@@ -87,8 +87,11 @@ JG_BACKEND_CONFIG_DIR="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
 # spawn-capable; unlike tmux/herdr/zellij it is also the worktree provider.
 # cmux is EXPERIMENTAL and spawn-capable, session-provider-only like
 # herdr/zellij - verified against the real 0.64.17 binary (docs/cmux-backend.md).
+# hc (Herdr Core) is KNOWN but not spawn-capable: its core primitives are
+# verified in the isolated hc lab, and it joins JG_BACKEND_SPAWN only after its
+# verify plan lands (docs/hc-backend.md).
 # codex-app remains deliberately absent; see docs/codex-app-backend.md.
-JG_BACKEND_KNOWN="tmux herdr zellij orca cmux"
+JG_BACKEND_KNOWN="tmux herdr zellij orca cmux hc"
 JG_BACKEND_SPAWN="tmux herdr zellij orca cmux"
 
 # jg_backend_list_contains: whitespace-delimited membership without relying on
@@ -332,6 +335,7 @@ jg_backend_required_tools() {  # <backend>
     herdr)  printf '%s' 'herdr jq treehouse python3' ;;
     zellij) printf '%s' 'zellij jq treehouse python3' ;;
     cmux)   printf '%s' 'cmux jq treehouse python3' ;;
+    hc)     printf '%s' 'hc jq treehouse python3' ;;
     orca)   printf '%s' 'orca' ;;
     *) return 1 ;;
   esac
@@ -584,6 +588,22 @@ jg_backend_validate_task_endpoint() {  # <meta-file> <task-id>
         return 1
       fi
       ;;
+    hc)
+      [ "$binding" = "$id" ] || {
+        echo "REFUSED: hc endpoint metadata for task $id lacks an exact task binding; preserving task state." >&2
+        return 1
+      }
+      recorded_session=$(jg_backend_meta_exact_value "$meta" hc_session) || recorded_session=
+      terminal=$(jg_backend_meta_exact_value "$meta" hc_terminal) || terminal=
+      case "$terminal" in t[0-9]*) ;; *) terminal= ;; esac
+      case "$terminal" in *[!a-z0-9]*) terminal= ;; esac
+      if [ -z "$recorded_session" ] || [ -z "$terminal" ] \
+        || [ "$window" != "$recorded_session:$terminal" ] \
+        || ! jg_backend_endpoint_atom_valid "$recorded_session"; then
+        echo "REFUSED: hc endpoint metadata for task $id is malformed or inconsistent; preserving task state." >&2
+        return 1
+      fi
+      ;;
   esac
   # shellcheck disable=SC2034 # Output globals are consumed by sourcing callers.
   JG_BACKEND_VALIDATED_BACKEND=$backend
@@ -683,6 +703,9 @@ jg_backend_source() {  # <name>
     cmux)
       set -- jg-backend-hometag-lib.sh jg-composer-lib.sh
       ;;
+    hc)
+      set -- jg-composer-lib.sh jg-agent-process-lib.sh jg-session-lock-lib.sh jg-gemini-lib.sh
+      ;;
     *)
       return 1
       ;;
@@ -726,6 +749,13 @@ jg_backend_source() {  # <name>
         # shellcheck source=/dev/null
         . "$adapter" || return 1
         _JG_BACKEND_CMUX_SOURCED=1
+      fi
+      ;;
+    hc)
+      if [ -z "${_JG_BACKEND_HC_SOURCED:-}" ]; then
+        # shellcheck source=/dev/null
+        . "$adapter" || return 1
+        _JG_BACKEND_HC_SOURCED=1
       fi
       ;;
   esac
@@ -799,6 +829,7 @@ jg_backend_capture() {  # <backend> <target> <lines> [expected-label]
     zellij) jg_backend_zellij_capture "$@" ;;
     orca) jg_backend_orca_capture "$@" ;;
     cmux) jg_backend_cmux_capture "$@" ;;
+    hc) jg_backend_hc_capture "$@" ;;
     *) echo "error: no capture implementation for backend '$backend'" >&2; return 1 ;;
   esac
 }
@@ -809,8 +840,9 @@ jg_backend_capture() {  # <backend> <target> <lines> [expected-label]
 # pending live verification: its `read-screen` without `--scrollback` plausibly
 # reads only the viewport, but that has not been observed on a real cmux, and
 # the adapter's own capture opts into history with `--scrollback`. orca's
-# `terminal read --limit` is a history read with no viewport mode.
-JG_BACKEND_VISIBLE_CAPTURE="tmux herdr zellij"
+# `terminal read --limit` is a history read with no viewport mode. hc's `read`
+# without --lines is the screen alone (proven by the hc lab journey).
+JG_BACKEND_VISIBLE_CAPTURE="tmux herdr zellij hc"
 
 # jg_backend_visible_capture_supported: whether <backend> can read the visible
 # viewport WITHOUT scrollback. Callers that must not mistake a scrolled-away
@@ -844,6 +876,7 @@ jg_backend_send_key() {  # <backend> <target> <key> [expected-label]
     zellij) jg_backend_zellij_send_key "$@" ;;
     orca) jg_backend_orca_send_key "$@" ;;
     cmux) jg_backend_cmux_send_key "$@" ;;
+    hc) jg_backend_hc_send_key "$@" ;;
     *) echo "error: no send-key implementation for backend '$backend'" >&2; return 1 ;;
   esac
 }
@@ -900,6 +933,7 @@ jg_backend_send_text_submit() {  # <backend> <target> <text> <retries> <enter-sl
     zellij) jg_backend_zellij_send_text_submit "$@" || rc=$? ;;
     orca) jg_backend_orca_send_text_submit "$@" || rc=$? ;;
     cmux) jg_backend_cmux_send_text_submit "$@" || rc=$? ;;
+    hc) jg_backend_hc_send_text_submit "$@" || rc=$? ;;
     *) echo "error: no send-text implementation for backend '$backend'" >&2; rc=1 ;;
   esac
   jg_composer_dialog_sink_release
@@ -942,25 +976,88 @@ jg_backend_send_nudge() {  # <backend> <target> <text> <retries> <enter-sleep> <
 }
 
 # jg_backend_withdraw_typed: take <text> back out of the composer if, and only
-# if, the composer holds exactly that text (ignoring whitespace and wrapping).
+# if, the composer holds that text (ignoring whitespace and wrapping) or a
+# leading part of it left by an interrupted typing (jg_composer_own_doorbell_
+# length). A composer that still holds it is given JG_COMPOSER_DOORBELL_WAIT
+# seconds (default 10) to take the submit, then cleared with the clear key.
 # Echoes `empty` (nothing there to withdraw), `withdrawn`, `foreign` (other
-# content: a human's, never keyed), or `stuck` (ours, but it will not clear).
+# content: a human's, or a draft glued after our line; never keyed), or
+# `stuck` (ours, but it will not clear).
 jg_backend_withdraw_typed() {  # <backend> <target> <text> [expected-label]
-  local backend=$1 target=$2 want=${3//[[:space:]]/} label=${4:-} held i=0
+  local backend=$1 target=$2 text=$3 label=${4:-} held i=0 waited=0
+  local polls=$(( ${JG_COMPOSER_DOORBELL_WAIT:-$JG_COMPOSER_DOORBELL_WAIT_DEFAULT} * 2 ))
   while [ "$i" -lt 6 ]; do
     held=$(jg_backend_capture "$backend" "$target" "$JG_COMPOSER_CAPTURE_LINES" "$label" 2>/dev/null) \
       && held=$(jg_composer_extract_selected_content styled=0 "$held") || held=
-    held=${held//[[:space:]]/}
-    if [ -z "$held" ]; then
+    if [ -z "${held//[[:space:]]/}" ]; then
       if [ "$i" -eq 0 ]; then printf 'empty'; else printf 'withdrawn'; fi
       return 0
     fi
-    [ "$held" = "$want" ] || { printf 'foreign'; return 0; }
+    jg_composer_own_doorbell_length "$held" "$text" >/dev/null || { printf 'foreign'; return 0; }
+    if [ "$i" -eq 0 ] && [ "$waited" -lt "$polls" ]; then
+      sleep 0.5
+      waited=$((waited + 1))
+      continue
+    fi
     jg_backend_send_key "$backend" "$target" C-u "$label" >/dev/null 2>&1 || break
     sleep 0.2
     i=$((i + 1))
   done
   printf 'stuck'
+}
+
+# jg_backend_repair_own_line: make the composer of <target> empty when, and only
+# when, what it holds is provably our own doorbell line or a leading part of one
+# (jg_composer_own_line_kind; <prefix> and <suffix> are the doorbell's fixed
+# ends, <fresh-line> the one about to be typed). A complete line on an idle agent
+# is submitted with Enter, so the agent reads the record it names; a complete
+# line on an agent mid-turn, and any partial line, is cleared with the clear key,
+# which is safe in a turn because the key only edits the box. The box is read
+# again before every key, so a person who starts typing is never keyed over.
+# Echoes `clear` (nothing was there), `cleared`, `submitted`, `foreign` (a
+# person's text, or text that is not provably ours: no key was sent) or `stuck`
+# (ours, but it would not go away).
+jg_backend_repair_own_line() {  # <backend> <target> <fresh-line> <prefix> <suffix> [expected-label]
+  local backend=$1 target=$2 fresh=$3 prefix=$4 suffix=$5 label=${6:-} held kind i=0
+  jg_backend_source "$backend" || return 1
+  while [ "$i" -le 3 ]; do
+    held=$(jg_backend_capture "$backend" "$target" "$JG_COMPOSER_CAPTURE_LINES" "$label" 2>/dev/null) \
+      && held=$(jg_composer_extract_selected_content styled=0 "$held") || held=
+    if [ -z "${held//[[:space:]]/}" ]; then
+      if [ "$i" -eq 0 ]; then printf 'clear'; else printf 'cleared'; fi
+      return 0
+    fi
+    kind=$(jg_composer_own_line_kind "$held" "$fresh" "$prefix" "$suffix") || { printf 'foreign'; return 0; }
+    if [ "$i" -eq 0 ] && [ "$kind" = whole ] && [ "$(jg_backend_busy_state "$backend" "$target")" = idle ]; then
+      [ "$(jg_backend_resubmit_typed "$backend" "$target" "$held" 2 0.4 "$label")" != empty ] || { printf 'submitted'; return 0; }
+    fi
+    [ "$i" -lt 3 ] || break
+    jg_backend_send_key "$backend" "$target" C-u "$label" >/dev/null 2>&1 || break
+    sleep 0.2
+    i=$((i + 1))
+  done
+  printf 'stuck'
+}
+
+# jg_backend_resubmit_typed: submit <text> again (Enter only, never retyped) if,
+# and only if, the composer holds exactly that text, ignoring whitespace,
+# wrapping, and trailing control residue. Echoes `foreign` (other content: a
+# human's, never keyed), `empty` (submitted), or the last composer verdict.
+jg_backend_resubmit_typed() {  # <backend> <target> <text> <retries> <enter-sleep> [expected-label]
+  local backend=$1 target=$2 want=${3//[[:space:]]/} retries=$4 sleep_s=$5 label=${6:-} held state=foreign i=0
+  held=$(jg_backend_capture "$backend" "$target" "$JG_COMPOSER_CAPTURE_LINES" "$label" 2>/dev/null) \
+    && held=$(jg_composer_extract_selected_content styled=0 "$held") || held=
+  held=${held//[[:space:]]/}
+  [ -n "$want" ] && [ "${held#"$want"}" != "$held" ] && [ -z "$(printf '%s' "${held#"$want"}" | tr -d '[:cntrl:]')" ] \
+    || { printf 'foreign'; return 0; }
+  while [ "$i" -lt "$retries" ]; do
+    jg_backend_send_key "$backend" "$target" Enter "$label" >/dev/null 2>&1 || true
+    sleep "$sleep_s"
+    state=$(jg_backend_composer_state "$backend" "$target" "$label" 2>/dev/null)
+    [ "$state" = pending ] || break
+    i=$((i + 1))
+  done
+  printf '%s' "$state"
 }
 
 # jg_backend_kill: remove the task's session endpoint. An already-gone target
@@ -986,6 +1083,7 @@ jg_backend_kill() {  # <backend> <target>
     zellij) jg_backend_zellij_kill "$@" ;;
     orca) jg_backend_orca_kill "$@" ;;
     cmux) jg_backend_cmux_kill "$@" ;;
+    hc) jg_backend_hc_kill "$@" ;;
     *) echo "error: no kill implementation for backend '$backend'" >&2; return 1 ;;
   esac
 }
@@ -1049,6 +1147,7 @@ jg_backend_composer_state() {  # <backend> <target> [expected-label] -> empty|pe
     orca) jg_backend_orca_composer_state "$@" ;;
     cmux) jg_backend_cmux_composer_state "$@" ;;
     zellij) jg_backend_zellij_composer_state "$@" ;;
+    hc) jg_backend_hc_composer_state "$@" ;;
     *) printf 'unknown' ;;
   esac
 }
@@ -1098,6 +1197,10 @@ jg_backend_target_exists() {  # <backend> <target> [expected-label]
       jg_backend_source cmux || return 1
       jg_backend_cmux_target_ready "$target" "$expected_label"
       ;;
+    hc)
+      jg_backend_source hc || return 1
+      jg_backend_hc_target_exists "$target"
+      ;;
     *)
       return 1
       ;;
@@ -1124,12 +1227,15 @@ jg_backend_target_exists() {  # <backend> <target> [expected-label]
 # `missing` only in this recovery-grade view. Zellij remains unverified because
 # its squad_lead ghost-tab and agent-process recovery path has not been
 # empirically validated. Orca and cmux do not support squad_lead spawns.
+# The hc adapter reads its terminal record: hc's own not_found is `missing`, a
+# finished terminal `dead`, and a live one is judged by its foreground process.
 jg_backend_agent_state() {  # <backend> <target> [<meta> <task-id>]
   local backend=$1 target=$2
   jg_backend_source "$backend" || { printf 'unverified'; return 0; }
   case "$backend" in
     tmux) jg_backend_tmux_agent_state "$target" ;;
     herdr) jg_backend_herdr_agent_state "$target" "${3:-}" "${4:-}" ;;
+    hc) jg_backend_hc_agent_state "$target" ;;
     *) printf 'unverified' ;;
   esac
 }
@@ -1145,6 +1251,7 @@ jg_backend_agent_exited() {  # <backend> <target>
   case "$1" in
     tmux) [ "$(jg_backend_tmux_agent_state "$2")" = dead ] ;;
     herdr) jg_backend_herdr_agent_exited "$2" ;;
+    hc) jg_backend_hc_agent_exited "$2" ;;
     *) return 1 ;;
   esac
 }
@@ -1167,6 +1274,7 @@ jg_backend_target_absent() {  # <backend> <target>
   case "$backend" in
     tmux) jg_backend_tmux_target_absent "$target" ;;
     herdr) jg_backend_herdr_target_absent "$target" ;;
+    hc) jg_backend_hc_target_absent "$target" ;;
     *) printf 'uncertain' ;;
   esac
 }

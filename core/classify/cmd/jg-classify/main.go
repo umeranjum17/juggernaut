@@ -11,21 +11,24 @@
 //	jg-classify paused-until <line>                    epoch the pause expects to clear
 //	jg-classify utc-epoch <YYYY-MM-DDTHH:MM[:SS]Z>     UTC ISO time to epoch seconds
 //	jg-classify facts                                  one tab-separated verdict row per stdin line
+//	jg-classify span-events <kind>                      captured stdin span's needs flag and events
 //	jg-classify verb|note|untimed|stamp-line|at-epoch <line>      the status-line grammar
 //	jg-classify key <keyless> <line>                   the decision key, exit 1 for a bad slug
+//	jg-classify key-before-colon|key-at-note-head <line>   where a line carries its key
 //	jg-classify open-decisions|current-line|own-open-decisions <status-file> [kind]
 //	jg-classify has-open-needs-decision <status-file> [<run-id>]
 //	jg-classify key-closing-verb <status-file> <key>   the verb that last moved a decision key
 //	jg-classify fold-line|drop|open-set-has|open-set-verb ...     one step of the decision fold
 //	jg-classify kind|event-recorded|transition-allowed|pending-reply-escalation|stamp-width ...
 //	jg-classify open-decisions-incremental <status-file> [<captured-end>]
-//	jg-classify scan-open-decisions[-incremental] <state> [<exclude-file>]
-//	jg-classify cursor-path|file-ident|file-size|file-mtime <file>
+//	jg-classify scan-open-decisions-incremental <state> [<exclude-file>]
+//	jg-classify cursor-path|file-ident|file-size|file-mtime|legacy-cursor-offset <file>
 //	jg-classify read-span <file> <start> <length>             bytes of a status-file span
 //
 // The tests answer by exit status: 0 yes, 1 no. Anything else (2) is a usage or read fault, so a
 // caller never reads a broken classifier as an answer. Overrides come from the environment:
 // JG_CAPTAIN_RE, JG_CLASSIFY_PAUSED_VERB, JG_CLASSIFY_RESOLVE_VERB, JG_CLASSIFY_CAPTAIN_HELD_VERB.
+// The usage line names every command, and tests/jg-go-entries.test.sh holds each name to a caller.
 package main
 
 import (
@@ -35,6 +38,13 @@ import (
 	"strconv"
 	"strings"
 )
+
+const usage = "usage: jg-classify last-line|declared-wait|is-terminal|is-relevant|is-paused|is-held|is-paused-or-held|" +
+	"paused-until|utc-epoch|facts|span-events|verb|note|untimed|stamp-line|stamp-width|at-epoch|key|key-before-colon|" +
+	"key-at-note-head|kind|event-recorded|transition-allowed|pending-reply-escalation|fold-line|drop|open-set-has|" +
+	"open-set-verb|open-decisions|current-line|own-open-decisions|has-open-needs-decision|key-closing-verb|" +
+	"open-decisions-incremental|scan-open-decisions-incremental|cursor-path|file-ident|file-size|file-mtime|" +
+	"read-span|legacy-cursor-offset ... (see the file header)"
 
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
 
@@ -47,10 +57,13 @@ func yes(b bool) int {
 
 func run(args []string, in *os.File, out, errw *os.File) int {
 	if len(args) == 0 {
-		fmt.Fprintln(errw, "jg-classify: command required (last-line, declared-wait, is-*, paused-until, utc-epoch, facts)")
+		fmt.Fprintln(errw, usage)
 		return 2
 	}
 	cmd, rest := args[0], args[1:]
+	if cmd == "span-events" && len(rest) == 1 {
+		return spanEvents(rest[0], in, out)
+	}
 	if code, handled := decideCommand(cmd, rest, out); handled {
 		return code
 	}

@@ -70,6 +70,7 @@ ACK_REMOVED=0
 PRESENTED_MAX=0
 ACK_FINGERPRINTS=
 ACK_NOTICE_FINGERPRINTS=
+OPEN_DECISIONS_ALL=0
 PRESENTATION_LOCK_TIMEOUT=${JG_STATUS_PRESENTATION_LOCK_TIMEOUT:-10}
 BRANCH_OUTCOMES_RC=0
 case "$PRESENTATION_LOCK_TIMEOUT" in ''|*[!0-9]*|0) PRESENTATION_LOCK_TIMEOUT=10 ;; esac
@@ -211,7 +212,13 @@ case "${1:-}" in
     case "$ACK_GENERATION" in ''|*[!A-Za-z0-9._-]*) echo "wake drain: invalid recovery generation" >&2; exit 2 ;; esac
     [ "$#" -eq 4 ] || { echo "wake drain: unexpected acknowledgement arguments" >&2; exit 2; }
     ;;
-  *) echo "usage: jg-wake-drain.sh [--ack-through SEQUENCE --recovery-generation GENERATION]" >&2; exit 2 ;;
+  --open-decisions)
+    # Read-only: every open decision, newest first, none cut. It takes no lock and moves no
+    # cursor, so the digest's "all of them" pointer is safe to run at any time.
+    [ "$#" -eq 1 ] || { echo "wake drain: --open-decisions takes no other argument" >&2; exit 2; }
+    OPEN_DECISIONS_ALL=1
+    ;;
+  *) echo "usage: jg-wake-drain.sh [--ack-through SEQUENCE --recovery-generation GENERATION | --open-decisions]" >&2; exit 2 ;;
 esac
 
 [ "$ACTOR" != branch ] || require_branch_eligible_rows || exit 1
@@ -398,7 +405,7 @@ EOF
   printf 'STATUS OUTCOME BACKSTOP (newest captain-facing task event has no covering branch outcome):\n' || return 1
   printf '%s' "$output" || return 1
   if [ "$omitted" -gt 0 ]; then
-    printf 'STATUS OUTCOME BACKSTOP: %d more omitted (byte cap)\n' "$omitted" || return 1
+    printf 'STATUS OUTCOME BACKSTOP: %d more omitted (byte cap); every lane with its last status line: juggernaut-axi lanes\n' "$omitted" || return 1
   fi
 }
 
@@ -434,6 +441,28 @@ EOF
   [ "$shown" -gt 0 ] || return 0
 }
 
+# order_open_decisions <rows>: the folded "<task>\t<key>\t<verb>\t<note>" rows newest first - tasks by
+# the time of their last status line, and within a task the decision opened last first - so a cut
+# keeps what was raised most recently. A task whose log cannot be statted sorts last.
+order_open_decisions() {
+  local rows=$1 task stamps='' tab
+  tab=$(printf '\t')
+  while IFS= read -r task; do
+    [ -n "$task" ] || continue
+    stamps="$stamps$(jg_path_mtime "$STATE/$task.status" || printf 0)$tab$task
+"
+  done <<EOF
+$(printf '%s\n' "$rows" | cut -f1 | awk '!seen[$0]++')
+EOF
+  printf '%s\n' "$rows" | awk -F '\t' -v stamps="$stamps" '
+    BEGIN {
+      n = split(stamps, l, "\n")
+      for (i = 1; i <= n; i++) { split(l[i], p, "\t"); if (p[2] != "") m[p[2]] = p[1] }
+    }
+    { printf "%d\t%d\t%s\n", (m[$1] + 0), NR, $0 }' \
+    | sort -s -t "$tab" -k1,1nr -k2,2nr | cut -f3-
+}
+
 # Print the consolidated OPEN DECISIONS section: every still-open
 # needs-decision/blocked, fleet-wide, folded from the durable status logs by
 # jg-classify-lib.sh's status_open_decisions fold (via its cursor-backed
@@ -450,7 +479,7 @@ EOF
 # Bounded and silent: prints nothing when no decision is open, which is the
 # common case.
 print_open_decisions_section() {
-  local snapshot=${1:-} open task key verb note line item_bytes=220 global_bytes=4000
+  local snapshot=${1:-} open task key verb note line item_bytes=220 global_bytes=4000 total
   local output='' used=0 shown=0 omitted=0 bytes
 
   if [ -n "$snapshot" ]; then
@@ -459,6 +488,8 @@ print_open_decisions_section() {
     open=$(scan_open_decisions_incremental "$STATE") || return 1
   fi
   [ -n "$open" ] || return 0
+  total=$(printf '%s\n' "$open" | grep -c .)
+  open=$(order_open_decisions "$open")
 
   while IFS=$(printf '\t') read -r task key verb note; do
     [ -n "$task" ] || continue
@@ -484,10 +515,10 @@ $open
 EOF
 
   [ "$shown" -gt 0 ] || [ "$omitted" -gt 0 ] || return 0
-  printf 'OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):\n' || return 1
+  printf 'OPEN DECISIONS (%d still open, newest first, folded from the durable status logs - not just the latest line):\n' "$total" || return 1
   printf '%s' "$output" || return 1
   if [ "$omitted" -gt 0 ]; then
-    printf 'OPEN DECISIONS: %d more omitted (byte cap)\n' "$omitted" || return 1
+    printf 'OPEN DECISIONS: %d of %d shown (byte cap); all of them, newest first: bin/jg-wake-drain.sh --open-decisions\n' "$shown" "$total" || return 1
   fi
   # Answerer-closes hint, printed at exactly the moment an answer gets written:
   # the send that answers a listed decision also closes it, so closure never
@@ -547,7 +578,7 @@ EOF
   printf 'RECORD DIVERGENCE (answered in the status log, still held in the backlog - nothing was closed automatically):\n' || return 1
   printf '%s' "$output" || return 1
   if [ "$omitted" -gt 0 ]; then
-    printf 'RECORD DIVERGENCE: %d more omitted (byte cap)\n' "$omitted" || return 1
+    printf 'RECORD DIVERGENCE: %d more omitted (byte cap); every pair: bin/jg-captain-hold.sh diverged\n' "$omitted" || return 1
   fi
   # Both directions, deliberately. The status resolution is not proof the
   # captain ruled: a call can dissolve, or turn out to have been a question of
@@ -803,6 +834,37 @@ cleanup() {
   fi
   exit "$status"
 }
+
+# --open-decisions: fold every status log whole (status_open_decisions reads the log itself and
+# keeps no cursor), print every open decision newest first, and stop - before any lock or queue read.
+if [ "$OPEN_DECISIONS_ALL" -eq 1 ]; then
+  all_open=
+  for status_file in "$STATE"/*.status; do
+    [ -f "$status_file" ] && [ ! -L "$status_file" ] || continue
+    task=$(basename "$status_file" .status)
+    folded=$(status_open_decisions "$status_file" 2>/dev/null) || continue
+    [ -n "$folded" ] || continue
+    while IFS=$(printf '\t') read -r key verb note; do
+      [ -n "$key" ] || continue
+      all_open="$all_open$task$(printf '\t')$key$(printf '\t')$verb$(printf '\t')$note
+"
+    done <<EOF
+$folded
+EOF
+  done
+  if [ -z "$all_open" ]; then
+    printf 'OPEN DECISIONS: none\n'
+    exit 0
+  fi
+  printf 'OPEN DECISIONS (%d still open, newest first):\n' "$(printf '%s' "$all_open" | grep -c .)"
+  order_open_decisions "${all_open%
+}" | while IFS=$(printf '\t') read -r task key verb note; do
+    line="$task"
+    [ "$key" = default ] || line="$line [key=$key]"
+    printf '%s %s: %s\n' "$line" "$verb" "$note"
+  done
+  exit 0
+fi
 
 trap cleanup EXIT
 trap 'exit 130' INT

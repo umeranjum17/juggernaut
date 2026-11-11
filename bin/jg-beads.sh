@@ -107,12 +107,13 @@ store_mode_check() {
 }
 
 # Sets PINNED_TOOL to the verified binary. The hash runs first, so an unpinned build never starts.
+# The hash is cached beside the store and recomputed when the binary changes (jg_pin_sha_cached).
 pin_check() {  # <bd|dolt>
   local tool=$1 path want got
   if [ "$tool" = dolt ]; then path=${JG_BEADS_DOLT:-$(command -v dolt)}; else path=${JG_BEADS_BD:-$(command -v "$tool")}; fi
   [ -n "$path" ] && [ -x "$path" ] || die "$tool is not installed; toolchain.versions names the build this needs"
   want=$(jg_pin_sha_want "$tool") || die "toolchain.versions has no $tool build for this platform"
-  got=$(jg_pin_sha_of "$path")
+  got=$(jg_pin_sha_cached "$path" "$STORE_PARENT/.jg-beads-env/$tool.sha256")
   [ "$got" = "$want" ] || die "$path is not the pinned $tool $(jg_pin_version "$tool"): its sha256 is $got, the pin is $want"
   PINNED_TOOL=$path
 }

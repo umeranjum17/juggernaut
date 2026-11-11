@@ -1,0 +1,3 @@
+# Local trunk cleanup and large-backlog owner-rules lookup
+
+Local trunk cleanup and large-backlog owner-rules lookup: run `done-done run trunk-cleanup` with `JG_BEADS_TEST_BD` and `JG_BEADS_TEST_DOLT` set to the pinned installed builds; `journeys/trunk-cleanup.sh` drives the real cleanup and brief commands over isolated Git repositories and Beads stores, proves clean local-only work already on the recorded trunk closes without a release ref (also after rollover), unlanded and dirty work stay intact, held questions stay open, non-trunk rules stay unchanged, and a 5,160-row backlog above the single-argument limit still accepts an existing parent and refuses a missing parent or owner ask; the run writes three head-named logs and `steps.json` (screen: none).

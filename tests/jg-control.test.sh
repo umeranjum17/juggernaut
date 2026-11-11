@@ -993,25 +993,60 @@ test_exit_drops_meta_busy_gen_with_the_sidecar() {
   pass "jg-control exit: retiring a codex incarnation drops busy_gen with the sidecar"
 }
 
-test_interrupt_without_acknowledgement_preserves_busy_state() {
-  local dir gen before after out rc
+test_interrupt_without_acknowledgement_invalidates_busy_to_unknown() {
+  local dir gen out rc
   dir=$(new_case unconfirmed)
   add_task "$dir" t1 claude
   alive_as "$dir" claude
   gen=$("$ROOT/bin/jg-busy-event.sh" arm "$dir/home/state" t1)
   printf 'busy_gen=%s\n' "$gen" >> "$dir/home/state/t1.meta"
-  before=$(cat "$dir/home/state/t1.busy-state")
   out=$(run_control "$dir" t1 interrupt); rc=$?
   expect_code 0 "$rc" "an interrupt without acknowledgement should still deliver"$'\n'"$out"
-  after=$(cat "$dir/home/state/t1.busy-state")
   grep -q "^busy_gen=$gen$" "$dir/home/state/t1.meta" \
     || fail "an interrupt must leave the task record's busy_gen in place"
-  [ "$after" = "$before" ] || fail "an unconfirmed interrupt must preserve adapter-owned busy state"
+  assert_grep 'state=unknown source=jg-interrupt' "$dir/home/state/t1.busy-state" \
+    'a pane that does not show the turn ended must record unknown, never idle and never a stale busy'
   assert_contains "$out" "verified=agent-alive cancel=unconfirmed" \
     "the result should distinguish delivery proof from unconfirmed cancellation"
   assert_not_contains "$out" "cancel=confirmed" \
     "an adapter without acknowledgement must not report cancellation"
-  pass "jg-control interrupt: unconfirmed delivery preserves observed busy state"
+  pass "jg-control interrupt: a pane without the end-of-turn mark records unknown"
+}
+
+# S24b: Claude runs no hook for an interrupt, so the record stayed busy and the
+# steer check deferred the doorbell for up to an hour.
+test_claude_interrupt_writes_idle_when_the_pane_shows_the_turn_ended() {
+  local dir gen out rc before_record before_verdict
+  dir=$(new_case claude-idle-flag)
+  add_task "$dir" t1 claude
+  alive_as "$dir" claude
+  gen=$("$ROOT/bin/jg-busy-event.sh" arm "$dir/home/state" t1)
+  printf 'busy_gen=%s\n' "$gen" >> "$dir/home/state/t1.meta"
+  assert_grep 'state=busy' "$dir/home/state/t1.busy-state" 'fixture record must start busy'
+  printf '  \xe2\x8e\xbf  Interrupted \xc2\xb7 What should Claude do instead?\n' > "$dir/fake/pane"
+  steer_verdict() { JG_HOME="$dir/home" bash -c '. "$0/bin/jg-busy-lib.sh"; jg_busy_classify_semantic tmux x claude t1 "$1/state" 2>/dev/null' "$ROOT" "$dir/home"; }
+  before_record=$(cat "$dir/home/state/t1.busy-state"); before_verdict=$(steer_verdict)
+  out=$(JG_CONTROL_CALLER=lead-nudge run_control "$dir" t1 interrupt); rc=$?
+  expect_code 0 "$rc" "the interrupt should deliver"$'\n'"$out"
+  if [ -n "${JG_TEST_TRANSCRIPT:-}" ]; then
+    {
+      printf 'Pane after the interrupt:\n%s\n' "$(cat "$dir/fake/pane")"
+      printf 'Busy record BEFORE the interrupt: %s\nSteer check BEFORE: %s\n' "$before_record" "$before_verdict"
+      printf 'Busy record AFTER the interrupt:  %s\nSteer check AFTER:  %s\n' "$(cat "$dir/home/state/t1.busy-state")" "$(steer_verdict)"
+      printf 'data/control-actions.tsv (%s row):\n%s\n' "$(wc -l < "$dir/home/data/control-actions.tsv")" "$(cat "$dir/home/data/control-actions.tsv")"
+    } > "$JG_TEST_TRANSCRIPT"
+  fi
+  assert_grep 'state=idle source=jg-interrupt' "$dir/home/state/t1.busy-state" \
+    'a pane showing Claude ended the turn must record idle from jg-interrupt'
+  [ "${before_verdict%% *}" = busy ] || fail "the steer check must read busy before the interrupt, got: $before_verdict"
+  [ "$(steer_verdict | awk '{print $1}')" = idle ] \
+    || fail "the steer check must read idle after the interrupt, got: $(steer_verdict)"
+  [ "$(wc -l < "$dir/home/data/control-actions.tsv")" = 1 ] \
+    || fail "one interrupt must write exactly one control-actions row, got: $(cat "$dir/home/data/control-actions.tsv")"
+  awk -F'\t' '$1 ~ /^[0-9]+$/ && $2 == "t1" && $3 == "interrupt" && $4 == "lead-nudge" && $5 ~ /^delivered/ { ok = 1 } END { exit !ok }' \
+    "$dir/home/data/control-actions.tsv" \
+    || fail "the row must carry time, task, action, caller and result, got: $(cat "$dir/home/data/control-actions.tsv")"
+  pass "jg-control interrupt: Claude pane that shows the turn ended records idle and one action row"
 }
 
 test_muse_interrupt_confirms_adapter_acknowledgement() {
@@ -1410,7 +1445,8 @@ test_exit_drops_meta_busy_gen_with_the_sidecar
 test_exit_refuses_an_open_background_picker
 test_exit_refuses_the_confirming_enter
 test_exit_names_a_picker_that_renders_after_the_submit
-test_interrupt_without_acknowledgement_preserves_busy_state
+test_interrupt_without_acknowledgement_invalidates_busy_to_unknown
+test_claude_interrupt_writes_idle_when_the_pane_shows_the_turn_ended
 test_muse_interrupt_confirms_adapter_acknowledgement
 test_interrupt_revalidates_agent_after_acknowledgement_wait
 test_exit_accepts_agent_stopped_by_busy_interrupt

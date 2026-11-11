@@ -23,7 +23,9 @@
 # home that exports JG_* is never overridden by a stale FM_* in the environment.
 jg_compat_env_aliases() {
   local old new
-  for old in $(compgen -v FM_ 2>/dev/null || true); do
+  # ${!FM_@} lists the same names compgen -v does, without the subshell that
+  # every script start paid once per library sourcing this file.
+  for old in "${!FM_@}"; do
     new="JG_${old#FM_}"
     declare -p "$new" >/dev/null 2>&1 && continue
     export "$new=${!old}"

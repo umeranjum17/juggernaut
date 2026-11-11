@@ -1,0 +1,46 @@
+# defaults/brief-lint-rules.tsv - what bin/jg-brief-lint.sh reports in a brief.
+# Owner of the row format: this header. Reader: bin/jg-brief-lint.sh (--rules names another table).
+# Columns are separated by one TAB; a pattern is a POSIX extended regular expression, `-` means none.
+# A blank line or a line starting with `#` is ignored; any other row with a wrong shape refuses the table.
+#
+#   budget   <id>  <bytes>                   a file larger than <bytes> is reported, with the line that passes it
+#   conflict <id>  <pattern a>  <pattern b>  <why they disagree>
+#                                            a file with a line matching a and a line matching b is reported
+#   name     <id>  <name>  <before>  <after> a skill name the text tells the worker to use: a lower-case
+#                                            hyphenated word matching <name> anywhere, whose line text before it
+#                                            matches <before> at its end and whose text after it matches <after>
+#                                            at its start (the tool adds both anchors);
+#                                            a name that is neither a skill (a SKILL.md in a skill folder
+#                                            searched) nor a command (on PATH, or this repository's bin/ or
+#                                            core/*/ and core/*/bin/ script of that name) is reported
+#   ignore   <id>  <before>                  a name whose text before it matches <before> at its end is not checked
+#
+# The rows are pairs of words a person picked, never a model call, so a finding can be traced to its row.
+# The tool only reports; a finding refuses nothing.
+
+# The 200-line target of the Claude Code memory guidance (code.claude.com/docs/en/memory)
+# at 80 bytes a line. Measured 9 Nov 2026: the median worker brief of 3 to 9 Nov was 32,860 bytes,
+# of which the task was 4.8% (data/fable-opportunity-recon/report.md, 5.2).
+budget	brief-bytes	16000
+
+# A wait gets one status word. The shared brief says `paused:` and never `blocked:`, a home
+# addition said every wait is `blocked:`, and a later one said a wait on your own work is `paused:`.
+conflict	wait-word	`paused:[^`]*`.{0,40}(never|not) `blocked:`	[Ww][Aa][Ii][Tt][Ii][Nn][Gg] *= *`blocked:`	one rule says a wait is `paused:` and not `blocked:`, the other says a wait is `blocked:`
+# A local-trunk lane has no feature pull request, so a step that writes into a PR body cannot be done.
+conflict	pr-body-on-trunk	no feature pull request	in the PR body	one rule says there is no feature pull request, the other puts text in the PR body
+
+# A skill to use: after a verb, in backticks before the word skill, named by the word skill,
+# in brackets after it, or named after itself (three or more parts ending in -skill).
+name	skill-verb	-	(^|[^[:alnum:]_])([Rr]un|[Ff]ollow|[Ll]oad|[Ii]nvoke) `?	-
+name	skill-word-after	-	`	` skills?([^-[:alnum:]]|$)
+name	skill-word-before	-	[Ss]kills? (is|named|called) `?	-
+name	skill-in-brackets	-	[Ss]kills? \(`?	`?\)
+name	self-named	-[a-z0-9]+-skill$	-	-
+
+# A prohibition names a skill only to forbid it, so the name need not be installed.
+ignore	prohibition	[Nn]ever [a-z]+ `?
+# A word after a script, or after a command's run, is that command's argument (a task id, a journey).
+ignore	script-argument	\.sh'? ([a-z-]+ )?
+ignore	run-argument	[a-z0-9]-[a-z0-9-]+ run `?
+# A run that is a noun (the second run, a dry run) names no skill.
+ignore	run-noun	(^|[^[:alnum:]])([Aa]|[Tt]he|[Ee]ach|[Ee]very|[Oo]ne|[Ff]irst|[Ss]econd|[Ll]ast|[Nn]ext|[Tt]his|[Tt]hat) run `?

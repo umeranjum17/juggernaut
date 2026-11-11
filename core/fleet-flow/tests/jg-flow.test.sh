@@ -21,7 +21,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/home" "$TMP/xdg" "$TMP/tmp"
-# shellcheck source=core/lib/beads-test-env.sh
+# shellcheck source=core/lib/beads-test-env.sh disable=SC1091
 . "$ROOT/../lib/beads-test-env.sh"
 for h in main child grand; do core_beads_home "$(cd "$JG_BIN/.." && pwd)" "$TMP/$h"; done
 HOME="$TMP/home" XDG_CONFIG_HOME="$TMP/xdg" TMPDIR="$TMP/tmp" python3 - "$ROOT/bin/jg-flow.sh" "$TMP" <<'PY'

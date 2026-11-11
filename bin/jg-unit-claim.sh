@@ -23,7 +23,8 @@
 #           failed, nothing when all four already serve here. It only acts from
 #           the home's own copy of Juggernaut and never in a Squad Lead home, so
 #           a test or throwaway home that runs another checkout's scripts can
-#           never take the machine's units.
+#           never take the machine's units; nor can a throw-away home under a
+#           temp root that is its own copy (bin/jg-lab-home-lib.sh).
 #   status  One line per unit that is installed but not running, or that serves
 #           another home; nothing when all four serve here. The watcher's fast
 #           check runs it every 30 s (bin/jg-watch.sh), so a wrong unit reaches
@@ -47,6 +48,8 @@ JG_HOME=$(cd "$JG_HOME" 2>/dev/null && pwd -P) || { echo "jg-unit-claim: JG_HOME
 PREFIX=${JG_STACK_UNIT_PREFIX:-jg}
 UNITS="jg-sentinel $PREFIX-wake-engine $PREFIX-wake-watcher $PREFIX-router"
 UNIT_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
+# shellcheck source=bin/jg-lab-home-lib.sh
+. "$SCRIPT_DIR/jg-lab-home-lib.sh"
 
 # Main owns these units; a Squad Lead home never installs or moves them.
 reason() {
@@ -147,6 +150,9 @@ cmd_claim() {
   fi
   user_session || return 0
   own_copy || return 0
+  # Nor does a throw-away home that is its own copy (a test's fixture under a temp root)
+  # move the units when they are this account's own (bin/jg-lab-home-lib.sh owns the rule).
+  jg_lab_home_guard "$JG_HOME" jg-unit-claim "$UNIT_DIR" 2>/dev/null || return 0
   for unit in $UNITS; do
     why=$(problem "$unit") || continue
     [ -n "$why" ] || continue

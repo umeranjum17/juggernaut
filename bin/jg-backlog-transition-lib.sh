@@ -279,24 +279,37 @@ jg_backlog_serve() {
 # bound turns that into a loud partial reconcile: the caller reports the item it
 # could not read and moves to the next one.
 #
+# One slow read is not a wedge: on a slow host a single `show` can pass the base
+# bound while the backend is healthy, and refusing at once there refused the
+# cleanup of landed lanes and the captain holds that need this read. So a read
+# that hits its bound is retried, each attempt with a larger bound (the base
+# bound times the attempt number, three attempts), which
+# keeps the total bounded at the base bound times 1+2+3. Only a read that is
+# still timed out after the last attempt is a wedge: it returns 124 once, and
+# its first line names the attempts and their bounds.
+#
 # A per-item bound alone is not enough on a home carrying a large fleet, because
 # N wedged items still cost N bounds and the digest is truncated anyway. So the
-# first bound hit latches JG_BACKLOG_ROW_SHOW_WEDGED and every later read in the
+# first wedge latches JG_BACKLOG_ROW_SHOW_WEDGED and every later read in the
 # same sweep returns immediately, still naming its own item so nothing is
 # silently skipped. This function only READS that latch: it runs inside a
 # command substitution, and a write here would die with the subshell, so the
-# callers that capture its status set it. The latch is deliberately
-# process-wide because these scripts are short-lived and a backend that wedged
-# once will wedge again within the same run.
+# callers that capture its status set it. They see a 124 only after the last
+# attempt, so a read that a retry rescued never latches the sweep. The latch is
+# deliberately process-wide because these scripts are short-lived and a backend
+# that wedged through every attempt will wedge again within the same run.
 jg_backlog_row_show() {  # <resolved-data-dir> <id> [flag...]
   local data=$1 id=$2 out status addressing_status secs=${JG_BACKLOG_ROW_TIMEOUT_SECS:-10}
+  local attempt=1 attempts=3 bound bounds=
   shift 2
   # A non-positive bound is not a bound (jg-timeout-lib.sh), and a padded zero
   # such as 00 is still zero, so the digits test alone would let the very read
   # this bound exists to prevent back in. Compare arithmetically, tolerating a
-  # value too large for the shell to compare at all.
+  # value too large for the shell to compare at all. A value past a day is no
+  # bound either, and keeps the retried bounds below far from overflow.
   case "$secs" in ''|*[!0-9]*) secs=10 ;; esac
   [ "$secs" -gt 0 ] 2>/dev/null || secs=10
+  [ "$secs" -le 86400 ] 2>/dev/null || secs=10
   jg_backlog_addressing "$data"
   addressing_status=$?
   if [ "$addressing_status" -ne 0 ]; then
@@ -304,20 +317,28 @@ jg_backlog_row_show() {  # <resolved-data-dir> <id> [flag...]
     return "$addressing_status"
   fi
   if [ "$JG_BACKLOG_ROW_SHOW_WEDGED" = 1 ]; then
-    printf 'backlog show %s skipped: the backlog backend already exceeded its %ss read bound\n' "$id" "$secs"
+    printf 'backlog show %s skipped: the backlog backend already exceeded its read bound on every attempt\n' "$id"
     return 124
   fi
   jg_backlog_tool
-  # shellcheck disable=SC2016  # Expansion is deliberately deferred to the child shell.
-  out=$(jg_run_timed "$secs" bash -c 'cd "$1" 2>/dev/null || exit 1; shift; exec "$@"' \
-    _ "$JG_BACKLOG_AXI_ROOT" "${JG_BACKLOG_TOOL[@]}" show "$id" "$@" 2>&1)
-  status=$?
+  while :; do
+    bound=$((secs * attempt))
+    # shellcheck disable=SC2016  # Expansion is deliberately deferred to the child shell.
+    out=$(jg_run_timed "$bound" bash -c 'cd "$1" 2>/dev/null || exit 1; shift; exec "$@"' \
+      _ "$JG_BACKLOG_AXI_ROOT" "${JG_BACKLOG_TOOL[@]}" show "$id" "$@" 2>&1)
+    status=$?
+    [ "$status" -eq 124 ] || break
+    bounds=${bounds:+$bounds, }${bound}s
+    [ "$attempt" -lt "$attempts" ] || break
+    attempt=$((attempt + 1))
+  done
   # A backend that wrote a header or a progress line before wedging leaves that
   # fragment as the first output line, and every caller reads the first line as
   # the failure reason. Whatever a timed-out read managed to emit is incomplete
-  # by definition, so the bound speaks for it instead.
+  # by definition, so the bound speaks for it instead. The wording up to
+  # "backlog read bound" is matched by bin/jg-trunk.sh's landing retry.
   if [ "$status" -eq 124 ]; then
-    printf 'backlog show %s exceeded its %ss backlog read bound\n' "$id" "$secs"
+    printf 'backlog show %s exceeded its %ss backlog read bound after %s attempts (%s)\n' "$id" "$bound" "$attempt" "$bounds"
   else
     printf '%s\n' "$out"
   fi
@@ -389,6 +410,50 @@ jg_backlog_row_probe() {  # <data-dir> <id>
   return 0
 }
 
+# A sweep that pairs many task records with their rows reads the backlog once, not once per record (a home with 87
+# records paid 87 reads of 2.6 to 4.7 s). jg_backlog_row_snapshot fills JG_BACKLOG_ROW_SNAPSHOT with one
+# "<id> <state> <held> <blocked>" line per row, closed rows included, and jg_backlog_row_snapshot_probe answers
+# jg_backlog_row_probe's question from it: the same JG_BACKLOG_ROW_RESULT and JG_BACKLOG_ROW_STATE, found or not_found.
+# A list read that fails as a whole returns 1 with JG_BACKLOG_ROW_ERROR, and the caller falls back to jg_backlog_row_probe.
+# Only the last two fields and the first two are read, so a quoted title holding commas cannot shift them.
+JG_BACKLOG_ROW_SNAPSHOT=
+jg_backlog_row_snapshot() {  # <data-dir>
+  local data out status
+  JG_BACKLOG_ROW_SNAPSHOT=
+  JG_BACKLOG_ROW_ERROR=
+  if ! data=$(jg_backlog_data_absolute "$1"); then
+    JG_BACKLOG_ROW_ERROR="data directory cannot be resolved: $1"
+    return 1
+  fi
+  if ! jg_backlog_source_present "$data" "$1"; then
+    JG_BACKLOG_ROW_ERROR=$JG_BACKLOG_TRANSITION_ERROR
+    return 1
+  fi
+  out=$(JG_BACKLOG_TIMEOUT=${JG_BACKLOG_TIMEOUT:-60} jg_backlog_row_list "$data" --all --fields held,blocked)
+  status=$?
+  if [ "$status" -ne 0 ] || ! printf '%s\n' "$out" | grep -q '^\(count: \|tasks: 0 \)'; then
+    JG_BACKLOG_ROW_ERROR=$(printf '%s\n' "$out" | sed -n '1p')
+    [ -n "$JG_BACKLOG_ROW_ERROR" ] || JG_BACKLOG_ROW_ERROR="backlog list failed with status $status"
+    return 1
+  fi
+  JG_BACKLOG_ROW_SNAPSHOT=$(printf '%s\n' "$out" | awk -F, '/^  [A-Za-z0-9._-]+,/ {
+    id = $1; sub(/^ +/, "", id); print id " " $2 " " $(NF - 1) " " $NF }')
+}
+
+jg_backlog_row_snapshot_probe() {  # <id>
+  local state
+  state=$(printf '%s\n' "$JG_BACKLOG_ROW_SNAPSHOT" | awk -v id="$1" '$1 == id { print $2 " " $3 " " $4; exit }')
+  JG_BACKLOG_ROW_ERROR=
+  JG_BACKLOG_ROW_HOLD_KIND=
+  if [ -z "$state" ]; then
+    JG_BACKLOG_ROW_RESULT=not_found
+    JG_BACKLOG_ROW_STATE=
+    return 1
+  fi
+  JG_BACKLOG_ROW_RESULT=found
+  JG_BACKLOG_ROW_STATE=$state
+}
+
 # Write the ticket the moment a backlog row moves, so the board the captain reads
 # follows the work itself instead of waiting for the next tickets-sync poll.
 # bin/jg-ticket.sh owns the write: it takes this home's board, writes only fields
@@ -445,6 +510,10 @@ jg_backlog_ticket_publish() {  # <data-dir> <verb> <id>
   sync=${JG_TICKETS_SYNC:-${XDG_DATA_HOME:-${HOME:-}/.local/share}/jg-tickets-sync/tickets-sync/sync.py}
   pointer=${JG_CONFIG_OVERRIDE:-$home/config}/fleet-board
   [ -f "$sync" ] && [ -f "$pointer" ] || return 0
+  if [ -s "$home/.jg-squad-lead-home" ] && [ "$(tr -d '[:space:]' < "$home/.jg-squad-lead-home")" != main ]; then
+    printf 'jg-backlog: the parent poll publishes %s to the board\n' "$id" >&2
+    return 0
+  fi
   IFS= read -r board < "$pointer" || true
   case "$board" in /*) ;; *) board=$home/$board ;; esac
   tool=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/jg-ticket.sh
@@ -847,6 +916,7 @@ jg_backlog_dispatch_rollback() {
 jg_backlog_close_transition() {
   local meta=$1 marker=$2 data=$3 id=$4 state=$5
   shift 5
+  "${BASH_SOURCE[0]%/*}/jg-machine-shadow.sh" task "$id" "done" || true  # shadow report of the move (jg-machine-shadow.sh)
   [ -z "$meta" ] || jg_backlog_record_remove "$meta" "task record" "$state" || return 1
   if ! jg_backlog_done "$data" "$id" "$@"; then
     # A backlog that never held this row has nothing left to close, which is
@@ -988,7 +1058,7 @@ jg_backlog_close_marker_validate() {  # <marker-path> <authorized-data-dir> <exp
     0) ;;
     2)
       case "${args[0]}" in
-        --note) [ "${args[1]}" = "local%20main" ] ;;
+        --note) case ${args[1]} in local%20main|local-trunk) true ;; *) false ;; esac ;;
         --pr)
           arg_value=${args[1]}
           [ "${#arg_value}" -le 2048 ] \
@@ -1162,7 +1232,7 @@ jg_backlog_close_marker_replay() {  # <state-dir> <marker-path> <authorized-data
   mode=$JG_BACKLOG_CLOSE_VALIDATED_MODE
   [ "$mode" = close ] || mode_flags=(--retain)
   args=("${JG_BACKLOG_CLOSE_VALIDATED_ARGS[@]+"${JG_BACKLOG_CLOSE_VALIDATED_ARGS[@]}"}")
-  if [ "${args[0]-}" = --note ]; then
+  if [ "${args[0]-}" = --note ] && [ "${args[1]-}" = local%20main ]; then
     args[1]="local main"
   fi
   meta="$state/$id.meta"

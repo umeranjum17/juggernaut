@@ -117,13 +117,16 @@ def named(rows, ident):
     return hits[0] if len(hits) == 1 else None
 
 
+PARTIAL = bool(os.environ.get("JG_BEADS_PARTIAL"))  # the rows are a part of the store: a row left out is closed
+
+
 def task(row, rows, native=None):
     """native is bd blocked's answer as {id: [open blockers]}; None works the answer out from the blocks edges."""
     meta = row.get("metadata") or {}
     closed = row.get("status") == "closed"
     deps = [d["depends_on_id"] for d in row.get("dependencies") or [] if d.get("type") == "blocks"]
     # bd blocked does not speak for a closed row, so it keeps the edge answer.
-    waiting = [d for d in deps if rows.get(d, {}).get("status") != "closed"] if native is None or closed else native.get(row["id"], [])
+    waiting = [d for d in deps if rows.get(d, {"status": "closed"} if PARTIAL else {}).get("status") != "closed"] if native is None or closed else native.get(row["id"], [])
     until = (row.get("defer_until") or "-")[:10]
     links = ["pr:" + url for url in dict.fromkeys(filter(None, [row.get("external_ref"), *split(meta.get("prs"))]))]
     links += ["report:" + path for path in split(meta.get("reports"))]
@@ -160,7 +163,7 @@ def table(name, tasks, fields, full=False):
 
 def card(item, hint=None):
     print("task:")
-    for field in SHOW:
+    for field in SHOW + (["parent"] if item["parent"] != "-" else []):
         value = clip(item, field, hint)
         print("  %s: %s" % (field, scalar(value)))
 
@@ -208,7 +211,7 @@ def ready(tasks, args, answer=None):
 
 
 def listing(tasks, args):
-    found, _ = flags(args, ("--state", "--repo", "--kind", "--limit", "--fields"), ("--blocked", "--full"))
+    found, _ = flags(args, ("--state", "--repo", "--kind", "--limit", "--fields"), ("--blocked", "--full", "--all"))
     state, repo, kind = (found.get(f) for f in ("--state", "--repo", "--kind"))
     if state is not None and state not in STATES:
         refuse("--state must be one of " + ", ".join(STATES))
@@ -217,6 +220,7 @@ def listing(tasks, args):
         refuse("Unknown field in --fields: " + ",".join(extra))
     rows = [t for t in tasks
             if (state is None or (t["held"] == "yes" if state == "held" else t["state"] == state))
+            and (state is not None or "--all" in found or t["state"] != "done")
             and repo in (None, t["repo"]) and kind in (None, t["kind"])
             and ("--blocked" not in found or t["blocked"] == "yes")]
     total = len(rows)
@@ -269,7 +273,9 @@ def markdown(tasks, args):
         for item in tasks:
             if item["state"] == state:
                 print(file_row(item, items))
-                print("".join("  %s\n" % line for line in item["body"].splitlines() if line.strip()), end="")
+                # The parent edge reads as the parent: line it came from, so a reader of this file sees the edge too.
+                edge = [] if item["parent"] == "-" or re.search(r"^\s*parent:", item["body"], re.M) else ["parent: " + items.get(item["parent"], item["parent"])]
+                print("".join("  %s\n" % line for line in [*item["body"].splitlines(), *edge] if line.strip()), end="")
 
 
 def links(tasks, args):
@@ -298,7 +304,19 @@ def beads_answer(variable):
         return json.load(handle) or []
 
 
+def one(ident):
+    """Turn `bd show <id> --json` into the rows a read works on: the row, its edges in the store's shape, and its edge targets' statuses."""
+    row = (json.load(sys.stdin) or [{}])[0]
+    if row.get("id") != ident:
+        sys.exit(1)
+    edges = row.get("dependencies") or []
+    row["dependencies"] = [{"depends_on_id": d["id"], "type": d.get("dependency_type")} for d in edges]
+    print(json.dumps([row] + [{"id": d["id"], "status": d.get("status")} for d in edges]))
+
+
 def main():
+    if sys.argv[1:2] == ["--one"]:
+        return one(sys.argv[2])
     raw = json.load(sys.stdin) or []
     rows = {row["id"]: row for row in raw}
     blocked = beads_answer("JG_BEADS_BLOCKED")

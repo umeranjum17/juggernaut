@@ -32,6 +32,42 @@ TMUX_STATE="$TMP_ROOT/remote-tmux.state"
 PARENT_ROUTE_INBOX="$REMOTE_HOME/state/parent-route/ios.inbox"
 CLAIMS="$TMP_ROOT/claims"
 mkdir -p "$PARENT/data" "$PARENT/state" "$PARENT/config" "$PARENT/projects" "$REMOTE_ROOT" "$CLAIMS"
+# The simulated host has its own account (JG_TEST_REMOTE_ACCOUNT_HOME): its jobs run with
+# that HOME and no inherited XDG dirs, and its systemctl and systemd-run only log. On 9 Nov
+# the update below ran as the runner's real account and rewrote the machine's own
+# jg-sentinel unit to this fixture's remote root; the real unit is read here and below,
+# never written.
+REMOTE_ACCOUNT="$TMP_ROOT/remote-account"
+REMOTE_UNIT_LOG="$TMP_ROOT/remote-systemctl.log"
+mkdir -p "$REMOTE_ACCOUNT/.local/bin"
+: > "$REMOTE_UNIT_LOG"
+for unit_tool in systemctl systemd-run; do
+  printf '#!/bin/sh\nprintf "%%s %%s\\n" "%s" "$*" >> "%s"\nexit 0\n' "$unit_tool" "$REMOTE_UNIT_LOG" \
+    > "$REMOTE_ACCOUNT/.local/bin/$unit_tool"
+  chmod +x "$REMOTE_ACCOUNT/.local/bin/$unit_tool"
+done
+printf '[user]\n\tname = Test\n\temail = test@example.com\n' > "$REMOTE_ACCOUNT/.gitconfig"
+# The host's toolchain is the runner's own, so the account holds tools, never their state:
+# go (the spawn core builds with it) is a wrapper that keeps the runner's Go caches, and the
+# pinned Beads tools are links, so their bytes still match the pin.
+if host_tool_path=$(command -v go 2>/dev/null); then
+  # shellcheck disable=SC2016 # the wrapper expands these when it runs, not this shell
+  printf '#!/bin/sh\nGOCACHE=${GOCACHE:-%s} GOMODCACHE=${GOMODCACHE:-%s} exec %s "$@"\n' \
+    "$(go env GOCACHE)" "$(go env GOMODCACHE)" "$host_tool_path" > "$REMOTE_ACCOUNT/.local/bin/go"
+  chmod +x "$REMOTE_ACCOUNT/.local/bin/go"
+fi
+for host_tool in "${JG_BEADS_TEST_BD:-}" "${JG_BEADS_TEST_DOLT:-}"; do
+  [ -z "$host_tool" ] || ln -s "$host_tool" "$REMOTE_ACCOUNT/.local/bin/${host_tool##*/}"
+done
+REAL_UNIT="$(unset HOME; CDPATH='' cd ~ && pwd -P)/.config/systemd/user/jg-sentinel.service"
+real_unit_fingerprint() {
+  if [ -e "$REAL_UNIT" ]; then
+    printf '%s %s\n' "$(stat -c %Y "$REAL_UNIT")" "$(sha256sum < "$REAL_UNIT" | cut -d' ' -f1)"
+  else
+    printf 'absent\n'
+  fi
+}
+REAL_UNIT_BEFORE=$(real_unit_fingerprint)
 cleanup() {
   local worker_pid=''
   touch "$TMP_ROOT/provision.release" "$TMP_ROOT/seed.release" "$TMP_ROOT/handoff.release" \
@@ -50,6 +86,8 @@ cleanup() {
     . "$ROOT/bin/jg-remote-job-lib.sh"
     jg_remote_job_stop_worker_tree "$worker_pid" || true
   fi
+  # A launched lane leaves its hook folder read-only.
+  chmod -R u+w -- "$TMP_ROOT" 2>/dev/null || true
   rm -rf -- "$TMP_ROOT"
 }
 trap cleanup EXIT
@@ -111,6 +149,10 @@ git -C "$REMOTE_ROOT" config user.email test@example.com
 git -C "$REMOTE_ROOT" config user.name Test
 git -C "$REMOTE_ROOT" add .
 git -C "$REMOTE_ROOT" commit -qm 'remote fixture root'
+# What the runner's own global ignore kept out of that commit stays ignored for the host's
+# account, which has no global ignore, so the root is as clean there as it is here.
+git -C "$REMOTE_ROOT" -c core.excludesFile=/dev/null ls-files --others --exclude-standard \
+  >> "$REMOTE_ROOT/.git/info/exclude"
 REMOTE_ORIGIN="$TMP_ROOT/juggernaut-origin.git"
 git init -q --bare "$REMOTE_ORIGIN"
 git -C "$REMOTE_ROOT" remote add origin "file://$REMOTE_ORIGIN"
@@ -131,7 +173,8 @@ git -C "$PARENT/projects/alpha" push -q -u origin main
 cat > "$PARENT/data/projects.md" <<EOF
 - alpha [direct-PR] - alpha project (added 2026-08-02)
 EOF
-printf 'codex\n' > "$PARENT/config/squad-lead-harness"
+# A lane runs only on a model somebody chose (jg-spawn.sh), and the remote job carries no test seam.
+printf 'codex gpt-5.5\n' > "$PARENT/config/squad-lead-harness"
 printf 'tmux\n' > "$PARENT/config/backend"
 printf 'primary harness defaults\n' > "$PARENT/config/crew-harness"
 
@@ -289,6 +332,7 @@ remote_env() {
   JG_FAKE_REMOTE_ENTRYPOINT="$REMOTE_ROOT/bin/jg-remote-entrypoint.sh" \
   JG_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
   JG_REMOTE_JOB_STATE_ROOT="$TMP_ROOT/remote-jobs" \
+  JG_TEST_REMOTE_ACCOUNT_HOME="$REMOTE_ACCOUNT" \
   JG_FAKE_SSH_MODE="${JG_FAKE_SSH_MODE:-normal}" \
   JG_FAKE_REMOTE_CWD="$TMP_ROOT" \
   JG_FAKE_SEED_ENTERED="$TMP_ROOT/seed.entered" \
@@ -343,6 +387,7 @@ seed_env() {
   JG_FAKE_REMOTE_ENTRYPOINT="$REMOTE_ROOT/bin/jg-remote-entrypoint.sh" \
   JG_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
   JG_REMOTE_JOB_STATE_ROOT="$TMP_ROOT/remote-jobs" \
+  JG_TEST_REMOTE_ACCOUNT_HOME="$REMOTE_ACCOUNT" \
   JG_FAKE_SSH_MODE="${JG_FAKE_SSH_MODE:-normal}" \
   JG_FAKE_REMOTE_CWD="$TMP_ROOT" \
   JG_FAKE_SEED_ENTERED="$TMP_ROOT/seed.entered" \
@@ -1223,6 +1268,19 @@ assert_contains "$UPDATE_OUT" 'synced:' "remote update did not report a host-loc
   || fail "remote persistent home did not fast-forward to its code-root commit"
 assert_present "$REMOTE_HOME/REMOTE_UPDATE_PROBE" "remote update did not materialize the code-root commit"
 pass "remote update imports and fast-forwards the persistent home on its configured host"
+# The update installs the release's services and host wiring, which a throw-away home
+# (this fixture's remote root is under a temp root) must never do to an account's own
+# units: each installer refuses it (bin/jg-lab-home-lib.sh), so the host's account gets no
+# unit, no sentinel copy and no systemd change, and the runner's real unit is exactly as it was.
+assert_absent "$REMOTE_ACCOUNT/.config/systemd/user/jg-sentinel.service" "the remote update wrote the host account's sentinel unit"
+assert_absent "$REMOTE_ACCOUNT/.local/share/jg-sentinel" "the remote update installed a sentinel copy into the host account"
+# Reading a unit's state is fine (the release's service check does); changing one is not.
+UNIT_WRITES=$(grep -Ev '^systemctl (--user )?(is-active|is-enabled|is-failed|show|show-environment|status|cat|list-units)( |$)' \
+  "$REMOTE_UNIT_LOG" || true)
+[ -z "$UNIT_WRITES" ] || fail "the remote update drove the host's systemd: $(printf '%s\n' "$UNIT_WRITES" | head -3)"
+[ "$(real_unit_fingerprint)" = "$REAL_UNIT_BEFORE" ] \
+  || fail "the remote update changed the real $REAL_UNIT (was $REAL_UNIT_BEFORE, now $(real_unit_fingerprint))"
+pass "remote update from a throw-away root installs no unit and leaves the real sentinel unit unchanged"
 
 # The remote restart verb is not a second implementation: its host-local leg runs
 # the ORDINARY control plane against a record that is plain and local on that

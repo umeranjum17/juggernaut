@@ -1,0 +1,3 @@
+# Pre-rename alias layer (`bin/fm-*.sh`)
+
+Pre-rename alias layer (`bin/fm-*.sh`): run `bash tests/jg-compat-old-records.test.sh` (or `done-done run -- bash tests/jg-compat-old-records.test.sh` with the log written into `$DONE_DONE_EVIDENCE_ROOT`); it sources and executes the aliases that are still in the tree, so it proves every surviving old path still hands over to its renamed file with its own arguments, an old library path still answers to its old function names, and a deleted alias left no gap behind it. A batch that deletes aliases also proves each deleted name with `git grep -F` over the tree returning no hit.

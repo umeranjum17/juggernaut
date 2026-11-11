@@ -175,7 +175,10 @@ def validate(root: Path, inventory_path: Path) -> tuple[int, int]:
     surfaces = data.get("surfaces")
     if not isinstance(surfaces, list):
         fail("surfaces must be an array")
+    # A path ending in "/" is a folder entry: it classifies every tracked prose
+    # file under that folder, so adding a file there needs no inventory edit.
     paths: list[str] = []
+    folders: dict[str, str] = {}
     classifications: dict[str, str] = {}
     for index, entry in enumerate(surfaces):
         if not isinstance(entry, dict):
@@ -187,16 +190,27 @@ def validate(root: Path, inventory_path: Path) -> tuple[int, int]:
         if audience not in audiences:
             fail(f"{path}: unsupported audience {audience!r}")
         paths.append(path)
-        classifications[path] = audience
+        if path.endswith("/"):
+            folders[path] = audience
+        else:
+            classifications[path] = audience
 
-    duplicates = sorted(path for path, count in Counter(paths).items() if count != 1)
+    tracked = set(git_tracked(root, patterns))
+    # A file may have one classifying entry: its own path or one folder entry.
+    duplicates = Counter(paths)
+    for path in tracked:
+        for folder in folders:
+            if path.startswith(folder):
+                duplicates[path] += 1
+                classifications[path] = folders[folder]
+    duplicates = sorted(path for path, count in duplicates.items() if count != 1)
     if duplicates:
         fail("surfaces classified more than once: " + ", ".join(duplicates))
 
-    tracked = set(git_tracked(root, patterns))
-    classified = set(paths)
+    classified = set(classifications)
     missing = sorted(tracked - classified)
-    extra = sorted(classified - tracked)
+    extra = sorted((set(paths) - set(folders)) - tracked)
+    extra += sorted(f for f in folders if not any(p.startswith(f) for p in tracked))
     if missing or extra:
         details = []
         if missing:

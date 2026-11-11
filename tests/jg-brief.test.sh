@@ -1968,3 +1968,71 @@ test_scout_depth_levels() {
   pass "jg-brief.sh: --depth keeps quick byte-identical, defaults to standard, and adds the deep stages only for deep"
 }
 test_scout_depth_levels
+
+# A bug that is a state which should not exist is fixed by making the implicit
+# state machine explicit; the ship brief points fix lanes at the method that
+# the diagnostic-reasoning skill owns, and the skill still carries the section.
+test_ship_brief_points_at_explicit_state_machine_fix() {
+  local home id brief
+  home="$TMP_ROOT/state-machine-home"
+  mkdir -p "$home/config" "$home/data" && : > "$home/config/delivery-risk-loose"
+  id="brief-state-machine"
+  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" "$id" some-proj --mode direct-PR >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  assert_present "$brief" "brief was not scaffolded"
+  assert_grep "make the implicit state machine explicit" "$brief" \
+    "ship brief lost the explicit-state-machine fix type"
+  assert_grep "diagnostic-reasoning" "$brief" \
+    "explicit-state-machine line does not name the skill that owns the method"
+  assert_grep "## Make the implicit state machine explicit" "$ROOT/.agents/skills/diagnostic-reasoning/SKILL.md" \
+    "diagnostic-reasoning lost its explicit-state-machine section"
+  pass "jg-brief.sh: ship brief points fix lanes at the explicit state machine fix type"
+}
+test_ship_brief_points_at_explicit_state_machine_fix
+
+# The lander rebases a lane's one commit itself, so no text of a generated local-trunk brief may tell the worker to
+# rebase onto the trunk tip or to report done again because the trunk moved.
+test_local_trunk_brief_never_tells_worker_to_rebase() {
+  local home id brief
+  home="$TMP_ROOT/trunk-no-rebase-home"
+  mkdir -p "$home/config" "$home/data" && : > "$home/config/delivery-risk-loose"
+  printf -- '- some-proj [local-trunk] - fixture (added 2026-11-09)\n' > "$home/data/projects.md"
+  id="brief-trunk-no-rebase"
+  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" "$id" some-proj --mode local-trunk >/dev/null 2>&1 \
+    || fail "a local-trunk ship brief should scaffold"
+  brief="$home/data/$id/brief.md"
+  assert_grep "# Local trunk lane" "$brief" "the local-trunk lane section is missing"
+  assert_grep "mode=local-trunk" "$brief" "the local-trunk delivery contract is missing"
+  assert_grep "a done lane waits as it is" "$brief" "the brief lost the wait-as-it-is rule"
+  assert_grep "conflict the landing check names" "$brief" "the brief lost the conflict-refusal path"
+  if grep -qiE "rebase (your|the|one)[^.]*(on|onto) (the )?(latest|current) (local )?trunk" "$brief"; then
+    fail "the local-trunk brief still tells the worker to rebase onto the latest trunk tip"
+  fi
+  pass "jg-brief.sh: a local-trunk brief carries no instruction to rebase onto the latest trunk tip"
+}
+test_local_trunk_brief_never_tells_worker_to_rebase
+
+# Every ship brief carries the captain's build rule once, verbatim, in its own
+# section, with the needs-decision way to stop for a refactor; scouts and
+# charters do not build, so they carry none.
+test_ship_brief_carries_the_build_rule() {
+  local home id brief rule
+  home="$TMP_ROOT/build-rule-home"
+  mkdir -p "$home/config" "$home/data" && : > "$home/config/delivery-risk-loose"
+  rule="Always build code cleanly, modularly, and with proper architecture and separation of concerns. Never simply bolt on a feature because I asked for it. If you can't find an easy way to build it naturally, and you'd recommend a refactor to make the whole thing cleanly, stop your work ahead of time and say so."
+  for id in build-rule-nm:no-mistakes build-rule-dp:direct-PR build-rule-lo:local-only; do
+    mode=${id##*:}; id=${id%%:*}
+    JG_HOME="$home" "$ROOT/bin/jg-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1 \
+      || fail "$id: jg-brief.sh --mode $mode failed"
+    brief="$home/data/$id/brief.md"
+    assert_grep "# Build rule" "$brief" "$id: ship brief missing the Build rule section"
+    grep -qxF "$rule" "$brief" || fail "$id: ship brief lacks the build rule verbatim"
+    [ "$(grep -cF "bolt on a feature" "$brief")" = 1 ] || fail "$id: build rule is repeated in the brief"
+    assert_grep "needs-decision [at=<epoch>]: {the refactor that would make this clean}" "$brief" \
+      "$id: build rule does not name the needs-decision line for a refactor"
+  done
+  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" build-rule-scout some-proj --scout >/dev/null 2>&1
+  assert_no_grep "bolt on a feature" "$home/data/build-rule-scout/brief.md" "scout brief carries the build rule"
+  pass "jg-brief.sh: every ship brief carries the build rule once, verbatim"
+}
+test_ship_brief_carries_the_build_rule

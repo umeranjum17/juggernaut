@@ -94,6 +94,10 @@
       "target": "docs/verification/runtime-backends.md"
     },
     {
+      "source": "docs/hc-backend.md",
+      "target": "docs/verification/runtime-backends.md"
+    },
+    {
       "source": "docs/codex-app-backend.md",
       "target": "docs/verification/runtime-backends.md"
     },
@@ -504,6 +508,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/hc-backend.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "docs/herdr-backend.md",
       "audience": "operator-current"
     },
@@ -554,6 +562,10 @@
     {
       "path": "docs/sessionstart-nudge.md",
       "audience": "operator-current"
+    },
+    {
+      "path": "docs/state-machines.md",
+      "audience": "maintainer-architecture"
     },
     {
       "path": "docs/state-shadow.md",
@@ -808,6 +820,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/done-done-verify-suites/suites/",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/done-done-verify-suites/features/README.md",
       "audience": "agent-runtime"
     },
@@ -912,6 +928,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "core/claude-model-guard/README.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "core/critical-stall/README.md",
       "audience": "operator-current"
     },
@@ -956,6 +976,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "core/lead-sweep/README.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "core/lead-wake/DEPRECATED.md",
       "audience": "maintainer-architecture"
     },
@@ -965,6 +989,10 @@
     },
     {
       "path": "core/lookout-adapter/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/machines/README.md",
       "audience": "operator-current"
     },
     {
@@ -1040,6 +1068,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "core/stall-action/README.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "core/status-wait-check/README.md",
       "audience": "operator-current"
     },
@@ -1057,6 +1089,10 @@
     },
     {
       "path": "core/tickets-sync/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/trunk-latency/README.md",
       "audience": "operator-current"
     },
     {

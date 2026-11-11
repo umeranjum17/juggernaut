@@ -308,12 +308,15 @@ jg_tmux_clear_typed() {  # <target> <text>
 }
 
 jg_tmux_submit_core() {  # <target> <text> <retries> <enter-sleep> <settle>
-  local target=$1 text=$2 retries=$3 sleep_s=$4 settle=$5 baseline_idle='' baseline_state err
+  local target=$1 text=$2 retries=$3 sleep_s=$4 settle=$5 baseline_idle='' baseline_state err before=unknown
   # The turn-started baseline must predate our own typing: a pane already
   # busy before the text lands can turn "busy" for reasons unrelated to our
   # Enter, so only a clean idle-to-busy transition may confirm a submit.
   baseline_state=$(jg_pane_busy_state "$target")
   [ "$baseline_state" = idle ] && baseline_idle=1
+  if [ -n "${JG_TASK_INBOX_SUBMIT_DIR:-}" ]; then
+    before=$(jg_tmux_composer_state "$target") || before=unknown
+  fi
   # A failed literal send replays tmux's stderr (for example "command too
   # long") so the caller can log why nothing was typed.
   if ! err=$(tmux send-keys -t "$target" -l "$text" 2>&1 >/dev/null); then
@@ -322,6 +325,13 @@ jg_tmux_submit_core() {  # <target> <text> <retries> <enter-sleep> <settle>
     return 0
   fi
   sleep "$settle"
+  if [ "$before" = empty ] && [ -n "${JG_TASK_INBOX_SUBMIT_DIR:-}" ]; then
+    jg_task_inbox_held_record "$JG_TASK_INBOX_SUBMIT_DIR" tmux "$target" "$text" "${JG_TASK_INBOX_SUBMIT_LABEL:-}" || {
+      echo 'error: could not record the typed wake before submitting it' >&2
+      printf 'send-failed'
+      return 0
+    }
+  fi
   # Delivery time: a doorbell whose record vanished while it was being typed is
   # cleared instead of submitted (jg_backend_doorbell_stale owns the test).
   if type jg_backend_doorbell_stale >/dev/null 2>&1 && jg_backend_doorbell_stale "$text"; then

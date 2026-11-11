@@ -1,0 +1,3 @@
+# Shared model pool helper
+
+[Shared model pool helper](../features/model-pool-helper.md): run `done-done run pool-helper` (`bash account-pool/run-model-pool-proof.sh`) or `bash account-pool/tests/model-pool.test.sh`; fixture Umer A=70%/B=40%, A limit then B, all Claude under the 15% eligibility floor then Sol/Goat/Cursor auto, credits-enabled account refused and logged, overall deadline, omitted `pool_config` defaults from `$JG_HOME/config/account-pool` (else `$HOME/juggernaut/config/account-pool`) so lfm `account_picker` works, explicit `pool_config` still wins, no default file still refuses, no network or real model CLI.

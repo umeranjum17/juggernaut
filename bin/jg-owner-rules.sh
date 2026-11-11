@@ -8,6 +8,7 @@
 #   jg-owner-rules.sh add --kind owner --words "<his words>" --scope <scope> \
 #     --point <decision point> --when '<fact=value ...>' --then <action> [--reason <why>]
 #   jg-owner-rules.sh split [--surface <file>] [--apply]
+#   jg-owner-rules.sh check [--surface <file>]
 #   jg-owner-rules.sh audit [--fail] [--source <file-or-directory>]...
 #
 # The surface is $DATA/owner-rules.md: one entry per standing owner decision,
@@ -57,6 +58,13 @@
 #         point, in both modes. It refuses to apply while an entry has no kind.
 #         Exit status is 0 when every entry is classified, 1 when an entry still
 #         needs a kind, and 2 on a refusal or a usage error.
+# check   Report every rule the lead still has to finish: one `no kind:` line per
+#         entry with no owner or product kind, and one `no check file:` line per
+#         entry whose `- Enforced by:` text names no file that exists in this
+#         checkout (a script, test, doc or folder path; prose alone names none),
+#         then the counts. A report only: `add` is never refused because of it.
+#         Exit status is 0 when every rule is complete, 1 when a rule is listed,
+#         and 2 on a missing surface or a usage error.
 # audit   Report every owner quote that a private memory, notes or agent-config
 #         file still holds and that this surface, the shared captain files, and
 #         the tracked code never carry: a rule enforced only in one agent's
@@ -158,21 +166,28 @@ require_repo_paths() {  # <enforcement point> -> refuse a named path that does n
 }
 
 # shipped_enforcement <enforcement point>: 0 when the point names a file that
-# exists here (a script, a doc, AGENTS.md), which is the ticket's proof that
-# something already carries the rule. Any other point - a contract or a check
-# that has not been written yet - needs building.
+# exists here (a script, a doc, AGENTS.md, a core/ folder), which is the proof
+# that something already carries the rule. Any other point - a contract or a
+# check that has not been written yet - needs building. A bare prose word only
+# counts when it is a file: "the docs" or "bin defaults" name no check even
+# though this checkout has those folders.
 shipped_enforcement() {
   local token path
-  for token in $(printf '%s' "$1" | tr ';,()' '    '); do
+  for token in $(printf '%s' "$1" | tr $';,()`"\'' '       '); do
     case "$token" in
       ''|*://*) continue ;;
     esac
     path=${token%%#*}
+    path=${path%[.:]}
+    [ -n "$path" ] || continue
     case "$path" in
       /*) ;;
       *) path="$JG_ROOT/$path" ;;
     esac
-    [ -e "$path" ] && return 0
+    case "$token" in
+      */*) [ -e "$path" ] && return 0 ;;
+      *) [ -f "$path" ] && return 0 ;;
+    esac
   done
   return 1
 }
@@ -392,6 +407,60 @@ cmd_split() {
   return 1
 }
 
+# surface_entries <surface>: one record per entry - title, kind, enforcement
+# text - joined by the unit separator, so an empty field survives the read.
+surface_entries() {
+  LC_ALL=C awk '
+    function emit() { if (title != "") printf "%s\037%s\037%s\n", title, kind, enforce }
+    /^## / { emit(); title = substr($0, 4); kind = ""; enforce = ""; next }
+    title != "" && kind == "" && /^- Kind:/ {
+      kind = tolower($0); sub(/^- kind:[ \t]*/, "", kind); sub(/[ \t]+$/, "", kind)
+    }
+    title != "" && enforce == "" && /^- Enforced by:/ {
+      enforce = $0; sub(/^- Enforced by:[ \t]*/, "", enforce); sub(/[ \t]+$/, "", enforce)
+    }
+    END { emit() }
+  ' "$1"
+}
+
+# cmd_check - report each rule with no kind, or whose enforcement names no file
+# that exists here. A report only: it never refuses `add`, so a correction can
+# always be recorded first and its kind or check file added after.
+cmd_check() {
+  local surface='' entries title kind enforce total=0 no_kind=0 no_file=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --surface) shift; [ $# -gt 0 ] || die "--surface needs a value"; surface=$1 ;;
+      *) die "unknown argument: $1" ;;
+    esac
+    shift
+  done
+  [ -n "$surface" ] || surface=$SURFACE
+  [ -f "$surface" ] || die "no rules surface at $surface"
+  entries=$(surface_entries "$surface") || die "cannot read $surface"
+
+  while IFS=$'\037' read -r title kind enforce; do
+    [ -n "$title" ] || continue
+    total=$((total + 1))
+    case "$kind" in
+      owner|product) ;;
+      '') no_kind=$((no_kind + 1)); printf 'no kind: %s\n' "$title" ;;
+      *) no_kind=$((no_kind + 1)); printf "no kind: %s (kind '%s' is neither owner nor product)\n" "$title" "$kind" ;;
+    esac
+    shipped_enforcement "$enforce" && continue
+    no_file=$((no_file + 1))
+    printf 'no check file: %s [enforced by: %s]\n' "$title" "${enforce:-nothing}"
+  done <<< "$entries"
+
+  printf 'rules: %d\nwithout a kind: %d\nwithout a check file: %d\n' "$total" "$no_kind" "$no_file"
+  if [ "$no_kind" -eq 0 ] && [ "$no_file" -eq 0 ]; then
+    printf 'clean: every rule has a kind and names a check file that exists\n'
+    return 0
+  fi
+  printf 'fix: give each rule above a "- Kind: owner" or "- Kind: product" line, and name the script, test or doc that enforces it on its "- Enforced by:" line\n'
+  return 1
+}
+
 normalize() { tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9\n' ' ' | tr -s ' \n' ' '; }
 
 audit_sources() {
@@ -493,6 +562,7 @@ case "$cmd" in
   init) cmd_init "$@" ;;
   add) cmd_add "$@" ;;
   split) cmd_split "$@" ;;
+  check) cmd_check "$@" ;;
   audit) cmd_audit "$@" ;;
   -h|--help|help) usage ;;
   *) usage ;;

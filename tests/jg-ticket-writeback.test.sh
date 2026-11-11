@@ -31,7 +31,9 @@ ticket_field() {  # <id> <jq path>
 publish() {  # <task>: the poll's own ticket creation, so the writer has a row to correct
   local id
   id=$(ticket_id "$1")
-  sign-off-axi ticket "$board" --id "$id" --title "Ticket for $1" --progress 0 --state queued --stage queued >/dev/null
+  # A new ticket needs its own description (sign-off-axi refuses one without), as the poll gives it.
+  sign-off-axi ticket "$board" --id "$id" --title "Ticket for $1" --progress 0 --state queued --stage queued \
+    --description "$(printf 'Ticket for %s.\n# Ask\n- Show the work on the board.\n# Why\n- The board follows the work.\n# Done when\n- The ticket reads done.' "$1")" >/dev/null
 }
 
 (cd "$home" && jg-backlog.sh add jg-shipone 'Ship the first thing' --repo demo --priority 1 --body 'release: c-2' >/dev/null
@@ -132,6 +134,14 @@ JG_HOME="$mirror" python3 "$JG_TICKETS_SYNC" >/dev/null 2>&1 || fail 'the second
 assert_equals 1 "$(count_cards)" 'syncing twice must leave one card'
 assert_equals "done" "$(sign-off-axi ticket "$mboard" --id "$mid" --json | jq -r .ticket.state)" 'syncing must not bounce a done ticket'
 pass 'an added and a done ticket reach the board with no sync run by hand, once'
+
+# A lead does not run its own poll; its parent owns publication.
+printf 'lead-a\n' > "$mirror/.jg-squad-lead-home"
+out=$(JG_HOME="$mirror" bash "$ROOT/bin/jg-backlog.sh" add jg-lead 'Lead work' --repo demo --priority 1 2>&1) || fail "lead add failed: $out"
+assert_contains "$out" 'parent poll publishes' 'a lead must name the parent poll'
+assert_not_contains "$out" 'mirror is behind' 'a lead must not claim its expected wait is a fault'
+rm "$mirror/.jg-squad-lead-home"
+pass 'a lead names the parent poll as publisher'
 
 # A board the writer cannot reach: the backlog write still succeeds and says so.
 fakebin=$(jg_fakebin "$work/fakebin-down") || fail 'fake bin was not built'

@@ -7,7 +7,6 @@
 //
 //	jg-spawn-core model-flag <harness> <model>
 //	jg-spawn-core effort-flag [--harness-script <path>] <harness> <effort> <model>
-//	jg-spawn-core rigor-rank <mode>
 //	jg-spawn-core delivery-agree [flags]   brief, mode, branch, consent, forge and yolo agreement
 //	jg-spawn-core delivery-notices [flags] the two "less than the standing posture" notices
 //	jg-spawn-core intake <spawn arguments> the argument grammar and the refusals that need only the arguments
@@ -25,7 +24,8 @@
 //
 // Exit codes: 0 answered, 1 the spawn must stop (the reason is on stderr), 2 the command itself
 // was misused. The text each subcommand prints is byte for byte what the shell function it
-// replaced printed; core/spawn/README.md records the parity replay that holds it to that.
+// replaced printed; core/spawn/README.md records the parity replay that holds it to that. The
+// usage line names every command, and tests/jg-go-entries.test.sh holds each name to a caller.
 package main
 
 import (
@@ -50,12 +50,6 @@ func run(args []string) int {
 		return 0
 	case "effort-flag":
 		return effortFlagCmd(args[1:])
-	case "rigor-rank":
-		if len(args) != 2 {
-			return usage()
-		}
-		fmt.Println(rigorRank(args[1]))
-		return 0
 	case "delivery-agree":
 		return deliveryAgreeCmd(args[1:])
 	case "delivery-notices":
@@ -75,6 +69,6 @@ func run(args []string) int {
 }
 
 func usage() int {
-	fmt.Fprintln(os.Stderr, "usage: jg-spawn-core model-flag|effort-flag|rigor-rank|delivery-agree|delivery-notices|intake|launch-template|home-validate|worktree-isolated|rovo-override|claude-add-dirs|opencode-lead-grant|launch-home-token|opencode-db|launch-env-names|launch-env-strip|launch-env-wrap ... (see the file header)")
+	fmt.Fprintln(os.Stderr, "usage: jg-spawn-core model-flag|effort-flag|delivery-agree|delivery-notices|intake|launch-template|home-validate|worktree-isolated|rovo-override|claude-add-dirs|opencode-lead-grant|launch-home-token|opencode-db|launch-env-names|launch-env-strip|launch-env-wrap ... (see the file header)")
 	return 2
 }

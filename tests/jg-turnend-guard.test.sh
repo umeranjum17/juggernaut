@@ -1060,7 +1060,7 @@ test_tracked_claude_entries_inert_under_grok() {
       || fail "tracked entry for $target ran under a legacy GROK_AGENT environment"
   done < <(jq -r '.hooks[][].hooks[].command' "$ROOT/.claude/settings.json")
 
-  [ "$guarded" -eq 9 ] || fail "expected 9 grok-guarded tracked entries, saw $guarded"
+  [ "$guarded" -eq 10 ] || fail "expected 10 grok-guarded tracked entries, saw $guarded"
   [ "$unguarded" -eq 1 ] || fail "expected 1 documented unguarded tracked entry, saw $unguarded"
   pass "tracked .claude/settings.json entries: $guarded inert under grok, the documented subagent exception still armed, all live under Claude"
 }
@@ -1615,6 +1615,63 @@ test_autoarm_unsettled_wake_still_reprompts() {
   rm -f "$dir/state/.wake-ack-fleet-fp"
   expect_reprompt "$dir" "a missing fleet baseline"
   pass "jg-claude-stop-autoarm: queued wake, unacknowledged recovery, open decision, unread status, pending captain message and changed fleet each keep the re-prompt"
+}
+
+# --- mid-turn: a lead deep in one long turn gets a cycle without a turn end ------
+# The real checkout's hook, arm and watcher run against a squad lead fixture home
+# (JG_ROOT_OVERRIDE), fired the way the PostToolUse registration fires it: from
+# inside the session that holds the session lock, with no Stop at all.
+midturn_fire() {  # <dir>
+  local home
+  home=$(cd "$1" && pwd)
+  # shellcheck disable=SC2016 # the fake harness expands its own variables.
+  printf '{"session_id":"sess-midturn","hook_event_name":"PostToolUse"}\n' \
+    | JG_HOME="$home" JG_ROOT_OVERRIDE="$home" ROOT="$ROOT" \
+      JG_SIGNAL_GRACE=0 JG_HEARTBEAT=999999 JG_POLL=1 "$1/fake-claude" -c '
+        printf "%s\n" "$$" > "$JG_HOME/state/.lock"
+        "$ROOT/bin/jg-claude-stop-autoarm.sh" --mid-turn' 2>&1
+}
+
+midturn_cycle_pid() {  # <dir>: the live, identity-matched watcher with a fresh beacon
+  local home
+  home=$(cd "$1" && pwd)
+  JG_HOME="$home" bash -c '
+    . "$1/bin/jg-wake-lib.sh"
+    jg_watcher_healthy "$2/state" "$1/bin/jg-watch.sh" 300 "$2" && printf "%s\n" "$JG_WATCHER_HEALTHY_PID"
+  ' _ "$ROOT" "$home"
+}
+
+test_autoarm_midturn_rearms_lead_without_turn_end() {
+  local dir out status started elapsed first second
+  dir=$(make_squad_lead_dir "$TMP_ROOT/midturn-lead")
+  jg_test_track_watcher_state "$(cd "$dir" && pwd)/state"
+  ln -s /bin/bash "$dir/fake-claude"
+  printf 'kind=ship\n' > "$dir/state/task1.meta"
+  printf 'working [at=%s]: building\n' "$(date +%s)" > "$dir/state/task1.status"
+  [ -z "$(midturn_cycle_pid "$dir")" ] || fail "the fixture lead started with a live cycle"
+
+  started=$(date +%s)
+  out=$(midturn_fire "$dir"); status=$?
+  elapsed=$(( $(date +%s) - started ))
+  expect_code 0 "$status" "the mid-turn firing must never block or rewake the turn"
+  [ -z "$out" ] || fail "the mid-turn firing printed into the turn: $out"
+  first=$(midturn_cycle_pid "$dir")
+  [ -n "$first" ] || fail "a lead with work under way and no cycle got none from the mid-turn firing: $(tail -n 3 "$dir/state/.watch-triage.log" 2>/dev/null)"
+  [ "$elapsed" -le 60 ] || fail "the mid-turn cycle took ${elapsed}s, past the 60s bound"
+  assert_absent "$dir/state/.claude-autoarm-epoch" "the mid-turn firing took a Stop generation"
+  assert_absent "$dir/state/.claude-midturn-arm.lock" "the mid-turn firing left its single-flight lock behind"
+
+  out=$(midturn_fire "$dir"); status=$?
+  expect_code 0 "$status" "a mid-turn firing over a healthy cycle must exit quietly"
+  [ -z "$out" ] || fail "a mid-turn firing over a healthy cycle printed into the turn: $out"
+  second=$(midturn_cycle_pid "$dir")
+  [ "$second" = "$first" ] || fail "a lead with a healthy cycle (watcher $first) got another one ($second)"
+  # The arm ledger gains a row only when a cycle ends: none may have ended.
+  ! grep -q 'origin=started' "$dir/state/.watch-cycle-exits.log" 2>/dev/null \
+    || fail "a mid-turn cycle ended: $(cat "$dir/state/.watch-cycle-exits.log")"
+
+  JG_HOME="$(cd "$dir" && pwd)" JG_STATE_OVERRIDE="$(cd "$dir" && pwd)/state" "$ROOT/bin/jg-watch-arm.sh" --stop >/dev/null 2>&1
+  pass "jg-claude-stop-autoarm --mid-turn: a lead with work under way and no cycle gets one in ${elapsed}s without a turn end, and a healthy cycle gets no second one"
 }
 
 test_guard_still_blocks_settled_wake_without_a_cycle() {
@@ -2473,6 +2530,99 @@ test_hook_daemon_lock_is_ignored_without_away_mode() {
   pass "jg-turnend-guard: a daemon lock proves nothing while away mode is off"
 }
 
+# --- LEAD DAEMON: a Codex squad lead supervised by the always-on daemon ------
+#
+# A squad lead on a harness with no background shell cycle runs
+# bin/jg-supervise-daemon.sh always-on (JG_LEAD_DAEMON=1, bin/jg-lead-daemon.sh),
+# with no away flag. The daemon keeps state/.lead-daemon while it lives, and the
+# guard must let the turn end idle on a live daemon with a fresh beacon - never
+# the foreground-checkpoint loop - while a dead daemon, a stale beacon or a marker
+# left behind still blocks.
+
+# A live-daemon fixture holds a real process. Track each one and stop it on every
+# exit path, so a failed assertion or a kill never leaves it behind.
+LEAD_TEST_PIDS=()
+lead_test_reap() {
+  local p
+  for p in "${LEAD_TEST_PIDS[@]:-}"; do
+    [ -n "$p" ] || continue
+    kill "$p" 2>/dev/null || true
+    wait "$p" 2>/dev/null || true
+  done
+  LEAD_TEST_PIDS=()
+}
+trap 'lead_test_reap; jg_test_cleanup' EXIT
+trap 'lead_test_reap; jg_test_cleanup; exit 130' INT
+trap 'lead_test_reap; jg_test_cleanup; exit 143' TERM
+trap 'lead_test_reap; jg_test_cleanup; exit 129' HUP
+
+make_lead_home_between_cycles() {  # <dir-path>
+  local dir=$1
+  dir=$(make_squad_lead_dir "$dir")
+  : > "$dir/state/task1.meta"
+  printf '%s\n' 1 > "$dir/state/.lead-daemon"
+  touch "$dir/state/.last-watcher-beat"
+  printf '%s\n' "$dir"
+}
+
+test_hook_lead_daemon_allows_turn_end_without_away_mode() {
+  local dir pid out status
+  dir=$(make_lead_home_between_cycles "$TMP_ROOT/hook-lead-daemon-live")
+  sleep 60 &
+  pid=$!
+  LEAD_TEST_PIDS+=("$pid")
+  record_daemon_lock "$dir" "$pid" || {
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    fail "could not identify live lead daemon holder"
+  }
+  out=$(run_hook "$dir" false); status=$?
+  expect_code 0 "$status" "a live lead daemon with a fresh beacon must let the turn end"
+  [ -z "$out" ] || fail "lead-daemon ownership still produced a block banner: $out"
+  rm -f "$dir/state/.lead-daemon"
+  out=$(run_hook "$dir" false); status=$?
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  expect_code 2 "$status" "the same daemon without its lead marker proves nothing outside away mode"
+  pass "jg-turnend-guard: a live lead daemon satisfies supervision with no away flag"
+}
+
+test_hook_lead_daemon_blocks_dead_daemon_and_stale_beacon() {
+  local dir pid dead out status
+  dir=$(make_lead_home_between_cycles "$TMP_ROOT/hook-lead-daemon-dead")
+  dead=$(nonexistent_pid)
+  record_daemon_lock "$dir" "$dead" "dead daemon identity"
+  out=$(run_hook "$dir" false); status=$?
+  expect_code 2 "$status" "a lead marker over a dead daemon must still block"
+  dir=$(make_lead_home_between_cycles "$TMP_ROOT/hook-lead-daemon-stale")
+  touch -t 202001010000 "$dir/state/.last-watcher-beat"
+  sleep 60 &
+  pid=$!
+  LEAD_TEST_PIDS+=("$pid")
+  record_daemon_lock "$dir" "$pid" || {
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    fail "could not identify live lead daemon holder"
+  }
+  out=$(run_hook "$dir" false); status=$?
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  expect_code 2 "$status" "a live lead daemon that stopped restarting its watcher must block on a stale beacon"
+  pass "jg-turnend-guard: a lead daemon never substitutes for a live process or a fresh beacon"
+}
+
+test_lead_daemon_codex_repair_line_names_the_daemon() {
+  local dir out
+  dir=$(make_lead_home_between_cycles "$TMP_ROOT/hook-lead-daemon-repair")
+  out=$(JG_ROOT_OVERRIDE="$dir" JG_HOME="$dir" bash "$dir/bin/jg-supervision-instructions.sh" --harness codex --repair-line)
+  assert_contains "$out" "bin/jg-lead-daemon.sh start" "a Codex lead's repair line must start the daemon"
+  case "$out" in *"watch-checkpoint.sh --seconds"*) fail "a Codex lead's repair line must never send it to a foreground checkpoint" ;; esac
+  rm -f "$dir/.jg-squad-lead-home"
+  out=$(JG_ROOT_OVERRIDE="$dir" JG_HOME="$dir" bash "$dir/bin/jg-supervision-instructions.sh" --harness codex --repair-line)
+  assert_contains "$out" "foreground checkpoint" "a Codex home that is not a squad lead keeps the checkpoint cycle"
+  pass "jg-supervision-instructions: a Codex lead is told to run the daemon, not the checkpoint loop"
+}
+
 # --- AWAY MODE: beacon grace derives from the poll cadence -------------------
 #
 # The daemon starts a fresh one-shot watcher only after it finishes handling
@@ -2638,6 +2788,7 @@ test_hook_claude_mode_integrated_monotonic_fail_open
 test_autoarm_settled_wake_spends_no_turn
 test_autoarm_unsettled_wake_still_reprompts
 test_guard_still_blocks_settled_wake_without_a_cycle
+test_autoarm_midturn_rearms_lead_without_turn_end
 test_hook_claude_mode_frozen_epoch_reaches_bounded_fail_open
 test_hook_claude_mode_frozen_epoch_without_verified_failure_spends_budget_and_keeps_blocking
 test_hook_claude_mode_recovery_contention_is_not_ordinary_allow
@@ -2657,6 +2808,9 @@ test_hook_away_mode_blocks_on_dead_daemon
 test_hook_away_mode_blocks_on_pid_reused_daemon
 test_hook_away_mode_blocks_on_stale_beacon
 test_hook_daemon_lock_is_ignored_without_away_mode
+test_hook_lead_daemon_allows_turn_end_without_away_mode
+test_hook_lead_daemon_blocks_dead_daemon_and_stale_beacon
+test_lead_daemon_codex_repair_line_names_the_daemon
 test_hook_away_daemon_allows_beacon_within_poll_derived_grace
 test_hook_away_daemon_blocks_dead_daemon_despite_poll_derived_grace
 test_hook_away_daemon_blocks_beacon_older_than_poll_derived_grace

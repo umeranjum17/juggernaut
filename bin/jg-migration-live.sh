@@ -191,10 +191,11 @@ config_chain() {
 # count_lines <file>: newline count, zero when the file is absent.
 count_lines() { [ -r "$1" ] && wc -l < "$1" | tr -d ' ' || echo 0; }
 
-# server_conf <pid>: the config file the running NATS server was started with.
+# server_conf <pid>: the config file the running NATS server was started with. ps cuts its
+# output to the caller's COLUMNS (a pane's width), which cut the path short; -ww never cuts.
 server_conf() {
   [ -n "${1:-}" ] || return 1
-  ps -o args= -p "$1" 2>/dev/null | sed -n 's/.*[[:space:]]-c[[:space:]]\{1,\}\([^[:space:]]*\).*/\1/p' | head -n 1
+  ps -ww -o args= -p "$1" 2>/dev/null | sed -n 's/.*[[:space:]]-c[[:space:]]\{1,\}\([^[:space:]]*\).*/\1/p' | head -n 1
 }
 
 probe_nats() {

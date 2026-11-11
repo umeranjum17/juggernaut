@@ -1,0 +1,18 @@
+# changes.tsv - the registry of changes that ship behind a switch, read by core/machines/observers/delivery.sh.
+# Columns (tab separated): id, project, commit (a sha, or - to find the trunk commit whose message has the trailer line `Change: <id>`),
+# switch (the file in config/ that turns it on, or -), proof (switch, or log:<file under config|data|state>:<regex>, or -), what.
+# Every change that ships behind a switch gets a row here in the same commit, with that trailer on the commit, so no report has to guess.
+# The state machine slices below are read through the machine view (config/machine-view) or enforced through config/machine-enforce.
+sm-s1a-engine	juggernaut	da22cf5a0da71d9d097434d2c3b065048c3be35d	machine-view	switch	jg-machine reads a machine table and answers a record's state and legal moves
+sm-s1b-proof-step	juggernaut	73b6e521cf941fbe3963cfd48a38a58588cccdf4	machine-view	switch	jg-machine coverage, diagram and edge-check, and the sealed run-proof
+sm-s2-task-lifecycle	juggernaut	4148d620bcb140a54b2a4a1c26cba27a20908f03	machine-view	switch	one state per task, and an opt-in State column in the fleet view
+sm-s3-status-verb	juggernaut	230f84c4a5784c3f269de6744f707612d18e2112	machine-view	switch	a status-verb table names every lane verb
+sm-s4-index	juggernaut	d1a367cd060b0234dadf7ea5bf1a7dd3a67361a1	machine-view	switch	docs/state-machines.md lists every machine table
+sm-s5-landing	juggernaut	2def61034354ac0cd09a3ddeb18791655ac26518	machine-view	switch	landing attempt and trunk pointers as machine tables
+sm-s6-inbox	juggernaut	9346e615a0f9d9c79458128de710a089bf99f7ec	machine-view	switch	the task-inbox machine table
+sm-s7-markers	juggernaut	ce71d6ee6945711dc5d9fe409a5b043ee7bb3afe	machine-view	switch	a marker table gives each watcher marker a writer and a remover
+sm-s8-captain-call	juggernaut	0e77e7a1f789a9230c66f7f44ad4dcea39b205d5	machine-view	switch	a captain call as one state; reverted on the trunk, the redo has not landed
+sm-s9-wait	juggernaut	d4f02c378075fa15419a504660b800eff9662c4a	machine-view	switch	a wait that names the placeholder date shows as paused-no-date
+sm-s10-records	juggernaut	2dc8b8b7034b9c8c0dadea4e62f47ec6b2ae7332	machine-view	switch	one registry of every versioned record shape in bin/
+sm-s11-adoption	juggernaut	952c2c71ad05afc3a282dc2b8ea302dbc6c629ec	machine-enforce	log:config/machine-enforce:.	writers report an illegal move to the machine tables in shadow
+sm-s12-enforce	juggernaut	38f1eed7e0f316ec3787d973160f35678dd0713b	machine-enforce	log:config/machine-enforce:.	a machine listed in config/machine-enforce refuses an illegal move

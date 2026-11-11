@@ -1,0 +1,3 @@
+# Receipt hooks across the fork boundary
+
+Receipt hooks across the fork boundary: with a full Juggernaut checkout on disk and `bin/jg-backlog.sh`, run `JG_TEST_FORK=<checkout> bash core/receipts/tests/receipts-hook-e2e.sh`; it clones the real fork scripts and proves done acceptance, local delivery, both PR-merge call sites, next-PR-of-lane acceptance when meta `pr=` is merge-notified and the receipt names a different open PR of the same repo (other repo, closed, or unmarked meta still refuse), the PR candidate hook (outside-origin prints PR_HEAD, same-repo and unverified print nothing) through the real `bin/jg-pr-check.sh`, and the no-op behavior of a checkout copied from `bin/` alone; `done-done run receipts-pr-candidate` runs it and keeps the transcript.

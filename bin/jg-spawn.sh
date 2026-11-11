@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a operator in a treehouse or Orca worktree, or a
 # squad_lead in its isolated juggernaut home.
-# Usage: jg-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--off-critical-path <captain-words>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
+# Usage: jg-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only|local-trunk> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--off-critical-path <captain-words>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
 #        jg-spawn.sh <task-id> <project-dir> --scout [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
 #        jg-spawn.sh <task-id> [<juggernaut-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --squad-lead
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
@@ -121,7 +121,12 @@
 #   --model <name> and --effort <low|medium|high|xhigh|max|ultra> are concrete profile
 #   axes chosen by juggernaut at intake. A model the home's
 #   config/model-allow-list.json does not allow is refused here with one line
-#   (bin/jg-model-allowlist.sh owns that rule). They are only threaded into harnesses whose
+#   (bin/jg-model-allowlist.sh owns that rule). A spawn or relaunch whose model is empty or
+#   `default` is refused for every harness and kind, naming the owner rule "No worker lane on
+#   Luna", unless the home declares a worker-default entry for that harness in
+#   config/tool-models.json; the resolved model is what the task record keeps. A Claude
+#   launch on an account listed in config/claude-1m-accounts runs and records the model's
+#   1M-window [1m] id (claude_1m_model below). They are only threaded into harnesses whose
 #   installed CLIs were verified to support that axis; unsupported axes are omitted
 #   from that harness's launch rather than guessed. Ultra is the explicit
 #   exception: bin/jg-harness.sh validate-native-effort owns its model scope;
@@ -224,6 +229,12 @@
 #   A batch reports such a pair as `batch: DEFERRED` and exits 75 when nothing
 #   else failed. A relaunch and a --squad-lead spawn are never counted against
 #   capacity.
+#   Host load: a fresh ship or scout spawn on a machine whose load has stayed
+#   above config/reaper-load-factor (default 2) times the cores for
+#   config/reaper-load-minutes (default 10), read from the root home, is
+#   deferred the same way: one `deferred:` line naming the load, exit 75, no
+#   record. bin/jg-reaper-lib.sh owns the limit, the window and the history; a
+#   relaunch and a --squad-lead spawn are never deferred for load.
 #   With no harness arg, a operator/scout spawn resolves the CREW harness only when
 #   config/crew-dispatch.json is absent. When that file exists, operator/scout
 #   spawns require an explicit harness so juggernaut cannot silently skip dispatch
@@ -777,10 +788,7 @@ jg_backlog_directory_present "$STATE" "state directory" || {
 # Only a local-trunk project is touched here; no-mistakes, direct-PR and local-only projects go the way they always did. A
 # local-trunk project ships no feature pull request: a lane starts on the trunk tip and its one commit lands there.
 spawn_trunk_branch() {
-  local pn; pn=$(basename "$PROJ_ABS")
-  [ "$(JG_HOME="$JG_HOME" "$JG_ROOT/bin/jg-project-mode.sh" --raw "$pn" 2>/dev/null | cut -d' ' -f1)" = local-trunk ] || return 1
-  [ -e "$STATE/trunk-tip-$pn" ] || return 1
-  JG_CONFIG_OVERRIDE=$CONFIG jg_trunk_branch "$pn" "$STATE"
+  JG_HOME="$JG_HOME" JG_CONFIG_OVERRIDE=$CONFIG jg_project_trunk_branch "$PROJ_ABS" "$STATE"
 }
 # shellcheck source=bin/jg-role-lib.sh
 . "$SCRIPT_DIR/jg-role-lib.sh"
@@ -792,10 +800,18 @@ spawn_trunk_branch() {
 . "$SCRIPT_DIR/jg-timeout-lib.sh"
 # shellcheck source=bin/jg-project-capacity-lib.sh
 . "$SCRIPT_DIR/jg-project-capacity-lib.sh"
+# shellcheck source=bin/jg-reaper-lib.sh
+. "$SCRIPT_DIR/jg-reaper-lib.sh"
+# A fresh lane deferred for project capacity or host load: the sysexits
+# "temporary failure" code, so a caller tells a deferral, which leaves the task
+# exactly as queued as it was, from an ordinary failure.
+SPAWN_DEFER_EXIT=75
 # shellcheck source=bin/jg-worker-account-lib.sh
 . "$SCRIPT_DIR/jg-worker-account-lib.sh"
 # shellcheck source=bin/jg-model-allowlist.sh
 . "$SCRIPT_DIR/jg-model-allowlist.sh"
+# shellcheck source=bin/jg-tool-models.sh
+. "$SCRIPT_DIR/jg-tool-models.sh"
 # Account pool (core/account-pool): the pool hook every launch and relaunch routes through, and a
 # no-op in a fixture checkout copied from bin/ alone, which carries no core/ tree.
 _jg_ap=$SCRIPT_DIR/../core/account-pool/bin/jg-account-pool-lib.sh
@@ -1490,9 +1506,9 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
     [ "$KIND" != scout ] || pair_args+=(--scout)
     pair_rc=0
     JG_SPAWN_NO_GUARD=1 "$JG_ROOT/bin/jg-spawn.sh" "${pair_args[@]}" || pair_rc=$?
-    if [ "$pair_rc" -eq "$JG_PROJECT_CAPACITY_DEFER_EXIT" ]; then
-      echo "batch: DEFERRED ${pair%%=*} (${pair#*=}) - its project is at capacity, so it stays queued" >&2
-      [ "$rc" -ne 0 ] || rc=$JG_PROJECT_CAPACITY_DEFER_EXIT
+    if [ "$pair_rc" -eq "$SPAWN_DEFER_EXIT" ]; then
+      echo "batch: DEFERRED ${pair%%=*} (${pair#*=}) - not launched now (its deferred: line says why), so it stays queued" >&2
+      [ "$rc" -ne 0 ] || rc=$SPAWN_DEFER_EXIT
     elif [ "$pair_rc" -ne 0 ]; then
       echo "batch: FAILED to spawn ${pair%%=*} (${pair#*=})" >&2
       rc=1
@@ -2229,6 +2245,20 @@ if [ "$KIND" = squad_lead ] && [ -z "$ARG3" ]; then
     fi
   fi
 fi
+# No lane runs on a model nobody chose: an empty or `default` model is refused for every harness and
+# every kind, on a fresh spawn and on a relaunch. A harness default reaches a task record only when
+# the home declares it (a "worker-default" rule in config/tool-models.json that names this harness),
+# and then it is recorded as the resolved model. A raw launch command names no adapter, so it has no model to choose. JG_TEST_SEAM=1 with JG_SPAWN_TEST_MODEL_OPTIONAL=1
+# (tests/lib.sh arms both for fixture suites that never choose a model) steps this aside.
+if { [ -z "$MODEL" ] || [ "$MODEL" = default ]; } && [ "$RAW_LAUNCH" != 1 ]; then
+  declared_model=$(jg_tool_models_model worker-default "$HARNESS" 2>/dev/null) || declared_model=''
+  if [ -n "$declared_model" ]; then
+    MODEL=$declared_model
+  elif ! { [ "${JG_TEST_SEAM:-}" = 1 ] && [ "${JG_SPAWN_TEST_MODEL_OPTIONAL:-}" = 1 ]; }; then
+    echo "error: spawn refused - task $ID has no chosen model for $HARNESS, and no worker lane runs on a harness default (owner rule 2026-11-08 \"No worker lane on Luna\"). Pass --model <name> (a dispatch profile supplies it), or declare this harness's default with a worker-default rule in config/tool-models.json" >&2
+    exit 1
+  fi
+fi
 # Ultra is an explicit native capability, never a Pi thinking-level alias.
 # Validate the fully resolved profile before worktree or endpoint provisioning.
 if [ "$EFFORT" = ultra ]; then
@@ -2265,6 +2295,47 @@ if [ -n "$WORKER_ACCOUNT" ] && [ "$HARNESS" = claude ]; then
   fi
 fi
 jg_account_hook spawn-pick "$HARNESS" "$CONFIG" "$WORKER_ACCOUNT" "${POOL_ACCOUNT_WANT:-}" || exit 1
+
+# Claude 1M context window (config/claude-1m-accounts; docs/configuration.md owns the contract): a
+# Claude launch on a listed account runs a model that offers the 1M window as its [1m] id. The account
+# is the value the task record writes as account=, the pin's declared value or the pool pick's id, so an
+# unpinned, unpooled launch never changes. It runs after the allow-list and the account checks, which
+# judge the model the caller chose, and before the task record and the launch line, so both carry the
+# id the worker runs; a relaunch reads that id back, and an id already ending in [1m] matches no entry.
+JG_CLAUDE_1M_MODELS="claude-opus-5-5 claude-fable-5-2 claude-sonnet-5-5"
+claude_1m_model() { # <harness> <account> <model>: prints the model the launch runs; 1 on an unreadable list
+  local harness=$1 account=$2 model=$3 file=$CONFIG/claude-1m-accounts line
+  case " $JG_CLAUDE_1M_MODELS " in
+  *" $model "*) ;;
+  *) printf '%s\n' "$model"; return 0 ;;
+  esac
+  if [ "$harness" != claude ] || [ -z "$account" ] || { [ ! -e "$file" ] && [ ! -L "$file" ]; }; then
+    printf '%s\n' "$model"
+    return 0
+  fi
+  if [ ! -f "$file" ] || [ ! -r "$file" ]; then
+    echo "error: config/claude-1m-accounts must be a readable regular file naming one Claude account per line: $file" >&2
+    return 1
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line#"${line%%[![:space:]]*}"}
+    line=${line%"${line##*[![:space:]]}"}
+    case "$line" in '' | '#'*) continue ;; esac
+    if [ "$line" = "$account" ]; then
+      printf '%s[1m]\n' "$model"
+      return 0
+    fi
+  done <"$file"
+  printf '%s\n' "$model"
+}
+if [ "$RAW_LAUNCH" = 0 ]; then
+  CLAUDE_1M_ACCOUNT=${WORKER_ACCOUNT_DECLARED:-${POOL_ACCOUNT_ID:-}}
+  CLAUDE_1M_MODEL=$(claude_1m_model "$HARNESS" "$CLAUDE_1M_ACCOUNT" "$MODEL") || exit 1
+  if [ "$CLAUDE_1M_MODEL" != "$MODEL" ]; then
+    echo "notice: config/claude-1m-accounts lists account $CLAUDE_1M_ACCOUNT, so $MODEL launches with the 1M context window as $CLAUDE_1M_MODEL" >&2
+    MODEL=$CLAUDE_1M_MODEL
+  fi
+fi
 
 squad_lead_registry_value() {
   squad_lead_registry_field "$DATA/squad_leads.md" "$1" "$2"
@@ -2583,6 +2654,24 @@ else
   WT=""
   BRIEF="$DATA/$ID/brief.md"
 fi
+# Host load admission (bin/jg-reaper-lib.sh owns the limit, the window and the
+# load history, which the root home's watcher samples for the whole machine). A
+# fresh lane on a machine whose load has stayed over its limit for the window is
+# deferred here, before any brief render, endpoint, worktree, record, or backlog
+# move exists, so the task stays exactly as queued as it was and every running
+# lane is untouched. A relaunch replaces a lane that already runs, and a
+# squad_lead is not a lane.
+if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ]; then
+  if ! SPAWN_LOAD_STATE=$(jg_juggernaut_root_dir "$JG_HOME" "$STATE" state) ||
+    ! SPAWN_LOAD_CONFIG=$(jg_juggernaut_root_dir "$JG_HOME" "$CONFIG" config); then
+    echo "error: could not resolve the root Juggernaut home that samples this machine's load" >&2
+    exit 1
+  fi
+  if jg_reaper_load_over "$SPAWN_LOAD_STATE" "$SPAWN_LOAD_CONFIG"; then
+    echo "deferred: $JG_REAPER_LOAD_WHY ($SPAWN_LOAD_CONFIG/reaper-load-factor, reaper-load-minutes); task $ID was not launched and its backlog item stays queued - dispatch it again once the load is back under the limit" >&2
+    exit "$SPAWN_DEFER_EXIT"
+  fi
+fi
 # Project capacity admission (bin/jg-project-capacity-lib.sh owns the
 # declaration, what holds a place, and why this is race-safe). A fresh worker
 # for a project whose declared capacity is already held is deferred here, before
@@ -2626,7 +2715,7 @@ if [ -n "$SPAWN_PROJECT_CAPACITY" ]; then
   fi
   if [ "$JG_PROJECT_CAPACITY_OCCUPANTS" -ge "$SPAWN_PROJECT_CAPACITY" ]; then
     echo "deferred: project $(basename "$PROJ_ABS") admits $SPAWN_PROJECT_CAPACITY worker(s) at once on this machine ($JG_PROJECT_CAPACITY_FILE) and $JG_PROJECT_CAPACITY_OCCUPANTS already hold a place ($JG_PROJECT_CAPACITY_OCCUPANT_IDS); task $ID was not launched and its backlog item stays queued - dispatch it again once one of them records its ready PR or is cleaned up" >&2
-    exit "$JG_PROJECT_CAPACITY_DEFER_EXIT"
+    exit "$SPAWN_DEFER_EXIT"
   fi
 fi
 [ -f "$BRIEF" ] || {
@@ -2683,7 +2772,7 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
     # before. A mode that publishes nothing keeps no base, because
     # jg_base_branch_valid refuses one there.
     PROJ_FORGE=
-    if [ "$KIND" != squad_lead ] && [ "$MODE" != local-only ]; then
+    if [ "$KIND" != squad_lead ] && [ "$MODE" != local-only ] && [ "$MODE" != local-trunk ]; then
       PROJ_FORGE=$("$JG_ROOT/bin/jg-project-mode.sh" --forge "$(basename "$PROJ_ABS")" 2>/dev/null) || PROJ_FORGE=
       if [ -z "$PROJ_FORGE" ] || [ "$PROJ_FORGE" = none ]; then
         BASE_BRANCH=$(jg_current_version_branch "$PROJ_ABS") || BASE_BRANCH=
@@ -2761,7 +2850,6 @@ if [ "$KIND" = ship ]; then
   fi
   [ -n "$STANDING_FORGE" ] || STANDING_FORGE=none
   STANDING_MODE=$("$JG_ROOT/bin/jg-project-mode.sh" --raw "$PROJ_NAME" 2>/dev/null | cut -d" " -f1) || STANDING_MODE=
-  [ "$STANDING_MODE" != local-trunk ] || STANDING_MODE=local-only  # a local-trunk lane ships as a local-only task
   # The brief/spawn agreement (branch, mode, upstream consent, forge, yolo on gerrit) is the Go
   # spawn core's (core/spawn/cmd/jg-spawn-core/delivery.go), which prints its own refusal.
   # The registered forge is the captain's confirmed binding (bin/jg-project-mode.sh), read
@@ -2772,10 +2860,14 @@ if [ "$KIND" = ship ]; then
     --brief "$BRIEF" --source-brief "$SOURCE_BRIEF" --project "$PROJ_NAME" \
     --standing-forge "$STANDING_FORGE" || exit 1
   # No feature pull requests: a project with a local trunk (bin/jg-trunk.sh init) ships every lane
-  # local-only; the only pull request is the release one. A current explicit captain instruction
+  # local-trunk; legacy local-only records remain interoperable. The only PR is the release one. A current explicit captain instruction
   # can still choose a pull request mode by removing the trunk record, never by this spawn.
-  if [ "$MODE" != local-only ] && spawn_trunk_branch >/dev/null; then
-    echo "error: $ID cannot ship mode=$MODE: $PROJ_NAME is registered local-trunk, so it takes no feature pull request; spawn it --mode local-only and its one commit lands on the trunk once its done-done proof passes (docs/trunk-flow.md)" >&2
+  if [ "$MODE" != local-only ] && [ "$MODE" != local-trunk ] && [ "$STANDING_MODE" = local-trunk ]; then
+    echo "error: $ID cannot ship mode=$MODE: $PROJ_NAME is registered local-trunk, so it takes no feature pull request; spawn it --mode local-trunk and its one commit lands on the trunk once its done-done proof passes (docs/trunk-flow.md)" >&2
+    exit 1
+  fi
+  if [ "$MODE" = local-trunk ] && { [ "$STANDING_MODE" != local-trunk ] || ! spawn_trunk_branch >/dev/null; }; then
+    echo "error: $ID requires a registered local-trunk project with an initialized trunk; run bin/jg-trunk.sh init first" >&2
     exit 1
   fi
   # Self-repository publication gate (bin/jg-role-lib.sh): a ship task whose
@@ -2784,7 +2876,7 @@ if [ "$KIND" = ship ]; then
   # config/juggernaut-role, or this one task's recorded upstream consent. Every
   # other project passes through unchanged; local-only publishes nothing and
   # never reaches this gate.
-  if [ "$MODE" != local-only ]; then
+  if [ "$MODE" != local-only ] && [ "$MODE" != local-trunk ]; then
     gate_rc=0
     jg_role_gate_self_publish "$JG_HOME" "$CONFIG" "$PROJ_ABS" "$JG_ROOT" "$UPSTREAM_CONSENT" || gate_rc=$?
     case $gate_rc in
@@ -2930,6 +3022,7 @@ spawn_worktree_has_origin_config() { # <worktree>
   return 1
 }
 
+SPAWN_BASE_TIP=
 freshen_spawn_worktree_base() { # <worktree> [<base-branch>]
   local worktree=$1 base=${2:-} default target expected actual status trunk
   status=$(git -C "$worktree" -c core.quotePath=false status --porcelain) || {
@@ -2949,6 +3042,14 @@ freshen_spawn_worktree_base() { # <worktree> [<base-branch>]
       echo "error: could not start pooled worktree '$worktree' on the local trunk '$trunk'; refusing to launch" >&2
       return 1
     }
+    # A lane's base is the trunk tip it started on, recorded as base=<tip>; a copy not on that tip is refused, never worked on.
+    expected=$(git -C "$worktree" rev-parse --verify --quiet "refs/heads/$trunk^{commit}" 2>/dev/null || true)
+    actual=$(git -C "$worktree" rev-parse --verify --quiet HEAD 2>/dev/null || true)
+    if [ -z "$expected" ] || [ "$actual" != "$expected" ]; then
+      echo "error: pooled worktree '$worktree' is at '${actual:-unknown}', not the tip of local trunk '$trunk' ('${expected:-unknown}'); refusing to launch a lane on another base" >&2
+      return 1
+    fi
+    SPAWN_BASE_TIP=$actual
     return 0
   fi
   if ! spawn_worktree_has_origin_config "$worktree"; then
@@ -3088,13 +3189,13 @@ if jg_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then
   BACKLOG_TRANSITION=1
   if jg_backlog_row_probe "$DATA" "$ID"; then
     BACKLOG_ROW_STATE=$JG_BACKLOG_ROW_STATE
-    # A fresh ship for a [captain-ask] or Recon/plan-born ticket needs the captain's signed
-    # approval (bin/jg-captain-ask-lib.sh); a Recon, a lead and a relaunch are not builds.
+    # A fresh ship for a [captain-ask] or Recon/plan-born ticket needs a record of the captain's
+    # yes (bin/jg-captain-ask-lib.sh); a Recon, a lead and a relaunch are not builds.
     if [ "$KIND" = ship ] && [ "$RELAUNCH" -eq 0 ]; then
       fail() { echo "error: spawn refused: $*" >&2; exit 1; }
       # shellcheck source=bin/jg-captain-ask-lib.sh
       . "$SCRIPT_DIR/jg-captain-ask-lib.sh"
-      guard_captain_ask_build "$ID" "$(jg_backlog_row_show "$(jg_backlog_data_absolute "$DATA")" "$ID" --full)"
+      guard_captain_ask_build "$ID"
       # A decision open on this ticket or on linked work blocks the start.
       SPAWN_LINKED_STATUS=0
       SPAWN_LINKED_CALLS=$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$DATA" \
@@ -3909,13 +4010,49 @@ elif [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] && [ "$BACKEND" != orca 
     exit 1
   }
   python3 "$SCRIPT_DIR/jg-treehouse-protect.py" "$PROJ_ABS" "${JG_LOCAL_JUGGERNAUT_STATES[@]}" || exit 1
-  allocated=$(cd "$PROJ_ABS" && treehouse get --lease --lease-holder "$ID") || {
-    echo "error: treehouse could not lease a worktree for task $ID; copies held by tasks not yet torn down are not available until their teardown" >&2
+  lease_error=$(mktemp "$STATE/.treehouse-lease.XXXXXX") || exit 1
+  if ! allocated=$(cd "$PROJ_ABS" && treehouse get --lease --lease-holder "$ID" 2>"$lease_error"); then
+    if grep -Eq 'all [0-9]+ worktrees are in use or dirty \(max_trees = [0-9]+\)' "$lease_error"; then
+      holders=$(cd "$PROJ_ABS" && treehouse status 2>&1) || holders="pool status unavailable: $holders"
+      holders=$(printf '%s' "$holders" | tr '\n\r\t' '   ')
+      pool_key=${SPAWN_TREEHOUSE_PROJECT_LOCK##*.treehouse-project-}; pool_key=${pool_key%.lock}
+      pool_dir="$STATE/.pool-waiters/$pool_key"
+      mkdir -p "$STATE/.stops" "$pool_dir" || exit 1
+      printf '%s\n' "$SPAWN_TREEHOUSE_PROJECT_LOCK" > "$pool_dir/.project-lock" || exit 1
+      printf '%s\n' "$PROJ_ABS" > "$pool_dir/.project" || exit 1
+      : > "$pool_dir/$ID" || exit 1
+      pool_tasks=$(printf '%s\n' "$pool_dir"/* | sed 's#.*/##' | tr '\n' ' ')
+      pool_tmp=$(mktemp "$STATE/.stops/.pool-$pool_key.XXXXXX") || exit 1
+      if ! { printf '%s\n' "tasks=$pool_tasks project=$PROJ_ABS; holders: $holders" > "$pool_tmp" &&
+        mv -f -- "$pool_tmp" "$STATE/.stops/pool-$pool_key.pool-full"; }; then exit 1; fi
+      rm -f -- "$lease_error"
+      [ "$HERDR_PROJECTION_ABORT_CLEANUP" = 1 ] || rovo_endpoint_cleanup
+      echo "deferred: pool for $PROJ_ABS is full; holders: $holders; task $ID stays queued" >&2
+      exit 75
+    fi
+    cat "$lease_error" >&2
+    rm -f -- "$lease_error"
+    echo "error: treehouse could not lease a worktree for task $ID" >&2
+    exit 1
+  fi
+  rm -f -- "$lease_error"
+  [ -n "$allocated" ] || { echo "error: treehouse lease returned no worktree for task $ID" >&2; exit 1; }
+  # The lease belongs to this task even if the pool returned another clone.
+  # Record it before inspecting Git so every refusal preserves it for recovery.
+  SPAWN_TREEHOUSE_LEASE=$allocated
+  project_common=$(git -C "$PROJ_ABS" rev-parse --path-format=absolute --git-common-dir) || {
+    echo "error: cannot resolve Git common directory for registered project '$PROJ_ABS'; preserving lease '$allocated'" >&2
     exit 1
   }
-  [ -n "$allocated" ] || { echo "error: treehouse lease returned no worktree for task $ID" >&2; exit 1; }
-  if jg_treehouse_pool_slot "$PROJ_ABS" "$allocated"; then
-    SPAWN_TREEHOUSE_LEASE=$allocated
+  copy_common=$(git -C "$allocated" rev-parse --path-format=absolute --git-common-dir) || {
+    echo "error: cannot resolve Git common directory for leased copy '$allocated'; preserving lease" >&2
+    exit 1
+  }
+  project_common=$(CDPATH='' cd -- "$project_common" && pwd -P) || exit 1
+  copy_common=$(CDPATH='' cd -- "$copy_common" && pwd -P) || exit 1
+  if [ "$project_common" != "$copy_common" ]; then
+    echo "error: leased copy Git common directory '$copy_common' differs from registered project Git common directory '$project_common'; preserving lease '$allocated' for recovery" >&2
+    exit 1
   fi
   spawn_send_text_line "$WT_TARGET" "cd -- $(shell_quote "$allocated")" || exit 1
 
@@ -3951,7 +4088,7 @@ elif [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] && [ "$BACKEND" != orca 
   candidate=""
   last_seen=""
   last_reason="the pane reported no path"
-  for _ in $(seq 1 60); do
+  for _ in $(seq 1 "${JG_SPAWN_WT_POLLS:-60}"); do
     p=$(spawn_current_path "$WT_TARGET" || true)
     [ -z "$p" ] || last_seen="$p"
     if [ -n "$p" ] && spawn_worktree_isolated "$p" &&
@@ -3970,7 +4107,7 @@ elif [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] && [ "$BACKEND" != orca 
     sleep 1
   done
   if [ -z "$WT" ]; then
-    echo "error: treehouse get did not enter an isolated worktree within 60s (last seen '${last_seen:-none}': $last_reason; spawning project '$PROJ_ABS'); inspect window $T" >&2
+    echo "error: treehouse get did not enter an isolated worktree within ${JG_SPAWN_WT_POLLS:-60}s (last seen '${last_seen:-none}': $last_reason; spawning project '$PROJ_ABS'); inspect window $T" >&2
     exit 1
   fi
 
@@ -4731,6 +4868,7 @@ preserve_relaunch_meta() {
   [ -z "$MODE" ] || echo "mode=$MODE"
   [ -z "$YOLO" ] || echo "yolo=$YOLO"
   [ -z "${BRANCH:-}" ] || echo "branch=$BRANCH"
+  [ -z "${SPAWN_BASE_TIP:-}" ] || echo "base=$SPAWN_BASE_TIP"
   echo "tasktmp=$TASK_TMP"
   [ -z "$BASE_BRANCH" ] || echo "base_branch=$BASE_BRANCH"
   [ -z "$RED_FIX_OF" ] || echo "red_fix_of=$RED_FIX_OF"
@@ -5409,6 +5547,14 @@ if [ -n "$SPAWN_DEFERRED_SIGNAL" ]; then
 fi
 jg_lock_release "$SPAWN_META_LOCK"
 SPAWN_META_LOCK_HELD=0
+# Mark this waiter started; the tick clears its pool stop under the project lock.
+if [ "$RELAUNCH" -eq 0 ] && [ -n "$SPAWN_TREEHOUSE_PROJECT_LOCK" ]; then
+  pool_key=${SPAWN_TREEHOUSE_PROJECT_LOCK##*.treehouse-project-}; pool_key=${pool_key%.lock}
+  pool_dir="$STATE/.pool-waiters/$pool_key"
+  if [ -f "$pool_dir/$ID" ] && ! : > "$pool_dir/.started-$ID"; then
+    echo "warning: cannot record that task $ID started; its pool stop needs attention" >&2
+  fi
+fi
 
 SPAWN_DELIVERY=
 [ -z "$MODE" ] || SPAWN_DELIVERY=" mode=$MODE yolo=$YOLO"
@@ -5433,4 +5579,9 @@ jg_account_hook spawn-line
 if [ "$BACKEND" = herdr ]; then
   jg_backend_herdr_pin_agent_name "${T%%:*}" "${T#*:}" "$ID"
 fi
+# One row per launch - copy, pane, task id, start epoch - in data/copy-tasks.tsv, so the Fable pulse
+# (core/fleet-pulse/bin/fleet-fable.sh) can name the task of a pooled copy after its record is removed.
+# Best effort: a write failure never blocks the launch.
+[ "$KIND" = squad_lead ] || printf '%s\t%s\t%s\t%s\n' "$WT" "$META_WINDOW" "$ID" "$(date +%s)" \
+  >> "$DATA/copy-tasks.tsv" 2>/dev/null || true
 echo "spawned $ID harness=$HARNESS kind=$KIND$SPAWN_DELIVERY window=$META_WINDOW worktree=$WT$SPAWN_ACCOUNT"

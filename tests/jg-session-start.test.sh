@@ -723,7 +723,181 @@ EOF
   pass "context digest distinguishes ABSENT, empty-but-present, and populated files"
 }
 
+# Owner rules stay whole on disk, and the digest reaches every one of them: a long file prints
+# as an index of every rule's title with the line range that holds the rule, never as a
+# silently shortened body. A run that lifts the caps prints every byte.
+test_context_owner_rules_whole() {
+  local rec root home fakebin mode out before after
+  rec=$(new_world owner-rules-whole)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  python3 - "$home/data" <<'PYTHON'
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+for name in ("captain", "captain-shared", "learnings", "owner-rules"):
+    body = "".join(
+        f"## {name} entry {entry}\n- Kind: owner\n"
+        + "".join(f"{name} {entry} knowledge {line:04d}: Umer keeps this exact fact.\n"
+                  for line in range(240))
+        + f"{name} entry {entry} final fact: café; `literal` $text \tend.\n"
+        for entry in range(1, 4)
+    )
+    (root / f"{name}.md").write_text(body)
+PYTHON
+  before=$(for f in "$home"/data/{captain,captain-shared,learnings,owner-rules}.md; do hash_file_for_test "$f"; done)
+  for mode in default override; do
+    out="$TMP_ROOT/owner-rules-$mode.txt"
+    if [ "$mode" = default ]; then
+      (unset JG_SESSION_START_CONTEXT_FILE_CAP; run_session_start "$home" "$root" "$fakebin:$BASE_PATH") > "$out"
+    else
+      JG_DIGEST_CAP=100000000 JG_SESSION_START_OWNER_RULES_CAP=100000000 JG_SESSION_START_CONTEXT_FILE_CAP=100000000 \
+        run_session_start "$home" "$root" "$fakebin:$BASE_PATH" > "$out"
+    fi
+    python3 - "$home/data" "$out" "$mode" <<'PYTHON' || fail "owner-rule journey failed ($mode)"
+from pathlib import Path
+import re
+import sys
+root, output, mode = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+digest = output.read_bytes()
+if mode == "default":
+    assert len(digest) <= 40000, f"digest is {len(digest)} bytes, over its cap"
+for name in ("captain", "captain-shared", "learnings", "owner-rules"):
+    source = (root / f"{name}.md").read_bytes()
+    label = re.escape(f"data/{name}.md".encode())
+    section = re.split(rb"\n" + label + rb"(?: \([^\n]*\))?\n-+\n", digest, maxsplit=1)[1]
+    section = section.split(b"\ndata/", 1)[0]
+    if mode == "override":
+        assert source in section, f"{name}: full source bytes missing ({mode})"
+        assert b"[cut at " not in section, f"{name}: unexpected cut ({mode})"
+    elif name == "owner-rules":
+        assert source not in section, f"{name}: the long file printed whole"
+        assert b"3 owner rules" in section, f"{name}: the index lost its rule count"
+        for entry in range(1, 4):
+            assert f"## owner-rules entry {entry}".encode() in section, f"{name}: rule {entry} is not in the index"
+        assert b"sed -n '<first>,<last>p'" in section, f"{name}: the index lost its reader command"
+    else:
+        assert b"[cut at " in section, f"{name}: a long file was not cut"
+        assert f"sed -n ".encode() in section and f"{name}.md".encode() in section, f"{name}: the cut lost its reader command"
+        assert source not in section, f"{name}: cap removed"
+print(f"PASS {mode}")
+PYTHON
+    if [ -n "${DONE_DONE_EVIDENCE_ROOT:-}" ]; then
+      cp "$out" "$DONE_DONE_EVIDENCE_ROOT/owner-rules-$mode.txt"
+    fi
+  done
+  after=$(for f in "$home"/data/{captain,captain-shared,learnings,owner-rules}.md; do hash_file_for_test "$f"; done)
+  [ "$before" = "$after" ] || fail "startup changed source memory bytes"
+  pass "long curated files print as a bounded excerpt plus a count and reader command, owner rules as an index of every rule, whole when the caps are lifted; all source memory unchanged"
+}
+
 # --- lock refusal: read-only path --------------------------------------------
+
+# Every learning stays discoverable even past both the body and old 40-heading caps.
+test_learnings_index_and_body_cap() {
+  local rec root home fakebin out section index cap i name range first last body expected printed
+  rec=$(new_world learnings-index)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  printf '# Learnings\n\n' > "$home/data/learnings.md"
+  for i in $(seq 1 55); do
+    printf '## Learning %02d: retain the complete name even when it exceeds the old one hundred character index truncation boundary\nBody %02d: unique knowledge stays on disk.\n\n' "$i" "$i"
+  done >> "$home/data/learnings.md"
+  # A body lookup must include the final line even when it has no newline.
+  printf 'Final unique knowledge without a newline.' >> "$home/data/learnings.md"
+  expected=$(cat "$home/data/learnings.md")
+  for cap in 160 100000; do
+    out=$(JG_SESSION_START_CONTEXT_FILE_CAP=$cap JG_SESSION_START_INDEX_CAP=100000 run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+    section=$(printf '%s\n' "$out" | sed -n '/^data\/learnings.md$/,/^data\/owner-rules.md /p' | sed '$d')
+    if [ -n "${DONE_DONE_EVIDENCE_ROOT:-}" ]; then
+      printf '%s\n' "$out" > "$DONE_DONE_EVIDENCE_ROOT/learnings-start-$cap.txt"
+    fi
+    index=$(printf '%s\n' "$section" | sed -n '/^Learning index (newest first;/,$p')
+    [ "$(printf '%s\n' "$index" | grep -c '^  lines ')" -eq 56 ] || fail "expected all 56 headings exactly once at cap $cap: $index"
+    for i in $(seq 1 55); do
+      printf -v name '## Learning %02d: retain the complete name even when it exceeds the old one hundred character index truncation boundary' "$i"
+      [ "$(printf '%s\n' "$index" | grep -Fc "$name")" -eq 1 ] || fail "index duplicated or omitted $name"
+      range=$(printf '%s\n' "$index" | grep -F "$name" | sed 's/^  lines \([0-9]*-[0-9]*\):.*/\1/')
+      first=${range%-*}; last=${range#*-}
+      body=$(sed -n "${first},${last}p" "$home/data/learnings.md")
+      assert_contains "$body" "$name" "lookup lost the complete heading"
+      assert_contains "$body" "$(printf 'Body %02d: unique knowledge stays on disk.' "$i")" "lookup lost unique knowledge"
+    done
+    assert_contains "$body" 'Final unique knowledge without a newline.' "final body lookup lost an unterminated line"
+    assert_contains "$index" "sed -n '<first>,<last>p' $home/data/learnings.md" "index lacks its full-body reader"
+    if [ "$cap" -eq 160 ]; then
+      assert_contains "$section" '[cut at 160 bytes:' "body cap disappeared"
+      printed=$(printf '%s\n' "$section" | sed '1,2d; /\[cut at/,$d')
+      [ "${#printed}" -le "$cap" ] || fail "printed body exceeded its configured cap"
+      assert_not_contains "$section" 'Body 01:' "body exceeded its configured cap"
+    else
+      assert_not_contains "$section" '[cut at' "uncapped file was labelled cut"
+      assert_contains "$section" 'Body 55:' "small file body was not printed"
+    fi
+    [ "$(cat "$home/data/learnings.md")" = "$expected" ] || fail "startup changed the knowledge store"
+    pass "learning index cap=$cap: zero omitted names, zero duplicate index names, 55 full-body lookups, all knowledge retained"
+  done
+  # At the default index cap the digest prints the newest headings, the total count and the
+  # one command that prints every heading; no heading is lost from the file.
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  section=$(printf '%s\n' "$out" | sed -n '/^data\/learnings.md$/,/^data\/owner-rules.md /p' | sed '$d')
+  index=$(printf '%s\n' "$section" | sed -n '/^Learning index (newest first;/,$p')
+  assert_contains "$index" "of 56 headings shown; all of them: grep -n '^#' $home/data/learnings.md" "default-cap index lost its count or its full-list command"
+  [ "$(printf '%s\n' "$index" | grep -c '^  lines ')" -lt 56 ] || fail "default index cap printed every heading"
+  assert_contains "$(printf '%s\n' "$index" | sed -n '2p')" 'Learning 55' "index did not list the newest heading first"
+  [ "$(cat "$home/data/learnings.md")" = "$expected" ] || fail "startup changed the knowledge store"
+  pass "learning index at the default cap: newest headings first, total count, one full-list command"
+}
+
+# --- the digest has a fixed size ----------------------------------------------
+
+# A home with 320 open decisions and long curated files must still start a session
+# with a small digest: the whole digest stays under its byte cap, the safety inputs
+# print whole, every cut section names its total and the command that prints it all,
+# and the command really prints all of them.
+test_digest_stays_under_its_cap_with_300_open_decisions() {
+  local rec root home fakebin out bytes cap=40000 i n=320 listed
+  rec=$(new_world digest-cap-decisions)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  # 8 task logs of 40 keyed decisions each: the open-decision count is per key, and a few
+  # logs keep the drain's per-log cost out of this test.
+  for i in $(seq 1 "$n"); do
+    printf 'needs-decision [key=k%03d]: pick the option for question %03d; %0180d\n' "$i" "$i" 0 \
+      >> "$home/state/task-$(printf '%03d' $(( (i - 1) / 40 + 1 ))).status"
+  done
+  append_wake "$home/state" signal task-001.status "needs-decision: pick the option for question 001"
+  for f in captain learnings captain-shared projects; do
+    for i in $(seq 1 600); do
+      printf '## %s section %03d\nA long line of curated text that a session never needs at start: %0100d\n' "$f" "$i" 0
+    done > "$home/data/$f.md"
+  done
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  bytes=$(printf '%s' "$out" | wc -c | tr -d '[:space:]')
+  [ "$bytes" -le "$cap" ] || fail "the digest is $bytes bytes, over its $cap byte cap, with $n open decisions"
+  # The safety inputs print whole.
+  assert_contains "$out" "lock acquired: harness pid" "the lock result was cut"
+  assert_contains "$out" "$(printf 'signal\ttask-001.status\tneeds-decision: pick the option for question 001')" "the queued wake was cut"
+  assert_contains "$out" "WAKE_ACK_REQUIRED" "the wake acknowledgement line was cut"
+  # The cut section reports its total and the command that prints every decision.
+  assert_contains "$out" "OPEN DECISIONS ($n still open, newest first" "the open decisions lost their total count"
+  assert_contains "$out" "all of them, newest first: bin/jg-wake-drain.sh --open-decisions" "the open decisions lost their full-list command"
+  assert_contains "$out" "[cut at" "a long curated file was not cut"
+  assert_contains "$out" "DIGEST SIZE:" "the digest did not report its own size"
+  # The full-list command prints every one of them.
+  listed=$(env JG_HOME="$home" JG_STATE_OVERRIDE="$home/state" "$ROOT/bin/jg-wake-drain.sh" --open-decisions | grep -c 'needs-decision:')
+  [ "$listed" -eq "$n" ] || fail "the full-list command printed $listed of $n open decisions"
+  pass "a digest with $n open decisions is $bytes bytes (cap $cap); safety inputs print whole; the full-list command prints all $n"
+}
 
 test_lock_refusal_read_only_path() {
   local rec root home fakebin holder_pid out status
@@ -1068,16 +1242,16 @@ EOF
 
   out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
   assert_contains "$out" "working: step 7" "default status tail missing the most recent line"
-  assert_contains "$out" "working: step 5" "default status tail (3 lines) missing an expected recent line"
-  assert_not_contains "$out" "working: step 4" "default status tail (3 lines) leaked an older line"
-  assert_contains "$out" "$home/state/task-a.status" "digest did not print the full status log path for a deeper read"
-  assert_contains "$out" "a bounded tail of every state/*.status" "read-once contract does not distinguish bounded status tails"
+  assert_not_contains "$out" "working: step 6" "default status tail (1 line) leaked an older line"
+  assert_contains "$out" "full record: state/<id>.meta and state/<id>.status" "digest did not point at the full status log for a deeper read"
+  assert_contains "$out" "one row per work lane (state/<id>.meta and state/<id>.status hold its full record)" "read-once contract does not say where a lane's full record lives"
 
-  out=$(JG_SESSION_START_STATUS_TAIL=2 run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
-  assert_contains "$out" "working: step 7" "JG_SESSION_START_STATUS_TAIL=2 tail missing the most recent line"
-  assert_not_contains "$out" "working: step 5" "JG_SESSION_START_STATUS_TAIL=2 did not bound the tail to 2 lines"
+  out=$(JG_SESSION_START_STATUS_TAIL=3 run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" "working: step 7" "JG_SESSION_START_STATUS_TAIL=3 tail missing the most recent line"
+  assert_contains "$out" "working: step 5" "JG_SESSION_START_STATUS_TAIL=3 tail missing an expected recent line"
+  assert_not_contains "$out" "working: step 4" "JG_SESSION_START_STATUS_TAIL=3 did not bound the tail to 3 lines"
 
-  pass "status tail is bounded to the configured line count, with the full log path always printed"
+  pass "status tail is bounded to the configured line count, with the lane listing naming where the full log lives"
 }
 
 # A operator writes its own status lines, so nothing upstream bounds their
@@ -1103,19 +1277,19 @@ EOF
     printf 'working: short line kept whole\n'
   } > "$home/state/task-cap.status"
 
-  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  out=$(JG_SESSION_START_STATUS_TAIL=2 run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
 
   assert_contains "$out" "$lede" "the cap discarded the lede that carries the state word and decision key"
   assert_contains "$out" " [truncated]" "an over-long status line was not marked as truncated"
   assert_contains "$out" "working: short line kept whole" "the cap mangled a status line already under it"
-  assert_contains "$out" "each capped at 220 characters" "the status tail header does not disclose its per-line cap"
-  assert_contains "$out" "$home/state/task-cap.status" "a capped tail dropped the full log path that recovers the rest"
+  assert_contains "$out" "capped at 160 characters" "the lane listing does not disclose its per-line cap"
+  assert_contains "$out" "state/<id>.status" "the lane listing dropped the pointer to the full log that recovers the rest"
 
   # Nothing the tail emits may exceed the cap, and the padded line really was
   # long enough to exercise it.
-  tail_section=$(printf '%s\n' "$out" | awk '/^status tail \(/ { flag = 1; next } flag && /^$/ { flag = 0 } flag')
+  tail_section=$(printf '%s\n' "$out" | grep '^task-cap ship | endpoint:' | sed 's/^[^|]*|[^|]*| //' | sed 's/ || /\n/g')
   longest=$(printf '%s\n' "$tail_section" | awk '{ if (length($0) > max) max = length($0) } END { print max + 0 }')
-  [ "$longest" -le 220 ] || fail "a status tail line ran $longest characters past the 220-character cap"
+  [ "$longest" -le 160 ] || fail "a status tail line ran $longest characters past the 160-character cap"
   capped=$(printf '%s\n' "$tail_section" | grep -c ' \[truncated\]$')
   [ "$capped" -eq 1 ] || fail "expected exactly one truncated tail line, got $capped: $tail_section"
 
@@ -1144,9 +1318,8 @@ EOF
   assert_contains "$out" 'lane-done,ship,unknown,done,null,"PR https://example.invalid/o/r/pull/7"' "finished lane has no juggernaut-axi row"
   assert_not_contains "$out" "--- lane-done ---" "finished lane still printed its meta block"
   assert_not_contains "$out" "early step of the finished lane" "finished lane still printed its status tail"
-  assert_contains "$out" "--- lane-live ---" "running lane lost its meta block"
-  assert_contains "$out" "step of the lane still running" "running lane lost its status tail"
-  pass "a finished lane folds into one juggernaut-axi row, a running lane is printed whole"
+  assert_contains "$out" "lane-live ship | endpoint: unknown (no window recorded) | working [at=3]: step of the lane still running" "running lane lost its row"
+  pass "a finished lane folds into one juggernaut-axi row, a running lane is one row with its last status line"
   assert_contains "$out" 'run juggernaut-axi status, then juggernaut-axi lanes' "supervision block does not point at juggernaut-axi"
   pass "the supervision block tells the agent to read the fleet with juggernaut-axi"
 }
@@ -1168,10 +1341,9 @@ EOF
   out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
 
   assert_contains "$out" "Orphan status logs (state/*.status without matching .meta)" "digest did not label orphan status logs"
-  assert_contains "$out" "--- task-orphan ---" "digest did not print the orphan status id"
+  assert_contains "$out" "task-orphan | working: orphan step 6" "digest did not print the orphan status id with its last line"
   assert_contains "$out" "working: orphan step 6" "orphan status tail missing the newest line"
   assert_not_contains "$out" "working: orphan step 1" "orphan status tail was not bounded"
-  assert_contains "$out" "$home/state/task-orphan.status" "orphan status tail did not print the full log path"
 
   matched_count=$(printf '%s\n' "$out" | grep -F -c 'working: surfaced once')
   orphan_count=$(printf '%s\n' "$out" | grep -F -c 'working: orphan step 6')
@@ -2807,6 +2979,8 @@ if [ -n "${JG_SESSION_START_ONLY:-}" ]; then
 fi
 
 test_context_digest_absent_empty_present
+test_learnings_index_and_body_cap
+test_context_owner_rules_whole
 test_lock_refusal_read_only_path
 test_lock_write_failure_read_only_path
 test_trace_context_effective_state_is_frozen_after_lock
@@ -2836,6 +3010,7 @@ test_endpoint_bound_rejects_padded_zero
 test_perl_timeout_fallback_reports_signal_death_nonzero
 test_abnormal_digest_death_banners_and_exits_zero
 test_composition_invokes_real_scripts
+test_digest_stays_under_its_cap_with_300_open_decisions
 test_branch_outcome_replay_respects_captain_barrier_and_lease_sweep
 test_non_pi_session_start_leaves_branch_state_untouched
 test_session_start_seeds_the_outcome_display_tail_while_away

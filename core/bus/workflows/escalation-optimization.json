@@ -141,10 +141,6 @@
       ],
       "enforce": true
     },
-    "workflow": {
-      "note": "the Dapr wait workflow (core/escalation-workflow): re-alerts back off by backoff.factor from the ladder's re-alert timer up to backoff.capSeconds, and an episode nobody clears ends at the horizon",
-      "horizonSeconds": 86400
-    },
     "replay": {
       "tokensPerWake": 4000,
       "note": "estimate of the context a woken model re-reads per wake; measure it before trusting the saved-token figure"

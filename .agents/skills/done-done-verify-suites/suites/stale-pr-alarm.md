@@ -1,0 +1,3 @@
+# Stale-PR alarm
+
+Stale-PR alarm: run `done-done run -- bash core/merge-on-green/tests/stale-pr-alarm.test.sh` (log in `$DONE_DONE_EVIDENCE_ROOT`); recorded PR fixtures behind a gh-axi stub prove one alert per PR for `no checks and no update for 24 h`, for a `release/c-N` PR with no started CI 30 minutes after it opened (a queued-only run still counts as not started) and for a base release branch already merged into main, a healthy or recent PR silent, no repeat on the second poll, and the alarm running from `merge-on-green.sh check`. Live, read-only: `core/merge-on-green/stale-pr-alarm.sh check <home>` over a clone with a github origin prints the real stale PRs.

@@ -3,7 +3,8 @@
 # non-must ask is refused and routed to Overwatch, a must ask is posted and
 # counted, and the check re-pings an old must ask while it moves an old or
 # unclassified one off the board (bin/jg-ask-gate-lib.sh, bin/jg-board-gate.sh,
-# bin/jg-question-card.sh).
+# bin/jg-question-card.sh), and withdraws asks that are acted on, superseded or
+# past their time to live (bin/jg-board-ttl-lib.sh).
 set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -348,6 +349,63 @@ test_check_dismisses_the_card_of_a_settled_hold() {
   pass "the card of an answered hold leaves the board and the card of an open hold stays"
 }
 
+# A card with the fields the expiry rules read: type, ticket, ask-ref, answered.
+add_ask() {  # <case dir> <key> <type> <detail> <age secs> [<ticket> [<ask-ref> [answered]]]
+  local board=$1/so/.sign-off/decisions.json
+  jq --arg k "$2" --arg ty "$3" --arg d "$4" --arg f "$(iso_ago "$5")" --arg t "${6-}" --arg r "${7-}" --arg a "${8-}" \
+    '.items += [({key: $k, type: $ty, title: $k, detail: $d, filed: $f}
+      + (if $t != "" then {ticket: $t} else {} end) + (if $r != "" then {ask_ref: $r} else {} end)
+      + (if $a != "" then {decided: {value: "a"}} else {} end))]' "$board" > "$board.t" && mv "$board.t" "$board"
+}
+
+# A backlog that lists one done ticket; the sweep reads done tickets in one call.
+fake_backlog() {  # <case dir>
+  cat > "$1/backlog" <<'SH'
+#!/usr/bin/env bash
+printf 'count: 1\ntasks[1]{id,state,kind,repo,title}:\n  t-done,done,task,-,"x"\n'
+SH
+  chmod +x "$1/backlog"
+}
+
+test_expiry_withdraws_acted_on_superseded_and_stale_asks_never_owner_calls() {
+  d=$(setup expiry); fake_backlog "$d"
+  add_ask "$d" ticket-done decision 'must: plan-approval' 3600 t-done
+  add_ask "$d" ticket-open decision 'must: plan-approval' 3600 t-open
+  add_ask "$d" old-plan decision 'must: plan-approval' $((8 * 86400))
+  add_ask "$d" young-plan decision 'must: plan-approval' $((6 * 86400))
+  add_ask "$d" old-money decision 'must: money' $((30 * 86400))
+  add_ask "$d" old-design design '' $((8 * 86400))
+  add_ask "$d" first-card decision 'must: plan-approval' 7200 '' same-call
+  add_ask "$d" later-answered decision 'must: plan-approval' 3600 '' same-call answered
+  jq '(.items[] | select(.key == "later-answered")) |= (. + {decided: {value: "a"}})' "$d/so/.sign-off/decisions.json" > "$d/b.t" && mv "$d/b.t" "$d/so/.sign-off/decisions.json"
+  out=$(JG_BOARD_BACKLOG_BIN="$d/backlog" run "$d" "$GATE" expire --dry-run)
+  assert_grep "withdrawn ticket-done" <(printf '%s\n' "$out") "a done ticket's ask was not named"
+  assert_equals "8" "$(open_cards "$d")" "a dry run changed the board"
+  out=$(JG_BOARD_BACKLOG_BIN="$d/backlog" run "$d" "$GATE" check)
+  assert_grep "reason ticket-done done-elsewhere" "$d/signoff.log" "an ask of a done ticket was not withdrawn as done-elsewhere"
+  assert_grep "reason first-card replaced" "$d/signoff.log" "an ask a later answered card superseded was not withdrawn as replaced"
+  assert_grep "reason old-plan not-relevant" "$d/signoff.log" "a plan ask past its time to live was not withdrawn"
+  assert_grep "reason old-design not-relevant" "$d/signoff.log" "a design ask past its time to live was not withdrawn"
+  for k in ticket-open young-plan old-money later-answered; do
+    assert_no_grep "dismiss $k" "$d/signoff.log" "$k was withdrawn but is neither acted on, superseded nor stale"
+  done
+  assert_equals "4" "$(cut -f2 "$d/home/data/board-withdrawn.tsv" | wc -l | tr -d ' ')" "the cleanup report holds a row for each withdrawal"
+  assert_grep "old-plan" "$d/home/data/board-withdrawn.tsv" "the cleanup report lacks the withdrawn ask"
+  assert_grep "expires never" <(run "$d" "$GATE" report) "an owner call shows an expiry"
+  pass "acted-on, superseded and stale asks are withdrawn with a recorded reason, owner calls stay open"
+}
+
+test_leash_ask_keeps_every_ask_on_the_board() {
+  d=$(setup leash-ask)
+  printf 'leash: ask\n' > "$d/so/.sign-off/config.yaml"
+  add_card "$d" plain-ask '' "$(iso_ago 3600)"
+  : > "$d/signoff.log"
+  out=$(run "$d" "$GATE" check)
+  assert_no_grep "dismiss plain-ask" "$d/signoff.log" "the check dismissed an ask while the leash is Ask me first"
+  assert_equals "1" "$(open_cards "$d")" "the ask left the board"
+  pass "on the Ask me first leash the gate leaves every ask on the board"
+}
+
 test_non_must_ask_is_refused_and_routed
 test_dismiss_sends_a_fitting_reason_and_odd_titles_make_valid_tags
 test_must_ask_is_posted_and_counted
@@ -360,4 +418,6 @@ test_check_reads_the_category_record
 test_decided_writes_mains_decision
 test_check_alerts_once_for_an_unchanged_set
 test_check_reads_one_ask_from_a_many_line_detail
+test_expiry_withdraws_acted_on_superseded_and_stale_asks_never_owner_calls
+test_leash_ask_keeps_every_ask_on_the_board
 test_check_dismisses_the_card_of_a_settled_hold

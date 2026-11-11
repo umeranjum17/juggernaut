@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # jg-owner-rules-gate.sh <task-id> <worktree|-> <head|-> <pr-url|-> - local proof authorization and merge gate.
 # Run `init-key` once in the captain's home, then use `sign <task-id> <head> <pr-url|->` only after the passed-proof recipe succeeds.
+# `diagnose <task-id> <worktree|-> <head> <pr-url|->` changes nothing and refuses nothing: it prints the facts the gate judges
+# (`receipt=`, `signature=`, `lint=`, `screen_none=`), or `owner-rules=off` in a home that has not enabled the gate, so a
+# missing input can be read from the gate's own evaluation. A local-trunk landing (bin/jg-trunk.sh) does not run this gate.
 # The private key stays in the main home's config; the merge gate verifies its detached signature with the public key.
 # jg-compat shim (slice S4, deleted by S10): an old FM_* name still resolves
 # here, so an unmigrated shell, unit, pane or record keeps this script working.
@@ -12,9 +15,10 @@ done
 unset _jg_old _jg_new 2>/dev/null || true
 set -u
 mode=gate
-case ${1:-} in sign|init-key) mode=$1; shift ;; esac
+case ${1:-} in sign|init-key|diagnose) mode=$1; shift ;; esac
 if [ -z "${JG_HOME:-}" ] || [ ! -e "$JG_HOME/config/owner-rules" ]; then
   [ "$mode" = gate ] && exit 0
+  [ "$mode" != diagnose ] || { echo "owner-rules=off"; exit 0; }
   echo "owner-rules: config/owner-rules is not enabled" >&2
   exit 1
 fi
@@ -22,8 +26,10 @@ command -v openssl >/dev/null 2>&1 || { echo "owner-rules: OpenSSL is required f
 # Main's home holds the key pair. An explicit JG_MAIN_HOME wins; otherwise a lead home follows the parent binding it
 # already carries (.jg-squad-lead-parent) up to the home with none, so no merge in a lead home needs a hand export.
 # A binding that cannot be followed stops with the exact fix instead of reading a key the lead home never had.
-# Only the merge gate follows it: sign and init-key keep the private key in the home they run in, never a lead's reach into Main.
-if [ -z "${JG_MAIN_HOME:-}" ] && [ "$mode" = gate ]; then
+# The merge gate and sign follow it, so a lead home signs with Main's key in place (never copied) and keeps the signature in its own data;
+# init-key still creates a pair only in the home it runs in.
+if [ -z "${JG_MAIN_HOME:-}" ] && [ "$mode" != init-key ]; then
+  # shellcheck source=/dev/null
   . "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../bin" && pwd -P)/jg-squad-lead-parent-lib.sh"
   JG_MAIN_HOME=$JG_HOME hops=0
   while [ -e "$JG_MAIN_HOME/.jg-squad-lead-parent" ]; do
@@ -73,8 +79,8 @@ proof_payload() {
   printf 'juggernaut-owner-proof-v1\ntask=%s\nhead=%s\npr=%s\nreceipt-sha256=%s\n' "$id" "$head" "$pr" "$hash"
 }
 if [ "$mode" = sign ]; then
-  [ -f "$private" ] && [ ! -L "$private" ] || { echo "owner-rules: local private key is missing; configure $private with the matching public key at $pub" >&2; exit 1; }
-  chmod go-rwx "$private" || { echo "owner-rules: cannot secure local private key permissions" >&2; exit 1; }
+  [ -f "$private" ] && [ ! -L "$private" ] || { echo "ENV: owner-rules: local private key is missing; configure $private with the matching public key at $pub" >&2; exit 1; }
+  chmod go-rwx "$private" || { echo "ENV: owner-rules: cannot secure local private key permissions" >&2; exit 1; }
   receipt=$(proof_receipt) || { echo "owner-rules: no sealed clean receipt to sign for $head" >&2; exit 1; }
   [ -n "$receipt" ] || { echo "owner-rules: no sealed clean receipt to sign for $head" >&2; exit 1; }
   mkdir -p "$proof_dir" || { echo "owner-rules: cannot create local proof record" >&2; exit 1; }
@@ -82,7 +88,7 @@ if [ "$mode" = sign ]; then
   proof_payload "$receipt" > "$tmp/payload" || { rm -rf -- "$tmp"; exit 1; }
   out=$(mktemp "$proof_dir/.signature.XXXXXX") || { rm -rf -- "$tmp"; exit 1; }
   if ! openssl pkeyutl -sign -rawin -inkey "$private" -in "$tmp/payload" -out "$out" 2>/dev/null; then
-    rm -f -- "$out"; rm -rf -- "$tmp"; echo "owner-rules: local signing failed" >&2; exit 1
+    rm -f -- "$out"; rm -rf -- "$tmp"; echo "ENV: owner-rules: local signing failed" >&2; exit 1
   fi
   chmod 600 "$out" && mv -f -- "$out" "$signature" || { rm -f -- "$out"; rm -rf -- "$tmp"; exit 1; }
   rm -rf -- "$tmp"
@@ -97,7 +103,7 @@ guard_host=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)/bin/jg-guar
 none=false
 "$mc" screen-none "$1" "$4" && none=true
 # The top line: a screen-free merge is on the text-only card path, and no capture is asked for.
-[ "$none" = false ] || echo "owner-rules: $what declares screen: none, so it takes the text-only Evidence card path; no capture is needed"
+[ "$none" = false ] || [ "$mode" = diagnose ] || echo "owner-rules: $what declares screen: none, so it takes the text-only Evidence card path; no capture is needed"
 receipt_ok=false
 "$mc" receipt "$1" "$3" && receipt_ok=true
 # The signature is local authorization for this exact task, PR scope, head, and receipt contents.
@@ -114,13 +120,17 @@ fi
 # merge's rows name the report file and carry head `-`, so they match on the task's own folder instead.
 lint_log=$JG_HOME/data/checks-gate.log
 [ -r "$lint_log" ] || lint_log=/dev/null
-src=$4; [ "$4" != - ] || src="<report file>"
+src=$4; [ "$4" != - ] || src=$JG_HOME/data/$1/checks.md
 lint=error
 if lint_verdict=$(jq -Rn --arg pr "$4" --arg head "$3" --arg task "$1" \
   '{pr: $pr, head: $head, task: $task, rows: [inputs | split("\t") | select(length >= 4) | {src: .[1], head: .[2], verdict: .[3]}]}' \
   "$lint_log" | "$guard_host" eval gate.lint_row 2>&1); then
   lint=fail
   [ "$(jq -r '.ok' <<<"$lint_verdict" 2>/dev/null)" != true ] || lint=pass
+fi
+if [ "$mode" = diagnose ]; then
+  printf 'receipt=%s\nsignature=%s\nlint=%s\nscreen_none=%s\n' "$receipt_ok" "$sig" "$lint" "$none"
+  exit 0
 fi
 # Canary config lists exact JG_HOME paths; without it every home keeps today's gate behavior.
 canary=$JG_HOME/config/owner-rules-canary waiver=''

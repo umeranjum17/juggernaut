@@ -88,7 +88,17 @@ sleep 6
 [ "$(rings)" = 0 ] || fail "rang the primary although a watcher beacon was fresh"
 pass "a fresh watcher beacon: the note is queued and the primary is not rung"
 
-# 2. No beacon, no lane in flight: the note rings the primary in seconds.
+# 1b. A captain at the screen (no away record) is never typed at: no beacon, yet
+# the doorbell stays out of his message box and the log says why.
+rm -f "$STATE/.last-watcher-beat" "$STATE/.sentinel-inbox-woken"
+note attended-1b "captain note while he is at the screen" || fail "attended note was not filed"
+sleep 6
+[ "$(rings)" = 0 ] || fail "typed a doorbell into an attended primary"
+grep -q 'attended; wake left to the Stop hook' "$STATE/.sentinel.log" || fail "the attended skip was not logged"
+pass "an attended primary is not typed at"
+
+# 2. No beacon, no lane in flight, captain away: the note rings the primary in seconds.
+printf 'away\n' >"$STATE/.afk"
 rm -f "$STATE/.last-watcher-beat" "$STATE/.sentinel-inbox-woken"
 t0=$(date +%s)
 note ring-2 "captain note with no live cycle" || fail "second note was not filed"

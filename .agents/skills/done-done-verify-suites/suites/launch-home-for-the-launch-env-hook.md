@@ -1,0 +1,3 @@
+# Launch home for the launch-env-hook
+
+Launch home for the launch-env-hook: run `done-done run -- bash core/pane-titles/tests/pane-titles.test.sh` and `done-done run -- bash tests/jg-spawn-dispatch-profile.test.sh` with the logs written into `$DONE_DONE_EVIDENCE_ROOT`; the first runs the real hook with `JG_HOME` unset (the shared Herdr server carries none) and proves the launch continues with the task id as the title, and the second runs the emitted launch text in a pane without `JG_HOME`, plain and under the `launch-env-allowlist` `env -i` wrapper, and proves `jg-spawn.sh` exported the real home to both the hook and the agent.

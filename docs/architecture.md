@@ -326,7 +326,7 @@ The refusal library's header owns the gate detection, lab-home exception, test-h
 
 ## Two task shapes
 
-Ship tasks change projects and ship by project mode (`no-mistakes`, `direct-PR`, or `local-only`); Recon tasks leave standalone investigation reports at `data/<id>/report.md` and never push.
+Ship tasks change projects and ship by project mode (`no-mistakes`, `direct-PR`, `local-only`, or `local-trunk`); Recon tasks leave standalone investigation reports at `data/<id>/report.md` and never push.
 The intake and authority contract in `AGENTS.md` owns when separate Recon research is warranted.
 
 ## Dispatch profiles
@@ -385,6 +385,7 @@ The `data/squad_leads.md` line contract is owned by the [`squad-lead-provisionin
 ## Delivery modes are explicit per task
 
 `no-mistakes` tasks run the full validation pipeline, `direct-PR` tasks open PRs without that pipeline, and `local-only` tasks stay local until Juggernaut performs an approved fast-forward merge.
+`local-trunk` tasks follow `docs/trunk-flow.md` and retain their mode through automatic exact-head landing and cleanup.
 Each task's mode and `yolo` merge posture are Juggernaut's decision at intake.
 The mode is passed explicitly to `bin/jg-brief.sh`, and both values are passed explicitly to `bin/jg-spawn.sh` and `bin/jg-promote.sh`; each command refuses to guess the values it consumes.
 A ship brief records its mode as a fixed machine-readable line and the spawn refuses to launch on a different one, so the worker's instructions and the recorded task delivery cannot diverge.

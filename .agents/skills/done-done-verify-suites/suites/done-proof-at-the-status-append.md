@@ -1,0 +1,3 @@
+# Done proof at the status append
+
+Done proof at the status append: run `done-done run -- bash tests/jg-lavish-guard-done-proof.test.sh`; the real status command a brief gives a worker (`bin/jg-lavish-guard.sh --append`) over a fixture local-trunk home with the real merge-card check proves a `done` with no merge-card exits 1 with the gap and an unchanged status file, a `done` with the whole proof is written, a conflict fix's new head is refused with its receipt and merge-card gaps until it is proved, and no lane record, no jq or another delivery mode each let the line through with one warning (screen: none).

@@ -1,0 +1,3 @@
+# Home triage (one-command health check and repair)
+
+Home triage (one-command health check and repair): run `done-done run -- bash tests/jg-triage.test.sh`; over fixture homes with stubbed sibling scripts it proves `bin/jg-triage.sh` reports every finding and changes nothing in check mode, that `--fix` repairs only through the guarded scripts and only when no other live session holds the home lock, that the state shown is the state after repair, that a failed repair stays a finding, that an unreadable source is unknown (exit 2) and is never repaired or relaunched, that `--context` writes a private redacted facts file, and that `--agent` starts the home's verified harness with the playbook only when a finding is left. No model is called.

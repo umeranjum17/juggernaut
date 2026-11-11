@@ -127,17 +127,26 @@ jg_path_age() {
 }
 
 jg_watcher_child_identity() {
-  local pid=$1 proc_root=${JG_PROC_ROOT_OVERRIDE:-/proc} stat_line identity
-  local -a fields
-  if [ -r "$proc_root/$pid/stat" ]; then
-    read -r stat_line < "$proc_root/$pid/stat" 2>/dev/null || return 1
-    read -r -a fields <<< "${stat_line##*)}"
-    [ "${#fields[@]}" -ge 20 ] || return 1
-    printf 'starttime=%s\n' "${fields[19]}"
+  local identity
+  jg_watcher_child_identity_to identity "$1" || return 1
+  printf '%s\n' "$identity"
+}
+
+# jg_watcher_child_identity_to <variable> <pid>: the same identity, stored in
+# <variable>. On a /proc host it forks nothing, so the watcher's once-a-second
+# child recorder can read every identity it needs without a process per read.
+jg_watcher_child_identity_to() {
+  local _jg_ci_pid=$2 _jg_ci_root=${JG_PROC_ROOT_OVERRIDE:-/proc} _jg_ci_line _jg_ci_ps
+  local -a _jg_ci_fields
+  if [ -r "$_jg_ci_root/$_jg_ci_pid/stat" ]; then
+    read -r _jg_ci_line 2>/dev/null < "$_jg_ci_root/$_jg_ci_pid/stat" || return 1
+    read -r -a _jg_ci_fields <<< "${_jg_ci_line##*)}"
+    [ "${#_jg_ci_fields[@]}" -ge 20 ] || return 1
+    printf -v "$1" 'starttime=%s' "${_jg_ci_fields[19]}"
   else
-    identity=$(LC_ALL=C ps -p "$pid" -o lstart= 2>/dev/null) || return 1
-    [ -n "$identity" ] || return 1
-    printf '%s\n' "$identity"
+    _jg_ci_ps=$(LC_ALL=C ps -p "$_jg_ci_pid" -o lstart= 2>/dev/null) || return 1
+    [ -n "$_jg_ci_ps" ] || return 1
+    printf -v "$1" '%s' "$_jg_ci_ps"
   fi
 }
 
@@ -211,8 +220,51 @@ jg_watcher_progress_age() {
   fi
 }
 
+# jg_watcher_first_scan_age <state> <watch-path> [home]
+# A live, identity-matched holder that claimed the lock after the last beacon
+# (or with no beacon) is still in its first scan: the beacon on disk is its
+# predecessor's, and this holder renews it at its first progress point. Prints
+# the claim age and returns 0 while that age is under the stall bound, the same
+# bound that evicts a stuck holder; a holder past it, or one with a newer
+# beacon, returns 1. The supervision read (bin/jg-supervision-lib.sh) and the
+# guard verdict below both ask this, so they cannot call the same home
+# "starting" and "down". jg_watcher_healthy stays strict: the arm layer needs
+# completed work as proof, not a pid.
+jg_watcher_first_scan_age() {
+  local state=$1 watch_path=$2 home=${3:-$JG_HOME} beat claimed pid age
+  beat=$(jg_path_mtime "$state/.last-watcher-beat")
+  claimed=$(jg_path_mtime "$state/.watch.lock/pid")
+  [ -n "$claimed" ] || return 1
+  [ -z "$beat" ] || [ "$claimed" -gt "$beat" ] || return 1
+  pid=$(cat "$state/.watch.lock/pid" 2>/dev/null || true)
+  jg_pid_alive "$pid" && jg_watcher_lock_matches_pid "$state" "$watch_path" "$pid" "$home" || return 1
+  age=$(( $(date +%s) - claimed ))
+  [ "$age" -lt "$(jg_watcher_stall_bound)" ] || return 1
+  printf '%s\n' "$age"
+}
+
+# jg_host_load_scale
+# Whole-number factor (>=1) a beacon deadline stretches by under host load:
+# ceil(1-minute load average / CPU count). A watcher beats from a shell loop, so a
+# saturated host delays the beat without the watcher being dead; liveness there is
+# the pid, and the beat limit only has to outlast the delay. JG_HOST_LOAD and
+# JG_HOST_CPUS replace the reads (tests, and a host with no /proc/loadavg).
+jg_host_load_scale() {
+  local load cpus scale
+  load=${JG_HOST_LOAD:-$(cut -d' ' -f1 /proc/loadavg 2>/dev/null || true)}
+  cpus=${JG_HOST_CPUS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)}
+  case "$cpus" in ''|*[!0-9]*|0) cpus=1 ;; esac
+  load=${load%%.*}
+  case "$load" in ''|*[!0-9]*) load=0 ;; esac
+  scale=$(( (load + cpus - 1) / cpus ))
+  [ "$scale" -ge 1 ] || scale=1
+  printf '%s\n' "$scale"
+}
+
 # jg_poll_derived_grace [poll-seconds]
-# Default guard-grace derivation: max(300, poll + 60). A watcher touches its
+# Default guard-grace derivation: max(300, poll + 60), stretched by
+# jg_host_load_scale so a slow beat under load is not read as a dead watcher.
+# A watcher touches its
 # liveness beacon once per poll cycle, so a fixed 300s grace stops correctly
 # bounding staleness once the poll cadence reaches or exceeds it; growing the
 # default with the cadence while keeping the historical 300s floor for the
@@ -227,7 +279,7 @@ jg_poll_derived_grace() {
   case "$poll" in ''|*[!0-9]*) poll=15 ;; esac
   derived=$((poll + margin))
   [ "$derived" -ge 300 ] || derived=300
-  printf '%s\n' "$derived"
+  printf '%s\n' "$((derived * $(jg_host_load_scale)))"
 }
 
 # jg_watcher_stall_bound [poll-seconds]
@@ -480,9 +532,28 @@ jg_extension_pair_owns_supervision() {  # <state> <extension-dir> <source:marker
 # a daemon that stops restarting its watcher still fails supervision once the
 # beacon passes grace.
 jg_afk_daemon_owns_supervision() {
-  local state=$1 lockdir pid recorded current
-  [ -e "$state/.afk" ] || return 1
-  lockdir="$state/.supervise-daemon.lock"
+  { [ -e "$1/.afk" ] || jg_lead_daemon_present "$1"; } && jg_daemon_lock_live "$1"
+}
+
+# A squad lead on a harness with no background shell cycle (Codex) runs the same
+# daemon always-on, with no away mode: no human types in a lead pane, so the
+# presence gate does not apply. The daemon writes state/.lead-daemon at startup
+# and removes it at shutdown (JG_LEAD_DAEMON=1, started by bin/jg-lead-daemon.sh);
+# the marker plus a live identity-matched daemon is ownership, exactly as above.
+jg_lead_daemon_present() {  # <state>
+  [ -f "$1/.lead-daemon" ]
+}
+
+# True for a squad lead home whose harness has no background shell cycle (Codex
+# runs foreground checkpoints only): the one case that runs the daemon always-on.
+jg_lead_daemon_home() {  # <home> <harness>
+  case "$2" in codex) ;; *) return 1 ;; esac
+  [ -f "$(jg_compat_marker "$1")" ]
+}
+
+# True when a live daemon process still holds this home's singleton lock.
+jg_daemon_lock_live() {  # <state>
+  local lockdir="$1/.supervise-daemon.lock" pid recorded current
   pid=$(cat "$lockdir/pid" 2>/dev/null) || return 1
   jg_pid_alive "$pid" || return 1
   recorded=$(cat "$lockdir/pid-identity" 2>/dev/null) || return 1
@@ -490,6 +561,21 @@ jg_afk_daemon_owns_supervision() {
   current=$(jg_pid_identity "$pid" 2>/dev/null) || return 1
   [ -n "$current" ] || return 1
   [ "$current" = "$recorded" ]
+}
+
+# True when the always-on lead daemon is live and holds this home's lock.
+jg_lead_daemon_owns_supervision() {  # <state>
+  jg_lead_daemon_present "$1" && jg_daemon_lock_live "$1"
+}
+
+# True when the always-on lead daemon owns supervision AND its watcher cycle is
+# fresh: the owner proof above never proves freshness, so a daemon that stopped
+# restarting its watcher still reads as down once the beacon passes the poll-
+# derived grace (the daemon starts a replacement only after handling a wake).
+jg_lead_daemon_supervising() {  # <state> [grace]
+  local state=$1 grace=${2:-${JG_GUARD_GRACE:-$(jg_poll_derived_grace)}}
+  jg_lead_daemon_owns_supervision "$state" \
+    && [ "$(jg_path_age "$state/.last-watcher-beat")" -lt "$grace" ]
 }
 
 # jg_afk_mode <state>
@@ -512,6 +598,14 @@ jg_afk_mode() {
     quiet) printf '%s\n' quiet ;;
     *) printf '%s\n' away ;;
   esac
+}
+
+# jg_afk_unattended <state>
+# Succeeds only when the captain is away: an away-mode record exists. No record,
+# or quiet mode (captain present), is attended, and nothing machine-typed may go
+# into the captain's composer there (task doorbell-composer-cleanup).
+jg_afk_unattended() {
+  [ -e "$1/.afk" ] && [ "$(jg_afk_mode "$1")" = away ]
 }
 
 # jg_watcher_supervision_verdict <state> <watch-path> [grace] [home] [root]
@@ -557,6 +651,12 @@ jg_watcher_supervision_verdict() {
     ''|*[!0-9]*) ;;
     *) [ "$age" -lt "$grace" ] && fresh=true ;;
   esac
+  # A live holder still in its first scan is "starting" to the supervision read
+  # (jg_watcher_first_scan_age), so it is not a lapse here either.
+  if [ "$fresh" = false ] && jg_watcher_first_scan_age "$state" "$watch" "$home" >/dev/null; then
+    JG_WATCHER_VERDICT_OK=true
+    return 0
+  fi
   model=$(jg_supervision_model)
   if [ "$model" = autoarm ]; then
     if [ "$fresh" = true ] || jg_autoarm_midturn_healthy "$state" "$grace"; then
@@ -564,7 +664,8 @@ jg_watcher_supervision_verdict() {
     fi
     return 0
   fi
-  if jg_watcher_healthy "$state" "$watch" "$grace" "$home"; then
+  if jg_watcher_healthy "$state" "$watch" "$grace" "$home" \
+    || jg_lead_daemon_supervising "$state"; then
     # shellcheck disable=SC2034 # Read by callers after the function returns.
     JG_WATCHER_VERDICT_OK=true
   elif [ "$fresh" = true ]; then
@@ -589,6 +690,7 @@ jg_lock_clean_known_files() {
     "$lockdir/pid-identity" \
     "$lockdir/role" \
     "$lockdir/watcher-path" \
+    "$lockdir/scan-complete" \
     "$lockdir/children" \
     "$lockdir/children.next" \
     2>/dev/null || true
@@ -1682,6 +1784,21 @@ jg_juggernaut_root_home() {
   printf '%s\n' "$home"
 }
 
+# One directory of the local root home, for a fact the root owns for the whole
+# machine (project capacity, the host load history): <own-dir>, the home's own
+# directory, when <home> is the root, so an override of it applies; otherwise the
+# root home's <name>/ directory.
+jg_juggernaut_root_dir() {  # <home> <own-dir> <name>
+  local root home_real
+  root=$(jg_juggernaut_root_home "$1") || return 1
+  home_real=$(CDPATH='' cd -- "$1" 2>/dev/null && pwd -P) || return 1
+  if [ "$root" = "$home_real" ]; then
+    printf '%s\n' "$2"
+  else
+    printf '%s/%s\n' "$root" "$3"
+  fi
+}
+
 # Every Juggernaut state directory on THIS machine whose task records can share a
 # machine-local resource with <first-state>: <first-state> itself, then the local
 # root home and each local squad_lead home registered below it, walked through
@@ -2119,7 +2236,8 @@ jg_autoarm_claim_open() {  # <state-dir> [grace]
 
 # True when a stale mid-turn beacon is explained by a healthy Claude Stop
 # auto-arm generation, so the pull guard must not cry supervision-off.
-# The watcher runs only between turns; turn-end re-arms.
+# Turn end re-arms, and a tool call re-arms mid-turn (jg-claude-stop-autoarm.sh
+# --mid-turn), so a gap lasts at most until the next tool call or Stop.
 #
 # Healthy means outcome=rewake with no exhausted-failure marker, bound to the
 # current session-lock pid and current watcher recovery generation. The rewake
@@ -2394,6 +2512,11 @@ jg_wake_clean_field() {
 # is the store; bin/jg-wake-bus.sh is its one owner, and docs/bus-live.md is the
 # contract. Callers never spell the environment out themselves.
 jg_wake_bus() {
+  # Shell functions can hold the full line; exec arguments cannot.
+  case "${1:-}" in
+    raise) printf '%s' "$4" | jg_wake_bus raise-stdin "$2" "$3" "$5"; return $? ;;
+    settle) printf '%s' "$4" | jg_wake_bus settle-stdin "$2" "$3"; return $? ;;
+  esac
   JG_HOME="${JG_HOME:-$JG_ROOT}" JG_STATE_OVERRIDE="$STATE" \
     "$JG_WAKE_LIB_DIR/jg-wake-bus.sh" "$@"
 }
@@ -2416,6 +2539,10 @@ jg_wake_append() {
 # owns the contract. Where that command cannot run an event is `now`, never hidden.
 # jg_wake_core <command...>: the Go command, told this home's resolved paths.
 jg_wake_core() {
+  case "${1:-}" in
+    route|classify|realert|realert-record)
+      printf '%s' "$4" | jg_wake_core "$1-stdin" "$2" "$3"; return $? ;;
+  esac
   JG_STATE_OVERRIDE="$STATE" "$JG_WAKE_LIB_DIR/jg-wake-core.sh" \
     --state "$STATE" --home "$JG_HOME" --root "$JG_WAKE_DEFAULT_ROOT" --queue "$JG_WAKE_QUEUE" \
     --routing "${JG_WAKE_ROUTING:-}" --config "${JG_CONFIG_OVERRIDE:-}" \
@@ -2486,6 +2613,24 @@ jg_wake_settle() {
   _jg_wake_settled_locked "$1" "$(printf '%s' "$2" | jg_wake_clean_field)" "$(printf '%s' "$3" | jg_wake_clean_field)"
 }
 
+# _jg_wake_ledger_record <kind> <key> <class>: one row per wake in data/wake-ledger.tsv
+# (epoch, home, kind, key, class; tab-separated, the key already cleaned), written whatever
+# the class, so an alert, a batched row and a recorded-only one are all countable after the
+# queue's acknowledgement has deleted them. The file keeps a week: a row older than that
+# moves it to wake-ledger.tsv.1, which replaces the week before. The ledger belongs to a home
+# that has a data directory and is never the reason one is made or a wake fails.
+_jg_wake_ledger_record() {
+  local data=${JG_DATA_OVERRIDE:-$JG_HOME/data} ledger now first=
+  [ -d "$data" ] || return 0
+  ledger=$data/wake-ledger.tsv
+  jg_epoch_seconds_to now
+  if [ -f "$ledger" ] && IFS= read -r first < "$ledger"; then
+    first=${first%%$'\t'*}
+    case "$first" in ''|*[!0-9]*) ;; *) [ $((now - first)) -lt 604800 ] || mv -f -- "$ledger" "$ledger.1" 2>/dev/null ;; esac
+  fi
+  printf '%s\t%s\t%s\t%s\t%s\n' "$now" "$JG_HOME" "$1" "$2" "$3" >> "$ledger" 2>/dev/null || true
+}
+
 # jg_wake_append_locked <kind> <key> <payload>
 # Locked core of jg_wake_append: records one event under an already-held
 # JG_WAKE_QUEUE_LOCK. Callers that must commit another durable record atomically with
@@ -2497,7 +2642,7 @@ jg_wake_settle() {
 # JG_WAKE_CYCLE_URGENT latches once any row this cycle was `now`.
 # shellcheck disable=SC2034 # JG_WAKE_LAST and JG_WAKE_CYCLE_URGENT are read by wake() in the separately linted transition owner.
 jg_wake_append_locked() {
-  local kind=$1 key=$2 payload=$3 clean_key clean_payload class word status=0
+  local kind=$1 key=$2 payload=$3 clean_key clean_payload class word chat_payload status=0
   case "$kind" in
     signal|stale|check|heartbeat) ;;
     *) printf 'jg_wake_append: invalid wake kind: %s\n' "$kind" >&2; return 2 ;;
@@ -2515,15 +2660,15 @@ jg_wake_append_locked() {
   # Route, drop a repeated `now` to `batch` inside the re-alert window, and charge a settled event
   # against the hourly cap: one answer from the Go command, `now` where it cannot run.
   class=$(jg_wake_core classify "$kind" "$clean_key" "$clean_payload" 2>/dev/null) || class=now
+  _jg_wake_ledger_record "$kind" "$clean_key" "$class"
   if [ "$class" = silent ]; then
     _jg_wake_settled_locked "$kind" "$clean_key" "$clean_payload" || true
     JG_WAKE_LAST="silent:$clean_key"
     return 0
   fi
 
-  # The server assigns the row's sequence and keeps the event, so nothing here
-  # allocates a number, appends to a file, or arms a recovery marker for a queue
-  # whose consumer might be down.
+  # jg-bus fixes the row identity before publishing (docs/bus-live.md), so an
+  # offline event retains its number when the bus accepts it later.
   word=$(jg_wake_status_word "$clean_key")
   JG_WAKE_WORD=$word jg_wake_bus raise "$kind" "$clean_key" "$clean_payload" "$class" || status=$?
   if [ "$status" -ne 0 ]; then
@@ -2538,9 +2683,13 @@ jg_wake_append_locked() {
   # the call site that already records the wake, so the channel needs no scan of
   # its own; a chat problem can never fail a wake.
   if [ -x "$JG_WAKE_LIB_DIR/jg-chat.sh" ]; then
+    chat_payload=$clean_payload
+    if [ "${#chat_payload}" -gt 4096 ]; then
+      chat_payload="${chat_payload:0:2048} [full event: $STATE/.wake-bus.events.jsonl or $STATE/.wake-bus.outbox.jsonl; key: $clean_key]"
+    fi
     JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" \
       "$JG_WAKE_LIB_DIR/jg-chat.sh" note '#fleet' "${clean_key%.status}" - wake - \
-      "$kind: $clean_key $clean_payload${word:+ [status=$word]}" >/dev/null 2>&1 || true
+      "$kind: $clean_key $chat_payload${word:+ [status=$word]}" >/dev/null 2>&1 || true
   fi
   return 0
 }

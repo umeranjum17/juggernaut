@@ -44,6 +44,10 @@ forces a re-seal: the receipt already names those files.
 A receipt that exists and does not prove the tree refuses by name rather than
 quietly turning back into a CI wait.
 
+The local trunk lander keeps the same tree key for its full gate.
+When that gate fails, it reruns the failing scripts on the trunk tip's tree once, stores the tip's result by tree, and charges the lane only for failures that differ from the tip's.
+`docs/trunk-flow.md` owns the rule.
+
 ## 3. Green means merged, with no model turn in between
 
 `core/merge-on-green/merge-on-green.sh check <home>` is the deterministic watcher check,
@@ -96,3 +100,11 @@ A merge over `JG_MERGE_LATENCY_LIMIT_MINUTES` (default 5)
 raises one alert naming the number.
 A five-minute path that silently takes eleven is the failure this row exists to
 make visible, so read the recorded minutes rather than any promise about them.
+
+A local-trunk project has no pull request to merge, so its number is the
+landing: the check `core/trunk-latency` writes one row per landing to
+`data/trunk-latency.tsv` with the minutes from the lane's last `done` line to
+its landing row and the stage that held most of them (the queue before the
+landing starts, the landing's start lock and rebase, or the gate).
+A landing over the same `JG_MERGE_LATENCY_LIMIT_MINUTES` raises one alert that
+names that stage.

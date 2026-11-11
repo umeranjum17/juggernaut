@@ -1,0 +1,11 @@
+{
+  "name": "takeone",
+  "says": "A short film of a page or screen that exists",
+  "names": ["takeone", "take one"],
+  "words": ["demo video", "demo film", "show it moving", "film of", "make a film"],
+  "tool": { "bin": "takeone", "min": "0.4.0", "doctor": ["takeone", "doctor"] },
+  "spends": "none",
+  "card": "evidence",
+  "record": ["render.json", "take.json", "storyboard.json"],
+  "outputs": ["out/*.mp4"]
+}

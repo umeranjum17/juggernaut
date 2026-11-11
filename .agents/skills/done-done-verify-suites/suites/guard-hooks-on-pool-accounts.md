@@ -1,0 +1,3 @@
+# Guard hooks on pool accounts
+
+Guard hooks on pool accounts: run `bash kill-guard/tests/kill-guard.test.sh`, `bash read-guard/tests/read-guard.test.sh` and `bash delete-guard/tests/delete-guard-uninstall.test.sh`; each installs into a throwaway HOME with a fixture account registry and proves the Claude hook lands in the pool account folder's `settings.json` (other keys kept) and uninstall removes it. After a live install from main, a fresh `claude -p --model claude-haiku-5-5` with `CLAUDE_CONFIG_DIR=<pool folder>` asked to `cat` a planted fixture under a `.codex/auth.json` path must be refused.

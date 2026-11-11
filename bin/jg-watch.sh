@@ -225,9 +225,10 @@
 # starts in its place, printing "watcher: replaced stalled pid <N> (...)". A
 # holder that survives the five-second TERM grace is re-verified as the same
 # stalled lock holder before KILL; an unproved or surviving holder keeps the
-# refusal and the nonzero exit. The replacement safeguards, including recorded
-# child retirement and missing-beacon handling, are owned by
-# docs/turnend-guard.md "Guard grace and the poll cadence".
+# refusal and the nonzero exit. A child the pass waits on keeps the beacon fresh
+# for at most JG_WATCHER_CHILD_CAP seconds (watcher_child). The replacement
+# safeguards, including recorded child retirement and missing-beacon handling,
+# are owned by docs/turnend-guard.md "Guard grace and the poll cadence".
 # Once per poll the watcher also checks that its home (when it existed at
 # start), its state directory, and its own bin directory still exist; when one
 # is gone it logs "watcher: exiting - <what> no longer exists: <path>" to stderr
@@ -329,7 +330,7 @@ WATCH_HOME_EXISTED=0
 . "$SCRIPT_DIR/jg-project-capacity-lib.sh"
 # Stale test-browser reaper and machine load alarm: on by default, no feature to
 # install, and it stops only a browser in a fleet temp or scratch profile root whose
-# owning worker is gone and whose age is past the limit.
+# owner is gone and whose age is past the limit (bin/jg-reaper-lib.sh owns the rule).
 # shellcheck source=bin/jg-reaper-lib.sh
 . "$SCRIPT_DIR/jg-reaper-lib.sh"
 # Where this checkout's features live (in-repo core/ first, then the pre-fold clone).
@@ -420,6 +421,12 @@ WATCHER_STALE_GRACE=${JG_WATCHER_STALE_GRACE:-${JG_GUARD_GRACE:-$(jg_poll_derive
 # jg_watcher_stall_bound (bin/jg-wake-lib.sh) owns the derivation, shared with
 # the arm that follows this watcher.
 WATCHER_STALL_BOUND=$(jg_watcher_stall_bound "$POLL")
+# How long one child the pass waits on keeps the beacon fresh (watcher_child owns
+# why): by default the stall bound less the grace, so a wedged child is refused as
+# stale one stall bound after it started and evicted one cap after that.
+WATCHER_CHILD_CAP=${JG_WATCHER_CHILD_CAP:-$((WATCHER_STALL_BOUND - WATCHER_STALE_GRACE))}
+case "$WATCHER_CHILD_CAP" in ''|*[!0-9]*|0) WATCHER_CHILD_CAP=$WATCHER_STALE_GRACE ;; esac
+WATCHER_CHILD_MARK="$STATE/.watcher-child"
 HEARTBEAT=${JG_HEARTBEAT:-600}        # base seconds between heartbeat scans
 HEARTBEAT_MAX=${JG_HEARTBEAT_MAX:-7200}  # heartbeat backoff cap
 CHECK_INTERVAL=${JG_CHECK_INTERVAL:-300}  # seconds between *.check.sh sweeps and ask-default decide ticks
@@ -544,11 +551,12 @@ _event_cap_key=""
 _event_cap_ok=0
 _event_cap_fails=0
 
-# afk_present: 0 while the away-mode flag exists. When set, the daemon wraps this
+# afk_present: 0 while the away-mode flag exists, or while a live always-on lead
+# daemon (state/.lead-daemon, jg-wake-lib.sh) owns this home. When set, the daemon wraps this
 # watcher and owns triage, so the watcher must behave one-shot (enqueue + exit on
 # every wake) and let the daemon classify - never absorb here, or the daemon's
 # digest/injection layer would never see the wake.
-afk_present() { [ -e "$STATE/.afk" ]; }
+afk_present() { [ -e "$STATE/.afk" ] || jg_lead_daemon_owns_supervision "$STATE"; }
 
 # away_record_present: 0 while an away record exists (the captain is away, in
 # either supervision shape); quiet mode's record is a present captain, so it
@@ -727,162 +735,26 @@ window_key() {  # <window>
   printf '%s' "${key//./_}"
 }
 
-# Emit the one deferral report for <record> and mark it reported. Both
-# deferral reasons (a turn still running, a composer holding other text) use
-# this single wake, and neither one ends delivery.
-inbox_steer_defer_report() {  # <window> <task> <record> <kind> <sentence>
-  local w=$1 task=$2 rec=$3 reason
-  if [ ! -d "${rec%/*}" ] || [ ! -f "$rec" ]; then
-    jg_task_inbox_due_action "$STATE" "$task" >/dev/null || true
-    return 0
-  fi
-  reason="stale: $w (unread juggernaut instruction: $rec stays unhandled - $5; no doorbell was typed, and it lands as soon as that clears, so no interrupt is needed unless the worker is wedged)"
-  jg_wake_append stale "$w" "$reason" || exit 1
-  if ! jg_task_inbox_record_deferral_reported "$STATE" "$task" "$rec" "$4"; then
-    echo "error: stale wake was queued for $task but its deferral report marker could not be written" >&2
-    exit 1
-  fi
-  wake "$reason"
-}
-
-inbox_steer_escalate_unavailable() {  # <window> <task> <record>
-  local w=$1 task=$2 rec=$3 reason
-  reason="stale: $w (unread juggernaut instruction: $rec is unhandled and the worker's agent has exited or its endpoint is missing, so the doorbell was not typed; recover the worker)"
-  if [ ! -d "${rec%/*}" ] || [ ! -f "$rec" ]; then
-    jg_task_inbox_due_action "$STATE" "$task" >/dev/null || true
-    return 0
-  fi
-  jg_wake_append stale "$w" "$reason" || exit 1
-  if ! jg_task_inbox_record_escalated "$STATE" "$task" "$rec"; then
-    echo "error: stale wake was queued for $task but its inbox escalation marker could not be written" >&2
-    exit 1
-  fi
-  wake "$reason"
-}
-
 # Steering-inbox loss detection, one cheap check per recorded window per poll.
-# bin/jg-task-inbox-lib.sh owns delivery, busy-deferral, retry, and escalation policy.
+# bin/jg-task-inbox-lib.sh owns the whole ladder (jg_task_inbox_ladder): delivery,
+# busy-deferral, retry, escalation, and the one-ring lock it shares with the delivery
+# tick (bin/jg-delivery-tick.sh), which walks the same ladder when this cycle never
+# reaches a window. This file only names what is the watcher's own: how a pane is read
+# stop-safely and judged busy, where the ladder logs, and that a stale row ends the cycle.
 # Endpoint and busy checks precede delivery so recovery never types into a busy,
 # dead, or missing worker; the ring helper protects pending composer text.
 # Normal retries keep the watcher blocking rather than waking juggernaut.
 # Runs for squad_leads too: their pane-staleness exemption is about quiet panes
 # being healthy, while an unacknowledged instruction can still be a stuck steer.
+inbox_steer_busy() {  # <window> <task> <backend>
+  watcher_capture "$3" "$1" 40 "$(window_label "$1")" || WATCHER_CAPTURE=
+  window_is_busy "$1" "$WATCHER_CAPTURE"
+}
+inbox_steer_wake() { wake "$1"; }
+
 inbox_steer_check() {  # <window> <task>
-  local w=$1 task=$2 action verb rec count tail40 reason='' ring_rc backend agent_state decision
-  # Parked-home guard (core/parked-homes): a parked home gets no
-  # doorbell ring, re-ring or unread-instruction escalation. No-op without
-  # the feature checkout.
-  jg_parked_skip_meta "$STATE/$task.meta" "$task" wake-doorbell && return 0
-  action=$(jg_task_inbox_due_action "$STATE" "$task") || return 0
-  verb=${action%% *}
-  [ "$verb" != quiet ] || return 0
-  if [ "$verb" = retry ] && [ -n "$(status_own_open_decisions "$STATE/$task.status")" ]; then
-    return 0
-  fi
-  rec=${action#* }
-  count=
-  case "$verb" in
-    escalate)
-      count=${rec##* }
-      rec=${rec% *}
-      ;;
-  esac
-  backend=$(window_backend "$w")
-  agent_state=$(jg_backend_agent_state "$backend" "$w" 2>/dev/null || true)
-  case "$agent_state" in
-    dead|missing)
-      if [ "$verb" = retry ]; then
-        jg_task_inbox_clear_retry "$STATE" "$task" "$rec" || true
-      else
-        inbox_steer_escalate_unavailable "$w" "$task" "$rec"
-      fi
-      return 0
-      ;;
-  esac
-  watcher_capture "$backend" "$w" 40 "$(window_label "$w")" || WATCHER_CAPTURE=
-  tail40=$WATCHER_CAPTURE
-  if window_is_busy "$w" "$tail40"; then
-    [ "$verb" != retry ] || return 0
-    # The turn really is still running, so nothing may be typed at it. The
-    # deferral only defers: it reports the unread instruction once and keeps the
-    # message owed, so the ordinary ladder below rings the doorbell on the first
-    # non-busy poll once the turn ends - no interrupt, no relaunch.
-    decision=$(jg_task_inbox_defer "$STATE" "$task" "$rec")
-    case "$decision" in
-      quiet) return 0 ;;
-      escalate)
-        reason="stale: $w (steering-inbox busy bookkeeping unwritable: ${rec%/*}/.busy-state cannot be written while $rec stays unhandled; inspect the inbox directory)"
-        verb=escalate
-        ;;
-      *)
-        inbox_steer_defer_report "$w" "$task" "$rec" busy \
-          "stuck-busy after ${decision#report } consecutive busy-deferred due doorbells, with the pane reading busy for a turn still running"
-        return 0
-        ;;
-    esac
-  elif [ "$verb" != retry ] && ! jg_task_inbox_clear_busy "$STATE" "$task"; then
-    reason="stale: $w (steering-inbox busy bookkeeping unwritable: ${rec%/*}/.busy-state cannot be reset after a non-busy check; inspect the inbox directory)"
-    verb=escalate
-  fi
-  case "$verb" in
-    ring)
-      ring_rc=0
-      jg_task_inbox_ring "$backend" "$w" "$rec" "$(window_label "$w")" || ring_rc=$?
-      if [ "$ring_rc" -eq 3 ]; then
-        inbox_steer_escalate_unavailable "$w" "$task" "$rec"
-        return 0
-      fi
-      if [ "$ring_rc" -eq 1 ]; then
-        # The composer provably holds other text, so the Enter was withheld on
-        # purpose. That is a deferral, not a spent attempt: the record stays
-        # owed and the one-keypress fix is reported at once instead of the
-        # delivery budget being spent toward a silent give-up.
-        if jg_task_inbox_deferral_reported "$STATE" "$task" "$rec" held; then
-          triage_log "steer-inbox delivery held: $task ${rec##*/} (already reported)"
-          return 0
-        fi
-        triage_log "steer-inbox delivery held: $task ${rec##*/}${JG_TASK_INBOX_RING_REASON:+ reason=$JG_TASK_INBOX_RING_REASON}"
-        inbox_steer_defer_report "$w" "$task" "$rec" held \
-          "the worker's composer holds other pending text, so submitting the doorbell could submit that text - submit it with 'jg-send.sh $task --key Enter' or clear the composer"
-        return 0
-      fi
-      if ! jg_task_inbox_record_ring "$STATE" "$task" "$rec"; then
-        if [ ! -f "$rec" ]; then
-          jg_task_inbox_due_action "$STATE" "$task" >/dev/null || true
-          return 0
-        fi
-        if [ -d "${rec%/*}" ]; then
-          reason="stale: $w (steering-inbox ladder bookkeeping unwritable: ${rec%/*}/.ring-state cannot be written while $rec stays unhandled; the doorbell cannot advance toward escalation - inspect the inbox directory)"
-          jg_wake_append stale "$w" "$reason" || exit 1
-          wake "$reason"
-        fi
-      fi
-      triage_log "steer-inbox delivery attempt: $task ${rec##*/} result=$ring_rc${JG_TASK_INBOX_RING_REASON:+ reason=$JG_TASK_INBOX_RING_REASON}"
-      ;;
-    retry)
-      ring_rc=0
-      jg_task_inbox_ring "$backend" "$w" "$rec" "$(window_label "$w")" || ring_rc=$?
-      if ! jg_task_inbox_clear_retry "$STATE" "$task" "$rec" && [ -f "$rec" ]; then
-        reason="stale: $w (steering-inbox retry mark unremovable: ${rec%/*}/.retry-ring cannot be removed, so $rec would ring on every poll - inspect the inbox directory)"
-        jg_wake_append stale "$w" "$reason" || exit 1
-        wake "$reason"
-      fi
-      triage_log "steer-inbox retry ring: $task ${rec##*/} result=$ring_rc${JG_TASK_INBOX_RING_REASON:+ reason=$JG_TASK_INBOX_RING_REASON}"
-      ;;
-    escalate)
-      reason=${reason:-"stale: $w (unread juggernaut instruction: $rec still unhandled after $count doorbell delivery attempts with an idle pane; inspect the worker)"}
-      if [ ! -d "${rec%/*}" ] || [ ! -f "$rec" ]; then
-        jg_task_inbox_due_action "$STATE" "$task" >/dev/null || true
-        return 0
-      fi
-      jg_wake_append stale "$w" "$reason" || exit 1
-      if ! jg_task_inbox_record_escalated "$STATE" "$task" "$rec"; then
-        echo "error: stale wake was queued for $task but its inbox escalation marker could not be written" >&2
-        exit 1
-      fi
-      wake "$reason"
-      ;;
-  esac
+  JG_LADDER_BUSY=inbox_steer_busy JG_LADDER_LOG=triage_log JG_LADDER_WAKE=inbox_steer_wake \
+    jg_task_inbox_ladder "$STATE" "$2" "$1" "$(window_backend "$1")" "$(window_label "$1")" || exit 1
 }
 
 # 0 (benign/absorb) if EVERY task in a no-verb "signal:" wake has positive work
@@ -2236,12 +2108,14 @@ phantom_pane_prune() {
     clear_pause_tracking "$key"
     # Withdraw before removing the sidecar, so a failed queue write is retried.
     jg_wake_withdraw stale "$w" || exit 1
+    "$SCRIPT_DIR/jg-machine-shadow.sh" markers ".tracked-$key" removed || true  # shadow report of the move (jg-machine-shadow.sh)
     # The sidecar is removed LAST: a failed marker removal leaves it behind so
     # the next cycle retries the whole prune, while a removed sidecar with
     # markers left behind would strand the orphans unfindable.
     rm -f "$STATE/.hash-$key" "$STATE/.count-$key" "$STATE/.churn-since-$key" \
       "$STATE/.dead-reported-$key" "$STATE/.truth-read-$key" "$STATE/.truth-raised-$key" \
-      "$STATE/.activity-$key" "$STATE/.activity-observed-$key" "$STATE/.activity-observed-$key.next" || continue
+      "$STATE/.activity-$key" "$STATE/.activity-observed-$key" "$STATE/.activity-observed-$key.next" \
+      "$STATE/.silent-seen-$key" "$STATE/.silent-working-$key" || continue
     rm -f "$tracked" || continue
     pruned_panes_record "$key" || true
     triage_log "pruned absent unowned pane: $w"
@@ -2514,16 +2388,11 @@ steer_task() {  # <task> <seed> <text>
   fi
 }
 
-# lead_nudge: tell a squad_lead about a wait it owns. A lead busy mid-turn is
-# interrupted first (bin/jg-control.sh), so the steer is read now rather than
-# after the turn; an idle lead only gets the steer, which rings its doorbell;
-# a dead or unreadable one gets the durable steer alone.
+# lead_nudge: tell a squad_lead about a wait it owns. The steer lands in the
+# lead's durable inbox and rings its doorbell once the turn has ended: a lead
+# busy mid-turn is never interrupted (the steer ladder's rule, no interrupt),
+# and a dead or unreadable one gets the durable steer alone.
 lead_nudge() {  # <task> <window> <seed> <text>
-  squad_lead_busy_class "$2"
-  if [ "$SQUAD_LEAD_BUSY_CLASS" = busy ]; then
-    JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-control.sh" "$1" interrupt >/dev/null 2>&1 \
-      || triage_log "interrupt of squad_lead $1 failed"
-  fi
   steer_task "$1" "$3" "$4"
 }
 
@@ -2789,6 +2658,10 @@ run_check_process() {
   fi
 }
 
+check_capture_skip() { # <label>
+  triage_log "watcher check skipped: $1 (capture failed)"
+}
+
 run_check() {
   ( run_check_process "$@" ) 2>/dev/null || true
 }
@@ -2796,11 +2669,12 @@ run_check() {
 JG_ACTIVE_CHECK_PID=
 JG_ACTIVE_CHECK_PGID=
 JG_CHECK_OUTPUT=
-JG_CHECK_RESULT=
+JG_CHECK_OUTPUT_TMP=
 JG_CHECK_SIGNAL_PENDING=
 
 jg_check_output_cleanup() {
-  [ -z "$JG_CHECK_OUTPUT" ] || rm -f -- "$JG_CHECK_OUTPUT"
+  [ -z "$JG_CHECK_OUTPUT_TMP" ] || rm -f -- "$JG_CHECK_OUTPUT_TMP"
+  JG_CHECK_OUTPUT_TMP=
   JG_CHECK_OUTPUT=
 }
 
@@ -2846,18 +2720,21 @@ watcher_stop_signals() {
 }
 
 run_check_capture() {
-  local pgid
+  local pgid key output tmp
   jg_check_output_cleanup
-  JG_CHECK_RESULT=
-  JG_CHECK_OUTPUT=$(mktemp "$STATE/.jg-check-output.XXXXXX") || return 1
-  chmod 0600 "$JG_CHECK_OUTPUT" || { jg_check_output_cleanup; return 1; }
+  key=${JG_CHECK_OUTPUT_KEY:-check}
+  printf '%s\t%s\tcheck:%s\n' "$WATCHER_PID" "$JG_WATCH_DELIVERY_IDENTITY" "$key" > "$STATE/.watch-progress" 2>/dev/null || true
+  output="$STATE/.jg-check-output-$key"
+  tmp=$(mktemp "$output.XXXXXX") || return 1
+  JG_CHECK_OUTPUT_TMP=$tmp
+  chmod 0600 "$JG_CHECK_OUTPUT_TMP" || { jg_check_output_cleanup; return 1; }
   JG_CHECK_SIGNAL_PENDING=
   # Defer stop signals only until the check's process group is recorded for
   # watcher_cleanup. Keep command substitutions out of this window: bash 5.2
   # can drop a trap that is pending when one is parsed (watcher_stop_signals).
   trap 'JG_CHECK_SIGNAL_PENDING=1' HUP INT TERM
   set -m
-  ( JG_CHECK_OWNED_GROUP=1 run_check_process "$@" ) > "$JG_CHECK_OUTPUT" 2>/dev/null &
+  ( JG_CHECK_OWNED_GROUP=1 run_check_process "$@" ) > "$JG_CHECK_OUTPUT_TMP" 2>/dev/null &
   JG_ACTIVE_CHECK_PID=$!
   JG_ACTIVE_CHECK_PGID=$JG_ACTIVE_CHECK_PID
   set +m
@@ -2872,8 +2749,29 @@ run_check_capture() {
   wait "$JG_ACTIVE_CHECK_PID" 2>/dev/null || true
   JG_ACTIVE_CHECK_PID=
   jg_active_check_stop || return 1
-  JG_CHECK_RESULT=$(cat "$JG_CHECK_OUTPUT" 2>/dev/null || true)
-  jg_check_output_cleanup
+  mv -f -- "$JG_CHECK_OUTPUT_TMP" "$output" || { jg_check_output_cleanup; return 1; }
+  JG_CHECK_OUTPUT_TMP=
+  JG_CHECK_OUTPUT=$output
+}
+
+check_output_reference() {
+  case "$JG_CHECK_OUTPUT" in
+    "$JG_HOME"/*) printf '%s\n' "${JG_CHECK_OUTPUT#"$JG_HOME"/}" ;;
+    *) printf '%s\n' "$JG_CHECK_OUTPUT" ;;
+  esac
+}
+
+check_result_reason() { # <label>
+  local label=$1 max=${JG_WATCH_CHECK_REASON_MAX_BYTES:-4096} ref prefix suffix keep summary
+  [ -s "$JG_CHECK_OUTPUT" ] || return 1
+  case "$max" in ''|*[!0-9]*|0) max=4096 ;; esac
+  ref=$(check_output_reference)
+  prefix="check: $label: "
+  suffix=" [full output: $ref]"
+  keep=$((max - ${#prefix} - ${#suffix}))
+  [ "$keep" -ge 0 ] || keep=0
+  summary=$(head -c "$keep" "$JG_CHECK_OUTPUT" 2>/dev/null | tr '\t\r\n' '   ')
+  JG_CHECK_REASON="$prefix$summary$suffix"
 }
 
 JG_CAPTURE_OUTPUT=
@@ -3512,10 +3410,40 @@ watcher_process_table() {
 }
 
 
-watcher_descendants() {
-  local root=$1 excluded=${2:-0} table
-  table=$(watcher_process_table) || return 1
-  printf '%s\n' "$table" | awk -v root="$root" -v excluded="$excluded" '
+# watcher_descendants_to <variable> <root> [excluded]: store every live
+# descendant pid of <root>, space separated, skipping <excluded> and its subtree.
+# Where the kernel publishes each process's child list
+# (/proc/<pid>/task/<tid>/children) the walk reads only this tree, so its cost
+# is the watcher's own few processes and it forks nothing. A host without those
+# lists walks the whole process table, which costs one read of every process on
+# the host - affordable for a one-off eviction, never as a once-a-second loop.
+watcher_descendants_to() {
+  local _wd_out=$1 _wd_root=$2 _wd_excluded=${3:-0} _wd_proc=${JG_PROC_ROOT_OVERRIDE:-/proc}
+  local _wd_found=' ' _wd_pid _wd_file _wd_child _wd_table
+  local -a _wd_queue _wd_kids
+  if [ -r "$_wd_proc/$$/task/$$/children" ]; then
+    _wd_queue=("$_wd_root")
+    while [ "${#_wd_queue[@]}" -gt 0 ]; do
+      _wd_pid=${_wd_queue[0]}
+      _wd_queue=("${_wd_queue[@]:1}")
+      for _wd_file in "$_wd_proc/$_wd_pid"/task/*/children; do
+        _wd_kids=()
+        read -r -a _wd_kids 2>/dev/null < "$_wd_file" || true
+        for _wd_child in ${_wd_kids[@]+"${_wd_kids[@]}"}; do
+          # A pid seen twice was reused mid-walk; never walk it again.
+          case "$_wd_found" in *" $_wd_child "*) continue ;; esac
+          [ "$_wd_child" != "$_wd_excluded" ] || continue
+          _wd_found+="$_wd_child "
+          _wd_queue+=("$_wd_child")
+        done
+      done
+    done
+    _wd_found=${_wd_found# }
+    printf -v "$_wd_out" '%s' "${_wd_found% }"
+    return 0
+  fi
+  _wd_table=$(watcher_process_table) || return 1
+  _wd_found=$(printf '%s\n' "$_wd_table" | awk -v root="$_wd_root" -v excluded="$_wd_excluded" '
     { parent[$1] = $2 }
     END {
       for (pid in parent) {
@@ -3526,29 +3454,94 @@ watcher_descendants() {
           if (p == root) { print pid; break }
         }
       }
-    }'
+    }') || return 1
+  printf -v "$_wd_out" '%s' "$_wd_found"
 }
 
+# watcher_child <command...>: run one child process the pass waits on, in the
+# foreground and exactly as a bare call (same environment, output and exit
+# status), while the child-recorder sidecar keeps the beacon fresh
+# (watcher_child_beat). Between two progress points the pass is only as live as
+# its slowest child: under load the comms-feed sync once ran past 250 seconds, and
+# the unmoving beacon made every re-arm refuse a live, working watcher as stale.
+# The extension is capped at WATCHER_CHILD_CAP from the child's start, so the
+# beacon never beats free of the pass: past the cap it ages again, and a wedged
+# child still reaches the stale refusal and then the stall-bound eviction, which
+# retires it with this watcher (evict_stalled_holder). The mark names this
+# watcher, so a successor's sidecar never beats on a mark a dead one left.
+watcher_child() {
+  local now rc=0
+  jg_epoch_seconds_to now
+  printf '%s\t%s\t%s\n' "$WATCHER_PID" "$JG_WATCH_DELIVERY_IDENTITY" "${1##*/}" > "$STATE/.watch-progress" 2>/dev/null || true
+  printf '%s %s\n' "$((now + WATCHER_CHILD_CAP))" "$WATCHER_PID" > "$WATCHER_CHILD_MARK" 2>/dev/null || true
+  "$@" || rc=$?
+  : > "$WATCHER_CHILD_MARK" 2>/dev/null || true
+  return "$rc"
+}
+
+# watcher_child_beat <watcher-pid>: one sidecar pass of the extension above.
+# Touches the beacon only while that watcher's own mark is inside its cap. It is
+# defined here, ahead of the sidecar's fork, which is why it touches the beacon
+# itself rather than through watcher_beat (defined after that fork).
+watcher_child_beat() {
+  local until owner now
+  read -r until owner 2>/dev/null < "$WATCHER_CHILD_MARK" || return 0
+  [ "$owner" = "$1" ] || return 0
+  case "$until" in ''|*[!0-9]*) return 0 ;; esac
+  jg_epoch_seconds_to now
+  [ "$now" -lt "$until" ] || return 0
+  touch "$STATE/.last-watcher-beat" 2>/dev/null || true
+}
+
+# watcher_record_children: the child ledger eviction and lock removal retire
+# from (jg_watcher_retire_child_identities). Once a second it records every
+# descendant's identity and keeps each earlier record whose process still
+# carries it, because a child reparented away from this tree is exactly what an
+# eviction must still find. It runs for this watcher's whole life on every home,
+# so a pass must stay near free: the walk reads only this tree, identities are
+# read without forking, and the ledger is rewritten only when it changed.
+# The full lock identity is proved once; each later pass rechecks that the lock
+# still names <root> and that <root> still has the start time it had then. The
+# holder writes the lock's home, path and identity once, and a new holder
+# rewrites its pid, so that recheck decides what the full match decides.
+# Each pass also carries the capped beacon extension for a child the pass is
+# waiting on (watcher_child), so that extension costs no process of its own and
+# ends with the watcher that owns it.
 watcher_record_children() {
-  local root=$1 identity=$2 ledger=$3 recorder child child_identity current descendants
+  local root=$1 identity=$2 ledger=$3 recorder root_start current lock_pid child child_identity
+  local descendants records written='' recorded
   trap - EXIT HUP INT TERM
   jg_current_pid recorder || return 1
-  while jg_watcher_lock_matches_pid "$STATE" "$WATCH_PATH" "$root" "$JG_HOME" \
-    && [ "$JG_WATCHER_MATCHED_IDENTITY" = "$identity" ]; do
-    descendants=$(watcher_descendants "$root" "$recorder") || return 1
-    {
-      for child in $descendants; do
-        child_identity=$(jg_watcher_child_identity "$child" 2>/dev/null) || continue
-        printf '%s\t%s\n' "$child" "$child_identity"
-      done
-      while IFS="$(printf '\t')" read -r child child_identity; do
-        jg_pid_alive "$child" || continue
-        current=$(jg_watcher_child_identity "$child" 2>/dev/null) || continue
-        [ "$current" = "$child_identity" ] || continue
-        printf '%s\t%s\n' "$child" "$child_identity"
-      done < "$ledger"
-    } | awk '!seen[$0]++' > "$ledger.next" || return 1
-    mv -f "$ledger.next" "$ledger" || return 1
+  jg_watcher_lock_matches_pid "$STATE" "$WATCH_PATH" "$root" "$JG_HOME" \
+    && [ "$JG_WATCHER_MATCHED_IDENTITY" = "$identity" ] || return 0
+  jg_watcher_child_identity_to root_start "$root" || return 0
+  while :; do
+    read -r lock_pid 2>/dev/null < "$WATCH_LOCK/pid" || return 0
+    [ "$lock_pid" = "$root" ] || return 0
+    jg_watcher_child_identity_to current "$root" || return 0
+    [ "$current" = "$root_start" ] || return 0
+    watcher_descendants_to descendants "$root" "$recorder" || return 1
+    records='' recorded=' '
+    for child in $descendants; do
+      jg_watcher_child_identity_to child_identity "$child" 2>/dev/null || continue
+      records+="$child"$'\t'"$child_identity"$'\n'
+      recorded+="$child "
+    done
+    while IFS=$'\t' read -r child child_identity; do
+      [ -n "$child" ] || continue
+      case "$recorded" in *" $child "*) continue ;; esac
+      jg_pid_alive "$child" || continue
+      jg_watcher_child_identity_to current "$child" 2>/dev/null || continue
+      [ "$current" = "$child_identity" ] || continue
+      records+="$child"$'\t'"$child_identity"$'\n'
+      recorded+="$child "
+    done <<< "$written"
+    if [ "$records" != "$written" ]; then
+      printf '%s' "$records" > "$ledger.next" || return 1
+      mv -f "$ledger.next" "$ledger" || return 1
+      written=$records
+    fi
+    watcher_child_beat "$root"
     sleep 1
   done
 }
@@ -3576,7 +3569,7 @@ evict_stalled_holder_locked() {
   local pid=$1 i=0 identity descendants child child_identity recorded line
   jg_watcher_lock_matches_pid "$STATE" "$WATCH_PATH" "$pid" "$JG_HOME" || return 1
   identity=$JG_WATCHER_MATCHED_IDENTITY
-  descendants=$(watcher_descendants "$pid") || return 1
+  watcher_descendants_to descendants "$pid" || return 1
   recorded=$(awk '!seen[$0]++' "$WATCH_LOCK/children" 2>/dev/null || true)
   for child in $descendants; do
     child_identity=$(jg_watcher_child_identity "$child" 2>/dev/null) || continue
@@ -3614,6 +3607,13 @@ while ! jg_lock_try_acquire "$WATCH_LOCK"; do
         EVICTED_PID=$JG_LOCK_HELD_PID
         EVICTED_BEAT_AGE=$beat_age
         continue
+      fi
+      # A live, identity-matched holder below the stall bound is a slow beat, not
+      # a failure: it is the one watcher of this home, so this arm stands down.
+      if [ "$beat_age" -lt "$WATCHER_STALL_BOUND" ] \
+        && jg_watcher_lock_matches_pid "$STATE" "$WATCH_PATH" "$JG_LOCK_HELD_PID" "$JG_HOME"; then
+        echo "watcher: already running pid $JG_LOCK_HELD_PID"
+        exit 0
       fi
       echo "watcher: lock held by live pid $JG_LOCK_HELD_PID but heartbeat is stale for ${beat_age}s (>${WATCHER_STALE_GRACE}s); inspect or stop that watcher before re-arming." >&2
       exit 1
@@ -3720,6 +3720,27 @@ reconcile_requests_detached() {
   RECONCILE_REQUEST_PID=$!
 }
 
+# Keep the fleet comms feed current, on for every install with no flag to set.
+# The export is detached for the reason home_summary_refresh_detached gives: a
+# pass that has new rows scans every lead home, and under load it has run past
+# 250 seconds - inline, that stopped the beacon until the guard refused every
+# re-arm as a stale watcher. Nothing in the poll reads the feed. The exporter
+# owns its own cursor and lock, so a pass still running from an earlier cycle,
+# or from a watcher that already exited, makes a new start return at once.
+COMMS_FEED_PID=
+comms_feed_sync_detached() {
+  [ -f "$SCRIPT_DIR/jg-comms-feed.sh" ] && [ ! -L "$SCRIPT_DIR/jg-comms-feed.sh" ] || return 0
+  if [ -n "$COMMS_FEED_PID" ]; then
+    if kill -0 "$COMMS_FEED_PID" 2>/dev/null; then
+      return 0
+    fi
+    wait "$COMMS_FEED_PID" 2>/dev/null || true
+    COMMS_FEED_PID=
+  fi
+  "$SCRIPT_DIR/jg-comms-feed.sh" sync </dev/null >/dev/null 2>&1 &
+  COMMS_FEED_PID=$!
+}
+
 PR_POLL_CONTROL_LOCK=
 PR_POLL_PUBLISH_LOCK=
 
@@ -3783,17 +3804,7 @@ watcher_stop_signals
 # ${BASHPID:-$$} from this same main shell). Read directly, never via a command
 # substitution, so it matches the stored holder pid for the self-eviction check.
 WATCHER_PID=${BASHPID:-$$}
-# Retain the last proven scan through handoff. Do not renew it until this
-# cycle makes progress: a stalled successor must still age past grace.
-# A cycle that starts over a beacon still fresh took over from a healthy
-# predecessor (a --take-over, or a hand-off after a delivered wake), so its
-# first scan may publish at each finished unit like any later scan
-# (watcher_beat's header). One that starts over a stale or absent beacon is
-# recovering a lapse and keeps proving it with a whole scan.
-WATCH_BEAT_INHERITED=0
-_beat_age=$(jg_path_age "$STATE/.last-watcher-beat" 2>/dev/null || echo)
-case "$_beat_age" in ''|*[!0-9]*) ;; *) [ "$_beat_age" -lt "$WATCHER_STALE_GRACE" ] && WATCH_BEAT_INHERITED=1 ;; esac
-unset _beat_age
+# Retain the predecessor's beacon until this cycle completes real work.
 printf '%s\n' "$JG_HOME" > "$WATCH_LOCK/jg-home" || true
 printf '%s\n' "$WATCH_PATH" > "$WATCH_LOCK/watcher-path" || true
 # shellcheck disable=SC2034 # Consumed by wake() in the separately linted transition owner.
@@ -3802,6 +3813,8 @@ JG_WATCH_DELIVERY_IDENTITY=$(jg_pid_identity "$WATCHER_PID" 2>/dev/null || true)
 printf '%s\n' "$JG_WATCH_DELIVERY_IDENTITY" > "$WATCH_LOCK/pid-identity" 2>/dev/null || true
 WATCH_OWNER_DIR=$(jg_lock_link_owner "$WATCH_LOCK") || exit 1
 : > "$WATCH_OWNER_DIR/children" || exit 1
+# A predecessor killed inside a child leaves its mark; this holder starts in none.
+: > "$WATCHER_CHILD_MARK" 2>/dev/null || true
 watcher_record_children "$WATCHER_PID" "$JG_WATCH_DELIVERY_IDENTITY" "$WATCH_OWNER_DIR/children" </dev/null >/dev/null 2>&1 &
 WATCH_CHILD_RECORDER_PID=$!
 if declare -F jg_memory_sampler_ensure >/dev/null; then jg_memory_sampler_ensure || triage_log "host memory sampler failed to start"; fi
@@ -3893,16 +3906,10 @@ resurface_after_downtime() {
 # still ages past the grace and the real detector still fires. Best-effort: a
 # transient write failure must not abort a running scan, and the next progress
 # point retries it.
-# Only a cycle that has already proven one complete scan, or that started over
-# a still-fresh beacon from a healthy predecessor (a take-over; its first scan
-# can outlast the grace while the retained beacon ages), publishes mid-scan.
-# Any other first scan announces nothing until it finishes, so the arm's
-# startup confirmation keeps requiring resumed supervision and a first scan
-# that hangs in its first check is still not reported healthy. The supervision
-# read covers that first scan through its live-holder rule instead
-# (bin/jg-supervision-lib.sh).
+# A completed bounded unit proves progress even in a recovering first scan.
+# A PID alone, or a first check that hangs, never reaches this function.
 watcher_beat() {
-  [ "${WATCH_SCAN_COMPLETE:-0}" = 1 ] || [ "${WATCH_BEAT_INHERITED:-0}" = 1 ] || return 0
+  printf '%s\t%s\t%s\n' "$WATCHER_PID" "$JG_WATCH_DELIVERY_IDENTITY" "${1:-scan}" > "$STATE/.watch-progress" 2>/dev/null || true
   touch "$STATE/.last-watcher-beat" 2>/dev/null || true
 }
 
@@ -3955,26 +3962,31 @@ rejected_checks_record() {
 # check pass; a line it prints becomes a check wake like any check result. The
 # slow sweep skips board-answers.check.sh so a pass is never run twice.
 run_fast_checks() {
-  local out reason shim="$STATE/board-answers.check.sh"
+  local reason shim="$STATE/board-answers.check.sh"
   [ "$(age_of "$STATE/.last-fast-check")" -ge "$FAST_CHECK_INTERVAL" ] || return 0
   touch "$STATE/.last-fast-check"
   if [ -f "$SCRIPT_DIR/jg-board-answers.sh" ] && [ ! -L "$SCRIPT_DIR/jg-board-answers.sh" ]; then
-    JG_HOME="$JG_HOME" run_check_capture "$SCRIPT_DIR/jg-board-answers.sh" tick || exit 1
-    out=$JG_CHECK_RESULT
-    if [ -n "$out" ]; then
-      reason="check: $shim: $out"
+    JG_CHECK_OUTPUT_KEY='board-answers'
+    if ! JG_HOME="$JG_HOME" run_check_capture "$SCRIPT_DIR/jg-board-answers.sh" tick; then
+      check_capture_skip "$shim"
+    elif check_result_reason "$shim"; then
+      reason=$JG_CHECK_REASON
       jg_wake_append check "$shim" "$reason" || exit 1
       wake "$reason"
     fi
   fi
-  # A worker's done starts its landing here, in every home: core/trunk-landing lands a task whose done-done receipt
-  # is a PASS for its exact head into the local trunk and cleans it up, with no lead or human step.
-  if [ -f "$SCRIPT_DIR/../core/trunk-landing/trunk-landing.sh" ] && [ ! -L "$SCRIPT_DIR/../core/trunk-landing/trunk-landing.sh" ]; then
-    run_check_capture "$SCRIPT_DIR/../core/trunk-landing/trunk-landing.sh" check "$JG_HOME" || exit 1
-    out=$JG_CHECK_RESULT
-    if [ -n "$out" ]; then
-      reason="check: trunk-landing: $out"
-      jg_wake_append check trunk-landing "$reason" || exit 1
+  # A worker's done starts its landing here within seconds, and from the host sentinel within a minute when no watcher
+  # runs: bin/jg-delivery-tick.sh is the one pass both run (core/trunk-landing lands a task whose done-done receipt is a
+  # PASS for its exact head into the local trunk and cleans it up, with no lead or human step). The pass queues its own
+  # result row; a reason it prints is a row due now, so this cycle rings the model with it.
+  if [ -f "$SCRIPT_DIR/jg-delivery-tick.sh" ] && [ ! -L "$SCRIPT_DIR/jg-delivery-tick.sh" ]; then
+    JG_CHECK_OUTPUT_KEY=delivery-tick
+    if ! run_check_capture "$SCRIPT_DIR/jg-delivery-tick.sh" "$JG_HOME"; then
+      check_capture_skip delivery-tick
+    elif [ -s "$JG_CHECK_OUTPUT" ]; then
+      reason=$(head -n 1 "$JG_CHECK_OUTPUT")
+      # shellcheck disable=SC2034 # Read by wake(): the pass queued this row as due now.
+      JG_WAKE_CYCLE_URGENT=1
       wake "$reason"
     fi
   fi
@@ -3983,10 +3995,11 @@ run_fast_checks() {
   # here on the fast cadence and not on the slow sweep (bin/jg-unit-claim.sh owns
   # the verdict and the words).
   if [ -f "$SCRIPT_DIR/jg-unit-claim.sh" ] && [ ! -L "$SCRIPT_DIR/jg-unit-claim.sh" ]; then
-    JG_HOME="$JG_HOME" run_check_capture "$SCRIPT_DIR/jg-unit-claim.sh" status || exit 1
-    out=$JG_CHECK_RESULT
-    if [ -n "$out" ]; then
-      reason="check: unit-claim: $out"
+    JG_CHECK_OUTPUT_KEY=unit-claim
+    if ! JG_HOME="$JG_HOME" run_check_capture "$SCRIPT_DIR/jg-unit-claim.sh" status; then
+      check_capture_skip unit-claim
+    elif check_result_reason unit-claim; then
+      reason=$JG_CHECK_REASON
       jg_wake_append check unit-claim "$reason" || exit 1
       wake "$reason"
     fi
@@ -4015,8 +4028,11 @@ run_due_checks() {
       if [ "$(basename "$c")" = x-watch.check.sh ]; then
         if fmx_poll_shim_valid "$c" "$JG_HOME" "$JG_ROOT" \
           && [ -f "$JG_ROOT/bin/jg-x-poll.sh" ] && [ ! -L "$JG_ROOT/bin/jg-x-poll.sh" ]; then
-          JG_HOME="$JG_HOME" run_check_capture "$JG_ROOT/bin/jg-x-poll.sh" || exit 1
-          out=$JG_CHECK_RESULT
+          JG_CHECK_OUTPUT_KEY=x-watch
+          if ! JG_HOME="$JG_HOME" run_check_capture "$JG_ROOT/bin/jg-x-poll.sh"; then
+            check_capture_skip "$c"
+            continue
+          fi
         else
           rejected_checks="$rejected_checks $c"
           continue
@@ -4039,13 +4055,21 @@ run_due_checks() {
             triage_log "PR poll for $id changed before its validated check; skipping the stale snapshot"
             continue
           fi
-          run_check_capture "$SCRIPT_DIR/jg-pr-poll.sh" --validated \
-            "$provider" "$url" "$host" "$path" "$number" || exit 1
-          out=$JG_CHECK_RESULT
+          JG_CHECK_OUTPUT_KEY=$id
+          if ! run_check_capture "$SCRIPT_DIR/jg-pr-poll.sh" --validated \
+            "$provider" "$url" "$host" "$path" "$number"; then
+            pr_poll_control_release || exit 1
+            check_capture_skip "$c"
+            continue
+          fi
         elif jg_custom_check_snapshot_prepare "$STATE" "$id"; then
           custom_snapshot=$JG_CUSTOM_CHECK_SNAPSHOT
-          run_check_capture "$custom_snapshot" || exit 1
-          out=$JG_CHECK_RESULT
+          JG_CHECK_OUTPUT_KEY=$id
+          if ! run_check_capture "$custom_snapshot"; then
+            jg_custom_check_snapshot_cleanup
+            check_capture_skip "$c"
+            continue
+          fi
           jg_custom_check_snapshot_cleanup
         else
           jg_custom_check_snapshot_cleanup
@@ -4053,8 +4077,9 @@ run_due_checks() {
           continue
         fi
       fi
-      if [ -n "$out" ]; then
+      if [ -s "$JG_CHECK_OUTPUT" ]; then
         if [ "$(basename "$c")" = contributions.check.sh ]; then
+          out=$(cat "$JG_CHECK_OUTPUT" 2>/dev/null || true)
           contribution_check_output=
           contribution_check_diagnostics=
           while IFS= read -r contribution_check_line; do
@@ -4068,13 +4093,14 @@ run_due_checks() {
 $out
 EOF
           if [ -n "$contribution_check_diagnostics" ]; then
-            out=${contribution_check_diagnostics%$'\n'}
+            printf '%s\n' "${contribution_check_diagnostics%$'\n'}" > "$JG_CHECK_OUTPUT"
           elif [ -n "$contribution_check_output" ]; then
             continue
           fi
         fi
-        reason="check: $c: $out"
-        if [ "$is_pr_poll" -eq 1 ] && [ "$out" = merged ]; then
+        check_result_reason "$c" || continue
+        reason=$JG_CHECK_REASON
+        if [ "$is_pr_poll" -eq 1 ] && [ "$(cat "$JG_CHECK_OUTPUT" 2>/dev/null)" = merged ]; then
           if [ "$(jg_meta_get "$STATE/$id.meta" kind)" = squad_lead ]; then
             # A merge poll armed on a squad_lead is residue: the mate is a
             # persistent worker, never landed work, and the merge it detected
@@ -4125,7 +4151,7 @@ EOF
       # This bounded unit of the sweep is done, so the scan has made progress:
       # publish liveness here (watcher_beat's header owns why). A check that
       # hangs or a cycle that dies never reaches this point, so it still ages.
-      watcher_beat
+      watcher_beat due-check
     done
     # shellcheck disable=SC2086 # rejected_checks is a space-separated path list.
     unalerted_checks=$(rejected_checks_unalerted $rejected_checks)
@@ -4187,6 +4213,10 @@ while :; do
     exit 0
   fi
 
+  # Due board/landing checks must run before queue resurfacing or recovery can
+  # exit this cycle. Otherwise an urgent queue can starve ready/PASS work forever.
+  run_fast_checks
+
   # One window inventory serves this whole cycle: the stale ladder, the busy reads
   # and the event wait all read it instead of re-walking every meta record per
   # question. A cycle that cannot read its own fleet stops here with a named reason.
@@ -4203,21 +4233,21 @@ while :; do
 
   # Opt-in fleet activity ledger (docs/fleet-ledger.md): pick up newly appended
   # status lines before this cycle can exit on a wake. Off costs one file test.
-  [ ! -e "$CONFIG/fleet-ledger" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE JG_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/jg-fleet-ledger.sh" capture || true
+  [ ! -e "$CONFIG/fleet-ledger" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE JG_CONFIG_OVERRIDE=$CONFIG watcher_child "$SCRIPT_DIR/jg-fleet-ledger.sh" capture || true
   # The wake queue and the task inboxes run on the bus (docs/bus-live.md). A
   # worker's acknowledgement of an inbox record is a `mv` into handled/, so this
   # poll carries that move to the bus as the record's acknowledgement; a bus the
   # poll cannot reach is silent and can never fail or delay a wake.
-  JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-wake-bus.sh" inbox-settle >/dev/null 2>"$STATE/.inbox-settle.err" \
+  JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE watcher_child "$SCRIPT_DIR/jg-wake-bus.sh" inbox-settle >/dev/null 2>"$STATE/.inbox-settle.err" \
     || echo "watcher: inbox settle failed: $(tr '\n' ' ' < "$STATE/.inbox-settle.err" | cut -c1-200)" >&2
   # Migration step 5e shadow: the same task leases and busy events, mirrored to
   # the key-value bus beside the files (docs/state-shadow.md). Off costs one file
   # test, and a mirror that cannot reach its bus can never fail or delay a wake.
-  [ ! -e "$CONFIG/state-bus" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-state-bus.sh" sync >/dev/null 2>&1 || true
+  [ ! -e "$CONFIG/state-bus" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE watcher_child "$SCRIPT_DIR/jg-state-bus.sh" sync >/dev/null 2>&1 || true
   # Migration step 5g shadow: the host and fleet numbers on Prometheus plus
   # node_exporter, beside the shell collection (docs/metrics-shadow.md). Off costs
   # one file test, and a shadow that cannot start can never fail or delay a wake.
-  [ ! -e "$CONFIG/metrics-shadow" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-metrics-shadow.sh" sync >/dev/null 2>&1 || true
+  [ ! -e "$CONFIG/metrics-shadow" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE watcher_child "$SCRIPT_DIR/jg-metrics-shadow.sh" sync >/dev/null 2>&1 || true
 
   if [ "$(age_of "$STATE/home-summary.json")" -ge "$HOME_SUMMARY_INTERVAL" ]; then
     home_summary_refresh_detached
@@ -4239,12 +4269,12 @@ while :; do
   # bus as durable workflow events beside the records (docs/reply-shadow.md). Off
   # costs one file test, and a mirror that cannot reach its bus can never fail or
   # delay a reply, a repost or an escalation.
-  [ ! -e "$CONFIG/reply-bus" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-reply-bus.sh" sync >/dev/null 2>&1 || true
+  [ ! -e "$CONFIG/reply-bus" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE watcher_child "$SCRIPT_DIR/jg-reply-bus.sh" sync >/dev/null 2>&1 || true
   # The same wait, decided by the workflow definition instead of by hand
   # (bin/jg-reply-engine.sh): it folds the event log, records what it would do and
   # acts on nothing. Off costs one file test, and an engine that cannot fold can
   # never fail or delay a reply, a repost or an escalation.
-  [ ! -e "$CONFIG/reply-bus" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-reply-engine.sh" tick >/dev/null 2>&1 || true
+  [ ! -e "$CONFIG/reply-bus" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE watcher_child "$SCRIPT_DIR/jg-reply-engine.sh" tick >/dev/null 2>&1 || true
 
   # Endpoint liveness runs before queue observation: a positively dead or
   # missing squad_lead endpoint is relaunched here on a bounded cadence, which
@@ -4271,13 +4301,13 @@ while :; do
   # so it stays ahead of signals: a constant signal stream must not stop a dead
   # source from being restarted.
   if [ -d "$STATE/procevent" ]; then
-    JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-procevent.sh" reconcile >/dev/null 2>&1 || true
+    JG_HOME="$JG_HOME" watcher_child "$SCRIPT_DIR/jg-procevent.sh" reconcile >/dev/null 2>&1 || true
   fi
 
   # Merge alerts the board refused while it was down are posted once it is back
   # (bin/jg-merge-alert.sh drain); a no-op with nothing queued, and it never wakes.
   if [ -d "$STATE/merge-alerts/pending" ]; then
-    JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-merge-alert.sh" drain >/dev/null 2>&1 || true
+    JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" watcher_child "$SCRIPT_DIR/jg-merge-alert.sh" drain >/dev/null 2>&1 || true
   fi
 
   # The decision must read the wake queue as it stood at cycle start, because
@@ -4342,7 +4372,7 @@ EOF
         [ -n "$sf" ] || continue
         case "$f" in *.status) ;; *) continue ;; esac
         reportable_signal_path "$f" || continue
-        JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-chat.sh" note '#fleet' \
+        JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" watcher_child "$SCRIPT_DIR/jg-chat.sh" note '#fleet' \
           "$(basename "$f" .status)" - status - \
           "$(awk 'NF { line = $0 } END { print line }' "$f" 2>/dev/null)" \
           >/dev/null 2>&1 || true
@@ -4399,7 +4429,7 @@ EOF
         # The ready-PR record pass is one bounded unit of this scan; publish
         # liveness after it so a batch of them cannot outrun the grace
         # (watcher_beat's header owns why).
-        watcher_beat
+        watcher_beat ready-record
         file_reason="$reason"
         case " $JG_SIGNAL_NEEDS_DECISION_FILES " in *" $f "*) file_reason="needs-decision:$signal_files" ;; esac
         jg_wake_append signal "$(basename "$f")" "$file_reason" || exit 1
@@ -4463,15 +4493,9 @@ EOF
     fi
   fi
 
-  # Keep the fleet comms feed current, on for every install with no flag to set.
-  # The exporter owns its own cursor and lock and returns at once when nothing
-  # moved, so a cycle pays one cheap process here; its failure is absorbed so a
-  # feed problem can never stall supervision.
-  if [ -f "$SCRIPT_DIR/jg-comms-feed.sh" ] && [ ! -L "$SCRIPT_DIR/jg-comms-feed.sh" ]; then
-    "$SCRIPT_DIR/jg-comms-feed.sh" sync >/dev/null 2>&1 || true
-  fi
+  # Never waited on: a slow feed export cannot hold the beacon (see the helper).
+  comms_feed_sync_detached
 
-  run_fast_checks
   run_due_checks
   if [ -n "$signal_wake" ]; then
     wake "$signal_wake"
@@ -4491,7 +4515,7 @@ EOF
   # queued, so this cycle ends on it exactly as the ladder's own owner fire did;
   # a tick that cannot read its definition reports it and leaves the poll running.
   if escalation_reason=$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_CONFIG_OVERRIDE="$CONFIG" POLL="$POLL" \
-    "$SCRIPT_DIR/jg-escalation-workflows.sh" tick); then
+    watcher_child "$SCRIPT_DIR/jg-escalation-workflows.sh" tick); then
     # The tick queued this row in its own process, so a batch key this cycle
     # appended earlier can never suppress the delivery of it.
     if [ -n "$escalation_reason" ]; then
@@ -4510,7 +4534,7 @@ EOF
   # was created, so quiet cycles never wake juggernaut or consume model tokens.
   inactive_out=
   if inactive_out=$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" \
-    "$SCRIPT_DIR/jg-inactive-reconcile.sh" scan 2>/dev/null); then
+    watcher_child "$SCRIPT_DIR/jg-inactive-reconcile.sh" scan 2>/dev/null); then
     if [ -n "$inactive_out" ]; then
       wake "check: inactive-outcome"
     fi
@@ -4526,7 +4550,7 @@ EOF
   while IFS= read -r w; do
     # Everything before this window is done: a bounded unit of the scan, and
     # the loop has early exits, so the top is the one point every window hits.
-    watcher_beat
+    watcher_beat pane-scan
     kind=$(window_kind "$w")
     task=$(window_to_task "$w" "$STATE")
     # Steering-inbox loss detection runs before the squad_lead stale
@@ -4853,13 +4877,11 @@ EOF
   # Re-delivering rows the ordinary scan already recorded is the resurface
   # timer's job (own_queue_resurface), not a second wake path here.
 
-  # Renew liveness only after a complete supervision scan. The predecessor's
+  # Complete the scan's liveness publication before startup readiness. The predecessor's
   # beacon stays readable during handoff but keeps its original age while
   # checks block. Actionable wakes stamp in watcher_cleanup after lock release.
   touch "$STATE/.last-watcher-beat" || exit 1
-  # This cycle has now proven one whole scan, so the bounded units of every
-  # later scan may publish liveness themselves (watcher_beat's header).
-  WATCH_SCAN_COMPLETE=1
+  printf '%s\n' "$JG_WATCH_DELIVERY_IDENTITY" > "$WATCH_OWNER_DIR/scan-complete" || exit 1
 
   # Terminal wait: a bounded native-event wait for push-capable homes (herdr),
   # else the blind poll sleep. See event_wait_or_sleep.

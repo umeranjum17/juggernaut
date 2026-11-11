@@ -228,6 +228,7 @@ func TestGatewayPairAndStatus(t *testing.T) {
 	}
 	t.Logf("no bot token file: gateway enabled=no, serve exits 0 with no output, so no unit is installed and nothing fails")
 	os.WriteFile(tokenPath, []byte(tok+"\n"), 0o644)
+	os.Chmod(tokenPath, 0o644) // the mode is the test: a restrictive umask must not narrow it
 	if _, _, _, err := a.readTokenFile(); err == nil || strings.Contains(err.Error(), tok) {
 		t.Fatalf("a group-readable token file must be refused without naming the token: %v", err)
 	}

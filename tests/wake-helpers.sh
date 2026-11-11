@@ -4,6 +4,16 @@
 # watcher/daemon/composer behavior, so they live here rather than in the generic
 # tests/lib.sh. Generic reporters/assertions come from lib.sh, pulled in below.
 
+# A wake fixture must never combine temporary state with inherited owner paths.
+# Scrub legacy aliases too, before production compatibility code can restore them.
+if [ -z "${JG_WAKE_HELPERS_SOURCED:-}" ]; then
+  JG_WAKE_HELPERS_SOURCED=1
+  unset JG_HOME JG_ROOT JG_STATE_OVERRIDE JG_CONFIG_OVERRIDE JG_DATA_OVERRIDE JG_PROJECTS_OVERRIDE JG_ROOT_OVERRIDE
+  unset FM_HOME FM_ROOT FM_STATE_OVERRIDE FM_CONFIG_OVERRIDE FM_DATA_OVERRIDE FM_PROJECTS_OVERRIDE FM_ROOT_OVERRIDE
+  unset JG_WAKE_QUEUE JG_WAKE_QUEUE_LOCK JG_WAKE_ROUTING JG_CAPTAIN_CHANNEL
+  unset FM_WAKE_QUEUE FM_WAKE_QUEUE_LOCK FM_WAKE_ROUTING FM_CAPTAIN_CHANNEL
+fi
+
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 

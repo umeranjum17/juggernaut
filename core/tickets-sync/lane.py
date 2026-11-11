@@ -1,27 +1,35 @@
-"""Lane/PR evidence for ticket leaves; backlog prose references are not completion evidence."""
+"""A ticket leaf's stage from the task and delivery machines, plus its lane/PR evidence; backlog prose references are not completion evidence."""
 import datetime as dt
+import functools
+import os
 import re
+import subprocess as sp
 import time
 
 PR = re.compile(r'https://github\.com/([\w.-]+/[\w.-]+)/pull/([1-9]\d*)\b')
 
 
+def delivery_urls(row):
+    """Every pull request a ticket names as its own delivery: `pr:` notes, links and title.
+
+    Other URLs in a note may be prerequisites, so they are never delivery evidence."""
+    notes = '\n'.join(l for l in row.get('body', '').splitlines() if re.match(r'\s*pr:', l, re.I))
+    found = PR.finditer(notes + '\n' + row.get('links', '') + '\n' + row.get('title', ''))
+    return sorted({m[0] for m in found})
+
+
 def evidence(source, item, row):
+    """Whether the lane or the item says the work was dropped, and the delivery PR the records link; never the stage."""
     state = source / 'state'
     meta = state / (item + '.meta')
     status = state / (item + '.status')
     props = dict(line.split('=', 1) for line in meta.read_text().splitlines() if '=' in line) if meta.exists() else {}
     lines = status.read_text().splitlines() if status.exists() else []
-    stage, terminal, link = ('queued' if row['state'] == 'queued' else 'building'), False, ''
+    terminal, link = False, ''
     for line in lines:
         verb = re.match(r'^(?:\d+\s+)?([a-z-]+)\b', line)
         verb = verb[1] if verb else ''
-        key = re.search(r'\[key=nm-.*?-(review|intent|rebase|test|lint|document|push|pr|ci)(?:-fix\d+)?\]', line)
-        if key or verb in ('review', 'ci'): stage = 'review'
-        if verb in ('merge', 'merging'): stage = 'merging'
-        if verb == 'reopened' or verb == 'working' and stage == 'queued': stage = 'building'
         if verb == 'done':
-            stage = 'merging'
             match = PR.search(line)
             if match: link = match[0]
         if verb in ('superseded', 'cancelled', 'canceled'): terminal = True
@@ -30,9 +38,56 @@ def evidence(source, item, row):
     explicit = re.search(r'^\s*(?:status|resolution):\s*(superseded|cancelled|canceled)\b', body, re.M | re.I)
     own = re.search(r'^\s*pr:\s*(' + PR.pattern + ')', body, re.M | re.I)
     # Title/links are task delivery links; arbitrary URLs inside notes may be prerequisites.
-    match = PR.search(row.get('links', '') + '\n' + row['title'])
+    match = PR.search(row.get('links', '') + '\n' + row.get('title', ''))
     link = props.get('pr') or (own[1] if own else '') or (match[0] if match else '') or link
-    return stage, terminal or bool(explicit), link
+    return terminal or bool(explicit), link
+
+
+# The board's stage words until it accepts the machines' own (slice C2): each machine word's nearest board stage. The
+# exact word travels in the ticket's description, so the board shows both. A word not listed here is the worker's own.
+BOARD_STAGE = {'queued': 'queued', 'done': 'merging', 'ready-to-land': 'merging', 'cleaned': 'merging', 'landed': 'merging', 'in-homes': 'merging',
+               'in-homes-off': 'merging', 'in-use': 'merging', 'reverted': 'merging'}
+
+
+def machine(home, source, script, *args):
+    """One read-only machine observer (core/machines/observers) run on `source`'s records; empty when it cannot answer."""
+    path = home / 'core/machines/observers' / script
+    if not path.is_file(): return ''
+    env = {k: v for k, v in os.environ.items() if k not in ('JG_DATA_OVERRIDE', 'JG_STATE_OVERRIDE', 'JG_ROOT_OVERRIDE')}
+    env['JG_HOME'] = str(source)
+    try: out = sp.run(['bash', str(path), *args], env=env, text=True, capture_output=True, timeout=30).stdout
+    except (OSError, sp.TimeoutExpired): return ''
+    return out.strip()
+
+
+def landed_commit(source, item):
+    """The trunk commit the lander recorded for this lane (data/trunk-landings.tsv: id, project, commit, epoch, kind)."""
+    file = source / 'data/trunk-landings.tsv'
+    rows = [line.split('\t') for line in file.read_text().splitlines()] if file.exists() else []
+    return next((r[2] for r in reversed(rows) if len(r) > 2 and r[0] == item), '')
+
+
+@functools.lru_cache(maxsize=None)
+def deliveries(home, source):
+    """{trunk commit: delivery word} for each registered change that has landed, read once per pass."""
+    found = {}
+    for change in machine(home, source, 'delivery.sh', 'ids').split():
+        detail = dict(line.split('\t', 1) for line in machine(home, source, 'delivery.sh', 'detail', change).splitlines() if '\t' in line)
+        if detail.get('commit') and detail.get('state') != 'unlanded': found[detail['commit']] = detail['state']
+    return found
+
+
+def word(home, source, item, row):
+    """What the task machine says this lane is; a delivered lane says where its change stands (in-homes, in-use, ...).
+
+    An item that no worker or lander has a record of has not started, so only a lane with a record is asked. The delivery
+    machine answers for a registered change, so a landed lane reads its word only when its commit is one."""
+    state, landing = source / 'state', source / 'data/jg-trunk-landing'
+    if not ((state / (item + '.meta')).exists() or (state / (item + '.status')).exists() or any(landing.glob(item + '.*.state'))):
+        return 'queued'
+    task = machine(home, source, 'task.sh', item) or 'working'
+    if task in ('landed', 'cleaned'): return deliveries(home, source).get(landed_commit(source, item), task)
+    return task
 
 
 NO_WORKER = 'no worker yet'
@@ -93,10 +148,12 @@ def newest_event(source, item, row):
     return max(stamps) if stamps else None
 
 
-def progress(source, item, row, cache, run):
-    stage, terminal, link = evidence(source, item, row)
+def stage(home, source, item, row, cache, run):
+    """(machine word, board stage, done, PR link, newest event) for one ticket leaf."""
+    terminal, link = evidence(source, item, row)
     done = row['state'] == 'done' or terminal
     match = PR.fullmatch(link)
+    old = {}
     if match and not done:
         old = cache.get(link, {})
         # A merged or closed PR never reopens, so a read that proved one is kept and the sync stops re-asking GitHub for
@@ -110,6 +167,7 @@ def progress(source, item, row, cache, run):
             old = dict(merged=values['merged'] == 'true', state=values['state'], draft=values['draft'] == 'true', at=time.time())
             cache[link] = old
         done = old['merged']
-        if not done and old['state'] == 'open' and not old['draft'] and stage != 'merging': stage = 'review'
-    word = 'done' if done else stage
-    return (100 if done else {'queued': 0, 'building': 30, 'review': 65, 'merging': 90}[stage]), done, link, word, newest_event(source, item, row)
+    said = 'done' if done else word(home, source, item, row)
+    # A worker's own PR in review is the one thing the board's stage knows that the task machine does not.
+    review = said == 'working' and old.get('state') == 'open' and not old.get('draft')
+    return said, 'review' if review else BOARD_STAGE.get(said, 'done' if done else 'building'), done, link, newest_event(source, item, row)

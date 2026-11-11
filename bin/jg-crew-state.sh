@@ -170,8 +170,12 @@
 #      classified by step 4. Backends with no classifier keep reading a failed
 #      capture as gone. The fallback's own comment owns the per-verdict rules.
 #
-# Read-only and side-effect free. Always exits 0 on a successful read regardless
-# of state; exit 2 only on a usage error (no id).
+# Read-only, with one sanctioned repair: when the task's recorded Herdr pane is
+# gone because a muxr account move replaced it, and the same task's agent is
+# positively live in another pane of its worktree, the task record's endpoint
+# lines follow it (bin/jg-endpoint-follow-lib.sh). Nothing else is written.
+# Always exits 0 on a successful read regardless of state; exit 2 only on a
+# usage error (no id).
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
 [ "$_jg_d" != "${BASH_SOURCE[0]}" ] || _jg_d=.
@@ -216,6 +220,8 @@ STATE="${JG_STATE_OVERRIDE:-$JG_HOME/state}"
 . "$SCRIPT_DIR/jg-timeout-lib.sh"
 # shellcheck source=bin/jg-dod-lib.sh
 . "$SCRIPT_DIR/jg-dod-lib.sh"
+# shellcheck source=bin/jg-endpoint-follow-lib.sh
+. "$SCRIPT_DIR/jg-endpoint-follow-lib.sh"
 
 ID=${1:-}
 [ -n "$ID" ] || { echo "usage: jg-crew-state.sh <id>" >&2; exit 2; }
@@ -348,6 +354,14 @@ fi
 # herdr task is read through jg_backend_capture instead of a bare tmux probe.
 TASK_BACKEND=$(jg_backend_of_meta "$META")
 BACKEND_TARGET=$(jg_backend_target_of_meta "$META")
+# A muxr account move replaces the worker's Herdr pane; the record follows it
+# here (bin/jg-endpoint-follow-lib.sh owns when, and what changes), so every
+# state below reads the pane the worker runs in. The repair is of the live
+# record, never of a snapshot copy; the target is re-read either way.
+if [ "$TASK_BACKEND" = herdr ] && [ "$META" = "$STATE/$ID.meta" ]; then
+  jg_endpoint_follow "$META" "$ID" "$STATE" || true
+  BACKEND_TARGET=$(jg_backend_target_of_meta "$META")
+fi
 EXPECTED_LABEL="jg-$ID"
 pane_readable() {  # <target>
   case "$TASK_BACKEND" in

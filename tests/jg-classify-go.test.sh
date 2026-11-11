@@ -68,6 +68,19 @@ check "a done carrying a key closes that decision on a squad_lead lane and leave
 printf 'needs-decision [key=a]: q\ndone [at=2]: the lead finished its own work\n' > "$s"
 check "a keyless done on a squad_lead lane closes no child wait" "$(status_open_decisions "$s" squad_lead)" "a	needs-decision	q"
 
+# A cold reader must classify all historical bytes in one call and keep every live event.
+s=$lab/cold.status
+awk 'BEGIN {print "blocked [key=old]: closed"; for(i=1;i<=20000;i++) print "working: history " i; print "resolved [key=old]: clear"; print "blocked [key=access]: waiting"; print "needs-decision [key=mode]: choose"}' > "$s"
+printf 'kind=ship\n' > "$lab/cold.meta"
+cp "$s" "$lab/cold.before"
+span=''; needs=0
+status_span_first_actionable_record "$s" 0 span needs
+check "cold history retains every live opening in order" "${span#*$'\t'*$'\t'}" "blocked [key=access]: waiting ; needs-decision [key=mode]: choose"
+check "cold history keeps the decision side band" "$needs" 1
+check "cold history returns its complete byte endpoint" "${span%%$'\t'*}" "$(wc -c < "$s" | tr -d '[:space:]')"
+check "classification preserves all history bytes" "$(cmp -s "$s" "$lab/cold.before" && echo yes)" yes
+check "classification alone never creates a presentation cursor" "$(find "$lab" -name '*cursor*' -print)" ""
+
 # The dispatcher never turns a classifier that cannot run into a yes or no answer.
 JG_CLASSIFY_BIN=$lab/none/jg-classify JG_CLASSIFY_GO=$lab/no-such-go "$ROOT/bin/jg-classify.sh" is-paused 'paused: x' 2>/dev/null
 check "no binary and no toolchain exits 2, not a verdict" "$?" 2

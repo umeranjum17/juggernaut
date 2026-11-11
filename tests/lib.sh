@@ -54,6 +54,10 @@ export JG_GATE_REFUSE_BYPASS=1
 # JG_TEST_HARNESS harness pin). Normal primary launches do not arm it, so a
 # leaked harness pin alone stays inert outside a suite.
 export JG_TEST_SEAM=1
+# A fixture spawn that never chooses a model still launches: bin/jg-spawn.sh refuses an unchosen model
+# (owner rule "No worker lane on Luna") unless both this and JG_TEST_SEAM are set.
+# tests/jg-spawn-model.test.sh unsets it, because refusing the unchosen model is what it proves.
+export JG_SPAWN_TEST_MODEL_OPTIONAL=1
 # A fixture binds no port and installs no service: bin/jg-stack.sh up is a no-op under this.
 # tests/jg-stack.test.sh unsets it, because starting the stack is what it proves.
 export JG_STACK_SKIP=1
@@ -117,7 +121,11 @@ fi
 jg_test_beads_home() {  # <home> [<prefix>=jg]
   local home=$1 prefix=${2:-jg} tpl store
   if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
-    printf 'skip: no Beads store: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
+    # A case home is built inside `d=$(setup ...)`, where `exit` ends only that subshell and stdout becomes the
+    # case dir: the skip text would name a directory the suite then creates. The note goes to stderr and the
+    # suite itself is told to skip (the USR1 trap below).
+    printf 'skip: no Beads store: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n' >&2
+    kill -s USR1 "$$" 2>/dev/null
     exit 0
   fi
   export JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
@@ -288,7 +296,8 @@ JG_TEST_TMPDIR=$(jg_test_tmpdir) || return 1
 # owner's list before this file named a list of its own. JG_BUS_HOMES is that list, so
 # every suite's registrations land in this run's temp tree. A case that proves the
 # refusal unsets it deliberately.
-export JG_BUS_HOMES="${JG_BUS_HOMES:-$JG_TEST_TMPDIR/jg-bus-homes.$$}"
+[ -n "${JG_BUS_HOMES:-}" ] || JG_TEST_BUS_HOMES_OWN="$JG_TEST_TMPDIR/jg-bus-homes.$$"
+export JG_BUS_HOMES="${JG_BUS_HOMES:-$JG_TEST_BUS_HOMES_OWN}"
 
 JG_TEST_CLEANUP_DIRS=()
 JG_TEST_CLEANUP_REGISTRY=$(mktemp "$JG_TEST_TMPDIR/.jg-test-cleanup.$$.XXXXXX") || return 1
@@ -357,6 +366,39 @@ jg_test_reap_procevent_homes() {
 # deleted has no lock and is skipped; that watcher exits on its own home-gone
 # check within one poll.
 
+# --- detached job reaping ---------------------------------------------------
+#
+# A job a check starts with setsid (core/trunk-landing/trunk-landing.sh run, runbatch, post and live) leads
+# its own process group and reparents to init, so neither the suite's exit nor removing its temp root stops
+# it: two post-landing jobs kept polling a lock in their deleted fixture homes for 3 hours. Each such job
+# writes `<pid> <identity>` here as it starts (JG_TEST_SEAM=1), and cleanup stops exactly those groups. A
+# pid whose identity no longer matches has been reused by someone else and is left alone.
+JG_TEST_DETACHED_REGISTRY=$(mktemp "$JG_TEST_TMPDIR/.jg-test-detached.$$.XXXXXX") || return 1
+export JG_TEST_DETACHED_REGISTRY
+
+jg_test_detached_alive() {  # prints the pid of each registered job still running as it registered
+  local pid identity
+  [ -f "$JG_TEST_DETACHED_REGISTRY" ] || return 0
+  while read -r pid identity; do
+    [ -n "$pid" ] && [ -n "$identity" ] && [ "$pid" != "$$" ] || continue
+    [ "$(jg_test_pid_identity "$pid" 2>/dev/null)" = "$identity" ] && printf '%s\n' "$pid"
+  done < "$JG_TEST_DETACHED_REGISTRY"
+  return 0
+}
+
+jg_test_reap_detached() {
+  local live pid _
+  live=$(jg_test_detached_alive)
+  [ -n "$live" ] || return 0
+  for pid in $live; do kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || :; done
+  for _ in $(seq 1 30); do
+    live=$(jg_test_detached_alive)
+    [ -n "$live" ] || return 0
+    sleep 0.1
+  done
+  for pid in $live; do kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || :; done
+}
+
 JG_TEST_WATCHER_REGISTRY=$(mktemp "$JG_TEST_TMPDIR/.jg-test-watcher.$$.XXXXXX") || return 1
 
 jg_test_track_watcher_state() {  # <state-dir>
@@ -407,6 +449,8 @@ jg_test_remove_tree() {
 
 jg_test_cleanup() {
   local d
+  jg_test_reap_detached
+  rm -f -- "$JG_TEST_DETACHED_REGISTRY"
   jg_test_reap_buses
   jg_test_reap_watchers
   jg_test_reap_procevent_homes
@@ -419,6 +463,7 @@ jg_test_cleanup() {
     done < "$JG_TEST_CLEANUP_REGISTRY"
     rm -f "$JG_TEST_CLEANUP_REGISTRY"
   fi
+  [ -z "${JG_TEST_BUS_HOMES_OWN:-}" ] || rm -f -- "$JG_TEST_BUS_HOMES_OWN"
 }
 
 # --- throwaway key-value bus ------------------------------------------------
@@ -502,6 +547,7 @@ trap 'jg_test_cleanup; exit 130' INT
 trap 'jg_test_cleanup; exit 143' TERM
 trap 'jg_test_cleanup; exit 129' HUP
 trap 'jg_test_cleanup; exit 131' QUIT
+trap 'exit 0' USR1  # the suite skips: jg_test_beads_home has no Beads build to give it
 
 # jg_test_reap_orphans: best-effort sweep for fixture roots left behind by a
 # prior run that was killed hard enough to skip the traps above (e.g. a

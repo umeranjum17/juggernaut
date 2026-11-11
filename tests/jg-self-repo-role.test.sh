@@ -558,6 +558,9 @@ run_spawn() {  # <home> <spawn-args...>
     "$SPAWN" "$@" 2>&1
 }
 BASE_PATH=${JG_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
+if ! PATH=$BASE_PATH command -v go >/dev/null 2>&1 && command -v go >/dev/null 2>&1; then
+  ln -sf "$(command -v go)" "$SPAWN_FAKEBIN/go"
+fi
 
 test_spawn_gate_on_self_repo() {
   local home out rc

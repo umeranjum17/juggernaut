@@ -1,0 +1,3 @@
+# Owner-rule clauses and preference blocks
+
+Owner-rule clauses and preference blocks: run `bash tests/jg-clause.test.sh` (or `done-done run -- bash tests/jg-clause.test.sh` with the log written into `$DONE_DONE_EVIDENCE_ROOT`); it drives the real `core/account-pool/bin/jg-model-pool`, `bin/jg-owner-rules.sh add --point --when --then`, `bin/jg-pref.sh` and the config push over fixture routes and fixed clocks, and proves a rule added with one command is obeyed at the next route pick, the peak-hour DeepSeek clause skips DeepSeek in the window and follows a change to the peak-hours block, removing that clause makes the guard notice, the hard-only Sol rule now runs as a clause, and a block change reaches a squad_lead home and mirrors absence.

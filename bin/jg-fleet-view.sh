@@ -134,4 +134,4 @@ printf '%s\n' "$SNAPSHOT" | jq -r --argjson kpi "$KPI" '
      "| --- | --- | --- | --- | --- |",
      (.prompt_approvals[] | "| \(.at | todate) | \(.task) | \(.window) | \(.path) | \(.root) |")
    end)
-'
+' | bash "$SCRIPT_DIR/../core/machines/observers/task.sh" columns

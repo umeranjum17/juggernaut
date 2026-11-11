@@ -130,6 +130,16 @@ test_a_lead_home_feeds_its_own_room_through_the_parent_home() {
   assert_contains "$out" '"channel":"mate"' "the lead's own room is not the channel"
   assert_contains "$out" '"from":"mate"' "the lead's line is not from the lead"
   assert_contains "$out" '"to":"main"' "the lead's line does not go to Main"
+  # A pass with nothing new adds nothing; a line the lead home writes after it,
+  # and a steer delivered to this home's task, both still reach the next pass.
+  run "$d" "$FEED_SH" sync > /dev/null || fail "quiet sync failed"
+  [ "$(wc -l < "$d/home/state/comms-feed.jsonl")" = 1 ] \
+    || fail "a pass with nothing new added lines:"$'\n'"$(feed "$d")"
+  printf 'MainNNN [key=room2] the room view is ready\n' >> "$d/mate/state/parent-replies.status"
+  printf 'at=%s\nfrom=main\n--\nMainNNN [key=late] a later steer\n' "$STEER_AT" > "$d/home/state/w1.inbox/002.msg"
+  run "$d" "$FEED_SH" sync > /dev/null || fail "sync after the quiet pass failed"
+  assert_contains "$(feed "$d")" 'the room view is ready' "a lead home's line written after a quiet pass was lost"
+  assert_contains "$(feed "$d")" 'a later steer' "a steer delivered after a quiet pass was lost"
   pass "a recorded lead home reports into its own room with a parent-channel kind"
 }
 

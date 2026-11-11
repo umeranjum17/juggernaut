@@ -1,0 +1,3 @@
+# Migration card, live parts
+
+Migration card, live parts: run `done-done run migration-card`; it posts three merge cards through the real sign-off-axi, then runs `bin/jg-migration-card.sh live` so the card carries a measured table of every stack part on this machine (runs here with the pid, port, real message or traffic count; pending with the reason and the open pull request that finishes it; not installed), arms the watcher check and proves two cadence passes print nothing while one changed part posts a fresh card. Live: `JG_HOME=<home> bin/jg-migration-live.sh` prints the same table read-only and `bin/jg-migration-live.sh --link` prints the card's link for an update; no model turn is part of it.

@@ -10,6 +10,11 @@
 #   question  a picker or question dialog on screen (Pi ask_user_question,
 #             Claude AskUserQuestion, OpenCode question, Codex request_user_input),
 #             whatever status the terminal shows for the pane
+#   account   the account itself refused the worker: a subscription the runtime
+#             cannot use (payment past due, plan ended) or a sign-in that failed,
+#             in the last lines of the visible screen. The account-down row of the
+#             owner table (core/wait-timers/bin/jg-wait-actions-lib.sh) clears it,
+#             as it clears a quota wait on a Claude worker
 #   quota     a provider rate-limit or usage-limit banner as the bottom of the
 #             visible screen (the banner and the prompt or status line under it)
 #   errors    one provider or API error line repeated on screen (a bad key, an
@@ -36,7 +41,7 @@ jg_stuck_error_loop() {
   printf '%s (%s times on screen)\n' "$(printf '%s' "$line" | cut -c1-160)" "$count"
 }
 
-# jg_stuck_verdict: read a pane capture on stdin; print "question|quota|errors
+# jg_stuck_verdict: read a pane capture on stdin; print "question|account|quota|errors
 # <TAB> <line>" for the first stuck cause on screen, or nothing. Text signatures are
 # harness-neutral so a new adapter is covered; every picker pairs a select/
 # confirm hint with an escape hint, so worker prose alone does not match.
@@ -49,6 +54,11 @@ jg_stuck_verdict() {
   # A line higher up is transcript, and a transcript can hold any sentence a
   # test printed, so it is never read as a live condition.
   footer=$(printf '%s\n' "$tail12" | tail -2)
+  line=$(printf '%s\n' "$tail12" | tail -4 | grep -iE "${JG_STUCK_ACCOUNT_REGEX:-(can.t use your claude subscription|subscription (is )?(past due|expired|inactive|canceled|cancelled)|payment (is )?(past due|failed|required)|account (is )?(past due|suspended|disabled)|invalid api key|not logged in|please run /login|oauth token (has )?(expired|revoked)|authentication[_ ]error)}" | head -1) || true
+  if [ -n "$line" ]; then
+    printf 'account\t%s\n' "$(printf '%s' "$line" | tr -s '[:space:]' ' ' | cut -c1-200)"
+    return 0
+  fi
   line=$(printf '%s\n' "$footer" | grep -iE "${JG_STUCK_QUOTA_REGEX:-(you.ve hit your|usage (limit|exceeded)|rate.?limit(ed| exceeded| reached)|quota (exceeded|exhausted|reached)|insufficient[_ ]quota|too many requests|credit balance is too low|limit resets)}" | head -1) || true
   if [ -n "$line" ]; then
     printf 'quota\t%s\n' "$(printf '%s' "$line" | tr -s '[:space:]' ' ' | cut -c1-200)"
@@ -75,7 +85,7 @@ stuck_source_set() {  # <task> <source> [text]
 
 # stuck_gate_check: one poll of one window. <tail40> is its capture.
 stuck_gate_check() {  # <window> <task> <key> <tail40> <kind>
-  local task=$2 key=$3 tail40=$4 kind=$5 verdict h seen last declared until okf quota='' finished=
+  local task=$2 key=$3 tail40=$4 kind=$5 verdict h seen last declared until okf quota='' account='' finished=
   [ -n "$task" ] || return 0
   last=$(last_status_line "$STATE/$task.status")
   case "$(status_line_verb "$last")" in done | failed) finished=1 ;; esac
@@ -88,9 +98,11 @@ stuck_gate_check() {  # <window> <task> <key> <tail40> <kind>
     # or failed declares no wait, so a banner left in its pane is history, never a
     # live condition that keeps waking the fleet.
     quota$'\t'*) [ -n "$finished" ] || quota=${verdict#*$'\t'} ;;
+    account$'\t'*) [ -n "$finished" ] || account=${verdict#*$'\t'} ;;
     errors$'\t'*) stuck_source_set "$task" errors "${verdict#*$'\t'}" ;;
   esac
   stuck_source_set "$task" quota "$quota"
+  stuck_source_set "$task" account "$account"
   # Silence: a pane text change (spinner glyphs and counters ignored) or a
   # status line is progress. An idle lead is healthy by design.
   seen="$STATE/.silent-seen-$key"

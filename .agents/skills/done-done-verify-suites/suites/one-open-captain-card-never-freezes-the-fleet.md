@@ -1,0 +1,3 @@
+# One open captain card never freezes the fleet
+
+One open captain card never freezes the fleet: run `done-done run -- bash tests/jg-held-card-no-fleet-freeze.test.sh` (screen: none); the real `bin/jg-fleet-snapshot.sh` and `bin/jg-fleet-view.sh` read four Squad Lead homes and flag every lead with ready work and no worker working as idle with ready work, whether or not a captain decision is also open, while a lead with a worker working or nothing ready is not flagged; spawn, merge and landing refusals scoped to linked work stay proved by `tests/jg-pending-decision-blocks-work.test.sh` (S2, M2), run it with `JG_BEADS_TEST_BD` and `JG_BEADS_TEST_DOLT` set.

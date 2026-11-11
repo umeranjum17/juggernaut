@@ -14,32 +14,77 @@
 
 _JG_SUP_BIN=${BASH_SOURCE[0]%/*}
 
+# _jg_ready_work_scope <home> <rows>
+# Prints the rows of a squad_lead home that it can dispatch: those naming a
+# project registered in its data/projects.md, or none. Any other row (a ticket
+# for a project this lead does not run) is dropped and handed back once to the
+# parent channel, recorded in state/.ready-work-handed-back, so a lead is never
+# woken for work it cannot start. A main home, or a lead with no registry to read,
+# cannot tell scope and keeps every row. A hand-back that could not be delivered
+# is retried on the next read.
+_jg_ready_work_scope() {
+  local home=$1 rows=$2 marker registry names id repo state handed
+  if declare -F jg_compat_marker >/dev/null; then marker=$(jg_compat_marker "$home"); else marker=$home/.jg-squad-lead-home; fi
+  registry=$home/data/projects.md
+  if [ ! -f "$marker" ] || [ -L "$marker" ] || [ ! -f "$registry" ]; then
+    printf '%s\n' "$rows"
+    return 0
+  fi
+  names=$(sed -nE 's/^- (.+)$/\1/p' "$registry" | sed -E 's/( \[| - ).*//')
+  if [ -z "$names" ]; then
+    printf '%s\n' "$rows"
+    return 0
+  fi
+  state=${JG_STATE_OVERRIDE:-$home/state}
+  handed=$state/.ready-work-handed-back
+  while read -r id repo; do
+    [ -n "$id" ] || continue
+    if [ "$repo" = - ] || printf '%s\n' "$names" | grep -Fxq -- "$repo"; then
+      printf '%s %s\n' "$id" "$repo"
+      continue
+    fi
+    grep -Fxq -- "$id" "$handed" 2>/dev/null && continue
+    # shellcheck source=bin/jg-parent-channel-lib.sh
+    declare -F jg_parent_channel_report >/dev/null || [ ! -r "$_JG_SUP_BIN/jg-parent-channel-lib.sh" ] \
+      || . "$_JG_SUP_BIN/jg-parent-channel-lib.sh"
+    declare -F jg_parent_channel_report >/dev/null || continue
+    jg_parent_channel_report "$home" "$state" \
+      "note: ready item $id names project $repo, which this home does not run; handed back to the parent to route" \
+      && printf '%s\n' "$id" >> "$handed"
+  done <<EOF
+$rows
+EOF
+}
+
 # jg_ready_work_rows <home>
 # Prints one "<id> <repo>" line per ready backlog item of <home> (the backlog
 # ready: queued, not blocked, not held), highest priority first (P0 before P4,
 # an unprioritized item last, ties by id); <repo> is "-" for an item that names
-# none. Returns the ready read's own status so a caller can tell an empty queue
+# none. A squad_lead home sees only the items it can dispatch
+# (_jg_ready_work_scope above owns that filter and the hand-back of the rest).
+# Returns the ready read's own status so a caller can tell an empty queue
 # from an unreadable one.
 jg_ready_work_rows() {
-  local home=$1 out rc prios
+  local home=$1 out rc prios rows
   out=$(JG_HOME="$home" "$_JG_SUP_BIN/jg-backlog.sh" ready 2>/dev/null); rc=$?
   prios=$(JG_HOME="$home" "$_JG_SUP_BIN/jg-backlog.sh" list --state queued --fields priority 2>/dev/null) || prios=
-  printf '%s\n' "$out" | awk -v p="$prios" '
-    BEGIN {
-      n = split(p, L, "\n")
-      for (i = 1; i <= n; i++) if (L[i] ~ /^  /) {
-        line = L[i]; sub(/^  /, "", line)
+  rows=$(awk '
+    NR == FNR {
+      if ($0 ~ /^  /) {
+        line = $0; sub(/^  /, "", line)
         id = line; sub(/,.*/, "", id)
         pr = line; sub(/.*,/, "", pr); gsub(/"/, "", pr)
         prio[id] = (pr ~ /^[0-9]+$/) ? pr : 9
       }
+      next
     }
     /^ready\[[0-9]+\]/ { on = 1; next }
     on && /^  / {
       sub(/^  /, ""); split($0, f, ","); repo = f[4]; gsub(/"/, "", repo)
       print ((f[1] in prio) ? prio[f[1]] : 9), f[1], (repo == "" ? "-" : repo); next
     }
-    { on = 0 }' | sort -k1,1n -k2,2 | awk '{ print $2, $3 }'
+    { on = 0 }' <(printf '%s\n' "$prios") <(printf '%s\n' "$out") | sort -k1,1n -k2,2 | awk '{ print $2, $3 }')
+  [ -z "$rows" ] || _jg_ready_work_scope "$home" "$rows"
   return "$rc"
 }
 
@@ -104,12 +149,18 @@ jg_squad_lead_ready_work() {
 #                         beacon yet, or only its predecessor's older than the
 #                         holder's lock claim) younger than the stall bound; needs
 #                         bin/jg-wake-lib.sh sourced, else only the beacon counts
+#                         A home whose own checkpoint (bin/jg-watch-checkpoint.sh, any
+#                         harness) wrote state/.checkpoint-cadence is also fresh while
+#                         that marker is younger than its cadence plus the grace: between
+#                         two checkpoints no watcher runs by design, so only a lead whose
+#                         checkpoints stopped alarms. The endpoint liveness probe is
+#                         separate and unchanged.
 #   JG_SUP_BEACON_DESC    human-readable beacon age, for banners ("never" if absent)
 #   JG_SUP_QUEUE_PENDING  true/false - state/.wake-queue has unread records
 # grace-seconds defaults to $JG_GUARD_GRACE, then 300, matching jg-guard.sh.
 # Always returns 0; callers read the vars, or use jg_supervision_unhealthy below.
 jg_supervision_status() {
-  local state=$1 grace=${2:-${JG_GUARD_GRACE:-300}} meta source check id beat m age pid claimed ready
+  local state=$1 grace=${2:-${JG_GUARD_GRACE:-300}} meta source check id beat m age ready
   JG_SUP_IN_FLIGHT=0
   JG_SUP_READY_WORK=0
   JG_SUP_GOAL_NEXT=0
@@ -171,20 +222,21 @@ jg_supervision_status() {
   # same bound that evicts a stuck holder. Its own stale beacon is never newer
   # than its claim, so a slow cycle still reads as stale.
   if [ "$JG_SUP_WATCHER_FRESH" = false ] && [ "$JG_SUP_BEACON_DESC" != unknown ] \
-    && declare -F jg_watcher_lock_matches_pid >/dev/null; then
-    pid=$(cat "$state/.watch.lock/pid" 2>/dev/null || true)
-    claimed=$(jg_sup_stat_mtime "$state/.watch.lock/pid")
-    if [ -z "$m" ] || { [ -n "$claimed" ] && [ "$claimed" -gt "$m" ]; }; then
-      if jg_pid_alive "$pid" \
-        && jg_watcher_lock_matches_pid "$state" "$JG_WAKE_LIB_DIR/jg-watch.sh" "$pid" "${JG_HOME:-}"; then
-        age=$(( $(date +%s) - ${claimed:-0} ))
-        if [ "$age" -lt "$(jg_watcher_stall_bound)" ]; then
-          # shellcheck disable=SC2034 # Read by callers (jg-guard.sh) after sourcing.
-          JG_SUP_BEACON_DESC="starting (${age}s)"
-          JG_SUP_WATCHER_FRESH=true
-        fi
-      fi
-    fi
+    && declare -F jg_watcher_first_scan_age >/dev/null \
+    && age=$(jg_watcher_first_scan_age "$state" "$JG_WAKE_LIB_DIR/jg-watch.sh" "${JG_HOME:-}"); then
+    # shellcheck disable=SC2034 # Read by callers (jg-guard.sh) after sourcing.
+    JG_SUP_BEACON_DESC="starting (${age}s)"
+    JG_SUP_WATCHER_FRESH=true
+  fi
+
+  # An always-on squad lead daemon (jg-wake-lib.sh) owns supervision between its
+  # one-shot watcher cycles, so no watcher process holds the lock and nothing is
+  # wrong: a live daemon with a fresh beacon is supervised.
+  if [ "$JG_SUP_WATCHER_FRESH" = false ] && declare -F jg_lead_daemon_supervising >/dev/null \
+    && jg_lead_daemon_supervising "$state"; then
+    # shellcheck disable=SC2034 # Read by callers (jg-guard.sh) after sourcing.
+    JG_SUP_BEACON_DESC="lead daemon (${JG_SUP_BEACON_DESC})"
+    JG_SUP_WATCHER_FRESH=true
   fi
 
   # A cycle that ended on a wake leaves a fresh beacon, but its replacement
@@ -199,6 +251,25 @@ jg_supervision_status() {
       # shellcheck disable=SC2034 # Read by callers (jg-guard.sh) after sourcing.
       JG_SUP_BEACON_DESC="hand-off (${age}s)"
       JG_SUP_WATCHER_FRESH=true
+    fi
+  fi
+
+  # A checkpoint lead has no watcher between its foreground checkpoints. Its
+  # marker, rewritten as each checkpoint starts and ends, is healthy for the
+  # declared cadence plus the grace; the alarm fires once that window passes.
+  if [ "$JG_SUP_WATCHER_FRESH" = false ] && [ -f "$state/.checkpoint-cadence" ] && [ ! -L "$state/.checkpoint-cadence" ]; then
+    local cadence='' line
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in cadence=*) cadence=${line#cadence=} ;; esac
+    done < "$state/.checkpoint-cadence"
+    m=$(jg_sup_stat_mtime "$state/.checkpoint-cadence")
+    case "$cadence" in ''|*[!0-9]*|0*) cadence= ;; esac
+    if [ -n "$cadence" ] && [ -n "$m" ] && [ "$cadence" -le 28800 ]; then
+      age=$(( $(date +%s) - m ))
+      if [ "$age" -lt $(( cadence + grace )) ]; then
+        JG_SUP_BEACON_DESC="checkpoint (${age}s ago)"
+        JG_SUP_WATCHER_FRESH=true
+      fi
     fi
   fi
 

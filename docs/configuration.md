@@ -9,7 +9,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | --- | --- |
 | Juggernaut's code, private files, or project location | [JG_HOME](#jg_home) and [operational home layout](#operational-home-layout-and-state) |
 | Task windows and worker tools | [Runtime backend](#runtime-backend-configbackend--jg_backend) and [harness support](#harness-support) |
-| Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), [model allow-lists](#model-allow-lists-configmodel-allow-listjson), [worker tool exclusions](#worker-tool-exclusions-configcrew-exclude-tools), [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist), [provider credential strip](#provider-credentials-stripped-from-every-launch), and [launch environment hook](#launch-environment-hook-configlaunch-env-hook) |
+| Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), [account outage fallbacks](#account-outage-fallbacks-configclaude-account-fallbacks), [Claude 1M context window](#claude-1m-context-window-configclaude-1m-accounts), [model allow-lists](#model-allow-lists-configmodel-allow-listjson), [worker tool exclusions](#worker-tool-exclusions-configcrew-exclude-tools), [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist), [provider credential strip](#provider-credentials-stripped-from-every-launch), and [launch environment hook](#launch-environment-hook-configlaunch-env-hook) |
 | Backlog, preferences, and memory | [Backlog](#backlog-configbeads-dir), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), [external memory tiers](#external-memory-tiers-memory-layering-section), [startup memory budget](#startup-memory-budget-configstartup-memory-budget), [host memory guard](#host-memory-guard-confighost-memory), and [supervisor context cap](#supervisor-context-cap-configsupervisor-context-cap) |
 | Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configcalm) |
 | Persistent Squad Leads | [Squad Lead routes](#squad-lead-routes-datasquad_leadsmd) |
@@ -195,6 +195,10 @@ With no list at all, `bin/jg-spawn.sh` still refuses a model that cannot run an 
 Such a model fails every turn with a provider error and is retried at once, so the worker never settles.
 An OpenCode launch with no model starts on the model its own TUI used last, so that model is checked the same way and the refusal says to pin one.
 `JG_ALLOW_NON_AGENT_MODEL=1` lets a deliberate pick launch anyway.
+
+A model the list excludes may still run one job.
+`config/model-ban-lifts` holds one line per lift, `<task-id> <provider>/<model> <scope words>`, and `bin/jg-model-allowlist.sh watch` stays silent for exactly that task and model.
+A line with no scope, a comment, and any other task running the same model lift nothing.
 
 ## Pi supervision branch
 
@@ -881,12 +885,33 @@ The section counts toward the startup memory budget like the rest of its file, s
 
 ## Digest print caps (defaults/token-caps, config/token-caps)
 
-`defaults/token-caps` holds the shipped byte and row caps for the session-start digest, each with its reason.
-A home overrides a value in `config/token-caps` (same `<name> <positive integer>` lines); a `JG_SESSION_START_*` variable overrides both for one run.
+The session-start digest has a fixed size: at most `digest-cap` bytes, 40000 by default (about 10,000 tokens, 5 percent of a 200K-token window).
+A Squad Lead home once started at 85 percent of its context on a 300 KB digest, so a fresh session must start with most of its context free.
+Every byte the digest prints counts against that cap, and the last line of the digest reports the total (`DIGEST SIZE: <bytes> of <cap> bytes`).
+`bin/jg-digest-cap-lib.sh` owns the arithmetic; `tests/jg-session-start.test.sh` fails when a fixture with 320 open decisions passes the cap.
+
+`defaults/token-caps` holds the shipped caps, each with its reason and the measurement behind it.
+A home overrides a value in `config/token-caps` (same `<name> <positive integer>` lines); a `JG_DIGEST_*` or `JG_SESSION_START_*` variable overrides both for one run.
 A missing, zero, or malformed value falls back to the built-in in `bin/jg-session-start.sh`, so a bad line never switches a cap off.
-The caps only cut what the digest prints.
-Each cut names the remainder and the command that shows it.
-No cap touches the wake queue, the lock, network checks, owner rules, or captain-held rows.
+
+Every cap cuts only what the digest prints; nothing is deleted from disk.
+A cut section lists its newest and most urgent items first and ends in its total count and the one command that prints all of it, such as `[cut: 9 of 28 rows shown; all of them: bin/jg-backlog.sh list --state in_flight]`.
+Files end in a `[cut at ...` line with the line range and the `sed` command that prints the rest.
+
+| Cap (`defaults/token-caps`) | Run override | Cuts |
+|---|---|---|
+| `digest-cap` | `JG_DIGEST_CAP` | the whole digest |
+| `digest-reserve` | `JG_DIGEST_RESERVE` | bytes kept free for the network checks and the next-step note |
+| `backlog-cap` | `JG_SESSION_START_BACKLOG_CAP` | the in-flight, held, blocked and ready listings together |
+| `lanes-cap` | `JG_SESSION_START_LANES_CAP` | the lane rows |
+| `orphan-cap`, `commitments-cap` | `JG_SESSION_START_ORPHAN_CAP`, `JG_SESSION_START_COMMITMENTS_CAP` | orphan status logs, public commitments |
+| `index-cap` | `JG_SESSION_START_INDEX_CAP` | the heading index of the learnings file and of a long owner-rules file |
+| `owner-rules-cap` | `JG_SESSION_START_OWNER_RULES_CAP` | owner rules print whole up to this size, else as an index of every rule |
+| `context-file-cap`, `memory-file-cap` | `JG_SESSION_START_CONTEXT_FILE_CAP` (both) | the opening lines of the curated files |
+| `status-tail` | `JG_SESSION_START_STATUS_TAIL` | status lines per lane row |
+
+No cap touches the lock result, the wake queue and its `WAKE_ACK_REQUIRED` line, the supervision block, or the network checks: those carry an action and print whole.
+The wake queue's own `OPEN DECISIONS` list is newest first, states its total, and ends in `bin/jg-wake-drain.sh --open-decisions`, which prints every open decision without acknowledging or changing anything.
 
 ## Supervisor context cap (config/supervisor-context-cap)
 
@@ -1209,8 +1234,10 @@ It does not apply to a Squad Lead's own agent, which neither reads nor refuses o
 ### Built-in: workers cannot ask the human
 
 A worker never asks the human directly; its question belongs to its lead.
-So every ship and Recon launch hides the runtime's own ask tool, with or without this file: Claude gets `--disallowedTools=AskUserQuestion`, OpenCode gets `"question":"deny"` in its permission config, and `pi` and `pi-signed` get `ask_user_question` in `--exclude-tools` ahead of any listed names.
-A Squad Lead's agent keeps its tools, and the other runtimes have no ask tool to hide here.
+So every ship and Recon launch hides the runtime's own ask tool, with or without this file: Claude gets `AskUserQuestion` in its `--disallowedTools` list, OpenCode gets `"question":"deny"` in its permission config, and `pi` and `pi-signed` get `ask_user_question` in `--exclude-tools` ahead of any listed names.
+The same Claude list also removes the fan-out, schedule, message, worktree, publish and notify tools a worker may not use, and every Claude launch, Squad Lead included, adds `--strict-mcp-config`, so no MCP server loads and the account's connectors (mail, file sharing, calendar, documents) never reach a fleet session.
+A Claude Squad Lead is launched without the delegation tools `bin/jg-subagent-pretool-check.sh` refuses and without `Artifact`; `bin/jg-spawn-core.sh launch-template claude <kind>` prints each kind's list.
+Otherwise a Squad Lead's agent keeps its tools, and the other runtimes have no ask tool to hide here.
 A dialog that still opens on any runtime is caught by the stuck-worker detector in `bin/jg-stuck-gate-lib.sh`.
 
 ### Runtime support
@@ -1288,6 +1315,50 @@ A remote Squad Lead is launched on its host from its own home's configuration, s
 
 [`bin/jg-worker-account-lib.sh`](../bin/jg-worker-account-lib.sh) owns parsing, the sign-in check, and the full list of credentials a Claude launch unsets; [runtime backend verification](verification/runtime-backends.md#worker-account-pin-sign-in-check) records the check against the real runners.
 The worker account pool (`config/account-pool` and `relaunch --account`) is owned by `core/account-pool`.
+
+## Account outage fallbacks (config/claude-account-fallbacks)
+
+When a Claude account stops working (subscription past due, sign-in failed, usage or rate limit), the watcher clears the outage with no model turn, but only onto an account you recorded.
+The file is local and gitignored, and it is opt-in: with no file, or an empty one, the watcher changes no pin and relaunches nothing.
+
+`config/claude-account-fallbacks` lists accounts in your order, one per line, in the format of [`config/claude-account`](#worker-account-pin-configclaude-account-configpi-account): `ordinary` or the absolute path of an existing Claude config directory.
+Blank lines and `#` comments are skipped.
+A malformed line ends the list there, so a typo never lets a later line be picked out of order.
+Example, for a home pinned to the first account:
+
+```
+# renewed first, then the second login
+/home/me/.claude-first
+/home/me/.claude-second
+```
+
+The row needs the pin: a home with no `config/claude-account` has no pinned account to move.
+When a Claude worker's pane shows the account error (or a usage or rate limit), the watcher:
+
+1. probes the pinned account once with a one-line Claude test (`JG_ACCOUNT_PROBE_MODEL`, default `claude-haiku-5-5`; the answer is reused for `JG_ACCOUNT_PROBE_SECS`, default 300); an account that answers is not down, and the wait climbs the ladder as before;
+2. takes the next entry after the pin that answers its own probe (the whole list, when the pin is not in it); the account pool is never used;
+3. writes that entry to `config/claude-account` and relaunches every live Claude worker recorded on the dead account with `bin/jg-control.sh relaunch`, one after another;
+4. raises one board card: renew the account or not.
+
+With no entry that answers, only the card is raised. The pin and every pane stay as they are, and the wait goes on to its owner.
+The cleared outage adds its minutes to `data/metrics/escalations.tsv`.
+[`core/wait-timers/README.md`](../core/wait-timers/README.md) "Known next steps" owns the row.
+
+## Claude 1M context window (config/claude-1m-accounts)
+
+Some Claude accounts can run a model with its 1M-token context window, and a launch asks for it with the model's `[1m]` id, for example `claude-opus-5-5[1m]`.
+A home lists those accounts in `config/claude-1m-accounts`, one per line, so its Claude workers get the 1M window without every dispatch naming the `[1m]` id.
+
+Each line names an account exactly as the task record writes it as `account=`: `ordinary` or the absolute path from `config/claude-account`, or an account id from the account pool.
+Blank lines and lines that start with `#` are ignored.
+
+When a Claude worker launches on a listed account with `claude-opus-5-5`, `claude-fable-5-2`, or `claude-sonnet-5-5`, the spawn launches it as that model's `[1m]` id, prints one notice line, and records the `[1m]` id as the task's `model=`.
+A relaunch reads that recorded id back, so the worker keeps the 1M window.
+A model id that already ends in `[1m]`, another model, another runner, a raw launch command, an account that is not listed, and a launch with no pin and no pool pick stay unchanged.
+The model allow-list and the account checks judge the model the dispatch chose, before the `[1m]` id is applied.
+
+The file is local and gitignored, is read on every spawn and relaunch, and is not inherited into Squad Lead homes, because it describes this home's accounts as the pin does.
+An absent file changes nothing; a file that is present but is not a readable regular file refuses the launch and names the file.
 
 ## Lane floor (config/lane-target)
 
@@ -1551,6 +1622,19 @@ A malformed or unreadable file refuses every fresh ship or Recon spawn until it 
 Juggernaut cannot see which part of a worker's life uses the resource, so the number bounds whole workers from launch to handoff, and the tightest resource every worker needs should decide it.
 [`bin/jg-project-capacity-lib.sh`](../bin/jg-project-capacity-lib.sh) owns the file format, what holds a place, and why concurrent spawns cannot both take the last one.
 
+## Host load admission (config/reaper-load-factor, config/reaper-load-minutes)
+
+New lanes wait while the machine is overloaded.
+The main home's watcher samples the host load on its check cadence and keeps one record of how long every sample has stayed above the limit.
+The limit is `config/reaper-load-factor` times the core count (default 2, so 64 on 32 cores), and the window is `config/reaper-load-minutes` (default 10); each file holds one positive integer.
+Both files live in the machine's root Juggernaut home, so every local Squad Lead home reads the same limit and the same record.
+While that record is a whole window old and the current one-minute load is still above the limit, a fresh ship or Recon spawn launches nothing, creates no record, leaves the backlog item queued, prints one `deferred:` line naming the load, and exits 75.
+Lanes already running are untouched: a relaunch and a Squad Lead launch are never deferred for load.
+The spawn proceeds as soon as the current load is back under the limit, even before the next sample clears the record.
+A home with no sampler (`config/reaper-off`, or no `/proc`) has no record, so nothing is deferred.
+The same limit and window raise the machine load alarm.
+[`bin/jg-reaper-lib.sh`](../bin/jg-reaper-lib.sh) owns the limit, the window and the record.
+
 ## Preferences and owner-rule clauses (config/preferences/)
 
 A preference is one small JSON block; an owner rule's machine form is a clause. Both follow `defaults/preferences/schema.json`, and nothing here needs new code per rule.
@@ -1731,6 +1815,7 @@ Squad Lead homes inherit the file with the other shared config.
 | Tool tag | Read by | What the entry sets |
 |---|---|---|
 | `squad-lead` | `bin/jg-harness.sh` (`squad_lead_line`), used by `bin/jg-spawn.sh` and `bin/jg-control.sh` | Harness, model, and effort of a Squad Lead launch. A per-lead pin in `config/squad_leads/<id>/harness` still wins, and the entry wins over `config/squad-lead-harness`. |
+| `worker-default` | `bin/jg-spawn.sh` | Model a worker launch records when no model was chosen and the entry names the launching harness. `bin/jg-spawn.sh` otherwise refuses a spawn or relaunch whose model is empty or `default`. |
 | `done-done-judge` | `core/merge-card/merge-card` | Model that judges the Evidence card. The harness must be `pi`, and the model carries its provider prefix. |
 | `supervision-engine` | `bin/jg-supervision-engine-lib.sh` | Default model of the supervision engine when its harness matches the entry. |
 | `no-mistakes-review` | `core/pipeline-quota-failover/pi-quota-failover` | Model of the no-mistakes review chain, and of the account-pool route that names no model. The harness must be `pi`, and the model carries its provider prefix. The installed wrapper finds the home through `PI_QUOTA_FAILOVER_JG_HOME`, then `JG_HOME`, then `~/juggernaut`; `PI_QUOTA_FAILOVER_CHAIN` still wins. |
@@ -2903,10 +2988,11 @@ JG_BACKEND_HERDR_SUBMIT_POLLS=6  # herdr-only: agent-state samples spread across
 JG_BACKEND_HERDR_SUBMIT_MIN_SLEEP=0.6  # herdr-only: minimum per-Enter confirmation budget before polling agent-state after an idle baseline
 JG_ZELLIJ_SESSION=juggernaut  # zellij-only: named session for normal backend ops and test isolation (docs/zellij-backend.md)
 CMUX_SOCKET_PASSWORD=   # cmux-only: socket password fallback when config/cmux-socket-password is absent (docs/cmux-backend.md)
-JG_SESSION_START_STATUS_TAIL=5   # state/*.status lines printed per task in the session-start digest; each line is capped by bin/jg-line-cap-lib.sh
-JG_SESSION_START_QUEUED_LIMIT=20   # plain queued backlog rows in the session-start digest; in-flight, held, and blocked rows are never bounded and done rows are never listed
+JG_DIGEST_CAP=40000   # bytes the whole session-start digest may print (defaults/token-caps `digest-cap`); every cut section ends in its total count and the command that prints all of it
+JG_SESSION_START_STATUS_TAIL=1   # state/*.status lines printed per lane row in the session-start digest; each line is capped at 160 characters by bin/jg-line-cap-lib.sh
+JG_SESSION_START_BACKLOG_CAP=5000   # bytes shared by the in-flight, held, blocked and ready backlog listings in the session-start digest; a cut group ends in its total and the bin/jg-backlog.sh command that lists every row
 JG_SESSION_START_ENDPOINT_TIMEOUT=10   # seconds bounding each per-task endpoint liveness read in the session-start digest (bin/jg-session-start.sh); nonpositive or invalid values fall back to 10; a read that hits the bound or dies becomes that task's own `endpoint: error` line and the digest continues
-JG_BACKLOG_ROW_TIMEOUT_SECS=10   # seconds bounding each backlog row read (bin/jg-backlog-transition-lib.sh); nonpositive or invalid values fall back to 10; the first bound hit latches the sweep so later reads return immediately, each still naming its own item
+JG_BACKLOG_ROW_TIMEOUT_SECS=10   # base seconds bounding each backlog row read (bin/jg-backlog-transition-lib.sh); a read that hits it is retried twice with the base bound times 2 and then times 3 (a total of six times the base bound), so a slow host does not refuse cleanup or a captain hold; nonpositive, invalid or past-a-day values fall back to 10; a read still timed out after the last attempt refuses once, naming its attempts, and latches the sweep so later reads return immediately, each still naming its own item
 JG_BOOTSTRAP_DETECT_ONLY=0   # internal/read-only session-start mode: skip bootstrap's mutating sweeps and print advisory TANGLE wording
 JG_BOOTSTRAP_NETWORK=all   # internal session-start phase split: all, skip (local steps only), or only (network steps only); see bin/jg-bootstrap.sh
 JG_STARTUP_NETWORK_TIMEOUT=120   # seconds bounding the deferred inactive-outcome scan plus network checks, including the lock waits the worker makes before them; hitting it prints an actionable NETWORK_CHECKS line, and a lock a live process still holds at the deadline ends the worker with a failed-rerun record (publication and delivery are bounded by JG_SESSION_START_TIMEOUT the same way)
@@ -2999,6 +3085,7 @@ JG_WATCH_CYCLE_LOG_KEEP_LINES=1000   # newest complete lifecycle rows considered
 JG_WATCH_EXTENSION_LOG_KEEP_LINES=0   # opt-in Pi extension diagnostic log (state/.watch-extension.log); unset, empty, non-numeric, zero, or negative disables logging, a positive value keeps that many newest rows; logging never changes supervision behavior
 JG_WATCHER_STALE_GRACE=300   # defaults to JG_GUARD_GRACE if set, else the poll-derived grace (docs/turnend-guard.md "Guard grace and the poll cadence"); seconds before a fresh arm refuses a live holder's stale beacon (attached arms: JG_WATCHER_STALL_BOUND)
 JG_WATCHER_STALL_BOUND=       # live-holder stall bound; default and arm/re-arm behavior: docs/turnend-guard.md "Guard grace and the poll cadence"
+JG_WATCHER_CHILD_CAP=         # seconds one child the watcher's pass waits on keeps the beacon fresh; default (stall bound less grace) and why: docs/turnend-guard.md "Guard grace and the poll cadence"
 JG_SIGNAL_GRACE=30      # seconds to coalesce nearby status and turn-end signals into one wake
 JG_WATCHER_CLEANUP_LOCK_BOUND=   # optional watcher EXIT marker-lock wait; default and validation: docs/watcher-continuity.md
 JG_TURNEND_CHURN_ABSORB_SECS=900   # longest one endpoint's bare turn-ends may be deferred on pane-churn evidence alone; only consulted when config/turnend-churn-absorb is present

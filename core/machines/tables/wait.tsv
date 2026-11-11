@@ -1,0 +1,16 @@
+machine	wait	a task's latest status line (state/<id>.status)	core/wait-timers/README.md
+state	not-paused	initial	The worker is not waiting on anything.	-
+state	paused-open	normal	The worker waits and gave no time; Main rechecks on the flat cadence.	reason
+state	paused-dated	normal	The worker waits until a time it named.	reason,until
+state	paused-no-date	normal	The worker is parked with no date; the placeholder date 2026-12-31 means no real date.	reason
+edge	not-paused	pause	paused-open	bin/jg-lavish-guard.sh:append	-	the worker appends a paused line with no until clause	tests/jg-machine-wait.test.sh
+edge	not-paused	pause-dated	paused-dated	bin/jg-lavish-guard.sh:append	-	the worker appends a paused line with a valid until time	tests/jg-machine-wait.test.sh
+edge	not-paused	park	paused-no-date	bin/jg-lavish-guard.sh:append	-	the worker appends a paused line that uses the placeholder date	tests/jg-machine-wait.test.sh
+edge	paused-open	date	paused-dated	bin/jg-lavish-guard.sh:append	-	the worker appends a paused line that names a time	tests/jg-machine-wait.test.sh
+edge	paused-no-date	date	paused-dated	bin/jg-lavish-guard.sh:append	-	the worker appends a paused line that names a real time	tests/jg-machine-wait.test.sh
+edge	paused-open	park	paused-no-date	bin/jg-lavish-guard.sh:append	-	the worker appends a paused line that uses the placeholder date	tests/jg-machine-wait.test.sh
+edge	paused-dated	park	paused-no-date	bin/jg-lavish-guard.sh:append	-	the worker appends a paused line that uses the placeholder date	tests/jg-machine-wait.test.sh
+edge	paused-open	resume	not-paused	bin/jg-lavish-guard.sh:append	-	the worker appends any line that is not a pause	tests/jg-machine-wait.test.sh
+edge	paused-dated	resume	not-paused	bin/jg-lavish-guard.sh:append	-	the worker appends any line that is not a pause	tests/jg-machine-wait.test.sh
+edge	paused-no-date	resume	not-paused	bin/jg-lavish-guard.sh:append	-	the worker appends any line that is not a pause	tests/jg-machine-wait.test.sh
+observer	r=$(cd "$JG_MACHINES_TABLES/../../.." && pwd); c="$r/bin/jg-classify.sh"; s=${JG_STATE_OVERRIDE:-${JG_HOME:-$r}/state}; l=$(bash "$c" last-line "$s/$1.status"); if bash "$c" is-paused "$l"; then case $l in *"until 2026-12-31"*) echo paused-no-date;; *) if bash "$c" paused-until "$l" >/dev/null; then echo paused-dated; else echo paused-open; fi;; esac; else echo not-paused; fi

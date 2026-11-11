@@ -17,7 +17,7 @@ Do not infer this guard's scope, loop safety, or compatibility tradeoffs for tho
 | Question | Start here |
 | --- | --- |
 | What the guard enforces | [Current invariant](#current-invariant) |
-| A correction no rule or ticket captured | [Owner-correction capture rule](#owner-correction-capture-rule) |
+| A correction no rule or ticket captured | [Owner-correction suggestion](#owner-correction-suggestion) |
 | A message that calls a migration part live with no live row | [Migration progress rule](#migration-progress-rule) |
 | Which sessions are in scope and what counts as supervision need | [Primary scope](#primary-scope) and [supervision need](#supervision-need) |
 | How the turn-end check and the mid-turn pull warning judge watcher health | [Strict watcher check at the turn boundary](#strict-watcher-check-at-the-turn-boundary) and [pull-warning verdict by supervision model](#pull-warning-verdict-by-supervision-model) |
@@ -55,26 +55,29 @@ A live identity-matched daemon with a fresh beacon then satisfies that boundary 
 The guard remains a backstop.
 [`watcher-continuity.md`](watcher-continuity.md) owns normal continuity.
 
-## Overwatch KPI rule
+## Overwatch KPI tags
 
-The captain should come only for a major decision only he can take or to file new work, so every captain message is tagged in the turn it arrives.
-At the same boundary, before the supervision predicate, the guard blocks while the newest captain message `bin/jg-overwatch-kpi.sh` recorded is untagged, with one exit-2 banner naming its `tag` command.
-A note the captain sends from the chat counts as a captain message too: the gateway records it, so a Telegram note is never missed and the tag lands on it rather than on an older message.
-It is charged once per message, recorded in `state/.overwatch-kpi-flagged`, and a primary whose harness has no prompt hook records nothing, so it is never blocked.
+The captain should come only for a major decision only he can take or to file new work, so a captain message may be tagged with `bin/jg-overwatch-kpi.sh tag`.
+The guard never asks for a tag: an untagged message prints nothing and never blocks.
+A note the captain sends from the chat counts as a captain message too: the gateway records it, so the tag lands on it rather than on an older message.
+A primary whose harness has no prompt hook records nothing.
 
-## Owner-correction capture rule
+## Owner-correction suggestion
 
-The owner's standing rule (`data/owner-rules.md`) is that a correction he gives in chat must not stay a one-time fix, so the turn that follows one must leave something the whole system reads.
-At the same boundary, after the KPI rule, the guard asks `bin/jg-owner-correction.sh` whether the recorded correction is captured, and blocks once per correction when it is not.
-The correction is the newest captain message whose newest KPI tag kind is `feedback` or `micromanagement`.
-That tag is the record this fleet already keeps for "he told us how to work", so the trigger is that record and never the guard's reading of his tone, and the KPI rule above has already required it.
+The owner's standing rule (`data/owner-rules.md`) is that a correction he gives in chat should not stay a one-time fix, but he decides what is worth a ticket: Overwatch and the leads file nothing from a captain remark without his yes.
+At the same boundary the guard asks `bin/jg-owner-correction.sh` whether a repeated correction is captured, and prints one soft `SOFT SUGGESTION` line once per correction when it is not.
+The first correction of a kind is silent.
+The kind repeats when `JG_OWNER_CORRECTION_REPEATS` corrections of the same kind (default 2, this one included) fall within `JG_OWNER_CORRECTION_WINDOW` seconds (default 604800, seven days); only then does the line say the correction may be worth a ticket or an owner rule and ask the lead to ask him whether it is worth it.
+It never blocks the turn, never spends a block budget, and asks for no per-message tag.
+A correction is a captain message whose newest KPI tag kind is `feedback` or `micromanagement`, and the one that can trigger the line is the newest captain message.
+That tag is the record this fleet already keeps for "he told us how to work", so the trigger is that record and never the guard's reading of his tone.
 
-Either artefact captures it, and both are commands that already exist:
+A correction is captured when either artefact exists, and both are commands that already exist:
 
 - A rule: `data/owner-rules.md` was written at or after the correction, which `bin/jg-owner-rules.sh add` does, and that same call files the rule's enforcement ticket so the work does not sit in the surface alone.
 - A ticket: the backlog holds a row created on or after the correction's UTC date, or `data/ticket-counters.tsv` was written at or after it, which `bin/jg-backlog.sh add` does.
 
-A turn that writes either artefact ends normally, and the charge (`state/.owner-correction-flagged`) keeps every harness bounded to one block per correction; a home whose harness records no captain message records no correction, exactly as for the KPI rule.
+A captured correction prints nothing, and the charge (`state/.owner-correction-flagged`) keeps the suggestion to one line per correction; a home whose harness records no captain message records no correction, exactly as for the KPI tags.
 The check ships from this repository's own `bin/` with the guard, so a home that fast-forwards gets both, and a home whose guard runs without `bin/jg-owner-correction.sh` - or whose copy cannot answer - is never read as "nothing pending": the guard prints a `THIS HOME HAS NOT PICKED UP OWNER-CORRECTION CAPTURE` banner once (`state/.owner-correction-unavailable`) instead of pretending it ran.
 
 ## Migration progress rule
@@ -154,7 +157,7 @@ The exception has these limits:
 ### Pull-warning verdict by supervision model
 
 `bin/jg-guard.sh`, the pull warning, instead uses the model-aware `jg_watcher_supervision_verdict` from `bin/jg-wake-lib.sh`.
-It needs a different verdict because it fires mid-turn, when the auto-arm model runs no watcher at all.
+It needs a different verdict because it fires mid-turn, when the auto-arm model may have no watcher live until the next tool call starts the [mid-turn cycle](watcher-continuity.md#claude-mid-turn-cycle).
 The verdict depends on the supervision model.
 
 #### Claude Stop auto-arm model
@@ -242,12 +245,17 @@ With `state/.afk` absent the daemon lock proves nothing and the strict watcher p
 ### Guard grace and the poll cadence
 
 Only `bin/jg-watch.sh` publishes `state/.last-watcher-beat`: it publishes a fresh one at every progress point of its supervision scan (`watcher_beat`, once per bounded unit of work in the due-check sweep, in the ready-PR record pass, and for each recorded window), after completing the scan immediately before its terminal wait (`event_wait_or_sleep`), or as it exits on a delivered actionable wake.
-Startup confirmation therefore requires resumed supervision: a recovery's first scan, over a stale or absent beacon, publishes nothing until it finishes, so it is never reported healthy before supervising everything.
+Progress heartbeats prove liveness; startup confirmation also requires the first complete scan recorded in that watcher's identity-bound lock (`bin/jg-watch-arm.sh` `healthy_watcher`).
 That exit beacon is written after the cycle releases the singleton lock and only when the wake was delivered, so a busy home whose every cycle ends early still reads as supervised for one grace window; a killed or evicted watcher leaves none.
-The replacement, including a `--take-over` successor, inherits the predecessor's beacon without renewing it at start, so it never announces recovery while its checks are blocked; because it started over a still-fresh beacon it renews it at each finished unit of its first scan, so a long first scan never leaves the predecessor's timestamp to age into a false alarm. The live-holder rule in `bin/jg-supervision-lib.sh` still covers a first scan that has finished no unit yet, until the stall bound.
+The replacement, including a `--take-over` successor, inherits the predecessor's beacon without renewing it at start, so it never announces recovery while its checks are blocked; it renews it at each finished unit of its first scan, including after a stale-beacon recovery, so a long first scan never leaves the predecessor's timestamp to age into a false alarm. The live-holder rule in `bin/jg-supervision-lib.sh` still covers a first scan that has finished no unit yet, until the stall bound.
 The beacon's age therefore bounds the gap between progress points, never the length of one scan.
 A due-check sweep, or a run of ready-PR records, can legitimately outlast a fixed grace on a healthy cycle, and publishing only at the end of the scan made exactly that cycle read as a dead watcher: the false "the watcher beacon is Ns old and no turn is running" alarm.
 A cycle that is killed, wedged, or hung in one unbounded step reaches no further progress point, so its beacon still ages past the grace and both the stale alarm and the turn-end guard still fire.
+
+A child process the pass waits on can outlast the grace on a healthy cycle too: under load the comms-feed sync once ran past 250 seconds, and every re-arm then refused the live watcher as stale.
+`watcher_child` wraps each inline child of the pass, and the watcher's once-a-second child-recorder sidecar keeps the beacon fresh while that child runs, for at most `JG_WATCHER_CHILD_CAP` seconds from its start (default: the stall bound less the grace).
+The extension never beats free of the pass: past the cap the beacon ages again, so a wedged child is refused as stale one stall bound after it started and is evicted with its watcher one cap later.
+Side jobs whose result the pass never reads (the home-summary publication, reconcile requests, and the comms-feed sync) run detached instead and never hold the pass.
 
 A fixed 300-second grace default stops correctly bounding staleness once a home's `JG_POLL` reaches or exceeds it.
 A perfectly healthy watcher mid-wait would then read stale at the edge of every full poll cycle by definition.
@@ -632,6 +640,7 @@ That warning uses `bin/jg-supervision-instructions.sh --repair-line`, so it alwa
 - Positive recovery reset.
 - Generation and legacy claim cases that must block or clear instead of allowing a blind stop.
 - Away-mode daemon ownership between watcher cycles and over a watcher lock left behind by an exited watcher, plus its dead, pid-reused, absent, stale-beacon, and away-mode-off negatives.
+- Lead-daemon ownership: a Codex squad lead supervised by the always-on daemon (`bin/jg-lead-daemon.sh`, marker `state/.lead-daemon`, no away flag) ends its turn idle on a live daemon with a fresh beacon, and blocks on a dead daemon, a stale beacon, or a marker with no live daemon; its repair line starts the daemon instead of a foreground checkpoint.
 - The away-mode beacon's poll-derived grace widening for a live daemon still mid-cycle and its bound against a dead daemon, a beacon older than that wider grace, and JG_POLL's inapplicability with away mode off.
 - Pi logical-run latching.
 - Missing-`jq` behavior.
@@ -641,7 +650,7 @@ That warning uses `bin/jg-supervision-instructions.sh --repair-line`, so it alwa
 - Malformed input.
 - Exactly-one-path safety.
 
-`tests/jg-owner-correction.test.sh` covers the correction rule: an uncaptured correction is flagged once with both exact commands named, an owner rule ends the turn, an enforcement ticket ends the turn, new work is never read as a correction, and a home without the shared check says so once.
+`tests/jg-owner-correction.test.sh` covers the correction suggestion: a first correction and an untagged captain message print nothing, a repeat of the kind inside the window gets one soft line and never blocks, an owner rule or an enforcement ticket silences it, new work is never read as a correction, and a home without the shared check says so once.
 
 `tests/jg-progress-claim.test.sh` covers the progress rule: an unsupported live claim is blocked once with the part and its measurement, honest wording and live parts pass, a merged switch with a pending row is recorded as merged, and the digest carries the live count.
 

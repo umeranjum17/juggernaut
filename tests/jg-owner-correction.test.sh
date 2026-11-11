@@ -2,10 +2,10 @@
 # Behavioral regressions for owner-correction capture (bin/jg-owner-correction.sh
 # and the turn-end rule that reads it, docs/turnend-guard.md "Owner-correction
 # capture rule"), built from the real case: the owner said "I don't want these
-# feedbacks as one time fix ... so it doesn't repeat again". A turn that follows
-# that correction with neither an owner rule nor an enforcement ticket is refused
-# once; a turn that writes either artefact ends. The trigger is the recorded
-# captain message's KPI kind, never a reading of his tone.
+# feedbacks as one time fix ... so it doesn't repeat again". The first correction
+# of a kind is silent; a repeat inside the window gets one soft line that never
+# blocks, and an owner rule or enforcement ticket silences it. The trigger is the
+# recorded captain message's KPI kind, never a reading of his tone.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -46,36 +46,63 @@ stop() {  # <dir> -> the guard's exit status
   printf '{"session_id":"s"}' | in_home "$1" bash "$1/bin/jg-turnend-guard.sh" >/dev/null 2>"$1/guard.err"
 }
 
-test_a_correction_with_no_artefact_is_flagged() {
+correct() {  # <dir> [<kind>] - one captain correction, tagged
+  submit "$1" "$CORRECTION"
+  kpi "$1" tag "${2:-feedback}" https://github.com/acme/juggernaut/pull/41 >/dev/null || fail "tagging the correction failed"
+}
+
+test_a_first_correction_is_silent_and_a_repeat_gets_one_soft_line() {
   local home="$TMP_ROOT/uncaptured" rc out
   make_home "$home"
   submit "$home" "$CORRECTION"
-  pending "$home" >/dev/null && fail "an untagged message was read as a recorded correction"
-  kpi "$home" tag feedback https://github.com/acme/juggernaut/pull/41 >/dev/null \
-    || fail "tagging the correction as feedback failed"
+  stop "$home"; rc=$?
+  assert_equals 0 "$rc" "an untagged captain message blocked the turn"
+  [ ! -s "$home/guard.err" ] || fail "an untagged first message printed: $(cat "$home/guard.err")"
+  kpi "$home" tag feedback https://github.com/acme/juggernaut/pull/41 >/dev/null || fail "tagging failed"
+  pending "$home" >/dev/null && fail "a first correction read as pending"
+  stop "$home"; rc=$?
+  assert_equals 0 "$rc" "a first correction blocked the turn"
+  [ ! -s "$home/guard.err" ] || fail "a first correction printed: $(cat "$home/guard.err")"
+  correct "$home" micromanagement
+  pending "$home" >/dev/null && fail "a different kind of correction counted as a repeat"
+  correct "$home" feedback
   out=$(pending "$home"); rc=$?
-  assert_equals 0 "$rc" "a recorded correction with no artefact is not pending"
+  assert_equals 0 "$rc" "a repeated correction with no artefact is not pending"
   assert_contains "$out" "feedback" "the pending line does not carry the recorded kind"
   stop "$home"; rc=$?
-  assert_equals 2 "$rc" "a turn that followed an owner correction with neither artefact ended"
-  for want in 'HE CORRECTED THE FLEET, AND NOTHING CAPTURED IT' 'jg-owner-rules.sh add --kind owner --words' \
-    'jg-backlog.sh add' 'one time fix'; do
-    grep -qF "$want" "$home/guard.err" || fail "the block did not name '$want': $(cat "$home/guard.err")"
+  assert_equals 0 "$rc" "a repeated owner correction blocked the turn instead of suggesting"
+  for want in 'SOFT SUGGESTION' 'same kind of correction' 'worth a ticket or an owner rule' 'Ask him whether it is worth it' 'one time fix'; do
+    grep -qF "$want" "$home/guard.err" || fail "the soft line did not say '$want': $(cat "$home/guard.err")"
   done
+  [ "$(wc -l < "$home/guard.err")" -le 1 ] || fail "the suggestion is more than one soft line: $(cat "$home/guard.err")"
+  [ ! -e "$home/state/.turnend-claude-blocks" ] || fail "the soft suggestion spent a block budget"
   stop "$home"; rc=$?
-  assert_equals 0 "$rc" "the same correction was charged twice, which can wedge a harness"
+  assert_equals 0 "$rc" "the same correction was suggested twice"
+  [ ! -s "$home/guard.err" ] || fail "the suggestion repeated: $(cat "$home/guard.err")"
   submit "$home" "file a ticket to add CSV export"
   kpi "$home" tag new-work >/dev/null || fail "tagging new work failed"
   stop "$home"; rc=$?
   assert_equals 0 "$rc" "new work was refused for a missing correction capture"
-  pass "the guard refuses a turn that follows an owner correction with no rule and no ticket, once, and never for new work"
+  [ ! -s "$home/guard.err" ] || fail "new work printed a suggestion: $(cat "$home/guard.err")"
+  pass "a first correction is silent, a repeat of the kind gets one soft line, and neither blocks"
+}
+
+test_the_repeat_threshold_is_configurable() {
+  local home="$TMP_ROOT/window"
+  make_home "$home"
+  correct "$home"
+  correct "$home"
+  pending "$home" >/dev/null || fail "setup: a repeat inside the window was not pending"
+  JG_OWNER_CORRECTION_WINDOW=1 JG_OWNER_CORRECTION_REPEATS=3 pending "$home" >/dev/null \
+    && fail "two corrections met a threshold of three"
+  pass "the repeat threshold is the guard's own setting, never a tag demand"
 }
 
 test_an_owner_rule_captures_the_correction() {
   local home="$TMP_ROOT/rule" rc
   make_home "$home"
-  submit "$home" "$CORRECTION"
-  kpi "$home" tag feedback https://github.com/acme/juggernaut/pull/41 >/dev/null || fail "tagging failed"
+  correct "$home"; correct "$home"
+  pending "$home" >/dev/null || fail "setup: the repeated correction was not pending"
   in_home "$home" bash "$home/bin/jg-owner-rules.sh" add --kind owner --words "$CORRECTION" \
     --scope "every owner correction" --enforce "bin/jg-turnend-guard.sh" >/dev/null \
     || fail "adding the owner rule failed"
@@ -89,8 +116,8 @@ test_an_owner_rule_captures_the_correction() {
 test_an_enforcement_ticket_captures_the_correction() {
   local home="$TMP_ROOT/ticket" rc
   make_home "$home"
-  submit "$home" "$CORRECTION"
-  kpi "$home" tag feedback https://github.com/acme/juggernaut/pull/41 >/dev/null || fail "tagging failed"
+  correct "$home"; correct "$home"
+  pending "$home" >/dev/null || fail "setup: the repeated correction was not pending"
   in_home "$home" bash "$home/bin/jg-backlog.sh" add jg-capture \
     "[feature] flag a turn that ends after an owner correction" \
     --body "an owner correction must become a rule or an enforcement ticket" >/dev/null \
@@ -115,7 +142,8 @@ test_a_home_without_the_shared_check_says_so() {
   pass "a home that has not picked the check up says so once instead of pretending it ran"
 }
 
-test_a_correction_with_no_artefact_is_flagged
+test_a_first_correction_is_silent_and_a_repeat_gets_one_soft_line
+test_the_repeat_threshold_is_configurable
 test_an_owner_rule_captures_the_correction
 test_an_enforcement_ticket_captures_the_correction
 test_a_home_without_the_shared_check_says_so

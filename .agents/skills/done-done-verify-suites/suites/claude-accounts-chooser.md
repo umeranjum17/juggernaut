@@ -1,0 +1,3 @@
+# Claude accounts chooser
+
+[Claude accounts chooser](../features/claude-accounts-pick.md): run `bash claude-accounts/tests/claude-accounts-pick.test.sh`; it uses a fixture registry and stub quota-axi, proves proportional consecutive and concurrent assignments within each provider, counter expiry, the switch when one account runs low, install/uninstall of config/account-pool, and Codex weekly-only rest recovery (null five_hour clears when seven_day.left >= rest floor; below floor keeps rest; Claude with five_hour still needs every present window at 100). Live stale-rest pick: `POOL_STATE=<pool state> done-done run claude-accounts-codex-rest` (or `JG_HOME` with `config/account-pool` `state=`).

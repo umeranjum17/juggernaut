@@ -1,0 +1,40 @@
+machine	task	a task's backlog row, status log and delivery	core/machines/observers/task.sh
+state	working	initial	The worker is working on it.	-
+state	parked	normal	The worker waits for a decision.	-
+state	blocked	normal	The worker is stuck and needs help.	-
+state	paused	normal	The worker waits on purpose for something outside.	-
+state	failed	normal	The work failed.	-
+state	unknown	normal	No record says what this worker does now.	-
+state	ready-to-land	normal	Finished; waits in the landing queue, #N	-
+state	landed	normal	On the trunk; cleanup runs	-
+state	cleaned	terminal	On the trunk and cleaned up.	-
+state	rework	normal	The lander named a conflict, or the suite found a red the commit caused and reverted it; the worker fixes it	-
+state	done	terminal	The worker finished a task that needs no landing.	-
+state	stale	normal	The work is already merged but its backlog row is still open.	-
+state	finished-elsewhere	normal	The worker finished and the work is merged, but its backlog row is still open.	-
+state	abandoned	normal	The pull request was closed without a merge; the owner decides if the work is still wanted.	pr
+edge	working	park	parked	bin/jg-lavish-guard.sh:append	-	the worker appends needs-decision	jg-machine-task:each-edge-offered
+edge	working	block	blocked	bin/jg-lavish-guard.sh:append	-	the worker appends blocked	jg-machine-task:each-edge-offered
+edge	working	pause	paused	bin/jg-lavish-guard.sh:append	-	the worker appends paused	jg-machine-task:each-edge-offered
+edge	working	finish	done	bin/jg-lavish-guard.sh:append	-	the worker appends done and the task is not a local-trunk lane	jg-machine-task:each-edge-offered
+edge	working	fail	failed	bin/jg-lavish-guard.sh:append	-	the worker appends failed or its run fails	jg-machine-task:each-edge-offered
+edge	working	lose	unknown	bin/jg-crew-state.sh:emit	-	no record names a current state	jg-machine-task:each-edge-offered
+edge	working	merge-unnoticed	stale	bin/jg-pr-merge.sh:merge or core/trunk-landing/trunk-landing.sh:run	bin/jg-backlog.sh done {id}	the work merged or landed while the row stayed open	jg-machine-task:each-edge-offered
+edge	working	finish-unnoticed	finished-elsewhere	bin/jg-pr-merge.sh:merge or core/trunk-landing/trunk-landing.sh:run	bin/jg-backlog.sh done {id}	the worker reported done and the work merged while the row stayed open	jg-machine-task:each-edge-offered
+edge	working	close-unmerged	abandoned	forge:close-pull-request	bin/jg-captain-hold.sh hold {id} --reason owner-decides	the pull request closed unmerged while the row stayed open	jg-machine-task:each-edge-offered
+edge	parked	resume	working	bin/jg-send.sh:send	-	the decision is answered	jg-machine-task:each-edge-offered
+edge	blocked	resume	working	bin/jg-send.sh:send	-	the blocker is cleared	jg-machine-task:each-edge-offered
+edge	paused	resume	working	bin/jg-send.sh:send	-	the wait ends	jg-machine-task:each-edge-offered
+edge	failed	relaunch	working	bin/jg-control.sh:relaunch	bin/jg-control.sh relaunch {id}	the owner starts the worker again	jg-machine-task:each-edge-offered
+edge	unknown	relaunch	working	bin/jg-control.sh:relaunch	bin/jg-control.sh relaunch {id}	the owner starts the worker again	jg-machine-task:each-edge-offered
+edge	stale	close	done	bin/jg-backlog.sh:done	bin/jg-backlog.sh done {id}	the owner closes the row	jg-machine-task:each-edge-offered
+edge	finished-elsewhere	close	done	bin/jg-backlog.sh:done	bin/jg-backlog.sh done {id}	the owner closes the row	jg-machine-task:each-edge-offered
+edge	abandoned	close	done	bin/jg-backlog.sh:done	bin/jg-backlog.sh done {id}	the owner decides the work is not wanted	jg-machine-task:each-edge-offered
+edge	abandoned	relaunch	working	bin/jg-control.sh:relaunch	bin/jg-control.sh relaunch {id}	the owner decides the work is still wanted	jg-machine-task:each-edge-offered
+edge	working	report-done	ready-to-land	bin/jg-lavish-guard.sh:append	-	the worker appends done on a local-trunk lane	jg-machine-task:each-edge-offered
+edge	ready-to-land	land	landed	core/trunk-landing/trunk-landing.sh:run	-	the lander rebases the one commit and lands it, one lane at a time	jg-machine-task:each-edge-offered
+edge	ready-to-land	conflict	rework	core/trunk-landing/trunk-landing.sh:run	-	the lander names a conflict or a failing check; a moved trunk is no edge, the lander rebases	jg-machine-task:each-edge-offered
+edge	landed	verify-red	rework	bin/jg-trunk.sh:verify	-	the whole suite found a red this commit caused and the commit was reverted	jg-machine-task:each-edge-offered
+edge	landed	clean-up	cleaned	bin/jg-teardown.sh:main	-	cleanup runs unforced	jg-machine-task:each-edge-offered
+edge	rework	report-done	ready-to-land	bin/jg-lavish-guard.sh:append	-	the worker fixes the refusal and appends done for the new head	jg-machine-task:each-edge-offered
+observer	bash "$(dirname "$JG_MACHINES_TABLES")/observers/task.sh" "$1"

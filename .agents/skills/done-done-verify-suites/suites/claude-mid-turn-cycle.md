@@ -1,0 +1,3 @@
+# Claude mid-turn cycle
+
+Claude mid-turn cycle: run `done-done run claude-midturn-cycle` (`bash journeys/claude-midturn-cycle.sh`, which runs `bash tests/jg-turnend-guard.test.sh`); the real `bin/jg-claude-stop-autoarm.sh --mid-turn`, fired as the PostToolUse registration fires it, gives a Squad Lead home with work under way and no watcher a real live cycle with no Stop and no epoch ledger, and a second firing over that healthy cycle starts none; with `JG_CLAUDE_LIVE_E2E=1` the journey also runs `tests/jg-claude-midturn-arm-live-e2e.test.sh`, one real Haiku turn whose cycle is up before the turn ends, and keeps its transcript under `live/` (screen: none).

@@ -167,6 +167,9 @@ test_spawn_isolation_abort() {
   fakebin=$(make_spawn_fakebin "$TMP_ROOT/spawn-fake")
   # The assertions concern identity, not how long an unchanged cwd is polled.
   jg_test_fake_sleep_noop "$fakebin"
+  # A path the poll rejects is retried until the poll budget is spent, and each try runs the spawn core; five tries
+  # are enough to show every rejection cause, so the abort cases do not spend the production 60.
+  export JG_SPAWN_WT_POLLS=5
   # A genuine isolated linked worktree of the project, detached on the default.
   git -C "$proj" worktree add -q --detach "$TMP_ROOT/spawn-wt" >/dev/null 2>&1
   # The non-git case must BE non-git wherever this suite runs. A directory under

@@ -51,7 +51,13 @@ cleanup_sink() {
   [ -z "$SINK_PID" ] || kill "$SINK_PID" 2>/dev/null
   [ -z "$BUS_PID" ] || kill "$BUS_PID" 2>/dev/null
 }
-trap cleanup_sink EXIT
+# The shared library's own traps reap watchers, buses and temp dirs; this file's
+# traps must keep that reap and add the sink and the test bus, on a kill as well
+# as a normal exit, so no child outlives the run.
+trap 'cleanup_sink; jg_test_cleanup' EXIT
+trap 'cleanup_sink; jg_test_cleanup; exit 130' INT
+trap 'cleanup_sink; jg_test_cleanup; exit 143' TERM
+trap 'cleanup_sink; jg_test_cleanup; exit 129' HUP
 
 # start_bus: the reply leg settles a task lease on the home's bus, so the test runs
 # its own JetStream server on a free port and points the lease store at it, instead
@@ -97,10 +103,13 @@ srv.serve_forever()
 PY
   SINK_PID=$!
   local _
-  for _ in $(seq 100); do [ -s "$portfile" ] && { cat "$portfile"; return 0; }; sleep 0.1; done
+  for _ in $(seq 100); do [ -s "$portfile" ] && { PORT=$(cat "$portfile"); return 0; }; sleep 0.1; done
   fail "the publish sink never started"
 }
-PORT=$(start_sink)
+# Called in this shell, never in a command substitution: a subshell would keep
+# SINK_PID to itself and the exit trap could never stop the sink.
+PORT=
+start_sink
 [ -n "$PORT" ] || fail "no sink port"
 
 # A home with the captain-facing path's fakes and one card route.

@@ -218,38 +218,14 @@ fi
 # so this exempts them while guarding every real squad_lead home.
 jg_primary_scope_matches "$JG_ROOT" "$STATE" || exit 0
 
-# --- the Overwatch KPI rule -------------------------------------------------
-# Every captain message is tagged in the turn it arrives; bin/jg-overwatch-kpi.sh
-# owns the ledger, the kinds, and the link a miss needs. The block is charged
-# once per message (the seq in $STATE/.overwatch-kpi-flagged), which keeps every
-# harness bounded; a message left untagged still counts as a miss.
-KPI_PENDING=$("$SCRIPT_DIR/jg-overwatch-kpi.sh" pending 2>/dev/null) || KPI_PENDING=
-KPI_SEQ=${KPI_PENDING%%$'\t'*}
-if [ -n "$KPI_PENDING" ] && [ "$KPI_SEQ" != "$(cat "$STATE/.overwatch-kpi-flagged" 2>/dev/null)" ]; then
-  printf '%s\n' "$KPI_SEQ" > "$STATE/.overwatch-kpi-flagged" 2>/dev/null || true
-  {
-    printf '●%s\n' '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-    printf '●  CAPTAIN MESSAGE NOT TAGGED - OVERWATCH KPI\n'
-    printf '●  Tag it now: new-work, decision-answer, feedback, or micromanagement.\n'
-    printf '●  Feedback and micromanagement are misses: link a Juggernaut ticket or PR that changes code so it stops.\n'
-    printf '●    %s/jg-overwatch-kpi.sh tag <kind> [<ticket id or PR URL>]\n' "$SCRIPT_DIR"
-    printf '●  Message: %.120s\n' "${KPI_PENDING#*$'\t'}"
-    printf '●%s\n' '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-  } >&2
-  exit 2
-fi
-
 # --- the owner-correction capture rule --------------------------------------
 # The owner's standing rule (data/owner-rules.md): "I don't want these feedbacks
-# as one time fix". A captain message that told the fleet to work differently
-# must leave something the whole system reads - an owner rule
-# (bin/jg-owner-rules.sh add) or, when it cannot be a rule yet, an enforcement
-# ticket (bin/jg-backlog.sh add) - in the turn it lands, or the correction dies
-# in one conversation and the next session repeats it. bin/jg-owner-correction.sh
-# owns the record and the predicate; the KPI rule above has already required the
-# tag that record reads. A helper that is missing or cannot answer is never read
-# as "nothing pending": this home has not picked the shared check up and says so
-# once.
+# as one time fix". The guard stays silent on the first correction of a kind; when
+# the same kind repeats inside the window it prints ONE soft line suggesting an
+# owner rule (bin/jg-owner-rules.sh add) or a ticket for the captain to decide,
+# once per correction, and never blocks. It asks for no per-message tagging. bin/jg-owner-correction.sh owns the record and the predicate.
+# A helper that is missing or cannot answer is never read as "nothing pending":
+# this home has not picked the shared check up and says so once.
 owner_correction_unavailable() {  # <why>
   [ ! -e "$STATE/.owner-correction-unavailable" ] || return 0
   : > "$STATE/.owner-correction-unavailable" 2>/dev/null || true
@@ -263,20 +239,10 @@ owner_correction_unavailable() {  # <why>
   exit 2
 }
 
-owner_correction_block() {  # <seq> <kind> <text>
+owner_correction_suggest() {  # <seq> <kind> <text>
   printf '%s\n' "$1" > "$STATE/.owner-correction-flagged" 2>/dev/null || true
-  {
-    printf '●%s\n' '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-    printf '●  HE CORRECTED THE FLEET, AND NOTHING CAPTURED IT\n'
-    printf '●  A correction that stays in this conversation is repeated in the next session.\n'
-    printf '●  Write the rule the whole system reads, in his own words, when it is his own taste or authority:\n'
-    printf '●    %s/jg-owner-rules.sh add --kind owner --words "<his exact words>" --scope "<where it applies>" --enforce "<script or contract that enforces it>"\n' "$SCRIPT_DIR"
-    printf '●  When it is an engineering default every Juggernaut user should get, or cannot be a rule yet, file the ticket instead:\n'
-    printf '●    %s/jg-backlog.sh add <id> "[feature] <what changes>" --body "<summary of what changes and why>"\n' "$SCRIPT_DIR"
-    printf '●  His message (%s): %.160s\n' "$2" "$3"
-    printf '●%s\n' '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-  } >&2
-  exit 2
+  printf '●  SOFT SUGGESTION: he has given the same kind of correction (%s) again: "%.120s". It may be worth a ticket or an owner rule. Ask him whether it is worth it; file nothing without his yes.\n' \
+    "$2" "$3" >&2
 }
 
 if [ ! -x "$SCRIPT_DIR/jg-owner-correction.sh" ]; then
@@ -291,7 +257,7 @@ case "$OWNER_CORRECTION_STATUS" in
      if [ "$OWNER_CORRECTION_SEQ" != "$(cat "$STATE/.owner-correction-flagged" 2>/dev/null)" ]; then
        OWNER_CORRECTION_REST=${OWNER_CORRECTION#*$'\t'}
        OWNER_CORRECTION_REST=${OWNER_CORRECTION_REST#*$'\t'}
-       owner_correction_block "$OWNER_CORRECTION_SEQ" \
+       owner_correction_suggest "$OWNER_CORRECTION_SEQ" \
          "${OWNER_CORRECTION_REST%%$'\t'*}" "${OWNER_CORRECTION_REST#*$'\t'}"
      fi ;;
   *) owner_correction_unavailable "bin/jg-owner-correction.sh could not answer (exit $OWNER_CORRECTION_STATUS)" ;;

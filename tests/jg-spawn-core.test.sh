@@ -32,7 +32,6 @@ check "opencode puts the effort in the config JSON for a provider that exposes i
 check "opencode omits an effort its provider lacks, and an unresolved model" "$("$core" effort-flag opencode xhigh 'anthropic/x')$("$core" effort-flag opencode high default)" ""
 check "an unknown effort word adds nothing" "$("$core" effort-flag claude bogus x)" ""
 check "pi ultra without a model it can validate stops the spawn" "$(rc "$core" effort-flag --harness-script "$ROOT/bin/jg-harness.sh" pi ultra gpt-5)" 1
-check "rigor ranks no-mistakes over direct-PR over local-only" "$("$core" rigor-rank no-mistakes)$("$core" rigor-rank direct-PR)$("$core" rigor-rank local-only)$("$core" rigor-rank other)" 3210
 
 brief=$lab/brief.md
 printf 'intro\nDelivery contract: mode=direct-PR forge=github upstream-consent=github.com/o/r\nShip branch: fm/t1\n' > "$brief"
@@ -52,6 +51,9 @@ check "a missing brief stops the spawn" "$(rc agree --brief "$lab/none.md")" 1
 notices() { "$core" delivery-notices --id t1 --mode local-only --branch fm/t1 --project proj "$@" 2>&1; }
 check "dropping below the standing posture is announced" "$(notices --standing-mode no-mistakes --standing-branch fm/ | head_is "notice: t1 ships mode=local-only while the standing posture for proj is no-mistakes")" "notice: t1 ships mode=local-only while the standing posture for proj is no-mistakes"
 check "a conditional policy raises no notice" "$(notices --standing-mode no-mistakes-prod-only --standing-branch fm/)" ""
+# less: 1 when <mode> under standing <standing> is announced as less rigor, else 0.
+less() { notices --standing-branch fm/ --mode "$1" --standing-mode "$2" | grep -c 'less rigor'; }
+check "rigor ranks no-mistakes over direct-PR over local-only and local-trunk over any other word" "$(less direct-PR no-mistakes)$(less local-only direct-PR)$(less local-trunk local-only)$(less other local-only)$(less no-mistakes direct-PR)" 11010
 check "a registered prefix the branch lacks is announced" "$(notices --standing-mode '' --standing-branch x/ | head_is "notice: t1 ships branch=fm/t1 while proj registers the ship-bra")" "notice: t1 ships branch=fm/t1 while proj registers the ship-bra"
 
 # The argument grammar: the dispatcher prints the parsed variables for the spawn to eval, or the
@@ -112,6 +114,21 @@ check "a filtered launch forwards names by reference and ends in the quoted laun
 # The launch templates: the verified command per adapter, with its placeholders, by kind.
 check "a claude ship worker is launched with the dialog tool off and the worker statement" "$("$core" launch-template claude ship | grep -o -e '--disallowedTools=AskUserQuestion' -e 'You are a task worker launched by Juggernaut' | wc -l)" 2
 check "a claude squad_lead gets neither" "$("$core" launch-template claude squad_lead | grep -c -e AskUserQuestion -e 'task worker')" 0
+# The Claude tool part: a worker and a lead are launched without the tools they may not use, and with
+# no MCP server, so the account's connectors (mail, file sharing, calendar, documents) never load.
+deny_of() { "$core" launch-template claude "$1" | sed -n 's/.*--disallowedTools=\([^ ]*\) .*/\1/p'; }
+worker_deny=AskUserQuestion,Artifact,Workflow,Agent,ScheduleWakeup,ReportFindings,ListAgents,Monitor,CronCreate,CronDelete,CronList,RemoteTrigger,SendMessage,EnterWorktree,ExitWorktree,PushNotification,DesignSync
+check "a claude ship and a Recon worker deny the dialog, fan-out, publish and notify tools" "$(deny_of ship)|$(deny_of scout)" "$worker_deny|$worker_deny"
+check "every claude kind loads no MCP server, so no account connector" "$(for k in ship scout squad_lead; do "$core" launch-template claude "$k" | grep -c -e ' --strict-mcp-config '; done | tr '\n' ' ')" "1 1 1 "
+check "no claude kind denies a tool a task works with" "$(for k in ship squad_lead; do deny_of "$k" | tr ',' '\n'; done | grep -cx -e Bash -e Read -e Edit -e Write -e Glob -e Grep -e Skill -e ToolSearch -e WebFetch -e WebSearch -e TaskOutput -e TaskStop -e NotebookEdit)" 0
+# The lead's list is the delegation guard's own: in a marked squad_lead home the guard refuses every
+# name on it but Artifact, the one addition, and lets Artifact and the tools it leaves open through.
+mkdir -p "$lab/lg/bin" "$lab/lg/state"; : > "$lab/lg/AGENTS.md"; printf 'lead1\n' > "$lab/lg/.jg-squad-lead-home"
+guard() { env -u JG_ALLOW_SUBAGENT JG_ROOT_OVERRIDE="$lab/lg" JG_HOME="$lab/lg" JG_STATE_OVERRIDE="$lab/lg/state" bash "$ROOT/bin/jg-subagent-pretool-check.sh" --claude --tool "$1" 2>/dev/null; echo "$?"; }
+lead_deny=$(deny_of squad_lead)
+check "a claude squad_lead denies the guard's delegation tools and Artifact" "$lead_deny" "Artifact,Agent,Task,ListAgents,Workflow,ScheduleWakeup,CronCreate,CronDelete,RemoteTrigger,SendMessage,EnterWorktree,ExitWorktree,Monitor"
+check "the guard refuses every lead-denied name but Artifact" "$(for t in $(printf %s "$lead_deny" | tr ',' ' '); do [ "$t" = Artifact ] || printf '%s=%s ' "$t" "$(guard "$t")"; done | tr ' ' '\n' | grep -vc '=2$')" 0
+check "the guard lets Artifact and the observe and plan tools through, so the lead keeps those" "$(for t in Artifact TaskStop TaskOutput CronList TaskCreate; do guard "$t"; done | tr '\n' ' ')" "0 0 0 0 0 "
 check "a codex worker disables hooks and a codex squad_lead keeps them" "$("$core" launch-template codex scout | grep -c -e '--disable hooks')|$("$core" launch-template codex squad_lead | grep -c -e '--disable hooks')" "1|0"
 check "an opencode worker denies the question tool and a squad_lead keeps it" "$("$core" launch-template opencode ship | grep -cF 'question":"deny')|$("$core" launch-template opencode squad_lead | grep -cF 'question":"deny')" "1|0"
 check "pi and pi-signed share one template" "$("$core" launch-template pi ship)" "$("$core" launch-template pi-signed ship)"

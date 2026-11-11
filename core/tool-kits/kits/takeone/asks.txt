@@ -1,0 +1,8 @@
+# <kit or none> | <ask>: what `jg-tool-kit.sh resolve` must print for it
+takeone | make a demo video of the new board
+takeone | a take one film of the login page
+takeone | show it moving on the settings screen
+takeone | film of the checkout page with takeone
+none | build the onboarding screen
+none | build a demo video of the new board
+none | why is the login slow

@@ -14,7 +14,7 @@
 # charters still use a single `{TASK}` charter fill. Juggernaut may adjust other
 # sections when the task genuinely deviates (e.g. working an existing external
 # PR instead of shipping a new one).
-# Usage: jg-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--migration-row <slug|none>] [--off-critical-path <captain-words>] [--forge <none|gerrit|forgejo> [--shape squash]] [--design-call <yes|no> --design-reason <text>] [--demo-call <yes|no> --demo-reason <text>] [--herdr-lab] [--medium <mobile|web|desktop|cli|backend>]
+# Usage: jg-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only|local-trunk> [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--migration-row <slug|none>] [--off-critical-path <captain-words>] [--forge <none|gerrit|forgejo> [--shape squash]] [--design-call <yes|no> --design-reason <text>] [--demo-call <yes|no> --demo-reason <text>] [--herdr-lab] [--medium <mobile|web|desktop|cli|backend>]
 #        jg-brief.sh <task-id> <repo-name> --scout [--depth <quick|standard|deep>] [--base-branch <branch>] [--herdr-lab]
 #        jg-brief.sh <task-id> --squad-lead {<project>...|--no-projects}
 #   --medium names the project's medium at intake, so the brief can carry this
@@ -250,6 +250,8 @@ esac
 . "$SCRIPT_DIR/jg-classify-lib.sh"
 # shellcheck source=bin/jg-dod-lib.sh
 . "$SCRIPT_DIR/jg-dod-lib.sh"
+# shellcheck source=bin/jg-trunk-policy-lib.sh
+. "$SCRIPT_DIR/jg-trunk-policy-lib.sh"
 # shellcheck source=bin/jg-role-lib.sh
 . "$SCRIPT_DIR/jg-role-lib.sh"
 # shellcheck source=bin/jg-preferred-stack-lib.sh
@@ -412,15 +414,15 @@ done
 # missing or invalid value stops the scaffold rather than silently defaulting.
 if [ "$KIND" = ship ]; then
   [ "$MODE_SET" -eq 1 ] || {
-    echo "error: ship briefs require --mode <no-mistakes|direct-PR|local-only>; resolve it at intake from the captain's instruction and the project's registered posture in data/projects.md" >&2
+    echo "error: ship briefs require --mode <no-mistakes|direct-PR|local-only|local-trunk>; resolve it at intake from the captain's instruction and the project's registered posture in data/projects.md" >&2
     exit 1
   }
   case "$MODE" in
-    no-mistakes|direct-PR|local-only) ;;
+    no-mistakes|direct-PR|local-only|local-trunk) ;;
     no-mistakes-prod-only)
       echo "error: no-mistakes-prod-only is a registry policy, not a task mode; classify this task's surface and resolve it to no-mistakes or direct-PR at intake" >&2
       exit 1 ;;
-    *) echo "error: --mode must be one of no-mistakes, direct-PR, local-only (got '$MODE')" >&2; exit 1 ;;
+    *) echo "error: --mode must be one of no-mistakes, direct-PR, local-only, local-trunk (got '$MODE')" >&2; exit 1 ;;
   esac
 elif [ "$MODE_SET" -eq 1 ]; then
   echo "error: --mode applies only to ship briefs; a scout delivers a report and a squad_lead charter is not a delivery contract" >&2
@@ -543,7 +545,7 @@ fi
 # brief that disagrees, so the two can never drift.
 # bin/jg-version-branch-lib.sh owns which branch that is, and a project without
 # one keeps the default-branch setup sentence and its --base-branch flag path.
-if [ "$BASE_BRANCH_SET" -eq 0 ] && [ "$KIND" = ship ] && [ "$MODE" != local-only ] \
+if [ "$BASE_BRANCH_SET" -eq 0 ] && [ "$KIND" = ship ] && [ "$MODE" != local-only ] && [ "$MODE" != local-trunk ] \
   && [ "$FORGE" = none ] && [ "$PROJECT_DIR_SET" -eq 1 ] && [ -n "$PROJECT_DIR" ]; then
   BASE_BRANCH=$(jg_current_version_branch "$PROJECT_DIR") || BASE_BRANCH=
 fi
@@ -602,7 +604,7 @@ fi
 # Self-repository pre-gate for a publishing ship brief: detectable only when
 # --project was passed, so the check runs here only then. bin/jg-spawn.sh
 # repeats it at launch with the resolved project path.
-if [ "$KIND" = ship ] && [ "$MODE" != local-only ] && [ "$PROJECT_DIR_SET" -eq 1 ]; then
+if [ "$KIND" = ship ] && [ "$MODE" != local-only ] && [ "$MODE" != local-trunk ] && [ "$PROJECT_DIR_SET" -eq 1 ]; then
   [ -n "$PROJECT_DIR" ] || {
     echo "error: --project requires a non-empty directory" >&2
     exit 1
@@ -748,8 +750,8 @@ if [ -e "$CONFIG/wait-no-turns" ]; then
 fi
 
 # The local-trunk landing rule, in one place for the lane brief and the squad lead charter (local-trunk projects only).
-TRUNK_REBASE_RULE="Before your commit can land, rebase it on the LATEST tip of the local trunk, taken at that moment (the trunk moves while you work; a base you took earlier is stale).
-If the rebase conflicts, YOU resolve every conflict in your own change, then prove it again at the new head; never hand a conflict to anyone else, and never force a landing: no force flag, no hand-moved trunk ref, no landing past a conflict or a stale base exists, and a landing that is refused for either reason is fixed by rebasing and proving again."
+TRUNK_REBASE_RULE="Juggernaut's landing check rebases your commit onto the latest tip of the local trunk by itself, lints the changed files, runs the changed files' tests against the tip's own result and lands it; you never rebase for it. Your done and the landing both need the whole proof at your exact head: a PASS completion receipt, approved merge-card evidence that cites files, and a sealed done-done run holding them; a PASS receipt alone is refused, and nothing may be committed after the seal. The owner signature is recorded after the landing and never blocks it.
+If the landing check reports that your change conflicts with the trunk, YOU resolve every conflict in your own change, then report ready again; never hand a conflict to anyone else, and never force a landing: no force flag, no hand-moved trunk ref, no landing past a conflict exists, and a landing that is refused is fixed in the lane and reported ready again."
 jg_brief_local_trunk() {  # <project>: true when the project is registered local-trunk
   [ "$(JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-project-mode.sh" --raw "$1" 2>/dev/null | cut -d' ' -f1)" = local-trunk ]
 }
@@ -1045,7 +1047,7 @@ case "$MODE" in
   direct-PR)
     SETUP2=""
     ;;
-  local-only)
+  local-only|local-trunk)
     SETUP2=""
     ;;
   *)  # no-mistakes
@@ -1065,17 +1067,19 @@ Replace the survey line below with the record, then run \`$JG_ROOT/bin/jg-prior-
 Prior art (survey): <replace with \`Prior art pick: <name>\` and \`Licence: <licence - usable here or not>\` lines, or with \`Prior art: none needed - <why this work is neither new nor complex>\`>
 EOF
 PRIOR_ART_SECTION=$'\n'${PRIOR_ART_SECTION%$'\n'}$'\n'
-# A project registered local-trunk (docs/trunk-flow.md) ships its lanes as local-only tasks that land on the local
+# A project registered local-trunk (docs/trunk-flow.md) ships local-trunk tasks; legacy local-only tasks land on the local
 # trunk by themselves. Only that posture gets this section; every other project's brief is exactly as it was.
 TRUNK_SECTION=
-if [ "$MODE" = local-only ] && jg_brief_local_trunk "$REPO"; then
+TRUNK_NAME=$(JG_HOME="$JG_HOME" jg_trunk_branch "$REPO" "$STATE" 2>/dev/null || true)
+: "${TRUNK_NAME:=trunk}"
+if { [ "$MODE" = local-only ] || [ "$MODE" = local-trunk ]; } && jg_brief_local_trunk "$REPO"; then
   TRUNK_SECTION="
 # Local trunk lane
 This project is registered local-trunk: there is no feature pull request, and the only pull request is the release one, raised on the captain's word.
-Your branch must be exactly ONE commit on top of the local trunk tip (the \`trunk\` branch of the project), and the commit message must carry its ticket reference (the task id or its ticket key).
+Your branch must be exactly ONE commit on top of the local trunk tip (the \`$TRUNK_NAME\` branch of the project, which is the commit your worktree starts on; compare against that branch only, never an older trunk branch), and the commit message must carry its ticket reference (the task id or its ticket key).
 $TRUNK_REBASE_RULE
 A stale or conflicting change is refused with its paths named and is never landed dirty.
-When the sealed done-done proof has passed at that exact head, publish the completion receipt for it and report ready. Juggernaut's landing check then lands the commit on the trunk and cleans up unforced; you never land, push, go live or release.
+Run the light gate on your changed files (the lint, then their tests), commit, and report ready with your done line. Juggernaut's landing check then lands the commit on the trunk and cleans up unforced; you never land, push, go live or release.
 "
 fi
 DESIGN_SECTION=
@@ -1140,6 +1144,13 @@ STACK_BLOCK=
 RULES_SECTION=$(jg_rules_section "$CONFIG")
 RULES_BLOCK=
 [ -z "$RULES_SECTION" ] || RULES_BLOCK="$RULES_SECTION"$'\n'
+# Every ship brief carries the build rule, once, verbatim from the captain.
+IFS= read -r -d '' BUILD_RULE_BLOCK <<'EOF' || true
+# Build rule
+Always build code cleanly, modularly, and with proper architecture and separation of concerns. Never simply bolt on a feature because I asked for it. If you can't find an easy way to build it naturally, and you'd recommend a refactor to make the whole thing cleanly, stop your work ahead of time and say so.
+To say so, append `needs-decision [at=<epoch>]: {the refactor that would make this clean}` to the status file and stop.
+EOF
+BUILD_RULE_BLOCK=$'\n'${BUILD_RULE_BLOCK%$'\n'}$'\n'
 
 RULE1=$(jg_ship_rule_one "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH") || exit 1
 RISK_SECTION=
@@ -1156,7 +1167,7 @@ You are a operator: an autonomous worker agent managed by juggernaut. Work on yo
 $TASK_SECTION
 $PRIOR_ART_SECTION$TRUNK_SECTION$DESIGN_SECTION$DEMO_SECTION$UI_SECTION$RISK_SECTION
 $HERDR_SECTION
-$STACK_BLOCK$RULES_BLOCK
+$STACK_BLOCK$RULES_BLOCK$BUILD_RULE_BLOCK
 
 # Setup
 $SETUP_BASE
@@ -1205,6 +1216,7 @@ $SHARED_INFRA_RULE
    Binding evidence rule: every file the \`evidence:\` line cites must be a file your own done-done run wrote, inside that run's capture folder under \`$DATA/$ID/\`, so the run record ties it to the commit it sealed. A file you copied or saved into \`$DATA/\` by hand is not evidence: nothing ties it to a commit, the judge is never asked, and the PR cannot merge. A tooling change with no user-visible screen still needs \`screen: none\` alone on its own line in the Checks block, and still needs the run-owned text captures (the run's own log or output files) cited in \`evidence:\`.
    d. Before the PR exists, write the same \`## Checks\` block to a draft file (for example \`$DATA/$ID/checks-draft.md\`) and run \`JG_HOME=$JG_HOME $JG_ROOT/core/merge-on-green/checks-lint.sh <draft file> <evidence folder>\` until it prints PASS, so a lint failure shows before the PR is open. Paste the passing block into the PR body, then run the same command with \`<PR url>\` in place of the draft file until it prints PASS.
    e. Publish the receipt bound to the PR head with the Completion receipt command under Definition of done, with \`JG_RECEIPT_PR=<PR url>\` set to the PR's full URL: a receipt for a PR needs it.
+9. If your fix is for a state that should not exist, make the implicit state machine explicit: find the machine, write its transition table, give it one owner, and test each transition (the \`diagnostic-reasoning\` skill, section "Make the implicit state machine explicit").
 
 $WAIT_BLOCK$INBOX_SECTION
 

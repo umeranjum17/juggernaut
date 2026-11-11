@@ -77,7 +77,11 @@
 #
 # Usage: jg-supervise-daemon.sh
 #          Long-lived background loop. Normally started by the /watchover skill, which
-#          sets state/.afk first. Env knobs:
+#          sets state/.afk first. A squad lead on a harness with no background
+#          shell cycle (Codex) runs it always-on instead, through
+#          bin/jg-lead-daemon.sh, with JG_LEAD_DAEMON=1: no presence gate (no
+#          human types in a lead pane), state/.lead-daemon while it lives.
+#          Env knobs:
 #          JG_SUPERVISOR_TARGET     supervisor pane target (override; otherwise
 #                                   auto-discovered per backend - $TMUX_PANE
 #                                   under tmux, "<session>:<pane-id>" from
@@ -268,9 +272,12 @@ _file_age() {  # seconds since mtime; very large if missing
 }
 
 # --- presence-gating helpers (PURE-ish: side-effect-free reads of state) -----
-# afk_active: 0 if the durable away-mode flag exists, 1 otherwise.
+# afk_active: 0 if the durable away-mode flag exists, or this daemon runs as a
+# squad lead's always-on daemon (JG_LEAD_DAEMON=1, marker state/.lead-daemon), 1
+# otherwise. No human types in a lead pane, so the presence gate does not apply
+# to a lead: its daemon injects only actionable events, whatever .afk says.
 afk_active() {  # <state>
-  [ -e "$1/$AFK_FLAG_NAME" ]
+  [ -e "$1/$AFK_FLAG_NAME" ] || [ -f "$1/.lead-daemon" ]
 }
 
 # afk_enter / afk_exit: write/clear the away-mode flag. Called by the /watchover
@@ -1186,7 +1193,7 @@ window_for_task() {  # <task-key> [state]
 #     line, or a previous injection's unsent text), defer entirely - injecting
 #     would merge with the human's text.
 inject_msg() {  # <message> [state]
-  local msg=$1 state target backend retries sleep_s verdict composer encoded bytes errf err='' body
+  local msg=$1 state target backend retries sleep_s verdict composer encoded bytes errf err='' body unsent resent
   state="${2:-$(_state_root)}"
   # (1) Presence-gate: inject ONLY when afk is active. When afk is off, the
   # daemon self-handles and stays quiet; juggernaut drives the normal always-on
@@ -1228,6 +1235,20 @@ inject_msg() {  # <message> [state]
   #      on anything that is not affirmatively 'empty'. A deferred escalation
   #      stays buffered for the next cycle or the catch-up flush.
   composer=$(jg_backend_composer_state "$backend" "$target" 2>/dev/null)
+  #      The one exception is the daemon's own earlier text, left typed by a
+  #      swallowed Enter: it is submitted once more (Enter only) and the new
+  #      text, if it differs, follows into the now-empty composer.
+  unsent="$state/.subsuper-inject-unsent"
+  if [ "$composer" = pending ] && [ -s "$unsent" ]; then
+    resent=$(cat "$unsent")
+    verdict=$(jg_backend_resubmit_typed "$backend" "$target" "$resent" "${JG_INJECT_CONFIRM_RETRIES:-$INJECT_CONFIRM_RETRIES_DEFAULT}" "${JG_INJECT_CONFIRM_SLEEP:-$INJECT_CONFIRM_SLEEP_DEFAULT}")
+    if [ "$verdict" = empty ]; then
+      rm -f "$unsent"
+      log "inject resent the daemon's own unsent text"
+      [ "$resent" != "$msg" ] || return 0
+      composer=$verdict
+    fi
+  fi
   if [ "$composer" != empty ]; then
     INJECT_LAST_FAILURE="deferred: supervisor composer not confirmed-empty (state=${composer:-unknown}: pending input, dead-shell prompt, or unreadable pane)"
     log "inject $INJECT_LAST_FAILURE"
@@ -1266,8 +1287,11 @@ inject_msg() {  # <message> [state]
     rm -f "$errf"
   fi
   if [ "$verdict" = empty ]; then
+    rm -f "$unsent"
     return 0  # Backend confirmed the submit.
   fi
+  # Typed but unconfirmed: remember our own text so the next try can submit it.
+  case "$verdict" in send-failed|holds-text|not-withdrawable|withdrawn|record-missing|dead|missing) ;; *) printf '%s' "$msg" > "$unsent" ;; esac
   err=$(_collapse_newlines "$err")
   _utf8_prefix "$err" 512 err
   if [ "$verdict" = send-failed ]; then
@@ -1547,6 +1571,13 @@ jg_super_main() {
     exit 1
   fi
   echo "$$" > "$PIDFILE"
+  # An always-on lead daemon (bin/jg-lead-daemon.sh) declares itself with a marker
+  # the turn-end guard and Main's lead-liveness check read (jg-wake-lib.sh); the
+  # marker lives exactly as long as this daemon does.
+  if [ "${JG_LEAD_DAEMON:-0}" = 1 ]; then
+    printf '%s\n' "$$" > "$STATE/.lead-daemon" \
+      || { echo "error: could not write $STATE/.lead-daemon" >&2; jg_lock_release "$LOCK" 2>/dev/null || true; rm -f "$PIDFILE"; exit 1; }
+  fi
   # The recorded identity is what proves this daemon still owns supervision after
   # its watcher child exits (jg_afk_daemon_owns_supervision, read by the turn-end
   # guard). Startup continues without it - a supervising daemon must not refuse to
@@ -1650,6 +1681,7 @@ jg_super_main() {
     fi
     jg_lock_release "$LOCK" 2>/dev/null || true
     rm -f "$PIDFILE" 2>/dev/null || true
+    [ "${JG_LEAD_DAEMON:-0}" != 1 ] || rm -f "$STATE/.lead-daemon" 2>/dev/null || true
     log "daemon shutting down"
     exit 0
   }

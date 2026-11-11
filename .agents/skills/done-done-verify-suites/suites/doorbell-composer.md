@@ -1,0 +1,3 @@
+# Doorbell never sticks in a composer
+
+Doorbell never sticks in a composer: run `done-done run -- bash tests/jg-doorbell-composer.test.sh` (and `bash tests/jg-sentinel-inbox-ring.test.sh`) with the log written into `$DONE_DONE_EVIDENCE_ROOT`; the real `jg-send.sh` ring over recorded composer frames (`tests/fixtures/doorbell-composer`) proves a stuck doorbell is submitted then cleared after the 10 s wait, a partly typed one is cleared and never submitted, a human draft is never keyed, the prompt hook strips a leading doorbell line and counts the words after it, and an attended primary (no away record) is never typed at by the sentinel (screen: none).

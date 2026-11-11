@@ -158,44 +158,40 @@ cycle
 [ "$(grep -c 'level=main' "$dir/events")" -eq 1 ] || fail 'Main-owned escalation repeated on a later poll'
 pass 'a Main-owned overdue wait escalates once to Main without paging the captain'
 
-# Re-raise only when the wait changed. The wait above sits at the Main hop; its
-# re-fire comes due again and again, and an unchanged wait must stay silent, with
-# the durable log (not a wake) recording each skipped raise.
-raised="$dir/state/.waiting-timers/.raised/lane"
-unchanged_log="$dir/state/.waiting-timers/.unchanged.log"
-[ -f "$raised" ] || fail 'the Main escalation left no record of what it said'
-due_refire() {  # <dir>: the Main hop's re-fire interval has passed since its last raise
+# Queue acknowledgement alone is not owner action: an unchanged blocked launch must keep ringing.
+due_refire() {
   local file="$1/state/.waiting-timers/lane" past
   past=$(( $(date +%s) - 2000 ))
   IFS=$'\t' read -r sig since _ _ key _ < "$file"
   printf '%s\t%s\t%s\t%s\t%s\t0\t0\t0\n' "$sig" "$since" "$past" "$past" "$key" > "$file"
 }
-due_refire "$dir"
+for attempt in 1 2 3; do
+  due_refire "$dir"
+  : > "$dir/events"
+  cycle
+  grep -q 'level=main; still open' "$dir/events" || fail "acknowledged but unhandled blocker stopped ringing at $attempt"
+done
+# A synthetic explicit binary is absent. The owner fixes that dependency and retries it.
+printf '%s\n' "$dir/missing-pi" > "$dir/config/pi-bin"
+if "$(cat "$dir/config/pi-bin")" > "$dir/retry.log" 2>&1; then fail 'missing explicit binary launched'; fi
+printf 'needs-decision [key=unrelated]: retain this separate call\n' >> "$dir/state/lane.status"
+printf '#!/usr/bin/env bash\nprintf "owner retry succeeded\\n"\n' > "$dir/pi"
+chmod +x "$dir/pi"
+printf '%s\n' "$dir/pi" > "$dir/config/pi-bin"
+"$(cat "$dir/config/pi-bin")" > "$dir/retry.log" || fail 'owner retry failed'
+printf 'resolved [key=wait]: explicit binary corrected; retry succeeded\nworking: resumed\n' >> "$dir/state/lane.status"
 : > "$dir/events"
 cycle
-[ "$(grep -c 'waiting-state lane' "$dir/events")" -eq 0 ] || fail 'an unchanged wait woke a model on its re-fire'
-grep -q 'lane.*main.*unchanged' "$unchanged_log" || fail 'the unchanged re-raise left no durable log line'
-IFS=$'\t' read -r _sig _since _owner _parent _key _misses _card last < "$dir/state/.waiting-timers/lane"
-[ "$last" -gt 1 ] || fail 'a silent re-raise did not move the clock on'
-# The hop outlives its longest interval (the fixture sets the card time to 999999): one backstop raise, then silence again.
-IFS=$'\t' read -r sfp sstart sspent < "$raised"
-printf '%s\t%s\t%s\n' "$sfp" "$((sstart - 2000000))" "$sspent" > "$raised"
-due_refire "$dir"
 cycle
-[ "$(grep -c 'level=main; still open' "$dir/events")" -eq 1 ] || fail 'a wait that outlived its hop did not raise once'
-due_refire "$dir"
-: > "$dir/events"
-cycle
-[ "$(grep -c 'waiting-state lane' "$dir/events")" -eq 0 ] || fail 'the hop raised again after its backstop'
-# A changed wait raises at once.
-printf 'blocked [at=%s] [key=wait]: external condition, new blocker text\n' "$(date +%s)" >> "$dir/state/lane.status"
-prime_status_seen "$dir/state" "$dir/state/lane.status"
-cycle
-cycle
-[ "$(grep -c 'level=owner' "$dir/events")" -ge 1 ] || fail 'a changed wait did not raise'
-pass 'an unchanged re-raise is silent and logged, a changed wait and a hop backstop still raise'
+# The unrelated call survives; only the launch wait is closed.
+grep -q 'unrelated' "$dir/drain" || fail 'owner action lost an unrelated call'
+! grep -q 'waiting-state lane (blocked key=wait' "$dir/events" || fail 'handled launch kept ringing'
+grep -q 'owner retry succeeded' "$dir/retry.log" || fail 'no concrete owner action'
+printf 'owner-action: configured synthetic binary exit=0 stdout=%s; launch wait closed; unrelated call open\n' "$(cat "$dir/retry.log")"
+pass 'durable blocker delivery and acknowledgement keep ringing until owner fixes the explicit binary and retries; unrelated call survives'
+if [ "${JG_WAIT_TIMERS_OWNER_CONTINUATION_ONLY:-0}" = 1 ]; then exit; fi
 
-# A refreshed [at=] stamp is not a change; a new supervisor session still hears the wait.
+# A refreshed [at=] stamp cannot silence a blocker; a new session still hears it.
 dir=$(make_case reraise-forced)
 mkdir -p "$dir/home/config" "$dir/tmp" "$dir/config"
 printf 'kind=ship\nbackend=tmux\nwindow=fake:1\n' > "$dir/state/lane.meta"
@@ -208,17 +204,17 @@ cycle
 due_refire "$dir"
 : > "$dir/events"
 cycle
-[ "$(grep -c 'waiting-state lane' "$dir/events")" -eq 0 ] || fail 'the owner hop re-raised an unchanged wait'
+grep -q 'waiting-state lane .*still open' "$dir/events" || fail 'unchanged owner wait stopped ringing'
 printf 'blocked [at=%s] [key=wait]: external condition\n' "$(( $(date +%s) + 1 ))" >> "$dir/state/lane.status"
 due_refire "$dir"
 cycle
 cycle
-[ "$(grep -c 'waiting-state lane' "$dir/events")" -eq 0 ] || fail 'a refreshed time stamp counted as a changed wait'
+grep -q 'waiting-state lane .*still open' "$dir/events" || fail 'stamp refresh suppressed the unresolved wait'
 IFS=$'\t' read -r sig since owner parent key misses card _ < "$dir/state/.waiting-timers/lane"
 printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t1\n' "$sig" "$since" "$owner" "$parent" "$key" "$misses" "$card" > "$dir/state/.waiting-timers/lane"
 cycle
 grep -q 'waiting-state lane .*still open' "$dir/events" || fail 'a new supervisor session was not told about the open wait'
-pass 'a refreshed stamp stays silent and a new supervisor session still hears the open wait'
+pass 'a refreshed stamp cannot silence a blocker and a new supervisor session hears the open wait'
 # A blocked wait that names a clearing time still ahead is a planned wait (the wake classifier's
 # plannedBlocked): the timers arm no episode for it, the same as for a timed pause, and the
 # fixtures above name no time because they stand for a wait with none.
@@ -369,9 +365,10 @@ printf 'blocked [key=tmux-wait]: external dependency\n' > "$dir/state/tmux-lane.
 prime_status_seen "$dir/state" "$dir/state/herdr-lane.status"
 prime_status_seen "$dir/state" "$dir/state/tmux-lane.status"
 : > "$dir/events"
-export JG_BACKEND_HERDR_READ_TIMEOUT=1 JG_TIMEOUT_MECHANISM_OVERRIDE=bash
+# Fast checks run before inventory; exercise their existing portable deadline too.
+export JG_BACKEND_HERDR_READ_TIMEOUT=1 JG_TIMEOUT_MECHANISM_OVERRIDE=bash JG_CHECK_FORCE_FALLBACK=1
 cycle
-unset JG_BACKEND_HERDR_READ_TIMEOUT JG_TIMEOUT_MECHANISM_OVERRIDE
+unset JG_BACKEND_HERDR_READ_TIMEOUT JG_TIMEOUT_MECHANISM_OVERRIDE JG_CHECK_FORCE_FALLBACK
 grep -q 'check: waiting-state tmux-lane .*level=owner' "$dir/events" || fail 'stalled native lookup stopped monitoring the healthy tmux lane'
 ! grep -q 'herdr-lane' "$dir/events" || fail 'lane on a stalled native session raised an alert'
 grep -q 'agent list for fixture failed (code 124, deadline 1s); its lanes are unknown this poll' "$dir/err" || fail 'native failure diagnostic missing'

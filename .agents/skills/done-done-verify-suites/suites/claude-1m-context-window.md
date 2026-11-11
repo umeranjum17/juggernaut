@@ -1,0 +1,3 @@
+# Claude 1M context window
+
+Claude 1M context window: run `done-done run claude-1m-context` with `JG_BEADS_TEST_BD` and `JG_BEADS_TEST_DOLT` naming the pinned builds; the real `bin/jg-spawn.sh` over a fixture home with `config/claude-account` set to `ordinary` and `config/claude-1m-accounts` listing it launches a Claude lane asked for `claude-opus-5-5` as `claude-opus-5-5[1m]` on its launch line and in the task record's `model=`, a relaunch of that record keeps it, `claude-fable-5-2[1m]` is not doubled, and a Claude lane on an unlisted account or a codex lane keeps the model as chosen (cases T9 to T11 of `tests/jg-spawn-model.test.sh`); the run writes its log and `steps.json` (screen: none).

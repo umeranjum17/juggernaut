@@ -100,6 +100,7 @@ A denied name is removed from the model's schema entirely.
 The model is never offered the tool, so there is no call to intercept, no matcher to get wrong, no fail-open path, and no dependence on the model's cooperation.
 This is removal, not interception, and it is strictly stronger than any hook.
 
+A Claude Squad Lead that `bin/jg-spawn.sh` launches already gets the guard's known delegation tools removed by its launch flags (see [`configuration.md`](configuration.md#built-in-workers-cannot-ask-the-human)), so this local list is for a primary started any other way.
 This list is recommended local hardening because it closes the known Claude surface before the hook is needed.
 It is not tracked for two reasons.
 

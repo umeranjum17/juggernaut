@@ -60,6 +60,11 @@
 # the composer visibly holds pending text the ring is skipped with a notice and
 # the watcher re-rings an ordinary record later; no composer verdict is
 # delivery proof on this plane, and a failed ring never fails the send.
+# One bell per unread batch while the worker is busy: when an earlier unhandled
+# record already has a landed ring and the worker's turn is still running, the
+# send records and does not ring again (the bell names the whole inbox); an idle
+# worker is rung again. jg_task_inbox_bell_standing owns that rule and the
+# re-ring ladder is unchanged.
 #
 # TYPED - the LOCAL text that must reach the terminal itself: a harness-native
 # invocation (a leading "/", or a leading "$" to a codex target) must reach
@@ -872,7 +877,7 @@ else
     exit 1
   fi
   # An order that names a [captain-ask] or Recon/plan-born ticket is a build order unless it
-  # says kind=recon; it needs the captain's signed approval (bin/jg-captain-ask-lib.sh).
+  # says kind=recon; it needs a record of the captain's yes (bin/jg-captain-ask-lib.sh).
   if [ -n "$order_route_tag" ] && ! [[ "$MESSAGE" =~ (^|[[:space:]])kind=(recon|scout)([[:space:]]|$) ]] &&
     [[ "$MESSAGE" =~ (^|[[:space:]])ticket=([A-Za-z0-9._-]+)([[:space:]]|$) ]]; then
     order_ticket=${BASH_REMATCH[2]}
@@ -885,7 +890,7 @@ else
       fail() { echo "error: [$order_route_tag] steer not sent: $*" >&2; exit 1; }
       # shellcheck source=bin/jg-captain-ask-lib.sh
       . "$SCRIPT_DIR/jg-captain-ask-lib.sh"
-      guard_captain_ask_build "$order_ticket" "$(jg_backlog_row_show "$(jg_backlog_data_absolute "$DATA")" "$order_ticket" --full)"
+      guard_captain_ask_build "$order_ticket"
     fi
   fi
   if [ "$TARGET_BACKEND" = remote ]; then
@@ -1186,7 +1191,11 @@ else
     # because the watcher owns loss detection from here, either through its
     # bounded re-ring ladder or direct unavailable-endpoint recovery.
     ring_rc=0
-    jg_task_inbox_ring "$TARGET_BACKEND" "$T" "$INBOX_RECORD" "$EXPECTED_LABEL" || ring_rc=$?
+    if jg_task_inbox_bell_standing "$STATE" "$INBOX_TASK_ID" "$INBOX_RECORD" "$TARGET_META"; then
+      ring_rc=4
+    else
+      jg_task_inbox_ring "$TARGET_BACKEND" "$T" "$INBOX_RECORD" "$EXPECTED_LABEL" || ring_rc=$?
+    fi
     ring_retry="the watcher will re-ring"
     if [ -n "$FIRE_AND_FORGET_ID" ] \
       && [ -e "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}/wait-no-turns" ]; then
@@ -1201,6 +1210,7 @@ else
       esac
     fi
     case "$ring_rc" in
+    4) echo "jg-send: no new doorbell: an earlier waiting steer was already rung, the worker is busy, and the bell names the whole inbox; the steer is durably recorded at $INBOX_RECORD and the watcher re-rings from the oldest unhandled record if the bell was swallowed" >&2 ;;
     1) echo "jg-send: doorbell skipped (composer visibly holds pending text); the steer is durably recorded at $INBOX_RECORD and $ring_retry. To ring now, submit the pending text with 'jg-send.sh $INBOX_TASK_ID --key Enter' (or clear the composer); the next ring then lands." >&2 ;;
     2) echo "jg-send: doorbell did not reach $T${JG_TASK_INBOX_RING_REASON:+ ($JG_TASK_INBOX_RING_REASON)}; the steer is durably recorded at $INBOX_RECORD and $ring_retry" >&2 ;;
     3) echo "jg-send: doorbell not typed because the agent in $T has exited; the steer is durably recorded at $INBOX_RECORD for recovery (stuck-operator-recovery), and the watcher will not re-ring a dead pane${WAKE_STARTED:+ - its squad lead was woken and drains the inbox when it comes up}" >&2 ;;
@@ -1243,10 +1253,18 @@ else
   # block: remote text rides the inbox leg above, and remote --key exits
   # earlier.
   send_rc=0
-  if verdict=$(jg_backend_send_text_submit "$TARGET_BACKEND" "$T" "$MESSAGE" "$retries" "$sleep_s" "$settle" "$EXPECTED_LABEL"); then
-    :
+  if [ "$TARGET_BACKEND" = tmux ] && [ "$TARGET_HARNESS" = codex ]; then
+    if verdict=$(jg_task_inbox_direct_submit "$STATE" "$TARGET_BACKEND" "$T" "$MESSAGE" "$retries" "$sleep_s" "$settle" "$EXPECTED_LABEL" 1); then
+      :
+    else
+      send_rc=$?
+    fi
   else
-    send_rc=$?
+    if verdict=$(jg_backend_send_text_submit "$TARGET_BACKEND" "$T" "$MESSAGE" "$retries" "$sleep_s" "$settle" "$EXPECTED_LABEL"); then
+      :
+    else
+      send_rc=$?
+    fi
   fi
   if [ "$send_rc" -ne 0 ]; then
     jg_send_known_undelivered_cleanup ||

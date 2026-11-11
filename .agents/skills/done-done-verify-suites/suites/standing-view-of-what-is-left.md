@@ -1,0 +1,3 @@
+# Standing view of what is left
+
+Standing view of what is left: run `bash tests/jg-whats-left.test.sh` (or `done-done run -- bash tests/jg-whats-left.test.sh` with the log written into `$DONE_DONE_EVIDENCE_ROOT`); over a fixture home it proves a summary publication (`bin/jg-home-summary-refresh.sh --best-effort`, the call the watcher, spawn and teardown make) renders `state/whats-left.md` from the backlog, that each queued item states what it waits on, that a changed record reaches the file at the next publication, and that `bin/jg-whats-left.sh show` re-renders by itself when a record is newer. Live read-only: `JG_HOME=<home> bin/jg-whats-left.sh show` prints the people-waiting, open-work and queued sections of a real home (screen: none).

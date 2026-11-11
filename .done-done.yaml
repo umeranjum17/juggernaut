@@ -1,5 +1,13 @@
 app: juggernaut
 journeys:
+  trunk-cleanup:
+    command: bash journeys/trunk-cleanup.sh
+  status-cold-scan:
+    command: bash journeys/status-cold-scan.sh
+  learnings:
+    command: bash journeys/learnings.sh
+  brief-lint:
+    command: bash journeys/brief-lint-real-briefs.sh
   teardown-missing-record:
     command: bash journeys/teardown-missing-record.sh
   live-services:
@@ -12,6 +20,10 @@ journeys:
     command: bash journeys/wake-watcher.sh
   wake-batching:
     command: bash journeys/wake-batching.sh
+  required-shard-retry:
+    command: bash journeys/required-shard-retry.sh
+  trunk-latency:
+    command: bash journeys/trunk-latency.sh
   ports-adapter-refusal:
     command: bash journeys/ports-adapter-refusal.sh
   rejected-state-check-once:
@@ -22,28 +34,36 @@ journeys:
     command: bash journeys/wake-batch-threshold.sh
   planned-wait:
     command: bash journeys/planned-wait.sh
+  wait-quiet:
+    command: bash journeys/wait-quiet.sh
   watcher-window-inventory:
     command: bash journeys/watcher-window-inventory.sh
   migration-card:
     command: bash journeys/migration-card.sh
   axi-on-path:
     command: bash journeys/axi-on-path.sh
-  dapr-workflow:
-    command: bash journeys/dapr-workflow.sh
   relaunch-model-refusal:
     command: bash tests/jg-control.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   pre-push-hook:
     command: bash tests/jg-pre-push.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   spawn-dispatch-profile:
     command: bash journeys/spawn-dispatch-profile.sh
+  claude-1m-context:
+    command: bash journeys/claude-1m-context.sh
+  spawn-load-admission:
+    command: bash journeys/spawn-load-admission.sh
   tool-models:
     command: bash journeys/tool-models.sh
   receipt-candidate-hook:
     command: bash journeys/receipt-candidate-hook.sh
   tickets-stage-publish:
     command: bash core/tickets-sync/run-stage-proof.sh
+  tickets-truthful:
+    command: bash core/tickets-sync/run-board-proof.sh && bash core/tickets-sync/run-tidy-proof.sh
   tickets-writeback:
     command: bash journeys/tickets-writeback.sh
+  tickets-cleanup-acts:
+    command: bash core/tickets-sync/run-cleanup-proof.sh
   ready-backlog-stall:
     command: bash journeys/ready-backlog-stall.sh
     timeout: 45m
@@ -67,6 +87,8 @@ journeys:
     command: bash journeys/critical-path.sh
   trunk-landing:
     command: bash journeys/trunk-landing.sh
+  landing-card:
+    command: bash journeys/landing-card.sh
   proof-attach:
     command: bash journeys/proof-attach.sh
   merge-proof-gate:
@@ -89,6 +111,8 @@ journeys:
     command: bash journeys/worker-no-ask-tool.sh
   watcher-exit-beacon:
     command: bash journeys/watcher-exit-beacon.sh
+  claude-midturn-cycle:
+    command: bash journeys/claude-midturn-cycle.sh
   stuck-live-captures:
     command: bash journeys/stuck-live-captures.sh
   model-gate-concurrent:
@@ -115,6 +139,10 @@ journeys:
     command: bash core/fleet-pulse/tests/chat-tsv.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   fleet-pulse-newest-retro:
     command: bash core/fleet-pulse/run-proof.sh
+  fleet-pulse-fable-allow:
+    command: bash core/fleet-pulse/run-fable-proof.sh
+  fleet-pulse-trunk-landed:
+    command: bash core/fleet-pulse/run-trunk-proof.sh
   retro-metrics:
     command: bash core/fleet-stats/tests/retro-metrics.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
 
@@ -187,12 +215,37 @@ journeys:
     command: bash journeys/token-cuts-live.sh
   context-bound-at-wake:
     command: bash journeys/context-bound-at-wake.sh
+  owner-rules-whole:
+    command: bash journeys/owner-rules-whole.sh
   axi-digest:
     command: bash journeys/axi-digest.sh
   remote-squad-lead-lifecycle:
     command: bash journeys/remote-squad-lead-lifecycle.sh
   unit-claim:
     command: bash journeys/unit-claim.sh
+  test-unit-isolation:
+    command: bash journeys/test-unit-isolation.sh
+    timeout: 45m
+  host-memory-sampler-cpu:
+    command: bash journeys/host-memory-sampler-cpu.sh
+    timeout: 10m
+  tool-kit:
+    command: bash journeys/tool-kit.sh
+  tool-kit-spend:
+    command: bash journeys/tool-kit-spend.sh --approved
+    spends: "the model quota or money of each tool kit's spending journey"
+  hc-backend:
+    command: bash journeys/hc-backend.sh
+  landing-refusing-shims:
+    command: bash journeys/landing-refusing-shims.sh
+  wait-refusal-retry:
+    command: bash journeys/wait-refusal-retry.sh
+  board-answer-route:
+    command: bash journeys/board-answer-route.sh
+  afk-daemon-resend:
+    command: bash journeys/afk-daemon-resend.sh
+  gate-quarantine:
+    command: bash journeys/gate-quarantine.sh
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'

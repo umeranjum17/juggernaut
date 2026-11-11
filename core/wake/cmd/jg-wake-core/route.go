@@ -140,14 +140,6 @@ func (e env) ruleLines() []string {
 	return out
 }
 
-// routingFile is the file a caller reads for the rules in force, for the messages that name it.
-func (e env) routingFile() string {
-	if files := e.routingFiles(); len(files) > 0 {
-		return files[0]
-	}
-	return ""
-}
-
 func (e env) homeOrRoot() string {
 	if e.home != "" {
 		return e.home

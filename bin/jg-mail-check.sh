@@ -217,8 +217,10 @@ poll_has_publication_evidence() {
 action_check() {
   local out rc line woken_before queued=0
   mkdir -p "$STATE" || return 1
-  woken_before=$(mktemp) || woken_before=
+  woken_before=$(mktemp "${TMPDIR:-/tmp}/jg-mail-woken.XXXXXX") || woken_before=
   if [ -n "$woken_before" ]; then
+    trap 'rm -f -- "$woken_before"' EXIT
+    trap 'exit 143' HUP INT TERM
     if [ -f "$STATE/.mail-woken" ]; then
       cp "$STATE/.mail-woken" "$woken_before" 2>/dev/null || : > "$woken_before"
     else
@@ -253,7 +255,8 @@ action_check() {
   if poll_has_publication_evidence "${rc:-0}" "${out:-}" "$woken_before"; then
     queued=1
   fi
-  [ -n "$woken_before" ] && rm -f -- "$woken_before"
+  [ -z "$woken_before" ] || rm -f -- "$woken_before"
+  trap - EXIT HUP INT TERM
   if [ -n "$line" ] && { [ "$line" != "$RECORD_REPORTED" ] || [ "$queued" -eq 1 ]; }; then
     jg_cap_line_var "mail: $line" "$MAX_LINE"
     printf '%s\n' "$JG_LINE_CAP_LINE"

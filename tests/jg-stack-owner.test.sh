@@ -16,7 +16,7 @@ command -v python3 >/dev/null 2>&1 || { echo "skip: no python3 for the listener"
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 T=$(jg_test_tmproot jg-stack-owner)
 mkdir -p "$T/repo/bin" "$T/repo/core/bus" "$T/fakebin" "$T/xdg" "$T/home" "$T/state"
-cp "$ROOT/bin/jg-stack.sh" "$ROOT/bin/jg-pin-lib.sh" "$T/repo/bin/"
+cp "$ROOT/bin/jg-stack.sh" "$ROOT/bin/jg-pin-lib.sh" "$ROOT/bin/jg-lab-home-lib.sh" "$T/repo/bin/"
 [ ! -f "$ROOT/bin/jg-compat.sh" ] || cp "$ROOT/bin/jg-compat.sh" "$T/repo/bin/"
 cp "$ROOT/toolchain.versions" "$T/repo/"
 printf '{"name": "CAPTAIN"}\n' > "$T/repo/core/bus/stream.json"

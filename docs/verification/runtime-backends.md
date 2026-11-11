@@ -2170,6 +2170,45 @@ tests/jg-backend-zellij-smoke.test.sh
 
 The real lifecycle smoke proved spawn, metadata, nested-subshell worktree discovery, send, capture, unlanded-work refusal, approved local landing, exact tab cleanup, and session cleanup without retaining task-specific ids or branch names here.
 
+## Herdr Core (hc)
+
+The core primitives were verified on 2026-11-09 against Herdr Core 0.1.18 on Linux x86_64, from the release archive whose SHA-256 matched the release manifest.
+
+```sh
+hc --version
+tests/jg-backend-hc-live-e2e.test.sh
+```
+
+Observed output:
+
+```text
+hc 0.1.18
+ok - lab helper refuses default, foreign and unprovisioned sessions and a public state directory
+ok - lab core listens only inside its private root, refuses core and machine commands, and isolates HOME
+ok - hc is known but not spawn-capable, and the tool check enforces the tested version floor
+ok - with no core listening, reads prove nothing, send hc no command, and start no core
+ok - create_task starts a labelled terminal, and a bare shell reads dead
+ok - send_text_submit delivers once and reports 'unknown'
+ok - capture reads bounded history, visible capture reads the screen only
+ok - a non-agent program reads ambiguous, C-c stops it although the core was started with SIGINT ignored, and Escape, Enter and C-u are delivered
+ok - a real Claude Code (2.1.319 (Claude Code)) reads alive
+ok - a finished terminal reads dead and present, and kill removes it
+ok - kill ends and removes the terminal; a gone terminal reads absent and missing
+ok - hc endpoint records are validated by task binding, session and terminal
+ok - teardown removes the lab and leaves the fleet Herdr Core as it was (absent)
+```
+
+Herdr Core facts the adapter relies on, observed in that run:
+
+- `hc read` without `--lines` returns the screen only, and with `--lines N` returns history plus screen.
+- `hc get` on a removed terminal fails with a `not_found` error and exit code 3.
+- `hc kill` returns after the terminal reads `finished`, and `hc rm` then removes it.
+- Any client call except `--version` starts a core for its session, so the adapter probes the socket first.
+- A private `XDG_RUNTIME_DIR` puts the lab socket at `<root>/run/herdr-core/<session>.sock`.
+- A core started by a process that ignores SIGINT runs its programs with SIGINT ignored: with the lab's signal reset removed, the journey's C-c step fails with `agent state of <target> stayed 'ambiguous', expected 'dead'`, and with it the step passes.
+
+The submit verdict is `unknown` because the hc screen read carries no styling or cursor, so the composer classifier cannot prove an empty composer.
+
 ## Orca
 
 Real readiness was verified against `/usr/local/bin/orca` with `/Applications/Orca.app` bundle version 1.4.116.
@@ -2870,3 +2909,21 @@ The task's `live-proof/` artifacts hold the rerunnable script and the full trans
 This live proof covers the watcher and queue boundary; it does not establish live daemon-consumer delivery.
 `bin/jg-test-run.sh tests/jg-daemon.test.sh` exercises that consumer routing separately with portable regressions for busy escalation and busy-bookkeeping failures in away and quiet mode.
 Repeat the hooked-worker check above, or the Pi script in the `busy-stuck-rootcause` live-proof artifacts, before publication if watcher or task-inbox busy code changes; `bin/jg-test-run.sh tests/jg-task-inbox.test.sh` refreshes the portable ladder regressions.
+
+## Pi multiline editor discard and managed native switch
+
+Verified on 2026-11-08 with Pi 1.0.0, codex-cli 0.159.2 and Herdr 0.9.1.
+`JG_CONTROL_PI_LIVE=1 bash tests/jg-control-pi-live-e2e.test.sh` drives the real control and spawn commands in a named Herdr lab, then prints:
+
+```text
+ok - real Pi multiline clear and managed Codex switch preserve work, child state and queued input
+```
+
+Pi's Ctrl+U deletes to the current line start, so the previous three-press clear left an eight-line draft pending.
+The adapter's explicit discard uses one Ctrl+C on proven pending editor input; ordinary exit still refuses that draft, and an unowned target refuses before any clear key.
+The live journey requires the replacement's `SWITCH_OK` response and a verified native exit, while checking the original Pi PID disappeared and HEAD, dirty/untracked work, child state and queued instructions stayed intact.
+It uses the installed Codex CLI with its normal credential location, handles only the exact synthetic lab folder's native trust choice, and copies no credentials.
+`JG_CONTROL_PI_PACKAGES_JSON` selects a JSON array of installed Pi package paths for the same journey with disposable extension memory and session state; this variant also passed.
+Future verification defaults to the cheap native `gpt-6-luna` model.
+A separate observed Hermes Memory 0.9.9 shared-store shutdown wait is outside this guarantee: the final shutdown handler remained live, so control correctly refused a replacement instead of declaring it stopped.
+The current clear mechanics are owned by `bin/jg-control-lib.sh` and `bin/harness-quirks/pi.json`.

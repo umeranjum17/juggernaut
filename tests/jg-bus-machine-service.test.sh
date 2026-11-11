@@ -502,19 +502,29 @@ pass "a config the server cannot start with is refused with the shortfall named 
 # even with the config directory removed. The reaper is told to look only below the temp base.
 REAP="$D/reap"
 OTHER=$(jg_test_tmproot jg-reapother)
+# Each server is waited on until it logs that it is ready, and its pid is the one it logs: before that
+# it may still be a shell, or not running at all, so removing its directory earlier leaves nothing to reap.
 reap_start() { # <config dir> <pid file>
+  local i pid=''
   mkdir -p "$1"; printf 'host: "127.0.0.1"\nport: -1\n' > "$1/bus.conf"
   ( cd "$1" && exec setsid "$NATS_SERVER" -c "$1/bus.conf" > "$1/log" 2>&1 < /dev/null ) &
-  echo $! > "$2"
+  # shellcheck disable=SC2034 # a bounded wait for the ready line, never read.
+  for i in $(seq 1 1200); do
+    pid=$(sed -n 's/^\[\([0-9][0-9]*\)\] .*Server is ready.*/\1/p' "$1/log" 2>/dev/null | head -n 1)
+    [ -z "$pid" ] || break
+    sleep 0.05
+  done
+  [ -n "$pid" ] || fail "the lab server in $1 never logged that it is ready: $(cat "$1/log" 2>/dev/null)"
+  echo "$pid" > "$2"
 }
 reap_start "$REAP/jg-bus-machine.STALE1/state/bus" "$D/reap-stale.pid"
 reap_start "$REAP/jg-bus-machine.LIVE01/state/bus" "$D/reap-live.pid"
 reap_start "$OTHER/state/bus" "$D/reap-other.pid"
-sleep 0.5
 rm -rf -- "$REAP/jg-bus-machine.STALE1" "$OTHER/state"
 reap_out=$("$ROOT/bin/jg-bus-reap.sh" --under "$(dirname "$D")")
 assert_contains "$reap_out" "reaped $(cat "$D/reap-stale.pid") " "the reaper must stop the server whose directory is gone: $reap_out"
-sleep 0.3
+# shellcheck disable=SC2034 # a bounded wait for the reaped server to be gone, never read.
+for i in $(seq 1 200); do kill -0 "$(cat "$D/reap-stale.pid")" 2>/dev/null || break; sleep 0.05; done
 ! kill -0 "$(cat "$D/reap-stale.pid")" 2>/dev/null || fail "the stale lab server is still running"
 kill -0 "$(cat "$D/reap-live.pid")" 2>/dev/null || fail "the reaper stopped a live lab server"
 kill -0 "$(cat "$D/reap-other.pid")" 2>/dev/null || fail "the reaper stopped a server that is not a jg-bus-machine lab"

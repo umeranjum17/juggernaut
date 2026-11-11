@@ -1,0 +1,3 @@
+# Goal journey
+
+Goal journey: run `done-done run -- bash journeys/goal-loop.sh` (about 4 minutes; `GOAL_PINNED_BIN` names the pinned bd and dolt folder); a real Goal store, the real Goal verbs and check, and a fake forge in real time take one Goal from a failing proof to one finish message that names the version, place and proof log, with a stop row that sends one message and no wake, a failed proof that adds a fix step, a restart that sends no second message, a repeated failure that makes a limit stop and a changed finish line that makes a stop with no proof run; the lead is a script (screen: none).

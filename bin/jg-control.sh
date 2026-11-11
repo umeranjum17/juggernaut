@@ -24,8 +24,10 @@
 #              keeps running. Postcondition: delivery succeeded, the endpoint
 #              still exists, and the agent is still alive where the backend can
 #              classify that. Cancellation is confirmed only from an adapter-
-#              owned acknowledgement and otherwise reported unconfirmed. Busy
-#              state is never rewritten as proof of the action. Devin
+#              owned acknowledgement and otherwise reported unconfirmed. A Claude
+#              task's busy record is set to idle only when the pane shows its
+#              own end-of-turn mark, else unknown. Each interrupt adds one row
+#              to data/control-actions.tsv. Devin
 #              cancellation invalidates it to unknown because its native hooks
 #              emit no cancellation close; this is not a success claim.
 #              An adapter whose repeated interrupt key does something else on
@@ -135,8 +137,8 @@
 #   - A composer that visibly holds pending text refuses before an exit command
 #     is typed, so existing text is preserved instead of being concatenated.
 #     `--clear-composer` (exit and relaunch) is the way out of that refusal: it
-#     names the composer state it found, discards the text with Ctrl+U (up to
-#     three presses), reads the composer again, and types the exit command only
+#     names the composer state it found, uses the adapter's clear key, reads
+#     the composer again, and types the exit command only
 #     once the read says `empty`. A composer that is still not empty refuses
 #     with its state, so the exit command can never land on existing text.
 #
@@ -623,6 +625,40 @@ verify_interrupt_running() {
   printf '%s' "$proof"
 }
 
+# record_claude_interrupt_flag: Claude runs no hook for an interrupt, so the
+# busy record would stay busy and defer the steer doorbell for up to an hour.
+# `idle` needs the pane's own end-of-turn mark (Claude prints "Interrupted ·
+# What should Claude do instead?"); without it the record is `unknown`, which
+# is not busy and never lets a doorbell into a running turn. Skipped when the
+# task has no armed busy record, as jg-send's Escape path does.
+record_claude_interrupt_flag() {
+  local state=unknown elapsed=0
+  [ "$HARNESS" = claude ] && [ -f "$STATE/$ID.busy-gen" ] || return 0
+  while :; do
+    if rendered_matches 'Interrupted · What should Claude do instead\?'; then
+      state=idle
+      break
+    fi
+    awk -v e="$elapsed" -v t="$SETTLE_WAIT" 'BEGIN{exit !(e < t)}' || break
+    sleep "$POLL"
+    elapsed=$(awk -v e="$elapsed" -v p="$POLL" 'BEGIN{printf "%.3f", e + p}')
+  done
+  "$SCRIPT_DIR/jg-busy-event.sh" apply "$STATE" "$ID" "$state" \
+    --current-gen --source jg-interrupt --event interrupt >/dev/null \
+    || die "interrupt key reached task $ID, but its busy record could not be set to $state"
+}
+
+# record_control_action <action> <result>: one row per lifecycle action in
+# data/control-actions.tsv: epoch, task, action, caller, result. The caller is
+# JG_CONTROL_CALLER when a script sets it, else the invoking process's name.
+record_control_action() {  # <action> <result>
+  local caller=${JG_CONTROL_CALLER:-}
+  [ -n "$caller" ] || caller=$(ps -o comm= -p "$PPID" 2>/dev/null | tr -d '[:space:]')
+  mkdir -p "$DATA" || die "interrupt delivered to task $ID, but $DATA could not be created for its action row"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$ID" "$1" "${caller:-unknown}" "$2" \
+    >>"$DATA/control-actions.tsv" || die "interrupt delivered to task $ID, but its action row could not be written"
+}
+
 do_interrupt() {
   local proof cancel
   cancel=$(deliver_interrupt) || return $?
@@ -754,23 +790,41 @@ identity=0' "$screen" 2>/dev/null) || content=
   done
 }
 
-# clear_composer <state found>: the self-service way out of the composer refusal. It discards the composer text with
-# Ctrl+U, reads the composer again after each press and returns only on `empty`; anything else dies naming the state
-# it found and the state it left, so the exit command is never typed onto existing text.
+# clear_composer <state found>: discard only on explicit request. Pi's whole
+# editor clear needs proven pending input and is sent once: a second Ctrl+C
+# could exit. Return 2 only when the process classifier proves it stopped.
 clear_composer() {
-  local found=$1 now=$1 i=0
-  jg_control_backend_supports_key "$BACKEND" C-u \
-    || die "task $ID's composer state is '$found' and the $BACKEND backend cannot deliver the Ctrl+U that clears it; clear the composer by hand, then retry '$VERB'"
+  local found=$1 now=$1 i=0 key state display
+  key=$(jg_control_composer_clear_key "$HARNESS") || die "no verified composer clear for $HARNESS"
+  display=$key
+  case "$key" in C-u) display=Ctrl+U ;; C-c) display=Ctrl+C ;; esac
+  jg_control_backend_supports_key "$BACKEND" "$key" \
+    || die "task $ID's composer state is '$found' and the $BACKEND backend cannot deliver its $key clear key"
+  if [ "$key" = C-c ] && [ "$found" != pending ]; then
+    die "task $ID's composer state is '$found', not proven pending editor input; refusing $key because it could answer an unknown surface"
+  fi
   while [ "$i" -lt 3 ] && [ "$now" != empty ]; do
-    jg_backend_send_key "$BACKEND" "$T" C-u "$LABEL" \
-      || die "task $ID's composer state is '$found' and Ctrl+U was not delivered; nothing was typed"
+    if [ "$key" != C-c ] || [ "$i" = 0 ]; then
+      jg_backend_validate_task_endpoint "$META" "$ID" >/dev/null || return 1
+      state=$(agent_state)
+      [ "$state" != dead ] || return 2
+      [ "$state" = alive ] || die "task $ID's endpoint reads '$state'; refusing composer clear"
+      if [ "$key" = C-c ]; then
+        now=$(jg_backend_composer_state "$BACKEND" "$T" "$LABEL" 2>/dev/null) || now=unknown
+        [ "$now" != empty ] || break
+        [ "$now" = pending ] || die "task $ID's editor changed to '$now'; refusing $key"
+      fi
+      jg_backend_send_key "$BACKEND" "$T" "$key" "$LABEL" \
+        || die "task $ID's composer state is '$found' and $key was not delivered; nothing was typed"
+    fi
     i=$((i + 1))
     sleep "$POLL"
+    if [ "$key" = C-c ] && [ "$(agent_state)" = dead ]; then return 2; fi
     now=$(jg_backend_composer_state "$BACKEND" "$T" "$LABEL" 2>/dev/null) || now=unknown
   done
   [ "$now" = empty ] \
-    || die "task $ID's composer state was '$found'; Ctrl+U sent $i times left it '$now', so the exit command was not typed. Clear the composer by hand, then retry '$VERB'"
-  echo "note: task $ID's composer state was '$found'; cleared with Ctrl+U, now empty" >&2
+    || die "task $ID's composer state was '$found'; $key clear left it '$now', so the exit command was not typed"
+  echo "note: task $ID's composer state was '$found'; cleared with $display, now empty" >&2
 }
 
 # do_exit: stop the running agent, preserving endpoint and worktree. Prints
@@ -885,7 +939,13 @@ do_exit() {
   # submits the pending text instead of looping on interrupt: Enter submits it
   # through the data plane, and --clear-composer discards it.
   if [ "$CLEAR_COMPOSER" = 1 ] && [ "$composer_state" != empty ]; then
-    clear_composer "$composer_state"
+    local clear_rc=0
+    clear_composer "$composer_state" || clear_rc=$?
+    case "$clear_rc" in
+      0) ;;
+      2) retire_busy_incarnation; printf 'stopped'; return 0 ;;
+      *) return "$clear_rc" ;;
+    esac
     composer_state=empty
   fi
   case "$composer_state" in
@@ -1342,6 +1402,10 @@ do_relaunch() {
     else
       die "the replacement agent for $ID was launched, but task $ID's republished record no longer passes endpoint validation (the refusal above names the row), so this transaction cannot say which endpoint to confirm it on; reconcile $META before any further control action"
     fi
+    # The launch owner records the model the worker runs, which can differ from the one asked for
+    # (a Claude account listed in config/claude-1m-accounts runs its [1m] id), so report that one.
+    TARGET_MODEL=$(jg_meta_get "$META" model)
+    [ -n "$TARGET_MODEL" ] || TARGET_MODEL=default
   else
     [ "$(jg_meta_get "$META" control_relaunch_tx)" != "$RELAUNCH_TX" ] \
       || RELAUNCH_META_PUBLISHED=1
@@ -1375,6 +1439,8 @@ case "$VERB" in
       *) die "task $ID's endpoint reads '$state' rather than a positively classified state; refusing to send a lifecycle key into an unattributed endpoint" ;;
     esac
     proof=$(do_interrupt)
+    record_claude_interrupt_flag
+    record_control_action interrupt "delivered $proof"
     echo "interrupt-delivered $ID harness=$HARNESS backend=$BACKEND verified=$proof"
     ;;
   exit)

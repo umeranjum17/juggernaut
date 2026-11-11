@@ -313,7 +313,7 @@ holds "judge: card still posts with a named route" "$work/card-judge/card.json"
 PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" gate --judge minimax:key newer "$wt" "$head_c" - >"$work/gate-judge.log" 2>&1
 if grep -q -- '^check .* --judge minimax:key' "$DD_LOG"; then ok "judge: gate passes the route to done-done check"; else no "judge: gate passes the route to done-done check: $(cat "$DD_LOG")"; fi
 is "judge: gate recorded the verdict" "$(jq -r .verdict "$home/data/newer/merge-card.json")" pass
-grep -q -- 'done-done check: pass' "$work/gate-judge.log" && ok "judge: gate reports the verdict" || no "judge: gate reports the verdict: $(cat "$work/gate-judge.log")"
+if grep -q -- 'done-done check: pass' "$work/gate-judge.log"; then ok "judge: gate reports the verdict"; else no "judge: gate reports the verdict: $(cat "$work/gate-judge.log")"; fi
 
 # The judge is a claude caller: with a pool in the home, the check runs it on the
 # account the pool picked, with that account's profile folder in CLAUDE_CONFIG_DIR and
@@ -331,7 +331,7 @@ PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" check pool "$wt" "$he
 is "pool: the check asks the pool for a claude account" "$(grep -c 'pick claude --json --state' "$DD_POOL_LOG")" 1
 is "pool: the judge runs on the picked account's folder" "$(cut -d' ' -f1 "$DD_ENV_LOG" | tail -n 1)" "dir=$POOL_FOLDER"
 is "pool: the pool's login variables are unset for it" "$(cut -d' ' -f2- "$DD_ENV_LOG" | tail -n 1)" "key= token="
-grep -q "pool: Claude folder $POOL_FOLDER" "$work/pool-check.log" && ok "pool: the line names the account" || no "pool: the line names the account: $(cat "$work/pool-check.log")"
+if grep -q "pool: Claude folder $POOL_FOLDER" "$work/pool-check.log"; then ok "pool: the line names the account"; else no "pool: the line names the account: $(cat "$work/pool-check.log")"; fi
 is "pool: the verdict is still the check's" "$(jq -r .verdict "$home/data/pool/merge-card.json")" pass
 # Without a pool the ambient login stays: no pick, no folder, no unset.
 rm -f "$home/config/account-pool"
@@ -343,12 +343,12 @@ is "no pool: fallback judge starts" "$(wc -l <"$DD_ENV_LOG" | tr -d ' ')" 1
 printf 'command=%s\nstate=%s\n' "$work/bin/pool-claude" "$work/pool" >"$home/config/account-pool"
 POOL_FAIL=1 PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" check pool "$wt" "$head_c" - >"$work/fallback.log" 2>&1
 is "reader failure: judge runs despite cached pick" "$(jq -r .verdict "$home/data/pool/merge-card.json")" pass
-grep -q 'cached accounts will not be used' "$work/fallback.log" && ok "fallback reports age" || no "fallback reports age"
+if grep -q 'cached accounts will not be used' "$work/fallback.log"; then ok "fallback reports age"; else no "fallback reports age"; fi
 rm -f "$home/state/claude-tool-pick.json"
 : >"$DD_ENV_LOG"
 POOL_FAIL=1 PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" check pool "$wt" "$head_c" - >"$work/no-cache.log" 2>&1
 is "reader failure without cache: judge starts" "$(wc -l <"$DD_ENV_LOG" | tr -d ' ')" 1
-grep -q 'quota reader unavailable' "$work/no-cache.log" && ok "failure reports cause" || no "failure reports cause"
+if grep -q 'quota reader unavailable' "$work/no-cache.log"; then ok "failure reports cause"; else no "failure reports cause"; fi
 
 
 # A 0.3.0 done-done on PR 24's shape: the PR body names the PNG bare, the file
@@ -412,7 +412,7 @@ is "tool models, entry: the named DeepSeek model judges" "$(cat "$ROUTE_LOG")" c
 printf '{"rules":[{"tool":"done-done-judge","when":"the proof judge","use":{"harness":"claude","model":"sonnet"}}]}\n' >"$home/config/tool-models.json"
 PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" check pool "$wt" "$head_c" - >"$work/tm-bad.log" 2>&1
 is "tool models, wrong harness: the judge stays as configured" "$(cat "$ROUTE_LOG")" claude-haiku-5-5
-grep -q 'TOOL_MODELS: done-done-judge needs harness pi' "$work/tm-bad.log" && ok "tool models, wrong harness: one plain reason" || no "tool models, wrong harness: one plain reason: $(cat "$work/tm-bad.log")"
+if grep -q 'TOOL_MODELS: done-done-judge needs harness pi' "$work/tm-bad.log"; then ok "tool models, wrong harness: one plain reason"; else no "tool models, wrong harness: one plain reason: $(cat "$work/tm-bad.log")"; fi
 rm -f "$home/config/tool-models.json"
 : >"$ROUTE_LOG"
 MODE=inconclusive POOL_FAIL=1 PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" check pool "$wt" "$head_c" - >/dev/null 2>&1
@@ -430,11 +430,9 @@ case $(jq -r .verdict "$home/data/pool/merge-card.json") in
   "not checked: No judge has room"*) ok "every route dry: the verdict says no judge has room" ;;
   *) no "every route dry: the verdict says no judge has room: $(jq -r .verdict "$home/data/pool/merge-card.json")" ;;
 esac
-grep -q 'ollama-cloud/deepseek-v4.1-flash (pi does not list it)' "$work/dry.log" &&
-  ok "every route dry: the line names each dry route" || no "every route dry: the line names each dry route: $(cat "$work/dry.log")"
+if grep -q 'ollama-cloud/deepseek-v4.1-flash (pi does not list it)' "$work/dry.log"; then ok "every route dry: the line names each dry route"; else no "every route dry: the line names each dry route: $(cat "$work/dry.log")"; fi
 POOL_FAIL=1 CODEX_ROOM=0 PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" post --board "$work/board-dry.json" pool "$wt" "$head_c" - >"$work/dry-post.log" 2>&1
-grep -q 'no evidence card' "$work/dry-post.log" &&
-  ok "every route dry: no card is posted" || no "every route dry: no card is posted: $(cat "$work/dry-post.log")"
+if grep -q 'no evidence card' "$work/dry-post.log"; then ok "every route dry: no card is posted"; else no "every route dry: no card is posted: $(cat "$work/dry-post.log")"; fi
 if grep -qi 'does not hold up' "$work/dry-post.log"; then no "every route dry: the proof is not blamed"; else ok "every route dry: the proof is not blamed"; fi
 mv "$work/pi-models.listed" "$PI_MODELS"
 
@@ -462,8 +460,8 @@ if [ -f "$work/card-absolute/1.png" ] && cmp -s "$work/card-absolute/1.png" "$sh
 # The passed-test receipt: a sealed clean done-done run at the merged head goes on the card; a failed run, or no run record, adds none.
 mk_run() { # mk_run <task-id> <run-id> <exit>: a done-done run record at head_c, listing its shot
   mkdir -p "$home/data/$1/.done-done/runs"
-  jq -n --arg id "$2" --arg c "$head_c" --argjson e "$3" \
-    '{schema:1, run_id:$id, commit:$c, dirty:false, exit:$e, files:[{path:"\($id)/shot.png"}]}' \
+  jq -n --arg id "$2" --arg c "$head_c" --argjson e "$3" --arg path "$home/data/$1/shot.png" \
+    '{schema:1, run_id:$id, commit:$c, dirty:false, exit:$e, files:[{path:$path}]}' \
     >"$home/data/$1/.done-done/runs/$2.json"
 }
 mk_run receipt 20261020T000000Z-receipt0001 0
@@ -508,14 +506,22 @@ is "0.6.18 run-id match: real card post succeeds" "$?" 0
 is "0.6.18 lookup: newest matching record wins" "$(jq -r .run.run_id "$work/card-receipt-newest/card.json")" 20261027T012000Z-0afa0120-abcdef
 is "0.6.18 run-id match: card binds the full head" "$(jq -r .run.commit "$work/card-receipt-newest/card.json")" "$real_head"
 # Non-screen-free receipt cards retain the existing outcome text.
-# A sealed clean run in done-done's own evidence root (a throwaway DONE_DONE_HOME, the real done-done) is accepted
-# for its head with no task folder run; one at another head is refused.
+# A sealed run in the default root needs approved citations before public lookup; its checked head passes,
+# with no task-local manifest, and another head still refuses.
 if command -v done-done >/dev/null; then
   git init -q "$home" # JG_HOME is a Juggernaut checkout; done-done answers from inside a repo
   mkdir -p "$work/ddhome/evidence/juggernaut/.done-done/runs"
   jq -n --arg c "$head_c" '{schema:1, run_id:"20261020T000000Z-default0001", commit:$c, dirty:false, exit:0, files:[{path:"x/shot.png"}]}' \
     >"$work/ddhome/evidence/juggernaut/.done-done/runs/20261020T000000Z-default0001.json"
   dd_receipt() { DD_EVIDENCE_ROOT=$work/ddhome/evidence PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" receipt norun "$1" >/dev/null 2>&1; echo $?; }
+  is "default root: an unapproved run at the head is refused" "$(dd_receipt "$head_c")" 1
+  DD_EVIDENCE_ROOT=$work/ddhome/evidence PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" receipt-json norun "$head_c" > "$work/default-unapproved.json" 2>/dev/null
+  is "default root: unapproved JSON lookup refuses" "$?" 1
+  is "default root: unapproved lookup prints no JSON" "$(cat "$work/default-unapproved.json")" ""
+  mkdir -p "$work/ddhome/evidence/juggernaut/x"
+  cp "$shot" "$work/ddhome/evidence/juggernaut/x/shot.png"
+  checks norun "$work/ddhome/evidence/juggernaut/x/shot.png"
+  MODE=newer DD_EVIDENCE_ROOT=$work/ddhome/evidence PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" check norun "$wt" "$head_c" - >/dev/null
   is "default root: run at the head is accepted" "$(dd_receipt "$head_c")" 0
   is "default root: run at another head is refused" "$(dd_receipt otherhead)" 1
 else
@@ -738,7 +744,7 @@ SO_CAPTURE=$work/card-titled
 export SO_CAPTURE
 PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" post --board "$work/board.json" titled "$wt" "$head_c" https://github.com/o/muxr/pull/1012 >/dev/null
 is "internal title is the PR's outcome sentence" "$(jq -r .title "$work/card-titled/card.json")" "Retire the old sign-off card"
-bash "$here/../merge-card" generic-title "$(jq -r .title "$work/card-titled/card.json")" && no "internal title passes the generic-title refusal" || ok "internal title passes the generic-title refusal"
+if bash "$here/../merge-card" generic-title "$(jq -r .title "$work/card-titled/card.json")"; then no "internal title passes the generic-title refusal"; else ok "internal title passes the generic-title refusal"; fi
 GH_BODY=$work/pr-body.md
 GH_TITLE=
 export GH_BODY GH_TITLE
@@ -847,12 +853,18 @@ for c in "$work"/card-*/card.json; do
 done
 
 # The receipt question, both sides, with temp data folders and no mocks: a head with a sealed clean run
-# passes, and a head with no run refuses. A fake head has no done-done receipt, so the run scan decides.
+# passes after its check; a raw unapproved run and a head with no run refuse.
 sealed_pass=20261031T000000Z-sealed0001
 mkdir -p "$home/data/receipt-pass/.done-done/runs" "$home/data/receipt-none"
 jq -n --arg c "$head_c" --arg id "$sealed_pass" \
   '{schema:1, run_id:$id, commit:$c, dirty:false, exit:0, started_at:"2026-10-31T00:00:00.000Z", files:[{path:"\($id)/shot.png"}]}' \
   >"$home/data/receipt-pass/.done-done/runs/$sealed_pass.json"
+PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" receipt receipt-pass "$head_c"
+is "receipt: a raw run without approved citations refuses" "$?" 1
+checks receipt-pass "$sealed_pass/shot.png"
+mkdir -p "$home/data/receipt-pass/$sealed_pass"
+cp "$shot" "$home/data/receipt-pass/$sealed_pass/shot.png"
+MODE=newer PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" check receipt-pass "$wt" "$head_c" - >/dev/null
 PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" receipt receipt-pass "$head_c"
 is "receipt: a sealed clean run at the head passes" "$?" 0
 PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" receipt-json receipt-pass "$head_c" >"$work/receipt-pass.json" 2>/dev/null
@@ -894,11 +906,45 @@ if command -v done-done >/dev/null; then
   is "done-done receipt: no run record is needed" "$(ls -d "$home/data/receipt-ddone/.done-done" 2>/dev/null)" ""
   is "done-done receipt: the receipt names its run" "$(jq -r .run_id "$work/receipt-ddone.json")" 20261031T000000Z-ddreceipt01-abcdef
   is "done-done receipt: the receipt covers the head" "$(jq -r .commit "$work/receipt-ddone.json")" "$dd_head"
-  is "done-done receipt: the receipt names its evidence" "$(jq -c .files "$work/receipt-ddone.json")" '["proof.log"]'
+  is "done-done receipt: the receipt names its evidence" "$(jq -c .files "$work/receipt-ddone.json")" "$(jq -cn --arg p "$ddlane/proof.log" '[$p]')"
   JG_HOME=$home "$here/../merge-card" receipt receipt-ddone "$dd_head"
   is "done-done receipt: receipt agrees" "$?" 0
   JG_HOME=$home "$here/../merge-card" receipt receipt-ddone "b18d2598a4852810412964192ec0713c5914b961"
   is "done-done receipt: another head still refuses" "$?" 1
+
+  # A Designs requirement counts like any other cited file: the receipt holds a capture that a written requirement judged
+  # (approved_requirements), not a plain verdict, and the saved check cited both. The receipt must cite the same evidence set.
+  git -C "$ddlane" -c user.email=e2e@example.invalid -c user.name=e2e commit -q --allow-empty -m 'the head with a Designs requirement'
+  dr_head=$(git -C "$ddlane" rev-parse HEAD)
+  dr_tree=$(git -C "$ddlane" rev-parse "$dr_head^{tree}")
+  printf 'the Designs frame the written requirement read\n' >"$ddlane/designs.log"
+  dr_sha=$(if command -v sha256sum >/dev/null; then sha256sum "$ddlane/designs.log" | awk '{print $1}'; else shasum -a 256 "$ddlane/designs.log" | awk '{print $1}'; fi)
+  jq -n --arg head "$dr_head" --arg tree "$dr_tree" --arg p "$ddlane/proof.log" --arg sha "$dd_sha" --arg d "$ddlane/designs.log" --arg dsha "$dr_sha" '
+    {schema:2, repo:"e2e", head:$head, tree:$tree, claim:"a design pick is listed under Designs",
+     result:"pass", at:"2026-10-31T00:00:00.000Z", files:[{path:$p, sha256:$sha}, {path:$d, sha256:$dsha}],
+     runs:[{run_id:"20261031T000000Z-designs0001-abcdef", commit:$head, journey:null, command:"bash drive.sh", tool:"0.6.24",
+            steps:{target:{version:"e2e 1"}, start:"a design pick", steps:["open Designs"], result:"the pick is listed"}}],
+     judge:{route:"claude-code", model:"claude-haiku-5-5", independence:"session-only",
+            comparison_basis:"judged against written requirements (no approved reference image)",
+            verdicts:[{path:$p, sha256:$sha, verdict:"pass"}],
+            approved_requirements:[{name:"design-pick-listing", requirement:"A design pick is listed under Designs.", path:$d, sha256:$dsha,
+                                    verdict:"pass", reason:"The Designs item lists one pick.", basis:"judged against written requirements (no approved reference image)"}]}}' \
+    >"$dd_ev/.done-done/receipts/$dr_head.json"
+  mkdir -p "$home/data/receipt-designs"
+  printf 'worktree=%s\n' "$ddlane" >"$home/state/receipt-designs.meta"
+  jq -n --arg head "$dr_head" --arg a "$ddlane/proof.log" --arg b "$ddlane/designs.log" \
+    '{head:$head, pr:"-", verdict:"pass", check:{result:"pass", claim:"a design pick is listed under Designs", evidence:[$a, $b]}}' >"$home/data/receipt-designs/merge-card.json"
+  JG_HOME=$home "$here/../merge-card" receipt receipt-designs "$dr_head" 2>"$work/receipt-designs.err"
+  is "Designs requirement: the receipt that cites the judged Designs capture is accepted" "$?" 0
+  JG_HOME=$home "$here/../merge-card" receipt-json receipt-designs "$dr_head" >"$work/receipt-designs.json" 2>/dev/null
+  is "Designs requirement: the receipt names the Designs capture beside the verdict capture" "$(jq -c .files "$work/receipt-designs.json")" "$(jq -cn --arg a "$ddlane/designs.log" --arg b "$ddlane/proof.log" '[$a, $b]')"
+  # A saved check that cites a file the official receipt does not hold is still refused, naming the reason.
+  mkdir -p "$home/data/receipt-designs-extra"
+  printf 'worktree=%s\n' "$ddlane" >"$home/state/receipt-designs-extra.meta"
+  jq --arg c "$ddlane/not-in-the-receipt.png" '.check.evidence += [$c]' "$home/data/receipt-designs/merge-card.json" >"$home/data/receipt-designs-extra/merge-card.json"
+  JG_HOME=$home "$here/../merge-card" receipt receipt-designs-extra "$dr_head" 2>"$work/receipt-designs-extra.err"
+  is "Designs requirement: a check citing a file the receipt lacks is refused" "$?" 1
+  is "Designs requirement: the refusal says the receipt cites different evidence" "$(grep -c 'official receipt cites different evidence' "$work/receipt-designs-extra.err")" 1
 else
   ok "done-done receipt: skipped, no done-done on PATH"
 fi

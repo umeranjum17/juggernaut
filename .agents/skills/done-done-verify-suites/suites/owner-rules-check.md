@@ -1,0 +1,3 @@
+# Owner-rules check
+
+Owner-rules check: run `done-done run -- bash tests/jg-owner-rules-check.test.sh` with the log written into `$DONE_DONE_EVIDENCE_ROOT`; the real `bin/jg-owner-rules.sh check` over a fixture surface lists each rule with no kind (none, or one that is neither owner nor product) and each rule whose `- Enforced by:` text names no file that exists (prose naming only folder words, a deleted script, no line), counts them, exits 1, changes no byte of the surface, and exits 0 with `clean:` on complete rules; `add` still records a correction while the check has findings. Live and read-only: `bin/jg-owner-rules.sh check` on a home prints its rules with no kind or no check file (screen: none).

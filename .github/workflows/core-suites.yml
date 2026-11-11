@@ -245,17 +245,29 @@ jobs:
       - name: Owner guard uninstall isolation test
         if: ${{ !cancelled() }}
         run: bash owner-guard/tests/uninstall-isolation.test.sh
+      # Throwaway HOME and XDG dirs, stub systemctl and herdr, a /tmp stand-in: nothing real is touched.
+      - name: Sentinel one-copy test
+        if: ${{ !cancelled() }}
+        run: bash sentinel/tests/jg-sentinel-one-copy.test.sh
       # Throwaway XDG_DATA_HOME: the wiring step and the check touch nothing real.
       - name: Task priority test
         if: ${{ !cancelled() }}
         run: bash task-priority/tests/task-priority.test.sh
       - name: Tickets sync real-board journey
         if: ${{ !cancelled() }}
-        run: command -v identify >/dev/null || sudo apt-get install -y --no-install-recommends imagemagick; npm install --global sign-off-axi@0.9.10 && bash tickets-sync/tests/sync.test.sh && bash tickets-sync/tests/skip-bad-ticket.test.sh && bash tickets-sync/tests/description-linebreaks.test.sh && bash tickets-sync/tests/cleanup-report-card.test.sh
-      # Fixture transcripts and a throwaway home; no real chat data is read or written.
+        run: command -v identify >/dev/null || sudo apt-get install -y --no-install-recommends imagemagick; npm install --global sign-off-axi@0.9.10 && bash tickets-sync/tests/sync.test.sh && bash tickets-sync/tests/skip-bad-ticket.test.sh && bash tickets-sync/tests/description-linebreaks.test.sh && bash tickets-sync/tests/cleanup-report-card.test.sh && bash tickets-sync/tests/stage-from-machines.test.sh && bash tickets-sync/tests/no-store-quiet.test.sh && bash tickets-sync/tests/tidy.test.sh && bash tickets-sync/tests/cleanup-acts.test.sh && bash tickets-sync/tests/cleanup-keeps-question.test.sh && bash tickets-sync/tests/check-own-cursor.test.sh && bash tickets-sync/tests/ticket-identity.test.sh
+      # Fixture transcripts, fixture homes and a stub forge in a throwaway home; no real chat data or home is read or written.
       - name: Fleet pulse test
         if: ${{ !cancelled() }}
-        run: bash fleet-pulse/tests/chat-tsv.test.sh
+        run: bash fleet-pulse/tests/chat-tsv.test.sh && bash fleet-pulse/tests/trunk-pulse.test.sh
+      # Fixture homes, session logs and a guard installed into a throwaway HOME and XDG data dir: nothing real is touched.
+      - name: Fleet pulse Fable wake test
+        if: ${{ !cancelled() }}
+        run: bash fleet-pulse/tests/fleet-fable.test.sh
+      # Throwaway HOME, XDG data dir and Claude settings; no claude process starts.
+      - name: Claude model guard test
+        if: ${{ !cancelled() }}
+        run: bash claude-model-guard/tests/claude-model-guard.test.sh
       # Stub byokit-accounts and a throwaway config: nothing real is touched.
       - name: Fleet report test
         if: ${{ !cancelled() }}
@@ -412,6 +424,15 @@ jobs:
       - name: Critical-stall test
         if: ${{ !cancelled() }}
         run: bash critical-stall/tests/critical-stall.test.sh
+      - name: Stall-action test
+        if: ${{ !cancelled() }}
+        run: bash stall-action/tests/stall-action.test.sh
+      - name: Lead-sweep test
+        if: ${{ !cancelled() }}
+        run: bash lead-sweep/tests/lead-sweep.test.sh
+      - name: Landing-card test
+        if: ${{ !cancelled() }}
+        run: bash landing-card/tests/landing-card.test.sh
       # Recorded Goal rows and a fixture home; the real-store case skips without the pinned bd and dolt.
       - name: Goal loop test
         if: ${{ !cancelled() }}
@@ -426,6 +447,9 @@ jobs:
       - name: Merge-card evidence-root message test
         if: ${{ !cancelled() }}
         run: bash merge-card/tests/dd-root-message.test.sh
+      - name: Merge-card post-merge wiring test
+        if: ${{ !cancelled() }}
+        run: bash merge-card/tests/wiring.test.sh
       - name: Owner-rules design flag test
         if: ${{ !cancelled() }}
         run: bash owner-rules/tests/design-flag.test.sh
@@ -447,3 +471,7 @@ jobs:
       - name: Lookout front and install dry-run test
         if: ${{ !cancelled() }}
         run: bash lookout-adapter/tests/front.test.sh
+      # Machine tables: the sealed acceptance in a throwaway home; no real home is read.
+      - name: Machine tables sealed proof
+        if: ${{ !cancelled() }}
+        run: bash machines/run-proof.sh

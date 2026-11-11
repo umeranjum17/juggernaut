@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # The spawn side of the trunk flow (bin/jg-spawn.sh, bin/jg-trunk.sh): a project with a local trunk takes no
-# feature pull request, and a local-only lane starts on the trunk tip so its one commit can land there.
+# feature pull request, and a local-trunk lane starts on the trunk tip so its one commit can land there.
 # Real bin/jg-brief.sh and bin/jg-spawn.sh over a fixture project; only the terminal and the worktree tool are
-# stand-ins. tests/jg-trunk.test.sh owns landing, going live and the release.
+# stand-ins. tests/jg-trunk.test.sh and its parts own landing, going live and the release.
 #
 # T1 a direct-PR or no-mistakes ship on a project registered local-trunk is refused by name and leaves no task record.
-# T2 a local-only ship on that project spawns, and its isolated copy is on the trunk tip, not on the default branch.
+# T2 a local-trunk ship on that project spawns, and its isolated copy is on the trunk tip, not on the default branch.
+# T4 after a rollover the trunk is on trunk-v2: the lane starts on that tip, records base=<tip>, and its brief names trunk-v2, not the older trunk.
 # T3 a project registered direct-PR keeps spawning a pull-request lane as before.
 set -u
 
@@ -52,11 +53,9 @@ expect_code 0 "$rc" "T3 a direct-PR project with a stray trunk record must still
 [ "$(git -C "$wt" rev-parse HEAD)" = "$(git -C "$PROJ" rev-parse origin/main)" ] || fail "T3 a direct-PR lane must not be moved onto a trunk"
 git -C "$PROJ" branch -D trunk >/dev/null; rm -f "$HOME_DIR/state/trunk-tip-proj"
 printf -- '- proj [local-trunk] - fixture (added 2026-11-07)\n' > "$HOME_DIR/data/projects.md"
-# Give the project a trunk one commit ahead of the default branch.
-git -C "$PROJ" branch --no-track trunk origin/main
-git -C "$PROJ" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m "landed earlier" --no-verify 2>/dev/null
-git -C "$PROJ" branch -f trunk HEAD
-mkdir -p "$HOME_DIR/state"; git -C "$PROJ" rev-parse trunk > "$HOME_DIR/state/trunk-tip-proj"
+# Initialize a real trunk one commit ahead of origin/main.
+git -C "$PROJ" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m "landed earlier"
+JG_HOME="$HOME_DIR" "$ROOT/bin/jg-trunk.sh" init "$PROJ" HEAD >/dev/null || fail "trunk init"
 
 # T1
 for mode in direct-PR no-mistakes; do
@@ -68,8 +67,64 @@ done
 pass "T1 a pull-request lane on a project with a trunk is refused by name"
 
 # T2
-ship local-only
+ship local-trunk
 expect_code 0 "$rc" "T2 a local-only lane on a project with a trunk must spawn: $out"
 [ "$(git -C "$wt" rev-parse HEAD)" = "$(git -C "$PROJ" rev-parse trunk)" ] || fail "T2 the lane's copy must start on the trunk tip"
-pass "T2 a local-only lane starts on the trunk tip"
+[ "$(sed -n 's/^mode=//p' "$HOME_DIR/state/$id.meta")" = local-trunk ] || fail "T2 the task record must keep local-trunk"
+assert_contains "$(cat "$HOME_DIR/data/$id/launch-brief.md")" "Delivery contract: mode=local-trunk" "T2 the launch contract must keep local-trunk"
+pass "T2 a local-trunk lane starts on the trunk tip with its mode intact"
+# Continue that real task through publication, automatic landing and real unforced cleanup.
+# Only terminal/pool endpoints are fixtures; the repository, store, receipt and cleanup are real.
+branch=$(sed -n 's/^branch=//p' "$HOME_DIR/state/$id.meta")
+git -C "$wt" checkout -q -b "$branch"
+printf 'Umer\n' > "$wt/work.txt"; git -C "$wt" add work.txt
+git -C "$wt" commit -qm "ticket $id: local-trunk journey"
+head=$(git -C "$wt" rev-parse HEAD)
+cp -R "$ROOT/bin" "$HOME_DIR/bin"; ln -s "$ROOT/core" "$HOME_DIR/core"; ln -s "$ROOT/policy" "$HOME_DIR/policy"; ln -s "$ROOT/toolchain.versions" "$HOME_DIR/toolchain.versions"
+# shellcheck disable=SC2016 # expanded by the gate in the candidate clone
+printf 'gate-lint=test -s work.txt\ngate-full=test "$(cat work.txt)" = Umer\nflush-at-ready=1\n' > "$HOME_DIR/config/trunk-policy"
+printf 'real task journey; commit and receipt; no live or release requested\n' > "$HOME_DIR/data/$id/evidence.txt"
+JG_HOME="$HOME_DIR" "$ROOT/core/receipts/bin/jg-run-receipt.sh" "$id" PASS "$HOME_DIR/data/$id/evidence.txt" "$wt" >/dev/null || fail "real receipt publisher"
+[ "$(jq -r .mode "$HOME_DIR/state/$id.run-receipt.json")" = local-trunk ] || fail "receipt mode changed"
+[ -z "$(git -C "$PROJ" for-each-ref --format='%(refname)' refs/remotes/origin/release/)" ] || fail "fixture must have no remote release ref"
+# The landing starts on the worker's own done and the lane's whole proof at that head: the receipt above, the merge-card's
+# approved cited evidence, and a sealed clean done-done run holding that evidence.
+d="$HOME_DIR/data/$id"; mkdir -p "$d/.done-done/runs"; printf 'ok\n' > "$d/run.log"
+printf '{"head":"%s","verdict":"pass","check":{"claim":"a user can land","evidence":["%s/run.log"]}}\n' "$head" "$d" > "$d/merge-card.json"
+printf '{"schema":1,"run_id":"20261109T000000Z-%s-ab","commit":"%s","exit":0,"dirty":false,"started_at":"2026-11-09T00:00:00Z","files":["run.log"]}\n' "${head:0:8}" "$head" > "$d/.done-done/runs/run-$head.json"
+printf 'done [at=%s]: ready in branch %s (local-trunk)\n' "$(date +%s)" "$branch" >> "$HOME_DIR/state/$id.status"
+JG_HOME="$HOME_DIR" PATH="$FAKEBIN:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_DIR" >/dev/null
+for _ in $(seq 1 150); do
+  [ ! -s "$HOME_DIR/data/jg-trunk-landing/outbox" ] || break
+  grep -qE '^(final|wait) ' "$HOME_DIR/data/jg-trunk-landing/$id.$head.state" && break
+  sleep 0.2
+done
+out=$(JG_HOME="$HOME_DIR" PATH="$FAKEBIN:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_DIR")
+[ "$(git -C "$PROJ" rev-parse trunk)" = "$head" ] || fail "automatic landing did not select the exact proved head: $out"
+assert_contains "$out" "(local-trunk)" "landing outcome must retain the mode"
+assert_contains "$out" "cleaned up" "real cleanup must succeed with no release ref"
+[ ! -e "$HOME_DIR/state/$id.meta" ] || fail "real cleanup must remove the task record"
+assert_contains "$(jg_test_backlog "$HOME_DIR" show "$id")" "local-trunk" "completed task must retain its delivery identity"
+snapshot=$(JG_HOME="$HOME_DIR" PATH="$FAKEBIN:$PATH" "$ROOT/bin/jg-fleet-snapshot.sh" --json)
+[ "$(jq -r --arg id "$id" '.backlog.records[] | select(.id == $id) | .local_note' <<<"$snapshot")" = local-trunk ] || fail "completed fleet status must retain local-trunk"
+pass "T2 the exact proved local-trunk head lands and cleans up without a remote release ref"
+
+ship local-only
+expect_code 0 "$rc" "T2 legacy local-only task contracts must still launch: $out"
+[ "$(sed -n 's/^mode=//p' "$HOME_DIR/state/$id.meta")" = local-only ] || fail "T2 legacy task records must not be rewritten"
+# T4: roll the trunk over to trunk-v2 (as bin/jg-trunk.sh does), leaving the old `trunk` branch behind at its earlier commit.
+old_tip=$(git -C "$PROJ" rev-parse trunk)
+for i in 1 2 3; do git -C "$PROJ" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m "after rollover $i"; done
+JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref refs/heads/trunk-v2 HEAD
+v2_tip=$(git -C "$PROJ" rev-parse trunk-v2)
+printf 'trunk-v2\n' > "$HOME_DIR/state/trunk-branch-proj"; printf '%s\n' "$v2_tip" > "$HOME_DIR/state/trunk-tip-proj"
+ship local-trunk
+expect_code 0 "$rc" "T4 a lane after a rollover must spawn: $out"
+[ "$(git -C "$wt" rev-parse HEAD)" = "$v2_tip" ] || fail "T4 the lane must start on the tip of trunk-v2"
+[ "$(git -C "$wt" rev-list --count "$old_tip..HEAD")" = 3 ] || fail "T4 fixture must reproduce a lane ahead of the old trunk branch"
+[ "$(sed -n 's/^base=//p' "$HOME_DIR/state/$id.meta")" = "$v2_tip" ] || fail "T4 the task record must hold base=<trunk tip>"
+# shellcheck disable=SC2016 # literal backticks in the brief text
+assert_contains "$(cat "$HOME_DIR/data/$id/brief.md")" 'the `trunk-v2` branch of the project' "T4 the brief must name the real trunk branch"
+pass "T4 a lane after a rollover starts on the trunk tip, records base=<tip>, and its brief names that branch"
+
 printf 'jg-trunk-spawn: ok\n'

@@ -661,6 +661,32 @@ tests/jg-claude-stop-autoarm.test.sh
 tests/jg-turnend-guard.test.sh
 ```
 
+### Claude mid-turn cycle, 2026-11-09
+
+The mid-turn cycle ([`watcher-continuity.md`](../watcher-continuity.md#claude-mid-turn-cycle)) ran with Claude Code 2.1.321 on Haiku on 2026-11-09.
+The lab is a disposable clone that is its own Squad Lead home, with one lane under way and no watcher.
+The turn runs `true`, then a probe that waits up to 60 seconds for a healthy watcher and then watches it for 20 seconds.
+
+```sh
+claude --version
+JG_CLAUDE_LIVE_E2E=1 bin/jg-test-run.sh tests/jg-claude-midturn-arm-live-e2e.test.sh
+```
+
+Observed output with the PostToolUse registration:
+
+```text
+2.1.321 (Claude Code)
+ok - Claude 2.1.321 (Claude Code) live E2E: a Squad Lead with work under way got a live cycle mid-turn (healthy pid=667668 waited=1s held=20s epoch=absent) with no Stop and no model-issued arm command
+```
+
+The same guard run against the previous tracked settings, which had only the Stop registration, failed:
+
+```text
+not ok - Claude 2.1.321 (Claude Code): a lead with work under way had no live cycle mid-turn within 60s: none waited=60s held=0s epoch=absent; triage:
+```
+
+A headless `claude -p` session sends TERM to the detached arm when the session process exits, after the turn; the watcher it started keeps its lock, so the guard checks only the turn itself.
+
 ### Stalled-holder recovery
 
 On 2026-10-25, GNU Bash 5.3.15 on Linux exercised the real arm and watcher through `bash tests/jg-watcher-lock.test.sh` in a private test home.
@@ -852,16 +878,8 @@ The max-defer wedge alert reaches the captain by the one captain channel, `bin/j
 The channels this section previously recorded (macOS Notification Center, herdr, a captain-supplied `command:`) are deleted with `config/wedge-alarm`: the slice that removed the duplicate notifier records its own dated proof, and [`captain-channel.md`](../captain-channel.md) owns how the surviving path runs, reverses and replays.
 `tests/jg-afk-inject-herdr-e2e.test.sh` Scenario D still proves the wedge itself end to end: the durable marker is written and the buffer is preserved while the daemon keeps running, and its channel config is `set mode off` so no test reaches a bus.
 
-## Owner-correction capture at the turn boundary, 2026-10-30
+## Owner-correction suggestion at the turn boundary
 
-`bin/jg-turnend-guard.sh` refuses a turn that ends after a recorded owner correction with neither a new `data/owner-rules.md` entry nor an enforcement ticket, as [`../turnend-guard.md`](../turnend-guard.md) "Owner-correction capture rule" specifies.
-`bash tests/jg-owner-correction.test.sh`, built from the owner's words "I don't want these feedbacks as one time fix this need to go into juggernaut as feedback so it doesn't repeat again", fails on its first case against the guard before the change (`not ok - a turn that followed an owner correction with neither artefact ended (expected '2', got '0')`) and passes all four cases against it.
-The flag's command lines for that case:
-
-```text
-●  HE CORRECTED THE FLEET, AND NOTHING CAPTURED IT
-●    <repo>/bin/jg-owner-rules.sh add --kind owner --words "<his exact words>" --scope "<where it applies>" --enforce "<script or contract that enforces it>"
-●    <repo>/bin/jg-backlog.sh add <id> "[feature] <what changes>" --body "<summary of what changes and why>"
-```
-
-`tests/jg-turnend-guard.test.sh` and `tests/jg-overwatch-kpi.test.sh` pass unchanged.
+`bin/jg-turnend-guard.sh` prints one soft `SOFT SUGGESTION` line on stderr after a repeated owner correction of the same kind with neither a new `data/owner-rules.md` entry nor an enforcement ticket, and exits without blocking, as [`../turnend-guard.md`](../turnend-guard.md) "Owner-correction suggestion" specifies.
+`bash tests/jg-owner-correction.test.sh` asserts that a first correction and an untagged captain message print nothing, and that a repeat gets exactly one soft line, exit 0 and no block budget.
+`tests/jg-overwatch-kpi.test.sh` asserts that an untagged message neither blocks nor prints.

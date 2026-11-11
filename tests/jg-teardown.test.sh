@@ -69,6 +69,7 @@
 #   (z3d) forced squad_lead + child return leaves residue    -> warning, retirement completes, exit 4
 #   (z3e) return removes the copy                            -> cannot-verify warning, exit 4
 #   (z4) scout + ignored file                                -> ignored file survives
+# Run with --local-trunk to exercise only the local-trunk cleanup journey and legacy local-only rules.
 set -u
 
 # shellcheck source=tests/lib.sh disable=SC1091
@@ -696,6 +697,9 @@ make_path_without_lsof() {  # <case-dir>
   for cmd in awk python3 jq bash basename cat chmod cp cut date dirname env find git go grep head hostname id ln \
     mkdir mktemp mv perl ps readlink realpath rm sed sh sha1sum sha256sum shasum sleep sort stat tail timeout tr uname wc xargs; do
     resolved=$(command -v "$cmd" 2>/dev/null) || continue
+    if [ "$cmd" = python3 ]; then
+      resolved=$("$resolved" -c 'import sys; print(sys.executable)') || return 1
+    fi
     case "$resolved" in /*) ln -sf "$resolved" "$path_dir/$cmd" ;; esac
   done
   printf '%s\n' "$path_dir"
@@ -2768,6 +2772,8 @@ test_squad_lead_pr_registration_publishes_ready_line() {
 # in place hands a fixture teardown a foreign "live" parent to compare against
 # that fixture's own durable binding, and the teardown then refuses a cleanup
 # that has to succeed - a false red that depends only on who started the run.
+# The launch's JG_SUPERVISION_MODEL names the live home's model, so a fixture that
+# inherits it is judged by a model its own home never had (tests/jg-inbox.test.sh).
 # This guards the clearance itself, in the runner that owns what a script inherits.
 test_runner_clears_the_lead_launch_parent_prefix() {
   local probe_dir probe out rc
@@ -2776,17 +2782,18 @@ test_runner_clears_the_lead_launch_parent_prefix() {
   probe="$probe_dir/probe.test.sh"
   cat > "$probe" <<'SH'
 #!/usr/bin/env bash
-printf 'seen=%s home=%s\n' "${JG_PUBLIC_FOLLOWUP_PRIMARY_HOME:-}" "${JG_HOME:-}"
+printf 'seen=%s home=%s model=%s\n' "${JG_PUBLIC_FOLLOWUP_PRIMARY_HOME:-}" "${JG_HOME:-}" "${JG_SUPERVISION_MODEL:-}"
 SH
   out="$probe_dir/runner.out"
   rc=0
   JG_HOME="$probe_dir/live-home" \
   JG_PUBLIC_FOLLOWUP_PRIMARY_HOME="$probe_dir/foreign-primary-home" \
   JG_STATE_OVERRIDE="$probe_dir/live-state" \
+  JG_SUPERVISION_MODEL=autoarm \
     "$ROOT/bin/jg-test-run.sh" "$probe" > "$out" 2>&1 || rc=$?
   expect_code 0 "$rc" "runner-env: the runner should still report a green probe: $(cat "$out")"
-  assert_grep "seen= home=" "$out" \
-    "runner-env: the lead-launch parent prefix reached the test script"
+  grep -qxF "seen= home= model=" "$out" \
+    || fail "runner-env: the lead-launch parent prefix reached the test script: $(cat "$out")"
   pass "the test runner clears a squad_lead launch's parent-home prefix"
 }
 
@@ -5657,6 +5664,69 @@ test_retained_sources_still_reach_the_ordinary_refusal() {
   pass "present required sources still reach the ordinary teardown refusal"
 }
 
+test_local_trunk_cleanup() {
+  local scenario case_dir head out rc branch=trunk
+  for scenario in landed unlanded pushed-unlanded dirty held rolled non-trunk; do
+    case_dir=$(make_case "local-trunk-$scenario")
+    write_meta "$case_dir" local-only ship
+    printf '%s\n' '- project [local-trunk] - fixture' > "$case_dir/data/projects.md"
+    wt_commit_file "$case_dir" feature.txt 'Umer feature' 'task-x1: feature'
+    head=$(git -C "$case_dir/wt" rev-parse HEAD)
+    [ "$scenario" != rolled ] || branch=trunk-v2
+    git -C "$case_dir/project" branch "$branch" "$head"
+    printf '%s\n' "$branch" > "$case_dir/state/trunk-branch-project"
+    printf '%s\n' "$head" > "$case_dir/state/trunk-tip-project"
+    # In rolled homes the original trunk has already been retired.
+    git -C "$case_dir/project" show-ref --verify --quiet "refs/heads/$branch" || fail 'missing fixture trunk'
+    case "$scenario" in
+      unlanded|pushed-unlanded) wt_commit_file "$case_dir" later.txt 'unlanded work' 'task-x1: later' ;;
+      dirty) printf '%s\n' 'uncommitted work' >> "$case_dir/wt/feature.txt" ;;
+      held)
+        seed_backlog_in_flight "$case_dir"
+        JG_HOME="$case_dir" JG_STATE_OVERRIDE="$case_dir/state" JG_DATA_OVERRIDE="$case_dir/data" \
+          JG_CONFIG_OVERRIDE="$case_dir/config" "$ROOT/bin/jg-captain-hold.sh" hold task-x1 \
+          --reason 'Choose the follow-up' >/dev/null || fail 'could not hold fixture task'
+        ;;
+      non-trunk) printf '%s\n' '- project [local-only] - fixture' > "$case_dir/data/projects.md" ;;
+    esac
+    [ "$scenario" != pushed-unlanded ] || add_fork_with_pushed_branch "$case_dir"
+    head=$(git -C "$case_dir/wt" rev-parse HEAD)
+    [ -z "$(git --git-dir="$case_dir/origin.git" for-each-ref refs/heads/release/)" ] || fail 'fixture has a release ref'
+    rc=0; out=$(run_teardown "$case_dir" 2>&1) || rc=$?
+    case "$scenario" in
+      unlanded|pushed-unlanded|dirty|non-trunk)
+        [ "$rc" -ne 0 ] || fail "$scenario: cleanup discarded protected work"
+        assert_refusal_retained_task_state "$case_dir" "$scenario" "$head"
+        if [ "$scenario" = dirty ]; then
+          assert_contains "$(cat "$case_dir/wt/feature.txt")" 'uncommitted work' 'dirty bytes lost'
+        fi
+        assert_contains "$out" REFUSED "$scenario: refusal must name the cause"
+        ;;
+      *)
+        [ "$rc" -eq 0 ] || fail "$scenario: landed local trunk cleanup refused: $out"
+        [ ! -e "$case_dir/state/task-x1.meta" ] || fail "$scenario: task record survived cleanup"
+        git -C "$case_dir/project" merge-base --is-ancestor "$head" "$branch" || fail 'cleanup lost landed work'
+        if [ "$scenario" = held ]; then
+          JG_HOME="$case_dir" JG_STATE_OVERRIDE="$case_dir/state" JG_DATA_OVERRIDE="$case_dir/data" \
+            JG_CONFIG_OVERRIDE="$case_dir/config" "$ROOT/bin/jg-captain-hold.sh" open task-x1 >/dev/null \
+            || fail 'cleanup closed the unanswered captain call'
+          assert_contains "$out" 'still held for the captain' 'held row must remain open'
+        fi
+        ;;
+    esac
+    pass "local trunk cleanup: $scenario (no release ref)"
+    branch=trunk
+  done
+}
+
+if [ "${1:-}" = --local-trunk ]; then
+  test_local_trunk_cleanup
+  test_local_only_truly_unpushed_refuses
+  test_local_only_merged_to_local_main_allows
+  exit 0
+fi
+
+test_local_trunk_cleanup
 test_missing_startup_source_refuses_before_cleanup
 test_unreadable_startup_source_refuses_before_cleanup
 test_missing_adapter_sibling_refuses_before_cleanup

@@ -9,8 +9,10 @@
 #   jg-git-strip-ai-trailers.sh install <hooks-dir> <worktree>
 #       Recreate <hooks-dir> as a core.hooksPath for this launch: a commit-msg
 #       hook that runs this strip, plus one wrapper per client-side hook name
-#       git documents except reference-transaction and post-index-change,
-#       which are deliberately excluded (see JG_GIT_CLIENT_HOOKS below).
+#       git documents except post-index-change (see JG_GIT_CLIENT_HOOKS below).
+#   jg-git-strip-ai-trailers.sh upstream-hooks <hooks-dir> <worktree>
+#       Resolve the repository hook directory beneath this launch overlay, using
+#       the same environment filtering as its runtime wrappers.
 #       Each wrapper removes this directory's own core.hooksPath entry from
 #       GIT_CONFIG_*, keeping every inherited entry (a scoped credential.helper,
 #       safe.directory) for the repository's hook, and then resolves
@@ -25,6 +27,13 @@
 #       repository hook, as in plain git; any other failed lookup exits
 #       nonzero rather than skipping the repository's hook. Does not touch the
 #       project's git config; the caller prefixes the pane with env-file below.
+#   jg-git-strip-ai-trailers.sh refresh <state-dir>
+#       Bring each <state-dir>/<id>.git-hooks that install wrote up to this
+#       checkout's current wrapper set, so a launch made before the installed
+#       hook set changed gains the new wrappers. It touches only a directory
+#       whose commit-msg names that exact path as its own, replaces wrappers by
+#       rename, keeps the directory read-only, and leaves a current one alone.
+#       Bootstrap runs it at every locked session start.
 #   jg-git-strip-ai-trailers.sh env-file <hooks-dir> <out-file>
 #       Write <out-file> as one plain export statement that appends
 #       core.hooksPath=<hooks-dir> after the GIT_CONFIG_COUNT entries this
@@ -95,6 +104,7 @@ usage() {
 usage:
   jg-git-strip-ai-trailers.sh <msgfile>
   jg-git-strip-ai-trailers.sh install <hooks-dir> <worktree>
+  jg-git-strip-ai-trailers.sh refresh <state-dir>
   jg-git-strip-ai-trailers.sh env-file <hooks-dir> <out-file>
 EOF
   exit 2
@@ -189,10 +199,13 @@ write_executable() {
 # when the lookup still names this launch's own hooks dir, meaning those files
 # point here, so the wrapper cannot recurse into itself. An empty
 # core.hooksPath makes that lookup fail, but plain git reads it as "no hooks",
-# so the wrapper runs none; any other failure reruns the lookup to show git's
-# error and refuses.
+# so the wrapper runs none. A repository that git is still creating (git init,
+# and the init inside git clone) writes its HEAD through a reference-transaction
+# before its objects directory exists, so git cannot yet resolve it either; it
+# has no hook of its own to chain to, so the wrapper runs none. Any other
+# failure reruns the lookup to show git's error and refuses.
 runtime_chain_body() {
-  local ours=$1
+  local ours=$1 resolve_only=${2:-0}
   cat <<EOF
 ours=$(quote_for_hook "$ours")
 case \${GIT_CONFIG_COUNT:-} in
@@ -215,10 +228,17 @@ orig=\$(unset GIT_CONFIG_PARAMETERS; git rev-parse --path-format=absolute --git-
   if hooks_path=\$(unset GIT_CONFIG_PARAMETERS; git config --get --type=path core.hooksPath 2>/dev/null) && [ -z "\$hooks_path" ]; then
     exit 0
   fi
+  if [ -n "\${GIT_DIR:-}" ] && [ ! -d "\$GIT_DIR/objects" ]; then
+    exit 0
+  fi
   (unset GIT_CONFIG_PARAMETERS; git rev-parse --path-format=absolute --git-path hooks >/dev/null)
   echo "jg-git-strip-ai-trailers: cannot resolve this repository's hooks directory; refusing to skip its \$name hook" >&2
   exit 1
 }
+if [ "$resolve_only" = 1 ]; then
+  printf '%s\n' "\$orig"
+  exit 0
+fi
 if [ "\$orig" = "\$ours" ]; then
   exit 0
 fi
@@ -234,15 +254,10 @@ EOF
 # them up in a fleet worker's own worktree. commit-msg is written separately
 # because it is the one that carries the strip.
 #
-# reference-transaction and post-index-change are deliberately excluded, ruled
-# 2026-09-17. git invokes them twice per updated ref and on every index write,
-# so a wrapper for either turns a stat git used to skip into hundreds of forks
-# on one bulk command. Measured on git 2.50.1: a fetch of 300 new refs goes
-# 0.23s -> 24.6s, and a no-op /bin/sh hook still costs 4.9s, so the price is
-# git's invocation rather than the wrapper body. Neither name is one
-# commit-message or lint tooling installs, which is what this chaining exists
-# to preserve. A project that does install one loses chaining for it inside
-# fleet panes only.
+# post-index-change stays excluded because it runs on every index write.
+# reference-transaction is required: the repository's trunk guard must also run
+# inside the task overlay. Its fork cost cannot authorize bypassing ref protection.
+# The same wrapper resolves hooks at invocation time, including guards installed after launch.
 #
 # The names kept are not free either, and that cost is accepted, ruled
 # 2026-09-17. Every wrapper call forks bash plus one git rev-parse. A plain
@@ -254,7 +269,7 @@ EOF
 # pre-push, and a slower rebase inside a pane is the accepted price.
 JG_GIT_CLIENT_HOOKS='applypatch-msg pre-applypatch post-applypatch pre-commit
 pre-merge-commit prepare-commit-msg post-commit pre-rebase post-checkout
-post-merge pre-push post-rewrite pre-auto-gc sendemail-validate'
+post-merge pre-push post-rewrite pre-auto-gc sendemail-validate reference-transaction'
 
 write_env_file() {
   local hooks_dir=$1 out=$2 count=${GIT_CONFIG_COUNT:-0} tmp
@@ -302,21 +317,55 @@ install_hooks() {
   chmod 700 "$hooks_dir" 2>/dev/null || true
   hooks_dir=$(CDPATH='' cd -- "$hooks_dir" && pwd -P) || return 1
 
-  write_executable "$hooks_dir/commit-msg" <<EOF
-#!/usr/bin/env bash
-set -u
-$(quote_for_hook "$SELF") "\$1" || exit \$?
-$(runtime_chain_body "$hooks_dir")
-EOF
-
-  for name in $JG_GIT_CLIENT_HOOKS; do
-    write_executable "$hooks_dir/$name" <<EOF
-#!/usr/bin/env bash
-set -u
-$(runtime_chain_body "$hooks_dir")
-EOF
+  for name in commit-msg $JG_GIT_CLIENT_HOOKS; do
+    hook_text "$name" "$hooks_dir" | write_executable "$hooks_dir/$name" || return 1
   done
   chmod 500 "$hooks_dir"
+}
+
+# The wrapper text for hook <name> in the directory <ours>.
+hook_text() {
+  local name=$1 ours=$2
+  printf '#!/usr/bin/env bash\n# managed by bin/jg-git-strip-ai-trailers.sh\nset -u\n'
+  [ "$name" != commit-msg ] || printf '%s %s\n' "$(quote_for_hook "$SELF")" "\"\$1\" || exit \$?"
+  runtime_chain_body "$ours"
+}
+
+# Bring every <state-dir>/<id>.git-hooks this installer wrote up to the hook
+# set and wrapper text this checkout installs, so a launch made before the
+# installed hook set changed gains the new wrappers. Only a directory whose
+# commit-msg names that exact path as its own is touched, so another home's
+# directory or a hand-made one is left alone. Each wrapper is replaced by
+# rename, so a running git never finds one half-written, and the directory
+# returns to read-only; a current directory is not modified. Nothing is
+# deleted: a wrapper for a name that left the set stays, and only chains.
+refresh_hooks() {
+  local state=$1 d real name tmp rc=0 unlocked
+  [ -d "$state" ] || return 0
+  for d in "$state"/*.git-hooks; do
+    [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/commit-msg" ] || continue
+    real=$(CDPATH='' cd -- "$d" && pwd -P) || continue
+    grep -qxF "ours=$(quote_for_hook "$real")" "$d/commit-msg" || continue
+    unlocked=0
+    for name in commit-msg $JG_GIT_CLIENT_HOOKS; do
+      if [ -f "$real/$name" ] && [ "$(hook_text "$name" "$real"; echo x)" = "$(cat "$real/$name"; echo x)" ]; then
+        continue
+      fi
+      if [ "$unlocked" = 0 ]; then
+        chmod u+w "$real" || { rc=1; break; }
+        unlocked=1
+      fi
+      if ! { tmp=$(mktemp "$real/.refresh.XXXXXX") && hook_text "$name" "$real" >"$tmp" &&
+        chmod 500 "$tmp" && mv -f "$tmp" "$real/$name"; }; then
+        echo "error: could not refresh $real/$name" >&2
+        rc=1
+        continue
+      fi
+      echo "refreshed: $real/$name"
+    done
+    [ "$unlocked" = 0 ] || chmod 500 "$real"
+  done
+  return "$rc"
 }
 
 CMD=${1:-}
@@ -325,6 +374,15 @@ install)
   [ "$#" -eq 3 ] || usage
   unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
   install_hooks "$2" "$3"
+  ;;
+upstream-hooks)
+  [ "$#" -eq 3 ] || usage
+  cd "$3" || exit 1
+  bash -c "$(runtime_chain_body "$2" 1)"
+  ;;
+refresh)
+  [ "$#" -eq 2 ] || usage
+  refresh_hooks "$2"
   ;;
 env-file)
   [ "$#" -eq 3 ] || usage

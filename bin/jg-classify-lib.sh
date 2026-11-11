@@ -1331,67 +1331,9 @@ EOF
 # status_open_decisions remains the single owner of open/closed semantics,
 # including same-key reopening and reserved-key handling.
 # Every other captain-relevant event is terminal and always actionable.
-_jg_decision_origin_drop() {  # <origins> <key> [<out-var>]
-  local __jg_origindrop_origin __jg_origindrop_out=''
-  while IFS= read -r __jg_origindrop_origin; do
-    case "$__jg_origindrop_origin" in
-      "$2"$'\t'*) ;;
-      *) [ -n "$__jg_origindrop_origin" ] && __jg_origindrop_out="${__jg_origindrop_out}${__jg_origindrop_origin}"$'\n' ;;
-    esac
-  done <<EOF
-$1
-EOF
-  # Same capture rule as _jg_decision_drop's <out-var> form.
-  if [ "$#" -gt 2 ]; then
-    while [ -n "$__jg_origindrop_out" ]; do
-      case "$__jg_origindrop_out" in *$'\n') __jg_origindrop_out=${__jg_origindrop_out%$'\n'} ;; *) break ;; esac
-    done
-    printf -v "$3" '%s' "$__jg_origindrop_out"
-  else
-    printf '%s' "$__jg_origindrop_out"
-  fi
-}
-
-_jg_status_open_decision_origins() {  # <status-file> [<kind>]
-  local f=$1 line open='' after key verb note number=0 origins=''
-  local resolve held kind __jg_origins_setverb
-  kind=$(_jg_status_kind "$f" "${2:-}")
-  resolve=${JG_CLASSIFY_RESOLVE_VERB:-$JG_CLASSIFY_RESOLVE_VERB_DEFAULT}
-  held=${JG_CLASSIFY_CAPTAIN_HELD_VERB:-$JG_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}
-  while IFS= read -r line || [ -n "$line" ]; do
-    number=$((number + 1))
-    _jg_decision_fold_line "$open" "$line" "$kind" after
-    [ -n "$after" ] || origins=''
-    _jg_decision_key "$line" default key || { open=$after; continue; }
-    status_line_verb "$line" verb
-    status_line_note "$line" note
-    case "$verb" in
-      needs-decision|blocked)
-        if _jg_open_set_has "$after" "$key" \
-          && _jg_open_set_verb "$after" "$key" __jg_origins_setverb \
-          && [ "$__jg_origins_setverb" = "$verb" ]; then
-          case "$after" in
-            "$key"$'\t'"$verb"$'\t'"$note"|*$'\n'"$key"$'\t'"$verb"$'\t'"$note")
-              _jg_decision_origin_drop "$origins" "$key" origins
-              [ -n "$origins" ] && origins="${origins}"$'\n'
-              origins="${origins}${key}"$'\t'"${number}"
-              ;;
-          esac
-        fi
-        ;;
-      "$resolve"|"$held")
-        _jg_open_set_has "$after" "$key" || _jg_decision_origin_drop "$origins" "$key" origins
-        ;;
-    esac
-    open=$after
-  done < "$f"
-  printf '%s' "$origins"
-}
-
 status_span_first_actionable_record() {  # <status-file> <start-offset> [record-var] [needs-decision-var]
   local f=$1 start=${2:-0} output_var=${3-} needs_var=${4-} size ident cur_ident scratch chunk_file result
-  local line verb key origins='' folded=0 rc=1 failed=0 line_number=0 live_line='' events='' _line _key _jg_span_needs_decision=0
-  local -a evs=()
+  local rc=0 events='' classified kind _jg_span_needs_decision=0
   [ -e "$f" ] || { [ -L "$f" ] && return 2; return 1; }
   [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 2
   ident=$(_jg_open_decisions_file_ident "$f") || return 2
@@ -1418,60 +1360,12 @@ status_span_first_actionable_record() {  # <status-file> <start-offset> [record-
     rm -f "$chunk_file"; return 2;
   }
   [ "$cur_ident" = "$ident" ] || { rm -f "$chunk_file"; return 2; }
-  # shellcheck disable=SC2094 # The loop and the origin fold below only read the span scratch.
-  while IFS= read -r line || [ -n "$line" ]; do
-    line_number=$((line_number + 1))
-    case "$line" in *[![:space:]]*) ;; *) continue ;; esac
-    if status_is_captain_held "$line"; then
-      # A transfer closes the status-log decision and remains non-actionable to
-      # stale classification. The side-band marker lets signal routing surface
-      # the captain-owned hold without changing that established stale verdict.
-      _jg_span_needs_decision=1
-      continue
-    fi
-    status_is_captain_relevant "$line" || continue
-    status_line_verb "$line" verb
-    case "$verb" in
-      needs-decision|blocked)
-        key=$(_jg_decision_key "$line") || {
-          evs+=("$line")
-          [ "$verb" = needs-decision ] && _jg_span_needs_decision=1
-          rc=0
-          continue
-        }
-        _jg_decision_key_transition_allowed "$key" "$(status_line_note "$line")" || {
-          evs+=("reconciliation-required: ${line}")
-          [ "$verb" = needs-decision ] && _jg_span_needs_decision=1
-          rc=0
-          continue
-        }
-        if [ "$folded" -eq 0 ]; then
-          origins=$(_jg_status_open_decision_origins "$chunk_file" "$(_jg_status_kind "$f")") || { failed=1; break; }
-          folded=1
-        fi
-        live_line=$(while IFS=$(printf '\t') read -r _key _line; do
-          [ "$_key" = "$key" ] && { printf '%s' "$_line"; break; }
-        done <<EOF
-$origins
-EOF
-)
-        [ -n "$live_line" ] && [ "$line_number" -eq "$live_line" ] || continue
-        evs+=("$line")
-        if [ "$verb" = needs-decision ] || { [ "$verb" = blocked ] &&
-          _jg_is_pending_reply_escalation "$key" "$(status_line_note "$line")"; }; then
-          _jg_span_needs_decision=1
-        fi
-        rc=0
-        ;;
-      *)
-        evs+=("$line")
-        rc=0
-        ;;
-    esac
-  done < "$chunk_file"
+  kind=$(_jg_status_kind "$f") || { rm -f "$chunk_file"; return 2; }
+  classified=$(_jg_classify_go span-events "$kind" < "$chunk_file") || rc=$?
   rm -f "$chunk_file"
-  [ "$failed" -eq 0 ] || return 2
-  if [ "${#evs[@]}" -gt 0 ]; then printf -v events '%s ; ' "${evs[@]}"; events=${events% ; }; fi
+  [ "$rc" -le 1 ] || return 2
+  _jg_span_needs_decision=${classified%%$'\t'*}
+  events=${classified#*$'\t'}
   if [ "$rc" -eq 0 ]; then result="${size}"$'\t'"${ident}"$'\t'"${events}"; else result="${size}"$'\t'"${ident}"; fi
   if [ -n "$output_var" ]; then
     printf -v "$output_var" '%s' "$result"

@@ -29,6 +29,8 @@
 # While config/frozen-release names a release branch that is shipping, that branch
 # is also accepted as the release pull request's head even when a newer
 # release/c-<N> exists; an absent, malformed, or unknown marker changes nothing.
+# A local-trunk project's current trunk branch is its release pull request's head
+# too (bin/jg-trunk.sh release opens it); jg_is_release_head owns every such head.
 # That release pull request is itself refused while an open pull request still
 # targets an older release/c-<M> (jg_pr_check_release_orphans below).
 # An unreadable base does not refuse.
@@ -266,8 +268,8 @@ jg_pr_check_version_branch_base() {  # <meta> <url>
   head_ref=${fields#*$'\t'}
   [ -n "$base" ] && [ -n "$head_ref" ] || return 0
   [ "$base" = "$default" ] || return 0
-  # The release in flight (config/frozen-release) is also a release head, even
-  # when a newer release branch exists.
+  # The release in flight (config/frozen-release) and a local-trunk project's
+  # current trunk branch are release heads too (jg_is_release_head).
   if jg_is_release_head "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" "$project" "$head_ref"; then
     jg_pr_check_release_orphans "$url" "$head_ref" "$default"
     return

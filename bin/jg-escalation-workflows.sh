@@ -22,8 +22,6 @@
 #               It owns the rungs, which timer each rung fires on, each timer's
 #               seconds and the environment name it answers to, the ladder a wait
 #               class uses, the wait-source priority and the episode key template.
-#               The Dapr side of the same definition is
-#               core/bus/dapr/resiliency.yaml.
 #   facts       The one thing the definition does not own is how a fact is read:
 #               a status log, a wait source, the pause-until token and the captain
 #               hold are read with the same shared libraries the ladder code reads
@@ -35,13 +33,6 @@
 #   timers      Print <timer> <seconds> for every timer the definition carries. The
 #               ladder reads the two numbers it still measures its own rungs from
 #               here, so neither number exists a second time in shell code.
-#   deliver     deliver <rung> <task> <key> <class> <actor>: queue one rung's wake under
-#               <key>-<rung> (a rung already queued is not queued twice) and print it. This is
-#               the delivery command core/escalation-workflow's Dapr activity runs, so the
-#               workflow's rungs and the shell tick's rung use one wake line shape. Two more
-#               rungs serve the workflow's escalation rules: `digest` queues the one wake that
-#               replaces a coalesced group (<task> the group, <key> the wake key, <actor> its
-#               line), and `withdraw` takes back the wakes of a wait whose state changed.
 #   tick        The live rung. Once per watcher poll, for every open episode the
 #               ladder recorded, deliver the rungs this definition says are due and
 #               none it does not: queue the wake under <key>-owner, stamp the
@@ -59,7 +50,6 @@
 #   jg-escalation-workflows.sh show
 #   jg-escalation-workflows.sh timers
 #   jg-escalation-workflows.sh tick
-#   jg-escalation-workflows.sh deliver <rung> <task> <key> <class> <actor>
 set -u
 export LC_ALL=C
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -67,6 +57,8 @@ ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 JG_HOME=${JG_HOME:-${JG_ROOT_OVERRIDE:-$ROOT}}
 STATE=${JG_STATE_OVERRIDE:-$JG_HOME/state}
 CONFIG=${JG_CONFIG_OVERRIDE:-$JG_HOME/config}
+# shellcheck source=core/wait-timers/bin/jg-wait-policy-lib.sh
+. "$ROOT/core/wait-timers/bin/jg-wait-policy-lib.sh"
 
 die() { printf 'jg-escalation-workflows: %s\n' "$*" >&2; exit 2; }
 say() { printf '%s\n' "$*" >&2; }
@@ -92,6 +84,12 @@ timer_secs() {  # <timer-name>
   local name=$1 env value
   env=$(wf ".spec.timers[\"$name\"].env // empty") || return 1
   value=$(wf ".spec.timers[\"$name\"].seconds // empty") || return 1
+  timer_resolve "$name" "$env" "$value"
+}
+
+# The one rule for a timer's seconds, whichever read of the definition found them.
+timer_resolve() {  # <timer-name> <env-name> <definition-seconds>
+  local name=$1 env=$2 value=$3
   if [ -n "$env" ] && [ -n "${!env:-}" ]; then value=${!env}; fi
   case "$value" in
     '' | *[!0-9]* | 0*) die "timer $name is not positive decimal seconds: ${value:-<empty>}" ;;
@@ -138,7 +136,7 @@ ladder_rung_secs() {  # <wait|pause> <rung>
 # ---------------------------------------------------------------------------
 wf_facts() {  # <task>
   local task=$1 meta="$STATE/$1.meta" window decl='' wsrc='' dkey='' rows
-  local until name rule record old verb native fresh
+  local until name rule record old verb native fresh wait_state
   [ -f "$meta" ] && [ ! -L "$meta" ] || return 1
   window=$(jg_backend_target_of_meta "$meta")
   fresh=$(( ${POLL:-15} * 3 + 30 ))
@@ -175,7 +173,11 @@ EOF
       esac
     fi
   fi
-  if status_is_paused "$decl" && until=$(status_paused_until "$decl") && [ "$WF_NOW" -lt "$until" ]; then
+  wait_state=''
+  if status_is_paused "$decl"; then
+    wait_state=$(jg_wait_machine_state "$SCRIPT_DIR" "$task") || return 1
+  fi
+  if [ "$wait_state" != paused-no-date ] && status_is_paused "$decl" && until=$(status_paused_until "$decl") && [ "$WF_NOW" -lt "$until" ]; then
     decl=''
   fi
   if [ -n "$decl" ] && declare -F task_captain_call_open >/dev/null && task_captain_call_open "$task"; then
@@ -241,10 +243,7 @@ cmd_timers() {
     || die 'the definition carries no timers'
   while IFS=$'\t' read -r name value env; do
     [ -n "$name" ] || continue
-    if [ -n "$env" ] && [ -n "${!env:-}" ]; then value=${!env}; fi
-    case "$value" in
-      '' | *[!0-9]* | 0*) die "timer $name is not positive decimal seconds: ${value:-<empty>}" ;;
-    esac
+    value=$(timer_resolve "$name" "$env" "$value") || exit $?
     printf '%s\t%s\n' "$name" "$value"
   done <<EOF
 $rows
@@ -258,6 +257,37 @@ EOF
 # Deliver one rung's wake exactly as the ladder code delivered it: the same wake
 # line, the same <key>-<rung> queue key, and the same episode stamp afterwards so
 # the rungs this definition does not carry yet keep their timing from it.
+# What a tick needs from the definition, in ONE jq read rather than one per field:
+# each wait source as the ladder table row (<name><TAB><lapse rule>), each
+# ladder's single owner timer, and every timer's env name and seconds. Fields are
+# split by \037, so an empty field stays a field. Fails, as the per-field reads
+# did, when the definition carries no wait source.
+tick_plan() {
+  jq -r '.spec as $s
+    | ([$s.sources[] | select(.facts == "wait-source")] | if length == 0 then error("no wait source") else . end) as $src
+    | ($src[] | "source\u001f" + ([.name, (if .lapse then .lapse elif .fresh then "fresh" else "any" end)] | @tsv)),
+      (("wait", "pause") as $c | [$s.ladders[$c].rungs[]? | select(.rung == "owner") | .timer]
+        | select(length == 1 and .[0] != null and .[0] != false) | "owner\u001f" + $c + "\u001f" + (.[0] | tostring)),
+      (($s.timers // {}) | to_entries[]
+        | select(.value.env != null and .value.env != false and .value.seconds != null and .value.seconds != false)
+        | "timer\u001f" + .key + "\u001f" + (.value.env | tostring) + "\u001f" + (.value.seconds | tostring))' "$DEF"
+}
+
+# timer_secs, read from the tick's plan (WF_PLAN_TIMERS) instead of the definition.
+plan_timer_secs() {  # <timer-name>
+  local name env value
+  while IFS=$'\037' read -r name env value; do
+    [ "$name" = "$1" ] || continue
+    timer_resolve "$name" "$env" "$value"
+    return
+  done <<EOF
+$WF_PLAN_TIMERS
+EOF
+  return 1
+}
+
+need_fact_libs() { load_fact_libs || die 'the ladder fact libraries are not in this tree'; }
+
 tick_reason() {  # <task> <key> <since> <verb> <source>
   printf 'check: waiting-state %s (%s, observed %ss, level=owner; %s must recheck and unblock) id=%s source=[%s]' \
     "$1" "$4" "$((WF_NOW - $3))" "$(actor_text)" "$2" "$5"
@@ -275,14 +305,15 @@ opt_envelope() {  # <task> <verb> <since>
 
 cmd_tick() {
   local dir="$STATE/.waiting-timers" now record task sig since owner key
-  local wait_secs pause_secs class _src window decl verb source rungsecs reason
-  local _sig _owner _parent misses _card _last rows name rule
+  local wait_secs pause_secs class _src window decl verb source rungsecs reason wait_state
+  local _sig _owner _parent misses _card _last rows name rule plan kind a b c owner_wait='' owner_pause=''
   [ -d "$dir" ] || return 0
   if opt_available; then
     JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_CONFIG_OVERRIDE="$CONFIG" "$OPTIMIZER" resolve >/dev/null 2>&1 || true
     # Held rows leave as one wake per group, with a one-line digest.
     while IFS= read -r line; do
       [ -n "$line" ] || continue
+      need_fact_libs
       jg_wake_append check "escalation-digest-$(printf '%s' "$line" | awk '{ print $3 }')" "$line" || return 1
     done <<DIGEST_END
 $(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_CONFIG_OVERRIDE="$CONFIG" "$OPTIMIZER" flush 2>/dev/null)
@@ -290,18 +321,29 @@ DIGEST_END
   fi
   # The wait-source table is read once per tick, not once per lane, with each
   # named lapse timer resolved to its seconds.
-  rows=$(wf '.spec.sources[] | select(.facts == "wait-source") | [.name, (if .lapse then .lapse elif .fresh then "fresh" else "any" end)] | @tsv') || return 1
+  plan=$(tick_plan) || return 1
+  rows='' WF_PLAN_TIMERS=''
+  while IFS=$'\037' read -r kind a b c; do
+    case "$kind" in
+      source) rows="$rows$a"$'\n' ;;
+      owner) if [ "$a" = wait ]; then owner_wait=$b; else owner_pause=$b; fi ;;
+      timer) WF_PLAN_TIMERS="$WF_PLAN_TIMERS$a"$'\037'"$b"$'\037'"$c"$'\n' ;;
+    esac
+  done <<EOF
+$plan
+EOF
   WF_SOURCES=''
   while IFS=$'\t' read -r name rule; do
     [ -n "$name" ] || continue
-    case "$rule" in any | fresh) ;; *) rule=$(timer_secs "$rule") || return 1 ;; esac
+    case "$rule" in any | fresh) ;; *) rule=$(plan_timer_secs "$rule") || return 1 ;; esac
     WF_SOURCES="$WF_SOURCES$(printf '%s\t%s' "$name" "$rule")
 "
   done <<EOF
 $rows
 EOF
-  wait_secs=$(ladder_rung_secs wait owner 2>/dev/null) || wait_secs=''
-  pause_secs=$(ladder_rung_secs pause owner 2>/dev/null) || pause_secs=''
+  wait_secs='' pause_secs=''
+  [ -z "$owner_wait" ] || wait_secs=$(plan_timer_secs "$owner_wait" 2>/dev/null) || wait_secs=''
+  [ -z "$owner_pause" ] || pause_secs=$(plan_timer_secs "$owner_pause" 2>/dev/null) || pause_secs=''
   [ -n "$wait_secs$pause_secs" ] || return 0
   now=$(date +%s) || return 1
   WF_NOW=$now
@@ -316,12 +358,17 @@ EOF
     # The ladder normalizes a legacy owner level of 1 to "no owner delivery yet".
     case "${owner:-0}" in 0 | 1) ;; *) continue ;; esac
     [ -n "$key" ] || continue
+    need_fact_libs
     class='wait'
     if facts=$(wf_facts "$task"); then
       IFS=$'\t' read -r class _src window decl verb <<<"$facts"
       source=$(printf '%s' "$decl" | tr '\t\n' '  ' | cut -c1-160)
       rungsecs=$wait_secs
       [ "$class" != pause ] || rungsecs=$pause_secs
+      if [ "$class" = pause ]; then
+        wait_state=$(jg_wait_machine_state "$SCRIPT_DIR" "$task") || return 1
+        [ "$wait_state" != paused-no-date ] || rungsecs=$JG_WAIT_PLACEHOLDER_SECS
+      fi
     else
       # A lane the runtime reported blocked has no recorded declaration this fact
       # layer can read (the definition names that source `herdr-blocked`); its
@@ -351,27 +398,6 @@ EOF
     return 0  # one wake per poll, as the ladder's own owner fire was
   done
   return 0
-}
-
-cmd_deliver() {  # <rung> <task> <key> <class> [actor]
-  local rung=${1:-} task=${2:-} key=${3:-} class=${4:-} actor=${5:-} reason r
-  [ -n "$rung" ] && [ -n "$task" ] && [ -n "$key" ] && [ -n "$class" ] \
-    || die 'usage: jg-escalation-workflows.sh deliver <rung> <task> <key> <class> <actor>'
-  case "$rung" in
-    digest)  # coalesced rows leave as one wake: <task> is the group, <key> the wake key, <actor> the digest line
-      jg_wake_queued_keys check | grep -Fx "$key" >/dev/null || jg_wake_append check "$key" "$actor" || return 1
-      printf '%s\n' "$actor"
-      return 0 ;;
-    withdraw)  # the wait's state changed: take back every rung wake still queued for it
-      for r in $(jg_wake_queued_keys check | grep -F -- "$key-" || true); do jg_wake_withdraw check "$r" || return 1; done
-      return 0 ;;
-  esac
-  reason=$(printf 'check: waiting-state %s (%s, level=%s; %s must recheck and unblock) id=%s source=[dapr-workflow]' \
-    "$task" "$class" "$rung" "${actor:-$(actor_text)}" "$key")
-  if ! jg_wake_queued_keys check | grep -Fx "$key-$rung" >/dev/null; then
-    jg_wake_append check "$key-$rung" "$reason" || return 1
-  fi
-  printf '%s\n' "$reason"
 }
 
 # The fact layer, shared with the ladder code: the same hash, status-fold and
@@ -415,14 +441,11 @@ main() {
     show) cmd_show "$@" ;;
     timers) cmd_timers "$@" ;;
     tick)
-      load_fact_libs || die 'the ladder fact libraries are not in this tree'
+      # The fact libraries load at the first episode or digest a tick finds, so a
+      # poll with no open episode does not pay for them.
       cmd_tick "$@"
       ;;
-    deliver)
-      load_fact_libs || die 'the ladder fact libraries are not in this tree'
-      cmd_deliver "$@"
-      ;;
-    *) die 'usage: jg-escalation-workflows.sh show | timers | tick | deliver' ;;
+    *) die 'usage: jg-escalation-workflows.sh show | timers | tick' ;;
   esac
 }
 

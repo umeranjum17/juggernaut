@@ -13,7 +13,8 @@
 # Merge method on GitHub defaults to --squash when the caller passes none of
 # --squash, --merge, --rebase, or --method after the optional -- separator,
 # except for a release pull request (base the default branch, head the current
-# or in-flight release/c-<N> branch, as bin/jg-pr-check.sh admits it), which
+# or in-flight release/c-<N> branch or a local-trunk project's current trunk
+# branch, as bin/jg-pr-check.sh admits it), which
 # defaults to --merge so the default branch becomes an ancestor of the next
 # release branch. A caller's explicit method always wins.
 # On Forgejo the merge style defaults to the repository's own

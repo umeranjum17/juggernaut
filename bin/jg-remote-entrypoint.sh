@@ -158,7 +158,15 @@ COMMAND_PATH="$ROOT/bin/$COMMAND"
 [ -f "$COMMAND_PATH" ] && [ ! -L "$COMMAND_PATH" ] && [ -x "$COMMAND_PATH" ] \
   || die "command is not a genuine executable in the configured remote root: $COMMAND"
 unset HOME
-ACCOUNT_HOME=$(CDPATH='' cd ~ 2>/dev/null && pwd -P) || die "cannot resolve the remote account home"
+# The account home is the password database's (bash reads it for ~ when HOME is unset). A suite that plays the
+# remote host on its own machine names the host's account home instead (JG_TEST_SEAM=1), so the jobs it runs write
+# a throw-away account, never the runner's real one.
+if [ "${JG_TEST_SEAM:-}" = 1 ] && [ -n "${JG_TEST_REMOTE_ACCOUNT_HOME:-}" ]; then
+  ACCOUNT_HOME=$(jg_remote_job_canonical_existing_dir "$JG_TEST_REMOTE_ACCOUNT_HOME") \
+    || die "the test's remote account home is not a safe existing directory"
+else
+  ACCOUNT_HOME=$(CDPATH='' cd ~ 2>/dev/null && pwd -P) || die "cannot resolve the remote account home"
+fi
 jg_remote_job_compose_operator_path "$ACCOUNT_HOME" >/dev/null
 GIT_BIN=$(jg_remote_job_operator_tool git 2>/dev/null || true)
 if [ -n "$GIT_BIN" ]; then

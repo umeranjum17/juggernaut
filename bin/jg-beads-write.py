@@ -229,11 +229,40 @@ def tips_for(ident):
             "Run `jg-backlog.sh block %s --by <other>` to record a dependency" % ident]
 
 
+def child_of(items, found):
+    """Return the parent row of a child being filed: bd numbers the child under it, but stops no fourth level."""
+    row = view.named(items.values(), found["--parent"])
+    if row is None:
+        view.refuse('parent "%s" not found' % found["--parent"], "Create the parent first, or choose an existing task id")
+    if re.search(r"\.\d+\.\d+\Z", row["id"]):
+        view.refuse("%s is already a piece of a slice: a piece has no parts" % row["id"],
+                    "File this part under the slice: `jg-backlog.sh add --parent %s \"<title>\"`" % row["id"].rsplit(".", 1)[0])
+    return row
+
+
+def parent_flags(row, found):
+    """Return the create flags for a child: its parent, and of the parent's labels only captain-ask and project:<name>."""
+    labels = row.get("labels") or []
+    mine = [] if "--repo" in found else [label for label in labels if label.startswith("project:")][:1]
+    return ["--parent", row["id"], "--no-inherit-labels"] + [
+        flag for label in mine + [l for l in ("captain-ask",) if l in labels] for flag in ("-l", label)]
+
+
+def epic(row):
+    """Make the parent an epic, which bd needs before epic status lists its children; a captain decision keeps its kind in metadata."""
+    if row.get("issue_type") != "epic":
+        keep = ["--set-metadata", "kind=" + CAPTAIN] if row.get("issue_type") == "decision" else []
+        bd("update", row["id"], "--type", "epic", *keep)
+
+
 def add(args):
-    found, words = view.flags(args, FIELDS + ("--prefix", "--blocked-by", "--label"), ("--queue", "--mint", "--json"))
-    if "--mint" in found:
+    found, words = view.flags(args, FIELDS + ("--prefix", "--blocked-by", "--label", "--parent"), ("--queue", "--mint", "--json"))
+    if "--parent" in found and "--mint" not in found and len(words) == 2:
+        view.refuse("--parent cannot go with an own id: bd names a child under its parent",
+                    'Run `jg-backlog.sh add --parent <id> "<title>"`')
+    if "--mint" in found or "--parent" in found:
         if len(words) != 1 or not words[0]:
-            view.refuse("--mint requires a title", 'Run `jg-backlog.sh add "<title>" --mint`')
+            view.refuse("--mint and --parent require a title", 'Run `jg-backlog.sh add "<title>" --mint`')
         if "--prefix" in found:
             view.refuse("--prefix cannot go with --mint: bd names a minted id under the store's own prefix",
                         'Run `jg-backlog.sh add <prefix>-<name> "<title>"` to choose the id')
@@ -244,14 +273,22 @@ def add(args):
     body = checked(found)
     items = rows()
     title = words[-1]
-    ident = None if "--mint" in found else words[0]
+    minted = "--mint" in found or "--parent" in found
+    ident = None if minted else words[0]
     known = ident and view.named(items.values(), ident)
+    if known and known["id"] != ident:
+        view.refuse("%s is the task name of row %s, so it cannot be a new id" % (ident, known["id"]),
+                    "Run `jg-backlog.sh show %s` or choose another id" % known["id"])
     if known:
         state = LABEL[view.task(known, items)["state"]]
         lay(known["id"])
         respond(found, "add", ident, "add %s already exists -> %s" % (ident, state), tips_for(ident), already=True)
         return
+    if ident and any(re.fullmatch(re.escape(other) + r"-\d+", ident) for other in items):
+        view.refuse("%s has the form of a child's task name (<id>-<number>), so it cannot be a new id" % ident,
+                    'Run `jg-backlog.sh add --parent <id> "<title>"` to file a part of a row')
     blockers = [blocker(items, other) for other in found.get("--blocked-by+", [])]
+    parent = child_of(items, found) if "--parent" in found else None
     meta = {"kind": found["--kind"]} if found.get("--kind", CAPTAIN) != CAPTAIN else {}
     if "--report" in found:
         meta["reports"] = found["--report"]
@@ -264,8 +301,11 @@ def add(args):
     cmd += ["--description=" + body] if body else []
     cmd += ["-l", "project:" + found["--repo"]] if "--repo" in found else []
     cmd += ["-l", found["--label"]] if "--label" in found else []
+    cmd += parent_flags(parent, found) if parent else []
     made = bd(*cmd)
     ident = ident or json.loads(made)["id"]
+    if parent:
+        epic(parent)
     lay(ident)
     named = [found[f] if f == "--kind" else "repo " + found[f] for f in ("--kind", "--repo") if f in found]
     line = "added %s%s -> Queued" % (ident, " (%s)" % ", ".join(named) if named else "")

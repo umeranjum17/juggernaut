@@ -3,6 +3,7 @@
 [`documentation-audiences.json`](documentation-audiences.json) is the machine-consumed classification owner for every maintained prose surface.
 `bin/jg-doc-audience-check.sh` validates exact inventory coverage, README setup routing, required owner pointers, and local link targets.
 Audience metadata is centralized there rather than copied into front matter on every page.
+An entry whose path ends in `/` classifies every tracked prose file under that folder, so a folder that holds one file per item, such as the verify skill's `suites/`, needs no new entry for each file.
 
 The audience classes have one placement purpose each:
 

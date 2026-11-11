@@ -7,7 +7,6 @@ Install after merge: install HOME writes HOME/config/jg-captain-ask.sh as a shim
 """
 import argparse
 import fcntl
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -15,6 +14,8 @@ import re
 import subprocess
 import sys
 import time
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tickets-sync'))
+import identity  # the board ticket this ask's card names, by the rule the poll publishes it under
 # jg-compat shim (slice S4, deleted by S10): an old FM_* name still resolves here
 for _jg_old, _jg_val in list(os.environ.items()):
     if _jg_old.startswith("FM_") and "JG_" + _jg_old[3:] not in os.environ:
@@ -113,7 +114,7 @@ def main():
             command = ['sign-off-axi', 'raise', '--key', args.text, '--ask-ref', args.id,
                        '--title', card['question'], '--about', '\n'.join(card['context']), '--why', '\n'.join(card['context']),
                        '--detail', 'must: ' + MUST_CATEGORY[card['owner_must']],
-                       '--ticket', 'jg-' + hashlib.sha256(f'main/{args.id}'.encode()).hexdigest()[:32],
+                       '--ticket', identity.ticket_id(identity.home_name(os.environ['JG_HOME']), args.id),
                        '--close', args.url, '--recommend', card['recommend'].lower(),
                        '--recommend-reason', card['reason'], '--default', card['default'].lower()]
             for label, outcome in card['options']:

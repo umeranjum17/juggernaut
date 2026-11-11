@@ -9,6 +9,11 @@
 # --restore   remove agent_path_override.pi and the installed copy.
 # --home      alternate install dir (default ~/.local/share/jg-pipeline-quota-failover)
 #
+# A key that already names this step's wrapper is left as it is, so a rerun is a no-op. A key that names
+# the wrapper the pre-rename installer wrote (~/.local/share/fm-pipeline-quota-failover/pi-quota-failover)
+# is this step's own earlier wiring: its value is moved to the current wrapper, after the backup. Any other
+# value belongs to someone else and is refused untouched.
+#
 # The edit never prints the config or any value in it; it reports only the
 # key name and the wrapper path it wrote. A timestamped backup of the config
 # is written next to it before the first change. The no-mistakes daemon
@@ -36,6 +41,7 @@ src=$(cd "$(dirname "$0")" && pwd)/pi-quota-failover
 [ -f "$config" ] || die "no config at $config"
 
 wrapper=$install_root/pi-quota-failover
+legacy_wrapper=${HOME:?}/.local/share/fm-pipeline-quota-failover/pi-quota-failover
 
 if [ "$restore" = 1 ]; then
   [ "$(python3 -c 'import yaml,sys; c=yaml.safe_load(open(sys.argv[1])); print((c.get("agent_path_override") or {}).get("pi") or "")' "$config" 2>/dev/null)" = "$wrapper" ] \
@@ -68,17 +74,20 @@ fi
 
 have=$(python3 -c 'import yaml,sys; c=yaml.safe_load(open(sys.argv[1])); print((c.get("agent_path_override") or {}).get("pi") or "")' "$config" 2>/dev/null) \
   || die "cannot parse $config with python3-yaml"
-if [ -n "$have" ] && [ "$have" != "$wrapper" ]; then
-  die "agent_path_override.pi already points at $have; refusing to replace it (restore first)"
-fi
+case $have in
+  '') key=add ;;
+  "$wrapper") key=keep ;;
+  "$legacy_wrapper") key=move ;;
+  *) die "agent_path_override.pi already points at $have, which is neither $wrapper nor the pre-rename $legacy_wrapper; refusing to replace it (restore first)" ;;
+esac
 
 if [ "$dry" = 1 ]; then
   echo "dry-run: would copy $src -> $wrapper"
-  if [ -z "$have" ]; then
-    echo "dry-run: would add key agent_path_override.pi = $wrapper to $config (backup first)"
-  else
-    echo "dry-run: key agent_path_override.pi is already $wrapper; config unchanged"
-  fi
+  case $key in
+    add) echo "dry-run: would add key agent_path_override.pi = $wrapper to $config (backup first)" ;;
+    move) echo "dry-run: would move key agent_path_override.pi from the pre-rename $legacy_wrapper to $wrapper in $config (backup first)" ;;
+    keep) echo "dry-run: key agent_path_override.pi is already $wrapper; config unchanged" ;;
+  esac
   exit 0
 fi
 
@@ -89,7 +98,7 @@ if ! cp -p "$src" "$tmp_wrapper" || ! chmod +x "$tmp_wrapper" || ! mv -f "$tmp_w
   die "cannot atomically install wrapper at $wrapper"
 fi
 
-if [ -z "$have" ]; then
+if [ "$key" = add ]; then
   cp -p "$config" "$config.bak-pqf-$(date +%Y%m%d-%H%M%S)" || die "cannot back up $config"
   # Key-level edit: append the new top-level key at the end of the document
   # (YAML keys are order-free, so nothing else in the file moves or changes).
@@ -103,6 +112,38 @@ text += '\nagent_path_override:\n  pi: ' + wrapper + '\n'
 open(path, 'w').write(text)
 EOF
   echo "added key agent_path_override.pi = $wrapper to $config (backup written next to it)"
+elif [ "$key" = move ]; then
+  backup=$config.bak-pqf-$(date +%Y%m%d-%H%M%S)
+  cp -p "$config" "$backup" || die "cannot back up $config"
+  # Key-level edit: only the value on the one `pi:` line of the block-form agent_path_override key changes.
+  # The result is parsed again, and anything but the current wrapper under the key puts the backup back.
+  if ! python3 - "$config" "$legacy_wrapper" "$wrapper" <<'EOF'
+import re, sys, yaml
+path, legacy, wrapper = sys.argv[1:]
+lines = open(path).read().splitlines(keepends=True)
+hits, block = [], False
+for i, line in enumerate(lines):
+    text = line.rstrip('\n')
+    if re.match(r'^agent_path_override:\s*(?:#.*)?$', text):
+        block = True
+        continue
+    if block and text.strip() and not text.startswith((' ', '\t')):
+        block = False
+    if block and re.match(r'^[ \t]+pi:\s*' + re.escape(legacy) + r'\s*(?:#.*)?$', text):
+        hits.append(i)
+if len(hits) != 1:
+    sys.exit("found %d block-form agent_path_override.pi lines naming the pre-rename wrapper; expected one" % len(hits))
+lines[hits[0]] = lines[hits[0]].replace(legacy, wrapper, 1)
+open(path, 'w').write(''.join(lines))
+got = ((yaml.safe_load(open(path)) or {}).get('agent_path_override') or {}).get('pi')
+if got != wrapper:
+    sys.exit("the edited config does not read back agent_path_override.pi as the current wrapper")
+EOF
+  then
+    cp -p "$backup" "$config" || die "cannot put the backup $backup back over $config"
+    die "cannot move agent_path_override.pi from $legacy_wrapper to $wrapper in $config; the config is unchanged"
+  fi
+  echo "moved key agent_path_override.pi from the pre-rename $legacy_wrapper to $wrapper in $config (backup written next to it)"
 else
   echo "key agent_path_override.pi already $wrapper; config unchanged"
 fi

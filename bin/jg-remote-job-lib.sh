@@ -71,7 +71,9 @@
 #
 # The worker accepts only a tracked, non-symlink executable named jg-*.sh below
 # its configured JG_ROOT/bin. Every child receives env -i with the composed
-# PATH, HOME, JG_HOME, JG_ROOT_OVERRIDE, and JG_REMOTE_JOB_ACTIVE=1. The PATH
+# PATH, HOME, JG_ACCOUNT_HOME (the account home HOME names, so a throw-away
+# home's job never wires it: bin/jg-lab-home-lib.sh), JG_HOME,
+# JG_ROOT_OVERRIDE, and JG_REMOTE_JOB_ACTIVE=1. The PATH
 # is intentionally filesystem-discovered rather than login-shell-derived:
 # ~/.local/bin; nvm, asdf, and mise shims/install bins; Nix; Homebrew; and the
 # system tail. No shell startup files are evaluated. Each discovered set is

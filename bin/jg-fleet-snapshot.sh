@@ -100,9 +100,14 @@
 #     schemas; a live ledger or cached copy missing either declaration or declaring
 #     an unsupported version is unavailable even when it contains no captain holds.
 #     These schemas also accept v1 summaries from older producers.
-#     ready_work counts the home's queued items that are unblocked and not held, and
+#     ready_work counts the tickets the home can start now (bin/jg-backlog.sh
+#     `ready --spawnable`, read once by each refresh; a home with no store counts its
+#     queued items that are unblocked and not held). It is null, "not known", when the
+#     store read failed or the summary is older than JG_READY_MAX_AGE (900) seconds.
 #     idle_with_ready_work is true when a valid home has no active child work while
 #     ready_work is above zero: a lead that should have been woken to dispatch.
+#     An open captain decision or an external hold elsewhere in the home never
+#     masks it: only a worker actually working does.
 #   squad_lead_landed: {records[],truncated[],unreadable[],partial[]} - the
 #     compatibility landed-work roll-up derived from squad_lead_current. Readable
 #     structured homes are partial, not unreadable, when an unavailable child state
@@ -157,6 +162,9 @@ STATE="${JG_STATE_OVERRIDE:-$JG_HOME/state}"
 DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
 CONFIG="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
 PROJECTS="${JG_PROJECTS_OVERRIDE:-$JG_HOME/projects}"
+# A summary older than this many seconds has no known ready count (see ready_work).
+JG_READY_MAX_AGE=${JG_READY_MAX_AGE:-900}
+case "$JG_READY_MAX_AGE" in ''|*[!0-9]*) JG_READY_MAX_AGE=900 ;; esac
 BACKLOG="$DATA/backlog.md"
 SNAPSHOT_NOW=${JG_SNAPSHOT_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
 if [ -n "${JG_SNAPSHOT_NOW_EPOCH:-}" ]; then
@@ -470,8 +478,8 @@ backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
     def strip_title_artifacts:
       sub("[[:space:]]+-[[:space:]]+data/[^[:space:])]+/report\\.md$"; "")
       | sub("[[:space:]]+data/[^[:space:])]+/report\\.md$"; "")
-      | sub("[[:space:]]+-[[:space:]]+local main$"; "")
-      | sub("[[:space:]]+local main$"; "")
+      | sub("[[:space:]]+-[[:space:]]+(local main|local-trunk)$"; "")
+      | sub("[[:space:]]+(local main|local-trunk)$"; "")
       | sub("[[:space:]]+-[[:space:]]*$"; "");
     def clean_title:
       strip_trailing_metadata
@@ -493,7 +501,7 @@ backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
         else ($reason | clean_title | if . == "" then null else . end)
         end;
     def local_note($rest):
-      cap(($rest | strip_trailing_metadata); ".*(?:^|[[:space:]]+-[[:space:]]+|[[:space:]])(?<v>local main)$");
+      cap(($rest | strip_trailing_metadata); ".*(?:^|[[:space:]]+-[[:space:]]+|[[:space:]])(?<v>local main|local-trunk)$");
     def completion($rest):
       (metadata_word($rest; "merged")) as $merged
       | (metadata_word($rest; "reported")) as $reported
@@ -568,7 +576,7 @@ backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
               // (if any(.body_lines[];
                     test("^Resolution recorded by jg-(captain|decision)-hold\\.$"))
                   then null
-                  else cap(.body_lines[-1]; "^(?<v>local main)$")
+                  else cap(.body_lines[-1]; "^(?<v>local main|local-trunk)$")
                   end))
           | .body_excerpt = ((.body_lines | join(" "))[:240])
         else . end)
@@ -997,6 +1005,15 @@ main_inventory_json() {  # <backlog-json-file> <tasks-json-file>
 # validated parent read needs.
 # This mode never reads parent events or terminal text and never aggregates
 # nested squad_leads.
+# The count of tickets this home can start, as JSON: a number, null when the store
+# did not answer within its limit (not known), or "legacy" for a home with no store.
+spawnable_ready_json() {
+  local out
+  [ -r "$CONFIG/beads-dir" ] || { printf '"legacy"\n'; return 0; }
+  out=$(JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-backlog.sh" ready --spawnable 2>/dev/null) || { printf 'null\n'; return 0; }
+  out=$(printf '%s\n' "$out" | sed -n 's/^count: \([0-9][0-9]*\)$/\1/p' | head -1)
+  printf '%s\n' "${out:-null}"
+}
 squad_lead_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
   jq -n \
     --arg generated "$SNAPSHOT_NOW" \
@@ -1006,6 +1023,7 @@ squad_lead_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
     --argjson queued_n "$JG_SNAPSHOT_SQUAD_LEAD_QUEUED" \
     --argjson decisions_n "$JG_SNAPSHOT_SQUAD_LEAD_DECISIONS" \
     --argjson landed_n "$JG_SNAPSHOT_SQUAD_LEAD_LANDED_PER_HOME" \
+    --argjson spawnable "${SPAWNABLE_READY:-null}" \
     --slurpfile backlog "$1" \
     --slurpfile tasks "$2" --slurpfile contributions "$CONTRIBUTIONS_JSON_FILE" "$JG_LANDED_JQ_DEFS"'
     ($backlog[0]) as $backlog
@@ -1142,7 +1160,7 @@ squad_lead_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
         reason:$reason,
         invalidity:$invalidity,
         state:$state,
-        ready_work:($ready_all | length),
+        ready_work:(if $spawnable == "legacy" then ($ready_all | length) else $spawnable end),
         active_children:$active_all[:$child_n],
         decisions_open:$decisions_all[:$decisions_n],
         holds:$holds_all[:$queued_n],
@@ -1535,6 +1553,8 @@ snapshot_cleanup() {
   cleanup_json_files
 }
 trap snapshot_cleanup EXIT
+# A watcher kill is a TERM; without this the EXIT trap never runs and the transport directories stay in the temp directory.
+trap 'exit 143' HUP INT TERM
 
 bounded_parent_activities_json() {  # <status-file>
   local f=$1 out rc reason script
@@ -1911,14 +1931,17 @@ squad_lead_current_json() {  # <parent-tasks-json-file> <output-file>
         --argjson registered "$registered" --slurpfile summary "$summary_file" --argjson summary_valid "$summary_valid" --argjson decisions "$decisions" \
         --argjson activities "$activities" --argjson activity_scan "$activity_scan" \
         --argjson reconciliation "$reconciliation" --argjson terminal "$terminal" --argjson contradiction "$contradiction" \
-        --arg event_raw "$event_raw" --arg event_note "$event_note" --argjson event_age "$event_age" '
+        --arg event_raw "$event_raw" --arg event_note "$event_note" --argjson event_age "$event_age" \
+        --argjson ready_max_age "$JG_READY_MAX_AGE" '
         ($summary[0]) as $summary
+        # A count from a summary older than the freshness limit is "not known" (null), never a number.
+        | (if $summary_age != null and $summary_age <= $ready_max_age then $summary.ready_work else null end) as $ready_known_count
         |
         {id:$id,home:$home,host:($host | if . == "" then null else . end),remote:$remote,registered:$registered,
          spawn_gen:($spawn_gen | if . == "" then null else . end),
          current:{state:$state,reason:(if $summary_valid then null else "structured home state invalid: " + ($summary.reason // "unknown reason") end)},invalidity:$summary.invalidity,
-         ready_work:($summary.ready_work // 0),
-         idle_with_ready_work:($summary_valid and $summary.state == "no_active_work" and ($summary.ready_work // 0) > 0),
+         ready_work:$ready_known_count,
+         idle_with_ready_work:($summary_valid and (($summary.counts.active_children // (($summary.active_children // []) | length)) == 0) and ($ready_known_count // 0) > 0),
          reconcile_inventory:$summary.invalidity,
          provenance:{selected:"structured-home",structured_home:$home,summary_source:$summary_source,summary_valid:$summary_valid,
            trust:(if $summary_valid then "complete" else "partial-structured" end),parent_event_role:"historical-only"},
@@ -2069,6 +2092,13 @@ SQUAD_LEAD_LANDED_JSON_FILE="$JSON_TRANSPORT_DIR/squad-lead-landed.json"
 printf '%s\n' "$TASKS_JSON" > "$TASKS_JSON_FILE" \
   || { echo "jg-fleet-snapshot: temporary task file write failed" >&2; exit 1; }
 
+# The store read for the ready count is bounded at 10 seconds and independent of the
+# rest, so it runs beside them and the summary waits for it only at the end.
+SPAWNABLE_PID=
+if [ "$OUTPUT_MODE" = squad-lead-home-summary ]; then
+  spawnable_ready_json > "$JSON_TRANSPORT_DIR/spawnable" &
+  SPAWNABLE_PID=$!
+fi
 CONTRIBUTIONS_JSON_FILE="$JSON_TRANSPORT_DIR/contributions.json"
 CONTRIBUTION_TASKS_JSON=$(contribution_tasks_json) \
   || { echo "jg-fleet-snapshot: contribution task read failed" >&2; exit 1; }
@@ -2079,6 +2109,8 @@ JG_CONTRIBUTIONS_NOW="$SNAPSHOT_NOW" "$SCRIPT_DIR/jg-contributions.sh" snapshot 
   || { echo "jg-fleet-snapshot: contribution coverage unavailable" >&2; exit 1; }
 
 if [ "$OUTPUT_MODE" = squad-lead-home-summary ]; then
+  wait "$SPAWNABLE_PID" 2>/dev/null
+  SPAWNABLE_READY=$(cat -- "$JSON_TRANSPORT_DIR/spawnable" 2>/dev/null) || SPAWNABLE_READY=null
   squad_lead_home_summary_json "$BACKLOG_JSON_FILE" "$TASKS_JSON_FILE" \
     || { echo "jg-fleet-snapshot: squad_lead home summary failed" >&2; exit 1; }
   exit 0

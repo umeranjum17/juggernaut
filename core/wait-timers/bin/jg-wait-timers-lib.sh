@@ -25,10 +25,9 @@
 # escalates. Every other rung, once reached, fires again every
 # JG_PROMPT_REALERT_SECS while the wait stays open, and a new supervisor session
 # re-presents every open wait on its first tick.
-# A re-raise wakes a model only when the wait changed since the last raise (new
-# owner, reason, deadline, blocker text, or one hop up the ladder); an unchanged
-# open wait is logged to state/.waiting-timers/.unchanged.log and the clock moves
-# on, with one backstop raise per hop once the hop's longest interval has passed.
+# An unresolved wait re-fires at every due recheck until its source clears.
+# Queue acknowledgement is not handling. Expected pauses retain the change gate
+# and its bounded backstop; unchanged pauses are logged without another wake.
 # Parent reports use the existing local/remote parent channel. Only the main
 # home posts a board card, so only what Main cannot settle reaches the captain.
 # An episode key is waiting-timer-<home>-<task>-g<generation>-<source key>, so a
@@ -56,6 +55,27 @@ _JG_WAIT_TIMER_DIR="${SCRIPT_DIR:-${JG_PUSH_TRANSITION_LIB_DIR:-$JG_HOME/bin}}"
 # backlog is not a stall.
 # shellcheck source=bin/jg-pause-lib.sh
 [ ! -r "$_JG_WAIT_TIMER_DIR/jg-pause-lib.sh" ] || . "$_JG_WAIT_TIMER_DIR/jg-pause-lib.sh"
+# The known next steps the ladder takes itself live beside this file.
+# shellcheck source=core/wait-timers/bin/jg-wait-actions-lib.sh
+. "${BASH_SOURCE[0]%/*}/jg-wait-actions-lib.sh"
+# shellcheck source=core/wait-timers/bin/jg-wait-policy-lib.sh
+. "${BASH_SOURCE[0]%/*}/jg-wait-policy-lib.sh"
+
+# A wait whose owner is already known is quiet: it arms no episode, so no timer
+# wake, no escalation and no board card come from it. Two cases only:
+#   - a pause parked to the placeholder date (wait machine state paused-no-date):
+#     the lane named no real time, so a recheck every 30 minutes only repeats the
+#     parking; whoever parked it holds the next step;
+#   - a finished lane (its last status line is `done`) whose open decision is for
+#     its owner: no worker is left to unblock it, and the owner's card carries the
+#     call.
+# A wait source (prompt, quota, silence ...), a blocked or needs-decision lane that
+# is still working, and a pause with a real date keep their rungs.
+jg_wait_timer_quiet() {  # <task> <wait-state> <wait-source>
+  [ "$2" != paused-no-date ] || return 0
+  [ -z "$3" ] || return 1
+  [ "$(status_line_verb "$(last_status_line "$STATE/$1.status")")" = "done" ]
+}
 
 jg_wait_timer_save() {  # <record> <signature> <since> <owner> <parent> <key> <misses> [card] [last]
   local file=$1 temp="${1%/*}/.${1##*/}.tmp.$$"
@@ -82,7 +102,7 @@ jg_wait_timer_report() {  # <status-line>
   }
 }
 
-# Re-raise gate (README "Re-raise only when the wait changed"). The sidecar
+# Pause re-raise gate (README "Re-raise until the wait is handled"). The sidecar
 # state/.waiting-timers/.raised/<task> holds what the last raise said: a
 # fingerprint of the wait, when that hop's first raise happened, and whether the
 # hop's backstop raise was spent. It lives beside the episode record, not in it,
@@ -210,21 +230,60 @@ jg_wait_timer_card_dismiss() {  # <card-key>
   (cd "$JG_HOME" && sign-off-axi dismiss "$1") >/dev/null 2>&1 || true
 }
 
+# An episode's first fire: the ladder's first step in it, else its owner wake;
+# nothing when no rung fired.
+jg_wait_timer_first_fire() {  # <record> <task>
+  local since owner first
+  IFS=$'\t' read -r _ since owner _ < "$1" 2>/dev/null || return 0
+  first=$(jg_wait_action_spent "$2" "${since:-0}" first)
+  case "$owner" in ''|*[!0-9]*|0|1) owner='' ;; esac
+  printf '%s' "${first:-$owner}"
+}
+
+# Minutes from <first fire> to <now>, one decimal; nothing without a first fire.
+jg_wait_timer_fired_minutes() {  # <first fire> <now>
+  [ -n "$1" ] || return 0
+  awk -v s=$(($2 - $1)) 'BEGIN { printf "%.1f", s / 60 }'
+}
+
+# The metrics ledger's row for an escalation that cleared, one per episode whose
+# first rung fired: data/metrics/escalations.tsv, columns cleared, task, key,
+# first_fire, minutes, level (the highest rung reached: owner, main or card),
+# acts (the ladder's own steps, or -), why.
+jg_wait_timer_ledger() {  # <record> <task> <now> <first fire> <minutes> <why>
+  local file=${JG_DATA_OVERRIDE:-$JG_HOME/data}/metrics/escalations.tsv since parent key card level acts
+  [ -n "$5" ] || return 0
+  IFS=$'\t' read -r _ since _ parent key _ card _ < "$1" || return 0
+  level=owner
+  [ "${parent:-0}" = 0 ] || level=main
+  [ "${card:-0}" = 0 ] || level=card
+  acts=$(jg_wait_action_spent "$2" "$since")
+  mkdir -p "${file%/*}" || return 0
+  [ -s "$file" ] || printf 'cleared\ttask\tkey\tfirst_fire\tminutes\tlevel\tacts\twhy\n' > "$file"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$3" "$2" "$key" "$4" "$5" "$level" "${acts:--}" "$6" >> "$file" || true
+}
+
 # End an episode: resolve its parent report (a lead home) or dismiss its card
-# (the main home), then drop it. Returns 1 when the parent report failed, so the
-# episode is kept and retried next poll.
+# (the main home), record its minutes in the metrics ledger, then drop it.
+# Returns 1 when the parent report failed, so the episode is kept and retried
+# next poll.
 jg_wait_timer_end() {  # <record> <task> <parent> <key> <card> <why>
+  local now first mins
+  now=$(date +%s) || return 1
+  first=$(jg_wait_timer_first_fire "$1" "$2")
+  mins=$(jg_wait_timer_fired_minutes "$first" "$now")
   if [ "$3" != 0 ] && [ -e "$JG_HOME/.jg-squad-lead-home" ]; then
-    jg_wait_timer_report "resolved [key=$4]: waiting-timer-cleared: $2 $6" || return 1
+    jg_wait_timer_report "resolved [key=$4]: waiting-timer-cleared: $2 $6${mins:+ after $mins min}" || return 1
   fi
   [ "$5" = 0 ] || jg_wait_timer_card_dismiss "$4-card"
+  jg_wait_timer_ledger "$1" "$2" "$now" "$first" "$mins" "$6"
   rm -f "$1" "$STATE/.waiting-timers/.raised/$2"
 }
 
 # Main's side of a lead's overdue report: a waiting-timer-overdue line the lead
 # appended to this home's state/<lead>.status (its parent channel), never the
 # lead's own child records. On first sight and every <interval> the lead is
-# nudged (interrupted first when busy mid-turn) naming the blocked worker and
+# nudged (a busy lead reads the steer when its turn ends) naming the blocked worker and
 # its wait; at <card-secs> since the worker's wait began the board card is
 # posted, and kept, until the lead resolves the report. One record per open
 # report under state/.waiting-relay/: first-seen, nudged, card times.
@@ -497,7 +556,7 @@ jg_wait_timers_tick() {
   silence=$(printf '%s\n' "$numbers" | awk -F '\t' '$1 == "silence" { print $2 }')
   local meta task backend window session native sessions='|' blocked='|' unknown='|' rows actor=Main lead=''
   local dir="$STATE/.waiting-timers" now record declaration verb signature old since owner parent key misses age reason until bound lapse rc
-  local pause_key dkey src source card last wsrc fresh session_id fired every level pending='' hop hopstart ceiling fp forced deadline
+  local wait_state pause_key dkey src source card last wsrc fresh session_id fired every level pending='' hop hopstart ceiling fp forced deadline acts
   for native in "$alert" "$paused_alert" "$escalate" "$card_secs" "$interval"; do
     case "$native" in ''|*[!0-9]*|0* ) echo "waiting timers: thresholds must be positive decimal seconds" >&2; return 1 ;; esac
     [ "${#native}" -le 9 ] || { echo "waiting timers: threshold exceeds nine digits" >&2; return 1; }
@@ -583,6 +642,7 @@ EOF
     task=${src##*/}; task=${task%.*}
     [ -f "$STATE/$task.meta" ] || rm -f "$src" || return 1
   done
+  jg_wait_actions_prune
   jg_wait_timers_green_pr "$now" || return 1
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] && [ ! -L "$meta" ] || continue
@@ -601,7 +661,7 @@ EOF
     # Wait sources the watcher records: an unanswered permission prompt (kept
     # only while the prompt gate still sees it, so a dead pane's prompt lapses)
     # and a Squad Lead whose own supervision is not running.
-    for src in prompt question quota errors silent supervision greenpr; do
+    for src in prompt question account quota errors silent supervision greenpr; do
       [ -z "$declaration" ] || break
       record="$STATE/.wait-sources/$task.$src"
       [ -f "$record" ] && [ ! -L "$record" ] || continue
@@ -623,13 +683,21 @@ EOF
       [ -n "$declaration" ] || declaration=$(status_declared_wait_line "$STATE/$task.status")
       status_is_paused "$declaration" || case "$declaration" in blocked*|needs-decision*) ;; *) declaration='' ;; esac
     fi
-    if status_is_paused "$declaration" && until=$(status_paused_until "$declaration") && [ "$now" -lt "$until" ]; then
+    wait_state=''
+    if status_is_paused "$declaration"; then
+      wait_state=$(jg_wait_machine_state "$_JG_WAIT_TIMER_DIR" "$task") || return 1
+    fi
+    if [ "$wait_state" != paused-no-date ] && status_is_paused "$declaration" && until=$(status_paused_until "$declaration") && [ "$now" -lt "$until" ]; then
       declaration=''
     fi
     # A captain hold waits on the captain, so a held lane never arms an episode.
     # Checked before the record is read: a check made only once an episode is due
     # would clear it and let the still-declared wait re-arm it on the next poll.
     if [ -n "$declaration" ] && task_captain_call_open "$task"; then
+      declaration=''
+    fi
+    # A parked or finished lane has an owner already (jg_wait_timer_quiet).
+    if [ -n "$declaration" ] && [ "$declaration" != herdr-blocked ] && jg_wait_timer_quiet "$task" "$wait_state" "$wsrc"; then
       declaration=''
     fi
     record="$dir/$task"
@@ -704,7 +772,24 @@ EOF
     # rides the owner stamp the definition wrote.
     every=$interval
     if status_is_paused "$declaration"; then every=$paused_alert; fi
+    [ "$wait_state" != paused-no-date ] || every=$JG_WAIT_PLACEHOLDER_SECS
+    # A stuck state with a row in the owner table (jg-wait-actions-lib.sh) gets
+    # its owner's steps from the ladder, each in the place of the rung due now.
+    # A step stamps the owner time, so the next rung times from it; the row's
+    # last step, "lead", clears that stamp, so the owner rung then wakes this
+    # home's own owner and the Main rung follows as for any wait. A wait with
+    # no row, or whose step failed, climbs as before.
+    if ! status_is_paused "$declaration" && [ "$parent" -eq 0 ] \
+      && { { [ "$owner" -le 1 ] && [ "$age" -ge "$alert" ]; } || { [ "$owner" -gt 1 ] && [ "$((now - owner))" -ge "$((escalate - alert))" ]; }; } \
+      && jg_wait_action_next "$task" "$now" "$wsrc" "$(status_line_verb "$declaration")" "$dkey" "$declaration" \
+      && jg_wait_action_take "$task" "$WAIT_ACT_NEXT_STATE" "$WAIT_ACT_NEXT" "$now" "$dkey" "$declaration" "$age"; then
+      owner=$now
+      [ "$WAIT_ACT_NEXT" != lead ] || owner=0
+      jg_wait_timer_save "$record" "$signature" "$since" "$owner" "$parent" "$key" "$misses" "$card" "$last" || return 1
+      continue
+    fi
     [ "$owner" -gt 1 ] || continue
+    acts=$(jg_wait_action_spent "$task" "$since")
     # What this wait says now, for the re-raise gate: the hop it sits on and its
     # fingerprint. The hop moves up the ladder as the rungs below are reached.
     deadline=''
@@ -712,7 +797,7 @@ EOF
     if ! status_is_paused "$declaration" && [ "$parent" -eq 0 ] \
       && [ "$((now - owner))" -ge "$((escalate - alert))" ] && [ "$age" -ge "$escalate" ]; then
       if [ -n "$lead" ]; then
-        jg_wait_timer_report "blocked [key=$key]: waiting-timer-overdue: $task ($verb, observed ${age}s, since=$since); owning lead has not cleared the wait; Main must unblock or steer the lead; source=[$source]" || continue
+        jg_wait_timer_report "blocked [key=$key]: waiting-timer-overdue: $task ($verb, observed ${age}s, since=$since); owning lead has not cleared the wait${acts:+; the ladder already took: $acts}; Main must unblock or steer the lead; source=[$source]" || continue
         parent=$now
         jg_wait_timer_save "$record" "$signature" "$since" "$owner" "$parent" "$key" "$misses" "$card" "$last" || return 1
         fp=$(jg_wait_timer_fingerprint main "$key" "$window" "$verb" "$actor" "$declaration" "$wsrc" "$deadline") || return 1
@@ -722,7 +807,7 @@ EOF
         # classifies by, so it must read "check:" like the kind this row is
         # queued under: a prefix outside that taxonomy classifies as no wake at
         # all, and the escalation then reaches nobody.
-        reason="check: waiting-state $task ($verb, observed ${age}s, level=main; Main must unblock it now) id=$key source=[$source]"
+        reason="check: waiting-state $task ($verb, observed ${age}s, level=main${acts:+; the ladder already took: $acts}; Main must unblock it now) id=$key source=[$source]"
         jg_wake_append check "$key-escalation" "$reason" || return 1
         parent=$now
         jg_wait_timer_save "$record" "$signature" "$since" "$owner" "$parent" "$key" "$misses" "$card" "$last" || return 1
@@ -732,7 +817,9 @@ EOF
       fi
     fi
     # Only the main home posts a card: what Main cannot settle reaches the captain.
-    if [ -z "$lead" ] && ! status_is_paused "$declaration" && [ "$parent" -gt 0 ] && [ "$card" -eq 0 ] && [ "$age" -ge "$card_secs" ]; then
+    # An account outage already raised its own card (renew the account or not).
+    if [ -z "$lead" ] && ! status_is_paused "$declaration" && [ "$parent" -gt 0 ] && [ "$card" -eq 0 ] && [ "$age" -ge "$card_secs" ] \
+      && ! jg_wait_action_raised_card "$task" "$since"; then
       jg_wait_timer_card "$task" "$key-card" "$verb" "$source" || true
       card=$now
       jg_wait_timer_save "$record" "$signature" "$since" "$owner" "$parent" "$key" "$misses" "$card" "$last" || return 1
@@ -742,11 +829,13 @@ EOF
     for native in "$parent" "$card" "$last"; do [ "$native" -le "$fired" ] || fired=$native; done
     [ "$last" -eq 1 ] || [ "$((now - fired))" -ge "$every" ] || continue
     forced=0; [ "$last" -ne 1 ] || forced=1
+    # Reading or acknowledging a wake is not an unblock. An unresolved blocker
+    # must ring at every due recheck until its source clears, even unchanged.
+    status_is_paused "$declaration" || forced=1
+    [ "$wait_state" != paused-no-date ] || forced=1
     last=$now
     jg_wait_timer_save "$record" "$signature" "$since" "$owner" "$parent" "$key" "$misses" "$card" "$last" || return 1
-    # The clock has moved on. Wake a model only if the wait changed since its last
-    # raise, or this hop has now outlived its longest interval without a backstop
-    # raise; a new supervisor session (last=1) is always told again.
+    # Expected pauses keep the change gate; unresolved waits always re-fire.
     if status_is_paused "$declaration"; then
       hop=pause hopstart=$owner ceiling=$paused_alert
     else

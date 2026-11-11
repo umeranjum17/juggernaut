@@ -117,6 +117,16 @@ rm -f "$w/home/config/account-pool"
 printf 'state=/x\ncommand=/bin/other\n' > "$w/home/config/account-pool"
 "$addons/claude-accounts/wiring.sh" "$w/home" >/dev/null 2>&1; is "install refuses another pool file" "$?" 1
 "$addons/claude-accounts/unwiring.sh" "$w/home" >/dev/null 2>&1; is "uninstall leaves another pool file" "$?|$(grep -c other "$w/home/config/account-pool")" "1|1"
+# The pre-rename add-on's file is this step's own: the first run moves its chooser to core and keeps the shared pool
+# folder, the second changes nothing; a chooser from any other checkout is still refused.
+printf 'command=%s\nstate=%s\n' "$w/old/projects/firstmate-addons/claude-accounts/bin/claude-accounts-pick" "$w/pool" > "$w/home/config/account-pool"
+"$addons/claude-accounts/wiring.sh" "$w/home" >/dev/null; is "install adopts the pre-rename add-on's pool file" "$?|$(cat "$w/home/config/account-pool")" "0|command=$addons/claude-accounts/bin/claude-accounts-pick
+state=$w/pool"
+before=$(sha256sum < "$w/home/config/account-pool")
+out=$("$addons/claude-accounts/wiring.sh" "$w/home"); is "a second install after the adoption is a no-op" "$?|$(sha256sum < "$w/home/config/account-pool")|$out" "0|$before|already installed: $w/home/config/account-pool -> $addons/claude-accounts/bin/claude-accounts-pick"
+printf 'command=%s\nstate=%s\n' "$w/elsewhere/core/claude-accounts/bin/claude-accounts-pick" "$w/pool" > "$w/home/config/account-pool"
+"$addons/claude-accounts/wiring.sh" "$w/home" >/dev/null 2>&1; is "install refuses a chooser from another checkout" "$?|$(grep -c elsewhere "$w/home/config/account-pool")" "1|1"
+rm -f "$w/home/config/account-pool"
 
 # Repeated selections through the public pool contract must balance, not elect the same winner.
 mkdir -p "$w/a3" "$w/c1" "$w/c2"

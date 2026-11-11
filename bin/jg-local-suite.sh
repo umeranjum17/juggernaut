@@ -48,6 +48,13 @@
 # the head proved, and on success the same facts are appended to the pull
 # request body so a reviewer reads the proof on the pull request itself.
 # Sharding and caching are slice 2; this slice always records one shard.
+#
+# A test that is red without the change never blocks the proof. When the runner fails and lint is clean, each red script is
+# run again on the pull request's base (origin/<base branch>, exported with git archive, never checked out) and compared by
+# jg_dod_baseline_split in bin/jg-dod-lib.sh: a red is set aside only when the base fails the same script with the same exit
+# and the same case names. A new case, a different exit, a script the base passes, a failure no script accounts for, an unreadable
+# base or a lint finding is still the lane's red and the receipt keeps the failing exit. A receipt that set a red aside records
+# tip_red=<scripts>, inside the seal, and `verify` names those scripts on its evidence line.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -55,6 +62,8 @@ JG_ROOT="${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$JG_ROOT}}"
 STATE="${JG_STATE_OVERRIDE:-$JG_HOME/state}"
 DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
+# shellcheck source=bin/jg-dod-lib.sh
+. "$SCRIPT_DIR/jg-dod-lib.sh"
 
 usage() {
   sed -n '2,/^set -eu$/p' "${BASH_SOURCE[0]}" | sed -e 's/^# \{0,1\}//' -e '$d'
@@ -73,8 +82,8 @@ receipt_seal_of() {  # <file-without-its-seal-line>
   fi
 }
 
-# Republish the receipt with a fresh seal over exactly the given facts.
-receipt_seal() {  # <file> <task> <head> <tree> <exit> <started> <ended> <wall> <shards> <log>
+# Republish the receipt with a fresh seal over exactly the given facts; <tip_red> is empty unless a red was set aside.
+receipt_seal() {  # <file> <task> <head> <tree> <exit> <started> <ended> <wall> <shards> <log> [<tip_red>]
   local file=$1 tmp="$1.$$"
   {
     printf 'schema=1\n'
@@ -88,6 +97,7 @@ receipt_seal() {  # <file> <task> <head> <tree> <exit> <started> <ended> <wall> 
     printf 'wall_seconds=%s\n' "$8"
     printf 'shards=%s\n' "$9"
     printf 'log=%s\n' "${10}"
+    [ -z "${11:-}" ] || printf 'tip_red=%s\n' "${11}"
   } > "$tmp" || return 1
   printf 'seal=sha256:%s\n' "$(receipt_seal_of "$tmp")" >> "$tmp" || return 1
   mv -f "$tmp" "$file"
@@ -109,7 +119,7 @@ tree_of_head() {  # <head> [<owner>] [<repo>]
 }
 
 verify_receipt() {  # <state-dir> <task-id> <candidate-head> [<owner> <repo>]
-  local file head tree recorded candidate_tree rc wall shards log
+  local file head tree recorded candidate_tree rc wall shards log aside
   file="$1/$2.local-suite"
   if [ ! -e "$file" ] && [ ! -L "$file" ]; then
     echo "no local suite receipt for $2, so the forge check gate applies" >&2
@@ -153,7 +163,36 @@ verify_receipt() {  # <state-dir> <task-id> <candidate-head> [<owner> <repo>]
   wall=$(receipt_field "$file" wall_seconds)
   shards=$(receipt_field "$file" shards)
   log=$(receipt_field "$file" log)
-  printf 'local suite %ss, %s shard(s), tree %s, log %s\n' "$wall" "$shards" "${tree:-unrecorded}" "$log"
+  aside=$(receipt_field "$file" tip_red)
+  printf 'local suite %ss, %s shard(s), tree %s, log %s%s\n' "$wall" "$shards" "${tree:-unrecorded}" "$log" \
+    "${aside:+, red on the base the same way and set aside: $aside}"
+}
+
+# The red scripts of a failed run that the pull request's base fails the same way: runs only those scripts on the base's
+# exported tree and prints the set-aside ones, space-separated. Prints nothing (and returns 1) when any red is the lane's own.
+base_red_set_aside() {  # <worktree> <run log> <PR URL> <failed-script-count-from-the-runner>
+  local wt=$1 log=$2 url=$3 base commit dir blog mine reds base_res split charged aside n_red
+  mine=$(jg_dod_test_results "$log" | awk -F'\t' '$2 != "0"')
+  reds=$(printf '%s\n' "$mine" | cut -f1 | grep -c . || true)
+  # A failure no script accounts for (a runner that died, a check before it) is never set aside.
+  [ "$reds" -gt 0 ] && [ "$reds" = "$4" ] || return 1
+  base=$(gh pr view "$url" --json baseRefName -q .baseRefName 2>/dev/null) && [ -n "$base" ] || return 1
+  commit=$(git -C "$wt" rev-parse -q --verify "origin/$base^{commit}" 2>/dev/null) || return 1
+  dir=$(mktemp -d "$DATA/jg-local-suite/.base.XXXXXX") || return 1
+  blog="$dir.log"
+  if git -C "$wt" archive "$commit" | tar -x -C "$dir" 2>/dev/null && [ -x "$dir/bin/jg-test-run.sh" ]; then
+    # shellcheck disable=SC2046
+    ( cd "$dir" && "$dir/bin/jg-test-run.sh" $(printf '%s\n' "$mine" | cut -f1) ) >"$blog" 2>&1 || :
+  fi
+  rm -rf -- "$dir"
+  base_res=$(jg_dod_test_results "$blog" 2>/dev/null) || base_res=''
+  rm -f -- "$blog"
+  split=$(jg_dod_baseline_split "$mine" "$base_res")
+  charged=$(printf '%s\n' "$split" | sed -n 's/^charged //p')
+  aside=$(printf '%s\n' "$split" | sed -n 's/^aside //p' | paste -sd' ' -)
+  n_red=$(printf '%s\n' "$split" | grep -c . || true)
+  [ -z "$charged" ] && [ -n "$aside" ] && [ "$n_red" = "$reds" ] || return 1
+  printf '%s\n' "$aside"
 }
 
 case "${1:-}" in
@@ -221,21 +260,33 @@ JSON="$LOG_DIR/$ID-$SHORT-$STARTED.json"
 SHARDS=1
 
 RC=0
-(
-  cd "$WORKTREE"
-  # --gate is the gate contract this receipt stands for: the per-test speed
-  # limits enforced, and the whole gate bounded by the configured budget, so a
-  # hung or overrunning test fails the receipt instead of holding the gate.
-  "$WORKTREE/bin/jg-test-run.sh" --all --gate --json "$JSON"
-  "$WORKTREE/bin/jg-lint.sh"
-) >"$LOG" 2>&1 || RC=$?
+TEST_RC=0
+LINT_RC=0
+# --gate is the gate contract this receipt stands for: the per-test speed
+# limits enforced, and the whole gate bounded by the configured budget, so a
+# hung or overrunning test fails the receipt instead of holding the gate.
+( cd "$WORKTREE" && "$WORKTREE/bin/jg-test-run.sh" --all --gate --json "$JSON" ) >"$LOG" 2>&1 || TEST_RC=$?
+( cd "$WORKTREE" && "$WORKTREE/bin/jg-lint.sh" ) >>"$LOG" 2>&1 || LINT_RC=$?
+TIP_RED=''
+if [ "$LINT_RC" -ne 0 ]; then
+  RC=$LINT_RC
+elif [ "$TEST_RC" -ne 0 ]; then
+  RC=$TEST_RC
+  RUNNER_FAILED=$(sed -n 's/^JG_TEST_SUMMARY .* failed=\([0-9][0-9]*\) .*/\1/p' "$LOG" | awk '{ n += $1 } END { print n + 0 }')
+  if TIP_RED=$(base_red_set_aside "$WORKTREE" "$LOG" "$URL" "$RUNNER_FAILED"); then
+    RC=0
+    echo "note: the base fails only what the pull request fails the same way, so set aside, not charged: $TIP_RED" >&2
+  else
+    TIP_RED=''
+  fi
+fi
 ENDED=$(date +%s)
 WALL=$((ENDED - STARTED))
 
 RECEIPT="$STATE/$ID.local-suite"
 TREE=$(git -C "$WORKTREE" rev-parse "$HEAD^{tree}" 2>/dev/null) \
   || { echo "error: could not read the tree of $HEAD in $WORKTREE" >&2; exit 1; }
-receipt_seal "$RECEIPT" "$ID" "$HEAD" "$TREE" "$RC" "$STARTED" "$ENDED" "$WALL" "$SHARDS" "$LOG"
+receipt_seal "$RECEIPT" "$ID" "$HEAD" "$TREE" "$RC" "$STARTED" "$ENDED" "$WALL" "$SHARDS" "$LOG" "$TIP_RED"
 
 if [ "$RC" -eq 0 ]; then
   # Publish the proof where a reviewer reads it; a body update that fails is

@@ -1,0 +1,3 @@
+# Release cut orphans
+
+Release cut orphans: run `done-done run release-cut-orphans` (it invokes `bash journeys/release-cut-orphans.sh`); real `bin/jg-pr-check.sh`, `bin/jg-version-branch-sync.sh` and `bin/jg-release-readiness.sh` over a fixture project and a recording forge prove the release pull request is refused while a pull request sits on the shipped release/c-5 (its release pull request merged), is not refused for a pull request on an older release that never shipped, readiness reports it as orphaned, the c-5 release merge moves that pull request to release/c-6 while a feature merge moves nothing, and only the merge-time `--allow-orphans` waiver passes and is recorded.

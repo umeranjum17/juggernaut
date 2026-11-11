@@ -338,12 +338,12 @@ every_project_local_only() {
   for proj in "$PROJECTS"/*; do
     [ -d "$proj" ] || continue
     mode=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-project-mode.sh" "${proj##*/}" 2>/dev/null) || return 1
-    [ "${mode%% *}" = local-only ] || return 1
+    { [ "${mode%% *}" = local-only ] || [ "${mode%% *}" = local-trunk ]; } || return 1
   done
   while IFS= read -r name; do
     [ -d "$PROJECTS/$name" ] || return 1
     mode=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-project-mode.sh" "$name" 2>/dev/null) || return 1
-    [ "${mode%% *}" = local-only ] || return 1
+    { [ "${mode%% *}" = local-only ] || [ "${mode%% *}" = local-trunk ]; } || return 1
     seen=1
   done < <(sed -nE 's/^- (.+)$/\1/p' "$DATA/projects.md" | sed -E 's/ (\[| - ).*//')
   [ "$seen" = 1 ]
@@ -369,7 +369,7 @@ fleet_sync_relay_filtered_output() {
   local tmp=$1 line
   while IFS= read -r line; do
     case "$line" in
-      *': skipped: local-only project') ;;
+      *': skipped: local-only project'|*': skipped: local-trunk project') ;;
       *': skipped: no origin remote') ;;
       *': skipped:'*) echo "FLEET_SYNC: $line" ;;
       *': STUCK:'*) echo "FLEET_SYNC: $line" ;;
@@ -1010,6 +1010,7 @@ install_cmd() {
 manual_install_url() {
   case "$1" in
     herdr) echo "https://herdr.dev" ;;
+    hc) echo "https://releases.herdr.dev/core/install.sh" ;;
     cursor-agent) echo "https://cursor.com/cli" ;;
     *) return 1 ;;
   esac
@@ -1421,7 +1422,7 @@ crew_dispatch_validate() {
 # snapshot's classifier and bin/jg-squad-lead-reconcile.sh's nudge stay as
 # backstops for what this cannot see. Never reads or writes another home.
 backlog_record_reconcile() {
-  local marker meta control_lock meta_lock id row label has_record=0 gate_status
+  local marker meta control_lock meta_lock id row label has_record=0 gate_status snapshot=0
   # A fresh home with no state directory has no physical task records to pair.
   # Keep bootstrap diagnostics working without creating state just for a no-op.
   [ -e "$STATE" ] || [ -L "$STATE" ] || return 0
@@ -1497,6 +1498,12 @@ backlog_record_reconcile() {
     break
   done
   [ "$has_record" = 1 ] || return 0
+  # One list read answers every record's row; only a list that fails as a whole falls back to a read per record.
+  if jg_backlog_row_snapshot "$DATA"; then
+    snapshot=1
+  else
+    echo "BOOTSTRAP_INFO: the backlog list read failed ($JG_BACKLOG_ROW_ERROR); reading the rows one by one"
+  fi
   for meta in "$STATE"/*.meta; do
     [ -e "$meta" ] || [ -L "$meta" ] || continue
     if ! jg_backlog_record_present "$meta" "task record" "$STATE"; then
@@ -1518,7 +1525,8 @@ backlog_record_reconcile() {
     if [ "$(jg_meta_get "$meta" kind)" != squad_lead ] \
        && [ "$(jg_meta_get "$meta" cleanup_recovery)" != orca ]; then
       row=
-      if jg_backlog_row_probe "$DATA" "$id"; then
+      if { [ "$snapshot" = 1 ] && jg_backlog_row_snapshot_probe "$id"; } \
+         || { [ "$snapshot" = 0 ] && jg_backlog_row_probe "$DATA" "$id"; }; then
         row=$JG_BACKLOG_ROW_STATE
       elif [ "$JG_BACKLOG_ROW_RESULT" != not_found ]; then
         echo "BACKLOG_RECONCILE: $id: worker record exists but its backlog item could not be read: $JG_BACKLOG_ROW_ERROR"
@@ -1640,6 +1648,13 @@ if [ "${1:-}" = "install" ]; then
     esac
   done
   exit 0
+fi
+
+# Launch hook overlays (state/<id>.git-hooks) are written once at spawn; refresh them at every locked
+# session start so an update that changes the installed hook set reaches launches already running.
+if [ "${JG_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ] && local_phase && [ -x "$SCRIPT_DIR/jg-git-strip-ai-trailers.sh" ]; then
+  "$SCRIPT_DIR/jg-git-strip-ai-trailers.sh" refresh "$STATE" ||
+    echo "BOOTSTRAP_WARN: launch hook overlays not all refreshed (see the error above)" >&2
 fi
 
 # This is the first mutating sweep at a locked session boundary. Detect-only
@@ -1775,6 +1790,7 @@ detect_local_config() {
   fi
   crew_dispatch_validate
   detect_beads_health
+  detect_account_state
   detect_home_summary_publication
   detect_sentinel_service
   detect_unit_homes
@@ -1791,6 +1807,20 @@ detect_beads_health() {
   else
     echo "BEADS_UNHEALTHY: $health"
   fi
+}
+
+# A state of the worker account that only its owner can clear, found at start
+# rather than by a worker mid-task. Incident 11: a compaction cap in the account
+# settings capped every worker. The file is the owner's, so this only reads it
+# and names file and line; no script edits it.
+detect_account_state() {
+  local dir=${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude} f hit
+  [ -n "$dir" ] || return 0
+  for f in "$dir/settings.json" "$dir/settings.local.json"; do
+    [ -f "$f" ] && [ -r "$f" ] || continue
+    hit=$(LC_ALL=C grep -n -m1 '"CLAUDE_CODE_AUTO_COMPACT_WINDOW"' "$f" 2>/dev/null) || continue
+    echo "ACCOUNT_STATE: $f:${hit%%:*}: a compaction cap in the account settings caps every worker's context; only the account owner clears it"
+  done
 }
 
 detect_sentinel_service() {
@@ -1941,6 +1971,12 @@ if [ "${JG_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ]; then
     && [ ! -e "$CONFIG/fleet-heartbeat-off" ] && [ "$STATE" = "$JG_HOME/state" ] && [ -d "$STATE" ]; then
     JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-fleet-heartbeat.sh" arm >/dev/null 2>&1 \
       || echo "MISSING: the fleet heartbeat could not be armed; idle or stalled homes will not wake Main"
+  fi
+  # The temp reaper removes this host's leaked jg-* scratch and alerts when the temp directory fills.
+  if local_phase && [ ! -e "$(jg_compat_marker "$JG_HOME")" ] \
+    && [ "$STATE" = "$JG_HOME/state" ] && [ -d "$STATE" ]; then
+    JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-tmp-reaper.sh" arm >/dev/null 2>&1 \
+      || echo "MISSING: the temp reaper could not be armed; leaked scratch stays in the temp directory"
   fi
   # The board gate: only a must ask reaches the captain's board, and a merge
   # lands with its Evidence card. Same primary-home guard as the fleet heartbeat.

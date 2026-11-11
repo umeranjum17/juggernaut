@@ -1,0 +1,31 @@
+machine	delivery	a change in core/machines/changes.tsv, its trunk commit, data/trunk-live.tsv and its config/ switch	core/machines/observers/delivery.sh
+state	unlanded	initial	The change is not on the trunk yet. No home runs it.	-
+state	landed	normal	The change is on the trunk. Not every home runs it yet.	-
+state	in-homes	normal	Every home runs the change. No proof that it does its job is named, so it is not called live.	-
+state	in-homes-off	normal	Every home has the code, but the change is switched off. It does nothing until its switch is on.	switch
+state	in-use	normal	The change runs in every home, its switch is on, and its proof shows it does its job.	proof
+state	pinned-behind	normal	A red check pinned a home back to a commit before this change.	-
+state	reverted	terminal	The change was reverted on the trunk and does not run.	-
+edge	unlanded	land	landed	bin/jg-trunk.sh:cmd_land	-	a lane carrying the change passes the gate chain	jg-machine-delivery.test.sh
+edge	landed	live	in-homes	bin/jg-update.sh:move_home	-	every home moved to a commit that holds the change, and no switch or proof is named	jg-machine-delivery.test.sh
+edge	landed	live-off	in-homes-off	bin/jg-update.sh:move_home	-	every home moved to a commit that holds the change and its switch file is absent	jg-machine-delivery.test.sh
+edge	landed	live-on	in-use	bin/jg-update.sh:move_home	-	every home moved to a commit that holds the change, its switch is on and its proof holds	jg-machine-delivery.test.sh
+edge	landed	pin-back	pinned-behind	bin/jg-trunk.sh:cmd_ci	-	CI is red and a home was pinned back below the change	jg-machine-delivery.test.sh
+edge	in-homes	switch-off	in-homes-off	config/<switch>:file	-	the switch file is removed	jg-machine-delivery.test.sh
+edge	in-homes	switch-on	in-use	config/<switch>:file	-	the switch file is added and its proof holds	jg-machine-delivery.test.sh
+edge	in-homes	pin-back	pinned-behind	bin/jg-trunk.sh:cmd_ci	-	CI is red and a home was pinned back below the change	jg-machine-delivery.test.sh
+edge	in-homes-off	switch-on	in-use	config/<switch>:file	-	the switch file is added and its proof holds	jg-machine-delivery.test.sh
+edge	in-homes-off	switch-named	in-homes	config/<switch>:file	-	the switch file is added and no proof of use holds	jg-machine-delivery.test.sh
+edge	in-homes-off	pin-back	pinned-behind	bin/jg-trunk.sh:cmd_ci	-	CI is red and a home was pinned back below the change	jg-machine-delivery.test.sh
+edge	in-use	switch-off	in-homes-off	config/<switch>:file	-	the switch file is removed	jg-machine-delivery.test.sh
+edge	in-use	proof-lost	in-homes	config/<switch>:file	-	the proof stops holding	jg-machine-delivery.test.sh
+edge	in-use	pin-back	pinned-behind	bin/jg-trunk.sh:cmd_ci	-	CI is red and a home was pinned back below the change	jg-machine-delivery.test.sh
+edge	pinned-behind	live	in-homes	bin/jg-update.sh:move_home	-	a later green commit moves every home to a commit that holds the change	jg-machine-delivery.test.sh
+edge	pinned-behind	live-off	in-homes-off	bin/jg-update.sh:move_home	-	a later green commit moves every home to a commit that holds the change, switch absent	jg-machine-delivery.test.sh
+edge	pinned-behind	live-on	in-use	bin/jg-update.sh:move_home	-	a later green commit moves every home to a commit that holds the change, switch on and proof holds	jg-machine-delivery.test.sh
+edge	landed	revert	reverted	bin/jg-trunk.sh:revert_commit	-	a revert of the change lands on the trunk	jg-machine-delivery.test.sh
+edge	in-homes	revert	reverted	bin/jg-trunk.sh:revert_commit	-	a revert of the change lands on the trunk	jg-machine-delivery.test.sh
+edge	in-homes-off	revert	reverted	bin/jg-trunk.sh:revert_commit	-	a revert of the change lands on the trunk	jg-machine-delivery.test.sh
+edge	in-use	revert	reverted	bin/jg-trunk.sh:revert_commit	-	a revert of the change lands on the trunk	jg-machine-delivery.test.sh
+edge	pinned-behind	revert	reverted	bin/jg-trunk.sh:revert_commit	-	a revert of the change lands on the trunk	jg-machine-delivery.test.sh
+observer	bash "$(dirname "$JG_MACHINES_TABLES")/observers/delivery.sh" "$1"

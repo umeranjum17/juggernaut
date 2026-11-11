@@ -511,8 +511,8 @@ clone_project() {
   read -r mode _ <<EOF
 $mode_line
 EOF
-  if [ "$mode" = local-only ]; then
-    echo "error: project $project is local-only; squad_lead routes support only no-mistakes and direct-PR projects" >&2
+  if { [ "$mode" = local-only ] || [ "$mode" = local-trunk ]; }; then
+    echo "error: project $project is $mode; squad_lead routes support only no-mistakes and direct-PR projects" >&2
     return 1
   fi
   if [ -e "$dst" ]; then
@@ -539,8 +539,8 @@ validate_seed_project() {
   read -r mode _ <<EOF
 $mode_line
 EOF
-  if [ "$mode" = local-only ]; then
-    echo "error: project $project is local-only; squad_lead routes support only no-mistakes and direct-PR projects" >&2
+  if { [ "$mode" = local-only ] || [ "$mode" = local-trunk ]; }; then
+    echo "error: project $project is $mode; squad_lead routes support only no-mistakes and direct-PR projects" >&2
     return 1
   fi
   url=$(git -C "$src" remote get-url origin 2>/dev/null || true)

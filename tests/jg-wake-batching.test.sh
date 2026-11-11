@@ -83,8 +83,10 @@ test_lead_lines_batch() {
 # --- 2. a batch row does not wake through the stop-owned arm ------------------
 # cycle <dir>: one real watcher cycle, then drain and acknowledge it, the way a
 # Stop-owned arm runs the cycle. A wake ends the cycle and lands in the output.
-cycle() {  # <dir> [escalate] [alert]
-  local dir=$1 escalate=${2:-900001} alert=${3:-900000} rc=0 seq gen pid
+# A cycle that delivers nothing would run out its whole poll budget (0.1 s a poll). A cycle that only has to arm
+# a wait names that wait's record as <ready>, and is ended as soon as the record exists instead of at the budget.
+cycle() {  # <dir> [escalate] [alert] [ready record]
+  local dir=$1 escalate=${2:-900001} alert=${3:-900000} ready=${4:-} polls=40 rc=0 seq gen pid i=0
   local fake_windows
   fake_windows=$(printf 'fake:1\nfake:2')
   env HOME="$dir/home" XDG_CONFIG_HOME="$dir/home/config" TMPDIR="$dir/tmp" \
@@ -98,7 +100,11 @@ cycle() {  # <dir> [escalate] [alert]
     JG_SQUAD_LEAD_WAKE_STALL_SECS=1 JG_WATCH_HANDLING_SUCCESSOR=1 \
     "$WATCH" > "$dir/out" 2> "$dir/err" &
   pid=$!
-  wait_for_exit "$pid" 40 || rc=$?
+  if [ -n "$ready" ]; then
+    while [ "$i" -lt "$polls" ] && [ ! -e "$ready" ] && is_live_non_zombie "$pid"; do sleep 0.1; i=$((i + 1)); done
+    [ ! -e "$ready" ] || polls=0
+  fi
+  wait_for_exit "$pid" "$polls" || rc=$?
   case "$rc" in 0|124) ;; *) fail "watcher failed: $(cat "$dir/err")" ;; esac
   cat "$dir/out" >> "$dir/events"
   JG_HOME="$dir" JG_STATE_OVERRIDE="$dir/state" "$DRAIN" > "$dir/drain" 2> "$dir/ack"
@@ -171,8 +177,8 @@ test_done_closes_its_escalation() {
 
   # Arm both episodes on quiet cycles: the tick ends the cycle on the first
   # escalation, so each lane arms on its own cycle.
-  cycle "$dir"
-  cycle "$dir"
+  cycle "$dir" 900001 900000 "$dir/state/.waiting-timers/lead-a"
+  cycle "$dir" 900001 900000 "$dir/state/.waiting-timers/lead-b"
   [ -e "$dir/state/.waiting-timers/lead-a" ] || fail "the first lane's wait never armed"
   [ -e "$dir/state/.waiting-timers/lead-b" ] || fail "the second lane's wait never armed"
   : > "$dir/events"

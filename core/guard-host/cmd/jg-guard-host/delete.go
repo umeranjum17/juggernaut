@@ -6,8 +6,7 @@
 //
 // This is the Go port of the JavaScript decider that held this rule. Its decisions are
 // unchanged: core/delete-guard/tests/delete-guard.test.sh drives the same block and allow
-// corpus it drove before, and the OPA shadow replay still scores the Rego rule against this
-// decider.
+// corpus it drove before. It is the only copy of the rule; no policy file holds it.
 package main
 
 import (

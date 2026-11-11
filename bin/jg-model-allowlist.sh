@@ -19,6 +19,9 @@
 # from: a --model flag, a dispatch profile, or a config/crew-harness and
 # config/squad-lead-harness token. watch reports a model that started outside that
 # gate, once each; install registers it for the watcher and uninstall retires it.
+# A model the list excludes may run one job when config/model-ban-lifts holds a line
+# "<task-id> <provider>/<model> <scope words>" for exactly that task and model; watch stays silent
+# for that pair and still reports the same model for any other task.
 # Sourced, this file only defines functions.
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
@@ -171,25 +174,35 @@ edit() { # <allow|deny> <provider> <model>...
   show
 }
 
-# The launches this home actually made, as "<harness>\t<model>" lines.
+# The launches this home actually made, as "<task-id>\t<harness>\t<model>" lines.
 launches() {
   local history
   for history in "$STATE"/*.models; do
     [ -f "$history" ] || continue
-    awk -F'\t' 'NF >= 3 && $3 != "" && $3 != "default" { printf "%s\t%s\n", $2, $3 }' "$history"
+    awk -F'\t' -v id="$(basename "$history" .models)" 'NF >= 3 && $3 != "" && $3 != "default" { printf "%s\t%s\t%s\n", id, $2, $3 }' "$history"
   done
 }
 
+# lifted <task-id> <provider/model>: 0 when config/model-ban-lifts holds a one-job lift for exactly that
+# task and model. A lift line is "<task-id> <provider>/<model> <scope words...>"; a line with no scope,
+# and a comment, lifts nothing, so a lift always says what it was for.
+lifted() {
+  local lifts=$CONFIG/model-ban-lifts
+  [ -r "$lifts" ] || return 1
+  awk -v id="$1" -v pm="$2" '$1 == id && $2 == pm && NF >= 3 && $1 !~ /^#/ { found = 1 } END { exit !found }' "$lifts"
+}
+
 watch() {
-  local harness model provider verdict words previous current out
+  local task harness model provider verdict words previous current out
   previous=$(cat -- "$SEEN" 2>/dev/null || true)
   current=''
   out=''
-  while IFS=$'\t' read -r harness model; do
+  while IFS=$'\t' read -r task harness model; do
     [ -n "$model" ] || continue
     provider=$(jg_model_allowlist_provider "$harness" "$model")
     IFS=$'\t' read -r verdict words <<<"$(jg_model_allowlist_verdict "$provider" "$model")"
     [ "$verdict" = deny ] || continue
+    lifted "$task" "$provider/${model#"$provider"/}" && continue
     current+="$provider/$model"$'\n'
     printf '%s\n' "$previous" | grep -qxF -- "$provider/$model" && continue
     out+=$(printf 'model-allowlist: %s ran model %s although %s allows %s; allow it with bin/jg-model-allowlist.sh allow %s %s\n' \

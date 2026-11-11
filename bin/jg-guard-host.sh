@@ -49,6 +49,16 @@ build() {
   local tmp
   command -v "$GO" >/dev/null 2>&1 || return 1
   mkdir -p "${BIN%/*}" || return 1
+  if [ -n "${GOTMPDIR:-}" ]; then
+    if [ -L "$GOTMPDIR" ] || { [ -e "$GOTMPDIR" ] && { [ ! -d "$GOTMPDIR" ] || [ ! -O "$GOTMPDIR" ]; }; }; then
+      printf 'jg-guard-host: unsafe Go work directory %s (must be a directory owned by the caller, not a symlink)\n' "$GOTMPDIR" >&2
+      return 1
+    fi
+    if ! (umask 077; mkdir -p -- "$GOTMPDIR") || [ -L "$GOTMPDIR" ] || [ ! -O "$GOTMPDIR" ] || ! chmod 700 -- "$GOTMPDIR"; then
+      printf 'jg-guard-host: cannot create or secure Go work directory %s\n' "$GOTMPDIR" >&2
+      return 1
+    fi
+  fi
   tmp="$BIN.tmp.$$"
   if ! ( cd "$SOURCE_DIR" && "$GO" build -o "$tmp" ./cmd/jg-guard-host ) >&2; then
     rm -f -- "$tmp"

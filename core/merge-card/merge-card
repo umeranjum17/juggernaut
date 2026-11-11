@@ -12,8 +12,13 @@
 #     lane that fixed its evidence after a fail is checked again instead of refused by the old verdict.
 #     done-done's verdict is report only. A PR merge is refused (exit 1) when the newest
 #     checks-gate.log row for the head, from jg-checks-lint.sh, is not a pass.
-#   merge-card check [--judge <route>] <task-id> <worktree|-> <head|-> <pr-url|->
+#   merge-card check [--refresh-context] [--judge <route>] <task-id> <worktree|-> <head|-> <pr-url|->
 #     The gate's check alone: run done-done, save and print the verdict, post nothing.
+#     --refresh-context explicitly rejudges a changed recipe before replacing the saved context.
+#   merge-card context <task-id> <head>
+#     With explicit DONE_DONE_HOME, bind an existing passed check and sealed head to its
+#     authoritative context without another proof or judge run. Receipt/signing callers
+#     then use that context or refuse an explicit conflicting override.
 #     gate, check and post all take `--judge <route>`: it reaches `done-done check --judge <route>`
 #     for that call alone, so a lane whose configured judge route is rate limited can name another
 #     one instead of waiting on the fallback. Without it done-done checks with its own configured
@@ -58,13 +63,21 @@
 #     The title a card gets for a PR (its own title, else its claim, trimmed; nothing when neither reads),
 #     and the refusal retitle-old-cards and the tests use: exit 0 when <title> is the generic sentence.
 #   merge-card screen-none <task-id> <pr-url|->, merge-card receipt <task-id> <head>, merge-card receipt-json <task-id> <head>
-#     Exit 0 when the merge declares `screen: none`, or when done-done answers for <head>: its own
-#     `done-done receipt --verify <head>`, asked in the task's lane worktree when the task's record names
-#     one, else here. While a merge head may carry no receipt, a sealed clean done-done run at <head> in the
-#     task folder or done-done's own evidence root is the fallback, and it goes once done-done records a
-#     receipt at every merge head. receipt-json prints the normalized receipt used by owner-rules' local signature check.
+#     screen-none tests the declaration. receipt and receipt-json require a verified official receipt or
+#     approved cited evidence held by a sealed clean run at the head. receipt-json is the normalized
+#     authorization used by owner-rules signatures; an unapproved raw run never satisfies it.
+#   merge-card capture-json <task-id> <head>
+#     Read-only sealed-run discovery for attachments, always marked verification: unverified.
+#     It never judges, authorizes landing or supplies the owner-signature receipt.
+#   merge-card same-change <repo> <proved-head> <head>
+#     Exit 0 when <head> is the same change as <proved-head> in <repo>, so a proof bound to <proved-head> holds for <head>
+#     (bin/jg-merge-gate-lib.sh's jg_dod_trunk_proof_gaps asks it for a lane rebased with no change). Each must be one commit
+#     with one parent, and the two must touch the same paths with the same status and modes and have the same patch id
+#     (`git patch-id --verbatim`: line numbers are ignored, every byte of every changed and context line is kept, and a binary
+#     change is compared whole). Anything else exits 1 with one line on stderr naming why.
 #     sign-off-axi writes the board under its lock: it appends and never rewrites other cards.
-# The done-done check runs as the pool's claude account when the home has one
+# Explicit caller accounts and done-done account/pool commands own their selection.
+# Otherwise the check runs as the pool's Claude account when the home has one
 # (config/account-pool): the check's env carries that account's profile folder in
 # CLAUDE_CONFIG_DIR and the pool's login variables unset, so the judge never answers on
 # the default login. A fresh pick is required; a dry pool uses the route chain's non-Claude
@@ -74,8 +87,38 @@
 # still covered), sign-off-axi, jq and gh. Dry-pool fallback also needs Python 3 with PyYAML
 # and pi (quota-axi when present).
 set -u
+# Only internal discovery/check scopes may select these modes, never the caller environment.
+recording=0 discovering=0
 
 die() { echo "merge-card: $*" >&2; exit 1; }
+
+# abs_path <path> [<base>]: <path> made absolute against <base> (default: the physical working directory), with `.`, `..`
+# and repeated slashes folded by name as os.path.abspath does: symlinks stay, and the path need not exist. Plain bash, so
+# the receipt the landing asks for never starts an interpreter: on a host where python3 is a mise shim, a caller whose
+# mise settings point elsewhere made every shim refuse, and that refusal was the landing's (fric-lander-mise-immune).
+abs_path() {
+  local p=$1 part out=''
+  local -a parts=()
+  case $p in /*) ;; *) p=${2:-$(pwd -P)}/$p ;; esac
+  IFS=/ read -rd '' -a parts < <(printf '%s' "$p") || :
+  for part in "${parts[@]}"; do
+    case $part in
+      ''|.) ;;
+      ..) out=${out%/*} ;;
+      *) out=$out/$part ;;
+    esac
+  done
+  printf '%s\n' "${out:-/}"
+}
+
+# Resolve explicit folders before any call changes directory into the task.
+for context_var in DONE_DONE_HOME CLAUDE_CONFIG_DIR; do
+  if [ -n "${!context_var:-}" ]; then
+    context_path=$(abs_path "${!context_var}") || die "cannot resolve $context_var"
+    export "$context_var=$context_path"
+  fi
+done
+unset context_var context_path
 
 # version_at_least <version> <minimum>: a dotted numeric version of at least the minimum.
 version_at_least() {
@@ -106,7 +149,7 @@ resolve_evidence() {
 # checks_claim <task-id> <pr-url|->: the Checks block's own claim (its `outcome:` line), which a
 # citation redirect checks again against the sealed run's capture.
 checks_claim() {
-  { [ "$2" != - ] && gh pr view "$2" --json body --jq .body 2>/dev/null || cat -- "$JG_HOME/data/$1/checks.md" 2>/dev/null; } |
+  { if [ "$2" != - ] && gh pr view "$2" --json body --jq .body 2>/dev/null; then :; else cat -- "$JG_HOME/data/$1/checks.md" 2>/dev/null; fi; } |
     sed -n 's/^outcome: *//p' | head -n 1
 }
 
@@ -190,6 +233,7 @@ verdict_of() {
 # run_files <task-id> <head>: the sealed clean done-done run's own file names at <head>, one per line
 # (nothing when there is no such run). The card's passed-test receipt names only files it holds.
 run_files() {
+  local discovering=1 # Discovery for capture selection is not public proof authorization.
   receipt_run "$1" "$2" /dev/null 2>/dev/null | jq -r '(.files // [])[]' 2>/dev/null
 }
 
@@ -198,7 +242,7 @@ run_capture() {
   local f root
   f=$(run_files "$1" "$2" | head -n 1)
   [ -n "$f" ] || return 0
-  for root in "$JG_HOME/data/$1" "$(dd_root)"; do
+  for root in "$JG_HOME/data/$1" "$(dd_root "$1")"; do
     [ -z "$root" ] || [ ! -f "$root/$f" ] || { printf '%s' "$root/$f"; return 0; }
   done
 }
@@ -232,11 +276,11 @@ redirect_evidence() {
   printf '%s' "$out"
 }
 
-# shellcheck source=account-pool/bin/jg-pool-claude-env.sh
+# shellcheck source=core/account-pool/bin/jg-pool-claude-env.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/account-pool/bin/jg-pool-claude-env.sh"
-# shellcheck source=account-pool/bin/jg-route-chain-lib.sh
+# shellcheck source=core/account-pool/bin/jg-route-chain-lib.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/account-pool/bin/jg-route-chain-lib.sh"
-# shellcheck source=signoff/bin/jg-signoff-feedback-lib.sh
+# shellcheck source=core/signoff/bin/jg-signoff-feedback-lib.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/signoff/bin/jg-signoff-feedback-lib.sh"
 
 # The pi model an entry tagged done-done-judge in config/tool-models.json (bin/jg-tool-models.sh) names, or
@@ -281,6 +325,7 @@ pool_env_run() {
     [ -z "${TM_JUDGE:-}" ] || chain=$(jq -c --arg m "$TM_JUDGE" '[{id: "tool-models", provider: ($m | split("/")[0]), model: $m}] + .' <<<"${chain:-[]}") || chain=''
     while IFS=$'\t' read -r id provider model <&3; do
       [ -n "$model" ] || continue
+      case $model in gpt-*|*/gpt-*) dry="${dry:+$dry, }$model (GPT requires native Codex, unsupported for this judge)"; continue ;; esac
       if jg_route_down "$id"; then
         dry="${dry:+$dry, }$model (route probe says down: $(jg_route_cause "$id"))"
         continue
@@ -328,6 +373,32 @@ CONFIG
   )
 }
 
+# A passed check declares the proof context for owner lookup. Explicit conflicting callers refuse.
+proof_context() {  # <task> <head>
+  local record=$JG_HOME/data/$1/merge-card.json saved home account hash project declared
+  [ -f "$record" ] || return 0
+  saved=$(jq -c --arg h "$2" 'select(.head == $h and .verdict == "pass") | .context // empty' "$record") || {
+    echo "merge-card: cannot read the proof context" >&2; return 1;
+  }
+  [ -n "$saved" ] || return 0
+  project=$(sed -n 's/^project=//p' "$JG_HOME/state/$1.meta" 2>/dev/null | tail -n 1)
+  declared=$(jq -r '.project // empty' <<<"$saved")
+  [ -z "$project" ] || [ -z "$declared" ] || [ "$project" = "$declared" ] || {
+    echo "merge-card: task project differs from the passed proof context" >&2; return 1;
+  }
+  home=$(jq -r .home <<<"$saved"); account=$(jq -r '.account // ""' <<<"$saved")
+  if { [ -n "${DONE_DONE_HOME:-}" ] && [ "$DONE_DONE_HOME" != "$home" ]; } ||
+    { [ -n "${CLAUDE_CONFIG_DIR:-}" ] && [ "$CLAUDE_CONFIG_DIR" != "$account" ]; }; then
+    echo "merge-card: explicit proof context/account differs from the passed check" >&2; return 1
+  fi
+  export DONE_DONE_HOME=$home
+  [ -z "$account" ] || export CLAUDE_CONFIG_DIR=$account
+  hash=$(git hash-object "$home/config.yaml" 2>/dev/null || true)
+  [ "$hash" = "$(jq -r '.config_hash // ""' <<<"$saved")" ] || {
+    echo "merge-card: proof configuration changed since the passed check; use check --refresh-context to rejudge the selected recipe" >&2; return 1;
+  }
+}
+
 # checks_key <task-id> <pr-url|->: a short key of the newest Checks block, so a recorded verdict is reused
 # only while the block it judged is unchanged. An unreadable block gets a unique key, never a reusable one.
 checks_key() {
@@ -346,13 +417,33 @@ checks_key() {
 
 # check [--claim-id <id>] [--judge <route>] <task-id> <worktree|-> <head|-> <pr-url|->: run done-done, save and print the verdict.
 check() {
-  local claim_id=() judge=()
+  local claim_id=() judge=() refresh=0
+  [ "${1:-}" != --refresh-context ] || { refresh=1; shift; }
   [ "${1:-}" = --claim-id ] && [ -n "${2:-}" ] && claim_id=(--claim-id "$2") && shift 2
   [ "${1:-}" = --judge ] && [ -n "${2:-}" ] && judge=(--judge "$2") && shift 2
   [ $# -eq 4 ] || { echo "usage: merge-card check [--claim-id <id>] [--judge <route>] <task-id> <worktree|-> <head|-> <pr-url|->"; return; }
   [ -n "${JG_HOME:-}" ] || { echo "merge-card: JG_HOME is not set, so done-done did not run"; return; }
   local id=$1 wt=$2 head=$3 pr=$4 src out='' rc=0 verdict signoff=''
-  local record=$JG_HOME/data/$id/merge-card.json dd_v='' args body fallback=0 ck=''
+  local record=$JG_HOME/data/$id/merge-card.json dd_v='' args body fallback=0 ck='' selection=automatic saved account
+  [ -z "${CLAUDE_CONFIG_DIR:-}" ] || selection=explicit
+  # A new check refreshes automatic picks. Only the declared recipe and an
+  # explicit account pin carry forward; receipt lookup never enters this path.
+  if [ "$refresh" = 0 ] && [ -f "$record" ]; then
+    saved=$(jq -c --arg h "$head" 'select(.head == $h and .verdict == "pass") | .context // empty' "$record") || return 1
+    if [ -n "$saved" ]; then
+      if [ -z "${DONE_DONE_HOME:-}" ]; then
+        DONE_DONE_HOME=$(jq -r .home <<<"$saved") || return 1
+        export DONE_DONE_HOME
+      fi
+      if [ "$(jq -r '.selection // "automatic"' <<<"$saved")" = explicit ]; then
+        account=$(jq -r .account <<<"$saved")
+        [ -z "${CLAUDE_CONFIG_DIR:-}" ] || [ "$CLAUDE_CONFIG_DIR" = "$account" ] || {
+          echo "merge-card: explicit account pin changed; use check --refresh-context for a new selection" >&2; return 1;
+        }
+        export CLAUDE_CONFIG_DIR=$account; selection=explicit
+      fi
+    fi
+  fi
   ck=$(checks_key "$id" "$pr")
   local signoff_board=${signoff_board:-$JG_HOME/data/$id/merge-card-media/signoff-board.json}
   src=$pr
@@ -365,12 +456,36 @@ check() {
     # only the repo identity. A done-done of 0.3.1 or newer does that itself with --citation-base;
     # an older one rejects the flag and resolves against its cwd, so probe once (offline, cheap)
     # and, on the older one, hand it the Checks block with its names already resolved, on stdin.
+    if ! python3 - "${DONE_DONE_HOME:-$HOME/.done-done}/config.yaml" "${judge[1]:-}" <<'ROUTE'
+import sys, yaml
+try:
+    j = (yaml.safe_load(open(sys.argv[1])) or {}).get('judge', {})
+except FileNotFoundError:
+    j = {}
+route, model = sys.argv[2] or j.get('route'), j.get('model', '')
+if route == 'answerer:pi' and (model.startswith('gpt-') or '/gpt-' in model):
+    print('merge-card: GPT requires native Codex; this installed image judge needs the supported native Haiku route', file=sys.stderr)
+    sys.exit(1)
+ROUTE
+    then return 1; fi
     dd_v=$(done-done --version 2>/dev/null | head -n 1)
     # Explicit non-Claude judges must never depend on Claude pool capacity.
     case ${judge[1]:-claude-code} in
       claude-code|answerer:claude|answerer:claude-code)
         # A judge model from config/tool-models.json runs on the route list and never needs Claude pool room.
-        if [ -n "${TM_JUDGE:=$(tool_models_judge)}" ]; then fallback=1; else JG_POOL_REQUIRE_FRESH=1 jg_pool_claude_env || fallback=1; fi ;;
+        if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+          [ -d "$CLAUDE_CONFIG_DIR" ] || { echo "merge-card: selected Claude account folder is missing" >&2; return 1; }
+        elif python3 - "${DONE_DONE_HOME:-$HOME/.done-done}/config.yaml" <<'PYCONFIG'
+import sys, yaml
+try:
+    judge = (yaml.safe_load(open(sys.argv[1])) or {}).get('judge', {})
+except FileNotFoundError:
+    judge = {}
+sys.exit(0 if judge.get('account_command') or judge.get('pool_command') else 1)
+PYCONFIG
+        then : # done-done owns the explicit account selection, including its unset list.
+        elif [ -n "${TM_JUDGE:=$(tool_models_judge)}" ]; then fallback=1
+        else JG_POOL_REQUIRE_FRESH=1 jg_pool_claude_env || fallback=1; fi ;;
     esac
     if done-done check --help 2>&1 | grep -q -- '--citation-base' ||
        version_at_least "$dd_v" 0.3.1; then
@@ -414,10 +529,19 @@ check() {
     signoff=$(cd "$wt" && done-done signoff --board "$signoff_board" --json 2>/dev/null | jq -r 'select(.kind == "evidence") | .file // empty')
     { [ -n "$signoff" ] && [ "$(jq -r .run.commit "$signoff" 2>/dev/null)" = "$head" ]; } || signoff=''
   fi
+  local context attempt recording=1 run=''
+  context=$(current_context "$id" "$wt" "${CLAUDE_CONFIG_DIR:-}") || return 1
+  [ "$verdict" != pass ] || run=$(receipt_run "$id" "$head" /dev/null | jq -r '.run_id // empty')
+  context=$(jq -c --arg selection "$selection" --arg run_id "$run" '. + {selection:$selection, run_id:$run_id}' <<<"$context") || return 1
   printf '%s' "$out" | jq -e 'type == "object"' >/dev/null 2>&1 || out=$(jq -n --arg e "$out" 'if $e == "" then {} else {error: $e} end')
-  mkdir -p "${record%/*}" &&
-    jq -n --arg head "$head" --arg pr "$pr" --arg verdict "$verdict" --arg signoff "$signoff" --arg ck "$ck" --argjson check "$out" \
-      '{$head, $pr, $verdict, $signoff, checks: $ck, $check}' > "$record.$$" && mv "$record.$$" "$record"
+  mkdir -p "${record%/*}" || return 1
+  if [ -f "$record" ]; then
+    attempt=$(mktemp "$record.previous-XXXXXX") && cp "$record" "$attempt" || return 1
+  fi
+  attempt=$(mktemp "$record.attempt-XXXXXX") || return 1
+  jq -n --arg head "$head" --arg pr "$pr" --arg verdict "$verdict" --arg signoff "$signoff" --arg ck "$ck" --argjson check "$out" --argjson context "$context" \
+    '{$head, $pr, $verdict, $signoff, checks: $ck, $check, $context}' > "$attempt" &&
+    cp "$attempt" "$record.$$" && mv "$record.$$" "$record" || return 1
   echo "done-done check: $verdict ($src)"
   # The findings and the fix done-done names (a step record, a judge) so a lead acts on one refusal.
   printf '%s' "$out" | jq -r '((.findings // [])[:3][].why), (.error // empty), ((.help // [])[0] // empty)' | sed 's/^/  /'
@@ -428,7 +552,7 @@ gate() {
   [ "${1:-}" = --judge ] && [ -n "${2:-}" ] && judge=(--judge "$2") && shift 2
   [ $# -eq 4 ] || { echo "usage: merge-card gate [--judge <route>] <task-id> <worktree|-> <head|-> <pr-url|->"; return; }
   [ -n "${JG_HOME:-}" ] || { echo "merge-card: JG_HOME is not set, so done-done did not run"; return; }
-  check "${judge[@]}" "$1" "$2" "$3" "$4"
+  check "${judge[@]}" "$1" "$2" "$3" "$4" || return $?
   echo "merge-card: report only; done-done's verdict never refuses this merge"
   [ "$4" != - ] && [ "$3" != - ] || return 0
   # Row: <time> <src> <head> pass|fail <why>, one per jg-checks-lint.sh run.
@@ -440,12 +564,64 @@ gate() {
 }
 
 # dd_root: done-done's own evidence root, asked of done-done (`doctor`
-# prints <root>/<app>); nothing when done-done is absent or does not answer, so only the task folder counts.
+# prints the app evidence root); nothing when done-done is absent or does not answer, so only the task folder counts.
+dd_dir() {
+  local dir
+  dir=$(sed -n 's/^worktree=//p' "$JG_HOME/state/$1.meta" 2>/dev/null | tail -n 1)
+  [ -n "$dir" ] || dir=$(jq -r '.context.dir // empty' "$JG_HOME/data/$1/merge-card.json" 2>/dev/null)
+  [ -d "${dir:-}" ] || dir=$JG_HOME
+  printf '%s' "$dir"
+}
+
 dd_root() {
-  local root
-  root=$(cd "$JG_HOME" 2>/dev/null && done-done doctor --json 2>/dev/null |
-    jq -r '.checks[]? | select(.check == "evidence_root") | .detail | capture("^writable: (?<p>.+)/[^/]+$").p' 2>/dev/null)
-  printf '%s' "${root/#\~/$HOME}"
+  local root dir=${2:-} base
+  if [ -z "$dir" ]; then
+    root=$(jq -r '.context.root // empty' "$JG_HOME/data/${1:-}/merge-card.json" 2>/dev/null)
+    [ -z "$root" ] || { printf '%s' "$root"; return 0; }
+    dir=$(dd_dir "${1:-}")
+  fi
+  root=$(cd "$dir" 2>/dev/null && done-done doctor --json 2>/dev/null |
+    jq -r '.checks[]? | select(.check == "evidence_root") | .detail | capture("^writable: (?<p>.+)$").p' 2>/dev/null)
+  [ -n "$root" ] || return 0
+  base=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || base=$(cd "$dir" && pwd -P) || return 1
+  case $root in \~|\~/*) root=$HOME${root#\~} ;; esac
+  abs_path "$root" "$base"
+}
+
+current_context() {  # <task> <directory> <explicit-account>
+  local root project target=''
+  root=$(dd_root "$1" "$2") || return 1
+  project=$(sed -n 's/^project=//p' "$JG_HOME/state/$1.meta" 2>/dev/null | tail -n 1)
+  [ -z "$project" ] || target=$(cat "$JG_HOME/state/trunk-tip-$(basename "$project")" 2>/dev/null || true)
+  jq -nc --arg home "${DONE_DONE_HOME:-$HOME/.done-done}" --arg account "$3" \
+    --arg dir "$2" --arg root "$root" \
+    --arg project "$project" --arg target_tip "$target" \
+    --arg config_hash "$(git hash-object "${DONE_DONE_HOME:-$HOME/.done-done}/config.yaml" 2>/dev/null || true)" \
+    '{home:$home, account:$account, dir:$dir, root:$root, project:$project, target_tip:$target_tip, config_hash:$config_hash}'
+}
+
+# Bind an existing passed check and sealed head without another judge or proof run.
+# A bound context stays immutable; check --refresh-context must actually rejudge a changed recipe.
+bind_context() {
+  [ "$#" -eq 2 ] && [ -n "${JG_HOME:-}" ] && [ -n "${DONE_DONE_HOME:-}" ] || die "context needs JG_HOME, explicit DONE_DONE_HOME, task and head"
+  local record=$JG_HOME/data/$1/merge-card.json context tmp receipt selection=automatic
+  [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && $2 =~ ^[0-9a-f]{40,64}$ ]] || die "invalid proof context task or head"
+  jq -e --arg h "$2" '.head == $h and .verdict == "pass" and (.context == null)' "$record" >/dev/null || die "context requires an existing passed check without a bound context"
+  receipt=$(receipt_run "$1" "$2" /dev/null) || return 1
+  [ -n "$receipt" ] || die "the selected context has no clean sealed proof at the requested head"
+  context=$(current_context "$1" "$(dd_dir "$1")" "${CLAUDE_CONFIG_DIR:-}") || return 1
+  jq -e --arg root "$(jq -r .root <<<"$context")/" --argjson receipt "$receipt" '
+    ([ $receipt.files[] | if startswith("/") then . else $root + . end ]) as $files
+    | (.check.evidence // []) as $checked
+    | ($checked | length > 0) and all($checked[]; . as $path | $files | index($path))' "$record" >/dev/null \
+    || die "the selected sealed run does not hold the evidence from the passed check"
+  [ -z "${CLAUDE_CONFIG_DIR:-}" ] || selection=explicit
+  context=$(jq -c --arg selection "$selection" --arg run_id "$(jq -r .run_id <<<"$receipt")" '. + {selection:$selection,run_id:$run_id}' <<<"$context") || return 1
+  tmp=$(mktemp "$record.previous-XXXXXX") || return 1
+  cp "$record" "$tmp" || return 1
+  tmp=$(mktemp "$record.XXXXXX") || return 1
+  if ! { jq --argjson context "$context" '.context=$context' "$record" > "$tmp" && mv "$tmp" "$record"; }; then rm -f "$tmp"; return 1; fi
+  echo "merge-card: bound the existing passed proof context; no proof or judge rerun"
 }
 
 # dd_root_why: one sentence saying where done-done's evidence root was looked for and was not found, else nothing.
@@ -459,56 +635,114 @@ dd_root_why() {
 # <head>", asked in the task's lane worktree when the task's record names one, else here, printed as the card's
 # receipt. Nothing when done-done is absent, refuses, or names no run the card can carry: the caller then scans
 # the sealed run records itself. done-done's verdict is the check; the run id and files come from the record it
-# passed, because `receipt --verify` reports how many files it passed rather than their names.
+# passed, because `receipt --verify` reports how many files it passed rather than their names. The files are the
+# receipt's own cited list (`.files`), the same list `check` reports as its evidence, so a capture that a written
+# requirement, an approved design or a redesign judged counts exactly like one a plain verdict judged.
 dd_receipt() {
-  local meta=$JG_HOME/state/$1.meta dir=. out head file
+  local dir out head file
   command -v done-done >/dev/null 2>&1 || return 0
-  if [ -f "$meta" ]; then dir=$(sed -n 's/^worktree=\(..*\)$/\1/p' "$meta" | head -n 1); fi
-  [ -n "$dir" ] && [ -d "$dir" ] || dir=.
+  dir=$(dd_dir "$1")
   out=$(cd "$dir" 2>/dev/null && done-done receipt --verify "$2" --json 2>/dev/null) || return 0
   head=$(printf '%s' "$out" | jq -r 'select(.result == "pass") | .head // empty' 2>/dev/null)
-  [ -n "$head" ] && [ -n "$5" ] || return 0
-  for file in "$5"/*/.done-done/receipts/"$head".json; do
-    [ -f "$file" ] || continue
-    jq -c --arg head "$2" --arg claim "$3" --arg ev "$4" '
+  [ "$head" = "$2" ] && [ -n "$5" ] || return 0
+  file=$5/.done-done/receipts/$head.json
+  if [ -f "$file" ]; then
+    jq -c --arg head "$2" --arg claim "$3" --arg ev "$4" --arg root "$5/" '
       ([.runs[]?.run_id] | last // empty) as $run
       | select($run != "")
       | {run_id: $run, commit: $head,
-         files: ([.judge.verdicts[]?.path | split("/") | last] | unique),
+         files: ([.files[]?.path | if startswith($root) then ltrimstr($root) elif startswith("<evidence root>/") then ltrimstr("<evidence root>/") else . end] | unique),
          outcome: $claim, repro: "see the merge note", proof: "done-done run \($run)", evidence: $ev}' "$file" 2>/dev/null
     return 0
-  done
+  fi
 }
 
 # receipt_run <task-id> <head> <record>: done-done's own receipt at <head>, else a sealed clean done-done run
 # there, from the task folder or done-done's default evidence root, else nothing.
 receipt_run() {
-  local claim evidence root file records=() dd
-  root=$(dd_root)
+  local claim evidence root file records=() dd bound='' result checked='[]'
+  if [ "${recording:-0}" = 1 ]; then root=$(dd_root "$1" "$wt")
+  else
+    proof_context "$1" "$2" || return 1
+    root=$(dd_root "$1")
+    bound=$(jq -r --arg h "$2" 'select(.head == $h and .verdict == "pass") | .context.run_id // empty' "$JG_HOME/data/$1/merge-card.json" 2>/dev/null)
+  fi
+  [ -n "$root" ] || root=$JG_HOME/data/$1
   claim=$(jq -r '.check.claim // empty' "$3" 2>/dev/null)
   evidence=$(jq -r '[.check.evidence[]? | split("/") | last] | join(", ")' "$3" 2>/dev/null)
-  dd=$(dd_receipt "$1" "$2" "$claim" "$evidence" "$root")
-  [ -z "$dd" ] || { printf '%s\n' "$dd"; return 0; }
+  dd=''
+  if [ "${recording:-0}" = 1 ]; then checked=$(jq -c '.evidence // []' <<<"$out" 2>/dev/null) || checked='[]'
+  else
+    checked=$(jq -c --arg h "$2" 'select(.head == $h and .verdict == "pass") | .check.evidence // []' "$JG_HOME/data/$1/merge-card.json" 2>/dev/null) || checked='[]'
+    checked=${checked:-[]}
+    dd=$(dd_receipt "$1" "$2" "$claim" "$evidence" "$root")
+  fi
+  if [ -n "$dd" ] && { [ -z "$bound" ] || [ "$(jq -r .run_id <<<"$dd")" = "$bound" ]; }; then
+    # An official publication must preserve the evidence set that the saved check approved.
+    if [ "$checked" != '[]' ]; then
+      jq -e --arg root "$root/" --argjson checked "$checked" '
+        (.files | map(if startswith("/") then . else $root + . end) | unique) == ($checked | unique)' <<<"$dd" >/dev/null \
+        || { echo 'merge-card: official receipt cites different evidence; recheck and authorize the intended set' >&2; return 1; }
+    fi
+    printf '%s\n' "$dd"; return 0
+  fi
+  if [ "${recording:-0}" != 1 ] && [ "${discovering:-0}" != 1 ] && [ "$3" = /dev/null ] && [ "$checked" = '[]' ]; then
+    echo 'merge-card: no approved cited evidence for this head; run check or publish a verified official receipt' >&2
+    return 1
+  fi
   for file in "$JG_HOME"/data/"$1"/.done-done/runs/*.json; do
     [ -f "$file" ] && records+=("$file")
   done
   if [ -n "$root" ]; then
-    for file in "$root"/*/.done-done/runs/*.json; do
+    for file in "$root"/.done-done/runs/*.json; do
       [ -f "$file" ] && records+=("$file")
     done
   fi
-  [ "${#records[@]}" -gt 0 ] || return 0
-  jq -cs --arg head "$2" --arg claim "$claim" --arg ev "$evidence" '
-    map(select(.schema == 1 and .exit == 0 and .dirty == false and
-      ((.commit == $head) or ((try (.run_id | capture("^[0-9]{8}T[0-9]{6}Z-(?<commit>[0-9a-f]{8})-[0-9a-f]+$").commit) catch "") == $head[0:8])) and
-      (.files | type) == "array" and (.files | length) > 0 and (.run_id | type) == "string" and .run_id != ""))
+  [ "${#records[@]}" -gt 0 ] || {
+    [ "${recording:-0}" != 1 ] || dd_receipt "$1" "$2" "$claim" "$evidence" "$root"
+    return 0
+  }
+  # Each manifest owns its relative capture paths, including legacy task-local records.
+  result=$(jq -nc --arg head "$2" --arg claim "$claim" --arg ev "$evidence" --arg bound "$bound" --arg root "$root/" --argjson checked "$checked" '
+    [inputs | . + {_record_root: (input_filename | sub("/\\.done-done/runs/[^/]+$"; "/"))}]
+    | map(select(.schema == 1 and .exit == 0 and .dirty == false and
+      ($bound == "" or .run_id == $bound) and
+      ((.commit == $head) or (.commit == null and ((try (.run_id | capture("^[0-9]{8}T[0-9]{6}Z-(?<commit>[0-9a-f]{8})-[0-9a-f]+$").commit) catch "") == $head[0:8]))) and
+      (.files | type) == "array" and (.files | length) > 0 and (.run_id | type) == "string" and .run_id != "")
+      | ._record_root as $capture_root
+      | ([.files[] | if type == "object" then .path else . end | if startswith("/") then . else $capture_root + . end]) as $files
+      | select(all($checked[]; . as $path | $files | index($path))))
     | sort_by(.started_at // "") | reverse | .[0] // empty
-    | {run_id, commit: $head, files: [.files[]? | if type == "object" then .path else . end], outcome: $claim, repro: "see the merge note", proof: "done-done run \(.run_id)", evidence: $ev}' "${records[@]}" 2>/dev/null
+    | {run_id, commit: $head, files: (if ($checked | length) > 0 then [$checked[] | if startswith($root) then ltrimstr($root) else . end] else [.files[]? | if type == "object" then .path else . end] end | unique), outcome: $claim, repro: "see the merge note", proof: "done-done run \(.run_id)", evidence: $ev}' "${records[@]}") || return 1
+  [ -z "$result" ] || printf '%s\n' "$result"
+}
+
+# change_key <repo> <commit>: one text that names the commit's change and nothing else: its paths with their status and modes
+# (the raw diff without blob ids, which differ after any rebase) and the patch id of its lines. A rebase with no change keeps
+# it. Fails for a commit that is missing, is not one commit on one parent, or changes nothing.
+change_key() {
+  local raw pid
+  [[ $2 =~ ^[0-9a-f]{40,64}$ ]] && [ "$(git -C "$1" rev-list --parents -n 1 "$2" 2>/dev/null | wc -w)" = 2 ] || return 1
+  raw=$(git -C "$1" diff-tree -r --no-commit-id --no-renames --raw "$2" | sed -E 's/^(:[0-7]+ [0-7]+) [0-9a-f]+ [0-9a-f]+ /\1 /') || return 1
+  pid=$(git -C "$1" diff-tree -p --binary --full-index --no-commit-id --no-renames --no-color --no-ext-diff --no-textconv "$2" |
+    git patch-id --verbatim | cut -d' ' -f1) || return 1
+  [ -n "$raw" ] && [ -n "$pid" ] || return 1
+  printf '%s\n%s\n' "$pid" "$raw"
+}
+
+# same_change <repo> <proved-head> <head>: the subcommand; see the header.
+same_change() {
+  local a b
+  [ "$#" -eq 3 ] || die "usage: merge-card same-change <repo> <proved-head> <head>"
+  git -C "$1" rev-parse --git-dir >/dev/null 2>&1 || die "${1:-<no repository>} is not a git repository, so the change at ${3:0:12} cannot be compared with ${2:0:12}"
+  a=$(change_key "$1" "$2") || die "${2:0:12} is not one commit with a change on one parent in $1, so it cannot be compared"
+  b=$(change_key "$1" "$3") || die "${3:0:12} is not one commit with a change on one parent in $1, so it cannot be compared"
+  [ "$a" = "$b" ] || die "${3:0:12} is not the same change as ${2:0:12}: its changed lines, paths or modes differ"
 }
 
 # screen_none <task-id> <pr-url|->: the merge's Checks block declares `screen: none`.
 screen_none() {
-  { [ "$2" != - ] && gh pr view "$2" --json body --jq .body 2>/dev/null || cat -- "$JG_HOME/data/$1/checks.md" 2>/dev/null; } |
+  { if [ "$2" != - ] && gh pr view "$2" --json body --jq .body 2>/dev/null; then :; else cat -- "$JG_HOME/data/$1/checks.md" 2>/dev/null; fi; } |
     grep -qiE '^[[:space:]]*screen[[:space:]]*:[[:space:]]*none[[:space:]]*$'
 }
 
@@ -666,10 +900,10 @@ post() {
   # The gate's verdict for this merge, else run done-done now (a merge the gate never saw). A recorded
   # verdict is reused only while it is a pass for this same candidate and the same Checks block: a lane
   # that fixed its evidence list after a fail, or edited the block, is checked again instead of refused.
-  [ "${#claim_id[@]}" -eq 0 ] && [ "${#judge[@]}" -eq 0 ] && jq -e --arg pr "$pr" --arg head "$head" --arg ck "$(checks_key "$id" "$pr")" \
-    '.pr == $pr and .head == $head and .verdict == "pass" and .checks == $ck' "$record" >/dev/null 2>&1 || {
-    check "${claim_id[@]}" "${judge[@]}" "$id" "$wt" "$head" "$pr"
-  }
+  if ! { [ "${#claim_id[@]}" -eq 0 ] && [ "${#judge[@]}" -eq 0 ] && jq -e --arg pr "$pr" --arg head "$head" --arg ck "$(checks_key "$id" "$pr")" \
+    '.pr == $pr and .head == $head and .verdict == "pass" and .checks == $ck' "$record" >/dev/null 2>&1; }; then
+    check "${claim_id[@]}" "${judge[@]}" "$id" "$wt" "$head" "$pr" || return $?
+  fi
   verdict=$(jq -r '.verdict // empty' "$record")
   claim=$(jq -r '.check.claim // empty' "$record")
   # Evidence only: a merge without passed proof posts no card, and the gap goes
@@ -745,7 +979,7 @@ post() {
 
 case ${1:-} in
   gate) shift; gate "$@"; exit $? ;;
-  check) shift; check "$@"; exit 0 ;;
+  check) shift; check "$@"; exit $? ;;
   post) shift; post "$@" ;;
   # The title a card gets for a PR: its own title, else its declared claim, trimmed. Prints nothing
   # when neither can be read, so the caller can tell no outcome from the generic sentence.
@@ -754,12 +988,21 @@ case ${1:-} in
   generic-title) generic_card_title "${2:-}" ;;
   # For owner-rules' merge gate: exit 0 when the merge is exempt / has a sealed clean run at <head>.
   screen-none) [ -n "${JG_HOME:-}" ] && screen_none "${2:-}" "${3:--}"; exit $? ;;
+  context) shift; bind_context "$@"; exit $? ;;
+  same-change) shift; same_change "$@"; exit $? ;;
   receipt) [ -n "${JG_HOME:-}" ] && [ -n "$(receipt_run "${2:-}" "${3:-}" /dev/null)" ]; exit $? ;;
+  capture-json)
+    [ -n "${JG_HOME:-}" ] || exit 1
+    discovering=1
+    capture=$(receipt_run "${2:-}" "${3:-}" /dev/null) || exit $?
+    [ -n "$capture" ] || exit 1
+    jq -c '. + {verification:"unverified"}' <<<"$capture"
+    ;;
   receipt-json)
     [ -n "${JG_HOME:-}" ] || exit 1
     receipt=$(receipt_run "${2:-}" "${3:-}" /dev/null) || exit $?
     [ -n "$receipt" ] || exit 1
     printf '%s\n' "$receipt"
     ;;
-  *) die "usage: merge-card gate|check|post|title|generic-title|receipt|receipt-json ... (see the header of $0)" ;;
+  *) die "usage: merge-card gate|check|post|title|generic-title|capture-json|receipt|receipt-json|same-change ... (see the header of $0)" ;;
 esac

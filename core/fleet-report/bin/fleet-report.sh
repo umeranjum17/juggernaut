@@ -4,6 +4,7 @@
 # Usage: fleet-report.sh <home> [--hours N] [--now <epoch>] [--flow <jg-flow.json>] [--json]
 #        fleet-report.sh <home> post [--hours N] [--now <epoch>] [--flow <file>]
 #        fleet-report.sh <home> tick [--now <epoch>]
+#        fleet-report.sh <home> --goal [--hours N] [--now <epoch>] [--json] [--record]
 # Reads: jg-flow.v1 (fleet-flow reader, or --flow), data/metrics/task-outcomes.tsv
 # (plus files named in JG_REPORT_OUTCOMES), data/metrics/alerts.tsv (see
 # fleet-alerts-ledger.sh), config/lane-target. Default text goes to stdout.
@@ -14,6 +15,7 @@
 # tick   For the scheduled check: records alerts, then posts a 4 h card when the
 #        last one is 4 h old and a 24 h card when the last one is a day old.
 #        Silent unless a post fails.
+# --goal Prints the goal meter instead of the report (goal-meter.sh owns the rows); tick records its row once a day.
 # False alarm: an alert whose same kind, key stem and subject raised again within
 # JG_REPORT_FALSE_SECS (default 600) of the previous one clearing or raising.
 set -euo pipefail
@@ -21,17 +23,26 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 [ "$#" -ge 1 ] || { sed -n 3,6p "$0" | cut -c3- >&2; exit 2; }
 home=$(cd "$1" && pwd -P); shift
 mode=text; [ "${1:-}" != post ] && [ "${1:-}" != tick ] || { mode=$1; shift; }
-hours=24 now=$(date +%s) flow='' json=0
+hours=24 now=$(date +%s) flow='' json=0 goal=0 record=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --hours) hours=${2:?}; shift 2 ;;
     --now) now=${2:?}; shift 2 ;;
     --flow) flow=${2:?}; shift 2 ;;
     --json) json=1; shift ;;
+    --goal) goal=1; shift ;;
+    --record) record=1; shift ;;
     *) echo "fleet-report: unknown argument $1" >&2; exit 2 ;;
   esac
 done
 case "$hours$now" in *[!0-9]*|'') echo 'fleet-report: --hours and --now need digits' >&2; exit 2 ;; esac
+
+if [ "$goal" = 1 ]; then
+  gargs=(--hours "$hours" --now "$now")
+  [ "$json" = 0 ] || gargs+=(--json)
+  [ "$record" = 0 ] || gargs+=(--record)
+  exec bash "$here/goal-meter.sh" "$home" "${gargs[@]}"
+fi
 
 tmps=()
 trap 'rm -f -- "${tmps[@]}"' EXIT
@@ -137,6 +148,7 @@ case $mode in
   post) post "$hours" ;;
   tick)
     bash "$here/fleet-alerts-ledger.sh" "$home" --now "$now"
+    bash "$here/goal-meter.sh" "$home" --now "$now" --record > /dev/null
     mkdir -p "$home/state"
     for pair in 4:14400 24:86400; do
       h=${pair%:*} gap=${pair#*:} mark=$home/state/.fleet-report-${pair%:*}h.last last=0

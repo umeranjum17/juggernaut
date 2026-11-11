@@ -14,8 +14,20 @@
 # Usage (JG_HOME is required; the backend session defaults to Herdr's default):
 #   JG_HOME=<home> jg-sentinel.sh tick       one pass; what a scheduler runs
 #   JG_HOME=<home> jg-sentinel.sh loop       tick every JG_SENTINEL_INTERVAL seconds
+#   JG_HOME=<home> jg-sentinel.sh ring       ring the primary now for a queued captain note (jg-inbox.sh runs it)
 #   JG_HOME=<home> jg-sentinel.sh reconcile  nudge or relaunch this home's direct reports, once per episode
 #   JG_HOME=<home> jg-sentinel.sh unit       print a systemd user service running `loop`
+#                             (Main only: a Squad Lead home is refused, and
+#                             bin/jg-unit-claim.sh owns why Main owns the units)
+#   JG_HOME=<home> jg-sentinel.sh model-reconcile       restore a recorded Claude model, this home
+#   JG_HOME=<home> jg-sentinel.sh lead-model-reconcile  the same for each local, unparked lead home
+#
+# One copy: this file is the sentinel. bin/jg-sentinel.sh is a forwarder that
+# execs it with JG_BIN set to that checkout's bin/, and core/sentinel/wiring.sh
+# installs this file as the host's copy. The Juggernaut scripts and libraries it
+# runs come from JG_BIN when set, else from the home's checkout ($JG_HOME/bin),
+# which is what the installed copy uses. `unit` names the entry it was run
+# through: the forwarder when JG_BIN is set, else this file.
 #
 # tick, under the home's state/.sentinel.lock:
 #   1. Reads the Herdr server identity for JG_SENTINEL_HERDR_SESSION (default the
@@ -35,11 +47,46 @@
 #      The primary is the Herdr pane whose agent session is state/.lock-session.
 #      The wake is typed only when that pane reads not busy and its composer
 #      reads exactly empty, as the away daemon's injection does, so it never
-#      lands mid-turn or on top of the captain's typing; a deferred wake stays
-#      pending for the next tick. The typed text is an operational-input
+#      lands mid-turn or on top of a person's typing; a deferred wake stays
+#      pending for the next tick and is logged, and the captain is never told
+#      (task jg-7v6uw-s32). Text of our own doorbell left in the box, whole or
+#      a leading part of one, is repaired first (jg_backend_repair_own_line):
+#      cleared by key in a turn or when partial, submitted when whole and the
+#      agent is idle, one row each in data/composer-repairs.tsv. A repair that
+#      fails twice in a row for the same wake calls the guarded relaunch of the
+#      primary once (JG_SENTINEL_PRIMARY_RELAUNCH replaces its command). The typed text is an operational-input
 #      doorbell whose record says what happened; handling it is an ordinary
 #      turn, and that turn's end re-arms supervision through the primary's own
 #      re-arm owner (docs/watcher-continuity.md).
+#
+# After those steps, whatever they decided and whether or not a Herdr server runs, each tick
+# runs the delivery pass (bin/jg-delivery-tick.sh) for this home and for each registered, local,
+# unparked lead home, each with that home's own checkout's entry and bounded by
+# JG_SENTINEL_DELIVERY_TIMEOUT: a worker's done lands, and the go-live and rollover start, with
+# no model awake and no watcher running. A live watcher runs the same pass on its fast tick; the
+# pass's lock lets only one of them run it at a time, and its result row goes to that home's wake
+# queue whoever ran it. A failed pass is logged and makes the tick exit 1.
+#
+# A captain note is the exception to the grace: while a note's wake row waits in
+# the queue and no watcher is live (beacon older than JG_SENTINEL_INBOX_GRACE,
+# default 60 s), the primary is rung at once, with no need for lanes in flight
+# and no 300 s beacon wait. Each tick checks it, and `ring` runs only that check;
+# bin/jg-inbox.sh runs `ring` the moment it queues the note, so the note reaches
+# a turn in seconds whatever the unit's own tick phase. One ring per queued set
+# of notes, repeated after JG_SENTINEL_INBOX_REWAKE_SECS (default 300); a
+# deferred ring (mid-turn, composer not empty) is retried by the next tick.
+#
+# Before step 1, each tick also guards /tmp pressure through bin/jg-tmp-sweep.sh,
+# which owns the policy: a WARNING log line and a primary wake when /tmp space or
+# inode use reaches JG_TMP_WARN_PCT (80), repeated at most once per
+# JG_SENTINEL_TMP_REWARN_SECS, and a sweep of stale fleet scratch once per
+# JG_SENTINEL_TMP_SWEEP_SECS (86400; 0 turns the sweep off), whose summary goes
+# to the log. At JG_TMP_PRESSURE_PCT (70) it does not wait for the day: it logs one
+# "tmp pressure" line naming the 5 largest folders with their lanes and sweeps in
+# the same tick, again at most each JG_SENTINEL_TMP_PRESSURE_SECS (900) while the
+# use stays over; the sweep rules are the daily sweep's, and a lane's folder stays
+# (JG_SENTINEL_TMP_SWEEP_SECS=0 turns it off too). It runs even while no Herdr
+# server is up, and a failure never changes the tick's own result.
 #
 # reconcile, for each local direct report in state/*.meta on the watched Herdr
 # session (bin/jg-session-start.sh also runs it detached at every locked
@@ -81,7 +128,8 @@
 # rule tick uses, so a later session start in that episode skips it.
 #
 # Knobs: JG_SENTINEL_HERDR_SESSION (HERDR_SESSION, else default), JG_SENTINEL_INTERVAL (60),
-# JG_SENTINEL_REWAKE_SECS (1800), JG_GUARD_GRACE (300).
+# JG_SENTINEL_REWAKE_SECS (1800), JG_GUARD_GRACE (300), JG_SENTINEL_TMP_REWARN_SECS (21600),
+# JG_SENTINEL_TMP_SWEEP_SECS (86400), JG_SENTINEL_DELIVERY_TIMEOUT (120).
 # JG_SENTINEL_DRY_RUN=1 with reconcile decides as usual and prints each line to
 # stdout, but runs no jg-control action, takes no lock, and writes nothing to the
 # home; it is refused for tick and loop.
@@ -101,31 +149,45 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
-  sed -n '14,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '/^# Usage/,/^#$/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'
 }
 
 case "${1:-}" in
-  tick|loop|reconcile|unit|model-reconcile|lead-model-reconcile) CMD=$1 ;;
+  tick|loop|ring|reconcile|unit|model-reconcile|lead-model-reconcile) CMD=$1 ;;
   -h|--help) usage; exit 0 ;;
   *) usage >&2; exit 2 ;;
 esac
 [ -n "${JG_HOME:-}" ] || { echo "jg-sentinel: JG_HOME must be set explicitly" >&2; exit 2; }
 JG_HOME=$(cd "$JG_HOME" 2>/dev/null && pwd -P) || { echo "jg-sentinel: JG_HOME is not a directory" >&2; exit 2; }
 export JG_HOME
-# Upstream Juggernaut scripts and libraries run from the home's checkout; this
-# feature copy carries only the sentinel itself.
-BIN="$JG_HOME/bin"
+# The Juggernaut scripts and libraries this sentinel runs (see One copy above).
+BIN=${JG_BIN:-$JG_HOME/bin}
+ENTRY=$SCRIPT_DIR/jg-sentinel.sh
+[ -z "${JG_BIN:-}" ] || ENTRY=$JG_BIN/jg-sentinel.sh
 STATE="$JG_HOME/state"
 SESSION=${JG_SENTINEL_HERDR_SESSION:-${HERDR_SESSION:-default}}
 INTERVAL=${JG_SENTINEL_INTERVAL:-60}
 REWAKE=${JG_SENTINEL_REWAKE_SECS:-1800}
 GRACE=${JG_GUARD_GRACE:-300}
+INBOX_GRACE=${JG_SENTINEL_INBOX_GRACE:-60}
+INBOX_REWAKE=${JG_SENTINEL_INBOX_REWAKE_SECS:-300}
+TMP_REWARN=${JG_SENTINEL_TMP_REWARN_SECS:-21600}
+TMP_SWEEP=${JG_SENTINEL_TMP_SWEEP_SECS:-86400}
+TMP_PRESSURE_PCT=${JG_TMP_PRESSURE_PCT:-70}
+TMP_PRESSURE_EVERY=${JG_SENTINEL_TMP_PRESSURE_SECS:-900}
+DELIVERY_TIMEOUT=${JG_SENTINEL_DELIVERY_TIMEOUT:-120}
 LOG="$STATE/.sentinel.log"
 DRY_RUN=${JG_SENTINEL_DRY_RUN:-0}
 case "$DRY_RUN" in 0|1) ;; *) echo "jg-sentinel: JG_SENTINEL_DRY_RUN must be 0 or 1" >&2; exit 2 ;; esac
 [ "$DRY_RUN" = 0 ] || [ "$CMD" = reconcile ] || { echo "jg-sentinel: JG_SENTINEL_DRY_RUN applies only to reconcile" >&2; exit 2; }
 
 if [ "$CMD" = unit ]; then
+  # The machine's services belong to Main (bin/jg-unit-claim.sh owns why): a
+  # Squad Lead home that installs its own takes Main's alerts away with them.
+  if [ -e "$JG_HOME/.jg-squad-lead-home" ] || [ -L "$JG_HOME/.jg-squad-lead-home" ]; then
+    "$BIN/jg-unit-claim.sh" refuse jg-sentinel unit
+    exit 2
+  fi
   unit_quote() {
     local value=$1
     value=${value//\\/\\\\}
@@ -140,7 +202,7 @@ Description=Juggernaut sentinel for ${JG_HOME//%/%%} (recovers supervision after
 [Service]
 Environment=$(unit_quote "JG_HOME=$JG_HOME")
 Environment=$(unit_quote "PATH=$PATH")
-ExecStart=$(unit_quote "$SCRIPT_DIR/jg-sentinel.sh") loop
+ExecStart=$(unit_quote "$ENTRY") loop
 Restart=always
 RestartSec=10
 
@@ -197,13 +259,6 @@ act() {  # <task-id> <done-message> <command...>
     RECONCILE_RC=1
     return 1
   fi
-}
-
-# Not defined by the upstream libraries, so it moves here verbatim from the fork's
-# bin/jg-wake-lib.sh.
-jg_canonical_existing_dir() {  # <path>
-  [ -n "$1" ] && [ -d "$1" ] || return 1
-  ( CDPATH='' cd -- "$1" 2>/dev/null && pwd -P )
 }
 
 delivery_id() {
@@ -397,16 +452,84 @@ primary_target() {
   printf '%s:%s\n' "$SESSION" "$panes"
 }
 
+# A deferred wake is normal for a moment (a turn is running, a person is typing). It waits for
+# the next tick and says so in the sentinel log, one line per tick; it never writes to the captain,
+# because a busy or occupied primary is the fleet's own business (task jg-7v6uw-s32). The lead
+# sees the waits in that log and in the repair rows below.
+defer_wake() {  # <log line>
+  say "$1"
+  return 1
+}
+
+# One row per repair of the primary's input box in data/composer-repairs.tsv: epoch, UTC time,
+# pane, what was found, what was done, and the wake it was for. A person's draft is a wait, not a
+# repair, so it gets a log line and no row.
+repair_row() {  # <pane> <found> <action> <wake-sum>
+  [ "$DRY_RUN" = 0 ] || return 0
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "$3" "$4" \
+    >>"$JG_HOME/data/composer-repairs.tsv" 2>/dev/null || say "primary: could not write the composer repair row"
+}
+
+# Count a repair that did not clear the box. The second failure in a row for the same wake calls
+# the guarded relaunch of the primary (jg-control.sh primary relaunch --clear-composer, slice 34;
+# JG_SENTINEL_PRIMARY_RELAUNCH names a stand-in command) once, and never again for that wake.
+# state/.sentinel-repair-failed holds "<wake-sum> <failures> <relaunched>"; any other wake, or
+# a box that cleared, resets it.
+repair_failed() {  # <pane> <wake-sum>
+  local file="$STATE/.sentinel-repair-failed" sum fails relaunched cmd=("$BIN/jg-control.sh" primary relaunch --clear-composer)
+  [ "$DRY_RUN" = 0 ] || return 0
+  [ -z "${JG_SENTINEL_PRIMARY_RELAUNCH:-}" ] || cmd=("$JG_SENTINEL_PRIMARY_RELAUNCH")
+  read -r sum fails relaunched <"$file" 2>/dev/null || true
+  [ "${sum:-}" = "$2" ] || { fails=0; relaunched=0; }
+  fails=$(( ${fails:-0} + 1 ))
+  if [ "$fails" -ge 2 ] && [ "${relaunched:-0}" = 0 ]; then
+    relaunched=1
+    repair_row "$1" own-line-stuck relaunch "$2"
+    if "${cmd[@]}" >/dev/null 2>&1; then
+      say "primary: $1 input box would not clear twice; relaunch requested"
+    else
+      say "primary: $1 input box would not clear twice; the relaunch command failed"
+    fi
+  fi
+  printf '%s %s %s\n' "$2" "$fails" "${relaunched:-0}" >"$file"
+}
+
+# Remove the record a wake wrote when the wake did not go out: the next tick writes its own.
+drop_wake_record() {  # <doorbell>
+  local record
+  jg_operational_doorbell_path "$1" record && rm -f "$record"
+}
+
 wake_primary() {  # <body>
-  local target doorbell verdict rec
-  target=$(primary_target) || { say "primary: no single Herdr pane runs session $(head -n 1 "$STATE/.lock-session" 2>/dev/null); wake deferred"; return 1; }
-  [ "$(jg_backend_busy_state herdr "$target")" != busy ] || { say "primary: $target mid-turn; wake deferred"; return 1; }
-  [ "$(jg_backend_composer_state herdr "$target")" = empty ] || { say "primary: $target composer not empty; wake deferred"; return 1; }
+  local target doorbell verdict sum
+  target=$(primary_target) || { defer_wake "primary: no single Herdr pane runs session $(head -n 1 "$STATE/.lock-session" 2>/dev/null); wake deferred"; return 1; }
   jg_operational_record_write "$STATE" watcher "$1" doorbell || { say "primary: could not write the wake record"; return 1; }
-  verdict=$(jg_backend_send_text_submit herdr "$target" "$doorbell" 3 0.5 0.5 2>/dev/null)
+  # A captain at the screen (no away record, or quiet mode) never gets a typed
+  # doorbell: it can stick in his message box and swallow his own words. The
+  # record above and the Stop-hook wake reach the primary without typing.
+  if ! jg_afk_unattended "$STATE"; then
+    say "primary: $target attended; wake left to the Stop hook and the record"
+    return 0
+  fi
+  # Text of OUR OWN doorbell left in the box is repaired, never waited behind; anything else in
+  # the box is a person's, and the wake waits for it (jg_backend_repair_own_line owns the test).
+  sum=$(printf '%s' "$1" | cksum | cut -d' ' -f1)
+  case "$(jg_backend_repair_own_line herdr "$target" "$doorbell" "$JG_OPERATIONAL_DOORBELL_PREFIX" "$JG_OPERATIONAL_DOORBELL_SUFFIX")" in
+    clear) ;;
+    cleared) repair_row "$target" own-line cleared-by-key "$sum"; say "primary: $target stale doorbell line cleared" ;;
+    submitted) repair_row "$target" own-line submitted "$sum"; say "primary: $target stale doorbell line submitted" ;;
+    stuck) repair_row "$target" own-line-stuck none "$sum"; repair_failed "$target" "$sum"
+      drop_wake_record "$doorbell"; defer_wake "primary: $target stale doorbell line would not clear; wake deferred"; return 1 ;;
+    *) drop_wake_record "$doorbell"; defer_wake "primary: $target input box holds someone else's text; wake deferred"; return 1 ;;
+  esac
+  rm -f "$STATE/.sentinel-repair-failed"
+  [ "$(jg_backend_busy_state herdr "$target")" != busy ] || { drop_wake_record "$doorbell"; defer_wake "primary: $target mid-turn; wake deferred"; return 1; }
+  [ "$(jg_backend_composer_state herdr "$target")" = empty ] || { drop_wake_record "$doorbell"; defer_wake "primary: $target composer not empty; wake deferred"; return 1; }
+  verdict=$(jg_backend_send_nudge herdr "$target" "$doorbell" 3 0.5 0.5 2>/dev/null)
   if [ "$verdict" != empty ]; then
-    if jg_operational_doorbell_path "$doorbell" rec 2>/dev/null; then rm -f "$rec"; fi
-    say "primary: wake typed into $target but not confirmed ($verdict)"; return 1;
+    # The record stays: typed text that was not confirmed can still be submitted,
+    # and a ring whose record is gone sends its reader to a missing file.
+    defer_wake "primary: wake typed into $target but not confirmed ($verdict)"; return 1;
   fi
   say "primary: woke $target"
 }
@@ -433,25 +556,39 @@ reconcile_episode() {  # <episode>
   return "$rc"
 }
 
+# Each registered local lead home in data/squad_leads.md, one "<lead> <home>" line each; a remote
+# lead and a line with no home are left out.
+lead_homes() {
+  local line lead home
+  while IFS= read -r line; do
+    case "$line" in *'(host:'*) continue ;; esac
+    lead=$(printf '%s\n' "$line" | sed -n 's/^[[:space:]]*-[[:space:]]*\([^[:space:]]*\).*/\1/p')
+    home=$(printf '%s\n' "$line" | sed -n 's/.*(home: \([^;)]*\).*/\1/p')
+    [ -n "$lead" ] && [ -n "$home" ] || continue
+    printf '%s %s\n' "$lead" "$home"
+  done < <(grep -E '^[[:space:]]*-[[:space:]]' "$JG_HOME/data/squad_leads.md" 2>/dev/null || true)
+}
+
+lead_parked() {  # <lead>
+  [ -f "$JG_HOME/config/parked-homes" ] && grep -Eq "^[[:space:]]*$1([[:space:]]|$|#)" "$JG_HOME/config/parked-homes"
+}
+
 # Restore Claude's recorded model after Herdr's bare --resume restart.
 # The pane process-info API is read-only; all relaunches use their guarded owner.
 relaunch_lead_model_mismatches() {
-  local line lead home remote rc=0
-  while IFS= read -r line; do
-    lead=$(printf '%s\n' "$line" | sed -n 's/^[[:space:]]*-[[:space:]]*\([^[:space:]]*\).*/\1/p')
-    remote=$(printf '%s\n' "$line" | grep -q '(host:' && echo yes || echo no)
-    home=$(printf '%s\n' "$line" | sed -n 's/.*(home: \([^;)]*\).*/\1/p')
-    [ "$remote" = no ] && [ -n "$home" ] || continue
-    if [ -f "$JG_HOME/config/parked-homes" ] && grep -Eq "^[[:space:]]*$lead([[:space:]]|$|#)" "$JG_HOME/config/parked-homes"; then
+  local lead home rc=0
+  while read -r lead home; do
+    if lead_parked "$lead"; then
       say "$lead: parked lead home skipped"
       continue
     fi
     [ -d "$home/state" ] && [ -x "$home/bin/jg-control.sh" ] || { say "$lead: unavailable lead home skipped"; continue; }
-    if ! JG_HOME="$home" JG_SENTINEL_MODEL_EVENT="$JG_SENTINEL_MODEL_EVENT" "$SCRIPT_DIR/jg-sentinel.sh" model-reconcile; then
+    # The lead home runs its own checkout's tools, so JG_BIN does not follow it.
+    if ! env -u JG_BIN JG_HOME="$home" JG_SENTINEL_MODEL_EVENT="$JG_SENTINEL_MODEL_EVENT" "$SCRIPT_DIR/jg-sentinel.sh" model-reconcile; then
       say "$lead: lead model reconciliation failed"
       rc=1
     fi
-  done < <(grep -E '^[[:space:]]*-[[:space:]]' "$JG_HOME/data/squad_leads.md" 2>/dev/null || true)
+  done < <(lead_homes)
   return "$rc"
 }
 
@@ -493,8 +630,81 @@ relaunch_model_mismatches() {
   return "$rc"
 }
 
+# /tmp pressure guard: warn at the threshold, sweep stale scratch once a day; never fails the tick.
+tmp_hygiene() {
+  local out now last_try last_ok mode pressure='' rc=0
+  now=$(date +%s)
+  out=$("$BIN/jg-tmp-sweep.sh" check 2>&1) || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    rm -f "$STATE/.sentinel-tmp-warn"
+  elif [ "$rc" -eq 1 ]; then
+    read -r last_try last_ok <"$STATE/.sentinel-tmp-warn" 2>/dev/null || true
+    if [ $(( now - ${last_ok:-0} )) -ge "$TMP_REWARN" ] && [ $(( now - ${last_try:-0} )) -ge 600 ]; then
+      say "WARNING: $out; a daily sweep clears stale scratch, bin/jg-tmp-sweep.sh sweep lists what it would remove"
+      if wake_primary "Warning: $out. Fleet scratch is filling the inode budget; wake acknowledgements and tools fail when it reaches 100%. The sentinel sweeps stale scratch daily; run bin/jg-tmp-sweep.sh sweep to list what it would remove."; then
+        printf '%s %s\n' "$now" "$now" >"$STATE/.sentinel-tmp-warn"
+      else
+        printf '%s %s\n' "$now" "${last_ok:-0}" >"$STATE/.sentinel-tmp-warn"
+      fi
+    fi
+  fi
+  [ "$TMP_SWEEP" -gt 0 ] 2>/dev/null || return 0
+  last_ok=$(cat "$STATE/.sentinel-tmp-sweep" 2>/dev/null)
+  mode=--apply; rc=0
+  "$BIN/jg-tmp-sweep.sh" check --warn-pct "$TMP_PRESSURE_PCT" >/dev/null 2>&1 || rc=$?
+  if [ "$rc" -ne 1 ]; then
+    [ $(( now - ${last_ok:-0} )) -ge "$TMP_SWEEP" ] || return 0
+  else
+    # Over the pressure line: sweep now, at most once per TMP_PRESSURE_EVERY.
+    [ "$(cat "$STATE/.sentinel-tmp-pressure" 2>/dev/null || echo 0)" -le $(( now - TMP_PRESSURE_EVERY )) ] || return 0
+    printf '%s\n' "$now" >"$STATE/.sentinel-tmp-pressure"
+    pressure=1
+  fi
+  printf '%s\n' "$now" >"$STATE/.sentinel-tmp-sweep"
+  # In the background: a sweep of a crowded /tmp takes about a minute and must not delay recovery.
+  (
+    rc=0
+    # The first sweep on a home only reports; the marker records that its report was logged.
+    if [ -n "${pressure:-}" ]; then
+      say "tmp pressure: $("$BIN/jg-tmp-sweep.sh" check --warn-pct "$TMP_PRESSURE_PCT" 2>&1 | head -n 1); largest: $("$BIN/jg-tmp-sweep.sh" top -n 5 2>&1)"
+    elif [ ! -e "$STATE/.sentinel-tmp-sweep-reported" ]; then mode=--dry-run; : >"$STATE/.sentinel-tmp-sweep-reported"; fi
+    out=$("$BIN/jg-tmp-sweep.sh" sweep "$mode" 2>&1) || rc=$?
+    printf '%s\n' "$out" | grep -E '^(remove|would remove|FAILED) ' | while IFS= read -r line; do say "tmp sweep: $line"; done
+    say "tmp sweep $mode (exit $rc): $(printf '%s' "$out" | grep -E '^(removed|would remove [0-9]|space use|inode use|FAILED|jg-tmp-sweep)' | tr '\n' ';')"
+  ) >/dev/null 2>&1 &
+}
+
+# Ring the primary now when a captain note waits in the wake queue and no watcher is live.
+# The ring is recorded per set of queued notes, only after it was typed and confirmed.
+ring_for_inbox() {
+  local keys sum last woken
+  keys=$(jg_wake_queued_keys check 2>/dev/null | grep '^inbox:' | sort) || true
+  [ -n "$keys" ] || return 0
+  jg_supervision_status "$STATE" "$INBOX_GRACE"
+  [ "$JG_SUP_WATCHER_FRESH" = false ] || return 0
+  sum=$(printf '%s\n' "$keys" | cksum | cut -d' ' -f1)
+  read -r last woken <"$STATE/.sentinel-inbox-woken" 2>/dev/null || true
+  [ "${woken:-}" != "$sum" ] || [ $(( $(date +%s) - ${last:-0} )) -ge "$INBOX_REWAKE" ] || return 0
+  if wake_primary "A captain note waits in the inbox and no watcher is running. Run bin/jg-session-start.sh if this session was resumed, drain the wake queue, handle the note, then end the turn so supervision re-arms."; then
+    printf '%s %s\n' "$(date +%s)" "$sum" >"$STATE/.sentinel-inbox-woken"
+  else
+    return 1
+  fi
+}
+
 tick() {
-  local id prev beat woken_beat age last body rc=0
+  local id prev beat woken_beat age last body gap_class gap_progress=unknown rc=0
+  tmp_hygiene || true
+  if jg_supervision_unhealthy "$STATE" "$GRACE"; then
+    if gap_class=$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$BIN/jg-supervision-gap.sh" detect); then
+      gap_progress=$(awk -F '\t' '{for (i=1;i<=NF;i++) if ($i ~ /^progress=/) {sub(/^progress=/,"",$i); print $i}}' "$STATE/.supervision-gap")
+    else
+      say "supervision gap: record failed"; gap_class=unknown-current
+    fi
+  else
+    JG_STATE_OVERRIDE="$STATE" "$BIN/jg-supervision-gap.sh" clear || say "supervision gap: clear failed"
+    gap_class=none
+  fi
   id=$(herdr_identity)
   [ -n "$id" ] || return 0
   prev=$(cat "$STATE/.sentinel-herdr-identity" 2>/dev/null)
@@ -522,13 +732,55 @@ tick() {
     wake_primary "$(cat "$STATE/.sentinel-wake-pending")" && rm -f "$STATE/.sentinel-wake-pending"
     return "$rc"
   fi
+  ring_for_inbox || true
   jg_supervision_unhealthy "$STATE" "$GRACE" || return "$rc"
   beat=$(jg_path_mtime "$STATE/.last-watcher-beat")
   read -r last woken_beat <"$STATE/.sentinel-wake-last" 2>/dev/null || true
   age=$(( $(date +%s) - ${last:-0} ))
   [ "${woken_beat:-}" != "${beat:-none}" ] || [ "$age" -ge "$REWAKE" ] || return "$rc"
-  body="Supervision is needed but the watcher beacon is $JG_SUP_BEACON_DESC old and no turn is running, so nothing is watching the fleet. Run bin/jg-session-start.sh if this session was resumed, reconcile, then end the turn so supervision re-arms."
+  body="Supervision is needed but the watcher beacon is $JG_SUP_BEACON_DESC old and no turn is running. Gap $gap_class, last progress ${gap_progress:-unknown}, is in state/.supervision-gap. Run bin/jg-session-start.sh if this session was resumed, reconcile, then end the turn so supervision re-arms."
+  # defaults/wake-routing decides whether this doorbell costs a turn: it settles while a
+  # live watcher holds the lock, and it is recorded and counted like any settled wake.
+  if [ "$(jg_wake_route_class check sentinel-beacon-old "$body")" != now ]; then
+    jg_wake_settle check sentinel-beacon-old "$body" || true
+    say "primary: beacon doorbell settled without a wake (defaults/wake-routing)"
+    printf '%s %s\n' "$(date +%s)" "${beat:-none}" >"$STATE/.sentinel-wake-last"
+    return "$rc"
+  fi
   wake_primary "$body" && printf '%s %s\n' "$(date +%s)" "${beat:-none}" >"$STATE/.sentinel-wake-last"
+  return "$rc"
+}
+
+# One home's delivery pass, bounded by DELIVERY_TIMEOUT; a failure is logged.
+deliver_home() {  # <home> <entry>
+  local out rc=0 bound=()
+  [ -x "$2" ] || return 0
+  if command -v timeout >/dev/null 2>&1; then bound=(timeout "$DELIVERY_TIMEOUT"); fi
+  out=$(env -u JG_BIN -u JG_STATE_OVERRIDE -u JG_CONFIG_OVERRIDE -u JG_DATA_OVERRIDE JG_HOME="$1" \
+    ${bound[@]+"${bound[@]}"} "$2" "$1" </dev/null 2>&1) || rc=$?
+  [ -z "$out" ] || say "delivery: $1: $(printf '%s' "$out" | tail -n 3 | tr '\n' ' ' | cut -c1-300)"
+  [ "$rc" -eq 0 ] || { say "delivery: $1: FAILED (exit $rc)"; return 1; }
+}
+
+# The delivery pass of this home and of each local, unparked lead home, which needs no Herdr
+# server and no model (bin/jg-delivery-tick.sh owns the pass, its lock and its result row). Each
+# lead home runs its own checkout's entry; a checkout without one is left to its watcher.
+deliver() {
+  local lead home rc=0
+  deliver_home "$JG_HOME" "$BIN/jg-delivery-tick.sh" || rc=1
+  while read -r lead home; do
+    lead_parked "$lead" && continue
+    [ -d "$home/state" ] && [ "$(cd "$home" && pwd -P)" != "$JG_HOME" ] || continue
+    deliver_home "$home" "$home/bin/jg-delivery-tick.sh" || rc=1
+  done < <(lead_homes)
+  return "$rc"
+}
+
+# One sentinel pass: recovery first, then delivery, which runs whatever recovery found.
+pass() {
+  local rc=0
+  tick || rc=$?
+  deliver || rc=1
   return "$rc"
 }
 
@@ -545,13 +797,14 @@ locked() {
 }
 
 case "$CMD" in
-  tick) locked tick ;;
+  tick) locked pass ;;
+  ring) locked ring_for_inbox ;;
   reconcile) locked reconcile_episode "${JG_SENTINEL_EPISODE:-$(herdr_identity)}" ;;
   model-reconcile) locked relaunch_model_mismatches ;;
   lead-model-reconcile) locked relaunch_lead_model_mismatches ;;
   loop)
     while :; do
-      locked tick || true
+      locked pass || true
       sleep "$INTERVAL"
     done
     ;;

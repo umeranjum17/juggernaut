@@ -149,14 +149,15 @@ merge_gate() {
   trap 'rm -f -- "$TMP" "$CONT" "$BODY" "$HITS"; rm -rf -- "$scratch"' EXIT
   base=$(gh pr view "$url" --json baseRefName --jq .baseRefName 2>"$scratch/err") && [ -n "$base" ] ||
     unscanned "$url" "$head" "cannot read the PR base branch: $(tail -n 1 "$scratch/err")"
-  git init -q --bare "$scratch/r.git" || unscanned "$url" "$head" "cannot create a scratch repository"
+  scratch_git() { env -u GIT_CONFIG_COUNT -u GIT_CONFIG_PARAMETERS -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES git -c core.hooksPath=/dev/null "$@"; }
+  scratch_git init -q --bare "$scratch/r.git" || unscanned "$url" "$head" "cannot create a scratch repository"
   if [ "$wt" != - ] && common=$(git -C "$wt" rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
     printf '%s/objects\n' "$common" >"$scratch/r.git/objects/info/alternates"
   fi
-  git -C "$scratch/r.git" fetch --no-tags --quiet "$repo" "$head:refs/scan/head" "refs/heads/$base:refs/scan/base" 2>"$scratch/err" ||
+  scratch_git -C "$scratch/r.git" fetch --no-tags --quiet "$repo" "$head:refs/scan/head" "refs/heads/$base:refs/scan/base" 2>"$scratch/err" ||
     unscanned "$url" "$head" "cannot fetch the head and $base: $(tail -n 1 "$scratch/err")"
-  mb=$(git -C "$scratch/r.git" merge-base refs/scan/base refs/scan/head) || unscanned "$url" "$head" "no merge base with $base"
-  hits=$(git -C "$scratch/r.git" -c core.quotePath=false diff --unified=0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ "$mb" "$head" -- | scan_diff) ||
+  mb=$(scratch_git -C "$scratch/r.git" merge-base refs/scan/base refs/scan/head) || unscanned "$url" "$head" "no merge base with $base"
+  hits=$(scratch_git -C "$scratch/r.git" -c core.quotePath=false diff --unified=0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ "$mb" "$head" -- | scan_diff) ||
     unscanned "$url" "$head" "cannot diff the pull request"
   [ -z "$hits" ] || refuse merge "$hits"
   echo "owner-guard: merge scan clean: $url at ${head:0:12}"

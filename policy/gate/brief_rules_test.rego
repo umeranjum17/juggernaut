@@ -35,6 +35,16 @@ test_a_non_ask_ship_needs_a_known_parent if {
 	ask(object.union(item, {"entry_lines": ["- [ ] t - Fix it Main7", "  parent:"]})).why == "no_parent"
 }
 
+test_a_parent_edge_counts_and_beats_the_body_line if {
+	item := {"title": "Fix it", "entry_lines": ["- [ ] t - Fix it Main7"]}
+	ask(object.union(item, {"parent": "p"})).ok
+	ask(object.union(item, {"parent": "upkeep"})).ok
+	ask(object.union(item, {"parent": "nope"})).why == "no_parent"
+	ask(object.union(item, {"parent": "", "labels": []})).why == "no_parent"
+	ask(object.union(item, {"parent": "nope", "entry_lines": ["- [ ] t - Fix it Main7", "  parent: p"]})).why == "no_parent"
+	ask(object.union(item, {"parent": "", "entry_lines": ["- [ ] t - Fix it Main7", "  parent: p"]})).ok
+}
+
 test_a_scout_needs_no_parent if ask({"kind": "scout", "title": "Fix it", "entry_lines": ["- [ ] t - Fix it Main7"]}).ok
 
 test_a_squad_lead_is_not_checked if ask({"kind": "squad_lead", "title": "", "entry_lines": [""]}).ok

@@ -162,5 +162,111 @@ test_actionable_exit_leaves_the_home_supervised() (
   pass "an actionable exit leaves the home supervised once the hand-off stamp ages out"
 )
 
+# A stale predecessor must not prevent completed first-scan units from proving progress.
+test_stale_first_scan_progress_and_restart() (
+  local dir state arm pid i checks
+  dir=$(make_home first-scan)
+  state=$dir/state
+  # shellcheck disable=SC2030,SC2031 # Exports stay inside this case subshell.
+  export JG_HOME="$dir" JG_STATE_OVERRIDE="$state" JG_POLL=0.2 JG_SIGNAL_GRACE=0 \
+    JG_GUARD_GRACE=4 JG_CHECK_INTERVAL=0 JG_CHECK_TIMEOUT=10 JG_HEARTBEAT=0 JG_ARM_CONFIRM_TIMEOUT=60
+  register_slow_checks "$dir" 4 2 "$dir/check-runs.log"
+  touch -t "$(date -d "@$(( $(date +%s) - 600 ))" +%Y%m%d%H%M.%S 2>/dev/null || date -r "$(( $(date +%s) - 600 ))" +%Y%m%d%H%M.%S)" "$state/.last-watcher-beat"
+  "$WATCH_ARM" > "$dir/arm.out" 2>&1 &
+  arm=$!
+  wait_file "$dir/check-runs.log" 600 || fail "first scan never reached a check"
+  # A PID before any completed work is insufficient evidence.
+  ! JG_HOME="$dir" jg_watcher_healthy "$state" "$ROOT/bin/jg-watch.sh" 4 "$dir" \
+    || fail "a first scan with no completed unit was called healthy"
+  for ((i = 0; i < 600; i++)); do
+    if JG_HOME="$dir" jg_watcher_healthy "$state" "$ROOT/bin/jg-watch.sh" 4 "$dir"; then break; fi
+    sleep 0.1
+  done
+  [ "$i" -lt 600 ] || fail "completed first-scan work never confirmed health"
+  checks=$(wc -l < "$dir/check-runs.log")
+  [ "$checks" -lt 4 ] || fail "stale recovery withheld all progress until the whole first scan ($checks checks)"
+  pid=$(cat "$state/.watch.lock/pid")
+  kill -TERM "$arm"
+  wait "$arm" 2>/dev/null || true
+  ! jg_pid_alive "$pid" || fail "interrupted arm left its watcher running"
+  "$WATCH_ARM" > "$dir/restart.out" 2>&1 &
+  arm=$!
+  # This marker is written at the heartbeat at the end of the scan, after all checks.
+  wait_file "$state/.heartbeat-streak" 600 || fail "restarted first scan never completed"
+  supervision_read "$dir" 4
+  [ "$JG_SUP_WATCHER_FRESH" = true ] || fail "completed first scan reads unsupervised"
+  JG_HOME="$dir" jg_watcher_healthy "$state" "$ROOT/bin/jg-watch.sh" 4 "$dir" \
+    || fail "guard and supervision disagree after first-scan progress"
+  kill -TERM "$arm"
+  wait "$arm" 2>/dev/null || true
+  printf 'first-scan: checks before interruption=%s; completed heartbeat=%s; strict guard and supervision=true\n' \
+    "$checks" "$(cat "$state/.heartbeat-streak")"
+  pass "stale first-scan progress confirms real work, interrupted recovery resumes and completes, and guard agrees"
+)
+
+# A timed-out contributions check followed by an untrusted orphan must surface the
+# rejection, not crash in the no-control-lock release path.
+test_timeout_and_orphan_release_return() (
+  local dir state
+  dir=$(make_home release-return)
+  state=$dir/state
+  cat > "$state/contributions.check.sh" <<EOF
+#!/usr/bin/env bash
+touch "$dir/contributions-ran"
+sleep 5
+EOF
+  chmod 0700 "$state/contributions.check.sh"
+  JG_HOME="$dir" "$ROOT/bin/jg-check-register.sh" contributions >/dev/null || fail "register contributions"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$state/orphan.check.sh"
+  chmod 0700 "$state/orphan.check.sh"
+  JG_HOME="$dir" JG_STATE_OVERRIDE="$state" JG_CHECK_TIMEOUT=1 JG_CHECK_INTERVAL=0 \
+    JG_POLL=0.2 JG_SIGNAL_GRACE=0 JG_HEARTBEAT=999999 "$WATCH_ARM" > "$dir/arm.out" 2>&1 \
+    || fail "release-return crashed: $(cat "$dir/arm.out")"
+  [ -e "$dir/contributions-ran" ] || fail "timeout direction was not exercised"
+  grep -q '^check: rejected unauthenticated state checks:.*orphan.check.sh' "$dir/arm.out" \
+    || fail "orphan rejection was not delivered: $(cat "$dir/arm.out")"
+  pass "a timed-out contributions check releases without a control lock and the orphan rejection is delivered"
+)
+
+# The guard and the supervision read must agree on a live watcher still in its first scan: the
+# supervision read calls it "starting" (healthy), so the verdict the guard and the inbox act on
+# must not call the same home down. A disagreement printed "WATCHER DOWN ... last beat: starting".
+test_first_scan_holder_is_not_called_down() (
+  local dir state arm age
+  dir=$(make_home first-scan-verdict)
+  state=$dir/state
+  # shellcheck disable=SC2030,SC2031 # Exports stay inside this case subshell.
+  export JG_HOME="$dir" JG_STATE_OVERRIDE="$state" JG_POLL=0.2 JG_SIGNAL_GRACE=0 \
+    JG_GUARD_GRACE=4 JG_CHECK_INTERVAL=0 JG_CHECK_TIMEOUT=20 JG_HEARTBEAT=0 JG_ARM_CONFIRM_TIMEOUT=60 \
+    JG_WATCHER_STALL_BOUND=60 JG_SUPERVISION_MODEL=persistent
+  register_slow_checks "$dir" 1 8 "$dir/check-runs.log"
+  touch -t "$(date -d "@$(( $(date +%s) - 600 ))" +%Y%m%d%H%M.%S 2>/dev/null || date -r "$(( $(date +%s) - 600 ))" +%Y%m%d%H%M.%S)" "$state/.last-watcher-beat"
+  "$WATCH_ARM" > "$dir/arm.out" 2>&1 &
+  arm=$!
+  wait_file "$dir/check-runs.log" 600 || fail "first scan never reached a check"
+  supervision_read "$dir" 4
+  case "$JG_SUP_BEACON_DESC" in starting*) ;; *) fail "setup: the supervision read is not in the starting state ($JG_SUP_BEACON_DESC)" ;; esac
+  jg_watcher_supervision_verdict "$state" "$ROOT/bin/jg-watch.sh" 4 "$dir" "$ROOT"
+  [ "$JG_WATCHER_VERDICT_OK" = true ] \
+    || fail "the verdict calls a live first-scan watcher down (${JG_WATCHER_VERDICT_REASON}) while supervision reads it as $JG_SUP_BEACON_DESC"
+  # The strict arm-side primitive is unchanged: a pid before any completed work is not healthy.
+  ! jg_watcher_healthy "$state" "$ROOT/bin/jg-watch.sh" 4 "$dir" \
+    || fail "the strict watcher check called a first scan with no completed unit healthy"
+  kill -TERM "$arm"
+  wait "$arm" 2>/dev/null || true
+  age=$(jg_path_age "$state/.last-watcher-beat")
+  pass "a live first-scan watcher reads as starting and the guard verdict agrees (beat age ${age}s)"
+)
+
+if [ "${JG_WATCH_BEACON_FIRST_SCAN_ONLY:-0}" = 1 ]; then
+  test_stale_first_scan_progress_and_restart
+  exit
+fi
+test_timeout_and_orphan_release_return
+test_first_scan_holder_is_not_called_down
+test_stale_first_scan_progress_and_restart
 test_live_sweep_is_supervised_and_a_killed_watcher_is_not
 test_actionable_exit_leaves_the_home_supervised
+
+# journeys/supervision-gap-records.sh captures this same integration journey.
+bash "$ROOT/journeys/supervision-gap-integration.sh" || fail "supervision gap journey failed"

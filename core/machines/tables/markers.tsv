@@ -1,0 +1,29 @@
+machine	markers	state/.<kind>-<pane key> files	bin/jg-watch.sh
+state	owned	initial	A task record names this pane, so the watcher still reads the marker.	-
+state	orphan	normal	No task record names this pane, so only a remover can delete the marker.	-
+state	removed	terminal	The marker is gone.	-
+edge	owned	record-gone	orphan	bin/jg-teardown.sh:jg_backlog_atomic_transition	-	teardown deletes the task record that named the pane	t-orphan
+edge	orphan	prune	removed	bin/jg-watch.sh:phantom_pane_prune	-	the backend reports the pane absent	t-prune
+observer	d=${JG_STATE_OVERRIDE:-${JG_HOME:-.}/state}; [ -e "$d/$1" ] || { echo removed; exit; }; awk -F= -v k="${1##*-}" '$1=="window"||$1=="terminal"{v=$2; gsub(/[:\/.]/,"_",v); if(v==k)f=1} END{print f?"owned":"orphan"}' "$d"/*.meta 2>/dev/null || echo orphan
+# marker lines (read by tests/jg-machine-markers.test.sh, not by the engine): kind, writer file, key, remover file:function or - for none
+marker	hash	bin/jg-watch.sh	pane	bin/jg-watch.sh:phantom_pane_prune
+marker	count	bin/jg-watch.sh	pane	bin/jg-watch.sh:phantom_pane_prune
+marker	churn-since	bin/jg-watch.sh	pane	bin/jg-watch.sh:phantom_pane_prune
+marker	dead-reported	bin/jg-watch.sh	pane	bin/jg-watch.sh:phantom_pane_prune
+marker	truth-read	bin/jg-watch.sh	pane	bin/jg-watch.sh:phantom_pane_prune
+marker	truth-raised	bin/jg-watch.sh	pane	bin/jg-watch.sh:phantom_pane_prune
+marker	activity	bin/jg-watch-progress-lib.sh	pane	bin/jg-watch.sh:phantom_pane_prune
+marker	activity-observed	bin/jg-watch-progress-lib.sh	pane	bin/jg-watch.sh:phantom_pane_prune
+marker	tracked	bin/jg-watch.sh	pane	bin/jg-watch.sh:phantom_pane_prune
+marker	stale	bin/jg-watch.sh	pane	bin/jg-watch.sh:phantom_pane_prune
+marker	stale-since	bin/jg-watch.sh	pane	bin/jg-watch.sh:phantom_pane_prune
+marker	wedge-escalations	bin/jg-watch.sh	pane	bin/jg-watch.sh:phantom_pane_prune
+marker	paused	bin/jg-watch.sh	pane	bin/jg-watch.sh:phantom_pane_prune
+marker	paused-rechecked	bin/jg-watch.sh	pane	bin/jg-watch.sh:phantom_pane_prune
+marker	paused-resurfaced	bin/jg-watch.sh	pane	bin/jg-watch.sh:phantom_pane_prune
+marker	waiting-resurfaced	bin/jg-watch.sh	pane	bin/jg-watch.sh:phantom_pane_prune
+marker	writing-since	bin/jg-watch.sh	pane	bin/jg-watch.sh:phantom_pane_prune
+marker	writing-resurfaced	bin/jg-watch.sh	pane	bin/jg-watch.sh:phantom_pane_prune
+marker	stale-cleanup	bin/jg-watch.sh	pane	-
+marker	silent-seen	bin/jg-stuck-gate-lib.sh	pane	bin/jg-watch.sh:phantom_pane_prune
+marker	silent-working	bin/jg-stuck-gate-lib.sh	pane	bin/jg-watch.sh:phantom_pane_prune

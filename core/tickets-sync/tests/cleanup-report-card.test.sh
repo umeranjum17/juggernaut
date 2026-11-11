@@ -25,7 +25,7 @@ mkdir -p "$HOME" "$JG_HOME"/{data,config,state}
 ln -s "$fork/bin" "$JG_HOME/bin"
 printf '{"schema":2,"items":[]}\n' > "$work/board.json"
 printf '%s\n' "$work/board.json" > "$JG_HOME/config/fleet-board"
-# shellcheck source=core/lib/beads-test-env.sh
+# shellcheck source=core/lib/beads-test-env.sh disable=SC1091
 . "$root/../lib/beads-test-env.sh"
 core_beads_home "$fork" "$JG_HOME"
 # Eight captain tickets with no ask card and no quoted words are two findings

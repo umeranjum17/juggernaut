@@ -413,16 +413,14 @@ func statusFiles(state, exclude string) []string {
 	return kept
 }
 
-// scanOpenDecisionsPrefixes prints one "<task>\t<key>\t<verb>\t<note>" row per open decision, in
-// glob (task id) order, from a per-file open set reader.
-func scanOpenDecisionsPrefixes(state, exclude string, out *os.File, open func(string) string) {
+// scanOpenDecisionsIncremental prints one "<task>\t<key>\t<verb>\t<note>" row per open decision,
+// in glob (task id) order, from the cursor-backed fold, so a fleet-wide per-drain scan stays
+// bounded by new appends rather than total lifetime log size.
+func scanOpenDecisionsIncremental(state, exclude string, out *os.File) int {
 	w := bufio.NewWriterSize(out, 1<<16)
 	for _, f := range statusFiles(state, exclude) {
 		task := strings.TrimSuffix(filepath.Base(f), ".status")
-		set := open(f)
-		if set == "" {
-			continue
-		}
+		set, _ := openDecisionsIncremental(f, "")
 		for _, line := range strings.Split(set, "\n") {
 			if line == "" {
 				continue
@@ -431,22 +429,6 @@ func scanOpenDecisionsPrefixes(state, exclude string, out *os.File, open func(st
 		}
 	}
 	w.Flush()
-}
-
-// scanOpenDecisions is the fleet-wide whole-file wrapper: a thin directory scan, so the fold
-// above remains the one place the open/resolved semantics are decided.
-func scanOpenDecisions(state, exclude string, out *os.File) int {
-	scanOpenDecisionsPrefixes(state, exclude, out, func(f string) string { return openDecisions(f, "") })
-	return 0
-}
-
-// scanOpenDecisionsIncremental is the same walk over the cursor-backed fold, so a fleet-wide
-// per-drain scan stays bounded by new appends rather than total lifetime log size.
-func scanOpenDecisionsIncremental(state, exclude string, out *os.File) int {
-	scanOpenDecisionsPrefixes(state, exclude, out, func(f string) string {
-		open, _ := openDecisionsIncremental(f, "")
-		return open
-	})
 	return 0
 }
 
@@ -503,9 +485,7 @@ func cursorCommand(cmd string, a []string, out *os.File) (code int, handled bool
 		open, code := openDecisionsIncremental(arg(0), arg(1))
 		fmt.Fprint(out, open)
 		return code, true
-	case "scan-open-decisions": // scan-open-decisions <state> [<exclude-file>]
-		return scanOpenDecisions(arg(0), arg(1), out), true
-	case "scan-open-decisions-incremental":
+	case "scan-open-decisions-incremental": // scan-open-decisions-incremental <state> [<exclude-file>]
 		return scanOpenDecisionsIncremental(arg(0), arg(1), out), true
 	}
 	return 0, false

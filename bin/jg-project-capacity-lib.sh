@@ -71,24 +71,10 @@
 # bin/jg-squad-lead-registry-lib.sh (which the local-homes walk reads), and
 # bin/jg-backend.sh (jg_meta_get) to be sourced first. No side effects on source.
 
-# Exit status of a spawn deferred because the project is at capacity: the
-# sysexits "temporary failure" code, so a caller can tell a deferral that leaves
-# the task queued from an ordinary failure.
-# shellcheck disable=SC2034 # read by bin/jg-spawn.sh after sourcing.
-JG_PROJECT_CAPACITY_DEFER_EXIT=75
-
-# The config directory holding this machine's declaration: the spawning home's
-# own <config-dir> when that home is the local root (so an override of it
-# applies), otherwise the root home's config/.
+# shellcheck disable=SC2034 # the JG_PROJECT_CAPACITY_* results are read by bin/jg-spawn.sh after sourcing.
+# The config directory holding this machine's declaration (jg_juggernaut_root_dir).
 jg_project_capacity_config_dir() {  # <spawning-home> <spawning-config-dir>
-  local home=$1 config=$2 root home_real
-  root=$(jg_juggernaut_root_home "$home") || return 1
-  home_real=$(CDPATH='' cd -- "$home" 2>/dev/null && pwd -P) || return 1
-  if [ "$root" = "$home_real" ]; then
-    printf '%s\n' "$config"
-  else
-    printf '%s/config\n' "$root"
-  fi
+  jg_juggernaut_root_dir "$1" "$2" config
 }
 
 # Read the declared capacity for one project.

@@ -77,17 +77,67 @@ UNREADABLE="$STATE/.board-answers-unreadable"
 . "$SCRIPT_DIR/jg-check-lib.sh"
 die() { printf 'jg-board-answers: %s\n' "$1" >&2; exit "${2:-1}"; }
 key_ok() { case "$1" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac; }
-rget() { sed -n "s/^$2=//p" "$ROUTES/$1" 2>/dev/null | tail -1; }
+# <out-var> <card-key> <field>: the field's last recorded value in the card's
+# route, or empty. A read loop, so a pass over every answer forks nothing here.
+rget() {
+  local _rg_line _rg_v=''
+  if [ -f "$ROUTES/$2" ]; then
+    while IFS= read -r _rg_line || [ -n "$_rg_line" ]; do
+      case "$_rg_line" in "$3="*) _rg_v=${_rg_line#"$3="} ;; esac
+    done 2>/dev/null < "$ROUTES/$2"
+  fi
+  printf -v "$1" '%s' "$_rg_v"
+}
+# <out-var> <file>: the file's lines, each followed by a newline, so a whole-line
+# membership test is one `case` with no grep per answer.
+lines_of() {
+  local _lo_line _lo_v=$'\n'
+  if [ -f "$2" ]; then
+    while IFS= read -r _lo_line || [ -n "$_lo_line" ]; do
+      _lo_v+="$_lo_line"$'\n'
+    done 2>/dev/null < "$2"
+  fi
+  printf -v "$1" '%s' "$_lo_v"
+}
 rput() { printf '%s=%s\n' "$2" "$3" >> "$ROUTES/$1"; }
 say() { printf '%s\n' "${1:0:400}"; }
 
 cmd_route() {
   local key=${1-} lead=${2-} dk=${3-}
   { key_ok "$key" && key_ok "$lead"; } || die "route needs a card key and a lead task id" 2
+  if [ "$lead" = main ]; then
+    # A card Main owns: recorded as owned, so the prefix rule never hands its answer to a task.
+    mkdir -p "$ROUTES" || die "cannot create $ROUTES"
+    printf 'owner=main\n' > "$ROUTES/$key" || die "cannot record the route for $key"
+    return 0
+  fi
   [ -z "$dk" ] || key_ok "$dk" || die "invalid decision key '$dk'" 2
   [ -f "$STATE/$lead.meta" ] || die "refused: '$lead' is not a task recorded in this home"
   mkdir -p "$ROUTES" || die "cannot create $ROUTES"
   printf 'lead=%s\ndecision=%s\n' "$lead" "${dk:-$key}" > "$ROUTES/$key" || die "cannot record the route for $key"
+}
+
+# <out-var> <card-key>: the task of this home that owns a card nobody routed. A card is
+# keyed by the task it asks for, plus a suffix (`fable-why-no-landing-wave1` asks for
+# `fable-why-no-landing`), so the owner is the task whose id is the longest `-`-bounded
+# prefix of the key. No such task leaves the out-var empty: the answer stays with Main.
+owner_of() {
+  local _ow_meta _ow_id _ow_best=''
+  for _ow_meta in "$STATE"/*.meta; do
+    [ -f "$_ow_meta" ] || continue
+    _ow_id=${_ow_meta##*/}; _ow_id=${_ow_id%.meta}
+    case "$2" in "$_ow_id"|"$_ow_id"-*) [ "${#_ow_id}" -gt "${#_ow_best}" ] && _ow_best=$_ow_id ;; esac
+  done
+  printf -v "$1" '%s' "$_ow_best"
+}
+
+# Record the owner of an unrouted card from its name, unless Main owns it. 0 = routed.
+adopt_owner() {  # <card-key>
+  local _ad_main _ad_owner
+  rget _ad_main "$1" owner
+  [ -z "$_ad_main" ] || return 1
+  owner_of _ad_owner "$1"
+  [ -n "$_ad_owner" ] && cmd_route "$1" "$_ad_owner"
 }
 
 deliver() {  # <key> <lead> <decision> <text> <delivery-id>; 0 = recorded in the lead's inbox
@@ -126,29 +176,40 @@ unreadable() {
 }
 
 cmd_check() {
-  local json board key answer label note at lead dk link text id out first=0 report='' shown
+  local json board key answer label note at lead dk link text id out first=0 report='' shown closed seen got
   jg_question_signoff_available || { unreadable "board answers cannot be read: sign-off-axi is not on PATH"; return 0; }
   board=$(jg_question_board)
   json=$(sign-off-axi answers ${board:+"$board"} --json 2>/dev/null) || { unreadable "board answers cannot be read: sign-off-axi answers failed"; return 0; }
-  rm -f -- "$UNREADABLE"
+  [ ! -e "$UNREADABLE" ] && [ ! -L "$UNREADABLE" ] || rm -f -- "$UNREADABLE"
   [ -f "$SEEN" ] || { first=1; : > "$SEEN"; }
-  mkdir -p "$ROUTES"
+  [ -d "$ROUTES" ] || mkdir -p "$ROUTES"
+  # Every answer on the shared board is walked every pass, and nearly all of them
+  # end in `continue`, so the closed and seen records are read once per pass and
+  # an answer that needs nothing costs no process at all.
+  lines_of closed "$CLOSED"
+  lines_of seen "$SEEN"
   while IFS=$'\037' read -r key at answer label note; do
     key_ok "$key" && [ -n "$at" ] && [ -n "$answer" ] || continue
     designed "$key" "$answer"
     # The chat message for this card shows the board's answer and drops its buttons. A repeat is a no-op there.
-    if ! grep -qxF "$key" "$CLOSED" 2>/dev/null; then
+    case "$closed" in *$'\n'"$key"$'\n'*) ;; *)
       printf '%s\n' "$key" >> "$CLOSED"
+      closed+="$key"$'\n'
       case "$label" in ''|"Answered in chat") shown=$answer ;; *) shown=$label ;; esac
       [ "$first" = 1 ] || "$SCRIPT_DIR/jg-bus.sh" publish card-close "$key" "answered" --answer "$shown" >/dev/null 2>&1 || true
-    fi
-    link=$(JG_HOME="$JG_HOME" jg_board_link answered "$key" 2>/dev/null)
-    lead=$(rget "$key" lead)
+      ;;
+    esac
+    rget lead "$key" lead
     if [ -z "$lead" ]; then
       case "$key" in jg-*) continue ;; esac
-      grep -qxF "$key"$'\t'"$at" "$SEEN" && continue
+      case "$seen" in *$'\n'"$key"$'\t'"$at"$'\n'*) continue ;; esac
       printf '%s\t%s\n' "$key" "$at" >> "$SEEN"
+      seen+="$key"$'\t'"$at"$'\n'
       [ "$first" = 1 ] && continue
+      adopt_owner "$key" && rget lead "$key" lead
+    fi
+    if [ -z "$lead" ]; then
+      link=$(JG_HOME="$JG_HOME" jg_board_link answered "$key" 2>/dev/null)
       text="$(say "$answer${label:+ ($label)}${note:+ - $note} | board answer on $key at $at, not routed to a lead${link:+ | $link}")"
       # A real wake in this pass, one per answer (the key carries the answer time); the line
       # is only printed when the wake cannot be raised, so the answer is never lost.
@@ -157,18 +218,20 @@ cmd_check() {
         || report="${report}${text}"$'\n'
       continue
     fi
-    if [ "$(rget "$key" answered)" != "$at" ]; then
-      dk=$(rget "$key" decision)
+    rget got "$key" answered
+    if [ "$got" != "$at" ]; then
+      rget dk "$key" decision
+      link=$(JG_HOME="$JG_HOME" jg_board_link answered "$key" 2>/dev/null)
       id=$(printf '%s' "$key|$at" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -c1-16)
       text="$(answer_text "$key" "$at" "$answer" "$label" "$note" "$link")"
       if out=$(deliver "$key" "$lead" "$dk" "$text" "$id"); then
         rput "$key" answered "$at"
         report="${report}$(say "info: board answer \"$answer\" on $key went to $lead; nothing for Main to do")"$'\n'
-      elif [ "$(rget "$key" failed)" != "$at" ]; then
+      elif rget got "$key" failed; [ "$got" != "$at" ]; then
         rput "$key" failed "$at"
         report="${report}$(say "board answer \"$answer\" on $key could not reach $lead (retrying each pass): ${out//$'\n'/ }")"$'\n'
       fi
-    elif [ -z "$(rget "$key" archived)" ] && grep -qsF "board-answer [key=$key at=$at]" "$STATE/$lead.inbox/handled/"*.msg; then
+    elif rget got "$key" archived; [ -z "$got" ] && grep -qsF "board-answer [key=$key at=$at]" "$STATE/$lead.inbox/handled/"*.msg; then
       sign-off-axi dismiss "$key" ${board:+"$board"} --reason done-elsewhere >/dev/null 2>&1 && rput "$key" archived 1
     fi
   done < <(printf '%s\n' "$json" | jq -r 'to_entries[] | select(.value.answer != null and .value.at != null)
@@ -182,12 +245,12 @@ cmd_route_answer() {
   { [ -n "$at" ] && [ -n "$answer" ]; } || die "route-answer needs the answer time and the captain's answer" 2
   mkdir -p "$ROUTES"
   designed "$key" "$answer"
-  lead=$(rget "$key" lead)
+  rget lead "$key" lead
   if [ -z "$lead" ]; then
     case "$key" in jg-*) die "refused: $key belongs to the captain-hold adapter, not a routed card" 3 ;; esac
     die "refused: card $key is not routed to a lead, so its answer stays with Main as it does today" 3
   fi
-  dk=$(rget "$key" decision)
+  rget dk "$key" decision
   link=$(JG_HOME="$JG_HOME" jg_board_link answered "$key" 2>/dev/null)
   id=$(printf '%s' "$key|$at" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -c1-16)
   text=$(answer_text "$key" "$at" "$answer" "$label" '' "$link")

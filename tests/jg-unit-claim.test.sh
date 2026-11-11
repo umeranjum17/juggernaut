@@ -44,7 +44,9 @@ UNIT_LIST="jg-sentinel jg-wake-engine jg-wake-watcher jg-router"
 make_lab() {
   local d="$TMP_ROOT/$1"
   mkdir -p "$d/home" "$d/other" "$d/mine/state" "$d/mine/data" "$d/mine/config" \
-    "$d/xdg/systemd/user" "$d/fakebin" "$d/stand-in"
+    "$d/xdg/systemd/user" "$d/fakebin" "$d/stand-in" "$d/mine/core/sentinel/bin"
+  # The home's bin/jg-sentinel.sh (copied with bin/ by each case) forwards to the one core copy.
+  cp -a "$ROOT/core/sentinel/bin/jg-sentinel.sh" "$d/mine/core/sentinel/bin/"
   cat > "$d/fakebin/systemctl" <<'SH'
 #!/usr/bin/env bash
 set -u

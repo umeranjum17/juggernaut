@@ -1,0 +1,5 @@
+# Trunk landing latency rows
+
+Trunk landing latency rows: run `done-done run trunk-latency` (`bash journeys/trunk-latency.sh`, which runs `bash tests/jg-trunk-latency.test.sh` and writes `trunk-latency.log` and the rows of its first home as `trunk-latency.tsv` into `$DONE_DONE_EVIDENCE_ROOT`); the real `core/trunk-latency/latency.sh` replays the records of two landings of 9 and 10 Nov at the clock of each, and proves the 32-minute landing gets a row that names the queue with one alert, the 2-minute landing gets a row with the host load and no alert, a third tick writes nothing, the limit is `JG_MERGE_LATENCY_LIMIT_MINUTES`, a first run counts old landings in one line and keeps a landing with no done line as a row with an empty ready field, and the wiring's installed shim runs the check (screen: none).
+
+Run `done-done run trunk-landing` to prove the real landing records the done epoch and writes its latency row before cleanup removes the lane status file; `tests/jg-trunk-gate.test.sh` drives this journey and the run captures its result in `run.log` (screen: none).

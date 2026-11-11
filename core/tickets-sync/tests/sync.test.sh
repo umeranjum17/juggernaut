@@ -22,37 +22,46 @@ export HOME=$work/user XDG_DATA_HOME=$work/xdg SIGN_OFF_HOME=$work/signoff
 export JG_HOME=$work/main
 mkdir -p "$HOME" "$JG_HOME"/{data,config,state} "$work/parked/data"
 ln -s "$fork/bin" "$JG_HOME/bin"
+ln -s "$fork/core" "$JG_HOME/core"
 printf '{"schema":2,"items":[]}\n' > "$work/board.json"
 printf '%s\n' "$work/board.json" > "$JG_HOME/config/fleet-board"
+# The local trunk has cut one release, trunk-v3; v1 is a PR-era version no trunk cut.
+printf 'alpha\ttrunk-v3\t9e050a45\t2\t1700000000\thttps://github.com/example/alpha/pull/9\n' > "$JG_HOME/data/trunk-releases.tsv"
 printf '%s\n' "- parked - Umer project (home: $work/parked; scope: demo)" > "$JG_HOME/data/squad_leads.md"
 printf 'parked\n' > "$JG_HOME/config/parked-homes"
-# shellcheck source=core/lib/beads-test-env.sh
+# shellcheck source=core/lib/beads-test-env.sh disable=SC1091
 . "$root/lib/beads-test-env.sh"
 core_beads_home "$fork" "$JG_HOME"
 core_beads_home "$fork" "$work/parked"
 (cd "$JG_HOME"; jg-backlog.sh add jg-parent '[captain-ask] P1 Parent: Umer release' --repo alpha --priority 0 --body 'type: captain-ask: "Umer telescope focus should be simple"' >/dev/null
- jg-backlog.sh done jg-parent --captain-quote 'Umer focus should be simple' >/dev/null
+ jg-backlog.sh 'done' jg-parent --captain-quote 'Umer focus should be simple' >/dev/null
  jg-backlog.sh add jg-long "Umer 🚢 $(printf 'long title %.0s' {1..30})" --repo alpha --priority 1 --body $'release: v1\nhttps://github.com/example/alpha/pull/123\nhttps://github.com/example/alpha/pull/456' >/dev/null
  jg-backlog.sh start jg-long >/dev/null
  jg-backlog.sh add jg-upkeep 'Umer maintenance' --repo alpha --priority 2 --body 'parent: upkeep' >/dev/null
  jg-backlog.sh add jg-held 'Umer paused item' --repo alpha --priority 1 --body 'parent: missing' >/dev/null
  jg-backlog.sh hold jg-held --reason 'Umer parked this item' --kind parked >/dev/null
  jg-backlog.sh add jg-voice 'Umer voice practice' --repo ownvoice --priority 2 --body 'release: soon' >/dev/null
+ jg-backlog.sh add jg-ids 'Plain row Main42 (corr=0123abcd) gc-x1' --repo alpha --priority 2 --body 'parent: upkeep' >/dev/null
  jg-backlog.sh add jg-take 'Umer takes' --repo takeone --priority 2 >/dev/null
+ jg-backlog.sh add jg-self 'Umer juggernaut maintenance' --repo juggernaut --priority 2 --body 'parent: upkeep' >/dev/null
+ jg-backlog.sh add jg-plain $'Umer plain words data/umer/report.md\n... (truncated, 90 chars total - use show jg-plain --full)' --repo alpha --priority 2 >/dev/null
  jg-backlog.sh add jg-gone 'Umer queued item whose worker has gone' --repo alpha --priority 2 >/dev/null
  jg-backlog.sh add jg-inferred 'Umer telescope focus regression' --repo alpha --priority 1 >/dev/null
  jg-backlog.sh add jg-internal 'Umer internal maintenance' --repo herdr --priority 2 --body 'parent: upkeep' >/dev/null
- jg-backlog.sh add jg-child '[captain-ask] P0 Umer settings' --repo alpha --priority 0 --body "$(printf 'Umer notes %.0s' {1..80})"$'\nrelease: v1\nparent: jg-parent' >/dev/null)
+ jg-backlog.sh add jg-child '[captain-ask] P0 Umer settings' --repo alpha --priority 0 --body "$(printf 'Umer notes %.0s' {1..80})"$'\nrelease: trunk-v3\nparent: jg-parent' >/dev/null)
 (cd "$work/parked"; JG_HOME="$work/parked" jg-backlog.sh add jg-parent 'Umer paused project' --repo beta --priority 2 >/dev/null)
-(cd "$JG_HOME"; jg-backlog.sh add jg-recent 'Umer shipped feature' --repo alpha --priority 2 >/dev/null; jg-backlog.sh done jg-recent >/dev/null)
+(cd "$JG_HOME"; jg-backlog.sh add jg-recent 'Umer shipped feature' --repo alpha --priority 2 >/dev/null; jg-backlog.sh 'done' jg-recent >/dev/null)
 git init -q "$JG_HOME/projects/alpha"
 git -C "$JG_HOME/projects/alpha" remote add origin https://github.com/example/alpha-app.git
-printf 'window=default:w9:p1\nendpoint_task_id=jg-long\nharness=pi\nmodel=ollama-cloud/deepseek-v4.1-flash\neffort=high\naccount=found-claude\n' > "$JG_HOME/state/jg-long.meta"
+printf 'mode=local-trunk\nwindow=default:w9:p1\nendpoint_task_id=jg-long\nharness=pi\nmodel=ollama-cloud/deepseek-v4.1-flash\neffort=high\naccount=found-claude\n' > "$JG_HOME/state/jg-long.meta"
 printf 'working [at=1700000000]: building Umer release\n' > "$JG_HOME/state/jg-long.status"
 printf 'harness=pi\nmodel=ollama-cloud/deepseek-v4.1-flash\neffort=high\naccount=found-claude\n' > "$JG_HOME/state/jg-gone.meta"
 printf 'paused [at=1700000010]: ran once and stopped\n' > "$JG_HOME/state/jg-gone.status"
-sign-off-axi ticket "$work/board.json" --id jg-legacy-fixture --title 'Needs a parent · alpha' --progress 17 --asked yes >/dev/null
-sign-off-axi ticket "$work/board.json" --id jg-history-fixture --title 'Umer historical maintenance' --project main --progress 100 --asked no >/dev/null
+# sign-off-axi refuses a new ticket without a description (a summary, then # Ask, # Why and # Done when), so every
+# fixture ticket written straight to the board carries this one.
+fixture_description=$'Fixture ticket.\n# Ask\n- Show the work on the board.\n# Why\n- The board follows the work.\n# Done when\n- The ticket reads done.'
+sign-off-axi ticket "$work/board.json" --id jg-legacy-fixture --title 'Needs a parent · alpha' --progress 17 --asked yes --description "$fixture_description" >/dev/null
+sign-off-axi ticket "$work/board.json" --id jg-history-fixture --title 'Umer historical maintenance' --project main --progress 100 --asked no --description "$fixture_description" >/dev/null
 source_before=$(cd "$JG_HOME" && jg-backlog.sh list; cd "$work/parked" && JG_HOME="$work/parked" jg-backlog.sh list)
 bash "$root/tickets-sync/wiring.sh" --dry-run
 test ! -d "$XDG_DATA_HOME/jg-tickets-sync"
@@ -62,8 +71,9 @@ env -u JG_HOME "$JG_HOME/state/tickets-sync.check.sh" | tee "$work/first.out"
 # Missing/broken icons are recorded quietly; check stdout would wake Main.
 jq -e '.["alpha-app"] == "no local image" and .takeone == "not a readable png image"' "$JG_HOME/state/tickets-sync/icons-skipped.json"
 grep -q 'icon skipped' "$work/first.out" && { echo 'FAIL: icon skip must not print to check stdout'; exit 1; }
-# Finished backfill wakes once with a summary; mid-pass continue does not.
-grep -qE '^tickets-sync: [0-9]+ homes read; [0-9]+ tickets changed$' "$work/first.out"
+# A finished backfill is a routine result: one log row, no stdout; mid-pass continue is quiet too.
+grep -q 'homes read' "$work/first.out" && { echo 'FAIL: the routine count line must not print to check stdout'; exit 1; }
+grep -qE '^tickets-sync: [0-9]+ homes read; [0-9]+ tickets changed$' "$JG_HOME/state/tickets-sync/progress.log"
 grep -q continuing "$work/first.out" && { echo 'FAIL: backfill continue must not print to check stdout'; exit 1; }
 rm -f "$JG_HOME/state/tickets-sync/cursor.json" "$JG_HOME/state/tickets-sync/progress.log"
 JG_TICKETS_SYNC_BUDGET_SECS=0 JG_HOME="$JG_HOME" python3 "$XDG_DATA_HOME/jg-tickets-sync/tickets-sync/sync.py" > "$work/continue.out"
@@ -71,24 +81,38 @@ grep -q continuing "$work/continue.out" && { echo 'FAIL: backfill continue must 
 grep -q continuing "$JG_HOME/state/tickets-sync/progress.log"
 test -s "$JG_HOME/state/tickets-sync/cursor.json"
 printf 'working [at=1700000050]: still building Umer release\n' >> "$JG_HOME/state/jg-long.status"
+# A pass always handles the row it resumed on, so the budget-0 pass handled one row; the row its cursor names is the first
+# the resumed pass reads, and a title drifted on the board there is news that pass puts right, whatever the row order.
+resumed=$(jq -r '.home + "/" + .task' "$JG_HOME/state/tickets-sync/cursor.json")
+sign-off-axi ticket "$work/board.json" --id "jg-$(printf '%s' "$resumed" | sha256sum | cut -c1-32)" --title 'Umer drifted title' >/dev/null
 "$JG_HOME/state/tickets-sync.check.sh" > "$work/resume.out"
 grep -q continuing "$work/resume.out" && { echo 'FAIL: resumed backfill continue must stay off stdout'; exit 1; }
-grep -qE '^tickets-sync: [0-9]+ homes read; [0-9]+ tickets changed$' "$work/resume.out"
-echo 'PASS: backfill continue is quiet; finished pass wakes once with a summary'
+grep -q 'homes read' "$work/resume.out" && { echo 'FAIL: the routine count line must not print to check stdout'; exit 1; }
+grep -qE '^tickets-sync: [0-9]+ homes read; [0-9]+ tickets changed$' "$JG_HOME/state/tickets-sync/progress.log"
+echo 'PASS: backfill continue is quiet; a finished pass logs its summary and wakes no one'
 ticket_id() { printf 'jg-%s\n' "$(printf '%s' "$1" | sha256sum | cut -c1-32)"; }
 child=$(ticket_id main/jg-child) parent=$(ticket_id main/jg-parent) parked=$(ticket_id parked/jg-parent)
 sign-off-axi ticket "$work/board.json" --json > "$work/first.json" || { cat "$work/first.json"; exit 1; }
-jq -e '.tickets | all(.[]; (.title | length) <= 160) and all(.[]; (.title | startswith("Needs a parent")) | not)'  "$work/first.json"
-jq -e --arg id "$child" --arg parent "$parent" '.tickets[] | select(.id == $id) | .parent == $parent and .priority == "P0" and .asked == false and .title == "Umer settings" and .release == "v1"' "$work/first.json"
+jq -e '.tickets | all(.[]; (.title | length) <= 100) and all(.[]; (.title | startswith("Needs a parent")) | not)'  "$work/first.json"
+jq -e --arg id "$child" --arg parent "$parent" '.tickets[] | select(.id == $id) | .parent == $parent and .priority == "P0" and .asked == false and .title == "Umer settings" and .release == "trunk-v3"' "$work/first.json"
+jq -e --arg id "$(ticket_id main/jg-long)" '[.tickets[] | select(.id == $id and (.release // "") == "")] | length == 1' "$work/first.json"
+# A board row is one plain line: no Main ref, corr id or ticket id, and no more than 100 characters.
+jq -e --arg id "$(ticket_id main/jg-ids)" '.tickets[] | select(.id == $id) | .title == "Plain row"' "$work/first.json"
+jq -e --arg id "$(ticket_id main/jg-long)" '.tickets[] | select(.id == $id) | .title | (length == 100 and endswith("…"))' "$work/first.json"
 jq -e --arg id "$parked" '.tickets[] | select(.id == $id) | .hold == true' "$work/first.json"
 jq -e --arg id "$(ticket_id main/jg-held)" '[.tickets[] | select(.id == $id and .hold == true)] | length == 1' "$work/first.json"
 upkeep=$(ticket_id fleet/:upkeep)
 jq -e --arg root "$parent" --arg upkeep "$upkeep" '.tickets as $ts | all($ts[]; ((.parent // "") != "") or .id == $root or .id == $upkeep) and any($ts[]; .id == $root and .title == "Umer telescope focus should be simple") and any($ts[]; .id == $upkeep and .asked == false and .title == "Not from your asks (fleet upkeep)")' "$work/first.json"
 jq -e --arg upkeep "$upkeep" '.tickets[] | select(.id == "jg-legacy-fixture") | .parent == $upkeep and .asked == false and .progress == 0' "$work/first.json"
-jq -e --arg upkeep "$upkeep" '.tickets[] | select(.id == "jg-history-fixture") | .parent == $upkeep and (.project // "") == ""' "$work/first.json"
+jq -e --arg upkeep "$upkeep" '.tickets[] | select(.id == "jg-history-fixture") | .parent == $upkeep and .project == "juggernaut"' "$work/first.json"
 jq -e --arg inferred "$(ticket_id main/jg-inferred)" --arg parent "$parent" '.tickets[] | select(.id == $inferred) | .parent == $parent' "$work/first.json"
-# herdr is an internal home: no ticket project label and no icon wake line.
-jq -e --arg internal "$(ticket_id main/jg-internal)" '.tickets[] | select(.id == $internal) | (.project // "") == ""' "$work/first.json"
+# A title is one plain line: the store's truncation tail and a file path are not words a reader needs.
+jq -e --arg id "$(ticket_id main/jg-plain)" '.tickets[] | select(.id == $id) | .title == "Umer plain words"' "$work/first.json"
+# herdr is an internal home: its work is Juggernaut's own, so every ticket still has a project (juggernaut), never herdr, and no icon wake line.
+jq -e --arg internal "$(ticket_id main/jg-internal)" '.tickets[] | select(.id == $internal) | .project == "juggernaut"' "$work/first.json"
+# Juggernaut is a real project, so its tickets are not left under No project.
+jq -e --arg self "$(ticket_id main/jg-self)" '.tickets[] | select(.id == $self) | .project == "juggernaut"' "$work/first.json"
+jq -e '[.tickets[] | select((.project // "") == "")] | length == 0' "$work/first.json"
 # The feed record carries the assignee the board shows, and it is never blank: the owning lead with the live
 # worker's harness, model, effort and account, the last values a queued item's gone worker left, a plain
 # "no worker yet" for work no worker has run, and the home that publishes a fleet-wide row as its owner.
@@ -123,19 +147,25 @@ ledger[tid] = hashlib.sha256(json.dumps(desired, sort_keys=True).encode()).hexdi
 ledger_path.write_text(json.dumps(ledger))
 PY
 "$JG_HOME/state/tickets-sync.check.sh" >/dev/null
-jq -e --arg internal "$(ticket_id main/jg-internal)" '.tickets[] | select(.id == $internal) | (.project // "") == ""' <(sign-off-axi ticket "$work/board.json" --json)
+jq -e --arg internal "$(ticket_id main/jg-internal)" '.tickets[] | select(.id == $internal) | .project == "juggernaut"' <(sign-off-axi ticket "$work/board.json" --json)
 grep -qiE 'herdr( |$)' "$work/first.out" && { echo 'FAIL: herdr must not appear on check stdout'; exit 1; }
 sign-off-axi project "$work/board.json" --json | jq -e '[.projects[] | .name | ascii_downcase] | (index("herdr") == null) and (index("herdr-runtime") == null)'
-sign-off-axi project "$work/board.json" --json | jq -e '[.projects[] | .name] == ["ownvoice"] and .projects[0].icon.sha256 == "'"$(sha256sum "$root/tickets-sync/icons/ownvoice.png" | cut -d" " -f1)"'"'
+sign-off-axi project "$work/board.json" --json | jq -e '([.projects[] | .name] | sort) == ["juggernaut", "ownvoice"] and (.projects[] | select(.name == "ownvoice") | .icon.sha256) == "'"$(sha256sum "$root/tickets-sync/icons/ownvoice.png" | cut -d" " -f1)"'"'
 cmp "$root/tickets-sync/icons/ownvoice.png" "$work/icons/ownvoice.png"
 test ! -e "$work/icons/takeone.png"
-sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --json | jq -e '.ticket.progress == 30 and .ticket.state == "in progress" and .ticket.stage == "building" and .ticket.last_event_at == 1700000050'
+sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --json | jq -e '.ticket.progress == 0 and .ticket.state == "in progress" and .ticket.stage == "building" and .ticket.last_event_at == 1700000050'
 printf 'working [key=nm-umer-ci] [at=1700000100]: checking CI\n' >> "$JG_HOME/state/jg-long.status"
 "$JG_HOME/state/tickets-sync.check.sh"
-sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --json | jq -e '.ticket.progress == 65 and .ticket.stage == "review" and .ticket.last_event_at == 1700000100'
+sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --json | jq -e '.ticket.progress == 0 and .ticket.stage == "building" and .ticket.last_event_at == 1700000100'
 printf 'done [at=1700000200]: ready to merge\n' >> "$JG_HOME/state/jg-long.status"
 "$JG_HOME/state/tickets-sync.check.sh"
-sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --json | jq -e '.ticket.progress == 90 and .ticket.stage == "merging" and .ticket.last_event_at == 1700000200'
+sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --json | jq -e '.ticket.progress == 0 and .ticket.stage == "merging" and (.ticket.description | startswith("Stage: ready-to-land")) and .ticket.last_event_at == 1700000200'
+# A PR-era version already on an open ticket is cleared by the next pass; a release the trunk cut stays.
+sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --release v0.3.0 >/dev/null
+sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --json | jq -e '.ticket.release == "v0.3.0"'
+"$JG_HOME/state/tickets-sync.check.sh"
+sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --json | jq -e '(.ticket.release // "") == ""'
+sign-off-axi ticket "$work/board.json" --id "$child" --json | jq -e '.ticket.release == "trunk-v3"'
 # A timing word in the release field is no release: the board keeps none.
 sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-voice)" --json | jq -e '(.ticket.release // "") == ""'
 printf 'cancelled [at=1700000300]: Umer cancelled this task\n' >> "$JG_HOME/state/jg-long.status"
@@ -149,7 +179,7 @@ mv "$JG_HOME/state/tickets-sync"/published-*.json "$JG_HOME/state/tickets-sync/l
 "$JG_HOME/state/tickets-sync.check.sh"
 test "$before" = "$(sha256sum "$work/board.tickets.jsonl" "$work/board.projects.jsonl")"
 test "$source_before" = "$(cd "$JG_HOME" && jg-backlog.sh list; cd "$work/parked" && JG_HOME="$work/parked" jg-backlog.sh list)"
-(cd "$JG_HOME"; jg-backlog.sh done jg-child --captain-quote 'Umer settings' --pr https://github.com/example/alpha/pull/1 >/dev/null; jg-backlog.sh done jg-inferred >/dev/null)
+(cd "$JG_HOME"; jg-backlog.sh 'done' jg-child --captain-quote 'Umer settings' --pr https://github.com/example/alpha/pull/1 >/dev/null; jg-backlog.sh 'done' jg-inferred >/dev/null)
 "$JG_HOME/state/tickets-sync.check.sh"
 sign-off-axi ticket "$work/board.json" --id "$child" --json > "$work/closed.json"
 jq -e '.ticket | .progress == 100 and .hold == false and (.prs | index("https://github.com/example/alpha/pull/1") != null)' "$work/closed.json"
@@ -161,6 +191,22 @@ test "$before" = "$(sha256sum "$work/board.tickets.jsonl")"
 grep -q 'tickets changed' "$work/steady.out" && { echo "FAIL: settled board republished rows: $(cat "$work/steady.out")"; exit 1; }
 sign-off-axi ticket "$work/board.json" --id "$parent" --json | jq -e '.ticket.progress == 100'
 echo 'PASS: completed sync stays idempotent; epic progress rolls up from its child'
+
+# One ticket changed is a routine result: no output, one more log row. A record the board refuses is a finding with an
+# act for this home (fix that record), so it still prints, and the pass's count line goes with it.
+rows_before=$(grep -c 'homes read' "$JG_HOME/state/tickets-sync/progress.log")
+sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-upkeep)" --title 'Umer drifted again' >/dev/null
+"$JG_HOME/state/tickets-sync.check.sh" > "$work/routine.out"
+test ! -s "$work/routine.out" || { echo "FAIL: a routine one-ticket pass printed: $(cat "$work/routine.out")"; exit 1; }
+test "$(grep -c 'homes read; 1 tickets changed' "$JG_HOME/state/tickets-sync/progress.log")" -ge 1
+test "$(grep -c 'homes read' "$JG_HOME/state/tickets-sync/progress.log")" = "$((rows_before + 1))"
+(cd "$JG_HOME"; jg-backlog.sh add jg-refused 'Umer refused item' --repo alpha --priority 2 >/dev/null)
+printf 'pr=not-a-url\n' > "$JG_HOME/state/jg-refused.meta"
+"$JG_HOME/state/tickets-sync.check.sh" > "$work/finding.out"
+grep -qE "^tickets-sync: skipped $(ticket_id main/jg-refused): main/jg-refused: " "$work/finding.out"
+rm "$JG_HOME/state/jg-refused.meta"
+"$JG_HOME/state/tickets-sync.check.sh" >/dev/null
+echo 'PASS: a routine pass is silent with one log row; a finding with an act still prints'
 
 if command -v gh-axi >/dev/null && [ -n "${JG_TEST_MERGED_PR:-}" ]; then
   (cd "$JG_HOME"; jg-backlog.sh add jg-merged 'Umer shipped PR' --repo alpha --priority 1 --body "pr: $JG_TEST_MERGED_PR" >/dev/null; jg-backlog.sh start jg-merged >/dev/null)
@@ -198,22 +244,22 @@ JG_HOME="$JG_HOME" python3 "$WRITER" jg-refresh --state "done"
 sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-refresh)" --json | jq -e '.ticket.state == "done" and .ticket.progress == 100'
 echo 'PASS: the lifecycle writer corrects an existing ticket only where it differs'
 
-# The stale check names the ticket its own work contradicts and the board row no
-# home's work accounts for, writes nothing, and falls silent on a settled board.
+# The stale check settles proven drift and names the board row no home accounts for.
 # The board can lag the work: this ticket still says in progress after its item closed.
 sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-inferred)" --state "in progress" >/dev/null
-before=$(sha256sum "$work/board.tickets.jsonl")
+printf 'working [at=1700000400]: building voice work\n' > "$JG_HOME/state/jg-voice.status"
+sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-voice)" --state queued >/dev/null
 out=$("$JG_HOME/state/tickets-stale.check.sh")
-# ...and the fixture still holds the surplus row its earlier grouping history left behind.
-grep -q 'Umer telescope focus regression' <<<"$out"
+if grep -q 'Umer telescope focus regression' <<<"$out"; then echo 'FAIL: proven drift was reported'; exit 1; fi
 grep -q "no home's work accounts for it" <<<"$out"
-test "$before" = "$(sha256sum "$work/board.tickets.jsonl")"
+sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-inferred)" --json | jq -e '.ticket.state == "done"'
+sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-voice)" --json | jq -e '.ticket.state == "in progress"'
 # The fixture's leftover row from its earlier grouping history is the surplus row the
 # check is for; closing it and settling the rest leaves the board true and silent.
 sign-off-axi ticket "$work/board.json" --id jg-history-fixture --state "done" >/dev/null
 "$JG_HOME/state/tickets-sync.check.sh" >/dev/null
 test -z "$("$JG_HOME/state/tickets-stale.check.sh")"
-echo 'PASS: the stale check flags a contradicting and an orphaned ticket, writes nothing, and silences a settled board'
+echo 'PASS: the stale check settles proven drift, flags an orphan, and silences a settled board'
 
 # The full reconcile is the backfill for a board that drifted, so it must settle a drifted row and finish a settled
 # board without writing; the seconds are printed so a slow pass is visible in the transcript.
@@ -252,7 +298,7 @@ printf 'schema=jg-task-inbox.v1\nat=2026-10-28T10:00:00Z\n--\nCaptain: Umer want
 printf '#!/usr/bin/env bash\nexport JG_HOME=%q\nexec python3 %q --cleanup 2>&1\n' "$JG_HOME" "$XDG_DATA_HOME/jg-tickets-sync/tickets-sync/sync.py" > "$work/cleanup.sh"
 sign-off-axi raise "$work/board.json" --ticket "$(ticket_id main/jg-ask3)" --ask-ref jg-ask3 --key jg-ask3 --title "Show quotes always?" --why "Captain ask on record." --outcome yes=Done --outcome no=Not --recommend yes --recommend-reason ok --default yes >/dev/null
 out=$(bash "$work/cleanup.sh")
-grep -q '^tickets-cleanup: flagged .*duplicate.*no-ask-card.*no-quote.*stale' <<<"$out"
+grep -q '^tickets-cleanup: closed 1 duplicate; flagged .*no-ask-card.*no-quote.*stale' <<<"$out"
 grep -q '1 quotes back-filled' <<<"$out"
 grep -q "quoted-at: 2026-10-28" <(cd "$JG_HOME"; jg-backlog.sh show jg-ask3 --full)
 grep -q "source: $JG_HOME/state/lane.inbox/001.msg" <(cd "$JG_HOME"; jg-backlog.sh show jg-ask3 --full)
@@ -284,11 +330,36 @@ echo 'PASS: the card reconcile archives a closed-source card, keeps an open-sour
 # same work, so that row names the same owner: only the assignee moves, and its own fields stay as they were.
 (cd "$JG_HOME"; jg-backlog.sh add jg-legacy 'Umer legacy row item' --repo alpha --priority 2 >/dev/null)
 legacy="fm-$(ticket_id main/jg-legacy | cut -c4-)"
-sign-off-axi ticket "$work/board.json" --id "$legacy" --title 'Umer legacy row item' --state queued >/dev/null
+sign-off-axi ticket "$work/board.json" --id "$legacy" --title 'Umer legacy row item' --state queued --description "$fixture_description" >/dev/null
 "$JG_HOME/state/tickets-sync.check.sh" >/dev/null
 feed_assignee "$legacy" | jq -e '.lead == "main" and .live == false and .model == "no worker yet"'
 sign-off-axi ticket "$work/board.json" --id "$legacy" --json | jq -e '.ticket.title == "Umer legacy row item" and .ticket.state == "queued" and .ticket.progress == 0 and ((.ticket.last_event_at // "") == "") and ((.ticket.stage // "") == "")'
 echo 'PASS: the row from before the re-keyed ids names the same owner, and only that field moves'
+
+# A legacy row the board still holds with no reason is one nothing moves any more: `--migrate-legacy` releases it
+# (never closed, so no false shipped count and no captain ask lost), keeps its title, progress and owner, and a second
+# run finds nothing left.
+owner='{"lead":"main","live":false,"model":"no worker yet"}'
+for row in "fm-legacyask $(jq -nc --argjson o "$owner" '{title:"Umer quoted ask",asked:true,state:"on hold",stage:"queued",progress:0,assignee:$o}')" \
+           "fm-legacyold $(jq -nc --argjson o "$owner" '{title:"Umer frozen row",asked:false,state:"on hold",stage:"merging",progress:90,assignee:$o}')"; do
+  jq -c --arg id "${row%% *}" '. + {id:$id,hold:true,at:"2026-11-04T10:15:53Z"}' <<<"${row#* }" >> "$work/board.tickets.jsonl"
+done
+held_without_reason() { sign-off-axi ticket "$work/board.json" --json | jq '[.tickets[] | select(.hold and ((.hold_reason // "") == ""))] | length'; }
+migrate_legacy() { JG_HOME="$JG_HOME" python3 "$XDG_DATA_HOME/jg-tickets-sync/tickets-sync/sync.py" --migrate-legacy "$@"; }
+[ "$(held_without_reason)" = 2 ]
+before=$(wc -l < "$work/board.tickets.jsonl")
+migrate_legacy --check | grep -q '^tickets-sync: would release 2 legacy rows held with no reason$'
+[ "$(wc -l < "$work/board.tickets.jsonl")" = "$before" ]
+migrate_legacy | grep -q '^tickets-sync: released 2 legacy rows held with no reason$'
+[ "$(held_without_reason)" = 0 ]
+for id in fm-legacyask fm-legacyold; do
+  sign-off-axi ticket "$work/board.json" --id "$id" --json | jq -e '.ticket.hold == false and (.ticket.state // "") != "on hold"'
+  feed_assignee "$id" | jq -e '.lead == "main" and .model == "no worker yet"'
+done
+sign-off-axi ticket "$work/board.json" --id fm-legacyask --json | jq -e '.ticket.title == "Umer quoted ask" and .ticket.asked == true'
+sign-off-axi ticket "$work/board.json" --id fm-legacyold --json | jq -e '.ticket.title == "Umer frozen row" and .ticket.progress == 90 and .ticket.stage == "merging"'
+migrate_legacy | grep -q '^tickets-sync: released 0 legacy rows held with no reason$'
+echo 'PASS: legacy rows held with no reason are released, their titles and owners stay, and a second run finds none'
 
 # Every project image ships from the core icons directory: the installer copies them all, and
 # `sync.py` looks nowhere else, so a project whose image lives there registers on the board.

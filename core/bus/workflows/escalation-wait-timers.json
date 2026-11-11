@@ -6,7 +6,7 @@
     "migrationStep": "5c",
     "half": "the wait timers: the owner alert and the pause cadence, the two timers that start a wait's clock",
     "mode": "live",
-    "authoritative": "bin/jg-escalation-workflows.sh decides and delivers these rungs on every watcher poll; the escalation rung, the board card and the re-alert cadence are still core/wait-timers/bin/jg-wait-timers-lib.sh; core/escalation-workflow runs the whole wait ladder as a Dapr workflow from these same numbers, off until a home runs bin/jg-dapr-workflow.sh",
+    "authoritative": "bin/jg-escalation-workflows.sh decides and delivers these rungs on every watcher poll; the escalation rung, the board card and the re-alert cadence are still core/wait-timers/bin/jg-wait-timers-lib.sh",
     "reader": "bin/jg-escalation-workflows.sh is the one reader; a home may override this file at config/escalation-workflows.json or with JG_ESCALATION_WORKFLOW"
   },
   "spec": {
@@ -25,6 +25,11 @@
       },
       {
         "name": "question",
+        "facts": "wait-source",
+        "fresh": true
+      },
+      {
+        "name": "account",
         "facts": "wait-source",
         "fresh": true
       },

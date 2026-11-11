@@ -479,12 +479,28 @@ ff_maybe_clear_stale_index_lock() { # <dir> <label> <merge-output>
 # Guards are identical in both modes: never force/merge/stash; skip a dirty or
 # wrong-branch target and leave its work untouched. An optional squad_lead id
 # enables the content-equivalent divergence proof and durable marker described
-# in this file's header.
+# in this file's header. contained_repoint=yes (the fleet live move, jg-update.sh
+# --base) runs that same proof WITHOUT a squad_lead id or reconciliation state: a
+# clean target whose HEAD is not an ancestor of the base but whose complete tree
+# result the base already holds is re-pointed with reset --keep; any other
+# divergence is skipped untouched.
+# A fast-forward writes the index and tree before it updates the branch ref, so a failure or kill
+# between the two leaves HEAD at the old commit with index and tree at the new one, and the next run
+# refuses on "dirty working tree". When that is exactly the state (HEAD unmoved, index equal to the
+# new commit), switch index and tree back with a two-way read-tree, which touches only the paths the
+# move changed and keeps any local edit (it refuses a path whose file differs from the index).
+ff_rollback_half_move() { # <dir> <old-rev> <new-rev>
+  local dir=$1 old=$2 new=$3
+  [ "$(git -C "$dir" rev-parse HEAD 2>/dev/null)" = "$old" ] || return 0
+  git -C "$dir" diff-index --cached --quiet "$new" -- 2>/dev/null || return 0
+  git -C "$dir" read-tree -u -m "$new" "$old" >/dev/null 2>&1 || true
+}
+
 FF_STATUS=""
 FF_INSTR=""
 ff_target() {
   local dir=$1 label=$2 base_mode=$3 allow_detached=${4:-no} ignore_seed_marker=${5:-no}
-  local squad_lead_id=${6:-} reconciliation_state=${7:-}
+  local squad_lead_id=${6:-} reconciliation_state=${7:-} contained_repoint=${8:-no}
   FF_STATUS="skipped"
   FF_INSTR=""
 
@@ -559,7 +575,7 @@ ff_target() {
     return 0
   fi
   if ! git -C "$dir" merge-base --is-ancestor HEAD "$base" 2>/dev/null; then
-    if [ -n "$squad_lead_id" ] && [ -n "$reconciliation_state" ] \
+    if { [ "$contained_repoint" = yes ] || { [ -n "$squad_lead_id" ] && [ -n "$reconciliation_state" ]; }; } \
       && divergence_is_redundant "$dir" "$local_rev" "$base_rev"; then
       instr=$(changed_instr "$dir" "$base")
       before=$(git -C "$dir" rev-parse --short HEAD)
@@ -594,6 +610,7 @@ ff_target() {
   instr=$(changed_instr "$dir" "$base")
   before=$(git -C "$dir" rev-parse --short HEAD)
   if ! out=$(git -C "$dir" merge --ff-only "$base" 2>&1); then
+    ff_rollback_half_move "$dir" "$local_rev" "$base_rev"
     # A killed git process can orphan the target's index.lock, after which every
     # fast-forward fails forever on "Unable to create ...index.lock: File exists".
     # Recover once: clear the lock only when provably stale (jg-lock-lib.sh) and
@@ -601,6 +618,7 @@ ff_target() {
     # lock, keeps today's skip.
     if ! ff_maybe_clear_stale_index_lock "$dir" "$label" "$out" \
       || ! out=$(git -C "$dir" merge --ff-only "$base" 2>&1); then
+      ff_rollback_half_move "$dir" "$local_rev" "$base_rev"
       echo "$label: skipped: fast-forward failed: $(first_line "$out")"
       return 0
     fi

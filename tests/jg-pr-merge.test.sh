@@ -2227,6 +2227,56 @@ test_release_pull_request_defaults_to_a_merge_commit() {
   pass "jg-pr-merge merges a release pull request with a merge commit and a feature pull request with a squash"
 }
 
+# A local-trunk project's release pull request has the current trunk branch as its
+# head, not a release/c-<N> branch (bin/jg-trunk.sh release). The merge path
+# records it under the task record the release step writes (kind=release, no
+# worker, no worktree) and the guard it records through (bin/jg-pr-check.sh) must
+# admit it even while the project still carries a release/c-<N> branch, then
+# merge it with a merge commit. Any other head into the default branch, an older
+# trunk version and a feature branch included, is still refused.
+# Before the fix the guard refused it: "targets the default branch main, but this
+# project's current version branch is release/c-16".
+trunk_release_case() {  # <name> <trunk-branch>: a local-trunk project on <trunk-branch> holding the release record
+  local case_dir
+  case_dir=$(make_case "$1")
+  add_gh_mocks "$case_dir" 1414141414141414141414141414141414141414
+  jg_git_init_commit "$case_dir/project"
+  git -C "$case_dir/project" update-ref refs/heads/release/c-16 "$(git -C "$case_dir/project" rev-parse HEAD)"
+  git -C "$case_dir/project" update-ref "refs/heads/$2" "$(git -C "$case_dir/project" rev-parse HEAD)"
+  printf -- '- project [local-trunk +yolo] - fixture project in local-trunk mode (added 2026-11-10)\n' > "$case_dir/home/data/projects.md"
+  git -C "$case_dir/project" rev-parse HEAD > "$case_dir/state/trunk-tip-project"
+  printf '%s\n' "$2" > "$case_dir/state/trunk-branch-project"
+  jg_write_meta "$case_dir/state/task-x1.meta" "kind=release" "project=$case_dir/project" "mode=local-trunk" "yolo=off"
+  chmod 0600 "$case_dir/state/task-x1.meta"
+  printf '%s\n' "$case_dir"
+}
+
+test_trunk_release_pull_request_is_admitted_and_merged_with_a_merge_commit() {
+  local case_dir rc err
+  case_dir=$(trunk_release_case trunk-release-merge-commit trunk-v3)
+  sed -i 's/"baseRefName":"main"/"baseRefName":"main","headRefName":"trunk-v3"/' "$case_dir/github-view.json"
+  rc=0
+  JG_TEST_GH_BASE=main JG_TEST_GH_HEAD_REF=trunk-v3 run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/813 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  err=$(cat "$case_dir/stderr" "$case_dir/stdout")
+  [ "$rc" -eq 0 ] || fail "the local-trunk release pull request from trunk-v3 into main must merge (rc $rc): $err"
+  assert_not_contains "$err" "targets the default branch" "the local-trunk release pull request was refused by the version-branch guard"
+  assert_logged_gh_merge "$case_dir" 813 example/repo --merge
+  assert_grep 'pr=https://github.com/example/repo/pull/813' "$case_dir/state/task-x1.meta" "the release pull request was not recorded under its task"
+
+  for head in trunk-v2 fm/task-x1; do
+    case_dir=$(trunk_release_case "trunk-release-other-head-${head//\//-}" trunk-v3)
+    : > "$case_dir/gh-axi.log"
+    rc=0
+    JG_TEST_GH_BASE=main JG_TEST_GH_HEAD_REF=$head run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/814 \
+      > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+    [ "$rc" -ne 0 ] || fail "a pull request from $head into main of a local-trunk project on trunk-v3 must be refused"
+    assert_contains "$(cat "$case_dir/stderr")" "current version branch is release/c-16" "the refusal of $head does not name the version branch"
+    assert_no_grep ' pr merge' "$case_dir/gh-axi.log" "a refused merge from $head reached the forge"
+  done
+  pass "a local-trunk release pull request from the current trunk merges with a merge commit; an older trunk or a feature head into main is refused"
+}
+
 # A release branch recorded as carried is closed: a merge into it never reaches
 # the default branch, so the merge is refused and the refusal names the live
 # release branch (bin/jg-version-branch-lib.sh jg_release_shipped owns "shipped").
@@ -3429,6 +3479,7 @@ test_repo_override_args_refuse_before_recording
 test_bundled_repo_override_args_refuse_before_recording
 test_explicit_merge_method_not_overridden
 test_release_pull_request_defaults_to_a_merge_commit
+test_trunk_release_pull_request_is_admitted_and_merged_with_a_merge_commit
 test_merge_into_a_carried_release_branch_is_refused
 test_method_equals_merge_method_not_overridden
 test_parses_pr_url_for_gh_axi

@@ -43,11 +43,13 @@ Pick the depth of every Recon at intake and pass it to the scaffold as `--depth 
 - **quick** only for one fact.
 - **standard** for everything else; it is the default.
 
-A deep Recon needs one separate critic worker after the researcher's draft, never a fan-out: when the researcher reports its draft ready, spawn one critic Recon on a fresh isolated copy with that draft, install the critic's output as the researcher's `data/<id>/critic.md`, and steer that same critic for each further round.
+A deep Recon needs one separate critic worker after the researcher's draft, never a fan-out: when the researcher reports its draft ready, spawn one critic Recon with the task id `<id>-critic` on a fresh isolated copy with that draft, install the critic's output as the researcher's `data/<id>/critic.md`, and steer that same critic for each further round.
+That id is how the wait ladder forwards each later draft to the critic by itself (`core/wait-timers/README.md` "Known next steps").
 `.agents/skills/deep-recon/SKILL.md` owns the stages, budgets and critic rubric, and `bin/jg-recon-gate.sh` refuses `done` for a standard or deep Recon that does not meet them.
 
 ## Delivery mode, branch, and consent flags
 
+For a registered `local-trunk` project, keep `local-trunk` as the task mode through landing and cleanup (`docs/trunk-flow.md`); never translate it to `local-only`.
 Pass the mode explicitly to the brief, and pass both values explicitly to the spawn and any Recon promotion; each command refuses to guess the values it consumes.
 Resolve the project's registered ship-branch prefix the same way, via `bin/jg-project-mode.sh --branch-prefix --kind <feature|bug|chore> <project>`, and pass it explicitly to the brief, ship spawn, and Recon promotion as `--branch-prefix`; a registered prefix wins, otherwise the kind of the backlog item names the branch (`feature/`, `fix/`, `chore/`), and with no kind it stays `fm/`.
 When the work must start from and target a branch other than the project's default, such as a named feature or release branch, pass it to the ship or Recon brief and spawn as `--base-branch <branch>`; any promotion reads it from task meta.
@@ -59,7 +61,7 @@ Record the resulting mode, `yolo` merge posture, and the one-line reason for any
 ## Concurrency
 
 Treat file or subsystem overlap as a risk signal rather than an automatic reason to wait, and dispatch isolated work immediately with no concurrency cap when each change can be independently implemented and validated and the selected delivery path can reconcile ordinary rebases or conflicts.
-A project's declared machine capacity (`config/project-capacity`) still bounds that dispatch: a spawn beyond it exits 75 without launching, and its item stays queued rather than blocked.
+A project's declared machine capacity (`config/project-capacity`) and the machine's load (docs/configuration.md "Host load admission") still bound that dispatch: a spawn beyond either exits 75 without launching, and its item stays queued rather than blocked.
 Serialize only for a true semantic dependency, shared mutable external state, incompatible concurrent migration, or another concrete condition that makes independent progress or reconciliation unsafe; same-file editing alone is insufficient, and genuine blockers remain durable.
 Dispatch a home's ready routed backlog P0 first, up to project capacity; `fleet-records` owns the routed-backlog record.
 A `core/goal-loop` wake names a Goal step: take it like any ready item (ship or fix: spawn a worker and close the step row when the work lands). Stop the Goal with `bin/jg-goal.sh stop` for an owner-only call, a credential, a quota or an outside wait; closing the stop row resumes it.
@@ -80,6 +82,7 @@ Do not add model-specific versions of that policy.
 ## Spawn handoff and steering
 
 When the configured the backlog backlog gate applies, the spawn itself moves the work item to In flight and refuses rather than dispatching work this home has no item for, so recording the dispatch is never a separate step to remember; a manual-backend home retains the hand-editing contract in `docs/configuration.md`.
+Before writing a brief for a plan's slice, file the slice as a real child: `bin/jg-backlog.sh add --parent <ask> "<title>"` (a second worker's part of a slice: `--parent <slice>`), never a `parent:` body line; use `link` for anything that is not "part of".
 After spawning, confirm the worker is processing the brief and handle any trust dialog through `harness-adapters`.
 A persistent Squad Lead is recorded in the Squad Lead registry and runtime state, never as a backlog work item.
 

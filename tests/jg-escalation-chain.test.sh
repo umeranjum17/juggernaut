@@ -14,11 +14,16 @@ FORK="$TMP_ROOT/fork"
 mkdir -p "$FORK"
 # toolchain.versions pins the bd and dolt that the copied backlog scripts run.
 cp -a "$ROOT/bin" "$ROOT/core" "$ROOT/toolchain.versions" "$FORK/"
-# The steer and interrupt endpoints record their calls in the calling home.
+# The steer and interrupt endpoints record their calls in the calling home. A home
+# holding a real-steer file also delivers each steer through the real jg-send (kept
+# as jg-send-real.sh), so its inbox records and decision closes are the real ones.
+cp "$FORK/bin/jg-send.sh" "$FORK/bin/jg-send-real.sh"
 for f in jg-send.sh jg-control.sh; do
   # shellcheck disable=SC2016 # the recorder expands its own arguments when run
   printf '#!/usr/bin/env bash\nprintf "%%s %%s\\n" %s "$*" >> "$JG_HOME/sent"\n' "${f%.sh}" > "$FORK/bin/$f"
 done
+# shellcheck disable=SC2016 # the recorder expands its own arguments when run
+printf '[ ! -e "$JG_HOME/real-steer" ] || exec "$(dirname "$0")/jg-send-real.sh" "$@"\n' >> "$FORK/bin/jg-send.sh"
 
 # A home with a recorded terminal (fake:<n> panes listed in $JG_FAKE_PANES,
 # each showing $h/panes/<n>, an agent in the foreground) and a recording board.
@@ -84,7 +89,7 @@ SH
 # A cycle keeps the four-second budget it always had, minus its one hard edge: it
 # never stops inside a scan. A scan that overruns the budget (a loaded runner) is
 # allowed to finish, so the wake it was about to report is not lost with it. The
-# watcher stamps its liveness beacon after each complete scan, so the wait ends at
+# watcher publishes scan completion after each complete scan, so the wait ends at
 # a scan boundary instead of in the middle of one.
 cycle() {  # <home> [absent]
   local h=$1 rc=0 seq gen pid successor=0 mark
@@ -95,7 +100,7 @@ cycle() {  # <home> [absent]
     JG_HOME="$h" JG_STATE_OVERRIDE="$h/state" JG_CONFIG_OVERRIDE="$h/config" \
     JG_POLL=1 JG_SIGNAL_GRACE=1 JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999 JG_HOME_SUMMARY_INTERVAL=999999 \
     JG_SQUAD_LEAD_LIVENESS_SECS="${LIVENESS:-99999999}" JG_BUSY_TURN_MAX_SECS=999999 JG_STALE_ESCALATE_SECS=999999 \
-    JG_SQUAD_LEAD_WAKE_STALL_SECS=999999 JG_WAIT_ALERT_SECS=2 JG_WAIT_ESCALATE_SECS=4 JG_WAIT_CARD_SECS="${CARD_SECS:-6}" \
+    JG_SQUAD_LEAD_WAKE_STALL_SECS=999999 JG_WAIT_ALERT_SECS="${ALERT_SECS:-2}" JG_WAIT_ESCALATE_SECS="${ESCALATE_SECS:-4}" JG_WAIT_CARD_SECS="${CARD_SECS:-6}" \
     JG_READY_STALL_POLL_SECS=0 JG_GREEN_PR_POLL_SECS=0 \
     JG_PROMPT_REALERT_SECS=900 JG_FAKE_PANES="${PANES:-}" "$FORK/bin/jg-watch.sh" > "$h/out" 2> "$h/err" &
   pid=$!
@@ -131,12 +136,14 @@ cycle_until() {  # <home> <extended-regex> [absent]
 # Wait for one owned watcher cycle. Return its exit status when the watcher
 # reports a wake. Otherwise stop it after <budget> hundred-millisecond polls, or
 # after <limit> polls when a scan that was already running crossed that budget:
-# that scan finishes and the cycle ends on its beacon, not inside it.
+# that scan finishes and the cycle ends on its completion marker, not inside it.
 wait_for_scan() {  # <pid> <state> <mark> <budget> <limit>
   local pid=$1 state=$2 mark=$3 budget=${4:-40} limit=${5:-600} i=0
   while [ "$i" -lt "$limit" ]; do
     is_live_non_zombie "$pid" || break
-    if [ "$i" -ge "$budget" ] && [ "$state/.last-watcher-beat" -nt "$mark" ]; then
+    # Ignore scans completed before the budget; another scan may be under way.
+    [ "$i" -ne "$budget" ] || touch "$mark"
+    if [ "$i" -ge "$budget" ] && [ "$state/.watch.lock/scan-complete" -nt "$mark" ]; then
       break
     fi
     sleep 0.1
@@ -167,7 +174,7 @@ slow_panes() {  # <home> <secs>
   local t="$1/fakebin/tmux"
   mv "$t" "$t.real"
   # shellcheck disable=SC2016 # the wrapper expands its own arguments when run
-  printf '#!/usr/bin/env bash\nsleep %s\nexec "$(dirname "$0")/tmux.real" "$@"\n' "$2" > "$t"
+  printf '#!/usr/bin/env bash\nsleep %s\n[ ! -e "$JG_HOME/state/.last-watcher-beat" ] || [ -e "$JG_HOME/state/.watch.lock/scan-complete" ] || touch "$JG_HOME/progress-before-completion"\nexec "$(dirname "$0")/tmux.real" "$@"\n' "$2" > "$t"
   chmod +x "$t"
 }
 
@@ -201,6 +208,11 @@ lead_home() {  # <name> <main> -> lead home path
   local l
   l=$(home "$1")
   mkdir -p "$l/data"
+  # A real lead has this required check registered; without it the repair wake
+  # ends the first watcher cycle before the backlog timer can run.
+  printf '#!/usr/bin/env bash\nexec %q check %q\n' "$FORK/core/trunk-latency/latency.sh" "$l" > "$l/state/trunk-latency.check.sh"
+  chmod 700 "$l/state/trunk-latency.check.sh"
+  JG_HOME="$l" "$FORK/bin/jg-check-register.sh" trunk-latency >/dev/null
   printf 'lead1\n' > "$l/.jg-squad-lead-home"
   printf 'schema=jg-squad-lead-parent.v1\nroute=local\nparent_home=%s\n' "$2" > "$l/.jg-squad-lead-parent"
   printf '%s\n' "$l"
@@ -386,16 +398,16 @@ test_lead_idle_is_steered_without_interrupt() {
   pass "an idle lead with a stuck worker is steered at once, naming the worker and its wait, and again every interval"
 }
 
-test_busy_lead_is_interrupted_first() {
+test_busy_lead_is_steered_without_interrupt() {
   local m
   m=$(home lead-busy)
   lead_meta "$m" lead1 1 "$m/lead-home"
   "$FORK/bin/jg-busy-event.sh" arm "$m/state" lead1 >/dev/null
   overdue_report "$m" lead1 w1 0
   PANES=1 cycle "$m"
-  [ "$(sed -n 1p "$m/sent")" = "jg-control lead1 interrupt" ] || fail "a busy lead was not interrupted first: $(cat "$m/sent" 2>&1)"
-  sed -n 2p "$m/sent" | grep -q '^jg-send lead1 --fire-and-forget .*Your worker w1' || fail "the interrupted lead was not told about its worker"
-  pass "a lead busy mid-turn is interrupted, then told its worker is blocked"
+  ! grep -q '^jg-control' "$m/sent" || fail "a busy lead was interrupted: $(cat "$m/sent" 2>&1)"
+  sed -n 1p "$m/sent" | grep -q '^jg-send lead1 --fire-and-forget .*Your worker w1' || fail "the busy lead was not told about its worker"
+  pass "a lead busy mid-turn is told its worker is blocked, and is not interrupted"
 }
 
 test_lead_stuck_on_a_prompt_reaches_the_board() {
@@ -449,6 +461,11 @@ test_dead_lead_still_reaches_the_board_and_relaunch_represents() {
   printf 'needs-decision [key=q]: pick a database\n' > "$l/state/w1.status"
   prime_status_seen "$l/state" "$l/state/w1.status"
   printf 'session-one\n' > "$l/state/.lock-session"
+  # A lead home has its required check installed before supervision starts.
+  cp -a "$FORK/bin" "$l/bin"
+  mkdir -p "$l/core"
+  cp -a "$FORK/core/trunk-latency" "$l/core/"
+  HOME="$l/home" JG_HOME="$l" bash "$l/core/trunk-latency/wiring.sh" "$l" >/dev/null
   PANES=1 cycle "$l"
   backdate "$l" w1 10
   PANES=1 cycle "$l"
@@ -977,6 +994,7 @@ codex|question|Question 1/1\n  1. Yes\n  2. No\nPress enter to confirm or esc to
 gemini|question|Choose an option\n  1. Continue\nEnter to submit · Esc to cancel
 kimi|question|Select one\n  a) first\nPress Enter to select, Esc to skip
 cursor|question|Which file?\n  1. a.ts\nenter to select · esc to cancel
+claude-account|account|● Working\nClaude Code can't use your Claude subscription\n> 
 claude-quota|quota|⎿ You've hit your limit · resets 3pm\n> 
 codex-quota|quota|■ You've hit your usage limit. Upgrade or try again at 9:41 PM.\n> 
 pi-quota|quota|Error: 429 Too Many Requests - rate limit exceeded\n> 
@@ -1018,6 +1036,7 @@ test_a_slow_scan_reports_the_wake_it_found() {
   printf '%s\n' "$TRUST" > "$m/panes/3"
   slow_panes "$m" 2.5
   PANES='1 2 3' cycle "$m"
+  [ -e "$m/progress-before-completion" ] || fail "the slow scan never published progress before completion"
   grep -q '^stale: fake:3 (permission prompt' "$m/events" \
     || fail "a wake found on the last pane of a slow scan was lost: $(cat "$m/events")"
   pass "a cycle waits for the scan that finds its wake, however slow the runner is"
@@ -1277,6 +1296,224 @@ test_memory_refused_launch_reraises_when_admission_clears() {
   pass "a memory-refused launch rings once while its record stands, and stops when it clears"
 }
 
+# Known next steps (core/wait-timers/README.md): the ladder takes them itself, so
+# no rung wakes the owner or Main while a step is left. Each case runs the real
+# jg-send (real-steer), so the inbox records and the decision close are real.
+
+# A worker that has gone quiet mid-task: it says it is working and its pane and
+# status have not changed for 20 minutes, so the watcher raises its silent source.
+silence_worker() {  # <home> <task> <pane>
+  local m=$1 n mark="$1/tmp/silent-mark"
+  printf 'kind=ship\nbackend=tmux\nwindow=fake:%s\nharness=claude\n' "$3" > "$m/state/$2.meta"
+  printf 'working [at=1]: running the suite\n' > "$m/state/$2.status"
+  prime_status_seen "$m/state" "$m/state/$2.status"
+  for n in 1 2 3 4 5 6 7 8; do
+    touch "$mark"
+    cycle "$m"
+    [ -s "$m/state/.silent-seen-fake_$3" ] && [ ! "$m/state/.silent-seen-fake_$3" -nt "$mark" ] && break
+  done
+  touch -d '-20 minutes' "$m/state/.silent-seen-fake_$3" "$m/state/$2.status"
+  prime_status_seen "$m/state" "$m/state/$2.status"
+  cycle_for "$m" 120 test -e "$m/state/.waiting-timers/$2"
+  grep -q '^silent: no status line or pane change' "$m/state/.wait-sources/$2.silent" 2>/dev/null \
+    || fail "$2 silent 20 minutes armed no silent wait: $(ls -a "$m/state/.wait-sources" 2>&1; cat "$m/err")"
+}
+
+# The row the metrics ledger holds for <task>, or nothing.
+ledger_row() {  # <home> <task>
+  awk -F '\t' -v t="$2" '$2 == t' "$1/data/metrics/escalations.tsv" 2>/dev/null
+}
+
+test_a_silent_worker_is_rung_and_clears_with_no_model_turn() {
+  # Wide gaps between rungs, so arming takes no step and one test cycle takes one.
+  local m row CYCLE_POLLS=100 PANES=1 ALERT_SECS=30 ESCALATE_SECS=90 CARD_SECS=600
+  m=$(home silent-ring)
+  : > "$m/real-steer"
+  silence_worker "$m" sr 1
+  backdate "$m" sr 31
+  cycle_for "$m" 120 test -e "$m/state/.waiting-timers/.acted/sr"
+  grep -qx 'silent	[0-9]*	ring	[0-9]*' "$m/state/.waiting-timers/.acted/sr" \
+    || fail "the silent worker was not rung by the ladder: $(cat "$m/state/.waiting-timers/.acted/sr" 2>&1; cat "$m/err")"
+  grep -l 'no status line and shown no new output' "$m/state/sr.inbox/"*.msg >/dev/null 2>&1 \
+    || fail "the ring did not reach the worker's inbox: $(ls -la "$m/state/sr.inbox" 2>&1; cat "$m/sent" 2>&1)"
+  # The worker reads the steer and reports where it is.
+  printf 'working [at=%s]: back; the suite had hung on a lock\n' "$(date +%s)" >> "$m/state/sr.status"
+  cycle_for "$m" 120 test ! -e "$m/state/.waiting-timers/sr"
+  [ ! -e "$m/state/.waiting-timers/sr" ] || fail "the answered ring left the wait open: $(cat "$m/state/.waiting-timers/sr")"
+  ! grep -q 'waiting-state sr' "$m/events" || fail "a rung wait still woke a model: $(cat "$m/events")"
+  ! grep -q '^jg-control ' "$m/sent" 2>/dev/null || fail "an answered ring was relaunched: $(cat "$m/sent")"
+  row=$(ledger_row "$m" sr)
+  printf '%s\n' "$row" | grep -qE '^[0-9]+	sr	waiting-timer-[^	]+	[0-9]+	[0-9]+\.[0-9]	owner	ring	changed state$' \
+    || fail "the ledger has no row with the cleared minutes: $(cat "$m/data/metrics/escalations.tsv" 2>&1)"
+  printf 'silent ring: cleared in %s min, no model turn\n' "$(printf '%s' "$row" | cut -f5)"
+  pass "a silent worker is rung by the ladder, clears when it reports, and the ledger holds the minutes, with no owner or Main wake"
+}
+
+test_an_unanswered_ring_is_relaunched_then_reaches_main() {
+  local m row CYCLE_POLLS=100 PANES=1 ALERT_SECS=30 ESCALATE_SECS=90 CARD_SECS=600
+  m=$(home silent-relaunch)
+  : > "$m/real-steer"
+  silence_worker "$m" sq 1
+  backdate "$m" sq 31
+  cycle_for "$m" 120 test -e "$m/state/.waiting-timers/.acted/sq"
+  # No answer: the next rung is stuck-operator recovery's relaunch, not a wake.
+  backdate "$m" sq 61
+  cycle_for "$m" 120 grep -q '^jg-control sq relaunch --note ' "$m/sent"
+  grep -q '^jg-control sq relaunch --note The watcher relaunched you' "$m/sent" \
+    || fail "an unanswered ring was not relaunched: $(cat "$m/sent" 2>&1; cat "$m/state/.waiting-timers/.acted/sq" 2>&1)"
+  grep -q 'relaunch exit=0' "$m/state/.waiting-timers/.acted/sq.relaunch.log" || fail "the relaunch outcome was not logged"
+  ! grep -q 'waiting-state sq' "$m/events" || fail "a wait with a step left woke a model: $(cat "$m/events")"
+  # Both steps spent and still silent: the table's next owner, the lead (Main
+  # in this home), gets the owner wake; only then does the Main rung follow.
+  backdate "$m" sq 61
+  cycle_for "$m" 120 grep -q 'waiting-state sq (silent, .*level=owner' "$m/events"
+  grep -q 'check: waiting-state sq (silent, .*level=owner' "$m/events" \
+    || fail "the lead was not handed the wait after the steps were spent: $(cat "$m/events"; cat "$m/state/.waiting-timers/.acted/sq")"
+  ! grep -q 'waiting-state sq (silent, .*level=main' "$m/events" || fail "Main was woken before the lead: $(cat "$m/events")"
+  backdate "$m" sq 61
+  cycle_for "$m" 120 grep -q 'waiting-state sq (silent, .*level=main' "$m/events"
+  grep -q 'check: waiting-state sq (silent, .*level=main; the ladder already took: ring, relaunch, lead; Main must unblock it now)' "$m/events" \
+    || fail "Main was not told after the lead: $(cat "$m/events")"
+  printf 'working [at=%s]: resumed after the relaunch\n' "$(date +%s)" >> "$m/state/sq.status"
+  cycle_for "$m" 120 test ! -e "$m/state/.waiting-timers/sq"
+  row=$(ledger_row "$m" sq)
+  printf '%s\n' "$row" | grep -qE '	main	ring, relaunch, lead	changed state$' \
+    || fail "the ledger row does not name the rung and the steps: $(cat "$m/data/metrics/escalations.tsv" 2>&1)"
+  pass "an unanswered ring is relaunched by the ladder, then the lead owns it, Main hears only after that, and the ledger names the steps"
+}
+
+test_a_ready_recon_draft_is_forwarded_to_its_critic() {
+  local m w row draft=/drafts/rc/report.md CYCLE_POLLS=100 PANES='1 2 3 4'
+  m=$(home critic-forward)
+  : > "$m/real-steer"
+  # rc's critic was started before this draft; rd's after it, so rd's critic already has its draft.
+  printf 'kind=scout\nbackend=tmux\nwindow=fake:1\nharness=claude\n' > "$m/state/rc.meta"
+  printf 'kind=scout\nbackend=tmux\nwindow=fake:2\nharness=claude\nspawn_gen=s1000.1.1\n' > "$m/state/rc-critic.meta"
+  printf 'kind=scout\nbackend=tmux\nwindow=fake:3\nharness=claude\n' > "$m/state/rd.meta"
+  printf 'kind=scout\nbackend=tmux\nwindow=fake:4\nharness=claude\nspawn_gen=s%s.1.1\n' "$(($(date +%s) + 60))" > "$m/state/rd-critic.meta"
+  printf 'needs-decision [at=%s]: draft 2 ready for critic round 2 - %s\n' "$(date +%s)" "$draft" > "$m/state/rc.status"
+  printf 'needs-decision [at=%s]: draft ready for the separate critic - /drafts/rd/report.md\n' "$(date +%s)" > "$m/state/rd.status"
+  for w in rc rd; do prime_status_seen "$m/state" "$m/state/$w.status"; done
+  cycle_for "$m" 120 test -e "$m/state/.waiting-timers/rc" -a -e "$m/state/.waiting-timers/rd"
+  backdate "$m" rc 3
+  backdate "$m" rd 3
+  cycle_for "$m" 120 test ! -e "$m/state/.waiting-timers/rc" -a ! -e "$m/state/.waiting-timers/rd"
+  grep -l "Recon rc declared its draft ready for your next round: draft 2 ready for critic round 2 - $draft" "$m/state/rc-critic.inbox/"*.msg >/dev/null 2>&1 \
+    || fail "the draft did not reach its critic: $(cat "$m/state/rc-critic.inbox/"*.msg 2>&1; cat "$m/err")"
+  grep -q '^resolved \[key=default\].*forwarded to the critic rc-critic' "$m/state/rc.status" \
+    || fail "the forward did not close the draft decision: $(cat "$m/state/rc.status")"
+  [ ! -d "$m/state/rd-critic.inbox" ] || ! ls "$m/state/rd-critic.inbox/"*.msg >/dev/null 2>&1 \
+    || fail "a critic that already had the draft was sent it again: $(cat "$m/state/rd-critic.inbox/"*.msg)"
+  grep -q '^resolved \[key=default\].*rd-critic already has this draft' "$m/state/rd.status" \
+    || fail "a draft its critic already had was left open: $(cat "$m/state/rd.status")"
+  ! grep -qE 'waiting-state r[cd] ' "$m/events" || fail "a forwarded draft woke a model: $(cat "$m/events")"
+  row=$(ledger_row "$m" rc)
+  printf '%s\n' "$row" | grep -qE '	owner	forward	changed state$' \
+    || fail "the ledger has no row for the forwarded draft: $(cat "$m/data/metrics/escalations.tsv" 2>&1)"
+  printf 'critic forward: cleared in %s min, no model turn\n' "$(printf '%s' "$row" | cut -f5)"
+  pass "a ready Recon draft is forwarded to its critic and its decision closed by the ladder, a critic that has it is not sent it twice, and the ledger holds the minutes"
+}
+
+# Account outage (core/wait-timers/README.md "Known next steps"): the pinned Claude
+# account dies, and the watcher moves the lanes to the owner's next recorded
+# account, or only raises its one card when he recorded none.
+
+# A home pinned to account a, whose Claude CLI answers PONG on any account but a.
+# w1 and w2 are working on a, wd is finished on a, wo works on b (another account).
+account_outage_home() {  # <name> -> home path
+  local m
+  m=$(home "$1")
+  mkdir -p "$m/acct/a" "$m/acct/b" "$m/acct/c"
+  printf '%s\n' "$m/acct/a" > "$m/config/claude-account"
+  cat > "$m/fakebin/claude" <<'SH'
+#!/usr/bin/env bash
+case "${CLAUDE_CONFIG_DIR:-}" in
+  */a|*/c) echo "Claude Code can't use your Claude subscription: payment past due"; exit 1 ;;
+esac
+echo PONG
+SH
+  chmod +x "$m/fakebin/claude"
+  local n=0 w
+  for w in w1:working w2:working wd:done wo:working; do
+    n=$((n + 1))
+    printf 'kind=ship\nbackend=tmux\nwindow=fake:%s\nharness=claude\naccount=%s\n' "$n" "$m/acct/$([ "${w%%:*}" = wo ] && echo b || echo a)" > "$m/state/${w%%:*}.meta"
+    printf '%s [at=1]: on it\n' "${w#*:}" > "$m/state/${w%%:*}.status"
+    prime_status_seen "$m/state" "$m/state/${w%%:*}.status"
+  done
+  printf 'Claude Code can'"'"'t use your Claude subscription\n> \n' > "$m/panes/1"
+  cp "$m/panes/1" "$m/panes/2"
+  cp "$m/panes/1" "$m/panes/3"
+  printf '%s\n' "$m"
+}
+
+test_a_dead_account_moves_the_lanes_to_the_recorded_fallback_with_no_model_turn() {
+  local m row CYCLE_POLLS=100 PANES='1 2 3 4' ALERT_SECS=30 ESCALATE_SECS=90 CARD_SECS=600
+  m=$(account_outage_home account-down)
+  printf '%s\n%s\n' "$m/acct/a" "$m/acct/b" > "$m/config/claude-account-fallbacks"
+  cycle_for "$m" 120 test -e "$m/state/.waiting-timers/w1" -a -e "$m/state/.waiting-timers/w2"
+  [ -f "$m/state/.wait-sources/w1.account" ] || fail "a subscription error in the pane raised no account wait: $(ls -a "$m/state/.wait-sources" 2>&1)"
+  backdate "$m" w1 31
+  backdate "$m" w2 31
+  cycle_for "$m" 120 grep -q 'relaunch.*w2' "$m/state/.account-outage/relaunch.log"
+  [ "$(cat "$m/config/claude-account")" = "$m/acct/b" ] \
+    || fail "the pin did not move to the recorded fallback: $(cat "$m/config/claude-account"; cat "$m/err")"
+  cycle_for "$m" 20 test "$(grep -c '^jg-control .* relaunch ' "$m/sent" 2>/dev/null || echo 0)" -ge 2
+  [ "$(grep -cE '^jg-control w[12] relaunch --note ' "$m/sent")" = 2 ] \
+    || fail "a lane on the dead account was not relaunched: $(cat "$m/sent" 2>&1; cat "$m/state/.account-outage/relaunch.log" 2>&1)"
+  ! grep -qE '^jg-control (wd|wo) ' "$m/sent" || fail "a finished lane or a lane on another account was relaunched: $(cat "$m/sent")"
+  [ "$(grep -c '^raise ' "$m/cards")" = 1 ] || fail "the outage did not raise exactly one card: $(cat "$m/cards" 2>&1)"
+  grep -q 'Renew the Claude account?' "$m/cards" || fail "the card does not ask the owner to renew: $(cat "$m/cards")"
+  ! grep -q 'waiting-state' "$m/events" 2>/dev/null || fail "the recovery woke a model: $(cat "$m/events")"
+  # The relaunched lanes show a quiet pane: the waits clear and the ledger holds the minutes.
+  printf 'working on it\n> \n' > "$m/panes/1"
+  cp "$m/panes/1" "$m/panes/2"
+  printf 'working [at=%s]: back on the new account\n' "$(date +%s)" | tee -a "$m/state/w1.status" >> "$m/state/w2.status"
+  cycle_for "$m" 120 test ! -e "$m/state/.waiting-timers/w1" -a ! -e "$m/state/.waiting-timers/w2"
+  row=$(ledger_row "$m" w1)
+  printf '%s\n' "$row" | grep -qE '	[0-9]+\.[0-9]	(owner|card)	recover	' \
+    || fail "the ledger has no row with the outage minutes: $(cat "$m/data/metrics/escalations.tsv" 2>&1)"
+  printf 'account outage: cleared in %s min, no model turn\n' "$(printf '%s' "$row" | cut -f5)"
+  pass "a dead account moves its lanes to the next recorded fallback, relaunches only them, raises one card and records the minutes, with no model turn"
+}
+
+test_an_empty_fallback_list_raises_one_card_and_changes_nothing() {
+  local m listed CYCLE_POLLS=100 PANES='1 2 3 4' ALERT_SECS=30 ESCALATE_SECS=90 CARD_SECS=600
+  for listed in empty none; do
+    m=$(account_outage_home "account-down-$listed")
+    [ "$listed" = none ] || : > "$m/config/claude-account-fallbacks"
+    cycle_for "$m" 120 test -e "$m/state/.waiting-timers/w1" -a -e "$m/state/.waiting-timers/w2"
+    backdate "$m" w1 31
+    backdate "$m" w2 31
+    cycle_for "$m" 120 test -s "$m/cards"
+    cycle "$m"
+    [ "$(cat "$m/config/claude-account")" = "$m/acct/a" ] || fail "($listed) the pin moved with no recorded fallback: $(cat "$m/config/claude-account")"
+    ! grep -q '^jg-control ' "$m/sent" 2>/dev/null || fail "($listed) a pane was relaunched with no recorded fallback: $(cat "$m/sent")"
+    [ "$(grep -c '^raise ' "$m/cards")" = 1 ] || fail "($listed) the outage did not raise exactly one card: $(cat "$m/cards" 2>&1)"
+  done
+  pass "with no recorded fallback the outage raises one card, moves no pin and relaunches nothing"
+}
+
+test_a_working_account_is_not_treated_as_down() {
+  local m CYCLE_POLLS=100 PANES='1 2 3 4' ALERT_SECS=30 ESCALATE_SECS=90 CARD_SECS=600
+  m=$(account_outage_home account-up)
+  printf '%s\n%s\n' "$m/acct/a" "$m/acct/b" > "$m/config/claude-account-fallbacks"
+  printf '%s\n' "$m/acct/b" > "$m/config/claude-account"
+  sed -i "s|acct/a|acct/b|" "$m/state/w1.meta" "$m/state/w2.meta"
+  cycle_for "$m" 120 test -e "$m/state/.waiting-timers/w1"
+  backdate "$m" w1 31
+  cycle "$m"; cycle "$m"
+  [ "$(cat "$m/config/claude-account")" = "$m/acct/b" ] || fail "an account that answers its probe was switched away: $(cat "$m/config/claude-account")"
+  ! grep -q '^jg-control ' "$m/sent" 2>/dev/null || fail "a lane on a working account was relaunched: $(cat "$m/sent")"
+  [ ! -s "$m/cards" ] || fail "a working account raised an outage card: $(cat "$m/cards")"
+  pass "an account that answers its probe is not treated as down"
+}
+
+test_a_silent_worker_is_rung_and_clears_with_no_model_turn
+test_an_unanswered_ring_is_relaunched_then_reaches_main
+test_a_ready_recon_draft_is_forwarded_to_its_critic
+test_a_dead_account_moves_the_lanes_to_the_recorded_fallback_with_no_model_turn
+test_an_empty_fallback_list_raises_one_card_and_changes_nothing
+test_a_working_account_is_not_treated_as_down
 test_a_stale_wake_names_its_task_and_reason
 test_a_finished_landed_worker_is_cleaned_up_without_a_wake
 test_a_finished_unlanded_worker_is_kept_and_wakes_with_its_reason
@@ -1289,7 +1526,7 @@ test_a_declared_quota_pause_is_a_wait
 test_a_slow_scan_reports_the_wake_it_found
 test_question_and_quota_ride_the_chain_whatever_the_terminal_says
 test_silent_worker_climbs_whatever_it_declared
-test_busy_lead_is_interrupted_first
+test_busy_lead_is_steered_without_interrupt
 test_lead_stuck_on_a_prompt_reaches_the_board
 test_dead_lead_still_reaches_the_board_and_relaunch_represents
 test_lead_supervision_not_running_is_a_main_wait

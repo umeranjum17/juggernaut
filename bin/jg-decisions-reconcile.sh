@@ -293,12 +293,13 @@ cmd_check() {
   logged=$(cut -f1 "$LOG" 2>/dev/null) || logged=''
 
   # One backlog read for the whole pass (jg_backlog_row_list is the single owner
-  # of backlog reads, and row_state reads this one listing).
+  # of backlog reads, and row_state reads this one listing). A plain list holds
+  # open rows only, and a card is cleared for a task that is done, so it reads --all.
   ROWS=''
   BACKLOG_DATA=''
   if backlog_data=$(jg_backlog_data_absolute "$DATA" 2>/dev/null); then
     BACKLOG_DATA=$backlog_data
-    ROWS=$(jg_backlog_row_list "$backlog_data" 2>/dev/null) || ROWS=''
+    ROWS=$(jg_backlog_row_list "$backlog_data" --all 2>/dev/null) || ROWS=''
   fi
   # Every task id this home knows, from a task record or a backlog row. A card
   # may only be tied to an id on this list, and to none other.
