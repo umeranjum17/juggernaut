@@ -87,6 +87,7 @@ plan=(
   fleet-flow:plain
   fleet-pulse:home
   fleet-stall:env
+  fleet-report:env
   key-in-env-check:env
   zai-quota-check:env
   nm-drain:home
