@@ -3608,6 +3608,13 @@ while ! jg_lock_try_acquire "$WATCH_LOCK"; do
         EVICTED_BEAT_AGE=$beat_age
         continue
       fi
+      # A live, identity-matched holder below the stall bound is a slow beat, not
+      # a failure: it is the one watcher of this home, so this arm stands down.
+      if [ "$beat_age" -lt "$WATCHER_STALL_BOUND" ] \
+        && jg_watcher_lock_matches_pid "$STATE" "$WATCH_PATH" "$JG_LOCK_HELD_PID" "$JG_HOME"; then
+        echo "watcher: already running pid $JG_LOCK_HELD_PID"
+        exit 0
+      fi
       echo "watcher: lock held by live pid $JG_LOCK_HELD_PID but heartbeat is stale for ${beat_age}s (>${WATCHER_STALE_GRACE}s); inspect or stop that watcher before re-arming." >&2
       exit 1
     fi

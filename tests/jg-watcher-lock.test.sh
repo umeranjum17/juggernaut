@@ -246,7 +246,7 @@ test_live_stale_watch_lock_is_actionable() {
 }
 
 test_live_stalled_watch_lock_is_replaced_past_hard_bound() {
-  # A live holder whose beacon is stale past the ordinary grace is refused, but
+  # A live holder whose beacon is stale past the ordinary grace stands the arm down, but
   # a beacon stale past the hard bound evicts that holder (identity-verified
   # TERM) and the arm starts in its place - the deadlock where every re-arm
   # died against a live-but-stalled watcher while nothing polled the home.
@@ -271,8 +271,8 @@ test_live_stalled_watch_lock_is_replaced_past_hard_bound() {
   touch -t 200001010000 "$state/.last-watcher-beat"
   status=0
   PATH="$fakebin:$PATH" JG_HOME="$dir" JG_STATE_OVERRIDE="$state" JG_GUARD_GRACE=1 JG_WATCHER_STALL_BOUND=9999999999 JG_POLL=5 JG_SIGNAL_GRACE=1 JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999 "$WATCH" > "$out" 2> "$err" || status=$?
-  [ "$status" -ne 0 ] || fail "watcher replaced a holder whose beacon was under the hard bound"
-  grep -F 'heartbeat is stale' "$err" >/dev/null || fail "under-bound stale holder lost its refusal"
+  [ "$status" -eq 0 ] || fail "a live identity-matched holder under the hard bound refused the arm ($status)"
+  grep -Fx "watcher: already running pid $holder" "$out" >/dev/null || fail "under-bound stale holder was not reported as already running"
   is_live_non_zombie "$holder" || fail "under-bound stale holder was signalled"
   # Same holder and beacon, a bound it is past -> evicted and replaced.
   PATH="$fakebin:$PATH" JG_HOME="$dir" JG_STATE_OVERRIDE="$state" JG_GUARD_GRACE=1 JG_WATCHER_STALL_BOUND=3 JG_POLL=5 JG_SIGNAL_GRACE=1 JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999 "$WATCH" > "$out" 2> "$err" &

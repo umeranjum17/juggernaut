@@ -149,7 +149,7 @@ WATCH="$SCRIPT_DIR/jg-watch.sh"
 WATCH_LOCK="$STATE/.watch.lock"
 BEAT="$STATE/.last-watcher-beat"
 # "Fresh" reuses the guard's threshold so there is one definition of liveness.
-GRACE=${JG_GUARD_GRACE:-300}
+GRACE=${JG_GUARD_GRACE:-$(jg_poll_derived_grace)}
 # Poll interval while attached to an existing healthy watcher.
 ATTACH_POLL=${JG_ARM_ATTACH_POLL:-0.5}
 # The beacon age at which the watcher's own re-arm evicts a live holder; an

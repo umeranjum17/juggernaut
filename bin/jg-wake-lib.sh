@@ -243,8 +243,28 @@ jg_watcher_first_scan_age() {
   printf '%s\n' "$age"
 }
 
+# jg_host_load_scale
+# Whole-number factor (>=1) a beacon deadline stretches by under host load:
+# ceil(1-minute load average / CPU count). A watcher beats from a shell loop, so a
+# saturated host delays the beat without the watcher being dead; liveness there is
+# the pid, and the beat limit only has to outlast the delay. JG_HOST_LOAD and
+# JG_HOST_CPUS replace the reads (tests, and a host with no /proc/loadavg).
+jg_host_load_scale() {
+  local load cpus scale
+  load=${JG_HOST_LOAD:-$(cut -d' ' -f1 /proc/loadavg 2>/dev/null || true)}
+  cpus=${JG_HOST_CPUS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)}
+  case "$cpus" in ''|*[!0-9]*|0) cpus=1 ;; esac
+  load=${load%%.*}
+  case "$load" in ''|*[!0-9]*) load=0 ;; esac
+  scale=$(( (load + cpus - 1) / cpus ))
+  [ "$scale" -ge 1 ] || scale=1
+  printf '%s\n' "$scale"
+}
+
 # jg_poll_derived_grace [poll-seconds]
-# Default guard-grace derivation: max(300, poll + 60). A watcher touches its
+# Default guard-grace derivation: max(300, poll + 60), stretched by
+# jg_host_load_scale so a slow beat under load is not read as a dead watcher.
+# A watcher touches its
 # liveness beacon once per poll cycle, so a fixed 300s grace stops correctly
 # bounding staleness once the poll cadence reaches or exceeds it; growing the
 # default with the cadence while keeping the historical 300s floor for the
@@ -259,7 +279,7 @@ jg_poll_derived_grace() {
   case "$poll" in ''|*[!0-9]*) poll=15 ;; esac
   derived=$((poll + margin))
   [ "$derived" -ge 300 ] || derived=300
-  printf '%s\n' "$derived"
+  printf '%s\n' "$((derived * $(jg_host_load_scale)))"
 }
 
 # jg_watcher_stall_bound [poll-seconds]
