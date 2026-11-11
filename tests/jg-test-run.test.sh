@@ -72,6 +72,25 @@ test_required_shards_keep_the_union_and_a_failed_shard() {
   pass 'the eight required shards keep the selected union and retain a failed shard in the aggregate'
 }
 
+# A script tests/gate-quarantine.tsv lists is selected by the gate's changed files but never run: the gate lists it with its reason and
+# still passes, so one hung or flaky script cannot hold a landing. The same script outside the quarantine fails the gate (the case above).
+test_a_quarantined_script_is_listed_not_run_and_the_gate_passes() {
+  local fixture=$TMP_ROOT/quarantine out rc=0
+  # shellcheck disable=SC2016 # the body runs in the fixture script, not here
+  required_fixture "$fixture" 'echo "Umer hung fixture"; touch "$(dirname "$0")/ran-marker"; exit 1'
+  printf 'tests/required-feature.test.sh\thung under --jobs 1 (fixture)\n' >"$fixture/tests/gate-quarantine.tsv"
+  git -C "$fixture" add tests/gate-quarantine.tsv
+  git -C "$fixture" -c user.name=t -c user.email=t@example.invalid commit -qm 'quarantine the feature script'
+  printf '# touched\n' >>"$fixture/tests/required-feature.test.sh"
+  git -C "$fixture" -c user.name=t -c user.email=t@example.invalid commit -qam 'touch the quarantined script'
+  out=$(bash "$fixture/bin/jg-test-run.sh" --required-shards HEAD^ "$TMP_ROOT/quarantine-results" 2>&1) || rc=$?
+  [ "$rc" = 0 ] || fail "a quarantined script held the gate: rc=$rc $out"
+  assert_contains "$out" 'JG_TEST_QUARANTINED tests/required-feature.test.sh reason=hung under --jobs 1 (fixture)' 'the gate must record the quarantine with its reason'
+  [ ! -e "$fixture/tests/ran-marker" ] || fail "the quarantined script ran: $out"
+  jq -e '.summary.total == 0 and .summary.failed == 0' "$TMP_ROOT/quarantine-results/required.json" >/dev/null || fail "the aggregate counted the quarantined script: $out"
+  pass 'a quarantined script is listed with its reason, not run, and the gate still passes'
+}
+
 # trunk tip 52dd4fd44 went red as "aggregate input not found: shard-1.json", on all eight shards at once: the commit range held
 # bin/jg-digest-cap-lib.sh, which no test names, so each shard stopped at selection ("no changed-test mapping") before it
 # wrote its result, and the aggregate then reported the missing file in place of the real cause. A shard that stops for any
@@ -523,5 +542,6 @@ test_a_changed_core_script_selects_the_scripts_that_name_it
 test_a_changed_fleet_homes_library_selects_the_move_test
 test_a_changed_dispatch_skill_runs_the_floor_test
 test_the_coverage_time_budget_advises_and_a_script_no_shard_runs_still_refuses
+test_a_quarantined_script_is_listed_not_run_and_the_gate_passes
 
 printf 'all %s\n' 'jg-test-run limit tests passed'

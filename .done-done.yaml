@@ -244,6 +244,8 @@ journeys:
     command: bash journeys/board-answer-route.sh
   afk-daemon-resend:
     command: bash journeys/afk-daemon-resend.sh
+  gate-quarantine:
+    command: bash journeys/gate-quarantine.sh
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'

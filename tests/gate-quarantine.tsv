@@ -1,0 +1,4 @@
+# Test scripts the landing gate (jg-test-run.sh --changed --gate) lists but does not run. One per line: script<TAB>reason.
+# A quarantined script is skipped and recorded in the gate log; the lane's own sealed done-done run still proves its change,
+# and --all (the on-demand verify and the release CI) still runs it. Keep each script's flaky row until its fix removes the line here.
+tests/jg-trunk-verify.test.sh	hung 47 minutes under --jobs 1 and left 2-hour orphan sandboxes (flaky-juggernaut-jg-trunk-verify)

@@ -94,7 +94,8 @@
 #                   after the run and so cannot catch a hang on its own.
 #                   External interruption cleanup is outside this runner's
 #                   guarantee; configured per-script bounds remain authoritative.
-#   --gate          the pull-request gate contract, which bin/jg-local-suite.sh
+#   --gate          (with --changed, also skips and logs the scripts in tests/gate-quarantine.tsv)
+#                   the pull-request gate contract, which bin/jg-local-suite.sh
 #                   passes: enforce the per-test speed limits and apply the
 #                   configured whole-run gate budget unless --max-wall-ms names
 #                   one. A test over its speed limit is reported by name with its
@@ -1827,6 +1828,11 @@ families_for_changed_path() {
           || printf '%s\n' "__unmapped__:$path"
       fi
       ;;
+    tests/gate-quarantine.tsv)
+      # The gate's quarantine list is read by the runner's own suite.
+      scripts_for_test_reference gate-quarantine.tsv \
+        || printf '%s\n' "__unmapped__:$path"
+      ;;
     tests/jg-trunk-fixture.sh|tests/jg-machine-call-fixture.sh)
       # Each is shared by the parts of one split suite, which are unclassified:
       # the family-wide arm below would widen it to every unclassified script.
@@ -2005,6 +2011,25 @@ apply_exclude_families() {
       fi
     done
     [ "$keep" -eq 1 ] && kept+=("$s")
+  done
+  SCRIPTS=("${kept[@]+"${kept[@]}"}")
+}
+
+# apply_quarantine drops the scripts tests/gate-quarantine.tsv lists from a gate's changed-files selection and logs each one with
+# its reason, so a hung or flaky script can never hold a landing. Only --changed --gate is affected: a script named on the command
+# line, --all and the other modes still run it.
+apply_quarantine() {
+  local s why
+  local -a kept=()
+  [ "$GATE_MODE" -eq 1 ] && [ "$MODE" = changed ] || return 0
+  [ -f "$ROOT/tests/gate-quarantine.tsv" ] || return 0
+  for s in "${SCRIPTS[@]+"${SCRIPTS[@]}"}"; do
+    why=$(awk -F'\t' -v s="$s" '$1 == s { print $2; exit }' "$ROOT/tests/gate-quarantine.tsv")
+    if [ -n "$why" ]; then
+      printf 'JG_TEST_QUARANTINED %s reason=%s\n' "$s" "$why"
+    else
+      kept+=("$s")
+    fi
   done
   SCRIPTS=("${kept[@]+"${kept[@]}"}")
 }
@@ -2570,6 +2595,7 @@ case "${MODE:-}" in
 esac
 
 apply_exclude_families
+apply_quarantine
 apply_max_weight
 apply_shard
 if [ -n "$SHARD" ]; then
