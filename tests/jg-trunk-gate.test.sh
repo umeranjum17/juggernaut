@@ -451,6 +451,35 @@ first-draft receipt: $HOME_D/data/$id-fd-run.json" '{schema:1,task:$t,mode:"loca
   pass 'a design lane lands on a moved trunk on the receipt it proved, and one without the receipt line is still refused'
 }
 
+# jg8-lander-receipt-line: a refusal the lander remembers as final is judged again once the lander itself is fixed. A design lane whose
+# receipt holds the first-draft line was refused by a lander that misread the line; the lane's head did not change, so the remembered
+# refusal was printed for ever after the fix.
+test_a_design_lane_refused_by_a_broken_lander_lands_after_the_lander_is_fixed() {
+  local id=dl1 h lib out
+  world lander
+  lane "$id" design d.txt
+  printf 'design_call=yes\n' >> "$HOME_D/state/$id.meta"
+  printf '{"made":{"files":[{"file":"d.html"}]}}\n' > "$HOME_D/data/$id-fd-run.json"
+  h=$(git -C "$PROJ" rev-parse "fm/$id")
+  jq -n --arg t "$id" --arg h "$h" --arg e "first-draft receipt: $HOME_D/data/$id-fd-run.json" \
+    '{schema:1,task:$t,mode:"local-trunk",spawn_gen:("g-"+$t),head:$h,pr:"",verdict:"PASS",at:1,evidence:$e}' > "$HOME_D/state/$id.run-receipt.json"
+  # The broken lander reads the line under another label, so it finds none.
+  lib=$W/root/bin/jg-merge-gate-lib.sh
+  sed -i "s/^JG_DESIGN_RECEIPT_LABEL='first-draft receipt'/JG_DESIGN_RECEIPT_LABEL='first-draft recept'/" "$lib"
+  out=$(trunk land "$id" 2>&1) && fail "the broken lander must refuse $id"
+  assert_contains "$out" "no 'first-draft receipt: <ref>' evidence line" 'the broken lander refuses a receipt that holds the line'
+  # The refusal is final and remembered for this head; the same lander refuses again without a new run.
+  out=$(trunk land "$id" 2>&1) && fail "the same broken lander must still refuse $id"
+  # The fix reaches the lander; the head, the receipt and the task are unchanged.
+  sed -i "s/^JG_DESIGN_RECEIPT_LABEL='first-draft recept'/JG_DESIGN_RECEIPT_LABEL='first-draft receipt'/" "$lib"
+  out=$(trunk land "$id" 2>&1) || fail "a design lane whose receipt holds the line must land once the lander is fixed: $out"
+  git -C "$PROJ" cat-file -e "trunk:d.txt" || fail "the landed tip must hold the design lane's file"
+  # A design lane whose receipt holds no line is still refused by the fixed lander.
+  lane dl2 design e.txt; printf 'design_call=yes\n' >> "$HOME_D/state/dl2.meta"
+  assert_contains "$(trunk land dl2 2>&1)" "no 'first-draft receipt" 'a design lane without the line is refused'
+  pass 'a refusal remembered under a broken lander is judged again after the fix, and a lane without the line stays refused'
+}
+
 test_the_full_gate_charges_a_lane_only_for_what_it_broke
 test_every_landing_writes_its_latency_row_from_the_done_epoch_it_recorded
 test_a_flaky_failure_gets_one_rerun_before_it_is_judged
@@ -467,4 +496,5 @@ test_a_red_verify_finds_by_hand_is_reverted_and_takes_the_green_pin_back
 test_a_green_pin_left_behind_moves_to_the_next_landing_and_the_landing_check_does_not_grow
 test_a_lane_proved_at_the_tree_the_lander_would_test_is_not_tested_again
 test_a_design_lane_lands_after_the_trunk_moved_on_the_receipt_it_proved
+test_a_design_lane_refused_by_a_broken_lander_lands_after_the_lander_is_fixed
 printf 'jg-trunk-gate: ok\n'

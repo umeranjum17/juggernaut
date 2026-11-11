@@ -1168,6 +1168,8 @@ cmd_land() {
     key=$key_home/config/owner-rules-proof.pub
     printf '%s ' "$key"; [ ! -f "$key" ] || git hash-object "$key"; [ ! -r "$key" ] || echo readable
     cat "$meta"
+    # The landing code is part of the context: a refusal remembered as final under a lander that has since been fixed must be judged again.
+    git hash-object "$SCRIPT_DIR/jg-trunk.sh" "$SCRIPT_DIR/jg-merge-gate-lib.sh" "$SCRIPT_DIR/jg-dod-lib.sh" 2>/dev/null || true
     jq -Sc 'del(.at)' "$STATE/$id.run-receipt.json" 2>/dev/null || true
     for key in "$STATE/trunk-tip-$(basename "$proj")" \
       "$CONFIG/trunk-policy" "$CONFIG/merge-gate" "$CONFIG/owner-details-patterns" \
