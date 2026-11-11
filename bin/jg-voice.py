@@ -180,11 +180,21 @@ def outcome_line(name):
     return re.compile(r"^[ \t]*(?:[-*][ \t]+)?\*{0,2}" + name + r"\*{0,2}[ \t]*:", re.I | re.M)
 
 
+QUOTED = re.compile(r'"([^"]*)"|\u201c([^\u201d]*)\u201d')
+
+
+def quoted_text(line):
+    """The words inside the quotation marks, so a label or date form around them does not count.
+    A line with no quotation marks is judged whole."""
+    found = [a or b for a, b in QUOTED.findall(line)]
+    return " ".join(found) if found else line
+
+
 def quote_is_his_words(line, ask_words):
-    """Two content words or more, and 60% of them occur in the ask. A verbatim quote passes; a
-    paraphrase in the writer's own words does not. A tiny ask ("x") cannot be quoted, so any
-    words stand in for it."""
-    quoted, asked = content_words(line), set(content_words(ask_words))
+    """Two content words or more, and 60% of the quoted ones occur in the ask. A verbatim quote
+    passes whatever label or date form surrounds it; a paraphrase in the writer's own words does
+    not. A tiny ask ("x") cannot be quoted, so any words stand in for it."""
+    quoted, asked = content_words(quoted_text(line)), set(content_words(ask_words))
     if not ask_words or len(asked) < 2:
         return bool(line.strip())
     if len(quoted) < 2:

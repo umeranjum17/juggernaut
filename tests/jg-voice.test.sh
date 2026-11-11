@@ -224,6 +224,16 @@ err=$(printf '%s\n' "Your ask: \"$ask_text\"" 'Done: x' 'Not done: nothing.' 'Ne
 case $err in *"no date"*) ;; *) fail "the refusal does not name the missing date: $err" ;; esac
 err=$(printf '%s\n' "Your ask: \"make the messages better\" ($ask_day)" 'Done: x' 'Not done: nothing.' 'Next: review.' 'Proof: https://x.example/a' | python3 "$VOICE" check --ask "$ask_text" --ask-date "$ask_day" 2>&1) && fail "a paraphrase passed as his words"
 case $err in *"does not quote his words"*) ;; *) fail "the refusal does not name the paraphrase: $err" ;; esac
+# A verbatim quote is never refused, whatever label or date form sits around it (R-35); only the quoted words count.
+vq="Why did Main miss my messages"
+for lead in 'Captain: ' 'Captain (11 Nov 06:28): ' 'Captain asked (2026-11-11 06:28): '; do
+  for tail in '' ' on Telegram'; do
+    printf '%s\n' "Your ask: ${lead}\"$vq\"$tail ($ask_day)" 'Done: x' 'Not done: nothing.' 'Next: review.' 'Proof: https://x.example/a' \
+      | python3 "$VOICE" check --ask "$vq" --ask-date "$ask_day" >/dev/null 2>&1 || fail "a verbatim quote was refused with label '$lead' and tail '$tail'"
+  done
+done
+err=$(printf '%s\n' "Your ask: Captain asked: \"why Main failed me\" ($ask_day)" 'Done: x' 'Not done: nothing.' 'Next: review.' 'Proof: https://x.example/a' | python3 "$VOICE" check --ask "$vq" --ask-date "$ask_day" 2>&1) && fail "a paraphrase with a long label passed as his words"
+case $err in *"does not quote his words"*) ;; *) fail "the refusal does not name the paraphrase: $err" ;; esac
 # A pure acknowledgement answers no ask and still goes out.
 printf '%s' 'Captain, standing by.' | python3 "$VOICE" check --ask "$ask_text" --ask-date "$ask_day" 2>/dev/null || fail "a pure acknowledgement was refused"
 pass "a reply that answers his ask carries his words, their date, done, not done, next and a proof link, or it is refused"
