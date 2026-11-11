@@ -81,6 +81,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-brief-heading-lib.sh` | Single owner of reading a brief's sections, shared by the `--intent` contract, spawn and promotion validation, and `jg-dispatch-resolve.sh` |
 | `jg-hc-lab.sh`           | Provision and guardedly operate an isolated, never-default Herdr Core (`hc`) lab session |
 | `jg-herdr-lab.sh`        | Provision and guardedly operate an isolated, never-default Herdr lab session         |
+| `jg-herdr-lab-brief-lib.sh` | The Herdr lab section of a brief, the words that make a task need it, and the swap into a brief made without it |
 | `jg-herdr-lab-viewer.py` | The pty engine behind `jg-herdr-lab.sh viewer`: one real foreground Herdr client on a non-zero window grid |
 | `jg-herdr.sh`            | Build and run the herdr backend core (`core/herdr`): the release-floor, preference and agent-name decisions and the readers of `herdr` JSON answers that `backends/herdr.sh` forwards to |
 | `jg-lab-home.sh`         | Mint disposable lab homes and manage their isolated tmux socket directories       |

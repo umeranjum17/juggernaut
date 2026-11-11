@@ -1454,5 +1454,35 @@ test_agent_that_does_not_stop_fails_closed
 test_grok_interrupt_without_acknowledgement_reports_unconfirmed
 test_grok_idle_footer_does_not_confirm_cancellation
 test_pi_exit_survives_a_popup_that_swallows_enter
+# A lane that stopped for a brief with no lab section runs on the same relaunch:
+# the section replaces the gate, the progress note follows it, and the lane's other
+# sections stay. jg-spawn is stubbed to copy the brief it was launched with.
+test_relaunch_herdr_lab_swaps_the_section_into_the_brief() {
+  local dir out bin_dir f
+  dir=$(new_case herdr-lab)
+  add_task "$dir" t1 claude
+  alive_as "$dir" claude
+  printf '# Task\nwork\n\n# Herdr lifecycle declaration - NOT ENABLED\nGate text.\n\n# Setup\nsetup\n' > "$dir/home/data/t1/brief.md"
+  out=$(run_control "$dir" t1 exit --herdr-lab); rc=$?
+  expect_code 1 "$rc" "--herdr-lab should not apply to exit"
+  assert_contains "$out" "applies to 'relaunch' only" "the refusal should scope the flag"
+  bin_dir="$dir/bin"
+  mkdir -p "$bin_dir"
+  for f in "$ROOT"/bin/*; do ln -s "$f" "$bin_dir/${f##*/}"; done
+  rm "$bin_dir/jg-spawn.sh"
+  printf '#!/usr/bin/env bash\ncp "%s/home/data/t1/brief.md" "%s/brief-at-launch"\nexit 1\n' "$dir" "$dir" > "$bin_dir/jg-spawn.sh"
+  chmod +x "$bin_dir/jg-spawn.sh"
+  env PATH="$dir/fakebin:$PATH" JG_HOME="$dir/home" JG_FAKE_DIR="$dir/fake" \
+    JG_CONTROL_POLL=0.01 JG_CONTROL_SETTLE_WAIT=0.05 JG_CONTROL_EXIT_WAIT=0.05 \
+    JG_CONTROL_LAUNCH_WAIT=0.05 "$bin_dir/jg-control.sh" t1 relaunch --herdr-lab --note x >/dev/null 2>&1 || true
+  [ -f "$dir/brief-at-launch" ] || fail "relaunch never reached the launch"
+  assert_grep "# Herdr isolation - HARD SAFETY CONTRACT" "$dir/brief-at-launch" "the launch read a brief with no lab section"
+  assert_no_grep "NOT ENABLED" "$dir/brief-at-launch" "the launch read a brief that still has the gate"
+  assert_grep "# Setup" "$dir/brief-at-launch" "the sections after the gate were lost"
+  assert_grep "## Progress note" "$dir/brief-at-launch" "the progress note was not recorded"
+  pass "jg-control: relaunch --herdr-lab puts the lab section in the brief"
+}
+
 test_squad_lead_control_command_carries_no_marker
 test_jg_send_still_marks_the_same_squad_lead_task
+test_relaunch_herdr_lab_swaps_the_section_into_the_brief

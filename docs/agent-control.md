@@ -50,6 +50,7 @@ muse is the one verified adapter that restores the cancelled prompt back into it
 The clear is refused before anything is sent when the recorded backend cannot deliver it.
 
 `exit` reads the composer's state before typing the exit command and requires the exact `empty` verdict; a `pending` verdict refuses by naming the pending text and its recovery (submit it with `--key Enter`, or clear it with the harness clear key where `bin/jg-control-lib.sh` names one), and any other verdict (`unknown`, `pending-unproven`, or an unreadable read) refuses as not proven empty while naming the same clear recovery, matching the fail-safe contract every other consumer that can overwrite composer input follows.
+Passing `--herdr-lab` to `relaunch` of a ship or Recon swaps the Herdr lab section into its instructions when they were made without it (`bin/jg-herdr-lab-brief-lib.sh`), inside the same transaction as the progress note. The wait table does this once for a lane blocked on `needs --herdr-lab` (`core/wait-timers/README.md`).
 Passing `--clear-composer` to `exit` or `relaunch` selects the adapter-owned explicit discard key in `bin/jg-control-lib.sh` and still requires an empty editor before typing an exit command.
 Pi and Pi-signed use one Ctrl+C on proven pending editor input because Ctrl+U deletes only to the current line start; unknown surfaces refuse that key, and later polls never repeat it.
 Other adapters retain up to three Ctrl+U presses.

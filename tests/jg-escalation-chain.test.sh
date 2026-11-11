@@ -1414,6 +1414,33 @@ test_a_ready_recon_draft_is_forwarded_to_its_critic() {
   pass "a ready Recon draft is forwarded to its critic and its decision closed by the ladder, a critic that has it is not sent it twice, and the ledger holds the minutes"
 }
 
+test_a_lane_blocked_for_the_herdr_lab_section_is_relaunched_once_with_it() {
+  local m n CYCLE_POLLS=100 PANES='1 2'
+  m=$(home herdr-lab)
+  : > "$m/real-steer"
+  # wl's brief has no lab section; wk's brief has it already, so its blocked line is not this state.
+  printf 'kind=ship\nbackend=tmux\nwindow=fake:1\nharness=claude\n' > "$m/state/wl.meta"
+  printf 'kind=ship\nbackend=tmux\nwindow=fake:2\nharness=claude\n' > "$m/state/wk.meta"
+  mkdir -p "$m/data/wl" "$m/data/wk"
+  printf '# Task\n\n# Herdr lifecycle declaration - NOT ENABLED\nGate text.\n\n# Setup\n' > "$m/data/wl/brief.md"
+  printf '# Herdr isolation - HARD SAFETY CONTRACT\n\n# Setup\n' > "$m/data/wk/brief.md"
+  for n in wl wk; do
+    printf 'blocked [at=%s] [key=lab]: needs --herdr-lab in my brief to drive the panes\n' "$(date +%s)" > "$m/state/$n.status"
+    prime_status_seen "$m/state" "$m/state/$n.status"
+  done
+  cycle_for "$m" 120 test -e "$m/state/.waiting-timers/wl" -a -e "$m/state/.waiting-timers/wk"
+  backdate "$m" wl 3
+  cycle_for "$m" 120 grep -q '^jg-control wl relaunch --note ' "$m/sent"
+  grep -q '^jg-control wl relaunch --note The watcher relaunched you because you were blocked on a brief with no Herdr lab section.* --herdr-lab$' "$m/sent" \
+    || fail "the blocked lane was not relaunched with the lab section: $(cat "$m/sent" 2>&1; cat "$m/err"; cat "$m/state/wl.status"; ls -la "$m/state/.waiting-timers/.acted/"; cat "$m/state/.waiting-timers/.acted/wl.relaunch.log")"
+  [ "$(grep -c '^jg-control wl relaunch' "$m/sent")" = 1 ] || fail "the lane was relaunched more than once: $(cat "$m/sent")"
+  grep -q '^resolved \[key=lab\]' "$m/state/wl.status" || fail "the blocked decision was left open: $(cat "$m/state/wl.status")"
+  grep -qx 'herdr-lab	[0-9]*	rebrief	[0-9]*' "$m/state/.waiting-timers/.acted/wl" \
+    || fail "the step was not recorded: $(cat "$m/state/.waiting-timers/.acted/wl" 2>&1)"
+  ! grep -q '^jg-control wk ' "$m/sent" 2>/dev/null || fail "a lane whose brief has the section was relaunched: $(cat "$m/sent")"
+  pass "a lane blocked for the Herdr lab section is answered and relaunched once with it; a lane that has it is left alone"
+}
+
 # Account outage (core/wait-timers/README.md "Known next steps"): the pinned Claude
 # account dies, and the watcher moves the lanes to the owner's next recorded
 # account, or only raises its one card when he recorded none.
@@ -1512,6 +1539,7 @@ test_a_silent_worker_is_rung_and_clears_with_no_model_turn
 test_an_unanswered_ring_is_relaunched_then_reaches_main
 test_a_ready_recon_draft_is_forwarded_to_its_critic
 test_a_dead_account_moves_the_lanes_to_the_recorded_fallback_with_no_model_turn
+test_a_lane_blocked_for_the_herdr_lab_section_is_relaunched_once_with_it
 test_an_empty_fallback_list_raises_one_card_and_changes_nothing
 test_a_working_account_is_not_treated_as_down
 test_a_stale_wake_names_its_task_and_reason

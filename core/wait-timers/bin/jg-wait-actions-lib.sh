@@ -22,6 +22,12 @@
 #   silent: the silent wait source, on a worker whose own record declares no
 #     wait and holds no open decision. ring is one steer asking for its state;
 #     relaunch is stuck-operator recovery's bin/jg-control.sh relaunch, detached.
+#   herdr-lab: a ship or Recon whose open blocked line says it needs the Herdr lab
+#     section (`needs --herdr-lab`) because its brief was scaffolded without it.
+#     rebrief is one step: close the decision with an answer, then relaunch the
+#     lane once with `jg-control.sh relaunch --herdr-lab`, which swaps the section
+#     into its brief. A lane whose brief already has the section is not in this
+#     state, so the same lane is never relaunched for it twice.
 #   account-down: a Claude worker whose account stopped working: the account
 #     source (a subscription the runtime cannot use, a failed sign-in) or the quota
 #     source (a usage or rate limit), in a home that pins config/claude-account.
@@ -41,6 +47,7 @@
 #     quiet (jg_wait_action_awaiting): no owner wake comes from it.
 JG_WAIT_OWNER_TABLE='critic	critic	forward	lead
 silent	worker	ring,relaunch	lead
+herdr-lab	watcher	rebrief	lead	0	600	brief carries the lab section
 account-down	watcher	recover	lead
 pool-full	script	sweep,notify	lead	0	600	task started
 waits-for	landing	resume	lead	0	600	ticket landed'
@@ -148,6 +155,18 @@ jg_wait_action_awaiting() {  # <task>
   [ "$ticket" != "$1" ] && [ -f "$STATE/$ticket.meta" ] && ! jg_wait_action_landed "$ticket"
 }
 
+# A ship or Recon blocked on a brief that lacks the Herdr lab section, with the
+# decision's key and no section in its brief yet.
+jg_wait_action_herdr_lab_ok() {  # <task> <verb> <decision key> <declaration>
+  local kind brief
+  [ "$2" = blocked ] && [ -n "$3" ] || return 1
+  printf '%s' "$4" | grep -qiE 'needs[ :]+(the )?(--herdr-lab|herdr lab)' || return 1
+  kind=$(jg_meta_get "$STATE/$1.meta" kind)
+  [ "$kind" = ship ] || [ "$kind" = scout ] || return 1
+  brief=${JG_DATA_OVERRIDE:-$JG_HOME/data}/$1/brief.md
+  [ -f "$brief" ] && ! grep -qxF '# Herdr isolation - HARD SAFETY CONTRACT' "$brief"
+}
+
 # The table state of this wait on stdout, or 1 when it has no row.
 jg_wait_action_state() {  # <task> <wait source> <verb> <decision key> <declaration>
   local ticket
@@ -155,6 +174,10 @@ jg_wait_action_state() {  # <task> <wait source> <verb> <decision key> <declarat
     silent) jg_wait_action_silent_ok "$1" && echo silent ;;
     account | quota) jg_account_outage_ok "$1" && echo account-down ;;
     '')
+      if jg_wait_action_herdr_lab_ok "$1" "$3" "$4" "$5"; then
+        echo herdr-lab
+        return 0
+      fi
       if [ -n "$4" ] && case "$3" in blocked | needs-decision) true ;; *) false ;; esac \
         && ticket=$(jg_wait_action_waits_for "$5") && [ "$ticket" != "$1" ] && jg_wait_action_landed "$ticket"; then
         echo waits-for
@@ -270,14 +293,24 @@ _jg_wait_action_ring() {  # <task> <silent seconds>
 # agent and starts a new one, which outlasts a poll, so it runs detached and its
 # outcome goes to a log beside the sidecar; a failed relaunch leaves the wait
 # open, and the next rung reaches Main with both steps named.
-_jg_wait_action_relaunch() {  # <task>
-  local ctl="$_JG_WAIT_TIMER_DIR/jg-control.sh" log="$STATE/.waiting-timers/.acted/$1.relaunch.log" note detach=()
+_jg_wait_action_relaunch() {  # <task> [<note> [<relaunch option>]]
+  local ctl="$_JG_WAIT_TIMER_DIR/jg-control.sh" log="$STATE/.waiting-timers/.acted/$1.relaunch.log" note=${2:-} detach=()
   [ -x "$ctl" ] || return 1
-  note="The watcher relaunched you: you wrote no status line and showed no new output, and a steer asking for your state went unanswered. Your local copy and commits are kept. Read your steering inbox, check git status and git log, then continue the task from where it stopped."
+  # The log sits in the sidecar directory, which a first step has not created yet.
+  mkdir -p "${log%/*}" || return 1
+  [ -n "$note" ] || note="The watcher relaunched you: you wrote no status line and showed no new output, and a steer asking for your state went unanswered. Your local copy and commits are kept. Read your steering inbox, check git status and git log, then continue the task from where it stopped."
   ! command -v setsid >/dev/null 2>&1 || detach=(setsid)
   # shellcheck disable=SC2016 # The child shell expands its positional parameters.
-  ( JG_HOME="$JG_HOME" nohup ${detach[@]+"${detach[@]}"} sh -c '"$1" "$2" relaunch --note "$3"; echo "relaunch exit=$?"' \
-      jg-wait-relaunch "$ctl" "$1" "$note" </dev/null >"$log" 2>&1 & ) || return 1
+  ( JG_HOME="$JG_HOME" nohup ${detach[@]+"${detach[@]}"} sh -c '"$1" "$2" relaunch --note "$3" ${4:+"$4"}; echo "relaunch exit=$?"' \
+      jg-wait-relaunch "$ctl" "$1" "$note" "${3:-}" </dev/null >"$log" 2>&1 & ) || return 1
+}
+
+# Close the lane's "needs --herdr-lab" decision with its answer, then relaunch it
+# once with the lab section added to its brief. The answer goes first: the
+# relaunched worker reads it from its inbox, and the decision no longer waits.
+_jg_wait_action_rebrief() {  # <task> <decision key>
+  _jg_wait_action_send "$1" --resolve-key "$2" "Your brief now has the Herdr lab section you asked for. You are relaunched with it: follow that section for every Herdr call and carry on with the task." || return 1
+  _jg_wait_action_relaunch "$1" "The watcher relaunched you because you were blocked on a brief with no Herdr lab section. Your brief now has it. Your local copy and commits are kept. Read your steering inbox, check git status and git log, then continue the task from where it stopped, using the lab section for every Herdr call." --herdr-lab
 }
 
 # Take <step> on a wait in table <state>. 0 records it in the sidecar; 1 means it
@@ -294,6 +327,7 @@ jg_wait_action_take() {  # <task> <state> <step> <now> <decision key> <declarati
     resume) _jg_wait_action_resume "$1" "$5" "$6" || return 1 ;;
     relaunch) _jg_wait_action_relaunch "$1" || return 1 ;;
     recover) _jg_wait_action_account "$1" "$4" || return 1 ;;
+    rebrief) _jg_wait_action_rebrief "$1" "$5" || return 1 ;;
     lead) ;;
     *) return 1 ;;
   esac

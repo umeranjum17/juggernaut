@@ -14,7 +14,7 @@
 # charters still use a single `{TASK}` charter fill. Juggernaut may adjust other
 # sections when the task genuinely deviates (e.g. working an existing external
 # PR instead of shipping a new one).
-# Usage: jg-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only|local-trunk> [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--migration-row <slug|none>] [--off-critical-path <captain-words>] [--forge <none|gerrit|forgejo> [--shape squash]] [--design-call <yes|no> --design-reason <text>] [--demo-call <yes|no> --demo-reason <text>] [--herdr-lab] [--medium <mobile|web|desktop|cli|backend>]
+# Usage: jg-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only|local-trunk> [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--migration-row <slug|none>] [--off-critical-path <captain-words>] [--forge <none|gerrit|forgejo> [--shape squash]] [--design-call <yes|no> --design-reason <text>] [--demo-call <yes|no> --demo-reason <text>] [--herdr-lab|--task-text-file <file>] [--medium <mobile|web|desktop|cli|backend>]
 #        jg-brief.sh <task-id> <repo-name> --scout [--depth <quick|standard|deep>] [--base-branch <branch>] [--herdr-lab]
 #        jg-brief.sh <task-id> --squad-lead {<project>...|--no-projects}
 #   --medium names the project's medium at intake, so the brief can carry this
@@ -43,10 +43,12 @@
 #   Set JG_SQUAD_LEAD_SCOPE='<scope>' to write a routing scope distinct from the charter text.
 #   --herdr-lab is mandatory when the task will issue Herdr lifecycle commands.
 #   It adds the hard isolation contract backed by bin/jg-herdr-lab.sh.
-#   The flag must be explicit because {TASK} and {JUGGERNAUT_SPEC} are filled
-#   after scaffolding and the caller-supplied repo string cannot reliably
-#   identify this repo. Briefs made without it carry a loud declaration so an
-#   omitted contract cannot be silent.
+#   {TASK} and {JUGGERNAUT_SPEC} are filled after scaffolding, so the scaffold
+#   cannot read the task by itself: pass the ticket text as --task-text-file <file>
+#   and the section is added when the text names panes, the input box, a composer
+#   or Herdr (bin/jg-herdr-lab-brief-lib.sh owns the words). Briefs made with
+#   neither carry a loud declaration so an omitted contract cannot be silent, and
+#   a lane that stops on it is repaired by `jg-control.sh <id> relaunch --herdr-lab`.
 # --design-call <yes|no> --design-reason <text> records the per-task first-draft
 # call on a ship brief as `Design call (first-draft): <yes|no> - <reason>`. Juggernaut
 # or the lead judges it per task: yes for bigger redesigns, new screens, landing
@@ -244,6 +246,8 @@ case "${1:-}" in
   -h|--help) usage; exit 0 ;;
 esac
 
+# shellcheck source=bin/jg-herdr-lab-brief-lib.sh
+. "$SCRIPT_DIR/jg-herdr-lab-brief-lib.sh"
 # shellcheck source=bin/jg-marker-lib.sh
 . "$SCRIPT_DIR/jg-marker-lib.sh"
 # shellcheck source=bin/jg-classify-lib.sh
@@ -299,6 +303,7 @@ CONFIG="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
 case "$CONFIG" in /*) ;; *) CONFIG="$PWD/$CONFIG" ;; esac
 KIND=ship
 HERDR_LAB=0
+TASK_TEXT_FILE=
 DEPTH=
 DEPTH_SET=0
 NO_PROJECTS=0
@@ -349,6 +354,7 @@ for a in "$@"; do
       upstream-consent) UPSTREAM_CONSENT=$a; UPSTREAM_CONSENT_SET=1 ;;
       project) PROJECT_DIR=$a; PROJECT_DIR_SET=1 ;;
       medium) MEDIUM=$a ;;
+      task-text-file) TASK_TEXT_FILE=$a ;;
       design-call) DESIGN_CALL=$a ;;
       design-reason) DESIGN_REASON=$a ;;
       demo-call) DEMO_CALL=$a ;;
@@ -386,6 +392,8 @@ for a in "$@"; do
     --upstream-consent=*) UPSTREAM_CONSENT=${a#--upstream-consent=}; UPSTREAM_CONSENT_SET=1 ;;
     --project) want_value="project" ;;
     --project=*) PROJECT_DIR=${a#--project=}; PROJECT_DIR_SET=1 ;;
+    --task-text-file) want_value="task-text-file" ;;
+    --task-text-file=*) TASK_TEXT_FILE=${a#--task-text-file=} ;;
     --medium) want_value=medium ;;
     --medium=*) MEDIUM=${a#--medium=} ;;
     --design-call) want_value="design-call" ;;
@@ -629,6 +637,16 @@ if ! git check-ref-format --branch "$BRANCH" >/dev/null 2>&1; then
 fi
 printf -v BRANCH_Q '%q' "$BRANCH"
 
+# The lab section follows the work: a task whose text names panes, the input box or
+# Herdr gets it without a flag, so no lane waits for a lead to regenerate its brief.
+if [ -n "$TASK_TEXT_FILE" ] && [ "$KIND" != squad_lead ] && [ "$HERDR_LAB" -eq 0 ]; then
+  [ -r "$TASK_TEXT_FILE" ] || { echo "error: --task-text-file '$TASK_TEXT_FILE' is not a readable file" >&2; exit 1; }
+  if HERDR_NEED_TERM=$(jg_herdr_lab_need_term < "$TASK_TEXT_FILE"); then
+    HERDR_LAB=1
+    echo "herdr lab: added, the task text names '$HERDR_NEED_TERM'" >&2
+  fi
+fi
+
 if [ "$KIND" = squad_lead ] && [ "$HERDR_LAB" -eq 1 ]; then
   echo "error: --herdr-lab applies only to operator ship or scout briefs" >&2
   exit 1
@@ -869,31 +887,7 @@ fi
 REPO=${POS[1]}
 
 if [ "$HERDR_LAB" -eq 1 ]; then
-HERDR_LAB_HELPER=$(shell_quote "$JG_ROOT/bin/jg-herdr-lab.sh")
-# shellcheck disable=SC2016  # single quotes are deliberate: these lines are literal brief text whose backtick-wrapped $(...) and "$HERDR_LAB_SESSION" snippets must reach the reading agent verbatim, not expand at scaffold time; only the '"$VAR"' break-outs interpolate.
-HERDR_SECTION=$(printf '%s\n' \
-'# Herdr isolation - HARD SAFETY CONTRACT' \
-'This brief was explicitly scaffolded with `--herdr-lab` because the task will drive Herdr lifecycle behavior.' \
-'On Herdr 0.7.3 the API socket is not relocatable by `HERDR_CONFIG_PATH`, `XDG_CONFIG_HOME`, or `HOME`.' \
-'A named non-`default` session plus an explicit `--session <name>` Herdr option on every call is the only viable local isolation.' \
-'' \
-'For tmux-based lab primaries, `bin/jg-lab-home.sh` owns the short private socket directory; do not place `TMUX_TMPDIR` under the lab home or worktree.' \
-'Use `LAB_HOME_HELPER='"$(shell_quote "$JG_ROOT/bin/jg-lab-home.sh")"'`, then `LAB_TMUX_DIR=$("$LAB_HOME_HELPER" tmux-dir "$JG_HOME")` and launch tmux with `TMUX_TMPDIR="$LAB_TMUX_DIR"`.' \
-'Your single EXIT cleanup trap must kill only the server addressed through that `TMUX_TMPDIR`, call `"$LAB_HOME_HELPER" teardown "$JG_HOME"`, and call the Herdr teardown below; do not install a second trap that replaces either cleanup.' \
-'' \
-'1. Set `HERDR_LAB_HELPER='"$HERDR_LAB_HELPER"'` and generate the session name with `HERDR_LAB_SESSION=$("$HERDR_LAB_HELPER" name '"$ID"')`.' \
-'   Install the combined EXIT cleanup before provisioning, then provision only with `"$HERDR_LAB_HELPER" provision "$HERDR_LAB_SESSION"`.' \
-'2. Run every task-specific non-lifecycle Herdr command through `"$HERDR_LAB_HELPER" run "$HERDR_LAB_SESSION" <arguments...>`.' \
-'   The helper supplies the required `--session "$HERDR_LAB_SESSION"` as a Herdr option, before any `--` delimiter; `HERDR_SESSION` alone is never accepted as isolation.' \
-'3. Teardown only through `"$HERDR_LAB_HELPER" teardown "$HERDR_LAB_SESSION"`.' \
-'   It re-checks refuse-default immediately before stop and again immediately before delete, and fails closed on ambiguity.' \
-'4. If an experiment requires a deliberate mid-run session stop, use only `"$HERDR_LAB_HELPER" stop "$HERDR_LAB_SESSION"`; it performs the same immediate refuse-default check.' \
-'5. Forbidden commands: direct `herdr server stop`, every other server-global operation such as `herdr server live-handoff` or reload/update operations, direct `herdr session stop`, direct `herdr session delete`, and any Herdr call scoped only by ambient or inline `HERDR_SESSION`.' \
-'6. The helper records the live default session before provisioning and verifies the identical fleet state after teardown.' \
-'   A missing, stopped, or changed default session is a hard tripwire failure, never a cleanup warning to ignore.' \
-'' \
-'Never bypass the helper, even for a read-only lifecycle probe or cleanup after failure.' \
-'The captain fleet uses the running `default` session.')
+HERDR_SECTION=$(jg_herdr_lab_section "$JG_ROOT" "$ID")
 else
 IFS= read -r -d '' HERDR_SECTION <<'EOF' || true
 # Herdr lifecycle declaration - NOT ENABLED

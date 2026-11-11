@@ -2036,3 +2036,40 @@ test_ship_brief_carries_the_build_rule() {
   pass "jg-brief.sh: every ship brief carries the build rule once, verbatim"
 }
 test_ship_brief_carries_the_build_rule
+
+# The lab section follows the ticket text: a task that names panes or the input box
+# gets it with no flag; a task that names neither keeps the NOT ENABLED gate.
+test_task_text_picks_the_herdr_lab_section() {
+  local home id brief text
+  home="$TMP_ROOT/lab-pick-home"
+  mkdir -p "$home/config" "$home/data" && : > "$home/config/delivery-risk-loose"
+  id="brief-lab-pick-yes"
+  text="$TMP_ROOT/lab-pick-yes.txt"
+  printf 'A wake is pasted into the lead input box and the re-ring skips it\n' > "$text"
+  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" "$id" juggernaut --mode no-mistakes --task-text-file "$text" >/dev/null 2>&1 \
+    || fail "jg-brief.sh --task-text-file failed"
+  brief="$home/data/$id/brief.md"
+  assert_grep "# Herdr isolation - HARD SAFETY CONTRACT" "$brief" "a task naming the input box got no lab section"
+  assert_no_grep "NOT ENABLED" "$brief" "the lab brief still carries the gate"
+  id="brief-lab-pick-no"
+  printf 'Rename a column in the report table\n' > "$text"
+  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" "$id" juggernaut --mode no-mistakes --task-text-file "$text" >/dev/null 2>&1 \
+    || fail "jg-brief.sh --task-text-file failed for plain text"
+  brief="$home/data/$id/brief.md"
+  assert_grep "NOT ENABLED" "$brief" "a task naming no pane lost its gate"
+  assert_no_grep "# Herdr isolation - HARD SAFETY CONTRACT" "$brief" "a task naming no pane got the lab section"
+  id="brief-lab-pick-scout"
+  printf 'Find why the panes stay open\n' > "$text"
+  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" "$id" juggernaut --scout --task-text-file "$text" >/dev/null 2>&1 \
+    || fail "jg-brief.sh --scout --task-text-file failed"
+  assert_grep "# Herdr isolation - HARD SAFETY CONTRACT" "$home/data/$id/brief.md" "a Recon naming panes got no lab section"
+  # The words that decide it are owned by bin/jg-herdr-lab-brief-lib.sh.
+  # shellcheck source=bin/jg-herdr-lab-brief-lib.sh
+  . "$ROOT/bin/jg-herdr-lab-brief-lib.sh"
+  printf 'Fix the window title of the report\n' | jg_herdr_lab_need_term >/dev/null \
+    && fail "a task that names a window but no pane was taken to need the lab"
+  [ "$(printf 'The composer holds stale text\n' | jg_herdr_lab_need_term)" = composer ] \
+    || fail "the composer was not recognised as a pane surface"
+  pass "jg-brief.sh: ticket text that names panes or the input box gets the lab section, other text keeps the gate"
+}
+test_task_text_picks_the_herdr_lab_section

@@ -4,7 +4,7 @@
 #
 # Usage: jg-control.sh <task-id> interrupt
 #        jg-control.sh <task-id> exit [--clear-composer]
-#        jg-control.sh <task-id> relaunch [--clear-composer] [--harness <name>] [--model <name>]
+#        jg-control.sh <task-id> relaunch [--clear-composer] [--herdr-lab] [--harness <name>] [--model <name>]
 #                                         [--effort <level>]
 #                                         (--note <text> | --note-file <path>)
 #        jg-control.sh primary relaunch --clear-composer
@@ -93,6 +93,11 @@
 #              The same pre-stop refusal applies to this home's worker tool
 #              exclusions (bin/jg-exclude-tools-lib.sh): a malformed list, or a
 #              replacement runtime that cannot hide the listed tools.
+#              --herdr-lab (ship or scout) swaps the Herdr lab section into the
+#              instructions when they were scaffolded without it
+#              (bin/jg-herdr-lab-brief-lib.sh), so a lane that stopped for the
+#              missing section runs on the same relaunch; a refused relaunch
+#              restores the instructions byte-exact like the note.
 #              --note is required for a ship or scout, whose replacement
 #              inherits the local copy but none of the conversation; a
 #              squad_lead reconciles its own home's records at startup, so its
@@ -230,6 +235,8 @@ DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
 . "$SCRIPT_DIR/jg-busy-lib.sh"
 # shellcheck source=bin/jg-control-lib.sh
 . "$SCRIPT_DIR/jg-control-lib.sh"
+# shellcheck source=bin/jg-herdr-lab-brief-lib.sh
+. "$SCRIPT_DIR/jg-herdr-lab-brief-lib.sh"
 # shellcheck source=bin/jg-composer-lib.sh
 . "$SCRIPT_DIR/jg-composer-lib.sh"
 # shellcheck source=bin/jg-pr-lib.sh
@@ -314,6 +321,7 @@ NEW_EFFORT=
 HARNESS_SET=0
 CLEAR_COMPOSER=0
 FORCE_SEEN=0
+HERDR_LAB=0
 MODEL_SET=0
 EFFORT_SET=0
 NOTE=
@@ -342,6 +350,7 @@ for control_arg in "$@"; do
   case "$control_arg" in
     --clear-composer) CLEAR_COMPOSER=1 ;;
     --force) [ "$RAW_ID" = primary ] || die "unexpected argument '$control_arg'"; FORCE_SEEN=1 ;;
+    --herdr-lab) HERDR_LAB=1 ;;
     --harness) control_want_value=harness ;;
     --harness=*) NEW_HARNESS=${control_arg#--harness=}; HARNESS_SET=1 ;;
     --model) control_want_value=model ;;
@@ -368,6 +377,8 @@ if [ "$VERB" != relaunch ]; then
   [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
     || die "--harness, --model, --effort, and --note apply to 'relaunch' only"
 fi
+[ "$HERDR_LAB" = 0 ] || [ "$VERB" = relaunch ] || die "--herdr-lab applies to 'relaunch' only"
+[ "$HERDR_LAB" = 0 ] || [ "$RAW_ID" != primary ] || die "--herdr-lab applies to a ship or scout task, not the primary session"
 [ "$CLEAR_COMPOSER" = 0 ] || [ "$VERB" = exit ] || [ "$VERB" = relaunch ] || die "--clear-composer applies to 'exit' and 'relaunch' only"
 [ "$HARNESS_SET" = 0 ] || [ -n "$NEW_HARNESS" ] || die "--harness requires a non-empty value"
 [ "$MODEL_SET" = 0 ] || [ -n "$NEW_MODEL" ] || die "--model requires a non-empty value"
@@ -1331,6 +1342,10 @@ record_note() {
     ship|scout)
       cp -p "$RELAUNCH_BRIEF" "$BRIEF_PRIOR" \
         || die "could not preserve task $ID's instructions before recording the progress note"
+      if [ "$HERDR_LAB" = 1 ]; then
+        jg_herdr_lab_swap_brief "$RELAUNCH_BRIEF" "$JG_ROOT" "$ID" \
+          || die "could not add the Herdr lab section to task $ID's instructions"
+      fi
       {
         echo
         echo "## Progress note ($stamp)"
@@ -1368,6 +1383,7 @@ do_relaunch() {
       # The charter in the squad_lead's own home is its instruction source and
       # stays untouched.
       RELAUNCH_BRIEF=
+      [ "$HERDR_LAB" = 0 ] || die "--herdr-lab applies to a ship or scout, whose instructions it changes; task $ID is a squad_lead"
       ;;
     *)
       die "task $ID records kind '$KIND', which has no defined relaunch shape"
