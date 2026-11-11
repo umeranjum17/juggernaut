@@ -480,6 +480,23 @@ test_a_design_lane_refused_by_a_broken_lander_lands_after_the_lander_is_fixed() 
   pass 'a refusal remembered under a broken lander is judged again after the fix, and a lane without the line stays refused'
 }
 
+# jg8-lander-receipt-line: a hand-roll approval written after the lander refused a small UI change is read by the next landing of the same head.
+test_a_hand_roll_approval_written_after_a_refusal_is_read_by_the_next_landing() {
+  local id=hr1 out
+  world handroll
+  git -C "$PROJ" worktree add -q -b uiseed "$W/uiseed" trunk
+  commit_in "$W/uiseed" page.css 'a { color: red; }' "seed css"
+  JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref refs/heads/trunk "$(git -C "$W/uiseed" rev-parse HEAD)"
+  git -C "$PROJ" rev-parse trunk > "$HOME_D/state/trunk-tip-proj"
+  lane "$id" 'a { color: blue; }' page.css
+  printf 'design_call=no\nbase_branch=trunk\n' >> "$HOME_D/state/$id.meta"
+  refused 'a small UI change with no hand-roll approval' "$id" 'no hand-roll approval'
+  mkdir -p "$HOME_D/state/design-approvals"
+  jq -n --arg id "$id" '{schema:1,task:$id,by:"main"}' > "$HOME_D/state/design-approvals/$id.handroll.json"
+  out=$(trunk land "$id" 2>&1) || fail "the approved hand-roll must land on the next landing of the same head: $out"
+  pass 'a hand-roll approval written after a refusal is read by the next landing of the same head'
+}
+
 test_the_full_gate_charges_a_lane_only_for_what_it_broke
 test_every_landing_writes_its_latency_row_from_the_done_epoch_it_recorded
 test_a_flaky_failure_gets_one_rerun_before_it_is_judged
@@ -497,4 +514,5 @@ test_a_green_pin_left_behind_moves_to_the_next_landing_and_the_landing_check_doe
 test_a_lane_proved_at_the_tree_the_lander_would_test_is_not_tested_again
 test_a_design_lane_lands_after_the_trunk_moved_on_the_receipt_it_proved
 test_a_design_lane_refused_by_a_broken_lander_lands_after_the_lander_is_fixed
+test_a_hand_roll_approval_written_after_a_refusal_is_read_by_the_next_landing
 printf 'jg-trunk-gate: ok\n'
