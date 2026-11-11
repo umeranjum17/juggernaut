@@ -4015,8 +4015,22 @@ elif [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] && [ "$BACKEND" != orca 
     exit 1
   }
   [ -n "$allocated" ] || { echo "error: treehouse lease returned no worktree for task $ID" >&2; exit 1; }
-  if jg_treehouse_pool_slot "$PROJ_ABS" "$allocated"; then
-    SPAWN_TREEHOUSE_LEASE=$allocated
+  # The lease belongs to this task even if the pool returned another clone.
+  # Record it before inspecting Git so every refusal preserves it for recovery.
+  SPAWN_TREEHOUSE_LEASE=$allocated
+  project_common=$(git -C "$PROJ_ABS" rev-parse --path-format=absolute --git-common-dir) || {
+    echo "error: cannot resolve Git common directory for registered project '$PROJ_ABS'; preserving lease '$allocated'" >&2
+    exit 1
+  }
+  copy_common=$(git -C "$allocated" rev-parse --path-format=absolute --git-common-dir) || {
+    echo "error: cannot resolve Git common directory for leased copy '$allocated'; preserving lease" >&2
+    exit 1
+  }
+  project_common=$(CDPATH='' cd -- "$project_common" && pwd -P) || exit 1
+  copy_common=$(CDPATH='' cd -- "$copy_common" && pwd -P) || exit 1
+  if [ "$project_common" != "$copy_common" ]; then
+    echo "error: leased copy Git common directory '$copy_common' differs from registered project Git common directory '$project_common'; preserving lease '$allocated' for recovery" >&2
+    exit 1
   fi
   spawn_send_text_line "$WT_TARGET" "cd -- $(shell_quote "$allocated")" || exit 1
 

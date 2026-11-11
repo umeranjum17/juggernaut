@@ -123,6 +123,8 @@ A timed-out shard may upload no artifact, so include a complete green run or the
 Completed shards from a partial run can supplement that complete baseline, but never treat missing tail scripts or the timeout duration as successful samples.
 Measure native-Windows-only scripts through the focused Git Bash runner and retain that `duration_ms` separately, because the portable CI shards skip them.
 
+The clone identity spawn journey carries a provisional 20000 ms hint from a 13.474 s local run with real fixture stores; the serial lane uses twelve shards to keep the modeled largest shard below its target.
+
 ## Coverage guard
 
 `bin/jg-test-run.sh --check-coverage` verifies that both parallel lanes partition the proven-isolated set.

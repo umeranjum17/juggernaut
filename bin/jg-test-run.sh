@@ -848,6 +848,7 @@ tests/jg-send-inbox.test.sh 53586
 tests/jg-session-start.test.sh 748000
 tests/jg-sessionstart-hook-live-e2e.test.sh 157
 tests/jg-ship-local.test.sh 786
+tests/jg-spawn-clone-identity.test.sh 20000
 tests/jg-spawn-core.test.sh 1238
 tests/jg-spawn-dispatch-profile.test.sh 938199
 tests/jg-squad-lead-dormant.test.sh 2392
