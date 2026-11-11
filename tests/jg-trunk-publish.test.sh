@@ -38,8 +38,8 @@ SH
   chmod +x "$W/fakebin/gh-axi" "$W/fakebin/gh" "$W/root/bin/jg-pr-state.sh"
 }
 waive() { trunk waiver "$PROJ" --rule owner-rule-standing --release >/dev/null 2>&1 || fail "the release waiver must record"; }
-landed() {  # <id>...: each lane lands, the trunk and the pin move
-  local id out; for id; do lane "$id" "$id"; out=$(trunk land "$id" 2>&1) || fail "$id must land: $out"; done
+landed() {  # <id>...: each lane lands, then a verify moves the pin to it
+  local id out; for id; do lane "$id" "$id"; out=$(trunk land "$id" 2>&1) || fail "$id must land: $out"; out=$(trunk verify "$PROJ" 2>&1) || fail "$id must verify: $out"; done
 }
 pushed() { git -C "$ORIGIN" rev-parse --verify --quiet refs/heads/trunk || true; }
 creates() { grep -c "pr create" "$W/gh-calls" 2>/dev/null || echo 0; }
@@ -75,7 +75,7 @@ test_publish_pushes_the_green_pin_only_when_the_trunk_holds_enough_and_only_unde
   # A red on the pushed commit pins back; a commit lands above it.
   trunk ci "$PROJ" "$pin" red >/dev/null 2>&1 || fail "T5: the red must record"
   [ "$(green)" != "$(tip)" ] || fail "T5: the pin must stay below the red"
-  landed q7; [ "$(green)" != "$(tip)" ] || fail "T5: a landing must leave the pin below the red"
+  lane q7 q7; trunk land q7 >/dev/null 2>&1 || fail "T5: q7 must land"; [ "$(green)" != "$(tip)" ] || fail "T5: a landing must leave the pin below the red"
   printf 'CHECK: CI required (IN_PROGRESS)\n' > "$W/pr-checks"
   out=$(trunk publish "$PROJ" 2>&1) || fail "T5: $out"
   assert_contains "$out" "in flight" "T5: a run in flight must hold the candidate"
@@ -89,7 +89,7 @@ test_publish_pushes_the_green_pin_only_when_the_trunk_holds_enough_and_only_unde
   assert_contains "$out" "candidate already" "T5: a tip is pushed once"
   trunk ci "$PROJ" "$(tip)" green >/dev/null 2>&1 || fail "T5: the green result must record"
   [ "$(green)" = "$(tip)" ] || fail "T5: a green result on the candidate must move the pin past the red"
-  landed q8; [ "$(green)" = "$(tip)" ] || fail "T5: the next landing must move the pin again"
+  landed q8; [ "$(green)" = "$(tip)" ] || fail "T5: the next verify must move the pin again"
   pass 'T5 after a red the tip is pushed once as a candidate, not while a run is in flight, and its green moves the pin past the red'
 }
 

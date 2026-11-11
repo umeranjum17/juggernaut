@@ -2,7 +2,7 @@
 # done-done journey: the local trunk flow. A done lane with one commit lands on a local trunk by compare-and-swap, by
 # itself through the registered core/trunk-landing check, after one fast check (rebase, changed-file lint, changed-file
 # tests against the tip's own result), and never goes live; three lanes ready at once land in order, a red one is refused,
-# and each landing whose gate passed moves the green pin with no whole-suite run after it; live
+# and a landing moves no green pin and runs no whole suite (the tick's verify moves the pin, one at a time, and a red it finds is traced to its commit, reverted, and raises line-red); live
 # and release refuse without the captain's recorded word; unsafe landings (a second commit, a conflict that names its
 # paths, a failing gate, a failing lint, an owner-guard hit, an open
 # linked decision, away mode, a protected path, a trunk a lane moved) refuse and leave the trunk

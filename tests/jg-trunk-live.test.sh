@@ -65,7 +65,7 @@ age_live() {
   awk -F'\t' -v OFS='\t' -v n="$(date +%s)" '{ $3 = n - 7200; print }' "$HOME_D/data/trunk-live.tsv" > "$HOME_D/data/trunk-live.tsv.new" && mv "$HOME_D/data/trunk-live.tsv.new" "$HOME_D/data/trunk-live.tsv"
 }
 
-await_green() {  # the landing has moved the green pin to the trunk tip
+await_green() {  # the tick's verify of the landing has moved the green pin to the trunk tip
   for _ in $(seq 1 200); do [ "$(cat "$HOME_D/state/trunk-green-proj" 2>/dev/null)" = "$(tip)" ] && return 0; sleep 0.2; done; return 1
 }
 
@@ -77,6 +77,7 @@ test_the_bundled_hook_moves_a_home_that_runs_the_project() {
   lane h1 hook; c=$(git -C "$PROJ" rev-parse fm/h1)
   out=$(CODE_ROOT="$W/homecode" trunk land h1 2>&1) || fail "h1 must land: $out"
   [ "$(git -C "$W/homecode" rev-parse HEAD)" != "$c" ] || fail "landing alone must not move the home checkout"
+  trunk verify "$PROJ" >/dev/null 2>&1 || fail "the verify must pass: it moves the pin that live follows"
   trunk word live "$PROJ" "go" >/dev/null 2>&1
   out=$(CODE_ROOT="$W/homecode" trunk live "$PROJ" 2>&1) || fail "live must move a home that runs the project: $out"
   [ "$(git -C "$W/homecode" rev-parse HEAD)" = "$c" ] || fail "the home checkout must be fast-forwarded to the landed commit: $out"
@@ -87,6 +88,7 @@ test_the_bundled_hook_moves_a_home_that_runs_the_project() {
   printf '%s\n' "$c" > "$HOME_D/state/trunk-green-proj"
   rm "$HOME_D/data/trunk-live.tsv"; printf 'dirty\n' >> "$W/homecode/README.md"
   lane h2 hook2; CODE_ROOT="$W/homecode" trunk land h2 >/dev/null 2>&1 || fail "h2 must land"
+  trunk verify "$PROJ" >/dev/null 2>&1 || fail "the verify must pass: it moves the pin that live follows"
   trunk word live "$PROJ" "go" >/dev/null 2>&1
   rc=0; out=$(CODE_ROOT="$W/homecode" trunk live "$PROJ" 2>&1) || rc=$?
   [ "$rc" = 3 ] || fail "a live whose home did not move must exit 3, got $rc: $out"
@@ -205,8 +207,10 @@ test_a_red_or_unwaived_landing_never_goes_live() {
   lane r2 'echo "not ok - r2 breaks the suite" >&2; exit 1' t/r2.test.sh; c=$(git -C "$PROJ" rev-parse fm/r2)
   out=$(fleet_sweeps "landed r2"); assert_contains "$out" "landed r2" "a head that passes the landing check lands"
   case $out in *"whole suite is red"*) fail "no whole suite may run after a landing: $out" ;; esac
-  trunk verify "$PROJ" "$(tip)" >/dev/null 2>&1 && fail "a hand-run verify must find the red"
-  git -C "$PROJ" log --format=%B trunk | grep -q '^reverts: ' || fail "a red verify finds is reverted by itself"
+  # The tick's own verify (started by the sweep) and a hand-run one find the same red; whichever runs first reverts it.
+  trunk verify "$PROJ" "$c" >/dev/null 2>&1 || :
+  for _ in $(seq 1 150); do git -C "$PROJ" log --format=%B trunk | grep -q "^reverts: $c" && break; sleep 0.2; done
+  git -C "$PROJ" log --format=%B trunk | grep -q "^reverts: $c" || fail "a red verify finds is reverted by itself"
   age_landings 30 30; trunk autolive "$PROJ" >/dev/null 2>&1
   homes_at "$BASE" || fail "a red verify found must not move any home, even after the quiet window: $(cat "$HOME_D/data/trunk-live.tsv" 2>/dev/null)"
   ! grep -q "	$c	" "$HOME_D/data/trunk-live.tsv" 2>/dev/null || fail "the red commit is never live: $(cat "$HOME_D/data/trunk-live.tsv")"
@@ -223,6 +227,7 @@ test_the_landing_check_cuts_the_next_trunk_once_the_release_merged() {
   world rolcheck
   cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
   lane k1 one; trunk land k1 >/dev/null 2>&1 || fail "k1 must land"
+  trunk verify "$PROJ" >/dev/null 2>&1 || fail "the verify must pass: the release ships the pin it moves"
   trunk word release "$PROJ" "ship it" >/dev/null 2>&1; trunk release "$PROJ" >/dev/null 2>&1 || fail "release must open"
   out=$(sweep); [ -z "$out" ] || fail "an open release must change nothing: $out"
   printf 'merged\n' > "$W/pr-state"; git -C "$PROJ" push -q origin "$(tip):refs/heads/main"; rm -f "$HOME_D"/data/jg-trunk-landing/.rollover-*
@@ -267,19 +272,20 @@ if [ "${JG_TRUNK_OUTER_ONLY:-0}" = 1 ]; then
 fi
 
 # The journey that stalled on 9 Nov: a lane lands on a tip that carries only recorded reds and the check tears the lane down at once
-# (its record is gone). The landing's own gate sets the recorded reds aside and moves the pin, no whole suite runs after it, and the
-# quiet trunk goes live by itself.
+# (its record is gone). The landing's own gate sets the recorded reds aside, the tick's verify moves the pin, and the quiet trunk goes
+# live by itself.
 # shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
 test_a_landing_on_a_tip_with_only_recorded_reds_moves_the_pin_and_goes_live_by_itself() {
   local out c
   fleet_world oldreds; rig; seed_red_tip; cp "$W/root/bin/jg-backlog.sh" "$HOME_D/bin/jg-backlog.sh"
+  cp "$HOME_D/state/trunk-tip-proj" "$HOME_D/state/trunk-green-proj"  # the red tip is the trunk's accepted green: its reds are the parent's own
   printf 'gate-verify=echo run >> %s/suite-runs; export GATE_MARK=yes; bash %s/rig.sh --all\n' "$W" "$W" >> "$HOME_D/config/trunk-policy"
   lane good 'exit 0' t/d.test.sh
   out=$(fleet_sweeps "landed good"); assert_contains "$out" "cleaned up" "the check must tear the landed lane down"
   [ ! -e "$HOME_D/state/good.meta" ] || fail "fixture: the lane's record must be gone, as the real teardown leaves it"
-  await_green || fail "the landing must move the pin over the tip's recorded reds: $(cat "$HOME_D"/data/jg-trunk-landing/good.*.log 2>&1)"
+  await_green || fail "the tick's verify must move the pin over the tip's recorded reds: $(cat "$HOME_D"/data/jg-trunk-landing/good.*.log "$HOME_D"/data/jg-trunk-landing/verify-proj.log 2>&1)"
   c=$(tip)
-  [ ! -e "$W/suite-runs" ] || fail "no whole suite may run after a landing"
+  [ -e "$W/suite-runs" ] || fail "the verify, not the landing, ran the suite"
   age_landings 25 25
   out=$(fleet_sweeps "proj: live at")
   assert_contains "$out" "proj: live at ${c:0:12} on every home" "the quiet trunk must go live by itself over the recorded reds"

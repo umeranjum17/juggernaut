@@ -76,7 +76,7 @@ ROW
 }
 
 batch() {  # <id>: one landed, fully green commit on the trunk and the captain's word to release it
-  lane "$1" "$1"; trunk land "$1" >/dev/null 2>&1 || fail "$1 must land"
+  lane "$1" "$1"; trunk land "$1" >/dev/null 2>&1 || fail "$1 must land"; trunk verify "$PROJ" >/dev/null 2>&1 || fail "$1 must verify"
   trunk word release "$PROJ" "ship $1" >/dev/null 2>&1 || fail "the captain's word must record"
 }
 open_prs() {  # <n>...: the open pull requests from the trunk into main, as gh-axi lists them
@@ -218,6 +218,7 @@ printf '%s\n' "$converge" > "$HOME_D/state/trunk-green-proj"
 : > "$HOME_D/data/trunk-landing-proofs.tsv"
 lane first first; trunk land first >/dev/null 2>&1 || fail 'first proof lane must land'
 lane later later; trunk land later >/dev/null 2>&1 || fail 'later fixture lane must land'
+trunk verify "$PROJ" >/dev/null 2>&1 || fail 'the verify must move the pin to the later lane'
 later=$(tip)
 trunk word release "$PROJ" 'release fixture' >/dev/null || fail 'record release word'
 cat > "$W/fakebin/gh-axi" <<SH

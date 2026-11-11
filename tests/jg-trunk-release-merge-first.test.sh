@@ -54,7 +54,7 @@ SH
   printf '#!/usr/bin/env bash\necho "checks-lint: PASS"\n' > "$W/checks-lint"
   ln -s "$W/root/bin" "$HOME_D/bin"   # the merge check runs the home's own bin
   chmod +x "$W/fakebin/gh-axi" "$W/fakebin/gh" "$W/root/bin/jg-pr-state.sh" "$W/root/bin/jg-pr-merge.sh" "$W/checks-lint"
-  lane a1 released >/dev/null; trunk land a1 >/dev/null 2>&1 || fail "a1 must land"
+  lane a1 released >/dev/null; trunk land a1 >/dev/null 2>&1 || fail "a1 must land"; trunk verify "$PROJ" >/dev/null 2>&1 || fail "a1 must verify"
   trunk word release "$PROJ" "ship a1" >/dev/null 2>&1 || fail "the release word must record"
 }
 
@@ -120,7 +120,7 @@ test_a_green_open_release_is_not_pushed_into() {
   local out head
   world_with_release nopush
   trunk waiver "$PROJ" --rule "$RULE" --release >/dev/null 2>&1; trunk release "$PROJ" >/dev/null 2>&1 || fail "T4: the release must open"
-  lane a2 second >/dev/null; trunk land a2 >/dev/null 2>&1 || fail "T4: a2 must land"
+  lane a2 second >/dev/null; trunk land a2 >/dev/null 2>&1 || fail "T4: a2 must land"; trunk verify "$PROJ" >/dev/null 2>&1 || fail "T4: a2 must verify"
   trunk word release "$PROJ" "ship a2" >/dev/null 2>&1
   head=$(git --git-dir="$W/origin.git" rev-parse refs/heads/trunk)
   out=$(trunk release "$PROJ" 2>&1) && fail "T4: a green open release must not take a push: $out"

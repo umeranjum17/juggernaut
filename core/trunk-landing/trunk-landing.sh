@@ -5,6 +5,7 @@
 #        trunk-landing.sh run <jg-home> <task-id> <head>      (what `check` starts in the background)
 #        trunk-landing.sh runbatch <jg-home> <task-id>@<head>...     (what `check` starts when 2 or more lanes are queued: one stack)
 #        trunk-landing.sh live <jg-home> <project>                   (what a tick starts under a go-live waiver: the batched live step)
+#        trunk-landing.sh verify <jg-home> <project>                 (what a tick starts while the trunk tip is above the green pin: bin/jg-trunk.sh verify, one at a time)
 #        trunk-landing.sh publish <jg-home> <project>                (what a tick starts under a release waiver: bin/jg-trunk.sh publish, the green pin or a candidate after a red)
 #
 # For each state/<task>.meta in the home with mode=local-trunk (or legacy local-only) whose project is registered local-trunk and has a trunk
@@ -19,10 +20,11 @@
 # second lands right behind the first, or is gated again on the tip when the first does not land; bin/jg-trunk.sh owns it).
 # When 2 or more lanes are ready, the check stacks up to batch-max (5) of them, oldest done first, into one `bin/jg-trunk.sh land-batch`:
 # one gate over the stack, one trunk move, and only a lane that conflicts or causes a red is returned (reported once, like any refusal).
-# A single ready lane keeps the path above. A landed commit is green at once (its gate moves the green pin, unless a recorded red lies
-# below it: bin/jg-trunk.sh pin_landed); nothing runs the whole suite
-# on this machine after a landing, because it runs once, on the release pull request in GitHub CI. A red never stops a landing; once the
-# trunk has had no green commit for no-green-alarm-minutes (15), `bin/jg-trunk.sh green-alarm`, run every minute, raises one alarm to Overwatch.
+# A single ready lane keeps the path above. A landing runs no whole-suite test and never moves the green pin. Every tick starts the
+# line's verify (`verify`, detached, one at a time) whenever the trunk tip is above the pin; a green verify moves the pin to the tip, a
+# red is traced to its commit and reverted, and `line-red` is raised (bin/jg-trunk.sh verify). A red never stops a landing; once the
+# trunk has had no green commit for no-green-alarm-minutes (15) and no verify is running, `bin/jg-trunk.sh green-alarm`, run every
+# minute, raises one alarm to Overwatch.
 # The check never goes live on its own authority: that stays the captain's word
 # (jg-trunk.sh live), EXCEPT for a project with a line in config/trunk-live-waiver (jg-trunk.sh waiver). For it every tick
 # also starts `live` (a detached job, never blocking a landing), which runs `bin/jg-trunk.sh autolive` and reports a go-live,
@@ -47,9 +49,10 @@ case "${1:-}" in
   check|next) [ "$#" -eq 2 ] || { echo "usage: trunk-landing.sh check|next <jg-home>" >&2; exit 2; } ;;
   runbatch) [ "$#" -ge 4 ] || { echo "usage: trunk-landing.sh runbatch <jg-home> <task-id>@<head> <task-id>@<head>..." >&2; exit 2; } ;;
   run) [ "$#" -eq 4 ] || { echo "usage: trunk-landing.sh run <jg-home> <task-id> <head>" >&2; exit 2; } ;;
+  verify) [ "$#" -eq 3 ] || { echo "usage: trunk-landing.sh verify <jg-home> <project>" >&2; exit 2; } ;;
   publish) [ "$#" -eq 3 ] || { echo "usage: trunk-landing.sh publish <jg-home> <project>" >&2; exit 2; } ;;
   live) [ "$#" -eq 3 ] || { echo "usage: trunk-landing.sh live <jg-home> <project>" >&2; exit 2; } ;;
-  *) echo "usage: trunk-landing.sh check|next <jg-home> | runbatch <jg-home> <task-id>@<head>... | run <jg-home> <task-id> <head> | live <jg-home> <project> | publish <jg-home> <project>" >&2; exit 2 ;;
+  *) echo "usage: trunk-landing.sh check|next <jg-home> | runbatch <jg-home> <task-id>@<head>... | run <jg-home> <task-id> <head> | live <jg-home> <project> | verify <jg-home> <project> | publish <jg-home> <project>" >&2; exit 2 ;;
 esac
 [ -d "$2/state" ] || { echo "trunk-landing: $2 has no state directory" >&2; exit 2; }
 FMH=$(cd "$2" && pwd -P)
@@ -70,7 +73,7 @@ mkdir -p "$MEM" || exit 0
 # (JG_TEST_SEAM=1) it names itself in the suite's registry, so the suite's cleanup stops its process group even after
 # the fixture home is gone (tests/lib.sh jg_test_reap_detached).
 case $1 in
-  run|runbatch|live|publish)
+  run|runbatch|live|publish|verify)
     if [ "${JG_TEST_SEAM:-}" = 1 ] && [ -n "${JG_TEST_DETACHED_REGISTRY:-}" ]; then
       printf '%s %s\n' "$$" "$(jg_pid_identity "$$" 2>/dev/null)" >> "$JG_TEST_DETACHED_REGISTRY" 2>/dev/null || :
     fi
@@ -131,6 +134,18 @@ if [ "$1" = publish ]; then
   jg_lock_acquire_wait "$MEM/.outbox.lock"
   printf 'trunk-landing: %s: %s\n' "$pn" "$pub" >> "$MEM/outbox"
   jg_lock_release "$MEM/.outbox.lock"
+  exit 0
+fi
+
+# The line's verify for one project (bin/jg-trunk.sh verify decides and reports; a red raises line-red there). One at a time per project:
+# a tick that finds the last one still running does nothing. A run that is green or already reported prints nothing.
+if [ "$1" = verify ]; then
+  pn=$3; proj=$FMH/projects/$pn
+  [[ $pn =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && [ -d "$proj" ] || exit 2
+  jg_lock_try_acquire "$STATE/.trunk-autoverify-$pn.lock" || exit 0
+  trap 'jg_lock_release "$STATE/.trunk-autoverify-$pn.lock"' EXIT
+  JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" verify-due "$proj" >/dev/null 2>&1 || exit 0
+  JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" verify "$proj" >"$MEM/verify-$pn.log" 2>&1 || :
   exit 0
 fi
 
@@ -283,6 +298,16 @@ for tip in "$STATE"/trunk-tip-*; do
   : > "$MEM/.green-alarm-$pn"
   JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" reconcile "$proj" >/dev/null 2>&1 || :
   JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" green-alarm "$proj" >/dev/null 2>&1 || :
+done
+# Every tick starts the line's verify while a trunk's tip is above its green pin (detached, so it never holds a landing back; the job
+# itself keeps one verify at a time and skips a tip a verify already ended red on). Nothing is printed: a red raises line-red.
+for tip in "$STATE"/trunk-tip-*; do
+  [ -z "$QUIET" ] || break
+  [ -f "$tip" ] || continue
+  pn=${tip##*/trunk-tip-}
+  [ "$(cat "$tip" 2>/dev/null)" != "$(cat "$STATE/trunk-green-$pn" 2>/dev/null)" ] || continue
+  [ -d "$FMH/projects/$pn" ] && [ "$(local_trunk "$FMH/projects/$pn")" = yes ] || continue
+  setsid nohup "$SELF" verify "$FMH" "$pn" >/dev/null 2>&1 < /dev/null &
 done
 # Under a go-live waiver every tick starts the batched live step (detached, so it never holds a landing back).
 for tip in "$STATE"/trunk-tip-*; do

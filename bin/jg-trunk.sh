@@ -9,7 +9,8 @@
 #        jg-trunk.sh land-batch <id>[@<head>]...       land 2 to batch-max queued lanes as one stack: one gate over their changed files, one move; a red stack is halved to find and return only the lane that caused it
 #        jg-trunk.sh flush <project-dir>               Overwatch only: land every ready lane of the project now, in batches, whatever the threshold says
 #        jg-trunk.sh land-next <task-id>               Overwatch only: mark one ready lane so the landing check lands it at once, ahead of the queue
-#        jg-trunk.sh verify <project-dir> [<sha>]      on demand only: run the whole suite at a landed commit (default: the tip), one verify at a time and the newest wins; a red it finds reverts the commit that caused it
+#        jg-trunk.sh verify <project-dir> [<sha>]      run the verify gate over every change since the green pin (default: the tip), one verify at a time and the newest wins; green moves the pin, a red it finds reverts the commit that caused it and raises line-red
+#        jg-trunk.sh verify-due <project-dir>          print the tip and exit 0 when a tick should start a verify (tip above the pin, none running, tip not already ended red)
 #        jg-trunk.sh green-alarm <project-dir>         raise one alarm to Overwatch once the trunk has had no green commit for no-green-alarm-minutes (15)
 #        jg-trunk.sh word live|release <project-dir> "<his words>"   record the captain's word for the commit that would go live or out (both: the last green commit, never the tip)
 #        jg-trunk.sh recover <project-dir> [--prepare <task-id>|--land <task-id>]   report divergence, prepare a merge, or land its exact proved head
@@ -35,8 +36,8 @@
 # trunk tip by itself (a clean three-way merge; the lane branch follows it), runs the lint over the changed files (gate-lint),
 # runs the changed files' tests (gate-full: the fast required set, docs/fast-merge-path.md) judged against the trunk tip's own
 # result (skipped when the lane's passing sealed done-done run is for the very tree it would test: gate=sealed-run), and lands.
-# A landed commit is green at once: its gate is the trunk's green (the green pin), and the whole suite runs once, on the release
-# pull request in GitHub CI, never on this machine per landing. Only a conflict in the lane's
+# A landing never moves the green pin: the line's verify does (`verify`, started by each tick of core/trunk-landing while the tip is
+# above the pin), so the go-live and the release never take a combined head no test ran on. Only a conflict in the lane's
 # own change stops it, and the refusal names the paths. The captain hold, the design, demo and nav gates, the ticket reference,
 # the linked-decision block and owner-guard still apply; a red trunk never stops a landing. A landing starts only on a head whose whole proof is there
 # (jg_dod_trunk_proof_gaps in bin/jg-merge-gate-lib.sh, the same check the worker's done runs): a PASS completion receipt, approved
@@ -81,15 +82,17 @@
 # for one project: it records state/trunk-flush-<project>, which the check honours until the project has no ready lane left. `land-next` records
 # state/<task>.land-next: that lane goes first and lands at once, with the others only when the threshold is also met. A worker never records either.
 #
-# `verify <project> <commit>` runs the whole suite (gate-verify) at a landed commit when someone asks for it; nothing starts it per
-# landing. A script that fails there and passes on the commit's parent charges that one commit, which is reverted by itself (a new
-# commit on the tip, never a rewind), takes the green pin back below it, and the lane's ticket is told. A run that fails with no
+# `verify <project> <commit>` runs the verify gate (gate-verify) at a landed commit, over every change since the green pin. Each tick
+# of the landing check starts it, one at a time, whenever the tip is above the pin (`verify-due` says so) and not when that tip
+# already ended without moving the pin; nothing starts it per landing. A green run moves the pin to the tip, and only a green run
+# does. A script that fails there and passes on the commit's parent (or the pin) charges that one commit, which is reverted by itself
+# (a new commit on the tip, never a rewind), and `line-red` is raised on the trunk's wake path; the pin stays where it is. A run that fails with no
 # failed test charged to a commit (a run over its time budget, a shard with no result, a runner that stopped) is a warning and runs
 # once more; it never moves the pin and never reverts. Nothing a verify finds stops a landing: a charged red that stays (a revert
 # that does not apply cleanly) takes the green pin, and with it live, back below that commit. `green-alarm`
 # (run by the landing check every minute) raises ONE alarm to Overwatch on the trunk's wake path (jg_wake_append check, a
-# `-stall` key that wakes at once) once the oldest commit above the green pin has waited no-green-alarm-minutes (default 15);
-# one per green pin, so a stall that goes on is not raised twice.
+# `-stall` key that wakes at once) once the oldest commit above the green pin has waited no-green-alarm-minutes (default 15) and
+# no verify is running; one per green pin, so a stall that goes on is not raised twice.
 #
 # The ship branch (state/<id>.meta branch=, default fm/<id>) must hold EXACTLY ONE commit on
 # top of the trunk tip or on a base it can be rebased from. A second commit refuses; a conflict names the conflicting paths.
@@ -120,9 +123,8 @@
 # state/trunk-version-<project>, data/trunk-versions.tsv). The commits landed on the old trunk after its release are replayed onto the
 # new one first, each with the tree of its original (else one line, nothing changed); the green pin follows its replayed commit.
 # The old trunk is left exactly as it was.
-# Pin-back: state/trunk-green-<project> is the newest commit whose gate passed: a landing moves it unless an unreverted red recorded
-# in data/trunk-ci.tsv (a red CI, or a charged verify red that could not be reverted) lies below the landing, and a red found later
-# takes it back below that commit. `live` moves the home only to that commit, so a red commit is never live.
+# Pin-back: state/trunk-green-<project> is the newest commit a verify (or a green CI) passed: a landing never moves it, and a red found
+# later takes it back below that commit. `live` moves the home only to that commit, so a red commit is never live.
 # `release` ships only the green pin, never the tip. A red `ci` moves the green pin, and every home, back to the
 # newest earlier commit that went live and was not red (else the last release); landings go on.
 # The captain's word: `word` writes state/trunk-word-<live|release>-<project>, bound to the one commit
@@ -825,23 +827,11 @@ sealed_run_covers() {  # <id> <candidate>
   return 1
 }
 
-# The green pin is the newest trunk commit whose gate passed. A landing's own gate (the changed files' tests and the fast required
-# set) is the trunk's green, and the whole suite runs on the release pull request in GitHub CI; a whole-suite pass (verify, a green
-# CI) moves it too. It only moves forward. Called with the trunk lock held.
+# The green pin is the newest trunk commit a verify (or a green CI) passed. A landing never moves it: the line's verify moves it, so the
+# go-live and the release never take a combined head no test ran on. It only moves forward. Called with the trunk lock held.
 pin_green() {  # <sha>
   local green; green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
   if [ -z "$green" ] || git -C "$PROJ" merge-base --is-ancestor "$green" "$1"; then put "$STATE/trunk-green-$PN" "$1"; fi
-}
-
-# A landing moves the green pin to its commit, except over a recorded red: a commit between the pin and the landing that a red CI
-# or a charged verify red recorded in data/trunk-ci.tsv, and that no commit up to the landing reverts. The landing still lands
-# (a red never stops a landing); only the pin, and with it live, waits, until a whole-suite pass past the red moves it, or the
-# no-green alarm tells Overwatch. Called with the trunk lock held.
-pin_landed() {  # <landed sha>
-  local green
-  green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
-  if [ -n "$green" ] && blocking_red "$1" "$green" >/dev/null; then return 0; fi
-  pin_green "$1"
 }
 
 # The recorded red that holds the green pin below <sha>: a red CI or charged verify red (data/trunk-ci.tsv) on a commit that is an
@@ -944,7 +934,7 @@ land_candidate() {
   done
   [ -n "$still" ] || refuse "the trunk kept moving while $id was gated; it lands on the next try"
   JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref -m "trunk: land $id" "refs/heads/$TRUNK" "$cand" "$base" || refuse "$TRUNK changed while landing $id"
-  put "$STATE/trunk-tip-$PN" "$cand"; pin_landed "$cand"
+  put "$STATE/trunk-tip-$PN" "$cand"
   row trunk-landings.tsv "$id" "$PN" "$cand" "$(date +%s)" "$GATE_KIND"
   unlock "$STATE/.trunk-$PN.lock"; front_release
   [ "$cand" = "$LANE_HEAD" ] || lane_follow "$LANE_BRANCH" "$LANE_HEAD" "$cand" "$(jg_dod_meta_value "$META" worktree)"
@@ -1058,7 +1048,7 @@ land_group() {
   lock "$STATE/.trunk-$PN.lock"; tip_adopt_forward; tip_ok
   [ "$(rev "refs/heads/$TRUNK")" = "$B_TIP" ] || { unlock "$STATE/.trunk-$PN.lock"; return 1; }
   JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref -m "trunk: land a batch of ${#CHAIN[@]}" "refs/heads/$TRUNK" "$top" "$B_TIP" || refuse "$TRUNK changed while landing the batch"
-  put "$STATE/trunk-tip-$PN" "$top"; pin_landed "$top"
+  put "$STATE/trunk-tip-$PN" "$top"
   for i in "${CHAIN[@]}"; do row trunk-landings.tsv "${B_ID[$i]}" "$PN" "${B_CUR[$i]}" "$(date +%s)" "$GATE_KIND" "batch-from=$B_BASE0"; done
   unlock "$STATE/.trunk-$PN.lock"
   for i in "${CHAIN[@]}"; do
@@ -1350,6 +1340,32 @@ batch_culprit() {  # <from> <top> <verify gate>
   printf '%s\n' "${cs[lo-1]}"
 }
 
+# `line-red`: the line's verify found a red and traced it to <commit>. One alert on the trunk's wake path, once per red commit.
+line_red() {  # <commit> <what happened>
+  jg_wake_append check "line-red-$PN-${1:0:12}" "line-red: $TRUNK is red at ${1:0:12}: $2" >/dev/null 2>&1 || echo "warning: could not raise line-red" >&2
+}
+
+# Whether this project's verify is running (its slot's lock is held). Read-only.
+verify_running() {
+  local m="$STATE/.trunk-verify-$PN.lock"
+  [ -e "$m" ] || return 1
+  if jg_lock_try_acquire "$m"; then jg_lock_release "$m"; return 1; fi
+}
+
+# `verify-due <project>`: prints the trunk tip and returns 0 when a tick should start a verify: the tip is above the green pin, no
+# verify is running, and the tip is not one a verify already ended on without moving the pin (a red it could not revert, or a failure no
+# test accounts for), so a red tip is not run again each minute. A reverted red moves the tip, which is due again.
+cmd_verify_due() {
+  local tip green
+  open_project "${1-}"
+  tip=$(rev "refs/heads/$TRUNK") || return 1
+  green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
+  [ "$green" != "$tip" ] || return 1
+  [ "$(cat "$STATE/trunk-verify-last-$PN" 2>/dev/null || true)" != "$tip" ] || return 1
+  ! verify_running || return 1
+  printf '%s\n' "$tip"
+}
+
 cmd_verify() {
   local sha tip rc=0 parent why from culprit='' gate base attempt bad green started=$SECONDS
   open_project "${1-}"
@@ -1399,19 +1415,21 @@ cmd_verify() {
         *) echo "trunk green at ${sha:0:12}" ;;
       esac ;;
     2)
+      put "$STATE/trunk-verify-last-$PN" "$sha"
       why="the whole suite fails on it where its parent ${parent:0:12} passes"
       [ -z "$from" ] || culprit=$(batch_culprit "$from" "$sha" "$gate")
       if [ -n "$culprit" ] && [ "$culprit" != "$sha" ]; then
         why="the whole suite fails on it where the trunk before it (${from:0:12}) passes"
-        if revert_commit "$culprit" "$why"; then exit 1; fi
-      elif revert_commit "$sha" "$why"; then exit 1; fi
+        if revert_commit "$culprit" "$why"; then line_red "$culprit" "$why; it was reverted by itself"; exit 1; fi
+      elif revert_commit "$sha" "$why"; then line_red "$sha" "$why; it was reverted by itself"; exit 1; fi
       # The red stays recorded (data/trunk-ci.tsv, source verify) so no later landing moves the pin over it.
       bad=$sha; [ -z "$culprit" ] || bad=$culprit
       lock "$STATE/.trunk-$PN.lock"; unpin_green "$bad"; row trunk-ci.tsv "$PN" "$bad" "$(date +%s)" red verify; unlock "$STATE/.trunk-$PN.lock"
       why="$TRUNK is red at ${bad:0:12}: $why, and it could not be reverted by itself; landings go on, and live stays on the last green commit $(green_short)"
-      jg_wake_append check "trunk-red-$PN-${bad:0:12}" "$why" >/dev/null 2>&1 || echo "warning: could not raise the red alert" >&2
+      line_red "$bad" "$why"
       echo "verify: $why" >&2; exit 1 ;;
     *)
+      put "$STATE/trunk-verify-last-$PN" "$sha"
       echo "verify: ${sha:0:12} is not green after its one rerun, and no failed test is charged to a commit; nothing is reverted and the green pin stays at $(green_short): landings go on" >&2; exit 1 ;;
   esac
 }
@@ -1435,6 +1453,7 @@ cmd_green_alarm() {
   case $at in ''|*[!0-9]*) at=$(git -C "$PROJ" log -1 --format=%ct "$first") ;; esac
   mins=$(pol no-green-alarm-minutes); case $mins in ''|*[!0-9]*) mins=15 ;; esac
   age=$(( $(date +%s) - at ))
+  verify_running && { echo "green-alarm: a verify is running on ${tip:0:12}; quiet until it ends"; return 0; }
   [ "$age" -ge $(( mins * 60 )) ] || { echo "green-alarm: no green above ${green:0:12} for $(( age / 60 )) of $mins minutes"; return 0; }
   lock "$STATE/.trunk-green-alarm-$PN.lock"
   [ "$(cat "$STATE/trunk-green-alarm-$PN" 2>/dev/null || true)" != "$green" ] || { echo "green-alarm: already raised for the green pin ${green:0:12}"; return 0; }
@@ -2144,6 +2163,7 @@ case "${1:-}" in
   land-next) shift; cmd_land_next "$@" ;;
   classify) shift; [ "$#" -ge 1 ] && [ -f "$1" ] || die "classify takes an output file and, after it, any gate logs"; classify_refusal "$@" ;;
   verify) shift; cmd_verify "$@" ;;
+  verify-due) shift; cmd_verify_due "$@" ;;
   green-alarm) shift; cmd_green_alarm "$@" ;;
   proof) shift; cmd_proof "$@" ;;
   word) shift; cmd_word "$@" ;;

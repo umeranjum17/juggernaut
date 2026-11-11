@@ -28,14 +28,14 @@ fresh() { printf 'done [at=%s]: ready in branch fm/%s (local-trunk)\n' "$(( $(da
 
 qsweep() { JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D" 2>&1; }
 
-# settled <n>: the trunk holds <n> commits over <base> and the landing has moved the green pin to its tip. A finished landing
+# settled <n>: the trunk holds <n> commits over <base> and no landing is running. A finished landing
 # chains `next` (core/trunk-landing/trunk-landing.sh) from its own detached job after it records `landed`, and that sweep reads
 # the queue as it is at that moment; the case must not build its next lanes under it, so settled also waits for every job the
 # check started to end.
 settled() {
   local _
   for _ in $(seq 1 150); do
-    [ "$(git -C "$PROJ" rev-list --count "$base..trunk")" = "$1" ] && [ "$(cat "$HOME_D/state/trunk-green-proj" 2>/dev/null)" = "$(tip)" ] && ! grep -qs '^running' "$HOME_D"/data/jg-trunk-landing/*.state && [ -z "$(jg_test_detached_alive)" ] && return 0
+    [ "$(git -C "$PROJ" rev-list --count "$base..trunk")" = "$1" ] && ! grep -qs '^running' "$HOME_D"/data/jg-trunk-landing/*.state && [ -z "$(jg_test_detached_alive)" ] && return 0
     sleep 0.2
   done
   fail "the trunk must hold $1 landed lanes and a settled suite: $(git -C "$PROJ" log --format=%s "$base..trunk" | paste -sd, -)"
@@ -66,7 +66,7 @@ test_queued_lanes_land_as_one_stack_and_a_red_stack_is_bisected() {
   ! git -C "$PROJ" cat-file -e trunk:t/b2.test.sh 2>/dev/null || fail "the red lane is undone"
   git -C "$PROJ" cat-file -e trunk:t/b1.test.sh || fail "the first green lane stays on trunk"
   git -C "$PROJ" cat-file -e trunk:t/b3.test.sh || fail "the last green lane stays on trunk"
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(git -C "$PROJ" log --format=%H --grep='^ticket b1$' -n 1 trunk)" ] || fail "the guilty commit takes the green pin back below it"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$base" ] || fail "the pin stays below the guilty commit: a landing never moved it and a red verify does not"
   assert_contains "$out" "b2" "the revert names the lane"
   # A lane that conflicts drops out and is told, with its paths; the rest still land as one stack.
   : > "$W/gate-runs"; base=$(tip)
@@ -102,7 +102,7 @@ test_queued_lanes_land_as_one_stack_and_a_red_stack_is_bisected() {
 
 # shellcheck disable=SC2016 # the gate bodies are written out verbatim and expand when the gate runs them
 test_the_landing_check_stacks_ready_lanes_and_keeps_a_single_lane_on_its_own_path() {
-  local base out n
+  local base out n again
   batch_world watcherbatch; base=$(tip)
   cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
   lane w1 one f1.txt; lane w2 left; lane w3 right; lane w4 four f4.txt
@@ -116,16 +116,20 @@ test_the_landing_check_stacks_ready_lanes_and_keeps_a_single_lane_on_its_own_pat
   out=$(JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D")
   assert_contains "$out" "w3 not landed" "the conflicting lane is reported"
   assert_contains "$out" "work.txt" "its report names the conflicting path"
-  [ -z "$(JG_HOME="$HOME_D" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D")" ] || fail "the refusal is reported once"
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(tip)" ] || fail "the stack's landing moves the green pin to its top"
+  # A landing's own outbox line can still be in flight (its state is written first), so only a repeated refusal counts.
+  again=$(JG_HOME="$HOME_D" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D")
+  [ -z "$again" ] || ! grep -qv ': landed ' <<<"$again" || fail "the refusal is reported once: $again"
+  for _ in $(seq 1 150); do [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(tip)" ] && break; sleep 0.2; done
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(tip)" ] || fail "the tick's verify moves the green pin to the stack's top"
   # A single ready lane keeps the single path: its own landing, no stack.
   : > "$W/gate-runs"; lane w5 five f5.txt
   JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D" >/dev/null
   for _ in $(seq 1 150); do git -C "$PROJ" log --format=%s trunk | grep -q '^ticket w5' && break; sleep 0.2; done
   git -C "$PROJ" log --format=%s trunk | grep -q '^ticket w5' || fail "a single ready lane lands"
   ! grep -q 'batch-from' <(grep '^w5' "$HOME_D/data/trunk-landings.tsv") || fail "a single lane is not recorded as part of a stack"
+  JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D" >/dev/null  # the tick that follows the landing starts its verify
   for _ in $(seq 1 150); do [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(tip)" ] && break; sleep 0.2; done
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(tip)" ] || fail "a single lane's landing moves the green pin"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(tip)" ] || fail "the tick's verify moves the green pin after a single lane's landing"
   pass 'the landing check stacks the ready lanes into one landing and a single lane keeps its own path'
 }
 
@@ -194,6 +198,7 @@ test_a_job_the_landing_check_starts_never_outlives_its_fixture() {
   [ "$(ps -o pgid= -p "$job" | tr -d ' ')" = "$job" ] || fail "the landing job leads its own process group"
   jg_test_reap_detached
   [ -z "$(jg_test_detached_alive)" ] || fail "a job the landing check started outlived the cleanup: $(jg_test_detached_alive)"
+  for _ in $(seq 1 50); do kill -0 "$job" 2>/dev/null || break; sleep 0.1; done  # the stop is a signal: the process may need a moment to go
   ! kill -0 "$job" 2>/dev/null || fail "the hung landing job $job is still running"
   ! pgrep -g "$job" >/dev/null 2>&1 || fail "a child in the landing job's group is still running: $(pgrep -g "$job" -a)"
   [ "$(git -C "$PROJ" rev-list --count "$base..trunk")" = 0 ] || fail "a landing whose gate never finished moves nothing"
