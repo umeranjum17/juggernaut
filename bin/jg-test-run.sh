@@ -86,11 +86,13 @@
 #                   1 (serial) except for plain --changed and a plain list of
 #                   script paths, which use the bounded automatic scheduler.
 #   --per-script-timeout-secs N
-#                   terminate a script that runs longer than N seconds and
-#                   record it as exit 124 (0 disables, the default). The
-#                   --changed applies a per-test ceiling automatically,
-#                   max(120s, 4 x the test's CI hint); exceeding it becomes a
-#                   bounded failure, not proof of a hang. --max-wall-ms is checked
+#                   advise on a script that runs longer than N seconds (0
+#                   disables, the default): a JG_TEST_SLOW line, and the script
+#                   keeps its own result while it keeps writing output. A script
+#                   whose output stops for a whole N seconds is hung and ends as
+#                   exit 124. --changed applies a per-test bound automatically,
+#                   max(120s, 4 x the test's CI hint), by the same rule: a slow
+#                   script that passes stays green. --max-wall-ms is checked
 #                   after the run and so cannot catch a hang on its own.
 #                   External interruption cleanup is outside this runner's
 #                   guarantee; configured per-script bounds remain authoritative.
@@ -2895,9 +2897,9 @@ record_script_result() {  # <script> <rc> <duration> <out> <end_iso> <stream>
 # Run <script>, capturing output to <out>. <stream> 1 also echoes it live.
 # <id> only has to be unique within this run. The script runs under the bound
 # script_speed_bound_secs names, and a script that outruns it is terminated and
-# reported as exit 124: a hung or overrunning script must become a bounded
-# failure rather than an unbounded suite, because an unbounded suite is what
-# silently outruns its caller's budget.
+# advised (JG_TEST_SLOW) and never stopped while it keeps writing output; a script
+# whose output stops for a whole bound is hung and ends as exit 124, so a hang is
+# still a bounded failure while a slow, passing script stays green.
 run_script_bounded() {  # <script> <out> <stream> <id>
   local script=$1 out=$2 stream=$3 id=$4
   # Declaring the variables local first keeps the helper's export scoped to this
@@ -2929,27 +2931,38 @@ run_script_bounded() {  # <script> <out> <stream> <id>
   JG_BUS_HOMES="$RUN_TMP/bus-homes.$$"
   export JG_BUS_HOMES
   set +e
-  if [ "$stream" -eq 1 ]; then
-    if [ "$bound" -gt 0 ]; then
-      # Expansion is intentionally deferred to the child bash passed to -c.
-      # shellcheck disable=SC2016
-      jg_run_timed "$bound" bash -c \
+  local marker="$out.bound"
+  if [ "$bound" -gt 0 ]; then
+    # Expansion is intentionally deferred to the child bash passed to -c.
+    # shellcheck disable=SC2016
+    if [ "$stream" -eq 1 ]; then
+      jg_run_advised "$bound" "$out" "$marker" bash -c \
         'bash "$1" 2>&1 | tee "$2"; exit "${PIPESTATUS[0]}"' _ "$script" "$out"
-      rc=$?
     else
-      bash "$script" 2>&1 | tee "$out"
-      rc=${PIPESTATUS[0]}
+      jg_run_advised "$bound" "$out" "$marker" bash -c \
+        'exec bash "$1" >"$2" 2>&1' _ "$script" "$out"
     fi
-  elif [ "$bound" -gt 0 ]; then
-    jg_run_timed "$bound" bash "$script" >"$out" 2>&1
     rc=$?
+  elif [ "$stream" -eq 1 ]; then
+    bash "$script" 2>&1 | tee "$out"
+    rc=${PIPESTATUS[0]}
   else
     bash "$script" >"$out" 2>&1
     rc=$?
   fi
-  if [ "$bound" -gt 0 ] && [ "$rc" -eq 124 ]; then
-    printf 'not ok - %s exceeded the per-script bound of %ss and was terminated\n' \
-      "$script" "$bound" >>"$out"
+  # The bound advises: a script that outran it and still finished keeps its own
+  # result, and only a script whose output stopped growing for a whole bound is
+  # ended as hung (exit 124). The line names which of the two it was.
+  local verdict=
+  [ "$bound" -gt 0 ] && verdict=$(cat "$marker" 2>/dev/null)
+  rm -f -- "$marker"
+  if [ "$verdict" = hung ] && [ "$rc" -eq 124 ]; then
+    printf 'not ok - %s exceeded the per-script bound of %ss with no output for %ss and was terminated as hung\n' \
+      "$script" "$bound" "$bound" >>"$out"
+    [ "$stream" -eq 1 ] && tail -1 "$out"
+  elif [ "$verdict" = slow ]; then
+    printf 'JG_TEST_SLOW %s ran past the per-script bound of %ss and was not stopped: it kept writing output (advice only, exit %s; shards that run side by side slow each other)\n' \
+      "$script" "$bound" "$rc" >>"$out"
     [ "$stream" -eq 1 ] && tail -1 "$out"
   fi
   return "$rc"

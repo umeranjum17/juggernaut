@@ -263,9 +263,37 @@ test_a_hanging_test_is_killed_and_reported_instead_of_holding_the_run() {
   out=$(TEST_SPEED_LIMITS_FILE="$limits" bash "$RUNNER" --enforce-test-speed --per-script-timeout-secs 1 "$hung" 2>&1) || rc=$?
   ended=$(date +%s)
   [ "$rc" -ne 0 ] || fail "a hanging test must fail the run: $out"
-  assert_contains "$out" "not ok - $hung exceeded the per-script bound of 1s" 'the terminated script and the bound that killed it must be named'
+  assert_contains "$out" "not ok - $hung exceeded the per-script bound of 1s with no output for 1s and was terminated as hung" 'the hung script and the bound that ended it must be named'
   [ "$((ended - started))" -lt 20 ] || fail "the hang must be bounded well under a gate, took $((ended - started))s"
   pass 'a hanging test is killed and reported instead of holding the run'
+}
+
+# The per-script bound advises: a script that outruns it while it keeps writing output is slow, not hung, and its own
+# result stands (PR 813, Changed tests 8: tests/jg-test-run.test.sh was killed at 132 s only because eight shards ran at once).
+test_a_slow_passing_script_past_the_per_script_bound_warns_and_passes() {
+  local slow rc=0 out
+  slow="$TMP_ROOT/slow-but-alive.test.sh"
+  # shellcheck disable=SC2016  # the loop variable expands in the script under test
+  write_script "$slow" 'for i in 1 2 3 4 5; do echo "ok - step $i"; sleep 0.7; done'
+  out=$(bash "$RUNNER" --per-script-timeout-secs 1 "$slow" 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] || fail "a slow script that still passes must exit 0: $out"
+  assert_contains "$out" 'JG_TEST_SLOW' 'the advise line must be printed'
+  assert_contains "$out" 'ran past the per-script bound of 1s and was not stopped' 'the advise line must say the script was not stopped'
+  assert_contains "$out" 'shards that run side by side slow each other' 'the advise line must name the shared-load cause'
+  assert_not_contains "$out" 'terminated as hung' 'a script that keeps writing is not hung'
+  assert_contains "$out" 'ok - step 5' 'the slow script must run to its end'
+  pass 'a slow script that keeps writing past the per-script bound warns and passes'
+}
+
+test_a_slow_failing_script_past_the_per_script_bound_stays_red() {
+  local slow rc=0 out
+  slow="$TMP_ROOT/slow-fails.test.sh"
+  # shellcheck disable=SC2016  # the loop variable expands in the script under test
+  write_script "$slow" 'for i in 1 2 3; do echo "step $i"; sleep 0.7; done; exit 3'
+  out=$(bash "$RUNNER" --per-script-timeout-secs 1 "$slow" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "a slow script that fails must stay red: $out"
+  assert_not_contains "$out" 'terminated as hung' 'a failing slow script is a plain failure, not a hang'
+  pass 'a slow script that fails past the per-script bound stays red'
 }
 
 test_a_test_within_its_limits_is_unaffected() {
@@ -534,6 +562,8 @@ test_the_gate_wall_limit_is_10_minutes_in_config
 test_a_run_past_the_gate_budget_fails_without_starting_the_next_test
 test_a_wall_failure_with_no_functional_failure_stays_red_in_aggregate
 test_a_hanging_test_is_killed_and_reported_instead_of_holding_the_run
+test_a_slow_passing_script_past_the_per_script_bound_warns_and_passes
+test_a_slow_failing_script_past_the_per_script_bound_stays_red
 test_a_test_within_its_limits_is_unaffected
 test_a_weight_cap_defers_slow_suites_and_names_them
 test_a_deleted_journey_does_not_refuse_the_changed_selection

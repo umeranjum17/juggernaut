@@ -216,6 +216,54 @@ jg_run_timed() {  # <seconds> <command...>
   esac
 }
 
+# jg_run_advised <seconds> <progress-file> <marker-file> <command...>
+#   The advisory twin of jg_run_timed: the bound warns, it does not kill.
+#   At <seconds> a command still running gets "slow" written to <marker-file>
+#   and keeps running. From then on every <seconds> the watchdog compares the
+#   size of <progress-file> (the file the command's output lands in) with the
+#   last look; a command whose output did not grow for a whole bound is hung,
+#   gets "hung" written to <marker-file>, is TERMed (KILLed 0.2 s later) as a
+#   process group, and reports 124. A command that finishes reports its own
+#   status, whatever the markers say, so the caller reads "slow" as advice.
+jg_run_advised() {
+  local seconds=$1 progress=$2 marker=$3
+  shift 3
+  local child_pid watchdog_pid command_rc monitor_was_on=0
+  case $- in *m*) monitor_was_on=1 ;; esac
+  : >"$marker"
+  set -m
+  ( set +m; exec "$@" ) &
+  child_pid=$!
+  (
+    set +m
+    local last=-1 size
+    sleep "$seconds"
+    while kill -0 "$child_pid" 2>/dev/null; do
+      size=$(wc -c <"$progress" 2>/dev/null | tr -d ' ')
+      if [ "${size:-0}" = "$last" ]; then
+        printf 'hung\n' >"$marker"
+        kill -TERM -- "-$child_pid" 2>/dev/null || true
+        sleep 0.2
+        kill -KILL -- "-$child_pid" 2>/dev/null || true
+        exit 0
+      fi
+      [ "$last" = -1 ] && printf 'slow\n' >"$marker"
+      last=${size:-0}
+      sleep "$seconds"
+    done
+  ) &
+  watchdog_pid=$!
+  [ "$monitor_was_on" -eq 1 ] || set +m
+  if wait "$child_pid" 2>/dev/null; then command_rc=0; else command_rc=$?; fi
+  if [ "$(cat "$marker" 2>/dev/null)" = hung ]; then
+    wait "$watchdog_pid" 2>/dev/null || true
+    return 124
+  fi
+  kill -TERM -- "-$watchdog_pid" 2>/dev/null || kill "$watchdog_pid" 2>/dev/null || true
+  wait "$watchdog_pid" 2>/dev/null || true
+  return "$command_rc"
+}
+
 jg_timed_out() {  # <status>
   case ${1:-} in
     124 | 137) return 0 ;;
