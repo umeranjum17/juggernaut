@@ -4,3 +4,4 @@ required-checks	event
 fleet-report	event
 pr-pager	event
 auto-dispatch	event
+records-reaper	event

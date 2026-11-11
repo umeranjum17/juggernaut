@@ -239,6 +239,9 @@ if [ -z "$QUIET" ] && jg_lock_try_acquire "$MEM/.outbox.lock"; then
   if [ -s "$MEM/outbox" ]; then mv -f -- "$MEM/outbox" "$MEM/outbox.$$" && cat "$MEM/outbox.$$" && rm -f -- "$MEM/outbox.$$"; fi
   jg_lock_release "$MEM/.outbox.lock"
 fi
+# The landing's temporary output (request and launch logs) and the leftovers of a task with no record are removed
+# (core/tmp-reaper/records.sh landing, at most every 10 minutes and silent).
+[ -n "$QUIET" ] || [ ! -x "${SELF%/*}/../tmp-reaper/records.sh" ] || "${SELF%/*}/../tmp-reaper/records.sh" landing "$FMH" >/dev/null 2>&1 || :
 # Only a project registered local-trunk is ever touched; no-mistakes, direct-PR and local-only projects keep their own rules.
 # shellcheck source=bin/jg-delivery-style.sh disable=SC1091
 . "$FMH/bin/jg-delivery-style.sh"
