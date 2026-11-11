@@ -28,11 +28,14 @@ fresh() { printf 'done [at=%s]: ready in branch fm/%s (local-trunk)\n' "$(( $(da
 
 qsweep() { JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D" 2>&1; }
 
-# settled <n>: the trunk holds <n> commits over <base> and the landing has moved the green pin to its tip.
+# settled <n>: the trunk holds <n> commits over <base> and the landing has moved the green pin to its tip. A finished landing
+# chains `next` (core/trunk-landing/trunk-landing.sh) from its own detached job after it records `landed`, and that sweep reads
+# the queue as it is at that moment; the case must not build its next lanes under it, so settled also waits for every job the
+# check started to end.
 settled() {
   local _
   for _ in $(seq 1 150); do
-    [ "$(git -C "$PROJ" rev-list --count "$base..trunk")" = "$1" ] && [ "$(cat "$HOME_D/state/trunk-green-proj" 2>/dev/null)" = "$(tip)" ] && ! grep -qs '^running' "$HOME_D"/data/jg-trunk-landing/*.state && return 0
+    [ "$(git -C "$PROJ" rev-list --count "$base..trunk")" = "$1" ] && [ "$(cat "$HOME_D/state/trunk-green-proj" 2>/dev/null)" = "$(tip)" ] && ! grep -qs '^running' "$HOME_D"/data/jg-trunk-landing/*.state && [ -z "$(jg_test_detached_alive)" ] && return 0
     sleep 0.2
   done
   fail "the trunk must hold $1 landed lanes and a settled suite: $(git -C "$PROJ" log --format=%s "$base..trunk" | paste -sd, -)"
