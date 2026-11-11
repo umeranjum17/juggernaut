@@ -5,6 +5,7 @@
 #   jg-board-gate.sh route --title "<the ask>" [--filer <id>] [--ref <id>]
 #   jg-board-gate.sh decided <record-id> --words "<what Main decided>"
 #   jg-board-gate.sh waiting
+#   jg-board-gate.sh expire [--dry-run] | report
 #   jg-board-gate.sh check | arm | disarm
 #
 # The captain's leash (2026-10-30): "asking when it matters is not working at
@@ -46,6 +47,14 @@
 #          however many passes see it. A re-ping and a healthy board are silent
 #          after the first pass. A report card is not an ask (its kind is not a
 #          decision), so the gate ignores it.
+# expire   Withdraw every open decision or design ask that is already acted on
+#          (its ticket is done, or its ask-ref's hold is no longer open),
+#          superseded (a later card on the same ask-ref was answered), or past
+#          its time to live (bin/jg-board-ttl-lib.sh owns the rules). It is a
+#          dismissal with sign-off's own reason, never an answer, and each one
+#          is a row in $DATA/board-withdrawn.tsv. `check` runs it every pass.
+# report   Every open ask with its category and expiry, then the last
+#          withdrawals with their reasons.
 # arm      Write state/board-gate.check.sh and bind it with jg-check-register.sh;
 #          bin/jg-bootstrap.sh arms it on a primary home. disarm retires it.
 # Environment: JG_HOME, JG_STATE_OVERRIDE and JG_DATA_OVERRIDE as in other bin/
@@ -76,6 +85,8 @@ BOARD=${BOARD:-}
 . "$SCRIPT_DIR/jg-board-link-lib.sh"
 # shellcheck source=bin/jg-board-record-lib.sh
 . "$SCRIPT_DIR/jg-board-record-lib.sh"
+# shellcheck source=bin/jg-board-ttl-lib.sh
+. "$SCRIPT_DIR/jg-board-ttl-lib.sh"
 
 OPEN_ASKS='.decisions[]? | select((.dismissed // false) != true and .decided == null and ((.kind // .type // "decision") == "decision"))'
 
@@ -269,8 +280,12 @@ dismiss_reason() {  # <board json> <key> <filer> <title> <filed> <record id>
 
 # Route one ask off the board, or re-ping one must ask.
 ask_sweep() {  # <board json> <board>
-  local key filed detail filer title cat epoch id
+  local key filed detail filer title cat epoch id leash
   local lines=$GATE_DIR/.unrouted.lines keys=$GATE_DIR/.unrouted.keys
+  # Only "When it matters" keeps non-must asks off the board: on "Ask me first"
+  # every ask waits for him, and on "Act, then tell me" the board takes the
+  # recommendation itself, so neither leash is the gate's to enforce.
+  leash=$(jg_ask_leash "$2")
   mkdir -p "$GATE_DIR" 2>/dev/null || return 0
   : > "$lines" && : > "$keys" || return 0
   # A detail field can hold line breaks, and a bare join would then read each of
@@ -295,6 +310,9 @@ ask_sweep() {  # <board json> <board>
         fi
         cat=$(jg_ask_card_category "$detail")
         [ -n "$cat" ] || cat=$(jg_ask_card_category "$(jg_board_detail_of "$2" "$key")")
+        if [ -z "$cat" ] && [ "$leash" != matters ]; then
+          continue
+        fi
         if [ -z "$cat" ]; then
           id=$(routed_id "$key")
           [ -n "$id" ] || id=$(route_record "${title:-$key}" "$filer" "$key") || continue
@@ -349,9 +367,94 @@ merge_sweep() {  # <board json>
   done
 }
 
+# Every open decision and design ask, one tab-separated line each. A card's
+# answered sibling is another card, answered, that names the same ask-ref and
+# was filed later: the captain's later words on the same call.
+ASK_CARDS='.decisions[]? | select((.dismissed // false) != true and .decided == null and ((.kind // .type // "decision") == "decision" or (.kind // .type) == "design"))'
+card_lines() {  # <board json>
+  printf '%s' "$1" | jq -r ". as \$all | $ASK_CARDS"' | . as $c
+    | [($c.key // ""), ($c.kind // $c.type // "decision"), ($c.filed // ""), ($c.detail // ""), ($c.ticket // ""), ($c.ask_ref // ""),
+       ($c.title // ""),
+       ([$all.decisions[]? | select($c.ask_ref != null and .ask_ref == $c.ask_ref and .key != $c.key and .decided != null and (.filed // "") > ($c.filed // "")) | .key] | first // "")]
+    | map(gsub("[\n\r\t]"; " ")) | join("\u001f")' 2>/dev/null
+}
+
+card_category() {  # <board> <key> <type> <detail>
+  local cat
+  [ "$3" != design ] || { printf 'design-pick\n'; return 0; }
+  cat=$(jg_ask_card_category "$4")
+  [ -n "$cat" ] || cat=$(jg_ask_card_category "$(jg_board_detail_of "$1" "$2")")
+  printf '%s\n' "$cat"
+}
+
+filed_epoch() {  # <filed iso> -> epoch, or return 1
+  case "$1" in *.*) set -- "${1%%.*}Z" ;; esac
+  jg_utc_iso_to_epoch "$1"
+}
+
+# Withdraw every open ask that is already acted on, superseded or past its time
+# to live (bin/jg-board-ttl-lib.sh). A withdrawal is a dismissal with sign-off's
+# own reason, never an answer, and each one is a row in data/board-withdrawn.tsv.
+# --dry-run prints the same lines and changes nothing.
+expire_sweep() {  # <board json> <board> [--dry-run]
+  local key type filed detail ticket ref title answered cat epoch verdict reason why n=0 report=$DATA/board-withdrawn.tsv
+  mkdir -p "$GATE_DIR" 2>/dev/null || return 0
+  JG_BOARD_DONE_FILE=$GATE_DIR/.done-tickets
+  jg_board_done_tickets "$JG_BOARD_DONE_FILE"
+  while IFS=$'\x1f' read -r key type filed detail ticket ref title answered; do
+    [ -n "$key" ] || continue
+    jg_board_dismissed "$2" "$key" && continue
+    cat=$(card_category "$2" "$key" "$type" "$detail")
+    epoch=$(filed_epoch "$filed") || continue
+    verdict=$(jg_board_ask_verdict "$type" "$cat" "$epoch" "$NOW" "$ticket" "$ref" "$answered") || continue
+    reason=${verdict%%|*}; why=${verdict#*|}
+    if [ "${3-}" != --dry-run ]; then
+      sign-off-axi dismiss "$key" "$2" --reason "$reason" >/dev/null 2>&1 || { printf 'board ask could not be withdrawn: %s - %s\n' "$key" "$title"; continue; }
+      printf '%s\t%s\t%s\t%s\t%s\n' "$NOW" "$key" "$reason" "$why" "$title" >> "$report"
+    fi
+    printf 'withdrawn %s (%s): %s\n' "$key" "$why" "$title"
+    n=$((n + 1))
+  done < <(card_lines "$1")
+  rm -f -- "$JG_BOARD_DONE_FILE" 2>/dev/null || true
+  [ "$n" -eq 0 ] || printf 'board asks withdrawn: %s (rows in %s)\n' "$n" "$report"
+}
+
+# The cleanup report: every open ask with its category and expiry, then the
+# last withdrawals with their reasons.
+cmd_report() {
+  local board json key type filed detail ticket ref title answered cat epoch exp
+  board=$(board_file)
+  json=$(board_list "$board") || die "cannot read $board with sign-off-axi"
+  printf 'open asks (leash: %s)\n' "$(jg_ask_leash "$board")"
+  while IFS=$'\x1f' read -r key type filed detail ticket ref title answered; do
+    [ -n "$key" ] || continue
+    jg_board_dismissed "$board" "$key" && continue
+    cat=$(card_category "$board" "$key" "$type" "$detail")
+    exp=never
+    if epoch=$(filed_epoch "$filed"); then
+      exp=$(jg_board_ask_expiry "$epoch" "$cat")
+      [ "$exp" = never ] || exp=$(date -u -d "@$exp" +%Y-%m-%dT%H:%MZ 2>/dev/null || printf '%s' "$exp")
+    fi
+    printf '  %s\t%s\texpires %s\t%s\n' "${cat:-no-category}" "$key" "$exp" "$title"
+  done < <(card_lines "$json")
+  printf 'withdrawn (last 40)\n'
+  tail -n 40 "$DATA/board-withdrawn.tsv" 2>/dev/null | awk -F'\t' '{printf "  %s\t%s\t%s\t%s\n", $2, $3, $4, $5}'
+}
+
+cmd_expire() {  # [--dry-run]
+  local board json
+  board=$(board_file)
+  json=$(board_list "$board") || die "cannot read $board with sign-off-axi"
+  expire_sweep "$json" "$board" "${1-}"
+}
+
 cmd_check() {
   local board json
   board=$(board_file)
+  json=$(board_list "$board") || return 0
+  # Withdrawals come first, so an ask that leaves the board this pass is not
+  # also re-pinged as a waiting must ask.
+  expire_sweep "$json" "$board"
   json=$(board_list "$board") || return 0
   ask_sweep "$json" "$board"
   merge_sweep "$json"
@@ -373,8 +476,10 @@ case "${1:-waiting}" in
   decided) shift; cmd_decided "$@" ;;
   waiting) cmd_waiting ;;
   check) cmd_check ;;
+  expire) shift; cmd_expire "$@" ;;
+  report) cmd_report ;;
   arm) cmd_arm ;;
   disarm) JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-check-unregister.sh" board-gate ;;
   -h|--help|help) awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}"; exit 2 ;;
-  *) die 'usage: route|decided|waiting|check|arm|disarm (see the header)' 2 ;;
+  *) die 'usage: route|decided|waiting|check|expire|report|arm|disarm (see the header)' 2 ;;
 esac
