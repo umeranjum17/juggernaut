@@ -344,7 +344,7 @@ test_ship_mode_is_required_and_closed_set() {
   done <<'ROWS'
 missing --mode||ship briefs require --mode
 empty --mode value|--mode|requires a value
-unknown mode value|--mode nope|must be one of no-mistakes, direct-PR, local-only
+unknown mode value|--mode nope|must be one of no-mistakes, direct-PR, local
 conditional policy is not a task mode|--mode no-mistakes-prod-only|classify this task's surface
 ROWS
   pass "jg-brief.sh: ship --mode is required and closed-set validated"
@@ -1946,7 +1946,7 @@ tlo trunk-proj local-only
 tlt trunk-proj local-trunk
 LIST
   out=$(JG_HOME="$home" "$ROOT/bin/jg-brief.sh" bad-mode some-proj --mode bogus 2>&1) && fail "an unknown mode should be refused"
-  assert_contains "$out" "no-mistakes, direct-PR, local-only, local-trunk" "the refusal lists the modes from the table"
+  assert_contains "$out" "no-mistakes, direct-PR, local (the old words local-trunk, local-only" "the refusal lists the modes from the table"
   pass "jg-brief.sh: the six ship briefs equal their goldens and an unknown mode is refused with the table's mode list"
 }
 test_ship_briefs_match_goldens

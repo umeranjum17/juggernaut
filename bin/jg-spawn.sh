@@ -2891,7 +2891,7 @@ if [ "$KIND" = ship ]; then
   # local-trunk; legacy local-only records remain interoperable. The only PR is the release one. A current explicit captain instruction
   # can still choose a pull request mode by removing the trunk record, never by this spawn.
   if ! jg_delivery_style_is "$MODE" local && jg_delivery_style_is "$STANDING_MODE" trunk; then
-    echo "error: $ID cannot ship mode=$MODE: $PROJ_NAME is registered local-trunk, so it takes no feature pull request; spawn it --mode local-trunk and its one commit lands on the trunk once its done-done proof passes (docs/trunk-flow.md)" >&2
+    echo "error: $ID cannot ship mode=$MODE: $PROJ_NAME is registered local-trunk, so it takes no feature pull request; spawn it --mode local and its one commit lands on the trunk once its done-done proof passes (docs/trunk-flow.md)" >&2
     exit 1
   fi
   if jg_delivery_style_is "$MODE" trunk && { ! jg_delivery_style_is "$STANDING_MODE" trunk || ! spawn_trunk_branch >/dev/null; }; then

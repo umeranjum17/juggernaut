@@ -66,7 +66,7 @@ if ! jg_backlog_meta_spawn_gen_optional "$META" "$STATE"; then
   exit 1
 fi
 MODE=$(jg_dod_meta_value "$META" mode)
-case "$MODE" in local-trunk|local-only|direct-PR|no-mistakes) ;; *) echo 'error: receipt requires a ship delivery mode' >&2; exit 1 ;; esac
+jg_delivery_style_accepts "$MODE" || { echo 'error: receipt requires a ship delivery mode' >&2; exit 1; }
 HEAD_SHA=$(git -C "$REPO" rev-parse --verify 'HEAD^{commit}')
 if [ "$VERDICT" = PASS ] && [ -n "$(git -C "$REPO" status --porcelain)" ]; then
   echo 'error: PASS requires a clean candidate checkout' >&2
@@ -89,7 +89,7 @@ trim() { local v=${1-}; v=${v#"${v%%[![:space:]]*}"}; printf '%s' "${v%"${v##*[!
 pr_was_set=false
 [ -z "${JG_RECEIPT_PR+x}" ] || pr_was_set=true
 PR_URL=$(trim "${JG_RECEIPT_PR-}")
-if [ "$MODE" != local-trunk ] && [ -z "$PR_URL" ] && command -v gh >/dev/null; then
+if ! jg_delivery_style_is "$MODE" trunk && [ -z "$PR_URL" ] && command -v gh >/dev/null; then
   PR_URL=$(trim "$(cd "$REPO" && gh pr view --json url --jq .url 2>/dev/null || true)")
   BRANCH=$(trim "$(jg_dod_meta_value "$META" branch)")
   if [ -z "$PR_URL" ] && [ -n "$BRANCH" ]; then

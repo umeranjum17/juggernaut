@@ -121,6 +121,8 @@ unset _jg_d
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/jg-delivery-style.sh
+. "$SCRIPT_DIR/jg-delivery-style.sh"
 JG_ROOT="${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$JG_ROOT}}"
 STATE="${JG_STATE_OVERRIDE:-$JG_HOME/state}"
@@ -153,7 +155,7 @@ if [ -n "$BASE" ]; then
   [ -n "$PROJECT" ] && [ -n "$TRUNK_BRANCH" ] || { usage; exit 1; }
 elif [ -n "$PROJECT$ONLY_HOME" ]; then
   usage; exit 1
-elif [ "$(env JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="${JG_DATA_OVERRIDE:-$JG_HOME/data}" "$SCRIPT_DIR/jg-project-mode.sh" --raw juggernaut 2>/dev/null | cut -d' ' -f1 || true)" = local-trunk ]; then
+elif jg_delivery_style_is "$(env JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="${JG_DATA_OVERRIDE:-$JG_HOME/data}" "$SCRIPT_DIR/jg-project-mode.sh" --raw juggernaut 2>/dev/null | cut -d' ' -f1 || true)" trunk; then
   echo "REFUSED: juggernaut is registered local-trunk; update this project from its trunk (jg-trunk.sh live), not from origin" >&2
   exit 1
 fi

@@ -209,7 +209,7 @@ open_project() {  # <project-dir>: sets PROJ PN TRUNK
   git check-ref-format --branch "$TRUNK" >/dev/null 2>&1 || die "invalid trunk-branch '$TRUNK'"
   # The trunk flow is for local-trunk projects ONLY: a no-mistakes, direct-PR or local-only project keeps its own rules.
   mode=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-project-mode.sh" --raw "$PN" 2>/dev/null | cut -d' ' -f1 || true)
-  [ "$mode" = local-trunk ] || refuse "$PN is registered ${mode:-as nothing} in data/projects.md, not local-trunk; the trunk flow applies to local-trunk projects only and this project's own delivery rules are unchanged"
+  jg_delivery_style_is "$mode" trunk || refuse "$PN is registered ${mode:-as nothing} in data/projects.md, not local-trunk; the trunk flow applies to local-trunk projects only and this project's own delivery rules are unchanged"
   [ "${2:-}" = read-only ] || ensure_guard
   [ "$(pol trunk-owner)" = this-home ] || refuse "trunk-owner=$(pol trunk-owner) is not built; only this-home is, and the owner is an open captain call"
 }
@@ -670,7 +670,7 @@ lane_meta() {  # <task-id>
   jg_pr_task_id_valid "$1" || die "invalid task id"
   META="$STATE/$1.meta"; [ -f "$META" ] || die "no meta for task $1 at $META"
   open_project "$(jg_dod_meta_value "$META" project)"
-  case $(jg_dod_meta_value "$META" mode) in local-trunk|local-only|trunk) ;; *) die "task $1 is not a local-trunk task (legacy local-only/trunk also accepted); merge PR tasks with bin/jg-pr-merge.sh" ;; esac
+  case $(jg_dod_meta_value "$META" mode) in local|local-trunk|local-only|trunk) ;; *) die "task $1 is not a local-trunk task (legacy local-only/trunk also accepted); merge PR tasks with bin/jg-pr-merge.sh" ;; esac
 }
 
 # One lane's admission onto <tip>: the trunk tip for a single landing, the top of the stack for a batch. The lander rebases the

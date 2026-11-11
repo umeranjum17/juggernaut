@@ -6,14 +6,17 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 DS="$ROOT/bin/jg-delivery-style.sh" TABLE="$ROOT/core/machines/styles/delivery-styles.tsv"
 
-assert_equals "no-mistakes direct-PR local-only local-trunk" "$(bash "$DS" --list | tr '\n' ' ' | sed 's/ $//')" "the four mode words"
-for m in no-mistakes direct-PR local-only local-trunk; do
+assert_equals "no-mistakes direct-PR local" "$(bash "$DS" --list | tr '\n' ' ' | sed 's/ $//')" "the three mode words: the two local rows are one"
+assert_equals "no-mistakes direct-PR local local-trunk local-only" "$(bash "$DS" --accepted | tr '\n' ' ' | sed 's/ $//')" "the accepted words: the old local words are read as before"
+for m in no-mistakes direct-PR local local-only local-trunk; do
   out=$(bash "$DS" "$m" 2>&1); rc=$?
   expect_code 0 "$rc" "$m prints"
   assert_equals "line adds joins publishes review trunk" "$(printf '%s\n' "$out" | cut -f1 | tr '\n' ' ' | sed 's/ $//')" "$m row has six fields"
   if printf '%s\n' "$out" | cut -f2 | grep -qv .; then fail "$m has an empty field"; fi
 done
 assert_contains "$(bash "$DS" local-trunk)" "the local trunk" "local-trunk line"
+assert_contains "$(bash "$DS" local)" "the local trunk" "local line"
+assert_equals "$(bash "$DS" local | sed '/^trunk/d')" "$(bash "$DS" local-only | sed '/^trunk/d')" "an old word reads as the row local"
 assert_contains "$(bash "$DS" direct-PR)" "pull request" "direct-PR joins by pull request"
 
 assert_contains "$(bash "$DS" local-only)" "publishes	no" "local-only publishes nothing"
@@ -25,7 +28,9 @@ bash "$DS" local-only local; expect_code 0 "$?" "local-only has no pull request"
 bash "$DS" no-mistakes review; expect_code 0 "$?" "no-mistakes runs the review"
 bash "$DS" direct-PR review; expect_code 1 "$?" "direct-PR runs no review"
 bash "$DS" local-trunk trunk; expect_code 0 "$?" "local-trunk lands on the trunk"
-bash "$DS" local-only trunk; expect_code 1 "$?" "local-only does not land on the trunk"
+bash "$DS" local-only trunk; expect_code 1 "$?" "local-only keeps the trunk fact it carried"
+bash "$DS" local trunk; expect_code 0 "$?" "local lands on the trunk"
+bash "$DS" local local; expect_code 0 "$?" "local publishes nothing"
 bash "$DS" bogus local; expect_code 1 "$?" "an unknown mode has no fact"
 
 out=$(bash "$DS" bogus 2>&1); rc=$?

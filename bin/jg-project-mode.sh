@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Resolve a project's REGISTERED delivery posture from the data/projects.md registry.
 # Default usage prints two words to stdout: "<mode> <yolo>" where mode is one of
-# no-mistakes|direct-PR|local-only|local-trunk and yolo is on|off.
+# no-mistakes|direct-PR|local (or the old local-only|local-trunk, read as before) and yolo is on|off.
 # --branch-prefix instead prints one value: the project's registered ship-branch
 # prefix, "fm/" when the project registers none, is unregistered, or the registry
 # is absent, so every existing installation keeps its current "fm/<task-id>"
@@ -45,6 +45,8 @@
 # Registered modes:
 #   no-mistakes            full pipeline -> PR -> configured merge authority (default)
 #   direct-PR              push + PR via gh-axi, no pipeline
+#   local                  the one local style (core/machines/styles/delivery-styles.tsv): lanes land on the local trunk; yolo on lands them by
+#                          itself, yolo off waits for the captain's word. Same trunk rules as local-trunk below.
 #   local-only             local branch, no remote/PR, guarded local merge
 #   local-trunk            the local trunk flow (docs/trunk-flow.md, bin/jg-trunk.sh): lanes ship as local-trunk
 #                          tasks and land on a local trunk by themselves; goes live and out as ONE release PR
@@ -138,6 +140,8 @@ unset _jg_d
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/jg-delivery-style.sh
+. "$SCRIPT_DIR/jg-delivery-style.sh"
 JG_ROOT="${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$JG_ROOT}}"
 DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
@@ -280,8 +284,8 @@ $posture
 EOF
 forge=${rest_forge:-none}
 case "$mode" in
-  no-mistakes|direct-PR|local-only|local-trunk|no-mistakes-prod-only) ;;
-  *) echo "warn: unknown mode \"$mode\" for $NAME; defaulting to no-mistakes off" >&2; mode=no-mistakes; yolo=off; branch=$unset_prefix ;;
+  no-mistakes-prod-only) ;;
+  *) jg_delivery_style_accepts "$mode" || { echo "warn: unknown mode \"$mode\" for $NAME; defaulting to no-mistakes off" >&2; mode=no-mistakes; yolo=off; branch=$unset_prefix; } ;;
 esac
 case "$yolo" in on|off) ;; *) yolo=off ;; esac
 if [ "$BRANCH_PREFIX_QUERY" -eq 1 ]; then
@@ -298,7 +302,7 @@ case "$forge" in
     echo "refused: unknown forge \"${forge#forge=}\" registered for $NAME in $REG; the accepted values are forge=gerrit and forge=forgejo, or no forge token at all for a forge whose pull requests no-mistakes already drives; correct the registry entry" >&2
     exit 3 ;;
 esac
-if [ "$forge" != none ] && { [ "$mode" = local-only ] || [ "$mode" = local-trunk ]; }; then
+if [ "$forge" != none ] && jg_delivery_style_is "$mode" local; then
   echo "refused: $NAME is registered $mode with forge=$forge in $REG; $mode publishes nothing, so a forge has no meaning there, and its landing would fast-forward local main with content the review server has never seen; register no-mistakes or direct-PR to publish through the forge, or drop the forge token to keep the project local" >&2
   exit 3
 fi

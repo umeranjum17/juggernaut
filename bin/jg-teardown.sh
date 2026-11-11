@@ -1511,9 +1511,9 @@ backlog_done_args() {
       BACKLOG_DONE_ARGS=(--report "$data_relative/$ID/report.md")
       ;;
     *)
-      if [ "$MODE" = local-trunk ]; then
+      if jg_delivery_style_is "$MODE" trunk; then
         BACKLOG_DONE_ARGS=(--note "local-trunk")
-      elif [ "$MODE" = local-only ]; then
+      elif jg_delivery_style_is "$MODE" local; then
         BACKLOG_DONE_ARGS=(--note "local main")
       elif [ -n "$PR_URL" ]; then
         BACKLOG_DONE_ARGS=(--pr "$PR_URL")
@@ -1779,7 +1779,7 @@ validate_worktree_teardown_safety() {
   # Only a registered local-trunk project uses the recorded current trunk (including rollovers).
   local project_mode
   project_mode=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-project-mode.sh" --raw "$(basename "$PROJ")") || return 1
-  if [ "${project_mode%% *}" = local-trunk ] && [ -e "$STATE/trunk-tip-$(basename "$PROJ")" ]; then
+  if jg_delivery_style_is "${project_mode%% *}" trunk && [ -e "$STATE/trunk-tip-$(basename "$PROJ")" ]; then
     args+=(--trunk-branch "$(jg_trunk_branch "$(basename "$PROJ")" "$STATE")")
   fi
   if [ -n "$PR_URL" ]; then
@@ -3466,7 +3466,7 @@ if [ -d "$STATE" ] && [ "$KIND" != squad_lead ]; then
     "$SCRIPT_DIR/jg-inactive-reconcile.sh" retire "$ID" || true
 fi
 rm -f "$STATE/$ID.models"
-if [ "$KIND" != scout ] && [ "$KIND" != squad_lead ] && [ "$MODE" != local-only ] && [ "$MODE" != local-trunk ]; then
+if [ "$KIND" != scout ] && [ "$KIND" != squad_lead ] && ! jg_delivery_style_is "$MODE" local; then
   "$JG_ROOT/bin/jg-fleet-sync.sh" "$PROJ" || true
 fi
 # A squad_lead retirement may remove the home containing an overridden control

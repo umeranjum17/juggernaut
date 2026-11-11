@@ -38,7 +38,7 @@
 # its value against the registry; bin/jg-project-mode.sh's header owns the
 # binding and bin/jg-dod-lib.sh owns what it changes for the worker, including
 # the refusal of a forge on local-only.
-# Usage: jg-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only|local-trunk> --yolo <on|off> [--branch-prefix <prefix>] [--upstream-consent <host>/<owner>/<repo>]
+# Usage: jg-promote.sh <task-id> --mode <no-mistakes|direct-PR|local> --yolo <on|off> [--branch-prefix <prefix>] [--upstream-consent <host>/<owner>/<repo>]
 # --upstream-consent records the captain's one-off approval for this task to
 # publish to juggernaut's own upstream repository; promotion applies the same
 # self-repository publication gate as bin/jg-spawn.sh (bin/jg-role-lib.sh), so
@@ -129,9 +129,9 @@ for a in "$@"; do
   esac
 done
 [ -z "$want_value" ] || { echo "error: --$want_value requires a value" >&2; exit 1; }
-[ "${#POS[@]}" -ge 1 ] || { echo "usage: jg-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only|local-trunk> --yolo <on|off>" >&2; exit 1; }
+[ "${#POS[@]}" -ge 1 ] || { echo "usage: jg-promote.sh <task-id> --mode <no-mistakes|direct-PR|local> --yolo <on|off>" >&2; exit 1; }
 [ "$MODE_SET" -eq 1 ] || {
-  echo "error: promotion requires --mode <no-mistakes|direct-PR|local-only|local-trunk>; decide it now from the scout's findings and the project's registered posture in data/projects.md" >&2
+  echo "error: promotion requires --mode <no-mistakes|direct-PR|local>; decide it now from the scout's findings and the project's registered posture in data/projects.md" >&2
   exit 1
 }
 [ "$YOLO_SET" -eq 1 ] || {
@@ -139,11 +139,10 @@ done
   exit 1
 }
 case "$MODE" in
-  no-mistakes|direct-PR|local-only|local-trunk) ;;
   no-mistakes-prod-only)
     echo "error: no-mistakes-prod-only is a registry policy, not a task mode; classify this task's surface and resolve it to no-mistakes or direct-PR" >&2
     exit 1 ;;
-  *) echo "error: --mode must be one of no-mistakes, direct-PR, local-only, local-trunk (got '$MODE')" >&2; exit 1 ;;
+  *) jg_delivery_style_accepts "$MODE" || { echo "error: --mode must be one of $(jg_delivery_style_modes | paste -sd, - | sed 's/,/, /g') (the old words $(jg_delivery_style_aliases | paste -sd, - | sed 's/,/, /g') are read as before; got '$MODE')" >&2; exit 1; } ;;
 esac
 case "$YOLO" in
   on|off) ;;
@@ -151,7 +150,7 @@ case "$YOLO" in
 esac
 if [ "$UPSTREAM_CONSENT_SET" -eq 1 ]; then
   [ -n "$UPSTREAM_CONSENT" ] || { echo "error: --upstream-consent requires a non-empty <host>/<owner>/<repo> value" >&2; exit 1; }
-  if { [ "$MODE" = local-only ] || [ "$MODE" = local-trunk ]; }; then
+  if jg_delivery_style_is "$MODE" local; then
     echo "error: --upstream-consent is meaningless on $MODE, which publishes nothing; drop it" >&2
     exit 1
   fi
@@ -248,7 +247,7 @@ jg_base_branch_valid "$BASE_BRANCH" "$MODE" "$FORGE" "jg-promote.sh $ID" || exit
 # The same self-repository publication gate bin/jg-spawn.sh applies to a fresh
 # ship spawn runs here on the recorded project: a promoted scout reaches no
 # greater upstream authority than the spawn path would grant.
-if [ "$MODE" != local-only ] && [ "$MODE" != local-trunk ] && [ -n "$PROMOTE_PROJECT" ]; then
+if ! jg_delivery_style_is "$MODE" local && [ -n "$PROMOTE_PROJECT" ]; then
   gate_rc=0
   jg_role_gate_self_publish "$JG_HOME" "$CONFIG" "$PROMOTE_PROJECT" "$JG_ROOT" "$UPSTREAM_CONSENT" || gate_rc=$?
   case $gate_rc in

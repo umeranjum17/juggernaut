@@ -8,7 +8,7 @@
 #   task.sh columns                 filter for jg-fleet-view.sh: add a State column (the captain sentence) to the Under Way table,
 #                                   and pass the text through unchanged unless config/machine-view exists
 #
-# A local-trunk lane (meta mode local-trunk or local-only) whose status log says done reads from the trunk flow, never as done:
+# A local-trunk lane (meta mode local, or the old words local-trunk and local-only) whose status log says done reads from the trunk flow, never as done:
 #   ready-to-land (waits in the landing queue), landed (on the trunk, cleanup runs), cleaned, or rework (the lander refused this
 #   head, or the suite found a red the commit caused and it was reverted). Records read: data/jg-trunk-landing/<task>.<head>.state
 #   and data/trunk-landings.tsv. A moved trunk changes nothing: the lander rebases, the worker waits.
@@ -34,7 +34,9 @@ set -- "${args[@]+"${args[@]}"}"
 
 mval() { sed -n "s/^$2=//p" "$STATE/$1.meta" 2>/dev/null | tail -n 1; }
 done_line() { [ "$(status_line_verb "$(status_current_line "$STATE/$1.status" "$(mval "$1" kind)" 2>/dev/null)")" = "done" ]; }
-trunk_lane() { case "$(mval "$1" mode)" in local-trunk|local-only) return 0 ;; esac; return 1; }
+# shellcheck source=bin/jg-delivery-style.sh
+. "$root/bin/jg-delivery-style.sh"
+trunk_lane() { jg_delivery_style_is "$(mval "$1" mode)" local; }
 # Where a finished local-trunk lane stands: cleaned, landed, rework or ready; nothing when no trunk record names it.
 landing() {  # <id>
   local id=$1 f w rest head='' final=0 tsv="$DATA/trunk-landings.tsv"

@@ -119,8 +119,8 @@ The switch is read in the home that asks, so the same change can be `in-use` in 
 
 ## Delivery styles
 
-`core/machines/styles/delivery-styles.tsv` has one row per mode word: the line, what the style adds in delivering, how it joins main, and whether it publishes a pull request. `bin/jg-brief.sh` reads the mode list and that flag from it.
-`bin/jg-delivery-style.sh <mode>` is the one reader (`--list` prints the modes; an unknown mode exits 1).
+`core/machines/styles/delivery-styles.tsv` has one row per style (no-mistakes, direct-PR, local): the line, what the style adds in delivering, how it joins main, and whether it publishes a pull request. The two old local words, `local-only` and `local-trunk`, are alias rows of `local`, so an old record is read as before; `local` lands by itself with yolo on and waits for a word with yolo off. `bin/jg-brief.sh` reads the mode list and that flag from it.
+`bin/jg-delivery-style.sh <mode>` is the one reader (`--list` prints the styles, `--accepted` every accepted word; an unknown mode exits 1).
 No row names a prover: done-done proves the commit in every mode.
 `--field <mode> <name>` prints one named column from the `columns` row, such as `publishes`, `review` or `rule1` (the first ship rule).
 `bin/jg-dod-lib.sh` reads those properties instead of testing mode words, and `tests/jg-dod-style-brief.test.sh` holds the four per-mode brief texts byte-equal to a golden.

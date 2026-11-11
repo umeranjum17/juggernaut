@@ -240,7 +240,9 @@ if [ -z "$QUIET" ] && jg_lock_try_acquire "$MEM/.outbox.lock"; then
   jg_lock_release "$MEM/.outbox.lock"
 fi
 # Only a project registered local-trunk is ever touched; no-mistakes, direct-PR and local-only projects keep their own rules.
-local_trunk() { [ "$(JG_HOME="$FMH" "$FMH/bin/jg-project-mode.sh" --raw "$(basename "$1")" 2>/dev/null | cut -d' ' -f1)" = local-trunk ] && echo yes || echo no; }
+# shellcheck source=bin/jg-delivery-style.sh disable=SC1091
+. "$FMH/bin/jg-delivery-style.sh"
+local_trunk() { jg_delivery_style_is "$(JG_HOME="$FMH" "$FMH/bin/jg-project-mode.sh" --raw "$(basename "$1")" 2>/dev/null | cut -d' ' -f1)" trunk && echo yes || echo no; }
 # Initialize only registered projects without a recorded trunk; init itself refuses an existing branch.
 for proj in "$FMH"/projects/*; do
   [ -d "$proj" ] && [ "$(local_trunk "$proj")" = yes ] || continue
@@ -347,7 +349,7 @@ for meta in "$STATE"/*.meta; do
   [ -f "$meta" ] || continue
   id=$(basename "$meta" .meta)
   # Compatibility is read-only and applies only to registered local-trunk projects below.
-  case $(mval "$meta" mode) in local-trunk|local-only) ;; *) continue ;; esac
+  jg_delivery_style_is "$(mval "$meta" mode)" local || continue
   proj=$(mval "$meta" project); [ -d "$proj" ] || continue
   [ -e "$STATE/trunk-tip-$(basename "$proj")" ] || continue
   [ "$(local_trunk "$proj")" = yes ] || continue
@@ -370,6 +372,12 @@ for meta in "$STATE"/*.meta; do
     fi ;;
   esac
   at=$(ready_at "$id") || continue
+  # The merge switch of the style `local` (docs/trunk-flow.md): a lane of mode `local` lands by itself with yolo on, or once the lead
+  # recorded merge=approved; with yolo off it waits for that word. A record with an old word (local-trunk, local-only) is read as before.
+  if [ "$(mval "$meta" mode)" = local ] && [ "$(mval "$meta" yolo)" != on ] && [ "$(mval "$meta" merge)" != approved ]; then
+    report "$id.$head" "$id waits for the captain's word to land (yolo is off)" "waits for the captain's word: yolo is off and merge=approved is not recorded"
+    continue
+  fi
   # A landing starts only on a head whose whole proof is there: receipt, approved merge-card evidence and a sealed done-done run.
   if gaps=$(JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" proof "$id" 2>&1); then :; else
     [ -z "$QUIET" ] || continue

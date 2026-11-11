@@ -241,22 +241,22 @@ func (t *intake) deliveryRefusal() string {
 	if t.kind == "ship" {
 		switch {
 		case !t.modeSet:
-			return "error: ship spawns require --mode <no-mistakes|direct-PR|local-only|local-trunk>; resolve it at intake from the captain's instruction and the project's registered posture in data/projects.md"
+			return "error: ship spawns require --mode <no-mistakes|direct-PR|local>; resolve it at intake from the captain's instruction and the project's registered posture in data/projects.md"
 		case !t.yoloSet:
 			return "error: ship spawns require --yolo <on|off>; it is this task's merge authority, not a project lookup"
 		}
 		switch t.mode {
-		case "no-mistakes", "direct-PR", "local-only", "local-trunk":
+		case "no-mistakes", "direct-PR", "local", "local-only", "local-trunk": // local-only and local-trunk are read as before (delivery-styles.tsv alias rows)
 		case "no-mistakes-prod-only":
 			return "error: no-mistakes-prod-only is a registry policy, not a task mode; classify this task's surface and resolve it to no-mistakes or direct-PR at intake"
 		default:
-			return fmt.Sprintf("error: --mode must be one of no-mistakes, direct-PR, local-only, local-trunk (got '%s')", t.mode)
+			return fmt.Sprintf("error: --mode must be one of no-mistakes, direct-PR, local (the old words local-only and local-trunk are read as before; got '%s')", t.mode)
 		}
 		if t.yolo != "on" && t.yolo != "off" {
 			return fmt.Sprintf("error: --yolo must be on or off (got '%s')", t.yolo)
 		}
 		if t.consentSet {
-			if t.mode == "local-only" || t.mode == "local-trunk" {
+			if t.mode == "local" || t.mode == "local-only" || t.mode == "local-trunk" {
 				return fmt.Sprintf("error: --upstream-consent is meaningless on %s, which publishes nothing; drop it", t.mode)
 			}
 			if !scopeValid(t.consent) {

@@ -54,6 +54,8 @@ unset _jg_d
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/jg-delivery-style.sh
+. "$SCRIPT_DIR/jg-delivery-style.sh"
 JG_ROOT="${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$JG_ROOT}}"
 DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
@@ -511,7 +513,7 @@ clone_project() {
   read -r mode _ <<EOF
 $mode_line
 EOF
-  if { [ "$mode" = local-only ] || [ "$mode" = local-trunk ]; }; then
+  if jg_delivery_style_is "$mode" local; then
     echo "error: project $project is $mode; squad_lead routes support only no-mistakes and direct-PR projects" >&2
     return 1
   fi
@@ -539,7 +541,7 @@ validate_seed_project() {
   read -r mode _ <<EOF
 $mode_line
 EOF
-  if { [ "$mode" = local-only ] || [ "$mode" = local-trunk ]; }; then
+  if jg_delivery_style_is "$mode" local; then
     echo "error: project $project is $mode; squad_lead routes support only no-mistakes and direct-PR projects" >&2
     return 1
   fi

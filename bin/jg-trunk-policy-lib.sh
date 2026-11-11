@@ -118,11 +118,13 @@ jg_trunk_branch() {
 # A lane starts on it (bin/jg-spawn.sh), and it is the one head the release pull request into the default branch has
 # (bin/jg-version-branch-lib.sh jg_is_release_head). Usage: jg_project_trunk_branch <project-dir> [<state-dir>]
 jg_project_trunk_branch() {
+  # shellcheck source=bin/jg-delivery-style.sh
+  command -v jg_delivery_style_is >/dev/null 2>&1 || . "$(cd "${BASH_SOURCE[0]%/*}" && pwd)/jg-delivery-style.sh"
   local pn state mode
   [ -n "${1:-}" ] || return 1
   pn=$(basename "$1"); state=${2:-${JG_STATE_OVERRIDE:-${JG_HOME:-.}/state}}
   mode=$("$(cd "${BASH_SOURCE[0]%/*}" && pwd)/jg-project-mode.sh" --raw "$pn" 2>/dev/null | cut -d' ' -f1) || return 1
-  [ "$mode" = local-trunk ] && [ -e "$state/trunk-tip-$pn" ] || return 1
+  jg_delivery_style_is "$mode" trunk && [ -e "$state/trunk-tip-$pn" ] || return 1
   jg_trunk_branch "$pn" "$state"
 }
 

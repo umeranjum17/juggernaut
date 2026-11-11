@@ -6,7 +6,7 @@
 # receives. Both paths must hand the worker the same contract: a promoted
 # no-mistakes worker that never received the ask-user escalation rule or the
 # `--yes` ban is the exact delivery hole this single owner exists to close.
-# jg_dod_block <no-mistakes|direct-PR|local-only|local-trunk> <task-id> [branch] [<forge>]
+# jg_dod_block <no-mistakes|direct-PR|local|local-only|local-trunk> <task-id> [branch] [<forge>]
 # prints the block on stdout with no trailing blank line. The caller validates the
 # mode; an unknown mode is refused rather than silently rendered as the pipeline
 # contract.
@@ -234,7 +234,7 @@ jg_brief_base_branches() {  # <brief>
   ' "$1"
 }
 
-jg_ship_rule_one() {  # <no-mistakes|direct-PR|local-only|local-trunk> <task-id> [branch] [<forge>] [<base>]
+jg_ship_rule_one() {  # <no-mistakes|direct-PR|local|local-only|local-trunk> <task-id> [branch] [<forge>] [<base>]
   local mode=$1 id=$2 forge=${4:-none} base=${5:-}
   local branch=${3:-fm/$id} target='the default branch' rule
   jg_forge_valid_for_mode "$forge" "$mode" jg_ship_rule_one || return 1
@@ -525,16 +525,16 @@ If you deliberately keep the PR a draft, append \`paused [at=<epoch>]: {why the 
 Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; juggernaut relays the outcome.
 EOF
       ;;
-    local-trunk:*)
+    local:*|local-trunk:*)
       cat <<EOF
 # Definition of done
-Delivery contract: mode=local-trunk
+Delivery contract: mode=$mode
 Ship branch: $branch
-This task ships **local-trunk**: one commit on the latest local trunk, no feature PR, no push, no release.
+This task ships **$mode**: one commit on the latest local trunk, no feature PR, no push, no release.
 The commit message must carry this task id or its ticket key.
 Run sealed done-done verification at your one commit's exact clean head. The landing check rebases it onto the trunk tip itself: a done lane waits as it is, and you never rebase it or report done again because the trunk moved.
 Act only on a conflict the landing check names for your lane, or a red your own change caused: fix it in the lane, then report ready again.
-Publish the completion receipt, then append \`done [at=<epoch>]: ready in branch $branch (local-trunk)\` and stop.
+Publish the completion receipt, then append \`done [at=<epoch>]: ready in branch $branch ($mode)\` and stop.
 Juggernaut's existing trunk landing check lands that exact head and cleans up unforced.
 Going live and releasing still require the captain's recorded word.
 EOF
@@ -910,7 +910,7 @@ jg_dod_pr_checks_clear() {  # <worktree> <pr-url>
   return 1
 }
 
-# 0 when a lane of this mode is a local-trunk lane: mode local-trunk, or the legacy local-only of a project registered local-trunk.
+# 0 when a lane of this mode is a trunk lane: mode local (or its old word local-trunk), or the old local-only of a project registered local.
 jg_dod_trunk_lane() {  # <mode> <project-dir>
   jg_delivery_style_is "$1" trunk && return 0
   jg_delivery_style_is "$1" local || return 1

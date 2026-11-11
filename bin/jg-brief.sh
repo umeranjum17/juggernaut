@@ -435,15 +435,15 @@ done
 # missing or invalid value stops the scaffold rather than silently defaulting.
 if [ "$KIND" = ship ]; then
   [ "$MODE_SET" -eq 1 ] || {
-    echo "error: ship briefs require --mode <no-mistakes|direct-PR|local-only|local-trunk>; resolve it at intake from the captain's instruction and the project's registered posture in data/projects.md" >&2
+    echo "error: ship briefs require --mode <no-mistakes|direct-PR|local>; resolve it at intake from the captain's instruction and the project's registered posture in data/projects.md" >&2
     exit 1
   }
   if [ "$MODE" = no-mistakes-prod-only ]; then
     echo "error: no-mistakes-prod-only is a registry policy, not a task mode; classify this task's surface and resolve it to no-mistakes or direct-PR at intake" >&2
     exit 1
   fi
-  jg_delivery_style_modes | grep -qx -- "$MODE" || {
-    echo "error: --mode must be one of $(jg_delivery_style_modes | paste -sd, - | sed 's/,/, /g') (got '$MODE')" >&2
+  jg_delivery_style_accepts "$MODE" || {
+    echo "error: --mode must be one of $(jg_delivery_style_modes | paste -sd, - | sed 's/,/, /g') (the old words $(jg_delivery_style_aliases | paste -sd, - | sed 's/,/, /g') are read as before; got '$MODE')" >&2
     exit 1
   }
 elif [ "$MODE_SET" -eq 1 ]; then
@@ -812,8 +812,8 @@ fi
 # The local-trunk landing rule, in one place for the lane brief and the squad lead charter (local-trunk projects only).
 TRUNK_REBASE_RULE="Juggernaut's landing check rebases your commit onto the latest tip of the local trunk by itself, lints the changed files, runs the changed files' tests against the tip's own result and lands it; you never rebase for it. Your done and the landing both need the whole proof at your exact head: a PASS completion receipt, approved merge-card evidence that cites files, and a sealed done-done run holding them; a PASS receipt alone is refused, and nothing may be committed after the seal. The owner signature is recorded after the landing and never blocks it.
 If the landing check reports that your change conflicts with the trunk, YOU resolve every conflict in your own change, then report ready again; never hand a conflict to anyone else, and never force a landing: no force flag, no hand-moved trunk ref, no landing past a conflict exists, and a landing that is refused is fixed in the lane and reported ready again."
-jg_brief_local_trunk() {  # <project>: true when the project is registered local-trunk
-  [ "$(JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-project-mode.sh" --raw "$1" 2>/dev/null | cut -d' ' -f1)" = local-trunk ]
+jg_brief_local_trunk() {  # <project>: true when the project is registered local (local-trunk read as before)
+  jg_delivery_style_is "$(JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-project-mode.sh" --raw "$1" 2>/dev/null | cut -d' ' -f1)" trunk
 }
 if [ "$KIND" = squad_lead ]; then
 SQUAD_LEAD_PROJECTS=""
