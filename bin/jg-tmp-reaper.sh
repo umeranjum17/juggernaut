@@ -18,6 +18,10 @@
 #         Each removal is logged to state/tmp-reaper.log and is silent otherwise.
 #         It prints one line when the temp filesystem use reaches JG_TMP_ALERT_PCT percent (default 70),
 #         once per crossing: state/.tmp-reaper-alert records that the line was sent and clears when use drops back.
+#         The same check also reaps test sandboxes (bin/jg-tmp-sandbox-lib.sh owns the rule): a jg-trunk.* or tmp.* entry holding a
+#         trunk-landing tree whose processes (or, with none, newest change) are older than its own timeout
+#         (.jg-sandbox-timeout seconds in the folder, else JG_TMP_SANDBOX_TIMEOUT_SEC, default 3600) has them stopped and the
+#         folder removed. A task root, a folder a task meta names, and a sandbox with a process that has a recorded task meta are left alone.
 # arm     Writes state/tmp-reaper.check.sh and binds it with jg-check-register.sh, so the watcher runs
 #         it on the normal check cadence. disarm removes both.
 #
@@ -43,6 +47,8 @@ AGE_MIN=${JG_TMP_REAP_AGE_MIN:-120}
 ALERT_PCT=${JG_TMP_ALERT_PCT:-70}
 LOG=$STATE/tmp-reaper.log
 ALERT_RECORD=$STATE/.tmp-reaper-alert
+# shellcheck source=bin/jg-tmp-sandbox-lib.sh
+. "$SCRIPT_DIR/jg-tmp-sandbox-lib.sh"
 
 die() { printf 'jg-tmp-reaper: %s\n' "$1" >&2; exit "${2:-1}"; }
 case "$AGE_MIN$ALERT_PCT" in *[!0-9]* | '') die "JG_TMP_REAP_AGE_MIN and JG_TMP_ALERT_PCT must be whole numbers" 2 ;; esac
@@ -67,7 +73,7 @@ is_task_root() {  # <path>
 
 # A leaked read-only tree cannot be removed until its directories are writable again.
 remove_entry() {  # <path under TMP_ROOT>
-  case "$1" in "$TMP_ROOT"/jg-* ) ;; *) return 1 ;; esac
+  case "$1" in "$TMP_ROOT"/jg-* | "$TMP_ROOT"/tmp.*) ;; *) return 1 ;; esac
   case "$1" in */../* | */..) return 1 ;; esac
   [ ! -d "$1" ] || chmod -R u+rwX -- "$1" 2>/dev/null
   rm -rf -- "$1"
@@ -113,6 +119,7 @@ alert() {
 cmd_check() {
   [ -d "$STATE" ] || die "state directory is missing: $STATE"
   [ -d "$TMP_ROOT" ] || return 0
+  reap_sandboxes
   reap
   alert
 }
