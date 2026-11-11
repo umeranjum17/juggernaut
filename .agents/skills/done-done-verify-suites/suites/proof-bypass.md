@@ -1,0 +1,3 @@
+# Proof bypass
+
+Proof bypass: run `done-done run proof-bypass` (`bash journeys/proof-bypass.sh`, which runs `tests/jg-proof-bypass.test.sh` and writes its log and `steps.json` into the run's folder); it lints `core/machines/tables/bypass.tsv` (2 states, 4 moves), calls the real `bin/jg-proof-bypass.sh` and the real `bin/jg-delivery-tick.sh` in a fixture home, refuses a call with a task id set, a grant with no word id, a second scope and a past end time, gives a project grant the 24 hour default end, ends a ticket bypass when its ticket is released and an expired one at its end time, and reads the next done line as proved; it reads only generated fixtures (screen: none).

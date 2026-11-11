@@ -12,6 +12,8 @@ journeys:
     command: bash journeys/machine-observers.sh
   worker-table:
     command: bash journeys/worker-table.sh
+  proof-bypass:
+    command: bash journeys/proof-bypass.sh
   brief-lint:
     command: bash journeys/brief-lint-real-briefs.sh
   teardown-missing-record:

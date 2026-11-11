@@ -21,7 +21,7 @@ done
 for f in "$tables"/*.tsv; do  # the new tables of the ticket are the target, not a list to map
   m=$(basename "$f" .tsv); case $m in ticket|delivering|proving|known-baseline) continue ;; esac
   awk -F'\t' -v m="$m" '$1 == "state" { print m "\t" $2 }' "$f"
-done | grep -Ev '^(message|worker)'$'\t'  # the message and worker tables are new tables of the ticket plan, a target and not an older list
+done | grep -Ev '^(message|worker|bypass)'$'\t'  # the message, worker and bypass tables are new tables of the ticket plan, a target and not an older list
 for f in "$state"/*.status; do
   [ -e "$f" ] && sed -E '/^$/d; s/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+Z //; s/^([^ :[]+).*/status-verb\t\1/' "$f"
 done

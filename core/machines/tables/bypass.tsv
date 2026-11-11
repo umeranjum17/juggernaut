@@ -1,0 +1,9 @@
+machine	bypass	config/proof-bypass: one line for each word of the owner (machine 17 of the state-machine plan)	bin/jg-proof-bypass.sh
+state	standing	initial	The owner's word to skip the proof is in force, and its uses are counted.	-	rest	expire
+state	ended	terminal	The word is no longer in force; the next done line in its scope is proved.	-
+edge	(none)	grant	standing	bin/jg-proof-bypass.sh:cmd_grant	-	the owner's word is named by an owner rule or a board answer; no worker writes it; a project or the home carries an end time	jg-proof-bypass
+edge	standing	use	standing	bin/jg-proof-bypass.sh:cmd_use	-	a ticket of its scope is in proving; the use is counted on the record	jg-proof-bypass
+edge	standing	expire	ended	bin/jg-proof-bypass.sh:cmd_expire	-	the end time is reached, or the ticket of a ticket bypass is released or closed	jg-proof-bypass
+edge	standing	revoke	ended	bin/jg-proof-bypass.sh:cmd_end	-	the owner's word ends it; no worker does	jg-proof-bypass
+observer	bash "$(dirname "$JG_MACHINES_TABLES")/observers/bypass.sh" "$1"
+enum	bypass
