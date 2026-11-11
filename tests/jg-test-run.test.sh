@@ -365,6 +365,40 @@ test_a_weight_cap_defers_slow_suites_and_names_them() {
   pass 'a weight cap defers slow suites and names them'
 }
 
+test_the_hosted_selection_drops_scripts_that_hit_the_time_bound_or_have_no_hosted_time() {
+  local dir out
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/jg-hosted-timings.XXXXXX")
+  {
+    printf '# <script>\t<exit>\t<duration_ms>, one hosted run per line, oldest first\n'
+    # Ended at the bound once in five runs: dropped. Five runs under the bound: stays.
+    printf 'tests/jg-teardown.test.sh\t0\t30000\n'
+    printf 'tests/jg-teardown.test.sh\t124\t120000\n'
+    printf 'tests/jg-teardown.test.sh\t0\t31000\n'
+    printf 'tests/jg-teardown.test.sh\t0\t29000\n'
+    printf 'tests/jg-teardown.test.sh\t0\t30500\n'
+    local i
+    for i in 1 2 3 4 5; do printf 'tests/jg-ship-local.test.sh\t0\t2%s000\n' "$i"; done
+    # The 8 red release runs: the four scripts that hit the bound, as recorded.
+    printf 'tests/jg-trunk.test.sh\t124\t120000\n'
+    printf 'tests/jg-machine-call.test.sh\t124\t120000\n'
+    printf 'tests/jg-bootstrap-backlog-reconcile.test.sh\t124\t120000\n'
+    printf 'tests/jg-test-run.test.sh\t124\t132000\n'
+  } >"$dir/timings.tsv"
+  out=$(bash "$RUNNER" --list --hosted-timings "$dir/timings.tsv" \
+    tests/jg-teardown.test.sh tests/jg-ship-local.test.sh tests/jg-trunk.test.sh tests/jg-machine-call.test.sh \
+    tests/jg-bootstrap-backlog-reconcile.test.sh tests/jg-test-run.test.sh tests/jg-tmux.test.sh 2>&1) || fail "the hosted selection was refused: $out"
+  assert_equals 'tests/jg-ship-local.test.sh' "$(printf '%s\n' "$out" | grep -v '^jg-test-run:')" 'only the script with five runs under the bound stays'
+  local s
+  for s in jg-teardown jg-trunk jg-machine-call jg-bootstrap-backlog-reconcile jg-test-run; do
+    assert_contains "$out" "(ended at the time bound in its last five hosted runs): tests/$s.test.sh" "$s must be dropped and named"
+  done
+  assert_contains "$out" '(no hosted time): tests/jg-tmux.test.sh' 'a script with no hosted time must be dropped and named'
+  out=$(bash "$RUNNER" --list tests/jg-teardown.test.sh tests/jg-trunk.test.sh 2>&1) || fail "the plain selection was refused: $out"
+  assert_contains "$out" 'tests/jg-trunk.test.sh' 'without the flag a bound-ending script is still selected (it runs on our host)'
+  rm -rf -- "$dir"
+  pass 'the hosted selection drops scripts that hit the time bound in the last five runs or have no hosted time, and names them'
+}
+
 # within <seconds>, <path> exists (or, with <text>, contains it); otherwise the case fails naming <what>.
 await_file() {  # <seconds> <path> <what> [<text>]
   local deadline=$((SECONDS + $1))
@@ -597,6 +631,7 @@ test_a_slow_failing_script_past_the_per_script_bound_stays_red
 test_the_gate_stops_a_hung_script_with_its_children_and_temp_folder_without_a_flag
 test_a_test_within_its_limits_is_unaffected
 test_a_weight_cap_defers_slow_suites_and_names_them
+test_the_hosted_selection_drops_scripts_that_hit_the_time_bound_or_have_no_hosted_time
 test_a_deleted_journey_does_not_refuse_the_changed_selection
 test_a_changed_shared_file_selects_the_scripts_that_name_it
 test_a_changed_core_script_selects_the_scripts_that_name_it

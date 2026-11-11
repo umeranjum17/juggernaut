@@ -56,6 +56,13 @@
 #                   after selection, and name each one on stderr. The pull request
 #                   fast set uses it so a slow suite runs in the post-merge lane
 #                   instead of holding the merge.
+#   --hosted-timings <file>
+#                   interim hosted-job rule: drop a script that ended at the time bound
+#                   (exit 124) in any of its last five hosted runs, or that has no hosted
+#                   time, and name each one on stderr. The file is tab separated, one
+#                   hosted run per line, oldest first: <script> <exit> <duration_ms>;
+#                   '#' lines are comments. The script still runs on our host, in the
+#                   proof and in the line's verify. Remove with the hosted shell test job.
 #   --shard <k>of<n>
 #                   keep only shard k of n of the selection, after the exclusions and
 #                   the weight cap, so one pull request selection can run on n runners
@@ -269,6 +276,7 @@ JSON_PATH=
 SCRIPTS=()
 EXCLUDE_FAMILIES=()
 MAX_WEIGHT_MS=
+HOSTED_TIMINGS=
 SHARD=
 FAIL_ON_GATE_SKIP=
 JOBS=1
@@ -2065,6 +2073,31 @@ apply_max_weight() {
   SCRIPTS=("${kept[@]+"${kept[@]}"}")
 }
 
+# apply_hosted_timings drops, from the hosted selection, the scripts the hosted
+# runner cannot finish: one that ended at the time bound (exit 124) in any of its
+# last five runs in the timing file, or one with no run in it at all.
+apply_hosted_timings() {
+  local s why
+  local -a kept=()
+  [ -n "$HOSTED_TIMINGS" ] || return 0
+  for s in "${SCRIPTS[@]+"${SCRIPTS[@]}"}"; do
+    why=$(awk -F'\t' -v s="$s" '
+      $0 ~ /^#/ || NF < 2 { next }
+      $1 == s { n++; code[n] = $2 }
+      END {
+        if (n == 0) { print "no hosted time"; exit }
+        for (i = (n > 5 ? n - 4 : 1); i <= n; i++)
+          if (code[i] == 124) { print "ended at the time bound in its last five hosted runs"; exit }
+      }' "$HOSTED_TIMINGS")
+    if [ -n "$why" ]; then
+      log "not run on the hosted runner ($why): $s"
+    else
+      kept+=("$s")
+    fi
+  done
+  SCRIPTS=("${kept[@]+"${kept[@]}"}")
+}
+
 # apply_shard keeps shard k of n of the selection (--shard <k>of<n>): the
 # scripts are packed longest-hint-first onto the lightest of n bins, a tie taking
 # the lowest bin, and this shard keeps its bin. The packing depends only on the
@@ -2447,6 +2480,12 @@ while [ "$#" -gt 0 ]; do
       MAX_WEIGHT_MS=$2
       shift 2
       ;;
+    --hosted-timings)
+      [ "$#" -gt 1 ] || die "--hosted-timings requires a file"
+      [ -f "$2" ] || die "--hosted-timings file not found: $2"
+      HOSTED_TIMINGS=$2
+      shift 2
+      ;;
     --shard)
       [ "$#" -gt 1 ] || die "--shard requires <k>of<n>"
       case "$2" in
@@ -2620,6 +2659,7 @@ esac
 apply_exclude_families
 apply_quarantine
 apply_max_weight
+apply_hosted_timings
 apply_shard
 if [ -n "$SHARD" ]; then
   SELECTION_DESC="${SELECTION_DESC};shard=$SHARD"
