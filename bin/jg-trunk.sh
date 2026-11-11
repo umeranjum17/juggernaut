@@ -2042,6 +2042,7 @@ push_batch() {  # <rel> <n> <prev> <spend 0|1> <proof 0|1>
   put "$STATE/trunk-released-$PN" "$rel"; [ "$4" != 1 ] || spend_word release
   rm -f -- "$STATE/trunk-release-pending-$PN"
   echo "released $n commits from $TRUNK: $url"
+  "$SCRIPT_DIR/../core/machines/release-stamp.sh" "$PROJ" "$base" "$rel" || true
   record_release_task "$url" "$rel"
   [ "$5" = 1 ] || { unlock "$STATE/.trunk-$PN.lock"; return 0; }
   base=$(release_base "$rel") || refuse "cannot find the release base for ${rel:0:12}"

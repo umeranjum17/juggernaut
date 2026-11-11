@@ -19,7 +19,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 for f in "$tables"/*.tsv; do  # the new tables of the ticket are the target, not a list to map
-  m=$(basename "$f" .tsv); case $m in ticket|delivering|proving|known-baseline) continue ;; esac
+  m=$(basename "$f" .tsv); case $m in ticket|delivering|proving|release|known-baseline) continue ;; esac
   awk -F'\t' -v m="$m" '$1 == "state" { print m "\t" $2 }' "$f"
 done | grep -Ev '^(message|worker|bypass|presence|squad-lead|supervision)'$'\t'  # the message, worker, bypass, presence, squad-lead and supervision tables are new tables of the ticket plan, a target and not an older list
 for f in "$state"/*.status; do

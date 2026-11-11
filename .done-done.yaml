@@ -482,6 +482,9 @@ journeys:
     # measured 7.1 s on the host, 2026-11-12 (serial, one run)
     tier: ci
     command: bash tests/jg-recon-gate.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  release-record:
+    tier: local
+    command: bash journeys/release-record.sh
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'
