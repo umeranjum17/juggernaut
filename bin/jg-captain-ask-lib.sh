@@ -176,7 +176,9 @@ guard_captain_ask_build() {  # <ticket>; refuses an unapproved build, else names
     return 0
   fi
   if printf '%s\n' "$show" | grep -Eq 'born-from: *(recon|plan)([^A-Za-z]|$)'; then
-    parent=$(captain_ask_body "$show" | sed -nE 's/^[[:space:]]*parent:[[:space:]]*([A-Za-z0-9._-]+)[[:space:]]*$/\1/p' | head -1)
+    # The parent is the row's parent-child edge, which the card prints; a body line is the fallback.
+    parent=$(printf '%s\n' "$show" | sed -nE 's/^  parent:[[:space:]]*([A-Za-z0-9._-]+)[[:space:]]*$/\1/p' | head -1)
+    [ -n "$parent" ] || parent=$(captain_ask_body "$show" | sed -nE 's/^[[:space:]]*parent:[[:space:]]*([A-Za-z0-9._-]+)[[:space:]]*$/\1/p' | head -1)
   fi
   if [ -n "$parent" ] && [ "$parent" != "$1" ] \
     && basis=$(captain_ask_build_basis "$parent" "$(jg_backlog_row_show "$(jg_backlog_data_absolute "$DATA")" "$parent" --full)"); then

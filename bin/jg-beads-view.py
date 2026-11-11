@@ -163,7 +163,7 @@ def table(name, tasks, fields, full=False):
 
 def card(item, hint=None):
     print("task:")
-    for field in SHOW:
+    for field in SHOW + (["parent"] if item["parent"] != "-" else []):
         value = clip(item, field, hint)
         print("  %s: %s" % (field, scalar(value)))
 
@@ -273,7 +273,9 @@ def markdown(tasks, args):
         for item in tasks:
             if item["state"] == state:
                 print(file_row(item, items))
-                print("".join("  %s\n" % line for line in item["body"].splitlines() if line.strip()), end="")
+                # The parent edge reads as the parent: line it came from, so a reader of this file sees the edge too.
+                edge = [] if item["parent"] == "-" or re.search(r"^\s*parent:", item["body"], re.M) else ["parent: " + items.get(item["parent"], item["parent"])]
+                print("".join("  %s\n" % line for line in [*item["body"].splitlines(), *edge] if line.strip()), end="")
 
 
 def links(tasks, args):

@@ -50,6 +50,8 @@ A new item needs a type tag and a justification line, or `bin/jg-backlog.sh add`
 When a main-side thread such as a pending captain decision or relay reminder is worth durable tracking, file it as its own work item and hold it through that wrapper.
 When the automatic transition gate applies, dispatch and completion move the item themselves - `bin/jg-spawn.sh` and `bin/jg-teardown.sh` own those transitions and refuse rather than report success without them - so what remains yours is filing the item before dispatch, recording decisions, and keeping notes current; `docs/configuration.md` owns gate applicability and the manual-backend exception.
 
+File an ask with `add --mint`, each plan slice with `add --parent <ask>`, and a second worker's part of a slice with `add --parent <slice>`; bd numbers each child `<parent>.<n>`, a piece takes no parts, and `link` is for anything that is not "part of".
+
 `docs/configuration.md` and current `bin/jg-backlog.sh help` own the backlog schema, compatibility, retention, and routine command syntax.
 `squad-lead-provisioning` and `bin/jg-backlog-handoff.sh` own cross-home handoff safety.
 

@@ -257,6 +257,8 @@ item_args() {  # <add|update args...>
       --priority) ITEM_PRIORITY=${2-}; shift ;;
       --priority=*) ITEM_PRIORITY=${1#--priority=} ;;
       --mint) mint=1 ;;
+      --parent) mint=1; shift ;;
+      --parent=*) mint=1 ;;
       --kind|--repo|--blocked-by|--pr|--report|--prefix) shift ;;
       -*) ;;
       *) positional+=("$1") ;;

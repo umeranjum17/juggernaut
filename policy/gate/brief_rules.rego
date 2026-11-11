@@ -6,6 +6,8 @@
 # input.title       the item's title (after "<id> - "), "" when the item is not in the backlog
 # input.entry_lines the item's lines in the backlog, header first ([""] when absent)
 # input.ids         every item id in the backlog, any status
+# input.parent      the target of the item's parent-child edge, or upkeep for that label ("" or absent: none)
+# input.labels      the item's labels
 # The design flag is a body line "design: required|none": required adds the brief line, a design-like line that is
 # not exact is refused, and design-sounding work with no line only gets a note.
 # decision.why      no_ask, no_parent or bad_design when refused; note says the item reads like design work
@@ -29,7 +31,10 @@ has_ask if count(matching(rules.order_pattern, input.entry_lines)) > 0
 
 parent_lines := [i | some i, l in input.entry_lines; regex.match(rules.parent_line_pattern, l)]
 
-parent := p if {
+# The edge is the parent; the body line is the fallback for a row that has no edge.
+parent := input.parent if {
+	input.parent != ""
+} else := p if {
 	count(parent_lines) > 0
 	p := regex.find_all_string_submatch_n(rules.parent_value_pattern, input.entry_lines[min(parent_lines)], 1)[0][1]
 } else := ""

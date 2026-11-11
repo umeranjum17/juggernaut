@@ -82,6 +82,7 @@ Do not add model-specific versions of that policy.
 ## Spawn handoff and steering
 
 When the configured the backlog backlog gate applies, the spawn itself moves the work item to In flight and refuses rather than dispatching work this home has no item for, so recording the dispatch is never a separate step to remember; a manual-backend home retains the hand-editing contract in `docs/configuration.md`.
+Before writing a brief for a plan's slice, file the slice as a real child: `bin/jg-backlog.sh add --parent <ask> "<title>"` (a second worker's part of a slice: `--parent <slice>`), never a `parent:` body line; use `link` for anything that is not "part of".
 After spawning, confirm the worker is processing the brief and handle any trust dialog through `harness-adapters`.
 A persistent Squad Lead is recorded in the Squad Lead registry and runtime state, never as a backlog work item.
 
