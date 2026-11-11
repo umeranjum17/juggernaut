@@ -6,6 +6,8 @@ journeys:
     command: bash journeys/status-cold-scan.sh
   learnings:
     command: bash journeys/learnings.sh
+  message-table:
+    command: bash journeys/message-table.sh
   brief-lint:
     command: bash journeys/brief-lint-real-briefs.sh
   teardown-missing-record:

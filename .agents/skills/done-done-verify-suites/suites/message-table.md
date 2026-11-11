@@ -1,0 +1,3 @@
+# Message table
+
+Message table: run `done-done run message-table` (`bash journeys/message-table.sh`, which runs `tests/jg-machine-message.test.sh` and writes its log and `steps.json` into the run's folder); it lints `core/machines/tables/message.tsv` (5 states, the six ladder counts are fields), sends three real steers through `bin/jg-send.sh` with a stubbed terminal and reads the ticket and the kind from each record, counts the steers from the records, reads each steer as one of the five words, and replays the ledger words of the inbox (including a ring that did not land) against the table; it reads only generated fixtures (screen: none).

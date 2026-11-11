@@ -47,6 +47,9 @@
 # Record format (jg_task_inbox_write / jg_task_inbox_body):
 #   schema=jg-task-inbox.v1
 #   at=<utc timestamp>
+#   ticket=<id>                the ticket the steer is about: its ticket=<id> token, else the task
+#   kind=<order|route|steer>   what the steer is: its [order] or [route] tag, else steer
+#                              (core/machines/tables/message.tsv; steers are counted from these two lines)
 #   delivery=fire-and-forget   present only when the re-ring ladder must ignore it
 #                              (it still gets one retry ring; see below)
 #   --
@@ -363,6 +366,21 @@ jg_task_inbox_direct_submit() { # <state> <backend> <target> <text> <retries> <s
 
 # Write one record into the next sequence slot: temp-write, then atomic
 # rename. Prints the record path. Caller must hold .seq.lock.
+# The two header lines every record carries: ticket=<id> and kind=<order|route|steer>.
+jg_task_inbox_identity() {  # <task-id> <text>
+  local ticket=$1 kind=steer re_tag='(^|[[:space:]])\[(order|route)\]([[:space:]]|$)' re_ticket='(^|[[:space:]])ticket=([A-Za-z0-9._-]+)([[:space:]]|$)'
+  [[ $2 =~ $re_ticket ]] && ticket=${BASH_REMATCH[2]}
+  [[ $2 =~ $re_tag ]] && kind=${BASH_REMATCH[2]}
+  printf 'ticket=%s\nkind=%s\n' "$ticket" "$kind"
+}
+
+# One header value of a record (inbox or handled/), empty when the record predates the line.
+jg_task_inbox_field() {  # <record-path> <key>
+  local rec=$1
+  [ -f "$rec" ] || rec="${rec%/*}/handled/${rec##*/}"
+  awk -v k="$2" '$0 == "--" { exit } index($0, k "=") == 1 { print substr($0, length(k) + 2); exit }' "$rec" 2>/dev/null
+}
+
 _jg_task_inbox_write_record_locked() {  # <inbox-dir> <text> [delivery-mode]
   local dir=$1 text=$2 delivery_mode=${3:-} seq tmp rec status=0 task=${1##*/}
   task=${task%.inbox}
@@ -372,6 +390,7 @@ _jg_task_inbox_write_record_locked() {  # <inbox-dir> <text> [delivery-mode]
   {
     printf 'schema=%s\n' "$JG_TASK_INBOX_SCHEMA"
     printf 'at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    jg_task_inbox_identity "$task" "$text"
     [ "$delivery_mode" != fire-and-forget ] || printf 'delivery=fire-and-forget\n'
     printf -- '--\n'
     printf '%s' "$text"

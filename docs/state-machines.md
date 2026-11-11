@@ -20,6 +20,7 @@ The `Ask` column is the command that prints a record's state and its legal moves
 | `landing` | `data/jg-trunk-landing/<task>.<head>[.<ctx>].state` | `core/trunk-landing/trunk-landing.sh` | 6 | 9 | `bin/jg-machine.sh next landing <id>` |
 | `lane-delivery` | `a lane's state/<id>.status and .meta, data/jg-trunk-landing/<id>.<head>.state, data/trunk-landings.tsv, data/trunk-live.tsv, data/trunk-releases.tsv and its release pull request` | `core/machines/observers/lane-delivery.sh` | 18 | 30 | `bin/jg-machine.sh next lane-delivery <id>` |
 | `markers` | `state/.<kind>-<pane key> files` | `bin/jg-watch.sh` | 3 | 2 | `bin/jg-machine.sh next markers <id>` |
+| `message` | `state/<task>.inbox/NNN.msg with .delivery.jsonl; the ladder counts are fields (id: <task>:<NNN>; machine 9 of the state-machine plan)` | `core/machines/observers/message.sh` | 5 | 8 | `bin/jg-machine.sh next message <id>` |
 | `proving` | `the inside of the ticket stage proving: a done-done proof run (machine 12 of the state-machine plan)` | `core/machines/observers/ticket.sh` | 9 | 12 | `bin/jg-machine.sh next proving <id>` |
 | `status-verb` | `state/<id>.status prefix` | `core/classify/cmd/jg-classify/classify.go` | 14 | 13 | `bin/jg-machine.sh next status-verb <id>` |
 | `task-inbox` | `state/<task>.inbox/NNN.msg with .delivery.jsonl and the ladder markers (id: <task>:<NNN>)` | `bin/jg-task-inbox-lib.sh` | 12 | 40 | `bin/jg-machine.sh next task-inbox <id>` |
