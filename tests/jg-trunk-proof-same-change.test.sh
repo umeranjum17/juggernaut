@@ -9,6 +9,9 @@
 # T20 A lane whose change differs after the rebase is refused and the refusal names it: the seed is lander-refusal-reaches-worker on
 #    9 Nov, proved at bf4cac943 and rebased at 15:27:21Z to bd60a810e, which dropped one file's hunk and had to seal its run again.
 #    A rebase that changes only a file's mode is another change too.
+# T21 A script that is red on the base the same way no longer blocks the worker's proof (bin/jg-local-suite.sh through its real
+#    entry point, with bin/jg-dod-lib.sh's comparison): the receipt exits 0 and names the script; a new case in it, or a new failing
+#    script, still leaves the failing exit.
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
@@ -66,6 +69,83 @@ test_a_lane_whose_change_differs_after_the_rebase_is_refused_and_named() {
   pass 'a lane whose change differs after the rebase is refused, at the done and at the landing, and the refusal names it'
 }
 
+# A lane repository whose base already holds a red script: a stand-in runner that prints the real runner's JG_TEST lines,
+# a clean lint, and tests/a.test.sh failing with one named case. The lane is a clone with one commit of its own on top.
+baseline_world() {  # <name>: sets BW (the world), LW (the lane worktree), BSTATE, BDATA
+  BW="$TMP_ROOT/$1"; BSTATE="$BW/state"; BDATA="$BW/data"; LW="$BW/lane"
+  mkdir -p "$BW/seed/bin" "$BW/seed/tests" "$BW/fakebin" "$BSTATE" "$BDATA"
+  cat > "$BW/seed/bin/jg-test-run.sh" <<'RUNNER'
+#!/usr/bin/env bash
+# stand-in for bin/jg-test-run.sh: --all runs tests/*.test.sh, otherwise the scripts named
+[ "${1:-}" = "--all" ] && set -- tests/*.test.sh
+total=0 failed=0
+for s in "$@"; do
+  case "$s" in --*) continue ;; esac
+  case "$s" in tests/*) ;; *) continue ;; esac
+  printf 'JG_TEST_BEGIN 2026-11-11T00:00:00Z %s family=x expected_gate_skip=none\n' "$s"
+  bash "$s"; rc=$?
+  printf 'JG_TEST_END 2026-11-11T00:00:00Z %s exit=%s duration_ms=1 gate_skip=false\n' "$s" "$rc"
+  total=$((total + 1)); [ "$rc" = 0 ] || failed=$((failed + 1))
+done
+printf 'JG_TEST_SUMMARY total=%s failed=%s skipped_gate=0 duration_ms=1\n' "$total" "$failed"
+[ "$failed" = 0 ]
+RUNNER
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$BW/seed/bin/jg-lint.sh"
+  chmod +x "$BW/seed/bin/jg-test-run.sh" "$BW/seed/bin/jg-lint.sh"
+  printf 'echo "not ok 1 - the slow scan case"; exit 1\n' > "$BW/seed/tests/a.test.sh"
+  printf 'echo "ok 1 - fine"\n' > "$BW/seed/tests/g.test.sh"
+  git init -q -b main "$BW/seed"; git -C "$BW/seed" add -A
+  git -C "$BW/seed" -c user.name=t -c user.email=t@example.invalid commit -q -m base
+  git clone -q --bare "$BW/seed" "$BW/origin.git"; git clone -q "$BW/origin.git" "$LW"
+  printf 'echo "ok 1 - the lane change"\n' > "$LW/tests/l.test.sh"; git -C "$LW" add -A
+  git -C "$LW" -c user.name=t -c user.email=t@example.invalid commit -q -m 'ticket the lane change'
+  # shellcheck disable=SC2016 # the stand-in expands its own arguments
+  cat > "$BW/fakebin/gh" <<'GH'
+#!/usr/bin/env bash
+case "$*" in
+  *headRefOid*) git -C "$FAKE_LANE" rev-parse HEAD ;;
+  *baseRefName*) echo main ;;
+  *) exit 1 ;;
+esac
+GH
+  chmod +x "$BW/fakebin/gh"
+  printf 'worktree=%s\n' "$LW" > "$BSTATE/b1.meta"
+}
+run_local_suite() {  # <worktree>: the receipt run, from outside the lane, as the supervisor runs it
+  FAKE_LANE=$1 PATH="$BW/fakebin:$PATH" JG_HOME="$BW" JG_STATE_OVERRIDE="$BSTATE" JG_DATA_OVERRIDE="$BDATA" \
+    bash "$ROOT/bin/jg-local-suite.sh" b1 https://github.com/o/r/pull/1 2>&1
+}
+commit_lane() { git -C "$LW" add -A; git -C "$LW" -c user.name=t -c user.email=t@example.invalid commit -q --amend -m 'ticket the lane change'; }
+
+test_a_red_the_base_has_the_same_way_is_set_aside_and_a_new_failure_is_not() {
+  local out rc=0 head
+  baseline_world red
+  out=$(run_local_suite "$LW") || rc=$?
+  [ "$rc" = 0 ] || fail "a script red on the base the same way must not fail the receipt, got exit $rc: $out"
+  assert_contains "$out" "tests/a.test.sh" "the run names the script it set aside"
+  [ "$(sed -n 's/^exit=//p' "$BSTATE/b1.local-suite")" = 0 ] || fail "the receipt must record exit 0"
+  [ "$(sed -n 's/^tip_red=//p' "$BSTATE/b1.local-suite")" = tests/a.test.sh ] || fail "the receipt must name the set-aside script"
+  head=$(git -C "$LW" rev-parse HEAD)
+  out=$(cd "$LW" && bash "$ROOT/bin/jg-local-suite.sh" verify "$BSTATE" b1 "$head" 2>&1) || fail "the receipt must verify: $out"
+  assert_contains "$out" "set aside: tests/a.test.sh" "the evidence line names the set-aside red"
+  # A new failing case in the same script is the lane's own red.
+  printf 'echo "not ok 1 - the slow scan case"; echo "not ok 2 - a case the lane broke"; exit 1\n' > "$LW/tests/a.test.sh"; commit_lane
+  rc=0; out=$(run_local_suite "$LW") || rc=$?
+  [ "$rc" != 0 ] || fail "a new failing case must still fail the receipt: $out"
+  [ "$(sed -n 's/^exit=//p' "$BSTATE/b1.local-suite")" != 0 ] || fail "the receipt must keep the failing exit"
+  [ -z "$(sed -n 's/^tip_red=//p' "$BSTATE/b1.local-suite")" ] || fail "no red may be named as set aside"
+  # A different exit in the same case names, and a new failing script beside the base's red, are the lane's too.
+  printf 'echo "not ok 1 - the slow scan case"; exit 2\n' > "$LW/tests/a.test.sh"; commit_lane
+  rc=0; out=$(run_local_suite "$LW") || rc=$?
+  [ "$rc" != 0 ] || fail "a different exit must still fail the receipt: $out"
+  printf 'echo "not ok 1 - the slow scan case"; exit 1\n' > "$LW/tests/a.test.sh"
+  printf 'echo "not ok 1 - brand new"; exit 1\n' > "$LW/tests/n.test.sh"; commit_lane
+  rc=0; out=$(run_local_suite "$LW") || rc=$?
+  [ "$rc" != 0 ] || fail "a new failing script beside the base's red must still fail the receipt: $out"
+  pass "a red the base has the same way is set aside and named; a new case, a different exit and a new failing script still fail"
+}
+
 test_a_proved_lane_rebased_with_no_change_keeps_its_proof_and_lands
 test_a_lane_whose_change_differs_after_the_rebase_is_refused_and_named
+test_a_red_the_base_has_the_same_way_is_set_aside_and_a_new_failure_is_not
 printf 'jg-trunk-proof-same-change: ok\n'

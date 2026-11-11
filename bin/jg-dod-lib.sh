@@ -858,6 +858,44 @@ jg_dod_light_gate() {  # <worktree>
   printf '%s\n' "the project's lint over the files you changed, then the tests for those files"
 }
 
+# What each test script did in a runner log (bin/jg-test-run.sh's JG_TEST_BEGIN/JG_TEST_END lines), one line per script:
+# script TAB exit TAB signature. The signature of a red script is its sorted, de-duplicated `not ok` case names (paths and
+# numbers normalised), or its last three output lines when it names no case; a green script has "-". Reads the log named
+# by $1. bin/jg-trunk.sh's gate_results is the same reading for the lander.
+jg_dod_test_results() {  # <log>
+  awk '
+    function norm(s) { gsub(/\/(tmp|var\/folders)\/[^ \t:]*/, "PATH", s); gsub(/[0-9][0-9][0-9][0-9]+/, "N", s); gsub(/[0-9]+\.[0-9]+s/, "Ns", s); return s }
+    /^JG_TEST_BEGIN / { cur = $3; nf = 0; nt = 0; split("", f); split("", t); next }
+    /^JG_TEST_END / {
+      ex = $0; sub(/.* exit=/, "", ex); sub(/ .*/, "", ex); sig = "-"
+      if (ex != "0") {
+        sig = ""
+        if (nf > 0) {
+          for (i = 2; i <= nf; i++) { v = f[i]; for (j = i - 1; j >= 1 && f[j] > v; j--) f[j + 1] = f[j]; f[j + 1] = v }
+          for (i = 1; i <= nf; i++) if (i == 1 || f[i] != f[i - 1]) sig = sig (sig == "" ? "" : " | ") f[i]
+        } else {
+          for (i = (nt > 3 ? nt - 2 : 1); i <= nt; i++) sig = sig (sig == "" ? "" : " | ") t[i]
+        }
+      }
+      print $3 "\t" ex "\t" sig; cur = ""; next
+    }
+    cur != "" && $0 !~ /^[ \t]*$/ { l = norm($0); t[++nt] = l; if ($0 ~ /^not ok/) f[++nf] = l }
+  ' "$1"
+}
+
+# Splits a candidate's red scripts into the base's own red and the change's red. <candidate> and <base> are
+# jg_dod_test_results lines (a red is any exit other than 0). Prints `aside <script>` for a red the base has with the
+# same script, exit and case names, and `charged <script>` for every other red: a new case, a different exit, a script
+# the base passes or never ran. A red with no signature is always charged, because nothing then says it is the same red.
+jg_dod_baseline_split() {  # <candidate-results> <base-results>
+  printf '%s\n' "$1" | awk -F'\t' -v base="$2" '
+    BEGIN { n = split(base, rows, "\n"); for (i = 1; i <= n; i++) if (rows[i] != "") { split(rows[i], c, "\t"); sub(/^[^\t]*\t[^\t]*\t/, "", rows[i]); ex[c[1]] = c[2]; sg[c[1]] = rows[i] } }
+    $2 != "0" && $2 != "" {
+      sig = $0; sub(/^[^\t]*\t[^\t]*\t/, "", sig)
+      print (($1 in ex) && ex[$1] == $2 && sig != "" && sig != "-" && sg[$1] == sig ? "aside " : "charged ") $1
+    }'
+}
+
 # 0 when the pull request a done names reports no red or unfinished check, which
 # is what makes that done true rather than early. 1 when it does; stdout then
 # names every such check and the local light gate, and nothing else.
