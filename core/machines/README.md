@@ -16,6 +16,8 @@ The records stay the truth: the table never stores a state, and the command neve
 - `jg-machine.sh diagram <machine>` prints a Mermaid state diagram generated from the table.
 - `jg-machine.sh edge-check <machine> <from> <to>` prints `legal` with the event and writer, or `illegal`, and exits 1 for an illegal move; it only reads, so a writer may call it in shadow.
 
+`bin/jg-move.sh <ticket> <event>` takes one move of the `ticket` table: it reads the ticket's state through the observer, refuses (exit 1, nothing written, the legal events on stderr) an event that state does not have, and appends one line `epoch, ticket, from, event, to` to `data/moves.log` for a legal one.
+
 `show` and `next` print tab-separated `key<TAB>value` lines.
 A move line is `move<TAB>event<TAB>to<TAB>writer<TAB>command<TAB>guard`, with `{id}` already replaced in the command.
 A `-` command means the writer fires the move itself.

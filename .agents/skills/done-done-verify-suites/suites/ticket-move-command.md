@@ -1,0 +1,3 @@
+# Ticket move command
+
+Ticket move command: run `done-done run ticket-move` (`bash journeys/ticket-move.sh`, which runs `tests/jg-move.test.sh` and writes its log and `steps.json` into the run's folder); in a test home with a copy of the ticket tables, the real `bin/jg-move.sh <ticket> <event>` exits 1 on an event the ticket's stage does not have (`prove-pass` from `building`, an unknown event, `start` for a ticket in no stage), names the legal events and writes no line to `data/moves.log`, and a legal move (`claim-done`, then `file` for a new ticket) appends exactly one line with the ticket, the stage before, the event and the stage after; it reads only generated fixtures (screen: none).
