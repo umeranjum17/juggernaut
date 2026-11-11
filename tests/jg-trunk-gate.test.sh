@@ -429,6 +429,28 @@ test_every_landing_writes_its_latency_row_from_the_done_epoch_it_recorded() {
   pass 'a landing records the lane done epoch and writes its latency row at once, with the status file gone'
 }
 
+# jg-i1iv3: a design task's first-draft receipt binds the head the lane proved; the trunk moving under it must not refuse the landing.
+test_a_design_lane_lands_after_the_trunk_moved_on_the_receipt_it_proved() {
+  local out id=dz1 h
+  world designmoved
+  lane dz0 other other.txt; lane "$id" design d.txt
+  printf 'design_call=yes\n' >> "$HOME_D/state/$id.meta"
+  printf '{"made":{"files":[{"file":"d.html"}]}}\n' > "$HOME_D/data/$id-fd-run.json"
+  h=$(git -C "$PROJ" rev-parse "fm/$id")
+  jq -n --arg t "$id" --arg h "$h" --arg e "done-done run: ok
+first-draft receipt: $HOME_D/data/$id-fd-run.json" '{schema:1,task:$t,mode:"local-trunk",spawn_gen:("g-"+$t),head:$h,pr:"",verdict:"PASS",at:1,evidence:$e}' > "$HOME_D/state/$id.run-receipt.json"
+  # The trunk moves under the proved lane, so the lander lands a rebased candidate that is not the receipt's head.
+  trunk land dz0 >/dev/null 2>&1 || fail "dz0 must land first"
+  out=$(trunk land "$id" 2>&1) || fail "a design lane proved at ${h:0:12} must land on the moved trunk: $out"
+  [ "$(git -C "$PROJ" rev-parse "$(tip)^")" != "$h" ] || fail "the lane must have landed rebased"
+  git -C "$PROJ" cat-file -e "trunk:d.txt" || fail "the landed tip must hold the design lane's file"
+  # A design lane with no first-draft line is still refused at its proved head.
+  lane dz2 design e.txt; printf 'design_call=yes\n' >> "$HOME_D/state/dz2.meta"
+  lane dz3 other f.txt; trunk land dz3 >/dev/null 2>&1 || fail "dz3 must land"
+  assert_contains "$(trunk land dz2 2>&1)" "no 'first-draft receipt" 'a design lane without the receipt line is still refused'
+  pass 'a design lane lands on a moved trunk on the receipt it proved, and one without the receipt line is still refused'
+}
+
 test_the_full_gate_charges_a_lane_only_for_what_it_broke
 test_every_landing_writes_its_latency_row_from_the_done_epoch_it_recorded
 test_a_flaky_failure_gets_one_rerun_before_it_is_judged
@@ -444,4 +466,5 @@ test_three_lanes_land_in_order_a_red_one_is_refused_and_no_whole_suite_runs_per_
 test_a_red_verify_finds_by_hand_is_reverted_and_takes_the_green_pin_back
 test_a_green_pin_left_behind_moves_to_the_next_landing_and_the_landing_check_does_not_grow
 test_a_lane_proved_at_the_tree_the_lander_would_test_is_not_tested_again
+test_a_design_lane_lands_after_the_trunk_moved_on_the_receipt_it_proved
 printf 'jg-trunk-gate: ok\n'

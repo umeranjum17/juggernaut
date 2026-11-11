@@ -400,7 +400,7 @@ jg_dod_trunk_proof_gaps() {
 # passes `trunk` as <kind>.
 # Usage: jg_dod_local_landing_gates <bin-dir> <config-dir> <home> <state> <id> <meta> <project> <base> <candidate> [trunk]
 jg_dod_local_landing_gates() {
-  local bin=$1 config=$2 home=$3 state=$4 id=$5 meta=$6 proj=$7 base=$8 candidate=$9 kind=${10:-} hold_status=0
+  local bin=$1 config=$2 home=$3 state=$4 id=$5 meta=$6 proj=$7 base=$8 candidate=$9 kind=${10:-} hold_status=0 proved
   JG_HOME="$home" JG_STATE_OVERRIDE="$state" "$bin/jg-captain-hold.sh" open "$id" --distinguish-absent || hold_status=$?
   case "$hold_status" in
     0) echo "error: task $id is still held for the captain; release it before merging" >&2; return 1 ;;
@@ -408,8 +408,12 @@ jg_dod_local_landing_gates() {
     *) echo "error: could not determine whether task $id is still held for the captain; refusing to merge" >&2; return 1 ;;
   esac
   if [ "$kind" != trunk ] && declare -F jg_dod_receipt_accept >/dev/null; then jg_dod_receipt_accept "$state" "$id" "$meta" "$candidate" >&2 || return 1; fi
-  if declare -F jg_dod_design_gate >/dev/null; then jg_dod_design_gate "$state" "$id" "$meta" "$candidate" >&2 || return 1; fi
-  if declare -F jg_dod_demo_gate >/dev/null; then jg_dod_demo_gate "$config" "$state" "$id" "$meta" "$candidate" >&2 || return 1; fi
+  # A trunk landing lands a rebased candidate, but its completion receipt binds the head the lane proved (jg_dod_trunk_proof_gaps
+  # already kept that proof across a no-change rebase), so the receipt-bound design and demo gates read it at that head.
+  proved=$candidate
+  if [ "$kind" = trunk ] && command -v jq >/dev/null 2>&1; then proved=$(jq -r '.head // empty' "$state/$id.run-receipt.json" 2>/dev/null) || proved=''; proved=${proved:-$candidate}; fi
+  if declare -F jg_dod_design_gate >/dev/null; then jg_dod_design_gate "$state" "$id" "$meta" "$proved" >&2 || return 1; fi
+  if declare -F jg_dod_demo_gate >/dev/null; then jg_dod_demo_gate "$config" "$state" "$id" "$meta" "$proved" >&2 || return 1; fi
   if declare -F jg_dod_nav_gate >/dev/null; then jg_dod_nav_gate "$id" "$meta" "$(git -C "$proj" log --format=%B "$base..$candidate")" >&2 || return 1; fi
   [ "$kind" != trunk ] || return 0
   if declare -F jg_dod_merge_gate >/dev/null; then jg_dod_merge_gate "$config" "$home" "$id" "$meta" "$candidate" - >&2 || return 1; fi
