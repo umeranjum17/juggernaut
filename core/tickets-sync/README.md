@@ -40,7 +40,7 @@ A sign-off call the board refuses is named by its `error:` line on stdout, never
 
 ## The checks
 
-`state/tickets-sync.check.sh` runs the poll; `state/tickets-stale.check.sh` runs `sync.py --check`. The second one reads every registered home and prints one line for each ticket whose state contradicts its own work — the board still says queued or in progress while the backlog item is closed and its PR merged, or the reverse — and for each `jg-` ticket left on the board that no home's work accounts for. It writes no ticket, and silence means the board is true.
+`state/tickets-sync.check.sh` runs the poll; `state/tickets-stale.check.sh` runs `sync.py --check`. The second one reads every registered home and corrects each leaf ticket whose state contradicts its proven work, using the same publisher as the poll. It prints a failure if a correction is refused and reports each open `jg-` ticket no home's work accounts for; silence means no unresolved drift was found.
 It walks the fleet inside the same 20-second budget as the poll, with its own cursor (`state/tickets-sync/check-cursor.json`), and names a ticket no home's work accounts for only once one walk has read every home.
 When the check walked the poll's cursor, the poll skipped every row the check had read, so those rows never reached the board and the check said `ticket says no state` for work in progress.
 Every pass of either walk handles at least the row it resumed on, so a pass whose reads outlast the budget under load still moves on.

@@ -244,22 +244,22 @@ JG_HOME="$JG_HOME" python3 "$WRITER" jg-refresh --state "done"
 sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-refresh)" --json | jq -e '.ticket.state == "done" and .ticket.progress == 100'
 echo 'PASS: the lifecycle writer corrects an existing ticket only where it differs'
 
-# The stale check names the ticket its own work contradicts and the board row no
-# home's work accounts for, writes nothing, and falls silent on a settled board.
+# The stale check settles proven drift and names the board row no home accounts for.
 # The board can lag the work: this ticket still says in progress after its item closed.
 sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-inferred)" --state "in progress" >/dev/null
-before=$(sha256sum "$work/board.tickets.jsonl")
+printf 'working [at=1700000400]: building voice work\n' > "$JG_HOME/state/jg-voice.status"
+sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-voice)" --state queued >/dev/null
 out=$("$JG_HOME/state/tickets-stale.check.sh")
-# ...and the fixture still holds the surplus row its earlier grouping history left behind.
-grep -q 'Umer telescope focus regression' <<<"$out"
+if grep -q 'Umer telescope focus regression' <<<"$out"; then echo 'FAIL: proven drift was reported'; exit 1; fi
 grep -q "no home's work accounts for it" <<<"$out"
-test "$before" = "$(sha256sum "$work/board.tickets.jsonl")"
+sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-inferred)" --json | jq -e '.ticket.state == "done"'
+sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-voice)" --json | jq -e '.ticket.state == "in progress"'
 # The fixture's leftover row from its earlier grouping history is the surplus row the
 # check is for; closing it and settling the rest leaves the board true and silent.
 sign-off-axi ticket "$work/board.json" --id jg-history-fixture --state "done" >/dev/null
 "$JG_HOME/state/tickets-sync.check.sh" >/dev/null
 test -z "$("$JG_HOME/state/tickets-stale.check.sh")"
-echo 'PASS: the stale check flags a contradicting and an orphaned ticket, writes nothing, and silences a settled board'
+echo 'PASS: the stale check settles proven drift, flags an orphan, and silences a settled board'
 
 # The full reconcile is the backfill for a board that drifted, so it must settle a drifted row and finish a settled
 # board without writing; the seconds are printed so a slow pass is visible in the transcript.

@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
-"""Read-only backlog backfill and incremental publication via sign-off-axi ticket.
+"""Backlog backfill and incremental publication via sign-off-axi ticket.
 
---check reads without writing and prints one line per ticket whose board state
-disagrees with its PR and backlog item, plus every board ticket no home's work
-accounts for; the watcher check whose stdout wakes Main runs it.
+--check corrects provable ticket state drift and reports unaccounted tickets.
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -149,7 +147,7 @@ def tidy_report(items, homes, home, state, apply, run):
 def sync():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--audit', action='store_true')
-    parser.add_argument('--check', action='store_true', help='print board tickets that disagree with their work; write nothing')
+    parser.add_argument('--check', action='store_true', help='correct proven state drift and print tickets that cannot be accounted for')
     parser.add_argument('--cleanup', action='store_true', help='once a day, flag tickets that need a keep/remove call and back-fill captain quotes')
     parser.add_argument('--migrate-legacy', action='store_true', help='one-off: release the legacy fm- rows that hold with no reason; with --check, print the plan and write nothing')
     parser.add_argument('--reconcile', action='store_true', help='read every home without the watcher time budget')
@@ -259,11 +257,10 @@ def sync():
                 # A row whose work another ticket already covers is left alone on purpose (the board keeps one open
                 # ticket per piece of work), so its missing state is not a disagreement to report.
                 if any(o != tid for o in tracked.get(work_key(desired), [])): return
-                # A leaf's state is the one its PR and backlog item derive; a grouping row's is its own.
-                if 'stage' in desired and (existing.get(tid, {}).get('state') or '') != desired['state']:
-                    board_state = existing.get(tid, {}).get('state') or 'no state'
-                    print(f"tickets-check: {desired['title'][:70]} ticket says {board_state}, its PR and backlog item say {desired['state'] or 'no state'}")
-                return
+                # A leaf's state is derived from its work. Reuse the poll's publisher to correct it;
+                # grouping rows and already-settled leaves need no write on this check.
+                if 'stage' not in desired or (existing.get(tid, {}).get('state') or '') == desired['state']:
+                    return
             digest = hashlib.sha256(json.dumps(desired, sort_keys=True).encode()).hexdigest()
             old = existing.get(tid, {})
             def settled(key, value):
