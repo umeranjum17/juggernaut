@@ -1,0 +1,21 @@
+machine	worker	state/<id>.meta, the status log and the endpoint of one agent session of a lane (machine 1 of the state-machine plan)	core/machines/observers/worker.sh
+enum	worker
+state	starting	initial	The agent session is coming up.	-	active	5m -> first-line
+state	working	normal	The agent works on the ticket.	-	active	15m -> wait
+state	waiting	normal	The agent waits for someone, and said who.	-	waiting	0s -> alert stuck-wait
+state	done	normal	The agent reported done and its turn ended.	-	rest	rework
+state	lost	normal	The session shows no sign of life.	-	waiting	0s -> alert lost-worker
+state	exited	terminal	The session is over.	-
+group	alive	starting	working	waiting
+edge	(none)	spawn	starting	bin/jg-spawn.sh:spawn	-	a ticket is ready and a lane is free	jg-machine-worker
+edge	starting	first-line	working	bin/jg-lavish-guard.sh:append	-	a status line or a screen change	jg-machine-worker
+edge	working	wait	waiting	bin/jg-lavish-guard.sh:append	-	a wait word and a reason are given	jg-machine-worker
+edge	waiting	resume	working	bin/jg-send.sh:send	-	the wait is answered	jg-machine-worker
+edge	working	claim-done	done	bin/jg-lavish-guard.sh:append	-	the done line names a commit that is reachable	jg-machine-worker
+edge	done	rework	working	bin/jg-send.sh:send	-	a steer, a return from proving or delivering, or the worker starts on another head	jg-machine-worker
+edge	alive	lose	lost	bin/jg-watch.sh:tick	-	the lease is dead and there is no sign of life	jg-machine-worker
+edge	lost	relaunch	starting	bin/jg-control.sh:do_relaunch	bin/jg-control.sh relaunch {id}	the tick or the lead starts a new session on the same work copy; fewer than 3 tries	jg-machine-worker
+edge	alive	stop	exited	bin/jg-control.sh:do_exit	bin/jg-control.sh exit {id}	the lead's word, or the ticket was dropped	jg-machine-worker
+edge	lost	abandon	exited	bin/jg-watch.sh:tick	-	3 tries, or the ticket was dropped	jg-machine-worker
+edge	done	exit	exited	bin/jg-teardown.sh:main	-	the lane ended and cleanup removes the session	jg-machine-worker
+observer	bash "$(dirname "$JG_MACHINES_TABLES")/observers/worker.sh" "$1"

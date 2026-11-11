@@ -31,6 +31,7 @@ The `Ask` column is the command that prints a record's state and its legal moves
 | `ticket` | `a ticket: the one Beads row of jg-q1b3n (machine 0 of the state-machine plan)` | `core/machines/observers/ticket.sh` | 7 | 15 | `bin/jg-machine.sh next ticket <id>` |
 | `trunk-pointers` | `state/trunk-{tip,green,released,rolled,word-live}-<project> and data/trunk-live.tsv` | `bin/jg-trunk.sh` | 8 | 20 | `bin/jg-machine.sh next trunk-pointers <id>` |
 | `wait` | `a task's latest status line (state/<id>.status)` | `core/wait-timers/README.md` | 4 | 10 | `bin/jg-machine.sh next wait <id>` |
+| `worker` | `state/<id>.meta, the status log and the endpoint of one agent session of a lane (machine 1 of the state-machine plan)` | `core/machines/observers/worker.sh` | 6 | 11 | `bin/jg-machine.sh next worker <id>` |
 <!-- machines:end -->
 
 Regenerate the table above with `bash tests/jg-machine-index.test.sh --write` after you add or change a table.
