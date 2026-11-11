@@ -3,6 +3,7 @@
 
 Usage: BEADS_DIR=<store> jg-beads-write.py <add|create|update|edit|done|close|block|unblock|start|task|reopen|hold|unhold|relink> [args...]
        BEADS_DIR=<store> jg-beads-write.py <stage <key>...|take <file> <key>...|drop <key>...|public-followup ...>
+       BEADS_DIR=<store> jg-beads-write.py <moment|wait|ticket-stage> ...   (the ticket machine's moments, wait and stage: bin/jg-beads-moment.py)
 
 bin/jg-backlog-lib.sh's jg_backlog_beads_write starts it after bin/jg-backlog.sh's intake and captain guards.
 Every bd call goes through bin/jg-beads.sh. Replies and refusals print the backlog's lines on stdout.
@@ -682,7 +683,8 @@ def main():
     serve = {"add": add, "create": add, "update": update, "edit": update, "done": done, "close": done,
              "block": block, "unblock": unblock, "start": start, "task": task, "reopen": reopen, "hold": hold, "unhold": unhold,
              "stage": stage, "take": take, "drop": drop, "relink": relink,
-             "public-followup": lambda args: __import__("jg-beads-followup").main(args)}.get(verb)
+             "public-followup": lambda args: __import__("jg-beads-followup").main(args),
+             **{name: lambda args, name=name: __import__("jg-beads-moment").main(name, args) for name in ("moment", "wait", "ticket-stage")}}.get(verb)
     if serve is None:
         view.refuse("Unknown write verb: " + verb)
     serve(sys.argv[2:])

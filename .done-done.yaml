@@ -266,6 +266,9 @@ journeys:
     command: bash journeys/machine-rules.sh
   ship-brief-style:
     command: bash journeys/ship-brief-style.sh
+  ticket-stage:
+    command: bash journeys/ticket-stage.sh
+    timeout: 10m
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'
