@@ -194,8 +194,10 @@
 # share a machine. This script owns <n>: a lane whose <n> disagrees with the
 # configured shard count is refused, so a CI matrix cannot silently drop a shard.
 # --check-coverage also reports serial_max_ms (largest packed hint sum, including
-# default weights) and serial_budget_ms (the 20-minute packing target), refusing
-# a split above that target. Neither figure is an execution timeout or proof of
+# default weights) and serial_budget_ms (the 20-minute packing target). A split above
+# that target, or too many unhinted serial scripts, prints a warning and the line
+# "JG_TEST_COVERAGE advise ..." (same fields as "ok") and exits 0: a time estimate
+# never refuses a landing or a CI run; a script no shard runs still does. Neither figure is an execution timeout or proof of
 # observed headroom: refresh growing files from CI measurements.
 # --changed is conservative: it over-selects related families rather than
 # under-selecting, and never expands to the complete suite unless --all. The one
@@ -1145,6 +1147,7 @@ select_lane() {
 run_coverage_guard() {
   local tmp missing extra a b shard unhinted serial_total serial_ms serial_max_ms=0
   local p1_ms p1_unhinted p2_ms p2_unhinted parallel_max_ms parallel_imbalance_ms
+  local verdict=ok
   local -a saved_scripts=()
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/jg-test-coverage.XXXXXX")
 
@@ -1249,28 +1252,25 @@ run_coverage_guard() {
     return 1
   fi
 
-  # Hint drift is what makes a balanced-looking partition run unbalanced: the
-  # shards are packed from hints, so every unmeasured script is balanced on a
-  # guess and enough of them let one shard reach its CI job cap while another
-  # runner sits idle. Bound the unmeasured share here rather than waiting for a
-  # shard to time out.
+  # Hint drift and a modeled shard over its target are advice, never a refusal:
+  # the hints are estimates, and refusing a landing or a CI run for an estimate
+  # stopped work that no script had failed. Only a script no shard runs, or a
+  # partition that disagrees with its owners, refuses.
   portable_serial_unhinted >"$tmp/unhinted"
   unhinted=$(wc -l <"$tmp/unhinted" | tr -d ' ')
   serial_total=$(wc -l <"$tmp/serial" | tr -d ' ')
   if [ "$serial_total" -gt 0 ] &&
     [ "$((unhinted * 100))" -gt "$((serial_total * PORTABLE_SERIAL_MAX_UNHINTED_PERCENT))" ]; then
-    log "coverage guard: $unhinted of $serial_total portable serial scripts have no measured duration hint (max ${PORTABLE_SERIAL_MAX_UNHINTED_PERCENT}%)"
+    log "coverage advice: $unhinted of $serial_total portable serial scripts have no measured duration hint (advised max ${PORTABLE_SERIAL_MAX_UNHINTED_PERCENT}%); the shards are balanced on a guess"
     log "refresh the hints from a green run's timing artifacts: docs/jg-test-portable-shards.md"
     cat "$tmp/unhinted" >&2
-    rm -rf "$tmp"
-    return 1
+    verdict=advise
   fi
 
   if [ "$serial_max_ms" -gt "$PORTABLE_SERIAL_MAX_WEIGHT_MS" ]; then
-    log "coverage guard: largest portable serial shard packs ${serial_max_ms}ms above the ${PORTABLE_SERIAL_MAX_WEIGHT_MS}ms target"
+    log "coverage advice: largest portable serial shard packs ${serial_max_ms}ms above the ${PORTABLE_SERIAL_MAX_WEIGHT_MS}ms target"
     log "refresh CI hints and rebalance or add shards; do not raise the job timeout: docs/jg-test-portable-shards.md"
-    rm -rf "$tmp"
-    return 1
+    verdict=advise
   fi
 
   if [ -x "$ROOT/bin/jg-test-isolation-proof.sh" ]; then
@@ -1292,7 +1292,8 @@ run_coverage_guard() {
   parallel_imbalance_ms=$((p1_ms - p2_ms))
   [ "$parallel_imbalance_ms" -ge 0 ] || parallel_imbalance_ms=$((-parallel_imbalance_ms))
 
-  printf 'JG_TEST_COVERAGE ok total=%s parallel=%s parallel_max_ms=%s parallel_imbalance_ms=%s parallel_unhinted=%s serial=%s serial_shards=%s serial_unhinted=%s serial_max_ms=%s serial_budget_ms=%s herdr=%s\n' \
+  printf 'JG_TEST_COVERAGE %s total=%s parallel=%s parallel_max_ms=%s parallel_imbalance_ms=%s parallel_unhinted=%s serial=%s serial_shards=%s serial_unhinted=%s serial_max_ms=%s serial_budget_ms=%s herdr=%s\n' \
+    "$verdict" \
     "$(wc -l <"$tmp/all" | tr -d ' ')" \
     "$(wc -l <"$tmp/shards_union" | tr -d ' ')" \
     "$parallel_max_ms" \

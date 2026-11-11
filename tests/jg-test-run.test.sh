@@ -485,6 +485,27 @@ test_a_changed_dispatch_skill_runs_the_floor_test() {
   pass 'a dispatch skill change runs the floor test and rejects its failure'
 }
 
+# A time budget advises and never stops: a tree whose largest serial shard packs 3 s over its target still passes,
+# with the advise line and a warning, while a script that no shard runs still refuses.
+test_the_coverage_time_budget_advises_and_a_script_no_shard_runs_still_refuses() {
+  local fixture=$TMP_ROOT/coverage out rc=0 max
+  mkdir -p "$fixture"
+  cp -R "$ROOT/bin" "$ROOT/defaults" "$ROOT/tests" "$fixture/"
+  max=$(bash "$fixture/bin/jg-test-run.sh" --check-coverage 2>&1 | sed -n 's/.* serial_max_ms=\([0-9]*\) .*/\1/p')
+  [ -n "$max" ] || fail "the untouched tree must print its coverage line"
+  sed -i "s/^PORTABLE_SERIAL_MAX_WEIGHT_MS=.*/PORTABLE_SERIAL_MAX_WEIGHT_MS=$((max - 3000))/" "$fixture/bin/jg-test-run.sh"
+  out=$(bash "$fixture/bin/jg-test-run.sh" --check-coverage 2>&1) || rc=$?
+  [ "$rc" = 0 ] || fail "a shard 3 s over its target must pass: rc=$rc $out"
+  assert_contains "$out" 'JG_TEST_COVERAGE advise ' 'the advise line must be printed'
+  assert_contains "$out" 'coverage advice: largest portable serial shard' 'the warning must name the shard'
+  sed -i '/^tests\/jg-x-mode.test.sh$/d' "$fixture/bin/jg-test-run.sh"
+  rc=0
+  out=$(bash "$fixture/bin/jg-test-run.sh" --check-coverage 2>&1) || rc=$?
+  [ "$rc" = 1 ] || fail "a script no shard runs must still refuse: rc=$rc $out"
+  assert_contains "$out" 'tests/jg-x-mode.test.sh' 'the refusal must name the script'
+  pass 'the coverage time budget advises with exit 0 and a script no shard runs still refuses'
+}
+
 test_shards_split_a_selection_without_losing_or_repeating_a_script
 test_the_e2e_limit_is_60_seconds_in_config
 test_an_e2e_test_over_its_limit_warns_naming_itself_and_its_time
@@ -501,5 +522,6 @@ test_a_changed_shared_file_selects_the_scripts_that_name_it
 test_a_changed_core_script_selects_the_scripts_that_name_it
 test_a_changed_fleet_homes_library_selects_the_move_test
 test_a_changed_dispatch_skill_runs_the_floor_test
+test_the_coverage_time_budget_advises_and_a_script_no_shard_runs_still_refuses
 
 printf 'all %s\n' 'jg-test-run limit tests passed'
