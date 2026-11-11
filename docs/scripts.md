@@ -204,6 +204,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-kv-lib.sh`           | One owner of the JetStream key-value client surface: server and client resolution, bucket creation, and the reads, writes, deletes, and revision a compare-and-set claim needs |
 | `jg-control.sh`          | Agent lifecycle control plane: allowlisted `interrupt`, `exit`, and transactional `relaunch` verbs for an exact task id ([agent-control.md](agent-control.md)) |
 | `jg-control-lib.sh`      | One executable owner of the control-plane verb allowlist, per-harness interrupt/exit mechanics, per-backend capability, and the endpoint-absence proof both `exit` and `relaunch` read |
+| `jg-control-primary-lib.sh` | The `primary` target of `jg-control.sh`: proves the pane is this home's locked primary session, then ends and restarts it once, verified, never forced (`docs/agent-control.md`) |
 | `jg-busy-lib.sh`         | Single owner of the semantic busy-state contract: verdicts, source attribution, and per-harness sources |
 | `jg-busy-event.sh`       | The only writer of a task's semantic busy-state record and native-harness progress marker; arms an incarnation and applies lifecycle events |
 | `jg-tmux-lib.sh`         | Shared tmux pane primitives for composer capture, verified submit, and the submit-time busy check |

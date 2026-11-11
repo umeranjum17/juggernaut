@@ -7,6 +7,7 @@
 #        jg-control.sh <task-id> relaunch [--clear-composer] [--harness <name>] [--model <name>]
 #                                         [--effort <level>]
 #                                         (--note <text> | --note-file <path>)
+#        jg-control.sh primary relaunch --clear-composer
 #
 # Why this exists, and how it differs from jg-send.sh. bin/jg-send.sh is the
 # DATA plane: conversational text for the agent to read, always routing-marked
@@ -102,6 +103,16 @@
 #              the prior durable record in place and reports the concrete
 #              state; it never leaves a half-transitioned task claiming to be
 #              running.
+#
+#   primary    Not a task: this home's own locked primary session (Main). Only
+#              `relaunch --clear-composer` exists, for a wake that waits behind
+#              input-box text two repairs could not clear. It proves the pane is
+#              the locked primary, refuses a second attempt inside 10 minutes, a
+#              running turn, any box text that is not our own doorbell line and
+#              any --force, ends the session with one SIGTERM and starts the
+#              same command in the same pane, verifying each step. The owner is
+#              bin/jg-control-primary-lib.sh; docs/agent-control.md has the
+#              contract.
 #
 # Teardown and discard are NOT verbs here and never will be. `exit` stops an
 # agent and preserves everything else; removing a worktree, killing an
@@ -302,6 +313,7 @@ NEW_MODEL=
 NEW_EFFORT=
 HARNESS_SET=0
 CLEAR_COMPOSER=0
+FORCE_SEEN=0
 MODEL_SET=0
 EFFORT_SET=0
 NOTE=
@@ -329,6 +341,7 @@ for control_arg in "$@"; do
   fi
   case "$control_arg" in
     --clear-composer) CLEAR_COMPOSER=1 ;;
+    --force) [ "$RAW_ID" = primary ] || die "unexpected argument '$control_arg'"; FORCE_SEEN=1 ;;
     --harness) control_want_value=harness ;;
     --harness=*) NEW_HARNESS=${control_arg#--harness=}; HARNESS_SET=1 ;;
     --model) control_want_value=model ;;
@@ -364,6 +377,18 @@ case "$NEW_EFFORT" in
   ''|default|low|medium|high|xhigh|max|ultra) ;;
   *) die "--effort must be one of default, low, medium, high, xhigh, max, ultra" ;;
 esac
+
+# --- the primary session ----------------------------------------------------
+# `primary` is not a task id: it names this home's own locked primary session
+# and is proven from the lock records, not a task record. Everything it does is
+# in bin/jg-control-primary-lib.sh; it calls none of the task helpers below.
+
+if [ "$RAW_ID" = primary ]; then
+  # shellcheck source=bin/jg-control-primary-lib.sh
+  . "$SCRIPT_DIR/jg-control-primary-lib.sh"
+  jg_control_primary_main
+  exit $?
+fi
 
 # --- exact task-id resolution ----------------------------------------------
 

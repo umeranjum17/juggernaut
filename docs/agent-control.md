@@ -68,6 +68,40 @@ It is not deterministic across the verified adapters: codex, grok, gemini, and d
 `relaunch` uses the brief on disk - not a harness-private session - as the durable instruction when the backend can prove the old agent stopped and the composer is empty; Devin on Herdr currently fails that composer check and refuses.
 A relaunch does take one session reference when the endpoint's own runtime recorded it - see [the relaunch transaction](#transactional-relaunch) - but that is a relaunch input, not a caller-facing verb.
 
+## The primary session
+
+`jg-control.sh primary relaunch --clear-composer` restarts this home's own primary session (Main) in the pane it already runs in.
+It exists for one case: a wake or an owner note waits behind input-box text, and two repairs of that text failed.
+The repair path of the watcher and the sentinel calls it after the second failed repair; this command cannot count repairs, so that condition belongs to its caller.
+[`bin/jg-control-primary-lib.sh`](../bin/jg-control-primary-lib.sh) owns it.
+
+`primary` is not a task id and has no task record.
+The command proves the target from three records that already name it:
+
+- `state/.lock` is held by a live process that is a verified harness, and that process is not an ancestor of the caller.
+- `state/.lock-session` names the session id of that lock owner.
+- Exactly one Herdr pane in this home's Herdr session (`JG_CONTROL_PRIMARY_HERDR_SESSION`, else `HERDR_SESSION`, else `default`) reports that agent session id.
+
+It refuses before any key or signal when a proof is missing, when `--force` or any option but `--clear-composer` is given, when the last attempt was under `JG_CONTROL_PRIMARY_GAP` seconds ago (600), when a turn is running, or when the input box holds anything except our own doorbell line or a leading part of it.
+A person's text is never cleared.
+Each attempt, refused or not, adds one row to `data/primary-relaunches.tsv` (epoch, result, pane, harness, model, reason) for the lead; only a `relaunched` or `failed` row starts the 10-minute gap.
+
+Each step is verified before the next:
+
+1. Read the live harness process's argv and working directory from `/proc`.
+   These are the recorded harness and model.
+   Where `/proc` is absent the command refuses, because argv cannot be recovered intact.
+2. Send one SIGTERM to that process and wait for the pane's agent to read dead.
+   There is no SIGKILL: an agent that does not stop in `JG_CONTROL_EXIT_WAIT` is reported and nothing is started.
+3. Type the same command into the same pane's shell, in the same working directory.
+4. Wait for the pane's agent to read alive (`JG_CONTROL_LAUNCH_WAIT`).
+5. Report whether the lock changed hands (`lock=taken` or `lock=pending`).
+   The new session's own session start takes the lock and drains the wake queue.
+
+The relaunch discards nothing: transcripts, records, and uncommitted changes are untouched.
+The command line is rebuilt from argv only, so an inline environment prefix the original launch used is not recovered; the pane's shell supplies the environment.
+[`tests/jg-control-primary-relaunch.test.sh`](../tests/jg-control-primary-relaunch.test.sh) proves it in a named Herdr lab.
+
 ## Transactional relaunch
 
 `relaunch` is the only verb that changes durable records, so it runs as a transaction with a journal at `state/<id>.control-relaunch`, the prior record preserved beside it, and a ship or Recon's prior instructions preserved when a progress note is appended.

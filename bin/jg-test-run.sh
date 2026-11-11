@@ -1728,7 +1728,7 @@ families_for_changed_path() {
       printf '%s\n' pure-contract-unit
       printf '%s\n' pr-forge
       ;;
-    bin/jg-control-lib.sh)
+    bin/jg-control-lib.sh|bin/jg-control-primary-lib.sh)
       printf '%s\n' backend-dispatch
       printf '%s\n' session-bootstrap
       ;;
