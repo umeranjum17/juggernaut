@@ -9,6 +9,8 @@ The records stay the truth: the table never stores a state, and the command neve
 - `jg-machine.sh show <machine> <id>` prints the state, its kind, its captain sentence and its required fields.
 - `jg-machine.sh next <machine> <id>` prints the state and each legal move.
 - `jg-machine.sh check <machine> [--corpus <file>]` lints the table, and with a corpus replays it against the table.
+- `jg-machine.sh events <machine>` lists the events a table declares: event, from, to.
+- `jg-machine.sh word <map> <list> <word>`, `replay <map> <corpus>` and `records <map> <records>` read a word map (below).
 - `jg-machine.sh coverage <machine>` lists each edge whose test id is empty or `-` and exits 1 when there is one.
 - `jg-machine.sh diagram <machine>` prints a Mermaid state diagram generated from the table.
 - `jg-machine.sh edge-check <machine> <from> <to>` prints `legal` with the event and writer, or `illegal`, and exits 1 for an illegal move; it only reads, so a writer may call it in shadow.
@@ -30,6 +32,13 @@ Each line has tab-separated columns, and its first column names the line kind.
 | `state` | name, kind (`initial`, `normal`, `terminal` or `extension`), captain sentence, required fields (`-` for none) |
 | `edge` | from, event, to, writer (`file:function`), command, guard in words, test id |
 | `observer` | a shell command that prints the state word for the id in `$1` |
+| `group` | name, then its members (states, groups or composite stages): an edge that leaves the group leaves each member |
+| `inner` | a composite stage, then the table inside it |
+
+A `state` of kind `composite` is a stage that holds the states of another table (`inner`), named `<stage>.<state>`.
+An edge that leaves a composite stage leaves each state inside it, and an edge that enters it enters the inner table's initial state.
+An edge whose from is `(none)` is the first event of the machine and must lead to its initial state.
+`docs/ticket-statechart.md` is the worked example: `ticket.tsv` holds `delivering.tsv` and `proving.tsv`.
 
 The observer is always an existing reader of the record.
 The table holds each verb list once; no other file may repeat it.
@@ -50,6 +59,14 @@ Every command lints the table first and refuses it, naming each defect, when it 
 A corpus file has one line per observation: a state name, or `from<TAB>event<TAB>to` for a move.
 `check` reports each line the table lacks and exits 1.
 A line listed in `known-baseline.tsv` (`machine<TAB>corpus line`) is reported as `baseline` and does not fail.
+
+## Word maps
+
+A map, `core/machines/maps/<map>.tsv`, says where each word of an older word list lands in a machine.
+A `word` line is list, word, target, wait and health; a target is a state or stage of the machine, a comma list of them, `=` (unchanged), `-` (not a word of this machine) or `by-rule`.
+A `rule` line decides by facts: pull request state, where the work is, superseded, last verb; the first match wins.
+`word` prints the target, `replay` reads `list<TAB>word` lines and names each word with no target, and `records` checks a record file against the rules.
+`core/machines/ticket-corpus.sh` builds the replay lines from the older tables, the status logs and the shadow log.
 
 ## Delivery: is a change live?
 

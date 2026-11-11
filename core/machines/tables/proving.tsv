@@ -1,0 +1,25 @@
+machine	proving	the inside of the ticket stage proving: a done-done proof run (machine 12 of the state-machine plan)	core/machines/observers/ticket.sh
+state	planned	initial	The run decided what matters and which journeys the change affects.	-
+state	writing	normal	One journey is being added or extended.	-
+state	running	normal	The checks run.	-
+state	judged	normal	The judge has answered.	-
+state	reviewing	normal	The reviewer reads the change.	-
+state	waiting	normal	The run waits for an answer that the worker may not give.	-
+state	sealed	terminal	The change is proved for this exact commit.	-
+state	failed	terminal	The change could not be proved in the allowed tries.	-
+state	aborted	terminal	The run was stopped.	-
+group	checked	judged	reviewing
+group	live	planned	writing	running	checked	waiting
+edge	(none)	start	planned	done-done:run	-	the ticket move claim-done with no bypass standing, or the command verify	jg-machine-ticket:proving
+edge	planned	write	writing	done-done:run	-	new or changed behaviour a user sees, and no journey covers it	jg-machine-ticket:proving
+edge	planned	skip-write	running	done-done:run	-	a journey covers the behaviour, or nothing a user sees changed	jg-machine-ticket:proving
+edge	writing	run	running	done-done:run	-	the journey is written	jg-machine-ticket:proving
+edge	running	judge	judged	done-done:run	-	the checks ended	jg-machine-ticket:proving
+edge	judged	review	reviewing	done-done:run	-	the judge said pass, the change has a diff and the review step is on	jg-machine-ticket:proving
+edge	checked	seal	sealed	done-done:run	-	the reviewer approved, or the judge passed with the review step off or no diff	jg-machine-ticket:proving
+edge	checked	fix	running	done-done:run	-	the judge said fail or the reviewer said to fix, and the tries are not spent	jg-machine-ticket:proving
+edge	checked	ask	waiting	done-done:run	-	the judge said unsure, or the reviewer said to ask	jg-machine-ticket:proving
+edge	checked	give-up	failed	done-done:run	-	a fail or a finding to fix, and the tries are spent	jg-machine-ticket:proving
+edge	waiting	settle	judged	done-done:run	-	an answer that the worker did not write is on record	jg-machine-ticket:proving
+edge	live	abort	aborted	done-done:run	-	the command abort	jg-machine-ticket:proving
+observer	bash "$(dirname "$JG_MACHINES_TABLES")/observers/ticket.sh" "$1" | sed -n 's/^proving\.//p'

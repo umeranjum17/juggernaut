@@ -254,6 +254,8 @@ journeys:
     command: bash journeys/gate-per-test-timeout.sh
   pr-pager:
     command: bash journeys/pr-pager.sh
+  ticket-statechart:
+    command: bash journeys/ticket-statechart.sh
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'

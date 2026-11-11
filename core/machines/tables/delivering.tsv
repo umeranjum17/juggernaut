@@ -1,0 +1,25 @@
+machine	delivering	the inside of the ticket stage delivering (machine 20 of the state-machine plan)	core/machines/observers/ticket.sh
+state	queued	initial	Waiting for its turn at the line.	-
+state	resolving	normal	A rebase conflict is being resolved, and only the affected journeys run again.	-
+state	rebased	normal	On the tip of the line as the same change, and the quick check runs.	-
+state	gated	normal	The quick check is green, and yolo or the owner's word decides.	-
+state	batched	normal	On the local trunk, in a batch.	-
+state	live	normal	The homes run it.	-
+state	joining	normal	Its merge into main is under way.	-
+state	on-main	terminal	The commit is on the default branch.	-
+state	returned	terminal	The delivery gave the ticket back to building.	-
+group	before-the-line	resolving	rebased
+group	on-the-line	batched	live	joining
+edge	(none)	enter	queued	core/trunk-landing/trunk-landing.sh:run	-	the ticket move prove-pass or bypass	jg-machine-ticket:delivering
+edge	queued	rebase	rebased	core/trunk-landing/trunk-landing.sh:run	-	a free gate slot, and the rebase is clean with the same change; no test runs	jg-machine-ticket:delivering
+edge	queued	conflict	resolving	core/trunk-landing/trunk-landing.sh:run	-	the rebase met a conflict, or the patch changed in the rebase	jg-machine-ticket:delivering
+edge	resolving	resolved	rebased	core/trunk-landing/trunk-landing.sh:run	-	the conflict is resolved and the journeys the touched files affect pass	jg-machine-ticket:delivering
+edge	before-the-line	give-back	returned	core/trunk-landing/trunk-landing.sh:run	-	the conflict cannot be resolved in its limit, a journey of the small run fails, or the quick check is red	jg-machine-ticket:delivering
+edge	rebased	gate	gated	core/trunk-landing/trunk-landing.sh:run	-	the quick check is green	jg-machine-ticket:delivering
+edge	gated	batch	batched	core/trunk-landing/trunk-landing.sh:run	-	knob local; yolo is on or the owner's word is on record	jg-machine-ticket:delivering
+edge	gated	join-pr	joining	bin/jg-pr-merge.sh:merge	-	knob pr; yolo is on or the owner's word is on record	jg-machine-ticket:delivering
+edge	batched	go-live	live	bin/jg-trunk.sh:verify	-	the verify of the line passed on a head that holds the commit, and the homes moved	jg-machine-ticket:delivering
+edge	live	join	joining	bin/jg-trunk.sh:release	-	the release that carries the commit opened	jg-machine-ticket:delivering
+edge	joining	land-on-main	on-main	bin/jg-trunk.sh:release	-	the commit is on the default branch and runs where it runs	jg-machine-ticket:delivering
+edge	on-the-line	revert	returned	bin/jg-trunk.sh:verify	-	a red found after the commit joined the line is traced to it, and the commit is reverted	jg-machine-ticket:delivering
+observer	bash "$(dirname "$JG_MACHINES_TABLES")/observers/ticket.sh" "$1" | sed -n 's/^delivering\.//p'

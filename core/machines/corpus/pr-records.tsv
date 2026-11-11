@@ -1,0 +1,22 @@
+task	last_verb	forge	work	superseded	target	wait	health
+beads-config-push-data-loss	paused	closed-unmerged	none	yes	closed	none	ok
+comms-reply-carries-ask	done	closed-unmerged	main	no	released	tick	ok
+every-board-input-wakes-its-owner-and-sh-2a	paused	none	none	no	building	lead	ok
+every-merge-raises-a-merge-alert-to-the-44	done	closed-unmerged	main	no	released	tick	ok
+goal-loop-build	paused	merged	main	no	released	tick	ok
+goal-loop-evidence-fix	done	none	main	no	released	tick	ok
+goal-loop-s6-fix	done	closed-unmerged	main	no	released	tick	ok
+holds-and-blocks-clear-themselves-date-g-5c	paused	none	none	no	building	lead	ok
+main-wake-on-telegram	done	merged	main	no	released	tick	ok
+project-state-map-build	done	closed-unmerged	main	no	released	tick	ok
+radio-silence-animation-awesome-proper-o-f5	paused	none	none	no	building	lead	ok
+rename-sweep-a-sessions	paused	none	none	no	building	lead	ok
+reopen-juggernaut-stealth-animation-redo-75	paused	none	none	no	building	lead	ok
+smart-wake-schedule	done	none	main	no	released	tick	ok
+teardown-accepts-trunk-landing	paused	none	main	no	released	tick	ok
+tickets-sync-raise-missing-asked-card	paused	closed-unmerged	none	no	intake	owner (decision)	ok
+token-cut-stop-relayed-outcomes	done	closed-unmerged	main	no	released	tick	ok
+tool-models-by-tool-and-job	done	closed-unmerged	main	no	released	tick	ok
+tool-models-route-pool	done	closed-unmerged	main	no	released	tick	ok
+trunk-flow-enforcement	paused	none	main	no	released	tick	ok
+turn-end-guard-flags-the-captain-s-own-q-00	resolved	closed-unmerged	none	no	intake	owner (decision)	ok
