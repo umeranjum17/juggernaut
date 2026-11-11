@@ -6,6 +6,7 @@
 #
 # T1 a direct-PR or no-mistakes ship on a project registered local-trunk is refused by name and leaves no task record.
 # T2 a local-trunk ship on that project spawns, and its isolated copy is on the trunk tip, not on the default branch.
+# T4 after a rollover the trunk is on trunk-v2: the lane starts on that tip, records base=<tip>, and its brief names trunk-v2, not the older trunk.
 # T3 a project registered direct-PR keeps spawning a pull-request lane as before.
 set -u
 
@@ -111,4 +112,19 @@ pass "T2 the exact proved local-trunk head lands and cleans up without a remote 
 ship local-only
 expect_code 0 "$rc" "T2 legacy local-only task contracts must still launch: $out"
 [ "$(sed -n 's/^mode=//p' "$HOME_DIR/state/$id.meta")" = local-only ] || fail "T2 legacy task records must not be rewritten"
+# T4: roll the trunk over to trunk-v2 (as bin/jg-trunk.sh does), leaving the old `trunk` branch behind at its earlier commit.
+old_tip=$(git -C "$PROJ" rev-parse trunk)
+for i in 1 2 3; do git -C "$PROJ" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m "after rollover $i"; done
+JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref refs/heads/trunk-v2 HEAD
+v2_tip=$(git -C "$PROJ" rev-parse trunk-v2)
+printf 'trunk-v2\n' > "$HOME_DIR/state/trunk-branch-proj"; printf '%s\n' "$v2_tip" > "$HOME_DIR/state/trunk-tip-proj"
+ship local-trunk
+expect_code 0 "$rc" "T4 a lane after a rollover must spawn: $out"
+[ "$(git -C "$wt" rev-parse HEAD)" = "$v2_tip" ] || fail "T4 the lane must start on the tip of trunk-v2"
+[ "$(git -C "$wt" rev-list --count "$old_tip..HEAD")" = 3 ] || fail "T4 fixture must reproduce a lane ahead of the old trunk branch"
+[ "$(sed -n 's/^base=//p' "$HOME_DIR/state/$id.meta")" = "$v2_tip" ] || fail "T4 the task record must hold base=<trunk tip>"
+# shellcheck disable=SC2016 # literal backticks in the brief text
+assert_contains "$(cat "$HOME_DIR/data/$id/brief.md")" 'the `trunk-v2` branch of the project' "T4 the brief must name the real trunk branch"
+pass "T4 a lane after a rollover starts on the trunk tip, records base=<tip>, and its brief names that branch"
+
 printf 'jg-trunk-spawn: ok\n'

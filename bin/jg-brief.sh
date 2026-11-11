@@ -250,6 +250,8 @@ esac
 . "$SCRIPT_DIR/jg-classify-lib.sh"
 # shellcheck source=bin/jg-dod-lib.sh
 . "$SCRIPT_DIR/jg-dod-lib.sh"
+# shellcheck source=bin/jg-trunk-policy-lib.sh
+. "$SCRIPT_DIR/jg-trunk-policy-lib.sh"
 # shellcheck source=bin/jg-role-lib.sh
 . "$SCRIPT_DIR/jg-role-lib.sh"
 # shellcheck source=bin/jg-preferred-stack-lib.sh
@@ -1068,11 +1070,13 @@ PRIOR_ART_SECTION=$'\n'${PRIOR_ART_SECTION%$'\n'}$'\n'
 # A project registered local-trunk (docs/trunk-flow.md) ships local-trunk tasks; legacy local-only tasks land on the local
 # trunk by themselves. Only that posture gets this section; every other project's brief is exactly as it was.
 TRUNK_SECTION=
+TRUNK_NAME=$(JG_HOME="$JG_HOME" jg_trunk_branch "$REPO" "$STATE" 2>/dev/null || true)
+: "${TRUNK_NAME:=trunk}"
 if { [ "$MODE" = local-only ] || [ "$MODE" = local-trunk ]; } && jg_brief_local_trunk "$REPO"; then
   TRUNK_SECTION="
 # Local trunk lane
 This project is registered local-trunk: there is no feature pull request, and the only pull request is the release one, raised on the captain's word.
-Your branch must be exactly ONE commit on top of the local trunk tip (the \`trunk\` branch of the project), and the commit message must carry its ticket reference (the task id or its ticket key).
+Your branch must be exactly ONE commit on top of the local trunk tip (the \`$TRUNK_NAME\` branch of the project, which is the commit your worktree starts on; compare against that branch only, never an older trunk branch), and the commit message must carry its ticket reference (the task id or its ticket key).
 $TRUNK_REBASE_RULE
 A stale or conflicting change is refused with its paths named and is never landed dirty.
 Run the light gate on your changed files (the lint, then their tests), commit, and report ready with your done line. Juggernaut's landing check then lands the commit on the trunk and cleans up unforced; you never land, push, go live or release.

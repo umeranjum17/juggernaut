@@ -3022,6 +3022,7 @@ spawn_worktree_has_origin_config() { # <worktree>
   return 1
 }
 
+SPAWN_BASE_TIP=
 freshen_spawn_worktree_base() { # <worktree> [<base-branch>]
   local worktree=$1 base=${2:-} default target expected actual status trunk
   status=$(git -C "$worktree" -c core.quotePath=false status --porcelain) || {
@@ -3041,6 +3042,14 @@ freshen_spawn_worktree_base() { # <worktree> [<base-branch>]
       echo "error: could not start pooled worktree '$worktree' on the local trunk '$trunk'; refusing to launch" >&2
       return 1
     }
+    # A lane's base is the trunk tip it started on, recorded as base=<tip>; a copy not on that tip is refused, never worked on.
+    expected=$(git -C "$worktree" rev-parse --verify --quiet "refs/heads/$trunk^{commit}" 2>/dev/null || true)
+    actual=$(git -C "$worktree" rev-parse --verify --quiet HEAD 2>/dev/null || true)
+    if [ -z "$expected" ] || [ "$actual" != "$expected" ]; then
+      echo "error: pooled worktree '$worktree' is at '${actual:-unknown}', not the tip of local trunk '$trunk' ('${expected:-unknown}'); refusing to launch a lane on another base" >&2
+      return 1
+    fi
+    SPAWN_BASE_TIP=$actual
     return 0
   fi
   if ! spawn_worktree_has_origin_config "$worktree"; then
@@ -4823,6 +4832,7 @@ preserve_relaunch_meta() {
   [ -z "$MODE" ] || echo "mode=$MODE"
   [ -z "$YOLO" ] || echo "yolo=$YOLO"
   [ -z "${BRANCH:-}" ] || echo "branch=$BRANCH"
+  [ -z "${SPAWN_BASE_TIP:-}" ] || echo "base=$SPAWN_BASE_TIP"
   echo "tasktmp=$TASK_TMP"
   [ -z "$BASE_BRANCH" ] || echo "base_branch=$BASE_BRANCH"
   [ -z "$RED_FIX_OF" ] || echo "red_fix_of=$RED_FIX_OF"
