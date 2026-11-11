@@ -45,6 +45,9 @@
 # recorded after it (data/trunk-landing-proofs.tsv), absent when missing. That row names the account the proof was saved under and the lander's own (proof-account, lander-account; the lander clears CLAUDE_CONFIG_DIR before it reads a proof) and also keeps the gate's figures (gate=ran:<scripts>,
 # failed:<on the first run>,secs:<whole gate>; absent when no gate ran), which the landing's Evidence card (core/landing-card) prints.
 #
+# A full gate whose log carries a `JG_TEST_COVERAGE advise` line (a test shard over its hinted time budget) files one ticket,
+# shard-budget-<project>, once (data/trunk/shard-budget-<project>.tsv); the lane that takes it runs bin/jg-shard-hints-refresh.sh,
+# and the ticket closes on the first gate log that carries `JG_TEST_COVERAGE ok`. The advice never refuses a landing.
 # The changed-files gate charges a lane only for what it broke. When it fails, the lander first reruns the failing scripts once on
 # the lane, and a script that passes on the rerun is flaky and not charged: each such script is recorded
 # (data/trunk/flaky-<project>.tsv) and filed once as its own [blocker] fix row, never a landing stop. A script that fails on the lane
@@ -497,6 +500,33 @@ Done when: $s passes every run, or its flaky case is removed." >/dev/null 2>&1; 
   done
 }
 
+# The coverage guard's time-budget advice (a `JG_TEST_COVERAGE advise` line in a gate log) becomes one ticket for the suite, owned by
+# the lead of this home, which owns the project: `shard-budget-<project>`. The hints are tables inside a tracked file the lander cannot
+# commit, so a lane takes the ticket, runs bin/jg-shard-hints-refresh.sh and lands the result. The ticket is filed once however many
+# gates print the advice, and closes on the first gate log that prints `JG_TEST_COVERAGE ok`
+# (data/trunk/shard-budget-<project>.tsv: epoch, commit, open|closed, ticket). A log with no verdict line leaves it as it is.
+settle_shard_budget() {  # <commit> <gate log>
+  local sha=$1 log=$2 verdict id="shard-budget-$PN" ledger="$DATA/trunk/shard-budget-$PN.tsv" last=none verb=add bl="$SCRIPT_DIR/jg-backlog.sh"
+  verdict=$(sed -n 's/^JG_TEST_COVERAGE \(advise\|ok\) .*/\1/p' "$log" 2>/dev/null | tail -n 1)
+  [ -n "$verdict" ] || return 0
+  mkdir -p "$DATA/trunk"; touch "$ledger"
+  [ ! -s "$ledger" ] || { last=$(awk -F'\t' 'END { print $3 }' "$ledger"); if grep -q "	closed	" "$ledger"; then verb=reopen; fi; }
+  if [ "$verdict" = advise ] && [ "$last" != open ]; then
+    if [ "$verb" = reopen ]; then JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$bl" reopen "$id" >/dev/null 2>&1
+    else JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$bl" add "$id" \
+      "[blocker] the test shards are over their time budget on $PN" --kind ship --priority 2 \
+      --body "The coverage guard advises that a portable test shard is over its hinted time budget, or too many scripts have no hint (gate log: $log).
+Why: a full shard slows every gate and CI run until its hints are refreshed or the shard is split; the hints are tables in bin/jg-test-run.sh.
+Done when: bin/jg-shard-hints-refresh.sh (add --split when the largest shard is still over) has run in a lane, its commit has landed, and the guard prints no advise line." >/dev/null 2>&1; fi \
+      || { echo "warning: could not file the shard-budget ticket $id" >&2; return 0; }
+    printf '%s\t%s\topen\t%s\n' "$(date +%s)" "$sha" "$id" >> "$ledger"
+  elif [ "$verdict" = ok ] && [ "$last" = open ]; then
+    JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$bl" "done" "$id" >/dev/null 2>&1 \
+      || { echo "warning: could not close the shard-budget ticket $id" >&2; return 0; }
+    printf '%s\t%s\tclosed\t%s\n' "$(date +%s)" "$sha" "$id" >> "$ledger"
+  fi
+}
+
 # GATE_FIGURES for the landing's proofs row (ran:<scripts>,failed:<first run>,secs:<whole gate>): the scripts the first run reported
 # (its JG_TEST_SUMMARY lines; "-" when the gate prints none) and the seconds since <start epoch>. Landed commits read it back in record_proofs.
 gate_figures() {  # <first-run log> <start epoch>
@@ -516,6 +546,7 @@ full_gate() {  # <candidate> <command> <base>
   t0=$(date +%s); GATE_KIND=full; GATE_FIGURES=; GATE_BAD=
   envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX" 2>/dev/null) || { mkdir -p "$DATA/trunk"; envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX"); }
   gate_exec "$cand" "$2" "$log" "$envf" || rc=$?
+  settle_shard_budget "$cand" "$log"
   [ "$rc" -ne 0 ] || { rm -f -- "$envf"; gate_figures "$log" "$t0"; return 0; }
   mine=$(gate_results "$log" | awk -F'\t' '$2 != "0"')
   unexplained=$(gate_unexplained "$log" "$mine")
