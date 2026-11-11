@@ -44,6 +44,15 @@ def run(args, env=None, cwd=None, missing=False):
     return '{}' if r.returncode else r.stdout
 
 # What one ticket's publish can fail with; a bad record is skipped, never fatal to the pass.
+BOARD_DESCRIPTION_LIMIT = 4000
+
+def fit_description(text, source):
+    """The board refuses a description past its limit, which would skip the ticket. Trim a long one to fit and end it with
+    where the whole ticket lives, so the ticket still shows and its full words stay one lookup away."""
+    if len(text) <= BOARD_DESCRIPTION_LIMIT: return text
+    tail = f'\n\n… Trimmed. Full ticket: {source}'
+    return text[:BOARD_DESCRIPTION_LIMIT - len(tail)].rstrip() + tail
+
 TICKET_ERRORS = (OSError, ValueError, KeyError, RuntimeError, sp.TimeoutExpired)
 
 def rows(args, env, cwd=None, extra=''):
@@ -462,7 +471,8 @@ def sync():
                     if event is not None: desired['last-event-at'] = event
                 if all(i['name'] != name or i['row']['id'] != item for i in items): items.append(dict(tid=tid, name=name, row=r, event=event, parked=name in parked, source=source, said=said, link=pr, merged=bool(prs.get(pr, {}).get('merged'))))
                 if claims.setdefault(tid, f'{name}/{item}') != f'{name}/{item}': continue
-                publish(tid, desired, ('progress',) if item in parents else (), f'{name}/{item}', hold_reason, f'Stage: {said}\n\n{body.strip()}'.strip() if said != stage else body.strip())
+                publish(tid, desired, ('progress',) if item in parents else (), f'{name}/{item}', hold_reason,
+                        fit_description(f'Stage: {said}\n\n{body.strip()}'.strip() if said != stage else body.strip(), f'{name}/{item}'))
         if options.tidy:
             print(tidy_report(items, homes, home, state, options.apply, run)); return
         if options.cleanup:
