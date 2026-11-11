@@ -1,0 +1,3 @@
+# pr-pager
+
+Pull request pager: run `done-done run -- bash tests/jg-pr-pager.test.sh` (it writes `pr-pager.log` into `$DONE_DONE_EVIDENCE_ROOT`); a Main home, a lead home, the real wiring and installed check shim, and a forge stub prove an open pull request 30 minutes old with a red check gets one page in the lead home with the address, the check's name and the next step, a second page an hour later and none inside the hour, six pages with the same step put one note on the parent channel, merged or closed ends the episode with no page, a repository of another lead or of Main pages nothing here, a due release with no pull request gets one page, and `bin/jg-captain-say.sh` is never called (screen: none).

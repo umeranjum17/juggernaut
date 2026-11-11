@@ -97,6 +97,7 @@ plan=(
   critical-stall:home
   stall-action:home
   lead-sweep:home
+  pr-pager:home
   trunk-latency:home
   tmp-reaper:home
   landing-card:home
