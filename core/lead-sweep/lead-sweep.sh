@@ -2,7 +2,8 @@
 # lead-sweep watcher check: every beat, clean up the landed lanes of this home, unforced, with no model turn.
 # Usage: lead-sweep.sh check <jg-home>
 #
-# A lane of this home (state/<id>.meta, kind ship or scout) whose latest status line is `done` is swept when it has landed:
+# A lane of this home (state/<id>.meta, kind ship or scout) whose latest status line is `done` or `resolved` (an answered
+# lane) is swept when it has landed:
 #   - ship: its branch head is on the trunk (state/trunk-tip-<project> for a local-trunk project, else the default branch
 #     of the clone), or its recorded pull request is merged (GitHub only, asked at most every JG_LEAD_SWEEP_PR_MIN
 #     minutes, default 10, per lane);
@@ -10,6 +11,8 @@
 # The sweep then runs `bin/jg-teardown.sh <id>` and nothing else: no --force, ever. The teardown owns the landed-work test
 # and every gate (unlanded or dirty work, the report, captain-call inventory and depth gates), so a lane with unlanded work
 # or a failing gate is refused and left alone. A lane a landing is running for (state/.trunk-run-<id>-*.lock) is skipped.
+# A `resolved` lane that has not landed is left alone and reported once (`lead-sweep: <id> ended as resolved, left alone: ...`);
+# a `done` lane that has not landed is waiting for its landing and prints nothing.
 # Output, which becomes a check wake: `lead-sweep: <id> cleaned up (<why>)` once, and `lead-sweep: <id> not cleaned up ...`
 # once per lane and reason (data/lead-sweep/<id>.reported); the same refusal on the next beat prints nothing.
 # JG_LEAD_SWEEP_TEARDOWN and JG_LEAD_SWEEP_GH name the teardown and gh-axi commands (tests point them at stubs).
@@ -51,7 +54,11 @@ for meta in "$STATE"/*.meta; do
   id=$(basename "$meta" .meta)
   kind=$(mval "$meta" kind)
   case $kind in ship|scout) ;; *) continue ;; esac
-  case $(tail -n 1 "$STATE/$id.status" 2>/dev/null) in done\ *|done:*) ;; *) continue ;; esac
+  case $(tail -n 1 "$STATE/$id.status" 2>/dev/null) in
+    done\ *|done:*) ended='done' ;;
+    resolved\ *|resolved:*) ended=resolved ;;
+    *) continue ;;
+  esac
   ls "$STATE"/.trunk-run-"$id"-*.lock >/dev/null 2>&1 && continue
   why=
   if [ "$kind" = scout ]; then
@@ -60,7 +67,14 @@ for meta in "$STATE"/*.meta; do
     proj=$(mval "$meta" project); branch=$(mval "$meta" branch); branch=${branch:-fm/$id}
     [ ! -d "$proj" ] || why=$(why_landed "$meta" "$proj" "$branch")
   fi
-  [ -n "$why" ] || continue
+  if [ -z "$why" ]; then
+    # Only an answered lane is reported: nothing else will ever revisit it. A done lane is waiting for its landing.
+    if [ "$ended" = resolved ] && [ "$(cat "$MEM/$id.reported" 2>/dev/null)" != unlanded ]; then
+      echo unlanded > "$MEM/$id.reported"
+      echo "lead-sweep: $id ended as resolved, left alone: its work has not landed on the trunk"
+    fi
+    continue
+  fi
   rc=0
   out=$(JG_HOME="$FMH" JG_STATE_OVERRIDE="$STATE" "$TEARDOWN" "$id" 2>&1) || rc=$?
   last=$(printf '%s\n' "$out" | grep -E '^(REFUSED|error)' | tail -n 1)

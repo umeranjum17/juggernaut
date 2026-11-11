@@ -7,12 +7,13 @@ It prints one line when a lane is cleaned up and one line when a cleanup is refu
 
 ## What is swept
 
-A lane (kind ship or scout) whose latest status line is `done`, and that has landed:
+A lane (kind ship or scout) whose latest status line is `done` or `resolved` (an answered lane), and that has landed:
 
 - Ship: its branch head is on the trunk (`state/trunk-tip-<project>`, or the clone's default branch), or its recorded GitHub pull request is merged.
   The forge is asked at most every 10 minutes per lane (`JG_LEAD_SWEEP_PR_MIN`).
 - Recon: its report `data/<id>/report.md` exists.
 
+A `resolved` lane that has not landed is left alone and reported once; a `done` lane that has not landed is waiting for its landing and prints nothing.
 A lane that is still working, a lead, and a lane a landing is running for are never touched.
 
 ## Cleanup
@@ -29,4 +30,4 @@ A refusal is kept in `data/lead-sweep/<id>.reported` and printed once; the same 
 
 ## Test
 
-`bash lead-sweep/tests/lead-sweep.test.sh` runs the whole journey against a fixture home with real git clones, a recording teardown and a forge stub.
+`bash tests/jg-lead-sweep-end-states.test.sh` runs the end-state journey (resolved lanes); `bash core/lead-sweep/tests/lead-sweep.test.sh` runs the whole journey against a fixture home with real git clones, a recording teardown and a forge stub.

@@ -124,6 +124,8 @@ journeys:
     command: bash journeys/tmp-sweep.sh
   browser-sweep:
     command: bash journeys/browser-sweep.sh
+  lead-sweep-end-states:
+    command: bash journeys/lead-sweep-end-states.sh
   wake-routing:
     command: bash journeys/wake-routing.sh
 
