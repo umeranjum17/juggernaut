@@ -30,10 +30,20 @@
 #     config/claude-account-fallbacks, relaunch every worker on the dead account,
 #     and raise one card. With no recorded fallback it raises the card and
 #     changes nothing. An account that answers is not down: the wait climbs as before.
+#   waits-for: a lane whose open blocked or needs-decision line says
+#     `waits-for: <ticket>` (the form bin/jg-brief.sh teaches), once that ticket
+#     has landed on the trunk. resume is one steer, with the blocker's key
+#     resolved in the same send, so the lane resumes and its decision closes.
+#     The landing check takes the step itself the moment the ticket lands
+#     (jg_wait_waits_for_resume); this row is the backstop for a lane that
+#     declared its wait after the landing, or whose landing-time send failed.
+#     While the ticket has not landed and its lane still runs, the wait is
+#     quiet (jg_wait_action_awaiting): no owner wake comes from it.
 JG_WAIT_OWNER_TABLE='critic	critic	forward	lead
 silent	worker	ring,relaunch	lead
 account-down	watcher	recover	lead
-pool-full	script	sweep,notify	lead	0	600	task started'
+pool-full	script	sweep,notify	lead	0	600	task started
+waits-for	landing	resume	lead	0	600	ticket landed'
 #
 # Sidecar state/.waiting-timers/.acted/<task>: state, time of the last step, the
 # steps taken (comma-joined), and the time of the first step. It outlives the episode on purpose: a ring
@@ -94,12 +104,63 @@ jg_wait_action_silent_ok() {  # <task>
   [ -z "$(status_declared_wait_line "$STATE/$1.status")" ]
 }
 
+# The ticket a declaration or decision text says it waits for: `waits-for: <ticket>`.
+jg_wait_action_waits_for() {  # <text>
+  local ticket
+  ticket=$(printf '%s' "$1" | sed -nE 's/.*waits-for: ?([A-Za-z0-9][A-Za-z0-9._-]*).*/\1/p' | head -n 1)
+  [ -n "$ticket" ] && printf '%s\n' "$ticket"
+}
+
+# 0 when <ticket> has landed on the local trunk: the landing check's own record
+# (data/jg-trunk-landing/<ticket>.<head>.state) says so, and it outlives the
+# lane's cleanup.
+jg_wait_action_landed() {  # <ticket>
+  local file base
+  for file in "${JG_DATA_OVERRIDE:-$JG_HOME/data}/jg-trunk-landing/$1."*.state; do
+    [ -f "$file" ] && [ ! -L "$file" ] || continue
+    base=${file##*/}
+    [[ ${base#"$1".} =~ ^[0-9a-f]{40,64}\.state$ ]] || continue
+    case "$(head -n 1 "$file")" in landed*) return 0 ;; esac
+  done
+  return 1
+}
+
+# The open blocked or needs-decision line of <task> that names the ticket it
+# waits for: the decision key and the ticket, tab-separated.
+jg_wait_action_waiting_on() {  # <task>
+  local key verb native ticket rows
+  rows=$(status_own_open_decisions "$STATE/$1.status")
+  while IFS=$'\t' read -r key verb native; do
+    case "$verb" in blocked | needs-decision) ;; *) continue ;; esac
+    ticket=$(jg_wait_action_waits_for "$native") || continue
+    printf '%s\t%s\n' "$key" "$ticket"
+    return 0
+  done <<< "$rows"
+  return 1
+}
+
+# 0 when <task> waits for a ticket that has not landed and whose own lane still
+# runs in this home: the wait ends by itself when that lane lands, so it is quiet.
+jg_wait_action_awaiting() {  # <task>
+  local row ticket
+  row=$(jg_wait_action_waiting_on "$1") || return 1
+  ticket=${row#*$'\t'}
+  [ "$ticket" != "$1" ] && [ -f "$STATE/$ticket.meta" ] && ! jg_wait_action_landed "$ticket"
+}
+
 # The table state of this wait on stdout, or 1 when it has no row.
 jg_wait_action_state() {  # <task> <wait source> <verb> <decision key> <declaration>
+  local ticket
   case "$2" in
     silent) jg_wait_action_silent_ok "$1" && echo silent ;;
     account | quota) jg_account_outage_ok "$1" && echo account-down ;;
-    '') [ "$3" = needs-decision ] && [ -n "$4" ] && jg_wait_action_critic_of "$1" "$5" >/dev/null && echo critic ;;
+    '')
+      if [ -n "$4" ] && case "$3" in blocked | needs-decision) true ;; *) false ;; esac \
+        && ticket=$(jg_wait_action_waits_for "$5") && [ "$ticket" != "$1" ] && jg_wait_action_landed "$ticket"; then
+        echo waits-for
+        return 0
+      fi
+      [ "$3" = needs-decision ] && [ -n "$4" ] && jg_wait_action_critic_of "$1" "$5" >/dev/null && echo critic ;;
     *) return 1 ;;
   esac
 }
@@ -174,6 +235,33 @@ _jg_wait_action_forward() {  # <task> <decision key> <declaration> <now>
   [ "$rc" -eq 0 ] || echo "waiting timers: $1's draft reached $critic, but closing its decision $2 failed (code $rc)" >&2
 }
 
+# The landed ticket's waiter resumes: one steer, with the blocker's key resolved
+# in the same send (jg-send's answer path appends the `resolved` line).
+_jg_wait_action_resume() {  # <task> <decision key> <text naming the ticket>
+  local ticket
+  ticket=$(jg_wait_action_waits_for "$3") || return 1
+  _jg_wait_action_send "$1" --resolve-key "$2" "Ticket $ticket, the one you waited for, has landed on the trunk. Your blocker is closed. Resume your task from where it stopped: read your steering inbox, check git status and git log, and move your branch onto the trunk tip first if your work needs what $ticket landed."
+}
+
+# Called by the landing check the moment <ticket> lands: every lane of this home
+# whose open blocker says `waits-for: <ticket>` resumes at once, with no timer and
+# no owner turn. A send that fails is reported and leaves that blocker open, so
+# the waits-for row above takes it at the next alert.
+jg_wait_waits_for_resume() {  # <landed ticket>
+  local file task row key rc
+  for file in "$STATE"/*.status; do
+    [ -f "$file" ] || continue
+    task=${file##*/}; task=${task%.status}
+    [ "$task" != "$1" ] && [ -f "$STATE/$task.meta" ] || continue
+    row=$(jg_wait_action_waiting_on "$task") || continue
+    [ "${row#*$'\t'}" = "$1" ] || continue
+    key=${row%%$'\t'*}
+    rc=0
+    _jg_wait_action_resume "$task" "$key" "waits-for: $1" || rc=$?
+    [ "$rc" -eq 0 ] || echo "waiting timers: resuming $task after $1 landed failed (code $rc)" >&2
+  done
+}
+
 _jg_wait_action_ring() {  # <task> <silent seconds>
   _jg_wait_action_send "$1" "You have written no status line and shown no new output for at least $(($2 / 60 + ${JG_SILENT_SECS:-900} / 60)) minutes. Append a status line now that says where you are (working, blocked or paused, as your brief says), then carry on with the task."
 }
@@ -203,6 +291,7 @@ jg_wait_action_take() {  # <task> <state> <step> <now> <decision key> <declarati
   case "$3" in
     forward) _jg_wait_action_forward "$1" "$5" "$6" "$4" || return 1 ;;
     ring) _jg_wait_action_ring "$1" "$7" || return 1 ;;
+    resume) _jg_wait_action_resume "$1" "$5" "$6" || return 1 ;;
     relaunch) _jg_wait_action_relaunch "$1" || return 1 ;;
     recover) _jg_wait_action_account "$1" "$4" || return 1 ;;
     lead) ;;

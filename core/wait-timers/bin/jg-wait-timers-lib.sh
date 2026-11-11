@@ -62,19 +62,24 @@ _JG_WAIT_TIMER_DIR="${SCRIPT_DIR:-${JG_PUSH_TRANSITION_LIB_DIR:-$JG_HOME/bin}}"
 . "${BASH_SOURCE[0]%/*}/jg-wait-policy-lib.sh"
 
 # A wait whose owner is already known is quiet: it arms no episode, so no timer
-# wake, no escalation and no board card come from it. Two cases only:
+# wake, no escalation and no board card come from it. Three cases only:
 #   - a pause parked to the placeholder date (wait machine state paused-no-date):
 #     the lane named no real time, so a recheck every 30 minutes only repeats the
 #     parking; whoever parked it holds the next step;
 #   - a finished lane (its last status line is `done`) whose open decision is for
 #     its owner: no worker is left to unblock it, and the owner's card carries the
-#     call.
+#     call;
+#   - a lane whose open blocker says `waits-for: <ticket>` while that ticket's own
+#     lane still runs: the ticket's landing resumes it by itself
+#     (jg-wait-actions-lib.sh), and once that lane is gone without landing the
+#     wait rings again.
 # A wait source (prompt, quota, silence ...), a blocked or needs-decision lane that
 # is still working, and a pause with a real date keep their rungs.
 jg_wait_timer_quiet() {  # <task> <wait-state> <wait-source>
   [ "$2" != paused-no-date ] || return 0
   [ -z "$3" ] || return 1
-  [ "$(status_line_verb "$(last_status_line "$STATE/$1.status")")" = "done" ]
+  [ "$(status_line_verb "$(last_status_line "$STATE/$1.status")")" != "done" ] || return 0
+  jg_wait_action_awaiting "$1"
 }
 
 jg_wait_timer_save() {  # <record> <signature> <since> <owner> <parent> <key> <misses> [card] [last]

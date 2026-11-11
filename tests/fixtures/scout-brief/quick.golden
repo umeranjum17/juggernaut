@@ -41,6 +41,7 @@ The report is the only thing that survives, so anything worth keeping must be in
    When you know when the wait clears, include `until <YYYY-MM-DDTHH:MMZ>` (UTC) for a recheck at that time.
    Follow the resolution rule below when the wait clears, then resume the task.
    Use `blocked:` when you are stuck and need help.
+   When your wait is for another ticket to land on the trunk, or for a cause that a ticket removes, write `blocked [at=<epoch>] [key=<slug>]: waits-for: <ticket-id> {why}`; that ticket's landing steers you and closes the blocker by itself, so ask nobody and do not poll.
 
 5. If you hit the same obstacle twice, append `blocked [at=<epoch>]: {why}` and stop; juggernaut will help.
 6. If a decision belongs to a human (product choices, destructive actions),

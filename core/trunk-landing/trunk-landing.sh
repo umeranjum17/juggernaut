@@ -27,6 +27,7 @@
 # also starts `live` (a detached job, never blocking a landing), which runs `bin/jg-trunk.sh autolive` and reports a go-live,
 # a failed move, a hold or a home still behind the last go-live after 10 minutes (bin/jg-trunk-live-lag.sh) in the outbox: the homes move once the trunk has been quiet for live-quiet-minutes (20) or the
 # oldest landing not yet live is live-cap-minutes (60) old, whichever is first. Only the green pin goes live, so a red suite never does.
+# A landed task resumes the lanes whose blocker says `waits-for: <task>`: one steer each, the blocker closed in the same send.
 # A landed task is then cleaned up with bin/jg-teardown.sh, never forced: a refusal is reported and the worktree stays.
 # bin/jg-delivery-tick.sh runs this check, from the watcher's fast tick and from the host sentinel's minute tick, so a worker's done
 # starts the landing within seconds in a supervised home and within a minute when no model or watcher runs; the outcome
@@ -76,6 +77,16 @@ esac
 # shellcheck source=core/trunk-landing/verdict.sh
 . "$(dirname "${BASH_SOURCE[0]}")/verdict.sh"
 mval() { sed -n "s/^$2=//p" "$1" | tail -n 1; }
+
+# A landed ticket resumes the lanes that wait for it, at once and with no owner turn: each gets one steer and its
+# `waits-for: <ticket>` blocker is resolved in the same send (core/wait-timers/bin/jg-wait-actions-lib.sh owns the rule).
+# A failure goes to data/jg-trunk-landing/resume.log and leaves the blocker open, which the ladder's waits-for row takes.
+resume_waiters() {  # <landed task id>
+  local lib=${BASH_SOURCE[0]%/*}/../wait-timers/bin/jg-wait-actions-lib.sh
+  # shellcheck disable=SC2016 # the child shell expands its own positional parameters
+  STATE=$FMH/state _JG_WAIT_TIMER_DIR=$FMH/bin bash -c '. "$1/bin/jg-classify-lib.sh" && . "$2" && jg_wait_waits_for_resume "$3"' \
+    jg-resume "$FMH" "$lib" "$1" 2>>"$MEM/resume.log" || :
+}
 
 # The batched live step for one project (bin/jg-trunk.sh autolive decides; this reports what is worth a line: a go-live, a
 # failed move, or a new hold). One at a time per project: a tick that finds the last one still running does nothing.
@@ -128,6 +139,7 @@ if [ "$1" = runbatch ]; then
       res=$(JG_HOME="$FMH" "$FMH/bin/jg-teardown.sh" "$id" 2>&1) && res='cleaned up' || res="cleanup refused, nothing was forced: $(printf '%s' "$res" | tail -n 1 | cut -c1-200)"
       printf 'landed %s\n' "$res" > "$MEM/$id.$head.state"; rm -f -- "$STATE/$id.land-next"
       [ -z "$now" ] || [ "$now" = "$head" ] || printf 'landed %s\n' "$res" > "$MEM/$id.$now.state"
+      resume_waiters "$id"
       jg_lock_acquire_wait "$MEM/.outbox.lock"
       printf 'trunk-landing: landed %s (local-trunk) on the local trunk in one stack with its queue (not live yet: live follows the captain'"'"'s word or the project'"'"'s waiver and its quiet window); %s\n' "$id" "$res" >> "$MEM/outbox"
       jg_lock_release "$MEM/.outbox.lock"
@@ -172,6 +184,7 @@ if [ "$1" = run ]; then
     out=$(JG_HOME="$FMH" "$FMH/bin/jg-teardown.sh" "$id" 2>&1) && out='cleaned up' || out="cleanup refused, nothing was forced: $(printf '%s' "$out" | tail -n 1 | cut -c1-200)"
     printf 'landed %s\n' "$out" > "$MEM/$id.$head.state"; rm -f -- "$STATE/$id.land-next"
     [ -z "$now" ] || [ "$now" = "$head" ] || printf 'landed %s\n' "$out" > "$MEM/$id.$now.state"
+    resume_waiters "$id"
     jg_lock_acquire_wait "$MEM/.outbox.lock"
     printf 'trunk-landing: landed %s (local-trunk) on the local trunk (not live yet: live follows the captain'"'"'s word or the project'"'"'s waiver and its quiet window); %s\n' "$id" "$out" >> "$MEM/outbox"
     jg_lock_release "$MEM/.outbox.lock"

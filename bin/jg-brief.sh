@@ -268,6 +268,7 @@ IFS= read -r -d '' OPERATOR_PAUSE_INSTRUCTIONS <<EOF || true
    When you know when the wait clears, include \`until <YYYY-MM-DDTHH:MMZ>\` (UTC) for a recheck at that time.
    Follow the resolution rule below when the wait clears, then resume the task.
    Use \`blocked:\` when you are stuck and need help.
+   When your wait is for another ticket to land on the trunk, or for a cause that a ticket removes, write \`blocked [at=<epoch>] [key=<slug>]: waits-for: <ticket-id> {why}\`; that ticket's landing steers you and closes the blocker by itself, so ask nobody and do not poll.
 EOF
 
 resolve_directory_input() {
