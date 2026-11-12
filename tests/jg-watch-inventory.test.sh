@@ -241,5 +241,77 @@ SH
   pass "a real cycle read its inventory through the Go command and delivered the wake: $(head -n 1 "$dir/watch.out")"
 }
 
+# count_cycles: run the real watcher over an empty home (no working lane) for <secs> seconds
+# and print how many cycles asked the Go command for their inventory.
+count_cycles() {  # <name> <idle-poll> <secs>
+  local dir log pid
+  dir=$(make_case "$1")
+  log="$dir/core-calls.log"
+  : > "$log"
+  cat > "$dir/logging-core" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$log"
+exec "$DIR/jg-watch-core" "\$@"
+SH
+  chmod 0700 "$dir/logging-core"
+  PATH="$dir/fakebin:$PATH" JG_HOME="$dir" JG_STATE_OVERRIDE="$dir/state" \
+    JG_WATCH_CORE_BIN="$dir/logging-core" \
+    JG_POLL=1 JG_IDLE_POLL="$2" JG_SIGNAL_GRACE=0 JG_HEARTBEAT=999999 JG_HOME_SUMMARY_INTERVAL=999999 \
+    "$ROOT/bin/jg-watch.sh" > "$dir/watch.out" 2> "$dir/watch.err" &
+  pid=$!
+  sleep "$3"
+  kill "$pid" 2>/dev/null || true
+  wait_for_exit "$pid" 100 >/dev/null 2>&1 || true
+  grep -c '^inventory' "$log"
+}
+
+test_idle_home_cycles_each_idle_period() {
+  local busy idle d
+  busy=$(count_cycles idle-control 1 9)
+  idle=$(count_cycles idle-home 30 9)
+  [ "$busy" -ge 3 ] || fail "the control home (idle period = poll) ran $busy cycles in 9s, wanted at least 3"
+  [ "$idle" = 1 ] || fail "the idle home ran $idle cycles in 9s with a 30s idle period, wanted 1 (control: $busy)"
+  d=$(make_case interval-lane)
+  jg_write_meta "$d/state/lane.meta" "window=juggernaut:jg-lane" "backend=tmux" "kind=ship"
+  [ "$("$DISPATCH" interval 15 300 "$d/state/lane.meta")" = 15 ] || fail "a home with a working lane lost its poll period"
+  [ "$("$DISPATCH" interval 15 300 "$d/state/none.meta")" = 300 ] || fail "a home with no record did not get the idle period"
+  [ "$("$DISPATCH" interval 15 5 "$d/state/none.meta")" = 15 ] || fail "an idle period under the poll was not raised to the poll"
+  pass "a home with no working lane ran $idle cycles in 9s against $busy for the same home at the poll period"
+}
+
+test_check_cost_is_on_record_and_a_costly_check_is_named() {
+  local dir pid i
+  dir=$(make_case check-cost)
+  mkdir -p "$dir/home/config" "$dir/tmp" "$dir/config"
+  cat > "$dir/state/burner.check.sh" <<'SH'
+#!/usr/bin/env bash
+for i in 1 2 3 4 5 6; do ( j=0; while [ "$j" -lt 60000 ]; do j=$((j + 1)); done ) & wait; done
+echo burned
+SH
+  chmod 700 "$dir/state/burner.check.sh"
+  env JG_HOME="$dir" JG_STATE_OVERRIDE="$dir/state" "$ROOT/bin/jg-check-register.sh" burner >/dev/null \
+    || fail "could not register the burner check"
+  env HOME="$dir/home" XDG_CONFIG_HOME="$dir/home/config" TMPDIR="$dir/tmp" PATH="$dir/fakebin:$PATH" \
+    JG_HOME="$dir" JG_STATE_OVERRIDE="$dir/state" JG_CONFIG_OVERRIDE="$dir/config" JG_WATCH_CORE_BIN="$DIR/jg-watch-core" \
+    JG_POLL=1 JG_SIGNAL_GRACE=1 JG_CHECK_INTERVAL=1 JG_WATCH_CHECK_CPU_BUDGET=0.05 JG_HEARTBEAT=999999 \
+    JG_HOME_SUMMARY_INTERVAL=999999 JG_STALE_ESCALATE_SECS=999999 \
+    "$ROOT/bin/jg-watch.sh" > "$dir/watch.out" 2> "$dir/watch.err" &
+  pid=$!
+  for i in $(seq 1 40); do
+    grep -qs ' burner ' "$dir/state/.watch-cost" && break
+    sleep 0.25
+  done
+  kill "$pid" 2>/dev/null || true
+  wait_for_exit "$pid" 100 >/dev/null 2>&1 || true
+  grep -qs '^[0-9]* burner [0-9.]*$' "$dir/state/.watch-cost" \
+    || fail "the check's cost is not on record: $(cat "$dir/state/.watch-cost" 2>&1) $(cat "$dir/watch.err")"
+  grep -rqs 'check burner used .* CPU seconds in one minute (budget 0.05)' "$dir" --include='*.log' --include='triage*' \
+    || grep -rqs 'check burner used' "$dir/state" \
+    || fail "the check over its budget is not named in the triage log"
+  pass "the check's CPU seconds are on record: $(grep ' burner ' "$dir/state/.watch-cost" | head -n 1)"
+}
+
 test_replay
 test_live_cycle
+test_idle_home_cycles_each_idle_period
+test_check_cost_is_on_record_and_a_costly_check_is_named

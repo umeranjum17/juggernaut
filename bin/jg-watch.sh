@@ -405,6 +405,9 @@ fi
 # turn-ended signature, annotation staleness checks, and guarded bookkeeping writes.
 
 POLL=${JG_POLL:-15}                   # seconds between cycles
+# Seconds between cycles of a home with no working lane. A JG_POLL set on purpose is the
+# cadence its owner chose, so it is the idle cadence too unless JG_IDLE_POLL says otherwise.
+IDLE_POLL=${JG_IDLE_POLL:-${JG_POLL:-300}}
 PROMPT_REALERT=${JG_PROMPT_REALERT_SECS:-600}  # a prompt still up is re-acted on this often
 # Beacon publication and scan timing are owned by docs/turnend-guard.md
 # "Guard grace and the poll cadence".
@@ -2721,6 +2724,19 @@ watcher_stop_signals() {
   trap 'exit 1' INT
 }
 
+# watch_record_check_cost: the CPU seconds the check just waited on used, on record in
+# state/.watch-cost once a minute per check (core/watch/cmd/jg-watch-core/interval.go owns
+# the arithmetic, the row format and the budget). A check over its budget is named in the
+# triage log. Recording is a measurement, so a failure to record never stops a check.
+watch_record_check_cost() {  # <key>
+  local over="$STATE/.watch-cost-over"
+  times > "$STATE/.watch-times-after" 2>/dev/null || return 0
+  "$SCRIPT_DIR/jg-watch-core.sh" cost "$STATE" "$1" "$STATE/.watch-times-before" "$STATE/.watch-times-after" \
+    "${JG_WATCH_CHECK_CPU_BUDGET:-5}" > "$over" 2>/dev/null || true
+  [ ! -s "$over" ] || triage_log "$(head -n 1 "$over")"
+  rm -f -- "$over" "$STATE/.watch-times-before" "$STATE/.watch-times-after"
+}
+
 run_check_capture() {
   local pgid key output tmp
   jg_check_output_cleanup
@@ -2735,6 +2751,7 @@ run_check_capture() {
   # watcher_cleanup. Keep command substitutions out of this window: bash 5.2
   # can drop a trap that is pending when one is parsed (watcher_stop_signals).
   trap 'JG_CHECK_SIGNAL_PENDING=1' HUP INT TERM
+  times > "$STATE/.watch-times-before" 2>/dev/null || true
   set -m
   ( JG_CHECK_OWNED_GROUP=1 run_check_process "$@" ) > "$JG_CHECK_OUTPUT_TMP" 2>/dev/null &
   JG_ACTIVE_CHECK_PID=$!
@@ -2750,6 +2767,7 @@ run_check_capture() {
   fi
   wait "$JG_ACTIVE_CHECK_PID" 2>/dev/null || true
   JG_ACTIVE_CHECK_PID=
+  watch_record_check_cost "$key"
   jg_active_check_stop || return 1
   mv -f -- "$JG_CHECK_OUTPUT_TMP" "$output" || { jg_check_output_cleanup; return 1; }
   JG_CHECK_OUTPUT_TMP=
@@ -3229,9 +3247,34 @@ ask_default_tick() {
 # loop is the permanent fail-closed backstop). This preserves the single live
 # supervision cycle: the reader is a short-lived subprocess of THIS watcher, not
 # a second watcher, so every guard/beacon/arm/turn-end mechanism is unchanged.
+# idle_wait: a home with no working lane has nothing for a cycle to find, so it waits
+# IDLE_POLL seconds between cycles, not POLL (the rule is in
+# core/watch/cmd/jg-watch-core/interval.go). The wait is cut into POLL slices that each
+# refresh the liveness beacon, because the guard grace is derived from POLL, and it ends
+# early when the set of records changes, so a lane started in an idle home is watched at
+# once. Returns 1 when the home is busy and the caller waits as before.
+idle_wait() {
+  local metas=("$STATE"/*.meta) wait left slice
+  case "$POLL" in ''|*[!0-9]*) return 1 ;; esac
+  wait=$("$SCRIPT_DIR/jg-watch-core.sh" interval "$POLL" "$IDLE_POLL" "${metas[@]}" 2>/dev/null) || return 1
+  case "$wait" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$wait" -gt "$POLL" ] || return 1
+  left=$wait
+  while [ "$left" -gt 0 ]; do
+    slice=$POLL
+    [ "$left" -ge "$slice" ] || slice=$left
+    sleep "$slice"
+    left=$((left - slice))
+    touch "$STATE/.last-watcher-beat" 2>/dev/null || true
+    [ "$(printf '%s\n' "$STATE"/*.meta | cksum)" = "$(printf '%s\n' "${metas[@]}" | cksum)" ] || return 0
+  done
+  return 0
+}
+
 event_wait_or_sleep() {
   local w b session first_backend="" first_session="" rec rc
   local windows=()
+  idle_wait && return
   while IFS= read -r w; do
     b=$(window_backend "$w")
     jg_backend_has_push "$b" || continue
