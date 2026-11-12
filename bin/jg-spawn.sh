@@ -3239,6 +3239,30 @@ spawn_ticket_refuse() {
     echo "error: spawn refused: $(printf '%s\n' "$out" | sed -n 's/^error: *//p' | head -1)" >&2
     return 1
   fi
+  [ "$KIND" = ship ] || return 0
+  spawn_ticket_admit
+}
+# The ticket belongs to this repository and may start now (core/spawn/cmd/jg-spawn-core/admit.go): its
+# repository label and files, its open edges and the files of the other live lanes. The rows are read here.
+spawn_ticket_admit() {
+  local store scratch admit_rc=0
+  store=$(tr -d '[:space:]' 2>/dev/null < "$CONFIG/beads-dir") || store=
+  if [ -z "$store" ]; then
+    echo "error: ticket $TICKET's rows could not be read before dispatch: put an absolute BEADS_DIR in $CONFIG/beads-dir" >&2
+    return 1
+  fi
+  scratch=$(mktemp -d) || return 1
+  if ! BEADS_DIR=$store "$SCRIPT_DIR/jg-beads.sh" show "$TICKET" --json >"$scratch/ticket" 2>"$scratch/err" \
+    || ! BEADS_DIR=$store "$SCRIPT_DIR/jg-beads.sh" list --status in_progress --limit 0 --json >"$scratch/lanes" 2>>"$scratch/err"; then
+    echo "error: ticket $TICKET's rows could not be read before dispatch ($(sed -n '1p' "$scratch/err"))" >&2
+    admit_rc=1
+  else
+    "$SCRIPT_DIR/jg-spawn-core.sh" admit --project "$(basename "$PROJ_ABS")" --repo "$PROJ_ABS" \
+      --ticket "$scratch/ticket" --lanes "$scratch/lanes" || admit_rc=1
+  fi
+  rm -f -- "$scratch/ticket" "$scratch/lanes" "$scratch/err"
+  rmdir -- "$scratch"
+  return "$admit_rc"
 }
 if jg_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then
   BACKLOG_TRANSITION=1

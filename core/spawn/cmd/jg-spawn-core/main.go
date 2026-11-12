@@ -10,6 +10,7 @@
 //	jg-spawn-core delivery-agree [flags]   brief, mode, branch, consent, forge and yolo agreement
 //	jg-spawn-core delivery-notices [flags] the two "less than the standing posture" notices
 //	jg-spawn-core intake <spawn arguments> the argument grammar and the refusals that need only the arguments
+//	jg-spawn-core admit --project <name> --repo <dir> --ticket <json> --lanes <json>  the ticket belongs here and may start
 //	jg-spawn-core rovo-override <effort> <data-dir> <state-dir> <id>
 //	jg-spawn-core claude-add-dirs <kind> <state-dir> <data-dir> <code-root> <id>
 //	jg-spawn-core opencode-lead-grant <lead-home> <state-dir> <id> <code-root>
@@ -58,6 +59,8 @@ func run(args []string) int {
 		return launchTemplateCmd(args[1:])
 	case "intake":
 		return intakeCmd(args[1:])
+	case "admit":
+		return admitCmd(args[1:])
 	}
 	if code, ok := builderCmd(args[0], args[1:]); ok {
 		return code
@@ -69,6 +72,6 @@ func run(args []string) int {
 }
 
 func usage() int {
-	fmt.Fprintln(os.Stderr, "usage: jg-spawn-core model-flag|effort-flag|delivery-agree|delivery-notices|intake|launch-template|home-validate|worktree-isolated|rovo-override|claude-add-dirs|opencode-lead-grant|launch-home-token|opencode-db|launch-env-names|launch-env-strip|launch-env-wrap ... (see the file header)")
+	fmt.Fprintln(os.Stderr, "usage: jg-spawn-core model-flag|effort-flag|delivery-agree|delivery-notices|intake|admit|launch-template|home-validate|worktree-isolated|rovo-override|claude-add-dirs|opencode-lead-grant|launch-home-token|opencode-db|launch-env-names|launch-env-strip|launch-env-wrap ... (see the file header)")
 	return 2
 }
