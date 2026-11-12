@@ -5,7 +5,7 @@ import os, re, subprocess, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tablelint
 
-USAGE = "usage: jg-machine.sh show|next <machine> <id> | enum <name> | check <machine> [--corpus <file>] | coverage|diagram|events <machine> | edge-check <machine> <from> <to>"
+USAGE = "usage: jg-machine.sh show|next <machine> <id> | enum <name> | legal <enum> <value> | write <enum> <value> <file> | check <machine> [--corpus <file>] | coverage|diagram|events <machine> | edge-check <machine> <from> <to>"
 
 
 def die(msg, rc=2):
@@ -88,7 +88,7 @@ def load(name, depth=0):
     except OSError as e:
         die(f"jg-machine: no table for machine '{name}': {e.strerror}")
     enum = next((ln.split("\t")[1] for ln in lines if ln.startswith("enum\t")), None)  # opt in: the closed list this table's states come from
-    m = {"name": name, "tdir": tdir, "states": {}, "edges": [], "observer": None, "rows": [], "groups": {}, "comp": {}, "subs": {}, "stages": {}, "open": {}}
+    m = {"enum": enum, "name": name, "tdir": tdir, "states": {}, "edges": [], "observer": None, "rows": [], "groups": {}, "comp": {}, "subs": {}, "stages": {}, "open": {}}
     bad, inner = [], []
     for ln in lines:
         f = ln.split("\t") + [""] * 8
@@ -170,7 +170,8 @@ def observe(m, rid):
     out = subprocess.run(["bash", "-c", m["observer"], m["name"], rid], capture_output=True, text=True, timeout=30).stdout
     word = out.strip()
     if word not in m["states"]:
-        die(f"{m['name']} {rid}: no state: the observer printed '{word}'", 1)
+        hint = f"; legal: {' '.join(check_enum(m['enum']))}" if m["enum"] else ""
+        die(f"{m['name']} {rid}: no state: the observer printed '{word}'{hint}", 1)
     return word
 
 
@@ -263,7 +264,23 @@ def edge_check(m, frm, to):
     sys.exit(0 if hit else 1)
 
 
+def legal(name, value):
+    """The enum reader for a write: the value if the closed list has it, else exit 1 with the legal values."""
+    vals = check_enum(name)
+    if value not in vals:
+        die(f"jg-machine: refused: '{value}' is not a value of enum {name}; legal: {' '.join(vals)}", 1)
+    return value
+
+
 def main(a):
+    if len(a) == 3 and a[0] == "legal":
+        print(legal(a[1], a[2]))
+        return
+    if len(a) == 4 and a[0] == "write":  # the one writer of a state word to a file: it writes nothing for an illegal value
+        value = legal(a[1], a[2])
+        with open(a[3], "w", encoding="utf-8") as f:
+            f.write(value + "\n")
+        return
     if len(a) == 2 and a[0] == "check":
         check(load(a[1]), None)
     if len(a) == 4 and a[0] == "check" and a[2] == "--corpus":

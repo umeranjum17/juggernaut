@@ -277,6 +277,8 @@ journeys:
     timeout: 10m
   ticket-move:
     command: bash journeys/ticket-move.sh
+  state-write:
+    command: bash journeys/state-write.sh
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'

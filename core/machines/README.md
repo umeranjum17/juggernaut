@@ -126,3 +126,8 @@ No row names a prover: done-done proves the commit in every mode.
 `bin/jg-dod-lib.sh` reads those properties instead of testing mode words, and `tests/jg-dod-style-brief.test.sh` holds the four per-mode brief texts byte-equal to a golden.
 The same file holds two `knob` rows, `pr` and `local`, and a `word` row for each registry word: `bin/jg-delivery-style.sh knob <word>` prints the knob (direct-PR and no-mistakes read as `pr`, local-only and local-trunk as `local`). yolo stays the merge knob.
 `tests/jg-delivery-style.test.sh` is its test.
+
+## State words are written through the enum
+
+`bin/jg-machine.sh legal <enum> <value>` prints the value or exits 1 with the legal values; `write <enum> <value> <file>` writes a state word to a file only if the enum has it, so a refused write changes nothing. `bin/jg-move.sh` reads its destination through `legal`, and the observer's error on a state outside a table's enum lists the legal values.
+`bin/jg-state-lint.sh` counts the bare state strings in `bin/` and `core/` (a stage, state or status variable set or tested against an enum value as a literal word), prints the count, and with `--check` exits 1 when it is above `core/machines/bare-states.baseline`. It starts at today's count, so a new bare string is refused while the existing ones are cleaned up writer by writer; each cleanup lowers the baseline.

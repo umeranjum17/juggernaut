@@ -36,6 +36,8 @@ if [ -z "$to" ]; then
     "$(printf '%s\n' "$moves" | cut -f1 | paste -sd' ' -)" >&2
   exit 1
 fi
+# the destination is a state word: it goes through the enum reader before anything is written
+bash "$here/jg-machine.sh" legal ticket "${to%%.*}" >/dev/null || exit 1
 if ! { mkdir -p "$DATA" && printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$ticket" "$from" "$event" "$to" >>"$DATA/moves.log"; }; then
   echo "jg-move: cannot write $DATA/moves.log" >&2; exit 1
 fi
