@@ -119,6 +119,25 @@ for pid in "$P_FRESH" "$P_TASK" "$P_LIVE" "$P_NAMED" "$P_PLAIN"; do kill "$pid" 
 wait 2>/dev/null
 pass "reaper stops and removes only test sandboxes older than their timeout"
 
+# --- a stranger's task process never protects a sandbox --------------------------------
+# The holder scan once overwrote its sandbox-path argument with the stat fields of the first holder it found, so a later
+# process of any task (here: one with a recorded task meta and a bare "S" argument) was read as a holder of the sandbox.
+mk_sandbox jg-trunk.stranger; printf '1\n' > "$SB/jg-trunk.stranger/.jg-sandbox-timeout"
+touch -d '3 hours ago' "$SB/jg-trunk.stranger/world/root/bin/jg-trunk.sh" "$SB/jg-trunk.stranger/.jg-sandbox-timeout"
+sb_hold "$SB/jg-trunk.stranger"; P_H1=$SB_PID
+JG_TASK_ID=sb-task bash -c 'exec sleep 600' _ S </dev/null >/dev/null 2>&1 & P_D1=$!
+sb_hold "$SB/jg-trunk.stranger"; P_H2=$SB_PID
+JG_TASK_ID=sb-task bash -c 'exec sleep 600' _ S </dev/null >/dev/null 2>&1 & P_D2=$!
+sleep 2.2
+TMPDIR=$SB JG_HOME=$HOME_DIR JG_TMP_SANDBOX_GRACE_SEC=1 JG_TMP_ALERT_PCT=100 "$REAPER" check >/dev/null 2>&1
+assert_absent "$SB/jg-trunk.stranger" "a task process that does not work in the sandbox kept it"
+alive "$P_H1" && fail "the sandbox's first process kept running"
+alive "$P_H2" && fail "the sandbox's second process kept running"
+alive "$P_D1" || fail "a stranger's task process was stopped"
+for pid in "$P_D1" "$P_D2"; do kill "$pid" 2>/dev/null; done
+wait 2>/dev/null
+pass "a stranger's task process does not keep an old sandbox"
+
 # --- the alert ----------------------------------------------------------------
 out=$(TMPDIR=$T JG_HOME=$HOME_DIR JG_TMP_ALERT_PCT=1 "$REAPER" check 2>&1)
 assert_contains "$out" "is " "no alert at the threshold"
@@ -147,7 +166,8 @@ signalled_leaves_nothing() {  # <label> <env assignment or ''> <script text> <wa
   kill -TERM -- "-$pid" 2>/dev/null
   wait "$pid" 2>/dev/null
   # A descendant that left the group (the crew-state read) finishes its own bounded call and cleans up itself.
-  for _ in $(seq 1 50); do [ "$(count "$d")" = 0 ] && break; sleep 0.1; done
+  # Poll for that end - up to 30 s, leaving the moment the scratch is gone - not a fixed time a loaded host overruns.
+  for _ in $(seq 1 300); do [ "$(count "$d")" = 0 ] && break; sleep 0.1; done
   [ "$(count "$d")" = 0 ] || fail "$label: TERM left $(find "$d" -mindepth 1 | tr '\n' ' ')"
   pass "$label: TERM leaves no scratch"
 }

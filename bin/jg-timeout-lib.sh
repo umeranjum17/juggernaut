@@ -171,7 +171,7 @@ jg_run_external_timeout_body() {
     shift
     "$@"
     command_rc=$?
-    printf "%s\n" "$command_rc" > "$status_file"
+    [ ! -e "$status_file" ] || printf "%s\n" "$command_rc" > "$status_file"  # a parent that was signalled already removed it; do not leave it behind
     exit "$command_rc"
   ' _ "$status_file" "$@" &
   runner_pid=$!

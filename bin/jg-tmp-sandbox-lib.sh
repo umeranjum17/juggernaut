@@ -56,7 +56,7 @@ sandbox_timeout() {  # <dir>: print the timeout in seconds
 
 # One line per process that works in <dir>: "<pid> <age seconds>". Skips this process and its ancestors.
 sandbox_holders() {  # <dir>
-  local d pid cwd stat rest hz up start age skip=" $$ " p
+  local d pid cwd stat rest hz up start age skip=" $$ " p dir=$1 fields
   hz=$(getconf CLK_TCK 2>/dev/null) || hz=100
   up=$(awk '{ printf "%d", $1; exit }' /proc/uptime 2>/dev/null) || return 0
   p=$$
@@ -70,14 +70,15 @@ sandbox_holders() {  # <dir>
     case "$skip" in *" $pid "*) continue ;; esac
     [ -O "$d" ] || continue
     cwd=$(readlink "$d/cwd" 2>/dev/null) || cwd=''
-    case "$cwd" in "$1" | "$1"/*) ;; *)
-      tr '\0' '\n' < "$d/cmdline" 2>/dev/null | grep -qE -- "(^|[^[:alnum:]_.-])$(printf '%s' "$1" | sed 's/[][\.*^$/]/\\&/g')(/|\$)" || continue ;;
+    case "$cwd" in "$dir" | "$dir"/*) ;; *)
+      tr '\0' '\n' < "$d/cmdline" 2>/dev/null | grep -qE -- "(^|[^[:alnum:]_.-])$(printf '%s' "$dir" | sed 's/[][\.*^$/]/\\&/g')(/|\$)" || continue ;;
     esac
     read -r stat 2>/dev/null < "$d/stat" || continue
     rest=${stat##*) }
-    # shellcheck disable=SC2086  # Deliberate: split the stat fields; starttime is the 20th after the state.
-    set -- $rest
-    start=${20:-}
+    # Split the stat fields into an array: `set --` here would overwrite $1, the sandbox path, for every later process.
+    # shellcheck disable=SC2206  # Deliberate: split the stat fields; starttime is the 20th after the state.
+    fields=($rest)
+    start=${fields[19]:-}
     case "$start" in '' | *[!0-9]*) continue ;; esac
     age=$((up - start / hz))
     [ "$age" -ge 0 ] || age=0
