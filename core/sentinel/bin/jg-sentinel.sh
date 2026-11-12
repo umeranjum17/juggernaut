@@ -733,12 +733,14 @@ tick() {
     return "$rc"
   fi
   ring_for_inbox || true
-  jg_supervision_unhealthy "$STATE" "$GRACE" || return "$rc"
+  jg_supervision_unhealthy "$STATE" "$GRACE" || { JG_STATE_OVERRIDE="$STATE" "$BIN/jg-alert.sh" resolve supervision-down--beacon-old >/dev/null 2>&1 || true; return "$rc"; }
   beat=$(jg_path_mtime "$STATE/.last-watcher-beat")
   read -r last woken_beat <"$STATE/.sentinel-wake-last" 2>/dev/null || true
   age=$(( $(date +%s) - ${last:-0} ))
   [ "${woken_beat:-}" != "${beat:-none}" ] || [ "$age" -ge "$REWAKE" ] || return "$rc"
   body="Supervision is needed but the watcher beacon is $JG_SUP_BEACON_DESC old and no turn is running. Gap $gap_class, last progress ${gap_progress:-unknown}, is in state/.supervision-gap. Run bin/jg-session-start.sh if this session was resumed, reconcile, then end the turn so supervision re-arms."
+  # The alert record is what covers the home's waits (rule I1); the doorbell below is how it reaches the primary's pane.
+  JG_STATE_OVERRIDE="$STATE" "$BIN/jg-alert.sh" raise supervision-down beacon-old --home "$JG_HOME" --note "$body" >/dev/null 2>&1 || true
   # defaults/wake-routing decides whether this doorbell costs a turn: it settles while a
   # live watcher holds the lock, and it is recorded and counted like any settled wake.
   if [ "$(jg_wake_route_class check sentinel-beacon-old "$body")" != now ]; then

@@ -2856,6 +2856,7 @@ jg_wake_squad_lead_stall_receipt_write() { # <task> <row-key>
 jg_wake_commit_squad_lead_stall_receipts_through() { # <cutoff> [<rows-file>]
   local cutoff=$1 rows=${2:-} key seq rest epoch task row_key
   while IFS= read -r key; do
+    key=${key#alert-supervision-down--}   # the alert function's wake key wraps the producer's own key
     seq=${key##*-}
     rest=${key%-*}
     epoch=${rest##*-}
@@ -2870,7 +2871,7 @@ jg_wake_commit_squad_lead_stall_receipts_through() { # <cutoff> [<rows-file>]
     BEGIN { if (rows != "") while ((getline line < rows) > 0) owned[line]=1 }
     NF >= 5 && $2 ~ /^[0-9]+$/ && $2 <= cutoff \
       && (rows == "" || ($2 in owned)) && $3 == "check" \
-      && $4 ~ /^squad-lead-wake-loop-[A-Za-z0-9._-]+-[0-9]+-[0-9]+$/ { print $4 }
+      && $4 ~ /^(alert-supervision-down--)?squad-lead-wake-loop-[A-Za-z0-9._-]+-[0-9]+-[0-9]+$/ { print $4 }
   ' "$JG_WAKE_QUEUE" 2>/dev/null)
 }
 

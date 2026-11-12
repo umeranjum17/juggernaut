@@ -49,7 +49,7 @@ al raise stuck-wait w2 --fact wait=main; assert_contains "$OUT" "	3	main" "a Mai
 pass "quiet facts keep a row quiet and the first rung follows the wait"
 
 # 4. Rule I1: with supervision-down open for a home, the wait alerts of that home are inhibited and ring nothing; another home still rings.
-al raise supervision-down h1 --home h1 --fact beats=2; assert_contains "$OUT" "	0	tick" "supervision-down starts at the tick"
+al raise supervision-down h1 --home h1 --fact beats=2; assert_contains "$OUT" "	1	worker" "supervision-down starts at rung 1"
 al raise stuck-wait s-h1 --home h1 --fact wait=lead; assert_equals "" "$OUT" "supervision-down open: no ring"
 assert_equals inhibited "$(bash "$AL" word stuck-wait--s-h1)" "the covered alert is recorded inhibited"
 assert_equals supervision-down--h1 "$(rec stuck-wait--s-h1 covered_by)" "it names its cover"
@@ -99,9 +99,9 @@ Q=$(bash -c '. "$1/bin/jg-wake-lib.sh"; printf %s "$JG_WAKE_QUEUE"' _ "$ROOT")
 bash "$AL" raise host mem1 --machine m1 | bash "$AL" deliver; expect_code 0 $? "deliver a main ring"
 assert_contains "$(cat "$Q" 2>/dev/null)" "alert-host--mem1" "the main ring is one wake in the queue"
 assert_contains "$(cat "$Q")" "(P3) at rung 3 for main" "the wake names precedence, rung and holder"
-bash "$AL" raise supervision-down h9 --home h9 --fact beats=2 | bash "$AL" deliver
-! grep -q "alert-supervision-down--h9" "$Q" || fail "a tick ring made a wake"
-assert_contains "$(bash "$ROOT/bin/jg-wake.sh" settled 2>&1)" "alert-supervision-down--h9" "a tick ring is recorded as settled"
+bash "$AL" raise lost-worker h9 --home h9 | bash "$AL" deliver
+! grep -q "alert-lost-worker--h9" "$Q" || fail "a tick ring made a wake"
+assert_contains "$(bash "$ROOT/bin/jg-wake.sh" settled 2>&1)" "alert-lost-worker--h9" "a tick ring is recorded as settled"
 bash "$AL" raise line-red nt1 --note "the tip is red" | bash "$AL" deliver
 assert_contains "$(cat "$Q")" "(P1) at rung 2 for lead: nt1 - the tip is red" "the producer's note rides in the wake"
 echo "not a ring" | bash "$AL" deliver 2>/dev/null; expect_code 1 $? "a stray line is refused"

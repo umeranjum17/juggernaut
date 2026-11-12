@@ -1105,7 +1105,7 @@ squad_lead_ring_to_drain() {  # <task> <window> <seq>
 squad_lead_wake_stall_tick() {
   local now=$(( $(date +%s) )) threshold=$SQUAD_LEAD_WAKE_STALL_SECS
   local meta task kind remote_host home queue row epoch seq row_key marker progress_marker ring_marker progress observed_at observed_key
-  local receipt receipt_dir notify_key queued idle reason episode_alerted already_rung w
+  local receipt receipt_dir notify_key idle reason episode_alerted already_rung w
   # Endpoint metadata admits this queue-loop check; squad-lead-liveness owns registered mates whose endpoint is missing or dead.
   for meta in "$STATE"/*.meta; do
     [ -e "$meta" ] || continue
@@ -1190,10 +1190,8 @@ EOF
     fi
     notify_key="squad-lead-wake-loop-$task-$row_key"
     reason="check: squad_lead wake-loop stalled: mate=$task row=$seq idle=${idle}s"
-    queued=$(jg_wake_queued_keys check)
-    if ! printf '%s\n' "$queued" | grep -Fx "$notify_key" >/dev/null 2>&1; then
-      jg_wake_append check "$notify_key" "$reason" || return 1
-    fi
+    JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" raise supervision-down "$notify_key" --home "$JG_HOME" \
+      --note "${reason#check: }" --deliver || return 1
     jg_wake_squad_lead_stall_receipt_write "$task" "$row_key" || return 1
     jg_wake_squad_lead_stall_marker_write "$task" "$row_key" || return 1
     wake "$reason"
@@ -1370,7 +1368,7 @@ squad_lead_liveness_tick() {
   JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-squad-lead-dormant.sh" sweep >/dev/null 2>&1 \
     || triage_log "squad_lead dormant sweep reported a failure; the liveness tick continues"
   local now=$(( $(date +%s) )) meta id kind
-  local bound_marker attempts notify_key reason queued err first_reason='' failed=0
+  local bound_marker attempts notify_key reason err first_reason='' failed=0
   for meta in "$STATE"/*.meta; do
     [ -e "$meta" ] || continue
     kind=$(jg_meta_get "$meta" kind 2>/dev/null || true)
@@ -1435,9 +1433,8 @@ squad_lead_liveness_tick() {
         ;;
     esac
     if [ -n "$reason" ]; then
-      queued=$(jg_wake_queued_keys check)
-      if printf '%s\n' "$queued" | grep -Fx "$notify_key" >/dev/null 2>&1 \
-        || jg_wake_append check "$notify_key" "$reason"; then
+      if JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" raise supervision-down "$notify_key" --home "$JG_HOME" \
+        --note "${reason#check: }" --deliver; then
         [ -n "$first_reason" ] || first_reason=$reason
       else
         err="check wake row could not be queued: $reason"
@@ -4008,7 +4005,7 @@ run_fast_checks() {
       check_capture_skip unit-claim
     elif check_result_reason unit-claim; then
       reason=$JG_CHECK_REASON
-      jg_wake_append check unit-claim "$reason" || exit 1
+      JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" raise supervision-down unit-claim --home "$JG_HOME" --note "${reason#check: }" --deliver || exit 1
       wake "$reason"
     fi
   fi
