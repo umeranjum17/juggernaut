@@ -20,13 +20,15 @@ view = __import__("jg-beads-view")
 moment = __import__("jg-beads-moment")
 
 # source -> (the row's moment key, whether the ref is the landed commit, the row's list that grows by the ref). One line per producer;
-# S12 and S27 add theirs. A key may be a dict by event kind (the ready step records commit and resume under one source); None writes no moment.
+# S12 and S27 added theirs: a pull-request merge sets no commit, the URL in external_ref is its pointer. A key may be a dict by event kind (the ready step records commit and resume under one source); None writes no moment.
 SOURCES = {
     "jg-trunk-land": ("landed_at", True, None),
     "jg-trunk-revert": ("reverted_at", False, None),
     "jg-trunk-live": ("live_at", False, None),
     "jg-trunk-pin-back": ("pinned_back_at", False, None),
     "jg-trunk-release": ("released_at", False, None),
+    "jg-merge": ("landed_at", False, None),
+    "jg-merge-local": ("landed_at", True, None),
     "jg-spawn": (None, False, None),
     "jg-done": ({"commit": "ready_at", "resume": "resumed_at"}, False, None),
     "jg-receipt": (None, False, None),

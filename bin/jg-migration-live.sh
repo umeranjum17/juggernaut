@@ -377,14 +377,12 @@ probe_escalation() {
 }
 
 probe_fiveminute() {
-  local file="$JG_HOME/data/merge-latency.tsv" n
   if [ ! -f "$STATE/merge-on-green.check.sh" ]; then
     printf 'pending\tmerge-on-green is not armed, so a green pull request waits for a person\n'
     return 0
   fi
-  n=$(count_lines "$file")
-  printf 'live\tthe merge-on-green check is armed in this home; %s merges recorded%s\n' "${n:-0}" \
-    "$([ "${n:-0}" -gt 0 ] && awk -F'\t' '$5+0 > m { m = $5+0 } END { printf ", worst %s minutes", m+0 }' "$file")"
+  # A merge's minutes live on its ticket (jg-backlog.sh times <ticket>); no table file is kept.
+  printf 'live\tthe merge-on-green check is armed in this home; each merge lands on its ticket\n'
 }
 
 probe_deletions() {

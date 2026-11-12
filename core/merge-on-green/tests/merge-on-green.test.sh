@@ -74,7 +74,15 @@ if [ -f "$STUB_DIR/lint-notproven" ]; then
 fi
 echo "checks-lint: PASS: 2 evidence files"
 EOF
-chmod +x "$FM/bin/jg-crew-state.sh" "$FM/bin/jg-pr-merge.sh" "$STUB_DIR/jg-checks-lint.sh"
+cat > "$FM/bin/jg-backlog.sh" <<'EOF'
+#!/usr/bin/env bash
+# stub: `times <task>` prints the ready and landed rows the merge left on the ticket, from $STUB_DIR/times/<task>.
+[ "$1" = times ] && [ -f "$STUB_DIR/times/$2" ] && cat "$STUB_DIR/times/$2"
+exit 0
+EOF
+mkdir -p "$STUB_DIR/times"
+rfc() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
+chmod +x "$FM/bin/jg-crew-state.sh" "$FM/bin/jg-pr-merge.sh" "$FM/bin/jg-backlog.sh" "$STUB_DIR/jg-checks-lint.sh"
 cat > "$STUB_DIR/gh" <<'EOF'
 #!/usr/bin/env bash
 # stub: the mergedAt read and the open-PR count; every sweep reaches the count, so no real gh runs.
@@ -255,45 +263,35 @@ rm "$FM/state/t12.meta" "$FM/state/t12.run-receipt.json"
 # stub, so the number is the one the record holds rather than the moment the sweep ran.
 meta t13 on "$H1" s13
 now=$(date +%s)
-printf 'working [at=%s]: implementing\n' "$((now - 1200))" > "$FM/state/t13.status"
-printf 'done [at=%s]: PR https://github.com/ex/r/pull/13\n' "$((now - 780))" >> "$FM/state/t13.status"
-STUB_MERGED_AT=$(date -u -d "@$now" +%Y-%m-%dT%H:%M:%SZ)
-export STUB_MERGED_AT
+# The merge (jg-pr-merge, stubbed here) writes landed_at on the ticket; the stub `times` serves the row.
+printf 'ready\t%s\nlanded\t%s\n' "$(rfc "$((now - 780))")" "$(rfc "$now")" > "$STUB_DIR/times/t13"
 out=$(mog)
 check "n: one merged line" "$(printf '%s\n' "$out" | wc -l)" 1
-has "n: the line names the measured minutes" "$out" "it took 13m from its done line to merged"
+has "n: the line names the minutes read from the ticket" "$out" "it took 13m from its done line to merged"
 has "n: over the target raises the over-target alert" "$out" "over the 5-minute target"
-check "n: the row is recorded with the real gap" \
-  "$(awk -F '\t' '$1 == "t13" { print $3, $4, $5 }' "$FM/data/merge-latency.tsv")" \
-  "$((now - 780)) $now 13"
-check "n: the table has one header row" "$(sed -n 1p "$FM/data/merge-latency.tsv")" \
-  "$(printf 'task\tpr\tdone_epoch\tmerged_epoch\tminutes')"
+has "n: the alert points at times" "$out" "jg-backlog.sh times t13"
+check "n: no latency table is written" "$([ -e "$FM/data/merge-latency.tsv" ] && echo written || echo none)" none
 rm "$FM/state/t13.meta" "$FM/state/t13.run-receipt.json"
 
 # (n2) a refusal wake names the real refusal, not the `armed:` and `WARNING:` notices printed first;
 # a worker's `ready [at=N key=..]` hand-off line still gets a latency row.
 meta t95 on "$H1" s95
 now=$(date +%s)
-printf 'ready [at=%s extra=1]: slice 2 PR https://github.com/ex/r/pull/95\n' "$((now - 60))" > "$FM/state/t95.status"
+printf 'ready\t%s\nlanded\t%s\n' "$(rfc "$((now - 60))")" "$(rfc "$now")" > "$STUB_DIR/times/t95"
 touch "$STUB_DIR/merge-noisy"
 out=$(mog)
 has "n2: the real refusal is named" "$out" "jg-pr-merge refused: error: pull request is not mergeable: required check ci is red"
 check "n2: armed and WARNING lines are not the reason" "$(printf '%s' "$out" | grep -cE 'refused: (armed:|WARNING:)')" 0
 rm "$STUB_DIR/merge-noisy"
 rm -f "$FM/data/jg-merge-on-green/t95.head"
-STUB_MERGED_AT=$(date -u -d "@$now" +%Y-%m-%dT%H:%M:%SZ)
-export STUB_MERGED_AT
 out=$(mog)
-has "n2: a ready hand-off line is measured" "$out" "in 1m from its done line"
-check "n2: the ready line has a latency row" "$(awk -F '\t' '$1 == "t95" { print $5 }' "$FM/data/merge-latency.tsv")" 1
+has "n2: the ticket's ready time is measured" "$out" "in 1m from its done line"
 rm "$FM/state/t95.meta" "$FM/state/t95.run-receipt.json"
 
 # (o) a merge inside the target is recorded and reported without the over-target wording.
 meta t14 on "$H2" s14
 now=$(date +%s)
-printf 'done [at=%s]: PR https://github.com/ex/r/pull/14\n' "$((now - 120))" > "$FM/state/t14.status"
-STUB_MERGED_AT=$(date -u -d "@$now" +%Y-%m-%dT%H:%M:%SZ)
-export STUB_MERGED_AT
+printf 'ready\t%s\nlanded\t%s\n' "$(rfc "$((now - 120))")" "$(rfc "$now")" > "$STUB_DIR/times/t14"
 out=$(mog)
 check "o: one merged line" "$(printf '%s\n' "$out" | wc -l)" 1
 has "o: the line names the fast minutes" "$out" "in 2m from its done line"

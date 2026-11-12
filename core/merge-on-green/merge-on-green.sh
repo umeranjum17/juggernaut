@@ -80,33 +80,26 @@ LEAD_NOTE='lead: clear it and merge through bin/jg-pr-merge.sh; only a genuine h
 
 timed_out() { [ "$1" = 124 ] || [ "$1" = 137 ]; }
 
-# record_latency <task> <pr>: append the done-to-merged minutes to the home's
-# table and print them, empty when the task never reported a done line.
-# Every merge is recorded, so the five-minute target is a number anyone can read
-# rather than a claim, and a merge over JG_MERGE_LATENCY_LIMIT_MINUTES (default
-# 5) is called out in the wake line the lead relays.
-LATENCY_FILE=$FMH/data/merge-latency.tsv
+# merge_minutes <task>: the whole minutes from the ticket's ready time to its landed time, read from
+# `jg-backlog.sh times <task>`; empty when the ticket has no ready time or no landed time. The merge itself
+# writes landed_at (bin/jg-merge-outcome-lib.sh), so the number is the record's own, and a merge over
+# JG_MERGE_LATENCY_LIMIT_MINUTES (default 5) is called out in the wake line the lead relays.
 MERGE_LATENCY_LIMIT=${JG_MERGE_LATENCY_LIMIT_MINUTES:-5}
 case "$MERGE_LATENCY_LIMIT" in ''|*[!0-9]*) MERGE_LATENCY_LIMIT=5 ;; esac
-record_latency() { # <task> <pr>
-  local done_at merged_at when minutes
-  # A worker's hand-off line: `done` or `ready`, `[at=<epoch>]` with optional extra keys.
-  done_at=$(sed -n -E 's/^(done|ready)[[:space:]]*\[at=([0-9]+)[^]]*\].*/\2/p' "$STATE/$1.status" 2>/dev/null | tail -1)
-  # A release has no worker: its hand-off is the release proof's completion receipt.
-  [ -n "$done_at" ] || [ "$kind" != release ] || done_at=$(jq -r '.at // empty' "$STATE/$1.run-receipt.json" 2>/dev/null) || done_at=
-  [ -n "$done_at" ] || return 0
-  merged_at=
-  when=$(timeout "$BUDGET" gh pr view "$2" --json mergedAt -q '.mergedAt // empty' 2>/dev/null) || when=
-  [ -z "$when" ] || merged_at=$(date -u -d "$when" +%s 2>/dev/null) || merged_at=
-  [ -n "$merged_at" ] || merged_at=$(date +%s)
-  minutes=$(( (merged_at - done_at) / 60 ))
-  [ "$minutes" -ge 0 ] || minutes=0
-  mkdir -p "${LATENCY_FILE%/*}" 2>/dev/null || :
-  [ -s "$LATENCY_FILE" ] \
-    || printf 'task\tpr\tdone_epoch\tmerged_epoch\tminutes\n' > "$LATENCY_FILE" 2>/dev/null || :
-  printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$done_at" "$merged_at" "$minutes" \
-    >> "$LATENCY_FILE" 2>/dev/null || :
-  printf '%s' "$minutes"
+merge_minutes() { # <task>
+  local rows ready landed
+  rows=$(JG_HOME="$FMH" timeout "$BUDGET" "$FMH/bin/jg-backlog.sh" times "$1" 2>/dev/null) || rows=
+  ready=$(printf '%s\n' "$rows" | awk -F '\t' '$1 == "ready" { print $2 }')
+  landed=$(printf '%s\n' "$rows" | awk -F '\t' '$1 == "landed" { print $2 }')
+  # A release has no worker and no ready time: its hand-off is the release proof's completion receipt, and its merge is now.
+  if [ -z "$ready" ] && [ "$kind" = release ]; then
+    ready=$(jq -r '.at // empty' "$STATE/$1.run-receipt.json" 2>/dev/null) || ready=
+    [ -z "$ready" ] || { printf '%s' $(( ($(date +%s) - ready) / 60 )); return 0; }
+  fi
+  [ -n "$ready" ] && [ -n "$landed" ] || return 0
+  ready=$(date -u -d "$ready" +%s 2>/dev/null) && landed=$(date -u -d "$landed" +%s 2>/dev/null) || return 0
+  [ "$landed" -ge "$ready" ] || { printf 0; return 0; }
+  printf '%s' $(( (landed - ready) / 60 ))
 }
 
 refuse() { # <reason> <receipt-stamp>: the wake line prints once per task+head+reason+receipt state,
@@ -246,11 +239,10 @@ for m in "$STATE"/*.meta; do
     continue
   fi
   if [ "$merge_rc" -eq 0 ]; then
-    # Measured before the merged line is appended, because that line is itself a
-    # done line and the number this rows measures is the worker's own done line.
-    latency=$(record_latency "$task" "$pr")
+    # The merge wrote landed_at on the ticket; the number is its ready time to that landing.
+    latency=$(merge_minutes "$task")
     if [ -n "$latency" ] && [ "$latency" -gt "$MERGE_LATENCY_LIMIT" ]; then
-      echo "merge-on-green: merged $task $pr through jg-pr-merge, but it took ${latency}m from its done line to merged, over the ${MERGE_LATENCY_LIMIT}-minute target; recorded in $LATENCY_FILE; lead: run the post-merge steps (install from main, teardown)"
+      echo "merge-on-green: merged $task $pr through jg-pr-merge, but it took ${latency}m from its done line to merged, over the ${MERGE_LATENCY_LIMIT}-minute target (jg-backlog.sh times $task); lead: run the post-merge steps (install from main, teardown)"
     elif [ -n "$latency" ]; then
       echo "merge-on-green: merged $task $pr through jg-pr-merge in ${latency}m from its done line; lead: run the post-merge steps (install from main, teardown)"
     else

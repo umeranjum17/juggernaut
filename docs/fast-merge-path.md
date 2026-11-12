@@ -93,13 +93,14 @@ Nothing is reverted, and no other merge waits on it.
 
 ## 5. The number
 
-Every merge the check lands appends one row to `data/merge-latency.tsv`: the
-task, the pull request, the `done` epoch, the merge epoch, and the whole minutes
-between them.
+Every merge, whoever makes it (this home, the check, or a person on the forge, found by the poll),
+ends in `jg_merge_outcome_report`, which records a `land` event for the pull request and sets `landed_at`
+on the ticket (a local-only landing does the same for its commit). No table file is written.
+The check reads the minutes from `jg-backlog.sh times <ticket>`: the ticket's ready time to its landed time.
 A merge over `JG_MERGE_LATENCY_LIMIT_MINUTES` (default 5)
 raises one alert naming the number.
-A five-minute path that silently takes eleven is the failure this row exists to
-make visible, so read the recorded minutes rather than any promise about them.
+A five-minute path that silently takes eleven is the failure this number exists to
+make visible, so read `times` rather than any promise about them.
 
 A local-trunk project has no pull request to merge, so its number is the
 landing: the check `core/trunk-latency` writes one row per landing to
