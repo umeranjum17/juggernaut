@@ -26,10 +26,10 @@ journeys:
     command: bash journeys/alert.sh
   proof-bypass-apply:
     tier: local
-    command: bash journeys/proof-bypass-apply.sh
+    command: bash tests/jg-proof-bypass-apply.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   bypass-says-so:
     tier: local
-    command: bash journeys/bypass-says-so.sh
+    command: bash tests/jg-bypass-says-so.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   brief-lint:
     tier: local
     command: bash journeys/brief-lint-real-briefs.sh
@@ -65,7 +65,7 @@ journeys:
     command: bash journeys/ports-adapter-refusal.sh
   rejected-state-check-once:
     tier: local
-    command: bash journeys/rejected-state-check-once.sh
+    command: bash tests/jg-rejected-state-check-once.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   wake-schedule:
     tier: local
     command: bash journeys/wake-schedule.sh
@@ -74,10 +74,10 @@ journeys:
     command: bash journeys/wake-batch-threshold.sh
   planned-wait:
     tier: local
-    command: bash journeys/planned-wait.sh
+    command: bash tests/jg-planned-wait.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   wait-quiet:
     tier: local
-    command: bash journeys/wait-quiet.sh
+    command: bash tests/jg-wait-quiet.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   wait-word:
     tier: local
     command: bash journeys/wait-word.sh
@@ -99,16 +99,16 @@ journeys:
     command: bash tests/jg-pre-push.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   spawn-dispatch-profile:
     tier: local
-    command: bash journeys/spawn-dispatch-profile.sh
+    command: bash tests/jg-spawn-dispatch-profile.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   claude-account-by-model:
     tier: local
-    command: bash journeys/claude-account-by-model.sh
+    command: bash tests/jg-spawn-account-by-model.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   claude-1m-context:
     tier: local
-    command: bash journeys/claude-1m-context.sh
+    command: bash tests/jg-spawn-model.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   spawn-load-admission:
     tier: local
-    command: bash journeys/spawn-load-admission.sh
+    command: bash tests/jg-spawn-load-admission.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   tool-models:
     tier: local
     command: bash journeys/tool-models.sh
@@ -178,7 +178,7 @@ journeys:
     command: bash tests/jg-merge-gate-policy.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   running-products:
     tier: local
-    command: bash journeys/running-products.sh
+    command: bash tests/jg-running-products.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   demo-call-gate:
     tier: local
     command: bash journeys/demo-call-gate.sh
@@ -386,16 +386,16 @@ journeys:
     command: bash journeys/hc-backend.sh
   landing-refusing-shims:
     tier: local
-    command: bash journeys/landing-refusing-shims.sh
+    command: env -u JG_TASK_ID bash tests/jg-trunk-gate-env.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   wait-refusal-retry:
     tier: local
-    command: bash journeys/wait-refusal-retry.sh
+    command: env -u JG_TASK_ID bash tests/jg-trunk-retry.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   board-answer-route:
     tier: local
-    command: bash journeys/board-answer-route.sh
+    command: env -u JG_TASK_ID bash tests/jg-board-answers-route.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   afk-daemon-resend:
     tier: local
-    command: bash journeys/afk-daemon-resend.sh
+    command: env -u JG_TASK_ID bash tests/jg-supervise-daemon-resend.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   gate-quarantine:
     tier: local
     command: bash journeys/gate-quarantine.sh
@@ -404,7 +404,7 @@ journeys:
     command: bash journeys/gate-per-test-timeout.sh
   pr-pager:
     tier: local
-    command: bash journeys/pr-pager.sh
+    command: bash tests/jg-pr-pager.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   delivery-style:
     tier: local
     command: bash journeys/delivery-style.sh
@@ -430,7 +430,7 @@ journeys:
     timeout: 10m
   ticket-move:
     tier: local
-    command: bash journeys/ticket-move.sh
+    command: bash tests/jg-move.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   state-write:
     tier: local
     command: bash journeys/state-write.sh

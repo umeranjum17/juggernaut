@@ -6,7 +6,7 @@
 # literal launch command sent with `tmux send-keys -l`, so assertions pin the
 # command juggernaut would run without starting any real harness.
 #
-# This is also the test that owns journeys/spawn-dispatch-profile.sh (the done-done journey runs this file).
+# This is also the done-done journey test of spawn-dispatch-profile (the journey runs this file directly).
 set -u
 
 # shellcheck source=tests/fixtures.sh
