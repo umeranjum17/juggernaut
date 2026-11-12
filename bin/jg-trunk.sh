@@ -89,12 +89,11 @@
 # of the landing check starts it, one at a time, whenever the tip is above the pin (`verify-due` says so) and not when that tip
 # already ended without moving the pin; nothing starts it per landing. A green run moves the pin to the tip, and only a green run
 # does. A script that fails there and passes on the commit's parent (or the pin) charges that one commit, which is reverted by itself
-# (a new commit on the tip, never a rewind), and `line-red` is raised on the trunk's wake path; the pin stays where it is. A run that fails with no
+# (a new commit on the tip, never a rewind), and `line-red` is raised through jg-alert.sh; the pin stays where it is. A run that fails with no
 # failed test charged to a commit (a run over its time budget, a shard with no result, a runner that stopped) is a warning and runs
 # once more; it never moves the pin and never reverts. Nothing a verify finds stops a landing: a charged red that stays (a revert
 # that does not apply cleanly) takes the green pin, and with it live, back below that commit. `green-alarm`
-# (run by the landing check every minute) raises ONE alarm to Overwatch on the trunk's wake path (jg_wake_append check, a
-# `-stall` key that wakes at once) once the oldest commit above the green pin has waited no-green-alarm-minutes (default 15) and
+# (run by the landing check every minute) raises ONE `line-red` alert (jg-alert.sh, a wake that wakes at once) once the oldest commit above the green pin has waited no-green-alarm-minutes (default 15) and
 # no verify is running; one per green pin, so a stall that goes on is not raised twice.
 #
 # The ship branch (state/<id>.meta branch=, default fm/<id>) must hold EXACTLY ONE commit on
@@ -471,6 +470,14 @@ flaky_on_base() {  # <base> <envfile> <script>...
   done | sort -u
 }
 
+# Every red on the line raises the one alert `line-red` (bin/jg-alert.sh): the table owns its holder, rung and quiet rule, and deliver
+# turns the ring into the wake. <subject> keeps one record per episode. A red is raised at once; `green-alarm` stays quiet while a verify runs.
+raise_line_red() {  # <subject> <note>
+  JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" raise line-red "$1" --project "$PN" --note "$2" \
+    | JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" deliver >/dev/null 2>&1 && return 0
+  echo "warning: could not raise line-red" >&2; return 1
+}
+
 # One alert and one note per pre-existing red script and tip tree, however many lanes meet it.
 report_tip_red() {  # <tip> <script>...
   local tip=$1 tree ledger fresh='' s ticket note
@@ -482,7 +489,7 @@ report_tip_red() {  # <tip> <script>...
   for s in "$@"; do grep -qxF "$tree	$s" "$ledger" || fresh="$fresh $s"; done
   [ -n "$fresh" ] || return 0
   note="$TRUNK tip ${tip:0:12} is red in:$fresh. It was red before any lane touched it, so no lane is charged for it."
-  jg_wake_append check "trunk-tip-red-$PN-${tree:0:12}" "$note" >/dev/null 2>&1 || echo "warning: could not raise the tip-red alert" >&2
+  raise_line_red "$PN-tip-${tree:0:12}" "$note"
   ticket=$(pol gate-red-ticket)
   if [ -n "$ticket" ]; then
     JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-backlog.sh" update "$ticket" --append-notes "$note" >/dev/null 2>&1 \
@@ -729,7 +736,7 @@ tell_lane() {  # <id> <note> [<head>]
     lane_refusal_reach "$1" "$3" "$project" "$branch" "$2" final
     return
   fi
-  jg_wake_append check "trunk-reverted-$PN-$(printf '%s' "$2" | cksum | cut -d' ' -f1)" "$2" >/dev/null 2>&1 || echo "warning: could not raise the revert alert" >&2
+  raise_line_red "$PN-reverted-$(printf '%s' "$2" | cksum | cut -d' ' -f1)" "$2"
   refusal_deliver note "$1" "$2" || echo "warning: could not add the revert note to $1" >&2
   refusal_deliver steer "$1" "$2" || echo "warning: could not steer $1" >&2
 }
@@ -1430,7 +1437,7 @@ batch_culprit() {  # <from> <top> <verify gate>
 
 # `line-red`: the line's verify found a red and traced it to <commit>. One alert on the trunk's wake path, once per red commit.
 line_red() {  # <commit> <what happened>
-  jg_wake_append check "line-red-$PN-${1:0:12}" "line-red: $TRUNK is red at ${1:0:12}: $2" >/dev/null 2>&1 || echo "warning: could not raise line-red" >&2
+  raise_line_red "$PN-${1:0:12}" "$TRUNK is red at ${1:0:12}: $2"
 }
 
 # Whether this project's verify is running (its slot's lock is held). Read-only.
@@ -1573,8 +1580,7 @@ cmd_nightly() {
 
 green_short() { cut -c1-12 "$STATE/trunk-green-$PN" 2>/dev/null || echo none; }
 
-# The trunk with no green commit for no-green-alarm-minutes raises ONE alarm to Overwatch, on the same wake path as the trunk's other
-# alarms (jg_wake_append check); its key ends in -stall, which the wake routing wakes at once. The wait is counted from the landing of
+# The trunk with no green commit for no-green-alarm-minutes raises ONE `line-red` alert through jg-alert.sh; defaults/wake-routing wakes it at once. The wait is counted from the landing of
 # the oldest commit above the green pin (its data/trunk-landings.tsv row, else its commit time). One alarm per green pin
 # (state/trunk-green-alarm-<project> holds the pin it was raised for): a stall that goes on is not raised again, and once the pin moves
 # a new stall can be. Read-only for the trunk; the landing check runs it every minute.
@@ -1596,7 +1602,7 @@ cmd_green_alarm() {
   [ "$(cat "$STATE/trunk-green-alarm-$PN" 2>/dev/null || true)" != "$green" ] || { echo "green-alarm: already raised for the green pin ${green:0:12}"; return 0; }
   n=$(git -C "$PROJ" rev-list --count "$green..$tip")
   note="$TRUNK has had no green commit for $(( age / 60 )) minutes: the tip ${tip:0:12} is $n commit(s) above the last green ${green:0:12}. Landings go on and live stays on ${green:0:12}; a red a hand-run verify or a red CI found took the pin back there."
-  jg_wake_append check "trunk-no-green-$PN-${green:0:12}-stall" "$note" >/dev/null 2>&1 || die "could not raise the no-green alarm"
+  raise_line_red "$PN-no-green-${green:0:12}" "$note" || die "could not raise the no-green alarm"
   put "$STATE/trunk-green-alarm-$PN" "$green"
   echo "green-alarm: raised: $note"
 }
@@ -1969,6 +1975,7 @@ cmd_ci() {
       row trunk-ci.tsv "$PN" "$sha" "$(date +%s)" red
       back=$(last_green_before "$sha")
       put "$STATE/trunk-green-$PN" "$back"
+      raise_line_red "$PN-ci-${sha:0:12}" "CI is red at ${sha:0:12}; the green pin and every home go back to ${back:0:12}"
       echo "ci RED at ${sha:0:12}; pinning the green pin and the home back to ${back:0:12}; landings go on" >&2
       LIVE_FLEET=1; go_live "$back" "$tip" ;;
     *) die "usage: jg-trunk.sh ci <project-dir> <sha> green|red" ;;

@@ -160,6 +160,7 @@ now      check   sentinel-*       *
 # A worker stuck past its ladder: every stale event, and the stall, owner and escalation checks.
 now      stale   *                *
 now      check   *-stall          *
+now      check   alert-line-red--* *
 now      check   *migration-watch.check.sh   *no status chang*
 now      check   waiting-timer-*  *
 now      check   *-owner          *

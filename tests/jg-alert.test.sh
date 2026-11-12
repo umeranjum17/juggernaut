@@ -102,7 +102,11 @@ assert_contains "$(cat "$Q")" "(P3) at rung 3 for main" "the wake names preceden
 bash "$AL" raise supervision-down h9 --home h9 --fact beats=2 | bash "$AL" deliver
 ! grep -q "alert-supervision-down--h9" "$Q" || fail "a tick ring made a wake"
 assert_contains "$(bash "$ROOT/bin/jg-wake.sh" settled 2>&1)" "alert-supervision-down--h9" "a tick ring is recorded as settled"
+bash "$AL" raise line-red nt1 --note "the tip is red" | bash "$AL" deliver
+assert_contains "$(cat "$Q")" "(P1) at rung 2 for lead: nt1. the tip is red" "the producer's note rides in the wake"
 echo "not a ring" | bash "$AL" deliver 2>/dev/null; expect_code 1 $? "a stray line is refused"
+# The old line-red wake calls are gone from every producer: the only wake they raise is the alert's.
+assert_equals "" "$(grep -nE 'jg_wake_append check "(trunk-tip-red|trunk-reverted|line-red|trunk-no-green|post-merge-ci)-' "$ROOT"/bin/jg-trunk.sh "$ROOT"/bin/jg-post-merge-ci.sh)" "no producer of line-red wakes by itself"
 pass "deliver turns a ring into a wake for its holder and only records a tick ring"
 
 # 10. The wait ladder reads its rung timers from the table: they print from it, a changed row changes them, and the library holds no default of its own.

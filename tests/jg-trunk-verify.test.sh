@@ -281,9 +281,9 @@ test_the_tick_verifies_a_landed_pair_that_breaks_together_and_the_pin_moves_only
   git -C "$PROJ" log -1 --format=%B trunk | grep -qx "reverts: $b" || fail "the tick's verify must revert the second change, the one the red is traced to: $(git -C "$PROJ" log -2 --format=%B trunk) log: $(cat "$HOME_D/data/jg-trunk-landing/verify-proj.log" 2>&1)"
   git -C "$PROJ" log --format=%B "$a^..$a" | grep -q '^reverts: ' && fail "the first change stays"
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$base" ] || fail "a red verify must not move the green pin"
-  for _ in $(seq 1 150); do grep -qs "line-red-proj-${b:0:12}" "$q" && break; sleep 0.2; done
-  grep -q "line-red-proj-${b:0:12}" "$q" || fail "line-red must be raised for the traced commit: $(cat "$q" 2>&1)"
-  assert_contains "$(grep 'line-red' "$q")" "line-red: " "the alert is named line-red"
+  for _ in $(seq 1 150); do grep -qs "alert-line-red--proj-${b:0:12}" "$q" && break; sleep 0.2; done
+  grep -q "alert-line-red--proj-${b:0:12}" "$q" || fail "line-red must be raised for the traced commit: $(cat "$q" 2>&1)"
+  assert_contains "$(grep 'line-red' "$q")" "alert line-red (P1) at rung 2 for lead" "the alert is named line-red"
   # No go-live takes the red head: the home goes live on the pin only, which no landing or red verify moved.
   trunk word live "$PROJ" "go" >/dev/null 2>&1
   trunk live "$PROJ" >/dev/null 2>&1 || :
@@ -313,7 +313,7 @@ test_no_green_for_15_minutes_raises_one_alarm_not_two() {
   awk -F'\t' -v OFS='\t' -v t=$(( $(date +%s) - 960 )) '{ $4 = t; print }' "$HOME_D/data/trunk-landings.tsv" > "$W/rows" && mv "$W/rows" "$HOME_D/data/trunk-landings.tsv"
   sweep >/dev/null; rm -f "$HOME_D"/data/jg-trunk-landing/.green-alarm-*; sweep >/dev/null
   [ "$(grep -c 'has had no green commit for 16 minutes' "$q")" = 1 ] || fail "the stall must raise one alarm through the landing check, not two: $(cat "$q" 2>&1)"
-  grep 'has had no green commit' "$q" | grep -q "trunk-no-green-proj-${green:0:12}-stall" || fail "the alarm key ends in -stall, which the wake routing wakes at once: $(cat "$q")"
+  grep 'has had no green commit' "$q" | grep -q "alert-line-red--proj-no-green-${green:0:12}" || fail "the stall raises line-red for the lead: $(cat "$q")"
   assert_contains "$(grep 'has had no green commit' "$q")" "live stays on ${green:0:12}" "the alarm says live stays on the last green commit"
   assert_contains "$(trunk green-alarm "$PROJ" 2>&1)" "already raised for the green pin ${green:0:12}" "a stall that goes on is not raised again"
   # The pin moves, and a later stall raises a new alarm.

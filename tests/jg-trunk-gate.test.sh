@@ -39,7 +39,7 @@ test_the_full_gate_charges_a_lane_only_for_what_it_broke() {
   refused 'a script that passes on the tip' breaks 't/c.test.sh'
   # Reported once for the tip tree: one wake and one note, however many lanes met it; and the tip was rerun once.
   [ "$(grep -c '^update ticket-red ' "$W/backlog-calls")" = 1 ] || fail "the tip's red must be noted once: $(cat "$W/backlog-calls")"
-  [ "$(grep -c 'trunk-tip-red-proj-' "$HOME_D/state/.wake-queue")" = 1 ] || fail "the tip's red must raise one alert: $(cat "$HOME_D/state/.wake-queue" 2>&1)"
+  [ "$(grep -c 'alert-line-red--proj-tip-' "$HOME_D/state/.wake-queue")" = 1 ] || fail "the tip's red must raise one alert: $(cat "$HOME_D/state/.wake-queue" 2>&1)"
   assert_contains "$(cat "$W/backlog-calls")" "update ticket-red --append-notes" "the note goes to the red ticket"
   assert_contains "$(cat "$W/backlog-calls")" "t/a.test.sh" "the note names the red script"
   [ "$(grep -c '^t/a.test.sh' "$HOME_D/data/trunk/"tip-results-proj-*.tsv)" = 1 ] || fail "the tip's result for a script is computed once"
@@ -54,7 +54,7 @@ test_the_full_gate_charges_a_lane_only_for_what_it_broke() {
   [[ $(tail -n 1 "$HOME_D/data/trunk-landing-proofs.tsv") =~ gate=ran:[1-9][0-9]*,failed:[1-9][0-9]*,secs:[0-9]+[[:space:]]done=[0-9]+$ ]] \
     || fail "the proofs row must keep the gate's scripts run, failed on the first run and seconds: $(tail -n 1 "$HOME_D/data/trunk-landing-proofs.tsv")"
   [ "$(cat "$HOME_D/state/trunk-green-proj")" != "$(tip)" ] || fail "a landing that set only the tip's own red aside still does not move the green pin"
-  [ "$(grep -c '^update ticket-red ' "$W/backlog-calls")" = 1 ] && [ "$(grep -c 'trunk-tip-red-proj-' "$HOME_D/state/.wake-queue")" = 1 ] || fail "the same tip tree is not reported twice"
+  [ "$(grep -c '^update ticket-red ' "$W/backlog-calls")" = 1 ] && [ "$(grep -c 'alert-line-red--proj-tip-' "$HOME_D/state/.wake-queue")" = 1 ] || fail "the same tip tree is not reported twice"
   pass 'the full gate blocks only what the lane broke: new, worse and broken-passing scripts block; the tip'"'"'s own red lands, reported once'
 }
 

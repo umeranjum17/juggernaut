@@ -77,7 +77,7 @@ red_run_url() {  # <repo> <run id>
 
 # file_red_item <item id> <filed path> <run id> <workflow> <conclusion> <head> <body> <wake text>
 # The one filing path for both modes: it adds the backlog item, records that it
-# filed, and queues the wake. A backlog that refuses the add is reported and
+# filed, and raises the line-red alert. A backlog that refuses the add is reported and
 # changes nothing else.
 file_red_item() {
   local item=$1 filed=$2 run_id=$3 workflow=$4 conclusion=$5 head=$6 body=$7 wake=$8
@@ -86,11 +86,9 @@ file_red_item() {
     --kind ship --body "$body" >/dev/null 2>&1; then
     printf '%s %s\n' "$run_id" "$head" > "$filed"
     say "filed $item for red run $run_id ($workflow, $conclusion) at head $head"
-    # shellcheck source=bin/jg-wake-lib.sh
-    if . "$SCRIPT_DIR/jg-wake-lib.sh" 2>/dev/null; then
-      jg_wake_append check "post-merge-ci-$item" "$wake" >/dev/null 2>&1 \
-        || say "could not queue the red-CI wake for $item"
-    fi
+    JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" raise line-red "post-merge-ci-$item" --note "$wake" 2>/dev/null \
+      | JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" deliver >/dev/null 2>&1 \
+      || say "could not raise line-red for $item"
     return 0
   fi
   say "$workflow went red at head $head on run $run_id, but backlog item $item could not be added"

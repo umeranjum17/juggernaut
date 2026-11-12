@@ -29,6 +29,9 @@ EOF
 jg_wake_append() { printf '%s\\n' "\$*" >> "$dir/wakes"; }
 EOF
   chmod +x "$dir/repo/bin/jg-backlog.sh"
+  # The real alert function and its tables raise line-red; only the wake queue is recorded.
+  cp "$ROOT/bin/jg-alert.sh" "$ROOT/bin/jg-machine.sh" "$dir/repo/bin/"
+  ln -s "$ROOT/core" "$dir/repo/core"
   cat > "$dir/fakebin/gh" <<EOF
 #!/usr/bin/env bash
 printf '[{"databaseId":4242,"status":"$status","conclusion":"$conclusion","headSha":"abcdef0123456789"}]\\n'
@@ -59,7 +62,9 @@ test_a_red_run_files_one_item_naming_the_run() {
   assert_contains "$(cat "$dir/backlog-adds")" 'actions/runs/4242' \
     'the item body must carry the failing run url'
   [ -f "$dir/wakes" ] || fail 'a red run must queue a wake'
-  assert_contains "$(cat "$dir/wakes")" 'check: Behavior suite went red on main' \
+  assert_contains "$(cat "$dir/wakes")" 'check alert-line-red--post-merge-ci-ci-red-main-4242 alert line-red (P1) at rung 2 for lead' \
+    'the red must raise the line-red alert for the lead'
+  assert_contains "$(cat "$dir/wakes")" 'Behavior suite went red on main' \
     'the wake must say which suite went red'
   pass 'a red run files one item naming the run'
 }
