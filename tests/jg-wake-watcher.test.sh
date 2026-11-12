@@ -63,7 +63,7 @@ shell_oldest() { # <read-model file>
   ' "$1"
 }
 shell_hostmem() { # <read-model file>
-  awk -F '\t' '$3 == "check" && $4 == "host-memory" { row=$0 } END { if (row != "") print row }' "$1"
+  awk -F '\t' '$3 == "check" && $4 == "alert-host--memory" { row=$0 } END { if (row != "") print row }' "$1"
 }
 
 BUS_BIN=$DIR/jg-bus
@@ -228,7 +228,7 @@ wait_ready || fail "the wake watcher never created its consumer: $(cat "$DIR/wat
 before=$("$BUS" probe wake-watcher)
 wait_field acked 1 || fail "the consumer did not acknowledge the wake raised before it started: $("$BUS" probe wake-watcher) $(cat "$DIR/watcher.log")"
 wait_rows 1 || fail "the fold did not take the recorded raise"
-"$WAKE" raise check host-memory "check: host memory ALERT: probe" now || fail "the second raise did not publish"
+"$WAKE" raise check alert-host--memory "alert host (P3) at rung 3 for main: memory" now || fail "the second raise did not publish"
 wait_field acked 2 || fail "the acknowledged counter did not rise on a real event: $("$BUS" probe wake-watcher)"
 after=$("$BUS" probe wake-watcher)
 [ "$(field pending)" = 0 ] || fail "events are still pending: $after"
@@ -236,8 +236,8 @@ pass "the acknowledged counter rises on real events: $before -> $after"
 
 "$BUS" watcher oldest 2>/dev/null | grep -q "^[0-9]*${TAB}[0-9]*${TAB}check${TAB}ready-work${TAB}check: ready work waiting (0/4 open): alpha-one${TAB}[0-9]*\$" \
   || fail "the oldest row is not the first raise: $("$BUS" watcher oldest 2>&1)"
-latest=$("$BUS" watcher latest check host-memory 2>/dev/null)
-[ "${latest##*"$TAB"}" = "check: host memory ALERT: probe" ] || fail "the newest host-memory row is wrong: $latest"
+latest=$("$BUS" watcher latest check alert-host--memory 2>/dev/null)
+[ "${latest##*"$TAB"}" = "alert host (P3) at rung 3 for main: memory" ] || fail "the newest host memory alert row is wrong: $latest"
 [ "$(rows)" = "$(cat "$HOME_DIR/state/.wake-queue")" ] || fail "the fold and the read model differ: $(rows) vs $(cat "$HOME_DIR/state/.wake-queue")"
 pass "the fold answers oldest and latest, and equals the read model the render writes"
 
@@ -246,7 +246,7 @@ ids=$("$WAKE" ids check ready-work) || fail "no id for the first raise"
 "$WAKE" ack "$ids" || fail "the acknowledgement did not publish"
 wait_field acked 3 || fail "the acknowledgement was not consumed: $("$BUS" probe wake-watcher)"
 wait_rows 1 || fail "the settled row is still in the fold: $(rows)"
-"$BUS" watcher oldest 2>/dev/null | grep -q 'host memory ALERT' || fail "the oldest row is not the remaining one"
+"$BUS" watcher oldest 2>/dev/null | grep -q 'alert host (P3)' || fail "the oldest row is not the remaining one"
 pass "an acknowledgement removes its row from the fold"
 
 # A restart handles what arrived while the service was down, and the counters continue.
@@ -279,5 +279,5 @@ cycle=$!
 for _ in $(seq 1 300); do [ ! -s "$DIR/watch.out" ] || break; sleep 0.1; done
 kill "$cycle" 2>/dev/null; wait "$cycle" 2>/dev/null
 chmod 600 "$HOME_DIR/state/.wake-queue"
-grep -q 'host memory ALERT: probe' "$DIR/watch.out" || fail "the watcher did not re-deliver the stalled row: out=$(cat "$DIR/watch.out") err=$(cat "$DIR/watch.err")"
+grep -q 'alert host (P3) at rung 3 for main: memory' "$DIR/watch.out" || fail "the watcher did not re-deliver the stalled row: out=$(cat "$DIR/watch.out") err=$(cat "$DIR/watch.err")"
 pass "the watcher cycle re-delivers the stalled oldest row with the queue file unreadable: $(head -n 1 "$DIR/watch.out")"

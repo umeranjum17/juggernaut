@@ -23,7 +23,7 @@ package main
 //	jg-bus watcher replay <events.jsonl> --home <key>
 //	                               fold recorded raise and acknowledgement events one by one and
 //	                               print, after each, the rows, the oldest row and the newest
-//	                               host-memory row as one JSON line; no server is read.
+//	                               alert-host--memory row as one JSON line; no server is read.
 //
 // WHAT THIS REPLACES. bin/jg-watch.sh's own_queue_resurface and host_memory_surface_queued each
 // opened the read model every poll (an awk over state/.wake-queue) and kept their own progress file
@@ -448,7 +448,7 @@ func (a *app) watcherReplay(args []string) int {
 		if r, ok := fold.oldest(0, false); ok {
 			out.Oldest = r.line()
 		}
-		if r, ok := fold.latest("check", "host-memory"); ok {
+		if r, ok := fold.latest("check", "alert-host--memory"); ok {
 			out.HostMem = r.line()
 		}
 		data, _ := json.Marshal(out)

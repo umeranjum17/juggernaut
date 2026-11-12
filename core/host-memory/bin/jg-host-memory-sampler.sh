@@ -64,6 +64,18 @@ jg_memory_sampler_interrupt() {
   printf '%s\t%s\t%s\n' "$(date +%s)" "$task" "$action" >> "$STATE/host-memory-interrupts.tsv"
 }
 
+# jg_memory_sampler_alert raise|resolve: the host alert of this home (bin/jg-alert.sh owns its one live record, its holder and its wake).
+# A Squad Lead home under a local root only records it: the root's sampler rings Main alone.
+jg_memory_sampler_alert() {
+  local verb=$1 lead=${2:-0} alert="$SAMPLER_DIR/jg-alert.sh"
+  case $verb in
+    resolve) JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" bash "$alert" resolve host--memory >/dev/null 2>&1 || true ;;
+    raise)
+      if [ "$lead" -eq 1 ]; then JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" bash "$alert" raise host memory >/dev/null
+      else JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" bash "$alert" raise host memory | JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" bash "$alert" deliver; fi ;;
+  esac
+}
+
 jg_memory_sampler_tick() {
   local out root task reason action epoch stop=0 latch="$STATE/.host-memory-alerted" lead=0
   # The guard walks the squad_lead homes below these itself, and only when it names consumers,
@@ -79,7 +91,7 @@ jg_memory_sampler_tick() {
   }
   case "${out%%$'\t'*}" in
     ALERT) ;;
-    WAIT|OK) rm -f "$latch"; return 0 ;;
+    WAIT|OK) [ ! -e "$latch" ] || jg_memory_sampler_alert resolve; rm -f "$latch"; return 0 ;;
     *) return 0 ;;
   esac
   [ ! -e "$latch" ] || return 0
@@ -92,12 +104,11 @@ jg_memory_sampler_tick() {
     *) action="automatic interrupt attempted: task $task" ;;
   esac
   epoch=$(date +%s)
-  jg_lock_acquire_wait "$JG_WAKE_QUEUE_LOCK" || return 0
   trap 'stop=1' HUP INT TERM
-  # The alert is one machine-wide event. A Squad Lead home under a local root settles it into the
-  # wake tally and its own interrupt log with no wake; the root's sampler wakes Main alone. A home with
-  # no readable local parent record (Main, a remote-routed lead, a damaged record) wakes as before.
-  if { if [ "$lead" -eq 1 ]; then jg_wake_settle check host-memory "$reason; $action"; else jg_wake_append_locked check host-memory "$reason; $action"; fi; } \
+  # The alert is one machine-wide event. A Squad Lead home under a local root records it and the interrupt log with no wake;
+  # the root's sampler wakes Main alone. A home with no readable local parent record (Main, a remote-routed lead, a damaged
+  # record) wakes as before.
+  if jg_memory_sampler_alert raise "$lead" \
     && printf '%s\t%s\t%s\n' "$epoch" "$task" "$reason; $action" >> "$STATE/host-memory-interrupts.tsv" \
     && printf '%s\n' "$reason; $action" > "$latch.$$" \
     && mv "$latch.$$" "$latch"; then
@@ -107,7 +118,6 @@ jg_memory_sampler_tick() {
     esac
   fi
   rm -f "$latch.$$"
-  jg_lock_release "$JG_WAKE_QUEUE_LOCK"
   trap 'exit 0' HUP INT TERM
   [ "$stop" -eq 0 ] || exit 0
 }

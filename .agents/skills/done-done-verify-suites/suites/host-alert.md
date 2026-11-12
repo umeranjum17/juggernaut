@@ -1,0 +1,3 @@
+# Host alert
+
+Host alert: run `done-done run host-alert` (`bash journeys/host-alert.sh`, which writes its log and `steps.json` into the run's folder); it runs the temp-space check, the browser reaper (a stop and a load episode), the host memory sampler in three homes, the wake watcher and the wake router on fixture homes. Each producer raises the alert `host` through `bin/jg-alert.sh`: Main gets one `check alert-host--<subject>` wake per episode, a Squad Lead home under a local root records the memory alert with no wake, the alert resolves when its cause ends so the next episode rings again, and the watcher and the bus read the new wake key; the old wake calls and the temp-space latch file are gone. It reads only generated fixtures (screen: none).

@@ -377,10 +377,11 @@ report_requires_wake() {  # <state>
     "$REPORT_FILE" 2>/dev/null
 }
 
-queue_result_wake() {  # <state>
-  jg_wake_append check startup-network \
-    "check: startup-network: deferred startup network checks finished ($1); read them with $JG_ROOT/bin/jg-startup-network.sh report" \
-    || true
+queue_result_wake() {  # <state>: the host alert rings once per result; read the result with `jg-startup-network.sh report`
+  local alert="$SCRIPT_DIR/jg-alert.sh"
+  { JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" bash "$alert" raise host startup-network \
+      | JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" bash "$alert" deliver \
+      && JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" bash "$alert" resolve host--startup-network; } >/dev/null 2>&1 || true
 }
 
 # Bounded by DELIVERY_DEADLINE, which publish() sets from the delivery budget.
@@ -431,7 +432,7 @@ EOF
 # Write the result files. Prints the final state, which differs from the
 # requested one only when the report itself could not be written.
 record_result() {  # <generation> <state> <phases> <locked> <started> <rc> <output-file> <timing-file>
-  local generation=$1 state=$2 phases=$3 locked=$4 started=$5 rc=$6 out=$7 timings=${8:-} report_published=1
+  local generation=$1 state=$2 phases=$3 locked=$4 started=$5 exit_code=$6 out=$7 timings=${8:-} report_published=1
   # Timings are published for EVERY outcome, including timeout and failure: a run
   # that hit the bound is exactly the run whose per-step record is worth having,
   # and whatever the killed sweeps managed to append is a real partial answer.
@@ -442,7 +443,7 @@ record_result() {  # <generation> <state> <phases> <locked> <started> <rc> <outp
   fi
   if ! write_atomic "$REPORT_FILE" < "$out"; then
     state=failed
-    rc=1
+    exit_code=1
     report_published=0
   fi
   rm -f "$DELIVERED_FILE" 2>/dev/null || true
@@ -451,7 +452,7 @@ state=$state
 pid=$$
 started=$started
 finished=$(now)
-rc=$rc
+rc=$exit_code
 locked=$locked
 phases=$phases
 generation=$generation
@@ -462,7 +463,7 @@ EOF
 }
 
 publish() {  # <generation> <state> <phases> <locked> <started> <rc> <output-file> <timing-file>
-  local generation=$1 state=$2 phases=$3 locked=$4 started=$5 rc=$6 out=$7 timings=${8:-}
+  local generation=$1 state=$2 phases=$3 locked=$4 started=$5 exit_code=$6 out=$7 timings=${8:-}
   DELIVERY_DEADLINE=$(( $(now) + $(delivery_budget) ))
   if ! take_lock "$PUBLISH_LOCK" "$(seconds_until "$DELIVERY_DEADLINE")"; then
     publish_lock_held "$generation" "$phases" "$locked" "$started" "$PUBLISH_LOCK" "$out" "$timings"
@@ -472,7 +473,7 @@ publish() {  # <generation> <state> <phases> <locked> <started> <rc> <output-fil
     jg_lock_release "$PUBLISH_LOCK"
     return 0
   fi
-  state=$(record_result "$generation" "$state" "$phases" "$locked" "$started" "$rc" "$out" "$timings")
+  state=$(record_result "$generation" "$state" "$phases" "$locked" "$started" "$exit_code" "$out" "$timings")
   jg_lock_release "$PUBLISH_LOCK"
   await_delivery "$generation" "$state"
 }

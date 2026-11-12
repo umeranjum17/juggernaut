@@ -57,6 +57,7 @@ JG_REAPER_CACHE=${XDG_CACHE_HOME:-$HOME/.cache}
 JG_REAPER_HOME=${JG_HOME:-}
 _jg_reaper_dir=${BASH_SOURCE[0]%/*}
 [ "$_jg_reaper_dir" != "${BASH_SOURCE[0]}" ] || _jg_reaper_dir=.
+JG_REAPER_ALERT=$_jg_reaper_dir/jg-alert.sh
 # shellcheck source=bin/jg-primary-scope-lib.sh
 . "$_jg_reaper_dir/jg-primary-scope-lib.sh"
 unset _jg_reaper_dir
@@ -67,8 +68,13 @@ jg_reaper_log() { # <line>: append one timestamped stop-log line
   printf '[%s] %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$1" >>"$JG_REAPER_STATE/browser-reaper.log" 2>/dev/null || true
 }
 
-jg_reaper_wake() { # <key> <payload>: one check row, only when a wake queue exists
-  declare -F jg_wake_append >/dev/null && jg_wake_append check "$1" "$2" 2>/dev/null || true
+jg_reaper_raise() { # <subject>: raise the host alert (bin/jg-alert.sh owns the wake, its holder and its one live record per subject)
+  JG_HOME=$JG_REAPER_HOME JG_STATE_OVERRIDE=$JG_REAPER_STATE bash -c \
+    'bash "$1" raise host "$2" | bash "$1" deliver' _ "$JG_REAPER_ALERT" "$1" 2>/dev/null || true
+}
+
+jg_reaper_resolve() { # <subject>: the host alert's cause is over, so its next raise rings again
+  JG_HOME=$JG_REAPER_HOME JG_STATE_OVERRIDE=$JG_REAPER_STATE bash "$JG_REAPER_ALERT" resolve "host--$1" >/dev/null 2>&1 || true
 }
 
 jg_reaper_roots() { # print the fleet temp and scratch roots, one per line
@@ -202,8 +208,9 @@ jg_reaper_sweep() { # stop every browser root the decision in the header says to
     if [ "$age" -gt "$oldest" ]; then oldest=$age oldest_dir=$dir; fi
   done <<<"$browsers"
   [ "$stopped" -gt 0 ] || return 0
-  jg_reaper_wake browser-reaper \
-    "check: browser reaper stopped $stopped stale test browsers: oldest ${oldest}s at $oldest_dir (state/browser-reaper.log)"
+  jg_reaper_log "alert: stopped $stopped stale test browsers, oldest ${oldest}s at $oldest_dir"
+  jg_reaper_raise browser-reaper
+  jg_reaper_resolve browser-reaper   # one stop is one event: the next stop rings again
 }
 
 jg_reaper_load_groups() { # print the top process groups by count, with oldest age
@@ -260,6 +267,7 @@ jg_reaper_load_alarm() { # main home only: one wake per episode of load above fa
   jg_reaper_load_settings "$JG_REAPER_CONFIG"
   state=$JG_REAPER_STATE/.browser-reaper-load
   if ! jg_reaper_load_above "$load" "$JG_REAPER_LOAD_LIMIT"; then
+    [ ! -e "$state.raised" ] || jg_reaper_resolve browser-reaper-load
     rm -f "$state" "$state.raised" 2>/dev/null || true
     return 0
   fi
@@ -267,8 +275,8 @@ jg_reaper_load_alarm() { # main home only: one wake per episode of load above fa
   case $first in '' | *[!0-9]*) first=$now; printf '%s\n' "$first" >"$state" 2>/dev/null || true ;; esac
   [ $((now - first)) -ge "$JG_REAPER_LOAD_WINDOW" ] && [ ! -e "$state.raised" ] || return 0
   : >"$state.raised" 2>/dev/null || true
-  jg_reaper_wake browser-reaper-load \
-    "check: machine load $load above $JG_REAPER_LOAD_LIMIT over $JG_REAPER_LOAD_CORES cores for $(( (now - first) / 60 )) min: top process groups: $(jg_reaper_load_groups)"
+  jg_reaper_log "alert: machine load $load above $JG_REAPER_LOAD_LIMIT over $JG_REAPER_LOAD_CORES cores for $(( (now - first) / 60 )) min: $(jg_reaper_load_groups)"
+  jg_reaper_raise browser-reaper-load
 }
 
 jg_reaper_tick() { # once per watcher check cadence: the sweep, then the alarm

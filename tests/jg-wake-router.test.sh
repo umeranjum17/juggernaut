@@ -94,12 +94,12 @@ test_append_dedupes_repeats_and_never_hides() (
   out=$(JG_STATE_OVERRIDE="$dir/state" JG_HOME="$dir" bash -c '. "$1/bin/jg-wake-lib.sh"
     jg_wake_bus() { :; }
     for i in 1 2; do
-      jg_wake_append_locked check host-memory "check: ready work"
+      jg_wake_append_locked check alert-host--memory "check: ready work"
       printf "%s " "$JG_WAKE_LAST"
     done
-    jg_wake_append_locked check host-memory "check: other work"
+    jg_wake_append_locked check alert-host--memory "check: other work"
     printf "%s\n" "$JG_WAKE_LAST"' _ "$ROOT" 2>&1)
-  assert_equals "$out" "now:host-memory batch:host-memory now:host-memory" \
+  assert_equals "$out" "now:alert-host--memory batch:alert-host--memory now:alert-host--memory" \
     "an unchanged now event inside the re-alert window rides the digest; a changed one wakes"
   # With no Go to build the router, an event is urgent rather than hidden.
   out=$(JG_WAKE_CORE_BIN="$dir/none/jg-wake-core" JG_WAKE_CORE_GO="$dir/no-such-go" JG_STATE_OVERRIDE="$dir/state2" \

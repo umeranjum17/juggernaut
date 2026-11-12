@@ -16,8 +16,8 @@
 #         writable first, because a read-only directory cannot otherwise be removed.
 #         Liveness is read from /proc, so a host without /proc reaps nothing.
 #         Each removal is logged to state/tmp-reaper.log and is silent otherwise.
-#         It prints one line when the temp filesystem use reaches JG_TMP_ALERT_PCT percent (default 70),
-#         once per crossing: state/.tmp-reaper-alert records that the line was sent and clears when use drops back.
+#         It raises the host alert (bin/jg-alert.sh) when the temp filesystem use reaches JG_TMP_ALERT_PCT percent (default 70),
+#         once per crossing: the alert's one live record holds it, and it is resolved when use drops back. The line goes to the log.
 #         The same check also reaps test sandboxes (bin/jg-tmp-sandbox-lib.sh owns the rule): a jg-trunk.* or tmp.* entry holding a
 #         trunk-landing tree whose processes (or, with none, newest change) are older than its own timeout
 #         (.jg-sandbox-timeout seconds in the folder, else JG_TMP_SANDBOX_TIMEOUT_SEC, default 3600) has them stopped and the
@@ -46,7 +46,6 @@ TMP_ROOT=${TMP_ROOT%/}
 AGE_MIN=${JG_TMP_REAP_AGE_MIN:-120}
 ALERT_PCT=${JG_TMP_ALERT_PCT:-70}
 LOG=$STATE/tmp-reaper.log
-ALERT_RECORD=$STATE/.tmp-reaper-alert
 # shellcheck source=bin/jg-tmp-sandbox-lib.sh
 . "$SCRIPT_DIR/jg-tmp-sandbox-lib.sh"
 
@@ -103,16 +102,16 @@ reap() {
   trap - EXIT HUP INT TERM
 }
 
+# The host alert rings once while use stays over the line (bin/jg-alert.sh keeps its one live record) and is resolved when use drops back.
 alert() {
-  local pct
+  local pct jg_alert="$SCRIPT_DIR/jg-alert.sh"
   pct=$(df -P -- "$TMP_ROOT" 2>/dev/null | awk 'NR == 2 { gsub("%", "", $5); print $5 }')
-  case "$pct" in '' | *[!0-9]*) return 0 ;; esac
+  case "$pct" in '' | *[!0-9]* ) return 0 ;; esac
   if [ "$pct" -ge "$ALERT_PCT" ]; then
-    [ -e "$ALERT_RECORD" ] && return 0
-    : > "$ALERT_RECORD"
-    printf 'tmp: %s is %s%% full (alert at %s%%); something is leaking scratch, or a worker holds large files there\n' "$TMP_ROOT" "$pct" "$ALERT_PCT"
+    printf '[%s] alert: %s is %s%% full (alert at %s%%)\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$TMP_ROOT" "$pct" "$ALERT_PCT" >> "$LOG" 2>/dev/null || true
+    JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" bash "$jg_alert" raise host tmp-space | JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" bash "$jg_alert" deliver
   else
-    rm -f -- "$ALERT_RECORD"
+    JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" bash "$jg_alert" resolve host--tmp-space >/dev/null 2>&1 || true
   fi
 }
 
