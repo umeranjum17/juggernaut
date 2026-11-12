@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The done-done journey journeys/wake-routing.sh runs this suite with tests/jg-wake-route.test.sh.
+# The wake-routing done-done journey runs this suite with tests/jg-wake-route.test.sh.
 # Wake urgency routing, proved through the Go command the wake library calls (bin/jg-wake-core.sh).
 # tests/fixtures/wake-recorded/route-classes.tsv holds the class the shell rule reader gave each
 # distinct event recorded on a real JG_WAKE stream (241 events, 205 raises); the Go port must give

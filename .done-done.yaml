@@ -52,16 +52,16 @@ journeys:
     command: bash tests/jg-stack.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   wake-watcher:
     tier: local
-    command: bash journeys/wake-watcher.sh
+    command: bash tests/jg-wake-watcher.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   wake-batching:
     tier: local
-    command: bash journeys/wake-batching.sh
+    command: bash tests/jg-wake-batching.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   required-shard-retry:
     tier: local
     command: bash journeys/required-shard-retry.sh
   trunk-latency:
     tier: local
-    command: bash journeys/trunk-latency.sh
+    command: env -u JG_TASK_ID bash tests/jg-trunk-latency.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   ports-adapter-refusal:
     tier: local
     command: bash journeys/ports-adapter-refusal.sh
@@ -70,10 +70,10 @@ journeys:
     command: bash tests/jg-rejected-state-check-once.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   wake-schedule:
     tier: local
-    command: bash journeys/wake-schedule.sh
+    command: (bash tests/jg-wake-schedule.test.sh && bash tests/jg-wake-batching.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   wake-batch-threshold:
     tier: local
-    command: bash journeys/wake-batch-threshold.sh
+    command: WAKE_SCHEDULE_ONLY=batch-threshold bash tests/jg-wake-schedule.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   planned-wait:
     tier: local
     command: bash tests/jg-planned-wait.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -82,11 +82,11 @@ journeys:
     command: bash tests/jg-wait-quiet.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   wait-word:
     tier: local
-    command: bash journeys/wait-word.sh
+    command: JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-wait-word.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
     timeout: 10m
   watcher-window-inventory:
     tier: local
-    command: bash journeys/watcher-window-inventory.sh
+    command: bash tests/jg-watch-inventory.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   migration-card:
     tier: local
     command: bash journeys/migration-card.sh
@@ -159,7 +159,7 @@ journeys:
     command: bash journeys/release-shipped-merge-refusal.sh
   critical-path:
     tier: local
-    command: bash journeys/critical-path.sh
+    command: (bash tests/jg-critical-path.test.sh && bash tests/jg-critical-path-spawn.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   trunk-landing:
     tier: local
     command: bash journeys/trunk-landing.sh
@@ -223,7 +223,7 @@ journeys:
     command: bash journeys/lead-sweep-end-states.sh
   wake-routing:
     tier: local
-    command: bash journeys/wake-routing.sh
+    command: (bash tests/jg-wake-router.test.sh && bash tests/jg-wake-route.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
 
   merge-card-pool-fallback:
     tier: local
@@ -333,7 +333,7 @@ journeys:
     command: bash journeys/wake-bus-live.sh
   wedge-marker:
     tier: local
-    command: bash journeys/wedge-marker.sh
+    command: bash bin/jg-test-run.sh tests/jg-bus.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   wake-cursor-kill:
     tier: local
     command: bash journeys/wake-cursor-kill.sh
@@ -428,7 +428,7 @@ journeys:
     timeout: 10m
   trace-writers:
     tier: local
-    command: bash journeys/trace-writers.sh
+    command: JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-trace-writers.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
     timeout: 10m
   ticket-move:
     tier: local

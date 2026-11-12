@@ -19,7 +19,7 @@
 # The corpus is written here rather than recorded from a home: a record names a project, a
 # worktree and a home path, so a recorded corpus would carry an owner's data into the repo.
 #
-# This is also the test that owns journeys/watcher-window-inventory.sh (the done-done journey
+# This is also the test that owns the watcher-window-inventory journey of .done-done.yaml (the done-done journey
 # runs this file), so the changed-test map selects it for a change to that journey.
 set -u
 

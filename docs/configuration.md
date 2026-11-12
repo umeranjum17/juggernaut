@@ -1417,7 +1417,7 @@ When the task record names that PR and [`core/merge-on-green`](../core/merge-on-
 The watcher's own `done: merged` line or `NOT merging` alert wakes the lead instead.
 A `done` line with no recorded PR, a PR the watcher does not own, a head it already tried, and every Recon result, `failed`, `blocked` and `needs-decision` line keep waking at once.
 Nothing is dropped: the next drain presents every held row.
-[`core/wake/README.md`](../core/wake/README.md) owns the rule grammar, and `journeys/wake-batch-threshold.sh` proves both triggers and the urgent bypass.
+[`core/wake/README.md`](../core/wake/README.md) owns the rule grammar, and the `wake-batch-threshold` journey proves both triggers and the urgent bypass.
 
 ## Batch digest cadence (config/status-digest)
 
