@@ -15,6 +15,8 @@ journeys:
   machine-observers:
     tier: local
     command: bash journeys/machine-observers.sh
+  landing-table:
+    command: bash journeys/landing-table.sh
   worker-table:
     tier: local
     command: bash journeys/worker-table.sh

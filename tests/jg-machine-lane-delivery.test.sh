@@ -50,7 +50,8 @@ see() {
   local out from
   out=$(bash "$JM" show lane-delivery "$1" 2>&1); assert_contains "$out" $'\nstate\t'"$3"$'\n' "$1 after $2 is $3: $out"
   from=$(bash "$OBS" detail "$1" | awk -F'\t' '$1 == "from" { print $2 }')
-  [ "$from" = none ] || grep -q "^state	${from#*:}	" "$TABLES/${from%%:*}.tsv" || fail "$1 is $3, read from $from, which no older table holds"
+  case $from in landing:*) case ${from#landing:} in new|running|wait|retry|final|landed) ;; *) fail "$1 is $3, read from $from, which is no word of the lander's state line" ;; esac ;;  # the landing table now holds the states of a landing run; the lander's line words are records
+    none) ;; *) grep -q "^state	${from#*:}	" "$TABLES/${from%%:*}.tsv" || fail "$1 is $3, read from $from, which no older table holds" ;; esac
   if [ -n "${LAST[$1]:-}" ]; then tab "${LAST[$1]}" "$2" "$3"; else printf '%s\n' "$3"; fi >> "$T/corpus"
   LAST[$1]=$3
 }

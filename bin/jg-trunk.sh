@@ -784,6 +784,8 @@ lane_admit() {  # <id> <tip> <expected head or -> <follow 0|1>
     [ "$4" != 1 ] || lane_follow "$LANE_BRANCH" "$LANE_CAND" "$fresh" "$(jg_dod_meta_value "$META" worktree)"
     LANE_CAND=$fresh
   fi
+  # The admission is over, so the landing run is in its state `checking` (data/trunk-landing-phases.tsv; core/machines/observers/landing.sh reads it).
+  row trunk-landing-phases.tsv "$id" "$PN" "$tip" "$LANE_HEAD" checking "$(date +%s)" ""
   n=$(git -C "$PROJ" rev-list --count "$tip..$LANE_CAND")
   [ "$n" = 1 ] && [ "$(git -C "$PROJ" rev-list --parents -n 1 "$LANE_CAND" | wc -w)" = 2 ] || refuse "one commit per ticket: $LANE_BRANCH has $n commits over $TRUNK; squash it to one"
   ticket_ref_check "$id" "$LANE_CAND"

@@ -1,0 +1,3 @@
+# Landing table
+
+Landing table: run `done-done run landing-table` (`bash journeys/landing-table.sh`, which runs `tests/jg-machine-landing.test.sh` and writes its log and `steps.json` into the run's folder); it lints `core/machines/tables/landing.tsv` (9 states, 13 moves, each with a test) and its enum, reads a fixture record in each of the nine states through the real observer (`core/machines/observers/landing.sh`, which reads the lander's state line, `data/trunk-resolving.tsv` and the phase rows `bin/jg-trunk.sh` writes in `data/trunk-landing-phases.tsv`), reports legal and illegal moves to the shadow log (a legal move adds no line), and lands a ready lane from one host tick (screen: none).

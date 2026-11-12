@@ -19,7 +19,7 @@ The `Ask` column is the command that prints a record's state and its legal moves
 | `delivering` | `the inside of the ticket stage delivering (machine 20 of the state-machine plan)` | `core/machines/observers/ticket.sh` | 9 | 12 | `bin/jg-machine.sh next delivering <id>` |
 | `delivery` | `a change in core/machines/changes.tsv, its trunk commit, data/trunk-live.tsv and its config/ switch` | `core/machines/observers/delivery.sh` | 7 | 22 | `bin/jg-machine.sh next delivery <id>` |
 | `host` | `state/.stops/pool-<project>.pool-full` | `bin/jg-spawn.sh` | 2 | 2 | `bin/jg-machine.sh next host <id>` |
-| `landing` | `data/jg-trunk-landing/<task>.<head>[.<ctx>].state` | `core/trunk-landing/trunk-landing.sh` | 6 | 9 | `bin/jg-machine.sh next landing <id>` |
+| `landing` | `data/jg-trunk-landing/<task>.<head>[.<ctx>].state, data/trunk-resolving.tsv and data/trunk-landing-phases.tsv: one landing run of a lane (machine 6 of the state-machine plan)` | `core/machines/observers/landing.sh` | 9 | 13 | `bin/jg-machine.sh next landing <id>` |
 | `lane-delivery` | `a lane's state/<id>.status and .meta, data/jg-trunk-landing/<id>.<head>.state, data/trunk-landings.tsv, data/trunk-live.tsv` | `core/machines/observers/lane-delivery.sh` | 12 | 17 | `bin/jg-machine.sh next lane-delivery <id>` |
 | `markers` | `state/.<kind>-<pane key> files` | `bin/jg-watch.sh` | 3 | 2 | `bin/jg-machine.sh next markers <id>` |
 | `message` | `state/<task>.inbox/NNN.msg with .delivery.jsonl; the ladder counts are fields (id: <task>:<NNN>; machine 9 of the state-machine plan)` | `core/machines/observers/message.sh` | 5 | 8 | `bin/jg-machine.sh next message <id>` |
