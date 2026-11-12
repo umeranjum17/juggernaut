@@ -14,7 +14,16 @@
 #   model-relaunch    core/sentinel/bin/jg-sentinel.sh     the event a model relaunch was last asked for
 #   land-next         bin/jg-trunk.sh                      the mark that lands a lane ahead of the queue
 #   models            bin/jg-spawn.sh                      the model history of the task
-JG_TASK_FILE_KINDS_RETIRED="probe-at account-probe-at exit check-trust check.sh model-relaunch land-next models"
+# Slice 3 (jg8-j19c):
+#   pi-ext.ts         bin/jg-spawn.sh                      the pi busy-state extension of the task
+#   log               per-task writers                     the task's own log
+#   jsonl             per-task writers                     the task's own event lines
+#   pr-poll           bin/jg-pr-lib.sh                     the PR poll data of the task
+#   scratch           bin/jg-spawn.sh                      the pointer to the task's scratch directories
+#   local-suite       bin/jg-local-suite.sh                the local suite proof of the lane
+#   pr-poll-registration  bin/jg-pr-lib.sh                 the PR poll registration of the task
+#   prelimit-gen      core/quota-failover/quota-failover   the spawn generation a pre-limit relaunch was done for
+JG_TASK_FILE_KINDS_RETIRED="probe-at account-probe-at exit check-trust check.sh model-relaunch land-next models pi-ext.ts log jsonl pr-poll scratch local-suite pr-poll-registration prelimit-gen"
 
 # jg_task_files_retire <state dir> <task id>: remove every listed kind for the task. Best effort, never fails.
 jg_task_files_retire() {
