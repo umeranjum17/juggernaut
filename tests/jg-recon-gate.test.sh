@@ -256,25 +256,26 @@ test_a_critic_task_passes_on_its_critic_md() {
   pass "jg-recon-gate.sh: a critic task passes on its critic.md and a researcher is not one"
 }
 
-test_a_waiver_by_main_is_a_file_the_gate_reads() {
+test_the_owners_bypass_lets_a_recon_through_and_a_waiver_by_main_does_not() {
   local wdir=$HOME_DIR/state/recon-gate-waiver
   make_recon rg-waive deep
   rm -f "$HOME_DIR/data/rg-waive/report.md"
-  expect_refused rg-waive "report.md is missing" "a deep Recon with no report, no waiver yet"
+  expect_refused rg-waive "report.md is missing" "a deep Recon with no report, no bypass yet"
+  # A waiver file by Main alone is refused, with the reason.
   mkdir -p "$wdir"
-  printf 'reason: the owner dropped the report\n' > "$wdir/rg-waive"
-  expect_refused rg-waive "needs a 'waived-by: Main' line" "a waiver with no author"
-  printf 'waived-by: Main\n' > "$wdir/rg-waive"
-  expect_refused rg-waive "needs a 'waived-by: Main' line" "a waiver with no reason"
   printf 'waived-by: Main\nreason: the owner dropped the report\n' > "$wdir/rg-waive"
+  expect_refused rg-waive "no longer read" "a whole waiver file by Main"
+  expect_refused rg-waive "owner's recorded bypass" "the refusal names the way through"
+  # The owner's bypass, written by the real command, passes the gate and says whose word it is.
+  JG_HOME="$HOME_DIR" bash "$ROOT/bin/jg-proof-bypass.sh" grant --ticket rg-waive --word owner-rule-abc123 >/dev/null 2>&1 \
+    || fail "could not grant the ticket bypass"
   run_gate rg-waive
-  expect_code 0 "$RC" "a whole waiver passes the gate (got: $OUT)"
-  assert_contains "$OUT" "WAIVED by Main" "the pass line did not say it was waived"
-  assert_contains "$OUT" "the owner dropped the report" "the pass line did not carry the reason"
+  expect_code 0 "$RC" "a ticket bypass passes the gate (got: $OUT)"
+  assert_contains "$OUT" "BYPASSED by the owner's word owner-rule-abc123" "the pass line did not say whose word it is"
   make_recon rg-nowaive deep
   rm -f "$HOME_DIR/data/rg-nowaive/report.md"
-  expect_refused rg-nowaive "report.md is missing" "a waiver for one task does not cover another"
-  pass "jg-recon-gate.sh: a waiver by Main is read from a file and covers only its own task"
+  expect_refused rg-nowaive "report.md is missing" "a ticket bypass for one task does not cover another"
+  pass "jg-recon-gate.sh: the owner's bypass passes a Recon and prints whose word it is; a waiver by Main is refused"
 }
 
 test_usage_errors() {
@@ -335,6 +336,6 @@ test_closure_check_closes_the_last_round
 test_source_budget
 test_quick_and_legacy_are_exempt
 test_a_critic_task_passes_on_its_critic_md
-test_a_waiver_by_main_is_a_file_the_gate_reads
+test_the_owners_bypass_lets_a_recon_through_and_a_waiver_by_main_does_not
 test_usage_errors
 test_board_report_is_written_by_the_command

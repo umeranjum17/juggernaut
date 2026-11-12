@@ -32,12 +32,11 @@
 # one `Round <n>: new gaps <k>` line, at any depth. `--is-critic` only asks
 # whether the task is one: exit 0 when it is, 1 when it is not, nothing printed.
 #
-# A waiver by Main is a file the gate reads: <state>/recon-gate-waiver/<task-id>
-# (the state directory is JG_STATE_OVERRIDE, else <JG_HOME>/state), written by
-# Main with a `waived-by: Main` line and a non-empty `reason: <why>` line. With
-# a whole waiver the depth checks are skipped and the gate prints the reason;
-# a waiver missing either line is refused, so a half-written file never passes.
-# It waives this depth gate only, never the owner-call completion gate.
+# The owner's bypass (bin/jg-proof-bypass.sh, the record config/proof-bypass) lets a
+# Recon past this depth gate by the same record and command as a ship; the gate prints
+# whose word it is. A waiver file by Main (<state>/recon-gate-waiver/<task-id>) is no
+# longer read and is refused with that reason. A bypass never waives the owner-call
+# completion gate.
 #
 # It prints one line and exits 0 on success, one line per refusal and exits 1
 # otherwise, and exits 2 on a usage error. A "board link missing" refusal waits
@@ -73,15 +72,22 @@ if [ ! -f "$dir/report.md" ] && [ -f "$dir/critic.md" ]; then
 fi
 if [ -n "$is_critic" ]; then [ -n "$critic_task" ]; exit; fi
 
+# The owner's bypass is the one way past this gate: the record bin/jg-proof-bypass.sh
+# keeps, found for the task's ticket (then its project, then the home). A waiver file
+# by Main alone is no longer read; it is refused with that reason.
 state=${JG_STATE_OVERRIDE:-${JG_HOME:-$root}/state}
-waiver=$state/recon-gate-waiver/$task
-if [ -f "$waiver" ]; then
-  waiver_reason=$(sed -n 's/^reason:[[:space:]]*//p' "$waiver" | head -1)
-  if grep -Eqi '^waived-by:[[:space:]]*Main[[:space:]]*$' "$waiver" && [ -n "$waiver_reason" ]; then
-    echo "recon gate: WAIVED by Main - $task: $waiver_reason"
-    exit 0
-  fi
-  echo "jg-recon-gate: refused: the waiver $waiver needs a 'waived-by: Main' line and a 'reason: <why>' line" >&2
+bypass_cmd=$root/bin/jg-proof-bypass.sh
+bypass_project=$(sed -n 's/^project=//p' "$state/$task.meta" 2>/dev/null | head -1)
+bypass_project=$(basename -- "${bypass_project:-}" 2>/dev/null)
+if bypass_id=$(JG_HOME="${JG_HOME:-$root}" "$bypass_cmd" find "$task" "$bypass_project" 2>/dev/null); then
+  bypass_line=$(JG_HOME="${JG_HOME:-$root}" "$bypass_cmd" list --standing | awk -F'\t' -v i="$bypass_id" '$1 == i { print; exit }')
+  bypass_scope=$(printf '%s' "$bypass_line" | cut -f3)
+  bypass_word=$(printf '%s' "$bypass_line" | cut -f5 | sed 's/^word=//')
+  echo "recon gate: BYPASSED by the owner's word $bypass_word (bypass $bypass_id, scope $bypass_scope) - $task"
+  exit 0
+fi
+if [ -f "$state/recon-gate-waiver/$task" ]; then
+  echo "jg-recon-gate: refused: a waiver file by Main is no longer read; only the owner's recorded bypass lets a Recon past this gate (bin/jg-proof-bypass.sh grant --ticket $task --word <owner rule or board answer>)" >&2
   exit 1
 fi
 

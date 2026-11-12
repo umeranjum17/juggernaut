@@ -122,21 +122,21 @@ test_a_recon_done_waits_for_both_gates() {
   assert_absent "$home/state/$id.status" 'a refused Recon done wrote nothing'
   recon_append "$home" "$id" 'working [at=1]: reading sources'
   [ "$RC" -eq 0 ] || fail "a working line of a Recon was refused: $ERR"
-  # A waiver by Main passes the depth gate but never the completion gate.
-  mkdir -p "$home/state/recon-gate-waiver"
-  printf 'waived-by: Main\nreason: owner dropped the depth\n' > "$home/state/recon-gate-waiver/$id"
+  # The owner's bypass passes the depth gate but never the completion gate.
+  JG_HOME="$home" JG_STATE_OVERRIDE="$home/state" JG_CONFIG_OVERRIDE="$home/config" "$ROOT/bin/jg-proof-bypass.sh" grant --ticket "$id" --word owner-rule-abc123 >/dev/null 2>&1 \
+    || fail 'could not grant the ticket bypass'
   printf '# Report\n\nNo captain choice.\n' > "$dir/report.md"
   recon_append "$home" "$id" 'done [at=2]: report ready'
-  [ "$RC" -eq 1 ] || fail 'a waived Recon passed without its completion gate'
-  assert_not_contains "$ERR" 'depth gate' 'a waived depth gate is not named as a gap'
-  assert_contains "$ERR" 'completion gate' 'the completion gate still stands behind a waiver'
+  [ "$RC" -eq 1 ] || fail 'a bypassed Recon passed without its completion gate'
+  assert_not_contains "$ERR" 'depth gate' 'a bypassed depth gate is not named as a gap'
+  assert_contains "$ERR" 'completion gate' 'the completion gate still stands behind a bypass'
   PATH="$home/fakebin:$PATH" JG_HOME="$home" JG_STATE_OVERRIDE="$home/state" JG_DATA_OVERRIDE="$home/data" \
     JG_CONFIG_OVERRIDE="$home/config" "$ROOT/bin/jg-captain-hold.sh" complete "$id" --none >/dev/null 2>&1 \
     || fail 'could not attest the completion gate'
   recon_append "$home" "$id" 'done [at=3]: report ready'
   [ "$RC" -eq 0 ] || fail "a Recon past both gates was refused: $ERR"
   assert_grep 'done [at=3]' "$home/state/$id.status" 'the accepted done is appended'
-  pass 'a Recon done is refused until the depth gate and the completion gate pass; a waiver covers only the first'
+  pass 'a Recon done is refused until the depth gate and the completion gate pass; a bypass covers only the first'
 }
 
 test_a_critic_task_done_needs_no_report() {
