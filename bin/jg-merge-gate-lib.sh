@@ -372,6 +372,15 @@ jg_dod_nav_gate() {  # <id> <meta> <text> [<where>] [<fallback text>]
   return 1
 }
 
+# Reads the sealed-run receipt of <id> at <head>. The compare of the account saved at the passed check belongs to the worker's own
+# done (<kind> = done); every other reader (the lander, crew state, the lavish guard, a lead on another account) reads the proof as
+# the lander does, with the caller's account and proof home cleared, so a proof saved under account A shows under account B.
+# Usage: jg_dod_proof_receipt_read <kind> <home> <merge-card> <id> <head>
+jg_dod_proof_receipt_read() {
+  if [ "$1" = 'done' ]; then JG_HOME=$2 "$3" receipt "$4" "$5"
+  else env -u CLAUDE_CONFIG_DIR -u DONE_DONE_HOME JG_HOME="$2" "$3" receipt "$4" "$5"; fi
+}
+
 # The proof a local-trunk lane needs at its exact head, checked once and whole: its completion receipt (PASS, this head, this
 # incarnation), approved merge-card evidence that cites files (core/merge-card's saved pass for this head), and a sealed clean
 # done-done run at this head holding those files (`merge-card receipt`). A PASS receipt alone is not enough. Prints one line per
@@ -407,7 +416,7 @@ jg_dod_trunk_proof_gaps() {
   fi
   if ! { [ -f "$card" ] && jq -e --arg h "$ch" 'select(.head == $h and .verdict == "pass") | (.check.evidence // []) | length > 0' "$card" >/dev/null 2>&1; }; then
     echo "no approved merge-card evidence citing files for head ${head:0:12} of $id (run: JG_HOME=$home $mc check $id <worktree> $head <PR url|->$cnote)"; gaps=1
-  elif ! why=$(JG_HOME=$home "$mc" receipt "$id" "$ch" 2>&1 >/dev/null); then
+  elif ! why=$(jg_dod_proof_receipt_read "${6:-}" "$home" "$mc" "$id" "$ch" 2>&1 >/dev/null); then
     # merge-card names why it refused (a run that exists but cites other evidence, a changed proof context); say that,
     # not that no run exists. It prints nothing when no run holds the cited evidence at the head.
     why=${why%%$'\n'*}; why=${why#merge-card: }
