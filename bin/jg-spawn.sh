@@ -4473,7 +4473,7 @@ BUSY_GEN=
     j_submit=$(json_escape "$busy_cmd_prefix busy $busy_suffix --event user-prompt-submit 2>/dev/null || true")
     j_stopfail=$(json_escape "$busy_cmd_prefix idle $busy_suffix --event stop-failure 2>/dev/null || true")
     j_sessionend=$(json_escape "$busy_cmd_prefix idle $busy_suffix --event session-end 2>/dev/null || true")
-    stop_entry=
+    stop_busy_hook=
     if [ "$KIND" = squad_lead ] && grep -qF '.jg-busy-stop' "$WT/bin/jg-turnend-guard.sh" 2>/dev/null; then
       {
         printf 'writer=%s\n' "$JG_ROOT/bin/jg-busy-event.sh"
@@ -4489,7 +4489,7 @@ BUSY_GEN=
         stop_turnend="touch $(shell_quote "$TURNEND"); "
       fi
       j_stop=$(json_escape "${stop_turnend}$busy_cmd_prefix idle $busy_suffix --event stop 2>/dev/null || true")
-      stop_entry="\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"$j_stop\"}]}],"
+      stop_busy_hook=",{\"type\":\"command\",\"command\":\"$j_stop\"}"
     fi
     # The learn-from-mistakes poll guard (0.12.0+) runs report-only: its deny
     # output is discarded, so a would-be block is only logged to its
@@ -4500,7 +4500,13 @@ BUSY_GEN=
       j_guard=$(json_escape "node $(shell_quote "$poll_guard") >/dev/null 2>&1 || true")
       guard_entries="\"PreToolUse\":[{\"matcher\":\"Bash|Edit|Write|MultiEdit|NotebookEdit\",\"hooks\":[{\"type\":\"command\",\"command\":\"$j_guard\"}]}],\"SessionStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"$j_guard\"}]}],"
     fi
-    hooks_json="\"hooks\":{${guard_entries}\"UserPromptSubmit\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"$j_submit\"}]}],${stop_entry}\"StopFailure\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"$j_stopfail\"}]}],\"SessionEnd\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"$j_sessionend\"}]}]}"
+    # The beat (bin/jg-hook.sh, core/hooks/): one dispatcher entry for each event, a separate hook
+    # object so it never touches the busy-state entries above. PostToolBatch exists only for it.
+    beat_hook() {  # <event>: one hook object running the dispatcher for that event
+      printf '{"type":"command","command":"%s"}' "$(json_escape "$(shell_quote "$JG_ROOT/bin/jg-hook.sh") $1 $(shell_quote "$STATE_REAL") $(shell_quote "$ID") 2>/dev/null || true")"
+    }
+    stop_entry="\"Stop\":[{\"hooks\":[$(beat_hook Stop)${stop_busy_hook}]}],"
+    hooks_json="\"hooks\":{${guard_entries}\"UserPromptSubmit\":[{\"hooks\":[$(beat_hook UserPromptSubmit),{\"type\":\"command\",\"command\":\"$j_submit\"}]}],\"PostToolBatch\":[{\"hooks\":[$(beat_hook PostToolBatch)]}],${stop_entry}\"StopFailure\":[{\"hooks\":[$(beat_hook StopFailure),{\"type\":\"command\",\"command\":\"$j_stopfail\"}]}],\"SessionEnd\":[{\"hooks\":[$(beat_hook SessionEnd),{\"type\":\"command\",\"command\":\"$j_sessionend\"}]}]}"
     if [ "$KIND" = squad_lead ]; then
       session_keys='"feedbackDrafts":"off",'
       if [ "$KEEP_AI_TRAILERS" != 1 ]; then

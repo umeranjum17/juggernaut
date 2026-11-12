@@ -22,6 +22,9 @@ journeys:
   busy-beat:
     tier: local
     command: bash tests/jg-busy-beat.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  hook-beat:
+    tier: local
+    command: bash journeys/hook-beat.sh
   learnings:
     tier: local
     command: bash tests/jg-learnings.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
