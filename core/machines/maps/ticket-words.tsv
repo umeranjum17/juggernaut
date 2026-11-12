@@ -81,14 +81,6 @@ word	host	pool-full	ready	tick	ok
 word	markers	owned	-	-	-
 word	markers	orphan	-	-	-
 word	markers	removed	-	-	-
-word	trunk-pointers	released	-	-	-
-word	trunk-pointers	rolled	-	-	-
-word	trunk-pointers	green	-	-	-
-word	trunk-pointers	live	-	-	-
-word	trunk-pointers	landed	delivering.batched	tick	red
-word	trunk-pointers	word-given	delivering.batched	tick	ok
-word	trunk-pointers	pinned-behind	delivering.batched,delivering.live	tick	red|stuck
-word	trunk-pointers	hook-failed	delivering.batched,delivering.live	tick	red|stuck
 word	wait	not-paused	=	none	-
 word	wait	paused-open	=	outside (date)|lead (parked)|worker	-
 word	wait	paused-dated	=	outside (date)	-

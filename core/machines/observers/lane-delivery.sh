@@ -71,7 +71,7 @@ trunk_state() {
     case $st in held:*) continue ;; esac
     [ -n "$sha" ] && holds "$C" "$sha" && moved="$key ${st:0:80}"
   done < <(live_rows; live_rows homes)
-  if [ -n "$moved" ]; then WORD=home-behind; FROM=trunk-pointers:hook-failed; EVIDENCE="data/trunk-live.tsv: $moved"; return 0; fi
+  if [ -n "$moved" ]; then WORD=home-behind; FROM=delivery:pinned-behind; EVIDENCE="data/trunk-live.tsv: $moved"; return 0; fi
   WORD=landed; FROM=landing:landed; EVIDENCE="data/trunk-landings.tsv: $ID at ${C:0:12}"
 }
 

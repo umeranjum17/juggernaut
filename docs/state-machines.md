@@ -32,7 +32,7 @@ The `Ask` column is the command that prints a record's state and its legal moves
 | `supervision` | `one supervisor session per home: state/.lock, state/.last-watcher-beat and state/.wake-queue (id: the home name; machine 3 of the state-machine plan)` | `core/machines/observers/supervision.sh` | 5 | 9 | `bin/jg-machine.sh next supervision <id>` |
 | `task` | `a task's backlog row, status log and delivery` | `core/machines/observers/task.sh` | 14 | 24 | `bin/jg-machine.sh next task <id>` |
 | `ticket` | `a ticket: the one Beads row of jg-q1b3n (machine 0 of the state-machine plan)` | `core/machines/observers/ticket.sh` | 7 | 15 | `bin/jg-machine.sh next ticket <id>` |
-| `trunk-pointers` | `state/trunk-{tip,green,released,rolled,word-live}-<project> and data/trunk-live.tsv` | `bin/jg-trunk.sh` | 8 | 20 | `bin/jg-machine.sh next trunk-pointers <id>` |
+| `trunk` | `state/trunk-{tip,green}-<project>, the verify lock state/.trunk-verify-<project>.lock and data/trunk-ci.tsv: the trunk line of one project (machine 7 of the state-machine plan)` | `core/machines/observers/trunk.sh` | 4 | 6 | `bin/jg-machine.sh next trunk <id>` |
 | `wait` | `a task's latest status line (state/<id>.status)` | `core/wait-timers/README.md` | 4 | 10 | `bin/jg-machine.sh next wait <id>` |
 | `worker` | `state/<id>.meta, the status log and the endpoint of one agent session of a lane (machine 1 of the state-machine plan)` | `core/machines/observers/worker.sh` | 6 | 11 | `bin/jg-machine.sh next worker <id>` |
 <!-- machines:end -->

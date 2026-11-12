@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Behavior tests for the landing and trunk-pointers machine tables (core/machines/tables).
+# Behavior tests for the landing machine table (core/machines/tables).
 # Every record is generated here by a seed function in the shape its writer prints; no fleet record is copied.
-# The tables are report-only: `show` and `check` print findings and nothing in the landing chain calls them.
+# The table is report-only: `show` and `check` print findings and nothing in the landing chain calls them.
 # The landing run (9 states, 13 moves, observer core/machines/observers/landing.sh): a fixture record in every state prints the right word,
 # the table lints, and a legal move adds no line to the shadow log. The last journey drives the start of a landing run from the host tick
 # (core/sentinel/bin/jg-sentinel.sh, through bin/jg-delivery-tick.sh) in a tests/jg-trunk-fixture.sh world: real git, the real lander, a stub Herdr with no server.
@@ -23,10 +23,9 @@ H=$(rep a 40); X=$(rep b 40); NOW=$(date +%s)
 jm check landing; expect_code 0 "$RC" "the landing table lints"; assert_equals "ok landing: 9 states, 13 edges" "$OUT" "lint golden"
 jm enum landing; expect_code 0 "$RC" "the enum lints"; assert_contains "$OUT" 9 "nine values"
 jm coverage landing; expect_code 0 "$RC" "every edge names its test"
-jm check trunk-pointers; expect_code 0 "$RC" "the trunk-pointers table lints"
 assert_equals "queued rebasing resolving retesting checking retrying landed returned withdrawn" \
   "$(awk -F'\t' '$1=="state"{printf "%s ", $2}' "$ROOT/core/machines/tables/landing.tsv" | sed 's/ $//')" "the nine states"
-pass "the landing table lints with 9 states and 13 moves, each with a test, and so does trunk-pointers"
+pass "the landing table lints with 9 states and 13 moves, each with a test"
 
 # A fixture record in every state prints the right word through the real jg-machine.sh and the real observer. The records are the
 # lander's state line, the conflict run's rows (data/trunk-resolving.tsv) and the phase rows of lane_admit (data/trunk-landing-phases.tsv).
@@ -108,36 +107,6 @@ assert_equals 1 "$(shadow "run-reb.$H" landed)" "rebasing -> landed skips the ch
 assert_contains "$(tail -n 1 "$LOG")" landing "the shadow line names the machine"
 assert_equals 1 "$(shadow "t-landed.$H" rebasing)" "a landed run has no move"
 pass "a legal move adds no shadow line, an illegal move adds one"
-
-# Trunk pointers: one project, its pointer files and its live rows.
-P=proj; A=$(rep 1 40); B=$(rep 2 40)
-seed_ptr() {  # <tip> <green> <released> [word sha] [live status for green] [rolled]
-  printf '%s' "$1" > "$S/trunk-tip-$P"; printf '%s' "$2" > "$S/trunk-green-$P"; printf '%s' "$3" > "$S/trunk-released-$P"
-  rm -f "$S/trunk-word-live-$P" "$S/trunk-rolled-$P" "$JG_HOME/data/trunk-live.tsv"
-  [ -z "${4:-}" ] || tab "$4" 1 "ship it" > "$S/trunk-word-live-$P"
-  [ -z "${5:-}" ] || tab "$P" "$2" 1 "$5" > "$JG_HOME/data/trunk-live.tsv"
-  [ -z "${6:-}" ] || printf 'url' > "$S/trunk-rolled-$P"
-}
-ptr() { seed_ptr "$@"; jm show trunk-pointers "$P"; printf '%s\n' "$OUT" | awk -F'\t' '$1 == "state" { print $2 }'; }
-assert_equals released "$(ptr "$A" "$A" "$A")" "tip, green and released agree"
-assert_equals rolled "$(ptr "$A" "$A" "$A" "" "" 1)" "a cut-over trunk"
-assert_equals landed "$(ptr "$B" "$A" "$A")" "tip ahead of green"
-assert_equals green "$(ptr "$B" "$B" "$A")" "tip is green"
-assert_equals word-given "$(ptr "$B" "$B" "$A" "$B")" "the captain's word is recorded"
-assert_equals live "$(ptr "$B" "$B" "$A" "" live)" "the home runs green"
-assert_equals pinned-behind "$(ptr "$B" "$A" "$A" "" "live,pinned-behind-222222222222")" "red CI pinned the home back"
-assert_equals hook-failed "$(ptr "$B" "$B" "$A" "$B" hook-failed)" "the live hook failed"
-jm show trunk-pointers nope; expect_code 1 "$RC" "a project with no trunk"
-assert_contains "$OUT" "no state" "show names the missing state"
-pass "trunk-pointers names each pointer state from the pointer files"
-
-{ tab released land green; tab green verify-red landed; tab landed verify green; tab green word word-given; tab word-given live live
-  tab live release released; tab released rollover rolled; tab green ci-red pinned-behind; tab word-given hook-fail hook-failed
-  tab hook-failed live live; tab pinned-behind ci-green green; } > "$T/ptr.corpus"
-jm check trunk-pointers --corpus "$T/ptr.corpus"; expect_code 0 "$RC" "the trunk lifecycle replays clean"
-tab landed release released > "$T/ptr-bad.corpus"
-jm check trunk-pointers --corpus "$T/ptr-bad.corpus"; expect_code 1 "$RC" "a release of an unverified tip"
-pass "check replays the trunk lifecycle and refuses a release of a tip that is not green"
 
 # A ready lane whose home has no model and no watcher left (09:03Z to 09:20Z on 10 Nov: nothing landed for 16.5 minutes)
 # lands on the host sentinel's next tick. The sentinel serves Main's home and each local lead home, which is where a trunk lives.
