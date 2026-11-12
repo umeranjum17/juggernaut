@@ -621,6 +621,10 @@ journeys:
     # was Core suites step 30: Repo guard test
     tier: local
     command: bash journeys/core-run.sh 'bash repo-guard/tests/repo-guard.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  repo-guard-loop:
+    # sf-h6: the gh shim cannot call itself
+    tier: local
+    command: bash journeys/repo-guard-loop.sh
   core-owner-guard-uninstall-isolation-test:
     # was Core suites step 31: Owner guard uninstall isolation test
     tier: local

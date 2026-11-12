@@ -92,7 +92,20 @@ for tool in $TOOLS; do
     echo "guarded: $target (real: $(cat "$(realfile "$tool")"))"
     fi
     shim_tmp=$target.tmp.$$
-    printf '#!/usr/bin/env bash\n# %s\nexec %q %s "$@"\n' "$GUARD" "$RUNNER" "$tool" >"$shim_tmp"
+    shim_var=JG_REPO_GUARD_IN_$(printf '%s' "$tool" | tr -c 'A-Za-z0-9\n' _)
+    # The real tool is often a wrapper that runs "gh" by name (mise x gh -- gh); with the shim first on PATH that finds the shim again and loops for ever.
+    # So the shim marks its call chain, and a second entry in one chain runs the first other copy on PATH by its full path, or refuses; it never enters the guard again.
+    # shellcheck disable=SC2016 # The shim expands these variables when it runs, not now.
+    printf '%s\n' '#!/usr/bin/env bash' "# $GUARD" \
+      "if [ -n \"\${$shim_var:-}\" ]; then" \
+      '  self=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P) rest=' \
+      '  IFS=: read -ra dirs <<<"$PATH"' \
+      '  for dir in "${dirs[@]}"; do [ "$(cd "$dir" 2>/dev/null && pwd -P)" = "$self" ] || rest=${rest:+$rest:}$dir; done' \
+      "  real=\$(PATH=\$rest command -v $tool) || { echo 'repo-guard: refused: $tool called itself and no other $tool is on PATH' >&2; exit 1; }" \
+      '  PATH=$rest exec "$real" "$@"' \
+      'fi' \
+      "export $shim_var=1" \
+      "exec $(printf '%q' "$RUNNER") $tool \"\$@\"" >"$shim_tmp"
     chmod 755 "$shim_tmp"
     mv -f -- "$shim_tmp" "$target"
   fi
