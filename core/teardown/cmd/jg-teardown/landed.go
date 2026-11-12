@@ -18,6 +18,17 @@ type landing struct {
 	forgejo                                *forgejoRef
 	gap                                    string
 	contentGap                             string
+	// empty is set when laneIsEmpty proved the copy never left its starting commit.
+	empty bool
+}
+
+// gapReason is the closed-list reason for the gap a failed landing left: the empty lane is its own
+// reason, and every other gap carries the one the caller names.
+func (l *landing) gapReason(other string) string {
+	if l.empty {
+		return reasonEmptyLane
+	}
+	return other
 }
 
 func runDefaultBranch(args []string) int {
@@ -70,6 +81,7 @@ func runLanded(args []string) int {
 		fmt.Println("landed=yes")
 	} else {
 		fmt.Println("landed=no")
+		fmt.Println("reason=" + l.gapReason(reasonNoProof))
 		fmt.Println("gap=" + oneLine(l.gap))
 	}
 	if l.prURL != "" {
@@ -130,6 +142,7 @@ func (l *landing) laneIsEmpty() bool {
 		return false
 	}
 	l.gap = "this copy's HEAD is still the commit the lane started on, so it holds no work of its own"
+	l.empty = true
 	return true
 }
 

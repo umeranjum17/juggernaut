@@ -1092,7 +1092,7 @@ jg_backlog_close_marker_validate() {  # <marker-path> <authorized-data-dir> <exp
     0) ;;
     2)
       case "${args[0]}" in
-        --note) [ "${args[1]}" = local%20main ] || jg_delivery_style_trunk_aliases | grep -qxF -- "${args[1]}" ;;
+        --note) [ "${args[1]}" = local%20main ] || [ "${args[1]}" = dropped ] || jg_delivery_style_trunk_aliases | grep -qxF -- "${args[1]}" ;;
         --pr)
           arg_value=${args[1]}
           [ "${#arg_value}" -le 2048 ] \

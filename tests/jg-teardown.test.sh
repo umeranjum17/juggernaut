@@ -734,6 +734,39 @@ test_teardown_of_an_already_cleaned_task_says_so() {
   pass "teardown of an already-cleaned task says so and exits 0"
 }
 
+# H13: through the real caller. A clean copy that never left its starting commit holds no work. While
+# its ticket is open teardown refuses it with the reason empty-lane; once the ticket is closed teardown
+# cleans it as dropped, and the ticket is not marked landed (no PR or landing note on its row).
+test_empty_lane_of_a_closed_ticket_is_dropped() {
+  local case_dir rc
+  case_dir=$(make_case empty-lane)
+  write_meta "$case_dir" no-mistakes ship
+  printf 'base=%s\n' "$(git -C "$case_dir/wt" rev-parse HEAD)" >> "$case_dir/state/task-x1.meta"
+  seed_backlog_in_flight "$case_dir"
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "empty-lane: an empty lane of an open ticket is refused"
+  grep -F 'cleanup refused, reason: empty-lane' "$case_dir/stderr" >/dev/null \
+    || fail "empty-lane: the refusal names no reason from the closed list: $(cat "$case_dir/stderr")"
+  [ -d "$case_dir/wt" ] || fail "empty-lane: the refusal removed the copy"
+  [ "$(backlog_row_state "$case_dir")" = in_flight ] || fail "empty-lane: the refusal changed the ticket"
+
+  jg_test_backlog "$case_dir" "done" task-x1 --note "dropped by the lead" >/dev/null \
+    || fail "empty-lane: the fixture could not close its ticket"
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "empty-lane: an empty lane of a closed ticket is cleaned: $(cat "$case_dir/stderr")"
+  ! grep -q REFUSED "$case_dir/stderr" || fail "empty-lane: the dropped lane printed a refusal: $(cat "$case_dir/stderr")"
+  assert_absent "$case_dir/state/task-x1.meta" "empty-lane: the task record stayed"
+  [ "$(backlog_row_state "$case_dir")" = "done" ] || fail "empty-lane: the ticket is not closed"
+  ! grep -q 'local-trunk\|pull/' "$(backlog_dump "$case_dir")" || fail "empty-lane: the ticket row carries a landing"
+  pass "an empty lane of a closed ticket is cleaned as dropped, and an open one is refused with its reason"
+}
+
 test_teardown_closes_the_backlog_item_itself() {
   local case_dir out
   case_dir=$(make_case backlog-close)
@@ -5051,6 +5084,7 @@ test_retained_sources_still_reach_the_ordinary_refusal
 test_local_only_fork_remote_allows
 test_teardown_of_an_already_cleaned_task_says_so
 test_teardown_closes_the_backlog_item_itself
+test_empty_lane_of_a_closed_ticket_is_dropped
 test_local_only_truly_unpushed_refuses
 test_local_only_merged_to_local_main_allows
 test_pushed_branch_needs_forge_merge_proof

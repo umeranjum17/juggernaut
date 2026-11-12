@@ -1493,7 +1493,10 @@ backlog_done_args() {
       BACKLOG_DONE_ARGS=(--report "$data_relative/$ID/report.md")
       ;;
     *)
-      if jg_delivery_style_is "$MODE" trunk; then
+      if [ "${TEARDOWN_DROPPED:-0}" = 1 ]; then
+        # An empty lane of a closed ticket landed nothing: its row keeps the resolution it already has.
+        BACKLOG_DONE_ARGS=(--note dropped)
+      elif jg_delivery_style_is "$MODE" trunk; then
         BACKLOG_DONE_ARGS=(--note "local-trunk")
       elif jg_delivery_style_is "$MODE" local; then
         BACKLOG_DONE_ARGS=(--note "local main")
@@ -1746,7 +1749,8 @@ teardown_note_dirty_return() {
 # merged PR the record did not carry; the branch it read is kept so a later call, after the branch
 # is detached, still asks about the branch the work was done on.
 validate_worktree_teardown_safety() {
-  local out rc=0 line login
+  local rc=0 login
+  TEARDOWN_DROPPED=0
   # A park proves its own rule, never the landed-work test: the branch is kept.
   [ "$PARK" != 1 ] || { teardown_park_gate; return; }
   [ -d "$WT" ] || return 0
@@ -1774,21 +1778,59 @@ validate_worktree_teardown_safety() {
       ! login=$(jg_pr_forgejo_login "$JG_PR_HOST") || args+=(--forgejo-login "$login")
     fi
   fi
-  out=$("$SCRIPT_DIR/jg-teardown-core.sh" "${args[@]}") || rc=$?
+  safety_core "${args[@]}"; rc=$SAFETY_RC
+  # An empty lane has nothing to land. When its ticket is closed it is cleaned as dropped (the core
+  # says so with resolution=dropped); the ticket is read only now, because only this lane needs it.
+  if [ "$rc" = 1 ] && [ "$TEARDOWN_REFUSAL_REASON" = empty-lane ] && teardown_ticket_is_closed; then
+    safety_core "${args[@]}" --ticket-closed; rc=$SAFETY_RC
+  fi
+  [ "$rc" = 0 ] || [ -z "$SAFETY_ERR" ] || printf '%s\n' "$SAFETY_ERR" >&2
+  case "$rc" in
+    0) return 0 ;;
+    1) echo "teardown: cleanup refused, reason: ${TEARDOWN_REFUSAL_REASON:-no-merge-proof}" >&2; return 1 ;;
+    "$TEARDOWN_WORKTREE_SAFETY_LOCK_BLOCKED") return "$rc" ;;
+  esac
+  echo "REFUSED: the worktree safety check for $WT could not run (exit $rc)." >&2
+  echo "teardown: cleanup refused, reason: check-failed" >&2
+  return 1
+}
+
+# Runs the core's safety check once: its stdout facts are read, its stderr sentences are held in
+# SAFETY_ERR so a lane that passes on the second ask (dropped) prints no refusal.
+SAFETY_RC=0 SAFETY_ERR=
+safety_core() {  # <core args...>
+  local errf out
+  errf=$(mktemp "${TMPDIR:-/tmp}/jg-teardown-safety.XXXXXX") || { SAFETY_RC=2; SAFETY_ERR=; return; }
+  out=$("$SCRIPT_DIR/jg-teardown-core.sh" "$@" 2>"$errf") && SAFETY_RC=0 || SAFETY_RC=$?
+  SAFETY_ERR=$(cat "$errf" 2>/dev/null); rm -f "$errf"
+  safety_read_facts "$out"
+}
+
+# Reads the facts the core printed on stdout: the branch it read, the PR it resolved, the closed-list
+# reason of a refusal (core/machines/cleanup-reason.states), and a dropped resolution.
+TEARDOWN_REFUSAL_REASON=
+safety_read_facts() {  # <core stdout>
+  local line
+  TEARDOWN_REFUSAL_REASON=
   while IFS= read -r line; do
     case "$line" in
       branch=*) TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY=${line#branch=} ;;
       pr_url=*) [ -n "$PR_URL" ] || PR_URL=${line#pr_url=} ;;
+      reason=*) TEARDOWN_REFUSAL_REASON=${line#reason=} ;;
+      resolution=dropped) TEARDOWN_DROPPED=1 ;;
     esac
-  done <<EOF_OUT
-$out
-EOF_OUT
-  case "$rc" in
-    0|1|"$TEARDOWN_WORKTREE_SAFETY_LOCK_BLOCKED") return "$rc" ;;
-  esac
-  echo "REFUSED: the worktree safety check for $WT could not run (exit $rc)." >&2
-  return 1
+  done <<EOF_FACTS
+$1
+EOF_FACTS
 }
+
+# The lane's ticket is closed: its backlog row reads done. A row that cannot be read is not closed.
+teardown_ticket_is_closed() {
+  [ "$TEARDOWN_BACKLOG_APPLIES" = 1 ] || return 1
+  jg_backlog_row_probe "$DATA" "$ID" || return 1
+  [ "${JG_BACKLOG_ROW_STATE%% *}" = "done" ]
+}
+
 
 # Fix 2 (see script header): the process reaping is Go (core/teardown, through
 # bin/jg-teardown-core.sh); its header owns the contract. This wrapper hands it the
