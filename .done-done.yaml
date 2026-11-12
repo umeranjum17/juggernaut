@@ -642,6 +642,10 @@ journeys:
     # was Core suites step 32: Sentinel one-copy test
     tier: local
     command: bash journeys/core-run.sh 'bash sentinel/tests/jg-sentinel-one-copy.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-sentinel-watch-test:
+    # sf-h16: the sentinel's watch pass starts a dead watcher inside 2 runs and raises escalation-stuck
+    tier: local
+    command: bash journeys/core-run.sh 'bash sentinel/tests/jg-sentinel-watch.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   core-task-priority-test:
     # was Core suites step 33: Task priority test
     tier: local

@@ -1,0 +1,11 @@
+# The sentinel's watch pass (jg-sentinel.sh watch): one run, started by jg-sentinel-watch.timer.
+# TimeoutStartSec is the watchdog: a pass that hangs is killed, and the timer starts the next one.
+# Replace @HOME@ and @SENTINEL@ (the installed jg-sentinel.sh) before installing it as a user unit.
+[Unit]
+Description=Juggernaut sentinel watch pass for @HOME@
+
+[Service]
+Type=oneshot
+Environment=JG_HOME=@HOME@
+ExecStart=@SENTINEL@ watch
+TimeoutStartSec=45

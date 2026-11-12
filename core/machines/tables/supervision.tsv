@@ -13,6 +13,7 @@ edge	starting	arm	watching	bin/jg-watch.sh:beat	-	the watcher beats	jg-machine-s
 edge	watching	wake	handling	bin/jg-wake-lib.sh:jg_wake_drain	-	a wake is queued and presence is not away	jg-machine-supervision
 edge	handling	ack	watching	bin/jg-wake-lib.sh:jg_wake_ack	-	every drained wake is acknowledged	jg-machine-supervision
 edge	watching	miss	starting	bin/jg-watch.sh:tick	-	2 beats missed: the tick starts the watcher again	jg-machine-supervision
+edge	watching	revive	starting	core/sentinel/units/jg-sentinel-watch.sh:revive	-	2 beats missed and no watcher runs: the sentinel starts it again from outside the session	jg-machine-supervision
 edge	locked	end	off	bin/jg-lock.sh:on_lock_exit	-	the session ends and the lock is freed	jg-machine-supervision
 edge	read-only	close	off	bin/jg-lock.sh:on_lock_exit	-	the session ends	jg-machine-supervision
 observer	bash "$(dirname "$JG_MACHINES_TABLES")/observers/supervision.sh" "$1"

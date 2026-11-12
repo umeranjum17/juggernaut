@@ -1,0 +1,11 @@
+# Runs jg-sentinel-watch.service every minute, outside every agent runtime. A missed run is caught up once at boot.
+[Unit]
+Description=Juggernaut sentinel watch pass, every minute
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target
