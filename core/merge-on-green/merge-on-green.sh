@@ -45,6 +45,7 @@ STATE=$FMH/state
 SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 LINT=${JG_MOG_CHECKS_LINT:-$SRC/checks-lint.sh}
 DATA=$FMH/data/jg-merge-on-green
+ALERT=${JG_STRANDED_ALERT:-$FMH/bin/jg-alert.sh}
 # The release record's standing word is read through the trunk policy lib, from this script's own checkout; where it is absent no release merges.
 # shellcheck source=bin/jg-trunk-policy-lib.sh
 [ ! -r "$SRC/../../bin/jg-trunk-policy-lib.sh" ] || . "$SRC/../../bin/jg-trunk-policy-lib.sh"
@@ -266,8 +267,8 @@ done
 # Open-PR cap: ten green PRs once sat unmerged behind one red release PR and nobody saw the pile.
 # A merge never waits on another PR's colour (each task above is judged on its own PR), so the pile is
 # raised here instead. For every repo named by a task's recorded pr= URL, count its open PRs; over
-# <home>/config/open-pr-cap (a whole number, default 8) one alert names the repo, the count and the cap.
-# The alert is remembered per repo and count in <home>/data/jg-merge-on-green/open-pr-cap/, so it repeats
+# <home>/config/open-pr-cap (a whole number, default 8) one central `stranded` alert (bin/jg-alert.sh raise, then
+# deliver; subject <owner>__<repo>.open-prs) rings the lead. The count is remembered per repo in <home>/data/jg-merge-on-green/open-pr-cap/, so it repeats
 # only when the count changes, and a repo back under the cap forgets it. Runs after the merges and only
 # while a gh call still fits in the bound; a gh failure is silent and retried next sweep.
 CAP=; [ ! -f "$FMH/config/open-pr-cap" ] || read -r CAP _ < "$FMH/config/open-pr-cap" || :
@@ -281,9 +282,10 @@ for repo in $repos; do
   seen=$DATA/open-pr-cap/${repo//\//__}
   open=$(timeout "$BUDGET" gh pr list --repo "$repo" --state open --limit 500 --json number --jq length 2>/dev/null) || continue
   case "$open" in ''|*[!0-9]*) continue ;; esac
-  if [ "$open" -le "$CAP" ]; then rm -f "$seen" 2>/dev/null || :; continue; fi
+  if [ "$open" -le "$CAP" ]; then rm -f "$seen" 2>/dev/null || :; JG_HOME=$FMH "$ALERT" resolve "stranded--${seen##*/}.open-prs" >/dev/null 2>&1; continue; fi
   [ "$(cat "$seen" 2>/dev/null)" = "$open" ] && continue
-  echo "merge-on-green: $open open pull requests in $repo, over the cap of $CAP; lead: merge the green ones now, a red pull request elsewhere never holds them"
+  JG_HOME=$FMH "$ALERT" resolve "stranded--${seen##*/}.open-prs" >/dev/null 2>&1
+  JG_HOME=$FMH "$ALERT" raise stranded "${seen##*/}.open-prs" | JG_HOME=$FMH "$ALERT" deliver
   mkdir -p "$DATA/open-pr-cap" 2>/dev/null && printf '%s\n' "$open" > "$seen" 2>/dev/null || :
 done
 

@@ -23,7 +23,10 @@ export JG_MOG_CHECKS_LINT=$STUB_DIR/jg-checks-lint.sh
 fails=0
 check() { if [ "$2" = "$3" ]; then echo "ok: $1"; else printf 'FAIL: %s\n  want: %s\n  got:  %s\n' "$1" "$3" "$2"; fails=$((fails + 1)); fi; }
 has() { if printf '%s' "$2" | grep -qF -- "$3"; then echo "ok: $1"; else printf 'FAIL: %s\n  want text: %s\n  got: %s\n' "$1" "$3" "$2"; fails=$((fails + 1)); fi; }
+export JG_STRANDED_ALERT=$SRC/../../bin/jg-alert.sh
 mog() { JG_CHECK_TIMEOUT=30 "$SRC/merge-on-green.sh" check "$FM" 2>&1; }
+# newwakes: the wake lines the central stranded alert added to the fixture home's queue since the last call.
+newwakes() { local q=$FM/state/.wake-queue n; : >> "$q"; n=$(wc -l < "$q"); tail -n +"$(( $(cat "$d/seen-wakes" 2>/dev/null || echo 0) + 1 ))" "$q" | cut -f5; echo "$n" > "$d/seen-wakes"; }
 meta() { # <task> <yolo> <head> <gen> -> meta + matching PASS receipt
   printf 'yolo=%s\npr=https://github.com/ex/r/pull/%s\npr_head=%s\nspawn_gen=%s\n' "$2" "${1#t}" "$3" "$4" > "$FM/state/$1.meta"
   printf '{\n  "verdict": "PASS",\n  "head": "%s",\n  "spawn_gen": "%s"\n}\n' "$3" "$4" > "$FM/state/$1.run-receipt.json"
@@ -327,8 +330,8 @@ check "q: only the green PR reached the merge call" \
 check "q: the red PR is untouched" "$([ -e "$FM/data/jg-merge-on-green/t17.head" ] && echo attempted || echo never)" never
 rm "$STUB_DIR/red/t17" "$FM/state/t17.meta" "$FM/state/t17.run-receipt.json" "$FM/state/t18.meta" "$FM/state/t18.run-receipt.json"
 
-# (r) the open-PR cap: nothing at or under the cap; one alert over it; the same count stays silent; a new
-# count alerts again; a drop under the cap forgets it; config/open-pr-cap sets the cap; a gh failure is silent.
+# (r) the open-PR cap: nothing at or under the cap; one stranded alert over it (the real jg-alert.sh, one wake to the
+# lead per episode, resolved when the count drops under the cap); the same count stays silent; a new count alerts again; a drop under the cap forgets it; config/open-pr-cap sets the cap; a gh failure is silent.
 printf 'yolo=off\npr=https://github.com/ex/r/pull/30\n' > "$FM/state/t30.meta"
 STUB_OPEN_PRS=8
 export STUB_OPEN_PRS
@@ -336,25 +339,27 @@ check "r: at the default cap of 8 -> silent" "$(mog)" ""
 check "r: asked the forge about the PR's repo" "$(grep -c -- '--repo ex/r' "$STUB_DIR/gh-list-calls")" "$(wc -l < "$STUB_DIR/gh-list-calls")"
 STUB_OPEN_PRS=23
 out=$(mog)
-check "r: over the cap -> one alert" "$(printf '%s\n' "$out" | wc -l)" 1
-has "r: alert names count, repo and cap" "$out" "23 open pull requests in ex/r, over the cap of 8"
+check "r: over the cap -> one alert, no line from the old code" "$out" ""
+has "r: the lead's stranded alert names the repo" "$(newwakes)" "alert stranded (P3) at rung 2 for lead: ex__r.open-prs"
 check "r: same count -> silent" "$(mog)" ""
 STUB_OPEN_PRS=24
-has "r: changed count alerts again" "$(mog)" "24 open pull requests in ex/r"
+mog >/dev/null; has "r: changed count alerts again" "$(newwakes)" "for lead: ex__r.open-prs"
 check "r: repeat of the changed count silent" "$(mog)" ""
 STUB_OPEN_PRS=3
 check "r: back under the cap -> silent" "$(mog)" ""
 STUB_OPEN_PRS=24
-has "r: over the cap again alerts again" "$(mog)" "24 open pull requests in ex/r"
+check "r: back under the cap resolves the alert" "$(JG_HOME=$FM bash "$SRC/../../bin/jg-alert.sh" word stranded--ex__r.open-prs)" resolved
+mog >/dev/null; STUB_OPEN_PRS=24; mog >/dev/null
+has "r: over the cap again alerts again" "$(newwakes)" "for lead: ex__r.open-prs"
 mkdir -p "$FM/config"
 echo 30 > "$FM/config/open-pr-cap"
 STUB_OPEN_PRS=25
 check "r: config/open-pr-cap raises the cap" "$(mog)" ""
 STUB_OPEN_PRS=31
-has "r: configured cap named" "$(mog)" "31 open pull requests in ex/r, over the cap of 30"
+mog >/dev/null; has "r: configured cap holds back the alert until passed" "$(newwakes)" "for lead: ex__r.open-prs"
 echo nonsense > "$FM/config/open-pr-cap"
 STUB_OPEN_PRS=40
-has "r: unreadable config falls back to 8" "$(mog)" "40 open pull requests in ex/r, over the cap of 8"
+mog >/dev/null; has "r: unreadable config falls back to 8" "$(newwakes)" "for lead: ex__r.open-prs"
 rm "$FM/config/open-pr-cap"
 touch "$STUB_DIR/gh-list-fail"
 STUB_OPEN_PRS=99

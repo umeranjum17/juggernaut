@@ -11,13 +11,14 @@
 #     release (bin/jg-version-branch-lib.sh jg_carried_branches); counted, never alarmed.
 #   - ahead above 0 on any other closed branch: stranded work. The first sweep that sees it stamps the time; once
 #     it has stood for 48 hours (JG_STRANDED_HOURS) one alert line names the repo, the branch, the ahead count and
-#     the time it was first seen. The alert repeats only when the count changes.
+#     the time it was first seen. The alert is the central `stranded` alert (bin/jg-alert.sh raise, then deliver; subject
+#     <owner>__<repo>.release__c-N) and is raised again only when the count changes; a branch that heals resolves it.
 # `report <jg-home>` prints one line per closed branch with its ahead count and state, for a human to read.
 # State lives in <home>/data/jg-merge-on-green/stranded-sweep/. The forge is asked at most once per
 # JG_STRANDED_SWEEP_MIN minutes (default 60) per home, so the watcher check stays cheap and never slows the work
 # that runs beside it. A forge failure is silent and retried next sweep. Nothing is printed when nothing happened.
 # merge-on-green.sh runs this after the stale-PR alarm and hands over its remaining time in JG_STRANDED_LIMIT.
-# JG_STRANDED_GH names the gh-axi binary (tests point it at a stub).
+# JG_STRANDED_GH names the gh-axi binary (tests point it at a stub); JG_STRANDED_ALERT names jg-alert.sh.
 set -u
 mode=${1:-}
 case $mode in check|report) ;; *) mode= ;; esac
@@ -25,12 +26,14 @@ case $mode in check|report) ;; *) mode= ;; esac
 FMH=$(cd "$2" && pwd -P)
 GH=${JG_STRANDED_GH:-gh-axi}
 MEM=$FMH/data/jg-merge-on-green/stranded-sweep
+ALERT=${JG_STRANDED_ALERT:-$FMH/bin/jg-alert.sh}
 umask 077
 BUDGET=$(( ${JG_CHECK_TIMEOUT:-30} / 3 )); [ "$BUDGET" -ge 5 ] || BUDGET=5
 START=$(date +%s)
 LIMIT=${JG_STRANDED_LIMIT:-$(( START + ${JG_CHECK_TIMEOUT:-30} * 4 / 5 ))}
 HOURS=${JG_STRANDED_HOURS:-48}; case $HOURS in ''|*[!0-9]*) HOURS=48 ;; esac
 EVERY=${JG_STRANDED_SWEEP_MIN:-60}; case $EVERY in ''|*[!0-9]*) EVERY=60 ;; esac
+alert() { JG_HOME=$FMH "$ALERT" "$@"; }
 api() { timeout "$BUDGET" "$GH" api "$1" --jq "$2" 2>/dev/null; } # <path> <jq> -> jq text, nonzero on failure
 
 if [ "$mode" = check ] && [ -f "$MEM/.last" ]; then
@@ -64,10 +67,10 @@ for repo in $repos; do
     f=$MEM/$key.${b//\//__}
     state=closed
     if [ "$ahead" -eq 0 ]; then
-      rm -f -- "$f" 2>/dev/null
+      rm -f -- "$f" 2>/dev/null; [ "$mode" != check ] || alert resolve "stranded--${f##*/}" >/dev/null 2>&1
     elif printf '%s\n' "$carried" | grep -qxF -- "$b"; then
       state=carried
-      rm -f -- "$f" 2>/dev/null
+      rm -f -- "$f" 2>/dev/null; [ "$mode" != check ] || alert resolve "stranded--${f##*/}" >/dev/null 2>&1
     else
       state=stranded
     fi
@@ -77,7 +80,7 @@ for repo in $repos; do
     if [ -f "$f" ]; then read -r first seen < "$f" 2>/dev/null || :; fi
     case $first in ''|*[!0-9]*) first=$START; seen= ;; esac
     if [ "$(( START - first ))" -ge "$(( HOURS * 3600 ))" ] && [ "$seen" != "$ahead" ]; then
-      echo "stranded-merge-sweep: $repo: $b is ahead of $default by $ahead commits and has been for $HOURS h or more (first seen $(date -u -d "@$first" +%FT%TZ)); merged work on it never reached $default - carry it onto the live release, then list the branch in config/version-branch-carried"
+      alert resolve "stranded--${f##*/}" >/dev/null 2>&1; alert raise stranded "${f##*/}" | alert deliver
       seen=$ahead
     fi
     mkdir -p "$MEM" 2>/dev/null && printf '%s %s\n' "$first" "$seen" > "$f" 2>/dev/null || :

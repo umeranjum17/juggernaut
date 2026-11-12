@@ -1,25 +1,26 @@
 #!/usr/bin/env bash
-# critical-stall watcher check: a critical migration row that sits pending with no commit raises one
-# note to Main and one board card. No model turn, and nothing is printed.
+# critical-stall watcher check: a critical migration row that sits pending with no commit raises the central
+# `stranded` alert (bin/jg-alert.sh raise, then deliver; subject = the row's slug) and one board card. No model
+# turn, and nothing is printed.
 # Usage: critical-stall.sh check <jg-home>
 #
 # For each row of `bin/jg-critical-path.sh rows` that is not live, this records the epoch the row was first
 # seen pending in <home>/data/critical-stall/seen.tsv (`slug<TAB>epoch`; a row that turns live is dropped). A
 # row is stalled when it has been pending for 24 h or more (config/critical-stall-hours changes the 24) and
 # either it has no pull request, or the newest commit on its pull requests is that old. A stall raises, once
-# per (slug, pull request, newest commit) in alerts.jsonl: one `bin/jg-inbox.sh note`, and one card through
+# per (slug, pull request, newest commit) in alerts.jsonl: one alert (a new commit replaces the old record), and one card through
 # `bin/jg-question-card.sh` on the board config/fleet-board names. A new commit changes the key, so a row
 # that moves and stalls again alerts again; a forge failure is silent and retried next sweep.
 # The card is skipped when stale-pr-alarm already alerted on the same pull request after its newest commit,
-# so the captain gets one card for one pull request; the note to Main is still sent.
+# so the captain gets one card for one pull request; the alert is still raised.
 # Seams for tests: JG_MIGRATION_LIVE_BIN (the probe, read by jg-critical-path.sh and here for the part's name),
-# JG_STALL_GH (gh-axi), JG_STALL_NOTE, JG_STALL_CARD, JG_STALL_NOW (epoch).
+# JG_STALL_GH (gh-axi), JG_STALL_ALERT (jg-alert.sh), JG_STALL_CARD, JG_STALL_NOW (epoch).
 set -u
 [ "$#" -eq 2 ] && [ "$1" = check ] && [ -d "$2/state" ] || { echo "usage: critical-stall.sh check <jg-home>" >&2; exit 2; }
 FMH=$(cd "$2" && pwd -P)
 export JG_HOME=$FMH
 GH=${JG_STALL_GH:-gh-axi}
-NOTE=${JG_STALL_NOTE:-$FMH/bin/jg-inbox.sh}
+ALERT=${JG_STALL_ALERT:-$FMH/bin/jg-alert.sh}
 CARD=${JG_STALL_CARD:-$FMH/bin/jg-question-card.sh}
 PROBE=${JG_MIGRATION_LIVE_BIN:-$FMH/bin/jg-migration-live.sh}
 DIR=$FMH/data/critical-stall SEEN=$DIR/seen.tsv ALERTS=$DIR/alerts.jsonl
@@ -64,12 +65,10 @@ while IFS="$TAB" read -r slug first; do
   commit_h=$(( (NOW - newest) / 3600 ))
   [ -z "$urls" ] || [ "$(( NOW - newest ))" -ge $(( HOURS * 3600 )) ] || continue
   key=$slug.$url.$sha
-  if [ -z "$urls" ]; then text="critical row $slug pending $pending_h h; it has no PR"
-  else text="critical row $slug pending $pending_h h; PR $url has no commit for $commit_h h"; fi
 
-  recorded "note.$key" || {
-    JG_HOME=$FMH timeout "$BUDGET" "$NOTE" note --request-id "critical-stall-$(printf '%s' "$key" | cksum | cut -d' ' -f1)" "$text" >/dev/null 2>&1 \
-      && record "note.$key"
+  recorded "alert.$key" || {
+    "$ALERT" resolve "stranded--$slug" >/dev/null 2>&1
+    "$ALERT" raise stranded "$slug" | "$ALERT" deliver >/dev/null 2>&1 && record "alert.$key"
   }
 
   board=$(tr -d "\n" 2>/dev/null < "$FMH/config/fleet-board")
