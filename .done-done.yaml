@@ -21,6 +21,9 @@ journeys:
   proof-bypass:
     tier: local
     command: bash journeys/proof-bypass.sh
+  alert:
+    tier: local
+    command: bash journeys/alert.sh
   brief-lint:
     tier: local
     command: bash journeys/brief-lint-real-briefs.sh

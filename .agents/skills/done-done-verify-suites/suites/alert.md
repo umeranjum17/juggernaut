@@ -1,0 +1,3 @@
+# Alert table
+
+Alert table: run `done-done run alert` (`bash journeys/alert.sh`, which runs `tests/jg-alert.test.sh` and writes its log and `steps.json` into the run's folder); it lints `core/machines/tables/alert.tsv` (4 states, 7 moves), calls the real `bin/jg-alert.sh` in a fixture home, raises a stuck wait in each of the four delivery modes (one P2 alert at rung 2), keeps quiet rows quiet, raises none for a home with `supervision-down` open and releases them when it resolves, gates the fires-at time by the limit of its kind, climbs the ladder to its top with rung 4 held while away, and drives open, acknowledged, inhibited and resolved; it reads only generated fixtures (screen: none).

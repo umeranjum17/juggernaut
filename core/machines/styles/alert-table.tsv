@@ -1,0 +1,33 @@
+# The alert table (section 6.7 of the state-machine plan): the twelve alerts, the rules that keep one cause from raising many, the ladder and the limits by kind.
+# One reader: bin/jg-alert.sh (row, rules, limit, raise). Every time counts from the moment the state began. Seconds are plain numbers; "beats:N" is N missed beats of the watcher (its grace is the watcher's, not set here).
+# alert:  name, fires on, fires at (seconds, beats:N or "limit" = the limit of its kind), precedence, first rung (0 tick, 1 worker, 2 lead, 3 Main, 4 owner; "wait" = the one the wait names), quiet when (facts joined by +; "never")
+# rule:   id, covering alert ("*" = any alert of the same ticket with a higher precedence), scope the cover and the covered share, alerts kept quiet, why. I6 (presence) holds rung 4 and is applied by the ladder.
+# ladder: precedence, seconds to the next rung, seconds between repeats, top rung ("start+2" = two rungs above the first, at most 3), the fact that lifts the top to 4 ("-" = none)
+# limit:  kind of work, seconds (0 = none), why
+alert	security	a secret in the open, a refused delete, an owner detail found, an unregistered check	0	P0	4	never
+alert	line-red	health red on the trunk tip, a release or main; or the tip is above the green pin and no verify has started (900 s)	0	P1	2	verify-running
+alert	supervision-down	a supervisor session not watching or handling while work is under way	beats:2	P1	0	never
+alert	stuck-wait	wait is worker, lead or main	0	P2	wait	wait=owner+wait=outside,reason=ci|date|approval|review|quota+reason=parked
+alert	lost-worker	health lost, or stage building or proving with no sign of life	900	P2	0	wait=worker|lead|main|owner|outside|tick
+alert	capacity	wait reason quota: a quota, an account, a model, no machine slot	0	P2	0	never
+alert	undelivered	a message stored or rung and not read	300	P2	2	home-parked
+alert	drift	the observer finds that the stage and the records disagree	600	P2	2	never
+alert	slow-delivery	stage proving, or delivering in queued, rebased or gated, past the limit for its kind	limit	P3	0	wait=owner+wait=outside,reason=ci|approval|date|review+queued-behind-running-landing
+alert	ready-idle	a ticket in ready and a free lane	600	P3	2	home-paused+capacity-held+owner-card-open
+alert	stranded	stage delivering in batched, live or joining; or a pull request style in queued with no check started	172800	P3	2	never
+alert	host	memory, disk or temp space over its limit	0	P3	3	never
+rule	I1	supervision-down	home	stuck-wait,lost-worker,undelivered,ready-idle,slow-delivery	nobody is watching, so every wait would fire
+rule	I2	line-red	project	slow-delivery,stranded	they wait for the line, not for themselves
+rule	I3	capacity	route	lost-worker,stuck-wait	the lanes are stopped by the same cause
+rule	I4	host	machine	slow-delivery	a loaded machine is slow
+rule	I5	*	ticket	*	one page for one ticket
+rule	I6	presence=away	home	rung-4:P1,P2,P3	the return brief lists them; P0 still reaches the owner
+ladder	P0	0	600	4	-
+ladder	P1	300	600	4	-
+ladder	P2	300	600	start+2	owner-answer
+ladder	P3	0	3600	3	-
+limit	ship-delivering	300	5 min of its own landing run, or 5 min in queued while the lander runs nothing; not behind another landing
+limit	ship-proving	900	15 min from the last done line to sealed
+limit	ship-reviewing	900	the same 15 min for the whole of proving, counted while the run works
+limit	recon-standard	600	its gate is one script
+limit	recon-deep	0	no limit while a critic round is open: the wait is outside with reason review
