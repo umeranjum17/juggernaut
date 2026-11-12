@@ -214,5 +214,20 @@ check "the same copy without trunk mode is still refused" "$rc|$(printf '%s' "$o
 out=$(trunk_land); rc=$?
 check "a pushed release commit that is not on the local trunk is not landed" "$rc|$(printf '%s' "$out" | grep -c "is not on the local trunk")" "1|1"
 
+# An empty lane (HEAD is still the commit it started on) is an ancestor of the trunk and of the
+# default branch, but nothing landed: both the landed test and the safety test refuse it. A lane with
+# one commit of its own, on the trunk, is still landed.
+( cd "$lab/proj" && g worktree add -q -b emptywork "$lab/ewt" origin/main )
+ebase=$(g -C "$lab/ewt" rev-parse HEAD)
+empty_land() { "$core" landed --worktree "$lab/ewt" --branch emptywork --project "$lab/proj" --trunk-branch trunk --lane-base "$ebase"; }
+( cd "$lab/proj" && g branch -q -f trunk "$ebase" )
+out=$(empty_land); rc=$?
+check "an empty lane on the trunk is not landed" "$rc|$(printf '%s' "$out" | grep -c 'holds no work of its own')" "1|1"
+out=$("$core" safety --worktree "$lab/ewt" --project "$lab/proj" --mode local-only --trunk-branch trunk --lane-base "$ebase" 2>&1); rc=$?
+check "teardown's safety test refuses an empty lane" "$rc|$(printf '%s' "$out" | grep -c 'holds no work of its own')" "1|1"
+( cd "$lab/ewt" && echo e > e && g add e && g commit -q -m emptywork && g -C "$lab/proj" branch -q -f trunk emptywork )
+out=$(empty_land); rc=$?
+check "the same lane with one commit on the trunk is landed" "$rc|$out" "0|landed=yes"
+
 [ "$fails" -eq 0 ] || { printf '%d check(s) failed\n' "$fails"; exit 1; }
 printf 'all jg-teardown-core tests passed\n'

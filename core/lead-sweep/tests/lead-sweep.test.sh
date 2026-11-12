@@ -5,6 +5,7 @@
 # b) a done lane whose head is on the trunk but holds uncommitted work is refused and reported once; the next beat prints
 #    nothing; a changed reason is reported again;
 # c) a Recon with a report and a passing gate is closed; a Recon whose gate refuses is reported once; a Recon with no report is left;
+# g) a done lane still on its recorded base (no commit of its own) is never torn down;
 # d) a working lane, a done lane not landed, a lead and a lane a landing is running for are never touched;
 # e) a done lane whose pull request is merged is torn down; an open one is not, and the forge is asked once per window.
 # Usage: lead-sweep/tests/lead-sweep.test.sh
@@ -74,6 +75,10 @@ check "e: the lane with an open pull request is not" "$(tore pending)" 0
 sweep
 check "e: the forge is asked once per lane per window" "$(grep -c 'pulls/8' "$STUB_LOG")" 0
 check "no --force reaches the teardown" "$(grep -c -- '--force' "$STUB_LOG")" 0
+# g: an empty lane (head is still its recorded base, an ancestor of the trunk) is not landed, so it is not torn down
+lane empty ship 'done [at=1]: ready' "base=$(git -C "$P" rev-parse trunk)"; git -C "$P" branch -f fm/empty trunk; sweep
+check "g: the empty lane is not torn down" "$(tore empty)" 0
+check "g: the empty lane is not reported cleaned up" "$(grep -c '^lead-sweep: empty ' "$d/out")" 0
 # f: the wiring installs a shim that registers, and the unwiring removes it
 if [ -x "$SRC/../../bin/jg-check-register.sh" ]; then
   mkdir -p "$FM/bin"; cp "$SRC/../../bin/"jg-*.sh "$FM/bin/" 2>/dev/null || true

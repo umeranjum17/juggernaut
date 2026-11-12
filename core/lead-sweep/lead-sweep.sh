@@ -4,7 +4,7 @@
 #
 # A lane of this home (state/<id>.meta, kind ship or scout) whose latest status line is `done` or `resolved` (an answered
 # lane) is swept when it has landed:
-#   - ship: its branch head is on the trunk (state/trunk-tip-<project> for a local-trunk project, else the default branch
+#   - ship: its branch head is on the trunk and is not the commit the lane started on (meta base=) (state/trunk-tip-<project> for a local-trunk project, else the default branch
 #     of the clone), or its recorded pull request is merged (GitHub only, asked at most every JG_LEAD_SWEEP_PR_MIN
 #     minutes, default 10, per lane);
 #   - scout (Recon): its report data/<id>/report.md exists.
@@ -30,9 +30,12 @@ mval() { sed -n "s/^$2=//p" "$1" | tail -n 1; }
 
 # why_landed <meta> <project> <branch>: prints why the ship lane counts as landed; prints nothing when it does not.
 why_landed() {
-  local id=${1##*/} head target tipf pr slug num asked
+  local id=${1##*/} head base target tipf pr slug num asked
   id=${id%.meta}
   head=$(git -C "$2" rev-parse --verify --quiet "refs/heads/$3^{commit}") || head=
+  # A lane still on the commit it started on holds no work: that head is an ancestor of the trunk, yet nothing landed.
+  base=$(mval "$1" base)
+  [ -z "$base" ] || [ "$head" != "$base" ] || return 0
   tipf=$STATE/trunk-tip-$(basename "$2")
   if [ -s "$tipf" ]; then target=$(cat "$tipf"); else target=$(git -C "$2" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null) || target=; fi
   if [ -n "$head" ] && [ -n "$target" ] && git -C "$2" merge-base --is-ancestor "$head" "$target" 2>/dev/null; then

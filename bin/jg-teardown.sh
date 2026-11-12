@@ -1226,6 +1226,7 @@ fi
 MODE=$(grep '^mode=' "$META" | cut -d= -f2- || true)
 [ -n "$MODE" ] || MODE=no-mistakes
 BASE_BRANCH=$(grep '^base_branch=' "$META" | cut -d= -f2- || true)
+LANE_BASE=$(grep '^base=' "$META" | cut -d= -f2- || true)
 
 # A record accepted as a legacy incarnation (no spawn_gen, and either
 # --legacy-record given or the record is windowless) may be torn down only
@@ -1776,6 +1777,7 @@ validate_worktree_teardown_safety() {
   [ -z "${TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY:-}" ] || args+=(--cached-branch "$TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY")
   [ -z "$PR_URL" ] || args+=(--pr-url "$PR_URL")
   [ -z "$BASE_BRANCH" ] || args+=(--base-branch "$BASE_BRANCH")
+  [ -z "$LANE_BASE" ] || args+=(--lane-base "$LANE_BASE")
   # Only a registered local-trunk project uses the recorded current trunk (including rollovers).
   local project_mode
   project_mode=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-project-mode.sh" --raw "$(basename "$PROJ")") || return 1
