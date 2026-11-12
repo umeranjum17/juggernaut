@@ -178,8 +178,9 @@ wait_line_gate() {  # <text>
 }
 
 # The ticket move of a done line, in shadow (bin/jg-move.sh --shadow): the worker said done, so the ticket makes
-# claim-done from building, or new-head from delivering. Only a line that opens with `done` moves; the accepted line
-# is already written and this never refuses it or changes the exit code.
+# claim-done from building, or new-head from delivering. Only a line that opens with `done` moves. It runs before the
+# line is written: in shadow it never refuses, and once `ticket` is in config/machine-enforce (bin/jg-move.sh) an
+# illegal move returns 1 and the line is not written.
 done_line_move() {  # <status file> <text>
   local id state event here line said_done=''
   while IFS= read -r line; do
@@ -190,7 +191,9 @@ done_line_move() {  # <status file> <text>
   id=$(basename -- "$1" .status)
   state=$(bash "$here/jg-machine.sh" show ticket "$id" 2>/dev/null | sed -n 's/^state\t//p')
   if [[ "$state" == delivering* ]]; then event='new-head'; else event='claim-done'; fi
-  bash "$here/jg-move.sh" --shadow "$id" "$event" >/dev/null 2>&1 || true
+  bash "$here/jg-move.sh" --shadow "$id" "$event" >/dev/null 2>&1; [ "$?" -eq 1 ] || return 0  # only exit 1 is a refusal
+  echo "owner-rules: done line refused: ticket $id cannot make the move $event from its state; run: bin/jg-machine.sh next ticket $id" >&2
+  return 1
 }
 
 APPEND=''
@@ -225,7 +228,7 @@ if [ -n "$APPEND" ]; then
       done_proof_gate "$APPEND" "$text" || exit 1
       ;;
   esac
+  case $APPEND in *.status) done_line_move "$APPEND" "$text" || exit 1 ;; esac
   printf '%s\n' "$text" >> "$APPEND" || exit 1
-  case $APPEND in *.status) done_line_move "$APPEND" "$text" ;; esac
 fi
 exit 0

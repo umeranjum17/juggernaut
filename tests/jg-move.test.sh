@@ -58,3 +58,24 @@ assert_contains "$(cat "$SH")" "ticket	intake	claim-done	shadow" "the shadow lin
 [ ! -e "$H/data/moves.log" ] || ! grep -q "	t5	" "$LOG" || fail "an illegal move reached the move log"
 mv_ --shadow t5 prove-pass; expect_code 0 "$RC" "a shadow call never refuses"
 pass "a done line and a close each produce one legal move and no shadow line"
+
+# 5. The switch (J18): with `ticket` listed in config/machine-enforce, the same two writers refuse an illegal move through
+#    the real caller and write nothing; delete the line (the rollback) and they carry on in shadow again.
+mkdir -p "$H/config"; export JG_CONFIG_OVERRIDE=$H/config
+: > "$SH"; echo intake > "$H/state/t6.stage"
+echo ticket > "$H/config/machine-enforce"
+OUT=$(echo 'done [at=4]: early' | bash "$ROOT/bin/jg-lavish-guard.sh" --append "$H/state/t6.status" 2>&1); RC=$?
+expect_code 1 "$RC" "an enforced illegal done line is refused"
+assert_contains "$OUT" "cannot make the move claim-done" "the refusal names the move"
+[ ! -e "$H/state/t6.status" ] || fail "the refused done line was written"
+assert_contains "$(cat "$SH")" "ticket	intake	claim-done	refused" "the refusal is logged as refused"
+echo building > "$H/state/t7.stage"
+echo 'done [at=6]: ready' | bash "$ROOT/bin/jg-lavish-guard.sh" --append "$H/state/t7.status" || fail "an enforced legal done line was refused"
+assert_equals "t7	building	claim-done	proving.planned" "$(grep "	t7	" "$LOG" | tail -1 | cut -f2-)" "a legal done line still moves"
+echo intake > "$H/state/t8.stage"
+RC=0; bash -c '. "$1/bin/jg-backlog-transition-lib.sh"; jg_backlog_close_transition "" "$2/state/t8.marker" "$2/data" t8 "$2/state"' _ "$ROOT" "$H" >/dev/null 2>&1 || RC=$?
+[ "$RC" -ne 0 ] || fail "an enforced illegal close succeeded"
+rm "$H/config/machine-enforce"
+echo 'done [at=7]: early again' | bash "$ROOT/bin/jg-lavish-guard.sh" --append "$H/state/t6.status" || fail "after the rollback the done line was refused"
+assert_contains "$(cat "$SH")" "ticket	intake	claim-done	shadow" "after the rollback the move is logged as shadow"
+pass "an enforced ticket table refuses an illegal done line and close; deleting the switch file returns to shadow"

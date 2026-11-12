@@ -5,6 +5,7 @@
 # Usage:
 #   jg-machine-guard.sh edge <machine> <from> <to>   judge one move; exit 0 allowed, exit 1 refused, exit 2 usage
 #   jg-machine-guard.sh flip <machine> <seconds>     list the machine in config/machine-enforce, only when quiet
+#   jg-machine-guard.sh enforced <machine>           exit 0 when the machine is listed in config/machine-enforce, else 1
 #
 # Shadow is the default. An illegal move (not a table edge, a state the table lacks, and not in
 # core/machines/tables/known-baseline.tsv) is appended to data/machine-shadow.log as
@@ -76,7 +77,13 @@ cmd_flip() {
   mkdir -p "$CONFIG" && printf '%s\n' "$m" >>"$ENFORCE"
 }
 
+cmd_enforced() {
+  if [ $# -ne 1 ] || ! plain "$1"; then usage; fi
+  grep -qxF -- "$1" "$ENFORCE" 2>/dev/null
+}
+
 case "${1:-}" in
+  enforced) shift; cmd_enforced "$@" ;;
   edge) shift; cmd_edge "$@" ;;
   flip) shift; cmd_flip "$@" ;;
   *) usage ;;

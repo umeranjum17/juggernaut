@@ -13,6 +13,10 @@
 # but appended to data/machine-shadow.log as `<epoch> TAB ticket TAB <from> TAB <event> TAB shadow` (the guard's own
 # file and shape, bin/jg-machine-guard.sh), with the legal events on stderr, and the command always exits 0 so the
 # writer carries on; a ticket the observer cannot place is left alone. Without it an illegal move still exits 1.
+# Enforcement is the switch of bin/jg-machine-guard.sh: when `ticket` is listed in config/machine-enforce, --shadow
+# stops being shadow for a ticket the observer can place. The illegal move is logged as `refused` (not `shadow`),
+# nothing else is written and the command exits 1, so a writer that reads the exit code refuses its own write.
+# Rollback is deleting the `ticket` line from config/machine-enforce.
 # Env: JG_HOME, JG_DATA_OVERRIDE, JG_MACHINES_TABLES as in bin/jg-machine.sh.
 set -u
 export LC_ALL=C
@@ -22,7 +26,7 @@ DATA=${JG_DATA_OVERRIDE:-$JG_HOME/data}
 JM=$here/jg-machine.sh
 plain() { case "$1" in '' | *[!A-Za-z0-9._:@-]*) return 1 ;; esac; }
 usage() { sed -n '2,4p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
-shadow=0 unplaced=0
+shadow=0 unplaced=0 mode=shadow
 if [ "${1-}" = --shadow ]; then shadow=1; shift; fi
 if [ "$#" -ne 2 ] || ! plain "$1" || ! plain "$2"; then usage; fi
 ticket=$1 event=$2
@@ -30,7 +34,9 @@ ticket=$1 event=$2
 refuse() {
   [ "$shadow" -eq 1 ] || exit 1
   [ "$unplaced" -eq 0 ] || exit 0  # in shadow a ticket the observer cannot place is a silent no-op, as in bin/jg-machine-shadow.sh
-  { mkdir -p "$DATA" && printf '%s\tticket\t%s\t%s\tshadow\n' "$(date +%s)" "$1" "$event" >>"$DATA/machine-shadow.log"; } 2>/dev/null
+  bash "$here/jg-machine-guard.sh" enforced ticket 2>/dev/null && mode=refused
+  { mkdir -p "$DATA" && printf '%s\tticket\t%s\t%s\t%s\n' "$(date +%s)" "$1" "$event" "$mode" >>"$DATA/machine-shadow.log"; } 2>/dev/null
+  [ "$mode" = shadow ] || exit 1
   exit 0
 }
 
