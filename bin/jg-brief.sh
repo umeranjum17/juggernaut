@@ -458,7 +458,7 @@ if [ "$KIND" = ship ]; then
       *) echo "error: --risk must be one of release, security, migration, large-change, shared-protocol, fork-repo (got '$RISK')" >&2; exit 1 ;;
     esac
   fi
-  if [ "$MODE" = no-mistakes ] && [ "$RISK_SET" -eq 0 ] && [ ! -e "$CONFIG/delivery-risk-loose" ]; then
+  if jg_delivery_style_is "$MODE" review && [ "$RISK_SET" -eq 0 ] && [ ! -e "$CONFIG/delivery-risk-loose" ]; then
     echo "error: a no-mistakes ship brief states its risk with --risk <release|security|migration|large-change|shared-protocol|fork-repo>; a task with no such risk ships as --mode direct-PR with a done-done check" >&2
     exit 1
   fi
@@ -742,7 +742,7 @@ BRIEF="$DATA/$ID/brief.md"
 mkdir -p "$DATA/$ID"
 
 ASK_USER_BLOCK=
-if [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ]; then
+if [ "$KIND" = ship ] && jg_delivery_style_is "$MODE" review; then
   ASK_USER_BLOCK=$(jg_ask_user_escalation_block "$DATA" "$ID")
 fi
 
@@ -1077,7 +1077,7 @@ fi
 # bin/jg-spawn.sh checks against its own explicit --mode and the project's
 # registered forge before launching.
 SETUP2=""
-if [ "$MODE" = no-mistakes ]; then
+if jg_delivery_style_is "$MODE" review; then
   SETUP2="
 2. Run \`no-mistakes doctor\`; if it reports the repo is not initialized here, run \`no-mistakes init\`."
 fi
@@ -1186,7 +1186,7 @@ RISK_SECTION=
 if [ -n "$RISK" ]; then
   RISK_SECTION="
 # Delivery risk
-Delivery risk (no-mistakes): $RISK"
+Delivery risk ($MODE): $RISK"
 fi
 DOD=$(jg_dod_block "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH" "$UPSTREAM_CONSENT") || exit 1
 

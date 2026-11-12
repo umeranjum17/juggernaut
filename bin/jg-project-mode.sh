@@ -21,7 +21,7 @@
 # section 7 and the task-dispatch skill; bin/jg-brief.sh's own header owns the
 # --branch-prefix flag it accepts).
 # The consumers are bin/jg-fleet-sync.sh (skip local-only clones),
-# bin/jg-bootstrap.sh (skip the GitHub-auth probe when every clone is local-only),
+# bin/jg-bootstrap.sh (skip the GitHub-auth probe when every clone is local),
 # bin/jg-home-seed.sh and bin/jg-remote-home-seed.sh (refuse local-only seeding,
 # run no-mistakes init), bin/jg-spawn.sh's advisory registry-deviation notice,
 # and --forge for bin/jg-spawn.sh's forge agreement and yolo refusal and for

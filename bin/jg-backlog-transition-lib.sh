@@ -71,6 +71,9 @@ JG_BACKLOG_CLOSE_REPLAY_RESULT=
 # re-deriving a deadline here.
 # shellcheck source=bin/jg-timeout-lib.sh disable=SC1091
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/jg-timeout-lib.sh"
+# jg-delivery-style.sh owns which old mode words name a trunk lane (the landed note's word).
+# shellcheck source=bin/jg-delivery-style.sh disable=SC1091
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/jg-delivery-style.sh"
 # jg-pr-lib.sh owns which URL is a Gerrit change. It is functions and empty
 # globals only, so it is sourced once rather than re-initialising a caller's
 # parsed identity.
@@ -1089,7 +1092,7 @@ jg_backlog_close_marker_validate() {  # <marker-path> <authorized-data-dir> <exp
     0) ;;
     2)
       case "${args[0]}" in
-        --note) case ${args[1]} in local%20main|local-trunk) true ;; *) false ;; esac ;;
+        --note) [ "${args[1]}" = local%20main ] || jg_delivery_style_trunk_aliases | grep -qxF -- "${args[1]}" ;;
         --pr)
           arg_value=${args[1]}
           [ "${#arg_value}" -le 2048 ] \

@@ -6,6 +6,7 @@
 #   jg-delivery-style.sh <mode> <fact>  exit 0 when the fact (publishes, review, trunk, or local) is yes for a known mode, else 1
 #   jg-delivery-style.sh --list     print the style words, one per line
 #   jg-delivery-style.sh --accepted print every accepted word: the styles, then the old words that read as one of them
+#   jg-delivery-style.sh --trunk-aliases print the old words whose lane lands on the local trunk
 #   jg-delivery-style.sh --field <mode> <name>   print one named column (the `columns` row names them)
 #   jg-delivery-style.sh knob <word>  print the knob (pr or local) a registry word reads as; an unknown word exits 1
 #   jg-delivery-style.sh pr|local   print the knob's row: line, adds, joins, publishes
@@ -53,6 +54,8 @@ jg_delivery_style_aliases() { awk -F'\t' '$1=="alias"{print $2}' "$(_jg_ds_table
 # jg_delivery_style_accepts <word>: 0 for a style or an old word, the accepted-mode test of every entry point.
 jg_delivery_style_accepts() { jg_delivery_style_canonical "${1:-}" >/dev/null; }
 jg_delivery_style_accepted() { jg_delivery_style_modes; jg_delivery_style_aliases; }
+# jg_delivery_style_trunk_aliases: the old words whose lane lands on the local trunk (read from the alias rows, so a record's old note word needs no list of its own).
+jg_delivery_style_trunk_aliases() { local w; for w in $(jg_delivery_style_aliases); do jg_delivery_style_is "$w" trunk && printf '%s\n' "$w"; done; return 0; }
 
 jg_delivery_style_publishes() { jg_delivery_style_is "${1:-}" publishes; }
 
@@ -83,6 +86,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   case "${1:-}" in
     --list) jg_delivery_style_modes ;;
     --accepted) jg_delivery_style_accepted ;;
+    --trunk-aliases) jg_delivery_style_trunk_aliases ;;
     --field) jg_delivery_style_field "${2:-}" "${3:-}" || { echo "jg-delivery-style: no property '${3:-}' for mode '${2:-}'" >&2; exit 1; } ;;
     knob) jg_delivery_style_knob "${2:-}" ;;
     ""|-*) echo "usage: jg-delivery-style.sh <mode> | --list" >&2; exit 2 ;;
