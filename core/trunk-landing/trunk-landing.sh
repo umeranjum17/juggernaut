@@ -8,7 +8,7 @@
 #        trunk-landing.sh verify <jg-home> <project>                 (what a tick starts while the trunk tip is above the green pin: bin/jg-trunk.sh verify, one at a time)
 #        trunk-landing.sh publish <jg-home> <project>                (what a tick starts under a release waiver: bin/jg-trunk.sh publish, the green pin or a candidate after a red)
 #
-# For each state/<task>.meta in the home with mode=local-trunk (or legacy local-only) whose project is registered local-trunk and has a trunk
+# For each state/<task>.meta in the home with a local-style mode (the table row `local` or its old words) whose project is registered local-trunk and has a trunk
 # (state/trunk-tip-<project>, made by bin/jg-trunk.sh init), whose ship branch is not on the trunk yet and whose
 # state/<task>.status ends with a `done` line, `check` starts `bin/jg-trunk.sh land <task>` detached and records
 # the outcome in <home>/data/jg-trunk-landing/<task>.<head>.state. The worker's done is the signal, and the lane's whole proof must be there at its head (completion
@@ -163,7 +163,7 @@ if [ "$1" = runbatch ]; then
   out=$(JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" land-batch "$@" 2>&1) || rc=$?
   tip=$(verdict_tip "$pn")  # a lane the stack returned was judged on top of the stack's lanes that landed
   for arg in "$@"; do
-    id=${arg%%@*}; head=${arg#*@}; proj=$(mval "$STATE/$id.meta" project)
+    id=${arg%%@*}; head=${arg#*@}; proj=$(mval "$STATE/$id.meta" project); lane_mode=$(mval "$STATE/$id.meta" mode)
     request_log=$(mktemp "$MEM/$id.$head.request-XXXXXX.log") || exit 1
     printf '%s\n' "$out" > "$request_log"; printf '%s\n' "$out" > "$MEM/$id.$head.log"
     if printf '%s\n' "$out" | grep -q "^landed $id " || printf '%s\n' "$out" | grep -q "^already landed $id "; then
@@ -174,7 +174,7 @@ if [ "$1" = runbatch ]; then
       [ -z "$now" ] || [ "$now" = "$head" ] || printf 'landed %s\n' "$res" > "$MEM/$id.$now.state"
       resume_waiters "$id"
       jg_lock_acquire_wait "$MEM/.outbox.lock"
-      printf 'trunk-landing: landed %s (local-trunk) on the local trunk in one stack with its queue (not live yet: live follows the answer given at gated, the captain'"'"'s word or the project'"'"'s waiver, and its quiet window); %s\n' "$id" "$res" >> "$MEM/outbox"
+      printf 'trunk-landing: landed %s (%s) on the local trunk in one stack with its queue (not live yet: live follows the answer given at gated, the captain'"'"'s word or the project'"'"'s waiver, and its quiet window); %s\n' "$id" "$lane_mode" "$res" >> "$MEM/outbox"
       jg_lock_release "$MEM/.outbox.lock"
       continue
     fi
@@ -210,7 +210,7 @@ if [ "$1" = run ]; then
   printf '%s\n' "$out" > "$MEM/$id.$head.log"
   if [ "$rc" -eq 0 ]; then
     JG_HOME="$FMH" "$FMH/bin/jg-machine-shadow.sh" landing "$id.$head" landed || true  # shadow report of the move (jg-machine-shadow.sh)
-    proj=$(mval "$STATE/$id.meta" project)
+    proj=$(mval "$STATE/$id.meta" project); lane_mode=$(mval "$STATE/$id.meta" mode)
     # The lander rebased the lane, so its branch is now at the landed commit: the same verdict stands for that head.
     br=$(mval "$STATE/$id.meta" branch); br=${br:-fm/$id}
     now=$(git -C "$proj" rev-parse --verify --quiet "refs/heads/$br^{commit}" 2>/dev/null) || now=
@@ -219,7 +219,7 @@ if [ "$1" = run ]; then
     [ -z "$now" ] || [ "$now" = "$head" ] || printf 'landed %s\n' "$out" > "$MEM/$id.$now.state"
     resume_waiters "$id"
     jg_lock_acquire_wait "$MEM/.outbox.lock"
-    printf 'trunk-landing: landed %s (local-trunk) on the local trunk (not live yet: live follows the answer given at gated, the captain'"'"'s word or the project'"'"'s waiver, and its quiet window); %s\n' "$id" "$out" >> "$MEM/outbox"
+    printf 'trunk-landing: landed %s (%s) on the local trunk (not live yet: live follows the answer given at gated, the captain'"'"'s word or the project'"'"'s waiver, and its quiet window); %s\n' "$id" "$lane_mode" "$out" >> "$MEM/outbox"
     jg_lock_release "$MEM/.outbox.lock"
     "$SELF" next "$FMH" >/dev/null 2>&1 || :
     exit 0
@@ -401,7 +401,7 @@ for meta in "$STATE"/*.meta; do
   esac
   at=$(ready_at "$id") || continue
   # The merge switch of the style `local` (docs/trunk-flow.md): a lane of mode `local` lands by itself with yolo on, or once the lead
-  # recorded merge=approved; with yolo off it waits for that word. A record with an old word (local-trunk, local-only) is read as before.
+  # recorded merge=approved; with yolo off it waits for that word. A record with an old word is read as before.
   if [ "$(mval "$meta" mode)" = local ] && [ "$(mval "$meta" yolo)" != on ] && [ "$(mval "$meta" merge)" != approved ]; then
     report "$id.$head" "$id waits for the captain's word to land (yolo is off)" "waits for the captain's word: yolo is off and merge=approved is not recorded"
     continue

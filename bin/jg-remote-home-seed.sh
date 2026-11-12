@@ -65,6 +65,8 @@ MAX_MANIFEST_BYTES=1048576
 . "$SCRIPT_DIR/jg-remote-readiness-lib.sh"
 # shellcheck source=bin/jg-project-origin-lib.sh
 . "$SCRIPT_DIR/jg-project-origin-lib.sh"
+# shellcheck source=bin/jg-delivery-style.sh
+. "$SCRIPT_DIR/jg-delivery-style.sh"
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 usage() { sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
@@ -198,11 +200,10 @@ for project in "${PROJECT_NAMES[@]+"${PROJECT_NAMES[@]}"}"; do
   read -r MODE _ <<EOF
 $MODE_LINE
 EOF
-  case "$MODE" in
-    no-mistakes|direct-PR) ;;
-    local|local-only|local-trunk) die "project $project is $MODE and cannot be provisioned remotely" ;;
-    *) die "project $project has unsupported delivery mode: $MODE" ;;
-  esac
+  if ! jg_delivery_style_publishes "$MODE"; then
+    if jg_delivery_style_accepts "$MODE"; then die "project $project is $MODE and cannot be provisioned remotely"; fi
+    die "project $project has unsupported delivery mode: $MODE"
+  fi
   # An origin named on the command line is authoritative. Reading one from a
   # clone this home happens to have is only a convenience for the already-cloned
   # case; it is never a reason to create one.

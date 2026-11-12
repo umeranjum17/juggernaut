@@ -8,7 +8,7 @@
 #   task.sh columns                 filter for jg-fleet-view.sh: add a State column (the captain sentence) to the Under Way table,
 #                                   and pass the text through unchanged unless config/machine-view exists
 #
-# A local-trunk lane (meta mode local, or the old words local-trunk and local-only) whose status log says done reads from the trunk flow, never as done:
+# A trunk lane (meta mode local, or its old words) whose status log says done reads from the trunk flow, never as done:
 #   ready-to-land (waits in the landing queue), landed (on the trunk, cleanup runs), cleaned, or rework (the lander refused this
 #   head, or the suite found a red the commit caused and it was reverted). Records read: data/jg-trunk-landing/<task>.<head>.state
 #   and data/trunk-landings.tsv. A moved trunk changes nothing: the lander rebases, the worker waits.
