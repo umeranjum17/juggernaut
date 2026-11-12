@@ -51,7 +51,7 @@ make_case() {
   chmod +x "$fb/treehouse" "$fb/tmux"
   touch "$c/state/.last-watcher-beat"
   write_meta "$c" ship
-  printf 'working [at=1]: on it\npaused [at=2]: parked until 2026-12-31\n' > "$c/state/$ID.status"
+  printf 'working [at=1]: on it\npaused [at=2] [wait=lead] [reason=parked]: set aside\n' > "$c/state/$ID.status"
   mkdir -p "$c/state/$ID.inbox"
   printf 'a steer\n' > "$c/state/$ID.inbox/001.msg"
   printf 'the brief\n' > "$c/data/$ID/brief.md"

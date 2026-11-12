@@ -46,7 +46,13 @@
 # as its cause must carry the id of a hold on record (bin/jg-captain-hold.sh open); without one it is refused with
 # "no such hold is on record" and nothing is written.
 #
-# This file is the one core owner of both refusals. bin/jg-squad-lead-report.sh
+# The wait check (--append on a .status file). A paused: line is the one way to wait, and it names who owes the next
+# move and why: `paused [at=<epoch>] [wait=<who>] [reason=<word>]: {why}`. The words are the rows of
+# core/machines/ticket-wait.states (not `none`) and core/machines/ticket-wait-reason.states. A paused: line with no wait,
+# a wait with no reason, a word outside those lists, or the old placeholder date 2026-12-31 is refused with the new form
+# in the refusal text, and nothing is written. A parked lane is `reason=parked`; the quiet rule keys on that word.
+#
+# This file is the one core owner of these refusals. bin/jg-squad-lead-report.sh
 # runs it before a parent-channel append, and the status line bin/jg-brief.sh
 # generates pipes through it, so no captain-facing status or report note can
 # carry a Lavish address even when a worker types one by hand, and no lane's
@@ -136,6 +142,41 @@ hold_record_gate() {  # <text>
   done <<< "$1"
 }
 
+# The words of a machine enum file (first column of its non-comment rows), one per line.
+wait_words() {  # <enum-file-name>
+  awk -F '\t' '!/^#/ && NF { print $1 }' "$(dirname -- "${BASH_SOURCE[0]}")/../core/machines/$1"
+}
+
+# 0 when every paused: line of <text> names a legal wait and reason; otherwise 1 with the new form on stderr.
+wait_line_gate() {  # <text>
+  local line head who why whos whys problem form
+  whos=$(wait_words ticket-wait.states | grep -vx none) || whos=''
+  whys=$(wait_words ticket-wait-reason.states) || whys=''
+  form='write paused [at=<epoch>] [wait=<who>] [reason=<word>]: {why}'
+  while IFS= read -r line; do
+    status_is_paused "$line" || continue
+    head=${line%%:*}
+    who=$(printf '%s\n' "$head" | sed -n 's/.*[[ ]wait=\([A-Za-z0-9_-]*\).*/\1/p' | head -1)
+    why=$(printf '%s\n' "$head" | sed -n 's/.*[[ ]reason=\([A-Za-z0-9_-]*\).*/\1/p' | head -1)
+    problem=''
+    if printf '%s\n' "$line" | grep -q '2026-12-31'; then problem='the placeholder date 2026-12-31 is not a wait; use reason=parked'
+    elif [ -z "$who" ] && [ -z "$why" ]; then problem='a paused line names no wait'
+    elif [ -z "$who" ]; then problem='a reason needs a wait: who owes the next move?'
+    elif [ -z "$why" ]; then problem="a wait on $who needs a reason"
+    elif ! printf '%s\n' "$whos" | grep -qx "$who"; then problem="wait=$who is not a who"
+    elif ! printf '%s\n' "$whys" | grep -qx "$why"; then problem="reason=$why is not a reason"
+    fi
+    [ -n "$problem" ] || continue
+    {
+      printf 'wait refused: %s; nothing was written.\n' "$problem"
+      printf '%s.\n' "$form"
+      printf 'wait is one of: %s.\n' "$(printf '%s\n' "$whos" | paste -sd' ' -)"
+      printf 'reason is one of: %s.\n' "$(printf '%s\n' "$whys" | paste -sd' ' -)"
+    } >&2
+    return 1
+  done <<< "$1"
+}
+
 APPEND=''
 if [ "${1-}" = --append ]; then
   [ "$#" -ge 2 ] || { echo 'error: --append needs a file' >&2; exit 2; }
@@ -163,6 +204,7 @@ if [ -n "$APPEND" ]; then
       # shellcheck source=bin/jg-dod-lib.sh
       . "$(cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/jg-dod-lib.sh"
       hold_record_gate "$text" || exit 1
+      wait_line_gate "$text" || exit 1
       recon_done_gate "$APPEND" "$text" || exit 1
       done_proof_gate "$APPEND" "$text" || exit 1
       ;;

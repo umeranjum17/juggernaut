@@ -111,19 +111,25 @@ def moment(args):
     done(started, "ok: %s %s = %s" % (row["id"], name, when))
 
 
-def wait(args):
-    found, ids = flags(args, ("--at",))
-    if len(ids) not in (2, 3):
-        view.refuse("usage: wait <ticket> <who> [<reason>] [--at <RFC3339>]")
-    started, ticket, who, why = time.monotonic(), ids[0], ids[1], (ids[2] if len(ids) == 3 else "")
+def wait_flags(who, why, at=""):
+    """Return the flags that write the three wait keys (wait, wait_reason, wait_at); a word outside the closed lists is refused."""
     if who not in rule.words("ticket-wait"):
         view.refuse("who must be one of %s, got %s" % (", ".join(rule.words("ticket-wait")), who))
     if why and why not in rule.words("ticket-wait-reason"):
         view.refuse("reason must be one of %s, got %s" % (", ".join(rule.words("ticket-wait-reason")), why))
     if who != "none" and not why:
         view.refuse("a wait on %s needs a reason" % who, "usage: wait <ticket> <who> <reason>")
+    return ["--set-metadata", "wait=" + who, "--set-metadata", "wait_reason=" + why, "--set-metadata", "wait_at=" + utc(at)]
+
+
+def wait(args):
+    found, ids = flags(args, ("--at",))
+    if len(ids) not in (2, 3):
+        view.refuse("usage: wait <ticket> <who> [<reason>] [--at <RFC3339>]")
+    started, ticket, who, why = time.monotonic(), ids[0], ids[1], (ids[2] if len(ids) == 3 else "")
+    meta = wait_flags(who, why, found.get("--at"))
     row = fetch(ticket)
-    bd("update", row["id"], "--set-metadata", "wait=" + who, "--set-metadata", "wait_reason=" + why, "--set-metadata", "wait_at=" + utc(found.get("--at")))
+    bd("update", row["id"], *meta)
     done(started, "ok: %s wait = %s%s" % (row["id"], who, " (%s)" % why if why else ""))
 
 

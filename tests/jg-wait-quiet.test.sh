@@ -173,7 +173,7 @@ backdate() {  # <home> <task> <secs>
 test_parked_and_finished_lanes_ring_no_timer_and_a_blocked_lane_still_does() {
   local m w n=0 i
   m=$(home quiet)
-  for w in "pk:paused [at=1]: parked until 2026-12-31T00:00Z, nothing to do"$'\n' \
+  for w in "pk:paused [at=1] [wait=lead] [reason=parked]: set aside, nothing to do"$'\n' \
     "rc:needs-decision [at=1] [key=d1]: owner call: which slice goes first"$'\n'"done [at=2]: report final, gate PASS; owner calls D1 wait on the lead" \
     "wk:needs-decision [at=1] [key=d2]: owner call: which slice goes first" \
     "bl:blocked [at=1] [key=vendor]: waiting on the vendor"; do
@@ -195,7 +195,7 @@ test_parked_and_finished_lanes_ring_no_timer_and_a_blocked_lane_still_does() {
   done
   grep -q -E "waiting-state bl .*level=owner" "$m/events" || fail "a blocked lane did not ring: $(cat "$m/events")"
   grep -q -E "waiting-state wk .*level=owner" "$m/events" || fail "a working lane under an open decision did not ring: $(cat "$m/events")"
-  pass "a placeholder pause and a finished Recon raise no timer wake in two hours; a blocked lane and a working lane under an open decision still ring"
+  pass "a parked pause and a finished Recon raise no timer wake in two hours; a blocked lane and a working lane under an open decision still ring"
 }
 
 # A real future date and a placeholder both stay quiet, but a pause whose real date has passed

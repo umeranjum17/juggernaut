@@ -33,14 +33,11 @@ The report is the only thing that survives, so anything worth keeping must be in
    Whenever you mention a PR anywhere - a status line, your terminal, a summary - write its full
    https:// URL exactly as the forge printed it, never a bare number such as "PR 108"; juggernaut
    copies that URL from your line rather than assembling one.
-   Use `paused: {why}` - never `blocked:` - when deliberately waiting for work or an external condition expected to clear on its own, including your own validation round.
-   Before ending your turn with your own background shell or monitor still running, or before waiting on your own pipeline run or a long foreground command, append `paused [at=<epoch>]: {job and completion condition}` to the status file.
-   Name what you are waiting for and what will let you resume; do not repeat the declaration on every poll.
-   Do not declare active implementation or reasoning as a wait.
+   One rule for every wait (your own background shell, pipeline run or validation round, an outside condition, a parked lane, a date): before you end your turn append `paused [at=<epoch>] [wait=<who>] [reason=<word>]: {job and completion condition}`. Use `blocked:` only when you are stuck, or for the waits-for line below.
+   `wait` is who owes the next move: worker, tick (a script), lead, main, owner or outside (CI, a quota, another ticket, a date). `reason` is why: decision, blocker, dependency, quota, ci, approval, review, parked or date. A line with no wait, no reason, another word, or the old placeholder date is refused.
+   Do not repeat the declaration on every poll. Do not declare active implementation or reasoning as a wait.
    Juggernaut may still raise one first-sight alert; the declared wait then uses the existing long recheck cadence instead of repeated possible-wedge alarms.
-   When you know when the wait clears, include `until <YYYY-MM-DDTHH:MMZ>` (UTC) for a recheck at that time.
-   Follow the resolution rule below when the wait clears, then resume the task.
-   Use `blocked:` when you are stuck and need help.
+   When you know when the wait clears, add `until <YYYY-MM-DDTHH:MMZ>` (UTC) to the text. Follow the resolution rule below when it clears, then resume the task.
    When your wait is for another ticket to land on the trunk, or for a cause that a ticket removes, write `blocked [at=<epoch>] [key=<slug>]: waits-for: <ticket-id> {why}`; that ticket's landing steers you and closes the blocker by itself, so ask nobody and do not poll.
 
 5. If you hit the same obstacle twice, append `blocked [at=<epoch>]: {why}` and stop; juggernaut will help.

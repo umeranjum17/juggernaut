@@ -1022,7 +1022,7 @@ SIGNALS
     assert_grep "States: working, needs-decision, blocked, awaiting, done, failed." "$brief" \
       "$kind brief did not render the configured pause verb in its states list"
     # shellcheck disable=SC2016 # Literal backticks and braces must remain unexpanded.
-    assert_grep 'Use `awaiting: {why}`' "$brief" \
+    assert_grep '`awaiting [at=<epoch>] [wait=<who>] [reason=<word>]:' "$brief" \
       "$kind brief did not instruct the configured pause status"
     # shellcheck disable=SC2016 # Literal backticks and braces must remain unexpanded.
     assert_no_grep '`paused: {why}`' "$brief" \
@@ -1052,16 +1052,16 @@ test_ship_and_scout_teach_validation_round_pause() {
     brief="$home/data/$id/brief.md"
     assert_grep "your own validation round, which you declare once just before its blocking hold" "$brief" \
       "$kind brief did not teach workers to declare their validation-round wait before holding it"
-    assert_grep "append \`paused:\` once just before its first blocking command, then stay in the command" "$brief" \
+    assert_grep "append the \`paused\` wait line once just before its first blocking command, then stay in the command" "$brief" \
       "$kind brief's Waiting section does not declare the validation round once and then hold it"
     assert_no_grep "is not a \`paused:\` wait" "$brief" \
       "$kind brief still tells workers never to declare a wait they hold in a command"
     assert_grep "your own validation round" "$brief" \
       "$kind brief did not teach workers to declare their validation-round wait"
-    assert_grep 'Before ending your turn with your own background shell or monitor still running' "$brief" \
+    assert_grep 'your own background shell, pipeline run or validation round' "$brief" \
       "$kind brief did not require declaring a background-work wait"
-    assert_grep 'before waiting on your own pipeline run or a long foreground command' "$brief" \
-      "$kind brief did not require declaring a pipeline or foreground wait"
+    assert_grep 'append `paused [at=<epoch>] [wait=<who>] [reason=<word>]:' "$brief" \
+      "$kind brief did not give the one wait form"
     assert_grep 'Juggernaut may still raise one first-sight alert' "$brief" \
       "$kind brief incorrectly promised to suppress the first alert"
     assert_grep 'Do not declare active implementation or reasoning as a wait' "$brief" \

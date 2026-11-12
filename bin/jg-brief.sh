@@ -272,14 +272,11 @@ esac
 . "$SCRIPT_DIR/jg-version-branch-lib.sh"
 PAUSED_VERB=${JG_CLASSIFY_PAUSED_VERB:-$JG_CLASSIFY_PAUSED_VERB_DEFAULT}
 IFS= read -r -d '' OPERATOR_PAUSE_INSTRUCTIONS <<EOF || true
-   Use \`$PAUSED_VERB: {why}\` - never \`blocked:\` - when deliberately waiting for work or an external condition expected to clear on its own, including your own validation round.
-   Before ending your turn with your own background shell or monitor still running, or before waiting on your own pipeline run or a long foreground command, append \`$PAUSED_VERB [at=<epoch>]: {job and completion condition}\` to the status file.
-   Name what you are waiting for and what will let you resume; do not repeat the declaration on every poll.
-   Do not declare active implementation or reasoning as a wait.
+   One rule for every wait (your own background shell, pipeline run or validation round, an outside condition, a parked lane, a date): before you end your turn append \`$PAUSED_VERB [at=<epoch>] [wait=<who>] [reason=<word>]: {job and completion condition}\`. Use \`blocked:\` only when you are stuck, or for the waits-for line below.
+   \`wait\` is who owes the next move: worker, tick (a script), lead, main, owner or outside (CI, a quota, another ticket, a date). \`reason\` is why: decision, blocker, dependency, quota, ci, approval, review, parked or date. A line with no wait, no reason, another word, or the old placeholder date is refused.
+   Do not repeat the declaration on every poll. Do not declare active implementation or reasoning as a wait.
    Juggernaut may still raise one first-sight alert; the declared wait then uses the existing long recheck cadence instead of repeated possible-wedge alarms.
-   When you know when the wait clears, include \`until <YYYY-MM-DDTHH:MMZ>\` (UTC) for a recheck at that time.
-   Follow the resolution rule below when the wait clears, then resume the task.
-   Use \`blocked:\` when you are stuck and need help.
+   When you know when the wait clears, add \`until <YYYY-MM-DDTHH:MMZ>\` (UTC) to the text. Follow the resolution rule below when it clears, then resume the task.
    When your wait is for another ticket to land on the trunk, or for a cause that a ticket removes, write \`blocked [at=<epoch>] [key=<slug>]: waits-for: <ticket-id> {why}\`; that ticket's landing steers you and closes the blocker by itself, so ask nobody and do not poll.
 EOF
 
@@ -801,7 +798,7 @@ Bound that command by what your harness lets one command run: in Pi pass the bas
 Give any `--wait` a duration a little under that bound.
 When the bound passes with nothing changed, run the same blocking command again, with no status check in between.
 The one exception is `respond`: it sent its answer before it began waiting, so reattach with `no-mistakes axi run --wait` instead, and never send the same `respond` again, because it would answer whichever gate parks next without you reading it.
-A wait your shell can watch this way needs no `paused:` line, except your own pipeline run, a long foreground command, or your own validation round, which you declare once just before its blocking hold: append `paused:` once just before its first blocking command, then stay in the command, and never append it again as you reissue that command.
+A wait your shell can watch this way needs no `paused:` line, except your own pipeline run, a long foreground command, or your own validation round, which you declare once just before its blocking hold: append the `paused` wait line once just before its first blocking command, then stay in the command, and never append it again as you reissue that command.
 EOF
 WAIT_SECTION=${WAIT_SECTION%$'\n'}
 WAIT_BLOCK=
@@ -897,7 +894,7 @@ Report only true captain-relevant outcomes or a declared external wait by append
    \`$STATUS_APPEND\`
 States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.
 Substitute \`<epoch>\` with the current Unix time in seconds - run \`date +%s\` and write the number it printed; a stamp that is not plain digits records no time at all.
-Use \`$PAUSED_VERB: {why}\` (never \`blocked:\`) only when your domain is deliberately idling on a known external wait you expect to clear on its own, naming when it clears with \`until <YYYY-MM-DDTHH:MMZ>\` (UTC) when you know; use \`blocked:\` when you are stuck and need juggernaut to act.
+Use \`$PAUSED_VERB [at=<epoch>] [wait=<who>] [reason=<word>]: {why}\` (never \`blocked:\`) only when your domain is deliberately idling on a known external wait you expect to clear on its own (wait is one of worker, tick, lead, main, owner, outside; reason one of decision, blocker, dependency, quota, ci, approval, review, parked, date; a line without them is refused), naming when it clears with \`until <YYYY-MM-DDTHH:MMZ>\` (UTC) when you know; use \`blocked:\` when you are stuck and need juggernaut to act.
 Use this only for material phase changes, a captain decision, a real blocker, a failure, work ready for review, or work you landed.
 Work you landed includes a merge you performed yourself under standing merge authority and one the captain merged on the forge: under that authority nothing is ever \"ready for review\", so a landed merge that goes unreported reaches the captain as silence.
 This is also how you return the answer to a marked from-juggernaut request above.

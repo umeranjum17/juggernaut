@@ -72,6 +72,10 @@ journeys:
   wait-quiet:
     tier: local
     command: bash journeys/wait-quiet.sh
+  wait-word:
+    tier: local
+    command: bash journeys/wait-word.sh
+    timeout: 10m
   watcher-window-inventory:
     tier: local
     command: bash journeys/watcher-window-inventory.sh

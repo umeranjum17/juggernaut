@@ -12,6 +12,8 @@ and reports are metadata.reports, each comma-joined; a PR or report also joins t
 A hold is status on_hold with metadata.hold_reason and hold_kind, kept in plain text; a dated hold is status deferred
 with --until as defer_until at UTC midnight, because bd reads a bare date in local time, and bd ready wakes it to open;
 a held row keeps its assignee, and that owner is what keeps it in flight, across that wake too.
+A hold writes the ticket's three wait keys in the same update (hold_kind and hold_reason stay as they are): a hold to a date waits on
+outside for the date, an owner question (kind captain) on the owner for a decision, a parked hold on the lead for parked; unhold writes the wait `none`.
 --archive-body needs nothing further: the store's own history keeps the replaced body.
 --mint leaves the id to bd, which names it under the store's prefix. A rerun converges: an existing id, blocker, link or note is left alone. bd refuses an id with no dash and a dependency
 cycle, and that refusal reaches stderr with bd's exit status.
@@ -533,6 +535,15 @@ def hold_date(value):
     return value
 
 
+def hold_wait(kind, until):
+    """Return the wait a hold writes with it, as (who, reason), or None when it writes none: a hold to a date waits on `outside`
+    for the `date`, an owner question (kind captain) on the `owner` for a `decision`, a parked hold on the `lead` for `parked`.
+    hold_kind and hold_reason are written by the caller as before."""
+    if until:
+        return "outside", "date"
+    return {"captain": ("owner", "decision"), "parked": ("lead", "parked")}.get(kind)
+
+
 def hold(args):
     found, ids = view.flags(args, ("--reason", "--kind", "--until"), ("--json",))
     if len(ids) != 1:
@@ -550,11 +561,15 @@ def hold(args):
     ident = row["id"]
     item = view.task(row, items)
     tips = ["Run `jg-backlog.sh unhold %s` to resume dispatch" % ident, "Run `jg-backlog.sh list --state held` to review paused work"]
-    if item["held"] == "yes" and (item["hold_reason"], item["hold_kind"], item["hold_until"]) == (reason, kind or "-", until or "-"):
+    waits = hold_wait(kind, until)
+    meta = row.get("metadata") or {}
+    if item["held"] == "yes" and (item["hold_reason"], item["hold_kind"], item["hold_until"]) == (reason, kind or "-", until or "-") \
+            and (not waits or (meta.get("wait"), meta.get("wait_reason")) == waits):
         respond(found, "hold", ident, "hold %s already held" % ident, tips, already=True)
         return
-    status, meta = row.get("status"), row.get("metadata") or {}
+    status = row.get("status")
     cmd = ["--set-metadata", "hold_reason=" + reason]
+    cmd += __import__("jg-beads-moment").wait_flags(*waits) if waits else []
     cmd += ["--set-metadata", "hold_kind=" + kind] if kind else ["--unset-metadata", "hold_kind"] if "hold_kind" in meta else []
     cmd += ["--defer", until + "T00:00:00Z" if until else ""] if until or row.get("defer_until") else []
     cmd += unowned(row) if status == "in_progress" else []
@@ -574,6 +589,7 @@ def unhold(args):
     ident = row["id"]
     meta = row.get("metadata") or {}
     cmd = [word for key in HOLD_FIELDS if key in meta for word in ("--unset-metadata", key)]
+    cmd += __import__("jg-beads-moment").wait_flags("none", "") if meta.get("wait", "none") != "none" else []
     cmd += ["--defer", ""] if row.get("defer_until") else []
     back = "in_progress" if view.flying(row) else "open"
     cmd += ["--status", back] if row.get("status") not in ("closed", back) else []
