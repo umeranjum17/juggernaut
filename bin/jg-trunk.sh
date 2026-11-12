@@ -1543,8 +1543,8 @@ verify_slot() {  # <sha>
   [ "$(cat "$wf" 2>/dev/null || true)" = "$sha" ]
 }
 
-# The whole suite at a landed commit, on demand: nothing starts it per landing (the whole suite runs on the release pull request in
-# GitHub CI). Green moves the pin; a script that fails there and passes on the commit's parent charges that one commit, which is
+# The whole suite at a landed commit, on demand: nothing starts it per landing (the changed tests run once for each batch, in the
+# tick's verify, off the landing path). Green moves the pin; a script that fails there and passes on the commit's parent charges that one commit, which is
 # reverted, and the green pin goes back below it. A failure no test accounts for runs once more and never moves the pin or reverts.
 # Nothing here stops a landing.
 # The commit of a landed batch that caused the red its top commit shows: the lowest commit of <from>..<top> whose whole suite

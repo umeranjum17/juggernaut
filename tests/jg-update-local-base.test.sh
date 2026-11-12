@@ -533,7 +533,7 @@ test_the_landing_check_runs_the_batched_live_step_and_reports_it() {
   chmod +x "$fh/bin/jg-trunk.sh"; cp "$ROOT/bin/jg-wake-lib.sh" "$ROOT/bin/jg-path-lib.sh" "$fh/bin/"
   local rc=0 ob="$fh/data/jg-trunk-landing/outbox"
   live() { bash "$ROOT/core/trunk-landing/trunk-landing.sh" live "$fh" proj >/dev/null 2>&1; }
-  # No job follows a landing to run the whole suite on this machine: it runs once, on the release pull request in GitHub CI.
+  # No job follows a landing to run the whole suite on this machine: the changed tests run once for each batch, in the tick's verify, off the landing path.
   bash "$ROOT/core/trunk-landing/trunk-landing.sh" post "$fh" t1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa cccccccccccccccccccccccccccccccccccccccc >/dev/null 2>&1 || rc=$?
   [ "$rc" = 2 ] && [ ! -e "$fh/calls" ] || fail "the landing check must have no post-landing suite job (exit $rc, calls: $(cat "$fh/calls" 2>/dev/null))"
   # The live job reports a go-live and a failed move, a new hold once, and nothing for waiting, already live or no waiver.

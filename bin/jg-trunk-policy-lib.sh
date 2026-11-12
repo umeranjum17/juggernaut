@@ -22,7 +22,7 @@
 #                                     is the one test run, and a red it finds reverts the commit that caused it. tests: the landing also runs
 #                                     gate-full over the changed files (the rollback)
 #   gate-verify           the same invariants, then the whole suite: `verify` runs it on a landed commit on
-#                         demand (never per landing: the whole suite runs on the release PR in GitHub CI), and
+#                         demand or from the tick's verify (never per landing: the changed tests run once for each batch, off the landing path), and
 #                         a script that fails there and passes on the commit's parent reverts that one commit
 #                         gate-lint, gate-full and gate-verify defaults are Juggernaut's own suite: they apply only to a repository
 #                         that carries it (bin/jg-test-run.sh at the commit). Any other project runs only a gate its home set for it

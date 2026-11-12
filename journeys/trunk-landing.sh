@@ -7,7 +7,7 @@
 # paths, a failing gate, a failing lint, an owner-guard hit, an open
 # linked decision, away mode, a protected path, a trunk a lane moved) refuse and leave the trunk
 # unchanged, and a red trunk never stops a landing; each open captain call changes behaviour only through config/trunk-policy;
-# the whole suite runs on the release pull request in CI, never per landing; the release is ONE pull request from the trunk itself
+# the changed tests run once for each batch on the trunk, off the landing path; the release is ONE pull request from the trunk itself
 # with no release branch; and a red CI pins the home back to the last green commit.
 # Real bin/jg-trunk.sh, bin/jg-trunk-live-home.sh, core/trunk-landing and the shared landing gates run over real git
 # repositories, a bare origin and a recording forge (tests/jg-trunk.test.sh and its -adopt, -refusal, -live, -gate, -queue, -retry and
