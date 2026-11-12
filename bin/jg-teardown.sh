@@ -1110,7 +1110,7 @@ remote_squad_lead_teardown() {
   [ ! -e "$CONFIG/fleet-ledger" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE JG_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/jg-fleet-ledger.sh" cleaned_up "$ID" || true
   status_retire_presentation_task "$STATE" "$ID" || return 1
   jg_backlog_atomic_transition remove "$STATE/$ID.meta" "task record" "$STATE" || return 1
-  rm -f -- "$STATE/$ID.turn-ended" "$STATE/$ID.progress" \
+  rm -f -- "$STATE/$ID.turn-ended" \
     "$(jg_wake_signal_seen_path "$STATE" "$STATE/$ID.turn-ended")" \
     "$STATE/.squad-lead-relaunch-$ID" "$STATE/.squad-lead-relaunch-bound-$ID"
   jg_task_files_retire "$STATE" "$ID"
@@ -2665,14 +2665,14 @@ cleanup_juggernaut_home_children() {
     status_retire_presentation_task "$sub_state" "$child_id" || return 1
     jg_wake_queue_prune_task "$sub_state" "$child_id" "$child_t" 2>/dev/null || true
     jg_backlog_atomic_transition remove "$sub_state/$child_id.meta" "task record" "$sub_state" || return 1
-    rm -f "$sub_state/$child_id.turn-ended" "$sub_state/$child_id.progress" \
+    rm -f "$sub_state/$child_id.turn-ended" \
       "$(jg_wake_signal_seen_path "$sub_state" "$sub_state/$child_id.turn-ended")" \
-      "$sub_state/$child_id.pi-ext.ts" "$sub_state/$child_id.omp-ext.ts" \
+      "$sub_state/$child_id.pi-ext.ts" \
       "$sub_state/$child_id.grok-turnend-token" "$sub_state/$child_id.kimi-turnend-token" \
       "$sub_state/$child_id.muse-session" "$sub_state/$child_id.muse-session-current" \
-      "$sub_state/$child_id.cursor-session" "$sub_state/$child_id.reconcile-nudged" "$sub_state/$child_id.restart-nudged" \
-      "$sub_state/$child_id.claude-settings.json" "$sub_state/$child_id.devin-config.json" \
+      "$sub_state/$child_id.cursor-session" \
       "$sub_state/.$child_id.branch-outcome-index"
+    jg_task_files_retire "$sub_state" "$child_id"
     chmod u+w "$sub_state/$child_id.git-hooks" 2>/dev/null || true
     rm -rf "$sub_state/$child_id.git-hooks"
   done
@@ -3258,15 +3258,13 @@ else
 fi
 status_retire_presentation_task "$STATE" "$ID" || exit 1
 jg_wake_queue_prune_task "$STATE" "$ID" "$T" 2>/dev/null || true
-rm -f "$STATE/$ID.turn-ended" "$STATE/$ID.progress" "$STATE/$ID.lane-groups" \
+rm -f "$STATE/$ID.turn-ended" \
   "$(jg_wake_signal_seen_path "$STATE" "$STATE/$ID.turn-ended")" \
-  "$STATE/$ID.pi-ext.ts" "$STATE/$ID.omp-ext.ts" "$STATE/$ID.grok-turnend-token" \
+  "$STATE/$ID.pi-ext.ts" "$STATE/$ID.grok-turnend-token" \
   "$STATE/$ID.kimi-turnend-token" "$STATE/$ID.muse-session" \
   "$STATE/$ID.muse-session-current" "$STATE/$ID.cursor-session" \
   "$STATE/$ID.control-relaunch" "$STATE/$ID.control-relaunch.meta-prior" \
   "$STATE/$ID.control-relaunch.brief-prior" "$STATE/$ID.control-relaunch.note" \
-  "$STATE/$ID.reconcile-nudged" "$STATE/$ID.restart-nudged" "$STATE/$ID.gemini-settings.json" \
-  "$STATE/$ID.claude-settings.json" "$STATE/$ID.devin-config.json" \
   "$STATE/.$ID.branch-outcome-index" \
   "$STATE/.squad-lead-relaunch-$ID" "$STATE/.squad-lead-relaunch-bound-$ID"
 # The steering inbox (bin/jg-task-inbox-lib.sh) is runtime state for the

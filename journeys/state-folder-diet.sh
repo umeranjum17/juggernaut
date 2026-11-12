@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # done-done journey: the state folder diet (jg8-j19). A fixture task leaves one file of every per-task kind that
 # bin/jg-task-files-lib.sh lists; the real bin/jg-teardown.sh cleans the task up and the
-# journey counts the kinds (the suffix after state/<id>.) before and after. Slices 1 to 3 remove 24 kinds (one is a directory).
+# journey counts the kinds (the suffix after state/<id>.) before and after. Slices 1 to 4 remove 32 kinds (one is a directory).
 set -u
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 OUT=${DONE_DONE_EVIDENCE_ROOT:?run through done-done}
