@@ -693,7 +693,21 @@ jg_lock_clean_known_files() {
     "$lockdir/scan-complete" \
     "$lockdir/children" \
     "$lockdir/children.next" \
+    "$lockdir/since" \
+    "$lockdir/beat" \
     2>/dev/null || true
+}
+
+# Holder record of a lock (core/lock-lease): `pid` names the holder, `since` is the epoch it took the lock, and `beat` is the
+# epoch of its last sign of life. A holder that runs long calls jg_lock_beat; core/lock-lease reads the three files and breaks a lock
+# whose holder is gone or whose lease ran out. `since` is written at acquire with no fork, because this path is the watcher's hot loop.
+jg_lock_beat() {  # <lockdir>
+  local lockdir=$1 pid current now
+  jg_current_pid current || return 1
+  pid=$(cat "$lockdir/pid" 2>/dev/null || true)
+  [ "$pid" = "$current" ] || return 1
+  jg_epoch_seconds_to now
+  printf '%s\n' "$now" > "$lockdir/beat" 2>/dev/null
 }
 
 jg_lock_set_role() {
@@ -729,8 +743,10 @@ jg_lock_owner_dir() {
 }
 
 jg_lock_prepare_owner() {
-  local ownerdir=$1 mypid back
+  local ownerdir=$1 mypid back since
   jg_current_pid mypid || return 1
+  jg_epoch_seconds_to since
+  printf '%s\n' "$since" > "$ownerdir/since" 2>/dev/null || return 1
   printf '%s\n' "$mypid" > "$ownerdir/pid" 2>/dev/null || return 1
   back=$(cat "$ownerdir/pid" 2>/dev/null || true)
   [ "$back" = "$mypid" ]
