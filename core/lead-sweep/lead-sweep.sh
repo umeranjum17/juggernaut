@@ -13,8 +13,8 @@
 # or a failing gate is refused and left alone. A lane a landing is running for (state/.trunk-run-<id>-*.lock) is skipped.
 # A `resolved` lane that has not landed is left alone and reported once (`lead-sweep: <id> ended as resolved, left alone: ...`);
 # a `done` lane that has not landed is waiting for its landing and prints nothing.
-# Output, which becomes a check wake: `lead-sweep: <id> cleaned up (<why>)` once, and `lead-sweep: <id> not cleaned up ...`
-# once per lane and reason (data/lead-sweep/<id>.reported); the same refusal on the next beat prints nothing.
+# Output, which becomes a check wake: `lead-sweep: <id> cleaned up (<why>)` once. A cleanup that is refused or left alone is the
+# drift alert (bin/jg-alert.sh raise --deliver), once per lane and reason (data/lead-sweep/<id>.reported); the same refusal on the next beat prints nothing.
 # The other ends of a lane (machine 10 request; worker expire and retire), each acted on once and never forced:
 #   done, not landed   the agent ends at once (`bin/jg-control.sh <id> exit`); the copy, branch and ticket stay;
 #   parked             a ship lane whose last line is paused, blocked or needs-decision for JG_LEAD_SWEEP_PARK_H hours (default 24;
@@ -41,6 +41,13 @@ START_S=$(( $(num "${JG_LEAD_SWEEP_START_MIN:-}" 30) * 60 ))
 PR_MIN=${JG_LEAD_SWEEP_PR_MIN:-10}; case $PR_MIN in ''|*[!0-9]*) PR_MIN=10 ;; esac
 umask 077
 mkdir -p "$MEM" || exit 0
+# drift <lane> <note>: a refused or left-alone cleanup is the drift alert, one per lane; a changed reason rings again.
+drift() {
+  local a=$FMH/bin/jg-alert.sh
+  JG_HOME="$FMH" JG_STATE_OVERRIDE="$STATE" "$a" resolve "drift--lead-sweep-$1" >/dev/null 2>&1 || true
+  JG_HOME="$FMH" JG_STATE_OVERRIDE="$STATE" "$a" raise drift "lead-sweep-$1" --deliver --ticket "$1" --note "$2" >/dev/null 2>&1 \
+    || echo "lead-sweep: $2"
+}
 mval() { sed -n "s/^$2=//p" "$1" | tail -n 1; }
 mtime() { stat -c %Y "$1" 2>/dev/null || echo "$NOW"; }
 run_as_home() { JG_HOME="$FMH" JG_STATE_OVERRIDE="$STATE" "$@"; }
@@ -152,7 +159,7 @@ for meta in "$STATE"/*.meta; do
     # Only an answered lane is reported: nothing else will ever revisit it. A done lane is waiting for its landing.
     if [ "$ended" = resolved ] && [ "$(cat "$MEM/$id.reported" 2>/dev/null)" != unlanded ]; then
       echo unlanded > "$MEM/$id.reported"
-      echo "lead-sweep: $id ended as resolved, left alone: its work has not landed on the trunk"
+      drift "$id" "$id ended as resolved, left alone: its work has not landed on the trunk"
     fi
     continue
   fi
@@ -167,7 +174,7 @@ for meta in "$STATE"/*.meta; do
     *)
       [ "$(cat "$MEM/$id.reported" 2>/dev/null)" != "$last" ] || continue
       printf '%s\n' "$last" > "$MEM/$id.reported"
-      echo "lead-sweep: $id ($why) not cleaned up, nothing was forced: ${last:-the cleanup was refused}" ;;
+      drift "$id" "$id ($why) not cleaned up, nothing was forced: ${last:-the cleanup was refused}" ;;
   esac
 done
 exit 0

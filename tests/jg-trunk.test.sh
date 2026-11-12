@@ -67,7 +67,7 @@ test_adopt_tip_ends_a_moved_trunk_with_a_record_and_loses_no_landed_commit() {
   printf '%s\n' "$out" > "$W/moved.out"; [ "$(trunk classify "$W/moved.out")" = wait ] || fail "the moved-trunk refusal must be class wait"
   trunk land c >/dev/null 2>&1 || :
   trunk land c >/dev/null 2>&1 || :
-  [ "$(grep -c "trunk-moved-proj-${OLD:0:12}-${M:0:12}" "$HOME_D/state/.wake-queue")" = 1 ] || fail "one wake, keyed by record and branch, however many refusals: $(cat "$HOME_D/state/.wake-queue" 2>&1)"
+  [ "$(grep -c "trunk-moved-proj-${OLD:0:12}-${M:0:12}" "$HOME_D/state/.wake-queue")" = 1 ] || fail "one drift alert, keyed by record and branch, however many refusals: $(cat "$HOME_D/state/.wake-queue" 2>&1)"
   grep -q "adopt-tip $PROJ --reason .* --carried-by <task-id>" "$HOME_D/state/.wake-queue" || fail "the wake names the exact adopt-tip line and the lane the lost commits need"
   # (a) the lost commits are listed and refused without --carried-by.
   out=$(trunk adopt-tip "$PROJ" --reason 'main moved by a fetch' 2>&1) && fail "lost commits without --carried-by must be refused: $out"

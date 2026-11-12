@@ -113,7 +113,7 @@
 # on-default when the old pin is not its ancestor); a red pin whose commit is not on the tip is removed; one row in
 # data/trunk-adoptions.tsv (project, old record, new tip, epoch, relation, lost count, carried-by, reason[, red-removed=<sha>]).
 # The released commit must be an ancestor of the tip. It takes no force or skip flag and never moves the trunk ref (the hook holds).
-# A refusal for a moved trunk is class `wait`, and tip_ok raises one wake keyed by record and branch with the exact adopt-tip line.
+# A refusal for a moved trunk is class `wait`, and tip_ok raises one drift alert keyed by record and branch with the exact adopt-tip line.
 # Only the lander moves the trunk. A worker never lands. A git reference-transaction hook that every
 # subcommand installs in the project refuses any other write to the trunk branch, so `git branch -f trunk`
 # or `git update-ref` by hand is stopped where it happens; the record check above stays as the second lock.
@@ -290,8 +290,8 @@ tip_ok() {
   have=$(rev "refs/heads/$TRUNK") || refuse "trunk branch $TRUNK is missing in $PROJ"
   [ "$want" = "$have" ] || {
     adopt_facts "$want" "$have"
-    [ ! -e "$STATE/trunk-moved-wake-$PN-${want:0:12}-${have:0:12}" ] && : > "$STATE/trunk-moved-wake-$PN-${want:0:12}-${have:0:12}" && \
-    jg_wake_append check "trunk-moved-$PN-${want:0:12}-${have:0:12}" "$TRUNK in $PN is at ${have:0:12} but the lander left it at ${want:0:12} (relation to the record: $ADOPT_REL, unverified until adopt-tip fetches origin; $ADOPT_LOST_N landed commit(s) off the tip). If the move is known, run: $SCRIPT_DIR/jg-trunk.sh adopt-tip $PROJ --reason \"<what moved it>\"$([ "$ADOPT_LOST_N" -eq 0 ] || printf ' --carried-by <task-id>')" >/dev/null 2>&1 || :
+    JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" raise drift "trunk-moved-$PN-${want:0:12}-${have:0:12}" --deliver --project "$PN" \
+      --note "$TRUNK in $PN is at ${have:0:12} but the lander left it at ${want:0:12} (relation to the record: $ADOPT_REL, unverified until adopt-tip fetches origin; $ADOPT_LOST_N landed commit(s) off the tip). If the move is known, run: $SCRIPT_DIR/jg-trunk.sh adopt-tip $PROJ --reason \"<what moved it>\"$([ "$ADOPT_LOST_N" -eq 0 ] || printf ' --carried-by <task-id>')" >/dev/null 2>&1 || :
     refuse "$TRUNK is at ${have:0:12} but the lander last left it at ${want:0:12}; something else moved it, so nothing lands or releases until that is explained"
   }
 }
