@@ -2992,6 +2992,9 @@ warn_invalid_lane_target_once() {
   triage_log "lane-target is not a positive integer; using the no-worker-working rule instead"
 }
 
+# The ready-idle alert (bin/jg-ready-idle.sh) is the one way ready work reaches a lead's queue.
+ready_idle() { JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-ready-idle.sh" "$@"; }
+
 # Base-cadence idle-home check: 0 when this home (primary or squad_lead) has
 # dispatchable queued work and sits below its lane floor, so ready work is
 # started without anyone asking. With
@@ -3014,7 +3017,7 @@ ready_work_waits_idle() {
   # Paused: withdraw the queued row so nothing is presented, and drop the
   # resurface record so the same ready set rings at once when the pause lifts.
   if fleet_paused; then
-    jg_wake_withdraw check ready-work || true
+    ready_idle clear ready-work: || true
     rm -f "$STATE/.ready-work-surfaced"
     return 1
   fi
@@ -3030,7 +3033,7 @@ ready_work_waits_idle() {
     # flight until an acknowledgement that may never come. Keep the resurface
     # record so this transient empty set cannot reset the re-raise window and
     # let the identical set fire again the moment it returns.
-    jg_wake_withdraw check ready-work || true
+    ready_idle clear ready-work: || true
     return 1
   fi
   target=$(lane_target_value) || target=
@@ -4810,7 +4813,7 @@ EOF
     touch "$STATE/.last-ready-work-check"
     if ready_work_waits_idle; then
       reason=$READY_WORK_REASON
-      jg_wake_append check ready-work "$reason" || exit 1
+      ready_idle fire "ready-work:${READY_WORK_IDS// /+}" || exit 1
       record_ready_work_surfaced
       wake "$reason"
     fi

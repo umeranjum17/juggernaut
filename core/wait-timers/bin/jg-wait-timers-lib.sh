@@ -395,6 +395,11 @@ EOF
   done
 }
 
+# The ready-idle alert (bin/jg-ready-idle.sh) carries this backstop's wake to the lead.
+jg_wait_timer_ready_idle() {  # fire <subject> | clear <prefix>
+  JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$_JG_WAIT_TIMER_DIR/jg-ready-idle.sh" "$@"
+}
+
 # A lead home's stalled ready backlog (README "Stalled ready backlog"): ready
 # work that could start, a free lane, and nothing
 # started for JG_READY_STALL_SECS. The watcher's ready_backlog_stall_state owns
@@ -432,6 +437,7 @@ jg_wait_timers_backlog() {  # <now> <interval>
       if [ "$reported" -gt 0 ]; then
         jg_wait_timer_report "resolved [key=$key]: waiting-timer-cleared: $lead ready backlog: the home is paused" || return 0
       fi
+      jg_wait_timer_ready_idle clear ready-backlog: || true
     fi
     rm -f "$record" "$whyfile" || return 1
     return 0
@@ -461,6 +467,7 @@ jg_wait_timers_backlog() {  # <now> <interval>
       [ "$rc" -eq 3 ] || reason="no ready work waits to start now"
       jg_wait_timer_report "resolved [key=$key]: waiting-timer-cleared: $lead ready backlog: $reason" || return 0
     fi
+    jg_wait_timer_ready_idle clear ready-backlog: || true
     rm -f "$record" || return 1
     since=
   fi
@@ -483,9 +490,7 @@ jg_wait_timers_backlog() {  # <now> <interval>
   printf '%s\t%s\t%s\t%s\t%s\n' "$since" "${READY_STALL_LANES:--}" "$key" "$reported" "$last" > "$record.tmp.$$" \
     && mv "$record.tmp.$$" "$record" || return 1
   reason="check: ready backlog stalled: $READY_STALL_IDS waits with $cond ($READY_STALL_OPEN/$READY_STALL_TARGET open) and nothing started for ${age}s - dispatch them now, P0 first, up to project capacity, or hold each with why it waits; Main was told id=$key"
-  if ! jg_wake_queued_keys check | grep -Fx "$key-stall" >/dev/null; then
-    jg_wake_append check "$key-stall" "$reason" || return 1
-  fi
+  jg_wait_timer_ready_idle fire "ready-backlog:${READY_STALL_IDS// /+}" || return 1
   wake "$reason"
 }
 

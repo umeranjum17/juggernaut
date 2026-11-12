@@ -285,6 +285,13 @@ test_ready_work_wakes_the_primary_home_too() {
   cycle "$m"
   grep -q '^check: ready work waiting with no worker working: jg-alpha' "$m/events" \
     || fail "a primary home with ready work and no worker got no wake: $(cat "$m/events")"
+  # The old wake and the new alert fire on the same fixture: the watcher still surfaces its wake, and the ready-idle alert holds one open
+  # record with one wake for the lead on the ledger. The three old producers' own wake calls are gone from the source.
+  [ "$(JG_HOME="$m" JG_STATE_OVERRIDE="$m/state" bash "$ROOT/bin/jg-alert.sh" word 'ready-idle--ready-work:jg-alpha')" = open ] || fail "the ready-idle alert was not raised: $(ls "$m/state/alerts" 2>&1)"
+  [ "$(grep -c 'alert-ready-idle--ready-work:jg-alpha' "$m/data/wake-ledger.tsv")" = 1 ] || fail "the alert delivered no single wake: $(cat "$m/data/wake-ledger.tsv")"
+  # shellcheck disable=SC2016 # the pattern is literal source text
+  ! grep -rnE 'jg_wake_(append|withdraw) check (ready-work|"\$key-stall")' "$ROOT/bin" "$ROOT/core/wait-timers/bin" "$ROOT/core/fleet-stall/fleet-stall-check" \
+    || fail "an old ready-idle wake call is still in the source"
   [ ! -e "$m/state/.waiting-timers/.ready-backlog" ] || fail "a primary home with no parent armed a lead escalation"
   # The same set must not ring again inside the resurface window, but a place
   # freed since it surfaced makes it startable now, so the stamp re-raises it.

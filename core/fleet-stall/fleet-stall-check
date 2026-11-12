@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Wake Main when a home lead is idle while its workers sit in `paused:` waiting
 # on that lead (a deadlock the watcher absorbs, since paused: means external wait).
-# Prints one line at most every 45 min; prints nothing when the fleet is healthy.
+# Raises the ready-idle alert (bin/jg-ready-idle.sh) at most every 45 min; does nothing when the fleet is healthy.
+# JG_STALL_RAISE names another copy of that command (the fixture test uses it).
 # The paused reason is matched with absolute paths, URLs, key=value tokens and
 # [key=...] stamps removed (an evidence path once made workers waiting on their
 # own runs count as waiting on the lead).
@@ -58,4 +59,6 @@ for h in byokit:10 crewhouse:3 desklink:9 muxr:8 takeone:1 writeboost:4; do
 done
 [ -n "$hits" ] || exit 0
 touch "$MARK"
-echo "fleet-stall: idle lead with 0 busy lanes and ready work, or workers paused on it >45m:$hits - send a go order"
+# An idle lead with ready work, or workers paused on it, is the ready-idle alert: it wakes the lead's holder itself, so this check prints nothing.
+hits=${hits# }
+JG_HOME=$R JG_STATE_OVERRIDE=$R/state "${JG_STALL_RAISE:-$R/bin/jg-ready-idle.sh}" fire "fleet-stall:${hits// /+}"
