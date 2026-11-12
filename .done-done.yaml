@@ -881,6 +881,9 @@ journeys:
     # was Core suites step 89: Machine tables sealed proof
     tier: local
     command: bash journeys/core-run.sh 'bash machines/run-proof.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  agent-cli:
+    tier: local
+    command: bash journeys/core-run.sh 'bash agent-cli/tests/agent-cli.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
 
   registry-union:
     tier: local
