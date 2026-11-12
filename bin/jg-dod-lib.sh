@@ -910,7 +910,7 @@ jg_dod_pr_checks_clear() {  # <worktree> <pr-url>
   return 1
 }
 
-# 0 when a lane of this mode is a trunk lane: mode local (or its old word local-trunk), or the old local-only of a project registered local.
+# 0 when a lane of this mode is a trunk lane: a mode whose style lands on the local trunk, or an old word of a project registered so.
 jg_dod_trunk_lane() {  # <mode> <project-dir>
   jg_delivery_style_is "$1" trunk && return 0
   jg_delivery_style_is "$1" local || return 1
@@ -956,7 +956,7 @@ jg_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
   url=$(jg_dod_pr_url_from_done_note "$(status_line_note "$line")") || url=
   if [ -z "$forge_head" ] && [ -n "$url" ] && [ -n "$meta" ] && [ -f "$meta" ] \
     && [ "$(jg_dod_meta_value "$meta" pr)" = "$url" ] \
-    && { jg_dod_forge_head_is_named_head "$mode" || { [ "$mode" = direct-PR ] && jg_dod_pr_outside_origin "$wt" "$url"; }; }; then
+    && { jg_dod_forge_head_is_named_head "$mode" || { jg_delivery_style_is "$mode" publishes && jg_dod_pr_outside_origin "$wt" "$url"; }; }; then
     recorded_head=$(jg_dod_meta_value "$meta" pr_head)
     jg_pr_head_valid "$recorded_head" && forge_head=$recorded_head
   fi

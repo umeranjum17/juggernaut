@@ -24,6 +24,9 @@ rc=0
   # J8c: these four files read the table too, so the count for them is 0 (it was 10: jg-brief.sh 4, jg-fleet-snapshot.sh 4, jg-backlog-transition-lib.sh 1, jg-project-mode.sh 1).
   j8c=$(git -C "$root" grep -n -E "$pat" -- bin/jg-brief.sh bin/jg-fleet-snapshot.sh bin/jg-backlog-transition-lib.sh bin/jg-project-mode.sh | wc -l)
   echo "== mode branch lines in the J8c files: $j8c (10 before J8c)"; [ "$j8c" -eq 0 ] || rc=1
+  # J8d: these five files read the table too (the Go spawn core through jg-spawn-core.sh), so the count for them is 0 (it was 5: jg-dod-lib.sh 2, jg-gate-refuse-lib.sh 1, intake.go 1, delivery.go 1).
+  j8d=$(git -C "$root" grep -n -E "$pat" -- bin/jg-dod-lib.sh bin/jg-gate-refuse-lib.sh core/spawn/cmd/jg-spawn-core/intake.go core/spawn/cmd/jg-spawn-core/delivery.go core/spawn/cmd/jg-spawn-core/style.go | wc -l)
+  echo "== mode branch lines in the J8d files: $j8d (5 before J8d)"; [ "$j8d" -eq 0 ] || rc=1
   echo "== trunk aliases the old note words read from: $(bash "$ds" --trunk-aliases | paste -sd' ' -)"; [ "$(bash "$ds" --trunk-aliases)" = local-trunk ] || rc=1
   echo "== bogus"; bash "$ds" bogus && rc=1
   bash "$root/tests/jg-delivery-style.test.sh" || rc=1

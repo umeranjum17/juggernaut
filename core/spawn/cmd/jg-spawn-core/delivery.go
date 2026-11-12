@@ -118,7 +118,12 @@ func deliveryAgreeCmd(args []string) int {
 	}
 	if facts.forge != forge {
 		risk := ""
-		if mode == "no-mistakes" {
+		review, err := styleIs(mode, "review")
+		if err != nil {
+			fmt.Fprintf(stderr, "error: %v\n", err)
+			return 1
+		}
+		if review {
 			risk = " --risk <release|security|migration|large-change|shared-protocol|fork-repo>"
 		}
 		scaffold := fmt.Sprintf("jg-brief.sh %s %s --mode %s%s", id, proj, mode, risk)

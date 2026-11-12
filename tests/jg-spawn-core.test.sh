@@ -60,6 +60,10 @@ check "a registered prefix the branch lacks is announced" "$(notices --standing-
 # refusal that stops it. These keep the shapes the intake replay (core/spawn/README.md) found interesting.
 intake() { "$core" intake "$@" 2>&1; }
 var() { sed -n "s/^$1=//p" | head -1; }
+check "a consent flag on a mode that publishes nothing is refused, read from the table" "$(intake t1 proj --mode local --yolo off --upstream-consent github.com/o/r | grep -o 'meaningless on local')" "meaningless on local"
+check "a consent flag on an old local word is refused the same way" "$(intake t1 proj --mode local-trunk --yolo off --upstream-consent github.com/o/r | grep -o 'meaningless on local-trunk')" "meaningless on local-trunk"
+check "a consent flag on a mode that publishes is accepted" "$(intake t1 proj --mode direct-PR --yolo off --upstream-consent github.com/o/r | var MODE)" "'direct-PR'"
+check "an unreadable table is refused with its cause" "$(JG_DELIVERY_STYLES=$lab/none.tsv intake t1 proj --mode local --yolo off --upstream-consent github.com/o/r | grep -o 'table not readable')" "table not readable"
 check "a ship request is parsed into the spawn's variables" "$(intake t1 proj --mode direct-PR --yolo off --harness=claude | var MODE)|$(intake t1 proj --mode direct-PR --yolo off --harness=claude | var HARNESS_ARG)|$(intake t1 proj --mode direct-PR --yolo off | var POS)" "'direct-PR'|'claude'|('t1' 'proj')"
 check "a value flag followed by another flag is refused" "$(intake --model --mode x)" "error: --model requires a value"
 check "a flag with no value at the end is refused" "$(intake t1 --backend)" "error: --backend requires a value"

@@ -256,7 +256,9 @@ func (t *intake) deliveryRefusal() string {
 			return fmt.Sprintf("error: --yolo must be on or off (got '%s')", t.yolo)
 		}
 		if t.consentSet {
-			if t.mode == "local" || t.mode == "local-only" || t.mode == "local-trunk" {
+			if publishes, err := styleIs(t.mode, "publishes"); err != nil {
+				return "error: " + err.Error()
+			} else if !publishes {
 				return fmt.Sprintf("error: --upstream-consent is meaningless on %s, which publishes nothing; drop it", t.mode)
 			}
 			if !scopeValid(t.consent) {

@@ -20,12 +20,12 @@
 #
 #   1. NO_MISTAKES_GATE set - the durable env marker no-mistakes stamps into every
 #      gate agent. This is the primary signal and covers a relocated NM_HOME.
-#   2. The current worktree's git-common-dir resolves under a no-mistakes gate
-#      repo (.../.no-mistakes/repos/*.git) - the UNSPOOFABLE backstop. It derives
+#   2. The current worktree's git-common-dir resolves under a gate repo of
+#      the pipeline (.../.no-mistakes/repos/*.git) - the UNSPOOFABLE backstop. It derives
 #      from the checkout's real filesystem location, which the agent cannot
 #      relocate without breaking the gate's own git operations, so it still
 #      detects a gate even if the agent tampered NO_MISTAKES_GATE away. Its limit: the
-#      literal-path match only fires for the default NM_HOME (~/.no-mistakes); a
+#      literal-path match only fires for the default NM_HOME of the pipeline; a
 #      relocated NM_HOME is covered by signal 1.
 #
 # A NORMAL juggernaut session - a real primary checkout, a real treehouse/Orca

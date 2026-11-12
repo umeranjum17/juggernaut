@@ -31,6 +31,8 @@ STATE=${JG_STATE_OVERRIDE:-$JG_HOME/state}
 SOURCE_DIR=$ROOT/core/spawn
 BIN=${JG_SPAWN_CORE_BIN:-$STATE/bin/jg-spawn-core}
 GO=${JG_SPAWN_CORE_GO:-go}
+# The delivery-style table the core reads its mode facts from (the same one bin/jg-delivery-style.sh reads).
+export JG_DELIVERY_STYLES=${JG_DELIVERY_STYLES:-$ROOT/core/machines/styles/delivery-styles.tsv}
 
 # stale: 0 when the binary is absent or older than any source file.
 stale() {
