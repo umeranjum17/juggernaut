@@ -44,6 +44,9 @@ test_a_stale_wake_names_its_task_and_reason() {
   # An endpoint no record names still says so instead of guessing a task.
   [ "$(stale_wake_decorate_for "$m" 'stale: default:w9:p9')" = 'stale: default:w9:p9 [task=unknown reason=stopped]' ] \
     || fail "an unrecorded endpoint was mapped to a task"
+  # The same wake is the alert lost-worker, raised at rung 1 for the window; the watcher holds no stale wake call of its own any more.
+  [ "$(sed -n 's/^rung=//p' "$m/state/alerts/lost-worker--fake:1.rec" 2>/dev/null)" = 1 ] || fail "no lost-worker alert for the window"
+  ! grep -q 'jg_wake_append stale' "$ROOT/bin/jg-watch.sh" || fail "the watcher still appends its own stale wake"
   pass "a stale wake names the task and the reason, on the doorbell line and in the queued row"
 }
 

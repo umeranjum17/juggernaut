@@ -2544,6 +2544,17 @@ jg_wake_append() {
   jg_wake_append_locked "$@"
 }
 
+# jg_wake_lost_worker <window> <reason>: the alert `lost-worker` for a pane that stopped showing life, raised through bin/jg-alert.sh
+# (core/machines/styles/alert-table.tsv). It starts at rung 1 because the tick-driven climb is not built, repeats on every call, and
+# delivers the same `stale` wake keyed by the window with the reason as its text, so the stale: consumers read what they always read.
+jg_wake_lost_worker() {
+  local alert="$JG_WAKE_LIB_DIR/jg-alert.sh" rc
+  JG_HOME="${JG_HOME:-$JG_ROOT}" JG_STATE_OVERRIDE="$STATE" \
+    bash "$alert" raise lost-worker "$1" --rung 1 --wake stale --text "$2" --repeat \
+    | JG_HOME="${JG_HOME:-$JG_ROOT}" JG_STATE_OVERRIDE="$STATE" bash "$alert" deliver
+  rc=("${PIPESTATUS[@]}"); [ "${rc[0]}" -eq 0 ] && [ "${rc[1]}" -eq 0 ]
+}
+
 # --- wake urgency routing -----------------------------------------------------
 # One shared rule file gives every event a class, in every home: `now` wakes at once,
 # `batch` waits for a turn that happens anyway, and `silent` is recorded only.

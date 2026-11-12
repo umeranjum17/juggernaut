@@ -7,7 +7,7 @@
 #   jg-alert.sh timers                      print the wait ladder's timers, one "<name> <seconds>" line each: escalate (the stuck-wait
 #                                           precedence's seconds to the next rung), card (two such steps), realert (its repeat), ready-stall
 #   jg-alert.sh raise <alert> <subject> [--mode <delivery word>] [--kind <kind>] [--held <seconds>] [--fact k=v | word]...
-#                     [--home H] [--project P] [--route R] [--machine M] [--ticket T]
+#                     [--home H] [--project P] [--route R] [--machine M] [--ticket T] [--rung N] [--wake <kind> --text <line>] [--repeat]
 #                     [--note <text>] [--deliver | --print]
 #   jg-alert.sh capacity <producer> <text> [--deliver | --print]   raise the capacity alert for a quota, account, model or machine-slot event
 #   jg-alert.sh climb <key> [--now <epoch>]   take the next rung when the rung's timer ran out and the row's top is not reached
@@ -19,6 +19,10 @@
 # raise refuses an unknown alert or mode and a state that has not held for the row's time (--held below fires at), prints nothing
 # for a quiet row (a fact of its "quiet when" holds), records the alert `inhibited` when a rule I1 to I5 covers it, and otherwise
 # records it `open` and prints one ring line: ring<TAB>key<TAB>rung<TAB>holder. Rule I6 (fact presence=away) holds rung 4 for P1 to P3.
+# --rung N starts the climb at rung N instead of the row's first rung (the tick-driven climb is not built, so a producer that must
+# wake someone now starts at 1). --wake <kind> --text <line> make deliver append that kind of wake, keyed by the subject, carrying the
+# line, instead of the `check` wake, so a consumer of an older wake kind keeps reading what it read. --repeat rings an alert that is
+# still open again (a producer that fires every window), with the new text, instead of staying silent.
 # The row is the same in every delivery mode; the mode is recorded and checked against bin/jg-delivery-style.sh.
 # --note records the producer's own text (one line) in the record and the wake; --deliver pipes the ring through `deliver` at once; --print prints the wake line a registered check hands the watcher instead of a ring.
 # capacity is the one entry every capacity producer calls: the subject is the producer, and a new event of it resolves its last one.
@@ -89,16 +93,17 @@ cmd_timers() {
 }
 
 cmd_raise() {
-  local name=${1:-} subj=${2:-} mode='' kind='' held='' facts=() sc_home='' sc_project='' sc_route='' sc_machine='' sc_ticket='' note='' now_deliver=0 now_print=0
+  local name=${1:-} subj=${2:-} mode='' kind='' held='' facts=() sc_home='' sc_project='' sc_route='' sc_machine='' sc_ticket='' note='' now_deliver=0 now_print=0 rung='' wake='' text='' again=''
   [ -n "$name" ] && [ -n "$subj" ] || { _rc=2 _die "usage: raise <alert> <subject> [options]"; }
   shift 2
   while [ "$#" -gt 0 ]; do
     [ "$1" != --deliver ] || { now_deliver=1; shift; continue; }
     [ "$1" != --print ] || { now_print=1; shift; continue; }
+    [ "$1" != --repeat ] || { again=1; shift; continue; }
     [ "$#" -ge 2 ] || { _rc=2 _die "option $1 needs a value"; }
     case $1 in
       --mode) mode=$2 ;; --kind) kind=$2 ;; --held) held=$2 ;; --fact) facts+=("$2") ;;
-      --home) sc_home=$2 ;; --project) sc_project=$2 ;; --route) sc_route=$2 ;; --machine) sc_machine=$2 ;; --ticket) sc_ticket=$2 ;; --note) note=$(printf '%s' "$2" | tr '\t\r\n' '   ') ;;
+      --home) sc_home=$2 ;; --project) sc_project=$2 ;; --route) sc_route=$2 ;; --machine) sc_machine=$2 ;; --ticket) sc_ticket=$2 ;; --rung) rung=$2 ;; --wake) wake=$2 ;; --text) text=$2 ;; --note) note=$(printf '%s' "$2" | tr '\t\r\n' '   ') ;;
       *) _rc=2 _die "unknown option $1" ;;
     esac
     shift 2
@@ -117,18 +122,26 @@ cmd_raise() {
     for f in "${facts[@]}"; do [ "${f%%=*}" != wait ] || case ${f#*=} in worker) start=1 ;; lead) start=2 ;; main) start=3 ;; esac; done
     case $start in [0-4]) ;; *) _die "stuck-wait needs --fact wait=worker|lead|main" ;; esac
   fi
+  case $rung in '') ;; [0-4]) start=$rung ;; *) _rc=2 _die "--rung is 0 to 4" ;; esac
+  text=$(printf '%s' "$text" | tr '\n\t' '  ')
   local key="$name--$subj" file; file="$(_dir)/$key.rec"
   case $key in */*|*..*) _die "bad subject '$subj'" ;; esac
   if [ -r "$file" ]; then
     local cur; cur=$(_get "$file" state)
-    [ "$cur" = "$s_res" ] || return 0   # one live record for one key
+    if [ "$cur" != "$s_res" ]; then   # one live record for one key
+      if [ -n "$again" ] && [ "$cur" = "$s_open" ]; then
+        _set "$file" text "$text"; _set "$file" wake "$wake"
+        printf 'ring\t%s\t%s\t%s\n' "$key" "$(_get "$file" rung)" "$(_holder "$(_get "$file" rung)")"
+      fi
+      return 0
+    fi
   fi
   start=$(_cap "$prec" "$start" "${facts[@]}")
   local now cover; now=${JG_ALERT_NOW:-$(date +%s)}
   cover=$(_cover "$name" "$prec" "$sc_home" "$sc_project" "$sc_route" "$sc_machine" "$sc_ticket" || true)
   local st=$s_open
   _put "$file" "alert=$name" "subject=$subj" "mode=$mode" "precedence=$prec" "rung=$start" "top=$(_top "$prec" "$start" "${facts[@]}")" \
-    "since=$now" "rung_at=$now" "home=$sc_home" "project=$sc_project" "route=$sc_route" "machine=$sc_machine" "ticket=$sc_ticket" "note=$note" "state=$st"
+    "since=$now" "rung_at=$now" "home=$sc_home" "project=$sc_project" "route=$sc_route" "machine=$sc_machine" "ticket=$sc_ticket" "note=$note" "wake=$wake" "text=$text" "state=$st"
   if [ -n "$cover" ]; then
     _edge "$st" "$s_inh" || _die "the alert table has no inhibit move"
     _set "$file" state "$s_inh"; _set "$file" covered_by "$cover"
@@ -213,7 +226,7 @@ cmd_capacity() {
 }
 
 cmd_deliver() {
-  local tag key rung holder rec payload
+  local tag key rung holder rec payload kind
   # shellcheck source=bin/jg-wake-lib.sh disable=SC1091
   . "$_root/bin/jg-wake-lib.sh"
   while IFS=$'\t' read -r tag key rung holder; do
@@ -221,7 +234,9 @@ cmd_deliver() {
     [ "$tag" = ring ] && [ -n "$holder" ] || _die "not a ring line: '$tag'"
     rec=$(_rec "$key" deliver) || exit 1
     payload=$(_payload "$key" "$rung" "$holder")
-    if [ "$holder" = tick ]; then jg_wake_settle check "alert-$key" "$payload"
+    kind=$(_get "$rec" wake)
+    if [ -n "$kind" ] && [ "$holder" != tick ]; then jg_wake_append "$kind" "$(_get "$rec" subject)" "$(_get "$rec" text)" || _die "the wake for $key was not appended"
+    elif [ "$holder" = tick ]; then jg_wake_settle check "alert-$key" "$payload"
     else jg_wake_append check "alert-$key" "$payload" || _die "the wake for $key was not appended"; fi
   done
 }

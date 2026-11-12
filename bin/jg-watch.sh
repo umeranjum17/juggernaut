@@ -1486,7 +1486,7 @@ resurface_absorbed() {  # <window> <throttle-marker> <age> <reason> [scope] [min
     [ "$age" -ge "$min_age" ] || return 0
     [ "$(age_of "$throttle")" -ge "$PAUSE_RESURFACE_SECS" ] || return 0   # 999999 when no prior re-surface
   fi
-  jg_wake_append stale "$win" "$reason" || exit 1
+  jg_wake_lost_worker "$win" "$reason" || exit 1
   if [ -n "$scope" ]; then printf '%s' "$scope" > "$throttle"; else date +%s > "$throttle"; fi
   wake "$reason"
 }
@@ -1810,7 +1810,7 @@ wedge_dead_record() {  # <window> <since-file> <triage-label> <idle-age> <pane-h
   # written ahead of a failed append outlives it, and the next sighting would then
   # absorb the retry - the one way this bound could swallow the report outright
   # rather than deliver it once.
-  jg_wake_append stale "$win" "$reason" || exit 1
+  jg_wake_lost_worker "$win" "$reason" || exit 1
   printf '%s %s' "$agent_state" "$id" > "$marker"
   clear_write_tracking "$key"
   wake "$reason"
@@ -1875,7 +1875,7 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
         if [ "$n" -ge "$JG_WEDGE_DEMAND_INSPECT_COUNT" ]; then
           reason="stale: $win (idle ${age}s, possible wedge, escalation $n, demand-deep-inspection: same pane has wedge-escalated $n times in a row - do not re-absorb on the run-step/pane state alone)"
         fi
-        jg_wake_append stale "$win" "$reason" || exit 1
+        jg_wake_lost_worker "$win" "$reason" || exit 1
         rm -f "$since_file"
         clear_write_tracking "$(window_key "$win")"
         wake "$reason"
@@ -2018,7 +2018,7 @@ busy_turn_bound_check() {  # <window> <task> <hash> <since-file> <escalation-fil
         return 0
       fi
       if [ "$(cat "$STATE/.stale-$key" 2>/dev/null || true)" != "$declared" ]; then
-        jg_wake_append stale "$win" "stale: $win" || exit 1
+        jg_wake_lost_worker "$win" "stale: $win" || exit 1
         printf '%s' "$declared" > "$STATE/.stale-$key"
         wake "stale: $win"
       fi
@@ -2368,7 +2368,7 @@ prompt_gate_check() {  # <window> <task> [tail40]
   mkdir -p "$STATE/.wait-sources" && printf 'prompt: %s; path %s\n' "$prompt" "$path" > "$src" || exit 1
   printf 'wait:%s' "$h" > "$mf"
   reason="stale: $w (permission prompt: $prompt; path $path; not answered: $_r)"
-  jg_wake_append stale "$w" "$reason" || exit 1
+  jg_wake_lost_worker "$w" "$reason" || exit 1
   if declare -F jg_wait_timer_source_delivered >/dev/null; then
     jg_wait_timer_source_delivered "$task" "$w" "$(head -n 1 "$src" | tr '\t' ' ' | cut -c1-300)" || exit 1
   fi
@@ -2433,7 +2433,7 @@ surface_nonterminal_stale() {  # <window> <hash>
     bounded=0
   fi
   if [ "$throttled" -ne 0 ]; then
-    jg_wake_append stale "$win" "stale: $win" || exit 1
+    jg_wake_lost_worker "$win" "stale: $win" || exit 1
     stale_wait_record "$key"
   fi
   printf '%s' "$h" > "$STATE/.stale-$key"
@@ -2495,7 +2495,7 @@ declared_wait_contradiction() {  # <window> <task> <window-key>
   raised="$STATE/.truth-raised-$key"
   [ "$(cat "$raised" 2>/dev/null || true)" != "$sig $state" ] || return 0
   reason="stale: $win (task $task says paused, but its run is ${state#state: parked · source: run-step · } - a parked gate holds no pending drive call, so nothing resumes this lane until juggernaut decides or steers)"
-  jg_wake_append stale "$win" "$reason" || exit 1
+  jg_wake_lost_worker "$win" "$reason" || exit 1
   printf '%s' "$sig $state" > "$raised"
   wake "$reason"
 }
@@ -4630,7 +4630,7 @@ EOF
             printf '%s' "$h" > "$sf"
             triage_log "absorbed stale (captain-held, never rechecked while the away-posture record exists): $w"
           elif [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
-            jg_wake_append stale "$w" "stale: $w" || exit 1
+            jg_wake_lost_worker "$w" "stale: $w" || exit 1
             printf '%s' "$h" > "$sf"
             wake "stale: $w"
           fi
@@ -4673,7 +4673,7 @@ EOF
             else
               stale_text="stale: $w"
               [ -z "$STALE_CLEANUP_NOTE" ] || stale_text="stale: $w (finished but not cleaned up: $STALE_CLEANUP_NOTE)"
-              jg_wake_append stale "$w" "$stale_text" || exit 1
+              jg_wake_lost_worker "$w" "$stale_text" || exit 1
               stale_wait_record "$key"
               printf '%s' "$h" > "$sf"
               rm -f "$ssf"

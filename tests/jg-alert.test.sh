@@ -103,7 +103,7 @@ bash "$AL" raise supervision-down h9 --home h9 --fact beats=2 | bash "$AL" deliv
 ! grep -q "alert-supervision-down--h9" "$Q" || fail "a tick ring made a wake"
 assert_contains "$(bash "$ROOT/bin/jg-wake.sh" settled 2>&1)" "alert-supervision-down--h9" "a tick ring is recorded as settled"
 bash "$AL" raise line-red nt1 --note "the tip is red" | bash "$AL" deliver
-assert_contains "$(cat "$Q")" "(P1) at rung 2 for lead: nt1. the tip is red" "the producer's note rides in the wake"
+assert_contains "$(cat "$Q")" "(P1) at rung 2 for lead: nt1 - the tip is red" "the producer's note rides in the wake"
 echo "not a ring" | bash "$AL" deliver 2>/dev/null; expect_code 1 $? "a stray line is refused"
 # The old line-red wake calls are gone from every producer: the only wake they raise is the alert's.
 assert_equals "" "$(grep -nE 'jg_wake_append check "(trunk-tip-red|trunk-reverted|line-red|trunk-no-green|post-merge-ci)-' "$ROOT"/bin/jg-trunk.sh "$ROOT"/bin/jg-post-merge-ci.sh)" "no producer of line-red wakes by itself"
@@ -129,3 +129,13 @@ assert_equals 1 "$(bash "$AL" list | grep -c '^capacity--model-outage-abc$')" "a
 al capacity route-chain; expect_code 2 "$RC" "capacity needs a producer and a text"
 assert_equals "" "$(grep -nE 'jg_wake_append (check )?(admission-retry|"?model-outage-)' "$ROOT/bin/jg-watch.sh" "$ROOT/core/alerts/bin/jg-model-outage-lib.sh")" "the old wake calls are gone"
 pass "capacity raises through the alert function at rung 1 and the old wake calls are gone"
+
+# 12. A producer of an older wake kind: --rung 1 starts at the worker, --wake/--text deliver that kind keyed by the subject, and --repeat rings an open alert again.
+: >"$Q"
+al raise lost-worker w1 --rung 1 --wake stale --text "stale: w1 (idle 240s)" --repeat; assert_contains "$OUT" "ring	lost-worker--w1	1	worker" "--rung 1 starts at the worker"
+printf '%s\n' "$OUT" | bash "$AL" deliver; assert_contains "$(cat "$Q")" "stale	w1	stale: w1 (idle 240s)" "the stale wake is appended with the window key and the text"
+al raise lost-worker w1 --rung 1; assert_equals "" "$OUT" "a second raise without --repeat stays silent"
+al raise lost-worker w1 --rung 1 --wake stale --text "stale: w1 (idle 480s)" --repeat; assert_contains "$OUT" "ring	lost-worker--w1	1	worker" "--repeat rings the open alert again"
+assert_equals "stale: w1 (idle 480s)" "$(rec lost-worker--w1 text)" "the repeat records the new text"
+al raise lost-worker w2 --rung 9; expect_code 2 "$RC" "a rung out of range is a usage error"
+pass "a producer of an older wake kind raises at rung 1 and repeats through the alert"
