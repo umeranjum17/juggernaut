@@ -14,6 +14,7 @@ edge	intake	approve	ready	bin/jg-backlog.sh:approve	-	the lead or the owner says
 edge	ready	start	building	bin/jg-spawn.sh:main	-	a lane is free and the spawn made an isolated copy	jg-machine-ticket:moves
 edge	building	reclaim	ready	bin/jg-watch.sh:tick	-	the worker is lost and its lease ran out	jg-machine-ticket:moves
 edge	building	claim-done	proving	bin/jg-lavish-guard.sh:append	-	the done line names a commit that can be reached	jg-machine-ticket:moves
+edge	proving	claim-done	proving	bin/jg-lavish-guard.sh:append	-	the worker offers another head while it is proving; the run for the old head is withdrawn and a new ready_at is written	jg-machine-ticket:moves
 edge	proving	prove-fail	building	done-done:receipt	-	the fix loop is spent, or the owner said fix first	jg-machine-ticket:moves
 edge	proving	prove-pass	delivering	done-done:receipt	-	the receipt names this commit and covers every check the change needs	jg-machine-ticket:moves
 edge	proving	bypass	delivering	bin/jg-proof-bypass-apply.sh:main	-	a bypass of the owner stands for this ticket, its project or the home	jg-machine-ticket:moves

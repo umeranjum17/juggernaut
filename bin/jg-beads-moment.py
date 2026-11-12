@@ -48,6 +48,37 @@ MOMENTS = {
 }
 
 
+# moment -> the ticket moves that write it, the first one the ticket's state has being the one made (bin/jg-move.sh). bypassed_at has none:
+# its writer, bin/jg-proof-bypass-apply.sh, makes the move bypass itself first.
+MOVES = {
+    "approved_at": ("approve",),
+    "proved_at": ("prove-pass",),
+    "landing_at": ("rebase", "resolved"),
+    "gated_at": ("gate",),
+    "returned_at": ("refuse", "give-back"),
+    "conflict_at": ("conflict",),
+    "release_opened_at": ("join",),
+}
+MOVE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jg-move.sh")
+MACHINE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jg-machine.sh")
+
+
+def gate(ticket, *events):
+    """Make the ticket's move before anything is written: the first of `events` that the ticket's state has, else the first one, which
+    jg-move.sh then logs as a shadow line or refuses. A refusal (exit 1, once `ticket` is in config/machine-enforce) writes nothing."""
+    if not events:
+        return
+    event = events[0]
+    if len(events) > 1:  # which of the moves the state has: one read of the table, only when the writer has a choice
+        nxt = subprocess.run(["bash", MACHINE, "next", "ticket", ticket], capture_output=True, text=True, check=False)
+        legal = {line.split("\t")[1] for line in nxt.stdout.splitlines() if line.startswith("move\t")}
+        event = next((e for e in events if e in legal), event)
+    run = subprocess.run(["bash", MOVE, "--shadow", ticket, event], capture_output=True, text=True, check=False)
+    if run.returncode == 1:
+        view.refuse("the move %s of %s was refused, so nothing was written: %s" % (event, ticket, run.stderr.strip()),
+                    "Run: bin/jg-machine.sh next ticket " + ticket, "MOVE_REFUSED", 1)
+
+
 def bd(*args):
     run = subprocess.run([WRAPPER, *args], capture_output=True, text=True, check=False)
     if run.returncode:
@@ -100,6 +131,7 @@ def moment(args):
     held = str((row.get("metadata") or {}).get(name) or "")
     if held > when:
         view.refuse("%s is already %s, later than %s: a moment is never moved back" % (name, held, when), "Give a later --at", "MOMENT_BACK", 1)
+    gate(row["id"], *MOVES.get(name, ()))
     payload = {"moment": name}
     if name == "bypassed_at":
         payload["mark"] = "unproved"  # the trace says it: no proof ran for this ticket

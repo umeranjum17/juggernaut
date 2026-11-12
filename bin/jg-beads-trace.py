@@ -34,6 +34,19 @@ SOURCES = {
     "jg-receipt": (None, False, None),
     "jg-evidence": (None, False, "evidence"),
 }
+# (source, kind) -> the ticket moves this writer makes first (bin/jg-move.sh, through moment.gate); no entry is a record that moves nothing.
+MOVES = {
+    ("jg-spawn", "claim"): ("start",),
+    ("jg-done", "commit"): ("claim-done", "new-head"),
+    ("jg-trunk-land", "land"): ("batch",),
+    ("jg-merge-local", "land"): ("batch",),
+    ("jg-merge", "land"): ("release",),
+    ("jg-trunk-release", "land"): ("release",),
+    ("jg-trunk-live", "land"): ("go-live",),
+    ("jg-trunk-revert", "land"): ("revert", "revert-released"),
+}
+# A local landing of a project that publishes nothing is the end of the ticket: released_at is written in the same step as landed_at.
+ENDS = {"jg-merge-local"}
 # The moment that undoes another: live_at is current only while no later pinned_back_at is on the row.
 UNDONE_BY = {"live_at": "pinned_back_at"}
 
@@ -60,6 +73,7 @@ def record(args):
             json.loads(found["--payload"])
         except ValueError:
             view.refuse("--payload must be JSON")
+    moment.gate(row["id"], *MOVES.get((source, kind), ()))  # the ticket's move first: a refusal writes no event and no moment
     # The event first, then the row: the row write is what a reader polls.
     event = ["provenance", "record", "--issue", row["id"], "--kind", kind, "--source", source, "--ref-kind", ref_kind, "--ref", ref, "--at", when]
     if found.get("--payload"):
@@ -67,12 +81,14 @@ def record(args):
     moment.bd(*event)
     if key:
         meta[key] = when
+    if source in ENDS:
+        meta["released_at"] = when
     if lands:
         meta["commit"] = str(ref)
     if grows:  # a comma-joined list that only grows
         have = view.split(meta.get(grows))
         meta[grows] = ",".join(have + [ref] if ref not in have else have)
-    if key or lands or grows:
+    if key or lands or grows or source in ENDS:
         moment.bd("update", row["id"], "--metadata", json.dumps(meta, sort_keys=True))
     moment.done(started, "ok: %s %s = %s" % (row["id"], key or kind, when))
 

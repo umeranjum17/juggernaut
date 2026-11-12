@@ -5,7 +5,7 @@ It is a hierarchical statechart: a stage can hold sub-states, and a move that le
 The tables are `core/machines/tables/ticket.tsv` (machine 0 of the state-machine plan), `delivering.tsv` (machine 20) and `proving.tsv` (the proof run that fills `proving`).
 This slice is report-only: no script writes a move yet, and the engine never changes a record.
 
-- **Seven stages** and **fifteen moves**: `file`, `approve`, `start`, `reclaim`, `claim-done`, `prove-fail`, `prove-pass`, `bypass`, `answer`, `new-head`, `refuse`, `release`, `revert-released`, `close` and `drop`.
+- **Seven stages** and **sixteen moves**: `file`, `approve`, `start`, `reclaim`, `claim-done` (twice: from building, and again from proving with another head), `prove-fail`, `prove-pass`, `bypass`, `answer`, `new-head`, `refuse`, `release`, `revert-released`, `close` and `drop`.
 - **`delivering`** holds seven sub-states, `queued`, `resolving`, `rebased`, `gated`, `batched`, `live` and `joining`, and the two ends `on-main` and `returned`. It has twelve events.
 - **`proving`** holds the proof run: `planned`, `writing`, `running`, `judged`, `reviewing`, `waiting` and the ends `sealed`, `failed` and `aborted`.
 - A stage is never `unknown`. Who owes the next move (the wait) and how the ticket fares (the health) are separate words, listed in `core/machines/maps/ticket-words.tsv`.
@@ -69,6 +69,7 @@ stateDiagram-v2
   ready --> building: start
   building --> ready: reclaim
   building --> proving: claim-done
+  proving --> proving: claim-done
   proving --> building: prove-fail
   proving --> delivering: prove-pass
   proving --> delivering: bypass
@@ -91,7 +92,7 @@ stateDiagram-v2
 ## Ask the engine
 
 ```
-bin/jg-machine.sh events ticket                          # the fifteen moves
+bin/jg-machine.sh events ticket                          # the sixteen moves
 bin/jg-machine.sh edge-check ticket proving.running building   # legal, from any sub-state
 bin/jg-machine.sh diagram ticket                         # the diagram above
 bin/jg-machine.sh word ticket-words task rework          # building, worker, red

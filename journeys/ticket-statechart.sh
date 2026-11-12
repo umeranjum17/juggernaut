@@ -25,7 +25,7 @@ cat "$out"
 cat > "$DONE_DONE_EVIDENCE_ROOT/steps.json" <<JSON
 {"target": {"version": "$(git -C "$root" rev-parse --short HEAD)"},
  "start": "the shipped ticket, delivering and proving tables and the ticket word map, with generated status and shadow logs and the 21 pull request records",
- "steps": ["lint the ticket, delivering and proving tables", "list the 15 moves of the ticket", "ask for a move out of a stage from four sub-states of proving and five of delivering", "ask for a move that skips proving and require a refusal", "replay the words of the eleven older tables, a status log and a shadow log", "check the 21 pull request records against their targets", "draw the diagram and run the behavior test"],
- "result": "the three tables lint clean, the moves are the fifteen of the plan, each stage is left from every sub-state, a skipped stage is refused, every older word has a target (0 unmapped) and the 21 records get theirs"}
+ "steps": ["lint the ticket, delivering and proving tables", "list the 16 moves of the ticket", "ask for a move out of a stage from four sub-states of proving and five of delivering", "ask for a move that skips proving and require a refusal", "replay the words of the eleven older tables, a status log and a shadow log", "check the 21 pull request records against their targets", "draw the diagram and run the behavior test"],
+ "result": "the three tables lint clean, the moves are the sixteen of the plan and J3b, each stage is left from every sub-state, a skipped stage is refused, every older word has a target (0 unmapped) and the 21 records get theirs"}
 JSON
 exit "$rc"
