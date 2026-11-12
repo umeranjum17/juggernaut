@@ -15,7 +15,7 @@
 #        home already writes; nothing is re-derived:
 #          working  state/<task>.meta of kind ship or scout whose last state
 #                   line is not paused, blocked, needs-decision, done or failed;
-#          target   config/lane-target (one positive integer);
+#          target   config/lane-target (one positive integer), or the lane limit when config/lane-scale says mode=act (core/lane-scale);
 #          ready    ready_work in state/home-summary.json (the tickets that can start; "?" when
 #                   the summary is older than JG_READY_MAX_AGE, default 900 s, and the why says
 #                   "summary is stale"; an old number never makes a GAP), plus one for each open Goal whose
@@ -124,7 +124,8 @@ EOF
     last=$(grep -E '^(working|paused|blocked|needs-decision|done|failed)[ :[]' "${meta%.meta}.status" 2>/dev/null | tail -1)
     case "$last" in paused*|blocked*|needs-decision*|done*|failed*) ;; *) working=$((working + 1)) ;; esac
   done
-  target=$(awk 'NF { print; exit }' "$home/config/lane-target" 2>/dev/null)
+  if [ -x "$home/core/lane-scale/scale.sh" ]; then target=$("$home/core/lane-scale/scale.sh" target "$home" 2>/dev/null)
+  else target=$(awk 'NF { print; exit }' "$home/config/lane-target" 2>/dev/null); fi
   case "$target" in ''|*[!0-9]*|0) target=- ;; esac
   # A count from a summary older than READY_MAX_AGE is not known: it never makes a GAP.
   # The count is the summary's own (tickets that can start), never recomputed here.

@@ -1,8 +1,8 @@
 machine	squad-lead	a registered Squad Lead home: its data/squad_leads.md line, config/parked-homes and the relaunch ledger (id: the Squad Lead id; machine 2 of the state-machine plan)	core/machines/observers/squad-lead.sh
 enum	squad-lead
 state	provisioned	initial	The home exists and its session has not answered yet.	-	waiting	10m -> alert supervision-down
-state	idle	normal	The home is up and has no work.	-	rest	route
-state	working	normal	The home has open tickets of its own.	-	active
+state	idle	normal	The home is up and has no work.	lane_limit	rest	route
+state	working	normal	The home has open tickets of its own.	lane_limit	active
 state	down	normal	The home session does not answer.	-	waiting	0s -> alert supervision-down
 state	parked	normal	Main set the home aside.	-	rest	unpark
 state	retired	terminal	The home is gone.	-	final

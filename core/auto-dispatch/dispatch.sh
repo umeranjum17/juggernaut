@@ -3,7 +3,7 @@
 # switch on, start them. With the switch off (the default) it is watch only: it starts nothing.
 # Usage: dispatch.sh check <jg-home>
 #
-# Free lanes are config/lane-target minus the ship and Recon lanes still working (the count bin/jg-fleet-heartbeat.sh makes);
+# Free lanes are the lane target (config/lane-target, or the lane limit once config/lane-scale says `mode=act`; core/lane-scale) minus the ship and Recon lanes still working (the count bin/jg-fleet-heartbeat.sh makes);
 # a home with no lane target has none. The candidates are the tickets `bin/jg-backlog.sh ready --spawnable` lists, plus every
 # ticket that holds an approval record. A candidate is judged in this order, and the first reason that fits is the one written:
 #   1. no approval record  state/dispatch-approved/<id>, written by `bin/jg-backlog.sh approve-dispatch` (a worker is refused
@@ -45,6 +45,7 @@ SPAWN=${JG_AUTO_DISPATCH_SPAWN:-$FMH/bin/jg-spawn.sh}
 PROJECT_MODE=${JG_AUTO_DISPATCH_PROJECT_MODE:-$FMH/bin/jg-project-mode.sh}
 ALERT=${JG_AUTO_DISPATCH_ALERT:-$FMH/bin/jg-alert.sh}
 TOLD=$DATA/auto-dispatch/told.tsv
+SCALE=${JG_AUTO_DISPATCH_SCALE:-$FMH/core/lane-scale/scale.sh}
 APPROVED=$STATE/dispatch-approved
 IN_FLIGHT_SECONDS=${JG_AUTO_DISPATCH_IN_FLIGHT:-600}
 ROWS=$DATA/auto-dispatch/rows.tsv
@@ -52,10 +53,17 @@ umask 077
 mkdir -p "$DATA/auto-dispatch" || exit 0
 export JG_HOME=$FMH
 
+# lane_target: the home's lane target. core/lane-scale/scale.sh owns it: the lane limit when the home's mode is `act`,
+# else config/lane-target; a home without the scaler reads config/lane-target itself.
+lane_target() {
+  if [ -x "$SCALE" ]; then "$SCALE" target "$FMH" 2>/dev/null
+  else awk 'NF { print; exit }' "$CONFIG/lane-target" 2>/dev/null; fi
+}
+
 # free_lanes: the target minus the working ship and Recon lanes; 0 when no target is set.
 free_lanes() {
   local target working=0 meta kind last
-  target=$(awk 'NF { print; exit }' "$CONFIG/lane-target" 2>/dev/null)
+  target=$(lane_target)
   case "$target" in ''|*[!0-9]*|0) echo 0; return ;; esac
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] || continue
@@ -135,6 +143,7 @@ SPAWNABLE_IDS=$tmp/spawnable
 awk -F'\t' 'NF >= 2 { print $1 }' "$tmp/out" > "$SPAWNABLE_IDS"
 { cat "$SPAWNABLE_IDS"; for f in "$APPROVED"/*; do [ -f "$f" ] && basename "$f"; done; } 2>/dev/null | sort -u > "$tmp/candidates"
 
+[ ! -x "$SCALE" ] || "$SCALE" check "$FMH" >/dev/null 2>&1   # the lane limit takes its tick on this beat
 free=$(free_lanes)
 now=$(date +%s)
 started=0
