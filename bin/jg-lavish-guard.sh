@@ -177,6 +177,22 @@ wait_line_gate() {  # <text>
   done <<< "$1"
 }
 
+# The ticket move of a done line, in shadow (bin/jg-move.sh --shadow): the worker said done, so the ticket makes
+# claim-done from building, or new-head from delivering. Only a line that opens with `done` moves; the accepted line
+# is already written and this never refuses it or changes the exit code.
+done_line_move() {  # <status file> <text>
+  local id state event here line said_done=''
+  while IFS= read -r line; do
+    [ "$(status_line_verb "$line")" = "done" ] && { said_done=1; break; }
+  done <<< "$2"
+  [ -n "$said_done" ] || return 0
+  here=$(cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+  id=$(basename -- "$1" .status)
+  state=$(bash "$here/jg-machine.sh" show ticket "$id" 2>/dev/null | sed -n 's/^state\t//p')
+  if [[ "$state" == delivering* ]]; then event='new-head'; else event='claim-done'; fi
+  bash "$here/jg-move.sh" --shadow "$id" "$event" >/dev/null 2>&1 || true
+}
+
 APPEND=''
 if [ "${1-}" = --append ]; then
   [ "$#" -ge 2 ] || { echo 'error: --append needs a file' >&2; exit 2; }
@@ -210,5 +226,6 @@ if [ -n "$APPEND" ]; then
       ;;
   esac
   printf '%s\n' "$text" >> "$APPEND" || exit 1
+  case $APPEND in *.status) done_line_move "$APPEND" "$text" ;; esac
 fi
 exit 0
