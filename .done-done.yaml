@@ -24,6 +24,9 @@ journeys:
   lock-lease:
     tier: local
     command: bash tests/jg-lock-lease.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  plan-gate:
+    tier: local
+    command: bash journeys/plan-gate.sh
   message-table:
     tier: local
     command: (bash bin/jg-machine.sh check message && bash bin/jg-machine.sh events message && bash tests/jg-machine-message.test.sh && bash tests/jg-machine-inbox.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
