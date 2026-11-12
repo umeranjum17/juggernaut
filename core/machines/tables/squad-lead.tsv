@@ -13,6 +13,8 @@ edge	idle	route	working	bin/jg-send.sh:send	-	Main routed a ticket to it	jg-mach
 edge	working	drain	idle	bin/jg-squad-lead-dormant.sh:sweep	-	no ticket of its own is open	jg-machine-squad-lead
 edge	live	miss	down	bin/jg-squad-lead-liveness-lib.sh:jg_squad_lead_liveness_probe	-	2 beats missed	jg-machine-squad-lead
 edge	down	recover	idle	bin/jg-squad-lead-liveness-lib.sh:jg_squad_lead_liveness_relaunch	-	the session answers again; routed work then makes it working	jg-machine-squad-lead
+edge	working	ring	working	core/stall-action/lead.sh:ring	-	a working beat is 10 min old while the home has work: the lead is rung once, then relaunched	jg-machine-squad-lead
+edge	working	relaunch	working	core/stall-action/lead.sh:relaunch	-	the ring did not bring a beat back: the session is replaced; 3 in 30 min raise supervision-down	jg-machine-squad-lead
 edge	idle	park	parked	core/parked-homes/bin/jg-parked-homes-lib.sh:jg_parked_home	-	Main's word	jg-machine-squad-lead
 edge	down	park-down	parked	core/parked-homes/bin/jg-parked-homes-lib.sh:jg_parked_home	-	Main's word: a home that does not come back is parked and its backlog goes to Main	jg-machine-squad-lead
 edge	parked	unpark	idle	core/parked-homes/bin/jg-parked-homes-lib.sh:jg_parked_home	-	Main's word	jg-machine-squad-lead
