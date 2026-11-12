@@ -23,14 +23,29 @@
 #   local-suite       bin/jg-local-suite.sh                the local suite proof of the lane
 #   pr-poll-registration  bin/jg-pr-lib.sh                 the PR poll registration of the task
 #   prelimit-gen      core/quota-failover/quota-failover   the spawn generation a pre-limit relaunch was done for
-JG_TASK_FILE_KINDS_RETIRED="probe-at account-probe-at exit check-trust check.sh model-relaunch land-next models pi-ext.ts log jsonl pr-poll scratch local-suite pr-poll-registration prelimit-gen"
+# Slice 2 (kinds 9 to 16, in the order of the state census by count):
+#   turn-ended                  the agent hooks and bin/jg-watch.sh    the wake ping that a turn ended
+#   busy-state                  bin/jg-busy-event.sh                   the one-line busy record
+#   busy-gen                    bin/jg-spawn.sh                        the token of the busy wiring
+#   control-relaunch            bin/jg-control.sh                      the journal of a relaunch in flight
+#   control-relaunch.note       bin/jg-control.sh                      the note a relaunch left for the worker
+#   control-relaunch.meta-prior bin/jg-control.sh                      the task record before the relaunch
+#   control-relaunch.brief-prior bin/jg-control.sh                     the launch brief before the relaunch
+#   git-hooks                   bin/jg-spawn.sh                        the directory of commit hooks (a directory)
+JG_TASK_FILE_KINDS_RETIRED="probe-at account-probe-at exit check-trust check.sh model-relaunch land-next models pi-ext.ts log jsonl pr-poll scratch local-suite pr-poll-registration prelimit-gen turn-ended busy-state busy-gen control-relaunch control-relaunch.note control-relaunch.meta-prior control-relaunch.brief-prior"
+# A kind that is a directory: its installer leaves it read-only, so the remover makes it writable first.
+JG_TASK_DIR_KINDS_RETIRED="git-hooks"
 
-# jg_task_files_retire <state dir> <task id>: remove every listed kind for the task. Best effort, never fails.
+# jg_task_files_retire <state dir> <task id>: remove every listed kind (files and directories) for the task. Best effort, never fails.
 jg_task_files_retire() {
   local state=${1:-} id=${2:-} kind
   [ -d "$state" ] && [ -n "$id" ] || return 0
   for kind in $JG_TASK_FILE_KINDS_RETIRED; do
     rm -f -- "$state/$id.$kind"
+  done
+  for kind in $JG_TASK_DIR_KINDS_RETIRED; do
+    chmod u+w -- "$state/$id.$kind" 2>/dev/null || true
+    rm -rf -- "${state:?}/${id:?}.$kind"
   done
   return 0
 }

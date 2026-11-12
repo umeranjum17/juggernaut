@@ -704,10 +704,11 @@ seed_task_file_kinds() {  # <case dir>
   # shellcheck source=bin/jg-task-files-lib.sh disable=SC1091
   . "$ROOT/bin/jg-task-files-lib.sh"
   for kind in $JG_TASK_FILE_KINDS_RETIRED; do printf '1\n' > "$1/state/task-x1.$kind"; done
+  for kind in $JG_TASK_DIR_KINDS_RETIRED; do mkdir "$1/state/task-x1.$kind"; : > "$1/state/task-x1.$kind/commit-msg"; chmod a-w "$1/state/task-x1.$kind"; done
 }
 assert_task_file_kinds_gone() {  # <case dir> <what ran>
   local kind
-  for kind in $JG_TASK_FILE_KINDS_RETIRED; do assert_absent "$1/state/task-x1.$kind" "$2 left the $kind file"; done
+  for kind in $JG_TASK_FILE_KINDS_RETIRED $JG_TASK_DIR_KINDS_RETIRED; do assert_absent "$1/state/task-x1.$kind" "$2 left the $kind file"; done
 }
 
 test_teardown_of_an_already_cleaned_task_says_so() {
