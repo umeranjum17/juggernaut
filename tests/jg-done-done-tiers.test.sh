@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Every journey entry of .done-done.yaml names a tier (ci or local), and the
-# contract set of tier ci is the 17 keep scripts, each a real test file with a
-# measured time. Reads the shipped config, the file done-done itself reads.
+# set of tier ci is the 17 contract scripts and the 13 static Core suites steps,
+# each a real script with a measured time. The retired Core suites workflow is
+# gone, and each of its 89 steps is accounted for: 5 set-up steps named in the
+# config header, 84 entries that carry a "was Core suites step N" line.
+# Reads the shipped config, the file done-done itself reads.
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CFG="$ROOT/.done-done.yaml"
@@ -28,15 +31,25 @@ if [ -z "$notier" ]; then ok "0 entries with no tier"; else bad "entries with no
 
 ci="$(printf '%s\n' "$rows" | awk -F'\t' '$2=="ci"')"
 n="$(printf '%s\n' "$ci" | grep -c .)"
-if [ "$n" = 17 ]; then ok "17 entries in tier ci"; else bad "tier ci has $n entries, want 17"; fi
+if [ "$n" = 30 ]; then ok "30 entries in tier ci"; else bad "tier ci has $n entries, want 30"; fi
 
 while IFS=$'\t' read -r name _ cmd m; do
   [ -n "$name" ] || continue
-  f="$(printf '%s' "$cmd" | sed -n 's/^bash \(tests\/[^ ]*\.test\.sh\).*/\1/p')"
+  f="$(printf '%s' "$cmd" | sed -En 's/^bash ((tests|journeys)\/[^ ]*\.sh).*/\1/p')"
   if [ -n "$f" ] && [ -f "$ROOT/$f" ]; then :; else bad "$name: command names no existing tests/ script"; fi
   case "$m" in [0-9]*" s") ;; *) bad "$name: no measured time" ;; esac
 done <<<"$ci"
 [ "$fail" = 0 ] && ok "each ci entry runs a real test file and records its time"
+
+# The Core suites workflow is deleted and its 89 steps are all placed.
+if [ ! -e "$ROOT/.github/workflows/core-suites.yml" ]; then ok "core-suites workflow is gone"; else bad "core-suites workflow still exists"; fi
+steps="$(grep -o '^    # was Core suites step [0-9]*:' "$CFG" | sed 's/[^0-9]//g' | sort -n)"
+setup="$(printf '%s\n' 1 2 3 4 49)"
+placed="$(printf '%s\n%s\n' "$steps" "$setup" | grep . | sort -n | tr '\n' ' ')"
+want="$(seq 1 89 | tr '\n' ' ')"
+if [ "$placed" = "$want" ]; then ok "all 89 Core suites steps have an entry or a named set-up"; else bad "Core suites steps placed: $placed"; fi
+nlocal="$(printf '%s\n' "$rows" | awk -F'\t' '$1 ~ /^core-/ && $2=="local"' | grep -c .)"
+if [ "$nlocal" = 71 ]; then ok "71 Core suites entries in tier local"; else bad "$nlocal Core suites entries in tier local, want 71"; fi
 
 # done-done still reads the config with every entry.
 cnt="$(cd "$ROOT" && done-done 2>/dev/null | sed -n 's/^journeys\[\([0-9]*\)\].*/\1/p')"

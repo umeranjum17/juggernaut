@@ -781,7 +781,6 @@ tests/jg-claude-midturn-arm-live-e2e.test.sh 140
 tests/jg-clause.test.sh 4074
 tests/jg-codex-continuity-live-e2e.test.sh 260
 tests/jg-codex-hook-layer-live-e2e.test.sh 225
-tests/core-suites-report-all.test.sh 158
 tests/jg-comms-feed.test.sh 1014
 tests/jg-compat-old-records.test.sh 1127
 tests/jg-composer-matrix-live-e2e.test.sh 244
@@ -1915,14 +1914,14 @@ families_for_changed_path() {
     core/*.sh)
       # A core script has no curated row. The tests that name it run, per script,
       # so a lane's own proof covers the file it changed; a script no test names
-      # selects nothing here. The core feature's own suites still run in
-      # core-suites.yml on the push after the merge, and a red post-merge run
+      # selects nothing here. The core feature's own suites are the core-* tier entries of .done-done.yaml, run
+      # by done-done on the host, and a red post-merge run
       # files a fix-forward item (bin/jg-post-merge-ci.sh).
       scripts_for_test_reference "$(basename "$path")" || true
       ;;
     core/*)
-      # Other core files (docs, data, Go sources) are run by core-suites.yml on
-      # the push after the merge; the fast set does not wait for them.
+      # Other core files (docs, data, Go sources) are run as core-* entries of .done-done.yaml, not on
+      # the push; the fast set does not wait for them.
       ;;
     *)
       if [ -e "$path" ]; then

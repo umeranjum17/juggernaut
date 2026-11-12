@@ -31,7 +31,7 @@ An untouched area skips, and `CI required` refuses a touched area whose suite wa
 A skip is only safe if the area covers every file its suite reads, so each of these lanes runs its suite through
 `bin/jg-ci-area-reads.sh`, which traces what the suite opens and fails, naming the file, when one is outside the area.
 The rest run after the merge instead: the behaviour suite
-(`behavior.yml`), and the core journeys (`core-suites.yml`).
+(`behavior.yml`), and the core journeys (the `core-*` entries of `.done-done.yaml`, tier local).
 An unreadable diff still widens the pull request to the full set.
 
 ## 2. The proof is keyed to the tree

@@ -62,7 +62,7 @@ jobs:
           bin/jg-install-actionlint.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       # The completion-receipt gate runs the merge path's Rego rules through the guard host, which
-      # needs OPA at the version toolchain.versions pins; core-suites installs it the same way.
+      # needs OPA at the version toolchain.versions pins; the core-* entries of .done-done.yaml expect it on the host.
       - name: Install the pinned OPA
         run: |
           set -eu
@@ -122,7 +122,7 @@ jobs:
           bin/jg-install-actionlint.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       # The completion-receipt gate runs the merge path's Rego rules through the guard host, which
-      # needs OPA at the version toolchain.versions pins; core-suites installs it the same way.
+      # needs OPA at the version toolchain.versions pins; the core-* entries of .done-done.yaml expect it on the host.
       - name: Install the pinned OPA
         run: |
           set -eu
@@ -201,7 +201,7 @@ jobs:
           }
           tmux -V
       # The completion-receipt gate runs the merge path's Rego rules through the guard host, which
-      # needs OPA at the version toolchain.versions pins; core-suites installs it the same way.
+      # needs OPA at the version toolchain.versions pins; the core-* entries of .done-done.yaml expect it on the host.
       - name: Install the pinned OPA
         run: |
           set -eu

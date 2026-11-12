@@ -467,7 +467,7 @@ out=$(XDG_DATA_HOME=$d/data4 "$SRC/wiring.sh" "$FM4" 2>&1) && rc=0 || rc=$?
 check "l: a shim running another home's gate refuses" "$rc" 1
 has "l: the refusal names the home it runs for" "$out" "not for this home"
 
-# A direct-PR task (no pipeline run) has its own journey; core-suites runs it through this suite.
+# A direct-PR task (no pipeline run) has its own journey; the core-merge-on-green-test entry of .done-done.yaml runs it through this suite.
 bash "$SRC/tests/merge-on-green-direct-pr.test.sh" || fails=$((fails + 1))
 
 if [ "$fails" -eq 0 ]; then echo "PASS: merge-on-green e2e"; else echo "FAIL: $fails check(s)"; exit 1; fi

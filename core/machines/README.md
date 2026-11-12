@@ -110,7 +110,7 @@ The switch is read in the home that asks, so the same change can be `in-use` in 
 ## Sealed proof
 
 `core/machines/run-proof.sh` is the acceptance run: it runs the machine tests and checks every shipped table in a throwaway home.
-`.github/workflows/core-suites.yml` runs it after the merge.
+The `core-machine-tables-sealed-proof` entry of `.done-done.yaml` (tier local) runs it.
 
 ## Test
 
