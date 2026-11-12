@@ -364,6 +364,32 @@ test_every_unsafe_landing_refuses() {
   pass 'every unsafe landing refuses and leaves the trunk where it was'
 }
 
+test_a_lane_with_a_ticket_lands_only_with_its_trailer() {
+  local out amend
+  world trailer
+  lane tk a; printf 'ticket=jg-x.1\n' >> "$HOME_D/state/tk.meta"
+  lane rb c rb.txt; printf 'ticket=jg-x.3\n' >> "$HOME_D/state/rb.meta"
+  git -C "$W/lanes/rb" -c user.name=t -c user.email=t@example.invalid commit -q --amend -m "rb work" --trailer "Ticket: jg-x.3"; prove rb
+  refused 'a ticket lane with no trailer' tk 'Ticket: jg-x.1'
+  assert_contains "$(trunk land tk 2>&1)" 'git commit --amend --no-edit --trailer "Ticket: jg-x.1"' 'the refusal must print the fix command'
+  amend=$(git -C "$W/lanes/tk" -c user.name=t -c user.email=t@example.invalid commit -q --amend --no-edit --trailer "Ticket: jg-x.2" 2>&1) || fail "fixture amend: $amend"
+  prove tk; refused 'a trailer naming another ticket' tk 'Ticket: jg-x.1'
+  git -C "$W/lanes/tk" -c user.name=t -c user.email=t@example.invalid commit -q --amend -m "work done" --trailer "Ticket: jg-x.1"; prove tk
+  lane other b other.txt
+  trunk land tk >/dev/null 2>&1 || fail "a lane with its trailer must land"
+  out=$(trunk land other 2>&1) || fail "a lane with no ticket= keeps the task-id text rule: $out"
+  git -C "$PROJ" log -1 --format=%B trunk~1 | git interpret-trailers --parse | grep -Fxq 'Ticket: jg-x.1' || fail "the landed commit must keep its trailer"
+  git -C "$PROJ" merge-base --is-ancestor trunk fm/rb && fail "fixture: rb must be based on an old tip"
+  trunk land rb >/dev/null 2>&1 || fail "a stale lane with its trailer must land after the lander's rebase"
+  git -C "$PROJ" log -1 --format=%B trunk | git interpret-trailers --parse | grep -Fxq 'Ticket: jg-x.3' || fail "the rebased commit must keep its trailer"
+  lane noref2 d; git -C "$W/lanes/noref2" -c user.name=t -c user.email=t@example.invalid commit -q --amend -m "AB-12 work"; prove noref2
+  refused 'a KEY-n commit in a home with no ticket-key file' noref2 'ticket reference'
+  printf 'AB\n' > "$HOME_D/config/ticket-prefix"
+  lane keyed e; git -C "$W/lanes/keyed" -c user.name=t -c user.email=t@example.invalid commit -q --amend -m "AB-12 work"; prove keyed
+  out=$(trunk land keyed 2>&1) || fail "a KEY-n commit must land in a home that has a ticket-key file: $out"
+  pass 'a ticket lane needs its Ticket trailer; a lane with none keeps the text rule; KEY-n needs a key file'
+}
+
 test_a_seam_is_the_only_place_behaviour_changes() {
   local out
   world seam
@@ -740,6 +766,7 @@ test_legacy_mode_stays_interoperable
 test_the_home_guard_chains_the_trunk_guard
 test_a_good_lane_lands_but_goes_live_only_on_his_word
 test_every_unsafe_landing_refuses
+test_a_lane_with_a_ticket_lands_only_with_its_trailer
 test_a_seam_is_the_only_place_behaviour_changes
 test_a_red_found_after_the_landing_pins_the_home_behind_it
 test_the_release_is_one_pr_from_the_trunk_on_his_word

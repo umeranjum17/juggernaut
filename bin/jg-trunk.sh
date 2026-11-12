@@ -673,6 +673,23 @@ lane_meta() {  # <task-id>
   case $(jg_dod_meta_value "$META" mode) in local|local-trunk|local-only|trunk) ;; *) die "task $1 is not a local-trunk task (legacy local-only/trunk also accepted); merge PR tasks with bin/jg-pr-merge.sh" ;; esac
 }
 
+# The commit's ticket reference. A lane whose record has `ticket=` (spawned with a ticket) needs a `Ticket:` trailer equal to it. A lane with
+# no `ticket=` (started before the spawn recorded one) keeps the text match of its task id; the `KEY-n` form counts only in a home with a
+# ticket-key file. A message the lander rebased keeps its trailer, so the check reads the commit to land. Refuses (exits) on a miss.
+ticket_ref_check() {  # <id> <commit>
+  local id=$1 msg ticket keyed=
+  msg=$(git -C "$PROJ" log -1 --format=%B "$2")
+  ticket=$(jg_dod_meta_value "$META" ticket)
+  if [ -n "$ticket" ]; then
+    printf '%s\n' "$msg" | git interpret-trailers --parse | sed -n 's/^Ticket:[[:space:]]*//p' | grep -Fxq -- "$ticket" \
+      || refuse "the commit must carry the trailer 'Ticket: $ticket'; fix it with: git commit --amend --no-edit --trailer \"Ticket: $ticket\" and report ready again"
+    return 0
+  fi
+  [ -e "$CONFIG/ticket-prefixes" ] || [ -e "$CONFIG/ticket-prefix" ] || [ -e "$DATA/ticket-keys.tsv" ] && keyed='|[A-Z]{2,4}-[0-9]+'
+  printf '%s\n' "$msg" | grep -Eq "(^|[^[:alnum:]-])($id$keyed)([^[:alnum:]-]|$)" \
+    || refuse "the commit must carry its ticket reference (the task id $id${keyed:+ or its ticket key}) in its message"
+}
+
 # One lane's admission onto <tip>: the trunk tip for a single landing, the top of the stack for a batch. The lander rebases the
 # lane's one commit onto <tip> by itself and only a conflict stops it; then the ticket reference, protected paths,
 # linked decisions, the design/demo/nav gates and owner-guard. Refuses (exits) on any failure. Sets LANE_BRANCH, LANE_HEAD, LANE_CAND
@@ -701,8 +718,7 @@ lane_admit() {  # <id> <tip> <expected head or -> <follow 0|1>
   fi
   n=$(git -C "$PROJ" rev-list --count "$tip..$LANE_CAND")
   [ "$n" = 1 ] && [ "$(git -C "$PROJ" rev-list --parents -n 1 "$LANE_CAND" | wc -w)" = 2 ] || refuse "one commit per ticket: $LANE_BRANCH has $n commits over $TRUNK; squash it to one"
-  git -C "$PROJ" log -1 --format=%B "$LANE_CAND" | grep -Eq "(^|[^[:alnum:]-])($id|[A-Z]{2,4}-[0-9]+)([^[:alnum:]-]|$)" \
-    || refuse "the commit must carry its ticket reference (the task id $id or its ticket key) in its message"
+  ticket_ref_check "$id" "$LANE_CAND"
   if hit=$(touches_protected "$tip" "$LANE_CAND") && [ "$(pol protected-landing)" = refuse ]; then
     refuse "$hit is a protected path; landing requires approval of protected-landing=gate (current protected-landing=refuse)"
   fi
