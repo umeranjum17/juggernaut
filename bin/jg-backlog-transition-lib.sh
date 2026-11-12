@@ -568,19 +568,38 @@ jg_backlog_start() {  # <data-dir> <id>
   jg_backlog_mutate "$1" start "$2"
 }
 
-# A row names the worker that owns it: the Herdr agent name of the task id as the
-# assignee, the same across a relaunch, with the spawn generation in the task
-# record as metadata.lane and the record's harness as metadata.agent.
-# bin/jg-beads-write.py owns the claim and its refusal of a second spawn.
+# A row names the worker that owns it: the Herdr agent name the task record holds
+# as agent_name= (made once, at the ticket's first spawn) as the assignee, the same
+# across a relaunch, with the spawn generation in the task record as
+# metadata.spawn_gen and the record's harness, model and effort as metadata.agent,
+# model and effort. A record with no agent_name= (a lane from before it, a lead)
+# keeps the name made from the task id. bin/jg-beads-write.py owns the claim and
+# its refusal of a second spawn.
+jg_backlog_agent_name() {  # <meta> <id>: the agent name this task is known by
+  local name
+  name=$(LC_ALL=C sed -n 's/^agent_name=//p' "$1" | tail -n 1)
+  [ -n "$name" ] || name=$("${BASH_SOURCE[0]%/*}/jg-herdr.sh" agent-name-for "$2") || return 1
+  printf '%s\n' "$name"
+}
+
 jg_backlog_lane_start() {  # <meta> <data-dir> <id> <state-dir>
-  local meta=$1 data=$2 id=$3 state=$4 agent name
+  local meta=$1 data=$2 id=$3 state=$4 agent model effort name
   jg_backlog_meta_spawn_gen_optional "$meta" "$state" || return 1
   agent=$(LC_ALL=C sed -n 's/^harness=//p' "$meta" | tail -n 1)
-  name=$("${BASH_SOURCE[0]%/*}/jg-herdr.sh" agent-name-for "$id") || {
+  model=$(LC_ALL=C sed -n 's/^model=//p' "$meta" | tail -n 1)
+  effort=$(LC_ALL=C sed -n 's/^effort=//p' "$meta" | tail -n 1)
+  name=$(jg_backlog_agent_name "$meta" "$id") || {
     JG_BACKLOG_TRANSITION_ERROR="no agent name for task $id"
     return 1
   }
-  JG_BACKLOG_LANE=$name JG_BACKLOG_SPAWN_GEN=$JG_BACKLOG_META_SPAWN_GEN JG_BACKLOG_AGENT=$agent jg_backlog_start "$data" "$id"
+  JG_BACKLOG_LANE=$name JG_BACKLOG_SPAWN_GEN=$JG_BACKLOG_META_SPAWN_GEN JG_BACKLOG_AGENT=$agent \
+    JG_BACKLOG_MODEL=$model JG_BACKLOG_EFFORT=$effort jg_backlog_start "$data" "$id"
+}
+
+# Herdr kept a variant of the name the spawn made: the row follows the name that
+# stuck, only while the first name still owns it.
+jg_backlog_lane_rename() {  # <data-dir> <id> <first-name> <stuck-name>
+  jg_backlog_mutate "$1" rename-lane "$2" "$3" "$4"
 }
 
 # A row already In flight needs no move, so only Beads has work here: the new

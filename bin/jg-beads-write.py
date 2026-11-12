@@ -19,8 +19,9 @@ start, reopen and done move status only from the status they expect, so a row th
 nothing, with one refusal line on stdout. A held row keeps its status on reopen. start takes an open row or a deferred
 row past its date: one status column cannot read in flight and held at once, so where the backlog would start a held or
 done row this refuses.
-A worker owns its row: the assignee is the worker's Herdr agent name in JG_BACKLOG_LANE, the same across a relaunch,
-metadata.lane is the spawn generation in JG_BACKLOG_SPAWN_GEN, and metadata.agent is JG_BACKLOG_AGENT.
+A worker owns its row: the assignee is the worker's Herdr agent name in JG_BACKLOG_LANE (the task record's agent_name=), the same across a relaunch,
+metadata.spawn_gen is the spawn generation in JG_BACKLOG_SPAWN_GEN, and metadata.agent, model and effort are JG_BACKLOG_AGENT, _MODEL and _EFFORT.
+rename-lane <id> <first> <stuck> gives the row to the name Herdr kept, only while <first> still owns it.
 start claims a row with no owner. A start whose generation is not the one on the row exits 13, unless JG_BACKLOG_LANE_HANDOVER=1
 (a relaunch) takes it; a row another worker took first exits 13 too. done keeps the assignee as history, reopen clears all
 three, and each moves only from the owner it read.
@@ -76,19 +77,26 @@ def lane(row):
     """Return the flags that make this run's worker the row's owner, or nothing with no lane named.
 
     The assignee is the agent name and survives a relaunch, so the owner guard alone cannot tell a second spawn from a
-    relaunch: metadata.lane carries the spawn generation and a start from another one is refused here. bd has no guard on
-    metadata, so that check is a read and then a write with a short gap; a second spawn landing in the gap is not caught.
+    relaunch: metadata.spawn_gen carries the spawn generation and a start from another one is refused here. bd has no guard
+    on metadata, so that check is a read and then a write with a short gap; a second spawn landing in the gap is not caught.
+    A fresh spawn writes with --if-assignee "" (owner is empty unless the row is this name's); a relaunch writes with the owner
+    it read, which is empty for a row that was reclaimed. The pane id is not written: an account move changes it with no relaunch.
     """
-    name, agent, gen = (os.environ.get(key) for key in ("JG_BACKLOG_LANE", "JG_BACKLOG_AGENT", "JG_BACKLOG_SPAWN_GEN"))
+    name, gen = (os.environ.get(key) for key in ("JG_BACKLOG_LANE", "JG_BACKLOG_SPAWN_GEN"))
     if not name:
         return []
     handover = os.environ.get("JG_BACKLOG_LANE_HANDOVER")
-    held = (row.get("metadata") or {}).get("lane")
+    meta = row.get("metadata") or {}
+    held = meta.get("spawn_gen") or meta.get("lane")
     if row.get("assignee") == name and held and gen and held != gen and not handover:
         view.refuse("stale write refused: %s is held by lane \"%s\", expected \"%s\"" % (row["id"], held, gen),
                     "Run `jg-backlog.sh show %s` and decide again" % row["id"], "STALE_WRITE", STALE)
     owner = row.get("assignee") or "" if handover or row.get("assignee") == name else ""
-    return ["-a", name, "--if-assignee", owner] + (["--set-metadata", "lane=" + gen] if gen else []) + (["--set-metadata", "agent=" + agent] if agent else [])
+    flags = ["-a", name, "--if-assignee", owner]
+    for key, value in (("spawn_gen", gen), ("agent", os.environ.get("JG_BACKLOG_AGENT")),
+                       ("model", os.environ.get("JG_BACKLOG_MODEL")), ("effort", os.environ.get("JG_BACKLOG_EFFORT"))):
+        flags += ["--set-metadata", "%s=%s" % (key, value)] if value else []
+    return flags + (["--unset-metadata", "lane"] if "lane" in meta else [])
 
 
 def unowned(row):
@@ -101,7 +109,7 @@ def unowned(row):
 def released(row):
     """Return the flags that take a lane off its row, guarded on the owner read."""
     owner = row.get("assignee")
-    return ["-a", "", "--unset-metadata", "agent", "--unset-metadata", "lane", "--if-assignee", owner] if owner else []
+    return ["-a", "", "--unset-metadata", "agent", "--unset-metadata", "model", "--unset-metadata", "effort", "--unset-metadata", "spawn_gen", "--unset-metadata", "lane", "--if-assignee", owner] if owner else []
 
 
 def rows():
@@ -462,7 +470,7 @@ def start(args):
     found, ident, row = one_row("start", args)
     tips = ["Run `jg-backlog.sh done %s --pr <url>` when it ships" % ident]
     owner, status, held = lane(row) or unowned(row), row["status"], view.holding(row)
-    mine = owner and row.get("assignee") == owner[1] and (row.get("metadata") or {}).get("lane") == os.environ.get("JG_BACKLOG_SPAWN_GEN")
+    mine = owner and row.get("assignee") == owner[1] and (row.get("metadata") or {}).get("spawn_gen") == os.environ.get("JG_BACKLOG_SPAWN_GEN")
     if status == "in_progress" or (held and view.flying(row)):
         if owner and not mine:
             bd("update", ident, *owner, "--if-status", status)
@@ -472,6 +480,16 @@ def start(args):
     due = status == "deferred" and not held
     bd("update", ident, "--status", "in_progress", "--if-status", "deferred" if due else "open", *(["--defer", ""] if due else []), *([] if mine else owner))
     respond(found, "start", ident, "start %s -> In flight" % ident, tips, card=False)
+
+
+def rename_lane(args):
+    """Give the row to the name Herdr kept when the pin took a variant, only while the first name still owns it."""
+    _, ids = view.flags(args, (), ())
+    if len(ids) != 3:
+        view.refuse("Expected 3 positional arguments, got %d" % len(ids), "usage: jg-beads-write.py rename-lane <id> <first> <stuck>")
+    row = plain(rows(), ids[0])
+    bd("update", row["id"], "-a", ids[2], "--if-assignee", ids[1])
+    print(ids[2])
 
 
 def task(args):
@@ -681,7 +699,7 @@ def relink(_args):
 def main():
     verb = sys.argv[1] if len(sys.argv) > 1 else ""
     serve = {"add": add, "create": add, "update": update, "edit": update, "done": done, "close": done,
-             "block": block, "unblock": unblock, "start": start, "task": task, "reopen": reopen, "hold": hold, "unhold": unhold,
+             "block": block, "unblock": unblock, "start": start, "rename-lane": rename_lane, "task": task, "reopen": reopen, "hold": hold, "unhold": unhold,
              "stage": stage, "take": take, "drop": drop, "relink": relink,
              "public-followup": lambda args: __import__("jg-beads-followup").main(args),
              **{name: lambda args, name=name: __import__("jg-beads-moment").main(name, args) for name in ("moment", "wait", "ticket-stage", "ticket-drift")}}.get(verb)

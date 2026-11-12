@@ -109,6 +109,17 @@ grep -qxF "export JG_TICKET=$c2" "$JG_FAKE_PANE_LOG" || fail "T2 the pane must g
 [ "$(row_field "$T2" state)" = in_flight ] || fail "T2 the spawn must put the ticket In flight through its task id"
 printf 'ok - T2 ticket %s runs as task %s: record, row, pane and brief carry it\n' "$c2" "$T2"
 
+# T7: the agent name is made once at the first spawn, held in the record, and is the row's assignee; spawn_gen, model and effort
+# go to the row as metadata strings; the pane id is not on the row.
+AGENT=$("$ROOT/bin/jg-herdr.sh" agent-name-for "$T2") || fail "T7 the agent name of $T2"
+[ "$(sed -n 's/^agent_name=//p' "$H/state/$T2.meta")" = "$AGENT" ] || fail "T7 the record must hold agent_name=$AGENT: $(cat "$H/state/$T2.meta")"
+[ "$(field "$c2" .assignee)" = "$AGENT" ] || fail "T7 the assignee must be the agent name, got [$(field "$c2" .assignee)]"
+GEN1=$(sed -n 's/^spawn_gen=//p' "$H/state/$T2.meta")
+[ "$(field "$c2" .metadata.spawn_gen)" = "$GEN1" ] || fail "T7 metadata.spawn_gen must be the record's spawn_gen $GEN1"
+[ "$(field "$c2" '.metadata.model|type')" = string ] && [ "$(field "$c2" '.metadata.effort|type')" = string ] || fail "T7 model and effort must be metadata strings"
+[ "$(field "$c2" '.metadata | keys | map(select(test("pane"))) | length')" = 0 ] || fail "T7 no pane id may be written to the row"
+printf 'ok - T7 agent_name= is the assignee; spawn_gen, model and effort are metadata strings\n'
+
 # T3: an open owner question on a child blocks its start, and the landing's own check finds it by the task id.
 hold() { JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" JG_DATA_OVERRIDE="$H/data" JG_CONFIG_OVERRIDE="$H/config" "$ROOT/bin/jg-captain-hold.sh" "$@"; }
 bl add jg-q3 "Which way for slice three" --kind ship --repo sample --body "Owner question on the third slice
@@ -139,7 +150,23 @@ out=$(JG_FAKE_DUPLICATE_WINDOW="jg-$T2" jg_test_run_spawn "$H" "$W/wt-1" "$FAKEB
 expect_code 0 "$rc" "T6 a relaunch should read the ticket from the record: $out"
 [ "$(sed -n 's/^ticket=//p' "$H/state/$T2.meta")" = "$c2" ] || fail "T6 a relaunch must keep ticket= in the record"
 grep -qxF "export JG_TICKET=$c2" "$JG_FAKE_PANE_LOG" || fail "T6 a relaunch must export JG_TICKET again: $(cat "$JG_FAKE_PANE_LOG")"
+[ "$(sed -n 's/^agent_name=//p' "$H/state/$T2.meta")" = "$AGENT" ] || fail "T7 a relaunch must keep agent_name= in the record"
+[ "$(field "$c2" .assignee)" = "$AGENT" ] || fail "T7 a relaunch must keep the assignee"
+GEN2=$(sed -n 's/^spawn_gen=//p' "$H/state/$T2.meta")
+[ "$GEN2" != "$GEN1" ] && [ "$(field "$c2" .metadata.spawn_gen)" = "$GEN2" ] || fail "T7 a relaunch must write its new spawn_gen to the row"
 printf 'ok - T6 a lead and a relaunch take no --ticket; a relaunch reads it from the record\n'
+
+# T7: Herdr kept a variant of the name: the spawn's own write-back moves the record and the row, the row only from the first name.
+STUCK="${AGENT:0:27}-ab12"
+# shellcheck disable=SC2016 # the single-quoted script runs in the child shell
+out=$(env JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" JG_DATA_OVERRIDE="$H/data" JG_CONFIG_OVERRIDE="$H/config" bash -c '
+  . "$1/bin/jg-wake-lib.sh"; . "$1/bin/jg-backlog-lib.sh"; . "$1/bin/jg-backlog-transition-lib.sh"
+  STATE=$JG_STATE_OVERRIDE DATA=$JG_DATA_OVERRIDE ID=$2
+  eval "$(sed -n "/^spawn_follow_stuck_name() {/,/^}/p" "$1/bin/jg-spawn.sh")"
+  spawn_follow_stuck_name "$3" "$4"' _ "$ROOT" "$T2" "$AGENT" "$STUCK" 2>&1) || fail "T7 the write-back of the name that stuck failed: $out"
+[ "$(sed -n 's/^agent_name=//p' "$H/state/$T2.meta")" = "$STUCK" ] || fail "T7 the record must hold the name that stuck"
+[ "$(field "$c2" .assignee)" = "$STUCK" ] || fail "T7 the assignee must follow the name that stuck"
+printf 'ok - T7 a variant name that stuck is written to the record and the assignee\n'
 
 # T5: a teardown closes the child's row through its task id.
 printf 'pr=https://github.com/o/r/pull/7\n' >> "$H/state/$T2.meta"

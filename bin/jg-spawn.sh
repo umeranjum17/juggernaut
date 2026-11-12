@@ -4906,7 +4906,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id cleanup_recovery worktree project harness kind mode yolo branch receipt_required design_call demo_call ui_change tasktmp base_branch migration_row critical_override upstream_consent model effort account account_provider busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id cleanup_recovery worktree project harness kind mode yolo branch receipt_required design_call demo_call ui_change tasktmp base_branch migration_row critical_override upstream_consent model effort account account_provider busy_gen spawn_gen agent_name traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -4939,6 +4939,14 @@ preserve_relaunch_meta() {
   jg_account_hook record-line
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"
+  # The agent name is made once, at the first spawn, and every later relaunch keeps it.
+  # A record from before it has none and keeps the name made from its id.
+  if [ "$RELAUNCH" -eq 1 ]; then
+    SPAWN_AGENT_NAME=$(sed -n 's/^agent_name=//p' "$RELAUNCH_META" | tail -n 1)
+  else
+    SPAWN_AGENT_NAME=$("$SCRIPT_DIR/jg-herdr.sh" agent-name-for "$ID" 2>/dev/null) || SPAWN_AGENT_NAME=
+  fi
+  [ -z "$SPAWN_AGENT_NAME" ] || echo "agent_name=$SPAWN_AGENT_NAME"
   if [ "$KIND" = ship ]; then
     design_call=$(sed -n -E 's/^Design call \(first-draft\): (yes|no)( - .*)?$/\1/p' "$BRIEF" | head -1)
     if [ -z "$design_call" ] && [ -n "${RELAUNCH_META:-}" ] && [ -f "$RELAUNCH_META" ]; then
@@ -5027,6 +5035,25 @@ spawn_commit_backlog_transition() {
   fi
   [ "$BACKLOG_TRANSITION" = 1 ] || return 0
   jg_backlog_atomic_transition dispatch "$STATE/$ID.meta" "$DATA" "$ID" "$STATE"
+}
+
+# Herdr kept a variant of the name this spawn made: write the name that stuck to the task
+# record's agent_name= and to the row's assignee, which is guarded on the first name.
+spawn_follow_stuck_name() {  # <first-name> <stuck-name>
+  local lock tmp rc=0
+  lock=$(jg_meta_lock_path "$STATE/$ID.meta") || return 1
+  jg_lock_acquire_wait "$lock"
+  tmp=$(mktemp "$STATE/.$ID.meta.name.XXXXXX") || { jg_lock_release "$lock"; return 1; }
+  if awk -v name="$2" 'BEGIN { done = 0 } /^agent_name=/ { print "agent_name=" name; done = 1; next } { print } END { if (!done) print "agent_name=" name }' "$STATE/$ID.meta" >"$tmp"; then
+    jg_backlog_atomic_transition publish "$tmp" "$STATE/$ID.meta" "task record" "$STATE" || rc=1
+  else
+    rc=1
+  fi
+  [ "$rc" -eq 0 ] || rm -f "$tmp"
+  jg_lock_release "$lock"
+  [ "$rc" -eq 0 ] || return 1
+  jg_backlog_row_probe "$DATA" "$ID" || return 0
+  jg_backlog_lane_rename "$DATA" "$ID" "$1" "$2"
 }
 
 # The deferred-signal exit path's preservation report. A claim about preserved
@@ -5633,7 +5660,13 @@ jg_account_hook spawn-line
 # "session:pane-id", so this one site also re-applies the pin after a
 # relaunch rebind, a projection reclaim, or a husk replacement.
 if [ "$BACKEND" = herdr ]; then
-  jg_backend_herdr_pin_agent_name "${T%%:*}" "${T#*:}" "$ID"
+  SPAWN_PIN_FIRST=$(jg_backlog_agent_name "$STATE/$ID.meta" "$ID") || SPAWN_PIN_FIRST=
+  jg_backend_herdr_pin_agent_name "${T%%:*}" "${T#*:}" "$SPAWN_PIN_FIRST"
+  # When Herdr kept a variant, the name that stuck is the name: the record and the row follow it.
+  if [ -n "${JG_BACKEND_HERDR_PINNED_NAME:-}" ] && [ "$JG_BACKEND_HERDR_PINNED_NAME" != "$SPAWN_PIN_FIRST" ]; then
+    spawn_follow_stuck_name "$SPAWN_PIN_FIRST" "$JG_BACKEND_HERDR_PINNED_NAME" ||
+      echo "warning: the agent name that stuck in Herdr ($JG_BACKEND_HERDR_PINNED_NAME) could not be written back for $ID" >&2
+  fi
 fi
 # One row per launch - copy, pane, task id, start epoch - in data/copy-tasks.tsv, so the Fable pulse
 # (core/fleet-pulse/bin/fleet-fable.sh) can name the task of a pooled copy after its record is removed.

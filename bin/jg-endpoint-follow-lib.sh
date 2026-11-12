@@ -17,7 +17,8 @@
 #
 # Identity. The recorded pane is the only thing a move changes, so the worker
 # is found again by what a move does not change, both required together:
-#   - the Herdr agent name pinned from the task id (bin/backends/herdr.sh,
+#   - the Herdr agent name pinned from the record's agent_name= (a record with
+#     none: the name made from the task id) (bin/backends/herdr.sh,
 #     jg_backend_herdr_moved_agent), and
 #   - its working folder, which must be the task's worktree or a folder below.
 # The worker is followed only when ALL of these hold; anything else is no move,
@@ -87,7 +88,7 @@ jg_endpoint_follow_rewrite() {
 
 jg_endpoint_follow() {  # <meta-file> <task-id> <state-dir>
   local meta=$1 id=$2 state=$3 session worktree old_pane old_window found new_pane new_tab new_workspace
-  local other other_session other_pane account recorded_account new_window lock tmp rc=0
+  local other other_session other_pane account recorded_account new_window lock tmp agent_name rc=0
   [ -f "$meta" ] && [ ! -L "$meta" ] || return 1
   [ "$(jg_backend_of_meta "$meta")" = herdr ] || return 1
   [ -z "$(jg_meta_get "$meta" remote_host)" ] || return 1
@@ -102,7 +103,9 @@ jg_endpoint_follow() {  # <meta-file> <task-id> <state-dir>
   [ "$(jg_backend_herdr_pane_presence_state "$session" "$old_pane")" = dead ] || return 1
 
   # 3. The one agent that is this task, working in its worktree, elsewhere.
-  found=$(jg_backend_herdr_moved_agent "$session" "$id" "$worktree" "$old_pane") || return 1
+  agent_name=$(jg_meta_get "$meta" agent_name)
+  [ -n "$agent_name" ] || agent_name=$(jg_backend_herdr_agent_name_for "$id") || return 1
+  found=$(jg_backend_herdr_moved_agent "$session" "$agent_name" "$worktree" "$old_pane") || return 1
   IFS=$'\t' read -r new_pane new_tab new_workspace <<<"$found"
   [ -n "$new_pane" ] && [ -n "$new_tab" ] && [ -n "$new_workspace" ] || return 1
   new_window="$session:$new_pane"

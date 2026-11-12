@@ -203,6 +203,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-lease.sh`            | Claim, release, inspect, and sweep per-task supervision leases on the home's key-value bus |
 | `jg-lease-lib.sh`        | One owner of the supervision lease contract and the main-only role-partition guards  |
 | `jg-kv-lib.sh`           | One owner of the JetStream key-value client surface: server and client resolution, bucket creation, and the reads, writes, deletes, and revision a compare-and-set claim needs |
+| `jg-herdr-names.sh`      | `check` and `migrate` for one home's Herdr workspace, tab and agent names; the agent target is the task record's `agent_name=` ([herdr-backend.md](herdr-backend.md)) |
 | `jg-control.sh`          | Agent lifecycle control plane: allowlisted `interrupt`, `exit`, and transactional `relaunch` verbs for an exact task id ([agent-control.md](agent-control.md)) |
 | `jg-control-lib.sh`      | One executable owner of the control-plane verb allowlist, per-harness interrupt/exit mechanics, per-backend capability, and the endpoint-absence proof both `exit` and `relaunch` read |
 | `jg-control-primary-lib.sh` | The `primary` target of `jg-control.sh`: proves the pane is this home's locked primary session, then ends and restarts it once, verified, never forced (`docs/agent-control.md`) |

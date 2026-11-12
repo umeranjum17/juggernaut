@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Slice S7 on a real Beads store: a worker's row is owned by its Herdr agent name, the same across a relaunch, and the
-# spawn generation is metadata.lane. A start from another generation is refused unless it is a relaunch. The moves run
+# spawn generation is metadata.spawn_gen, with the model and effort beside it. The name is the task record's agent_name= (a record with none keeps the id's name). A start from another generation is refused unless it is a relaunch. The moves run
 # through the transition library the spawn calls. JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT name the builds; without
 # them the run skips plainly.
 set -u
@@ -34,8 +34,10 @@ state=$JG_HOME/state data=$JG_HOME/data op=$1 id=$2
 shift 2
 case "$op" in
   dispatch|handover)
-    printf 'spawn_gen=%s\nharness=claude\n' "$1" > "$state/$id.meta"
+    printf 'spawn_gen=%s\nharness=claude\nmodel=m-5\neffort=high\n%s' "$1" "${2:+agent_name=$2$'\n'}" > "$state/$id.meta"
     jg_backlog_atomic_transition "$op" "$state/$id.meta" "$data" "$id" "$state" ;;
+  rename) jg_backlog_lane_rename "$data" "$id" "$@" ;;
+  reopen) jg_backlog_mutate "$data" reopen "$id" ;;
   close) jg_backlog_atomic_transition close "" "$state/$id.backlog-close" "$data" "$id" "$state" "$@" ;;
 esac
 rc=$?
@@ -53,30 +55,58 @@ export JG_HERDR_BIN=$T/jg-herdr
 
 bd init --prefix jg >"$T/init.log" 2>&1 || fail "init the store: $(cat "$T/init.log")"
 axi add jg-s7a "[feature] Worker row" --priority 2 --body why >/dev/null || fail "seed the row"
-name=$("$ROOT/bin/jg-herdr.sh" agent-name-for jg-s7a)
-[ "$name" = jg-s7a ] || fail "the agent name of the seeded id must be the id, got [$name]"
+id_name=$("$ROOT/bin/jg-herdr.sh" agent-name-for jg-s7a)
+[ "$id_name" = jg-s7a ] || fail "the agent name of the seeded id must be the id, got [$id_name]"
+name=fix-the-row-jg-s7a
 
-out=$(spawn dispatch jg-s7a s1.1.1) || fail "the first spawn must start the row: $out"
-[ "$(field jg-s7a .assignee)" = "$name" ] || fail "the assignee must be the agent name, got [$(field jg-s7a .assignee)]"
-[ "$(field jg-s7a .metadata.lane)" = s1.1.1 ] || fail "metadata.lane must be the spawn generation"
+out=$(spawn dispatch jg-s7a s1.1.1 "$name") || fail "the first spawn must start the row: $out"
+[ "$(field jg-s7a .assignee)" = "$name" ] || fail "the assignee must be the agent name of the record, got [$(field jg-s7a .assignee)]"
+[ "$(field jg-s7a .metadata.spawn_gen)" = s1.1.1 ] || fail "metadata.spawn_gen must be the spawn generation"
+[ "$(field jg-s7a .metadata.lane)" = null ] || fail "no metadata.lane is written"
 [ "$(field jg-s7a .metadata.agent)" = claude ] || fail "metadata.agent must be the harness"
-printf 'ok - a start owns the row under the agent name, with the generation in metadata.lane\n'
+[ "$(field jg-s7a '.metadata.model|type+"="+.')" = string=m-5 ] || fail "metadata.model must be the model, as a string"
+[ "$(field jg-s7a '.metadata.effort|type+"="+.')" = string=high ] || fail "metadata.effort must be the effort, as a string"
+[ "$(field jg-s7a '.metadata.spawn_gen|type')" = string ] || fail "metadata.spawn_gen must be a string"
+printf 'ok - a start owns the row under the record agent name, with generation, model and effort in metadata\n'
 
-out=$(spawn handover jg-s7a s2.2.2) || fail "a relaunch must take the row: $out"
+out=$(spawn handover jg-s7a s2.2.2 "$name") || fail "a relaunch must take the row: $out"
 [ "$(field jg-s7a .assignee)" = "$name" ] || fail "a relaunch must keep the agent name"
-[ "$(field jg-s7a .metadata.lane)" = s2.2.2 ] || fail "a relaunch must move metadata.lane"
+[ "$(field jg-s7a .metadata.spawn_gen)" = s2.2.2 ] || fail "a relaunch must move metadata.spawn_gen"
 printf 'ok - a relaunch keeps the name and moves the generation\n'
 
-out=$(spawn dispatch jg-s7a s3.3.3)
+out=$(spawn dispatch jg-s7a s3.3.3 "$name")
 rc=$?
 [ "$rc" = 13 ] || fail "a second spawn must exit 13, got $rc: $out"
 assert_contains "$out" 'stale write refused: jg-s7a is held by lane \"s2.2.2\"' "a second spawn must name the generation that holds the row"
-[ "$(field jg-s7a .metadata.lane)" = s2.2.2 ] || fail "a refused spawn must change nothing"
-spawn dispatch jg-s7a s2.2.2 >/dev/null || fail "a repeat of the holding generation must pass"
+[ "$(field jg-s7a .metadata.spawn_gen)" = s2.2.2 ] || fail "a refused spawn must change nothing"
+spawn dispatch jg-s7a s2.2.2 "$name" >/dev/null || fail "a repeat of the holding generation must pass"
 printf 'ok - a second spawn is refused: %s\n' "$out"
+
+# Herdr kept a variant: the row follows the name that stuck, and only from the name that owns it.
+out=$(spawn rename jg-s7a wrong-first stuck-name-1)
+[ "$?" = 13 ] || fail "a rename from a name that does not own the row must exit 13: $out"
+[ "$(field jg-s7a .assignee)" = "$name" ] || fail "a refused rename must change nothing"
+spawn rename jg-s7a "$name" stuck-name-1 >/dev/null || fail "the rename from the owning name must pass"
+[ "$(field jg-s7a .assignee)" = stuck-name-1 ] || fail "the assignee must be the name that stuck"
+out=$(spawn handover jg-s7a s4.4.4 stuck-name-1) || fail "a relaunch under the name that stuck must take the row: $out"
+[ "$(field jg-s7a .assignee)" = stuck-name-1 ] || fail "a relaunch must keep the name that stuck"
+printf 'ok - a variant name moves the assignee once and the relaunch keeps it\n'
+
+# A reclaimed row (open, no owner) is taken back by a relaunch under the same name.
+spawn reopen jg-s7a >/dev/null || fail "reclaim the row"
+[ -z "$(field jg-s7a '.assignee // empty')" ] || fail "a reclaimed row has no owner"
+out=$(spawn handover jg-s7a s5.5.5 stuck-name-1) || fail "a relaunch must take a reclaimed row: $out"
+[ "$(field jg-s7a .assignee)" = stuck-name-1 ] && [ "$(field jg-s7a .status)" = in_progress ] || fail "the reclaimed row must be owned and in flight again"
+printf 'ok - a relaunch takes a reclaimed row\n'
+
+# A record with no agent_name= (a lane from before) keeps the name made from its id.
+axi add jg-s7b "[feature] Old record" --priority 2 --body why >/dev/null || fail "seed the old row"
+spawn dispatch jg-s7b s1.1.1 >/dev/null || fail "an old record must start"
+[ "$(field jg-s7b .assignee)" = jg-s7b ] || fail "a record with no agent name keeps the id's name, got [$(field jg-s7b .assignee)]"
+printf 'ok - a record with no agent_name= keeps the name made from the id\n'
 
 spawn close jg-s7a --pr https://github.com/o/r/pull/9 >/dev/null || fail "close the row"
 [ "$(field jg-s7a .status)" = closed ] || fail "the row must close"
-[ "$(field jg-s7a .assignee)" = "$name" ] || fail "a closed row must keep the agent name as history"
+[ "$(field jg-s7a .assignee)" = stuck-name-1 ] || fail "a closed row must keep the agent name as history"
 printf 'ok - the row closes under the agent name\n'
 pass "jg-beads lane s7"
