@@ -26,6 +26,8 @@ has() { if printf '%s' "$2" | grep -q -- "$3"; then ok "$1"; else no "$1: [$2] l
 home() { # <dir>: a home with the fork's check registration scripts
   mkdir -p "$1/state" "$1/bin" "$1/config" "$1/data"
   for f in jg-check-register.sh jg-check-unregister.sh jg-check-lib.sh jg-pr-lib.sh; do cp "$FORK/bin/$f" "$1/bin/"; done
+  # the check raises its text through the real alert function; the fixture home reaches it by a one-line wrapper
+  printf '#!/usr/bin/env bash\nexec bash %s/bin/jg-alert.sh "$@"\n' "$FORK" >"$1/bin/jg-alert.sh"; chmod +x "$1/bin/jg-alert.sh"
 }
 registered() { # <home>: 0 when the fork's reader trusts the watcher check's current bytes
   # shellcheck source=/dev/null # the fork's libraries, copied into the fixture home
@@ -58,7 +60,7 @@ for h in "$M" "$A"; do
 done
 is "alpha's hand-made check is backed up" "$(cat "$A"/state/quota-failover-watch.check.sh.bak-*)" "hand-made check"
 printf 'quota-failover: w1 stopped\n' >"$A/state/quota-failover.wake"
-is "alpha's shim runs the installed check on alpha" "$("$A/state/quota-failover-watch.check.sh")" "quota-failover: w1 stopped"
+has "alpha's shim runs the installed check on alpha" "$("$A/state/quota-failover-watch.check.sh")" "alert capacity (P2) at rung 1 for worker: quota-failover - quota-failover: w1 stopped"
 for lib in quota-failover/jg-probe-folder-lib.sh parked-homes/bin/jg-parked-homes-lib.sh account-pool/bin/jg-account-pool-lib.sh account-pool/bin/jg-pool-claude-env.sh; do
   is "the installed watcher finds $lib at its own relative path" \
     "$(cmp "$SRC/$lib" "$XDG_DATA_HOME/jg-quota-failover/quota-failover/../$lib" && echo same)" same

@@ -4814,7 +4814,7 @@ EOF
     # A refused launch becomes retryable on the same base-cadence clock.
     if admission_retry_waits_memory; then
       reason=$ADMISSION_RETRY_REASON
-      jg_wake_append check admission-retry "$reason" || exit 1
+      JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" capacity admission-retry "$reason" --deliver || exit 1
       printf '%s' "$ADMISSION_RETRY_KEY" > "$STATE/.admission-retry-surfaced" || true
       wake "$reason"
     fi

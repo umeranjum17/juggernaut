@@ -151,7 +151,7 @@ now      check   *                *FAILED*
 # state check, and the network check when it found something actionable.
 now      check   host-memory      *
 now      check   delete-guard     *
-now      check   model-outage-*   *
+now      check   alert-capacity--*   *
 now      check   supervision-host-return:*   *
 now      check   unauthenticated-state-checks   *
 now      check   *key-in-env-check.check.sh   *

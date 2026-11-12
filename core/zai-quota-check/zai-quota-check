@@ -37,4 +37,4 @@ print(f"zai-quota: Z.AI GLM plan 5 h window {fp}% left with {left} min to its re
 sig=${out%%$'\n'*}
 [ "$sig" = "$(cat "$MARK" 2>/dev/null)" ] && { touch "$MARK"; exit 0; }
 printf '%s' "$sig" > "$MARK"
-printf '%s\n' "${out#*$'\n'}"
+JG_HOME=$JG_MAIN JG_STATE_OVERRIDE="${JG_STATE_OVERRIDE:-$JG_MAIN/state}" "$JG_MAIN/bin/jg-alert.sh" capacity zai-quota "${out#*$'\n'}" --print

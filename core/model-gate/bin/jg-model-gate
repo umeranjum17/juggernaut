@@ -142,7 +142,8 @@ watch() {
       "$p" "$m" "$n" "$usd" "${JG_MODEL_GATE_RANGE:-7d}" "$(allowed_words "$p")" "$credit" "$LIST")$'\n'
   done <<<"$rows"
   printf '%s' "$cur" > "$SEEN" 2>/dev/null || true
-  [ -z "$out" ] || printf '%s' "$out" | sed '/^$/d'
+  out=$(printf '%s' "$out" | sed '/^$/d'); [ -z "$out" ] ||
+    JG_STATE_OVERRIDE="$STATE" "${JG_HOME:-$HOME/juggernaut}/bin/jg-alert.sh" capacity model-gate "$out" --print
 }
 
 case ${1:-watch} in
