@@ -53,7 +53,7 @@ check "dropping below the standing posture is announced" "$(notices --standing-m
 check "a conditional policy raises no notice" "$(notices --standing-mode no-mistakes-prod-only --standing-branch fm/)" ""
 # less: 1 when <mode> under standing <standing> is announced as less rigor, else 0.
 less() { notices --standing-branch fm/ --mode "$1" --standing-mode "$2" | grep -c 'less rigor'; }
-check "rigor ranks no-mistakes over direct-PR over local-only and local-trunk over any other word" "$(less direct-PR no-mistakes)$(less local-only direct-PR)$(less local-trunk local-only)$(less other local-only)$(less no-mistakes direct-PR)" 11010
+check "rigor ranks direct-PR (the retired no-mistakes reads as the same) over local-only and local-trunk over any other word" "$(less direct-PR no-mistakes)$(less local-only direct-PR)$(less local-trunk local-only)$(less other local-only)$(less no-mistakes direct-PR)" 01010
 check "a registered prefix the branch lacks is announced" "$(notices --standing-mode '' --standing-branch x/ | head_is "notice: t1 ships branch=fm/t1 while proj registers the ship-bra")" "notice: t1 ships branch=fm/t1 while proj registers the ship-bra"
 
 # The argument grammar: the dispatcher prints the parsed variables for the spawn to eval, or the

@@ -438,8 +438,9 @@ EOF
 }
 
 jg_dod_block() {  # <mode> <task-id> [branch] [<forge>] [<base>] [<consent>]
-  local mode=$1 id=$2 forge=${4:-none} base=${5:-} consent=${6:-}
-  local branch=${3:-fm/$id} pr_base='' nm_base='' base_q contract_forge='' contract_consent='' forge_cli=gh-axi draft_check
+  local mode id=$2 forge=${4:-none} base=${5:-} consent=${6:-}
+  mode=$(jg_delivery_style_task_mode "$1")  # the retired word no-mistakes is read as direct-PR
+  local branch=${3:-fm/$id} pr_base='' base_q contract_forge='' contract_consent='' forge_cli=gh-axi draft_check
   jg_forge_valid_for_mode "$forge" "$mode" jg_dod_block || return 1
   jg_base_branch_valid "$base" "$mode" "$forge" jg_dod_block || return 1
   if [ -n "$consent" ]; then
@@ -458,8 +459,6 @@ jg_dod_block() {  # <mode> <task-id> [branch] [<forge>] [<base>] [<consent>]
   if [ -n "$base" ]; then
     printf -v base_q '%q' "$base"
     pr_base=", against the base branch \`$base\` (\`--base $base_q\`), not the repository default"
-    nm_base="This task's base branch is \`$base\`, not the repository default: pass \`--base-branch $base_q\` on every \`no-mistakes axi run\` that starts a run, so the pipeline rebases onto, opens its PR against, and watches CI for that branch.
-"
   fi
   case "$mode:$forge" in
     direct-PR:gerrit)
@@ -467,45 +466,10 @@ jg_dod_block() {  # <mode> <task-id> [branch] [<forge>] [<base>] [<consent>]
 # Definition of done
 Delivery contract: mode=direct-PR forge=gerrit shape=squash$contract_consent
 Ship branch: $branch
-This task ships **direct-PR** to a Gerrit review server: you publish the change yourself, without the no-mistakes pipeline.
+This task ships **direct-PR** to a Gerrit review server: you publish the change yourself, after proving it with \`done-done verify\` (journeys, review and docs), and no pipeline run starts.
 Gerrit has no pull requests, so there is nothing to open; publishing creates the change.
 The task is complete only when committed on your branch.
 When it is implemented and committed, publish it.
-EOF
-      jg_gerrit_publish_block
-      cat <<EOF
-Do NOT run /no-mistakes.
-EOF
-      ;;
-    no-mistakes:gerrit)
-      cat <<EOF
-# Definition of done
-Delivery contract: mode=no-mistakes forge=gerrit shape=squash$contract_consent
-Ship branch: $branch
-This project's review server is Gerrit: it has no pull requests and no forge CI the pipeline can watch, so **no-mistakes runs here as a review pass that ends at a ready branch**, and you then publish that branch as one change.
-Pass \`--skip push,pr,ci\` on every \`no-mistakes axi run\` for this task, and skip nothing else: \`review\`, \`test\`, \`document\`, and \`lint\` are the whole point of the run.
-Those three are the only steps that reach a forge, and skipping them is a supported outcome, not a degraded one.
-The task is complete only when committed on your branch.
-When you believe it is complete, append \`done [at=<epoch>]: {summary}\` to the status file and stop.
-Juggernaut will then instruct you to run /no-mistakes to validate.
-That first \`done:\` is the handoff that starts the pipeline; it is not a request to publish.
-
-EOF
-      jg_nm_driving_block "$forge"
-      cat <<EOF
-
-Because \`push\` is skipped, the pipeline's fixes DO NOT arrive in your checkout: each fix round commits onto a branch inside no-mistakes' own local gate repository, and with no push nothing carries those commits back to you.
-Your tree never goes dirty and nothing interrupts you, so a passed run whose fixes are still in the gate looks exactly like a passed run whose fixes you already have.
-You may not publish until you have closed that gap:
-1. After the run reaches its outcome, read \`branch_sync.next_action\` from \`no-mistakes axi status\`.
-2. When its code is \`recover_custody\`, run the exact command that status prints - \`no-mistakes axi sync --recover\` - and confirm \`branch_sync.state\` comes back \`custody_returned\` on a clean tree. The printed command is authoritative if it differs. The \`run_pipeline\` next action status reports after recovery is not an instruction to run again: the recovered head is the one the passed run validated, so publish it.
-3. Confirm with \`git log\` that \`$branch\` now carries every fix commit the run made, whether or not step 2 was needed.
-An unrecovered fix round is an unfinished task, never housekeeping: publishing without it is how the UNFIXED code reaches review.
-Your ready report is refused while the run still holds your branch, while its outcome is missing or not passing, or while your HEAD's tree differs from the run's result.
-
-When the run's outcome is passed, passed-with-skips, or passed-with-override and step 3 holds, publish.
-The squashed change carries only the oldest commit's message, so the pipeline's own fix commits never reach the reviewer's description; your report is how they reach the captain.
-After publishing and immediately before your ready report, append one line \`note [at=<epoch>]: pipeline changes: {finding} - {fix it made}; {finding} - {fix it made}\` to the status file, one short clause per finding the run fixed, taken from the run's \`fixes\` table and the gate findings its drive calls returned (\`no-mistakes axi logs --step <step> --full\` has the detail); write \`note [at=<epoch>]: pipeline changes: none\` when it fixed nothing.
 EOF
       jg_gerrit_publish_block
       ;;
@@ -514,7 +478,7 @@ EOF
 # Definition of done
 Delivery contract: mode=direct-PR$contract_forge$contract_consent
 Ship branch: $branch
-This task ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
+This task ships **direct-PR**: you prove the commit with \`done-done verify\` (journeys, review and docs), then raise the PR yourself; no pipeline run starts.
 The task is complete only when committed on your branch.
 When it is implemented and committed, push your branch and open a PR with \`$forge_cli\` that is ready for review, not a draft$pr_base.
 Before you report done, read the PR back from the forge and confirm it is not a draft $draft_check
@@ -522,7 +486,7 @@ A draft cannot be merged, so a done report on one leaves the merge unasked.
 Then append \`done [at=<epoch>]: PR {url}\` to the status file and stop.
 That \`done:\` is accepted only when this copy's HEAD - your latest commit - is pushed to your PR branch; the check tests that commit, not merely that a branch moved.
 If you deliberately keep the PR a draft, append \`paused [at=<epoch>] [wait=lead] [reason=parked]: {why the draft is held}\` instead of done.
-Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; juggernaut relays the outcome.
+The configured merge authority decides whether to merge the PR; juggernaut relays the outcome.
 EOF
       ;;
     local:*|local-trunk:*)
@@ -550,27 +514,6 @@ A \`done:\` is accepted when the named head is on this project's shared local br
 Keep your branch a clean fast-forward onto the current default branch - if \`main\` has advanced, rebase onto it so the eventual merge stays a fast-forward.
 When it is implemented and committed, append \`done [at=<epoch>]: ready in branch $branch\` to the status file and stop.
 The configured merge authority approves the ready branch, then juggernaut merges it into local \`main\` through the guarded fast-forward path.
-EOF
-      ;;
-    no-mistakes:*)
-      cat <<EOF
-# Definition of done
-Delivery contract: mode=no-mistakes$contract_forge$contract_consent
-Ship branch: $branch
-The task is complete only when committed on your branch.
-When you believe it is complete, append \`done [at=<epoch>]: {summary}\` to the status file and stop.
-Juggernaut will then instruct you to run /no-mistakes to validate and ship a PR.
-That first \`done:\` is the handoff that starts the pipeline, which owns the push; it is not a request to push from this copy.
-${nm_base}
-EOF
-      jg_nm_driving_block "$forge"
-      cat <<EOF
-
-After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), read the PR back from the forge and confirm it is not a draft $draft_check
-A draft cannot be merged, so a done report on one leaves the merge unasked.
-Then append \`done [at=<epoch>]: PR {url} checks green\` and stop. You are finished.
-That CI-ready \`done:\` is accepted only when this copy's HEAD - your latest commit - is one the /no-mistakes run pushed, so commit nothing after the run; the check tests that commit, not merely that a branch moved.
-If you deliberately keep the PR a draft, append \`paused [at=<epoch>] [wait=lead] [reason=parked]: {why the draft is held}\` instead of done.
 EOF
       ;;
     *)
@@ -632,18 +575,11 @@ jg_dod_recon_gate_refusal() {  # <task-id>
 }
 
 # 0 when this ship done: is one the named-head gate must accept or refuse.
-# no-mistakes pre-validation done: is the pipeline handoff and is not gated.
-# Empty mode is treated as no-mistakes, the unregistered-project default.
+# Empty mode is treated as direct-PR, the unregistered-project default.
 jg_dod_should_gate_ship_done() {  # <kind> <mode> <line>
-  local note
   [ "$1" = ship ] || return 1
   [ "$(status_line_verb "$3")" = "done" ] || return 1
-  note=$(status_line_note "$3")
-  if [ -z "$2" ] || jg_delivery_style_is "$2" review; then
-    jg_dod_note_reports_ci_ready "$note" || jg_dod_note_reports_published_change "$note"
-  else
-    jg_delivery_style "$2" >/dev/null 2>&1  # a known style with no review needs only the done line; an unknown mode is refused
-  fi
+  jg_delivery_style "${2:-direct-PR}" >/dev/null 2>&1  # a known style needs only the done line; an unknown mode is refused
 }
 
 # The PR/MR URL from a `done: PR <url>...` note, or empty.
@@ -663,12 +599,13 @@ jg_dod_meta_value() {  # <meta> <key>
   grep "^$2=" "$1" 2>/dev/null | tail -1 | cut -d= -f2-
 }
 
-# 0 when the forge's head for a PR is the head the done names. In no-mistakes
-# mode the pipeline pushes it, possibly with commits the worker clone never
-# fetched. A direct-PR worker pushes from its own copy, so its named head stays
-# that copy's HEAD and a later unpushed commit is refused.
+# 0 when the forge's head for a PR is the head the done names. A style whose
+# pull request is pushed by another tool (the review column of the delivery table)
+# may carry commits the worker clone never fetched; a direct-PR worker pushes from
+# its own copy, so its named head stays that copy's HEAD and a later unpushed
+# commit is refused.
 jg_dod_forge_head_is_named_head() {  # <mode>
-  jg_delivery_style_is "${1:-no-mistakes}" review
+  jg_delivery_style_is "${1:-direct-PR}" review
 }
 
 # 0 when <url> is the task's recorded pr= and the forge holds its head:
@@ -1015,10 +952,6 @@ jg_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
     return 1
   fi
   if [ "$gerrit" = 1 ]; then
-    case "$mode" in
-      no-mistakes|'')
-        jg_dod_nm_custody_returned "$wt" || return 1 ;;
-    esac
     if jg_dod_gerrit_change_carries_head "$wt" "$url"; then
       return 0
     fi
@@ -1036,7 +969,7 @@ jg_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
   # the forge and the done is accepted; an unreadable read or a different forge
   # head keeps the refusal below. local-only stays out: its acceptance is the
   # head on the project's shared local branch, never a pull request.
-  if jg_delivery_style_is "${mode:-no-mistakes}" publishes; then
+  if jg_delivery_style_is "${mode:-direct-PR}" publishes; then
     if [ -n "$url" ] && jg_pr_url_parse "$url" && [ "$JG_PR_PROVIDER" != gerrit ] \
       && jg_dod_forge_pr_head_live "$JG_PR_PROVIDER" "$JG_PR_HOST" "$JG_PR_PATH" "$JG_PR_NUMBER" "$url" \
       && [ "$JG_DOD_LIVE_HEAD" = "$sha" ]; then

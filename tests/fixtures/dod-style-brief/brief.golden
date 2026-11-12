@@ -1,53 +1,24 @@
 === no-mistakes
-1. Never push to the default branch. Never merge a PR.
+1. Never push to the default branch (push only your `fm/tid` branch). Never merge a PR.
 # Definition of done
-Delivery contract: mode=no-mistakes
+Delivery contract: mode=direct-PR
 Ship branch: fm/tid
+This task ships **direct-PR**: you prove the commit with `done-done verify` (journeys, review and docs), then raise the PR yourself; no pipeline run starts.
 The task is complete only when committed on your branch.
-When you believe it is complete, append `done [at=<epoch>]: {summary}` to the status file and stop.
-Juggernaut will then instruct you to run /no-mistakes to validate and ship a PR.
-That first `done:` is the handoff that starts the pipeline, which owns the push; it is not a request to push from this copy.
-
-You drive no-mistakes by responding to its gates, not by implementing fixes.
-Follow the guidance no-mistakes itself provides for the mechanics: it loads when you invoke /no-mistakes, and `no-mistakes axi run --help` plus the `help` lines in each `axi` response are authoritative and version-matched to the installed binary.
-When starting no-mistakes, pass `--intent` as only this brief's `## Captain's intent` subsection body, not its heading, plus any later words the captain actually said.
-Preserve the actual words without adding speaker labels or direct address; the subsection heading supplies provenance outside the pipeline input.
-For a legacy brief with no such subsection, include only words on lines marked `[captain] `, excluding that metadata prefix; never copy its mixed `# Task` wholesale.
-If it has no provenance-marked captain words, stop and ask juggernaut instead of starting no-mistakes.
-Do not include `## Juggernaut spec`, later Juggernaut build constraints, or your own decisions and tradeoffs.
-The `--intent` string you pass must be self-sufficient: that string plus the codebase must let a reader reconstruct roughly the same specification, without depending on a separate report, a PR, or context that lives only in this conversation.
-When the captain's intent refers to a report, decision, or PR ("do items 1, 2, 3, and 7 of the report"), write the substance of the referenced items into `--intent` in the captain's terms, not only the pointer; that substance is the captain's ask by reference, while Juggernaut's build instructions and your own decisions still stay out.
-This replaces the no-mistakes skill's advice to enrich `--intent` with decisions and tradeoffs; that advice does not apply to Juggernaut-dispatched work.
-Do not hand-edit, commit, or fix findings yourself while a run is active - the pipeline applies every fix.
-
-One drive call blocks until the next gate or outcome, which routinely outlives what your harness lets a single command run: Claude Code kills a command at ten minutes maximum, while one fix round is capped around thirty minutes and up to three rounds chain.
-So background the drive call instead of sitting in one blocking hold your harness will kill, and read its return when it finishes.
-Declare that wait using the brief's status-reporting rule before waiting on the backgrounded drive call.
-Where a harness's own command limit is not established, assume it bounds commands and use that same backgrounded shape.
-Only a drive call's return reports the green PR: `no-mistakes axi status` shows progress but never reports `checks-passed` while the ci step is still monitoring the PR for merge, so never wait on a status poll for the next gate or outcome.
-Whenever a drive call returns without a gate or an outcome - its own wait elapsed, or it was killed or timed out - reattach at once by re-running `no-mistakes axi run` without flags, backgrounded the same way; once checks are green it returns `checks-passed` immediately, and if it refuses because no run is active, read the finished outcome from `no-mistakes axi status`.
-A killed or timed-out call is never evidence the daemon died: the daemon accepts your response immediately and runs the round in the background, so the call was only ever waiting for a read while the run kept working.
-Reattach and keep going rather than reporting the pipeline blocked; rule 7 owns the checks that decide when a pipeline block is real.
-
-Two juggernaut-specific rules layer on top of that guidance:
-- ask-user findings are never yours to answer: escalate to juggernaut using rule 6's ask-user format and stop.
-  Juggernaut applies `ask-user-authority` and obtains any required captain decision.
-  When the decision comes back, feed it to the gate with `no-mistakes axi respond` and let the pipeline apply it - do not route the question to "the user" or implement the fix yourself.
-- NEVER pass `--yes` (or `-y`) to `no-mistakes axi run` or `no-mistakes axi respond`. It is banned fleet-wide.
-  It auto-resolves every gate including ask-user findings with no escalation, and answering your own ask-user finding is a hard rule violation.
-
-After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), read the PR back from the forge and confirm it is not a draft (`gh-axi pr view <number>` must print `draft: no`, where <number> is the PR number from your PR URL); if it is a draft, mark it ready with `gh-axi pr ready <number>`.
+When it is implemented and committed, push your branch and open a PR with `gh-axi` that is ready for review, not a draft.
+Before you report done, read the PR back from the forge and confirm it is not a draft (`gh-axi pr view <number>` must print `draft: no`, where <number> is the PR number from your PR URL); if it is a draft, mark it ready with `gh-axi pr ready <number>`.
 A draft cannot be merged, so a done report on one leaves the merge unasked.
-Then append `done [at=<epoch>]: PR {url} checks green` and stop. You are finished.
-That CI-ready `done:` is accepted only when this copy's HEAD - your latest commit - is one the /no-mistakes run pushed, so commit nothing after the run; the check tests that commit, not merely that a branch moved.
+Then append `done [at=<epoch>]: PR {url}` to the status file and stop.
+That `done:` is accepted only when this copy's HEAD - your latest commit - is pushed to your PR branch; the check tests that commit, not merely that a branch moved.
 If you deliberately keep the PR a draft, append `paused [at=<epoch>] [wait=lead] [reason=parked]: {why the draft is held}` instead of done.
+The configured merge authority decides whether to merge the PR; juggernaut relays the outcome.
 Completion receipt: required
 Before the final ready report (after validation in no-mistakes mode), write a nonempty evidence file containing commands run, results and limitations, then run `JG_HOME=/jg-home JG_RECEIPT_PR=<PR url> ROOT/core/receipts/bin/jg-run-receipt.sh tid PASS <evidence-file>` from the clean candidate checkout; a receipt for a PR needs JG_RECEIPT_PR.
 Use FAIL when verification failed; never label failed or unperformed checks PASS.
 The evidence file may be a task-owned temporary file outside your worktree; that write and the helper's completion-receipt write into its supervising state directory are authorized.
 Regenerate the receipt after any candidate change, including validation fixes or a rebase.
 
-QA: hand the feature to done-done and write no tests or proof by hand. At your final clean head, run `done-done affected`, then the repository's verify skill sealed with `done-done run -- <the suite command it names>`; done-done selects the journeys, runs them, judges them and seals the proof, so run no separate lint-and-tests pass of your own. If a journey your change touches has no coverage, extend that journey through done-done.
+QA: hand the feature to done-done and write no tests or proof by hand. At your final clean head, run `done-done affected`, then the repository's verify skill sealed with `done-done run -- <the suite command it names>`; done-done selects the journeys, runs them, judges them and seals the proof, so run no separate lint-and-tests pass of your own. Each of the nine steps has one owner: done-done owns intent, review, test, document and lint (a review question reaches your lead as the wait `lead`, reason `review`, and you never answer your own finding); the delivery style owns rebase, push, pull request and CI. If a journey your change touches has no coverage, extend that journey through done-done.
 A `done:` naming a pull request needs that pull request's checks green: while a check is red or still running, the done is refused by the check's own name with the command to run it locally, so fix the cause or wait rather than report done.
 
 A report that a user-visible change is fixed or done carries the released version that is running and where it is observable, or it says plainly that the change is merged but not released; `bin/jg-live-claim.sh` decides that from your report and the release record, and your lead or juggernaut applies it.
@@ -56,7 +27,7 @@ A report that a user-visible change is fixed or done carries the released versio
 # Definition of done
 Delivery contract: mode=direct-PR
 Ship branch: fm/tid
-This task ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
+This task ships **direct-PR**: you prove the commit with `done-done verify` (journeys, review and docs), then raise the PR yourself; no pipeline run starts.
 The task is complete only when committed on your branch.
 When it is implemented and committed, push your branch and open a PR with `gh-axi` that is ready for review, not a draft.
 Before you report done, read the PR back from the forge and confirm it is not a draft (`gh-axi pr view <number>` must print `draft: no`, where <number> is the PR number from your PR URL); if it is a draft, mark it ready with `gh-axi pr ready <number>`.
@@ -64,14 +35,14 @@ A draft cannot be merged, so a done report on one leaves the merge unasked.
 Then append `done [at=<epoch>]: PR {url}` to the status file and stop.
 That `done:` is accepted only when this copy's HEAD - your latest commit - is pushed to your PR branch; the check tests that commit, not merely that a branch moved.
 If you deliberately keep the PR a draft, append `paused [at=<epoch>] [wait=lead] [reason=parked]: {why the draft is held}` instead of done.
-Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; juggernaut relays the outcome.
+The configured merge authority decides whether to merge the PR; juggernaut relays the outcome.
 Completion receipt: required
 Before the final ready report (after validation in no-mistakes mode), write a nonempty evidence file containing commands run, results and limitations, then run `JG_HOME=/jg-home JG_RECEIPT_PR=<PR url> ROOT/core/receipts/bin/jg-run-receipt.sh tid PASS <evidence-file>` from the clean candidate checkout; a receipt for a PR needs JG_RECEIPT_PR.
 Use FAIL when verification failed; never label failed or unperformed checks PASS.
 The evidence file may be a task-owned temporary file outside your worktree; that write and the helper's completion-receipt write into its supervising state directory are authorized.
 Regenerate the receipt after any candidate change, including validation fixes or a rebase.
 
-QA: hand the feature to done-done and write no tests or proof by hand. At your final clean head, run `done-done affected`, then the repository's verify skill sealed with `done-done run -- <the suite command it names>`; done-done selects the journeys, runs them, judges them and seals the proof, so run no separate lint-and-tests pass of your own. If a journey your change touches has no coverage, extend that journey through done-done.
+QA: hand the feature to done-done and write no tests or proof by hand. At your final clean head, run `done-done affected`, then the repository's verify skill sealed with `done-done run -- <the suite command it names>`; done-done selects the journeys, runs them, judges them and seals the proof, so run no separate lint-and-tests pass of your own. Each of the nine steps has one owner: done-done owns intent, review, test, document and lint (a review question reaches your lead as the wait `lead`, reason `review`, and you never answer your own finding); the delivery style owns rebase, push, pull request and CI. If a journey your change touches has no coverage, extend that journey through done-done.
 A `done:` naming a pull request needs that pull request's checks green: while a check is red or still running, the done is refused by the check's own name with the command to run it locally, so fix the cause or wait rather than report done.
 
 A report that a user-visible change is fixed or done carries the released version that is running and where it is observable, or it says plainly that the change is merged but not released; `bin/jg-live-claim.sh` decides that from your report and the release record, and your lead or juggernaut applies it.
@@ -92,7 +63,7 @@ Use FAIL when verification failed; never label failed or unperformed checks PASS
 The evidence file may be a task-owned temporary file outside your worktree; that write and the helper's completion-receipt write into its supervising state directory are authorized.
 Regenerate the receipt after any candidate change, including validation fixes or a rebase.
 
-QA: hand the feature to done-done and write no tests or proof by hand. At your final clean head, run `done-done affected`, then the repository's verify skill sealed with `done-done run -- <the suite command it names>`; done-done selects the journeys, runs them, judges them and seals the proof, so run no separate lint-and-tests pass of your own. If a journey your change touches has no coverage, extend that journey through done-done.
+QA: hand the feature to done-done and write no tests or proof by hand. At your final clean head, run `done-done affected`, then the repository's verify skill sealed with `done-done run -- <the suite command it names>`; done-done selects the journeys, runs them, judges them and seals the proof, so run no separate lint-and-tests pass of your own. Each of the nine steps has one owner: done-done owns intent, review, test, document and lint (a review question reaches your lead as the wait `lead`, reason `review`, and you never answer your own finding); the delivery style owns rebase, push, pull request and CI. If a journey your change touches has no coverage, extend that journey through done-done.
 A `done:` naming a pull request needs that pull request's checks green: while a check is red or still running, the done is refused by the check's own name with the command to run it locally, so fix the cause or wait rather than report done.
 
 A report that a user-visible change is fixed or done carries the released version that is running and where it is observable, or it says plainly that the change is merged but not released; `bin/jg-live-claim.sh` decides that from your report and the release record, and your lead or juggernaut applies it.
@@ -114,17 +85,17 @@ Use FAIL when verification failed; never label failed or unperformed checks PASS
 The evidence file may be a task-owned temporary file outside your worktree; that write and the helper's completion-receipt write into its supervising state directory are authorized.
 Regenerate the receipt after any candidate change, including validation fixes or a rebase.
 
-QA: hand the feature to done-done and write no tests or proof by hand. At your final clean head, run `done-done affected`, then the repository's verify skill sealed with `done-done run -- <the suite command it names>`; done-done selects the journeys, runs them, judges them and seals the proof, so run no separate lint-and-tests pass of your own. If a journey your change touches has no coverage, extend that journey through done-done.
+QA: hand the feature to done-done and write no tests or proof by hand. At your final clean head, run `done-done affected`, then the repository's verify skill sealed with `done-done run -- <the suite command it names>`; done-done selects the journeys, runs them, judges them and seals the proof, so run no separate lint-and-tests pass of your own. Each of the nine steps has one owner: done-done owns intent, review, test, document and lint (a review question reaches your lead as the wait `lead`, reason `review`, and you never answer your own finding); the delivery style owns rebase, push, pull request and CI. If a journey your change touches has no coverage, extend that journey through done-done.
 A `done:` naming a pull request needs that pull request's checks green: while a check is red or still running, the done is refused by the check's own name with the command to run it locally, so fix the cause or wait rather than report done.
 
 A report that a user-visible change is fixed or done carries the released version that is running and where it is observable, or it says plainly that the change is merged but not released; `bin/jg-live-claim.sh` decides that from your report and the release record, and your lead or juggernaut applies it.
 === no-mistakes on a base branch
-1. Never push to the base branch `feat/x` or the default branch. Never merge a PR.
+1. Never push to the base branch `feat/x` or the default branch (push only your `fm/tid` branch). Never merge a PR.
 === direct-PR on gerrit
 # Definition of done
 Delivery contract: mode=direct-PR forge=gerrit shape=squash
 Ship branch: fm/tid
-This task ships **direct-PR** to a Gerrit review server: you publish the change yourself, without the no-mistakes pipeline.
+This task ships **direct-PR** to a Gerrit review server: you publish the change yourself, after proving it with `done-done verify` (journeys, review and docs), and no pipeline run starts.
 Gerrit has no pull requests, so there is nothing to open; publishing creates the change.
 The task is complete only when committed on your branch.
 When it is implemented and committed, publish it.
@@ -141,14 +112,13 @@ Then append `done [at=<epoch>]: PR {change url} published for review` to the sta
 That `done:` is accepted only when the change's current patch set on the server carries this copy's HEAD tree, so commit nothing after publishing; if you must change the work, commit it and publish again before reporting done.
 A `done:` whose URL is not the canonical `https://<host>/c/<project>/+/<number>` change URL is refused.
 There is no pull request, no `gh-axi` call, and no forge CI result to report: a human reviewer approves and submits the change on the server, and juggernaut relays that outcome.
-Do NOT run /no-mistakes.
 Completion receipt: required
 Before the final ready report (after validation in no-mistakes mode), write a nonempty evidence file containing commands run, results and limitations, then run `JG_HOME=/jg-home JG_RECEIPT_PR=<PR url> ROOT/core/receipts/bin/jg-run-receipt.sh tid PASS <evidence-file>` from the clean candidate checkout; a receipt for a PR needs JG_RECEIPT_PR.
 Use FAIL when verification failed; never label failed or unperformed checks PASS.
 The evidence file may be a task-owned temporary file outside your worktree; that write and the helper's completion-receipt write into its supervising state directory are authorized.
 Regenerate the receipt after any candidate change, including validation fixes or a rebase.
 
-QA: hand the feature to done-done and write no tests or proof by hand. At your final clean head, run `done-done affected`, then the repository's verify skill sealed with `done-done run -- <the suite command it names>`; done-done selects the journeys, runs them, judges them and seals the proof, so run no separate lint-and-tests pass of your own. If a journey your change touches has no coverage, extend that journey through done-done.
+QA: hand the feature to done-done and write no tests or proof by hand. At your final clean head, run `done-done affected`, then the repository's verify skill sealed with `done-done run -- <the suite command it names>`; done-done selects the journeys, runs them, judges them and seals the proof, so run no separate lint-and-tests pass of your own. Each of the nine steps has one owner: done-done owns intent, review, test, document and lint (a review question reaches your lead as the wait `lead`, reason `review`, and you never answer your own finding); the delivery style owns rebase, push, pull request and CI. If a journey your change touches has no coverage, extend that journey through done-done.
 A `done:` naming a pull request needs that pull request's checks green: while a check is red or still running, the done is refused by the check's own name with the command to run it locally, so fix the cause or wait rather than report done.
 
 A report that a user-visible change is fixed or done carries the released version that is running and where it is observable, or it says plainly that the change is merged but not released; `bin/jg-live-claim.sh` decides that from your report and the release record, and your lead or juggernaut applies it.

@@ -1205,7 +1205,7 @@ elif [ "$TREEHOUSE_SLOT_LOCK_REQUIRED" = 1 ]; then
   exit 1
 fi
 MODE=$(grep '^mode=' "$META" | cut -d= -f2- || true)
-[ -n "$MODE" ] || MODE=no-mistakes
+[ -n "$MODE" ] || MODE=direct-PR
 BASE_BRANCH=$(grep '^base_branch=' "$META" | cut -d= -f2- || true)
 LANE_BASE=$(grep '^base=' "$META" | cut -d= -f2- || true)
 

@@ -142,12 +142,19 @@ func effortFlagCmd(args []string) int {
 	return 0
 }
 
-// rigorRank orders the delivery modes by rigor: 3 most, 1 least, 0 for a word that is not a task mode.
+// retiredModeRead is the mode a task runs with: the retired word no-mistakes runs as direct-PR
+// (delivery-styles.tsv, row `retired`); any other word stays as it came.
+func retiredModeRead(mode string) string {
+	if mode == "no-mistakes" {
+		return "direct-PR"
+	}
+	return mode
+}
+
+// rigorRank orders the delivery modes by rigor: 2 for a pull request mode (no-mistakes is read as direct-PR), 1 for local, 0 for a word that is not a task mode.
 func rigorRank(mode string) int {
 	switch mode {
-	case "no-mistakes":
-		return 3
-	case "direct-PR":
+	case "direct-PR", "no-mistakes":
 		return 2
 	case "local", "local-only", "local-trunk":
 		return 1

@@ -9,6 +9,7 @@
 #   jg-delivery-style.sh --trunk-aliases print the old words whose lane lands on the local trunk
 #   jg-delivery-style.sh --field <mode> <name>   print one named column (the `columns` row names them)
 #   jg-delivery-style.sh knob <word>  print the knob (pr or local) a registry word reads as; an unknown word exits 1
+#   jg-delivery-style.sh task-mode <word>  print the mode a task is run with: no-mistakes prints direct-PR, any other word prints as it came
 #   jg-delivery-style.sh pr|local   print the knob's row: line, adds, joins, publishes
 # Source it to call jg_delivery_style_knob <word>, jg_delivery_style <mode>, jg_delivery_style_modes, or jg_delivery_style_publishes <mode> (exit 0 when the mode
 # publishes a pull request, 1 when it does not or is unknown) from another script.
@@ -24,16 +25,24 @@ jg_delivery_style_canonical() {
   awk -F'\t' -v m="${1:-}" '($1=="style" || $1=="alias") && $2==m { print ($1=="alias" ? $3 : $2); f=1 } END { exit f?0:1 }' "$(_jg_ds_table)"
 }
 
+# jg_delivery_style_task_mode <word>: the mode a task is run with. The retired word no-mistakes runs as direct-PR: the worker proves with done-done
+# and takes the pull request path, and no pipeline run starts. Every other word is printed as it came, so local-only and local-trunk read as before.
+jg_delivery_style_task_mode() {
+  local w=${1:-} r
+  r=$(awk -F'\t' -v w="$w" '$1=="retired" && $2==w { print $3; f=1 } END { exit f?0:1 }' "$(_jg_ds_table)") && { printf '%s\n' "$r"; return 0; }
+  printf '%s\n' "$w"
+}
+
 jg_delivery_style() {
   local mode=${1:-} table=${JG_DELIVERY_STYLES:-$_jg_ds_root/core/machines/styles/delivery-styles.tsv}
   [ -r "$table" ] || { echo "jg-delivery-style: table not readable: $table" >&2; return 2; }
   [ -n "$mode" ] || { echo "jg-delivery-style: a mode is required" >&2; return 2; }
   awk -F'\t' -v m="$mode" '
     $1=="knob" && $2==m { kn=sprintf("line\t%s\nadds\t%s\njoins\t%s\npublishes\t%s\n", $3, $4, $5, $6) }
-    $1=="alias" && $2==m { s=$3; t=$4 }
-    $1=="style" { row[$2]=sprintf("line\t%s\nadds\t%s\njoins\t%s\npublishes\t%s\nreview\t%s\n", $3, $4, $5, $6, $7); tr[$2]=$8 }
+    $1=="alias" && $2==m { s=$3; t=$4; rv=$6 }
+    $1=="style" { row[$2]=sprintf("line\t%s\nadds\t%s\njoins\t%s\npublishes\t%s\nreview\t%s\n", $3, $4, $5, $6, $7); tr[$2]=$8; rvd[$2]=$7 }
     # a style or an old word wins over a knob of the same name
-    END { if (s=="") s=m; if (!(s in row)) { if (kn=="") exit 1; printf "%s", kn; exit 0 }  if (t=="") t=tr[s]; printf "%strunk\t%s\n", row[s], t }' "$table" && return 0
+    END { if (s=="") s=m; if (!(s in row)) { if (kn=="") exit 1; printf "%s", kn; exit 0 }  if (t=="") t=tr[s]; if (rv!="") sub("review\t" rvd[s] "\n", "review\t" rv "\n", row[s]); printf "%strunk\t%s\n", row[s], t }' "$table" && return 0
   echo "jg-delivery-style: unknown mode '$mode' (known: $(jg_delivery_style_modes | tr '\n' ' ' | sed 's/ $//'); read as before: $(jg_delivery_style_aliases | tr '\n' ' ' | sed 's/ $//'))" >&2
   return 1
 }
@@ -89,6 +98,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     --trunk-aliases) jg_delivery_style_trunk_aliases ;;
     --field) jg_delivery_style_field "${2:-}" "${3:-}" || { echo "jg-delivery-style: no property '${3:-}' for mode '${2:-}'" >&2; exit 1; } ;;
     knob) jg_delivery_style_knob "${2:-}" ;;
+    task-mode) jg_delivery_style_task_mode "${2:-}" ;;
     ""|-*) echo "usage: jg-delivery-style.sh <mode> | --list" >&2; exit 2 ;;
     *) if [ -n "${2:-}" ]; then jg_delivery_style_is "$1" "$2"; else jg_delivery_style "$1"; fi ;;
   esac

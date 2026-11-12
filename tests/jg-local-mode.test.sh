@@ -72,9 +72,9 @@ test_every_entry_point_accepts_local_and_the_old_words() {
     bash "$ROOT/bin/jg-delivery-style.sh" "$m" local || fail "$m must be a mode that publishes nothing"
   done
   out=$(bash "$ROOT/bin/jg-delivery-style.sh" --accepted | paste -sd' ' -)
-  assert_equals "no-mistakes direct-PR local local-trunk local-only" "$out" "the accepted mode words"
+  assert_equals "direct-PR local local-trunk local-only no-mistakes" "$out" "the accepted mode words"
   out=$(bash "$ROOT/bin/jg-delivery-style.sh" --list | paste -sd' ' -)
-  assert_equals "no-mistakes direct-PR local" "$out" "the mode list holds one local row"
+  assert_equals "direct-PR local" "$out" "the mode list holds one local row"
 }
 
 test_old_and_new_words_land_and_yolo_is_the_merge_switch

@@ -64,7 +64,6 @@ If the top-level path is the primary checkout or not the worktree you were launc
 5. If you hit the same obstacle twice, append `blocked [at=<epoch>]: {why}` and stop; juggernaut will help.
 6. If a decision belongs above the implementation worker (product choices, destructive actions),
    append `needs-decision [at=<epoch>]: {summary of options}` and stop. Juggernaut will reply with the decision.
-
    A decision or blocker you opened stays open until a `resolved` line carrying its exact key lands; a later `done:` or `working:` line never closes it, even when the answer is what started that work.
    Juggernaut's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a juggernaut reply, append `resolved [at=<epoch>]: {how it cleared}` yourself (same `[key=<slug>]` if you opened it with one) as you resume.
 7. Never administer infrastructure that every lane shares. Two things are shared:
@@ -111,7 +110,7 @@ A correction edits only the wrong text: do not run `@ROOT@/bin/jg-ensure-agents-
 # Definition of done
 Delivery contract: mode=direct-PR
 Ship branch: fm/dp
-This task ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
+This task ships **direct-PR**: you prove the commit with `done-done verify` (journeys, review and docs), then raise the PR yourself; no pipeline run starts.
 The task is complete only when committed on your branch.
 When it is implemented and committed, push your branch and open a PR with `gh-axi` that is ready for review, not a draft.
 Before you report done, read the PR back from the forge and confirm it is not a draft (`gh-axi pr view <number>` must print `draft: no`, where <number> is the PR number from your PR URL); if it is a draft, mark it ready with `gh-axi pr ready <number>`.
@@ -119,7 +118,7 @@ A draft cannot be merged, so a done report on one leaves the merge unasked.
 Then append `done [at=<epoch>]: PR {url}` to the status file and stop.
 That `done:` is accepted only when this copy's HEAD - your latest commit - is pushed to your PR branch; the check tests that commit, not merely that a branch moved.
 If you deliberately keep the PR a draft, append `paused [at=<epoch>] [wait=lead] [reason=parked]: {why the draft is held}` instead of done.
-Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; juggernaut relays the outcome.
+The configured merge authority decides whether to merge the PR; juggernaut relays the outcome.
 Completion receipt: required
 Before the final ready report (after validation in no-mistakes mode), write a nonempty evidence file containing commands run, results and limitations, then run `JG_HOME=@HOME@ JG_RECEIPT_PR=<PR url> @ROOT@/core/receipts/bin/jg-run-receipt.sh dp PASS <evidence-file>` from the clean candidate checkout; a receipt for a PR needs JG_RECEIPT_PR.
 Use FAIL when verification failed; never label failed or unperformed checks PASS.

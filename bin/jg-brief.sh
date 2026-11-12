@@ -14,7 +14,7 @@
 # charters still use a single `{TASK}` charter fill. Juggernaut may adjust other
 # sections when the task genuinely deviates (e.g. working an existing external
 # PR instead of shipping a new one).
-# Usage: jg-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only|local-trunk> [--ticket <ticket-id>] [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--migration-row <slug|none>] [--off-critical-path <captain-words>] [--forge <none|gerrit|forgejo> [--shape squash]] [--design-call <yes|no> --design-reason <text>] [--demo-call <yes|no> --demo-reason <text>] [--herdr-lab|--task-text-file <file>] [--medium <mobile|web|desktop|cli|backend>]
+# Usage: jg-brief.sh <task-id> <repo-name> --mode <direct-PR|local|local-only|local-trunk> [--ticket <ticket-id>] [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--migration-row <slug|none>] [--off-critical-path <captain-words>] [--forge <none|gerrit|forgejo> [--shape squash]] [--design-call <yes|no> --design-reason <text>] [--demo-call <yes|no> --demo-reason <text>] [--herdr-lab|--task-text-file <file>] [--medium <mobile|web|desktop|cli|backend>]
 #        jg-brief.sh <task-id> <repo-name> --scout [--ticket <ticket-id>] [--depth <quick|standard|deep>] [--base-branch <branch>] [--herdr-lab]
 #        jg-brief.sh <task-id> --squad-lead {<project>...|--no-projects}
 #   --ticket <ticket-id> (ship and scout) makes the brief the first step of a dispatch from a ticket: it runs
@@ -72,12 +72,9 @@
 # pair is accepted and the brief carries no demo line. bin/jg-spawn.sh records demo_call=,
 # and bin/jg-merge-gate-lib.sh's jg_dod_demo_gate refuses to merge a yes-task whose
 # completion receipt evidence carries no `takeone receipt: <ref>` line.
-# --risk <reason> states why this task needs the no-mistakes pipeline, as one of
-# release, security, migration, large-change, shared-protocol or fork-repo. It is
-# required on a no-mistakes ship brief and refused elsewhere: no-mistakes is for
-# real risk, and a task with no such risk ships as direct-PR with a done-done
-# check. The local presence flag config/delivery-risk-loose turns the check off
-# (docs/configuration.md "Delivery risk").
+# --risk <reason> states the delivery risk of a ship task, as one of release,
+# security, migration, large-change, shared-protocol or fork-repo. It is optional
+# on a ship brief and refused elsewhere; the brief records it under "Delivery risk".
 # --ui-change <yes|no> records on a ship brief whether the task changes the UI, as
 # `UI change (nav-check): <yes|no>`. A yes brief carries the no-silent-removal rule:
 # the PR body lists `Nav before:` and `Nav after:` and any removed screen is named.
@@ -93,12 +90,12 @@
 # For ship tasks, --mode is REQUIRED and shapes the definition of done. Juggernaut
 # resolves it per task at intake (AGENTS.md section 7); data/projects.md holds the
 # captain's standing posture as context, and this script never reads it:
-#   no-mistakes  implement -> /no-mistakes pipeline -> PR -> configured merge authority
-#   direct-PR    implement -> push + open PR via gh-axi (no pipeline) -> configured merge authority
+#   direct-PR    implement -> done-done verify (journeys, review, docs) -> push + open PR via gh-axi -> configured merge authority
+#                (the retired word no-mistakes is read as direct-PR: no pipeline run starts)
 #   local-only   implement on branch, stop and report "ready in branch" (no push/PR);
 #                the configured merge authority approves, juggernaut merges to local main
 # no-mistakes-prod-only is a registry policy, not a task mode; resolve it to one of
-# the three concrete modes at intake before calling this script.
+# the concrete modes at intake before calling this script.
 # --branch-prefix <prefix> optionally overrides the ship branch's "fm/" prefix, so
 # the resolved branch is "<prefix><task-id>" instead of the default "fm/<task-id>".
 # Pass an empty prefix ("--branch-prefix ''") for a bare "<task-id>" branch, or a
@@ -432,17 +429,19 @@ done
 # missing or invalid value stops the scaffold rather than silently defaulting.
 if [ "$KIND" = ship ]; then
   [ "$MODE_SET" -eq 1 ] || {
-    echo "error: ship briefs require --mode <no-mistakes|direct-PR|local>; resolve it at intake from the captain's instruction and the project's registered posture in data/projects.md" >&2
+    echo "error: ship briefs require --mode <direct-PR|local>; resolve it at intake from the captain's instruction and the project's registered posture in data/projects.md" >&2
     exit 1
   }
   if [ "$MODE" = no-mistakes-prod-only ]; then
-    echo "error: no-mistakes-prod-only is a registry policy, not a task mode; classify this task's surface and resolve it to no-mistakes or direct-PR at intake" >&2
+    echo "error: no-mistakes-prod-only is a registry policy, not a task mode; classify this task's surface and resolve it to direct-PR at intake" >&2
     exit 1
   fi
   jg_delivery_style_accepts "$MODE" || {
     echo "error: --mode must be one of $(jg_delivery_style_modes | paste -sd, - | sed 's/,/, /g') (the old words $(jg_delivery_style_aliases | paste -sd, - | sed 's/,/, /g') are read as before; got '$MODE')" >&2
     exit 1
   }
+  # The retired word runs as direct-PR: the worker proves with done-done and opens the pull request, and no pipeline run starts.
+  MODE=$(jg_delivery_style_task_mode "$MODE")
 elif [ "$MODE_SET" -eq 1 ]; then
   echo "error: --mode applies only to ship briefs; a scout delivers a report and a squad_lead charter is not a delivery contract" >&2
   exit 1
@@ -457,10 +456,6 @@ if [ "$KIND" = ship ]; then
       release|security|migration|large-change|shared-protocol|fork-repo) ;;
       *) echo "error: --risk must be one of release, security, migration, large-change, shared-protocol, fork-repo (got '$RISK')" >&2; exit 1 ;;
     esac
-  fi
-  if jg_delivery_style_is "$MODE" review && [ "$RISK_SET" -eq 0 ] && [ ! -e "$CONFIG/delivery-risk-loose" ]; then
-    echo "error: a no-mistakes ship brief states its risk with --risk <release|security|migration|large-change|shared-protocol|fork-repo>; a task with no such risk ships as --mode direct-PR with a done-done check" >&2
-    exit 1
   fi
 elif [ "$RISK_SET" -eq 1 ]; then
   echo "error: --risk applies only to ship briefs; a scout delivers a report and a squad_lead charter is not a delivery contract" >&2
@@ -740,11 +735,6 @@ append_brief_include() {
 BRIEF="$DATA/$ID/brief.md"
 [ -e "$BRIEF" ] && { echo "error: $BRIEF already exists" >&2; exit 1; }
 mkdir -p "$DATA/$ID"
-
-ASK_USER_BLOCK=
-if [ "$KIND" = ship ] && jg_delivery_style_is "$MODE" review; then
-  ASK_USER_BLOCK=$(jg_ask_user_escalation_block "$DATA" "$ID")
-fi
 
 shell_quote() {
   printf "'"
@@ -1076,11 +1066,6 @@ fi
 # The block opens with the fixed "Delivery contract: mode=<mode>" line that
 # bin/jg-spawn.sh checks against its own explicit --mode and the project's
 # registered forge before launching.
-SETUP2=""
-if jg_delivery_style_is "$MODE" review; then
-  SETUP2="
-2. Run \`no-mistakes doctor\`; if it reports the repo is not initialized here, run \`no-mistakes init\`."
-fi
 # Every ship brief carries the prior-art step: new or complex work starts from
 # what already exists, and a change that is neither records that in one line.
 # bin/jg-prior-art-gate.sh refuses the section left empty or holding this
@@ -1205,7 +1190,7 @@ $SETUP_BASE
 The path check is authoritative: \`git rev-parse --git-dir\` and \`git rev-parse --git-common-dir\` can help inspect the repo, but they do not prove you are outside the primary checkout.
 If the top-level path is the primary checkout or not the worktree you were launched in, STOP - do not branch or commit here - append \`blocked [at=<epoch>]: launched in primary checkout, not an isolated worktree\` to the status file and stop.
 
-1. First action: create your branch: \`git checkout -b $BRANCH_Q --\`$SETUP2
+1. First action: create your branch: \`git checkout -b $BRANCH_Q --\`
 
 # Rules
 $RULE1
@@ -1233,7 +1218,6 @@ $OPERATOR_PAUSE_INSTRUCTIONS
 5. If you hit the same obstacle twice, append \`blocked [at=<epoch>]: {why}\` and stop; juggernaut will help.
 6. If a decision belongs above the implementation worker (product choices, destructive actions),
    append \`needs-decision [at=<epoch>]: {summary of options}\` and stop. Juggernaut will reply with the decision.
-$ASK_USER_BLOCK
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Juggernaut's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a juggernaut reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 $SHARED_INFRA_RULE

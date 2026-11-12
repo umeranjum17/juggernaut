@@ -195,7 +195,7 @@ EOF
 # one of these DOD blocks, since a broken heredoc corrupts or empties the
 # generated brief content, not just the script's own syntax.
 test_ship_modes_generate_clean_briefs() {
-  local home id mode brief status
+  local home id mode brief status want_mode
   home="$TMP_ROOT/ship-home"
   mkdir -p "$home/config" && : > "$home/config/delivery-risk-loose"
   write_registry "$home"
@@ -208,7 +208,8 @@ test_ship_modes_generate_clean_briefs() {
     brief="$home/data/$id/brief.md"
     assert_present "$brief" "$id: brief was not scaffolded"
     assert_grep "# Definition of done" "$brief" "$id: brief missing Definition of done section"
-    grep -qx "Delivery contract: mode=$mode" "$brief" \
+    want_mode=$mode; [ "$mode" != no-mistakes ] || want_mode=direct-PR  # the retired word runs as direct-PR
+    grep -qx "Delivery contract: mode=$want_mode" "$brief" \
       || fail "$id: brief did not record its machine-readable delivery contract line"
     assert_grep "{TASK}" "$brief" "$id: brief missing the {TASK} placeholder"
     assert_grep "{JUGGERNAUT_SPEC}" "$brief" "$id: brief missing the {JUGGERNAUT_SPEC} placeholder"
@@ -247,6 +248,27 @@ test_ship_modes_generate_clean_briefs() {
   assert_no_grep "## Checks" "$brief" "scout brief carries the Checks block recipe"
   echo "capture: scout brief carries no merge-gate recipe ($(grep -c 'follow this recipe in order' "$brief") matches for the recipe line)"
   pass "jg-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly"
+}
+
+# J20b: a ship task of a project that had the old word proves with done-done and takes the pull request path; its brief starts no pipeline run.
+test_retired_word_ships_through_done_done_and_the_pr_path() {
+  local home brief
+  home="$TMP_ROOT/retired-word-home"
+  mkdir -p "$home/config" "$home/data"
+  printf -- '- legacy-proj [no-mistakes] - registered with the retired word (added 2026-01-01)\n' > "$home/data/projects.md"
+  [ "$(JG_HOME="$home" "$ROOT/bin/jg-project-mode.sh" legacy-proj 2>/dev/null)" = "direct-PR off" ] \
+    || fail "a project registered with the retired word must resolve to direct-PR"
+  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" retired-word-a9 legacy-proj --mode no-mistakes >/dev/null 2>&1 \
+    || fail "a ship brief with the retired word must scaffold with no --risk"
+  brief="$home/data/retired-word-a9/brief.md"
+  assert_grep "Delivery contract: mode=direct-PR" "$brief" "the retired word must record the direct-PR contract"
+  assert_grep "done-done verify" "$brief" "the brief must name done-done verify as the proof"
+  assert_grep "push your branch and open a PR" "$brief" "the brief must take the pull request path"
+  # shellcheck disable=SC2016
+  for pattern in '/no-mistakes' 'no-mistakes axi run' 'no-mistakes init' 'no-mistakes doctor' '--skip push'; do
+    assert_no_grep "$pattern" "$brief" "the brief must not start a pipeline run ($pattern)"
+  done
+  pass "jg-brief.sh: the retired word runs as direct-PR with done-done proof and no pipeline run"
 }
 
 # --forge forgejo is the Forgejo value of the project's registered forge binding
@@ -294,21 +316,6 @@ test_forge_selection_renders_correct_cli() {
   assert_no_grep 'gh-axi pr ready' "$brief" \
     "--forge forgejo's direct-PR DOD must not send the worker to gh-axi to clear a draft"
 
-  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" brief-forge-nm some-proj --mode no-mistakes --forge forgejo >/dev/null 2>&1 \
-    || fail "--forge forgejo should scaffold a no-mistakes ship brief"
-  brief="$home/data/brief-forge-nm/brief.md"
-  assert_grep "3. Use tea for Forgejo operations and chrome-devtools-axi for browser operations." "$brief" \
-    "a no-mistakes --forge forgejo brief must render the tea Rule 3 line"
-  grep -qx "Delivery contract: mode=no-mistakes forge=forgejo" "$brief" \
-    || fail "a no-mistakes --forge forgejo brief must mark the delivery contract line"
-  # shellcheck disable=SC2016 # Backticks and braces are literal generated brief text.
-  assert_grep 'confirm it is not a draft (`tea api --repo <owner>/<repo> /repos/{owner}/{repo}/pulls/<number>` must show `draft` as false' "$brief" \
-    "a no-mistakes --forge forgejo DOD must read the draft state back with tea"
-  assert_no_grep 'gh-axi pr view' "$brief" \
-    "a no-mistakes --forge forgejo DOD must not send the worker to gh-axi for the draft read-back"
-  assert_no_grep 'gh-axi pr ready' "$brief" \
-    "a no-mistakes --forge forgejo DOD must not send the worker to gh-axi to clear a draft"
-
   while IFS='|' read -r label args expect; do
     [ -n "$label" ] || continue
     # shellcheck disable=SC2086 # The row's arguments must split into words.
@@ -349,7 +356,7 @@ test_ship_mode_is_required_and_closed_set() {
   done <<'ROWS'
 missing --mode||ship briefs require --mode
 empty --mode value|--mode|requires a value
-unknown mode value|--mode nope|must be one of no-mistakes, direct-PR, local
+unknown mode value|--mode nope|must be one of direct-PR, local
 conditional policy is not a task mode|--mode no-mistakes-prod-only|classify this task's surface
 ROWS
   pass "jg-brief.sh: ship --mode is required and closed-set validated"
@@ -363,13 +370,13 @@ test_ship_mode_is_explicit_not_registry() {
   home="$TMP_ROOT/explicit-over-registry-home"
   mkdir -p "$home/config" && : > "$home/config/delivery-risk-loose"
   write_registry "$home"
-  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" brief-explicit-a5 direct-proj --mode no-mistakes >/dev/null 2>&1 \
-    || fail "explicit no-mistakes brief on a direct-PR project should scaffold"
+  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" brief-explicit-a5 direct-proj --mode local-only >/dev/null 2>&1 \
+    || fail "explicit local-only brief on a direct-PR project should scaffold"
   brief="$home/data/brief-explicit-a5/brief.md"
-  grep -qx "Delivery contract: mode=no-mistakes" "$brief" \
+  grep -qx "Delivery contract: mode=local-only" "$brief" \
     || fail "registered direct-PR posture overrode the explicit --mode"
-  assert_grep "Juggernaut will then instruct you to run /no-mistakes" "$brief" \
-    "explicit no-mistakes brief did not render the pipeline definition of done"
+  assert_grep "no remote, no PR, no pipeline" "$brief" \
+    "explicit local-only brief did not render the local-only definition of done"
 
   # An unregistered project is not a blocker either, because nothing is looked up.
   JG_HOME="$home" "$ROOT/bin/jg-brief.sh" brief-explicit-a6 never-registered --mode local-only >/dev/null 2>&1 \
@@ -460,142 +467,6 @@ test_pr_based_dod_requires_non_draft() {
       "$mode: a deliberate draft must declare a wait instead of done"
   done
   pass "jg-brief.sh: PR-based done requires a non-draft PR; a deliberate draft declares a wait"
-}
-
-# Pin the specific line the bug lived on: the no-mistakes DOD's no-mistakes
-# reference must render as plain prose with no dangling apostrophe artifact.
-test_no_mistakes_dod_wording() {
-  local home id brief spelling
-  home="$TMP_ROOT/wording-home"
-  mkdir -p "$home/config" && : > "$home/config/delivery-risk-loose"
-  mkdir -p "$home/data"
-  id="brief-wording-b1"
-  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
-  brief="$home/data/$id/brief.md"
-  assert_present "$brief" "brief was not scaffolded"
-  for spelling in 'Captain:' "Captain's words:" "Captain's ask:" "Captain's intent:" 'Captain,'; do
-    assert_no_grep "$spelling" "$brief" "rendered intent contract still teaches operator-address labels"
-  done
-  assert_grep '[captain]' "$brief" "rendered intent contract must explain the neutral legacy provenance marker"
-  assert_grep "no-mistakes itself provides for the mechanics" "$brief" \
-    "no-mistakes DOD lost its guidance-reference sentence"
-  # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
-  assert_grep '`no-mistakes axi run --help`' "$brief" \
-    "no-mistakes DOD must render literal backticks around the help command"
-  # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
-  assert_grep '`help`' "$brief" \
-    "no-mistakes DOD must render literal backticks around help"
-  assert_grep "pass \`--intent\` as only this brief's \`## Captain's intent\`" "$brief" \
-    "no-mistakes DOD must require --intent to be the Captain's intent subsection"
-  assert_grep "plus any later words the captain actually said" "$brief" \
-    "no-mistakes DOD must allow later captain words in --intent"
-  assert_grep "Do not include \`## Juggernaut spec\`" "$brief" \
-    "no-mistakes DOD must keep Juggernaut spec out of --intent"
-  assert_grep "or your own decisions and tradeoffs" "$brief" \
-    "no-mistakes DOD must keep worker tradeoffs out of --intent"
-  assert_grep "This replaces the no-mistakes skill's advice to enrich \`--intent\`" "$brief" \
-    "no-mistakes DOD must override the external skill's enrich-with-decisions guidance"
-  # A bare reference cannot preserve the captain's ask, so the rendered DOD states
-  # the self-sufficiency rule and requires referenced material to be resolved into
-  # its substance.
-  assert_grep "The \`--intent\` string you pass must be self-sufficient" "$brief" \
-    "no-mistakes DOD must require a self-sufficient --intent string"
-  assert_grep "write the substance of the referenced items into \`--intent\`" "$brief" \
-    "no-mistakes DOD must tell the worker to resolve report, decision, and PR references into substance"
-
-  # The --yes ban is a fleet-wide prohibition, not a preference, and it must not
-  # claim an enforcement the tool does not provide: this is instruction only.
-  assert_grep "NEVER pass \`--yes\` (or \`-y\`) to \`no-mistakes axi run\` or \`no-mistakes axi respond\`. It is banned fleet-wide." "$brief" \
-    "no-mistakes DOD must state the --yes ban as a prohibition"
-  assert_grep "answering your own ask-user finding is a hard rule violation" "$brief" \
-    "no-mistakes DOD must say why --yes is banned"
-  assert_no_grep "Avoid \`--yes\`" "$brief" \
-    "no-mistakes DOD still states the --yes ban as a preference"
-  assert_no_grep "no-mistakes refuses" "$brief" \
-    "no-mistakes DOD must not claim the tool itself refuses --yes"
-  pass "jg-brief.sh: no-mistakes DOD keeps its apostrophe prose and bans --yes outright"
-}
-
-# The green-PR report must not depend on a status poll: `axi status` never
-# reports `checks-passed` while the ci step monitors the PR for merge, so a
-# worker told to wait on it for the next gate or outcome never learned its PR
-# went green (2026-09-22, PR #5317). The rendered DOD must make the drive
-# call's own return the green signal and reattach after a bounded return.
-test_no_mistakes_dod_green_detection() {
-  local home id brief
-  home="$TMP_ROOT/green-detection-home"
-  mkdir -p "$home/config" && : > "$home/config/delivery-risk-loose"
-  mkdir -p "$home/data"
-  id="brief-green-b1"
-  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
-  brief="$home/data/$id/brief.md"
-  assert_present "$brief" "brief was not scaffolded"
-  assert_grep "Only a drive call's return reports the green PR" "$brief" \
-    "no-mistakes DOD must make the drive call's return the green signal"
-  assert_grep "never reports \`checks-passed\` while the ci step is still monitoring the PR for merge" "$brief" \
-    "no-mistakes DOD must say axi status cannot show a green PR in merge monitoring"
-  assert_grep "never wait on a status poll for the next gate or outcome" "$brief" \
-    "no-mistakes DOD must forbid waiting on a status poll"
-  assert_grep "reattach at once by re-running \`no-mistakes axi run\` without flags" "$brief" \
-    "no-mistakes DOD must reattach the drive call after a bounded return"
-  assert_grep "once checks are green it returns \`checks-passed\` immediately" "$brief" \
-    "no-mistakes DOD must say a reattach reports an already-green PR"
-  assert_no_grep "poll \`no-mistakes axi status\` from a separate call" "$brief" \
-    "no-mistakes DOD still makes a status poll the wait for the next gate or outcome"
-  pass "jg-brief.sh: no-mistakes DOD detects a green PR from the drive call, not a status poll"
-}
-
-test_ask_user_escalation_format() {
-  local home id brief mode other_id other_brief
-  home="$TMP_ROOT/ask-user-home"
-  mkdir -p "$home/config" && : > "$home/config/delivery-risk-loose"
-  mkdir -p "$home/data"
-  id="brief-ask-user-d1"
-  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
-  brief="$home/data/$id/brief.md"
-  assert_present "$brief" "brief was not scaffolded"
-
-  # A no-mistakes ask-user gate must escalate its ask-user findings as one status
-  # event plus one verbatim findings snapshot file, using that same shape even
-  # for a single finding, never paraphrased into the status line.
-  assert_grep "escalate all ask-user findings as one event plus one snapshot file" "$brief" \
-    "ship rule 6 lost the one-event-plus-snapshot-file ask-user contract"
-  assert_grep "using that same shape even when the gate holds only a single ask-user finding" "$brief" \
-    "ship rule 6 must require the same shape for a single finding"
-  assert_grep "write only the ask-user findings, verbatim and unparaphrased (id, severity, file, line, description, authority)" "$brief" \
-    "ship rule 6 must limit the verbatim axi slice to ask-user findings"
-  # shellcheck disable=SC2016  # single quotes are deliberate: backticks and the key/findings/file tokens must stay literal
-  assert_grep 'needs-decision [at=<epoch>] [key=nm-<run>-<step>]: ask-user findings=<id1>,<id2>,... file='"$home/data/$id/nm-<run>-findings.txt" "$brief" \
-    "ship rule 6 must render the exact needs-decision ask-user status line"
-  assert_grep "$home/data/$id/nm-<run>-findings.txt" "$brief" \
-    "ship rule 6 must point the snapshot file under this task's own data directory"
-  assert_grep "The status line only points at the file; it never restates or summarizes a finding's content." "$brief" \
-    "ship rule 6 must forbid paraphrasing ask-user findings into the status line"
-
-  # The DOD's own ask-user paragraph must point back at rule 6's format
-  # (one-owner rule) rather than restating or bare-citing it.
-  assert_grep "escalate to juggernaut using rule 6's ask-user format" "$brief" \
-    "no-mistakes DOD ask-user paragraph must point at rule 6's format instead of a bare citation"
-  assert_no_grep "escalate to juggernaut (rule 6) and stop." "$brief" \
-    "no-mistakes DOD ask-user paragraph still uses the old bare rule-6 pointer"
-
-  other_id="brief-no-ask-user-scout"
-  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" "$other_id" some-proj --scout >/dev/null 2>&1
-  other_brief="$home/data/$other_id/brief.md"
-  assert_no_grep "destructive actions, ask-user findings" "$other_brief" \
-    "scout brief received a no-mistakes-only decision case"
-
-  for mode in direct-PR local-only; do
-    other_id="brief-no-ask-user-$(printf '%s' "$mode" | tr '[:upper:]' '[:lower:]')"
-    JG_HOME="$home" "$ROOT/bin/jg-brief.sh" "$other_id" some-proj --mode "$mode" >/dev/null 2>&1
-    other_brief="$home/data/$other_id/brief.md"
-    assert_no_grep "nm-<run>-findings.txt" "$other_brief" \
-      "$mode brief received a no-mistakes-only escalation format"
-    assert_no_grep "destructive actions, ask-user findings" "$other_brief" \
-      "$mode brief received a no-mistakes-only decision case"
-  done
-
-  pass "jg-brief.sh: no-mistakes ask-user findings use one event plus a verbatim snapshot"
 }
 
 # The project-memory section bounds operator edits of a project's AGENTS.md or
@@ -1177,10 +1048,6 @@ test_workers_wait_without_spending_turns() {
       "$id: polling the inbox while waiting is not forbidden"
     assert_grep "natural checkpoint" "$brief" "$id: the flag dropped the natural-checkpoint inbox check"
   done
-  brief="$home/data/brief-wait-ship/brief.md"
-  assert_grep "issue the same foreground call again" "$brief" \
-    "the no-mistakes DOD must reattach with the same foreground call"
-  assert_no_grep "background the drive call" "$brief" "the no-mistakes DOD still backgrounds the drive call"
 
   JG_SQUAD_LEAD_CHARTER='Supervise the alpha domain.' \
     JG_HOME="$home" "$ROOT/bin/jg-brief.sh" brief-wait-sm --squad-lead --no-projects >/dev/null 2>&1 \
@@ -1205,9 +1072,6 @@ test_wait_no_turns_absent_keeps_the_previous_brief() {
   assert_no_grep "end your turn at once" "$brief" "an absent flag still added the waiting section"
   assert_grep "natural checkpoint" "$brief" "an absent flag dropped the unprompted inbox check"
   assert_no_grep "Do not poll or list the inbox while waiting" "$brief" "an absent flag still added the no-poll inbox line"
-  assert_grep "background the drive call" "$brief" "an absent flag replaced the backgrounded drive text"
-  assert_no_grep "issue the same foreground call again" "$brief" \
-    "an absent flag still asked for the foreground reattach"
   pass "jg-brief: without config/wait-no-turns the brief and drive text stay as they were"
 }
 
@@ -1336,24 +1200,9 @@ test_base_branch_is_rendered_and_bounded() {
   assert_grep 'Never push to the base branch `feature/hub` or the default branch' "$brief" \
     "the direct-PR safety rule does not protect the base branch"
 
-  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" brief-base-nm-b2 some-proj --mode no-mistakes --base-branch release/1.2 >/dev/null 2>&1 \
-    || fail "no-mistakes --base-branch should scaffold"
-  brief="$home/data/brief-base-nm-b2/brief.md"
-  # shellcheck disable=SC2016
-  assert_grep 'pass `--base-branch release/1.2` on every `no-mistakes axi run`' "$brief" \
-    "the no-mistakes definition of done does not pass the base branch to the pipeline"
-
   # A base git accepts but the shell would expand is quoted in worker commands.
   # shellcheck disable=SC2016  # the literal $HOTFIX is the point
   meta_base='release/$HOTFIX'
-  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" brief-base-meta-b8 some-proj --mode no-mistakes --base-branch "$meta_base" >/dev/null 2>&1 \
-    || fail "no-mistakes --base-branch with a shell metacharacter should scaffold"
-  brief="$home/data/brief-base-meta-b8/brief.md"
-  base=$(jg_brief_base_branches "$brief")
-  [ "$base" = "$meta_base" ] || fail "the brief recorded base '$base', not $meta_base"
-  # shellcheck disable=SC2016
-  assert_grep 'pass `--base-branch release/\$HOTFIX` on every' "$brief" \
-    "the no-mistakes command did not shell-quote the base branch"
   JG_HOME="$home" "$ROOT/bin/jg-brief.sh" brief-base-meta-b9 some-proj --mode direct-PR --base-branch "$meta_base" >/dev/null 2>&1 \
     || fail "direct-PR --base-branch with a shell metacharacter should scaffold"
   # shellcheck disable=SC2016
@@ -1843,15 +1692,13 @@ test_script_parses
 test_no_heredoc_in_command_substitution
 test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
+test_retired_word_ships_through_done_done_and_the_pr_path
 test_forge_selection_renders_correct_cli
 test_ship_mode_is_required_and_closed_set
 test_ship_mode_is_explicit_not_registry
 test_delivery_flags_are_refused_where_they_do_not_apply
 test_faster_paths_use_configured_authority_without_stacked_review
-test_no_mistakes_dod_wording
-test_no_mistakes_dod_green_detection
 test_pr_based_dod_requires_non_draft
-test_ask_user_escalation_format
 test_ship_project_memory_wording
 test_herdr_lab_contract_is_explicit_and_complete
 test_herdr_lab_contract_quotes_foreign_juggernaut_path
@@ -1884,29 +1731,24 @@ test_design_call_field
 test_demo_call_field
 test_ui_change_field
 
-# No-mistakes is for real risk: the brief states which risk, and the local
-# presence flag config/delivery-risk-loose is the only way to skip the question.
+# The retired word no-mistakes asks for no risk reason any more: --risk is optional on every ship brief and refused elsewhere.
 test_delivery_risk_reason() {
   local home brief out status
   home="$TMP_ROOT/delivery-risk-home"
   mkdir -p "$home/data"
-  out=$(JG_HOME="$home" "$ROOT/bin/jg-brief.sh" brief-risk-missing some-proj --mode no-mistakes 2>&1)
-  status=$?
-  [ "$status" -ne 0 ] || fail "a no-mistakes brief with no --risk should be refused"
-  assert_contains "$out" "states its risk with --risk" "the refusal did not name the flag"
-  assert_contains "$out" "direct-PR" "the refusal did not offer the direct-PR route"
-  assert_absent "$home/data/brief-risk-missing/brief.md" "refused no-mistakes scaffold wrote a brief"
+  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" brief-risk-missing some-proj --mode no-mistakes >/dev/null 2>&1 \
+    || fail "a brief with the retired word needs no --risk"
 
-  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" brief-risk-yes some-proj --mode no-mistakes --risk security >/dev/null 2>&1 \
-    || fail "a no-mistakes brief with --risk security should scaffold"
+  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" brief-risk-yes some-proj --mode direct-PR --risk security >/dev/null 2>&1 \
+    || fail "a brief with --risk security should scaffold"
   brief=$(cat "$home/data/brief-risk-yes/brief.md")
-  assert_contains "$brief" "Delivery risk (no-mistakes): security" "the brief did not record the risk reason"
+  assert_contains "$brief" "Delivery risk (direct-PR): security" "the brief did not record the risk reason"
 
   JG_HOME="$home" "$ROOT/bin/jg-brief.sh" brief-risk-direct some-proj --mode direct-PR >/dev/null 2>&1 \
     || fail "a direct-PR brief needs no risk reason"
-  assert_not_contains "$(cat "$home/data/brief-risk-direct/brief.md")" "Delivery risk" "a direct-PR brief carried a risk line"
+  assert_not_contains "$(cat "$home/data/brief-risk-direct/brief.md")" "Delivery risk" "a brief with no --risk carried a risk line"
 
-  out=$(JG_HOME="$home" "$ROOT/bin/jg-brief.sh" brief-risk-bad some-proj --mode no-mistakes --risk because 2>&1)
+  out=$(JG_HOME="$home" "$ROOT/bin/jg-brief.sh" brief-risk-bad some-proj --mode direct-PR --risk because 2>&1)
   status=$?
   [ "$status" -ne 0 ] || fail "an unlisted --risk value should be refused"
   assert_contains "$out" "must be one of" "an unlisted --risk value did not explain the list"
@@ -1916,17 +1758,12 @@ test_delivery_risk_reason() {
   status=$?
   [ "$status" -ne 0 ] || fail "scout accepted --risk"
   assert_contains "$out" "applies only to ship briefs" "scout refusal did not explain why"
-
-  mkdir -p "$home/config" && : > "$home/config/delivery-risk-loose"
-  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" brief-risk-loose some-proj --mode no-mistakes >/dev/null 2>&1 \
-    || fail "config/delivery-risk-loose should turn the risk question off"
-  assert_not_contains "$(cat "$home/data/brief-risk-loose/brief.md")" "Delivery risk" "loose mode wrote a risk line"
-  pass "jg-brief.sh: --risk states the no-mistakes risk, is refused elsewhere, and config/delivery-risk-loose turns it off"
+  pass "jg-brief.sh: --risk is optional on a ship brief and refused elsewhere"
 }
 test_delivery_risk_reason
 test_preferred_stack_is_advice_never_a_gate
 
-# The delivery-style table decides which modes exist and which publish, so the six ship briefs (the four modes, and
+# The delivery-style table decides which modes exist and which publish, so the five ship briefs (the three modes, and
 # local-only and local-trunk on a local-trunk project) are enforced byte for byte against goldens captured before
 # jg-brief.sh read the table. tests/fixtures/ship-brief is regenerated only on an intended brief-text change.
 test_ship_briefs_match_goldens() {
@@ -1943,7 +1780,6 @@ test_ship_briefs_match_goldens() {
     cmp -s "$TMP_ROOT/$id.normalized.md" "$golden" \
       || fail "$id: the $mode brief drifted from its golden: $(diff "$golden" "$TMP_ROOT/$id.normalized.md" | head -5)"
   done <<'LIST'
-nm some-proj no-mistakes --risk release
 dp some-proj direct-PR
 lo some-proj local-only
 lt some-proj local-trunk
@@ -1951,8 +1787,8 @@ tlo trunk-proj local-only
 tlt trunk-proj local-trunk
 LIST
   out=$(JG_HOME="$home" "$ROOT/bin/jg-brief.sh" bad-mode some-proj --mode bogus 2>&1) && fail "an unknown mode should be refused"
-  assert_contains "$out" "no-mistakes, direct-PR, local (the old words local-trunk, local-only" "the refusal lists the modes from the table"
-  pass "jg-brief.sh: the six ship briefs equal their goldens and an unknown mode is refused with the table's mode list"
+  assert_contains "$out" "direct-PR, local (the old words local-trunk, local-only, no-mistakes" "the refusal lists the modes from the table"
+  pass "jg-brief.sh: the five ship briefs equal their goldens and an unknown mode is refused with the table's mode list"
 }
 test_ship_briefs_match_goldens
 

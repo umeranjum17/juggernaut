@@ -1,13 +1,14 @@
-# Delivery styles: one row per style a task is given (no-mistakes, direct-PR, local). Columns: mode, the line, what it adds in delivering, how it joins main, publishes (yes when the line goes to a forge as a pull request), review (yes when the pipeline review and its intent overlay run), trunk (yes when the lane lands as one commit on the local trunk).
-# An alias row is an old mode word read as a style: alias, the old word, the style it reads as, the trunk fact the old word carried and its rule1, so an old record is read as before. yolo stays the merge switch: with it off a `local` lane waits for a word, with it on it lands by itself.
+# Delivery styles: one row per style a task is given (direct-PR, local). Columns: mode, the line, what it adds in delivering, how it joins main, publishes (yes when the line goes to a forge as a pull request), review (yes when the pipeline review and its intent overlay run), trunk (yes when the lane lands as one commit on the local trunk).
+# An alias row is an old mode word read as a style: alias, the old word, the style it reads as, the trunk fact the old word carried and its rule1, so an old record is read as before. yolo stays the merge switch: with it off a `local` lane waits for a word, with it on it lands by itself. An alias may carry a sixth field, the review fact the old word carried, so a record that says no-mistakes keeps its head accepted when a pipeline pushed it.
 # A style changes only the stage delivering. No column names a prover: done-done proves the commit in every mode.
 # rule1 (column 9) is the first ship rule; {target} and {branch} are filled by the brief. Columns are read by name through `jg-delivery-style.sh --field`, which uses the `columns` row.
 columns	mode	line	adds	joins	publishes	review	trunk	rule1
-style	no-mistakes	the pull request's base branch	push, the pull request and the hosted checks	the pull request's merge	yes	yes	no	1. Never push to {target}. Never merge a PR.
 style	direct-PR	the pull request's base branch	push and the pull request	the pull request's merge	yes	no	no	1. Never push to {target} (push only your `{branch}` branch). Never merge a PR.
 style	local	the local trunk	the batch and the go-live	one release pull request, on the captain's recorded word	no	no	yes	1. Never push, open a PR, merge, go live or release. Work only on your `{branch}` branch; juggernaut lands it on the local trunk.
 alias	local-trunk	local	yes	1. Never push, open a PR, merge, go live or release. Work only on your `{branch}` branch; juggernaut lands it on the local trunk.
 alias	local-only	local	no	1. Never push to any remote and never open a PR. Work only on your `{branch}` branch; juggernaut handles the merge into local `main`.
+alias	no-mistakes	direct-PR	no	1. Never push to {target} (push only your `{branch}` branch). Never merge a PR.	yes
+retired	no-mistakes	direct-PR
 # Knobs: the delivery table has two rows, `pr` and `local`; yolo stays the merge knob. A `word` row reads a registry word as a knob: direct-PR and no-mistakes read as pr, local-only and local-trunk as local, and nothing else is read from the old word (the reviewer runs for every lane). The style rows above stay until the slices that retire them.
 knob	pr	the pull request's base branch	push and the pull request	the pull request's merge	yes
 knob	local	the local branch or the local trunk	nothing until the go-live	the guarded local landing, on the merge knob yolo	no

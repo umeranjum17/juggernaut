@@ -6,8 +6,8 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 DS="$ROOT/bin/jg-delivery-style.sh" TABLE="$ROOT/core/machines/styles/delivery-styles.tsv"
 
-assert_equals "no-mistakes direct-PR local" "$(bash "$DS" --list | tr '\n' ' ' | sed 's/ $//')" "the three mode words: the two local rows are one"
-assert_equals "no-mistakes direct-PR local local-trunk local-only" "$(bash "$DS" --accepted | tr '\n' ' ' | sed 's/ $//')" "the accepted words: the old local words are read as before"
+assert_equals "direct-PR local" "$(bash "$DS" --list | tr '\n' ' ' | sed 's/ $//')" "the mode words: the retired word is not a style and the two local rows are one"
+assert_equals "direct-PR local local-trunk local-only no-mistakes" "$(bash "$DS" --accepted | tr '\n' ' ' | sed 's/ $//')" "the accepted words: the old local words are read as before"
 for m in no-mistakes direct-PR local local-only local-trunk; do
   out=$(bash "$DS" "$m" 2>&1); rc=$?
   expect_code 0 "$rc" "$m prints"
@@ -25,7 +25,10 @@ assert_contains "$(bash "$DS" direct-PR)" "publishes	yes" "direct-PR publishes"
 bash "$DS" direct-PR local; expect_code 1 "$?" "direct-PR meets a forge"
 bash "$DS" local-trunk local; expect_code 0 "$?" "local-trunk has no feature pull request"
 bash "$DS" local-only local; expect_code 0 "$?" "local-only has no pull request"
-bash "$DS" no-mistakes review; expect_code 0 "$?" "no-mistakes runs the review"
+bash "$DS" direct-PR review; expect_code 1 "$?" "a new task starts no pipeline review"
+bash "$DS" no-mistakes review; expect_code 0 "$?" "an old record that says no-mistakes keeps the pushed-head fact it carried"
+[ "$(bash "$DS" task-mode no-mistakes)" = direct-PR ] || fail "the retired word is given as direct-PR to a new task"
+assert_equals "direct-PR direct-PR local-only local-trunk" "$(for w in no-mistakes direct-PR local-only local-trunk; do bash "$DS" task-mode "$w"; done | tr '\n' ' ' | sed 's/ $//')" "task-mode reads only the retired word as direct-PR"
 bash "$DS" direct-PR review; expect_code 1 "$?" "direct-PR runs no review"
 bash "$DS" local-trunk trunk; expect_code 0 "$?" "local-trunk lands on the trunk"
 bash "$DS" local-only trunk; expect_code 1 "$?" "local-only keeps the trunk fact it carried"
@@ -53,7 +56,7 @@ for p in Alpha Beta Gamma Delta; do
   case "$p" in Alpha|Beta) want="pr" ;; *) want="local" ;; esac
   assert_equals "$want" "$knob" "$p ($word) reads as $want"
   if [ "$p" = Alpha ]; then
-    assert_equals "no-mistakes on" "$word $yolo" "the record with no-mistakes reads as before"
+    assert_equals "direct-PR on" "$word $yolo" "the record with no-mistakes runs as direct-PR and keeps its yolo"
     assert_contains "$(bash "$DS" "$knob")" "joins	the pull request's merge" "Alpha lands by the pull request path"
   fi
 done

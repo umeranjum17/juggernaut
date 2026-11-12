@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a operator in a treehouse or Orca worktree, or a
 # squad_lead in its isolated juggernaut home.
-# Usage: jg-spawn.sh <task-id> <project-dir> --ticket <ticket-id> --mode <no-mistakes|direct-PR|local-only|local-trunk> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--off-critical-path <captain-words>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
+# Usage: jg-spawn.sh <task-id> <project-dir> --ticket <ticket-id> --mode <direct-PR|local|local-only|local-trunk> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--off-critical-path <captain-words>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
 #        jg-spawn.sh <task-id> <project-dir> --ticket <ticket-id> --scout [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
 #        jg-spawn.sh <task-id> [<juggernaut-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --squad-lead
 #   --ticket <ticket-id> is REQUIRED for every fresh ship or scout spawn: the task id is made from the
@@ -1885,7 +1885,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
     echo "error: squad_lead $ID's recorded endpoint is gone; its recovery is owned by the squad_lead respawn path, not by relaunch (run bin/jg-spawn.sh $ID --squad-lead, or let the session-start liveness sweep do it)" >&2
     exit 1
   fi
-  MODE=$(jg_meta_get "$RELAUNCH_META" mode)
+  MODE=$(jg_delivery_style_task_mode "$(jg_meta_get "$RELAUNCH_META" mode)")
   YOLO=$(jg_meta_get "$RELAUNCH_META" yolo)
   UPSTREAM_CONSENT=$(jg_meta_get "$RELAUNCH_META" upstream_consent)
   if [ "$KIND" = ship ]; then

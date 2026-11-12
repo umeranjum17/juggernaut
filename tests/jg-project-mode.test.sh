@@ -31,9 +31,9 @@ test_a_registered_posture_is_never_lowered() {
     printf -- '- legacy - registered before modes existed (added 2026-10-30)\n'
     printf -- '- typo [no-mistake] - a misspelled mode (added 2026-10-30)\n'
   } > "$home/data/projects.md"
-  assert_equals "no-mistakes off" "$(mode_of "$home" strict)" "a registered no-mistakes project changed route"
-  assert_equals "no-mistakes off" "$(mode_of "$home" legacy)" "a legacy bracket-less line lost its gate"
-  assert_equals "no-mistakes off" "$(mode_of "$home" typo)" "a misspelled mode silently dropped the gate"
+  assert_equals "direct-PR off" "$(mode_of "$home" strict)" "a project registered with the retired word no-mistakes runs as direct-PR"
+  assert_equals "direct-PR off" "$(mode_of "$home" legacy)" "a legacy bracket-less line reads as direct-PR"
+  assert_equals "direct-PR off" "$(mode_of "$home" typo)" "a misspelled mode resolves to direct-PR"
   pass "a registered posture is never lowered by the default"
 }
 
