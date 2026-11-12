@@ -147,6 +147,39 @@ jg_wait_timer_raise_gate() {  # <task> <fingerprint> <hop-start> <longest-interv
   return 1
 }
 
+# The top of the ladder is not rung forever. A wait whose board card is posted
+# is at its top rung; it wakes its owner at most spec.topRung.repeats more
+# times (core/bus/workflows/escalation-optimization.json, the one owner of the
+# number), then is only that one card, which stays open until the wait clears.
+# state/.waiting-timers/.top-fires/<task> holds the wait key and the wakes sent
+# at the top, so a new wait of the same task counts again from zero.
+_JG_WAIT_TIMER_LIB_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+jg_wait_timer_top_repeats() {
+  local f
+  for f in "${JG_ESCALATION_OPT:-}" "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}/escalation-optimization.json" \
+    "$_JG_WAIT_TIMER_LIB_DIR/../../bus/workflows/escalation-optimization.json"; do
+    [ -n "$f" ] && [ -f "$f" ] || continue
+    jq -er '.spec.topRung.repeats | select(type == "number" and . >= 0)' "$f" && return 0
+    echo "waiting timers: $f has no spec.topRung.repeats" >&2
+    return 1
+  done
+  echo "waiting timers: the escalation optimization definition is missing" >&2
+  return 1
+}
+
+jg_wait_timer_top_fires() {  # <task> <key>: the wakes already sent at the top for this wait
+  local file="$STATE/.waiting-timers/.top-fires/$1" k='' n=0
+  if [ -f "$file" ] && [ ! -L "$file" ]; then IFS=$'\t' read -r k n < "$file" || k=''; fi
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  [ "$k" = "$2" ] || n=0
+  printf '%s\n' "$n"
+}
+
+jg_wait_timer_top_fires_save() {  # <task> <key> <count>
+  local file="$STATE/.waiting-timers/.top-fires/$1"
+  mkdir -p "${file%/*}" && printf '%s\t%s\n' "$2" "$3" > "$file.tmp.$$" && mv "$file.tmp.$$" "$file"
+}
+
 # The durable record of a re-raise that did not wake: when, which wait, which hop.
 jg_wait_timer_unchanged_log() {  # <now> <task> <key> <hop> <age>
   local log="$STATE/.waiting-timers/.unchanged.log"
@@ -276,7 +309,7 @@ jg_wait_timer_end() {  # <record> <task> <parent> <key> <card> <why>
   fi
   [ "$5" = 0 ] || jg_wait_timer_card_dismiss "$4-card"
   jg_wait_timer_ledger "$1" "$2" "$now" "$first" "$mins" "$6"
-  rm -f "$1" "$STATE/.waiting-timers/.raised/$2"
+  rm -f "$1" "$STATE/.waiting-timers/.raised/$2" "$STATE/.waiting-timers/.top-fires/$2"
 }
 
 # Main's side of a lead's overdue report: a waiting-timer-overdue line the lead
@@ -546,6 +579,7 @@ jg_wait_timers_table() {  # <name>
 jg_wait_timers_tick() {
   local escalate=${JG_WAIT_ESCALATE_SECS:-$(jg_wait_timers_table escalate)} card_secs=${JG_WAIT_CARD_SECS:-$(jg_wait_timers_table card)}
   local interval=${JG_PROMPT_REALERT_SECS:-$(jg_wait_timers_table realert)}
+  local top_max; top_max=$(jg_wait_timer_top_repeats) || return 1
   # The owner alert and the pause cadence are the escalation workflow
   # definition's timers, and the owner rung itself is delivered there
   # (bin/jg-escalation-workflows.sh, live on every poll). The two numbers are
@@ -564,7 +598,7 @@ jg_wait_timers_tick() {
   silence=$(printf '%s\n' "$numbers" | awk -F '\t' '$1 == "silence" { print $2 }')
   local meta task backend window session native sessions='|' blocked='|' unknown='|' rows actor=Main lead=''
   local dir="$STATE/.waiting-timers" now record declaration verb signature old since owner parent key misses age reason until bound lapse rc
-  local wait_state pause_key dkey src source card last wsrc fresh session_id fired every level pending='' hop hopstart ceiling fp forced deadline acts
+  local top wait_state pause_key dkey src source card last wsrc fresh session_id fired every level pending='' hop hopstart ceiling fp forced deadline acts
   for native in "$alert" "$paused_alert" "$escalate" "$card_secs" "$interval"; do
     case "$native" in ''|*[!0-9]*|0* ) echo "waiting timers: thresholds must be positive decimal seconds" >&2; return 1 ;; esac
     [ "${#native}" -le 9 ] || { echo "waiting timers: threshold exceeds nine digits" >&2; return 1; }
@@ -858,6 +892,16 @@ EOF
       # Keeping the one open board card is not a wake, so it stays on its cadence.
       if [ -z "$lead" ] && [ "$parent" -gt 0 ] && [ "$card" -ne 0 ]; then jg_wait_timer_card "$task" "$key-card" "$verb" "$source" || true; fi
       continue
+    fi
+    # At the top rung (the posted card) the wait wakes its owner a few more times, then is only that card.
+    if [ -z "$lead" ] && [ "$card" -ne 0 ] && ! status_is_paused "$declaration"; then
+      top=$(jg_wait_timer_top_fires "$task" "$key")
+      if [ "$top" -ge "$top_max" ]; then
+        jg_wait_timer_unchanged_log "$now" "$task" "$key" card-only "$((now - hopstart))"
+        jg_wait_timer_card "$task" "$key-card" "$verb" "$source" || true
+        continue
+      fi
+      jg_wait_timer_top_fires_save "$task" "$key" "$((top + 1))" || true
     fi
     level=owner
     if [ "$parent" -gt 0 ] && [ -n "$lead" ]; then

@@ -193,6 +193,31 @@ printf 'owner-action: configured synthetic binary exit=0 stdout=%s; launch wait 
 pass 'durable blocker delivery and acknowledgement keep ringing until owner fixes the explicit binary and retries; unrelated call survives'
 if [ "${JG_WAIT_TIMERS_OWNER_CONTINUATION_ONLY:-0}" = 1 ]; then exit; fi
 
+# A wait at its top rung (the card is posted) wakes its owner three more times, then is only the one card.
+dir=$(make_case top-rung)
+mkdir -p "$dir/home/config" "$dir/tmp" "$dir/config"
+printf 'kind=ship\nbackend=tmux\nwindow=fake:1\n' > "$dir/state/lane.meta"
+printf 'blocked [at=%s] [key=wait]: external condition\n' "$(date +%s)" > "$dir/state/lane.status"
+prime_status_seen "$dir/state" "$dir/state/lane.status"
+arm_episode "$dir"
+age_episode "$dir"
+cycle
+top_refire() {
+  local file="$1/state/.waiting-timers/lane" past
+  past=$(( $(date +%s) - 2000 ))
+  IFS=$'\t' read -r sig since _ _ key _ < "$file"
+  printf '%s\t%s\t%s\t%s\t%s\t0\t%s\t0\n' "$sig" "$since" "$past" "$past" "$key" "$past" > "$file"
+}
+: > "$dir/events"
+for _ in 1 2 3 4 5; do top_refire "$dir"; cycle; done
+[ "$(grep -c 'level=main; still open' "$dir/events")" -eq 3 ] || fail "the top rung did not wake exactly three times: $(grep -c 'level=main; still open' "$dir/events")"
+[ -s "$dir/state/.waiting-timers/.unchanged.log" ] && grep -q 'card-only' "$dir/state/.waiting-timers/.unchanged.log" || fail 'the card-only raises were not logged'
+printf 'resolved [key=wait]: handled\nworking: resumed\n' >> "$dir/state/lane.status"
+cycle
+cycle
+[ ! -e "$dir/state/.waiting-timers/.top-fires/lane" ] || fail 'the top-rung count outlived its wait'
+pass 'a wait at its top rung wakes three times, then is only its card, and the count ends with the wait'
+
 # A refreshed [at=] stamp cannot silence a blocker; a new session still hears it.
 dir=$(make_case reraise-forced)
 mkdir -p "$dir/home/config" "$dir/tmp" "$dir/config"
