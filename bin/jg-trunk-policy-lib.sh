@@ -140,3 +140,20 @@ jg_project_trunk_branch() {
 jg_trunk_waiver_rule() {
   awk -v p="$2" '$1 == p { r = $2 } END { print r }' "$1" 2>/dev/null || true
 }
+
+# The one answer, asked once at `gated` (docs/trunk-flow.md): a lane of mode `local` lands with yolo on, or with the captain's
+# word (merge=approved), and the landing writes one row `<project> <commit> <epoch> <task> <yolo|word>` to data/trunk-gated.tsv.
+# That row carries the change on: the go-live and the release read it in place of a second word. A commit is covered when it is the
+# landed commit or lies under one (the trunk is one line, and every lane that landed in the style was answered).
+# Usage: jg_trunk_gated_answer <gated-file> <project> <project-dir> <commit>; prints yolo or word, or nothing.
+jg_trunk_gated_answer() {
+  local c answer
+  while IFS=$'\t' read -r c answer; do
+    git -C "$3" merge-base --is-ancestor "$4" "$c" 2>/dev/null && printf '%s\n' "$answer" && return 0
+  done < <(awk -F'\t' -v p="$2" '$1 == p { print $2 "\t" $5 }' "$1" 2>/dev/null | tac)
+  return 0
+}
+# Whether any lane of the project was answered at `gated` (the tick then runs the go-live and publish steps for it).
+jg_trunk_gated_any() {  # <gated-file> <project>
+  awk -F'\t' -v p="$2" '$1 == p { f = 1 } END { exit !f }' "$1" 2>/dev/null
+}

@@ -182,3 +182,43 @@ done_gate() {
     JG_HOME="$HOME_D" jg_dod_accept_ship_done ship "${2:-local-trunk}" "$W/lanes/$1" "$PROJ" "${3:-done [at=1]: ready in branch fm/$1 (local-trunk)}" \
       "$HOME_D/state" "$1" "$HOME_D/state/$1.meta" 2>&1 )
 }
+
+U=https://github.com/o/r/pull
+
+# One release PR (number 1), open until the merge stand-in merges it. The gh-axi stand-in answers its state; jg-pr-state
+# prints what the file ci-state holds (nothing is green); jg-pr-merge records its call and merges like the forge does.
+release_world() {  # <name>: world plus a release pull request that stays open until the merge stand-in merges it
+  world "$1"
+  cat > "$W/fakebin/gh-axi" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$W/gh-calls"
+case "\$2" in
+  view) printf 'state: %s\n' "\$(cat "$W/pr-state-\$3" 2>/dev/null || echo open)" ;;
+  list) printf 'count: 0\n' ;;
+  create) printf '$U/1\n' ;;
+esac
+SH
+  cat > "$W/fakebin/gh" <<SH
+#!/usr/bin/env bash
+case "\$1 \$2 \$*" in
+  'pr view '*isDraft*) printf '{"isDraft":false}\n' ;;
+  'pr view '*headRefOid*) git -C "$PROJ" rev-parse trunk ;;
+  'pr view '*baseRefName*) printf 'main\ttrunk\n' ;;
+  'api '*) printf '{}\n' ;;
+esac
+exit 0
+SH
+  cat > "$W/root/bin/jg-pr-state.sh" <<SH
+#!/usr/bin/env bash
+cat "$W/ci-state" 2>/dev/null || true
+SH
+  cat > "$W/root/bin/jg-pr-merge.sh" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$W/merge-calls"
+M=\$(git -C "$PROJ" -c user.name=t -c user.email=t@example.invalid commit-tree "\$(git -C "$PROJ" rev-parse 'trunk^{tree}')" -p origin/main -p "\$(git -C "$PROJ" rev-parse trunk)" -m "Merge pull request #1")
+git -C "$PROJ" push -q origin "\$M:refs/heads/main"; echo merged > "$W/pr-state-1"
+SH
+  printf '#!/usr/bin/env bash\necho "checks-lint: PASS"\n' > "$W/checks-lint"
+  ln -s "$W/root/bin" "$HOME_D/bin"   # the merge check runs the home's own bin
+  chmod +x "$W/fakebin/gh-axi" "$W/fakebin/gh" "$W/root/bin/jg-pr-state.sh" "$W/root/bin/jg-pr-merge.sh" "$W/checks-lint"
+}

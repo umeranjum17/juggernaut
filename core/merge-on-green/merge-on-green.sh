@@ -13,7 +13,7 @@
 #   2. state/<task>.run-receipt.json - require verdict PASS, head == pr_head, spawn_gen == the meta's spawn_gen.
 #   3. JG_HOME=<home> bin/jg-pr-merge.sh <task> <PR URL> - never --auto, never gh merge directly.
 # A release record (kind=release, written by bin/jg-trunk.sh release) is merged on the captain's standing word,
-# config/trunk-release-waiver: its merge=approved counts only while that line stands, so removing the rule stops the
+# config/trunk-release-waiver, or the answer given at `gated` (jg-trunk.sh): its merge=approved counts only while that line or answer stands, so removing the rule stops the
 # merge; its done is the release proof's receipt; and after its merge `jg-trunk.sh rollover` cuts the next trunk
 # version in the same pass. Every other gate below applies to it unchanged.
 # Any refusal or FAIL: one wake line naming the task, the PR URL and the first refusal reason, so the lead
@@ -130,7 +130,10 @@ for m in "$STATE"/*.meta; do
   [ "$yolo" = on ] || [ "$approved" = approved ] || continue
   # A release record's approval is the standing release word: gone when that rule is gone, whatever the record says.
   if [ "$kind" = release ]; then
-    [ -n "$(jg_trunk_waiver_rule "$FMH/config/trunk-release-waiver" "$(basename "$(meta_get "$m" project)")")" ] || continue
+    rproj=$(basename "$(meta_get "$m" project)")
+    # The standing word, or the answer given at `gated` (merge_rule=gated:<yolo|word>, backed by a row in data/trunk-gated.tsv).
+    [ -n "$(jg_trunk_waiver_rule "$FMH/config/trunk-release-waiver" "$rproj")" ] \
+      || { case $(meta_get "$m" merge_rule) in gated:*) jg_trunk_gated_any "$FMH/data/trunk-gated.tsv" "$rproj" ;; *) false ;; esac; } || continue
   fi
   # The lead marks merge=manual at intake on destructive, irreversible or security-sensitive work and
   # on work waiting for the captain's own review.

@@ -16,7 +16,7 @@
 #        jg-trunk.sh word live|release <project-dir> "<his words>"   record the captain's word for the commit that would go live or out (both: the last green commit, never the tip)
 #        jg-trunk.sh recover <project-dir> [--prepare <task-id>|--land <task-id>]   report divergence, prepare a merge, or land its exact proved head
 #        jg-trunk.sh adopt-tip <project-dir> --reason <text> [--carried-by <task-id>]   Overwatch only: record the trunk's present tip as the lander's own after something else moved it; only if the record is its ancestor or the tip is on origin/<default>
-#        jg-trunk.sh live <project-dir> [--home <lead-home>]   move every home to the last fully green commit; refuses without his word (or a waiver); --home moves one lead only
+#        jg-trunk.sh live <project-dir> [--home <lead-home>]   move every home to the last fully green commit; refuses without his word, a waiver or the answer given at gated; --home moves one lead only
 #        jg-trunk.sh autolive <project-dir>            the batched live step: under a waiver, move every home to the green pin once the trunk is quiet or the hourly cap is due
 #        jg-trunk.sh waiver <project-dir> --rule <owner-rule-id>   Overwatch only: the captain waived his word for this project's live until the stable point
 #        jg-trunk.sh waiver <project-dir> --rule <owner-rule-id> --release   Overwatch only: the captain's standing word lets this project's green release pull request merge by itself
@@ -1019,6 +1019,7 @@ land_candidate() {
   JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref -m "trunk: land $id" "refs/heads/$TRUNK" "$cand" "$base" || refuse "$TRUNK changed while landing $id"
   put "$STATE/trunk-tip-$PN" "$cand"
   row trunk-landings.tsv "$id" "$PN" "$cand" "$(date +%s)" "$GATE_KIND"
+  record_gated_answer "$META" "$id" "$cand"
   unlock "$STATE/.trunk-$PN.lock"; front_release
   [ "$cand" = "$LANE_HEAD" ] || lane_follow "$LANE_BRANCH" "$LANE_HEAD" "$cand" "$(jg_dod_meta_value "$META" worktree)"
   landed_effects "$id" "$LANE_HEAD" "$cand"
@@ -1132,7 +1133,7 @@ land_group() {
   [ "$(rev "refs/heads/$TRUNK")" = "$B_TIP" ] || { unlock "$STATE/.trunk-$PN.lock"; return 1; }
   JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref -m "trunk: land a batch of ${#CHAIN[@]}" "refs/heads/$TRUNK" "$top" "$B_TIP" || refuse "$TRUNK changed while landing the batch"
   put "$STATE/trunk-tip-$PN" "$top"
-  for i in "${CHAIN[@]}"; do row trunk-landings.tsv "${B_ID[$i]}" "$PN" "${B_CUR[$i]}" "$(date +%s)" "$GATE_KIND" "batch-from=$B_BASE0"; done
+  for i in "${CHAIN[@]}"; do row trunk-landings.tsv "${B_ID[$i]}" "$PN" "${B_CUR[$i]}" "$(date +%s)" "$GATE_KIND" "batch-from=$B_BASE0"; record_gated_answer "${B_META[$i]}" "${B_ID[$i]}" "${B_CUR[$i]}"; done
   unlock "$STATE/.trunk-$PN.lock"
   for i in "${CHAIN[@]}"; do
     META=${B_META[$i]}
@@ -1609,7 +1610,7 @@ go_live() {  # <sha> <tip>   LIVE_FLEET=1 (cmd_live) moves every home; a pin-bac
     status=live
   fi
   [ "$sha" = "$2" ] || status="$status,pinned-behind-${2:0:12}"
-  [ -z "${LIVE_WAIVER:-}" ] || status="$status,waiver=$LIVE_WAIVER"
+  case ${LIVE_WAIVER:-} in '') ;; gated:*) status="$status,answer=${LIVE_WAIVER#gated:}" ;; *) status="$status,waiver=$LIVE_WAIVER" ;; esac
   row trunk-live.tsv "$PN" "$sha" "$(date +%s)" "$status"
   echo "live: $PN at ${sha:0:12} ($status)"
   case $status in live*) live_tickets "$sha" "$prev" || : ;; esac  # a one-home canary moves nothing the fleet runs
@@ -1636,8 +1637,27 @@ fleet_move() {  # <sha> <tip>
   JG_HOME="$JG_HOME" JG_ROOT_OVERRIDE="$JG_ROOT" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$DATA" "$mover" "${args[@]}"
 }
 
-waiver_rule() { jg_trunk_waiver_rule "$CONFIG/trunk-live-waiver" "$PN"; }
-release_waiver_rule() { jg_trunk_waiver_rule "$CONFIG/trunk-release-waiver" "$PN"; }
+
+# yolo is asked once, at `gated`: a lane of mode `local` that lands carries its answer (yolo on, or the captain's word,
+# merge=approved) in one row of data/trunk-gated.tsv, and that row stands in for the go-live word and the release word of every
+# commit under it. A record with an old word writes none, so the old word and the waivers are read as before.
+record_gated_answer() {  # <meta> <task> <landed commit>
+  local answer=
+  [ "$(jg_dod_meta_value "$1" mode)" = local ] || return 0
+  if [ "$(jg_dod_meta_value "$1" yolo)" = on ]; then answer=yolo
+  elif [ "$(jg_dod_meta_value "$1" merge)" = approved ]; then answer=word; fi
+  [ -z "$answer" ] || row trunk-gated.tsv "$PN" "$3" "$(date +%s)" "$2" "$answer"
+}
+# What lets <sha> go on without a second word: the answer given at `gated` (printed as gated:<yolo|word>), and for `authority`
+# the project's standing waiver rule (<waiver-file>) first. Prints nothing when neither stands, and the captain's recorded word is then needed.
+gated_answer() {  # <sha>
+  local answer; answer=$(jg_trunk_gated_answer "$DATA/trunk-gated.tsv" "$PN" "$PROJ" "$1")
+  [ -z "$answer" ] || printf 'gated:%s\n' "$answer"
+}
+authority() {  # <waiver-file> <sha>
+  local rule; rule=$(jg_trunk_waiver_rule "$CONFIG/$1" "$PN")
+  if [ -n "$rule" ]; then printf '%s\n' "$rule"; else gated_answer "$2"; fi
+}
 
 # The batched live step, run on every tick of the landing check for a project with a go-live waiver. It moves every home to the
 # green pin once the trunk has been quiet (no landing for live-quiet-minutes) or the oldest landing that is not live yet is
@@ -1647,9 +1667,9 @@ cmd_autolive() {
   local green tip out rc now last quiet cap newest oldest wait_s failed_at
   [ -z "${JG_TASK_ID:-}" ] || refuse "a worker never runs the live step"
   open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"; tip_ok; tip=$(rev "refs/heads/$TRUNK")
-  LIVE_WAIVER=$(waiver_rule)
-  [ -n "$LIVE_WAIVER" ] || { echo "autolive: not live: it needs the captain's word (no go-live waiver for $PN)"; return 0; }
   green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
+  LIVE_WAIVER=$(authority trunk-live-waiver "$green")
+  [ -n "$LIVE_WAIVER" ] || { echo "autolive: not live: it needs the captain's word (no go-live waiver and no answer at gated for $PN)"; return 0; }
   if [ -z "$green" ]; then echo "autolive: waiting: no fully green trunk commit yet"; return 0
   elif awk -F'\t' -v p="$PN" -v g="$green" '$1 == p && $2 == g && $4 ~ /^live/ { f = 1 } END { exit !f }' "$DATA/trunk-live.tsv" 2>/dev/null; then
     echo "autolive: already live at ${green:0:12}"; return 0
@@ -1679,7 +1699,7 @@ cmd_live() {
   case ${2-} in '') ;; --home) LIVE_HOME=${3:?--home needs a lead home path} ;; *) die "usage: jg-trunk.sh live <project-dir> [--home <lead-home>]" ;; esac
   open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"; tip_ok; tip=$(rev "refs/heads/$TRUNK")
   green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null) || refuse "no fully green trunk commit yet; the home stays where it is"
-  LIVE_WAIVER=$(waiver_rule); LIVE_FLEET=1
+  LIVE_WAIVER=$(authority trunk-live-waiver "$green"); LIVE_FLEET=1
   [ -n "$LIVE_WAIVER" ] || need_word live "$green"
   go_live "$green" "$tip"
   [ -n "$LIVE_WAIVER" ] || [ -n "${LIVE_HOME:-}" ] || spend_word live
@@ -2090,7 +2110,7 @@ record_release_task() {  # <url> [<head>]
 # The merge authority of the release record: the captain's standing release word (config/trunk-release-waiver) writes
 # `merge=approved` and the rule it comes from; with no such rule the lines are removed, so a record never outlives the word.
 release_merge_authority() {  # <meta>
-  local rule; rule=$(release_waiver_rule)
+  local rule; rule=$(authority trunk-release-waiver "$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)")
   sed -i -e '/^merge=approved$/d' -e '/^merge_rule=/d' "$1"
   [ -z "$rule" ] || printf 'merge=approved\nmerge_rule=%s\n' "$rule" >> "$1"
 }
@@ -2182,9 +2202,9 @@ cmd_release() {
     "$SCRIPT_DIR/jg-trunk-release-proof.sh" "$PROJ" "$TRUNK" "$base" "$rel" "$url"
     return
   fi
-  need_word release "$rel"
+  [ -n "$(gated_answer "$rel")" ] || need_word release "$rel"  # the answer given at gated is the word; a waiver file alone is not
   prev=$(last_release_url)
-  if [ -n "$prev" ] && [ -n "$(release_waiver_rule)" ] && [ "$(pr_state "$prev")" = open ]; then
+  if [ -n "$prev" ] && [ -n "$(authority trunk-release-waiver "$rel")" ] && [ "$(pr_state "$prev")" = open ]; then
     # The standing word merges a green release by itself: a push would restart its checks and move its head.
     waiting=$(JG_HOME=$JG_HOME "$SCRIPT_DIR/jg-pr-state.sh" --all "$prev") || refuse "cannot read the checks of the open release PR $prev; nothing is pushed into it"
     [ -n "$waiting" ] || refuse "the release PR $prev is green and merges on the captain's standing word; nothing is pushed into it, and the later commits go out in the release after it"
@@ -2222,7 +2242,8 @@ cmd_publish() {
   local green rel tip prev open=0 n flight=0
   PRS_URL=; PRS_VAL=
   open_project "${1-}"
-  [ -n "$(release_waiver_rule)" ] || { echo "publish: $PN has no release waiver; nothing pushed"; return 0; }
+  green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
+  [ -n "$(authority trunk-release-waiver "$green")" ] || { echo "publish: $PN has no release waiver and no answer at gated; nothing pushed"; return 0; }
   # The forge is asked before the trunk lock is taken: a slow or hung forge must never stop a landing. A forge that does not
   # answer ends the publish with one line and nothing pushed; the next tick asks again.
   prev=$(last_release_url)

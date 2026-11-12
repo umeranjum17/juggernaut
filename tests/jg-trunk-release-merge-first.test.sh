@@ -10,6 +10,10 @@
 # T2 A red head, or a check that has not reported: not merged, nothing rolled over.
 # T3 The rule removed (the record still says merge=approved): not merged. The rule never written: the record carries no approval.
 # T4 A release again while the open release PR is green and the rule stands: nothing is pushed into it and the word stays.
+# T5 yolo asked once (slice J21): a lane of mode local with yolo on goes from the landing check to main with no word recorded,
+#    no waiver file and no release word: it lands, goes live, is published and merged on the answer given at `gated`.
+# T6 The same with yolo off: the lane waits at `gated` and nothing goes live or out; one word (merge=approved) lands it, and then
+#    it reaches main with no second word.
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
@@ -18,42 +22,8 @@ U=https://github.com/o/r/pull
 RULE=owner-rule-5f0e638d
 ID=release-proj-trunk
 
-# One release PR (number 1), open until the merge stand-in merges it. The gh-axi stand-in answers its state; jg-pr-state
-# prints what the file ci-state holds (nothing is green); jg-pr-merge records its call and merges like the forge does.
 world_with_release() {  # <name>
-  world "$1"
-  cat > "$W/fakebin/gh-axi" <<SH
-#!/usr/bin/env bash
-printf '%s\n' "\$*" >> "$W/gh-calls"
-case "\$2" in
-  view) printf 'state: %s\n' "\$(cat "$W/pr-state-\$3" 2>/dev/null || echo open)" ;;
-  list) printf 'count: 0\n' ;;
-  create) printf '$U/1\n' ;;
-esac
-SH
-  cat > "$W/fakebin/gh" <<SH
-#!/usr/bin/env bash
-case "\$1 \$2 \$*" in
-  'pr view '*isDraft*) printf '{"isDraft":false}\n' ;;
-  'pr view '*headRefOid*) git -C "$PROJ" rev-parse trunk ;;
-  'pr view '*baseRefName*) printf 'main\ttrunk\n' ;;
-  'api '*) printf '{}\n' ;;
-esac
-exit 0
-SH
-  cat > "$W/root/bin/jg-pr-state.sh" <<SH
-#!/usr/bin/env bash
-cat "$W/ci-state" 2>/dev/null || true
-SH
-  cat > "$W/root/bin/jg-pr-merge.sh" <<SH
-#!/usr/bin/env bash
-printf '%s\n' "\$*" >> "$W/merge-calls"
-M=\$(git -C "$PROJ" -c user.name=t -c user.email=t@example.invalid commit-tree "\$(git -C "$PROJ" rev-parse 'trunk^{tree}')" -p origin/main -p "\$(git -C "$PROJ" rev-parse trunk)" -m "Merge pull request #1")
-git -C "$PROJ" push -q origin "\$M:refs/heads/main"; echo merged > "$W/pr-state-1"
-SH
-  printf '#!/usr/bin/env bash\necho "checks-lint: PASS"\n' > "$W/checks-lint"
-  ln -s "$W/root/bin" "$HOME_D/bin"   # the merge check runs the home's own bin
-  chmod +x "$W/fakebin/gh-axi" "$W/fakebin/gh" "$W/root/bin/jg-pr-state.sh" "$W/root/bin/jg-pr-merge.sh" "$W/checks-lint"
+  release_world "$1"
   lane a1 released >/dev/null; trunk land a1 >/dev/null 2>&1 || fail "a1 must land"; trunk verify "$PROJ" >/dev/null 2>&1 || fail "a1 must verify"
   trunk word release "$PROJ" "ship a1" >/dev/null 2>&1 || fail "the release word must record"
 }
@@ -136,5 +106,54 @@ test_a_green_open_release_is_not_pushed_into() {
 test_a_green_release_merges_on_the_standing_word_and_rolls_over
 test_a_red_or_unreported_head_is_not_merged
 test_without_the_rule_nothing_merges
+# answered_world <name> <yolo>: the release world with one proved lane l1 of mode local and the given yolo, and a policy that makes
+# the tick's go-live and publish steps due at once. No word of any kind is recorded.
+answered_world() {
+  release_world "$1"
+  printf 'live-quiet-minutes=0\nrelease-after-commits=1\n' >> "$HOME_D/config/trunk-policy"
+  lane l1 answered >/dev/null
+  jg_write_meta "$HOME_D/state/l1.meta" "project=$PROJ" "mode=local" "yolo=$2" "branch=fm/l1" "worktree=$W/lanes/l1" "spawn_gen=g-l1"
+}
+# settle: wait for every detached job the tick started (landing, verify, go-live, publish)
+settle() { local _; for _ in $(seq 1 150); do [ -z "$(jg_test_detached_alive)" ] && ! grep -qs '^running' "$HOME_D"/data/jg-trunk-landing/*.state && return 0; sleep 0.2; done; fail "the tick's jobs must settle"; }
+# reaches_main: the green pin is live, the release is published and merged into main, with no word anywhere
+reaches_main() {  # <label>
+  local out
+  sweep >/dev/null; settle; trunk verify "$PROJ" >/dev/null 2>&1 || fail "$1: the landed lane must verify"
+  rm -f "$HOME_D"/config/.publish-* "$HOME_D"/data/jg-trunk-landing/.publish-* 2>/dev/null || true
+  sweep >/dev/null; settle
+  [ -f "$HOME_D/state/$ID.meta" ] || fail "$1: the tick must publish the release with no word: $(tail -3 "$HOME_D/data/jg-trunk-landing/outbox" 2>/dev/null)"
+  [ "$(cat "$W/live-moves" 2>/dev/null)" = "$(cat "$HOME_D/state/trunk-green-proj")" ] || fail "$1: the home must go live at the green pin with no word"
+  grep -qxF "merge_rule=gated:$2" "$HOME_D/state/$ID.meta" || fail "$1: the release record must carry the answer given at gated: $(cat "$HOME_D/state/$ID.meta")"
+  receipt "$(date +%s)"; out=$(sweep_mog)
+  [ "$(merges)" = 1 ] || fail "$1: the green release must merge on that answer: $out"
+  [ ! -e "$HOME_D"/state/trunk-word-live-proj ] && [ ! -e "$HOME_D"/state/trunk-word-release-proj ] && [ ! -e "$HOME_D/data/trunk-words.tsv" ] || fail "$1: no word may be recorded"
+  [ ! -e "$HOME_D/config/trunk-live-waiver" ] && [ ! -e "$HOME_D/config/trunk-release-waiver" ] || fail "$1: no waiver may be written"
+  # The release PR is the trunk itself going into main: the landed change is in what was pushed, and that PR was merged by the guarded path.
+  git --git-dir="$W/origin.git" merge-base --is-ancestor "$(awk -F'\t' '$1 == "l1" { c = $3 } END { print c }' "$HOME_D/data/trunk-landings.tsv")" refs/heads/trunk || fail "$1: the landed change must be in the release"
+  [ "$(cat "$W/pr-state-1")" = merged ] || fail "$1: the release PR must be merged into main"
+}
+
+test_yolo_on_reaches_main_with_no_word() {
+  answered_world yoloon on
+  reaches_main T5 yolo
+  pass 'T5 yolo on: the change lands, goes live, is published and merged into main with no word recorded'
+}
+
+test_yolo_off_waits_at_gated_and_one_word_carries_it_to_main() {
+  local out
+  answered_world yolooff off
+  out=$(sweep); settle
+  git -C "$PROJ" log --format=%s trunk | grep -qx "ticket l1" && fail "T6: yolo off must wait at gated"
+  assert_contains "$out" "waits for the captain's word" "T6: the wait names its reason"
+  [ ! -e "$HOME_D/data/trunk-gated.tsv" ] || fail "T6: no answer is recorded before a word"
+  trunk release "$PROJ" >/dev/null 2>&1 && fail "T6: nothing goes out before the word"
+  printf 'merge=approved\n' >> "$HOME_D/state/l1.meta"
+  reaches_main T6 word
+  pass 'T6 yolo off: the change waits at gated; one word lands it and carries it to main with no second word'
+}
+
 test_a_green_open_release_is_not_pushed_into
+test_yolo_on_reaches_main_with_no_word
+test_yolo_off_waits_at_gated_and_one_word_carries_it_to_main
 printf 'jg-trunk-release-merge-first: ok\n'

@@ -11,3 +11,5 @@ A legacy trunk with no version row: `bash tests/jg-trunk-release-open-pr.test.sh
 Diverged trunk recovery: the same journey creates eight recorded commits and one divergent actual commit, reports both tips, prepares a merge, refuses missing proof and a third ref, and lands only the exact proved merge while retaining both histories (screen: none).
 
 The publish step under the standing release word: run `bash tests/jg-trunk-publish.test.sh` (the same journey runs it); the green pin is pushed once the trunk holds enough, a candidate after a red is pushed once for each new tip, and a green result on it moves the pin (screen: none).
+
+yolo asked once, at `gated`: `bash tests/jg-trunk-release-merge-first.test.sh` (the same journey runs it; T5 and T6) drives the real landing check, `bin/jg-trunk.sh` and the registered merge check: with yolo on a lane of the style `local` lands, goes live, is published and merged into main with no word and no waiver recorded; with yolo off it waits at `gated`, and one word (`merge=approved`) carries it to main with no second word (screen: none).

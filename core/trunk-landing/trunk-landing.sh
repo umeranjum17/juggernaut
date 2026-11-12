@@ -174,7 +174,7 @@ if [ "$1" = runbatch ]; then
       [ -z "$now" ] || [ "$now" = "$head" ] || printf 'landed %s\n' "$res" > "$MEM/$id.$now.state"
       resume_waiters "$id"
       jg_lock_acquire_wait "$MEM/.outbox.lock"
-      printf 'trunk-landing: landed %s (local-trunk) on the local trunk in one stack with its queue (not live yet: live follows the captain'"'"'s word or the project'"'"'s waiver and its quiet window); %s\n' "$id" "$res" >> "$MEM/outbox"
+      printf 'trunk-landing: landed %s (local-trunk) on the local trunk in one stack with its queue (not live yet: live follows the answer given at gated, the captain'"'"'s word or the project'"'"'s waiver, and its quiet window); %s\n' "$id" "$res" >> "$MEM/outbox"
       jg_lock_release "$MEM/.outbox.lock"
       continue
     fi
@@ -219,7 +219,7 @@ if [ "$1" = run ]; then
     [ -z "$now" ] || [ "$now" = "$head" ] || printf 'landed %s\n' "$out" > "$MEM/$id.$now.state"
     resume_waiters "$id"
     jg_lock_acquire_wait "$MEM/.outbox.lock"
-    printf 'trunk-landing: landed %s (local-trunk) on the local trunk (not live yet: live follows the captain'"'"'s word or the project'"'"'s waiver and its quiet window); %s\n' "$id" "$out" >> "$MEM/outbox"
+    printf 'trunk-landing: landed %s (local-trunk) on the local trunk (not live yet: live follows the answer given at gated, the captain'"'"'s word or the project'"'"'s waiver, and its quiet window); %s\n' "$id" "$out" >> "$MEM/outbox"
     jg_lock_release "$MEM/.outbox.lock"
     "$SELF" next "$FMH" >/dev/null 2>&1 || :
     exit 0
@@ -314,7 +314,7 @@ for tip in "$STATE"/trunk-tip-*; do
   [ -z "$QUIET" ] || break
   [ -f "$tip" ] || continue
   pn=${tip##*/trunk-tip-}
-  awk -v p="$pn" '$1 == p { f = 1 } END { exit !f }' "$FMH/config/trunk-live-waiver" 2>/dev/null || continue
+  awk -v p="$pn" '$1 == p { f = 1 } END { exit !f }' "$FMH/config/trunk-live-waiver" 2>/dev/null || jg_trunk_gated_any "$FMH/data/trunk-gated.tsv" "$pn" || continue
   [ -d "$FMH/projects/$pn" ] && [ "$(local_trunk "$FMH/projects/$pn")" = yes ] || continue
   setsid nohup "$SELF" live "$FMH" "$pn" >/dev/null 2>&1 < /dev/null &
 done
@@ -323,7 +323,7 @@ for tip in "$STATE"/trunk-tip-*; do
   [ -z "$QUIET" ] || break
   [ -f "$tip" ] || continue
   pn=${tip##*/trunk-tip-}
-  awk -v p="$pn" '$1 == p { f = 1 } END { exit !f }' "$FMH/config/trunk-release-waiver" 2>/dev/null || continue
+  awk -v p="$pn" '$1 == p { f = 1 } END { exit !f }' "$FMH/config/trunk-release-waiver" 2>/dev/null || jg_trunk_gated_any "$FMH/data/trunk-gated.tsv" "$pn" || continue
   [ -d "$FMH/projects/$pn" ] && [ "$(local_trunk "$FMH/projects/$pn")" = yes ] || continue
   [ ! -e "$MEM/.publish-$pn" ] || [ -n "$(find "$MEM/.publish-$pn" -mmin +0 2>/dev/null)" ] || continue
   : > "$MEM/.publish-$pn"
