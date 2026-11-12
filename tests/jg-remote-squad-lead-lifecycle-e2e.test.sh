@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Full remote squad_lead lifecycle over the deterministic generic SSH boundary.
 #
-# This is also the test that owns journeys/remote-squad-lead-lifecycle.sh (the done-done journey runs this file).
+# This is also the test that owns the remote-squad-lead-lifecycle journey of .done-done.yaml (the done-done journey runs this file).
 set -u
 
 # shellcheck source=tests/lib.sh
