@@ -11,7 +11,7 @@ journeys:
     command: bash tests/jg-learnings.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   message-table:
     tier: local
-    command: bash journeys/message-table.sh
+    command: (bash bin/jg-machine.sh check message && bash bin/jg-machine.sh events message && bash tests/jg-machine-message.test.sh && bash tests/jg-machine-inbox.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   machine-observers:
     tier: local
     command: (for m in squad-lead supervision presence; do bash bin/jg-machine.sh check $m && bash bin/jg-machine.sh events $m || exit 1; done; bash tests/jg-machine-observers16.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -20,10 +20,10 @@ journeys:
     command: bash journeys/account-table.sh
   landing-table:
     tier: local
-    command: bash journeys/landing-table.sh
+    command: (bash bin/jg-machine.sh check landing && bash bin/jg-machine.sh events landing && bash tests/jg-machine-landing.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   worker-table:
     tier: local
-    command: bash journeys/worker-table.sh
+    command: (bash bin/jg-machine.sh check worker && bash bin/jg-machine.sh events worker && bash tests/jg-machine-worker.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   proof-bypass:
     tier: local
     command: (bash bin/jg-machine.sh check bypass && bash bin/jg-machine.sh events bypass && bash tests/jg-proof-bypass.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -62,7 +62,7 @@ journeys:
     command: bash tests/jg-wake-batching.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   required-shard-retry:
     tier: local
-    command: bash journeys/required-shard-retry.sh
+    command: (env -u JG_TASK_ID bash tests/jg-test-run.test.sh && env -u JG_TASK_ID bash tests/jg-trunk-verify.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   trunk-latency:
     tier: local
     command: env -u JG_TASK_ID bash tests/jg-trunk-latency.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -343,7 +343,7 @@ journeys:
     command: bash journeys/wake-cursor-kill.sh
   bus-machine-service:
     tier: local
-    command: bash journeys/bus-machine-service.sh
+    command: (bash bin/jg-bus-reap.sh >/dev/null 2>&1 || true; bash tests/jg-bus-machine-service.test.sh && bash tests/jg-stack-owner.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
     timeout: 5m
   stray-nats-reap:
     tier: local
@@ -439,7 +439,7 @@ journeys:
     command: bash tests/jg-move.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   state-write:
     tier: local
-    command: bash journeys/state-write.sh
+    command: (bash tests/jg-state-write.test.sh && bash bin/jg-state-lint.sh --check) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   contract-agents-md-floor:
     # measured 0.7 s on the host, 2026-11-12 (serial, one run)
     tier: ci
@@ -510,7 +510,7 @@ journeys:
     command: bash tests/jg-recon-gate.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   release-record:
     tier: local
-    command: bash journeys/release-record.sh
+    command: (bash bin/jg-machine.sh check release && bash bin/jg-machine.sh events release && bash tests/jg-machine-release.test.sh && bash tests/jg-machine-lane-delivery.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   # Core suites (retired .github/workflows/core-suites.yml, 89 steps), one entry per step below. Steps 1 to 4 and 49
   # (checkout, Go, OPA, bd and dolt, Node) were set-up, not tests: done-done runs on a host that already has them.
   # The steps that installed sign-off-axi or python3-yaml on the runner no longer install anything; the host's own
