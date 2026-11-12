@@ -36,6 +36,9 @@ journeys:
   teardown-missing-record:
     tier: local
     command: bash journeys/teardown-missing-record.sh
+  state-folder-diet:
+    tier: local
+    command: bash journeys/state-folder-diet.sh
   live-services:
     tier: local
     command: bash journeys/live-services.sh

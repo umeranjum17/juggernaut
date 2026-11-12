@@ -745,12 +745,24 @@ test_local_only_fork_remote_allows() {
   pass "local-only worktree with HEAD on a fork remote is torn down and the home summary is refreshed"
 }
 
+# The per-task file kinds that bin/jg-task-files-lib.sh lists (the state folder diet): a teardown leaves none of them.
+seed_task_file_kinds() {  # <case dir>
+  local kind
+  # shellcheck source=bin/jg-task-files-lib.sh disable=SC1091
+  . "$ROOT/bin/jg-task-files-lib.sh"
+  for kind in $JG_TASK_FILE_KINDS_RETIRED; do printf '1\n' > "$1/state/task-x1.$kind"; done
+}
+assert_task_file_kinds_gone() {  # <case dir> <what ran>
+  local kind
+  for kind in $JG_TASK_FILE_KINDS_RETIRED; do assert_absent "$1/state/task-x1.$kind" "$2 left the $kind file"; done
+}
+
 test_teardown_of_an_already_cleaned_task_says_so() {
   local case_dir out rc
   case_dir=$(make_case already-cleaned)
   rm -f "$case_dir/state/task-x1.meta"
   : > "$case_dir/state/task-x1.run-receipt.json"
-  : > "$case_dir/state/task-x1.probe-at"
+  seed_task_file_kinds "$case_dir"
   rc=0; out=$(run_teardown "$case_dir" 2>&1) || rc=$?
   [ "$rc" -eq 0 ] || fail "already-cleaned teardown exited $rc: $out"
   printf '%s\n' "$out" | grep -F 'already cleaned up' >/dev/null \
@@ -758,7 +770,7 @@ test_teardown_of_an_already_cleaned_task_says_so() {
   printf '%s\n' "$out" | grep -F 'not a regular file' >/dev/null \
     && fail "already-cleaned teardown gave the wrong refusal: $out"
   assert_absent "$case_dir/state/task-x1.run-receipt.json" "leftover receipt kept"
-  assert_absent "$case_dir/state/task-x1.probe-at" "leftover probe file kept"
+  assert_task_file_kinds_gone "$case_dir" "already-cleaned teardown"
   # A record that exists but is not a regular file keeps its refusal.
   mkdir "$case_dir/state/task-x1.meta"
   rc=0; out=$(run_teardown "$case_dir" 2>&1) || rc=$?
@@ -774,8 +786,10 @@ test_teardown_closes_the_backlog_item_itself() {
   write_meta "$case_dir" no-mistakes ship
   printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
   seed_backlog_in_flight "$case_dir"
+  seed_task_file_kinds "$case_dir"
 
   out=$(run_teardown "$case_dir") || fail "teardown failed with a real backlog"
+  assert_task_file_kinds_gone "$case_dir" "a landed teardown"
   [ "$(backlog_row_state "$case_dir")" = "done" ] \
     || fail "teardown returned success while its backlog item was still open: $(backlog_row_state "$case_dir")"
   assert_grep 'https://github.com/example/repo/pull/7' "$(backlog_dump "$case_dir")" \

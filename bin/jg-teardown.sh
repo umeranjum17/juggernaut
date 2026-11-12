@@ -399,6 +399,8 @@ unset _teardown_source
 . "$SCRIPT_DIR/jg-nm-run-lib.sh"
 # shellcheck source=bin/jg-teardown-park-lib.sh
 . "$SCRIPT_DIR/jg-teardown-park-lib.sh"
+# shellcheck source=bin/jg-task-files-lib.sh
+. "$SCRIPT_DIR/jg-task-files-lib.sh"
 if [ "$#" -lt 1 ] || ! jg_task_id_path_safe "$1"; then
   echo "error: invalid teardown request" >&2
   exit 2
@@ -560,7 +562,8 @@ if [ ! -e "$META" ] && [ ! -L "$META" ] && [ ! -e "$STATE/$ID.backlog-close" ]; 
     echo "error: teardown refused: $JG_BACKLOG_TRANSITION_ERROR" >&2
     exit 1
   }
-  rm -f "$STATE/$ID.run-receipt.json" "$STATE/$ID".run-receipt.????????????????????????????????????????.json "$STATE/$ID.probe-at" "$STATE/$ID.account-probe-at"
+  rm -f "$STATE/$ID.run-receipt.json" "$STATE/$ID".run-receipt.????????????????????????????????????????.json
+  jg_task_files_retire "$STATE" "$ID"
   echo "task $ID is already cleaned up: its task record $META does not exist; nothing to tear down"
   exit 0
 fi
@@ -1133,6 +1136,7 @@ remote_squad_lead_teardown() {
   rm -f -- "$STATE/$ID.turn-ended" "$STATE/$ID.progress" \
     "$(jg_wake_signal_seen_path "$STATE" "$STATE/$ID.turn-ended")" \
     "$STATE/.squad-lead-relaunch-$ID" "$STATE/.squad-lead-relaunch-bound-$ID"
+  jg_task_files_retire "$STATE" "$ID"
   printf 'teardown %s complete (remote %s:%s)\n' "$ID" "$remote_host" "$remote_home"
   return "$rc"
 }
@@ -3467,7 +3471,7 @@ if [ -d "$STATE" ] && [ "$KIND" != squad_lead ]; then
   JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$DATA" \
     "$SCRIPT_DIR/jg-inactive-reconcile.sh" retire "$ID" || true
 fi
-rm -f "$STATE/$ID.models"
+jg_task_files_retire "$STATE" "$ID"
 if [ "$KIND" != scout ] && [ "$KIND" != squad_lead ] && ! jg_delivery_style_is "$MODE" local; then
   "$JG_ROOT/bin/jg-fleet-sync.sh" "$PROJ" || true
 fi
