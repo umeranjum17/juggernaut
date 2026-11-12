@@ -183,9 +183,11 @@
 #   missing-endpoint legacy record with or without --legacy-record; the shared
 #   endpoint validator is skipped so it cannot be read as the current window,
 #   kill is skipped, and a still-present worktree still faces the ordinary
-#   landed-work checks. Every other windowless record, including one with a
-#   spawn_gen, a non-tmux backend, or an ambiguous field, still faces the
-#   validator and refuses.
+#   landed-work checks. A windowless record that carries a published spawn_gen
+#   is accepted the same way: the incarnation is kept, there is no endpoint to
+#   kill, and unlanded work still refuses. Every other windowless record,
+#   including one with a non-tmux backend or an ambiguous field, still faces
+#   the validator and refuses.
 #
 # Transient / stale worktree git lock recovery (teardown-lock-race): a crew process
 # killed mid-git-operation can leave a .git/worktrees/<wt>/index.lock (or, for a
@@ -665,6 +667,10 @@ if [ "$TEARDOWN_BACKLOG_APPLIES" = 1 ]; then
       exit 1
     fi
   else
+    # A published incarnation whose record names no window has no endpoint to
+    # kill or classify, exactly like the legacy leftover above: accept it as a
+    # missing endpoint. The landed-work checks below still refuse unlanded work.
+    [ "$TEARDOWN_WINDOWLESS_SHAPE" != 1 ] || TEARDOWN_WINDOWLESS=1
     case "$JG_BACKLOG_META_SPAWN_GEN" in
       legacy-*)
         # Only this teardown path mints a legacy- token; a launch publishes
