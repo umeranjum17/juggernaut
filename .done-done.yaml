@@ -45,6 +45,8 @@ journeys:
   trunk-table:
     tier: local
     command: bash journeys/trunk-table.sh
+  cleanup-table:
+    command: bash journeys/cleanup-table.sh
   worker-table:
     tier: local
     command: (bash bin/jg-machine.sh check worker && bash bin/jg-machine.sh events worker && bash tests/jg-machine-worker.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

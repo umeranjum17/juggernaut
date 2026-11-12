@@ -17,6 +17,7 @@ The `Ask` column is the command that prints a record's state and its legal moves
 | `alert` | `one record per alert key, state/alerts/<alert>--<subject>.rec (machine 5 of the state-machine plan)` | `bin/jg-alert.sh` | 4 | 7 | `bin/jg-machine.sh next alert <id>` |
 | `bypass` | `config/proof-bypass: one line for each word of the owner (machine 17 of the state-machine plan)` | `bin/jg-proof-bypass.sh` | 2 | 4 | `bin/jg-machine.sh next bypass <id>` |
 | `hold` | `a question held for the owner: the hold on the task (bin/jg-captain-hold.sh) and its card on the board (machine 8 of the state-machine plan)` | `core/machines/observers/hold.sh` | 5 | 8 | `bin/jg-machine.sh next hold <id>` |
+| `cleanup` | `state/<id>.meta, state/<id>.backlog-close, data/jg-trunk-landing/<id>.<head>.state: one cleanup of a landed lane; or a jg-* entry of the temp folder that the reaper owns (id: tmp:<name>; machine 10 of the state-machine plan)` | `core/machines/observers/cleanup.sh` | 5 | 7 | `bin/jg-machine.sh next cleanup <id>` |
 | `delivering` | `the inside of the ticket stage delivering (machine 20 of the state-machine plan)` | `core/machines/observers/ticket.sh` | 9 | 12 | `bin/jg-machine.sh next delivering <id>` |
 | `delivery` | `a change in core/machines/changes.tsv, its trunk commit, data/trunk-live.tsv and its config/ switch` | `core/machines/observers/delivery.sh` | 7 | 22 | `bin/jg-machine.sh next delivery <id>` |
 | `host` | `state/.stops/pool-<project>.pool-full` | `bin/jg-spawn.sh` | 2 | 2 | `bin/jg-machine.sh next host <id>` |

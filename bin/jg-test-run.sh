@@ -994,6 +994,7 @@ tests/jg-home-guard.test.sh 3000
 tests/jg-machine-enforce.test.sh 2500
 tests/jg-machine-inbox.test.sh 3500
 tests/jg-machine-index.test.sh 1500
+tests/jg-machine-cleanup.test.sh 1500
 tests/jg-machine-landing.test.sh 3000
 tests/jg-machine-status.test.sh 4000
 tests/jg-machine.test.sh 2000
