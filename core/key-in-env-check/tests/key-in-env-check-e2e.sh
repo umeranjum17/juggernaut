@@ -40,6 +40,9 @@ printf '%s\n' "$canary" >"$HOME/.config/openrouter/api_key"
 home=$work/pool/1/juggernaut
 printf 'worktree=%s\nendpoint_task_id=task-a\n' "$work/wt-a" > "$home/state/task-a.meta"
 export JG_HOME=$home JG_KEY_HOMES=$home
+# The check raises its alert through the home's own alert function, so the fixture home carries the repo's bin and core.
+repo=$(cd "$here/../../.." && pwd)
+cp -r "$repo/bin" "$home/bin"; ln -s "$repo/core" "$home/core"; mkdir -p "$home/config"; printf 'off\n' > "$home/config/wake-bus"
 
 # Fixture trees run under setsid with an empty environment so nothing real (the live fleet's
 # keys, the test shell's own parents) is picked up; JG_KEY_TREES scopes the scan to them.
@@ -60,7 +63,11 @@ sleep 1
 export JG_KEY_TREES=${pids[0]},${pids[1]}
 child=$(pgrep -P "${pids[0]}" sleep | head -n 1)
 
-run() { "$bin" >"$work/out" 2>"$work/err"; }
+# One security alert record per alerting run: fired counts them, so a run "wakes" when the count grows.
+fired() { find "$home/state/alerts" -name 'security--key-in-env-*.rec' 2>/dev/null | wc -l; }
+run() { n0=$(fired); "$bin" >"$work/out" 2>"$work/err"; n1=$(fired); }
+woke() { [ "$n1" -gt "$n0" ]; }
+quiet() { [ "$n1" -eq "$n0" ]; }
 run
 inc=$home/state/key-in-env.incidents
 line=$(awk -F'\t' -v p="$child" '$1==p' "$inc")
@@ -70,11 +77,11 @@ case "$h" in */1) ok "home attributed ($h)" ;; *) no "home is '$h'" ;; esac
 [ "$t" = task-a ] && ok "task attributed" || no "task is '$t'"
 [ "$v" = OPENROUTER_API_KEY ] && ok "variable named" || no "variable is '$v'"
 [ "$top" = "bash(${pids[0]})" ] && ok "topmost parent named ($top)" || no "topmost is '$top'"
-grep -q "key-in-env: " "$work/out" && grep -q "task-a" "$work/out" && ok "wake line printed" || no "no wake line"
+woke && grep -q "task-a" "$home"/state/alerts/security--key-in-env-*.rec && ok "security alert raised with the finding" || no "no security alert"
 grep -q '"count": 50' "$home/state/.key-in-env.alerted.json" && ok "alerted count persisted" || no "alerted count missing"
 
 run
-[ ! -s "$work/out" ] && ok "second run silent (de-duplicated)" || no "second run woke again"
+quiet && ok "second run silent (de-duplicated)" || no "second run woke again"
 
 # the key-free process in wt-b is never listed
 [ "$(wc -l < "$inc")" -eq 50 ] && ok "key-free process not listed" || no "key-free process listed"
@@ -84,25 +91,25 @@ run
 root "$work/c.pid" "$work/wt-b" "OPENROUTER_API_KEY=$canary" bash -c 'for _ in $(seq 4); do sleep 300 & done; wait'
 export JG_KEY_TREES=$JG_KEY_TREES,${pids[2]}
 run
-[ ! -s "$work/out" ] && ok "exact 10% process increase stays silent" || no "10% process increase woke"
+quiet && ok "exact 10% process increase stays silent" || no "10% process increase woke"
 
 # A 26% increase over the last alerted count wakes, even with the same key name.
 # shellcheck disable=SC2016 # the loop runs in the fixture process shell
 root "$work/d.pid" "$work/wt-b" "OPENROUTER_API_KEY=$canary" bash -c 'for _ in $(seq 7); do sleep 300 & done; wait'
 export JG_KEY_TREES=$JG_KEY_TREES,${pids[3]}
 run
-grep -q "key-in-env: " "$work/out" && ok "exact 26% process increase wakes" || no "26% process increase stayed silent"
+woke && ok "exact 26% process increase wakes" || no "26% process increase stayed silent"
 
 # Forced current key: a newly appearing key name while the env value still matches the file wakes once.
 root "$work/e.pid" "$work/wt-b" "ANTHROPIC_API_KEY=$canary" sleep 302
 export JG_KEY_TREES=$JG_KEY_TREES,${pids[4]}
 run
-grep -q "key-in-env: " "$work/out" && ok "forced current: new key name wakes" || no "forced current: new key name stayed silent"
+woke && ok "forced current: new key name wakes" || no "forced current: new key name stayed silent"
 
 # Forced old key: rotate the fixture key file so env canaries no longer match; log-only, no wake.
 printf '%s\n' "$rotated" >"$HOME/.config/openrouter/api_key"
 run
-[ ! -s "$work/out" ] && ok "forced old key: no wake on stdout" || no "forced old key: woke on stdout"
+quiet && ok "forced old key: no alert" || no "forced old key: raised an alert"
 grep -q "key revoked" "$work/err" && ok "forced old key: revoked note on stderr" || no "forced old key: revoked note missing"
 if grep -q "key revoked" "$work/out" 2>/dev/null; then no "forced old key: revoked note on stdout"; else ok "forced old key: revoked note kept off stdout"; fi
 
@@ -111,7 +118,7 @@ if grep -q "key revoked" "$work/out" 2>/dev/null; then no "forced old key: revok
 root "$work/f.pid" "$work/wt-b" "OPENROUTER_API_KEY=$canary" bash -c 'for _ in $(seq 40); do sleep 300 & done; wait'
 export JG_KEY_TREES=$JG_KEY_TREES,${pids[5]}
 run
-[ ! -s "$work/out" ] && ok "forced old key: count jump stays silent" || no "forced old key: count jump woke"
+quiet && ok "forced old key: count jump stays silent" || no "forced old key: count jump woke"
 
 # a custom pattern list narrows the match
 JG_KEY_PATTERNS='NOTHING_*' run
@@ -121,7 +128,7 @@ unset JG_KEY_PATTERNS
 # A clean scan ends the active finding; restore the file to the env canary so a return wakes.
 printf '%s\n' "$canary" >"$HOME/.config/openrouter/api_key"
 run
-grep -q "key-in-env: " "$work/out" && ok "finding after clean scan alerts again" || no "finding after clean scan stayed silent"
+woke && ok "finding after clean scan alerts again" || no "finding after clean scan stayed silent"
 
 # canary / rotated values and full hashes are nowhere in anything the check wrote or printed
 if grep -rqF -- "$canary" "$work/out" "$work/err" "$home" 2>/dev/null; then no "canary value leaked"; else ok "canary value absent from output, errors, incident file and state"; fi

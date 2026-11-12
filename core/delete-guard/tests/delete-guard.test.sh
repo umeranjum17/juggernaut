@@ -16,10 +16,10 @@ unset JG_TASK_ID JG_TASK_INBOX JG_HOME
 ADDON=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 T=$(mktemp -d)
 trap 'rm -rf -- "$T"' EXIT
-mkdir -p "$T/fm/state" "$T/home/.claude" "$T/home/.pi/agent/extensions" "$T/home/.config/opencode/plugins"
-git -C "$1" archive "${2:-HEAD}" bin | tar -x -C "$T/fm"
+mkdir -p "$T/fm/state" "$T/fm/config" "$T/home/.claude" "$T/home/.pi/agent/extensions" "$T/home/.config/opencode/plugins"
+git -C "$1" archive "${2:-HEAD}" bin core/bus core/wake core/machines/tables core/machines/styles | tar -x -C "$T/fm"
 echo '{"env":{"KEEP":"1"},"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"other-hook"}]}]}}' > "$T/home/.claude/settings.json"
-fail=0
+printf "off\n" > "$T/fm/config/wake-bus"; fail=0
 ok() { echo "ok: $*"; }; no() { echo "FAIL: $*"; fail=1; }
 inst() { env -u XDG_DATA_HOME HOME="$T/home" "$ADDON/wiring.sh" "$@" "$T/fm"; }
 
@@ -83,21 +83,25 @@ check() { HOME=/home/fixture/users/user-014 "$@"; }
 JG_TASK_ID=t1 JG_TASK_INBOX="$T/lead/state/t1.inbox" hookrun /w 'rm -rf ~' || true
 grep -q 'delete-guard' "$T/fm/state/.wake-queue" 2>/dev/null && no "first block woke at once" || ok "first block waits for the check"
 JG_TASK_ID=t1 JG_TASK_INBOX="$T/lead/state/t1.inbox" hookrun /w 'rm -rf "$HOME"' || true
-grep -q "delete guard REPEAT: task t1 tried 2 .*home $T/lead," "$T/fm/state/.wake-queue" && ok "repeat queues an immediate wake" || no "no repeat wake"
+# A fixture home has no wake server, so the raised wake waits in the bus outbox until a drain renders the queue.
+cat "$T/fm/state/.wake-queue" "$T/fm/state/.wake-bus.outbox.jsonl" 2>/dev/null | grep -q "alert-security--delete-guard-repeat-.*delete guard REPEAT: task t1 tried 2 .*home $T/lead," && ok "repeat queues an immediate wake" || no "no repeat wake"
 tail -n1 "$T/fm/state/delete-guard.log" | jq -e --arg h "$T/lead" '.task == "t1" and .home == $h and .cwd == "/w" and .runtime == "claude"' >/dev/null && ok "log line names home, task, cwd, runtime" || no "log line fields"
 JG_TASK_ID=t2 JG_TASK_INBOX="$T/lead/state/t2.inbox" hookrun "$T/fm/state" 'rm -rf ~' || true # cwd's juggernaut home wins over an inherited inbox home
 jq -e --arg h "$T/fm" '.task == "t2" and .home == $h' <(tail -n1 "$T/fm/state/delete-guard.log") >/dev/null && ok "home is the juggernaut home of cwd, not an inherited inbox" || no "cwd home lost to inbox"
 JG_HOME=/elsewhere hookrun "$T/fm/state" 'rm -rf ~' || true # a lead with an inherited JG_HOME, working in its own home
 tail -n1 "$T/fm/state/delete-guard.log" | jq -e --arg h "$T/fm" '.home == $h and .task == ""' >/dev/null && ok "no-task block logs the home holding cwd" || no "home from cwd"
-out=$(check "$T/fm/state/delete-guard.check.sh")
-case "$out" in "delete guard blocked 1 recursive delete(s)"*"task t1 (claude, home $T/lead, cwd /w, "*"/home/fixture/users/user-014: rm -rf ~") ok "check wakes on a literal home target, not on its repeat or temp-folder blocks" ;; *) no "check output: $out" ;; esac
+check "$T/fm/state/delete-guard.check.sh" >/dev/null
+out=$(grep 'alert-security--delete-guard-' "$T/fm/state/.wake-queue" || true)
+case "$out" in *"alert security (P0) at rung 4 for owner: delete-guard-"*"delete guard blocked 1 recursive delete(s)"*"task t1 (claude, home $T/lead, cwd /w, "*"/home/fixture/users/user-014: rm -rf ~"*) ok "check raises a security alert on a literal home target, not on its repeat or temp-folder blocks" ;; *) no "check output: $out" ;; esac
+[ "$(grep -c 'alert-security--delete-guard-' "$T/fm/state/.wake-queue")" -eq 1 ] && ok "one alert for the one literal block" || no "alert count"
 
 # Replay of the fixture log, one sweep per row: only the 14:22 literal /home/you/scratch-test block wakes; the
 # build probes, variable targets and that task's $d repeat 15 s later are counted.
-mkdir -p "$T/replay/state"; wakes=()
+mkdir -p "$T/replay/state"; ln -s "$T/fm/bin" "$T/replay/bin"; ln -s "$T/fm/core" "$T/replay/core"; mkdir -p "$T/replay/config"; cp "$T/fm/config/wake-bus" "$T/replay/config/"; wakes=()
 while IFS= read -r row; do
   printf '%s\n' "$row" >> "$T/replay/state/delete-guard.log"
-  w=$(HOME=/home/you "$T/home/.local/share/jg-delete-guard/check.sh" "$T/replay"); [ -z "$w" ] || wakes+=("$w")
+  HOME=/home/you "$T/home/.local/share/jg-delete-guard/check.sh" "$T/replay" >/dev/null
+  while IFS= read -r w; do wakes+=("$w"); done < <(grep 'alert-security--delete-guard-' "$T/replay/state/.wake-queue" 2>/dev/null | tail -n +"$((${#wakes[@]} + 1))")
 done < "$ADDON/tests/fixtures/delete-guard-2026-10-16.log"
 [ "${#wakes[@]}" -eq 1 ] && case "${wakes[0]}" in *"task rd-stale-screen-on-return (pi, "*", 14:22Z) /home/you/scratch-test: "*) true ;; *) false ;; esac \
   && ok "replay wakes only on the 14:22 /home/you/scratch-test block" || no "replay wakes: $(printf '%s\n' "${wakes[@]}")"

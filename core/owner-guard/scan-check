@@ -6,8 +6,8 @@
 # case-insensitive). A full clone loop cannot finish inside the watcher's
 # timeout, so when a scan is due this records the run, starts the loop
 # detached in the background, and returns at once with no output. A finished
-# loop with hits leaves its one wake line under the Main home's state/; the
-# next check run prints it once and removes it. Nothing is printed when clean,
+# loop with hits leaves its one result line under the Main home's state/; the
+# next check run raises it once as a security alert (bin/jg-alert.sh raise --deliver) and removes it. Nothing is raised when clean,
 # unconfigured, or when no finished scan is waiting. The patterns themselves
 # are never printed.
 set -u -o pipefail
@@ -69,11 +69,11 @@ case "${1:-}" in
 _worker) [ -n "${2:-}" ] || exit 2; _worker "$2"; exit 0 ;;
 esac
 
-# A finished background scan leaves its one wake line here; print it once.
+# A finished background scan leaves its one result line here; raise it once as a security alert.
+# The line goes only after the alert is recorded, so a refused alert is tried again on the next run.
 if [ -f "$RES" ]; then
   line=$(cat "$RES" 2>/dev/null || true)
-  rm -f -- "$RES"
-  [ -n "$line" ] && printf '%s\n' "$line"
+  if [ -z "$line" ] || JG_HOME="$M" "$M/bin/jg-alert.sh" raise security "owner-details-scan-$(date +%s)-$$" --note "$line" --deliver; then rm -f -- "$RES"; fi
 fi
 
 now=$(date +%s)
