@@ -912,6 +912,39 @@ journeys:
   agent-cli-proof-land:
     tier: local
     command: bash journeys/core-run.sh 'bash agent-cli/tests/proof-land.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  live-checks:
+    tier: local
+    command: bash journeys/live-checks.sh
+  live-gh-shim:
+    tier: live
+    command: bash tests/live/gh-shim.sh
+  live-lock-lease:
+    tier: live
+    command: bash tests/live/lock-lease.sh
+  live-model-turn:
+    tier: live
+    command: bash tests/live/model-turn.sh
+  live-ready-vs-free:
+    tier: live
+    command: bash tests/live/ready-vs-free.sh
+  live-steer-read:
+    tier: live
+    command: bash tests/live/steer-read.sh
+  live-load-memory:
+    tier: live
+    command: bash tests/live/load-memory.sh
+  live-stranded-release:
+    tier: live
+    command: bash tests/live/stranded-release.sh
+  live-landed-agent:
+    tier: live
+    command: bash tests/live/landed-agent.sh
+  live-approval-verify:
+    tier: live
+    command: bash tests/live/approval-verify.sh
+  live-plan-rows:
+    tier: live
+    command: bash tests/live/plan-rows.sh "${JG_LIVE_EPIC:-jg-8kugw}"
 
 secrets:
   allow:
