@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """jg-beads-trace.py - the adapter verb that writes a ticket's provenance: the event first, then the moment on the row.
 
-Usage: BEADS_DIR=<store> jg-beads-write.py trace record <ticket or task> <kind> <ref-kind> <ref> --source <source> [--at <RFC3339>] [--payload <JSON>]
+Usage: BEADS_DIR=<store> jg-beads-write.py trace record <ticket or task> <kind> <ref-kind> <ref> --source <source> [--at <RFC3339>] [--payload <JSON>] [--once]
 
+--once writes nothing, with exit 0, when the row already holds the moment and nothing undid it (live_at is undone by a later pinned_back_at).
 record takes a ticket id or a task name (the row's metadata.task), so it still finds the ticket after the lane was torn down. It writes the
 provenance event first and the row second, because the row write is the signal a reader polls and the event alone leaves no trace on the row.
 The row gets the moment `<source>` stands for, as an RFC3339 string in UTC equal to the event's time. A landing also sets `commit` to the ref.
@@ -17,23 +18,31 @@ sys.dont_write_bytecode = True
 view = __import__("jg-beads-view")
 moment = __import__("jg-beads-moment")
 
-# source -> (the row's moment key, whether the ref is the landed commit). One line per producer; S9, S12 and S27 add theirs.
+# source -> (the row's moment key, whether the ref is the landed commit). One line per producer; S9 and S27 add theirs.
 SOURCES = {
     "jg-trunk-land": ("landed_at", True),
     "jg-trunk-revert": ("reverted_at", False),
+    "jg-trunk-live": ("live_at", False),
+    "jg-trunk-pin-back": ("pinned_back_at", False),
+    "jg-trunk-release": ("released_at", False),
 }
+# The moment that undoes another: live_at is current only while no later pinned_back_at is on the row.
+UNDONE_BY = {"live_at": "pinned_back_at"}
 
 
 def record(args):
-    found, ids = view.flags(args, ("--source", "--at", "--payload"), ())
+    found, ids = view.flags(args, ("--source", "--at", "--payload"), ("--once",))
     if len(ids) != 4 or found.get("--source") not in SOURCES:
-        view.refuse("usage: trace record <ticket> <kind> <ref-kind> <ref> --source <%s> [--at <RFC3339>] [--payload <JSON>]" % "|".join(SOURCES))
+        view.refuse("usage: trace record <ticket> <kind> <ref-kind> <ref> --source <%s> [--at <RFC3339>] [--payload <JSON>] [--once]" % "|".join(SOURCES))
     started, (ticket, kind, ref_kind, ref) = time.monotonic(), ids
     source, when = found["--source"], moment.utc(found.get("--at"))
     key, lands = SOURCES[source]
     row = moment.fetch(ticket)
     meta = dict(row.get("metadata") or {})
     held = str(meta.get(key) or "")
+    if found.get("--once") and held and held > str(meta.get(UNDONE_BY.get(key)) or ""):
+        moment.done(started, "skip: %s %s is already %s" % (row["id"], key, held))
+        return
     if held > when:
         view.refuse("%s is already %s, later than %s: a moment is never moved back" % (key, held, when), "Give a later --at", "MOMENT_BACK", 1)
     if found.get("--payload"):

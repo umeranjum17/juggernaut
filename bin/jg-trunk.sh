@@ -787,6 +787,52 @@ trace_land() {  # <task id> <source> <sha> [payload JSON]
     ${4:+--payload "$4"} >/dev/null 2>&1 || echo "jg-trunk: warning: the $2 provenance of $1 was not written; the trunk is unchanged by it" >&2
 }
 
+# The tickets of the commits git log names (the same arguments), as `<sha><TAB><ticket>` lines, newest commit first, one line per ticket:
+# a commit's ticket is its `Ticket:` trailer, so this finds it after the lane was torn down and for a commit a rollover replayed.
+commit_tickets() {  # <git log arguments>
+  git -C "$PROJ" log --format='%H%x09%(trailers:key=Ticket,valueonly,separator=%x20)' "$@" \
+    | awk -F'\t' '$2 != "" { n = split($2, t, " "); for (i = 1; i <= n; i++) if (!seen[t[i]]++) print $1 "\t" t[i] }'
+}
+
+# Write one moment to each ticket on stdin (`<sha><TAB><ticket>` lines): jg-backlog.sh trace record with <source>, once (a ticket that has the
+# moment already, and nothing undid it, is skipped). <ref> is the one ref of every event (a release pull request URL), else each commit's sha.
+# A ticket this home's store lacks is listed in one line and written nowhere; any other failed write is one warning line. Never stops the move.
+trace_moments() {  # <source> <ref-kind> [<ref>] [once]
+  local sha ticket out missing=''
+  while IFS=$'\t' read -r sha ticket; do
+    out=$(JG_HOME=$JG_HOME JG_DATA_OVERRIDE=$DATA "$SCRIPT_DIR/jg-backlog.sh" trace record "$ticket" land "$2" "${3:-$sha}" --source "$1" \
+      --at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" ${4:+--once} 2>&1) && continue
+    if printf '%s\n' "$out" | grep -q '^code: NOT_FOUND'; then missing="$missing $ticket"
+    else echo "jg-trunk: warning: the $1 provenance of $ticket was not written; the trunk is unchanged by it" >&2; fi
+  done
+  [ -z "$missing" ] || echo "not in this home:${missing}"
+}
+
+# The live step reached the tickets: every ticket of a commit above the last one that went live (or above the commit this trunk version was
+# cut from, when none did) gets live_at; a pin-back gives pinned_back_at to the tickets above the commit the home went back to. A commit the
+# lander reverted in the range ends its ticket's turn. The release marker is no bound: a release pushed first moves it past the range.
+live_tickets() {  # <sha> <previous live commit or empty>
+  local sha=$1 prev=$2 lower reverted
+  if [ -n "$prev" ] && [ "$prev" != "$sha" ] && git -C "$PROJ" merge-base --is-ancestor "$sha" "$prev" 2>/dev/null; then
+    commit_tickets "$sha..$prev" | trace_moments jg-trunk-pin-back git-sha
+    return 0
+  fi
+  lower=''; [ -z "$prev" ] || ! git -C "$PROJ" merge-base --is-ancestor "$prev" "$sha" 2>/dev/null || lower=$prev
+  [ -n "$lower" ] || lower=$(release_base "$sha") || { echo "jg-trunk: warning: no lower bound for what went live at ${sha:0:12}; no ticket got live_at" >&2; return 0; }
+  reverted=$(commit_tickets --grep='^reverts: [0-9a-f]' "$lower..$sha" | cut -f2)
+  commit_tickets "$lower..$sha" | awk -F'\t' -v r="$reverted" 'BEGIN { n = split(r, a, "\n"); for (i = 1; i <= n; i++) skip[a[i]] = 1 } !($2 in skip)' \
+    | trace_moments jg-trunk-live git-sha '' once
+}
+
+# A merged release reached the tickets: every row of the release pull request holds a released commit and the count of commits in that
+# release, and one pull request can have more than one row.
+release_tickets() {  # <release pull request URL>
+  local rel n
+  while IFS=$'\t' read -r rel n; do commit_tickets -n "$n" "$rel"; done \
+    < <(awk -F'\t' -v p="$PN" -v u="$1" 'NF >= 6 && $1 == p && $6 == u { print $3 "\t" $4 }' "$DATA/trunk-releases.tsv" 2>/dev/null) \
+    | awk -F'\t' '!seen[$2]++' | trace_moments jg-trunk-release pr "$1" once
+}
+
 # The scripts of a landing's changed selection, one per line, as the project's own selector names them at <candidate>: bin/jg-test-run.sh
 # --changed against the candidate's parent. Prints nothing and returns 1 when the project has no such selector (the sealed run then can
 # only be judged by its tree) and returns 2 when the selector cannot name a selection (the tests run at the landing).
@@ -1502,7 +1548,8 @@ begin_move() {
 
 # Move the home to <sha> through the project's live hook and record it. Exit 3 when the home did not move.
 go_live() {  # <sha> <tip>   LIVE_FLEET=1 (cmd_live) moves every home; a pin-back moves this one
-  local sha=$1 hook status=landed-not-live here there why hook_out hook_rc reason
+  local sha=$1 hook status=landed-not-live here there why hook_out hook_rc reason prev
+  prev=$(awk -F'\t' -v p="$PN" '$1 == p && $4 ~ /^live/ { c = $2 } END { print c }' "$DATA/trunk-live.tsv" 2>/dev/null || true)
   [ -n "${MOVE_HELD:-}" ] || begin_move "$sha"
   set -- "$sha" "$(rev "refs/heads/$TRUNK")"  # the tip as it stands once the gates have ended
   hook="$CONFIG/live-hook.$PN"
@@ -1533,6 +1580,7 @@ go_live() {  # <sha> <tip>   LIVE_FLEET=1 (cmd_live) moves every home; a pin-bac
   [ -z "${LIVE_WAIVER:-}" ] || status="$status,waiver=$LIVE_WAIVER"
   row trunk-live.tsv "$PN" "$sha" "$(date +%s)" "$status"
   echo "live: $PN at ${sha:0:12} ($status)"
+  case $status in live*) live_tickets "$sha" "$prev" || : ;; esac  # a one-home canary moves nothing the fleet runs
 }
 
 # Run the tip's own mover (an export of its bin/ and core/) over every home; its exit code and last line are the verdict.
@@ -1894,6 +1942,7 @@ rollover_if_merged() {
   put "$STATE/trunk-tip-$PN" "$CARRY_TIP"; put "$STATE/trunk-green-$PN" "${green:-$base}"; put "$STATE/trunk-released-$PN" "$base"
   put "$STATE/trunk-branch-$PN" "$new"; put "$STATE/trunk-version-$PN" "$ver"; put "$STATE/trunk-rolled-$PN" "$url"
   row trunk-versions.tsv "$PN" "$ver" "$new" "$base" "$(date +%s)"
+  release_tickets "$url" || :
   echo "release merged: the project is now on $new (version $ver) at $CARRY_TIP, cut from $default at $base"
   [ "$CARRY_TIP" = "$base" ] || echo "carried: $(git -C "$PROJ" rev-list --count "$base..$CARRY_TIP") landed commit(s) of $TRUNK above the release replayed onto $new with equal trees; the green pin is $(cut -c1-12 <<<"${green:-$base}")"
   local old=$TRUNK; TRUNK=$new
