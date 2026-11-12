@@ -1,284 +1,487 @@
 app: juggernaut
 journeys:
   trunk-cleanup:
+    tier: local
     command: bash journeys/trunk-cleanup.sh
   status-cold-scan:
+    tier: local
     command: bash journeys/status-cold-scan.sh
   learnings:
+    tier: local
     command: bash journeys/learnings.sh
   message-table:
+    tier: local
     command: bash journeys/message-table.sh
   machine-observers:
+    tier: local
     command: bash journeys/machine-observers.sh
   worker-table:
+    tier: local
     command: bash journeys/worker-table.sh
   proof-bypass:
+    tier: local
     command: bash journeys/proof-bypass.sh
   brief-lint:
+    tier: local
     command: bash journeys/brief-lint-real-briefs.sh
   teardown-missing-record:
+    tier: local
     command: bash journeys/teardown-missing-record.sh
   live-services:
+    tier: local
     command: bash journeys/live-services.sh
   ci-rerun-refusal:
+    tier: local
     command: bash journeys/ci-rerun-refusal.sh
   stack-install:
+    tier: local
     command: bash journeys/stack-install.sh
   wake-watcher:
+    tier: local
     command: bash journeys/wake-watcher.sh
   wake-batching:
+    tier: local
     command: bash journeys/wake-batching.sh
   required-shard-retry:
+    tier: local
     command: bash journeys/required-shard-retry.sh
   trunk-latency:
+    tier: local
     command: bash journeys/trunk-latency.sh
   ports-adapter-refusal:
+    tier: local
     command: bash journeys/ports-adapter-refusal.sh
   rejected-state-check-once:
+    tier: local
     command: bash journeys/rejected-state-check-once.sh
   wake-schedule:
+    tier: local
     command: bash journeys/wake-schedule.sh
   wake-batch-threshold:
+    tier: local
     command: bash journeys/wake-batch-threshold.sh
   planned-wait:
+    tier: local
     command: bash journeys/planned-wait.sh
   wait-quiet:
+    tier: local
     command: bash journeys/wait-quiet.sh
   watcher-window-inventory:
+    tier: local
     command: bash journeys/watcher-window-inventory.sh
   migration-card:
+    tier: local
     command: bash journeys/migration-card.sh
   axi-on-path:
+    tier: local
     command: bash journeys/axi-on-path.sh
   relaunch-model-refusal:
+    tier: local
     command: bash tests/jg-control.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   pre-push-hook:
+    tier: local
     command: bash tests/jg-pre-push.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   spawn-dispatch-profile:
+    tier: local
     command: bash journeys/spawn-dispatch-profile.sh
   claude-account-by-model:
+    tier: local
     command: bash journeys/claude-account-by-model.sh
   claude-1m-context:
+    tier: local
     command: bash journeys/claude-1m-context.sh
   spawn-load-admission:
+    tier: local
     command: bash journeys/spawn-load-admission.sh
   tool-models:
+    tier: local
     command: bash journeys/tool-models.sh
   receipt-candidate-hook:
+    tier: local
     command: bash journeys/receipt-candidate-hook.sh
   tickets-stage-publish:
+    tier: local
     command: bash core/tickets-sync/run-stage-proof.sh
   tickets-truthful:
+    tier: local
     command: bash core/tickets-sync/run-board-proof.sh && bash core/tickets-sync/run-tidy-proof.sh
   tickets-writeback:
+    tier: local
     command: bash journeys/tickets-writeback.sh
   tickets-cleanup-acts:
+    tier: local
     command: bash core/tickets-sync/run-cleanup-proof.sh
   ready-backlog-stall:
+    tier: local
     command: bash journeys/ready-backlog-stall.sh
     timeout: 45m
   fleet-report:
+    tier: local
     command: bash core/fleet-report/run-proof.sh
   project-state-map:
+    tier: local
     command: bash core/project-state-map/run-proof.sh
   status-digest:
+    tier: local
     command: bash journeys/status-digest.sh
   release-readiness:
+    tier: local
     command: bash journeys/release-readiness.sh
   frozen-release-base:
+    tier: local
     command: bash journeys/frozen-release-base.sh
   red-ci-ticket:
+    tier: local
     command: bash journeys/red-ci-ticket.sh
   release-cut-orphans:
+    tier: local
     command: bash journeys/release-cut-orphans.sh
   release-shipped-merge-refusal:
+    tier: local
     command: bash journeys/release-shipped-merge-refusal.sh
   critical-path:
+    tier: local
     command: bash journeys/critical-path.sh
   trunk-landing:
+    tier: local
     command: bash journeys/trunk-landing.sh
   landing-card:
+    tier: local
     command: bash journeys/landing-card.sh
   proof-attach:
+    tier: local
     command: bash journeys/proof-attach.sh
   merge-proof-gate:
+    tier: local
     command: bash journeys/merge-proof-gate.sh
   design-call-gate:
+    tier: local
     command: bash journeys/design-call-gate.sh
   merge-gate-policy:
+    tier: local
     command: bash journeys/merge-gate-policy.sh
   running-products:
+    tier: local
     command: bash journeys/running-products.sh
   demo-call-gate:
+    tier: local
     command: bash journeys/demo-call-gate.sh
   nav-removal-gate:
+    tier: local
     command: bash journeys/nav-removal-gate.sh
   captain-close-gate:
+    tier: local
     command: bash journeys/captain-close-gate.sh
   stuck-question-replay:
+    tier: local
     command: bash journeys/stuck-question-replay.sh
   worker-no-ask-tool:
+    tier: local
     command: bash journeys/worker-no-ask-tool.sh
   watcher-exit-beacon:
+    tier: local
     command: bash journeys/watcher-exit-beacon.sh
   claude-midturn-cycle:
+    tier: local
     command: bash journeys/claude-midturn-cycle.sh
   stuck-live-captures:
+    tier: local
     command: bash journeys/stuck-live-captures.sh
   model-gate-concurrent:
+    tier: local
     command: bash journeys/model-gate-concurrent.sh
     core: true
   worker-rules:
+    tier: local
     command: bash journeys/worker-rules.sh
   tmp-sweep:
+    tier: local
     command: bash journeys/tmp-sweep.sh
   browser-sweep:
+    tier: local
     command: bash journeys/browser-sweep.sh
   lead-sweep-end-states:
+    tier: local
     command: bash journeys/lead-sweep-end-states.sh
   wake-routing:
+    tier: local
     command: bash journeys/wake-routing.sh
 
   merge-card-pool-fallback:
+    tier: local
     command: bash core/merge-card/run-proof.sh
   owner-rules-hierarchy:
+    tier: local
     command: bash core/owner-rules/run-hierarchy-proof.sh
   owner-rules-publication:
+    tier: local
     command: bash core/owner-rules/run-proof.sh
   key-in-env-alert-once:
+    tier: local
     command: bash core/key-in-env-check/run-proof.sh
   fleet-pulse-chat-tsv-refresh:
+    tier: local
     command: bash core/fleet-pulse/tests/chat-tsv.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   fleet-pulse-newest-retro:
+    tier: local
     command: bash core/fleet-pulse/run-proof.sh
   fleet-pulse-fable-allow:
+    tier: local
     command: bash core/fleet-pulse/run-fable-proof.sh
   fleet-pulse-trunk-landed:
+    tier: local
     command: bash core/fleet-pulse/run-trunk-proof.sh
   retro-metrics:
+    tier: local
     command: bash core/fleet-stats/tests/retro-metrics.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
 
   limit-prompt-move:
+    tier: local
     command: bash core/limit-prompt-move/tests/limit-prompt-move-e2e.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   limit-prompt-move-live:
+    tier: local
     command: bash core/limit-prompt-move/run-live-proof.sh
   quota-failover-screen-match:
+    tier: local
     command: bash core/quota-failover/run-proof.sh
   quota-failover-live-route:
+    tier: local
     command: bash core/quota-failover/run-live-proof.sh
   pipeline-route:
+    tier: local
     command: bash core/pipeline-quota-failover/run-proof.sh
   pipeline-route-live:
+    tier: local
     command: bash core/pipeline-quota-failover/run-live-proof.sh
   claude-accounts-quota:
+    tier: local
     command: bash core/claude-accounts/run-proof.sh
   claude-accounts-pick:
+    tier: local
     command: bash core/claude-accounts/run-proof-pick.sh
   claude-accounts-codex-rest:
+    tier: local
     command: bash core/claude-accounts/run-proof-codex-rest.sh
   claude-accounts-timer:
+    tier: local
     command: bash core/claude-accounts/run-proof-timer.sh
   receipts-pr-candidate:
+    tier: local
     command: bash core/receipts/run-proof.sh
   lookout-adapter-live:
+    tier: local
     command: bash core/lookout-adapter/run-proof.sh
   lookout-service-dry:
+    tier: local
     command: bash core/lookout-adapter/run-service-proof.sh
   wait-timers-identity:
+    tier: local
     command: bash core/wait-timers/run-proof.sh
   merge-card-real-board:
+    tier: local
     command: bash core/merge-card/tests/real-board.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   merge-card-clean-clone:
+    tier: local
     command: bash core/merge-card/run-clean-clone-proof.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   merge-card-retitle:
+    tier: local
     command: bash core/merge-card/run-retitle-proof.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   fleet-contract-check:
+    tier: local
     command: bash core/fleet-contract-check/run-proof.sh
   pool-tool-account:
+    tier: local
     command: bash core/account-pool/run-tool-proof.sh
   pool-helper:
+    tier: local
     command: bash core/account-pool/run-model-pool-proof.sh
   quota-axi-pool:
+    tier: local
     command: bash core/quota-axi-pool/run-proof.sh
   guards-pool-accounts:
+    tier: local
     command: bash core/read-guard/run-pool-proof.sh
   kill-guard-device:
+    tier: local
     command: bash core/kill-guard/run-device-proof.sh
   kill-guard-main-live:
+    tier: local
     command: node core/kill-guard/run-main-proof.mjs
   kill-guard-home-owner:
+    tier: local
     command: node core/kill-guard/run-home-owner-proof.mjs
   wake-bus-live:
+    tier: local
     command: bash journeys/wake-bus-live.sh
   wedge-marker:
+    tier: local
     command: bash journeys/wedge-marker.sh
   wake-cursor-kill:
+    tier: local
     command: bash journeys/wake-cursor-kill.sh
   bus-machine-service:
+    tier: local
     command: bash journeys/bus-machine-service.sh
     timeout: 5m
   stray-nats-reap:
+    tier: local
     command: bash journeys/stray-nats-reap.sh
   escalation-optimize:
+    tier: local
     command: bash core/escalation-optimize/tests/jg-escalation-optimize.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   escalation-rules-live:
+    tier: local
     command: bash journeys/escalation-rules-live.sh
   token-cuts-live:
+    tier: local
     command: bash journeys/token-cuts-live.sh
   context-bound-at-wake:
+    tier: local
     command: bash journeys/context-bound-at-wake.sh
   owner-rules-whole:
+    tier: local
     command: bash journeys/owner-rules-whole.sh
   axi-digest:
+    tier: local
     command: bash journeys/axi-digest.sh
   remote-squad-lead-lifecycle:
+    tier: local
     command: bash journeys/remote-squad-lead-lifecycle.sh
   unit-claim:
+    tier: local
     command: bash journeys/unit-claim.sh
   test-unit-isolation:
+    tier: local
     command: bash journeys/test-unit-isolation.sh
     timeout: 45m
   host-memory-sampler-cpu:
+    tier: local
     command: bash journeys/host-memory-sampler-cpu.sh
     timeout: 10m
   tool-kit:
+    tier: local
     command: bash journeys/tool-kit.sh
   tool-kit-spend:
+    tier: local
     command: bash journeys/tool-kit-spend.sh --approved
     spends: "the model quota or money of each tool kit's spending journey"
   hc-backend:
+    tier: local
     command: bash journeys/hc-backend.sh
   landing-refusing-shims:
+    tier: local
     command: bash journeys/landing-refusing-shims.sh
   wait-refusal-retry:
+    tier: local
     command: bash journeys/wait-refusal-retry.sh
   board-answer-route:
+    tier: local
     command: bash journeys/board-answer-route.sh
   afk-daemon-resend:
+    tier: local
     command: bash journeys/afk-daemon-resend.sh
   gate-quarantine:
+    tier: local
     command: bash journeys/gate-quarantine.sh
   gate-per-test-timeout:
+    tier: local
     command: bash journeys/gate-per-test-timeout.sh
   pr-pager:
+    tier: local
     command: bash journeys/pr-pager.sh
   delivery-style:
+    tier: local
     command: bash journeys/delivery-style.sh
   ticket-statechart:
+    tier: local
     command: bash journeys/ticket-statechart.sh
   machine-enums:
+    tier: local
     command: bash journeys/machine-enums.sh
   machine-rules:
+    tier: local
     command: bash journeys/machine-rules.sh
   ship-brief-style:
+    tier: local
     command: bash journeys/ship-brief-style.sh
   ticket-stage:
+    tier: local
     command: bash journeys/ticket-stage.sh
     timeout: 10m
   ticket-move:
+    tier: local
     command: bash journeys/ticket-move.sh
   state-write:
+    tier: local
     command: bash journeys/state-write.sh
+  contract-agents-md-floor:
+    # measured 0.7 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-agents-md-floor.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-brief-lint:
+    # measured 0.6 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-brief-lint.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-brief:
+    # measured 22.8 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-brief.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-bus-machine-service:
+    # measured 12.6 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-bus-machine-service.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-lint-partitions:
+    # measured 12.0 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-lint-partitions.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-lint-root-memory:
+    # measured 5.1 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-lint-root-memory.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-loss-claim-check:
+    # measured 0.3 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-loss-claim-check.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-machine-enforce:
+    # measured 1.2 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-machine-enforce.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-machine-inbox:
+    # measured 2.8 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-machine-inbox.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-machine-index:
+    # measured 0.5 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-machine-index.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-machine-shadow:
+    # measured 2.4 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-machine-shadow.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-machine-status:
+    # measured 1.3 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-machine-status.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-machine-task:
+    # measured 4.4 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-machine-task.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-machine:
+    # measured 1.4 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-machine.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-prior-art-gate:
+    # measured 0.6 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-prior-art-gate.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-recon-depth:
+    # measured 0.4 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-recon-depth.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-recon-gate:
+    # measured 7.1 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-recon-gate.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'
