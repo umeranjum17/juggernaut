@@ -4,6 +4,8 @@
 # Usage:
 #   jg-alert.sh row <alert>                 print the row: name, fires on, fires at, precedence, first rung, quiet when
 #   jg-alert.sh limit <kind>                print the slow-delivery limit in seconds for a kind of work (0 = none)
+#   jg-alert.sh timers                      print the wait ladder's timers, one "<name> <seconds>" line each: escalate (the stuck-wait
+#                                           precedence's seconds to the next rung), card (two such steps), realert (its repeat), ready-stall
 #   jg-alert.sh raise <alert> <subject> [--mode <delivery word>] [--kind <kind>] [--held <seconds>] [--fact k=v | word]...
 #                     [--home H] [--project P] [--route R] [--machine M] [--ticket T]
 #   jg-alert.sh climb <key> [--now <epoch>]   take the next rung when the rung's timer ran out and the row's top is not reached
@@ -71,6 +73,16 @@ cmd_row() {
     || _die "unknown alert '$1' (known: $(_rows alert | cut -f2 | paste -sd' ' -))"
 }
 cmd_limit() { _rows limit | awk -F'\t' -v k="${1:?usage: limit <kind>}" '$2==k {print $3; f=1} END {exit f?0:1}' || _die "unknown kind '$1' (known: $(_rows limit | cut -f2 | paste -sd' ' -))"; }
+
+# The wait ladder (core/wait-timers) reads every rung timer here, so the table is its only owner.
+cmd_timers() {
+  local prec step repeat stall
+  prec=$(_rows alert | awk -F'\t' '$2=="stuck-wait" {print $5}')
+  read -r step repeat < <(_rows ladder | awk -F'\t' -v p="$prec" '$2==p {print $3, $4}')
+  stall=$(_rows alert | awk -F'\t' '$2=="ready-idle" {print $4}')
+  [ "${step:-0}" -gt 0 ] && [ "${repeat:-0}" -gt 0 ] && [ "${stall:-0}" -gt 0 ] || _die "the alert table has no usable stuck-wait ladder or ready-idle timer"
+  printf 'escalate\t%s\ncard\t%s\nrealert\t%s\nready-stall\t%s\n' "$step" $((step * 2)) "$repeat" "$stall"
+}
 
 cmd_raise() {
   local name=${1:-} subj=${2:-} mode='' kind='' held='' facts=() sc_home='' sc_project='' sc_route='' sc_machine='' sc_ticket=''
@@ -195,6 +207,6 @@ cmd_deliver() {
 [ "$#" -gt 0 ] || { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 c=$1; shift
 case $c in
-  row|limit|raise|climb|ack|reopen|resolve|show|word|list|deliver) "cmd_$c" "$@" ;;
+  row|limit|timers|raise|climb|ack|reopen|resolve|show|word|list|deliver) "cmd_$c" "$@" ;;
   *) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
 esac

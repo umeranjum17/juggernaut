@@ -51,9 +51,11 @@ provenance table now records history, not the current bytes.
   This library reads `JG_WAIT_ALERT_SECS` and `JG_PAUSE_RESURFACE_SECS` from
   that definition (`bin/jg-escalation-workflows.sh timers`) rather than
   defaulting them, so each number has one owner.
-- Environment: `JG_WAIT_ESCALATE_SECS` (default 300) for Main's rung,
-  `JG_WAIT_CARD_SECS` (default 600, above the escalation threshold) for the
-  board card, and `JG_PROMPT_REALERT_SECS` (default 600) for how often a
+- Timers: the alert table owns them (`bin/jg-alert.sh timers`, from the
+  stuck-wait ladder and the ready-idle row); the library writes no number. An
+  environment override still wins: `JG_WAIT_ESCALATE_SECS` for Main's rung,
+  `JG_WAIT_CARD_SECS` (above the escalation threshold) for the
+  board card, and `JG_PROMPT_REALERT_SECS` for how often a
   reached rung is checked and raised again until its source clears (see
   "Re-raise until the wait is handled"). A declared pause rechecks at the
   `JG_PAUSE_RESURFACE_SECS` cadence instead and never escalates.

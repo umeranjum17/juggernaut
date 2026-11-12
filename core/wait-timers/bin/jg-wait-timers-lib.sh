@@ -385,7 +385,7 @@ EOF
 # so it arms and escalates nothing: an episode reported before the pause is
 # closed and the record dropped, and the clock starts again when the pause lifts.
 jg_wait_timers_backlog() {  # <now> <interval>
-  local now=$1 interval=$2 stall=${JG_READY_STALL_SECS:-600} every=${JG_READY_STALL_POLL_SECS:-60}
+  local now=$1 interval=$2 stall=${JG_READY_STALL_SECS:-$(jg_wait_timers_table ready-stall)} every=${JG_READY_STALL_POLL_SECS:-60}
   local record="$STATE/.waiting-timers/.ready-backlog" mark="$STATE/.waiting-timers/.ready-backlog-checked"
   local whyfile="$STATE/.waiting-timers/.ready-backlog-why" why_old
   local rc since='' lanes='' key='' reported=0 last=0 id lead age report reason cond
@@ -540,9 +540,14 @@ jg_wait_timers_definition_timers() {
   "$_JG_WAIT_TIMER_DIR/jg-escalation-workflows.sh" timers 2>/dev/null
 }
 
+# The ladder's rung timers belong to the alert table (bin/jg-alert.sh timers); an environment override still wins.
+jg_wait_timers_table() {  # <name>
+  "$_JG_WAIT_TIMER_DIR/jg-alert.sh" timers 2>/dev/null | awk -F '\t' -v n="$1" '$1 == n { print $2 }'
+}
+
 jg_wait_timers_tick() {
-  local escalate=${JG_WAIT_ESCALATE_SECS:-300} card_secs=${JG_WAIT_CARD_SECS:-600}
-  local interval=${JG_PROMPT_REALERT_SECS:-600}
+  local escalate=${JG_WAIT_ESCALATE_SECS:-$(jg_wait_timers_table escalate)} card_secs=${JG_WAIT_CARD_SECS:-$(jg_wait_timers_table card)}
+  local interval=${JG_PROMPT_REALERT_SECS:-$(jg_wait_timers_table realert)}
   # The owner alert and the pause cadence are the escalation workflow
   # definition's timers, and the owner rung itself is delivered there
   # (bin/jg-escalation-workflows.sh, live on every poll). The two numbers are

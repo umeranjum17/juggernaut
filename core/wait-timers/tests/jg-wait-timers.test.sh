@@ -93,6 +93,8 @@ for verb in blocked needs-decision; do
   dir=$(make_case "$verb")
   mkdir -p "$dir/home/config" "$dir/tmp" "$dir/config" "$dir/parent/state"
   printf 'lead\n' > "$dir/.jg-squad-lead-home"
+  # The lead's required latency check is wired, so the watcher's first cycle rings nothing else (bin/jg-required-checks.sh).
+  printf '#!/bin/sh\n' > "$dir/state/trunk-latency.check.sh" && chmod 0700 "$dir/state/trunk-latency.check.sh" && JG_HOME="$dir" JG_STATE_OVERRIDE="$dir/state" bash "$ROOT/bin/jg-check-register.sh" trunk-latency >/dev/null
   printf 'schema=jg-squad-lead-parent.v1\nroute=local\nparent_home=%s\n' "$dir/parent" > "$dir/.jg-squad-lead-parent"
   channel="$dir/parent/state/lead.status"
   if [ "$verb" = needs-decision ]; then
