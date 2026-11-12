@@ -5,6 +5,7 @@
 #        trunk-landing.sh run <jg-home> <task-id> <head>      (what `check` starts in the background)
 #        trunk-landing.sh runbatch <jg-home> <task-id>@<head>...     (what `check` starts when 2 or more lanes are queued: one stack)
 #        trunk-landing.sh live <jg-home> <project>                   (what a tick starts under a go-live waiver: the batched live step)
+#        trunk-landing.sh nightly <jg-home> <project>                (what a tick starts once a day from nightly-hour: bin/jg-trunk.sh nightly, the whole suite on the tip through the same verify)
 #        trunk-landing.sh verify <jg-home> <project>                 (what a tick starts while the trunk tip is above the green pin: bin/jg-trunk.sh verify, one at a time)
 #        trunk-landing.sh publish <jg-home> <project>                (what a tick starts under a release waiver: bin/jg-trunk.sh publish, the green pin or a candidate after a red)
 #
@@ -50,9 +51,10 @@ case "${1:-}" in
   runbatch) [ "$#" -ge 4 ] || { echo "usage: trunk-landing.sh runbatch <jg-home> <task-id>@<head> <task-id>@<head>..." >&2; exit 2; } ;;
   run) [ "$#" -eq 4 ] || { echo "usage: trunk-landing.sh run <jg-home> <task-id> <head>" >&2; exit 2; } ;;
   verify) [ "$#" -eq 3 ] || { echo "usage: trunk-landing.sh verify <jg-home> <project>" >&2; exit 2; } ;;
+  nightly) [ "$#" -eq 3 ] || { echo "usage: trunk-landing.sh nightly <jg-home> <project>" >&2; exit 2; } ;;
   publish) [ "$#" -eq 3 ] || { echo "usage: trunk-landing.sh publish <jg-home> <project>" >&2; exit 2; } ;;
   live) [ "$#" -eq 3 ] || { echo "usage: trunk-landing.sh live <jg-home> <project>" >&2; exit 2; } ;;
-  *) echo "usage: trunk-landing.sh check|next <jg-home> | runbatch <jg-home> <task-id>@<head>... | run <jg-home> <task-id> <head> | live <jg-home> <project> | verify <jg-home> <project> | publish <jg-home> <project>" >&2; exit 2 ;;
+  *) echo "usage: trunk-landing.sh check|next <jg-home> | runbatch <jg-home> <task-id>@<head>... | run <jg-home> <task-id> <head> | live <jg-home> <project> | verify <jg-home> <project> | nightly <jg-home> <project> | publish <jg-home> <project>" >&2; exit 2 ;;
 esac
 [ -d "$2/state" ] || { echo "trunk-landing: $2 has no state directory" >&2; exit 2; }
 FMH=$(cd "$2" && pwd -P)
@@ -73,7 +75,7 @@ mkdir -p "$MEM" || exit 0
 # (JG_TEST_SEAM=1) it names itself in the suite's registry, so the suite's cleanup stops its process group even after
 # the fixture home is gone (tests/lib.sh jg_test_reap_detached).
 case $1 in
-  run|runbatch|live|publish|verify)
+  run|runbatch|live|publish|verify|nightly)
     if [ "${JG_TEST_SEAM:-}" = 1 ] && [ -n "${JG_TEST_DETACHED_REGISTRY:-}" ]; then
       printf '%s %s\n' "$$" "$(jg_pid_identity "$$" 2>/dev/null)" >> "$JG_TEST_DETACHED_REGISTRY" 2>/dev/null || :
     fi
@@ -149,6 +151,18 @@ if [ "$1" = verify ]; then
   exit 0
 fi
 
+# The nightly whole run for one project (bin/jg-trunk.sh nightly writes the day's report; nightly-due says whether it is time). One at a
+# time per project, and it shares the verify's slot, so it never runs beside a verify.
+if [ "$1" = nightly ]; then
+  pn=$3; proj=$FMH/projects/$pn
+  [[ $pn =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && [ -d "$proj" ] || exit 2
+  jg_lock_try_acquire "$STATE/.trunk-autonightly-$pn.lock" || exit 0
+  trap 'jg_lock_release "$STATE/.trunk-autonightly-$pn.lock"' EXIT
+  JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" nightly-due "$proj" >/dev/null 2>&1 || exit 0
+  JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" nightly "$proj" >"$MEM/nightly-$pn.log" 2>&1 || :
+  exit 0
+fi
+
 # A stack of lanes: one `land-batch` run, then each lane's outcome is read from its own line, the same as a single landing's.
 if [ "$1" = runbatch ]; then
   shift 2; arg=; locked=; out=; rc=0
@@ -202,6 +216,9 @@ if [ "$1" = run ]; then
   run_lock=$STATE/.trunk-run-$id-$head.lock
   jg_lock_try_acquire "$run_lock" || exit 0
   trap 'jg_lock_release "$run_lock"' EXIT
+  # A run started from a check that read the lane before an earlier run landed it (the lane's head moved by the rebase, so the lock of the
+  # old head does not hold it back) finds the lane cleaned up: landing it again would only write a refusal for a lane with no record.
+  [ -f "$STATE/$id.meta" ] || exit 0
   printf 'running %s %s\n' "$(date +%s)" "$$" > "$MEM/$id.$head.state"
   tip=$(verdict_tip "$(basename "$(mval "$STATE/$id.meta" project)")")
   out=$(JG_HOME="$FMH" JG_TRUNK_RUN_HELD_BY="$$" JG_TRUNK_EXPECT_HEAD="$head" "$FMH/bin/jg-trunk.sh" land "$id" 2>&1) || rc=$?
@@ -308,6 +325,17 @@ for tip in "$STATE"/trunk-tip-*; do
   [ "$(cat "$tip" 2>/dev/null)" != "$(cat "$STATE/trunk-green-$pn" 2>/dev/null)" ] || continue
   [ -d "$FMH/projects/$pn" ] && [ "$(local_trunk "$FMH/projects/$pn")" = yes ] || continue
   setsid nohup "$SELF" verify "$FMH" "$pn" >/dev/null 2>&1 < /dev/null &
+done
+# Every tick offers the nightly whole run to each local-trunk project: only a project whose `nightly-due` says it is time gets a detached
+# job (which asks again under its lock).
+for tip in "$STATE"/trunk-tip-*; do
+  [ -z "$QUIET" ] || break
+  [ -f "$tip" ] || continue
+  pn=${tip##*/trunk-tip-}
+  [ -d "$FMH/projects/$pn" ] && [ "$(local_trunk "$FMH/projects/$pn")" = yes ] || continue
+  # Ask first: a tick that is not due starts no process at all, so the nightly job costs every other tick nothing.
+  JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" nightly-due "$FMH/projects/$pn" >/dev/null 2>&1 || continue
+  setsid nohup "$SELF" nightly "$FMH" "$pn" >/dev/null 2>&1 < /dev/null &
 done
 # Under a go-live waiver every tick starts the batched live step (detached, so it never holds a landing back).
 for tip in "$STATE"/trunk-tip-*; do
@@ -485,6 +513,9 @@ if [ "$running" -le 1 ]; then
     id=${ready[0]%%@*}; head=${ready[0]#*@}
   else
   id=${ready[0]%%@*}; head=${ready[0]#*@}
+  # The pick above read the state some time ago: a run that landed this head since has written `landed`, and a running mark written over
+  # it would make the lane look unlanded for good. Read it once more right before the write.
+  case $(cat "$MEM/$id.$head.state" 2>/dev/null) in landed*) rmdir "$MEM/.start" 2>/dev/null; exit 0 ;; esac
   printf 'running %s\n' "$(date +%s)" > "$MEM/$id.$head.state"
   launch_log=$(mktemp "$MEM/$id.$head.launch-XXXXXX.log") || exit 1
   setsid nohup "$SELF" run "$FMH" "$id" "$head" >"$launch_log" 2>&1 < /dev/null &

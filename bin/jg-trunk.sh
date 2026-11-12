@@ -12,6 +12,8 @@
 #        jg-trunk.sh cancel <task-id> --reason <text>   Overwatch only: end the task's running landing (a single run or the stack it is in) through the landing check's own path: stops its process group, clears its running state and locks, records why, starts the next ready lane
 #        jg-trunk.sh verify <project-dir> [<sha>]      run the verify gate over every change since the green pin (default: the tip), one verify at a time and the newest wins; green moves the pin, a red it finds reverts the commit that caused it and raises line-red
 #        jg-trunk.sh verify-due <project-dir>          print the tip and exit 0 when a tick should start a verify (tip above the pin, none running, tip not already ended red)
+#        jg-trunk.sh nightly <project-dir>             the nightly whole run: the verify over the whole suite on the tip (gate-nightly), a red traced to its commit and reverted the same way, a flaky script filed, one report a day
+#        jg-trunk.sh nightly-due <project-dir>         print the day and exit 0 when a tick should start the nightly run (nightly-hour reached, today's run not ended, no verify running)
 #        jg-trunk.sh green-alarm <project-dir>         raise one alarm to Overwatch once the trunk has had no green commit for no-green-alarm-minutes (15)
 #        jg-trunk.sh word live|release <project-dir> "<his words>"   record the captain's word for the commit that would go live or out (both: the last green commit, never the tip)
 #        jg-trunk.sh recover <project-dir> [--prepare <task-id>|--land <task-id>]   report divergence, prepare a merge, or land its exact proved head
@@ -1453,7 +1455,7 @@ cmd_verify_due() {
 }
 
 cmd_verify() {
-  local sha tip rc=0 parent why from culprit='' gate base attempt bad green started=$SECONDS
+  local sha tip rc=0 parent why from culprit='' gate gatekey base attempt bad green started=$SECONDS
   open_project "${1-}"
   # The tip is a ref read, which is atomic, so reading it never waits for a landing; the trunk lock is taken only for a short write.
   tip=$(rev "refs/heads/$TRUNK") || refuse "trunk branch $TRUNK is missing in $PROJ"
@@ -1467,10 +1469,17 @@ cmd_verify() {
   # The line judges what landed since the last green: the green pin is the base when it sits below the commit, so one run covers every
   # commit landed since it (the pin moves up on a green run, so the next run is that much smaller).
   green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
-  if [ -n "$green" ] && [ "$green" != "$sha" ] && git -C "$PROJ" merge-base --is-ancestor "$green" "$sha" 2>/dev/null; then from=$green; parent=$green; else green=; fi
-  if ! gate=$(jg_trunk_gate gate-verify "$PN" "$PROJ" "$sha"); then
+  if [ -n "${VERIFY_NIGHTLY:-}" ]; then
+    # The nightly run is this verify over the whole suite: the gate is not narrowed to any base, and the day's first commit (when the
+    # caller names it) is the base a red is judged and traced against.
+    green=; from=; parent=
+    if [ -n "${VERIFY_NIGHTLY_FROM:-}" ] && git -C "$PROJ" merge-base --is-ancestor "$VERIFY_NIGHTLY_FROM" "$sha" 2>/dev/null && [ "$VERIFY_NIGHTLY_FROM" != "$sha" ]; then from=$VERIFY_NIGHTLY_FROM; parent=$from; fi
+  elif [ -n "$green" ] && [ "$green" != "$sha" ] && git -C "$PROJ" merge-base --is-ancestor "$green" "$sha" 2>/dev/null; then from=$green; parent=$green; else green=; fi
+  if [ -n "${VERIFY_NIGHTLY:-}" ]; then gatekey="gate-nightly"; else gatekey="gate-verify"; fi
+  if ! gate=$(jg_trunk_gate "$gatekey" "$PN" "$PROJ" "$sha"); then
     # No gate for this project (not Juggernaut, and neither gate-verify@$PN nor gate-full@$PN set): nothing can fail, so nothing goes red.
     echo "verify: no verify gate for $PN (no gate-verify@$PN or gate-full@$PN); nothing run, nothing marked red" >&2; gate=
+  elif [ -n "${VERIFY_NIGHTLY:-}" ]; then echo "verify: the nightly whole run, ${from:+judged against the first commit of the day ${from:0:12}}" >&2
   elif [ -n "$green" ]; then
     gate=$(gate_from "$gate" "$green"); echo "verify: judging every change since the green pin ${green:0:12}" >&2
   elif base=$(release_base "$sha"); then
@@ -1518,6 +1527,48 @@ cmd_verify() {
       put "$STATE/trunk-verify-last-$PN" "$sha"
       echo "verify: ${sha:0:12} is not green after its one rerun, and no failed test is charged to a commit; nothing is reverted and the green pin stays at $(green_short): landings go on" >&2; exit 1 ;;
   esac
+}
+
+# The nightly whole run (slice T5): every script of the verify gate on the trunk tip, through the same verify, so a red is traced to its
+# commit and reverted by the same code (the base is the day's first commit), and a script that fails and passes on its rerun is filed as
+# a flaky-test row by the same gate. It writes one report per day (data/trunk/nightly-<project>-<date>.md) and never stops a landing.
+# `nightly-due <project>`: prints the day and returns 0 when a tick should start it: this UTC hour is the nightly-hour or later, today's
+# run has not ended, and no verify is running.
+cmd_nightly_due() {
+  local day hour
+  open_project "${1-}" read-only
+  day=$(date -u +%F); hour=$(pol nightly-hour); case $hour in ''|*[!0-9]*) hour=3 ;; esac
+  [ "$(cat "$STATE/trunk-nightly-last-$PN" 2>/dev/null || true)" != "$day" ] || return 1
+  [ "$((10#$(date -u +%H)))" -ge "$hour" ] || return 1
+  ! verify_running || return 1
+  printf '%s\n' "$day"
+}
+
+cmd_nightly() {
+  local tip day from out rc=0 result started=$SECONDS report flaky_ledger flaky_before flaky_new
+  open_project "${1-}"
+  tip=$(rev "refs/heads/$TRUNK") || refuse "trunk branch $TRUNK is missing in $PROJ"
+  day=$(date -u +%F); report="$DATA/trunk/nightly-$PN-$day.md"; flaky_ledger="$DATA/trunk/flaky-$PN.tsv"
+  from=$(git -C "$PROJ" rev-list -1 --before="24 hours ago" "refs/heads/$TRUNK" 2>/dev/null || true)
+  flaky_before=$(grep -c . "$flaky_ledger" 2>/dev/null || true)
+  out=$(VERIFY_NIGHTLY=1 VERIFY_NIGHTLY_FROM=$from "$SCRIPT_DIR/jg-trunk.sh" verify "$PROJ" "$tip" 2>&1) || rc=$?
+  case $out in
+    *superseded*) echo "nightly: ${tip:0:12} is superseded by a newer verify, so the whole run did not start; a later tick tries again"; return 0 ;;
+  esac
+  if [ "$rc" -eq 0 ]; then result=green
+  elif printf '%s\n' "$out" | grep -q '^reverted '; then result="red, traced to its commit and reverted"
+  else result="red, not reverted (see the lines below)"; fi
+  flaky_new=$(tail -n "+$(( ${flaky_before:-0} + 1 ))" "$flaky_ledger" 2>/dev/null | cut -f3 | sort -u | paste -sd' ' - || true)
+  mkdir -p "$DATA/trunk"
+  {
+    printf '# Nightly whole run of %s on %s\n\n' "$PN" "$day"
+    printf -- '- tip: %s\n- judged against: %s\n- result: %s\n- seconds: %s\n' "$tip" "${from:-no earlier commit}" "$result" "$((SECONDS - started))"
+    printf -- '- flaky scripts filed (passed on their rerun): %s\n\n' "${flaky_new:-none}"
+    printf '%s\n' "$out" | grep -E '^(verify:|reverted |trunk green|note:|REFUSED|warning:)' | sed 's/^/    /'
+  } > "$report"
+  put "$STATE/trunk-nightly-last-$PN" "$day"
+  echo "nightly: $result; report $report"
+  [ "$rc" -eq 0 ] || return 1
 }
 
 green_short() { cut -c1-12 "$STATE/trunk-green-$PN" 2>/dev/null || echo none; }
@@ -2311,6 +2362,8 @@ case "${1:-}" in
   classify) shift; [ "$#" -ge 1 ] && [ -f "$1" ] || die "classify takes an output file and, after it, any gate logs"; classify_refusal "$@" ;;
   verify) shift; cmd_verify "$@" ;;
   verify-due) shift; cmd_verify_due "$@" ;;
+  nightly) shift; cmd_nightly "$@" ;;
+  nightly-due) shift; cmd_nightly_due "$@" ;;
   green-alarm) shift; cmd_green_alarm "$@" ;;
   proof) shift; cmd_proof "$@" ;;
   word) shift; cmd_word "$@" ;;

@@ -42,6 +42,8 @@
 #   conflict-resolver     (empty)     the command of the agent that resolves a rebase conflict in the lander's copy (bin/jg-trunk-resolve-lib.sh);
 #                                     empty sends every conflict back to the worker, as before
 #   conflict-limit-seconds 600        how long that agent has before the run ends returned
+#   gate-nightly         gate-verify  the nightly whole run's gate: its own key, else gate-verify, else gate-full
+#   nightly-hour         3            the UTC hour from which a tick starts the day's nightly whole run, once a day
 #   no-green-alarm-minutes 15         the trunk with no green commit this long (since the oldest commit above the green pin landed) raises one alarm to Overwatch
 _JG_TRUNK_PROTECTED='bin/jg-merge-* bin/jg-pr-merge.sh bin/jg-trunk* bin/jg-dod-lib.sh bin/jg-captain-hold.sh bin/jg-test-run.sh bin/jg-lint.sh bin/jg-ci-* bin/jg-update.sh bin/jg-ff-lib.sh bin/jg-stack.sh core/merge-on-green/* core/merge-card/* core/owner-guard/* core/owner-rules/* core/receipts/* core/teardown/* core/delete-guard/* core/kill-guard/* policy/gate/* .github/workflows/*'
 
@@ -64,6 +66,7 @@ _jg_trunk_policy_set() {  # <key> [<project>]
   printf '%s' "$val"
 }
 
+# gate-nightly is the nightly whole run: its own key, else the project's gate-verify, else its gate-full.
 # The gate command to run for one project at one commit, or nothing (status 1) when that project has no such gate.
 # The built-in gate-lint, gate-full and gate-verify defaults are Juggernaut's own suite, so they apply only to a
 # repository that carries it (the commit has bin/jg-test-run.sh). Any other project runs the gate its home set for it:
@@ -72,7 +75,8 @@ _jg_trunk_policy_set() {  # <key> [<project>]
 jg_trunk_gate() {
   local key=$1 proj=$2 dir=$3 commit=$4 val
   val=$(_jg_trunk_policy_set "$key" "$proj")
-  [ -n "$val" ] || { [ "$key" != gate-verify ] || val=$(_jg_trunk_policy_set gate-full "$proj"); }
+  [ -n "$val" ] || { [ "$key" != gate-nightly ] || val=$(_jg_trunk_policy_set gate-verify "$proj"); }
+  [ -n "$val" ] || case $key in gate-verify|gate-nightly) val=$(_jg_trunk_policy_set gate-full "$proj") ;; esac
   if [ -z "$val" ] && git -C "$dir" cat-file -e "$commit:bin/jg-test-run.sh" 2>/dev/null; then val=$(jg_trunk_policy "$key" "$proj"); fi
   [ -n "$val" ] || return 1
   printf '%s\n' "$val"
@@ -91,6 +95,8 @@ jg_trunk_policy() {  # <key> [<project>]
       gate-lint) val='bin/jg-lint.sh --changed-base HEAD^' ;;
       gate-full) val=$_JG_TRUNK_GATE_FULL ;;
       gate-verify) val=$_JG_TRUNK_GATE_VERIFY ;;
+      gate-nightly) val=$_JG_TRUNK_GATE_VERIFY ;;
+      nightly-hour) val=3 ;;
       gate-rerun) val='bin/jg-test-run.sh --jobs 1' ;;
       gate-red-ticket) val=core-self-checks-red ;;
       release-after-hours) val=48 ;;

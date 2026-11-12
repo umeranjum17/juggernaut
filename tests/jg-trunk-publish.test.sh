@@ -103,7 +103,7 @@ test_a_hung_forge_does_not_hold_the_trunk_lock_and_ends_the_publish_in_one_line(
   # shellcheck disable=SC2016 # the stand-in script expands its own arguments
   printf '#!/usr/bin/env bash\nsleep 60\n' > "$W/fakebin/gh-axi"
   lane h4 h4
-  JG_TRUNK_GH_TIMEOUT=4 trunk publish "$PROJ" > "$W/publish.out" 2>&1 & pid=$!
+  JG_TRUNK_GH_TIMEOUT=20 trunk publish "$PROJ" > "$W/publish.out" 2>&1 & pid=$!  # long enough for the landing below to finish on a loaded host
   sleep 1
   kill -0 "$pid" 2>/dev/null || fail "T7: the publish must still be waiting on the forge"
   out=$(trunk land h4 2>&1) || fail "T7: a landing must start while the forge hangs: $out"

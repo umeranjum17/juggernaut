@@ -74,7 +74,7 @@ printf '%s\\t%s\\n' "\$1" "\$2" >> "$W/send-calls"
 SH
   : > "$HOME_D/config/fleet-ledger"
   chmod +x "$W/root/bin/jg-send.sh" "$W/root/bin/jg-fleet-ledger.sh" "$W/root/bin/jg-teardown.sh" "$W/root/bin/jg-captain-hold.sh" "$W/fakebin/gh-axi" "$HOME_D/config/live-hook.proj"
-  printf 'gate-full=! grep -q BAD work.txt\ngate-verify=! grep -q BAD work.txt\ngate-lint=! grep -q UGLY work.txt\nflush-at-ready=1\n' > "$HOME_D/config/trunk-policy"
+  printf 'gate-full=! grep -q BAD work.txt\ngate-verify=! grep -q BAD work.txt\ngate-lint=! grep -q UGLY work.txt\nflush-at-ready=1\nnightly-hour=24\n' > "$HOME_D/config/trunk-policy"
   printf -- '- proj [local-trunk] - fixture project in local-trunk mode (added 2026-11-07)\n' > "$HOME_D/data/projects.md"
   jg_git_init_commit "$PROJ"
   mkdir -p "$PROJ/bin"; printf '# proj\n' > "$PROJ/AGENTS.md"; : > "$PROJ/bin/.keep"; git -C "$PROJ" add AGENTS.md bin/.keep  # a Squad Lead home is only valid with both

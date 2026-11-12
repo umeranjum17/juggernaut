@@ -14,6 +14,8 @@
 #    and a lane or stack whose tip moved under its gate is judged again on the moved tip.
 # Verify judges every change since the trunk's release base (data/trunk-versions.tsv), the set CI maps for the release
 #    pull request, not only the last commit's.
+# The nightly whole run (jg8-t5, `jg-trunk.sh nightly`, started by the tick): one report a day, a flaky script filed once, a red traced
+#    to its commit and reverted by the verify's own code.
 # The done-done journey journeys/trunk-landing.sh runs this file and seals its output.
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
@@ -329,6 +331,43 @@ test_no_green_for_15_minutes_raises_one_alarm_not_two() {
   pass 'a trunk with no green for 15 minutes raises one alarm through the landing check, never two, and a new stall after the pin moved raises one more'
 }
 
+# The nightly whole run (jg8-t5), started by the tick: every script on the tip through the same verify. Of three changes landed since the
+# day's first commit, one carries a script that fails once and passes on its rerun, and two pass the landing gate alone and break
+# together. The one run writes its day's report, files the flaky script as exactly one ticket, traces the red to the second of the pair
+# and reverts it with line-red, and the same day starts no second run.
+# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
+test_the_nightly_run_writes_its_report_files_one_flake_ticket_and_traces_a_red_to_its_commit() {
+  local base b day report q out runs
+  world nightly; rig
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  q="$HOME_D/state/.wake-queue"; day=$(date -u +%F); report="$HOME_D/data/trunk/nightly-proj-$day.md"
+  printf 'gate-full=true\ngate-verify=false\ngate-nightly=bash %s/rig.sh --all\nnightly-hour=0\n' "$W" >> "$HOME_D/config/trunk-policy"
+  # The day's first commit is two days old; the landing gate is quick, and the verify gate (false) must not be the one the nightly runs.
+  GIT_COMMITTER_DATE=$(date -u -d '2 days ago' +%FT%TZ) lane np '[ ! -e a.txt ] || [ ! -e b.txt ] || { echo "not ok - pair" >&2; exit 1; }' t/pair.test.sh; tip_after_land np >/dev/null
+  base=$(tip); tip > "$HOME_D/state/trunk-green-proj"
+  lane nf "[ -e $W/seen-f ] || { : > $W/seen-f; echo 'not ok - flaky f' >&2; exit 1; }; exit 0" t/f.test.sh; tip_after_land nf >/dev/null
+  lane na one a.txt; tip_after_land na >/dev/null; lane nb two b.txt; b=$(tip_after_land nb)
+  tip > "$HOME_D/state/trunk-verify-last-proj"  # the line's own verify has ended on this tip, so only the nightly run is due
+  [ "$(trunk nightly-due "$PROJ" 2>&1)" = "$day" ] || fail "the nightly run must be due at its hour: $(trunk nightly-due "$PROJ" 2>&1)"
+  sweep >/dev/null
+  for _ in $(seq 1 300); do [ -s "$report" ] && break; sleep 0.2; done
+  [ -s "$report" ] || fail "the nightly run must write its report: $(cat "$HOME_D/data/jg-trunk-landing/nightly-proj.log" 2>&1)"
+  assert_contains "$(cat "$report")" "red, traced to its commit and reverted" "the report names the result"
+  assert_contains "$(cat "$report")" "judged against: $base" "the report names the day's first commit it judged against"
+  assert_contains "$(cat "$report")" "t/f.test.sh" "the report names the flaky script"
+  git -C "$PROJ" log -1 --format=%B trunk | grep -qx "reverts: $b" || fail "the red must be traced to the second of the pair and reverted: $(git -C "$PROJ" log -2 --format=%B trunk)"
+  for _ in $(seq 1 100); do grep -qs "line-red-proj-${b:0:12}" "$q" && break; sleep 0.2; done
+  grep -q "line-red-proj-${b:0:12}" "$q" || fail "line-red must be raised for the traced commit: $(cat "$q" 2>&1)"
+  [ "$(grep -c '^add ' "$W/backlog-calls")" = 1 ] || fail "the flaky script must be filed as exactly one ticket: $(cat "$W/backlog-calls")"
+  assert_contains "$(grep '^add flaky-proj-f ' "$W/backlog-calls")" "t/f.test.sh" "the ticket names the script"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$base" ] || fail "a red nightly run must not move the green pin"
+  # One run a day: the same day starts no second one.
+  out=$(trunk nightly-due "$PROJ" 2>&1) && fail "a day with a finished nightly run is not due again: $out"
+  runs=$(find "$HOME_D/data/trunk" -name 'nightly-proj-*.md' | grep -c .); sweep >/dev/null; sleep 1
+  [ "$(find "$HOME_D/data/trunk" -name 'nightly-proj-*.md' | grep -c .)" = "$runs" ] || fail "a second tick the same day must write no second report"
+  pass 'the nightly run writes its day report, files the flaky script as one ticket, traces a red to its commit and reverts it, and runs once a day'
+}
+
 test_queued_verifies_run_one_at_a_time_and_only_the_newest_runs
 test_a_verify_moves_the_pin_over_a_red_its_parent_already_had
 test_a_verify_over_the_wall_clock_budget_with_no_failed_test_moves_the_pin_and_records_the_load
@@ -340,4 +379,5 @@ test_verify_judges_only_the_changes_since_the_green_pin_and_prints_its_seconds
 test_a_red_with_no_failed_test_never_pins_and_a_ready_lane_lands_on_it
 test_the_tick_verifies_a_landed_pair_that_breaks_together_and_the_pin_moves_only_on_green
 test_no_green_for_15_minutes_raises_one_alarm_not_two
+test_the_nightly_run_writes_its_report_files_one_flake_ticket_and_traces_a_red_to_its_commit
 printf 'jg-trunk-verify: ok\n'
