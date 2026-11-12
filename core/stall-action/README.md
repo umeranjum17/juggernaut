@@ -18,6 +18,19 @@ It prints nothing, so it never wakes anyone.
   This is the hung background terminal behind an idle foreground, for example a background checkpoint.
   The probe reads `/proc`; where that is missing the idle record exempts as before.
 
+## The beat
+
+A task with a beat record (`state/beats/<id>`, one `<epoch> <event>` line per beat) is judged by its last beat instead of the pane hash.
+A task with no beat record keeps the pane rule.
+
+- `silent`: the last beat is a working one and older than the bound. The check interrupts and re-rings, as for a stalled pane.
+- `api-error`: the last beat is a failed turn that names an API error type. The check re-rings with that type.
+- `idle-no-reason`: the last beat is a stop, and the status log holds no declared wait and no done line. The check re-rings.
+- `no-start`: a Claude task has no beat and no status line after the bound. The check re-rings.
+
+Only `silent` interrupts, because nothing hangs in the other three.
+The exemptions, cooldown and one-action-per-beat ledger are the same.
+
 ## What is never touched
 
 - A task with a declared wait (`paused:` or captain-held).

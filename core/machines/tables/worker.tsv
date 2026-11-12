@@ -14,6 +14,11 @@ edge	waiting	resume	working	bin/jg-send.sh:send	-	the wait is answered	jg-machin
 edge	working	claim-done	done	bin/jg-lavish-guard.sh:append	-	the done line names a commit that is reachable	jg-machine-worker
 edge	done	rework	working	bin/jg-send.sh:send	-	a steer, a return from proving or delivering, or the worker starts on another head	jg-machine-worker
 edge	alive	lose	lost	bin/jg-watch.sh:tick	-	the lease is dead and there is no sign of life	jg-machine-worker
+edge	starting	no-start	lost	core/stall-action/stall-action.sh:check	-	a Claude session has no beat and no status line after the stall bound	jg-machine-worker
+edge	working	silent	lost	core/stall-action/stall-action.sh:check	-	the last beat is a working one and older than the stall bound; the check interrupts it	jg-machine-worker
+edge	working	api-error	lost	core/stall-action/stall-action.sh:check	-	the last beat is a failed turn that names an API error type	jg-machine-worker
+edge	working	idle-no-reason	lost	core/stall-action/stall-action.sh:check	-	the last beat is a stop, with no declared wait and no done line in the status log	jg-machine-worker
+edge	lost	ring	working	core/stall-action/stall-action.sh:check	bin/jg-send.sh {id}	the check re-rings the worker through the steering inbox once per beat	jg-machine-worker
 edge	lost	relaunch	starting	bin/jg-control.sh:do_relaunch	bin/jg-control.sh relaunch {id}	the tick or the lead starts a new session on the same work copy; fewer than 3 tries	jg-machine-worker
 edge	alive	stop	exited	bin/jg-control.sh:do_exit	bin/jg-control.sh exit {id}	the lead's word, or the ticket was dropped	jg-machine-worker
 edge	lost	abandon	exited	bin/jg-watch.sh:tick	-	3 tries, or the ticket was dropped	jg-machine-worker

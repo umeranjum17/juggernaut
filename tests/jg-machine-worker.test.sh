@@ -26,7 +26,7 @@ seed() {  # <id> <meta: yes|no> <status line|-> <crew word>
 }
 
 # 1. The table lints clean: 6 states, 11 moves, and the enum file has the same six values.
-jm check worker; expect_code 0 "$RC" "the table lints"; assert_equals "ok worker: 6 states, 11 edges" "$OUT" "lint golden"
+jm check worker; expect_code 0 "$RC" "the table lints"; assert_equals "ok worker: 6 states, 16 edges" "$OUT" "lint golden"
 assert_equals "starting working waiting done lost exited" "$(awk -F'\t' '$1=="state"{printf "%s ", $2}' "$ROOT/core/machines/tables/worker.tsv" | sed 's/ $//')" "the six states"
 jm enum worker; expect_code 0 "$RC" "the enum lints"; assert_contains "$OUT" 6 "six values"
 jm coverage worker; expect_code 0 "$RC" "every edge names its test"

@@ -4,5 +4,5 @@ starting	initial	active	the agent session is coming up
 working	-	active	the agent works on the ticket
 waiting	-	waiting	the agent waits for someone, and said who
 done	-	rest	the agent reported done and its turn ended
-lost	-	waiting	the session shows no sign of life
+lost	-	waiting	the session shows no sign of life: no beat, a silent one, a failed turn or a stop with no reason
 exited	final	final	the session is over

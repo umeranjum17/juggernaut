@@ -9,6 +9,8 @@
 #    polling, and a worker with no pane record are untouched;
 # d) a lead has a 10 min bound; config/stall-bound-workers and config/stall-bound-leads replace the defaults;
 # e) a failed interrupt is retried once on the next sweep and then given up for that hash;
+# h) a task with a beat record is judged by the beat: silent (interrupt and re-ring), API error, idle with no reason and
+#    no start (re-ring only, naming the cause); a fresh beat, a declared wait, a done line and a beat-less task keep their rules;
 # f) the wiring installs a shim that registers, and the unwiring removes it.
 # Usage: stall-action/tests/stall-action.test.sh
 set -euo pipefail
@@ -157,6 +159,32 @@ check "g: the next sweep over the same hash does nothing" "$(calls control bgw)$
 kill "$HUNG" 2>/dev/null || true; wait "$HUNG" 2>/dev/null || true
 unset JG_STALL_ACTION_BG_MIN_AGE
 for t in bgw bgquiet bgchange bgpause bglead bgleadq; do rm -f "$FM/state/$t.meta" "$FM/state/$t.busy-state"; done
+
+
+# h: the beat. state/beats/<id> holds `<epoch> <event>[ error=<type>]`; the beat, not the pane hash, judges such a task.
+: > "$FM/data/stall-action/actions.jsonl"
+beat() { mkdir -p "$FM/state/beats"; printf '%s %s\n' "$(( NOW - $2 * 60 ))" "$3" >> "$FM/state/beats/$1"; }  # <task> <minutes ago> <event [error=..]>
+hlane() { lane "$1" ship 1; printf 'harness=%s\n' "${2:-claude}" >> "$FM/state/$1.meta"; }
+hlane hsilent;  beat hsilent 7 PostToolBatch;               status hsilent "working [at=$NOW]: x"
+hlane herr;     beat herr 7 "StopFailure error=rate_limit"; status herr "working [at=$NOW]: x"
+hlane hidle;    beat hidle 7 Stop;                          status hidle "working [at=$NOW]: x"
+hlane hfresh;   beat hfresh 2 PostToolBatch;                status hfresh "working [at=$NOW]: x"
+hlane hpause;   beat hpause 7 Stop;                         status hpause "paused [at=$NOW]: waiting for the run"
+hlane hdone;    beat hdone 7 Stop;                          status hdone "done [at=$NOW]: ready in branch b"
+hlane hnostart; touch -d "@$(( NOW - 600 ))" "$FM/state/hnostart.meta"
+hlane hother codex; touch -d "@$(( NOW - 600 ))" "$FM/state/hother.meta"
+lane hhash ship 6;  status hhash "working [at=$NOW]: no beat record, the pane rule still applies"
+sweep
+check "h: a silent beat is interrupted once and re-rung once" "$(calls control 'hsilent interrupt')$(calls send 'hsilent Your last call')" 11
+check "h: an API error is re-rung with its type and never interrupted" "$(calls control herr)$(calls send 'herr Your last turn ended on an API error (rate_limit)')" 01
+check "h: an idle agent with no stated reason is re-rung, not interrupted" "$(calls control hidle)$(calls send 'hidle Your turn ended')" 01
+check "h: a task that never started is re-rung" "$(calls control hnostart)$(calls send 'hnostart Your session showed no sign')" 01
+check "h: a fresh beat, a declared wait, a done line and a runtime with no beat are untouched" "$(calls control hfresh)$(calls send hfresh)$(calls send hpause)$(calls send hdone)$(calls send hother)" 00000
+check "h: a task with no beat record keeps the pane rule" "$(calls control 'hhash interrupt')" 1
+check "h: the check prints nothing" "$(cat "$d/out")" ""
+sweep
+check "h: the next sweep over the same beat does nothing" "$(wc -l < "$STUB_LOG")" 0
+for t in hsilent herr hidle hfresh hpause hdone hnostart hother hhash; do rm -f "$FM/state/$t.meta"; done
 
 # f: the wiring installs and registers, the unwiring removes.
 cat > "$FM/bin/jg-check-register.sh" <<'STUB'
