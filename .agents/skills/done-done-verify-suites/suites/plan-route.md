@@ -1,0 +1,3 @@
+# Plan route
+
+Plan route: run `done-done run plan-route` (`bash tests/jg-plan-route.test.sh`, which writes its log into the run's folder); it calls the real `bin/jg-plan-route.sh` from a fixture Main home with a registered Squad Lead home, both on real Beads stores, files a plan of two owners so each slice is in its owner's store and in no other, refuses an unregistered owner, a plan routed from a Squad Lead home and a cross-home dependency with nothing filed, and shows `bin/jg-backlog.sh add --owner` in the wrong home refused with the owner named; it reads only generated fixtures (screen: none). It needs `JG_BEADS_TEST_BD` and `JG_BEADS_TEST_DOLT`, and skips without them.

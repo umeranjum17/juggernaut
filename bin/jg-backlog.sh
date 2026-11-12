@@ -42,6 +42,10 @@
 #     `update`/`edit` that would set one on a [captain-ask] row (or retitle a
 #     row to [captain-ask] with one): an owner ask is top priority. Such an add
 #     or retitle without --priority gets --priority 0 added;
+#   - `add` (or `create`) of a row for another home: `--owner <home>` (or JG_ROW_OWNER, which bin/jg-plan-route.sh
+#     sets) names the home that owns the row, and a home files only its own, so the row lives in one store. A
+#     home is `main` or the id in its squad-lead marker. The refusal names the owner; the flag never reaches the
+#     store. Without it nothing is checked;
 #   - `add` (or `create`) that the optional task-priority feature check refuses,
 #     e.g. no `--priority 0-3`; its message and exit status are returned and
 #     nothing runs. The check is ${XDG_DATA_HOME:-~/.local/share}/jg-task-priority/check.sh
@@ -126,7 +130,10 @@ path_value_next=0
 CAPTAIN_QUOTE=
 CONFIRM_CARD=
 cap_next=
+ROW_OWNER=${JG_ROW_OWNER:-}
+owner_next=0
 for arg in "$@"; do
+  if [ "$owner_next" = 1 ]; then ROW_OWNER=$arg; owner_next=0; continue; fi
   if [ -n "$cap_next" ]; then
     case $cap_next in quote) CAPTAIN_QUOTE=$arg ;; *) CONFIRM_CARD=$arg ;; esac
     cap_next=
@@ -140,6 +147,12 @@ for arg in "$@"; do
   case "$arg" in
     --file|--file=*)
       fail "this command always addresses this home's backlog; drop --file"
+      ;;
+    --owner|--owner=*)
+      case "${1:-}" in
+        add|create) if [ "$arg" = --owner ]; then owner_next=1; else ROW_OWNER=${arg#--owner=}; fi ;;
+        *) ARGS+=("$arg") ;;
+      esac
       ;;
     --captain-quote) cap_next=quote ;;
     --captain-quote=*) CAPTAIN_QUOTE=${arg#--captain-quote=} ;;
@@ -167,6 +180,7 @@ for arg in "$@"; do
 done
 
 [ -z "$cap_next" ] || fail "--captain-quote and --confirm-card each need a value"
+[ "$owner_next" = 0 ] || fail "--owner needs a home name"
 
 # A ticket key names its slug wherever a task id goes; a title or any other value is left alone.
 TICKET_KEY="$SCRIPT_DIR/jg-ticket-key.sh"
@@ -344,10 +358,25 @@ captain_ask_first() {
     *) fail "a [captain-ask] item is top priority and stays at 0; drop --priority $ITEM_PRIORITY" ;;
   esac
 }
+# This home's name as the owner of a row: `main`, or the id its squad-lead marker holds.
+home_owner_name() {
+  local marker
+  marker=$(jg_compat_marker "$JG_HOME")
+  if [ -r "$marker" ]; then tr -d '[:space:]' < "$marker"; else printf 'main'; fi
+}
+# A home files only the rows it owns: a row that names another owner is that home's to file.
+owner_check() {
+  local me
+  [ -n "$ROW_OWNER" ] || return 0
+  me=$(home_owner_name)
+  [ "$ROW_OWNER" = "$me" ] \
+    || fail "this row is owned by $ROW_OWNER and this home is $me: file it in $ROW_OWNER's home (bin/jg-plan-route.sh does that for a plan); nothing was filed"
+}
 # New and edited items: strict intake and owner asks first, then the optional
 # task-priority feature (a new task must carry a priority; no-op when not installed).
 case "${1:-}" in
   add|create)
+    owner_check
     item_args ${ARGS[@]+"${ARGS[@]}"}
     intake_check
     captain_ask_first
