@@ -409,9 +409,9 @@ fleet_world() {
     mkdir -p "$W/$id/state"; touch "$W/$id/state/.last-watcher-beat"
   done
 }
-# grace_now: the beacon grace the health check will derive. Host load is pinned to 1 unless the caller sets JG_HOST_LOAD, so
-# the grace cannot drift between this read and the move.
-export JG_HOST_LOAD=${JG_HOST_LOAD:-1}
+# grace_now: the beacon grace the health check will derive. The load, the CPU count and the poll are fixed outright (a caller's
+# JG_HOST_LOAD, JG_HOST_CPUS or JG_POLL is overridden), so the grace is always 300 s and cannot drift with the host.
+export JG_HOST_LOAD=1 JG_HOST_CPUS=1 JG_POLL=15
 # shellcheck source=/dev/null
 grace_now() { ( . "$ROOT/bin/jg-wake-lib.sh"; jg_poll_derived_grace ); }
 # fleet_move: the move to TIP with the real health check and the real wiring, in a throwaway user home.
