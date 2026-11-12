@@ -15,9 +15,8 @@ them:
 - `Repo invariants` - the seconds-long file comparisons and the coverage proofs.
 - `Lint <n>` - the sharded lint over the files the change touched
   (`bin/jg-lint.sh --changed-base <base>`), not over the whole tree.
-- `Changed tests <n>` - the suite scripts the change's paths map to
-  (`bin/jg-test-run.sh --changed --base <base> --exclude-family real-herdr-gated --max-weight-ms 60000 --shard <n>of8`): a suite whose recorded time is over a minute is named in the log and runs in the post-merge lane instead.
-  The selection is split across eight runners at once, by recorded time, so the slowest required lane is about an eighth of the work.
+- `Tier ci` - the journeys `.done-done.yaml` marks `tier: ci`, run as `done-done run --tier ci`.
+  No shell test shard runs on GitHub. The other scripts run on our host: in proving, in the line's verify, and each night.
 
 `CI required` is still the one required status check, and `bin/jg-ci-required.sh`
 now holds two lane sets: the fast set for a `pull_request` event and the full set

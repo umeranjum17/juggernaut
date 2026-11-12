@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # `CI required` is the one status check a pull request merges on, so its verdict
 # must follow the lane set the event owes exactly: a pull request owes only the
-# fast set (changed-file lint and changed-file tests), a push to main or a
+# fast set (changed-file lint and the tier-ci journeys), a push to main or a
 # release branch owes the full set, every lane this change needed ran and
 # passed, a skipped lane on a behavior change refuses, and a documentation
 # change is allowed to skip the lanes it does not need.
@@ -34,7 +34,7 @@ expect_verdict() {  # <want rc> <event> <behavior> <needs json> <label>
 # The scope verdict itself always passed here, because a skipped invariants job
 # is what CI looks like when nothing reported at all.
 fast_lanes() {  # <result>
-  printf '{"invariants":{"result":"success"},"lint":{"result":"%s"},"tests":{"result":"%s"}}' \
+  printf '{"invariants":{"result":"success"},"lint":{"result":"%s"},"tier-ci":{"result":"%s"}}' \
     "$1" "$1"
 }
 
@@ -76,9 +76,9 @@ test_an_absent_event_owes_the_full_set() {
 }
 
 test_a_skipped_lane_on_a_behavior_change_refuses() {
-  expect_verdict 1 pull_request true '{"invariants":{"result":"success"},"lint":{"result":"success"},"tests":{"result":"skipped"}}' \
+  expect_verdict 1 pull_request true '{"invariants":{"result":"success"},"lint":{"result":"success"},"tier-ci":{"result":"skipped"}}' \
     'a skipped lane on a behavior change must refuse'
-  assert_contains "$OUT" 'tests=skipped' 'the refusal must name the lane that did not run'
+  assert_contains "$OUT" 'tier-ci=skipped' 'the refusal must name the lane that did not run'
   pass 'a skipped lane on a behavior change refuses'
 }
 
@@ -91,7 +91,7 @@ test_a_documentation_change_may_skip_the_behavior_lanes() {
 }
 
 test_a_failed_lane_refuses_even_on_a_documentation_change() {
-  expect_verdict 1 pull_request false '{"invariants":{"result":"success"},"lint":{"result":"failure"},"tests":{"result":"skipped"}}' \
+  expect_verdict 1 pull_request false '{"invariants":{"result":"success"},"lint":{"result":"failure"},"tier-ci":{"result":"skipped"}}' \
     'a failed lane must refuse whatever the scope says'
   assert_contains "$OUT" 'lint=failure' 'the refusal must name the failed lane'
   pass 'a failed lane refuses even on a documentation change'
@@ -107,7 +107,7 @@ test_an_unreadable_scope_refuses() {
 
 # A pull request that touches an area owes that area's suite; an untouched area may skip.
 test_a_touched_area_suite_must_run_on_a_pull_request() {
-  local needs='{"invariants":{"result":"success"},"lint":{"result":"success"},"tests":{"result":"success"},"bus":{"result":"skipped"},"syntax":{"result":"success"},"smoke":{"result":"success"},"evals":{"result":"success"}}'
+  local needs='{"invariants":{"result":"success"},"lint":{"result":"success"},"tier-ci":{"result":"success"},"bus":{"result":"skipped"},"syntax":{"result":"success"},"smoke":{"result":"success"},"evals":{"result":"success"}}'
   AREA_BUS=true AREA_SHELL=true AREA_EVALS=true expect_verdict 1 pull_request true "$needs" \
     'a skipped suite for a touched area must refuse'
   assert_contains "$OUT" 'bus=skipped' 'the refusal must name the skipped area suite'
@@ -117,7 +117,7 @@ test_a_touched_area_suite_must_run_on_a_pull_request() {
   AREA_BUS=false AREA_SHELL=true AREA_EVALS=true expect_verdict 0 pull_request true "$needs" \
     'a skipped suite for an untouched area must pass'
   AREA_BUS=false AREA_SHELL=false AREA_EVALS=false expect_verdict 1 pull_request true \
-    '{"invariants":{"result":"success"},"lint":{"result":"success"},"tests":{"result":"success"},"bus":{"result":"failure"}}' \
+    '{"invariants":{"result":"success"},"lint":{"result":"success"},"tier-ci":{"result":"success"},"bus":{"result":"failure"}}' \
     'a failed area suite must refuse even when the area is untouched'
   pass 'a touched area suite must run on a pull request'
 }

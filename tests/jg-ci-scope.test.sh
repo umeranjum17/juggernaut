@@ -24,7 +24,7 @@ skipped_suite_verdict() {
   local area=$1 path=$2 scope needs lane
   scope=$(scope_of "$path")
   case $area in bus) lane=bus ;; shell) lane=syntax ;; evals) lane=smoke ;; esac
-  needs='{"invariants":{"result":"success"},"lint":{"result":"success"},"tests":{"result":"success"},"bus":{"result":"success"},"syntax":{"result":"success"},"smoke":{"result":"success"},"evals":{"result":"success"}}'
+  needs='{"invariants":{"result":"success"},"lint":{"result":"success"},"tier-ci":{"result":"success"},"bus":{"result":"success"},"syntax":{"result":"success"},"smoke":{"result":"success"},"evals":{"result":"success"}}'
   needs=$(printf '%s' "$needs" | jq -c --arg l "$lane" '.[$l].result = "skipped"')
   OUT=$(JG_CI_EVENT=pull_request JG_CI_NEEDS="$needs" \
     JG_CI_BEHAVIOR="$(printf '%s\n' "$scope" | sed -n 's/^behavior=//p')" \

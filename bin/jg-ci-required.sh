@@ -8,7 +8,7 @@
 #
 # JG_CI_EVENT says which lane set this run owes, and it is the whole reason the
 # merge path is fast: a pull request owes only the fast set, the sharded
-# changed-file lint and the changed-file tests, so its required check finishes
+# changed-file lint and the tier-ci journeys, so its required check finishes
 # in minutes. A push to main or a release branch runs after the merge and owes
 # the full set, including the lanes a pull request no longer waits for. An
 # absent or unknown event owes the full set, so a caller that forgets it gets
@@ -48,7 +48,7 @@ else
 fi
 set -eu
 
-JG_CI_REQUIRED_LANES_PR='lint tests'
+JG_CI_REQUIRED_LANES_PR='lint tier-ci'
 JG_CI_REQUIRED_LANES_FULL='lint syntax smoke evals bus'
 
 jg_ci_required_die() { printf 'error: %s\n' "$*" >&2; exit 1; }

@@ -27,10 +27,9 @@ concurrency:
 # difference between a merge that finishes in minutes and one that waits.
 #
 # A pull request owes the FAST required set only: the repo invariants, the
-# sharded changed-file lint (bin/jg-lint.sh --changed-base), and the
-# changed-file tests (bin/jg-test-run.sh --changed). Those finish in about two
-# minutes on a small change because they work on the files the change touches
-# rather than on the whole tree. It also owes the Bus service, Shell syntax, and
+# sharded changed-file lint (bin/jg-lint.sh --changed-base), and the tier-ci
+# journeys (done-done run --tier ci). Those finish in minutes because lint works
+# on the files the change touches and tier ci holds only the fast contract scripts. It also owes the Bus service, Shell syntax, and
 # Smoke plus Fast evals suites when it touches that suite's area (bin/jg-ci-scope.sh
 # owns the paths); an untouched area skips, and `CI required` refuses a touched
 # area whose suite was skipped or did not report.
@@ -389,38 +388,22 @@ jobs:
           set -eu
           bin/jg-ci-area-reads.sh --check bus -- tests/jg-bus.test.sh
 
-  # The changed-file tests: the suite scripts this change's paths map to, on the
-  # pull request, and nothing else. They are the second half of the fast required
-  # set; the whole suite on main and release branches is
-  # .github/workflows/behavior.yml, which runs post-merge.
-  #
-  # The selection is split across eight runners at once (bin/jg-test-run.sh
-  # --shard owns the split): this job is the longest required one, 1.4 minutes at
-  # the median and 8 to 15 on a wide change such as a release pull request, where
-  # three shards kept the whole run near 16 minutes. The split is by recorded
-  # time, so more runners shorten the wide case and cost nothing on a narrow one
-  # (an empty shard passes at once). The count is only this matrix; --shard reads
-  # strategy.job-total below.
-  # A shard with no scripts passes at once, and `CI required` reads the matrix as
-  # one result, so a failed or cancelled shard still fails the lane.
-  tests:
-    name: Changed tests ${{ matrix.shard }}
+  # The tier-ci set: the journeys .done-done.yaml marks `tier: ci`, run by
+  # done-done itself, and nothing else. It is the second half of the fast required
+  # set. Tier ci holds the contract scripts that need no model and no host-only
+  # tool; every other journey runs on our host, in proving and in the line's
+  # verify, and the whole suite on main and release branches is
+  # .github/workflows/behavior.yml, which runs post-merge. No shell test shard
+  # runs here. In CI (GITHUB_ACTIONS=true) `done-done run` defaults to tier ci;
+  # the flag is spelled out so the job states what it owes.
+  tier-ci:
+    name: Tier ci
     runs-on: ubuntu-latest
     needs: invariants
     if: ${{ needs.invariants.outputs.behavior == 'true' && github.event_name == 'pull_request' }}
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
-        with:
-          # --changed diffs against the pull request's base commit.
-          fetch-depth: 0
-          # Blobless: every commit and tree for the diff, no file contents until
-          # they are read. The history is 107 MB with them and 6.5 MB without.
-          filter: blob:none
       - name: Install pinned ShellCheck
         run: |
           set -eu
@@ -451,14 +434,16 @@ jobs:
           echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
           echo "JG_BEADS_TEST_BD=$NPM_CONFIG_PREFIX/bin/bd" >> "$GITHUB_ENV"
           echo "JG_BEADS_TEST_DOLT=$NPM_CONFIG_PREFIX/bin/dolt" >> "$GITHUB_ENV"
-      - name: Run the tests this change's paths map to
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        # The real-Herdr family needs a live herdr, so it runs in its own
-        # post-merge lane instead of gate-skipping inside the fast set.
+      # The tier runner: done-done at the version toolchain.versions pins.
+      - name: Install the pinned done-done
         run: |
-          bin/jg-test-run.sh --changed --base "$BASE_SHA" --exclude-family real-herdr-gated --max-weight-ms 60000 --hosted \
-            --shard "${{ matrix.shard }}of${{ strategy.job-total }}"
+          set -eu
+          export NPM_CONFIG_PREFIX=$HOME/.local
+          mkdir -p "$NPM_CONFIG_PREFIX/bin"
+          bin/jg-bootstrap.sh install done-done
+          echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
+      - name: Run the tier-ci journeys
+        run: done-done run --tier ci
 
   # The one required status check: it always reports, refusing a lane that did
   # not run.
@@ -467,7 +452,7 @@ jobs:
     runs-on: ubuntu-latest
     # Fast tier: the verdict is a few JSON reads.
     timeout-minutes: 5
-    needs: [invariants, lint, syntax, smoke, evals, bus, tests]
+    needs: [invariants, lint, syntax, smoke, evals, bus, tier-ci]
     if: ${{ always() && !github.event.pull_request.draft && !(github.event_name == 'push' && vars.JG_CI_SKIP_PUSH == '1') }}
     steps:
       - uses: actions/checkout@v6

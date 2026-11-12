@@ -22,7 +22,7 @@ gh-axi gh-axi@0.1.44
 chrome-devtools-axi chrome-devtools-axi@0.1.44
 quota-axi quota-axi@0.1.67
 learn-from-mistakes learn-from-mistakes-axi@0.12.0
-done-done done-done-axi@0.6.18
+done-done done-done-axi@0.6.27
 sign-off-axi sign-off-axi@0.7.0
 first-draft-axi first-draft-axi@0.3.0
 # The message bus every live path in the migration runs on: the JetStream server
