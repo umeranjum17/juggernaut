@@ -18,8 +18,16 @@ cat > "$d/teardown" <<'STUB'
 printf '%s\n' "$*" >> "$STUB_LOG"
 rm -f "$JG_STATE_OVERRIDE/$1.meta"
 STUB
-chmod +x "$d/teardown"
-export JG_LEAD_SWEEP_TEARDOWN=$d/teardown
+cat > "$d/control" <<'STUB'
+#!/usr/bin/env bash
+date +%s > "$JG_STATE_OVERRIDE/$1.exit"
+STUB
+cat > "$d/agent" <<'STUB'
+#!/usr/bin/env bash
+echo alive
+STUB
+chmod +x "$d/teardown" "$d/control" "$d/agent"
+export JG_LEAD_SWEEP_TEARDOWN=$d/teardown JG_LEAD_SWEEP_CONTROL=$d/control JG_LEAD_SWEEP_AGENT=$d/agent
 fails=0
 check() { if [ "$2" = "$3" ]; then echo "ok: $1"; else echo "FAIL: $1 (want: $3, got: $2)"; fails=$((fails + 1)); fi; }
 lane() {
@@ -42,6 +50,6 @@ check "b: the unlanded resolved lane is not torn down" "$(tore open)" 0
 check "b: it is reported once" "$(grep -c '^lead-sweep: open ended as resolved, left alone' "$d/out")" 1
 sweep
 check "b: the next beat prints nothing" "$(wc -c < "$d/out" | tr -d ' ')" 0
-check "c: the unlanded done lane and the paused lane are untouched" "$(tore waiting)$(tore parked)" 00
+check "c: the unlanded done lane and the paused lane are not torn down" "$(tore waiting)$(tore parked)" 00
 [ "$fails" -eq 0 ] || { echo "$fails failed"; exit 1; }
 echo "all passed"

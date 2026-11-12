@@ -16,6 +16,17 @@ A lane (kind ship or scout) whose latest status line is `done` or `resolved` (an
 A `resolved` lane that has not landed is left alone and reported once; a `done` lane that has not landed is waiting for its landing and prints nothing.
 A lane that is still working, a lead, and a lane a landing is running for are never touched.
 
+## Other ends of a lane
+
+Each is acted on once and never forced (limits: `JG_LEAD_SWEEP_PARK_H`, `JG_LEAD_SWEEP_PARK_EMPTY_H`, `JG_LEAD_SWEEP_START_MIN`):
+
+- Done, not landed: the agent ends at once (`bin/jg-control.sh <id> exit`). The copy, branch and ticket stay for the landing.
+- Parked: a ship lane whose last line is paused, blocked or needs-decision for 24 hours (2 hours when its branch has no commit of its own) has its agent ended and its clean copy given back (`jg-teardown.sh <id> --park`). The branch, ticket and records stay.
+- Never started: a ship lane with no status line 30 minutes after its record was written is relaunched once with a note, then parked if it still has none.
+- Agent gone: a lane whose agent is dead or missing, whatever its last line, is cleaned up once its work has landed.
+
+A step that fails prints one alert per lane and reason, like a refused cleanup.
+
 ## Cleanup
 
 The sweep runs `bin/jg-teardown.sh <id>` and never passes `--force`.
