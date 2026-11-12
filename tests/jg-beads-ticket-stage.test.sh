@@ -162,7 +162,9 @@ rc=0; axi moment jg-w1 gated_at --at 2026-11-12T09:30:00Z >/dev/null || rc=$?
 [ "$rc" != 0 ] && [ "$(row jg-w1 | jq -r .metadata.gated_at)" = 2026-11-12T09:59:59Z ] || fail "a moment moved back must be refused and leave the row"
 axi moment jg-w1 returned_at --at $t1 --returned-to proving >/dev/null || fail "returned_at with returned_to"
 [ "$(row jg-w1 | jq -r '.metadata.returned_to')" = proving ] || fail "returned_to must be written with returned_at"
-axi moment jg-w1 landed_at >/dev/null 2>&1 && fail "only the six new moments are written by this verb"
+axi moment jg-w1 conflict_at --at $t1 >/dev/null || fail "conflict_at is a moment this verb writes (slice J32a)"
+[ "$(row jg-w1 | jq -r '.metadata.conflict_at')" = "$t1" ] || fail "conflict_at must be written on the row"
+axi moment jg-w1 landed_at >/dev/null 2>&1 && fail "only the eight moments are written by this verb"
 pass "the writer records the event first, keeps UTC text, and never moves a moment back"
 
 # A wait: three keys in one write, no child row, no stage word, no hold_kind.

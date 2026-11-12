@@ -182,6 +182,8 @@ LANDER_ACCOUNT="${CLAUDE_CONFIG_DIR:-}"; unset CLAUDE_CONFIG_DIR
 . "$SCRIPT_DIR/jg-version-branch-lib.sh"
 # shellcheck source=bin/jg-trunk-policy-lib.sh
 . "$SCRIPT_DIR/jg-trunk-policy-lib.sh"
+# shellcheck source=bin/jg-trunk-resolve-lib.sh
+. "$SCRIPT_DIR/jg-trunk-resolve-lib.sh"
 # shellcheck source=core/trunk-landing/refusal-reach.sh
 . "$SCRIPT_DIR/../core/trunk-landing/refusal-reach.sh"
 export JG_HOME JG_CONFIG_OVERRIDE="$CONFIG"
@@ -656,11 +658,36 @@ cmd_init() {
 # The lane's one commit on the latest tip, made by the lander itself: a three-way merge of the commit onto the tip, committed
 # with the lane's own author, date and message. Prints the new commit; prints nothing when the merge conflicts.
 rebase_commit() {  # <tip> <candidate>
-  local tree ident=()
+  local tree
   tree=$(git -C "$PROJ" merge-tree --write-tree --merge-base="$2^" "$1" "$2" 2>/dev/null) || return 1
-  [ -n "$(git -C "$PROJ" config user.name 2>/dev/null || true)" ] || ident=(-c user.name=jg-trunk -c user.email=jg-trunk@localhost)
-  git -C "$PROJ" log -1 --format=%B "$2" | GIT_AUTHOR_NAME=$(git -C "$PROJ" log -1 --format=%an "$2") GIT_AUTHOR_EMAIL=$(git -C "$PROJ" log -1 --format=%ae "$2") \
-    GIT_AUTHOR_DATE=$(git -C "$PROJ" log -1 --format=%aI "$2") git -C "$PROJ" "${ident[@]+"${ident[@]}"}" commit-tree "$tree" -p "$1"
+  jg_trunk_commit_like "$PROJ" "$tree" "$1" "$2"
+}
+
+# A rebase that met a conflict goes to the landing run's state `resolving` when the home set a resolver (policy conflict-resolver): an
+# agent resolves it in the lander's own copy inside conflict-limit-seconds, and the files it touched are listed on the run
+# (data/trunk-resolving.tsv: task, project, tip, lane commit, state, epoch, touched files or the reason). The run starts with its state and
+# the ticket's conflict_at; it ends `resolved` (the commit is printed and the landing goes on, no steer to the worker) or `returned` (the
+# lane gets the refusal as before, with the reason). With no resolver set nothing here runs. Prints the resolved commit; returns 1 otherwise.
+resolve_conflict() {  # <id> <tip> <candidate>: sets RESOLVE_FRESH (the resolved commit) or RESOLVE_WHY (the reason)
+  local id=$1 cmd limit scratch ticket touched
+  RESOLVE_FRESH=''; RESOLVE_WHY=''
+  cmd=$(pol conflict-resolver) || cmd=''
+  [ -n "$cmd" ] || return 1
+  limit=$(pol conflict-limit-seconds); [[ $limit =~ ^[0-9]+$ ]] && [ "$limit" -gt 0 ] || limit=600
+  scratch="$DATA/trunk/resolve-$PN-${3:0:12}"; ticket=$(jg_dod_meta_value "$META" ticket); ticket=${ticket:-$id}
+  mkdir -p "$DATA/trunk"
+  row trunk-resolving.tsv "$id" "$PN" "$2" "$3" resolving "$(date +%s)" ""
+  JG_HOME=$JG_HOME JG_DATA_OVERRIDE=$DATA "$SCRIPT_DIR/jg-backlog.sh" moment "$ticket" conflict_at >/dev/null 2>&1 \
+    || echo "jg-trunk: warning: conflict_at of $ticket was not written; the resolving run goes on" >&2
+  if RESOLVE_FRESH=$(jg_trunk_resolve "$PROJ" "$2" "$3" "$cmd" "$limit" "$scratch" 2>"$scratch.why"); then
+    touched=$(paste -sd' ' "$scratch/touched" 2>/dev/null || :)
+    row trunk-resolving.tsv "$id" "$PN" "$2" "$3" resolved "$(date +%s)" "$touched"
+    echo "land: the conflict of $id with $TRUNK (${2:0:12}) is resolved in the lander's copy; touched: $touched" >&2
+    rm -f -- "$scratch.why"; return 0
+  fi
+  RESOLVE_FRESH=''; RESOLVE_WHY=$(tail -n 1 "$scratch.why" 2>/dev/null || :); rm -f -- "$scratch.why"
+  row trunk-resolving.tsv "$id" "$PN" "$2" "$3" returned "$(date +%s)" "$RESOLVE_WHY"
+  return 1
 }
 
 # The lane follows its rebased commit, so cleanup finds the branch where the trunk is: in its own clean worktree by
@@ -749,9 +776,10 @@ lane_admit() {  # <id> <tip> <expected head or -> <follow 0|1>
     base=$(git -C "$PROJ" merge-base "$tip" "$LANE_CAND" 2>/dev/null) || refuse "$LANE_BRANCH shares no history with $TRUNK (${tip:0:12}); start the lane on the trunk tip"
     n=$(git -C "$PROJ" rev-list --count "$base..$LANE_CAND")
     [ "$n" = 1 ] || refuse "one commit per ticket: $LANE_BRANCH has $n commits over $TRUNK; squash it to one"
-    fresh=$(rebase_commit "$tip" "$LANE_CAND") || {
+    RESOLVE_WHY=''
+    fresh=$(rebase_commit "$tip" "$LANE_CAND") || { resolve_conflict "$id" "$tip" "$LANE_CAND" && fresh=$RESOLVE_FRESH; } || {
       hit=$(conflict_paths "$tip" "$LANE_CAND")
-      refuse "$LANE_BRANCH conflicts with $TRUNK (${tip:0:12}) in: ${hit:-an unreadable merge}; a lane rebases and fixes it, then reports ready again; it is never landed dirty"
+      refuse "$LANE_BRANCH conflicts with $TRUNK (${tip:0:12}) in: ${hit:-an unreadable merge}; ${RESOLVE_WHY:+the resolver did not resolve it ($RESOLVE_WHY); }a lane rebases and fixes it, then reports ready again; it is never landed dirty"
     }
     [ "$4" != 1 ] || lane_follow "$LANE_BRANCH" "$LANE_CAND" "$fresh" "$(jg_dod_meta_value "$META" worktree)"
     LANE_CAND=$fresh
