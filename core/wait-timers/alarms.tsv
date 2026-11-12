@@ -5,3 +5,5 @@ fleet-report	event
 pr-pager	event
 auto-dispatch	event
 records-reaper	event
+alert-*	event
+line-red-*	event
