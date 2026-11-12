@@ -1,0 +1,19 @@
+machine	account	state/<provider>-accounts.json, state/<provider>-accounts-rested/<id> and state/account-assignments.json: one account of the pool (id: <provider>.<account id>; machine 11 of the state-machine plan)	core/machines/observers/account.sh
+enum	account
+state	available	initial	Signed in, and nobody uses it.	-	rest	lease
+state	in-use	normal	One worker or more uses it.	leases	active	-
+state	limited	normal	Its quota is used up until a reset time.	reset_at	rest	reset
+state	signed-out	normal	Its login does not work.	-	waiting	0s -> alert capacity
+state	retired	terminal	It is out of the pool for good.	-
+group	signed-in	available	in-use	limited
+edge	(none)	add	available	core/claude-accounts/bin/claude-accounts-quota.sh:reading	-	the owner signed the account in, or a pin file names it	jg-machine-account
+edge	available	lease	in-use	core/claude-accounts/bin/claude-accounts-pick:pick	-	the pin allows this account for this worker; the count becomes 1	jg-machine-account
+edge	in-use	recount	in-use	core/claude-accounts/bin/claude-accounts-pick:pick	-	another worker takes a lease, or one holder of several ends: only the count of leases changes	jg-machine-account
+edge	in-use	release	available	core/claude-accounts/bin/claude-accounts-pick:pick	-	the last lease ended	jg-machine-account
+edge	in-use	hit-limit	limited	core/claude-accounts/bin/claude-accounts-pick:rest	-	a limit message, or usage at the cap	jg-machine-account
+edge	limited	reset	available	core/claude-accounts/bin/claude-accounts-pick:unrest	-	the reset time is reached	jg-machine-account
+edge	signed-in	sign-out	signed-out	core/claude-accounts/bin/claude-accounts-quota.sh:reading	-	the login check fails	jg-machine-account
+edge	signed-out	sign-in	available	core/claude-accounts/bin/claude-accounts-quota.sh:reading	-	the owner signed in	jg-machine-account
+edge	signed-in	retire	retired	core/claude-accounts/bin/claude-accounts-quota.sh:reading	-	the owner's word	jg-machine-account
+edge	signed-out	retire-out	retired	core/claude-accounts/bin/claude-accounts-quota.sh:reading	-	the owner's word	jg-machine-account
+observer	bash "$(dirname "$JG_MACHINES_TABLES")/observers/account.sh" "$1"
