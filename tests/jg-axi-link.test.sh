@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Journey for putting `juggernaut-axi` on PATH (migration goal 5, step 1), driven by journeys/axi-on-path.sh.
+# Journey for putting `juggernaut-axi` on PATH (migration goal 5, step 1), driven by tests/jg-axi-link.test.sh.
 # A clean machine has no juggernaut-axi on PATH and its migration row is absent. The real session-start
 # bootstrap then links it, the row reads live, a second run changes nothing, two homes on one machine
 # each get their own bin/juggernaut-axi from one launcher, a deleted home hands the launcher to the

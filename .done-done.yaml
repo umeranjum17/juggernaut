@@ -8,7 +8,7 @@ journeys:
     command: bash journeys/status-cold-scan.sh
   learnings:
     tier: local
-    command: bash journeys/learnings.sh
+    command: bash tests/jg-learnings.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   message-table:
     tier: local
     command: bash journeys/message-table.sh
@@ -47,7 +47,7 @@ journeys:
     command: bash journeys/ci-rerun-refusal.sh
   stack-install:
     tier: local
-    command: bash journeys/stack-install.sh
+    command: bash tests/jg-stack.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   wake-watcher:
     tier: local
     command: bash journeys/wake-watcher.sh
@@ -90,7 +90,7 @@ journeys:
     command: bash journeys/migration-card.sh
   axi-on-path:
     tier: local
-    command: bash journeys/axi-on-path.sh
+    command: bash tests/jg-axi-link.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   relaunch-model-refusal:
     tier: local
     command: bash tests/jg-control.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -175,7 +175,7 @@ journeys:
     command: bash journeys/design-call-gate.sh
   merge-gate-policy:
     tier: local
-    command: bash journeys/merge-gate-policy.sh
+    command: bash tests/jg-merge-gate-policy.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   running-products:
     tier: local
     command: bash journeys/running-products.sh
@@ -356,16 +356,16 @@ journeys:
     command: bash journeys/context-bound-at-wake.sh
   owner-rules-whole:
     tier: local
-    command: bash journeys/owner-rules-whole.sh
+    command: JG_SESSION_START_ONLY='test_context_digest_absent_empty_present test_context_owner_rules_whole test_learnings_index_and_body_cap' bash tests/jg-session-start.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   axi-digest:
     tier: local
-    command: bash journeys/axi-digest.sh
+    command: JG_SESSION_START_ONLY="test_finished_lanes_fold_into_one_axi_row test_learnings_index_and_body_cap test_digest_stays_under_its_cap_with_300_open_decisions" bash tests/jg-session-start.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   remote-squad-lead-lifecycle:
     tier: local
     command: bash journeys/remote-squad-lead-lifecycle.sh
   unit-claim:
     tier: local
-    command: bash journeys/unit-claim.sh
+    command: bash tests/jg-unit-claim.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   test-unit-isolation:
     tier: local
     command: bash journeys/test-unit-isolation.sh

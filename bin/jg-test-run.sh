@@ -919,7 +919,6 @@ tests/jg-wake-daemon-lifecycle-e2e.test.sh 15568
 tests/jg-wake-core.test.sh 4900
 tests/jg-wake-router.test.sh 1211
 tests/jg-wake-route.test.sh 24386
-tests/token-cuts-live.test.sh 30146
 tests/jg-wake-drain-open-decisions-cursor.test.sh 148819
 tests/jg-wake-next.test.sh 4801
 tests/jg-planned-wait.test.sh 83716
@@ -1001,7 +1000,6 @@ tests/jg-machine-status.test.sh 4000
 tests/jg-machine.test.sh 2000
 tests/jg-merge-alert.test.sh 1726
 tests/jg-proof-gate.test.sh 502
-tests/jg-red-ci-ticket.test.sh 554
 tests/jg-rejected-state-check-once.test.sh 26500
 tests/jg-sentinel-inbox-ring.test.sh 19000
 tests/jg-ticket-link-guard.test.sh 1152

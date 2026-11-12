@@ -5,7 +5,7 @@
 # rules and 41 task records through the completion-receipt acceptance, each held to the decision the shell rules
 # gave before they moved to policy.
 #
-# This is also the test that owns journeys/merge-gate-policy.sh (the done-done journey runs this file), so the
+# This is also the test that owns tests/jg-merge-gate-policy.test.sh (the done-done journey runs this file), so the
 # changed-test map selects it for a change to that journey or to anything under policy/gate/.
 # Needs opa and Go; with either absent it skips.
 set -u

@@ -1321,7 +1321,7 @@ EOF
 
 # A finished lane is one juggernaut-axi row in the digest, not a meta block, endpoint read and status tail;
 # a running lane is printed whole; the supervision block points the agent at the same command.
-# Driven by journeys/axi-digest.sh.
+# Driven by tests/jg-session-start.test.sh.
 test_finished_lanes_fold_into_one_axi_row() {
   local rec root home fakebin out
   rec=$(new_world axi-folded-lanes)
@@ -2994,7 +2994,7 @@ EOF
   pass "session start rejects Pi loaded markers from previous sessions"
 }
 
-# JG_SESSION_START_ONLY="<test function> ..." runs just those cases (journeys/axi-digest.sh uses it).
+# JG_SESSION_START_ONLY="<test function> ..." runs just those cases (tests/jg-session-start.test.sh uses it).
 if [ -n "${JG_SESSION_START_ONLY:-}" ]; then
   for case_name in $JG_SESSION_START_ONLY; do "$case_name"; done
   echo "# jg-session-start.test.sh: selected cases passed"
