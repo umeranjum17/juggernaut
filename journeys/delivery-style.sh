@@ -14,6 +14,9 @@ rc=0
   # The mode-branch count of the plan (section 12, M7): lines that branch on a mode word in bin and core outside tests..
   pat='(local-only|local-trunk|direct-PR|no-mistakes)\)|= *"?(local-only|local-trunk|direct-PR|no-mistakes)"? *\]|== *"?(local-only|local-trunk|direct-PR|no-mistakes)'
   echo "== mode branch lines in bin and core: $(git -C "$root" grep -n -E "$pat" -- bin core ':!*test*' | wc -l) (76 on the trunk before this slice, 81 before J7)"
+  # J8a: these five files read the table, so the count for them is 0 (it was 5: jg-spawn.sh, jg-promote.sh, jg-merge-local.sh, jg-home-seed.sh, jg-receipts-lib.sh).
+  j8a=$(git -C "$root" grep -n -E "$pat" -- bin/jg-spawn.sh bin/jg-promote.sh bin/jg-merge-local.sh bin/jg-home-seed.sh core/receipts/bin/jg-receipts-lib.sh | wc -l)
+  echo "== mode branch lines in the five J8a files: $j8a (5 before J8a)"; [ "$j8a" -eq 0 ] || rc=1
   for m in no-mistakes direct-PR local-only local-trunk; do echo "== knob $m: $(bash "$ds" knob "$m")"; done
   # J8c: these four files read the table too, so the count for them is 0 (it was 10: jg-brief.sh 4, jg-fleet-snapshot.sh 4, jg-backlog-transition-lib.sh 1, jg-project-mode.sh 1).
   j8c=$(git -C "$root" grep -n -E "$pat" -- bin/jg-brief.sh bin/jg-fleet-snapshot.sh bin/jg-backlog-transition-lib.sh bin/jg-project-mode.sh | wc -l)

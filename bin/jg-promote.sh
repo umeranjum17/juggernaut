@@ -298,7 +298,7 @@ fi
 # the --yes ban is the delivery hole this file used to leave open.
 INSTRUCTIONS="$DATA/$ID/ship-instructions.md"
 PROMOTION_ASK_USER_BLOCK=
-if [ "$MODE" = no-mistakes ]; then
+if jg_delivery_style_is "$MODE" review; then
   PROMOTION_ASK_USER_BLOCK=$(jg_ask_user_escalation_block "$DATA" "$ID")
 fi
 IFS= read -r -d '' PROMOTION_SHIP_SPEC <<EOF || true

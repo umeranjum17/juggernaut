@@ -2870,7 +2870,7 @@ if [ "$KIND" = ship ]; then
   PROJ_NAME=$(basename "$PROJ_ABS")
   # The parser's own refusal reaches the operator here rather than being
   # discarded: an entry it refuses (an unknown forge token, or a forge on
-  # local-only) resolves to no posture at all, and launching on the silent
+  # a line that publishes nothing) resolves to no posture at all, and launching on the silent
   # default is how a mistyped forge would hand a Gerrit project the
   # pull-request contract.
   if ! STANDING_FORGE=$("$JG_ROOT/bin/jg-project-mode.sh" --forge "$PROJ_NAME" 2>/dev/null); then

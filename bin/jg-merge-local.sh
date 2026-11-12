@@ -100,7 +100,7 @@ fi
 PROJ=$(grep '^project=' "$META" | cut -d= -f2-)
 MODE=$(grep '^mode=' "$META" | cut -d= -f2- || true)
 if ! jg_delivery_style_is "$MODE" local || jg_delivery_style_is "$MODE" trunk; then
-  echo "error: task $ID is mode=$MODE, not a local task landed by hand (local-only); trunk lanes land through the trunk landing check, merge PR tasks with bin/jg-pr-merge.sh <id> <PR url> after approval" >&2
+  echo "error: task $ID is mode=$MODE, not a local task landed by hand; trunk lanes land through the trunk landing check, merge PR tasks with bin/jg-pr-merge.sh <id> <PR url> after approval" >&2
   exit 1
 fi
 
