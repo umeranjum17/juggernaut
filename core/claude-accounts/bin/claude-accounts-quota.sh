@@ -99,4 +99,6 @@ JSON=$(printf '%s\n' "${ACCOUNTS[@]}" | jq -sc --argjson at "$(date +%s)" '{sche
 mkdir -p "$JG_HOME/state"
 tmp=$(mktemp "$OUT.XXXXXX") && printf '%s\n' "$JSON" >"$tmp" && mv -f "$tmp" "$OUT" || { echo "error: cannot write $OUT" >&2; exit 1; }
 [ "$PRINT" -eq 0 ] || printf '%s\n' "$JSON"
+# The ledger of readings (core/lane-scale/quota.sh): one line for each account, so a reader that goes blind is seen.
+[ ! -x "$JG_HOME/core/lane-scale/quota.sh" ] || "$JG_HOME/core/lane-scale/quota.sh" record "$JG_HOME" "$PROVIDER" || echo "warning: quota ledger not written" >&2
 jq -e 'any(.accounts[]; .problem == null)' "$OUT" >/dev/null
