@@ -1004,7 +1004,7 @@ Before reporting done, run \`$JG_ROOT/bin/jg-recon-gate.sh $ID\` until it prints
 "
   if [ "$DEPTH" = deep ]; then
     DEPTH_SECTION="${DEPTH_SECTION}This is a deep Recon: you are the one researcher.
-After your draft report is complete, append \`needs-decision [at=<epoch>]: draft ready for the separate critic\` to the status file and stop; juggernaut dispatches one separate critic worker, and its \`critic.md\` is installed beside your report.
+After your draft report is complete, append \`done [at=<epoch>]: draft ready for the separate critic\` to the status file and stop; the gate lets that done through while only the critic is open, the ticket is then in its proving step critic, juggernaut dispatches one separate critic worker, and its \`critic.md\` is installed beside your report.
 Never write \`critic.md\` yourself for a deep Recon; the gate refuses a critic that is you.
 Close every gap the critic finds, then run the gate again.
 "

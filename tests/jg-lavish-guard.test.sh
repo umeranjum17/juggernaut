@@ -156,6 +156,42 @@ test_a_critic_task_done_needs_no_report() {
   pass 'a critic task says done on its critic.md, with no report'
 }
 
+# The Recon gate journey for a deep Recon: the researcher's done with its draft is accepted while only the critic is
+# open, writes no needs-decision line, and cleanup's plain gate still waits for the critic.
+test_a_deep_draft_says_done_with_its_critic_open() {
+  command -v jq >/dev/null 2>&1 || { pass 'skipped: jq not found'; return; }
+  local id=rc-deep home dir n title kinds=(code docs upstream oss community run)
+  home=$(recon_home deep "$id"); dir=$home/data/$id
+  jg_write_meta "$home/state/$id.meta" "window=juggernaut:jg-$id" "worktree=$home/projects/none" \
+    "project=$home/projects/sample" "harness=claude" "kind=scout" "mode=scout"
+  JG_HOME="$home" JG_DATA_OVERRIDE="$home/data" "$ROOT/bin/jg-brief.sh" "$id" sample --scout --depth deep >/dev/null 2>&1 \
+    || fail 'could not scaffold the deep Recon'
+  for n in $(seq 1 20); do
+    printf '{"id":"S-%d","kind":"%s","title":"s","link":"x/%d","read":"2026-11-05"}\n' "$n" "${kinds[$((n % 5))]}" "$n" >> "$dir/sources.jsonl"
+  done
+  printf '{"id":"C-1","text":"a claim","kind":"fact","sources":["S-1","S-2"],"load_bearing":true}\n' > "$dir/claims.jsonl"
+  printf '{"claim":"C-1","status":"verified","method":"run","note":"checked"}\n' > "$dir/checks.jsonl"
+  n=1; printf '# Report\n\n' > "$dir/report.md"
+  for title in "Answer" "What was asked" "Method and depth record" "Prior art and options" "Findings" "Design" "Not checked" \
+    "Implementation plan" "Risks and mitigations" "Open decisions" "Acceptance test" "Sources and evidence" "Revision log"; do
+    printf '## %d. %s\nBody citing [C-1].\n\n' "$n" "$title" >> "$dir/report.md"; n=$((n + 1))
+  done
+  PATH="$home/fakebin:$PATH" JG_HOME="$home" JG_STATE_OVERRIDE="$home/state" JG_DATA_OVERRIDE="$home/data" \
+    JG_CONFIG_OVERRIDE="$home/config" "$ROOT/bin/jg-captain-hold.sh" complete "$id" --none >/dev/null 2>&1 \
+    || fail 'could not attest the completion gate'
+  recon_append "$home" "$id" 'done [at=1]: draft ready for the separate critic'
+  [ "$RC" -eq 0 ] || fail "a deep draft with only its critic open was refused: $ERR"
+  assert_grep 'done [at=1]: draft ready for the separate critic' "$home/state/$id.status" 'the done line is appended'
+  assert_no_grep 'needs-decision' "$home/state/$id.status" 'the critic handoff wrote no needs-decision line'
+  if JG_HOME="$home" JG_DATA_OVERRIDE="$home/data" JG_STATE_OVERRIDE="$home/state" bash "$ROOT/bin/jg-recon-gate.sh" "$id" >/dev/null 2>&1; then
+    fail 'the plain gate passed a Recon whose critic is open'
+  fi
+  rm -f "$dir/report.md"
+  recon_append "$home" "$id" 'done [at=2]: draft ready for the separate critic'
+  [ "$RC" -eq 1 ] || fail 'a deep Recon with no report was let through the critic step'
+  pass 'a deep Recon says done with its draft while only the critic is open, with no needs-decision line, and cleanup still waits'
+}
+
 test_tonights_report_link_is_refused
 test_a_lavish_publish_command_is_refused
 test_clean_report_text_passes
@@ -164,4 +200,5 @@ test_the_lead_report_helper_refuses_before_append
 # These two need a Beads store; a host without one skips the suite from here, so they run last.
 test_a_recon_done_waits_for_both_gates
 test_a_critic_task_done_needs_no_report
+test_a_deep_draft_says_done_with_its_critic_open
 printf 'jg-lavish-guard: ok\n'

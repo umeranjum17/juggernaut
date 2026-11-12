@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The Recon depth gate: one shell check on a Recon's files, never a model call.
 #
-# Usage: jg-recon-gate.sh <task-id> [--depth <quick|standard|deep>]
+# Usage: jg-recon-gate.sh <task-id> [--depth <quick|standard|deep>] [--step]
 #
 # bin/jg-brief.sh --scout writes `Recon depth: <level>` into a standard or deep
 # Recon's brief, and .agents/skills/deep-recon/SKILL.md owns the method. Before
@@ -26,6 +26,12 @@
 # flag existed). The depth is read from data/<task-id>/brief.md unless --depth is
 # given. The data directory is JG_DATA_OVERRIDE, else <JG_HOME>/data.
 #
+# --step asks where a Recon stands in the ticket stage `proving` (core/machines/tables/proving.tsv): a deep
+# Recon whose only refusals are about its separate critic prints `recon gate: STEP critic - ...` and exits 0, so
+# its researcher's done line is the claim-done move and the critic is a step of proving, not a wait. Every
+# other refusal still refuses, and a Recon with no refusal prints PASS. Cleanup never passes --step, so a Recon
+# whose critic is open is still not cleanable.
+#
 # A critic task is judged on its critic.md alone. Its data directory holds a
 # critic.md whose `Critic:` line names the task itself and no report.md; the
 # researcher's report is not its product. It passes with that `Critic:` line and
@@ -47,11 +53,13 @@ die() { echo "jg-recon-gate: $*" >&2; exit 2; }
 task=
 depth=
 is_critic=
+step=
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --depth) [ "$#" -ge 2 ] || die "usage: jg-recon-gate.sh <task-id> [--depth <quick|standard|deep>]"; depth=$2; shift 2 ;;
     --depth=*) depth=${1#--depth=}; shift ;;
     --is-critic) is_critic=1; shift ;;
+    --step) step=1; shift ;;
     -*) die "usage: jg-recon-gate.sh <task-id> [--depth <quick|standard|deep>]" ;;
     *) [ -z "$task" ] || die "usage: jg-recon-gate.sh <task-id> [--depth <quick|standard|deep>]"; task=$1; shift ;;
   esac
@@ -113,11 +121,12 @@ if [ -d "$dir/board-report" ]; then
   JG_DATA_OVERRIDE=$data "$root/bin/jg-report-page.sh" check "$task" >/dev/null || exit 1
 fi
 
-python3 -I - "$dir" "$task" "$depth" <<'PY'
+python3 -I - "$dir" "$task" "$depth" "$step" <<'PY'
 import json, os, re, sys
 
-d, task, depth = sys.argv[1:4]
+d, task, depth, step = sys.argv[1:5]
 refusals = []
+critic_refusals = []
 
 
 def refuse(msg):
@@ -210,6 +219,7 @@ for cid, c in sorted(claims.items()):
         refuse(f"load-bearing claim {cid} is {st}, and section 7 'Not checked' does not list it")
 
 # --- critic ------------------------------------------------------------------
+before_critic = len(refusals)
 cpath = os.path.join(d, "critic.md")
 if not os.path.isfile(cpath):
     refuse("critic.md is missing")
@@ -248,6 +258,10 @@ else:
         if depth == "deep" and gap_rounds > 3:
             refuse(f"critic.md has {gap_rounds} rounds with new gaps; a deep Recon allows 3")
 
+critic_refusals = refusals[before_critic:]
+if step and depth == "deep" and critic_refusals and before_critic == 0:
+    print(f"recon gate: STEP critic - deep Recon {task}: the draft is complete and its separate critic is open ({'; '.join(critic_refusals)})")
+    sys.exit(0)
 if refusals:
     for r in refusals:
         print(f"jg-recon-gate: refused: {r}", file=sys.stderr)

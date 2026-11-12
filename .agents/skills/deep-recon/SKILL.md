@@ -81,10 +81,10 @@ Gaps the critic finds go back to stage 3 as the next sweep round.
 ## Deep: one researcher, one critic
 
 The researcher never spawns the critic and never writes `critic.md` for a deep Recon.
-It finishes the draft, then reports `needs-decision: draft ready for the separate critic` and stops.
+It finishes the draft, then reports `done: draft ready for the separate critic` and stops: the gate (`bin/jg-recon-gate.sh --step`) lets that done through while only the critic is open, and the ticket is in the step `critic` of its stage `proving`, with no decision and no wait.
 Overwatch dispatches exactly one critic worker with a fresh isolated copy, the draft, and these rubric lines.
 The critic worker writes the `critic.md` content with `Critic: <its own task id>`, and Overwatch installs it as `data/<researcher-task>/critic.md`.
-When the critic finds gaps, the researcher closes them and Overwatch steers the same critic for the next round.
+When the critic finds gaps, the researcher closes them and appends `done` again with the new draft, and Overwatch steers the same critic for the next round. Cleanup still needs the plain gate to pass, so a Recon whose critic is open is not cleanable.
 A second critic worker never starts, and neither does a fan-out.
 The gate refuses a deep `critic.md` whose `Critic:` is `self`, empty, or the researcher's own task id.
 

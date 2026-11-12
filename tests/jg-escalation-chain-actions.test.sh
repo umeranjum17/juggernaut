@@ -87,38 +87,6 @@ test_an_unanswered_ring_is_relaunched_then_reaches_main() {
   pass "an unanswered ring is relaunched by the ladder, then the lead owns it, Main hears only after that, and the ledger names the steps"
 }
 
-test_a_ready_recon_draft_is_forwarded_to_its_critic() {
-  local m w row draft=/drafts/rc/report.md CYCLE_POLLS=100 PANES='1 2 3 4'
-  m=$(home critic-forward)
-  : > "$m/real-steer"
-  # rc's critic was started before this draft; rd's after it, so rd's critic already has its draft.
-  printf 'kind=scout\nbackend=tmux\nwindow=fake:1\nharness=claude\n' > "$m/state/rc.meta"
-  printf 'kind=scout\nbackend=tmux\nwindow=fake:2\nharness=claude\nspawn_gen=s1000.1.1\n' > "$m/state/rc-critic.meta"
-  printf 'kind=scout\nbackend=tmux\nwindow=fake:3\nharness=claude\n' > "$m/state/rd.meta"
-  printf 'kind=scout\nbackend=tmux\nwindow=fake:4\nharness=claude\nspawn_gen=s%s.1.1\n' "$(($(date +%s) + 60))" > "$m/state/rd-critic.meta"
-  printf 'needs-decision [at=%s]: draft 2 ready for critic round 2 - %s\n' "$(date +%s)" "$draft" > "$m/state/rc.status"
-  printf 'needs-decision [at=%s]: draft ready for the separate critic - /drafts/rd/report.md\n' "$(date +%s)" > "$m/state/rd.status"
-  for w in rc rd; do prime_status_seen "$m/state" "$m/state/$w.status"; done
-  cycle_for "$m" 120 test -e "$m/state/.waiting-timers/rc" -a -e "$m/state/.waiting-timers/rd"
-  backdate "$m" rc 3
-  backdate "$m" rd 3
-  cycle_for "$m" 120 test ! -e "$m/state/.waiting-timers/rc" -a ! -e "$m/state/.waiting-timers/rd"
-  grep -l "Recon rc declared its draft ready for your next round: draft 2 ready for critic round 2 - $draft" "$m/state/rc-critic.inbox/"*.msg >/dev/null 2>&1 \
-    || fail "the draft did not reach its critic: $(cat "$m/state/rc-critic.inbox/"*.msg 2>&1; cat "$m/err")"
-  grep -q '^resolved \[key=default\].*forwarded to the critic rc-critic' "$m/state/rc.status" \
-    || fail "the forward did not close the draft decision: $(cat "$m/state/rc.status")"
-  [ ! -d "$m/state/rd-critic.inbox" ] || ! ls "$m/state/rd-critic.inbox/"*.msg >/dev/null 2>&1 \
-    || fail "a critic that already had the draft was sent it again: $(cat "$m/state/rd-critic.inbox/"*.msg)"
-  grep -q '^resolved \[key=default\].*rd-critic already has this draft' "$m/state/rd.status" \
-    || fail "a draft its critic already had was left open: $(cat "$m/state/rd.status")"
-  ! grep -qE 'waiting-state r[cd] ' "$m/events" || fail "a forwarded draft woke a model: $(cat "$m/events")"
-  row=$(ledger_row "$m" rc)
-  printf '%s\n' "$row" | grep -qE '	owner	forward	changed state$' \
-    || fail "the ledger has no row for the forwarded draft: $(cat "$m/data/metrics/escalations.tsv" 2>&1)"
-  printf 'critic forward: cleared in %s min, no model turn\n' "$(printf '%s' "$row" | cut -f5)"
-  pass "a ready Recon draft is forwarded to its critic and its decision closed by the ladder, a critic that has it is not sent it twice, and the ledger holds the minutes"
-}
-
 test_a_lane_blocked_for_the_herdr_lab_section_is_relaunched_once_with_it() {
   local m n CYCLE_POLLS=100 PANES='1 2'
   m=$(home herdr-lab)
@@ -243,7 +211,6 @@ test_a_working_account_is_not_treated_as_down() {
 
 test_a_silent_worker_is_rung_and_clears_with_no_model_turn
 test_an_unanswered_ring_is_relaunched_then_reaches_main
-test_a_ready_recon_draft_is_forwarded_to_its_critic
 test_a_dead_account_moves_the_lanes_to_the_recorded_fallback_with_no_model_turn
 test_a_lane_blocked_for_the_herdr_lab_section_is_relaunched_once_with_it
 test_an_empty_fallback_list_raises_one_card_and_changes_nothing

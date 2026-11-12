@@ -15,10 +15,6 @@
 #   repeat  seconds between raises (non-lane stops)
 #   clear-by detector or rule that removes the stop
 #
-#   critic: a deep Recon's open needs-decision naming its draft ready for its
-#     critic, with that critic recorded in this home as <task>-critic. forward
-#     steers the critic to the draft and closes the decision; a critic that
-#     started or reported after the draft already has it, so it is only closed.
 #   silent: the silent wait source, on a worker whose own record declares no
 #     wait and holds no open decision. ring is one steer asking for its state;
 #     relaunch is stuck-operator recovery's bin/jg-control.sh relaunch, detached.
@@ -45,8 +41,7 @@
 #     declared its wait after the landing, or whose landing-time send failed.
 #     While the ticket has not landed and its lane still runs, the wait is
 #     quiet (jg_wait_action_awaiting): no owner wake comes from it.
-JG_WAIT_OWNER_TABLE='critic	critic	forward	lead
-silent	worker	ring,relaunch	lead
+JG_WAIT_OWNER_TABLE='silent	worker	ring,relaunch	lead
 herdr-lab	watcher	rebrief	lead	0	600	brief carries the lab section
 account-down	watcher	recover	lead
 pool-full	script	sweep,notify	lead	0	600	task started
@@ -91,16 +86,6 @@ jg_wait_actions_prune() {
     case "$file" in *.log) file=${file%.relaunch.log} ;; esac
     [ -f "$STATE/${file##*/}.meta" ] || rm -f "$file" "$file.relaunch.log"
   done
-}
-
-# The critic a deep Recon's draft-ready decision waits for, on stdout.
-jg_wait_action_critic_of() {  # <task> <declaration>
-  local critic="$1-critic"
-  [ "$(jg_meta_get "$STATE/$1.meta" kind)" = scout ] || return 1
-  printf '%s' "$2" | grep -qiE 'draft.*ready for .*critic' || return 1
-  [ -f "$STATE/$critic.meta" ] && [ ! -L "$STATE/$critic.meta" ] || return 1
-  [ "$(jg_meta_get "$STATE/$critic.meta" kind)" = scout ] || return 1
-  printf '%s\n' "$critic"
 }
 
 # A silent worker the ladder may ring: not a lead, no open decision of its own and
@@ -183,7 +168,7 @@ jg_wait_action_state() {  # <task> <wait source> <verb> <decision key> <declarat
         echo waits-for
         return 0
       fi
-      [ "$3" = needs-decision ] && [ -n "$4" ] && jg_wait_action_critic_of "$1" "$5" >/dev/null && echo critic ;;
+      return 1 ;;
     *) return 1 ;;
   esac
 }
@@ -231,31 +216,6 @@ jg_wait_action_raised_card() {  # <task> <since>
 
 _jg_wait_action_send() {  # <jg-send arguments...>
   JG_HOME="$JG_HOME" "$_JG_WAIT_TIMER_DIR/jg-send.sh" "$@" >/dev/null
-}
-
-# Forward the draft, or note that the critic already has it, then close the
-# decision through jg-send's answer path. Once the critic holds the draft the
-# step counts as taken even when the close fails: the open decision then climbs
-# the ladder with the forward named, and the draft is never sent twice.
-_jg_wait_action_forward() {  # <task> <decision key> <declaration> <now>
-  local critic note line at spawn answer rc=0
-  critic=$(jg_wait_action_critic_of "$1" "$3") || return 1
-  note=${3#*: }
-  # The time the draft was declared: the decision's own line, not the episode,
-  # which can re-arm after the critic started.
-  line=$(grep -F -- "${note:0:80}" "$STATE/$1.status" 2>/dev/null | tail -n 1)
-  at=$(status_line_at_epoch "$line" 2>/dev/null) || at=$4
-  spawn=$(jg_meta_get "$STATE/$critic.meta" spawn_gen); spawn=${spawn#s}; spawn=${spawn%%.*}
-  case "$spawn" in ''|*[!0-9]*) spawn=0 ;; esac
-  if [ "$spawn" -gt "$at" ] \
-    || { [ -f "$STATE/$critic.status" ] && [ $(($4 - $(age_of "$STATE/$critic.status"))) -gt "$at" ]; }; then
-    answer="The critic $critic already has this draft: it started or reported after you declared it. Wait for its round; there is nothing to do now."
-  else
-    _jg_wait_action_send "$critic" "Recon $1 declared its draft ready for your next round: $note. Read that draft now, write your next critic round, and report as your brief says." || return 1
-    answer="Your draft is forwarded to the critic $critic for its next round. Wait for its gaps; there is nothing to do now."
-  fi
-  _jg_wait_action_send "$1" --resolve-key "$2" "$answer" || rc=$?
-  [ "$rc" -eq 0 ] || echo "waiting timers: $1's draft reached $critic, but closing its decision $2 failed (code $rc)" >&2
 }
 
 # The landed ticket's waiter resumes: one steer, with the blocker's key resolved
@@ -322,7 +282,6 @@ jg_wait_action_take() {  # <task> <state> <step> <now> <decision key> <declarati
   jg_wait_action_read "$1" "$4"
   [ "$WAIT_ACT_STATE" != "$2" ] || { steps=$WAIT_ACT_STEPS first=$WAIT_ACT_FIRST; }
   case "$3" in
-    forward) _jg_wait_action_forward "$1" "$5" "$6" "$4" || return 1 ;;
     ring) _jg_wait_action_ring "$1" "$7" || return 1 ;;
     resume) _jg_wait_action_resume "$1" "$5" "$6" || return 1 ;;
     relaunch) _jg_wait_action_relaunch "$1" || return 1 ;;
@@ -331,7 +290,7 @@ jg_wait_action_take() {  # <task> <state> <step> <now> <decision key> <declarati
     lead) ;;
     *) return 1 ;;
   esac
-  # Stamped once the step is done, so the answer line a forward appends is not
+  # Stamped once the step is done, so the answer line a step appends is not
   # read as the worker's own progress.
   at=$(date +%s) || at=$4
   mkdir -p "${file%/*}" \

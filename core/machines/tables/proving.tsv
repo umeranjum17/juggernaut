@@ -5,11 +5,12 @@ state	running	normal	The checks run.	-
 state	judged	normal	The judge has answered.	-
 state	reviewing	normal	The reviewer reads the change.	-
 state	waiting	normal	The run waits for an answer that the worker may not give.	-	waiting	0s -> alert stuck-wait
+state	critic	normal	A deep Recon's draft is complete and its separate critic reads it, round by round; this is a step of proving, not a wait.	-
 state	sealed	terminal	The change is proved for this exact commit.	-
 state	failed	terminal	The change could not be proved in the allowed tries.	-
 state	aborted	terminal	The run was stopped.	-
 group	checked	judged	reviewing
-group	live	planned	writing	running	checked	waiting
+group	live	planned	writing	running	checked	waiting	critic
 edge	(none)	start	planned	done-done:run	-	the ticket move claim-done with no bypass standing, or the command verify	jg-machine-ticket:proving
 edge	planned	write	writing	done-done:run	-	new or changed behaviour a user sees, and no journey covers it	jg-machine-ticket:proving
 edge	planned	skip-write	running	done-done:run	-	a journey covers the behaviour, or nothing a user sees changed	jg-machine-ticket:proving
@@ -21,5 +22,7 @@ edge	checked	fix	running	done-done:run	-	the judge said fail or the reviewer sai
 edge	checked	ask	waiting	done-done:run	-	the judge said unsure, or the reviewer said to ask	jg-machine-ticket:proving
 edge	checked	give-up	failed	done-done:run	-	a fail or a finding to fix, and the tries are spent	jg-machine-ticket:proving
 edge	waiting	settle	judged	done-done:run	-	an answer that the worker did not write is on record	jg-machine-ticket:proving
+edge	planned	hand-to-critic	critic	bin/jg-recon-gate.sh:main	-	a deep Recon's done line, and its gate (--step) has no refusal but the open critic	tests/jg-recon-gate.test.sh
+edge	critic	close-critic	sealed	bin/jg-recon-gate.sh:main	-	the gate passes: the separate critic's last round found nothing new or its closure check closed the gaps	tests/jg-recon-gate.test.sh
 edge	live	abort	aborted	done-done:run	-	the command abort	jg-machine-ticket:proving
 observer	bash "$(dirname "$JG_MACHINES_TABLES")/observers/ticket.sh" "$1" | sed -n 's/^proving\.//p'

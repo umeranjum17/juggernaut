@@ -36,8 +36,9 @@
 # The Recon done check (--append only). When the lane record names a Recon
 # (kind=scout) and a line of the text opens with `done`, the guard asks the two
 # questions the cleanup asks, so a Recon never says done and then cannot be
-# cleaned: the depth gate (bin/jg-recon-gate.sh, which judges a critic task on
-# its critic.md and honours a waiver by Main) and the owner-call completion gate
+# cleaned: the depth gate (bin/jg-recon-gate.sh --step, which judges a critic task on
+# its critic.md and lets a deep Recon whose only open item is its separate critic
+# say done: that done is the claim-done move into proving.critic, not a wait) and the owner-call completion gate
 # (bin/jg-captain-hold.sh verify). A Recon with no report.md is refused too,
 # except a critic task, whose product is critic.md. A refused done writes
 # nothing and lists every gap on stderr. Another kind of lane is not judged here.
@@ -106,7 +107,7 @@ recon_done_gate() {  # <status-file> <text>
   gate="$(dirname -- "${BASH_SOURCE[0]}")/jg-recon-gate.sh"
   hold="$(dirname -- "${BASH_SOURCE[0]}")/jg-captain-hold.sh"
   if [ -f "$gate" ]; then
-    out=$(JG_HOME=$home JG_DATA_OVERRIDE=$data JG_STATE_OVERRIDE=$state bash "$gate" "$id" 2>&1 >/dev/null) && out=''
+    out=$(JG_HOME=$home JG_DATA_OVERRIDE=$data JG_STATE_OVERRIDE=$state bash "$gate" "$id" --step 2>&1 >/dev/null) && out=''
     [ -z "$out" ] || gaps=$(printf '%s\n' "$out" | sed 's/^jg-recon-gate: refused: /depth gate: /')
   fi
   if [ ! -f "$dir/report.md" ] && ! { [ -f "$gate" ] && JG_HOME=$home JG_DATA_OVERRIDE=$data bash "$gate" "$id" --is-critic >/dev/null 2>&1; }; then

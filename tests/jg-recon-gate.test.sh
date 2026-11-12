@@ -278,6 +278,34 @@ test_the_owners_bypass_lets_a_recon_through_and_a_waiver_by_main_does_not() {
   pass "jg-recon-gate.sh: the owner's bypass passes a Recon and prints whose word it is; a waiver by Main is refused"
 }
 
+test_a_deep_draft_with_only_its_critic_open_is_the_step_critic() {
+  local dir
+  make_recon rg-step deep
+  dir="$HOME_DIR/data/rg-step"
+  rm -f "$dir/critic.md"
+  run_gate rg-step
+  expect_code 1 "$RC" "the plain gate refuses a deep Recon whose critic is open (got: $OUT)"
+  run_gate rg-step --step
+  expect_code 0 "$RC" "the step reading lets the draft through to its critic (got: $OUT)"
+  assert_contains "$OUT" "STEP critic" "the step line did not name the step critic (got: $OUT)"
+  printf 'Critic: critic-of-rg-step\nRound 1: new gaps 2\n- a gap\n' > "$dir/critic.md"
+  run_gate rg-step --step
+  expect_code 0 "$RC" "a round with open gaps is still the step critic (got: $OUT)"
+  assert_contains "$OUT" "STEP critic" "round with gaps: not the step critic (got: $OUT)"
+  printf 'Critic: critic-of-rg-step\nRound 1: new gaps 0\n' > "$dir/critic.md"
+  run_gate rg-step --step
+  expect_code 0 "$RC" "a closed critic passes (got: $OUT)"
+  assert_contains "$OUT" "PASS" "a closed critic is PASS, not the step critic (got: $OUT)"
+  rm -f "$dir/critic.md"; sed -i '/^## 5\./,/^$/d' "$dir/report.md"
+  run_gate rg-step --step
+  expect_code 1 "$RC" "a draft with a hole other than the critic is still refused (got: $OUT)"
+  make_recon rg-step-std standard
+  rm -f "$HOME_DIR/data/rg-step-std/critic.md"
+  run_gate rg-step-std --step
+  expect_code 1 "$RC" "a standard Recon has no critic step (got: $OUT)"
+  pass "jg-recon-gate.sh --step: a deep draft with only its separate critic open is the step critic; any other hole, or a standard Recon, is refused"
+}
+
 test_usage_errors() {
   local out rc
   out=$(JG_HOME="$HOME_DIR" bash "$GATE" 2>&1); rc=$?
@@ -337,5 +365,6 @@ test_source_budget
 test_quick_and_legacy_are_exempt
 test_a_critic_task_passes_on_its_critic_md
 test_the_owners_bypass_lets_a_recon_through_and_a_waiver_by_main_does_not
+test_a_deep_draft_with_only_its_critic_open_is_the_step_critic
 test_usage_errors
 test_board_report_is_written_by_the_command

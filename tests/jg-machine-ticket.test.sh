@@ -19,9 +19,9 @@ if [ "${1:-}" = --write ]; then
 fi
 
 # 1. The three tables lint clean: 7 stages with 15 moves, delivering with 12 events and 7 sub-states, proving as the composite.
-jm check ticket; expect_code 0 "$RC" "ticket lints"; assert_equals "ok ticket: 23 states, 15 edges" "$OUT" "ticket lint golden"
+jm check ticket; expect_code 0 "$RC" "ticket lints"; assert_equals "ok ticket: 24 states, 15 edges" "$OUT" "ticket lint golden"
 jm check delivering; assert_equals "ok delivering: 9 states, 12 edges" "$OUT" "delivering lint golden"
-jm check proving; assert_equals "ok proving: 9 states, 12 edges" "$OUT" "proving lint golden"
+jm check proving; assert_equals "ok proving: 10 states, 14 edges" "$OUT" "proving lint golden"
 assert_equals 7 "$(grep -c '^state	' "$TABLES/ticket.tsv")" "seven stages"
 assert_equals 7 "$(grep -c '^state	.*	normal	\|^state	queued	' "$TABLES/delivering.tsv")" "seven sub-states of delivering besides its two ends"
 assert_equals 15 "$(bash "$JM" events ticket | wc -l | tr -d ' ')" "fifteen moves"

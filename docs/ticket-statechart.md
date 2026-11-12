@@ -33,12 +33,15 @@ stateDiagram-v2
     judged --> failed: give-up
     reviewing --> failed: give-up
     waiting --> judged: settle
+    planned --> critic: hand-to-critic
+    critic --> sealed: close-critic
     planned --> aborted: abort
     writing --> aborted: abort
     running --> aborted: abort
     judged --> aborted: abort
     reviewing --> aborted: abort
     waiting --> aborted: abort
+    critic --> aborted: abort
     sealed --> [*]
     failed --> [*]
     aborted --> [*]
