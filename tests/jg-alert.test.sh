@@ -92,3 +92,15 @@ al resolve stuck-wait--w1; assert_equals resolved "$(bash "$AL" word stuck-wait-
 al ack stuck-wait--w1; expect_code 1 "$RC" "a resolved alert cannot be acknowledged"
 al raise stuck-wait w1 --fact wait=worker; assert_contains "$OUT" "ring" "a resolved key can ring again as a new episode"
 pass "open, acknowledged, inhibited and resolved follow the table"
+
+# 9. deliver: a ring reaches its holder as one wake, a tick ring is only recorded, and a stray line is refused.
+export JG_CONFIG_OVERRIDE="$H/config" JG_DATA_OVERRIDE="$H/data"; mkdir -p "$H/config" "$H/data"
+Q=$(bash -c '. "$1/bin/jg-wake-lib.sh"; printf %s "$JG_WAKE_QUEUE"' _ "$ROOT")
+bash "$AL" raise host mem1 --machine m1 | bash "$AL" deliver; expect_code 0 $? "deliver a main ring"
+assert_contains "$(cat "$Q" 2>/dev/null)" "alert-host--mem1" "the main ring is one wake in the queue"
+assert_contains "$(cat "$Q")" "(P3) at rung 3 for main" "the wake names precedence, rung and holder"
+bash "$AL" raise supervision-down h9 --home h9 --fact beats=2 | bash "$AL" deliver
+! grep -q "alert-supervision-down--h9" "$Q" || fail "a tick ring made a wake"
+assert_contains "$(bash "$ROOT/bin/jg-wake.sh" settled 2>&1)" "alert-supervision-down--h9" "a tick ring is recorded as settled"
+echo "not a ring" | bash "$AL" deliver 2>/dev/null; expect_code 1 $? "a stray line is refused"
+pass "deliver turns a ring into a wake for its holder and only records a tick ring"

@@ -9,12 +9,15 @@
 #   jg-alert.sh climb <key> [--now <epoch>]   take the next rung when the rung's timer ran out and the row's top is not reached
 #   jg-alert.sh ack|reopen|resolve <key>      the other moves of the alert machine; resolve also releases the alerts it covered
 #   jg-alert.sh show <key> | word <key> | list   print a record, its state word, or every live key
+#   jg-alert.sh deliver                      read ring lines on stdin (what raise, climb and resolve print) and deliver each to its holder
 # A key is <alert>--<subject>. The record is state/alerts/<key>.rec (key=value lines); rung and precedence are fields of it.
 #
 # raise refuses an unknown alert or mode and a state that has not held for the row's time (--held below fires at), prints nothing
 # for a quiet row (a fact of its "quiet when" holds), records the alert `inhibited` when a rule I1 to I5 covers it, and otherwise
 # records it `open` and prints one ring line: ring<TAB>key<TAB>rung<TAB>holder. Rule I6 (fact presence=away) holds rung 4 for P1 to P3.
 # The row is the same in every delivery mode; the mode is recorded and checked against bin/jg-delivery-style.sh.
+# deliver turns a ring into the wake its holder reads: the tick only records it (settled, no wake); worker, lead, main and owner get one
+# `check` wake with key alert-<key> that names the alert, its precedence, the rung and the holder. A line that is not a ring is refused.
 # Exit 0 is success, 1 a refusal, 2 a usage error. The table is core/machines/styles/alert-table.tsv (override: JG_ALERT_TABLE).
 set -u
 export LC_ALL=C
@@ -174,9 +177,24 @@ cmd_show() { cat "$(_rec "${1:-}" show)"; }
 cmd_word() { _get "$(_rec "${1:-}" word)" state; }
 cmd_list() { local r; for r in "$(_dir)"/*.rec; do [ -r "$r" ] && case $(_get "$r" state) in resolved) ;; *) basename "$r" .rec ;; esac; done; return 0; }
 
-[ "$#" -gt 0 ] || { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+cmd_deliver() {
+  local tag key rung holder rec name prec payload
+  # shellcheck source=bin/jg-wake-lib.sh disable=SC1091
+  . "$_root/bin/jg-wake-lib.sh"
+  while IFS=$'\t' read -r tag key rung holder; do
+    [ -n "$tag" ] || continue
+    [ "$tag" = ring ] && [ -n "$holder" ] || _die "not a ring line: '$tag'"
+    rec=$(_rec "$key" deliver) || exit 1
+    name=$(_get "$rec" alert); prec=$(_get "$rec" precedence)
+    payload="alert $name ($prec) at rung $rung for $holder: $(_get "$rec" subject)"
+    if [ "$holder" = tick ]; then jg_wake_settle check "alert-$key" "$payload"
+    else jg_wake_append check "alert-$key" "$payload" || _die "the wake for $key was not appended"; fi
+  done
+}
+
+[ "$#" -gt 0 ] || { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 c=$1; shift
 case $c in
-  row|limit|raise|climb|ack|reopen|resolve|show|word|list) "cmd_$c" "$@" ;;
-  *) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
+  row|limit|raise|climb|ack|reopen|resolve|show|word|list|deliver) "cmd_$c" "$@" ;;
+  *) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
 esac
