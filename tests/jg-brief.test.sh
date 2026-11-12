@@ -220,6 +220,10 @@ test_ship_modes_generate_clean_briefs() {
     assert_grep "QA: hand the feature to done-done and write no tests or proof by hand" "$brief" \
       "$id: brief missing the one QA paragraph"
     assert_no_grep "light gate" "$brief" "$id: brief still names the light gate"
+    assert_grep "Each of the nine steps has one owner: done-done owns intent, review, test, document and lint" "$brief" \
+      "$id: brief missing the one owner of each of the nine steps"
+    assert_grep "the delivery style owns rebase, push, pull request and CI" "$brief" \
+      "$id: brief missing the delivery style's steps"
     assert_grep "needs that pull request's checks green" "$brief" \
       "$id: brief missing the rule that a done line needs the PR's checks green"
     assert_grep "must be a file your own done-done run wrote, inside that run's capture folder" "$brief" \
