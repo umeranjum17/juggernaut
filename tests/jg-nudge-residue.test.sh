@@ -104,3 +104,18 @@ rc=0; jg_task_inbox_ring tmux "$TARGET" "$RECORD" || rc=$?
 [ "$(wc -l < "$WORK/log5")" = 1 ] || fail "the non-Codex pending doorbell was not submitted once"
 [ "$(head -1 "$WORK/log5")" = "$LINE" ] || fail "the non-Codex pending doorbell changed"
 pass "a non-Codex pane still submits its own pending doorbell"
+
+# --- 5. our own digest left unsent: the doorbell submits it, then lands ----------
+# shellcheck source=/dev/null
+. "$ROOT/bin/jg-operational-input.sh"
+jg_operational_input_encode away-supervisor "Supervisor escalate (1 event(s)): done (pre-read; re-arm not needed)" DIGEST || fail "no digest"
+start_box submit "$WORK/log6"
+tmux send-keys -t "$TARGET" -l "$DIGEST"; sleep 0.3
+[ "$(jg_backend_composer_state tmux "$TARGET")" = pending ] || fail "the digest is not pending in the box"
+rc=0; jg_task_inbox_ring tmux "$TARGET" "$RECORD" || rc=$?
+[ "$rc" = 0 ] || fail "a ring behind our own unsent digest returned $rc, not 0"
+[ "$(wc -l < "$WORK/log6")" = 2 ] || fail "expected the digest and the doorbell submitted, got $(wc -l < "$WORK/log6") lines"
+[ "$(head -1 "$WORK/log6")" = "$DIGEST" ] || fail "the digest was submitted as '$(head -1 "$WORK/log6")'"
+[ "$(sed -n 2p "$WORK/log6")" = "$LINE" ] || fail "the doorbell was submitted as '$(sed -n 2p "$WORK/log6")'"
+[ -z "$(box_text)" ] || fail "the box is not empty after delivery: '$(box_text)'"
+pass "our own unsent digest is submitted by the doorbell, which then lands"

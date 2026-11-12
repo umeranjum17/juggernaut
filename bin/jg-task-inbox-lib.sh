@@ -133,6 +133,8 @@ _JG_TASK_INBOX_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 . "$_JG_TASK_INBOX_LIB_DIR/jg-backend.sh"
 # shellcheck source=/dev/null
+. "$_JG_TASK_INBOX_LIB_DIR/jg-operational-input.sh"
+# shellcheck source=/dev/null
 . "$_JG_TASK_INBOX_LIB_DIR/jg-busy-lib.sh"
 
 JG_TASK_INBOX_SCHEMA='jg-task-inbox.v1'
@@ -629,6 +631,9 @@ _jg_task_inbox_ring_attempt() {  # <backend> <target> <record-path> <expected-la
     return 2
   fi
   cstate=$(jg_backend_composer_state "$backend" "$target" "$label" 2>/dev/null) || cstate=unknown
+  if [ "$cstate" = pending ] && jg_task_inbox_submit_own_digest "$backend" "$target" "$label"; then
+    cstate=$(jg_backend_composer_state "$backend" "$target" "$label" 2>/dev/null) || cstate=unknown
+  fi
   case "$cstate" in
     pending)
       [ -z "$submit_dir" ] || return 1
@@ -687,6 +692,25 @@ _jg_task_inbox_ring_attempt() {  # <backend> <target> <record-path> <expected-la
   esac
   JG_TASK_INBOX_RING_REASON=
   return 0
+}
+
+# A supervision digest that Juggernaut typed itself (the typed away-supervisor
+# envelope, marked with U+2063, which a person's text never carries) and that a
+# swallowed Enter left unsent would hold the composer for ever, so every later
+# doorbell would be skipped. Submit it once with Enter when the worker is idle;
+# the ring then goes on. Any other pending text is a person's and is never keyed.
+# Returns 0 when the composer no longer holds it, 1 when nothing was submitted.
+jg_task_inbox_submit_own_digest() {  # <backend> <target> [expected-label]
+  local backend=$1 target=$2 label=${3:-} cap held
+  jg_backend_source "$backend" || return 1
+  cap=$(jg_backend_capture "$backend" "$target" "$JG_COMPOSER_CAPTURE_LINES" "$label" 2>/dev/null) || return 1
+  held=$(jg_composer_extract_selected_content styled=0 "$cap") || return 1
+  case "$held" in
+    "${JG_OPERATIONAL_PREFIX}v1 away-supervisor: "?*) ;;
+    *) return 1 ;;
+  esac
+  [ "$(jg_backend_busy_state "$backend" "$target" 2>/dev/null)" != busy ] || return 1
+  [ "$(jg_backend_resubmit_typed "$backend" "$target" "$held" 2 0.4 "$label")" = empty ]
 }
 
 jg_task_inbox_composer_holds() {  # <backend> <target> <line> [expected-label]
