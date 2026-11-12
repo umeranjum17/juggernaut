@@ -41,9 +41,18 @@
 #   claude-settings.json  bin/jg-spawn.sh                    the claude settings the task was launched with
 #   gemini-settings.json  bin/jg-spawn.sh                    the gemini settings of the task
 #   devin-config.json     bin/jg-devin-config.sh             the devin config the task was launched with
-JG_TASK_FILE_KINDS_RETIRED="probe-at account-probe-at exit check-trust check.sh model-relaunch land-next models pi-ext.ts log jsonl pr-poll scratch local-suite pr-poll-registration prelimit-gen turn-ended busy-state busy-gen control-relaunch control-relaunch.note control-relaunch.meta-prior control-relaunch.brief-prior progress lane-groups omp-ext.ts reconcile-nudged restart-nudged claude-settings.json gemini-settings.json devin-config.json"
+# Slice 5 (jg8-j19e, kinds 33 to 40):
+#   grok-turnend-token        bin/jg-spawn.sh                      the grok turn-end hook token of the task
+#   kimi-turnend-token        bin/jg-spawn.sh                      the kimi turn-end hook token of the task
+#   muse-session              the muse agent                       the pointer to muse's own session event file
+#   muse-session-current      bin/jg-spawn.sh                      the muse session that is current for the task
+#   cursor-session            bin/jg-spawn.sh                      the cursor session the task was launched with
+#   limit-prompt-gen          core/limit-prompt-move/limit-prompt-move   the spawn generation a usage-limit menu was moved for
+#   composer-dialog           bin/jg-control.sh                    the name of the dialog a lifecycle action saw
+#   pr-poll-merge-notified.lock  bin/jg-merge-outcome-lib.sh       the lock directory that guards the merge notice (a directory)
+JG_TASK_FILE_KINDS_RETIRED="probe-at account-probe-at exit check-trust check.sh model-relaunch land-next models pi-ext.ts log jsonl pr-poll scratch local-suite pr-poll-registration prelimit-gen turn-ended busy-state busy-gen control-relaunch control-relaunch.note control-relaunch.meta-prior control-relaunch.brief-prior progress lane-groups omp-ext.ts reconcile-nudged restart-nudged claude-settings.json gemini-settings.json devin-config.json grok-turnend-token kimi-turnend-token muse-session muse-session-current cursor-session limit-prompt-gen composer-dialog"
 # A kind that is a directory: its installer leaves it read-only, so the remover makes it writable first.
-JG_TASK_DIR_KINDS_RETIRED="git-hooks"
+JG_TASK_DIR_KINDS_RETIRED="git-hooks pr-poll-merge-notified.lock"
 
 # jg_task_files_retire <state dir> <task id>: remove every listed kind (files and directories) for the task. Best effort, never fails.
 jg_task_files_retire() {
