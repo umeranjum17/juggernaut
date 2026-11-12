@@ -97,6 +97,8 @@ def moment(args):
     if held > when:
         view.refuse("%s is already %s, later than %s: a moment is never moved back" % (name, held, when), "Give a later --at", "MOMENT_BACK", 1)
     payload = {"moment": name}
+    if name == "bypassed_at":
+        payload["mark"] = "unproved"  # the trace says it: no proof ran for this ticket
     meta = ["--set-metadata", "%s=%s" % (name, when)]
     if name == "returned_at":
         to = found.get("--returned-to") or "building"

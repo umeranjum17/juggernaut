@@ -196,11 +196,25 @@ downgrade() {  # <claim>
   exit 3
 }
 
+# A change the owner's bypass passed over proving is never reported as proven (J26c): the claim says so whatever else it says.
+not_proven_verdict() {  # <claim>
+  local state=${JG_STATE_OVERRIDE:-${JG_HOME:-}/state} task
+  [ -n "${JG_HOME:-}" ] && [ -d "$state" ] && command -v jq >/dev/null 2>&1 || return 0
+  # shellcheck source=bin/jg-bypass-record-lib.sh
+  . "${0%/*}/jg-bypass-record-lib.sh"
+  task=$(jg_bypass_claim_ticket "$JG_HOME" "$state" "$1") || return 0
+  case $1 in "$JG_BYPASS_NOT_PROVEN"*) printf '%s\n' "$1"; exit 0 ;; esac
+  printf '%s: %s\n' "$JG_BYPASS_NOT_PROVEN" "$1"
+  printf 'jg-live-claim: %s was passed over proving by the owner'"'"'s bypass: no proof ran, so the report says %s.\n' "$task" "$JG_BYPASS_NOT_PROVEN" >&2
+  exit 3
+}
+
 [ "$#" -eq 2 ] || die 'usage: jg-live-claim.sh <verb> <claim>'
 verb=${1%:}
 claim=$2
 
 claim_reports_a_fix "$verb" "$claim" || keep_as_written
+not_proven_verdict "$claim"
 delivery_verdict "$claim"
 claim_states_the_truth "$claim" && keep_as_written
 

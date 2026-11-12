@@ -110,6 +110,9 @@ new jg-b2; meta jg-b2 ready_at=$t1; axi moment jg-b2 proved_at --at $t2 >/dev/nu
 axi moment jg-b2 returned_at --at $t4 >/dev/null; check jg-b2 building ok
 meta jg-b2 ready_at=$t5; check jg-b2 proving.planned ok   # returned to building, then done again
 new jg-b3; meta jg-b3 ready_at=$t1; axi moment jg-b3 bypassed_at --at $t2 >/dev/null; check jg-b3 delivering.queued ok   # a bypass is the proof moment of its try
+[ "$(bd provenance log jg-b3 --json | jq -r '[.[] | select(.source == "jg-bypass")] | .[0].payload | fromjson? // . | .mark')" = unproved ] || fail "the trace of a bypassed ticket must carry the unproved mark"
+axi show jg-b3 | grep -q 'unproved: yes' || fail "the board card of a bypassed ticket must show the unproved mark"
+axi show jg-b2 | grep -q 'unproved' && fail "the board card of an ordinary ticket must show no mark"
 new jg-b4; meta jg-b4 ready_at=$t1; axi moment jg-b4 proved_at --at $t2 >/dev/null; bd update jg-b4 -s in_progress -a w1 >/dev/null
 meta jg-b4 resumed_at=$t3; check jg-b4 building ok   # proved, then working again
 meta jg-b4 ready_at=$t4; axi moment jg-b4 proved_at --at $t5 >/dev/null; meta jg-b4 ready_at=$t6; check jg-b4 proving.planned ok   # proved, then a done line with another head

@@ -141,6 +141,8 @@ def task(row, rows, native=None):
         "deps": ",".join("blocked-by:" + d for d in deps) or "none",
         "links": ",".join(links) or "none", "body": row.get("description", ""),
         "mentions": mentions(row), "delivery_state": meta.get("delivery_state", "-"),
+        # unproved: the owner's bypass passed the ticket over proving (bypassed_at), so the board says no proof ran.
+        "unproved": "yes" if meta.get("bypassed_at") else "-",
         # parent: the parent-child edge's target, else upkeep for the upkeep label; item: the id the home's state files use.
         "parent": next((d["depends_on_id"] for d in row.get("dependencies") or [] if d.get("type") == "parent-child"),
                        "upkeep" if "upkeep" in (row.get("labels") or []) else "-"),
@@ -163,7 +165,7 @@ def table(name, tasks, fields, full=False):
 
 def card(item, hint=None):
     print("task:")
-    for field in SHOW + (["parent"] if item["parent"] != "-" else []):
+    for field in SHOW + (["parent"] if item["parent"] != "-" else []) + (["unproved"] if item["unproved"] != "-" else []):
         value = clip(item, field, hint)
         print("  %s: %s" % (field, scalar(value)))
 

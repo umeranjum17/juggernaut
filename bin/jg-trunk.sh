@@ -170,6 +170,8 @@ LANDER_ACCOUNT="${CLAUDE_CONFIG_DIR:-}"; unset CLAUDE_CONFIG_DIR
 . "$SCRIPT_DIR/jg-pr-lib.sh"
 # shellcheck source=bin/jg-dod-lib.sh
 . "$SCRIPT_DIR/jg-dod-lib.sh"
+# shellcheck source=bin/jg-bypass-record-lib.sh
+. "$SCRIPT_DIR/jg-bypass-record-lib.sh"
 # shellcheck source=bin/jg-wake-lib.sh
 . "$SCRIPT_DIR/jg-wake-lib.sh"
 # shellcheck source=bin/jg-lease-lib.sh
@@ -2030,7 +2032,7 @@ adopt_pushed_release() {  # <commit>
 # released mark, records the release task, and runs the release proof for a commit that is the green pin. Called with the trunk
 # lock held; it lets the lock go before the proof. <spend> 1 spends the captain's release word; <proof> 0 skips the proof.
 push_batch() {  # <rel> <n> <prev> <spend 0|1> <proof 0|1>
-  local rel=$1 n=$2 prev=$3 default base body url
+  local rel=$1 n=$2 prev=$3 default base body url unproved; local -a carried
   base=$(cat "$STATE/trunk-released-$PN")
   default=$(git -C "$PROJ" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || true); default=${default:-main}
   printf 'refs/heads/%s %s refs/heads/%s %s\n' "$TRUNK" "$rel" "$TRUNK" "$base" | (cd "$PROJ" && "$SCRIPT_DIR/../core/owner-guard/owner-guard" pre-push) || refuse "owner-guard refused the batch"
@@ -2042,7 +2044,11 @@ push_batch() {  # <rel> <n> <prev> <spend 0|1> <proof 0|1>
   else
     body=$(mktemp); WORK=$body
     { echo "Release batch from the local $TRUNK: $n commits, one per ticket."; echo
-      git -C "$PROJ" log --reverse --format='- %h %s' "$base..$rel"; } > "$body"
+      git -C "$PROJ" log --reverse --format='- %h %s' "$base..$rel"
+      # A bypassed ticket was passed over proving by the owner's word: the release says which ones carry no proof (J26c).
+      mapfile -t carried < <(git -C "$PROJ" rev-list "$base..$rel")
+      unproved=$(jg_bypass_release_lines "$JG_HOME" "$STATE" "${carried[@]}")
+      [ -z "$unproved" ] || { echo; echo "Bypassed, no proof ran:"; printf '%s\n' "$unproved"; }; } > "$body"
     open_release_pr "$default" "Release: $n tickets from the local $TRUNK" "$body"; url=$REL_URL
   fi
   put "$STATE/trunk-release-pending-$PN" "$rel"

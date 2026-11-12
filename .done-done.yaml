@@ -27,6 +27,9 @@ journeys:
   proof-bypass-apply:
     tier: local
     command: bash journeys/proof-bypass-apply.sh
+  bypass-says-so:
+    tier: local
+    command: bash journeys/bypass-says-so.sh
   brief-lint:
     tier: local
     command: bash journeys/brief-lint-real-briefs.sh

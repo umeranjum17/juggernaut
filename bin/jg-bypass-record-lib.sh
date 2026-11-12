@@ -40,3 +40,49 @@ jg_bypass_record_holds() {
 
 # jg_bypass_standing <home> <task> <project-name>: print the id of the standing bypass that covers the ticket; 1 when none does.
 jg_bypass_standing() { JG_HOME=$1 bash "${BASH_SOURCE[0]%/*}/jg-proof-bypass.sh" find "$2" "$3" 2>/dev/null; }
+
+# The words a bypassed change carries wherever it is shown (J26c). One owner, so the proof status, the release body, the report and
+# the board read the same text. A record counts only when jg_bypass_record_holds says it is genuine at its own commit.
+JG_BYPASS_UNPROVED_WORD=unproved
+# shellcheck disable=SC2034 # read by bin/jg-live-claim.sh, which sources this file
+JG_BYPASS_NOT_PROVEN='not proven: bypassed by the owner'
+
+# jg_bypass_mark_line <home> <state> <task>: print `bypassed: no proof ran (word <word>)` for a task with a genuine record; 1 when none.
+jg_bypass_mark_line() {
+  local file commit word
+  file=$(jg_bypass_record_file "$2" "$3")
+  [ -f "$file" ] && command -v jq >/dev/null 2>&1 || return 1
+  commit=$(jq -r '.commit // empty' "$file" 2>/dev/null); word=$(jq -r '.word // empty' "$file" 2>/dev/null)
+  [ -n "$commit" ] && jg_bypass_record_holds "$1" "$2" "$3" "$commit" || return 1
+  printf 'bypassed: no proof ran (word %s)\n' "$word"
+}
+
+# jg_bypass_release_lines <home> <state> <commit>...: one line for each genuine record whose commit is among the release's commits,
+# `- <short commit> <ticket>: unproved, bypassed by the owner (word <word>)`. Prints nothing when none of them was bypassed.
+jg_bypass_release_lines() {
+  local home=$1 state=$2 file task commit
+  shift 2
+  for file in "$state"/*.bypass-record.json; do
+    [ -f "$file" ] || continue
+    task=$(jq -r '.task // empty' "$file" 2>/dev/null); commit=$(jq -r '.commit // empty' "$file" 2>/dev/null)
+    [ -n "$task" ] && [ -n "$commit" ] || continue
+    case " $* " in *" $commit "*) ;; *) continue ;; esac
+    jg_bypass_mark_line "$home" "$state" "$task" >/dev/null || continue
+    printf -- '- %s %s: %s, bypassed by the owner (word %s)\n' "${commit:0:12}" "$(jq -r '.ticket // .task' "$file")" "$JG_BYPASS_UNPROVED_WORD" "$(jq -r '.word' "$file")"
+  done
+}
+
+# jg_bypass_claim_ticket <home> <state> <claim>: print the task of a genuine record that the claim names (by task or ticket id); 1 when none.
+jg_bypass_claim_ticket() {
+  local file task ticket
+  for file in "$2"/*.bypass-record.json; do
+    [ -f "$file" ] || continue
+    task=$(jq -r '.task // empty' "$file" 2>/dev/null); ticket=$(jq -r '.ticket // empty' "$file" 2>/dev/null)
+    for id in "$task" "$ticket"; do
+      [ -n "$id" ] || continue
+      printf '%s\n' "$3" | grep -Eq -- "(^|[^[:alnum:]_.-])$id([^[:alnum:]_.-]|\$)" || continue
+      jg_bypass_mark_line "$1" "$2" "$task" >/dev/null && { printf '%s\n' "$task"; return 0; }
+    done
+  done
+  return 1
+}
