@@ -2205,6 +2205,21 @@ jg_autoarm_ledger_read() {  # <state-dir>
   return 0
 }
 
+# jg_autoarm_claim_bound <grace>: the age at which an arming claim with no beat
+# is stuck. It is shorter than the stall bound (3x grace) and is never stretched
+# by host load, because the load-stretched grace (600 s at a load of 2x the CPU
+# count) let a hung claim hold a home dark for 9 minutes. JG_AUTOARM_CLAIM_BOUND
+# overrides; the default is max(120, poll + 60), and never above the grace given.
+jg_autoarm_claim_bound() {  # <grace>
+  local grace=$1 poll=${JG_POLL:-15} bound=${JG_AUTOARM_CLAIM_BOUND:-}
+  case "$poll" in ''|*[!0-9]*) poll=15 ;; esac
+  case "$bound" in
+    ''|*[!0-9]*|0) bound=$((poll + 60)); [ "$bound" -ge 120 ] || bound=120 ;;
+  esac
+  [ "$bound" -le "$grace" ] || bound=$grace
+  printf '%s\n' "$bound"
+}
+
 # True while the CURRENT ledger claim is open and healthy - the defer predicate
 # both Stop participants use. Open means: outcome "arming", a live owner whose
 # mandatory recorded identity recomputes and matches its pid, and not stuck
@@ -2220,6 +2235,7 @@ jg_autoarm_claim_open() {  # <state-dir> [grace]
   case "$grace" in
     ''|*[!0-9]*|0) grace=300 ;;
   esac
+  grace=$(jg_autoarm_claim_bound "$grace")
   jg_autoarm_ledger_read "$state" || return 1
   [ "$JG_AUTOARM_OUTCOME" = arming ] || return 1
   jg_pid_alive "$JG_AUTOARM_OWNER" || return 1

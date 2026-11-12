@@ -3129,6 +3129,9 @@ ready_backlog_stall_state() {
     printf '%s\n' "$cards" | grep -Fxq -- "$id" && continue
     rc=0
     JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$data_dir" "$SCRIPT_DIR/jg-captain-hold.sh" blocking "$id" >/dev/null 2>&1 || rc=$?
+    # One lookup per ready task is a completed bounded unit: beat after each, so
+    # a slow lookup across many tasks under host load never ages the beacon.
+    watcher_beat ready-stall
     case "$rc" in 0) continue ;; 1) ;; *) return 2 ;; esac
     proj="$JG_HOME/projects/$repo"
     if [ -n "$cfg" ] && [ "$repo" != - ] && [ -d "$proj" ]; then
