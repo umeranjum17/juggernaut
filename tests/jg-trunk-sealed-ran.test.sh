@@ -7,6 +7,8 @@
 # T2 A lane whose sealed run wrote the list of the changed scripts it ran, all passed, is counted: the landing runs the lint alone (gate=sealed-run).
 # T3 A run whose list names the script with a failing exit, or whose list file no longer matches the hash the record holds, is not counted.
 # T4 A project with no changed-tests selector is judged by the tree alone, as before.
+# T5 A sealed run counts for a rebased commit that is the same change (no test runs at the landing, the landing time is printed); a rebase that
+#    changed the patch goes back to proving (gate=full); a conflict goes back to building (refused). The green pin is not moved by a landing.
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
@@ -90,6 +92,50 @@ test_a_project_without_a_selector_is_judged_by_the_tree_alone() {
   pass 'a project with no changed-tests selector keeps the tree rule'
 }
 
+# advance <file> <content>: the trunk moves under the lanes, as another landing would move it.
+advance() {
+  git -C "$PROJ" worktree add -q -b adv-$RANDOM "$W/adv" trunk
+  commit_in "$W/adv" "$1" "$2" "advance $1"
+  JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref refs/heads/trunk "$(git -C "$W/adv" rev-parse HEAD)"
+  git -C "$PROJ" rev-parse trunk > "$HOME_D/state/trunk-tip-proj"
+  git -C "$PROJ" worktree remove --force "$W/adv"
+}
+
+test_a_rebase_with_the_same_change_lands_without_a_test() {
+  local out pin
+  world rebased; JG_TRUNK_SEALED_REUSE=1; selector
+  advance tests/ctx.test.sh $'l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10'
+  pin=$(cat "$HOME_D/state/trunk-green-proj" 2>/dev/null || echo none)
+
+  lane r1 'exit 0' tests/r.test.sh; seal_with r1 "$(ran tests/r.test.sh)"
+  lane r2 $'l1\nl2\nl3\nl4\nl5\nl6\nl7\nL8\nl9\nl10' tests/ctx.test.sh; seal_with r2 "$(ran tests/ctx.test.sh)"
+  lane r3 $'L1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10' tests/ctx.test.sh; seal_with r3 "$(ran tests/ctx.test.sh)"
+  lane r4 'mine' conflict.txt; seal_with r4 -
+  advance tests/other.test.sh 'exit 0'   # r1 moves onto a new tip with its patch unchanged
+  advance tests/ctx.test.sh $'l1\nl2\nl3\nl4\nM5\nl6\nl7\nl8\nl9\nl10'  # r2's context line changes; r3's patch is untouched
+  advance conflict.txt 'theirs'
+
+  out=$(trunk land r1 2>&1) || fail "r1 must land: $out"
+  assert_contains "$out" "gate=sealed-run" "a rebase with the same patch keeps the sealed run"
+  assert_contains "$out" "s)" "the landing time is printed"
+  [ ! -e "$W/gate-runs" ] || fail "no test runs at the landing of an unchanged patch"
+
+  out=$(trunk land r2 2>&1) || fail "r2 must land: $out"
+  assert_contains "$out" "gate=full" "a rebase that changed the patch goes back to proving"
+  [ -e "$W/gate-runs" ] || fail "the tests must run for a patch that changed in the rebase"
+  rm -f "$W/gate-runs"
+
+  out=$(trunk land r3 2>&1) || fail "r3 must land: $out"
+  assert_contains "$out" "gate=sealed-run" "a rebase of a patch far from the trunk's edit keeps the run"
+
+  out=$(trunk land r4 2>&1) && fail "r4 conflicts and must not land: $out"
+  assert_contains "$out" "conflicts" "a conflict goes back to building"
+
+  [ "$(cat "$HOME_D/state/trunk-green-proj" 2>/dev/null || echo none)" = "$pin" ] || fail "a landing must not move the green pin"
+  pass 'a sealed run follows a rebase with the same change, and only that'
+}
+
 test_a_sealed_run_counts_only_when_it_says_it_ran_the_changed_tests
+test_a_rebase_with_the_same_change_lands_without_a_test
 test_a_project_without_a_selector_is_judged_by_the_tree_alone
 printf 'jg-trunk-sealed-ran: ok\n'

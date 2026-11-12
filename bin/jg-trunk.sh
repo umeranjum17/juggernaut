@@ -811,18 +811,20 @@ sealed_run_ran() {  # <evidence root> <record file> <selection, one script per l
   [ -z "$(comm -23 <(printf '%s\n' "$3" | grep .) <(printf '%s\n' "$got" | grep .))" ]
 }
 
-# True when a sealed done-done run of the lane passed, clean, at a commit whose tree is the tree <candidate> would be tested at, and says
-# it ran the landing's changed tests: the tree hash decides which run is the lane's, the list of scripts the run wrote decides whether it
-# counts (a run that ran one journey and not its changed tests is not counted, so the tests run at the landing). A trunk that moved under
-# the lane (a rebased tree) or a run that failed or was dirty never counts. A project with no selector is judged by the tree alone.
+# True when a sealed done-done run of the lane passed, clean, at the commit <candidate> is or at one that is the same change (merge-card
+# same-change: the same paths, modes and patch id, so a rebase with no change keeps the proof), and says it ran the landing's changed
+# tests: the commit decides which run is the lane's, the list of scripts the run wrote decides whether it counts (a run that ran one
+# journey and not its changed tests is not counted, so the tests run at the landing). A rebase that changed the patch, or a run that
+# failed or was dirty, never counts. A project with no selector is judged by the change alone. The combined head is not tested here: the
+# line's verify (the green pin) is.
 sealed_run_covers() {  # <id> <candidate>
   local want c f sel='' have=0 rc=0; [ "${JG_TRUNK_SEALED_REUSE:-1}" != 0 ] || return 1  # 0 always runs the tests (the suites that test the gate itself)
-  want=$(git -C "$PROJ" rev-parse --verify --quiet "$2^{tree}") || return 1
+  want=$(git -C "$PROJ" rev-parse --verify --quiet "$2^{commit}") || return 1
   for f in "$DATA/$1/.done-done/runs/"*.json; do
     [ -f "$f" ] || continue
     c=$(jq -r 'select(.exit == 0 and .dirty == false) | .commit // empty' "$f" 2>/dev/null) || continue
     [ -n "$c" ] || continue
-    [ "$(git -C "$PROJ" rev-parse --verify --quiet "$c^{tree}")" = "$want" ] || continue
+    [ "$c" = "$want" ] || "$SCRIPT_DIR/../core/merge-card/merge-card" same-change "$PROJ" "$c" "$want" >/dev/null 2>&1 || continue
     if [ "$have" = 0 ]; then sel=$(landing_selection "$2") || rc=$?; have=1; fi
     case $rc in 1) return 0 ;; 2) return 1 ;; esac
     sealed_run_ran "$DATA/$1" "$f" "$sel" && return 0
@@ -899,13 +901,13 @@ land_gates() {  # <id> <candidate> <base>
   local id=$1 cand=$2 base=$3 gate
   # Only a repository that carries Juggernaut's own suite gets its default gates; any other project runs the gates its home set for it, if any.
   if gate=$(jg_trunk_gate gate-lint "$PN" "$PROJ" "$cand"); then run_gate_try "$cand" "$gate" lint || return 1; else echo "land: $PN has no lint gate; none run" >&2; fi
-  if gate=$(jg_trunk_gate gate-full "$PN" "$PROJ" "$cand") && sealed_run_covers "$id" "$cand"; then GATE_KIND=sealed-run; echo "land: ${cand:0:12} has the tree of $id's passing sealed run; the tests ran there, so only the lint ran here" >&2
+  if gate=$(jg_trunk_gate gate-full "$PN" "$PROJ" "$cand") && sealed_run_covers "$id" "$cand"; then GATE_KIND=sealed-run; echo "land: ${cand:0:12} is the change of $id's passing sealed run; the tests ran there, so only the lint ran here" >&2
   elif gate=$(jg_trunk_gate gate-full "$PN" "$PROJ" "$cand"); then full_gate "$cand" "$gate" "$base" || return 1
   else GATE_KIND=no-gate; echo "land: $PN has no landing gate (no gate-full@$PN); none run" >&2; fi
 }
 
 land_candidate() {
-  local id=${1-} tip base spec cand GATE_KIND='' GATE_FIGURES='' GATE_SPECULATIVE='' gate_rc still=
+  local id=${1-} t0=$SECONDS tip base spec cand GATE_KIND='' GATE_FIGURES='' GATE_SPECULATIVE='' gate_rc still=
   case " $* " in *" --force"*|*" -f "*|*" --no-verify "*|*" --skip"*) refuse "a landing is never forced: land takes only the task id; there is no flag that lands past a conflict, a stale base or a failing check" ;; esac
   [ $# -le 1 ] || refuse "land takes only the task id; there is no option that forces or skips a gate"
   lane_meta "$id"
@@ -942,7 +944,7 @@ land_candidate() {
   unlock "$STATE/.trunk-$PN.lock"; front_release
   [ "$cand" = "$LANE_HEAD" ] || lane_follow "$LANE_BRANCH" "$LANE_HEAD" "$cand" "$(jg_dod_meta_value "$META" worktree)"
   landed_effects "$id" "$LANE_HEAD" "$cand"
-  echo "landed $id on $TRUNK (${base:0:12} -> ${cand:0:12}, gate=$GATE_KIND) in $PROJ; not live: it goes live only on the captain's word"
+  echo "landed $id on $TRUNK (${base:0:12} -> ${cand:0:12}, gate=$GATE_KIND, $((SECONDS - t0))s) in $PROJ; not live: it goes live only on the captain's word"
 }
 
 # --- The merge queue: two or more queued lanes land as one stack (docs/trunk-flow.md "Batch landing") ---

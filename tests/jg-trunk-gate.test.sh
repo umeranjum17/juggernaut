@@ -398,7 +398,7 @@ gate-verify=echo run >> %s/suite-runs; bash %s/rig.sh $(git diff --name-only HEA
 }
 
 # shellcheck disable=SC2016 # the policy line is written out verbatim and expands when the gate runs it
-test_a_lane_proved_at_the_tree_the_lander_would_test_is_not_tested_again() {
+test_a_lane_proved_at_the_change_the_lander_lands_is_not_tested_again() {
   local out
   world once; local JG_TRUNK_SEALED_REUSE=1
   # The tests leave a mark each time the gate runs them; the lint still runs on every landing.
@@ -409,11 +409,11 @@ test_a_lane_proved_at_the_tree_the_lander_would_test_is_not_tested_again() {
   [ ! -e "$W/gate-runs" ] || fail "the tests must not run again for a tree the sealed run already passed"
   [ "$(grep -c . "$W/lint-runs")" = 1 ] || fail "the lint must still run for the landing"
   assert_contains "$out" "gate=sealed-run" "the landing must say the sealed run stood for the tests"
-  # The trunk moved under s2: the lander rebases it onto a tree its run never saw, so the tests run.
+  # The trunk moved under s2: the lander rebases it onto a tree its run never saw, but the rebase leaves the patch as it was, so the run stands.
   out=$(trunk land s2 2>&1) || fail "a lane on a moved trunk must land: $out"
-  [ "$(grep -c . "$W/gate-runs")" = 1 ] || fail "the tests must run when the trunk moved under the lane"
-  assert_contains "$out" "gate=full" "a moved trunk is gated with the tests"
-  pass 'a lane whose sealed run is for the tree the lander tests lands on the lint alone; a moved trunk runs the tests'
+  [ ! -e "$W/gate-runs" ] || fail "the tests must not run for a rebase with the same change"
+  assert_contains "$out" "gate=sealed-run" "a rebase with the same change keeps the sealed run"
+  pass 'a lane whose sealed run is for the change the lander lands lands on the lint alone, also after a rebase with no change'
 }
 
 # A landing writes its latency row at once, from the done epoch it recorded while the lane's status file still existed.
@@ -541,7 +541,7 @@ test_the_check_starts_no_landing_until_the_whole_proof_is_there
 test_three_lanes_land_in_order_a_red_one_is_refused_and_no_whole_suite_runs_per_landing
 test_a_red_verify_finds_by_hand_is_reverted_and_takes_the_green_pin_back
 test_a_green_pin_left_behind_moves_to_the_next_landing_and_the_landing_check_does_not_grow
-test_a_lane_proved_at_the_tree_the_lander_would_test_is_not_tested_again
+test_a_lane_proved_at_the_change_the_lander_lands_is_not_tested_again
 test_a_design_lane_lands_after_the_trunk_moved_on_the_receipt_it_proved
 test_a_design_lane_refused_by_a_broken_lander_lands_after_the_lander_is_fixed
 test_a_hand_roll_approval_written_after_a_refusal_is_read_by_the_next_landing
