@@ -141,6 +141,10 @@ rested_ids=$(for f in "$rested_dir"/*; do
   expiry=$(cat "$f") || fail "cannot read account rest"
   if [ "$expiry" -gt "$(date +%s)" ] 2>/dev/null; then basename "$f"; fi
 done | jq -Rsc 'split("\n") | map(select(. != ""))') || fail "cannot read or expire account rests"
+# An account on hold (claude-accounts-hold.sh) is out like a rested one, whatever its reading says.
+held_ids=$(for f in "$state/$tool-accounts-held"/*; do if [ -s "$f" ]; then basename "$f"; fi; done | jq -Rsc 'split("\n") | map(select(. != ""))') \
+  || fail "cannot read the account holds"
+rested_ids=$(jq -cn --argjson a "$rested_ids" --argjson b "$held_ids" '$a + $b')
 
 # The picker owns the counter, so all callers (spawn, relaunch, and tool judges) share it.
 mkdir -p "$state" || fail "cannot create assignment state in $state"
@@ -179,7 +183,7 @@ pick=$(jq -cn --arg prefer "$prefer" --arg tool "$tool" --argjson assignments "$
   | (map(.tier) | min) as $tier | map(select(.tier == $tier))
   | (map(weight) | add) as $total | ((map(.assigned) | add) + 1) as $turn
   | sort_by(.assigned - (weight * $turn / $total), -.runway) | first // empty' --argjson roster "$roster")
-[ -n "$pick" ] || fail "no ${tool/claude/Claude} account can take a worker${prefer:+ (asked for $prefer)}: each is resting, signed out, or under $low% left${read_err:+ (quota reading unavailable: $read_err)}"
+[ -n "$pick" ] || fail "no ${tool/claude/Claude} account can take a worker${prefer:+ (asked for $prefer)}: each is resting, on hold, signed out, or under $low% left${read_err:+ (quota reading unavailable: $read_err)}"
 folder=$(jq -r '.folder' <<<"$pick")
 [ -d "$folder" ] || fail "the chosen $tool account's folder is missing"
 tmp=$(mktemp "$state/account-assignments.XXXXXX") || fail "cannot create assignment update"

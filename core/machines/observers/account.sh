@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # account.sh - report-only observer of the account machine (core/machines/tables/account.tsv): one word per account of the pool.
 #
-# Usage: account.sh <provider>.<account id>   print available, in-use, limited, signed-out or retired (provider: claude or codex)
+# Usage: account.sh <provider>.<account id>   print available, in-use, limited, signed-out, on-hold or retired (provider: claude or codex)
 # Records read, never written (the command only reads: it writes no record and runs no move):
 #   state/<provider>-accounts.json          the quota reader's last reading (core/claude-accounts/bin/claude-accounts-quota.sh): the roster, each
 #                                           account's windows (five_hour, seven_day, each with `left`, percent remaining) and its `problem`
@@ -10,6 +10,7 @@
 # The word, the first line that holds:
 #   no account in the reading   retired       (no reading file at all: no-reading, which is no state of the table, so `jg-machine.sh show` reports it)
 #   problem names a sign-in     signed-out    (the picker's own test: sign-in, login, unauthenticated, not authenticated, no credentials)
+#   held (a hold file)          on-hold      (state/<provider>-accounts-held/<id>, core/claude-accounts/bin/claude-accounts-hold.sh)
 #   rested until a future epoch,
 #   or a window with 0 left     limited
 #   a live lease                in-use
@@ -24,12 +25,14 @@ tool=${BASH_REMATCH[1]}; id=${BASH_REMATCH[2]}
 reading=$STATE/$tool-accounts.json
 [ -s "$reading" ] || { echo no-reading; exit 0; }
 now=$(date +%s)
-jq -r --arg id "$id" --arg tool "$tool" --argjson now "$now" --argjson ttl "${JG_ACCOUNT_POOL_ASSIGNMENT_SECONDS:-300}" \
+held=0; [ -s "$STATE/$tool-accounts-held/$id" ] && held=1
+jq -r --arg id "$id" --arg tool "$tool" --argjson now "$now" --argjson held "$held" --argjson ttl "${JG_ACCOUNT_POOL_ASSIGNMENT_SECONDS:-300}" \
   --arg rest "$(cat "$STATE/$tool-accounts-rested/$id" 2>/dev/null || echo 0)" \
   --slurpfile leases <(cat "$STATE/account-assignments.json" 2>/dev/null || echo '[]') '
   (first(.accounts[]? | select(.id == $id)) // null) as $a
   | if $a == null then "retired"
     elif (($a.problem // "") | test("sign-?in|log ?in|unauthenticated|not authenticated|no credentials"; "i")) then "signed-out"
+    elif $held == 1 then "on-hold"
     elif (($rest | tonumber? // 0) > $now) or ([$a.five_hour, $a.seven_day] | any(. != null and .left == 0)) then "limited"
     elif ([$leases[0][]? | select(.provider == $tool and .id == $id and .at > $now - $ttl)] | length) > 0 then "in-use"
     else "available" end' "$reading" 2>/dev/null || echo no-reading

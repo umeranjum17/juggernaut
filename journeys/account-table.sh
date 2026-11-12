@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# done-done journey: an account of the pool has 5 states. The real jg-machine.sh lints the account table and lists its moves; the behavior
+# done-done journey: an account of the pool has 6 states. The real jg-machine.sh lints the account table and lists its moves; the behavior
 # test (tests/jg-machine-account.test.sh) reads a fixture record in every state through the real observer and checks that a legal move adds no
 # line to the shadow log.
 set -u
@@ -16,7 +16,7 @@ cat "$out"
 cat > "$DONE_DONE_EVIDENCE_ROOT/steps.json" <<JSON
 {"target": {"version": "$(git -C "$root" rev-parse --short HEAD)"},
  "start": "generated quota readings, rest files and assignments in the shapes the quota reader and the picker write",
- "steps": ["lint the account table and its enum", "list its moves", "read a fixture record in each of the five states through the real observer", "report four legal moves and two illegal ones to the shadow log"],
- "result": "the table lints with 5 states and 10 moves, each fixture prints the right word, a legal move adds no shadow line and an illegal one adds one"}
+ "steps": ["lint the account table and its enum", "list its moves", "read a fixture record in each of the six states through the real observer", "report four legal moves and two illegal ones to the shadow log"],
+ "result": "the table lints with 6 states and 13 moves, each fixture prints the right word, a legal move adds no shadow line and an illegal one adds one"}
 JSON
 exit "$rc"

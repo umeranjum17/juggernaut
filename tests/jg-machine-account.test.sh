@@ -13,12 +13,12 @@ tab() { local IFS=$'\t'; printf '%s\n' "$*"; }
 jm() { OUT=$(bash "$JM" "$@" 2>&1); RC=$?; }
 NOW=$(date +%s)
 
-jm check account; expect_code 0 "$RC" "the account table lints"; assert_equals "ok account: 5 states, 10 edges" "$OUT" "lint golden"
-jm enum account; expect_code 0 "$RC" "the enum lints"; assert_contains "$OUT" 5 "five values"
+jm check account; expect_code 0 "$RC" "the account table lints"; assert_equals "ok account: 6 states, 13 edges" "$OUT" "lint golden"
+jm enum account; expect_code 0 "$RC" "the enum lints"; assert_contains "$OUT" 6 "six values"
 jm coverage account; expect_code 0 "$RC" "every edge names its test"
-assert_equals "available in-use limited signed-out retired" \
-  "$(awk -F'\t' '$1=="state"{printf "%s ", $2}' "$ROOT/core/machines/tables/account.tsv" | sed 's/ $//')" "the five states"
-pass "the account table lints with 5 states and 10 moves, each with a test"
+assert_equals "available in-use limited signed-out on-hold retired" \
+  "$(awk -F'\t' '$1=="state"{printf "%s ", $2}' "$ROOT/core/machines/tables/account.tsv" | sed 's/ $//')" "the six states"
+pass "the account table lints with 6 states and 13 moves, each with a test"
 
 # The reading the quota reader writes: one entry per account, windows with `left`, and a `problem` that is null or its cause.
 cat > "$S/claude-accounts.json" <<JSON
@@ -28,8 +28,10 @@ cat > "$S/claude-accounts.json" <<JSON
  {"id":"a-capped","name":"capped","folder":"/x/3","five_hour":{"left":0,"resets_at":"2026-11-12T20:00:00+00:00"},"seven_day":{"left":40,"resets_at":"2026-11-15T20:00:00+00:00"},"problem":null},
  {"id":"a-rested","name":"rested","folder":"/x/4","five_hour":{"left":10,"resets_at":"2026-11-12T20:00:00+00:00"},"seven_day":{"left":40,"resets_at":"2026-11-15T20:00:00+00:00"},"problem":null},
  {"id":"a-out","name":"out","folder":"/x/5","five_hour":null,"seven_day":null,"problem":"claude auth status: not authenticated, please sign in"},
+ {"id":"a-held","name":"held","folder":"/x/7","five_hour":{"left":90,"resets_at":"2026-11-12T20:00:00+00:00"},"seven_day":{"left":60,"resets_at":"2026-11-15T20:00:00+00:00"},"problem":null},
  {"id":"a-err","name":"err","folder":"/x/6","five_hour":{"left":70,"resets_at":"2026-11-12T20:00:00+00:00"},"seven_day":null,"problem":"timeout reading the quota"}]}
 JSON
+mkdir -p "$S/claude-accounts-held"; printf '%s\t/x/7\tbilling error\n' "$NOW" > "$S/claude-accounts-held/a-held"
 echo "$((NOW + 3600))" > "$S/claude-accounts-rested/a-rested"; echo "$((NOW - 10))" > "$S/claude-accounts-rested/a-free"
 cat > "$S/account-assignments.json" <<JSON
 [{"provider":"claude","id":"a-busy","at":$((NOW - 20))},{"provider":"claude","id":"a-busy","at":$((NOW - 5))},
@@ -42,12 +44,12 @@ word_of() {  # the state word `show` found, or the word the observer printed whe
 }
 : > "$T/states.corpus"
 for id in claude.a-free:available claude.a-busy:in-use claude.a-capped:limited claude.a-rested:limited claude.a-out:signed-out \
-  claude.a-err:available claude.a-gone:retired; do
+  claude.a-err:available claude.a-held:on-hold claude.a-gone:retired; do
   echo "show account ${id%:*} -> $(word_of "${id%:*}")"
   assert_equals "${id##*:}" "$(word_of "${id%:*}")" "${id%:*} is ${id##*:}"
   word_of "${id%:*}" >> "$T/states.corpus"
 done
-for st in available in-use limited signed-out retired; do grep -qx "$st" "$T/states.corpus" || fail "no fixture is in state $st"; done
+for st in available in-use limited signed-out on-hold retired; do grep -qx "$st" "$T/states.corpus" || fail "no fixture is in state $st"; done
 jm check account --corpus "$T/states.corpus"; expect_code 0 "$RC" "every word a fixture printed is a state"
 pass "a fixture record in every state prints the right word"
 
@@ -58,10 +60,11 @@ assert_contains "$OUT" "no state: the observer printed 'no-reading'" "show names
 jm check account; expect_code 0 "$RC" "a missing reading never fails the table check (report-only)"
 pass "a missing reading is reported and blocks nothing"
 
-# Moves: the ten legal moves replay clean, and a move out of a final state is a finding.
+# Moves: the legal moves replay clean, and a move out of a final state is a finding.
 { tab available lease in-use; tab in-use recount in-use; tab in-use release available; tab in-use hit-limit limited
   tab limited reset available; tab available sign-out signed-out; tab limited sign-out signed-out; tab in-use sign-out signed-out
-  tab signed-out sign-in available; tab available retire retired; tab signed-out retire-out retired; } > "$T/moves.corpus"
+  tab signed-out sign-in available; tab available retire retired; tab signed-out retire-out retired; tab available hold on-hold; tab in-use hold on-hold; tab limited hold on-hold
+  tab on-hold release available; tab on-hold retire-hold retired; } > "$T/moves.corpus"
 jm check account --corpus "$T/moves.corpus"; expect_code 0 "$RC" "legal moves replay clean"
 tab retired lease in-use > "$T/bad-move.corpus"
 jm check account --corpus "$T/bad-move.corpus"; expect_code 1 "$RC" "a move out of retired"

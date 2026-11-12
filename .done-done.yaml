@@ -732,6 +732,10 @@ journeys:
     # was Core suites step 47: Claude accounts pick test
     tier: local
     command: bash journeys/core-run.sh 'bash claude-accounts/tests/claude-accounts-pick.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-claude-accounts-hold-test:
+    # sf-h8: the account hold, through its real caller (a billing error on a lane's beat, one scan tick)
+    tier: local
+    command: bash journeys/core-run.sh 'bash claude-accounts/tests/claude-accounts-hold.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   core-claude-accounts-timer-test:
     # was Core suites step 48: Claude accounts timer test
     tier: local

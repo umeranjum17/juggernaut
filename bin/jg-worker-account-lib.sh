@@ -273,6 +273,23 @@ jg_worker_account_check() {
   return 0
 }
 
+# jg_worker_account_held <root> <state-dir>
+# Returns 1 and prints one error when the pinned root is the folder of an account on hold
+# (core/claude-accounts/bin/claude-accounts-hold.sh writes state/<tool>-accounts-held/<id>:
+# "epoch<TAB>folder<TAB>reason"). A hold never edits the pin: the launch refuses until the hold is lifted or the owner moves the pin.
+jg_worker_account_held() {
+  local root=$1 state=$2 f _at folder reason
+  [ -n "$root" ] || return 0
+  for f in "$state"/*-accounts-held/*; do
+    [ -s "$f" ] || continue
+    IFS=$'\t' read -r _at folder reason < "$f"
+    [ "$folder" = "$root" ] || continue
+    echo "error: config/claude-account pins Claude workers to $root, which is on hold (${reason:-no reason recorded}); lift it with core/claude-accounts/bin/claude-accounts-hold.sh release ${f##*/}, or change the pin" >&2
+    return 1
+  done
+  return 0
+}
+
 # jg_worker_account_select <harness> <config-dir> <model> <executable> [<raw-command>]
 # The whole launch-time decision. Prints nothing for an unpinned runner, so
 # the caller keeps today's launch unchanged. For a pinned one prints
@@ -319,6 +336,11 @@ jg_worker_account_select() {
       return 1
       ;;
     esac
+  fi
+  if [ "$harness" = claude ]; then  # the pool's own state folder, as claude-accounts-quota.sh resolves it
+    local pool_state; pool_state=$(sed -n 's/^state=//p' "$config/account-pool" 2>/dev/null | head -n 1)
+    case "$pool_state" in /*) ;; *) pool_state=${JG_STATE_OVERRIDE:-$(dirname "$config")/state} ;; esac
+    jg_worker_account_held "$root" "$pool_state" || return 1
   fi
   jg_worker_account_check "$harness" "$declared" "$root" "$executable" "$provider" || return 1
   printf '%s\t%s\t%s\n' "$declared" "$root" "$provider"
