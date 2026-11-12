@@ -176,6 +176,8 @@ LANDER_ACCOUNT="${CLAUDE_CONFIG_DIR:-}"; unset CLAUDE_CONFIG_DIR
 . "$SCRIPT_DIR/jg-wake-lib.sh"
 # shellcheck source=bin/jg-lease-lib.sh
 . "$SCRIPT_DIR/jg-lease-lib.sh"
+# shellcheck source=bin/jg-trace-lib.sh
+. "$SCRIPT_DIR/jg-trace-lib.sh"
 # shellcheck source=bin/jg-version-branch-lib.sh
 . "$SCRIPT_DIR/jg-version-branch-lib.sh"
 # shellcheck source=bin/jg-trunk-policy-lib.sh
@@ -684,6 +686,8 @@ record_proofs() {  # <id> <lane head> <landed commit>
     proof_account=$(jq -r --arg h "$2" 'select(.head == $h) | .context.account // empty' "$d/merge-card.json" 2>/dev/null | tail -n 1)
   row trunk-landing-proofs.tsv "$1" "$PN" "$3" "$(date +%s)" "receipt=$receipt" "signature=$sig" "merge-card=$card" \
     "proof-account=${proof_account:-none}" "lander-account=${LANDER_ACCOUNT:-none}" "gate=${GATE_FIGURES:-absent}" "done=${done_at:-absent}"
+  # The receipt the landing read is a fact on the ticket's trail. A failed write is one warning line (jg-trace-lib.sh).
+  case $receipt in absent) ;; *) jg_trace_record "$1" used work-id "$1@${2:0:12}" --source jg-receipt --payload "{\"verdict\":\"${receipt%%@*}\"}" || : ;; esac
 }
 
 # Tell the lane's ticket and Overwatch that its landed commit was reverted, with the reason. Best effort: the revert stands.

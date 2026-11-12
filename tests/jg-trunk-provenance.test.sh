@@ -29,8 +29,8 @@ test_a_landing_and_the_landers_revert_write_provenance_on_the_ticket() {
   [ "$(meta jg-j9 commit)" = "$c" ] || fail "the row must hold the landed commit, got [$(meta jg-j9 commit)]"
   [ -n "$(meta jg-j9 landed_at)" ] || fail "the row must hold landed_at"
   [ "$(events jg-j9 jg-trunk-land)" = 1 ] || fail "one land event from jg-trunk-land"
-  [ "$(bd provenance log jg-j9 --json | jq -r '.[0].ref')" = "$c" ] || fail "the event must hold the landed commit"
-  [ "$(bd provenance log jg-j9 --json | jq -r '.[0].occurred_at')" = "$(meta jg-j9 landed_at)" ] || fail "the event and the row must carry the same time"
+  [ "$(bd provenance log jg-j9 --json | jq -r '[.[] | select(.source == "jg-trunk-land")][0].ref')" = "$c" ] || fail "the event must hold the landed commit"
+  [ "$(bd provenance log jg-j9 --json | jq -r '[.[] | select(.source == "jg-trunk-land")][0].occurred_at')" = "$(meta jg-j9 landed_at)" ] || fail "the event and the row must carry the same time"
   pass "a landing writes a land event with the landed commit, then landed_at and commit on the ticket's row, with the same time"
   # The lander reverts a commit that broke the suite: trailer, event, reverted_at; landed_at and commit stay.
   trunk verify "$PROJ" "$c" >/dev/null 2>&1 && fail "verify must fail on the broken commit"

@@ -72,8 +72,20 @@ jg_dod_merge_gate() {  # <config-dir> <home> <id> <meta> <candidate-head> <pr-ur
   return 1
 }
 
+# The completion receipt a merge read is a fact on the ticket's trail (a landing records its own in bin/jg-trunk.sh record_proofs).
+jg_merge_trace_receipt() {  # <home> <id> <meta> <head|->
+  local r=${3%/*}/$2.run-receipt.json verdict ticket
+  ticket=$(sed -n 's/^ticket=//p' "$3" 2>/dev/null | tail -n 1)
+  [ "$4" != - ] && [ -f "$r" ] && command -v jq >/dev/null 2>&1 || return 0
+  verdict=$(jq -r 'select(.head == $h) | .verdict // empty' --arg h "$4" "$r" 2>/dev/null) || return 0
+  [ -n "$verdict" ] || return 0
+  JG_HOME=$1 "$_JG_GATE_LIB_DIR/jg-backlog.sh" trace record "${ticket:-$2}" used work-id "$2@${4:0:12}" --source jg-receipt \
+    --payload "{\"verdict\":\"$verdict\"}" >/dev/null 2>&1 || echo "warning: the receipt of $2 could not be put on its ticket's trail" >&2
+}
+
 jg_merge_post_hook() {  # <config-dir> <home> <id> <meta> <head|-> <pr-url|->
   local hook=$1/post-merge worktree out rc=0 seconds=${JG_POST_MERGE_TIMEOUT:-120}
+  jg_merge_trace_receipt "$2" "$3" "$4" "$5"
   [ -e "$hook" ] || [ -L "$hook" ] || return 0
   [ -x "$hook" ] || { echo "post-merge hook skipped: $hook is not executable"; return 0; }
   case $seconds in ''|0*|*[!0-9]*) seconds=120 ;; esac

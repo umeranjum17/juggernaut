@@ -1784,6 +1784,7 @@ RAW_LAUNCH=0
 # validation teardown uses, so a malformed, ambiguous, or foreign record
 # refuses here exactly as it refuses there.
 RELAUNCH_PRIOR_HARNESS=
+RELAUNCH_PRIOR_GEN=
 # 1 when the recorded endpoint is authoritatively gone and this relaunch must
 # create a fresh one for the task rather than adopt its recorded address.
 RELAUNCH_REBIND=0
@@ -1871,6 +1872,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
       ;;
   esac
   RELAUNCH_PRIOR_HARNESS=$(jg_meta_get "$RELAUNCH_META" harness)
+  RELAUNCH_PRIOR_GEN=$(jg_meta_get "$RELAUNCH_META" spawn_gen)
   KIND=$(jg_meta_get "$RELAUNCH_META" kind)
   [ -n "$KIND" ] || KIND=ship
   # A squad_lead whose endpoint is gone already has ONE owner for that
@@ -5647,9 +5649,12 @@ SPAWN_ACCOUNT=
 jg_account_hook spawn-line
 # Opt-in fleet activity ledger (docs/fleet-ledger.md); off costs one file test.
 [ ! -e "$CONFIG/fleet-ledger" ] || [ "$RELAUNCH" -eq 1 ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE JG_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/jg-fleet-ledger.sh" dispatched "$ID" "$KIND" "${PROJ_ABS##*/}" "$HARNESS" "$MODEL" || true
-# The board's ticket says what this lane is doing from the first minute instead
-# of the next poll. A relaunch keeps whatever stage the lane already reached.
-[ "$RELAUNCH" -eq 1 ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE JG_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/jg-ticket.sh" "$ID" --stage building --state "in progress" || true
+# The ticket's trail says who started this lane from the first minute: a claim for a spawn, a handoff for a relaunch (with the
+# generation it replaced). A failed write is one warning line and never fails the spawn.
+if [ "$RELAUNCH" -eq 1 ]; then _trace_kind=handoff _trace_payload="{\"from_gen\":\"${RELAUNCH_PRIOR_GEN:-}\",\"gen\":\"$SPAWN_GEN\"}"
+else _trace_kind=claim _trace_payload="{\"gen\":\"$SPAWN_GEN\"}"; fi
+[ "$KIND" = squad_lead ] || JG_HOME=$JG_HOME "$SCRIPT_DIR/jg-backlog.sh" trace record "$ID" "$_trace_kind" work-id "$ID@$SPAWN_GEN" --source jg-spawn --payload "$_trace_payload" >/dev/null \
+  || echo "warning: the $_trace_kind of $ID could not be put on its ticket's trail" >&2
 # Herdr assigns every agent a random call-sign at start and fresh ones across
 # a server restart, so pin the live agent's display name to this task's id now
 # that the spawn has fully succeeded (the agent is live here; a rename on an

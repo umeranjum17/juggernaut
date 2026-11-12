@@ -151,6 +151,9 @@ if [ -z "$card_done" ]; then
   sweep="$(dirname "$MC")/one-card-per-pr"
   [ ! -x "$sweep" ] || "$sweep" --apply "$BOARD" >/dev/null 2>&1 || true
   echo "proof: posted $card_key ($KIND, $n media)"
+  # The card is evidence on the ticket's trail; a failed write is one line and never stops the card.
+  "$SCRIPT_DIR/jg-backlog.sh" trace record "$ID" used work-id "$card_key" --source jg-evidence >/dev/null 2>&1 \
+    || echo "proof: warning: the card $card_key could not be put on the ticket's trail" >&2
   link_out=$(jg_board_link reports "$card_key") && echo "proof: link: $link_out"
 fi
 

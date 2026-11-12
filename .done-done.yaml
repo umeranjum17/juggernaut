@@ -424,6 +424,10 @@ journeys:
     tier: local
     command: bash journeys/ticket-stage.sh
     timeout: 10m
+  trace-writers:
+    tier: local
+    command: bash journeys/trace-writers.sh
+    timeout: 10m
   ticket-move:
     tier: local
     command: bash journeys/ticket-move.sh
