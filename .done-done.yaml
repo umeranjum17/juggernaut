@@ -947,6 +947,9 @@ journeys:
   live-plan-rows:
     tier: live
     command: bash tests/live/plan-rows.sh "${JG_LIVE_EPIC:-jg-8kugw}"
+  proc-reaper:
+    tier: local
+    command: bash tests/jg-proc-reaper.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
 
 secrets:
   allow:
