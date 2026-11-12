@@ -325,8 +325,12 @@ jg_dod_demo_gate() {  # <config-dir> <state> <id> <meta> <candidate-head>
 # `Nav after: ...` line, and every item of before is still in after unless a
 # `Removed by captain words: <quote>` line is present. ui_change=no passes; a record
 # with no ui_change (an older task) warns and counts as no. A shell check decides.
-jg_dod_nav_gate() {  # <id> <meta> <text>
-  local id=$1 meta=$2 text=$3 call before after item removed=''
+# <where> names the place the lines belong in a refusal: "PR body" (the default) for a PR,
+# "commit message" for a local landing, which has no PR body. <fallback> is read only when
+# <text> lacks a Nav before or Nav after line; a local landing passes the lane's receipt
+# evidence and done line, so a lane already at ready is not sent back for a missing line.
+jg_dod_nav_gate() {  # <id> <meta> <text> [<where>] [<fallback text>]
+  local id=$1 meta=$2 text=$3 where=${4:-PR body} fallback=${5:-} call before after item removed=''
   [ -n "$id" ] && [ -f "$meta" ] || return 0
   call=$(jg_dod_meta_value "$meta" ui_change)
   case $call in
@@ -339,8 +343,11 @@ jg_dod_nav_gate() {  # <id> <meta> <text>
     printf '%s\n' "$text" | tr -d '\r' | sed -n -E "s/^[[:space:]]*([-*][[:space:]]+)?$1:[[:space:]]*(.*[^[:space:]])[[:space:]]*\$/\\2/Ip" | tail -1
   }
   before=$(_jg_nav_line 'Nav before'); after=$(_jg_nav_line 'Nav after')
+  if { [ -z "$before" ] || [ -z "$after" ]; } && [ -n "$fallback" ]; then
+    text=$fallback; before=$(_jg_nav_line 'Nav before'); after=$(_jg_nav_line 'Nav after')
+  fi
   if [ -z "$before" ] || [ -z "$after" ]; then
-    echo "merge refused: $id is a UI change and its PR body has no 'Nav before: <items>' and 'Nav after: <items>' lines listing the menus, tabs and screens"
+    echo "merge refused: $id is a UI change and its $where has no 'Nav before: <items>' and 'Nav after: <items>' lines listing the menus, tabs and screens"
     return 1
   fi
   _jg_nav_items() { printf '%s\n' "$1" | tr ';,' '\n' | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' | sed '/^$/d' | tr '[:upper:]' '[:lower:]'; }
@@ -349,7 +356,7 @@ jg_dod_nav_gate() {  # <id> <meta> <text>
   done < <(_jg_nav_items "$before")
   [ -n "$removed" ] || return 0
   if [ -n "$(_jg_nav_line 'Removed by captain words')" ]; then return 0; fi
-  echo "merge refused: $id is a UI change and its PR body drops from Nav before ($removed) with no 'Removed by captain words: <quote>' line; a UI change never removes an existing menu, tab or screen unless the captain's own words ask for it"
+  echo "merge refused: $id is a UI change and its $where drops from Nav before ($removed) with no 'Removed by captain words: <quote>' line; a UI change never removes an existing menu, tab or screen unless the captain's own words ask for it"
   return 1
 }
 
@@ -399,6 +406,20 @@ jg_dod_trunk_proof_gaps() {
   [ "$gaps" = 0 ]
 }
 
+# The nav lines a local-landing lane may state outside its commit message: the evidence of its PASS completion receipt for
+# this head, then its last done line (the `done [at=..]:` prefix removed; a Nav/Removed label after the first on one line
+# starts its own line). Prints nothing when it has neither.
+jg_dod_local_nav_fallback() {  # <state> <id> <head>
+  local state=$1 id=$2 head=$3 receipt=$1/$2.run-receipt.json
+  if [ -f "$receipt" ] && [ ! -L "$receipt" ] && command -v jq >/dev/null 2>&1; then
+    jq -r --arg task "$id" --arg head "$head" 'select(.task == $task and .head == $head and .verdict == "PASS") | .evidence // empty' "$receipt" 2>/dev/null
+  fi
+  if [ -f "$state/$id.status" ]; then
+    grep -E '^done( \[[^]]*\])?:' "$state/$id.status" | tail -1 | sed -E 's/^done( \[[^]]*\])?:[[:space:]]*//; s/[[:space:]|]+(Nav before|Nav after|Removed by captain words):/\n\1:/Ig'
+  fi
+  return 0
+}
+
 # The gates a local landing passes, in one place so bin/jg-merge-local.sh and bin/jg-trunk.sh
 # cannot drift: the captain hold, then receipt, design, demo, nav, config/merge-gate and the proof card.
 # Prints the refusal and returns 1; returns 0 when every gate passes.
@@ -421,7 +442,7 @@ jg_dod_local_landing_gates() {
   if [ "$kind" = trunk ] && command -v jq >/dev/null 2>&1; then proved=$(jq -r '.head // empty' "$state/$id.run-receipt.json" 2>/dev/null) || proved=''; proved=${proved:-$candidate}; fi
   if declare -F jg_dod_design_gate >/dev/null; then jg_dod_design_gate "$state" "$id" "$meta" "$proved" >&2 || return 1; fi
   if declare -F jg_dod_demo_gate >/dev/null; then jg_dod_demo_gate "$config" "$state" "$id" "$meta" "$proved" >&2 || return 1; fi
-  if declare -F jg_dod_nav_gate >/dev/null; then jg_dod_nav_gate "$id" "$meta" "$(git -C "$proj" log --format=%B "$base..$candidate")" >&2 || return 1; fi
+  if declare -F jg_dod_nav_gate >/dev/null; then jg_dod_nav_gate "$id" "$meta" "$(git -C "$proj" log --format=%B "$base..$candidate")" "commit message" "$(jg_dod_local_nav_fallback "$state" "$id" "$proved")" >&2 || return 1; fi
   [ "$kind" != trunk ] || return 0
   if declare -F jg_dod_merge_gate >/dev/null; then jg_dod_merge_gate "$config" "$home" "$id" "$meta" "$candidate" - >&2 || return 1; fi
   if declare -F jg_dod_proof_gate >/dev/null; then jg_dod_proof_gate "$home" "$id" "$candidate" - >&2 || return 1; fi

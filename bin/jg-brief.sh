@@ -1147,12 +1147,15 @@ if [ -n "$UI_CHANGE" ]; then
 # UI change
 UI change (nav-check): $UI_CHANGE"
   if [ "$UI_CHANGE" = yes ]; then
+    # A local landing has no PR body: it reads the lane's one commit message (and, failing that, its receipt evidence or done line).
+    if jg_delivery_style_publishes "$MODE"; then NAV_PLACE='the PR body'; NAV_VERB=merge
+    else NAV_PLACE="the commit message (a local landing has no PR body; the same two lines in your completion receipt evidence or done line also count)"; NAV_VERB=landing; fi
     UI_SECTION="$UI_SECTION
 A UI change never removes or renames an existing menu, tab or screen unless the captain's own words ask for it.
 A design option that removes a screen must name each removed screen in plain words.
-Put two lines in the PR body: \`Nav before: <item>, <item>\` and \`Nav after: <item>, <item>\`, listing every menu, tab and screen the change touches.
+Put two lines in $NAV_PLACE: \`Nav before: <item>, <item>\` and \`Nav after: <item>, <item>\`, listing every menu, tab and screen the change touches.
 An item in before that is missing from after needs a line \`Removed by captain words: <quote of the captain>\`.
-The merge is refused without the two lines, or with a dropped item and no quote."
+The $NAV_VERB is refused without the two lines, or with a dropped item and no quote."
   fi
   UI_SECTION="$UI_SECTION
 "

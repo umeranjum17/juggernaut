@@ -500,6 +500,33 @@ test_a_hand_roll_approval_written_after_a_refusal_is_read_by_the_next_landing() 
   pass 'a hand-roll approval written after a refusal is read by the next landing of the same head'
 }
 
+# jg8-nav-gate-local-lane: a local lane has no PR body, so the nav gate reads its commit message, then its receipt evidence or done line.
+test_a_ui_lane_states_its_nav_lines_in_the_commit_message_the_receipt_or_the_done_line() {
+  local out id h
+  world nav
+  # No lines anywhere: refused, and the refusal names the commit message, never a PR body.
+  lane nv1 ui a.txt; printf 'ui_change=yes\n' >> "$HOME_D/state/nv1.meta"
+  refused 'a ui lane with no nav lines' nv1 "its commit message has no 'Nav before"
+  assert_not_contains "$(trunk land nv1 2>&1 || true)" "PR body" "a local landing must not name a PR body"
+  # The lines in the commit message: lands.
+  lane nv2 ui b.txt $'Nav before: Home, Inbox\nNav after: Home, Inbox, Reports'; printf 'ui_change=yes\n' >> "$HOME_D/state/nv2.meta"
+  out=$(trunk land nv2 2>&1) || fail "a ui lane with the lines in its commit message must land: $out"
+  # The lines only in the completion receipt evidence: lands.
+  lane nv3 ui c.txt; printf 'ui_change=yes\n' >> "$HOME_D/state/nv3.meta"
+  h=$(git -C "$PROJ" rev-parse "fm/nv3")
+  jq -n --arg t nv3 --arg h "$h" --arg e $'done-done run: ok\nNav before: Home\nNav after: Home, Reports' \
+    '{schema:1,task:$t,mode:"local-trunk",spawn_gen:("g-"+$t),head:$h,pr:"",verdict:"PASS",at:1,evidence:$e}' > "$HOME_D/state/nv3.run-receipt.json"
+  out=$(trunk land nv3 2>&1) || fail "a ui lane with the lines in its receipt must land: $out"
+  # The lines only in the done line: lands.
+  lane nv4 ui d.txt; printf 'ui_change=yes\n' >> "$HOME_D/state/nv4.meta"
+  printf 'done [at=2000]: ready in branch fm/nv4 (local-trunk) Nav before: Home | Nav after: Home, Reports\n' >> "$HOME_D/state/nv4.status"
+  out=$(trunk land nv4 2>&1) || fail "a ui lane with the lines in its done line must land: $out"
+  # A dropped item is still refused on a local landing, from whichever place the lines come.
+  lane nv5 ui e.txt $'Nav before: Home, Inbox\nNav after: Home'; printf 'ui_change=yes\n' >> "$HOME_D/state/nv5.meta"
+  refused 'a ui lane that drops a nav item' nv5 "its commit message drops from Nav before (inbox)"
+  pass 'a local ui lane names the commit message in the refusal and lands on its lines in the commit message, the receipt or the done line'
+}
+
 test_the_full_gate_charges_a_lane_only_for_what_it_broke
 test_every_landing_writes_its_latency_row_from_the_done_epoch_it_recorded
 test_a_flaky_failure_gets_one_rerun_before_it_is_judged
@@ -518,4 +545,5 @@ test_a_lane_proved_at_the_tree_the_lander_would_test_is_not_tested_again
 test_a_design_lane_lands_after_the_trunk_moved_on_the_receipt_it_proved
 test_a_design_lane_refused_by_a_broken_lander_lands_after_the_lander_is_fixed
 test_a_hand_roll_approval_written_after_a_refusal_is_read_by_the_next_landing
+test_a_ui_lane_states_its_nav_lines_in_the_commit_message_the_receipt_or_the_done_line
 printf 'jg-trunk-gate: ok\n'
