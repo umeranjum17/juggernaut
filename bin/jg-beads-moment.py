@@ -5,6 +5,7 @@ Usage: BEADS_DIR=<store> jg-beads-write.py moment <ticket> <moment> [--at <RFC33
        BEADS_DIR=<store> jg-beads-write.py wait <ticket> <who> [<reason>] [--at <RFC3339>]
        BEADS_DIR=<store> jg-beads-write.py ticket-stage <ticket> [--proof <state of the proof run>]
        BEADS_DIR=<store> jg-beads-write.py ticket-drift <ticket> [--forge]
+       BEADS_DIR=<store> jg-beads-write.py times <ticket>
 
 moment writes one of eight moments of the ticket machine: approved_at, proved_at, bypassed_at, landing_at, gated_at, returned_at, conflict_at and release_opened_at.
 Each is a provenance event first and then the row's metadata, in that order, because the row write is the signal a reader can poll and
@@ -15,6 +16,8 @@ returned_to (default building), the stage the ticket was given back to.
 wait writes the three wait keys, wait (who owes the next move), wait_reason and wait_at, in one update; a wait ends by writing the
 who `none`. The words are the closed lists of core/machines/ticket-wait.states and ticket-wait-reason.states. A wait adds no child row.
 No stage word is stored, `bd set-state` is never called, and hold_kind is not written: the stage is worked out by bin/jg-beads-stage.py.
+times prints one line `<name><TAB><time>` for each of ready, landed, live and released that the row holds, in that order, and nothing, with exit 0,
+for a row that holds none. The time is the row's RFC3339 string (ready_at, landed_at, live_at, released_at). It never writes.
 Every write prints one line with the seconds it took.
 ticket-drift prints one line `drift<TAB><ticket><TAB>lost<TAB><difference>` for each way the row and the records outside Beads differ
 (bin/jg-beads-drift.py) and nothing when they agree. The forge is read only with --forge. It never writes.
@@ -159,5 +162,19 @@ def ticket_drift(args):
         print(line)
 
 
+# The stamps `times` reads, in the order a ticket reaches them: name -> the row's metadata key.
+TIMES = (("ready", "ready_at"), ("landed", "landed_at"), ("live", "live_at"), ("released", "released_at"))
+
+
+def times(args):
+    _, ids = view.flags(args, (), ())
+    if len(ids) != 1:
+        view.refuse("usage: times <ticket>")
+    meta = fetch(ids[0]).get("metadata") or {}
+    for name, key in TIMES:
+        if meta.get(key):
+            print("%s\t%s" % (name, meta[key]))
+
+
 def main(verb, args):
-    {"moment": moment, "wait": wait, "ticket-stage": ticket_stage, "ticket-drift": ticket_drift}[verb](args)
+    {"moment": moment, "wait": wait, "ticket-stage": ticket_stage, "ticket-drift": ticket_drift, "times": times}[verb](args)

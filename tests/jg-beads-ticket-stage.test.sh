@@ -206,6 +206,13 @@ out=$(PATH="$T/bin:$PATH" drift jg-f1 --forge)
 meta jg-f1 released_at=$t2; [ -z "$(PATH="$T/bin:$PATH" drift jg-f1 --forge)" ] || fail "a released row agrees with a merged pull request"
 pass "a merged pull request on an open row prints one drift line"
 
+# The times verb (slice S25): four stamps print in order, and a ticket with none prints nothing and exits 0.
+new jg-t1; meta jg-t1 released_at=$t4 live_at=$t3 landed_at=$t2 ready_at=$t1 commit=abc123
+[ "$(axi times jg-t1)" = "$(printf 'ready\t%s\nlanded\t%s\nlive\t%s\nreleased\t%s' $t1 $t2 $t3 $t4)" ] || fail "times must print the four stamps in order, got [$(axi times jg-t1)]"
+new jg-t2; out=$(axi times jg-t2) || fail "times on a ticket with no stamps must exit 0"
+[ -z "$out" ] || fail "a ticket with no stamps must print nothing, got [$out]"
+pass "times prints the stamped times in order, and nothing for none"
+
 # The time of one write.
 out=$(axi moment jg-w1 approved_at) || fail "timed write: $out"
 secs=$(sed -n 's/.*(\([0-9.]*\) s)$/\1/p' <<<"$out")
