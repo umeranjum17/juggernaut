@@ -21,7 +21,7 @@ the shell it deletes, and deletes that shell in the same change.
    the content check against the branch that carries the merge, and the default-branch read. 29 shell lines remain in
    `bin/jg-teardown.sh` to marshal the facts the command cannot read from the worktree.
 2. **Done.** The worktree safety check (`safety`): the dirty, unpushed and unmerged reads, the
-   local-only rule, the untracked-path report and the lock-blocked answer (exit 3). The wait for a
+   local rule (a mode the delivery-style table says does not publish), the untracked-path report and the lock-blocked answer (exit 3). The wait for a
    lock to clear and the stale-lock proof stay in `bin/jg-teardown.sh` with the shared
    `bin/jg-lock-lib.sh` proof, because the treehouse return uses them too; they go with that slice.
 3. **Done for the reap.** Process reaping. The endpoint close and its refusal stay in

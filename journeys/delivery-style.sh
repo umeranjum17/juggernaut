@@ -27,6 +27,10 @@ rc=0
   # J8d: these five files read the table too (the Go spawn core through jg-spawn-core.sh), so the count for them is 0 (it was 5: jg-dod-lib.sh 2, jg-gate-refuse-lib.sh 1, intake.go 1, delivery.go 1).
   j8d=$(git -C "$root" grep -n -E "$pat" -- bin/jg-dod-lib.sh bin/jg-gate-refuse-lib.sh core/spawn/cmd/jg-spawn-core/intake.go core/spawn/cmd/jg-spawn-core/delivery.go core/spawn/cmd/jg-spawn-core/style.go | wc -l)
   echo "== mode branch lines in the J8d files: $j8d (5 before J8d)"; [ "$j8d" -eq 0 ] || rc=1
+  # J8e: the last file, core/teardown's safety.go, reads the table's local fact (jg-teardown.sh passes --local), so the total outside three files whose match is not a mode is 0:
+  # bin/jg-bootstrap.sh and the supervisor policy name the pipeline tool, and bin/jg-trunk-policy-lib.sh names the tool's folder in a path list.
+  j8e=$(git -C "$root" grep -n -E "$pat" -- bin core ':!*test*' ':!bin/jg-bootstrap.sh' ':!bin/jg-trunk-policy-lib.sh' ':!core/supervisor-guard/bin/jg-supervisor-work-command-policy.mjs' | wc -l)
+  echo "== mode branch lines in bin and core outside the three tool-name files: $j8e (core/teardown safety.go was the last one)"; [ "$j8e" -eq 0 ] || rc=1
   echo "== trunk aliases the old note words read from: $(bash "$ds" --trunk-aliases | paste -sd' ' -)"; [ "$(bash "$ds" --trunk-aliases)" = local-trunk ] || rc=1
   echo "== bogus"; bash "$ds" bogus && rc=1
   bash "$root/tests/jg-delivery-style.test.sh" || rc=1

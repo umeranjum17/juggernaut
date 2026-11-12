@@ -20,7 +20,7 @@
 // branch and exits 1 when none can be determined.
 //
 // `safety` is the next question, asked before the worktree is returned: is anything uncommitted or
-// unpushed that nobody has absorbed? It takes the landed flags plus --mode and --cached-branch,
+// unpushed that nobody has absorbed? It takes the landed flags plus --local and --cached-branch,
 // exits 0 to proceed, 1 for a refusal whose sentences it prints on stderr, 3 when a git index lock
 // stopped a read (the caller waits, proves the lock stale, and asks again), and 2 for an invalid
 // request. branch= and pr_url= on stdout are facts for the caller to keep. The landed question is
@@ -65,5 +65,5 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: jg-teardown safety --worktree W --project P --mode M [flags] | landed --worktree W --branch B --project P [flags] | default-branch --project P | reap --label L --task-id ID --backend B --target T --caller-pid N DIR... | validate-removal|validate-child|validate-home|worktree-registered [flags] -- TARGET")
+	fmt.Fprintln(os.Stderr, "usage: jg-teardown safety --worktree W --project P [--local] [flags] | landed --worktree W --branch B --project P [flags] | default-branch --project P | reap --label L --task-id ID --backend B --target T --caller-pid N DIR... | validate-removal|validate-child|validate-home|worktree-registered [flags] -- TARGET")
 }

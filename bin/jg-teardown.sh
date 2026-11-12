@@ -1754,7 +1754,9 @@ validate_worktree_teardown_safety() {
   case "$KIND" in
     squad_lead|scout) return 0 ;;
   esac
-  local args=(safety --worktree "$WT" --project "$PROJ" --mode "$MODE")
+  local args=(safety --worktree "$WT" --project "$PROJ")
+  # A mode that does not publish is read from the delivery-style table; the Go core holds no mode word.
+  ! jg_delivery_style_is "$MODE" local || args+=(--local)
   [ -z "${TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY:-}" ] || args+=(--cached-branch "$TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY")
   [ -z "$PR_URL" ] || args+=(--pr-url "$PR_URL")
   [ -z "$BASE_BRANCH" ] || args+=(--base-branch "$BASE_BRANCH")

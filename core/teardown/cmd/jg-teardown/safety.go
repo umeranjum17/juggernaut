@@ -24,19 +24,21 @@ var exemptDirt = regexp.MustCompile(`^\?\? (\.claude/|\.jg-(grok|kimi)-turnend$)
 
 type safety struct {
 	landing
-	mode, cachedBranch string
+	cachedBranch string
+	// local is the delivery-style fact "a known mode that does not publish", read from the table by the caller.
+	local bool
 }
 
 // runSafety answers whether a worktree may be returned to the pool: nothing uncommitted, nothing
 // unpushed that the forge or the default branch has not absorbed. It prints the refusal sentences
 // on stderr and `branch=` / `pr_url=` facts on stdout for the caller to keep.
 //
-//	jg-teardown safety --worktree W --project P --mode M [--cached-branch B]
+//	jg-teardown safety --worktree W --project P [--local] [--cached-branch B]
 //	                   [landed flags]
 func runSafety(args []string) int {
 	fs := flag.NewFlagSet("safety", flag.ContinueOnError)
 	s := &safety{}
-	fs.StringVar(&s.mode, "mode", "", "the task's delivery mode")
+	fs.BoolVar(&s.local, "local", false, "the task's delivery style does not publish (the delivery-style table's local fact)")
 	fs.StringVar(&s.cachedBranch, "cached-branch", "", "the branch an earlier check read from this worktree")
 	build := landedFlags(fs, &s.landing)
 	fs.SetOutput(os.Stderr)
@@ -85,7 +87,7 @@ func (s *safety) check() int {
 	unpushed := firstLines(unpushedRaw, 5)
 
 	switch {
-	case unpushed != "" && s.mode == "local-only" && s.trunkBranch == "":
+	case unpushed != "" && s.local && s.trunkBranch == "":
 		def, ok := defaultBranch(s.project)
 		if !ok {
 			return refuse("REFUSED: cannot determine default branch for " + s.project + "; expected origin/HEAD, main, or master.")
@@ -99,7 +101,7 @@ func (s *safety) check() int {
 		}
 		unmerged := firstLines(unmergedRaw, 5)
 		if dirty != "" || unmerged != "" {
-			fmt.Fprintln(os.Stderr, "REFUSED: local-only worktree "+wt+" has work not yet merged into "+def+" and not on any remote.")
+			fmt.Fprintln(os.Stderr, "REFUSED: local worktree "+wt+" has work not yet merged into "+def+" and not on any remote.")
 			if dirty != "" {
 				reportDirt(dirty)
 			}
@@ -112,11 +114,11 @@ func (s *safety) check() int {
 		fmt.Fprintln(os.Stderr, "REFUSED: worktree "+wt+" has uncommitted changes.")
 		reportDirt(dirty)
 		return refuse("Commit them (or get the captain's explicit OK to discard, then --force).")
-	case s.mode == "local-only" && s.trunkBranch != "":
+	case s.local && s.trunkBranch != "":
 		if !s.landedOnTrunk() {
 			return refuse("REFUSED: "+s.gap+".", "Land this branch on the local "+s.trunkBranch+" before cleanup.")
 		}
-	case s.mode != "local-only":
+	case !s.local:
 		// A pushed branch is not a landing: the forge must prove the merge.
 		branch := s.cachedBranch
 		if branch == "" {
