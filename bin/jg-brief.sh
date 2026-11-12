@@ -1036,7 +1036,8 @@ The report is the only thing that survives, so anything worth keeping must be in
 $OPERATOR_PAUSE_INSTRUCTIONS
 5. If you hit the same obstacle twice, append \`blocked [at=<epoch>]: {why}\` and stop; juggernaut will help.
 6. If a decision belongs to a human (product choices, destructive actions),
-   append \`needs-decision [at=<epoch>]: {summary of options}\` and stop. Juggernaut will reply with the decision.
+   run \`jg ask "<question>" --option <a> --option <b> --recommend <a>\` (\`--owner\` when it is the captain's call) and stop. Juggernaut will reply with the decision.
+   \`jg alert\` lists the alerts that name your ticket, and \`jg alert ack <key>\` acknowledges one.
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Juggernaut's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a juggernaut reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 $SHARED_INFRA_RULE
@@ -1217,7 +1218,8 @@ $RULE1
 $OPERATOR_PAUSE_INSTRUCTIONS
 5. If you hit the same obstacle twice, append \`blocked [at=<epoch>]: {why}\` and stop; juggernaut will help.
 6. If a decision belongs above the implementation worker (product choices, destructive actions),
-   append \`needs-decision [at=<epoch>]: {summary of options}\` and stop. Juggernaut will reply with the decision.
+   run \`jg ask "<question>" --option <a> --option <b> --recommend <a>\` (\`--owner\` when it is the captain's call) and stop. Juggernaut will reply with the decision.
+   \`jg alert\` lists the alerts that name your ticket, and \`jg alert ack <key>\` acknowledges one.
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Juggernaut's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a juggernaut reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 $SHARED_INFRA_RULE

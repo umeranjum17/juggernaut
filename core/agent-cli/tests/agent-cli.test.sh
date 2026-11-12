@@ -40,6 +40,25 @@ out=$(jg status); has status-wait "$out" "wait: paused [at="; has status-wait "$
 out=$(jg done); has done "$out" "done recorded"
 last=$(tail -n1 "$S"); case $last in "done [at="*"]: ready in branch feature/t1 (local-only)") ;; *) fail "done line: $last" ;; esac
 [ "$(wc -l < "$S")" = 3 ] || fail "status file should hold 3 lines (progress, paused, done), got $(wc -l < "$S")"
+# alerts: only the ticket's own alerts show; a lead's --home shows all; ack is the machine's move
+JG_HOME=$H JG_STATE_OVERRIDE=$H/state "$ROOT/bin/jg-alert.sh" raise lost-worker t1 --ticket t1 --note "no sign of life" >/dev/null || fail "raise own alert"
+JG_HOME=$H JG_STATE_OVERRIDE=$H/state "$ROOT/bin/jg-alert.sh" raise lost-worker t2 --ticket t2 --note "other lane" >/dev/null || fail "raise other alert"
+out=$(jg alert); has alert "$out" "alerts: 1"; has alert "$out" "lost-worker--t1"; has alert "$out" "Next: jg alert ack"
+case $out in *lost-worker--t2*) fail "alert list shows another ticket's alert" ;; esac
+out=$(jg alert --home); has alert-home "$out" "alerts: 2"
+out=$(jg alert ack lost-worker--t2) && fail "ack of another ticket's alert passed"; has alert-other "$out" "does not name t1"
+out=$(jg alert ack lost-worker--t1); has ack-alert "$out" "acknowledged"
+[ "$(JG_HOME=$H JG_STATE_OVERRIDE=$H/state "$ROOT/bin/jg-alert.sh" word lost-worker--t1)" != open ] || fail "alert still open after ack"
+out=$(jg alert ack lost-worker--t1) && fail "second ack passed"
+
+# ask: one decision line with options and recommendation; a bad question is refused and writes nothing
+before=$(wc -l < "$S")
+out=$(jg ask "Keep the old name?" --option keep --option rename --recommend keep); has ask "$out" "decision asked"
+last=$(tail -n1 "$S"); case $last in "needs-decision [at="*"]: Keep the old name? Options: keep | rename. Recommend: keep.") ;; *) fail "ask line: $last" ;; esac
+out=$(jg ask "One option?" --option only) && fail "single option passed"; has ask-one "$out" "two options"
+out=$(jg ask "Pick" --option a --option b --recommend c) && fail "recommend outside options passed"
+[ "$(wc -l < "$S")" = $((before + 1)) ] || fail "a refused ask wrote a line"
+
 out=$(jg bogus) && fail "unknown verb passed"; has verb "$out" "Next: jg help"
 out=$(jg help); has help "$out" "jg inbox"
 
