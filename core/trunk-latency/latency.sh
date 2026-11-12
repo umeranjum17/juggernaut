@@ -17,7 +17,9 @@
 #                                   a test run bound to that head (the light gate before it writes no record)
 #   /proc/loadavg                   the one-minute host load, written only for a landing at most 10 minutes old
 # It writes data/trunk-latency.tsv, one row per landing row (task and commit), with the fields
-#   task head commit first_done ready gate_start launch landed minutes stage gate_secs load queue_why
+#   task head commit first_done ready gate_start launch landed minutes stage gate_secs load queue_why queue_secs landing_secs
+# queue_secs, gate_secs and landing_secs are the seconds of each step, which add up to the seconds from ready to landed; queue_secs
+# and landing_secs are empty when the landing start is not on record, and a header from before a column gains it with the old rows left short.
 # ready is the last done line at or before the landing row and first_done the first, as table T of the plan's measure.py
 # reads them; minutes is (landed - ready) / 60, rounded the same way. The stage is the one of queue (the done line to the
 # landing start), landing (the start to the gate: start lock, rebase, admission) and gate (the lint and the changed tests)
@@ -42,9 +44,11 @@ umask 077
 exec 9> "$STATE/.trunk-latency.lock" && flock -n 9 || exit 0  # one run per home writes the rows
 
 # The landing rows that have no latency row yet. The header line keeps the file non-empty, so awk reads it first.
-H1='task\thead\tcommit\tfirst_done\tready\tgate_start\tlaunch\tlanded\tminutes\tstage\tgate_secs\tload\tqueue_why'
+H1='task\thead\tcommit\tfirst_done\tready\tgate_start\tlaunch\tlanded\tminutes\tstage\tgate_secs\tload\tqueue_why\tqueue_secs\tlanding_secs'
 [ -s "$OUT" ] || printf '%b\n' "$H1" > "$OUT"
-[ "$(head -n 1 "$OUT")" != "${H1%$'\t'queue_why}" ] || sed -i "1s/\$/\tqueue_why/" "$OUT"  # a file from before the column keeps its rows
+for col in queue_why queue_secs landing_secs; do  # a file from before a column keeps its rows and gains the column in the header
+  head -n 1 "$OUT" | tr '\t' '\n' | grep -qx "$col" || sed -i "1s/\$/\t$col/" "$OUT"
+done
 pending=$(awk -F'\t' 'FNR == NR { seen[$1 "\t" $3] = 1; next } NF >= 4 && !(($1 "\t" $3) in seen)' "$OUT" "$LANDINGS")
 [ -n "$pending" ] || exit 0
 
@@ -89,19 +93,20 @@ while IFS=$'\t' read -r task _ commit landed _ extra; do
     done | while IFS= read -r iso; do date -u -d "$iso" +%s 2>/dev/null; done | sort -n | head -n 1)
   load=
   [ $((NOW - landed)) -gt 600 ] || load=$(awk '{ print $1; exit }' "$LOADAVG" 2>/dev/null)
-  # minutes, stage, the stage's seconds: the share each stage held of the done line to the landing row.
-  read -r minutes stage _ < <(awk -v r="${ready:-}" -v s="$start" -v l="$landed" -v g="${gate:-0}" 'BEGIN {
+  # minutes, stage, the stage's minutes, then the queue and landing seconds (- when the landing start is not on record).
+  read -r minutes stage _ qsecs lsecs < <(awk -v r="${ready:-}" -v s="$start" -v l="$landed" -v g="${gate:-0}" 'BEGIN {
     if (r == "") { print ""; exit }
     t = l - r; if (t < 0) t = 0; if (g > t) g = t
     if (s == "") { n["before-gate"] = t - g; o = "before-gate gate" }
     else { n["queue"] = s - r; n["landing"] = l - s - g; o = "queue landing gate" }
     n["gate"] = g; k = split(o, names, " "); best = names[1]
     for (i = 1; i <= k; i++) { if (n[names[i]] < 0) n[names[i]] = 0; if (n[names[i]] > n[best]) best = names[i] }
-    printf "%.0f %s %.0f\n", t / 60, best, n[best] / 60 }')
+    printf "%.0f %s %.0f %s %s\n", t / 60, best, n[best] / 60, (s == "" ? "-" : n["queue"]), (s == "" ? "-" : n["landing"]) }')
+  [ "${qsecs:--}" != - ] || qsecs=; [ "${lsecs:--}" != - ] || lsecs=
   why=$(cat "$MEM/$task.$head.queue-why" 2>/dev/null | head -n 1)
   [ -n "$why" ] || [ "${stage:-}" != queue ] || why='not recorded'
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$task" "$head" "$commit" "${first:-}" "${ready:-}" "$gstart" \
-    "$start" "$landed" "${minutes:-}" "${stage:-}" "$gate" "$load" "$why" >> "$OUT"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$task" "$head" "$commit" "${first:-}" "${ready:-}" "$gstart" \
+    "$start" "$landed" "${minutes:-}" "${stage:-}" "$gate" "$load" "$why" "${qsecs:-}" "${lsecs:-}" >> "$OUT"
   if [ $((NOW - landed)) -gt 3600 ]; then
     old=$((old + 1)); [ "${minutes:-0}" -le "$LIMIT" ] || old_over=$((old_over + 1)); continue
   fi

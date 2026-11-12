@@ -94,8 +94,11 @@ assert_contains "$(wakes "$H")" "(P3) at rung 1 for worker"
 [ "$(field "$H" "$S14" stage)" = queue ] || fail "the queue held $S14, the row says $(field "$H" "$S14" stage)"
 before=$(awk -F'\t' -v t="$S14" '$1 == t { printf "%.0f", ($8 - $5 - $11) / 60 }' "$H/data/trunk-latency.tsv")
 [ "$before" = 28 ] || fail "table T reads 28 minutes before the gate for $S14, the row gives $before"
-want="$S14	$S14_HEAD	$S14_COMMIT	1794262407	1794262407	1794262279	1794263753	1794264327	32	queue	216	7.25	not recorded"
+want="$S14	$S14_HEAD	$S14_COMMIT	1794262407	1794262407	1794262279	1794263753	1794264327	32	queue	216	7.25	not recorded	1346	358"
 [ "$(grep "^$S14	" "$H/data/trunk-latency.tsv")" = "$want" ] || fail "the $S14 row is $(grep "^$S14	" "$H/data/trunk-latency.tsv")"
+[ "$(field "$H" "$S14" queue_secs)+$(field "$H" "$S14" landing_secs)+$(field "$H" "$S14" gate_secs)" = 1346+358+216 ] \
+  || fail "the $S14 row must carry the seconds of each step: queue, landing, gate"
+say "landing row of $S14: queue $(field "$H" "$S14" queue_secs) seconds, landing $(field "$H" "$S14" landing_secs) seconds, gate $(field "$H" "$S14" gate_secs) seconds"
 ok "$S14: one row of 32 minutes (28 before the gate, as table T reads), the queue named as the stage that held 22 of them, one alert"
 seed_shard "$H"
 out=$(tick "$H" 1794270967)
@@ -188,3 +191,6 @@ done
 [ "$(alerts "$H" | sort | paste -sd' ' -)" = "slow-delivery--lane-c-0c0000000000 slow-delivery--lane-d-0d0000000000 slow-delivery--lane-e-0e0000000000" ] || fail "the alerts are: $(alerts "$H" | paste -sd' ' -)"
 ! grep -P '\tqueue\t[0-9]*\t[0-9.]*\t$' "$H/data/trunk-latency.tsv" || fail "a queue row has a bare reason"
 ok "L5: rows say behind lane-a, behind attempt of lane-x and first seen +300 s; no queue row is bare"
+[ -z "${DONE_DONE_EVIDENCE_ROOT:-}" ] || jq -n --arg v "$(git -C "$ROOT" rev-parse HEAD)" '{target: {version: $v}, start: "a fixture home with two real landings and their records",
+  steps: ["Run the trunk-latency check at the clock of each landing", "Read the landing row for queue, landing and gate seconds"],
+  result: "Each landing row lists the seconds of its queue, landing and gate steps"}' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
