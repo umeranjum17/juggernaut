@@ -42,6 +42,8 @@ for h in byokit:10 crewhouse:3 desklink:9 muxr:8 takeone:1 writeboost:4; do
   w=$(timeout 20 "$R/config/jg-flow-check.sh" "$B/$n/juggernaut" --summary 2>/dev/null | cut -f3)
   # Ready work only: held and blocked items are queued but not startable.
   q=$(JG_HOME="$B/$n/juggernaut" timeout 15 "$R/bin/jg-backlog.sh" ready 2>/dev/null | sed -n 's/^count: //p')
+  # A home whose auto-dispatch switch is on starts its own ready work (core/auto-dispatch); its ready-idle alert names a failure.
+  [ "$(awk 'NF { print $1; exit }' "$B/$n/juggernaut/config/auto-dispatch" 2>/dev/null)" = on ] && q=0
   [ "${w:-1}" = 0 ] && [ "${q:-0}" -gt 0 ] && { hits="$hits $name(0-busy,$q-ready)"; continue; }
   c=0
   for s in "$B/$n/juggernaut"/state/*.status; do

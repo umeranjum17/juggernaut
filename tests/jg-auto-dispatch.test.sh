@@ -133,3 +133,87 @@ before=$(rows_of "$D" | wc -l)
 env JG_HOME="$D" JG_AUTO_DISPATCH_BACKLOG=/bin/false bash "$CHECK" check "$D" >/dev/null
 assert_equals "$(rows_of "$D" | wc -l)" "$before" "an unreadable store writes no row"
 pass "an unreadable store writes nothing"
+
+# ---- The switch on: the check starts what it would start, through bin/jg-spawn.sh, and names the rest to the lead once.
+# A stand-in spawn records its arguments (the real spawn needs a pool, a pane and a model); the route comes from the record.
+D2=$TMP_ROOT/home-on
+make_home "$D2"
+cat > "$D2/spawn" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$SPAWN_LOG"
+SH
+chmod +x "$D2/spawn"
+for t in a1 a2 b c e; do approve "$D2" "$t" >/dev/null || fail "approve-dispatch $t was refused"; done
+for t in a1 a2 b e d; do
+  mkdir -p "$D2/data/$t"
+  # shellcheck disable=SC2016  # the backquotes are the brief's own text
+  printf 'Delivery contract: mode=local-trunk\n1. First action: create your branch: `git checkout -b feature/%s --`\n' "$t" > "$D2/data/$t/brief.md"
+done
+mkdir -p "$D2/data/c"
+on_beat() { home_env "$D2" env SPAWN_LOG="$D2/spawn.log" JG_AUTO_DISPATCH_SPAWN="$D2/spawn" JG_AUTO_DISPATCH_PROJECT_MODE="$ROOT/bin/jg-project-mode.sh" "$@" bash "$CHECK" check "$D2" 2>&1; }
+wait_for_spawns() { local n; for n in $(seq 1 50); do [ "$n" -gt 0 ] && [ "$(wc -l < "$D2/spawn.log" 2>/dev/null)" -ge "$1" ] && return 0; sleep 0.1; done; return 1; }
+
+out=$(on_beat) || fail "the check failed with the switch off: $out"
+assert_equals "$out" "" "switch off: watch only, nothing printed"
+assert_absent "$D2/spawn.log" "switch off: nothing is spawned"
+
+printf 'on\n' > "$D2/config/auto-dispatch"
+out=$(on_beat) || fail "the check failed with the switch on: $out"
+wait_for_spawns 2 || fail "the two approved tickets were not spawned"
+spawned=$(cat "$D2/spawn.log")
+assert_equals "$(wc -l < "$D2/spawn.log")" 2 "two free lanes: two spawns, no more"
+assert_contains "$spawned" "a1 $D2/projects/proj --ticket a1 --mode local-trunk --yolo off --branch-prefix feature/ --harness claude --model sonnet --effort medium" "a1 is spawned through the spawn with its route and its brief's branch prefix"
+assert_contains "$spawned" "a2 $D2/projects/proj --ticket a2 --mode local-trunk --yolo off --branch-prefix feature/ --harness claude --model sonnet --effort medium" "a2 is spawned with its route"
+for t in b c d e; do assert_not_contains "$spawned" "--ticket $t " "$t is never spawned"; done
+assert_contains "$out" "auto-dispatch: lead," "the lead is told in one line"
+assert_equals "$(printf '%s\n' "$out" | wc -l)" 1 "one line, not one per ticket"
+assert_contains "$out" "c (no brief)" "the lead is told c has no brief"
+assert_contains "$out" "d (no approval record)" "the lead is told d has no approval record"
+assert_not_contains "$out" "b (" "an open decision is the owner's, not named to the lead"
+assert_absent "$D2/data/c/brief.md" "the check wrote no brief"
+rows=$(rows_of "$D2")
+assert_contains "$rows" "a1	started	claude sonnet medium" "a1's row says started"
+[ -z "${DONE_DONE_EVIDENCE_ROOT:-}" ] || { cp "$D2/data/auto-dispatch/rows.tsv" "$DONE_DONE_EVIDENCE_ROOT/auto-dispatch-on-rows.tsv"; cp "$D2/spawn.log" "$DONE_DONE_EVIDENCE_ROOT/auto-dispatch-spawn-calls.log"; }
+pass "switch on: two approved tickets are spawned with their route; the rest are never spawned and the lead hears once"
+
+# A second beat spawns nothing again and says nothing again.
+out=$(on_beat) || fail "second beat failed: $out"
+assert_equals "$out" "" "a second beat tells the lead nothing new"
+assert_equals "$(wc -l < "$D2/spawn.log")" 2 "a second beat spawns nothing: the starts are in flight"
+pass "an unchanged beat neither spawns again nor names the same tickets again"
+
+# A start that leaves no lane record is a failed start: named once, not retried until the lead approves again.
+out=$(on_beat JG_AUTO_DISPATCH_IN_FLIGHT=0) || fail "failed-start beat failed: $out"
+assert_contains "$out" "a1 (no lane record after 0 seconds" "a start with no lane record is named to the lead"
+assert_contains "$(rows_of "$D2")" "a1	spawn failed	no lane record" "a1's row says the start failed"
+out=$(on_beat JG_AUTO_DISPATCH_IN_FLIGHT=0) || fail "beat after a failed start failed: $out"
+assert_equals "$out" "" "a failed start is named once"
+assert_equals "$(wc -l < "$D2/spawn.log")" 2 "a failed start is not tried again by itself"
+sleep 1
+approve "$D2" a1 >/dev/null || fail "approving a1 again was refused"
+on_beat >/dev/null
+wait_for_spawns 3 || fail "a1 was not spawned again after a new approval"
+pass "a failed start waits for the lead's new approval"
+
+# Delivery contract missing: the ticket is named to the lead and not spawned.
+D3=$TMP_ROOT/home-nocontract
+make_home "$D3"
+cp "$D2/spawn" "$D3/spawn"; printf 'on\n' > "$D3/config/auto-dispatch"
+approve "$D3" a1 >/dev/null; mkdir -p "$D3/data/a1"; printf 'a brief with no contract\n' > "$D3/data/a1/brief.md"
+out=$(home_env "$D3" env SPAWN_LOG="$D3/spawn.log" JG_AUTO_DISPATCH_SPAWN="$D3/spawn" JG_AUTO_DISPATCH_PROJECT_MODE="$ROOT/bin/jg-project-mode.sh" bash "$CHECK" check "$D3" 2>&1)
+assert_contains "$out" "a1 (the brief has no delivery contract line)" "a brief with no delivery contract is named to the lead"
+assert_absent "$D3/spawn.log" "a brief with no delivery contract is never spawned"
+pass "a brief with no delivery contract is not spawned"
+
+# ready-idle: a ticket the check may start, with a free lane, but no start running 10 minutes after its refusal raises the alert
+# once, through the real bin/jg-alert.sh and its table's own timer. The same beat 5 minutes in raises nothing.
+ra() { home_env "$D3" env JG_STATE_OVERRIDE="$D3/state" JG_AUTO_DISPATCH_ALERT="$ROOT/bin/jg-alert.sh" JG_AUTO_DISPATCH_SPAWN="$D3/spawn" \
+  JG_AUTO_DISPATCH_PROJECT_MODE="$ROOT/bin/jg-project-mode.sh" bash "$CHECK" check "$D3" 2>&1; }
+out=$(ra)
+assert_not_contains "$out" "ready-idle" "a fresh refusal raises no ready-idle alert yet"
+old=$(( $(date +%s) - 700 ))
+sed -i "s/^[0-9]*\(\ta1\tskipped\)/$old\1/" "$D3/data/auto-dispatch/rows.tsv"
+out=$(ra)
+assert_contains "$out" "alert ready-idle (P3) at rung 2 for lead: a1" "10 minutes after the refusal the lead gets the ready-idle alert"
+assert_equals "$(ra | grep -c 'ready-idle')" 0 "the alert is printed once, not every beat"
+pass "an unstarted ticket with a free lane raises ready-idle after 10 minutes, once"

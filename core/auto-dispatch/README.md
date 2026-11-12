@@ -1,9 +1,10 @@
 # auto-dispatch
 
 Every watcher beat writes down which tickets this home would start by itself, with no model turn.
-This is the watch-only stage: it starts nothing, writes no brief and picks no route.
-The lead still starts the work.
+With the switch off (the default) it is watch only: it starts nothing, writes no brief and picks no route.
 A week of its rows shows how often it agrees with what the leads started.
+With the switch on it starts the tickets it would start, through `bin/jg-spawn.sh`.
+It still writes no brief and picks no route: both come from the lead's approval.
 
 `dispatch.sh check <jg-home>` is the watcher check.
 It prints nothing, so it wakes no one.
@@ -47,6 +48,38 @@ A row is added only when a ticket's verdict changes, so a quiet beat writes noth
 
 `bash tests/jg-auto-dispatch.test.sh` runs the whole journey: 2 free lanes and 6 ready tickets, through the real `ready --spawnable` reader and the real `approve-dispatch`.
 
+## The switch
+
+`config/auto-dispatch` holds one word per home.
+`on` makes the check act; anything else, or no file, leaves it watch only.
+Removing the file is the rollback; the lane target and the quota gates stay in force either way.
+
+## What it does with the switch on
+
+For each "would start" ticket it runs `bin/jg-spawn.sh <task> projects/<project> --ticket <id> --mode <m> --yolo <y> --harness <h> --model <m> --effort <e>`, detached:
+
+- the route is the one in the approval record (Claude Sonnet for the plan that built this);
+- the mode is the brief's `Delivery contract: mode=` line, and yolo is the project's registered posture;
+- the branch prefix is the one the brief's branch line names;
+- the spawn's output is `data/auto-dispatch/<id>.log`, and the row is `started`.
+
+The spawn keeps its own refusals (owner asks, plan tickets with no recorded yes, quota, pool).
+A start that leaves no lane record in 10 minutes becomes a `spawn failed` row; it is not tried again until the lead approves the ticket anew.
+
+## What the lead hears
+
+Switch on, one line per beat names the tickets that newly need the lead: no approval record, no brief, no route, no delivery contract, or a failed start.
+`data/auto-dispatch/told.tsv` keeps each ticket from being named twice for the same reason.
+A ticket held by an open decision, or one waiting for a lane, is not named: those clear without the lead.
+
+## Ready work that does not start
+
+Switch on, a ticket the check may start (a free lane, all six reasons passed) that has no running start 10 minutes after its refusal raises the `ready-idle` alert.
+The alert is raised through `bin/jg-alert.sh` (its table owns the timer and the rung), printed as one wake line, and resolved when a start takes.
+Watch only raises nothing.
+`core/fleet-stall/fleet-stall-check` no longer reports a home with the switch on as an idle lead with ready work: that home starts its own tickets, and this alert names the failure.
+
 ## Follow-up (not in this slice)
 
-Slice 16 makes the check act: it spawns an approved ticket through `bin/jg-spawn.sh` behind a `config/auto-dispatch` switch.
+- A scout start (a brief with no delivery contract line is skipped today).
+- A spawn failure is read from the missing lane record after 10 minutes; reading the spawn's own exit would be faster.
