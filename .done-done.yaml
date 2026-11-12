@@ -869,6 +869,10 @@ journeys:
     tier: local
     command: bash journeys/core-run.sh 'bash machines/run-proof.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
 
+  registry-union:
+    tier: local
+    command: bash journeys/registry-union.sh
+
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'

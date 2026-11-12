@@ -1,2 +1,6 @@
 # Bash parses shell scripts with LF line endings on every supported platform.
 *.sh text eol=lf
+# Registry files that nearly every slice touches merge by union: two lanes that each add an entry rebase with no conflict.
+# bin/jg-registry-lint.sh reads these lines and keeps each change to its own added entries.
+.done-done.yaml merge=union
+docs/state-machines.md merge=union
