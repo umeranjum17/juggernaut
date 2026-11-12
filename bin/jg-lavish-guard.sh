@@ -76,7 +76,7 @@ done_proof_gate() {  # <status-file> <text>
   wt=$(jg_dod_meta_value "$meta" worktree)
   head=$(git -C "${wt:-/nonexistent}" rev-parse --verify -q 'HEAD^{commit}' 2>/dev/null) \
     || { _unchecked "no head in its isolated copy ${wt:-(none recorded)}"; return 0; }
-  gaps=$(JG_HOME=$home jg_dod_trunk_proof_gaps "$home" "$state" "$id" "$meta" "$head") && return 0
+  gaps=$(JG_HOME=$home jg_dod_trunk_proof_gaps "$home" "$state" "$id" "$meta" "$head" 'done') && return 0
   {
     printf 'done refused: the landing would refuse head %s of %s for missing proof, so nothing was written to %s:\n' "${head:0:12}" "$id" "$file"
     printf '%s\n' "$gaps" | sed 's/^/  - /'

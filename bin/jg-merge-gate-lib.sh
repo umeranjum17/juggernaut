@@ -48,6 +48,8 @@ set -u
 
 # shellcheck source=bin/jg-squad-lead-parent-lib.sh
 [ ! -r "$_jg_d/jg-squad-lead-parent-lib.sh" ] || . "$_jg_d/jg-squad-lead-parent-lib.sh"
+# shellcheck source=bin/jg-bypass-record-lib.sh
+[ ! -r "$_JG_GATE_LIB_DIR/jg-bypass-record-lib.sh" ] || . "$_JG_GATE_LIB_DIR/jg-bypass-record-lib.sh"
 # shellcheck source=bin/jg-timeout-lib.sh
 . "$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)/jg-timeout-lib.sh"
 
@@ -359,8 +361,13 @@ jg_dod_nav_gate() {  # <id> <meta> <text>
 # A rebase with no change keeps the proof: the receipt, and the merge-card check with its sealed run, each count for this head
 # when they are bound to it, or to a head that `merge-card same-change` finds is the same change in the lane's project (the
 # lander still lints and tests the rebased commit on the tip). A proof bound to another change is named and not kept.
-# Usage: jg_dod_trunk_proof_gaps <home> <state> <id> <meta> <head>
+# The owner's bypass of proving (bin/jg-proof-bypass.sh) stands in for all of it: a bypass record for this exact head
+# (bin/jg-bypass-record-lib.sh) leaves no gap. The worker's done, which comes before the tick writes that record, passes <done> as the
+# sixth word, and a standing bypass that covers the ticket is enough there.
+# Usage: jg_dod_trunk_proof_gaps <home> <state> <id> <meta> <head> [done]
 jg_dod_trunk_proof_gaps() {
+  jg_bypass_record_holds "$1" "$2" "$3" "$5" && return 0
+  if [ "${6:-}" = 'done' ] && jg_bypass_standing "$1" "$3" "$(basename "$(sed -n 's/^project=//p' "$4" 2>/dev/null | tail -n 1)")" >/dev/null; then return 0; fi
   local home=$1 state=$2 id=$3 meta=$4 head=$5 r="$2/$3.run-receipt.json" card="${JG_DATA_OVERRIDE:-$1/data}/$3/merge-card.json" gaps=0 mc why
   local repo rh ch rnote='' cnote=''
   mc=$_JG_GATE_LIB_DIR/../core/merge-card/merge-card

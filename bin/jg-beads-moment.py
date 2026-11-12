@@ -6,7 +6,7 @@ Usage: BEADS_DIR=<store> jg-beads-write.py moment <ticket> <moment> [--at <RFC33
        BEADS_DIR=<store> jg-beads-write.py ticket-stage <ticket> [--proof <state of the proof run>]
        BEADS_DIR=<store> jg-beads-write.py ticket-drift <ticket> [--forge]
 
-moment writes one of six moments of the ticket machine: approved_at, proved_at, landing_at, gated_at, returned_at and release_opened_at.
+moment writes one of seven moments of the ticket machine: approved_at, proved_at, bypassed_at, landing_at, gated_at, returned_at and release_opened_at.
 Each is a provenance event first and then the row's metadata, in that order, because the row write is the signal a reader can poll and
 the event alone leaves no trace on the row. The event carries the time given by --at (else now), so the id of the event is the same
 when a writer fires twice. The metadata value is that time as an RFC3339 string in UTC, so two moments compare as text. A moment is
@@ -36,6 +36,7 @@ WRAPPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jg-beads.sh"
 MOMENTS = {
     "approved_at": ("jg-approve", "claim"),
     "proved_at": ("jg-prove", "used"),
+    "bypassed_at": ("jg-bypass", "used"),
     "landing_at": ("jg-trunk-landing", "land"),
     "gated_at": ("jg-trunk-gate", "land"),
     "returned_at": ("jg-trunk-return", "resume"),

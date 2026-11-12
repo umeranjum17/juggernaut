@@ -985,7 +985,7 @@ jg_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
   # A local-trunk lane's done needs the whole proof at its head, up front: the receipt, approved merge-card evidence and a
   # sealed done-done run (jg_dod_trunk_proof_gaps). The landing asks the same question, so a done that passes here lands.
   if [ -n "$state" ] && [ -n "$id" ] && [ -f "$meta" ] && [ -n "$design_head" ] && jg_dod_trunk_lane "$mode" "$project"; then
-    jg_dod_trunk_proof_gaps "${JG_HOME:-$(dirname "$state")}" "$state" "$id" "$meta" "$design_head" || return 1
+    jg_dod_trunk_proof_gaps "${JG_HOME:-$(dirname "$state")}" "$state" "$id" "$meta" "$design_head" 'done' || return 1
   fi
   [ -z "$run_out" ] || jg_dod_nm_custody_released "$run_out" || return 1
   if jg_delivery_style_is "$mode" local && [ -n "$run_out" ]; then

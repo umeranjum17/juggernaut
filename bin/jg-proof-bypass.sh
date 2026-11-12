@@ -8,6 +8,8 @@
 #   jg-proof-bypass.sh find <ticket-id> [<project>]   print the id of the bypass that covers the ticket; exit 1 when none stands
 #   jg-proof-bypass.sh use <bypass-id>                count one use of a standing bypass
 #   jg-proof-bypass.sh expire                         the tick: end what has reached its end (prints one line for each)
+#   jg-proof-bypass.sh verify <bypass-id> <word>      exit 0 when that bypass row exists (standing or ended) with that word
+#   jg-proof-bypass.sh show <bypass-id>               print scope, target and word of the bypass, tab separated; exit 1 when unknown
 #   jg-proof-bypass.sh state <bypass-id>              print standing or ended (what the bypass table's observer reads); exit 1 when unknown
 #   jg-proof-bypass.sh digest                         one line for each standing bypass, with its uses; nothing when none stands
 #
@@ -32,7 +34,7 @@ DEFAULT_HOURS=24
 . "$SCRIPT_DIR/jg-wake-lib.sh"
 
 refuse() { echo "REFUSED: $*" >&2; exit 1; }
-usage() { sed -n '3,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '3,14p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 now() { date +%s; }
 
 # Every line of the file, with the effective status in column 7: standing past its end time reads ended.
@@ -164,6 +166,10 @@ cmd_expire() {
   done <<< "$ended"
 }
 
+cmd_verify() { rows | awk -F'\t' -v i="${1-}" -v w="${2-}" '$1 == i && $4 == w { f = 1 } END { exit !f }'; }
+
+cmd_show() { rows | awk -F'\t' -v i="${1-}" '$1 == i { print $2 "\t" $3 "\t" $4; f = 1 } END { exit !f }'; }
+
 cmd_state() { rows | awk -F'\t' -v i="${1-}" '$1 == i { print $7; f = 1 } END { exit !f }'; }
 
 cmd_digest() {
@@ -182,6 +188,8 @@ case $c in
   find) cmd_find "$@" ;;
   use) cmd_use "$@" ;;
   expire) cmd_expire ;;
+  verify) cmd_verify "$@" ;;
+  show) cmd_show "$@" ;;
   state) cmd_state "$@" ;;
   digest) cmd_digest ;;
   *) usage ;;

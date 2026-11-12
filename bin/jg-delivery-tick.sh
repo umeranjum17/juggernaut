@@ -61,6 +61,8 @@ tick_stops() (
 trap 'tick_stops || echo "jg-delivery-tick: stop processing failed in $H" >&2; jg_lock_release "$LOCK"' EXIT
 # The owner's bypass ends at its end time, and a ticket's when the ticket is released or closed (machine 17).
 bash "$SCRIPT_DIR/jg-proof-bypass.sh" expire >/dev/null 2>&1 || echo "jg-delivery-tick: the proof bypass could not be expired in $H" >&2
+# A lane that reported done inside a standing bypass is passed over proving here, before the landing check reads its proof.
+bash "$SCRIPT_DIR/jg-proof-bypass-apply.sh" "$H" || echo "jg-delivery-tick: the proof bypass could not be applied in $H" >&2
 compgen -G "$H/state/trunk-tip-*" >/dev/null || exit 0
 
 OUT=$H/state/.jg-check-output-trunk-landing

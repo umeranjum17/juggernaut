@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Slice J2 on a real Beads store, through the real caller (jg-backlog.sh): the stage rule of section 6.3 gives the stage, sub-state
-# and health of a fixture row for every row of its table, and the one adapter verb writes the six new moments (an event first, then
+# and health of a fixture row for every row of its table, and the one adapter verb writes the seven new moments (an event first, then
 # an RFC3339 string in UTC on the row) and the three wait keys. The older moments (ready_at, landed_at, ...) belong to jg-q1b3n's
 # writers, which are not on this trunk yet, so each fixture lays them with bd directly. The same rows are read by jg-q1b3n's rule
 # (section 6.5), held here as a second table, and the two must agree for every row that table already names. JG_BEADS_TEST_BD and
@@ -109,7 +109,7 @@ check jg-b1 delivering.resolving ok   # a rebase that met a conflict
 new jg-b2; meta jg-b2 ready_at=$t1; axi moment jg-b2 proved_at --at $t2 >/dev/null; axi moment jg-b2 landing_at --at $t3 >/dev/null
 axi moment jg-b2 returned_at --at $t4 >/dev/null; check jg-b2 building ok
 meta jg-b2 ready_at=$t5; check jg-b2 proving.planned ok   # returned to building, then done again
-new jg-b3; meta jg-b3 ready_at=$t1 bypassed_at=$t2; check jg-b3 delivering.queued ok   # a bypass is the proof moment of its try
+new jg-b3; meta jg-b3 ready_at=$t1; axi moment jg-b3 bypassed_at --at $t2 >/dev/null; check jg-b3 delivering.queued ok   # a bypass is the proof moment of its try
 new jg-b4; meta jg-b4 ready_at=$t1; axi moment jg-b4 proved_at --at $t2 >/dev/null; bd update jg-b4 -s in_progress -a w1 >/dev/null
 meta jg-b4 resumed_at=$t3; check jg-b4 building ok   # proved, then working again
 meta jg-b4 ready_at=$t4; axi moment jg-b4 proved_at --at $t5 >/dev/null; meta jg-b4 ready_at=$t6; check jg-b4 proving.planned ok   # proved, then a done line with another head
