@@ -82,9 +82,9 @@ assert_equals "$(cat "$T/want")" "$(cat "$T/facts")" "jg-classify facts agrees w
 pass "jg-classify facts replays the corpus and agrees line for line"
 
 # 3. The extension verbs are rows, so they still surface as themselves; nothing else is an extension.
-assert_equals "baseline-attribution checks-lint-pass progress ready ready-to-sign" \
-  "$(awk -F'\t' '$1=="state" && $3=="extension" {print $2}' "$TABLE" | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')" "the five lane verbs are extension rows"
-pass "ready, ready-to-sign, progress, checks-lint-pass and baseline-attribution are extension rows"
+assert_equals "baseline-attribution checks-lint-pass ready ready-to-sign" \
+  "$(awk -F'\t' '$1=="state" && $3=="extension" {print $2}' "$TABLE" | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')" "the four lane verbs are extension rows"
+pass "ready, ready-to-sign, checks-lint-pass and baseline-attribution are extension rows; progress is a normal row that wakes nobody"
 
 # 4. A verb outside the table is found by name and line, and clears when removed.
 { cat "$T/verbs.corpus"; echo parked; } > "$T/new.corpus"
