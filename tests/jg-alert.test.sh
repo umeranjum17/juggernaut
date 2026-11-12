@@ -62,7 +62,7 @@ pass "supervision-down open raises no wait alert in its home, and resolving it r
 al limit ship-delivering; assert_equals 300 "$OUT" "ship delivering limit"; al limit ship-proving; assert_equals 900 "$OUT" "ship proving limit"
 al raise slow-delivery sd1; expect_code 1 "$RC" "slow-delivery with no kind"
 al raise slow-delivery sd1 --kind ship-delivering --held 299; expect_code 1 "$RC" "held 299 s of 300"
-al raise slow-delivery sd1 --kind ship-delivering --held 300 --ticket tk; assert_contains "$OUT" "ring	slow-delivery--sd1	0	tick" "held 300 s rings the tick first"
+al raise slow-delivery sd1 --kind ship-delivering --held 300 --ticket tk; assert_contains "$OUT" "ring	slow-delivery--sd1	1	worker" "held 300 s rings the worker first (the tick climb is not built)"
 al raise slow-delivery sd2 --kind ship-delivering --held 400 --fact wait=outside --fact reason=ci; assert_equals "" "$OUT" "wait outside for ci keeps slow-delivery quiet"
 pass "limits by kind gate the fires-at time"
 
@@ -108,6 +108,14 @@ echo "not a ring" | bash "$AL" deliver 2>/dev/null; expect_code 1 $? "a stray li
 # The old line-red wake calls are gone from every producer: the only wake they raise is the alert's.
 assert_equals "" "$(grep -nE 'jg_wake_append check "(trunk-tip-red|trunk-reverted|line-red|trunk-no-green|post-merge-ci)-' "$ROOT"/bin/jg-trunk.sh "$ROOT"/bin/jg-post-merge-ci.sh)" "no producer of line-red wakes by itself"
 pass "deliver turns a ring into a wake for its holder and only records a tick ring"
+
+# 9b. raise --deliver on a slow delivery: a slow delivery rings the worker (rung 1) as one wake, a quiet row rings nothing, a refusal is passed on.
+al raise slow-delivery fire1 --kind ship-delivering --deliver; expect_code 0 "$RC" "fire a slow delivery"
+assert_contains "$(cat "$Q")" "alert-slow-delivery--fire1" "the fired slow delivery is one wake in the queue"
+assert_contains "$(cat "$Q")" "(P3) at rung 1 for worker" "it rings the worker, the tick climb not being built"
+al raise slow-delivery fire2 --kind ship-delivering --fact wait=outside --fact reason=ci --deliver; expect_code 0 "$RC" "a quiet fire"; ! grep -q "slow-delivery--fire2" "$Q" || fail "a quiet row made a wake"
+al raise slow-delivery fire3; expect_code 1 "$RC" "a refusal is passed on"
+pass "a slow delivery raised with --deliver rings the worker as one wake"
 
 # 10. The wait ladder reads its rung timers from the table: they print from it, a changed row changes them, and the library holds no default of its own.
 al timers; expect_code 0 "$RC" "timers"; assert_equals "$(printf 'escalate\t300\ncard\t600\nrealert\t600\nready-stall\t600')" "$OUT" "the timers come from the stuck-wait ladder and the ready-idle row"

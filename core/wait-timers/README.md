@@ -85,8 +85,6 @@ provenance table now records history, not the current bytes.
   `silence` timer (`JG_SILENT_SECS`) unread, for the ladder and the owner rung
   alike, and its episode keys on the window alone, keeping its clock and rung
   while the stated silence age grows on every scan.
-  The library itself writes `<task>.greenpr` for a green PR left unmerged under
-  yolo (see "Green PR left unmerged").
 - Episode record: one tab-separated line per lane at
   `state/.waiting-timers/<task>` holding signature, first-observed time,
   owner-delivery time, Main-rung time (0 before it fires), report key, miss
@@ -171,16 +169,15 @@ The gate's sidecar remains `state/.waiting-timers/.raised/<task>` and is removed
 
 ## Green PR left unmerged
 
-A recorded ready PR that is green and unmerged under yolo is one more wait source on the same per-task ladder, with the lead (or Main, in the main home) as the owner.
+A recorded ready PR that is green and unmerged under yolo is a slow delivery, not a lane wait: it raises the `slow-delivery` alert of `bin/jg-alert.sh`, and the ladder above does not carry it.
 `jg_wait_timers_green_pr` runs every tick for each ship task whose metadata holds `pr=` and `yolo=on` and whose merge poll is armed.
 It reads the PR from the forge at most every `JG_GREEN_PR_POLL_SECS` (default 120).
 Green means the forge reports the PR open, not a draft, with merge state `CLEAN`, which is the state `bin/jg-pr-merge.sh` merges on.
 Only GitHub is read; any other forge, a missing `gh`, or an unreadable answer stays quiet, and an answer not refreshed for three reads lapses.
-After the PR has stayed green at one head for `JG_GREEN_PR_SECS` (default 900), `state/.wait-sources/<task>.greenpr` is rewritten on every tick and the rungs above run unchanged: the owner is woken naming the PR, Main hears of it, a lead is steered to merge it, and the board card follows.
-The card reads "Merge the green ... PR?" and the steer tells the lead to merge with `bin/jg-pr-merge.sh` or record a hold with the reason it waits.
-- The source clears when the PR merges or closes, goes red or draft, gets a new head (the 15-minute clock re-arms), or yolo is off.
-- A recorded hold also clears it: a `paused:` or captain-held status line that is still the task's declared wait, or an open captain hold on the task.
-- Merge authority is untouched: this ladder only asks; the owner still merges through `bin/jg-pr-merge.sh`.
+After the PR has stayed green at one head for `JG_GREEN_PR_SECS` (default 900), `jg-alert.sh raise slow-delivery <task> --deliver` raises one alert for the task; the alert table owns its rung and holder (rung 1 until the tick-driven climb exists), and a live alert is never raised twice.
+- The alert resolves when the PR merges or closes, goes red or draft, gets a new head (the 15-minute clock re-arms), or yolo is off.
+- A recorded hold also resolves it: a `paused:` or captain-held status line that is still the task's declared wait, or an open captain hold on the task.
+- Merge authority is untouched: the alert only asks; the owner still merges through `bin/jg-pr-merge.sh`.
 - Record: `state/.green-pr/<task>`, one tab-separated line holding last forge read time, first-green time at this head, head, and PR URL.
 
 ## Stalled ready backlog

@@ -204,16 +204,10 @@ jg_wait_timer_source_delivered() {  # <task> <window> <declaration>
 # is stable for the wait, so posting again keeps the one open card. The board
 # refuses an id in a title, so the title names the task in plain words.
 jg_wait_timer_card() {  # <task> <card-key> <verb> <source> [title] [why]
-  local words why guard=() must=() title pr
+  local words why guard=() must=() title
   words=$(printf '%s' "$1" | tr -cs 'A-Za-z' '\n' | grep -E '^[A-Za-z]{2,}$' | head -6 | paste -sd' ' -) || true
   title=${5:-"Unblock stuck ${words:-work}?"}
   why=${6:-"$1 is stuck on: $4. Its owner and Main were told and have not cleared it."}
-  case "$3" in
-    greenpr)
-      pr=${4#greenpr: }; pr=${pr%% *}
-      title=${5:-"Merge the green ${words:-work} PR?"}
-      why=${6:-"$pr is green and unmerged under yolo. Its owner and Main were told and have not merged it."} ;;
-  esac
   [ "${#why}" -le 200 ] || why="${why:0:197}..."
   # The board gate takes only a must ask (bin/jg-ask-gate-lib.sh). A worker stuck
   # on a prompt is waiting on a credential or login, which is one; every other
@@ -343,7 +337,6 @@ jg_wait_timers_relay() {  # <now> <interval> <card-secs>
       if [ "${nudged:-0}" -eq 0 ] || [ $((now - nudged)) -ge "$interval" ]; then
         if declare -F lead_nudge >/dev/null; then
           ask="Clear it now: answer it, steer it, or report blocked: with what it needs."
-          [ "$wverb" != greenpr ] || ask="Merge it now with bin/jg-pr-merge.sh, or record a hold with the reason it waits."
           lead_nudge "$lead" "$window" "waiting-relay-$k-$now" "Your worker $worker has been stuck $((now - since))s on: $wsrc. $ask Main posts it to the captain's board at $((card_secs / 60)) minutes." \
             || echo "waiting timers: nudge to squad lead $lead about $worker was not recorded" >&2
         fi
@@ -464,14 +457,20 @@ jg_wait_timers_backlog() {  # <now> <interval>
 }
 
 # A recorded ready PR that is green at its head and unmerged under yolo is one
-# more wait source (README "Green PR left unmerged"): once it has stayed so for
-# JG_GREEN_PR_SECS, <task>.greenpr is rewritten on every tick and the existing
-# per-task ladder takes over. The source clears on a merge (the poll retires
+# slow delivery (README "Green PR left unmerged"): once it has stayed so for
+# JG_GREEN_PR_SECS, the slow-delivery alert (bin/jg-alert.sh) is raised for the
+# task, once per episode. The alert resolves on a merge (the poll retires
 # or the forge answers not open), a new head (the clock re-arms), a pause or
 # captain hold on the task, or yolo off. Only GitHub is read; any other forge,
 # an unreadable answer, or a missing gh stays quiet. State: .green-pr/<task>
 # holds checked, since, head, url; a forge read runs at most every
 # JG_GREEN_PR_POLL_SECS, and an answer older than three reads lapses.
+# jg_wait_timer_green_pr_resolve <task>: the PR is no longer green and unmerged for this task; resolve its alert when one is live.
+jg_wait_timer_green_pr_resolve() {
+  local alert="$_JG_WAIT_TIMER_DIR/jg-alert.sh" key="slow-delivery--$1"
+  JG_STATE_OVERRIDE="$STATE" "$alert" word "$key" >/dev/null 2>&1 && JG_STATE_OVERRIDE="$STATE" "$alert" resolve "$key" >/dev/null 2>&1
+  return 0
+}
 jg_wait_timer_green_pr_read() {  # <pr-url> -> head on stdout; 0 green, 1 not green, 2 unreadable
   local row prstate draft merge head
   declare -F jg_pr_url_parse >/dev/null && jg_pr_url_parse "$1" && [ "$JG_PR_PROVIDER" = github ] || return 1
@@ -503,7 +502,7 @@ jg_wait_timers_green_pr() {  # <now>
         || { status_is_paused "$declared" && { until=$(status_paused_until "$declared") || until=$((now + 1)); [ "$now" -lt "$until" ]; }; } \
         || { declare -F task_captain_call_open >/dev/null && task_captain_call_open "$id"; }; then url=; fi
     fi
-    if [ -z "$url" ]; then rm -f "$rec" "$STATE/.wait-sources/$id.greenpr"; continue; fi
+    if [ -z "$url" ]; then rm -f "$rec"; jg_wait_timer_green_pr_resolve "$id"; continue; fi
     checked=0 since=$now head=
     if [ -f "$rec" ] && [ ! -L "$rec" ]; then
       IFS=$'\t' read -r checked since head live < "$rec" || checked=0
@@ -516,22 +515,21 @@ jg_wait_timers_green_pr() {  # <now>
         0) [ "$live" = "$head" ] || since=$now
            printf '%s\t%s\t%s\t%s\n' "$now" "$since" "$live" "$url" > "$rec.tmp.$$" && mv "$rec.tmp.$$" "$rec" || return 1
            checked=$now head=$live ;;
-        1) rm -f "$rec" "$STATE/.wait-sources/$id.greenpr"; continue ;;
+        1) rm -f "$rec"; jg_wait_timer_green_pr_resolve "$id"; continue ;;
         *) [ "$checked" -gt 0 ] || continue ;;
       esac
     fi
     # An answer that was never refreshed (the forge stopped answering) lapses.
     if [ $((now - checked)) -le $((every * 3)) ] && [ $((now - since)) -ge "$stall" ]; then
-      mkdir -p "$STATE/.wait-sources" \
-        && printf 'greenpr: %s is green at %s and unmerged under yolo; merge it (bin/jg-pr-merge.sh) or record a hold with a reason\n' "$url" "${head:0:8}" \
-          > "$STATE/.wait-sources/$id.greenpr" || return 1
+      JG_STATE_OVERRIDE="$STATE" "$_JG_WAIT_TIMER_DIR/jg-alert.sh" raise slow-delivery "$id" --kind ship-delivering --ticket "$id" --deliver >/dev/null 2>&1 \
+        || echo "waiting timers: could not raise the slow-delivery alert for $id ($url is green at ${head:0:8} and unmerged)" >&2
     else
-      rm -f "$STATE/.wait-sources/$id.greenpr"
+      jg_wait_timer_green_pr_resolve "$id"
     fi
   done
   for rec in "$dir"/*; do
     [ -f "$rec" ] || continue
-    [ -f "$STATE/${rec##*/}.meta" ] || rm -f "$rec" "$STATE/.wait-sources/${rec##*/}.greenpr"
+    [ -f "$STATE/${rec##*/}.meta" ] || { rm -f "$rec"; jg_wait_timer_green_pr_resolve "${rec##*/}"; }
   done
   return 0
 }
@@ -671,7 +669,7 @@ EOF
     # Wait sources the watcher records: an unanswered permission prompt (kept
     # only while the prompt gate still sees it, so a dead pane's prompt lapses)
     # and a Squad Lead whose own supervision is not running.
-    for src in prompt question account quota errors silent supervision greenpr; do
+    for src in prompt question account quota errors silent supervision; do
       [ -z "$declaration" ] || break
       record="$STATE/.wait-sources/$task.$src"
       [ -f "$record" ] && [ ! -L "$record" ] || continue

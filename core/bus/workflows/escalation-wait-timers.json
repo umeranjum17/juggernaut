@@ -55,11 +55,6 @@
         "fresh": false
       },
       {
-        "name": "greenpr",
-        "facts": "wait-source",
-        "fresh": true
-      },
-      {
         "name": "decision",
         "facts": "status-open-decision"
       },

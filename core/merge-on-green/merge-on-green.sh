@@ -84,7 +84,7 @@ timed_out() { [ "$1" = 124 ] || [ "$1" = 137 ]; }
 # merge_minutes <task>: the whole minutes from the ticket's ready time to its landed time, read from
 # `jg-backlog.sh times <task>`; empty when the ticket has no ready time or no landed time. The merge itself
 # writes landed_at (bin/jg-merge-outcome-lib.sh), so the number is the record's own, and a merge over
-# JG_MERGE_LATENCY_LIMIT_MINUTES (default 5) is called out in the wake line the lead relays.
+# JG_MERGE_LATENCY_LIMIT_MINUTES (default 5) raises the slow-delivery alert (bin/jg-alert.sh).
 MERGE_LATENCY_LIMIT=${JG_MERGE_LATENCY_LIMIT_MINUTES:-5}
 case "$MERGE_LATENCY_LIMIT" in ''|*[!0-9]*) MERGE_LATENCY_LIMIT=5 ;; esac
 merge_minutes() { # <task>
@@ -242,9 +242,12 @@ for m in "$STATE"/*.meta; do
   if [ "$merge_rc" -eq 0 ]; then
     # The merge wrote landed_at on the ticket; the number is its ready time to that landing.
     latency=$(merge_minutes "$task")
+    # A merge over the limit is the alert table's slow-delivery row (bin/jg-alert.sh); the merged line below carries the minutes.
     if [ -n "$latency" ] && [ "$latency" -gt "$MERGE_LATENCY_LIMIT" ]; then
-      echo "merge-on-green: merged $task $pr through jg-pr-merge, but it took ${latency}m from its done line to merged, over the ${MERGE_LATENCY_LIMIT}-minute target (jg-backlog.sh times $task); lead: run the post-merge steps (install from main, teardown)"
-    elif [ -n "$latency" ]; then
+      JG_HOME="$FMH" JG_STATE_OVERRIDE="$STATE" timeout "$BUDGET" "$ALERT" raise slow-delivery "$task" --mode "$(meta_get "$m" mode)" --kind ship-delivering \
+        --ticket "$task" --deliver >/dev/null 2>&1 || echo "merge-on-green: could not raise the slow-delivery alert for $task (${latency}m, over the ${MERGE_LATENCY_LIMIT}-minute target)"
+    fi
+    if [ -n "$latency" ]; then
       echo "merge-on-green: merged $task $pr through jg-pr-merge in ${latency}m from its done line; lead: run the post-merge steps (install from main, teardown)"
     else
       echo "merge-on-green: merged $task $pr through jg-pr-merge; lead: run the post-merge steps (install from main, teardown)"

@@ -262,7 +262,7 @@ check "m: merged once" "$(wc -l < "$STUB_DIR/merge-calls")" 7
 rm "$FM/state/t12.meta" "$FM/state/t12.run-receipt.json"
 
 # (n) the done-to-merged minutes are recorded for every merge, and a merge over the five-minute
-# target is called out in the wake line the lead relays. The forge's merge time comes from the gh
+# target raises the slow-delivery alert. The forge's merge time comes from the gh
 # stub, so the number is the one the record holds rather than the moment the sweep ran.
 meta t13 on "$H1" s13
 now=$(date +%s)
@@ -270,9 +270,9 @@ now=$(date +%s)
 printf 'ready\t%s\nlanded\t%s\n' "$(rfc "$((now - 780))")" "$(rfc "$now")" > "$STUB_DIR/times/t13"
 out=$(mog)
 check "n: one merged line" "$(printf '%s\n' "$out" | wc -l)" 1
-has "n: the line names the minutes read from the ticket" "$out" "it took 13m from its done line to merged"
-has "n: over the target raises the over-target alert" "$out" "over the 5-minute target"
-has "n: the alert points at times" "$out" "jg-backlog.sh times t13"
+has "n: the line names the minutes read from the ticket" "$out" "in 13m from its done line"
+check "n: over the target raises one slow-delivery alert" "$(JG_HOME=$FM JG_STATE_OVERRIDE=$FM/state "$JG_STRANDED_ALERT" list | grep -c '^slow-delivery--t13$')" 1
+check "n: the over-target wording is gone from the line" "$(printf '%s' "$out" | grep -c 'over the 5-minute target' || true)" 0
 check "n: no latency table is written" "$([ -e "$FM/data/merge-latency.tsv" ] && echo written || echo none)" none
 rm "$FM/state/t13.meta" "$FM/state/t13.run-receipt.json"
 
@@ -298,8 +298,8 @@ printf 'ready\t%s\nlanded\t%s\n' "$(rfc "$((now - 120))")" "$(rfc "$now")" > "$S
 out=$(mog)
 check "o: one merged line" "$(printf '%s\n' "$out" | wc -l)" 1
 has "o: the line names the fast minutes" "$out" "in 2m from its done line"
-check "o: no over-target wording inside the target" \
-  "$(printf '%s' "$out" | grep -c 'over the 5-minute target' || true)" 0
+check "o: no alert inside the target" \
+  "$(JG_HOME=$FM JG_STATE_OVERRIDE=$FM/state "$JG_STRANDED_ALERT" list | grep -c t14 || true)" 0
 rm "$FM/state/t14.meta" "$FM/state/t14.run-receipt.json"
 
 # (p) the captain's own recorded word is authority too: merge=approved with no yolo meta lands the

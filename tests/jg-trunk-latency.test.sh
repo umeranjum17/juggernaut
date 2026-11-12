@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Integration test for the registered check core/trunk-latency: every local-trunk landing gets one row with its minutes from
-# the done line to the landing row and the stage that held them, and a landing over five minutes raises one alert.
+# the done line to the landing row and the stage that held them, and a landing over five minutes raises one slow-delivery alert
+# through bin/jg-alert.sh (the check prints no alert text of its own).
 # It replays the records of two real landings against a fixture home, at the clock of each landing:
 #   fric-s14-release-one-url: done 22:13:27Z, stack started 22:35:53Z, landed 22:45:27Z on 9 Nov, gate 216 s. Table T of the plan's
 #     measure.py reads 32 minutes, 28 of them before the gate; nobody was told.
@@ -23,6 +24,7 @@ LOG=${DONE_DONE_EVIDENCE_ROOT:+$DONE_DONE_EVIDENCE_ROOT/trunk-latency.log}
 say() { printf '%s\n' "$*" | tee -a "${LOG:-/dev/null}"; }
 ok() { say "ok - $1"; }
 
+export JG_TRUNK_LATENCY_ALERT=$ROOT/bin/jg-alert.sh  # the fixture homes hold no bin of their own
 S14=fric-s14-release-one-url S14_HEAD=c51c26ab2fd909dc744a43bc04cb08ac7ccd0917 S14_COMMIT=f19bfb172622c43cacff1f1d30a33720cfb819b4
 SHARD=fric-gate-shard-timeout SHARD_HEAD=77c927cfa3ea6a35b907cfda47a3c06079ec5741
 REVERT=revert-telegram-intake-stalled
@@ -69,6 +71,12 @@ tick() {  # <home> <clock> [env...]: one watcher tick of the check at that clock
   local h=$1 now=$2; shift 2
   env JG_TRUNK_LATENCY_NOW="$now" JG_TRUNK_LATENCY_LOADAVG="$h/loadavg" "$@" bash "$CHECK" check "$h"
 }
+alerts() {  # <home>: the live alert keys of the home, one per line
+  JG_HOME=$1 JG_STATE_OVERRIDE=$1/state bash "$ROOT/bin/jg-alert.sh" list
+}
+wakes() {  # <home>: the wake lines the alerts delivered
+  cat "$1/state/.wake-queue" 2>/dev/null
+}
 field() {  # <home> <task> <field name>: one field of the task's latency row
   awk -F'\t' -v t="$2" -v f="$3" 'NR == 1 { for (i = 1; i <= NF; i++) c[$i] = i; next } $1 == t { print $c[f] }' "$1/data/trunk-latency.tsv"
 }
@@ -78,8 +86,10 @@ H=$(home l1)
 seed_s14 "$H"
 out=$(tick "$H" 1794264357)
 say "$out"
-[ "$(printf '%s\n' "$out" | grep -c .)" = 1 ] || fail "the 32-minute landing must raise exactly one alert, got: $out"
-assert_contains "$out" "trunk-latency: $S14 landed f19bfb172622 32 minutes after its done line, over the 5-minute target; the queue held 22 minutes of it (from its done line to the landing start; not recorded)"
+[ -z "$out" ] || fail "the check prints no alert text of its own, got: $out"
+[ "$(alerts "$H")" = "slow-delivery--$S14-f19bfb172622" ] || fail "the 32-minute landing must raise exactly one slow-delivery alert, got: $(alerts "$H")"
+assert_contains "$(wakes "$H")" "alert-slow-delivery--$S14-f19bfb172622"
+assert_contains "$(wakes "$H")" "(P3) at rung 1 for worker"
 [ "$(field "$H" "$S14" minutes)" = 32 ] || fail "table T reads 32 minutes for $S14, the row says $(field "$H" "$S14" minutes)"
 [ "$(field "$H" "$S14" stage)" = queue ] || fail "the queue held $S14, the row says $(field "$H" "$S14" stage)"
 before=$(awk -F'\t' -v t="$S14" '$1 == t { printf "%.0f", ($8 - $5 - $11) / 60 }' "$H/data/trunk-latency.tsv")
@@ -89,7 +99,7 @@ want="$S14	$S14_HEAD	$S14_COMMIT	1794262407	1794262407	1794262279	1794263753	179
 ok "$S14: one row of 32 minutes (28 before the gate, as table T reads), the queue named as the stage that held 22 of them, one alert"
 seed_shard "$H"
 out=$(tick "$H" 1794270967)
-[ -z "$out" ] || fail "a 2-minute landing raises no alert, got: $out"
+[ -z "$out" ] && [ "$(alerts "$H" | wc -l)" = 1 ] || fail "a 2-minute landing raises no alert, got: $out $(alerts "$H")"
 [ "$(field "$H" "$SHARD" minutes)" = 2 ] || fail "table T reads 2 minutes for $SHARD, the row says $(field "$H" "$SHARD" minutes)"
 [ "$(field "$H" "$SHARD" stage)" = gate ] || fail "the gate held most of $SHARD, the row says $(field "$H" "$SHARD" stage)"
 [ "$(field "$H" "$SHARD" load)" = 7.25 ] || fail "a fresh landing's row holds the one-minute load"
@@ -103,7 +113,7 @@ ok "a tick with no new landing writes nothing and says nothing"
 H=$(home l2)
 seed_s14 "$H"
 out=$(tick "$H" 1794264357 JG_MERGE_LATENCY_LIMIT_MINUTES=40)
-[ -z "$out" ] && [ "$(field "$H" "$S14" minutes)" = 32 ] || fail "under a 40-minute limit the row is written and no alert raised: $out"
+[ -z "$out" ] && [ -z "$(alerts "$H")" ] && [ "$(field "$H" "$S14" minutes)" = 32 ] || fail "under a 40-minute limit the row is written and no alert raised: $out"
 ok "JG_MERGE_LATENCY_LIMIT_MINUTES sets the limit: under 40 minutes the 32-minute landing is recorded with no alert"
 
 # L3: the first run in a home with history.
@@ -137,8 +147,8 @@ export XDG_DATA_HOME=$T/share
 bash "$ROOT/core/trunk-latency/wiring.sh" "$H" >/dev/null || fail "the wiring failed"
 [ "$(cat "$H/register.log")" = 'register trunk-latency' ] || fail "the check was not registered: $(cat "$H/register.log")"
 cmp -s "$CHECK" "$T/share/jg-trunk-latency/latency.sh" || fail "the installed check differs from the source"
-out=$(JG_TRUNK_LATENCY_NOW=1794264357 JG_TRUNK_LATENCY_LOADAVG="$H/loadavg" "$H/state/trunk-latency.check.sh")
-assert_contains "$out" "$S14 landed f19bfb172622 32 minutes"
+JG_TRUNK_LATENCY_NOW=1794264357 JG_TRUNK_LATENCY_LOADAVG="$H/loadavg" "$H/state/trunk-latency.check.sh" >/dev/null
+[ "$(alerts "$H")" = "slow-delivery--$S14-f19bfb172622" ] || fail "the installed shim did not raise the alert: $(alerts "$H")"
 bash "$ROOT/core/trunk-latency/unwiring.sh" "$H" >/dev/null || fail "the unwiring failed"
 [ ! -e "$H/state/trunk-latency.check.sh" ] && [ ! -e "$T/share/jg-trunk-latency" ] && [ -s "$H/data/trunk-latency.tsv" ] \
   || fail "the unwiring must remove the shim and the install and keep the rows"
@@ -174,9 +184,7 @@ say "$out"
 for pair in "lane-b:behind lane-a" "lane-c:behind attempt of lane-x" "lane-d:first seen +300 s"; do
   [ "$(field "$H" "${pair%%:*}" queue_why)" = "${pair#*:}" ] || fail "${pair%%:*}'s row says $(field "$H" "${pair%%:*}" queue_why)"
 done
-assert_contains "$out" "lane-b landed" 
-assert_contains "$out" "the landing start; behind lane-a)"
-assert_contains "$out" "the landing start; behind attempt of lane-x)"
-assert_contains "$out" "the landing start; first seen +300 s)"
+# lane-b waited behind a landing that ran: the row's quiet fact keeps its alert quiet; the other three (over the one-minute limit) raise one each.
+[ "$(alerts "$H" | sort | paste -sd' ' -)" = "slow-delivery--lane-c-0c0000000000 slow-delivery--lane-d-0d0000000000 slow-delivery--lane-e-0e0000000000" ] || fail "the alerts are: $(alerts "$H" | paste -sd' ' -)"
 ! grep -P '\tqueue\t[0-9]*\t[0-9.]*\t$' "$H/data/trunk-latency.tsv" || fail "a queue row has a bare reason"
 ok "L5: rows say behind lane-a, behind attempt of lane-x and first seen +300 s; no queue row is bare"

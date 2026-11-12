@@ -1,6 +1,5 @@
 prompt	Approval and rejection belong to the watcher prompt gate; the ladder cannot invoke them.
 question	First-sight owner wake exists outside the row ladder; row timers are not applied to lanes.
 errors	Ring exists for silent workers only; errors need a distinct safe matcher and message.
-greenpr	Merge belongs to merge-on-green; the lane ladder cannot invoke it at the row timer.
 pause	Declared pauses bypass row actions and use their own recheck cadence.
 herdr-blocked	First-sight owner wake exists outside the row ladder; row timers are not applied to lanes.

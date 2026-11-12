@@ -24,9 +24,9 @@
 # that held the most seconds, or before-gate when the start is not on record. A landing with no done line on record gets a
 # row with empty ready, minutes and stage: it is counted, not dropped. A queue stage always names its reason in queue_why: behind
 # <lane>, behind attempt of <lane>, first seen +N s, or `not recorded` for a landing the lander wrote no reason for.
-# Output, which becomes a check wake: one line per landing over JG_MERGE_LATENCY_LIMIT_MINUTES (default 5, the limit
-# core/merge-on-green reads too). A landing more than an hour old when its row is written (the first run in a home, or a
-# check that was off) is recorded with no alert, and the run prints one line that counts those over the limit.
+# Alert: a landing over JG_MERGE_LATENCY_LIMIT_MINUTES (default 5, the limit core/merge-on-green reads too) raises the slow-delivery
+# alert through bin/jg-alert.sh, one key per landing. A landing more than an hour old when its row is written (the first run in a home,
+# or a check that was off) is recorded with no alert, and the run prints one line, which becomes a check wake, that counts those over the limit.
 set -u
 [ "$#" -eq 2 ] && [ "$1" = check ] && [ -d "$2/state" ] || { echo "usage: latency.sh check <jg-home>" >&2; exit 2; }
 FMH=$(cd "$2" && pwd -P)
@@ -36,6 +36,7 @@ MEM=$DATA/jg-trunk-landing OUT=$DATA/trunk-latency.tsv LANDINGS=$DATA/trunk-land
 LIMIT=${JG_MERGE_LATENCY_LIMIT_MINUTES:-5}
 case $LIMIT in ''|*[!0-9]*) LIMIT=5 ;; esac
 NOW=${JG_TRUNK_LATENCY_NOW:-$(date +%s)}  # the clock; a test sets it to replay a dated landing
+ALERT=${JG_TRUNK_LATENCY_ALERT:-$FMH/bin/jg-alert.sh}  # the home's own alert function, like core/merge-on-green reads its bin/jg-pr-merge.sh
 LOADAVG=${JG_TRUNK_LATENCY_LOADAVG:-/proc/loadavg}
 umask 077
 exec 9> "$STATE/.trunk-latency.lock" && flock -n 9 || exit 0  # one run per home writes the rows
@@ -89,7 +90,7 @@ while IFS=$'\t' read -r task _ commit landed _ extra; do
   load=
   [ $((NOW - landed)) -gt 600 ] || load=$(awk '{ print $1; exit }' "$LOADAVG" 2>/dev/null)
   # minutes, stage, the stage's seconds: the share each stage held of the done line to the landing row.
-  read -r minutes stage held < <(awk -v r="${ready:-}" -v s="$start" -v l="$landed" -v g="${gate:-0}" 'BEGIN {
+  read -r minutes stage _ < <(awk -v r="${ready:-}" -v s="$start" -v l="$landed" -v g="${gate:-0}" 'BEGIN {
     if (r == "") { print ""; exit }
     t = l - r; if (t < 0) t = 0; if (g > t) g = t
     if (s == "") { n["before-gate"] = t - g; o = "before-gate gate" }
@@ -105,14 +106,11 @@ while IFS=$'\t' read -r task _ commit landed _ extra; do
     old=$((old + 1)); [ "${minutes:-0}" -le "$LIMIT" ] || old_over=$((old_over + 1)); continue
   fi
   [ "${minutes:-0}" -gt "$LIMIT" ] || continue
-  case $stage in
-    queue) what="from its done line to the landing start; $why" ;;
-    landing) what='in the start lock, rebase and admission' ;;
-    gate) what='in the lint and the changed tests' ;;
-    *) what='before the gate; the landing start is not on record' ;;
-  esac
-  printf 'trunk-latency: %s landed %s %s minutes after its done line, over the %s-minute target; the %s held %s minutes of it (%s); recorded in %s\n' \
-    "$task" "${commit:0:12}" "$minutes" "$LIMIT" "$stage" "$held" "$what" "$OUT"
+  # The alert is the alert table's slow-delivery row (bin/jg-alert.sh); the row in $OUT names the stage and its minutes. A landing that
+  # waited behind a landing that was running is the row's quiet fact. A refused raise is one warning line, never a lost row.
+  facts=(); [ "${stage:-}" != queue ] || case $why in 'behind attempt'*) ;; behind\ *) facts=(--fact queued-behind-running-landing) ;; esac
+  JG_HOME=$FMH JG_STATE_OVERRIDE=$STATE bash "$ALERT" raise slow-delivery "$task-${commit:0:12}" --mode local-trunk --kind ship-delivering \
+    "${facts[@]}" --ticket "$task" --deliver >/dev/null || echo "trunk-latency: could not raise the slow-delivery alert for $task ($minutes minutes, ${stage:-}); recorded in $OUT"
 done <<< "$pending"
 [ "$old" -eq 0 ] || printf 'trunk-latency: recorded %s earlier landings with no alert, %s of them over the %s-minute target; %s\n' \
   "$old" "$old_over" "$LIMIT" "$OUT"

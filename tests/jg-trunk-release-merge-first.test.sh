@@ -34,7 +34,7 @@ receipt() {  # <at>
 }
 sweep_mog() {  # the registered check over the fixture home
   PATH="$W/fakebin:$PATH" JG_HOME="$HOME_D" JG_ROOT_OVERRIDE="$W/root" JG_STATE_OVERRIDE="$HOME_D/state" JG_DATA_OVERRIDE="$HOME_D/data" \
-    JG_CONFIG_OVERRIDE="$HOME_D/config" JG_MOG_CHECKS_LINT="$W/checks-lint" JG_CHECK_TIMEOUT=60 \
+    JG_CONFIG_OVERRIDE="$HOME_D/config" JG_MOG_CHECKS_LINT="$W/checks-lint" JG_MOG_ALERT="$ROOT/bin/jg-alert.sh" JG_CHECK_TIMEOUT=60 \
     "$ROOT/core/merge-on-green/merge-on-green.sh" check "$HOME_D" 2>&1
 }
 merges() { [ -s "$W/merge-calls" ] && grep -c . "$W/merge-calls" || echo 0; }
@@ -52,7 +52,7 @@ test_a_green_release_merges_on_the_standing_word_and_rolls_over() {
   [ "$(merges)" = 1 ] || fail "T1: the green release must merge once through bin/jg-pr-merge.sh: $out"
   assert_contains "$(cat "$W/merge-calls")" "$ID $U/1" "T1: the merge is for the release task and its PR"
   assert_contains "$out" "merged $ID $U/1" "T1: the merge must be named"
-  assert_contains "$out" "over the 5-minute target" "T1: a merge 10 minutes after the proof must be called out"
+  assert_contains "$(JG_HOME="$HOME_D" JG_STATE_OVERRIDE="$HOME_D/state" bash "$ROOT/bin/jg-alert.sh" list)" "slow-delivery--$ID" "T1: a merge 10 minutes after the proof must raise the slow-delivery alert"
   git -C "$PROJ" rev-parse --verify -q refs/heads/trunk-v2 >/dev/null || fail "T1: the next trunk must be cut in the same pass: $out"
   [ "$(cat "$HOME_D/state/trunk-branch-proj")" = trunk-v2 ] || fail "T1: the project must be on the next trunk"
   assert_contains "$out" "rollover after $ID: release merged" "T1: the rollover must be named"

@@ -13,7 +13,7 @@ alert	lost-worker	health lost, or stage building or proving with no sign of life
 alert	capacity	wait reason quota: a quota, an account, a model, no machine slot	0	P2	1	never
 alert	undelivered	a message stored or rung and not read	300	P2	2	home-parked
 alert	drift	the observer finds that the stage and the records disagree	600	P2	2	never
-alert	slow-delivery	stage proving, or delivering in queued, rebased or gated, past the limit for its kind	limit	P3	0	wait=owner+wait=outside,reason=ci|approval|date|review+queued-behind-running-landing
+alert	slow-delivery	stage proving, or delivering in queued, rebased or gated, past the limit for its kind	limit	P3	1	wait=owner+wait=outside,reason=ci|approval|date|review+queued-behind-running-landing
 alert	ready-idle	a ticket in ready and a free lane	600	P3	2	home-paused+capacity-held+owner-card-open
 alert	stranded	stage delivering in batched, live or joining; or a pull request style in queued with no check started	172800	P3	2	never
 alert	host	memory, disk or temp space over its limit	0	P3	3	never

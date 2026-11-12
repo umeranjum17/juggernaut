@@ -103,7 +103,7 @@ if True:
             return subprocess.run(['bash', str(root/'tests/jg-stop-coverage.test.sh'), '--check'], env=env, text=True, capture_output=True)
         waivers = fixture/'core/wait-timers/source-waivers.tsv'
         original = waivers.read_text()
-        for name in ('prompt', 'question', 'errors', 'greenpr', 'pause', 'herdr-blocked'):
+        for name in ('prompt', 'question', 'errors', 'pause', 'herdr-blocked'):
             r = run_gate()
             if r.returncode or 'waiver: ' + name + ':' not in r.stdout: raise SystemExit('FAIL visible waiver ' + name)
             waivers.write_text('\n'.join(l for l in original.splitlines() if not l.startswith(name + '\t')) + '\n')
