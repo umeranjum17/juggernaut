@@ -5,7 +5,7 @@
 # Usage:
 #   lane-delivery.sh <lane>          print the state word; print nothing for a lane with no record
 #   lane-delivery.sh detail <lane>   print key<TAB>value lines: state, from (the state of an older table it was read from,
-#                                    <table>:<state>, or none for a state no older table holds), commit, release, chain
+#                                    <table>:<state>, or none for a state no older table holds), commit, chain
 #                                    (the place of the change itself while a refused cleanup stands), evidence
 #
 # The records, first match wins:
@@ -20,15 +20,11 @@
 #   after the landing (the lane's last row in data/trunk-landings.tsv names commit C in project P):
 #     reverted          a revert-<lane> row follows it
 #     cleanup-refused   state/<lane>.meta still stands and a landing state file of the lane says `landed cleanup refused`
-#     rolled, merged, release-*   the first data/trunk-releases.tsv row of P whose commit holds C names the pull request:
-#                       rolled when state/trunk-rolled-P is that pull request or a data/trunk-versions.tsv base holds C;
-#                       else one read of the pull request (gh pr view): merged, or on its head a failed check (release-red),
-#                       a check still running (release-ci-running), every check passed (release-green), none or a
-#                       cancelled one (release-open). A read that fails prints release-unread, which is no state.
 #     live              the last live row of P in data/trunk-live.tsv (its project row is written only when every home moved) holds C
 #     live-partial      the last live row of some home P:<home> holds C
 #     home-behind       a move row of P or a home of P was written at a commit that holds C
 #     landed            anything else
+# A change in a release pull request is read by core/machines/observers/release.sh, and ticket.sh joins the two.
 set -u
 export LC_ALL=C
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P); root=$(cd "$here/../../.." && pwd -P)
@@ -63,33 +59,6 @@ lane_state() {
   esac
 }
 
-# A trunk version was cut from a main-branch commit that holds C (data/trunk-versions.tsv: project, version, branch, base).
-cut_after() {
-  local base
-  while read -r base; do holds "$C" "$base" && return 0; done < <(awk -F'\t' -v p="$P" '$1 == p { print $4 }' "$DATA/trunk-versions.tsv" 2>/dev/null)
-  return 1
-}
-
-# The release states of commit C: sets WORD and FROM, or returns 1 when no release holds C.
-release_state() {
-  local sha url json
-  while IFS=$'\t' read -r sha url; do holds "$C" "$sha" && { REL=$url; break; }; done < <(awk -F'\t' -v p="$P" '$1 == p && $6 ~ /^https:\/\// { print $3 "\t" $6 }' "$DATA/trunk-releases.tsv" 2>/dev/null)
-  [ -n "$REL" ] || return 1
-  FROM=trunk-pointers:released; EVIDENCE="release pull request $REL"
-  if [ "$(cat "$STATE/trunk-rolled-$P" 2>/dev/null)" = "$REL" ] || cut_after; then
-    WORD=rolled; FROM=trunk-pointers:rolled; return 0
-  fi
-  json=$(gh pr view "$REL" --json state,statusCheckRollup 2>/dev/null) || { WORD=release-unread; FROM=none; EVIDENCE="gh pr view $REL failed"; return 0; }
-  WORD=$(jq -r '[.statusCheckRollup[]? | (.conclusion // .state // "") as $c | (.status // "COMPLETED") as $s
-      | if ($c | test("^(FAILURE|ERROR|TIMED_OUT|STARTUP_FAILURE|ACTION_REQUIRED)$")) then "red"
-        elif $s != "COMPLETED" or ($c | test("^(PENDING|EXPECTED|)$")) then "running"
-        elif $c == "CANCELLED" then "open" else "green" end] as $k
-    | if .state == "MERGED" then "merged" elif .state != "OPEN" then "release-closed"
-      elif ($k | index("red")) then "release-red" elif ($k | index("running")) then "release-ci-running"
-      elif ($k | index("open")) or ($k | length) == 0 then "release-open" else "release-green" end' <<< "$json" 2>/dev/null)
-  case $WORD in release-red|release-green) FROM=none ;; release-closed|'') FROM=none; WORD=${WORD:-release-unread} ;; esac
-}
-
 # After the landing, on the trunk side: sets WORD and FROM for commit C of project P.
 trunk_state() {
   local key sha st last moved=
@@ -106,15 +75,15 @@ trunk_state() {
   WORD=landed; FROM=landing:landed; EVIDENCE="data/trunk-landings.tsv: $ID at ${C:0:12}"
 }
 
-classify() {  # <lane>: sets WORD FROM C REL CHAIN EVIDENCE
+classify() {  # <lane>: sets WORD FROM C CHAIN EVIDENCE
   local row rev f
-  ID=$1; WORD=; FROM=none; C=; REL=; CHAIN=; EVIDENCE=
+  ID=$1; WORD=; FROM=none; C=; CHAIN=; EVIDENCE=
   row=$(awk -F'\t' -v i="$ID" '$1 == i { r = $2 "\t" $3; v = 0 } $1 == "revert-" i && r != "" { v = 1 } END { if (r != "") print r "\t" v }' "$DATA/trunk-landings.tsv" 2>/dev/null)
   [ -n "$row" ] || { lane_state; return; }
   IFS=$'\t' read -r P C rev <<< "$row"
   REPO=$JG_HOME/projects/$P; git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1 || REPO=$JG_HOME
   if [ "$rev" = 1 ]; then WORD=reverted; FROM=delivery:reverted; EVIDENCE="data/trunk-landings.tsv: revert-$ID"; return 0; fi
-  release_state || trunk_state
+  trunk_state
   [ -e "$STATE/$ID.meta" ] || return 0
   for f in "$MEM/$ID".*.state; do
     case $(head -n 1 "$f" 2>/dev/null) in "landed cleanup refused"*)
@@ -127,7 +96,7 @@ case ${1:-} in
   detail)
     [ -n "${2:-}" ] || { echo "usage: lane-delivery.sh detail <lane>" >&2; exit 2; }
     classify "$2" || exit 1
-    printf 'state\t%s\nfrom\t%s\ncommit\t%s\nrelease\t%s\nchain\t%s\nevidence\t%s\n' "$WORD" "$FROM" "${C:-none}" "${REL:-none}" "${CHAIN:-none}" "${EVIDENCE:-none}" ;;
+    printf 'state\t%s\nfrom\t%s\ncommit\t%s\nchain\t%s\nevidence\t%s\n' "$WORD" "$FROM" "${C:-none}" "${CHAIN:-none}" "${EVIDENCE:-none}" ;;
   ""|-*) echo "usage: lane-delivery.sh <lane> | detail <lane>" >&2; exit 2 ;;
   *) classify "$1" && printf '%s\n' "$WORD" ;;
 esac

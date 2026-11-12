@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
 # Behavior test for the lane-delivery machine (core/machines/tables/lane-delivery.tsv): one command says where a lane's
 # change stands between the worker's done line and the main branch. Every record is made here in the shape its writer
-# prints (status lines, lane meta, landing state files, data/trunk-*.tsv rows, a stub gh for the release
-# pull request); no fleet record is copied. The shapes of section 6.5 of the plan are built from these records:
+# prints (status lines, lane meta, landing state files, data/trunk-*.tsv rows); no fleet record is copied. The shapes of section 6.5 of the plan are built from these records:
 #   fric-s2-wait-or-final: done, then a `final` landing refusal (9 Nov)                     -> refused
 #   a landing row with an empty verify log (lead-sweeps-landed-lanes, 9 Nov)               -> landed
 #   the green pin b7b93282e: a hook-failed project row, a rolled-back home row, no live row -> home-behind
-#   release pull request 813 with run 42711888100 red (Changed tests 3, CI required)       -> release-red
-#   the same pull request, 18 of 18 checks green and not merged (10 Nov)                    -> release-green
 #   a red CI at the live commit pins the green pin and every home back                    -> home-behind
 # A red trunk is no state: nothing pins it or holds a go-live (fric-no-red-trunk-stop), so section 6.5's red, red-fix-landed
 # and live-held states and its t6 and t14 moves are gone.
+# A change in a release pull request is read by the release observer (tests/jg-machine-release.test.sh); the lane
+# table stops at the trunk and the go-live, so its readers read the ticket's sub-state for the release.
 # Each walk takes the moves its writers make, every observation is replayed against the table as a corpus, every edge
 # of the table is seen at least once, and each state names the state of an older table that it was read from.
 set -u
@@ -28,9 +27,6 @@ tab() { local IFS=$'\t'; printf '%s\n' "$*"; }
 g() { git -C "$R" -c user.name=t -c user.email=t@example.test -c commit.gpgsign=false "$@"; }
 git init -q -b trunk "$R"; g commit -q --allow-empty -m base; BASE=$(g rev-parse HEAD)
 mk() { g commit-tree "$BASE^{tree}" -p "$1" -m "$2"; }  # <parent> <message>: a new commit; prints its sha
-# gh pr view <url> --json ...: prints the seeded pull request; a pull request with no seed is a failed read.
-# shellcheck disable=SC2016 # the stub body is written out verbatim and expands when the stub runs
-printf '#!/bin/sh\ncat "%s/pr/${3##*/}.json" 2>/dev/null || { echo "could not resolve to a PullRequest" >&2; exit 1; }\n' "$T" > "$T/bin/gh"; chmod +x "$T/bin/gh"
 
 declare -A P H LAST
 lane() {  # <lane> <project> [<parent>] [<message>]: a ship branch with one commit and the lane's meta
@@ -48,16 +44,6 @@ prove() {  # <lane>: the receipt, the approved merge-card evidence and the seale
 }
 land() { tab "$1" "${P[$1]}" "${H[$1]}" "$(date +%s)" full >> "$D/trunk-landings.tsv"; printf '%s\n' "${H[$1]}" > "$S/trunk-tip-${P[$1]}"; }
 live() { tab "$1" "$2" "$(date +%s)" "$3" "$2" >> "$D/trunk-live.tsv"; }  # <project[:home]> <sha> <status>
-release() { tab "$1" trunk-v3 "$2" 3 "$(date +%s)" "https://github.com/umeranjum17/juggernaut/pull/$3" >> "$D/trunk-releases.tsv"; }
-NAMES=("Repo invariants" "Lint 1" "Lint 2" "Lint 3" "Lint 4" "Shell syntax" "Smoke" "Fast evals" "Bus service" "Changed tests 1" "Changed tests 2" "Changed tests 3" "Changed tests 4" "Changed tests 5" "Changed tests 6" "Changed tests 7" "Changed tests 8" "CI required")
-pr() {  # <number> <OPEN|MERGED> none|running|red|green: the pull request's checks on its head, as gh prints them
-  local n s c rows=()
-  for n in "${NAMES[@]}"; do s=COMPLETED; c=SUCCESS
-    case "$3:$n" in none:*) continue ;; running:Changed*) s=IN_PROGRESS; c= ;; "red:Changed tests 3"|"red:CI required") c=FAILURE ;; esac
-    rows+=("$(printf '{"__typename":"CheckRun","name":"%s","status":"%s","conclusion":"%s"}' "$n" "$s" "$c")")
-  done
-  printf '{"state":"%s","statusCheckRollup":[%s]}\n' "$2" "$(IFS=,; printf '%s' "${rows[*]}")" > "$T/pr/$1.json"
-}
 # see <lane> <event> <word>: the observer names <word>; the state it says it was read from is a state of that older table;
 # the move from the lane's last word is kept for the corpus.
 see() {
@@ -71,11 +57,12 @@ see() {
 
 bash "$JM" check lane-delivery >/dev/null; expect_code 0 "$?" "the table lints"
 bash "$JM" coverage lane-delivery >/dev/null; expect_code 0 "$?" "every edge names its test"
-assert_equals 18 "$(grep -c '^state	' "$TABLES/lane-delivery.tsv")" "the table holds the 17 states of section 6.5 that a red trunk does not make, and parked"
-assert_equals 12 "$(awk -F'\t' '$1 == "edge" && $3 ~ /^t[0-9]+-/ { split($3, a, "-"); print a[1] }' "$TABLES/lane-delivery.tsv" | sort -u | wc -l)" "its edges carry the 12 transitions t1 to t13, with no t6"
-pass "the table holds 18 states and the 12 transitions"
+assert_equals 12 "$(grep -c '^state	' "$TABLES/lane-delivery.tsv")" "the table holds 12 states: the release states are the release table's"
+assert_equals 0 "$(grep -cE '^state	(release-|merged|rolled)' "$TABLES/lane-delivery.tsv")" "no release state is left in the lane table"
+assert_equals 7 "$(awk -F'\t' '$1 == "edge" && $3 ~ /^t[0-9]+-/ { split($3, a, "-"); print a[1] }' "$TABLES/lane-delivery.tsv" | sort -u | wc -l)" "its edges carry the 7 transitions t1 to t5, t7 and t13"
+pass "the table holds 12 states and the 7 transitions"
 
-# Walk 1, fric-s2-wait-or-final: from coding to rolled, through a refusal, a refused cleanup and a red release run.
+# Walk 1, fric-s2-wait-or-final: from coding to live, through a refusal and a refused cleanup.
 L=fric-s2-wait-or-final; lane $L p1
 status $L working "on it"; see $L - coding
 status $L "done" "ready in branch feature/$L (local-trunk)"; see $L t1-done ready
@@ -89,14 +76,7 @@ lstate $L "landed cleanup refused, nothing was forced: refused: the worktree has
 assert_contains "$(bash "$OBS" detail $L)" $'chain\tlanded' "a refused cleanup still names where the change is"
 rm -f "$S/$L.meta"; see $L t13-cleaned landed
 live p1 "${H[$L]}" live; see $L t7-live live
-release p1 "${H[$L]}" 813; pr 813 OPEN none; see $L t8-release release-open
-pr 813 OPEN running; see $L t9-run release-ci-running
-pr 813 OPEN red; see $L t9-red release-red
-pr 813 OPEN none; see $L t10-push release-open
-pr 813 OPEN green; see $L t9-green release-green
-pr 813 MERGED green; see $L t11-merge merged
-printf '%s\n' https://github.com/umeranjum17/juggernaut/pull/813 > "$S/trunk-rolled-p1"; see $L t12-rollover rolled
-pass "walk 1: coding to rolled; a final refusal, a red release run and 18 green checks not merged are named"
+pass "walk 1: coding to live; a final refusal and a refused cleanup are named"
 
 # Walk 2, the green pin b7b93282e, then a red CI that pins it back.
 L=b7-lane; lane $L p2; land $L; : > "$M/$L.${H[$L]}.verify.log"; see $L - landed
@@ -115,14 +95,10 @@ L=w4; lane $L p4; land $L; see $L - landed; live p4:primary "${H[$L]}" live; see
 L=w5; lane $L p5; land $L; see $L - landed; live p5 "${H[$L]}" "hook-failed:the live hook exited 1"; see $L t7-behind home-behind
 L=w6; lane $L p6; land $L; see $L - landed; live p6 "${H[$L]}" "hook-failed:the live hook exited 1"; see $L t7-behind home-behind
 live p6 "${H[$L]}" live; see $L t7-live live
-L=w7; lane $L p7; land $L; see $L - landed; release p7 "${H[$L]}" 7; pr 7 OPEN none; see $L t8-release release-open
-pr 7 OPEN red; see $L t9-red release-red; tab "revert-$L" p7 "$(mk "${H[$L]}" revert)" "$(date +%s)" "reverts-${H[$L]:0:12}" >> "$D/trunk-landings.tsv"
-see $L t10-revert reverted
+L=w7; lane $L p7; land $L; see $L - landed; tab "revert-$L" p7 "$(mk "${H[$L]}" revert)" "$(date +%s)" "reverts-${H[$L]:0:12}" >> "$D/trunk-landings.tsv"
+see $L s18-revert reverted
 L=w8; lane $L p8; land $L; see $L - landed; live p8 "${H[$L]}" "hook-failed:the live hook exited 1"; see $L t7-behind home-behind
-release p8 "${H[$L]}" 8; pr 8 OPEN none; see $L t8-release release-open; pr 8 OPEN running; see $L t9-run release-ci-running
-pr 8 OPEN green; see $L t9-green release-green
 L=w9; lane $L p9; land $L; see $L - landed; live p9:primary "${H[$L]}" live; see $L t7-partial live-partial
-release p9 "${H[$L]}" 9; pr 9 OPEN none; see $L t8-release release-open
 L=w10; lane $L p10; land $L; see $L - landed; tab "revert-$L" p10 "$(mk "${H[$L]}" revert)" "$(date +%s)" "reverts-${H[$L]:0:12}" >> "$D/trunk-landings.tsv"
 see $L s18-revert reverted
 L=w12; lane $L p12; status $L working "on it"; see $L - coding
@@ -143,7 +119,5 @@ L=w11; lane $L p11; status $L "done" "ready"; prove $L; see $L - admitted
 before=$(cd "$JG_HOME" && find . -type f -exec cksum {} + | sort)
 for l in "${!LAST[@]}"; do bash "$JM" show lane-delivery "$l" >/dev/null 2>&1; done
 assert_equals "$before" "$(cd "$JG_HOME" && find . -type f -exec cksum {} + | sort)" "the observer writes no record"
-rm -f "$T/pr/9.json"; out=$(bash "$JM" show lane-delivery w9 2>&1); expect_code 1 "$?" "a failed pull request read is no state"
-assert_contains "$out" "release-unread" "the failed read is named"
 bash "$JM" show lane-delivery no-such-lane >/dev/null 2>&1; expect_code 1 "$?" "a lane with no record is no state"
-pass "the observer writes nothing, and a read it cannot make is no state"
+pass "the observer writes nothing, and a lane with no record is no state"

@@ -44,13 +44,13 @@ word	lane-delivery	home-behind	delivering.batched	tick	slow|stuck
 word	lane-delivery	live-partial	delivering.batched	tick	slow|stuck
 word	lane-delivery	live	delivering.live	tick	ok
 word	lane-delivery	cleanup-refused	=	tick	stuck
-word	lane-delivery	release-open	delivering.joining	outside (ci)	ok
-word	lane-delivery	release-ci-running	delivering.joining	outside (ci)	ok
-word	lane-delivery	release-green	delivering.joining	outside (ci)	ok
-word	lane-delivery	release-red	delivering.joining	tick	red
-word	lane-delivery	merged	released	-	-
-word	lane-delivery	rolled	released	-	-
 word	lane-delivery	reverted	building,closed	-	red
+word	release	open	delivering.joining	outside (ci)	ok
+word	release	checking	delivering.joining	outside (ci)	ok
+word	release	ready	delivering.joining	outside (ci)	ok
+word	release	red	delivering.joining	tick	red
+word	release	merged	released	-	-
+word	release	abandoned	-	-	-
 word	landing	new	delivering.queued	tick	ok
 word	landing	running	delivering.rebased,delivering.gated	tick	ok
 word	landing	wait	delivering.queued	tick	ok

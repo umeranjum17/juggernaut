@@ -50,6 +50,21 @@ ready:OPEN:green:joining
 merged:MERGED:green:-
 abandoned:CLOSED:none:-
 LIST
+# The ticket reads the release: released once it merged (by the pull request, by the rolled pointer, or by a cut version),
+# the lane word again when it was abandoned, and the lane word when the pull request cannot be read.
+assert_equals "released" "$(bash "$M/observers/ticket.sh" lane-merged)" "the ticket of a merged release reads released"
+assert_equals "delivering.batched" "$(bash "$M/observers/ticket.sh" lane-abandoned)" "an abandoned release leaves the ticket batched"
+rm -f "$T/pr/4.json"; assert_equals "" "$(bash "$M/observers/release.sh" lane-ready 2>/dev/null)" "a pull request that cannot be read prints no word"
+assert_equals "delivering.batched" "$(bash "$M/observers/ticket.sh" lane-ready)" "an unread release leaves the ticket on its lane word"
+pr 4 OPEN green
+printf '%s\n' "https://github.com/example/p4/pull/4" > "$S/trunk-rolled-p4"; pr 4 OPEN none
+assert_equals "merged" "$(bash "$M/observers/release.sh" lane-ready)" "the rolled pointer of the release reads merged"
+lane_sha=$(git -C "$R" rev-parse refs/heads/rel1)
+git -C "$R" update-ref refs/heads/cutmain "$(g commit-tree "$BASE^{tree}" -p "$lane_sha" -m main)"
+tab p1 v4 trunk-v4 "$(git -C "$R" rev-parse refs/heads/cutmain)" > "$D/trunk-versions.tsv"
+assert_equals "merged" "$(bash "$M/observers/release.sh" lane-open)" "a trunk version cut from main after the commit reads merged"
+tab "revert-lane-red" p3 "$(g commit-tree "$BASE^{tree}" -p "$BASE" -m revert)" "$(date +%s)" reverts >> "$D/trunk-landings.tsv"
+assert_equals "" "$(bash "$M/observers/release.sh" lane-red)" "a reverted lane is in no release"
 assert_equals "" "$(bash "$M/observers/release.sh" no-such-lane)" "a lane in no release prints nothing"
 pass "a fixture release in each of its six states prints the right release word and sub-state"
 
