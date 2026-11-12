@@ -425,6 +425,37 @@ jg_task_delivery_note() {  # <inbox-dir> <seq-or-record-name> <word> [pointer]
     >> "$dir/.delivery.jsonl" 2>/dev/null || return 1
 }
 
+# The agent's own pull at a hook beat (core/hooks/inbox.sh): print every unhandled steer in numeric order, move
+# each into handled/ and write the `read` word on its delivery record (pointer: the hook event). The move is the
+# message machine's `read` edge (core/machines/tables/message.tsv), so a steer pulled here is read the same way a
+# worker's own `mv` reads it, and the re-ring ladder stops ringing for it. The text is the agent's to act on; it
+# still claims `handled` with proof through bin/jg-delivery.sh. Prints nothing and exits 1 for an empty inbox.
+# A record that cannot be moved is left in place and not printed, so the next beat tries again.
+jg_task_inbox_pull() {  # <state-dir> <task-id> [event]
+  local dir f n seq body any=1 lock
+  dir=$(jg_task_inbox_dir "$1" "$2")
+  [ -d "$dir" ] || return 1
+  mkdir -p "$dir/handled" || return 1
+  lock="$dir/.pull.lock"
+  jg_task_inbox_lock_acquire "$lock" || return 1
+  while IFS= read -r f; do
+    [ -f "$f" ] || continue
+    body=$(jg_task_inbox_body "$f") || continue
+    mv "$f" "$dir/handled/" 2>/dev/null || continue
+    seq=$(jg_task_inbox_seq_of "${f##*/}") || continue
+    jg_task_delivery_note "$dir" "$seq" read "hook:${3:-pull}" || true
+    printf 'Juggernaut instruction %s (inbox %s.msg, now moved to handled/; act on it, then claim it with bin/jg-delivery.sh handled %s %s --evidence <kind>:<pointer>):\n%s\n\n' \
+      "$seq" "$(printf '%03d' "$seq")" "$2" "$seq" "$body"
+    any=0
+  done < <(for f in "$dir"/*.msg; do
+    [ -e "$f" ] || continue
+    n=$(jg_task_inbox_seq_of "${f##*/}") || continue
+    printf '%010d %s\n' "$n" "$f"
+  done | sort | cut -d' ' -f2-)
+  jg_lock_release "$lock"
+  return "$any"
+}
+
 # Durably enqueue one steer: temp-write, then atomic rename into the next
 # sequence slot. Prints the record path. Fails without a partial record.
 jg_task_inbox_write() {  # <state-dir> <task-id> <text> [delivery-mode]

@@ -21,7 +21,7 @@ state_of() { jm show message "$1"; printf '%s\n' "$OUT" | awk -F'\t' '$1=="state
 field() { bash -c '. "$1"; jg_task_inbox_field "$2" "$3"' _ "$ROOT/bin/jg-task-inbox-lib.sh" "$S/t1.inbox/$1.msg" "$2"; }
 
 # 1. The table lints clean: 5 states, the six count states are not states.
-jm check message; expect_code 0 "$RC" "the table lints"; assert_equals "ok message: 5 states, 8 edges" "$OUT" "lint golden"
+jm check message; expect_code 0 "$RC" "the table lints"; assert_equals "ok message: 5 states, 9 edges" "$OUT" "lint golden"
 assert_equals "stored rung read handled failed" "$(awk -F'\t' '$1=="state"{printf "%s ", $2}' "$ROOT/core/machines/tables/message.tsv" | sed 's/ $//')" "the five states"
 for c in ring-counted busy-deferred busy-reported held-reported escalated retry-owed; do
   assert_equals 0 "$(grep -c "^state	$c	" "$ROOT/core/machines/tables/message.tsv")" "$c is a field, not a state"

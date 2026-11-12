@@ -9,6 +9,9 @@ journeys:
   status-progress-wakes-nobody:
     tier: local
     command: bash journeys/status-progress-wakes-nobody.sh
+  hook-inbox:
+    tier: local
+    command: bash tests/jg-hook-inbox.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   learnings:
     tier: local
     command: bash tests/jg-learnings.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
