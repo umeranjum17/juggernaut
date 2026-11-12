@@ -1,0 +1,3 @@
+# Hold table
+
+Hold table: run `done-done run hold-table` (`bash journeys/hold-table.sh`, which runs `tests/jg-machine-hold.test.sh` and `tests/jg-machine-hold-b.test.sh` and writes its log and `steps.json` into the run's folder); it lints `core/machines/tables/hold.tsv` (5 states, 8 moves, each with a test) and its enum, reads a fixture record in each of the five states through the real observer (`core/machines/observers/hold.sh`, which asks `bin/jg-captain-hold.sh diverged` and `bin/jg-captain-hold.sh phase`) over a real Beads store, and reports legal and illegal moves to the shadow log (a legal move adds no line); `captain-call.tsv` is gone (screen: none).

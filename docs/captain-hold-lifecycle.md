@@ -43,6 +43,7 @@ It never reads report bodies, review artifacts, terminal output, or chat.
 | `reconcile-requests` | Internal intake that records a reconcile request from a board selection. | [Reconcile](#reconcile-re-check-reality-never-a-blind-close) |
 | `reconcile close`, `reconcile note`, `reconcile list` | Retire or list pending reconcile requests. | [Verifying and retiring a request](#verifying-and-retiring-a-request) |
 | `diverged` | Read-only report of a call whose two records disagree. | [Record divergence](#record-divergence) |
+| `phase` | Read-only word of one call for the hold machine: raised, deferred, answered, closed or none. | `core/machines/tables/hold.tsv` |
 
 ### Creating a hold (`hold`)
 

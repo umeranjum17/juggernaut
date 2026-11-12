@@ -24,6 +24,9 @@ journeys:
   landing-table:
     tier: local
     command: (bash bin/jg-machine.sh check landing && bash bin/jg-machine.sh events landing && bash tests/jg-machine-landing.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  hold-table:
+    tier: local
+    command: bash journeys/hold-table.sh
   worker-table:
     tier: local
     command: (bash bin/jg-machine.sh check worker && bash bin/jg-machine.sh events worker && bash tests/jg-machine-worker.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

@@ -831,9 +831,8 @@ tests/jg-merge-gate-lib.test.sh 608
 tests/jg-merge-gate-policy.test.sh 30967
 tests/jg-metrics-shadow-parity.test.sh 210
 tests/jg-machine-task.test.sh 1800
-tests/jg-machine-call.test.sh 55000
-tests/jg-machine-call-b.test.sh 38000
-tests/jg-machine-call-c.test.sh 53000
+tests/jg-machine-hold.test.sh 80000
+tests/jg-machine-hold-b.test.sh 75000
 tests/jg-muse-signals-live-e2e.test.sh 180
 tests/jg-omp-primary-live-e2e.test.sh 290
 tests/jg-on.test.sh 20997
@@ -1860,7 +1859,7 @@ families_for_changed_path() {
       scripts_for_test_reference "$(basename "$path")" \
         || printf '%s\n' "__unmapped__:$path"
       ;;
-    tests/jg-trunk-fixture.sh|tests/jg-machine-call-fixture.sh)
+    tests/jg-trunk-fixture.sh|tests/jg-machine-hold-fixture.sh)
       # Each is shared by the parts of one split suite, which are unclassified:
       # the family-wide arm below would widen it to every unclassified script.
       scripts_for_test_reference "$(basename "$path")" \

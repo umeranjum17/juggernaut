@@ -69,10 +69,6 @@ word	task-inbox	busy-reported	-	-	-
 word	task-inbox	held-reported	-	-	-
 word	task-inbox	escalated	-	-	-
 word	task-inbox	retry-owed	-	-	-
-word	captain-call	none	=	none	ok
-word	captain-call	open	=	owner (decision)	ok
-word	captain-call	answered	=	none	ok
-word	captain-call	diverged	=	owner (decision)	lost
 word	delivery	unlanded	intake,delivering.gated	-	-
 word	delivery	landed	delivering.batched	tick	ok
 word	delivery	in-homes	delivering.live,released	-	ok
