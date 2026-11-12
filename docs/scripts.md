@@ -230,6 +230,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-pr-state.sh`         | Read-only: print one line per GitHub pull-request blocker it can see, reporting on checks that have reported rather than verdicting merge-readiness |
 | `jg-pr-reviewers.sh`     | Read-only: suggest reviewers from GitHub's own author mapping of recent commits on a pull request's changed files, never requesting one |
 | `jg-merge-outcome-lib.sh` | Publish a confirmed merge's durable, role-routed supervision outcome |
+| `jg-proof-status-lib.sh` | Publish a passed release proof as the commit status juggernaut/release-proof, and give the merge command its two proof rules: a release head needs that status, a pull request that commits a receipt needs the receipt check |
 | `jg-merge-alert.sh`      | File one text-only board alert for every proven merge (project, full PR URL, plain outcome, proof card link, who merged and built it with which model), queue it durably under `state/merge-alerts/` when the board is down and retry it from the supervision cycle |
 | `jg-reaper-lib.sh` | Stop a browser left behind by a dead worker or an ended heavy job, never one whose task record still exists, when its profile is a fleet temp or scratch folder and it is past the age limit; raise the machine load alarm, from the main home only, and keep the load record whose reader defers new lanes at spawn |
 | `jg-merge-authority-lib.sh` | Resolve merge authority at the gate, persist it against the accepted canonical PR, and identity-check its later poll consumption |

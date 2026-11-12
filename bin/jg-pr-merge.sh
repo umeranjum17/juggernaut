@@ -125,6 +125,11 @@
 # recorded value stale. Reading that state needs glab and jq, and either one
 # absent stops the merge before any state is recorded.
 #
+# A GitHub merge also needs its proof as the forge shows it (bin/jg-proof-status-lib.sh owns the rule): a release
+# pull request needs the juggernaut/release-proof status success at its exact head, which bin/jg-trunk.sh publishes
+# when the release proof passes; a pull request that commits a receipt under .done-done-receipts/ needs the receipt
+# check (done-done gate) to pass at its head. Nothing is set as required on the forge; this is the enforcement point.
+#
 # Completion evidence is checked by bin/jg-dod-lib.sh against the verified
 # forge head before either merge command, independently of forge check waivers.
 # A Forgejo merge is refused unless every pre-merge condition holds, each read
@@ -242,6 +247,8 @@ STATE="${JG_STATE_OVERRIDE:-$JG_HOME/state}"
 . "$SCRIPT_DIR/jg-pr-lib.sh"
 # shellcheck source=bin/jg-dod-lib.sh
 . "$SCRIPT_DIR/jg-dod-lib.sh"
+# shellcheck source=bin/jg-proof-status-lib.sh
+. "$SCRIPT_DIR/jg-proof-status-lib.sh"
 # shellcheck source=bin/jg-backlog-transition-lib.sh
 . "$SCRIPT_DIR/jg-backlog-transition-lib.sh"
 # shellcheck source=bin/jg-merge-outcome-lib.sh
@@ -1957,6 +1964,7 @@ case "$PROVIDER" in
     fi
     if declare -F jg_dod_merge_gate >/dev/null; then github_gate 'proof or evidence gate refused the merge' jg_dod_merge_gate "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" "$JG_HOME" "$ID" "$META" "$JG_PR_MERGE_HEAD" "$URL" || exit 1; fi
     if declare -F jg_dod_proof_gate >/dev/null; then github_gate 'proof card missing' jg_dod_proof_gate "$JG_HOME" "$ID" "$JG_PR_MERGE_HEAD" "$URL" || exit 1; fi
+    github_gate 'release proof or receipt check refused the merge' jg_proof_merge_gate "$META" "$PR_OWNER/$PR_REPO" "$PR_NUMBER" "$JG_PR_MERGE_HEAD" || exit 1
     # The evidence lint runs here, in the merge's own call, so the lead no
     # longer spends one model turn reading PASS and a second one merging. It is
     # the lint the merge-on-green gate runs, over the same evidence folder

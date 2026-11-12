@@ -55,6 +55,10 @@ if [ "\$2" = view ]; then
   printf 'state: %s\n' "\$(cat "$W/pr-state" 2>/dev/null || echo open)"; exit 0; fi
 printf 'https://github.com/o/r/pull/9\n'
 SH
+  # The forge's commit-status write (the release proof status) is accepted. The stand-in holds no world path, so the cached
+  # world template (JG_TRUNK_FIXTURE_CACHE) can be copied to another world unchanged.
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$W/fakebin/gh"
+  chmod +x "$W/fakebin/gh"
   cat > "$HOME_D/config/live-hook.proj" <<SH
 #!/usr/bin/env bash
 printf '%s\n' "\$2" >> "$W/live-moves"

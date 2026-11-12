@@ -151,6 +151,25 @@ test_the_release_pr_has_an_owning_task_the_guard_admits() {
   pass 'T6 the release records its own task, the guard admits the trunk head into main, and any other head is refused'
 }
 
+# T8 (slice T3b) The proof reaches GitHub: a release whose proof passes publishes the status juggernaut/release-proof
+# on the release head through the forge; a release whose proof fails publishes none, so the merge command refuses it.
+test_the_release_proof_status_reaches_the_forge() {
+  local out head
+  release_world proofstatus
+  batch j8; echo open > "$W/state-813"; head=$(tip)
+  : > "$W/gh-real-calls"
+  out=$(trunk release "$PROJ" 2>&1) || fail "T8: the release must pass: $out"
+  grep -Fq "api -X POST repos/umeranjum17/juggernaut/statuses/$head -f state=success -f context=juggernaut/release-proof" "$W/gh-real-calls" \
+    || fail "T8: a passed release proof must publish the success status on the release head: $(cat "$W/gh-real-calls")"
+
+  release_world proofstatus-red
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$W/root/bin/jg-trunk-release-proof.sh"
+  batch j9; echo open > "$W/state-813"; : > "$W/gh-real-calls"
+  out=$(trunk release "$PROJ" 2>&1) && fail "T8: a failed release proof must fail the release: $out"
+  ! grep -q 'juggernaut/release-proof' "$W/gh-real-calls" || fail "T8: a failed release proof must publish no status: $(cat "$W/gh-real-calls")"
+  pass 'T8 a passed release proof publishes the release-proof status on the release head; a failed one publishes none'
+}
+
 test_a_pushed_release_without_its_record_gets_the_record_and_no_second_push() {
   local out meta rows sum
   release_world rel-pushed; meta="$HOME_D/state/release-juggernaut-trunk.meta"
@@ -414,6 +433,7 @@ test_a_home_that_cannot_pass_the_merge_gate_waits_on_main_at_the_release() {
 test_a_release_keeps_one_url_and_takes_the_open_release_pr_as_success
 test_a_home_that_cannot_pass_the_merge_gate_waits_on_main_at_the_release
 test_a_pushed_release_without_its_record_gets_the_record_and_no_second_push
+test_the_release_proof_status_reaches_the_forge
 test_the_release_pr_has_an_owning_task_the_guard_admits
 test_release_proof_at_its_head
 printf 'jg-trunk-release-open-pr: ok\n'

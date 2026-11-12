@@ -269,6 +269,15 @@ case "${1:-} ${2:-}" in
     # The required-check reads: the branch itself, and its rules read without
     # the merge-queue filter the queue reader below applies.
     case " $* " in
+      *" repos/"*"/commits/"*"/statuses"*)
+        # The release proof status read (bin/jg-proof-status-lib.sh): the newest status first.
+        cat "${JG_TEST_GH_PROOF_STATUSES:-/dev/null}" 2>/dev/null || printf '[]\n'
+        exit 0
+        ;;
+      *" repos/"*"/pulls/"*"/files"*)
+        cat "${JG_TEST_GH_PR_FILES:-/dev/null}" 2>/dev/null
+        exit 0
+        ;;
       *" repos/"*"/commits/"*"/check-runs"*)
         case "$*" in
           *"/commits/$(cat "$JG_TEST_GH_HEAD")/check-runs"*) ;;
@@ -685,6 +694,8 @@ run_pr_merge() {
   JG_TEST_GH_MERGEABLE_CALLS="$case_dir/mergeable-calls" \
   JG_TEST_GH_HEAD="$case_dir/github-head" \
   JG_TEST_GH_RUNS="$case_dir/github-runs.json" \
+  JG_TEST_GH_PROOF_STATUSES="$case_dir/github-proof-statuses.json" \
+  JG_TEST_GH_PR_FILES="$case_dir/github-pr-files" \
   JG_TEST_GH_MERGE_RC_FILE="$case_dir/github-merge-rc" \
   JG_TEST_GH_MERGE_OUTPUT="$(cat "$case_dir/github-merge-output" 2>/dev/null || true)" \
   JG_TEST_GH_GRAPHQL_FAIL="$case_dir/github-graphql-fail" \
@@ -2248,7 +2259,18 @@ trunk_release_case() {  # <name> <trunk-branch>: a local-trunk project on <trunk
   printf '%s\n' "$2" > "$case_dir/state/trunk-branch-project"
   jg_write_meta "$case_dir/state/task-x1.meta" "kind=release" "project=$case_dir/project" "mode=local-trunk" "yolo=off"
   chmod 0600 "$case_dir/state/task-x1.meta"
+  write_proof_status "$case_dir" success
   printf '%s\n' "$case_dir"
+}
+
+# The release proof status the forge returns for the head: <state> for the newest status, or none for no status.
+write_proof_status() {  # <case-dir> <success|failure|none>
+  if [ "$2" = none ]; then
+    printf '[{"context":"ci/other","state":"success"}]\n' > "$1/github-proof-statuses.json"
+  else
+    printf '[{"context":"juggernaut/release-proof","state":"%s"},{"context":"juggernaut/release-proof","state":"success"}]\n' "$2" \
+      > "$1/github-proof-statuses.json"
+  fi
 }
 
 test_trunk_release_pull_request_is_admitted_and_merged_with_a_merge_commit() {
@@ -2275,6 +2297,70 @@ test_trunk_release_pull_request_is_admitted_and_merged_with_a_merge_commit() {
     assert_no_grep ' pr merge' "$case_dir/gh-axi.log" "a refused merge from $head reached the forge"
   done
   pass "a local-trunk release pull request from the current trunk merges with a merge commit; an older trunk or a feature head into main is refused"
+}
+
+# Fixture 1 (slice T3b): the release pull request merges only on its release proof status. A release head of five
+# commits with the status success is green and merges; with no status it is red and nothing reaches the forge; a newest
+# status of failure is red even when an older one passed.
+test_release_pull_request_needs_its_release_proof_status() {
+  local case_dir rc state err
+  for state in success none failure; do
+    case_dir=$(trunk_release_case "release-proof-$state" trunk-v3)
+    write_proof_status "$case_dir" "$state"
+    sed -i 's/"baseRefName":"main"/"baseRefName":"main","headRefName":"trunk-v3"/' "$case_dir/github-view.json"
+    rc=0
+    JG_TEST_GH_BASE=main JG_TEST_GH_HEAD_REF=trunk-v3 run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/813 \
+      > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+    err=$(cat "$case_dir/stderr" "$case_dir/stdout")
+    if [ "$state" = success ]; then
+      [ "$rc" -eq 0 ] || fail "a release head with a passed release proof must merge (rc $rc): $err"
+      assert_logged_gh_merge "$case_dir" 813 example/repo --merge
+    else
+      [ "$rc" -ne 0 ] || fail "a release head whose proof status is $state must be refused"
+      assert_contains "$err" "release-proof" "the refusal for $state does not name the release proof status"
+      assert_no_grep ' pr merge' "$case_dir/gh.log" "a release head with proof status $state reached the forge's merge"
+    fi
+  done
+  pass "a release pull request merges on a passed release proof status and is refused with none or a failed one"
+}
+
+# Fixture 2 (slice T3b): one worker's pull request that commits a receipt uses the receipt check (done-done gate).
+# A receipt that names the head passes; a receipt for another commit fails and the merge is refused.
+receipt_case() {  # <name> <own|other>: a worker pull request whose head commits a receipt for itself or for a commit off its history
+  local case_dir wt=$TMP_ROOT/$1-wt head tree sample other
+  case_dir=$(make_case "$1")
+  rm -rf "$wt"; jg_git_init_commit "$wt"
+  sample=$(find "$ROOT/.done-done-receipts" -name "*.json" | sort | head -1)
+  mkdir -p "$wt/.done-done-receipts"
+  if [ "$2" = own ]; then
+    head=$(git -C "$wt" rev-parse HEAD); tree=$(git -C "$wt" rev-parse 'HEAD^{tree}')
+    jq --arg h "$head" --arg t "$tree" '.head=$h|.tree=$t|.runs[0].commit=$h' "$sample" > "$wt/.done-done-receipts/$head.json"
+  else
+    other=1010101010101010101010101010101010101010
+    jq --arg h "$other" '.head=$h|.runs[0].commit=$h' "$sample" > "$wt/.done-done-receipts/$other.json"
+  fi
+  git -C "$wt" add . && git -C "$wt" commit -qm "a receipt"
+  head=$(git -C "$wt" rev-parse HEAD)
+  git -C "$wt" update-ref refs/remotes/origin/main "$head"
+  add_gh_mocks "$case_dir" "$head"
+  printf '.done-done-receipts/x.json\nbin/a.sh\n' > "$case_dir/github-pr-files"
+  jg_write_meta "$case_dir/state/task-x1.meta" "window=jg-task-x1" "worktree=$wt" "project=$case_dir/project" "kind=ship" "mode=no-mistakes"
+  printf '%s\n' "$case_dir"
+}
+
+test_worker_pull_request_uses_its_committed_receipt() {
+  local case_dir rc err
+  command -v done-done >/dev/null 2>&1 || { pass "skipped: done-done is not installed"; return 0; }
+  case_dir=$(receipt_case worker-receipt-own own); rc=0
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/41 > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  [ "$rc" -eq 0 ] || fail "a pull request whose receipt names its head must pass the receipt check (rc $rc): $(cat "$case_dir/stderr")"
+  case_dir=$(receipt_case worker-receipt-other other); rc=0
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/42 > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  err=$(cat "$case_dir/stderr" "$case_dir/stdout")
+  [ "$rc" -ne 0 ] || fail "a pull request with a receipt for another commit must be refused"
+  assert_contains "$err" "receipt check refused" "the refusal does not name the receipt check"
+  assert_no_grep ' pr merge' "$case_dir/gh.log" "a refused receipt reached the forge's merge"
+  pass "a worker pull request passes with a receipt for its head and is refused with a receipt for another commit"
 }
 
 # A release branch recorded as carried is closed: a merge into it never reaches
@@ -3480,6 +3566,8 @@ test_bundled_repo_override_args_refuse_before_recording
 test_explicit_merge_method_not_overridden
 test_release_pull_request_defaults_to_a_merge_commit
 test_trunk_release_pull_request_is_admitted_and_merged_with_a_merge_commit
+test_release_pull_request_needs_its_release_proof_status
+test_worker_pull_request_uses_its_committed_receipt
 test_merge_into_a_carried_release_branch_is_refused
 test_method_equals_merge_method_not_overridden
 test_parses_pr_url_for_gh_axi

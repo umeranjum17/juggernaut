@@ -169,6 +169,8 @@ CONFIG="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
 LANDER_ACCOUNT="${CLAUDE_CONFIG_DIR:-}"; unset CLAUDE_CONFIG_DIR
 # shellcheck source=bin/jg-pr-lib.sh
 . "$SCRIPT_DIR/jg-pr-lib.sh"
+# shellcheck source=bin/jg-proof-status-lib.sh
+. "$SCRIPT_DIR/jg-proof-status-lib.sh"
 # shellcheck source=bin/jg-dod-lib.sh
 . "$SCRIPT_DIR/jg-dod-lib.sh"
 # shellcheck source=bin/jg-bypass-record-lib.sh
@@ -2222,6 +2224,16 @@ release_preflight() {  # <rel>
   refuse "release of ${1:0:12} waits on Main (wait=main, reason=approval): this home cannot pass its merge gate; nothing is pushed. $(cut -f2,3 <<<"$miss" | sed 's/\t/ -> /' | tr '\n' ';')"
 }
 
+# The release proof at the release head, then its pass as the commit status the merge command needs. A pass the forge
+# cannot take is an error, never a quiet skip: the release PR would stay red with no word why.
+prove_release() {  # <base> <rel> <url>
+  local slug
+  "$SCRIPT_DIR/jg-trunk-release-proof.sh" "$PROJ" "$TRUNK" "$1" "$2" "$3" || return
+  slug=${3#https://github.com/}; slug=${slug%%/pull/*}
+  jg_proof_status_publish "$slug" "$2" success "release proof passed: every commit since ${1:0:12} has landing proof" "$3" \
+    || die "the release proof passed but its status could not be published on ${2:0:12} ($slug)"
+}
+
 push_batch() {  # <rel> <n> <prev> <spend 0|1> <proof 0|1>
   release_preflight "$1"
   local rel=$1 n=$2 prev=$3 default base body url unproved; local -a carried
@@ -2255,7 +2267,7 @@ push_batch() {  # <rel> <n> <prev> <spend 0|1> <proof 0|1>
   [ "$5" = 1 ] || { unlock "$STATE/.trunk-$PN.lock"; return 0; }
   base=$(release_base "$rel") || refuse "cannot find the release base for ${rel:0:12}"
   unlock "$STATE/.trunk-$PN.lock"
-  "$SCRIPT_DIR/jg-trunk-release-proof.sh" "$PROJ" "$TRUNK" "$base" "$rel" "$url"
+  prove_release "$base" "$rel" "$url"
 }
 
 
@@ -2275,7 +2287,7 @@ cmd_release() {
     [ "$(pr_state "$url")" = open ] || refuse "the release PR $url is not open"
     base=$(release_base "$rel") || refuse "cannot find the release base for ${rel:0:12}"
     unlock "$STATE/.trunk-$PN.lock"
-    "$SCRIPT_DIR/jg-trunk-release-proof.sh" "$PROJ" "$TRUNK" "$base" "$rel" "$url"
+    prove_release "$base" "$rel" "$url"
     return
   fi
   [ -n "$(gated_answer "$rel")" ] || need_word release "$rel"  # the answer given at gated is the word; a waiver file alone is not
