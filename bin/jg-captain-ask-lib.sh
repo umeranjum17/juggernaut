@@ -107,11 +107,32 @@ captain_ask_build_gated() {  # <show-output>; 0 when a ship build needs the capt
   printf '%s\n' "$1" | grep -Eq 'born-from: *(recon|plan)([^A-Za-z]|$)'
 }
 
+# A Squad Lead home holds no key of its own for the owner's yes: the line was signed in its parent
+# home, so the parent home's own copy of this file recomputes the HMAC under the parent's key. The
+# key never leaves that home and no key is made here. CAPTAIN_ASK_PARENT_NOTE says why the parent
+# could not answer, so a refusal can tell a wait on the parent from a bad line.
+captain_ask_parent_sig() {  # <ticket> <ref>; prints the parent home's HMAC, else sets CAPTAIN_ASK_PARENT_NOTE
+  local parent lib
+  CAPTAIN_ASK_PARENT_NOTE=''
+  declare -F jg_squad_lead_parent_record_parse >/dev/null \
+    && jg_squad_lead_parent_record_parse "$(jg_compat_parent_marker "${JG_HOME:-}")" || return 1
+  [ "$JG_SQUAD_LEAD_PARENT_ROUTE" = local ] && parent=$JG_SQUAD_LEAD_PARENT_HOME || return 1
+  lib="$parent/bin/jg-captain-ask-lib.sh"
+  if [ ! -r "$lib" ] || [ ! -s "$parent/state/captain-approval.key" ]; then
+    CAPTAIN_ASK_PARENT_NOTE="the main home $parent cannot verify the approval now (its key or its verifier is missing); the ticket waits on Main"
+    return 1
+  fi
+  STATE="$parent/state" bash -c 'fail() { echo "$*" >&2; exit 1; }; . "$1" && captain_ask_approval_sig "$2" "$3" "$STATE/captain-approval.key"' \
+    _ "$lib" "$1" "$2" 2>/dev/null \
+    || { CAPTAIN_ASK_PARENT_NOTE="the main home $parent did not answer the approval check; the ticket waits on Main"; return 1; }
+}
+
 captain_ask_approved_ref() {  # <ticket> <show-output>; prints the ref of the first line that verifies
-  local key="${STATE:?}/captain-approval.key" ref sig
-  [ -s "$key" ] || return 1
+  local key="${STATE:?}/captain-approval.key" ref sig want
   while read -r ref sig; do
-    [ -n "$ref" ] && [ "$sig" = "$(captain_ask_approval_sig "$1" "$ref" "$key")" ] && { printf '%s\n' "$ref"; return 0; }
+    [ -n "$ref" ] || continue
+    if [ -s "$key" ] && [ "$sig" = "$(captain_ask_approval_sig "$1" "$ref" "$key")" ]; then printf '%s\n' "$ref"; return 0; fi
+    if want=$(captain_ask_parent_sig "$1" "$ref") && [ "$sig" = "$want" ]; then printf '%s\n' "$ref"; return 0; fi
   done < <(printf '%s\n' "$2" | grep -Eo 'approved-by-captain: [A-Za-z0-9._:-]+ sig=[0-9a-f]{64}' | sed -E 's/^approved-by-captain: ([^ ]+) sig=/\1 /')
   return 1
 }
@@ -185,6 +206,9 @@ guard_captain_ask_build() {  # <ticket>; refuses an unapproved build, else names
     printf 'approval: %s starts on %s on its parent %s\n' "$1" "$basis" "$parent" >&2
     return 0
   fi
+  # The verifier runs in a subshell, so ask once more here to learn whether the parent was reachable.
+  if printf '%s\n' "$show" | grep -q 'approved-by-captain:'; then captain_ask_parent_sig "$1" probe >/dev/null || true; fi
+  [ -z "${CAPTAIN_ASK_PARENT_NOTE:-}" ] || printf 'approval: %s\n' "$CAPTAIN_ASK_PARENT_NOTE" >&2
   fail "$1 is a [captain-ask] or Recon/plan-born ticket with no record of the captain's yes, so no worker may be told to build it. Any one record is enough: his recorded answer (bin/jg-captain-hold.sh answer) or his note (bin/jg-inbox.sh approve <note-id> $1) writes an approved-by-captain line; an order carries his words as owner-words: note:<chat-note-id> \"<his words>\"; a Recon/plan-born slice rests on its parent: ticket's record. A report, a recommendation or an option pick is not one"
 }
 

@@ -239,3 +239,38 @@ assert_contains "$out" "approval: $slice starts on the captain's recorded approv
 assert_contains "$out" "on its parent $report" "T10 the start does not name the report"
 assert_grep 'kind=ship' "$HOME_DIR/state/$slice.meta" "T10 the slice left no ship task record"
 pass "T10 a plan slice starts on its report's recorded answer; an unanswered report or a mere parent line does not"
+
+# T11: an approval signed in the main home verifies in a Squad Lead home through the main home.
+ticket "[captain-ask] lead-home approval"; lead_t=$TID
+captain "$HOME_DIR" hold "$lead_t" --reason "captain must decide" >/dev/null 2>&1 || fail "T11 hold failed"
+captain "$HOME_DIR" answer "$lead_t" --decision-file "$W/decision.txt" --release >/dev/null 2>&1 || fail "T11 answer failed"
+signed=$(body_of "$lead_t" | grep -o 'approved-by-captain: answer:[A-Za-z0-9._:-]* sig=[0-9a-f]*' | head -1)
+[ -n "$signed" ] || fail "T11 the main home wrote no signed line"
+# The main home's own verifier: a copy of the shipped lib, as every real home has.
+mkdir -p "$HOME_DIR/bin"
+cp "$ROOT"/bin/jg-captain-ask-lib.sh "$ROOT"/bin/jg-compat.sh "$ROOT"/bin/jg-squad-lead-parent-lib.sh "$HOME_DIR/bin/" 2>/dev/null
+L="$W/lead"
+mkdir -p "$L/state" "$L/config" "$L/data"
+jg_test_beads_home "$L"
+send_l() {
+  PATH="$FAKEBIN:$PATH" JG_ROOT_OVERRIDE="$L" JG_HOME="$L" JG_SEND_SETTLE=0 JG_SEND_LOG="$L/send.log" \
+    "$ROOT/bin/jg-send.sh" t1 "$1" 2>&1
+}
+jg_write_meta "$L/state/t1.meta" "window=sess:jg-t1" "kind=ship" "harness=claude"
+jg_test_backlog "$L" add jg-ld1 "[captain-ask] signed in main" --priority 0 --kind ship --repo demo --body "$signed" >/dev/null 2>&1 || fail "T11 could not file the ticket"
+jg_test_backlog "$L" add jg-ld2 "[captain-ask] written by hand" --priority 0 --kind ship --repo demo \
+  --body "approved-by-captain: note:1234 sig=0000000000000000000000000000000000000000000000000000000000000000" >/dev/null 2>&1 || fail "T11 could not file the hand-written ticket"
+# The line names $lead_t, so it verifies only for that ticket id; file it under that id in the lead home.
+jg_test_backlog "$L" add "$lead_t" "[captain-ask] signed in main" --priority 0 --kind ship --repo demo --body "$signed" >/dev/null 2>&1 || fail "T11 could not file the signed ticket"
+printf 'schema=jg-squad-lead-parent.v1\nroute=local\nparent_home=%s\n' "$HOME_DIR" > "$L/.jg-squad-lead-parent"
+out=$(send_l "[order] ticket=$lead_t build it"); rc=$?
+expect_code 0 "$rc" "T11 a line signed in the main home should verify in the lead home: $out"
+assert_contains "$out" "starts on the captain's recorded approval" "T11 the start does not name the approval"
+out=$(send_l "[order] ticket=jg-ld2 build it"); rc=$?
+expect_code 1 "$rc" "T11 a hand-written line should be refused in the lead home: $out"
+mv "$HOME_DIR/state/captain-approval.key" "$HOME_DIR/state/captain-approval.key.away"
+out=$(send_l "[order] ticket=$lead_t build it"); rc=$?
+expect_code 1 "$rc" "T11 with the main home unable to verify the order should wait: $out"
+assert_contains "$out" "waits on Main" "T11 the refusal does not say the ticket waits on Main"
+mv "$HOME_DIR/state/captain-approval.key.away" "$HOME_DIR/state/captain-approval.key"
+pass "T11 a lead home verifies the owner's approval through the main home that signed it; a hand-written line is refused; an away main home is named"
