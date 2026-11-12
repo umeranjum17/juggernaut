@@ -19,6 +19,7 @@ journeys:
     tier: local
     command: bash journeys/account-table.sh
   landing-table:
+    tier: local
     command: bash journeys/landing-table.sh
   worker-table:
     tier: local
