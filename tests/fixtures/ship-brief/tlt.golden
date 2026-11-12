@@ -19,7 +19,7 @@ Your branch must be exactly ONE commit on top of the local trunk tip (the `trunk
 Juggernaut's landing check rebases your commit onto the latest tip of the local trunk by itself, lints the changed files, runs the changed files' tests against the tip's own result and lands it; you never rebase for it. Your done and the landing both need the whole proof at your exact head: a PASS completion receipt, approved merge-card evidence that cites files, and a sealed done-done run holding them; a PASS receipt alone is refused, and nothing may be committed after the seal. The owner signature is recorded after the landing and never blocks it.
 If the landing check reports that your change conflicts with the trunk, YOU resolve every conflict in your own change, then report ready again; never hand a conflict to anyone else, and never force a landing: no force flag, no hand-moved trunk ref, no landing past a conflict exists, and a landing that is refused is fixed in the lane and reported ready again.
 A stale or conflicting change is refused with its paths named and is never landed dirty.
-Run the light gate on your changed files (the lint, then their tests), commit, and report ready with your done line. Juggernaut's landing check then lands the commit on the trunk and cleans up unforced; you never land, push, go live or release.
+Commit, run the QA step of the Definition of done, and report ready with your done line. Juggernaut's landing check then lands the commit on the trunk and cleans up unforced; you never land, push, go live or release.
 
 # Herdr lifecycle declaration - NOT ENABLED
 **HARD SAFETY GATE:** this scaffold cannot inspect the task text filled in above.
@@ -132,7 +132,7 @@ Use FAIL when verification failed; never label failed or unperformed checks PASS
 The evidence file may be a task-owned temporary file outside your worktree; that write and the helper's completion-receipt write into its supervising state directory are authorized.
 Regenerate the receipt after any candidate change, including validation fixes or a rebase.
 
-Before you push, open a pull request, or hand off to /no-mistakes, stage or commit your work and run the light gate locally over the files you changed, fixing every finding, so the change arrives already clean: the project's lint for those files, then the tests for those files.
+QA: hand the feature to done-done and write no tests or proof by hand. At your final clean head, run `done-done affected`, then the repository's verify skill sealed with `done-done run -- <the suite command it names>`; done-done selects the journeys, runs them, judges them and seals the proof, so run no separate lint-and-tests pass of your own. If a journey your change touches has no coverage, extend that journey through done-done.
 A `done:` naming a pull request needs that pull request's checks green: while a check is red or still running, the done is refused by the check's own name with the command to run it locally, so fix the cause or wait rather than report done.
 
 A report that a user-visible change is fixed or done carries the released version that is running and where it is observable, or it says plainly that the change is merged but not released; `bin/jg-live-claim.sh` decides that from your report and the release record, and your lead or juggernaut applies it.

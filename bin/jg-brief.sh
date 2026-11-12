@@ -1105,7 +1105,7 @@ This project is registered local-trunk: there is no feature pull request, and th
 Your branch must be exactly ONE commit on top of the local trunk tip (the \`$TRUNK_NAME\` branch of the project, which is the commit your worktree starts on; compare against that branch only, never an older trunk branch), and the commit message must carry its ticket reference (the task id or its ticket key).
 $TRUNK_REBASE_RULE
 A stale or conflicting change is refused with its paths named and is never landed dirty.
-Run the light gate on your changed files (the lint, then their tests), commit, and report ready with your done line. Juggernaut's landing check then lands the commit on the trunk and cleans up unforced; you never land, push, go live or release.
+Commit, run the QA step of the Definition of done, and report ready with your done line. Juggernaut's landing check then lands the commit on the trunk and cleans up unforced; you never land, push, go live or release.
 "
 fi
 DESIGN_SECTION=

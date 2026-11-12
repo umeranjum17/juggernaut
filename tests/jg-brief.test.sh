@@ -217,8 +217,9 @@ test_ship_modes_generate_clean_briefs() {
     assert_grep 'never a bare number such as "PR 108"' "$brief" "$id: brief missing the full-PR-URL rule"
     assert_grep "mid-task \`working:\` line (including setup complete) is nonterminal" "$brief" \
       "$id: brief missing nonterminal working:/setup-complete gate protection"
-    assert_grep "stage or commit your work and run the light gate locally over the files you changed, fixing every finding" "$brief" \
-      "$id: brief missing the light gate every PR opens behind"
+    assert_grep "QA: hand the feature to done-done and write no tests or proof by hand" "$brief" \
+      "$id: brief missing the one QA paragraph"
+    assert_no_grep "light gate" "$brief" "$id: brief still names the light gate"
     assert_grep "needs that pull request's checks green" "$brief" \
       "$id: brief missing the rule that a done line needs the PR's checks green"
     assert_grep "must be a file your own done-done run wrote, inside that run's capture folder" "$brief" \

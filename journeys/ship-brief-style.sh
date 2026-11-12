@@ -15,6 +15,8 @@ printf -- '- trunk-proj [local-trunk] - fixture (added 2026-11-09)\n' > "$home/d
     if sed -e "s#$home#@HOME@#g" -e "s#$root#@ROOT@#g" "$home/data/$id/brief.md" | cmp -s - "$root/tests/fixtures/ship-brief/$id.golden"; then
       echo "== $id ($mode on $proj): equals its golden"
     else echo "FAIL $id ($mode on $proj) drifted from its golden"; rc=1; fi
+    qa=$(grep -c '^QA: hand the feature to done-done' "$home/data/$id/brief.md") lg=$(grep -ci 'light gate' "$home/data/$id/brief.md")
+    if [ "$qa" = 1 ] && [ "$lg" = 0 ]; then echo "   $id: one QA paragraph, no light gate"; else echo "FAIL $id: QA paragraphs=$qa light-gate mentions=$lg"; rc=1; fi
   done <<'LIST'
 nm some-proj no-mistakes --risk release
 dp some-proj direct-PR
