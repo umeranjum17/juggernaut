@@ -16,9 +16,9 @@ seed_pane() { # <state> <window> <key>: a tracked pane with no task record and o
   for kind in $KINDS; do printf 'x' > "$state/.$kind-$key"; done
 }
 
-seed_table() { # <dir> <observed state>: a markers table whose only legal prune is orphan -> removed
+seed_table() { # <dir> <observed state>: a markers table whose only legal prune is orphan -> removed (owned is a final state, so the table lints)
   mkdir -p "$1/tables"
-  printf 'machine\tmarkers\tm\tx\nstate\torphan\tinitial\tO.\t-\nstate\towned\tnormal\tW.\t-\nstate\tremoved\tterminal\tR.\t-\nedge\torphan\tprune\tremoved\tw:f\t-\tg\tt\nedge\torphan\tjoin\towned\tw:f\t-\tg\tt\nobserver\techo %s\n' "$2" > "$1/tables/markers.tsv"
+  printf 'machine\tmarkers\tm\tx\nstate\torphan\tinitial\tO.\t-\nstate\towned\tterminal\tW.\t-\nstate\tremoved\tterminal\tR.\t-\nedge\torphan\tprune\tremoved\tw:f\t-\tg\tt\nedge\torphan\tjoin\towned\tw:f\t-\tg\tt\nobserver\techo %s\n' "$2" > "$1/tables/markers.tsv"
 }
 
 test_prune() ( # <observed state> <shadow lines wanted>
