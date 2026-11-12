@@ -211,10 +211,9 @@ cmd_check() {
     if [ -z "$lead" ]; then
       link=$(JG_HOME="$JG_HOME" jg_board_link answered "$key" 2>/dev/null)
       text="$(say "$answer${label:+ ($label)}${note:+ - $note} | board answer on $key at $at, not routed to a lead${link:+ | $link}")"
-      # A real wake in this pass, one per answer (the key carries the answer time); the line
-      # is only printed when the wake cannot be raised, so the answer is never lost.
-      # shellcheck source=/dev/null
-      ( . "$SCRIPT_DIR/jg-wake-lib.sh" && jg_wake_append check "board-answer-unmapped-$key-$at" "check: $text" ) >/dev/null 2>&1 \
+      # A real alert in this pass, one per answer (the subject carries the answer time); the line
+      # is only printed when the alert cannot be raised, so the answer is never lost.
+      JG_STATE_OVERRIDE="$JG_HOME/state" "$SCRIPT_DIR/jg-alert.sh" raise undelivered "board-answer-unmapped-$key-$at" --note "$text" --deliver >/dev/null 2>&1 \
         || report="${report}${text}"$'\n'
       continue
     fi

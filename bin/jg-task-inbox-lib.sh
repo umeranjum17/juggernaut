@@ -963,6 +963,12 @@ _jg_ladder_skip() {  # <state-dir> <task> [retry]
   return 1
 }
 
+# Raise the undelivered alert for a steer that was not read (alert table row `undelivered`, bin/jg-alert.sh); its holder reads the
+# wake `--deliver` appends. One live alert per lane, record and kind, so a repeat of the same event raises nothing twice.
+_jg_ladder_alert() {  # <state-dir> <window> <record-path> <kind> <reason>
+  JG_STATE_OVERRIDE=$1 "$_JG_TASK_INBOX_LIB_DIR/jg-alert.sh" raise undelivered "$2-${3##*/}-$4" --note "$5" --deliver
+}
+
 _jg_ladder_defer_report() {  # <state> <task> <window> <record> <kind> <sentence>
   local state=$1 task=$2 w=$3 rec=$4 reason
   if [ ! -d "${rec%/*}" ] || [ ! -f "$rec" ]; then
@@ -970,7 +976,7 @@ _jg_ladder_defer_report() {  # <state> <task> <window> <record> <kind> <sentence
     return 0
   fi
   reason="stale: $w (unread juggernaut instruction: $rec stays unhandled - $6; no doorbell was typed, and it lands as soon as that clears, so no interrupt is needed unless the worker is wedged)"
-  jg_wake_append stale "$w" "$reason" || return 1
+  _jg_ladder_alert "$state" "$w" "$rec" "$5" "$reason" || return 1
   if ! jg_task_inbox_record_deferral_reported "$state" "$task" "$rec" "$5"; then
     echo "error: stale wake was queued for $task but its deferral report marker could not be written" >&2
     return 1
@@ -985,7 +991,7 @@ _jg_ladder_escalate_unavailable() {  # <state> <task> <window> <record>
     jg_task_inbox_due_action "$state" "$task" >/dev/null || true
     return 0
   fi
-  jg_wake_append stale "$w" "$reason" || return 1
+  _jg_ladder_alert "$state" "$w" "$rec" unavailable "$reason" || return 1
   if ! jg_task_inbox_record_escalated "$state" "$task" "$rec"; then
     echo "error: stale wake was queued for $task but its inbox escalation marker could not be written" >&2
     return 1
@@ -1095,7 +1101,7 @@ _jg_ladder_step() {  # <state-dir> <task> <window> <backend> <label>
         fi
         if [ -d "${rec%/*}" ]; then
           reason="stale: $w (steering-inbox ladder bookkeeping unwritable: ${rec%/*}/.ring-state cannot be written while $rec stays unhandled; the doorbell cannot advance toward escalation - inspect the inbox directory)"
-          jg_wake_append stale "$w" "$reason" || return 1
+          _jg_ladder_alert "$state" "$w" "$rec" bookkeeping "$reason" || return 1
           _JG_LADDER_WAKE_REASON=$reason
         fi
       fi
@@ -1106,7 +1112,7 @@ _jg_ladder_step() {  # <state-dir> <task> <window> <backend> <label>
       jg_task_inbox_ring "$backend" "$w" "$rec" "$label" || ring_rc=$?
       if ! jg_task_inbox_clear_retry "$state" "$task" "$rec" && [ -f "$rec" ]; then
         reason="stale: $w (steering-inbox retry mark unremovable: ${rec%/*}/.retry-ring cannot be removed, so $rec would ring on every poll - inspect the inbox directory)"
-        jg_wake_append stale "$w" "$reason" || return 1
+        _jg_ladder_alert "$state" "$w" "$rec" retry-mark "$reason" || return 1
         _JG_LADDER_WAKE_REASON=$reason
       fi
       "$log" "steer-inbox retry ring: $task ${rec##*/} result=$ring_rc${JG_TASK_INBOX_RING_REASON:+ reason=$JG_TASK_INBOX_RING_REASON}"
@@ -1117,7 +1123,7 @@ _jg_ladder_step() {  # <state-dir> <task> <window> <backend> <label>
         jg_task_inbox_due_action "$state" "$task" >/dev/null || true
         return 0
       fi
-      jg_wake_append stale "$w" "$reason" || return 1
+      _jg_ladder_alert "$state" "$w" "$rec" escalated "$reason" || return 1
       if ! jg_task_inbox_record_escalated "$state" "$task" "$rec"; then
         echo "error: stale wake was queued for $task but its inbox escalation marker could not be written" >&2
         return 1
