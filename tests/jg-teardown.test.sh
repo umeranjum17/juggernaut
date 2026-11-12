@@ -140,61 +140,14 @@ case "${1:-} ${2:-}" in
 esac
 exit 0
 SH
-  # Default hermetic no-mistakes stub: `axi status` answers JG_FAKE_AXI_STATUS
-  # verbatim (empty by default, i.e. no active run - the pre-teardown run-abort
-  # step is then a no-op), `axi abort` appends one line to
-  # JG_FAKE_NM_ABORT_LOG when set, the top-level `runs` listing answers
-  # JG_FAKE_NM_RUNS_LIST verbatim (the real `no-mistakes runs --limit N` is
-  # plain text with no run id and no quoting - see the ledger fixtures below),
-  # and `runs` appends its own invocation to JG_FAKE_NM_RUNS_LOG when set, so
-  # a test can prove whether the ledger fallback ever engaged.
-  # The bare `axi` overview answers JG_FAKE_AXI_OVERVIEW verbatim (empty by
-  # default, so no repository resolves and the pipeline-spend record is
-  # written as unavailable).
-  # This keeps every case hermetic - without it, `command -v no-mistakes`
-  # would fall through to whatever real binary happens to be on the test
-  # runner's own PATH. Tests exercising the run-abort path override
-  # JG_FAKE_AXI_STATUS/JG_FAKE_NM_ABORT_LOG/JG_FAKE_NM_RUNS_LIST before
-  # run_teardown.
+  # Default hermetic no-mistakes stub: the bare `axi` overview answers
+  # JG_FAKE_AXI_OVERVIEW verbatim (empty by default, so no repository resolves
+  # and the pipeline-spend record is written as unavailable). Without it,
+  # `command -v no-mistakes` would fall through to whatever real binary is on
+  # the test runner's own PATH.
   cat > "$fakebin/no-mistakes" <<'SH'
 #!/usr/bin/env bash
-case "${1:-}" in
-  axi)
-    shift
-    case "${1:-}" in
-      '')
-        printf '%s\n' "${JG_FAKE_AXI_OVERVIEW:-}" ;;
-      status)
-        shift
-        run_id=""
-        if [ "${1:-}" = --run ]; then run_id=${2:-}; fi
-        if [ -n "${JG_FAKE_NM_ABORT_LOG:-}" ] \
-           && grep -Fxq "abort --run $run_id" "$JG_FAKE_NM_ABORT_LOG" 2>/dev/null \
-           && [ "${JG_FAKE_NM_ABORT_NOOP:-0}" != 1 ]; then
-          if [ "${JG_FAKE_NM_NOT_FOUND_AFTER_ABORT:-0}" = 1 ]; then
-            printf 'error: "run \\"%s\\" not found"\n' "$run_id" >&2
-            exit 1
-          elif [ "${JG_FAKE_NM_EMPTY_AFTER_ABORT:-0}" = 1 ]; then
-            exit 0
-          elif [ -n "${JG_FAKE_AXI_STATUS_AFTER_ABORT:-}" ]; then
-            printf '%s\n' "$JG_FAKE_AXI_STATUS_AFTER_ABORT"
-          else
-            printf 'run:\n  id: "%s"\n  outcome: cancelled\n' "$run_id"
-          fi
-        else
-          printf '%s\n' "${JG_FAKE_AXI_STATUS:-}"
-        fi
-        ;;
-      abort)
-        shift
-        [ -z "${JG_FAKE_NM_ABORT_LOG:-}" ] || printf 'abort %s\n' "$*" >> "$JG_FAKE_NM_ABORT_LOG"
-        exit 0 ;;
-    esac
-    ;;
-  runs)
-    [ -z "${JG_FAKE_NM_RUNS_LOG:-}" ] || printf 'runs %s\n' "$*" >> "$JG_FAKE_NM_RUNS_LOG"
-    printf '%s\n' "${JG_FAKE_NM_RUNS_LIST:-}" ;;
-esac
+[ "${1:-}" = axi ] && [ -z "${2:-}" ] && printf '%s\n' "${JG_FAKE_AXI_OVERVIEW:-}"
 exit 0
 SH
   chmod +x "$fakebin/treehouse" "$fakebin/tmux" "$fakebin/gh-axi" "$fakebin/gh" "$fakebin/no-mistakes"
@@ -3952,70 +3905,9 @@ test_teardown_retains_v1_journal_when_workspace_query_ambiguous() {
   pass "teardown retains a v1 presentation journal when the workspace query is ambiguous"
 }
 
-# --- Fix 1: conclude/abort the task's own parked no-mistakes run before the
-# worker is removed, and Fix 2: reap leaked descendant processes rooted under
-# the task's own worktree/tasktmp - both exercised through the real teardown
-# path (bin/jg-teardown.sh), never by matching its source text. ------------
-
-# A parked-at-a-gate `axi status` TOON payload for <branch>/<head>, matching
-# the shape no-mistakes actually emits (see tests/jg-crew-state.test.sh's
-# run_parked fixture, the same shape bin/jg-crew-state.sh's own tests pin).
-parked_axi_status_toon() {  # <branch> <head> [run-id]
-  cat <<EOF
-run:
-  id: "${3:-01RUN}"
-  branch: $1
-  status: awaiting_approval
-  awaiting_agent: parked 2m10s
-  head: "$2"
-  pr: ""
-  findings: none
-gate: review
-EOF
-}
-
-running_axi_status_toon() {  # <branch> <head> [run-id]
-  cat <<EOF
-run:
-  id: "${3:-01RUN}"
-  branch: $1
-  status: running
-  head: "$2"
-  pr: ""
-steps[1]{step,status,findings,summary}:
-  test,running,0,"agent under way"
-EOF
-}
-
-# One row of the real `no-mistakes runs` ledger: plain text, newest-first,
-# no run id, no quoting - "<status> <branch> <short-sha> <date> <time> [<pr-url>]"
-# (the same shape tests/jg-crew-state.test.sh's runs-list fixtures pin).
-ledger_row() {  # <status> <branch> <short-sha> <date> <time> [pr-url]
-  printf '  %-10s %-24s %-8s  %s %s' "$1" "$2" "$3" "$4" "$5"
-  [ -z "${6:-}" ] || printf '  %s' "$6"
-  printf '\n'
-}
-
-# Commit <n> pipeline fix rounds on top of the task branch in a separate
-# clone of origin that the task copy NEVER fetches from, mirroring how the
-# no-mistakes daemon commits fix rounds in its own gate-repo clone. Echoes
-# the newest short sha, which is genuinely absent from the task worktree's
-# object store. Args: case_dir [rounds]
-make_unfetched_pipeline_heads() {
-  local case_dir=$1 rounds=${2:-1} i
-  git clone -q "$case_dir/origin.git" "$case_dir/pipeline-clone"
-  git -C "$case_dir/pipeline-clone" checkout -q fm/task-x1
-  for i in $(seq 1 "$rounds"); do
-    git -C "$case_dir/pipeline-clone" -c user.email=t@t -c user.name=t \
-      commit -q --allow-empty -m "pipeline fix round $i"
-  done
-  git -C "$case_dir/pipeline-clone" rev-parse --short=7 HEAD
-}
-
-assert_head_absent_from_worktree() {  # <worktree> <short-sha> <label>
-  [ -z "$(git -C "$1" rev-parse --verify --quiet "${2}^{commit}" 2>/dev/null)" ] \
-    || fail "$3: fixture broke - the pipeline head resolved in the task copy"
-}
+# --- Fix 2: reap leaked descendant processes rooted under the task's own
+# worktree/tasktmp, exercised through the real teardown path
+# (bin/jg-teardown.sh), never by matching its source text. ------------------
 
 # Land an empty commit on the task branch and push it to origin: it changes no
 # content, so origin's main already holds it and teardown must ALLOW, so these
@@ -4532,622 +4424,6 @@ test_teardown_records_unavailable_spend_for_a_gone_worktree() {
   pass "teardown records unavailable pipeline spend for an owned ship task whose copy is gone"
 }
 
-test_parked_own_run_is_aborted_before_teardown() {
-  local case_dir rc head
-  case_dir=$(make_case parked-run-abort)
-  write_meta "$case_dir" no-mistakes ship
-  land_shippable_commit "$case_dir"
-  head=$(git -C "$case_dir/wt" rev-parse HEAD)
-
-  local rc=0
-  JG_FAKE_AXI_STATUS="$(parked_axi_status_toon fm/task-x1 "$head")" \
-  JG_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
-    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-
-  expect_code 0 "$rc" "parked-run-abort: teardown should still succeed"
-  assert_present "$case_dir/nm-abort.log" \
-    "parked-run-abort: no-mistakes axi abort was never invoked for the task's own parked run"
-  assert_grep "abort --run 01RUN" "$case_dir/nm-abort.log" \
-    "parked-run-abort: no-mistakes axi abort did not target the verified run id"
-  assert_grep "parked at a gate; aborting" "$case_dir/stderr" \
-    "parked-run-abort: teardown did not report aborting the parked run before removing the worker"
-  pass "a task's own parked no-mistakes run is aborted, not orphaned, before the worker is removed"
-}
-
-# An abort can race a concurrent gate response: the run finishes with a
-# passing-but-not-clean outcome (an explicitly approved Test/CI exception)
-# instead of landing on `cancelled`. That is still a terminal, finished run,
-# so teardown must conclude cleanly rather than refuse as still-parked.
-test_parked_own_run_concludes_on_passed_with_override_after_abort() {
-  local case_dir rc head
-  case_dir=$(make_case parked-run-abort-passed-with-override)
-  write_meta "$case_dir" no-mistakes ship
-  land_shippable_commit "$case_dir"
-  head=$(git -C "$case_dir/wt" rev-parse HEAD)
-
-  local rc=0
-  JG_FAKE_AXI_STATUS="$(parked_axi_status_toon fm/task-x1 "$head")" \
-  JG_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
-  JG_FAKE_AXI_STATUS_AFTER_ABORT='run:
-  id: "01RUN"
-  outcome: passed-with-override
-ci_override_reason: "live checks not all passed: Lint (fail)"' \
-    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-
-  expect_code 0 "$rc" "parked-run-abort-passed-with-override: teardown should still succeed"
-  assert_no_grep "REFUSED" "$case_dir/stderr" \
-    "parked-run-abort-passed-with-override: a passing override outcome must not be reported as still parked"
-  pass "a run that lands on passed-with-override after abort is still recognized as terminal"
-}
-
-# The same race, landing on the other automatic passing-but-not-clean outcome:
-# publication or CI verification was skipped instead of an explicit override.
-# That is still a terminal, finished run.
-test_parked_own_run_concludes_on_passed_with_skips_after_abort() {
-  local case_dir rc head
-  case_dir=$(make_case parked-run-abort-passed-with-skips)
-  write_meta "$case_dir" no-mistakes ship
-  land_shippable_commit "$case_dir"
-  head=$(git -C "$case_dir/wt" rev-parse HEAD)
-
-  local rc=0
-  JG_FAKE_AXI_STATUS="$(parked_axi_status_toon fm/task-x1 "$head")" \
-  JG_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
-  JG_FAKE_AXI_STATUS_AFTER_ABORT='run:
-  id: "01RUN"
-  outcome: passed-with-skips
-automatic_skips: "publication skipped: no-mistakes.yaml pr.enabled=false"' \
-    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-
-  expect_code 0 "$rc" "parked-run-abort-passed-with-skips: teardown should still succeed"
-  assert_no_grep "REFUSED" "$case_dir/stderr" \
-    "parked-run-abort-passed-with-skips: a passing skips outcome must not be reported as still parked"
-  pass "a run that lands on passed-with-skips after abort is still recognized as terminal"
-}
-
-# The pipeline advanced the parked run past the submitted head in its own
-# repo, so the run head object does not exist in the task copy at all and the
-# strict object-local identity rule cannot bind the run. The daemon's own
-# runs ledger is what still proves the run is this task's continuation: its
-# newest fm/task-x1 row is active at the unfetched head, anchored by the
-# immediately older fm/task-x1 row ending exactly at this worktree's HEAD.
-# Teardown must conclude the run instead of orphaning a parked gate wait that
-# would otherwise hold a fleet slot forever (observed 2026-09-03). Foreign
-# branches' rows interleaved in the ledger must not matter.
-test_parked_run_advanced_past_unfetched_head_is_still_aborted() {
-  local case_dir rc advanced_short anchor_short
-  case_dir=$(make_case parked-run-pipeline-advanced-unfetched)
-  write_meta "$case_dir" no-mistakes ship
-  land_shippable_commit "$case_dir"
-  anchor_short=$(git -C "$case_dir/wt" rev-parse --short=7 HEAD)
-  advanced_short=$(make_unfetched_pipeline_heads "$case_dir")
-  assert_head_absent_from_worktree "$case_dir/wt" "$advanced_short" "parked-run-pipeline-advanced-unfetched"
-
-  rc=0
-  JG_FAKE_AXI_STATUS="$(parked_axi_status_toon fm/task-x1 "$advanced_short")" \
-  JG_FAKE_NM_RUNS_LIST="$(cat <<EOF
-$(ledger_row running fm/other-task aaaaaaa 2026-09-03 22:10)
-$(ledger_row running fm/task-x1 "$advanced_short" 2026-09-03 07:55)
-$(ledger_row failed fm/task-x1 "$anchor_short" 2026-09-02 06:36)
-$(ledger_row completed fm/third-task bbbbbbb 2026-09-01 11:00)
-EOF
-)" \
-  JG_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
-    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-
-  expect_code 0 "$rc" "parked-run-pipeline-advanced-unfetched: teardown should still succeed"
-  assert_grep "abort --run 01RUN" "$case_dir/nm-abort.log" \
-    "parked-run-pipeline-advanced-unfetched: teardown did not abort the parked run the ledger proves is this task's continuation"
-  assert_grep "parked at a gate; aborting" "$case_dir/stderr" \
-    "parked-run-pipeline-advanced-unfetched: teardown did not report aborting the parked run"
-  pass "a parked run the pipeline advanced past the task copy is still concluded from the runs ledger, not orphaned"
-}
-
-test_parked_run_with_mismatched_ledger_head_is_never_aborted() {
-  local case_dir rc advanced_short anchor_short
-  case_dir=$(make_case parked-run-mismatched-ledger-head)
-  write_meta "$case_dir" no-mistakes ship
-  land_shippable_commit "$case_dir"
-  anchor_short=$(git -C "$case_dir/wt" rev-parse --short=7 HEAD)
-  advanced_short=$(make_unfetched_pipeline_heads "$case_dir")
-  assert_head_absent_from_worktree "$case_dir/wt" "$advanced_short" "parked-run-mismatched-ledger-head"
-
-  rc=0
-  JG_FAKE_AXI_STATUS="$(parked_axi_status_toon fm/task-x1 "$advanced_short")" \
-  JG_FAKE_NM_RUNS_LIST="$(cat <<EOF
-$(ledger_row running fm/task-x1 deadbee 2026-09-03 07:55)
-$(ledger_row failed fm/task-x1 "$anchor_short" 2026-09-02 06:36)
-EOF
-)" \
-  JG_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
-    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-
-  expect_code 0 "$rc" "parked-run-mismatched-ledger-head: teardown should still succeed"
-  assert_absent "$case_dir/nm-abort.log" \
-    "parked-run-mismatched-ledger-head: teardown aborted a ledger run with a different head"
-  pass "a ledger row for a different head never authorizes a parked-run abort"
-}
-
-test_parked_run_with_malformed_ledger_row_is_never_aborted() {
-  local case_dir rc advanced_short anchor_short
-  case_dir=$(make_case parked-run-malformed-ledger-row)
-  write_meta "$case_dir" no-mistakes ship
-  land_shippable_commit "$case_dir"
-  anchor_short=$(git -C "$case_dir/wt" rev-parse --short=7 HEAD)
-  advanced_short=$(make_unfetched_pipeline_heads "$case_dir")
-  assert_head_absent_from_worktree "$case_dir/wt" "$advanced_short" "parked-run-malformed-ledger-row"
-
-  rc=0
-  JG_FAKE_AXI_STATUS="$(parked_axi_status_toon fm/task-x1 "$advanced_short")" \
-  JG_FAKE_NM_RUNS_LIST="$(cat <<EOF
-running fm/task-x1 $advanced_short
-$(ledger_row failed fm/task-x1 "$anchor_short" 2026-09-02 06:36)
-EOF
-)" \
-  JG_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
-    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-
-  expect_code 0 "$rc" "parked-run-malformed-ledger-row: teardown should still succeed"
-  assert_absent "$case_dir/nm-abort.log" \
-    "parked-run-malformed-ledger-row: teardown aborted from a malformed ledger row"
-  pass "a malformed ledger row never authorizes a parked-run abort"
-}
-
-test_parked_run_with_impossible_ledger_date_is_never_aborted() {
-  local case_dir rc advanced_short anchor_short
-  case_dir=$(make_case parked-run-impossible-ledger-date)
-  write_meta "$case_dir" no-mistakes ship
-  land_shippable_commit "$case_dir"
-  anchor_short=$(git -C "$case_dir/wt" rev-parse --short=7 HEAD)
-  advanced_short=$(make_unfetched_pipeline_heads "$case_dir")
-  assert_head_absent_from_worktree "$case_dir/wt" "$advanced_short" "parked-run-impossible-ledger-date"
-
-  rc=0
-  JG_FAKE_AXI_STATUS="$(parked_axi_status_toon fm/task-x1 "$advanced_short")" \
-  JG_FAKE_NM_RUNS_LIST="$(cat <<EOF
-$(ledger_row running fm/task-x1 "$advanced_short" 2026-02-31 07:55)
-$(ledger_row failed fm/task-x1 "$anchor_short" 2026-02-28 06:36)
-EOF
-)" \
-  JG_FAKE_NM_RUNS_LOG="$case_dir/nm-runs.log" \
-  JG_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
-    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-
-  expect_code 0 "$rc" "parked-run-impossible-ledger-date: teardown should still succeed"
-  assert_present "$case_dir/nm-runs.log" \
-    "parked-run-impossible-ledger-date: fixture broke - the ledger fallback never engaged"
-  assert_absent "$case_dir/nm-abort.log" \
-    "parked-run-impossible-ledger-date: teardown aborted from an impossible ledger date"
-  pass "an impossible ledger date never authorizes a parked-run abort"
-}
-
-test_terminal_status_with_gate_never_queries_or_aborts_ledger_fallback() {
-  local case_dir rc advanced_short anchor_short terminal_status
-  case_dir=$(make_case parked-run-terminal-status-gate)
-  write_meta "$case_dir" no-mistakes ship
-  land_shippable_commit "$case_dir"
-  anchor_short=$(git -C "$case_dir/wt" rev-parse --short=7 HEAD)
-  advanced_short=$(make_unfetched_pipeline_heads "$case_dir")
-  assert_head_absent_from_worktree "$case_dir/wt" "$advanced_short" "parked-run-terminal-status-gate"
-  terminal_status=$(parked_axi_status_toon fm/task-x1 "$advanced_short")
-  terminal_status=${terminal_status/status: awaiting_approval/status: completed}
-
-  rc=0
-  JG_FAKE_AXI_STATUS="$terminal_status" \
-  JG_FAKE_NM_RUNS_LIST="$(cat <<EOF
-$(ledger_row running fm/task-x1 "$advanced_short" 2026-09-03 07:55)
-$(ledger_row failed fm/task-x1 "$anchor_short" 2026-09-02 06:36)
-EOF
-)" \
-  JG_FAKE_NM_RUNS_LOG="$case_dir/nm-runs.log" \
-  JG_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
-    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-
-  expect_code 0 "$rc" "parked-run-terminal-status-gate: teardown should still succeed"
-  assert_absent "$case_dir/nm-runs.log" \
-    "parked-run-terminal-status-gate: terminal status queried the ledger fallback"
-  assert_absent "$case_dir/nm-abort.log" \
-    "parked-run-terminal-status-gate: terminal status with a stale gate aborted"
-  pass "a terminal status with a stale gate never reaches ledger cleanup"
-}
-
-# Counterfactual twin of the unfetched defect above: the SAME parked-run shape
-# with the pipeline's advanced fix head FETCHED into the task copy (objects
-# only - no ref moves) resolves through the strict object-local rule alone,
-# because a fix round's commits descend from this worktree's submitted HEAD.
-# With an EMPTY ledger, teardown must still abort - and must never query the
-# ledger at all - proving the fallback stays dormant whenever the run head's
-# object is present locally (no ledger dependency on the strict-rule path).
-test_parked_run_advanced_head_locally_fetched_is_still_aborted() {
-  local case_dir rc advanced_short
-  case_dir=$(make_case parked-run-advanced-fetched)
-  write_meta "$case_dir" no-mistakes ship
-  land_shippable_commit "$case_dir"
-  advanced_short=$(make_unfetched_pipeline_heads "$case_dir")
-  # The one changed condition vs the defect case: fetch the fix commits into
-  # the project clone's object store (shared with the task worktree) without
-  # moving any ref, so jg_nm_resolve_commit sees the head again.
-  git -C "$case_dir/project" fetch -q "$case_dir/pipeline-clone" fm/task-x1
-  [ -n "$(git -C "$case_dir/wt" rev-parse --verify --quiet "${advanced_short}^{commit}" 2>/dev/null)" ] \
-    || fail "parked-run-advanced-fetched: fixture broke - the pipeline head never reached the task copy"
-
-  rc=0
-  JG_FAKE_AXI_STATUS="$(parked_axi_status_toon fm/task-x1 "$advanced_short")" \
-  JG_FAKE_NM_RUNS_LIST="" \
-  JG_FAKE_NM_RUNS_LOG="$case_dir/nm-runs.log" \
-  JG_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
-    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-
-  expect_code 0 "$rc" "parked-run-advanced-fetched: teardown should still succeed"
-  assert_grep "abort --run 01RUN" "$case_dir/nm-abort.log" \
-    "parked-run-advanced-fetched: teardown did not abort the parked run the strict object-local rule binds"
-  assert_absent "$case_dir/nm-runs.log" \
-    "parked-run-advanced-fetched: the ledger fallback fired even though the advanced head resolves locally"
-  pass "an advanced head present locally aborts through the strict rule alone - the ledger fallback stays dormant"
-}
-
-# No anchor: the unresolvable active row is the branch's ONLY row, so nothing
-# proves the run ever touched this worktree's head - a branch-name coincidence
-# or an arbitrary daemon-side run must not be concluded.
-test_parked_advanced_run_without_anchor_is_never_aborted() {
-  local case_dir rc advanced_short
-  case_dir=$(make_case parked-run-advanced-no-anchor)
-  write_meta "$case_dir" no-mistakes ship
-  land_shippable_commit "$case_dir"
-  advanced_short=$(make_unfetched_pipeline_heads "$case_dir")
-  assert_head_absent_from_worktree "$case_dir/wt" "$advanced_short" "parked-run-advanced-no-anchor"
-
-  rc=0
-  JG_FAKE_AXI_STATUS="$(parked_axi_status_toon fm/task-x1 "$advanced_short")" \
-  JG_FAKE_NM_RUNS_LIST="$(cat <<EOF
-$(ledger_row running fm/other-task aaaaaaa 2026-09-03 22:10)
-$(ledger_row running fm/task-x1 "$advanced_short" 2026-09-03 07:55)
-$(ledger_row completed fm/third-task bbbbbbb 2026-09-01 11:00)
-EOF
-)" \
-  JG_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
-    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-
-  expect_code 0 "$rc" "parked-run-advanced-no-anchor: teardown should still succeed"
-  assert_absent "$case_dir/nm-abort.log" \
-    "parked-run-advanced-no-anchor: teardown aborted an unanchored run it cannot prove is its own"
-  pass "an unresolvable active row with no same-branch anchor is never concluded (conservative refusal)"
-}
-
-# The anchor row resolves but to an OLDER commit: the worktree advanced past
-# it since the run was submitted, so exact-equality fails and the run is not
-# provably this worktree's submission. Ancestor-only anchors must never bind.
-test_parked_advanced_run_ancestor_anchor_is_never_aborted() {
-  local case_dir rc advanced_short parent_short
-  case_dir=$(make_case parked-run-advanced-ancestor-anchor)
-  write_meta "$case_dir" no-mistakes ship
-  land_shippable_commit "$case_dir"
-  parent_short=$(git -C "$case_dir/wt" rev-parse --short=7 HEAD~1)
-  advanced_short=$(make_unfetched_pipeline_heads "$case_dir")
-  assert_head_absent_from_worktree "$case_dir/wt" "$advanced_short" "parked-run-advanced-ancestor-anchor"
-
-  rc=0
-  JG_FAKE_AXI_STATUS="$(parked_axi_status_toon fm/task-x1 "$advanced_short")" \
-  JG_FAKE_NM_RUNS_LIST="$(cat <<EOF
-$(ledger_row running fm/task-x1 "$advanced_short" 2026-09-03 07:55)
-$(ledger_row failed fm/task-x1 "$parent_short" 2026-09-02 06:36)
-EOF
-)" \
-  JG_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
-    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-
-  expect_code 0 "$rc" "parked-run-advanced-ancestor-anchor: teardown should still succeed"
-  assert_absent "$case_dir/nm-abort.log" \
-    "parked-run-advanced-ancestor-anchor: teardown aborted on an ancestor-only anchor"
-  pass "an ancestor-only anchor never binds an advanced parked run to this task"
-}
-
-# The branch's newest same-branch row is TERMINAL at an unfetched head: a
-# finished run is history, never the branch's current run, and the anchored
-# older row never answers for it. Teardown must not conclude a run from a
-# stale terminal row.
-test_parked_terminal_unfetched_row_is_never_aborted() {
-  local case_dir rc advanced_short anchor_short
-  case_dir=$(make_case parked-run-terminal-unfetched)
-  write_meta "$case_dir" no-mistakes ship
-  land_shippable_commit "$case_dir"
-  anchor_short=$(git -C "$case_dir/wt" rev-parse --short=7 HEAD)
-  advanced_short=$(make_unfetched_pipeline_heads "$case_dir")
-  assert_head_absent_from_worktree "$case_dir/wt" "$advanced_short" "parked-run-terminal-unfetched"
-
-  rc=0
-  JG_FAKE_AXI_STATUS="$(parked_axi_status_toon fm/task-x1 "$advanced_short")" \
-  JG_FAKE_NM_RUNS_LIST="$(cat <<EOF
-$(ledger_row failed fm/task-x1 "$advanced_short" 2026-09-03 08:20)
-$(ledger_row failed fm/task-x1 "$anchor_short" 2026-09-02 06:36)
-EOF
-)" \
-  JG_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
-    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-
-  expect_code 0 "$rc" "parked-run-terminal-unfetched: teardown should still succeed"
-  assert_absent "$case_dir/nm-abort.log" \
-    "parked-run-terminal-unfetched: teardown concluded a run from a terminal unfetched row"
-  pass "a terminal unfetched-head row is stale history and never concludes a run"
-}
-
-# The crafted d15 boundary, tightened deliberately: the axi-reported head is
-# unresolvable and the branch's newest ledger row is TERMINAL at exactly this
-# worktree's head - a perfectly anchored, already-finished run. A finished run
-# is history, so the ledger fallback authorizes cleanup only when its proved
-# answer is the explicitly active word (`running`): a terminal newest row,
-# even anchored at this head, never authorizes an abort. The runs log proves
-# the fallback actually engaged, so the refusal is this tightened boundary
-# and not an earlier guard.
-test_parked_run_terminal_newest_row_at_own_head_is_never_aborted() {
-  local case_dir rc advanced_short anchor_short
-  case_dir=$(make_case parked-run-terminal-newest-at-head)
-  write_meta "$case_dir" no-mistakes ship
-  land_shippable_commit "$case_dir"
-  anchor_short=$(git -C "$case_dir/wt" rev-parse --short=7 HEAD)
-  advanced_short=$(make_unfetched_pipeline_heads "$case_dir")
-  assert_head_absent_from_worktree "$case_dir/wt" "$advanced_short" "parked-run-terminal-newest-at-head"
-
-  rc=0
-  JG_FAKE_AXI_STATUS="$(parked_axi_status_toon fm/task-x1 "$advanced_short")" \
-  JG_FAKE_NM_RUNS_LIST="$(cat <<EOF
-$(ledger_row running fm/other-task aaaaaaa 2026-09-03 22:10)
-$(ledger_row failed fm/task-x1 "$anchor_short" 2026-09-03 06:36)
-EOF
-)" \
-  JG_FAKE_NM_RUNS_LOG="$case_dir/nm-runs.log" \
-  JG_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
-    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-
-  expect_code 0 "$rc" "parked-run-terminal-newest-at-head: teardown should still succeed"
-  assert_present "$case_dir/nm-runs.log" \
-    "parked-run-terminal-newest-at-head: fixture broke - the ledger fallback never engaged"
-  assert_absent "$case_dir/nm-abort.log" \
-    "parked-run-terminal-newest-at-head: teardown aborted a run whose newest anchored ledger row is terminal"
-  pass "a terminal newest row anchored at this worktree's head never authorizes an abort"
-}
-
-# The branch's newest row resolves in this copy to a head that DIVERGED from
-# this worktree's HEAD (the branch was rewritten or moved on by a newer run
-# from another worktree of the same project): not equal, not a descendant,
-# so the shared rule answers nothing and every older row - including this
-# task's parked run - stays stale history. Neither this task's run nor the
-# unrelated newer run may be concluded here.
-test_parked_run_behind_diverged_newer_row_is_never_aborted() {
-  local case_dir rc advanced_short diverged_short
-  case_dir=$(make_case parked-run-behind-newer-row)
-  write_meta "$case_dir" no-mistakes ship
-  land_shippable_commit "$case_dir"
-  advanced_short=$(make_unfetched_pipeline_heads "$case_dir")
-  assert_head_absent_from_worktree "$case_dir/wt" "$advanced_short" "parked-run-behind-newer-row"
-  # A newer fm/task-x1 head that THIS copy resolves but that diverged from
-  # the worktree's HEAD: rewritten from origin/main and pushed over the
-  # branch (the fixture origin allows the non-fast-forward rewrite), then
-  # fetched into the project clone (shared object store).
-  git -C "$case_dir/origin.git" config receive.denyNonFastForwards false
-  git clone -q "$case_dir/origin.git" "$case_dir/newer-clone"
-  git -C "$case_dir/newer-clone" checkout -q origin/main
-  git -C "$case_dir/newer-clone" -c user.email=t@t -c user.name=t \
-    commit -q --allow-empty -m "newer run's diverged work"
-  git -C "$case_dir/newer-clone" push -q --force origin HEAD:fm/task-x1
-  git -C "$case_dir/project" fetch -q origin
-  diverged_short=$(git -C "$case_dir/wt" rev-parse --short=7 origin/fm/task-x1)
-  git -C "$case_dir/wt" merge-base --is-ancestor HEAD "$diverged_short" \
-    && fail "parked-run-behind-newer-row: fixture broke - the newer row is a descendant, not diverged"
-
-  rc=0
-  JG_FAKE_AXI_STATUS="$(parked_axi_status_toon fm/task-x1 "$advanced_short")" \
-  JG_FAKE_NM_RUNS_LIST="$(cat <<EOF
-$(ledger_row running fm/task-x1 "$diverged_short" 2026-09-03 09:00)
-$(ledger_row failed fm/task-x1 "$advanced_short" 2026-09-03 07:55)
-EOF
-)" \
-  JG_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
-    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-
-  expect_code 0 "$rc" "parked-run-behind-newer-row: teardown should still succeed"
-  assert_absent "$case_dir/nm-abort.log" \
-    "parked-run-behind-newer-row: teardown concluded this task from another run's ledger row"
-  pass "a resolvable diverged newer same-branch row makes every older row stale history; no run is concluded"
-}
-
-# Two consecutive unresolvable running rows for the branch: the ledger cannot
-# prove which row is current or where the submission boundary is. Ambiguity
-# must refuse, never guess.
-test_parked_advanced_run_ambiguous_rows_are_never_aborted() {
-  local case_dir rc advanced_short anchor_short
-  case_dir=$(make_case parked-run-advanced-ambiguous)
-  write_meta "$case_dir" no-mistakes ship
-  land_shippable_commit "$case_dir"
-  anchor_short=$(git -C "$case_dir/wt" rev-parse --short=7 HEAD)
-  advanced_short=$(make_unfetched_pipeline_heads "$case_dir" 2)
-  assert_head_absent_from_worktree "$case_dir/wt" "$advanced_short" "parked-run-advanced-ambiguous"
-
-  rc=0
-  JG_FAKE_AXI_STATUS="$(parked_axi_status_toon fm/task-x1 "$advanced_short")" \
-  JG_FAKE_NM_RUNS_LIST="$(cat <<EOF
-$(ledger_row running fm/task-x1 "$advanced_short" 2026-09-03 08:30)
-$(ledger_row failed fm/other-task ccccccc 2026-09-03 08:10)
-$(ledger_row running fm/task-x1 ddddddd 2026-09-03 07:55)
-$(ledger_row failed fm/task-x1 "$anchor_short" 2026-09-02 06:36)
-EOF
-)" \
-  JG_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
-    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-
-  expect_code 0 "$rc" "parked-run-advanced-ambiguous: teardown should still succeed"
-  assert_absent "$case_dir/nm-abort.log" \
-    "parked-run-advanced-ambiguous: teardown guessed through ambiguous ledger rows"
-  pass "consecutive unresolvable rows are ambiguous and never conclude a run"
-}
-
-# The ledger proves the continuation, but the run is NOT parked at a gate -
-# it is autonomously running/fixing against the daemon's own clone. Teardown
-# must leave that work alone even when the attribution proof would bind it.
-test_ledger_proven_continuation_never_aborts_active_run() {
-  local case_dir rc advanced_short anchor_short
-  case_dir=$(make_case parked-run-ledger-active)
-  write_meta "$case_dir" no-mistakes ship
-  land_shippable_commit "$case_dir"
-  anchor_short=$(git -C "$case_dir/wt" rev-parse --short=7 HEAD)
-  advanced_short=$(make_unfetched_pipeline_heads "$case_dir")
-  assert_head_absent_from_worktree "$case_dir/wt" "$advanced_short" "parked-run-ledger-active"
-
-  rc=0
-  JG_FAKE_AXI_STATUS="$(running_axi_status_toon fm/task-x1 "$advanced_short")" \
-  JG_FAKE_NM_RUNS_LIST="$(cat <<EOF
-$(ledger_row running fm/task-x1 "$advanced_short" 2026-09-03 07:55)
-$(ledger_row failed fm/task-x1 "$anchor_short" 2026-09-02 06:36)
-EOF
-)" \
-  JG_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
-    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-
-  expect_code 0 "$rc" "parked-run-ledger-active: teardown should still succeed"
-  assert_absent "$case_dir/nm-abort.log" \
-    "parked-run-ledger-active: teardown aborted an actively running run the ledger happened to bind"
-  pass "a ledger-proven continuation is still left alone while the run is autonomously active"
-}
-
-test_mismatched_run_after_abort_refuses_unconfirmed() {
-  local case_dir rc head
-  case_dir=$(make_case parked-run-replaced)
-  write_meta "$case_dir" no-mistakes ship
-  land_shippable_commit "$case_dir"
-  head=$(git -C "$case_dir/wt" rev-parse HEAD)
-
-  rc=0
-  JG_FAKE_AXI_STATUS="$(parked_axi_status_toon fm/task-x1 "$head" 01RUN)" \
-  JG_FAKE_AXI_STATUS_AFTER_ABORT="$(parked_axi_status_toon fm/task-x1 "$head" 02RUN)" \
-  JG_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
-    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-
-  expect_code 1 "$rc" "parked-run-replaced: a different run does not confirm the targeted abort"
-  assert_grep "abort --run 01RUN" "$case_dir/nm-abort.log" \
-    "parked-run-replaced: teardown did not abort only the verified run"
-  assert_present "$case_dir/wt" "parked-run-replaced: teardown removed the worktree without confirmation"
-  pass "a different run cannot confirm the targeted abort"
-}
-
-test_empty_status_after_abort_refuses_unconfirmed() {
-  local case_dir rc head
-  case_dir=$(make_case parked-run-empty-confirmation)
-  write_meta "$case_dir" no-mistakes ship
-  land_shippable_commit "$case_dir"
-  head=$(git -C "$case_dir/wt" rev-parse HEAD)
-
-  rc=0
-  JG_FAKE_AXI_STATUS="$(parked_axi_status_toon fm/task-x1 "$head")" \
-  JG_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
-  JG_FAKE_NM_EMPTY_AFTER_ABORT=1 \
-    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-
-  expect_code 1 "$rc" "parked-run-empty-confirmation: empty status should refuse"
-  assert_present "$case_dir/wt" "parked-run-empty-confirmation: teardown removed the worktree"
-  pass "empty post-abort status is not accepted as confirmation"
-}
-
-test_not_found_status_after_abort_confirms_completion() {
-  local case_dir rc head
-  case_dir=$(make_case parked-run-not-found-confirmation)
-  write_meta "$case_dir" no-mistakes ship
-  land_shippable_commit "$case_dir"
-  head=$(git -C "$case_dir/wt" rev-parse HEAD)
-
-  rc=0
-  JG_FAKE_AXI_STATUS="$(parked_axi_status_toon fm/task-x1 "$head")" \
-  JG_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
-  JG_FAKE_NM_NOT_FOUND_AFTER_ABORT=1 \
-    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-
-  expect_code 0 "$rc" "parked-run-not-found-confirmation: explicit not-found should confirm completion"
-  pass "the CLI's exact run-not-found signal confirms completion"
-}
-
-test_parked_own_run_refuses_when_abort_is_unconfirmed() {
-  local case_dir rc head pid
-  case_dir=$(make_case parked-run-abort-unconfirmed)
-  write_meta "$case_dir" no-mistakes ship
-  land_shippable_commit "$case_dir"
-  head=$(git -C "$case_dir/wt" rev-parse HEAD)
-  seed_backlog_in_flight "$case_dir"
-  mkdir -p "$case_dir/scratch/proof"
-  JG_STATE_OVERRIDE="$case_dir/state" "$ROOT/bin/jg-scratch.sh" register task-x1 "$case_dir/scratch/proof" >/dev/null \
-    || fail "scratch registration failed"
-  ( cd "$case_dir/wt" && exec sleep 300 ) &
-  pid=$!
-  disown
-
-  cat > "$case_dir/fakebin/treehouse" <<EOF
-#!/usr/bin/env bash
-printf 'return\n' >> "$case_dir/treehouse.log"
-EOF
-  chmod +x "$case_dir/fakebin/treehouse"
-
-  rc=0
-  JG_FAKE_AXI_STATUS="$(parked_axi_status_toon fm/task-x1 "$head")" \
-  JG_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
-  JG_FAKE_NM_ABORT_NOOP=1 \
-    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-
-  expect_code 1 "$rc" "parked-run-abort-unconfirmed: teardown should refuse"
-  assert_grep "REFUSED: no-mistakes run for task-x1 is still parked after axi abort" "$case_dir/stderr" \
-    "parked-run-abort-unconfirmed: teardown did not explain the parked-run refusal"
-  assert_present "$case_dir/wt" \
-    "parked-run-abort-unconfirmed: teardown removed the worktree after refusing"
-  assert_present "$case_dir/state/task-x1.meta" \
-    "parked-run-abort-unconfirmed: teardown removed task metadata after refusing"
-  assert_absent "$case_dir/treehouse.log" \
-    "parked-run-abort-unconfirmed: teardown returned the worktree after refusing"
-  kill -0 "$pid" 2>/dev/null || fail "parked-run-abort-unconfirmed: process reap ran before refusal"
-  kill -KILL "$pid" 2>/dev/null || true
-  assert_present "$case_dir/state/task-x1.scratch" "early refusal lost scratch registry"
-  assert_absent "$case_dir/state/task-x1.backlog-close" "early refusal left a replayable close"
-  pass "teardown refuses before reap or removal when a task-owned run remains parked"
-}
-
-test_another_branchs_parked_run_is_never_touched() {
-  local case_dir rc
-  case_dir=$(make_case parked-run-not-ours)
-  write_meta "$case_dir" no-mistakes ship
-  land_shippable_commit "$case_dir"
-
-  local rc=0
-  # A parked run reported for a DIFFERENT branch - e.g. another crew's task
-  # still validating on the shared gate - must never be aborted by this task's
-  # teardown.
-  JG_FAKE_AXI_STATUS="$(parked_axi_status_toon fm/some-other-task deadbeef)" \
-  JG_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
-    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-
-  expect_code 0 "$rc" "parked-run-not-ours: teardown should still succeed"
-  assert_absent "$case_dir/nm-abort.log" \
-    "parked-run-not-ours: teardown called axi abort for a run on another branch"
-  assert_not_contains "$(cat "$case_dir/stderr")" "aborting" \
-    "parked-run-not-ours: teardown reported aborting a run it does not own"
-  pass "a parked run on another branch is never aborted by this task's teardown (ownership is precise)"
-}
-
-test_own_autonomous_run_is_left_alone() {
-  local case_dir rc head
-  case_dir=$(make_case autonomous-run-left-alone)
-  write_meta "$case_dir" no-mistakes ship
-  land_shippable_commit "$case_dir"
-  head=$(git -C "$case_dir/wt" rev-parse HEAD)
-
-  rc=0
-  JG_FAKE_AXI_STATUS="$(running_axi_status_toon fm/task-x1 "$head")" \
-  JG_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
-    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-
-  expect_code 0 "$rc" "autonomous-run-left-alone: teardown should still succeed"
-  assert_absent "$case_dir/nm-abort.log" \
-    "autonomous-run-left-alone: teardown aborted a task-owned autonomous run"
-  assert_not_contains "$(cat "$case_dir/stderr")" "aborting" \
-    "autonomous-run-left-alone: teardown reported aborting an autonomous run"
-  pass "a task-owned autonomous running step is left alone rather than aborted"
-}
-
 test_leaked_worktree_process_is_reaped() {
   local case_dir rc pid
   case_dir=$(make_case leaked-process-reap)
@@ -5494,46 +4770,38 @@ EOF
   pass "a process exiting during identity lookup does not block teardown"
 }
 
-test_run_abort_precedes_process_reap_precedes_worktree_removal() {
-  local case_dir rc head pid abort_log
-  case_dir=$(make_case abort-then-reap-then-remove-order)
+test_process_reap_precedes_worktree_removal() {
+  local case_dir rc pid
+  case_dir=$(make_case reap-then-remove-order)
   write_meta "$case_dir" no-mistakes ship
   land_shippable_commit "$case_dir"
-  head=$(git -C "$case_dir/wt" rev-parse HEAD)
-  abort_log="$case_dir/nm-abort.log"
 
   ( cd "$case_dir/wt" && exec sleep 300 ) &
   pid=$!
   disown
   sleep 0.3
-  kill -0 "$pid" 2>/dev/null || fail "abort-then-reap-then-remove-order: setup sleeper did not start"
+  kill -0 "$pid" 2>/dev/null || fail "reap-then-remove-order: setup sleeper did not start"
 
   # A treehouse fake that snapshots, at the exact moment the destructive
-  # worktree return runs, whether the run was already aborted and whether the
-  # leaked process was already reaped - direct causal proof of ordering from
+  # worktree return runs whether the leaked process was already reaped - direct causal proof of ordering from
   # real observed state, not a source-text or line-number correlation.
   cat > "$case_dir/fakebin/treehouse" <<EOF
 #!/usr/bin/env bash
-if [ -s "$abort_log" ]; then echo "abort-already-happened" >> "$case_dir/order.log"; fi
 if ! kill -0 $pid 2>/dev/null; then echo "reap-already-happened" >> "$case_dir/order.log"; fi
 exit 0
 EOF
   chmod +x "$case_dir/fakebin/treehouse"
 
   rc=0
-  JG_FAKE_AXI_STATUS="$(parked_axi_status_toon fm/task-x1 "$head")" \
-  JG_FAKE_NM_ABORT_LOG="$abort_log" \
-    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-  expect_code 0 "$rc" "abort-then-reap-then-remove-order: teardown should still succeed"
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 0 "$rc" "reap-then-remove-order: teardown should still succeed"
   kill -0 "$pid" 2>/dev/null && { kill -KILL "$pid" 2>/dev/null || true; }
 
   assert_present "$case_dir/order.log" \
-    "abort-then-reap-then-remove-order: the destructive worktree return was never invoked"
-  assert_grep "abort-already-happened" "$case_dir/order.log" \
-    "abort-then-reap-then-remove-order: the run was not yet aborted when the worktree return ran"
+    "reap-then-remove-order: the destructive worktree return was never invoked"
   assert_grep "reap-already-happened" "$case_dir/order.log" \
-    "abort-then-reap-then-remove-order: the leaked process was not yet reaped when the worktree return ran"
-  pass "the run abort and the leaked-process reap both complete before the destructive worktree return"
+    "reap-then-remove-order: the leaked process was not yet reaped when the worktree return ran"
+  pass "the leaked-process reap completes before the destructive worktree return"
 }
 
 # Copy the public teardown script tree, then drop or blank one required file.
@@ -5592,10 +4860,10 @@ test_missing_startup_source_refuses_before_cleanup() {
   case_dir=$(make_case missing-startup-source)
   write_meta "$case_dir" local-only ship
   prepare_teardown_source_copy "$case_dir"
-  rm -f "$case_dir/test-root/bin/jg-nm-run-lib.sh"
+  rm -f "$case_dir/test-root/bin/jg-wake-lib.sh"
   rc=0
   run_copied_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-  assert_source_refusal_preserved_state "$case_dir" "missing-startup-source" "required source jg-nm-run-lib.sh"
+  assert_source_refusal_preserved_state "$case_dir" "missing-startup-source" "required source jg-wake-lib.sh"
   pass "a missing teardown startup source refuses before cleanup"
 }
 
@@ -5604,16 +4872,16 @@ test_unreadable_startup_source_refuses_before_cleanup() {
   case_dir=$(make_case unreadable-startup-source)
   write_meta "$case_dir" local-only ship
   prepare_teardown_source_copy "$case_dir"
-  rm -f "$case_dir/test-root/bin/jg-nm-run-lib.sh"
-  cp "$ROOT/bin/jg-nm-run-lib.sh" "$case_dir/test-root/bin/jg-nm-run-lib.sh"
-  chmod 000 "$case_dir/test-root/bin/jg-nm-run-lib.sh"
-  if [ -r "$case_dir/test-root/bin/jg-nm-run-lib.sh" ]; then
+  rm -f "$case_dir/test-root/bin/jg-wake-lib.sh"
+  cp "$ROOT/bin/jg-wake-lib.sh" "$case_dir/test-root/bin/jg-wake-lib.sh"
+  chmod 000 "$case_dir/test-root/bin/jg-wake-lib.sh"
+  if [ -r "$case_dir/test-root/bin/jg-wake-lib.sh" ]; then
     pass "unreadable startup source skipped: this user can read mode-000 files"
     return 0
   fi
   rc=0
   run_copied_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-  assert_source_refusal_preserved_state "$case_dir" "unreadable-startup-source" "required source jg-nm-run-lib.sh"
+  assert_source_refusal_preserved_state "$case_dir" "unreadable-startup-source" "required source jg-wake-lib.sh"
   pass "an unreadable teardown startup source refuses before cleanup"
 }
 
@@ -5867,28 +5135,6 @@ test_fractional_legacy_retry_wait_refuses_without_arithmetic_error
 test_teardown_records_the_task_pipeline_spend
 test_teardown_skips_pipeline_spend_when_disabled
 test_teardown_records_unavailable_spend_for_a_gone_worktree
-test_parked_own_run_is_aborted_before_teardown
-test_parked_own_run_concludes_on_passed_with_override_after_abort
-test_parked_own_run_concludes_on_passed_with_skips_after_abort
-test_parked_run_advanced_past_unfetched_head_is_still_aborted
-test_parked_run_with_mismatched_ledger_head_is_never_aborted
-test_parked_run_with_malformed_ledger_row_is_never_aborted
-test_parked_run_with_impossible_ledger_date_is_never_aborted
-test_terminal_status_with_gate_never_queries_or_aborts_ledger_fallback
-test_parked_run_advanced_head_locally_fetched_is_still_aborted
-test_parked_advanced_run_without_anchor_is_never_aborted
-test_parked_advanced_run_ancestor_anchor_is_never_aborted
-test_parked_terminal_unfetched_row_is_never_aborted
-test_parked_run_terminal_newest_row_at_own_head_is_never_aborted
-test_parked_run_behind_diverged_newer_row_is_never_aborted
-test_parked_advanced_run_ambiguous_rows_are_never_aborted
-test_ledger_proven_continuation_never_aborts_active_run
-test_parked_own_run_refuses_when_abort_is_unconfirmed
-test_mismatched_run_after_abort_refuses_unconfirmed
-test_empty_status_after_abort_refuses_unconfirmed
-test_not_found_status_after_abort_confirms_completion
-test_another_branchs_parked_run_is_never_touched
-test_own_autonomous_run_is_left_alone
 test_leaked_worktree_process_is_reaped
 test_leaked_tasktmp_process_is_reaped
 test_registered_scratch_is_reaped_after_launching_session_is_gone
@@ -5907,4 +5153,4 @@ test_exec_changed_process_is_still_reaped
 test_process_spawned_during_grace_is_reaped_on_later_pass
 test_persistent_scan_refuses_after_bounded_retries
 test_process_exit_during_identity_lookup_does_not_refuse
-test_run_abort_precedes_process_reap_precedes_worktree_removal
+test_process_reap_precedes_worktree_removal

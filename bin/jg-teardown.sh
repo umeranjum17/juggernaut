@@ -224,32 +224,6 @@
 # delete below - a still-active run or a leaked process may own live work in
 # that worktree). Run conclusion precedes endpoint close; process reaping
 # follows Herdr's focus-preserving close so it cannot kill the pane first:
-#   Fix 1 - conclude the task's own no-mistakes run. A ship task's worktree can
-#     be torn down while its no-mistakes pipeline run is still PARKED at a gate
-#     (awaiting_approval/fix_review/any awaiting_agent field), with no worker
-#     left to ever answer it - the run then sits there holding a fleet slot
-#     indefinitely (observed 2026-08-03: runs parked 7h39m and parked at a
-#     post-CI approval gate after the worker was already cleaned up). A run
-#     with an autonomous step still under way (running/fixing/ci) is left
-#     alone: no-mistakes drives those against its own gate-repo clone, not the
-#     crew's worktree, so they are not orphaned by removing the worktree.
-#     conclude_task_no_mistakes_run attributes the active-or-most-recent run to
-#     THIS task only when its branch AND code identity (bin/jg-nm-run-lib.sh's
-#     strict jg_nm_head_matches_worktree rule) both match this worktree, then
-#     runs `no-mistakes axi abort --run <id>` for that verified run instance.
-#     When the run head is absent from this copy's object store - the pipeline
-#     committed its fix round in its own repo and the task copy never fetched
-#     it - attribution falls to the same lib's shared
-#     jg_nm_runs_status_for_worktree ledger rule, whose anchored continuation
-#     recognition is the only remaining path, which refuses every row shape
-#     it cannot prove, and which authorizes the abort only for an explicitly
-#     active (`running`) proved continuation - a terminal newest word is
-#     finished history, never an abort authorization (observed 2026-09-03: a
-#     run parked at a post-CI gate after fix rounds advanced its head past
-#     the submitted head stayed parked forever once the task was cleaned up).
-#     A run already terminal
-#     (an outcome is set) or not parked at a gate is left untouched. Idempotent:
-#     an already-aborted run reads back terminal and is skipped on retry.
 #   Fix 2 - reap leaked descendant processes. A backgrounded/disowned process
 #     started under a task-owned directory does not receive the
 #     SIGHUP/SIGTERM that closing the backend pane sends to its own foreground
@@ -284,7 +258,7 @@
 #     root still exists, so the account's healthy LaunchAgent worker and every
 #     live remote squad_lead worker are out of scope. Best effort: a sweep
 #     failure never blocks this teardown.
-# After Fix 1 and Fix 2, when config/pipeline-spend opts this home in, a ship
+# After Fix 2, when config/pipeline-spend opts this home in, a ship
 # task whose local copy this teardown owns has its no-mistakes pipeline spend
 # recorded by bin/jg-pipeline-spend.sh, which owns the attribution and the
 # ledger. It runs before the task branch it attributes runs by is deleted and
@@ -361,7 +335,6 @@ for _teardown_source in \
   jg-tmux-lib.sh \
   jg-composer-lib.sh \
   jg-cursor-lib.sh \
-  jg-nm-run-lib.sh \
   jg-wake-lib.sh \
   jg-path-lib.sh \
   jg-lease-lib.sh
@@ -397,8 +370,6 @@ unset _teardown_source
 . "$SCRIPT_DIR/jg-squad-lead-parent-lib.sh"
 # shellcheck source=bin/jg-pending-reply-lib.sh
 . "$SCRIPT_DIR/jg-pending-reply-lib.sh"
-# shellcheck source=bin/jg-nm-run-lib.sh
-. "$SCRIPT_DIR/jg-nm-run-lib.sh"
 # shellcheck source=bin/jg-teardown-park-lib.sh
 . "$SCRIPT_DIR/jg-teardown-park-lib.sh"
 # shellcheck source=bin/jg-task-files-lib.sh
@@ -1817,120 +1788,6 @@ EOF_OUT
   return 1
 }
 
-# Fix 1 (see script header): does the active-or-most-recent no-mistakes run in
-# worktree $1 belong to THIS task, and is it parked at a gate awaiting an agent
-# that is about to be removed? Prints nothing; returns 0 only on a genuine
-# match so the caller knows it is safe to abort - never a guess. Identity
-# binds through the strict object-local head rule, with bin/jg-nm-run-lib.sh's
-# shared ledger-anchored continuation rule as the only recognition for a head
-# this copy cannot resolve at all.
-NM_TEARDOWN_TIMEOUT=${JG_TEARDOWN_NM_TIMEOUT:-10}
-case "$NM_TEARDOWN_TIMEOUT" in ''|*[!0-9]*) NM_TEARDOWN_TIMEOUT=10 ;; esac
-# How many of the most recent `no-mistakes runs` rows the parked-run
-# continuation proof may scan, mirroring bin/jg-crew-state.sh's limit posture
-# (generous: rows of other branches interleave freely in the real ledger).
-NM_TEARDOWN_RUNS_LIMIT=${JG_TEARDOWN_NM_RUNS_LIMIT:-200}
-case "$NM_TEARDOWN_RUNS_LIMIT" in ''|*[!0-9]*) NM_TEARDOWN_RUNS_LIMIT=200 ;; esac
-TASK_RUN_ID=
-task_status_is_own_parked_run() {  # <worktree> <axi-status-output>
-  local wt=$1 out=$2 branch run_id run_branch run_head status outcome awaiting has_gate ledger
-  TASK_RUN_ID=
-  branch=$(git -C "$wt" symbolic-ref --quiet --short HEAD 2>/dev/null) || return 1
-  [ -n "$branch" ] || return 1
-  [ -n "$out" ] || return 1
-  run_id=$(jg_nm_strip_quotes "$(jg_nm_field "$out" id)")
-  [ -n "$run_id" ] || return 1
-  run_branch=$(jg_nm_strip_quotes "$(jg_nm_field "$out" branch)")
-  [ -n "$run_branch" ] && [ "$run_branch" = "$branch" ] || return 1
-  run_head=$(jg_nm_strip_quotes "$(jg_nm_field "$out" head)")
-  outcome=$(jg_nm_strip_quotes "$(jg_nm_field "$out" outcome)")
-  [ -z "$outcome" ] || return 1
-  status=$(jg_nm_strip_quotes "$(jg_nm_field "$out" status)")
-  [ -n "$status" ] || return 1
-  case "$status" in
-    completed|failed|cancelled|passed|checks-passed|running|fixing|ci) return 1 ;;
-  esac
-  if ! jg_nm_head_matches_worktree "$wt" "$run_head"; then
-    # The strict object-local rule rejected this run head. That rejection is
-    # final when the head object resolves in this copy (diverged or rewritten
-    # tips are genuine mismatches), but when the object is absent entirely -
-    # the pipeline committed its fix round in its own repo and this copy
-    # never fetched it - the ONE shared runs-ledger rule in
-    # bin/jg-nm-run-lib.sh owns the only remaining recognition, and it prints
-    # nothing for any ledger shape it cannot prove, so the run stays
-    # untouched unless the ledger proves this exact continuation. Cleanup
-    # consumes only an explicitly active (`running`) proved word: a terminal
-    # newest row is finished history, never this parked run's abort
-    # authorization (the read path classifies the same owner's answer; the
-    # abort here must never fire for a run that already ended).
-    [ -n "$run_head" ] || return 1
-    [ -z "$(jg_nm_resolve_commit "$wt" "$run_head")" ] || return 1
-    ledger=$(jg_nm_run "$wt" "$NM_TEARDOWN_TIMEOUT" runs --limit "$NM_TEARDOWN_RUNS_LIMIT")
-    [ "$(jg_nm_runs_status_for_worktree "$wt" "$branch" "$ledger" "$run_head")" = running ] || return 1
-  fi
-  awaiting=$(printf '%s\n' "$out" | grep -E '^[[:space:]]*awaiting_agent:' | head -1 || true)
-  has_gate=$(printf '%s\n' "$out" | grep -Eq '^[[:space:]]*gate:[[:space:]]*' && echo 1 || echo 0)
-  case "$status" in
-    awaiting_approval|fix_review) TASK_RUN_ID=$run_id; return 0 ;;
-  esac
-  if [ -n "$awaiting" ] || [ "$has_gate" = 1 ]; then
-    TASK_RUN_ID=$run_id
-    return 0
-  fi
-  return 1
-}
-
-task_run_is_own_parked_run() {  # <worktree>
-  local wt=$1 out
-  # Accepted best-effort residual: query failures stay fail-open because making
-  # no-mistakes availability a prerequisite would block ship tasks with no run.
-  out=$(jg_nm_run "$wt" "$NM_TEARDOWN_TIMEOUT" axi status)
-  task_status_is_own_parked_run "$wt" "$out"
-}
-
-task_status_is_terminal_run() {  # <axi-status-output> <run-id>
-  local out=$1 expected_id=$2 run_id outcome
-  run_id=$(jg_nm_strip_quotes "$(jg_nm_field "$out" id)")
-  [ "$run_id" = "$expected_id" ] || return 1
-  outcome=$(jg_nm_strip_quotes "$(jg_nm_field "$out" outcome)")
-  case "$outcome" in
-    cancelled|failed|passed|checks-passed|passed-with-override|passed-with-skips) return 0 ;;
-  esac
-  return 1
-}
-
-task_status_is_run_not_found() {  # <status-error> <run-id>
-  local actual expected
-  actual=$(jg_nm_trim "$1")
-  expected=$(printf 'error: "run \\"%s\\" not found"' "$2")
-  [ "$actual" = "$expected" ]
-}
-
-# Abort THIS task's own parked no-mistakes run before the worker that would
-# have answered its gate is removed, so no run is left orphaned holding a
-# fleet slot. Only KIND=ship drives a no-mistakes validation of its own
-# worktree (scouts and squad_leads never do, mirroring bin/jg-crew-state.sh);
-# a run not attributed to this exact branch+head is left completely alone.
-conclude_task_no_mistakes_run() {  # <worktree>
-  local wt=$1 out run_id
-  [ "$KIND" = ship ] || return 0
-  [ -d "$wt" ] || return 0
-  command -v no-mistakes >/dev/null 2>&1 || return 0
-  task_run_is_own_parked_run "$wt" || return 0
-  run_id=$TASK_RUN_ID
-  echo "teardown: no-mistakes run for $ID is parked at a gate; aborting before the worker is removed" >&2
-  # Accepted best-effort residual: abort supports run-id targeting but no atomic
-  # live-state condition; fully closing the resume race needs upstream compare-and-cancel.
-  jg_nm_run_checked "$wt" "$NM_TEARDOWN_TIMEOUT" axi abort --run "$run_id" >/dev/null 2>&1 || true
-  if out=$(jg_nm_run_bounded "$wt" "$NM_TEARDOWN_TIMEOUT" axi status --run "$run_id" 2>&1); then
-    task_status_is_terminal_run "$out" "$run_id" && return 0
-  elif task_status_is_run_not_found "$out" "$run_id"; then
-    return 0
-  fi
-  echo "REFUSED: no-mistakes run for $ID is still parked after axi abort; confirm it stopped (no-mistakes axi status) or abort it manually (no-mistakes axi abort --run <id>) before retrying teardown." >&2
-  return 1
-}
-
 # Fix 2 (see script header): the process reaping is Go (core/teardown, through
 # bin/jg-teardown-core.sh); its header owns the contract. This wrapper hands it the
 # task facts the command cannot read: the label, the task id, the backend and its
@@ -3103,12 +2960,7 @@ else
 fi
 
 # Every landed/discard-work refusal above has now passed (or --force skipped
-# them). Fix 1 (see script header) concludes a parked run before any endpoint
-# close. A squad_lead home's lifecycle belongs to the dedicated removal
-# machinery below, not to task-worktree cleanup.
-if [ "$KIND" != squad_lead ]; then
-  conclude_task_no_mistakes_run "$WT"
-fi
+# them).
 if [ "$KIND" = ship ] && [ "$PARK" != 1 ] && teardown_owns_worktree && [ -e "$CONFIG/pipeline-spend" ]; then
   JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$DATA" JG_CONFIG_OVERRIDE="$CONFIG" \
     "$SCRIPT_DIR/jg-pipeline-spend.sh" record "$ID" >/dev/null \
