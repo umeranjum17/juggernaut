@@ -2206,7 +2206,22 @@ adopt_pushed_release() {  # <commit>
 # into the default branch carries it (an open <prev> already does: the push is its new head). Writes the release row, moves the
 # released mark, records the release task, and runs the release proof for a commit that is the green pin. Called with the trunk
 # lock held; it lets the lock go before the proof. <spend> 1 spends the captain's release word; <proof> 0 skips the proof.
+# A release opens only in a home that can pass its merge gate (core/release-preflight): a miss waits on Main at once, with the
+# command, instead of surfacing at the merge. The alert is `stuck-wait` with wait=main and reason=approval; it resolves when the
+# next try finds nothing missing.
+release_preflight() {  # <rel>
+  local miss key=stuck-wait--release-preflight-$PN
+  miss=$("$SCRIPT_DIR/../core/release-preflight/check.sh" "$JG_HOME") && {
+    [ ! -e "$STATE/alerts/$key.rec" ] || JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" resolve "$key" >/dev/null 2>&1 || true
+    return 0
+  }
+  JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" raise stuck-wait "release-preflight-$PN" --deliver --project "$PN" --fact wait=main --fact reason=approval \
+    --note "the release of ${1:0:12} cannot pass its merge gate in this home: $(cut -f2,3 <<<"$miss" | sed 's/\t/ -> /' | tr '\n' ';')" >/dev/null 2>&1 || true
+  refuse "release of ${1:0:12} waits on Main (wait=main, reason=approval): this home cannot pass its merge gate; nothing is pushed. $(cut -f2,3 <<<"$miss" | sed 's/\t/ -> /' | tr '\n' ';')"
+}
+
 push_batch() {  # <rel> <n> <prev> <spend 0|1> <proof 0|1>
+  release_preflight "$1"
   local rel=$1 n=$2 prev=$3 default base body url unproved; local -a carried
   base=$(cat "$STATE/trunk-released-$PN")
   default=$(git -C "$PROJ" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || true); default=${default:-main}
