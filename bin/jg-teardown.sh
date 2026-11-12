@@ -109,7 +109,7 @@
 # boundary. Fresh Treehouse spawns for that project in
 # every local Juggernaut home hold the same lock from before slot allocation
 # through metadata publication, closing the publication
-# gap. Slow cleanup work (landed-work proof, run abort, pane close, final-outcome
+# gap. Slow cleanup work (landed-work proof, pipeline-spend lookup, pane close, final-outcome
 # delivery) runs outside the lock, so cleanups and spawns of one project do not
 # queue behind each other (tests/jg-teardown-lock-hold.test.sh); the slot-owner
 # checks are repeated inside the lock. Forced squad_lead teardown takes it and runs the same checks for every
@@ -455,7 +455,7 @@ DESCENDANT_TASK_HOMES=()
 DESCENDANT_TREEHOUSE_LOCK_PATHS=()
 # The shared project pool lock covers only what must be atomic with the slot
 # return: re-proving the slot is still this task's, reaping its processes, and
-# handing the copy back. Everything slow (the landed-work proof, the run abort,
+# handing the copy back. Everything slow (the landed-work proof, the pipeline-spend lookup,
 # the pane close, the final-outcome delivery) runs outside it, so another
 # cleanup or a spawn of the same project is never queued behind this one.
 teardown_pool_lock_acquire() {

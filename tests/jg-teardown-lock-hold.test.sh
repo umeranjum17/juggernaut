@@ -4,12 +4,12 @@
 #
 # Cleanups and spawns of one project take the same lock (jg_treehouse_project_lock_path).
 # While a cleanup held it for its whole run, a slow step (the landed-work proof, the
-# run abort, the pane close, the final-outcome delivery) made every other cleanup of
+# pipeline-spend lookup, the pane close, the final-outcome delivery) made every other cleanup of
 # the project refuse with "slot allocation or return in progress" and delayed spawns.
 #
 # Driven through the real bin/jg-teardown.sh against a Treehouse-shaped pool slot.
 # Stubs record, at the moment each external command runs, whether the lock is held:
-#   (a) slow step BEFORE the return (run-abort lookup)  -> lock free
+#   (a) slow step BEFORE the return (pipeline-spend lookup) -> lock free
 #   (b) the treehouse return itself                     -> lock held
 #   (c) slow step AFTER the return (pane close)         -> lock free
 #   (d) the lock is held for under 5 s while the cleanup around it takes much longer
@@ -36,6 +36,7 @@ make_case() {
   fakebin="$case_dir/fakebin"
   mkdir -p "$case_dir/state" "$case_dir/config" "$case_dir/data" "$fakebin"
   touch "$case_dir/state/.last-watcher-beat"
+  : > "$case_dir/config/pipeline-spend"
   jg_test_beads_home "$case_dir"
   jg_test_backlog "$case_dir" add task-x1 "[feature] lock hold fixture" --priority 1 --kind ship --repo demo \
     --body "Lock hold fixture" >/dev/null
@@ -88,10 +89,11 @@ exit 0
 SH
   cat > "$fakebin/no-mistakes" <<'SH'
 #!/usr/bin/env bash
-# The run-abort lookup before the return: it may reassign the slot, and is slow.
+# The pipeline-spend lookup (jg-pipeline-spend.sh record, run when config/pipeline-spend
+# exists) before the return: it may reassign the slot, and is slow.
 # (The caller bounds it, so the claim is written before the sleep.)
-if [ "${1:-}" = axi ] && [ "${2:-}" = status ]; then
-  "$(dirname "$0")/probe" run-abort-lookup
+if [ "${1:-}" = axi ]; then
+  "$(dirname "$0")/probe" pipeline-spend-lookup
   if [ -n "${JG_LOCK_HOLD_REASSIGN_TO:-}" ]; then
     printf 'task=%s\nhome=%s\n' "$JG_LOCK_HOLD_REASSIGN_TO" /elsewhere > "$JG_LOCK_HOLD_SLOT_MARKER"
   fi
@@ -155,8 +157,8 @@ test_lock_is_held_only_for_the_slot_return() {
 
   [ "$rc" = 0 ] || fail "hold: teardown exited $rc: $(cat "$case_dir/stderr")"
   [ -z "${JG_LOCK_HOLD_DEBUG:-}" ] || { echo "--- lock.log"; cat "$case_dir/lock.log"; echo "--- stderr"; cat "$case_dir/stderr"; } >&2
-  assert_grep 'run-abort-lookup free' "$case_dir/lock.log" \
-    "hold: the slow run-abort lookup ran while the pool lock was held"
+  assert_grep 'pipeline-spend-lookup free' "$case_dir/lock.log" \
+    "hold: the slow pipeline-spend lookup ran while the pool lock was held"
   assert_grep 'treehouse-return held' "$case_dir/lock.log" \
     "hold: the slot return ran without the pool lock"
   assert_grep 'tmux-kill-window free' "$case_dir/lock.log" \
