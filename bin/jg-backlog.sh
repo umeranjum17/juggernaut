@@ -233,7 +233,7 @@ case "${1:-}" in
     fi
     beads_read; exit $? ;;
   markdown) beads_read; exit $? ;;
-  add|create|update|edit|done|close|block|unblock|start|task|reopen|hold|unhold|public-followup|relink|moment|wait|ticket-stage|ticket-drift) ;;
+  add|create|update|edit|done|close|block|unblock|start|task|reopen|hold|unhold|public-followup|relink|moment|wait|ticket-stage|ticket-drift|trace) ;;
   *) fail "the beads backlog does not serve ${1:-this command}" ;;
 esac
 

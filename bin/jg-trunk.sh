@@ -772,7 +772,14 @@ landed_effects() {  # <id> <lane head> <landed commit>   (META is the lane's rec
   [ -z "$late" ] || jg_wake_append check "trunk-latency-$1" "$late" >/dev/null 2>&1 || :
   # The same merge alert as bin/jg-merge-local.sh: the opt-in fleet ledger's merged event and the ticket close.
   [ ! -e "$CONFIG/fleet-ledger" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-fleet-ledger.sh" merged "$1" local || true
-  JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-ticket.sh" "$1" --stage "done" --state "done" || true
+  trace_land "$1" jg-trunk-land "$3"
+}
+
+# One provenance event on the ticket and then the moment on its row (jg-backlog.sh trace record). A failed write is one warning line and
+# never stops a landing or a revert.
+trace_land() {  # <task id> <source> <sha> [payload JSON]
+  JG_HOME=$JG_HOME JG_DATA_OVERRIDE=$DATA "$SCRIPT_DIR/jg-backlog.sh" trace record "$1" land git-sha "$3" --source "$2" --at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    ${4:+--payload "$4"} >/dev/null 2>&1 || echo "jg-trunk: warning: the $2 provenance of $1 was not written; the trunk is unchanged by it" >&2
 }
 
 # The scripts of a landing's changed selection, one per line, as the project's own selector names them at <candidate>: bin/jg-test-run.sh
@@ -1288,19 +1295,21 @@ unlock() { jg_lock_release "$1" || true; LOCKS=${LOCKS/"$1 "/}; }
 # Undo one landed commit by itself: a new commit on the tip that carries the commit's inverse, so the trunk only moves forward.
 # Returns 1, changing nothing, when the commit cannot be undone cleanly or is itself an undo.
 revert_commit() {  # <sha> <reason>
-  local sha=$1 tip tree msg id ident=() new
+  local sha=$1 tip tree msg id ticket ident=() new
   lock "$STATE/.trunk-$PN.lock"; tip_ok; tip=$(rev "refs/heads/$TRUNK")
   msg=$(git -C "$PROJ" log -1 --format=%B "$sha")
   if printf '%s\n' "$msg" | grep -q '^reverts: '; then unlock "$STATE/.trunk-$PN.lock"; return 1; fi
   tree=$(git -C "$PROJ" merge-tree --write-tree --merge-base="$sha" "$tip" "$sha^" 2>/dev/null) || { unlock "$STATE/.trunk-$PN.lock"; return 1; }
   id=$(awk -F'\t' -v c="$sha" '$3 == c { i = $1 } END { print i }' "$DATA/trunk-landings.tsv" 2>/dev/null)
   [ -n "$(git -C "$PROJ" config user.name 2>/dev/null || true)" ] || ident=(-c user.name=jg-trunk -c user.email=jg-trunk@localhost)
-  new=$(printf 'Revert "%s"\n\nreverts: %s\nticket: %s\n\n%s\n' "$(git -C "$PROJ" log -1 --format=%s "$sha")" "$sha" "${id:-unknown}" "$2" \
+  ticket=$(printf '%s\n' "$msg" | git interpret-trailers --parse | sed -n 's/^Ticket: *//p' | tail -1)
+  new=$(printf 'Revert "%s"\n\nreverts: %s\n\n%s\n\nTicket: %s\n' "$(git -C "$PROJ" log -1 --format=%s "$sha")" "$sha" "$2" "${ticket:-${id:-unknown}}" \
     | git -C "$PROJ" "${ident[@]+"${ident[@]}"}" commit-tree "$tree" -p "$tip") || { unlock "$STATE/.trunk-$PN.lock"; return 1; }
   JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref -m "trunk: revert ${sha:0:12}" "refs/heads/$TRUNK" "$new" "$tip" || { unlock "$STATE/.trunk-$PN.lock"; return 1; }
   put "$STATE/trunk-tip-$PN" "$new"; unpin_green "$sha"
   row trunk-landings.tsv "revert-${id:-unknown}" "$PN" "$new" "$(date +%s)" reverts-"${sha:0:12}"
   unlock "$STATE/.trunk-$PN.lock"
+  [ -z "$id" ] || trace_land "$id" jg-trunk-revert "$new" "$(jq -nc --arg r "$sha" --arg w "$2" '{reverts: $r, reason: $w}')"
   tell_lane "${id:-unknown}" "$TRUNK commit ${sha:0:12} (${id:-unknown}) went red after it landed and was reverted by itself in ${new:0:12}: $2. Fix it on a new lane."
   echo "reverted ${sha:0:12} (${id:-unknown}) in ${new:0:12}: $2"
 }
