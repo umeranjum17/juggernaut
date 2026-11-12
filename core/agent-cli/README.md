@@ -20,12 +20,18 @@ jg wait <who> <reason> <text> [--until <YYYY-MM-DDTHH:MMZ>]
 jg progress <text>                a beat of work that wakes nobody
 jg inbox [ack <NNN> [--evidence <kind>:<pointer>]]
                                   read the unread steers; acknowledge one (and record it handled)
+jg proof [--wait] [--bound <secs>] [-- <command...>]
+                                  `done-done affected`, or with a command the sealed `done-done run -- <command>`; one background run per ticket; --wait returns at its end or the bound (exit 3)
+jg land [--wait] [--bound <secs>]
+                                  where the lane's landing stands: landed, refused, running or queued (place and why); --wait returns at the result or the bound; it starts nothing
 ```
 
 ## Owners
 
 - status line: `bin/jg-lavish-guard.sh --append` (refusals) and `bin/jg-fleet-ledger.sh`
 - stage: `bin/jg-crew-state.sh`
+- proof run: `done-done` (output in `data/<ticket>/jg-proof.log`); gaps: `bin/jg-trunk.sh proof`
+- landing state: `core/trunk-landing` records, `data/jg-trunk-landing/<ticket>.<head>.state`
 - inbox and handled record: `bin/jg-task-inbox-lib.sh`, `bin/jg-delivery.sh`
 
 Test: `tests/agent-cli.test.sh` runs `bin/jg` from a real worktree with no variable set.
