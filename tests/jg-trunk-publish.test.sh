@@ -12,6 +12,8 @@
 # T5 A red is recorded on the pushed commit and a later commit lands: the pin stays down; while a CI run of the batch is in flight
 #    the tip is not pushed; once it is not, the tip is pushed as a candidate, once (a second publish pushes nothing). A green result
 #    on the candidate moves the pin past the red, and the next landing moves it again.
+# T7 The forge hangs while a publish reads the release PR: no lock is held meanwhile, so a landing starts and lands; the publish is
+#    stopped at the time limit, says so in one line, and pushes nothing.
 # T6 The registered landing check starts the publish step itself within one tick and reports the push in its outbox.
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
@@ -93,6 +95,26 @@ test_publish_pushes_the_green_pin_only_when_the_trunk_holds_enough_and_only_unde
   pass 'T5 after a red the tip is pushed once as a candidate, not while a run is in flight, and its green moves the pin past the red'
 }
 
+test_a_hung_forge_does_not_hold_the_trunk_lock_and_ends_the_publish_in_one_line() {
+  local out pin pid n
+  pubworld hang; waive; landed h1 h2 h3
+  trunk publish "$PROJ" >/dev/null 2>&1 || fail "T7: the first publish must push"
+  pin=$(pushed); n=$(creates)
+  # shellcheck disable=SC2016 # the stand-in script expands its own arguments
+  printf '#!/usr/bin/env bash\nsleep 60\n' > "$W/fakebin/gh-axi"
+  lane h4 h4
+  JG_TRUNK_GH_TIMEOUT=4 trunk publish "$PROJ" > "$W/publish.out" 2>&1 & pid=$!
+  sleep 1
+  kill -0 "$pid" 2>/dev/null || fail "T7: the publish must still be waiting on the forge"
+  out=$(trunk land h4 2>&1) || fail "T7: a landing must start while the forge hangs: $out"
+  kill -0 "$pid" 2>/dev/null || fail "T7: the landing must finish before the publish gives up (the lock was held)"
+  wait "$pid" || fail "T7: a timed-out publish must exit 0"
+  assert_contains "$(cat "$W/publish.out")" "gh timeout" "T7: it must say the forge timed out"
+  [ "$(grep -c . "$W/publish.out")" = 2 ] || fail "T7: the timeout must be reported in one line plus the publish line: $(cat "$W/publish.out")"
+  [ "$(pushed)" = "$pin" ] && [ "$(creates)" = "$n" ] || fail "T7: a publish that could not read the forge pushes nothing"
+  pass 'T7 a hung forge holds no lock: a landing runs meanwhile and the publish stops at the time limit with one line'
+}
+
 test_the_landing_check_publishes_by_itself() {
   local out
   pubworld tick; waive; landed t1
@@ -105,5 +127,6 @@ test_the_landing_check_publishes_by_itself() {
 }
 
 test_publish_pushes_the_green_pin_only_when_the_trunk_holds_enough_and_only_under_the_waiver
+test_a_hung_forge_does_not_hold_the_trunk_lock_and_ends_the_publish_in_one_line
 test_the_landing_check_publishes_by_itself
 printf 'jg-trunk-publish: ok\n'

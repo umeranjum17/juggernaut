@@ -1829,10 +1829,23 @@ last_release_url() {
     "$DATA/trunk-releases.tsv" 2>/dev/null | pr_urls | head -1
 }
 pr_urls() { { grep -Eo 'https?://[^"[:space:],]+/pull/[0-9]+' || true; } | awk '!seen[$0]++'; }  # stdin: each PR URL once, in order
-pr_state() {  # <url>: open|merged|closed|unknown
-  local st
+# Every gh call this script makes is bounded: a call past JG_TRUNK_GH_TIMEOUT seconds (default 60) is killed and says so in one line, so a
+# hung gh (its wrapper runs `mise x gh`) can never hold a lock for more than that. Returns the call's own status, 124 for a timeout.
+gh_timed() {  # <what> <command...>
+  local what=$1 rc=0; shift
+  timeout --kill-after=5 "${JG_TRUNK_GH_TIMEOUT:-60}" "$@" || rc=$?
+  if [ "$rc" = 124 ] || [ "$rc" = 137 ]; then echo "gh timeout: $what did not answer in ${JG_TRUNK_GH_TIMEOUT:-60}s; it was stopped" >&2; rc=124; fi
+  return "$rc"
+}
+# open|merged|closed|unknown, or timeout when the forge did not answer. `publish` reads it before it takes the trunk lock and
+# keeps the answer (PRS_URL, PRS_VAL), so the later reads under the lock are not a network call.
+pr_state() {  # <url>
+  local st out rc=0
+  if [ "${PRS_URL-}" = "$1" ]; then printf '%s\n' "$PRS_VAL"; return; fi
   jg_pr_url_parse "$1" && [ "$JG_PR_PROVIDER" = github ] || { printf 'unknown\n'; return; }
-  st=$( (cd "$PROJ" && gh-axi pr view "$JG_PR_NUMBER" --repo "$JG_PR_PATH") | awk '$1 == "state:" { print tolower($2); exit }')
+  out=$(cd "$PROJ" && gh_timed "reading the state of $1" gh-axi pr view "$JG_PR_NUMBER" --repo "$JG_PR_PATH") || rc=$?
+  [ "$rc" != 124 ] || { printf 'timeout\n'; return; }
+  st=$(awk '$1 == "state:" { print tolower($2); exit }' <<<"$out")
   printf '%s\n' "${st:-unknown}"
 }
 
@@ -1955,12 +1968,12 @@ cmd_rollover() {
 # none the release stops as before, and with more than one it stops and names them all rather than pick one.
 open_release_pr() {  # <default> <title> <body-file>
   local out urls
-  if out=$(cd "$PROJ" && gh-axi pr create --base "$1" --head "$TRUNK" --title "$2" --body-file "$3"); then
+  if out=$(cd "$PROJ" && gh_timed "opening the release PR" gh-axi pr create --base "$1" --head "$TRUNK" --title "$2" --body-file "$3"); then
     urls=$(pr_urls <<<"$out")
     [ "$(grep -c . <<<"$urls")" != 1 ] || { REL_URL=$urls; return 0; }
   fi
   [ -z "$out" ] || printf '%s\n' "$out" >&2
-  urls=$( (cd "$PROJ" && gh-axi pr list --state open --head "$TRUNK" --base "$1" --fields url) | pr_urls)
+  urls=$( (cd "$PROJ" && gh_timed "listing the release PRs" gh-axi pr list --state open --head "$TRUNK" --base "$1" --fields url) | pr_urls)
   case $(grep -c . <<<"$urls") in
     1) REL_URL=$urls ;;
     0) die "$TRUNK is pushed but the release PR was not opened; run release again" ;;
@@ -2112,7 +2125,7 @@ holds_enough() {
 # A CI run of the release PR is in flight: a check pending, or none reported yet on the pushed head.
 ci_in_flight() {  # <url>
   local out
-  out=$(JG_HOME=$JG_HOME "$SCRIPT_DIR/jg-pr-state.sh" --all "$1") || return 0  # unreadable: assume a run, push nothing
+  out=$(JG_HOME=$JG_HOME gh_timed "reading the checks of $1" "$SCRIPT_DIR/jg-pr-state.sh" --all "$1") || return 0  # unreadable: assume a run, push nothing
   grep -Eiq '^CHECKS: none reported yet|^CHECKS: no required check has reported|^CHECK: .*\((pending|in_progress|queued|waiting|requested|expected)\)' <<<"$out"
 }
 
@@ -2125,20 +2138,30 @@ ci_in_flight() {  # <url>
 #     moves the pin past the red. No release proof: it is made for the green pin, and the candidate is not one yet.
 # With no waiver nothing is pushed: the word of the captain starts a release (`release`). Prints one line saying what it did.
 cmd_publish() {
-  local green rel tip prev open=0 n
-  open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"; tip_ok
+  local green rel tip prev open=0 n flight=0
+  PRS_URL=; PRS_VAL=
+  open_project "${1-}"
   [ -n "$(release_waiver_rule)" ] || { echo "publish: $PN has no release waiver; nothing pushed"; return 0; }
+  # The forge is asked before the trunk lock is taken: a slow or hung forge must never stop a landing. A forge that does not
+  # answer ends the publish with one line and nothing pushed; the next tick asks again.
+  prev=$(last_release_url)
+  if [ -n "$prev" ]; then
+    PRS_VAL=$(pr_state "$prev")
+    [ "$PRS_VAL" != timeout ] || { echo "publish: the forge did not answer for $prev; nothing pushed, the next tick asks again"; return 0; }
+    PRS_URL=$prev
+    if [ "$PRS_VAL" = open ]; then ci_in_flight "$prev" && flight=1; fi
+  fi
+  lock "$STATE/.trunk-$PN.lock"; tip_ok
   rollover_if_merged >/dev/null 2>&1 || true
   tip=$(rev "refs/heads/$TRUNK"); green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
   [ -n "$green" ] || { echo "publish: no green commit is recorded yet; nothing pushed"; return 0; }
-  prev=$(last_release_url)
-  [ -z "$prev" ] || [ "$(pr_state "$prev")" != open ] || open=1
+  [ -z "$prev" ] || [ "$PRS_VAL" != open ] || open=1
   if blocking_red "$tip" "$green" >/dev/null; then
     # After a red: the fix goes out as a candidate, once for each new tip.
     grep -Eq "^$PN	$tip	[0-9]+	(red|green)(	|$)" "$DATA/trunk-ci.tsv" 2>/dev/null && { echo "publish: the tip ${tip:0:12} has its CI result; nothing pushed"; return 0; }
     [ "$(cat "$STATE/trunk-candidate-$PN" 2>/dev/null || true)" != "$tip" ] || { echo "publish: the tip ${tip:0:12} was pushed as a candidate already; waiting for its result"; return 0; }
     git -C "$PROJ" merge-base --is-ancestor "$(cat "$STATE/trunk-released-$PN")" "$tip" || { echo "publish: the released mark is not under the tip; nothing pushed"; return 0; }
-    [ "$open" = 0 ] || ! ci_in_flight "$prev" || { echo "publish: a CI run of $prev is in flight; the candidate ${tip:0:12} waits"; return 0; }
+    [ "$flight" = 0 ] || { echo "publish: a CI run of $prev is in flight; the candidate ${tip:0:12} waits"; return 0; }
     n=$(git -C "$PROJ" rev-list --count "$(cat "$STATE/trunk-released-$PN")..$tip")
     echo "publish: pushing the tip ${tip:0:12} as a candidate after a red"
     push_batch "$tip" "$n" "$prev" 0 0
