@@ -884,6 +884,10 @@ journeys:
     # was Core suites step 77: Lead-sweep test
     tier: local
     command: bash journeys/core-run.sh 'bash lead-sweep/tests/lead-sweep.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-wake-rollup-test:
+    # H35: Main gets one digest per home per 10 minutes
+    tier: local
+    command: bash journeys/wake-rollup.sh
   core-landing-card-test:
     # was Core suites step 78: Landing-card test
     tier: local

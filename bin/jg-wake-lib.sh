@@ -2704,6 +2704,14 @@ _jg_wake_ledger_record() {
   printf '%s\t%s\t%s\t%s\t%s\n' "$now" "$JG_HOME" "$1" "$2" "$3" >> "$ledger" 2>/dev/null || true
 }
 
+# _jg_wake_rollup_holds <kind> <key> <payload>: exit 0 when core/wake-rollup holds the event for its home's digest
+# (rollup.sh header owns what is P0 and rings at once); exit 1 where the rollup is absent or the event rings.
+_jg_wake_rollup_holds() {
+  local rollup="$JG_WAKE_LIB_DIR/../core/wake-rollup/rollup.sh"
+  [ -x "$rollup" ] || return 1
+  JG_STATE_OVERRIDE="$STATE" "$rollup" hold "${JG_HOME:-$JG_ROOT}" "$1" "$2" "$3" 2>/dev/null
+}
+
 # jg_wake_append_locked <kind> <key> <payload>
 # Locked core of jg_wake_append: records one event under an already-held
 # JG_WAKE_QUEUE_LOCK. Callers that must commit another durable record atomically with
@@ -2733,6 +2741,12 @@ jg_wake_append_locked() {
   # Route, drop a repeated `now` to `batch` inside the re-alert window, and charge a settled event
   # against the hourly cap: one answer from the Go command, `now` where it cannot run.
   class=$(jg_wake_core classify "$kind" "$clean_key" "$clean_payload" 2>/dev/null) || class=now
+  # A non-P0 event of a Squad Lead's home is held for that home's one digest per window (core/wake-rollup).
+  if [ "$class" != silent ] && _jg_wake_rollup_holds "$kind" "$clean_key" "$clean_payload"; then
+    _jg_wake_ledger_record "$kind" "$clean_key" rollup
+    JG_WAKE_LAST="silent:$clean_key"
+    return 0
+  fi
   _jg_wake_ledger_record "$kind" "$clean_key" "$class"
   if [ "$class" = silent ]; then
     _jg_wake_settled_locked "$kind" "$clean_key" "$clean_payload" || true
