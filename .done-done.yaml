@@ -1,5 +1,9 @@
 app: juggernaut
 journeys:
+  startable-set-scale:
+    tier: local
+    command: bash journeys/startable-set-scale.sh
+    timeout: 10m
   trunk-cleanup:
     tier: local
     command: bash journeys/trunk-cleanup.sh

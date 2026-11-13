@@ -30,7 +30,8 @@ case "$1" in
   blocked) echo '[]' ;;
 esac
 SH
-  { cat "$d/bin/bd"; printf '# dolt\n'; } > "$d/bin/dolt"
+  # shellcheck disable=SC2016  # the stand-in expands $ROWS_TABLE when it runs, not here
+  printf '#!/usr/bin/env bash\ncat "$ROWS_TABLE"\n' > "$d/bin/dolt"   # the reader's one indexed query
   chmod +x "$d"/bin/*
   os=$(uname -s | tr '[:upper:]' '[:lower:]')
   arch=$(uname -m); case "$arch" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac
@@ -54,6 +55,12 @@ for i in ["a1", "a2", "b", "c", "d", "e"]:
     rows.append(row)
 json.dump(rows, open(d + "/all.json", "w"))
 json.dump([r for r in rows if not r["metadata"].get("hold_reason")], open(d + "/ready.json", "w"))  # `bd ready` leaves a held row out
+with open(d + "/table.txt", "w") as t:  # the store's answer to the reader's query: startable rows only, held e left out
+    t.write("+----+--------------+\n| id | label        |\n+----+--------------+\n")
+    for r in rows:
+        if not r["metadata"].get("hold_reason"):
+            t.write("| %s | %s |\n" % (r["id"], r["labels"][0]))
+    t.write("+----+--------------+\n")
 PY
   # The captain-hold stand-in: b has an open decision linked to it, the others have none.
   cat > "$d/hold" <<'SH'
@@ -70,7 +77,7 @@ home_env() {  # <dir> command...
   local d=$1
   shift
   env JG_HOME="$d" JG_PIN_FILE_OVERRIDE="$d/pins" JG_BEADS_BD="$d/bin/bd" JG_BEADS_DOLT="$d/bin/dolt" \
-    ROWS_READY="$d/ready.json" ROWS_ALL="$d/all.json" JG_AUTO_DISPATCH_HOLD="$d/hold" \
+    ROWS_READY="$d/ready.json" ROWS_ALL="$d/all.json" ROWS_TABLE="$d/table.txt" JG_AUTO_DISPATCH_HOLD="$d/hold" \
     JG_AUTO_DISPATCH_BACKLOG="$ROOT/bin/jg-backlog.sh" "$@"
 }
 
