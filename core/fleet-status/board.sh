@@ -5,7 +5,8 @@
 # Usage:
 #   board.sh [--json]          print the board model (juggernaut-axi.v1, view board) as JSON; `juggernaut-axi board` renders it
 #   board.sh --cell <home> <machine>   one row, tab separated (the board runs this under the time bound)
-#   board.sh --digest <home>           write the home's digest, data/fleet-status/digest.tsv: every row of the home, read once
+#   board.sh --digest <home>           write the home's digest, data/fleet-status/digest.tsv: every row of the home, read once, and its steps rollup
+#   board.sh --steps [--json]          time per step from every home's rollup (steps.sh, H48)
 #
 # A row says: records (the ones the machine lists), the count in each state, past_limit (records that stayed in a state with a
 # time limit longer than that limit; the age is the age of the record file), no_state (records whose observer names no state of
@@ -54,9 +55,10 @@ if [ "${1:-}" = --digest ]; then  # <home>: the home's rows, read once, written 
   moves=$(JG_HOME=$home JG_STATE_OVERRIDE=$home/state JG_DATA_OVERRIDE=$home/data bash "$HERE/../machines/observers/cursor.sh" read board 2>/dev/null | wc -l)
   { printf '#digest\t%s\t%s\n' "$(date +%s)" "$moves"
     for t in "$home"/core/machines/tables/*.tsv; do m=${t##*/}; cell "$home" "${m%.tsv}"; done; } > "$dir/digest.tsv.tmp" \
-    && mv -f -- "$dir/digest.tsv.tmp" "$dir/digest.tsv"
+    && mv -f -- "$dir/digest.tsv.tmp" "$dir/digest.tsv" && bash "$HERE/steps.sh" --rollup "$home"
   exit $?
 fi
+if [ "${1:-}" = --steps ]; then shift; exec bash "$HERE/steps.sh" "$@"; fi
 if [ "${1:-}" = --run ] && [ "${5:-}" = - ]; then  # <out dir> <home id> <home dir> -: the home's rows from its digest
   out=$2 id=$3 dir=$4 f=$4/data/fleet-status/digest.tsv
   age=$(( $(date +%s) - $(awk -F'\t' 'NR == 1 && $1 == "#digest" { print $2 }' "$f" 2>/dev/null | grep -E '^[0-9]+$' || echo 0) ))

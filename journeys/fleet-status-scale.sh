@@ -5,7 +5,7 @@ set -u
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 out=${DONE_DONE_EVIDENCE_ROOT:?}/${RUN_ID:-run}.log
 rc=0
-{ bash "$root/tests/jg-fleet-status.test.sh" && bash "$root/tests/jg-fleet-status-scale.test.sh"; } > "$out" 2>&1 || rc=1
+{ bash "$root/tests/jg-fleet-status.test.sh" && bash "$root/tests/jg-fleet-status-scale.test.sh" && bash "$root/tests/jg-fleet-steps.test.sh"; } > "$out" 2>&1 || rc=1
 cat "$out"
 cat > "$DONE_DONE_EVIDENCE_ROOT/steps.json" <<JSON
 {"target": {"version": "$(git -C "$root" rev-parse --short HEAD)"},
