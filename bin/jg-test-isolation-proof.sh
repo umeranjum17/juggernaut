@@ -154,9 +154,6 @@ exclusion_reason() {
 # path requires a new audit and proof archive.
 list_parallel_candidates() {
   cat <<'EOF'
-tests/jg-brief.test.sh
-tests/jg-captain-hold-lifecycle.test.sh
-tests/jg-crew-state.test.sh
 tests/jg-pr-merge.test.sh
 tests/jg-x-mode.test.sh
 EOF

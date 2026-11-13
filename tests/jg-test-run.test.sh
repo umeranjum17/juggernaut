@@ -689,22 +689,40 @@ test_a_changed_fleet_homes_library_selects_the_move_test() {
   pass 'a changed fleet-homes library selects the fleet move test'
 }
 
-test_a_changed_dispatch_skill_runs_the_floor_test() {
-  local d=$TMP_ROOT/select-dispatch out
+# T7 (jg8-t7): a script a journey of .done-done.yaml names is selected by `done-done affected`, never by this runner.
+# The old selectors stay only for scripts with no entry (jg8-t2 enters the rest), and this case fails when an entered
+# script is still selected the old way, by --all, a lane, --changed or a row of a table in the runner.
+test_a_script_with_a_done_done_entry_is_selected_by_no_old_selector() {
+  local d=$TMP_ROOT/select-entered out s base listing
   select_fixture "$d"
   cp "$ROOT/bin/jg-timeout-lib.sh" "$d/bin/"
   cp "$ROOT/tests/git-config-helpers.sh" "$d/tests/"
   mkdir -p "$d/.agents/skills/task-dispatch"
   printf 'original\n' >"$d/.agents/skills/task-dispatch/SKILL.md"
   printf 'echo floor failure; exit 1\n' >"$d/tests/jg-agents-md-floor.test.sh"
+  printf 'echo plain ok\n' >"$d/tests/jg-no-entry.test.sh"
   git -C "$d" add .agents tests
   git -C "$d" -c user.email=t@t -c user.name=t commit -qm dispatch
   printf 'changed\n' >>"$d/.agents/skills/task-dispatch/SKILL.md"
-  out=$(cd "$d" && bash bin/jg-test-run.sh --list --changed --base HEAD 2>&1) || fail "dispatch selection refused: $out"
-  assert_contains "$out" 'tests/jg-agents-md-floor.test.sh' 'a dispatch change must select the floor test'
-  out=$(cd "$d" && bash bin/jg-test-run.sh --changed --base HEAD 2>&1) && fail "a failing floor test passed the gate: $out"
-  assert_contains "$out" 'floor failure' 'the selected floor failure must be reported'
-  pass 'a dispatch skill change runs the floor test and rejects its failure'
+  out=$(cd "$d" && bash bin/jg-test-run.sh --list --all 2>&1) || fail "the fixture listing refused: $out"
+  assert_contains "$out" 'tests/jg-agents-md-floor.test.sh' 'a script with no entry stays in the old selection'
+  printf 'app: fixture\njourneys:\n  floor:\n    tier: local\n    command: bash tests/jg-agents-md-floor.test.sh\n' >"$d/.done-done.yaml"
+  out=$(cd "$d" && bash bin/jg-test-run.sh --list --all 2>&1) || fail "the fixture listing refused: $out"
+  case "$out" in *jg-agents-md-floor.test.sh*) fail "an entered script is still in --all: $out" ;; esac
+  assert_contains "$out" 'tests/jg-no-entry.test.sh' 'a script with no entry stays in the old selection'
+  out=$(cd "$d" && bash bin/jg-test-run.sh --list --changed --base HEAD 2>&1) || :
+  case "$out" in *jg-agents-md-floor.test.sh*) fail "an entered script is still selected by --changed: $out" ;; esac
+  # The real repository: no table of the runner holds a row for an entered script, and no listing selects one.
+  listing=$(bash "$ROOT/bin/jg-test-run.sh" --list --all 2>&1)
+  while IFS= read -r s; do
+    [ -n "$s" ] || continue
+    base=$(basename "$s")
+    if grep -nE -- "(^|[^A-Za-z0-9_.-])${base//./\\.}" "$ROOT/bin/jg-test-run.sh" >"$TMP_ROOT/entered-rows.txt"; then
+      fail "the runner still names the entered script $base: $(cat "$TMP_ROOT/entered-rows.txt")"
+    fi
+    case "$listing" in *"$s"*) fail "--all still selects the entered script $s" ;; esac
+  done < <(grep -oE '(^|[^A-Za-z0-9_./-])tests/[A-Za-z0-9_.-]+\.test\.sh' "$ROOT/.done-done.yaml" | grep -oE 'tests/.*' | LC_ALL=C sort -u)
+  pass 'a script with a done-done entry is selected by no old selector and has no row in the runner'
 }
 
 # A time budget advises and never stops: a tree whose largest serial shard packs 3 s over its target still passes,
@@ -750,7 +768,7 @@ test_a_deleted_shared_fixture_does_not_refuse_the_changed_selection
 test_a_changed_shared_file_selects_the_scripts_that_name_it
 test_a_changed_core_script_selects_the_scripts_that_name_it
 test_a_changed_fleet_homes_library_selects_the_move_test
-test_a_changed_dispatch_skill_runs_the_floor_test
+test_a_script_with_a_done_done_entry_is_selected_by_no_old_selector
 test_the_coverage_time_budget_advises_and_a_script_no_shard_runs_still_refuses
 test_a_quarantined_script_is_listed_not_run_and_the_gate_passes
 test_an_unmapped_test_file_fails_only_itself
