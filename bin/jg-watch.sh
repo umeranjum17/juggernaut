@@ -3352,8 +3352,8 @@ post_merge_cleanup() {  # <id>
     if ! env JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" \
         "$SCRIPT_DIR/jg-teardown.sh" "$id" > "$log" 2>&1; then
       line=$(grep -m1 '^REFUSED' "$log" 2>/dev/null) || line=
-      jg_wake_append check "post-merge-cleanup-$id" \
-        "check: cleanup after the merge of $id was refused: ${line:-see $log}" \
+      JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" raise drift "post-merge-cleanup-$id" --deliver --ticket "$id" \
+        --note "cleanup after the merge of $id was refused: ${line:-see $log}" \
         || triage_log "cleanup refusal for $id could not be queued"
     fi
   ) </dev/null >/dev/null 2>&1 &
@@ -3882,7 +3882,7 @@ if declare -F jg_memory_sampler_ensure >/dev/null; then jg_memory_sampler_ensure
 # Finish only identity-bound retirement receipts before any check can run.
 if ! jg_pr_poll_retirement_recover_all "$STATE" "$SCRIPT_DIR/jg-pr-poll.sh"; then
   reason="check: rejected unauthenticated PR poll retirement receipts:$JG_PR_POLL_RETIREMENT_REJECTED"
-  jg_wake_append check pr-poll-retirement "$reason" || exit 1
+  JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" raise drift pr-poll-retirement --deliver --note "$reason" || exit 1
   touch "$STATE/.last-check"
   wake "$reason"
 fi

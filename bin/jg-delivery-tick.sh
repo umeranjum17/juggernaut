@@ -10,7 +10,7 @@
 # check (core/trunk-landing/trunk-landing.sh check), which also starts the go-live and the rollover.
 # It first walks the steering inboxes (jg_task_inbox_walk): each task with an unread record gets one
 # step of the re-ring ladder, which the watcher's window loop runs too, so a steer reaches its worker
-# or its lead whatever either cycle does. Its next step records each lane's ready or resumed moment on its ticket's trail
+# or its lead whatever either cycle does. It then stops the agent of each Built lane (core/lane-end/stop-at-built.sh). Its next step records each lane's ready or resumed moment on its ticket's trail
 # (bin/jg-ready-trace.sh), for every delivery mode. A home with no local trunk (no state/trunk-tip-*) has no
 # landing to run. The stop loop runs after the landing check even when there is no trunk.
 #
@@ -49,6 +49,8 @@ tick_ladder_wake() { case ${JG_WAKE_LAST:-} in now:*) printf '%s\n' "$1" ;; esac
 JG_LADDER_WAKE=tick_ladder_wake jg_task_inbox_walk "$H/state" || echo "jg-delivery-tick: a steering-inbox step could not write its record in $H" >&2
 # Each ready or resumed lane reaches its ticket's trail within the tick (bin/jg-ready-trace.sh); it never stops the pass.
 bash "$SCRIPT_DIR/jg-ready-trace.sh" "$H" >&2 || echo "jg-delivery-tick: the ready trail step failed in $H" >&2
+# A Built lane (done line, PASS receipt at its branch head) has its agent stopped at once; the copy, branch and record stay.
+bash "$SCRIPT_DIR/../core/lane-end/stop-at-built.sh" "$H" >&2 || echo "jg-delivery-tick: the stop-at-built step failed in $H" >&2
 # A missing required check is reported in the same queue as other supervision findings.
 required_out=$(bash "$SCRIPT_DIR/jg-required-checks.sh" "$H" 2>&1) || true
 if [ -n "$required_out" ]; then

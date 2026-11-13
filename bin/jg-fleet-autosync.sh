@@ -146,16 +146,15 @@ skip_reason() {  # <copy-id> <pass-output>
 # says so itself: one check wake naming the copy, how far behind it is, and what
 # stopped it. Repeats stay quiet until the distance or the reason changes.
 report_stale() {  # <pass-output>
-  local id dir n reason key prev wake_ok=0
+  local id dir n reason key prev
   mkdir -p "$DIR/stale" 2>/dev/null || true
-  # shellcheck source=bin/jg-wake-lib.sh
-  . "$SCRIPT_DIR/jg-wake-lib.sh" 2>/dev/null && wake_ok=1
   while read -r id dir; do
     n=$(behind "$dir") || continue
     case "$n" in '' | *[!0-9]*) continue ;; esac
     key="$DIR/stale/$id"
     if [ "$n" -eq 0 ]; then
       rm -f "$key" 2>/dev/null || true
+      JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" resolve "drift--fleet-autosync-$id" >/dev/null 2>&1 || true
       continue
     fi
     reason=$(skip_reason "$id" "$1")
@@ -163,13 +162,11 @@ report_stale() {  # <pass-output>
     prev=$(cat "$key" 2>/dev/null || true)
     printf '%s|%s\n' "$n" "$reason" > "$key" 2>/dev/null || true
     [ "$prev" != "$n|$reason" ] || continue
-    if [ "$wake_ok" = 1 ]; then
-      jg_wake_append check "fleet-autosync-stale-$id" \
-        "check: fleet autosync left $id $n behind: $reason" > /dev/null 2>&1 \
-        || echo "actionable: $id is $n merges behind ($reason) and the stale notice could not be queued"
-    else
-      echo "actionable: $id is $n merges behind: $reason"
-    fi
+    # A changed distance or reason is a new drift: the old alert resolves so the new one rings.
+    JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" resolve "drift--fleet-autosync-$id" >/dev/null 2>&1 || true
+    JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" raise drift "fleet-autosync-$id" --deliver --home "$id" \
+      --note "fleet autosync left $id $n behind: $reason" > /dev/null 2>&1 \
+      || echo "actionable: $id is $n merges behind ($reason) and the stale notice could not be queued"
   done < <(homes)
 }
 

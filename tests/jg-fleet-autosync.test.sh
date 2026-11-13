@@ -130,13 +130,15 @@ test_stale_home_wakes_once_with_its_reason() {
 
   pass_run "$w" >/dev/null
   out=$(wake_queue "$w")
-  assert_contains "$out" "fleet-autosync-stale-primary" "a copy left behind is named"
+  assert_contains "$out" "alert-drift--fleet-autosync-primary" "a copy left behind raises the drift alert for it"
+  assert_equals 0 "$(printf '%s\n' "$out" | grep -c 'fleet-autosync-stale' || true)" "the old per-producer wake is gone"
+  assert_equals open "$(JG_HOME="$w/home" JG_STATE_OVERRIDE="$w/home/state" bash "$ROOT/bin/jg-alert.sh" word drift--fleet-autosync-primary 2>&1)" "the drift alert is open"
   assert_contains "$out" "left primary 2 behind: dirty working tree" \
     "the wake says what stopped it"
   local before
-  before=$(printf '%s\n' "$out" | grep -c fleet-autosync-stale || true)
+  before=$(printf '%s\n' "$out" | grep -c fleet-autosync-primary || true)
   pass_run "$w" >/dev/null
-  assert_equals "$before" "$(wake_queue "$w" | grep -c fleet-autosync-stale || true)" \
+  assert_equals "$before" "$(wake_queue "$w" | grep -c fleet-autosync-primary || true)" \
     "the same distance and reason does not wake twice"
   pass "T4 a copy the pass cannot move wakes once, naming itself and the reason"
 }

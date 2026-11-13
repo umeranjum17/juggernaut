@@ -30,7 +30,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/jg-task-inbox-lib.sh"
 
-VERSION=0.3.0
+VERSION=0.4.0
 TICKETS_MAX=100
 LANES_FIELDS="harness backend branch mode yolo pr age_seconds detail endpoint freshness"
 TASKS_FIELDS="priority since blocked_by hold_kind hold_reason hold_until pr links"
@@ -63,6 +63,9 @@ commands:
                          (read-only; asks GitHub at the time you run it)
   tickets [--state <queued|in_flight|done>] [--repo <name>] [--limit <n>]
                          bounded backlog rows (default 50, at most 100)
+  board                  every state machine in every registered home: one row each with the count in each
+                         state, records past their time limit, records in no state and whether it is wired;
+                         reads each within 10 s and names what it could not read (core/fleet-status/board.sh)
   decisions              open captain holds (read-only; answering is a later slice)
   messages <task-id> [--limit <n>]
                          newest steering messages for one known task (default 20,
@@ -122,6 +125,13 @@ examples:
   juggernaut-axi tasks --state queued --repo juggernaut
   juggernaut-axi tasks show some-task-id --full
   juggernaut-axi tasks ready
+HELP
+    ;;
+    board) cat <<'HELP'
+usage: juggernaut-axi board
+Reads core/machines/tables and each observer in every registered home, each row within 10 s (JG_BOARD_BOUND).
+Words: Built, Landed, In use, Released (core/fleet-status/words.tsv). A row not read in time is listed in unread.
+example: juggernaut-axi board --json
 HELP
     ;;
     holds) cat <<'HELP'
@@ -445,6 +455,16 @@ cmd_pr() {
     || { echo "juggernaut-axi: pr result unreadable" >&2; exit 1; }
 }
 
+cmd_board() {
+  [ $# -eq 0 ] || die "board takes no arguments"
+  "$HOME_ROOT/core/fleet-status/board.sh" | jq_or_die board '. + {
+    total: (.rows | length),
+    rows: [.rows[] | {home, machine, wired, records, states: ((.states | to_entries | map("\(.key)=\(.value)") | join(" ")) | if . == "" then "-" else . end), past_limit, no_state}],
+    help: ["wired false: the machine has no record lister yet (core/fleet-status/records.tsv), so its counts are not read",
+           "unread names each home or machine that was not read in time"]}' \
+    || { echo "juggernaut-axi: board unreadable" >&2; exit 1; }
+}
+
 cmd_decisions() {
   local snap
   snap=$("$SCRIPT_DIR/jg-bearings-snapshot.sh" --json) || { echo "juggernaut-axi: fleet snapshot failed" >&2; exit 1; }
@@ -578,7 +598,7 @@ for a in "$@"; do
   case "$a" in --json) FORMAT=json ;; *) ARGS+=("$a") ;; esac
 done
 case "$CMD" in
-  status|lanes|wakes|tickets|tasks|holds|pr|decisions|messages|answer|message|ticket) ;;
+  status|lanes|wakes|tickets|tasks|holds|pr|board|decisions|messages|answer|message|ticket) ;;
   *) die "unknown command: $CMD (try --help)" ;;
 esac
 for a in "${ARGS[@]+"${ARGS[@]}"}"; do

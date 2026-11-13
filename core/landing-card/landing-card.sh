@@ -136,11 +136,22 @@ summary_json() {
      about: ($total | tostring) + " landings from " + $first + " to " + $last + " UTC, as of " + $asof + ". " + $about, status: "In progress"}'
 }
 
+# drift <subject> <note>: a landing or go-live with no card is the drift alert (bin/jg-alert.sh raise --deliver), once per subject until the
+# card posts; `run` also prints the line for the person who ran it.
+drift() {
+  [ "$MODE" != run ] || echo "landing-card: $2"
+  JG_HOME="$FMH" JG_STATE_OVERRIDE="$FMH/state" "$FMH/bin/jg-alert.sh" raise drift "landing-card-${1// /-}" --deliver --note "$2" >/dev/null 2>&1 || echo "landing-card: $2"
+}
+
 # post_card <label> <card json file>: one post; a failure says why once and returns 1, so the caller stops and the rest wait.
 post_card() {
   local out
-  if out=$("$SIGNOFF" post "$BOARD" --kind evidence --from "$2" --filer juggernaut-landing 2>&1); then posted=$((posted + 1)); return 0; fi
-  echo "landing-card: card for $1 not posted ($(printf '%s' "$out" | tail -n 1 | cut -c1-160)); the rest wait for the next beat"; return 1
+  if out=$("$SIGNOFF" post "$BOARD" --kind evidence --from "$2" --filer juggernaut-landing 2>&1); then
+    posted=$((posted + 1))
+    JG_HOME="$FMH" JG_STATE_OVERRIDE="$FMH/state" "$FMH/bin/jg-alert.sh" resolve "drift--landing-card-${1// /-}" >/dev/null 2>&1 || true
+    return 0
+  fi
+  drift "$1" "card for $1 not posted ($(printf '%s' "$out" | tail -n 1 | cut -c1-160)); the rest wait for the next beat"; return 1
 }
 
 # land_cards: one card per landing row; live_cards: one per go-live row. Both skip a key already on the board, live or archived.
@@ -148,10 +159,10 @@ land_cards() {
   local id proj commit at kind extra
   while IFS=$'\t' read -r id proj commit at kind extra; do
     [ -n "$commit" ] || continue
-    [[ $commit =~ ^[0-9a-f]{40}$ ]] || { echo "landing-card: $id has no full commit in trunk-landings.tsv; no card"; continue; }
+    [[ $commit =~ ^[0-9a-f]{40}$ ]] || { drift "$id" "$id has no full commit in trunk-landings.tsv; no card"; continue; }
     [ "$at" -ge "$since" ] 2>/dev/null || continue
     if printf '%s\n' "$have" | grep -qxF "landing-$commit"; then already=$((already + 1)); continue; fi
-    card_json "$id" "$proj" "$commit" "$at" "$kind" "$extra" > "$work/card.json" || { echo "landing-card: could not build the card for $id"; return 1; }
+    card_json "$id" "$proj" "$commit" "$at" "$kind" "$extra" > "$work/card.json" || { drift "$id" "could not build the card for $id"; return 1; }
     post_card "$id" "$work/card.json" || return 1
   done < "$DATA/trunk-landings.tsv"
 }
@@ -165,7 +176,7 @@ live_cards() {
     prev=${last[$proj]:-}; last[$proj]=$commit
     [ "$at" -ge "$since" ] 2>/dev/null || continue
     if printf '%s\n' "$have" | grep -qxF "live-$commit"; then already=$((already + 1)); continue; fi
-    live_json "$proj" "$commit" "$at" "$status" "$prev" > "$work/card.json" || { echo "landing-card: could not build the go-live card for ${commit:0:12}"; return 1; }
+    live_json "$proj" "$commit" "$at" "$status" "$prev" > "$work/card.json" || { drift "go-live-${commit:0:12}" "could not build the go-live card for ${commit:0:12}"; return 1; }
     post_card "go-live ${commit:0:12}" "$work/card.json" || return 1
   done < <(awk -F'\t' '$1 !~ /:/' "$DATA/trunk-live.tsv")
 }

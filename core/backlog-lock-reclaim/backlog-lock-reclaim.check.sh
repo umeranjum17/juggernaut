@@ -2,8 +2,7 @@
 # backlog-lock-reclaim watcher check: reclaims <jg-home>/data/backlog.md.lock when it is a 0-byte file older than
 # JG_BACKLOG_LOCK_SAFE_AGE_S seconds (default 60, above the old 30 s stale mark) and no process has it open.
 # A backlog writer that dies between creating the lock and writing its token leaves exactly that file, and nothing
-# else reclaims it, so every later backlog write fails LOCKED. Prints one wake line per reclaim and nothing
-# otherwise; each reclaim is logged with its path and age to state/backlog-lock-reclaim.log. Usage: check.sh <jg-home>
+# else reclaims it, so every later backlog write fails LOCKED. Raises one drift alert per reclaim and prints nothing; each reclaim is logged with its path and age to state/backlog-lock-reclaim.log. Usage: check.sh <jg-home>
 # Liveness is the procfs open-descriptor table: a writer frozen between open and token write still holds the descriptor,
 # and the table is the one signal that names the lock file itself (a process name or cwd match cannot tell which
 # backlog a backlog process writes). Descriptors of other users' processes are unreadable; a backlog process we
@@ -47,4 +46,7 @@ held && exit 0
 [ "$(stat -c '%i %s' -- "$LOCK" 2>/dev/null)" = "$ino 0" ] || exit 0
 rm -f -- "$LOCK" || exit 0
 printf '%s reclaimed %s age=%ss\n' "$(date -u +%FT%TZ)" "$LOCK" "$age" >> "$FMH/state/backlog-lock-reclaim.log"
-echo "backlog-lock-reclaim: reclaimed 0-byte backlog lock $LOCK (age ${age}s, no holder); backlog writes are unblocked"
+# The reclaim is already done, so the drift alert rings once and resolves: the next stale lock is a new alert.
+JG_HOME="$FMH" JG_STATE_OVERRIDE="$FMH/state" "$FMH/bin/jg-alert.sh" raise drift backlog-lock-reclaim --deliver \
+  --note "reclaimed 0-byte backlog lock $LOCK (age ${age}s, no holder); backlog writes are unblocked" >/dev/null 2>&1 \
+  && JG_HOME="$FMH" JG_STATE_OVERRIDE="$FMH/state" "$FMH/bin/jg-alert.sh" resolve drift--backlog-lock-reclaim >/dev/null 2>&1

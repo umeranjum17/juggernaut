@@ -23,7 +23,7 @@ The check writes one row for each row of `data/trunk-landings.tsv` that has no r
 | `stage`, `gate_secs` | the stage that held the most seconds, and the gate's seconds | `data/trunk-landing-proofs.tsv` |
 | `load` | the one-minute host load, for a landing at most 10 minutes old | `/proc/loadavg` |
 | `queue_secs`, `landing_secs` | the seconds of the queue and of the landing step (start lock, rebase, admission); with `gate_secs` they are the seconds of each step. Both are empty when the landing start is not on record | `ready`, `launch`, `landed` and `gate_secs` above |
-| `queue_why` | why the lane waited: `behind <lane>`, `behind attempt of <lane>`, `first seen +N s`, or `not recorded` for a queue row the lander wrote no reason for | `data/jg-trunk-landing/<task>.<head>.queue-why`, written by `core/trunk-landing/queue-why.sh` at the landing start |
+| `queue_why` | why the lane waited: `behind <lane>`, `behind attempt of <lane>`, `slot full`, `verify running`, `host load`, `first seen +N s`, or `not recorded` for a queue row the lander wrote no reason for | `data/jg-trunk-landing/<task>.<head>.queue-why`, written by `core/trunk-landing/queue-why.sh` at the landing start |
 
 `ready` and `minutes` are the numbers of table T of the plan's `measure.py`, so both readers give one number for one landing.
 A landed lane's status file is removed at cleanup, so the done lines come from the message log.
@@ -54,5 +54,7 @@ That happens on the first run in a home and after the check was off; the run pri
 `bin/jg-host-wiring.sh` runs the wiring for each home.
 
 ## Test
+
+`latency.sh lint <jg-home> [<since epoch>]` exits 1 and names each queue row whose reason is empty or `not recorded`; `bash tests/jg-trunk-queue-why.test.sh` drives the real lander to a `slot full` row and proves the lint and the header migration.
 
 `bash tests/jg-trunk-latency.test.sh` replays the landings of 9 and 10 Nov against a fixture home.
