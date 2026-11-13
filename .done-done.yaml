@@ -477,6 +477,10 @@ journeys:
   gate-per-test-timeout:
     tier: local
     command: (bash bin/jg-test-run.sh --show-limits && bash bin/jg-test-run.sh tests/jg-test-run.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  result-cache:
+    tier: local
+    command: bash journeys/result-cache.sh
+    timeout: 20m
   pr-pager:
     tier: local
     command: bash tests/jg-pr-pager.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
