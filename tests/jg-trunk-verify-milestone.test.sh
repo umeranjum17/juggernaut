@@ -9,6 +9,9 @@
 # M4 30 lanes with 2 bad ones in different milestones: a red milestone is split with both halves at once until each bad commit stands
 #    alone, both are reverted by one verify, the pin stands on the last commit before the first bad one, the rounds stay within
 #    2 x log2(N), and a second verify moves the pin to the tip.
+# M5 (slice H29i) six lanes land in two queues (odd lanes in A, even lanes in B, each beside the other) and lane 4 is bad: the verify judges
+#    each queue on a chain of its own at once, so A's pin moves past B's red; only lane 4 is reverted, it is confirmed on the trunk
+#    first, and the trunk's pin stands on the last commit that is green in its own queue before it (lane 3); the next verify moves it to the tip.
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
@@ -91,7 +94,48 @@ test_two_bad_commits_in_different_milestones_are_each_found_and_reverted() {
   pass "two bad commits of 30 are each reverted by one verify in $rounds gate runs, the pin stops below the first, then moves to the tip"
 }
 
+# qstack <name> <lanes> <bad index>: lanes land in turn, odd ones in queue A and even ones in queue B, each while the other queue's chain is live.
+qstack() {
+  local i q o body live
+  world "$1"; rig; ms_gate; seed_share 69 5
+  lane base 'exit 0' t/base.test.sh; trunk land base >/dev/null 2>&1 || fail "base must land"; tip > "$HOME_D/state/trunk-green-proj"
+  sleep 600 & live=$!
+  for i in $(seq 1 "$2"); do
+    q=A; o=B; [ $(( i % 2 )) = 0 ] && { q=B; o=A; }
+    body='exit 0'; [ "$i" = "$3" ] && body='echo "not ok - bad lane" >&2; exit 1'
+    rm -rf -- "$HOME_D/state/.trunk-front-proj:A.lock" "$HOME_D/state/.trunk-front-proj:B.lock"
+    mkdir -p "$HOME_D/state/.trunk-front-proj:$o.lock"; printf '%s\n' "$live" > "$HOME_D/state/.trunk-front-proj:$o.lock/pid"
+    lane "l$i" "$body" "t/l$i.test.sh"
+    JG_TRUNK_QUEUE=$q trunk land "l$i" >/dev/null 2>&1 || fail "l$i must land"
+    eval "L$i=$(tip)"
+  done
+  kill "$live" 2>/dev/null || true
+  rm -rf -- "$HOME_D/state/.trunk-front-proj:A.lock" "$HOME_D/state/.trunk-front-proj:B.lock"
+  : > "$W/ms.log"
+}
+
+test_each_queue_is_verified_apart_and_at_once() {
+  local out pins
+  qstack queues 6 4
+  [ "$(awk -F'\t' '$6 == "queue=A" && $7 == "beside=B"' "$HOME_D/data/trunk-landings.tsv" | wc -l)" = 3 ] || fail "the three A landings must record queue=A beside=B"
+  [ "$(awk -F'\t' '$6 == "queue=B" && $7 == "beside=A"' "$HOME_D/data/trunk-landings.tsv" | wc -l)" = 3 ] || fail "the three B landings must record queue=B beside=A"
+  out=$(trunk verify "$PROJ" 2>&1) && fail "a red lane must fail the verify: $out"
+  assert_contains "$out" "queue A: milestone of 3 commits" "queue A is judged on its own milestone"
+  assert_contains "$out" "queue B: milestone of 3 commits" "queue B is judged on its own milestone"
+  [ "$(head -n 2 "$W/ms.log" | grep -c '^s ')" = 2 ] || fail "the two queues must run at once: $(tr '\n' ' ' < "$W/ms.log")"
+  [ "$(reverted)" = "$L4" ] || fail "only lane 4 is reverted: got $(reverted | tr '\n' ' ')"
+  pins=$(cat "$HOME_D/state/trunk-green-queues-proj")
+  assert_contains "$pins" "A $L5" "queue A's pin moves past B's red"
+  assert_contains "$pins" "B $L2" "queue B's pin stands below its red"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$L3" ] || fail "the trunk's pin must stand on lane 3, the last commit green in its queue before the red"
+  case $out in *"charged to no one"*) fail "lane 4 is bad on the trunk too, so it must be charged: $out" ;; esac
+  out=$(trunk verify "$PROJ" 2>&1) || fail "the second verify must pass on the reverted trunk: $out"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(tip)" ] || fail "the second verify must move the pin to the tip"
+  pass 'two queues are verified apart and at once: the red lane is reverted, the other queue keeps its pin, the trunk pin stops below the red then reaches the tip'
+}
+
 test_milestones_hold_n_commits_set_from_the_bad_share
+test_each_queue_is_verified_apart_and_at_once
 test_a_high_bad_share_makes_small_milestones
 test_a_milestone_holds_only_the_commits_of_its_window
 test_two_bad_commits_in_different_milestones_are_each_found_and_reverted

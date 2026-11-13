@@ -1079,6 +1079,21 @@ front_publish() {  # <tip> <commit>: the lane that gates on the real tip becomes
   [ -n "$FRONT" ] || front_claim 1 || return 0
   put "$STATE/$(front_name "$FRONT")" "$1 $2"
 }
+# The queue columns of a landing row (slice H29i): `queue=<queue>` and `beside=<the other queues whose chain is live now>`, empty for a lane of no
+# queue. The verify (core/trunk-verify/milestone.sh) judges the queues apart only when each landing in its range names every other queue.
+QCOLS=()
+queue_cols() {
+  local d n others=''; QCOLS=()
+  [ -n "${JG_TRUNK_QUEUE:-}" ] || return 0
+  for d in "$STATE/.trunk-front-$PN:"*.lock; do
+    [ -e "$d" ] || continue
+    jg_pid_alive "$(cat "$d/pid" 2>/dev/null || true)" || continue
+    n=${d##*/.trunk-front-"$PN":}; n=${n%.lock}; n=${n%%@*}
+    [ "$n" != "$JG_TRUNK_QUEUE" ] || continue
+    case ",$others," in *",$n,"*) ;; *) others="$others${others:+,}$n" ;; esac
+  done
+  QCOLS=("queue=$JG_TRUNK_QUEUE" "beside=${others:--}")
+}
 front_release() {
   [ -z "$FRONT" ] || { rm -f -- "$STATE/$(front_name "$FRONT")"; unlock "$(front_lock "$FRONT")"; FRONT=; }
 }
@@ -1152,7 +1167,7 @@ land_candidate() {
   [ -n "$still" ] || refuse "the trunk kept moving while $id was gated; it lands on the next try"
   JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref -m "trunk: land $id" "refs/heads/$TRUNK" "$cand" "$base" || refuse "$TRUNK changed while landing $id"
   put "$STATE/trunk-tip-$PN" "$cand"
-  row trunk-landings.tsv "$id" "$PN" "$cand" "$(date +%s)" "$GATE_KIND"
+  queue_cols; row trunk-landings.tsv "$id" "$PN" "$cand" "$(date +%s)" "$GATE_KIND" "${QCOLS[@]}"
   record_gated_answer "$META" "$id" "$cand"
   unlock "$STATE/.trunk-$PN.lock"; front_release
   [ "$cand" = "$LANE_HEAD" ] || lane_follow "$LANE_BRANCH" "$LANE_HEAD" "$cand" "$(jg_dod_meta_value "$META" worktree)"
@@ -1296,7 +1311,8 @@ land_group() {
   [ "$(rev "refs/heads/$TRUNK")" = "$B_TIP" ] || { unlock "$STATE/.trunk-$PN.lock"; return 1; }
   JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref -m "trunk: land a batch of ${#CHAIN[@]}" "refs/heads/$TRUNK" "$top" "$B_TIP" || refuse "$TRUNK changed while landing the batch"
   put "$STATE/trunk-tip-$PN" "$top"
-  for i in "${CHAIN[@]}"; do row trunk-landings.tsv "${B_ID[$i]}" "$PN" "${B_CUR[$i]}" "$(date +%s)" "$GATE_KIND" "batch-from=$B_BASE0"; record_gated_answer "${B_META[$i]}" "${B_ID[$i]}" "${B_CUR[$i]}"; done
+  queue_cols
+  for i in "${CHAIN[@]}"; do row trunk-landings.tsv "${B_ID[$i]}" "$PN" "${B_CUR[$i]}" "$(date +%s)" "$GATE_KIND" "batch-from=$B_BASE0" "${QCOLS[@]}"; record_gated_answer "${B_META[$i]}" "${B_ID[$i]}" "${B_CUR[$i]}"; done
   unlock "$STATE/.trunk-$PN.lock"
   for i in "${CHAIN[@]}"; do
     META=${B_META[$i]}
