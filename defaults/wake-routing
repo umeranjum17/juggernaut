@@ -149,7 +149,7 @@ now      check   *                *failed*
 now      check   *                *FAILED*
 # A host alarm: memory, the delete guard, a model outage, a lost host, an unauthenticated
 # state check, and the network check when it found something actionable.
-now      check   alert-host--*   *
+now      check   host-memory      *
 now      check   delete-guard     *
 now      check   alert-capacity--*   *
 now      check   supervision-host-return:*   *

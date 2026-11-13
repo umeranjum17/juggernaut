@@ -185,7 +185,7 @@ test_urgent_stays_now() {
   printf 'ready [at=%s]: PR https://example.test/pr/2\n' "$(date +%s)" > "$dir/state/rdy.status"
   assert_equals now "$(route "$dir" check 'inbox:7' 'check: captain inbox note 7 - yes, merge it')" "a captain answer must wake"
   assert_equals now "$(route "$dir" check ci.check.sh 'check: ci.check.sh: PR 12 checks failed')" "a red gate must wake"
-  assert_equals now "$(route "$dir" check alert-host--memory 'alert host (P3) at rung 3 for main: memory')" "a host alarm must wake"
+  assert_equals now "$(route "$dir" check host-memory 'check: host memory ALERT: 91 percent')" "a host alarm must wake"
   assert_equals now "$(route "$dir" check delete-guard 'check: delete guard blocked a command')" "a host alarm must wake"
   assert_equals now "$(route "$dir" stale crew:w1 'stale: crew:w1 (no output for 20 minutes)')" "a stuck worker must wake"
   assert_equals now "$(route "$dir" signal dec.status 'signal: dec.status')" "a decision must wake"

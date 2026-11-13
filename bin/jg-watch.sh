@@ -211,7 +211,7 @@
 #                          budget and is parked until a probe reads it live
 #                          again (JG_SQUAD_LEAD_LIVENESS_MAX_ATTEMPTS and
 #                          JG_SQUAD_LEAD_LIVENESS_WINDOW_SECS)
-#   check alert-host--memory: alert host (P3) at rung 3 for main: memory
+#   check: host memory ALERT: <summary>; largest: <owner> <size>, ...; <action>
 #                          durable sampler wake; docs/configuration.md "Host
 #                          memory guard" owns admission and alert behavior;
 #                          the host-memory feature owns sampler lifecycle
@@ -1260,11 +1260,11 @@ host_memory_surface_after_output() {
 
 host_memory_surface_queued() {
   local row reason
-  row=$(watcher_queue latest check alert-host--memory) || return 1
+  row=$(watcher_queue latest check host-memory) || return 1
   [ -n "$row" ] || return 0
   [ "$(printf '%s\n' "$row" | cut -f1,2)" != "$(cat "$STATE/.host-memory-surfaced" 2>/dev/null)" ] || return 0
   jg_lock_acquire_wait "$JG_WAKE_QUEUE_LOCK" || return 1
-  row=$(watcher_queue latest check alert-host--memory) || { jg_lock_release "$JG_WAKE_QUEUE_LOCK"; return 1; }
+  row=$(watcher_queue latest check host-memory) || { jg_lock_release "$JG_WAKE_QUEUE_LOCK"; return 1; }
   HOST_MEMORY_SURFACED=$(printf '%s\n' "$row" | cut -f1,2)
   if [ -z "$row" ] || [ "$HOST_MEMORY_SURFACED" = "$(cat "$STATE/.host-memory-surfaced" 2>/dev/null)" ]; then
     jg_lock_release "$JG_WAKE_QUEUE_LOCK"

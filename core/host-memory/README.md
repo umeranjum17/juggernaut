@@ -37,8 +37,8 @@ Kun's diagnostic guard must remain intact when the admission rule moves: the fea
   latch and record nothing further; only the first `ALERT` of an episode
   wakes (later `ALERT` rows in the same episode are quiet until a
   `WAIT`/`OK` clears the latch).
-- Alert: the host alert `host--memory` raised through `bin/jg-alert.sh` (one durable wake `check alert-host--memory`;
-  a Squad Lead home under a local root records the alert with no wake; the alert resolves when a `WAIT`/`OK` clears the latch), one row
+- Alert: one durable wake `check host-memory` with reason
+  `check: host memory ALERT: <summary>; <action>`, one row
   `<epoch>\t<task>\t<reason; action>` in
   `<STATE>/host-memory-interrupts.tsv`, one latch file
   `<STATE>/.host-memory-alerted`, and one owned-task interrupt attempt via

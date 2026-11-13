@@ -139,21 +139,14 @@ wait 2>/dev/null
 pass "a stranger's task process does not keep an old sandbox"
 
 # --- the alert ----------------------------------------------------------------
-# The host alert is the alert function's: one wake per crossing with its key, a log line, and no latch file of this script's own.
-Q=$HOME_DIR/state/.wake-queue
-over() { TMPDIR=$T JG_HOME=$HOME_DIR JG_TMP_ALERT_PCT=$1 "$REAPER" check >/dev/null 2>&1; }
-wakes() { grep -c $'\talert-host--tmp-space\t' "$Q" 2>/dev/null || true; }
-over 1
-assert_equals 1 "$(wakes)" "no host alert wake at the threshold"
-assert_grep "alert host (P3) at rung 3 for main: tmp-space" "$Q" "the wake does not name the host alert"
-assert_grep "% full" "$HOME_DIR/state/tmp-reaper.log" "the log does not name the use"
-over 1
-assert_equals 1 "$(wakes)" "the alert repeated while use stayed over the threshold"
-over 101
-[ "$(JG_HOME=$HOME_DIR bash "$ROOT/bin/jg-alert.sh" word host--tmp-space)" = resolved ] || fail "the alert was not resolved when use dropped"
-over 1
-assert_equals 2 "$(wakes)" "the alert did not fire again after use dropped"
-[ ! -e "$HOME_DIR/state/.tmp-reaper-alert" ] || fail "the old latch file came back"
+out=$(TMPDIR=$T JG_HOME=$HOME_DIR JG_TMP_ALERT_PCT=1 "$REAPER" check 2>&1)
+assert_contains "$out" "is " "no alert at the threshold"
+assert_contains "$out" "% full" "the alert does not name the use"
+out=$(TMPDIR=$T JG_HOME=$HOME_DIR JG_TMP_ALERT_PCT=1 "$REAPER" check 2>&1)
+[ -z "$out" ] || fail "the alert repeated while use stayed over the threshold: $out"
+TMPDIR=$T JG_HOME=$HOME_DIR JG_TMP_ALERT_PCT=101 "$REAPER" check >/dev/null 2>&1
+out=$(TMPDIR=$T JG_HOME=$HOME_DIR JG_TMP_ALERT_PCT=1 "$REAPER" check 2>&1)
+assert_contains "$out" "% full" "the alert did not fire again after use dropped"
 pass "alert fires once per crossing"
 
 # --- a signalled script leaves nothing -----------------------------------------

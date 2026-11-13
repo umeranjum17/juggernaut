@@ -607,12 +607,12 @@ wait_for_network_stage() {
 
 wait_for_network_wake() {
   local home=$1 limit=${2:-30} waited=0
-  while ! grep -Fq $'check\talert-host--startup-network' "$home/state/.wake-queue" 2>/dev/null \
+  while ! grep -Fq $'check\tstartup-network' "$home/state/.wake-queue" 2>/dev/null \
     && [ "$waited" -lt "$limit" ]; do
     sleep 1
     waited=$((waited + 1))
   done
-  grep -Fq $'check\talert-host--startup-network' "$home/state/.wake-queue" 2>/dev/null
+  grep -Fq $'check\tstartup-network' "$home/state/.wake-queue" 2>/dev/null
 }
 
 network_stage_report() {
@@ -2073,7 +2073,7 @@ EOF
   run_session_start_squad_lead "$root" "$home" "$fakebin" "$mate" "$log" "$spawned" missing >/dev/null
   wait_for_network_stage "$home" "$root" 60 || fail "the deferred stage never finished"
   wait_for_network_wake "$home" 60 || fail "the deferred stage never settled wake delivery"
-  assert_grep 'check	alert-host--startup-network' "$queue" \
+  assert_grep 'check	startup-network' "$queue" \
     "a result the digest could not print never reached the agent: $(cat "$queue" 2>/dev/null)"
   pass "session start: a deferred result the digest outran still reaches the agent as a wake"
 }

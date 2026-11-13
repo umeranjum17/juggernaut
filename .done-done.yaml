@@ -61,9 +61,6 @@ journeys:
   alert:
     tier: local
     command: bash journeys/alert.sh
-  host-alert:
-    tier: local
-    command: bash journeys/host-alert.sh
   proof-bypass-apply:
     tier: local
     command: bash tests/jg-proof-bypass-apply.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

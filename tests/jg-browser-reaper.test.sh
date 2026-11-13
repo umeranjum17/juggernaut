@@ -61,8 +61,8 @@ assert_grep "stopped pid=$stop age=90000s profile=$roots/jg-stale/chrome" "$log"
 assert_grep "owning-worker-gone" "$log" "the stop log names the reason"
 assert_no_grep "pid=$captain" "$log" "the captain's own profile never reaches the log"
 assert_equals "$((before + 1))" "$(wakes)" "a sweep that stopped something posts exactly one fleet event"
-assert_grep "alert: stopped 1 stale test browsers" "$log" "the log names the stop count"
-assert_equals "check alert-host--browser-reaper" "$(tail -1 "$JG_WAKE_QUEUE" | cut -f3,4 | tr '\t' ' ')" "the fleet event is the host alert's check row"
+assert_grep "browser reaper stopped 1 stale test browsers" "$JG_WAKE_QUEUE" "the fleet event names the stop count"
+assert_equals "check browser-reaper" "$(tail -1 "$JG_WAKE_QUEUE" | cut -f3,4 | tr '\t' ' ')" "the fleet event is a check row keyed browser-reaper"
 kill "$fresh" "$captain" "$owned" 2>/dev/null || true
 
 # The leak seen on the host: a heavy job (systemd-run scope run-p<main>-i<n>) ended,
@@ -200,9 +200,8 @@ assert_present "$state/.browser-reaper-load" "a load above the limit starts an e
 assert_equals "$before" "$(wakes)" "the first high sample raises nothing"
 printf '%s\n' "$(($(date +%s) - 700))" >"$state/.browser-reaper-load"; jg_reaper_load_alarm
 assert_equals "$((before + 1))" "$(wakes)" "ten minutes above the limit posts exactly one wake"
-assert_grep "alert host (P3) at rung 3 for main: browser-reaper-load" "$JG_WAKE_QUEUE" "the load event is the host alert"
-assert_grep "machine load 999.0" "$log" "the log names the load"
-assert_grep "chrome 3 (oldest" "$log" "the log names the top process group by count and age"
+assert_grep "machine load 999.0" "$JG_WAKE_QUEUE" "the load event names the load"
+assert_grep "chrome 3 (oldest" "$JG_WAKE_QUEUE" "the load event names the top process group by count and age"
 jg_reaper_load_alarm; assert_equals "$((before + 1))" "$(wakes)" "one wake per episode, not one per sample"
 JG_REAPER_LOADAVG=$home/load-low jg_reaper_load_alarm
 assert_absent "$state/.browser-reaper-load" "a load back under the limit ends the episode"
@@ -222,10 +221,10 @@ JG_HOME=$lead JG_STATE_OVERRIDE=$lead/state JG_CONFIG_OVERRIDE=$lead/config STAT
   JG_WAKE_QUEUE='' JG_REAPER_PS=$home/lead-ps.tsv JG_REAPER_LOADAVG=$home/load-high \
   bash -c '. "$1/bin/jg-wake-lib.sh"; . "$1/bin/jg-reaper-lib.sh"; jg_reaper_tick' _ "$ROOT"
 sleep 0.2
-assert_no_grep "browser-reaper-load" "$lead/state/.wake-queue" "a lead home gets no wake for the host load"
+assert_no_grep "machine load" "$lead/state/.wake-queue" "a lead home gets no wake for the host load"
 assert_absent "$lead/state/.browser-reaper-load.raised" "a lead home raises no load episode"
 alive "$lead_stale" && fail "the lead's own sweep must still stop its stale browser"
-assert_grep "alert-host--browser-reaper" "$lead/state/.wake-queue" "a lead's own stop still wakes the lead"
+assert_grep "browser reaper stopped 1 stale test browsers" "$lead/state/.wake-queue" "a lead's own stop still wakes the lead"
 pass "the host load wakes the main home only; a lead's own alert still wakes the lead"
 
 printf 'PASS jg-browser-reaper\n'

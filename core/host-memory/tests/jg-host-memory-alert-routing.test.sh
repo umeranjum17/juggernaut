@@ -51,7 +51,7 @@ test_lead_records_without_waking() (
   tick "$lead" "$lead/state" || fail "the lead tick failed"
   assert_alert_recorded "$lead/state" "Squad Lead home"
   [ ! -s "$lead/state/.wake-queue" ] || fail "a Squad Lead home queued a wake: $(<"$lead/state/.wake-queue")"
-  assert_grep 'alert=host' "$lead/state/alerts/host--memory.rec" "a Squad Lead home must hold the host alert record"
+  assert_grep 'host-memory' "$lead/state/.wake-settled" "a Squad Lead home must tally the alert as settled"
   pass "a Squad Lead home records the host memory alert and queues no wake"
 )
 
@@ -59,7 +59,7 @@ test_primary_wakes() (
   main=$(new_home primary-main)
   tick "$main" "$main/state" || fail "the primary tick failed"
   assert_alert_recorded "$main/state" "primary home"
-  assert_grep 'alert host (P3) at rung 3 for main: memory' "$main/state/.wake-queue" "the primary home must queue the alert wake"
+  assert_grep 'host memory ALERT' "$main/state/.wake-queue" "the primary home must queue the alert wake"
   pass "the primary home queues the host memory alert wake"
 )
 
@@ -69,7 +69,7 @@ test_missing_role_record_wakes() (
   printf 'orphan\n' > "$home/.jg-squad-lead-home"
   tick "$home" "$home/state" || fail "the no-role tick failed"
   assert_alert_recorded "$home/state" "home with no parent record"
-  assert_grep 'alert host (P3) at rung 3 for main: memory' "$home/state/.wake-queue" "a home with no parent record must queue the alert wake"
+  assert_grep 'host memory ALERT' "$home/state/.wake-queue" "a home with no parent record must queue the alert wake"
   pass "a home with a missing role record still queues the host memory alert wake"
 )
 
