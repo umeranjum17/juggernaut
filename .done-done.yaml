@@ -316,6 +316,13 @@ journeys:
       test -s "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" &&
       printf '%s\n' '{"target": {"version": "core/fleet-stats/hotfiles.sh at this head"}, "start": "this repository own git history, last 7 days", "steps": ["run hotfiles.sh over the repository with a 7 day window and a 3 lane minimum", "read the named files, their lane counts and lane ids from the log"], "result": "the log names the first 5 files changed by 3 or more lanes with its split proposal"}' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
 
+  bottlenecks:
+    tier: local
+    command: >-
+      BOTTLENECKS_SHOW="$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" bash tests/jg-fleet-bottlenecks.test.sh >/dev/null 2>&1 &&
+      grep -q 'Fix tickets filed' "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" &&
+      printf '%s\n' '{"target": {"version": "core/fleet-stats/bottlenecks.sh at this head"}, "start": "a fixture home with landing rows, a nightly file, load rows and per-script timing records", "steps": ["run bottlenecks.sh for the fixture day and read each report part", "run it with --daily --file-tickets and read the tickets it filed", "run it again and see no second report and no second ticket"], "result": "the log is the daily report the script wrote: the five report parts, one ticket per flagged script with its numbers, and none while one is open"}' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
+
   limit-prompt-move:
     tier: local
     command: bash core/limit-prompt-move/tests/limit-prompt-move-e2e.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
