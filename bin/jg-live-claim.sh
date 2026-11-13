@@ -40,6 +40,13 @@
 #     state in its own words (`in the homes, off`, `in-homes-off`, `pinned behind`, `reverted`, `not released`).
 # Code that is in every home with its switch off is never `live`, and a change with no named proof is never `in-use`.
 #
+# A claim that names a landed change by its commit id, or by its ticket (the `Ticket: <id>` trailer of its commit on the trunk,
+# state/trunk-tip-juggernaut, HEAD when that is absent) is decided from what the homes run: every registered local home
+# (bin/jg-fleet-homes-lib.sh: each lead, then Main) whose HEAD holds that commit runs the change. When at least one does, the
+# change is live and the claim is extended with `live: <version> @ homes <ids>` (the version is `git describe` of the change, and
+# a home that does not run it yet is named after `not yet in:`), exit 3. When no home runs it the claim falls through to the
+# release record below, so a change no home runs stays merged-not-released.
+#
 # Release record: `${JG_DATA_OVERRIDE:-$JG_HOME/data}/releases`, or the path in
 # JG_RELEASES_FILE.
 # One release per line, `#` starts a comment line, and the first field is the
@@ -186,6 +193,51 @@ delivery_verdict() {  # <claim>
   exit 3
 }
 
+# The commit a claim names: a commit id of 7 or more hex characters, or a ticket id that a trunk commit carries as `Ticket: <id>`.
+claimed_change() {  # <repo> <tip> <claim> -> the full sha, or nothing
+  local repo=$1 tip=$2 tok c
+  for tok in $(printf '%s\n' "$3" | tr -c 'A-Za-z0-9._-' ' '); do
+    tok=${tok%%[.]}
+    case $tok in
+      *[!0-9a-f]*|'') ;;
+      *) [ "${#tok}" -ge 7 ] && [ "${#tok}" -le 40 ] && c=$(git -C "$repo" rev-parse --verify --quiet "$tok^{commit}" 2>/dev/null) && { printf '%s\n' "$c"; return 0; } ;;
+    esac
+    case $tok in *-*) ;; *) continue ;; esac
+    c=$(git -C "$repo" log "$tip" -n 1 --format=%H --grep="^Ticket: $tok\$" 2>/dev/null)
+    [ -z "$c" ] || { printf '%s\n' "$c"; return 0; }
+  done
+  return 1
+}
+
+# The homes that run the claimed change decide it; exits itself when at least one does.
+homes_verdict() {  # <claim>
+  local base=${0%/*} home=${JG_HOME:-} state tip repo c kind id dir runs='' behind='' version
+  [ -n "$home" ] && command -v git >/dev/null 2>&1 || return 0
+  state=${JG_STATE_OVERRIDE:-$home/state}
+  # shellcheck source=bin/jg-compat.sh
+  . "$base/jg-compat.sh"
+  # shellcheck source=bin/jg-squad-lead-parent-lib.sh
+  . "$base/jg-squad-lead-parent-lib.sh"
+  # shellcheck source=bin/jg-squad-lead-registry-lib.sh
+  . "$base/jg-squad-lead-registry-lib.sh"
+  # shellcheck source=bin/jg-fleet-homes-lib.sh
+  . "$base/jg-fleet-homes-lib.sh"
+  repo=$home
+  tip=$(cat "$state/trunk-tip-juggernaut" 2>/dev/null); tip=${tip:-HEAD}
+  git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 || return 0
+  c=$(claimed_change "$repo" "$tip" "$1") || return 0
+  while IFS=$'\t' read -r kind id dir; do
+    if git -C "$dir" merge-base --is-ancestor "$c" HEAD 2>/dev/null; then runs="$runs, $id"; else behind="$behind, $id"; fi
+  done < <(jg_fleet_homes "$home" "$home")
+  [ -n "$runs" ] || return 0
+  version=$(git -C "$repo" describe --tags --always "$c" 2>/dev/null || printf '%s' "${c:0:12}")
+  printf '%s; live: %s @ homes %s' "$1" "$version" "${runs#, }"
+  [ -z "$behind" ] || printf '; not yet in: %s' "${behind#, }"
+  printf '\n'
+  printf 'jg-live-claim: change %s is live: %s run it; added from the homes.\n' "${c:0:12}" "${runs#, }" >&2
+  exit 3
+}
+
 claim_names() {  # <claim> <word>
   printf '%s\n' "$1" | grep -Eqi "(^|[^[:alnum:]_])$2:"
 }
@@ -217,6 +269,7 @@ claim_reports_a_fix "$verb" "$claim" || keep_as_written
 not_proven_verdict "$claim"
 delivery_verdict "$claim"
 claim_states_the_truth "$claim" && keep_as_written
+claim_names "$claim" live || homes_verdict "$claim"
 
 releases=${JG_RELEASES_FILE:-}
 if [ -z "$releases" ]; then
