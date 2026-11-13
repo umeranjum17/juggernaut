@@ -51,6 +51,10 @@ continues to run its own readers, and the lock-library line of
   `data/metrics/tool-cpu.tsv`; with `--file-tickets` it files one `tool-cpu-<script>`
   ticket per top caller through `bin/jg-backlog.sh`, none while one is open. The
   header owns usage. Test: `tests/jg-tool-cpu.test.sh`. Nothing runs it on a timer yet.
+- `hotfiles.sh` - names each file that 3 or more lanes (tickets) changed in a
+  window (default 7 days) with a split proposal; `--post` files one `[feature]`
+  board card per file, once. Read-only without `--post`.
+  Test: `tests/jg-hotfiles.test.sh`.
 
 ## Frozen contract (identical to the fork)
 

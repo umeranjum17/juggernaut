@@ -306,6 +306,12 @@ journeys:
   retro-metrics:
     tier: local
     command: bash core/fleet-stats/tests/retro-metrics.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  hotfiles:
+    tier: local
+    command: >-
+      bash core/fleet-stats/hotfiles.sh --repo . --days 7 --min-lanes 3 2>&1 | awk -F'\t' '{print $1 " is held by " $2 " lanes, for example " substr($3,1,50) "; proposal: " substr($4,1,90)}' | head -5 > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" &&
+      test -s "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" &&
+      printf '%s\n' '{"target": {"version": "core/fleet-stats/hotfiles.sh at this head"}, "start": "this repository own git history, last 7 days", "steps": ["run hotfiles.sh over the repository with a 7 day window and a 3 lane minimum", "read the named files, their lane counts and lane ids from the log"], "result": "the log names the first 5 files changed by 3 or more lanes with its split proposal"}' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
 
   limit-prompt-move:
     tier: local
