@@ -28,7 +28,7 @@
 # bin/jg-ticket-link-guard.sh then owns the ticket rule: a note that names no
 # board ticket link is refused before the append, and the refusal names the fix.
 # bin/jg-live-claim.sh then owns the fixed-means-live rule: a note that reports a
-# user-visible fix as done is written as `merged-not-released: ...` unless it
+# user-visible fix as done is written as `Landed, not in use: ...` unless it
 # carries the released ref and where it is observable, or states the truth itself,
 # and the reporter sees that note on stderr.
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.

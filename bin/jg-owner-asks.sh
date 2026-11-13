@@ -88,7 +88,7 @@ release_is_live() {  # <home path> <ref>
   if [ -z "${LIVE_CACHE[$key]+x}" ]; then
     out=$(JG_RELEASES_FILE="$1/data/releases" JG_STATE_OVERRIDE="$1/state" JG_DATA_OVERRIDE="$1/data" \
       "$SCRIPT_DIR/jg-live-claim.sh" "done" "fixed; live: $2 @ the running stack" 2>/dev/null)
-    case "$out" in 'merged-not-released'*|'') LIVE_CACHE[$key]=no ;; *) LIVE_CACHE[$key]=yes ;; esac
+    case "$out" in 'Landed, not in use'*|'merged-not-released'*|'Built, not landed'*|'') LIVE_CACHE[$key]=no ;; *) LIVE_CACHE[$key]=yes ;; esac
   fi
   [ "${LIVE_CACHE[$key]}" = yes ]
 }

@@ -108,8 +108,8 @@ eval_claim_needs_release() {
   out=$(eval_home bin/jg-live-claim.sh 'done' "$claim" 2>/dev/null) || rc=$?
   [ "$rc" -eq 3 ] || { echo "the claim exited $rc, not 3 (downgraded)"; return 1; }
   case $out in
-    'merged-not-released: '*) ;;
-    *) echo "the claim was not rewritten as merged-not-released: $out"; return 1 ;;
+    'Landed, not in use: '*) ;;
+    *) echo "the claim was not rewritten as Landed, not in use: $out"; return 1 ;;
   esac
 }
 

@@ -64,21 +64,21 @@ test_a_merged_only_fix_is_downgraded() {
   RC=$?
   ERR=$(cat "$dir/stderr")
   [ "$RC" -eq 3 ] || fail "a merged-only fix claim must be downgraded (exit 3), got $RC"
-  assert_equals "merged-not-released: $claim" "$OUT" 'the downgraded report says merged-not-released'
-  assert_contains "$ERR" 'merged-not-released' 'the reporter is told the new state'
+  assert_equals "Landed, not in use: $claim" "$OUT" 'the downgraded report says merged-not-released'
+  assert_contains "$ERR" 'Landed, not in use' 'the reporter is told the new state'
   assert_contains "$ERR" 'release it' 'the reporter is told the next step'
   pass 'a merged-only fix claim is downgraded to merged-not-released'
 }
 
 test_an_unknown_release_state_downgrades() {
-  local dir claim='Fixed the loop; live: v9.9.9 @ https://app.test/settings'
+  local dir claim='Fixed the loop; Released, v9.9.9; live: v9.9.9 @ https://app.test/settings'
   dir=$(home unknown-release 'v1.0.0 2026-11-01T10:00Z app.test')
   expect_verdict 3 "$dir" 'done' "$claim" 'a ref the release record does not name is downgraded'
-  assert_equals "merged-not-released: $claim" "$OUT" 'an unproven live clause is downgraded'
+  assert_equals "Landed, not in use: $claim" "$OUT" 'an unproven live clause is downgraded'
 }
 
 test_a_released_fix_with_an_observation_point_passes() {
-  local dir claim='Fixed the loop; live: v9.9.9 @ https://app.test/settings (checked 12:04Z); carries: #12; waiting: none'
+  local dir claim='Fixed the loop; Released, v9.9.9; live: v9.9.9 @ https://app.test/settings (checked 12:04Z); carries: #12; waiting: none'
   dir=$(home released 'v9.9.9 2026-11-01T10:00Z app.test')
   OUT=$(JG_HOME=$dir bash "$CHECK" 'done' "$claim" 2>"$dir/stderr")
   RC=$?
@@ -88,15 +88,15 @@ test_a_released_fix_with_an_observation_point_passes() {
 }
 
 test_a_recorded_commit_prefix_passes() {
-  local dir claim='Fixed the loop; live: 4f2c9ab @ https://app.test/settings; carries: #12; waiting: none'
+  local dir claim='Fixed the loop; Released, 4f2c9ab; live: 4f2c9ab @ https://app.test/settings; carries: #12; waiting: none'
   dir=$(home commit '4f2c9abd0e1 2026-11-01T11:00Z app.test')
   expect_verdict 0 "$dir" 'done' "$claim" 'a recorded commit id matches a shorter claimed id'
 }
 
 test_a_claim_that_states_the_truth_passes() {
-  local dir claim='Fixed the loop - merged-not-released: the PR merged, no release yet'
+  local dir claim='Fixed the loop - Landed, not in use: the PR merged, no release yet'
   dir=$(home stated)
-  expect_verdict 0 "$dir" 'done' "$claim" 'a claim that says merged-not-released needs no live clause'
+  expect_verdict 0 "$dir" 'done' "$claim" 'a claim that says Landed, not in use needs no live clause'
 }
 
 test_a_screen_free_change_passes() {
@@ -120,13 +120,13 @@ test_the_lead_report_path_writes_the_downgrade() {
   printf 'schema=jg-squad-lead-parent.v1\nroute=local\nparent_home=%s\n' "$dir/parent" > "$dir/.jg-squad-lead-parent"
   JG_HOME=$dir bash "$REPORT" 'done' abcdef0123456789 "$claim" 2>"$dir/stderr" \
     || fail 'the lead report helper must still append a downgraded report'
-  assert_contains "$(cat "$dir/parent/state/umer.status")" "merged-not-released: $claim" \
+  assert_contains "$(cat "$dir/parent/state/umer.status")" "Landed, not in use: $claim" \
     'the parent channel carries merged-not-released, not an unavailable fix'
   pass 'the lead report path writes the downgrade'
 }
 
 test_the_lead_report_path_keeps_a_live_claim() {
-  local dir claim='Fixed the refresh bug; live: v1.2.3 @ https://app.test/settings; carries: #12; waiting: none #tickets/jg-abc'
+  local dir claim='Fixed the refresh bug; Released, v1.2.3; live: v1.2.3 @ https://app.test/settings; carries: #12; waiting: none #tickets/jg-abc'
   dir=$(home lead-report-live 'v1.2.3 2026-11-01T09:00Z app.test')
   mkdir -p "$dir/parent/state"
   printf 'umer\n' > "$dir/.jg-squad-lead-home"
@@ -139,7 +139,7 @@ test_the_lead_report_path_keeps_a_live_claim() {
 }
 
 test_a_down_service_refuses_the_live_claim() {
-  local dir claim='Fixed it; live: v1.2.3 @ https://app.test; carries: #12; waiting: none' out rc=0
+  local dir claim='Fixed it; Released, v1.2.3; live: v1.2.3 @ https://app.test; carries: #12; waiting: none' out rc=0
   dir=$(home down-service 'v1.2.3 2026-11-01T09:00Z app.test')
   mv "$PROBES/dapr" "$PROBES/dapr.off"; mv "$PROBES/nats" "$PROBES/nats.off"
   out=$(bash "$LIVE_SERVICES" 2>&1) || rc=$?
@@ -151,7 +151,7 @@ test_a_down_service_refuses_the_live_claim() {
   assert_contains "$out" 'NOT-IN-DESIGN router' 'the router is named as not in the design'
   verdict "$dir" 'done' "$claim"
   [ "$RC" -eq 3 ] || fail "a recorded release with services down must not stand, got $RC"
-  assert_equals "merged-not-released: $claim" "$OUT" 'the claim is rewritten as merged-not-released'
+  assert_equals "Landed, not in use: $claim" "$OUT" 'the claim is rewritten as merged-not-released'
   assert_contains "$ERR" 'LIVE_SERVICES: DOWN nats dapr' 'the refusal names the down services'
   mv "$PROBES/dapr.off" "$PROBES/dapr"; mv "$PROBES/nats.off" "$PROBES/nats"
   verdict "$dir" 'done' "$claim"
@@ -179,25 +179,25 @@ test_a_landed_change_is_live_where_the_homes_run_it() {
   claim='Fixed the slice, ticket jg8-slice.'
   verdict "$dir" 'done' "$claim"
   [ "$RC" -eq 3 ] || fail "a change the homes run must extend the claim (exit 3), got $RC: $ERR"
-  assert_contains "$OUT" 'live: c-1-1-g' 'the claim carries the version'
-  assert_contains "$OUT" '@ homes lead1, primary' 'the claim names every home that runs it'
+  assert_contains "$OUT" 'In use, c-1-1-g' 'the claim carries the version'
+  assert_contains "$OUT" ', homes lead1, primary' 'the claim names every home that runs it'
   assert_contains "$ERR" 'run it' 'the reporter is told why it is live'
   verdict "$dir" 'done' "Fixed it, commit ${sha:0:9}."
-  assert_contains "$OUT" '@ homes lead1, primary' 'a commit id names the change too'
+  assert_contains "$OUT" ', homes lead1, primary' 'a commit id names the change too'
   # A trunk commit that the lead does not run yet is named after not-yet-in.
   g -C "$dir" commit -q --allow-empty -m 'jg8-next: next' -m 'Ticket: jg8-next'
   verdict "$dir" 'done' 'Fixed the next one, jg8-next.'
-  assert_contains "$OUT" '@ homes primary; not yet in: lead1' 'a home behind the change is named'
+  assert_contains "$OUT" ', homes primary; not yet in: lead1' 'a home behind the change is named'
   # A change no home runs stays merged-not-released.
   git -C "$dir" update-ref refs/heads/side "$(g -C "$dir" commit-tree -p "$sha" -m 'jg8-side: x' -m 'Ticket: jg8-side' 'HEAD^{tree}')"
   printf '%s\n' "$(git -C "$dir" rev-parse side)" > "$dir/state/trunk-tip-juggernaut"
   verdict "$dir" 'done' 'Fixed the side one, jg8-side.'
-  assert_equals 'merged-not-released: Fixed the side one, jg8-side.' "$OUT" 'a change no home runs stays merged-not-released'
+  assert_equals 'Landed, not in use: Fixed the side one, jg8-side.' "$OUT" 'a change no home runs stays merged-not-released'
   pass 'a landed change is live where the homes run it'
 }
 
 test_an_omitted_carries_and_waiting_clause_is_flagged_and_extended() {
-  local dir claim='Fixed the loop; live: v9.9.9 @ https://app.test/settings'
+  local dir claim='Fixed the loop; Released, v9.9.9; live: v9.9.9 @ https://app.test/settings'
   dir=$(home extended 'v8.0.0 2026-10-01T10:00Z app.test prs=3' 'v9.9.9 2026-11-01T10:00Z app.test prs=12,#15')
   task "$dir" open-a 20
   task "$dir" open-b 21
@@ -214,23 +214,23 @@ test_an_omitted_carries_and_waiting_clause_is_flagged_and_extended() {
 test_one_omitted_clause_is_named_alone() {
   local dir
   dir=$(home one-omitted 'v9.9.9 2026-11-01T10:00Z app.test prs=12')
-  expect_verdict 3 "$dir" 'done' 'Fixed it; live: v9.9.9 @ https://app.test; carries: #12' 'a claim that omits only waiting is flagged'
-  assert_equals 'Fixed it; live: v9.9.9 @ https://app.test; carries: #12; waiting: none' "$OUT" 'only the waiting clause is added'
+  expect_verdict 3 "$dir" 'done' 'Fixed it; Released, v9.9.9; live: v9.9.9 @ https://app.test; carries: #12' 'a claim that omits only waiting is flagged'
+  assert_equals 'Fixed it; Released, v9.9.9; live: v9.9.9 @ https://app.test; carries: #12; waiting: none' "$OUT" 'only the waiting clause is added'
   case "$ERR" in *'carries (carries'*) fail 'the carried list was named although the claim has it' ;; esac
-  expect_verdict 3 "$dir" 'done' 'Fixed it; live: v9.9.9 @ https://app.test; waiting: none' 'a claim that omits only carries is flagged'
-  assert_equals 'Fixed it; live: v9.9.9 @ https://app.test; waiting: none; carries: #12' "$OUT" 'only the carries clause is added'
+  expect_verdict 3 "$dir" 'done' 'Fixed it; Released, v9.9.9; live: v9.9.9 @ https://app.test; waiting: none' 'a claim that omits only carries is flagged'
+  assert_equals 'Fixed it; Released, v9.9.9; live: v9.9.9 @ https://app.test; waiting: none; carries: #12' "$OUT" 'only the carries clause is added'
 }
 
 test_a_record_without_prs_reads_unrecorded() {
   local dir
   dir=$(home no-prs 'v9.9.9 2026-11-01T10:00Z app.test')
-  expect_verdict 3 "$dir" 'done' 'Fixed it; live: v9.9.9 @ https://app.test; waiting: none' 'a release record with no prs= field is flagged'
+  expect_verdict 3 "$dir" 'done' 'Fixed it; Released, v9.9.9; live: v9.9.9 @ https://app.test; waiting: none' 'a release record with no prs= field is flagged'
   assert_contains "$OUT" 'carries: unrecorded' 'the extension says the carried PRs are unrecorded'
   assert_contains "$ERR" 'no prs= field' 'stderr names the missing record field'
 }
 
 test_the_lead_report_path_prints_the_extended_claim() {
-  local dir claim='Fixed the refresh bug; live: v1.2.3 @ https://app.test/settings #tickets/jg-abc'
+  local dir claim='Fixed the refresh bug; Released, v1.2.3; live: v1.2.3 @ https://app.test/settings #tickets/jg-abc'
   dir=$(home lead-report-extended 'v1.2.3 2026-11-01T09:00Z app.test prs=40')
   task "$dir" waiting-e 41
   mkdir -p "$dir/parent/state"

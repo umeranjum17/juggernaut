@@ -107,7 +107,7 @@ test_release_is_recorded_for_the_live_claim() {
   printf '#!/bin/sh\nexit 0\n' > "$w/services"; chmod +x "$w/services"
   out=$(JG_HOME="$w/home" JG_STATE_OVERRIDE="$w/home/state" JG_LIVE_SERVICES_BIN="$w/services" \
     "$ROOT/bin/jg-live-claim.sh" "done" "fixed: live: c-6 @ this home; waiting: none" 2>&1)
-  assert_not_contains "$out" "merged-not-released" "a claim for a recorded release is not downgraded"
+  assert_not_contains "$out" "Landed, not in use" "a claim for a recorded release is not downgraded"
   assert_contains "$out" "carries: #7 #9" "the claim names the pull requests the recorded release carries"
   pass "T2 a release is recorded once and the live claim reads it"
 }

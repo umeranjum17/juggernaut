@@ -99,7 +99,7 @@ claim() { OUT=$(bash "$CLAIM" "done" "$1" 2>/dev/null); RC=$?; }
 claim "feat-off is live"; expect_code 3 "$RC" "live for a switched-off change is refused"
 assert_contains "$OUT" "in the homes, off (switch config/feat-off)" "the claim becomes in the homes, off, naming the switch"
 claim "feat-off is live, in the homes, off until config/feat-off exists"; expect_code 0 "$RC" "saying in the homes, off stands"
-claim "feat-side is fixed"; expect_code 3 "$RC" "a change not on the trunk is not fixed"; assert_contains "$OUT" "merged-not-released:" "unlanded reads as merged-not-released"
+claim "feat-side is fixed"; expect_code 3 "$RC" "a change not on the trunk is not fixed"; assert_contains "$OUT" "Built, not landed:" "unlanded reads as Built, not landed"
 claim "feat-gone is done"; expect_code 3 "$RC" "a reverted change is not done"; assert_contains "$OUT" "reverted:" "reverted says reverted"
 : > "$C/feat-on"
 claim "feat-on is live"; expect_code 3 "$RC" "in-use without its proof is extended"

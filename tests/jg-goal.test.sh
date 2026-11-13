@@ -126,12 +126,12 @@ export JG_LIVE_SERVICES_PROBES=$T/probes
 fin=$("$GOAL" declare --ask "ref goal" --repo o/r --where "this home" -- false) || fail "declare the finish goal"
 "$GOAL" released "$fin" v9 >/dev/null
 close_steps "$fin"
-assert_contains "$("$GOAL" finish "$fin")" "merged-not-released: the Goal is done: ref goal - live: v9 @ this home" "a ref the release record does not name is not live"
+assert_contains "$("$GOAL" finish "$fin")" "Landed, not in use: the Goal is done: ref goal - Released, v9; live: v9 @ this home" "a ref the release record does not name is not live"
 fin=$("$GOAL" declare --ask "ref goal" --repo o/r --where "this home" -- false) || fail "declare the second finish goal"
 "$GOAL" released "$fin" v9 >/dev/null
 close_steps "$fin"
 printf 'v9 prs=1\n' > "$T/home/data/releases"
-assert_contains "$("$GOAL" finish "$fin")" "finished - the Goal is done: ref goal - live: v9 @ this home; carries: #1; waiting: none" "a recorded ref in running services is live"
+assert_contains "$("$GOAL" finish "$fin")" "finished - the Goal is done: ref goal - Released, v9; live: v9 @ this home; carries: #1; waiting: none" "a recorded ref in running services is live"
 unset JG_LIVE_SERVICES_PROBES
 
 # Cancel closes the open rows and the epic, and tears nothing down.

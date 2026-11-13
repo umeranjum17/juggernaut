@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# jg-live-claim.sh - the "fixed means live" rule: a report that a user-visible
-# change is fixed or done carries the released version that is running and where
-# it is observable, or it says plainly that the change is merged but not
-# released.
+# jg-live-claim.sh - the "fixed means live" rule, in the four delivery words (core/stage-words/words.tsv): a report that
+# a user-visible change is fixed or done says its word. `In use, <version>, homes <ids>` when it is an ancestor of what
+# registered homes run; `Released, <ref> on GitHub main and npm` when the release record names it; `Landed, not in use`
+# otherwise (`Built, not landed` when it is not on the trunk yet).
 # The verdict is decided from the claim's own words and a recorded release state.
 # Nothing here calls a model, a forge, or the network.
 # jg_dod_block (bin/jg-dod-lib.sh) hands the rule to every generated ship brief,
@@ -22,13 +22,13 @@
 # an ordinary report such as `done: PR <url>` never needs this vocabulary.
 #
 # A claim the rule fires on stands as written when it already says the truth:
-#   - `merged-not-released`, or `not released`: it states the plain position.
+#   - `Landed, not in use`, `Built, not landed`, `merged-not-released` (the old words) or `not released`: it states the plain position.
 #   - `screen: none`: the change has no user-visible screen to observe.
 #   - `live: <ref> @ <where>`: a released ref and the place it is observable,
 #     where the release record names <ref>, and that names the PRs the release
 #     carries (`carries: #12 #15`) and the open PRs that wait for the next
 #     release (`waiting: #20`, or `waiting: none`).
-# Anything else is downgraded to `merged-not-released: <claim>`, so a merged
+# Anything else is downgraded to `Landed, not in use: <claim>`, so a merged
 # change can never reach the captain as a fix he can already use.
 #
 # A claim that names a change the delivery machine knows (core/machines/changes.tsv, by its id or its switch name) is
@@ -36,16 +36,16 @@
 #   - in-use: the change runs in every home, its switch is on and its proof holds. The claim stands, and a claim with no
 #     `proof:` clause is extended with the proof that held (exit 3, so a caller that prints stdout prints the whole claim).
 #   - any other state: it is not live. The claim is replaced by `<state>: <claim>` (`in the homes, off (switch config/<file>):`
-#     for in-homes-off, `merged-not-released:` for unlanded and landed) and exit 3, unless the claim already says that
-#     state in its own words (`in the homes, off`, `in-homes-off`, `pinned behind`, `reverted`, `not released`).
+#     for in-homes-off, `Built, not landed:` for unlanded and `Landed, not in use:` for landed) and exit 3, unless the claim already says that
+#     state in its own words (`in the homes, off`, `in-homes-off`, `pinned behind`, `reverted`, `not in use`, `not released`).
 # Code that is in every home with its switch off is never `live`, and a change with no named proof is never `in-use`.
 #
 # A claim that names a landed change by its commit id, or by its ticket (the `Ticket: <id>` trailer of its commit on the trunk,
 # state/trunk-tip-juggernaut, HEAD when that is absent) is decided from what the homes run: every registered local home
 # (bin/jg-fleet-homes-lib.sh: each lead, then Main) whose HEAD holds that commit runs the change. When at least one does, the
-# change is live and the claim is extended with `live: <version> @ homes <ids>` (the version is `git describe` of the change, and
+# change is In use and the claim is extended with `In use, <version>, homes <ids>` (the version is `git describe` of the change, and
 # a home that does not run it yet is named after `not yet in:`), exit 3. When no home runs it the claim falls through to the
-# release record below, so a change no home runs stays merged-not-released.
+# release record below, so a change no home runs stays Landed, not in use.
 #
 # Release record: `${JG_DATA_OVERRIDE:-$JG_HOME/data}/releases`, or the path in
 # JG_RELEASES_FILE.
@@ -55,7 +55,9 @@
 # An absent, unreadable, or silent record proves no release, so a ref it does not
 # name is downgraded rather than accepted.
 # A record line may carry an optional `prs=12,15` field anywhere after the ref:
-# the PR numbers that release carries.
+# the PR numbers that release carries, and an optional `npm=<version>` field: the version published to npm. The record
+# is written when the release PR lands on GitHub main (bin/jg-release-tag.sh); without `npm=` the Released clause
+# says plainly that npm is not recorded.
 # The waiting list is every task record `$STATE/*.meta` with a `pr=` URL whose
 # `<id>.pr-poll-merge-notified` marker is absent (the PR is not merged) and
 # whose number no release record carries; nothing here asks the forge.
@@ -83,7 +85,7 @@ claim_reports_a_fix() {  # <verb> <claim>
 }
 
 claim_states_the_truth() {  # <claim>
-  if printf '%s\n' "$1" | grep -Eqi -e 'merged[ -]not[ -]released' -e 'not released'; then
+  if printf '%s\n' "$1" | grep -Eqi -e 'merged[ -]not[ -]released' -e 'not released' -e 'landed, not in use' -e 'built, not landed'; then
     return 0
   fi
   printf '%s\n' "$1" | grep -Eqi '(^|[[:space:]])screen:[[:space:]]*none([[:space:]]|$)'
@@ -125,6 +127,18 @@ record_prs_for_ref() {  # <ref> -> `#N #M` from the matching record's prs= field
   ' "$releases"
 }
 
+record_npm_for_ref() {  # <ref> -> the version in the matching record's npm= field, or nothing
+  local ref=$1
+  [ -r "$releases" ] || return 0
+  awk -v r="$ref" '
+    /^[[:space:]]*#/ { next }
+    NF == 0 { next }
+    $1 == r || (r ~ /^[0-9a-f]+$/ && length(r) >= 7 && index($1, r) == 1) {
+      for (i = 2; i <= NF; i++) if ($i ~ /^npm=/) { v = $i; sub(/^npm=/, "", v); print v; exit }
+    }
+  ' "$releases"
+}
+
 waiting_prs() {  # -> `#N #M` of recorded open PRs no release carries
   local state=${JG_STATE_OVERRIDE:-${JG_HOME:-}/state} meta id url n out='' carried=''
   [ -r "$releases" ] && carried=$(awk '/^[[:space:]]*#/ { next } { for (i = 2; i <= NF; i++) if ($i ~ /^prs=/) { v = $i; sub(/^prs=/, "", v); gsub(/#/, "", v); gsub(/,/, " ", v); print v } }' "$releases")
@@ -150,7 +164,8 @@ claim_says_state() {  # <claim> <state>
   case $text in *" $(norm "$2") "*) return 0 ;; esac
   case $2 in
     in-homes-off) case $text in *' in the homes off '*) return 0 ;; esac ;;
-    unlanded|landed) case $text in *' not released '*) return 0 ;; esac ;;
+    unlanded) case $text in *' not landed '*|*' not released '*) return 0 ;; esac ;;
+    landed) case $text in *' not in use '*|*' not released '*) return 0 ;; esac ;;
   esac
   return 1
 }
@@ -177,7 +192,8 @@ delivery_verdict() {  # <claim>
     claim_says_state "$1" "$state" && continue
     case $state in
       in-homes-off) prefix="in the homes, off (switch $sw)" ;;
-      unlanded|landed) prefix=merged-not-released ;;
+      unlanded) prefix='Built, not landed' ;;
+      landed) prefix='Landed, not in use' ;;
       *) prefix=$state ;;
     esac
     printf '%s: %s\n' "$prefix" "$1"
@@ -231,10 +247,10 @@ homes_verdict() {  # <claim>
   done < <(jg_fleet_homes "$home" "$home")
   [ -n "$runs" ] || return 0
   version=$(git -C "$repo" describe --tags --always "$c" 2>/dev/null || printf '%s' "${c:0:12}")
-  printf '%s; live: %s @ homes %s' "$1" "$version" "${runs#, }"
+  printf '%s; In use, %s, homes %s' "$1" "$version" "${runs#, }"
   [ -z "$behind" ] || printf '; not yet in: %s' "${behind#, }"
   printf '\n'
-  printf 'jg-live-claim: change %s is live: %s run it; added from the homes.\n' "${c:0:12}" "${runs#, }" >&2
+  printf 'jg-live-claim: change %s is In use: %s run it; added from the homes.\n' "${c:0:12}" "${runs#, }" >&2
   exit 3
 }
 
@@ -243,8 +259,8 @@ claim_names() {  # <claim> <word>
 }
 
 downgrade() {  # <claim>
-  printf 'merged-not-released: %s\n' "$1"
-  printf '%s\n' 'jg-live-claim: downgraded to merged-not-released: release it and name the released version and where it is observable (live: <ref> @ <where>), or report it as merged-not-released.' >&2
+  printf 'Landed, not in use: %s\n' "$1"
+  printf '%s\n' 'jg-live-claim: downgraded to Landed, not in use: no registered home runs it and no release names it. Put it in use, or release it and name the released version and where it is observable (live: <ref> @ <where>), or report it as Landed, not in use.' >&2
   exit 3
 }
 
@@ -283,6 +299,12 @@ if [ -n "$ref" ] && [ -n "$where" ] && ref_is_recorded "$ref"; then
   if [ ! -x "$svc_script" ]; then keep_as_written; fi
   if svc_out=$("$svc_script" --quiet 2>&1); then
     extended=$claim
+    if ! printf '%s\n' "$claim" | grep -Eq '(^|[^[:alnum:]_])Released,'; then
+      npm=$(record_npm_for_ref "$ref")
+      if [ -n "$npm" ]; then extended="$extended; Released, $ref on GitHub main and npm $npm"
+      else extended="$extended; Released, $ref on GitHub main (npm not recorded)"; fi
+      printf 'jg-live-claim: the claim does not say Released; added from the release record.\n' >&2
+    fi
     if ! claim_names "$claim" carries; then
       carried=$(record_prs_for_ref "$ref")
       extended="$extended; carries: ${carried:-unrecorded}"
@@ -299,8 +321,8 @@ if [ -n "$ref" ] && [ -n "$where" ] && ref_is_recorded "$ref"; then
     [ "$extended" = "$claim" ] && exit 0
     exit 3
   fi
-  printf 'merged-not-released: %s\n' "$claim"
-  printf 'jg-live-claim: release %s is recorded but not live: %s. Bring the services up (bin/jg-stack.sh up), then claim it live.\n' "$ref" "$(printf '%s' "$svc_out" | tail -n 1)" >&2
+  printf 'Landed, not in use: %s\n' "$claim"
+  printf 'jg-live-claim: release %s is recorded but not running: %s. Bring the services up (bin/jg-stack.sh up), then claim it live.\n' "$ref" "$(printf '%s' "$svc_out" | tail -n 1)" >&2
   exit 3
 fi
 
