@@ -88,6 +88,11 @@ test_each_clone_gets_its_own_pool() {
   git clone -q "$origin" "$dir/seed" 2>/dev/null || fail "seed clone"
   git -C "$dir/seed" -c user.name=t -c user.email=t@t commit -q --allow-empty -m seed || fail "seed commit"
   git -C "$dir/seed" push -q origin HEAD 2>/dev/null || fail "seed push"
+  # A lead home is a git repo with a tracked .gitignore; Treehouse appends to that file when the pool sits in the work tree.
+  git init -q "$lead" || fail "lead home fixture"
+  printf 'state/\nprojects/\n' > "$lead/.gitignore"
+  git -C "$lead" add .gitignore .jg-squad-lead-parent || fail "lead home fixture add"
+  git -C "$lead" -c user.name=t -c user.email=t@t commit -q -m home || fail "lead home fixture commit"
   mclone="$main/projects/pockit"; lclone="$lead/projects/pockit"
   git clone -q "$origin" "$mclone" 2>/dev/null || fail "main clone"
   git clone -q "$origin" "$lclone" 2>/dev/null || fail "lead clone"
@@ -100,12 +105,15 @@ test_each_clone_gets_its_own_pool() {
   mcopy=$(cd "$mclone" && treehouse get --lease 2>/dev/null) || fail "main lease"
   lcopy=$(cd "$lclone" && treehouse get --lease 2>/dev/null) || fail "lead lease"
   HOME=$real_home
+  [ -z "$(git -C "$lead" status --short)" ] || fail "spawn pool dirtied the lead home: $(git -C "$lead" status --short)"
+  [ "$(cat "$lead/.gitignore")" = "$(printf 'state/\nprojects/')" ] || fail "spawn pool edited the lead home .gitignore"
+  printf 'lead home git status: clean (%s entries); tracked .gitignore: unchanged\n' "$(git -C "$lead" status --short | wc -l)"
   [ -z "$(git -C "$lclone" status --short)" ] || fail "pool config dirtied the lead clone"
   [ "$(cd "$(git -C "$mcopy" rev-parse --git-common-dir)" && pwd -P)" = "$(cd "$mclone/.git" && pwd -P)" ] \
     || fail "main copy $mcopy is not a copy of the main clone"
   [ "$(cd "$(git -C "$lcopy" rev-parse --git-common-dir)" && pwd -P)" = "$(cd "$lclone/.git" && pwd -P)" ] \
     || fail "lead copy $lcopy is not a copy of the lead clone"
-  case "$lcopy" in "$lead"/.treehouse-pool/*) ;; *) fail "lead copy $lcopy is outside the lead pool";; esac
+  case "$lcopy" in "$lead"/.git/treehouse-pool/*) ;; *) fail "lead copy $lcopy is outside the lead pool";; esac
   printf 'main copy %s; lead copy %s\n' "$mcopy" "$lcopy"
   pass "each clone leases from its own pool"
 }

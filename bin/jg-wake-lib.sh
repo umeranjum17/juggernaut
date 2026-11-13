@@ -1922,15 +1922,24 @@ jg_treehouse_project_lock_path() {  # <project-dir>
 # default root, so its existing pools stay where they are. A project that
 # already carries its own treehouse.toml keeps it.
 jg_treehouse_clone_pool_prepare() {  # <project-dir>
-  local project=$1 home root top gitdir toml pool_root exclude
+  local project=$1 home root top gitdir toml pool_root old_root exclude
   [ -d "$project" ] || return 1
   home=$(CDPATH='' cd -- "$JG_HOME" 2>/dev/null && pwd -P) || return 1
   root=$(jg_juggernaut_root_home "$home") || return 1
   [ "$home" != "$root" ] || return 0
   top=$(git -C "$project" rev-parse --show-toplevel 2>/dev/null) || return 1
   toml="$top/treehouse.toml"
-  [ ! -e "$toml" ] && [ ! -L "$toml" ] || return 0
-  pool_root="$home/.treehouse-pool"
+  # Treehouse appends its pool root to the tracked .gitignore of the repo that
+  # holds the pool, and it never reads info/exclude, so the pool lives in the
+  # home's git directory, which no tracked file covers. A toml this function
+  # wrote for the old <home>/.treehouse-pool root is moved; live slots under
+  # that root stay found because slot detection reads each pool's own state.
+  gitdir=$(git -C "$home" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+  pool_root="$gitdir/treehouse-pool"
+  old_root="$home/.treehouse-pool"
+  if [ -e "$toml" ] || [ -L "$toml" ]; then
+    [ ! -L "$toml" ] && [ "$(cat "$toml" 2>/dev/null)" = "root = \"$old_root\"" ] || return 0
+  fi
   mkdir -p "$pool_root" || return 1
   printf 'root = "%s"\n' "$pool_root" > "$toml" || return 1
   gitdir=$(git -C "$project" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
