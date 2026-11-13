@@ -4084,6 +4084,16 @@ elif [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] && [ "$BACKEND" != orca 
     exit 1
   }
   python3 "$SCRIPT_DIR/jg-treehouse-protect.py" "$PROJ_ABS" "${JG_LOCAL_JUGGERNAUT_STATES[@]}" || exit 1
+  # Copies follow the lane limit and two stay free for a red fix (core/pool-reserve).
+  reserve_args=(); [ -z "$RED_FIX_OF" ] || reserve_args=(--red-fix)
+  reserve_rc=0
+  "$SCRIPT_DIR/../core/pool-reserve/reserve.sh" admit "$JG_HOME" "$PROJ_ABS" ${reserve_args[@]+"${reserve_args[@]}"} || reserve_rc=$?
+  if [ "$reserve_rc" -eq 75 ]; then
+    [ "$HERDR_PROJECTION_ABORT_CLEANUP" = 1 ] || rovo_endpoint_cleanup
+    echo "deferred: task $ID stays queued until a copy frees" >&2
+    exit 75
+  fi
+  [ "$reserve_rc" -eq 0 ] || { echo "error: the copy reserve check failed (exit $reserve_rc) for task $ID" >&2; exit 1; }
   lease_error=$(mktemp "$STATE/.treehouse-lease.XXXXXX") || exit 1
   if ! allocated=$(cd "$PROJ_ABS" && treehouse get --lease --lease-holder "$ID" 2>"$lease_error"); then
     if grep -Eq 'all [0-9]+ worktrees are in use or dirty \(max_trees = [0-9]+\)' "$lease_error"; then
