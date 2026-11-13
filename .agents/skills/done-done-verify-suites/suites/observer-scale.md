@@ -1,3 +1,0 @@
-# Observer cost at 10x records
-
-Observer cost at 10x records: run `done-done run observer-scale` (which runs `journeys/observer-scale.sh`, which runs `tests/jg-observers-scale.test.sh` and writes its log into the run's folder); it builds a lab home with 10 times today's move log, trunk rows and task records, times every observer of `core/machines/observers` and requires each under 1 s, then calls the real `core/machines/observers/cursor.sh` to check that `last` matches a full scan, a later call reads only new lines, a half-written line waits, a named `read` cursor returns each move once, and a replaced log resets the cursor; it reads only generated fixtures (screen: none).

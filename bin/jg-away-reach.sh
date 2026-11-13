@@ -16,8 +16,6 @@
 #     can call it with no away record. The urgent lines, the updates and the episode pages share one budget of
 #     JG_AWAY_REACH_BUDGET (4) sends an hour (state/away-reach.budget); a page over it waits for the next tick and is joined to it.
 #     An urgent line is never held back by the budget, but it counts.
-#   - a burn page (core/sentinel/slo.sh, slice H36): landings under half of ready work in the window is one episode, paged once
-#     when it opens and once when it closes, through the same message and budget; a burn that goes on is not paged again.
 # With no token file the push sends nothing and says nothing (docs/captain-chat.md "Pushes").
 #
 # ARMED BY THE MODE. bin/jg-afk-contract.sh `enter` calls `arm` and `archive` calls `disarm`, so
@@ -42,7 +40,6 @@ ID=away-reach
 SHIM="$STATE/$ID.check.sh"
 DIR="$STATE/$ID.d"
 EPISODES=${JG_EPISODES_BIN:-$JG_ROOT/core/sentinel/episodes.sh}
-SLO=${JG_SLO_BIN:-$JG_ROOT/core/sentinel/slo.sh}
 BUDGET_FILE="$STATE/$ID.budget"
 BUDGET=${JG_AWAY_REACH_BUDGET:-4}
 case "$BUDGET" in ''|*[!0-9]*|0) BUDGET=4 ;; esac
@@ -90,9 +87,6 @@ cmd_episodes() {
   local ev kind key a b text="" n=0 t
   t=$(now)
   ev=$("$EPISODES" events "$STATE" "$t") || return 0
-  # The fleet error budget (slice H36) pages through the same message and budget; its keys start with `slo--`.
-  [ ! -x "$SLO" ] || ev="$ev"$'\n'"$("$SLO" events "$STATE" "$t" 2>/dev/null)"
-  ev=$(printf '%s\n' "$ev" | sed '/^$/d')
   [ -n "$ev" ] || return 0
   [ "$(budget_used)" -lt "$BUDGET" ] || return 0
   while IFS=$'\t' read -r kind key a b; do
@@ -107,7 +101,7 @@ cmd_episodes() {
   push "The fleet needs you ($n change$([ "$n" -eq 1 ] || echo s)).$text" || return 0
   while IFS=$'\t' read -r kind key a b; do
     [ -n "$kind" ] || continue
-    case "$key" in slo--*) "$SLO" "mark-$kind" "$STATE" "$key" "$t" ;; *) "$EPISODES" "mark-$kind" "$STATE" "$key" "$t" ;; esac
+    "$EPISODES" "mark-$kind" "$STATE" "$key" "$t"
   done <<< "$ev"
 }
 

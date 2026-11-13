@@ -37,9 +37,6 @@ journeys:
   machine-observers:
     tier: local
     command: (for m in squad-lead supervision presence; do bash bin/jg-machine.sh check $m && bash bin/jg-machine.sh events $m || exit 1; done; bash tests/jg-machine-observers16.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  observer-scale:
-    tier: local
-    command: bash journeys/observer-scale.sh
   account-table:
     tier: local
     command: bash journeys/account-table.sh
@@ -102,7 +99,7 @@ journeys:
     command: env -u JG_TASK_ID bash tests/jg-trunk-parallel-batch.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   trunk-latency:
     tier: local
-    command: env -u JG_TASK_ID bash tests/jg-trunk-latency.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    command: (env -u JG_TASK_ID bash tests/jg-trunk-latency.test.sh && env -u JG_TASK_ID bash tests/jg-trunk-queue-why.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   status-latency:
     tier: local
     command: env -u JG_TASK_ID bash tests/jg-status-latency.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

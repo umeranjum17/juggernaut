@@ -3,13 +3,20 @@
 # The lander writes one record, $MEM/<task>.<head>.queue-why, when it starts the lane's landing, holding one of
 #   behind <lane>              another lane's landing ended between this lane's done line and now
 #   behind attempt of <lane>   another lane's attempt ended refused (final, env-wait or retry) in that window
+#   slot full                  the lander declined to start it because every gate slot was in use (queue_why_wait, at that decision)
+#   verify running             nothing was ahead of it and the project's verify held its slot when the lander started it late
+#   host load                  nothing was ahead of it and the host's one-minute load was at or over its cpu count when it started late
 #   first seen +<N> s          nothing was ahead of it; the lander first saw the lane N seconds after its done line (N over 60)
 # and the first sight of a lane is $MEM/<task>.<head>.seen (an epoch). Both are written once; a lane that starts on time has no why.
 
 # queue_seen <mem> <task> <head>: record the first tick that saw the lane ready with its whole proof.
 queue_seen() { [ -e "$1/$2.$3.seen" ] || date +%s > "$1/$2.$3.seen" 2>/dev/null || :; }
 
+# queue_why_wait <mem> <task> <head> <reason>: the lander declines to start the lane now; record why, once, at that decision.
+queue_why_wait() { [ -e "$1/$2.$3.queue-why" ] || printf '%s\n' "$4" > "$1/$2.$3.queue-why" 2>/dev/null || :; }
+
 # queue_why_record <mem> <task> <head> <done epoch> <now> [<other lane of the same stack>...]
+# A late start with no lane ahead names the cause true now: $QUEUE_WHY_CAUSE (the lander sets `verify running` or `host load`), else the first sight.
 queue_why_record() {
   local mem=$1 task=$2 head=$3 at=$4 now=$5 f b h t w m best="" bestm=0 seen why=""; shift 5
   [ ! -e "$mem/$task.$head.queue-why" ] || return 0
@@ -30,7 +37,7 @@ queue_why_record() {
   done
   if [ -z "$best" ]; then
     seen=$(cat "$mem/$task.$head.seen" 2>/dev/null) || seen=
-    [[ $seen =~ ^[0-9]+$ ]] && [ $((seen - at)) -gt 60 ] && best="first seen +$((seen - at)) s"
+    [[ $seen =~ ^[0-9]+$ ]] && [ $((seen - at)) -gt 60 ] && best=${QUEUE_WHY_CAUSE:-first seen +$((seen - at)) s}
   fi
   [ -z "$best" ] || printf '%s\n' "$best" > "$mem/$task.$head.queue-why" 2>/dev/null || :
 }

@@ -2,6 +2,8 @@
 # trunk-latency watcher check: one row per local-trunk landing with the minutes from the lane's done line to its landing
 # row and the stage that held most of them, and one alert for a landing over the five-minute target.
 # Usage: latency.sh check <jg-home>
+#        latency.sh lint <jg-home> [<since epoch>]   exits 1, naming each row, when the header lacks queue_why or a queue row landed since
+#                                   <since> (default 0) has an empty reason or `not recorded`; a landing with a reason is never refused
 #
 # It reads only records that the landing check and the lane already write:
 #   data/trunk-landings.tsv         one row per landing: task, project, commit, landed epoch, gate, [batch-from=<commit>]
@@ -30,6 +32,15 @@
 # alert through bin/jg-alert.sh, one key per landing. A landing more than an hour old when its row is written (the first run in a home,
 # or a check that was off) is recorded with no alert, and the run prints one line, which becomes a check wake, that counts those over the limit.
 set -u
+if [ "${1:-}" = lint ] && [ "$#" -ge 2 ] && [ "$#" -le 3 ] && [ -d "$2/state" ]; then
+  out=$(cd "$2" && pwd -P)/data/trunk-latency.tsv
+  [ -s "$out" ] || { echo "trunk-latency lint: no rows at $out" >&2; exit 1; }
+  awk -F'\t' -v since="${3:-0}" 'NR == 1 { for (i = 1; i <= NF; i++) { if ($i == "queue_why") w = i; if ($i == "stage") g = i; if ($i == "landed") l = i }
+      if (!(w && g && l)) { print "trunk-latency lint: the header has no queue_why column"; bad = 1; exit }; next }
+    $g == "queue" && $l >= since && ($w == "" || $w == "not recorded") { printf "trunk-latency lint: %s (%s) waited in the queue with no recorded reason\n", $1, substr($3, 1, 12); bad = 1 }
+    END { exit bad }' "$out"
+  exit
+fi
 [ "$#" -eq 2 ] && [ "$1" = check ] && [ -d "$2/state" ] || { echo "usage: latency.sh check <jg-home>" >&2; exit 2; }
 FMH=$(cd "$2" && pwd -P)
 STATE=$FMH/state DATA=$FMH/data

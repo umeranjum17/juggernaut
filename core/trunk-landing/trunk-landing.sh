@@ -395,6 +395,15 @@ second_slot_project() {
   done
   return 1
 }
+# Every ready lane waits because every gate slot is in use: record that at this decision (core/trunk-landing/queue-why.sh).
+slots_full() { local at id head; while read -r at id head _; do [ -z "$id" ] || queue_why_wait "$MEM" "$id" "$head" 'slot full'; done <<< "$cands"; }
+# The cause a late start names when nothing was ahead of the lane: the project's verify holds its slot, or the host load is at its cpu count.
+start_cause() {
+  local pn=$1 m="$STATE/.trunk-verify-$1.lock" load cpus
+  if [ -e "$m" ] && ! { jg_lock_try_acquire "$m" && jg_lock_release "$m"; }; then echo 'verify running'; return; fi
+  read -r load _ < /proc/loadavg 2>/dev/null || return 0; cpus=$(nproc 2>/dev/null || echo 1)
+  awk -v l="${load:-0}" -v c="$cpus" 'BEGIN { exit !(l >= c) }' && echo 'host load' || :
+}
 # The worker's own ready report: the last line of its status file is `done [at=<epoch>]: ...`. Prints the epoch of that report.
 ready_at() {
   local line; line=$(tail -n 1 "$STATE/$1.status" 2>/dev/null || true)
@@ -471,7 +480,8 @@ if ! mkdir "$MEM/.start" 2>/dev/null; then
 fi
 # Lanes land one at a time, except that a second one may gate on top of the first (second_slot_project): at most 2 gates at once.
 only_pn=; running=$(running_count)
-if [ "$running" -eq 1 ]; then only_pn=$(second_slot_project) || { rmdir "$MEM/.start" 2>/dev/null; exit 0; }; fi
+if [ "$running" -eq 1 ]; then only_pn=$(second_slot_project) || { slots_full; rmdir "$MEM/.start" 2>/dev/null; exit 0; }; fi
+[ "$running" -le 1 ] || slots_full
 if [ "$running" -le 1 ]; then
   # The flush rule (bin/jg-trunk-policy-lib.sh): a project's ready lanes wait until flush-at-ready of them are ready, or the oldest has
   # waited flush-after-minutes, or `jg-trunk.sh flush` was run; then they all land (up to batch-max, oldest done first; the rest follow
@@ -504,6 +514,7 @@ if [ "$running" -le 1 ]; then
   # Name why each lane did not start at its done line (core/trunk-landing/queue-why.sh); core/trunk-latency reads it.
   stack=(); for arg in "${ready[@]}"; do stack+=("${arg%%@*}"); done
   for arg in "${ready[@]}"; do
+    QUEUE_WHY_CAUSE=$(start_cause "$(printf '%s' "$cands" | awk -v t="${arg%%@*}" '$2 == t { print $4; exit }')") \
     queue_why_record "$MEM" "${arg%%@*}" "${arg#*@}" "$(printf '%s' "$cands" | awk -v t="${arg%%@*}" '$2 == t { print $1; exit }')" "$now" "${stack[@]}"
   done
   if [ "${#ready[@]}" -ge 2 ]; then

@@ -82,28 +82,6 @@ assert_equals "$b3" "$(sent)" "over the budget a page waits"
 JG_AWAY_REACH_NOW=$((T5 + 3700)) "$REACH" episodes
 assert_equals $((b3 + 1)) "$(sent)" "the waiting page goes when the hour has room"
 
-# The fleet error budget (slice H36): landings under half of ready work in the window is one burn, paged once, not once per
-# tick; it clears when landings catch up, and a later burn pages again.
-: > "$S/away-reach.budget"; mkdir -p "$T/home/data"
-NB=$((NOW0 + 40000)); LAND=$T/home/data/trunk-landings.tsv
-for i in 1 2 3 4; do printf 'done [at=%s]: ready in branch feature/x%s (local-trunk)\n' "$((NB - 100 * i))" "$i" >> "$S/t2.status"; done
-printf 'lane-a\tjuggernaut\tabc\t%s\tfull\n' "$((NB - 50))" > "$LAND"
-printf "%s\n" "$NB" > "$S/away-reach.d/last-slot"; b4=$(sent)
-JG_AWAY_REACH_NOW=$NB "$S/away-reach.check.sh"
-assert_equals $((b4 + 1)) "$(sent)" "a burn (1 landing against 4 ready) sends one page"
-assert_contains "$(tail -n 6 "$SENT")" "1 landed, 4 ready" "the burn page names the landings and the ready work"
-JG_AWAY_REACH_NOW=$((NB + 300)) "$S/away-reach.check.sh"
-JG_AWAY_REACH_NOW=$((NB + 600)) "$S/away-reach.check.sh"
-assert_equals $((b4 + 1)) "$(sent)" "a burn that goes on is not paged again"
-for i in 1 2 3; do printf 'lane-%s\tjuggernaut\tdef\t%s\tfull\n' "$i" "$((NB + 650))" >> "$LAND"; done
-JG_AWAY_REACH_NOW=$((NB + 900)) "$S/away-reach.check.sh"
-assert_contains "$(tail -n 6 "$SENT")" "Cleared after" "the burn closes when landings catch up"
-b5=$(sent)
-NC=$((NB + 7200)); : > "$LAND"; printf "%s\n" "$NC" > "$S/away-reach.d/last-slot"
-for i in 1 2 3; do printf 'done [at=%s]: ready in branch feature/y%s (local-trunk)\n' "$((NC - 60 * i))" "$i" >> "$S/t2.status"; done
-JG_AWAY_REACH_NOW=$NC "$S/away-reach.check.sh"
-assert_equals $((b5 + 1)) "$(sent)" "a second burn pages once more"
-
 "$ROOT/bin/jg-afk-contract.sh" archive >/dev/null 2>&1
 assert_absent "$S/away-reach.check.sh" "returning disarms the reach"
 assert_absent "$S/away-reach.check-trust" "returning removes the trust record"
