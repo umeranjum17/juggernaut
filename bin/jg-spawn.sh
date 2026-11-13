@@ -4012,37 +4012,30 @@ claude_visible_capture() {
   jg_backend_visible_capture "$BACKEND" "$T" "$W" 2>/dev/null || true
 }
 
-# Post-launch answer for Claude's external-CLAUDE.md-imports dialog
+# Post-launch check for Claude's external-CLAUDE.md-imports dialog
 # (bin/jg-busy-lib.sh owns both dialog signatures). Pre-registration
 # (bin/jg-claude-trust.sh) covers workspace trust and carries
-# already-approved imports consent, but a project entry with no standing
-# approval still opens this dialog, and no launch flag suppresses it. Its
-# cursor rests on the fail-closed "No, disable external imports" decline,
-# so one Enter dismisses it without manufacturing consent - the worker
-# proceeds without the global memory chain rather than sitting at the dialog
-# until a stale wake fires. The trust dialog is never touched: Enter there
-# selects "No, exit" and kills the worker, so a trust wedge stays a
-# stale-wake matter exactly as before. Exits 0 when no imports dialog needed
-# answering, or once an answered one clears; exits 1 when an answered dialog
-# never clears, failing the spawn loudly rather than leaving a worker parked
-# at the dialog.
+# already-approved imports consent, so a project the owner approved never
+# shows this dialog. When it shows anyway, no standing approval exists, and
+# every key Juggernaut can send answers it with a decline: Enter selects the
+# "No, disable external imports" default and Escape does the same. Claude then
+# saves that decline in the owner's own store, and bin/jg-claude-trust.sh
+# refuses every later launch of the project ("already declined external
+# CLAUDE.md imports"). So this sends NO key: the dialog stays unanswered for
+# the owner, nothing is recorded, and the spawn fails with the cause rather
+# than poisoning the project. The trust dialog is never touched either: Enter
+# there selects "No, exit" and kills the worker. Exits 0 when no imports dialog
+# shows; exits 1 as soon as one does.
 claude_wait_for_imports_answer() {
   local pane i=0 max=${JG_CLAUDE_IMPORTS_POLLS:-60} interval=${JG_CLAUDE_IMPORTS_POLL_INTERVAL:-0.5}
-  local answered=0 clear_streak=0
+  local clear_streak=0
   while [ "$i" -lt "$max" ]; do
     pane=$(claude_visible_capture)
     if [ -n "$pane" ] && printf '%s' "$pane" | jg_busy_claude_trust_dialog_tail; then
       # Trust is pre-registered, never answered: leave it for the stale path.
       return 0
     elif [ -n "$pane" ] && printf '%s' "$pane" | jg_busy_claude_imports_dialog_tail; then
-      clear_streak=0
-      if [ "$answered" -eq 0 ]; then
-        spawn_send_key "$T" Enter || return 1
-        answered=1
-      fi
-    elif [ "$answered" -eq 1 ]; then
-      clear_streak=$((clear_streak + 1))
-      [ "$clear_streak" -lt 3 ] || return 0
+      return 1
     else
       clear_streak=$((clear_streak + 1))
       [ "$clear_streak" -lt 10 ] || return 0
@@ -4050,10 +4043,7 @@ claude_wait_for_imports_answer() {
     i=$((i + 1))
     [ "$i" -ge "$max" ] || sleep "$interval"
   done
-  if [ "$answered" -eq 0 ]; then
-    return 0
-  fi
-  return 1
+  return 0
 }
 
 agy_wait_for_working() {
@@ -4094,6 +4084,16 @@ elif [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] && [ "$BACKEND" != orca 
     exit 1
   }
   python3 "$SCRIPT_DIR/jg-treehouse-protect.py" "$PROJ_ABS" "${JG_LOCAL_JUGGERNAUT_STATES[@]}" || exit 1
+  # Copies follow the lane limit and two stay free for a red fix (core/pool-reserve).
+  reserve_args=(); [ -z "$RED_FIX_OF" ] || reserve_args=(--red-fix)
+  reserve_rc=0
+  "$SCRIPT_DIR/../core/pool-reserve/reserve.sh" admit "$JG_HOME" "$PROJ_ABS" ${reserve_args[@]+"${reserve_args[@]}"} || reserve_rc=$?
+  if [ "$reserve_rc" -eq 75 ]; then
+    [ "$HERDR_PROJECTION_ABORT_CLEANUP" = 1 ] || rovo_endpoint_cleanup
+    echo "deferred: task $ID stays queued until a copy frees" >&2
+    exit 75
+  fi
+  [ "$reserve_rc" -eq 0 ] || { echo "error: the copy reserve check failed (exit $reserve_rc) for task $ID" >&2; exit 1; }
   lease_error=$(mktemp "$STATE/.treehouse-lease.XXXXXX") || exit 1
   if ! allocated=$(cd "$PROJ_ABS" && treehouse get --lease --lease-holder "$ID" 2>"$lease_error"); then
     if grep -Eq 'all [0-9]+ worktrees are in use or dirty \(max_trees = [0-9]+\)' "$lease_error"; then
@@ -5567,8 +5567,8 @@ fi
 case "$HARNESS" in
 claude*)
   if ! claude_wait_for_imports_answer; then
-    printf '%s\n' "$(status_stamp_line "failed: claude external-imports dialog did not clear after the safe decline in window $T")" >>"$STATE/$ID.status"
-    echo "error: claude external-imports dialog did not clear after the safe decline in window $T; refusing to leave a worker parked at the dialog; inspect window $T" >&2
+    printf '%s\n' "$(status_stamp_line "failed: claude external-imports dialog is waiting for the owner in window $T; no key was sent, so no decline was recorded")" >>"$STATE/$ID.status"
+    echo "error: claude external-imports dialog is showing in window $T and the project has no recorded approval; no key was sent, so no decline was recorded. The owner answers it once by hand (choose Yes), then relaunch" >&2
     exit 1
   fi
   ;;

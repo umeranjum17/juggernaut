@@ -1922,15 +1922,24 @@ jg_treehouse_project_lock_path() {  # <project-dir>
 # default root, so its existing pools stay where they are. A project that
 # already carries its own treehouse.toml keeps it.
 jg_treehouse_clone_pool_prepare() {  # <project-dir>
-  local project=$1 home root top gitdir toml pool_root exclude
+  local project=$1 home root top gitdir toml pool_root old_root exclude
   [ -d "$project" ] || return 1
   home=$(CDPATH='' cd -- "$JG_HOME" 2>/dev/null && pwd -P) || return 1
   root=$(jg_juggernaut_root_home "$home") || return 1
   [ "$home" != "$root" ] || return 0
   top=$(git -C "$project" rev-parse --show-toplevel 2>/dev/null) || return 1
   toml="$top/treehouse.toml"
-  [ ! -e "$toml" ] && [ ! -L "$toml" ] || return 0
-  pool_root="$home/.treehouse-pool"
+  # Treehouse appends its pool root to the tracked .gitignore of the repo that
+  # holds the pool, and it never reads info/exclude, so the pool lives in the
+  # home's git directory, which no tracked file covers. A toml this function
+  # wrote for the old <home>/.treehouse-pool root is moved; live slots under
+  # that root stay found because slot detection reads each pool's own state.
+  gitdir=$(git -C "$home" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+  pool_root="$gitdir/treehouse-pool"
+  old_root="$home/.treehouse-pool"
+  if [ -e "$toml" ] || [ -L "$toml" ]; then
+    [ ! -L "$toml" ] && [ "$(cat "$toml" 2>/dev/null)" = "root = \"$old_root\"" ] || return 0
+  fi
   mkdir -p "$pool_root" || return 1
   printf 'root = "%s"\n' "$pool_root" > "$toml" || return 1
   gitdir=$(git -C "$project" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
@@ -2704,6 +2713,14 @@ _jg_wake_ledger_record() {
   printf '%s\t%s\t%s\t%s\t%s\n' "$now" "$JG_HOME" "$1" "$2" "$3" >> "$ledger" 2>/dev/null || true
 }
 
+# _jg_wake_rollup_holds <kind> <key> <payload>: exit 0 when core/wake-rollup holds the event for its home's digest
+# (rollup.sh header owns what is P0 and rings at once); exit 1 where the rollup is absent or the event rings.
+_jg_wake_rollup_holds() {
+  local rollup="$JG_WAKE_LIB_DIR/../core/wake-rollup/rollup.sh"
+  [ -x "$rollup" ] || return 1
+  JG_STATE_OVERRIDE="$STATE" "$rollup" hold "${JG_HOME:-$JG_ROOT}" "$1" "$2" "$3" 2>/dev/null
+}
+
 # jg_wake_append_locked <kind> <key> <payload>
 # Locked core of jg_wake_append: records one event under an already-held
 # JG_WAKE_QUEUE_LOCK. Callers that must commit another durable record atomically with
@@ -2733,6 +2750,12 @@ jg_wake_append_locked() {
   # Route, drop a repeated `now` to `batch` inside the re-alert window, and charge a settled event
   # against the hourly cap: one answer from the Go command, `now` where it cannot run.
   class=$(jg_wake_core classify "$kind" "$clean_key" "$clean_payload" 2>/dev/null) || class=now
+  # A non-P0 event of a Squad Lead's home is held for that home's one digest per window (core/wake-rollup).
+  if [ "$class" != silent ] && _jg_wake_rollup_holds "$kind" "$clean_key" "$clean_payload"; then
+    _jg_wake_ledger_record "$kind" "$clean_key" rollup
+    JG_WAKE_LAST="silent:$clean_key"
+    return 0
+  fi
   _jg_wake_ledger_record "$kind" "$clean_key" "$class"
   if [ "$class" = silent ]; then
     _jg_wake_settled_locked "$kind" "$clean_key" "$clean_payload" || true

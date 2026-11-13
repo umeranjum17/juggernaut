@@ -4,7 +4,9 @@
 # Usage:
 #   jg-on.sh [--stdin] <squad-lead-id|unambiguous-ssh-alias> <jg-command> [args...]
 #
-# Routes come only from remote records in data/squad_leads.md. A record names an
+# Routes come only from remote records in data/squad_leads.md, or, when none of
+# them matches, from a runner registered in config/runners (core/runners/
+# registry.sh; the route is the runner id). A record names an
 # SSH config alias, remote Juggernaut code root, and remote JG_HOME. A host alias
 # may be used directly only when exactly one record selects it; an ambiguous
 # alias is refused. The command must be a genuine executable in this checkout's
@@ -93,12 +95,13 @@ LOCAL_COMMAND="$JG_ROOT/bin/$COMMAND"
   || die "remote command is not a genuine tracked executable in this Juggernaut checkout: $COMMAND"
 git -C "$JG_ROOT" ls-files --error-unmatch "bin/$COMMAND" >/dev/null 2>&1 \
   || die "remote command is not tracked by this Juggernaut checkout: $COMMAND"
-[ -f "$REG" ] && [ ! -L "$REG" ] || die "no safe squad_lead registry at $REG"
+[ ! -L "$REG" ] || die "no safe squad_lead registry at $REG"
 
 MATCHES=0
 HOST=
 ROOT=
 HOME_PATH=
+[ -f "$REG" ] || REG=/dev/null
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in '- '*) ;; *) continue ;; esac
   squad_lead_registry_parse_line "$line" || die "malformed squad_lead registry entry: $line"
@@ -110,7 +113,13 @@ while IFS= read -r line || [ -n "$line" ]; do
     HOME_PATH=$SQUAD_LEAD_REGISTRY_HOME
   fi
 done < "$REG"
-[ "$MATCHES" -gt 0 ] || die "no remote squad_lead or SSH alias matches '$ROUTE'"
+if [ "$MATCHES" -eq 0 ] && runner=$("$JG_ROOT/core/runners/registry.sh" get "$JG_HOME" "$ROUTE" 2>/dev/null); then
+  MATCHES=1
+  HOST=$(printf '%s\n' "$runner" | sed -n 's/^ssh=//p')
+  ROOT=$(printf '%s\n' "$runner" | sed -n 's/^root=//p')
+  HOME_PATH=$(printf '%s\n' "$runner" | sed -n 's/^home=//p')
+fi
+[ "$MATCHES" -gt 0 ] || die "no remote squad_lead, runner or SSH alias matches '$ROUTE'"
 [ "$MATCHES" -eq 1 ] || die "remote route '$ROUTE' is ambiguous across $MATCHES configured squad_leads; use a squad_lead id"
 case "$HOST" in ''|-*|*[!A-Za-z0-9._-]*) die "configured SSH alias is unsafe: $HOST" ;; esac
 case "$ROOT" in /*) ;; *) die "configured remote root is not absolute: $ROOT" ;; esac

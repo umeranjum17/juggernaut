@@ -51,6 +51,16 @@ continues to run its own readers, and the lock-library line of
   `data/metrics/tool-cpu.tsv`; with `--file-tickets` it files one `tool-cpu-<script>`
   ticket per top caller through `bin/jg-backlog.sh`, none while one is open. The
   header owns usage. Test: `tests/jg-tool-cpu.test.sh`. Nothing runs it on a timer yet.
+- `hotfiles.sh` - names each file that 3 or more lanes (tickets) changed in a
+  window (default 7 days) with a split proposal; `--post` files one `[feature]`
+  board card per file, once. Read-only without `--post`.
+  Test: `tests/jg-hotfiles.test.sh`.
+- `bottlenecks.sh` - one bottleneck report a day from the landing records: seconds per landing
+  step, gate and verify time, queue wait by reason, host load, and the runs, fail rate and cost of each
+  test script. `--daily` keeps one report a UTC day in `data/metrics/`; `--file-tickets` files one fix
+  ticket, through `core/trunk-landing/quarantine.sh ticket`, for a script whose mean is over its cost
+  budget (default 120 s over 3 runs) or that failed over 40 percent of at least 30 runs. Test:
+  `tests/jg-fleet-bottlenecks.test.sh`. Nothing runs it on a timer yet.
 
 ## Frozen contract (identical to the fork)
 

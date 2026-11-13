@@ -1,0 +1,3 @@
+# Result cache
+
+A green test result is reused: run `done-done run result-cache` (`bash journeys/result-cache.sh`, which runs `tests/jg-test-run.test.sh` and writes its log and `steps.json` into the run's folder). It proves that `bin/jg-test-run.sh --cache`, over two copies of one repository, runs a script on the first lane, runs nothing on the second lane with the same inputs and replays the green output with one `JG_TEST_CACHE_HIT` line, runs the script again when a file it names changed or when `--cache` is not given, and runs a failing script again each time, because `bin/jg-test-cache.sh` keeps only a green result (screen: none).

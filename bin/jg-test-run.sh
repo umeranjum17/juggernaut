@@ -110,6 +110,14 @@
 #                   after the run and so cannot catch a hang on its own.
 #                   External interruption cleanup is outside this runner's
 #                   guarantee; configured per-script bounds remain authoritative.
+#   --cache         reuse a green result: a script whose key (its path, the content of the files it names, and the tool
+#                   versions of this host) has a green entry runs nothing and replays the output that entry kept, with
+#                   one JG_TEST_CACHE_HIT line; every other script runs and, when it is green and did not gate-skip,
+#                   is kept. A red is never kept, so it is never reused. The cache is one folder per machine and
+#                   home that every lane, stack, verify and nightly run reads (bin/jg-test-cache.sh owns the key,
+#                   the folder and the entries). Without --cache nothing is read or written.
+#   --cache-dir <dir>
+#                   with --cache, keep the entries in <dir> instead of the default folder.
 #   --gate          (with --changed, also skips and logs the scripts in tests/gate-quarantine.tsv)
 #                   the pull-request gate contract, which bin/jg-local-suite.sh
 #                   passes: enforce the per-test speed limits and apply the
@@ -268,6 +276,7 @@ LIST_ONLY=0
 LIST_SCHEDULED=0
 SHOW_LIMITS=0
 GATE_MODE=0
+CACHE=0
 # The home the run was started for: run_script_bounded unsets the home overrides for the scripts, and the quarantine list is the home's.
 QUARANTINE_HOME=${JG_HOME:-}
 QUARANTINE_DATA=${JG_DATA_OVERRIDE:-}
@@ -2464,6 +2473,19 @@ while [ "$#" -gt 0 ]; do
       # breach is reported in every mode and never fails or kills a test.
       shift
       ;;
+    --cache)
+      CACHE=1
+      shift
+      ;;
+    --cache-dir)
+      [ "$#" -gt 1 ] || die "--cache-dir requires a folder"
+      export JG_TEST_CACHE_DIR=$2
+      shift 2
+      ;;
+    --cache-dir=*)
+      export JG_TEST_CACHE_DIR=${1#--cache-dir=}
+      shift
+      ;;
     --gate)
       # The pull-request gate contract: enforce the per-test limits, and apply the
       # configured whole-run budget unless the caller named one with --max-wall-ms.
@@ -2899,6 +2921,13 @@ RUN_TMP=$(mktemp -d "${TMPDIR:-/tmp}/jg-test-run.XXXXXX")
 RECORDS="$RUN_TMP/records.tsv"
 FAMILIES_TSV="$RUN_TMP/families.tsv"
 : >"$RECORDS"
+# The result cache lists the repository once per run; every script's key reads that list.
+if [ "$CACHE" -eq 1 ]; then
+  { git -C "$ROOT" ls-files; git -C "$ROOT" ls-files --others --exclude-standard; } 2>/dev/null | sort -u >"$RUN_TMP/cache-files"
+  export JG_TEST_CACHE_ROOT="$ROOT" JG_TEST_CACHE_FILELIST="$RUN_TMP/cache-files"
+  # The run's home names the cache folder; run_script_bounded unsets it for the scripts.
+  [ -n "${JG_TEST_CACHE_DIR:-}" ] || [ -z "$QUARANTINE_HOME" ] || export JG_TEST_CACHE_DIR="$QUARANTINE_HOME/state/test-cache"
+fi
 declare -a WORKER_PIDS=()
 declare -a WORKER_IDX=()
 declare -a WORKER_SCRIPTS=()
@@ -3059,8 +3088,30 @@ reap_marked_processes() {  # <mark>
 # advised (JG_TEST_SLOW) and never stopped while it keeps writing output; a script
 # whose output stops for a whole bound is hung and ends as exit 124, so a hang is
 # still a bounded failure while a slow, passing script stays green.
+# The result cache (bin/jg-test-cache.sh, one owner of key, folder and entries). A hit stands in for the run: the output the
+# green entry kept is replayed, so the record, the markers and the gate-skip scan read it as if the script had just run.
+cache_try_hit() {  # <script> <out> <stream> -> 0 on a hit
+  local script=$1 out=$2 stream=$3 line
+  [ "$CACHE" -eq 1 ] || return 1
+  line=$("$ROOT/bin/jg-test-cache.sh" lookup "$script" "$out" 2>/dev/null) || return 1
+  printf 'JG_TEST_CACHE_HIT %s %s\n' "$script" "${line#hit }" >>"$out"
+  if [ "$stream" -eq 1 ]; then cat -- "$out"; fi
+  return 0
+}
+
+# A green run that did not skip on a capability this host lacks is kept; a skip says what this host could not exercise, so
+# another host must not inherit it as a pass.
+cache_keep() {  # <script> <duration-ms> <out>
+  [ "$CACHE" -eq 1 ] || return 0
+  detect_gate_skip "$3" && return 0
+  "$ROOT/bin/jg-test-cache.sh" store "$1" "$2" "$3" >/dev/null 2>&1 || log "result cache: could not keep the result of $1"
+}
+
 run_script_bounded() {  # <script> <out> <stream> <id>
   local script=$1 out=$2 stream=$3 id=$4
+  cache_try_hit "$script" "$out" "$stream" && return 0
+  local cache_begin_ms
+  cache_begin_ms=$(now_ms)
   # Declaring the variables local first keeps the helper's export scoped to this
   # call and its child script, so the runner's own environment is left as the
   # caller had it.
@@ -3140,6 +3191,7 @@ run_script_bounded() {  # <script> <out> <stream> <id>
     [ "$stream" -eq 1 ] && tail -1 "$out"
   fi
   [ -z "$scratch" ] || rm -rf -- "$scratch"
+  [ "$rc" -ne 0 ] || [ -n "$verdict" ] || TMPDIR=$scratch_root cache_keep "$script" "$(($(now_ms) - cache_begin_ms))" "$out"
   return "$rc"
 }
 

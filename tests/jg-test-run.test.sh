@@ -177,6 +177,40 @@ test_a_required_shard_over_its_budget_is_a_warning_and_runs_every_script() {
   pass 'a required shard over its budget runs every script and is a warning with the host load; a failed test stays red'
 }
 
+# The result cache: a green result is reused by a second lane with the same inputs, a changed input runs the script again, and a red
+# is never reused. Each lane is its own copy of one repository; a counter file outside both counts the real runs of the script.
+test_a_green_result_is_reused_by_a_second_lane_and_a_red_never() {
+  local lane1=$TMP_ROOT/cache-lane1 lane2=$TMP_ROOT/cache-lane2 cache=$TMP_ROOT/cache-entries counter=$TMP_ROOT/cache-runs out rc=0
+  : >"$counter"
+  required_fixture "$lane1" "echo run >>'$counter'; cat data/input.txt >/dev/null" 2
+  mkdir -p "$lane1/data"
+  printf 'one\n' >"$lane1/data/input.txt"
+  git -C "$lane1" add data
+  git -C "$lane1" -c user.name=t -c user.email=t@example.invalid commit -qm 'input'
+  cp -R "$lane1" "$lane2"
+  out=$(cd "$lane1" && bash bin/jg-test-run.sh --cache --cache-dir "$cache" tests/required-feature.test.sh 2>&1) || fail "the first lane failed: $out"
+  [ "$(wc -l <"$counter")" -eq 1 ] || fail "the first lane must run the script once: $out"
+  case $out in *JG_TEST_CACHE_HIT*) fail "an empty cache cannot hit: $out" ;; esac
+  out=$(cd "$lane2" && bash bin/jg-test-run.sh --cache --cache-dir "$cache" tests/required-feature.test.sh 2>&1) || fail "the second lane failed: $out"
+  [ "$(wc -l <"$counter")" -eq 1 ] || fail "the second lane ran a script with a green result of the same inputs: $out"
+  assert_contains "$out" 'JG_TEST_CACHE_HIT tests/required-feature.test.sh' 'a reused result names itself'
+  assert_contains "$out" 'ok - required-feature.test.sh' 'the reused result replays the script output'
+  assert_contains "$out" 'JG_TEST_SUMMARY total=1 failed=0' 'a reused result counts as a green script'
+  printf 'two\n' >"$lane2/data/input.txt"
+  out=$(cd "$lane2" && bash bin/jg-test-run.sh --cache --cache-dir "$cache" tests/required-feature.test.sh 2>&1) || fail "the changed lane failed: $out"
+  [ "$(wc -l <"$counter")" -eq 2 ] || fail "a changed input must run the script again: $out"
+  out=$(cd "$lane2" && bash bin/jg-test-run.sh tests/required-feature.test.sh 2>&1) || fail "a run without --cache failed: $out"
+  [ "$(wc -l <"$counter")" -eq 3 ] || fail "a run without --cache must never read the cache: $out"
+  # A red is never kept: it runs again on the next lane.
+  printf '#!/usr/bin/env bash\necho red >>"%s"; exit 1\n' "$counter" >"$lane1/tests/required-feature-2.test.sh"
+  for _ in 1 2; do
+    (cd "$lane1" && bash bin/jg-test-run.sh --cache --cache-dir "$cache" tests/required-feature-2.test.sh >/dev/null 2>&1) && rc=0 || rc=$?
+    [ "$rc" -ne 0 ] || fail "a red script must stay red"
+  done
+  [ "$(grep -c red "$counter")" -eq 2 ] || fail "a red result was reused instead of run again"
+  pass 'a green result is reused by a second lane with the same inputs, a changed input runs it again, and a red never'
+}
+
 test_shards_split_a_selection_without_losing_or_repeating_a_script() {
   local scripts k out all seen rc=0
   scripts="tests/jg-ship-local.test.sh tests/jg-pr-wait.test.sh tests/jg-brief.test.sh tests/jg-send-inbox.test.sh tests/jg-prompt-gate.test.sh tests/jg-owner-rules.test.sh tests/jg-mail.test.sh"
@@ -694,6 +728,7 @@ test_the_coverage_time_budget_advises_and_a_script_no_shard_runs_still_refuses()
   pass 'the coverage time budget advises with exit 0 and a script no shard runs still refuses'
 }
 
+test_a_green_result_is_reused_by_a_second_lane_and_a_red_never
 test_shards_split_a_selection_without_losing_or_repeating_a_script
 test_the_e2e_limit_is_60_seconds_in_config
 test_an_e2e_test_over_its_limit_warns_naming_itself_and_its_time

@@ -395,8 +395,8 @@ test_the_nightly_run_writes_its_report_files_one_flake_ticket_and_traces_a_red_t
   assert_contains "$(cat "$report")" "judged against: $base" "the report names the day's first commit it judged against"
   assert_contains "$(cat "$report")" "t/f.test.sh" "the report names the flaky script"
   git -C "$PROJ" log -1 --format=%B trunk | grep -qx "reverts: $b" || fail "the red must be traced to the second of the pair and reverted: $(git -C "$PROJ" log -2 --format=%B trunk)"
-  for _ in $(seq 1 100); do grep -qs "line-red-proj-${b:0:12}" "$q" && break; sleep 0.2; done
-  grep -q "line-red-proj-${b:0:12}" "$q" || fail "line-red must be raised for the traced commit: $(cat "$q" 2>&1)"
+  for _ in $(seq 1 100); do grep -qs "alert-line-red--proj-${b:0:12}" "$q" && break; sleep 0.2; done
+  grep -q "alert-line-red--proj-${b:0:12}" "$q" || fail "line-red must be raised for the traced commit: $(cat "$q" 2>&1)"
   [ "$(grep -c '^add ' "$W/backlog-calls")" = 1 ] || fail "the flaky script must be filed as exactly one ticket: $(cat "$W/backlog-calls")"
   assert_contains "$(grep '^add flaky-proj-f ' "$W/backlog-calls")" "t/f.test.sh" "the ticket names the script"
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$base" ] || fail "a red nightly run must not move the green pin"

@@ -96,7 +96,7 @@ journeys:
     command: bash tests/jg-wake-batching.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   required-shard-retry:
     tier: local
-    command: (env -u JG_TASK_ID bash tests/jg-test-run.test.sh && env -u JG_TASK_ID bash tests/jg-trunk-verify.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    command: bash journeys/required-shard-retry.sh
   trunk-parallel-batch:
     tier: local
     command: env -u JG_TASK_ID bash tests/jg-trunk-parallel-batch.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -159,6 +159,9 @@ journeys:
   claude-1m-context:
     tier: local
     command: bash tests/jg-spawn-model.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  spawn-imports-dialog:
+    tier: local
+    command: JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-spawn-imports-dialog.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1 && printf '{"target":{"version":"jg-spawn.sh"},"start":"a claude spawn whose pane shows the external-imports dialog","steps":["spawn a claude worker","the pane shows the imports dialog","read the spawn result and the owner store"],"result":"the spawn failed with the cause, sent no key, and the store holds no decline"}\n' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
   spawn-load-admission:
     tier: local
     command: bash tests/jg-spawn-load-admission.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -306,6 +309,19 @@ journeys:
   retro-metrics:
     tier: local
     command: bash core/fleet-stats/tests/retro-metrics.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  hotfiles:
+    tier: local
+    command: >-
+      bash core/fleet-stats/hotfiles.sh --repo . --days 7 --min-lanes 3 2>&1 | awk -F'\t' '{print $1 " is held by " $2 " lanes, for example " substr($3,1,50) "; proposal: " substr($4,1,90)}' | head -5 > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" &&
+      test -s "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" &&
+      printf '%s\n' '{"target": {"version": "core/fleet-stats/hotfiles.sh at this head"}, "start": "this repository own git history, last 7 days", "steps": ["run hotfiles.sh over the repository with a 7 day window and a 3 lane minimum", "read the named files, their lane counts and lane ids from the log"], "result": "the log names the first 5 files changed by 3 or more lanes with its split proposal"}' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
+
+  bottlenecks:
+    tier: local
+    command: >-
+      BOTTLENECKS_SHOW="$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" bash tests/jg-fleet-bottlenecks.test.sh >/dev/null 2>&1 &&
+      grep -q 'Fix tickets filed' "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" &&
+      printf '%s\n' '{"target": {"version": "core/fleet-stats/bottlenecks.sh at this head"}, "start": "a fixture home with landing rows, a nightly file, load rows and per-script timing records", "steps": ["run bottlenecks.sh for the fixture day and read each report part", "run it with --daily --file-tickets and read the tickets it filed", "run it again and see no second report and no second ticket"], "result": "the log is the daily report the script wrote: the five report parts, one ticket per flagged script with its numbers, and none while one is open"}' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
 
   limit-prompt-move:
     tier: local
@@ -461,6 +477,10 @@ journeys:
   gate-per-test-timeout:
     tier: local
     command: (bash bin/jg-test-run.sh --show-limits && bash bin/jg-test-run.sh tests/jg-test-run.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  result-cache:
+    tier: local
+    command: bash journeys/result-cache.sh
+    timeout: 20m
   pr-pager:
     tier: local
     command: bash tests/jg-pr-pager.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -884,6 +904,10 @@ journeys:
     # was Core suites step 77: Lead-sweep test
     tier: local
     command: bash journeys/core-run.sh 'bash lead-sweep/tests/lead-sweep.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-wake-rollup-test:
+    # H35: Main gets one digest per home per 10 minutes
+    tier: local
+    command: bash journeys/wake-rollup.sh
   core-landing-card-test:
     # was Core suites step 78: Landing-card test
     tier: local

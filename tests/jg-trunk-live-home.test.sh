@@ -30,7 +30,9 @@ world() {
   chmod +x "$W/root/bin/jg-captain-hold.sh"
   printf 'trunk-branch=trunk-v3\n' > "$HOME_D/config/trunk-policy"
   printf -- '- proj [local-trunk] - fixture project in local-trunk mode (added 2026-11-07)\n' > "$HOME_D/data/projects.md"
-  jg_git_init_commit "$PROJ"; jg_git_add_origin "$PROJ" "$W/origin.git"
+  jg_git_init_commit "$PROJ"
+  printf 'data/\n' > "$PROJ/.gitignore"; git -C "$PROJ" add .gitignore; git -C "$PROJ" "${GIT_ID[@]}" commit -q -m gitignore
+  jg_git_add_origin "$PROJ" "$W/origin.git"
   trunk init "$PROJ" >/dev/null 2>&1 || fail "trunk init must work"
   git clone -q "$(git -C "$PROJ" remote get-url origin)" "$HOMEC"
   # `live` moves the whole fleet from the tip's own tools (ap-t2); this file proves the single-home hook and go_live's record of it.
@@ -137,7 +139,28 @@ test_guarded_home_moves_with_its_recorded_tip() {
   pass 'live advances a guarded home and its recorded tip together'
 }
 
+test_the_stray_pool_gitignore_line_is_cleared_and_other_edits_are_kept() {
+  local out stray=/.treehouse-pool/.treehouse
+  world stray
+  land_on_trunk four
+  printf '%s\n' "$stray" >> "$HOMEC/.gitignore"
+  out=$(trunk live "$PROJ" 2>&1) || fail "a home with only the stray pool line must go live: $out"
+  [ "$(git -C "$HOMEC" rev-parse HEAD)" = "$C" ] || fail "the home must reach the landed commit: $out"
+  grep -qxF "$stray" "$HOMEC/.gitignore" && fail "the stray line must be gone"
+  [ -z "$(git -C "$HOMEC" status --porcelain)" ] || fail "the moved home must be clean"
+  world strayplus
+  land_on_trunk five
+  printf '%s\n' "$stray" 'mine-local' >> "$HOMEC/.gitignore"
+  live_fails "dirty working tree"
+  out=$(trunk live "$PROJ" 2>&1 || true)
+  assert_contains "$out" "dirty path: .gitignore" "the kept edit must be reported"
+  grep -qxF mine-local "$HOMEC/.gitignore" || fail "the other edit must be kept"
+  grep -qxF "$stray" "$HOMEC/.gitignore" && fail "the stray line must still be removed"
+  pass 'live clears only the stray pool gitignore line, and keeps and reports any other edit'
+}
+
 test_guarded_home_moves_with_its_recorded_tip
+test_the_stray_pool_gitignore_line_is_cleared_and_other_edits_are_kept
 test_a_home_that_cannot_move_says_why
 test_a_failed_ref_update_leaves_the_home_clean_at_the_old_commit
 test_a_clean_home_fetches_from_the_trunk_branch_and_goes_live
