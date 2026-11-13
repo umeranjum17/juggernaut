@@ -62,6 +62,7 @@ if [ "$CMD" = place ]; then
   list=$CONFIG/lane-scale-machines
   rows=$(mktemp -d "$STATE/.fleet-machines.XXXXXX") || exit 1
   trap 'rm -rf -- "$rows"' EXIT
+  # shellcheck disable=SC2329 # run by name in the xargs child shell below
   read_machine() {  # <name> <target> <cores>: write one row `<name> read <counted cores> <stop cores>` or `<name> unread`
     local out
     out=$(if [ -n "${JG_FLEET_SSH:-}" ]; then timeout 5 bash -c "$JG_FLEET_SSH \"\$1\"" _ "$2"
@@ -73,6 +74,7 @@ if [ "$CMD" = place ]; then
   }
   export -f read_machine classify conf; export rows CONFIG JG_FLEET_SSH
   if [ -r "$list" ]; then
+    # shellcheck disable=SC2016 # the xargs child shell expands these
     grep -v '^[[:space:]]*\(#\|$\)' "$list" | awk 'NF >= 3 && $1 !~ /[\/.]/ && $3 ~ /^[0-9]+$/' \
       | xargs -P 16 -L 1 bash -c 'read_machine "$0" "$1" "$2"'
   fi

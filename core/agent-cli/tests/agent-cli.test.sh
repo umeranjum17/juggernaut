@@ -37,7 +37,7 @@ out=$(jg progress "built the parser"); has progress "$out" "Next:"
 out=$(jg wait outside ci "CI run of the lane" --until 2099-01-01T00:00Z); has wait "$out" "wait declared"
 out=$(jg wait nobody ci "x") && fail "bad wait word passed"
 out=$(jg status); has status-wait "$out" "wait: paused [at="; has status-wait "$out" "[wait=outside] [reason=ci]"
-out=$(jg done); has done "$out" "done recorded"
+out=$(jg "done"); has "done" "$out" "done recorded"
 last=$(tail -n1 "$S"); case $last in "done [at="*"]: ready in branch feature/t1 (local-only)") ;; *) fail "done line: $last" ;; esac
 [ "$(wc -l < "$S")" = 3 ] || fail "status file should hold 3 lines (progress, paused, done), got $(wc -l < "$S")"
 # alerts: only the ticket's own alerts show; a lead's --home shows all; ack is the machine's move

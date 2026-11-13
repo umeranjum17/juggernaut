@@ -403,7 +403,11 @@ jobs:
     if: ${{ needs.invariants.outputs.behavior == 'true' && github.event_name == 'pull_request' }}
     timeout-minutes: 15
     steps:
+      # Full history: bin/jg-brief.sh decides whether a project is this repository by its root commit, which a
+      # depth-1 checkout cannot show, so the brief journeys refuse every publishing scaffold there.
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - name: Install pinned ShellCheck
         run: |
           set -eu

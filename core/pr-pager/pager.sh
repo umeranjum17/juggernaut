@@ -66,6 +66,7 @@ page() {
 }
 
 report_main() {  # <what>: one line on the parent channel, from the lead home only
+  # shellcheck disable=SC2034 # JG_HOME is read by the sourced parent-channel library
   ( JG_HOME=$FMH
     # shellcheck source=bin/jg-parent-channel-lib.sh
     . "$FMH/bin/jg-parent-channel-lib.sh" && jg_parent_channel_report "$FMH" "$STATE" "note: pr-pager: $1; paged 6 times with no change; the lead has not moved it, so settle or reassign it" ) >/dev/null 2>&1

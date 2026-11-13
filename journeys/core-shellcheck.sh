@@ -12,15 +12,21 @@ shellcheck --version
 # it reports SC1091 for each missing source and, when only the unfollowed library reads a variable, a follow-on
 # SC2034. The copies are byte-identical to the fork and may not be edited, so exactly those two codes are
 # exempt for those files. Every other check stays on at every severity.
+# The same SC1091 also fires for every in-repo `# shellcheck source=bin/...` or `source=core/...` directive, because
+# those paths are relative to the repository root and ShellCheck 0.11 resolves them from this core/ directory; the
+# libraries are real and are checked as scripts of their own, so SC1091 is exempt for all files, not only the copies.
 found=0
 for f in ./*.sh ./*/* ./*/*/*; do
   [ -f "$f" ] || continue
   head -n 1 "$f" | grep -Eq '^#!.*\b(bash|sh)\b' || continue
   found=$((found + 1))
-  exclude=SC2015
+  exclude=SC2015,SC1091
   case "$f" in
-    ./sentinel/*|./supervisor-guard/*|./wait-timers/bin/*|./signoff/bin/*|./host-memory/bin/*|./alerts/*|./receipts/bin/*|./fleet-stats/bin/*) exclude=SC2015,SC1091 ;;
     ./wait-timers/tests/jg-wait-timers.test.sh) exclude=SC2015,SC1091,SC2034 ;;
+    # ShellCheck 0.11 adds these notes for two verbatim fork copies: functions stubbed for the code under test and
+    # called only from the sourced library, and a loop variable named like an uppercase global.
+    ./alerts/tests/model-outage-hook-e2e.sh) exclude=SC2015,SC1091,SC2030,SC2329 ;;
+    ./wait-timers/bin/jg-stops-lib.sh) exclude=SC2015,SC1091,SC2153 ;;
   esac
   echo "== shellcheck -x -e $exclude $f =="
   shellcheck -x -e "$exclude" "$f"

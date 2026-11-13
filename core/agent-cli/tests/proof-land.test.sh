@@ -5,7 +5,6 @@
 set -u
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 ROOT=$(cd "$here/../../.." && pwd -P)
-JG=$ROOT/bin/jg
 d=$(mktemp -d "${TMPDIR:-/tmp}/proof-land.XXXXXX") || exit 1
 trap 'rm -rf -- "$d"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }

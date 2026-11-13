@@ -58,6 +58,7 @@ landing_state() {
   n=$(ahead_of_me); why=$(cat "$mem/$JG_CLI_TASK.$head.queue-why" 2>/dev/null || true)
   echo "waiting|queued, $n lane(s) ahead${why:+; it waited: $why}"
 }
+# shellcheck disable=SC2329 # run by name through jg_cli_wait
 settled() { case $(landing_state) in landed\|*|refused\|*) return 0 ;; *) return 1 ;; esac; }
 
 [ "$wait" = 0 ] || jg_cli_wait "$bound" settled || true

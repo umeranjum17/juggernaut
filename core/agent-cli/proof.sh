@@ -37,6 +37,7 @@ if ! proof_running; then
   if [ ${#cmd[@]} -gt 0 ]; then run=("$dd" run -- "${cmd[@]}"); else run=("$dd" affected); fi
   : > "$log"
   # setsid keeps the run alive after this command returns; the record is written by the run's own wrapper.
+  # shellcheck disable=SC2016 # the child shell expands these, not this one
   setsid bash -c '
     printf "running %s %s %s\n" "$(date +%s)" "$$" "$1" > "$2"; shift 2
     "$@" >> "$0" 2>&1; rc=$?
