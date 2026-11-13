@@ -85,7 +85,7 @@ test_queued_lanes_land_as_one_stack_and_a_red_stack_is_bisected() {
   assert_contains "$out" "refusal-class d3: final" "a red the lane caused is final"
   case $out in *"returned d1"*|*"returned d2"*|*"returned d4"*) fail "a green lane must not be returned: $out" ;; esac
   [ "$(git -C "$PROJ" log --reverse --format=%s "$base..trunk" | paste -sd, -)" = "ticket d1,ticket d2,ticket d4" ] || fail "the green part lands in order"
-  [ "$(runs)" = 4 ] || fail "four lanes with one red take 4 gate runs (stack, first half, guilty, last lane), got $(runs)"
+  [ "$(runs)" = 5 ] || fail "four lanes with one red take 5 gate runs (stack, both halves, both lanes of the red half), got $(runs)"
   [ "$(git -C "$PROJ" rev-parse fm/d3)" = "$(git -C "$W/lanes/d3" rev-parse HEAD)" ] || fail "the returned lane is left exactly as it was"
   ! git -C "$PROJ" cat-file -e trunk:g3.txt 2>/dev/null || fail "the red lane's change is not on the trunk"
   # The same red on a full temp directory is the machine's: the returned lane is classed retry, not final.

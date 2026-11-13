@@ -71,7 +71,8 @@
 # as a single landing would refuse it). ONE gate (lint, then the tests of the union of the changed files, judged against the tip) runs on
 # the stack's top and, on green, the trunk fast-forwards over the whole stack in one move. On red the stack is halved (the first half is
 # judged alone and lands if green, the rest is judged on the new tip) until the guilty lane stands alone; only it is returned. A single
-# queued lane keeps the path above. Every landed lane keeps its own data/trunk-landings.tsv row (with batch-from=<tip before the batch>).
+# queued lane keeps the path above. With gate-slots 2 or more the two halves gate at once (core/trunk-landing/bisect.sh), so the guilty lane
+# is found in about log2(stack) rounds of one gate time. Every landed lane keeps its own data/trunk-landings.tsv row (with batch-from=<tip before the batch>).
 # The prior art is bors-ng's batch and bisect and Kubernetes Tide's batch merge (both Apache-2.0): ideas only, nothing copied.
 #
 # A landing holds the trunk lock only to read the tip and to move it, never across its gates: it gates the candidate on the tip it read,
@@ -193,6 +194,8 @@ LANDER_ACCOUNT="${CLAUDE_CONFIG_DIR:-}"; unset CLAUDE_CONFIG_DIR
 . "$SCRIPT_DIR/../core/trunk-landing/refusal-reach.sh"
 # shellcheck source=core/trunk-landing/batch.sh
 . "$SCRIPT_DIR/../core/trunk-landing/batch.sh"
+# shellcheck source=core/trunk-landing/bisect.sh
+. "$SCRIPT_DIR/../core/trunk-landing/bisect.sh"
 # shellcheck source=core/trunk-verify/milestone.sh
 . "$SCRIPT_DIR/../core/trunk-verify/milestone.sh"
 export JG_HOME JG_CONFIG_OVERRIDE="$CONFIG"
@@ -217,6 +220,7 @@ cleanup() {
     fi
   fi
   for l in $LOCKS; do jg_lock_release "$l" || true; done; [ -z "${WORK:-}" ] || rm -rf -- "$WORK"
+  [ -z "${BISECT_DIR:-}" ] || rm -rf -- "$BISECT_DIR"
 }
 trap cleanup EXIT
 lock() { jg_lock_acquire_wait "$1"; LOCKS="$1 $LOCKS"; }
@@ -472,7 +476,7 @@ tip_results() {  # <tip> <envfile> <script>...
     awk -F'\t' -v s="$s" '$1 == s { f = 1 } END { exit !f }' "$cache" || need="$need $(printf '%q' "$s")"
   done
   if [ -n "$need" ]; then
-    log="$DATA/trunk/gate-$PN-${tip:0:12}-tip-$(date +%s).log"
+    log="$DATA/trunk/gate-$PN-${tip:0:12}-tip-$(date +%s)-${BASHPID:-$$}.log"
     rerun_scripts "$tip" "$envf" "$log" "$need"
     while IFS= read -r line; do
       s=${line%%$'\t'*}
@@ -1172,6 +1176,15 @@ batch_gate() {  # <top> <stack size>   (B_TIP is the trunk tip the stack sits on
   [ "$rc" -eq 0 ]
 }
 
+# The verdict of the stack in CHAIN: the one its sibling half was gated with at the same time (core/trunk-landing/bisect.sh) when the
+# trunk has not moved since, else a gate of its own. Returns 0 green, 1 red.
+stack_gate() {  # <top> <stack size>
+  local v=0
+  bisect_replay "$B_TIP" "${CHAIN[@]}" || v=$?
+  [ "$v" -ne 2 ] || { batch_gate "$1" "$2"; return; }
+  return "$v"
+}
+
 # The one lane of CHAIN that owns every script the last gate blamed (GATE_BAD): the script is among that lane's own changed files and no
 # other lane of the stack changed it. Prints its index; prints nothing, and the red is unclear, when a blamed script has no owner or two,
 # when the owners differ, or when the red was not charged to a script. An unclear red is halved.
@@ -1299,7 +1312,7 @@ cmd_land_batch() {
       LAST_RED=$(cut -f5 <<< "$seen"); LAST_RED_CLASS=final
       echo "note: this stack of ${#CHAIN[@]} went red before on this tip; not gated again. It failed: $(cut -f4 <<< "$seen")" >&2
       [ "${#CHAIN[@]}" -ne 1 ] || LAST_RED="$LAST_RED (red alone before: $(cut -f4 <<< "$seen"))"
-    elif batch_gate "$top" "${#CHAIN[@]}"; then if land_group; then continue; fi; moved=1; break
+    elif stack_gate "$top" "${#CHAIN[@]}"; then if land_group; then continue; fi; moved=1; break
     else red_note "${CHAIN[@]}"; fi
     if [ "${#CHAIN[@]}" -eq 1 ]; then
       B_WHY[CHAIN[0]]="REFUSED: this lane is the red in its batch: $LAST_RED"; B_CLASS[CHAIN[0]]=$LAST_RED_CLASS; continue
@@ -1312,6 +1325,8 @@ cmd_land_batch() {
       CHAIN=("${orig[@]}")
     fi
     half=$(( ${#CHAIN[@]} / 2 )); first=("${CHAIN[@]:0:half}"); rest=("${CHAIN[@]:half}")
+    # Both halves gate now, at once, each on the tip (gate-slots 2 or more): whichever the loop takes next finds its verdict kept.
+    ! bisect_on || bisect_pair "$half" "${CHAIN[@]}" || true
     stack+=("1:${rest[*]}" "0:${first[*]}")
   done
   [ -n "$moved" ] || break
