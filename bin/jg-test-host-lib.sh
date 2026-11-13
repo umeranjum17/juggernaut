@@ -25,6 +25,17 @@
 #   tries that slot first, so the landing gate starts at once while every general slot is held by lane proofs.
 #   Time spent waiting is left in JG_TEST_HOST_WAITED_MS. Without python3 or a writable slot directory the run starts
 #   without a slot and says so. jg_test_host_release frees the slot at once.
+#
+# Shards on runners (H30b).
+#   jg_test_host_run_shard <jg-home> <k> <commit> <base> <out-json> -- <jg-test-run.sh arguments> runs one gate shard
+#   on a runner when one has room, else here. A runner is usable when core/runners/registry.sh names it (registered and
+#   its latest probe passed), its arch is this host's, and it has a free slot: the record's slots, held down to the
+#   probe's free cores. The shard then goes through core/runners/run-shard.sh: the commit travels as a git bundle through
+#   the remote job queue and the shard's JSON comes back to <out-json>. A runner that is lost (no connection, no result,
+#   a bundle it cannot take) is never a red: the shard runs here in its place, with the same arguments. With no runner
+#   registered every shard runs here, as before. A runner slot is a directory JG_TEST_HOST_SLOTS/runner-<id>.slot-<n>
+#   made atomically and holding its owner's pid, so shards placed at once never overfill a runner, and a slot whose
+#   owner died is taken over.
 
 JG_TEST_HOST_KEEPER=
 JG_TEST_HOST_WAITED_MS=0
@@ -156,4 +167,55 @@ jg_test_host_release() {
   kill "$JG_TEST_HOST_KEEPER" 2>/dev/null || :
   wait "$JG_TEST_HOST_KEEPER" 2>/dev/null || :
   JG_TEST_HOST_KEEPER=
+}
+
+jg_test_host_arch() {
+  case $(uname -m) in aarch64|arm64) echo arm64 ;; *) echo x86_64 ;; esac
+}
+
+jg_test_host_runner_slot() {  # <jg-home> <runner id>; claims a free slot on the runner and prints its directory, else fails
+  local home=$1 id=$2 record slots free cap n slot owner dir
+  dir=${JG_TEST_HOST_SLOTS:-/tmp/jg-test-runs-$(id -u)}
+  record=$("$JG_TEST_HOST_ROOT/core/runners/registry.sh" get "$home" "$id" 2>/dev/null) || return 1
+  [ "$(printf '%s\n' "$record" | sed -n 's/^arch=//p')" = "$(jg_test_host_arch)" ] || return 1
+  slots=$(printf '%s\n' "$record" | sed -n 's/^slots=//p')
+  free=$(awk -F'\t' -v id="$id" '$2 == id { f = $4 } END { print f + 0 }' "${JG_STATE_OVERRIDE:-$home/state}/runner-health.tsv" 2>/dev/null)
+  cap=$slots
+  [ "$free" -ge "$cap" ] || cap=$free
+  mkdir -p "$dir" 2>/dev/null || return 1
+  for ((n = 1; n <= cap; n++)); do
+    slot=$dir/runner-$id.slot-$n
+    if ! mkdir "$slot" 2>/dev/null; then
+      owner=$(cat "$slot/owner" 2>/dev/null) || owner=
+      case $owner in ''|*[!0-9]*) continue ;; esac
+      kill -0 "$owner" 2>/dev/null && continue
+      rm -f -- "$slot/owner"
+      rmdir "$slot" 2>/dev/null || continue
+      mkdir "$slot" 2>/dev/null || continue
+    fi
+    printf '%s\n' "$$" > "$slot/owner"
+    printf '%s\n' "$slot"
+    return 0
+  done
+  return 1
+}
+
+jg_test_host_run_shard() {  # <jg-home> <k> <commit> <base> <out-json> -- <jg-test-run.sh arguments>
+  local home=$1 k=$2 commit=$3 base=$4 out=$5 runner slot rc
+  shift 6
+  JG_TEST_HOST_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+  for runner in $("$JG_TEST_HOST_ROOT/core/runners/registry.sh" usable "$home" 2>/dev/null); do
+    slot=$(jg_test_host_runner_slot "$home" "$runner") || continue
+    log "shard $k goes to runner $runner"
+    rc=0
+    "$JG_TEST_HOST_ROOT/core/runners/run-shard.sh" "$home" "$runner" "$commit" "$base" "$out" -- "$@" || rc=$?
+    rm -f -- "$slot/owner"
+    rmdir "$slot" 2>/dev/null || :
+    [ "$rc" -ne 3 ] && return "$rc"
+    log "runner $runner was lost for shard $k, which is not a red: the shard runs here"
+    break
+  done
+  rc=0
+  bash "$JG_TEST_HOST_ROOT/bin/jg-test-run.sh" "$@" --json "$out" || rc=$?
+  return "$rc"
 }

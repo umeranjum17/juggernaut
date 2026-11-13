@@ -103,6 +103,7 @@ JG_REMOTE_JOB_LABEL=dev.juggernaut.remote-job
 JG_REMOTE_JOB_MAX_BYTES=${JG_REMOTE_JOB_MAX_BYTES:-1048576}
 JG_REMOTE_JOB_QUEUE_TIMEOUT=${JG_REMOTE_JOB_QUEUE_TIMEOUT:-360}
 JG_REMOTE_JOB_TIMEOUT=${JG_REMOTE_JOB_TIMEOUT:-360}
+JG_REMOTE_JOB_SHARD_TIMEOUT=${JG_REMOTE_JOB_SHARD_TIMEOUT:-1200}
 JG_REMOTE_JOB_WAIT_GRACE=${JG_REMOTE_JOB_WAIT_GRACE:-30}
 JG_REMOTE_JOB_ACTIVE_POLL_SECONDS=${JG_REMOTE_JOB_ACTIVE_POLL_SECONDS:-${JG_REMOTE_JOB_POLL_SECONDS:-0.25}}
 JG_REMOTE_JOB_POLL_SECONDS=${JG_REMOTE_JOB_POLL_SECONDS:-0.05}
@@ -132,6 +133,15 @@ jg_remote_job_command_preemptible() { # <staged argv command>
   case "${1:-}" in jg-remote-delta-read.sh) return 0 ;; *) return 1 ;; esac
 }
 
+# A test shard on a runner (bin/jg-runner-shard.sh) runs far past the 360 s that fits a command, so its job record carries
+# the longer bound; every other command keeps JG_REMOTE_JOB_TIMEOUT.
+jg_remote_job_command_timeout() { # <staged argv command>
+  case "${1:-}" in
+    jg-runner-shard.sh) printf '%s\n' "$JG_REMOTE_JOB_SHARD_TIMEOUT" ;;
+    *) printf '%s\n' "$JG_REMOTE_JOB_TIMEOUT" ;;
+  esac
+}
+
 jg_remote_job_validate_settings() {
   case "$JG_REMOTE_JOB_MAX_BYTES" in ''|*[!0-9]*|0) return 1 ;; esac
   [ "$JG_REMOTE_JOB_MAX_BYTES" -le 1048576 ] || return 1
@@ -139,6 +149,8 @@ jg_remote_job_validate_settings() {
   [ "$JG_REMOTE_JOB_QUEUE_TIMEOUT" -le 3600 ] || return 1
   case "$JG_REMOTE_JOB_TIMEOUT" in ''|*[!0-9]*|0) return 1 ;; esac
   [ "$JG_REMOTE_JOB_TIMEOUT" -le 3600 ] || return 1
+  case "$JG_REMOTE_JOB_SHARD_TIMEOUT" in ''|*[!0-9]*|0) return 1 ;; esac
+  [ "$JG_REMOTE_JOB_SHARD_TIMEOUT" -le 3600 ] || return 1
   case "$JG_REMOTE_JOB_WAIT_GRACE" in ''|*[!0-9]*) return 1 ;; esac
   [ "$JG_REMOTE_JOB_WAIT_GRACE" -le 300 ] || return 1
   case "$JG_REMOTE_JOB_REAP_SECONDS" in ''|*[!0-9]*|0) return 1 ;; esac
@@ -680,7 +692,7 @@ jg_remote_job_stage() { # <account-home> <root> <home> <command> [args...]; stdi
     ! printf '%s\n' "$root" > "$stage/root" ||
     ! printf '%s\n' "$home" > "$stage/home" ||
     ! printf '%s\n' "$queue_deadline" > "$stage/queue_deadline" ||
-    ! printf '%s\n' "$JG_REMOTE_JOB_TIMEOUT" > "$stage/timeout" ||
+    ! jg_remote_job_command_timeout "$command" > "$stage/timeout" ||
     ! printf '%s\0' "$command" "$@" > "$stage/argv" ||
     ! head -c "$((JG_REMOTE_JOB_MAX_BYTES + 1))" > "$stage/stdin"; then
     rm -rf -- "$stage"
