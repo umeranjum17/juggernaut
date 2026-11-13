@@ -1,8 +1,8 @@
-# The alert table (section 6.7 of the state-machine plan): the twelve alerts, the rules that keep one cause from raising many, the ladder and the limits by kind.
+# The alert table (section 6.7 of the state-machine plan): the nineteen alerts, the rules that keep one cause from raising many, the ladder and the limits by kind.
 # One reader: bin/jg-alert.sh (row, rules, limit, raise). Every time counts from the moment the state began. Seconds are plain numbers; "beats:N" is N missed beats of the watcher (its grace is the watcher's, not set here).
 # alert:  name, fires on, fires at (seconds, beats:N or "limit" = the limit of its kind), precedence, first rung (0 tick, 1 worker, 2 lead, 3 Main, 4 owner; "wait" = the one the wait names), quiet when (facts joined by +; "never")
-# rule:   id, covering alert ("*" = any alert of the same ticket with a higher precedence), scope the cover and the covered share, alerts kept quiet, why. I6 (presence) holds rung 4 and is applied by the ladder.
-# ladder: precedence, seconds to the next rung, seconds between repeats, top rung ("start+2" = two rungs above the first, at most 3), the fact that lifts the top to 4 ("-" = none)
+# rule:   id, covering alert ("*" = any alert of the same ticket with a higher precedence), scope the cover and the covered share, alerts kept quiet, why. I6 (presence) holds rung 4 and is applied by the ladder; a "!alert" in its list exempts that alert (escalation-stuck is the page and is never held).
+# ladder: precedence, seconds to the next rung, seconds between repeats, top rung ("start+2" = two rungs above the first, at most 3), the fact that lifts the top to 4 ("-" = none), repeats at the top rung before the alert is stuck (one card, one page, quiet)
 # capacity and supervision-down start at rung 1, not 0, so their producers keep their live wakes; the tick-driven climb that would let them start at rung 0 is a later slice.
 # limit:  kind of work, seconds (0 = none), why
 alert	security	a secret in the open, a refused delete, an owner detail found, an unregistered check	0	P0	4	never
@@ -15,18 +15,27 @@ alert	undelivered	a message stored or rung and not read	300	P2	2	home-parked
 alert	drift	the observer finds that the stage and the records disagree	600	P2	2	never
 alert	slow-delivery	stage proving, or delivering in queued, rebased or gated, past the limit for its kind	limit	P3	1	wait=owner+wait=outside,reason=ci|approval|date|review+queued-behind-running-landing
 alert	ready-idle	a ticket in ready and a free lane	600	P3	2	home-paused+capacity-held+owner-card-open
-alert	stranded	stage delivering in batched, live or joining; or a pull request style in queued with no check started	172800	P3	2	never
+alert	stranded	stage delivering in batched, live or joining; or a pull request style in queued with no check started	limit	P3	2	never
 alert	host	memory, disk or temp space over its limit	0	P3	3	never
+alert	wrong-repo	a spawn refused because the ticket's files are not in this repository	0	P2	2	never
+alert	lock-held	a trunk or landing lock held with no beat of its holder	300	P1	0	holder-beating
+alert	orphan-process	a process past its limit whose owner record is gone	0	P3	0	never
+alert	escalation-stuck	an alert at its top rung past its repeats; a wake not acknowledged for 20 min at a supervisor; or 10 decision records older than 30 min at Main	0	P1	4	never
+alert	fleet-blocked	the last-rung conditions B1 to B7 of the self-healing plan (nothing lands, idle with ready work, no account, a supervisor down, the host, paid limits unused)	0	P1	0	never
+alert	quota-unused	the share of an account's window that is left is over the share of its time by 20 points, and a ticket can start	1800	P2	0	host-at-stop+account-on-hold
+alert	quota-blind	the newest quota reading of an account that lanes use is old	1800	P2	0	account-no-lane
 rule	I1	supervision-down	home	stuck-wait,lost-worker,undelivered,ready-idle,slow-delivery	nobody is watching, so every wait would fire
 rule	I2	line-red	project	slow-delivery,stranded	they wait for the line, not for themselves
 rule	I3	capacity	route	lost-worker,stuck-wait	the lanes are stopped by the same cause
 rule	I4	host	machine	slow-delivery	a loaded machine is slow
 rule	I5	*	ticket	*	one page for one ticket
-rule	I6	presence=away	home	rung-4:P1,P2,P3	the return brief lists them; P0 still reaches the owner
-ladder	P0	0	600	4	-
-ladder	P1	300	600	4	-
-ladder	P2	300	600	start+2	owner-answer
-ladder	P3	0	3600	3	-
+rule	I6	presence=away	home	rung-4:P1,P2,P3,!escalation-stuck	the return brief lists them; P0 still reaches the owner
+ladder	P0	0	600	4	-	3
+ladder	P1	300	600	4	-	3
+ladder	P2	300	600	start+2	owner-answer	3
+ladder	P3	0	3600	3	-	3
+limit	stranded	172800	a lane stranded in delivering, or a pull request style queued with no check started: 48 h (the default kind)
+limit	stranded-release	14400	a release that an open ticket waits for: 4 h, since 48 h holds the other tickets too long
 limit	ship-delivering	300	5 min of its own landing run, or 5 min in queued while the lander runs nothing; not behind another landing
 limit	ship-proving	900	15 min from the last done line to sealed
 limit	ship-reviewing	900	the same 15 min for the whole of proving, counted while the run works

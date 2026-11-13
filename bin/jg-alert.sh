@@ -10,7 +10,8 @@
 #                     [--home H] [--project P] [--route R] [--machine M] [--ticket T] [--rung N] [--wake <kind> --text <line>] [--repeat]
 #                     [--note <text>] [--deliver | --print]
 #   jg-alert.sh capacity <producer> <text> [--deliver | --print]   raise the capacity alert for a quota, account, model or machine-slot event
-#   jg-alert.sh climb <key> [--now <epoch>]   take the next rung when the rung's timer ran out and the row's top is not reached
+#   jg-alert.sh climb <key> [--now <epoch>]   take the next rung when the rung's timer ran out; at the top rung repeat the ring when the repeat timer ran
+#                                           out, and after the ladder's repeats make the alert stuck (see below)
 #   jg-alert.sh ack|reopen|resolve <key>      the other moves of the alert machine; resolve also releases the alerts it covered
 #   jg-alert.sh show <key> | word <key> | list   print a record, its state word, or every live key
 #   jg-alert.sh deliver                      read ring lines on stdin (what raise, climb and resolve print) and deliver each to its holder
@@ -26,6 +27,10 @@
 # The row is the same in every delivery mode; the mode is recorded and checked against bin/jg-delivery-style.sh.
 # --note records the producer's own text (one line) in the record and the wake; --deliver pipes the ring through `deliver` at once; --print prints the wake line a registered check hands the watcher instead of a ring.
 # capacity is the one entry every capacity producer calls: the subject is the producer, and a new event of it resolves its last one.
+# A stuck alert (the ladder's column 7 gives the repeats) is quiet and does not climb. Its climb prints a `stuck` line once and the ring of one
+# escalation-stuck alert (the owner's card and page); resolving the stuck alert resolves that card too. escalation-stuck never repeats.
+# A row whose fires-at is `limit` reads the limit of --kind, or of the kind named like the alert when no --kind is given (stranded: 48 h, or
+# --kind stranded-release: 4 h).
 # deliver turns a ring into the wake its holder reads: the tick only records it (settled, no wake); worker, lead, main and owner get one
 # `check` wake with key alert-<key> that names the alert, its precedence, the rung and the holder. A line that is not a ring is refused.
 # Exit 0 is success, 1 a refusal, 2 a usage error. The table is core/machines/styles/alert-table.tsv (override: JG_ALERT_TABLE).
@@ -40,8 +45,8 @@ _rows() { awk -F'\t' -v k="$1" '$1==k' "$(_table)"; }
 _holder() { case $1 in 0) echo tick ;; 1) echo worker ;; 2) echo lead ;; 3) echo main ;; *) echo owner ;; esac; }
 _edge() { bash "$_root/bin/jg-machine.sh" edge-check alert "$1" "$2" >/dev/null 2>&1; }
 # The four state words come from the machine table (kind initial, mode waiting after it, mode rest, kind terminal), never typed here.
-_names() { awk -F'\t' -v k="$1" -v m="$2" '$1=="state" && (k=="" || $3==k) && (m=="" || $6==m) {print $2}' "$_root/core/machines/tables/alert.tsv"; }
-s_open=$(_names initial ""); s_ack=$(_names normal waiting); s_inh=$(_names normal rest); s_res=$(_names terminal "")
+_names() { awk -F'\t' -v k="$1" -v m="$2" -v l="${3:-}" '$1=="state" && (k=="" || $3==k) && (m=="" || $6==m) && (l=="" || $7==l) {print $2}' "$_root/core/machines/tables/alert.tsv"; }
+s_open=$(_names initial ""); s_ack=$(_names normal waiting); s_inh=$(_names normal rest release); s_stuck=$(_names normal rest resolve); s_res=$(_names terminal "")
 _put() { local f=$1; shift; mkdir -p "$(dirname "$f")"; printf '%s\n' "$@" >"$f.tmp.$$" && mv "$f.tmp.$$" "$f"; }
 _set() { local f=$1 k=$2 v=$3; { grep -v "^$k=" "$f" 2>/dev/null; printf '%s=%s\n' "$k" "$v"; } >"$f.tmp.$$" && mv "$f.tmp.$$" "$f"; }
 
@@ -73,8 +78,13 @@ _top() {
   echo "$t"
 }
 
-# _cap <precedence> <rung> <facts>: rule I6, rung 4 is held for P1 to P3 while presence is away.
-_cap() { local p=$1 r=$2; shift 2; case " $* " in *" presence=away "*) [ "$r" -lt 4 ] || [ "$p" = P0 ] || r=3 ;; esac; echo "$r"; }
+# _cap <alert> <precedence> <rung> <facts>: rule I6, rung 4 is held for the precedences its list names while presence is away; "!alert" exempts one.
+_cap() {
+  local n=$1 p=$2 r=$3 kept; shift 3
+  kept=$(_rows rule | awk -F'\t' '$2=="I6" {print $5}')
+  case " $* " in *" presence=away "*) [ "$r" -lt 4 ] || case ",${kept#*:}" in *",!$n"*) ;; *",$p"*) r=3 ;; esac ;; esac
+  echo "$r"
+}
 
 cmd_row() {
   _rows alert | awk -F'\t' -v a="${1:?usage: row <alert>}" '$2==a {print $2 "\t" $3 "\t" $4 "\t" $5 "\t" $6 "\t" $7; f=1} END {exit f?0:1}' \
@@ -114,7 +124,7 @@ cmd_raise() {
     # shellcheck source=bin/jg-delivery-style.sh disable=SC1091
     . "$_root/bin/jg-delivery-style.sh"; jg_delivery_style_accepts "$mode" || _die "unknown delivery mode '$mode'"
   fi
-  case $at in limit) at=$(cmd_limit "${kind:?slow-delivery needs --kind}") || exit 1 ;; beats:*) at= ;; esac
+  case $at in limit) at=$(cmd_limit "${kind:-$name}") || exit 1 ;; beats:*) at= ;; esac
   [ -z "$held" ] || [ -z "$at" ] || [ "$held" -ge "$at" ] || _die "$name has not held for $at s yet (held $held s)"
   _quiet "$quiet" "${facts[@]}" && return 0
   local start=$first f
@@ -136,12 +146,12 @@ cmd_raise() {
       return 0
     fi
   fi
-  start=$(_cap "$prec" "$start" "${facts[@]}")
+  start=$(_cap "$name" "$prec" "$start" "${facts[@]}")
   local now cover; now=${JG_ALERT_NOW:-$(date +%s)}
   cover=$(_cover "$name" "$prec" "$sc_home" "$sc_project" "$sc_route" "$sc_machine" "$sc_ticket" || true)
   local st=$s_open
   _put "$file" "alert=$name" "subject=$subj" "mode=$mode" "precedence=$prec" "rung=$start" "top=$(_top "$prec" "$start" "${facts[@]}")" \
-    "since=$now" "rung_at=$now" "home=$sc_home" "project=$sc_project" "route=$sc_route" "machine=$sc_machine" "ticket=$sc_ticket" "note=$note" "wake=$wake" "text=$text" "state=$st"
+    "since=$now" "rung_at=$now" "home=$sc_home" "project=$sc_project" "route=$sc_route" "machine=$sc_machine" "ticket=$sc_ticket" "note=$note" "wake=$wake" "text=$text" "repeats=0" "state=$st"
   if [ -n "$cover" ]; then
     _edge "$st" "$s_inh" || _die "the alert table has no inhibit move"
     _set "$file" state "$s_inh"; _set "$file" covered_by "$cover"
@@ -157,7 +167,7 @@ _cover() {
   local name=$1 prec=$2 rec id cov scope kept val
   for rec in "$(_dir)"/*.rec; do
     [ -r "$rec" ] || continue
-    case $(_get "$rec" state) in "$s_open"|"$s_ack") ;; *) continue ;; esac
+    case $(_get "$rec" state) in "$s_open"|"$s_ack"|"$s_stuck") ;; *) continue ;; esac
     while IFS=$'\t' read -r _ id cov scope kept _; do
       [ "$id" != I6 ] || continue
       val=$(_get "$rec" "$scope"); [ -n "$val" ] && [ "$val" = "$(_scope_of "$scope" "$3" "$4" "$5" "$6" "$7")" ] || continue
@@ -180,12 +190,32 @@ cmd_climb() {
   [ "${2:-}" != --now ] || now=${3:?--now needs an epoch}
   local st rung top prec after; st=$(_get "$f" state); rung=$(_get "$f" rung); top=$(_get "$f" top); prec=$(_get "$f" precedence)
   _edge "$st" "$st" && [ "$st" = "$s_open" ] || _die "alert '$1' is $st: only an open alert climbs"
-  [ "$rung" -lt "$top" ] || _die "alert '$1' is at its top rung $top"
+  [ "$rung" -lt "$top" ] || { _repeat "$f" "$1" "$now" "$prec" "$rung"; return; }
   after=$(_rows ladder | awk -F'\t' '$2==p {print $3}' p="$prec")
   [ "$after" -gt 0 ] || _die "$prec has no climb timer"
   [ $((now - $(_get "$f" rung_at))) -ge "$after" ] || _die "rung timer of $after s has not run out"
   _set "$f" rung $((rung + 1)); _set "$f" rung_at "$now"
   printf 'ring\t%s\t%s\t%s\n' "$1" $((rung + 1)) "$(_holder $((rung + 1)))"
+}
+# _repeat <file> <key> <now> <precedence> <rung>: the climb of an alert at its top rung. Each repeat timer that runs out rings the rung again, up
+# to the ladder's repeats; the next one makes the alert stuck: one `stuck` line, then the ring of its one escalation-stuck card, and no more rings.
+_repeat() {
+  local f=$1 key=$2 now=$3 prec=$4 rung=$5 gap max n name; name=$(_get "$f" alert)
+  [ "$name" != escalation-stuck ] || _die "alert '$key' is at its top rung $rung: escalation-stuck is the page and does not repeat"
+  read -r gap max < <(_rows ladder | awk -F'\t' '$2==p {print $4, $7}' p="$prec")
+  [ "${gap:-0}" -gt 0 ] && [ "${max:-0}" -gt 0 ] || _die "$prec has no repeat timer or repeat count in the ladder"
+  [ $((now - $(_get "$f" rung_at))) -ge "$gap" ] || _die "alert '$key' is at its top rung $rung: repeat timer of $gap s has not run out"
+  n=$(_get "$f" repeats); n=${n:-0}
+  _set "$f" rung_at "$now"
+  if [ "$n" -lt "$max" ]; then
+    _set "$f" repeats $((n + 1))
+    printf 'ring\t%s\t%s\t%s\n' "$key" "$rung" "$(_holder "$rung")"
+    return 0
+  fi
+  _edge "$s_open" "$s_stuck" || _die "the alert table has no stuck move"
+  _set "$f" state "$s_stuck"
+  printf 'stuck\t%s\t%s\t%s\n' "$key" "$rung" "$(_holder "$rung")"
+  cmd_raise escalation-stuck "$key" --note "$name sat at rung $rung through $max repeats with no answer"
 }
 _move() {  # _move <key> <from word> <to word>
   local f; f=$(_rec "$1" move) || exit 1
@@ -200,6 +230,9 @@ cmd_resolve() {
   cur=$(_get "$f" state); [ "$cur" != "$s_res" ] || return 0
   _edge "$cur" "$s_res" || _die "no move from $cur to resolved"
   _set "$f" state "$s_res"
+  # The card of a stuck alert goes with it, so a new episode of the key can be stuck again.
+  local card; card="$(_dir)/escalation-stuck--$1.rec"
+  [ "$cur" != "$s_stuck" ] || [ ! -r "$card" ] || [ "$(_get "$card" state)" = "$s_res" ] || _set "$card" state "$s_res"
   for rec in "$(_dir)"/*.rec; do   # release what this alert covered
     [ -r "$rec" ] && [ "$(_get "$rec" covered_by)" = "$1" ] || continue
     _set "$rec" state "$s_open"; _set "$rec" covered_by ""
@@ -231,6 +264,7 @@ cmd_deliver() {
   . "$_root/bin/jg-wake-lib.sh"
   while IFS=$'\t' read -r tag key rung holder; do
     [ -n "$tag" ] || continue
+    [ "$tag" != stuck ] || continue   # the stuck line only tells the caller; the card's ring is the page
     [ "$tag" = ring ] && [ -n "$holder" ] || _die "not a ring line: '$tag'"
     rec=$(_rec "$key" deliver) || exit 1
     payload=$(_payload "$key" "$rung" "$holder")
