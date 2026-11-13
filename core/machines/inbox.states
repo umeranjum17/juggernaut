@@ -1,0 +1,7 @@
+# inbox: the closed list of states of the machine "Inbox and steer".
+# value<TAB>mark (initial, final or -)<TAB>kind (active, waiting, rest, final)<TAB>meaning
+stored	initial	waiting	the message is on record and nobody was told
+rung	-	waiting	the target was told that a message waits
+read	-	waiting	the target took the message
+handled	final	final	the target acted on it and said how
+failed	final	final	the message could not be delivered

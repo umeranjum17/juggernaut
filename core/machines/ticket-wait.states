@@ -1,0 +1,9 @@
+# ticket-wait: who owes the next move.
+# value<TAB>mark (initial, final or -)<TAB>meaning
+none	initial	nobody: the work goes on
+worker	-	the worker
+tick	-	a script, with no model
+lead	-	the lead
+main	-	Main
+owner	-	the owner
+outside	-	CI, a quota, another ticket or a date

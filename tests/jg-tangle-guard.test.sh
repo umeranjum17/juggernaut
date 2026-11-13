@@ -181,24 +181,22 @@ test_spawn_isolation_abort() {
   # "GIT_CEILING_DIRECTORIES").
   mkdir -p "$TMP_ROOT/spawn-notgit-root/plain" "$proj/sub"
 
-  # Abort: the pane resolves to a plain non-git directory (not a worktree at all).
-  # The discovery poll screens every candidate with the isolation conditions, so
-  # a path like this is never adopted and the refusal comes from the poll's own
-  # deadline, naming the path and why it was rejected. The assertions pin which
-  # cause fired, not the operator wording that explains it.
+  # Abort: the leased copy is a plain non-git directory (not a worktree at all).
+  # The lease identity check refuses it before the pane poll starts, names the
+  # leased path, and preserves the lease. The assertions pin which cause fired.
   out=$(GIT_CEILING_DIRECTORIES="$TMP_ROOT/spawn-notgit-root" \
     run_spawn "$home" abort-notgit-dd4 "$proj" "$TMP_ROOT/spawn-notgit-root/plain" "$fakebin"); status=$?
   expect_code 1 "$status" "spawn into a non-worktree dir should abort"
-  assert_contains "$out" "did not enter an isolated worktree" "non-worktree spawn lacked the isolation error"
-  assert_contains "$out" "not inside a git worktree" "non-worktree spawn did not say why the path was rejected"
-  assert_absent "$home/state/abort-notgit-dd4.meta" "aborted spawn must not record meta"
+  assert_contains "$out" "cannot resolve Git common directory for leased copy" "non-worktree spawn lacked the lease identity error"
+  assert_contains "$out" "preserving lease" "non-worktree spawn did not preserve the lease"
+  assert_grep "cleanup_recovery=treehouse" "$home/state/abort-notgit-dd4.meta" "preserved lease must keep its recovery record"
 
   # Abort: the pane resolves INTO the primary checkout (a subdir of PROJ_ABS).
   out=$(run_spawn "$home" abort-primary-ee5 "$proj" "$proj/sub" "$fakebin"); status=$?
   expect_code 1 "$status" "spawn landing inside the primary checkout should abort"
   assert_contains "$out" "did not enter an isolated worktree" "primary-checkout spawn lacked the isolation error"
   assert_contains "$out" "not a worktree root" "primary-checkout spawn did not say why the path was rejected"
-  assert_absent "$home/state/abort-primary-ee5.meta" "aborted spawn must not record meta"
+  assert_grep "cleanup_recovery=treehouse" "$home/state/abort-primary-ee5.meta" "preserved lease must keep its recovery record"
 
   # Proceed: the pane resolves to a genuine, isolated worktree.
   out=$(run_spawn "$home" ok-isolated-ff6 "$proj" "$TMP_ROOT/spawn-wt" "$fakebin"); status=$?

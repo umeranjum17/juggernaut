@@ -429,6 +429,7 @@ backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
 
   set -o pipefail
   printf '%s\n' "$text" | jq -Rn --arg path "$backlog" --arg today "$SNAPSHOT_TODAY" --arg now "$SNAPSHOT_NOW" \
+    --arg note_words "local main|$(bash "$SCRIPT_DIR/jg-delivery-style.sh" --trunk-aliases | paste -sd'|' -)" \
     --argjson age_days "$JG_SNAPSHOT_UNDATED_HOLD_AGE_DAYS" '
     def trim: gsub("^[[:space:]]+|[[:space:]]+$"; "");
     def timestamp_epoch($d):
@@ -478,8 +479,8 @@ backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
     def strip_title_artifacts:
       sub("[[:space:]]+-[[:space:]]+data/[^[:space:])]+/report\\.md$"; "")
       | sub("[[:space:]]+data/[^[:space:])]+/report\\.md$"; "")
-      | sub("[[:space:]]+-[[:space:]]+(local main|local-trunk)$"; "")
-      | sub("[[:space:]]+(local main|local-trunk)$"; "")
+      | sub("[[:space:]]+-[[:space:]]+(\($note_words))$"; "")
+      | sub("[[:space:]]+(\($note_words))$"; "")
       | sub("[[:space:]]+-[[:space:]]*$"; "");
     def clean_title:
       strip_trailing_metadata
@@ -501,7 +502,7 @@ backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
         else ($reason | clean_title | if . == "" then null else . end)
         end;
     def local_note($rest):
-      cap(($rest | strip_trailing_metadata); ".*(?:^|[[:space:]]+-[[:space:]]+|[[:space:]])(?<v>local main|local-trunk)$");
+      cap(($rest | strip_trailing_metadata); ".*(?:^|[[:space:]]+-[[:space:]]+|[[:space:]])(?<v>\($note_words))$");
     def completion($rest):
       (metadata_word($rest; "merged")) as $merged
       | (metadata_word($rest; "reported")) as $reported
@@ -576,7 +577,7 @@ backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
               // (if any(.body_lines[];
                     test("^Resolution recorded by jg-(captain|decision)-hold\\.$"))
                   then null
-                  else cap(.body_lines[-1]; "^(?<v>local main|local-trunk)$")
+                  else cap(.body_lines[-1]; "^(?<v>\($note_words))$")
                   end))
           | .body_excerpt = ((.body_lines | join(" "))[:240])
         else . end)

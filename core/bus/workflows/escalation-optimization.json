@@ -88,6 +88,10 @@
       "capSeconds": 14400,
       "resetOn": "payload-change"
     },
+    "topRung": {
+      "repeats": 3,
+      "note": "a wait whose board card is posted wakes its owner this many more times, then is only that one card until it clears (core/wait-timers)"
+    },
     "coalesce": {
       "windowSeconds": 300,
       "maxEvents": 10,

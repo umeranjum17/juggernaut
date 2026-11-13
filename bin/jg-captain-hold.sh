@@ -37,6 +37,7 @@
 #   jg-captain-hold.sh design-card <card-key> --raised-by <ticket> --title <question>
 #   jg-captain-hold.sh design-pick <card-key> --words <the captain's words>
 #   jg-captain-hold.sh diverged
+#   jg-captain-hold.sh phase <task-id>
 #   jg-captain-hold.sh reconcile list
 #   jg-captain-hold.sh reconcile close <task-id> --evidence-file <path>
 #   jg-captain-hold.sh reconcile note <task-id> --note-file <path>
@@ -226,6 +227,9 @@
 # 1 when it does not, and any other non-zero status when the task cannot be read.
 # It prints nothing.
 #
+# `phase` is the read-only word of the hold machine (core/machines/tables/hold.tsv):
+# raised, deferred, answered, closed or none. An answer recorded and not yet completed
+# is `answered`; a hold dated in the future is `deferred`; a settled call is `closed`.
 # `diverged` is the read-only guard over the seam between the two records of
 # one captain call. See "record divergence" beside command_diverged below.
 #
@@ -2006,6 +2010,32 @@ command_answered() {  # <task-id>
   [ "$(recorded_resolution_mode "$body" || true)" != reconciled ]
 }
 
+# The hold machine's word for one task, from the same record `open` and `answered` read plus
+# the body's own completion line (core/machines/observers/hold.sh prints it). Exit 2 when the row cannot be read.
+command_phase() {  # <task-id>
+  local id=${1:-} status=0 show body decoded mode until
+  [ "$#" -eq 1 ] || { usage >&2; exit 2; }
+  (command_open "$id" --distinguish-absent) || status=$?
+  case "$status" in 0|1) ;; 3) echo none; return 0 ;; *) exit 2 ;; esac
+  task_show "$id" || exit 2
+  show=$TASK_SHOW_OUTPUT
+  body=$(show_field "$show" body)
+  decoded=$(decode_shown_value "$body")
+  if body_has_resolution_record "$body" && [ -n "$(body_hold_set_timestamp "$decoded")" ]; then
+    mode=$(recorded_resolution_mode "$body" || true)
+    if [ -n "$mode" ] && [ "$mode" != reconciled ] && ! recorded_resolution_completed "$body"; then
+      echo answered; return 0
+    fi
+  fi
+  if [ "$status" -eq 0 ]; then
+    until=$(show_field_value "$show" hold_until)
+    if [ -n "$until" ] && [[ "$until" > "$(date -u +%F)" ]]; then echo deferred; else echo raised; fi
+    return 0
+  fi
+  if [ "$(show_field "$show" state)" = "done" ] && [ "$(show_field_value "$show" hold_kind)" = captain ]; then echo closed; return 0; fi
+  (command_answered "$id") && echo closed || echo none
+}
+
 # Still an open captain call? Exit 0 yes, 1 no, 2 cannot tell (see the header).
 # A row this home does not carry is 3 when the caller requests the distinction,
 # and so is a home with no backlog file at all, because a backlog that does not
@@ -2212,6 +2242,7 @@ case "${1:-}" in
   complete) shift; command_complete "$@" ;;
   verify) shift; command_verify "$@" ;;
   answered) shift; command_answered "$@" ;;
+  phase) shift; command_phase "$@" ;;
   open) shift; command_open "$@" ;;
   blocking) shift; command_blocking "$@" ;;
   design-card) shift; command_design_card "$@" ;;

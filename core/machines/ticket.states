@@ -1,0 +1,9 @@
+# ticket: the closed list of states of the machine "Ticket: the one machine of section 6.3".
+# value<TAB>mark (initial, final or -)<TAB>kind (active, waiting, rest, final)<TAB>meaning
+intake	initial	rest	filed, and not yet approved to start
+ready	-	waiting	approved, and waiting for a free lane
+building	-	active	a worker has it
+proving	-	active	the worker said done, and this exact commit is being proved
+delivering	-	active	proved or bypassed, and on its way to main with no full proof again
+released	-	waiting	on the default branch and running where it runs
+closed	final	final	cleaned up, with a resolution

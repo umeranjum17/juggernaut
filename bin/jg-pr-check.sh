@@ -96,6 +96,8 @@ STATE="${JG_STATE_OVERRIDE:-$JG_HOME/state}"
 . "$SCRIPT_DIR/jg-evidence-lib.sh"
 # shellcheck source=bin/jg-dod-lib.sh
 . "$SCRIPT_DIR/jg-dod-lib.sh"
+# shellcheck source=bin/jg-bypass-record-lib.sh
+. "$SCRIPT_DIR/jg-bypass-record-lib.sh"
 
 if [ "$#" -ne 2 ]; then
   echo "error: invalid PR check request" >&2
@@ -482,9 +484,15 @@ if [ "${JG_PR_CHECK_MERGE:-}" != 1 ] && [ "$PROVIDER" = github ]; then
       || printf 'warning: could not publish the waiting-for status on %s\n' "$URL" >&2
   fi
 fi
-# A new review-ready PR moves the ticket to review; the merge-time re-record does not.
+# A bypassed change says so on its own page: a green proof status that reads "bypassed: no proof ran" with the word id (J26c).
+if [ "${JG_PR_CHECK_MERGE:-}" != 1 ] && [ "$PROVIDER" = github ] && BYPASS_LINE=$(jg_bypass_mark_line "$JG_HOME" "$STATE" "$ID"); then
+  jg_pr_proof_status "$URL" "$BYPASS_LINE" \
+    || printf 'warning: could not publish the proof status on %s\n' "$URL" >&2
+fi
+# A new review-ready PR goes onto the ticket row; the merge-time re-record does not.
 [ "${JG_PR_CHECK_MERGE:-}" = 1 ] \
-  || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-ticket.sh" "$ID" --stage review --pr "$URL" >/dev/null || true
+  || JG_HOME=$JG_HOME "$SCRIPT_DIR/jg-backlog.sh" update "$ID" --pr "$URL" >/dev/null 2>&1 \
+  || printf 'warning: could not put the PR on the ticket of %s\n' "$ID" >&2
 # The ready card carries the task's proof media and receipt, or this says what is missing
 # (bin/jg-proof-attach.sh). Homes with no board hook (config/post-merge) skip it.
 if [ "${JG_PR_CHECK_MERGE:-}" != 1 ] && { [ -e "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}/post-merge" ] || [ -n "${JG_PROOF_BOARD:-}" ]; }; then

@@ -13,7 +13,7 @@
 #   2. state/<task>.run-receipt.json - require verdict PASS, head == pr_head, spawn_gen == the meta's spawn_gen.
 #   3. JG_HOME=<home> bin/jg-pr-merge.sh <task> <PR URL> - never --auto, never gh merge directly.
 # A release record (kind=release, written by bin/jg-trunk.sh release) is merged on the captain's standing word,
-# config/trunk-release-waiver: its merge=approved counts only while that line stands, so removing the rule stops the
+# config/trunk-release-waiver, or the answer given at `gated` (jg-trunk.sh): its merge=approved counts only while that line or answer stands, so removing the rule stops the
 # merge; its done is the release proof's receipt; and after its merge `jg-trunk.sh rollover` cuts the next trunk
 # version in the same pass. Every other gate below applies to it unchanged.
 # Any refusal or FAIL: one wake line naming the task, the PR URL and the first refusal reason, so the lead
@@ -45,6 +45,7 @@ STATE=$FMH/state
 SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 LINT=${JG_MOG_CHECKS_LINT:-$SRC/checks-lint.sh}
 DATA=$FMH/data/jg-merge-on-green
+ALERT=${JG_STRANDED_ALERT:-$FMH/bin/jg-alert.sh}
 # The release record's standing word is read through the trunk policy lib, from this script's own checkout; where it is absent no release merges.
 # shellcheck source=bin/jg-trunk-policy-lib.sh
 [ ! -r "$SRC/../../bin/jg-trunk-policy-lib.sh" ] || . "$SRC/../../bin/jg-trunk-policy-lib.sh"
@@ -80,33 +81,26 @@ LEAD_NOTE='lead: clear it and merge through bin/jg-pr-merge.sh; only a genuine h
 
 timed_out() { [ "$1" = 124 ] || [ "$1" = 137 ]; }
 
-# record_latency <task> <pr>: append the done-to-merged minutes to the home's
-# table and print them, empty when the task never reported a done line.
-# Every merge is recorded, so the five-minute target is a number anyone can read
-# rather than a claim, and a merge over JG_MERGE_LATENCY_LIMIT_MINUTES (default
-# 5) is called out in the wake line the lead relays.
-LATENCY_FILE=$FMH/data/merge-latency.tsv
+# merge_minutes <task>: the whole minutes from the ticket's ready time to its landed time, read from
+# `jg-backlog.sh times <task>`; empty when the ticket has no ready time or no landed time. The merge itself
+# writes landed_at (bin/jg-merge-outcome-lib.sh), so the number is the record's own, and a merge over
+# JG_MERGE_LATENCY_LIMIT_MINUTES (default 5) raises the slow-delivery alert (bin/jg-alert.sh).
 MERGE_LATENCY_LIMIT=${JG_MERGE_LATENCY_LIMIT_MINUTES:-5}
 case "$MERGE_LATENCY_LIMIT" in ''|*[!0-9]*) MERGE_LATENCY_LIMIT=5 ;; esac
-record_latency() { # <task> <pr>
-  local done_at merged_at when minutes
-  # A worker's hand-off line: `done` or `ready`, `[at=<epoch>]` with optional extra keys.
-  done_at=$(sed -n -E 's/^(done|ready)[[:space:]]*\[at=([0-9]+)[^]]*\].*/\2/p' "$STATE/$1.status" 2>/dev/null | tail -1)
-  # A release has no worker: its hand-off is the release proof's completion receipt.
-  [ -n "$done_at" ] || [ "$kind" != release ] || done_at=$(jq -r '.at // empty' "$STATE/$1.run-receipt.json" 2>/dev/null) || done_at=
-  [ -n "$done_at" ] || return 0
-  merged_at=
-  when=$(timeout "$BUDGET" gh pr view "$2" --json mergedAt -q '.mergedAt // empty' 2>/dev/null) || when=
-  [ -z "$when" ] || merged_at=$(date -u -d "$when" +%s 2>/dev/null) || merged_at=
-  [ -n "$merged_at" ] || merged_at=$(date +%s)
-  minutes=$(( (merged_at - done_at) / 60 ))
-  [ "$minutes" -ge 0 ] || minutes=0
-  mkdir -p "${LATENCY_FILE%/*}" 2>/dev/null || :
-  [ -s "$LATENCY_FILE" ] \
-    || printf 'task\tpr\tdone_epoch\tmerged_epoch\tminutes\n' > "$LATENCY_FILE" 2>/dev/null || :
-  printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$done_at" "$merged_at" "$minutes" \
-    >> "$LATENCY_FILE" 2>/dev/null || :
-  printf '%s' "$minutes"
+merge_minutes() { # <task>
+  local rows ready landed
+  rows=$(JG_HOME="$FMH" timeout "$BUDGET" "$FMH/bin/jg-backlog.sh" times "$1" 2>/dev/null) || rows=
+  ready=$(printf '%s\n' "$rows" | awk -F '\t' '$1 == "ready" { print $2 }')
+  landed=$(printf '%s\n' "$rows" | awk -F '\t' '$1 == "landed" { print $2 }')
+  # A release has no worker and no ready time: its hand-off is the release proof's completion receipt, and its merge is now.
+  if [ -z "$ready" ] && [ "$kind" = release ]; then
+    ready=$(jq -r '.at // empty' "$STATE/$1.run-receipt.json" 2>/dev/null) || ready=
+    [ -z "$ready" ] || { printf '%s' $(( ($(date +%s) - ready) / 60 )); return 0; }
+  fi
+  [ -n "$ready" ] && [ -n "$landed" ] || return 0
+  ready=$(date -u -d "$ready" +%s 2>/dev/null) && landed=$(date -u -d "$landed" +%s 2>/dev/null) || return 0
+  [ "$landed" -ge "$ready" ] || { printf 0; return 0; }
+  printf '%s' $(( (landed - ready) / 60 ))
 }
 
 refuse() { # <reason> <receipt-stamp>: the wake line prints once per task+head+reason+receipt state,
@@ -130,7 +124,10 @@ for m in "$STATE"/*.meta; do
   [ "$yolo" = on ] || [ "$approved" = approved ] || continue
   # A release record's approval is the standing release word: gone when that rule is gone, whatever the record says.
   if [ "$kind" = release ]; then
-    [ -n "$(jg_trunk_waiver_rule "$FMH/config/trunk-release-waiver" "$(basename "$(meta_get "$m" project)")")" ] || continue
+    rproj=$(basename "$(meta_get "$m" project)")
+    # The standing word, or the answer given at `gated` (merge_rule=gated:<yolo|word>, backed by a row in data/trunk-gated.tsv).
+    [ -n "$(jg_trunk_waiver_rule "$FMH/config/trunk-release-waiver" "$rproj")" ] \
+      || { case $(meta_get "$m" merge_rule) in gated:*) jg_trunk_gated_any "$FMH/data/trunk-gated.tsv" "$rproj" ;; *) false ;; esac; } || continue
   fi
   # The lead marks merge=manual at intake on destructive, irreversible or security-sensitive work and
   # on work waiting for the captain's own review.
@@ -243,12 +240,14 @@ for m in "$STATE"/*.meta; do
     continue
   fi
   if [ "$merge_rc" -eq 0 ]; then
-    # Measured before the merged line is appended, because that line is itself a
-    # done line and the number this rows measures is the worker's own done line.
-    latency=$(record_latency "$task" "$pr")
+    # The merge wrote landed_at on the ticket; the number is its ready time to that landing.
+    latency=$(merge_minutes "$task")
+    # A merge over the limit is the alert table's slow-delivery row (bin/jg-alert.sh); the merged line below carries the minutes.
     if [ -n "$latency" ] && [ "$latency" -gt "$MERGE_LATENCY_LIMIT" ]; then
-      echo "merge-on-green: merged $task $pr through jg-pr-merge, but it took ${latency}m from its done line to merged, over the ${MERGE_LATENCY_LIMIT}-minute target; recorded in $LATENCY_FILE; lead: run the post-merge steps (install from main, teardown)"
-    elif [ -n "$latency" ]; then
+      JG_HOME="$FMH" JG_STATE_OVERRIDE="$STATE" timeout "$BUDGET" "$ALERT" raise slow-delivery "$task" --mode "$(meta_get "$m" mode)" --kind ship-delivering \
+        --ticket "$task" --deliver >/dev/null 2>&1 || echo "merge-on-green: could not raise the slow-delivery alert for $task (${latency}m, over the ${MERGE_LATENCY_LIMIT}-minute target)"
+    fi
+    if [ -n "$latency" ]; then
       echo "merge-on-green: merged $task $pr through jg-pr-merge in ${latency}m from its done line; lead: run the post-merge steps (install from main, teardown)"
     else
       echo "merge-on-green: merged $task $pr through jg-pr-merge; lead: run the post-merge steps (install from main, teardown)"
@@ -271,8 +270,8 @@ done
 # Open-PR cap: ten green PRs once sat unmerged behind one red release PR and nobody saw the pile.
 # A merge never waits on another PR's colour (each task above is judged on its own PR), so the pile is
 # raised here instead. For every repo named by a task's recorded pr= URL, count its open PRs; over
-# <home>/config/open-pr-cap (a whole number, default 8) one alert names the repo, the count and the cap.
-# The alert is remembered per repo and count in <home>/data/jg-merge-on-green/open-pr-cap/, so it repeats
+# <home>/config/open-pr-cap (a whole number, default 8) one central `stranded` alert (bin/jg-alert.sh raise, then
+# deliver; subject <owner>__<repo>.open-prs) rings the lead. The count is remembered per repo in <home>/data/jg-merge-on-green/open-pr-cap/, so it repeats
 # only when the count changes, and a repo back under the cap forgets it. Runs after the merges and only
 # while a gh call still fits in the bound; a gh failure is silent and retried next sweep.
 CAP=; [ ! -f "$FMH/config/open-pr-cap" ] || read -r CAP _ < "$FMH/config/open-pr-cap" || :
@@ -286,9 +285,10 @@ for repo in $repos; do
   seen=$DATA/open-pr-cap/${repo//\//__}
   open=$(timeout "$BUDGET" gh pr list --repo "$repo" --state open --limit 500 --json number --jq length 2>/dev/null) || continue
   case "$open" in ''|*[!0-9]*) continue ;; esac
-  if [ "$open" -le "$CAP" ]; then rm -f "$seen" 2>/dev/null || :; continue; fi
+  if [ "$open" -le "$CAP" ]; then rm -f "$seen" 2>/dev/null || :; JG_HOME=$FMH "$ALERT" resolve "stranded--${seen##*/}.open-prs" >/dev/null 2>&1; continue; fi
   [ "$(cat "$seen" 2>/dev/null)" = "$open" ] && continue
-  echo "merge-on-green: $open open pull requests in $repo, over the cap of $CAP; lead: merge the green ones now, a red pull request elsewhere never holds them"
+  JG_HOME=$FMH "$ALERT" resolve "stranded--${seen##*/}.open-prs" >/dev/null 2>&1
+  JG_HOME=$FMH "$ALERT" raise stranded "${seen##*/}.open-prs" | JG_HOME=$FMH "$ALERT" deliver
   mkdir -p "$DATA/open-pr-cap" 2>/dev/null && printf '%s\n' "$open" > "$seen" 2>/dev/null || :
 done
 

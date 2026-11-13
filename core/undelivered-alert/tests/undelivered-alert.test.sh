@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end: run undelivered-alert.sh against a fixture home. The first run records the count and stays
-# silent; a new row (whose text holds a raw newline) wakes once with its kind, key and reason; a repeat
+# silent; a new row (whose text holds a raw newline) raises the undelivered alert once with its kind, key and reason; a repeat
 # poll is silent; a second new row wakes again; a rotated file stays silent; wiring.sh --dry-run writes nothing.
 # Usage: undelivered-alert/tests/undelivered-alert.test.sh
 set -euo pipefail
@@ -11,7 +11,14 @@ FM=$d/fm; mkdir -p "$FM/state"
 R=$FM/state/captain-channel-undelivered.jsonl
 fails=0
 check() { if [ "$2" = "$3" ]; then echo "ok: $1"; else printf 'FAIL: %s\n  want: %s\n  got:  %s\n' "$1" "$3" "$2"; fails=$((fails + 1)); fi; }
-poll() { "$SRC/undelivered-alert.sh" check "$FM" 2>&1; }
+# poll prints the note of each alert wake the check newly raised: the payload's text after " - ".
+poll() {  # the offset lives in a file: poll runs in a command substitution
+  local seen; seen=$(cat "$d/seen" 2>/dev/null || echo 0)
+  JG_HOME="$FM" "$SRC/undelivered-alert.sh" check "$FM" 2>&1
+  [ -f "$FM/state/.wake-queue" ] || return 0
+  tail -n +$((seen + 1)) "$FM/state/.wake-queue" | awk -F'\t' '$3=="check" && $4 ~ /^alert-undelivered--/ {sub(/^.* - undelivered-alert:/, "undelivered-alert:", $5); sub(/ +$/, "", $5); print $5}'
+  wc -l < "$FM/state/.wake-queue" > "$d/seen"
+}
 row() { printf '{"at":1,"target":"http://x","error":"%s","event":{"at":1,"kind":"%s","key":"%s","subject":"s","text":"line one\nline two"}}\n' "$1" "$2" "$3"; }
 
 check "no row file stays silent" "$(poll)" ""

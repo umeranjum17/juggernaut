@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """jg-beads-write.py - serve the backlog's add, update, done, block, unblock, start, reopen, hold and unhold on a Beads store.
 
-Usage: BEADS_DIR=<store> jg-beads-write.py <add|create|update|edit|done|close|block|unblock|start|reopen|hold|unhold|relink> [args...]
+Usage: BEADS_DIR=<store> jg-beads-write.py <add|create|update|edit|done|close|block|unblock|start|task|reopen|hold|unhold|relink> [args...]
        BEADS_DIR=<store> jg-beads-write.py <stage <key>...|take <file> <key>...|drop <key>...|public-followup ...>
+       BEADS_DIR=<store> jg-beads-write.py <moment|wait|ticket-stage|ticket-drift|times|trace> ...   (the ticket machine's moments, wait and stage: bin/jg-beads-moment.py)
 
 bin/jg-backlog-lib.sh's jg_backlog_beads_write starts it after bin/jg-backlog.sh's intake and captain guards.
 Every bd call goes through bin/jg-beads.sh. Replies and refusals print the backlog's lines on stdout.
@@ -11,6 +12,8 @@ and reports are metadata.reports, each comma-joined; a PR or report also joins t
 A hold is status on_hold with metadata.hold_reason and hold_kind, kept in plain text; a dated hold is status deferred
 with --until as defer_until at UTC midnight, because bd reads a bare date in local time, and bd ready wakes it to open;
 a held row keeps its assignee, and that owner is what keeps it in flight, across that wake too.
+A hold writes the ticket's three wait keys in the same update (hold_kind and hold_reason stay as they are): a hold to a date waits on
+outside for the date, an owner question (kind captain) on the owner for a decision, a parked hold on the lead for parked; unhold writes the wait `none`.
 --archive-body needs nothing further: the store's own history keeps the replaced body.
 --mint leaves the id to bd, which names it under the store's prefix. A rerun converges: an existing id, blocker, link or note is left alone. bd refuses an id with no dash and a dependency
 cycle, and that refusal reaches stderr with bd's exit status.
@@ -18,9 +21,12 @@ start, reopen and done move status only from the status they expect, so a row th
 nothing, with one refusal line on stdout. A held row keeps its status on reopen. start takes an open row or a deferred
 row past its date: one status column cannot read in flight and held at once, so where the backlog would start a held or
 done row this refuses.
-A worker's lane owns its row: the assignee is the lane named by JG_BACKLOG_LANE and metadata.agent is JG_BACKLOG_AGENT.
-start claims a row with no owner, and JG_BACKLOG_LANE_HANDOVER=1 takes it from the owner it read, so a row another lane
-took first exits 13. done keeps the assignee as history, reopen clears both, and each moves only from the owner it read.
+A worker owns its row: the assignee is the worker's Herdr agent name in JG_BACKLOG_LANE (the task record's agent_name=), the same across a relaunch,
+metadata.spawn_gen is the spawn generation in JG_BACKLOG_SPAWN_GEN, and metadata.agent, model and effort are JG_BACKLOG_AGENT, _MODEL and _EFFORT.
+rename-lane <id> <first> <stuck> gives the row to the name Herdr kept, only while <first> still owns it.
+start claims a row with no owner. A start whose generation is not the one on the row exits 13, unless JG_BACKLOG_LANE_HANDOVER=1
+(a relaunch) takes it; a row another worker took first exits 13 too. done keeps the assignee as history, reopen clears all
+three, and each moves only from the owner it read.
 With no lane named, start claims an unowned row for the actor (BEADS_ACTOR, else juggernaut), so every in-flight row has an owner.
 bin/jg-beads.sh makes the lane the actor of every bd call, so a comment or an event carries who wrote it.
 bd takes --if-assignee or --force, never both, so closing a blocked row or a parent with an open child is guarded by status alone.
@@ -70,12 +76,29 @@ def bd(*args):
 
 
 def lane(row):
-    """Return the flags that make this run's lane the row's owner, or nothing with no lane named."""
-    name, agent = os.environ.get("JG_BACKLOG_LANE"), os.environ.get("JG_BACKLOG_AGENT")
+    """Return the flags that make this run's worker the row's owner, or nothing with no lane named.
+
+    The assignee is the agent name and survives a relaunch, so the owner guard alone cannot tell a second spawn from a
+    relaunch: metadata.spawn_gen carries the spawn generation and a start from another one is refused here. bd has no guard
+    on metadata, so that check is a read and then a write with a short gap; a second spawn landing in the gap is not caught.
+    A fresh spawn writes with --if-assignee "" (owner is empty unless the row is this name's); a relaunch writes with the owner
+    it read, which is empty for a row that was reclaimed. The pane id is not written: an account move changes it with no relaunch.
+    """
+    name, gen = (os.environ.get(key) for key in ("JG_BACKLOG_LANE", "JG_BACKLOG_SPAWN_GEN"))
     if not name:
         return []
-    owner = row.get("assignee") or "" if os.environ.get("JG_BACKLOG_LANE_HANDOVER") else ""
-    return ["-a", name, "--if-assignee", owner] + (["--set-metadata", "agent=" + agent] if agent else [])
+    handover = os.environ.get("JG_BACKLOG_LANE_HANDOVER")
+    meta = row.get("metadata") or {}
+    held = meta.get("spawn_gen") or meta.get("lane")
+    if row.get("assignee") == name and held and gen and held != gen and not handover:
+        view.refuse("stale write refused: %s is held by lane \"%s\", expected \"%s\"" % (row["id"], held, gen),
+                    "Run `jg-backlog.sh show %s` and decide again" % row["id"], "STALE_WRITE", STALE)
+    owner = row.get("assignee") or "" if handover or row.get("assignee") == name else ""
+    flags = ["-a", name, "--if-assignee", owner]
+    for key, value in (("spawn_gen", gen), ("agent", os.environ.get("JG_BACKLOG_AGENT")),
+                       ("model", os.environ.get("JG_BACKLOG_MODEL")), ("effort", os.environ.get("JG_BACKLOG_EFFORT"))):
+        flags += ["--set-metadata", "%s=%s" % (key, value)] if value else []
+    return flags + (["--unset-metadata", "lane"] if "lane" in meta else [])
 
 
 def unowned(row):
@@ -88,7 +111,7 @@ def unowned(row):
 def released(row):
     """Return the flags that take a lane off its row, guarded on the owner read."""
     owner = row.get("assignee")
-    return ["-a", "", "--unset-metadata", "agent", "--if-assignee", owner] if owner else []
+    return ["-a", "", "--unset-metadata", "agent", "--unset-metadata", "model", "--unset-metadata", "effort", "--unset-metadata", "spawn_gen", "--unset-metadata", "lane", "--if-assignee", owner] if owner else []
 
 
 def rows():
@@ -449,7 +472,7 @@ def start(args):
     found, ident, row = one_row("start", args)
     tips = ["Run `jg-backlog.sh done %s --pr <url>` when it ships" % ident]
     owner, status, held = lane(row) or unowned(row), row["status"], view.holding(row)
-    mine = owner and row.get("assignee") == owner[1]
+    mine = owner and row.get("assignee") == owner[1] and (row.get("metadata") or {}).get("spawn_gen") == os.environ.get("JG_BACKLOG_SPAWN_GEN")
     if status == "in_progress" or (held and view.flying(row)):
         if owner and not mine:
             bd("update", ident, *owner, "--if-status", status)
@@ -459,6 +482,37 @@ def start(args):
     due = status == "deferred" and not held
     bd("update", ident, "--status", "in_progress", "--if-status", "deferred" if due else "open", *(["--defer", ""] if due else []), *([] if mine else owner))
     respond(found, "start", ident, "start %s -> In flight" % ident, tips, card=False)
+
+
+def rename_lane(args):
+    """Give the row to the name Herdr kept when the pin took a variant, only while the first name still owns it."""
+    _, ids = view.flags(args, (), ())
+    if len(ids) != 3:
+        view.refuse("Expected 3 positional arguments, got %d" % len(ids), "usage: jg-beads-write.py rename-lane <id> <first> <stuck>")
+    row = plain(rows(), ids[0])
+    bd("update", row["id"], "-a", ids[2], "--if-assignee", ids[1])
+    print(ids[2])
+
+
+def task(args):
+    """Write a ticket's task id on its row as metadata.task, so every script that knows only the task id reaches the row.
+
+    The bash verb (bin/jg-backlog.sh task) makes the task id from the ticket; a different row that already answers to it, by id or by name, is a refusal that names both."""
+    _, ids = view.flags(args, (), ())
+    if len(ids) != 2:
+        view.refuse("Expected 2 positional arguments, got %d" % len(ids), "usage: jg-backlog.sh task <ticket-id>")
+    ticket, name = ids
+    items = rows()
+    row = items.get(ticket)
+    if row is None:
+        view.refuse('Task "%s" not found in this backlog' % ticket, "Run `jg-backlog.sh list` to see existing tasks", "NOT_FOUND", 1)
+    other = [r["id"] for r in items.values() if r["id"] != ticket and (r["id"] == name or name in view.legacy(r))]
+    if other:
+        view.refuse("task id %s of ticket %s is already answered by row %s" % (name, ticket, other[0]),
+                    "Rename or close row %s, or give ticket %s another id" % (other[0], ticket), "TASK_CLASH", 1)
+    if (row.get("metadata") or {}).get("task") != name:
+        bd("update", ticket, "--set-metadata", "task=" + name)
+    print(name)
 
 
 def reopen(args):
@@ -481,6 +535,15 @@ def hold_date(value):
     return value
 
 
+def hold_wait(kind, until):
+    """Return the wait a hold writes with it, as (who, reason), or None when it writes none: a hold to a date waits on `outside`
+    for the `date`, an owner question (kind captain) on the `owner` for a `decision`, a parked hold on the `lead` for `parked`.
+    hold_kind and hold_reason are written by the caller as before."""
+    if until:
+        return "outside", "date"
+    return {"captain": ("owner", "decision"), "parked": ("lead", "parked")}.get(kind)
+
+
 def hold(args):
     found, ids = view.flags(args, ("--reason", "--kind", "--until"), ("--json",))
     if len(ids) != 1:
@@ -498,11 +561,15 @@ def hold(args):
     ident = row["id"]
     item = view.task(row, items)
     tips = ["Run `jg-backlog.sh unhold %s` to resume dispatch" % ident, "Run `jg-backlog.sh list --state held` to review paused work"]
-    if item["held"] == "yes" and (item["hold_reason"], item["hold_kind"], item["hold_until"]) == (reason, kind or "-", until or "-"):
+    waits = hold_wait(kind, until)
+    meta = row.get("metadata") or {}
+    if item["held"] == "yes" and (item["hold_reason"], item["hold_kind"], item["hold_until"]) == (reason, kind or "-", until or "-") \
+            and (not waits or (meta.get("wait"), meta.get("wait_reason")) == waits):
         respond(found, "hold", ident, "hold %s already held" % ident, tips, already=True)
         return
-    status, meta = row.get("status"), row.get("metadata") or {}
+    status = row.get("status")
     cmd = ["--set-metadata", "hold_reason=" + reason]
+    cmd += __import__("jg-beads-moment").wait_flags(*waits) if waits else []
     cmd += ["--set-metadata", "hold_kind=" + kind] if kind else ["--unset-metadata", "hold_kind"] if "hold_kind" in meta else []
     cmd += ["--defer", until + "T00:00:00Z" if until else ""] if until or row.get("defer_until") else []
     cmd += unowned(row) if status == "in_progress" else []
@@ -522,6 +589,7 @@ def unhold(args):
     ident = row["id"]
     meta = row.get("metadata") or {}
     cmd = [word for key in HOLD_FIELDS if key in meta for word in ("--unset-metadata", key)]
+    cmd += __import__("jg-beads-moment").wait_flags("none", "") if meta.get("wait", "none") != "none" else []
     cmd += ["--defer", ""] if row.get("defer_until") else []
     back = "in_progress" if view.flying(row) else "open"
     cmd += ["--status", back] if row.get("status") not in ("closed", back) else []
@@ -647,9 +715,11 @@ def relink(_args):
 def main():
     verb = sys.argv[1] if len(sys.argv) > 1 else ""
     serve = {"add": add, "create": add, "update": update, "edit": update, "done": done, "close": done,
-             "block": block, "unblock": unblock, "start": start, "reopen": reopen, "hold": hold, "unhold": unhold,
+             "block": block, "unblock": unblock, "start": start, "rename-lane": rename_lane, "task": task, "reopen": reopen, "hold": hold, "unhold": unhold,
              "stage": stage, "take": take, "drop": drop, "relink": relink,
-             "public-followup": lambda args: __import__("jg-beads-followup").main(args)}.get(verb)
+             "public-followup": lambda args: __import__("jg-beads-followup").main(args),
+             "trace": lambda args: __import__("jg-beads-trace").main(args),
+             **{name: lambda args, name=name: __import__("jg-beads-moment").main(name, args) for name in ("moment", "wait", "ticket-stage", "ticket-drift", "times")}}.get(verb)
     if serve is None:
         view.refuse("Unknown write verb: " + verb)
     serve(sys.argv[2:])

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Wake Main when a running fleet process carries a provider API key in its environment.
+"""Raise a security alert when a running fleet process carries a provider API key in its environment.
 
 Read-only on /proc: /proc/<pid>/environ is split on NUL and only the variable
 NAMES are kept for matching (matched against JG_KEY_PATTERNS, the home's
@@ -18,7 +18,7 @@ state/.key-in-env.alerted.json. Nothing is killed, signalled or changed.
 Fixture knobs: JG_KEY_HOMES (colon list of home dirs), JG_KEY_TREES (comma list
 of pids: scan only them and their descendants), JG_PROC.
 """
-import fnmatch, hashlib, json, os, re, sys
+import fnmatch, hashlib, json, os, re, subprocess, sys, time
 
 PROVIDERS = "OPENROUTER ANTHROPIC OPENAI MINIMAX GOOGLE GEMINI XAI MOONSHOT ZAI DEEPSEEK MISTRAL GROQ COHERE TOGETHER FIREWORKS".split()
 DEFAULT = ["*_API_KEY", "*_API_TOKEN"] + [f"{p}_*{s}" for p in PROVIDERS for s in ("KEY", "TOKEN", "SECRET")]
@@ -218,10 +218,19 @@ def main():
     alert = not prev.get("active") or new_name or count_jump
     if not alert:
         return
-    print(line)
+    fire_alert(line)
     with open(last, "w") as f:
         json.dump({"active": True, "count": count, "names": variables, "revoked": False}, f)
         f.write("\n")
+
+
+def fire_alert(note):
+    """Raise the one security alert for a finding through the home's alert function (bin/jg-alert.sh raise --deliver).
+    A refusal stops the run before the baseline moves, so the next run alerts again."""
+    r = subprocess.run([os.path.join(HOME, "bin", "jg-alert.sh"), "raise", "security", f"key-in-env-{int(time.time())}-{os.getpid()}", "--note", note, "--deliver"],
+                       env={**os.environ, "JG_HOME": HOME, "JG_STATE_OVERRIDE": STATE}, capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit(f"key-in-env: the security alert was not raised: {r.stderr.strip()}")
 
 
 if __name__ == "__main__":

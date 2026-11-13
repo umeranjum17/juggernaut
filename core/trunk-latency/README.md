@@ -22,6 +22,7 @@ The check writes one row for each row of `data/trunk-landings.tsv` that has no r
 | `minutes` | `ready` to `landed`, rounded | |
 | `stage`, `gate_secs` | the stage that held the most seconds, and the gate's seconds | `data/trunk-landing-proofs.tsv` |
 | `load` | the one-minute host load, for a landing at most 10 minutes old | `/proc/loadavg` |
+| `queue_secs`, `landing_secs` | the seconds of the queue and of the landing step (start lock, rebase, admission); with `gate_secs` they are the seconds of each step. Both are empty when the landing start is not on record | `ready`, `launch`, `landed` and `gate_secs` above |
 | `queue_why` | why the lane waited: `behind <lane>`, `behind attempt of <lane>`, `first seen +N s`, or `not recorded` for a queue row the lander wrote no reason for | `data/jg-trunk-landing/<task>.<head>.queue-why`, written by `core/trunk-landing/queue-why.sh` at the landing start |
 
 `ready` and `minutes` are the numbers of table T of the plan's `measure.py`, so both readers give one number for one landing.

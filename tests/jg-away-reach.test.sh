@@ -55,6 +55,33 @@ JG_AWAY_REACH_NOW=$(( $(date +%s) + 5730 )) "$S/away-reach.check.sh"
 assert_equals 5 "$(sent)" "a sign-in need is urgent"
 assert_not_contains "$(cat "$SENT")" "abcdefgh12345678" "a secret is never sent"
 
+# Episodes (slice H17): an alert held open at the owner's rung is one page when it opens, none while it stays open,
+# one when it closes; the sends of every kind share one budget of 4 in an hour.
+mkdir -p "$S/alerts"
+ep() { printf 'alert=supervision-down\nsubject=%s\nrung=4\nsince=%s\nnote=%s\nstate=%s\n' "$1" "$2" "$3" "$4" > "$S/alerts/supervision-down--$1.rec"; }
+NOW0=$(date +%s); base=$(sent)
+ep sign-off "$NOW0" "no home can start sign-off work" open
+JG_AWAY_REACH_NOW=$((NOW0 + 6000)) "$S/away-reach.check.sh"
+assert_equals $((base + 1)) "$(sent)" "an episode that opens sends one page"
+assert_contains "$(tail -n 6 "$SENT")" "no home can start sign-off work" "the page names what is blocked"
+JG_AWAY_REACH_NOW=$((NOW0 + 6000 + 3 * 3600)) "$S/away-reach.check.sh"
+JG_AWAY_REACH_NOW=$((NOW0 + 6000 + 3 * 3600 + 300)) "$S/away-reach.check.sh"
+assert_equals $((base + 2)) "$(sent)" "3 hours later the open episode adds no page (only the changed-fleet update may go)"
+ep sign-off "$NOW0" "no home can start sign-off work" resolved
+JG_AWAY_REACH_NOW=$((NOW0 + 6000 + 3 * 3600 + 3000)) "$S/away-reach.check.sh"
+assert_contains "$(cat "$SENT")" "Cleared after" "the close sends a second page"
+b2=$(sent)
+JG_AWAY_REACH_NOW=$((NOW0 + 6000 + 3 * 3600 + 3100)) "$S/away-reach.check.sh"
+assert_equals "$b2" "$(sent)" "a closed episode is paged once"
+# The budget: four sends in the hour are spent, so a new episode waits and is sent when the hour has room.
+T5=$((NOW0 + 20000)); printf '%s\n' "$T5" "$T5" "$T5" "$T5" > "$S/away-reach.budget"
+ep disk "$T5" "the host disk is full" open
+b3=$(sent)
+JG_AWAY_REACH_NOW=$((T5 + 10)) "$REACH" episodes
+assert_equals "$b3" "$(sent)" "over the budget a page waits"
+JG_AWAY_REACH_NOW=$((T5 + 3700)) "$REACH" episodes
+assert_equals $((b3 + 1)) "$(sent)" "the waiting page goes when the hour has room"
+
 "$ROOT/bin/jg-afk-contract.sh" archive >/dev/null 2>&1
 assert_absent "$S/away-reach.check.sh" "returning disarms the reach"
 assert_absent "$S/away-reach.check-trust" "returning removes the trust record"

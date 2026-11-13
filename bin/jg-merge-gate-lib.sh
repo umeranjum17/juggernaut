@@ -48,6 +48,8 @@ set -u
 
 # shellcheck source=bin/jg-squad-lead-parent-lib.sh
 [ ! -r "$_jg_d/jg-squad-lead-parent-lib.sh" ] || . "$_jg_d/jg-squad-lead-parent-lib.sh"
+# shellcheck source=bin/jg-bypass-record-lib.sh
+[ ! -r "$_JG_GATE_LIB_DIR/jg-bypass-record-lib.sh" ] || . "$_JG_GATE_LIB_DIR/jg-bypass-record-lib.sh"
 # shellcheck source=bin/jg-timeout-lib.sh
 . "$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)/jg-timeout-lib.sh"
 
@@ -70,8 +72,20 @@ jg_dod_merge_gate() {  # <config-dir> <home> <id> <meta> <candidate-head> <pr-ur
   return 1
 }
 
+# The completion receipt a merge read is a fact on the ticket's trail (a landing records its own in bin/jg-trunk.sh record_proofs).
+jg_merge_trace_receipt() {  # <home> <id> <meta> <head|->
+  local r=${3%/*}/$2.run-receipt.json verdict ticket
+  ticket=$(sed -n 's/^ticket=//p' "$3" 2>/dev/null | tail -n 1)
+  [ "$4" != - ] && [ -f "$r" ] && command -v jq >/dev/null 2>&1 || return 0
+  verdict=$(jq -r 'select(.head == $h) | .verdict // empty' --arg h "$4" "$r" 2>/dev/null) || return 0
+  [ -n "$verdict" ] || return 0
+  JG_HOME=$1 "$_JG_GATE_LIB_DIR/jg-backlog.sh" trace record "${ticket:-$2}" used work-id "$2@${4:0:12}" --source jg-receipt \
+    --payload "{\"verdict\":\"$verdict\"}" >/dev/null 2>&1 || echo "warning: the receipt of $2 could not be put on its ticket's trail" >&2
+}
+
 jg_merge_post_hook() {  # <config-dir> <home> <id> <meta> <head|-> <pr-url|->
   local hook=$1/post-merge worktree out rc=0 seconds=${JG_POST_MERGE_TIMEOUT:-120}
+  jg_merge_trace_receipt "$2" "$3" "$4" "$5"
   [ -e "$hook" ] || [ -L "$hook" ] || return 0
   [ -x "$hook" ] || { echo "post-merge hook skipped: $hook is not executable"; return 0; }
   case $seconds in ''|0*|*[!0-9]*) seconds=120 ;; esac
@@ -323,8 +337,12 @@ jg_dod_demo_gate() {  # <config-dir> <state> <id> <meta> <candidate-head>
 # `Nav after: ...` line, and every item of before is still in after unless a
 # `Removed by captain words: <quote>` line is present. ui_change=no passes; a record
 # with no ui_change (an older task) warns and counts as no. A shell check decides.
-jg_dod_nav_gate() {  # <id> <meta> <text>
-  local id=$1 meta=$2 text=$3 call before after item removed=''
+# <where> names the place the lines belong in a refusal: "PR body" (the default) for a PR,
+# "commit message" for a local landing, which has no PR body. <fallback> is read only when
+# <text> lacks a Nav before or Nav after line; a local landing passes the lane's receipt
+# evidence and done line, so a lane already at ready is not sent back for a missing line.
+jg_dod_nav_gate() {  # <id> <meta> <text> [<where>] [<fallback text>]
+  local id=$1 meta=$2 text=$3 where=${4:-PR body} fallback=${5:-} call before after item removed=''
   [ -n "$id" ] && [ -f "$meta" ] || return 0
   call=$(jg_dod_meta_value "$meta" ui_change)
   case $call in
@@ -337,8 +355,11 @@ jg_dod_nav_gate() {  # <id> <meta> <text>
     printf '%s\n' "$text" | tr -d '\r' | sed -n -E "s/^[[:space:]]*([-*][[:space:]]+)?$1:[[:space:]]*(.*[^[:space:]])[[:space:]]*\$/\\2/Ip" | tail -1
   }
   before=$(_jg_nav_line 'Nav before'); after=$(_jg_nav_line 'Nav after')
+  if { [ -z "$before" ] || [ -z "$after" ]; } && [ -n "$fallback" ]; then
+    text=$fallback; before=$(_jg_nav_line 'Nav before'); after=$(_jg_nav_line 'Nav after')
+  fi
   if [ -z "$before" ] || [ -z "$after" ]; then
-    echo "merge refused: $id is a UI change and its PR body has no 'Nav before: <items>' and 'Nav after: <items>' lines listing the menus, tabs and screens"
+    echo "merge refused: $id is a UI change and its $where has no 'Nav before: <items>' and 'Nav after: <items>' lines listing the menus, tabs and screens"
     return 1
   fi
   _jg_nav_items() { printf '%s\n' "$1" | tr ';,' '\n' | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' | sed '/^$/d' | tr '[:upper:]' '[:lower:]'; }
@@ -347,8 +368,17 @@ jg_dod_nav_gate() {  # <id> <meta> <text>
   done < <(_jg_nav_items "$before")
   [ -n "$removed" ] || return 0
   if [ -n "$(_jg_nav_line 'Removed by captain words')" ]; then return 0; fi
-  echo "merge refused: $id is a UI change and its PR body drops from Nav before ($removed) with no 'Removed by captain words: <quote>' line; a UI change never removes an existing menu, tab or screen unless the captain's own words ask for it"
+  echo "merge refused: $id is a UI change and its $where drops from Nav before ($removed) with no 'Removed by captain words: <quote>' line; a UI change never removes an existing menu, tab or screen unless the captain's own words ask for it"
   return 1
+}
+
+# Reads the sealed-run receipt of <id> at <head>. The compare of the account saved at the passed check belongs to the worker's own
+# done (<kind> = done); every other reader (the lander, crew state, the lavish guard, a lead on another account) reads the proof as
+# the lander does, with the caller's account and proof home cleared, so a proof saved under account A shows under account B.
+# Usage: jg_dod_proof_receipt_read <kind> <home> <merge-card> <id> <head>
+jg_dod_proof_receipt_read() {
+  if [ "$1" = 'done' ]; then JG_HOME=$2 "$3" receipt "$4" "$5"
+  else env -u CLAUDE_CONFIG_DIR -u DONE_DONE_HOME JG_HOME="$2" "$3" receipt "$4" "$5"; fi
 }
 
 # The proof a local-trunk lane needs at its exact head, checked once and whole: its completion receipt (PASS, this head, this
@@ -359,8 +389,13 @@ jg_dod_nav_gate() {  # <id> <meta> <text>
 # A rebase with no change keeps the proof: the receipt, and the merge-card check with its sealed run, each count for this head
 # when they are bound to it, or to a head that `merge-card same-change` finds is the same change in the lane's project (the
 # lander still lints and tests the rebased commit on the tip). A proof bound to another change is named and not kept.
-# Usage: jg_dod_trunk_proof_gaps <home> <state> <id> <meta> <head>
+# The owner's bypass of proving (bin/jg-proof-bypass.sh) stands in for all of it: a bypass record for this exact head
+# (bin/jg-bypass-record-lib.sh) leaves no gap. The worker's done, which comes before the tick writes that record, passes <done> as the
+# sixth word, and a standing bypass that covers the ticket is enough there.
+# Usage: jg_dod_trunk_proof_gaps <home> <state> <id> <meta> <head> [done]
 jg_dod_trunk_proof_gaps() {
+  jg_bypass_record_holds "$1" "$2" "$3" "$5" && return 0
+  if [ "${6:-}" = 'done' ] && jg_bypass_standing "$1" "$3" "$(basename "$(sed -n 's/^project=//p' "$4" 2>/dev/null | tail -n 1)")" >/dev/null; then return 0; fi
   local home=$1 state=$2 id=$3 meta=$4 head=$5 r="$2/$3.run-receipt.json" card="${JG_DATA_OVERRIDE:-$1/data}/$3/merge-card.json" gaps=0 mc why
   local repo rh ch rnote='' cnote=''
   mc=$_JG_GATE_LIB_DIR/../core/merge-card/merge-card
@@ -381,7 +416,7 @@ jg_dod_trunk_proof_gaps() {
   fi
   if ! { [ -f "$card" ] && jq -e --arg h "$ch" 'select(.head == $h and .verdict == "pass") | (.check.evidence // []) | length > 0' "$card" >/dev/null 2>&1; }; then
     echo "no approved merge-card evidence citing files for head ${head:0:12} of $id (run: JG_HOME=$home $mc check $id <worktree> $head <PR url|->$cnote)"; gaps=1
-  elif ! why=$(JG_HOME=$home "$mc" receipt "$id" "$ch" 2>&1 >/dev/null); then
+  elif ! why=$(jg_dod_proof_receipt_read "${6:-}" "$home" "$mc" "$id" "$ch" 2>&1 >/dev/null); then
     # merge-card names why it refused (a run that exists but cites other evidence, a changed proof context); say that,
     # not that no run exists. It prints nothing when no run holds the cited evidence at the head.
     why=${why%%$'\n'*}; why=${why#merge-card: }
@@ -392,6 +427,20 @@ jg_dod_trunk_proof_gaps() {
   [ "$gaps" = 0 ]
 }
 
+# The nav lines a local-landing lane may state outside its commit message: the evidence of its PASS completion receipt for
+# this head, then its last done line (the `done [at=..]:` prefix removed; a Nav/Removed label after the first on one line
+# starts its own line). Prints nothing when it has neither.
+jg_dod_local_nav_fallback() {  # <state> <id> <head>
+  local state=$1 id=$2 head=$3 receipt=$1/$2.run-receipt.json
+  if [ -f "$receipt" ] && [ ! -L "$receipt" ] && command -v jq >/dev/null 2>&1; then
+    jq -r --arg task "$id" --arg head "$head" 'select(.task == $task and .head == $head and .verdict == "PASS") | .evidence // empty' "$receipt" 2>/dev/null
+  fi
+  if [ -f "$state/$id.status" ]; then
+    grep -E '^done( \[[^]]*\])?:' "$state/$id.status" | tail -1 | sed -E 's/^done( \[[^]]*\])?:[[:space:]]*//; s/[[:space:]|]+(Nav before|Nav after|Removed by captain words):/\n\1:/Ig'
+  fi
+  return 0
+}
+
 # The gates a local landing passes, in one place so bin/jg-merge-local.sh and bin/jg-trunk.sh
 # cannot drift: the captain hold, then receipt, design, demo, nav, config/merge-gate and the proof card.
 # Prints the refusal and returns 1; returns 0 when every gate passes.
@@ -400,7 +449,7 @@ jg_dod_trunk_proof_gaps() {
 # passes `trunk` as <kind>.
 # Usage: jg_dod_local_landing_gates <bin-dir> <config-dir> <home> <state> <id> <meta> <project> <base> <candidate> [trunk]
 jg_dod_local_landing_gates() {
-  local bin=$1 config=$2 home=$3 state=$4 id=$5 meta=$6 proj=$7 base=$8 candidate=$9 kind=${10:-} hold_status=0
+  local bin=$1 config=$2 home=$3 state=$4 id=$5 meta=$6 proj=$7 base=$8 candidate=$9 kind=${10:-} hold_status=0 proved
   JG_HOME="$home" JG_STATE_OVERRIDE="$state" "$bin/jg-captain-hold.sh" open "$id" --distinguish-absent || hold_status=$?
   case "$hold_status" in
     0) echo "error: task $id is still held for the captain; release it before merging" >&2; return 1 ;;
@@ -408,9 +457,13 @@ jg_dod_local_landing_gates() {
     *) echo "error: could not determine whether task $id is still held for the captain; refusing to merge" >&2; return 1 ;;
   esac
   if [ "$kind" != trunk ] && declare -F jg_dod_receipt_accept >/dev/null; then jg_dod_receipt_accept "$state" "$id" "$meta" "$candidate" >&2 || return 1; fi
-  if declare -F jg_dod_design_gate >/dev/null; then jg_dod_design_gate "$state" "$id" "$meta" "$candidate" >&2 || return 1; fi
-  if declare -F jg_dod_demo_gate >/dev/null; then jg_dod_demo_gate "$config" "$state" "$id" "$meta" "$candidate" >&2 || return 1; fi
-  if declare -F jg_dod_nav_gate >/dev/null; then jg_dod_nav_gate "$id" "$meta" "$(git -C "$proj" log --format=%B "$base..$candidate")" >&2 || return 1; fi
+  # A trunk landing lands a rebased candidate, but its completion receipt binds the head the lane proved (jg_dod_trunk_proof_gaps
+  # already kept that proof across a no-change rebase), so the receipt-bound design and demo gates read it at that head.
+  proved=$candidate
+  if [ "$kind" = trunk ] && command -v jq >/dev/null 2>&1; then proved=$(jq -r '.head // empty' "$state/$id.run-receipt.json" 2>/dev/null) || proved=''; proved=${proved:-$candidate}; fi
+  if declare -F jg_dod_design_gate >/dev/null; then jg_dod_design_gate "$state" "$id" "$meta" "$proved" >&2 || return 1; fi
+  if declare -F jg_dod_demo_gate >/dev/null; then jg_dod_demo_gate "$config" "$state" "$id" "$meta" "$proved" >&2 || return 1; fi
+  if declare -F jg_dod_nav_gate >/dev/null; then jg_dod_nav_gate "$id" "$meta" "$(git -C "$proj" log --format=%B "$base..$candidate")" "commit message" "$(jg_dod_local_nav_fallback "$state" "$id" "$proved")" >&2 || return 1; fi
   [ "$kind" != trunk ] || return 0
   if declare -F jg_dod_merge_gate >/dev/null; then jg_dod_merge_gate "$config" "$home" "$id" "$meta" "$candidate" - >&2 || return 1; fi
   if declare -F jg_dod_proof_gate >/dev/null; then jg_dod_proof_gate "$home" "$id" "$candidate" - >&2 || return 1; fi

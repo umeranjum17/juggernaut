@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Behavior test for bin/jg-stray-nats-reap.sh - the reaper for leftover throwaway nats-servers.
-# The done-done journey journeys/stray-nats-reap.sh runs this test, so a change to it selects this test.
+# The stray-nats-reap journey of .done-done.yaml runs this test, so a change to it selects this test.
 # It starts its own fake servers (an executable named nats-server that only waits for TERM) in a
 # throwaway root, and proves: a dry run lists and stops nothing; --stop stops exactly the
 # old servers whose config or store path is below the allowlist root, found by absolute path,

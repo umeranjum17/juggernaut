@@ -76,7 +76,7 @@ ROW
 }
 
 batch() {  # <id>: one landed, fully green commit on the trunk and the captain's word to release it
-  lane "$1" "$1"; trunk land "$1" >/dev/null 2>&1 || fail "$1 must land"
+  lane "$1" "$1"; trunk land "$1" >/dev/null 2>&1 || fail "$1 must land"; trunk verify "$PROJ" >/dev/null 2>&1 || fail "$1 must verify"
   trunk word release "$PROJ" "ship $1" >/dev/null 2>&1 || fail "the captain's word must record"
 }
 open_prs() {  # <n>...: the open pull requests from the trunk into main, as gh-axi lists them
@@ -151,6 +151,25 @@ test_the_release_pr_has_an_owning_task_the_guard_admits() {
   pass 'T6 the release records its own task, the guard admits the trunk head into main, and any other head is refused'
 }
 
+# T8 (slice T3b) The proof reaches GitHub: a release whose proof passes publishes the status juggernaut/release-proof
+# on the release head through the forge; a release whose proof fails publishes none, so the merge command refuses it.
+test_the_release_proof_status_reaches_the_forge() {
+  local out head
+  release_world proofstatus
+  batch j8; echo open > "$W/state-813"; head=$(tip)
+  : > "$W/gh-real-calls"
+  out=$(trunk release "$PROJ" 2>&1) || fail "T8: the release must pass: $out"
+  grep -Fq "api -X POST repos/umeranjum17/juggernaut/statuses/$head -f state=success -f context=juggernaut/release-proof" "$W/gh-real-calls" \
+    || fail "T8: a passed release proof must publish the success status on the release head: $(cat "$W/gh-real-calls")"
+
+  release_world proofstatus-red
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$W/root/bin/jg-trunk-release-proof.sh"
+  batch j9; echo open > "$W/state-813"; : > "$W/gh-real-calls"
+  out=$(trunk release "$PROJ" 2>&1) && fail "T8: a failed release proof must fail the release: $out"
+  ! grep -q 'juggernaut/release-proof' "$W/gh-real-calls" || fail "T8: a failed release proof must publish no status: $(cat "$W/gh-real-calls")"
+  pass 'T8 a passed release proof publishes the release-proof status on the release head; a failed one publishes none'
+}
+
 test_a_pushed_release_without_its_record_gets_the_record_and_no_second_push() {
   local out meta rows sum
   release_world rel-pushed; meta="$HOME_D/state/release-juggernaut-trunk.meta"
@@ -218,6 +237,7 @@ printf '%s\n' "$converge" > "$HOME_D/state/trunk-green-proj"
 : > "$HOME_D/data/trunk-landing-proofs.tsv"
 lane first first; trunk land first >/dev/null 2>&1 || fail 'first proof lane must land'
 lane later later; trunk land later >/dev/null 2>&1 || fail 'later fixture lane must land'
+trunk verify "$PROJ" >/dev/null 2>&1 || fail 'the verify must move the pin to the later lane'
 later=$(tip)
 trunk word release "$PROJ" 'release fixture' >/dev/null || fail 'record release word'
 cat > "$W/fakebin/gh-axi" <<SH
@@ -389,8 +409,31 @@ gate_out=$(PATH="$W/fakebin:$PATH" JG_HOME="$HOME_D" JG_PROOF_BOARD="$W/board.js
 pass 'release produces proof at its own head'
 }
 
+test_a_home_that_cannot_pass_the_merge_gate_waits_on_main_at_the_release() {
+  local out rows alert
+  release_world preflight
+  batch j1; echo open > "$W/state-813"; rows=$(wc -l < "$LEDGER")
+  rm -f "$HOME_D/config/post-merge" "$HOME_D/state/captain-approval.key"
+  out=$(trunk release "$PROJ" 2>&1) && fail "T8: a release in a home with no board and no key must be refused: $out"
+  assert_contains "$out" 'waits on Main (wait=main, reason=approval)' "T8: the refusal must name the wait"
+  assert_contains "$out" 'no proof board is configured' "T8: the missing board must show"
+  assert_contains "$out" 'jg-inbox.sh approve' "T8: the command that makes the key must show"
+  [ "$(wc -l < "$LEDGER")" = "$rows" ] && [ "$(cat "$MARK")" != "$(tip)" ] || fail "T8: a refused release must record nothing"
+  [ "$(creates)" = 0 ] && ! git -C "$W/origin-j.git" rev-parse -q --verify refs/heads/trunk >/dev/null 2>&1 || true
+  alert=$(cat "$HOME_D"/state/alerts/stuck-wait--release-preflight-juggernaut.rec 2>/dev/null) || fail "T8: the wait must be raised as an alert"
+  assert_contains "$alert" 'alert=stuck-wait' "T8: the alert must be the stuck-wait one"
+  assert_contains "$alert" 'rung=3' "T8: the wait is on Main, so the alert rings at rung 3"
+  assert_contains "$alert" 'jg-inbox.sh approve' "T8: the alert must carry the command"
+  printf 'x --board %s/board.json\n' "$W" > "$HOME_D/config/post-merge"; printf 'k\n' > "$HOME_D/state/captain-approval.key"
+  out=$(trunk release "$PROJ" 2>&1) || fail "T8: once the board and the key exist the release must go: $out"
+  [ "$(cat "$MARK")" = "$(tip)" ] || fail "T8: the released mark must move to the tip"
+  pass 'T8 a home with no proof board and no approval key refuses the release at its start, waits on Main with the command and records nothing; with both it releases'
+}
+
 test_a_release_keeps_one_url_and_takes_the_open_release_pr_as_success
+test_a_home_that_cannot_pass_the_merge_gate_waits_on_main_at_the_release
 test_a_pushed_release_without_its_record_gets_the_record_and_no_second_push
+test_the_release_proof_status_reaches_the_forge
 test_the_release_pr_has_an_owning_task_the_guard_admits
 test_release_proof_at_its_head
 printf 'jg-trunk-release-open-pr: ok\n'

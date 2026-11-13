@@ -1,0 +1,4 @@
+# delivery-knob: the delivery knob of a project.
+# value<TAB>mark (initial, final or -)<TAB>meaning
+pr	-	a pull request; adds nothing in delivering
+local	-	the local trunk; adds batched and live

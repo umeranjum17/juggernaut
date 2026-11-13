@@ -243,7 +243,9 @@ test_a_goal_step_waiting_is_ready_work_named_in_the_row
 
 # The ready count is the store's count of tickets that can start, written by the real refresh
 # and read by the real heartbeat. A stand-in bd serves 200 ready rows, 6 of which name a
-# registered project and can start; the rest name no project or another one.
+# registered project and can start; the rest name no project or another one. The reader asks
+# the store's dolt one indexed query, so the stand-in dolt answers it with the project-labelled
+# rows as a table.
 store_home() {  # <dir> -> a home with a stand-in store, its pinned tools, and one registered project
   local d=$1 os arch
   mkdir -p "$d/bin" "$d/state" "$d/config" "$d/data" "$d/store/.beads/embeddeddolt/jg"
@@ -257,7 +259,10 @@ case "$1" in
   blocked) echo '[]' ;;
 esac
 SH
-  { cat "$d/bin/bd"; printf '# dolt\n'; } > "$d/bin/dolt"
+  cat > "$d/bin/dolt" <<'SH'
+#!/usr/bin/env bash
+[ -z "${STUB_SLEEP:-}" ] || sleep "$STUB_SLEEP"; cat "$ROWS_TABLE"
+SH
   chmod +x "$d"/bin/*
   os=$(uname -s | tr '[:upper:]' '[:lower:]')
   arch=$(uname -m); case "$arch" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac
@@ -277,6 +282,12 @@ for i in range(200):
                  "dependency_count": 0, "dependent_count": 0})
 json.dump(rows, open(d + "/ready.json", "w"))
 json.dump(rows, open(d + "/all.json", "w"))
+with open(d + "/table.txt", "w") as t:  # the one query's answer: id and project label, as dolt prints it
+    t.write("+----+---------------+\n| id | label         |\n+----+---------------+\n")
+    for r in rows:
+        for l in r["labels"]:
+            t.write("| %s | %s |\n" % (r["id"], l))
+    t.write("+----+---------------+\n")
 PY
   touch "$d/state/.last-watcher-beat"
 }
@@ -285,7 +296,7 @@ store_env() {  # <dir> command...: run with the home's stand-in store
   local d=$1
   shift
   env JG_HOME="$d" JG_PIN_FILE_OVERRIDE="$d/pins" JG_BEADS_BD="$d/bin/bd" JG_BEADS_DOLT="$d/bin/dolt" \
-    ROWS_READY="$d/ready.json" ROWS_ALL="$d/all.json" "$@"
+    ROWS_READY="$d/ready.json" ROWS_ALL="$d/all.json" ROWS_TABLE="$d/table.txt" "$@"
 }
 
 test_ready_count_is_what_can_start_and_never_from_an_old_number() {

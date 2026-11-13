@@ -1,0 +1,3 @@
+# Two landings at once (a ready lane does not wait for another lane's gate)
+
+Two landings at once: run `done-done run -- bash -c 'set -e; bash tests/jg-trunk-two-gates.test.sh > "$DONE_DONE_EVIDENCE_ROOT/trunk-two-gates.log" 2>&1'`; over a fixture home with real git, the real landing check and a gate stand-in that logs its start and end, it proves that a lane ready while another gates starts at once, is gated on top of the first lane's commit and lands right behind it (two lanes, two gate runs, the second gate starting before the first ends), that a third lane waits so that at most 2 gates run at once, that a red first lane is returned and the second lane lands after one more gate on the tip, and that `gate-slots=1` keeps the one-at-a-time rule (screen: none).

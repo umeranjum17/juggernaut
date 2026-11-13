@@ -65,8 +65,8 @@ valid_name() { printf '%s' "$1" | grep -Eq '^[a-z][a-z0-9_-]{0,31}$'; }
 assert_equals "rename-sweep-a-sessions" "$(jg_backend_herdr_agent_name_for rename-sweep-a-sessions)" "a valid short id is the name"
 assert_equals "t-9lives" "$(jg_backend_herdr_agent_name_for 9lives)" "a digit start gets a letter"
 assert_equals "upper_x" "$(jg_backend_herdr_agent_name_for UPPER_x)" "upper case is lowered"
-long_a=live-names-still-say-the-same-thing-here-aa
-long_b=live-names-still-say-the-same-thing-here-bb
+long_a="live-names-still-say-the-same-thing-here-aa"
+long_b="live-names-still-say-the-same-thing-here-bb"
 name_a=$(jg_backend_herdr_agent_name_for "$long_a")
 name_b=$(jg_backend_herdr_agent_name_for "$long_b")
 valid_name "$name_a" || fail "a long id gives a name herdr accepts ($name_a)"
@@ -86,22 +86,22 @@ EOF
 }
 
 reset_world
-jg_backend_herdr_pin_agent_name s w1:p1 "$long_a" 2>"$tmp/err"
+jg_backend_herdr_pin_agent_name s w1:p1 "$name_a" 2>"$tmp/err"
 assert_equals "$name_a" "$JG_BACKEND_HERDR_PINNED_NAME" "a long id pins"
 assert_equals "$name_a" "$(jq -r '.agents[0].name' "$world")" "the live agent carries the pinned name"
 assert_equals "" "$(cat "$tmp/err")" "a successful pin is silent"
 
-jg_backend_herdr_pin_agent_name s w1:p1 "$long_a" 2>"$tmp/err"
+jg_backend_herdr_pin_agent_name s w1:p1 "$name_a" 2>"$tmp/err"
 assert_equals "$name_a" "$JG_BACKEND_HERDR_PINNED_NAME" "a name this pane already holds counts as pinned"
 assert_equals "" "$(cat "$tmp/err")" "re-pinning the same name is silent"
 
-jg_backend_herdr_pin_agent_name s w1:p2 "$long_a" 2>"$tmp/err"
+jg_backend_herdr_pin_agent_name s w1:p2 "$name_a" 2>"$tmp/err"
 variant=$(jq -r '.agents[1].name' "$world")
 valid_name "$variant" || fail "the fallback for a taken name is valid ($variant)"
 assert_not_equals "$name_a" "$variant" "a taken name falls back to a variant"
 assert_equals "$variant" "$JG_BACKEND_HERDR_PINNED_NAME" "the variant is reported"
 
-jg_backend_herdr_pin_agent_name s w1:p9 "$long_a" 2>"$tmp/err"; rc=$?
+jg_backend_herdr_pin_agent_name s w1:p9 "$name_a" 2>"$tmp/err"; rc=$?
 assert_equals 0 "$rc" "a pin on a missing agent never fails the caller"
 assert_equals "" "$JG_BACKEND_HERDR_PINNED_NAME" "nothing pinned on a missing agent"
 assert_contains "$(cat "$tmp/err")" "agent_not_found" "the warning carries herdr's own error"
@@ -111,7 +111,7 @@ pass "agent names map into herdr's rules and the pin handles taken and missing a
 home="$tmp/home"; mkdir -p "$home/state"
 printf 'alpha\n' > "$home/.jg-squad-lead-home"
 export JG_HOME=$home
-task_long=live-names-still-say-the-same-thing-here-aa
+task_long="live-names-still-say-the-same-thing-here-aa"
 task_old_word="ci-diet-${OLD_PRODUCT}-addons"
 write_task() {  # <id> <tab> <pane>
   jg_write_meta "$home/state/$1.meta" "backend=herdr" "herdr_session=s" \
@@ -184,6 +184,16 @@ jq -c '(.agents[] | select(.pane_id == "w1:p1") | .tab_id) = "w1:t2"' "$world" >
 bash "$names_sh" migrate >"$tmp/guard.out" 2>&1
 assert_equals "juggernaut-4" "$(jq -r '.agents[] | select(.pane_id == "w1:p1") | .name' "$world")" "an agent outside its recorded tab is left alone"
 assert_contains "$(cat "$tmp/guard.out")" "not the recorded task tab" "the skip is reported"
+
+# A record that holds agent_name= is migrated to that name, not to the name made from its id.
+jg_write_meta "$home/state/named-task.meta" "backend=herdr" "herdr_session=s" \
+  "herdr_workspace_id=w1" "herdr_tab_id=w1:t4" "herdr_pane_id=w1:p4" "agent_name=fix-the-thing-named-task"
+reset_home_world
+jq -c '.tabs += [{"tab_id":"w1:t4","workspace_id":"w1","label":"jg-named-task"}] | .agents += [{"pane_id":"w1:p4","tab_id":"w1:t4","name":"juggernaut-7"}]' "$world" > "$world.new" && mv "$world.new" "$world"
+bash "$names_sh" migrate >"$tmp/named.out" 2>&1; rc=$?
+expect_code 0 "$rc" "migrate with a recorded agent name succeeds ($(cat "$tmp/named.out"))"
+assert_equals "fix-the-thing-named-task" "$(jq -r '.agents[] | select(.pane_id == "w1:p4") | .name' "$world")" "migrate takes the name from agent_name="
+pass "migrate pins the name the record holds"
 
 # An unreadable recorded session is neither a pass nor a rename.
 rm -f "$world"

@@ -1,9 +1,17 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a operator in a treehouse or Orca worktree, or a
 # squad_lead in its isolated juggernaut home.
-# Usage: jg-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only|local-trunk> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--off-critical-path <captain-words>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
-#        jg-spawn.sh <task-id> <project-dir> --scout [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
+# Usage: jg-spawn.sh <task-id> <project-dir> --ticket <ticket-id> --mode <direct-PR|local|local-only|local-trunk> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--off-critical-path <captain-words>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
+#        jg-spawn.sh <task-id> <project-dir> --ticket <ticket-id> --scout [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
 #        jg-spawn.sh <task-id> [<juggernaut-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --squad-lead
+#   --ticket <ticket-id> is REQUIRED for every fresh ship or scout spawn: the task id is made from the
+#   ticket (bin/jg-backlog-lib.sh's jg_backlog_task_id: every dot becomes a dash, so ticket jg-x.1 runs as
+#   task jg-x-1) and the spawn refuses any other task id. It also refuses a ticket with no backlog row, a
+#   row whose title is not readable (2 to 7 words, 48 characters, no id, [tag], URL or path), and a task id
+#   that a different row already answers to. The spawn writes the task id on the ticket's row (`jg-backlog.sh
+#   task`), records `ticket=<id>` in the task record and exports JG_TICKET into the pane. --squad-lead starts a
+#   home, not a ticket, and --relaunch reads `ticket=` from the record (a lane from before has none and
+#   relaunches as it always did); both refuse --ticket.
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
 #   spawn and refused on --scout and --squad-lead spawns. Juggernaut resolves both
 #   per task at intake (AGENTS.md section 7); data/projects.md holds the captain's
@@ -767,6 +775,8 @@ jg_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/jg-squad-lead-nudge-lib.sh"
 # shellcheck source=bin/jg-backend.sh
 . "$SCRIPT_DIR/jg-backend.sh"
+# shellcheck source=bin/jg-delivery-style.sh
+. "$SCRIPT_DIR/jg-delivery-style.sh"
 # shellcheck source=bin/jg-control-lib.sh
 . "$SCRIPT_DIR/jg-control-lib.sh"
 # shellcheck source=bin/jg-gate-refuse-lib.sh
@@ -1472,6 +1482,10 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
     echo "error: config/crew-dispatch.json is active - pass an explicit harness resolved from the dispatch rules (the consultation backstop, so the rules are never silently skipped)." >&2
     exit 1
   fi
+  [ "$TICKET_SET" -eq 0 ] || {
+    echo "error: --ticket names one task's ticket; a batch spawns each id=repo pair under its own id as the ticket, so spawn a dotted ticket on its own" >&2
+    exit 2
+  }
   rc=0
   shared_args=()
   [ -z "$HARNESS_ARG" ] || shared_args+=(--harness "$HARNESS_ARG")
@@ -1502,7 +1516,7 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
       rc=2
       continue
     fi
-    pair_args=("${pair%%=*}" "${pair#*=}" "${shared_args[@]+"${shared_args[@]}"}")
+    pair_args=("${pair%%=*}" "${pair#*=}" "${shared_args[@]+"${shared_args[@]}"}" --ticket "${pair%%=*}")
     [ "$KIND" != scout ] || pair_args+=(--scout)
     pair_rc=0
     JG_SPAWN_NO_GUARD=1 "$JG_ROOT/bin/jg-spawn.sh" "${pair_args[@]}" || pair_rc=$?
@@ -1521,6 +1535,19 @@ jg_task_id_creation_valid "$ID" || {
   echo "error: invalid task id" >&2
   exit 2
 }
+if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ]; then
+  case "$TICKET" in
+    '' | *[!A-Za-z0-9._-]* | [!A-Za-z0-9]*)
+      echo "error: --ticket '$TICKET' is not a ticket id (letters, digits, dot, dash and underscore)" >&2
+      exit 2
+      ;;
+  esac
+  TICKET_TASK=$(jg_backlog_task_id "$TICKET")
+  if [ "$ID" != "$TICKET_TASK" ]; then
+    echo "error: spawn refused: the task id for ticket $TICKET is $TICKET_TASK (every dot becomes a dash), not $ID; run bin/jg-backlog.sh task $TICKET to print it" >&2
+    exit 2
+  fi
+fi
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" = ship ]; then
   BRANCH="$BRANCH_PREFIX$ID"
   if ! git check-ref-format --branch "$BRANCH" >/dev/null 2>&1; then
@@ -1757,6 +1784,7 @@ RAW_LAUNCH=0
 # validation teardown uses, so a malformed, ambiguous, or foreign record
 # refuses here exactly as it refuses there.
 RELAUNCH_PRIOR_HARNESS=
+RELAUNCH_PRIOR_GEN=
 # 1 when the recorded endpoint is authoritatively gone and this relaunch must
 # create a fresh one for the task rather than adopt its recorded address.
 RELAUNCH_REBIND=0
@@ -1844,6 +1872,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
       ;;
   esac
   RELAUNCH_PRIOR_HARNESS=$(jg_meta_get "$RELAUNCH_META" harness)
+  RELAUNCH_PRIOR_GEN=$(jg_meta_get "$RELAUNCH_META" spawn_gen)
   KIND=$(jg_meta_get "$RELAUNCH_META" kind)
   [ -n "$KIND" ] || KIND=ship
   # A squad_lead whose endpoint is gone already has ONE owner for that
@@ -1856,7 +1885,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
     echo "error: squad_lead $ID's recorded endpoint is gone; its recovery is owned by the squad_lead respawn path, not by relaunch (run bin/jg-spawn.sh $ID --squad-lead, or let the session-start liveness sweep do it)" >&2
     exit 1
   fi
-  MODE=$(jg_meta_get "$RELAUNCH_META" mode)
+  MODE=$(jg_delivery_style_task_mode "$(jg_meta_get "$RELAUNCH_META" mode)")
   YOLO=$(jg_meta_get "$RELAUNCH_META" yolo)
   UPSTREAM_CONSENT=$(jg_meta_get "$RELAUNCH_META" upstream_consent)
   if [ "$KIND" = ship ]; then
@@ -2735,7 +2764,7 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
     echo "error: $BRIEF ## Captain's intent has an operator-address line: $ADDRESS_LINE; write the captain's actual words without a Captain label or address before spawn, since the heading already records provenance" >&2
     exit 1
   fi
-  if [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ]; then
+  if [ "$KIND" = ship ] && jg_delivery_style_is "$MODE" review; then
     if jg_brief_task_heading_present "$BRIEF" "## Captain's intent"; then
       CAPTAIN_INTENT=$(jg_brief_task_heading_body "$BRIEF" "## Captain's intent")
     else
@@ -2752,6 +2781,7 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
     RED_FIX_OF=$(jg_meta_get "$RELAUNCH_META" red_fix_of)
     OFF_CRITICAL_PATH=$(jg_meta_get "$RELAUNCH_META" critical_override)
     MIGRATION_ROW=$(jg_meta_get "$RELAUNCH_META" migration_row)
+    TICKET=$(jg_meta_get "$RELAUNCH_META" ticket)
   elif [ "$BASE_BRANCH_SET" -eq 1 ]; then
     [ -n "$BASE_BRANCH" ] || {
       echo "error: --base-branch requires a branch name" >&2
@@ -2772,7 +2802,7 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
     # before. A mode that publishes nothing keeps no base, because
     # jg_base_branch_valid refuses one there.
     PROJ_FORGE=
-    if [ "$KIND" != squad_lead ] && [ "$MODE" != local-only ] && [ "$MODE" != local-trunk ]; then
+    if [ "$KIND" != squad_lead ] && ! jg_delivery_style_is "$MODE" local; then
       PROJ_FORGE=$("$JG_ROOT/bin/jg-project-mode.sh" --forge "$(basename "$PROJ_ABS")" 2>/dev/null) || PROJ_FORGE=
       if [ -z "$PROJ_FORGE" ] || [ "$PROJ_FORGE" = none ]; then
         BASE_BRANCH=$(jg_current_version_branch "$PROJ_ABS") || BASE_BRANCH=
@@ -2816,7 +2846,7 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
     jg_brief_worker_role "$STATE" "$ID" "$JG_ROOT" &&
       printf '\n' &&
       cat "$SOURCE_BRIEF" &&
-      if [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ]; then
+      if [ "$KIND" = ship ] && jg_delivery_style_is "$MODE" review; then
         jg_brief_intent_overlay "$CAPTAIN_INTENT"
       fi
   } >"$BRIEF_TMP" || {
@@ -2840,7 +2870,7 @@ if [ "$KIND" = ship ]; then
   PROJ_NAME=$(basename "$PROJ_ABS")
   # The parser's own refusal reaches the operator here rather than being
   # discarded: an entry it refuses (an unknown forge token, or a forge on
-  # local-only) resolves to no posture at all, and launching on the silent
+  # a line that publishes nothing) resolves to no posture at all, and launching on the silent
   # default is how a mistyped forge would hand a Gerrit project the
   # pull-request contract.
   if ! STANDING_FORGE=$("$JG_ROOT/bin/jg-project-mode.sh" --forge "$PROJ_NAME" 2>/dev/null); then
@@ -2862,11 +2892,11 @@ if [ "$KIND" = ship ]; then
   # No feature pull requests: a project with a local trunk (bin/jg-trunk.sh init) ships every lane
   # local-trunk; legacy local-only records remain interoperable. The only PR is the release one. A current explicit captain instruction
   # can still choose a pull request mode by removing the trunk record, never by this spawn.
-  if [ "$MODE" != local-only ] && [ "$MODE" != local-trunk ] && [ "$STANDING_MODE" = local-trunk ]; then
-    echo "error: $ID cannot ship mode=$MODE: $PROJ_NAME is registered local-trunk, so it takes no feature pull request; spawn it --mode local-trunk and its one commit lands on the trunk once its done-done proof passes (docs/trunk-flow.md)" >&2
+  if ! jg_delivery_style_is "$MODE" local && jg_delivery_style_is "$STANDING_MODE" trunk; then
+    echo "error: $ID cannot ship mode=$MODE: $PROJ_NAME is registered local-trunk, so it takes no feature pull request; spawn it --mode local and its one commit lands on the trunk once its done-done proof passes (docs/trunk-flow.md)" >&2
     exit 1
   fi
-  if [ "$MODE" = local-trunk ] && { [ "$STANDING_MODE" != local-trunk ] || ! spawn_trunk_branch >/dev/null; }; then
+  if jg_delivery_style_is "$MODE" trunk && { ! jg_delivery_style_is "$STANDING_MODE" trunk || ! spawn_trunk_branch >/dev/null; }; then
     echo "error: $ID requires a registered local-trunk project with an initialized trunk; run bin/jg-trunk.sh init first" >&2
     exit 1
   fi
@@ -2876,7 +2906,7 @@ if [ "$KIND" = ship ]; then
   # config/juggernaut-role, or this one task's recorded upstream consent. Every
   # other project passes through unchanged; local-only publishes nothing and
   # never reaches this gate.
-  if [ "$MODE" != local-only ] && [ "$MODE" != local-trunk ]; then
+  if ! jg_delivery_style_is "$MODE" local; then
     gate_rc=0
     jg_role_gate_self_publish "$JG_HOME" "$CONFIG" "$PROJ_ABS" "$JG_ROOT" "$UPSTREAM_CONSENT" || gate_rc=$?
     case $gate_rc in
@@ -3185,8 +3215,58 @@ herdr_projection_existing_meta_allows_flat() { # <meta>
 BACKLOG_TRANSITION=0
 BACKLOG_LANE_HANDOVER=0
 BACKLOG_ROW_STATE=
+# A fresh ship or scout starts from a ticket (bin/jg-backlog.sh task owns the join): its row exists, its title
+# reads as words, and the task id made from it is written on the row, so every script that knows only the task
+# id reaches the row. Nothing is written when a check before the write refuses.
+spawn_ticket_refuse() {
+  local out title why
+  if ! out=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-backlog.sh" show "$TICKET" 2>&1); then
+    if printf '%s\n' "$out" | grep -q '^code: NOT_FOUND$'; then
+      echo "error: ticket $TICKET has no backlog item in this home, so dispatching it would leave a worker no record owns; add it first (bin/jg-backlog.sh add $TICKET '[<type>] <title>' --kind $KIND --body '<why>') and re-run" >&2
+    else
+      echo "error: ticket $TICKET's backlog item could not be read before dispatch ($(printf '%s\n' "$out" | sed -n '1p'))" >&2
+    fi
+    return 1
+  fi
+  title=$(printf '%s\n' "$out" | sed -n 's/^  title: *//p' | head -1)
+  title=${title#\"}
+  title=${title%\"}
+  if ! why=$(jg_backlog_title_refusal "$title"); then
+    echo "error: ticket $TICKET has no readable title ($why); give it one with bin/jg-backlog.sh update $TICKET --title '<2 to 7 words>' and re-run" >&2
+    return 1
+  fi
+  if ! out=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-backlog.sh" task "$TICKET" 2>&1); then
+    echo "error: spawn refused: $(printf '%s\n' "$out" | sed -n 's/^error: *//p' | head -1)" >&2
+    return 1
+  fi
+  [ "$KIND" = ship ] || return 0
+  spawn_ticket_admit
+}
+# The ticket belongs to this repository and may start now (core/spawn/cmd/jg-spawn-core/admit.go): its
+# repository label and files, its open edges and the files of the other live lanes. The rows are read here.
+spawn_ticket_admit() {
+  local store scratch admit_rc=0
+  store=$(tr -d '[:space:]' 2>/dev/null < "$CONFIG/beads-dir") || store=
+  if [ -z "$store" ]; then
+    echo "error: ticket $TICKET's rows could not be read before dispatch: put an absolute BEADS_DIR in $CONFIG/beads-dir" >&2
+    return 1
+  fi
+  scratch=$(mktemp -d) || return 1
+  if ! BEADS_DIR=$store "$SCRIPT_DIR/jg-beads.sh" show "$TICKET" --json >"$scratch/ticket" 2>"$scratch/err" \
+    || ! BEADS_DIR=$store "$SCRIPT_DIR/jg-beads.sh" list --status in_progress --limit 0 --json >"$scratch/lanes" 2>>"$scratch/err"; then
+    echo "error: ticket $TICKET's rows could not be read before dispatch ($(sed -n '1p' "$scratch/err"))" >&2
+    admit_rc=1
+  else
+    "$SCRIPT_DIR/jg-spawn-core.sh" admit --project "$(basename "$PROJ_ABS")" --repo "$PROJ_ABS" \
+      --ticket "$scratch/ticket" --lanes "$scratch/lanes" || admit_rc=1
+  fi
+  rm -f -- "$scratch/ticket" "$scratch/lanes" "$scratch/err"
+  rmdir -- "$scratch"
+  return "$admit_rc"
+}
 if jg_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then
   BACKLOG_TRANSITION=1
+  if [ "$RELAUNCH" -eq 0 ]; then spawn_ticket_refuse || exit 1; fi
   if jg_backlog_row_probe "$DATA" "$ID"; then
     BACKLOG_ROW_STATE=$JG_BACKLOG_ROW_STATE
     # A fresh ship for a [captain-ask] or Recon/plan-born ticket needs a record of the captain's
@@ -4007,6 +4087,10 @@ elif [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] && [ "$BACKEND" != orca 
   # acquire in the explicit project, never the new pane's inherited cwd.
   jg_local_juggernaut_state_dirs "$STATE" || {
     echo "error: cannot enumerate recorded Treehouse copies: $JG_LOCAL_JUGGERNAUT_ERROR" >&2
+    exit 1
+  }
+  jg_treehouse_clone_pool_prepare "$PROJ_ABS" || {
+    echo "error: cannot prepare a pool for registered project '$PROJ_ABS'" >&2
     exit 1
   }
   python3 "$SCRIPT_DIR/jg-treehouse-protect.py" "$PROJ_ABS" "${JG_LOCAL_JUGGERNAUT_STATES[@]}" || exit 1
@@ -4852,7 +4936,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id cleanup_recovery worktree project harness kind mode yolo branch receipt_required design_call demo_call ui_change tasktmp base_branch migration_row critical_override upstream_consent model effort account account_provider busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id cleanup_recovery worktree project harness kind mode yolo branch receipt_required design_call demo_call ui_change tasktmp base_branch migration_row critical_override upstream_consent model effort account account_provider busy_gen spawn_gen agent_name traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -4875,6 +4959,7 @@ preserve_relaunch_meta() {
   [ -z "$MIGRATION_ROW" ] || echo "migration_row=$MIGRATION_ROW"
   [ -z "$OFF_CRITICAL_PATH" ] || echo "critical_override=$OFF_CRITICAL_PATH"
   [ -z "$UPSTREAM_CONSENT" ] || echo "upstream_consent=$UPSTREAM_CONSENT"
+  [ "$RELAUNCH" -eq 1 ] || [ -z "$TICKET" ] || echo "ticket=$TICKET"
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"
   # The worker account pin, only when this home declares one, so an unpinned
@@ -4884,6 +4969,14 @@ preserve_relaunch_meta() {
   jg_account_hook record-line
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"
+  # The agent name is made once, at the first spawn, and every later relaunch keeps it.
+  # A record from before it has none and keeps the name made from its id.
+  if [ "$RELAUNCH" -eq 1 ]; then
+    SPAWN_AGENT_NAME=$(sed -n 's/^agent_name=//p' "$RELAUNCH_META" | tail -n 1)
+  else
+    SPAWN_AGENT_NAME=$("$SCRIPT_DIR/jg-herdr.sh" agent-name-for "$ID" 2>/dev/null) || SPAWN_AGENT_NAME=
+  fi
+  [ -z "$SPAWN_AGENT_NAME" ] || echo "agent_name=$SPAWN_AGENT_NAME"
   if [ "$KIND" = ship ]; then
     design_call=$(sed -n -E 's/^Design call \(first-draft\): (yes|no)( - .*)?$/\1/p' "$BRIEF" | head -1)
     if [ -z "$design_call" ] && [ -n "${RELAUNCH_META:-}" ] && [ -f "$RELAUNCH_META" ]; then
@@ -4972,6 +5065,25 @@ spawn_commit_backlog_transition() {
   fi
   [ "$BACKLOG_TRANSITION" = 1 ] || return 0
   jg_backlog_atomic_transition dispatch "$STATE/$ID.meta" "$DATA" "$ID" "$STATE"
+}
+
+# Herdr kept a variant of the name this spawn made: write the name that stuck to the task
+# record's agent_name= and to the row's assignee, which is guarded on the first name.
+spawn_follow_stuck_name() {  # <first-name> <stuck-name>
+  local lock tmp rc=0
+  lock=$(jg_meta_lock_path "$STATE/$ID.meta") || return 1
+  jg_lock_acquire_wait "$lock"
+  tmp=$(mktemp "$STATE/.$ID.meta.name.XXXXXX") || { jg_lock_release "$lock"; return 1; }
+  if awk -v name="$2" 'BEGIN { done = 0 } /^agent_name=/ { print "agent_name=" name; done = 1; next } { print } END { if (!done) print "agent_name=" name }' "$STATE/$ID.meta" >"$tmp"; then
+    jg_backlog_atomic_transition publish "$tmp" "$STATE/$ID.meta" "task record" "$STATE" || rc=1
+  else
+    rc=1
+  fi
+  [ "$rc" -eq 0 ] || rm -f "$tmp"
+  jg_lock_release "$lock"
+  [ "$rc" -eq 0 ] || return 1
+  jg_backlog_row_probe "$DATA" "$ID" || return 0
+  jg_backlog_lane_rename "$DATA" "$ID" "$1" "$2"
 }
 
 # The deferred-signal exit path's preservation report. A claim about preserved
@@ -5326,6 +5438,7 @@ spawn_send_text_line "$T" "export COMPACT_ADVISER_DISABLE=1"
 # syntax of its own.
 if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   spawn_send_text_line "$T" "export JG_TASK_ID=$ID"
+  [ -z "$TICKET" ] || spawn_send_text_line "$T" "export JG_TICKET=$TICKET"
 fi
 # Send through the exact channel that already ships GOTMPDIR, so every backend
 # and harness - ship, scout, and squad_lead - gets it before launch. Skipped
@@ -5564,9 +5677,12 @@ SPAWN_ACCOUNT=
 jg_account_hook spawn-line
 # Opt-in fleet activity ledger (docs/fleet-ledger.md); off costs one file test.
 [ ! -e "$CONFIG/fleet-ledger" ] || [ "$RELAUNCH" -eq 1 ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE JG_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/jg-fleet-ledger.sh" dispatched "$ID" "$KIND" "${PROJ_ABS##*/}" "$HARNESS" "$MODEL" || true
-# The board's ticket says what this lane is doing from the first minute instead
-# of the next poll. A relaunch keeps whatever stage the lane already reached.
-[ "$RELAUNCH" -eq 1 ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE JG_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/jg-ticket.sh" "$ID" --stage building --state "in progress" || true
+# The ticket's trail says who started this lane from the first minute: a claim for a spawn, a handoff for a relaunch (with the
+# generation it replaced). A failed write is one warning line and never fails the spawn.
+if [ "$RELAUNCH" -eq 1 ]; then _trace_kind=handoff _trace_payload="{\"from_gen\":\"${RELAUNCH_PRIOR_GEN:-}\",\"gen\":\"$SPAWN_GEN\"}"
+else _trace_kind=claim _trace_payload="{\"gen\":\"$SPAWN_GEN\"}"; fi
+[ "$KIND" = squad_lead ] || JG_HOME=$JG_HOME "$SCRIPT_DIR/jg-backlog.sh" trace record "$ID" "$_trace_kind" work-id "$ID@$SPAWN_GEN" --source jg-spawn --payload "$_trace_payload" >/dev/null \
+  || echo "warning: the $_trace_kind of $ID could not be put on its ticket's trail" >&2
 # Herdr assigns every agent a random call-sign at start and fresh ones across
 # a server restart, so pin the live agent's display name to this task's id now
 # that the spawn has fully succeeded (the agent is live here; a rename on an
@@ -5577,7 +5693,13 @@ jg_account_hook spawn-line
 # "session:pane-id", so this one site also re-applies the pin after a
 # relaunch rebind, a projection reclaim, or a husk replacement.
 if [ "$BACKEND" = herdr ]; then
-  jg_backend_herdr_pin_agent_name "${T%%:*}" "${T#*:}" "$ID"
+  SPAWN_PIN_FIRST=$(jg_backlog_agent_name "$STATE/$ID.meta" "$ID") || SPAWN_PIN_FIRST=
+  jg_backend_herdr_pin_agent_name "${T%%:*}" "${T#*:}" "$SPAWN_PIN_FIRST"
+  # When Herdr kept a variant, the name that stuck is the name: the record and the row follow it.
+  if [ -n "${JG_BACKEND_HERDR_PINNED_NAME:-}" ] && [ "$JG_BACKEND_HERDR_PINNED_NAME" != "$SPAWN_PIN_FIRST" ]; then
+    spawn_follow_stuck_name "$SPAWN_PIN_FIRST" "$JG_BACKEND_HERDR_PINNED_NAME" ||
+      echo "warning: the agent name that stuck in Herdr ($JG_BACKEND_HERDR_PINNED_NAME) could not be written back for $ID" >&2
+  fi
 fi
 # One row per launch - copy, pane, task id, start epoch - in data/copy-tasks.tsv, so the Fable pulse
 # (core/fleet-pulse/bin/fleet-fable.sh) can name the task of a pooled copy after its record is removed.

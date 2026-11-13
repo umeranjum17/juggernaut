@@ -21,7 +21,8 @@
 #   while it waits: a slot held by one of its own ancestors admits it, so it never waits on the run that started it.
 #   A run of the trunk itself (the lander's gate or the verify; bin/jg-trunk.sh gives both JG_TRUNK_GATE_OUTPUT) marks
 #   itself as waiting, and a lane run takes no slot while such a mark of a live runner stands, so the trunk run gets
-#   the first slot that frees.
+#   the first slot that frees. The trunk run also owns one reserved slot, slot-<max+1>, that a lane run never takes: it
+#   tries that slot first, so the landing gate starts at once while every general slot is held by lane proofs.
 #   Time spent waiting is left in JG_TEST_HOST_WAITED_MS. Without python3 or a writable slot directory the run starts
 #   without a slot and says so. jg_test_host_release frees the slot at once.
 
@@ -92,7 +93,7 @@ if trunk:
     open(mark, "w").close()
 while alive(owner):
     holders = []
-    for k in range(1, n + 1):
+    for k in ([n + 1] if trunk else []) + list(range(1, n + 1)):
         if not trunk and trunk_waiting():
             break
         name = "slot-%d" % k
@@ -120,7 +121,7 @@ while alive(owner):
             sys.exit(0)
     if not told:
         sys.stderr.write("jg-test-run: waiting for a test-run slot: all %d on this machine are in use (runner pids %s)\n"
-                         % (n, ", ".join(pid or "unknown" for _, pid in holders)))
+                         % (n + (1 if trunk else 0), ", ".join(pid or "unknown" for _, pid in holders)))
         told = True
     time.sleep(2)
 unmark()

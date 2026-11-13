@@ -21,7 +21,7 @@ the shell it deletes, and deletes that shell in the same change.
    the content check against the branch that carries the merge, and the default-branch read. 29 shell lines remain in
    `bin/jg-teardown.sh` to marshal the facts the command cannot read from the worktree.
 2. **Done.** The worktree safety check (`safety`): the dirty, unpushed and unmerged reads, the
-   local-only rule, the untracked-path report and the lock-blocked answer (exit 3). The wait for a
+   local rule (a mode the delivery-style table says does not publish), the untracked-path report and the lock-blocked answer (exit 3). The wait for a
    lock to clear and the stale-lock proof stay in `bin/jg-teardown.sh` with the shared
    `bin/jg-lock-lib.sh` proof, because the treehouse return uses them too; they go with that slice.
 3. **Done for the reap.** Process reaping. The endpoint close and its refusal stay in
@@ -69,3 +69,9 @@ Two behaviours differ from the shell on purpose.
 The shell reported a failed scan when the last `lsof` line was the teardown script's own working directory under a root, because a `&&` list returned false at the end of the loop; the command does not.
 A core that cannot run refuses the removal with its own sentence.
 The parity replays for both slices (generated process, lsof, identity and registry situations, and their corrupted controls) are kept with the task's evidence.
+
+## Slice 5: the closed list of refusal reasons, and the dropped lane
+
+Every refusal of `safety` and `landed` prints one `reason=<value>` on stdout. The values are a closed list, `core/machines/cleanup-reason.states`: `unreadable-copy`, `uncommitted`, `unmerged-local`, `no-default-branch`, `not-on-trunk`, `no-merge-proof` and `empty-lane`, plus `check-failed`, which `bin/jg-teardown.sh` prints when the core cannot run. `tests/jg-teardown-core.test.sh` fails when the core's words and the list differ. The shell prints `teardown: cleanup refused, reason: <value>` after the sentences, so a refusal stored by the sweep names its reason. The `refused` state of `core/machines/tables/cleanup.tsv` carries the fields `reason` and `tried` and is raised again every 24 hours.
+
+A clean copy that is still on the commit its lane started on holds no work. While its ticket is open it stays refused (`empty-lane`, the rule of `jg8-false-landed-empty-branch`). `bin/jg-teardown.sh` asks the ticket's row only for this reason; when the row is closed it asks again with `--ticket-closed`, the core answers `resolution=dropped`, and teardown cleans the lane with the note `dropped` (a word the pending-close record accepts) instead of a PR or a landing, so the ticket is never marked landed. Uncommitted files, or a commit of the lane's own, still refuse.

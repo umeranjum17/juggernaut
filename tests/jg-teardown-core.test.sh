@@ -103,32 +103,36 @@ check "an unknown command exits 2" "$("$core" nonsense >/dev/null 2>&1; echo $?)
 # Refusals print their sentences on stderr; exit 3 means a git index lock stopped a read.
 g clone -q "$lab/origin.git" "$lab/wt2" 2>/dev/null
 safe() { "$core" safety --worktree "$lab/wt2" --project "$lab/proj" "$@" 2>&1; }
-out=$(safe --mode direct-PR --pr-url https://github.com/o/r/pull/7); rc=$?
+out=$(safe --pr-url https://github.com/o/r/pull/7); rc=$?
 check "a clean copy at origin's tip proves nothing is lost" "$rc" 0
 echo hand > "$lab/wt2/.jg-kimi-turnend"
-out=$(safe --mode direct-PR); rc=$?
+out=$(safe); rc=$?
 check "the fleet's own turn-end file never blocks a return" "$rc" 0
 for i in 1 2 3 4 5 6 7 8 9 10 11 12; do echo u > "$lab/wt2/u$i"; done
-out=$(safe --mode direct-PR); rc=$?
+out=$(safe); rc=$?
 check "untracked work refuses, naming ten paths and omitting the rest" "$rc|$(printf '%s' "$out" | grep -c '^  u')|$(printf '%s' "$out" | grep -c 'additional untracked paths omitted')|$(printf '%s' "$out" | grep -c 'untracked-only leftovers')" "1|10|1|1"
+check "  its reason is uncommitted" "$(printf '%s' "$out" | grep '^reason=')" "reason=uncommitted"
 echo more >> "$lab/wt2/f"
-out=$(safe --mode direct-PR); rc=$?
+out=$(safe); rc=$?
 check "a tracked edit refuses and says so" "$rc|$(printf '%s' "$out" | grep -c 'includes tracked edits')" "1|1"
 rm -f "$lab"/wt2/u*; ( cd "$lab/wt2" && git checkout -q -- f && rm -f .jg-kimi-turnend )
 ( cd "$lab/wt2" && g checkout -q -b local && echo l > l && g add l && g commit -q -m local )
-out=$(safe --mode local-only); rc=$?
+out=$(safe --local); rc=$?
 check "a local-only commit on no remote and not on main refuses" "$rc|$(printf '%s' "$out" | grep -c 'not yet merged into main')|$(printf '%s' "$out" | grep -c 'commits not yet on main')" "1|1|1"
-out=$(safe --mode direct-PR); rc=$?
+check "  its reason is unmerged-local" "$(printf '%s' "$out" | grep '^reason=')" "reason=unmerged-local"
+out=$(safe); rc=$?
 check "a pushed-mode copy with unpushed work needs the forge, and lists the commits" "$rc|$(printf '%s' "$out" | grep -c 'unpushed commits:')" "1|1"
-check "a pushed-mode copy reports the branch it asked about" "$("$core" safety --worktree "$lab/wt2" --project "$lab/proj" --mode direct-PR 2>/dev/null | grep '^branch=')" "branch=local"
-check "a cached branch is asked about instead of the current one" "$("$core" safety --worktree "$lab/wt2" --project "$lab/proj" --mode direct-PR --cached-branch fm/x 2>/dev/null | grep '^branch=')" "branch=fm/x"
+check "  its reason is no-merge-proof" "$(printf '%s' "$out" | grep '^reason=')" "reason=no-merge-proof"
+check "a pushed-mode copy reports the branch it asked about" "$("$core" safety --worktree "$lab/wt2" --project "$lab/proj" 2>/dev/null | grep '^branch=')" "branch=local"
+check "a cached branch is asked about instead of the current one" "$("$core" safety --worktree "$lab/wt2" --project "$lab/proj" --cached-branch fm/x 2>/dev/null | grep '^branch=')" "branch=fm/x"
 : > "$lab/wt2/.git/index.lock"; printf 'garbage' > "$lab/wt2/.git/index"
-out=$(safe --mode direct-PR); rc=$?
+out=$(safe); rc=$?
 check "an unreadable index behind a lock asks the caller to prove the lock stale" "$rc|$(printf '%s' "$out" | grep -c 'checking whether the lock is stale')" "3|1"
 rm -f "$lab/wt2/.git/index.lock"
-out=$(safe --mode direct-PR); rc=$?
+out=$(safe); rc=$?
 check "an unreadable index with no lock is a final refusal" "$rc|$(printf '%s' "$out" | grep -c 'cannot inspect worktree')" "1|1"
-check "a missing worktree has nothing to protect" "$("$core" safety --worktree "$lab/gone" --project "$lab/proj" --mode direct-PR >/dev/null 2>&1; echo $?)" 0
+check "  its reason is unreadable-copy" "$(printf '%s' "$out" | grep '^reason=')" "reason=unreadable-copy"
+check "a missing worktree has nothing to protect" "$("$core" safety --worktree "$lab/gone" --project "$lab/proj" >/dev/null 2>&1; echo $?)" 0
 
 # ---- process reaping (needs lsof; the tmux process-group fallback needs none) -------------------
 reap() { "$core" reap --label worktree --task-id tid --backend "${BACKEND:-tmux}" --target %7 --caller-pid $$ -- "$@"; }
@@ -146,7 +150,7 @@ if command -v lsof >/dev/null 2>&1; then
   kill -KILL "$leaked" 2>/dev/null
   check "an empty directory and a missing directory reap nothing" "$(reap "$lab/leak" "$lab/none" "" >/dev/null 2>&1; echo $?)" 0
   mkdir -p "$lab/nolsof"
-  for c in perl sed tr sort ps; do ln -sf "$(command -v $c)" "$lab/nolsof/$c"; done
+  for c in perl sed tr sort ps; do ln -sf "$(command -v "$c")" "$lab/nolsof/$c"; done
   out=$(PATH=$lab/nolsof "$lab/state/bin/jg-teardown-core" reap --label worktree --task-id tid --backend herdr --target x --caller-pid $$ -- "$lab/leak" 2>&1); rc=$?
   check "without lsof the fallback only warns, and never for another backend's group" "$rc|$out" "0|warning: lsof is unavailable; cannot resolve a process-group fallback for herdr task tid"
 else
@@ -213,6 +217,42 @@ check "the same copy without trunk mode is still refused" "$rc|$(printf '%s' "$o
 ( cd "$lab/proj" && g branch -q -D trunk && g branch -q trunk main )
 out=$(trunk_land); rc=$?
 check "a pushed release commit that is not on the local trunk is not landed" "$rc|$(printf '%s' "$out" | grep -c "is not on the local trunk")" "1|1"
+check "  the landed test names its reason" "$(printf '%s' "$out" | grep -c '^reason=no-merge-proof')" 1
+
+# An empty lane (HEAD is still the commit it started on) is an ancestor of the trunk and of the
+# default branch, but nothing landed: both the landed test and the safety test refuse it. A lane with
+# one commit of its own, on the trunk, is still landed.
+( cd "$lab/proj" && g worktree add -q -b emptywork "$lab/ewt" origin/main )
+ebase=$(g -C "$lab/ewt" rev-parse HEAD)
+empty_land() { "$core" landed --worktree "$lab/ewt" --branch emptywork --project "$lab/proj" --trunk-branch trunk --lane-base "$ebase"; }
+( cd "$lab/proj" && g branch -q -f trunk "$ebase" )
+out=$(empty_land); rc=$?
+check "an empty lane on the trunk is not landed" "$rc|$(printf '%s' "$out" | grep -c 'holds no work of its own')" "1|1"
+out=$("$core" safety --worktree "$lab/ewt" --project "$lab/proj" --local --trunk-branch trunk --lane-base "$ebase" 2>&1); rc=$?
+check "teardown's safety test refuses an empty lane" "$rc|$(printf '%s' "$out" | grep -c 'holds no work of its own')" "1|1"
+check "  its reason is empty-lane" "$(printf '%s' "$out" | grep '^reason=')" "reason=empty-lane"
+( cd "$lab/ewt" && echo e > e && g add e && g commit -q -m emptywork && g -C "$lab/proj" branch -q -f trunk emptywork )
+out=$(empty_land); rc=$?
+check "the same lane with one commit on the trunk is landed" "$rc|$out" "0|landed=yes"
+
+# H13: the reasons are a closed list, and an empty lane of a closed ticket is cleaned as dropped.
+reasons=$(sed -n 's/^\treason[A-Za-z]*[ \t]*=[ \t]*"\(.*\)".*/\1/p' "$ROOT/core/teardown/cmd/jg-teardown/safety.go" | sort | tr '\n' ' ')
+listed=$(awk -F'\t' '!/^#/ && NF {print $1}' "$ROOT/core/machines/cleanup-reason.states" | grep -vx check-failed | sort | tr '\n' ' ')
+check "the reason words in the core and in the closed list are the same, besides the one the shell prints" "$reasons" "$listed"
+( cd "$lab/proj" && g branch -q -f trunk "$ebase" )
+( cd "$lab/ewt" && g checkout -q --detach "$ebase" )
+sa() { "$core" safety --worktree "$lab/ewt" --project "$lab/proj" --local --trunk-branch trunk --lane-base "$ebase" "$@" 2>&1; }
+out=$(sa --ticket-closed); rc=$?
+check "an empty lane of a closed ticket passes, as dropped" "$rc|$(printf '%s' "$out" | grep -c '^resolution=dropped')|$(printf '%s' "$out" | grep -c '^reason=')" "0|1|0"
+out=$(sa); rc=$?
+check "an empty lane of an open ticket is still refused" "$rc|$(printf '%s' "$out" | grep -c '^reason=empty-lane')" "1|1"
+echo d > "$lab/ewt/dirty"
+out=$(sa --ticket-closed); rc=$?
+check "an empty lane with uncommitted files is refused even when its ticket is closed" "$rc|$(printf '%s' "$out" | grep -c '^reason=uncommitted')" "1|1"
+rm -f "$lab/ewt/dirty"
+( cd "$lab/ewt" && echo w > w && g add w && g commit -q -m work )
+out=$(sa --ticket-closed); rc=$?
+check "a lane with a commit of its own is not dropped, whatever its ticket" "$rc|$(printf '%s' "$out" | grep -c '^resolution=dropped')|$(printf '%s' "$out" | grep -c '^reason=not-on-trunk')" "1|0|1"
 
 [ "$fails" -eq 0 ] || { printf '%d check(s) failed\n' "$fails"; exit 1; }
 printf 'all jg-teardown-core tests passed\n'

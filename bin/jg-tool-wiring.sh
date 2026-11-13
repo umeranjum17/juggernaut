@@ -5,7 +5,7 @@
 # Idempotent: the second run writes nothing and prints nothing, so
 # bin/jg-bootstrap.sh calls it on every locked session start.
 # done-done  links the skill the pinned done-done-axi package ships, appends its
-#            integrations/juggernaut/brief-include.md to config/brief-include.md
+#            integrations/<juggernaut|firstmate>/brief-include.md to config/brief-include.md
 #            as one managed block (a rerun replaces that block instead of
 #            appending a duplicate), and places its
 #            integrations/juggernaut/merge-gate as config/merge-gate, executable.
@@ -94,8 +94,20 @@ install_skill() {  # <package-skill-dir> <skill-name>
   return "$rc"
 }
 
+# The package ships its home integration under the name of the product it was
+# published for: `juggernaut`, or `firstmate` (done-done-axi 0.6.27, the pin).
+integration_dir() {  # <package-dir>
+  local name
+  for name in juggernaut firstmate; do
+    [ -d "$1/integrations/$name" ] && { printf '%s\n' "$1/integrations/$name"; return 0; }
+  done
+  return 1
+}
+
 write_include() {  # <package-dir>
-  local block=$1/integrations/juggernaut/brief-include.md dest=$CONFIG/brief-include.md tmp
+  local dir block dest=$CONFIG/brief-include.md tmp
+  dir=$(integration_dir "$1") || return 1
+  block=$dir/brief-include.md
   [ -r "$block" ] || return 1
   mkdir -p "$CONFIG" || return 1
   if [ -L "$dest" ] || { [ -e "$dest" ] && [ ! -f "$dest" ]; }; then
@@ -119,7 +131,9 @@ write_include() {  # <package-dir>
 }
 
 place_gate() {  # <package-dir>
-  local src=$1/integrations/juggernaut/merge-gate dest=$CONFIG/merge-gate
+  local dir src dest=$CONFIG/merge-gate
+  dir=$(integration_dir "$1") || return 1
+  src=$dir/merge-gate
   [ -r "$src" ] || return 1
   if [ -e "$dest" ] || [ -L "$dest" ]; then
     return 0

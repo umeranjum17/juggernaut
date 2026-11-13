@@ -37,6 +37,8 @@ _JG_MERGE_OUTCOME_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$_JG_MERGE_OUTCOME_LIB_DIR/jg-parent-channel-lib.sh"
 # shellcheck source=bin/jg-evidence-lib.sh
 . "$_JG_MERGE_OUTCOME_LIB_DIR/jg-evidence-lib.sh"
+# shellcheck source=bin/jg-trace-lib.sh
+. "$_JG_MERGE_OUTCOME_LIB_DIR/jg-trace-lib.sh"
 # shellcheck source=bin/jg-board-link-lib.sh
 # shellcheck disable=SC1091
 . "$_JG_MERGE_OUTCOME_LIB_DIR/jg-board-link-lib.sh"
@@ -126,8 +128,12 @@ jg_merge_outcome_report() {  # <home> <state> <task-id> <pr-url> <origin> [autho
   jg_lock_release "$lock"
   # Opt-in fleet activity ledger (docs/fleet-ledger.md); off costs one file test.
   [ ! -e "${JG_CONFIG_OVERRIDE:-$home/config}/fleet-ledger" ] || [ "$status" -ne 0 ] || JG_HOME=$home JG_STATE_OVERRIDE=$state "$_JG_MERGE_OUTCOME_LIB_DIR/jg-fleet-ledger.sh" merged "$id" pr "$JG_PR_URL" || true
-  # The ticket closes with the merge and carries the delivered PR, not the link
-  # some earlier status line happened to mention.
+  # Every pull-request merge ends here, whoever merged it, so the ticket reads as landed from this one write: a land event for the PR and
+  # then landed_at on the row. No commit is recorded (the forge reports none), and external_ref already holds the PR. The poll finds a
+  # merge after the fact and holds no forge merge time, so its event says it is the time the poll saw it.
+  [ "$status" -ne 0 ] || JG_HOME=$home jg_trace_record "$id" land pr "$JG_PR_URL" --source jg-merge --at "$(date +%s)" \
+    --payload "{\"origin\":\"$origin\"}" || true
+  # The board's ticket still closes here until the board reads the stage from the row (the board-mirror cut, S20a, removes this call).
   [ "$status" -ne 0 ] || JG_HOME=$home JG_STATE_OVERRIDE=$state "$_JG_MERGE_OUTCOME_LIB_DIR/jg-ticket.sh" "$id" --stage "done" --state "done" --pr "$JG_PR_URL" || true
   # The landed merge reaches this home's active version branch here, so no home
   # depends on an editable hook and no agent has to remember the carry. Off

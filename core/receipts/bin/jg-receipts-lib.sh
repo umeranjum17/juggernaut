@@ -190,7 +190,7 @@ jg_receipts_accept_done() {  # <worktree> <mode> <line> <state> <id> <meta> [<fo
         if jg_pr_head_valid "$(jg_dod_meta_value "$meta" pr_head)"; then
           sha=$(jg_dod_meta_value "$meta" pr_head)
         fi
-      elif [ "$mode" = direct-PR ] && jg_dod_pr_outside_origin "$wt" "$url" \
+      elif jg_delivery_style_is "$mode" publishes && jg_dod_pr_outside_origin "$wt" "$url" \
         && jg_pr_head_valid "$(jg_dod_meta_value "$meta" pr_head)"; then
         sha=$(jg_dod_meta_value "$meta" pr_head)
       fi

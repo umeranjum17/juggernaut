@@ -15,9 +15,8 @@ them:
 - `Repo invariants` - the seconds-long file comparisons and the coverage proofs.
 - `Lint <n>` - the sharded lint over the files the change touched
   (`bin/jg-lint.sh --changed-base <base>`), not over the whole tree.
-- `Changed tests <n>` - the suite scripts the change's paths map to
-  (`bin/jg-test-run.sh --changed --base <base> --exclude-family real-herdr-gated --max-weight-ms 60000 --shard <n>of8`): a suite whose recorded time is over a minute is named in the log and runs in the post-merge lane instead.
-  The selection is split across eight runners at once, by recorded time, so the slowest required lane is about an eighth of the work.
+- `Tier ci` - the journeys `.done-done.yaml` marks `tier: ci`, run by `bin/jg-tier-run.sh ci`, one `done-done run <journey> --tier ci` each.
+  No shell test shard runs on GitHub. The other scripts run on our host: in proving, in the line's verify, and each night.
 
 `CI required` is still the one required status check, and `bin/jg-ci-required.sh`
 now holds two lane sets: the fast set for a `pull_request` event and the full set
@@ -31,7 +30,7 @@ An untouched area skips, and `CI required` refuses a touched area whose suite wa
 A skip is only safe if the area covers every file its suite reads, so each of these lanes runs its suite through
 `bin/jg-ci-area-reads.sh`, which traces what the suite opens and fails, naming the file, when one is outside the area.
 The rest run after the merge instead: the behaviour suite
-(`behavior.yml`), and the core journeys (`core-suites.yml`).
+(`behavior.yml`), and the core journeys (the `core-*` entries of `.done-done.yaml`, tier local).
 An unreadable diff still widens the pull request to the full set.
 
 ## 2. The proof is keyed to the tree
@@ -93,13 +92,14 @@ Nothing is reverted, and no other merge waits on it.
 
 ## 5. The number
 
-Every merge the check lands appends one row to `data/merge-latency.tsv`: the
-task, the pull request, the `done` epoch, the merge epoch, and the whole minutes
-between them.
+Every merge, whoever makes it (this home, the check, or a person on the forge, found by the poll),
+ends in `jg_merge_outcome_report`, which records a `land` event for the pull request and sets `landed_at`
+on the ticket (a local-only landing does the same for its commit). No table file is written.
+The check reads the minutes from `jg-backlog.sh times <ticket>`: the ticket's ready time to its landed time.
 A merge over `JG_MERGE_LATENCY_LIMIT_MINUTES` (default 5)
 raises one alert naming the number.
-A five-minute path that silently takes eleven is the failure this row exists to
-make visible, so read the recorded minutes rather than any promise about them.
+A five-minute path that silently takes eleven is the failure this number exists to
+make visible, so read `times` rather than any promise about them.
 
 A local-trunk project has no pull request to merge, so its number is the
 landing: the check `core/trunk-latency` writes one row per landing to

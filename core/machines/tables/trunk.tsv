@@ -1,0 +1,13 @@
+machine	trunk	state/trunk-{tip,green}-<project>, the verify lock state/.trunk-verify-<project>.lock and data/trunk-ci.tsv: the trunk line of one project (machine 7 of the state-machine plan)	core/machines/observers/trunk.sh
+enum	trunk
+state	clean	initial	The tip of the trunk is verified: it is the green pin.	-	rest	land
+state	unverified	normal	The tip holds commits that no verify has run on.	-	waiting	15m -> alert line-red
+state	verifying	normal	A verify runs on the commits above the pin.	-	active	30m -> alert line-red
+state	red	normal	A verify failed, and its commit is being reverted.	-	waiting	0s -> alert line-red
+edge	clean	land	unverified	bin/jg-trunk.sh:cmd_land	-	a landing run ended landed	jg-machine-trunk
+edge	unverified	verify	verifying	bin/jg-trunk.sh:cmd_verify	-	the tick starts a verify; one verify at a time	jg-machine-trunk
+edge	verifying	pass	clean	bin/jg-trunk.sh:pin_green	-	the verify passed and the verified commit is the tip	jg-machine-trunk
+edge	verifying	pass-behind	unverified	bin/jg-trunk.sh:pin_green	-	the verify passed and a landing came meanwhile: the pin moves and the tip is above it again	jg-machine-trunk
+edge	verifying	fail	red	bin/jg-trunk.sh:cmd_verify	-	the verify failed on a test charged to a commit	jg-machine-trunk
+edge	red	revert	unverified	bin/jg-trunk.sh:revert_commit	-	the traced commit is reverted	jg-machine-trunk
+observer	bash "$(dirname "$JG_MACHINES_TABLES")/observers/trunk.sh" "$1"

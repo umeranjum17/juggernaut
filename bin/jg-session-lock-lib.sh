@@ -184,7 +184,8 @@ jg_harness_pid_alive() {
 # an environment proven to belong to the current Claude run.
 #
 # Trust gate: CLAUDE_PID must be a Claude-shaped member of this process's
-# contiguous harness ancestry. An id merely retained in a helper environment
+# contiguous harness ancestry, or the ancestry must hold no harness at all (a
+# detached command reparented to init) while CLAUDE_PID is a live Claude. An id merely retained in a helper environment
 # fails that membership and is ignored: a hand-started Pi or codex primary under
 # a Claude pane still carries the pane's CLAUDE_CODE_SESSION_ID and CLAUDE_PID,
 # and must never own a lock with them. Ids are read from the environment only,
@@ -241,7 +242,19 @@ jg_session_lock_claude_session_id() {  # [<ancestry-pids>]
   case "$id" in *$'\n'*|*$'\r'*) return 1 ;; esac
   case "$claude_pid" in ''|*[!0-9]*) return 1 ;; esac
   if [ -z "$pids" ]; then
-    pids=$(jg_harness_ancestry_pids) || return 1
+    pids=$(jg_harness_ancestry_pids) || pids=
+  fi
+  # A command the harness detached (reparented to init, so no harness sits in
+  # its ancestry) is still this session's: its environment names a live Claude
+  # model loop. Only an EMPTY ancestry qualifies. A hand-started Pi or codex
+  # under a Claude pane has a harness in its chain, so it never reaches here.
+  if [ -z "$pids" ]; then
+    comm=$(ps -o comm= -p "$claude_pid" 2>/dev/null) || return 1
+    args=$(ps -o args= -p "$claude_pid" 2>/dev/null)
+    jg_harness_process_matches "$comm" "$args" || return 1
+    [ "$JG_HARNESS_IS_CLAUDE" -eq 1 ] || return 1
+    printf '%s\n' "$id"
+    return 0
   fi
   while IFS= read -r pid; do
     [ "$pid" = "$claude_pid" ] || continue
@@ -309,16 +322,16 @@ jg_session_lock_anchor_pid() {
 # bin/jg-lock.sh's ordinary stale-owner path, which refreshes line 1, rather than
 # silently owned with a dead anchor. A missing lock, a malformed lock, a lock
 # held by a harness outside this ancestry under another (or no) session id, or
-# an ancestry that cannot be resolved all fail closed.
+# a detached command whose CLAUDE_PID is not a live Claude all fail closed.
 jg_session_lock_owned_by_self() {
   local state=$1 lock_pid pids pid
   lock_pid=$(cat "$state/.lock" 2>/dev/null || true)
   case "$lock_pid" in
     ''|*[!0-9]*) return 1 ;;
   esac
-  pids=$(jg_harness_ancestry_pids) || return 1
+  pids=$(jg_harness_ancestry_pids) || pids=
   while IFS= read -r pid; do
-    [ "$pid" = "$lock_pid" ] && return 0
+    [ -n "$pid" ] && [ "$pid" = "$lock_pid" ] && return 0
   done <<EOF
 $pids
 EOF

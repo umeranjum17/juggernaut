@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Behavior tests for the landing and trunk-pointers machine tables (core/machines/tables).
+# Behavior tests for the landing machine table (core/machines/tables).
 # Every record is generated here by a seed function in the shape its writer prints; no fleet record is copied.
-# The tables are report-only: `show` and `check` print findings and nothing in the landing chain calls them.
-# The last journey drives the landing machine's start edge from the host tick (core/sentinel/bin/jg-sentinel.sh, through
-# bin/jg-delivery-tick.sh) in a tests/jg-trunk-fixture.sh world: real git, the real lander, a stub Herdr with no server.
+# The table is report-only: `show` and `check` print findings and nothing in the landing chain calls them.
+# The landing run (9 states, 13 moves, observer core/machines/observers/landing.sh): a fixture record in every state prints the right word,
+# the table lints, and a legal move adds no line to the shadow log. The last journey drives the start of a landing run from the host tick
+# (core/sentinel/bin/jg-sentinel.sh, through bin/jg-delivery-tick.sh) in a tests/jg-trunk-fixture.sh world: real git, the real lander, a stub Herdr with no server.
 set -u
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
@@ -19,87 +20,93 @@ jm() { OUT=$(bash "$JM" "$@" 2>&1); RC=$?; }
 rep() { printf "$1%.0s" $(seq "$2"); }
 H=$(rep a 40); X=$(rep b 40); NOW=$(date +%s)
 
+jm check landing; expect_code 0 "$RC" "the landing table lints"; assert_equals "ok landing: 9 states, 13 edges" "$OUT" "lint golden"
+jm enum landing; expect_code 0 "$RC" "the enum lints"; assert_contains "$OUT" 9 "nine values"
+jm coverage landing; expect_code 0 "$RC" "every edge names its test"
+assert_equals "queued rebasing resolving retesting checking retrying landed returned withdrawn" \
+  "$(awk -F'\t' '$1=="state"{printf "%s ", $2}' "$ROOT/core/machines/tables/landing.tsv" | sed 's/ $//')" "the nine states"
+pass "the landing table lints with 9 states and 13 moves, each with a test"
+
+# A fixture record in every state prints the right word through the real jg-machine.sh and the real observer. The records are the
+# lander's state line, the conflict run's rows (data/trunk-resolving.tsv) and the phase rows of lane_admit (data/trunk-landing-phases.tsv).
+G=$T/proj; git init -q -b main "$G"; git -C "$G" -c user.name=t -c user.email=t@x commit -q --allow-empty -m one
+git -C "$G" branch fm/lane-moved; NEW=$(git -C "$G" -c user.name=t -c user.email=t@x commit-tree "HEAD^{tree}" -p HEAD -m two); git -C "$G" update-ref refs/heads/fm/lane-moved "$NEW"
+printf 'project=%s\nbranch=fm/lane-moved\n' "$G" > "$S/lane-moved.meta"
+printf 'project=%s\nbranch=fm/lane-here\n' "$G" > "$S/lane-here.meta"; git -C "$G" branch fm/lane-here; HERE=$(git -C "$G" rev-parse fm/lane-here)
 seed_land() { printf '%s\n' "$2" > "$M/$1.state"; }  # <file stem> <content as the writer prints it>
+phase_row() { tab "$1" proj "$H" "${3:-$H}" "$2" "$(date +%s)" "" >> "$JG_HOME/data/${4:-trunk-resolving.tsv}"; }  # <task> <state> [lane commit] [file]
 word_of() {  # the state word `show` found, or the word the observer printed when it found none
   jm show landing "$1"
   if [ "$RC" -eq 0 ]; then printf '%s\n' "$OUT" | awk -F'\t' '$1 == "state" { print $2 }'
   else printf '%s\n' "$OUT" | sed -n "s/.*observer printed '\(.*\)'.*/\1/p"; fi
 }
-
-jm check landing; expect_code 0 "$RC" "the landing table lints"; assert_contains "$OUT" "ok landing" "check names the landing table"
-jm check trunk-pointers; expect_code 0 "$RC" "the trunk-pointers table lints"
-pass "both tables pass the engine lint"
-
-# Both writers: trunk-v3 (running <epoch>, landed, wait <why>, final <why>) and c63db7ed (running <epoch> <pid>,
-# landed <output>, and the jg-trunk.sh shape <kind> <count> <reason> in a three-part file name).
-seed_land "t1.$H" "running $NOW";                        seed_land "t2.$H" "running $NOW 4242"
-seed_land "t3.$H" "landed";                              seed_land "t4.$H" "landed cleaned up"
-seed_land "t5.$H" "wait REFUSED: linked to a decision";         seed_land "t6.$H.$X" "wait 0 REFUSED: away mode"
-seed_land "t7.$H.$X" "retry 1 REFUSED: read bound";      seed_land "t8.$H" "final REFUSED: conflict in a.txt"
-seed_land "t9.$H.$X" "final 2 REFUSED: gate failed; full log: /x"
-: > "$T/shapes.corpus"
-for id in "t1.$H:running" "t2.$H:running" "t3.$H:landed" "t4.$H:landed" "t5.$H:wait" "t6.$H.$X:wait" \
-  "t7.$H.$X:retry" "t8.$H:final" "t9.$H.$X:final" "none.$H:new"; do
+seed_land "q-wait.$H" "wait REFUSED: linked to a decision"; seed_land "q-wait2.$H.$X" "wait 0 REFUSED: away mode"
+seed_land "run-reb.$H" "running $NOW 4242"
+seed_land "run-res.$H" "running $NOW 4242"; phase_row run-res resolving
+seed_land "run-ret.$H" "running $NOW 4242"; phase_row run-ret resolving; phase_row run-ret resolved
+seed_land "run-chk.$H" "running $NOW"; phase_row run-chk resolving; phase_row run-chk resolved; phase_row run-chk checking "" trunk-landing-phases.tsv
+seed_land "run-chk2.$H" "running $NOW 4242"; phase_row run-chk2 checking "" trunk-landing-phases.tsv
+seed_land "run-gaveup.$H" "running $NOW 4242"; phase_row run-gaveup resolving; phase_row run-gaveup returned
+seed_land "other.$H" "running $NOW 4242"; phase_row other checking "$X" trunk-landing-phases.tsv   # a row of another lane commit is not this run's
+seed_land "t-retry.$H.$X" "retry 1 REFUSED: read bound"; seed_land "t-env.$H" "env-wait away"
+seed_land "t-final.$H" "final REFUSED: conflict in a.txt"; seed_land "t-final2.$H.$X" "final 2 REFUSED: gate failed; full log: /x"
+seed_land "t-landed.$H" "landed"; seed_land "t-landed2.$H" "landed cleaned up"
+seed_land "lane-moved.$H" "wait REFUSED: away mode"
+mkdir -p "$M/retired"; printf 'final REFUSED: conflict in a.txt\n' > "$M/retired/old.$H.state"
+printf 'final REFUSED: conflict in a.txt\n' > "$M/retired/lane-here.$HERE.state"
+: > "$T/states.corpus"
+for id in "none.$H:queued" "q-wait.$H:queued" "q-wait2.$H.$X:queued" "run-reb.$H:rebasing" "run-res.$H:resolving" "run-ret.$H:retesting" \
+  "run-chk.$H:checking" "run-chk2.$H:checking" "run-gaveup.$H:returned" "other.$H:rebasing" "t-retry.$H.$X:retrying" "t-env.$H:retrying" \
+  "t-final.$H:returned" "t-final2.$H.$X:returned" "t-landed.$H:landed" "t-landed2.$H:landed" "lane-moved.$H:withdrawn" "old.$H:returned" \
+  "lane-here.$HERE:queued" "lane-moved.$NEW:queued"; do
+  echo "show landing ${id%:*} -> $(word_of "${id%:*}")"
   assert_equals "${id##*:}" "$(word_of "${id%:*}")" "${id%:*} is ${id##*:}"
-  word_of "${id%:*}" >> "$T/shapes.corpus"
+  word_of "${id%:*}" >> "$T/states.corpus"
 done
-jm check landing --corpus "$T/shapes.corpus"; expect_code 0 "$RC" "both writer shapes are accepted"
-assert_equals "ok landing: 10 lines, 0 findings" "$OUT" "check counts the shapes"
-pass "check accepts both writer shapes"
+for st in queued rebasing resolving retesting checking retrying landed returned withdrawn; do grep -qx "$st" "$T/states.corpus" || fail "no fixture is in state $st"; done
+jm check landing --corpus "$T/states.corpus"; expect_code 0 "$RC" "every word a fixture printed is a state"
+pass "a fixture record in every state prints the right word"
 
-# A running record with no epoch above 0, an epoch past the 6-hour expiry, or a pid that is not a number is a finding.
-seed_land "r0.$H.$X" "running 0"; seed_land "r1.$H" "running"; seed_land "r2.$H" "running $((NOW - 30000))"
-seed_land "r3.$H" "running $NOW 4x2"; seed_land "r4.$H" "env-wait away"
+# A running record with no epoch above 0, an epoch past the 6-hour expiry, or a pid that is not a number is a finding, and blocks nothing.
+seed_land "r0.$H.$X" "running 0"; seed_land "r1.$H" "running"; seed_land "r2.$H" "running $((NOW - 30000))"; seed_land "r3.$H" "running $NOW 4x2"
 : > "$T/bad.corpus"
-for id in r0.$H.$X:running-no-epoch r1.$H:running-no-epoch r2.$H:running-expired r3.$H:running-bad-pid r4.$H:env-wait; do
+for id in r0.$H.$X:running-no-epoch r1.$H:running-no-epoch r2.$H:running-expired r3.$H:running-bad-pid; do
   jm show landing "${id%:*}"; expect_code 1 "$RC" "${id%:*} is a finding"
   assert_contains "$OUT" "no state: the observer printed '${id##*:}'" "${id%:*} names ${id##*:}"
   printf '%s\n' "${id##*:}" >> "$T/bad.corpus"
 done
-jm check landing --corpus "$T/bad.corpus"; expect_code 1 "$RC" "check flags running 0 and the other bad shapes"
-assert_contains "$OUT" "bad landing corpus:1: running-no-epoch is not a state" "check names running 0"
-assert_contains "$OUT" "fail landing: 5 lines, 5 findings" "check counts the findings"
+jm check landing --corpus "$T/bad.corpus"; expect_code 1 "$RC" "check flags the bad shapes"
+assert_contains "$OUT" "running-no-epoch is not a state" "check names running 0"
 jm check landing; expect_code 0 "$RC" "a bad record never fails the table check (report-only)"
-pass "check flags running 0, expiry, a bad pid and an unlisted state, and blocks nothing"
+pass "check flags running 0, expiry and a bad pid, and blocks nothing"
 
-# Moves: the writers' legal moves replay clean; a move out of a terminal state is a finding.
-{ tab new start running; tab running land landed; tab running refuse-wait wait; tab wait restart running
-  tab running refuse-final final; tab running retry retry; tab retry restart running; } > "$T/moves.corpus"
+# Moves: the 13 legal moves replay clean, and a move out of a final state is a finding.
+{ tab queued start rebasing; tab queued withdraw withdrawn; tab rebasing rebase-ok checking
+  tab rebasing conflict resolving; tab resolving conflict-resolved retesting; tab resolving give-back returned
+  tab retesting retest-ok checking; tab retesting retest-red returned; tab checking check-ok landed; tab checking check-red returned
+  tab checking fault retrying; tab rebasing fault retrying; tab retesting fault retrying; tab retrying retry rebasing; } > "$T/moves.corpus"
 jm check landing --corpus "$T/moves.corpus"; expect_code 0 "$RC" "legal moves replay clean"
-tab landed start running > "$T/bad-move.corpus"
+tab landed start rebasing > "$T/bad-move.corpus"
 jm check landing --corpus "$T/bad-move.corpus"; expect_code 1 "$RC" "a move out of landed"
-assert_contains "$OUT" "landed start running is not a move" "check names the move"
-pass "check replays the legal moves and refuses a move out of a terminal state"
+assert_contains "$OUT" "landed start rebasing is not a move" "check names the move"
+pass "check replays the legal moves and refuses a move out of a final state"
 
-# Trunk pointers: one project, its pointer files and its live rows.
-P=proj; A=$(rep 1 40); B=$(rep 2 40)
-seed_ptr() {  # <tip> <green> <released> [word sha] [live status for green] [rolled]
-  printf '%s' "$1" > "$S/trunk-tip-$P"; printf '%s' "$2" > "$S/trunk-green-$P"; printf '%s' "$3" > "$S/trunk-released-$P"
-  rm -f "$S/trunk-word-live-$P" "$S/trunk-rolled-$P" "$JG_HOME/data/trunk-live.tsv"
-  [ -z "${4:-}" ] || tab "$4" 1 "ship it" > "$S/trunk-word-live-$P"
-  [ -z "${5:-}" ] || tab "$P" "$2" 1 "$5" > "$JG_HOME/data/trunk-live.tsv"
-  [ -z "${6:-}" ] || printf 'url' > "$S/trunk-rolled-$P"
-}
-ptr() { seed_ptr "$@"; jm show trunk-pointers "$P"; printf '%s\n' "$OUT" | awk -F'\t' '$1 == "state" { print $2 }'; }
-assert_equals released "$(ptr "$A" "$A" "$A")" "tip, green and released agree"
-assert_equals rolled "$(ptr "$A" "$A" "$A" "" "" 1)" "a cut-over trunk"
-assert_equals landed "$(ptr "$B" "$A" "$A")" "tip ahead of green"
-assert_equals green "$(ptr "$B" "$B" "$A")" "tip is green"
-assert_equals word-given "$(ptr "$B" "$B" "$A" "$B")" "the captain's word is recorded"
-assert_equals live "$(ptr "$B" "$B" "$A" "" live)" "the home runs green"
-assert_equals pinned-behind "$(ptr "$B" "$A" "$A" "" "live,pinned-behind-222222222222")" "red CI pinned the home back"
-assert_equals hook-failed "$(ptr "$B" "$B" "$A" "$B" hook-failed)" "the live hook failed"
-jm show trunk-pointers nope; expect_code 1 "$RC" "a project with no trunk"
-assert_contains "$OUT" "no state" "show names the missing state"
-pass "trunk-pointers names each pointer state from the pointer files"
-
-{ tab released land green; tab green verify-red landed; tab landed verify green; tab green word word-given; tab word-given live live
-  tab live release released; tab released rollover rolled; tab green ci-red pinned-behind; tab word-given hook-fail hook-failed
-  tab hook-failed live live; tab pinned-behind ci-green green; } > "$T/ptr.corpus"
-jm check trunk-pointers --corpus "$T/ptr.corpus"; expect_code 0 "$RC" "the trunk lifecycle replays clean"
-tab landed release released > "$T/ptr-bad.corpus"
-jm check trunk-pointers --corpus "$T/ptr-bad.corpus"; expect_code 1 "$RC" "a release of an unverified tip"
-pass "check replays the trunk lifecycle and refuses a release of a tip that is not green"
+# The shadow log: a legal move adds no line, an illegal one adds exactly one, and the writer carries on.
+LOG=$JG_HOME/data/machine-shadow.log
+lines() { [ -f "$LOG" ] && wc -l < "$LOG" || echo 0; }
+shadow() { local b; b=$(lines); bash "$ROOT/bin/jg-machine-shadow.sh" landing "$1" "$2" || fail "the shadow helper must always exit 0"; echo $(( $(lines) - b )); }
+echo "shadow log before: $(lines) lines"
+assert_equals 0 "$(shadow "run-chk.$H" landed)" "checking -> landed is legal: the move the lander reports"
+assert_equals 0 "$(shadow "run-chk2.$H" landed)" "checking -> landed is legal after a clean rebase"
+assert_equals 0 "$(shadow "run-reb.$H" checking)" "rebasing -> checking is legal"
+assert_equals 0 "$(shadow "run-res.$H" retesting)" "resolving -> retesting is legal"
+assert_equals 0 "$(shadow "t-retry.$H.$X" rebasing)" "retrying -> rebasing is legal"
+assert_equals 0 "$(shadow "run-ret.$H" checking)" "retesting -> checking is legal"
+echo "shadow log after the six legal moves: $(lines) lines"
+assert_equals 1 "$(shadow "run-reb.$H" landed)" "rebasing -> landed skips the check and is illegal"
+assert_contains "$(tail -n 1 "$LOG")" landing "the shadow line names the machine"
+assert_equals 1 "$(shadow "t-landed.$H" rebasing)" "a landed run has no move"
+pass "a legal move adds no shadow line, an illegal move adds one"
 
 # A ready lane whose home has no model and no watcher left (09:03Z to 09:20Z on 10 Nov: nothing landed for 16.5 minutes)
 # lands on the host sentinel's next tick. The sentinel serves Main's home and each local lead home, which is where a trunk lives.

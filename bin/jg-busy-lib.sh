@@ -1252,7 +1252,49 @@ jg_busy_classify_meta() {  # <meta-file> <id> <state-dir> [tail40]
     printf 'unknown no-target'
     return 0
   fi
-  jg_busy_classify "$backend" "$target" "$harness" "$id" "$state" "$tail40"
+  local verdict
+  verdict=$(jg_busy_classify "$backend" "$target" "$harness" "$id" "$state" "$tail40")
+  jg_busy_beat_from_verdict "$state" "$id" "$harness" "$verdict" || true
+  printf '%s' "$verdict"
+}
+
+# jg_busy_beat_from_verdict: the beat of a runtime with no lifecycle hooks of its
+# own (slice H3b of the self-healing plan). A Claude agent writes state/beats/<id>
+# from its hooks (bin/jg-hook.sh); Codex and Pi have none, so the watcher's busy
+# verdict - the Pi extension's record, or Herdr's native reading for Codex - is
+# turned into the same beat lines through the one writer, bin/jg-beat.sh:
+#   busy  -> UserPromptSubmit when the last beat is not a busy one, else
+#            PostToolBatch at most once every JG_BEAT_BUSY_SECS (default 30)
+#   idle  -> Stop, once
+#   dead  -> SessionEnd, once
+#   unknown -> nothing: no proof, so no beat (the stall check then keeps its
+#            old rules for that agent)
+# A runtime that writes its own beat (Claude, and every other adapter) is skipped.
+# Best effort and silent: a beat that cannot be written never fails the classifier.
+jg_busy_beat_from_verdict() {  # <state-dir> <id> <harness> <verdict>
+  local state=$1 id=$2 harness=$3 verdict=$4 rec last_epoch last_event event now
+  case "$harness" in codex*|pi|pi-*) : ;; *) return 0 ;; esac
+  case "$id" in ''|*/*|.*) return 0 ;; esac
+  rec=$state/beats/$id
+  last_epoch=0 last_event=
+  if [ -s "$rec" ]; then
+    read -r last_epoch last_event _ < <(tail -n 1 "$rec") || true
+  fi
+  case "$last_epoch" in ''|*[!0-9]*) last_epoch=0 ;; esac
+  now=$(date +%s)
+  case "${verdict%% *}" in
+    busy)
+      case "$last_event" in
+        UserPromptSubmit|PostToolBatch)
+          [ $((now - last_epoch)) -ge "${JG_BEAT_BUSY_SECS:-30}" ] || return 0
+          event=PostToolBatch ;;
+        *) event=UserPromptSubmit ;;
+      esac ;;
+    idle) case "$last_event" in Stop|StopFailure|SessionEnd) return 0 ;; esac; event=Stop ;;
+    dead) [ "$last_event" != SessionEnd ] || return 0; event=SessionEnd ;;
+    *) return 0 ;;
+  esac
+  "${BASH_SOURCE[0]%/*}/jg-beat.sh" append "$state" "$id" "$event" >/dev/null 2>&1
 }
 
 # jg_busy_is_busy: boolean view for callers that only gate on provable

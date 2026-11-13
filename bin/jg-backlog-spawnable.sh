@@ -9,8 +9,10 @@
 #   - it names a project that data/projects.md registers for this home;
 #   - no live lane holds it (no state/<id>.meta);
 #   - no open captain decision card is linked to it, in either direction.
-# Two store reads (ready, and the whole board for its links) serve the whole answer;
-# `bd ready` already leaves out blocked, held and deferred rows.
+# One indexed query on the store's own tables answers it (status, is_blocked and the
+# dependency keys are indexed), so the cost follows the startable rows, not the board:
+# it reads no closed row and no row body. The project and live-lane checks run here on
+# that small answer. Rows come out in the order `bd ready` uses: priority, then age.
 # The caller bounds the whole run (bin/jg-backlog.sh gives it 10 seconds).
 set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -25,36 +27,40 @@ CONFIG="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
 die() { printf 'jg-backlog-spawnable: %s\n' "$1" >&2; exit "${2:-2}"; }
 
 store=$(jg_backlog_beads_store "$CONFIG") || exit 2
-# Registered project names: the text between "- " and the first " [" or " - ".
-projects=$(sed -n 's/^- \(.*\)$/\1/p' "$DATA/projects.md" 2>/dev/null \
-  | sed -e 's/ \[.*$//' -e 's/ - .*$//' | jq -R . | jq -sc .) || projects='[]'
-[ -n "$projects" ] || projects='[]'
-read_store() {  # <bd verb> [args...]: the verb's JSON answer, or the reason it failed
-  BEADS_DIR=$store "$SCRIPT_DIR/jg-beads.sh" "$@" --limit 0 --json 2>/dev/null
-}
 tmp=$(mktemp -d) || die "no scratch directory"
 trap 'rm -rf -- "$tmp"' EXIT
-read_store ready > "$tmp/ready.json" || die "the store read failed"
-read_store list --all > "$tmp/all.json" || die "the store read failed"
-for f in "$STATE"/*.meta; do [ -e "$f" ] && basename "$f" .meta; done | jq -R . | jq -sc . > "$tmp/lanes.json"
-# Open owner cards: an unclosed decision row, or an unclosed [design-ux] row. A card
-# blocks the rows it is linked to by an edge in either direction (links are edges).
-list=$(jq -rn --argjson projects "$projects" --slurpfile ready "$tmp/ready.json" \
-  --slurpfile all_rows "$tmp/all.json" --slurpfile lanes "$tmp/lanes.json" '
-  $ready[0] as $ready | $all_rows[0] as $all | $lanes[0] as $state
-  | ([$all[] | select(.status != "closed"
-        and (.issue_type == "decision" or (.title | contains("[design-ux]")))) | .id]) as $cards
-  | ([$all[] | .id as $id | .dependencies[]? | select(.type != "tracks")
-        | select(([.depends_on_id] | inside($cards)) or ([$id] | inside($cards)))
-        | (if ([.depends_on_id] | inside($cards)) then .issue_id else .depends_on_id end)]) as $linked
-  | $ready[]
-  | select(.status == "open" and .issue_type != "decision"
-      and ((.assignee // "") == "") and ((.metadata.hold_reason // "") == ""))
-  | ([.labels[]? | select(startswith("project:")) | sub("^project:"; "")]
-     | map(select(. as $p | $projects | index($p))) | first) as $project
-  | select($project != null)
-  | select(.id as $id | ($state | index($id)) == null and ($linked | index($id)) == null)
-  | [.id, $project] | @tsv') || die "the store answer could not be read"
+# Registered project names: the text between "- " and the first " [" or " - ".
+sed -n 's/^- \(.*\)$/\1/p' "$DATA/projects.md" 2>/dev/null \
+  | sed -e 's/ \[.*$//' -e 's/ - .*$//' > "$tmp/projects"
+for f in "$STATE"/*.meta; do [ -e "$f" ] && basename "$f" .meta; done > "$tmp/lanes"
+
+# A card is an unclosed decision row or an unclosed [design-ux] row; it blocks the rows it
+# is linked to by an edge in either direction (links are edges, `tracks` aside). A startable
+# row is open, not blocked, not deferred, not a decision, and has no assignee or hold reason.
+# Each row comes out once per project label, so the registered-project pick stays here.
+query="SELECT i.id, l.label FROM issues i JOIN labels l ON l.issue_id = i.id AND l.label LIKE 'project:%'
+  WHERE i.status = 'open' AND i.is_blocked = 0 AND i.issue_type <> 'decision' AND i.ephemeral = 0
+    AND (i.defer_until IS NULL OR i.defer_until <= NOW())
+    AND COALESCE(i.assignee, '') = ''
+    AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(i.metadata, '\$.hold_reason')), '') = ''
+    AND NOT EXISTS (SELECT 1 FROM dependencies d JOIN issues c ON c.id = d.depends_on_issue_id
+      WHERE d.issue_id = i.id AND d.type <> 'tracks' AND c.status <> 'closed'
+        AND (c.issue_type = 'decision' OR LOCATE('[design-ux]', c.title) > 0))
+    AND NOT EXISTS (SELECT 1 FROM dependencies d JOIN issues c ON c.id = d.issue_id
+      WHERE d.depends_on_issue_id = i.id AND d.type <> 'tracks' AND c.status <> 'closed'
+        AND (c.issue_type = 'decision' OR LOCATE('[design-ux]', c.title) > 0))
+  ORDER BY i.priority, i.created_at, i.id, l.label"
+BEADS_DIR=$store "$SCRIPT_DIR/jg-beads.sh" dolt sql -q "$query" > "$tmp/rows" 2>"$tmp/err" \
+  || die "the store read failed: $(head -c 300 "$tmp/err")"
+
+# The answer is a table: borders, a header row, then `| id | project:<name> |` rows.
+list=$(awk -v lanes="$tmp/lanes" -v projects="$tmp/projects" '
+  BEGIN { while ((getline l < lanes) > 0) lane[l] = 1; while ((getline p < projects) > 0) reg[p] = 1 }
+  /^\| / { n++; if (n == 1) next
+    sub(/^\| /, ""); sub(/ +\|$/, ""); i = index($0, " | "); id = substr($0, 1, i - 1)
+    gsub(/ +$/, "", id); label = substr($0, i + 3); sub(/^project:/, "", label)
+    if (!(label in reg) || (id in lane) || (id in done)) next
+    done[id] = 1; printf "%s\t%s\n", id, label }' "$tmp/rows")
 count=0
 [ -z "$list" ] || count=$(printf '%s\n' "$list" | wc -l | tr -d ' ')
 printf 'count: %s\n' "$count"

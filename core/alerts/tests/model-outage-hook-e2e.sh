@@ -24,6 +24,7 @@ trap cleanup EXIT
 export HOME=$d/user TMPDIR=$d/tmp
 mkdir -p "$HOME" "$TMPDIR" "$d/fork"
 cp -a "$JG_TEST_FORK/bin" "$d/fork/bin"
+ln -s "$JG_TEST_FORK/core" "$d/fork/core"   # the alert table and the wake bus
 rm -f "$d/fork/bin/jg-model-outage-lib.sh"   # step B deletes the fork-only copy
 # The observer reads the backend and busy verdict through sibling libraries run
 # in a bounded subshell; fake only those two, as the fork's own fixtures do.
@@ -39,6 +40,11 @@ FAKE
 # shellcheck disable=SC2317,SC2329,SC2030 # the watcher helpers are called by the sourced library
 # run <addons-dir> <wake-file>: the exact step-B watcher lines over two idle lanes
 # that fail with the same provider error.
+# The outage wake now comes from the real alert function; read each wake's own text back from the wake queue.
+queued_wakes() {  # <queue file> <out file>
+  [ -s "$1" ] || return 0
+  cut -f5 "$1" | sed 's/^alert capacity ([^)]*) at rung [0-9] for [a-z]*: [^ ]* - //' > "$2"
+}
 run() {
   local ad=$1 wakes=$2 state
   state=$d/state-$(basename "$wakes")
@@ -55,12 +61,12 @@ run() {
     jg_backend_target_of_meta() { printf 'fake:%s' "${1##*/}"; }
     jg_backend_of_meta() { printf fake; }
     hash_pane() { md5sum | cut -c1-12; }
-    jg_wake_append() { printf '%s\n' "$3" >> "$wakes"; }
     wake() { :; }
     triage_log() { printf '%s\n' "$*" >> "$d/triage.log"; }
     for id in alpha bravo; do : > "$state/$id.meta"; printf 'g1\n' > "$state/$id.busy-gen"; done
     if declare -F jg_model_outage_tick >/dev/null; then jg_model_outage_tick || triage_log "model-error observation failed"; fi
   )
+  queued_wakes "$state/.wake-queue" "$wakes"
 }
 
 run "$addons" "$d/present.wakes"

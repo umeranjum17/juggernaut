@@ -1,0 +1,14 @@
+machine	presence	one presence word per home: state/.afk, its mode line and state/.afk-return-catchup (id: the home name; machine 4 of the state-machine plan)	core/machines/observers/presence.sh
+enum	presence
+state	present	initial	The owner is here.	-	rest	go-away
+state	quiet	normal	The owner is here and wants only the most urgent alerts.	-	rest	speak
+state	away	normal	The owner is away and the away daemon supervises.	-	active
+state	returning	normal	The owner is back and has not read the return brief.	-	waiting	5m -> alert undelivered
+group	here	present	quiet
+edge	(none)	open	present	bin/jg-wake-lib.sh:jg_afk_mode	-	the home exists and has no away file	jg-machine-presence
+edge	present	go-quiet	quiet	bin/jg-afk-start.sh:jg_afk_start_main	-	the owner's word	jg-machine-presence
+edge	quiet	speak	present	bin/jg-afk-start.sh:jg_afk_start_main	-	the owner's word	jg-machine-presence
+edge	here	go-away	away	bin/jg-afk-start.sh:jg_afk_start_main	-	the away contract is written	jg-machine-presence
+edge	away	return	returning	bin/jg-afk-return.sh:begin	-	the owner is back	jg-machine-presence
+edge	returning	brief-read	present	bin/jg-afk-return.sh:check	-	the return brief was shown	jg-machine-presence
+observer	bash "$(dirname "$JG_MACHINES_TABLES")/observers/presence.sh" "$1"

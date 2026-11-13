@@ -108,7 +108,7 @@ func deliveryAgreeCmd(args []string) int {
 	}
 	if facts.mode == "" {
 		fmt.Fprintf(stderr, "warning: %s records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode %s - confirm its definition of done matches\n", brief, mode)
-	} else if facts.mode != mode {
+	} else if retiredModeRead(facts.mode) != mode {
 		fmt.Fprintf(stderr, "error: delivery mismatch for %s: the brief says mode=%s but this spawn passed --mode %s; correct the flag or re-scaffold the brief so the worker's instructions and the task record agree\n", id, facts.mode, mode)
 		return 1
 	}
@@ -117,13 +117,9 @@ func deliveryAgreeCmd(args []string) int {
 		return 1
 	}
 	if facts.forge != forge {
-		risk := ""
-		if mode == "no-mistakes" {
-			risk = " --risk <release|security|migration|large-change|shared-protocol|fork-repo>"
-		}
-		scaffold := fmt.Sprintf("jg-brief.sh %s %s --mode %s%s", id, proj, mode, risk)
+		scaffold := fmt.Sprintf("jg-brief.sh %s %s --mode %s", id, proj, mode)
 		if forge != "none" {
-			scaffold = fmt.Sprintf("jg-brief.sh %s %s --mode %s --forge %s%s", id, proj, mode, forge, risk)
+			scaffold = fmt.Sprintf("jg-brief.sh %s %s --mode %s --forge %s", id, proj, mode, forge)
 		}
 		fmt.Fprintf(stderr, "error: forge mismatch for %s: %s is registered forge=%s but %s records forge=%s; keep the filled ## Captain's intent and ## Juggernaut spec bodies, remove %s, re-scaffold it with %s, then re-fill those two subsections, so the worker's publication matches the project's forge\n", id, proj, forge, source, facts.forge, source, scaffold)
 		return 1

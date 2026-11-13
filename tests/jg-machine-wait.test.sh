@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Behavior tests for the wait machine table (core/machines/tables/wait.tsv) through bin/jg-machine.sh.
-# A pause that names the placeholder date 2026-12-31 is shown as "parked, no date", not as December.
+# A pause that carries reason=parked is shown as "parked, no date"; the old placeholder date 2026-12-31 is no longer a parking word.
 # The status lines are generated here by seed_status; no fleet record is copied. The display never
 # changes the classifier: the verdicts jg-classify.sh gives for each seeded line are pinned below
 # and the status files are byte-identical after every read.
@@ -27,16 +27,17 @@ seed_status work 'working [at=2]: building'
 seed_status prose 'working [at=2]: waiting until 2026-12-31 for nothing'
 seed_status open 'paused [at=2]: waiting on review'
 seed_status dated 'paused [at=2]: waiting until 2026-11-02T10:00Z'
-seed_status sentstamp 'paused [at=2]: parked until 2026-12-31T00:00Z'
-seed_status sentday 'paused [at=2]: parked until 2026-12-31'
+seed_status sentstamp 'paused [at=2] [wait=lead] [reason=parked]: set aside'
+seed_status sentday 'paused [at=2] wait=lead reason=parked: set aside'
+seed_status oldday 'paused [at=2]: parked until 2026-12-31T00:00Z'
 seed_status badtime 'paused [at=2]: waiting until 2026-13-45T99:00Z'
 
 # Classifier verdicts for each seeded line, read before the table is consulted (paused, paused-until).
-verdicts() { for id in work prose open dated sentstamp sentday badtime; do
+verdicts() { for id in work prose open dated sentstamp sentday oldday badtime; do
     l=$(bash "$CL" last-line "$T/state/$id.status"); bash "$CL" is-paused "$l" && p=yes || p=no
     u=$(bash "$CL" paused-until "$l") || u=-; printf '%s %s %s\n' "$id" "$p" "$u"; done; }
 before=$(verdicts)
-assert_equals "$(printf 'work no -\nprose no -\nopen yes -\ndated yes 1793613600\nsentstamp yes 1798675200\nsentday yes -\nbadtime yes -')" "$before" "classifier verdicts for the seeded lines"
+assert_equals "$(printf 'work no -\nprose no -\nopen yes -\ndated yes 1793613600\nsentstamp yes -\nsentday yes -\noldday yes 1798675200\nbadtime yes -')" "$before" "classifier verdicts for the seeded lines"
 sum_before=$(cat "$T"/state/*.status | cksum)
 
 jm check wait; expect_code 0 "$RC" "the wait table passes lint"
@@ -47,11 +48,12 @@ assert_equals not-paused "$(state_of work)" "a working line is not a pause"
 assert_equals not-paused "$(state_of prose)" "prose that names the date is not a pause"
 assert_equals paused-open "$(state_of open)" "a pause with no time named"
 assert_equals paused-dated "$(state_of dated)" "a pause with a real time"
-assert_equals paused-no-date "$(state_of sentstamp)" "the placeholder date with a time is parked, no date"
-assert_equals paused-no-date "$(state_of sentday)" "the placeholder date alone is parked, no date"
+assert_equals paused-no-date "$(state_of sentstamp)" "reason=parked in brackets is parked, no date"
+assert_equals paused-no-date "$(state_of sentday)" "reason=parked as bare words is parked, no date"
+assert_equals paused-dated "$(state_of oldday)" "the old placeholder date is only a far date now"
 assert_equals paused-open "$(state_of badtime)" "a malformed time falls back to no time named"
 jm show wait sentday
-assert_contains "$OUT" "parked with no date" "the captain sentence says parked, no date"
+assert_contains "$OUT" "set aside by the lead and no date is waited for" "the captain sentence says parked, no date"
 assert_not_contains "$OUT" "December" "the captain never reads December"
 jm next wait sentday; expect_code 0 "$RC" "next on a parked line"
 assert_contains "$OUT" "$(printf 'move\tdate\tpaused-dated')" "a parked wait can gain a real date"
@@ -67,7 +69,7 @@ line_for() {  # <state or event> -> a status line that puts a task in that state
     not-paused|resume) echo 'working [at=3]: back to work' ;;
     paused-open|pause) echo 'paused [at=3]: waiting on review' ;;
     paused-dated|pause-dated|date) echo 'paused [at=3]: waiting until 2026-11-02T10:00Z' ;;
-    paused-no-date|park) echo 'paused [at=3]: parked until 2026-12-31T00:00Z' ;;
+    paused-no-date|park) echo 'paused [at=3] [wait=lead] [reason=parked]: set aside' ;;
   esac
 }
 n=0

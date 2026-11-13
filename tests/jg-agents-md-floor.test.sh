@@ -22,6 +22,17 @@ for rule in 'Never write to a project.' "Never merge a PR without the captain's 
   grep -qF -- "**$rule**" "$agents" || fail "AGENTS.md lost hard rule '$rule'"
 done
 
+# One owner for each of the nine pipeline steps: the contract and both supervision skills say it, and the old
+# no-mistakes-owns-everything lines are gone.
+! grep -qF -- 'no-mistakes alone owns' "$agents" || fail "AGENTS.md still gives no-mistakes the nine steps"
+! grep -qF -- 'escalate whether to use no-mistakes' "$agents" || fail "AGENTS.md still offers a mode to choose for rigor"
+grep -qF -- 'done-done owns review, fixes, tests, and documentation as steps of proving' "$agents" \
+  || fail "AGENTS.md does not give review, fixes, tests and documentation to done-done"
+grep -qF -- "the wait \`lead\`, reason \`review\`" "$agents" || fail "AGENTS.md lost the review wait"
+for skill in validation-supervision ship-landing; do
+  grep -qF -- 'nine steps' "$ROOT/.agents/skills/$skill/SKILL.md" || fail "$skill does not name the owner of the nine steps"
+done
+
 rows=0
 while IFS='|' read -r section dest anchor; do
   [ -n "$section" ] || continue

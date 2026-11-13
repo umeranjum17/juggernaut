@@ -53,13 +53,17 @@ check "dropping below the standing posture is announced" "$(notices --standing-m
 check "a conditional policy raises no notice" "$(notices --standing-mode no-mistakes-prod-only --standing-branch fm/)" ""
 # less: 1 when <mode> under standing <standing> is announced as less rigor, else 0.
 less() { notices --standing-branch fm/ --mode "$1" --standing-mode "$2" | grep -c 'less rigor'; }
-check "rigor ranks no-mistakes over direct-PR over local-only and local-trunk over any other word" "$(less direct-PR no-mistakes)$(less local-only direct-PR)$(less local-trunk local-only)$(less other local-only)$(less no-mistakes direct-PR)" 11010
+check "rigor ranks direct-PR (the retired no-mistakes reads as the same) over local-only and local-trunk over any other word" "$(less direct-PR no-mistakes)$(less local-only direct-PR)$(less local-trunk local-only)$(less other local-only)$(less no-mistakes direct-PR)" 01010
 check "a registered prefix the branch lacks is announced" "$(notices --standing-mode '' --standing-branch x/ | head_is "notice: t1 ships branch=fm/t1 while proj registers the ship-bra")" "notice: t1 ships branch=fm/t1 while proj registers the ship-bra"
 
 # The argument grammar: the dispatcher prints the parsed variables for the spawn to eval, or the
 # refusal that stops it. These keep the shapes the intake replay (core/spawn/README.md) found interesting.
 intake() { "$core" intake "$@" 2>&1; }
 var() { sed -n "s/^$1=//p" | head -1; }
+check "a consent flag on a mode that publishes nothing is refused, read from the table" "$(intake t1 proj --mode local --yolo off --upstream-consent github.com/o/r | grep -o 'meaningless on local')" "meaningless on local"
+check "a consent flag on an old local word is refused the same way" "$(intake t1 proj --mode local-trunk --yolo off --upstream-consent github.com/o/r | grep -o 'meaningless on local-trunk')" "meaningless on local-trunk"
+check "a consent flag on a mode that publishes is accepted" "$(intake t1 proj --mode direct-PR --yolo off --upstream-consent github.com/o/r | var MODE)" "'direct-PR'"
+check "an unreadable table is refused with its cause" "$(JG_DELIVERY_STYLES=$lab/none.tsv intake t1 proj --mode local --yolo off --upstream-consent github.com/o/r | grep -o 'table not readable')" "table not readable"
 check "a ship request is parsed into the spawn's variables" "$(intake t1 proj --mode direct-PR --yolo off --harness=claude | var MODE)|$(intake t1 proj --mode direct-PR --yolo off --harness=claude | var HARNESS_ARG)|$(intake t1 proj --mode direct-PR --yolo off | var POS)" "'direct-PR'|'claude'|('t1' 'proj')"
 check "a value flag followed by another flag is refused" "$(intake --model --mode x)" "error: --model requires a value"
 check "a flag with no value at the end is refused" "$(intake t1 --backend)" "error: --backend requires a value"
@@ -74,7 +78,8 @@ check "an upstream consent is folded to lower case" "$(intake t1 proj --mode dir
 check "an upstream consent with a dot-dot is refused" "$(intake t1 proj --mode direct-PR --yolo off --upstream-consent a/../c | var INTAKE_REFUSAL)" "'error: --upstream-consent must be <host>/<owner>/<repo> (got '\\''a/../c'\\'')'"
 check "a relaunch may not restate the recorded mode" "$(intake --relaunch t1 --mode direct-PR | var INTAKE_REFUSAL)" "'error: --relaunch reuses the task'\\''s recorded delivery mode; --mode cannot override it'"
 check "a scout may not carry a mode" "$(intake --scout t1 proj --mode direct-PR | var INTAKE_REFUSAL | head_is "'error: --mode applies only to ship spawns")" "'error: --mode applies only to ship spawns"
-check "a squad_lead may not carry a base branch, a scout may" "$(intake --squad-lead t1 --base-branch x | var INTAKE_REFUSAL | head_is "'error: --base-branch applies only")|$(intake --scout t1 proj --base-branch x | var INTAKE_REFUSAL)" "'error: --base-branch applies only|''"
+check "a squad_lead may not carry a base branch, a scout may" "$(intake --squad-lead t1 --base-branch x | var INTAKE_REFUSAL | head_is "'error: --base-branch applies only")|$(intake --scout t1 proj --base-branch x --ticket t1 | var INTAKE_REFUSAL)" "'error: --base-branch applies only|''"
+check "a fresh ship or scout needs a ticket, a squad_lead and a relaunch take none" "$(intake t1 proj --mode direct-PR --yolo off | var INTAKE_REFUSAL | head_is "'error: a fresh ship or scout spawn requires --ticket")|$(intake --scout t1 proj | var INTAKE_REFUSAL | head_is "'error: a fresh ship or scout spawn requires --ticket")|$(intake --squad-lead t1 --ticket x | var INTAKE_REFUSAL | head_is "'error: --ticket applies only")|$(intake --relaunch t1 --ticket x | var INTAKE_REFUSAL | head_is "'error: --relaunch reads the ticket")|$(intake --squad-lead t1 | var INTAKE_REFUSAL)" "'error: a fresh ship or scout spawn requires --ticket|'error: a fresh ship or scout spawn requires --ticket|'error: --ticket applies only|'error: --relaunch reads the ticket|''"
 check "an off-critical-path decision is parsed for a ship" "$(intake t1 proj --mode direct-PR --yolo off --off-critical-path "captain: run it" | var OFF_CRITICAL_PATH)|$(intake t1 proj --mode direct-PR --yolo off --off-critical-path "captain: run it" | var OFF_CRITICAL_PATH_SET)" "'captain: run it'|'1'"
 check "an empty off-critical-path decision is refused" "$(intake t1 proj --mode direct-PR --yolo off --off-critical-path=)" "error: --off-critical-path requires the captain's words as a non-empty value"
 check "a relaunch may not restate the critical-path decision" "$(intake --relaunch t1 --off-critical-path x | var INTAKE_REFUSAL)" "'error: --relaunch reuses the task'\\''s recorded critical-path decision; --off-critical-path cannot override it'"

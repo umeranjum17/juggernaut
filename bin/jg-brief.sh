@@ -14,9 +14,15 @@
 # charters still use a single `{TASK}` charter fill. Juggernaut may adjust other
 # sections when the task genuinely deviates (e.g. working an existing external
 # PR instead of shipping a new one).
-# Usage: jg-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only|local-trunk> [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--migration-row <slug|none>] [--off-critical-path <captain-words>] [--forge <none|gerrit|forgejo> [--shape squash]] [--design-call <yes|no> --design-reason <text>] [--demo-call <yes|no> --demo-reason <text>] [--herdr-lab] [--medium <mobile|web|desktop|cli|backend>]
-#        jg-brief.sh <task-id> <repo-name> --scout [--depth <quick|standard|deep>] [--base-branch <branch>] [--herdr-lab]
+# Usage: jg-brief.sh <task-id> <repo-name> --mode <direct-PR|local|local-only|local-trunk> [--ticket <ticket-id>] [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--migration-row <slug|none>] [--off-critical-path <captain-words>] [--forge <none|gerrit|forgejo> [--shape squash]] [--design-call <yes|no> --design-reason <text>] [--demo-call <yes|no> --demo-reason <text>] [--herdr-lab|--task-text-file <file>] [--medium <mobile|web|desktop|cli|backend>]
+#        jg-brief.sh <task-id> <repo-name> --scout [--ticket <ticket-id>] [--depth <quick|standard|deep>] [--base-branch <branch>] [--herdr-lab]
 #        jg-brief.sh <task-id> --squad-lead {<project>...|--no-projects}
+#   --ticket <ticket-id> (ship and scout) makes the brief the first step of a dispatch from a ticket: it runs
+#   `jg-backlog.sh task <ticket-id>` before anything else, which writes the task id on the ticket's row so the
+#   owner rules below find the entry by the task id, and it refuses a <task-id> that is not the one made from
+#   the ticket. The brief then carries a `# Ticket` section: the ticket id, its title, and the commit form
+#   (the trailer `Ticket: <id>` and, while bin/jg-trunk.sh's landing check reads the task id out of the commit
+#   text, the task id at the start of the subject). bin/jg-spawn.sh requires the same --ticket.
 #   --medium names the project's medium at intake, so the brief can carry this
 #   home's stack advice from config/preferred-stack.json. It is a recommendation,
 #   never a gate, and is optional.
@@ -43,10 +49,12 @@
 #   Set JG_SQUAD_LEAD_SCOPE='<scope>' to write a routing scope distinct from the charter text.
 #   --herdr-lab is mandatory when the task will issue Herdr lifecycle commands.
 #   It adds the hard isolation contract backed by bin/jg-herdr-lab.sh.
-#   The flag must be explicit because {TASK} and {JUGGERNAUT_SPEC} are filled
-#   after scaffolding and the caller-supplied repo string cannot reliably
-#   identify this repo. Briefs made without it carry a loud declaration so an
-#   omitted contract cannot be silent.
+#   {TASK} and {JUGGERNAUT_SPEC} are filled after scaffolding, so the scaffold
+#   cannot read the task by itself: pass the ticket text as --task-text-file <file>
+#   and the section is added when the text names panes, the input box, a composer
+#   or Herdr (bin/jg-herdr-lab-brief-lib.sh owns the words). Briefs made with
+#   neither carry a loud declaration so an omitted contract cannot be silent, and
+#   a lane that stops on it is repaired by `jg-control.sh <id> relaunch --herdr-lab`.
 # --design-call <yes|no> --design-reason <text> records the per-task first-draft
 # call on a ship brief as `Design call (first-draft): <yes|no> - <reason>`. Juggernaut
 # or the lead judges it per task: yes for bigger redesigns, new screens, landing
@@ -64,12 +72,9 @@
 # pair is accepted and the brief carries no demo line. bin/jg-spawn.sh records demo_call=,
 # and bin/jg-merge-gate-lib.sh's jg_dod_demo_gate refuses to merge a yes-task whose
 # completion receipt evidence carries no `takeone receipt: <ref>` line.
-# --risk <reason> states why this task needs the no-mistakes pipeline, as one of
-# release, security, migration, large-change, shared-protocol or fork-repo. It is
-# required on a no-mistakes ship brief and refused elsewhere: no-mistakes is for
-# real risk, and a task with no such risk ships as direct-PR with a done-done
-# check. The local presence flag config/delivery-risk-loose turns the check off
-# (docs/configuration.md "Delivery risk").
+# --risk <reason> states the delivery risk of a ship task, as one of release,
+# security, migration, large-change, shared-protocol or fork-repo. It is optional
+# on a ship brief and refused elsewhere; the brief records it under "Delivery risk".
 # --ui-change <yes|no> records on a ship brief whether the task changes the UI, as
 # `UI change (nav-check): <yes|no>`. A yes brief carries the no-silent-removal rule:
 # the PR body lists `Nav before:` and `Nav after:` and any removed screen is named.
@@ -85,12 +90,12 @@
 # For ship tasks, --mode is REQUIRED and shapes the definition of done. Juggernaut
 # resolves it per task at intake (AGENTS.md section 7); data/projects.md holds the
 # captain's standing posture as context, and this script never reads it:
-#   no-mistakes  implement -> /no-mistakes pipeline -> PR -> configured merge authority
-#   direct-PR    implement -> push + open PR via gh-axi (no pipeline) -> configured merge authority
+#   direct-PR    implement -> done-done verify (journeys, review, docs) -> push + open PR via gh-axi -> configured merge authority
+#                (the retired word no-mistakes is read as direct-PR: no pipeline run starts)
 #   local-only   implement on branch, stop and report "ready in branch" (no push/PR);
 #                the configured merge authority approves, juggernaut merges to local main
 # no-mistakes-prod-only is a registry policy, not a task mode; resolve it to one of
-# the three concrete modes at intake before calling this script.
+# the concrete modes at intake before calling this script.
 # --branch-prefix <prefix> optionally overrides the ship branch's "fm/" prefix, so
 # the resolved branch is "<prefix><task-id>" instead of the default "fm/<task-id>".
 # Pass an empty prefix ("--branch-prefix ''") for a bare "<task-id>" branch, or a
@@ -244,8 +249,12 @@ case "${1:-}" in
   -h|--help) usage; exit 0 ;;
 esac
 
+# shellcheck source=bin/jg-herdr-lab-brief-lib.sh
+. "$SCRIPT_DIR/jg-herdr-lab-brief-lib.sh"
 # shellcheck source=bin/jg-marker-lib.sh
 . "$SCRIPT_DIR/jg-marker-lib.sh"
+# shellcheck source=bin/jg-delivery-style.sh
+. "$SCRIPT_DIR/jg-delivery-style.sh"
 # shellcheck source=bin/jg-classify-lib.sh
 . "$SCRIPT_DIR/jg-classify-lib.sh"
 # shellcheck source=bin/jg-dod-lib.sh
@@ -260,14 +269,12 @@ esac
 . "$SCRIPT_DIR/jg-version-branch-lib.sh"
 PAUSED_VERB=${JG_CLASSIFY_PAUSED_VERB:-$JG_CLASSIFY_PAUSED_VERB_DEFAULT}
 IFS= read -r -d '' OPERATOR_PAUSE_INSTRUCTIONS <<EOF || true
-   Use \`$PAUSED_VERB: {why}\` - never \`blocked:\` - when deliberately waiting for work or an external condition expected to clear on its own, including your own validation round.
-   Before ending your turn with your own background shell or monitor still running, or before waiting on your own pipeline run or a long foreground command, append \`$PAUSED_VERB [at=<epoch>]: {job and completion condition}\` to the status file.
-   Name what you are waiting for and what will let you resume; do not repeat the declaration on every poll.
-   Do not declare active implementation or reasoning as a wait.
+   One rule for every wait (your own background shell, pipeline run or validation round, an outside condition, a parked lane, a date): before you end your turn append \`$PAUSED_VERB [at=<epoch>] [wait=<who>] [reason=<word>]: {job and completion condition}\`. Use \`blocked:\` only when you are stuck, or for the waits-for line below.
+   \`wait\` is who owes the next move: worker, tick (a script), lead, main, owner or outside (CI, a quota, another ticket, a date). \`reason\` is why: decision, blocker, dependency, quota, ci, approval, review, parked or date. A line with no wait, no reason, another word, or the old placeholder date is refused.
+   Do not repeat the declaration on every poll. Do not declare active implementation or reasoning as a wait.
    Juggernaut may still raise one first-sight alert; the declared wait then uses the existing long recheck cadence instead of repeated possible-wedge alarms.
-   When you know when the wait clears, include \`until <YYYY-MM-DDTHH:MMZ>\` (UTC) for a recheck at that time.
-   Follow the resolution rule below when the wait clears, then resume the task.
-   Use \`blocked:\` when you are stuck and need help.
+   When you know when the wait clears, add \`until <YYYY-MM-DDTHH:MMZ>\` (UTC) to the text. Follow the resolution rule below when it clears, then resume the task.
+   When your wait is for another ticket to land on the trunk, or for a cause that a ticket removes, write \`blocked [at=<epoch>] [key=<slug>]: waits-for: <ticket-id> {why}\`; that ticket's landing steers you and closes the blocker by itself, so ask nobody and do not poll.
 EOF
 
 resolve_directory_input() {
@@ -298,6 +305,7 @@ CONFIG="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
 case "$CONFIG" in /*) ;; *) CONFIG="$PWD/$CONFIG" ;; esac
 KIND=ship
 HERDR_LAB=0
+TASK_TEXT_FILE=
 DEPTH=
 DEPTH_SET=0
 NO_PROJECTS=0
@@ -329,6 +337,7 @@ RISK_SET=0
 PROJECT_DIR=
 PROJECT_DIR_SET=0
 MEDIUM=
+TICKET=
 POS=()
 want_value=
 for a in "$@"; do
@@ -348,6 +357,8 @@ for a in "$@"; do
       upstream-consent) UPSTREAM_CONSENT=$a; UPSTREAM_CONSENT_SET=1 ;;
       project) PROJECT_DIR=$a; PROJECT_DIR_SET=1 ;;
       medium) MEDIUM=$a ;;
+      task-text-file) TASK_TEXT_FILE=$a ;;
+      ticket) TICKET=$a ;;
       design-call) DESIGN_CALL=$a ;;
       design-reason) DESIGN_REASON=$a ;;
       demo-call) DEMO_CALL=$a ;;
@@ -385,8 +396,12 @@ for a in "$@"; do
     --upstream-consent=*) UPSTREAM_CONSENT=${a#--upstream-consent=}; UPSTREAM_CONSENT_SET=1 ;;
     --project) want_value="project" ;;
     --project=*) PROJECT_DIR=${a#--project=}; PROJECT_DIR_SET=1 ;;
+    --task-text-file) want_value="task-text-file" ;;
+    --task-text-file=*) TASK_TEXT_FILE=${a#--task-text-file=} ;;
     --medium) want_value=medium ;;
     --medium=*) MEDIUM=${a#--medium=} ;;
+    --ticket) want_value=ticket ;;
+    --ticket=*) TICKET=${a#--ticket=} ;;
     --design-call) want_value="design-call" ;;
     --design-call=*) DESIGN_CALL=${a#--design-call=} ;;
     --design-reason) want_value="design-reason" ;;
@@ -414,16 +429,19 @@ done
 # missing or invalid value stops the scaffold rather than silently defaulting.
 if [ "$KIND" = ship ]; then
   [ "$MODE_SET" -eq 1 ] || {
-    echo "error: ship briefs require --mode <no-mistakes|direct-PR|local-only|local-trunk>; resolve it at intake from the captain's instruction and the project's registered posture in data/projects.md" >&2
+    echo "error: ship briefs require --mode <direct-PR|local>; resolve it at intake from the captain's instruction and the project's registered posture in data/projects.md" >&2
     exit 1
   }
-  case "$MODE" in
-    no-mistakes|direct-PR|local-only|local-trunk) ;;
-    no-mistakes-prod-only)
-      echo "error: no-mistakes-prod-only is a registry policy, not a task mode; classify this task's surface and resolve it to no-mistakes or direct-PR at intake" >&2
-      exit 1 ;;
-    *) echo "error: --mode must be one of no-mistakes, direct-PR, local-only, local-trunk (got '$MODE')" >&2; exit 1 ;;
-  esac
+  if [ "$MODE" = no-mistakes-prod-only ]; then
+    echo "error: no-mistakes-prod-only is a registry policy, not a task mode; classify this task's surface and resolve it to direct-PR at intake" >&2
+    exit 1
+  fi
+  jg_delivery_style_accepts "$MODE" || {
+    echo "error: --mode must be one of $(jg_delivery_style_modes | paste -sd, - | sed 's/,/, /g') (the old words $(jg_delivery_style_aliases | paste -sd, - | sed 's/,/, /g') are read as before; got '$MODE')" >&2
+    exit 1
+  }
+  # The retired word runs as direct-PR: the worker proves with done-done and opens the pull request, and no pipeline run starts.
+  MODE=$(jg_delivery_style_task_mode "$MODE")
 elif [ "$MODE_SET" -eq 1 ]; then
   echo "error: --mode applies only to ship briefs; a scout delivers a report and a squad_lead charter is not a delivery contract" >&2
   exit 1
@@ -438,10 +456,6 @@ if [ "$KIND" = ship ]; then
       release|security|migration|large-change|shared-protocol|fork-repo) ;;
       *) echo "error: --risk must be one of release, security, migration, large-change, shared-protocol, fork-repo (got '$RISK')" >&2; exit 1 ;;
     esac
-  fi
-  if [ "$MODE" = no-mistakes ] && [ "$RISK_SET" -eq 0 ] && [ ! -e "$CONFIG/delivery-risk-loose" ]; then
-    echo "error: a no-mistakes ship brief states its risk with --risk <release|security|migration|large-change|shared-protocol|fork-repo>; a task with no such risk ships as --mode direct-PR with a done-done check" >&2
-    exit 1
   fi
 elif [ "$RISK_SET" -eq 1 ]; then
   echo "error: --risk applies only to ship briefs; a scout delivers a report and a squad_lead charter is not a delivery contract" >&2
@@ -545,7 +559,7 @@ fi
 # brief that disagrees, so the two can never drift.
 # bin/jg-version-branch-lib.sh owns which branch that is, and a project without
 # one keeps the default-branch setup sentence and its --base-branch flag path.
-if [ "$BASE_BRANCH_SET" -eq 0 ] && [ "$KIND" = ship ] && [ "$MODE" != local-only ] && [ "$MODE" != local-trunk ] \
+if [ "$BASE_BRANCH_SET" -eq 0 ] && [ "$KIND" = ship ] && jg_delivery_style_publishes "$MODE" \
   && [ "$FORGE" = none ] && [ "$PROJECT_DIR_SET" -eq 1 ] && [ -n "$PROJECT_DIR" ]; then
   BASE_BRANCH=$(jg_current_version_branch "$PROJECT_DIR") || BASE_BRANCH=
 fi
@@ -604,7 +618,7 @@ fi
 # Self-repository pre-gate for a publishing ship brief: detectable only when
 # --project was passed, so the check runs here only then. bin/jg-spawn.sh
 # repeats it at launch with the resolved project path.
-if [ "$KIND" = ship ] && [ "$MODE" != local-only ] && [ "$MODE" != local-trunk ] && [ "$PROJECT_DIR_SET" -eq 1 ]; then
+if [ "$KIND" = ship ] && jg_delivery_style_publishes "$MODE" && [ "$PROJECT_DIR_SET" -eq 1 ]; then
   [ -n "$PROJECT_DIR" ] || {
     echo "error: --project requires a non-empty directory" >&2
     exit 1
@@ -621,12 +635,50 @@ if [ "$KIND" = ship ] && [ "$MODE" != local-only ] && [ "$MODE" != local-trunk ]
   esac
 fi
 ID=${POS[0]}
+# From a ticket, the task id is made from it and the owner rules below find its entry by that id, so the join
+# is written first (bin/jg-backlog.sh task); the spawn calls the same verb for a dispatch with no brief before it.
+TICKET_SECTION=
+if [ -n "$TICKET" ]; then
+  [ "$KIND" != squad_lead ] || { echo "error: --ticket applies only to ship and scout briefs; a squad_lead starts a home, not a ticket" >&2; exit 1; }
+  # shellcheck source=bin/jg-backlog-lib.sh
+  . "$SCRIPT_DIR/jg-backlog-lib.sh"
+  [ "$ID" = "$(jg_backlog_task_id "$TICKET")" ] || {
+    echo "error: the task id for ticket $TICKET is $(jg_backlog_task_id "$TICKET") (every dot becomes a dash), not $ID" >&2
+    exit 1
+  }
+  TICKET_OUT=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-backlog.sh" task "$TICKET" 2>&1) || {
+    echo "error: ticket $TICKET: $(printf '%s\n' "$TICKET_OUT" | sed -n 's/^error: *//p;1{/^error/!p}' | head -1)" >&2
+    exit 1
+  }
+  TICKET_TITLE=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-backlog.sh" show "$TICKET" 2>/dev/null | sed -n 's/^  title: *//p' | head -1)
+  TICKET_TITLE=${TICKET_TITLE#\"}
+  TICKET_TITLE=${TICKET_TITLE%\"}
+  TICKET_SECTION="
+
+# Ticket
+Ticket: $TICKET - $TICKET_TITLE
+Task id: $ID
+Commit form: end the commit message with the trailer \`Ticket: $TICKET\`."
+  if grep -q 'the commit must carry its ticket reference' "$SCRIPT_DIR/jg-trunk.sh" 2>/dev/null; then
+    TICKET_SECTION="$TICKET_SECTION Start the subject with the task id \`$ID\`, because the landing check reads it from the commit text."
+  fi
+fi
 BRANCH="$BRANCH_PREFIX$ID"
 if ! git check-ref-format --branch "$BRANCH" >/dev/null 2>&1; then
   echo "error: --branch-prefix and task id must form a valid git branch (got '$BRANCH')" >&2
   exit 1
 fi
 printf -v BRANCH_Q '%q' "$BRANCH"
+
+# The lab section follows the work: a task whose text names panes, the input box or
+# Herdr gets it without a flag, so no lane waits for a lead to regenerate its brief.
+if [ -n "$TASK_TEXT_FILE" ] && [ "$KIND" != squad_lead ] && [ "$HERDR_LAB" -eq 0 ]; then
+  [ -r "$TASK_TEXT_FILE" ] || { echo "error: --task-text-file '$TASK_TEXT_FILE' is not a readable file" >&2; exit 1; }
+  if HERDR_NEED_TERM=$(jg_herdr_lab_need_term < "$TASK_TEXT_FILE"); then
+    HERDR_LAB=1
+    echo "herdr lab: added, the task text names '$HERDR_NEED_TERM'" >&2
+  fi
+fi
 
 if [ "$KIND" = squad_lead ] && [ "$HERDR_LAB" -eq 1 ]; then
   echo "error: --herdr-lab applies only to operator ship or scout briefs" >&2
@@ -684,11 +736,6 @@ BRIEF="$DATA/$ID/brief.md"
 [ -e "$BRIEF" ] && { echo "error: $BRIEF already exists" >&2; exit 1; }
 mkdir -p "$DATA/$ID"
 
-ASK_USER_BLOCK=
-if [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ]; then
-  ASK_USER_BLOCK=$(jg_ask_user_escalation_block "$DATA" "$ID")
-fi
-
 shell_quote() {
   printf "'"
   printf '%s' "$1" | sed "s/'/'\\\\''/g"
@@ -741,7 +788,7 @@ Bound that command by what your harness lets one command run: in Pi pass the bas
 Give any `--wait` a duration a little under that bound.
 When the bound passes with nothing changed, run the same blocking command again, with no status check in between.
 The one exception is `respond`: it sent its answer before it began waiting, so reattach with `no-mistakes axi run --wait` instead, and never send the same `respond` again, because it would answer whichever gate parks next without you reading it.
-A wait your shell can watch this way needs no `paused:` line, except your own pipeline run, a long foreground command, or your own validation round, which you declare once just before its blocking hold: append `paused:` once just before its first blocking command, then stay in the command, and never append it again as you reissue that command.
+A wait your shell can watch this way needs no `paused:` line, except your own pipeline run, a long foreground command, or your own validation round, which you declare once just before its blocking hold: append the `paused` wait line once just before its first blocking command, then stay in the command, and never append it again as you reissue that command.
 EOF
 WAIT_SECTION=${WAIT_SECTION%$'\n'}
 WAIT_BLOCK=
@@ -752,8 +799,8 @@ fi
 # The local-trunk landing rule, in one place for the lane brief and the squad lead charter (local-trunk projects only).
 TRUNK_REBASE_RULE="Juggernaut's landing check rebases your commit onto the latest tip of the local trunk by itself, lints the changed files, runs the changed files' tests against the tip's own result and lands it; you never rebase for it. Your done and the landing both need the whole proof at your exact head: a PASS completion receipt, approved merge-card evidence that cites files, and a sealed done-done run holding them; a PASS receipt alone is refused, and nothing may be committed after the seal. The owner signature is recorded after the landing and never blocks it.
 If the landing check reports that your change conflicts with the trunk, YOU resolve every conflict in your own change, then report ready again; never hand a conflict to anyone else, and never force a landing: no force flag, no hand-moved trunk ref, no landing past a conflict exists, and a landing that is refused is fixed in the lane and reported ready again."
-jg_brief_local_trunk() {  # <project>: true when the project is registered local-trunk
-  [ "$(JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-project-mode.sh" --raw "$1" 2>/dev/null | cut -d' ' -f1)" = local-trunk ]
+jg_brief_local_trunk() {  # <project>: true when the project is registered local (local-trunk read as before)
+  jg_delivery_style_is "$(JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-project-mode.sh" --raw "$1" 2>/dev/null | cut -d' ' -f1)" trunk
 }
 if [ "$KIND" = squad_lead ]; then
 SQUAD_LEAD_PROJECTS=""
@@ -837,7 +884,7 @@ Report only true captain-relevant outcomes or a declared external wait by append
    \`$STATUS_APPEND\`
 States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.
 Substitute \`<epoch>\` with the current Unix time in seconds - run \`date +%s\` and write the number it printed; a stamp that is not plain digits records no time at all.
-Use \`$PAUSED_VERB: {why}\` (never \`blocked:\`) only when your domain is deliberately idling on a known external wait you expect to clear on its own, naming when it clears with \`until <YYYY-MM-DDTHH:MMZ>\` (UTC) when you know; use \`blocked:\` when you are stuck and need juggernaut to act.
+Use \`$PAUSED_VERB [at=<epoch>] [wait=<who>] [reason=<word>]: {why}\` (never \`blocked:\`) only when your domain is deliberately idling on a known external wait you expect to clear on its own (wait is one of worker, tick, lead, main, owner, outside; reason one of decision, blocker, dependency, quota, ci, approval, review, parked, date; a line without them is refused), naming when it clears with \`until <YYYY-MM-DDTHH:MMZ>\` (UTC) when you know; use \`blocked:\` when you are stuck and need juggernaut to act.
 Use this only for material phase changes, a captain decision, a real blocker, a failure, work ready for review, or work you landed.
 Work you landed includes a merge you performed yourself under standing merge authority and one the captain merged on the forge: under that authority nothing is ever \"ready for review\", so a landed merge that goes unreported reaches the captain as silence.
 This is also how you return the answer to a marked from-juggernaut request above.
@@ -868,31 +915,7 @@ fi
 REPO=${POS[1]}
 
 if [ "$HERDR_LAB" -eq 1 ]; then
-HERDR_LAB_HELPER=$(shell_quote "$JG_ROOT/bin/jg-herdr-lab.sh")
-# shellcheck disable=SC2016  # single quotes are deliberate: these lines are literal brief text whose backtick-wrapped $(...) and "$HERDR_LAB_SESSION" snippets must reach the reading agent verbatim, not expand at scaffold time; only the '"$VAR"' break-outs interpolate.
-HERDR_SECTION=$(printf '%s\n' \
-'# Herdr isolation - HARD SAFETY CONTRACT' \
-'This brief was explicitly scaffolded with `--herdr-lab` because the task will drive Herdr lifecycle behavior.' \
-'On Herdr 0.7.3 the API socket is not relocatable by `HERDR_CONFIG_PATH`, `XDG_CONFIG_HOME`, or `HOME`.' \
-'A named non-`default` session plus an explicit `--session <name>` Herdr option on every call is the only viable local isolation.' \
-'' \
-'For tmux-based lab primaries, `bin/jg-lab-home.sh` owns the short private socket directory; do not place `TMUX_TMPDIR` under the lab home or worktree.' \
-'Use `LAB_HOME_HELPER='"$(shell_quote "$JG_ROOT/bin/jg-lab-home.sh")"'`, then `LAB_TMUX_DIR=$("$LAB_HOME_HELPER" tmux-dir "$JG_HOME")` and launch tmux with `TMUX_TMPDIR="$LAB_TMUX_DIR"`.' \
-'Your single EXIT cleanup trap must kill only the server addressed through that `TMUX_TMPDIR`, call `"$LAB_HOME_HELPER" teardown "$JG_HOME"`, and call the Herdr teardown below; do not install a second trap that replaces either cleanup.' \
-'' \
-'1. Set `HERDR_LAB_HELPER='"$HERDR_LAB_HELPER"'` and generate the session name with `HERDR_LAB_SESSION=$("$HERDR_LAB_HELPER" name '"$ID"')`.' \
-'   Install the combined EXIT cleanup before provisioning, then provision only with `"$HERDR_LAB_HELPER" provision "$HERDR_LAB_SESSION"`.' \
-'2. Run every task-specific non-lifecycle Herdr command through `"$HERDR_LAB_HELPER" run "$HERDR_LAB_SESSION" <arguments...>`.' \
-'   The helper supplies the required `--session "$HERDR_LAB_SESSION"` as a Herdr option, before any `--` delimiter; `HERDR_SESSION` alone is never accepted as isolation.' \
-'3. Teardown only through `"$HERDR_LAB_HELPER" teardown "$HERDR_LAB_SESSION"`.' \
-'   It re-checks refuse-default immediately before stop and again immediately before delete, and fails closed on ambiguity.' \
-'4. If an experiment requires a deliberate mid-run session stop, use only `"$HERDR_LAB_HELPER" stop "$HERDR_LAB_SESSION"`; it performs the same immediate refuse-default check.' \
-'5. Forbidden commands: direct `herdr server stop`, every other server-global operation such as `herdr server live-handoff` or reload/update operations, direct `herdr session stop`, direct `herdr session delete`, and any Herdr call scoped only by ambient or inline `HERDR_SESSION`.' \
-'6. The helper records the live default session before provisioning and verifies the identical fleet state after teardown.' \
-'   A missing, stopped, or changed default session is a hard tripwire failure, never a cleanup warning to ignore.' \
-'' \
-'Never bypass the helper, even for a read-only lifecycle probe or cleanup after failure.' \
-'The captain fleet uses the running `default` session.')
+HERDR_SECTION=$(jg_herdr_lab_section "$JG_ROOT" "$ID")
 else
 IFS= read -r -d '' HERDR_SECTION <<'EOF' || true
 # Herdr lifecycle declaration - NOT ENABLED
@@ -971,7 +994,7 @@ Before reporting done, run \`$JG_ROOT/bin/jg-recon-gate.sh $ID\` until it prints
 "
   if [ "$DEPTH" = deep ]; then
     DEPTH_SECTION="${DEPTH_SECTION}This is a deep Recon: you are the one researcher.
-After your draft report is complete, append \`needs-decision [at=<epoch>]: draft ready for the separate critic\` to the status file and stop; juggernaut dispatches one separate critic worker, and its \`critic.md\` is installed beside your report.
+After your draft report is complete, append \`done [at=<epoch>]: draft ready for the separate critic\` to the status file and stop; the gate lets that done through while only the critic is open, the ticket is then in its proving step critic, juggernaut dispatches one separate critic worker, and its \`critic.md\` is installed beside your report.
 Never write \`critic.md\` yourself for a deep Recon; the gate refuses a critic that is you.
 Close every gap the critic finds, then run the gate again.
 "
@@ -985,7 +1008,7 @@ fi
 cat > "$BRIEF" <<EOF
 You are a operator: an autonomous worker agent managed by juggernaut. Work on your own; do not wait for a human.
 
-$TASK_SECTION
+$TASK_SECTION$TICKET_SECTION
 
 $HERDR_SECTION
 
@@ -1013,7 +1036,8 @@ The report is the only thing that survives, so anything worth keeping must be in
 $OPERATOR_PAUSE_INSTRUCTIONS
 5. If you hit the same obstacle twice, append \`blocked [at=<epoch>]: {why}\` and stop; juggernaut will help.
 6. If a decision belongs to a human (product choices, destructive actions),
-   append \`needs-decision [at=<epoch>]: {summary of options}\` and stop. Juggernaut will reply with the decision.
+   run \`jg ask "<question>" --option <a> --option <b> --recommend <a>\` (\`--owner\` when it is the captain's call) and stop. Juggernaut will reply with the decision.
+   \`jg alert\` lists the alerts that name your ticket, and \`jg alert ack <key>\` acknowledges one.
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Juggernaut's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a juggernaut reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 $SHARED_INFRA_RULE
@@ -1043,18 +1067,6 @@ fi
 # The block opens with the fixed "Delivery contract: mode=<mode>" line that
 # bin/jg-spawn.sh checks against its own explicit --mode and the project's
 # registered forge before launching.
-case "$MODE" in
-  direct-PR)
-    SETUP2=""
-    ;;
-  local-only|local-trunk)
-    SETUP2=""
-    ;;
-  *)  # no-mistakes
-    SETUP2="
-2. Run \`no-mistakes doctor\`; if it reports the repo is not initialized here, run \`no-mistakes init\`."
-    ;;
-esac
 # Every ship brief carries the prior-art step: new or complex work starts from
 # what already exists, and a change that is neither records that in one line.
 # bin/jg-prior-art-gate.sh refuses the section left empty or holding this
@@ -1072,14 +1084,14 @@ PRIOR_ART_SECTION=$'\n'${PRIOR_ART_SECTION%$'\n'}$'\n'
 TRUNK_SECTION=
 TRUNK_NAME=$(JG_HOME="$JG_HOME" jg_trunk_branch "$REPO" "$STATE" 2>/dev/null || true)
 : "${TRUNK_NAME:=trunk}"
-if { [ "$MODE" = local-only ] || [ "$MODE" = local-trunk ]; } && jg_brief_local_trunk "$REPO"; then
+if ! jg_delivery_style_publishes "$MODE" && jg_brief_local_trunk "$REPO"; then
   TRUNK_SECTION="
 # Local trunk lane
 This project is registered local-trunk: there is no feature pull request, and the only pull request is the release one, raised on the captain's word.
 Your branch must be exactly ONE commit on top of the local trunk tip (the \`$TRUNK_NAME\` branch of the project, which is the commit your worktree starts on; compare against that branch only, never an older trunk branch), and the commit message must carry its ticket reference (the task id or its ticket key).
 $TRUNK_REBASE_RULE
 A stale or conflicting change is refused with its paths named and is never landed dirty.
-Run the light gate on your changed files (the lint, then their tests), commit, and report ready with your done line. Juggernaut's landing check then lands the commit on the trunk and cleans up unforced; you never land, push, go live or release.
+Commit, run the QA step of the Definition of done, and report ready with your done line. Juggernaut's landing check then lands the commit on the trunk and cleans up unforced; you never land, push, go live or release.
 "
 fi
 DESIGN_SECTION=
@@ -1121,12 +1133,15 @@ if [ -n "$UI_CHANGE" ]; then
 # UI change
 UI change (nav-check): $UI_CHANGE"
   if [ "$UI_CHANGE" = yes ]; then
+    # A local landing has no PR body: it reads the lane's one commit message (and, failing that, its receipt evidence or done line).
+    if jg_delivery_style_publishes "$MODE"; then NAV_PLACE='the PR body'; NAV_VERB=merge
+    else NAV_PLACE="the commit message (a local landing has no PR body; the same two lines in your completion receipt evidence or done line also count)"; NAV_VERB=landing; fi
     UI_SECTION="$UI_SECTION
 A UI change never removes or renames an existing menu, tab or screen unless the captain's own words ask for it.
 A design option that removes a screen must name each removed screen in plain words.
-Put two lines in the PR body: \`Nav before: <item>, <item>\` and \`Nav after: <item>, <item>\`, listing every menu, tab and screen the change touches.
+Put two lines in $NAV_PLACE: \`Nav before: <item>, <item>\` and \`Nav after: <item>, <item>\`, listing every menu, tab and screen the change touches.
 An item in before that is missing from after needs a line \`Removed by captain words: <quote of the captain>\`.
-The merge is refused without the two lines, or with a dropped item and no quote."
+The $NAV_VERB is refused without the two lines, or with a dropped item and no quote."
   fi
   UI_SECTION="$UI_SECTION
 "
@@ -1157,14 +1172,14 @@ RISK_SECTION=
 if [ -n "$RISK" ]; then
   RISK_SECTION="
 # Delivery risk
-Delivery risk (no-mistakes): $RISK"
+Delivery risk ($MODE): $RISK"
 fi
 DOD=$(jg_dod_block "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH" "$UPSTREAM_CONSENT") || exit 1
 
 cat > "$BRIEF" <<EOF
 You are a operator: an autonomous worker agent managed by juggernaut. Work on your own; do not wait for a human.
 
-$TASK_SECTION
+$TASK_SECTION$TICKET_SECTION
 $PRIOR_ART_SECTION$TRUNK_SECTION$DESIGN_SECTION$DEMO_SECTION$UI_SECTION$RISK_SECTION
 $HERDR_SECTION
 $STACK_BLOCK$RULES_BLOCK$BUILD_RULE_BLOCK
@@ -1176,7 +1191,7 @@ $SETUP_BASE
 The path check is authoritative: \`git rev-parse --git-dir\` and \`git rev-parse --git-common-dir\` can help inspect the repo, but they do not prove you are outside the primary checkout.
 If the top-level path is the primary checkout or not the worktree you were launched in, STOP - do not branch or commit here - append \`blocked [at=<epoch>]: launched in primary checkout, not an isolated worktree\` to the status file and stop.
 
-1. First action: create your branch: \`git checkout -b $BRANCH_Q --\`$SETUP2
+1. First action: create your branch: \`git checkout -b $BRANCH_Q --\`
 
 # Rules
 $RULE1
@@ -1203,8 +1218,8 @@ $RULE1
 $OPERATOR_PAUSE_INSTRUCTIONS
 5. If you hit the same obstacle twice, append \`blocked [at=<epoch>]: {why}\` and stop; juggernaut will help.
 6. If a decision belongs above the implementation worker (product choices, destructive actions),
-   append \`needs-decision [at=<epoch>]: {summary of options}\` and stop. Juggernaut will reply with the decision.
-$ASK_USER_BLOCK
+   run \`jg ask "<question>" --option <a> --option <b> --recommend <a>\` (\`--owner\` when it is the captain's call) and stop. Juggernaut will reply with the decision.
+   \`jg alert\` lists the alerts that name your ticket, and \`jg alert ack <key>\` acknowledges one.
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Juggernaut's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a juggernaut reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 $SHARED_INFRA_RULE

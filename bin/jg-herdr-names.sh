@@ -24,8 +24,9 @@
 #     when the recorded workspace id still carries exactly that old label.
 #   - tab: the pre-rename tab label of a task becomes "jg-<task-id>", only for
 #     the recorded tab id.
-#   - agent: the recorded pane's agent is pinned to jg_backend_herdr_agent_name_for
-#     <task-id> (the name jg-spawn.sh pins at launch), only when the pane's tab is
+#   - agent: the recorded pane's agent is pinned to the record's agent_name= (a
+#     record with none: jg_backend_herdr_agent_name_for <task-id>), the name
+#     jg-spawn.sh pins at launch, only when the pane's tab is
 #     the recorded task tab. Herdr drops agent names on a server restart, so
 #     running migrate again is also the repair.
 # It is idempotent: an item already on its target name is left alone. --dry-run
@@ -76,10 +77,10 @@ die() {
 MASKS=
 RECORDS=
 
-# collect_records: one "<id>\t<session>\t<workspace>\t<tab>\t<pane>" line per
+# collect_records: one "<id>\t<session>\t<workspace>\t<tab>\t<pane>\t<agent-name>" line per
 # herdr-backed task record, and the ids to mask out of names.
 collect_records() {
-  local meta id session workspace tab pane marker lead
+  local meta id session workspace tab pane name marker lead
   RECORDS=
   MASKS=
   [ -d "$STATE" ] || return 0
@@ -91,10 +92,13 @@ collect_records() {
     workspace=$(jg_backend_meta_exact_value "$meta" herdr_workspace_id) || continue
     tab=$(jg_backend_meta_exact_value "$meta" herdr_tab_id) || continue
     pane=$(jg_backend_meta_exact_value "$meta" herdr_pane_id) || continue
-    RECORDS="${RECORDS}${id}"$'\t'"${session}"$'\t'"${workspace}"$'\t'"${tab}"$'\t'"${pane}"$'\n'
-    # The id, the agent name derived from it, and the 27-character head a
-    # long id keeps in that name: all are the id's own text.
-    MASKS="${MASKS}${id}"$'\n'"$(jg_backend_herdr_agent_name_for "$id")"$'\n'"${id:0:27}"$'\n'
+    # The agent name the record holds (agent_name=); a record with none keeps the name made from its id.
+    name=$(jg_backend_meta_exact_value "$meta" agent_name 2>/dev/null) || name=
+    [ -n "$name" ] || name=$(jg_backend_herdr_agent_name_for "$id") || continue
+    RECORDS="${RECORDS}${id}"$'\t'"${session}"$'\t'"${workspace}"$'\t'"${tab}"$'\t'"${pane}"$'\t'"${name}"$'\n'
+    # The id, the agent name derived from it, the name the record holds, and the
+    # 27-character head a long id keeps in that name: all are the home's own text.
+    MASKS="${MASKS}${id}"$'\n'"$(jg_backend_herdr_agent_name_for "$id")"$'\n'"${name}"$'\n'"${id:0:27}"$'\n'
   done
   marker=$(jg_compat_marker "$JG_HOME")
   if [ -f "$marker" ]; then
@@ -167,7 +171,7 @@ cmd_check() {
       [ -n "$workspace" ] || continue
       check_name "$session" "$workspace" workspace "$(ws_label "$workspace")"
     done < <(printf '%s' "$RECORDS" | awk -F'\t' -v s="$session" '$2 == s { print $3 }' | sort -u)
-    while IFS=$'\t' read -r id sess workspace tab pane; do
+    while IFS=$'\t' read -r id sess workspace tab pane name; do
       [ "$sess" = "$session" ] || continue
       check_name "$session" "$id" tab "$(tab_label "$tab")"
       check_name "$session" "$id" agent "$(agent_field "$pane" name)"
@@ -232,7 +236,7 @@ cmd_migrate() {
           jg_backend_herdr_cli "$session" workspace rename "$workspace" "$want"
       done < <(printf '%s' "$RECORDS" | awk -F'\t' -v s="$session" '$2 == s { print $3 }' | sort -u)
     fi
-    while IFS=$'\t' read -r id sess workspace tab pane; do
+    while IFS=$'\t' read -r id sess workspace tab pane name; do
       [ "$sess" = "$session" ] || continue
       # Tabs: the recorded tab, only from the pre-rename spelling of this task's label.
       live_tab=$(tab_label "$tab")
@@ -248,7 +252,7 @@ cmd_migrate() {
         echo "skip agent $pane ($id): its tab is not the recorded task tab"
         continue
       fi
-      desired=$(jg_backend_herdr_agent_name_for "$id") || continue
+      desired=$name
       variant=$(jg_backend_herdr_agent_name_variant "$desired" "$session:$pane")
       if [ "$current" = "$desired" ] || [ "$current" = "$variant" ]; then
         continue
@@ -257,7 +261,7 @@ cmd_migrate() {
         printf 'would rename agent %s: %s -> %s\n' "$pane" "$current" "$desired"
         continue
       fi
-      jg_backend_herdr_pin_agent_name "$session" "$pane" "$id"
+      jg_backend_herdr_pin_agent_name "$session" "$pane" "$desired"
       pinned=${JG_BACKEND_HERDR_PINNED_NAME:-}
       if [ -n "$pinned" ]; then
         printf 'renamed agent %s: %s -> %s\n' "$pane" "$current" "$pinned"

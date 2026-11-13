@@ -23,7 +23,10 @@ export JG_MOG_CHECKS_LINT=$STUB_DIR/jg-checks-lint.sh
 fails=0
 check() { if [ "$2" = "$3" ]; then echo "ok: $1"; else printf 'FAIL: %s\n  want: %s\n  got:  %s\n' "$1" "$3" "$2"; fails=$((fails + 1)); fi; }
 has() { if printf '%s' "$2" | grep -qF -- "$3"; then echo "ok: $1"; else printf 'FAIL: %s\n  want text: %s\n  got: %s\n' "$1" "$3" "$2"; fails=$((fails + 1)); fi; }
+export JG_STRANDED_ALERT=$SRC/../../bin/jg-alert.sh
 mog() { JG_CHECK_TIMEOUT=30 "$SRC/merge-on-green.sh" check "$FM" 2>&1; }
+# newwakes: the wake lines the central stranded alert added to the fixture home's queue since the last call.
+newwakes() { local q=$FM/state/.wake-queue n; : >> "$q"; n=$(wc -l < "$q"); tail -n +"$(( $(cat "$d/seen-wakes" 2>/dev/null || echo 0) + 1 ))" "$q" | cut -f5; echo "$n" > "$d/seen-wakes"; }
 meta() { # <task> <yolo> <head> <gen> -> meta + matching PASS receipt
   printf 'yolo=%s\npr=https://github.com/ex/r/pull/%s\npr_head=%s\nspawn_gen=%s\n' "$2" "${1#t}" "$3" "$4" > "$FM/state/$1.meta"
   printf '{\n  "verdict": "PASS",\n  "head": "%s",\n  "spawn_gen": "%s"\n}\n' "$3" "$4" > "$FM/state/$1.run-receipt.json"
@@ -74,7 +77,15 @@ if [ -f "$STUB_DIR/lint-notproven" ]; then
 fi
 echo "checks-lint: PASS: 2 evidence files"
 EOF
-chmod +x "$FM/bin/jg-crew-state.sh" "$FM/bin/jg-pr-merge.sh" "$STUB_DIR/jg-checks-lint.sh"
+cat > "$FM/bin/jg-backlog.sh" <<'EOF'
+#!/usr/bin/env bash
+# stub: `times <task>` prints the ready and landed rows the merge left on the ticket, from $STUB_DIR/times/<task>.
+[ "$1" = times ] && [ -f "$STUB_DIR/times/$2" ] && cat "$STUB_DIR/times/$2"
+exit 0
+EOF
+mkdir -p "$STUB_DIR/times"
+rfc() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
+chmod +x "$FM/bin/jg-crew-state.sh" "$FM/bin/jg-pr-merge.sh" "$FM/bin/jg-backlog.sh" "$STUB_DIR/jg-checks-lint.sh"
 cat > "$STUB_DIR/gh" <<'EOF'
 #!/usr/bin/env bash
 # stub: the mergedAt read and the open-PR count; every sweep reaches the count, so no real gh runs.
@@ -251,54 +262,44 @@ check "m: merged once" "$(wc -l < "$STUB_DIR/merge-calls")" 7
 rm "$FM/state/t12.meta" "$FM/state/t12.run-receipt.json"
 
 # (n) the done-to-merged minutes are recorded for every merge, and a merge over the five-minute
-# target is called out in the wake line the lead relays. The forge's merge time comes from the gh
+# target raises the slow-delivery alert. The forge's merge time comes from the gh
 # stub, so the number is the one the record holds rather than the moment the sweep ran.
 meta t13 on "$H1" s13
 now=$(date +%s)
-printf 'working [at=%s]: implementing\n' "$((now - 1200))" > "$FM/state/t13.status"
-printf 'done [at=%s]: PR https://github.com/ex/r/pull/13\n' "$((now - 780))" >> "$FM/state/t13.status"
-STUB_MERGED_AT=$(date -u -d "@$now" +%Y-%m-%dT%H:%M:%SZ)
-export STUB_MERGED_AT
+# The merge (jg-pr-merge, stubbed here) writes landed_at on the ticket; the stub `times` serves the row.
+printf 'ready\t%s\nlanded\t%s\n' "$(rfc "$((now - 780))")" "$(rfc "$now")" > "$STUB_DIR/times/t13"
 out=$(mog)
 check "n: one merged line" "$(printf '%s\n' "$out" | wc -l)" 1
-has "n: the line names the measured minutes" "$out" "it took 13m from its done line to merged"
-has "n: over the target raises the over-target alert" "$out" "over the 5-minute target"
-check "n: the row is recorded with the real gap" \
-  "$(awk -F '\t' '$1 == "t13" { print $3, $4, $5 }' "$FM/data/merge-latency.tsv")" \
-  "$((now - 780)) $now 13"
-check "n: the table has one header row" "$(sed -n 1p "$FM/data/merge-latency.tsv")" \
-  "$(printf 'task\tpr\tdone_epoch\tmerged_epoch\tminutes')"
+has "n: the line names the minutes read from the ticket" "$out" "in 13m from its done line"
+check "n: over the target raises one slow-delivery alert" "$(JG_HOME=$FM JG_STATE_OVERRIDE=$FM/state "$JG_STRANDED_ALERT" list | grep -c '^slow-delivery--t13$')" 1
+check "n: the over-target wording is gone from the line" "$(printf '%s' "$out" | grep -c 'over the 5-minute target' || true)" 0
+check "n: no latency table is written" "$([ -e "$FM/data/merge-latency.tsv" ] && echo written || echo none)" none
 rm "$FM/state/t13.meta" "$FM/state/t13.run-receipt.json"
 
 # (n2) a refusal wake names the real refusal, not the `armed:` and `WARNING:` notices printed first;
 # a worker's `ready [at=N key=..]` hand-off line still gets a latency row.
 meta t95 on "$H1" s95
 now=$(date +%s)
-printf 'ready [at=%s extra=1]: slice 2 PR https://github.com/ex/r/pull/95\n' "$((now - 60))" > "$FM/state/t95.status"
+printf 'ready\t%s\nlanded\t%s\n' "$(rfc "$((now - 60))")" "$(rfc "$now")" > "$STUB_DIR/times/t95"
 touch "$STUB_DIR/merge-noisy"
 out=$(mog)
 has "n2: the real refusal is named" "$out" "jg-pr-merge refused: error: pull request is not mergeable: required check ci is red"
 check "n2: armed and WARNING lines are not the reason" "$(printf '%s' "$out" | grep -cE 'refused: (armed:|WARNING:)')" 0
 rm "$STUB_DIR/merge-noisy"
 rm -f "$FM/data/jg-merge-on-green/t95.head"
-STUB_MERGED_AT=$(date -u -d "@$now" +%Y-%m-%dT%H:%M:%SZ)
-export STUB_MERGED_AT
 out=$(mog)
-has "n2: a ready hand-off line is measured" "$out" "in 1m from its done line"
-check "n2: the ready line has a latency row" "$(awk -F '\t' '$1 == "t95" { print $5 }' "$FM/data/merge-latency.tsv")" 1
+has "n2: the ticket's ready time is measured" "$out" "in 1m from its done line"
 rm "$FM/state/t95.meta" "$FM/state/t95.run-receipt.json"
 
 # (o) a merge inside the target is recorded and reported without the over-target wording.
 meta t14 on "$H2" s14
 now=$(date +%s)
-printf 'done [at=%s]: PR https://github.com/ex/r/pull/14\n' "$((now - 120))" > "$FM/state/t14.status"
-STUB_MERGED_AT=$(date -u -d "@$now" +%Y-%m-%dT%H:%M:%SZ)
-export STUB_MERGED_AT
+printf 'ready\t%s\nlanded\t%s\n' "$(rfc "$((now - 120))")" "$(rfc "$now")" > "$STUB_DIR/times/t14"
 out=$(mog)
 check "o: one merged line" "$(printf '%s\n' "$out" | wc -l)" 1
 has "o: the line names the fast minutes" "$out" "in 2m from its done line"
-check "o: no over-target wording inside the target" \
-  "$(printf '%s' "$out" | grep -c 'over the 5-minute target' || true)" 0
+check "o: no alert inside the target" \
+  "$(JG_HOME=$FM JG_STATE_OVERRIDE=$FM/state "$JG_STRANDED_ALERT" list | grep -c t14 || true)" 0
 rm "$FM/state/t14.meta" "$FM/state/t14.run-receipt.json"
 
 # (p) the captain's own recorded word is authority too: merge=approved with no yolo meta lands the
@@ -329,8 +330,8 @@ check "q: only the green PR reached the merge call" \
 check "q: the red PR is untouched" "$([ -e "$FM/data/jg-merge-on-green/t17.head" ] && echo attempted || echo never)" never
 rm "$STUB_DIR/red/t17" "$FM/state/t17.meta" "$FM/state/t17.run-receipt.json" "$FM/state/t18.meta" "$FM/state/t18.run-receipt.json"
 
-# (r) the open-PR cap: nothing at or under the cap; one alert over it; the same count stays silent; a new
-# count alerts again; a drop under the cap forgets it; config/open-pr-cap sets the cap; a gh failure is silent.
+# (r) the open-PR cap: nothing at or under the cap; one stranded alert over it (the real jg-alert.sh, one wake to the
+# lead per episode, resolved when the count drops under the cap); the same count stays silent; a new count alerts again; a drop under the cap forgets it; config/open-pr-cap sets the cap; a gh failure is silent.
 printf 'yolo=off\npr=https://github.com/ex/r/pull/30\n' > "$FM/state/t30.meta"
 STUB_OPEN_PRS=8
 export STUB_OPEN_PRS
@@ -338,25 +339,27 @@ check "r: at the default cap of 8 -> silent" "$(mog)" ""
 check "r: asked the forge about the PR's repo" "$(grep -c -- '--repo ex/r' "$STUB_DIR/gh-list-calls")" "$(wc -l < "$STUB_DIR/gh-list-calls")"
 STUB_OPEN_PRS=23
 out=$(mog)
-check "r: over the cap -> one alert" "$(printf '%s\n' "$out" | wc -l)" 1
-has "r: alert names count, repo and cap" "$out" "23 open pull requests in ex/r, over the cap of 8"
+check "r: over the cap -> one alert, no line from the old code" "$out" ""
+has "r: the lead's stranded alert names the repo" "$(newwakes)" "alert stranded (P3) at rung 2 for lead: ex__r.open-prs"
 check "r: same count -> silent" "$(mog)" ""
 STUB_OPEN_PRS=24
-has "r: changed count alerts again" "$(mog)" "24 open pull requests in ex/r"
+mog >/dev/null; has "r: changed count alerts again" "$(newwakes)" "for lead: ex__r.open-prs"
 check "r: repeat of the changed count silent" "$(mog)" ""
 STUB_OPEN_PRS=3
 check "r: back under the cap -> silent" "$(mog)" ""
 STUB_OPEN_PRS=24
-has "r: over the cap again alerts again" "$(mog)" "24 open pull requests in ex/r"
+check "r: back under the cap resolves the alert" "$(JG_HOME=$FM bash "$SRC/../../bin/jg-alert.sh" word stranded--ex__r.open-prs)" resolved
+mog >/dev/null; STUB_OPEN_PRS=24; mog >/dev/null
+has "r: over the cap again alerts again" "$(newwakes)" "for lead: ex__r.open-prs"
 mkdir -p "$FM/config"
 echo 30 > "$FM/config/open-pr-cap"
 STUB_OPEN_PRS=25
 check "r: config/open-pr-cap raises the cap" "$(mog)" ""
 STUB_OPEN_PRS=31
-has "r: configured cap named" "$(mog)" "31 open pull requests in ex/r, over the cap of 30"
+mog >/dev/null; has "r: configured cap holds back the alert until passed" "$(newwakes)" "for lead: ex__r.open-prs"
 echo nonsense > "$FM/config/open-pr-cap"
 STUB_OPEN_PRS=40
-has "r: unreadable config falls back to 8" "$(mog)" "40 open pull requests in ex/r, over the cap of 8"
+mog >/dev/null; has "r: unreadable config falls back to 8" "$(newwakes)" "for lead: ex__r.open-prs"
 rm "$FM/config/open-pr-cap"
 touch "$STUB_DIR/gh-list-fail"
 STUB_OPEN_PRS=99
@@ -467,7 +470,7 @@ out=$(XDG_DATA_HOME=$d/data4 "$SRC/wiring.sh" "$FM4" 2>&1) && rc=0 || rc=$?
 check "l: a shim running another home's gate refuses" "$rc" 1
 has "l: the refusal names the home it runs for" "$out" "not for this home"
 
-# A direct-PR task (no pipeline run) has its own journey; core-suites runs it through this suite.
+# A direct-PR task (no pipeline run) has its own journey; the core-merge-on-green-test entry of .done-done.yaml runs it through this suite.
 bash "$SRC/tests/merge-on-green-direct-pr.test.sh" || fails=$((fails + 1))
 
 if [ "$fails" -eq 0 ]; then echo "PASS: merge-on-green e2e"; else echo "FAIL: $fails check(s)"; exit 1; fi

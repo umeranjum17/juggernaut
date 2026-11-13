@@ -97,7 +97,10 @@ plan=(
   critical-stall:home
   stall-action:home
   lead-sweep:home
+  pr-pager:home
+  auto-dispatch:home
   trunk-latency:home
+  status-latency:home
   tmp-reaper:home
   landing-card:home
   machines:view
@@ -115,6 +118,7 @@ plan=(
   tickets-sync:env
   lookout-adapter:plain
   undelivered-alert:home
+  lock-lease:home
 )
 
 # The sources one step installs from: its own directory, this script (the plan and argument shapes), and every file

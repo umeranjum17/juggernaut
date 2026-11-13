@@ -237,6 +237,75 @@ test_quick_and_legacy_are_exempt() {
   pass "jg-recon-gate.sh: quick and a legacy brief are exempt, and --depth overrides the brief"
 }
 
+test_a_critic_task_passes_on_its_critic_md() {
+  local dir=$HOME_DIR/data/rg-critic
+  JG_HOME="$HOME_DIR" "$ROOT/bin/jg-brief.sh" rg-critic some-proj --scout --depth deep >/dev/null 2>&1 || fail "critic scaffold failed"
+  run_gate rg-critic
+  expect_code 1 "$RC" "a deep task with no report and no critic.md is refused (got: $OUT)"
+  printf 'Critic: rg-critic\nRound 1: new gaps 2\n- a gap\n' > "$dir/critic.md"
+  run_gate rg-critic
+  expect_code 0 "$RC" "a critic task passes on its critic.md, with no report (got: $OUT)"
+  assert_contains "$OUT" "critic task" "the pass line did not say it judged a critic task"
+  JG_HOME="$HOME_DIR" bash "$GATE" rg-critic --is-critic || fail "--is-critic should accept the critic task"
+  printf 'Critic: rg-critic\n' > "$dir/critic.md"
+  expect_refused rg-critic "no 'Round <n>: new gaps <k>' line" "a critic.md with no round line"
+  printf 'Critic: someone-else\nRound 1: new gaps 0\n' > "$dir/critic.md"
+  expect_refused rg-critic "report.md is missing" "a critic.md naming another critic is not a critic task"
+  make_recon rg-notcritic deep
+  JG_HOME="$HOME_DIR" bash "$GATE" rg-notcritic --is-critic && fail "a researcher is not a critic task"
+  pass "jg-recon-gate.sh: a critic task passes on its critic.md and a researcher is not one"
+}
+
+test_the_owners_bypass_lets_a_recon_through_and_a_waiver_by_main_does_not() {
+  local wdir=$HOME_DIR/state/recon-gate-waiver
+  make_recon rg-waive deep
+  rm -f "$HOME_DIR/data/rg-waive/report.md"
+  expect_refused rg-waive "report.md is missing" "a deep Recon with no report, no bypass yet"
+  # A waiver file by Main alone is refused, with the reason.
+  mkdir -p "$wdir"
+  printf 'waived-by: Main\nreason: the owner dropped the report\n' > "$wdir/rg-waive"
+  expect_refused rg-waive "no longer read" "a whole waiver file by Main"
+  expect_refused rg-waive "owner's recorded bypass" "the refusal names the way through"
+  # The owner's bypass, written by the real command, passes the gate and says whose word it is.
+  JG_HOME="$HOME_DIR" bash "$ROOT/bin/jg-proof-bypass.sh" grant --ticket rg-waive --word owner-rule-abc123 >/dev/null 2>&1 \
+    || fail "could not grant the ticket bypass"
+  run_gate rg-waive
+  expect_code 0 "$RC" "a ticket bypass passes the gate (got: $OUT)"
+  assert_contains "$OUT" "BYPASSED by the owner's word owner-rule-abc123" "the pass line did not say whose word it is"
+  make_recon rg-nowaive deep
+  rm -f "$HOME_DIR/data/rg-nowaive/report.md"
+  expect_refused rg-nowaive "report.md is missing" "a ticket bypass for one task does not cover another"
+  pass "jg-recon-gate.sh: the owner's bypass passes a Recon and prints whose word it is; a waiver by Main is refused"
+}
+
+test_a_deep_draft_with_only_its_critic_open_is_the_step_critic() {
+  local dir
+  make_recon rg-step deep
+  dir="$HOME_DIR/data/rg-step"
+  rm -f "$dir/critic.md"
+  run_gate rg-step
+  expect_code 1 "$RC" "the plain gate refuses a deep Recon whose critic is open (got: $OUT)"
+  run_gate rg-step --step
+  expect_code 0 "$RC" "the step reading lets the draft through to its critic (got: $OUT)"
+  assert_contains "$OUT" "STEP critic" "the step line did not name the step critic (got: $OUT)"
+  printf 'Critic: critic-of-rg-step\nRound 1: new gaps 2\n- a gap\n' > "$dir/critic.md"
+  run_gate rg-step --step
+  expect_code 0 "$RC" "a round with open gaps is still the step critic (got: $OUT)"
+  assert_contains "$OUT" "STEP critic" "round with gaps: not the step critic (got: $OUT)"
+  printf 'Critic: critic-of-rg-step\nRound 1: new gaps 0\n' > "$dir/critic.md"
+  run_gate rg-step --step
+  expect_code 0 "$RC" "a closed critic passes (got: $OUT)"
+  assert_contains "$OUT" "PASS" "a closed critic is PASS, not the step critic (got: $OUT)"
+  rm -f "$dir/critic.md"; sed -i '/^## 5\./,/^$/d' "$dir/report.md"
+  run_gate rg-step --step
+  expect_code 1 "$RC" "a draft with a hole other than the critic is still refused (got: $OUT)"
+  make_recon rg-step-std standard
+  rm -f "$HOME_DIR/data/rg-step-std/critic.md"
+  run_gate rg-step-std --step
+  expect_code 1 "$RC" "a standard Recon has no critic step (got: $OUT)"
+  pass "jg-recon-gate.sh --step: a deep draft with only its separate critic open is the step critic; any other hole, or a standard Recon, is refused"
+}
+
 test_usage_errors() {
   local out rc
   out=$(JG_HOME="$HOME_DIR" bash "$GATE" 2>&1); rc=$?
@@ -248,6 +317,43 @@ test_usage_errors() {
   pass "jg-recon-gate.sh: usage errors exit 2"
 }
 
+test_board_report_is_written_by_the_command() {
+  local dir page card first
+  make_recon rg-page standard
+  dir="$HOME_DIR/data/rg-page"
+  page="$dir/board-report/page.html"; card="$dir/board-report/report.json"
+  sed -i '/^## 8\. Implementation plan$/,/^## 9\. /{/^Body of/c\
+| Slice | Owner | Outcome |\
+| --- | --- | --- |\
+| J1 | lead | The ticket table is the first drawing |
+}' "$dir/report.md"
+  printf '%s\n' '{"key":"rg-page-1","title":"Page of {{count:moves}} moves","filed":"2026-11-12T00:00:00Z","filer":"rg-page","project":"Juggernaut",' \
+    ' "drawings":[{"label":"Delivering","machine":"delivering"}],' \
+    ' "counts":[{"label":"Moves the table lacks","ledger":"moves"}]}' > "$dir/page.json"
+  printf 'moves\t230\tshadow log\n' > "$dir/ledger.tsv"
+  JG_HOME="$HOME_DIR" "$ROOT/bin/jg-report-page.sh" build rg-page >/dev/null || fail "the page should build"
+  first=$(cat "$page" "$card")
+  JG_HOME="$HOME_DIR" "$ROOT/bin/jg-report-page.sh" build rg-page >/dev/null
+  [ "$first" = "$(cat "$page" "$card")" ] || fail "two builds from the same sources should match byte for byte"
+  assert_contains "$(cat "$page")" "resolving" "the page should draw the machine's states from its table"
+  assert_contains "$(cat "$card")" '"title": "Page of 230 moves"' "the card should take the count from the ledger"
+  assert_contains "$(cat "$card")" '"title": "J1"' "the card should take the plan from section 8"
+  run_gate rg-page
+  expect_code 0 "$RC" "a page the command wrote should pass (got: $OUT)"
+  printf 'moves\t231\tshadow log\n' > "$dir/ledger.tsv"
+  expect_refused rg-page "board-report/page.html is stale" "a ledger count that changed after the build"
+  JG_HOME="$HOME_DIR" "$ROOT/bin/jg-report-page.sh" build rg-page >/dev/null
+  assert_contains "$(cat "$card")" "Page of 231 moves" "a changed ledger count should change the card on the next run"
+  sed -i 's/resolving/resolvingX/' "$page"
+  expect_refused rg-page "board-report/page.html was edited by hand" "a hand edit of the page"
+  JG_HOME="$HOME_DIR" "$ROOT/bin/jg-report-page.sh" build rg-page >/dev/null
+  sed -i 's/"project": "Juggernaut"/"project": "Other"/' "$card"
+  expect_refused rg-page "board-report/report.json was edited by hand" "a hand edit of the card"
+  printf '{"title":"typed"}\n' > "$card"
+  expect_refused rg-page "board-report/report.json carries no jg-report-page stamp" "a card the command did not write"
+  pass "jg-recon-gate.sh: a board page and card must be written by jg-report-page.sh"
+}
+
 test_passing_recons_pass
 test_missing_and_empty_sections_are_refused
 test_deep_may_not_skip_plan_or_acceptance
@@ -257,4 +363,8 @@ test_critic_is_required
 test_closure_check_closes_the_last_round
 test_source_budget
 test_quick_and_legacy_are_exempt
+test_a_critic_task_passes_on_its_critic_md
+test_the_owners_bypass_lets_a_recon_through_and_a_waiver_by_main_does_not
+test_a_deep_draft_with_only_its_critic_open_is_the_step_critic
 test_usage_errors
+test_board_report_is_written_by_the_command

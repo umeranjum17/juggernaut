@@ -131,7 +131,7 @@ probe() {
   line=$(state_line "$chain" "$after")
   # The first pass only records the state; a later pass prints when, and only when, it differs from the recorded one.
   if [ -f "$STATE/.route-chain.printed" ] && [ "$(cat -- "$STATE/.route-chain.printed")" != "$line" ]; then
-    printf '%s\n' "$line"
+    JG_STATE_OVERRIDE="$STATE" "${JG_HOME:-$HOME/juggernaut}/bin/jg-alert.sh" capacity route-chain "$line" --print
   fi
   printf '%s' "$line" >"$STATE/.route-chain.printed" 2>/dev/null || true
 }

@@ -91,20 +91,17 @@ test_a_quarantined_script_is_listed_not_run_and_the_gate_passes() {
   pass 'a quarantined script is listed with its reason, not run, and the gate still passes'
 }
 
-# trunk tip 52dd4fd44 went red as "aggregate input not found: shard-1.json", on all eight shards at once: the commit range held
-# bin/jg-digest-cap-lib.sh, which no test names, so each shard stopped at selection ("no changed-test mapping") before it
-# wrote its result, and the aggregate then reported the missing file in place of the real cause. A shard that stops for any
-# reason writes a failed result that names the shard and the cause, so the aggregate reads a verdict and not a missing file.
+# trunk tip 52dd4fd44 went red as "aggregate input not found: shard-1.json", on all eight shards at once: each shard stopped at
+# selection before it wrote its result, and the aggregate then reported the missing file in place of the real cause. A shard that
+# stops for any reason writes a failed result that names the shard and the cause, so the aggregate reads a verdict and not a
+# missing file. The stop here is a base ref that does not exist; an unmapped path no longer stops a shard.
 test_a_shard_that_stops_before_its_result_still_writes_a_failed_result() {
   local fixture=$TMP_ROOT/orphan res=$TMP_ROOT/orphan-results out rc=0
   required_fixture "$fixture" 'exit 0'
-  printf '#!/usr/bin/env bash\n:\n' >"$fixture/bin/jg-orphan-lib.sh"
-  git -C "$fixture" add bin/jg-orphan-lib.sh
-  git -C "$fixture" -c user.name=t -c user.email=t@example.invalid commit -q --amend --no-edit
-  out=$(JG_REQUIRED_SHARD_WALL_MS=1 bash "$fixture/bin/jg-test-run.sh" --required-shards HEAD^ "$res" 2>&1) || rc=$?
+  out=$(JG_REQUIRED_SHARD_WALL_MS=1 bash "$fixture/bin/jg-test-run.sh" --required-shards no-such-ref "$res" 2>&1) || rc=$?
   [ "$rc" = 1 ] || fail "shards that stopped before their result must refuse with exit 1: rc=$rc $out"
   assert_not_contains "$out" 'aggregate input not found' 'a missing shard result must never reach the aggregate'
-  assert_contains "$out" 'no changed-test mapping for source path: bin/jg-orphan-lib.sh' 'the real cause stays in the log'
+  assert_contains "$out" 'changed-file base ref not found: no-such-ref' 'the real cause stays in the log'
   [ "$(printf '%s\n' "$out" | grep -c '^jg-test-run: shard [1-8]of8 stopped with exit 2 before it wrote its result')" = 8 ] ||
     fail "each shard must be named with its exit status: $out"
   [ "$(printf '%s\n' "$out" | grep -c '^JG_TEST_OVERRUN budget_ms=1 duration_ms=[0-9]* load=[^ ]* cpus=[0-9]* selection=shard=[1-8]of8$')" = 8 ] ||
@@ -112,6 +109,44 @@ test_a_shard_that_stops_before_its_result_still_writes_a_failed_result() {
   jq -e '.summary.lanes == 8 and .summary.failed_lanes == 8 and ([.lanes[].selection] | map(test("^shard=[1-8]of8$")) | all)' \
     "$res/required.json" >/dev/null || fail "the aggregate must hold one failed verdict per shard: $out"
   pass 'a shard that stops before its result writes a failed result naming the shard, and an overrun is still named'
+}
+
+# An unmapped source path (the trunk tip's bin/jg-tool-wiring.sh) stopped all eight shards at selection. It fails as its own
+# record now, once, and every other script keeps its own verdict, the same as an unmapped test file.
+test_an_unmapped_source_path_fails_only_itself() {
+  local fixture=$TMP_ROOT/unmapped-bin res=$TMP_ROOT/unmapped-bin-results out rc=0
+  required_fixture "$fixture" 'exit 0'
+  printf '#!/usr/bin/env bash\n:\n' >"$fixture/bin/jg-orphan-lib.sh"
+  git -C "$fixture" add bin/jg-orphan-lib.sh
+  git -C "$fixture" -c user.name=t -c user.email=t@example.invalid commit -q --amend --no-edit
+  out=$(bash "$fixture/bin/jg-test-run.sh" --required-shards HEAD^ "$res" 2>&1) || rc=$?
+  [ "$rc" = 1 ] || fail "an unmapped source path must refuse the gate with exit 1: rc=$rc $out"
+  assert_not_contains "$out" 'stopped with exit' 'no shard may stop before its result'
+  assert_contains "$out" 'not ok - bin/jg-orphan-lib.sh: no changed-test mapping for source path: bin/jg-orphan-lib.sh' 'the path and the cause are named'
+  jq -e '.summary.lanes == 8 and .summary.failed_lanes == 1 and .summary.total == 2 and .summary.failed == 1
+    and ([.scripts[] | select(.path == "tests/required-feature.test.sh" and .exit == 0)] | length) == 1' \
+    "$res/required.json" >/dev/null || fail "the aggregate must hold the other script's pass and only the stray path's failure: $out"
+  pass 'an unmapped source path fails only itself in one shard and the other scripts still run'
+}
+
+# trunk-v4 shard 8 stopped on "no changed-test mapping for source path: tests/jg-machine-call-fixture.sh" and held the green pin:
+# a changed test file that no suite names made the whole selection refuse. It fails as its own record now, once, and every other
+# script in the shards still runs and keeps its own verdict.
+test_an_unmapped_test_file_fails_only_itself() {
+  local fixture=$TMP_ROOT/unmapped-test res=$TMP_ROOT/unmapped-test-results out rc=0
+  required_fixture "$fixture" 'exit 0'
+  printf '#!/usr/bin/env bash\n:\n' >"$fixture/tests/orphan-fixture.sh"
+  git -C "$fixture" add tests/orphan-fixture.sh
+  git -C "$fixture" -c user.name=t -c user.email=t@example.invalid commit -q --amend --no-edit
+  out=$(bash "$fixture/bin/jg-test-run.sh" --required-shards HEAD^ "$res" 2>&1) || rc=$?
+  [ "$rc" = 1 ] || fail "an unmapped test file must refuse the gate with exit 1: rc=$rc $out"
+  assert_not_contains "$out" 'stopped with exit' 'no shard may stop before its result'
+  assert_contains "$out" 'not ok - tests/orphan-fixture.sh: no changed-test mapping for source path: tests/orphan-fixture.sh' 'the file and the cause are named'
+  [ "$(printf '%s\n' "$out" | grep -c '^JG_TEST_END .* tests/orphan-fixture.sh exit=1')" = 1 ] || fail "the file must fail once, in one shard: $out"
+  jq -e '.summary.lanes == 8 and .summary.failed_lanes == 1 and .summary.total == 2 and .summary.failed == 1
+    and ([.scripts[] | select(.path == "tests/required-feature.test.sh" and .exit == 0)] | length) == 1' \
+    "$res/required.json" >/dev/null || fail "the aggregate must hold the other script's pass and only the stray file's failure: $out"
+  pass 'an unmapped test file fails only itself in one shard and the other scripts still run'
 }
 
 # A shard over its wall-clock budget was slowed by the machine, not failed by a test, so it is a warning and never a red,
@@ -296,6 +331,30 @@ test_a_slow_failing_script_past_the_per_script_bound_stays_red() {
   pass 'a slow script that fails past the per-script bound stays red'
 }
 
+test_the_gate_stops_a_hung_script_with_its_children_and_temp_folder_without_a_flag() {
+  local limits hung rc=0 out marker pidfile child
+  limits="$TMP_ROOT/default-bound-limits"
+  { write_limits "$limits" 30 30 30; printf 'script_timeout_seconds=2\n' >>"$limits"; }
+  marker="jgdefaultbound$$"
+  pidfile="$TMP_ROOT/default-bound.pids"
+  hung="$TMP_ROOT/default-bound-hang.test.sh"
+  write_script "$hung" "mkdir -p \"\$TMPDIR/scratch-$marker\"
+setsid sleep 1234 >/dev/null 2>&1 < /dev/null &
+echo \$! > '$pidfile'
+sleep 1235 &
+echo \$! >> '$pidfile'
+echo \"\$TMPDIR\" > '$pidfile.tmpdir'
+sleep 1236"
+  out=$(TEST_SPEED_LIMITS_FILE="$limits" bash "$RUNNER" --gate "$hung" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "a hung script must fail the gate: $out"
+  assert_contains "$out" "JG_TEST_TIMEOUT script=$hung bound_secs=2" 'the gate must name the script that timed out and the bound'
+  while read -r child; do
+    ! kill -0 "$child" 2>/dev/null || fail "child $child of the hung script is still running"
+  done <"$pidfile"
+  [ ! -e "$(cat "$pidfile.tmpdir")" ] || fail 'the hung script temp folder must be removed'
+  pass 'the gate stops a hung script with its children and temp folder without a flag'
+}
+
 test_a_test_within_its_limits_is_unaffected() {
   local limits fast out rc=0
   limits="$TMP_ROOT/normal-limits"
@@ -330,6 +389,48 @@ test_a_deleted_journey_does_not_refuse_the_changed_selection() {
   pass 'a deleted journey selects only a test that still names it and never refuses the changed selection'
 }
 
+# A branch that retires a shared test fixture with its suites (c5d55bb1c deleted the machine-call fixture and
+# its suites) must still select its changed tests: the deleted fixture has no owner left, so it selects nothing.
+test_a_deleted_shared_fixture_does_not_refuse_the_changed_selection() {
+  local fixture=$TMP_ROOT/retire-fixture out rc=0
+  required_fixture "$fixture" 'true'
+  printf '# shared\n' >"$fixture/tests/jg-retired-fixture.sh"
+  git -C "$fixture" add tests
+  git -C "$fixture" -c user.name=t -c user.email=t@example.invalid commit -qm 'add fixture'
+  git -C "$fixture" rm -q tests/jg-retired-fixture.sh
+  git -C "$fixture" -c user.name=t -c user.email=t@example.invalid commit -qm 'retire the fixture'
+  out=$(bash "$fixture/bin/jg-test-run.sh" --list --changed --base HEAD^ 2>&1) || rc=$?
+  assert_equals 0 "$rc" "a deleted shared fixture must not refuse the changed selection: $out"
+  pass 'a deleted shared test fixture never refuses the changed selection'
+}
+
+# The hosted job (--hosted) leaves out a script tests/hosted-needs.tsv lists while a tool it needs is not on the runner's PATH,
+# and names it; the same selection without the flag still lists every one, so the scripts run on our host.
+test_the_hosted_selection_drops_scripts_whose_tool_the_runner_lacks() {
+  local bin=$TMP_ROOT/hosted-bin t hosted local_sel s
+  mkdir -p "$bin"
+  for t in bash awk sed grep git sort cat env dirname basename mktemp tr head tail wc date ls rm mkdir cut uniq xargs find ps sleep sh; do
+    command -v "$t" >/dev/null 2>&1 && ln -sf "$(command -v "$t")" "$bin/$t"
+  done
+  hosted=$(PATH=$bin /bin/bash "$RUNNER" --list --hosted tests/jg-trunk-release-open-pr.test.sh tests/jg-browser-reaper.test.sh \
+    tests/jg-trunk-rollover.test.sh tests/jg-ship-local.test.sh 2>&1) || fail "a hosted list was refused: $hosted"
+  local_sel=$(PATH=$bin /bin/bash "$RUNNER" --list tests/jg-trunk-release-open-pr.test.sh tests/jg-browser-reaper.test.sh \
+    tests/jg-trunk-rollover.test.sh tests/jg-ship-local.test.sh 2>&1) || fail "a local list was refused: $local_sel"
+  for s in jg-trunk-release-open-pr jg-browser-reaper jg-trunk-rollover; do
+    case $(printf '%s\n' "$hosted" | grep -v 'not run on the hosted runner') in
+      *"$s"*) fail "the hosted selection kept $s: $hosted" ;;
+    esac
+    assert_contains "$hosted" "not run on the hosted runner" 'a dropped script must be named'
+    assert_contains "$local_sel" "tests/$s.test.sh" "the local selection must still list $s"
+  done
+  assert_contains "$hosted" 'tests/jg-ship-local.test.sh' 'a script with no listed need must stay selected'
+  # A tool on the PATH keeps the script.
+  printf '#!/bin/sh\n' >"$bin/bd"; chmod +x "$bin/bd"
+  hosted=$(PATH=$bin /bin/bash "$RUNNER" --list --hosted tests/jg-browser-reaper.test.sh 2>&1) || fail "a hosted list was refused: $hosted"
+  assert_contains "$hosted" 'tests/jg-browser-reaper.test.sh' 'a script whose tool is present must stay selected'
+  pass 'the hosted selection drops scripts whose tool the runner lacks and the local selection keeps them'
+}
+
 test_a_weight_cap_defers_slow_suites_and_names_them() {
   local out
   out=$(bash "$RUNNER" --list --max-weight-ms 60000 tests/jg-teardown.test.sh tests/jg-ship-local.test.sh 2>&1) || fail "a capped list was refused: $out"
@@ -339,6 +440,40 @@ test_a_weight_cap_defers_slow_suites_and_names_them() {
     *jg-teardown*) fail "the slow suite stayed in the capped selection: $out" ;;
   esac
   pass 'a weight cap defers slow suites and names them'
+}
+
+test_the_hosted_selection_drops_scripts_that_hit_the_time_bound_or_have_no_hosted_time() {
+  local dir out
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/jg-hosted-timings.XXXXXX")
+  {
+    printf '# <script>\t<exit>\t<duration_ms>, one hosted run per line, oldest first\n'
+    # Ended at the bound once in five runs: dropped. Five runs under the bound: stays.
+    printf 'tests/jg-teardown.test.sh\t0\t30000\n'
+    printf 'tests/jg-teardown.test.sh\t124\t120000\n'
+    printf 'tests/jg-teardown.test.sh\t0\t31000\n'
+    printf 'tests/jg-teardown.test.sh\t0\t29000\n'
+    printf 'tests/jg-teardown.test.sh\t0\t30500\n'
+    local i
+    for i in 1 2 3 4 5; do printf 'tests/jg-ship-local.test.sh\t0\t2%s000\n' "$i"; done
+    # The 8 red release runs: the four scripts that hit the bound, as recorded.
+    printf 'tests/jg-trunk.test.sh\t124\t120000\n'
+    printf 'tests/jg-machine-call.test.sh\t124\t120000\n'
+    printf 'tests/jg-bootstrap-backlog-reconcile.test.sh\t124\t120000\n'
+    printf 'tests/jg-test-run.test.sh\t124\t132000\n'
+  } >"$dir/timings.tsv"
+  out=$(bash "$RUNNER" --list --hosted-timings "$dir/timings.tsv" \
+    tests/jg-teardown.test.sh tests/jg-ship-local.test.sh tests/jg-trunk.test.sh tests/jg-machine-call.test.sh \
+    tests/jg-bootstrap-backlog-reconcile.test.sh tests/jg-test-run.test.sh tests/jg-tmux.test.sh 2>&1) || fail "the hosted selection was refused: $out"
+  assert_equals 'tests/jg-ship-local.test.sh' "$(printf '%s\n' "$out" | grep -v '^jg-test-run:')" 'only the script with five runs under the bound stays'
+  local s
+  for s in jg-teardown jg-trunk jg-machine-call jg-bootstrap-backlog-reconcile jg-test-run; do
+    assert_contains "$out" "(ended at the time bound in its last five hosted runs): tests/$s.test.sh" "$s must be dropped and named"
+  done
+  assert_contains "$out" '(no hosted time): tests/jg-tmux.test.sh' 'a script with no hosted time must be dropped and named'
+  out=$(bash "$RUNNER" --list tests/jg-teardown.test.sh tests/jg-trunk.test.sh 2>&1) || fail "the plain selection was refused: $out"
+  assert_contains "$out" 'tests/jg-trunk.test.sh' 'without the flag a bound-ending script is still selected (it runs on our host)'
+  rm -rf -- "$dir"
+  pass 'the hosted selection drops scripts that hit the time bound in the last five runs or have no hosted time, and names them'
 }
 
 # within <seconds>, <path> exists (or, with <text>, contains it); otherwise the case fails naming <what>.
@@ -364,11 +499,11 @@ env -i PATH=\"\$PATH\" HOME=\"\$HOME\" JG_TEST_HOST_SLOTS='$d/slots' TEST_SPEED_
   bash '$RUNNER' '$d/quick.test.sh' >'$d/cleared.out' 2>&1 || exit 1
 touch '$d/a-started'
 i=0; while [ ! -e '$d/release' ] && [ \"\$i\" -lt 600 ]; do sleep 0.2; i=\$((i + 1)); done"
-  env -u JG_TEST_RUN_SLOT JG_TEST_HOST_SLOTS="$d/slots" TEST_SPEED_LIMITS_FILE="$d/limits" \
+  env -u JG_TEST_RUN_SLOT -u JG_TRUNK_GATE_OUTPUT JG_TEST_HOST_SLOTS="$d/slots" TEST_SPEED_LIMITS_FILE="$d/limits" \
     bash "$RUNNER" "$d/hold.test.sh" >"$d/a.out" 2>&1 &
   pid_a=$!
   await_file 60 "$d/a-started" 'the first run, with a run inside it and one with a cleared environment, did not start'
-  env -u JG_TEST_RUN_SLOT JG_TEST_HOST_SLOTS="$d/slots" TEST_SPEED_LIMITS_FILE="$d/limits" \
+  env -u JG_TEST_RUN_SLOT -u JG_TRUNK_GATE_OUTPUT JG_TEST_HOST_SLOTS="$d/slots" TEST_SPEED_LIMITS_FILE="$d/limits" \
     bash "$RUNNER" "$d/second.test.sh" >"$d/b.out" 2>&1 &
   pid_b=$!
   # A failed wait below still frees the first run: its script stops at release, or after 120 s.
@@ -384,15 +519,16 @@ i=0; while [ ! -e '$d/release' ] && [ \"\$i\" -lt 600 ]; do sleep 0.2; i=\$((i +
   pass 'a run past the machine limit waits for a slot and starts when it frees; runs inside an admitted run never wait'
 }
 
-# A run of the trunk itself (the lander's gate, the verify) names JG_TRUNK_GATE_OUTPUT and takes the first slot that
-# frees, ahead of lane runs that asked for a slot before it.
-test_a_trunk_run_takes_the_first_free_slot_ahead_of_lane_runs() {
-  local d=$TMP_ROOT/trunkfirst name pid_a pid_b pid_c pid_t rc=0
+# A run of the trunk itself (the lander's gate, the verify) names JG_TRUNK_GATE_OUTPUT. It owns one reserved slot that
+# lane runs never take, so with every general slot held by lane proofs it starts at once; a second trunk run, with the
+# reserved slot held, takes the first general slot that frees, ahead of lane runs that asked for a slot before it.
+test_a_trunk_run_starts_at_once_and_takes_the_first_free_slot_ahead_of_lane_runs() {
+  local d=$TMP_ROOT/trunkfirst name pid_a pid_b pid_c pid_t pid_u rc=0
   mkdir -p "$d"
   printf 'machine_runs_max=2\n' >"$d/limits"
-  for name in a b c t; do
+  for name in a b c t u; do
     write_script "$d/$name.test.sh" "touch '$d/$name-started'
-i=0; while [ ! -e '$d/$name-release' ] && [ \"\$i\" -lt 600 ]; do sleep 0.2; i=\$((i + 1)); done"
+i=0; while [ ! -e '$d/$name-release' ] && [ \"\$i\" -lt 1200 ]; do sleep 0.2; i=\$((i + 1)); done"
   done
   run_in_slots() {  # <name> [<env assignment>...]: start <name>.test.sh as its own run
     local n=$1; shift
@@ -400,23 +536,28 @@ i=0; while [ ! -e '$d/$name-release' ] && [ \"\$i\" -lt 600 ]; do sleep 0.2; i=\
       bash "$RUNNER" "$d/$n.test.sh" >"$d/$n.out" 2>&1 &
   }
   run_in_slots a; pid_a=$!
-  await_file 60 "$d/a-started" 'the first lane run did not start'
+  await_file 180 "$d/a-started" 'the first lane run did not start'
   run_in_slots b; pid_b=$!
-  await_file 60 "$d/b-started" 'the second lane run did not start'
+  await_file 180 "$d/b-started" 'the second lane run did not start'
   run_in_slots c; pid_c=$!
-  await_file 30 "$d/c.out" 'the third lane run did not say it waits for a slot' 'waiting for a test-run slot'
+  await_file 180 "$d/c.out" 'the third lane run did not say it waits for a slot' 'waiting for a test-run slot'
+  # Every general slot is held by a lane run and a lane run is queued: the trunk run still starts at once.
   run_in_slots t JG_TRUNK_GATE_OUTPUT="$d/t.proof"; pid_t=$!
-  await_file 30 "$d/t.out" 'the trunk run did not say it waits for a slot' 'waiting for a test-run slot'
-  # A failed wait below still frees every run: each script stops at its release file, or after 120 s.
+  await_file 180 "$d/t-started" 'the trunk run did not start at once on the reserved slot while all general slots were held'
+  assert_not_contains "$(cat "$d/t.out")" 'waiting for a test-run slot' 'the trunk run must not queue behind lane runs'
+  # A second trunk run finds the reserved slot held and waits for the first slot that frees.
+  run_in_slots u JG_TRUNK_GATE_OUTPUT="$d/u.proof"; pid_u=$!
+  await_file 180 "$d/u.out" 'the second trunk run did not say it waits for a slot' 'waiting for a test-run slot: all 3'
+  # A failed wait below still frees every run: each script stops at its release file, or after 240 s.
   touch "$d/a-release"
-  await_file 30 "$d/t-started" 'the trunk run did not take the first slot that freed'
+  await_file 180 "$d/u-started" 'the second trunk run did not take the first general slot that freed'
   [ ! -e "$d/c-started" ] || fail "the lane run that asked first took the slot ahead of the trunk run: $(cat "$d/c.out")"
-  touch "$d/t-release"
-  await_file 30 "$d/c-started" 'the lane run did not start once the trunk run freed its slot'
+  touch "$d/t-release" "$d/u-release"
+  await_file 180 "$d/c-started" 'the lane run did not start once the trunk run freed its slot'
   touch "$d/b-release" "$d/c-release"
-  for pid in "$pid_a" "$pid_b" "$pid_c" "$pid_t"; do wait "$pid" || rc=$?; done
+  for pid in "$pid_a" "$pid_b" "$pid_c" "$pid_t" "$pid_u"; do wait "$pid" || rc=$?; done
   assert_equals 0 "$rc" "every run must pass: $(cat "$d"/*.out)"
-  pass 'a trunk run takes the first slot that frees, ahead of lane runs that asked before it'
+  pass 'a trunk run starts at once on its reserved slot, and a second takes the first free slot ahead of lane runs'
 }
 
 # A test that moves HOME still builds Go from the caller's own build cache.
@@ -432,7 +573,7 @@ test_a_script_that_moves_home_keeps_the_callers_go_build_cache() {
 }
 
 test_a_run_past_the_machine_limit_waits_for_a_slot
-test_a_trunk_run_takes_the_first_free_slot_ahead_of_lane_runs
+test_a_trunk_run_starts_at_once_and_takes_the_first_free_slot_ahead_of_lane_runs
 test_a_script_that_moves_home_keeps_the_callers_go_build_cache
 test_required_shards_keep_the_union_and_a_failed_shard
 test_a_shard_that_stops_before_its_result_still_writes_a_failed_result
@@ -564,14 +705,20 @@ test_a_wall_failure_with_no_functional_failure_stays_red_in_aggregate
 test_a_hanging_test_is_killed_and_reported_instead_of_holding_the_run
 test_a_slow_passing_script_past_the_per_script_bound_warns_and_passes
 test_a_slow_failing_script_past_the_per_script_bound_stays_red
+test_the_gate_stops_a_hung_script_with_its_children_and_temp_folder_without_a_flag
 test_a_test_within_its_limits_is_unaffected
 test_a_weight_cap_defers_slow_suites_and_names_them
+test_the_hosted_selection_drops_scripts_that_hit_the_time_bound_or_have_no_hosted_time
+test_the_hosted_selection_drops_scripts_whose_tool_the_runner_lacks
 test_a_deleted_journey_does_not_refuse_the_changed_selection
+test_a_deleted_shared_fixture_does_not_refuse_the_changed_selection
 test_a_changed_shared_file_selects_the_scripts_that_name_it
 test_a_changed_core_script_selects_the_scripts_that_name_it
 test_a_changed_fleet_homes_library_selects_the_move_test
 test_a_changed_dispatch_skill_runs_the_floor_test
 test_the_coverage_time_budget_advises_and_a_script_no_shard_runs_still_refuses
 test_a_quarantined_script_is_listed_not_run_and_the_gate_passes
+test_an_unmapped_test_file_fails_only_itself
+test_an_unmapped_source_path_fails_only_itself
 
 printf 'all %s\n' 'jg-test-run limit tests passed'

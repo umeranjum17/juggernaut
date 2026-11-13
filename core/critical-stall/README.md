@@ -15,13 +15,13 @@ A row is stalled when both are true:
 
 `config/critical-stall-hours` (a whole number) replaces the 24.
 
-A stall raises one note to Main through `bin/jg-inbox.sh note` and one card through `bin/jg-question-card.sh` on the board `config/fleet-board` names.
+A stall raises the central `stranded` alert (`bin/jg-alert.sh raise` then `deliver`, subject the row's slug, so it reaches the lead) and one card through `bin/jg-question-card.sh` on the board `config/fleet-board` names.
 Each alert is recorded once per row, pull request and newest commit in `data/critical-stall/alerts.jsonl`.
 The next sweep raises nothing for the same stall.
 A new commit changes the key, so a row that moves and then stalls again alerts again.
 A forge failure is silent and retried on the next sweep.
 
-When `stale-pr-alarm` already alerted on the same pull request after its newest commit, the card is skipped and the note is still sent.
+When `stale-pr-alarm` already alerted on the same pull request after its newest commit, the card is skipped and the alert is still raised.
 The captain then sees one card for one pull request.
 
 ## Wiring

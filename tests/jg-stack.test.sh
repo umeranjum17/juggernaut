@@ -7,7 +7,7 @@
 # ports and its own store, never this machine's real bus. It skips when the pinned releases
 # cannot be reached or there is no Go toolchain to build the command; the CI bus lane has both.
 #
-# This is also the test that owns journeys/stack-install.sh (the done-done journey runs this file),
+# This is also the test that owns tests/jg-stack.test.sh (the done-done journey runs this file),
 # so the changed-test map selects it for a change to that journey.
 set -u
 

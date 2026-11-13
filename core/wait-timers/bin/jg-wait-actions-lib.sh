@@ -15,13 +15,15 @@
 #   repeat  seconds between raises (non-lane stops)
 #   clear-by detector or rule that removes the stop
 #
-#   critic: a deep Recon's open needs-decision naming its draft ready for its
-#     critic, with that critic recorded in this home as <task>-critic. forward
-#     steers the critic to the draft and closes the decision; a critic that
-#     started or reported after the draft already has it, so it is only closed.
 #   silent: the silent wait source, on a worker whose own record declares no
 #     wait and holds no open decision. ring is one steer asking for its state;
 #     relaunch is stuck-operator recovery's bin/jg-control.sh relaunch, detached.
+#   herdr-lab: a ship or Recon whose open blocked line says it needs the Herdr lab
+#     section (`needs --herdr-lab`) because its brief was scaffolded without it.
+#     rebrief is one step: close the decision with an answer, then relaunch the
+#     lane once with `jg-control.sh relaunch --herdr-lab`, which swaps the section
+#     into its brief. A lane whose brief already has the section is not in this
+#     state, so the same lane is never relaunched for it twice.
 #   account-down: a Claude worker whose account stopped working: the account
 #     source (a subscription the runtime cannot use, a failed sign-in) or the quota
 #     source (a usage or rate limit), in a home that pins config/claude-account.
@@ -30,10 +32,20 @@
 #     config/claude-account-fallbacks, relaunch every worker on the dead account,
 #     and raise one card. With no recorded fallback it raises the card and
 #     changes nothing. An account that answers is not down: the wait climbs as before.
-JG_WAIT_OWNER_TABLE='critic	critic	forward	lead
-silent	worker	ring,relaunch	lead
+#   waits-for: a lane whose open blocked or needs-decision line says
+#     `waits-for: <ticket>` (the form bin/jg-brief.sh teaches), once that ticket
+#     has landed on the trunk. resume is one steer, with the blocker's key
+#     resolved in the same send, so the lane resumes and its decision closes.
+#     The landing check takes the step itself the moment the ticket lands
+#     (jg_wait_waits_for_resume); this row is the backstop for a lane that
+#     declared its wait after the landing, or whose landing-time send failed.
+#     While the ticket has not landed and its lane still runs, the wait is
+#     quiet (jg_wait_action_awaiting): no owner wake comes from it.
+JG_WAIT_OWNER_TABLE='silent	worker	ring,relaunch	lead
+herdr-lab	watcher	rebrief	lead	0	600	brief carries the lab section
 account-down	watcher	recover	lead
-pool-full	script	sweep,notify	lead	0	600	task started'
+pool-full	script	sweep,notify	lead	0	600	task started
+waits-for	landing	resume	lead	0	600	ticket landed'
 #
 # Sidecar state/.waiting-timers/.acted/<task>: state, time of the last step, the
 # steps taken (comma-joined), and the time of the first step. It outlives the episode on purpose: a ring
@@ -76,16 +88,6 @@ jg_wait_actions_prune() {
   done
 }
 
-# The critic a deep Recon's draft-ready decision waits for, on stdout.
-jg_wait_action_critic_of() {  # <task> <declaration>
-  local critic="$1-critic"
-  [ "$(jg_meta_get "$STATE/$1.meta" kind)" = scout ] || return 1
-  printf '%s' "$2" | grep -qiE 'draft.*ready for .*critic' || return 1
-  [ -f "$STATE/$critic.meta" ] && [ ! -L "$STATE/$critic.meta" ] || return 1
-  [ "$(jg_meta_get "$STATE/$critic.meta" kind)" = scout ] || return 1
-  printf '%s\n' "$critic"
-}
-
 # A silent worker the ladder may ring: not a lead, no open decision of its own and
 # no declared wait, so it is not waiting on anyone; it went quiet mid-task.
 jg_wait_action_silent_ok() {  # <task>
@@ -94,12 +96,79 @@ jg_wait_action_silent_ok() {  # <task>
   [ -z "$(status_declared_wait_line "$STATE/$1.status")" ]
 }
 
+# The ticket a declaration or decision text says it waits for: `waits-for: <ticket>`.
+jg_wait_action_waits_for() {  # <text>
+  local ticket
+  ticket=$(printf '%s' "$1" | sed -nE 's/.*waits-for: ?([A-Za-z0-9][A-Za-z0-9._-]*).*/\1/p' | head -n 1)
+  [ -n "$ticket" ] && printf '%s\n' "$ticket"
+}
+
+# 0 when <ticket> has landed on the local trunk: the landing check's own record
+# (data/jg-trunk-landing/<ticket>.<head>.state) says so, and it outlives the
+# lane's cleanup.
+jg_wait_action_landed() {  # <ticket>
+  local file base
+  for file in "${JG_DATA_OVERRIDE:-$JG_HOME/data}/jg-trunk-landing/$1."*.state; do
+    [ -f "$file" ] && [ ! -L "$file" ] || continue
+    base=${file##*/}
+    [[ ${base#"$1".} =~ ^[0-9a-f]{40,64}\.state$ ]] || continue
+    case "$(head -n 1 "$file")" in landed*) return 0 ;; esac
+  done
+  return 1
+}
+
+# The open blocked or needs-decision line of <task> that names the ticket it
+# waits for: the decision key and the ticket, tab-separated.
+jg_wait_action_waiting_on() {  # <task>
+  local key verb native ticket rows
+  rows=$(status_own_open_decisions "$STATE/$1.status")
+  while IFS=$'\t' read -r key verb native; do
+    case "$verb" in blocked | needs-decision) ;; *) continue ;; esac
+    ticket=$(jg_wait_action_waits_for "$native") || continue
+    printf '%s\t%s\n' "$key" "$ticket"
+    return 0
+  done <<< "$rows"
+  return 1
+}
+
+# 0 when <task> waits for a ticket that has not landed and whose own lane still
+# runs in this home: the wait ends by itself when that lane lands, so it is quiet.
+jg_wait_action_awaiting() {  # <task>
+  local row ticket
+  row=$(jg_wait_action_waiting_on "$1") || return 1
+  ticket=${row#*$'\t'}
+  [ "$ticket" != "$1" ] && [ -f "$STATE/$ticket.meta" ] && ! jg_wait_action_landed "$ticket"
+}
+
+# A ship or Recon blocked on a brief that lacks the Herdr lab section, with the
+# decision's key and no section in its brief yet.
+jg_wait_action_herdr_lab_ok() {  # <task> <verb> <decision key> <declaration>
+  local kind brief
+  [ "$2" = blocked ] && [ -n "$3" ] || return 1
+  printf '%s' "$4" | grep -qiE 'needs[ :]+(the )?(--herdr-lab|herdr lab)' || return 1
+  kind=$(jg_meta_get "$STATE/$1.meta" kind)
+  [ "$kind" = ship ] || [ "$kind" = scout ] || return 1
+  brief=${JG_DATA_OVERRIDE:-$JG_HOME/data}/$1/brief.md
+  [ -f "$brief" ] && ! grep -qxF '# Herdr isolation - HARD SAFETY CONTRACT' "$brief"
+}
+
 # The table state of this wait on stdout, or 1 when it has no row.
 jg_wait_action_state() {  # <task> <wait source> <verb> <decision key> <declaration>
+  local ticket
   case "$2" in
     silent) jg_wait_action_silent_ok "$1" && echo silent ;;
     account | quota) jg_account_outage_ok "$1" && echo account-down ;;
-    '') [ "$3" = needs-decision ] && [ -n "$4" ] && jg_wait_action_critic_of "$1" "$5" >/dev/null && echo critic ;;
+    '')
+      if jg_wait_action_herdr_lab_ok "$1" "$3" "$4" "$5"; then
+        echo herdr-lab
+        return 0
+      fi
+      if [ -n "$4" ] && case "$3" in blocked | needs-decision) true ;; *) false ;; esac \
+        && ticket=$(jg_wait_action_waits_for "$5") && [ "$ticket" != "$1" ] && jg_wait_action_landed "$ticket"; then
+        echo waits-for
+        return 0
+      fi
+      return 1 ;;
     *) return 1 ;;
   esac
 }
@@ -149,29 +218,31 @@ _jg_wait_action_send() {  # <jg-send arguments...>
   JG_HOME="$JG_HOME" "$_JG_WAIT_TIMER_DIR/jg-send.sh" "$@" >/dev/null
 }
 
-# Forward the draft, or note that the critic already has it, then close the
-# decision through jg-send's answer path. Once the critic holds the draft the
-# step counts as taken even when the close fails: the open decision then climbs
-# the ladder with the forward named, and the draft is never sent twice.
-_jg_wait_action_forward() {  # <task> <decision key> <declaration> <now>
-  local critic note line at spawn answer rc=0
-  critic=$(jg_wait_action_critic_of "$1" "$3") || return 1
-  note=${3#*: }
-  # The time the draft was declared: the decision's own line, not the episode,
-  # which can re-arm after the critic started.
-  line=$(grep -F -- "${note:0:80}" "$STATE/$1.status" 2>/dev/null | tail -n 1)
-  at=$(status_line_at_epoch "$line" 2>/dev/null) || at=$4
-  spawn=$(jg_meta_get "$STATE/$critic.meta" spawn_gen); spawn=${spawn#s}; spawn=${spawn%%.*}
-  case "$spawn" in ''|*[!0-9]*) spawn=0 ;; esac
-  if [ "$spawn" -gt "$at" ] \
-    || { [ -f "$STATE/$critic.status" ] && [ $(($4 - $(age_of "$STATE/$critic.status"))) -gt "$at" ]; }; then
-    answer="The critic $critic already has this draft: it started or reported after you declared it. Wait for its round; there is nothing to do now."
-  else
-    _jg_wait_action_send "$critic" "Recon $1 declared its draft ready for your next round: $note. Read that draft now, write your next critic round, and report as your brief says." || return 1
-    answer="Your draft is forwarded to the critic $critic for its next round. Wait for its gaps; there is nothing to do now."
-  fi
-  _jg_wait_action_send "$1" --resolve-key "$2" "$answer" || rc=$?
-  [ "$rc" -eq 0 ] || echo "waiting timers: $1's draft reached $critic, but closing its decision $2 failed (code $rc)" >&2
+# The landed ticket's waiter resumes: one steer, with the blocker's key resolved
+# in the same send (jg-send's answer path appends the `resolved` line).
+_jg_wait_action_resume() {  # <task> <decision key> <text naming the ticket>
+  local ticket
+  ticket=$(jg_wait_action_waits_for "$3") || return 1
+  _jg_wait_action_send "$1" --resolve-key "$2" "Ticket $ticket, the one you waited for, has landed on the trunk. Your blocker is closed. Resume your task from where it stopped: read your steering inbox, check git status and git log, and move your branch onto the trunk tip first if your work needs what $ticket landed."
+}
+
+# Called by the landing check the moment <ticket> lands: every lane of this home
+# whose open blocker says `waits-for: <ticket>` resumes at once, with no timer and
+# no owner turn. A send that fails is reported and leaves that blocker open, so
+# the waits-for row above takes it at the next alert.
+jg_wait_waits_for_resume() {  # <landed ticket>
+  local file task row key rc
+  for file in "$STATE"/*.status; do
+    [ -f "$file" ] || continue
+    task=${file##*/}; task=${task%.status}
+    [ "$task" != "$1" ] && [ -f "$STATE/$task.meta" ] || continue
+    row=$(jg_wait_action_waiting_on "$task") || continue
+    [ "${row#*$'\t'}" = "$1" ] || continue
+    key=${row%%$'\t'*}
+    rc=0
+    _jg_wait_action_resume "$task" "$key" "waits-for: $1" || rc=$?
+    [ "$rc" -eq 0 ] || echo "waiting timers: resuming $task after $1 landed failed (code $rc)" >&2
+  done
 }
 
 _jg_wait_action_ring() {  # <task> <silent seconds>
@@ -182,14 +253,24 @@ _jg_wait_action_ring() {  # <task> <silent seconds>
 # agent and starts a new one, which outlasts a poll, so it runs detached and its
 # outcome goes to a log beside the sidecar; a failed relaunch leaves the wait
 # open, and the next rung reaches Main with both steps named.
-_jg_wait_action_relaunch() {  # <task>
-  local ctl="$_JG_WAIT_TIMER_DIR/jg-control.sh" log="$STATE/.waiting-timers/.acted/$1.relaunch.log" note detach=()
+_jg_wait_action_relaunch() {  # <task> [<note> [<relaunch option>]]
+  local ctl="$_JG_WAIT_TIMER_DIR/jg-control.sh" log="$STATE/.waiting-timers/.acted/$1.relaunch.log" note=${2:-} detach=()
   [ -x "$ctl" ] || return 1
-  note="The watcher relaunched you: you wrote no status line and showed no new output, and a steer asking for your state went unanswered. Your local copy and commits are kept. Read your steering inbox, check git status and git log, then continue the task from where it stopped."
+  # The log sits in the sidecar directory, which a first step has not created yet.
+  mkdir -p "${log%/*}" || return 1
+  [ -n "$note" ] || note="The watcher relaunched you: you wrote no status line and showed no new output, and a steer asking for your state went unanswered. Your local copy and commits are kept. Read your steering inbox, check git status and git log, then continue the task from where it stopped."
   ! command -v setsid >/dev/null 2>&1 || detach=(setsid)
   # shellcheck disable=SC2016 # The child shell expands its positional parameters.
-  ( JG_HOME="$JG_HOME" nohup ${detach[@]+"${detach[@]}"} sh -c '"$1" "$2" relaunch --note "$3"; echo "relaunch exit=$?"' \
-      jg-wait-relaunch "$ctl" "$1" "$note" </dev/null >"$log" 2>&1 & ) || return 1
+  ( JG_HOME="$JG_HOME" nohup ${detach[@]+"${detach[@]}"} sh -c '"$1" "$2" relaunch --note "$3" ${4:+"$4"}; echo "relaunch exit=$?"' \
+      jg-wait-relaunch "$ctl" "$1" "$note" "${3:-}" </dev/null >"$log" 2>&1 & ) || return 1
+}
+
+# Close the lane's "needs --herdr-lab" decision with its answer, then relaunch it
+# once with the lab section added to its brief. The answer goes first: the
+# relaunched worker reads it from its inbox, and the decision no longer waits.
+_jg_wait_action_rebrief() {  # <task> <decision key>
+  _jg_wait_action_send "$1" --resolve-key "$2" "Your brief now has the Herdr lab section you asked for. You are relaunched with it: follow that section for every Herdr call and carry on with the task." || return 1
+  _jg_wait_action_relaunch "$1" "The watcher relaunched you because you were blocked on a brief with no Herdr lab section. Your brief now has it. Your local copy and commits are kept. Read your steering inbox, check git status and git log, then continue the task from where it stopped, using the lab section for every Herdr call." --herdr-lab
 }
 
 # Take <step> on a wait in table <state>. 0 records it in the sidecar; 1 means it
@@ -201,14 +282,15 @@ jg_wait_action_take() {  # <task> <state> <step> <now> <decision key> <declarati
   jg_wait_action_read "$1" "$4"
   [ "$WAIT_ACT_STATE" != "$2" ] || { steps=$WAIT_ACT_STEPS first=$WAIT_ACT_FIRST; }
   case "$3" in
-    forward) _jg_wait_action_forward "$1" "$5" "$6" "$4" || return 1 ;;
     ring) _jg_wait_action_ring "$1" "$7" || return 1 ;;
+    resume) _jg_wait_action_resume "$1" "$5" "$6" || return 1 ;;
     relaunch) _jg_wait_action_relaunch "$1" || return 1 ;;
     recover) _jg_wait_action_account "$1" "$4" || return 1 ;;
+    rebrief) _jg_wait_action_rebrief "$1" "$5" || return 1 ;;
     lead) ;;
     *) return 1 ;;
   esac
-  # Stamped once the step is done, so the answer line a forward appends is not
+  # Stamped once the step is done, so the answer line a step appends is not
   # read as the worker's own progress.
   at=$(date +%s) || at=$4
   mkdir -p "${file%/*}" \

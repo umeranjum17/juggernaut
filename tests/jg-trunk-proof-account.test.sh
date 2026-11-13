@@ -24,6 +24,9 @@ test_a_proof_saved_under_one_account_lands_under_another() {
   [ "$rc" = 0 ] || fail "the landing check under account B must admit the proof saved under A, got exit $rc: $out"
   out=$(CLAUDE_CONFIG_DIR=$b done_gate q1) && fail "the worker's own done keeps the compare, so under account B it must be refused: $out"
   assert_contains "$out" "differs from the passed check" "the worker's done names the differing account"
+  # Every other reader of the proof (crew state, a lead on another account) calls the gaps function without the done flag.
+  out=$(CLAUDE_CONFIG_DIR=$b JG_HOME="$HOME_D" bash -c '. "$1"; shift; jg_dod_trunk_proof_gaps "$@"' _ "$W/root/bin/jg-merge-gate-lib.sh" "$HOME_D" "$HOME_D/state" q1 "$HOME_D/state/q1.meta" "$(git -C "$W/lanes/q1" rev-parse HEAD)" 2>&1 ) \
+    || fail "a view of the proof under account B must show no refusal: $out"
   out=$(CLAUDE_CONFIG_DIR=$b trunk land q1 2>&1) || fail "the lane proved under A must land under B: $out"
   git -C "$PROJ" cat-file -e "trunk:q1.txt" || fail "the landed tip must hold the lane's change"
   row=$(grep -F "$(git -C "$PROJ" rev-parse trunk)" "$HOME_D/data/trunk-landing-proofs.tsv") || fail "the landing must record its proofs row"

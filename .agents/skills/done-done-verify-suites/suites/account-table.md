@@ -1,0 +1,3 @@
+# Account table
+
+Account table: run `done-done run account-table` (`bash journeys/account-table.sh`, which runs `tests/jg-machine-account.test.sh` and writes its log and `steps.json` into the run's folder); it lints `core/machines/tables/account.tsv` (6 states, 13 moves, each with a test) and its enum, reads a fixture record in each of the six states through the real observer (`core/machines/observers/account.sh`, which reads the quota reader's `state/<provider>-accounts.json`, the picker's rest files and `state/account-assignments.json`), and reports legal and illegal moves to the shadow log (a legal move adds no line) (screen: none).

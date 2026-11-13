@@ -1,0 +1,10 @@
+# cleanup-reason: the closed list of reasons a cleanup is refused. The Go core (core/teardown, safety.go) prints one as reason=<value>.
+# value<TAB>mark (initial, final or -)<TAB>meaning
+unreadable-copy	-	git cannot read the copy's index or history
+uncommitted	-	the copy holds uncommitted changes
+unmerged-local	-	a local lane holds commits that no branch of the project has
+no-default-branch	-	the project's default branch cannot be determined
+not-on-trunk	-	a local-trunk lane's head is not on the local trunk
+no-merge-proof	-	the forge does not prove the merge
+empty-lane	-	the copy never left its starting commit and its ticket is still open
+check-failed	-	the safety check itself could not run

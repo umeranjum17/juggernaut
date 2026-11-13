@@ -71,6 +71,9 @@ JG_BACKLOG_CLOSE_REPLAY_RESULT=
 # re-deriving a deadline here.
 # shellcheck source=bin/jg-timeout-lib.sh disable=SC1091
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/jg-timeout-lib.sh"
+# jg-delivery-style.sh owns which old mode words name a trunk lane (the landed note's word).
+# shellcheck source=bin/jg-delivery-style.sh disable=SC1091
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/jg-delivery-style.sh"
 # jg-pr-lib.sh owns which URL is a Gerrit change. It is functions and empty
 # globals only, so it is sourced once rather than re-initialising a caller's
 # parsed identity.
@@ -412,10 +415,11 @@ jg_backlog_row_probe() {  # <data-dir> <id>
 
 # A sweep that pairs many task records with their rows reads the backlog once, not once per record (a home with 87
 # records paid 87 reads of 2.6 to 4.7 s). jg_backlog_row_snapshot fills JG_BACKLOG_ROW_SNAPSHOT with one
-# "<id> <state> <held> <blocked>" line per row, closed rows included, and jg_backlog_row_snapshot_probe answers
+# "<item> <state> <held> <blocked>" line per row, closed rows included (the item is the name the home's records use:
+# the task id of a ticket that was spawned under one, else the row id), and jg_backlog_row_snapshot_probe answers
 # jg_backlog_row_probe's question from it: the same JG_BACKLOG_ROW_RESULT and JG_BACKLOG_ROW_STATE, found or not_found.
 # A list read that fails as a whole returns 1 with JG_BACKLOG_ROW_ERROR, and the caller falls back to jg_backlog_row_probe.
-# Only the last two fields and the first two are read, so a quoted title holding commas cannot shift them.
+# Only the last three fields and the second are read, so a quoted title holding commas cannot shift them.
 JG_BACKLOG_ROW_SNAPSHOT=
 jg_backlog_row_snapshot() {  # <data-dir>
   local data out status
@@ -429,7 +433,7 @@ jg_backlog_row_snapshot() {  # <data-dir>
     JG_BACKLOG_ROW_ERROR=$JG_BACKLOG_TRANSITION_ERROR
     return 1
   fi
-  out=$(JG_BACKLOG_TIMEOUT=${JG_BACKLOG_TIMEOUT:-60} jg_backlog_row_list "$data" --all --fields held,blocked)
+  out=$(JG_BACKLOG_TIMEOUT=${JG_BACKLOG_TIMEOUT:-60} jg_backlog_row_list "$data" --all --fields held,blocked,item)
   status=$?
   if [ "$status" -ne 0 ] || ! printf '%s\n' "$out" | grep -q '^\(count: \|tasks: 0 \)'; then
     JG_BACKLOG_ROW_ERROR=$(printf '%s\n' "$out" | sed -n '1p')
@@ -437,7 +441,7 @@ jg_backlog_row_snapshot() {  # <data-dir>
     return 1
   fi
   JG_BACKLOG_ROW_SNAPSHOT=$(printf '%s\n' "$out" | awk -F, '/^  [A-Za-z0-9._-]+,/ {
-    id = $1; sub(/^ +/, "", id); print id " " $2 " " $(NF - 1) " " $NF }')
+    print $NF " " $2 " " $(NF - 2) " " $(NF - 1) }')
 }
 
 jg_backlog_row_snapshot_probe() {  # <id>
@@ -567,14 +571,38 @@ jg_backlog_start() {  # <data-dir> <id>
   jg_backlog_mutate "$1" start "$2"
 }
 
-# A row names the lane that owns it: the spawn generation in the task record, so
-# every fresh spawn and relaunch is a new lane, with the record's harness as
-# metadata.agent. bin/jg-beads-write.py owns the claim and its refusal.
+# A row names the worker that owns it: the Herdr agent name the task record holds
+# as agent_name= (made once, at the ticket's first spawn) as the assignee, the same
+# across a relaunch, with the spawn generation in the task record as
+# metadata.spawn_gen and the record's harness, model and effort as metadata.agent,
+# model and effort. A record with no agent_name= (a lane from before it, a lead)
+# keeps the name made from the task id. bin/jg-beads-write.py owns the claim and
+# its refusal of a second spawn.
+jg_backlog_agent_name() {  # <meta> <id>: the agent name this task is known by
+  local name
+  name=$(LC_ALL=C sed -n 's/^agent_name=//p' "$1" | tail -n 1)
+  [ -n "$name" ] || name=$("${BASH_SOURCE[0]%/*}/jg-herdr.sh" agent-name-for "$2") || return 1
+  printf '%s\n' "$name"
+}
+
 jg_backlog_lane_start() {  # <meta> <data-dir> <id> <state-dir>
-  local meta=$1 data=$2 id=$3 state=$4 agent
+  local meta=$1 data=$2 id=$3 state=$4 agent model effort name
   jg_backlog_meta_spawn_gen_optional "$meta" "$state" || return 1
   agent=$(LC_ALL=C sed -n 's/^harness=//p' "$meta" | tail -n 1)
-  JG_BACKLOG_LANE=$JG_BACKLOG_META_SPAWN_GEN JG_BACKLOG_AGENT=$agent jg_backlog_start "$data" "$id"
+  model=$(LC_ALL=C sed -n 's/^model=//p' "$meta" | tail -n 1)
+  effort=$(LC_ALL=C sed -n 's/^effort=//p' "$meta" | tail -n 1)
+  name=$(jg_backlog_agent_name "$meta" "$id") || {
+    JG_BACKLOG_TRANSITION_ERROR="no agent name for task $id"
+    return 1
+  }
+  JG_BACKLOG_LANE=$name JG_BACKLOG_SPAWN_GEN=$JG_BACKLOG_META_SPAWN_GEN JG_BACKLOG_AGENT=$agent \
+    JG_BACKLOG_MODEL=$model JG_BACKLOG_EFFORT=$effort jg_backlog_start "$data" "$id"
+}
+
+# Herdr kept a variant of the name the spawn made: the row follows the name that
+# stuck, only while the first name still owns it.
+jg_backlog_lane_rename() {  # <data-dir> <id> <first-name> <stuck-name>
+  jg_backlog_mutate "$1" rename-lane "$2" "$3" "$4"
 }
 
 # A row already In flight needs no move, so only Beads has work here: the new
@@ -917,6 +945,12 @@ jg_backlog_close_transition() {
   local meta=$1 marker=$2 data=$3 id=$4 state=$5
   shift 5
   "${BASH_SOURCE[0]%/*}/jg-machine-shadow.sh" task "$id" "done" || true  # shadow report of the move (jg-machine-shadow.sh)
+  local move_rc=0
+  "${BASH_SOURCE[0]%/*}/jg-move.sh" --shadow "$id" close >/dev/null 2>&1 || move_rc=$?
+  if [ "$move_rc" -eq 1 ]; then  # the ticket's own move: shadow until config/machine-enforce lists ticket (jg-move.sh)
+    JG_BACKLOG_TRANSITION_ERROR="ticket $id cannot make the move close from its state; run: bin/jg-machine.sh next ticket $id"
+    return 1
+  fi
   [ -z "$meta" ] || jg_backlog_record_remove "$meta" "task record" "$state" || return 1
   if ! jg_backlog_done "$data" "$id" "$@"; then
     # A backlog that never held this row has nothing left to close, which is
@@ -1058,7 +1092,7 @@ jg_backlog_close_marker_validate() {  # <marker-path> <authorized-data-dir> <exp
     0) ;;
     2)
       case "${args[0]}" in
-        --note) case ${args[1]} in local%20main|local-trunk) true ;; *) false ;; esac ;;
+        --note) [ "${args[1]}" = local%20main ] || [ "${args[1]}" = dropped ] || jg_delivery_style_trunk_aliases | grep -qxF -- "${args[1]}" ;;
         --pr)
           arg_value=${args[1]}
           [ "${#arg_value}" -le 2048 ] \

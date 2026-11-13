@@ -6,7 +6,7 @@
 # release record alone.
 # The last two cases drive the real report helper so the rule is proven on a
 # path a lead actually reports through, not only on the check itself.
-# This is also the test that owns journeys/live-services.sh (the done-done journey runs this file),
+# This is also the test that owns the live-services journey of .done-done.yaml (the done-done journey runs this file),
 # so the changed-test map selects it for a change to that journey.
 set -u
 
@@ -165,6 +165,37 @@ task() {  # <home> <id> <pr-number> [merged]
   if [ "${4:-}" = merged ]; then : > "$1/state/$2.pr-poll-merge-notified"; fi
 }
 
+test_a_landed_change_is_live_where_the_homes_run_it() {
+  local dir lead claim sha
+  dir=$(home homes-run); lead="$TMP_ROOT/homes-run-lead"
+  g() { git -c user.email=t@t -c user.name=t "$@"; }
+  g init -q "$dir" && g -C "$dir" commit -q --allow-empty -m 'base'
+  g -C "$dir" tag c-1
+  g -C "$dir" commit -q --allow-empty -m 'jg8-slice: the slice' -m 'Ticket: jg8-slice'
+  sha=$(git -C "$dir" rev-parse HEAD)
+  git clone -q "$dir" "$lead"
+  mkdir -p "$dir/data"
+  printf -- '- lead1 - test lead (home: %s; scope: all; projects: juggernaut; added 2026-11-13)\n' "$lead" > "$dir/data/squad_leads.md"
+  claim='Fixed the slice, ticket jg8-slice.'
+  verdict "$dir" 'done' "$claim"
+  [ "$RC" -eq 3 ] || fail "a change the homes run must extend the claim (exit 3), got $RC: $ERR"
+  assert_contains "$OUT" 'live: c-1-1-g' 'the claim carries the version'
+  assert_contains "$OUT" '@ homes lead1, primary' 'the claim names every home that runs it'
+  assert_contains "$ERR" 'run it' 'the reporter is told why it is live'
+  verdict "$dir" 'done' "Fixed it, commit ${sha:0:9}."
+  assert_contains "$OUT" '@ homes lead1, primary' 'a commit id names the change too'
+  # A trunk commit that the lead does not run yet is named after not-yet-in.
+  g -C "$dir" commit -q --allow-empty -m 'jg8-next: next' -m 'Ticket: jg8-next'
+  verdict "$dir" 'done' 'Fixed the next one, jg8-next.'
+  assert_contains "$OUT" '@ homes primary; not yet in: lead1' 'a home behind the change is named'
+  # A change no home runs stays merged-not-released.
+  git -C "$dir" update-ref refs/heads/side "$(g -C "$dir" commit-tree -p "$sha" -m 'jg8-side: x' -m 'Ticket: jg8-side' 'HEAD^{tree}')"
+  printf '%s\n' "$(git -C "$dir" rev-parse side)" > "$dir/state/trunk-tip-juggernaut"
+  verdict "$dir" 'done' 'Fixed the side one, jg8-side.'
+  assert_equals 'merged-not-released: Fixed the side one, jg8-side.' "$OUT" 'a change no home runs stays merged-not-released'
+  pass 'a landed change is live where the homes run it'
+}
+
 test_an_omitted_carries_and_waiting_clause_is_flagged_and_extended() {
   local dir claim='Fixed the loop; live: v9.9.9 @ https://app.test/settings'
   dir=$(home extended 'v8.0.0 2026-10-01T10:00Z app.test prs=3' 'v9.9.9 2026-11-01T10:00Z app.test prs=12,#15')
@@ -213,6 +244,7 @@ test_the_lead_report_path_prints_the_extended_claim() {
 }
 
 test_a_merged_only_fix_is_downgraded
+test_a_landed_change_is_live_where_the_homes_run_it
 test_a_down_service_refuses_the_live_claim
 test_an_unknown_release_state_downgrades
 test_a_released_fix_with_an_observation_point_passes
@@ -226,4 +258,12 @@ test_an_omitted_carries_and_waiting_clause_is_flagged_and_extended
 test_one_omitted_clause_is_named_alone
 test_a_record_without_prs_reads_unrecorded
 test_the_lead_report_path_prints_the_extended_claim
+if [ -n "${DONE_DONE_EVIDENCE_ROOT:-}" ]; then
+  jq -n --arg v "$(git -C "$ROOT" describe --tags --always 2>/dev/null)" '{
+    target: {version: $v},
+    start: "a Main home and a registered lead home that both run a trunk commit carrying a Ticket trailer",
+    steps: ["report done with a fix claim that names the landed ticket", "report done with a commit id", "advance Main past the lead and claim the newer ticket", "claim a ticket that no home runs"],
+    result: "the claim gains live: <version> @ homes <ids> (with not yet in: for a lagging home), and a change no home runs stays merged-not-released"
+  }' > "$DONE_DONE_EVIDENCE_ROOT/steps.json" || fail 'could not write the step record'
+fi
 printf 'jg-live-claim: ok\n'

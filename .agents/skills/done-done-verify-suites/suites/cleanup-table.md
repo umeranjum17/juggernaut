@@ -1,0 +1,3 @@
+# Cleanup table
+
+Cleanup table: run `done-done run cleanup-table` (`bash journeys/cleanup-table.sh`, which runs `tests/jg-machine-cleanup.test.sh` and writes its log and `steps.json` into the run's folder); it lints `core/machines/tables/cleanup.tsv` (5 states, 7 moves, each with a test) and its enum, reads a fixture record in each of the five states through the real observer (`core/machines/observers/cleanup.sh`, which reads the task record, its pending-close record, the record lock, the lander's cleanup outcome line and the reaper's temp entries), and reports legal and illegal moves to the shadow log (a legal move adds no line) (screen: none).

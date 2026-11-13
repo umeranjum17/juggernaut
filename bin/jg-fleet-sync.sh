@@ -58,6 +58,8 @@ unset _jg_d
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/jg-delivery-style.sh
+. "$SCRIPT_DIR/jg-delivery-style.sh"
 JG_ROOT="${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$JG_ROOT}}"
 PROJECTS="${JG_PROJECTS_OVERRIDE:-$JG_HOME/projects}"
@@ -359,7 +361,7 @@ sync_project() {
     return 0
   fi
   mode=${mode_line%% *}
-  if { [ "$mode" = local-only ] || [ "$mode" = local-trunk ]; }; then
+  if jg_delivery_style_is "$mode" local; then
     echo "$label: skipped: $mode project"
     return 0
   fi

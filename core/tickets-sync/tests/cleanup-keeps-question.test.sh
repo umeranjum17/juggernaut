@@ -37,7 +37,7 @@ ticket_id() { printf 'jg-%s\n' "$(printf %s "$1" | sha256sum | cut -c1-32)"; }
  jg-backlog.sh add jg-merged-ticket 'Umer shipped work with a ticket' --repo alpha --priority 2 --body "pr: $(pr 20)" >/dev/null
  jg-backlog.sh add jg-closed-task 'Umer closed work with a task card' --repo alpha --priority 2 --body "pr: $(pr 11)" >/dev/null
  jg-backlog.sh add jg-merged-task 'Umer shipped work with a task card' --repo alpha --priority 2 --body "pr: $(pr 20)" >/dev/null
- for id in jg-closed-ticket jg-merged-ticket jg-closed-task jg-merged-task; do jg-backlog.sh done "$id" >/dev/null; done)
+ for id in jg-closed-ticket jg-merged-ticket jg-closed-task jg-merged-task; do jg-backlog.sh "done" "$id" >/dev/null; done)
 bash "$root/wiring.sh" >/dev/null
 "$JG_HOME/state/tickets-sync.check.sh" >/dev/null
 raise() {  # <key> <ask-ref> <title> <why> [extra raise flags]

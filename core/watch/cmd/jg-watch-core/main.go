@@ -38,6 +38,8 @@
 //	r<US><target>                                  watched, in the glob's order
 //	w<US><window><US><kind><US><backend><US><harness>   every named window's answers
 //
+// The `interval` and `cost` commands are owned by interval.go.
+//
 // Usage: jg-watch-core inventory <meta>...
 package main
 
@@ -74,8 +76,16 @@ type inventory struct {
 }
 
 func main() {
+	if len(os.Args) >= 2 {
+		switch os.Args[1] {
+		case "interval":
+			os.Exit(runInterval(os.Args[2:]))
+		case "cost":
+			os.Exit(runCost(os.Args[2:]))
+		}
+	}
 	if len(os.Args) < 2 || os.Args[1] != "inventory" {
-		fmt.Fprintln(os.Stderr, "usage: jg-watch-core inventory <meta>...")
+		fmt.Fprintln(os.Stderr, "usage: jg-watch-core inventory <meta>... | interval <poll> <idle> <meta>... | cost <state> <key> <before> <after> [budget]")
 		os.Exit(2)
 	}
 	records := make([]*metaRecord, 0, len(os.Args)-2)

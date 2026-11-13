@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/jg-tmp-reaper.test.sh - jg-* scratch never piles up in the temp directory:
 # a signalled script removes its own scratch, the heartbeat cycle leaves the entry count flat,
-# and bin/jg-tmp-reaper.sh removes what no trap could (bin/jg-tmp-reaper.sh, bin/jg-timeout-lib.sh).
+# and bin/jg-tmp-reaper.sh removes what no trap could (bin/jg-tmp-reaper.sh, bin/jg-tmp-sandbox-lib.sh, bin/jg-timeout-lib.sh).
 set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -60,6 +60,84 @@ assert_present "$R/jg-task-c" "the reaper removed the root of a task with a stat
 assert_absent "$R/jg-plain-leak" "the reaper kept a plain old jg- entry"
 pass "reaper never removes a task temp root"
 
+# --- a test sandbox older than its timeout is stopped and removed ---------------------
+# jg-trunk.* and tmp.* roots holding a trunk-landing tree: the old one (its own 1 s timeout) loses its process and folder,
+# the fresh one (default timeout) is untouched, and a live task root, a sandbox with a task-meta process and a plain tmp.* are untouched.
+SB=$TMP_ROOT/sandbox-tmp
+mkdir -p "$SB"
+mk_sandbox() {  # <name>
+  mkdir -p "$SB/$1/world/root/bin"
+  : > "$SB/$1/world/root/bin/jg-trunk.sh"
+}
+mk_sandbox jg-trunk.old; printf '1\n' > "$SB/jg-trunk.old/.jg-sandbox-timeout"
+mk_sandbox tmp.oldtmp; printf '1\n' > "$SB/tmp.oldtmp/.jg-sandbox-timeout"
+mk_sandbox jg-trunk.fresh
+mk_sandbox tmp.taskproc; printf '1\n' > "$SB/tmp.taskproc/.jg-sandbox-timeout"
+mk_sandbox jg-livetask; printf '1\n' > "$SB/jg-livetask/.jg-sandbox-timeout"; mkdir -p "$SB/jg-livetask/gotmp"
+mk_sandbox tmp.named; printf '1\n' > "$SB/tmp.named/.jg-sandbox-timeout"
+mkdir -p "$SB/tmp.plain"; : > "$SB/tmp.plain/f"; printf '1\n' > "$SB/tmp.plain/.jg-sandbox-timeout"
+: > "$HOME_DIR/state/sb-task.meta"
+printf 'worktree=%s\n' "$SB/tmp.named" > "$HOME_DIR/state/sb-named.meta"
+for d in jg-trunk.old tmp.oldtmp jg-trunk.fresh tmp.taskproc jg-livetask tmp.named tmp.plain; do
+  touch -d '3 hours ago' "$SB/$d/world/root/bin/jg-trunk.sh" "$SB/$d/.jg-sandbox-timeout" 2>/dev/null
+done
+sb_hold() {  # <dir> [task id]: a process working in <dir>; its pid in SB_PID
+  JG_TASK_ID=${2:-} bash -c 'cd "$1" && exec sleep 600' _ "$1" </dev/null >/dev/null 2>&1 &
+  SB_PID=$!
+  # On a loaded host the shell may not have reached its directory yet: wait until the process works in it.
+  local n=0
+  until [ "$(readlink "/proc/$SB_PID/cwd" 2>/dev/null)" = "$1" ] && [ "$(tr '\0' ' ' < "/proc/$SB_PID/cmdline" 2>/dev/null)" = "sleep 600 " ]; do
+    n=$((n + 1)); [ "$n" -lt 200 ] || break; sleep 0.05
+  done
+}
+sb_hold "$SB/jg-trunk.old"; P_OLD=$SB_PID
+sb_hold "$SB/tmp.oldtmp"; P_OLDTMP=$SB_PID
+sb_hold "$SB/jg-trunk.fresh"; P_FRESH=$SB_PID
+sb_hold "$SB/tmp.taskproc" sb-task; P_TASK=$SB_PID
+sb_hold "$SB/jg-livetask"; P_LIVE=$SB_PID
+sb_hold "$SB/tmp.named"; P_NAMED=$SB_PID
+sb_hold "$SB/tmp.plain"; P_PLAIN=$SB_PID
+sleep 2.2
+TMPDIR=$SB JG_HOME=$HOME_DIR JG_TMP_SANDBOX_GRACE_SEC=1 JG_TMP_ALERT_PCT=100 "$REAPER" check >/dev/null 2>&1
+assert_absent "$SB/jg-trunk.old" "an old jg-trunk.* sandbox was kept"
+assert_absent "$SB/tmp.oldtmp" "an old tmp.* sandbox was kept"
+assert_present "$SB/jg-trunk.fresh" "a fresh sandbox was removed"
+assert_present "$SB/tmp.taskproc" "a sandbox with a task-meta process was removed"
+assert_present "$SB/jg-livetask" "a live task root was removed"
+assert_present "$SB/tmp.named" "a folder a task meta names was removed"
+assert_present "$SB/tmp.plain" "a tmp.* entry without a trunk-landing tree was removed"
+alive() { local st; st=$(ps -o stat= -p "$1" 2>/dev/null | tr -d " "); [ -n "$st" ] && [ "${st%"${st#?}"}" != Z ]; }
+alive "$P_OLD" && fail "the old sandbox's process kept running"
+alive "$P_OLDTMP" && fail "the old tmp.* sandbox's process kept running"
+alive "$P_FRESH" || fail "a fresh sandbox's process was stopped"
+alive "$P_TASK" || fail "a task-meta process was stopped"
+alive "$P_LIVE" || fail "a live task root's process was stopped"
+alive "$P_NAMED" || fail "a process in a task-named folder was stopped"
+alive "$P_PLAIN" || fail "a process in a plain tmp.* entry was stopped"
+assert_grep "sandbox-reaped $SB/jg-trunk.old" "$HOME_DIR/state/tmp-reaper.log" "the sandbox removal was not logged"
+for pid in "$P_FRESH" "$P_TASK" "$P_LIVE" "$P_NAMED" "$P_PLAIN"; do kill "$pid" 2>/dev/null; done
+wait 2>/dev/null
+pass "reaper stops and removes only test sandboxes older than their timeout"
+
+# --- a stranger's task process never protects a sandbox --------------------------------
+# The holder scan once overwrote its sandbox-path argument with the stat fields of the first holder it found, so a later
+# process of any task (here: one with a recorded task meta and a bare "S" argument) was read as a holder of the sandbox.
+mk_sandbox jg-trunk.stranger; printf '1\n' > "$SB/jg-trunk.stranger/.jg-sandbox-timeout"
+touch -d '3 hours ago' "$SB/jg-trunk.stranger/world/root/bin/jg-trunk.sh" "$SB/jg-trunk.stranger/.jg-sandbox-timeout"
+sb_hold "$SB/jg-trunk.stranger"; P_H1=$SB_PID
+JG_TASK_ID=sb-task bash -c 'exec sleep 600' _ S </dev/null >/dev/null 2>&1 & P_D1=$!
+sb_hold "$SB/jg-trunk.stranger"; P_H2=$SB_PID
+JG_TASK_ID=sb-task bash -c 'exec sleep 600' _ S </dev/null >/dev/null 2>&1 & P_D2=$!
+sleep 2.2
+TMPDIR=$SB JG_HOME=$HOME_DIR JG_TMP_SANDBOX_GRACE_SEC=1 JG_TMP_ALERT_PCT=100 "$REAPER" check >/dev/null 2>&1
+assert_absent "$SB/jg-trunk.stranger" "a task process that does not work in the sandbox kept it"
+alive "$P_H1" && fail "the sandbox's first process kept running"
+alive "$P_H2" && fail "the sandbox's second process kept running"
+alive "$P_D1" || fail "a stranger's task process was stopped"
+for pid in "$P_D1" "$P_D2"; do kill "$pid" 2>/dev/null; done
+wait 2>/dev/null
+pass "a stranger's task process does not keep an old sandbox"
+
 # --- the alert ----------------------------------------------------------------
 out=$(TMPDIR=$T JG_HOME=$HOME_DIR JG_TMP_ALERT_PCT=1 "$REAPER" check 2>&1)
 assert_contains "$out" "is " "no alert at the threshold"
@@ -88,7 +166,8 @@ signalled_leaves_nothing() {  # <label> <env assignment or ''> <script text> <wa
   kill -TERM -- "-$pid" 2>/dev/null
   wait "$pid" 2>/dev/null
   # A descendant that left the group (the crew-state read) finishes its own bounded call and cleans up itself.
-  for _ in $(seq 1 50); do [ "$(count "$d")" = 0 ] && break; sleep 0.1; done
+  # Poll for that end - up to 30 s, leaving the moment the scratch is gone - not a fixed time a loaded host overruns.
+  for _ in $(seq 1 300); do [ "$(count "$d")" = 0 ] && break; sleep 0.1; done
   [ "$(count "$d")" = 0 ] || fail "$label: TERM left $(find "$d" -mindepth 1 | tr '\n' ' ')"
   pass "$label: TERM leaves no scratch"
 }

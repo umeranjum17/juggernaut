@@ -1,0 +1,6 @@
+# trunk: the closed list of states of the machine "Trunk line".
+# value<TAB>mark (initial, final or -)<TAB>kind (active, waiting, rest, final)<TAB>meaning
+clean	initial	rest	the tip of the trunk is verified
+unverified	-	waiting	the tip holds commits that no verify has run on
+verifying	-	active	a verify runs on the commits above the pin
+red	-	waiting	a verify failed, and its commit is being reverted

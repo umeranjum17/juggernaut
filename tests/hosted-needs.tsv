@@ -1,0 +1,6 @@
+# Scripts the hosted CI job (jg-test-run.sh --hosted) drops while a tool they need is missing from the runner. script<TAB>tool, one row per tool.
+# Interim: the hosted shell test job goes away with slice T3a. The scripts still run on our host, in a change's proof and in the line's verify.
+tests/jg-trunk-release-open-pr.test.sh	done-done
+tests/jg-trunk-release-open-pr.test.sh	sign-off-axi
+tests/jg-browser-reaper.test.sh	bd
+tests/jg-trunk-rollover.test.sh	bd

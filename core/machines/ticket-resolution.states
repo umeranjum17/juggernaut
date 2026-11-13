@@ -1,0 +1,8 @@
+# ticket-resolution: how a closed ticket ended.
+# value<TAB>mark (initial, final or -)<TAB>meaning
+shipped	final	the change is on main
+answered	final	a Recon or a question was answered
+dropped	final	the lead or the owner dropped it
+superseded	final	another ticket replaced it
+duplicate	final	the same as another ticket
+reverted	final	the change was taken back

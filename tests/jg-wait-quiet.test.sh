@@ -173,7 +173,7 @@ backdate() {  # <home> <task> <secs>
 test_parked_and_finished_lanes_ring_no_timer_and_a_blocked_lane_still_does() {
   local m w n=0 i
   m=$(home quiet)
-  for w in "pk:paused [at=1]: parked until 2026-12-31T00:00Z, nothing to do"$'\n' \
+  for w in "pk:paused [at=1] [wait=lead] [reason=parked]: set aside, nothing to do"$'\n' \
     "rc:needs-decision [at=1] [key=d1]: owner call: which slice goes first"$'\n'"done [at=2]: report final, gate PASS; owner calls D1 wait on the lead" \
     "wk:needs-decision [at=1] [key=d2]: owner call: which slice goes first" \
     "bl:blocked [at=1] [key=vendor]: waiting on the vendor"; do
@@ -195,7 +195,7 @@ test_parked_and_finished_lanes_ring_no_timer_and_a_blocked_lane_still_does() {
   done
   grep -q -E "waiting-state bl .*level=owner" "$m/events" || fail "a blocked lane did not ring: $(cat "$m/events")"
   grep -q -E "waiting-state wk .*level=owner" "$m/events" || fail "a working lane under an open decision did not ring: $(cat "$m/events")"
-  pass "a placeholder pause and a finished Recon raise no timer wake in two hours; a blocked lane and a working lane under an open decision still ring"
+  pass "a parked pause and a finished Recon raise no timer wake in two hours; a blocked lane and a working lane under an open decision still ring"
 }
 
 # A real future date and a placeholder both stay quiet, but a pause whose real date has passed
@@ -217,5 +217,34 @@ test_a_pause_with_a_past_real_date_still_rings() {
   pass "a pause whose real date has passed still rings"
 }
 
+# A lane blocked `waits-for: <ticket>` while that ticket's own lane runs is waiting on a landing that resumes it by
+# itself (jg-7v6uw slice 12, tests/jg-wait-next-step.test.sh): no episode and no wake. When the ticket's lane is gone
+# without landing, nobody will resume it, so it rings like any blocker.
+test_a_lane_waiting_for_a_running_ticket_is_quiet_and_rings_when_that_lane_is_gone() {
+  local m i
+  m=$(home waitsfor)
+  printf 'kind=ship\nbackend=tmux\nwindow=fake:1\nharness=claude\n' > "$m/state/wf.meta"
+  printf 'blocked [at=1] [key=wf1]: waits-for: tk1 the base change\n' > "$m/state/wf.status"
+  printf 'kind=ship\nbackend=tmux\nwindow=fake:2\nharness=claude\n' > "$m/state/tk1.meta"
+  printf 'working [at=1]: building\n' > "$m/state/tk1.status"
+  touch -d '-20 minutes' "$m/state/wf.status" "$m/state/tk1.status"
+  prime_status_seen "$m/state" "$m/state/wf.status"
+  prime_status_seen "$m/state" "$m/state/tk1.status"
+  for i in 1 2 3; do
+    PANES='1 2' cycle "$m"
+    [ ! -f "$m/state/.waiting-timers/wf" ] || backdate "$m" wf 1200
+  done
+  [ ! -e "$m/state/.waiting-timers/wf" ] || fail "a lane waiting for a running ticket armed an episode"
+  ! grep -q -E "waiting-state wf |waiting-timer[^ ]*wf" "$m/events" || fail "a lane waiting for a running ticket raised a wake: $(cat "$m/events")"
+  rm -f "$m/state/tk1.meta" "$m/state/tk1.status"
+  for i in 1 2 3; do
+    PANES='1' cycle "$m"
+    [ ! -f "$m/state/.waiting-timers/wf" ] || backdate "$m" wf 1200
+  done
+  grep -q -E "waiting-state wf .*level=owner" "$m/events" || fail "a lane whose awaited ticket is gone did not ring: $(cat "$m/events")"
+  pass "a lane waiting for a running ticket is quiet; it rings once that lane is gone without landing"
+}
+
 test_parked_and_finished_lanes_ring_no_timer_and_a_blocked_lane_still_does
 test_a_pause_with_a_past_real_date_still_rings
+test_a_lane_waiting_for_a_running_ticket_is_quiet_and_rings_when_that_lane_is_gone

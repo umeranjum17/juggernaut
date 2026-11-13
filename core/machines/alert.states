@@ -1,0 +1,7 @@
+# alert: the closed list of states of the machine "Escalation and alert ladder".
+# value<TAB>mark (initial, final or -)<TAB>kind (active, waiting, rest, final)<TAB>meaning
+open	initial	waiting	the alert rings and nobody has taken it
+acknowledged	-	waiting	someone has taken it
+inhibited	-	rest	a higher alert covers it
+stuck	-	rest	it stayed at its top rung past its repeats: one card and one page went out, and it is quiet
+resolved	final	final	the cause is gone

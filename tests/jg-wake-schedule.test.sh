@@ -17,7 +17,7 @@
 #               stayed down past the grace window.
 #   immediate   a captain answer, a red gate, a host alarm, a stuck worker and a finished deliverable
 #               still wake at once, even when the digest is due.
-# This is also the test that owns journeys/wake-schedule.sh and journeys/wake-batch-threshold.sh (the done-done journey runs this file),
+# This is also the test that owns the wake-schedule and wake-batch-threshold journeys (the done-done journey runs this file),
 # so the changed-test map selects it for a change to that journey.
 set -u
 

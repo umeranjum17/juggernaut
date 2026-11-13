@@ -1,251 +1,984 @@
 app: juggernaut
 journeys:
+  startable-set-scale:
+    tier: local
+    command: bash journeys/startable-set-scale.sh
+    timeout: 10m
   trunk-cleanup:
+    tier: local
     command: bash journeys/trunk-cleanup.sh
   status-cold-scan:
+    tier: local
     command: bash journeys/status-cold-scan.sh
+  status-progress-wakes-nobody:
+    tier: local
+    command: bash journeys/status-progress-wakes-nobody.sh
+  hook-inbox:
+    tier: local
+    command: bash tests/jg-hook-inbox.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  busy-beat:
+    tier: local
+    command: bash tests/jg-busy-beat.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   learnings:
-    command: bash journeys/learnings.sh
+    tier: local
+    command: bash tests/jg-learnings.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  plan-route:
+    tier: local
+    command: bash tests/jg-plan-route.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  lock-lease:
+    tier: local
+    command: bash tests/jg-lock-lease.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  plan-gate:
+    tier: local
+    command: bash journeys/plan-gate.sh
+  message-table:
+    tier: local
+    command: (bash bin/jg-machine.sh check message && bash bin/jg-machine.sh events message && bash tests/jg-machine-message.test.sh && bash tests/jg-machine-inbox.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  machine-observers:
+    tier: local
+    command: (for m in squad-lead supervision presence; do bash bin/jg-machine.sh check $m && bash bin/jg-machine.sh events $m || exit 1; done; bash tests/jg-machine-observers16.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  account-table:
+    tier: local
+    command: bash journeys/account-table.sh
+  landing-table:
+    tier: local
+    command: (bash bin/jg-machine.sh check landing && bash bin/jg-machine.sh events landing && bash tests/jg-machine-landing.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  hold-table:
+    tier: local
+    command: bash journeys/hold-table.sh
+  trunk-table:
+    tier: local
+    command: bash journeys/trunk-table.sh
+  cleanup-table:
+    tier: local
+    command: bash journeys/cleanup-table.sh
+  worker-table:
+    tier: local
+    command: (bash bin/jg-machine.sh check worker && bash bin/jg-machine.sh events worker && bash tests/jg-machine-worker.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  proof-bypass:
+    tier: local
+    command: (bash bin/jg-machine.sh check bypass && bash bin/jg-machine.sh events bypass && bash tests/jg-proof-bypass.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  alert:
+    tier: local
+    command: bash journeys/alert.sh
+  proof-bypass-apply:
+    tier: local
+    command: bash tests/jg-proof-bypass-apply.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  bypass-says-so:
+    tier: local
+    command: bash tests/jg-bypass-says-so.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   brief-lint:
+    tier: local
     command: bash journeys/brief-lint-real-briefs.sh
   teardown-missing-record:
+    tier: local
     command: bash journeys/teardown-missing-record.sh
+  state-folder-diet:
+    tier: local
+    command: bash journeys/state-folder-diet.sh
   live-services:
-    command: bash journeys/live-services.sh
+    tier: local
+    command: (bash tests/jg-live-claim.test.sh && bash bin/jg-live-services.sh; echo "exit $?") > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   ci-rerun-refusal:
+    tier: local
     command: bash journeys/ci-rerun-refusal.sh
   stack-install:
-    command: bash journeys/stack-install.sh
+    tier: local
+    command: bash tests/jg-stack.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   wake-watcher:
-    command: bash journeys/wake-watcher.sh
+    tier: local
+    command: bash tests/jg-wake-watcher.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   wake-batching:
-    command: bash journeys/wake-batching.sh
+    tier: local
+    command: bash tests/jg-wake-batching.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   required-shard-retry:
-    command: bash journeys/required-shard-retry.sh
+    tier: local
+    command: (env -u JG_TASK_ID bash tests/jg-test-run.test.sh && env -u JG_TASK_ID bash tests/jg-trunk-verify.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  trunk-parallel-batch:
+    tier: local
+    command: env -u JG_TASK_ID bash tests/jg-trunk-parallel-batch.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   trunk-latency:
-    command: bash journeys/trunk-latency.sh
+    tier: local
+    command: env -u JG_TASK_ID bash tests/jg-trunk-latency.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  status-latency:
+    tier: local
+    command: env -u JG_TASK_ID bash tests/jg-status-latency.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   ports-adapter-refusal:
+    tier: local
     command: bash journeys/ports-adapter-refusal.sh
   rejected-state-check-once:
-    command: bash journeys/rejected-state-check-once.sh
+    tier: local
+    command: bash tests/jg-rejected-state-check-once.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   wake-schedule:
-    command: bash journeys/wake-schedule.sh
+    tier: local
+    command: (bash tests/jg-wake-schedule.test.sh && bash tests/jg-wake-batching.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   wake-batch-threshold:
-    command: bash journeys/wake-batch-threshold.sh
+    tier: local
+    command: WAKE_SCHEDULE_ONLY=batch-threshold bash tests/jg-wake-schedule.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   planned-wait:
-    command: bash journeys/planned-wait.sh
+    tier: local
+    command: bash tests/jg-planned-wait.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   wait-quiet:
-    command: bash journeys/wait-quiet.sh
+    tier: local
+    command: bash tests/jg-wait-quiet.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  wait-word:
+    tier: local
+    command: JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-wait-word.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    timeout: 10m
+  spawn-admit:
+    tier: local
+    command: JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-spawn-admit.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    timeout: 10m
   watcher-window-inventory:
-    command: bash journeys/watcher-window-inventory.sh
+    tier: local
+    command: bash tests/jg-watch-inventory.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   migration-card:
+    tier: local
     command: bash journeys/migration-card.sh
   axi-on-path:
-    command: bash journeys/axi-on-path.sh
+    tier: local
+    command: bash tests/jg-axi-link.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  tool-wiring:
+    tier: local
+    command: bash journeys/tool-wiring.sh
   relaunch-model-refusal:
+    tier: local
     command: bash tests/jg-control.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   pre-push-hook:
+    tier: local
     command: bash tests/jg-pre-push.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   spawn-dispatch-profile:
-    command: bash journeys/spawn-dispatch-profile.sh
+    tier: local
+    command: bash tests/jg-spawn-dispatch-profile.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  claude-account-by-model:
+    tier: local
+    command: bash tests/jg-spawn-account-by-model.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   claude-1m-context:
-    command: bash journeys/claude-1m-context.sh
+    tier: local
+    command: bash tests/jg-spawn-model.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   spawn-load-admission:
-    command: bash journeys/spawn-load-admission.sh
+    tier: local
+    command: bash tests/jg-spawn-load-admission.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   tool-models:
+    tier: local
     command: bash journeys/tool-models.sh
   receipt-candidate-hook:
+    tier: local
     command: bash journeys/receipt-candidate-hook.sh
   tickets-stage-publish:
+    tier: local
     command: bash core/tickets-sync/run-stage-proof.sh
   tickets-truthful:
+    tier: local
     command: bash core/tickets-sync/run-board-proof.sh && bash core/tickets-sync/run-tidy-proof.sh
   tickets-writeback:
+    tier: local
     command: bash journeys/tickets-writeback.sh
   tickets-cleanup-acts:
+    tier: local
     command: bash core/tickets-sync/run-cleanup-proof.sh
   ready-backlog-stall:
+    tier: local
     command: bash journeys/ready-backlog-stall.sh
     timeout: 45m
   fleet-report:
+    tier: local
     command: bash core/fleet-report/run-proof.sh
   project-state-map:
+    tier: local
     command: bash core/project-state-map/run-proof.sh
   status-digest:
+    tier: local
     command: bash journeys/status-digest.sh
   release-readiness:
+    tier: local
     command: bash journeys/release-readiness.sh
   frozen-release-base:
+    tier: local
     command: bash journeys/frozen-release-base.sh
   red-ci-ticket:
+    tier: local
     command: bash journeys/red-ci-ticket.sh
   release-cut-orphans:
+    tier: local
     command: bash journeys/release-cut-orphans.sh
   release-shipped-merge-refusal:
+    tier: local
     command: bash journeys/release-shipped-merge-refusal.sh
   critical-path:
-    command: bash journeys/critical-path.sh
+    tier: local
+    command: (bash tests/jg-critical-path.test.sh && bash tests/jg-critical-path-spawn.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   trunk-landing:
+    tier: local
     command: bash journeys/trunk-landing.sh
   landing-card:
+    tier: local
     command: bash journeys/landing-card.sh
   proof-attach:
+    tier: local
     command: bash journeys/proof-attach.sh
   merge-proof-gate:
+    tier: local
     command: bash journeys/merge-proof-gate.sh
   design-call-gate:
+    tier: local
     command: bash journeys/design-call-gate.sh
   merge-gate-policy:
-    command: bash journeys/merge-gate-policy.sh
+    tier: local
+    command: bash tests/jg-merge-gate-policy.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   running-products:
-    command: bash journeys/running-products.sh
+    tier: local
+    command: bash tests/jg-running-products.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   demo-call-gate:
+    tier: local
     command: bash journeys/demo-call-gate.sh
   nav-removal-gate:
+    tier: local
     command: bash journeys/nav-removal-gate.sh
   captain-close-gate:
+    tier: local
     command: bash journeys/captain-close-gate.sh
   stuck-question-replay:
+    tier: local
     command: bash journeys/stuck-question-replay.sh
   worker-no-ask-tool:
+    tier: local
     command: bash journeys/worker-no-ask-tool.sh
   watcher-exit-beacon:
+    tier: local
     command: bash journeys/watcher-exit-beacon.sh
   claude-midturn-cycle:
+    tier: local
     command: bash journeys/claude-midturn-cycle.sh
   stuck-live-captures:
+    tier: local
     command: bash journeys/stuck-live-captures.sh
   model-gate-concurrent:
+    tier: local
     command: bash journeys/model-gate-concurrent.sh
     core: true
   worker-rules:
-    command: bash journeys/worker-rules.sh
+    tier: local
+    command: (bash tests/jg-worker-rules.test.sh && bash bin/jg-worker-rules.sh check) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   tmp-sweep:
+    tier: local
     command: bash journeys/tmp-sweep.sh
   browser-sweep:
+    tier: local
     command: bash journeys/browser-sweep.sh
+  lead-sweep-end-states:
+    tier: local
+    command: bash journeys/lead-sweep-end-states.sh
   wake-routing:
-    command: bash journeys/wake-routing.sh
+    tier: local
+    command: (bash tests/jg-wake-router.test.sh && bash tests/jg-wake-route.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
 
   merge-card-pool-fallback:
+    tier: local
     command: bash core/merge-card/run-proof.sh
   owner-rules-hierarchy:
+    tier: local
     command: bash core/owner-rules/run-hierarchy-proof.sh
   owner-rules-publication:
+    tier: local
     command: bash core/owner-rules/run-proof.sh
   key-in-env-alert-once:
+    tier: local
     command: bash core/key-in-env-check/run-proof.sh
   fleet-pulse-chat-tsv-refresh:
+    tier: local
     command: bash core/fleet-pulse/tests/chat-tsv.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   fleet-pulse-newest-retro:
+    tier: local
     command: bash core/fleet-pulse/run-proof.sh
   fleet-pulse-fable-allow:
+    tier: local
     command: bash core/fleet-pulse/run-fable-proof.sh
   fleet-pulse-trunk-landed:
+    tier: local
     command: bash core/fleet-pulse/run-trunk-proof.sh
   retro-metrics:
+    tier: local
     command: bash core/fleet-stats/tests/retro-metrics.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
 
   limit-prompt-move:
+    tier: local
     command: bash core/limit-prompt-move/tests/limit-prompt-move-e2e.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   limit-prompt-move-live:
+    tier: local
     command: bash core/limit-prompt-move/run-live-proof.sh
   quota-failover-screen-match:
+    tier: local
     command: bash core/quota-failover/run-proof.sh
   quota-failover-live-route:
+    tier: local
     command: bash core/quota-failover/run-live-proof.sh
   pipeline-route:
+    tier: local
     command: bash core/pipeline-quota-failover/run-proof.sh
   pipeline-route-live:
+    tier: local
     command: bash core/pipeline-quota-failover/run-live-proof.sh
   claude-accounts-quota:
+    tier: local
     command: bash core/claude-accounts/run-proof.sh
   claude-accounts-pick:
+    tier: local
     command: bash core/claude-accounts/run-proof-pick.sh
   claude-accounts-codex-rest:
+    tier: local
     command: bash core/claude-accounts/run-proof-codex-rest.sh
   claude-accounts-timer:
+    tier: local
     command: bash core/claude-accounts/run-proof-timer.sh
   receipts-pr-candidate:
+    tier: local
     command: bash core/receipts/run-proof.sh
   lookout-adapter-live:
+    tier: local
     command: bash core/lookout-adapter/run-proof.sh
   lookout-service-dry:
+    tier: local
     command: bash core/lookout-adapter/run-service-proof.sh
   wait-timers-identity:
+    tier: local
     command: bash core/wait-timers/run-proof.sh
   merge-card-real-board:
+    tier: local
     command: bash core/merge-card/tests/real-board.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   merge-card-clean-clone:
+    tier: local
     command: bash core/merge-card/run-clean-clone-proof.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   merge-card-retitle:
+    tier: local
     command: bash core/merge-card/run-retitle-proof.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   fleet-contract-check:
+    tier: local
     command: bash core/fleet-contract-check/run-proof.sh
   pool-tool-account:
+    tier: local
     command: bash core/account-pool/run-tool-proof.sh
   pool-helper:
+    tier: local
     command: bash core/account-pool/run-model-pool-proof.sh
   quota-axi-pool:
+    tier: local
     command: bash core/quota-axi-pool/run-proof.sh
   guards-pool-accounts:
+    tier: local
     command: bash core/read-guard/run-pool-proof.sh
   kill-guard-device:
+    tier: local
     command: bash core/kill-guard/run-device-proof.sh
   kill-guard-main-live:
+    tier: local
     command: node core/kill-guard/run-main-proof.mjs
   kill-guard-home-owner:
+    tier: local
     command: node core/kill-guard/run-home-owner-proof.mjs
   wake-bus-live:
+    tier: local
     command: bash journeys/wake-bus-live.sh
   wedge-marker:
-    command: bash journeys/wedge-marker.sh
+    tier: local
+    command: bash bin/jg-test-run.sh tests/jg-bus.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   wake-cursor-kill:
+    tier: local
     command: bash journeys/wake-cursor-kill.sh
   bus-machine-service:
-    command: bash journeys/bus-machine-service.sh
+    tier: local
+    command: (bash bin/jg-bus-reap.sh >/dev/null 2>&1 || true; bash tests/jg-bus-machine-service.test.sh && bash tests/jg-stack-owner.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
     timeout: 5m
   stray-nats-reap:
-    command: bash journeys/stray-nats-reap.sh
+    tier: local
+    command: (bash tests/jg-stray-nats-reap.test.sh && bash bin/jg-stray-nats-reap.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   escalation-optimize:
+    tier: local
     command: bash core/escalation-optimize/tests/jg-escalation-optimize.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   escalation-rules-live:
+    tier: local
     command: bash journeys/escalation-rules-live.sh
   token-cuts-live:
+    tier: local
     command: bash journeys/token-cuts-live.sh
   context-bound-at-wake:
+    tier: local
     command: bash journeys/context-bound-at-wake.sh
   owner-rules-whole:
-    command: bash journeys/owner-rules-whole.sh
+    tier: local
+    command: JG_SESSION_START_ONLY='test_context_digest_absent_empty_present test_context_owner_rules_whole test_learnings_index_and_body_cap' bash tests/jg-session-start.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   axi-digest:
-    command: bash journeys/axi-digest.sh
+    tier: local
+    command: JG_SESSION_START_ONLY="test_finished_lanes_fold_into_one_axi_row test_learnings_index_and_body_cap test_digest_stays_under_its_cap_with_300_open_decisions" bash tests/jg-session-start.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   remote-squad-lead-lifecycle:
-    command: bash journeys/remote-squad-lead-lifecycle.sh
+    tier: local
+    command: bash tests/jg-remote-squad-lead-lifecycle-e2e.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   unit-claim:
-    command: bash journeys/unit-claim.sh
+    tier: local
+    command: bash tests/jg-unit-claim.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   test-unit-isolation:
+    tier: local
     command: bash journeys/test-unit-isolation.sh
     timeout: 45m
   host-memory-sampler-cpu:
+    tier: local
     command: bash journeys/host-memory-sampler-cpu.sh
     timeout: 10m
   tool-kit:
+    tier: local
     command: bash journeys/tool-kit.sh
   tool-kit-spend:
+    tier: local
     command: bash journeys/tool-kit-spend.sh --approved
     spends: "the model quota or money of each tool kit's spending journey"
   hc-backend:
+    tier: local
     command: bash journeys/hc-backend.sh
   landing-refusing-shims:
-    command: bash journeys/landing-refusing-shims.sh
+    tier: local
+    command: env -u JG_TASK_ID bash tests/jg-trunk-gate-env.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   wait-refusal-retry:
-    command: bash journeys/wait-refusal-retry.sh
+    tier: local
+    command: env -u JG_TASK_ID bash tests/jg-trunk-retry.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   board-answer-route:
-    command: bash journeys/board-answer-route.sh
+    tier: local
+    command: env -u JG_TASK_ID bash tests/jg-board-answers-route.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   afk-daemon-resend:
-    command: bash journeys/afk-daemon-resend.sh
+    tier: local
+    command: env -u JG_TASK_ID bash tests/jg-supervise-daemon-resend.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   gate-quarantine:
+    tier: local
     command: bash journeys/gate-quarantine.sh
+  flaky-quarantine:
+    tier: local
+    command: bash tests/jg-trunk-quarantine.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  gate-per-test-timeout:
+    tier: local
+    command: (bash bin/jg-test-run.sh --show-limits && bash bin/jg-test-run.sh tests/jg-test-run.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  pr-pager:
+    tier: local
+    command: bash tests/jg-pr-pager.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  delivery-style:
+    tier: local
+    command: bash journeys/delivery-style.sh
+  ticket-statechart:
+    tier: local
+    command: bash journeys/ticket-statechart.sh
+  machine-enums:
+    tier: local
+    command: (for f in core/machines/*.states; do bash bin/jg-machine.sh enum "$(basename "$f" .states)" || exit 1; done; bash bin/jg-machine.sh check ticket && bash bin/jg-machine.sh check delivering && bash tests/jg-machine-enum.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  machine-rules:
+    tier: local
+    command: (for f in core/machines/tables/*.tsv; do bash bin/jg-machine.sh check "$(basename "$f" .tsv)" || exit 1; done; bash tests/jg-machine-lint.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  ship-brief-style:
+    tier: local
+    command: bash journeys/ship-brief-style.sh
+  local-lane-brief:
+    tier: local
+    command: bash journeys/local-lane-brief.sh
+  ticket-stage:
+    tier: local
+    command: bash journeys/ticket-stage.sh
+    timeout: 10m
+  trace-writers:
+    tier: local
+    command: JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-trace-writers.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    timeout: 10m
+  ticket-move:
+    tier: local
+    command: bash tests/jg-move.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  state-write:
+    tier: local
+    command: (bash tests/jg-state-write.test.sh && bash bin/jg-state-lint.sh --check) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-agents-md-floor:
+    # measured 0.7 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-agents-md-floor.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-brief-lint:
+    # measured 0.6 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-brief-lint.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-brief:
+    # measured 22.8 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-brief.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-bus-machine-service:
+    # measured 12.6 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-bus-machine-service.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-lint-partitions:
+    # measured 12.0 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-lint-partitions.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-lint-root-memory:
+    # measured 5.1 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-lint-root-memory.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-loss-claim-check:
+    # measured 0.3 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-loss-claim-check.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-machine-enforce:
+    # measured 1.2 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-machine-enforce.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-machine-inbox:
+    # measured 2.8 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-machine-inbox.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-machine-index:
+    # measured 0.5 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-machine-index.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-machine-shadow:
+    # measured 2.4 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-machine-shadow.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-machine-status:
+    # measured 1.3 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-machine-status.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-machine-task:
+    # measured 4.4 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-machine-task.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-machine:
+    # measured 1.4 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-machine.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-prior-art-gate:
+    # measured 0.6 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-prior-art-gate.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-recon-depth:
+    # measured 0.4 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-recon-depth.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-recon-gate:
+    # measured 7.1 s on the host, 2026-11-12 (serial, one run)
+    tier: ci
+    command: bash tests/jg-recon-gate.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  release-record:
+    tier: local
+    command: (bash bin/jg-machine.sh check release && bash bin/jg-machine.sh events release && bash tests/jg-machine-release.test.sh && bash tests/jg-machine-lane-delivery.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  # Core suites (retired .github/workflows/core-suites.yml, 89 steps), one entry per step below. Steps 1 to 4 and 49
+  # (checkout, Go, OPA, bd and dolt, Node) were set-up, not tests: done-done runs on a host that already has them.
+  # The steps that installed sign-off-axi or python3-yaml on the runner no longer install anything; the host's own
+  # copies are used. Static steps (13) are tier ci; the rest (71) are tier local.
+  core-wait-timers-hook-journey:
+    # was Core suites step 5: Wait-timers hook journey
+    tier: local
+    command: bash journeys/core-run.sh 'bash wait-timers/tests/wait-timers-hook-e2e.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-receipts-hook-journeys:
+    # was Core suites step 6: Receipts hook journeys
+    tier: local
+    command: bash journeys/core-run.sh 'bash receipts/tests/receipts-hook-e2e.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-report-actions-replay:
+    # was Core suites step 7: Report actions replay
+    tier: local
+    command: bash journeys/core-run.sh 'python3 report-actions/tests/test_report_actions.py' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-shellcheck-core-feature-scripts:
+    # measured 2.3 s on the host, 2026-11-12 (serial, one run)
+    # was Core suites step 8: ShellCheck core feature scripts
+    tier: ci
+    command: bash journeys/core-shellcheck.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-syntax-check-core-feature-scripts:
+    # measured 1.1 s on the host, 2026-11-12 (serial, one run)
+    # was Core suites step 9: Syntax-check core feature scripts
+    tier: ci
+    command: bash journeys/core-syntax.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-memory-gate-test:
+    # was Core suites step 10: Memory gate test
+    tier: local
+    command: bash journeys/core-run.sh 'bash host-memory/tests/jg-mem-gate.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-host-memory-alert-routing-test:
+    # was Core suites step 11: Host memory alert routing test
+    tier: local
+    command: bash journeys/core-run.sh 'bash host-memory/tests/jg-host-memory-alert-routing.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-route-change-test:
+    # was Core suites step 12: Route change test
+    tier: local
+    command: bash journeys/core-run.sh 'bash route-change/tests/route-change-e2e.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-pipeline-quota-failover-route-test:
+    # was Core suites step 13: Pipeline quota failover route test
+    tier: local
+    command: bash journeys/core-run.sh 'bash pipeline-quota-failover/tests/pi-quota-failover-route.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-z-ai-quota-check-test:
+    # was Core suites step 14: Z.AI quota check test
+    tier: local
+    command: bash journeys/core-run.sh 'bash zai-quota-check/tests/zai-quota-check-e2e.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-quota-failover-tests:
+    # was Core suites step 15: Quota failover tests
+    tier: local
+    command: bash journeys/core-run.sh 'bash quota-failover/tests/quota-failover-e2e.sh && bash quota-failover/tests/install.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-fleet-contract-check-test:
+    # was Core suites step 16: Fleet contract check test
+    tier: local
+    command: bash journeys/core-run.sh 'bash fleet-contract-check/tests/fleet-contract-check.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-limit-prompt-move-test:
+    # was Core suites step 17: Limit prompt move test
+    tier: local
+    command: bash journeys/core-run.sh 'bash limit-prompt-move/tests/limit-prompt-move-e2e.sh && bash limit-prompt-move/tests/limit-prompt-move-e2e.sh --installed' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-fleet-stall-check-test:
+    # was Core suites step 18: Fleet stall check test
+    tier: local
+    command: bash journeys/core-run.sh 'bash fleet-stall/tests/fleet-stall-e2e.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-key-in-env-check-test:
+    # was Core suites step 19: Key-in-env check test
+    tier: local
+    command: bash journeys/core-run.sh 'bash key-in-env-check/tests/key-in-env-check-e2e.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-home-flow-check-test:
+    # was Core suites step 20: Home flow check test
+    tier: local
+    command: bash journeys/core-run.sh 'bash fleet-flow/tests/jg-flow-check.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-home-flow-check-wake-key-test:
+    # was Core suites step 21: Home flow check wake key test
+    tier: local
+    command: bash journeys/core-run.sh 'bash fleet-flow/tests/jg-flow-wake-key.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-kill-guard-main-allowance-and-cli-journeys:
+    # was Core suites step 22: Kill guard Main allowance and CLI journeys
+    tier: local
+    command: bash journeys/core-run.sh 'node kill-guard/tests/main-allowance.test.mjs && node kill-guard/tests/lead-project-worktree.test.mjs && node kill-guard/tests/home-owner-tree.test.mjs && bash kill-guard/tests/kill-guard.test.sh --guard-only' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-model-gate-test:
+    # was Core suites step 23: Model gate test
+    tier: local
+    command: bash journeys/core-run.sh 'bash model-gate/tests/model-gate.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-host-wiring-re-run-journey:
+    # was Core suites step 24: Host wiring re-run journey
+    tier: local
+    command: bash journeys/core-run.sh 'bash ../tests/jg-host-wiring.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-one-merge-gate-test:
+    # was Core suites step 25: One merge gate test
+    tier: local
+    command: bash journeys/core-run.sh 'bash ../tests/merge-gate-one-entry.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-git-identity-test:
+    # was Core suites step 26: Git identity test
+    tier: local
+    command: bash journeys/core-run.sh 'bash git-identity/tests/git-identity.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-owner-guard-test:
+    # was Core suites step 27: Owner guard test
+    tier: local
+    command: bash journeys/core-run.sh 'bash owner-guard/tests/owner-guard.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-owner-guard-global-test:
+    # was Core suites step 28: Owner guard global test
+    tier: local
+    command: bash journeys/core-run.sh 'bash owner-guard/tests/owner-guard-global.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-owner-guard-merge-gate-test:
+    # was Core suites step 29: Owner guard merge gate test
+    tier: local
+    command: bash journeys/core-run.sh 'bash owner-guard/tests/owner-guard-merge.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-repo-guard-test:
+    # was Core suites step 30: Repo guard test
+    tier: local
+    command: bash journeys/core-run.sh 'bash repo-guard/tests/repo-guard.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  repo-guard-loop:
+    # sf-h6: the gh shim cannot call itself
+    tier: local
+    command: bash journeys/repo-guard-loop.sh
+  core-owner-guard-uninstall-isolation-test:
+    # was Core suites step 31: Owner guard uninstall isolation test
+    tier: local
+    command: bash journeys/core-run.sh 'bash owner-guard/tests/uninstall-isolation.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-sentinel-one-copy-test:
+    # was Core suites step 32: Sentinel one-copy test
+    tier: local
+    command: bash journeys/core-run.sh 'bash sentinel/tests/jg-sentinel-one-copy.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-sentinel-watch-test:
+    # sf-h16: the sentinel's watch pass starts a dead watcher inside 2 runs and raises escalation-stuck
+    tier: local
+    command: bash journeys/core-run.sh 'bash sentinel/tests/jg-sentinel-watch.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-task-priority-test:
+    # was Core suites step 33: Task priority test
+    tier: local
+    command: bash journeys/core-run.sh 'bash task-priority/tests/task-priority.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-tickets-sync-real-board-journey:
+    # was Core suites step 34: Tickets sync real-board journey
+    tier: local
+    command: bash journeys/core-run.sh 'bash tickets-sync/tests/sync.test.sh && bash tickets-sync/tests/skip-bad-ticket.test.sh && bash tickets-sync/tests/description-linebreaks.test.sh && bash tickets-sync/tests/long-body.test.sh && bash tickets-sync/tests/cleanup-report-card.test.sh && bash tickets-sync/tests/stage-from-machines.test.sh && bash tickets-sync/tests/no-store-quiet.test.sh && bash tickets-sync/tests/tidy.test.sh && bash tickets-sync/tests/cleanup-acts.test.sh && bash tickets-sync/tests/cleanup-keeps-question.test.sh && bash tickets-sync/tests/check-own-cursor.test.sh && bash tickets-sync/tests/ticket-identity.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-fleet-pulse-test:
+    # was Core suites step 35: Fleet pulse test
+    tier: local
+    command: bash journeys/core-run.sh 'bash fleet-pulse/tests/chat-tsv.test.sh && bash fleet-pulse/tests/trunk-pulse.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-fleet-pulse-fable-wake-test:
+    # was Core suites step 36: Fleet pulse Fable wake test
+    tier: local
+    command: bash journeys/core-run.sh 'bash fleet-pulse/tests/fleet-fable.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-claude-model-guard-test:
+    # was Core suites step 37: Claude model guard test
+    tier: local
+    command: bash journeys/core-run.sh 'bash claude-model-guard/tests/claude-model-guard.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-fleet-report-test:
+    # was Core suites step 38: Fleet report test
+    tier: local
+    command: bash journeys/core-run.sh 'bash fleet-report/tests/fleet-report.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-project-state-map-test:
+    # was Core suites step 39: Project state map test
+    tier: local
+    command: bash journeys/core-run.sh 'bash project-state-map/tests/psm-search.test.sh && bash project-state-map/tests/psm-prove.test.sh && bash project-state-map/tests/psm-read.test.sh && bash project-state-map/tests/psm-card.test.sh && bash project-state-map/tests/psm-refresh.test.sh && bash project-state-map/tests/psm-ask.test.sh && bash project-state-map/tests/psm-wide.test.sh && bash project-state-map/tests/psm-first-run.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-retro-metrics-test:
+    # was Core suites step 40: Retro metrics test
+    tier: local
+    command: bash journeys/core-run.sh 'bash fleet-stats/tests/retro-metrics.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-account-pool-test:
+    # was Core suites step 41: Account pool test
+    tier: local
+    command: bash journeys/core-run.sh 'bash account-pool/tests/account-pool.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-model-pool-helper-test:
+    # was Core suites step 42: Model pool helper test
+    tier: local
+    command: bash journeys/core-run.sh 'bash account-pool/tests/model-pool.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-pool-tool-models-test:
+    # was Core suites step 43: Pool tool models test
+    tier: local
+    command: bash journeys/core-run.sh 'bash account-pool/tests/tool-models.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-quota-axi-pool-test:
+    # was Core suites step 44: Quota-axi pool test
+    tier: local
+    command: bash journeys/core-run.sh 'bash quota-axi-pool/tests/quota-axi-pool.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-quota-axi-pool-recursion-test:
+    # was Core suites step 45: Quota-axi pool recursion test
+    tier: local
+    command: bash journeys/core-run.sh 'bash quota-axi-pool/tests/quota-axi-pool-recursion.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-claude-accounts-test:
+    # was Core suites step 46: Claude accounts test
+    tier: local
+    command: bash journeys/core-run.sh 'bash claude-accounts/tests/claude-accounts.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-claude-accounts-pick-test:
+    # was Core suites step 47: Claude accounts pick test
+    tier: local
+    command: bash journeys/core-run.sh 'bash claude-accounts/tests/claude-accounts-pick.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-claude-accounts-hold-test:
+    # sf-h8: the account hold, through its real caller (a billing error on a lane's beat, one scan tick)
+    tier: local
+    command: bash journeys/core-run.sh 'bash claude-accounts/tests/claude-accounts-hold.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-claude-accounts-timer-test:
+    # was Core suites step 48: Claude accounts timer test
+    tier: local
+    command: bash journeys/core-run.sh 'bash claude-accounts/tests/claude-accounts-timer.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-checks-lint-parity-test:
+    # measured 11.7 s on the host, 2026-11-12 (serial, one run)
+    # was Core suites step 50: Checks lint parity test
+    tier: ci
+    command: bash journeys/core-run.sh 'bash merge-on-green/tests/checks-lint-parity.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-checks-lint-lane-task-identity-test:
+    # measured 0.3 s on the host, 2026-11-12 (serial, one run)
+    # was Core suites step 51: Checks lint lane-task identity test
+    tier: ci
+    command: bash journeys/core-run.sh 'bash merge-on-green/tests/checks-lint-lane-task.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-checks-lint-superseding-receipt-test:
+    # measured 2.1 s on the host, 2026-11-12 (serial, one run)
+    # was Core suites step 52: Checks lint superseding-receipt test
+    tier: ci
+    command: bash journeys/core-run.sh 'bash merge-on-green/tests/checks-lint-supersede-receipt.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-checks-lint-keeps-first-draft-line-test:
+    # measured 1.7 s on the host, 2026-11-12 (serial, one run)
+    # was Core suites step 53: Checks lint keeps first-draft line test
+    tier: ci
+    command: bash journeys/core-run.sh 'bash merge-on-green/tests/checks-lint-keeps-first-draft-line.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-checks-lint-receipt-head-test:
+    # measured 0.7 s on the host, 2026-11-12 (serial, one run)
+    # was Core suites step 54: Checks lint receipt head test
+    tier: ci
+    command: bash journeys/core-run.sh 'bash merge-on-green/tests/checks-lint-receipt-head.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-checks-lint-draft-registry-test:
+    # measured 0.6 s on the host, 2026-11-12 (serial, one run)
+    # was Core suites step 55: Checks lint draft registry test
+    tier: ci
+    command: bash journeys/core-run.sh 'bash merge-on-green/tests/checks-lint-draft-registry.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-checks-lint-receipt-lock-test:
+    # measured 6.8 s on the host, 2026-11-12 (serial, one run)
+    # was Core suites step 56: Checks lint receipt-lock test
+    tier: ci
+    command: bash journeys/core-run.sh 'bash merge-on-green/tests/checks-lint-receipt-lock.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-checks-lint-big-pr-size-test:
+    # measured 1.3 s on the host, 2026-11-12 (serial, one run)
+    # was Core suites step 57: Checks lint big-PR size test
+    tier: ci
+    command: bash journeys/core-run.sh 'bash merge-on-green/tests/checks-lint-big-pr.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-checks-lint-moved-similarity-test:
+    # measured 1.0 s on the host, 2026-11-12 (serial, one run)
+    # was Core suites step 58: Checks lint moved-similarity test
+    tier: ci
+    command: bash journeys/core-run.sh 'bash merge-on-green/tests/checks-lint-moved-similarity.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-merge-gate-policy-contract-tests:
+    # measured 0.0 s on the host, 2026-11-12 (serial, one run)
+    # was Core suites step 59: Merge-gate policy contract tests
+    tier: ci
+    command: bash journeys/core-run.sh 'opa test ../policy' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-checks-lint-recorded-decision-cases:
+    # measured 5.2 s on the host, 2026-11-12 (serial, one run)
+    # was Core suites step 60: Checks lint recorded-decision cases
+    tier: ci
+    command: bash journeys/core-run.sh 'bash merge-on-green/tests/checks-lint-cases.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-owner-rules-lint-row-recorded-decisions:
+    # was Core suites step 61: Owner-rules lint-row recorded decisions
+    tier: local
+    command: bash journeys/core-run.sh 'bash owner-rules/tests/lint-row-recorded.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-owner-rules-gate-recorded-decisions:
+    # was Core suites step 62: Owner-rules gate recorded decisions
+    tier: local
+    command: bash journeys/core-run.sh 'bash owner-rules/tests/gate-matrix.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-completion-receipt-acceptance-recorded-decisions:
+    # was Core suites step 63: Completion-receipt acceptance recorded decisions
+    tier: local
+    command: bash journeys/core-run.sh 'bash receipts/tests/receipt-accept-cases.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-completion-receipt-publisher-test:
+    # was Core suites step 64: Completion-receipt publisher test
+    tier: local
+    command: bash journeys/core-run.sh 'bash receipts/tests/run-receipt-publisher.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-completion-receipt-superseded-copy-test:
+    # was Core suites step 65: Completion-receipt superseded-copy test
+    tier: local
+    command: bash journeys/core-run.sh 'bash receipts/tests/receipt-superseded-copy.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-completion-receipt-lane-restore-test:
+    # was Core suites step 66: Completion-receipt lane restore test
+    tier: local
+    command: bash journeys/core-run.sh 'bash receipts/tests/receipt-lane-restore.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-completion-receipt-multi-pr-lane-test:
+    # was Core suites step 67: Completion-receipt multi-PR lane test
+    tier: local
+    command: bash journeys/core-run.sh 'bash receipts/tests/receipt-multi-pr-lane.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-no-old-receipt-path-test:
+    # was Core suites step 68: No old receipt path test
+    tier: local
+    command: bash journeys/core-run.sh 'bash merge-on-green/tests/no-old-receipt-path.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-merge-on-green-test:
+    # was Core suites step 69: Merge-on-green test
+    tier: local
+    command: bash journeys/core-run.sh 'bash merge-on-green/tests/merge-on-green.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-merge-on-green-uninstall-test:
+    # was Core suites step 70: Merge-on-green uninstall test
+    tier: local
+    command: bash journeys/core-run.sh 'bash merge-on-green/tests/merge-on-green-uninstall.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-stale-pr-alarm-test:
+    # was Core suites step 71: Stale-PR alarm test
+    tier: local
+    command: bash journeys/core-run.sh 'bash merge-on-green/tests/stale-pr-alarm.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-stranded-merge-sweep-test:
+    # was Core suites step 72: Stranded-merge sweep test
+    tier: local
+    command: bash journeys/core-run.sh 'bash merge-on-green/tests/stranded-merge-sweep.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-red-ci-ticket-test:
+    # was Core suites step 73: Red-CI ticket test
+    tier: local
+    command: bash journeys/core-run.sh 'bash merge-on-green/tests/red-ci-ticket.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-backlog-shipped-reconcile-test:
+    # was Core suites step 74: Backlog shipped-reconcile test
+    tier: local
+    command: bash journeys/core-run.sh 'bash merge-on-green/tests/backlog-shipped-reconcile.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-critical-stall-test:
+    # was Core suites step 75: Critical-stall test
+    tier: local
+    command: bash journeys/core-run.sh 'bash critical-stall/tests/critical-stall.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-stall-action-test:
+    # was Core suites step 76: Stall-action test
+    tier: local
+    command: bash journeys/core-run.sh 'bash stall-action/tests/stall-action.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-lead-sweep-test:
+    # was Core suites step 77: Lead-sweep test
+    tier: local
+    command: bash journeys/core-run.sh 'bash lead-sweep/tests/lead-sweep.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-landing-card-test:
+    # was Core suites step 78: Landing-card test
+    tier: local
+    command: bash journeys/core-run.sh 'bash landing-card/tests/landing-card.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-goal-loop-test:
+    # was Core suites step 79: Goal loop test
+    tier: local
+    command: bash journeys/core-run.sh 'bash goal-loop/tests/goal-loop.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-owner-rules-gate-test:
+    # was Core suites step 80: Owner-rules gate test
+    tier: local
+    command: bash journeys/core-run.sh 'bash owner-rules/tests/owner-rules-gate.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-owner-rules-gate-repoint-test:
+    # was Core suites step 81: Owner-rules gate repoint test
+    tier: local
+    command: bash journeys/core-run.sh 'bash owner-rules/tests/gate-repoint.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-merge-card-evidence-root-message-test:
+    # was Core suites step 82: Merge-card evidence-root message test
+    tier: local
+    command: bash journeys/core-run.sh 'bash merge-card/tests/dd-root-message.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-merge-card-post-merge-wiring-test:
+    # was Core suites step 83: Merge-card post-merge wiring test
+    tier: local
+    command: bash journeys/core-run.sh 'bash merge-card/tests/wiring.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-owner-rules-design-flag-test:
+    # was Core suites step 84: Owner-rules design flag test
+    tier: local
+    command: bash journeys/core-run.sh 'bash owner-rules/tests/design-flag.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-pipeline-route-switch-test:
+    # was Core suites step 85: Pipeline route switch test
+    tier: local
+    command: bash journeys/core-run.sh 'bash pipeline-quota-failover/tests/switch-route.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-owner-ask-real-board-journey:
+    # was Core suites step 86: Owner ask real-board journey
+    tier: local
+    command: bash journeys/core-run.sh 'bash owner-rules/tests/no-lavish.test.sh && bash ask-default/tests-owner-ask.test.sh && bash signoff/tests/jg-procevent-signoff.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-lookout-adapter-test:
+    # was Core suites step 87: Lookout adapter test
+    tier: local
+    command: bash journeys/core-run.sh 'bash lookout-adapter/tests/test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-lookout-front-and-install-dry-run-test:
+    # was Core suites step 88: Lookout front and install dry-run test
+    tier: local
+    command: bash journeys/core-run.sh 'bash lookout-adapter/tests/front.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-machine-tables-sealed-proof:
+    # was Core suites step 89: Machine tables sealed proof
+    tier: local
+    command: bash journeys/core-run.sh 'bash machines/run-proof.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  agent-cli:
+    tier: local
+    command: bash journeys/core-run.sh 'bash agent-cli/tests/agent-cli.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+
+  registry-union:
+    tier: local
+    command: bash journeys/registry-union.sh
+  agent-cli-proof-land:
+    tier: local
+    command: bash journeys/core-run.sh 'bash agent-cli/tests/proof-land.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  live-checks:
+    tier: local
+    command: bash journeys/live-checks.sh
+  live-gh-shim:
+    tier: live
+    command: bash tests/live/gh-shim.sh
+  live-lock-lease:
+    tier: live
+    command: bash tests/live/lock-lease.sh
+  live-model-turn:
+    tier: live
+    command: bash tests/live/model-turn.sh
+  live-ready-vs-free:
+    tier: live
+    command: bash tests/live/ready-vs-free.sh
+  live-steer-read:
+    tier: live
+    command: bash tests/live/steer-read.sh
+  live-load-memory:
+    tier: live
+    command: bash tests/live/load-memory.sh
+  live-stranded-release:
+    tier: live
+    command: bash tests/live/stranded-release.sh
+  live-landed-agent:
+    tier: live
+    command: bash tests/live/landed-agent.sh
+  live-approval-verify:
+    tier: live
+    command: bash tests/live/approval-verify.sh
+  live-plan-rows:
+    tier: live
+    command: bash tests/live/plan-rows.sh "${JG_LIVE_EPIC:-jg-8kugw}"
+  proc-reaper:
+    tier: local
+    command: bash tests/jg-proc-reaper.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  lane-scale-machines:
+    tier: local
+    command: bash journeys/lane-scale-machines.sh
+  tier-run:
+    tier: local
+    command: bash journeys/tier-run.sh
+
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'

@@ -79,10 +79,12 @@ function homeOwned(p, home) {
 	} catch {}
 	return roots.some((r) => under(r, p.cwd));
 }
+// A home or pool slot named juggernaut* or firstmate* is fleet-owned alike: ~/firstmate*, ~/.treehouse/<pool>[/<slot>]/<name>*.
+const NAMED_HOME = /^(?:firstmate[^/]*|\.treehouse\/[^/]+\/(?:[^/]+\/)?(?:juggernaut|firstmate)[^/]*)(?:\/|$)/;
 function fleetPath(path) {
 	try {
 		const resolved = realpathSync(path);
-		return under(realpathSync(MAIN_HOME), resolved) || /^\.treehouse\/[^/]+\/(?:[^/]+\/)?juggernaut[^/]*(?:\/|$)/.test(relative(ACCOUNT_HOME, resolved)) ||
+		return under(realpathSync(MAIN_HOME), resolved) || NAMED_HOME.test(relative(ACCOUNT_HOME, resolved)) ||
 			/^\.local\/(?:share|bin)\/jg-[^/]+(?:\/|$)/.test(relative(ACCOUNT_HOME, resolved));
 	} catch { return false; }
 }

@@ -23,6 +23,12 @@ e2e_seconds=60
 # loaded runtime (~10s) without re-measuring.
 unit_seconds=15
 gate_wall_seconds=600
+# script_timeout_seconds is the hard bound on ONE test script, applied to every
+# run that does not name its own --per-script-timeout-secs (the landing gate's
+# --all and its rerun included). A script over it is stopped with its children,
+# its temp folder is removed, and the run reports the script by name. It sits
+# above the slowest measured script, so it catches a hang, not a slow test.
+script_timeout_seconds=1800
 # machine_runs_max is not a speed limit but the runner's share of the machine:
 # how many runs may execute tests here at once, all homes together; the rest
 # wait for a slot (bin/jg-test-host-lib.sh). 0 is one run per 16 cpus, at least

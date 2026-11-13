@@ -16,6 +16,8 @@
 #   JG_HOME=<home> jg-sentinel.sh loop       tick every JG_SENTINEL_INTERVAL seconds
 #   JG_HOME=<home> jg-sentinel.sh ring       ring the primary now for a queued captain note (jg-inbox.sh runs it)
 #   JG_HOME=<home> jg-sentinel.sh reconcile  nudge or relaunch this home's direct reports, once per episode
+#   JG_HOME=<home> jg-sentinel.sh watch      the watch pass: read the beat, the wakes and the alerts from outside, start a dead watcher again
+#                             (core/sentinel/units/jg-sentinel-watch.sh owns it; the timer unit beside it runs this every minute)
 #   JG_HOME=<home> jg-sentinel.sh unit       print a systemd user service running `loop`
 #                             (Main only: a Squad Lead home is refused, and
 #                             bin/jg-unit-claim.sh owns why Main owns the units)
@@ -153,7 +155,7 @@ usage() {
 }
 
 case "${1:-}" in
-  tick|loop|ring|reconcile|unit|model-reconcile|lead-model-reconcile) CMD=$1 ;;
+  tick|loop|ring|reconcile|watch|unit|model-reconcile|lead-model-reconcile) CMD=$1 ;;
   -h|--help) usage; exit 0 ;;
   *) usage >&2; exit 2 ;;
 esac
@@ -733,12 +735,14 @@ tick() {
     return "$rc"
   fi
   ring_for_inbox || true
-  jg_supervision_unhealthy "$STATE" "$GRACE" || return "$rc"
+  jg_supervision_unhealthy "$STATE" "$GRACE" || { JG_STATE_OVERRIDE="$STATE" "$BIN/jg-alert.sh" resolve supervision-down--beacon-old >/dev/null 2>&1 || true; return "$rc"; }
   beat=$(jg_path_mtime "$STATE/.last-watcher-beat")
   read -r last woken_beat <"$STATE/.sentinel-wake-last" 2>/dev/null || true
   age=$(( $(date +%s) - ${last:-0} ))
   [ "${woken_beat:-}" != "${beat:-none}" ] || [ "$age" -ge "$REWAKE" ] || return "$rc"
   body="Supervision is needed but the watcher beacon is $JG_SUP_BEACON_DESC old and no turn is running. Gap $gap_class, last progress ${gap_progress:-unknown}, is in state/.supervision-gap. Run bin/jg-session-start.sh if this session was resumed, reconcile, then end the turn so supervision re-arms."
+  # The alert record is what covers the home's waits (rule I1); the doorbell below is how it reaches the primary's pane.
+  JG_STATE_OVERRIDE="$STATE" "$BIN/jg-alert.sh" raise supervision-down beacon-old --home "$JG_HOME" --note "$body" >/dev/null 2>&1 || true
   # defaults/wake-routing decides whether this doorbell costs a turn: it settles while a
   # live watcher holds the lock, and it is recorded and counted like any settled wake.
   if [ "$(jg_wake_route_class check sentinel-beacon-old "$body")" != now ]; then
@@ -797,6 +801,8 @@ locked() {
 }
 
 case "$CMD" in
+  # The watch pass takes its own lock, so a tick busy with delivery never delays it.
+  watch) exec bash "$(dirname "$BIN")/core/sentinel/units/jg-sentinel-watch.sh" run ;;
   tick) locked pass ;;
   ring) locked ring_for_inbox ;;
   reconcile) locked reconcile_episode "${JG_SENTINEL_EPISODE:-$(herdr_identity)}" ;;

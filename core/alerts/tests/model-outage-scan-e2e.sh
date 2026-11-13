@@ -26,6 +26,7 @@ trap cleanup EXIT
 export HOME=$d/user TMPDIR=$d/tmp
 mkdir -p "$HOME" "$TMPDIR" "$d/fork"
 cp -a "$JG_TEST_FORK/bin" "$d/fork/bin"
+ln -s "$JG_TEST_FORK/core" "$d/fork/core"   # the alert table and the wake bus
 rm -f "$d/fork/bin/jg-model-outage-lib.sh"
 cat > "$d/fork/bin/jg-backend.sh" <<'FAKE'
 jg_backend_agent_state() { cat "$FAKE_LIVENESS/$4" 2>/dev/null || printf alive; }
@@ -46,6 +47,11 @@ pass() { echo "ok: $*"; }
 
 # run_scans <case> <body>: runs <body> in a subshell with lane/tick helpers.
 # lane <id> <verdict> <liveness> [error] sets a lane; wakes land in <case>/wakes.
+# The outage wake now comes from the real alert function; read each wake's own text back from the wake queue.
+queued_wakes() {  # <queue file> <out file>
+  [ -s "$1" ] || return 0
+  cut -f5 "$1" | sed 's/^alert capacity ([^)]*) at rung [0-9] for [a-z]*: [^ ]* - //' > "$2"
+}
 run_scans() {
   local case_dir=$d/$1 body=$2
   mkdir -p "$case_dir/state" "$case_dir/liveness"
@@ -62,7 +68,6 @@ run_scans() {
     jg_backend_of_meta() { printf fake; }
     hash_pane() { md5sum | cut -c1-12; }
     wake() { :; }
-    jg_wake_append() { printf '%s\n' "$3" >> "$case_dir/wakes"; }
     lane() {
       : > "$STATE/$1.meta"
       printf 'g1\n' > "$STATE/$1.busy-gen"
@@ -73,6 +78,7 @@ run_scans() {
     tick() { ( rm -f "$STATE/.model-outages/.scan-at"; jg_model_outage_tick ); }
     "$body"
   ) || fail "$1: scans failed"
+  queued_wakes "$case_dir/state/.wake-queue" "$case_dir/wakes"
   if compgen -G "$case_dir/state/.model-outages/.scan.*" >/dev/null; then fail "$1: a scan batch directory leaked"; fi
 }
 

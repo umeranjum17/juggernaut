@@ -401,8 +401,9 @@ A Goal lives in a small Goal-only Beads store of its own. `config/goal-beads-dir
 The `start`, `reopen` and `done` moves write only if the row still has the status they read, so a row a second writer moved refuses with exit 13, `code: STALE_WRITE`, and changes nothing.
 [`bin/jg-backlog-transition-lib.sh`](../bin/jg-backlog-transition-lib.sh) drives the same provider directly, so spawn, teardown and bootstrap keep their gates on that store.
 `bin/jg-pr-merge.sh`, `bin/jg-merge-local.sh` and `core/merge-on-green/` read holds and linked decisions through `bin/jg-captain-hold.sh`, close rows through that provider, and refuse a merge when the store cannot be read.
-The lane on a row is the assignee, set to the task record's `spawn_gen`, and `metadata.agent`, set to its harness.
-A fresh spawn takes the row only if it has no owner, so a second spawn on a row another lane holds refuses with exit 13 and starts nothing that stays; a relaunch hands the row over from the owner it read, `done` keeps the assignee as history, and `reopen` clears it.
+A worker's row is owned by its Herdr agent name, the task record's `agent_name=` (made once at the first spawn; a record with none keeps `jg_backend_herdr_agent_name_for` of the task id), the same across a relaunch; `metadata.spawn_gen` is the task record's `spawn_gen`, and `metadata.agent`, `metadata.model` and `metadata.effort` are its harness, model and effort. The pane id is not on the row.
+A spawn whose `spawn_gen` is not the one on the row refuses with exit 13 and starts nothing that stays; a relaunch takes the row over, `done` keeps the assignee as history, and `reopen` clears all three.
+bd has no guard on metadata, so that check is a read then a write with a short gap, and the owner guard alone cannot tell a second spawn from a relaunch.
 The session digest, the fleet snapshot, the inbox status, the owner's asks, the Squad Lead dormant sweep, ticket keys, the what's-left view, voice status, the flow check and the owner rules read that store, and a failed read reports the failure rather than an empty backlog.
 `bin/jg-backlog-handoff.sh` moves rows between homes by `bd export` and `bd import`, and keeps the body, holds, blockers and links.
 A crash leaves the rows on both sides and rerunning the same handoff finishes the move.
@@ -1305,6 +1306,22 @@ Pi ranks a root's stored logins above environment variables, so a pinned Pi laun
 
 A home that authenticates Claude through environment credentials on purpose should leave the pin absent.
 
+### Per-model Claude account (config/claude-account-by-model)
+
+A home can send some Claude models to a different account than its pin.
+The file is local, gitignored, and opt-in: with no file, every launch is unchanged.
+Each line holds `<model-id> <ordinary|absolute path>`; blank lines and `#` comments are skipped, and a `[1m]` suffix on the launching model is ignored.
+A launch whose model has a line runs on that account, with the same directory and sign-in checks as the pin.
+Every other model keeps `config/claude-account`.
+Juggernaut reads the map at every spawn and relaunch and records the result as `account=`.
+A malformed line refuses the launch and names the file.
+The map never edits or replaces the pin; only the captain changes a pin.
+Example, Sonnet on a second login and everything else on the pin:
+
+```
+claude-sonnet-5-5 /home/you/.claude-accounts/second
+```
+
 ### Failures, reporting, and inheritance
 
 A malformed file, a root that is not a readable directory, or a signed-out account refuses the launch and names the file to fix; Juggernaut never falls back to the ambient account and never changes a global login or copies a credential.
@@ -1400,7 +1417,7 @@ When the task record names that PR and [`core/merge-on-green`](../core/merge-on-
 The watcher's own `done: merged` line or `NOT merging` alert wakes the lead instead.
 A `done` line with no recorded PR, a PR the watcher does not own, a head it already tried, and every Recon result, `failed`, `blocked` and `needs-decision` line keep waking at once.
 Nothing is dropped: the next drain presents every held row.
-[`core/wake/README.md`](../core/wake/README.md) owns the rule grammar, and `journeys/wake-batch-threshold.sh` proves both triggers and the urgent bypass.
+[`core/wake/README.md`](../core/wake/README.md) owns the rule grammar, and the `wake-batch-threshold` journey proves both triggers and the urgent bypass.
 
 ## Batch digest cadence (config/status-digest)
 
@@ -1459,6 +1476,14 @@ The local, gitignored `config/open-pr-cap` holds one whole number; an absent, em
 The alert repeats only when the count changes, and a repository back under the cap forgets it.
 A red pull request never holds a green one: each merges on its own checks.
 `core/merge-on-green/merge-on-green.sh` owns the count and the alert.
+
+## Flaky quarantine (config/quarantine)
+
+`core/trunk-landing/quarantine.sh` owns the one quarantine list, `data/trunk/quarantine-<project>.tsv`, and is the only way a script gets a fix ticket (`quarantine.sh ticket <script>`; the script path is the key and a second ticket is never filed while one is open).
+A script with 3 rows in 7 days in the lander's flaky ledger enters the list with its ticket.
+The local, gitignored `config/quarantine` holds `on` to turn the key on; absent or any other value is off, and the list is only kept.
+With the key on, `bin/jg-test-run.sh --gate` still runs a listed script, records each run, prints `JG_TEST_QUARANTINE_RED` for its red and does not count it as a failure.
+A listed script leaves after 10 green runs in a row, or after 7 days when it blocks again and its ticket is noted for its lead.
 
 ## Worker launch environment (config/launch-env-allowlist)
 
@@ -2029,7 +2054,7 @@ A herdr, zellij, or cmux home is therefore never told `tmux` is missing, and the
 **Companion-tool wiring**
 
 An install is not wiring: `bin/jg-tool-wiring.sh` runs on every locked session start and writes what the pinned packages carry, once per home.
-It links the skill each package ships, appends done-done's `integrations/juggernaut/brief-include.md` to `config/brief-include.md` as one managed block that a rerun replaces rather than appends, and places done-done's `integrations/juggernaut/merge-gate` as `config/merge-gate` with the executable bit set.
+It links the skill each package ships, appends done-done's `integrations/<juggernaut or firstmate>/brief-include.md` to `config/brief-include.md` as one managed block that a rerun replaces rather than appends, and places done-done's `integrations/<juggernaut or firstmate>/merge-gate` as `config/merge-gate` with the executable bit set.
 A second run writes nothing, an absent package is a silent no-op, and an existing `config/merge-gate` is never replaced, so a home that already has a gate keeps that gate.
 Sign-off arming stays per home and is never done for the user; the first wiring of an unarmed home prints one line naming `bin/jg-procevent-signoff.sh arm`, and an already wired home stays silent.
 

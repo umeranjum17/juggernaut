@@ -11,6 +11,8 @@ probe=$addons/account-pool/bin/jg-route-probe
 w=$(mktemp -d "${TMPDIR:-/tmp}/route-chain-test.XXXXXX") || exit 1
 trap 'rm -rf -- "$w"' EXIT
 mkdir -p "$w/home/state" "$w/home/config" "$w/pool" "$w/bin" "$w/.config/ollama-cloud"
+# The capacity alert goes through the real alert function: the fixture home reaches it by a one-line wrapper.
+mkdir -p "$w/home/bin"; printf '#!/usr/bin/env bash\nexec bash %s/bin/jg-alert.sh "$@"\n' "$(cd "$here/../../.." && pwd)" >"$w/home/bin/jg-alert.sh"; chmod +x "$w/home/bin/jg-alert.sh"
 fails=0
 is() { if [ "$2" = "$3" ]; then echo "ok - $1"; else echo "not ok - $1: got [$2], want [$3]"; fails=$((fails + 1)); fi; }
 
@@ -98,7 +100,7 @@ probe_run
 is "Ollama probed down (credit empty)" "$(state_of route:ollama-cloud/deepseek-v4.1-flash)" down
 is "one switch line" "$(log_lines)" 1
 is "a changed state prints exactly one line" "$(wc -l <<<"$out")" 1
-case $out in route-chain:\ head=route:commandcode/*down=*route:ollama-cloud/deepseek-v4.1-flash\(ollama_credit_empty\)*) ok=yes ;; *) ok=no ;; esac
+case $out in *route-chain:\ head=route:commandcode/*down=*route:ollama-cloud/deepseek-v4.1-flash\(ollama_credit_empty\)*) ok=yes ;; *) ok=no ;; esac
 is "the line names the new head and the dead route" "$ok" yes
 is "the line carries no epoch" "$(grep -Ec '[0-9]{10}' <<<"$out")" 0
 line=$(cat "$w/home/state/route-chain.log")

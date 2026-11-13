@@ -16,6 +16,9 @@ work=$(mktemp -d) || exit 1
 trap 'rm -rf "$work"' EXIT
 mark=$work/mark
 export ZAI_QUOTA_MARK=$mark
+# The capacity alert goes through the real alert function: the fixture home reaches it by a one-line wrapper.
+mkdir -p "$work/home/bin"; printf '#!/usr/bin/env bash\nexec bash %s/bin/jg-alert.sh "$@"\n' "$(cd "$here/../../.." && pwd)" >"$work/home/bin/jg-alert.sh"; chmod +x "$work/home/bin/jg-alert.sh"
+export JG_MAIN_HOME=$work/home
 
 fails=0
 ok() { printf 'ok - %s\n' "$1"; }
@@ -37,7 +40,7 @@ PY
 wakes() { # wakes <file>: 1 when the run printed a wake, else 0
   local out
   out=$("$bin" "$1") || { no "check exited nonzero on $1"; echo 0; return; }
-  grep -q '^zai-quota:' <<<"$out" && { echo 1; return; }
+  grep -q 'capacity (P2).* - zai-quota:' <<<"$out" && { echo 1; return; }
   echo 0
 }
 

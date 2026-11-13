@@ -53,9 +53,11 @@ fails=0
 ok() { printf 'ok - %s\n' "$1"; }
 no() { printf 'not ok - %s\n' "$1"; fails=$((fails + 1)); }
 is() { if [ "$2" = "$3" ]; then ok "$1"; else no "$1: got [$2], want [$3]"; fi; }
-run() { # homes the check names, e.g. "muxr(1) writeboost(1)"; the 45 min mark is cleared first
-  rm -f "$JG_STALL_ROOT/state/.fleet-stall.last"
-  "$bin" | sed -n 's/^fleet-stall: .*>45m: \(.*\) - send a go order$/\1/p'
+export JG_STALL_RAISE=${FLEET_STALL_RAISE:-$here/../../../bin/jg-ready-idle.sh}
+run() { # homes the check names, e.g. "muxr(1) writeboost(1)", read from the ready-idle alert it raised; the 45 min mark and old alerts are cleared first
+  rm -rf "$JG_STALL_ROOT/state/.fleet-stall.last" "$JG_STALL_ROOT/state/alerts" "$JG_STALL_ROOT/state/.wake-queue"
+  "$bin" >/dev/null
+  find "$JG_STALL_ROOT/state/alerts" -name 'ready-idle--fleet-stall:*.rec' -printf '%f\n' 2>/dev/null | sed -n 's/^ready-idle--fleet-stall:\(.*\)\.rec$/\1/p' | tr '+' ' '
 }
 
 is "workers waiting on their own runs behind juggernaut paths do not count" "$(run)" ""
@@ -63,6 +65,7 @@ is "workers waiting on their own runs behind juggernaut paths do not count" "$(r
 lane 8 rd-decision "paused [at=1792181200]: waiting on juggernaut for the decision"
 lane 4 ov-instruction "paused [at=1792181300] [key=ov-next]: awaiting main instruction"
 is "lead waits still count, path-only matches still do not" "$(run)" "muxr(1) writeboost(1)"
+is "the alert wakes its holder once, and the check prints nothing itself" "$(wc -l < "$JG_STALL_ROOT/state/.wake-queue")/$("$bin" | wc -l)" "1/0"
 
 # Zero-busy guard, the 2026-10-18 muxr shape: the idle lead's lane runs its own no-mistakes run under a paused: stamp, and
 # crew-state reads that run as working. The feature's real flow check must count it busy, so muxr raises no 0-busy line.
@@ -83,6 +86,6 @@ lane 8 own-run "paused [at=$(date +%s)]: own run: no-mistakes fix round executin
 echo kind=ship > "$JG_STALL_BASE/8/juggernaut/state/own-run.meta"
 : > "$JG_STALL_ROOT/working/own-run"
 rm -f "$JG_STALL_ROOT/state/.fleet-stall.last"
-is "a paused own-run lane keeps muxr out of the zero-busy guard" "$("$bin" | grep -c 'muxr(0-busy' || true)" 0
+is "a paused own-run lane keeps muxr out of the zero-busy guard" "$(run | grep -c 'muxr(0-busy' || true)" 0
 
 exit "$fails"

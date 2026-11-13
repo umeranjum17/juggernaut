@@ -3243,25 +3243,25 @@ jg_backend_herdr_agent_name_variant() {  # <name> <salt> -> <name>
 }
 
 # jg_backend_herdr_pin_agent_name: best-effort pin of a pane's agent display
-# name to the name derived from <id>. Herdr 0.9.1 assigns every agent a random
+# name to <name>, the agent_name= the task record holds (made once at the first
+# spawn by jg_backend_herdr_agent_name_for, or made from the task id for a
+# record that has none). Herdr 0.9.1 assigns every agent a random
 # call-sign at start and fresh ones across a server restart, so jg-spawn.sh
-# pins each worker's agent to its task id (the squad_lead id for a squad_lead
-# launch) once the spawn or relaunch has fully succeeded and the agent is live
+# pins each worker's agent to that name once the spawn or relaunch has fully
+# succeeded and the agent is live
 # - a rename on an agent-less pane fails agent_not_found, so this never runs at
-# tab-create time. The id arrives as metadata from the caller and is never
-# parsed from a label or title. Herdr refuses a name it cannot use, so the id
-# goes through jg_backend_herdr_agent_name_for first, and a name another agent
+# tab-create time. The name arrives from the caller and is never
+# parsed from a label or title. A name another agent
 # in the session already holds (agent_name_taken) is retried once as a variant
 # of the pane id; a taken name whose holder is this very pane already counts as
 # pinned. A failure warns with herdr's own error and still returns 0: the name
 # is cosmetic and must never fail a spawn or relaunch. The name that stuck is
 # left in JG_BACKEND_HERDR_PINNED_NAME (empty when none did).
 # shellcheck disable=SC2034 # JG_BACKEND_HERDR_PINNED_NAME is read by the caller
-jg_backend_herdr_pin_agent_name() {  # <session> <pane-id> <task-id>
-  local session=${1:-} pane=${2:-} id=${3:-} name out code message
+jg_backend_herdr_pin_agent_name() {  # <session> <pane-id> <agent-name>
+  local session=${1:-} pane=${2:-} name=${3:-} out code message
   JG_BACKEND_HERDR_PINNED_NAME=
-  [ -n "$session" ] && [ -n "$pane" ] && [ -n "$id" ] || return 0
-  name=$(jg_backend_herdr_agent_name_for "$id") || return 0
+  [ -n "$session" ] && [ -n "$pane" ] && [ -n "$name" ] || return 0
   if out=$(jg_backend_herdr_cli "$session" agent rename "$pane" "$name" 2>&1); then
     JG_BACKEND_HERDR_PINNED_NAME=$name
     return 0
@@ -3285,26 +3285,25 @@ jg_backend_herdr_pin_agent_name() {  # <session> <pane-id> <task-id>
   return 0
 }
 
-# jg_backend_herdr_moved_agent: where task <id>'s agent runs now that its
+# jg_backend_herdr_moved_agent: where the agent named <name> runs now that its
 # recorded pane <recorded-pane> is gone. A muxr account move carries the
 # conversation into a NEW pane of the same tab and closes the old one, so the
 # pane id changes while two things do not: the agent's name (pinned above from
-# the task id, and re-applied to the moved agent once the old pane is closed)
+# the task record's agent_name=, and re-applied to the moved agent once the old pane is closed)
 # and its working folder. Both must match, in the record's own session; a
 # name alone or a folder alone is never identity.
 #
 # Prints "<pane>\t<tab>\t<workspace>" and returns 0 for exactly one agent that
-# carries the name derived from <id>, works in <worktree> or a folder below it
+# carries <name>, works in <worktree> or a folder below it
 # (its own cwd or its foreground cwd), and sits in a pane other than
 # <recorded-pane>. Returns 1 when there is no such agent (the worker is gone)
 # and 2 when the answer is ambiguous or unreadable (more than one, or the
 # listing failed): neither is evidence of a move. A read; it never renames or
 # closes anything.
-jg_backend_herdr_moved_agent() {  # <session> <id> <worktree> <recorded-pane>
-  local session=${1:-} id=${2:-} worktree=${3:-} recorded=${4:-} name out found count
-  [ -n "$session" ] && [ -n "$id" ] && [ -n "$worktree" ] && [ -n "$recorded" ] || return 2
+jg_backend_herdr_moved_agent() {  # <session> <agent-name> <worktree> <recorded-pane>
+  local session=${1:-} name=${2:-} worktree=${3:-} recorded=${4:-} out found count
+  [ -n "$session" ] && [ -n "$name" ] && [ -n "$worktree" ] && [ -n "$recorded" ] || return 2
   worktree=${worktree%/}
-  name=$(jg_backend_herdr_agent_name_for "$id") || return 2
   out=$(jg_backend_herdr_cli "$session" agent list 2>/dev/null) || return 2
   found=$(printf '%s' "$out" | jq -r --arg name "$name" --arg wt "$worktree" --arg recorded "$recorded" '
     def inside($p): type == "string" and ($p != "") and (. == $p or startswith($p + "/"));

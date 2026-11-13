@@ -2,3 +2,13 @@
 $stop_event_key	event
 required-checks	event
 fleet-report	event
+pr-pager	event
+auto-dispatch	event
+records-reaper	event
+alert-*	event
+line-red-*	event
+lock-lease	event
+status-latency	event
+name	event
+*-reaper	event
+lab-wake	event

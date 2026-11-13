@@ -39,12 +39,17 @@
 #                              other composer text; NOT a delivery terminal
 #   <task>.inbox/.escalated    oldest-message name already surfaced as stale,
 #                              so later polls suppress another escalation
+#   <task>.inbox/.composer-seen  a lead's pending composer text: hash, first-seen
+#                              epoch, submitted flag (the unchanged-text submit)
 #   <task>.inbox/.retry-ring   name of a fire-and-forget record still owed its
 #                              one retry ring (jg_task_inbox_mark_retry)
 #
 # Record format (jg_task_inbox_write / jg_task_inbox_body):
 #   schema=jg-task-inbox.v1
 #   at=<utc timestamp>
+#   ticket=<id>                the ticket the steer is about: its ticket=<id> token, else the task
+#   kind=<order|route|steer>   what the steer is: its [order] or [route] tag, else steer
+#                              (core/machines/tables/message.tsv; steers are counted from these two lines)
 #   delivery=fire-and-forget   present only when the re-ring ladder must ignore it
 #                              (it still gets one retry ring; see below)
 #   --
@@ -115,6 +120,9 @@
 #   JG_TASK_INBOX_BUSY_MAX     default 2; consecutive busy-deferred due polls before
 #                              the one stuck-busy report (delivery stays owed)
 #   JG_TASK_INBOX_HELD_SECS   default 30; minimum age before one Codex retry
+#   JG_TASK_INBOX_COMPOSER_SUBMIT_SECS  default 120; a lead's composer text that stays
+#                              unchanged this long is submitted once, then the doorbell
+#                              rings (jg_task_inbox_unchanged_composer_submit)
 
 _JG_TASK_INBOX_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Both dependencies are canonical lint roots in their own right. Keep them as
@@ -124,6 +132,8 @@ _JG_TASK_INBOX_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$_JG_TASK_INBOX_LIB_DIR/jg-wake-lib.sh"
 # shellcheck source=/dev/null
 . "$_JG_TASK_INBOX_LIB_DIR/jg-backend.sh"
+# shellcheck source=/dev/null
+. "$_JG_TASK_INBOX_LIB_DIR/jg-operational-input.sh"
 # shellcheck source=/dev/null
 . "$_JG_TASK_INBOX_LIB_DIR/jg-busy-lib.sh"
 
@@ -358,6 +368,21 @@ jg_task_inbox_direct_submit() { # <state> <backend> <target> <text> <retries> <s
 
 # Write one record into the next sequence slot: temp-write, then atomic
 # rename. Prints the record path. Caller must hold .seq.lock.
+# The two header lines every record carries: ticket=<id> and kind=<order|route|steer>.
+jg_task_inbox_identity() {  # <task-id> <text>
+  local ticket=$1 kind=steer re_tag='(^|[[:space:]])\[(order|route)\]([[:space:]]|$)' re_ticket='(^|[[:space:]])ticket=([A-Za-z0-9._-]+)([[:space:]]|$)'
+  [[ $2 =~ $re_ticket ]] && ticket=${BASH_REMATCH[2]}
+  [[ $2 =~ $re_tag ]] && kind=${BASH_REMATCH[2]}
+  printf 'ticket=%s\nkind=%s\n' "$ticket" "$kind"
+}
+
+# One header value of a record (inbox or handled/), empty when the record predates the line.
+jg_task_inbox_field() {  # <record-path> <key>
+  local rec=$1
+  [ -f "$rec" ] || rec="${rec%/*}/handled/${rec##*/}"
+  awk -v k="$2" '$0 == "--" { exit } index($0, k "=") == 1 { print substr($0, length(k) + 2); exit }' "$rec" 2>/dev/null
+}
+
 _jg_task_inbox_write_record_locked() {  # <inbox-dir> <text> [delivery-mode]
   local dir=$1 text=$2 delivery_mode=${3:-} seq tmp rec status=0 task=${1##*/}
   task=${task%.inbox}
@@ -367,6 +392,7 @@ _jg_task_inbox_write_record_locked() {  # <inbox-dir> <text> [delivery-mode]
   {
     printf 'schema=%s\n' "$JG_TASK_INBOX_SCHEMA"
     printf 'at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    jg_task_inbox_identity "$task" "$text"
     [ "$delivery_mode" != fire-and-forget ] || printf 'delivery=fire-and-forget\n'
     printf -- '--\n'
     printf '%s' "$text"
@@ -397,6 +423,37 @@ jg_task_delivery_note() {  # <inbox-dir> <seq-or-record-name> <word> [pointer]
   jq -nc --argjson seq "$((10#$seq))" --arg word "$word" --arg pointer "$pointer" --argjson at "$(date +%s)" \
     '{seq:$seq,word:$word,at:$at} + (if $pointer == "" then {} else {pointer:$pointer} end)' \
     >> "$dir/.delivery.jsonl" 2>/dev/null || return 1
+}
+
+# The agent's own pull at a hook beat (core/hooks/inbox.sh): print every unhandled steer in numeric order, move
+# each into handled/ and write the `read` word on its delivery record (pointer: the hook event). The move is the
+# message machine's `read` edge (core/machines/tables/message.tsv), so a steer pulled here is read the same way a
+# worker's own `mv` reads it, and the re-ring ladder stops ringing for it. The text is the agent's to act on; it
+# still claims `handled` with proof through bin/jg-delivery.sh. Prints nothing and exits 1 for an empty inbox.
+# A record that cannot be moved is left in place and not printed, so the next beat tries again.
+jg_task_inbox_pull() {  # <state-dir> <task-id> [event]
+  local dir f n seq body any=1 lock
+  dir=$(jg_task_inbox_dir "$1" "$2")
+  [ -d "$dir" ] || return 1
+  mkdir -p "$dir/handled" || return 1
+  lock="$dir/.pull.lock"
+  jg_task_inbox_lock_acquire "$lock" || return 1
+  while IFS= read -r f; do
+    [ -f "$f" ] || continue
+    body=$(jg_task_inbox_body "$f") || continue
+    mv "$f" "$dir/handled/" 2>/dev/null || continue
+    seq=$(jg_task_inbox_seq_of "${f##*/}") || continue
+    jg_task_delivery_note "$dir" "$seq" read "hook:${3:-pull}" || true
+    printf 'Juggernaut instruction %s (inbox %s.msg, now moved to handled/; act on it, then claim it with bin/jg-delivery.sh handled %s %s --evidence <kind>:<pointer>):\n%s\n\n' \
+      "$seq" "$(printf '%03d' "$seq")" "$2" "$seq" "$body"
+    any=0
+  done < <(for f in "$dir"/*.msg; do
+    [ -e "$f" ] || continue
+    n=$(jg_task_inbox_seq_of "${f##*/}") || continue
+    printf '%010d %s\n' "$n" "$f"
+  done | sort | cut -d' ' -f2-)
+  jg_lock_release "$lock"
+  return "$any"
 }
 
 # Durably enqueue one steer: temp-write, then atomic rename into the next
@@ -605,6 +662,9 @@ _jg_task_inbox_ring_attempt() {  # <backend> <target> <record-path> <expected-la
     return 2
   fi
   cstate=$(jg_backend_composer_state "$backend" "$target" "$label" 2>/dev/null) || cstate=unknown
+  if [ "$cstate" = pending ] && jg_task_inbox_submit_own_digest "$backend" "$target" "$label"; then
+    cstate=$(jg_backend_composer_state "$backend" "$target" "$label" 2>/dev/null) || cstate=unknown
+  fi
   case "$cstate" in
     pending)
       [ -z "$submit_dir" ] || return 1
@@ -665,12 +725,76 @@ _jg_task_inbox_ring_attempt() {  # <backend> <target> <record-path> <expected-la
   return 0
 }
 
+# A supervision digest that Juggernaut typed itself (the typed away-supervisor
+# envelope, marked with U+2063, which a person's text never carries) and that a
+# swallowed Enter left unsent would hold the composer for ever, so every later
+# doorbell would be skipped. Submit it once with Enter when the worker is idle;
+# the ring then goes on. Any other pending text is a person's and is never keyed.
+# Returns 0 when the composer no longer holds it, 1 when nothing was submitted.
+jg_task_inbox_submit_own_digest() {  # <backend> <target> [expected-label]
+  local backend=$1 target=$2 label=${3:-} cap held
+  jg_backend_source "$backend" || return 1
+  cap=$(jg_backend_capture "$backend" "$target" "$JG_COMPOSER_CAPTURE_LINES" "$label" 2>/dev/null) || return 1
+  held=$(jg_composer_extract_selected_content styled=0 "$cap") || return 1
+  case "$held" in
+    "${JG_OPERATIONAL_PREFIX}v1 away-supervisor: "?*) ;;
+    *) return 1 ;;
+  esac
+  [ "$(jg_backend_busy_state "$backend" "$target" 2>/dev/null)" != busy ] || return 1
+  [ "$(jg_backend_resubmit_typed "$backend" "$target" "$held" 2 0.4 "$label")" = empty ]
+}
+
 jg_task_inbox_composer_holds() {  # <backend> <target> <line> [expected-label]
   local cap held
   jg_backend_source "$1" || return 1
   cap=$(jg_backend_capture "$1" "$2" "$JG_COMPOSER_CAPTURE_LINES" "${4:-}" 2>/dev/null) || return 1
   held=$(jg_composer_extract_selected_content styled=0 "$cap") || return 1
   [ -n "$held" ] && [ "$(printf '%s' "$held" | tr -d '[:space:]')" = "$(printf '%s' "$3" | tr -d '[:space:]')" ]
+}
+
+# A lead's composer that keeps the same pending text is a draft nobody will
+# finish, and the steer behind it sits unread. Once the exact text has stayed
+# unchanged for JG_TASK_INBOX_COMPOSER_SUBMIT_SECS (default 120), submit it once,
+# so the doorbell can ring. State under <inbox>/.composer-seen is
+# "<content hash>\t<first-seen epoch>\t<submitted 0|1>"; changed text restarts
+# the clock, and a submitted hash is never submitted again. Prints "submitted"
+# when it pressed Enter; any other outcome prints "wait". A composer that is not
+# pending, or a worker that is not a lead, never gets a key press.
+jg_task_inbox_composer_submit_secs() {
+  local s=${JG_TASK_INBOX_COMPOSER_SUBMIT_SECS:-120}
+  case "$s" in ''|*[!0-9]*) s=120 ;; esac
+  printf '%s' "$s"
+}
+
+jg_task_inbox_unchanged_composer_submit() {  # <state-dir> <task-id> <backend> <target> <label>
+  local dir cap held hash seen_hash seen_at submitted now
+  dir=$(jg_task_inbox_dir "$1" "$2")
+  jg_task_is_lead "$1/$2.meta" || { printf 'wait'; return 0; }
+  jg_backend_source "$3" || { printf 'wait'; return 0; }
+  cap=$(jg_backend_capture "$3" "$4" "$JG_COMPOSER_CAPTURE_LINES" "$5" 2>/dev/null) || { printf 'wait'; return 0; }
+  held=$(jg_composer_extract_selected_content styled=0 "$cap") || { printf 'wait'; return 0; }
+  [ -n "$held" ] || { rm -f "$dir/.composer-seen" 2>/dev/null; printf 'wait'; return 0; }
+  hash=$(printf '%s' "$held" | cksum | cut -d' ' -f1)
+  now=$(date +%s)
+  { IFS=$(printf '\t') read -r seen_hash seen_at submitted < "$dir/.composer-seen"; } 2>/dev/null || true
+  case "${seen_at:-}" in ''|*[!0-9]*) seen_hash= ;; esac
+  if [ "${seen_hash:-}" != "$hash" ]; then
+    { printf '%s\t%s\t0\n' "$hash" "$now" > "$dir/.composer-seen"; } 2>/dev/null || true
+    printf 'wait'
+    return 0
+  fi
+  if [ "${submitted:-0}" = 1 ] || [ "$((now - seen_at))" -lt "$(jg_task_inbox_composer_submit_secs)" ]; then
+    printf 'wait'
+    return 0
+  fi
+  { printf '%s\t%s\t1\n' "$hash" "$seen_at" > "$dir/.composer-seen"; } 2>/dev/null || { printf 'wait'; return 0; }
+  jg_backend_send_key "$3" "$4" Enter "$5" >/dev/null 2>&1 || { printf 'wait'; return 0; }
+  sleep 0.5
+  printf 'submitted'
+}
+
+jg_task_is_lead() {  # <meta-path>
+  [ "$(jg_meta_get "$1" kind 2>/dev/null)" = squad_lead ]
 }
 
 jg_task_inbox_is_fire_and_forget() {  # <record-path>
@@ -803,7 +927,7 @@ EOF
   [ "$rec_base" = "$base" ] || count=0
   case "$count" in ''|*[!0-9]*) count=0 ;; esac
   [ -d "$dir" ] || return 0
-  "${BASH_SOURCE[0]%/*}/jg-machine-shadow.sh" task-inbox "$2:${base%.msg}" ring-counted || true  # shadow report of the move (jg-machine-shadow.sh)
+  "${BASH_SOURCE[0]%/*}/jg-machine-shadow.sh" message "$2:${base%.msg}" rung || true  # shadow report of the move (jg-machine-shadow.sh)
   if ! { printf '%s\t%s\t%s\n' "$base" "$((count + 1))" "$(date +%s)" > "$dir/.ring-state"; } 2>/dev/null; then
     [ -d "$dir" ] || return 0
     return 1
@@ -870,6 +994,12 @@ _jg_ladder_skip() {  # <state-dir> <task> [retry]
   return 1
 }
 
+# Raise the undelivered alert for a steer that was not read (alert table row `undelivered`, bin/jg-alert.sh); its holder reads the
+# wake `--deliver` appends. One live alert per lane, record and kind, so a repeat of the same event raises nothing twice.
+_jg_ladder_alert() {  # <state-dir> <window> <record-path> <kind> <reason>
+  JG_STATE_OVERRIDE=$1 "$_JG_TASK_INBOX_LIB_DIR/jg-alert.sh" raise undelivered "$2-${3##*/}-$4" --note "$5" --deliver
+}
+
 _jg_ladder_defer_report() {  # <state> <task> <window> <record> <kind> <sentence>
   local state=$1 task=$2 w=$3 rec=$4 reason
   if [ ! -d "${rec%/*}" ] || [ ! -f "$rec" ]; then
@@ -877,7 +1007,7 @@ _jg_ladder_defer_report() {  # <state> <task> <window> <record> <kind> <sentence
     return 0
   fi
   reason="stale: $w (unread juggernaut instruction: $rec stays unhandled - $6; no doorbell was typed, and it lands as soon as that clears, so no interrupt is needed unless the worker is wedged)"
-  jg_wake_append stale "$w" "$reason" || return 1
+  _jg_ladder_alert "$state" "$w" "$rec" "$5" "$reason" || return 1
   if ! jg_task_inbox_record_deferral_reported "$state" "$task" "$rec" "$5"; then
     echo "error: stale wake was queued for $task but its deferral report marker could not be written" >&2
     return 1
@@ -892,7 +1022,7 @@ _jg_ladder_escalate_unavailable() {  # <state> <task> <window> <record>
     jg_task_inbox_due_action "$state" "$task" >/dev/null || true
     return 0
   fi
-  jg_wake_append stale "$w" "$reason" || return 1
+  _jg_ladder_alert "$state" "$w" "$rec" unavailable "$reason" || return 1
   if ! jg_task_inbox_record_escalated "$state" "$task" "$rec"; then
     echo "error: stale wake was queued for $task but its inbox escalation marker could not be written" >&2
     return 1
@@ -971,6 +1101,12 @@ _jg_ladder_step() {  # <state-dir> <task> <window> <backend> <label>
     ring)
       ring_rc=0
       jg_task_inbox_ring "$backend" "$w" "$rec" "$label" || ring_rc=$?
+      if [ "$ring_rc" -eq 1 ] \
+        && [ "$(jg_task_inbox_unchanged_composer_submit "$state" "$task" "$backend" "$w" "$label")" = submitted ]; then
+        "$log" "steer-inbox lead composer text unchanged for $(jg_task_inbox_composer_submit_secs)s was submitted: $task ${rec##*/}"
+        ring_rc=0
+        jg_task_inbox_ring "$backend" "$w" "$rec" "$label" || ring_rc=$?
+      fi
       if [ "$ring_rc" -eq 3 ]; then
         _jg_ladder_escalate_unavailable "$state" "$task" "$w" "$rec" || return 1
         return 0
@@ -996,7 +1132,7 @@ _jg_ladder_step() {  # <state-dir> <task> <window> <backend> <label>
         fi
         if [ -d "${rec%/*}" ]; then
           reason="stale: $w (steering-inbox ladder bookkeeping unwritable: ${rec%/*}/.ring-state cannot be written while $rec stays unhandled; the doorbell cannot advance toward escalation - inspect the inbox directory)"
-          jg_wake_append stale "$w" "$reason" || return 1
+          _jg_ladder_alert "$state" "$w" "$rec" bookkeeping "$reason" || return 1
           _JG_LADDER_WAKE_REASON=$reason
         fi
       fi
@@ -1007,7 +1143,7 @@ _jg_ladder_step() {  # <state-dir> <task> <window> <backend> <label>
       jg_task_inbox_ring "$backend" "$w" "$rec" "$label" || ring_rc=$?
       if ! jg_task_inbox_clear_retry "$state" "$task" "$rec" && [ -f "$rec" ]; then
         reason="stale: $w (steering-inbox retry mark unremovable: ${rec%/*}/.retry-ring cannot be removed, so $rec would ring on every poll - inspect the inbox directory)"
-        jg_wake_append stale "$w" "$reason" || return 1
+        _jg_ladder_alert "$state" "$w" "$rec" retry-mark "$reason" || return 1
         _JG_LADDER_WAKE_REASON=$reason
       fi
       "$log" "steer-inbox retry ring: $task ${rec##*/} result=$ring_rc${JG_TASK_INBOX_RING_REASON:+ reason=$JG_TASK_INBOX_RING_REASON}"
@@ -1018,7 +1154,7 @@ _jg_ladder_step() {  # <state-dir> <task> <window> <backend> <label>
         jg_task_inbox_due_action "$state" "$task" >/dev/null || true
         return 0
       fi
-      jg_wake_append stale "$w" "$reason" || return 1
+      _jg_ladder_alert "$state" "$w" "$rec" escalated "$reason" || return 1
       if ! jg_task_inbox_record_escalated "$state" "$task" "$rec"; then
         echo "error: stale wake was queued for $task but its inbox escalation marker could not be written" >&2
         return 1

@@ -1198,6 +1198,8 @@ print_file_capped "$DATA/captain.md" "data/captain.md"
 print_file_capped "$DATA/captain-shared.md" "data/captain-shared.md (shared, main-authoritative, read-only in squad_lead homes)" "$MEMORY_FILE_CAP"
 print_learnings "$DATA/learnings.md" "data/learnings.md"
 print_owner_rules "$DATA/owner-rules.md" "data/owner-rules.md (the shared owner rules every session reads; bin/jg-owner-rules.sh writes it)"
+bypass_digest=$(JG_HOME="$JG_HOME" JG_CONFIG_OVERRIDE="$CONFIG" JG_STATE_OVERRIDE="$STATE" bash "$SCRIPT_DIR/jg-proof-bypass.sh" digest 2>/dev/null) || bypass_digest=''
+if [ -n "$bypass_digest" ]; then subsection "proof bypass (config/proof-bypass; bin/jg-proof-bypass.sh)"; printf '%s\n' "$bypass_digest" | jg_digest_say; fi
 # The role's personality file adds tone only; the voice rules stay in captain-voice.md (bin/jg-voice.py).
 if voice_persona=$(JG_HOME="$JG_HOME" JG_CONFIG_OVERRIDE="$CONFIG" python3 "$SCRIPT_DIR/jg-voice.py" persona 2>/dev/null) && [ -n "$voice_persona" ]; then
   subsection "captain voice personality (config/captain-voice-<role>.md; tone only, the rules are in captain-voice.md)"

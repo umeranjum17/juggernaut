@@ -20,7 +20,7 @@
 # systemctl that stands in for the user manager, and a unit name of its own. It never
 # touches port 4222, the machine's service or the machine's state/bus files.
 #
-# This is also the test that owns journeys/bus-machine-service.sh (the done-done journey runs this
+# This is also the test that owns the bus-machine-service journey of .done-done.yaml (the done-done journey runs this
 # file), so the changed-test map selects it for a change to that journey.
 set -u
 

@@ -1,0 +1,3 @@
+# Claude account by model
+
+Claude account by model: run `done-done run claude-account-by-model` with `JG_BEADS_TEST_BD` and `JG_BEADS_TEST_DOLT` naming the pinned builds; the real `bin/jg-spawn.sh` over a fixture home with `config/claude-account` pinned to one folder and `config/claude-account-by-model` mapping `claude-sonnet-5-5` to a second folder launches Sonnet on the second folder (launch line and task record `account=`) and keeps it after a relaunch, launches `claude-opus-5-5` on the pin folder, keeps the pin for Sonnet when the map is absent, and refuses a malformed map before any task record exists (cases T1 to T4 of `tests/jg-spawn-account-by-model.test.sh`); the run writes its log and `steps.json` (screen: none).

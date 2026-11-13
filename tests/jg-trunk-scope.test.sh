@@ -66,11 +66,12 @@ pass "empty project is quiet and a committed project retains its refusal"
 
 for mode in direct-PR no-mistakes local-only; do
   world "stray-$mode" "$mode"
+  read_as=$mode; [ "$mode" = no-mistakes ] && read_as=direct-PR  # the retired word is read as direct-PR
   tip=$(git -C "$P" rev-parse trunk); lane s1 local-only
   for sub in "land s1" "verify $P" "live $P" "release $P" "rollover $P" "init $P"; do
     # shellcheck disable=SC2086
     out=$(jgt $sub 2>&1) && fail "T1 jg-trunk.sh $sub must refuse a $mode project: $out"
-    assert_contains "$out" "is registered $mode in data/projects.md, not local-trunk" "T1 jg-trunk.sh $sub must name the registered mode"
+    assert_contains "$out" "is registered $read_as in data/projects.md, not local-trunk" "T1 jg-trunk.sh $sub must name the registered mode"
   done
   [ "$(git -C "$P" rev-parse trunk)" = "$tip" ] || fail "T1 a $mode project's trunk branch must not move"
   [ ! -e "$(git -C "$P" rev-parse --git-common-dir)/hooks/reference-transaction" ] || fail "T1 no trunk hook may be installed in a $mode project"
@@ -78,7 +79,7 @@ for mode in direct-PR no-mistakes local-only; do
   out=$(bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$H" 2>&1); sleep 1
   [ -z "$out" ] && [ ! -e "$H/data/jg-trunk-landing/s1.$(git -C "$P" rev-parse fm/s1).state" ] || fail "T1 the landing check must not touch a $mode project: $out"
   [ "$(git -C "$P" rev-parse trunk)" = "$tip" ] || fail "T1 the landing check must not land on a $mode project"
-  [ "$(JG_HOME="$H" "$ROOT/bin/jg-project-mode.sh" proj 2>/dev/null)" = "$mode off" ] || fail "T1 the registry must still answer '$mode off'"
+  [ "$(JG_HOME="$H" "$ROOT/bin/jg-project-mode.sh" proj 2>/dev/null)" = "$read_as off" ] || fail "T1 the registry must still answer '$read_as off'"
   pass "T1 a $mode project is never treated as local-trunk, even with a stray trunk record"
 done
 
@@ -92,12 +93,13 @@ pass "T2 direct-PR still opens its PR"
 
 world nomistakes no-mistakes
 b=$(brief n1 no-mistakes --risk release)
-assert_contains "$b" "no-mistakes" "T3 no-mistakes must keep its pipeline contract"
-assert_contains "$b" "/no-mistakes" "T3 no-mistakes must still hand off to the pipeline"
+assert_contains "$b" "done-done verify" "T3 the retired no-mistakes word must prove with done-done verify"
+assert_contains "$b" "open a PR with \`gh-axi\`" "T3 the retired no-mistakes word must take the pull request path"
+assert_not_contains "$b" "/no-mistakes" "T3 the retired no-mistakes word must start no pipeline"
 assert_not_contains "$b" "Local trunk lane" "T3 a no-mistakes brief must carry no trunk section"
 assert_not_contains "$b" "rebases your commit onto the latest tip of the local trunk" "T3 a no-mistakes brief must carry no trunk rebase rule"
 lead=$(charter lead-n proj); assert_not_contains "$lead" "Local trunk projects" "T3 a no-mistakes project's squad lead charter must carry no trunk rule"
-pass "T3 no-mistakes still runs its pipeline"
+pass "T3 the retired no-mistakes word proves with done-done and opens its PR"
 
 world localonly local-only
 b=$(brief l1 local-only)

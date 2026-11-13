@@ -5,8 +5,8 @@
 #        jg-backlog.sh --help
 #
 # Every routine juggernaut backlog read or mutation goes through this command. It serves
-# `show`, `view`, `list`, `ready`, `ready --spawnable` (the tickets this home can start now, bin/jg-backlog-spawnable.sh, ended at 10 seconds with exit 124), `markdown`, `add`, `update`, `done`, `block`, `unblock`,
-# `start`, `reopen`, `hold`, `unhold`, `public-followup` and `relink` from the store that
+# `show`, `view`, `list`, `ready`, `ready --spawnable` (the tickets this home can start now, bin/jg-backlog-spawnable.sh, ended at 10 seconds with exit 124), `approve-dispatch`, `markdown`, `add`, `update`, `done`, `block`, `unblock`,
+# `start`, `task`, `reopen`, `hold`, `unhold`, `public-followup` and `relink` from the store that
 # `config/beads-dir` names (bin/jg-backlog-lib.sh); any other verb exits 2 with nothing
 # run. A relative value of `--to` or any `--*-file` flag (`--body-file`, ...) is made
 # absolute against the caller's working directory. Hold reasons are plain text.
@@ -42,11 +42,18 @@
 #     `update`/`edit` that would set one on a [captain-ask] row (or retitle a
 #     row to [captain-ask] with one): an owner ask is top priority. Such an add
 #     or retitle without --priority gets --priority 0 added;
+#   - `add` (or `create`) of a row for another home: `--owner <home>` (or JG_ROW_OWNER, which bin/jg-plan-route.sh
+#     sets) names the home that owns the row, and a home files only its own, so the row lives in one store. A
+#     home is `main` or the id in its squad-lead marker. The refusal names the owner; the flag never reaches the
+#     store. Without it nothing is checked;
 #   - `add` (or `create`) that the optional task-priority feature check refuses,
 #     e.g. no `--priority 0-3`; its message and exit status are returned and
 #     nothing runs. The check is ${XDG_DATA_HOME:-~/.local/share}/jg-task-priority/check.sh
 #     (JG_TASK_PRIORITY_CHECK overrides the path); when it is not installed this
 #     does nothing.
+# `task <ticket-id>` prints the task id made from the ticket (bin/jg-backlog-lib.sh's jg_backlog_task_id: every dot
+# becomes a dash) and writes it on the ticket's row as metadata.task, so every script that knows only the task id
+# reaches the row. It refuses a ticket with no row and a task id that a different row already answers to.
 # Ticket keys (bin/jg-ticket-key.sh owns the contract): a key such as JG-101 given where a
 # task id goes is resolved to its slug first, `show` prints the key under the id, `list --keys`
 # puts each row's key first, and a successful `add` keys the new ticket when the home has a
@@ -123,7 +130,10 @@ path_value_next=0
 CAPTAIN_QUOTE=
 CONFIRM_CARD=
 cap_next=
+ROW_OWNER=${JG_ROW_OWNER:-}
+owner_next=0
 for arg in "$@"; do
+  if [ "$owner_next" = 1 ]; then ROW_OWNER=$arg; owner_next=0; continue; fi
   if [ -n "$cap_next" ]; then
     case $cap_next in quote) CAPTAIN_QUOTE=$arg ;; *) CONFIRM_CARD=$arg ;; esac
     cap_next=
@@ -137,6 +147,12 @@ for arg in "$@"; do
   case "$arg" in
     --file|--file=*)
       fail "this command always addresses this home's backlog; drop --file"
+      ;;
+    --owner|--owner=*)
+      case "${1:-}" in
+        add|create) if [ "$arg" = --owner ]; then owner_next=1; else ROW_OWNER=${arg#--owner=}; fi ;;
+        *) ARGS+=("$arg") ;;
+      esac
       ;;
     --captain-quote) cap_next=quote ;;
     --captain-quote=*) CAPTAIN_QUOTE=${arg#--captain-quote=} ;;
@@ -164,6 +180,7 @@ for arg in "$@"; do
 done
 
 [ -z "$cap_next" ] || fail "--captain-quote and --confirm-card each need a value"
+[ "$owner_next" = 0 ] || fail "--owner needs a home name"
 
 # A ticket key names its slug wherever a task id goes; a title or any other value is left alone.
 TICKET_KEY="$SCRIPT_DIR/jg-ticket-key.sh"
@@ -183,8 +200,39 @@ ARGS=(${_jg_keyed[@]+"${_jg_keyed[@]}"})
 unset _jg_keyed _jg_arg _jg_slug
 key_tool() { JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$TICKET_KEY" "$@"; }
 beads_read() { jg_backlog_beads_read "$JG_HOME/config" ${ARGS[@]+"${ARGS[@]}"}; }
+# approve-dispatch <id> --harness <h> --model <m> --effort <e>: the lead's or the owner's yes that the dispatch check
+# (core/auto-dispatch) may start this ticket by itself, on that route. It writes state/dispatch-approved/<id>, the only
+# record the check trusts: a line typed into a ticket body is not one. A worker session (JG_TASK_ID set) is refused.
+approve_dispatch() {
+  local id='' harness='' model='' effort='' dir rec
+  [ -z "${JG_TASK_ID:-}" ] || fail "approve-dispatch is refused in a worker session: only the lead or the owner approves a start"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --harness|--model|--effort) [ "$#" -ge 2 ] && [ -n "$2" ] || fail "$1 needs a value"
+        case "$1" in --harness) harness=$2 ;; --model) model=$2 ;; --effort) effort=$2 ;; esac; shift 2 ;;
+      -*) fail "approve-dispatch: unknown option $1" ;;
+      *) [ -z "$id" ] || fail "approve-dispatch takes one ticket id"; id=$1; shift ;;
+    esac
+  done
+  [ -n "$id" ] && [ -n "$harness" ] && [ -n "$model" ] && [ -n "$effort" ] \
+    || fail "usage: approve-dispatch <id> --harness <h> --model <m> --effort <e>"
+  case "$id$harness$model$effort" in *[!A-Za-z0-9._:/-]*) fail "approve-dispatch: ids and route values hold letters, digits and . _ : / - only" ;; esac
+  jg_backlog_beads_read "$JG_HOME/config" show "$id" >/dev/null 2>&1 || fail "approve-dispatch: no ticket $id in this home's store"
+  dir="${JG_STATE_OVERRIDE:-$JG_HOME/state}/dispatch-approved"
+  mkdir -p "$dir" || fail "approve-dispatch: cannot create $dir"
+  rec=$(mktemp "$dir/.$id.XXXXXX") || fail "approve-dispatch: cannot write in $dir"
+  if ! { printf 'approved-by=%s\napproved-at=%s\nharness=%s\nmodel=%s\neffort=%s\n' \
+    "$(id -un)" "$(date +%s)" "$harness" "$model" "$effort" > "$rec" && mv -f "$rec" "$dir/$id"; }; then
+    rm -f "$rec"; fail "approve-dispatch: cannot write $dir/$id"
+  fi
+  printf 'approved %s for dispatch: %s %s %s\n' "$id" "$harness" "$model" "$effort"
+}
+
 set -o pipefail
+# The task id is made here, in the one function that makes it, and handed to the writer with the ticket.
+[ "${1:-}" != task ] || { [ "${#ARGS[@]}" -eq 2 ] || fail "usage: jg-backlog.sh task <ticket-id>"; ARGS+=("$(jg_backlog_task_id "${ARGS[1]}")"); }
 case "${1:-}" in
+  approve-dispatch) approve_dispatch "${ARGS[@]:1}"; exit $? ;;
   show|view) beads_read | key_tool annotate-show; exit $? ;;
   list) if [ "$LIST_KEYS" = 1 ]; then beads_read | key_tool annotate; else beads_read; fi; exit $? ;;
   ready)
@@ -199,7 +247,7 @@ case "${1:-}" in
     fi
     beads_read; exit $? ;;
   markdown) beads_read; exit $? ;;
-  add|create|update|edit|done|close|block|unblock|start|reopen|hold|unhold|public-followup|relink) ;;
+  add|create|update|edit|done|close|block|unblock|start|task|reopen|hold|unhold|public-followup|relink|moment|wait|ticket-stage|ticket-drift|times|trace) ;;
   *) fail "the beads backlog does not serve ${1:-this command}" ;;
 esac
 
@@ -310,10 +358,25 @@ captain_ask_first() {
     *) fail "a [captain-ask] item is top priority and stays at 0; drop --priority $ITEM_PRIORITY" ;;
   esac
 }
+# This home's name as the owner of a row: `main`, or the id its squad-lead marker holds.
+home_owner_name() {
+  local marker
+  marker=$(jg_compat_marker "$JG_HOME")
+  if [ -r "$marker" ]; then tr -d '[:space:]' < "$marker"; else printf 'main'; fi
+}
+# A home files only the rows it owns: a row that names another owner is that home's to file.
+owner_check() {
+  local me
+  [ -n "$ROW_OWNER" ] || return 0
+  me=$(home_owner_name)
+  [ "$ROW_OWNER" = "$me" ] \
+    || fail "this row is owned by $ROW_OWNER and this home is $me: file it in $ROW_OWNER's home (bin/jg-plan-route.sh does that for a plan); nothing was filed"
+}
 # New and edited items: strict intake and owner asks first, then the optional
 # task-priority feature (a new task must carry a priority; no-op when not installed).
 case "${1:-}" in
   add|create)
+    owner_check
     item_args ${ARGS[@]+"${ARGS[@]}"}
     intake_check
     captain_ask_first

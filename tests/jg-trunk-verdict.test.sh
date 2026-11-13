@@ -15,6 +15,9 @@
 # V7 A refusal whose cause is the environment (a hook the lander may not replace, a changed proof configuration) is not a judgement on the
 #    commit: the check asks the lander again after the bound (FINAL_ENV_SECS), and the repaired cause lands the lane, while an unrepaired
 #    cause stays refused with no new gate run, and a red the commit caused is still not tried again.
+# V8 A final stored with no inputs fingerprint (a record from before rule 6, 12 Nov: first-draft jg-i41 held a design-receipt refusal the fixed
+#    lander would no longer give) is asked of the lander again once and lands; a final whose inputs did not change stays held with no new
+#    attempt; a changed lander file, or a receipt published since, makes the same final ask again.
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
@@ -200,6 +203,36 @@ test_an_unrepaired_environment_refusal_runs_no_new_attempt() {
   pass 'an environment refusal asked again after its bound is answered by the lander cache and runs no new attempt'
 }
 
+test_a_final_with_no_inputs_fingerprint_is_asked_again_and_lands() {
+  local d
+  home_world nofp
+  lane f one; d=$(git -C "$PROJ" rev-parse fm/f); mkdir -p "$HOME_D/data/jg-trunk-landing"
+  printf 'final REFUSED: completion receipt has no first-draft receipt line\n' > "$HOME_D/data/jg-trunk-landing/f.$d.state"
+  sweep >/dev/null; settle
+  [ "$(attempts f "$d")" -ge 1 ] || fail "a final with no stored inputs must be asked of the lander again"
+  on_trunk work.txt one || fail "the lane must land once the lander no longer refuses it: $(state_of f "$d")"
+  pass 'a final stored with no inputs fingerprint is asked of the lander again and the lane lands'
+}
+
+test_a_final_stays_held_until_a_lander_file_or_the_receipt_changes() {
+  local r
+  home_world inputs
+  lane i BAD; r=$(git -C "$PROJ" rev-parse fm/i)
+  sweep >/dev/null; settle
+  case $(state_of i "$r") in final*gate*) ;; *) fail "i must be refused by the gate: $(state_of i "$r")" ;; esac
+  [ -s "$HOME_D/data/jg-trunk-landing/i.$r.inputs" ] || fail "a verdict must be stored with its inputs fingerprint"
+  sweep >/dev/null; settle; sweep >/dev/null; settle
+  [ "$(attempts i "$r")" = 1 ] || fail "a final whose inputs did not change is not asked again: $(attempts i "$r") attempts"
+  printf '\n# fixed\n' >> "$HOME_D/bin/jg-dod-lib.sh"
+  sweep >/dev/null; settle
+  [ "$(attempts i "$r")" = 2 ] || fail "a changed lander file must make the final ask again: $(attempts i "$r") attempts"
+  sweep >/dev/null; settle
+  [ "$(attempts i "$r")" = 2 ] || fail "the new verdict holds on its new inputs: $(attempts i "$r") attempts"
+  jq '.evidence = "republished"' "$HOME_D/state/i.run-receipt.json" > "$W/rcpt" && mv "$W/rcpt" "$HOME_D/state/i.run-receipt.json"
+  sweep >/dev/null; settle
+  [ "$(attempts i "$r")" = 3 ] || fail "a changed receipt must make the final ask again: $(attempts i "$r") attempts"
+  pass 'a final holds while its inputs stand; a changed lander file or receipt asks the lander again'
+}
 
 test_a_stack_whose_decisions_read_fails_once_is_tried_again_and_lands
 test_a_conflict_verdict_holds_only_while_its_tip_stands
@@ -209,4 +242,6 @@ test_a_red_gate_the_lane_caused_stays_final_for_its_head
 test_a_moved_trunk_verdict_holds_only_while_its_tip_record_stands
 test_an_environment_refusal_is_asked_again_and_lands_once_repaired
 test_an_unrepaired_environment_refusal_runs_no_new_attempt
+test_a_final_with_no_inputs_fingerprint_is_asked_again_and_lands
+test_a_final_stays_held_until_a_lander_file_or_the_receipt_changes
 printf 'jg-trunk-verdict: ok\n'

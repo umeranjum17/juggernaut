@@ -1,0 +1,3 @@
+# Records reaper
+
+Records reaper: run `done-done run -- bash tests/jg-records-reaper.test.sh` with the log written into `$DONE_DONE_EVIDENCE_ROOT`; it arms `core/tmp-reaper/wiring.sh` in a throwaway home and runs the installed check, which removes the status file, inbox folder, landing records, request and launch logs and merged `feature/` or `fm/` lane branch of a task with no record and no open ticket, while a live task, an open ticket, young files, a branch a record names, an unmerged branch, a branch cut just now, `data/<task>/` and an unreadable ticket list all remove nothing; `trunk-landing.sh check` clears the same landing output.

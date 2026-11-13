@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# jg - the one command an agent runs: jg <verb> [args]. It finds the home and the ticket from
+# the folder it runs in (core/agent-cli/lib.sh) and calls the script that owns the verb.
+# core/agent-cli/README.md owns the verbs and their output form.
+set -u
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+CLI=$SCRIPT_DIR/../core/agent-cli
+verb=${1:-help}
+case "$verb" in
+  -h|--help|help|'') sed -n '/^## Verbs/,$p' "$CLI/README.md" | sed '1d'; exit 0 ;;
+  status|done|wait|progress|inbox|proof|land|ask) shift; exec bash "$CLI/$verb.sh" "$@" ;;
+  alert) shift; exec bash "$CLI/alerts.sh" "$@" ;;
+  *) printf 'jg: no verb %s. Verbs: status, done, wait, progress, inbox, proof, land, alert, ask. Next: jg help\n' "$verb" >&2; exit 2 ;;
+esac

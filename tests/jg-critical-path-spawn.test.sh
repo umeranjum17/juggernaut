@@ -4,7 +4,7 @@
 # Real bin/jg-brief.sh, bin/jg-spawn.sh and bin/jg-critical-path.sh over a fixture project; only the
 # probe (JG_MIGRATION_LIVE_BIN), the terminal and the worktree tool are stand-ins, so a spawn that
 # passes the gate is the one that launches and writes its task record.
-# tests/jg-critical-path.test.sh owns the gate itself; journeys/critical-path.sh runs both files.
+# tests/jg-critical-path.test.sh owns the gate itself; the critical-path journey of .done-done.yaml runs both files.
 #
 # T1 a ship for a row past the first pending part is refused, with the measurement, and leaves no record.
 # T2 Migration row accounts, the first part not live, spawns.   T3 Migration row none spawns and is recorded.

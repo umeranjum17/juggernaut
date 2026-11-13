@@ -32,8 +32,8 @@ A non-conforming evidence list (a stray comma, a name written twice, a path inst
 doubled or missing `evidence/` prefix) fails naming the exact line and the name to write instead.
 
 A task is judged on its own PR's checks alone: a red PR elsewhere, including another PR into the same release branch, never holds a green one.
-After the merges, the check counts each repo's open PRs (the repos named by the tasks' recorded `pr=` URLs) and prints one alert when a count passes `config/open-pr-cap` (a whole number, default 8).
-The alert is remembered per repo and count in `<home>/data/jg-merge-on-green/open-pr-cap/`, so it repeats only when the count changes, and a repo back under the cap forgets it; a forge failure is silent and retried next sweep.
+After the merges, the check counts each repo's open PRs (the repos named by the tasks' recorded `pr=` URLs) and raises the central `stranded` alert (`bin/jg-alert.sh raise` then `deliver`, subject `<owner>__<repo>.open-prs`, which rings the lead) when a count passes `config/open-pr-cap` (a whole number, default 8).
+The count is remembered per repo in `<home>/data/jg-merge-on-green/open-pr-cap/`, so it raises again only when the count changes, and a repo back under the cap forgets it and resolves the alert; a forge failure is silent and retried next sweep.
 
 ## Merge-ready batch
 
@@ -45,17 +45,17 @@ Each outcome carries its own authority verdict, and the batch merges nothing: `m
 
 `stale-pr-alarm.sh check <jg-home>` runs at the end of every `merge-on-green.sh check`, so the same installed
 watcher check carries it and no model turn is spent. For each project in `data/projects.md` whose clone
-under `projects/` has a github.com `origin`, it lists the open PRs with `gh-axi` and prints one line per PR
+under `projects/` has a github.com `origin`, it lists the open PRs with `gh-axi` and raises one central `stranded` alert (`bin/jg-alert.sh raise` then `deliver`, subject `<owner>__<repo>.<number>`, which rings the lead) per PR
 we own, meaning the author is the home's gh login or the PR URL is recorded as `pr=` in a task meta (an outside
 author's PR on an upstream repo is ignored; with no login from the forge the sweep is skipped and retried),
-`stale-pr-alarm: <PR URL>: <reason>`, for any of these reasons:
+for any of these reasons:
 
 - `release PR: no CI started 30 min after it opened`: the PR's base or head is `release/c-N`, it opened 30 minutes ago or more (`JG_RELEASE_CI_MINUTES` changes the wait), and its head has no check run past queued and no commit status. PR 644 sat 80 minutes this way. This reason replaces the 24 h one for a release PR.
 - `no checks and no update for 24 h`: the head has no check run and no commit status, and the PR was last updated 24 hours ago or more.
 - `base branch <release/...> is a release branch already merged into main`: the PR points at a `release/*` branch that a merged PR already carried into `main`, so it can never land where it points.
 
-The alert is remembered per PR and reason in `<home>/data/jg-merge-on-green/stale-pr-alarm/`, so the next
-poll stays silent. A PR that closes, heals or changes reason forgets it, and a new stall alerts again. A forge
+The reason is remembered per PR in `<home>/data/jg-merge-on-green/stale-pr-alarm/`, so the next
+poll stays silent. A PR that closes, heals or changes reason forgets it and resolves its alert, and a new stall alerts again. A forge
 failure is silent and retried next sweep. The check never closes or rebases a PR, and the open-PR cap above is unchanged.
 
 ## Stranded-merge sweep
@@ -66,7 +66,7 @@ For each project with a github.com `origin`, it asks the forge how far each clos
 A branch ahead by 0 is fine.
 A branch listed in `config/version-branch-carried` has had its work carried to a newer release, so it is counted and never alarmed.
 Any other closed branch ahead by more than 0 is stamped when first seen.
-After 48 hours (`JG_STRANDED_HOURS`) one line `stranded-merge-sweep: <repo>: <branch> is ahead of <default> by <n> commits ...` is printed, and it repeats only when the count changes.
+After 48 hours (`JG_STRANDED_HOURS`) the central `stranded` alert is raised (subject `<owner>__<repo>.release__c-N`, which rings the lead), and it is raised again only when the count changes.
 The forge is asked at most once an hour (`JG_STRANDED_SWEEP_MIN`), which keeps the watcher check fast.
 A forge failure is silent and retried next sweep.
 `stranded-merge-sweep.sh report <jg-home>` prints each closed branch with its ahead count and state.

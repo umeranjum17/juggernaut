@@ -42,7 +42,7 @@ func legacyRE() string {
 
 func verbRecognized(v string) bool {
 	switch v {
-	case "working", "needs-decision", "blocked", "done", "failed", "note":
+	case "working", "needs-decision", "blocked", "done", "failed", "note", "progress":
 		return true
 	}
 	return v == pausedVerb() || v == resolveVerb() || v == captainHeldVerb()
@@ -126,7 +126,7 @@ func isCaptainRelevant(line string) bool {
 	}
 	verb := lineVerb(line)
 	switch verb {
-	case "working", "resolved", "captain-held", pausedVerb():
+	case "working", "progress", "resolved", "captain-held", pausedVerb():
 		return false
 	}
 	if prefixUnrecognized(line) {

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The Recon depth gate: one shell check on a Recon's files, never a model call.
 #
-# Usage: jg-recon-gate.sh <task-id> [--depth <quick|standard|deep>]
+# Usage: jg-recon-gate.sh <task-id> [--depth <quick|standard|deep>] [--step]
 #
 # bin/jg-brief.sh --scout writes `Recon depth: <level>` into a standard or deep
 # Recon's brief, and .agents/skills/deep-recon/SKILL.md owns the method. Before
@@ -18,11 +18,31 @@
 #     researcher's own task id, closing all k gaps); a deep critic may not be
 #     `self` or the researcher's own task id, and a deep Recon allows 3 rounds
 #     that found new gaps;
+#   - board-report/ holds a page or card that bin/jg-report-page.sh did not write
+#     (a content hash in the file must match), or whose sources changed since;
 #   - sources.jsonl is under the level's budget: standard 8 sources over 3 kinds,
 #     deep 20 over 5.
 # Quick is exempt, and so is a brief with no depth line (a brief made before the
 # flag existed). The depth is read from data/<task-id>/brief.md unless --depth is
 # given. The data directory is JG_DATA_OVERRIDE, else <JG_HOME>/data.
+#
+# --step asks where a Recon stands in the ticket stage `proving` (core/machines/tables/proving.tsv): a deep
+# Recon whose only refusals are about its separate critic prints `recon gate: STEP critic - ...` and exits 0, so
+# its researcher's done line is the claim-done move and the critic is a step of proving, not a wait. Every
+# other refusal still refuses, and a Recon with no refusal prints PASS. Cleanup never passes --step, so a Recon
+# whose critic is open is still not cleanable.
+#
+# A critic task is judged on its critic.md alone. Its data directory holds a
+# critic.md whose `Critic:` line names the task itself and no report.md; the
+# researcher's report is not its product. It passes with that `Critic:` line and
+# one `Round <n>: new gaps <k>` line, at any depth. `--is-critic` only asks
+# whether the task is one: exit 0 when it is, 1 when it is not, nothing printed.
+#
+# The owner's bypass (bin/jg-proof-bypass.sh, the record config/proof-bypass) lets a
+# Recon past this depth gate by the same record and command as a ship; the gate prints
+# whose word it is. A waiver file by Main (<state>/recon-gate-waiver/<task-id>) is no
+# longer read and is refused with that reason. A bypass never waives the owner-call
+# completion gate.
 #
 # It prints one line and exits 0 on success, one line per refusal and exits 1
 # otherwise, and exits 2 on a usage error. A "board link missing" refusal waits
@@ -32,10 +52,14 @@ die() { echo "jg-recon-gate: $*" >&2; exit 2; }
 
 task=
 depth=
+is_critic=
+step=
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --depth) [ "$#" -ge 2 ] || die "usage: jg-recon-gate.sh <task-id> [--depth <quick|standard|deep>]"; depth=$2; shift 2 ;;
     --depth=*) depth=${1#--depth=}; shift ;;
+    --is-critic) is_critic=1; shift ;;
+    --step) step=1; shift ;;
     -*) die "usage: jg-recon-gate.sh <task-id> [--depth <quick|standard|deep>]" ;;
     *) [ -z "$task" ] || die "usage: jg-recon-gate.sh <task-id> [--depth <quick|standard|deep>]"; task=$1; shift ;;
   esac
@@ -48,6 +72,42 @@ data=${JG_DATA_OVERRIDE:-${JG_HOME:-$root}/data}
 dir=$data/$task
 [ -d "$dir" ] || die "no task directory at $dir"
 
+# A critic task: critic.md names this task as its critic and there is no report.
+critic_task=
+if [ ! -f "$dir/report.md" ] && [ -f "$dir/critic.md" ]; then
+  critic_who=$(sed -n 's/^Critic:[[:space:]]*//p' "$dir/critic.md" | head -1 | tr -d '[:space:]')
+  [ "$(printf '%s' "$critic_who" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$task" | tr '[:upper:]' '[:lower:]')" ] || critic_task=1
+fi
+if [ -n "$is_critic" ]; then [ -n "$critic_task" ]; exit; fi
+
+# The owner's bypass is the one way past this gate: the record bin/jg-proof-bypass.sh
+# keeps, found for the task's ticket (then its project, then the home). A waiver file
+# by Main alone is no longer read; it is refused with that reason.
+state=${JG_STATE_OVERRIDE:-${JG_HOME:-$root}/state}
+bypass_cmd=$root/bin/jg-proof-bypass.sh
+bypass_project=$(sed -n 's/^project=//p' "$state/$task.meta" 2>/dev/null | head -1)
+bypass_project=$(basename -- "${bypass_project:-}" 2>/dev/null)
+if bypass_id=$(JG_HOME="${JG_HOME:-$root}" "$bypass_cmd" find "$task" "$bypass_project" 2>/dev/null); then
+  bypass_line=$(JG_HOME="${JG_HOME:-$root}" "$bypass_cmd" list --standing | awk -F'\t' -v i="$bypass_id" '$1 == i { print; exit }')
+  bypass_scope=$(printf '%s' "$bypass_line" | cut -f3)
+  bypass_word=$(printf '%s' "$bypass_line" | cut -f5 | sed 's/^word=//')
+  echo "recon gate: BYPASSED by the owner's word $bypass_word (bypass $bypass_id, scope $bypass_scope) - $task"
+  exit 0
+fi
+if [ -f "$state/recon-gate-waiver/$task" ]; then
+  echo "jg-recon-gate: refused: a waiver file by Main is no longer read; only the owner's recorded bypass lets a Recon past this gate (bin/jg-proof-bypass.sh grant --ticket $task --word <owner rule or board answer>)" >&2
+  exit 1
+fi
+
+if [ -n "$critic_task" ]; then
+  if grep -Eq '^Round[[:space:]]+[0-9]+:[[:space:]]*new gaps[[:space:]]+[0-9]+' "$dir/critic.md"; then
+    echo "recon gate: PASS - critic task $task: critic.md names its critic and its rounds"
+    exit 0
+  fi
+  echo "jg-recon-gate: refused: critic.md has no 'Round <n>: new gaps <k>' line" >&2
+  exit 1
+fi
+
 if [ -z "$depth" ] && [ -f "$dir/brief.md" ]; then
   depth=$(sed -n 's/^Recon depth:[[:space:]]*//p' "$dir/brief.md" | head -1 | tr -d '[:space:]')
 fi
@@ -57,11 +117,16 @@ case "$depth" in
   *) die "unknown depth '$depth'" ;;
 esac
 
-python3 -I - "$dir" "$task" "$depth" <<'PY'
+if [ -d "$dir/board-report" ]; then
+  JG_DATA_OVERRIDE=$data "$root/bin/jg-report-page.sh" check "$task" >/dev/null || exit 1
+fi
+
+python3 -I - "$dir" "$task" "$depth" "$step" <<'PY'
 import json, os, re, sys
 
-d, task, depth = sys.argv[1:4]
+d, task, depth, step = sys.argv[1:5]
 refusals = []
+critic_refusals = []
 
 
 def refuse(msg):
@@ -154,6 +219,7 @@ for cid, c in sorted(claims.items()):
         refuse(f"load-bearing claim {cid} is {st}, and section 7 'Not checked' does not list it")
 
 # --- critic ------------------------------------------------------------------
+before_critic = len(refusals)
 cpath = os.path.join(d, "critic.md")
 if not os.path.isfile(cpath):
     refuse("critic.md is missing")
@@ -192,6 +258,10 @@ else:
         if depth == "deep" and gap_rounds > 3:
             refuse(f"critic.md has {gap_rounds} rounds with new gaps; a deep Recon allows 3")
 
+critic_refusals = refusals[before_critic:]
+if step and depth == "deep" and critic_refusals and before_critic == 0:
+    print(f"recon gate: STEP critic - deep Recon {task}: the draft is complete and its separate critic is open ({'; '.join(critic_refusals)})")
+    sys.exit(0)
 if refusals:
     for r in refusals:
         print(f"jg-recon-gate: refused: {r}", file=sys.stderr)

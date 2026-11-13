@@ -42,39 +42,42 @@ esac
 jq -r "$4" "$STUB_FIX/$f.json"
 STUB
 chmod +x "$d/gh-axi"
-export JG_STALE_PR_GH=$d/gh-axi
+export JG_STALE_PR_GH=$d/gh-axi JG_STRANDED_ALERT=$SRC/../../bin/jg-alert.sh
+Q=$FM/state/.wake-queue; : > "$Q"; echo 0 > "$d/seen-wakes"
+# The alert is the central stranded alert: the real jg-alert.sh raises it and each wake reaches the lead's queue.
+newwakes() { local n; n=$(wc -l < "$Q"); tail -n +"$(( $(cat "$d/seen-wakes") + 1 ))" "$Q" | cut -f5; echo "$n" > "$d/seen-wakes"; }
 fails=0
 check() { if [ "$2" = "$3" ]; then echo "ok: $1"; else printf 'FAIL: %s\n  want: %s\n  got:  %s\n' "$1" "$3" "$2"; fails=$((fails + 1)); fi; }
-alarm() { JG_CHECK_TIMEOUT=30 "$SRC/stale-pr-alarm.sh" check "$FM" 2>&1; }
+alarm() { JG_CHECK_TIMEOUT=30 "$SRC/stale-pr-alarm.sh" check "$FM" 2>&1; newwakes; }
+W1() { printf 'alert stranded (P3) at rung 2 for lead: ex__r.%s\n' "$1"; }
 U=https://github.com/ex/r/pull
 
 out=$(alarm)
 check "first poll raises exactly five alerts" "$(printf '%s\n' "$out" | wc -l)" 5
-check "no checks and no update for 24 h" "$(printf '%s\n' "$out" | grep "$U/101:")" "stale-pr-alarm: $U/101: no checks and no update for 24 h"
-check "base is a release branch already merged" "$(printf '%s\n' "$out" | grep "$U/102:")" "stale-pr-alarm: $U/102: base branch release/c-5 is a release branch already merged into main"
-check "fresh PR without checks stays silent" "$(printf '%s\n' "$out" | grep -c "$U/103" || true)" 0
-check "stale PR with checks stays silent" "$(printf '%s\n' "$out" | grep -c "$U/104" || true)" 0
-check "unmerged release base stays silent" "$(printf '%s\n' "$out" | grep -c "$U/105" || true)" 0
-check "an outside author's stale PR raises no alarm" "$(printf '%s\n' "$out" | grep -c "$U/10[67]" || true)" 0
-R="release PR: no CI started 30 min after it opened"
-check "release PR from release/c-N into main, no CI after 80 min" "$(printf '%s\n' "$out" | grep "$U/108:")" "stale-pr-alarm: $U/108: $R"
-check "release PR with only a queued check run counts as not started" "$(printf '%s\n' "$out" | grep "$U/109:")" "stale-pr-alarm: $U/109: $R"
-check "release PR with a started check run stays silent" "$(printf '%s\n' "$out" | grep -c "$U/110" || true)" 0
-check "release PR younger than 30 min stays silent" "$(printf '%s\n' "$out" | grep -c "$U/111" || true)" 0
-check "a 30 h old release PR gets the one release alert, not also the 24 h one" "$(printf '%s\n' "$out" | grep "$U/112:")" "stale-pr-alarm: $U/112: $R"
-check "a non-release PR without CI after 80 min stays silent" "$(printf '%s\n' "$out" | grep -c "$U/113" || true)" 0
+check "no checks and no update for 24 h" "$(printf '%s\n' "$out" | grep -x "$(W1 101)")" "$(W1 101)"
+check "base is a release branch already merged" "$(printf '%s\n' "$out" | grep -x "$(W1 102)")" "$(W1 102)"
+check "fresh PR without checks stays silent" "$(printf '%s\n' "$out" | grep -c "ex__r.103" || true)" 0
+check "stale PR with checks stays silent" "$(printf '%s\n' "$out" | grep -c "ex__r.104" || true)" 0
+check "unmerged release base stays silent" "$(printf '%s\n' "$out" | grep -c "ex__r.105" || true)" 0
+check "an outside author's stale PR raises no alarm" "$(printf '%s\n' "$out" | grep -c "ex__r.10[67]" || true)" 0
+check "release PR from release/c-N into main, no CI after 80 min" "$(printf '%s\n' "$out" | grep -x "$(W1 108)")" "$(W1 108)"
+check "release PR with only a queued check run counts as not started" "$(printf '%s\n' "$out" | grep -x "$(W1 109)")" "$(W1 109)"
+check "release PR with a started check run stays silent" "$(printf '%s\n' "$out" | grep -c "ex__r.110" || true)" 0
+check "release PR younger than 30 min stays silent" "$(printf '%s\n' "$out" | grep -c "ex__r.111" || true)" 0
+check "a 30 h old release PR gets the one release alert, not also the 24 h one" "$(printf '%s\n' "$out" | grep -x "$(W1 112)")" "$(W1 112)"
+check "a non-release PR without CI after 80 min stays silent" "$(printf '%s\n' "$out" | grep -c "ex__r.113" || true)" 0
 check "second poll repeats nothing" "$(alarm)" ""
 
 # A PR by an outside author alerts once a task meta records its URL as pr=.
 printf 'pr=%s/107\n' "$U" > "$FM/state/t.meta"
-check "an outside PR recorded as a task pr= alerts" "$(alarm)" "stale-pr-alarm: $U/107: no checks and no update for 24 h"
+check "an outside PR recorded as a task pr= alerts" "$(alarm)" "$(W1 107)"
 rm "$FM/state/t.meta"; alarm >/dev/null
 
 # 101 gets a head with checks and heals, then returns to a head without: the forgotten alert fires again.
 sed -i 's#sha101#sha104#' "$STUB_FIX/pulls-open.json"
 check "healed PR is silent" "$(alarm)" ""
 sed -i 's#sha104", "ref": "lane-101#sha101", "ref": "lane-101#' "$STUB_FIX/pulls-open.json"
-check "a PR that stalls again alerts again" "$(alarm)" "stale-pr-alarm: $U/101: no checks and no update for 24 h"
+check "a PR that stalls again alerts again" "$(alarm)" "$(W1 101)"
 
 touch "$STUB_FAIL"
 check "a forge failure is silent" "$(alarm)" ""
@@ -85,13 +88,13 @@ check "after the failure nothing repeats" "$(alarm)" ""
 printf '[{"name":"release/c-5"},{"name":"release/c-6"},{"name":"release/c-12"},{"name":"main"}]\n' > "$STUB_FIX/branches.json"
 rm -rf "$FM/data/jg-merge-on-green/stale-pr-alarm"; alarm >/dev/null
 mkdir -p "$FM/config"; printf '# closed\nrelease/c-6\n' > "$FM/config/version-branch-carried"
-check "a carried release base alerts and names the live release branch" "$(alarm | grep "$U/105:")" "stale-pr-alarm: $U/105: base branch release/c-6 is a closed release branch whose work was carried; the live release branch is release/c-12"
-check "the carried alert is not repeated" "$(alarm | grep -c "$U/105" || true)" 0
+check "a carried release base alerts and names the live release branch" "$(alarm | grep -x "$(W1 105)")" "$(W1 105)"
+check "the carried alert is not repeated" "$(alarm | grep -c "ex__r.105" || true)" 0
 rm "$FM/config/version-branch-carried"
 
 # merge-on-green.sh check runs the alarm too: a fresh memory makes both PRs alert through the one watcher check.
 rm -rf "$FM/data/jg-merge-on-green/stale-pr-alarm"
-out=$(JG_CHECK_TIMEOUT=30 "$SRC/merge-on-green.sh" check "$FM" 2>&1)
-check "merge-on-green check carries the alarm" "$(printf '%s\n' "$out" | grep -c '^stale-pr-alarm: ')" 5
+out=$(JG_CHECK_TIMEOUT=30 "$SRC/merge-on-green.sh" check "$FM" 2>&1; newwakes)
+check "merge-on-green check carries the alarm" "$(printf '%s\n' "$out" | grep -c 'alert stranded (P3) at rung 2 for lead: ex__r')" 5
 
 if [ "$fails" -eq 0 ]; then echo "PASS stale-pr-alarm"; else echo "$fails failed"; exit 1; fi

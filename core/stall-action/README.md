@@ -18,6 +18,30 @@ It prints nothing, so it never wakes anyone.
   This is the hung background terminal behind an idle foreground, for example a background checkpoint.
   The probe reads `/proc`; where that is missing the idle record exempts as before.
 
+## The beat
+
+A task with a beat record (`state/beats/<id>`, one `<epoch> <event>` line per beat) is judged by its last beat instead of the pane hash.
+A task with no beat record keeps the pane rule.
+
+- `silent`: the last beat is a working one and older than the bound. The check interrupts and re-rings, as for a stalled pane.
+- `api-error`: the last beat is a failed turn that names an API error type. The check re-rings with that type.
+- `idle-no-reason`: the last beat is a stop, and the status log holds no declared wait and no done line. The check re-rings.
+- `no-start`: a Claude task has no beat and no status line after the bound. The check re-rings.
+
+Only `silent` interrupts, because nothing hangs in the other three.
+The exemptions, cooldown and one-action-per-beat ledger are the same.
+
+## The relaunch
+
+`relaunch.sh` is rung 0 of `lost-worker`, after the ring.
+`stall-action.sh` calls it for a worker with a beat verdict; it does nothing before the ring of that beat.
+
+- One relaunch per wait (300 s, `JG_STALL_ACTION_RELAUNCH_WAIT`): `bin/jg-control.sh <task> relaunch` on the same work copy. The wait counts from the ring or the last relaunch.
+- At most 3 relaunches of a task in 30 minutes (`JG_STALL_ACTION_RELAUNCH_WINDOW`). A refused relaunch counts as one.
+- At the limit the lead is told once, with the three tries named: `jg-alert.sh raise lost-worker <task>`.
+- An API error of a billing kind (`billing_error`, `account_on_hold`) is never relaunched: the same account fails the same way. The lead is told at once with the type.
+- A fresh beat resolves the alert (`relaunch.sh clear`).
+
 ## What is never touched
 
 - A task with a declared wait (`paused:` or captain-held).

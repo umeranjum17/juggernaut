@@ -18,6 +18,8 @@ gate=$here/bin/jg-model-gate
 w=$(mktemp -d "${TMPDIR:-/tmp}/model-gate-test.XXXXXX") || exit 1
 trap 'rm -rf -- "$w"' EXIT
 mkdir -p "$w/home/config" "$w/home/state" "$w/home/bin" "$w/xdg" "$w/b" "$w/log" "$w/pool" "$w/a"
+# The capacity alert goes through the real alert function: the fixture home reaches it by a one-line wrapper.
+mkdir -p "$w/home/bin"; printf '#!/usr/bin/env bash\nexec bash %s/bin/jg-alert.sh "$@"\n' "$(cd "$here/../.." && pwd)" >"$w/home/bin/jg-alert.sh"; chmod +x "$w/home/bin/jg-alert.sh"
 fails=0
 is() { if [ "$2" = "$3" ]; then echo "ok - $1"; else echo "not ok - $1: got [$2], want [$3]"; fails=$((fails + 1)); fi; }
 # The real Ollama usage and balance endpoints, answered from fixtures. The key file is a fixture too.

@@ -75,3 +75,39 @@ SH
 }
 
 test_leased_copy_matches_registered_clone
+
+# Two homes, two clones of one origin with the same directory name: the real
+# Treehouse must lease each clone a copy of its own clone, from its own pool.
+test_each_clone_gets_its_own_pool() {
+  command -v treehouse >/dev/null 2>&1 || { printf 'skip: treehouse not installed\n'; return 0; }
+  local dir main lead origin mclone lclone mcopy lcopy real_home
+  dir="$TMP_ROOT/per-clone-pool"; main="$dir/main"; lead="$dir/lead"; origin="$dir/origin.git"
+  mkdir -p "$main/state" "$lead/state" "$main/projects" "$lead/projects" "$dir/home"
+  printf 'schema=jg-squad-lead-parent.v1\nroute=local\nparent_home=%s\n' "$main" > "$lead/.jg-squad-lead-parent"
+  git init -q --bare "$origin" || fail "origin fixture"
+  git clone -q "$origin" "$dir/seed" 2>/dev/null || fail "seed clone"
+  git -C "$dir/seed" -c user.name=t -c user.email=t@t commit -q --allow-empty -m seed || fail "seed commit"
+  git -C "$dir/seed" push -q origin HEAD 2>/dev/null || fail "seed push"
+  mclone="$main/projects/pockit"; lclone="$lead/projects/pockit"
+  git clone -q "$origin" "$mclone" 2>/dev/null || fail "main clone"
+  git clone -q "$origin" "$lclone" 2>/dev/null || fail "lead clone"
+  real_home=$HOME
+  export HOME="$dir/home" TREEHOUSE_NO_UPDATE_CHECK=1
+  # shellcheck source=bin/jg-wake-lib.sh
+  . "$(dirname "${BASH_SOURCE[0]}")/../bin/jg-wake-lib.sh"
+  JG_HOME=$main jg_treehouse_clone_pool_prepare "$mclone" || fail "root home prepare"
+  JG_HOME=$lead jg_treehouse_clone_pool_prepare "$lclone" || fail "lead home prepare"
+  mcopy=$(cd "$mclone" && treehouse get --lease 2>/dev/null) || fail "main lease"
+  lcopy=$(cd "$lclone" && treehouse get --lease 2>/dev/null) || fail "lead lease"
+  HOME=$real_home
+  [ -z "$(git -C "$lclone" status --short)" ] || fail "pool config dirtied the lead clone"
+  [ "$(cd "$(git -C "$mcopy" rev-parse --git-common-dir)" && pwd -P)" = "$(cd "$mclone/.git" && pwd -P)" ] \
+    || fail "main copy $mcopy is not a copy of the main clone"
+  [ "$(cd "$(git -C "$lcopy" rev-parse --git-common-dir)" && pwd -P)" = "$(cd "$lclone/.git" && pwd -P)" ] \
+    || fail "lead copy $lcopy is not a copy of the lead clone"
+  case "$lcopy" in "$lead"/.treehouse-pool/*) ;; *) fail "lead copy $lcopy is outside the lead pool";; esac
+  printf 'main copy %s; lead copy %s\n' "$mcopy" "$lcopy"
+  pass "each clone leases from its own pool"
+}
+
+test_each_clone_gets_its_own_pool

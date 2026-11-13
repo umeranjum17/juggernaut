@@ -55,6 +55,10 @@ if [ "\$2" = view ]; then
   printf 'state: %s\n' "\$(cat "$W/pr-state" 2>/dev/null || echo open)"; exit 0; fi
 printf 'https://github.com/o/r/pull/9\n'
 SH
+  # The forge's commit-status write (the release proof status) is accepted. The stand-in holds no world path, so the cached
+  # world template (JG_TRUNK_FIXTURE_CACHE) can be copied to another world unchanged.
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$W/fakebin/gh"
+  chmod +x "$W/fakebin/gh"
   cat > "$HOME_D/config/live-hook.proj" <<SH
 #!/usr/bin/env bash
 printf '%s\n' "\$2" >> "$W/live-moves"
@@ -74,7 +78,9 @@ printf '%s\\t%s\\n' "\$1" "\$2" >> "$W/send-calls"
 SH
   : > "$HOME_D/config/fleet-ledger"
   chmod +x "$W/root/bin/jg-send.sh" "$W/root/bin/jg-fleet-ledger.sh" "$W/root/bin/jg-teardown.sh" "$W/root/bin/jg-captain-hold.sh" "$W/fakebin/gh-axi" "$HOME_D/config/live-hook.proj"
-  printf 'gate-full=! grep -q BAD work.txt\ngate-verify=! grep -q BAD work.txt\ngate-lint=! grep -q UGLY work.txt\nflush-at-ready=1\n' > "$HOME_D/config/trunk-policy"
+  printf 'gate-full=! grep -q BAD work.txt\ngate-verify=! grep -q BAD work.txt\ngate-lint=! grep -q UGLY work.txt\nflush-at-ready=1\nnightly-hour=24\nlanding-gate=tests\n' > "$HOME_D/config/trunk-policy"
+  # A home that can pass its merge gate (core/release-preflight): a proof board and the owner's approval key.
+  printf 'jg-merge-card post --board %s/board.json\n' "$W" > "$HOME_D/config/post-merge"; printf '%s\n' 0123456789abcdef0123456789abcdef > "$HOME_D/state/captain-approval.key"
   printf -- '- proj [local-trunk] - fixture project in local-trunk mode (added 2026-11-07)\n' > "$HOME_D/data/projects.md"
   jg_git_init_commit "$PROJ"
   mkdir -p "$PROJ/bin"; printf '# proj\n' > "$PROJ/AGENTS.md"; : > "$PROJ/bin/.keep"; git -C "$PROJ" add AGENTS.md bin/.keep  # a Squad Lead home is only valid with both
@@ -181,4 +187,44 @@ done_gate() {
     . "$W/root/bin/jg-dod-lib.sh"
     JG_HOME="$HOME_D" jg_dod_accept_ship_done ship "${2:-local-trunk}" "$W/lanes/$1" "$PROJ" "${3:-done [at=1]: ready in branch fm/$1 (local-trunk)}" \
       "$HOME_D/state" "$1" "$HOME_D/state/$1.meta" 2>&1 )
+}
+
+U=https://github.com/o/r/pull
+
+# One release PR (number 1), open until the merge stand-in merges it. The gh-axi stand-in answers its state; jg-pr-state
+# prints what the file ci-state holds (nothing is green); jg-pr-merge records its call and merges like the forge does.
+release_world() {  # <name>: world plus a release pull request that stays open until the merge stand-in merges it
+  world "$1"
+  cat > "$W/fakebin/gh-axi" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$W/gh-calls"
+case "\$2" in
+  view) printf 'state: %s\n' "\$(cat "$W/pr-state-\$3" 2>/dev/null || echo open)" ;;
+  list) printf 'count: 0\n' ;;
+  create) printf '$U/1\n' ;;
+esac
+SH
+  cat > "$W/fakebin/gh" <<SH
+#!/usr/bin/env bash
+case "\$1 \$2 \$*" in
+  'pr view '*isDraft*) printf '{"isDraft":false}\n' ;;
+  'pr view '*headRefOid*) git -C "$PROJ" rev-parse trunk ;;
+  'pr view '*baseRefName*) printf 'main\ttrunk\n' ;;
+  'api '*) printf '{}\n' ;;
+esac
+exit 0
+SH
+  cat > "$W/root/bin/jg-pr-state.sh" <<SH
+#!/usr/bin/env bash
+cat "$W/ci-state" 2>/dev/null || true
+SH
+  cat > "$W/root/bin/jg-pr-merge.sh" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$W/merge-calls"
+M=\$(git -C "$PROJ" -c user.name=t -c user.email=t@example.invalid commit-tree "\$(git -C "$PROJ" rev-parse 'trunk^{tree}')" -p origin/main -p "\$(git -C "$PROJ" rev-parse trunk)" -m "Merge pull request #1")
+git -C "$PROJ" push -q origin "\$M:refs/heads/main"; echo merged > "$W/pr-state-1"
+SH
+  printf '#!/usr/bin/env bash\necho "checks-lint: PASS"\n' > "$W/checks-lint"
+  ln -s "$W/root/bin" "$HOME_D/bin"   # the merge check runs the home's own bin
+  chmod +x "$W/fakebin/gh-axi" "$W/fakebin/gh" "$W/root/bin/jg-pr-state.sh" "$W/root/bin/jg-pr-merge.sh" "$W/checks-lint"
 }

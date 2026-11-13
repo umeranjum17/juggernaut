@@ -1,0 +1,11 @@
+# delivering: the closed list of states of the machine "Delivering: inside the stage delivering".
+# value<TAB>mark (initial, final or -)<TAB>kind (active, waiting, rest, final)<TAB>meaning
+queued	initial	waiting	waiting for its turn at the line
+resolving	-	active	a rebase conflict is being resolved, and only the affected journeys run again
+rebased	-	active	on the tip of the line as the same change, and the quick check runs
+gated	-	waiting	the quick check is green, and yolo or the owner's word decides
+batched	-	waiting	on the local trunk, in a batch
+live	-	waiting	the homes run it
+joining	-	active	its merge into main is under way
+on-main	final	final	the commit is on the default branch
+returned	final	final	the delivery gave the ticket back to building

@@ -59,14 +59,19 @@ mkdir -p "$H/state" "$H/config" "$H/data" "$H/bin" "$D/share"
 printf 'lead\n' > "$H/.jg-squad-lead-home"
 cp -a "$ROOT/bin/." "$H/bin/"
 mkdir -p "$H/core"
-cp -a "$ROOT/core/trunk-latency" "$H/core/"
+cp -a "$ROOT/core/trunk-latency" "$ROOT/core/machines" "$H/core/"
 JG_HOME=$H JG_ROOT_OVERRIDE=$ROOT XDG_DATA_HOME=$D/share bash "$ROOT/bin/jg-session-start.sh" --reemit > "$D/digest" 2>&1 || true
 grep -q 'required check missing: trunk-latency' "$D/digest" || fail 'session digest did not name the missing check'
 [ ! -e "$H/state/trunk-latency.check.sh" ] || fail 'read-only digest wrote the check'
 XDG_DATA_HOME=$D/share bash "$ROOT/bin/jg-delivery-tick.sh" "$H" > "$D/out" 2>&1
 grep -q 'missing.*trunk-latency' "$D/out" || fail 'missing check was not named'
 [ -f "$H/state/trunk-latency.check.sh" ] || fail 'check was not wired'
+# The missing check raises the supervision-down alert through the alert function: one record, one wake that names it, and no wake of the old shape.
+[ "$(JG_STATE_OVERRIDE=$H/state JG_HOME=$H bash "$H/bin/jg-alert.sh" word supervision-down--required-checks)" = open ] || fail 'the supervision-down alert was not raised'
+grep -q 'alert-supervision-down--required-checks' "$H/state/.wake-queue" || fail 'the alert wake was not queued'
+! grep -q 'check	required-checks	' "$H/state/.wake-queue" || fail 'the old required-checks wake is still raised'
 [ -f "$H/state/trunk-latency.check-trust" ] || fail 'check was not registered'
 XDG_DATA_HOME=$D/share bash "$ROOT/bin/jg-delivery-tick.sh" "$H" > "$D/again" 2>&1
 [ ! -s "$D/again" ] || fail 'wired check was reported again'
+[ "$(JG_STATE_OVERRIDE=$H/state JG_HOME=$H bash "$H/bin/jg-alert.sh" word supervision-down--required-checks)" = resolved ] || fail 'the alert did not resolve when the check was wired'
 pass 'supervision names and wires the missing check once'

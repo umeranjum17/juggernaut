@@ -1,0 +1,15 @@
+machine	cleanup	state/<id>.meta, state/<id>.backlog-close, data/jg-trunk-landing/<id>.<head>.state: one cleanup of a landed lane; or a jg-* entry of the temp folder that the reaper owns (id: tmp:<name>; machine 10 of the state-machine plan)	core/machines/observers/cleanup.sh
+enum	cleanup
+state	requested	initial	A cleanup was asked for.	-	waiting	10m -> alert drift
+state	checking	normal	The lane is tested for unlanded work.	-	active
+state	refused	normal	Unlanded work stops the cleanup.	-	waiting	0s -> alert stuck-wait
+state	removing	normal	The lane's files and session are being removed.	-	active
+state	done	terminal	Nothing of the lane is left.	-
+edge	(none)	request	requested	core/trunk-landing/trunk-landing.sh:run	-	the landing stands and its lane still has a task record; or the reaper found a jg-* entry with no owner, older than its limit	jg-machine-cleanup
+edge	requested	check	checking	bin/jg-teardown.sh:main	-	the tick, once for a lane: teardown takes the task record's lock	jg-machine-cleanup
+edge	checking	pass	removing	bin/jg-teardown.sh:main	-	every commit of the lane is landed and nothing is uncommitted; an orphan has no work	jg-machine-cleanup
+edge	checking	refuse	refused	bin/jg-teardown.sh:main	-	unlanded or uncommitted work	jg-machine-cleanup
+edge	refused	recheck	checking	bin/jg-teardown.sh:main	-	the work landed or was committed, or the lead asks again	jg-machine-cleanup
+edge	refused	discard	removing	bin/jg-teardown.sh:main	-	the lead's or the owner's explicit word to discard	jg-machine-cleanup
+edge	removing	removed	done	bin/jg-teardown.sh:main	-	nothing of the lane is left	jg-machine-cleanup
+observer	bash "$(dirname "$JG_MACHINES_TABLES")/observers/cleanup.sh" "$1"

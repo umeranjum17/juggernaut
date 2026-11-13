@@ -30,7 +30,19 @@
 # that is neither a harness nor a bare shell, running in the task's worktree for at least JG_STALL_ACTION_BG_MIN_AGE
 # seconds (default 120, which keeps a passing git or tool call out). It needs /proc and bin/jg-agent-process-lib.sh;
 # where either is missing the idle record exempts as before. The re-ring then names that command.
-# Seams for tests: JG_STALL_ACTION_PROC_LIB, JG_STALL_ACTION_BG_MIN_AGE, JG_STALL_ACTION_CONTROL, JG_STALL_ACTION_SEND, JG_STALL_ACTION_PEEK, JG_STALL_ACTION_CLASSIFY, JG_STALL_ACTION_NOW (epoch),
+# THE BEAT. A task that has a beat record (state/beats/<id>, written by bin/jg-beat.sh from the agent's own hooks, or from
+# the busy verdict for Codex and Pi) is judged by the beat instead of the pane hash, by its last line and the bound:
+#   silent          the last beat is a working one (UserPromptSubmit, PostToolBatch) and is older than the bound:
+#                   interrupt, then re-ring, as for a stalled pane;
+#   api-error       the last beat is a StopFailure carrying error=<type>: the turn died on that API error; re-ring only;
+#   idle-no-reason  the last beat is a Stop: the agent's turn ended and its status log holds no declared wait and no
+#                   captain-relevant event, so it stopped without saying why; re-ring only;
+#   no-start        a Claude task has no beat and no status line this long after its meta was written: it never started;
+#                   re-ring only.
+# Nothing is ever hung in the last three, so there is nothing to interrupt. A task with no beat record keeps the pane rule.
+# A lost worker that stays lost after its ring is relaunched by relaunch.sh (3 times in 30 minutes, then the lead is told); a fresh
+# beat resolves its alert.
+# The same exemptions, cooldown and one-action-per-beat ledger apply. Seams for tests: JG_STALL_ACTION_PROC_LIB, JG_STALL_ACTION_BG_MIN_AGE, JG_STALL_ACTION_CONTROL, JG_STALL_ACTION_SEND, JG_STALL_ACTION_PEEK, JG_STALL_ACTION_CLASSIFY, JG_STALL_ACTION_NOW (epoch),
 # JG_STALL_ACTION_WATCH_FRESH (seconds a poll record may be old).
 set -u
 [ "$#" -eq 2 ] && [ "$1" = check ] && [ -d "$2/state" ] || { echo "usage: stall-action.sh check <jg-home>" >&2; exit 2; }
@@ -44,6 +56,7 @@ CLASSIFY=${JG_STALL_ACTION_CLASSIFY:-$FMH/bin/jg-classify.sh}
 NOW=${JG_STALL_ACTION_NOW:-$(date +%s)}
 FRESH=${JG_STALL_ACTION_WATCH_FRESH:-600}
 COOLDOWN=${JG_STALL_ACTION_COOLDOWN:-1800}
+RELAUNCH=${JG_STALL_ACTION_RELAUNCH:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/relaunch.sh}
 PROC_LIB=${JG_STALL_ACTION_PROC_LIB:-$FMH/bin/jg-agent-process-lib.sh}
 BG_MIN=${JG_STALL_ACTION_BG_MIN_AGE:-120}
 DIR=$FMH/data/stall-action LEDGER=$DIR/actions.jsonl
@@ -75,6 +88,25 @@ background_job() {  # <worktree>: "<pid> <name>" of a command other than a harne
     done
   )
 }
+# <task> <meta> <bound seconds> <harness>: "<verdict> <epoch>" from the beat record, nothing when the beat shows no trouble.
+# The epoch names the beat the verdict rests on (the meta's time for no-start), so one beat is acted on once.
+beat_verdict() {
+  local rec=$STATE/beats/$1 at ev rest
+  if [ ! -s "$rec" ]; then
+    [ "$4" = claude ] && [ ! -s "$STATE/$1.status" ] || return 0
+    at=$(stat -c %Y "$2" 2>/dev/null) || return 0
+    [ $(( NOW - at )) -ge "$3" ] && printf 'no-start %s' "$at"
+    return 0
+  fi
+  read -r at ev rest < <(tail -n 1 "$rec") || return 0
+  case "$at" in ''|*[!0-9]*) return 0 ;; esac
+  [ $(( NOW - at )) -ge "$3" ] || return 0
+  case "$ev" in
+    UserPromptSubmit|PostToolBatch) printf 'silent %s' "$at" ;;
+    StopFailure) case "$rest" in error=*) printf 'api-error %s' "$at" ;; esac ;;
+    Stop) printf 'idle-no-reason %s' "$at" ;;
+  esac
+}
 age() { local m; m=$(stat -c %Y "$1" 2>/dev/null) && printf '%s' "$(( NOW - m ))"; }  # <file>: seconds since modified
 # <task> <hash> <step> <want rc: ok|bad>: how many recorded attempts of the step.
 tries() { grep -F "\"task\":\"$1\",\"hash\":\"$2\",\"step\":\"$3\"" "$LEDGER" 2>/dev/null | grep -c "\"ok\":$4" || true; }
@@ -85,9 +117,9 @@ for meta in "$STATE"/*.meta; do
   [ -e "$meta" ] || continue
   [ $(( $(date +%s) - START )) -lt "$LIMIT" ] || exit 0
   task=${meta##*/}; task=${task%.meta}
-  window='' kind='' worktree=''
+  window='' kind='' worktree='' harness='' vkind=''
   while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in window=*) window=${line#window=} ;; kind=*) kind=${line#kind=} ;; worktree=*) worktree=${line#worktree=} ;; esac
+    case "$line" in window=*) window=${line#window=} ;; kind=*) kind=${line#kind=} ;; worktree=*) worktree=${line#worktree=} ;; harness=*) harness=${line#harness=} ;; esac
   done < "$meta"
   [ -n "$window" ] || continue
   key=${window//:/_}; key=${key//\//_}; key=${key//./_}
@@ -103,6 +135,10 @@ for meta in "$STATE"/*.meta; do
       continue
     fi
     unchanged=$(( NOW - $(cut -d' ' -f2 "$seen") ))
+  elif verdict=$(beat_verdict "$task" "$meta" "$bound" "$harness"); [ -s "$STATE/beats/$task" ] || [ -n "$verdict" ]; then
+    if [ -z "$verdict" ]; then "$RELAUNCH" clear "$FMH" "$task"; continue; fi
+    vkind=${verdict% *}; hash=beat${verdict#* }
+    unchanged=$(( NOW - ${verdict#* } ))
   else
     hashfile=$STATE/.hash-$key
     [ -f "$hashfile" ] || continue
@@ -113,11 +149,9 @@ for meta in "$STATE"/*.meta; do
   fi
   [ -n "$hash" ] && [ "$unchanged" -ge "$bound" ] || continue
   bg=''
-  if grep -q ' state=idle ' "$STATE/$task.busy-state" 2>/dev/null; then
+  if [ -z "$vkind" ] && grep -q ' state=idle ' "$STATE/$task.busy-state" 2>/dev/null; then
     bg=$(background_job "$worktree"); [ -n "$bg" ] || continue
   fi
-  last_at=$(grep -F "\"task\":\"$task\"," "$LEDGER" 2>/dev/null | grep '"ok":true' | tail -n 1 | sed 's/.*"at":\([0-9]*\)}.*/\1/')
-  [ -z "$last_at" ] || [ "$(( NOW - last_at ))" -ge "$COOLDOWN" ] || [ "$(tries "$task" "$hash" interrupt true)" -gt 0 ] || continue
   wait_line=$("$CLASSIFY" declared-wait "$STATE/$task.status" 2>/dev/null) || continue
   [ -z "$wait_line" ] || continue
   last=$("$CLASSIFY" last-line "$STATE/$task.status" 2>/dev/null) || continue
@@ -125,8 +159,15 @@ for meta in "$STATE"/*.meta; do
     "$CLASSIFY" is-relevant "$last" >/dev/null 2>&1; rc=$?
     [ "$rc" -eq 1 ] || continue
   fi
+  # A lost worker that was rung and stays lost is relaunched (relaunch.sh owns the limit); it does nothing before the ring.
+  if [ -n "$vkind" ]; then
+    reason=$vkind; [ "$vkind" != api-error ] || reason=api:$(tail -n 1 "$STATE/beats/$task" | sed 's/.*error=//')
+    "$RELAUNCH" act "$FMH" "$task" "$hash" "$reason"
+  fi
+  last_at=$(grep -F "\"task\":\"$task\"," "$LEDGER" 2>/dev/null | grep '"ok":true' | tail -n 1 | sed 's/.*"at":\([0-9]*\)}.*/\1/')
+  [ -z "$last_at" ] || [ "$(( NOW - last_at ))" -ge "$COOLDOWN" ] || [ "$(tries "$task" "$hash" interrupt true)" -gt 0 ] || continue
 
-  if [ "$(tries "$task" "$hash" interrupt true)" -eq 0 ]; then
+  if { [ -z "$vkind" ] || [ "$vkind" = silent ]; } && [ "$(tries "$task" "$hash" interrupt true)" -eq 0 ]; then
     [ "$(tries "$task" "$hash" interrupt false)" -lt 2 ] || continue
     if timeout "$BUDGET" "$CONTROL" "$task" interrupt >/dev/null 2>&1; then
       record "$task" "$hash" interrupt true
@@ -137,7 +178,13 @@ for meta in "$STATE"/*.meta; do
   fi
   [ "$(tries "$task" "$hash" ring true)$(tries "$task" "$hash" ring false)" = 00 ] || continue
   mins=$(( unchanged / 60 ))
-  if [ -n "$bg" ]; then
+  if [ "$vkind" = api-error ]; then
+    text="Your last turn ended on an API error ($(tail -n 1 "$STATE/beats/$task" | sed 's/.*error=//')) $mins minutes ago. Check where the task stands, and carry on with it."
+  elif [ "$vkind" = idle-no-reason ]; then
+    text="Your turn ended $mins minutes ago and your status log shows no wait and no done line. Say why you stopped: carry on with the task, or write a status line that names what you wait for."
+  elif [ "$vkind" = no-start ]; then
+    text="Your session showed no sign of starting in $mins minutes. Read your instructions, write a working status line and begin the task."
+  elif [ -n "$bg" ]; then
     text="A background command (process ${bg% *}, ${bg#* }) has shown no new output for $mins minutes while you were idle. Check what it is waiting on, stop it or rerun it with a time limit, and carry on with the task."
   else
     text="Your last call showed no new output for $mins minutes, so it was interrupted. Check what it was waiting on, rerun it with a time limit or take another route, and carry on with the task."

@@ -22,6 +22,39 @@ jg_backlog_beads_store() {  # <config_dir>: prints the BEADS_DIR, or refuses.
   printf '%s\n' "$store"
 }
 
+# The task id of a ticket: its id with every dot made a dash (jg-x.1 gives jg-x-1, jg-x.1.1 gives jg-x-1-1).
+# The ticket is given and the task id is made from it, never the other way; this is the one place that makes it.
+jg_backlog_task_id() {  # <ticket-id>
+  printf '%s\n' "${1//./-}"
+}
+
+# The readable-title rule a fresh spawn holds a ticket to: 2 to 7 words, at most 48 characters, no id
+# (jg-..., Main<number>, 32 hex), no [tag], no URL or path. Prints the reason and returns 1 when the title fails.
+# Until the type tag moves to a label (S15a), `add` still stores it at the front of the title, so the one leading
+# type tag ([captain-ask], [feature], [design-ux], [security], [blocker]) is not judged with the words after it.
+jg_backlog_title_refusal() {  # <title>
+  local title=$1 words
+  case $title in
+    '[captain-ask]'* | '[feature]'* | '[design-ux]'* | '[security]'* | '[blocker]'*) title=${title#*]}; title=${title# } ;;
+  esac
+  # shellcheck disable=SC2086  # splitting on blanks is the word count
+  words=$(set -f; set -- $title; echo $#)
+  if [ "$words" -lt 2 ] || [ "$words" -gt 7 ]; then
+    printf 'it has %s words, not 2 to 7\n' "$words"
+  elif [ "${#title}" -gt 48 ]; then
+    printf 'it has %s characters, not 48 or fewer\n' "${#title}"
+  elif [[ $title =~ \[[^]]*\] ]]; then
+    printf 'it carries a [tag]\n'
+  elif [[ $title =~ (^|[^[:alnum:]])(jg-[[:alnum:]]|Main[0-9]|[0-9a-f]{32}) ]]; then
+    printf 'it carries an id\n'
+  elif [[ $title =~ ://|/ ]]; then
+    printf 'it carries a URL or path\n'
+  else
+    return 0
+  fi
+  return 1
+}
+
 # The backlog as markdown lines, rendered from the store.
 jg_backlog_text() {  # <config_dir> [<backlog_file>]
   jg_backlog_beads_read "$1" markdown

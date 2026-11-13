@@ -26,6 +26,11 @@ local, unparked lead home with that home's own sentinel state and relaunch tools
   `unit`, `model-reconcile` and `lead-model-reconcile`. Its CLI, state files and
   knobs are documented in its header. A sentinel change is made here, never in a
   second copy.
+- `units/` — the watch pass (`jg-sentinel-watch.sh`, run as `jg-sentinel.sh watch`) and its systemd
+  `jg-sentinel-watch.service` and `.timer` templates (every minute; `TimeoutStartSec` is the watchdog). The pass reads the
+  tick's beat, the unacknowledged wakes and the age of each open alert, starts a dead watcher again, raises
+  `supervision-down` (`watcher-dead`, `escalation-stuck`) and writes one row a run to `state/.sentinel-health.tsv`.
+  `wiring.sh` does not install the timer yet.
 - `wiring.sh` — copies the sentinel to `${XDG_DATA_HOME:-$HOME/.local/share}/jg-sentinel`
   and points the `jg-sentinel` user unit at that copy for one home.
 - `unwiring.sh` — restores the unit to its text from before the first install,
@@ -67,6 +72,9 @@ owner stops it by hand. Running it again when nothing is installed prints
   and XDG dirs and a stub `systemctl` on `PATH`. The real user manager is never
   read or changed. A throw-away home is refused for an account's unit dir, and,
   by a dry run only, for this account's real one, whose bytes and mtime stay.
+- `bash sentinel/tests/jg-sentinel-watch.test.sh` — hermetic: a stopped watcher is started again inside 2 runs, a
+  start that does not hold raises `watcher-dead`, a stopped session with old wakes raises `escalation-stuck`, and each
+  run writes one health row.
 - `bash sentinel/tests/jg-sentinel-model-relaunch.test.sh` — fixture-based check
   that only a Claude pane missing its recorded model is relaunched, once per event.
 - `bash sentinel/tests/jg-sentinel-one-copy.test.sh` — hermetic: the repository's

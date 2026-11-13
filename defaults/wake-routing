@@ -87,10 +87,10 @@ batch    check   *tickets-sync.check.sh     *
 # timer on a paused home, and a re-arm that finds nothing waiting for a turn.
 silent@parked        signal  *.status         paused*
 silent@parked        check   *                *waiting-state*
-silent@restart-pass  check   squad-lead-relaunch-*   *auto-relaunched*
+silent@restart-pass  check   *squad-lead-relaunch-*   *auto-relaunched*
 # During a restart pass a relaunch can lose the race to another spawn for the same lead: the
 # restart is already being done, so the loser's notice is noise. Outside a pass it keeps waking.
-silent@restart-pass  check   squad-lead-relaunch-*   *auto-relaunch failed*another spawn is already creating task*
+silent@restart-pass  check   *squad-lead-relaunch-*   *auto-relaunch failed*another spawn is already creating task*
 silent@queue-quiet   check   rearm-resurface  *
 # A doorbell the watcher deferred because the worker's turn is still running lands by itself
 # when the turn ends; the watcher says so in its own words. A doorbell that is still
@@ -129,7 +129,7 @@ batch    stale   *                *paused*the declared time is beyond the rechec
 # A lead that was told to re-arm right after its own restart reports it the same way a relaunch
 # does, so for a short grace window after that restart the notice is noise; a lead still without
 # supervision after the window keeps waking.
-silent@lead-restarted check  squad-lead-supervision-*   *supervision not running*
+silent@lead-restarted check  *squad-lead-supervision-*   *supervision not running*
 # The sentinel's "watcher beacon old" doorbell is typed into the primary's pane. While a
 # live watcher still holds the watcher lock, the beacon is only its predecessor's, so the
 # doorbell settles; with no live watcher it keeps waking.
@@ -151,7 +151,7 @@ now      check   *                *FAILED*
 # state check, and the network check when it found something actionable.
 now      check   host-memory      *
 now      check   delete-guard     *
-now      check   model-outage-*   *
+now      check   alert-capacity--*   *
 now      check   supervision-host-return:*   *
 now      check   unauthenticated-state-checks   *
 now      check   *key-in-env-check.check.sh   *
@@ -160,13 +160,14 @@ now      check   sentinel-*       *
 # A worker stuck past its ladder: every stale event, and the stall, owner and escalation checks.
 now      stale   *                *
 now      check   *-stall          *
+now      check   alert-line-red--* *
 now      check   *migration-watch.check.sh   *no status chang*
 now      check   waiting-timer-*  *
 now      check   *-owner          *
 now      check   *-escalation     *
 # A lead that died or lost its supervision: the rows above settle only the ones Main's own restart caused.
-now      check   squad-lead-relaunch-*       *
-now      check   squad-lead-supervision-*    *
+now      check   *squad-lead-relaunch-*       *
+now      check   *squad-lead-supervision-*    *
 # A re-arm that finds an urgent row waiting for a turn (the quiet case is settled above).
 now      check   rearm-resurface  *
 # A result an adapter owns (Relay, process-to-event) is routed to that adapter, not delayed.

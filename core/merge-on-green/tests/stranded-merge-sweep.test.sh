@@ -35,10 +35,14 @@ case $2 in
 esac
 STUB
 chmod +x "$d/gh-axi"
-export JG_STRANDED_GH=$d/gh-axi
+export JG_STRANDED_GH=$d/gh-axi JG_STRANDED_ALERT=$SRC/../../bin/jg-alert.sh
+Q=$FM/state/.wake-queue; : > "$Q"; echo 0 > "$d/seen-wakes"
+# The alert is the central stranded alert: the real jg-alert.sh raises it and each wake reaches the lead's queue.
+newwakes() { local n; n=$(wc -l < "$Q"); tail -n +"$(( $(cat "$d/seen-wakes") + 1 ))" "$Q" | cut -f5; echo "$n" > "$d/seen-wakes"; }
+W1='alert stranded (P3) at rung 2 for lead: ex__r.release__c-10'
 fails=0
 check() { if [ "$2" = "$3" ]; then echo "ok: $1"; else printf 'FAIL: %s\n  want: %s\n  got:  %s\n' "$1" "$3" "$2"; fails=$((fails + 1)); fi; }
-sweep() { JG_CHECK_TIMEOUT=30 "$SRC/stranded-merge-sweep.sh" check "$FM" 2>&1; }
+sweep() { JG_CHECK_TIMEOUT=30 "$SRC/stranded-merge-sweep.sh" check "$FM" 2>&1; newwakes; }
 M=$FM/data/jg-merge-on-green/stranded-sweep
 stamps() { find "$M" -maxdepth 1 -name "$1" 2>/dev/null | wc -l | tr -d ' '; } # count files matching a name glob
 
@@ -53,11 +57,11 @@ now=$(date +%s)
 printf '%s \n' "$(( now - 49 * 3600 ))" > "$M/ex__r.release__c-10"
 rm -f "$M/.last"
 out=$(sweep)
-check "after 48 h one alert names the branch and the ahead count" "$(printf '%s\n' "$out" | sed 's/ (first seen.*//')" "stranded-merge-sweep: ex/r: release/c-10 is ahead of main by 6 commits and has been for 48 h or more"
+check "after 48 h one stranded alert rings the lead for the branch" "$out" "$W1"
 rm -f "$M/.last"
 check "the alert is not repeated at the same count" "$(sweep)" ""
 printf '7\n' > "$STUB/ahead-release__c-10"; rm -f "$M/.last"
-check "a new count alerts again" "$(sweep | grep -c 'ahead of main by 7 commits')" 1
+check "a new count alerts again" "$(sweep)" "$W1"
 
 rm -f "$M/.last" "$STUB/asked"
 check "the throttle skips the forge inside the hour" "$( (sweep; sweep) >/dev/null; grep -c . "$STUB/asked")" "$(grep -c . "$STUB/asked")"
@@ -78,7 +82,7 @@ rm "$STUB_FAIL"
 rm -rf "$M"; sweep >/dev/null
 printf '%s \n' "$(( now - 49 * 3600 ))" > "$M/ex__r.release__c-10"
 rm -f "$M/.last"
-out=$(JG_CHECK_TIMEOUT=30 JG_STALE_PR_GH=$d/none "$SRC/merge-on-green.sh" check "$FM" 2>&1)
-check "merge-on-green check carries the sweep" "$(printf '%s\n' "$out" | grep -c '^stranded-merge-sweep: ')" 1
+out=$(JG_CHECK_TIMEOUT=30 JG_STALE_PR_GH=$d/none "$SRC/merge-on-green.sh" check "$FM" 2>&1; newwakes)
+check "merge-on-green check carries the sweep" "$(printf '%s\n' "$out" | grep -c -x "$W1")" 1
 
 if [ "$fails" -eq 0 ]; then echo "PASS stranded-merge-sweep"; else echo "$fails failed"; exit 1; fi

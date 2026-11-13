@@ -4,7 +4,7 @@
 # `paused:` line and for a `blocked:` line alike; a blocked wait that names no clearing condition
 # still climbs to its owner. Real watcher and drain cycles over a copy of this checkout; only the
 # terminal, the board and the steer endpoints are recorders.
-# journeys/planned-wait.sh runs this file as the done-done journey.
+# This file is also the done-done journey planned-wait (the journey runs it directly).
 set -eu
 
 # shellcheck source=tests/wake-helpers.sh

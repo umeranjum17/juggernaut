@@ -19,7 +19,7 @@
 #            the row, a restart handles what arrived while down, and the real watcher cycle
 #            re-delivers a stalled row through the service. It gate-skips without the server and client.
 #
-# This is also the test that owns journeys/wake-watcher.sh (the done-done journey runs this file),
+# This is also the test that owns the wake-watcher journey of .done-done.yaml (the done-done journey runs this file),
 # so the changed-test map selects it for a change to that journey.
 set -u
 

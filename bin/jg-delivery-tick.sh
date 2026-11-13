@@ -10,7 +10,8 @@
 # check (core/trunk-landing/trunk-landing.sh check), which also starts the go-live and the rollover.
 # It first walks the steering inboxes (jg_task_inbox_walk): each task with an unread record gets one
 # step of the re-ring ladder, which the watcher's window loop runs too, so a steer reaches its worker
-# or its lead whatever either cycle does. A home with no local trunk (no state/trunk-tip-*) has no
+# or its lead whatever either cycle does. Its next step records each lane's ready or resumed moment on its ticket's trail
+# (bin/jg-ready-trace.sh), for every delivery mode. A home with no local trunk (no state/trunk-tip-*) has no
 # landing to run. The stop loop runs after the landing check even when there is no trunk.
 #
 # One runner: the pass holds the home's state/.delivery-tick.lock, and a caller that finds it held does
@@ -46,11 +47,16 @@ trap 'jg_lock_release "$LOCK"' EXIT
 # shellcheck disable=SC2329 # Named by JG_LADDER_WAKE below; the ladder calls it.
 tick_ladder_wake() { case ${JG_WAKE_LAST:-} in now:*) printf '%s\n' "$1" ;; esac; }
 JG_LADDER_WAKE=tick_ladder_wake jg_task_inbox_walk "$H/state" || echo "jg-delivery-tick: a steering-inbox step could not write its record in $H" >&2
+# Each ready or resumed lane reaches its ticket's trail within the tick (bin/jg-ready-trace.sh); it never stops the pass.
+bash "$SCRIPT_DIR/jg-ready-trace.sh" "$H" >&2 || echo "jg-delivery-tick: the ready trail step failed in $H" >&2
 # A missing required check is reported in the same queue as other supervision findings.
 required_out=$(bash "$SCRIPT_DIR/jg-required-checks.sh" "$H" 2>&1) || true
 if [ -n "$required_out" ]; then
   printf '%s\n' "$required_out"
-  jg_wake_append check required-checks "$required_out" || echo "jg-delivery-tick: could not report required checks" >&2
+  JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" bash "$SCRIPT_DIR/jg-alert.sh" raise supervision-down required-checks --home "$H" \
+    --note "$(printf '%s' "$required_out" | tr '\n' ' ')" --deliver || echo "jg-delivery-tick: could not report required checks" >&2
+else
+  JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" bash "$SCRIPT_DIR/jg-alert.sh" resolve supervision-down--required-checks >/dev/null 2>&1 || true
 fi
 # The stop loop runs after the landing check, including homes without a trunk.
 # shellcheck disable=SC2329 # The EXIT trap calls this after the landing check.
@@ -59,6 +65,10 @@ tick_stops() (
   . "$SCRIPT_DIR/../core/wait-timers/bin/jg-stops-lib.sh" && jg_stops_tick
 )
 trap 'tick_stops || echo "jg-delivery-tick: stop processing failed in $H" >&2; jg_lock_release "$LOCK"' EXIT
+# The owner's bypass ends at its end time, and a ticket's when the ticket is released or closed (machine 17).
+bash "$SCRIPT_DIR/jg-proof-bypass.sh" expire >/dev/null 2>&1 || echo "jg-delivery-tick: the proof bypass could not be expired in $H" >&2
+# A lane that reported done inside a standing bypass is passed over proving here, before the landing check reads its proof.
+bash "$SCRIPT_DIR/jg-proof-bypass-apply.sh" "$H" || echo "jg-delivery-tick: the proof bypass could not be applied in $H" >&2
 compgen -G "$H/state/trunk-tip-*" >/dev/null || exit 0
 
 OUT=$H/state/.jg-check-output-trunk-landing

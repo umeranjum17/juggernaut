@@ -58,6 +58,7 @@ gate_words() {
     full) echo 'All required tests passed.' ;;
     full-rerun) echo 'Required tests passed after one rerun of a flaky failure.' ;;
     full-tip-red) echo 'Required tests failed only where the trunk already failed; not charged to this lane.' ;;
+    no-landing-gate) echo 'No tests ran at the landing (landing-gate=none); the line'"'"'s verify tests the batch.' ;;
     no-gate) echo 'This project has no landing gate; no tests ran.' ;;
     reverts-*) echo "Revert of ${1#reverts-}." ;;
     *) echo "Gate: $1." ;;

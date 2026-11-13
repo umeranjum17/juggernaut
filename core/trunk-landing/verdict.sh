@@ -14,7 +14,8 @@
 #      stack it is the tip after the stack's own landings, because a returned lane was judged on top of the stack's lanes that landed.
 #   3. A final conflict, or a final for a trunk something else moved (a home on older code stored it final), holds only while that tip stands: once the trunk moved, the lane is judged again (a conflict attempt stops
 #      at the rebase, before any gate). A conflict with no stored tip (a record from before this rule) is judged again once.
-#      Every other final (a red gate the lane caused, a second commit) holds for its head on any tip.
+#      Every other final (a red gate the lane caused, a second commit) holds for its head on any tip, but only while the inputs its
+#      refusal read are the ones stored beside it (rule 6).
 #   4. A final whose cause is the environment, not the commit's own content (a reference-transaction hook the lander may not replace),
 #      holds for ENV_FINAL_MINUTES (10) and is then asked of the lander again. The lander's admission cache is keyed by every input the
 #      refusal read (bin/jg-trunk.sh cmd_land), so an unrepaired cause is answered at once with no attempt and no gate, and a repaired
@@ -22,7 +23,12 @@
 #   5. A worker is steered, and the lead told, only for a verdict that still holds; both key on verdict_reason, which leaves out of a
 #      conflict the commit it was judged on and its attempt's log path, so a lane that still conflicts with the same paths after the tip
 #      moved is not reported or steered as new, and its ten minute alert keeps counting.
-# Needs from the caller: MEM (data/jg-trunk-landing) and STATE.
+#   6. Each verdict is stored with a fingerprint of the inputs a refusal reads (<task>.<head>.inputs, verdict_inputs): the lander's own code
+#      (bin/jg-trunk.sh, bin/jg-merge-gate-lib.sh, bin/jg-dod-lib.sh in this home), the task's run receipt less its `at`, and its design
+#      approval. A final other than rule 3 or 4 holds only while that fingerprint is the current one: a lander fixed after the refusal, or a
+#      receipt published since, is asked again, the way the lander's own admission cache (bin/jg-trunk.sh cmd_land) already keys it. A final
+#      stored with no fingerprint (a record from before this rule) is asked again once.
+# Needs from the caller: MEM (data/jg-trunk-landing), STATE and FMH (the home whose bin/ is the lander).
 
 RETRY_CAP=3
 ENV_FINAL_MINUTES=10
@@ -34,6 +40,15 @@ VERDICT_CONFLICT_RE=' conflicts with [^ ]+ \(([0-9a-f]+)\) in: '
 # The trunk tip the lander will judge the next landing of <project-name> on.
 verdict_tip() {  # <project-name>
   cat "$STATE/trunk-tip-$1" 2>/dev/null || :
+}
+
+# The fingerprint of what a refusal of <id> reads that can change without the head changing (rule 6).
+verdict_inputs() {  # <id>
+  {
+    git hash-object "$FMH/bin/jg-trunk.sh" "$FMH/bin/jg-merge-gate-lib.sh" "$FMH/bin/jg-dod-lib.sh" 2>/dev/null || :
+    jq -Sc 'del(.at)' "$STATE/$1.run-receipt.json" 2>/dev/null || :
+    [ ! -f "$STATE/design-approvals/$1.handroll.json" ] || git hash-object "$STATE/design-approvals/$1.handroll.json"
+  } | git hash-object --stdin
 }
 
 # Whether a stored wait or retry verdict is due to be tried again: 2 minutes since it was recorded (rule 1).
@@ -59,12 +74,13 @@ verdict_line() {  # <id> <head> <jg-trunk output> <reason>
 # Record a refusal for <head>, with the tip it was judged on. When the lander left the lane's branch at another head, the same
 # verdict (and its try count) stands for that head too.
 verdict_record() {  # <id> <head> <head the branch is at now, or empty> <tip> <jg-trunk output> <reason>
-  local line h
-  line=$(verdict_line "$1" "$2" "$5" "$6")
+  local line h inputs
+  line=$(verdict_line "$1" "$2" "$5" "$6"); inputs=$(verdict_inputs "$1")
   for h in "$2" "$3"; do
     [ -n "$h" ] || continue
     [ "$h" = "$2" ] || cp -f -- "$MEM/$1.$2.retries" "$MEM/$1.$h.retries" 2>/dev/null || :
     printf '%s\n' "$4" > "$MEM/$1.$h.tip"
+    printf '%s\n' "$inputs" > "$MEM/$1.$h.inputs"
     printf '%s\n' "$line" > "$MEM/$1.$h.state"
   done
 }
@@ -74,7 +90,9 @@ verdict_holds() {  # <id> <head> <state line> <project-name>
   local tip
   case $3 in final*) ;; *) return 0 ;; esac
   if [[ $3 =~ $VERDICT_ENV_RE ]]; then [ -z "$(find "$MEM/$1.$2.state" -mmin +"$ENV_FINAL_MINUTES" 2>/dev/null)" ]; return; fi
-  [[ $3 =~ $VERDICT_CONFLICT_RE || $3 == *'something else moved it'* ]] || return 0
+  if ! [[ $3 =~ $VERDICT_CONFLICT_RE || $3 == *'something else moved it'* ]]; then
+    [ "$(cat "$MEM/$1.$2.inputs" 2>/dev/null)" = "$(verdict_inputs "$1")" ]; return
+  fi
   tip=$(cat "$MEM/$1.$2.tip" 2>/dev/null) || return 1
   [ -n "$tip" ] && [ "$tip" = "$(verdict_tip "$4")" ]
 }

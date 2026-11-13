@@ -54,6 +54,8 @@ unset _jg_d
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/jg-delivery-style.sh
+. "$SCRIPT_DIR/jg-delivery-style.sh"
 JG_ROOT="${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$JG_ROOT}}"
 DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
@@ -511,7 +513,7 @@ clone_project() {
   read -r mode _ <<EOF
 $mode_line
 EOF
-  if { [ "$mode" = local-only ] || [ "$mode" = local-trunk ]; }; then
+  if jg_delivery_style_is "$mode" local; then
     echo "error: project $project is $mode; squad_lead routes support only no-mistakes and direct-PR projects" >&2
     return 1
   fi
@@ -539,7 +541,7 @@ validate_seed_project() {
   read -r mode _ <<EOF
 $mode_line
 EOF
-  if { [ "$mode" = local-only ] || [ "$mode" = local-trunk ]; }; then
+  if jg_delivery_style_is "$mode" local; then
     echo "error: project $project is $mode; squad_lead routes support only no-mistakes and direct-PR projects" >&2
     return 1
   fi
@@ -768,28 +770,6 @@ sync_project_registry() {
   mv "$tmp" "$sub_reg"
 }
 
-initialize_no_mistakes_project() {
-  local home=$1 project=$2 created=$3 mode dst
-  mode=$(project_mode_in_home "$home" "$project") || return 1
-  [ "$mode" = no-mistakes ] || return 0
-  dst=$(validate_project_destination "$home" "$project") || return 1
-  if git -C "$dst" remote get-url no-mistakes >/dev/null 2>&1; then
-    return 0
-  fi
-  if [ "$created" != 1 ]; then
-    echo "error: seeded project $project at $dst is not initialized for no-mistakes; refusing to mutate preexisting clone" >&2
-    return 1
-  fi
-  command -v no-mistakes >/dev/null 2>&1 || {
-    echo "error: no-mistakes command not found; cannot initialize $project in $home" >&2
-    return 1
-  }
-  ( cd "$dst" && no-mistakes init && no-mistakes doctor ) || {
-    echo "error: failed to initialize no-mistakes for $project at $dst" >&2
-    return 1
-  }
-}
-
 write_registry() {
   local id=$1 home=$2 projects_csv=$3 brief=$4 scope summary tmp today
   mkdir -p "$DATA"
@@ -1006,12 +986,8 @@ seed_home() {
   done
   sync_project_registry "$home" "$@"
   for project in "$@"; do
-    project_dst=$(validate_project_destination "$home" "$project") || return 1
-    if seed_project_was_created "$project_dst"; then
-      initialize_no_mistakes_project "$home" "$project" 1
-    else
-      initialize_no_mistakes_project "$home" "$project" 0
-    fi
+    # A seeded project needs no tool initialization: every task proves with done-done. The registry entry must still resolve to a delivery posture.
+    project_mode_in_home "$home" "$project" >/dev/null || return 1
   done
 
   cp "$SEED_PARENT_BRIEF" "$home/data/charter.md"

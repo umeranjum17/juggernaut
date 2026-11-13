@@ -78,11 +78,11 @@ pass "T2 a local-trunk lane starts on the trunk tip with its mode intact"
 branch=$(sed -n 's/^branch=//p' "$HOME_DIR/state/$id.meta")
 git -C "$wt" checkout -q -b "$branch"
 printf 'Umer\n' > "$wt/work.txt"; git -C "$wt" add work.txt
-git -C "$wt" commit -qm "ticket $id: local-trunk journey"
+git -C "$wt" commit -qm "ticket $id: local-trunk journey" --trailer "Ticket: $(sed -n 's/^ticket=//p' "$HOME_DIR/state/$id.meta")"
 head=$(git -C "$wt" rev-parse HEAD)
 cp -R "$ROOT/bin" "$HOME_DIR/bin"; ln -s "$ROOT/core" "$HOME_DIR/core"; ln -s "$ROOT/policy" "$HOME_DIR/policy"; ln -s "$ROOT/toolchain.versions" "$HOME_DIR/toolchain.versions"
 # shellcheck disable=SC2016 # expanded by the gate in the candidate clone
-printf 'gate-lint=test -s work.txt\ngate-full=test "$(cat work.txt)" = Umer\nflush-at-ready=1\n' > "$HOME_DIR/config/trunk-policy"
+printf 'gate-lint=test -s work.txt\ngate-full=test "$(cat work.txt)" = Umer\nflush-at-ready=1\nlanding-gate=tests\n' > "$HOME_DIR/config/trunk-policy"
 printf 'real task journey; commit and receipt; no live or release requested\n' > "$HOME_DIR/data/$id/evidence.txt"
 JG_HOME="$HOME_DIR" "$ROOT/core/receipts/bin/jg-run-receipt.sh" "$id" PASS "$HOME_DIR/data/$id/evidence.txt" "$wt" >/dev/null || fail "real receipt publisher"
 [ "$(jq -r .mode "$HOME_DIR/state/$id.run-receipt.json")" = local-trunk ] || fail "receipt mode changed"

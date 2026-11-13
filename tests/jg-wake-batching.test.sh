@@ -20,7 +20,7 @@
 #               decision stayed open, so its wait-timer episode kept its source and
 #               the escalation ladder kept climbing.
 #
-# This is also the test that owns journeys/wake-batching.sh (the done-done journey
+# This is also the test that owns the wake-batching journey of .done-done.yaml (the done-done journey
 # runs this file), so the changed-test map selects it for a change to that journey.
 set -u
 

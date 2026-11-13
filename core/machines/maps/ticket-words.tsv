@@ -1,0 +1,99 @@
+# ticket-words: where each word of an older word list lands in the ticket machine (plan jg-8kugw, section 6.5). Report-only.
+# word: list, word, target (a state, a stage, a comma list of states it may be, = for unchanged, - for not a ticket word, by-rule for the rule lines), wait, health
+# rule: forge state of the pull request, where the work is (main, trunk, none), superseded (yes, no), last status verb, target, wait, health; first match wins
+map	ticket
+enum	wait	none worker tick lead main owner outside
+enum	reason	decision blocker dependency quota ci approval review parked date
+enum	health	ok slow stuck lost red
+word	status-verb	working	building	none	ok
+word	status-verb	progress	building	none	ok
+word	status-verb	note	building	none	ok
+word	status-verb	needs-decision	=	lead (decision)	ok
+word	status-verb	blocked	=	lead (blocker)|lead (dependency)	ok
+word	status-verb	paused	=	outside (date)|lead (parked)|worker	ok
+word	status-verb	captain-held	=	owner (decision)	ok
+word	status-verb	resolved	=	none	ok
+word	status-verb	done	proving.planned	none	ok
+word	status-verb	failed	building	lead (blocker)	lost
+word	status-verb	ready	proving.running,proving.judged	none	ok
+word	status-verb	ready-to-sign	proving.running,proving.judged	none	ok
+word	status-verb	checks-lint-pass	proving.running,proving.judged	none	ok
+word	status-verb	baseline-attribution	proving.running,proving.judged	none	ok
+word	task	working	building	none	ok
+word	task	parked	=	lead (decision)	ok
+word	task	blocked	=	lead (blocker)|lead (dependency)	ok
+word	task	paused	=	outside (date)|lead (parked)|worker	ok
+word	task	failed	building	lead (blocker)	lost
+word	task	unknown	=	lead	lost
+word	task	ready-to-land	delivering.queued	tick	ok
+word	task	landed	delivering.batched	tick	ok
+word	task	cleaned	delivering.batched	tick	ok
+word	task	rework	building	worker	red
+word	task	done	closed,by-rule	-	-
+word	task	stale	released	tick	lost
+word	task	finished-elsewhere	released	tick	lost
+word	task	abandoned	intake	owner (decision)	ok
+word	lane-delivery	coding	building	-	-
+word	lane-delivery	parked	building	lead (parked)	ok
+word	lane-delivery	ready	proving.running,proving.judged	tick	ok
+word	lane-delivery	admitted	delivering.queued	tick	ok
+word	lane-delivery	landing	delivering.rebased,delivering.gated	tick	ok
+word	lane-delivery	refused	delivering.queued,building,proving	tick|worker	ok|red
+word	lane-delivery	landed	delivering.batched	tick	ok
+word	lane-delivery	home-behind	delivering.batched	tick	slow|stuck
+word	lane-delivery	live-partial	delivering.batched	tick	slow|stuck
+word	lane-delivery	live	delivering.live	tick	ok
+word	lane-delivery	cleanup-refused	=	tick	stuck
+word	lane-delivery	reverted	building,closed	-	red
+word	release	open	delivering.joining	outside (ci)	ok
+word	release	checking	delivering.joining	outside (ci)	ok
+word	release	ready	delivering.joining	outside (ci)	ok
+word	release	red	delivering.joining	tick	red
+word	release	merged	released	-	-
+word	release	abandoned	-	-	-
+word	landing	new	delivering.queued	tick	ok
+word	landing	running	delivering.rebased,delivering.gated	tick	ok
+word	landing	wait	delivering.queued	tick	ok
+word	landing	retry	delivering.queued	tick	ok
+word	landing	final	building,proving	worker	ok
+word	landing	landed	delivering.batched	tick	ok
+word	task-inbox	allocating	-	-	-
+word	task-inbox	stored	-	-	-
+word	task-inbox	rung	-	-	-
+word	task-inbox	read	-	-	-
+word	task-inbox	handled	-	-	-
+word	task-inbox	failed	-	-	-
+word	task-inbox	ring-counted	-	-	-
+word	task-inbox	busy-deferred	-	-	-
+word	task-inbox	busy-reported	-	-	-
+word	task-inbox	held-reported	-	-	-
+word	task-inbox	escalated	-	-	-
+word	task-inbox	retry-owed	-	-	-
+word	delivery	unlanded	intake,delivering.gated	-	-
+word	delivery	landed	delivering.batched	tick	ok
+word	delivery	in-homes	delivering.live,released	-	ok
+word	delivery	in-homes-off	delivering.live,released	-	ok
+word	delivery	in-use	delivering.live,released	-	ok
+word	delivery	pinned-behind	=	tick	red
+word	delivery	reverted	building,closed	-	red
+word	host	ok	-	-	-
+word	host	pool-full	ready	tick	ok
+word	markers	owned	-	-	-
+word	markers	orphan	-	-	-
+word	markers	removed	-	-	-
+word	wait	not-paused	=	none	-
+word	wait	paused-open	=	outside (date)|lead (parked)|worker	-
+word	wait	paused-dated	=	outside (date)	-
+word	wait	paused-no-date	=	lead (parked)	-
+rule	merged	*	*	*	released	tick	ok
+rule	closed-unmerged	main	*	*	released	tick	ok
+rule	none	main	*	*	released	tick	ok
+rule	closed-unmerged	trunk	*	*	delivering.batched	tick	ok
+rule	closed-unmerged	none	yes	*	closed	none	ok
+rule	closed-unmerged	none	no	*	intake	owner (decision)	ok
+rule	open-new	*	*	*	delivering.queued	tick	ok
+rule	open-running	*	*	*	delivering.rebased	outside (ci)	ok
+rule	open-red	*	*	*	building	worker	red
+rule	open-green	*	*	*	delivering.gated	tick	ok
+rule	none	none	*	paused	building	lead	ok
+rule	none	none	*	done	proving.planned	none	lost

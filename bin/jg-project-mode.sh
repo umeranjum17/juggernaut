@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Resolve a project's REGISTERED delivery posture from the data/projects.md registry.
 # Default usage prints two words to stdout: "<mode> <yolo>" where mode is one of
-# no-mistakes|direct-PR|local-only|local-trunk and yolo is on|off.
+# no-mistakes|direct-PR|local (or the old local-only|local-trunk, read as before) and yolo is on|off.
 # --branch-prefix instead prints one value: the project's registered ship-branch
 # prefix, "fm/" when the project registers none, is unregistered, or the registry
 # is absent, so every existing installation keeps its current "fm/<task-id>"
@@ -21,7 +21,7 @@
 # section 7 and the task-dispatch skill; bin/jg-brief.sh's own header owns the
 # --branch-prefix flag it accepts).
 # The consumers are bin/jg-fleet-sync.sh (skip local-only clones),
-# bin/jg-bootstrap.sh (skip the GitHub-auth probe when every clone is local-only),
+# bin/jg-bootstrap.sh (skip the GitHub-auth probe when every clone is local),
 # bin/jg-home-seed.sh and bin/jg-remote-home-seed.sh (refuse local-only seeding,
 # run no-mistakes init), bin/jg-spawn.sh's advisory registry-deviation notice,
 # and --forge for bin/jg-spawn.sh's forge agreement and yolo refusal and for
@@ -43,8 +43,10 @@
 #   legacy "fm/<task-id>".
 #
 # Registered modes:
-#   no-mistakes            full pipeline -> PR -> configured merge authority (default)
-#   direct-PR              push + PR via gh-axi, no pipeline
+#   direct-PR              done-done proof, then push + PR via gh-axi -> configured merge authority (default)
+#   no-mistakes            the retired word: read as direct-PR (done-done proof, then the pull request path; no pipeline run starts)
+#   local                  the one local style (core/machines/styles/delivery-styles.tsv): lanes land on the local trunk; yolo on lands them by
+#                          itself, yolo off waits for the captain's word. Same trunk rules as local-trunk below.
 #   local-only             local branch, no remote/PR, guarded local merge
 #   local-trunk            the local trunk flow (docs/trunk-flow.md, bin/jg-trunk.sh): lanes ship as local-trunk
 #                          tasks and land on a local trunk by themselves; goes live and out as ONE release PR
@@ -55,8 +57,8 @@
 #                          classifies each task's surface at intake (the
 #                          project-management skill owns that classification).
 #                          Mechanical output maps it to its most rigorous leg,
-#                          no-mistakes, so sync, seeding, and init treat such a
-#                          project as the remote-backed pipeline project it is.
+#                          direct-PR, so sync, seeding, and init treat such a
+#                          project as the remote-backed pull request project it is.
 # yolo (orthogonal) = merge authority only: when on, juggernaut merges green,
 #   in-scope work itself (AGENTS.md section 7).
 # branch=<prefix> (orthogonal) = overrides the "fm/" ship-branch prefix so a
@@ -94,9 +96,9 @@
 # A project with no registry entry, or a home with no registry at all, falls
 # back to "direct-PR off" (or "fm/" under --branch-prefix) and warns to stderr:
 # a direct pull request with done-done proof is the default delivery route, and
-# no-mistakes is chosen per project for real risk. An unknown mode in a
+# no-mistakes is a retired word. An unknown mode in a
 # registered line, and a legacy bracket-less line, still resolve to
-# "no-mistakes off", so a typo or an older registry never silently drops a gate
+# "direct-PR off", so a typo or an older registry never silently drops a gate
 # its owner registered. Other annotation tokens are ignored, as they always were, keyed
 # ones included: a `<key>=<value>` token whose key is neither exactly `forge` nor
 # `branch` resolves as it did before the forge existed, and in the mode slot it
@@ -138,6 +140,8 @@ unset _jg_d
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/jg-delivery-style.sh
+. "$SCRIPT_DIR/jg-delivery-style.sh"
 JG_ROOT="${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$JG_ROOT}}"
 DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
@@ -224,7 +228,7 @@ parsed=$(awk -v n="$NAME" -v sentinel="$unset_prefix" '
     if (substr($0, 1, plen) != prefix) next
     after = substr($0, plen + 1);
     if (after != "" && substr(after, 1, 2) != " [" && substr(after, 1, 3) != " - ") next
-    mode="no-mistakes"; yolo="off"; branch=sentinel; forge="none";
+    mode="direct-PR"; yolo="off"; branch=sentinel; forge="none";
     if (substr(after, 1, 2) == " [") {
       s="";
       nk = split(after, rest, " ");
@@ -280,9 +284,11 @@ $posture
 EOF
 forge=${rest_forge:-none}
 case "$mode" in
-  no-mistakes|direct-PR|local-only|local-trunk|no-mistakes-prod-only) ;;
-  *) echo "warn: unknown mode \"$mode\" for $NAME; defaulting to no-mistakes off" >&2; mode=no-mistakes; yolo=off; branch=$unset_prefix ;;
+  no-mistakes-prod-only) ;;
+  *) jg_delivery_style_accepts "$mode" || { echo "warn: unknown mode \"$mode\" for $NAME; defaulting to direct-PR off" >&2; mode=direct-PR; yolo=off; branch=$unset_prefix; } ;;
 esac
+# The retired word no-mistakes is read as direct-PR: a project registered with it proves with done-done and takes the pull request path.
+case "$mode" in no-mistakes-prod-only) ;; *) mode=$(jg_delivery_style_task_mode "$mode") ;; esac
 case "$yolo" in on|off) ;; *) yolo=off ;; esac
 if [ "$BRANCH_PREFIX_QUERY" -eq 1 ]; then
   prefix_answer "$branch" || exit 1
@@ -298,7 +304,7 @@ case "$forge" in
     echo "refused: unknown forge \"${forge#forge=}\" registered for $NAME in $REG; the accepted values are forge=gerrit and forge=forgejo, or no forge token at all for a forge whose pull requests no-mistakes already drives; correct the registry entry" >&2
     exit 3 ;;
 esac
-if [ "$forge" != none ] && { [ "$mode" = local-only ] || [ "$mode" = local-trunk ]; }; then
+if [ "$forge" != none ] && jg_delivery_style_is "$mode" local; then
   echo "refused: $NAME is registered $mode with forge=$forge in $REG; $mode publishes nothing, so a forge has no meaning there, and its landing would fast-forward local main with content the review server has never seen; register no-mistakes or direct-PR to publish through the forge, or drop the forge token to keep the project local" >&2
   exit 3
 fi
@@ -313,6 +319,6 @@ fi
 # A conditional policy is not a task mode. Mechanical callers get its most
 # rigorous leg; --raw callers get the annotation itself (see the header).
 if [ "$RAW" -eq 0 ] && [ "$mode" = no-mistakes-prod-only ]; then
-  mode=no-mistakes
+  mode=direct-PR
 fi
 echo "$mode $yolo"

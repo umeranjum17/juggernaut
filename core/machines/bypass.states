@@ -1,0 +1,4 @@
+# bypass: the closed list of states of the machine "Proof bypass: the owner's word".
+# value<TAB>mark (initial, final or -)<TAB>kind (active, waiting, rest, final)<TAB>meaning
+standing	initial	rest	the owner's word to skip the proof is in force
+ended	final	final	the word is no longer in force

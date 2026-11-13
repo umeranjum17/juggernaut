@@ -13,11 +13,22 @@ type forgejoRef struct{ host, path, number, login string }
 // proved; it is the sentence the refusal prints, so every non-zero path sets it first.
 type landing struct {
 	wt, branch, project, prURL, baseBranch string
-	trunkBranch, trunkGap                  string
+	trunkBranch, trunkGap, laneBase        string
 	outsideOrigin                          bool
 	forgejo                                *forgejoRef
 	gap                                    string
 	contentGap                             string
+	// empty is set when laneIsEmpty proved the copy never left its starting commit.
+	empty bool
+}
+
+// gapReason is the closed-list reason for the gap a failed landing left: the empty lane is its own
+// reason, and every other gap carries the one the caller names.
+func (l *landing) gapReason(other string) string {
+	if l.empty {
+		return reasonEmptyLane
+	}
+	return other
 }
 
 func runDefaultBranch(args []string) int {
@@ -41,6 +52,7 @@ func landedFlags(fs *flag.FlagSet, l *landing) (build func()) {
 	fs.StringVar(&l.project, "project", "", "the project clone")
 	fs.StringVar(&l.prURL, "pr-url", "", "the PR recorded for the task")
 	fs.StringVar(&l.trunkBranch, "trunk-branch", "", "the project's local trunk branch, when the project is in local-trunk mode")
+	fs.StringVar(&l.laneBase, "lane-base", "", "the commit the lane started on; a copy whose HEAD is still that commit holds no work")
 	fs.StringVar(&l.baseBranch, "base-branch", "", "the task's recorded base branch")
 	fs.BoolVar(&l.outsideOrigin, "pr-outside-origin", false, "the recorded PR lives outside this copy's origin repository")
 	fHost := fs.String("forgejo-host", "", "Forgejo host of the recorded PR")
@@ -69,6 +81,7 @@ func runLanded(args []string) int {
 		fmt.Println("landed=yes")
 	} else {
 		fmt.Println("landed=no")
+		fmt.Println("reason=" + l.gapReason(reasonNoProof))
 		fmt.Println("gap=" + oneLine(l.gap))
 	}
 	if l.prURL != "" {
@@ -88,6 +101,9 @@ func oneLine(s string) string { return strings.ReplaceAll(s, "\n", " ") }
 // fallback). That branch is the pull request's own base branch when the forge names it, so a merge
 // into a release branch lands here before the default branch holds it. False leaves the reason in gap.
 func (l *landing) workIsLanded() bool {
+	if l.laneIsEmpty() {
+		return false
+	}
 	if l.trunkBranch != "" {
 		if l.landedOnTrunk() {
 			return true
@@ -112,6 +128,22 @@ func (l *landing) workIsLanded() bool {
 		l.gap += "; and " + l.trunkGap
 	}
 	return false
+}
+
+// laneIsEmpty: the copy's HEAD is still the commit the lane started on, so it carries no commit of
+// its own. Such a head is an ancestor of the trunk and of the default branch, which would read as
+// landed, but nothing landed. The gap says so, and no later proof can stand in for it.
+func (l *landing) laneIsEmpty() bool {
+	if l.laneBase == "" {
+		return false
+	}
+	head, err := git(l.wt, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+	if err != nil || head != l.laneBase {
+		return false
+	}
+	l.gap = "this copy's HEAD is still the commit the lane started on, so it holds no work of its own"
+	l.empty = true
+	return true
 }
 
 // prIsMerged: 0 proved, 2 the forge reports the PR open or closed (decisive: no fallback can
@@ -220,6 +252,9 @@ func (l *landing) prIsMerged(branch string) int {
 // a release push. When it is not proved the gap says why and the ordinary forge proof gets its turn.
 func (l *landing) landedOnTrunk() bool {
 	trunk := "refs/heads/" + l.trunkBranch
+	if l.laneIsEmpty() {
+		return false
+	}
 	if !gitOK(l.wt, "merge-base", "--is-ancestor", "HEAD", trunk) {
 		l.gap = "this copy's HEAD is not on the local " + l.trunkBranch
 		return false

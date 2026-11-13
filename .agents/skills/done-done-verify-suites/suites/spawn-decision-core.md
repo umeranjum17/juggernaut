@@ -4,3 +4,4 @@ Spawn decision core (Go): run `bash tests/jg-spawn-core.test.sh` (or `done-done 
 
 Lease identity: `bash journeys/spawn-clone-identity.sh` drives the real spawn with fixture pool copies from matching and different clones.
 It proves the matching copy launches and the foreign copy is refused with both Git common directories while its lease and dirty contents remain.
+It also proves per-clone pools: a root-home clone and a Squad Lead home clone of one origin with one directory name each lease a copy of their own clone, from their own pool root, with no dirty clone.

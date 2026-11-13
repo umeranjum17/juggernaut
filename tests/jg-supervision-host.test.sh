@@ -995,6 +995,7 @@ test_settled_captain_outcome_rides_the_next_drain_and_is_bounded() {
   assert_not_contains "$drained" "BRANCH OUTCOMES" "an acknowledged held outcome must not be listed again"
   wait_until 100 test ! -e "$home/state/.branch-outcome-deferred" || fail "an acknowledged outcome kept its deferral"
   [ ! -s "$home/host.rc" ] || fail "an acknowledged deferred outcome still woke main: $(cat "$home/host.out")"
+  printf "PASS deferred outcome: row 1 appeared until acknowledged; no wake after acknowledgement\n"
 
   home=$(make_home attended-settled-bound attended)
   printf 'kind=ship\nyolo=on\n' >> "$home/state/demo.meta"
@@ -1005,6 +1006,7 @@ test_settled_captain_outcome_rides_the_next_drain_and_is_bounded() {
   wait_until 250 host_exited "$home" || fail "bound: an unacknowledged deferred outcome never woke main: $(cat "$home/state/.supervision-host.log")"
   assert_re '^supervision-host: branch-outcome: .*\(through store row 1\); run bin/jg-wake-drain.sh' "$home/host.out" \
     "the bound must wake main with the same drain instruction"
+  printf "PASS bounded wake: %s\n" "$(cat "$home/host.out")"
   [ ! -e "$home/state/.branch-outcome-deferred" ] || fail "the due deferral stayed after waking main"
   drained=$(JG_HOME="$home" "$FAKE_CLAUDE" -c '"$0" 2>&1' "$ROOT/bin/jg-wake-drain.sh")
   assert_contains "$drained" " ago] demo: stub escalated: " "the drain must still present the outcome the bound woke main for"
@@ -1017,6 +1019,7 @@ test_settled_captain_outcome_rides_the_next_drain_and_is_bounded() {
   append_status "$home" 'change finished' 'done'
   wait_until 250 host_exited "$home" || fail "off: with deferral off a captain outcome must wake main at once"
   assert_re '^supervision-host: branch-outcome: .*\(store rows 1\); run bin/jg-wake-drain.sh' "$home/host.out" "deferral off must keep the immediate hand-off"
+  printf "PASS zero-bound wake: %s\n" "$(cat "$home/host.out")"
   pass "host: a captain outcome that asks main for no reply rides main's next drain, is bounded, and a zero bound keeps the old hand-off"
 }
 
@@ -1038,6 +1041,7 @@ test_captain_outcome_needing_an_owner_reply_wakes_main_at_once() {
     wait_until 250 host_exited "$home" || fail "$name: an outcome needing an owner reply did not wake main: $(cat "$home/state/.supervision-host.log")"
     assert_re '^supervision-host: branch-outcome: .*\(store rows 1\); run bin/jg-wake-drain.sh' "$home/host.out" "$name: the wake must name the outcome's store row"
     [ ! -e "$home/state/.branch-outcome-deferred" ] || fail "$name: an outcome that woke main at once was also held"
+    printf "PASS %s immediate wake: %s\n" "$name" "$(cat "$home/host.out")"
     assert_contains "$(JG_HOME="$home" "$FAKE_CLAUDE" -c '"$0" 2>&1' "$ROOT/bin/jg-wake-drain.sh")" " ago] demo: stub escalated: " "$name: the drain must list the outcome that woke main"
   done
   pass "host: a captain outcome that needs an owner reply (blocker, failure, human merge, findings) still wakes main at once"
@@ -3046,6 +3050,14 @@ test_host_outside_the_lock_owner_stands_down() {
 
 test_superseded_host_leaves_the_owner_untouched() {
   local home owner watcher lock_pid
+  # Claim must write a real lease; an unavailable store deliberately degrades
+  # to success without a record and cannot prove the superseded host left it.
+  if [ -z "${JG_NATS_SERVER:-$(command -v nats-server 2>/dev/null || true)}" ] ||
+     [ -z "${JG_NATS_BIN:-$(command -v nats 2>/dev/null || true)}" ]; then
+    printf 'skip: superseded host lease needs nats-server and nats\n'
+    return 0
+  fi
+  jg_test_bus_start "$TMP_ROOT/superseded-lease-bus" || fail "fixture: could not start isolated lease store"
   home=$(make_home superseded away)
   # One fake harness runs the owner host, then, on a signal file, a second host
   # under an auto-arm generation the ledger has already superseded.
@@ -3083,7 +3095,7 @@ test_superseded_host_leaves_the_owner_untouched() {
   pass "host: a host under a superseded auto-arm generation stands down without touching the owner"
 }
 
-# CI runs the two halves in separate serial jobs. Run with
+# CI runs the case groups in separate serial jobs. Run with
 # JG_SUPERVISION_HOST_PART=all for the complete local suite.
 if [ "${JG_SUPERVISION_HOST_PART:-}" = defer ]; then
   test_settled_captain_outcome_rides_the_next_drain_and_is_bounded
@@ -3091,10 +3103,10 @@ if [ "${JG_SUPERVISION_HOST_PART:-}" = defer ]; then
   exit 0
 fi
 case "${JG_SUPERVISION_HOST_PART:-early}" in
-  early|late|all) ;;
+  early|middle|hook|late|all) ;;
   *) fail "unknown supervision-host test part: $JG_SUPERVISION_HOST_PART" ;;
 esac
-if [ "${JG_SUPERVISION_HOST_PART:-early}" != late ]; then
+if [ "${JG_SUPERVISION_HOST_PART:-early}" = early ] || [ "${JG_SUPERVISION_HOST_PART:-early}" = all ]; then
 test_claude_stop_hook_restores_handoff_when_successor_closed_before_exit_to_main
 test_claude_stop_hook_restores_handoff_when_successor_closed_mid_engine_turn
 test_claude_stop_hook_notifies_when_closed_successor_downtime_restore_fails
@@ -3117,6 +3129,8 @@ test_branch_outcomes_date_an_outcome_carried_across_a_switch_off_pi
 test_branch_outcomes_keep_an_unshown_outcome_until_acknowledged
 test_branch_outcomes_keep_a_drain_presented_outcome_across_a_switch_to_pi
 test_branch_outcomes_keep_a_drain_presented_outcome_across_an_index_repair
+fi
+if [ "${JG_SUPERVISION_HOST_PART:-early}" = middle ] || [ "${JG_SUPERVISION_HOST_PART:-early}" = all ]; then
 test_attended_routine_wake_is_handled_on_the_engine_and_stays_off_main
 test_attended_captain_outcome_reaches_main_through_branch_outcomes
 test_settled_captain_outcome_rides_the_next_drain_and_is_bounded
@@ -3133,6 +3147,8 @@ test_claude_stop_hook_delivers_a_main_only_pass_through
 test_claude_stop_hook_rewakes_a_present_captain_beside_a_quiet_record
 test_claude_stop_hook_runs_the_host_without_the_file_and_off_opts_out
 test_claude_stop_hook_delivers_a_close_that_turns_main_only_at_its_turn
+fi
+if [ "${JG_SUPERVISION_HOST_PART:-early}" = hook ] || [ "${JG_SUPERVISION_HOST_PART:-early}" = all ]; then
 test_successor_left_at_the_turn_survives_the_hook_process_group_teardown
 test_claude_stop_hook_notifies_when_at_turn_downtime_write_fails
 test_successor_close_during_main_turn_is_delivered_at_the_next_turn_end
@@ -3150,7 +3166,7 @@ test_away_turn_without_a_report_hands_the_wake_to_main
 test_return_during_an_engine_turn_hands_its_outcomes_to_main
 test_silent_outcomes_are_not_relayed_when_the_captain_returns
 fi
-if [ "${JG_SUPERVISION_HOST_PART:-early}" != early ]; then
+if [ "${JG_SUPERVISION_HOST_PART:-early}" = late ] || [ "${JG_SUPERVISION_HOST_PART:-early}" = all ]; then
 test_large_turn_relays_an_early_visible_outcome
 test_outcome_lookup_failure_is_not_treated_as_silence
 test_outcome_after_the_return_survives_a_host_killed_at_the_turn_end

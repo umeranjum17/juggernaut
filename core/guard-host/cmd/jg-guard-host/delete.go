@@ -557,9 +557,9 @@ func escalate(row logRow) error {
 	if shome == "" {
 		shome = "?"
 	}
-	reason := fmt.Sprintf("check: delete guard REPEAT: %s tried %d blocked recursive deletes in %d min (home %s, %s); latest: %s - stop that task and check it",
+	reason := fmt.Sprintf("delete guard REPEAT: %s tried %d blocked recursive deletes in %d min (home %s, %s); latest: %s - stop that task and check it",
 		task, recent, repeatSecs/60, shome, row.Runtime, firstN(row.Command, 200))
-	cmd := exec.Command("bash", "-c", `. "$1/bin/jg-wake-lib.sh" && jg_wake_append check delete-guard "$2"`, "_", home, reason)
+	cmd := exec.Command(filepath.Join(home, "bin", "jg-alert.sh"), "raise", "security", fmt.Sprintf("delete-guard-repeat-%d-%d", time.Now().Unix(), os.Getpid()), "--note", reason, "--deliver")
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "JG_HOME=" + home}
 	var stderr strings.Builder
 	cmd.Stderr = &stderr

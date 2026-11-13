@@ -1,0 +1,22 @@
+machine	squad-lead	a registered Squad Lead home: its data/squad_leads.md line, config/parked-homes and the relaunch ledger (id: the Squad Lead id; machine 2 of the state-machine plan)	core/machines/observers/squad-lead.sh
+enum	squad-lead
+state	provisioned	initial	The home exists and its session has not answered yet.	-	waiting	10m -> alert supervision-down
+state	idle	normal	The home is up and has no work.	lane_limit	rest	route
+state	working	normal	The home has open tickets of its own.	lane_limit	active
+state	down	normal	The home session does not answer.	-	waiting	0s -> alert supervision-down
+state	parked	normal	Main set the home aside.	-	rest	unpark
+state	retired	terminal	The home is gone.	-	final
+group	live	idle	working
+edge	(none)	provision	provisioned	bin/jg-squad-lead-charter-lib.sh:squad_lead_charter_write	-	Main's word and a charter	jg-machine-squad-lead
+edge	provisioned	launch	idle	bin/jg-spawn.sh:spawn_squad_lead	-	the session answers	jg-machine-squad-lead
+edge	idle	route	working	bin/jg-send.sh:send	-	Main routed a ticket to it	jg-machine-squad-lead
+edge	working	drain	idle	bin/jg-squad-lead-dormant.sh:sweep	-	no ticket of its own is open	jg-machine-squad-lead
+edge	live	miss	down	bin/jg-squad-lead-liveness-lib.sh:jg_squad_lead_liveness_probe	-	2 beats missed	jg-machine-squad-lead
+edge	down	recover	idle	bin/jg-squad-lead-liveness-lib.sh:jg_squad_lead_liveness_relaunch	-	the session answers again; routed work then makes it working	jg-machine-squad-lead
+edge	working	ring	working	core/stall-action/lead.sh:ring	-	a working beat is 10 min old while the home has work: the lead is rung once, then relaunched	jg-machine-squad-lead
+edge	working	relaunch	working	core/stall-action/lead.sh:relaunch	-	the ring did not bring a beat back: the session is replaced; 3 in 30 min raise supervision-down	jg-machine-squad-lead
+edge	idle	park	parked	core/parked-homes/bin/jg-parked-homes-lib.sh:jg_parked_home	-	Main's word	jg-machine-squad-lead
+edge	down	park-down	parked	core/parked-homes/bin/jg-parked-homes-lib.sh:jg_parked_home	-	Main's word: a home that does not come back is parked and its backlog goes to Main	jg-machine-squad-lead
+edge	parked	unpark	idle	core/parked-homes/bin/jg-parked-homes-lib.sh:jg_parked_home	-	Main's word	jg-machine-squad-lead
+edge	parked	retire	retired	bin/jg-teardown.sh:teardown	-	Main's word; a home is parked first, so no ticket is open	jg-machine-squad-lead
+observer	bash "$(dirname "$JG_MACHINES_TABLES")/observers/squad-lead.sh" "$1"

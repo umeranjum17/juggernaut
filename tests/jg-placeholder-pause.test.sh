@@ -89,13 +89,13 @@ age_episode() {  # <dir> [lane]
   : > "$1/events"
 }
 
-# A placeholder date is no deadline and the lane named no owner time: the parked lane is
+# A parked lane (reason=parked) names no deadline and no owner time: the parked lane is
 # quiet (jg_wait_timer_quiet), so the real watcher arms no episode and rings nobody, even
 # after 30 minutes. tests/jg-wait-quiet.test.sh owns the two-hour journey.
 dir=$(make_case placeholder-pause)
 mkdir -p "$dir/home/config" "$dir/tmp" "$dir/config"
 printf 'kind=ship\nbackend=tmux\nwindow=fake:1\n' > "$dir/state/lane.meta"
-printf 'paused: waiting until 2026-12-31\n' > "$dir/state/lane.status"
+printf 'paused [wait=lead] [reason=parked]: set aside\n' > "$dir/state/lane.status"
 prime_status_seen "$dir/state" "$dir/state/lane.status"
 arm_episode "$dir"
 [ ! -e "$dir/state/.waiting-timers/lane" ] || fail 'placeholder pause armed an episode'

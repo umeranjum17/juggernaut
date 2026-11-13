@@ -1,0 +1,11 @@
+# landing: the closed list of states of the machine "Landing run".
+# value<TAB>mark (initial, final or -)<TAB>kind (active, waiting, rest, final)<TAB>meaning
+queued	initial	waiting	the run waits for a gate slot
+rebasing	-	active	the commit is put on the tip of the line
+resolving	-	active	a rebase conflict is being resolved
+retesting	-	active	the journeys that the conflict affects run again
+checking	-	active	the quick check runs
+retrying	-	waiting	the runner failed, and the run is tried again or waits for the lead
+landed	final	final	the commit is on the line
+returned	final	final	the run gave the ticket back to building
+withdrawn	final	final	the run was taken out of the queue

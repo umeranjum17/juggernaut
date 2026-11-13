@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# delete-guard watcher check: prints one wake line for the delete-guard.log rows appended since the last sweep whose
+# delete-guard watcher check: raises one security alert (bin/jg-alert.sh raise --deliver) for the delete-guard.log rows appended since the last sweep whose
 # target is a literal path (or a variable the command set to one) outside temp and scratch folders, and nothing
 # otherwise. Every other new row is counted, per UTC day, in state/delete-guard.counted for the daily fleet summary:
 # a $VAR target with no literal value, a bare . .. * target, a temp or scratch target, a block from an agent working
@@ -42,5 +42,6 @@ fi
 printf '%s\n' "$total" > "$SEEN.$$" && mv "$SEEN.$$" "$SEEN"
 wakes=$(grep '^W' <<<"$rows" | cut -f2-)
 [ -n "$wakes" ] || exit 0
-printf 'delete guard blocked %s recursive delete(s) of a literal path outside temp and scratch folders, see %s; latest: %s\n' \
-  "$(wc -l <<<"$wakes")" "$LOG" "$(tail -n 5 <<<"$wakes" | paste -sd ';' -)"
+note=$(printf 'delete guard blocked %s recursive delete(s) of a literal path outside temp and scratch folders, see %s; latest: %s' \
+  "$(wc -l <<<"$wakes")" "$LOG" "$(tail -n 5 <<<"$wakes" | paste -sd ';' -)")
+JG_HOME="$1" "$1/bin/jg-alert.sh" raise security "delete-guard-$(date +%s)-$$" --note "$note" --deliver

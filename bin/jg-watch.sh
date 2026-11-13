@@ -405,6 +405,9 @@ fi
 # turn-ended signature, annotation staleness checks, and guarded bookkeeping writes.
 
 POLL=${JG_POLL:-15}                   # seconds between cycles
+# Seconds between cycles of a home with no working lane. A JG_POLL set on purpose is the
+# cadence its owner chose, so it is the idle cadence too unless JG_IDLE_POLL says otherwise.
+IDLE_POLL=${JG_IDLE_POLL:-${JG_POLL:-300}}
 PROMPT_REALERT=${JG_PROMPT_REALERT_SECS:-600}  # a prompt still up is re-acted on this often
 # Beacon publication and scan timing are owned by docs/turnend-guard.md
 # "Guard grace and the poll cadence".
@@ -654,7 +657,9 @@ watch_inventory_load() {
   # stop signal that lands inside one can be dropped or mis-parsed, and a supervision
   # cycle must never survive a stop request.
   inv="$STATE/.watch-inventory.$$"
-  if ! "$SCRIPT_DIR/jg-watch-core.sh" inventory "${metas[@]}" > "$inv"; then
+  # A child the pass waits on: with hundreds of records on a loaded host it can run past
+  # the grace, and watcher_child keeps the beacon fresh for it, within its cap.
+  if ! watcher_child "$SCRIPT_DIR/jg-watch-core.sh" inventory "${metas[@]}" > "$inv"; then
     rm -f -- "$inv"
     return 1
   fi
@@ -1105,7 +1110,7 @@ squad_lead_ring_to_drain() {  # <task> <window> <seq>
 squad_lead_wake_stall_tick() {
   local now=$(( $(date +%s) )) threshold=$SQUAD_LEAD_WAKE_STALL_SECS
   local meta task kind remote_host home queue row epoch seq row_key marker progress_marker ring_marker progress observed_at observed_key
-  local receipt receipt_dir notify_key queued idle reason episode_alerted already_rung w
+  local receipt receipt_dir notify_key idle reason episode_alerted already_rung w
   # Endpoint metadata admits this queue-loop check; squad-lead-liveness owns registered mates whose endpoint is missing or dead.
   for meta in "$STATE"/*.meta; do
     [ -e "$meta" ] || continue
@@ -1190,10 +1195,8 @@ EOF
     fi
     notify_key="squad-lead-wake-loop-$task-$row_key"
     reason="check: squad_lead wake-loop stalled: mate=$task row=$seq idle=${idle}s"
-    queued=$(jg_wake_queued_keys check)
-    if ! printf '%s\n' "$queued" | grep -Fx "$notify_key" >/dev/null 2>&1; then
-      jg_wake_append check "$notify_key" "$reason" || return 1
-    fi
+    JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" raise supervision-down "$notify_key" --home "$JG_HOME" \
+      --note "${reason#check: }" --deliver || return 1
     jg_wake_squad_lead_stall_receipt_write "$task" "$row_key" || return 1
     jg_wake_squad_lead_stall_marker_write "$task" "$row_key" || return 1
     wake "$reason"
@@ -1370,7 +1373,7 @@ squad_lead_liveness_tick() {
   JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-squad-lead-dormant.sh" sweep >/dev/null 2>&1 \
     || triage_log "squad_lead dormant sweep reported a failure; the liveness tick continues"
   local now=$(( $(date +%s) )) meta id kind
-  local bound_marker attempts notify_key reason queued err first_reason='' failed=0
+  local bound_marker attempts notify_key reason err first_reason='' failed=0
   for meta in "$STATE"/*.meta; do
     [ -e "$meta" ] || continue
     kind=$(jg_meta_get "$meta" kind 2>/dev/null || true)
@@ -1435,9 +1438,8 @@ squad_lead_liveness_tick() {
         ;;
     esac
     if [ -n "$reason" ]; then
-      queued=$(jg_wake_queued_keys check)
-      if printf '%s\n' "$queued" | grep -Fx "$notify_key" >/dev/null 2>&1 \
-        || jg_wake_append check "$notify_key" "$reason"; then
+      if JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" raise supervision-down "$notify_key" --home "$JG_HOME" \
+        --note "${reason#check: }" --deliver; then
         [ -n "$first_reason" ] || first_reason=$reason
       else
         err="check wake row could not be queued: $reason"
@@ -1486,7 +1488,7 @@ resurface_absorbed() {  # <window> <throttle-marker> <age> <reason> [scope] [min
     [ "$age" -ge "$min_age" ] || return 0
     [ "$(age_of "$throttle")" -ge "$PAUSE_RESURFACE_SECS" ] || return 0   # 999999 when no prior re-surface
   fi
-  jg_wake_append stale "$win" "$reason" || exit 1
+  jg_wake_lost_worker "$win" "$reason" || exit 1
   if [ -n "$scope" ]; then printf '%s' "$scope" > "$throttle"; else date +%s > "$throttle"; fi
   wake "$reason"
 }
@@ -1810,7 +1812,7 @@ wedge_dead_record() {  # <window> <since-file> <triage-label> <idle-age> <pane-h
   # written ahead of a failed append outlives it, and the next sighting would then
   # absorb the retry - the one way this bound could swallow the report outright
   # rather than deliver it once.
-  jg_wake_append stale "$win" "$reason" || exit 1
+  jg_wake_lost_worker "$win" "$reason" || exit 1
   printf '%s %s' "$agent_state" "$id" > "$marker"
   clear_write_tracking "$key"
   wake "$reason"
@@ -1875,7 +1877,7 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
         if [ "$n" -ge "$JG_WEDGE_DEMAND_INSPECT_COUNT" ]; then
           reason="stale: $win (idle ${age}s, possible wedge, escalation $n, demand-deep-inspection: same pane has wedge-escalated $n times in a row - do not re-absorb on the run-step/pane state alone)"
         fi
-        jg_wake_append stale "$win" "$reason" || exit 1
+        jg_wake_lost_worker "$win" "$reason" || exit 1
         rm -f "$since_file"
         clear_write_tracking "$(window_key "$win")"
         wake "$reason"
@@ -2018,7 +2020,7 @@ busy_turn_bound_check() {  # <window> <task> <hash> <since-file> <escalation-fil
         return 0
       fi
       if [ "$(cat "$STATE/.stale-$key" 2>/dev/null || true)" != "$declared" ]; then
-        jg_wake_append stale "$win" "stale: $win" || exit 1
+        jg_wake_lost_worker "$win" "stale: $win" || exit 1
         printf '%s' "$declared" > "$STATE/.stale-$key"
         wake "stale: $win"
       fi
@@ -2100,6 +2102,9 @@ phantom_pane_prune() {
   local tracked key w backend verdict
   for tracked in "$STATE"/.tracked-*; do
     [ -e "$tracked" ] || continue
+    # One backend probe per tracked pane can be slow on a loaded host, so each
+    # pane is a bounded unit of the scan that publishes liveness (watcher_beat).
+    watcher_beat prune-pane
     key=${tracked##*/.tracked-}
     { IFS=$(printf '\t') read -r w backend; } < "$tracked" || continue
     [ -n "$w" ] && [ -n "$backend" ] || continue
@@ -2368,7 +2373,7 @@ prompt_gate_check() {  # <window> <task> [tail40]
   mkdir -p "$STATE/.wait-sources" && printf 'prompt: %s; path %s\n' "$prompt" "$path" > "$src" || exit 1
   printf 'wait:%s' "$h" > "$mf"
   reason="stale: $w (permission prompt: $prompt; path $path; not answered: $_r)"
-  jg_wake_append stale "$w" "$reason" || exit 1
+  jg_wake_lost_worker "$w" "$reason" || exit 1
   if declare -F jg_wait_timer_source_delivered >/dev/null; then
     jg_wait_timer_source_delivered "$task" "$w" "$(head -n 1 "$src" | tr '\t' ' ' | cut -c1-300)" || exit 1
   fi
@@ -2433,7 +2438,7 @@ surface_nonterminal_stale() {  # <window> <hash>
     bounded=0
   fi
   if [ "$throttled" -ne 0 ]; then
-    jg_wake_append stale "$win" "stale: $win" || exit 1
+    jg_wake_lost_worker "$win" "stale: $win" || exit 1
     stale_wait_record "$key"
   fi
   printf '%s' "$h" > "$STATE/.stale-$key"
@@ -2495,7 +2500,7 @@ declared_wait_contradiction() {  # <window> <task> <window-key>
   raised="$STATE/.truth-raised-$key"
   [ "$(cat "$raised" 2>/dev/null || true)" != "$sig $state" ] || return 0
   reason="stale: $win (task $task says paused, but its run is ${state#state: parked · source: run-step · } - a parked gate holds no pending drive call, so nothing resumes this lane until juggernaut decides or steers)"
-  jg_wake_append stale "$win" "$reason" || exit 1
+  jg_wake_lost_worker "$win" "$reason" || exit 1
   printf '%s' "$sig $state" > "$raised"
   wake "$reason"
 }
@@ -2719,6 +2724,19 @@ watcher_stop_signals() {
   trap 'exit 1' INT
 }
 
+# watch_record_check_cost: the CPU seconds the check just waited on used, on record in
+# state/.watch-cost once a minute per check (core/watch/cmd/jg-watch-core/interval.go owns
+# the arithmetic, the row format and the budget). A check over its budget is named in the
+# triage log. Recording is a measurement, so a failure to record never stops a check.
+watch_record_check_cost() {  # <key>
+  local over="$STATE/.watch-cost-over"
+  times > "$STATE/.watch-times-after" 2>/dev/null || return 0
+  "$SCRIPT_DIR/jg-watch-core.sh" cost "$STATE" "$1" "$STATE/.watch-times-before" "$STATE/.watch-times-after" \
+    "${JG_WATCH_CHECK_CPU_BUDGET:-5}" > "$over" 2>/dev/null || true
+  [ ! -s "$over" ] || triage_log "$(head -n 1 "$over")"
+  rm -f -- "$over" "$STATE/.watch-times-before" "$STATE/.watch-times-after"
+}
+
 run_check_capture() {
   local pgid key output tmp
   jg_check_output_cleanup
@@ -2733,6 +2751,7 @@ run_check_capture() {
   # watcher_cleanup. Keep command substitutions out of this window: bash 5.2
   # can drop a trap that is pending when one is parsed (watcher_stop_signals).
   trap 'JG_CHECK_SIGNAL_PENDING=1' HUP INT TERM
+  times > "$STATE/.watch-times-before" 2>/dev/null || true
   set -m
   ( JG_CHECK_OWNED_GROUP=1 run_check_process "$@" ) > "$JG_CHECK_OUTPUT_TMP" 2>/dev/null &
   JG_ACTIVE_CHECK_PID=$!
@@ -2748,6 +2767,7 @@ run_check_capture() {
   fi
   wait "$JG_ACTIVE_CHECK_PID" 2>/dev/null || true
   JG_ACTIVE_CHECK_PID=
+  watch_record_check_cost "$key"
   jg_active_check_stop || return 1
   mv -f -- "$JG_CHECK_OUTPUT_TMP" "$output" || { jg_check_output_cleanup; return 1; }
   JG_CHECK_OUTPUT_TMP=
@@ -2958,7 +2978,7 @@ open_lane_count() {
   check=${XDG_DATA_HOME:-$HOME/.local/share}/jg-fleet-flow/jg-flow-check.sh
   if [ -f "$check" ] && [ -x "$check" ] \
     && counted=$(jg_run_timed "${JG_FLOW_CHECK_TIMEOUT_SECS:-10}" "$check" "$JG_HOME" --summary 2>/dev/null); then
-    counted=$(printf '%s\n' "$counted" | awk -F '\t' 'NF == 9 && NR == 1 { print $8 }')
+    counted=$(printf '%s\n' "$counted" | awk -F '\t' 'NF >= 9 && NR == 1 { print $8 }')
     case "$counted" in
       ''|*[!0-9]*) ;;
       *) printf '%s\n' "$counted"; return 0 ;;
@@ -2990,6 +3010,9 @@ warn_invalid_lane_target_once() {
   triage_log "lane-target is not a positive integer; using the no-worker-working rule instead"
 }
 
+# The ready-idle alert (bin/jg-ready-idle.sh) is the one way ready work reaches a lead's queue.
+ready_idle() { JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-ready-idle.sh" "$@"; }
+
 # Base-cadence idle-home check: 0 when this home (primary or squad_lead) has
 # dispatchable queued work and sits below its lane floor, so ready work is
 # started without anyone asking. With
@@ -3012,7 +3035,7 @@ ready_work_waits_idle() {
   # Paused: withdraw the queued row so nothing is presented, and drop the
   # resurface record so the same ready set rings at once when the pause lifts.
   if fleet_paused; then
-    jg_wake_withdraw check ready-work || true
+    ready_idle clear ready-work: || true
     rm -f "$STATE/.ready-work-surfaced"
     return 1
   fi
@@ -3028,7 +3051,7 @@ ready_work_waits_idle() {
     # flight until an acknowledgement that may never come. Keep the resurface
     # record so this transient empty set cannot reset the re-raise window and
     # let the identical set fire again the moment it returns.
-    jg_wake_withdraw check ready-work || true
+    ready_idle clear ready-work: || true
     return 1
   fi
   target=$(lane_target_value) || target=
@@ -3087,25 +3110,13 @@ admission_retry_waits_memory() {
 }
 
 # The stalled-backlog condition the wait-timers chain escalates
-# (core/wait-timers/README.md "Stalled ready backlog"): this squad_lead home
-# has a ready item that could start now, and either a free lane or no worker
-# provably working. A free lane is fewer open lanes than config/lane-target, or
-# than 4 without a usable one. A home at its floor is still stalled when no
-# worker is provably working (the ready-work wake's "no worker working" case),
-# because lanes that only wait on a merge or a cleanup must not hide an idle
-# lead. An item could start now unless its project's declared capacity is
-# already held (bin/jg-project-capacity-lib.sh). Sets READY_STALL_IDS (startable
-# ids, P0 first), READY_STALL_OPEN, READY_STALL_TARGET, READY_STALL_MODE
-# (free-lanes or no-worker), and READY_STALL_LANES (the open lane ids,
-# comma-joined, so the chain can see a start). When ready work exists but the
-# condition does not hold, READY_STALL_WHY names the reason (lanes-working or
-# project-capacity). The wait-timers core check reads the mode and the reason, so
-# they are outputs of this function and not local scratch. Returns 0 when the
-# condition holds, 1 when it does not, and 2 when the backlog cannot be read, so
-# an unknown poll never clears or fires an episode.
+# (core/wait-timers/README.md "Stalled ready backlog"): a startable item and a
+# free lane. Open captain cards and project capacity exclude items. The result
+# is unknown when the backlog or board cannot be read. READY_STALL_LANES tracks
+# lane starts; READY_STALL_WHY records why a nonempty ready set cannot start.
 # shellcheck disable=SC2034,SC2100 # READY_STALL_MODE and READY_STALL_WHY are read by core/wait-timers, outside the linted set.
 ready_backlog_stall_state() {
-  local rows rc id repo proj cfg seen='|' full='|' meta kind
+  local rows rc id repo proj cfg seen='|' full='|' meta kind cards board data_dir
   READY_STALL_IDS='' READY_STALL_OPEN='' READY_STALL_TARGET='' READY_STALL_LANES='' READY_STALL_MODE='' READY_STALL_WHY=''
   [ -f "$(jg_compat_marker "$JG_HOME")" ] && [ ! -L "$(jg_compat_marker "$JG_HOME")" ] || return 1
   rows=$(jg_ready_work_rows "$JG_HOME"); rc=$?
@@ -3115,16 +3126,36 @@ ready_backlog_stall_state() {
   READY_STALL_OPEN=$(open_lane_count) || return 2
   READY_STALL_MODE=free-lanes
   if [ "$READY_STALL_OPEN" -ge "$READY_STALL_TARGET" ]; then
-    READY_STALL_MODE=no-worker
-    for meta in "$STATE"/*.meta; do
-      [ -f "$meta" ] || continue
-      id=${meta##*/}
-      if crew_is_provably_working "${id%.meta}"; then READY_STALL_WHY=lanes-working; return 1; fi
-    done
+    READY_STALL_WHY=lanes-full
+    return 1
   fi
+  # Read the same open board used by the question-card command. An unreadable
+  # board leaves the episode unchanged rather than treating a held item as free.
+  # shellcheck source=bin/jg-question-lib.sh
+  . "$SCRIPT_DIR/jg-question-lib.sh"
+  cards=''
+  if jg_question_signoff_available; then
+    board=$(jg_question_board)
+    if [ -n "$board" ]; then
+      cards=$(sign-off-axi list "$board" --json) || return 2
+    elif [ -z "${SIGN_OFF_HOME:-}" ]; then
+      cards=$(sign-off-axi list --json) || return 2
+    fi
+    if [ -n "$cards" ]; then
+      cards=$(printf '%s\n' "$cards" | jq -er 'if (.decisions | type) == "array" then [.decisions[] | (.ticket // empty), (.raised_by // empty), (."raised-by" // empty)] | join("\n") else error("invalid board") end' 2>/dev/null) || return 2
+    fi
+  fi
+  data_dir=${JG_DATA_OVERRIDE:-$JG_HOME/data}
   cfg=$(jg_project_capacity_config_dir "$JG_HOME" "$CONFIG" 2>/dev/null) || cfg=
   while read -r id repo; do
     [ -n "$id" ] || continue
+    printf '%s\n' "$cards" | grep -Fxq -- "$id" && continue
+    rc=0
+    JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$data_dir" "$SCRIPT_DIR/jg-captain-hold.sh" blocking "$id" >/dev/null 2>&1 || rc=$?
+    # One lookup per ready task is a completed bounded unit: beat after each, so
+    # a slow lookup across many tasks under host load never ages the beacon.
+    watcher_beat ready-stall
+    case "$rc" in 0) continue ;; 1) ;; *) return 2 ;; esac
     proj="$JG_HOME/projects/$repo"
     if [ -n "$cfg" ] && [ "$repo" != - ] && [ -d "$proj" ]; then
       case "$seen" in
@@ -3216,9 +3247,34 @@ ask_default_tick() {
 # loop is the permanent fail-closed backstop). This preserves the single live
 # supervision cycle: the reader is a short-lived subprocess of THIS watcher, not
 # a second watcher, so every guard/beacon/arm/turn-end mechanism is unchanged.
+# idle_wait: a home with no working lane has nothing for a cycle to find, so it waits
+# IDLE_POLL seconds between cycles, not POLL (the rule is in
+# core/watch/cmd/jg-watch-core/interval.go). The wait is cut into POLL slices that each
+# refresh the liveness beacon, because the guard grace is derived from POLL, and it ends
+# early when the set of records changes, so a lane started in an idle home is watched at
+# once. Returns 1 when the home is busy and the caller waits as before.
+idle_wait() {
+  local metas=("$STATE"/*.meta) wait left slice
+  case "$POLL" in ''|*[!0-9]*) return 1 ;; esac
+  wait=$("$SCRIPT_DIR/jg-watch-core.sh" interval "$POLL" "$IDLE_POLL" "${metas[@]}" 2>/dev/null) || return 1
+  case "$wait" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$wait" -gt "$POLL" ] || return 1
+  left=$wait
+  while [ "$left" -gt 0 ]; do
+    slice=$POLL
+    [ "$left" -ge "$slice" ] || slice=$left
+    sleep "$slice"
+    left=$((left - slice))
+    touch "$STATE/.last-watcher-beat" 2>/dev/null || true
+    [ "$(printf '%s\n' "$STATE"/*.meta | cksum)" = "$(printf '%s\n' "${metas[@]}" | cksum)" ] || return 0
+  done
+  return 0
+}
+
 event_wait_or_sleep() {
   local w b session first_backend="" first_session="" rec rc
   local windows=()
+  idle_wait && return
   while IFS= read -r w; do
     b=$(window_backend "$w")
     jg_backend_has_push "$b" || continue
@@ -4000,7 +4056,7 @@ run_fast_checks() {
       check_capture_skip unit-claim
     elif check_result_reason unit-claim; then
       reason=$JG_CHECK_REASON
-      jg_wake_append check unit-claim "$reason" || exit 1
+      JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" raise supervision-down unit-claim --home "$JG_HOME" --note "${reason#check: }" --deliver || exit 1
       wake "$reason"
     fi
   fi
@@ -4157,7 +4213,8 @@ EOF
     unalerted_checks=$(rejected_checks_unalerted $rejected_checks)
     if [ -n "$unalerted_checks" ]; then
       reason="check: rejected unauthenticated state checks:$unalerted_checks"
-      jg_wake_append check unauthenticated-state-checks "$reason" || exit 1
+      JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" raise security "unauthenticated-state-checks-$(date +%s)-$$" \
+        --note "rejected unauthenticated state checks:$unalerted_checks" --deliver || exit 1
     fi
     # Recorded after the durable append, so a failed append alerts again next sweep.
     # shellcheck disable=SC2086
@@ -4622,7 +4679,7 @@ EOF
             printf '%s' "$h" > "$sf"
             triage_log "absorbed stale (captain-held, never rechecked while the away-posture record exists): $w"
           elif [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
-            jg_wake_append stale "$w" "stale: $w" || exit 1
+            jg_wake_lost_worker "$w" "stale: $w" || exit 1
             printf '%s' "$h" > "$sf"
             wake "stale: $w"
           fi
@@ -4665,7 +4722,7 @@ EOF
             else
               stale_text="stale: $w"
               [ -z "$STALE_CLEANUP_NOTE" ] || stale_text="stale: $w (finished but not cleaned up: $STALE_CLEANUP_NOTE)"
-              jg_wake_append stale "$w" "$stale_text" || exit 1
+              jg_wake_lost_worker "$w" "$stale_text" || exit 1
               stale_wait_record "$key"
               printf '%s' "$h" > "$sf"
               rm -f "$ssf"
@@ -4799,14 +4856,14 @@ EOF
     touch "$STATE/.last-ready-work-check"
     if ready_work_waits_idle; then
       reason=$READY_WORK_REASON
-      jg_wake_append check ready-work "$reason" || exit 1
+      ready_idle fire "ready-work:${READY_WORK_IDS// /+}" || exit 1
       record_ready_work_surfaced
       wake "$reason"
     fi
     # A refused launch becomes retryable on the same base-cadence clock.
     if admission_retry_waits_memory; then
       reason=$ADMISSION_RETRY_REASON
-      jg_wake_append check admission-retry "$reason" || exit 1
+      JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" capacity admission-retry "$reason" --deliver || exit 1
       printf '%s' "$ADMISSION_RETRY_KEY" > "$STATE/.admission-retry-surfaced" || true
       wake "$reason"
     fi

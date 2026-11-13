@@ -138,7 +138,7 @@ PROJ2="$TMP_ROOT/scratch-project-2"; make_scratch_project "$PROJ2"
 
 CM1_OUT="$TMP_ROOT/jg-cm1.out"; CM1_ERR="$TMP_ROOT/jg-cm1.err"
 JG_SPAWN_NO_GUARD=1 JG_HOME="$PRIMARY_HOME" JG_ROOT_OVERRIDE="$ROOT" \
-  "$ROOT/bin/jg-spawn.sh" jg-cm1 "$PROJ1" "sh -c 'echo primary-crew-ok'" --mode no-mistakes --yolo off --backend herdr \
+  "$ROOT/bin/jg-spawn.sh" jg-cm1 "$PROJ1" "sh -c 'echo primary-crew-ok'" --mode no-mistakes --yolo off --ticket jg-cm1 --backend herdr \
   >"$CM1_OUT" 2>"$CM1_ERR"
 rc=$?
 [ "$rc" -eq 0 ] || fail "primary-shaped operator spawn failed"$'\n'"--- stdout ---"$'\n'"$(cat "$CM1_OUT")"$'\n'"--- stderr ---"$'\n'"$(cat "$CM1_ERR")"

@@ -1,0 +1,7 @@
+# ticket-health: the health of a ticket.
+# value<TAB>mark (initial, final or -)<TAB>meaning
+ok	initial	nothing is wrong
+slow	-	past its target
+stuck	-	a wait past its limit
+lost	-	the worker or its record is gone
+red	-	its commit broke the line

@@ -153,7 +153,7 @@ jg_model_outage_tick() {
       rows=$(printf '%s\n' "$current" | paste -sd ',' -)
       error=$(cat "$batch/$hash.error")
       verdict="check: model outage affected=[$rows]: $error"
-      jg_wake_append check "model-outage-$hash" "$verdict" || return 1
+      JG_STATE_OVERRIDE="$STATE" "${SCRIPT_DIR:-$JG_HOME/bin}/jg-alert.sh" capacity "model-outage-$hash" "$verdict" --deliver || return 1
       groups="${groups}${verdict}"$'\n'
       kept=$current
     else

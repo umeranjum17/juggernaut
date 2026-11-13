@@ -21,11 +21,11 @@ type intake struct {
 	kindSet                                        bool
 	harness, model, effort, backend, mode, yolo    string
 	branchPrefix, baseBranch, consent, traceparent string
-	redFixOf, offCritical                          string
+	redFixOf, offCritical, ticket                  string
 	harnessSet, modelSet, effortSet, backendSet    bool
 	modeSet, yoloSet, branchPrefixSet              bool
 	baseBranchSet, consentSet, traceparentSet      bool
-	redFixOfSet, offCriticalSet                    bool
+	redFixOfSet, offCriticalSet, ticketSet         bool
 	relaunch, herdrResumeLockWait                  bool
 	pos                                            []string
 }
@@ -38,7 +38,7 @@ func b2i(b bool) string {
 }
 
 // valueFlags are the flags that take a value, as `--flag value` or `--flag=value`.
-var valueFlags = []string{"harness", "model", "effort", "backend", "mode", "yolo", "branch-prefix", "base-branch", "red-fix-of", "off-critical-path", "upstream-consent", "traceparent"}
+var valueFlags = []string{"harness", "model", "effort", "backend", "mode", "yolo", "branch-prefix", "base-branch", "red-fix-of", "off-critical-path", "ticket", "upstream-consent", "traceparent"}
 
 // set records one value flag, the shell's `case "$want_value"`.
 func (t *intake) set(name, v string) {
@@ -63,6 +63,8 @@ func (t *intake) set(name, v string) {
 		t.redFixOf, t.redFixOfSet = v, true
 	case "off-critical-path":
 		t.offCritical, t.offCriticalSet = v, true
+	case "ticket":
+		t.ticket, t.ticketSet = v, true
 	case "upstream-consent":
 		t.consent, t.consentSet = v, true
 	case "traceparent":
@@ -131,6 +133,7 @@ func parseIntake(args []string) (*intake, error) {
 		{t.yoloSet, t.yolo, "error: --yolo requires a non-empty value"},
 		{t.redFixOfSet, t.redFixOf, "error: --red-fix-of requires a non-empty branch name"},
 		{t.offCriticalSet, t.offCritical, "error: --off-critical-path requires the captain's words as a non-empty value"},
+		{t.ticketSet, t.ticket, "error: --ticket requires a non-empty ticket id"},
 		{t.consentSet, t.consent, "error: --upstream-consent requires a non-empty <host>/<owner>/<repo> value"},
 		{t.traceparentSet, t.traceparent, "error: --traceparent requires a non-empty value"},
 	} {
@@ -194,6 +197,24 @@ func scopeValid(s string) bool {
 // string means none. It may normalize the consent scope, which is why the intake is passed by
 // pointer.
 func (t *intake) refusal() string {
+	if r := t.deliveryRefusal(); r != "" || t.relaunch {
+		return r
+	}
+	switch {
+	case t.kind == "squad_lead" && t.ticketSet:
+		return "error: --ticket applies only to ship and scout spawns; a squad_lead starts a home, not a ticket"
+	case t.kind != "squad_lead" && !t.ticketSet && !t.batch():
+		return "error: a fresh ship or scout spawn requires --ticket <ticket-id>; the task id is made from the ticket (bin/jg-backlog.sh task <ticket-id> prints it)"
+	}
+	return ""
+}
+
+// batch is an id=repo dispatch: each pair is spawned singly with its own id as its ticket (a flat ticket's id is its task id).
+func (t *intake) batch() bool { return len(t.pos) > 0 && strings.Contains(t.pos[0], "=") }
+
+// deliveryRefusal is the checks every spawn kind had before the ticket: what a relaunch may not
+// restate and what a ship, scout or squad_lead may and may not carry.
+func (t *intake) deliveryRefusal() string {
 	if t.relaunch {
 		// A relaunch reuses the task's recorded identity, so restating any axis of it is a refusal.
 		for _, c := range []struct {
@@ -209,6 +230,7 @@ func (t *intake) refusal() string {
 			{t.redFixOfSet, "error: --relaunch reuses the task's recorded red-fix declaration; --red-fix-of cannot override it"},
 			{t.offCriticalSet, "error: --relaunch reuses the task's recorded critical-path decision; --off-critical-path cannot override it"},
 			{t.consentSet, "error: --relaunch reuses the task's recorded upstream consent; --upstream-consent cannot override it"},
+			{t.ticketSet, "error: --relaunch reads the ticket from the task's record; --ticket cannot override it"},
 		} {
 			if c.set {
 				return c.text
@@ -219,22 +241,24 @@ func (t *intake) refusal() string {
 	if t.kind == "ship" {
 		switch {
 		case !t.modeSet:
-			return "error: ship spawns require --mode <no-mistakes|direct-PR|local-only|local-trunk>; resolve it at intake from the captain's instruction and the project's registered posture in data/projects.md"
+			return "error: ship spawns require --mode <direct-PR|local>; resolve it at intake from the captain's instruction and the project's registered posture in data/projects.md"
 		case !t.yoloSet:
 			return "error: ship spawns require --yolo <on|off>; it is this task's merge authority, not a project lookup"
 		}
 		switch t.mode {
-		case "no-mistakes", "direct-PR", "local-only", "local-trunk":
+		case "no-mistakes", "direct-PR", "local", "local-only", "local-trunk": // local-only and local-trunk are read as before (delivery-styles.tsv alias rows)
 		case "no-mistakes-prod-only":
-			return "error: no-mistakes-prod-only is a registry policy, not a task mode; classify this task's surface and resolve it to no-mistakes or direct-PR at intake"
+			return "error: no-mistakes-prod-only is a registry policy, not a task mode; classify this task's surface and resolve it to direct-PR at intake"
 		default:
-			return fmt.Sprintf("error: --mode must be one of no-mistakes, direct-PR, local-only, local-trunk (got '%s')", t.mode)
+			return fmt.Sprintf("error: --mode must be one of direct-PR, local (the old words no-mistakes, local-only and local-trunk are read as before; got '%s')", t.mode)
 		}
 		if t.yolo != "on" && t.yolo != "off" {
 			return fmt.Sprintf("error: --yolo must be on or off (got '%s')", t.yolo)
 		}
 		if t.consentSet {
-			if t.mode == "local-only" || t.mode == "local-trunk" {
+			if publishes, err := styleIs(t.mode, "publishes"); err != nil {
+				return "error: " + err.Error()
+			} else if !publishes {
 				return fmt.Sprintf("error: --upstream-consent is meaningless on %s, which publishes nothing; drop it", t.mode)
 			}
 			if !scopeValid(t.consent) {
@@ -277,7 +301,7 @@ func (t *intake) shellCode(refusal string) string {
 	line("EFFORT_SET", b2i(t.effortSet))
 	line("BACKEND_ARG", t.backend)
 	line("BACKEND_SET", b2i(t.backendSet))
-	line("MODE", t.mode)
+	line("MODE", retiredModeRead(t.mode))
 	line("MODE_SET", b2i(t.modeSet))
 	line("YOLO", t.yolo)
 	line("YOLO_SET", b2i(t.yoloSet))
@@ -289,6 +313,8 @@ func (t *intake) shellCode(refusal string) string {
 	line("RED_FIX_OF_SET", b2i(t.redFixOfSet))
 	line("OFF_CRITICAL_PATH", t.offCritical)
 	line("OFF_CRITICAL_PATH_SET", b2i(t.offCriticalSet))
+	line("TICKET", t.ticket)
+	line("TICKET_SET", b2i(t.ticketSet))
 	line("UPSTREAM_CONSENT", t.consent)
 	line("UPSTREAM_CONSENT_SET", b2i(t.consentSet))
 	line("TRACEPARENT_ARG", t.traceparent)

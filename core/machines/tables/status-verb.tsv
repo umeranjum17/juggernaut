@@ -15,9 +15,10 @@ state	captain-held	normal	The captain holds this task on purpose.	-
 state	note	normal	The worker left a note and nothing needs action.	-
 state	ready	extension	The lane says its change is ready for the next step.	-
 state	ready-to-sign	extension	The lane's proof is complete for one head and waits for the landing signature.	-
-state	progress	extension	The lane reports a step of progress.	-
+state	progress	normal	The lane reports a beat of progress (n of m); it is an event and wakes nobody.	-
 state	checks-lint-pass	extension	The lane's checks block passed the lint.	-
 state	baseline-attribution	extension	The lane attributes a red check to the baseline.	-
+open	*	The table names the verb of the last line and the next line may carry any verb, so no verb is a dead end.
 edge	working	post-needs-decision	needs-decision	bin/jg-lavish-guard.sh:append	-	a worker appends a status line that opens with needs-decision	tests/jg-machine-status.test.sh
 edge	working	post-blocked	blocked	bin/jg-lavish-guard.sh:append	-	a worker appends a status line that opens with blocked	tests/jg-machine-status.test.sh
 edge	working	post-paused	paused	bin/jg-lavish-guard.sh:append	-	a worker appends a status line that opens with paused	tests/jg-machine-status.test.sh

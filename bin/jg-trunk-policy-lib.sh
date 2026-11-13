@@ -18,6 +18,9 @@
 #                         paths, no committed binaries, regression coverage), then only the test scripts
 #                         the changed files map to, in eight shards run side by side (HEAD^ is the trunk tip:
 #                         the lander rebases the lane first)
+#   landing-gate          none        none: a landing runs the lint and no tests; the line's verify (one run for a batch, off the landing path)
+#                                     is the one test run, and a red it finds reverts the commit that caused it. tests: the landing also runs
+#                                     gate-full over the changed files (the rollback)
 #   gate-verify           the same invariants, then the whole suite: `verify` runs it on a landed commit on
 #                         demand (never per landing: the whole suite runs on the release PR in GitHub CI), and
 #                         a script that fails there and passes on the commit's parent reverts that one commit
@@ -32,10 +35,20 @@
 #                                     (empty: no note, the alert still goes out)
 #   release-after-hours   48          age of the oldest unreleased commit that makes a release due
 #   batch-max             5           the most queued lanes the merge queue stacks into one landing (2 or more queued lanes land as one stack)
+#   gate-slots            2           the most landing gates that run at once: a second lane is gated on top of the first one's commit and lands right behind it; 1 lands one lane at a time
 #   flush-at-ready        3           the landing check holds ready lanes until this many are ready (or flush-after-minutes passes), then lands them all as one batch; 1 lands every lane as soon as it is ready
 #   flush-after-minutes   20          ...or until the oldest ready lane has waited this long, whichever is first
 #   live-quiet-minutes    20          under a go-live waiver: the trunk goes live once no landing has happened for this long
 #   live-cap-minutes      60          under a go-live waiver: ...or once the oldest landing not yet live is this old, whichever is first
+#   pr-page-minutes      60           how often the pull request pager (core/pr-pager) pages the lead of a pull request that is still open
+#   release-after-commits 10          unreleased commits on the trunk that make a release due, beside release-after-hours (whichever is first)
+#   conflict-resolver     (empty)     the command of the agent that resolves a rebase conflict in the lander's copy (bin/jg-trunk-resolve-lib.sh);
+#                                     empty sends every conflict back to the worker, as before
+#   conflict-limit-seconds 600        how long that agent has before the run ends returned
+#   gate-nightly         gate-verify  the nightly whole run's gate: its own key, else gate-verify, else gate-full
+#   nightly-hour         3            the UTC hour from which a tick starts the day's nightly whole run, once a day
+#   verify-width          4           the most batches the line's verify tests at once (and probes it runs at once to find a bad commit),
+#                                     each one heavy slot of core/lane-scale/fleet.sh; 1 tests the whole stack in one run
 #   no-green-alarm-minutes 15         the trunk with no green commit this long (since the oldest commit above the green pin landed) raises one alarm to Overwatch
 _JG_TRUNK_PROTECTED='bin/jg-merge-* bin/jg-pr-merge.sh bin/jg-trunk* bin/jg-dod-lib.sh bin/jg-captain-hold.sh bin/jg-test-run.sh bin/jg-lint.sh bin/jg-ci-* bin/jg-update.sh bin/jg-ff-lib.sh bin/jg-stack.sh core/merge-on-green/* core/merge-card/* core/owner-guard/* core/owner-rules/* core/receipts/* core/teardown/* core/delete-guard/* core/kill-guard/* policy/gate/* .github/workflows/*'
 
@@ -58,6 +71,7 @@ _jg_trunk_policy_set() {  # <key> [<project>]
   printf '%s' "$val"
 }
 
+# gate-nightly is the nightly whole run: its own key, else the project's gate-verify, else its gate-full.
 # The gate command to run for one project at one commit, or nothing (status 1) when that project has no such gate.
 # The built-in gate-lint, gate-full and gate-verify defaults are Juggernaut's own suite, so they apply only to a
 # repository that carries it (the commit has bin/jg-test-run.sh). Any other project runs the gate its home set for it:
@@ -66,7 +80,8 @@ _jg_trunk_policy_set() {  # <key> [<project>]
 jg_trunk_gate() {
   local key=$1 proj=$2 dir=$3 commit=$4 val
   val=$(_jg_trunk_policy_set "$key" "$proj")
-  [ -n "$val" ] || { [ "$key" != gate-verify ] || val=$(_jg_trunk_policy_set gate-full "$proj"); }
+  [ -n "$val" ] || { [ "$key" != gate-nightly ] || val=$(_jg_trunk_policy_set gate-verify "$proj"); }
+  [ -n "$val" ] || case $key in gate-verify|gate-nightly) val=$(_jg_trunk_policy_set gate-full "$proj") ;; esac
   if [ -z "$val" ] && git -C "$dir" cat-file -e "$commit:bin/jg-test-run.sh" 2>/dev/null; then val=$(jg_trunk_policy "$key" "$proj"); fi
   [ -n "$val" ] || return 1
   printf '%s\n' "$val"
@@ -85,15 +100,24 @@ jg_trunk_policy() {  # <key> [<project>]
       gate-lint) val='bin/jg-lint.sh --changed-base HEAD^' ;;
       gate-full) val=$_JG_TRUNK_GATE_FULL ;;
       gate-verify) val=$_JG_TRUNK_GATE_VERIFY ;;
+      gate-nightly) val=$_JG_TRUNK_GATE_VERIFY ;;
+      nightly-hour) val=3 ;;
       gate-rerun) val='bin/jg-test-run.sh --jobs 1' ;;
       gate-red-ticket) val=core-self-checks-red ;;
       release-after-hours) val=48 ;;
       batch-max) val=5 ;;
+      landing-gate) val=none ;;
+      gate-slots) val=2 ;;
       flush-at-ready) val=3 ;;
       flush-after-minutes) val=20 ;;
       live-quiet-minutes) val=20 ;;
       live-cap-minutes) val=60 ;;
+      pr-page-minutes) val=60 ;;
+      release-after-commits) val=10 ;;
       no-green-alarm-minutes) val=15 ;;
+      verify-width) val=4 ;;
+      conflict-resolver) val='' ;;
+      conflict-limit-seconds) val=600 ;;
       *) return 1 ;;
     esac
   fi
@@ -112,11 +136,13 @@ jg_trunk_branch() {
 # A lane starts on it (bin/jg-spawn.sh), and it is the one head the release pull request into the default branch has
 # (bin/jg-version-branch-lib.sh jg_is_release_head). Usage: jg_project_trunk_branch <project-dir> [<state-dir>]
 jg_project_trunk_branch() {
+  # shellcheck source=bin/jg-delivery-style.sh
+  command -v jg_delivery_style_is >/dev/null 2>&1 || . "$(cd "${BASH_SOURCE[0]%/*}" && pwd)/jg-delivery-style.sh"
   local pn state mode
   [ -n "${1:-}" ] || return 1
   pn=$(basename "$1"); state=${2:-${JG_STATE_OVERRIDE:-${JG_HOME:-.}/state}}
   mode=$("$(cd "${BASH_SOURCE[0]%/*}" && pwd)/jg-project-mode.sh" --raw "$pn" 2>/dev/null | cut -d' ' -f1) || return 1
-  [ "$mode" = local-trunk ] && [ -e "$state/trunk-tip-$pn" ] || return 1
+  jg_delivery_style_is "$mode" trunk && [ -e "$state/trunk-tip-$pn" ] || return 1
   jg_trunk_branch "$pn" "$state"
 }
 
@@ -126,4 +152,21 @@ jg_project_trunk_branch() {
 # restores the word. Usage: jg_trunk_waiver_rule <waiver-file> <project>
 jg_trunk_waiver_rule() {
   awk -v p="$2" '$1 == p { r = $2 } END { print r }' "$1" 2>/dev/null || true
+}
+
+# The one answer, asked once at `gated` (docs/trunk-flow.md): a lane of mode `local` lands with yolo on, or with the captain's
+# word (merge=approved), and the landing writes one row `<project> <commit> <epoch> <task> <yolo|word>` to data/trunk-gated.tsv.
+# That row carries the change on: the go-live and the release read it in place of a second word. A commit is covered when it is the
+# landed commit or lies under one (the trunk is one line, and every lane that landed in the style was answered).
+# Usage: jg_trunk_gated_answer <gated-file> <project> <project-dir> <commit>; prints yolo or word, or nothing.
+jg_trunk_gated_answer() {
+  local c answer
+  while IFS=$'\t' read -r c answer; do
+    git -C "$3" merge-base --is-ancestor "$4" "$c" 2>/dev/null && printf '%s\n' "$answer" && return 0
+  done < <(awk -F'\t' -v p="$2" '$1 == p { print $2 "\t" $5 }' "$1" 2>/dev/null | tac)
+  return 0
+}
+# Whether any lane of the project was answered at `gated` (the tick then runs the go-live and publish steps for it).
+jg_trunk_gated_any() {  # <gated-file> <project>
+  awk -F'\t' -v p="$2" '$1 == p { f = 1 } END { exit !f }' "$1" 2>/dev/null
 }

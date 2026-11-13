@@ -1,0 +1,3 @@
+# Trunk table
+
+Trunk table: run `done-done run trunk-table` (`bash journeys/trunk-table.sh`, which runs `tests/jg-machine-trunk.test.sh` and writes its log and `steps.json` into the run's folder); it lints `core/machines/tables/trunk.tsv` (4 states, 6 moves, each with a test) and its enum, reads a fixture record in each of the four states through the real observer (`core/machines/observers/trunk.sh`, which reads the tip and pin files, the verify lock and `data/trunk-ci.tsv`), checks that `trunk-pointers.tsv` is gone, and reports legal and illegal moves to the shadow log (a legal move adds no line) (screen: none).

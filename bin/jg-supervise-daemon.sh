@@ -1193,7 +1193,7 @@ window_for_task() {  # <task-key> [state]
 #     line, or a previous injection's unsent text), defer entirely - injecting
 #     would merge with the human's text.
 inject_msg() {  # <message> [state]
-  local msg=$1 state target backend retries sleep_s verdict composer encoded bytes errf err='' body unsent resent
+  local msg=$1 state target backend retries sleep_s verdict composer encoded bytes errf err='' body unsent resent record
   state="${2:-$(_state_root)}"
   # (1) Presence-gate: inject ONLY when afk is active. When afk is off, the
   # daemon self-handles and stays quiet; juggernaut drives the normal always-on
@@ -1246,6 +1246,9 @@ inject_msg() {  # <message> [state]
       rm -f "$unsent"
       log "inject resent the daemon's own unsent text"
       [ "$resent" != "$msg" ] || return 0
+      if jg_operational_doorbell_path "$resent" record && [ "$(cat "$record" 2>/dev/null)" = "$msg" ]; then
+        return 0
+      fi
       composer=$verdict
     fi
   fi
@@ -1255,10 +1258,11 @@ inject_msg() {  # <message> [state]
     return 1
   fi
   #   c) A primary that strips invisible characters from submitted prompts gets
-  #      the owner's record-backed doorbell instead of the typed envelope, so
+  #      the owner's record-backed doorbell instead of the typed envelope; Codex
+  #      also uses it to keep long digests out of collapsed paste placeholders, so
   #      the away-mode return check can still tell this escalation from the
   #      captain. The record is written only once every guard has passed.
-  if jg_operational_harness_needs_record "$(jg_daemon_primary_harness)"; then
+  if [ "$(jg_daemon_primary_harness)" = codex ] || jg_operational_harness_needs_record "$(jg_daemon_primary_harness)"; then
     if ! jg_operational_record_write "$state" away-supervisor "$body" msg; then
       INJECT_LAST_FAILURE="could not publish the away-supervisor record under $state"
       log "inject failed: $INJECT_LAST_FAILURE"

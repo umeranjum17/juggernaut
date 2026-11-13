@@ -723,6 +723,29 @@ EOF
   pass "context digest distinguishes ABSENT, empty-but-present, and populated files"
 }
 
+# The owner's proof bypass: a standing one is printed with its count of uses, and an ended one is not.
+test_context_digest_proof_bypass() {
+  local rec root home fakebin out id
+  rec=$(new_world proof-bypass)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  : > "$home/data/captain.md"
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_not_contains "$out" "proof bypass (" "a home with no bypass printed a bypass section"
+  id=$(JG_HOME="$home" "$ROOT/bin/jg-proof-bypass.sh" grant --home --word owner-rule-abc123 --hours 2 | awk '{ print $2 }')
+  JG_HOME="$home" "$ROOT/bin/jg-proof-bypass.sh" use "$id"
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" "$id" "the digest did not print the standing bypass"
+  assert_contains "$out" "uses=1" "the digest did not print the count of uses"
+  JG_HOME="$home" "$ROOT/bin/jg-proof-bypass.sh" end "$id" >/dev/null
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_not_contains "$out" "$id" "the digest printed an ended bypass"
+  pass "the digest prints a standing proof bypass with its uses and drops an ended one"
+}
+
 # Owner rules stay whole on disk, and the digest reaches every one of them: a long file prints
 # as an index of every rule's title with the line range that holds the rule, never as a
 # silently shortened body. A run that lifts the caps prints every byte.
@@ -1298,7 +1321,7 @@ EOF
 
 # A finished lane is one juggernaut-axi row in the digest, not a meta block, endpoint read and status tail;
 # a running lane is printed whole; the supervision block points the agent at the same command.
-# Driven by journeys/axi-digest.sh.
+# Driven by tests/jg-session-start.test.sh.
 test_finished_lanes_fold_into_one_axi_row() {
   local rec root home fakebin out
   rec=$(new_world axi-folded-lanes)
@@ -2971,7 +2994,7 @@ EOF
   pass "session start rejects Pi loaded markers from previous sessions"
 }
 
-# JG_SESSION_START_ONLY="<test function> ..." runs just those cases (journeys/axi-digest.sh uses it).
+# JG_SESSION_START_ONLY="<test function> ..." runs just those cases (tests/jg-session-start.test.sh uses it).
 if [ -n "${JG_SESSION_START_ONLY:-}" ]; then
   for case_name in $JG_SESSION_START_ONLY; do "$case_name"; done
   echo "# jg-session-start.test.sh: selected cases passed"
@@ -2980,6 +3003,7 @@ fi
 
 test_context_digest_absent_empty_present
 test_learnings_index_and_body_cap
+test_context_digest_proof_bypass
 test_context_owner_rules_whole
 test_lock_refusal_read_only_path
 test_lock_write_failure_read_only_path

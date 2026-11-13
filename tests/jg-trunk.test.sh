@@ -309,12 +309,13 @@ test_a_good_lane_lands_but_goes_live_only_on_his_word() {
   [ ! -e "$W/live-moves" ] || fail "landing must never run the live hook"
   [ ! -e "$HOME_D/data/trunk-live.tsv" ] || fail "landing must not record a live move"
   assert_contains "$out" "not live" "land must say the trunk is not live"
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$c" ] || fail "the landing's own gate must move the green pin to the landed commit"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$green" ] || fail "a landing must leave the green pin where it was: only a verify moves it"
   out=$(trunk live "$PROJ" 2>&1) && fail "live must refuse without the captain's word"
   assert_contains "$out" "no recorded word from the captain" "live must say it needs his word"
   out=$(JG_TASK_ID=t1 trunk word live "$PROJ" "go" 2>&1) && fail "a worker must not record the captain's word"
   assert_contains "$out" "worker never records" "a worker's word must be refused by name"
   trunk word live "$PROJ" "" >/dev/null 2>&1 && fail "a word with no quote must refuse"
+  trunk verify "$PROJ" >/dev/null 2>&1 || fail "the verify must pass: it moves the pin that live follows"
   trunk word live "$PROJ" "go live" >/dev/null 2>&1 || fail "the captain's word must record"
   out=$(trunk live "$PROJ" 2>&1) || fail "live with his word must move the home: $out"
   [ "$(cat "$W/live-moves")" = "$c" ] || fail "the live hook must run at the green commit"
@@ -364,6 +365,32 @@ test_every_unsafe_landing_refuses() {
   pass 'every unsafe landing refuses and leaves the trunk where it was'
 }
 
+test_a_lane_with_a_ticket_lands_only_with_its_trailer() {
+  local out amend
+  world trailer
+  lane tk a; printf 'ticket=jg-x.1\n' >> "$HOME_D/state/tk.meta"
+  lane rb c rb.txt; printf 'ticket=jg-x.3\n' >> "$HOME_D/state/rb.meta"
+  git -C "$W/lanes/rb" -c user.name=t -c user.email=t@example.invalid commit -q --amend -m "rb work" --trailer "Ticket: jg-x.3"; prove rb
+  refused 'a ticket lane with no trailer' tk 'Ticket: jg-x.1'
+  assert_contains "$(trunk land tk 2>&1)" 'git commit --amend --no-edit --trailer "Ticket: jg-x.1"' 'the refusal must print the fix command'
+  amend=$(git -C "$W/lanes/tk" -c user.name=t -c user.email=t@example.invalid commit -q --amend --no-edit --trailer "Ticket: jg-x.2" 2>&1) || fail "fixture amend: $amend"
+  prove tk; refused 'a trailer naming another ticket' tk 'Ticket: jg-x.1'
+  git -C "$W/lanes/tk" -c user.name=t -c user.email=t@example.invalid commit -q --amend -m "work done" --trailer "Ticket: jg-x.1"; prove tk
+  lane other b other.txt
+  trunk land tk >/dev/null 2>&1 || fail "a lane with its trailer must land"
+  out=$(trunk land other 2>&1) || fail "a lane with no ticket= keeps the task-id text rule: $out"
+  git -C "$PROJ" log -1 --format=%B trunk~1 | git interpret-trailers --parse | grep -Fxq 'Ticket: jg-x.1' || fail "the landed commit must keep its trailer"
+  git -C "$PROJ" merge-base --is-ancestor trunk fm/rb && fail "fixture: rb must be based on an old tip"
+  trunk land rb >/dev/null 2>&1 || fail "a stale lane with its trailer must land after the lander's rebase"
+  git -C "$PROJ" log -1 --format=%B trunk | git interpret-trailers --parse | grep -Fxq 'Ticket: jg-x.3' || fail "the rebased commit must keep its trailer"
+  lane noref2 d; git -C "$W/lanes/noref2" -c user.name=t -c user.email=t@example.invalid commit -q --amend -m "AB-12 work"; prove noref2
+  refused 'a KEY-n commit in a home with no ticket-key file' noref2 'ticket reference'
+  printf 'AB\n' > "$HOME_D/config/ticket-prefix"
+  lane keyed e; git -C "$W/lanes/keyed" -c user.name=t -c user.email=t@example.invalid commit -q --amend -m "AB-12 work"; prove keyed
+  out=$(trunk land keyed 2>&1) || fail "a KEY-n commit must land in a home that has a ticket-key file: $out"
+  pass 'a ticket lane needs its Ticket trailer; a lane with none keeps the text rule; KEY-n needs a key file'
+}
+
 test_a_seam_is_the_only_place_behaviour_changes() {
   local out
   world seam
@@ -388,7 +415,7 @@ test_a_red_found_after_the_landing_pins_the_home_behind_it() {
   first=$(tip); lane s1 'echo "not ok - s1 breaks the suite" >&2; exit 1' t/s1.test.sh; c=$(git -C "$PROJ" rev-parse fm/s1)
   printf 'gate-full=true\ngate-verify=bash %s/rig.sh --all\n' "$W" >> "$HOME_D/config/trunk-policy"
   out=$(trunk land s1 2>&1) || fail "a landing must pass the fast check: $out"
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$c" ] || fail "the landing's gate must move the green pin"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$first" ] || fail "the landing must leave the green pin where it was"
   out=$(trunk verify "$PROJ" "$c" 2>&1) && fail "verify must fail on a commit the whole suite rejects"
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$first" ] || fail "a red verify must take the green pin back below the commit: $out"
   trunk word live "$PROJ" "go live" >/dev/null || fail "the captain's word must record"
@@ -407,7 +434,9 @@ test_the_release_is_one_pr_from_the_trunk_on_his_word() {
   trunk land r1 >/dev/null 2>&1 || fail "r1 must land"
   relane r2 two
   trunk land r2 >/dev/null 2>&1 || fail "r2 must land"
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(tip)" ] || fail "every landing must move the green pin to its commit"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" != "$(tip)" ] || fail "a landing must not move the green pin"
+  trunk verify "$PROJ" >/dev/null 2>&1 || fail "verify must pass"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(tip)" ] || fail "a green verify must move the green pin to the tip"
   out=$(trunk release "$PROJ" 2>&1) && fail "a release must refuse without the captain's word"
   assert_contains "$out" 'no recorded word from the captain to release' 'a release without his word must say so'
   [ ! -e "$W/gh-calls" ] || fail "a refused release must open nothing"
@@ -421,7 +450,7 @@ test_the_release_is_one_pr_from_the_trunk_on_his_word() {
   out=$(trunk release "$PROJ" 2>&1) || fail "a published release must allow its proof to be retried: $out"
   assert_contains "$out" 'resuming its proof' 'a retry must name its proof stage'
   [ "$(grep -c 'pr create' "$W/gh-calls")" = 1 ] || fail "a proof retry must not open another PR"
-  lane r3 three; trunk land r3 >/dev/null 2>&1 || fail "r3 must land"
+  lane r3 three; trunk land r3 >/dev/null 2>&1 || fail "r3 must land"; trunk verify "$PROJ" >/dev/null 2>&1 || fail "r3 must verify"
   trunk word release "$PROJ" "ship it again" >/dev/null 2>&1
   out=$(trunk release "$PROJ" 2>&1) || fail "a later batch must release: $out"
   [ "$(grep -c 'pr create' "$W/gh-calls")" = 1 ] || fail "a release while the PR is open must open no second PR"
@@ -429,17 +458,17 @@ test_the_release_is_one_pr_from_the_trunk_on_his_word() {
   pass 'the release is one PR from the trunk itself, on his word, with no release branch'
 }
 
-# T5b A release carries the last green commit, not the tip (fric-release-last-green): every landing moves the pin, so the tip is
-# ahead of it only while a red found after a landing holds the pin below it. The word binds to the same commit.
+# T5b A release carries the last green commit, not the tip (fric-release-last-green): a landing never moves the pin, so the tip is
+# ahead of it until a verify has judged it. The word binds to the same commit.
 test_a_release_carries_the_last_green_commit_while_the_tip_is_ahead() {
   local out green tipc
   world rel-green
   lane g1 one; lane g2 two
   trunk land g1 >/dev/null 2>&1 || fail "g1 must land"
-  green=$(tip); [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$green" ] || fail "the landing must move the green pin to g1"
+  trunk verify "$PROJ" >/dev/null 2>&1 || fail "verify must pass at g1"
+  green=$(tip); [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$green" ] || fail "the verify must move the green pin to g1"
   relane g2 two; trunk land g2 >/dev/null 2>&1 || fail "g2 must land"
-  tipc=$(tip); [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$tipc" ] || fail "the landing must move the green pin to g2"
-  printf '%s\n' "$green" > "$HOME_D/state/trunk-green-proj"  # fixture: a red found after g2 landed took the pin back to g1
+  tipc=$(tip); [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$green" ] || fail "the landing must leave the green pin at g1"
   trunk word release "$PROJ" "ship the green one" >/dev/null 2>&1 || fail "the word must record while the tip is ahead of green"
   [ "$(cut -f1 "$HOME_D/state/trunk-word-release-proj")" = "$green" ] || fail "the release word must name the green commit, not the tip"
   out=$(trunk release "$PROJ" 2>&1) || fail "a tip ahead of the green pin must release the green commit: $out"
@@ -465,9 +494,9 @@ test_a_release_carries_the_last_green_commit_while_the_tip_is_ahead() {
 test_a_red_ci_pins_the_home_back_to_the_last_green_commit() {
   local c1 c2 out
   world ci
-  lane c1 one; c1=$(git -C "$PROJ" rev-parse fm/c1); trunk land c1 >/dev/null 2>&1 || fail "c1 must land"
+  lane c1 one; c1=$(git -C "$PROJ" rev-parse fm/c1); trunk land c1 >/dev/null 2>&1 || fail "c1 must land"; trunk verify "$PROJ" >/dev/null 2>&1 || fail "c1 must verify"
   trunk word live "$PROJ" "go" >/dev/null 2>&1; trunk live "$PROJ" >/dev/null 2>&1 || fail "c1 must go live"
-  lane c2 two; c2=$(git -C "$PROJ" rev-parse fm/c2); trunk land c2 >/dev/null 2>&1 || fail "c2 must land"
+  lane c2 two; c2=$(git -C "$PROJ" rev-parse fm/c2); trunk land c2 >/dev/null 2>&1 || fail "c2 must land"; trunk verify "$PROJ" >/dev/null 2>&1 || fail "c2 must verify"
   trunk word live "$PROJ" "go" >/dev/null 2>&1; trunk live "$PROJ" >/dev/null 2>&1 || fail "c2 must go live"
   [ "$(tail -1 "$W/live-moves")" = "$c2" ] || fail "fixture: the home must be at c2"
   out=$(trunk ci "$PROJ" "$c2" red 2>&1) || fail "a red CI must record and pin back: $out"
@@ -477,16 +506,18 @@ test_a_red_ci_pins_the_home_back_to_the_last_green_commit() {
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$c1" ] || fail "a landing above the CI-red commit leaves the green pin on the last green commit"
   trunk word live "$PROJ" "go" >/dev/null 2>&1; trunk live "$PROJ" >/dev/null 2>&1 || fail "live after a pin-back must work with his word"
   [ "$(tail -1 "$W/live-moves")" = "$c1" ] || fail "the home must stay pinned on the last green commit"
-  # A landed commit that reverts the CI-red one clears the hold: its landing moves the pin again.
+  # A landed commit that reverts the CI-red one; the verify of the tip above it moves the pin again.
   lane c4 one work.txt "reverts: $c2"; out=$(trunk land c4 2>&1) || fail "the revert lane must land: $out"
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(tip)" ] || fail "a landing above a reverted red moves the green pin to it"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$c1" ] || fail "a landing never moves the green pin, a reverted red or not"
+  trunk verify "$PROJ" >/dev/null 2>&1 || fail "the tip above a reverted red must verify"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(tip)" ] || fail "a green verify above a reverted red moves the green pin to it"
   pass 'a red CI pins the green pin and the home back to the last green commit, landings go on, and the pin waits until the red is reverted'
 }
 
 test_the_trunk_stays_safe_until_its_release_lands_then_the_next_version_is_cut() {
   local out old
   world roll
-  lane v1 one; trunk land v1 >/dev/null 2>&1 || fail "v1 must land"
+  lane v1 one; trunk land v1 >/dev/null 2>&1 || fail "v1 must land"; trunk verify "$PROJ" >/dev/null 2>&1 || fail "v1 must verify"
   trunk word release "$PROJ" "ship it" >/dev/null 2>&1
   trunk release "$PROJ" >/dev/null 2>&1 || fail "the release must open"
   old=$(tip)
@@ -514,7 +545,7 @@ test_the_trunk_stays_safe_until_its_release_lands_then_the_next_version_is_cut()
 test_the_old_trunk_is_cleaned_up_unforced_and_only_when_its_work_is_carried() {
   local out old hot wt
   world retire
-  lane o1 one; trunk land o1 >/dev/null 2>&1 || fail "o1 must land"
+  lane o1 one; trunk land o1 >/dev/null 2>&1 || fail "o1 must land"; trunk verify "$PROJ" >/dev/null 2>&1 || fail "o1 must verify"
   trunk word release "$PROJ" "ship it" >/dev/null 2>&1; trunk release "$PROJ" >/dev/null 2>&1 || fail "release must open"
   old=$(tip); wt="$W/oldwt"
   git -C "$PROJ" worktree add -q "$wt" trunk; printf 'scratch\n' > "$wt/unsaved.txt"
@@ -740,6 +771,7 @@ test_legacy_mode_stays_interoperable
 test_the_home_guard_chains_the_trunk_guard
 test_a_good_lane_lands_but_goes_live_only_on_his_word
 test_every_unsafe_landing_refuses
+test_a_lane_with_a_ticket_lands_only_with_its_trailer
 test_a_seam_is_the_only_place_behaviour_changes
 test_a_red_found_after_the_landing_pins_the_home_behind_it
 test_the_release_is_one_pr_from_the_trunk_on_his_word

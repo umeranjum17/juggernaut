@@ -1,0 +1,29 @@
+machine	ticket	a ticket: the one Beads row of jg-q1b3n (machine 0 of the state-machine plan)	core/machines/observers/ticket.sh
+state	intake	initial	Filed, and not yet approved to start.	-	rest	approve
+state	ready	normal	Approved, and waiting for a free lane.	-	waiting	10m -> alert ready-idle
+state	building	normal	A worker has it.	-
+state	proving	composite	The worker said done, and this exact commit is being proved.	-
+state	delivering	composite	Proved or bypassed, and on its way to main with no full proof again.	-
+state	released	normal	On the default branch and running where it runs.	-	waiting	10m -> alert drift
+state	closed	terminal	Cleaned up, with a resolution.	-
+inner	proving	proving
+inner	delivering	delivering
+group	open	intake	ready	building	proving	delivering	released
+edge	(none)	file	intake	bin/jg-backlog.sh:add	-	a ticket is filed with an id and a title	jg-machine-ticket:moves
+edge	intake	approve	ready	bin/jg-backlog.sh:approve	-	the lead or the owner says yes, and no linked decision is open	jg-machine-ticket:moves
+edge	ready	start	building	bin/jg-spawn.sh:main	-	a lane is free and the spawn made an isolated copy	jg-machine-ticket:moves
+edge	building	reclaim	ready	bin/jg-watch.sh:tick	-	the worker is lost and its lease ran out	jg-machine-ticket:moves
+edge	building	claim-done	proving	bin/jg-lavish-guard.sh:append	-	the done line names a commit that can be reached	jg-machine-ticket:moves
+edge	proving	claim-done	proving	bin/jg-lavish-guard.sh:append	-	the worker offers another head while it is proving; the run for the old head is withdrawn and a new ready_at is written	jg-machine-ticket:moves
+edge	proving	prove-fail	building	done-done:receipt	-	the fix loop is spent, or the owner said fix first	jg-machine-ticket:moves
+edge	proving	prove-pass	delivering	done-done:receipt	-	the receipt names this commit and covers every check the change needs	jg-machine-ticket:moves
+edge	proving	bypass	delivering	bin/jg-proof-bypass-apply.sh:main	-	a bypass of the owner stands for this ticket, its project or the home	jg-machine-ticket:moves
+edge	proving	answer	closed	bin/jg-recon-gate.sh:main	-	the kind is Recon, its gate passed and the critic closed	jg-machine-ticket:moves
+edge	delivering	new-head	proving	bin/jg-lavish-guard.sh:append	-	the worker offers another head while no landing stands; the queued run is withdrawn	jg-machine-ticket:moves
+edge	delivering	refuse	building	bin/jg-trunk.sh:refuse	-	delivering ended returned: an unresolved conflict, a red run of the affected journeys, a red quick check, or a red traced to the commit	jg-machine-ticket:moves
+edge	delivering	release	released	bin/jg-trunk.sh:release	-	delivering ended on-main: the commit is on the default branch and runs where it runs	jg-machine-ticket:moves
+edge	released	revert-released	building	bin/jg-trunk.sh:revert	-	a red found on main is traced to the commit and the commit is reverted	jg-machine-ticket:moves
+edge	released	close	closed	bin/jg-teardown.sh:main	-	cleanup passed, unforced	jg-machine-ticket:moves
+edge	open	drop	closed	bin/jg-backlog.sh:drop	-	the lead or the owner says drop, with the resolution	jg-machine-ticket:moves
+observer	bash "$(dirname "$JG_MACHINES_TABLES")/observers/ticket.sh" "$1"
+enum	ticket

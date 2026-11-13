@@ -1,0 +1,3 @@
+# Ticket statechart
+
+Ticket statechart: run `done-done run ticket-statechart` (`bash journeys/ticket-statechart.sh`, which runs `tests/jg-machine-ticket.test.sh` and writes its log and `steps.json` into the run's folder); it lints the ticket, delivering and proving tables (7 stages, 15 moves, 7 sub-states of delivering with 12 events), asks the engine for a move out of each stage from every one of its sub-states, replays this repository's eleven older tables with generated status logs and a generated shadow log (0 unmapped), checks the 21 pull request records against their targets, and compares the diagram in `docs/ticket-statechart.md` with the one the tables draw; it reads only generated fixtures and the shipped tables (screen: none).

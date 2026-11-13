@@ -1,0 +1,6 @@
+# presence: the closed list of states of the machine "Away and quiet mode".
+# value<TAB>mark (initial, final or -)<TAB>kind (active, waiting, rest, final)<TAB>meaning
+present	initial	rest	the owner is here
+quiet	-	rest	the owner is here and wants only the most urgent alerts
+away	-	active	the owner is away and the away daemon supervises
+returning	-	waiting	the owner is back and has not read the return brief

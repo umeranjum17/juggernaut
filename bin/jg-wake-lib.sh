@@ -693,7 +693,21 @@ jg_lock_clean_known_files() {
     "$lockdir/scan-complete" \
     "$lockdir/children" \
     "$lockdir/children.next" \
+    "$lockdir/since" \
+    "$lockdir/beat" \
     2>/dev/null || true
+}
+
+# Holder record of a lock (core/lock-lease): `pid` names the holder, `since` is the epoch it took the lock, and `beat` is the
+# epoch of its last sign of life. A holder that runs long calls jg_lock_beat; core/lock-lease reads the three files and breaks a lock
+# whose holder is gone or whose lease ran out. `since` is written at acquire with no fork, because this path is the watcher's hot loop.
+jg_lock_beat() {  # <lockdir>
+  local lockdir=$1 pid current now
+  jg_current_pid current || return 1
+  pid=$(cat "$lockdir/pid" 2>/dev/null || true)
+  [ "$pid" = "$current" ] || return 1
+  jg_epoch_seconds_to now
+  printf '%s\n' "$now" > "$lockdir/beat" 2>/dev/null
 }
 
 jg_lock_set_role() {
@@ -729,8 +743,10 @@ jg_lock_owner_dir() {
 }
 
 jg_lock_prepare_owner() {
-  local ownerdir=$1 mypid back
+  local ownerdir=$1 mypid back since
   jg_current_pid mypid || return 1
+  jg_epoch_seconds_to since
+  printf '%s\n' "$since" > "$ownerdir/since" 2>/dev/null || return 1
   printf '%s\n' "$mypid" > "$ownerdir/pid" 2>/dev/null || return 1
   back=$(cat "$ownerdir/pid" 2>/dev/null || true)
   [ "$back" = "$mypid" ]
@@ -1898,6 +1914,31 @@ jg_treehouse_project_lock_path() {  # <project-dir>
   printf '%s/.treehouse-project-%s.lock\n' "$root/state" "$hash"
 }
 
+# Treehouse names a pool after the clone's directory name and its origin, so
+# two clones of one origin that share a directory name (Main's projects/pockit
+# and a Squad Lead home's projects/pockit) land on one pool whose copies all
+# belong to the first clone. A home below the root therefore gives each of its
+# clones its own pool root under that home; the root home keeps Treehouse's
+# default root, so its existing pools stay where they are. A project that
+# already carries its own treehouse.toml keeps it.
+jg_treehouse_clone_pool_prepare() {  # <project-dir>
+  local project=$1 home root top gitdir toml pool_root exclude
+  [ -d "$project" ] || return 1
+  home=$(CDPATH='' cd -- "$JG_HOME" 2>/dev/null && pwd -P) || return 1
+  root=$(jg_juggernaut_root_home "$home") || return 1
+  [ "$home" != "$root" ] || return 0
+  top=$(git -C "$project" rev-parse --show-toplevel 2>/dev/null) || return 1
+  toml="$top/treehouse.toml"
+  [ ! -e "$toml" ] && [ ! -L "$toml" ] || return 0
+  pool_root="$home/.treehouse-pool"
+  mkdir -p "$pool_root" || return 1
+  printf 'root = "%s"\n' "$pool_root" > "$toml" || return 1
+  gitdir=$(git -C "$project" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+  exclude="$gitdir/info/exclude"
+  mkdir -p "$gitdir/info" || return 1
+  grep -qxF '/treehouse.toml' "$exclude" 2>/dev/null || printf '/treehouse.toml\n' >> "$exclude" || return 1
+}
+
 # A Treehouse slot has the managed pool's fixed <pool>/<slot>/<repo> layout.
 # Require both its pool state and the same Git common directory as the recorded
 # project; an ordinary linked worktree is not evidence that Treehouse owns it.
@@ -2205,6 +2246,21 @@ jg_autoarm_ledger_read() {  # <state-dir>
   return 0
 }
 
+# jg_autoarm_claim_bound <grace>: the age at which an arming claim with no beat
+# is stuck. It is shorter than the stall bound (3x grace) and is never stretched
+# by host load, because the load-stretched grace (600 s at a load of 2x the CPU
+# count) let a hung claim hold a home dark for 9 minutes. JG_AUTOARM_CLAIM_BOUND
+# overrides; the default is max(120, poll + 60), and never above the grace given.
+jg_autoarm_claim_bound() {  # <grace>
+  local grace=$1 poll=${JG_POLL:-15} bound=${JG_AUTOARM_CLAIM_BOUND:-}
+  case "$poll" in ''|*[!0-9]*) poll=15 ;; esac
+  case "$bound" in
+    ''|*[!0-9]*|0) bound=$((poll + 60)); [ "$bound" -ge 120 ] || bound=120 ;;
+  esac
+  [ "$bound" -le "$grace" ] || bound=$grace
+  printf '%s\n' "$bound"
+}
+
 # True while the CURRENT ledger claim is open and healthy - the defer predicate
 # both Stop participants use. Open means: outcome "arming", a live owner whose
 # mandatory recorded identity recomputes and matches its pid, and not stuck
@@ -2220,6 +2276,7 @@ jg_autoarm_claim_open() {  # <state-dir> [grace]
   case "$grace" in
     ''|*[!0-9]*|0) grace=300 ;;
   esac
+  grace=$(jg_autoarm_claim_bound "$grace")
   jg_autoarm_ledger_read "$state" || return 1
   [ "$JG_AUTOARM_OUTCOME" = arming ] || return 1
   jg_pid_alive "$JG_AUTOARM_OWNER" || return 1
@@ -2229,7 +2286,12 @@ jg_autoarm_claim_open() {  # <state-dir> [grace]
   [ "$current" = "$JG_AUTOARM_IDENTITY" ] || return 1
   if [ "$(jg_path_age "$epoch")" -ge "$grace" ] \
     && [ "$(jg_path_age "$state/.last-watcher-beat")" -ge "$grace" ]; then
-    return 1
+    # A live, identity-matched watcher that claimed the lock after the last beacon
+    # is still in its first scan, and the old beacon is its predecessor's: the
+    # claim is working, not stuck, until the watcher's own stall bound
+    # (jg_watcher_first_scan_age owns that proof). A dead watcher, or one past the
+    # bound, still leaves the claim stuck.
+    jg_watcher_first_scan_age "$state" "$JG_WAKE_LIB_DIR/jg-watch.sh" "${JG_HOME:-}" >/dev/null || return 1
   fi
   return 0
 }
@@ -2526,6 +2588,17 @@ jg_wake_bus() {
 # serialises its own appends.
 jg_wake_append() {
   jg_wake_append_locked "$@"
+}
+
+# jg_wake_lost_worker <window> <reason>: the alert `lost-worker` for a pane that stopped showing life, raised through bin/jg-alert.sh
+# (core/machines/styles/alert-table.tsv). It starts at rung 1 because the tick-driven climb is not built, repeats on every call, and
+# delivers the same `stale` wake keyed by the window with the reason as its text, so the stale: consumers read what they always read.
+jg_wake_lost_worker() {
+  local alert="$JG_WAKE_LIB_DIR/jg-alert.sh" pipe_rc
+  JG_HOME="${JG_HOME:-$JG_ROOT}" JG_STATE_OVERRIDE="$STATE" \
+    bash "$alert" raise lost-worker "$1" --rung 1 --wake stale --text "$2" --repeat \
+    | JG_HOME="${JG_HOME:-$JG_ROOT}" JG_STATE_OVERRIDE="$STATE" bash "$alert" deliver
+  pipe_rc=("${PIPESTATUS[@]}"); [ "${pipe_rc[0]}" -eq 0 ] && [ "${pipe_rc[1]}" -eq 0 ]
 }
 
 # --- wake urgency routing -----------------------------------------------------
@@ -2829,6 +2902,7 @@ jg_wake_squad_lead_stall_receipt_write() { # <task> <row-key>
 jg_wake_commit_squad_lead_stall_receipts_through() { # <cutoff> [<rows-file>]
   local cutoff=$1 rows=${2:-} key seq rest epoch task row_key
   while IFS= read -r key; do
+    key=${key#alert-supervision-down--}   # the alert function's wake key wraps the producer's own key
     seq=${key##*-}
     rest=${key%-*}
     epoch=${rest##*-}
@@ -2843,7 +2917,7 @@ jg_wake_commit_squad_lead_stall_receipts_through() { # <cutoff> [<rows-file>]
     BEGIN { if (rows != "") while ((getline line < rows) > 0) owned[line]=1 }
     NF >= 5 && $2 ~ /^[0-9]+$/ && $2 <= cutoff \
       && (rows == "" || ($2 in owned)) && $3 == "check" \
-      && $4 ~ /^squad-lead-wake-loop-[A-Za-z0-9._-]+-[0-9]+-[0-9]+$/ { print $4 }
+      && $4 ~ /^(alert-supervision-down--)?squad-lead-wake-loop-[A-Za-z0-9._-]+-[0-9]+-[0-9]+$/ { print $4 }
   ' "$JG_WAKE_QUEUE" 2>/dev/null)
 }
 

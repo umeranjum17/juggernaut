@@ -56,6 +56,17 @@
 #                   after selection, and name each one on stderr. The pull request
 #                   fast set uses it so a slow suite runs in the post-merge lane
 #                   instead of holding the merge.
+#   --hosted-timings <file>
+#                   interim hosted-job rule: drop a script that ended at the time bound
+#                   (exit 124) in any of its last five hosted runs, or that has no hosted
+#                   time, and name each one on stderr. The file is tab separated, one
+#                   hosted run per line, oldest first: <script> <exit> <duration_ms>;
+#                   '#' lines are comments. The script still runs on our host, in the
+#                   proof and in the line's verify. Remove with the hosted shell test job.
+#   --hosted        drop the scripts tests/hosted-needs.tsv lists when a tool they need is not on this
+#                   PATH, and name each one on stderr with the missing tool. The hosted CI job passes it;
+#                   without it the selection is unchanged, so the same scripts still run on our host.
+#                   Interim, until the hosted shell test job is removed.
 #   --shard <k>of<n>
 #                   keep only shard k of n of the selection, after the exclusions and
 #                   the weight cap, so one pull request selection can run on n runners
@@ -86,11 +97,14 @@
 #                   1 (serial) except for plain --changed and a plain list of
 #                   script paths, which use the bounded automatic scheduler.
 #   --per-script-timeout-secs N
-#                   advise on a script that runs longer than N seconds (0
-#                   disables, the default): a JG_TEST_SLOW line, and the script
+#                   advise on a script that runs longer than N seconds (default:
+#                   script_timeout_seconds from the limits file, 1800, so every
+#                   run bounds every script; an explicit 0 disables): a JG_TEST_SLOW line, and the script
 #                   keeps its own result while it keeps writing output. A script
 #                   whose output stops for a whole N seconds is hung and ends as
-#                   exit 124. --changed applies a per-test bound automatically,
+#                   exit 124: its process group and every descendant still
+#                   carrying its mark are killed, its private temp folder is
+#                   removed, and a JG_TEST_TIMEOUT line names it. --changed applies a per-test bound automatically,
 #                   max(120s, 4 x the test's CI hint), by the same rule: a slow
 #                   script that passes stays green. --max-wall-ms is checked
 #                   after the run and so cannot catch a hang on its own.
@@ -107,7 +121,7 @@
 #                   accepted so the nightly suite's command line stays valid; a
 #                   speed-limit breach is reported in every mode (see below).
 #   --show-limits   print the effective e2e_seconds, unit_seconds,
-#                   gate_wall_seconds and machine_runs_max from the config file
+#                   gate_wall_seconds, script_timeout_seconds and machine_runs_max from the config file
 #                   and exit without running anything.
 #   --max-wall-ms N fail the run when its measured invocation wall clock exceeds
 #                   N milliseconds, including an empty selection, and stop
@@ -254,6 +268,9 @@ LIST_ONLY=0
 LIST_SCHEDULED=0
 SHOW_LIMITS=0
 GATE_MODE=0
+# The home the run was started for: run_script_bounded unsets the home overrides for the scripts, and the quarantine list is the home's.
+QUARANTINE_HOME=${JG_HOME:-}
+QUARANTINE_DATA=${JG_DATA_OVERRIDE:-}
 LIST_FAMILIES=0
 LIST_CONCURRENT_SAFE_FAMILIES=0
 LIST_LANES=0
@@ -264,8 +281,12 @@ LANE=
 BASE_REF=origin/main
 JSON_PATH=
 SCRIPTS=()
+# Changed paths no suite names. Each fails as its own record, so one stray path never stops the whole selection.
+UNMAPPED_PATHS=()
 EXCLUDE_FAMILIES=()
 MAX_WEIGHT_MS=
+HOSTED_TIMINGS=
+HOSTED=0
 SHARD=
 FAIL_ON_GATE_SKIP=
 JOBS=1
@@ -273,7 +294,9 @@ JOBS_EXPLICIT=0
 JOBS_MAX=8
 MAX_WALL_MS=
 WARN_WALL_MS=
-PER_SCRIPT_TIMEOUT_SECS=0
+PER_SCRIPT_TIMEOUT_SECS=
+PER_SCRIPT_EXPLICIT=0
+TEST_SPEED_SCRIPT_TIMEOUT_SECONDS=1800
 # Per-test speed limits and the gate's whole-run budget, read from
 # defaults/test-speed-limits and overridden by JG_HOME/config/test-speed-limits.
 # A test over its limit is reported naming its measured time; it is never a
@@ -378,6 +401,8 @@ load_test_speed_limits() {
     case $v in ''|*[!0-9]*) ;; *) TEST_SPEED_UNIT_SECONDS=$v ;; esac
     v=$(sed -n 's/^gate_wall_seconds=//p' "$f" | tail -n 1)
     case $v in ''|*[!0-9]*) ;; *) TEST_SPEED_GATE_SECONDS=$v ;; esac
+    v=$(sed -n 's/^script_timeout_seconds=//p' "$f" | tail -n 1)
+    case $v in ''|*[!0-9]*) ;; *) TEST_SPEED_SCRIPT_TIMEOUT_SECONDS=$v ;; esac
     v=$(sed -n 's/^machine_runs_max=//p' "$f" | tail -n 1)
     case $v in ''|*[!0-9]*) ;; *) TEST_MACHINE_RUNS_MAX=$v ;; esac
     return 0
@@ -761,7 +786,6 @@ tests/jg-claude-midturn-arm-live-e2e.test.sh 140
 tests/jg-clause.test.sh 4074
 tests/jg-codex-continuity-live-e2e.test.sh 260
 tests/jg-codex-hook-layer-live-e2e.test.sh 225
-tests/core-suites-report-all.test.sh 158
 tests/jg-comms-feed.test.sh 1014
 tests/jg-compat-old-records.test.sh 1127
 tests/jg-composer-matrix-live-e2e.test.sh 244
@@ -775,7 +799,10 @@ tests/jg-design-gate-first-draft.test.sh 1650
 tests/jg-design-gate.test.sh 812
 tests/jg-devin-signals-live-e2e.test.sh 174
 tests/jg-doorbell-missing-record.test.sh 4529
-tests/jg-escalation-chain.test.sh 1073412
+tests/jg-escalation-chain.test.sh 245000
+tests/jg-escalation-chain-backlog.test.sh 410000
+tests/jg-escalation-chain-signals.test.sh 450000
+tests/jg-escalation-chain-actions.test.sh 305000
 tests/jg-escalation-workflows.test.sh 3200
 tests/jg-fast-evals.test.sh 1136
 tests/jg-fleet-heartbeat.test.sh 3664
@@ -809,9 +836,8 @@ tests/jg-merge-gate-lib.test.sh 608
 tests/jg-merge-gate-policy.test.sh 30967
 tests/jg-metrics-shadow-parity.test.sh 210
 tests/jg-machine-task.test.sh 1800
-tests/jg-machine-call.test.sh 55000
-tests/jg-machine-call-b.test.sh 38000
-tests/jg-machine-call-c.test.sh 53000
+tests/jg-machine-hold.test.sh 80000
+tests/jg-machine-hold-b.test.sh 75000
 tests/jg-muse-signals-live-e2e.test.sh 180
 tests/jg-omp-primary-live-e2e.test.sh 290
 tests/jg-on.test.sh 20997
@@ -883,6 +909,7 @@ tests/jg-trunk-live.test.sh 44000
 tests/jg-trunk-gate.test.sh 35000
 tests/jg-trunk-queue.test.sh 31000
 tests/jg-trunk-retry.test.sh 20000
+tests/jg-trunk-publish.test.sh 19000
 tests/jg-trunk-golive-guard.test.sh 30000
 tests/jg-trunk-verify.test.sh 15000
 tests/jg-trunk-spawn.test.sh 49000
@@ -896,7 +923,6 @@ tests/jg-wake-daemon-lifecycle-e2e.test.sh 15568
 tests/jg-wake-core.test.sh 4900
 tests/jg-wake-router.test.sh 1211
 tests/jg-wake-route.test.sh 24386
-tests/token-cuts-live.test.sh 30146
 tests/jg-wake-drain-open-decisions-cursor.test.sh 148819
 tests/jg-wake-next.test.sh 4801
 tests/jg-planned-wait.test.sh 83716
@@ -973,12 +999,12 @@ tests/jg-home-guard.test.sh 3000
 tests/jg-machine-enforce.test.sh 2500
 tests/jg-machine-inbox.test.sh 3500
 tests/jg-machine-index.test.sh 1500
+tests/jg-machine-cleanup.test.sh 1500
 tests/jg-machine-landing.test.sh 3000
 tests/jg-machine-status.test.sh 4000
 tests/jg-machine.test.sh 2000
 tests/jg-merge-alert.test.sh 1726
 tests/jg-proof-gate.test.sh 502
-tests/jg-red-ci-ticket.test.sh 554
 tests/jg-rejected-state-check-once.test.sh 26500
 tests/jg-sentinel-inbox-ring.test.sh 19000
 tests/jg-ticket-link-guard.test.sh 1152
@@ -1512,8 +1538,12 @@ families_for_unmapped_bin() {
 # Conservative path → family map. Over-selects rather than under-selects.
 # Never expands to the complete suite.
 families_for_changed_path() {
-  local path=$1 fixture_ref
+  local path=$1 fixture_ref suite
   case "$path" in
+    tests/captures/stuck-live/*)
+      # These captured terminal states are read by the signals cases.
+      printf '%s\n' __script__:jg-escalation-chain-signals.test.sh
+      ;;
     tests/jg-supervision-host.test.sh)
       # The late half sources the same fixture and test definitions.
       printf '%s\n' __script__:jg-supervision-host.test.sh
@@ -1721,7 +1751,7 @@ families_for_changed_path() {
       printf '%s\n' pure-contract-unit
       printf '%s\n' pr-forge
       ;;
-    bin/jg-control-lib.sh)
+    bin/jg-control-lib.sh|bin/jg-control-primary-lib.sh)
       printf '%s\n' backend-dispatch
       printf '%s\n' session-bootstrap
       ;;
@@ -1830,18 +1860,38 @@ families_for_changed_path() {
           || printf '%s\n' "__unmapped__:$path"
       fi
       ;;
-    tests/gate-quarantine.tsv)
+    tests/gate-quarantine.tsv|tests/hosted-needs.tsv)
       # The gate's quarantine list is read by the runner's own suite.
-      scripts_for_test_reference gate-quarantine.tsv \
+      scripts_for_test_reference "$(basename "$path")" \
         || printf '%s\n' "__unmapped__:$path"
       ;;
-    tests/jg-trunk-fixture.sh|tests/jg-machine-call-fixture.sh)
+    bin/jg-tool-wiring.sh)
+      # Sourced by bin/jg-bootstrap.sh, which the install test drives on a clean HOME; no test names the file itself.
+      printf '%s\n' "__script__:jg-tool-wiring.test.sh"
+      ;;
+    tests/jg-alert.d/*|tests/jg-machine-ticket.d/*|tests/live/*)
+      # One case or check per file, run by the one suite that loops over its directory: the case selects that suite.
+      # A suite whose directory is gone, or a file in a directory with no suite, stays unmapped.
+      case "$path" in
+        tests/jg-alert.d/*) suite=jg-alert.test.sh ;;
+        tests/jg-machine-ticket.d/*) suite=jg-machine-ticket.test.sh ;;
+        *) suite=jg-live-checks.test.sh ;;
+      esac
+      if [ -e "tests/$suite" ]; then printf '__script__:%s\n' "$suite"; else printf '%s\n' "__unmapped__:$path"; fi
+      ;;
+    tests/jg-trunk-fixture.sh|tests/jg-machine-hold-fixture.sh)
       # Each is shared by the parts of one split suite, which are unclassified:
       # the family-wide arm below would widen it to every unclassified script.
       scripts_for_test_reference "$(basename "$path")" \
         || printf '%s\n' "__unmapped__:$path"
       ;;
     tests/lib.sh|tests/*-helpers.sh|tests/fixtures.sh|tests/*-fixture.sh)
+      # A shared test file that was deleted selects only the suites that still
+      # name it, and never refuses: the branch that retired it retired its suites.
+      if [ ! -e "$path" ]; then
+        scripts_for_test_reference "$(basename "$path")" || true
+        return 0
+      fi
       # Shared top-level test files, selected by the suites that name them.
       # Must stay below the tests/fixtures/*/* arm: a case glob's * spans /, so
       # tests/*-fixture.sh would otherwise swallow a nested
@@ -1887,14 +1937,14 @@ families_for_changed_path() {
     core/*.sh)
       # A core script has no curated row. The tests that name it run, per script,
       # so a lane's own proof covers the file it changed; a script no test names
-      # selects nothing here. The core feature's own suites still run in
-      # core-suites.yml on the push after the merge, and a red post-merge run
+      # selects nothing here. The core feature's own suites are the core-* tier entries of .done-done.yaml, run
+      # by done-done on the host, and a red post-merge run
       # files a fix-forward item (bin/jg-post-merge-ci.sh).
       scripts_for_test_reference "$(basename "$path")" || true
       ;;
     core/*)
-      # Other core files (docs, data, Go sources) are run by core-suites.yml on
-      # the push after the merge; the fast set does not wait for them.
+      # Other core files (docs, data, Go sources) are run as core-* entries of .done-done.yaml, not on
+      # the push; the fast set does not wait for them.
       ;;
     *)
       if [ -e "$path" ]; then
@@ -1929,7 +1979,8 @@ select_changed() {
           wanted_scripts+=("$script_name")
           ;;
         __unmapped__:*)
-          die "no changed-test mapping for source path: ${entry#__unmapped__:}"
+          # A path no suite names fails only itself, so one stray path never stops every shard.
+          UNMAPPED_PATHS+=("${entry#__unmapped__:}")
           ;;
         *)
           wanted_families+=("$entry")
@@ -2036,6 +2087,25 @@ apply_quarantine() {
   SCRIPTS=("${kept[@]+"${kept[@]}"}")
 }
 
+# apply_hosted drops, on --hosted, each script tests/hosted-needs.tsv (script<TAB>tool) lists while its tool is not on PATH, and
+# names it with the tool. The scripts still run on our host: in a change's proof and in the line's verify.
+apply_hosted() {
+  local s tool
+  local -a kept=()
+  [ "$HOSTED" -eq 1 ] || return 0
+  [ -f "$ROOT/tests/hosted-needs.tsv" ] || return 0
+  for s in "${SCRIPTS[@]+"${SCRIPTS[@]}"}"; do
+    tool=$(awk -F'\t' -v s="$s" '$1 == s && $2 !~ /^#/ { print $2 }' "$ROOT/tests/hosted-needs.tsv" \
+      | while IFS= read -r t; do command -v "$t" >/dev/null 2>&1 || { printf '%s\n' "$t"; break; }; done)
+    if [ -n "$tool" ]; then
+      log "not run on the hosted runner (needs $tool, which it lacks): $s"
+    else
+      kept+=("$s")
+    fi
+  done
+  SCRIPTS=("${kept[@]+"${kept[@]}"}")
+}
+
 apply_max_weight() {
   local s ms
   local -a kept=()
@@ -2044,6 +2114,31 @@ apply_max_weight() {
     ms=$(portable_parallel_weight_for "$s")
     if [ "$ms" -gt "$MAX_WEIGHT_MS" ]; then
       log "deferred to the post-merge lane (${ms}ms hint is over ${MAX_WEIGHT_MS}ms): $s"
+    else
+      kept+=("$s")
+    fi
+  done
+  SCRIPTS=("${kept[@]+"${kept[@]}"}")
+}
+
+# apply_hosted_timings drops, from the hosted selection, the scripts the hosted
+# runner cannot finish: one that ended at the time bound (exit 124) in any of its
+# last five runs in the timing file, or one with no run in it at all.
+apply_hosted_timings() {
+  local s why
+  local -a kept=()
+  [ -n "$HOSTED_TIMINGS" ] || return 0
+  for s in "${SCRIPTS[@]+"${SCRIPTS[@]}"}"; do
+    why=$(awk -F'\t' -v s="$s" '
+      $0 ~ /^#/ || NF < 2 { next }
+      $1 == s { n++; code[n] = $2 }
+      END {
+        if (n == 0) { print "no hosted time"; exit }
+        for (i = (n > 5 ? n - 4 : 1); i <= n; i++)
+          if (code[i] == 124) { print "ended at the time bound in its last five hosted runs"; exit }
+      }' "$HOSTED_TIMINGS")
+    if [ -n "$why" ]; then
+      log "not run on the hosted runner ($why): $s"
     else
       kept+=("$s")
     fi
@@ -2061,6 +2156,8 @@ apply_shard() {
   [ -n "$SHARD" ] || return 0
   index=${SHARD%%of*}
   count=${SHARD#*of}
+  # An unmapped path is one record, so only the first shard carries it.
+  [ "$index" -eq 1 ] || UNMAPPED_PATHS=()
   i=1
   while [ "$i" -le "$count" ]; do
     loads[i]=0
@@ -2354,10 +2451,12 @@ while [ "$#" -gt 0 ]; do
     --per-script-timeout-secs)
       [ "$#" -gt 1 ] || die "--per-script-timeout-secs requires a whole number of seconds"
       PER_SCRIPT_TIMEOUT_SECS=$2
+      PER_SCRIPT_EXPLICIT=1
       shift 2
       ;;
     --per-script-timeout-secs=*)
       PER_SCRIPT_TIMEOUT_SECS=${1#--per-script-timeout-secs=}
+      PER_SCRIPT_EXPLICIT=1
       shift
       ;;
     --enforce-test-speed)
@@ -2425,10 +2524,20 @@ while [ "$#" -gt 0 ]; do
       EXCLUDE_FAMILIES+=("${1#--exclude-family=}")
       shift
       ;;
+    --hosted)
+      HOSTED=1
+      shift
+      ;;
     --max-weight-ms)
       [ "$#" -gt 1 ] || die "--max-weight-ms requires a number"
       case "$2" in ''|*[!0-9]*) die "--max-weight-ms requires a number" ;; esac
       MAX_WEIGHT_MS=$2
+      shift 2
+      ;;
+    --hosted-timings)
+      [ "$#" -gt 1 ] || die "--hosted-timings requires a file"
+      [ -f "$2" ] || die "--hosted-timings file not found: $2"
+      HOSTED_TIMINGS=$2
       shift 2
       ;;
     --shard)
@@ -2482,6 +2591,7 @@ if [ "$SHOW_LIMITS" -eq 1 ]; then
   printf 'e2e_seconds=%s\n' "$TEST_SPEED_E2E_SECONDS"
   printf 'unit_seconds=%s\n' "$TEST_SPEED_UNIT_SECONDS"
   printf 'gate_wall_seconds=%s\n' "$TEST_SPEED_GATE_SECONDS"
+  printf 'script_timeout_seconds=%s\n' "$TEST_SPEED_SCRIPT_TIMEOUT_SECONDS"
   printf 'machine_runs_max=%s\n' "$(machine_runs_max)"
   exit 0
 fi
@@ -2540,6 +2650,10 @@ if [ -n "$WARN_WALL_MS" ]; then
   [ -z "$MAX_WALL_MS" ] || die "--wall-warn-ms and --max-wall-ms cannot be given together"
 fi
 
+# Every run bounds every script: a caller that names no bound gets the configured
+# script_timeout_seconds, so no caller (the landing gate's --all and its rerun
+# included) can leave a hung script holding the run. Only an explicit 0 disables.
+[ "$PER_SCRIPT_EXPLICIT" -eq 1 ] || PER_SCRIPT_TIMEOUT_SECS=$TEST_SPEED_SCRIPT_TIMEOUT_SECONDS
 case "$PER_SCRIPT_TIMEOUT_SECS" in
   ''|*[!0-9]*) die "--per-script-timeout-secs requires a whole number of seconds (0 disables)" ;;
 esac
@@ -2598,7 +2712,9 @@ esac
 
 apply_exclude_families
 apply_quarantine
+apply_hosted
 apply_max_weight
+apply_hosted_timings
 apply_shard
 if [ -n "$SHARD" ]; then
   SELECTION_DESC="${SELECTION_DESC};shard=$SHARD"
@@ -2635,7 +2751,7 @@ fi
 # array as an unbound-variable error, while bash 4.4+ makes it a harmless no-op.
 # A contributor on stock macOS who changes only documentation must still get
 # total=0 and exit 0 rather than a crash.
-if [ "${#SCRIPTS[@]}" -eq 0 ]; then
+if [ "${#SCRIPTS[@]}" -eq 0 ] && [ "${#UNMAPPED_PATHS[@]}" -eq 0 ]; then
   log "nothing to run"
   empty_finished_ms=$(now_ms)
   empty_duration=$((empty_finished_ms - RUN_STARTED_MS))
@@ -2668,7 +2784,7 @@ if [ "${#SCRIPTS[@]}" -eq 0 ]; then
 fi
 
 # Verify selected scripts exist before starting.
-for s in "${SCRIPTS[@]}"; do
+for s in "${SCRIPTS[@]+"${SCRIPTS[@]}"}"; do
   [ -f "$s" ] || die "test script not found: $s"
   [ -x "$s" ] || [ -r "$s" ] || die "test script not readable: $s"
 done
@@ -2683,11 +2799,11 @@ done
 # and --all is a deliberate complete regression.
 AUTO_CONCURRENCY=0
 if { [ "$MODE" = changed ] || [ "$MODE" = scripts ]; } && [ "$JOBS_EXPLICIT" -eq 0 ]; then
-  if [ "$MODE" = changed ] && [ "${#SCRIPTS[@]}" -gt 0 ] && [ "$PER_SCRIPT_TIMEOUT_SECS" -eq 0 ]; then
+  if [ "$MODE" = changed ] && [ "${#SCRIPTS[@]}" -gt 0 ] && [ "$PER_SCRIPT_EXPLICIT" -eq 0 ]; then
     CHANGED_CEILING=1
   fi
   auto_admissible=0
-  for s in "${SCRIPTS[@]}"; do
+  for s in "${SCRIPTS[@]+"${SCRIPTS[@]}"}"; do
     script_allows_concurrency "$s" && auto_admissible=$((auto_admissible + 1))
   done
   if [ "$auto_admissible" -gt 1 ]; then
@@ -2711,7 +2827,7 @@ if [ "$JOBS" -gt 1 ] && [ "$AUTO_CONCURRENCY" -eq 0 ]; then
       portable-serial|portable-serial-*) die "--jobs $JOBS refused: portable serial lanes stay serial; use --jobs 1" ;;
     esac
   fi
-  for s in "${SCRIPTS[@]}"; do
+  for s in "${SCRIPTS[@]+"${SCRIPTS[@]}"}"; do
     if ! script_allows_concurrency "$s"; then
       die "--jobs $JOBS refused: $s is not in the proven-isolated set (see bin/jg-test-isolation-proof.sh --list) and its family has no recorded concurrent proof. Unproven stateful scripts stay serial."
     fi
@@ -2735,7 +2851,7 @@ CONCURRENT_PHASE_BREAK=__jg_test_concurrent_phase_break__
 if [ "$JOBS" -gt 1 ]; then
   SCHEDULE_TMP=$(mktemp "${TMPDIR:-/tmp}/jg-test-sched.XXXXXX")
   : >"$SCHEDULE_TMP"
-  for s in "${SCRIPTS[@]}"; do
+  for s in "${SCRIPTS[@]+"${SCRIPTS[@]}"}"; do
     if script_allows_concurrency "$s"; then
       if is_proven_isolated_script "$s"; then
         phase=0
@@ -2844,6 +2960,22 @@ family_bump() {
   mv "$tmp" "$FAMILIES_TSV"
 }
 
+# quarantine_verdict <script> <rc>: in a gate, the one quarantine list (core/trunk-landing/quarantine.sh) hears every run of a
+# listed script, and a red of a script that is listed while the policy key is on is recorded and does not block: it prints a
+# JG_TEST_QUARANTINE_RED line and the verdict (QUARANTINE_RC) is 0. Every other result is returned as it came.
+quarantine_verdict() {  # <script> <rc>
+  local script=$1 rc=$2 q="$ROOT/core/trunk-landing/quarantine.sh" result=green
+  QUARANTINE_RC=$rc
+  [ "$GATE_MODE" -eq 1 ] && [ -x "$q" ] || return 0
+  [ "$rc" -eq 0 ] || result=red
+  set -- env ${QUARANTINE_HOME:+JG_HOME="$QUARANTINE_HOME"} ${QUARANTINE_DATA:+JG_DATA_OVERRIDE="$QUARANTINE_DATA"} "$q"
+  "$@" record "$script" "$result" >&2 || :
+  if [ "$rc" -ne 0 ] && "$@" check "$script" >/dev/null 2>&1; then
+    printf 'JG_TEST_QUARANTINE_RED %s exit=%s\n' "$script" "$rc"
+    QUARANTINE_RC=0
+  fi
+}
+
 record_script_result() {  # <script> <rc> <duration> <out> <end_iso> <stream>
   local script=$1 rc=$2 duration=$3 out=$4 end_iso=$5 stream=${6:-0}
   local base family expected gate_skip gate_reason fail_delta
@@ -2881,6 +3013,9 @@ record_script_result() {  # <script> <rc> <duration> <out> <end_iso> <stream>
   printf 'JG_TEST_END %s %s exit=%s duration_ms=%s gate_skip=%s\n' \
     "$end_iso" "$script" "$rc" "$duration" "$gate_skip"
 
+  quarantine_verdict "$script" "$rc"
+  rc=$QUARANTINE_RC
+
   fail_delta=0
   if [ "$rc" -ne 0 ]; then
     FAILED=$((FAILED + 1))
@@ -2892,6 +3027,30 @@ record_script_result() {  # <script> <rc> <duration> <out> <end_iso> <stream>
     "$script" "$family" "$expected" "$rc" "$duration" "$gate_skip" "$gate_reason" >>"$RECORDS"
   family_bump "$family" "$duration" "$fail_delta"
   TOTAL=$((TOTAL + 1))
+}
+
+# Record each unmapped changed path as one failed result naming the file and the cause, and run nothing for it.
+record_unmapped_tests() {
+  local path out
+  for path in "${UNMAPPED_PATHS[@]+"${UNMAPPED_PATHS[@]}"}"; do
+    out="$RUN_TMP/out.unmapped.$TOTAL"
+    printf 'not ok - %s: no changed-test mapping for source path: %s\n' "$path" "$path" >"$out"
+    cat "$out"
+    printf 'JG_TEST_BEGIN %s %s family=%s expected_gate_skip=\n' "$(now_iso)" "$path" "$(family_for_basename "$(basename "$path")")"
+    record_script_result "$path" 1 0 "$out" "$(now_iso)" 1
+  done
+}
+
+# Kill every process still carrying <mark> in its environment, after the bound has
+# stopped the script's process group. A descendant that moved into a process group of
+# its own (setsid) is outside that signal; it still inherits the script's environment,
+# so /proc finds it. Hosts without /proc keep the group kill alone.
+reap_marked_processes() {  # <mark>
+  local mark=$1 pid
+  [ -n "$mark" ] && [ -d /proc/self ] || return 0
+  while read -r pid; do
+    [ "$pid" != "$$" ] && [ "$pid" != "$BASHPID" ] && kill -KILL "$pid" 2>/dev/null || :
+  done < <(grep -al "JG_TEST_SCRIPT_MARK=$mark" /proc/[0-9]*/environ 2>/dev/null | cut -d/ -f3)
 }
 
 # Run <script>, capturing output to <out>. <stream> 1 also echoes it live.
@@ -2908,9 +3067,21 @@ run_script_bounded() {  # <script> <out> <stream> <id>
   local GIT_CONFIG_GLOBAL GIT_CONFIG_NOSYSTEM
   # shellcheck source=tests/git-config-helpers.sh
   . "$ROOT/tests/git-config-helpers.sh" || return
-  local rc bound
+  local rc bound scratch mark scratch_root=${TMPDIR:-/tmp}
+  local TMPDIR JG_TEST_SCRIPT_MARK
+  TMPDIR=$scratch_root
   : "$id"
   bound=$(script_speed_bound_secs "$script")
+  # A bounded script gets a private temp folder and an environment mark, so a
+  # timeout can remove what the killed script never cleaned up and find the
+  # descendants that left its process group.
+  scratch=
+  mark=
+  if [ "$bound" -gt 0 ]; then
+    scratch=$(mktemp -d "$scratch_root/jg-script.XXXXXX") || return
+    mark="jg-script-mark-$$-$(now_ms)-$RANDOM"
+    export TMPDIR="$scratch" JG_TEST_SCRIPT_MARK="$mark"
+  fi
   # ONE owner of what a behavior script inherits, for the serial and the
   # concurrent path alike: a script must see the same environment in CI and
   # under a live home. A squad_lead launch prefixes every process it starts
@@ -2959,12 +3130,16 @@ run_script_bounded() {  # <script> <out> <stream> <id>
   if [ "$verdict" = hung ] && [ "$rc" -eq 124 ]; then
     printf 'not ok - %s exceeded the per-script bound of %ss with no output for %ss and was terminated as hung\n' \
       "$script" "$bound" "$bound" >>"$out"
+    reap_marked_processes "$mark"
     [ "$stream" -eq 1 ] && tail -1 "$out"
+    printf 'JG_TEST_TIMEOUT script=%s bound_secs=%s\n' "$script" "$bound"
+    printf 'JG_TEST_TIMEOUT script=%s bound_secs=%s\n' "$script" "$bound" >&2
   elif [ "$verdict" = slow ]; then
     printf 'JG_TEST_SLOW %s ran past the per-script bound of %ss and was not stopped: it kept writing output (advice only, exit %s; shards that run side by side slow each other)\n' \
       "$script" "$bound" "$rc" >>"$out"
     [ "$stream" -eq 1 ] && tail -1 "$out"
   fi
+  [ -z "$scratch" ] || rm -rf -- "$scratch"
   return "$rc"
 }
 
@@ -3014,8 +3189,10 @@ wall_budget_spent() {  # <next-script> -> 0 when the run must stop here
   return 0
 }
 
+record_unmapped_tests
+
 if [ "$JOBS" -eq 1 ]; then
-  for script in "${SCRIPTS[@]}"; do
+  for script in "${SCRIPTS[@]+"${SCRIPTS[@]}"}"; do
     wall_budget_spent "$script" && break
     run_one_serial "$script"
   done

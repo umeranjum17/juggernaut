@@ -163,10 +163,11 @@ Existing task operations use recorded endpoint ids and do not move a live task w
 
 ### Live names
 
-Spawn and relaunch pin each worker's Herdr agent to a name derived from its task id, because Herdr assigns a random call-sign at start and again after a server restart.
+The first spawn of a ticket makes the agent name once, from the task id, and writes it to the task record as `agent_name=`; a relaunch keeps it, and a record with no `agent_name=` (a lane from before it, a lead) keeps the name made from its id.
+Spawn and relaunch pin each worker's Herdr agent to that recorded name, because Herdr assigns a random call-sign at start and again after a server restart.
 Herdr accepts only 1-32 characters that start with a lowercase letter and continue with lowercase letters, digits, `-` or `_`, and keeps agent names unique in the session.
 `jg_backend_herdr_agent_name_for` maps a task id into that shape: an id that already fits is the name, and a longer id keeps its first 27 characters plus a four-hex checksum of the whole id.
-A name another agent holds falls back to a checksum variant of the pane, and a refusal warns with Herdr's own error code.
+A name another agent holds falls back to a checksum variant of the pane, and the spawn then writes the name that stuck back to `agent_name=` and to the row's assignee (only while the first name still owns the row); a refusal warns once with Herdr's own error code and the record keeps the name it made.
 `bin/jg-herdr-names.sh migrate` moves one home's live items to the current names, addressing each by the session, workspace, tab, and pane id in its own task records and never by a name search.
 Run it again after a server restart to restore the agent names.
 `bin/jg-herdr-names.sh check` reads the same recorded items and exits 1 while a workspace label, tab label, or agent name still shows a pre-rename word, so a leftover is a failing command and not a sighting.
@@ -180,7 +181,7 @@ Closing its last tab can remove the workspace, and the next spawn recreates it.
 `muxr accounts move <agent> <account>` (or the same move from a phone) carries a worker's conversation onto another Claude account in a new pane of the same tab and then closes the old pane, so the pane id in the task record goes stale while the worker keeps running.
 `bin/jg-crew-state.sh` repairs the record through `bin/jg-endpoint-follow-lib.sh`, which is the one owner of that repair; nobody edits `window=` by hand after a move.
 The follow is the only place that finds a worker by its name, and it is deliberately narrow.
-It runs only when Herdr says the recorded pane is gone, and it needs all of: exactly one agent in the recorded session with the name derived from the task id, working in the task's worktree or a folder below it, in a different pane, positively live by the same classifier every reader uses, and not already recorded by another task.
+It runs only when Herdr says the recorded pane is gone, and it needs all of: exactly one agent in the recorded session with the name in the record's `agent_name=` (the name made from the task id when the record has none), working in the task's worktree or a folder below it, in a different pane, positively live by the same classifier every reader uses, and not already recorded by another task.
 Then, under the record lock and in one atomic publish, `window=`, `herdr_workspace_id=`, `herdr_tab_id=` and `herdr_pane_id=` take the new pane's values, and `account=` takes the account muxr reports (`muxr pane account`) only when the record already holds a pool account id; `ordinary`, an absolute path (the home's pin, which only the captain changes) and an absent line are kept.
 Every other line, the local copy and the branch are untouched.
 A worker with no such agent still reads gone, a missing or failing muxr only skips the account line, and a read of a snapshot copy of the record never repairs the live one.

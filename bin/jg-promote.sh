@@ -10,8 +10,7 @@
 # default-branch base, the immutable ship branch, and - rendered from
 # bin/jg-dod-lib.sh, the single owner an ordinary ship brief also uses - the
 # mode-specific Definition of done, so a promoted worker receives exactly the same
-# delivery contract as a briefed one, including the no-mistakes mode's ask-user
-# escalation rule and --yes ban. The instructions also carry `# Task` with
+# delivery contract as a briefed one. The instructions also carry `# Task` with
 # `## Captain's intent` preserved from the scout brief and promotion's ship-time
 # instructions under `## Juggernaut spec`; the scout-time spec remains context but
 # is not relabeled as the ship spec. Promotion refuses leftover `{TASK}` /
@@ -38,7 +37,7 @@
 # its value against the registry; bin/jg-project-mode.sh's header owns the
 # binding and bin/jg-dod-lib.sh owns what it changes for the worker, including
 # the refusal of a forge on local-only.
-# Usage: jg-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only|local-trunk> --yolo <on|off> [--branch-prefix <prefix>] [--upstream-consent <host>/<owner>/<repo>]
+# Usage: jg-promote.sh <task-id> --mode <direct-PR|local> --yolo <on|off> [--branch-prefix <prefix>] [--upstream-consent <host>/<owner>/<repo>]
 # --upstream-consent records the captain's one-off approval for this task to
 # publish to juggernaut's own upstream repository; promotion applies the same
 # self-repository publication gate as bin/jg-spawn.sh (bin/jg-role-lib.sh), so
@@ -129,9 +128,9 @@ for a in "$@"; do
   esac
 done
 [ -z "$want_value" ] || { echo "error: --$want_value requires a value" >&2; exit 1; }
-[ "${#POS[@]}" -ge 1 ] || { echo "usage: jg-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only|local-trunk> --yolo <on|off>" >&2; exit 1; }
+[ "${#POS[@]}" -ge 1 ] || { echo "usage: jg-promote.sh <task-id> --mode <direct-PR|local> --yolo <on|off>" >&2; exit 1; }
 [ "$MODE_SET" -eq 1 ] || {
-  echo "error: promotion requires --mode <no-mistakes|direct-PR|local-only|local-trunk>; decide it now from the scout's findings and the project's registered posture in data/projects.md" >&2
+  echo "error: promotion requires --mode <direct-PR|local>; decide it now from the scout's findings and the project's registered posture in data/projects.md" >&2
   exit 1
 }
 [ "$YOLO_SET" -eq 1 ] || {
@@ -139,19 +138,20 @@ done
   exit 1
 }
 case "$MODE" in
-  no-mistakes|direct-PR|local-only|local-trunk) ;;
   no-mistakes-prod-only)
-    echo "error: no-mistakes-prod-only is a registry policy, not a task mode; classify this task's surface and resolve it to no-mistakes or direct-PR" >&2
+    echo "error: no-mistakes-prod-only is a registry policy, not a task mode; classify this task's surface and resolve it to direct-PR" >&2
     exit 1 ;;
-  *) echo "error: --mode must be one of no-mistakes, direct-PR, local-only, local-trunk (got '$MODE')" >&2; exit 1 ;;
+  *) jg_delivery_style_accepts "$MODE" || { echo "error: --mode must be one of $(jg_delivery_style_modes | paste -sd, - | sed 's/,/, /g') (the old words $(jg_delivery_style_aliases | paste -sd, - | sed 's/,/, /g') are read as before; got '$MODE')" >&2; exit 1; } ;;
 esac
+# The retired word no-mistakes runs as direct-PR (the worker proves with done-done, no pipeline run starts).
+MODE=$(jg_delivery_style_task_mode "$MODE")
 case "$YOLO" in
   on|off) ;;
   *) echo "error: --yolo must be on or off (got '$YOLO')" >&2; exit 1 ;;
 esac
 if [ "$UPSTREAM_CONSENT_SET" -eq 1 ]; then
   [ -n "$UPSTREAM_CONSENT" ] || { echo "error: --upstream-consent requires a non-empty <host>/<owner>/<repo> value" >&2; exit 1; }
-  if { [ "$MODE" = local-only ] || [ "$MODE" = local-trunk ]; }; then
+  if jg_delivery_style_is "$MODE" local; then
     echo "error: --upstream-consent is meaningless on $MODE, which publishes nothing; drop it" >&2
     exit 1
   fi
@@ -248,7 +248,7 @@ jg_base_branch_valid "$BASE_BRANCH" "$MODE" "$FORGE" "jg-promote.sh $ID" || exit
 # The same self-repository publication gate bin/jg-spawn.sh applies to a fresh
 # ship spawn runs here on the recorded project: a promoted scout reaches no
 # greater upstream authority than the spawn path would grant.
-if [ "$MODE" != local-only ] && [ "$MODE" != local-trunk ] && [ -n "$PROMOTE_PROJECT" ]; then
+if ! jg_delivery_style_is "$MODE" local && [ -n "$PROMOTE_PROJECT" ]; then
   gate_rc=0
   jg_role_gate_self_publish "$JG_HOME" "$CONFIG" "$PROMOTE_PROJECT" "$JG_ROOT" "$UPSTREAM_CONSENT" || gate_rc=$?
   case $gate_rc in
@@ -294,14 +294,8 @@ fi
 
 # The promoted worker must receive the same delivery contract an ordinary ship
 # brief carries, so the mode-specific Definition of done is rendered from its
-# single owner (bin/jg-dod-lib.sh) rather than summarised into a hint line. A
-# promoted no-mistakes worker that never received the ask-user escalation rule or
-# the --yes ban is the delivery hole this file used to leave open.
+# single owner (bin/jg-dod-lib.sh) rather than summarised into a hint line.
 INSTRUCTIONS="$DATA/$ID/ship-instructions.md"
-PROMOTION_ASK_USER_BLOCK=
-if [ "$MODE" = no-mistakes ]; then
-  PROMOTION_ASK_USER_BLOCK=$(jg_ask_user_escalation_block "$DATA" "$ID")
-fi
 IFS= read -r -d '' PROMOTION_SHIP_SPEC <<EOF || true
 If these promotion steps were already completed before a relaunch, preserve the existing \`$BRANCH_Q\` branch and continue from its current state; do not repeat them destructively.
 1. **Verify isolation before anything else.** Run \`pwd -P\` and \`git rev-parse --show-toplevel\`; both must resolve to the disposable task worktree you were launched in, such as a treehouse pool path or an Orca-managed worktree, not the primary checkout juggernaut operates from. If either does not resolve to the worktree you were launched in, stop and escalate to juggernaut.
@@ -329,10 +323,6 @@ The mode-specific Definition of done below is the current delivery contract.
 # Current ship safety rule
 EOF
   jg_ship_rule_one "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH"
-  if [ -n "$PROMOTION_ASK_USER_BLOCK" ]; then
-    printf '\nThe no-mistakes ask-user escalation below supersedes the scout rule 6 escalation shape.\n'
-    printf '%s\n' "$PROMOTION_ASK_USER_BLOCK"
-  fi
   printf '\n'
   jg_dod_block "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH" "$UPSTREAM_CONSENT"
 }

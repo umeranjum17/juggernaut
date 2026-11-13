@@ -1,0 +1,18 @@
+machine	message	state/<task>.inbox/NNN.msg with .delivery.jsonl; the ladder counts are fields (id: <task>:<NNN>; machine 9 of the state-machine plan)	core/machines/observers/message.sh
+state	stored	initial	The message is on record and nobody was told; its ticket and kind are on the record.	ticket,kind,at
+state	rung	normal	The worker was told that a message waits; the rings are counted in a field.	ticket,kind,rings
+state	read	normal	The worker moved the message out of the inbox; that proves it was read, not acted on.	ticket,kind
+state	handled	terminal	The worker acted on it and pointed at the proof.	ticket,kind,evidence
+state	failed	terminal	The worker refused it, or it could not be delivered, and the reason is on record.	ticket,kind,reason
+group	unread	stored	rung
+group	open	stored	rung	read
+edge	(none)	store	stored	bin/jg-task-inbox-lib.sh:jg_task_inbox_write	-	the target resolves to one record; the writer puts ticket= and kind= on it	jg-machine-message
+edge	stored	ring	rung	bin/jg-task-inbox-lib.sh:jg_task_inbox_ring	-	the doorbell was typed and returned 0	jg-machine-message
+edge	rung	ring	rung	bin/jg-task-inbox-lib.sh:jg_task_inbox_ring	-	another doorbell; the ring count field grows, the ladder markers stay fields	jg-machine-message
+edge	stored	ring-fail	stored	bin/jg-task-inbox-lib.sh:jg_task_inbox_ring	-	a ring that did not land; the state stays and the retry stays a field	jg-machine-message
+edge	rung	ring-fail	rung	bin/jg-task-inbox-lib.sh:jg_task_inbox_ring	-	a ring that did not land; the state stays and the retry stays a field	jg-machine-message
+edge	unread	read	read	worker:mv	d={id}; mv "${JG_STATE_OVERRIDE:-$JG_HOME/state}/${d%%:*}.inbox/${d#*:}.msg" "${JG_STATE_OVERRIDE:-$JG_HOME/state}/${d%%:*}.inbox/handled/"	the worker lists the inbox and moves the record to handled/	jg-machine-message
+edge	unread	pull	read	bin/jg-task-inbox-lib.sh:jg_task_inbox_pull	-	the agent's Stop or PostToolBatch hook (core/hooks/inbox.sh) moved the record to handled/ and wrote the read word with the hook event as pointer	jg-inbox-pull
+edge	open	handle	handled	bin/jg-delivery.sh:claim	d={id}; bin/jg-delivery.sh handled "${d%%:*}" "${d#*:}" --evidence <kind>:<pointer>	an evidence kind and a pointer are given	jg-machine-message
+edge	open	fail	failed	bin/jg-delivery.sh:claim	d={id}; bin/jg-delivery.sh failed "${d%%:*}" "${d#*:}" --reason <why>	a reason is given, or the target record is gone	jg-machine-message
+observer	bash "$(dirname "$JG_MACHINES_TABLES")/observers/message.sh" "$1"

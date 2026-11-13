@@ -13,26 +13,31 @@
 #     from that branch into main exists, so the PR can never land where it points), or listed in
 #     <home>/config/version-branch-carried (a closed release whose work moved to a newer one); that
 #     alert names the live release branch.
-# The alert is remembered per PR and reason in <home>/data/jg-merge-on-green/stale-pr-alarm/, so the
-# next poll stays silent; a PR that is closed, healthy or changes reason forgets or re-raises it.
+# Each alert is the central `stranded` alert (bin/jg-alert.sh raise, then deliver; subject <owner>__<repo>.<number>), so it
+# reaches the lead as one wake. The reason is remembered per PR in <home>/data/jg-merge-on-green/stale-pr-alarm/, so the
+# next poll stays silent; a PR that is closed, healthy or changes reason resolves its alert and forgets it or raises it again.
 # Only PRs we own are watched: the author is the home's gh login, or the PR URL is recorded as pr= in a
 # task meta (<home>/state/*.meta). An outside author's PR on an upstream repo we only contribute to is ignored.
 # A forge failure is silent and retried next sweep. Closing or rebasing the PR is out of scope, and so
 # is the open-PR cap, which merge-on-green.sh owns. Nothing is printed when nothing happened.
 # merge-on-green.sh runs this after its own work and hands over its remaining time in JG_STALE_PR_LIMIT.
 # JG_RELEASE_CI_MINUTES (default 30) sets the release-PR wait.
-# JG_STALE_PR_GH names the gh-axi binary (tests point it at recorded fixtures).
+# JG_STALE_PR_GH names the gh-axi binary (tests point it at recorded fixtures); JG_STRANDED_ALERT names jg-alert.sh.
 set -u
 [ "$#" -eq 2 ] && [ "$1" = check ] && [ -d "$2/state" ] || { echo "usage: stale-pr-alarm.sh check <jg-home>" >&2; exit 2; }
 FMH=$(cd "$2" && pwd -P)
 GH=${JG_STALE_PR_GH:-gh-axi}
 MEM=$FMH/data/jg-merge-on-green/stale-pr-alarm
+ALERT=${JG_STRANDED_ALERT:-$FMH/bin/jg-alert.sh}
 umask 077
 BUDGET=$(( ${JG_CHECK_TIMEOUT:-30} / 3 )); [ "$BUDGET" -ge 5 ] || BUDGET=5
 START=$(date +%s)
 RELEASE_WAIT_MIN=${JG_RELEASE_CI_MINUTES:-30}; case $RELEASE_WAIT_MIN in ''|*[!0-9]*) RELEASE_WAIT_MIN=30 ;; esac
 RELEASE_WAIT=$(( RELEASE_WAIT_MIN * 60 ))
 LIMIT=${JG_STALE_PR_LIMIT:-$(( START + ${JG_CHECK_TIMEOUT:-30} * 4 / 5 ))}
+alert() { JG_HOME=$FMH "$ALERT" "$@"; }
+# page <subject>: one live stranded alert for the subject, rung to the lead (a changed reason replaces the old record).
+page() { alert resolve "stranded--$1" >/dev/null 2>&1; alert raise stranded "$1" | alert deliver; }
 api() { timeout "$BUDGET" "$GH" api "$1" --jq "$2" 2>/dev/null; } # <path> <jq> -> jq text, nonzero on failure
 
 me=$(api user .login) && [ -n "$me" ] || exit 0 # no login, no ownership test: retry next sweep
@@ -81,14 +86,14 @@ for repo in $repos; do
     [ -n "$reasons" ] || continue
     flagged="$flagged$num "
     [ "$(cat "$MEM/$key.$num" 2>/dev/null)" = "$reasons" ] && continue
-    echo "stale-pr-alarm: $url: $reasons"
+    page "$key.$num"
     mkdir -p "$MEM" 2>/dev/null && printf '%s\n' "$reasons" > "$MEM/$key.$num" 2>/dev/null || :
   done <<< "$prs"
   # Forget a PR that is no longer flagged (closed, merged, or healthy again), so a new stall alerts again.
   [ "$cut" = 0 ] || continue
   for f in "$MEM/$key."*; do
     [ -f "$f" ] || continue
-    case $flagged in *" ${f##*.} "*) ;; *) rm -f -- "$f" ;; esac
+    case $flagged in *" ${f##*.} "*) ;; *) rm -f -- "$f"; alert resolve "stranded--${f##*/}" >/dev/null 2>&1 ;; esac
   done
 done
 exit 0

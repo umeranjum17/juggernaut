@@ -5,8 +5,7 @@
 # The captain channel appends one row to <home>/state/captain-channel-undelivered.jsonl for each message
 # it could not deliver (the voice check refused it, or the gateway was down). Nothing read that file, so a
 # refused real report never reached the captain and nobody knew. This check counts the rows; when the count
-# is higher than at the last run it prints one line with the newest row's kind, key and reason, which
-# wakes Main so Main can re-word the message and send it through the normal path. It sends nothing itself.
+# is higher than at the last run it raises the undelivered alert, whose wake names the newest row's kind, key and reason, so Main can re-word the message and send it through the normal path. It sends nothing itself.
 # Rows may hold raw newlines, so a row is counted by its leading {"at": and never decoded as one line.
 # The first run only records the count, so rows already in the file raise no alert.
 # The last count lives in <home>/data/jg-undelivered-alert/count. Nothing is printed when nothing rose.
@@ -29,6 +28,9 @@ field() { printf '%s' "$last" | sed -n "s/.*\"$1\":\"\\(\\([^\"\\\\]\\|\\\\.\\)*
 # error comes before event in a row, so take the first match of each; kind and key sit inside event.
 reason=$(printf '%s' "$last" | sed -n 's/^{"at":[0-9]*,"target":"[^"]*","error":"\(\([^"\\]\|\\.\)*\)".*/\1/p' | cut -c1-200)
 kind=$(field kind); key=$(field key)
-printf 'undelivered-alert: %s captain message(s) not delivered; newest: kind=%s key=%s reason=%s. Re-word and send it through the normal path.\n' \
-  "$((now - was))" "${kind:-unknown}" "${key:-unknown}" "${reason:-unknown}"
+text=$(printf 'undelivered-alert: %s captain message(s) not delivered; newest: kind=%s key=%s reason=%s. Re-word and send it through the normal path.' \
+  "$((now - was))" "${kind:-unknown}" "${key:-unknown}" "${reason:-unknown}")
+# Raise the undelivered alert (bin/jg-alert.sh); its holder reads the wake `--deliver` appends. The count moves only once it is raised.
+ALERT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../bin" && pwd -P)/jg-alert.sh
+JG_STATE_OVERRIDE=$FMH/state "$ALERT" raise undelivered "captain-message-$now" --note "$text" --deliver || exit 1
 printf '%s\n' "$now" > "$MEM/count"

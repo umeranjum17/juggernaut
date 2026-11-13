@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # jg-away-reach.sh - away mode reaches the captain on Telegram by itself.
 #
-# Usage: jg-away-reach.sh arm | disarm | tick | digest | status
+# Usage: jg-away-reach.sh arm | disarm | tick | digest | status | episodes
 #
 # WHAT IT DOES. While an away record exists (bin/jg-afk-contract.sh, mode away) this sends the
 # captain's private chat (`jg-bus.sh gateway push`):
@@ -11,6 +11,11 @@
 #   - an urgent message as the event arises, never waiting for the next slot: a worker's new
 #     `needs-decision`, `blocked` or `failed` status line, or a line that asks for a sign-in or a
 #     credential. Each status line is sent once (a per-file byte cursor).
+#   - an episode page (core/sentinel/episodes.sh, slice H17): an alert held open at the owner's rung 4 is one message when it
+#     opens and one when it closes, several that change together are one message, and `episodes` runs on its own so the sentinel
+#     can call it with no away record. The urgent lines, the updates and the episode pages share one budget of
+#     JG_AWAY_REACH_BUDGET (4) sends an hour (state/away-reach.budget); a page over it waits for the next tick and is joined to it.
+#     An urgent line is never held back by the budget, but it counts.
 # With no token file the push sends nothing and says nothing (docs/captain-chat.md "Pushes").
 #
 # ARMED BY THE MODE. bin/jg-afk-contract.sh `enter` calls `arm` and `archive` calls `disarm`, so
@@ -34,6 +39,10 @@ STATE="${JG_STATE_OVERRIDE:-$JG_HOME/state}"
 ID=away-reach
 SHIM="$STATE/$ID.check.sh"
 DIR="$STATE/$ID.d"
+EPISODES=${JG_EPISODES_BIN:-$JG_ROOT/core/sentinel/episodes.sh}
+BUDGET_FILE="$STATE/$ID.budget"
+BUDGET=${JG_AWAY_REACH_BUDGET:-4}
+case "$BUDGET" in ''|*[!0-9]*|0) BUDGET=4 ;; esac
 BUS_BIN=${JG_BUS_CMD:-$SCRIPT_DIR/jg-bus.sh}
 ASKS_BIN=${JG_OWNER_ASKS_BIN:-$SCRIPT_DIR/jg-owner-asks.sh}
 INTERVAL=${JG_AWAY_REACH_INTERVAL:-1800}
@@ -62,6 +71,38 @@ scrub() {  # strip secrets and the raw status prefix from a line, cap its length
 push() {  # <text> -> 0 when the sender accepted it
   printf '%s\n' "$1" | "$BUS_BIN" gateway push >/dev/null 2>&1 \
     || { log "the captain chat refused the push; it is retried on the next tick"; return 1; }
+  printf '%s\n' "$(now)" >> "$BUDGET_FILE" 2>/dev/null || true
+}
+
+# Sends in the last hour, every kind: the one budget.
+budget_used() {
+  local t; t=$(now)
+  awk -v t="$t" '$1 ~ /^[0-9]+$/ && t - $1 < 3600 { n++ } END { print n + 0 }' "$BUDGET_FILE" 2>/dev/null
+  [ ! -f "$BUDGET_FILE" ] || { tail -n 50 "$BUDGET_FILE" > "$BUDGET_FILE.tmp" && mv -f "$BUDGET_FILE.tmp" "$BUDGET_FILE"; } 2>/dev/null
+}
+
+# One message for the episodes that opened or closed since the last call, within the budget.
+cmd_episodes() {
+  [ -x "$EPISODES" ] && [ -d "$STATE" ] || return 0
+  local ev kind key a b text="" n=0 t
+  t=$(now)
+  ev=$("$EPISODES" events "$STATE" "$t") || return 0
+  [ -n "$ev" ] || return 0
+  [ "$(budget_used)" -lt "$BUDGET" ] || return 0
+  while IFS=$'\t' read -r kind key a b; do
+    [ -n "$kind" ] || continue
+    n=$((n + 1))
+    if [ "$kind" = open ]; then
+      text="$text"$'\n'"Blocked since $(date -u -d "@$a" '+%H:%M UTC' 2>/dev/null): $(printf '%s' "$b" | scrub)"
+    else
+      text="$text"$'\n'"Cleared after $((a / 60)) minutes: $key"
+    fi
+  done <<< "$ev"
+  push "The fleet needs you ($n change$([ "$n" -eq 1 ] || echo s)).$text" || return 0
+  while IFS=$'\t' read -r kind key a b; do
+    [ -n "$kind" ] || continue
+    "$EPISODES" "mark-$kind" "$STATE" "$key" "$t"
+  done <<< "$ev"
 }
 
 cmd_arm() {
@@ -151,6 +192,7 @@ cmd_digest() {
   worker_counts; printf '\n'
   asks=$("$ASKS_BIN" 2>/dev/null) || asks='The list of your asks could not be read just now.'
   printf '\n%s\n' "$asks"
+  "$EPISODES" open "$STATE" 2>/dev/null | sed '1i\\nOpen blocked episodes:'
 }
 
 cmd_tick() {
@@ -159,6 +201,7 @@ cmd_tick() {
   if [ "$mode" != away ]; then cmd_disarm >/dev/null; return 0; fi
   mkdir -p "$DIR" || return 0
   scan_urgent
+  cmd_episodes
   t=$(now)
   last=$(cat "$DIR/last-slot" 2>/dev/null)
   case "$last" in ''|*[!0-9]*) last=$t; printf '%s\n' "$t" > "$DIR/last-slot" ;; esac
@@ -190,5 +233,6 @@ case "${1-}" in
   tick) cmd_tick ;;
   digest) cmd_digest ;;
   status) cmd_status ;;
-  *) printf 'usage: jg-away-reach.sh arm | disarm | tick | digest | status\n' >&2; exit 2 ;;
+  episodes) cmd_episodes ;;
+  *) printf 'usage: jg-away-reach.sh arm | disarm | tick | digest | status | episodes\n' >&2; exit 2 ;;
 esac

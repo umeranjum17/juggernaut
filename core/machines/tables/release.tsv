@@ -1,0 +1,16 @@
+machine	release	one release of a project trunk: data/trunk-releases.tsv and its release pull request	core/machines/observers/release.sh
+state	open	initial	A release pull request is open and no check has reported on its head.	-
+state	checking	normal	The hosted checks of the release run.	-
+state	red	normal	A required check of the release failed.	-
+state	ready	normal	Every check is green and the merge waits for yolo or the owner's word.	-
+state	merged	terminal	The release is on main.	-
+state	abandoned	terminal	The release was closed unmerged, and its tickets join the next release.	-
+group	unmerged	open	checking	red	ready
+edge	(none)	open	open	bin/jg-trunk.sh:push_batch	-	the green pin is above main; yolo is on or the owner's word is on record; this home passes the release preflight (core/release-preflight)	jg-machine-release
+edge	open	check	checking	.github/workflows/ci.yml:jobs	-	the hosted checks started	jg-machine-release
+edge	checking	ci-red	red	.github/workflows/ci.yml:jobs	-	a required check is red	jg-machine-release
+edge	red	fix	open	bin/jg-trunk.sh:push_batch	-	a fix landed and the release head moved	jg-machine-release
+edge	checking	ci-green	ready	.github/workflows/ci.yml:jobs	-	every required check is green	jg-machine-release
+edge	ready	merge	merged	bin/jg-pr-merge.sh:main	-	yolo is on or the owner's word is on record	jg-machine-release
+edge	unmerged	abandon	abandoned	bin/jg-trunk.sh:push_batch	-	a newer release replaces it, or the pull request was closed	jg-machine-release
+observer	bash "$(dirname "$JG_MACHINES_TABLES")/observers/release.sh" "$1"

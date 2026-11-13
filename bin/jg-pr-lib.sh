@@ -357,7 +357,21 @@ JG_PR_WAIT_CONTEXT=juggernaut/waiting-for
 # decides whether that is fatal: a pull request must never fail to merge because
 # its wait line could not be written.
 jg_pr_wait_status() {  # <pr-url> <pending|success> <line>
-  local url=${1-} state=${2-} line=${3-} head owner repo
+  jg_pr_post_status "${1-}" "${2-}" "$JG_PR_WAIT_CONTEXT" "${3-}"
+}
+
+# The context of the proof status: what proved the change on this pull request. Today it is published only for a bypassed change,
+# as a green status that says no proof ran (bin/jg-bypass-record-lib.sh owns the words), so a reader of the page is never led to
+# think the green means proven.
+JG_PR_PROOF_CONTEXT=juggernaut/proof
+
+jg_pr_proof_status() {  # <pr-url> <line>
+  jg_pr_post_status "${1-}" success "$JG_PR_PROOF_CONTEXT" "${2-}"
+}
+
+# The one writer of a commit status on a pull request's current head (GitHub only; other providers publish nothing and return 0).
+jg_pr_post_status() {  # <pr-url> <pending|success> <context> <line>
+  local url=${1-} state=${2-} context=${3-} line=${4-} head owner repo
   jg_pr_url_parse "$url" || return 1
   [ "$JG_PR_PROVIDER" = github ] || return 0
   case "$state" in
@@ -373,7 +387,7 @@ jg_pr_wait_status() {  # <pr-url> <pending|success> <line>
   jg_pr_head_valid "$head" || return 1
   gh api -X POST "repos/$owner/$repo/statuses/$head" \
     -f state="$state" \
-    -f context="$JG_PR_WAIT_CONTEXT" \
+    -f context="$context" \
     -f description="$line" \
     -f target_url="$url" >/dev/null 2>&1
 }

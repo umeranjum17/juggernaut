@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Fixture proof for the daily scan: two local bare repos (one holding made-up
 # details, one clean) plus a temp patterns file. The due run returns at once
-# with no output and starts the loop detached; a later run prints the wake
-# line with the right counts once and the private report holds them; the run
-# after that prints nothing; a clean-only set prints nothing. The raw patterns
+# with no output and starts the loop detached; a later run raises the security alert
+# with the right counts once and the private report holds them; the run
+# after that raises nothing; a clean-only set raises nothing. The raw patterns
 # never reach stdout. Also drives install-scan.sh (dry-run plus a real install).
 # Usage: owner-guard/tests/scan-e2e.sh
 # jg-compat shim (slice S4, deleted by S10): an old FM_* name still resolves
@@ -22,7 +22,10 @@ trap 'chmod -R u+w -- "$d"; rm -rf -- "$d"' EXIT
 export HOME=$d/home TMPDIR=$d GIT_CONFIG_NOSYSTEM=1
 unset JG_HOME
 FM=$d/fm
-mkdir -p "$HOME" "$FM/config" "$FM/state" "$FM/data" "$FM/bin"
+mkdir -p "$HOME" "$FM/config" "$FM/state" "$FM/data" "$FM/config"
+# The scan raises its alert through the home's own alert function, so the fixture home carries the repo's bin and core.
+repo=$(cd "$SRC/../.." && pwd -P)
+cp -r "$repo/bin" "$FM/bin"; ln -s "$repo/core" "$FM/core"; printf 'off\n' >"$FM/config/wake-bus"
 export JG_MAIN_HOME=$FM
 fails=0
 check() { if [ "$2" = "$3" ]; then echo "ok: $1"; else printf 'FAIL: %s\n  want: %s\n  got:  %s\n' "$1" "$3" "$2"; fails=$((fails + 1)); fi; }
@@ -62,8 +65,11 @@ wait_result() { # poll until the background loop finishes (result file or lock g
   done
 }
 wait_result
-out=$("$SRC/scan-check")
-has "later run wakes with the hit repo and count" "$out" "hit (2)"
+printed=$("$SRC/scan-check")
+check "the finished scan prints no wake line of its own" "$printed" ""
+out=$(cat "$FM"/state/alerts/security--owner-details-scan-*.rec)
+check "the finished scan raised one security alert" "$(find "$FM/state/alerts" -name 'security--owner-details-scan-*.rec' | wc -l | tr -d ' ')" 1
+has "later run raises the alert with the hit repo and count" "$out" "hit (2)"
 missing "clean repo is not named" "$out" "clean"
 missing "raw patterns stay off stdout" "$out" 'scanprobe[0-9]'
 missing "plain pattern stays off stdout" "$out" "scane2e-fake-surname"
@@ -75,7 +81,8 @@ has "report holds the first file:line" "$(cat "$rep")" "hit-details.txt:1"
 has "report holds the second file:line" "$(cat "$rep")" "hit-more.txt:1"
 
 out=$("$SRC/scan-check")
-check "run after the wake prints nothing" "$out" ""
+check "run after the alert prints nothing" "$out" ""
+check "run after the alert raises no second one" "$(find "$FM/state/alerts" -name 'security--owner-details-scan-*.rec' | wc -l | tr -d ' ')" 1
 
 printf '%s\n' "$d/clean.git" >"$FM/config/owner-guard-repos"
 rm -f "$FM/state/.owner-details-scan.last"

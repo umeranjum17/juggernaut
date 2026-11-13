@@ -43,8 +43,8 @@ Pick the depth of every Recon at intake and pass it to the scaffold as `--depth 
 - **quick** only for one fact.
 - **standard** for everything else; it is the default.
 
-A deep Recon needs one separate critic worker after the researcher's draft, never a fan-out: when the researcher reports its draft ready, spawn one critic Recon with the task id `<id>-critic` on a fresh isolated copy with that draft, install the critic's output as the researcher's `data/<id>/critic.md`, and steer that same critic for each further round.
-That id is how the wait ladder forwards each later draft to the critic by itself (`core/wait-timers/README.md` "Known next steps").
+A deep Recon needs one separate critic worker after the researcher's draft, never a fan-out: when the researcher reports `done` with its draft ready for the critic (the ticket is in the proving step `critic`), spawn one critic Recon with the task id `<id>-critic` on a fresh isolated copy with that draft, install the critic's output as the researcher's `data/<id>/critic.md`, and steer that same critic for each further round.
+Each later draft is a new `done` line of the researcher; steer the same critic to it.
 `.agents/skills/deep-recon/SKILL.md` owns the stages, budgets and critic rubric, and `bin/jg-recon-gate.sh` refuses `done` for a standard or deep Recon that does not meet them.
 
 ## Delivery mode, branch, and consent flags
@@ -94,6 +94,7 @@ When the captain adds or changes an ask mid-task, append the captain's words wit
 
 ## Briefs
 
+A fresh ship or Recon spawn needs `--ticket <ticket-id>` (the brief takes it too); the task id is the ticket id with every dot a dash (`jg-x.1` runs as `jg-x-1`), `bin/jg-backlog.sh task <ticket-id>` prints it, and the spawn refuses a ticket with no row or no readable title (2 to 7 words) and a task id another row answers to. A Squad Lead and a relaunch take no `--ticket`.
 `bin/jg-brief.sh` and its help own scaffold syntax, generated variants, status protocol, delivery-mode definitions of done, and exact safety mechanics.
 Use its scaffold as the contract, then fill `## Captain's intent` (`{TASK}`) with the captain's own ask and any boundary the captain stated, plus the context needed to read it, including the substance of any report, decision, or PR the ask refers to; never widen the ask there into a general goal or an enumerated coverage list, because the reviewer treats that subsection as acceptance criteria.
 Fill `## Juggernaut spec` (`{JUGGERNAUT_SPEC}`) with only the build instructions that ask requires, naming what stays out of scope when the ask is narrow; a generalization, consistency sweep, or extra hardening the captain did not ask for is follow-up work to note, not scope to add.
