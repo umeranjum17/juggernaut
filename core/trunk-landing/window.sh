@@ -3,14 +3,12 @@
 # W is how many landing gates one project keeps running at once, each on top of the lanes ahead of it. It grows by one when a lane
 # lands and halves (rounded down, never under 1) when a gate ends red, and never passes the cap: the least of
 #   gate-slots   the project's policy (bin/jg-trunk-policy-lib.sh; gate-slots=1 turns the window off),
-#   heavy_slots  the heavy runs the host budget allows (config/lane-scale, core/lane-scale/fleet.sh), and
-#   WINDOW_CHAIN_MAX  how many gates bin/jg-trunk.sh can chain today: it keeps one front lane, so a gate sits on the front and no deeper.
+#   heavy_slots  the heavy runs the host budget allows (config/lane-scale, core/lane-scale/fleet.sh).
+# bin/jg-trunk.sh chains as many gates in order as the window allows (its chain of fronts), so the window is the only owner of the width.
 # A project with no record starts at the cap, so a home that never saw a red gates as wide as it was allowed to. The record is
 # state/trunk-window-<project>: one whole number, written under a lock.
 # Needs $STATE and $FMH and the lock helpers of bin/jg-wake-lib.sh; it reads the policy itself, because the run and runbatch jobs
 # call it before the check's own policy helpers exist.
-# h100-h29c2 replaces WINDOW_CHAIN_MAX with an ordered chain in bin/jg-trunk.sh; until it lands, W above 2 is not offered.
-WINDOW_CHAIN_MAX=2
 
 window_cap() {  # <project>: the widest the window may be now
   local pn=$1 slots heavy cap v
@@ -19,8 +17,7 @@ window_cap() {  # <project>: the widest the window may be now
   slots=$(jg_trunk_policy gate-slots "$pn"); case $slots in ''|*[!0-9]*) slots=2 ;; esac
   v=$(sed -n 's/^heavy_slots=//p' "$FMH/config/lane-scale" 2>/dev/null | tail -n 1)
   case $v in ''|*[!0-9]*) heavy=2 ;; *) heavy=$v ;; esac
-  cap=$WINDOW_CHAIN_MAX
-  [ "$slots" -ge "$cap" ] || cap=$slots
+  cap=$slots
   [ "$heavy" -ge "$cap" ] || cap=$heavy
   [ "$cap" -ge 1 ] || cap=1
   printf '%s\n' "$cap"

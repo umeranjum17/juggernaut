@@ -17,10 +17,10 @@
 # reported once and left, and lands on its own once the proof is complete. The owner signature is never waited for. The lander rebases the lane's
 # commit onto the trunk tip by itself, so a moved trunk is never a refusal. Lanes land oldest done first, and a
 # finished landing starts the next at once (`next`), so three lanes ready together land in order with no human or lead step. While one
-# lane gates on the trunk tip a second may start, gated on top of the first one's commit (at most gate-slots, default 2, gates at once: the
+# lane gates on the trunk tip a second may start, gated on top of the first one's commit (at most the window W of gates at once, default 2: the
 # second lands right behind the first, or is gated again on the tip when the first does not land; bin/jg-trunk.sh owns it). The number
 # of gates the check keeps is the window W of core/trunk-landing/window.sh: it grows by one on a landing, halves on a red gate, and is
-# capped by gate-slots, the host's heavy slots and the two gates bin/jg-trunk.sh can chain today.
+# capped by gate-slots and the host's heavy slots; bin/jg-trunk.sh chains that many gates in order.
 # When 2 or more lanes are ready, the check stacks up to batch-max (5) of them, oldest done first, into one `bin/jg-trunk.sh land-batch`:
 # one gate over the stack, one trunk move, and only a lane that conflicts or causes a red is returned (reported once, like any refusal).
 # A single ready lane keeps the path above. A landing runs no whole-suite test and never moves the green pin. Every tick starts the
@@ -395,16 +395,23 @@ running_count() {
   done
   printf '%s\n' "$n"
 }
-# Two gates at once: while exactly one single landing gates on the tip (it holds the project's front, bin/jg-trunk.sh), a second lane of
-# that project may start and is gated on top of the first one's commit. Prints the project when that second slot is free.
+# The chain of gates: while single landings of one project gate in its chain (they hold its front positions, bin/jg-trunk.sh) and the
+# highest live position is under the window W (core/trunk-landing/window.sh), the next lane of that project may start; it is gated on top
+# of the commit one position below. Prints the project when that slot is free and every landing running now is in that chain.
 second_slot_project() {
-  local lock pn pid
+  local lock pn top k pid
   for lock in "$STATE"/.trunk-front-*.lock; do
     [ -d "$lock" ] || continue
     pn=${lock##*/.trunk-front-}; pn=${pn%.lock}
-    pid=$(cat "$lock/pid" 2>/dev/null || true)
-    [ -n "$pid" ] && jg_pid_alive "$pid" || continue
-    [ "$(window_size "$pn")" -ge 2 ] || continue  # the window (core/trunk-landing/window.sh), not the policy alone, says how many gates may run
+    case $pn in *@*) continue ;; esac  # a deeper position of a chain is found through the front below
+    top=0
+    for k in $(seq 1 64); do
+      lock="$STATE/.trunk-front-$pn"; [ "$k" -le 1 ] || lock="$lock@$k"
+      pid=$(cat "$lock.lock/pid" 2>/dev/null || true)
+      [ -n "$pid" ] && jg_pid_alive "$pid" && top=$k
+    done
+    [ "$top" -ge 1 ] && [ "$top" -eq "$running" ] || continue
+    [ "$top" -lt "$(window_size "$pn")" ] || continue  # the window, not the policy alone, says how many gates may run
     printf '%s\n' "$pn"; return 0
   done
   return 1
@@ -492,11 +499,10 @@ if ! mkdir "$MEM/.start" 2>/dev/null; then
   [ -n "$(find "$MEM/.start" -mmin +1 2>/dev/null)" ] || exit 0
   rmdir "$MEM/.start" 2>/dev/null; mkdir "$MEM/.start" 2>/dev/null || exit 0
 fi
-# Lanes land one at a time, except that a second one may gate on top of the first (second_slot_project): at most 2 gates at once.
+# Lanes land one at a time, except that more may gate on top of the one ahead (second_slot_project): at most W gates at once.
 only_pn=; running=$(running_count)
-if [ "$running" -eq 1 ]; then only_pn=$(second_slot_project) || { slots_full; rmdir "$MEM/.start" 2>/dev/null; exit 0; }; fi
-[ "$running" -le 1 ] || slots_full
-if [ "$running" -le 1 ]; then
+if [ "$running" -ge 1 ]; then only_pn=$(second_slot_project) || { slots_full; rmdir "$MEM/.start" 2>/dev/null; exit 0; }; fi
+if [ "$running" -lt 1 ] || [ -n "$only_pn" ]; then
   # The flush rule (bin/jg-trunk-policy-lib.sh): a project's ready lanes wait until flush-at-ready of them are ready, or the oldest has
   # waited flush-after-minutes, or `jg-trunk.sh flush` was run; then they all land (up to batch-max, oldest done first; the rest follow
   # at once). A lane marked `land-next` goes first and lands at once, with or without the others. One project per stack.

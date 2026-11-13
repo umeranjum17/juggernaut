@@ -996,39 +996,59 @@ unpin_green() {  # <red sha>
   put "$STATE/trunk-green-$PN" "$(rev "$1^")"
 }
 
-# --- Two gates at once (docs/trunk-flow.md "Two gates at once") ---
-# The lane that gates on the real trunk tip is the front: it holds state/.trunk-front-<project>.lock and publishes `<tip> <commit>` in
-# state/trunk-front-<project>. A second lane started while the front gates is speculative: it is admitted and gated on top of the front's
-# commit, waits for the front to end, and lands only if the trunk then stands on that commit. If the front did not land, the lane is
-# gated again on the tip (one more gate). gate-slots (default 2; 1 turns this off) is the most gates that run at once; the lander
-# starts the second one (core/trunk-landing/trunk-landing.sh).
-FRONT=
-front_lock() { printf '%s\n' "$STATE/.trunk-front-$PN.lock"; }
-front_publish() {  # <tip> <commit>: the lane that gates on the real tip becomes the front, when no other lane is
-  [ -n "$FRONT" ] || { jg_lock_try_acquire "$(front_lock)" || return 0; LOCKS="$(front_lock) $LOCKS"; FRONT=1; }
-  put "$STATE/trunk-front-$PN" "$1 $2"
-}
-front_release() {
-  [ -z "$FRONT" ] || { rm -f -- "$STATE/trunk-front-$PN"; unlock "$(front_lock)"; FRONT=; }
-}
-front_alive() {  # true while another lane holds the front
-  local pid; pid=$(cat "$(front_lock)/pid" 2>/dev/null || true)
+# --- The chain of fronts (docs/trunk-flow.md "Two gates at once", "The window") ---
+# A lane that gates holds a position of the project's chain. Position 1 is the front: the lane that gates on the real trunk tip. It holds
+# state/.trunk-front-<project>.lock and publishes `<tip> <commit>` in state/trunk-front-<project>. Position k above 1 holds
+# state/.trunk-front-<project>@<k>.lock and publishes in state/trunk-front-<project>@<k>. A lane started while the chain is live takes the
+# position above the highest live one, is gated on top of the commit that position publishes, waits until every position ahead of it has
+# ended, and lands only if the trunk then stands on its base. If a lane ahead did not land, it is gated again on the tip (one more gate).
+# gate-slots (default 2; 1 turns this off) is the most positions; the lander starts the next lane while the highest live position is
+# under the window W (core/trunk-landing/window.sh, core/trunk-landing/trunk-landing.sh).
+FRONT=  # the position this lane holds, empty for none
+front_name() { if [ "$1" -le 1 ]; then printf 'trunk-front-%s\n' "$PN"; else printf 'trunk-front-%s@%s\n' "$PN" "$1"; fi; }  # <position>: the record name; its lock is .<name>.lock
+front_lock() { printf '%s\n' "$STATE/.$(front_name "$1").lock"; }
+front_holder_alive() {  # <position>: true while another lane holds that position
+  local pid; pid=$(cat "$(front_lock "$1")/pid" 2>/dev/null || true)
   [ -n "$pid" ] && [ "$pid" != "${BASHPID:-$$}" ] && jg_pid_alive "$pid"
 }
-front_spec() {  # <tip> <lane head>: prints the front's commit when this lane may be gated on top of it
-  local ftip='' fcand='' i
-  [ -z "$FRONT" ] && [ "$(pol gate-slots)" -ge 2 ] 2>/dev/null || return 1
-  for i in 1 2 3 4 5 6 7 8; do  # the front publishes right after its admission: wait for that, briefly
-    front_alive || return 1
-    { read -r ftip fcand < "$STATE/trunk-front-$PN"; } 2>/dev/null && [ "$ftip" = "$1" ] && [ -n "$fcand" ] && break
+front_top() {  # the highest position a live lane holds (0: none)
+  local k top=0 max; max=$(pol gate-slots); case $max in ''|*[!0-9]*) max=2 ;; esac
+  for k in $(seq 1 "$max"); do ! front_holder_alive "$k" || top=$k; done
+  printf '%s\n' "$top"
+}
+front_claim() {  # <position>: take it, or return 1
+  jg_lock_try_acquire "$(front_lock "$1")" || return 1
+  LOCKS="$(front_lock "$1") $LOCKS"; FRONT=$1
+}
+front_publish() {  # <tip> <commit>: the lane that gates on the real tip becomes the front, when no other lane is; a lane in the chain publishes its place
+  [ -n "$FRONT" ] || front_claim 1 || return 0
+  put "$STATE/$(front_name "$FRONT")" "$1 $2"
+}
+front_release() {
+  [ -z "$FRONT" ] || { rm -f -- "$STATE/$(front_name "$FRONT")"; unlock "$(front_lock "$FRONT")"; FRONT=; }
+}
+FRONT_BASE=  # set by front_spec: the commit of the position below this lane
+front_spec() {  # <tip> <lane head>: takes the next position and sets FRONT_BASE to the commit of the one below it, when this lane may be gated on top of it (not for a subshell: it keeps the lock)
+  local ftip='' fcand='' i k max; max=$(pol gate-slots); FRONT_BASE=
+  case $max in ''|*[!0-9]*) return 1 ;; esac
+  [ -z "$FRONT" ] && [ "$max" -ge 2 ] || return 1
+  for i in 1 2 3; do  # two lanes may reach for one position: the loser looks again
+    k=$(front_top); [ "$k" -ge 1 ] && [ "$k" -lt "$max" ] || return 1
+    front_claim $((k + 1)) && break
+  done
+  [ -n "$FRONT" ] || return 1
+  for i in 1 2 3 4 5 6 7 8; do  # the lane below publishes right after its admission: wait for that, briefly
+    front_holder_alive "$k" || break
+    { read -r ftip fcand < "$STATE/$(front_name "$k")"; } 2>/dev/null && [ "$ftip" = "$1" ] && [ -n "$fcand" ] && break
     fcand=; sleep 0.25
   done
-  # A conflict with the front is judged on the tip, not on a commit that may not land.
-  [ -n "$fcand" ] && rebase_commit "$fcand" "$2" >/dev/null || return 1
-  printf '%s\n' "$fcand"
+  # A conflict with the lane below is judged on the tip, not on a commit that may not land.
+  if [ -n "$fcand" ] && front_holder_alive "$k" && rebase_commit "$fcand" "$2" >/dev/null; then FRONT_BASE=$fcand; return 0; fi
+  front_release; return 1
 }
-front_wait() {  # until the front has ended: it landed (the trunk stands on its commit) or it did not
-  while front_alive; do sleep 0.2; done
+front_wait() {  # until every position ahead of this lane has ended: each landed (the trunk stands on its commit) or did not
+  local k
+  for k in $(seq 1 $((FRONT - 1))); do while front_holder_alive "$k"; do sleep 0.2; done; done
 }
 
 # The landing's gates over <cand> judged against <base>: the lint over the changed files, then the changed files' tests. Sets GATE_KIND;
@@ -1057,11 +1077,11 @@ land_candidate() {
   for _ in 1 2 3; do
     lock "$STATE/.trunk-$PN.lock"; tip_adopt_forward; tip_ok; tip=$(rev "refs/heads/$TRUNK"); unlock "$STATE/.trunk-$PN.lock"
     # A lane that starts while another gates on the tip is gated on top of that lane's commit (two gates at once).
-    if base=$(front_spec "$tip" "$LAND_HEAD"); then spec=1; else base=$tip; spec=; fi
+    if front_spec "$tip" "$LAND_HEAD"; then base=$FRONT_BASE; spec=1; else base=$tip; spec=; fi
     lane_admit "$id" "$base" "$LAND_HEAD" 0
     cand=$LANE_CAND
     if [ -n "$LANE_LANDED" ]; then echo "already landed $id at $cand; not live"; return 0; fi
-    [ -n "$spec" ] || front_publish "$tip" "$cand"
+    front_publish "$tip" "$cand"
     # A red on a speculative base is not charged until the lane ahead has ended: it may be that lane's red, and then this lane is gated again.
     GATE_SPECULATIVE=$spec; gate_rc=0; land_gates "$id" "$cand" "$base" || gate_rc=$?
     if [ -n "$spec" ]; then
@@ -1071,7 +1091,7 @@ land_candidate() {
     lock "$STATE/.trunk-$PN.lock"; tip_adopt_forward; tip_ok
     if [ "$gate_rc" -eq 0 ] && [ "$(rev "refs/heads/$TRUNK")" = "$base" ]; then still=1; break; fi
     unlock "$STATE/.trunk-$PN.lock"
-    if [ -n "$spec" ]; then echo "note: the lane ahead of $id did not land; gating it again on the $TRUNK tip $(rev "refs/heads/$TRUNK" | cut -c1-12)" >&2
+    if [ -n "$spec" ]; then front_release; echo "note: the lane ahead of $id did not land; gating it again on the $TRUNK tip $(rev "refs/heads/$TRUNK" | cut -c1-12)" >&2
     else echo "note: $TRUNK moved to $(rev "refs/heads/$TRUNK" | cut -c1-12) while $id was gated at ${tip:0:12}; rebasing it onto the new tip and gating it again" >&2; fi
   done
   [ -n "$still" ] || refuse "the trunk kept moving while $id was gated; it lands on the next try"

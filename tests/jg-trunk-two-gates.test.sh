@@ -9,6 +9,8 @@
 # G3 With gate-slots=1 the second lane waits for the first one's end: no overlap, and both still land.
 # G4 The window (core/trunk-landing/window.sh): a red gate halves it to one gate, so the next lane gates alone and a lane ready meanwhile
 #    waits; a landing grows it back to two and the waiting lane lands. gate-slots=1 keeps it at one.
+# G5 A chain of fronts (gate-slots=3, heavy_slots=3): three lanes gate at once, each on the commit of the one below, a fourth waits for a
+#    position, and all land in order after one gate each. A red lane in the middle is returned and the lane above it gates once more.
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
@@ -111,7 +113,40 @@ test_a_red_gate_halves_the_window_and_a_landing_grows_it() {
   pass 'a red gate halves the window, a lane waits behind the one gate, and landings grow it back'
 }
 
+deep_world() { slow_world "$1" 'gate-slots=3'; mkdir -p "$HOME_D/config"; printf 'heavy_slots=3\n' > "$HOME_D/config/lane-scale"; }
+
+test_a_deep_chain_gates_three_lanes_at_once_and_lands_them_in_order() {
+  local base
+  deep_world deep; base=$(tip); : > "$W/hold"
+  lane d1 'd1' d1.txt; kick; wait_for 'the first lane gates' has_starts 1; wait_for 'the first lane is the front' front_published
+  lane d2 'd2' d2.txt; kick; wait_for 'the second gate starts while the first is open' has_starts 2
+  lane d3 'd3' d3.txt; kick; wait_for 'the third gate starts while the first is open' has_starts 3
+  [ -s "$HOME_D/state/trunk-front-proj@3" ] || fail "the third lane publishes its place in the chain"
+  lane d4 'd4' d4.txt; kick; sleep 1
+  [ "$(starts)" = 3 ] || fail "with three positions a fourth lane waits, got $(starts) starts"
+  touch "$W/release"; settle "$base" 4
+  [ "$(starts)" = 4 ] || fail "four lanes take 4 gate runs (none is gated again), got $(starts)"
+  [ "$(git -C "$PROJ" log --reverse --format=%s "$base..trunk" | paste -sd, -)" = "ticket d1,ticket d2,ticket d3,ticket d4" ] || fail "all land in order: $(git -C "$PROJ" log --format=%s "$base..trunk")"
+  ls "$HOME_D"/state/trunk-front-proj* >/dev/null 2>&1 && fail "a landed chain leaves no record: $(ls "$HOME_D"/state/trunk-front-proj*)"
+  pass 'three lanes gate at once on a chain of fronts, a fourth waits, and all land in order'
+}
+
+test_a_red_middle_lane_costs_the_lane_above_it_one_more_gate() {
+  local base
+  deep_world mid; base=$(tip); : > "$W/hold"
+  lane m1 'm1' m1.txt; kick; wait_for 'the first lane gates' has_starts 1; wait_for 'the first lane is the front' front_published
+  lane m2 'BAD' m2.txt; kick; wait_for 'the second gate starts' has_starts 2
+  lane m3 'm3' m3.txt; kick; wait_for 'the third gate starts' has_starts 3
+  touch "$W/release"; settle "$base" 2
+  [ "$(starts)" = 4 ] || fail "the lane above a red one is gated once more (4 runs), got $(starts)"
+  [ "$(git -C "$PROJ" log --reverse --format=%s "$base..trunk" | paste -sd, -)" = "ticket m1,ticket m3" ] || fail "m1 and m3 land, m2 does not: $(git -C "$PROJ" log --format=%s "$base..trunk")"
+  grep -qs '^final' "$HOME_D"/data/jg-trunk-landing/m2.*.state || fail "the red lane is returned for good"
+  pass 'a red middle lane is returned and the lane above it is gated again'
+}
+
 test_two_lanes_land_in_about_one_gate
+test_a_deep_chain_gates_three_lanes_at_once_and_lands_them_in_order
+test_a_red_middle_lane_costs_the_lane_above_it_one_more_gate
 test_a_red_gate_halves_the_window_and_a_landing_grows_it
 test_a_red_first_lane_costs_the_second_one_more_gate
 test_one_slot_lands_one_lane_at_a_time
