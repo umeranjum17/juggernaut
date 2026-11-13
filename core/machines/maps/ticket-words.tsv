@@ -76,6 +76,11 @@ word	delivery	in-homes-off	delivering.live,released	-	ok
 word	delivery	in-use	delivering.live,released	-	ok
 word	delivery	pinned-behind	=	tick	red
 word	delivery	reverted	building,closed	-	red
+word	cleanup	requested	=	tick	ok
+word	cleanup	checking	=	tick	ok
+word	cleanup	refused	=	lead (blocker)	ok
+word	cleanup	removing	=	tick	ok
+word	cleanup	done	closed	-	-
 word	host	ok	-	-	-
 word	host	pool-full	ready	tick	ok
 word	markers	owned	-	-	-
