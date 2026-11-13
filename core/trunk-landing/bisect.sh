@@ -12,7 +12,7 @@
 # A verdict never lands anything: the stack loop of cmd_land_batch lands a green half through land_group, which moves the trunk only if
 # it is still where the half was gated. A half is gated as the lander would stack it: when a lane would conflict on the bare tip
 # (it needs the lane before it), nothing is gated in parallel and the halves run one after the other.
-# Needs from the caller: STATE PN B_C0 B_CUR B_WHY, pol, chain_on, batch_gate. Uses only git plumbing through those.
+# Needs from the caller: STATE PN B_C0 B_CUR B_WHY, pol, chain_on, batch_gate, red_seen. Uses only git plumbing through those.
 
 BISECT_DIR=''
 
@@ -43,6 +43,8 @@ bisect_pair() {  # <first count> <idx>...
     chain_on "$B_TIP" "${part_idx[@]}"
     if [ "${#CHAIN[@]}" -ne "${#part_idx[@]}" ]; then clean=0; break; fi
     f=$(bisect_file "$B_TIP" "${CHAIN[@]}")
+    # A half the red ledger already holds for this tip is never gated again (H29a): the stack loop returns it from the ledger.
+    [ -z "$(red_seen "${CHAIN[@]}")" ] || continue
     if [ ! -e "$f" ]; then bisect_gate "$f" "${B_CUR[${CHAIN[${#CHAIN[@]}-1]}]}" "${#CHAIN[@]}"; waiting+=("$f"); fi
   done
   wait || true
