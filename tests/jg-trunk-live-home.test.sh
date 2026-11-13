@@ -159,7 +159,45 @@ test_the_stray_pool_gitignore_line_is_cleared_and_other_edits_are_kept() {
   pass 'live clears only the stray pool gitignore line, and keeps and reports any other edit'
 }
 
+# A home left half-moved to an EARLIER go-live target (index and tree equal that commit, HEAD still behind, the ref update refused)
+# is adopted at that commit and carried to the new target. A home whose index matches no trunk commit, or that holds an extra
+# untracked file, keeps the dirty refusal and loses nothing.
+test_a_home_half_moved_to_an_earlier_target_finishes() {
+  local c1 out
+  world halfmoved
+  land_on_trunk first
+  c1=$C
+  git -C "$HOMEC" fetch -q "$PROJ" refs/heads/trunk-v3 || fail "fixture: fetch the earlier target"
+  git -C "$HOMEC" read-tree -u -m HEAD "$c1" || fail "fixture: cannot stage the earlier target"
+  [ "$(git -C "$HOMEC" write-tree)" = "$(git -C "$PROJ" rev-parse "$c1^{tree}")" ] || fail "fixture: index must equal the earlier target tree"
+  git -C "$PROJ" reset -q --hard "$c1"; land_on_trunk second
+  out=$(trunk live "$PROJ" 2>&1) || fail "a half-moved home must go live: $out"
+  [ "$(git -C "$HOMEC" rev-parse HEAD)" = "$C" ] || fail "the home must reach the new target: $out"
+  [ -z "$(git -C "$HOMEC" status --porcelain)" ] || fail "the moved home must be clean"
+  world halfmovedmine
+  land_on_trunk first
+  c1=$C
+  git -C "$HOMEC" fetch -q "$PROJ" refs/heads/trunk-v3
+  git -C "$HOMEC" read-tree -u -m HEAD "$c1"
+  printf 'mine\n' > "$HOMEC/note.txt"
+  git -C "$PROJ" reset -q --hard "$c1"; land_on_trunk second
+  live_fails "dirty working tree"
+  [ -f "$HOMEC/note.txt" ] || fail "the untracked file must be kept"
+  world halfmovedodd
+  land_on_trunk first
+  c1=$C
+  git -C "$HOMEC" fetch -q "$PROJ" refs/heads/trunk-v3
+  git -C "$HOMEC" read-tree -u -m HEAD "$c1"
+  printf 'edit\n' >> "$HOMEC/work.txt"
+  git -C "$PROJ" reset -q --hard "$c1"; land_on_trunk second
+  live_fails "dirty working tree"
+  grep -qx edit "$HOMEC/work.txt" || fail "the edit must be kept"
+  [ "$(git -C "$HOMEC" rev-parse HEAD)" != "$C" ] || fail "an index matching no trunk commit must not move"
+  pass 'a home half-moved to an earlier target finishes; an extra file or an edit keeps the refusal and loses nothing'
+}
+
 test_guarded_home_moves_with_its_recorded_tip
+test_a_home_half_moved_to_an_earlier_target_finishes
 test_the_stray_pool_gitignore_line_is_cleared_and_other_edits_are_kept
 test_a_home_that_cannot_move_says_why
 test_a_failed_ref_update_leaves_the_home_clean_at_the_old_commit

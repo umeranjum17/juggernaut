@@ -509,6 +509,30 @@ test_half_moved_index_equal_to_target_finishes() {
   pass "T5d half-moved home with index equal to target finishes; extra local state stays refused"
 }
 
+# A home whose index and working tree equal an EARLIER target commit C (HEAD behind C, the target past C) finishes: C is
+# adopted, then the guarded fast-forward reaches the target. An extra untracked file keeps the refusal.
+test_half_moved_to_an_earlier_target_finishes() {
+  local w out c1 target h
+  w=$(new_world t5e)
+  add_sm "$w" sm1
+  add_sm "$w" sm2
+  printf 'one\n' > "$w/seed/step.md"; git -C "$w/seed" add -A; git -C "$w/seed" commit -qm step-one; git -C "$w/seed" push -q origin main
+  c1=$(git -C "$w/seed" rev-parse HEAD)
+  printf 'two\n' > "$w/seed/step.md"; git -C "$w/seed" commit -qam step-two; git -C "$w/seed" push -q origin main
+  target=$(git -C "$w/seed" rev-parse HEAD)
+  for h in sm1 sm2; do
+    git -C "$w/$h" fetch -q origin 2>/dev/null || true
+    git -C "$w/$h" read-tree -u -m HEAD "$c1" || fail "fixture: cannot stage the earlier target"
+  done
+  printf 'mine\n' > "$w/sm2/untracked-note.txt"
+  out=$(run_update "$w")
+  [ "$(git -C "$w/sm1" rev-parse HEAD)" = "$target" ] || fail "sm1 must reach the target: $out"
+  git -C "$w/sm1" diff --quiet HEAD || fail "sm1 lost or gained changes"
+  assert_contains "$out" "squad_lead sm2: skipped" "an untracked file must keep the refusal"
+  [ -f "$w/sm2/untracked-note.txt" ] || fail "sm2 untracked file was lost"
+  pass "T5e home half-moved to an earlier target finishes; extra local state stays refused"
+}
+
 # --- T6: the git side is idempotent; the restart set is not -----------------
 # This is the SSHHIP case: that mate's home was already at the target commit, so
 # the old classifier skipped it entirely and its agent kept running the launch-time
@@ -746,6 +770,7 @@ test_diverged_squad_lead_skipped
 test_squash_merged_divergence_reconciles
 test_patch_equivalent_conflicting_divergence
 test_half_moved_index_equal_to_target_finishes
+test_half_moved_to_an_earlier_target_finishes
 test_already_current_squad_lead_still_restarts
 test_already_current_unprovable_mate_is_nudged
 test_registry_backstop_dedup_and_self_exclusion

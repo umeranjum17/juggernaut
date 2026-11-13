@@ -528,14 +528,10 @@ ff_rollback_half_move() { # <dir> <old-rev> <new-rev>
   git -C "$dir" read-tree -u -m "$new" "$old" >/dev/null 2>&1 || true
 }
 
-# Finish a half-done move without loss. A killed or refused move can leave the index (and tree) at the
-# target while HEAD is still behind, and reset --keep then sees local changes and refuses. When the index
-# tree, the tracked working tree and the target tree are all equal and no untracked file outside the
-# operational dirs exists, nothing is left to lose, so HEAD alone is re-pointed (reset --soft); any other
-# state returns 1 and keeps the caller's refusal. Never --hard, never a stash.
-ff_finish_half_move() { # <dir> <target-commit>
-  local dir=$1 target=$2 want got path first
-  want=$(git -C "$dir" rev-parse "$target^{tree}" 2>/dev/null) || return 1
+# True when nothing in the home is left to lose beside a tree: the index tree equals <tree>, the tracked
+# working tree equals the index, and no untracked file outside the operational dirs exists.
+ff_state_is_exactly_tree() { # <dir> <tree>
+  local dir=$1 want=$2 got path first
   got=$(git -C "$dir" write-tree 2>/dev/null) || return 1
   [ "$got" = "$want" ] || return 1
   git -C "$dir" diff --quiet -- 2>/dev/null || return 1
@@ -545,7 +541,36 @@ ff_finish_half_move() { # <dir> <target-commit>
     [ "$path" = "$SUB_HOME_MARKER" ] && continue
     return 1
   done < <(git -C "$dir" ls-files --others --exclude-standard 2>/dev/null)
+}
+
+# Finish a half-done move without loss. A killed or refused move can leave the index (and tree) at the
+# target while HEAD is still behind, and reset --keep then sees local changes and refuses. When the index
+# tree, the tracked working tree and the target tree are all equal and no untracked file outside the
+# operational dirs exists, nothing is left to lose, so HEAD alone is re-pointed (reset --soft); any other
+# state returns 1 and keeps the caller's refusal. Never --hard, never a stash.
+ff_finish_half_move() { # <dir> <target-commit>
+  local dir=$1 target=$2 want
+  want=$(git -C "$dir" rev-parse "$target^{tree}" 2>/dev/null) || return 1
+  ff_state_is_exactly_tree "$dir" "$want" || return 1
   git -C "$dir" reset --soft "$target" >/dev/null 2>&1
+}
+
+# Adopt the earlier trunk commit a half-done move stopped at: the first commit C on the path to <target>
+# (reachable from it, not from HEAD) whose tree is exactly the home's index and working tree, and that either
+# descends from HEAD or holds a redundant divergence from it. HEAD alone moves to C (reset --soft), so the
+# caller's normal guarded fast-forward carries the clean home on to the target. A redundant divergence is
+# adopted only when <allow-divergence> is yes (the same callers that may reset --keep one). Any other state returns 1.
+ff_adopt_half_moved_commit() { # <dir> <target-commit> <allow-divergence>
+  local dir=$1 target=$2 allow_divergence=$3 idx commit tree
+  idx=$(git -C "$dir" write-tree 2>/dev/null) || return 1
+  while read -r commit tree; do
+    [ "$tree" = "$idx" ] || continue
+    git -C "$dir" merge-base --is-ancestor HEAD "$commit" 2>/dev/null \
+      || { [ "$allow_divergence" = yes ] && divergence_is_redundant "$dir" "$(git -C "$dir" rev-parse HEAD)" "$commit"; } || continue
+    ff_finish_half_move "$dir" "$commit" && return 0
+    return 1
+  done < <(git -C "$dir" log --format='%H %T' "$target" --not HEAD 2>/dev/null)
+  return 1
 }
 
 FF_STATUS=""
@@ -618,6 +643,12 @@ ff_target() {
       echo "$label: reconciled redundant divergence $before..$after (index and tree already at the target)"
       return 0
     fi
+  fi
+  local allow_divergence=no
+  if [ "$contained_repoint" = yes ] || { [ -n "$squad_lead_id" ] && [ -n "$reconciliation_state" ]; }; then allow_divergence=yes; fi
+  if [ -n "$dirty" ] && base_rev=$(git -C "$dir" rev-parse "$base" 2>/dev/null) \
+    && ff_adopt_half_moved_commit "$dir" "$base_rev" "$allow_divergence"; then
+    dirty=$(dirty_paths "$dir" "$ignore_seed_marker")
   fi
   if [ -n "$dirty" ]; then
     echo "$label: skipped: dirty working tree"
