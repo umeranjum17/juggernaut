@@ -28,7 +28,7 @@ concurrency:
 #
 # A pull request owes the FAST required set only: the repo invariants, the
 # sharded changed-file lint (bin/jg-lint.sh --changed-base), and the tier-ci
-# journeys (done-done run --tier ci). Those finish in minutes because lint works
+# journeys (bin/jg-tier-run.sh ci). Those finish in minutes because lint works
 # on the files the change touches and tier ci holds only the fast contract scripts. It also owes the Bus service, Shell syntax, and
 # Smoke plus Fast evals suites when it touches that suite's area (bin/jg-ci-scope.sh
 # owns the paths); an untouched area skips, and `CI required` refuses a touched
@@ -394,8 +394,8 @@ jobs:
   # tool; every other journey runs on our host, in proving and in the line's
   # verify, and the whole suite on main and release branches is
   # .github/workflows/behavior.yml, which runs post-merge. No shell test shard
-  # runs here. In CI (GITHUB_ACTIONS=true) `done-done run` defaults to tier ci;
-  # the flag is spelled out so the job states what it owes.
+  # runs here. done-done 0.6.27 cannot run a whole tier in one call (`run --tier ci`
+  # alone stops with "run needs a journey"), so bin/jg-tier-run.sh names each tier-ci journey.
   tier-ci:
     name: Tier ci
     runs-on: ubuntu-latest
@@ -443,7 +443,7 @@ jobs:
           bin/jg-bootstrap.sh install done-done
           echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
       - name: Run the tier-ci journeys
-        run: done-done run --tier ci
+        run: bin/jg-tier-run.sh ci
 
   # The one required status check: it always reports, refusing a lane that did
   # not run.

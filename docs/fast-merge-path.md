@@ -15,7 +15,7 @@ them:
 - `Repo invariants` - the seconds-long file comparisons and the coverage proofs.
 - `Lint <n>` - the sharded lint over the files the change touched
   (`bin/jg-lint.sh --changed-base <base>`), not over the whole tree.
-- `Tier ci` - the journeys `.done-done.yaml` marks `tier: ci`, run as `done-done run --tier ci`.
+- `Tier ci` - the journeys `.done-done.yaml` marks `tier: ci`, run by `bin/jg-tier-run.sh ci`, one `done-done run <journey> --tier ci` each.
   No shell test shard runs on GitHub. The other scripts run on our host: in proving, in the line's verify, and each night.
 
 `CI required` is still the one required status check, and `bin/jg-ci-required.sh`
