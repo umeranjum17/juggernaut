@@ -31,6 +31,9 @@ local, unparked lead home with that home's own sentinel state and relaunch tools
   tick's beat, the unacknowledged wakes and the age of each open alert, starts a dead watcher again, raises
   `supervision-down` (`watcher-dead`, `escalation-stuck`) and writes one row a run to `state/.sentinel-health.tsv`.
   `wiring.sh` does not install the timer yet.
+- `episodes.sh` and `slo.sh` — what `bin/jg-away-reach.sh` pages the owner for. `slo.sh` is the fleet error budget (slice H36):
+  landings under half of ready work in `JG_SLO_WINDOW` seconds (default 1800) is one burn, paged once when it opens and
+  once when it closes, never once per tick. The test is `tests/jg-away-reach.test.sh`.
 - `wiring.sh` — copies the sentinel to `${XDG_DATA_HOME:-$HOME/.local/share}/jg-sentinel`
   and points the `jg-sentinel` user unit at that copy for one home.
 - `unwiring.sh` — restores the unit to its text from before the first install,
