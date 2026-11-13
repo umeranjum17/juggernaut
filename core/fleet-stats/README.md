@@ -44,6 +44,13 @@ continues to run its own readers, and the lock-library line of
   `data/metrics/retro-index.jsonl`; `show` reads a stored line back. The
   collectors that fill `prs.tsv` and `daily.tsv` are not in it.
   Test: `tests/retro-metrics.test.sh`.
+- `tool-cpu.sh` - which fleet scripts start the mise shim, gh, chromium and shellcheck
+  processes that take the most busy cores (H53). It averages a few process-table
+  samples, charges each tool process to the nearest `.sh` script above it, and prints
+  cores per tool and caller. `--daily` records one sample a UTC day in
+  `data/metrics/tool-cpu.tsv`; with `--file-tickets` it files one `tool-cpu-<script>`
+  ticket per top caller through `bin/jg-backlog.sh`, none while one is open. The
+  header owns usage. Test: `tests/jg-tool-cpu.test.sh`. Nothing runs it on a timer yet.
 
 ## Frozen contract (identical to the fork)
 
