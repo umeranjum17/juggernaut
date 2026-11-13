@@ -114,8 +114,6 @@
 # queue behind each other (tests/jg-teardown-lock-hold.test.sh); the slot-owner
 # checks are repeated inside the lock. Forced squad_lead teardown takes it and runs the same checks for every
 # descendant Treehouse slot before touching any child.
-# A teardown waits for that lock up to JG_TEARDOWN_LOCK_WAIT seconds (default 120) before it refuses; a dead holder is
-# taken over at once. Only then does it refuse, changing nothing.
 # These refusals are not relaxed by --force: --force authorizes discarding THIS
 # task's unlanded work, never another task's live work. Nothing of this task's
 # own is removed by a refusal; reconcile whichever record is wrong and re-run.
@@ -463,12 +461,8 @@ DESCENDANT_TREEHOUSE_LOCK_PATHS=()
 teardown_pool_lock_acquire() {
   [ "$TREEHOUSE_SLOT_LOCK_REQUIRED" = 1 ] || return 0
   [ "$TREEHOUSE_PROJECT_LOCK_HELD" != 1 ] || return 0
-  # Wait with a deadline: the lock is held for the short slot return only, and a refusal leaves a landed lane's record
-  # behind. A dead holder is taken over by the acquire itself. A spawn does not wait on this lock, so it is never delayed.
-  local wait=${JG_TEARDOWN_LOCK_WAIT:-120}
-  case $wait in ''|*[!0-9]*) wait=120 ;; esac
-  jg_lock_acquire_wait_max "$TREEHOUSE_PROJECT_LOCK" "$wait" || {
-    echo "REFUSED: another Treehouse slot allocation or return is in progress for $TEARDOWN_LOCK_PROJECT (waited ${wait}s); the task record is kept, rerun teardown" >&2
+  jg_lock_try_acquire "$TREEHOUSE_PROJECT_LOCK" || {
+    echo "REFUSED: another Treehouse slot allocation or return is in progress for $TEARDOWN_LOCK_PROJECT; the task record is kept, rerun teardown" >&2
     return 1
   }
   TREEHOUSE_PROJECT_LOCK_HELD=1

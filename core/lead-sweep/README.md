@@ -5,11 +5,6 @@ Every watcher beat sweeps the landed lanes of its own home and cleans them up, w
 `lead-sweep.sh check <jg-home>` is the watcher check.
 It prints one line when a lane is cleaned up and one line when a cleanup is refused.
 
-A cleanup can wait minutes for the project's slot lock (`JG_TEARDOWN_LOCK_WAIT`, default 120 seconds per lane), and a check has 30 seconds.
-So the check does not sweep itself: it prints the results of finished jobs, starts `lead-sweep.sh job <jg-home>` detached (one at a time per home), and returns.
-The job sweeps the lanes oldest done line first and publishes its lines as `data/lead-sweep/results.<time>` for the next beat.
-`lead-sweep.sh run <jg-home>` is one sweep in the foreground.
-
 ## What is swept
 
 A lane (kind ship or scout) whose latest status line is `done` or `resolved` (an answered lane), and that has landed:
@@ -47,4 +42,4 @@ A refusal is kept in `data/lead-sweep/<id>.reported` and printed once; the same 
 
 ## Test
 
-`bash tests/jg-lead-sweep-end-states.test.sh` runs the end-state journey (resolved lanes); `bash core/lead-sweep/tests/lead-sweep.test.sh` runs the whole journey against a fixture home with real git clones, a recording teardown and a forge stub. `bash tests/jg-teardown-lock-wait.test.sh` runs the lock-wait journey: a held lock, a dead holder and the sweep job.
+`bash tests/jg-lead-sweep-end-states.test.sh` runs the end-state journey (resolved lanes); `bash core/lead-sweep/tests/lead-sweep.test.sh` runs the whole journey against a fixture home with real git clones, a recording teardown and a forge stub.

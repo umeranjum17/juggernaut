@@ -61,7 +61,7 @@ lane() {
 }
 onto() { git -C "$P" merge -q --no-ff "fm/$1" -m "land $1"; git -C "$P" rev-parse trunk > "$FM/state/trunk-tip-proj"; }
 git -C "$P" rev-parse trunk > "$FM/state/trunk-tip-proj"
-sweep() { : > "$STUB_LOG"; "$SRC/lead-sweep.sh" run "$FM" > "$d/out" 2>&1; }
+sweep() { : > "$STUB_LOG"; "$SRC/lead-sweep.sh" check "$FM" > "$d/out" 2>&1; }
 tore() { grep -c "^$1\$" "$STUB_LOG" || true; }
 
 lane land ship 'done [at=1]: ready' ; lane dirty ship 'done [at=1]: ready'; echo "src/a.go" > "$FM/state/dirty-dirty"
