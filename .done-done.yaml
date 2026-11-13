@@ -502,7 +502,7 @@ journeys:
     command: (for f in core/machines/*.states; do bash bin/jg-machine.sh enum "$(basename "$f" .states)" || exit 1; done; bash bin/jg-machine.sh check ticket && bash bin/jg-machine.sh check delivering && bash tests/jg-machine-enum.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   machine-rules:
     tier: local
-    command: (for f in core/machines/tables/*.tsv; do bash bin/jg-machine.sh check "$(basename "$f" .tsv)" || exit 1; done; bash tests/jg-machine-lint.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    command: bash journeys/machine-rules.sh
   ship-brief-style:
     tier: local
     command: bash journeys/ship-brief-style.sh

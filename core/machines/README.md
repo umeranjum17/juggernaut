@@ -12,6 +12,7 @@ The records stay the truth: the table never stores a state, and the command neve
 - `jg-machine.sh events <machine>` lists the events a table declares: event, from, to.
 - `jg-machine.sh word <map> <list> <word>`, `replay <map> <corpus>` and `records <map> <records>` read a word map (below).
 - `jg-machine.sh enum <name>` lints one enum file (below) and prints its value count.
+- `jg-machine.sh writers <machine>` lists each edge whose writer file calls neither the shadow nor the move command (`jg-machine-guard`, `jg-machine-shadow`, `jg-move.sh`), then a count line; it only reports and exits 0 (override the folder the writer files are read from: `JG_MACHINES_ROOT`).
 - `jg-machine.sh coverage <machine>` lists each edge whose test id is empty or `-` and exits 1 when there is one.
 - `jg-machine.sh diagram <machine>` prints a Mermaid state diagram generated from the table.
 - `jg-machine.sh edge-check <machine> <from> <to>` prints `legal` with the event and writer, or `illegal`, and exits 1 for an illegal move; it only reads, so a writer may call it in shadow.

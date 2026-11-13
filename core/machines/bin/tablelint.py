@@ -5,6 +5,7 @@ that wakes it) or final. A state line may carry the mode and its limit as its si
 state has no move out yet, so it is not a dead end; with no mode, a terminal state
 is final and every other state is active. load() in machine.py calls lint() once the edges are expanded and prints each defect it returns.
 """
+import os
 import re
 
 MODES = ("active", "waiting", "rest", "final")
@@ -58,3 +59,27 @@ def lint(m):
         if s["kind"] != "terminal" and not out and not m["open"].get(k, m["open"].get("*")):
             bad.append(f"dead end {k} is not final")
     return bad
+
+
+REPORTERS = ("jg-machine-guard", "jg-machine-shadow", "jg-move.sh")
+
+
+def silent_writers(m, root):
+    """Report mode, never a defect: one line for each edge whose writer file (the part of `file:function` before the colon, under root) does not call the shadow or the move command.
+
+    A file that cannot be read counts as silent, so a table that names a file which does not exist is named too.
+    """
+    seen, out = {}, []
+    for e in m["rows"]:
+        path = e["writer"].split(":", 1)[0]
+        if path in ("", "-"):
+            continue
+        if path not in seen:
+            try:
+                text = open(os.path.join(root, path), encoding="utf-8", errors="replace").read()
+            except OSError:
+                text = ""
+            seen[path] = any(r in text for r in REPORTERS)
+        if not seen[path]:
+            out.append(f"silent {m['name']} {e['from']} {e['event']} {e['to']}\t{e['writer']}")
+    return out

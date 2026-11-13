@@ -5,7 +5,7 @@ import os, re, subprocess, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tablelint
 
-USAGE = "usage: jg-machine.sh show|next <machine> <id> | enum <name> | legal <enum> <value> | write <enum> <value> <file> | check <machine> [--corpus <file>] | coverage|diagram|events <machine> | edge-check <machine> <from> <to>"
+USAGE = "usage: jg-machine.sh show|next <machine> <id> | enum <name> | legal <enum> <value> | write <enum> <value> <file> | check <machine> [--corpus <file>] | coverage|diagram|events|writers <machine> | edge-check <machine> <from> <to>"
 
 
 def die(msg, rc=2):
@@ -207,6 +207,15 @@ def check(m, corpus):
     sys.exit(1 if findings else 0)
 
 
+def writers(m):
+    """Report mode: list each edge whose writer file does not report its move; exit 0 whatever it finds."""
+    root = os.environ.get("JG_MACHINES_ROOT") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..")
+    silent = tablelint.silent_writers(m, root)
+    for ln in silent:
+        print(ln)
+    print(f"report {m['name']}: {len(m['rows'])} edges, {len(silent)} silent")
+
+
 def coverage(m):
     """An edge with no test id (empty or '-') is untested."""
     bad = [e for e in m["rows"] if e["test"] in ("", "-")]
@@ -289,8 +298,8 @@ def main(a):
         vals = check_enum(a[1])
         print(f"ok enum {a[1]}: {len(vals)} values")
         return
-    if len(a) == 2 and a[0] in ("coverage", "diagram", "events"):
-        {"coverage": coverage, "diagram": diagram, "events": events}[a[0]](load(a[1]))
+    if len(a) == 2 and a[0] in ("coverage", "diagram", "events", "writers"):
+        {"coverage": coverage, "diagram": diagram, "events": events, "writers": writers}[a[0]](load(a[1]))
         return
     if len(a) == 4 and a[0] == "edge-check":
         edge_check(load(a[1]), a[2], a[3])
