@@ -429,6 +429,45 @@ test_squash_merged_divergence_reconciles() {
   pass "T5b squash-merged divergence heals and rejoins live convergence"
 }
 
+# A conflicting but patch-equivalent divergence heals; a unique commit still refuses.
+# Shape: upstream landed the same patch, then emptied the file, so the tree merge conflicts.
+test_patch_equivalent_conflicting_divergence() {
+  local w out before
+  w=$(new_world t5c)
+  add_sm "$w" sm1
+  printf 'a\n' > "$w/seed/stats.md"
+  git -C "$w/seed" add -A; git -C "$w/seed" commit -qm base-stats; git -C "$w/seed" push -q origin main
+  git -C "$w/sm1" checkout -q --detach origin/main 2>/dev/null || git -C "$w/sm1" checkout -q --detach "$(git -C "$w/seed" rev-parse HEAD)"
+  git -C "$w/sm1" fetch -q origin 2>/dev/null || true
+  git -C "$w/sm1" checkout -q --detach "$(git -C "$w/seed" rev-parse HEAD)"
+  printf 'a\nb\n' > "$w/sm1/stats.md"
+  git -C "$w/sm1" commit -qam same-patch
+  printf 'a\nb\n' > "$w/seed/stats.md"
+  git -C "$w/seed" commit -qam same-patch-upstream
+  : > "$w/seed/stats.md"
+  git -C "$w/seed" commit -qam empty-after
+  git -C "$w/seed" push -q origin main
+
+  out=$(run_update "$w")
+  assert_contains "$out" "squad_lead sm1: reconciled redundant divergence" \
+    "a conflicting patch-equivalent divergence did not heal"
+  [ "$(git -C "$w/sm1" rev-parse HEAD)" = "$(git -C "$w/sm1" rev-parse origin/main)" ] \
+    || fail "patch-equivalent home did not reach origin/main"
+
+  # A second home with an extra unique commit must stay skipped.
+  add_sm "$w" sm2
+  git -C "$w/sm2" checkout -q --detach "$(git -C "$w/seed" rev-parse HEAD~2)"
+  printf 'a\nb\n' > "$w/sm2/stats.md"
+  git -C "$w/sm2" commit -qam same-patch
+  printf 'unique\n' > "$w/sm2/unique.md"
+  git -C "$w/sm2" add -A; git -C "$w/sm2" commit -qm unique-work
+  before=$(git -C "$w/sm2" rev-parse HEAD)
+  out=$(run_update "$w")
+  assert_contains "$out" "squad_lead sm2: skipped: diverged from origin/main" "unique commit was not protected"
+  [ "$(git -C "$w/sm2" rev-parse HEAD)" = "$before" ] || fail "unique work moved"
+  pass "T5c patch-equivalent conflicting divergence heals; unique commit stays"
+}
+
 # --- T6: the git side is idempotent; the restart set is not -----------------
 # This is the SSHHIP case: that mate's home was already at the target commit, so
 # the old classifier skipped it entirely and its agent kept running the launch-time
@@ -664,6 +703,7 @@ test_dirty_squad_lead_skipped
 test_ignored_untracked_output_does_not_refuse
 test_diverged_squad_lead_skipped
 test_squash_merged_divergence_reconciles
+test_patch_equivalent_conflicting_divergence
 test_already_current_squad_lead_still_restarts
 test_already_current_unprovable_mate_is_nudged
 test_registry_backstop_dedup_and_self_exclusion

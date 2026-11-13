@@ -375,12 +375,25 @@ squad_lead_update_reconcile_clear() { # <state> <id>
   rm -f -- "$marker"
 }
 
+# True when every local-only commit has a patch-equivalent commit in TARGET
+# (git cherry prints no '+' line) and the local-only range holds no merge
+# commit, whose own conflict resolution git cherry does not compare.
+divergence_is_patch_equivalent() { # <dir> <local-commit> <target-commit>
+  local dir=$1 local_commit=$2 target_commit=$3 cherry
+  [ -z "$(git -C "$dir" rev-list --merges "$target_commit..$local_commit" 2>/dev/null)" ] || return 1
+  cherry=$(git -C "$dir" cherry "$target_commit" "$local_commit" 2>/dev/null) || return 1
+  [ -n "$cherry" ] || return 1
+  ! printf '%s\n' "$cherry" | grep -q '^+'
+}
+
 # Prove that merging LOCAL into TARGET from their real merge base adds no tree
-# change to TARGET. A temporary index performs the three-way comparison without
-# touching the worktree or writing a merge commit. Conflicts or any remaining
-# content difference are not redundant and therefore stay diverged.
+# change to TARGET. Either every local-only commit is patch-equivalent in
+# TARGET, or a temporary index performs the three-way comparison without
+# touching the worktree or writing a merge commit. A conflict or content
+# difference with a commit that has no patch-equivalent stays diverged.
 divergence_is_redundant() { # <dir> <local-commit> <target-commit>
   local dir=$1 local_commit=$2 target_commit=$3 ancestor scratch index result=1
+  divergence_is_patch_equivalent "$dir" "$local_commit" "$target_commit" && return 0
   ancestor=$(git -C "$dir" merge-base "$local_commit" "$target_commit" 2>/dev/null) || return 1
   scratch=$(mktemp -d "${TMPDIR:-/tmp}/jg-ff-redundant.XXXXXX" 2>/dev/null) || return 1
   index="$scratch/index"
