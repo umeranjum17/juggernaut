@@ -1914,6 +1914,31 @@ jg_treehouse_project_lock_path() {  # <project-dir>
   printf '%s/.treehouse-project-%s.lock\n' "$root/state" "$hash"
 }
 
+# Treehouse names a pool after the clone's directory name and its origin, so
+# two clones of one origin that share a directory name (Main's projects/pockit
+# and a Squad Lead home's projects/pockit) land on one pool whose copies all
+# belong to the first clone. A home below the root therefore gives each of its
+# clones its own pool root under that home; the root home keeps Treehouse's
+# default root, so its existing pools stay where they are. A project that
+# already carries its own treehouse.toml keeps it.
+jg_treehouse_clone_pool_prepare() {  # <project-dir>
+  local project=$1 home root top gitdir toml pool_root exclude
+  [ -d "$project" ] || return 1
+  home=$(CDPATH='' cd -- "$JG_HOME" 2>/dev/null && pwd -P) || return 1
+  root=$(jg_juggernaut_root_home "$home") || return 1
+  [ "$home" != "$root" ] || return 0
+  top=$(git -C "$project" rev-parse --show-toplevel 2>/dev/null) || return 1
+  toml="$top/treehouse.toml"
+  [ ! -e "$toml" ] && [ ! -L "$toml" ] || return 0
+  pool_root="$home/.treehouse-pool"
+  mkdir -p "$pool_root" || return 1
+  printf 'root = "%s"\n' "$pool_root" > "$toml" || return 1
+  gitdir=$(git -C "$project" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+  exclude="$gitdir/info/exclude"
+  mkdir -p "$gitdir/info" || return 1
+  grep -qxF '/treehouse.toml' "$exclude" 2>/dev/null || printf '/treehouse.toml\n' >> "$exclude" || return 1
+}
+
 # A Treehouse slot has the managed pool's fixed <pool>/<slot>/<repo> layout.
 # Require both its pool state and the same Git common directory as the recorded
 # project; an ordinary linked worktree is not evidence that Treehouse owns it.

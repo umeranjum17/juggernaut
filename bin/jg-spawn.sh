@@ -4089,6 +4089,10 @@ elif [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] && [ "$BACKEND" != orca 
     echo "error: cannot enumerate recorded Treehouse copies: $JG_LOCAL_JUGGERNAUT_ERROR" >&2
     exit 1
   }
+  jg_treehouse_clone_pool_prepare "$PROJ_ABS" || {
+    echo "error: cannot prepare a pool for registered project '$PROJ_ABS'" >&2
+    exit 1
+  }
   python3 "$SCRIPT_DIR/jg-treehouse-protect.py" "$PROJ_ABS" "${JG_LOCAL_JUGGERNAUT_STATES[@]}" || exit 1
   lease_error=$(mktemp "$STATE/.treehouse-lease.XXXXXX") || exit 1
   if ! allocated=$(cd "$PROJ_ABS" && treehouse get --lease --lease-holder "$ID" 2>"$lease_error"); then
