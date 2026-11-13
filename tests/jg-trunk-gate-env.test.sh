@@ -37,7 +37,7 @@ echo "JG_TEST_SUMMARY total=$# failed=$failed skipped_gate=0 duration_ms=1"
 [ "$failed" -eq 0 ]
 SH
 chmod +x "$W/root/bin/jg-captain-hold.sh"
-printf 'gate-full=bash %s/rig.sh t/env.test.sh\ngate-rerun=bash %s/rig.sh\ngate-lint=true\n' "$W" "$W" > "$HOME_D/config/trunk-policy"
+printf 'gate-full=bash %s/rig.sh t/env.test.sh\ngate-rerun=bash %s/rig.sh\ngate-lint=true\nlanding-gate=tests\n' "$W" "$W" > "$HOME_D/config/trunk-policy"
 printf -- '- proj [local-trunk] - fixture project in local-trunk mode (added 2026-11-09)\n' > "$HOME_D/data/projects.md"
 jg_git_init_commit "$PROJ"
 trunk() { JG_HOME="$HOME_D" JG_ROOT_OVERRIDE="$W/root" JG_STATE_OVERRIDE="$HOME_D/state" JG_DATA_OVERRIDE="$HOME_D/data" \

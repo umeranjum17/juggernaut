@@ -18,6 +18,9 @@
 #                         paths, no committed binaries, regression coverage), then only the test scripts
 #                         the changed files map to, in eight shards run side by side (HEAD^ is the trunk tip:
 #                         the lander rebases the lane first)
+#   landing-gate          none        none: a landing runs the lint and no tests; the line's verify (one run for a batch, off the landing path)
+#                                     is the one test run, and a red it finds reverts the commit that caused it. tests: the landing also runs
+#                                     gate-full over the changed files (the rollback)
 #   gate-verify           the same invariants, then the whole suite: `verify` runs it on a landed commit on
 #                         demand (never per landing: the whole suite runs on the release PR in GitHub CI), and
 #                         a script that fails there and passes on the commit's parent reverts that one commit
@@ -101,6 +104,7 @@ jg_trunk_policy() {  # <key> [<project>]
       gate-red-ticket) val=core-self-checks-red ;;
       release-after-hours) val=48 ;;
       batch-max) val=5 ;;
+      landing-gate) val=none ;;
       gate-slots) val=2 ;;
       flush-at-ready) val=3 ;;
       flush-after-minutes) val=20 ;;

@@ -129,7 +129,7 @@ test_the_gates_are_policy_keys_with_fast_defaults() {
 test_a_project_that_is_not_juggernaut_never_runs_juggernauts_gates() {
   local out rc=0 sha lib="$ROOT/bin/jg-trunk-policy-lib.sh"
   world foreign
-  rm -f "$HOME_D/config/trunk-policy"  # no override at all: the built-in defaults decide, and they are Juggernaut's own suite
+  printf 'landing-gate=tests\n' > "$HOME_D/config/trunk-policy"  # no gate override: the built-in defaults decide, and they are Juggernaut's own suite
   # The fixture tracks a file under data/, which Juggernaut's own invariant would reject silently (an empty log, a verify that never passes).
   lane f1 one data/notes.txt
   out=$(trunk land f1 2>&1) || fail "a project with no gates set must land with none run: $out"
@@ -140,10 +140,10 @@ test_a_project_that_is_not_juggernaut_never_runs_juggernauts_gates() {
   assert_contains "$out" "no verify gate for proj" "verify must say it had no gate"
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$sha" ] || fail "verify with no gate must leave the trunk green so the home can go on"
   # The project's own gate-full is its verify gate when it set no gate-verify; its own gate-verify wins over it; both fail for real.
-  printf 'gate-full@proj=test ! -e BAD\n' > "$HOME_D/config/trunk-policy"
+  printf 'gate-full@proj=test ! -e BAD\nlanding-gate=tests\n' > "$HOME_D/config/trunk-policy"
   out=$(bash -c ". '$lib'; JG_CONFIG_OVERRIDE='$HOME_D/config' jg_trunk_gate gate-verify proj '$PROJ' trunk")
   [ "$out" = 'test ! -e BAD' ] || fail "a project with only gate-full@proj must verify with it, got '$out'"
-  printf 'gate-full@proj=true\ngate-verify@proj=false\n' > "$HOME_D/config/trunk-policy"
+  printf 'gate-full@proj=true\ngate-verify@proj=false\nlanding-gate=tests\n' > "$HOME_D/config/trunk-policy"
   out=$(bash -c ". '$lib'; JG_CONFIG_OVERRIDE='$HOME_D/config' jg_trunk_gate gate-verify proj '$PROJ' trunk")
   [ "$out" = false ] || fail "gate-verify@proj must win over gate-full@proj, got '$out'"
   rc=0; trunk verify "$PROJ" "$sha" >/dev/null 2>&1 || rc=$?
@@ -402,7 +402,7 @@ test_a_lane_proved_at_the_change_the_lander_lands_is_not_tested_again() {
   local out
   world once; local JG_TRUNK_SEALED_REUSE=1
   # The tests leave a mark each time the gate runs them; the lint still runs on every landing.
-  printf 'gate-full=echo ran >> %s/gate-runs; ! grep -q BAD work.txt\ngate-lint=echo linted >> %s/lint-runs; ! grep -q UGLY work.txt\n' "$W" "$W" > "$HOME_D/config/trunk-policy"
+  printf 'gate-full=echo ran >> %s/gate-runs; ! grep -q BAD work.txt\ngate-lint=echo linted >> %s/lint-runs; ! grep -q UGLY work.txt\nlanding-gate=tests\n' "$W" "$W" > "$HOME_D/config/trunk-policy"
   lane s1 one a.txt; lane s2 two b.txt
   # The trunk has not moved since s1 was proved and sealed: its sealed run is for the tree the lander would test.
   out=$(trunk land s1 2>&1) || fail "a lane proved at the tip's tree must land: $out"
@@ -527,6 +527,28 @@ test_a_ui_lane_states_its_nav_lines_in_the_commit_message_the_receipt_or_the_don
   pass 'a local ui lane names the commit message in the refusal and lands on its lines in the commit message, the receipt or the done line'
 }
 
+# A local lane lands with no tests at the landing (landing-gate=none, the default): the lint is the only check, the batch's verify is
+# the one test run, and a red it finds is reverted. landing-gate=tests is the rollback: the changed files' tests run at the landing again.
+test_a_local_lane_lands_with_no_tests_and_the_verify_reverts_a_red() {
+  local rc out c before
+  world nogate; rig
+  printf 'gate-full=bash %s/rig.sh t/n1.test.sh\ngate-verify=bash %s/rig.sh --all\n' "$W" "$W" > "$HOME_D/config/trunk-policy"  # no landing-gate line: the default
+  [ "$(pol landing-gate)" = none ] || fail "the landing runs no tests by default"
+  lane n1 'echo "not ok - n1 breaks the suite" >&2; exit 1' t/n1.test.sh; before=$(tip)
+  out=$(trunk land n1 2>&1) || fail "a lane whose test fails must land when no tests run at the landing: $out"
+  assert_contains "$out" "gate=no-landing-gate" "the landing records that no test ran"
+  [ "$(tip)" != "$before" ] || fail "the lane must be on the trunk"
+  c=$(tip); printf '%s\n' "$before" > "$HOME_D/state/trunk-green-proj"
+  rc=0; out=$(trunk verify "$PROJ" "$c" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "the verify must find the red: $out"
+  git -C "$PROJ" log --format=%B trunk | grep -q "^reverts: $c" || fail "the verify reverts the commit that caused the red: $out"
+  # The rollback key puts the changed-tests gate back at the landing.
+  printf 'landing-gate=tests\n' >> "$HOME_D/config/trunk-policy"
+  lane n2 'echo "not ok - n1 breaks the suite" >&2; exit 1' t/n1.test.sh
+  refused 'a landing with landing-gate=tests' n2 'gate'
+  pass 'a local lane lands with no tests at the landing, the verify reverts its red, and landing-gate=tests is the rollback'
+}
+
 test_the_full_gate_charges_a_lane_only_for_what_it_broke
 test_every_landing_writes_its_latency_row_from_the_done_epoch_it_recorded
 test_a_flaky_failure_gets_one_rerun_before_it_is_judged
@@ -546,4 +568,5 @@ test_a_design_lane_lands_after_the_trunk_moved_on_the_receipt_it_proved
 test_a_design_lane_refused_by_a_broken_lander_lands_after_the_lander_is_fixed
 test_a_hand_roll_approval_written_after_a_refusal_is_read_by_the_next_landing
 test_a_ui_lane_states_its_nav_lines_in_the_commit_message_the_receipt_or_the_done_line
+test_a_local_lane_lands_with_no_tests_and_the_verify_reverts_a_red
 printf 'jg-trunk-gate: ok\n'

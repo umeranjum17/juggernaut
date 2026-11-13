@@ -37,7 +37,7 @@
 #
 # A landing is ONE fast check and needs no worker turn and no Overwatch turn. `land` rebases the lane's one commit onto the
 # trunk tip by itself (a clean three-way merge; the lane branch follows it), runs the lint over the changed files (gate-lint),
-# runs the changed files' tests (gate-full: the fast required set, docs/fast-merge-path.md) judged against the trunk tip's own
+# runs, only when landing-gate=tests (the rollback; the default none runs no test at the landing, the line's verify is the one test run), the changed files' tests (gate-full: the fast required set, docs/fast-merge-path.md) judged against the trunk tip's own
 # result (skipped when the lane's passing sealed done-done run is for the very tree it would test: gate=sealed-run), and lands.
 # A landing never moves the green pin: the line's verify does (`verify`, started by each tick of core/trunk-landing while the tip is
 # above the pin), so the go-live and the release never take a combined head no test ran on. Only a conflict in the lane's
@@ -989,7 +989,8 @@ land_gates() {  # <id> <candidate> <base>
   local id=$1 cand=$2 base=$3 gate
   # Only a repository that carries Juggernaut's own suite gets its default gates; any other project runs the gates its home set for it, if any.
   if gate=$(jg_trunk_gate gate-lint "$PN" "$PROJ" "$cand"); then run_gate_try "$cand" "$gate" lint || return 1; else echo "land: $PN has no lint gate; none run" >&2; fi
-  if gate=$(jg_trunk_gate gate-full "$PN" "$PROJ" "$cand") && sealed_run_covers "$id" "$cand"; then GATE_KIND=sealed-run; echo "land: ${cand:0:12} is the change of $id's passing sealed run; the tests ran there, so only the lint ran here" >&2
+  if [ "$(pol landing-gate)" != tests ]; then GATE_KIND=no-landing-gate; echo "land: landing-gate=none; only the lint ran here, the line's verify runs the tests" >&2
+  elif gate=$(jg_trunk_gate gate-full "$PN" "$PROJ" "$cand") && sealed_run_covers "$id" "$cand"; then GATE_KIND=sealed-run; echo "land: ${cand:0:12} is the change of $id's passing sealed run; the tests ran there, so only the lint ran here" >&2
   elif gate=$(jg_trunk_gate gate-full "$PN" "$PROJ" "$cand"); then full_gate "$cand" "$gate" "$base" || return 1
   else GATE_KIND=no-gate; echo "land: $PN has no landing gate (no gate-full@$PN); none run" >&2; fi
 }
@@ -1094,6 +1095,7 @@ batch_gate() {  # <top> <stack size>   (B_TIP is the trunk tip the stack sits on
   errf=$(mktemp)
   ( [ -z "$lint" ] || run_gate "$1" "$(gate_from "$lint" "HEAD~$2")" lint ) 2>"$errf" || rc=$?
   if [ "$rc" -ne 0 ]; then :
+  elif [ "$(pol landing-gate)" != tests ]; then GATE_KIND=no-landing-gate; echo "land: landing-gate=none; only the lint ran here, the line's verify runs the tests" >>"$errf"
   elif [ -n "$full" ]; then full_gate "$1" "$(gate_from "$full" "HEAD~$2")" "$B_TIP" 2>>"$errf" || rc=$?
   else GATE_KIND=no-gate; echo "land: $PN has no landing gate (no gate-full@$PN); none run" >>"$errf"; fi
   cat "$errf" >&2

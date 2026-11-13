@@ -15,7 +15,7 @@ edge	queued	rebase	rebased	core/trunk-landing/trunk-landing.sh:run	-	a free gate
 edge	queued	conflict	resolving	core/trunk-landing/trunk-landing.sh:run	-	the rebase met a conflict, or the patch changed in the rebase	jg-machine-ticket:delivering
 edge	resolving	resolved	rebased	core/trunk-landing/trunk-landing.sh:run	-	the conflict is resolved and the journeys the touched files affect pass	jg-machine-ticket:delivering
 edge	before-the-line	give-back	returned	core/trunk-landing/trunk-landing.sh:run	-	the conflict cannot be resolved in its limit, a journey of the small run fails, or the quick check is red	jg-machine-ticket:delivering
-edge	rebased	gate	gated	core/trunk-landing/trunk-landing.sh:run	-	the quick check is green	jg-machine-ticket:delivering
+edge	rebased	gate	gated	core/trunk-landing/trunk-landing.sh:run	-	the quick check is green (the lint; no test runs at the landing unless landing-gate is tests)	jg-machine-ticket:delivering
 edge	gated	batch	batched	core/trunk-landing/trunk-landing.sh:run	-	knob local; yolo is on or the owner's word is on record	jg-machine-ticket:delivering
 edge	gated	join-pr	joining	bin/jg-pr-merge.sh:merge	-	knob pr; yolo is on or the owner's word is on record	jg-machine-ticket:delivering
 edge	batched	go-live	live	bin/jg-trunk.sh:verify	-	the verify of the line passed on a head that holds the commit, and the homes moved	jg-machine-ticket:delivering

@@ -25,7 +25,7 @@ git diff --name-only "$base" HEAD -- "tests/*.test.sh"' "seed selector"
   JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref refs/heads/trunk "$(git -C "$W/seed-sel" rev-parse HEAD)"
   git -C "$PROJ" rev-parse trunk > "$HOME_D/state/trunk-tip-proj"
   git -C "$PROJ" worktree remove --force "$W/seed-sel"
-  printf 'gate-full=echo ran >> %s/gate-runs\ngate-lint=true\n' "$W" > "$HOME_D/config/trunk-policy"
+  printf 'gate-full=echo ran >> %s/gate-runs\ngate-lint=true\nlanding-gate=tests\n' "$W" > "$HOME_D/config/trunk-policy"
 }
 
 # seal_with <id> <list json or -> [<files form: plain|hash>]: the lane's sealed run, with the list a changed-tests run wrote into its folder.
@@ -84,7 +84,7 @@ test_a_sealed_run_counts_only_when_it_says_it_ran_the_changed_tests() {
 test_a_project_without_a_selector_is_judged_by_the_tree_alone() {
   local out
   world nosel; JG_TRUNK_SEALED_REUSE=1
-  printf 'gate-full=echo ran >> %s/gate-runs\ngate-lint=true\n' "$W" > "$HOME_D/config/trunk-policy"
+  printf 'gate-full=echo ran >> %s/gate-runs\ngate-lint=true\nlanding-gate=tests\n' "$W" > "$HOME_D/config/trunk-policy"
   lane n1 'exit 0' tests/a.test.sh
   out=$(trunk land n1 2>&1) || fail "n1 must land: $out"
   assert_contains "$out" "gate=sealed-run" "with no selector the sealed run at the tree stands"
