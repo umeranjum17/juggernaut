@@ -3,7 +3,7 @@
 # Usage: wiring.sh [--dry-run] <jg-home>
 # Copies lead-sweep.sh to ${XDG_DATA_HOME:-~/.local/share}/jg-lead-sweep/, writes the home's
 # state/lead-sweep.check.sh as a one-line shim that execs it (mode 700), and registers the check with
-# the home's bin/jg-check-register.sh; a registration the register script refuses puts the old shim back.
+# the home's bin/jg-check-register.sh (the installed command starts its own detached sweep job, so the check's time limit does not end a cleanup that waits for a lock); a registration the register script refuses puts the old shim back.
 set -euo pipefail
 DRY=0
 [ "${1:-}" = --dry-run ] && { DRY=1; shift; }
