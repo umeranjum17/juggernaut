@@ -988,7 +988,7 @@ journeys:
     command: bash journeys/registry-union.sh
   agent-cli-proof-land:
     tier: local
-    command: bash journeys/core-run.sh 'bash agent-cli/tests/proof-land.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    command: bash journeys/core-run.sh 'bash agent-cli/tests/proof-land.test.sh && bash agent-cli/tests/proof-runner.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1 && printf '{"target":{"version":"core/agent-cli/proof.sh at this head"},"start":"a worker worktree whose home has one heavy slot, held by a live run, and one probed runner","steps":["run jg proof with a free slot and see it run here","hold the slot and run jg proof and see it go to the runner","lose the runner and run jg proof and see it stay here"],"result":"the log shows the proof ran on the runner when the host was full, its result and record were written here, and a lost runner left the run here"}\n' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
   live-checks:
     tier: local
     command: bash journeys/live-checks.sh
