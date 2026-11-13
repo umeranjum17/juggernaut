@@ -309,6 +309,25 @@ dirty_paths() { # <dir> [ignore_seed_marker]
   done
 }
 
+# Old Treehouse pools made Treehouse append this one line to a home's tracked
+# .gitignore; the pool now lives in the git dir, so the line is a leftover edit.
+# Drop it from the working copy when it is the only thing that edit holds for the
+# line: an exact whole-line match, absent from HEAD, with the file's index entry
+# equal to HEAD. Every other edit in the file stays and is reported as dirty.
+STRAY_POOL_GITIGNORE_LINE="/.treehouse-pool/.treehouse"
+clear_stray_pool_gitignore_line() { # <dir>
+  local dir=$1 file="$1/.gitignore" tmp
+  [ -f "$file" ] && [ ! -L "$file" ] || return 0
+  git -C "$dir" diff --quiet -- .gitignore 2>/dev/null && return 0
+  git -C "$dir" diff --cached --quiet HEAD -- .gitignore 2>/dev/null || return 0
+  grep -qxF -- "$STRAY_POOL_GITIGNORE_LINE" "$file" || return 0
+  git -C "$dir" show "HEAD:.gitignore" 2>/dev/null | grep -qxF -- "$STRAY_POOL_GITIGNORE_LINE" && return 0
+  tmp=$(mktemp "${TMPDIR:-/tmp}/jg-gitignore.XXXXXX") || return 0
+  { grep -vxF -- "$STRAY_POOL_GITIGNORE_LINE" "$file" || true; } > "$tmp"
+  cat "$tmp" > "$file" || true
+  rm -f -- "$tmp"
+}
+
 squad_lead_update_reconcile_marker_path() { # <state> <id>
   local state=$1 id=$2
   case "$id" in *[!A-Za-z0-9._-]*|'') return 1 ;; esac
@@ -549,6 +568,7 @@ ff_target() {
     return 0
   fi
 
+  clear_stray_pool_gitignore_line "$dir"
   dirty=$(dirty_paths "$dir" "$ignore_seed_marker")
   if [ -n "$dirty" ]; then
     echo "$label: skipped: dirty working tree"
