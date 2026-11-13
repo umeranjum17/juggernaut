@@ -96,7 +96,7 @@ journeys:
     command: bash tests/jg-wake-batching.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   required-shard-retry:
     tier: local
-    command: (env -u JG_TASK_ID bash tests/jg-test-run.test.sh && env -u JG_TASK_ID bash tests/jg-trunk-verify.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    command: bash journeys/required-shard-retry.sh
   trunk-parallel-batch:
     tier: local
     command: env -u JG_TASK_ID bash tests/jg-trunk-parallel-batch.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
