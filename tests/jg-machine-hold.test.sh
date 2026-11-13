@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Behavior tests for the hold machine (core/machines/tables/hold.tsv, observer core/machines/observers/hold.sh): a question held for the owner
-# has 5 states (raised, deferred, answered, diverged, closed) and 8 moves. Every record is made through the real bin/jg-captain-hold.sh and
+# has 5 states (raised, deferred, answered, diverged, closed) and 10 moves. Every record is made through the real bin/jg-captain-hold.sh and
 # a real Beads store in the shape its writer prints; no fleet record is copied. The word of each task is read through the real
 # bin/jg-machine.sh, which runs the real observer, which asks bin/jg-captain-hold.sh (`diverged`, `phase`) and holds none of its rules.
 # This suite owns the lint, the moves and the open states (raised, deferred, answered, diverged); tests/jg-machine-hold-b.test.sh owns the
@@ -9,13 +9,13 @@
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/jg-machine-hold-fixture.sh"
 
-jm check hold; expect_code 0 "$RC" "the hold table lints"; assert_equals "ok hold: 5 states, 8 edges" "$OUT" "lint golden"
+jm check hold; expect_code 0 "$RC" "the hold table lints"; assert_equals "ok hold: 5 states, 10 edges" "$OUT" "lint golden"
 jm enum hold; expect_code 0 "$RC" "the enum lints"; assert_contains "$OUT" 5 "five values"
 jm coverage hold; expect_code 0 "$RC" "every edge names its test"
 assert_equals "raised deferred answered diverged closed" \
   "$(awk -F'\t' '$1=="state"{printf "%s ", $2}' "$ROOT/core/machines/tables/hold.tsv" | sed 's/ $//')" "the five states"
 if [ -e "$ROOT/core/machines/tables/captain-call.tsv" ]; then fail "captain-call.tsv is replaced by hold.tsv and must be gone"; fi
-pass "the hold table lints with 5 states and 8 moves, each with a test, and captain-call.tsv is gone"
+pass "the hold table lints with 5 states and 10 moves, each with a test, and captain-call.tsv is gone"
 
 # A fixture record in every state. Each is made through the real CLI (hold, answer) or, for the answer that is recorded and not yet
 # completed, in the exact body shape write_resolution_record leaves while the close is still to come.
@@ -39,9 +39,9 @@ jm check hold --corpus "$T/states.corpus"; expect_code 0 "$RC" "every word a fix
 pass "a fixture record in each open state prints the right word"
 
 
-# Moves: the 8 legal moves replay clean; a move out of a final state is a finding.
+# Moves: the 10 legal moves replay clean; a move out of a final state is a finding.
 { tab raised later deferred; tab deferred date raised; tab raised answer answered; tab raised withdraw closed; tab answered route closed
-  tab raised diverge diverged; tab answered diverge diverged; tab diverged reconcile raised; } > "$T/moves.corpus"
+  tab raised diverge diverged; tab answered diverge diverged; tab diverged reconcile raised; tab diverged settle closed; } > "$T/moves.corpus"
 jm check hold --corpus "$T/moves.corpus"; expect_code 0 "$RC" "legal moves replay clean"
 tab closed hold raised > "$T/bad-move.corpus"
 jm check hold --corpus "$T/bad-move.corpus"; expect_code 1 "$RC" "a move out of closed"

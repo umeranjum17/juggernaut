@@ -847,6 +847,7 @@ tests/jg-metrics-shadow-parity.test.sh 210
 tests/jg-machine-task.test.sh 1800
 tests/jg-machine-hold.test.sh 80000
 tests/jg-machine-hold-b.test.sh 75000
+tests/jg-captain-hold-moves.test.sh 60000
 tests/jg-muse-signals-live-e2e.test.sh 180
 tests/jg-omp-primary-live-e2e.test.sh 290
 tests/jg-on.test.sh 20997

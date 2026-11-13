@@ -3,7 +3,7 @@
 # per-machine flip from shadow to refusal.
 #
 # Usage:
-#   jg-machine-guard.sh edge <machine> <from> <to> [<id>]   judge one move; exit 0 allowed, exit 1 refused, exit 2 usage
+#   jg-machine-guard.sh edge <machine> <from|-> <to> [<id>]   judge one move (`-`: the record is new); exit 0 allowed, exit 1 refused, exit 2 usage
 #   jg-machine-guard.sh flip <machine> <seconds>     list the machine in config/machine-enforce, only when quiet
 #   jg-machine-guard.sh enforced <machine>           exit 0 when the machine is listed in config/machine-enforce, else 1
 #
@@ -62,6 +62,7 @@ cmd_edge() {
   # a record's first move starts from the word (none), which only the from position may hold
   if [ $# -lt 3 ] || [ $# -gt 4 ] || ! plain "$1" || { [ "$2" != '(none)' ] && ! plain "$2"; } || ! plain "$3" || { [ $# -eq 4 ] && ! plain "$4"; }; then usage; fi
   local m=$1 from=$2 to=$3 id=${4:--} out rc mode=shadow
+  [ "$from" = - ] && from='(none)'  # `-` is a record that does not exist yet: the table's `(none)` edges
   out=$(bash "$SCRIPT_DIR/jg-machine.sh" edge-check "$m" "$from" "$to" 2>&1); rc=$?
   [ "$rc" = 0 ] && { move_line "$m" "$id" "$from" "$to" "$out"; return 0; }
   case "$out" in

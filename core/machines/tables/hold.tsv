@@ -1,0 +1,18 @@
+machine	hold	a question held for the owner: the hold on the task (bin/jg-captain-hold.sh) and its card on the board (machine 8 of the state-machine plan)	core/machines/observers/hold.sh
+enum	hold
+state	raised	initial	A question waits for the owner.	-	waiting	0s -> alert captain-hold
+state	deferred	normal	The owner said later, to a date.	hold_until	rest	date
+state	answered	normal	The owner answered, and the answer is not routed yet.	-	active
+state	diverged	normal	Two records of the same call disagree.	-	waiting	0s -> alert captain-hold
+state	closed	terminal	The question is settled.	-
+edge	(none)	hold	raised	bin/jg-captain-hold.sh:command_hold	-	a task is held for the owner	jg-machine-hold
+edge	raised	later	deferred	bin/jg-captain-hold.sh:command_hold	-	the hold names a date in the future	jg-machine-hold
+edge	deferred	date	raised	bin/jg-captain-hold.sh:command_hold	-	the date has come	jg-machine-hold
+edge	raised	answer	answered	bin/jg-captain-hold.sh:command_answer	-	the owner's answer is recorded in the task	jg-machine-hold
+edge	raised	withdraw	closed	bin/jg-captain-hold.sh:command_answer	-	the hold is released with no answer to route	jg-machine-hold
+edge	answered	route	closed	bin/jg-captain-hold.sh:command_answer	-	the answer is routed and the task closes	jg-machine-hold
+edge	raised	diverge	diverged	bin/jg-captain-hold.sh:command_diverged	-	the status log says resolved and the hold is still open	jg-machine-hold
+edge	answered	diverge	diverged	bin/jg-captain-hold.sh:command_diverged	-	the status log says resolved and the hold is still open	jg-machine-hold
+edge	diverged	reconcile	raised	bin/jg-captain-hold.sh:reconcile_note	-	a reconcile note clears the disagreement	jg-machine-hold
+edge	diverged	settle	closed	bin/jg-captain-hold.sh:reconcile_close	-	a reconcile close settles the call on evidence	jg-machine-hold
+observer	bash "$(dirname "$JG_MACHINES_TABLES")/observers/hold.sh" "$1"
