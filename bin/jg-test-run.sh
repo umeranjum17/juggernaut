@@ -268,6 +268,9 @@ LIST_ONLY=0
 LIST_SCHEDULED=0
 SHOW_LIMITS=0
 GATE_MODE=0
+# The home the run was started for: run_script_bounded unsets the home overrides for the scripts, and the quarantine list is the home's.
+QUARANTINE_HOME=${JG_HOME:-}
+QUARANTINE_DATA=${JG_DATA_OVERRIDE:-}
 LIST_FAMILIES=0
 LIST_CONCURRENT_SAFE_FAMILIES=0
 LIST_LANES=0
@@ -2946,6 +2949,22 @@ family_bump() {
   mv "$tmp" "$FAMILIES_TSV"
 }
 
+# quarantine_verdict <script> <rc>: in a gate, the one quarantine list (core/trunk-landing/quarantine.sh) hears every run of a
+# listed script, and a red of a script that is listed while the policy key is on is recorded and does not block: it prints a
+# JG_TEST_QUARANTINE_RED line and the verdict (QUARANTINE_RC) is 0. Every other result is returned as it came.
+quarantine_verdict() {  # <script> <rc>
+  local script=$1 rc=$2 q="$ROOT/core/trunk-landing/quarantine.sh" result=green
+  QUARANTINE_RC=$rc
+  [ "$GATE_MODE" -eq 1 ] && [ -x "$q" ] || return 0
+  [ "$rc" -eq 0 ] || result=red
+  set -- env ${QUARANTINE_HOME:+JG_HOME="$QUARANTINE_HOME"} ${QUARANTINE_DATA:+JG_DATA_OVERRIDE="$QUARANTINE_DATA"} "$q"
+  "$@" record "$script" "$result" >&2 || :
+  if [ "$rc" -ne 0 ] && "$@" check "$script" >/dev/null 2>&1; then
+    printf 'JG_TEST_QUARANTINE_RED %s exit=%s\n' "$script" "$rc"
+    QUARANTINE_RC=0
+  fi
+}
+
 record_script_result() {  # <script> <rc> <duration> <out> <end_iso> <stream>
   local script=$1 rc=$2 duration=$3 out=$4 end_iso=$5 stream=${6:-0}
   local base family expected gate_skip gate_reason fail_delta
@@ -2982,6 +3001,9 @@ record_script_result() {  # <script> <rc> <duration> <out> <end_iso> <stream>
 
   printf 'JG_TEST_END %s %s exit=%s duration_ms=%s gate_skip=%s\n' \
     "$end_iso" "$script" "$rc" "$duration" "$gate_skip"
+
+  quarantine_verdict "$script" "$rc"
+  rc=$QUARANTINE_RC
 
   fail_delta=0
   if [ "$rc" -ne 0 ]; then

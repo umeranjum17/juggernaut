@@ -1477,6 +1477,14 @@ The alert repeats only when the count changes, and a repository back under the c
 A red pull request never holds a green one: each merges on its own checks.
 `core/merge-on-green/merge-on-green.sh` owns the count and the alert.
 
+## Flaky quarantine (config/quarantine)
+
+`core/trunk-landing/quarantine.sh` owns the one quarantine list, `data/trunk/quarantine-<project>.tsv`, and is the only way a script gets a fix ticket (`quarantine.sh ticket <script>`; the script path is the key and a second ticket is never filed while one is open).
+A script with 3 rows in 7 days in the lander's flaky ledger enters the list with its ticket.
+The local, gitignored `config/quarantine` holds `on` to turn the key on; absent or any other value is off, and the list is only kept.
+With the key on, `bin/jg-test-run.sh --gate` still runs a listed script, records each run, prints `JG_TEST_QUARANTINE_RED` for its red and does not count it as a failure.
+A listed script leaves after 10 green runs in a row, or after 7 days when it blocks again and its ticket is noted for its lead.
+
 ## Worker launch environment (config/launch-env-allowlist)
 
 The optional local, gitignored `config/launch-env-allowlist` limits the ambient environment passed to newly launched workers, Recon missions, and Squad Leads, including relaunches.

@@ -448,6 +448,9 @@ journeys:
   gate-quarantine:
     tier: local
     command: bash journeys/gate-quarantine.sh
+  flaky-quarantine:
+    tier: local
+    command: bash tests/jg-trunk-quarantine.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   gate-per-test-timeout:
     tier: local
     command: (bash bin/jg-test-run.sh --show-limits && bash bin/jg-test-run.sh tests/jg-test-run.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
