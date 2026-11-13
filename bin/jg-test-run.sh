@@ -281,8 +281,8 @@ LANE=
 BASE_REF=origin/main
 JSON_PATH=
 SCRIPTS=()
-# Changed test files no suite names. Each fails as its own record, so one stray file never stops the whole selection.
-UNMAPPED_TESTS=()
+# Changed paths no suite names. Each fails as its own record, so one stray path never stops the whole selection.
+UNMAPPED_PATHS=()
 EXCLUDE_FAMILIES=()
 MAX_WEIGHT_MS=
 HOSTED_TIMINGS=
@@ -1538,7 +1538,7 @@ families_for_unmapped_bin() {
 # Conservative path → family map. Over-selects rather than under-selects.
 # Never expands to the complete suite.
 families_for_changed_path() {
-  local path=$1 fixture_ref
+  local path=$1 fixture_ref suite
   case "$path" in
     tests/captures/stuck-live/*)
       # These captured terminal states are read by the signals cases.
@@ -1865,6 +1865,20 @@ families_for_changed_path() {
       scripts_for_test_reference "$(basename "$path")" \
         || printf '%s\n' "__unmapped__:$path"
       ;;
+    bin/jg-tool-wiring.sh)
+      # Sourced by bin/jg-bootstrap.sh, which the install test drives on a clean HOME; no test names the file itself.
+      printf '%s\n' "__script__:jg-tool-wiring.test.sh"
+      ;;
+    tests/jg-alert.d/*|tests/jg-machine-ticket.d/*|tests/live/*)
+      # One case or check per file, run by the one suite that loops over its directory: the case selects that suite.
+      # A suite whose directory is gone, or a file in a directory with no suite, stays unmapped.
+      case "$path" in
+        tests/jg-alert.d/*) suite=jg-alert.test.sh ;;
+        tests/jg-machine-ticket.d/*) suite=jg-machine-ticket.test.sh ;;
+        *) suite=jg-live-checks.test.sh ;;
+      esac
+      if [ -e "tests/$suite" ]; then printf '__script__:%s\n' "$suite"; else printf '%s\n' "__unmapped__:$path"; fi
+      ;;
     tests/jg-trunk-fixture.sh|tests/jg-machine-hold-fixture.sh)
       # Each is shared by the parts of one split suite, which are unclassified:
       # the family-wide arm below would widen it to every unclassified script.
@@ -1965,11 +1979,8 @@ select_changed() {
           wanted_scripts+=("$script_name")
           ;;
         __unmapped__:*)
-          # A test file no suite names fails only itself; any other unmapped source still stops the selection.
-          case "${entry#__unmapped__:}" in
-            tests/*) UNMAPPED_TESTS+=("${entry#__unmapped__:}") ;;
-            *) die "no changed-test mapping for source path: ${entry#__unmapped__:}" ;;
-          esac
+          # A path no suite names fails only itself, so one stray path never stops every shard.
+          UNMAPPED_PATHS+=("${entry#__unmapped__:}")
           ;;
         *)
           wanted_families+=("$entry")
@@ -2145,8 +2156,8 @@ apply_shard() {
   [ -n "$SHARD" ] || return 0
   index=${SHARD%%of*}
   count=${SHARD#*of}
-  # An unmapped test file is one record, so only the first shard carries it.
-  [ "$index" -eq 1 ] || UNMAPPED_TESTS=()
+  # An unmapped path is one record, so only the first shard carries it.
+  [ "$index" -eq 1 ] || UNMAPPED_PATHS=()
   i=1
   while [ "$i" -le "$count" ]; do
     loads[i]=0
@@ -2740,7 +2751,7 @@ fi
 # array as an unbound-variable error, while bash 4.4+ makes it a harmless no-op.
 # A contributor on stock macOS who changes only documentation must still get
 # total=0 and exit 0 rather than a crash.
-if [ "${#SCRIPTS[@]}" -eq 0 ] && [ "${#UNMAPPED_TESTS[@]}" -eq 0 ]; then
+if [ "${#SCRIPTS[@]}" -eq 0 ] && [ "${#UNMAPPED_PATHS[@]}" -eq 0 ]; then
   log "nothing to run"
   empty_finished_ms=$(now_ms)
   empty_duration=$((empty_finished_ms - RUN_STARTED_MS))
@@ -3018,10 +3029,10 @@ record_script_result() {  # <script> <rc> <duration> <out> <end_iso> <stream>
   TOTAL=$((TOTAL + 1))
 }
 
-# Record each unmapped changed test file as one failed result naming the file and the cause, and run nothing for it.
+# Record each unmapped changed path as one failed result naming the file and the cause, and run nothing for it.
 record_unmapped_tests() {
   local path out
-  for path in "${UNMAPPED_TESTS[@]+"${UNMAPPED_TESTS[@]}"}"; do
+  for path in "${UNMAPPED_PATHS[@]+"${UNMAPPED_PATHS[@]}"}"; do
     out="$RUN_TMP/out.unmapped.$TOTAL"
     printf 'not ok - %s: no changed-test mapping for source path: %s\n' "$path" "$path" >"$out"
     cat "$out"
