@@ -1636,18 +1636,24 @@ cmd_nightly() {
 
 green_short() { cut -c1-12 "$STATE/trunk-green-$PN" 2>/dev/null || echo none; }
 
-# The trunk with no green commit for no-green-alarm-minutes raises ONE `line-red` alert through jg-alert.sh; defaults/wake-routing wakes it at once. The wait is counted from the landing of
-# the oldest commit above the green pin (its data/trunk-landings.tsv row, else its commit time). One alarm per green pin
-# (state/trunk-green-alarm-<project> holds the pin it was raised for): a stall that goes on is not raised again, and once the pin moves
-# a new stall can be. Read-only for the trunk; the landing check runs it every minute.
+# The trunk with no green commit for no-green-alarm-minutes raises the `line-red` alert through jg-alert.sh for that green pin, and the alert
+# then climbs its ladder (the lead, Main, then the captain's chat) and rings again at the top, until the pin moves; each minute's run of this
+# command is the tick that does it (`jg-alert.sh climb`). The wait is counted from the landing of the oldest commit above the green pin (its
+# data/trunk-landings.tsv row, else its commit time). A tip at the pin resolves the alarm. Read-only for the trunk; the landing check runs it every minute.
 cmd_green_alarm() {
-  local tip green first at mins age n note
+  local tip green first at mins age n note key rec
   open_project "${1-}"
   tip=$(rev "refs/heads/$TRUNK") || refuse "trunk branch $TRUNK is missing in $PROJ"
   green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
   [ -n "$green" ] || { echo "green-alarm: $PN has no green pin yet"; return 0; }
+  key="line-red--$PN-no-green-${green:0:12}"
   first=$(git -C "$PROJ" rev-list --reverse "$green..$tip" | head -n 1)
-  [ -n "$first" ] || { echo "green-alarm: $TRUNK is green at ${green:0:12}"; return 0; }
+  if [ -z "$first" ]; then
+    for rec in "$STATE"/alerts/line-red--"$PN"-no-green-*.rec; do  # the pin caught up with the tip: every no-green alarm of this project ends
+      [ -e "$rec" ] && JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" resolve "$(basename "$rec" .rec)" >/dev/null 2>&1
+    done
+    echo "green-alarm: $TRUNK is green at ${green:0:12}"; return 0
+  fi
   at=$(awk -F'\t' -v c="$first" '$3 == c { t = $4 } END { print t }' "$DATA/trunk-landings.tsv" 2>/dev/null || true)
   case $at in ''|*[!0-9]*) at=$(git -C "$PROJ" log -1 --format=%ct "$first") ;; esac
   mins=$(pol no-green-alarm-minutes); case $mins in ''|*[!0-9]*) mins=15 ;; esac
@@ -1655,11 +1661,15 @@ cmd_green_alarm() {
   verify_running && { echo "green-alarm: a verify is running on ${tip:0:12}; quiet until it ends"; return 0; }
   [ "$age" -ge $(( mins * 60 )) ] || { echo "green-alarm: no green above ${green:0:12} for $(( age / 60 )) of $mins minutes"; return 0; }
   lock "$STATE/.trunk-green-alarm-$PN.lock"
-  [ "$(cat "$STATE/trunk-green-alarm-$PN" 2>/dev/null || true)" != "$green" ] || { echo "green-alarm: already raised for the green pin ${green:0:12}"; return 0; }
+  if [ -r "$STATE/alerts/$key.rec" ] && [ "$(JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" word "$key")" != resolved ]; then
+    # climb refuses until the rung's (or the repeat's) timer ran out: that refusal is the quiet minute, not an error.
+    { JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" climb "$key" 2>/dev/null || true; } | JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" deliver >/dev/null 2>&1 \
+      || die "could not climb the no-green alarm"
+    echo "green-alarm: ${key} is open; climbed or repeated when its timer ran out"; return 0
+  fi
   n=$(git -C "$PROJ" rev-list --count "$green..$tip")
   note="$TRUNK has had no green commit for $(( age / 60 )) minutes: the tip ${tip:0:12} is $n commit(s) above the last green ${green:0:12}. Landings go on and live stays on ${green:0:12}; a red a hand-run verify or a red CI found took the pin back there."
   raise_line_red "$PN-no-green-${green:0:12}" "$note" || die "could not raise the no-green alarm"
-  put "$STATE/trunk-green-alarm-$PN" "$green"
   echo "green-alarm: raised: $note"
 }
 

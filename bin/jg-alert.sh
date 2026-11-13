@@ -272,6 +272,8 @@ cmd_deliver() {
     if [ -n "$kind" ] && [ "$holder" != tick ]; then jg_wake_append "$kind" "$(_get "$rec" subject)" "$(_get "$rec" text)" || _die "the wake for $key was not appended"
     elif [ "$holder" = tick ]; then jg_wake_settle check "alert-$key" "$payload"
     else jg_wake_append check "alert-$key" "$payload" || _die "the wake for $key was not appended"; fi
+    # The owner's rung is the captain's chat: the same ring goes out as a captain-facing `alert` event (jg-bus.sh owns the Telegram send).
+    [ "$holder" != owner ] || "$_root/bin/jg-bus.sh" publish alert "alert-$key" "$payload" >/dev/null 2>&1 || true
   done
 }
 
