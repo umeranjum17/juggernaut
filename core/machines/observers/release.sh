@@ -5,6 +5,8 @@
 #
 # Usage:
 #   release.sh <lane>          print the release word: open, checking, red, ready, merged or abandoned
+#   release.sh stage <lane>    print Released for a merged release and Landed for any other state (the word-* groups of
+#                              core/machines/tables/release.tsv; core/fleet-status/words.tsv); nothing for a lane in no release
 #   release.sh detail <lane>   print key<TAB>value lines: state, release (the pull request), joining (the ticket's sub-state)
 #
 # The records: the lane's last row in data/trunk-landings.tsv names commit C in project P (a later revert-<lane> row ends the
@@ -17,7 +19,7 @@ export LC_ALL=C
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P); root=$(cd "$here/../../.." && pwd -P)
 JG_HOME=${JG_HOME:-${JG_ROOT_OVERRIDE:-$root}}
 STATE=${JG_STATE_OVERRIDE:-$JG_HOME/state}; DATA=${JG_DATA_OVERRIDE:-$JG_HOME/data}
-mode=word; [ "${1:-}" != detail ] || { mode=detail; shift; }
+mode=word; case ${1:-} in detail|stage) mode=$1; shift ;; esac
 ID=${1:?usage: release.sh [detail] <lane>}
 
 holds() { git -C "$REPO" merge-base --is-ancestor "$1" "$2" 2>/dev/null; }
@@ -46,6 +48,10 @@ else
       elif ($k | index("red")) then "red" elif ($k | index("running")) then "checking"
       elif ($k | index("open")) or ($k | length) == 0 then "open" else "ready" end' <<< "$json" 2>/dev/null)
   [ -n "$w" ] || exit 0
+fi
+if [ "$mode" = stage ]; then
+  awk -F'\t' -v s="$w" '$1 == "group" && $2 ~ /^word-/ { for (i = 3; i <= NF; i++) if ($i == s) { print toupper(substr($2, 6, 1)) substr($2, 7); exit } }' "$here/../tables/release.tsv"
+  exit 0
 fi
 if [ "$mode" = word ]; then printf '%s\n' "$w"; exit 0; fi
 # A merged or abandoned release no longer holds the ticket: the sub-state `joining` is for a release still under way.

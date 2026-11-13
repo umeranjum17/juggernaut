@@ -11,6 +11,8 @@ rc=0
   bash "$jm" check trunk || rc=1
   bash "$jm" events trunk || rc=1
   bash "$root/tests/jg-machine-trunk.test.sh" || rc=1
+  bash "$jm" check trunk-pointers || rc=1
+  bash "$root/tests/jg-machine-stage-words.test.sh" || rc=1
 } > "$out" 2>&1
 cat "$out"
 cat > "$DONE_DONE_EVIDENCE_ROOT/steps.json" <<JSON

@@ -12,6 +12,9 @@ state	live	normal	Every home runs the change.	commit
 state	cleanup-refused	normal	The change landed, and the lane's cleanup was refused, so its record and work copy still stand.	reason
 state	reverted	terminal	The change was reverted on the trunk and does not run.	commit
 open	parked	No move out of a parked lane is recorded yet.
+group	word-built	ready	admitted	landing	refused
+group	word-landed	landed	home-behind
+group	word-in-use	live-partial	live
 edge	coding	s27-park	parked	bin/jg-teardown.sh:main	-	bin/jg-teardown.sh <id> --park gives back the copy and the pane of a clean copy at its branch tip and writes state/<id>.parked	jg-machine-lane-delivery.test.sh
 edge	coding	t1-done	ready	bin/jg-lavish-guard.sh:append	-	the worker appends a done line for its head	jg-machine-lane-delivery.test.sh
 edge	ready	t2-proof	admitted	core/trunk-landing/trunk-landing.sh:check	-	bin/jg-trunk.sh proof finds the receipt, the merge-card evidence and the sealed run at the head	jg-machine-lane-delivery.test.sh

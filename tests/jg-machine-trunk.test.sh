@@ -17,8 +17,9 @@ jm check trunk; expect_code 0 "$RC" "the trunk table lints"; assert_equals "ok t
 jm enum trunk; expect_code 0 "$RC" "the enum lints"; assert_contains "$OUT" "4 values" "the enum holds four values"
 jm coverage trunk; expect_code 0 "$RC" "every edge names its test"
 assert_equals "clean unverified verifying red" "$(awk -F'\t' '$1=="state"{printf "%s ", $2}' "$ROOT/core/machines/tables/trunk.tsv" | sed 's/ $//')" "the four states"
-[ ! -e "$ROOT/core/machines/tables/trunk-pointers.tsv" ] || fail "trunk-pointers.tsv must be gone: the trunk table replaces it"
-pass "the trunk table lints with 4 states and 6 moves, each with a test, and trunk-pointers is gone"
+# The old trunk-pointers table is gone: the trunk table replaced it. A table of that name now holds the four delivery words (jg-machine-stage-words.test.sh).
+! grep -q $'^state\tpinned' "$ROOT/core/machines/tables/trunk-pointers.tsv" 2>/dev/null || fail "the old trunk-pointers states must be gone: the trunk table replaces them"
+pass "the trunk table lints with 4 states and 6 moves, each with a test, and the old trunk-pointers states are gone"
 
 # A project clone with three commits: base (the pin), one (above the pin), and a revert of one.
 G=$JG_HOME/projects/p; git init -q -b main "$G"

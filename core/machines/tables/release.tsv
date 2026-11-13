@@ -6,6 +6,8 @@ state	ready	normal	Every check is green and the merge waits for yolo or the owne
 state	merged	terminal	The release is on main.	-
 state	abandoned	terminal	The release was closed unmerged, and its tickets join the next release.	-
 group	unmerged	open	checking	red	ready
+group	word-landed	open	checking	red	ready	abandoned
+group	word-released	merged
 edge	(none)	open	open	bin/jg-trunk.sh:push_batch	-	the green pin is above main; yolo is on or the owner's word is on record; this home passes the release preflight (core/release-preflight)	jg-machine-release
 edge	open	check	checking	.github/workflows/ci.yml:jobs	-	the hosted checks started	jg-machine-release
 edge	checking	ci-red	red	.github/workflows/ci.yml:jobs	-	a required check is red	jg-machine-release
