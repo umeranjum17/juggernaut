@@ -50,11 +50,13 @@ bin/jg-machine.sh next <machine> <id>
 The output lists the record's state and each legal move with its writer, command, and guard.
 [`core/machines/README.md`](../core/machines/README.md) owns the table format, the commands, and the exit codes.
 
-## Ask whether a change is live
+## Ask whether a change is In use
 
 ```sh
 bin/jg-machine.sh show delivery <change-id>
 ```
+
+The answer names a stage with the four words Built, Landed, In use and Released (defined in [`trunk-flow.md`](trunk-flow.md#the-four-words-and-the-end-goal)); `live` alone is not a stage.
 
 A change that ships behind a switch has a row in `core/machines/changes.tsv`, and the answer is `in-homes-off` until the switch is on.
 The state machine slices `sm-s1a-engine` to `sm-s12-enforce` are registered there, behind `config/machine-view` and `config/machine-enforce`.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# jg-live-claim.sh - the "fixed means live" rule, in the four delivery words (core/stage-words/words.tsv): a report that
+# jg-live-claim.sh - the "fixed means live" rule, in the four delivery words (the word list of the stage-words lint): a report that
 # a user-visible change is fixed or done says its word. `In use, <version>, homes <ids>` when it is an ancestor of what
 # registered homes run; `Released, <ref> on GitHub main and npm` when the release record names it; `Landed, not in use`
 # otherwise (`Built, not landed` when it is not on the trunk yet).

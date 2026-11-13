@@ -18,7 +18,7 @@ Do not infer this guard's scope, loop safety, or compatibility tradeoffs for tho
 | --- | --- |
 | What the guard enforces | [Current invariant](#current-invariant) |
 | A correction no rule or ticket captured | [Owner-correction suggestion](#owner-correction-suggestion) |
-| A message that calls a migration part live with no live row | [Migration progress rule](#migration-progress-rule) |
+| A message that calls a migration part In use with no In use row | [Migration progress rule](#migration-progress-rule) |
 | Which sessions are in scope and what counts as supervision need | [Primary scope](#primary-scope) and [supervision need](#supervision-need) |
 | How the turn-end check and the mid-turn pull warning judge watcher health | [Strict watcher check at the turn boundary](#strict-watcher-check-at-the-turn-boundary) and [pull-warning verdict by supervision model](#pull-warning-verdict-by-supervision-model) |
 | Away and quiet mode | [Away and quiet mode daemon ownership](#away-and-quiet-mode-daemon-ownership) |
@@ -82,13 +82,13 @@ The check ships from this repository's own `bin/` with the guard, so a home that
 
 ## Migration progress rule
 
-A migration part merged is not a part live, so the turn that says a part is live must have a live row behind it.
-After the owner-correction rule, the guard asks `bin/jg-progress-claim.sh` whether the last message calls a part live while `bin/jg-migration-live.sh` says it is not.
+A migration part Landed is not a part In use, so the turn that says a part is In use must have an In use row behind it.
+After the owner-correction rule, the guard asks `bin/jg-progress-claim.sh` whether the last message calls a part In use while `bin/jg-migration-live.sh` says it is not.
 A claim is a sentence that names a part (a slug or name from the probe's part table) and says live, switched, landed, shipped, done, running, "is on" or "turned on".
 A sentence that also says pending, not live, not yet, not running or "is not" is not a claim, and "working on" is effort, so neither is blocked.
-The guard blocks once per message (`state/.progress-claim-flagged`), names the part and what the probe measured, and asks for "merged, not live" or for the row to be proved live.
+The guard blocks once per message (`state/.progress-claim-flagged`), names the part and what the probe measured, and asks for "Landed, not In use" or for the row to be proved In use.
 A home with no `critical=` in `config/migration-card`, a missing `jq`, or a copy of the guard without `bin/jg-progress-claim.sh` checks nothing and is never blocked.
-The captain-facing numbers come from the same rows: the milestone outcome in `bin/jg-migration-card.sh` and the `Live now` line in `bin/jg-status-digest.sh` lead with the count from `bin/jg-critical-path.sh summary`, and a merged switch is recorded as a milestone only when its row is live.
+The captain-facing numbers come from the same rows: the milestone outcome in `bin/jg-migration-card.sh` and the `Live now` line in `bin/jg-status-digest.sh` lead with the count from `bin/jg-critical-path.sh summary`, and a merged switch is recorded as a milestone only when its row is In use.
 
 ## Guard predicates
 

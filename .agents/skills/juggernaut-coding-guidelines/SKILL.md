@@ -156,4 +156,6 @@ Before you change a shared script, list every caller and reader you could reach,
 "Nothing else uses this" is a claim at the **said** rung until a search backs it.
 A reviewer should be able to tell from your wording which rung you stand on.
 
+In docs, status text and reports, name a change's stage with the four words Built, Landed, In use and Released (`docs/trunk-flow.md`), never with `live` alone; `core/stage-words/lint.sh` lists the lines that still do.
+
 Lock and certainty-ladder ideas adapted from pstack, MIT licence, by Lauren Tan (github.com/backnotprop/pstack).
