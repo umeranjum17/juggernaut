@@ -40,6 +40,12 @@ journeys:
   machine-observers:
     tier: local
     command: (for m in squad-lead supervision presence; do bash bin/jg-machine.sh check $m && bash bin/jg-machine.sh events $m || exit 1; done; bash tests/jg-machine-observers16.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  observer-scale:
+    tier: local
+    command: bash journeys/observer-scale.sh
+  fleet-status-scale:
+    tier: local
+    command: bash journeys/fleet-status-scale.sh
   account-table:
     tier: local
     command: bash journeys/account-table.sh
