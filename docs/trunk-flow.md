@@ -75,6 +75,17 @@ The check keeps a window of W gates (`core/trunk-landing/window.sh`, record `sta
 
 At most two gates run at once (`gate-slots`, default 2, in `config/trunk-policy`): a third lane starts when the front has landed or failed and the second lane's end starts the next one. Rollback is `gate-slots=1`, which lands one lane at a time as before. A stack (`land-batch`) is never a front, so a stack in flight keeps the one-at-a-time rule. This does not shorten one gate. `tests/jg-trunk-two-gates.test.sh` covers it: two lanes in one gate each with the second gate overlapping the first, a third lane waiting, a red front costing the second lane one more gate, and `gate-slots=1`.
 
+## Queues split by tests
+
+Lanes whose changes select no common test script do not wait for each other (`core/trunk-landing/partition.sh`, used by the landing check). A lane's selection is what the project's own selector names for its one commit (`bin/jg-test-run.sh --changed --base HEAD^ --list`), read once in a throwaway clone and kept in `data/jg-trunk-landing/<task>.<head>.selection`. The check puts the ready lanes of a project in queues by that selection:
+
+- a lane whose selection meets one queue is in that queue, and keeps its chain of fronts (`state/trunk-front-<project>:<queue>[@<position>]`, set by `JG_TRUNK_QUEUE`);
+- a lane that meets no queue starts a queue of its own, named by the lane, with its own front on the real tip, while the project's running landings are under the window W;
+- a lane that meets two running queues is in both: it waits (`slot full` in its queue-why record) until one of them has ended;
+- a lane whose selection cannot be named, or a project with no selector, meets every queue, so it is the one-queue rule that ran before.
+
+The trunk still moves by the one compare-and-swap of `bin/jg-trunk.sh`; a queue that finds the trunk moved is rebased and gated again, as any lane is. `gate-slots=1` keeps one landing at a time. `tests/jg-trunk-two-gates.test.sh` covers separate queues, one shared queue and a lane that meets two queues.
+
 ## Moving a home onto the trunk
 
 The lander takes one commit, so a home whose `main` carries the same changes under other SHAs is not an ancestor of the trunk. It moves anyway, and only after proof: `bin/jg-home-contained.sh <home-head> <trunk-tip>` exits 0 when every path the home changed is byte-identical at the tip or was changed later by a trunk commit, and exits 1 listing the uncontained paths. With a clean working tree and that exit 0, the home moves by `git reset --keep <trunk-tip>`; never a merge, stash or force. The mover is slice T2.

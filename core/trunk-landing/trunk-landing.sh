@@ -81,6 +81,8 @@ mkdir -p "$MEM" || exit 0
 . "$(dirname "${BASH_SOURCE[0]}")/queue-why.sh"
 # shellcheck source=core/trunk-landing/window.sh
 . "$(dirname "${BASH_SOURCE[0]}")/window.sh"
+# shellcheck source=core/trunk-landing/partition.sh
+. "$(dirname "${BASH_SOURCE[0]}")/partition.sh"
 # A detached job (run, runbatch, live: each started with setsid) outlives whoever started it. Under a test
 # (JG_TEST_SEAM=1) it names itself in the suite's registry, so the suite's cleanup stops its process group even after
 # the fixture home is gone (tests/lib.sh jg_test_reap_detached).
@@ -93,7 +95,7 @@ case $1 in
 esac
 # shellcheck source=core/trunk-landing/verdict.sh
 . "$(dirname "${BASH_SOURCE[0]}")/verdict.sh"
-mval() { sed -n "s/^$2=//p" "$1" | tail -n 1; }
+mval() { sed -n "s/^$2=//p" "$1" 2>/dev/null | tail -n 1; }
 # One five-minute deadline belongs to the whole landing attempt, lint and tests together (a test seam shortens it).
 landing_deadline() {
   local seconds=300
@@ -204,7 +206,8 @@ fi
 if [ "$1" = runbatch ]; then
   shift 2; arg=; locked=; out=; rc=0
   for arg in "$@"; do [[ ${arg%%@*} =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && ${arg#*@} =~ ^[0-9a-f]{40,64}$ ]] || exit 2; done
-  trap 'for arg in $locked; do jg_lock_release "$STATE/.trunk-run-${arg%%@*}-${arg#*@}.lock"; done' EXIT
+  trap 'for arg in $locked; do partition_forget "${arg%%@*}" "${arg#*@}"; jg_lock_release "$STATE/.trunk-run-${arg%%@*}-${arg#*@}.lock"; done' EXIT
+  q=$(partition_queue_of "${1%%@*}" "${1#*@}"); [ -z "$q" ] || export JG_TRUNK_QUEUE=$q  # the stack is one queue: its lanes share the chain of fronts
   for arg in "$@"; do
     jg_lock_try_acquire "$STATE/.trunk-run-${arg%%@*}-${arg#*@}.lock" || { for cleanup_arg in "$@"; do rm -f -- "$MEM/${cleanup_arg%%@*}.${cleanup_arg#*@}.state"; done; exit 0; }
     locked="$locked $arg"
@@ -248,6 +251,7 @@ if [ "$1" = runbatch ]; then
     fi
   done
   ! window_is_red "$out" || window_move "$pn" red >/dev/null || :
+  for arg in "$@"; do partition_forget "${arg%%@*}" "${arg#*@}"; done  # the stack's run has ended: its queue is free for the next start
   "$SELF" next "$FMH" >/dev/null 2>&1 || :
   exit 0
 fi
@@ -257,7 +261,8 @@ if [ "$1" = run ]; then
   [[ $id =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && $head =~ ^[0-9a-f]{40,64}$ ]] || exit 2
   run_lock=$STATE/.trunk-run-$id-$head.lock
   jg_lock_try_acquire "$run_lock" || exit 0
-  trap 'jg_lock_release "$run_lock"' EXIT
+  trap 'partition_forget "$id" "$head"; jg_lock_release "$run_lock"' EXIT
+  q=$(partition_queue_of "$id" "$head"); [ -z "$q" ] || export JG_TRUNK_QUEUE=$q  # this lane gates in its own queue's chain of fronts
   # A run started from a check that read the lane before an earlier run landed it (the lane's head moved by the rebase, so the lock of the
   # old head does not hold it back) finds the lane cleaned up: landing it again would only write a refusal for a lane with no record.
   [ -f "$STATE/$id.meta" ] || exit 0
@@ -270,6 +275,7 @@ if [ "$1" = run ]; then
   if [ "$rc" -eq 0 ]; then
     JG_HOME="$FMH" "$FMH/bin/jg-machine-shadow.sh" landing "$id.$head" landed || true  # shadow report of the move (jg-machine-shadow.sh)
     landed_lane "$id" "$head" "on the local trunk (not live yet: live follows the answer given at gated, the captain's word or the project's waiver, and its quiet window)"
+    partition_forget "$id" "$head"
     "$SELF" next "$FMH" >/dev/null 2>&1 || :
     exit 0
   fi
@@ -288,6 +294,7 @@ if [ "$1" = run ]; then
     fi
   fi
   ! window_is_red "$out" || window_move "$(basename "$(mval "$STATE/$id.meta" project)")" red >/dev/null || :
+  partition_forget "$id" "$head"
   [ "$rc" -ne 75 ] || exit 0  # another run holds this landing; its own end starts the next one
   "$SELF" next "$FMH" >/dev/null 2>&1 || :
   exit 0
@@ -402,38 +409,37 @@ run_alive() {
   read -r _w ep pid <<<"$1"
   if [ -n "${pid:-}" ]; then jg_pid_alive "$pid"; else [ $(( $(date +%s) - ${ep:-0} )) -lt 120 ]; fi
 }
-# The landings in progress: a lane's own `<task>.<head>.state` counts; the lander's admission records
-# (`<task>.<head>.<context>.state`) are not landings. Prints how many are running.
-running_count() {
-  local f l n=0
+# The landings in progress, one line each: <task> <head> <project> <queue> <selection, comma-joined>. A lane that started before queues
+# existed has no queue record: it is queue `-` and its selection is `*`, so it meets every lane and nothing starts beside it but its own chain.
+running_lanes() {
+  local f b h t l pn q
   for f in "$MEM"/*.state; do
     [ -f "$f" ] || continue
     ! printf '%s' "${f##*/}" | grep -Eq '\.[0-9a-f]{40,64}\.[0-9a-f]{40,64}\.state$' || continue
     l=$(cat "$f" 2>/dev/null || true)
-    case $l in running*) run_alive "$l" && n=$((n + 1)) ;; esac
+    case $l in running*) run_alive "$l" || continue ;; *) continue ;; esac
+    b=${f##*/}; b=${b%.state}; h=${b##*.}; t=${b%.*}
+    # A lane landed and cleaned up while its run ends has no record any more: it still counts as a running landing, in no project.
+    pn=$([ -f "$STATE/$t.meta" ] && basename "$(mval "$STATE/$t.meta" project)" || echo '?'); q=$(partition_queue_of "$t" "$h")
+    if [ -n "$q" ]; then printf '%s %s %s %s %s\n' "$t" "$h" "$pn" "$q" "$(partition_scripts "$t" "$h")"; else printf '%s %s %s - *\n' "$t" "$h" "$pn"; fi
   done
-  printf '%s\n' "$n"
 }
-# The chain of gates: while single landings of one project gate in its chain (they hold its front positions, bin/jg-trunk.sh) and the
-# highest live position is under the window W (core/trunk-landing/window.sh), the next lane of that project may start; it is gated on top
-# of the commit one position below. Prints the project when that slot is free and every landing running now is in that chain.
-second_slot_project() {
-  local lock pn top k pid
-  for lock in "$STATE"/.trunk-front-*.lock; do
-    [ -d "$lock" ] || continue
-    pn=${lock##*/.trunk-front-}; pn=${pn%.lock}
-    case $pn in *@*) continue ;; esac  # a deeper position of a chain is found through the front below
-    top=0
-    for k in $(seq 1 64); do
-      lock="$STATE/.trunk-front-$pn"; [ "$k" -le 1 ] || lock="$lock@$k"
-      pid=$(cat "$lock.lock/pid" 2>/dev/null || true)
-      [ -n "$pid" ] && jg_pid_alive "$pid" && top=$k
-    done
-    [ "$top" -ge 1 ] && [ "$top" -eq "$running" ] || continue
-    [ "$top" -lt "$(window_size "$pn")" ] || continue  # the window, not the policy alone, says how many gates may run
-    printf '%s\n' "$pn"; return 0
+# The highest live position of a queue's chain of fronts (bin/jg-trunk.sh): the project's one chain for queue `-`.
+chain_top() {  # <project> <queue>
+  local base="$STATE/.trunk-front-$1" k top=0 lock pid
+  [ "$2" = - ] || base="$base:$2"
+  for k in $(seq 1 64); do
+    lock=$base; [ "$k" -le 1 ] || lock="$lock@$k"
+    pid=$(cat "$lock.lock/pid" 2>/dev/null || true)
+    [ -n "$pid" ] && jg_pid_alive "$pid" && top=$k
   done
-  return 1
+  printf '%s\n' "$top"
+}
+# Whether a queue that runs now may take one more lane: every landing of it is a single gate in its chain (a stack is never a front) and the
+# highest live position is under the window W (core/trunk-landing/window.sh); the lane is gated on top of the commit one position below.
+queue_has_room() {  # <project> <queue> <landings of that queue running now>
+  local top; top=$(chain_top "$1" "$2")
+  [ "$top" -ge 1 ] && [ "$top" -eq "$3" ] && [ "$top" -lt "$(window_size "$1")" ]
 }
 # Every ready lane waits because every gate slot is in use: record that at this decision (core/trunk-landing/queue-why.sh).
 slots_full() { local at id head; while read -r at id head _; do [ -z "$id" ] || queue_why_wait "$MEM" "$id" "$head" 'slot full'; done <<< "$cands"; }
@@ -518,29 +524,63 @@ if ! mkdir "$MEM/.start" 2>/dev/null; then
   [ -n "$(find "$MEM/.start" -mmin +1 2>/dev/null)" ] || exit 0
   rmdir "$MEM/.start" 2>/dev/null; mkdir "$MEM/.start" 2>/dev/null || exit 0
 fi
-# Lanes land one at a time, except that more may gate on top of the one ahead (second_slot_project): at most W gates at once.
-only_pn=; running=$(running_count)
-if [ "$running" -ge 1 ]; then only_pn=$(second_slot_project) || { slots_full; rmdir "$MEM/.start" 2>/dev/null; exit 0; }; fi
-if [ "$running" -lt 1 ] || [ -n "$only_pn" ]; then
-  # The flush rule (bin/jg-trunk-policy-lib.sh): a project's ready lanes wait until flush-at-ready of them are ready, or the oldest has
+# Queues split by tests (core/trunk-landing/partition.sh): each project's ready lanes are put in queues by the scripts their changes select, and
+# a queue is a unit that lands by itself. Lanes of one queue land one at a time, except that more may gate on top of the one ahead (queue_has_room):
+# at most W gates in the queue's chain. A queue that shares no script with a running one starts at once beside it, while the project's running
+# landings are under W in all; a lane that meets two running queues waits for one of them to end. The trunk still moves by one compare-and-swap.
+rl=$(running_lanes); running=$(printf '%s' "$rl" | grep -c . || true); running=${running:-0}
+run_pn=$(printf '%s' "$rl" | awk '$3 != "?" { print $3 }' | sort -u)
+if [ "$(printf '%s' "$run_pn" | grep -c .)" -gt 1 ]; then slots_full; rmdir "$MEM/.start" 2>/dev/null; exit 0; fi  # landings of two projects in flight: nothing starts
+qmap=$(mktemp "$MEM/.queues-XXXXXX") || exit 1
+while read -r pn; do
+  [ -n "$pn" ] || continue
+  [ -z "$run_pn" ] || [ "$pn" = "$run_pn" ] || continue
+  sorted=$(printf '%s' "$cands" | awk -v p="$pn" '$4 == p' | sort -k5,5n -k6,6n -k1,1n -k2,2)
+  { printf '%s\n' "$rl" | awk -v p="$pn" '$3 == p { print "Q", $4, $5 }'
+    while read -r _ id head _; do
+      [ -n "$id" ] || continue
+      partition_selection "$(mval "$STATE/$id.meta" project)" "$id" "$head" >/dev/null
+      printf 'C %s %s\n' "$id" "$(partition_scripts "$id" "$head")"
+    done <<< "$sorted"
+  } | partition_assign "$(window_size "$pn")" | sed "s/^/$pn /" >> "$qmap"
+done < <(printf '%s' "$cands" | awk '!seen[$4]++ { print $4 }')
+now=$(date +%s); ready=(); id=; head=; qname=
+{
+  while read -r pn id q; do
+    [ "$q" != wait ] || { head=$(printf '%s' "$cands" | awk -v t="$id" '$2 == t { print $3; exit }'); queue_why_wait "$MEM" "$id" "$head" 'slot full'; }
+  done < "$qmap"
+  # <epoch done> <task> <head> <project> <land-next 1|0> <returned 1|0> <queue>: the lanes that wait are not offered
+  cands=$(printf '%s' "$cands" | while read -r at id head pn n1 n2; do
+    q=$(awk -v t="$id" '$2 == t { print $3; exit }' "$qmap"); [ -n "$q" ] && [ "$q" != wait ] && printf '%s %s %s %s %s %s %s\n' "$at" "$id" "$head" "$pn" "$n1" "$n2" "$q"
+  done)
+}
+rm -f -- "$qmap"
+if [ -z "$cands" ]; then slots_full; rmdir "$MEM/.start" 2>/dev/null; exit 0; fi
+only_q=
+while read -r pn q; do  # the units, oldest first: a queue that runs now takes one lane on its chain, a new queue needs a free gate in the window
+  [ -n "$pn" ] || continue
+  r_q=$(printf '%s\n' "$rl" | awk -v p="$pn" -v q="$q" '$3 == p && $4 == q' | grep -c . || true)
+  if [ "$r_q" -ge 1 ]; then queue_has_room "$pn" "$q" "$r_q" || continue; only_q=1
+  else [ "$running" -lt "$(window_size "$pn")" ] || continue; only_q=; fi
+  # The flush rule (bin/jg-trunk-policy-lib.sh): a queue's ready lanes wait until flush-at-ready of them are ready, or the oldest has
   # waited flush-after-minutes, or `jg-trunk.sh flush` was run; then they all land (up to batch-max, oldest done first; the rest follow
-  # at once). A lane marked `land-next` goes first and lands at once, with or without the others. One project per stack.
-  now=$(date +%s); ready=(); id=; head=
-  while read -r pn; do
-    [ -n "$pn" ] || continue
-    [ -z "$only_pn" ] || [ "$pn" = "$only_pn" ] || continue
-    list=$(printf '%s' "$cands" | awk -v p="$pn" '$4 == p' | sort -k5,5n -k6,6n -k1,1n -k2,2)
-    oldest=$(printf '%s\n' "$list" | sort -n -k1,1 | head -n 1 | cut -d' ' -f1)
-    at_ready=$(polnum flush-at-ready "$pn" 3); after=$(polnum flush-after-minutes "$pn" 20)
-    if [ -e "$STATE/trunk-flush-$pn" ] || [ "$(printf '%s\n' "$list" | grep -c .)" -ge "$at_ready" ] || [ $(( now - ${oldest:-0} )) -ge $(( after * 60 )) ]; then :; else
-      list=$(printf '%s\n' "$list" | awk '$5 == 0')
-    fi
-    [ -n "$list" ] || continue
-    take=$(jg_trunk_policy batch-max "$pn"); [ -z "$only_pn" ] || take=1  # the second slot is one lane, never a stack
-    batch=$(printf '%s\n' "$list" | head -n "$take" | awk '{ printf "%s%s@%s", (NR > 1 ? " " : ""), $2, $3 }')
-    read -r -a ready <<< "$batch"; break
-  done < <(printf '%s' "$cands" | sort -n -k1,1 | awk '!seen[$4]++ { print $4 }')
-  [ "${#ready[@]}" -gt 0 ] || { rmdir "$MEM/.start" 2>/dev/null; exit 0; }
+  # at once). A lane marked `land-next` goes first and lands at once, with or without the others. One queue per stack.
+  list=$(printf '%s' "$cands" | awk -v p="$pn" -v q="$q" '$4 == p && $7 == q' | sort -k5,5n -k6,6n -k1,1n -k2,2)
+  oldest=$(printf '%s\n' "$list" | sort -n -k1,1 | head -n 1 | cut -d' ' -f1)
+  at_ready=$(polnum flush-at-ready "$pn" 3); after=$(polnum flush-after-minutes "$pn" 20)
+  if [ -e "$STATE/trunk-flush-$pn" ] || [ "$(printf '%s\n' "$list" | grep -c .)" -ge "$at_ready" ] || [ $(( now - ${oldest:-0} )) -ge $(( after * 60 )) ]; then :; else
+    list=$(printf '%s\n' "$list" | awk '$5 == 0')
+  fi
+  [ -n "$list" ] || continue
+  take=$(jg_trunk_policy batch-max "$pn"); [ -z "$only_q" ] || take=1  # a lane beside the one ahead is one lane, never a stack
+  batch=$(printf '%s\n' "$list" | head -n "$take" | awk '{ printf "%s%s@%s", (NR > 1 ? " " : ""), $2, $3 }')
+  read -r -a ready <<< "$batch"; qname=$q; break
+done < <(printf '%s' "$cands" | sort -n -k1,1 | awk '!seen[$4 " " $7]++ { print $4, $7 }')
+if [ "${#ready[@]}" -eq 0 ]; then
+  [ "$(printf '%s' "$cands" | grep -c .)" -eq 0 ] || slots_full
+  rmdir "$MEM/.start" 2>/dev/null; exit 0
+fi
+if [ "${#ready[@]}" -gt 0 ]; then
   # A batch has no per-lane admission key; recheck environment waits singly so an unchanged fact never reruns its gate.
   normal=(); env_first=
   for arg in "${ready[@]}"; do
@@ -556,6 +596,20 @@ if [ "$running" -lt 1 ] || [ -n "$only_pn" ]; then
     QUEUE_WHY_CAUSE=$(start_cause "$(printf '%s' "$cands" | awk -v t="${arg%%@*}" '$2 == t { print $4; exit }')") \
     queue_why_record "$MEM" "${arg%%@*}" "${arg#*@}" "$(printf '%s' "$cands" | awk -v t="${arg%%@*}" '$2 == t { print $1; exit }')" "$now" "${stack[@]}"
   done
+  # The selection of lanes and queues above took time: a lane that landed meanwhile (its record is gone, or its branch moved with the rebase)
+  # is not started again.
+  fresh=()
+  for arg in "${ready[@]}"; do
+    id=${arg%%@*}; head=${arg#*@}; [ -f "$STATE/$id.meta" ] || continue
+    case $(cat "$MEM/$id.$head.state" 2>/dev/null) in landed*) continue ;; esac
+    br=$(mval "$STATE/$id.meta" branch); br=${br:-fm/$id}
+    [ "$(git -C "$(mval "$STATE/$id.meta" project)" rev-parse --verify --quiet "refs/heads/$br^{commit}" 2>/dev/null)" = "$head" ] || continue
+    fresh+=("$arg")
+  done
+  [ "${#fresh[@]}" -gt 0 ] || { rmdir "$MEM/.start" 2>/dev/null; exit 0; }
+  ready=("${fresh[@]}")
+  # Each lane names its queue before it runs: the run puts its gate in that queue's chain of fronts, and the next start reads it.
+  for arg in "${ready[@]}"; do [ "$qname" = - ] || partition_record "${arg%%@*}" "${arg#*@}" "$qname"; done
   if [ "${#ready[@]}" -ge 2 ]; then
     for arg in "${ready[@]}"; do printf 'running %s\n' "$(date +%s)" > "$MEM/${arg%%@*}.${arg#*@}.state"; done
     launch_log=$(mktemp "$MEM/batch.launch-XXXXXX.log") || exit 1

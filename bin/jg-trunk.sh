@@ -1054,8 +1054,13 @@ unpin_green() {  # <red sha>
 # ended, and lands only if the trunk then stands on its base. If a lane ahead did not land, it is gated again on the tip (one more gate).
 # gate-slots (default 2; 1 turns this off) is the most positions; the lander starts the next lane while the highest live position is
 # under the window W (core/trunk-landing/window.sh, core/trunk-landing/trunk-landing.sh).
+# Lanes whose changed tests share no script run in separate queues (core/trunk-landing/partition.sh): each queue keeps its own chain, and the
+# trunk still moves by the one compare-and-swap below, so a queue that finds the trunk moved rebases and is gated again.
 FRONT=  # the position this lane holds, empty for none
-front_name() { if [ "$1" -le 1 ]; then printf 'trunk-front-%s\n' "$PN"; else printf 'trunk-front-%s@%s\n' "$PN" "$1"; fi; }  # <position>: the record name; its lock is .<name>.lock
+front_name() {  # <position>: the record name; its lock is .<name>.lock. A lane of a test queue (JG_TRUNK_QUEUE, core/trunk-landing/partition.sh) has its own chain: trunk-front-<project>:<queue>
+  local n="trunk-front-$PN${JG_TRUNK_QUEUE:+:$JG_TRUNK_QUEUE}"
+  if [ "$1" -le 1 ]; then printf '%s\n' "$n"; else printf '%s@%s\n' "$n" "$1"; fi
+}
 front_lock() { printf '%s\n' "$STATE/.$(front_name "$1").lock"; }
 front_holder_alive() {  # <position>: true while another lane holds that position
   local pid; pid=$(cat "$(front_lock "$1")/pid" 2>/dev/null || true)
