@@ -10,7 +10,7 @@
 # the whole suite runs on the release pull request in CI, never per landing; the release is ONE pull request from the trunk itself
 # with no release branch; and a red CI pins the home back to the last green commit.
 # Real bin/jg-trunk.sh, bin/jg-trunk-live-home.sh, core/trunk-landing and the shared landing gates run over real git
-# repositories, a bare origin and a recording forge (tests/jg-trunk.test.sh and its -live, -gate, -queue, -retry and
+# repositories, a bare origin and a recording forge (tests/jg-trunk.test.sh and its -adopt, -refusal, -live, -gate, -queue, -retry and
 # -verify parts own the cases; tests/jg-trunk-scope.test.sh
 # proves direct-PR, no-mistakes and local-only projects are untouched; tests/jg-trunk-spawn.test.sh
 # owns the spawn side: a project with a trunk takes no feature pull request and its lane starts on the trunk tip).
@@ -26,7 +26,7 @@ git clone -q --shared --no-checkout "$root" "$candidate/tree" || exit 1
 git -C "$candidate/tree" checkout -q --detach "$(git -C "$root" rev-parse HEAD)" || exit 1
 rc=0
 (cd "$candidate/tree" && bash bin/jg-test-run.sh \
-  tests/jg-trunk.test.sh tests/jg-trunk-live.test.sh tests/jg-trunk-gate.test.sh tests/jg-trunk-sealed-ran.test.sh tests/jg-trunk-queue.test.sh \
+  tests/jg-trunk.test.sh tests/jg-trunk-adopt.test.sh tests/jg-trunk-refusal.test.sh tests/jg-trunk-live.test.sh tests/jg-trunk-gate.test.sh tests/jg-trunk-sealed-ran.test.sh tests/jg-trunk-queue.test.sh \
   tests/jg-trunk-retry.test.sh tests/jg-trunk-release-open-pr.test.sh tests/jg-trunk-release-merge-first.test.sh tests/jg-trunk-two-gates.test.sh tests/jg-trunk-publish.test.sh tests/jg-trunk-cancel.test.sh \
   tests/jg-trunk-verify.test.sh tests/jg-trunk-verify-milestone.test.sh tests/jg-trunk-spawn.test.sh tests/jg-trunk-scope.test.sh \
   tests/jg-on.test.sh tests/migration-card-live.test.sh tests/jg-afk-inject-e2e.test.sh \

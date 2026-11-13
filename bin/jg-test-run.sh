@@ -914,6 +914,8 @@ tests/jg-ticket-writeback.test.sh 83
 tests/jg-tmp-sweep.test.sh 5192
 tests/jg-tokens-retro.test.sh 615
 tests/jg-trunk.test.sh 45000
+tests/jg-trunk-adopt.test.sh 60000
+tests/jg-trunk-refusal.test.sh 90000
 tests/jg-trunk-live.test.sh 44000
 tests/jg-trunk-gate.test.sh 35000
 tests/jg-trunk-queue.test.sh 31000
