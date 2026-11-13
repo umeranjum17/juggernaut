@@ -146,7 +146,11 @@ refused() {  # <what> <id> <expect>: landing refuses, mentions <expect>, and lea
 sweep() {  # one check sweep over the fixture home, then wait for the detached landings it started
   local out
   out=$(JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D") || fail "the check must not fail: $out"
-  for _ in $(seq 1 100); do grep -qs '^running' "$HOME_D"/data/jg-trunk-landing/*.state || break; sleep 0.2; done
+  # A landing ends when its run releases its lock, which is after it records its state (it still tells the lane and starts the next check).
+  for _ in $(seq 1 100); do
+    grep -qs '^running' "$HOME_D"/data/jg-trunk-landing/*.state || compgen -G "$HOME_D/state/.trunk-run-*.lock" >/dev/null || break
+    sleep 0.2
+  done
   printf '%s' "$out"
 }
 
