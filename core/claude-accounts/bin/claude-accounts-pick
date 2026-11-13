@@ -37,6 +37,13 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 SHED='CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_FOUNDRY CLAUDE_CODE_USE_ANTHROPIC_AWS CLAUDE_CODE_USE_MANTLE ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_PROFILE ANTHROPIC_FEDERATION_RULE_ID'
 
 fail() { jq -cn --arg r "$1" '{ok: false, reason: $r}'; echo "error: $1" >&2; exit 1; }
+# A move of the account machine goes to the one move log before the record changes (the shadow reads the state now and
+# never refuses): report_move <account id> <state it moves to>. It needs a home; without one nothing is reported.
+report_move() {
+  local shadow=$here/../../../bin/jg-machine-shadow.sh
+  [ -n "${JG_HOME:-}" ] && [ -x "$shadow" ] || return 0
+  "$shadow" account "$tool.$1" "$2" || true
+}
 usage="usage: claude-accounts-pick pick <tool> --json [--prefer <id>] --state <dir>"
 verb=${1:-}
 case "$verb" in pick | status | rest | unrest) ;; *) fail "$usage" ;; esac
@@ -73,9 +80,10 @@ if [ "$verb" != pick ]; then
         | max | select(. > $now)' "$quota_dir/$tool-accounts.json") \
         || fail "rest requires low quota with a future reset for $id; a launch prompt is not a limit"
       mkdir -p "$rested" || fail "cannot write the rested list in $rested"
+      report_move "$id" limited
       echo "$until" >"$rested/$id" || fail "cannot rest $id in $rested"
       jq -cn --arg id "$id" --argjson until "$until" '{ok: true, id: $id, rested: true, until: $until, reason: "low quota"}' ;;
-    unrest) rm -f "$rested/$id"; jq -cn --arg id "$id" '{ok: true, id: $id, rested: false}' ;;
+    unrest) report_move "$id" available; rm -f "$rested/$id"; jq -cn --arg id "$id" '{ok: true, id: $id, rested: false}' ;;
   esac
   exit 0
 fi
@@ -136,6 +144,7 @@ rested_ids=$(for f in "$rested_dir"/*; do
         if .five_hour == null and .seven_day != null then .seven_day.left >= $floor
         else ([.five_hour, .seven_day] | map(select(. != null)) | length > 0 and all(.left == 100))
         end))' <<<"$reading" >/dev/null; then
+    if [ "$(cat "$f" 2>/dev/null)" -gt "$(date +%s)" ] 2>/dev/null; then report_move "${f##*/}" available; fi  # only a rest still in force is a move
     printf '0\n' >"$f" || fail "cannot expire the recovered account rest"
   fi
   expiry=$(cat "$f") || fail "cannot read account rest"
@@ -186,6 +195,7 @@ pick=$(jq -cn --arg prefer "$prefer" --arg tool "$tool" --argjson assignments "$
 [ -n "$pick" ] || fail "no ${tool/claude/Claude} account can take a worker${prefer:+ (asked for $prefer)}: each is resting, on hold, signed out, or under $low% left${read_err:+ (quota reading unavailable: $read_err)}"
 folder=$(jq -r '.folder' <<<"$pick")
 [ -d "$folder" ] || fail "the chosen $tool account's folder is missing"
+report_move "$(jq -r .id <<<"$pick")" in-use
 tmp=$(mktemp "$state/account-assignments.XXXXXX") || fail "cannot create assignment update"
 if ! jq -c --arg tool "$tool" --arg id "$(jq -r .id <<<"$pick")" --argjson at "$now" \
   '. + [{provider:$tool,id:$id,at:$at}]' <<<"$assignments" >"$tmp" || ! mv -f "$tmp" "$state/account-assignments.json"; then

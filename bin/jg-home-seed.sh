@@ -776,6 +776,7 @@ write_registry() {
   scope=$(registry_scope_for_brief "$brief")
   summary=$(registry_summary_for_brief "$brief")
   today=$(date +%F)
+  grep -qE "^- $id( |$)" "$REG" 2>/dev/null || squad_lead_report_provisioned "$id"  # a re-seed of a known home is no new move
   tmp="$REG.tmp.$$"
   if [ -f "$REG" ]; then
     grep -vE "^- $id( |$)" "$REG" > "$tmp" || true

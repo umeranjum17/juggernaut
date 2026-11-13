@@ -263,9 +263,9 @@ def edge_check(m, frm, to):
     """Read-only answer for a writer: is the move from -> to legal? Exit 0 legal, 1 not."""
     to = entry(m, to)
     for x in (frm, to):
-        if x not in m["states"]:
+        if x not in m["states"] and not (x == frm == "(none)"):  # (none) is the start of a record's first move
             die(f"{m['name']}: {x} is not a state", 1)
-    hit = [e for e in m["edges"] if e["from"] == frm and e["to"] == to]
+    hit = [e for e in (m["rows"] if frm == "(none)" else m["edges"]) if e["from"] == frm and entry(m, e["to"]) == to]
     for e in hit:
         print(f"legal {m['name']} {frm} {to}\t{e['event']}\t{e['writer']}")
     if not hit:

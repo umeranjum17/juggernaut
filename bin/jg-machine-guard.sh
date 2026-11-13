@@ -59,7 +59,8 @@ move_line() {
 }
 
 cmd_edge() {
-  if [ $# -lt 3 ] || [ $# -gt 4 ] || ! plain "$1" || ! plain "$2" || ! plain "$3" || { [ $# -eq 4 ] && ! plain "$4"; }; then usage; fi
+  # a record's first move starts from the word (none), which only the from position may hold
+  if [ $# -lt 3 ] || [ $# -gt 4 ] || ! plain "$1" || { [ "$2" != '(none)' ] && ! plain "$2"; } || ! plain "$3" || { [ $# -eq 4 ] && ! plain "$4"; }; then usage; fi
   local m=$1 from=$2 to=$3 id=${4:--} out rc mode=shadow
   out=$(bash "$SCRIPT_DIR/jg-machine.sh" edge-check "$m" "$from" "$to" 2>&1); rc=$?
   [ "$rc" = 0 ] && { move_line "$m" "$id" "$from" "$to" "$out"; return 0; }
