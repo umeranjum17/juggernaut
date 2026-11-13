@@ -4,6 +4,7 @@
 #        trunk-landing.sh next <jg-home>                      (what a finished landing starts: the next ready lane, silently)
 #        trunk-landing.sh run <jg-home> <task-id> <head>      (what `check` starts in the background)
 #        trunk-landing.sh runbatch <jg-home> <task-id>@<head>...     (what `check` starts when 2 or more lanes are queued: one stack)
+#        trunk-landing.sh cleanup <jg-home> <task-id> <head> [<now>]  (what a landed lane's refused cleanup starts when the refusal only needs time: the retry ladder)
 #        trunk-landing.sh live <jg-home> <project>                   (what a tick starts under a go-live waiver: the batched live step)
 #        trunk-landing.sh nightly <jg-home> <project>                (what a tick starts once a day from nightly-hour: bin/jg-trunk.sh nightly, the whole suite on the tip through the same verify)
 #        trunk-landing.sh verify <jg-home> <project>                 (what a tick starts while the trunk tip is above the green pin: bin/jg-trunk.sh verify, one at a time)
@@ -34,7 +35,9 @@
 # a failed move, a hold or a home still behind the last go-live after 10 minutes (bin/jg-trunk-live-lag.sh) in the outbox: the homes move once the trunk has been quiet for live-quiet-minutes (20) or the
 # oldest landing not yet live is live-cap-minutes (60) old, whichever is first. Only the green pin goes live, so a red suite never does.
 # A landed task resumes the lanes whose blocker says `waits-for: <task>`: one steer each, the blocker closed in the same send.
-# A landed task is then cleaned up with bin/jg-teardown.sh, never forced: a refusal is reported and the worktree stays.
+# A landed task is then cleaned up with bin/jg-teardown.sh, never forced, in the same step that landed it and per lane: a stack's
+# output is read as it comes, and each lane is cleaned at its own `landed` line. A refusal that only needs time is retried at 15 s, 1, 2
+# and 5 minutes; any other refusal is final with its reason from core/machines/cleanup-reason.states and one alert (cleanup-retry.sh).
 # bin/jg-delivery-tick.sh runs this check, from the watcher's fast tick and from the host sentinel's minute tick, so a worker's done
 # starts the landing within seconds in a supervised home and within a minute when no model or watcher runs; the outcome
 # line of a landing already cleaned up (its record is gone) comes from data/jg-trunk-landing/outbox.
@@ -55,8 +58,9 @@ case "${1:-}" in
   verify) [ "$#" -eq 3 ] || { echo "usage: trunk-landing.sh verify <jg-home> <project>" >&2; exit 2; } ;;
   nightly) [ "$#" -eq 3 ] || { echo "usage: trunk-landing.sh nightly <jg-home> <project>" >&2; exit 2; } ;;
   publish) [ "$#" -eq 3 ] || { echo "usage: trunk-landing.sh publish <jg-home> <project>" >&2; exit 2; } ;;
+  cleanup) [ "$#" -ge 4 ] || { echo "usage: trunk-landing.sh cleanup <jg-home> <task-id> <head> [<now>]" >&2; exit 2; } ;;
   live) [ "$#" -eq 3 ] || { echo "usage: trunk-landing.sh live <jg-home> <project>" >&2; exit 2; } ;;
-  *) echo "usage: trunk-landing.sh check|next <jg-home> | runbatch <jg-home> <task-id>@<head>... | run <jg-home> <task-id> <head> | live <jg-home> <project> | verify <jg-home> <project> | nightly <jg-home> <project> | publish <jg-home> <project>" >&2; exit 2 ;;
+  *) echo "usage: trunk-landing.sh check|next <jg-home> | runbatch <jg-home> <task-id>@<head>... | cleanup <jg-home> <task-id> <head> | run <jg-home> <task-id> <head> | live <jg-home> <project> | verify <jg-home> <project> | nightly <jg-home> <project> | publish <jg-home> <project>" >&2; exit 2 ;;
 esac
 [ -d "$2/state" ] || { echo "trunk-landing: $2 has no state directory" >&2; exit 2; }
 FMH=$(cd "$2" && pwd -P)
@@ -71,6 +75,8 @@ mkdir -p "$MEM" || exit 0
 . "$FMH/bin/jg-wake-lib.sh"
 # shellcheck source=core/trunk-landing/refusal-reach.sh
 . "$(dirname "${BASH_SOURCE[0]}")/refusal-reach.sh"
+# shellcheck source=core/trunk-landing/cleanup-retry.sh
+. "$(dirname "${BASH_SOURCE[0]}")/cleanup-retry.sh"
 # shellcheck source=core/trunk-landing/queue-why.sh
 . "$(dirname "${BASH_SOURCE[0]}")/queue-why.sh"
 # shellcheck source=core/trunk-landing/window.sh
@@ -79,7 +85,7 @@ mkdir -p "$MEM" || exit 0
 # (JG_TEST_SEAM=1) it names itself in the suite's registry, so the suite's cleanup stops its process group even after
 # the fixture home is gone (tests/lib.sh jg_test_reap_detached).
 case $1 in
-  run|runbatch|live|publish|verify|nightly)
+  run|runbatch|cleanup|live|publish|verify|nightly)
     if [ "${JG_TEST_SEAM:-}" = 1 ] && [ -n "${JG_TEST_DETACHED_REGISTRY:-}" ]; then
       printf '%s %s\n' "$$" "$(jg_pid_identity "$$" 2>/dev/null)" >> "$JG_TEST_DETACHED_REGISTRY" 2>/dev/null || :
     fi
@@ -103,6 +109,20 @@ resume_waiters() {  # <landed task id>
   # shellcheck disable=SC2016 # the child shell expands its own positional parameters
   STATE=$FMH/state _JG_WAIT_TIMER_DIR=$FMH/bin bash -c '. "$1/bin/jg-classify-lib.sh" && . "$2" && jg_wait_waits_for_resume "$3"' \
     jg-resume "$FMH" "$lib" "$1" 2>>"$MEM/resume.log" || :
+}
+
+# A lane the lander reports landed: cleaned up at once, never forced (cleanup-retry.sh), its waiters resumed, one outbox line.
+# The lander rebased the lane, so its branch may now be at another head: the same state stands for that head.
+landed_lane() {  # <task-id> <head> <outbox text after the id and mode>
+  local id=$1 head=$2 proj br now res lane_mode
+  proj=$(mval "$STATE/$id.meta" project); lane_mode=$(mval "$STATE/$id.meta" mode)
+  br=$(mval "$STATE/$id.meta" branch); br=${br:-fm/$id}
+  now=$(git -C "$proj" rev-parse --verify --quiet "refs/heads/$br^{commit}" 2>/dev/null) || now=
+  [ "$now" != "$head" ] || now=
+  res=$(lane_cleanup "$id" "$head" "$now"); rm -f -- "$STATE/$id.land-next"
+  window_move "$(basename "$proj")" landed >/dev/null || :
+  resume_waiters "$id"
+  cleanup_outbox "landed $id ($lane_mode) $3; $res"
 }
 
 # The batched live step for one project (bin/jg-trunk.sh autolive decides; this reports what is worth a line: a go-live, a
@@ -173,6 +193,13 @@ if [ "$1" = nightly ]; then
   exit 0
 fi
 
+# The retry ladder of one landed lane whose cleanup was refused for a reason that only needs time (cleanup-retry.sh).
+if [ "$1" = cleanup ]; then
+  [[ $3 =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && $4 =~ ^[0-9a-f]{40,64}$ ]] || exit 2
+  cleanup_ladder_run "$3" "$4" "${5:-}"
+  exit 0
+fi
+
 # A stack of lanes: one `land-batch` run, then each lane's outcome is read from its own line, the same as a single landing's.
 if [ "$1" = runbatch ]; then
   shift 2; arg=; locked=; out=; rc=0
@@ -184,25 +211,28 @@ if [ "$1" = runbatch ]; then
   done
   for arg in "$@"; do printf 'running %s %s\n' "$(date +%s)" "$$" > "$MEM/${arg%%@*}.${arg#*@}.state"; done
   pn=$(basename "$(mval "$STATE/${1%%@*}.meta" project)")
-  out=$(JG_TRUNK_GATE_DEADLINE="$(landing_deadline)" JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" land-batch "$@" 2>&1) || rc=$?
+  # The lander's output is read as it comes: a lane is cleaned up at its own landed line, not when the whole stack ends.
+  out_file=$(mktemp "$MEM/batch.out-XXXXXX.log") || exit 1; cleaned=
+  while IFS= read -r line; do
+    case $line in "exit-code "[0-9]*) rc=${line#exit-code }; continue ;; esac
+    printf '%s\n' "$line" >> "$out_file"
+    case $line in
+      "landed "*|"already landed "*)
+        for arg in "$@"; do
+          id=${arg%%@*}
+          case " $cleaned " in *" $id "*) continue ;; esac
+          case $line in "landed $id "*|"already landed $id "*) ;; *) continue ;; esac
+          cleaned="$cleaned $id"; landed_lane "$id" "${arg#*@}" "on the local trunk in one stack with its queue (not live yet: live follows the answer given at gated, the captain's word or the project's waiver, and its quiet window)"
+        done ;;
+    esac
+  done < <(JG_TRUNK_GATE_DEADLINE="$(landing_deadline)" JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" land-batch "$@" 2>&1; echo "exit-code $?")
+  out=$(cat "$out_file"); rm -f -- "$out_file"
   tip=$(verdict_tip "$pn")  # a lane the stack returned was judged on top of the stack's lanes that landed
   for arg in "$@"; do
     id=${arg%%@*}; head=${arg#*@}; proj=$(mval "$STATE/$id.meta" project); lane_mode=$(mval "$STATE/$id.meta" mode)
     request_log=$(mktemp "$MEM/$id.$head.request-XXXXXX.log") || exit 1
     printf '%s\n' "$out" > "$request_log"; printf '%s\n' "$out" > "$MEM/$id.$head.log"
-    if printf '%s\n' "$out" | grep -q "^landed $id " || printf '%s\n' "$out" | grep -q "^already landed $id "; then
-      br=$(mval "$STATE/$id.meta" branch); br=${br:-fm/$id}
-      now=$(git -C "$proj" rev-parse --verify --quiet "refs/heads/$br^{commit}" 2>/dev/null) || now=
-      res=$(JG_HOME="$FMH" "$FMH/bin/jg-teardown.sh" "$id" 2>&1) && res='cleaned up' || res="cleanup refused, nothing was forced: $(printf '%s' "$res" | tail -n 1 | cut -c1-200)"
-      printf 'landed %s\n' "$res" > "$MEM/$id.$head.state"; rm -f -- "$STATE/$id.land-next"
-      window_move "$pn" landed >/dev/null || :
-      [ -z "$now" ] || [ "$now" = "$head" ] || printf 'landed %s\n' "$res" > "$MEM/$id.$now.state"
-      resume_waiters "$id"
-      jg_lock_acquire_wait "$MEM/.outbox.lock"
-      printf 'trunk-landing: landed %s (%s) on the local trunk in one stack with its queue (not live yet: live follows the answer given at gated, the captain'"'"'s word or the project'"'"'s waiver, and its quiet window); %s\n' "$id" "$lane_mode" "$res" >> "$MEM/outbox"
-      jg_lock_release "$MEM/.outbox.lock"
-      continue
-    fi
+    case " $cleaned " in *" $id "*) continue ;; esac
     why=$(printf '%s\n' "$out" | grep -E "^returned $id: " | tail -n 1 | sed "s/^returned $id: //")
     [ -n "$why" ] || why=$(printf '%s\n' "$out" | grep -E '^(REFUSED|error|IN_PROGRESS):' | tail -n 1)
     why=$(printf '%s' "${why:-landing failed; see $request_log}" | cut -c1-300)
@@ -239,18 +269,7 @@ if [ "$1" = run ]; then
   printf '%s\n' "$out" > "$MEM/$id.$head.log"
   if [ "$rc" -eq 0 ]; then
     JG_HOME="$FMH" "$FMH/bin/jg-machine-shadow.sh" landing "$id.$head" landed || true  # shadow report of the move (jg-machine-shadow.sh)
-    proj=$(mval "$STATE/$id.meta" project); lane_mode=$(mval "$STATE/$id.meta" mode)
-    # The lander rebased the lane, so its branch is now at the landed commit: the same verdict stands for that head.
-    br=$(mval "$STATE/$id.meta" branch); br=${br:-fm/$id}
-    now=$(git -C "$proj" rev-parse --verify --quiet "refs/heads/$br^{commit}" 2>/dev/null) || now=
-    out=$(JG_HOME="$FMH" "$FMH/bin/jg-teardown.sh" "$id" 2>&1) && out='cleaned up' || out="cleanup refused, nothing was forced: $(printf '%s' "$out" | tail -n 1 | cut -c1-200)"
-    printf 'landed %s\n' "$out" > "$MEM/$id.$head.state"; rm -f -- "$STATE/$id.land-next"
-    window_move "$(basename "$proj")" landed >/dev/null || :
-    [ -z "$now" ] || [ "$now" = "$head" ] || printf 'landed %s\n' "$out" > "$MEM/$id.$now.state"
-    resume_waiters "$id"
-    jg_lock_acquire_wait "$MEM/.outbox.lock"
-    printf 'trunk-landing: landed %s (%s) on the local trunk (not live yet: live follows the answer given at gated, the captain'"'"'s word or the project'"'"'s waiver, and its quiet window); %s\n' "$id" "$lane_mode" "$out" >> "$MEM/outbox"
-    jg_lock_release "$MEM/.outbox.lock"
+    landed_lane "$id" "$head" "on the local trunk (not live yet: live follows the answer given at gated, the captain's word or the project's waiver, and its quiet window)"
     "$SELF" next "$FMH" >/dev/null 2>&1 || :
     exit 0
   fi
