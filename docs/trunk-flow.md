@@ -60,6 +60,8 @@ A ready lane does not wait for another lane's gate. While one lane gates on the 
 
 A landing runs no test by default (`landing-gate=none` in `config/trunk-policy`): it rebases, runs the lint and moves the trunk, and the line's verify (one run for a batch, off the landing path) is the one test run; a red it finds is reverted by itself and its ticket is told. The row records `gate=no-landing-gate`. Rollback is `landing-gate=tests`, which runs the changed files' tests at the landing again (`tests/jg-trunk-gate.test.sh`).
 
+The check keeps a window of W gates (`core/trunk-landing/window.sh`, record `state/trunk-window-<project>`): W starts at its cap, grows by one when a lane lands and halves (never under 1) when a gate ends red. The cap is the least of `gate-slots`, the host's `heavy_slots` (`config/lane-scale`) and 2. W above 2 is not built yet: `bin/jg-trunk.sh` keeps one front lane, so a gate can sit on the front and no deeper; the ordered chain that lifts this is ticket h100-h29c2.
+
 At most two gates run at once (`gate-slots`, default 2, in `config/trunk-policy`): a third lane starts when the front has landed or failed and the second lane's end starts the next one. Rollback is `gate-slots=1`, which lands one lane at a time as before. A stack (`land-batch`) is never a front, so a stack in flight keeps the one-at-a-time rule. This does not shorten one gate. `tests/jg-trunk-two-gates.test.sh` covers it: two lanes in one gate each with the second gate overlapping the first, a third lane waiting, a red front costing the second lane one more gate, and `gate-slots=1`.
 
 ## Moving a home onto the trunk

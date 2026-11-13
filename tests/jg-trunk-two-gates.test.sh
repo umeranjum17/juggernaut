@@ -7,6 +7,8 @@
 #    after one gate each (the second started before the first ended). A third lane waits: at most 2 gates at once, then it lands too.
 # G2 When the first lane is red, the second lands after one more gate (3 gate runs): it is gated again on the tip, the first is returned.
 # G3 With gate-slots=1 the second lane waits for the first one's end: no overlap, and both still land.
+# G4 The window (core/trunk-landing/window.sh): a red gate halves it to one gate, so the next lane gates alone and a lane ready meanwhile
+#    waits; a landing grows it back to two and the waiting lane lands. gate-slots=1 keeps it at one.
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
@@ -94,6 +96,22 @@ test_one_slot_lands_one_lane_at_a_time() {
   pass 'gate-slots=1 keeps the one-at-a-time rule'
 }
 
+test_a_red_gate_halves_the_window_and_a_landing_grows_it() {
+  local base; win() { cat "$HOME_D/state/trunk-window-proj" 2>/dev/null; }; win_is() { [ "$(win)" = "$1" ]; }
+  slow_world win; base=$(tip)
+  lane w0 'BAD' work.txt; kick; wait_for 'the red lane is returned' grep -qs '^final' "$HOME_D"/data/jg-trunk-landing/w0.*.state
+  wait_for 'the window halves on the red' win_is 1
+  : > "$W/gate-runs"; : > "$W/hold"
+  lane w1 'w1' w1.txt; kick; wait_for 'the next lane gates' has_starts 1; wait_for 'it is the front' front_published
+  lane w2 'w2' w2.txt; kick; sleep 1
+  [ "$(starts)" = 1 ] || fail "with the window at 1 a second lane must wait while the first gates, got $(starts) starts"
+  touch "$W/release"; settle "$base" 2
+  [ "$(git -C "$PROJ" log --reverse --format=%s "$base..trunk" | paste -sd, -)" = "ticket w1,ticket w2" ] || fail "both land in order: $(git -C "$PROJ" log --format=%s "$base..trunk")"
+  [ "$(win)" = 2 ] || fail "two landings grow the window back to its cap of 2, got $(win)"
+  pass 'a red gate halves the window, a lane waits behind the one gate, and landings grow it back'
+}
+
 test_two_lanes_land_in_about_one_gate
+test_a_red_gate_halves_the_window_and_a_landing_grows_it
 test_a_red_first_lane_costs_the_second_one_more_gate
 test_one_slot_lands_one_lane_at_a_time

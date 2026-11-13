@@ -18,7 +18,9 @@
 # commit onto the trunk tip by itself, so a moved trunk is never a refusal. Lanes land oldest done first, and a
 # finished landing starts the next at once (`next`), so three lanes ready together land in order with no human or lead step. While one
 # lane gates on the trunk tip a second may start, gated on top of the first one's commit (at most gate-slots, default 2, gates at once: the
-# second lands right behind the first, or is gated again on the tip when the first does not land; bin/jg-trunk.sh owns it).
+# second lands right behind the first, or is gated again on the tip when the first does not land; bin/jg-trunk.sh owns it). The number
+# of gates the check keeps is the window W of core/trunk-landing/window.sh: it grows by one on a landing, halves on a red gate, and is
+# capped by gate-slots, the host's heavy slots and the two gates bin/jg-trunk.sh can chain today.
 # When 2 or more lanes are ready, the check stacks up to batch-max (5) of them, oldest done first, into one `bin/jg-trunk.sh land-batch`:
 # one gate over the stack, one trunk move, and only a lane that conflicts or causes a red is returned (reported once, like any refusal).
 # A single ready lane keeps the path above. A landing runs no whole-suite test and never moves the green pin. Every tick starts the
@@ -71,6 +73,8 @@ mkdir -p "$MEM" || exit 0
 . "$(dirname "${BASH_SOURCE[0]}")/refusal-reach.sh"
 # shellcheck source=core/trunk-landing/queue-why.sh
 . "$(dirname "${BASH_SOURCE[0]}")/queue-why.sh"
+# shellcheck source=core/trunk-landing/window.sh
+. "$(dirname "${BASH_SOURCE[0]}")/window.sh"
 # A detached job (run, runbatch, live: each started with setsid) outlives whoever started it. Under a test
 # (JG_TEST_SEAM=1) it names itself in the suite's registry, so the suite's cleanup stops its process group even after
 # the fixture home is gone (tests/lib.sh jg_test_reap_detached).
@@ -185,6 +189,7 @@ if [ "$1" = runbatch ]; then
       now=$(git -C "$proj" rev-parse --verify --quiet "refs/heads/$br^{commit}" 2>/dev/null) || now=
       res=$(JG_HOME="$FMH" "$FMH/bin/jg-teardown.sh" "$id" 2>&1) && res='cleaned up' || res="cleanup refused, nothing was forced: $(printf '%s' "$res" | tail -n 1 | cut -c1-200)"
       printf 'landed %s\n' "$res" > "$MEM/$id.$head.state"; rm -f -- "$STATE/$id.land-next"
+      window_move "$pn" landed >/dev/null || :
       [ -z "$now" ] || [ "$now" = "$head" ] || printf 'landed %s\n' "$res" > "$MEM/$id.$now.state"
       resume_waiters "$id"
       jg_lock_acquire_wait "$MEM/.outbox.lock"
@@ -206,6 +211,7 @@ if [ "$1" = runbatch ]; then
       fi
     fi
   done
+  ! window_is_red "$out" || window_move "$pn" red >/dev/null || :
   "$SELF" next "$FMH" >/dev/null 2>&1 || :
   exit 0
 fi
@@ -233,6 +239,7 @@ if [ "$1" = run ]; then
     now=$(git -C "$proj" rev-parse --verify --quiet "refs/heads/$br^{commit}" 2>/dev/null) || now=
     out=$(JG_HOME="$FMH" "$FMH/bin/jg-teardown.sh" "$id" 2>&1) && out='cleaned up' || out="cleanup refused, nothing was forced: $(printf '%s' "$out" | tail -n 1 | cut -c1-200)"
     printf 'landed %s\n' "$out" > "$MEM/$id.$head.state"; rm -f -- "$STATE/$id.land-next"
+    window_move "$(basename "$proj")" landed >/dev/null || :
     [ -z "$now" ] || [ "$now" = "$head" ] || printf 'landed %s\n' "$out" > "$MEM/$id.$now.state"
     resume_waiters "$id"
     jg_lock_acquire_wait "$MEM/.outbox.lock"
@@ -255,6 +262,7 @@ if [ "$1" = run ]; then
       lane_refusal_reach "$id" "${now:-$head}" "$proj" "$br" "$(verdict_reason "${line#final }")" final
     fi
   fi
+  ! window_is_red "$out" || window_move "$(basename "$(mval "$STATE/$id.meta" project)")" red >/dev/null || :
   [ "$rc" -ne 75 ] || exit 0  # another run holds this landing; its own end starts the next one
   "$SELF" next "$FMH" >/dev/null 2>&1 || :
   exit 0
@@ -390,7 +398,7 @@ second_slot_project() {
     pn=${lock##*/.trunk-front-}; pn=${pn%.lock}
     pid=$(cat "$lock/pid" 2>/dev/null || true)
     [ -n "$pid" ] && jg_pid_alive "$pid" || continue
-    [ "$(polnum gate-slots "$pn" 2)" -ge 2 ] || continue
+    [ "$(window_size "$pn")" -ge 2 ] || continue  # the window (core/trunk-landing/window.sh), not the policy alone, says how many gates may run
     printf '%s\n' "$pn"; return 0
   done
   return 1
