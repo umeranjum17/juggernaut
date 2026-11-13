@@ -12,7 +12,7 @@
 #        jg-trunk.sh cancel <task-id> --reason <text>   Overwatch only: end the task's running landing (a single run or the stack it is in) through the landing check's own path: stops its process group, clears its running state and locks, records why, starts the next ready lane
 #        jg-trunk.sh verify <project-dir> [<sha>]      run the verify gate over every change since the green pin (default: the tip), one verify at a time and the newest wins; green moves the pin, a red it finds reverts the commit that caused it and raises line-red
 #        jg-trunk.sh verify-due <project-dir>          print the tip and exit 0 when a tick should start a verify (tip above the pin, none running, tip not already ended red)
-#        jg-trunk.sh nightly <project-dir>             the nightly whole run: the verify over the whole suite on the tip (gate-nightly), a red traced to its commit and reverted the same way, a flaky script filed, one report a day
+#        jg-trunk.sh nightly <project-dir>             the nightly whole run: the verify over the whole suite on the tip (gate-nightly), a red traced to its commit and reverted the same way, a journey its proof did not select recorded as a miss (core/trunk-verify/miss.sh), a flaky script filed, one report a day
 #        jg-trunk.sh nightly-due <project-dir>         print the day and exit 0 when a tick should start the nightly run (nightly-hour reached, today's run not ended, no verify running)
 #        jg-trunk.sh green-alarm <project-dir>         raise one alarm to Overwatch once the trunk has had no green commit for no-green-alarm-minutes (15)
 #        jg-trunk.sh word live|release <project-dir> "<his words>"   record the captain's word for the commit that would go live or out (both: the last green commit, never the tip)
@@ -202,6 +202,8 @@ LANDER_ACCOUNT="${CLAUDE_CONFIG_DIR:-}"; unset CLAUDE_CONFIG_DIR
 . "$SCRIPT_DIR/../core/trunk-verify/milestone.sh"
 # shellcheck source=core/trunk-verify/judge.sh
 . "$SCRIPT_DIR/../core/trunk-verify/judge.sh"
+# shellcheck source=core/trunk-verify/miss.sh
+. "$SCRIPT_DIR/../core/trunk-verify/miss.sh"
 export JG_HOME JG_CONFIG_OVERRIDE="$CONFIG"
 
 usage() { sed -n '2,/^set -eu$/p' "${BASH_SOURCE[0]}" | sed -e 's/^# \{0,1\}//' -e '$d'; }
@@ -1680,14 +1682,14 @@ cmd_verify() {
       if [ -n "${BATCH_TRACED:-}" ]; then culprit=$BATCH_CULPRIT; elif [ -n "$from" ]; then culprit=$(batch_culprit "$from" "$sha" "$gate"); fi
       if [ -n "$culprit" ] && [ "$culprit" != "$sha" ]; then
         why="the whole suite fails on it where the trunk before it (${from:0:12}) passes"
-        if revert_commit "$culprit" "$why"; then line_red "$culprit" "$why; it was reverted by itself"; exit 1; fi
-      elif revert_commit "$sha" "$why"; then line_red "$sha" "$why; it was reverted by itself"; exit 1; fi
+        if revert_commit "$culprit" "$why"; then line_red "$culprit" "$why; it was reverted by itself"; miss_charge "$culprit" "$sha"; exit 1; fi
+      elif revert_commit "$sha" "$why"; then line_red "$sha" "$why; it was reverted by itself"; miss_charge "$sha"; exit 1; fi
       # The red stays recorded (data/trunk-ci.tsv, source verify) so no later landing moves the pin over it.
       bad=$sha; [ -z "$culprit" ] || bad=$culprit
       lock "$STATE/.trunk-$PN.lock"; unpin_green "$bad"; row trunk-ci.tsv "$PN" "$bad" "$(date +%s)" red verify; unlock "$STATE/.trunk-$PN.lock"
       why="$TRUNK is red at ${bad:0:12}: $why, and it could not be reverted by itself; landings go on, and live stays on the last green commit $(green_short)"
       line_red "$bad" "$why"
-      echo "verify: $why" >&2; exit 1 ;;
+      echo "verify: $why" >&2; miss_charge "$bad" "$sha"; exit 1 ;;
     *)
       put "$STATE/trunk-verify-last-$PN" "$sha"
       echo "verify: ${sha:0:12} is not green after its one rerun, and no failed test is charged to a commit; nothing is reverted and the green pin stays at $(green_short): landings go on" >&2; exit 1 ;;
@@ -1710,12 +1712,13 @@ cmd_nightly_due() {
 }
 
 cmd_nightly() {
-  local tip day from out rc=0 result started=$SECONDS report flaky_ledger flaky_before flaky_new
+  local tip day from out rc=0 result started=$SECONDS report flaky_ledger flaky_before flaky_new miss_ledger miss_before miss_new
   open_project "${1-}"
   tip=$(rev "refs/heads/$TRUNK") || refuse "trunk branch $TRUNK is missing in $PROJ"
   day=$(date -u +%F); report="$DATA/trunk/nightly-$PN-$day.md"; flaky_ledger="$DATA/trunk/flaky-$PN.tsv"
   from=$(git -C "$PROJ" rev-list -1 --before="24 hours ago" "refs/heads/$TRUNK" 2>/dev/null || true)
   flaky_before=$(grep -c . "$flaky_ledger" 2>/dev/null || true)
+  miss_ledger="$DATA/trunk/misses-$PN.tsv"; miss_before=$(grep -c . "$miss_ledger" 2>/dev/null || true)
   out=$(VERIFY_NIGHTLY=1 VERIFY_NIGHTLY_FROM=$from "$SCRIPT_DIR/jg-trunk.sh" verify "$PROJ" "$tip" 2>&1) || rc=$?
   case $out in
     *superseded*) echo "nightly: ${tip:0:12} is superseded by a newer verify, so the whole run did not start; a later tick tries again"; return 0 ;;
@@ -1724,12 +1727,16 @@ cmd_nightly() {
   elif printf '%s\n' "$out" | grep -q '^reverted '; then result="red, traced to its commit and reverted"
   else result="red, not reverted (see the lines below)"; fi
   flaky_new=$(tail -n "+$(( ${flaky_before:-0} + 1 ))" "$flaky_ledger" 2>/dev/null | cut -f3 | sort -u | paste -sd' ' - || true)
+  miss_new=$(tail -n "+$(( ${miss_before:-0} + 1 ))" "$miss_ledger" 2>/dev/null || true)
   mkdir -p "$DATA/trunk"
   {
     printf '# Nightly whole run of %s on %s\n\n' "$PN" "$day"
     printf -- '- tip: %s\n- judged against: %s\n- result: %s\n- seconds: %s\n' "$tip" "${from:-no earlier commit}" "$result" "$((SECONDS - started))"
-    printf -- '- flaky scripts filed (passed on their rerun): %s\n\n' "${flaky_new:-none}"
-    printf '%s\n' "$out" | grep -E '^(verify:|reverted |trunk green|note:|REFUSED|warning:)' | sed 's/^/    /'
+    printf -- '- flaky scripts filed (passed on their rerun): %s\n' "${flaky_new:-none}"
+    printf -- '- failed journeys the proofs selected: %s; missed: %s%s\n\n' "$(printf '%s\n' "$miss_new" | awk -F'\t' '$4 == "selected"' | grep -c . || true)" \
+      "$(printf '%s\n' "$miss_new" | awk -F'\t' '$4 == "missed"' | grep -c . || true)" \
+      "$(printf '%s\n' "$miss_new" | awk -F'\t' '$4 == "missed" { printf " (%s: %s)", substr($2, 1, 12), $3 }')"
+    printf '%s\n' "$out" | grep -E '^(verify:|reverted |trunk green|note:|miss:|REFUSED|warning:)' | sed 's/^/    /'
   } > "$report"
   put "$STATE/trunk-nightly-last-$PN" "$day"
   echo "nightly: $result; report $report"

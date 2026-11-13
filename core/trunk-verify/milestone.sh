@@ -16,7 +16,7 @@
 #   ms_charge <commit>                          revert one charged commit (or record it red when it cannot be undone)
 # A commit and its revert (`reverts: <sha>`) are one unit that no cut splits, so a tree that holds a reverted commit is never judged.
 # Needs from the caller: PROJ PN TRUNK STATE DATA, pol, lock, unlock, tip_ok, pin_green, unpin_green, row, put, full_gate, gate_from,
-# revert_commit, line_red, green_short and batch_run.
+# revert_commit, line_red, miss_charge (core/trunk-verify/miss.sh), green_short and batch_run.
 
 MS_FIRST=(); MS_TOP=(); MS_CNT=(); MS_BAD=(); MS_UNACC=''
 
@@ -126,8 +126,9 @@ ms_charge() {  # <commit>
   if git -C "$PROJ" log --format=%B "$c..refs/heads/$TRUNK" | grep -qx "reverts: $c"; then
     echo "verify: ${c:0:12} is red and $TRUNK already carries its revert" >&2; return 0
   fi
-  if revert_commit "$c" "$why"; then line_red "$c" "$why; it was reverted by itself"; return 0; fi
+  if revert_commit "$c" "$why"; then line_red "$c" "$why; it was reverted by itself"; miss_charge "$c" "${sha:-}"; return 0; fi
   # The red stays recorded (data/trunk-ci.tsv, source verify) so no later landing moves the pin over it.
   lock "$STATE/.trunk-$PN.lock"; unpin_green "$c"; row trunk-ci.tsv "$PN" "$c" "$(date +%s)" red verify; unlock "$STATE/.trunk-$PN.lock"
   line_red "$c" "$TRUNK is red at ${c:0:12}: $why, and it could not be reverted by itself; landings go on, and live stays on the last green commit $(green_short)"
+  miss_charge "$c" "${sha:-}"
 }

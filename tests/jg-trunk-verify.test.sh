@@ -16,6 +16,9 @@
 #    pull request, not only the last commit's.
 # The nightly whole run (jg8-t5, `jg-trunk.sh nightly`, started by the tick): one report a day, a flaky script filed once, a red traced
 #    to its commit and reverted by the verify's own code.
+# A journey that fails in the nightly run and that its commit's proof did not select (jg8-j31): the second of a fixture day's three
+#    commits breaks it; the run names that commit, its ticket reads building with health red, the miss goes to done-done's audit, and the
+#    report counts one miss. The done-done tool is a stand-in that keeps the contract of `run` and `affected --audit --json`.
 # The done-done journey journeys/trunk-landing.sh runs this file and seals its output.
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
@@ -420,6 +423,58 @@ test_the_nightly_run_writes_its_report_files_one_flake_ticket_and_traces_a_red_t
   pass 'the nightly run writes its day report, files the flaky script as one ticket, traces a red to its commit and reverts it, and runs once a day'
 }
 
+# A stand-in for done-done: `run <journey>` fails and leaves a record, `affected --audit <range> --json` reports each journey with a record
+# as a miss unless the journey is listed in $W/dd-selected, and writes the pair into that journey's feature file as the tool does.
+dd_stub() {
+  cat > "$W/fakebin/done-done" <<'SH'
+#!/usr/bin/env bash
+W=@W@
+case $1 in
+  run) : > "$W/dd-failed-$2"; exit 1 ;;
+  affected) top=${3#*..}; caught=0; missed=''; n=0
+    for f in "$W"/dd-failed-*; do
+      [ -e "$f" ] || continue; j=${f##*dd-failed-}; n=$((n + 1))
+      if grep -qx "$j" "$W/dd-selected" 2>/dev/null; then caught=$((caught + 1)); else
+        missed="$missed{\"commit\":\"$top\",\"journey\":\"$j\",\"files\":[\"b.txt\"]},"
+        printf '\nAudit: a change to `b.txt` fails `run %s`, so it is selected with it.\n' "$j" >> ".agents/skills/done-done-verify-proj/features/$j.md"
+      fi
+    done
+    printf '{"command":"affected --audit","failures":%s,"caught":%s,"missed":[%s]}\n' "$n" "$caught" "${missed%,}" ;;
+esac
+SH
+  sed -i "s|@W@|$W|" "$W/fakebin/done-done"; chmod +x "$W/fakebin/done-done"
+}
+
+# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
+test_a_journey_its_proof_did_not_select_is_charged_to_its_commit_and_counted_as_a_miss() {
+  local base b day report out
+  world nightmiss; rig; dd_stub
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  day=$(date -u +%F); report="$HOME_D/data/trunk/nightly-proj-$day.md"
+  printf 'gate-full=true\ngate-verify=false\ngate-nightly=bash %s/rig.sh --all\nnightly-hour=0\n' "$W" >> "$HOME_D/config/trunk-policy"
+  GIT_COMMITTER_DATE=$(date -u -d '3 days ago' +%FT%TZ) lane j0 'journeys:
+  pair:
+    command: bash t/pair.test.sh' .done-done.yaml; tip_after_land j0 >/dev/null
+  GIT_COMMITTER_DATE=$(date -u -d '3 days ago' +%FT%TZ) lane j1 'Pair journey. run pair' .agents/skills/done-done-verify-proj/features/pair.md; tip_after_land j1 >/dev/null
+  GIT_COMMITTER_DATE=$(date -u -d '2 days ago' +%FT%TZ) lane j2 '[ ! -e b.txt ] || { echo "not ok - pair" >&2; exit 1; }' t/pair.test.sh; tip_after_land j2 >/dev/null
+  base=$(tip); tip > "$HOME_D/state/trunk-green-proj"
+  lane d1 one a.txt; tip_after_land d1 >/dev/null; lane d2 two b.txt; b=$(tip_after_land d2); lane d3 three c.txt; tip_after_land d3 >/dev/null
+  tip > "$HOME_D/state/trunk-verify-last-proj"
+  sweep >/dev/null
+  for _ in $(seq 1 300); do [ -s "$report" ] && break; sleep 0.2; done
+  [ -s "$report" ] || fail "the nightly run must write its report: $(cat "$HOME_D/data/jg-trunk-landing/nightly-proj.log" 2>&1)"
+  git -C "$PROJ" log --format=%B trunk | grep -qx "reverts: $b" || fail "the run must name the second commit and revert it: $(git -C "$PROJ" log -4 --format=%B trunk)"
+  assert_contains "$(cat "$report")" "selected: 0; missed: 1 (${b:0:12}: pair)" "the report shows the count of selections and of misses"
+  assert_contains "$(cat "$HOME_D/data/trunk/misses-proj.tsv")" "$(printf '%s\tpair\tmissed' "$b")" "the miss is on record for that commit and journey"
+  out=$(JG_HOME="$HOME_D" JG_DATA_OVERRIDE="$HOME_D/data" JG_STATE_OVERRIDE="$HOME_D/state" bash "$ROOT/core/machines/observers/ticket.sh" d2 2>&1)
+  [ "$out" = building ] || fail "the ticket of the charged commit must read building, got: $out"
+  out=$(JG_HOME="$HOME_D" bash "$ROOT/bin/jg-machine.sh" word ticket-words lane-delivery reverted 2>&1)
+  assert_contains "$out" "red" "the reverted word gives the ticket health red"
+  assert_contains "$(git -C "$PROJ" show "trunk:.agents/skills/done-done-verify-proj/features/pair.md")" 'fails `run pair`' "the miss goes to done-done's map as a new commit on the trunk"
+  [ "$(git -C "$PROJ" log --format=%s trunk | grep -c '^Map the journeys pair fails')" = 1 ] || fail "the map change is one commit"
+  pass 'a journey that fails in the nightly run and that its commit proof did not select is charged to that commit, its ticket reads building with health red, the pair goes to the map and the report counts one miss'
+}
+
 test_queued_verifies_run_one_at_a_time_and_only_the_newest_runs
 test_a_verify_moves_the_pin_over_a_red_its_parent_already_had
 test_a_verify_over_the_wall_clock_budget_with_no_failed_test_moves_the_pin_and_records_the_load
@@ -434,4 +489,5 @@ test_a_red_with_no_failed_test_never_pins_and_a_ready_lane_lands_on_it
 test_the_tick_verifies_a_landed_pair_that_breaks_together_and_the_pin_moves_only_on_green
 test_no_green_for_15_minutes_raises_one_alarm_not_two
 test_the_nightly_run_writes_its_report_files_one_flake_ticket_and_traces_a_red_to_its_commit
+test_a_journey_its_proof_did_not_select_is_charged_to_its_commit_and_counted_as_a_miss
 printf 'jg-trunk-verify: ok\n'
