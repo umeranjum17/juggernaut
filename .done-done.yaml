@@ -366,6 +366,9 @@ journeys:
   claude-accounts-timer:
     tier: local
     command: bash core/claude-accounts/run-proof-timer.sh
+  account-drift-relaunch:
+    tier: local
+    command: bash core/claude-accounts/run-proof-drift.sh
   receipts-pr-candidate:
     tier: local
     command: bash core/receipts/run-proof.sh

@@ -1,0 +1,3 @@
+# Account drift relaunch
+
+Account drift relaunch: run `done-done run account-drift-relaunch` (`core/claude-accounts/run-proof-drift.sh`, then `tests/jg-account-drift.test.sh`); the real `core/claude-accounts/bin/account-drift.sh tick` over a fixture home with a pin and a by-model map relaunches an idle lane whose recorded account is no longer selected (and records the pin's account), leaves a busy lane until its next idle, moves a lane when its map entry is removed, relaunches a stop-failure lane on a held account once per beat, raises one alert naming the lane and the account when a relaunch is refused, and moves nothing in a home with no pin and no map; the run writes `drift.txt` (screen: none).
