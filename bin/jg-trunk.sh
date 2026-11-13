@@ -198,6 +198,8 @@ LANDER_ACCOUNT="${CLAUDE_CONFIG_DIR:-}"; unset CLAUDE_CONFIG_DIR
 . "$SCRIPT_DIR/../core/trunk-landing/bisect.sh"
 # shellcheck source=core/trunk-verify/milestone.sh
 . "$SCRIPT_DIR/../core/trunk-verify/milestone.sh"
+# shellcheck source=core/trunk-verify/judge.sh
+. "$SCRIPT_DIR/../core/trunk-verify/judge.sh"
 export JG_HOME JG_CONFIG_OVERRIDE="$CONFIG"
 
 usage() { sed -n '2,/^set -eu$/p' "${BASH_SOURCE[0]}" | sed -e 's/^# \{0,1\}//' -e '$d'; }
@@ -589,6 +591,20 @@ gate_figures() {  # <first-run log> <start epoch>
 # Returns 0 when the candidate is cleared, 2 when it is charged with a failure its base does not have, and 1 when it failed for a
 # reason no test script accounts for. The base is the trunk tip for a landing and the commit's parent for a verify.
 full_gate() {  # <candidate> <command> <base>
+  local rc=0 verdict
+  GATE_FAILED=
+  _full_gate "$@" || rc=$?
+  # One verdict per commit (H29g): the judge (the lander's tip run, the verify or the nightly) keeps what it saw on this tree, and a
+  # second judge that saw another failed set raises judge-split. A run that ended for a reason no test accounts for (1) judged nothing.
+  if [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ]; then
+    # shellcheck disable=SC2086
+    verdict=$(judge_record "$PN" "$PROJ" "$DATA" "$SCRIPT_DIR/jg-alert.sh" "${JUDGE_NAME:-tip}" "$1" $GATE_FAILED) \
+      || echo "warning: could not record the verdict of ${1:0:12}" >&2
+    case $verdict in split*) echo "note: judge-split: ${verdict#split }" >&2 ;; esac
+  fi
+  return "$rc"
+}
+_full_gate() {  # <candidate> <command> <base>
   local badsig='' cand=$1 log="${LAND_ATTEMPT:-$DATA/trunk/gate-$PN-${1:0:12}}-full.log" envf rc=0 mine tipres line s ex sig tex tsig bad='' old='' unexplained quoted again settled now flaky='' t0 passing='' byself='' byparent='' rerun_red noparent=''
   t0=$(date +%s); GATE_KIND=full; GATE_FIGURES=; GATE_BAD=; GATE_BAD_SIG=
   envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX" 2>/dev/null) || { mkdir -p "$DATA/trunk"; envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX"); }
@@ -618,6 +634,7 @@ full_gate() {  # <candidate> <command> <base>
     else flaky="$flaky $s"; fi
   done <<< "$mine"
   mine=$(printf '%s' "$settled")
+  GATE_FAILED=$(printf '%s\n' "$mine" | cut -f1)  # the verdict of this run on the tree, before any base is read (judge.sh)
   # The rerun is judged as the first run was: a rerun that ended red with no script accounting for it (a runner that died, a count that
   # does not match its scripts) says nothing about the commit, so it is never charged to it.
   rerun_red=$(printf '%s\n' "$again" | awk -F'\t' '$2 != "0"')
@@ -1578,6 +1595,7 @@ cmd_verify() {
   tip=$(rev "refs/heads/$TRUNK") || refuse "trunk branch $TRUNK is missing in $PROJ"
   sha=$tip; [ -z "${2-}" ] || sha=$(rev "$2") || die "'${2-}' does not resolve in $PROJ"
   git -C "$PROJ" merge-base --is-ancestor "$sha" "$tip" || refuse "${sha:0:12} is not on $TRUNK"
+  JUDGE_NAME=verify; [ -z "${VERIFY_NIGHTLY:-}" ] || JUDGE_NAME=nightly
   verify_slot "$sha" || { echo "verify: ${sha:0:12} is superseded by a newer verify, so it does not run; a green result there moves the pin over it too"; return 0; }
   parent=$(rev "$sha^" || true)
   # The top of a batch is judged against the trunk before the batch (its row says where that was), so one run covers the whole stack.
