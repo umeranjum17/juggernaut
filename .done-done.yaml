@@ -159,6 +159,9 @@ journeys:
   claude-1m-context:
     tier: local
     command: bash tests/jg-spawn-model.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  spawn-imports-dialog:
+    tier: local
+    command: JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-spawn-imports-dialog.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1 && printf '{"target":{"version":"jg-spawn.sh"},"start":"a claude spawn whose pane shows the external-imports dialog","steps":["spawn a claude worker","the pane shows the imports dialog","read the spawn result and the owner store"],"result":"the spawn failed with the cause, sent no key, and the store holds no decline"}\n' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
   spawn-load-admission:
     tier: local
     command: bash tests/jg-spawn-load-admission.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

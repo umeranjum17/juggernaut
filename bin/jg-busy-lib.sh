@@ -939,7 +939,7 @@ jg_busy_agy_tail_busy() {
 # owns the reason this is separate from the imports dialog below: Enter on
 # the trust dialog selects "No, exit" and kills the worker, so the gate
 # must never press there, while Enter on the imports dialog selects the safe
-# "No, disable external imports" decline and lets the worker proceed.
+# "No, disable external imports" decline, which Claude saves as a standing decline.
 jg_busy_claude_trust_dialog_tail() {
   local buf
   buf=$(cat)
@@ -949,9 +949,8 @@ jg_busy_claude_trust_dialog_tail() {
 
 # jg_busy_claude_imports_dialog_tail: Claude's separate external-CLAUDE.md-
 # imports dialog alone (question plus its own option lines, both required).
-# The only dialog jg-spawn.sh may answer post-launch: its cursor rests on the
-# fail-closed decline, so one Enter dismisses it without manufacturing the
-# consent jg-claude-trust.sh refuses to grant.
+# jg-spawn.sh only detects it and sends no key: every key it could send answers
+# with a decline that Claude saves, and jg-claude-trust.sh then refuses the project.
 jg_busy_claude_imports_dialog_tail() {
   local buf
   buf=$(cat)

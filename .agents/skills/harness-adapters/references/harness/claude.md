@@ -31,9 +31,9 @@ The why-two-entries mechanism and the consent-gating logic live in the script's 
 
 Never try to answer the trust dialog with a key.
 Juggernaut's key plane carries only Enter, Escape, and C-c with no arrow navigation, so it cannot move a dialog's selection at all, and the trust dialog renders with the cursor on its declining option, which means a sent Enter ends the session instead of accepting.
-The external-imports dialog is the one exception: `bin/jg-spawn.sh` answers exactly that dialog post-launch with one Enter, which lands on the fail-closed "No, disable external imports" decline, and fails the spawn loudly when the dialog never clears.
+The external-imports dialog is no exception: `bin/jg-spawn.sh` detects it post-launch and sends no key, because Enter and Escape both select the "No, disable external imports" decline that Claude saves. The spawn fails with the cause and the owner answers the dialog once by hand.
 A visible trust dialog means pre-registration did not take effect (or the project entry already carries an explicit decline) - inspect the store and the spawn's error output rather than sending keys.
-A still-visible external-imports dialog after spawn means that gate failed and the spawn already failed rather than leaving a worker parked at the dialog.
+A visible external-imports dialog after spawn means the project has no recorded approval; the spawn has already failed and recorded nothing.
 `jg-control.sh <id> interrupt` delivers Escape, which is the safe way to clear a wedged workspace-trust dialog for inspection without answering it.
 Escape on the external-imports dialog is different: it records a permanent decline (`hasClaudeMdExternalIncludesApproved: false`, `hasClaudeMdExternalIncludesWarningShown: true`) that `../../../bin/jg-claude-trust.sh` then correctly refuses to override on every later spawn for that project.
 Outside a spawn, leave a pane showing the external-imports dialog for a person to answer interactively instead of interrupting it.
