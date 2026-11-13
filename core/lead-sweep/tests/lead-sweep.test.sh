@@ -4,7 +4,9 @@
 # a) a done lane whose head is on the trunk is torn down, once, with the lane id and no --force;
 # b) a done lane whose head is on the trunk but holds uncommitted work is refused and reported once; the next beat prints
 #    nothing; a changed reason is reported again;
-# c) a Recon with a report and a passing gate is closed; a Recon whose gate refuses is reported once; a Recon with no report is left;
+# c) a Recon with a report, Main's relayed move, a quiet inbox and a passing gate is closed; a Recon whose gate refuses is reported once; a Recon with no report is left;
+# l) a Recon with a report is left until its ticket has the relayed move and its inbox has been quiet 60 minutes, whatever its done
+#    line, a gone agent or a passed critic; a message in that hour restarts the hour; an agent that ends at its done line keeps its copy;
 # g) a done lane still on its recorded base (no commit of its own) is never torn down;
 # d) a working lane, a done lane not landed, a lead and a lane a landing is running for are never touched;
 # e) a done lane whose pull request is merged is torn down; an open one is not, and the forge is asked once per window;
@@ -65,7 +67,9 @@ tore() { grep -c "^$1\$" "$STUB_LOG" || true; }
 lane land ship 'done [at=1]: ready' ; lane dirty ship 'done [at=1]: ready'; echo "src/a.go" > "$FM/state/dirty-dirty"
 lane busy ship 'working [at=1]: coding'; lane open ship 'done [at=1]: ready'; lane lead squad_lead 'done [at=1]: x'
 lane running ship 'done [at=1]: ready'; : > "$FM/state/.trunk-run-running-$(git -C "$P" rev-parse fm/running).lock"
-lane recon scout 'done [at=1]: report' ; lane gate scout 'done [at=1]: report'; lane noreport scout 'done [at=1]: report'
+lane recon scout 'done [at=1]: report' ticket=t-recon; lane gate scout 'done [at=1]: report' ticket=t-gate; lane noreport scout 'done [at=1]: report' ticket=t-noreport
+printf '%s\t%s\tproving\trelayed\tproving\n' 1 t-recon 1 t-gate 1 t-noreport > "$FM/data/moves.log"
+
 mkdir -p "$FM/data/recon" "$FM/data/gate"; echo r > "$FM/data/recon/report.md"; echo r > "$FM/data/gate/report.md"
 echo "src/a.go" > "$FM/state/dirty-gate"
 for t in land dirty running; do onto "$t"; done
@@ -138,6 +142,20 @@ check "k: it says why" "$(grep -c '^lead-sweep: gone cleaned up (its agent is go
 check "k: a gone agent with unlanded work is left, silently" "$(tore goneopen)$(grep -c '^lead-sweep: goneopen' "$d/out")" 00
 check "k: a live agent that is working is never swept" "$(tore busy)" 0
 check "no --force reaches the teardown or the control" "$(grep -c -- '--force' "$STUB_LOG")" 0
+# l: a Recon is cleaned up only after Main relayed it and its inbox was quiet for 60 minutes
+mkdir -p "$FM/data/lrec" "$FM/data/lgone"; echo r > "$FM/data/lrec/report.md"; echo r > "$FM/data/lgone/report.md"
+lane lrec scout 'done [at=1]: report' ticket=t-lrec; lane lgone scout 'done [at=1]: report' ticket=t-lgone; echo dead > "$FM/state/agent-lgone"
+sweep
+check "l: a Recon not relayed is left, its agent ended at the done line" "$(tore lrec)$(tore lgone)$(grep -c '^control lrec exit$' "$STUB_LOG")" 001
+check "l: a gone agent with a report on disk is not enough" "$(grep -c '^lead-sweep: lgone' "$d/out")" 0
+printf '1\tt-lrec\tproving\trelayed\tproving\n1\tt-lgone\tproving\trelayed\tproving\n' >> "$FM/data/moves.log"
+mkdir -p "$FM/state/lrec.inbox"; echo m > "$FM/state/lrec.inbox/1.msg"; touch -d "@$((now - 10 * 60))" "$FM/state/lrec.inbox/1.msg"
+sweep
+check "l: a message in the last hour keeps a relayed Recon" "$(tore lrec)" 0
+check "l: a relayed Recon with no inbox is cleaned up" "$(tore lgone)" 1
+touch -d "@$((now - 70 * 60))" "$FM/state/lrec.inbox/1.msg"; sweep
+check "l: a quiet hour after the relay cleans it up, once" "$(tore lrec)" 1
+check "l: it says why" "$(grep -c '^lead-sweep: lrec cleaned up (its report exists and Main relayed it)' "$d/out")" 1
 # f: the wiring installs a shim that registers, and the unwiring removes it
 if [ -x "$SRC/../../bin/jg-check-register.sh" ]; then
   mkdir -p "$FM/bin"; cp "$SRC/../../bin/"jg-*.sh "$FM/bin/" 2>/dev/null || true

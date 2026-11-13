@@ -7,7 +7,10 @@
 #   - ship: its branch head is on the trunk and is not the commit the lane started on (meta base=) (state/trunk-tip-<project> for a local-trunk project, else the default branch
 #     of the clone), or its recorded pull request is merged (GitHub only, asked at most every JG_LEAD_SWEEP_PR_MIN
 #     minutes, default 10, per lane);
-#   - scout (Recon): its report data/<id>/report.md exists.
+#   - scout (Recon): its report data/<id>/report.md exists, Main relayed it (its ticket has the `relayed` move in data/moves.log,
+#     which Main writes with bin/jg-move.sh when it relays the findings), and no message reached its inbox in the last
+#     JG_LEAD_SWEEP_QUIET_MIN minutes (default 60). A done line, a passed critic or a gone agent is not enough; until then the
+#     record, inbox and copy stay (the agent may still end at its done line).
 # The sweep then runs `bin/jg-teardown.sh <id>` and nothing else: no --force, ever. The teardown owns the landed-work test
 # and every gate (unlanded or dirty work, the report, captain-call inventory and depth gates), so a lane with unlanded work
 # or a failing gate is refused and left alone. A lane a landing is running for (state/.trunk-run-<id>-*.lock) is skipped.
@@ -38,6 +41,7 @@ num() { case ${1:-} in ''|*[!0-9]*) echo "$2" ;; *) echo "$1" ;; esac; }
 PARK_S=$(( $(num "${JG_LEAD_SWEEP_PARK_H:-}" 24) * 3600 ))
 PARK_EMPTY_S=$(( $(num "${JG_LEAD_SWEEP_PARK_EMPTY_H:-}" 2) * 3600 ))
 START_S=$(( $(num "${JG_LEAD_SWEEP_START_MIN:-}" 30) * 60 ))
+QUIET_S=$(( $(num "${JG_LEAD_SWEEP_QUIET_MIN:-}" 60) * 60 ))
 PR_MIN=${JG_LEAD_SWEEP_PR_MIN:-10}; case $PR_MIN in ''|*[!0-9]*) PR_MIN=10 ;; esac
 umask 077
 mkdir -p "$MEM" || exit 0
@@ -76,6 +80,16 @@ park() {
   out=$(run_as_home "$TEARDOWN" "$1" --park 2>&1) || rc=$?
   if [ "$rc" -eq 0 ]; then rm -f -- "$MEM/$1.reported"; echo "lead-sweep: $1 parked ($2); its branch and ticket stay"
   else refuse "$1" "could not be parked ($2): $(printf '%s\n' "$out" | grep -E '^(REFUSED|error)' | tail -n 1 | cut -c1-200)"; fi
+}
+
+# scout_relayed <meta>: succeeds when the scout's ticket has the relayed move and its inbox has been quiet for the quiet window.
+scout_relayed() {
+  local id=${1##*/} ticket last
+  id=${id%.meta}; ticket=$(mval "$1" ticket)
+  [ -n "$ticket" ] && awk -F'\t' -v t="$ticket" '$2 == t && $4 == "relayed" { f = 1 } END { exit !f }' "$FMH/data/moves.log" 2>/dev/null || return 1
+  last=$(find "$STATE/$id.inbox" -type f -printf '%T@\n' 2>/dev/null | sort -n | tail -n 1); last=${last%%.*}
+  case $last in ''|*[!0-9]*) return 0 ;; esac
+  [ $(( NOW - last )) -ge "$QUIET_S" ]
 }
 
 # why_landed <meta> <project> <branch>: prints why the ship lane counts as landed; prints nothing when it does not.
@@ -139,7 +153,7 @@ for meta in "$STATE"/*.meta; do
   if [ "$ended" = gone ]; then case $(agent_state "$meta") in dead|missing) ;; *) continue ;; esac; fi
   why=
   if [ "$kind" = scout ]; then
-    [ ! -s "$FMH/data/$id/report.md" ] || why='its report exists'
+    [ ! -s "$FMH/data/$id/report.md" ] || ! scout_relayed "$meta" || why='its report exists and Main relayed it'
   else
     [ ! -d "$proj" ] || why=$(why_landed "$meta" "$proj" "$branch")
   fi
@@ -157,7 +171,7 @@ for meta in "$STATE"/*.meta; do
       esac
     fi
     # Only an answered lane is reported: nothing else will ever revisit it. A done lane is waiting for its landing.
-    if [ "$ended" = resolved ] && [ "$(cat "$MEM/$id.reported" 2>/dev/null)" != unlanded ]; then
+    if [ "$ended" = resolved ] && [ "$kind" = ship ] && [ "$(cat "$MEM/$id.reported" 2>/dev/null)" != unlanded ]; then
       echo unlanded > "$MEM/$id.reported"
       drift "$id" "$id ended as resolved, left alone: its work has not landed on the trunk"
     fi

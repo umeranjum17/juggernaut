@@ -284,6 +284,9 @@ journeys:
   lead-sweep-end-states:
     tier: local
     command: bash journeys/lead-sweep-end-states.sh
+  recon-relayed-cleanup:
+    tier: local
+    command: bash journeys/recon-relayed-cleanup.sh
   wake-routing:
     tier: local
     command: (bash tests/jg-wake-router.test.sh && bash tests/jg-wake-route.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

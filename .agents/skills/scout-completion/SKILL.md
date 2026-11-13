@@ -10,6 +10,7 @@ metadata:
 
 A completed Recon must leave a self-contained report before its scratch worktree can be discarded; read and relay its findings, record the report as the Done artifact, and re-evaluate the queue.
 A report may recommend implementation but does not authorize it.
+When you relay a Recon's findings, write the move `bin/jg-move.sh <ticket> relayed`. The lead-sweep cleans a Recon only after that move and 60 quiet minutes in its inbox; a done line, a passed critic or a gone agent never makes it cleanable, and a new message to the Recon restarts the hour.
 Before relaying a plan or report, run `bin/jg-loss-claim-check.sh <report>`: a line that says a capability is lost needs a named replacement path and an effort in the same block, or the report goes back.
 Before treating the investigation or any visual review as complete, load `captain-hold-lifecycle`; teardown enforces that shared completion gate.
 When a Recon's deliverable is a visual artifact the captain will review, publish it as a sign-off board report with `sign-off-axi` and put that sign-off report link in the report; never arm or poll a retired review surface from Juggernaut.

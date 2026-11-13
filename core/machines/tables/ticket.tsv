@@ -19,6 +19,7 @@ edge	proving	prove-fail	building	done-done:receipt	-	the fix loop is spent, or t
 edge	proving	prove-pass	delivering	done-done:receipt	-	the receipt names this commit and covers every check the change needs	jg-machine-ticket:moves
 edge	proving	bypass	delivering	bin/jg-proof-bypass-apply.sh:main	-	a bypass of the owner stands for this ticket, its project or the home	jg-machine-ticket:moves
 edge	proving	answer	closed	bin/jg-recon-gate.sh:main	-	the kind is Recon, its gate passed and the critic closed	jg-machine-ticket:moves
+edge	proving	relayed	proving	bin/jg-move.sh:main	-	Main relayed a Recon's findings to the owner; the lead-sweep cleans a Recon only after this move and a quiet hour	jg-machine-ticket:moves
 edge	delivering	new-head	proving	bin/jg-lavish-guard.sh:append	-	the worker offers another head while no landing stands; the queued run is withdrawn	jg-machine-ticket:moves
 edge	delivering	refuse	building	bin/jg-trunk.sh:refuse	-	delivering ended returned: an unresolved conflict, a red run of the affected journeys, a red quick check, or a red traced to the commit	jg-machine-ticket:moves
 edge	delivering	release	released	bin/jg-trunk.sh:release	-	delivering ended on-main: the commit is on the default branch and runs where it runs	jg-machine-ticket:moves

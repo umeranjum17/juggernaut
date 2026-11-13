@@ -68,11 +68,12 @@ The critic reads the draft with fresh eyes and checks:
 
 ```
 Critic: <task id of the critic worker, or self for standard>
-Round 1: new gaps 3
+Round 1: new gaps 3 report <sha256sum of report.md as read>
 - gap one
-Round 2: new gaps 0
+Round 2: new gaps 0 report <sha256sum of report.md as read>
 ```
 
+The last `Round` line names the report it read (`report <sha256 of report.md>`, 12 or more digits): the gate refuses a report changed after that round until the critic reads the new draft and writes a new round.
 The last `Round` line must say `new gaps 0`, or be followed by `Closure check: <k> closed by <critic>`, where `<k>` is that round's gap count and `<critic>` is the same id as the `Critic:` line.
 The closure line is the critic's word that the researcher fixed every gap of the last round; `self` and the researcher's own task id never close a gap.
 A deep Recon allows 3 rounds that found new gaps; the clean round or closure line after them does not count.

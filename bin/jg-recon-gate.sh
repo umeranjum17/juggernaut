@@ -15,7 +15,9 @@
 #   - critic.md is missing, names no `Critic:`, has no `Round n: new gaps k` line,
 #     or its last round found new gaps with no `Closure check: <k> closed by
 #     <critic>` line after it (the same critic as `Critic:`, never `self` or the
-#     researcher's own task id, closing all k gaps); a deep critic may not be
+#     researcher's own task id, closing all k gaps), or its last round does not name the report it read
+#     (`Round <n>: new gaps <k> report <sha256 of report.md>`) or names a report that has changed since (a
+#     passed round is a PASS for that draft only); a deep critic may not be
 #     `self` or the researcher's own task id, and a deep Recon allows 3 rounds
 #     that found new gaps;
 #   - board-report/ holds a page or card that bin/jg-report-page.sh did not write
@@ -122,7 +124,7 @@ if [ -d "$dir/board-report" ]; then
 fi
 
 python3 -I - "$dir" "$task" "$depth" "$step" <<'PY'
-import json, os, re, sys
+import hashlib, json, os, re, sys
 
 d, task, depth, step = sys.argv[1:5]
 refusals = []
@@ -235,6 +237,14 @@ else:
         refuse("critic.md has no 'Round <n>: new gaps <k>' line")
     else:
         last_n, last_k = rounds[-1][0], int(rounds[-1][1])
+        # A round is a verdict on the draft it read: its line names that draft's sha256 (a prefix of 12 or more digits).
+        last_line = re.findall(r"^Round[ \t]+\d+:[ \t]*new gaps[ \t]+\d+.*$", critic, re.M)[-1]
+        named = re.search(r"\breport[ \t]+([0-9a-f]{12,64})\b", last_line)
+        have = hashlib.sha256(open(rpath, "rb").read()).hexdigest() if os.path.isfile(rpath) else ""
+        if not named:
+            refuse(f"critic.md round {last_n} names no report; write 'Round {last_n}: new gaps {last_k} report <sha256sum of report.md>'")
+        elif have and not have.startswith(named.group(1)):
+            refuse(f"report.md changed after critic round {last_n} (it read {named.group(1)[:12]}, the report is {have[:12]}); the critic must read the new draft and write a new round")
         if last_k > 0:
             # A fixed last-round gap cannot get another round once the cap is
             # spent, so a closure line by the same separate critic, written after

@@ -999,7 +999,7 @@ Never write \`critic.md\` yourself for a deep Recon; the gate refuses a critic t
 Close every gap the critic finds, then run the gate again.
 "
   else
-    DEPTH_SECTION="${DEPTH_SECTION}Write \`critic.md\` yourself: one round that reads the draft as a hostile reviewer, lists the gaps it found, and carries a \`Round 1: new gaps 0\` line once they are closed.
+    DEPTH_SECTION="${DEPTH_SECTION}Write \`critic.md\` yourself: one round that reads the draft as a hostile reviewer, lists the gaps it found, and carries a \`Round 1: new gaps 0 report <sha256sum of report.md>\` line once they are closed (the hash names the draft it read; a later edit needs a new round).
 "
   fi
   DEPTH_SECTION="$DEPTH_SECTION
