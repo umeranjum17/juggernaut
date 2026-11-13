@@ -346,6 +346,8 @@ move_home() {  # <home-id> <dir> <label> <ignore-seed-marker>
     && JG_TRUNK_PINBACK=1 git -C "$dir" reset -q --keep "$BASE" 2>/dev/null; then
     FF_STATUS=updated; FF_INSTR=""; echo "$label: pinned back ${pre:0:12}..${BASE:0:12}" > "$tmp"
   else
+    # The guard a home holds may be an older copy; the move is judged by the current one (the recorded tip is kept).
+    [ ! -x "$SCRIPT_DIR/jg-home-guard.sh" ] || "$SCRIPT_DIR/jg-home-guard.sh" refresh "$dir" >/dev/null 2>&1 || true
     JG_TRUNK_LIVE=1 JG_TRUNK_TIP="$BASE" ff_target "$dir" "$label" "$BASE" yes "$seed" "" "" yes > "$tmp"
   fi
   out=$(cat "$tmp"); rm -f -- "$tmp"; printf '%s\n' "$out"

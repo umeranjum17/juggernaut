@@ -587,11 +587,54 @@ test_guarded_linked_home_moves_twice() {
   pass 'fleet live advances a guarded linked home twice'
 }
 
+# The real go-live shape (jg-ff-adopt-diverged): a home guarded by an OLDER guard copy, HEAD a commit that is patch-equivalent to a
+# trunk commit but diverged (trunk-v6 line), index and tree at a later trunk commit T2 whose three-way merge with HEAD conflicts,
+# and the target further on. The old guard refused the re-point to T2, so the home read as dirty and was skipped. The move now
+# refreshes the guard, adopts T2 and reaches the target; an untracked file keeps the refusal and loses nothing.
+test_a_guarded_diverged_half_moved_home_finishes() {
+  local out id t2 target hook
+  W="$TMP_ROOT/diverged-half"; mkdir -p "$W/home/state" "$W/home/data" "$W/home/config"
+  git init -q -b main "$W/proj"
+  commit_file "$W/proj" AGENTS.md v1 c0; mkdir -p "$W/proj/bin"; commit_file "$W/proj" bin/tool.sh a c0b
+  commit_file "$W/proj" f.txt "$(printf 'a\nb\nc\nd\ne\nf\ng\nh')" base
+  git clone -q "$W/proj" "$W/main"
+  C0=$(git -C "$W/main" rev-parse HEAD)
+  git -C "$W/proj" checkout -q -b trunk
+  commit_file "$W/proj" f.txt "$(printf 'a-home\nb\nc\nd\ne\nf\ng\nh')" t1
+  commit_file "$W/proj" f.txt "$(printf 'a-v2\nb\nc\nd\ne\nf\ng\nh')" t2a; commit_file "$W/proj" z.txt zed t2; t2=$(git -C "$W/proj" rev-parse HEAD)
+  commit_file "$W/proj" f.txt "$(printf 'a-v3\nb\nc\nd\ne\nf\ng\nh')" t3; C2=$(git -C "$W/proj" rev-parse HEAD); target=$C2
+  git -C "$W/proj" checkout -q main
+  for id in lead-a lead-b; do
+    git -C "$W/main" worktree add -q --detach "$W/$id" "$C0"; printf '%s\n' "$id" > "$W/$id/.jg-squad-lead-home"
+    printf -- '- %s - fixture (home: %s; scope: x; projects: proj; added 2026-11-08)\n' "$id" "$W/$id" >> "$W/home/data/squad_leads.md"
+    commit_file "$W/$id" f.txt "$(printf 'a-home\nb\nc\nd\ne\nf\ng\nh')" "same patch as t1"
+    X=$(git -C "$W/$id" rev-parse HEAD)
+    git -C "$W/$id" fetch -q "$W/proj" trunk
+    git -C "$W/$id" read-tree -u -m HEAD "$t2" || fail "fixture: cannot stage the earlier target"
+    "$ROOT/bin/jg-home-guard.sh" install "$W/$id" --tip "$X" >/dev/null || fail "install home guard"
+  done
+  git -C "$W/lead-a" merge-tree --write-tree "$X" "$t2" >/dev/null 2>&1 && fail "fixture: the three-way merge into the earlier target must conflict"
+  # The guard in the homes is the older copy: it lacks the patch-equivalence rule.
+  hook="$W/main/.git/hooks/reference-transaction"
+  # shellcheck disable=SC2016 # the pattern names the guard's own variables
+  sed '/patch_held "\$old" "\$new" && return 0/d' "$hook" > "$hook.old" && chmod +x "$hook.old" && mv -f "$hook.old" "$hook"
+  printf 'mine\n' > "$W/lead-b/note.txt"
+  out=$(run_mover) || :
+  [ "$(head_of lead-a)" = "$target" ] || fail "a guarded diverged half-moved home must reach the target: $out"
+  git -C "$W/lead-a" diff --quiet HEAD || fail "the finished home must hold no change against the target"
+  [ -z "$(git -C "$W/lead-a" status --porcelain --untracked-files=no)" ] || fail "the finished home must be clean"
+  [ "$(head_of lead-b)" != "$target" ] || fail "a home with an untracked file must not move"
+  [ -f "$W/lead-b/note.txt" ] || fail "the untracked file must be kept"
+  assert_contains "$out" "squad_lead lead-b: skipped: dirty working tree" "an untracked file must keep the refusal"
+  pass 'T1i a guarded diverged half-moved home finishes through the refreshed guard; an untracked file keeps the refusal'
+}
+
 test_guarded_linked_home_moves_twice
 
 test_guarded_primary_moves_with_tip
 test_every_home_moves_or_is_skipped_with_one_row
 test_a_half_moved_lead_finishes_its_move
+test_a_guarded_diverged_half_moved_home_finishes
 test_cache_is_cleared_after_a_move
 test_a_move_rewires_only_the_add_ons_it_changed_and_names_a_failure
 test_a_go_live_run_from_a_lead_home_moves_every_home

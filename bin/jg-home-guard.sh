@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # The home guard: no commit reaches a home's `main` or detached HEAD except from the local trunk.
 # Usage: jg-home-guard.sh install <home> [--tip <sha>] [--pre <sha>]   write the guard into the home's repository and record the trunk tip
+#        jg-home-guard.sh refresh <home>                                bring an installed guard hook up to this script; the recorded tip stays
 #        jg-home-guard.sh check <home>                                  exit 0 and say `present`, or exit 1 and say `missing: <why>`
 #        jg-home-guard.sh uninstall <home>                              remove the guard (the rollback; this installer is its only writer)
 #        reference-transaction hook mode (git runs the installed copy as `reference-transaction <state>`)
@@ -24,7 +25,8 @@
 # Writer flags (the only ones; there is no bypass variable, the rollback is removing the hook):
 #   JG_TRUNK_LIVE=1     the live move (bin/jg-update.sh --base): admits a fast-forward to a newer trunk tip and the contained
 #                       re-point of a diverged home, which is a `reset --keep` to a commit that already holds the home's whole
-#                       tree (a three-way merge of the home's HEAD into it gives back exactly that commit). With JG_TRUNK_TIP=<sha>
+#                       tree (a three-way merge of the home's HEAD into it gives back exactly that commit, or every commit the home holds that the
+#                       target lacks is patch-equivalent to one the target holds). With JG_TRUNK_TIP=<sha>
 #                       the target must also be on that tip. A committed live move records its tip and the HEAD it left.
 #   JG_TRUNK_PINBACK=1  the rollback of a failed health check: admits a move to the HEAD recorded before the last live move
 #                       (the guard's own record, or a data/trunk-live.tsv row <home> <post-move sha> <epoch> <status> <pre-move sha>
@@ -55,11 +57,21 @@ pinback_ok() {  # <old> <new>
   [ -r "$data" ] && awk -F'\t' -v o="$old" -v n="$new" '$2 == o && $5 == n { f = 1 } END { exit !f }' "$data"
 }
 
+# The home's commits that the target lacks are all patch-equivalent to target commits (git cherry, no merge among
+# them): the target already holds every change, even where a later trunk edit makes the three-way merge conflict.
+patch_held() {  # <old> <new>
+  local cherry
+  [ -z "$(git rev-list --merges "$2..$1" 2>/dev/null)" ] || return 1
+  cherry=$(git cherry "$2" "$1" 2>/dev/null) || return 1
+  [ -n "$cherry" ] && ! printf '%s\n' "$cherry" | grep -q '^+'
+}
+
 live_ok() {  # <old> <new>: sets WHY
   local old=$1 new=$2 tree
   if [ -n "${JG_TRUNK_TIP:-}" ] && ! on_trunk "$new" "$JG_TRUNK_TIP"; then WHY="$(short "$new") is not on the trunk tip $(short "$JG_TRUNK_TIP") the live move named"; return 1; fi
   [ -n "$old" ] || return 0
   on_trunk "$old" "$new" && return 0
+  patch_held "$old" "$new" && return 0
   tree=$(git merge-tree --write-tree "$old" "$new" 2>/dev/null | head -n 1) || tree=
   [ -n "$tree" ] && [ "$tree" = "$(git rev-parse "$new^{tree}")" ] && return 0
   WHY="the live move to $(short "$new") would drop content of the home's HEAD $(short "$old") that the trunk does not hold"; return 1
@@ -143,6 +155,14 @@ hook() {
 gitdir_of() { git -C "$1" rev-parse --path-format=absolute --git-dir 2>/dev/null || die "$1 is not a git repository"; }
 common_of() { git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || die "$1 is not a git repository"; }
 
+write_hook() {  # <git-common-dir> <hook-path>: put this script there as the managed hook
+  local tmp
+  tmp=$(mktemp "$1/hooks/.rt.XXXXXX") || die "cannot write into $1/hooks"
+  sed "2i # $MARK: a home's main and detached HEAD move only along the local trunk" "$SELF" > "$tmp" || die "cannot write $2"
+  chmod 755 "$tmp" || die "cannot write $2"
+  mv -f -- "$tmp" "$2" || die "cannot write $2"
+}
+
 cmd_install() {
   local home=${1-} tip="${JG_TRUNK_TIP:-}" pre="" common hook dir tmp
   [ -n "$home" ] || die "usage: jg-home-guard.sh install <home> [--tip <sha>] [--pre <sha>]"; shift
@@ -163,13 +183,21 @@ cmd_install() {
     tmp=$(mktemp "$common/hooks/.rt.XXXXXX") || die "cannot write into $common/hooks"
     if ! cp -p -- "$hook" "$tmp" || ! mv -f -- "$tmp" "$common/hooks/$CHAINED"; then rm -f -- "$tmp"; die "cannot keep the trunk guard at $common/hooks/$CHAINED"; fi
   fi
-  tmp=$(mktemp "$common/hooks/.rt.XXXXXX") || die "cannot write into $common/hooks"
-  sed "2i # $MARK: a home's main and detached HEAD move only along the local trunk" "$SELF" > "$tmp" || die "cannot write $hook"
-  chmod 755 "$tmp" || die "cannot write $hook"
-  mv -f -- "$tmp" "$hook" || die "cannot write $hook"
+  write_hook "$common" "$hook"
   printf '%s\n' "$tip" > "$dir/trunk-tip.new" && mv -f -- "$dir/trunk-tip.new" "$dir/trunk-tip"
   if [ -n "$pre" ]; then pre=$(git -C "$home" rev-parse -q --verify "$pre^{commit}") || die "pre-move $pre is not a commit in $home"; printf '%s %s\n' "$pre" "$(git -C "$home" rev-parse HEAD)" > "$dir/pre-move"; fi
   echo "home guard installed in $home (trunk tip $(short "$tip"))$([ ! -x "$common/hooks/$CHAINED" ] || printf '; it runs the trunk guard first')"
+}
+
+# Bring an installed guard hook up to this script without touching the recorded trunk tip or pre-move record, so a
+# home guarded by an older copy judges the next move by the current rules. A home with no managed guard is left alone.
+cmd_refresh() {
+  local home=${1-} common hook
+  [ -n "$home" ] || die "usage: jg-home-guard.sh refresh <home>"
+  common=$(common_of "$home"); hook="$common/hooks/reference-transaction"
+  if [ ! -e "$hook" ] || ! grep -q "$MARK" "$hook"; then echo "no home guard to refresh in $home"; return 0; fi
+  write_hook "$common" "$hook"
+  echo "home guard refreshed in $home"
 }
 
 cmd_check() {
@@ -200,6 +228,7 @@ cmd_uninstall() {
 case "${1:-}" in
   preparing | prepared | committed | aborted) hook "$@" ;;
   install) shift; cmd_install "$@" ;;
+  refresh) shift; cmd_refresh "$@" ;;
   check) shift; cmd_check "$@" ;;
   uninstall) shift; cmd_uninstall "$@" ;;
   *) sed -n '2,/^set -u$/p' "$SELF" | sed -e 's/^# \{0,1\}//' -e '$d' >&2; exit 2 ;;
