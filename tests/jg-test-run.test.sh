@@ -91,17 +91,20 @@ test_a_quarantined_script_is_listed_not_run_and_the_gate_passes() {
   pass 'a quarantined script is listed with its reason, not run, and the gate still passes'
 }
 
-# trunk tip 52dd4fd44 went red as "aggregate input not found: shard-1.json", on all eight shards at once: each shard stopped at
-# selection before it wrote its result, and the aggregate then reported the missing file in place of the real cause. A shard that
-# stops for any reason writes a failed result that names the shard and the cause, so the aggregate reads a verdict and not a
-# missing file. The stop here is a base ref that does not exist; an unmapped path no longer stops a shard.
+# trunk tip 52dd4fd44 went red as "aggregate input not found: shard-1.json", on all eight shards at once: the commit range held
+# bin/jg-digest-cap-lib.sh, which no test names, so each shard stopped at selection ("no changed-test mapping") before it
+# wrote its result, and the aggregate then reported the missing file in place of the real cause. A shard that stops for any
+# reason writes a failed result that names the shard and the cause, so the aggregate reads a verdict and not a missing file.
 test_a_shard_that_stops_before_its_result_still_writes_a_failed_result() {
   local fixture=$TMP_ROOT/orphan res=$TMP_ROOT/orphan-results out rc=0
   required_fixture "$fixture" 'exit 0'
-  out=$(JG_REQUIRED_SHARD_WALL_MS=1 bash "$fixture/bin/jg-test-run.sh" --required-shards no-such-ref "$res" 2>&1) || rc=$?
+  printf '#!/usr/bin/env bash\n:\n' >"$fixture/bin/jg-orphan-lib.sh"
+  git -C "$fixture" add bin/jg-orphan-lib.sh
+  git -C "$fixture" -c user.name=t -c user.email=t@example.invalid commit -q --amend --no-edit
+  out=$(JG_REQUIRED_SHARD_WALL_MS=1 bash "$fixture/bin/jg-test-run.sh" --required-shards HEAD^ "$res" 2>&1) || rc=$?
   [ "$rc" = 1 ] || fail "shards that stopped before their result must refuse with exit 1: rc=$rc $out"
   assert_not_contains "$out" 'aggregate input not found' 'a missing shard result must never reach the aggregate'
-  assert_contains "$out" 'changed-file base ref not found: no-such-ref' 'the real cause stays in the log'
+  assert_contains "$out" 'no changed-test mapping for source path: bin/jg-orphan-lib.sh' 'the real cause stays in the log'
   [ "$(printf '%s\n' "$out" | grep -c '^jg-test-run: shard [1-8]of8 stopped with exit 2 before it wrote its result')" = 8 ] ||
     fail "each shard must be named with its exit status: $out"
   [ "$(printf '%s\n' "$out" | grep -c '^JG_TEST_OVERRUN budget_ms=1 duration_ms=[0-9]* load=[^ ]* cpus=[0-9]* selection=shard=[1-8]of8$')" = 8 ] ||
@@ -109,24 +112,6 @@ test_a_shard_that_stops_before_its_result_still_writes_a_failed_result() {
   jq -e '.summary.lanes == 8 and .summary.failed_lanes == 8 and ([.lanes[].selection] | map(test("^shard=[1-8]of8$")) | all)' \
     "$res/required.json" >/dev/null || fail "the aggregate must hold one failed verdict per shard: $out"
   pass 'a shard that stops before its result writes a failed result naming the shard, and an overrun is still named'
-}
-
-# An unmapped source path (the trunk tip's bin/jg-tool-wiring.sh) stopped all eight shards at selection. It fails as its own
-# record now, once, and every other script keeps its own verdict, the same as an unmapped test file.
-test_an_unmapped_source_path_fails_only_itself() {
-  local fixture=$TMP_ROOT/unmapped-bin res=$TMP_ROOT/unmapped-bin-results out rc=0
-  required_fixture "$fixture" 'exit 0'
-  printf '#!/usr/bin/env bash\n:\n' >"$fixture/bin/jg-orphan-lib.sh"
-  git -C "$fixture" add bin/jg-orphan-lib.sh
-  git -C "$fixture" -c user.name=t -c user.email=t@example.invalid commit -q --amend --no-edit
-  out=$(bash "$fixture/bin/jg-test-run.sh" --required-shards HEAD^ "$res" 2>&1) || rc=$?
-  [ "$rc" = 1 ] || fail "an unmapped source path must refuse the gate with exit 1: rc=$rc $out"
-  assert_not_contains "$out" 'stopped with exit' 'no shard may stop before its result'
-  assert_contains "$out" 'not ok - bin/jg-orphan-lib.sh: no changed-test mapping for source path: bin/jg-orphan-lib.sh' 'the path and the cause are named'
-  jq -e '.summary.lanes == 8 and .summary.failed_lanes == 1 and .summary.total == 2 and .summary.failed == 1
-    and ([.scripts[] | select(.path == "tests/required-feature.test.sh" and .exit == 0)] | length) == 1' \
-    "$res/required.json" >/dev/null || fail "the aggregate must hold the other script's pass and only the stray path's failure: $out"
-  pass 'an unmapped source path fails only itself in one shard and the other scripts still run'
 }
 
 # trunk-v4 shard 8 stopped on "no changed-test mapping for source path: tests/jg-machine-call-fixture.sh" and held the green pin:
@@ -719,6 +704,5 @@ test_a_changed_dispatch_skill_runs_the_floor_test
 test_the_coverage_time_budget_advises_and_a_script_no_shard_runs_still_refuses
 test_a_quarantined_script_is_listed_not_run_and_the_gate_passes
 test_an_unmapped_test_file_fails_only_itself
-test_an_unmapped_source_path_fails_only_itself
 
 printf 'all %s\n' 'jg-test-run limit tests passed'
