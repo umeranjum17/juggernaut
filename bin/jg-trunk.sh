@@ -564,7 +564,7 @@ gate_figures() {  # <first-run log> <start epoch>
 # Returns 0 when the candidate is cleared, 2 when it is charged with a failure its base does not have, and 1 when it failed for a
 # reason no test script accounts for. The base is the trunk tip for a landing and the commit's parent for a verify.
 full_gate() {  # <candidate> <command> <base>
-  local cand=$1 log="${LAND_ATTEMPT:-$DATA/trunk/gate-$PN-${1:0:12}}-full.log" envf rc=0 mine tipres line s ex sig tex tsig bad='' old='' unexplained quoted again settled now flaky='' t0 passing='' byself='' byparent=''
+  local cand=$1 log="${LAND_ATTEMPT:-$DATA/trunk/gate-$PN-${1:0:12}}-full.log" envf rc=0 mine tipres line s ex sig tex tsig bad='' old='' unexplained quoted again settled now flaky='' t0 passing='' byself='' byparent='' rerun_red noparent=''
   t0=$(date +%s); GATE_KIND=full; GATE_FIGURES=; GATE_BAD=
   envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX" 2>/dev/null) || { mkdir -p "$DATA/trunk"; envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX"); }
   gate_exec "$cand" "$2" "$log" "$envf" || rc=$?
@@ -591,11 +591,31 @@ full_gate() {  # <candidate> <command> <base>
     else flaky="$flaky $s"; fi
   done <<< "$mine"
   mine=$(printf '%s' "$settled")
+  # The rerun is judged as the first run was: a rerun that ended red with no script accounting for it (a runner that died, a count that
+  # does not match its scripts) says nothing about the commit, so it is never charged to it.
+  rerun_red=$(printf '%s\n' "$again" | awk -F'\t' '$2 != "0"')
+  if [ -n "$rerun_red" ] && [ -n "$(gate_unexplained "$DATA/trunk/gate-$PN-${cand:0:12}-full-rerun.log" "$rerun_red")" ]; then
+    rm -f -- "$envf"
+    echo "REFUSED: gate 'full' at ${cand:0:12}: its rerun failed with no script accounting for it, so no lane is charged; full log: $log" >&2
+    return 1
+  fi
   # shellcheck disable=SC2086
   [ -z "$flaky" ] || { echo "note: passed on the rerun, so judged flaky and not charged (each recorded and filed as its own fix row):$flaky" >&2; record_flaky "$cand" $flaky; }
   if [ -z "$mine" ]; then rm -f -- "$envf"; GATE_KIND="full-rerun"; gate_figures "$log" "$t0"; return 0; fi
   # shellcheck disable=SC2046
   tipres=$(tip_results "$3" "$envf" $(printf '%s\n' "$mine" | cut -f1))
+  # A parent that gave no result for a script it has (its run could not start, or died at start) cannot show the lane added the red,
+  # so nothing is charged to the lane and nothing is reverted: the failure is one no test accounts for.
+  while IFS= read -r line; do
+    s=${line%%$'\t'*}
+    git -C "$PROJ" cat-file -e "$3:$s" 2>/dev/null || continue
+    printf '%s\n' "$tipres" | awk -F'\t' -v s="$s" '$1 == s { f = 1 } END { exit !f }' || noparent="$noparent $s"
+  done <<< "$mine"
+  if [ -n "$noparent" ]; then
+    rm -f -- "$envf"
+    echo "REFUSED: gate 'full' at ${cand:0:12}: the parent ${3:0:12} gave no result for:$noparent, so its run could not judge them and nothing is charged to this lane; full log: $log" >&2
+    return 1
+  fi
   while IFS= read -r line; do
     s=${line%%$'\t'*}
     [ "$(printf '%s\n' "$tipres" | awk -F'\t' -v s="$s" '$1 == s { print $2; exit }')" = 0 ] && passing="$passing $s"

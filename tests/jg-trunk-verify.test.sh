@@ -114,6 +114,45 @@ test_a_verify_whose_only_failures_pass_on_rerun_moves_the_pin_and_files_one_row_
   pass 'a verify whose only failures pass on their rerun moves the green pin and files one row per flaky test'
 }
 
+# A parent that cannot run (its rerun runner dies at start and prints no summary) cannot show a lane added a red: the verify charges
+# nothing to the child, reverts nothing and keeps the pin (jg8-red-verify-parent).
+# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
+test_a_verify_never_charges_a_red_to_a_child_when_its_parent_cannot_run() {
+  local out pin top
+  world deadparent; rig
+  printf 'gate-verify=bash %s/rig.sh --all\ngate-full=true\ngate-rerun=[ -e DEAD ] && exit 3; bash %s/rig.sh\n' "$W" "$W" >> "$HOME_D/config/trunk-policy"
+  lane dead 'exit 0' DEAD; trunk land dead >/dev/null 2>&1 || fail "the lane that makes the parent unable to rerun must land"
+  lane good 'exit 0' t/e.test.sh; trunk land good >/dev/null 2>&1 || fail "good must land"
+  pin=$(tip); printf '%s\n' "$pin" > "$HOME_D/state/trunk-green-proj"
+  lane bad 'echo "not ok - red" >&2; exit 1' t/e.test.sh; trunk land bad >/dev/null 2>&1 || fail "bad must land past the fast gate"
+  top=$(tip)
+  out=$(trunk verify "$PROJ" 2>&1) && fail "a red the verify cannot judge is not green: $out"
+  assert_contains "$out" "gave no result for" "the verify must say the parent could not judge the red"
+  [ "$(tip)" = "$top" ] || fail "no commit is reverted when the parent cannot run: $out"
+  if git -C "$PROJ" log --format=%B trunk | grep -q '^reverts: '; then fail "a parent that cannot run reverts nothing"; fi
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$pin" ] || fail "the pin stays where it was"
+  pass 'a red is never charged to a child, and nothing is reverted, when its parent cannot run'
+}
+
+# The rerun is judged as the first run: a rerun red that no failed script accounts for (its summary counts more failures than it
+# lists) is not charged to the lane and reverts nothing (jg8-red-verify-parent).
+# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
+test_a_verify_judges_its_rerun_as_it_judges_the_first_run() {
+  local out pin top
+  world oddrerun; rig
+  printf '#!/usr/bin/env bash\nbash %s/rig.sh "$@"\necho "JG_TEST_SUMMARY total=5 failed=1 skipped_gate=0 duration_ms=1"\nexit 1\n' "$W" > "$W/rerun-odd.sh"
+  printf 'gate-verify=bash %s/rig.sh --all\ngate-full=true\ngate-rerun=bash %s/rerun-odd.sh\n' "$W" "$W" >> "$HOME_D/config/trunk-policy"
+  lane base 'exit 0' t/a.test.sh; trunk land base >/dev/null 2>&1 || fail "base must land"
+  pin=$(tip); printf '%s\n' "$pin" > "$HOME_D/state/trunk-green-proj"
+  lane bad 'echo "not ok - red" >&2; exit 1' t/e.test.sh; trunk land bad >/dev/null 2>&1 || fail "bad must land past the fast gate"
+  top=$(tip)
+  out=$(trunk verify "$PROJ" 2>&1) && fail "a red the rerun cannot account for is not green: $out"
+  assert_contains "$out" "its rerun failed with no script accounting for it" "the verify must say the rerun is not charged"
+  [ "$(tip)" = "$top" ] || fail "no commit is reverted for a rerun no script accounts for: $out"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$pin" ] || fail "the pin stays where it was"
+  pass 'a rerun red that no failed script accounts for is not charged to the lane, as for the first run'
+}
+
 test_a_landing_does_not_hold_the_trunk_while_its_gate_runs() {
   local c0 p1 out
   world longland
@@ -372,6 +411,8 @@ test_queued_verifies_run_one_at_a_time_and_only_the_newest_runs
 test_a_verify_moves_the_pin_over_a_red_its_parent_already_had
 test_a_verify_over_the_wall_clock_budget_with_no_failed_test_moves_the_pin_and_records_the_load
 test_a_verify_whose_only_failures_pass_on_rerun_moves_the_pin_and_files_one_row_per_flaky_test
+test_a_verify_never_charges_a_red_to_a_child_when_its_parent_cannot_run
+test_a_verify_judges_its_rerun_as_it_judges_the_first_run
 test_a_landing_does_not_hold_the_trunk_while_its_gate_runs
 test_a_stack_holds_no_trunk_lock_while_its_gate_runs_and_is_judged_again_on_a_moved_tip
 test_verify_judges_every_change_since_the_release_base
