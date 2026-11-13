@@ -232,3 +232,13 @@ SH
   ln -s "$W/root/bin" "$HOME_D/bin"   # the merge check runs the home's own bin
   chmod +x "$W/fakebin/gh-axi" "$W/fakebin/gh" "$W/root/bin/jg-pr-state.sh" "$W/root/bin/jg-pr-merge.sh" "$W/checks-lint"
 }
+
+# conflicting_pair <name>: lane <name>-a lands first; lane <name>-b was made on the old tip and edits the same file differently.
+conflicting_pair() {
+  lane "$1-a" first; lane "$1-b" second
+  trunk land "$1-a" >/dev/null 2>&1 || fail "the first lane must land"
+}
+resolver() {  # <name> <body>: a resolver script the home sets by policy
+  printf '#!/usr/bin/env bash\n%s\n' "$2" > "$W/$1.sh"; chmod +x "$W/$1.sh"
+  printf 'conflict-resolver=bash %s/%s.sh\n' "$W" "$1" >> "$HOME_D/config/trunk-policy"
+}

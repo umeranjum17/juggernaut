@@ -190,6 +190,8 @@ LANDER_ACCOUNT="${CLAUDE_CONFIG_DIR:-}"; unset CLAUDE_CONFIG_DIR
 . "$SCRIPT_DIR/jg-timeout-lib.sh"
 # shellcheck source=bin/jg-trunk-resolve-lib.sh
 . "$SCRIPT_DIR/jg-trunk-resolve-lib.sh"
+# shellcheck source=bin/jg-trunk-retest-lib.sh
+. "$SCRIPT_DIR/jg-trunk-retest-lib.sh"
 # shellcheck source=core/trunk-landing/refusal-reach.sh
 . "$SCRIPT_DIR/../core/trunk-landing/refusal-reach.sh"
 # shellcheck source=core/trunk-landing/batch.sh
@@ -415,7 +417,7 @@ classify_refusal() {  # <output file> [<gate log>...]
   last=$(grep -E '^(REFUSED|error):' "$1" | tail -n 1)
   if grep -q '^ENV:' "$@" 2>/dev/null; then echo env-wait; return; fi
   case $last in
-    *'landing gate exceeded its shared deadline'*) echo retry; return ;;
+    *'landing gate exceeded its shared deadline'*|*'the retest runner failed after the conflict'*) echo retry; return ;;
     *'away mode'*|*'something else moved it'*|*'linked to a decision'*|*'still held'*|*'changed while landing'*|*'kept moving'*|*'proof inputs are incomplete'*) echo wait; return ;;
     "REFUSED: gate "*|"REFUSED: could not read the decisions"*|"REFUSED: this lane is the red"*|"error: cannot check out"*) ;;
     *) echo final; return ;;
@@ -748,7 +750,7 @@ rebase_commit() {  # <tip> <candidate>
 # lane gets the refusal as before, with the reason). With no resolver set nothing here runs. Prints the resolved commit; returns 1 otherwise.
 resolve_conflict() {  # <id> <tip> <candidate>: sets RESOLVE_FRESH (the resolved commit) or RESOLVE_WHY (the reason)
   local id=$1 cmd limit scratch ticket touched
-  RESOLVE_FRESH=''; RESOLVE_WHY=''
+  RESOLVE_FRESH=''; RESOLVE_WHY=''; RESOLVE_TOUCHED=''
   cmd=$(pol conflict-resolver) || cmd=''
   [ -n "$cmd" ] || return 1
   limit=$(pol conflict-limit-seconds); [[ $limit =~ ^[0-9]+$ ]] && [ "$limit" -gt 0 ] || limit=600
@@ -758,7 +760,7 @@ resolve_conflict() {  # <id> <tip> <candidate>: sets RESOLVE_FRESH (the resolved
   JG_HOME=$JG_HOME JG_DATA_OVERRIDE=$DATA "$SCRIPT_DIR/jg-backlog.sh" moment "$ticket" conflict_at >/dev/null 2>&1 \
     || echo "jg-trunk: warning: conflict_at of $ticket was not written; the resolving run goes on" >&2
   if RESOLVE_FRESH=$(jg_trunk_resolve "$PROJ" "$2" "$3" "$cmd" "$limit" "$scratch" 2>"$scratch.why"); then
-    touched=$(paste -sd' ' "$scratch/touched" 2>/dev/null || :)
+    touched=$(paste -sd' ' "$scratch/touched" 2>/dev/null || :); RESOLVE_TOUCHED=$scratch/touched
     row trunk-resolving.tsv "$id" "$PN" "$2" "$3" resolved "$(date +%s)" "$touched"
     echo "land: the conflict of $id with $TRUNK (${2:0:12}) is resolved in the lander's copy; touched: $touched" >&2
     rm -f -- "$scratch.why"; return 0
@@ -766,6 +768,30 @@ resolve_conflict() {  # <id> <tip> <candidate>: sets RESOLVE_FRESH (the resolved
   RESOLVE_FRESH=''; RESOLVE_WHY=$(tail -n 1 "$scratch.why" 2>/dev/null || :); rm -f -- "$scratch.why"
   row trunk-resolving.tsv "$id" "$PN" "$2" "$3" returned "$(date +%s)" "$RESOLVE_WHY"
   return 1
+}
+
+# The landing run's state `retesting`, after a resolved conflict: only the journeys the touched files affect run again on the resolved
+# commit (policy retest-runner, bin/jg-trunk-retest-lib.sh), and the receipt it writes names that commit and the one it extends. The full
+# proof does not run again. A journey red on the commit ends the run `returned`: the ticket goes back to building (returned_at) and the
+# lane is refused with the journey named. A fault of the runner is refused as a retry; the landing check owns the three tries, and its
+# giving up is the wait `lead`, reason `blocker`, with no steer to the worker (core/trunk-landing/refusal-reach.sh).
+retest_resolved() {  # <id> <tip> <lane head> <resolved commit>: returns 0 to go on to `checking`, else refuses
+  local id=$1 cmd limit scratch ticket rc=0 why
+  cmd=$(pol retest-runner) || cmd=''
+  limit=$(pol retest-limit-seconds); [[ $limit =~ ^[0-9]+$ ]] && [ "$limit" -gt 0 ] || limit=1200
+  scratch="$DATA/trunk/retest-$PN-${4:0:12}"; ticket=$(jg_dod_meta_value "$META" ticket); ticket=${ticket:-$id}
+  row trunk-landing-phases.tsv "$id" "$PN" "$3" "$3" retesting "$(date +%s)" "$(paste -sd' ' "$RESOLVE_TOUCHED" 2>/dev/null || :)"
+  why=$(jg_trunk_retest "$PROJ" "$4" "$3" "$RESOLVE_TOUCHED" "$cmd" "$limit" "$scratch" 2>&1 >/dev/null) || rc=$?
+  [ -z "$why" ] || printf '%s\n' "$why" | sed '/^retest: /!d' >&2
+  why=$(printf '%s\n' "$why" | sed '/^retest: /d')
+  case $rc in
+    0) return 0 ;;
+    1) row trunk-landing-phases.tsv "$id" "$PN" "$3" "$3" returned "$(date +%s)" "$why"
+       JG_HOME=$JG_HOME JG_DATA_OVERRIDE=$DATA "$SCRIPT_DIR/jg-backlog.sh" moment "$ticket" returned_at >/dev/null 2>&1 \
+         || echo "jg-trunk: warning: returned_at of $ticket was not written" >&2
+       refuse "the resolution of $LANE_BRANCH breaks a journey: $why; the lane fixes it and reports ready again; it is never landed dirty" ;;
+    *) refuse "the retest runner failed after the conflict of $id was resolved: $why" ;;
+  esac
 }
 
 # The lane follows its rebased commit, so cleanup finds the branch where the trunk is: in its own clean worktree by
@@ -854,11 +880,12 @@ lane_admit() {  # <id> <tip> <expected head or -> <follow 0|1>
     base=$(git -C "$PROJ" merge-base "$tip" "$LANE_CAND" 2>/dev/null) || refuse "$LANE_BRANCH shares no history with $TRUNK (${tip:0:12}); start the lane on the trunk tip"
     n=$(git -C "$PROJ" rev-list --count "$base..$LANE_CAND")
     [ "$n" = 1 ] || refuse "one commit per ticket: $LANE_BRANCH has $n commits over $TRUNK; squash it to one"
-    RESOLVE_WHY=''
+    RESOLVE_WHY=''; RESOLVE_TOUCHED=''
     fresh=$(rebase_commit "$tip" "$LANE_CAND") || { resolve_conflict "$id" "$tip" "$LANE_CAND" && fresh=$RESOLVE_FRESH; } || {
       hit=$(conflict_paths "$tip" "$LANE_CAND")
       refuse "$LANE_BRANCH conflicts with $TRUNK (${tip:0:12}) in: ${hit:-an unreadable merge}; ${RESOLVE_WHY:+the resolver did not resolve it ($RESOLVE_WHY); }a lane rebases and fixes it, then reports ready again; it is never landed dirty"
     }
+    [ -z "$RESOLVE_TOUCHED" ] || retest_resolved "$id" "$tip" "$LANE_CAND" "$fresh"
     [ "$4" != 1 ] || lane_follow "$LANE_BRANCH" "$LANE_CAND" "$fresh" "$(jg_dod_meta_value "$META" worktree)"
     LANE_CAND=$fresh
   fi

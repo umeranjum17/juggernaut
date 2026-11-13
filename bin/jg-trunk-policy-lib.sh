@@ -45,6 +45,9 @@
 #   conflict-resolver     (empty)     the command of the agent that resolves a rebase conflict in the lander's copy (bin/jg-trunk-resolve-lib.sh);
 #                                     empty sends every conflict back to the worker, as before
 #   conflict-limit-seconds 600        how long that agent has before the run ends returned
+#   retest-runner         (empty)     the command that runs only the journeys a resolved conflict affects (bin/jg-trunk-retest-lib.sh); empty
+#                                     runs `done-done verify --affected-by <touched files> --extends <lane commit>`
+#   retest-limit-seconds  1200        how long that runner has; a runner past it is a fault of the runner, tried again, never the lane's red
 #   gate-nightly         gate-verify  the nightly whole run's gate: its own key, else gate-verify, else gate-full
 #   nightly-hour         3            the UTC hour from which a tick starts the day's nightly whole run, once a day
 #   verify-width          4           the most batches the line's verify tests at once (and probes it runs at once to find a bad commit),
@@ -125,6 +128,8 @@ jg_trunk_policy() {  # <key> [<project>]
       verify-bad-share) val=5 ;;
       conflict-resolver) val='' ;;
       conflict-limit-seconds) val=600 ;;
+      retest-runner) val='' ;;
+      retest-limit-seconds) val=1200 ;;
       *) return 1 ;;
     esac
   fi

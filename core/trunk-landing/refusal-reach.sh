@@ -9,6 +9,9 @@
 #      re-ring ladder owns an unread one). It is keyed by the head, so a head the lane no longer has is never steered, and a new head
 #      starts a new record.
 #   2. A refusal nobody acted on for ALERT_SECS (the head is unchanged) raises ONE alert line that names the lane and the refusal.
+#   2b. A retest runner that failed on every try of the run after a resolved conflict (jg-trunk.sh retest_resolved; the check's try cap
+#      ends it as `gave up after N tries`) is the runner's fault, not the worker's: the ticket waits on the lead (wait `lead`, reason
+#      `blocker`) once for that head, and the worker gets no steer, no note and no new agent (the machine: landing `retrying`).
 #   3. A refusal that only needs time (away mode, a held decision) is not the worker's to fix and never comes here.
 #   4. A refusal that is the lane's own fault (its conflict, or a red its own change caused) for a lane that has NO running agent
 #      (stopped at Built, or dead) starts ONE new agent for that head (bin/jg-control.sh relaunch), with the refusal as its first
@@ -50,7 +53,7 @@ refusal_deliver() {  # <note|steer> <task-id> <message>
 refusal_fault_kind() {  # <reason>
   case $1 in
     *'gave up after'*) echo other ;;  # the machine failed the try cap, whatever the red said
-    *' conflicts with '*' in: '*|*'this lane introduced or changed the failure of'*|*'this lane is the red in its batch'*|*"gate 'lint' failed"*|*"gate 'full' failed"*|*"gate 'verify' failed"*) echo lane ;;
+    *' conflicts with '*' in: '*|*' breaks a journey: '*|*'this lane introduced or changed the failure of'*|*'this lane is the red in its batch'*|*"gate 'lint' failed"*|*"gate 'full' failed"*|*"gate 'verify' failed"*) echo lane ;;
     *) echo other ;;
   esac
 }
@@ -70,6 +73,15 @@ refusal_relaunch() {  # <task-id> <note>
   JG_HOME="$FMH" "$bin/jg-control.sh" "$1" relaunch --note "$2" >/dev/null
 }
 
+# The wait `lead`, reason `blocker`, for a runner that stopped on every try. Written once per head; returns 1 when the write failed.
+refusal_wait_lead() {  # <task-id> <marker file>
+  local bin=${REFUSAL_BIN:-$FMH/bin} ticket
+  [ ! -e "$2" ] || return 0
+  ticket=$(sed -n 's/^ticket=//p' "$STATE/$1.meta" 2>/dev/null | tail -n 1); ticket=${ticket:-$1}
+  JG_HOME="$FMH" JG_DATA_OVERRIDE="${DATA_DIR:-$FMH/data}" "$bin/jg-backlog.sh" wait "$ticket" lead blocker >/dev/null || return 1
+  date +%s > "$2"
+}
+
 # Usage: lane_refusal_reach <task-id> <head> <project-dir> <branch> <reason>
 lane_refusal_reach() {
   local id=$1 head=$2 proj=$3 branch=$4 reason sum f now first rsum steered alerted text note limit=1200
@@ -80,6 +92,10 @@ lane_refusal_reach() {
   if [[ $reason =~ \ conflicts\ with\ [^\ ]+\ \(([0-9a-f]+)\)\ in:\  ]]; then reason=${reason/ (${BASH_REMATCH[1]}) in: / in: }; fi
   # A refusal of a head the lane has moved off is history: nobody is steered about it.
   [ "$(git -C "$proj" rev-parse --verify --quiet "refs/heads/$branch^{commit}" 2>/dev/null)" = "$head" ] || return 0
+  if [ "${6:-}" = final ] && [[ $reason == *'gave up after'*'the retest runner failed'* ]]; then
+    refusal_wait_lead "$id" "$MEM/$id.$head.lead-wait" || echo "warning: could not put $id on the wait lead" >&2
+    return 0
+  fi
   sum=$(printf '%s' "$reason" | cksum | cut -d' ' -f1); f=$MEM/$id.$head.refusal; now=$(date +%s)
   jg_lock_try_acquire "$f.lock" || return 0
   if [ "$(git -C "$proj" rev-parse --verify --quiet "refs/heads/$branch^{commit}" 2>/dev/null)" != "$head" ]; then
