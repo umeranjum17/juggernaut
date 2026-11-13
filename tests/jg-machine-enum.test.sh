@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Behavior tests for the closed state lists (core/machines/<name>.states) and the lint that reads them, through bin/jg-machine.sh.
-# The 21 files of this repository all load; a fixture table with a state outside its enum fails and the lint names the value;
+# The 22 files of this repository all load; a fixture table with a state outside its enum fails and the lint names the value;
 # a fixture enum with two initial values fails; the ticket and delivering tables read their enums.
 set -u
 # shellcheck source=tests/lib.sh
@@ -12,15 +12,15 @@ export JG_MACHINES_TABLES="$T/tables"
 tab() { local IFS=$'\t'; printf '%s\n' "$*"; }
 jm() { OUT=$(bash "$JM" "$@" 2>&1); RC=$?; }
 
-# 1. Each of the 21 files of this repository loads (the real files, through the real command).
+# 1. Each of the 22 files of this repository loads (the real files, through the real command).
 n=0
 for f in "$MACHINES"/*.states; do
   name=$(basename "$f" .states); n=$((n + 1))
   JG_MACHINES_ENUMS="$MACHINES" jm enum "$name"
   expect_code 0 "$RC" "enum $name loads"; assert_contains "$OUT" "ok enum $name:" "enum $name golden"
 done
-assert_equals 21 "$n" "21 enum files"
-pass "the 21 enum files load"
+assert_equals 22 "$n" "22 enum files"
+pass "the 22 enum files load"
 
 # 2. The real ticket and delivering tables name only states of their enums.
 unset JG_MACHINES_TABLES

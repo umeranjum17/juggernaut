@@ -16,7 +16,7 @@ word() { jm show "$1" "$2"; printf '%s\n' "$OUT" | awk -F'\t' '$1=="state"{print
 states() { awk -F'\t' '$1=="state"{printf "%s ", $2}' "$ROOT/core/machines/tables/$1.tsv" | sed 's/ $//'; }
 
 # 1. Each table lints clean (the lint of J25 and the enum) and has exactly the states of its enum file.
-jm check squad-lead; expect_code 0 "$RC" "squad-lead lints"; assert_equals "ok squad-lead: 6 states, 10 edges" "$OUT" "squad-lead golden"
+jm check squad-lead; expect_code 0 "$RC" "squad-lead lints"; assert_equals "ok squad-lead: 6 states, 12 edges" "$OUT" "squad-lead golden"
 jm check supervision; expect_code 0 "$RC" "supervision lints"; assert_equals "ok supervision: 5 states, 10 edges" "$OUT" "supervision golden"
 jm check presence; expect_code 0 "$RC" "presence lints"; assert_equals "ok presence: 4 states, 6 edges" "$OUT" "presence golden"
 for m in squad-lead supervision presence; do
