@@ -8,7 +8,7 @@ set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-AL="$ROOT/bin/jg-alert.sh"; JM="$ROOT/bin/jg-machine.sh"
+AL="$ROOT/bin/jg-alert.sh"; JM="$ROOT/bin/jg-machine.sh"; RI="$ROOT/bin/jg-ready-idle.sh"
 T=$(cd "$(jg_test_tmproot jg-alert)" && pwd); H=$T/home
 mkdir -p "$H/state"
 export JG_HOME="$H" JG_STATE_OVERRIDE="$H/state"
