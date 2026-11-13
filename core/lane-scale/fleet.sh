@@ -3,6 +3,7 @@
 # Usage: fleet.sh verdict <jg-home>            print `go`, `stop <why>` or `hold <why>` and write state/fleet-budget.rec
 #        fleet.sh slot take <jg-home> <id> [pid]   take one of `heavy_slots` for a heavy run; exit 1 when all are taken
 #        fleet.sh slot give <jg-home> <id>         give the slot back
+#        fleet.sh budget <jg-home>                 print the heavy slots of the whole fleet and where they come from
 #        fleet.sh place <jg-home>                  print the machine that gets the next lane, or `stop <why>`; write state/fleet-machines.rec
 # The busy cores are the cpu of the running processes, grouped in classes: lane (agent sessions), heavy (gate, test and proof runs),
 # supervision (the watchers) and fault (any other process using 20% of a core or more: loops, browsers, shells). Only lane and heavy
@@ -11,6 +12,9 @@
 #         (quota.sh full): no lane starts. The reason names the class that is over its budget.
 #   hold  the signal cannot be read (no process list, no memory figure) or the quota reader is blind (quota.sh blind): the limit holds.
 #   go    otherwise.
+# Fleet budget (H30c)  `heavy_slots` of this host plus the `slots` of every runner whose probe passed (core/runners/registry.sh usable) is the
+#   number of heavy runs the fleet may hold. A paid runner (cost_per_hour above 0) counts only while core/runners/ledger.sh allows paid
+#   minutes: `paid_minutes_day` in config/fleet-scale (default 0, so a cloud machine gets no work until the owner raises it) not yet spent.
 # Config  config/lane-scale: cores_stop (75% of the host's cores), mem_floor_gb (8), heavy_slots (2).
 # Machines  config/lane-scale-machines: one line `<name> <ssh target> <cores>` for each machine besides this host. They are under the SAME
 #   budget: `place` reads each machine's process list over ssh (BatchMode, 5 s timeout, at most 16 reads at once, so 100 machines cost one
@@ -20,8 +24,8 @@
 # Stand-ins JG_FLEET_SSH (a command run as `<it> <target>` in place of ssh; its output is the process list), JG_FLEET_PS (a command printing `<pcpu> <args>` lines), JG_FLEET_CORES, JG_FLEET_MEMINFO (a meminfo file).
 set -u
 export LC_ALL=C
-case "${1:-}" in verdict|place) [ "$#" -eq 2 ] ;; slot) [ "$#" -ge 4 ] && case "$2" in take|give) true ;; *) false ;; esac ;; *) false ;; esac \
-  || { echo "usage: fleet.sh verdict|place <jg-home> | slot take|give <jg-home> <id> [pid]" >&2; exit 2; }
+case "${1:-}" in verdict|place|budget) [ "$#" -eq 2 ] ;; slot) [ "$#" -ge 4 ] && case "$2" in take|give) true ;; *) false ;; esac ;; *) false ;; esac \
+  || { echo "usage: fleet.sh verdict|place|budget <jg-home> | slot take|give <jg-home> <id> [pid]" >&2; exit 2; }
 CMD=$1; [ "$CMD" = slot ] && { SUB=$2; shift; }
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 [ -d "$2" ] || { echo "fleet.sh: no home $2" >&2; exit 2; }
@@ -31,18 +35,33 @@ CONFIG=${JG_CONFIG_OVERRIDE:-$FMH/config}
 conf() { local v; v=$(sed -n "s/^$1=//p" "$CONFIG/lane-scale" 2>/dev/null | tail -n 1); case "$v" in ''|*[!0-9]*) echo "$2" ;; *) echo "$v" ;; esac; }
 umask 077
 
+# fleet_slots: print `<total> host=<n> <runner>=<n> ...`; a paid runner outside the ledger's allowance is left out and named `<id>=capped`.
+fleet_slots() {
+  local total host id rec slots cost parts=
+  host=$(conf heavy_slots 2); total=$host
+  for id in $("$HERE/../runners/registry.sh" usable "$FMH" 2>/dev/null); do
+    rec=$("$HERE/../runners/registry.sh" get "$FMH" "$id" 2>/dev/null) || continue
+    slots=$(printf '%s\n' "$rec" | sed -n 's/^slots=//p'); cost=$(printf '%s\n' "$rec" | sed -n 's/^cost_per_hour=//p')
+    case "$cost" in *[1-9]*) "$HERE/../runners/ledger.sh" allow "$FMH" || { parts="$parts $id=capped"; continue; } ;; esac
+    total=$(( total + slots )); parts="$parts $id=$slots"
+  done
+  printf '%s host=%s%s\n' "$total" "$host" "$parts"
+}
+
 if [ "$CMD" = slot ]; then
   dir=$STATE/heavy-slots; mkdir -p "$dir" || exit 1
-  id=$3
+  id=$3; [ "$SUB" = take ] && { limit=$(fleet_slots); limit=${limit%% *}; }
   case "$id" in ''|*/*|.*) echo "fleet.sh: bad slot id" >&2; exit 2 ;; esac
   [ "$SUB" = give ] && { rm -f "$dir/$id"; exit 0; }
   # A slot whose run is gone is free again.
   for f in "$dir"/*; do [ -f "$f" ] && ! kill -0 "$(cat "$f")" 2>/dev/null && rm -f "$f"; done
   [ -f "$dir/$id" ] && exit 0
   n=$(find "$dir" -maxdepth 1 -type f | wc -l)
-  [ "$n" -lt "$(conf heavy_slots 2)" ] || { echo "fleet.sh: all $(conf heavy_slots 2) heavy slots are taken" >&2; exit 1; }
+  [ "$n" -lt "$limit" ] || { echo "fleet.sh: all $limit heavy slots are taken" >&2; exit 1; }
   printf '%s\n' "${4:-$PPID}" > "$dir/$id"; exit 0
 fi
+
+[ "$CMD" = budget ] && { fleet_slots; exit 0; }
 
 # Busy cores by class, in hundredths of a core (integers all through).
 classify() { awk '

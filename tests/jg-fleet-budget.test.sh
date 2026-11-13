@@ -68,4 +68,18 @@ slot take "$H" g2 $p; is "the second takes the last" "$?" 0
 slot take "$H" g3 $p; is "a third waits: both slots are taken" "$?" 1
 slot give "$H" g1; slot take "$H" g3 $p; is "a given slot is taken again" "$?" 0
 kill "$p"; wait "$p" 2>/dev/null; slot take "$H" g4 $$; is "slots of runs that ended are free" "$?" 0
+# One fleet budget (H30c): heavy slots are this host's plus every usable runner's; a paid runner counts only inside the daily ledger cap.
+rm -f "$H"/state/heavy-slots/*; kill "$p" 2>/dev/null
+mkdir -p "$H/config" "$H/state"
+printf 'own1 ssh=a root=/r home=/h arch=x86_64 cores=8 mem_gb=16 slots=3 cost_per_hour=0 private_ok=yes\ncloud1 ssh=b root=/r home=/h arch=x86_64 cores=4 mem_gb=8 slots=4 cost_per_hour=0.4 private_ok=no\n' > "$H/config/runners"
+printf '1\town1\tok\t4\tx\n1\tcloud1\tok\t4\tx\n' | sed 's/^1\t/'"$(date +%s)"'\t/' > "$H/state/runner-health.tsv"
+budget() { "$here/core/lane-scale/fleet.sh" budget "$H"; }
+is "the budget adds the own runner's slots; a paid runner at cap 0 stays out" "$(budget)" "5 host=2 own1=3 cloud1=capped"
+printf 'paid_minutes_day=60\n' > "$H/config/fleet-scale"
+is "a raised cap lets the paid runner in" "$(budget)" "9 host=2 own1=3 cloud1=4"
+"$here/core/runners/ledger.sh" record "$H" cloud1 60
+is "a spent cap takes the paid runner out again" "$(budget)" "5 host=2 own1=3 cloud1=capped"
+sleep 30 & p=$!
+for i in 1 2 3 4 5; do slot take "$H" f$i $p; done; slot take "$H" f6 $p; is "the sixth heavy run waits: five fleet slots are taken" "$?" 1
+kill "$p"; wait "$p" 2>/dev/null
 [ "$fails" -eq 0 ] && echo "PASS fleet-budget" || exit 1

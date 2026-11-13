@@ -1018,6 +1018,9 @@ journeys:
   lane-scale-machines:
     tier: local
     command: bash journeys/lane-scale-machines.sh
+  fleet-budget:
+    tier: local
+    command: bash journeys/fleet-budget.sh
   tier-run:
     tier: local
     command: bash journeys/tier-run.sh
