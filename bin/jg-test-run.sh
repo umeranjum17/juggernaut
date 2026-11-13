@@ -1866,6 +1866,12 @@ families_for_changed_path() {
         || printf '%s\n' "__unmapped__:$path"
       ;;
     tests/lib.sh|tests/*-helpers.sh|tests/fixtures.sh|tests/*-fixture.sh)
+      # A shared test file that was deleted selects only the suites that still
+      # name it, and never refuses: the branch that retired it retired its suites.
+      if [ ! -e "$path" ]; then
+        scripts_for_test_reference "$(basename "$path")" || true
+        return 0
+      fi
       # Shared top-level test files, selected by the suites that name them.
       # Must stay below the tests/fixtures/*/* arm: a case glob's * spans /, so
       # tests/*-fixture.sh would otherwise swallow a nested

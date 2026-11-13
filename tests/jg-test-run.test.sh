@@ -354,6 +354,21 @@ test_a_deleted_journey_does_not_refuse_the_changed_selection() {
   pass 'a deleted journey selects only a test that still names it and never refuses the changed selection'
 }
 
+# A branch that retires a shared test fixture with its suites (c5d55bb1c deleted the machine-call fixture and
+# its suites) must still select its changed tests: the deleted fixture has no owner left, so it selects nothing.
+test_a_deleted_shared_fixture_does_not_refuse_the_changed_selection() {
+  local fixture=$TMP_ROOT/retire-fixture out rc=0
+  required_fixture "$fixture" 'true'
+  printf '# shared\n' >"$fixture/tests/jg-retired-fixture.sh"
+  git -C "$fixture" add tests
+  git -C "$fixture" -c user.name=t -c user.email=t@example.invalid commit -qm 'add fixture'
+  git -C "$fixture" rm -q tests/jg-retired-fixture.sh
+  git -C "$fixture" -c user.name=t -c user.email=t@example.invalid commit -qm 'retire the fixture'
+  out=$(bash "$fixture/bin/jg-test-run.sh" --list --changed --base HEAD^ 2>&1) || rc=$?
+  assert_equals 0 "$rc" "a deleted shared fixture must not refuse the changed selection: $out"
+  pass 'a deleted shared test fixture never refuses the changed selection'
+}
+
 # The hosted job (--hosted) leaves out a script tests/hosted-needs.tsv lists while a tool it needs is not on the runner's PATH,
 # and names it; the same selection without the flag still lists every one, so the scripts run on our host.
 test_the_hosted_selection_drops_scripts_whose_tool_the_runner_lacks() {
@@ -661,6 +676,7 @@ test_a_weight_cap_defers_slow_suites_and_names_them
 test_the_hosted_selection_drops_scripts_that_hit_the_time_bound_or_have_no_hosted_time
 test_the_hosted_selection_drops_scripts_whose_tool_the_runner_lacks
 test_a_deleted_journey_does_not_refuse_the_changed_selection
+test_a_deleted_shared_fixture_does_not_refuse_the_changed_selection
 test_a_changed_shared_file_selects_the_scripts_that_name_it
 test_a_changed_core_script_selects_the_scripts_that_name_it
 test_a_changed_fleet_homes_library_selects_the_move_test
