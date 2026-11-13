@@ -3242,6 +3242,20 @@ spawn_ticket_refuse() {
   [ "$KIND" = ship ] || return 0
   spawn_ticket_admit
 }
+# The lane takes a lease on the files its ticket names (core/file-lease/lease.sh owns the rules): a hot file
+# another live lane leases refuses the start, and the ticket stays in ready. Nothing exists yet to unwind.
+spawn_file_lease() {
+  local files rc=0 paths
+  files=$(jq -r '(if type == "array" then .[0] else . end) | .metadata.files // empty
+    | if type == "string" then fromjson else . end | .[]?' "$1" 2>&1) \
+    || { echo "error: ticket $TICKET's file list could not be read for its lease: $files" >&2; return 1; }
+  [ -n "$files" ] || return 0
+  mapfile -t paths <<<"$files"
+  JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_CONFIG_OVERRIDE="$CONFIG" JG_FILE_LEASE_REPO="$PROJ_ABS" \
+    "$JG_ROOT/core/file-lease/lease.sh" acquire "$ID" "${paths[@]}" || rc=$?
+  [ "$rc" -eq 0 ] || echo "error: spawn refused: ticket $TICKET could not take its file lease (exit $rc)" >&2
+  return "$rc"
+}
 # The ticket belongs to this repository and may start now (core/spawn/cmd/jg-spawn-core/admit.go): its
 # repository label and files, its open edges and the files of the other live lanes. The rows are read here.
 spawn_ticket_admit() {
@@ -3259,6 +3273,7 @@ spawn_ticket_admit() {
   else
     "$SCRIPT_DIR/jg-spawn-core.sh" admit --project "$(basename "$PROJ_ABS")" --repo "$PROJ_ABS" \
       --ticket "$scratch/ticket" --lanes "$scratch/lanes" || admit_rc=1
+    [ "$admit_rc" -ne 0 ] || spawn_file_lease "$scratch/ticket" || admit_rc=1
   fi
   rm -f -- "$scratch/ticket" "$scratch/lanes" "$scratch/err"
   rmdir -- "$scratch"

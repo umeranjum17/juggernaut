@@ -138,6 +138,10 @@ journeys:
     tier: local
     command: JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-spawn-admit.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
     timeout: 10m
+  file-lease:
+    tier: local
+    command: JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-file-lease.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1 && printf '{"target":{"version":"juggernaut@%s"},"start":"two lanes name the same hot file","steps":["spawn the first lane","spawn a second lane on the hot file","spawn a lane on a file that is not hot","clean up the first lane and spawn the second again"],"result":"the second lane waits in ready with the first lane id, then starts after cleanup"}\n' "$(git rev-parse --short HEAD)" > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
+    timeout: 10m
   watcher-window-inventory:
     tier: local
     command: bash tests/jg-watch-inventory.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
