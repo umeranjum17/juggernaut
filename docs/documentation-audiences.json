@@ -1092,6 +1092,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "core/status-latency/README.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "core/trunk-latency/README.md",
       "audience": "operator-current"
     },

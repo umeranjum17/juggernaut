@@ -95,6 +95,9 @@ journeys:
   trunk-latency:
     tier: local
     command: env -u JG_TASK_ID bash tests/jg-trunk-latency.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  status-latency:
+    tier: local
+    command: env -u JG_TASK_ID bash tests/jg-status-latency.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   ports-adapter-refusal:
     tier: local
     command: bash journeys/ports-adapter-refusal.sh
