@@ -468,6 +468,47 @@ test_patch_equivalent_conflicting_divergence() {
   pass "T5c patch-equivalent conflicting divergence heals; unique commit stays"
 }
 
+# A home whose HEAD is a patch-equivalent divergence behind the target, while index and
+# working tree already equal the target tree (a half-finished move), finishes the move.
+# Any extra local change keeps the refusal and loses nothing.
+test_half_moved_index_equal_to_target_finishes() {
+  local w out target
+  w=$(new_world t5d)
+  add_sm "$w" sm1
+  add_sm "$w" sm2
+  printf 'a\n' > "$w/seed/stats.md"
+  git -C "$w/seed" add -A; git -C "$w/seed" commit -qm base-stats; git -C "$w/seed" push -q origin main
+  for h in sm1 sm2; do
+    git -C "$w/$h" fetch -q origin 2>/dev/null || true
+    git -C "$w/$h" checkout -q --detach "$(git -C "$w/seed" rev-parse HEAD)"
+    printf 'a\nb\n' > "$w/$h/stats.md"
+    git -C "$w/$h" commit -qam same-patch
+  done
+  printf 'a\nb\n' > "$w/seed/stats.md"
+  git -C "$w/seed" commit -qam same-patch-upstream
+  : > "$w/seed/stats.md"
+  git -C "$w/seed" commit -qam empty-after
+  git -C "$w/seed" push -q origin main
+  target=$(git -C "$w/seed" rev-parse HEAD)
+  for h in sm1 sm2; do
+    git -C "$w/$h" fetch -q origin 2>/dev/null || true
+    git -C "$w/$h" read-tree -u -m "$(git -C "$w/$h" rev-parse HEAD)" "$target" 2>/dev/null \
+      || { git -C "$w/$h" read-tree "$target"; git -C "$w/$h" checkout-index -a -f; }
+  done
+  # sm2 also holds an untracked file the target does not have: it must stay refused.
+  printf 'mine\n' > "$w/sm2/untracked-note.txt"
+
+  out=$(run_update "$w")
+  assert_contains "$out" "squad_lead sm1: reconciled redundant divergence" \
+    "a half-moved home (index equals target) did not finish its move"
+  [ "$(git -C "$w/sm1" rev-parse HEAD)" = "$target" ] || fail "sm1 HEAD did not reach the target"
+  git -C "$w/sm1" diff --quiet HEAD || fail "sm1 lost or gained changes"
+  assert_contains "$out" "squad_lead sm2: skipped" "an untracked file must keep the refusal"
+  [ -f "$w/sm2/untracked-note.txt" ] || fail "sm2 untracked file was lost"
+  [ "$(git -C "$w/sm2" rev-parse HEAD)" != "$target" ] || fail "sm2 moved despite an untracked file"
+  pass "T5d half-moved home with index equal to target finishes; extra local state stays refused"
+}
+
 # --- T6: the git side is idempotent; the restart set is not -----------------
 # This is the SSHHIP case: that mate's home was already at the target commit, so
 # the old classifier skipped it entirely and its agent kept running the launch-time
@@ -704,6 +745,7 @@ test_ignored_untracked_output_does_not_refuse
 test_diverged_squad_lead_skipped
 test_squash_merged_divergence_reconciles
 test_patch_equivalent_conflicting_divergence
+test_half_moved_index_equal_to_target_finishes
 test_already_current_squad_lead_still_restarts
 test_already_current_unprovable_mate_is_nudged
 test_registry_backstop_dedup_and_self_exclusion

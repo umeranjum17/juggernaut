@@ -112,6 +112,27 @@ test_every_home_moves_or_is_skipped_with_one_row() {
   pass 'T1 one row per home: two move, two skipped with a reason, Main last, a pool worktree untouched'
 }
 
+# A lead whose HEAD is a divergence the tip holds, left half-moved (index and tree already at the tip, HEAD behind), finishes
+# the move; the same lead with an extra untracked file keeps the refusal and loses nothing.
+test_a_half_moved_lead_finishes_its_move() {
+  local out
+  mover_world t1h
+  git -C "$W/lead-repoint" fetch -q "$W/proj" trunk
+  git -C "$W/lead-repoint" read-tree -u -m HEAD "$C2" || fail "fixture: cannot stage the tip"
+  [ "$(git -C "$W/lead-repoint" write-tree)" = "$(git -C "$W/proj" rev-parse "$C2^{tree}")" ] || fail "fixture: index must equal the tip tree"
+  git -C "$W/lead-ff" fetch -q "$W/proj" trunk
+  git -C "$W/lead-ff" checkout -q --detach "$X" 2>/dev/null || :
+  git -C "$W/lead-ff" read-tree -u -m HEAD "$C2" || fail "fixture: cannot stage the tip"
+  printf 'mine\n' > "$W/lead-ff/note.txt"
+  out=$(run_mover) || :
+  [ "$(head_of lead-repoint)" = "$C2" ] || fail "a half-moved lead must reach the tip: $out"
+  git -C "$W/lead-repoint" diff --quiet HEAD || fail "the finished lead must hold no change against the tip"
+  [ "$(row_of lead-repoint | cut -f4)" = "live,re-pointed-from:${X:0:12}" ] || fail "the row must say re-pointed: $(row_of lead-repoint)"
+  [ "$(head_of lead-ff)" != "$C2" ] || fail "a half-moved lead with an untracked file must not move"
+  [ -f "$W/lead-ff/note.txt" ] || fail "the untracked file must be kept"
+  pass 'T1h a half-moved lead (index and tree at the tip) finishes its move; an extra untracked file keeps the refusal'
+}
+
 test_cache_is_cleared_after_a_move() {
   mover_world t1b
   mkdir -p "$W/home/state/squad-lead-summary-cache"; : > "$W/home/state/squad-lead-summary-cache/old.json"
@@ -570,6 +591,7 @@ test_guarded_linked_home_moves_twice
 
 test_guarded_primary_moves_with_tip
 test_every_home_moves_or_is_skipped_with_one_row
+test_a_half_moved_lead_finishes_its_move
 test_cache_is_cleared_after_a_move
 test_a_move_rewires_only_the_add_ons_it_changed_and_names_a_failure
 test_a_go_live_run_from_a_lead_home_moves_every_home

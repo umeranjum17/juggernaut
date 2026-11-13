@@ -528,6 +528,26 @@ ff_rollback_half_move() { # <dir> <old-rev> <new-rev>
   git -C "$dir" read-tree -u -m "$new" "$old" >/dev/null 2>&1 || true
 }
 
+# Finish a half-done move without loss. A killed or refused move can leave the index (and tree) at the
+# target while HEAD is still behind, and reset --keep then sees local changes and refuses. When the index
+# tree, the tracked working tree and the target tree are all equal and no untracked file outside the
+# operational dirs exists, nothing is left to lose, so HEAD alone is re-pointed (reset --soft); any other
+# state returns 1 and keeps the caller's refusal. Never --hard, never a stash.
+ff_finish_half_move() { # <dir> <target-commit>
+  local dir=$1 target=$2 want got path first
+  want=$(git -C "$dir" rev-parse "$target^{tree}" 2>/dev/null) || return 1
+  got=$(git -C "$dir" write-tree 2>/dev/null) || return 1
+  [ "$got" = "$want" ] || return 1
+  git -C "$dir" diff --quiet -- 2>/dev/null || return 1
+  while IFS= read -r path; do
+    first=${path%%/*}
+    case " $OPERATIONAL_UNTRACKED_DIRS " in *" $first "*) continue ;; esac
+    [ "$path" = "$SUB_HOME_MARKER" ] && continue
+    return 1
+  done < <(git -C "$dir" ls-files --others --exclude-standard 2>/dev/null)
+  git -C "$dir" reset --soft "$target" >/dev/null 2>&1
+}
+
 FF_STATUS=""
 FF_INSTR=""
 ff_target() {
@@ -583,6 +603,22 @@ ff_target() {
 
   clear_stray_pool_gitignore_line "$dir"
   dirty=$(dirty_paths "$dir" "$ignore_seed_marker")
+  if [ -n "$dirty" ] && { [ "$contained_repoint" = yes ] || { [ -n "$squad_lead_id" ] && [ -n "$reconciliation_state" ]; }; } \
+    && base_rev=$(git -C "$dir" rev-parse "$base" 2>/dev/null) \
+    && local_rev=$(git -C "$dir" rev-parse HEAD 2>/dev/null) \
+    && ! git -C "$dir" merge-base --is-ancestor HEAD "$base" 2>/dev/null \
+    && divergence_is_redundant "$dir" "$local_rev" "$base_rev"; then
+    instr=$(changed_instr "$dir" "$base")
+    before=$(git -C "$dir" rev-parse --short HEAD)
+    if ff_finish_half_move "$dir" "$base_rev"; then
+      after=$(git -C "$dir" rev-parse --short HEAD)
+      FF_STATUS="updated"
+      FF_INSTR="$instr"
+      [ -z "$reconciliation_state" ] || squad_lead_update_reconcile_clear "$reconciliation_state" "$squad_lead_id" || true
+      echo "$label: reconciled redundant divergence $before..$after (index and tree already at the target)"
+      return 0
+    fi
+  fi
   if [ -n "$dirty" ]; then
     echo "$label: skipped: dirty working tree"
     # Name every path, one per line, so a skip stays diagnosable without
