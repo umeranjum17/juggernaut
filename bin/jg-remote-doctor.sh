@@ -31,6 +31,9 @@
 #   path=<the child PATH this command inherited>
 #   entrypoint=yes|no
 #   platform=darwin|linux|<uname -s>|unknown
+#   arch=<uname -m, aarch64 reported as arm64>
+#   cores=<online cpu count>
+#   load1=<one-minute load average>   (the runner probe of core/runners reads these three)
 #   required <tool>=<path>|MISSING
 #   optional <tool>=<path>|absent
 #   fix <check>=applied: <what changed>       (--fix only)
@@ -925,6 +928,12 @@ else
   printf 'note: not launched through the fixed remote entrypoint; the reported PATH is this caller environment.\n' >&2
 fi
 printf 'platform=%s\n' "$PLATFORM"
+ARCH=$(uname -m 2>/dev/null || true)
+[ "$ARCH" != aarch64 ] || ARCH=arm64
+printf 'arch=%s\n' "${ARCH:-unknown}"
+printf 'cores=%s\n' "$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo unknown)"
+LOAD1=$(uptime 2>/dev/null | sed -n 's/.*load averages\{0,1\}: *\([0-9.]*\).*/\1/p')
+printf 'load1=%s\n' "${LOAD1:-unknown}"
 
 LAUNCH_AGENT_SHELL=
 if [ "$PLATFORM" = darwin ]; then
