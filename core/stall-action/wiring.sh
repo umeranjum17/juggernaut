@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install or update the stall-action watcher check in one juggernaut home. Idempotent.
 # Usage: wiring.sh [--dry-run] <jg-home>
-# Copies stall-action.sh to ${XDG_DATA_HOME:-~/.local/share}/jg-stall-action/, writes the home's
+# Copies stall-action.sh and relaunch.sh to ${XDG_DATA_HOME:-~/.local/share}/jg-stall-action/, writes the home's
 # state/stall-action.check.sh as a one-line shim that execs it (mode 700), and registers the check with
 # the home's bin/jg-check-register.sh; a registration the register script refuses puts the old shim back.
 set -euo pipefail
@@ -18,7 +18,7 @@ if [ -L "$SHIM" ] || { [ -e "$SHIM" ] && [ ! -f "$SHIM" ]; }; then
   echo "stall-action: refused: $SHIM is not a regular file; move it aside and run this again" >&2; exit 1
 fi
 if [ "$DRY" -eq 1 ]; then
-  echo "would copy: $SRC/stall-action.sh -> $DEST/stall-action.sh"
+  echo "would copy: $SRC/stall-action.sh and relaunch.sh -> $DEST/"
   printf 'would write: %s:\n%s\n' "$SHIM" "$TEXT" | sed '2,$s/^/  /'
   echo "would run: env -u JG_STATE_OVERRIDE JG_HOME=$FMH $FMH/bin/jg-check-register.sh stall-action"
   echo "dry run: nothing written"
@@ -28,7 +28,7 @@ backup=''
 [ ! -f "$SHIM" ] || { backup=$(mktemp "$FMH/state/.jg-stall-action.XXXXXX"); cp -p "$SHIM" "$backup"; }
 trap '[ -z "$backup" ] || rm -f -- "$backup"' EXIT
 mkdir -p "$DEST"
-install -m 755 "$SRC/stall-action.sh" "$DEST/stall-action.sh"
+install -m 755 "$SRC/stall-action.sh" "$SRC/relaunch.sh" "$DEST/"
 printf '%s\n' "$TEXT" > "$SHIM"
 chmod 700 "$SHIM"
 if ! env -u JG_STATE_OVERRIDE JG_HOME="$FMH" "$FMH/bin/jg-check-register.sh" stall-action; then

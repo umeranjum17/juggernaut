@@ -31,6 +31,17 @@ A task with no beat record keeps the pane rule.
 Only `silent` interrupts, because nothing hangs in the other three.
 The exemptions, cooldown and one-action-per-beat ledger are the same.
 
+## The relaunch
+
+`relaunch.sh` is rung 0 of `lost-worker`, after the ring.
+`stall-action.sh` calls it for a worker with a beat verdict; it does nothing before the ring of that beat.
+
+- One relaunch per wait (300 s, `JG_STALL_ACTION_RELAUNCH_WAIT`): `bin/jg-control.sh <task> relaunch` on the same work copy. The wait counts from the ring or the last relaunch.
+- At most 3 relaunches of a task in 30 minutes (`JG_STALL_ACTION_RELAUNCH_WINDOW`). A refused relaunch counts as one.
+- At the limit the lead is told once, with the three tries named: `jg-alert.sh raise lost-worker <task>`.
+- An API error of a billing kind (`billing_error`, `account_on_hold`) is never relaunched: the same account fails the same way. The lead is told at once with the type.
+- A fresh beat resolves the alert (`relaunch.sh clear`).
+
 ## What is never touched
 
 - A task with a declared wait (`paused:` or captain-held).

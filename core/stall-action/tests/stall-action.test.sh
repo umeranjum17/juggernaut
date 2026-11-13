@@ -11,6 +11,8 @@
 # e) a failed interrupt is retried once on the next sweep and then given up for that hash;
 # h) a task with a beat record is judged by the beat: silent (interrupt and re-ring), API error, idle with no reason and
 #    no start (re-ring only, naming the cause); a fresh beat, a declared wait, a done line and a beat-less task keep their rules;
+# i) a lost worker that was rung and stays lost is relaunched, 3 times in 30 minutes, then the lead is told (alert lost-worker) once;
+#    a billing error is never relaunched and tells the lead at once; a fresh beat resolves the alert; a declared wait is untouched;
 # f) the wiring installs a shim that registers, and the unwiring removes it.
 # Usage: stall-action/tests/stall-action.test.sh
 set -euo pipefail
@@ -186,6 +188,46 @@ sweep
 check "h: the next sweep over the same beat does nothing" "$(wc -l < "$STUB_LOG")" 0
 for t in hsilent herr hidle hfresh hpause hdone hnostart hother hhash; do rm -f "$FM/state/$t.meta"; done
 
+# i: the relaunch. Sweeps run at later clock times against one lost worker: the ring first, then one relaunch per wait, at most 3.
+cat > "$d/alert" <<'STUB'
+#!/usr/bin/env bash
+printf 'alert %s\n' "$*" >> "$STUB_LOG"
+case "$1" in
+  raise) mkdir -p "$JG_HOME/state/alerts"; : > "$JG_HOME/state/alerts/lost-worker--$3.rec"; printf 'ring\tlost-worker--%s\t0\ttick\n' "$3" ;;
+  resolve) rm -f "$JG_HOME/state/alerts/$2.rec" ;;
+esac
+STUB
+chmod +x "$d/alert"; export JG_STALL_ACTION_ALERT=$d/alert
+: > "$FM/data/stall-action/actions.jsonl"
+sweep_at() { JG_STALL_ACTION_NOW=$(( NOW + $1 )) sweep; }  # <seconds after now>
+hlane rlost;   touch -d "@$(( NOW - 600 ))" "$FM/state/rlost.meta"   # a Claude worker that never started: no beat, no status line
+hlane rbill;   beat rbill 7 "StopFailure error=billing_error";      status rbill "working [at=$NOW]: x"
+hlane rwait;   beat rwait 7 Stop;                                   status rwait "working [at=$NOW]: x"
+sweep_at 0
+check "i: the first pass rings and relaunches nothing" "$(calls send 'rlost Your session')$(calls control 'rlost relaunch')" 10
+check "i: a billing error tells the lead at once and is never relaunched" "$(calls alert 'raise lost-worker rbill --fact reason=api:billing_error')$(calls control rbill)" 10
+status rwait "paused [at=$NOW] [wait=owner] [reason=decision]: waiting for the owner"
+sweep_at 100
+check "i: a pass before the wait ends does nothing" "$(calls control rlost)$(calls send rlost)" 00
+sweep_at 301
+check "i: after the wait the worker is relaunched on its own copy" "$(calls control 'rlost relaunch')" 1
+sweep_at 400
+check "i: a pass before the next wait does nothing" "$(calls control rlost)" 0
+sweep_at 602; sweep_at 903
+check "i: the third pass relaunches again" "$(calls control 'rlost relaunch')" 1
+check "i: three relaunches are on record" "$(grep -c '"task":"rlost".*"step":"relaunch","ok":true' "$FM/data/stall-action/actions.jsonl")" 3
+check "i: a worker with a declared wait is never relaunched" "$(grep -c '"task":"rwait".*"step":"relaunch"' "$FM/data/stall-action/actions.jsonl")" 0
+check "i: the lead is not told before the limit" "$(grep -c '"task":"rlost".*"step":"alert"' "$FM/data/stall-action/actions.jsonl")" 0
+sweep_at 1204
+check "i: the fourth pass tells the lead and relaunches nothing" "$(calls alert 'raise lost-worker rlost --fact reason=no-start --fact relaunch=tried 3 times in 30 minutes')$(calls control rlost)" 10
+sweep_at 1300
+check "i: the lead is told once" "$(calls alert raise)$(calls control rlost)" 00
+check "i: the check prints nothing" "$(cat "$d/out")" ""
+beat rlost -22 PostToolBatch   # a beat 80 s before the last sweep
+sweep_at 1400
+check "i: a worker that beats again resolves its alert" "$(calls alert 'resolve lost-worker--rlost')" 1
+for t in rlost rbill rwait; do rm -f "$FM/state/$t.meta"; done
+
 # f: the wiring installs and registers, the unwiring removes.
 cat > "$FM/bin/jg-check-register.sh" <<'STUB'
 #!/bin/sh
@@ -197,6 +239,7 @@ rm -f "$JG_HOME/state/$1.check.sh"
 STUB
 chmod +x "$FM/bin/"jg-check-*.sh
 "$SRC/wiring.sh" "$FM" >/dev/null
+check "f: the relaunch step is installed beside the check" "$(test -x "$XDG_DATA_HOME/jg-stall-action/relaunch.sh" && echo yes)" yes
 check "f: the shim runs the installed check for this home" "$(sed -n 2p "$FM/state/stall-action.check.sh")" "exec $XDG_DATA_HOME/jg-stall-action/stall-action.sh check $FM"
 check "f: the check is registered" "$(cat "$FM/state/registered")" stall-action
 "$SRC/unwiring.sh" "$FM" >/dev/null

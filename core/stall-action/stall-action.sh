@@ -40,6 +40,8 @@
 #   no-start        a Claude task has no beat and no status line this long after its meta was written: it never started;
 #                   re-ring only.
 # Nothing is ever hung in the last three, so there is nothing to interrupt. A task with no beat record keeps the pane rule.
+# A lost worker that stays lost after its ring is relaunched by relaunch.sh (3 times in 30 minutes, then the lead is told); a fresh
+# beat resolves its alert.
 # The same exemptions, cooldown and one-action-per-beat ledger apply. Seams for tests: JG_STALL_ACTION_PROC_LIB, JG_STALL_ACTION_BG_MIN_AGE, JG_STALL_ACTION_CONTROL, JG_STALL_ACTION_SEND, JG_STALL_ACTION_PEEK, JG_STALL_ACTION_CLASSIFY, JG_STALL_ACTION_NOW (epoch),
 # JG_STALL_ACTION_WATCH_FRESH (seconds a poll record may be old).
 set -u
@@ -54,6 +56,7 @@ CLASSIFY=${JG_STALL_ACTION_CLASSIFY:-$FMH/bin/jg-classify.sh}
 NOW=${JG_STALL_ACTION_NOW:-$(date +%s)}
 FRESH=${JG_STALL_ACTION_WATCH_FRESH:-600}
 COOLDOWN=${JG_STALL_ACTION_COOLDOWN:-1800}
+RELAUNCH=${JG_STALL_ACTION_RELAUNCH:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/relaunch.sh}
 PROC_LIB=${JG_STALL_ACTION_PROC_LIB:-$FMH/bin/jg-agent-process-lib.sh}
 BG_MIN=${JG_STALL_ACTION_BG_MIN_AGE:-120}
 DIR=$FMH/data/stall-action LEDGER=$DIR/actions.jsonl
@@ -133,7 +136,7 @@ for meta in "$STATE"/*.meta; do
     fi
     unchanged=$(( NOW - $(cut -d' ' -f2 "$seen") ))
   elif verdict=$(beat_verdict "$task" "$meta" "$bound" "$harness"); [ -s "$STATE/beats/$task" ] || [ -n "$verdict" ]; then
-    [ -n "$verdict" ] || continue
+    if [ -z "$verdict" ]; then "$RELAUNCH" clear "$FMH" "$task"; continue; fi
     vkind=${verdict% *}; hash=beat${verdict#* }
     unchanged=$(( NOW - ${verdict#* } ))
   else
@@ -149,8 +152,6 @@ for meta in "$STATE"/*.meta; do
   if [ -z "$vkind" ] && grep -q ' state=idle ' "$STATE/$task.busy-state" 2>/dev/null; then
     bg=$(background_job "$worktree"); [ -n "$bg" ] || continue
   fi
-  last_at=$(grep -F "\"task\":\"$task\"," "$LEDGER" 2>/dev/null | grep '"ok":true' | tail -n 1 | sed 's/.*"at":\([0-9]*\)}.*/\1/')
-  [ -z "$last_at" ] || [ "$(( NOW - last_at ))" -ge "$COOLDOWN" ] || [ "$(tries "$task" "$hash" interrupt true)" -gt 0 ] || continue
   wait_line=$("$CLASSIFY" declared-wait "$STATE/$task.status" 2>/dev/null) || continue
   [ -z "$wait_line" ] || continue
   last=$("$CLASSIFY" last-line "$STATE/$task.status" 2>/dev/null) || continue
@@ -158,6 +159,13 @@ for meta in "$STATE"/*.meta; do
     "$CLASSIFY" is-relevant "$last" >/dev/null 2>&1; rc=$?
     [ "$rc" -eq 1 ] || continue
   fi
+  # A lost worker that was rung and stays lost is relaunched (relaunch.sh owns the limit); it does nothing before the ring.
+  if [ -n "$vkind" ]; then
+    reason=$vkind; [ "$vkind" != api-error ] || reason=api:$(tail -n 1 "$STATE/beats/$task" | sed 's/.*error=//')
+    "$RELAUNCH" act "$FMH" "$task" "$hash" "$reason"
+  fi
+  last_at=$(grep -F "\"task\":\"$task\"," "$LEDGER" 2>/dev/null | grep '"ok":true' | tail -n 1 | sed 's/.*"at":\([0-9]*\)}.*/\1/')
+  [ -z "$last_at" ] || [ "$(( NOW - last_at ))" -ge "$COOLDOWN" ] || [ "$(tries "$task" "$hash" interrupt true)" -gt 0 ] || continue
 
   if { [ -z "$vkind" ] || [ "$vkind" = silent ]; } && [ "$(tries "$task" "$hash" interrupt true)" -eq 0 ]; then
     [ "$(tries "$task" "$hash" interrupt false)" -lt 2 ] || continue

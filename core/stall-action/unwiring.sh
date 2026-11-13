@@ -8,6 +8,8 @@ if [ -e "$f" ]; then
   [ -x "$FMH/bin/jg-check-unregister.sh" ] || { echo "remove manually: $f" >&2; exit 1; }
   if [ "$DRY" -eq 1 ]; then echo "would run: $FMH/bin/jg-check-unregister.sh stall-action"; else env -u JG_STATE_OVERRIDE JG_HOME="$FMH" "$FMH/bin/jg-check-unregister.sh" stall-action; fi
 fi
-[ ! -e "$DEST/stall-action.sh" ] || { echo "remove: $DEST/stall-action.sh"; [ "$DRY" -eq 1 ] || rm -f -- "$DEST/stall-action.sh"; }
+for c in stall-action.sh relaunch.sh; do
+  [ ! -e "$DEST/$c" ] || { echo "remove: $DEST/$c"; [ "$DRY" -eq 1 ] || rm -f -- "$DEST/$c"; }
+done
 [ "$DRY" -eq 1 ] || rmdir "$DEST" 2>/dev/null || true
 [ "$DRY" -eq 0 ] || echo 'dry run: nothing written'
