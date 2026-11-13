@@ -189,6 +189,8 @@ LANDER_ACCOUNT="${CLAUDE_CONFIG_DIR:-}"; unset CLAUDE_CONFIG_DIR
 . "$SCRIPT_DIR/jg-trunk-resolve-lib.sh"
 # shellcheck source=core/trunk-landing/refusal-reach.sh
 . "$SCRIPT_DIR/../core/trunk-landing/refusal-reach.sh"
+# shellcheck source=core/trunk-landing/batch.sh
+. "$SCRIPT_DIR/../core/trunk-landing/batch.sh"
 export JG_HOME JG_CONFIG_OVERRIDE="$CONFIG"
 
 usage() { sed -n '2,/^set -eu$/p' "${BASH_SOURCE[0]}" | sed -e 's/^# \{0,1\}//' -e '$d'; }
@@ -1501,6 +1503,7 @@ cmd_verify() {
   for attempt in 1 2; do
     rc=0
     if [ -z "$gate" ]; then :
+    elif [ -n "$from" ] && [ "$parent" = "$from" ]; then batch_verify "$sha" "$gate" "$from" || rc=$?
     elif [ -n "$parent" ]; then full_gate "$sha" "$gate" "$parent" || rc=$?
     else run_gate "$sha" "$gate" full || rc=$?; fi
     [ "$rc" -eq 1 ] && [ "$attempt" = 1 ] || break
@@ -1522,7 +1525,7 @@ cmd_verify() {
     2)
       put "$STATE/trunk-verify-last-$PN" "$sha"
       why="the whole suite fails on it where its parent ${parent:0:12} passes"
-      [ -z "$from" ] || culprit=$(batch_culprit "$from" "$sha" "$gate")
+      if [ -n "${BATCH_TRACED:-}" ]; then culprit=$BATCH_CULPRIT; elif [ -n "$from" ]; then culprit=$(batch_culprit "$from" "$sha" "$gate"); fi
       if [ -n "$culprit" ] && [ "$culprit" != "$sha" ]; then
         why="the whole suite fails on it where the trunk before it (${from:0:12}) passes"
         if revert_commit "$culprit" "$why"; then line_red "$culprit" "$why; it was reverted by itself"; exit 1; fi
