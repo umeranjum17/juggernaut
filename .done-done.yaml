@@ -16,6 +16,9 @@ journeys:
   hook-inbox:
     tier: local
     command: bash tests/jg-hook-inbox.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  stage-words:
+    tier: local
+    command: bash journeys/stage-words.sh
   busy-beat:
     tier: local
     command: bash tests/jg-busy-beat.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
