@@ -450,6 +450,9 @@ journeys:
   ship-brief-style:
     tier: local
     command: bash journeys/ship-brief-style.sh
+  local-lane-brief:
+    tier: local
+    command: bash journeys/local-lane-brief.sh
   ticket-stage:
     tier: local
     command: bash journeys/ticket-stage.sh

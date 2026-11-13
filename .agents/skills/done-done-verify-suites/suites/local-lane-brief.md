@@ -1,0 +1,3 @@
+# Local lane brief
+
+Local lane brief: run `done-done run local-lane-brief` (`bash journeys/local-lane-brief.sh`, which writes its log and `steps.json` into the run's folder); the real `bin/jg-brief.sh` scaffolds a local-trunk brief on a synthetic project registered local-trunk with trunk branch `trunk-v9`, and the brief must name that branch, demand exactly one commit with the ticket reference, keep the landing, conflict, never-force and sealed-proof rules and the done line, while a direct-PR brief and a local-only brief on a project not registered local carry no lane section and an unknown mode is refused (screen: none).
