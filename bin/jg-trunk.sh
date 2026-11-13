@@ -191,6 +191,8 @@ LANDER_ACCOUNT="${CLAUDE_CONFIG_DIR:-}"; unset CLAUDE_CONFIG_DIR
 . "$SCRIPT_DIR/../core/trunk-landing/refusal-reach.sh"
 # shellcheck source=core/trunk-landing/batch.sh
 . "$SCRIPT_DIR/../core/trunk-landing/batch.sh"
+# shellcheck source=core/trunk-verify/milestone.sh
+. "$SCRIPT_DIR/../core/trunk-verify/milestone.sh"
 export JG_HOME JG_CONFIG_OVERRIDE="$CONFIG"
 
 usage() { sed -n '2,/^set -eu$/p' "${BASH_SOURCE[0]}" | sed -e 's/^# \{0,1\}//' -e '$d'; }
@@ -1487,7 +1489,7 @@ cmd_verify_due() {
 }
 
 cmd_verify() {
-  local sha tip rc=0 parent why from culprit='' gate gatekey base attempt bad green started=$SECONDS
+  local sha tip rc=0 parent why from culprit='' gate rawgate gatekey base attempt bad green started=$SECONDS c
   open_project "${1-}"
   # The tip is a ref read, which is atomic, so reading it never waits for a landing; the trunk lock is taken only for a short write.
   tip=$(rev "refs/heads/$TRUNK") || refuse "trunk branch $TRUNK is missing in $PROJ"
@@ -1513,7 +1515,7 @@ cmd_verify() {
     echo "verify: no verify gate for $PN (no gate-verify@$PN or gate-full@$PN); nothing run, nothing marked red" >&2; gate=
   elif [ -n "${VERIFY_NIGHTLY:-}" ]; then echo "verify: the nightly whole run, ${from:+judged against the first commit of the day ${from:0:12}}" >&2
   elif [ -n "$green" ]; then
-    gate=$(gate_from "$gate" "$green"); echo "verify: judging every change since the green pin ${green:0:12}" >&2
+    rawgate=$gate; gate=$(gate_from "$gate" "$green"); echo "verify: judging every change since the green pin ${green:0:12}" >&2
   elif base=$(release_base "$sha"); then
     # Verify judges what the release pull request carries: every change since this trunk's release base, the set CI maps for it.
     gate=$(gate_from "$gate" "$base"); echo "verify: judging every change since the release base ${base:0:12}" >&2
@@ -1523,6 +1525,7 @@ cmd_verify() {
   for attempt in 1 2; do
     rc=0
     if [ -z "$gate" ]; then :
+    elif [ -z "${VERIFY_NIGHTLY:-}" ] && [ -n "$green" ]; then ms_verify "$sha" "$rawgate" "$(cat "$STATE/trunk-green-$PN")" || rc=$?
     elif [ -n "$from" ] && [ "$parent" = "$from" ]; then batch_verify "$sha" "$gate" "$from" || rc=$?
     elif [ -n "$parent" ]; then full_gate "$sha" "$gate" "$parent" || rc=$?
     else run_gate "$sha" "$gate" full || rc=$?; fi
@@ -1544,6 +1547,7 @@ cmd_verify() {
       esac ;;
     2)
       put "$STATE/trunk-verify-last-$PN" "$sha"
+      if [ "${#MS_BAD[@]}" -gt 0 ]; then for c in "${MS_BAD[@]}"; do ms_charge "$c"; done; exit 1; fi
       why="the whole suite fails on it where its parent ${parent:0:12} passes"
       if [ -n "${BATCH_TRACED:-}" ]; then culprit=$BATCH_CULPRIT; elif [ -n "$from" ]; then culprit=$(batch_culprit "$from" "$sha" "$gate"); fi
       if [ -n "$culprit" ] && [ "$culprit" != "$sha" ]; then

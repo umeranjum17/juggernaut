@@ -319,7 +319,7 @@ test_the_tick_verifies_a_landed_pair_that_breaks_together_and_the_pin_moves_only
   for _ in $(seq 1 150); do git -C "$PROJ" log --format=%B trunk | grep -q '^reverts: ' && break; sleep 0.2; done
   git -C "$PROJ" log -1 --format=%B trunk | grep -qx "reverts: $b" || fail "the tick's verify must revert the second change, the one the red is traced to: $(git -C "$PROJ" log -2 --format=%B trunk) log: $(cat "$HOME_D/data/jg-trunk-landing/verify-proj.log" 2>&1)"
   git -C "$PROJ" log --format=%B "$a^..$a" | grep -q '^reverts: ' && fail "the first change stays"
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$base" ] || fail "a red verify must not move the green pin"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$a" ] || fail "a red verify moves the pin only to the last commit before the bad one ($a), not over it"
   for _ in $(seq 1 150); do grep -qs "alert-line-red--proj-${b:0:12}" "$q" && break; sleep 0.2; done
   grep -q "alert-line-red--proj-${b:0:12}" "$q" || fail "line-red must be raised for the traced commit: $(cat "$q" 2>&1)"
   assert_contains "$(grep 'line-red' "$q")" "alert line-red (P1) at rung 2 for lead" "the alert is named line-red"

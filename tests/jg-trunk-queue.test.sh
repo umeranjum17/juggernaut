@@ -66,7 +66,7 @@ test_queued_lanes_land_as_one_stack_and_a_red_stack_is_bisected() {
   ! git -C "$PROJ" cat-file -e trunk:t/b2.test.sh 2>/dev/null || fail "the red lane is undone"
   git -C "$PROJ" cat-file -e trunk:t/b1.test.sh || fail "the first green lane stays on trunk"
   git -C "$PROJ" cat-file -e trunk:t/b3.test.sh || fail "the last green lane stays on trunk"
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$base" ] || fail "the pin stays below the guilty commit: a landing never moved it and a red verify does not"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(git -C "$PROJ" log -1 --format=%H --grep='^ticket b1$' trunk)" ] || fail "the pin stands on the last commit before the guilty one (b1): a landing never moved it and the verify moves it only that far"
   assert_contains "$out" "b2" "the revert names the lane"
   # A lane that conflicts drops out and is told, with its paths; the rest still land as one stack.
   : > "$W/gate-runs"; base=$(tip)

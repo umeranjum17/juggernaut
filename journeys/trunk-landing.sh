@@ -28,7 +28,7 @@ rc=0
 (cd "$candidate/tree" && bash bin/jg-test-run.sh \
   tests/jg-trunk.test.sh tests/jg-trunk-live.test.sh tests/jg-trunk-gate.test.sh tests/jg-trunk-sealed-ran.test.sh tests/jg-trunk-queue.test.sh \
   tests/jg-trunk-retry.test.sh tests/jg-trunk-release-open-pr.test.sh tests/jg-trunk-release-merge-first.test.sh tests/jg-trunk-two-gates.test.sh tests/jg-trunk-publish.test.sh tests/jg-trunk-cancel.test.sh \
-  tests/jg-trunk-verify.test.sh tests/jg-trunk-spawn.test.sh tests/jg-trunk-scope.test.sh \
+  tests/jg-trunk-verify.test.sh tests/jg-trunk-verify-milestone.test.sh tests/jg-trunk-spawn.test.sh tests/jg-trunk-scope.test.sh \
   tests/jg-on.test.sh tests/migration-card-live.test.sh tests/jg-afk-inject-e2e.test.sh \
   tests/jg-wake-watcher.test.sh tests/jg-beads.test.sh tests/jg-beads-native-n6.test.sh \
   tests/jg-beads-native-n8.test.sh tests/jg-ticket-writeback.test.sh) > "$out" 2>&1 || rc=$?

@@ -49,6 +49,10 @@
 #   nightly-hour         3            the UTC hour from which a tick starts the day's nightly whole run, once a day
 #   verify-width          4           the most batches the line's verify tests at once (and probes it runs at once to find a bad commit),
 #                                     each one heavy slot of core/lane-scale/fleet.sh; 1 tests the whole stack in one run
+#   verify-milestone-minutes 15       a verify milestone (core/trunk-verify/milestone.sh) holds the commits that landed within this many minutes of its first,
+#                                     or at most N commits, N set from the measured bad-commit share so a milestone is red at most half the time
+#   verify-milestone-max  50          the most commits N can be
+#   verify-bad-share      5           the bad-commit share in percent that sets N while the home has fewer than 20 landings
 #   no-green-alarm-minutes 15         the trunk with no green commit this long (since the oldest commit above the green pin landed) raises one alarm to Overwatch
 _JG_TRUNK_PROTECTED='bin/jg-merge-* bin/jg-pr-merge.sh bin/jg-trunk* bin/jg-dod-lib.sh bin/jg-captain-hold.sh bin/jg-test-run.sh bin/jg-lint.sh bin/jg-ci-* bin/jg-update.sh bin/jg-ff-lib.sh bin/jg-stack.sh core/merge-on-green/* core/merge-card/* core/owner-guard/* core/owner-rules/* core/receipts/* core/teardown/* core/delete-guard/* core/kill-guard/* policy/gate/* .github/workflows/*'
 
@@ -116,6 +120,9 @@ jg_trunk_policy() {  # <key> [<project>]
       release-after-commits) val=10 ;;
       no-green-alarm-minutes) val=15 ;;
       verify-width) val=4 ;;
+      verify-milestone-minutes) val=15 ;;
+      verify-milestone-max) val=50 ;;
+      verify-bad-share) val=5 ;;
       conflict-resolver) val='' ;;
       conflict-limit-seconds) val=600 ;;
       *) return 1 ;;
