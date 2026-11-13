@@ -19,11 +19,11 @@
 #                  the decision. A hold that waits on other work or on a later date is Not done.
 #   Done (verified) the ticket is closed AND the proof is recorded:
 #                  - a merged PR that the home's release record carries (data/releases, prs=),
-#                    where bin/jg-live-claim.sh says the release is live on this machine; or
+#                    where bin/jg-live-claim.sh says the release is In use on this machine; or
 #                  - a Recon report that exists, or the owner's own closing words
 #                    (data/captain-closures.md), for an ask that ships no code.
-#   Not done       everything else; the line gives the one reason it is not live: merged but not
-#                  released, PR open, waits on other work, under way, not started, or closed with
+#   Not done       everything else; the line gives the one reason it is not In use: Landed but not
+#                  Released, PR open, waits on other work, under way, not started, or closed with
 #                  no proof recorded.
 # A release, PR or proof appears only as that one reason. Done lists JG_OWNER_ASKS_DONE (default 8)
 # rows unless --all-done is given; the count always shows the total.
@@ -163,8 +163,8 @@ fi
 MODEL='
   def reason($r):
     if $r.state == "done" then
-      (if $r.released_not_live != null then "released, but the release is not running yet"
-       elif ($r.prs | length) > 0 or $r.merged then "merged, not released"
+      (if $r.released_not_live != null then "Released, not In use yet"
+       elif ($r.prs | length) > 0 or $r.merged then "Landed, not Released"
        else "closed, but no proof is recorded" end)
     elif ($r.waits_on | length) > 0 then "waits on other work first"
     elif ($r.prs | length) > 0 then "PR is open: " + $r.prs[0]
@@ -173,7 +173,7 @@ MODEL='
   . as $rows
   | [ $rows[]
       | if .state == "done" and .live_ref != null then
-          {group: "done", proof: ("live in " + .live_ref)}
+          {group: "done", proof: ("In use, " + .live_ref)}
         elif .state == "done" and .live_ref == null and (.prs | length) == 0 and (.merged | not) and (.report_ok or .closure) then
           {group: "done", proof: (if .report_ok then "report delivered" else "you closed it" end)}
         elif .state != "done" and .hold != null and (.hold.bucket == "live" or .hold.bucket == "aged") then

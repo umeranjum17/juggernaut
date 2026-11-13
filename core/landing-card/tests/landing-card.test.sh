@@ -48,6 +48,8 @@ check "a: every card is evidence" "$(cards | jq -r '[.[].type] | unique | join("
 check "a: the title is the lane name, short enough for a phone row" "$(cards | jq -r --arg k "landing-$c1" '.[] | select(.key == $k) | .title')" 'Landed: one'
 about() { cards | jq -r --arg k "landing-$1" '.[] | select(.key == $k) | .about'; }
 case $(about "$c1") in "one: the first lane. Landed on the proj trunk at 2026-11-09"*"All required tests passed. 312 test scripts ran, 0 failed on the first run, the gate took 431 s. Test receipt: PASS@${c1:0:12}."*"Done-done verdict: pass."*) say "ok: a: proofs on the card" ;; *) say "FAIL: a: proofs on the card: $(about "$c1")"; fails=$((fails + 1)) ;; esac
+case $(about "$c1") in *"not In use yet."*) say "ok: a: a landing card says Landed, not In use yet" ;; *) say "FAIL: a: four words: $(about "$c1")"; fails=$((fails + 1)) ;; esac
+say "card: landing about: $(about "$c1" | cut -c1-110)"
 case $(about "$c2") in *"not charged to this lane"*"Gate figures: not recorded. (one gate for its whole stack)"*"Test receipt: absent."*"Done-done verdict: not checked."*) say "ok: a: a missing proof reads absent" ;; *) say "FAIL: a: a missing proof: $(about "$c2")"; fails=$((fails + 1)) ;; esac
 case $(about "$c3") in "three: a revert. Landed"*"Revert of ${c1:0:12}."*) say "ok: a: a revert has its card" ;; *) say "FAIL: a: revert: $(about "$c3")"; fails=$((fails + 1)) ;; esac
 check "a: a revert is titled Reverted" "$(cards | jq -r --arg k "landing-$c3" '.[] | select(.key == $k) | .title')" 'Reverted: one'
@@ -81,10 +83,12 @@ printf 'one\tproj\t%s\tone-off\tswitch\tthe first\nfive\tproj\t%s\tfive-on\tswit
 printf 'proj\t%s\t1794201000\tlive\nproj:home-a\t%s\t1794201000\tlive\nproj:home-b\t%s\t1794201000\tlive\n' "$c2" "$c2" "$c2" >> "$FM/data/trunk-live.tsv"
 check "f: the first go-live posts one card" "$(run run)" 'landing-card: posted 1, 7 already on the board'
 livecard() { sign-off-axi list "$BOARD" --json --full | jq -r --arg k "live-$1" '.decisions[] | select(.key == $k) | .about'; }
-case $(livecard "$c2") in "Live in 2 home(s) at 2026-11-09"*"Landings since the last go-live: one, two."*"Delivery now: one is in-homes-off.") say "ok: f: the first go-live lists its two lanes and only the registered lane's word" ;; *) say "FAIL: f: first go-live: $(livecard "$c2")"; fails=$((fails + 1)) ;; esac
+case $(livecard "$c2") in "Landed in 2 home(s) at 2026-11-09"*"Landings since the last go-live: one, two."*"Delivery now: one is in-homes-off.") say "ok: f: the first go-live lists its two lanes and only the registered lane's word" ;; *) say "FAIL: f: first go-live: $(livecard "$c2")"; fails=$((fails + 1)) ;; esac
+check "f: the go-live card title says Landed, in the homes" "$(sign-off-axi list "$BOARD" --json --full | jq -r --arg k "live-$c2" '.decisions[] | select(.key == $k) | .title')" "Landed, in the homes: ${c2:0:8}, 2 landings"
+say "card: go-live title: $(sign-off-axi list "$BOARD" --json --full | jq -r --arg k "live-$c2" '.decisions[] | select(.key == $k) | .title + " | " + .about' | cut -c1-140)"
 printf 'proj\t%s\t1794201500\thook-failed:disk full\nproj\t%s\t1794202000\tlive,pinned-behind-%s\nproj:home-a\t%s\t1794202000\tlive\nproj:home-b\t%s\t1794202000\tlive\n' "$c6" "$c7" "${c7:0:12}" "$c7" "$c7" >> "$FM/data/trunk-live.tsv"
 check "f: a failed row gets no card; the next go-live posts one" "$(run run)" 'landing-card: posted 1, 8 already on the board'
-case $(livecard "$c7") in *"Live in 2 home(s)"*"Landings since the last go-live: revert-one, five, six, seven."*"pinned this go-live behind the trunk tip ${c7:0:12}."*"Delivery now: five is in-use.") say "ok: f: the second go-live lists the batch since the first, one lane in use" ;; *) say "FAIL: f: second go-live: $(livecard "$c7")"; fails=$((fails + 1)) ;; esac
+case $(livecard "$c7") in *"Landed in 2 home(s)"*"Landings since the last go-live: revert-one, five, six, seven."*"pinned this go-live behind the trunk tip ${c7:0:12}."*"Delivery now: five is in-use.") say "ok: f: the second go-live lists the batch since the first, one lane in use" ;; *) say "FAIL: f: second go-live: $(livecard "$c7")"; fails=$((fails + 1)) ;; esac
 check "f: no card for a failed row" "$(livecard "$c6")" ''
 check "f: the second run posts nothing" "$(run run)" 'landing-card: posted 0, 9 already on the board'
 
@@ -93,6 +97,8 @@ check "g: the summary posts once" "$(run summary 2026-11-09)" 'landing-card: pos
 case $(sign-off-axi list "$BOARD" --json --full | jq -r '.decisions[] | select(.key == "landings-2026-11-09") | .title + " | " + .about') in
   "Landed on 2026-11-09: 7 lanes | 7 landings from "*"1 failed only where the trunk was already red, 1 are reverts"*) say "ok: g: the summary counts the day by gate kind" ;;
   *) say "FAIL: g: summary: $(sign-off-axi list "$BOARD" --json --full | jq -r '.decisions[] | select(.key == "landings-2026-11-09") | .about')"; fails=$((fails + 1)) ;; esac
+case $(sign-off-axi list "$BOARD" --json --full | jq -r '.decisions[] | select(.key == "landings-2026-11-09") | .about') in *" reached the homes; "*" are Landed only."*) say "ok: g: the summary uses the four words" ;; *) say "FAIL: g: summary words"; fails=$((fails + 1)) ;; esac
+say "card: summary about: $(sign-off-axi list "$BOARD" --json --full | jq -r '.decisions[] | select(.key == "landings-2026-11-09") | .about')"
 check "g: the second summary posts nothing" "$(run summary 2026-11-09)" 'landing-card: the card landings-2026-11-09 is already on the board'
 check "g: a day with no landings gets no card" "$(run summary 2026-01-01)" 'landing-card: no landings on 2026-01-01; no card'
 

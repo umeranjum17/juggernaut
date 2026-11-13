@@ -67,7 +67,7 @@ test_a_milestone_pushes_the_four_lines_once() {
     "Done counts the merged tasks since the effort began"
   assert_contains "$OUT" "Left: 3 items" "the recorded Left line is carried"
   assert_contains "$OUT" "Release blockers: one review" "the recorded blocker line is carried"
-  assert_contains "$OUT" "Live now: no release is recorded yet" "no release record means the live line says so"
+  assert_contains "$OUT" "Released now: no release is recorded yet" "no release record means the Released line says so"
   assert_equals 1 "$(deliveries "$home")" "a milestone delivers exactly one card"
   assert_grep "--key status-digest-" "$POST_LOG" "the card carries a digest key"
   assert_present "$home/board/reports/status-digest-202701150816/index.html" "the card page is written"

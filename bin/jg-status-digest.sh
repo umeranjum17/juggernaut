@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # jg-status-digest.sh - the batch-class captain outcome, pushed at every milestone
-# and at most every N hours, so a big effort answers "done?" and "what is live?"
+# and at most every N hours, so a big effort answers "done?" and "what is Released?"
 # by itself.
 #
 # WHY. The captain asked "migration done?" and, minutes later, "what is live on
 # our system?". Both answers sat in durable records and neither reached him on
 # its own: a big effort changes every hour and nothing he could read followed it.
 # So the effort records one batch-class captain outcome of five lines - done,
-# left, release blockers, release state, what is live now - and this script
+# left, release blockers, release state, what is Released now - and this script
 # pushes it.
 #
 # CONTRACT (this header is the one owner).
@@ -16,7 +16,7 @@
 #            newest record is the effort's standing words, and the earliest
 #            `since` is when the effort began, so a batch that started before it
 #            was first recorded passes --since and Done counts from the truth.
-#            Done and Live now are never recorded as prose, because they are
+#            Done and Released now are never recorded as prose, because they are
 #            counted (see `lines`).
 #   pushes   $DATA/status-digest/pushes.jsonl, append-only, one JSON object per
 #            delivered digest: {"at","via","key","hash","digest"}. It is both the
@@ -42,7 +42,7 @@
 #                   ready release, one waiting to ship, one blocked and by what.
 #                   A home without that script, or a release it cannot describe,
 #                   carries the plain statement that no release is in progress.
-#            Live now the newest released ref in data/releases, or the plain
+#            Released now the newest released ref in data/releases, or the plain
 #                   statement that no release is recorded yet, never a guess.
 #
 # Usage:
@@ -123,7 +123,7 @@ render() {
   DONE="Done: $(clean "$(printf '%s' "$rec" | jq -r '.milestone')"); $merged $unit merged since $(date -u -d "@$start" +%Y-%m-%d)"
   LEFT="Left: $leftw"
   BLOCKERS="Release blockers: $blockw"
-  if [ -n "$live" ]; then LIVE="Live now: $live"; else LIVE='Live now: no release is recorded yet'; fi
+  if [ -n "$live" ]; then LIVE="Released now: $live"; else LIVE='Released now: no release is recorded yet'; fi
   migration=
   [ ! -x "$home/bin/jg-critical-path.sh" ] || migration=$(JG_HOME="$home" JG_CONFIG_OVERRIDE="$CFG" "$home/bin/jg-critical-path.sh" summary --short 2>/dev/null) || migration=
   [ -z "$migration" ] || LIVE="$LIVE - $migration"
@@ -176,7 +176,7 @@ HTML
     printf '<p>%s</p>\n<p>%s</p>\n<p>%s</p>\n<p>%s</p>\n' "$(xml "$3")" "$(xml "$4")" "$(xml "$5")" "$(xml "$6")"
     preview_svg "$2" "$3" "$5"
     printf '<p class=sub>Tap through the milestones this batch recorded.</p>\n<p id=t></p><button id=b>Next milestone</button>\n'
-    printf '<details><summary>Details</summary><p>Done counts the merged tasks in the task outcome record since this batch began. Release comes from the release readiness record, and Live now names the newest release in the release record, so no line here is a guess.</p></details>\n'
+    printf '<details><summary>Details</summary><p>Done counts the merged tasks in the task outcome record since this batch began. Release comes from the release readiness record, and Released now names the newest release in the release record, so no line here is a guess.</p></details>\n'
     printf '<script>var R=%s,i=0,t=document.getElementById("t");function d(){t.textContent=(i+1)+" of "+R.length+": "+R[i]}\ndocument.getElementById("b").onclick=function(){i=(i+1)%%R.length;d()};d()</script>\n' "$steps"
   } > "$dir/index.html"
   preview_svg "$2" "$3" "$5" > "$dir/preview.svg"

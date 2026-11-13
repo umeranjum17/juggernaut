@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # jg-critical-path.sh - the migration's critical path: which parts must run here first.
 #
-# A migration core that is merged but not live is not progress. This is the one reader
+# A migration core that is Landed but not In use is not progress. This is the one reader
 # of the ordered list, and the refusal that keeps a ship off a later step meanwhile.
 #
 # Usage: jg-critical-path.sh list
@@ -12,12 +12,12 @@
 #        jg-critical-path.sh gate <brief> <project-dir> [<override-text>] [<caller>]
 #   list           the critical slugs, one per line, in order
 #   rows           slug<TAB>state<TAB>pr for each critical slug, from a fresh one-part probe
-#   first-pending  the first critical slug that is not live, or nothing
+#   first-pending  the first critical slug that is not In use, or nothing
 #   row            slug<TAB>state<TAB>detail<TAB>pr for any part, from a fresh one-part probe
 #   parts          slug<TAB>name<TAB>title pattern for every part, from the probe's part table
 #   title-row      the first critical slug whose title pattern matches <title>, or nothing
-#   summary        `Live: n of m critical rows (slugs). Pending: slug - detail pr`; --short is
-#                  `migration: n of m critical rows live; first pending slug`
+#   summary        `In use: n of m critical rows (slugs). Pending: slug - detail pr`; --short is
+#                  `migration: n of m critical rows In use; first pending slug`
 #   brief-row      the brief's `Migration row:` value, or nothing (Setup section only)
 #   gate           exit 0 to admit a ship, or exit 1 with one error on stderr
 #
@@ -74,7 +74,7 @@ probe_row() {
   esac
 }
 
-# first_pending: print "<slug><TAB>state<TAB>detail<TAB>pr" for the first critical part not live.
+# first_pending: print "<slug><TAB>state<TAB>detail<TAB>pr" for the first critical part not In use.
 first_pending() {
   local slug row
   while IFS= read -r slug; do
@@ -118,11 +118,11 @@ cmd_summary() {  # [--short]
   [ "$n" -gt 0 ] || return 0
   slug=${pend%%"$TAB"*}; row=${pend#*"$TAB"}; row=${row#*"$TAB"}
   if [ "${1:-}" = --short ]; then
-    printf 'migration: %d of %d critical rows live; ' "$live" "$n"
+    printf 'migration: %d of %d critical rows In use; ' "$live" "$n"
     if [ -n "$pend" ]; then printf 'first pending %s\n' "$slug"; else printf 'no row pending\n'; fi
     return 0
   fi
-  printf 'Live: %d of %d critical rows (%s).' "$live" "$n" "${names:-none}"
+  printf 'In use: %d of %d critical rows (%s).' "$live" "$n" "${names:-none}"
   if [ -n "$pend" ]; then printf ' Pending: %s - %s %s\n' "$slug" "${row%%"$TAB"*}" "${row##*"$TAB"}"; else printf ' Pending: none\n'; fi
 }
 
@@ -174,11 +174,11 @@ cmd_gate() {  # <brief> <project-dir> [<override>] [<caller>]
   esac
   {
     if [ -z "$rows" ]; then
-      printf 'error: %s: %s has no Migration row line, and the critical path is not live yet.\n' "$caller" "$brief"
+      printf 'error: %s: %s has no Migration row line, and the critical path is not In use yet.\n' "$caller" "$brief"
     else
-      printf 'error: %s: Migration row %s is off the critical path while %s is not live.\n' "$caller" "$rows" "$slug"
+      printf 'error: %s: Migration row %s is off the critical path while %s is not In use.\n' "$caller" "$rows" "$slug"
     fi
-    printf '  first part not live: %s (%s)\n' "$slug" "$detail"
+    printf '  first part not In use: %s (%s)\n' "$slug" "$detail"
     printf '  open pull request that finishes it: %s\n' "$pr"
     [ -z "$link" ] || printf '  migration card: %s\n' "$link"
     printf '  Work on %s, or record non-migration work with Migration row: none (bin/jg-brief.sh --migration-row <slug|none>).\n' "$slug"

@@ -4,8 +4,8 @@
 #
 # Reads the project's newest `live` row in data/trunk-live.tsv and lists the homes (bin/jg-fleet-homes-lib.sh) whose HEAD is not
 # that commit. Prints nothing and exits 0 when every home is at it or the row is younger than <minutes>; otherwise prints one line,
-# `lag: homes not at the last go-live <sha12>: <ids>`, and exits 1. The line holds no age, so an unchanged lag is the same line
-# every time and the landing check's live step (core/trunk-landing) reports it once.
+# `lag: homes not In use at the last go-live <sha12>: <ids>`, and exits 1. The line holds no age, so an unchanged lag is the same line
+# every time and the landing check's go-live step (core/trunk-landing) reports it once.
 set -eu
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 JG_ROOT="${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
@@ -28,4 +28,4 @@ behind=""
 while IFS=$'\t' read -r _ id dir; do
   [ "$(git -C "$dir" rev-parse HEAD 2>/dev/null || true)" = "$sha" ] || behind="$behind $id"
 done < <(jg_fleet_homes "$JG_HOME" "$JG_ROOT")
-[ -z "$behind" ] || { echo "lag: homes not at the last go-live ${sha:0:12}:$behind"; exit 1; }
+[ -z "$behind" ] || { echo "lag: homes not In use at the last go-live ${sha:0:12}:$behind"; exit 1; }

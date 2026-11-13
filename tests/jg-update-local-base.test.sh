@@ -376,7 +376,7 @@ test_a_home_left_behind_is_named_and_the_lag_check_reports_it() {
   lead_world t7; now=$(date +%s)
   printf 'proj\t%s\t%s\tlive\n' "$C2" "$((now - 1200))" > "$SELF/data/trunk-live.tsv"
   out=$(run_from_self "$lag" "$W/proj") || rc=$?
-  [ "$rc" -eq 1 ] && [ "$out" = "lag: homes not at the last go-live ${C2:0:12}: lead-a lead-b lead-self primary" ] || fail "every home is behind a 20 minute old go-live: rc=$rc $out"
+  [ "$rc" -eq 1 ] && [ "$out" = "lag: homes not In use at the last go-live ${C2:0:12}: lead-a lead-b lead-self primary" ] || fail "every home is behind a 20 minute old go-live: rc=$rc $out"
   printf 'proj\t%s\t%s\tlive\n' "$C2" "$((now - 60))" > "$SELF/data/trunk-live.tsv"
   out=$(run_from_self "$lag" "$W/proj") || fail "a go-live under 10 minutes old is not a lag: $out"
   [ -z "$out" ] || fail "no lag line inside the 10 minutes: $out"
@@ -386,7 +386,7 @@ test_a_home_left_behind_is_named_and_the_lag_check_reports_it() {
   [ "$rc" -ne 0 ] || fail "a dirty home must fail the move: $out"
   [ "$(printf '%s\n' "$out" | tail -n 1)" = "fleet: not every home is at ${C2:0:12}: lead-b" ] || fail "the failed move names the home left behind: $out"
   out=$(run_from_self "$lag" "$W/proj") && fail "a home left behind must be a lag: $out"
-  [ "$out" = "lag: homes not at the last go-live ${C2:0:12}: lead-b" ] || fail "only the home left behind is named: $out"
+  [ "$out" = "lag: homes not In use at the last go-live ${C2:0:12}: lead-b" ] || fail "only the home left behind is named: $out"
   git -C "$W/lead-b" checkout -q -- AGENTS.md; run_from_self "$(passing_health_mover)" --base "$C2" --project "$W/proj" --branch trunk >/dev/null || fail "the move must finish once the home is clean"
   out=$(run_from_self "$lag" "$W/proj") || fail "no lag once every home is at the commit: $out"
   pass 'T7 a home left behind is named on the failed move, and the lag check reports it after 10 minutes and clears when it catches up'
@@ -550,11 +550,11 @@ test_the_landing_check_runs_the_batched_live_step_and_reports_it() {
   # A home behind the last go-live (the lag script's one line) is reported once per set of homes, and again after it clears and returns.
   printf '#!/usr/bin/env bash\ncat "%s/lag" 2>/dev/null\n' "$fh" > "$fh/bin/jg-trunk-live-lag.sh"; chmod +x "$fh/bin/jg-trunk-live-lag.sh"
   : > "$ob"; printf 'waiting: live in about 9 min\n' > "$fh/verdict"
-  printf 'lag: homes not at the last go-live abc: lead-b\n' > "$fh/lag"; live; live
-  [ "$(grep -c "proj: lag: homes not at the last go-live abc: lead-b" "$ob")" = 1 ] || fail "a lagging home is reported once: $(cat "$ob")"
-  printf 'lag: homes not at the last go-live abc: lead-b lead-c\n' > "$fh/lag"; live
+  printf 'lag: homes not In use at the last go-live abc: lead-b\n' > "$fh/lag"; live; live
+  [ "$(grep -c "proj: lag: homes not In use at the last go-live abc: lead-b" "$ob")" = 1 ] || fail "a lagging home is reported once: $(cat "$ob")"
+  printf 'lag: homes not In use at the last go-live abc: lead-b lead-c\n' > "$fh/lag"; live
   [ "$(grep -c "proj: lag: " "$ob")" = 2 ] || fail "a new set of lagging homes is reported: $(cat "$ob")"
-  rm "$fh/lag"; live; printf 'lag: homes not at the last go-live abc: lead-b lead-c\n' > "$fh/lag"; live
+  rm "$fh/lag"; live; printf 'lag: homes not In use at the last go-live abc: lead-b lead-c\n' > "$fh/lag"; live
   [ "$(grep -c "proj: lag: " "$ob")" = 3 ] || fail "a lag that clears and returns is reported again: $(cat "$ob")"
   pass 'T6 the landing check runs no suite after a landing, runs the batched live step on its own, and reports its outcomes'
 }

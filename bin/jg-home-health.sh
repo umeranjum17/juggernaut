@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The health check of one home after a live move, and the pin-back that undoes a bad move on the one home it broke.
+# The health check of one home after a go-live, and the pin-back that undoes a bad move on the one home it broke.
 # Usage: jg-home-health.sh check <home> [<sha>] [--all | --before <file>] [--grace <s>] [--session-max <s>] [--wait <s>]
 #        jg-home-health.sh pinback <home> --project <name> --key <home-id> --reason <reason>
 #        jg-home-health.sh verify <home> <sha> --project <name> --key <home-id> [check options]
@@ -23,7 +23,7 @@
 #                    and is not a failure, so a home that was unhealthy before a move is not blamed for the move. not-at-base
 #                    and missing-guard are the move's own work and are never carried. Only a new fault fails (exit 1, the
 #                    first new fault is the last line); with none the output ends `ok <home>` (exit 0).
-# pinback  Return the home to the HEAD recorded before its last live move and write the row
+# pinback  Return the home to the HEAD recorded before its last go-live and write the row
 #          `<project>:<key> <post-move sha> <epoch> rolled-back:<reason> <pre-move HEAD>` in data/trunk-live.tsv.
 #          It moves only when ALL hold: a record of the move exists (the home guard's own pre-move record, else a
 #          trunk-live.tsv row), the home's HEAD is the recorded post-move commit, the tracked tree is clean, and the
@@ -147,7 +147,7 @@ cmd_check() {
 
 # --- pin-back ------------------------------------------------------------------------------------------------------
 
-# Sets REC_PRE and REC_POST from the home guard's own record, else the last live row of trunk-live.tsv for <project>:<key>.
+# Sets REC_PRE and REC_POST from the home guard's own record, else the last go-live row of trunk-live.tsv for <project>:<key>.
 recorded_move() {  # <home> <project> <key>
   local home=$1 gitdir rec
   REC_PRE=""; REC_POST=""
@@ -174,9 +174,9 @@ cmd_pinback() {
   done
   [ -n "$project" ] && [ -n "$key" ] && [ -n "$reason" ] || die "pinback needs --project, --key and --reason"
   reason=$(printf '%s' "$reason" | LC_ALL=C tr '\t\r\n' '   ' | cut -c1-120)
-  recorded_move "$home" "$project" "$key" || { echo "pin-back refused: no record of a live move for $key" >&2; return 1; }
+  recorded_move "$home" "$project" "$key" || { echo "pin-back refused: no record of a go-live for $key" >&2; return 1; }
   head=$(git_home "$home" rev-parse HEAD 2>/dev/null) || die "$home has no HEAD"
-  [ "$head" = "$REC_POST" ] || { echo "pin-back refused: HEAD $(short "$head") is not the HEAD $(short "$REC_POST") the last live move recorded" >&2; return 1; }
+  [ "$head" = "$REC_POST" ] || { echo "pin-back refused: HEAD $(short "$head") is not the HEAD $(short "$REC_POST") the last go-live recorded" >&2; return 1; }
   git_home "$home" cat-file -e "$REC_PRE^{commit}" 2>/dev/null || { echo "pin-back refused: the pre-move HEAD $(short "$REC_PRE") no longer exists" >&2; return 1; }
   [ -z "$(git_home "$home" status --porcelain --untracked-files=no)" ] || { echo "pin-back refused: the home has uncommitted changes" >&2; return 1; }
   JG_TRUNK_PINBACK=1 git_home "$home" reset -q --keep "$REC_PRE" || { echo "pin-back failed: git reset --keep $(short "$REC_PRE") was refused" >&2; return 1; }

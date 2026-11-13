@@ -10,17 +10,17 @@
 # failed on the first run, seconds) and, when it exists, the done-done verdict in data/<lane>/merge-card.json. A missing piece
 # is written as "not checked" or "not recorded"; it never skips the card.
 # The title is the lane's name (a commit subject is too long for a phone row) and the about starts with the commit subject.
-# The card has the key `landing-<commit>` and is posted once: a commit whose key is already on the board, live or archived,
+# The card has the key `landing-<commit>` and is posted once: a commit whose key is already on the board, open or archived,
 # is left alone, so a second run posts nothing. The status pill is "In progress" because a landing is on the trunk, not yet
-# live. Cards go one at a time through sign-off-axi, which holds the board's own lock; a failed post stops the run (one line,
+# In use. Cards go one at a time through sign-off-axi, which holds the board's own lock; a failed post stops the run (one line,
 # the rest wait for the next beat) instead of queueing behind a busy board.
-# A go-live card (key `live-<commit>`, status "In progress": live in the homes is not proof the change is in use) is posted for each `live*` row of data/trunk-live.tsv that names the project
+# A go-live card (key `live-<commit>`, status "In progress": a home that moved to the commit is not proof the change is In use) is posted for each `live*` row of data/trunk-live.tsv that names the project
 # itself, not one home (`<project>:<home>` rows only give the count of homes that moved). It lists the landings since the previous
-# live commit (the landed commits that the new commit holds and the previous one does not) and the delivery word of each of them
+# go-live commit (the landed commits that the new commit holds and the previous one does not) and the delivery word of each of them
 # that core/machines/changes.tsv registers, read only through `jg-machine.sh show delivery`; a lane the registry does not name
 # gets no word, so a card never says "in use" without the machine's proof. A go-live row whose commit is not in the clone still
 # gets its card, with no lanes listed.
-# The summary card (key `landings-<day>`) counts one UTC day's landings by gate kind and how many are live now; a sign-off card
+# The summary card (key `landings-<day>`) counts one UTC day's landings by gate kind and how many reached the homes; a sign-off card
 # cannot change once posted, so it says "as of" its time and the per-landing and go-live cards carry the detail.
 # Backfill: the first run in a home writes data/landing-card-since (the epoch it ran). A landing or go-live from before it gets no
 # card of its own (that would be a flood of old rows); each UTC day that has such landings gets the one summary card instead
@@ -87,7 +87,7 @@ card_json() {
   [ "$(proof_field "$proofs" merge-card)" != present ] || verdict=$(jq -r '.verdict // "not checked"' "$DATA/$id/merge-card.json" 2>/dev/null | cut -c1-80)
   when=$(date -u -d "@$at" '+%Y-%m-%d %H:%M UTC' 2>/dev/null) || when=$at
   jq -n --arg key "landing-$commit" --arg commit "$commit" --arg title "$title" \
-    --arg about "$(printf '%s. Landed on the %s trunk at %s, not live yet. %s %s%s Test receipt: %s. Owner signature: %s. Done-done verdict: %s.' \
+    --arg about "$(printf '%s. Landed on the %s trunk at %s, not In use yet. %s %s%s Test receipt: %s. Owner signature: %s. Done-done verdict: %s.' \
       "${subject:0:200}" "$proj" "$when" "$(gate_words "$kind")" "$(figures_words "$(proof_field "$proofs" gate)")" "$stack" "$(proof_field "$proofs" receipt)" "$(proof_field "$proofs" signature)" "$verdict")" '
     def clean(max): gsub("[\u0000-\u0009\u000b-\u001f\u007f-\u009f]"; " ") | if length > max then .[:max - 3] + "..." else . end;
     {contract: 1, kind: "evidence", schema: 1, key: $key, title: ($title | clean(160)), about: ($about | clean(500)), link: $commit, status: "In progress"}'
@@ -109,8 +109,8 @@ live_json() {
   if [ "$homes" -gt 0 ]; then homes=" in $homes home(s)"; else homes=''; fi
   [ "$n" -eq 1 ] && count='1 landing' || count="$n landings"
   when=$(date -u -d "@$at" '+%Y-%m-%d %H:%M UTC' 2>/dev/null) || when=$at
-  jq -n --arg key "live-$commit" --arg commit "$commit" --arg title "Live: ${commit:0:8}, $count" \
-    --arg about "$(printf 'Live%s at %s. Landings since the last go-live: %s%s.%s Delivery now: %s.' \
+  jq -n --arg key "live-$commit" --arg commit "$commit" --arg title "Landed, in the homes: ${commit:0:8}, $count" \
+    --arg about "$(printf 'Landed%s at %s. Landings since the last go-live: %s%s.%s Delivery now: %s.' \
       "$homes" "$when" "${lanes:-none}" "$more" "$note" "${words:-no lane here is in the delivery registry, so no proof of use}")" '
     def clean(max): gsub("[\u0000-\u0009\u000b-\u001f\u007f-\u009f]"; " ") | if length > max then .[:max - 3] + "..." else . end;
     {contract: 1, kind: "evidence", schema: 1, key: $key, title: ($title | clean(160)), about: ($about | clean(500)), link: $commit, status: "In progress"}'
@@ -131,7 +131,7 @@ summary_json() {
   if [ -n "$until" ]; then closing='These landed before the cards were posted one by one; later landings each have their own card.'
   else closing='Each landing and go-live has its own card.'; fi
   jq -n --arg day "$day" --argjson total "$total" --arg first "$(date -u -d "@$first" +%H:%M)" --arg last "$(date -u -d "@$last" +%H:%M)" \
-    --arg asof "$(date -u '+%H:%M UTC')" --arg about "$pass passed every required test, $red failed only where the trunk was already red, $rev are reverts, $other other. $live of $total are live in the homes; $((total - live)) are not live yet. $closing" '
+    --arg asof "$(date -u '+%H:%M UTC')" --arg about "$pass passed every required test, $red failed only where the trunk was already red, $rev are reverts, $other other. $live of $total reached the homes; $((total - live)) are Landed only. $closing" '
     {contract: 1, kind: "evidence", schema: 1, key: ("landings-" + $day), title: ("Landed on " + $day + ": " + ($total | tostring) + " lanes"),
      about: ($total | tostring) + " landings from " + $first + " to " + $last + " UTC, as of " + $asof + ". " + $about, status: "In progress"}'
 }
