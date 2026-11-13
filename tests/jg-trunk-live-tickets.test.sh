@@ -28,7 +28,7 @@ test_live_pin_back_and_release_write_the_tickets_of_their_commits() {
   file_ticket jg-k1; file_ticket jg-k2; file_ticket jg-k4
   land_ticket k1 jg-k1; land_ticket k2 jg-k2; k2=$(tip); land_ticket k3 jg-elsewhere
   trunk verify "$PROJ" >/dev/null 2>&1 || fail "verify must move the green pin"
-  trunk word live "$PROJ" go >/dev/null 2>&1
+  trunk word in-use "$PROJ" go >/dev/null 2>&1
   out=$(trunk live "$PROJ" 2>&1) || fail "live: $out"
   for t in jg-k1 jg-k2; do
     [ -n "$(meta $t live_at)" ] || fail "$t must hold live_at"
@@ -42,7 +42,7 @@ test_live_pin_back_and_release_write_the_tickets_of_their_commits() {
   # The next live step starts above the last live commit and never rewrites a ticket that is live.
   k1_live=$(meta jg-k1 live_at); sleep 1
   land_ticket k4 jg-k4; k4=$(tip)
-  trunk verify "$PROJ" >/dev/null 2>&1 || fail "verify must move the green pin to k4"; trunk word live "$PROJ" go >/dev/null 2>&1
+  trunk verify "$PROJ" >/dev/null 2>&1 || fail "verify must move the green pin to k4"; trunk word in-use "$PROJ" go >/dev/null 2>&1
   out=$(trunk live "$PROJ" 2>&1) || fail "second live: $out"
   [ "$(events jg-k1 jg-trunk-live)" = 1 ] && [ "$(meta jg-k1 live_at)" = "$k1_live" ] || fail "a ticket that is live must not be written again"
   [ "$(events jg-k4 jg-trunk-live)" = 1 ] || fail "the new ticket must hold one live event"

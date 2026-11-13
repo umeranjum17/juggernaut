@@ -182,3 +182,24 @@ jg_trunk_gated_answer() {
 jg_trunk_gated_any() {  # <gated-file> <project>
   awk -F'\t' -v p="$2" '$1 == p { f = 1 } END { exit !f }' "$1" 2>/dev/null
 }
+
+# The In use record and word files were once named for "live". Move them to their four-word names, once in a home, with no second
+# path left: data/trunk-live.tsv -> trunk-in-use.tsv (an old file beside a new one is appended to it, then removed) and
+# state/trunk-word-live-<project> -> trunk-word-in-use-<project> (a word already recorded under the new name wins). Safe to call
+# from every reader and mover: with nothing old to move it does nothing. Usage: jg_trunk_in_use_migrate <data-dir> <state-dir>
+jg_trunk_in_use_migrate() {
+  local data=$1 state=$2 old new
+  if [ -f "$data/trunk-live.tsv" ]; then
+    if [ -f "$data/trunk-in-use.tsv" ]; then
+      cat -- "$data/trunk-live.tsv" >> "$data/trunk-in-use.tsv" && rm -f -- "$data/trunk-live.tsv"
+    else
+      mv -f -- "$data/trunk-live.tsv" "$data/trunk-in-use.tsv"
+    fi
+  fi
+  for old in "$state"/trunk-word-live-*; do
+    [ -f "$old" ] || continue
+    new="$state/trunk-word-in-use-${old##*/trunk-word-live-}"
+    if [ -e "$new" ]; then rm -f -- "$old"; else mv -f -- "$old" "$new"; fi
+  done
+  return 0
+}

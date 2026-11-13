@@ -15,7 +15,7 @@
 #        jg-trunk.sh nightly <project-dir>             the nightly whole run: the verify over the whole suite on the tip (gate-nightly), a red traced to its commit and reverted the same way, a journey its proof did not select recorded as a miss (core/trunk-verify/miss.sh), a flaky script filed, one report a day
 #        jg-trunk.sh nightly-due <project-dir>         print the day and exit 0 when a tick should start the nightly run (nightly-hour reached, today's run not ended, no verify running)
 #        jg-trunk.sh green-alarm <project-dir>         raise one alarm to Overwatch once the trunk has had no green commit for no-green-alarm-minutes (15)
-#        jg-trunk.sh word live|release <project-dir> "<his words>"   record the captain's word for the commit that would go live or out (both: the last green commit, never the tip)
+#        jg-trunk.sh word in-use|release <project-dir> "<his words>"   record the captain's word for the commit that would be In use or out (both: the last green commit, never the tip)
 #        jg-trunk.sh recover <project-dir> [--prepare <task-id>|--land <task-id>]   report divergence, prepare a merge, or land its exact proved head
 #        jg-trunk.sh adopt-tip <project-dir> --reason <text> [--carried-by <task-id>]   Overwatch only: record the trunk's present tip as the lander's own after something else moved it; only if the record is its ancestor or the tip is on origin/<default>
 #        jg-trunk.sh live <project-dir> [--home <lead-home>]   move every home to the last fully green commit; refuses without his word, a waiver or the answer given at gated; --home moves one lead only
@@ -130,7 +130,7 @@
 # later takes it back below that commit. `live` moves the home only to that commit, so a red commit is never live.
 # `release` ships only the green pin, never the tip. A red `ci` moves the green pin, and every home, back to the
 # newest earlier commit that went live and was not red (else the last release); landings go on.
-# The captain's word: `word` writes state/trunk-word-<live|release>-<project>, bound to the one commit
+# The captain's word: `word` writes state/trunk-word-<in-use|release>-<project>, bound to the one commit
 # it names and spent by the command it allows. A worker never records one.
 #
 # Live moves EVERY home: it exports the tip's own bin/ and core/ to state/trunk-live-tool/<sha>/ and runs that copy's
@@ -152,7 +152,7 @@
 #
 # Every open captain call is a key in bin/jg-trunk-policy-lib.sh with its safe default; nothing
 # here changes with the answer. Records: data/trunk-landings.tsv (task, project, commit, epoch,
-# gate), data/trunk-live.tsv (project, commit, epoch, status), data/trunk-releases.tsv, data/trunk-ci.tsv (project,
+# gate), data/trunk-in-use.tsv (project, commit, epoch, status), data/trunk-releases.tsv, data/trunk-ci.tsv (project,
 # commit, epoch, green|red, and `verify` for a charged verify red that could not be reverted), data/trunk-words.tsv.
 # `live` runs config/live-hook.<project> <project-dir> <sha> when it is executable. With none, a
 # project that shares this home's code origin is moved by bin/jg-trunk-live-home.sh; any other
@@ -236,6 +236,7 @@ open_project() {  # <project-dir>: sets PROJ PN TRUNK
   PROJ=${1:?project directory required}
   git -C "$PROJ" rev-parse --git-dir >/dev/null 2>&1 || die "$PROJ is not a git repository"
   PN=$(basename "$PROJ")
+  jg_trunk_in_use_migrate "$DATA" "$STATE"
   TRUNK=$(jg_trunk_branch "$PN" "$STATE")
   git check-ref-format --branch "$TRUNK" >/dev/null 2>&1 || die "invalid trunk-branch '$TRUNK'"
   # The trunk flow is for local-trunk projects ONLY: a no-mistakes, direct-PR or local-only project keeps its own rules.
@@ -703,7 +704,7 @@ conflict_paths() {  # <tip> <candidate>
 }
 
 # The captain's recorded word: spent by the command it allows, valid for one commit only.
-need_word() {  # <live|release> <sha>
+need_word() {  # <in-use|release> <sha>
   local f="$STATE/trunk-word-$1-$PN"
   [ -f "$f" ] && [ "$(cut -f1 "$f")" = "$2" ] || refuse "no recorded word from the captain to $1 ${2:0:12}; record it with: jg-trunk.sh word $1 $PROJ \"<his words>\""
 }
@@ -1150,7 +1151,7 @@ land_candidate() {
     if front_spec "$tip" "$LAND_HEAD"; then base=$FRONT_BASE; spec=1; else base=$tip; spec=; fi
     lane_admit "$id" "$base" "$LAND_HEAD" 0
     cand=$LANE_CAND
-    if [ -n "$LANE_LANDED" ]; then echo "already landed $id at $cand; not live"; return 0; fi
+    if [ -n "$LANE_LANDED" ]; then echo "already landed $id at $cand; not In use"; return 0; fi
     front_publish "$tip" "$cand"
     # A red on a speculative base is not charged until the lane ahead has ended: it may be that lane's red, and then this lane is gated again.
     GATE_SPECULATIVE=$spec; gate_rc=0; land_gates "$id" "$cand" "$base" || gate_rc=$?
@@ -1172,7 +1173,7 @@ land_candidate() {
   unlock "$STATE/.trunk-$PN.lock"; front_release
   [ "$cand" = "$LANE_HEAD" ] || lane_follow "$LANE_BRANCH" "$LANE_HEAD" "$cand" "$(jg_dod_meta_value "$META" worktree)"
   landed_effects "$id" "$LANE_HEAD" "$cand"
-  echo "landed $id on $TRUNK (${base:0:12} -> ${cand:0:12}, gate=$GATE_KIND, $((SECONDS - t0))s) in $PROJ; not live: it goes live only on the captain's word"
+  echo "landed $id on $TRUNK (${base:0:12} -> ${cand:0:12}, gate=$GATE_KIND, $((SECONDS - t0))s) in $PROJ; not In use: it is In use only on the captain's word"
 }
 
 # --- The merge queue: two or more queued lanes land as one stack (docs/trunk-flow.md "Batch landing") ---
@@ -1319,7 +1320,7 @@ land_group() {
     lane_follow "${B_BRANCH[$i]}" "${B_HEAD[$i]}" "${B_CUR[$i]}" "$(jg_dod_meta_value "$META" worktree)"
     landed_effects "${B_ID[$i]}" "${B_HEAD[$i]}" "${B_CUR[$i]}"
     LANDED+=("$i")
-    echo "landed ${B_ID[$i]} on $TRUNK (${B_TIP:0:12} -> ${top:0:12}, gate=$GATE_KIND, one stack of ${#CHAIN[@]}) in $PROJ; not live: it goes live only on the captain's word"
+    echo "landed ${B_ID[$i]} on $TRUNK (${B_TIP:0:12} -> ${top:0:12}, gate=$GATE_KIND, one stack of ${#CHAIN[@]}) in $PROJ; not In use: it is In use only on the captain's word"
   done
   B_TIP=$top
 }
@@ -1823,9 +1824,9 @@ begin_move() {
   lock "$STATE/.trunk-move-$PN.lock"
   deadline=$(( SECONDS + ${JG_TRUNK_MOVE_WAIT_MAX:-2700} ))
   while busy=$(running_gate); do
-    [ -n "$said" ] || { echo "live: waiting: a landing's gate is running (pid $busy); the homes move when it ends, before the next gate starts"; said=1; }
+    [ -n "$said" ] || { echo "In use: waiting: a landing's gate is running (pid $busy); the homes move when it ends, before the next gate starts"; said=1; }
     if [ "$SECONDS" -ge "$deadline" ]; then
-      row trunk-live.tsv "$PN" "${1:-none}" "$(date +%s)" "hook-failed:a landing's gate still ran after ${JG_TRUNK_MOVE_WAIT_MAX:-2700}s; the homes stay where they were"
+      row trunk-in-use.tsv "$PN" "${1:-none}" "$(date +%s)" "hook-failed:a landing's gate still ran after ${JG_TRUNK_MOVE_WAIT_MAX:-2700}s; the homes stay where they were"
       echo "error: the move waited ${JG_TRUNK_MOVE_WAIT_MAX:-2700}s for a landing's gate and made no move; the next tick tries again" >&2; exit 3
     fi
     sleep 0.2
@@ -1837,7 +1838,7 @@ begin_move() {
 # Move the home to <sha> through the project's live hook and record it. Exit 3 when the home did not move.
 go_live() {  # <sha> <tip>   LIVE_FLEET=1 (cmd_live) moves every home; a pin-back moves this one
   local sha=$1 hook status=landed-not-live here there why hook_out hook_rc reason prev
-  prev=$(awk -F'\t' -v p="$PN" '$1 == p && $4 ~ /^live/ { c = $2 } END { print c }' "$DATA/trunk-live.tsv" 2>/dev/null || true)
+  prev=$(awk -F'\t' -v p="$PN" '$1 == p && $4 ~ /^live/ { c = $2 } END { print c }' "$DATA/trunk-in-use.tsv" 2>/dev/null || true)
   [ -n "${MOVE_HELD:-}" ] || begin_move "$sha"
   set -- "$sha" "$(rev "refs/heads/$TRUNK")"  # the tip as it stands once the gates have ended
   hook="$CONFIG/live-hook.$PN"
@@ -1848,8 +1849,8 @@ go_live() {  # <sha> <tip>   LIVE_FLEET=1 (cmd_live) moves every home; a pin-bac
   fi
   if [ "$hook" = fleet ]; then
     if why=$(fleet_move "$sha" "$2" 2>&1); then status=live; else
-      row trunk-live.tsv "$PN" "$sha" "$(date +%s)" "hook-failed:$(printf '%s' "$why" | tail -n 1 | cut -c1-200)"
-      echo "error: the fleet move failed for ${sha:0:12}; see the rows in trunk-live.tsv" >&2
+      row trunk-in-use.tsv "$PN" "$sha" "$(date +%s)" "hook-failed:$(printf '%s' "$why" | tail -n 1 | cut -c1-200)"
+      echo "error: the fleet move failed for ${sha:0:12}; see the rows in trunk-in-use.tsv" >&2
       printf '%s\n' "$why"; exit 3  # the move's own last line (the homes left behind) stays last: autolive reports it
     fi
     printf '%s\n' "$why"
@@ -1859,15 +1860,15 @@ go_live() {  # <sha> <tip>   LIVE_FLEET=1 (cmd_live) moves every home; a pin-bac
     [ -z "$hook_out" ] || printf '%s\n' "$hook_out" >&2
     if [ "$hook_rc" -ne 0 ]; then  # the hook's last line is its reason (bin/jg-trunk-live-home.sh)
       reason=$(printf '%s\n' "$hook_out" | tr '\t' ' ' | awk 'NF { l = $0 } END { print substr(l, 1, 200) }')
-      row trunk-live.tsv "$PN" "$sha" "$(date +%s)" "hook-failed:${reason:-hook exited $hook_rc}"
-      echo "error: live hook failed for ${sha:0:12}: ${reason:-hook exited $hook_rc}; the home stays where it was" >&2; exit 3
+      row trunk-in-use.tsv "$PN" "$sha" "$(date +%s)" "hook-failed:${reason:-hook exited $hook_rc}"
+      echo "error: the In use hook failed for ${sha:0:12}: ${reason:-hook exited $hook_rc}; the home stays where it was" >&2; exit 3
     fi
     status=live
   fi
   [ "$sha" = "$2" ] || status="$status,pinned-behind-${2:0:12}"
   case ${LIVE_WAIVER:-} in '') ;; gated:*) status="$status,answer=${LIVE_WAIVER#gated:}" ;; *) status="$status,waiver=$LIVE_WAIVER" ;; esac
-  row trunk-live.tsv "$PN" "$sha" "$(date +%s)" "$status"
-  echo "live: $PN at ${sha:0:12} ($status)"
+  row trunk-in-use.tsv "$PN" "$sha" "$(date +%s)" "$status"
+  echo "In use: $PN at ${sha:0:12} ($status)"
   case $status in live*) live_tickets "$sha" "$prev" || : ;; esac  # a one-home canary moves nothing the fleet runs
 }
 
@@ -1886,7 +1887,7 @@ fleet_move() {  # <sha> <tip>
     find "$STATE/trunk-live-tool" -mindepth 1 -maxdepth 1 ! -name "$sha" -exec rm -rf -- {} +
     mover="$tool/bin/jg-update.sh"
   fi
-  echo "live: moving every home with $mover"
+  echo "In use: moving every home with $mover"
   args=(--base "$sha" --project "$PROJ" --branch "$TRUNK")
   [ -z "${LIVE_HOME:-}" ] || args+=(--home "$LIVE_HOME")
   JG_HOME="$JG_HOME" JG_ROOT_OVERRIDE="$JG_ROOT" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$DATA" "$mover" "${args[@]}"
@@ -1924,29 +1925,29 @@ cmd_autolive() {
   open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"; tip_ok; tip=$(rev "refs/heads/$TRUNK")
   green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
   LIVE_WAIVER=$(authority trunk-live-waiver "$green")
-  [ -n "$LIVE_WAIVER" ] || { echo "autolive: not live: it needs the captain's word (no go-live waiver and no answer at gated for $PN)"; return 0; }
+  [ -n "$LIVE_WAIVER" ] || { echo "autolive: not In use: it needs the captain's word (no go-live waiver and no answer at gated for $PN)"; return 0; }
   if [ -z "$green" ]; then echo "autolive: waiting: no fully green trunk commit yet"; return 0
-  elif awk -F'\t' -v p="$PN" -v g="$green" '$1 == p && $2 == g && $4 ~ /^live/ { f = 1 } END { exit !f }' "$DATA/trunk-live.tsv" 2>/dev/null; then
-    echo "autolive: already live at ${green:0:12}"; return 0
+  elif awk -F'\t' -v p="$PN" -v g="$green" '$1 == p && $2 == g && $4 ~ /^live/ { f = 1 } END { exit !f }' "$DATA/trunk-in-use.tsv" 2>/dev/null; then
+    echo "autolive: already In use at ${green:0:12}"; return 0
   fi
   now=$(date +%s); quiet=$(( $(pol live-quiet-minutes) * 60 )); cap=$(( $(pol live-cap-minutes) * 60 ))
   # A move that failed (some home did not reach the pin) is tried again after the quiet window, not on every tick: each try writes a row per home.
-  failed_at=$(awk -F'\t' -v p="$PN" -v g="$green" '$1 == p && $2 == g && $4 ~ /^hook-failed/ { t = $3 } END { print t + 0 }' "$DATA/trunk-live.tsv" 2>/dev/null || echo 0)
+  failed_at=$(awk -F'\t' -v p="$PN" -v g="$green" '$1 == p && $2 == g && $4 ~ /^hook-failed/ { t = $3 } END { print t + 0 }' "$DATA/trunk-in-use.tsv" 2>/dev/null || echo 0)
   if [ "$failed_at" -gt 0 ] && [ $(( now - failed_at )) -lt "$quiet" ]; then
     echo "autolive: waiting: the last move failed; the next try is in about $(( (quiet - (now - failed_at) + 59) / 60 )) min"; return 0
   fi
-  last=$(awk -F'\t' -v p="$PN" '$1 == p && $4 ~ /^live/ && $3 > m { m = $3 } END { print m + 0 }' "$DATA/trunk-live.tsv" 2>/dev/null || echo 0)
+  last=$(awk -F'\t' -v p="$PN" '$1 == p && $4 ~ /^live/ && $3 > m { m = $3 } END { print m + 0 }' "$DATA/trunk-in-use.tsv" 2>/dev/null || echo 0)
   read -r newest oldest <<< "$(awk -F'\t' -v p="$PN" -v l="$last" '$2 == p && $4 >= l { if (!n || $4 > n) n = $4; if (!o || $4 < o) o = $4 } END { print n + 0, o + 0 }' "$DATA/trunk-landings.tsv" 2>/dev/null || echo "0 0")"
-  [ "${newest:-0}" -gt 0 ] || { echo "autolive: waiting: nothing has landed since the last go-live"; return 0; }
+  [ "${newest:-0}" -gt 0 ] || { echo "autolive: waiting: nothing has landed since the last In use move"; return 0; }
   if [ $(( now - newest )) -lt "$quiet" ] && [ $(( now - oldest )) -lt "$cap" ]; then
     wait_s=$(( quiet - (now - newest) )); [ $(( cap - (now - oldest) )) -ge "$wait_s" ] || wait_s=$(( cap - (now - oldest) ))
-    echo "autolive: waiting: live in about $(( (wait_s + 59) / 60 )) min (quiet $(( quiet / 60 )) min, cap $(( cap / 60 )) min)"; return 0
+    echo "autolive: waiting: In use in about $(( (wait_s + 59) / 60 )) min (quiet $(( quiet / 60 )) min, cap $(( cap / 60 )) min)"; return 0
   fi
   LIVE_FLEET=1; begin_move "$green"  # in this process: the capture below is a subshell, which cannot let go of the trunk lock
   green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || echo "$green"); tip=$(rev "refs/heads/$TRUNK")  # as they stand once the gates have ended
   out=$(go_live "$green" "$tip" 2>&1) && rc=0 || rc=$?
-  if [ "$rc" -ne 0 ]; then echo "autolive: NOT live, the move failed: $(printf '%s' "$out" | tail -n 1 | cut -c1-200)"; return "$rc"; fi
-  echo "autolive: live at ${green:0:12} on every home ($(awk -F'\t' -v s="$green" '$2 == s && $4 ~ /^skipped/ { n++ } END { print n + 0 }' "$DATA/trunk-live.tsv" 2>/dev/null || echo 0) skipped, see data/trunk-live.tsv)"
+  if [ "$rc" -ne 0 ]; then echo "autolive: NOT In use, the move failed: $(printf '%s' "$out" | tail -n 1 | cut -c1-200)"; return "$rc"; fi
+  echo "autolive: In use at ${green:0:12} on every home ($(awk -F'\t' -v s="$green" '$2 == s && $4 ~ /^skipped/ { n++ } END { print n + 0 }' "$DATA/trunk-in-use.tsv" 2>/dev/null || echo 0) skipped, see data/trunk-in-use.tsv)"
 }
 
 cmd_live() {
@@ -1955,9 +1956,9 @@ cmd_live() {
   open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"; tip_ok; tip=$(rev "refs/heads/$TRUNK")
   green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null) || refuse "no fully green trunk commit yet; the home stays where it is"
   LIVE_WAIVER=$(authority trunk-live-waiver "$green"); LIVE_FLEET=1
-  [ -n "$LIVE_WAIVER" ] || need_word live "$green"
+  [ -n "$LIVE_WAIVER" ] || need_word in-use "$green"
   go_live "$green" "$tip"
-  [ -n "$LIVE_WAIVER" ] || [ -n "${LIVE_HOME:-}" ] || spend_word live
+  [ -n "$LIVE_WAIVER" ] || [ -n "${LIVE_HOME:-}" ] || spend_word in-use
 }
 
 # The captain waived his go-live word for one project until the stable point; only the Overwatch path records it.
@@ -2001,11 +2002,11 @@ cmd_cancel() {
 
 cmd_word() {
   local kind=${1-} sha quote=${3-}
-  case $kind in live|release) ;; *) die "usage: jg-trunk.sh word live|release <project-dir> \"<his words>\"" ;; esac
+  case $kind in in-use|release) ;; *) die "usage: jg-trunk.sh word in-use|release <project-dir> \"<his words>\"" ;; esac
   [ -z "${JG_TASK_ID:-}" ] || refuse "a worker never records the captain's word"
   [ -n "$quote" ] || refuse "the captain's own words are required"
   open_project "${2-}"; lock "$STATE/.trunk-$PN.lock"; tip_ok
-  if [ "$kind" = live ]; then sha=$(cat "$STATE/trunk-green-$PN"); else sha=$(release_commit); fi
+  if [ "$kind" = in-use ]; then sha=$(cat "$STATE/trunk-green-$PN"); else sha=$(release_commit); fi
   put "$STATE/trunk-word-$kind-$PN" "$(printf '%s\t%s\t%s' "$sha" "$(date +%s)" "$quote")"
   row trunk-words.tsv "$PN" "$kind" "$sha" "$(date +%s)" "$quote"
   echo "word recorded: $kind ${sha:0:12} in $PN"
@@ -2081,7 +2082,7 @@ cmd_recover() {
   JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref -m "trunk: recover $id" "refs/heads/$TRUNK" "$merge" "$actual" || refuse "trunk changed during recovery"
   put "$STATE/trunk-tip-$PN" "$merge"
   row trunk-landings.tsv "$id" "$PN" "$merge" "$(date +%s)" recovery
-  echo "recovered $TRUNK at $merge; not live"
+  echo "recovered $TRUNK at $merge; not In use"
 }
 
 # The one command that ends a trunk the lander did not leave (tip_ok); Overwatch only.
@@ -2143,7 +2144,7 @@ last_green_before() {  # <red sha>
     grep -Eq "^$PN	$c	[0-9]+	red(	|$)" "$DATA/trunk-ci.tsv" 2>/dev/null && continue
     git -C "$PROJ" merge-base --is-ancestor "$c" "$1" 2>/dev/null || continue
     echo "$c"; return 0
-  done < <(awk -F'\t' -v p="$PN" '$1 == p && $4 ~ /^live/ { print $2 }' "$DATA/trunk-live.tsv" 2>/dev/null | tac)
+  done < <(awk -F'\t' -v p="$PN" '$1 == p && $4 ~ /^live/ { print $2 }' "$DATA/trunk-in-use.tsv" 2>/dev/null | tac)
   # No live commit below it: the last release that is not the red commit itself (the released mark moves at the push, so it can be
   # the very commit CI found red), else the commit before it.
   while IFS= read -r c; do

@@ -62,7 +62,7 @@ age_landings() {
 
 # age_live: every go-live on record happened two hours ago, so a landing after it is a new batch.
 age_live() {
-  awk -F'\t' -v OFS='\t' -v n="$(date +%s)" '{ $3 = n - 7200; print }' "$HOME_D/data/trunk-live.tsv" > "$HOME_D/data/trunk-live.tsv.new" && mv "$HOME_D/data/trunk-live.tsv.new" "$HOME_D/data/trunk-live.tsv"
+  awk -F'\t' -v OFS='\t' -v n="$(date +%s)" '{ $3 = n - 7200; print }' "$HOME_D/data/trunk-in-use.tsv" > "$HOME_D/data/trunk-in-use.tsv.new" && mv "$HOME_D/data/trunk-in-use.tsv.new" "$HOME_D/data/trunk-in-use.tsv"
 }
 
 await_green() {  # the tick's verify of the landing has moved the green pin to the trunk tip
@@ -78,22 +78,22 @@ test_the_bundled_hook_moves_a_home_that_runs_the_project() {
   out=$(CODE_ROOT="$W/homecode" trunk land h1 2>&1) || fail "h1 must land: $out"
   [ "$(git -C "$W/homecode" rev-parse HEAD)" != "$c" ] || fail "landing alone must not move the home checkout"
   trunk verify "$PROJ" >/dev/null 2>&1 || fail "the verify must pass: it moves the pin that live follows"
-  trunk word live "$PROJ" "go" >/dev/null 2>&1
+  trunk word in-use "$PROJ" "go" >/dev/null 2>&1
   out=$(CODE_ROOT="$W/homecode" trunk live "$PROJ" 2>&1) || fail "live must move a home that runs the project: $out"
   [ "$(git -C "$W/homecode" rev-parse HEAD)" = "$c" ] || fail "the home checkout must be fast-forwarded to the landed commit: $out"
-  grep -Eq "^proj	$c	[0-9]+	live$" "$HOME_D/data/trunk-live.tsv" || fail "the live record must say live"
+  grep -Eq "^proj	$c	[0-9]+	live$" "$HOME_D/data/trunk-in-use.tsv" || fail "the live record must say live"
   base=$(cat "$HOME_D/state/trunk-released-proj")
   out=$(CODE_ROOT="$W/homecode" trunk ci "$PROJ" "$c" red 2>&1) || fail "a red CI must pin the bundled home back: $out"
   [ "$(git -C "$W/homecode" rev-parse HEAD)" = "$base" ] || fail "the home checkout must return to the last release when no earlier commit was live: $out"
   printf '%s\n' "$c" > "$HOME_D/state/trunk-green-proj"
-  rm "$HOME_D/data/trunk-live.tsv"; printf 'dirty\n' >> "$W/homecode/README.md"
+  rm "$HOME_D/data/trunk-in-use.tsv"; printf 'dirty\n' >> "$W/homecode/README.md"
   lane h2 hook2; CODE_ROOT="$W/homecode" trunk land h2 >/dev/null 2>&1 || fail "h2 must land"
   trunk verify "$PROJ" >/dev/null 2>&1 || fail "the verify must pass: it moves the pin that live follows"
-  trunk word live "$PROJ" "go" >/dev/null 2>&1
+  trunk word in-use "$PROJ" "go" >/dev/null 2>&1
   rc=0; out=$(CODE_ROOT="$W/homecode" trunk live "$PROJ" 2>&1) || rc=$?
   [ "$rc" = 3 ] || fail "a live whose home did not move must exit 3, got $rc: $out"
   [ "$(tip)" = "$(git -C "$PROJ" rev-parse fm/h2)" ] || fail "the commit must stay landed when only the live step failed"
-  assert_contains "$(cat "$HOME_D/data/trunk-live.tsv")" hook-failed "a home that did not move must be recorded as such"
+  assert_contains "$(cat "$HOME_D/data/trunk-in-use.tsv")" hook-failed "a home that did not move must be recorded as such"
   pass 'the bundled hook fast-forwards the home and a dirty home is recorded as not moved'
 }
 
@@ -131,25 +131,25 @@ test_a_quiet_trunk_goes_live_on_every_home_by_itself() {
   fleet_sweeps "landed g1" >/dev/null; await_green || fail "the landing must move the green pin"
   # A landing never waits on a go-live, and a fresh landing is not live yet: the trunk is not quiet.
   homes_at "$BASE" || fail "a fresh landing must not go live at once"
-  out=$(trunk autolive "$PROJ" 2>&1 | tail -n 1); assert_contains "$out" "autolive: waiting: live in about" "a busy trunk waits for its quiet window"
+  out=$(trunk autolive "$PROJ" 2>&1 | tail -n 1); assert_contains "$out" "autolive: waiting: In use in about" "a busy trunk waits for its quiet window"
   # 25 quiet minutes later (default window 20) the check's own tick moves every home, with no word and no model turn.
   age_landings 25 25
   out=$(fleet_sweeps "proj: live at")
-  assert_contains "$out" "proj: live at ${c:0:12} on every home" "the outbox must say every home moved"
-  homes_at "$c" || fail "a quiet trunk must move Main and every Squad Lead home: $(cat "$HOME_D/data/trunk-live.tsv" 2>/dev/null)"
-  [ ! -e "$HOME_D/state/trunk-word-live-proj" ] && [ ! -e "$HOME_D/data/trunk-words.tsv" ] || fail "the waiver records and spends no word"
-  for h in lead-a lead-b primary; do grep -q "^proj:$h	$c	[0-9]*	live" "$HOME_D/data/trunk-live.tsv" || fail "$h needs a live row: $(cat "$HOME_D/data/trunk-live.tsv")"; done
-  [ "$(trunk autolive "$PROJ" 2>&1 | tail -n 1)" = "autolive: already live at ${c:0:12}" ] || fail "a commit that is live is not moved twice"
+  assert_contains "$out" "proj: In use at ${c:0:12} on every home" "the outbox must say every home moved"
+  homes_at "$c" || fail "a quiet trunk must move Main and every Squad Lead home: $(cat "$HOME_D/data/trunk-in-use.tsv" 2>/dev/null)"
+  [ ! -e "$HOME_D/state/trunk-word-in-use-proj" ] && [ ! -e "$HOME_D/data/trunk-words.tsv" ] || fail "the waiver records and spends no word"
+  for h in lead-a lead-b primary; do grep -q "^proj:$h	$c	[0-9]*	live" "$HOME_D/data/trunk-in-use.tsv" || fail "$h needs a live row: $(cat "$HOME_D/data/trunk-in-use.tsv")"; done
+  [ "$(trunk autolive "$PROJ" 2>&1 | tail -n 1)" = "autolive: already In use at ${c:0:12}" ] || fail "a commit that is live is not moved twice"
   # The knob moves the window: 3 quiet minutes is not enough under 5 and is under 2; a red CI then pins EVERY home back at once.
   age_live; lane g2 two; fleet_sweeps "landed g2" >/dev/null; await_green || fail "g2's landing must move the green pin"
   age_landings 3 3; printf 'live-quiet-minutes=5\n' >> "$HOME_D/config/trunk-policy"
   assert_contains "$(trunk autolive "$PROJ" 2>&1 | tail -n 1)" "waiting" "3 quiet minutes is not enough under a 5 minute window"
   printf 'live-quiet-minutes=2\n' >> "$HOME_D/config/trunk-policy"
-  assert_contains "$(trunk autolive "$PROJ" 2>&1 | tail -n 1)" "live at $(tip | cut -c1-12)" "the quiet window is a policy knob"
+  assert_contains "$(trunk autolive "$PROJ" 2>&1 | tail -n 1)" "In use at $(tip | cut -c1-12)" "the quiet window is a policy knob"
   homes_at "$(tip)" || fail "the second batch must move every home"
   trunk ci "$PROJ" "$(tip)" red >/dev/null 2>&1 || fail "a red CI must record and pin back"
   homes_at "$c" || fail "a red CI must pin every home back to the last green live commit at once"
-  grep -q "^proj:lead-a	$c	[0-9]*	live,pinned-back-from:" "$HOME_D/data/trunk-live.tsv" || fail "the pin-back row names where the home came from"
+  grep -q "^proj:lead-a	$c	[0-9]*	live,pinned-back-from:" "$HOME_D/data/trunk-in-use.tsv" || fail "the pin-back row names where the home came from"
   pass 'a quiet trunk goes live on Main and every Squad Lead home by itself, the window is a knob, and a red CI pins every home back'
 }
 
@@ -162,16 +162,16 @@ test_a_pinned_behind_go_live_moves_every_home_and_fails_naming_a_home_left_behin
   printf '%s\n' "$c1" > "$HOME_D/state/trunk-green-proj"  # as a red found after p2 landed leaves it: the pin one commit under the tip
   [ "$c2" != "$c1" ] && [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$c1" ] || fail "fixture: the pin must be one commit behind the tip"
   age_landings 25 25; printf 'dirty\n' >> "$W/lead-a/work.txt"
-  out=$(trunk autolive "$PROJ" 2>&1); [ "$(printf '%s\n' "$out" | tail -n 1)" = "autolive: NOT live, the move failed: fleet: not every home is at ${c1:0:12}: lead-a" ] \
+  out=$(trunk autolive "$PROJ" 2>&1); [ "$(printf '%s\n' "$out" | tail -n 1)" = "autolive: NOT In use, the move failed: fleet: not every home is at ${c1:0:12}: lead-a" ] \
     || fail "a home left behind must fail the pinned-behind move and be named: $out"
-  awk -F'\t' -v p=proj -v g="$c1" '$1 == p && $2 == g && $4 ~ /^live/ { f = 1 } END { exit f }' "$HOME_D/data/trunk-live.tsv" || fail "no live row while a home is behind: $(cat "$HOME_D/data/trunk-live.tsv")"
-  grep -q "^proj	$c1	[0-9]*	hook-failed:fleet: not every home is at ${c1:0:12}: lead-a" "$HOME_D/data/trunk-live.tsv" || fail "the failed move leaves a hook-failed row naming the home"
+  awk -F'\t' -v p=proj -v g="$c1" '$1 == p && $2 == g && $4 ~ /^live/ { f = 1 } END { exit f }' "$HOME_D/data/trunk-in-use.tsv" || fail "no live row while a home is behind: $(cat "$HOME_D/data/trunk-in-use.tsv")"
+  grep -q "^proj	$c1	[0-9]*	hook-failed:fleet: not every home is at ${c1:0:12}: lead-a" "$HOME_D/data/trunk-in-use.tsv" || fail "the failed move leaves a hook-failed row naming the home"
   assert_contains "$(trunk autolive "$PROJ" 2>&1 | tail -n 1)" "waiting: the last move failed" "a failed move is not retried on every tick"
   rm -f "$W/lead-a/work.txt"; age_live
-  out=$(trunk autolive "$PROJ" 2>&1 | tail -n 1); assert_contains "$out" "live at ${c1:0:12} on every home" "the retry after the quiet window moves every home"
-  homes_at "$c1" || fail "the pinned-behind move must reach Main and every Squad Lead home, not the tip: $(cat "$HOME_D/data/trunk-live.tsv")"
-  for h in lead-a lead-b primary; do grep -q "^proj:$h	$c1	[0-9]*	live" "$HOME_D/data/trunk-live.tsv" || fail "$h needs a live row at the pin"; done
-  grep -q "^proj	$c1	[0-9]*	live,pinned-behind-${c2:0:12},waiver=" "$HOME_D/data/trunk-live.tsv" || fail "the live row says pinned-behind the tip: $(grep "^proj	" "$HOME_D/data/trunk-live.tsv")"
+  out=$(trunk autolive "$PROJ" 2>&1 | tail -n 1); assert_contains "$out" "In use at ${c1:0:12} on every home" "the retry after the quiet window moves every home"
+  homes_at "$c1" || fail "the pinned-behind move must reach Main and every Squad Lead home, not the tip: $(cat "$HOME_D/data/trunk-in-use.tsv")"
+  for h in lead-a lead-b primary; do grep -q "^proj:$h	$c1	[0-9]*	live" "$HOME_D/data/trunk-in-use.tsv" || fail "$h needs a live row at the pin"; done
+  grep -q "^proj	$c1	[0-9]*	live,pinned-behind-${c2:0:12},waiver=" "$HOME_D/data/trunk-in-use.tsv" || fail "the live row says pinned-behind the tip: $(grep "^proj	" "$HOME_D/data/trunk-in-use.tsv")"
   pass 'a pinned-behind go-live moves every home, writes its live row only when all are there, and names a home left behind'
 }
 
@@ -185,8 +185,8 @@ test_a_busy_trunk_goes_live_at_the_hourly_cap() {
   assert_contains "$(trunk autolive "$PROJ" 2>&1 | tail -n 1)" "waiting" "59 minutes of landings is under the 60 minute cap"
   homes_at "$BASE" || fail "nothing may move before the cap"
   age_landings 1 61
-  out=$(trunk autolive "$PROJ" 2>&1 | tail -n 1); assert_contains "$out" "live at ${c:0:12} on every home" "the cap makes the trunk go live while landings continue"
-  homes_at "$c" || fail "the hourly cap must move every home: $(cat "$HOME_D/data/trunk-live.tsv" 2>/dev/null)"
+  out=$(trunk autolive "$PROJ" 2>&1 | tail -n 1); assert_contains "$out" "In use at ${c:0:12} on every home" "the cap makes the trunk go live while landings continue"
+  homes_at "$c" || fail "the hourly cap must move every home: $(cat "$HOME_D/data/trunk-in-use.tsv" 2>/dev/null)"
   # Landings after that go live in the next batch, not at once: the cap counts from what is not live yet.
   lane b3 three; fleet_sweeps "landed b3" >/dev/null; await_green || fail "b3's landing must move the green pin"
   assert_contains "$(trunk autolive "$PROJ" 2>&1 | tail -n 1)" "waiting" "a landing after a go-live starts a new batch"
@@ -212,8 +212,8 @@ test_a_red_or_unwaived_landing_never_goes_live() {
   for _ in $(seq 1 150); do git -C "$PROJ" log --format=%B trunk | grep -q "^reverts: $c" && break; sleep 0.2; done
   git -C "$PROJ" log --format=%B trunk | grep -q "^reverts: $c" || fail "a red verify finds is reverted by itself"
   age_landings 30 30; trunk autolive "$PROJ" >/dev/null 2>&1
-  homes_at "$BASE" || fail "a red verify found must not move any home, even after the quiet window: $(cat "$HOME_D/data/trunk-live.tsv" 2>/dev/null)"
-  ! grep -q "	$c	" "$HOME_D/data/trunk-live.tsv" 2>/dev/null || fail "the red commit is never live: $(cat "$HOME_D/data/trunk-live.tsv")"
+  homes_at "$BASE" || fail "a red verify found must not move any home, even after the quiet window: $(cat "$HOME_D/data/trunk-in-use.tsv" 2>/dev/null)"
+  ! grep -q "	$c	" "$HOME_D/data/trunk-in-use.tsv" 2>/dev/null || fail "the red commit is never live: $(cat "$HOME_D/data/trunk-in-use.tsv")"
   # With no waiver the word rule stands, and a worker never runs the live step.
   rm -f "$HOME_D/config/trunk-live-waiver"
   out=$(trunk autolive "$PROJ" 2>&1 | tail -n 1); assert_contains "$out" "needs the captain's word" "no waiver, no automatic live"
@@ -288,12 +288,29 @@ test_a_landing_on_a_tip_with_only_recorded_reds_moves_the_pin_and_goes_live_by_i
   [ -e "$W/suite-runs" ] || fail "the verify, not the landing, ran the suite"
   age_landings 25 25
   out=$(fleet_sweeps "proj: live at")
-  assert_contains "$out" "proj: live at ${c:0:12} on every home" "the quiet trunk must go live by itself over the recorded reds"
-  homes_at "$c" || fail "every home must move to the landed commit: $(cat "$HOME_D/data/trunk-live.tsv" 2>/dev/null)"
+  assert_contains "$out" "proj: In use at ${c:0:12} on every home" "the quiet trunk must go live by itself over the recorded reds"
+  homes_at "$c" || fail "every home must move to the landed commit: $(cat "$HOME_D/data/trunk-in-use.tsv" 2>/dev/null)"
   pass 'a landing on a tip with only recorded reds moves the pin after its lane is torn down and goes live with no hand step'
 }
 
+test_a_home_with_the_old_live_names_moves_them_once_and_keeps_no_second_path() {
+  local out
+  world oldnames
+  printf 'proj\tabc\t1\tlive\n' > "$HOME_D/data/trunk-live.tsv"
+  printf 'abc\t1\tgo\n' > "$HOME_D/state/trunk-word-live-proj"
+  printf 'new\t1\tgo\n' > "$HOME_D/state/trunk-word-live-other"; printf 'kept\t1\tgo\n' > "$HOME_D/state/trunk-word-in-use-other"
+  out=$(trunk autolive "$PROJ" 2>&1) || :
+  [ ! -e "$HOME_D/data/trunk-live.tsv" ] && [ ! -e "$HOME_D/state/trunk-word-live-proj" ] && [ ! -e "$HOME_D/state/trunk-word-live-other" ] || fail "no old name may be left: $out"
+  assert_contains "$(cat "$HOME_D/data/trunk-in-use.tsv")" "proj	abc	1	live" "the old record moves into the In use record"
+  assert_equals "$(cut -f1 "$HOME_D/state/trunk-word-in-use-proj")" abc "the old word moves to its In use name"
+  assert_equals "$(cut -f1 "$HOME_D/state/trunk-word-in-use-other")" kept "a word already under the new name wins"
+  trunk autolive "$PROJ" >/dev/null 2>&1 || :
+  [ "$(grep -c '^proj	abc	1	live' "$HOME_D/data/trunk-in-use.tsv")" = 1 ] || fail "a second run moves nothing again"
+  pass 'the old live record and word files move once to their In use names, with no second path left'
+}
+
 test_a_landing_on_a_tip_with_only_recorded_reds_moves_the_pin_and_goes_live_by_itself
+test_a_home_with_the_old_live_names_moves_them_once_and_keeps_no_second_path
 test_the_bundled_hook_moves_a_home_that_runs_the_project
 test_the_registered_check_lands_a_proved_task_without_a_human
 test_a_quiet_trunk_goes_live_on_every_home_by_itself

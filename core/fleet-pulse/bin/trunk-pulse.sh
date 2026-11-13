@@ -5,7 +5,7 @@
 # home moves to a go-live by bin/jg-trunk.sh live, so a merged-PR count reads 0 there however fast it lands.
 # This reads the records bin/jg-trunk.sh writes instead:
 #   data/trunk-landings.tsv  task, project, commit, epoch, gate
-#   data/trunk-live.tsv      project, commit, epoch, status (live... when the home moved to a go-live; landed-not-live,
+#   data/trunk-in-use.tsv      project, commit, epoch, status (live... when the home moved to a go-live; landed-not-live,
 #                            hook-failed and rolled-back... when it did not)
 #   data/trunk-releases.tsv  project, trunk, tip, count, epoch, url
 #
@@ -25,10 +25,10 @@ set -euo pipefail
 home=$1 since=$2 now=${3:-$(date +%s)}
 case "$since$now" in *[!0-9]*) echo "trunk-pulse: since and now must be epoch seconds (got '$since' '$now')" >&2; exit 2 ;; esac
 data=$home/data
-[ -f "$data/trunk-landings.tsv" ] || [ -f "$data/trunk-live.tsv" ] || exit 1
+[ -f "$data/trunk-landings.tsv" ] || [ -f "$data/trunk-in-use.tsv" ] || exit 1
 
 # Tag each record with its file so awk reads all three in one pass; a missing file adds no rows.
-for f in L:trunk-landings.tsv V:trunk-live.tsv R:trunk-releases.tsv; do
+for f in L:trunk-landings.tsv V:trunk-in-use.tsv R:trunk-releases.tsv; do
   [ ! -f "$data/${f#*:}" ] || awk -v t="${f%%:*}" '{ print t "\t" $0 }' "$data/${f#*:}"
 done | awk -F'\t' -v since="$since" -v now="$now" '
   $1 == "L" && $5 ~ /^[0-9]+$/ { n++; proj[n] = $3; sha[n] = $4; at[n] = $5; if ($5 >= since) landed++; next }

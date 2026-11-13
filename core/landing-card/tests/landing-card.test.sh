@@ -7,7 +7,7 @@
 # c) a new landing posts exactly one card, and `check` is silent on success;
 # d) a failed post stops the run after one attempt with one line, and the next run posts the rest;
 # e) the wiring installs a shim that registers the check;
-# f) each go-live row of trunk-live.tsv gets one card listing the landings since the previous live commit, with the delivery
+# f) each go-live row of trunk-in-use.tsv gets one card listing the landings since the previous live commit, with the delivery
 #    machine's word for a registered lane and none for the others; a failed go-live row and a per-home row get no card, a
 #    second run posts nothing;
 # h) the first run in a home with history (no data/landing-card-since) writes the marker and posts one summary card per UTC
@@ -80,13 +80,13 @@ check "d: the next run posts the rest" "$(run run)" 'landing-card: posted 2, 5 a
 touch "$FM/config/five-on"
 export JG_DELIVERY_CHANGES=$d/changes.tsv
 printf 'one\tproj\t%s\tone-off\tswitch\tthe first\nfive\tproj\t%s\tfive-on\tswitch\tthe fifth\n' "$c1" "$c5" > "$JG_DELIVERY_CHANGES"
-printf 'proj\t%s\t1794201000\tlive\nproj:home-a\t%s\t1794201000\tlive\nproj:home-b\t%s\t1794201000\tlive\n' "$c2" "$c2" "$c2" >> "$FM/data/trunk-live.tsv"
+printf 'proj\t%s\t1794201000\tlive\nproj:home-a\t%s\t1794201000\tlive\nproj:home-b\t%s\t1794201000\tlive\n' "$c2" "$c2" "$c2" >> "$FM/data/trunk-in-use.tsv"
 check "f: the first go-live posts one card" "$(run run)" 'landing-card: posted 1, 7 already on the board'
 livecard() { sign-off-axi list "$BOARD" --json --full | jq -r --arg k "live-$1" '.decisions[] | select(.key == $k) | .about'; }
 case $(livecard "$c2") in "Landed in 2 home(s) at 2026-11-09"*"Landings since the last go-live: one, two."*"Delivery now: one is in-homes-off.") say "ok: f: the first go-live lists its two lanes and only the registered lane's word" ;; *) say "FAIL: f: first go-live: $(livecard "$c2")"; fails=$((fails + 1)) ;; esac
 check "f: the go-live card title says Landed, in the homes" "$(sign-off-axi list "$BOARD" --json --full | jq -r --arg k "live-$c2" '.decisions[] | select(.key == $k) | .title')" "Landed, in the homes: ${c2:0:8}, 2 landings"
 say "card: go-live title: $(sign-off-axi list "$BOARD" --json --full | jq -r --arg k "live-$c2" '.decisions[] | select(.key == $k) | .title + " | " + .about' | cut -c1-140)"
-printf 'proj\t%s\t1794201500\thook-failed:disk full\nproj\t%s\t1794202000\tlive,pinned-behind-%s\nproj:home-a\t%s\t1794202000\tlive\nproj:home-b\t%s\t1794202000\tlive\n' "$c6" "$c7" "${c7:0:12}" "$c7" "$c7" >> "$FM/data/trunk-live.tsv"
+printf 'proj\t%s\t1794201500\thook-failed:disk full\nproj\t%s\t1794202000\tlive,pinned-behind-%s\nproj:home-a\t%s\t1794202000\tlive\nproj:home-b\t%s\t1794202000\tlive\n' "$c6" "$c7" "${c7:0:12}" "$c7" "$c7" >> "$FM/data/trunk-in-use.tsv"
 check "f: a failed row gets no card; the next go-live posts one" "$(run run)" 'landing-card: posted 1, 8 already on the board'
 case $(livecard "$c7") in *"Landed in 2 home(s)"*"Landings since the last go-live: revert-one, five, six, seven."*"pinned this go-live behind the trunk tip ${c7:0:12}."*"Delivery now: five is in-use.") say "ok: f: the second go-live lists the batch since the first, one lane in use" ;; *) say "FAIL: f: second go-live: $(livecard "$c7")"; fails=$((fails + 1)) ;; esac
 check "f: no card for a failed row" "$(livecard "$c6")" ''

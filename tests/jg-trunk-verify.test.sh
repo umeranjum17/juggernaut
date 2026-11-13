@@ -327,7 +327,7 @@ test_the_tick_verifies_a_landed_pair_that_breaks_together_and_the_pin_moves_only
   grep -q "alert-line-red--proj-${b:0:12}" "$q" || fail "line-red must be raised for the traced commit: $(cat "$q" 2>&1)"
   assert_contains "$(grep 'line-red' "$q")" "alert line-red (P1) at rung 2 for lead" "the alert is named line-red"
   # No go-live takes the red head: the home goes live on the pin only, which no landing or red verify moved.
-  trunk word live "$PROJ" "go" >/dev/null 2>&1
+  trunk word in-use "$PROJ" "go" >/dev/null 2>&1
   trunk live "$PROJ" >/dev/null 2>&1 || :
   ! grep -qs "$b" "$W/live-moves" || fail "the red change must never go live: $(cat "$W/live-moves")"
   # The tick verifies the reverted tip: green, and the pin moves to the tip, one verify at a time.

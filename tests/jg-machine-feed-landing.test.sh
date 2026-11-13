@@ -20,7 +20,7 @@ printf 'lane1\t%s\t%s\t1000\t1010\t\t1030\t1100\t2\tqueue\n' "$head1" "$land1" >
 printf 'lane1\tdemo\t%s\t%s\tno-landing-gate\n' "$land1" 1100 >"$D/trunk-landings.tsv"
 printf 'lane1\tdemo\t%s\t%s\tresolving\t1040\t\nlane1\tdemo\t%s\t%s\tresolved\t1050\t\n' "$land1" "$head1" "$land1" "$head1" >"$D/trunk-resolving.tsv"
 printf 'lane1\tdemo\t%s\t%s\tchecking\t1060\t\n' "$land1" "$head1" >"$D/trunk-landing-phases.tsv"
-printf 'demo\t%s\t1200\tlive\t%s\n' "$live1" "$land1" >"$D/trunk-live.tsv"
+printf 'demo\t%s\t1200\tlive\t%s\n' "$live1" "$land1" >"$D/trunk-in-use.tsv"
 printf 'demo\ttrunk-v1\t%s\t3\t1300\thttps://example.invalid/pull/1\n' "$rel1" >"$D/trunk-releases.tsv"
 printf 'demo\t1\ttrunk-v1\t%s\t1400\n' "$base1" >"$D/trunk-versions.tsv"
 # the lander already logged one move of this run: the feed keeps it and adds no second one

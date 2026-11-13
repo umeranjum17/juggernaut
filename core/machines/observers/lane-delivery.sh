@@ -24,7 +24,7 @@
 #   after the landing (the lane's last row in data/trunk-landings.tsv names commit C in project P):
 #     reverted          a revert-<lane> row follows it
 #     cleanup-refused   state/<lane>.meta still stands and a landing state file of the lane says `landed cleanup refused`
-#     live              the last live row of P in data/trunk-live.tsv (its project row is written only when every home moved) holds C
+#     live              the last live row of P in data/trunk-in-use.tsv (its project row is written only when every home moved) holds C
 #     live-partial      the last live row of some home P:<home> holds C
 #     home-behind       a move row of P or a home of P was written at a commit that holds C
 #     landed            anything else
@@ -37,8 +37,8 @@ STATE=${JG_STATE_OVERRIDE:-$JG_HOME/state}; DATA=${JG_DATA_OVERRIDE:-$JG_HOME/da
 
 mval() { sed -n "s/^$2=//p" "$1" 2>/dev/null | tail -n 1; }
 holds() { git -C "$REPO" merge-base --is-ancestor "$1" "$2" 2>/dev/null; }
-# The data/trunk-live.tsv rows of project P (with the argument `homes`: of its homes P:<home>), as key, sha, status, in file order.
-live_rows() { awk -F'\t' -v p="$P" -v h="${1:-}" '(h == "" && $1 == p) || (h != "" && index($1, p ":") == 1) { print $1 "\t" $2 "\t" $4 }' "$DATA/trunk-live.tsv" 2>/dev/null; }
+# The data/trunk-in-use.tsv rows of project P (with the argument `homes`: of its homes P:<home>), as key, sha, status, in file order.
+live_rows() { awk -F'\t' -v p="$P" -v h="${1:-}" '(h == "" && $1 == p) || (h != "" && index($1, p ":") == 1) { print $1 "\t" $2 "\t" $4 }' "$DATA/trunk-in-use.tsv" 2>/dev/null; }
 
 # Before the landing: sets WORD and FROM from the lane's status, meta and landing state file.
 lane_state() {
@@ -67,15 +67,15 @@ lane_state() {
 trunk_state() {
   local key sha st last moved=
   last=$(live_rows | awk -F'\t' '$3 ~ /^live/ { s = $2 } END { print s }')
-  if [ -n "$last" ] && holds "$C" "$last"; then WORD=live; FROM=delivery:in-homes; EVIDENCE="data/trunk-live.tsv: $P live at ${last:0:12}"; return 0; fi
+  if [ -n "$last" ] && holds "$C" "$last"; then WORD=live; FROM=delivery:in-homes; EVIDENCE="data/trunk-in-use.tsv: $P live at ${last:0:12}"; return 0; fi
   while IFS=$'\t' read -r key sha; do
-    [ -n "$sha" ] && holds "$C" "$sha" && { WORD=live-partial; FROM=delivery:landed; EVIDENCE="data/trunk-live.tsv: $key live at ${sha:0:12}"; return 0; }
+    [ -n "$sha" ] && holds "$C" "$sha" && { WORD=live-partial; FROM=delivery:landed; EVIDENCE="data/trunk-in-use.tsv: $key live at ${sha:0:12}"; return 0; }
   done < <(live_rows homes | awk -F'\t' '$3 ~ /^live/ { s[$1] = $2 } END { for (k in s) print k "\t" s[k] }')
   while IFS=$'\t' read -r key sha st; do
     case $st in held:*) continue ;; esac
     [ -n "$sha" ] && holds "$C" "$sha" && moved="$key ${st:0:80}"
   done < <(live_rows; live_rows homes)
-  if [ -n "$moved" ]; then WORD=home-behind; FROM=delivery:pinned-behind; EVIDENCE="data/trunk-live.tsv: $moved"; return 0; fi
+  if [ -n "$moved" ]; then WORD=home-behind; FROM=delivery:pinned-behind; EVIDENCE="data/trunk-in-use.tsv: $moved"; return 0; fi
   WORD=landed; FROM=landing:landed; EVIDENCE="data/trunk-landings.tsv: $ID at ${C:0:12}"
 }
 

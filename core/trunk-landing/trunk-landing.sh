@@ -144,10 +144,10 @@ if [ "$1" = live ]; then
   live=$(JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" autolive "$proj" 2>&1) || lrc=$?
   live=$(printf '%s\n' "$live" | tail -n 1 | cut -c1-300); live=${live#autolive: }
   case $live in
-    '') live="NOT live: the live step printed nothing (exit $lrc)" ;;
-    waiting:*|"already live"*|"not live: it needs"*) exit 0 ;;
-    live\ at*) ;;
-    *) live="NOT live: $live" ;;
+    '') live="NOT In use: the In use step printed nothing (exit $lrc)" ;;
+    waiting:*|"already In use"*|"not In use: it needs"*) exit 0 ;;
+    "In use at"*) ;;
+    *) live="NOT In use: $live" ;;
   esac
   jg_lock_acquire_wait "$MEM/.outbox.lock"
   printf 'trunk-landing: %s: %s\n' "$pn" "$live" >> "$MEM/outbox"
@@ -225,7 +225,7 @@ if [ "$1" = runbatch ]; then
           id=${arg%%@*}
           case " $cleaned " in *" $id "*) continue ;; esac
           case $line in "landed $id "*|"already landed $id "*) ;; *) continue ;; esac
-          cleaned="$cleaned $id"; landed_lane "$id" "${arg#*@}" "on the local trunk in one stack with its queue (not live yet: live follows the answer given at gated, the captain's word or the project's waiver, and its quiet window)"
+          cleaned="$cleaned $id"; landed_lane "$id" "${arg#*@}" "on the local trunk in one stack with its queue (not In use yet: In use follows the answer given at gated, the captain's word or the project's waiver, and its quiet window)"
         done ;;
     esac
   done < <(JG_TRUNK_GATE_DEADLINE="$(landing_deadline)" JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" land-batch "$@" 2>&1; echo "exit-code $?")
@@ -274,7 +274,7 @@ if [ "$1" = run ]; then
   printf '%s\n' "$out" > "$MEM/$id.$head.log"
   if [ "$rc" -eq 0 ]; then
     JG_HOME="$FMH" "$FMH/bin/jg-machine-shadow.sh" landing "$id.$head" landed || true  # shadow report of the move (jg-machine-shadow.sh)
-    landed_lane "$id" "$head" "on the local trunk (not live yet: live follows the answer given at gated, the captain's word or the project's waiver, and its quiet window)"
+    landed_lane "$id" "$head" "on the local trunk (not In use yet: In use follows the answer given at gated, the captain's word or the project's waiver, and its quiet window)"
     partition_forget "$id" "$head"
     "$SELF" next "$FMH" >/dev/null 2>&1 || :
     exit 0
@@ -304,6 +304,7 @@ command -v jq >/dev/null 2>&1 || exit 0
 export JG_HOME=$FMH JG_CONFIG_OVERRIDE=$FMH/config
 # shellcheck source=bin/jg-trunk-policy-lib.sh disable=SC1091
 . "$FMH/bin/jg-trunk-policy-lib.sh"
+jg_trunk_in_use_migrate "$FMH/data" "$FMH/state"
 QUIET=; [ "$1" != next ] || QUIET=1
 # A policy number, or its default when the home's value is not a whole number.
 polnum() { local v; v=$(jg_trunk_policy "$1" "$2"); case $v in ''|*[!0-9]*) v=$3 ;; esac; printf '%s\n' "$v"; }

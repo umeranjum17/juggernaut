@@ -29,7 +29,7 @@
 #                       target lacks is patch-equivalent to one the target holds). With JG_TRUNK_TIP=<sha>
 #                       the target must also be on that tip. A committed live move records its tip and the HEAD it left.
 #   JG_TRUNK_PINBACK=1  the rollback of a failed health check: admits a move to the HEAD recorded before the last live move
-#                       (the guard's own record, or a data/trunk-live.tsv row <home> <post-move sha> <epoch> <status> <pre-move sha>
+#                       (the guard's own record, or a data/trunk-in-use.tsv row <home> <post-move sha> <epoch> <status> <pre-move sha>
 #                       under JG_DATA_OVERRIDE) and to nothing else.
 # With no trunk tip recorded the guard is inactive. A recorded tip whose commit is missing from the repository is warned
 # about and does not block: a guard that cannot decide steps aside rather than lock the home.
@@ -53,7 +53,7 @@ pinback_ok() {  # <old> <new>
   local old=$1 new=$2 data
   [ -n "$old" ] || return 1
   [ "$(cat "$DIR/pre-move" 2>/dev/null)" = "$new $old" ] && return 0
-  data="${JG_DATA_OVERRIDE:-${JG_HOME:-$(cd -P "$COMMON/.." && pwd -P)}/data}/trunk-live.tsv"
+  data="${JG_DATA_OVERRIDE:-${JG_HOME:-$(cd -P "$COMMON/.." && pwd -P)}/data}/trunk-in-use.tsv"
   [ -r "$data" ] && awk -F'\t' -v o="$old" -v n="$new" '$2 == o && $5 == n { f = 1 } END { exit !f }' "$data"
 }
 

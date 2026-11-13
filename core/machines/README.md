@@ -103,7 +103,7 @@ A `rule` line decides by facts: pull request state, where the work is, supersede
 
 The `delivery` machine answers for one change, never one task: `jg-machine.sh show delivery <id>`.
 Its states are `unlanded`, `landed` (on the trunk), `in-homes` (every home runs the commit), `in-homes-off` (every home has the code and its switch is off), `in-use` (switched on, with a proof that holds), `pinned-behind` and `reverted`.
-`core/machines/observers/delivery.sh` reads the states from the trunk, `data/trunk-live.tsv` and `config/`, and `delivery.sh` also documents the `changes.tsv` registry format.
+`core/machines/observers/delivery.sh` reads the states from the trunk, `data/trunk-in-use.tsv` and `config/`, and `delivery.sh` also documents the `changes.tsv` registry format.
 Every change that ships behind a switch gets a row in `core/machines/changes.tsv` in the same commit, which names the switch file in `config/` and the proof, and its commit carries the trailer line `Change: <id>`.
 A report may say `live` or `done` only for `in-use`, and `bin/jg-live-claim.sh` enforces that for every registered change a claim names, by id or by switch name.
 `in-homes-off` is reported as `in the homes, off`, with the switch file named.

@@ -19,7 +19,7 @@ printf '%s' "$on" > "$JG_HOME/state/trunk-tip-juggernaut"
 { tab change-off juggernaut "$off" switch-off switch "ships behind a switch that is off"
   tab change-on juggernaut "$on" switch-on switch "ships behind a switch that is on"; } > "$JG_DELIVERY_CHANGES"
 touch "$JG_HOME/config/switch-on"
-tab juggernaut:primary "$on" "$(date +%s)" live >> "$JG_HOME/data/trunk-live.tsv"
+tab juggernaut:primary "$on" "$(date +%s)" live >> "$JG_HOME/data/trunk-in-use.tsv"
 # A finished local-trunk lane: its meta names the mode and its status log says done.
 lane() { printf 'mode=local-trunk\n' > "$JG_HOME/state/$1.meta"; printf 'done [at=1700000000]: ready in branch fix/%s\n' "$1" > "$JG_HOME/state/$1.status"; }
 for id in refused reverted waiting waiting-too; do lane "$id"; done

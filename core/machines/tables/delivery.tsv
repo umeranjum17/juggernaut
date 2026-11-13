@@ -1,4 +1,4 @@
-machine	delivery	a change in core/machines/changes.tsv, its trunk commit, data/trunk-live.tsv and its config/ switch	core/machines/observers/delivery.sh
+machine	delivery	a change in core/machines/changes.tsv, its trunk commit, data/trunk-in-use.tsv and its config/ switch	core/machines/observers/delivery.sh
 state	unlanded	initial	The change is not on the trunk yet. No home runs it.	-
 state	landed	normal	The change is on the trunk. Not every home runs it yet.	-
 state	in-homes	normal	Every home runs the change. No proof that it does its job is named, so it is not called live.	-

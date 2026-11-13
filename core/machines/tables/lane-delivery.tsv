@@ -1,4 +1,4 @@
-machine	lane-delivery	a lane's state/<id>.status and .meta, data/jg-trunk-landing/<id>.<head>.state, data/trunk-landings.tsv, data/trunk-live.tsv	core/machines/observers/lane-delivery.sh
+machine	lane-delivery	a lane's state/<id>.status and .meta, data/jg-trunk-landing/<id>.<head>.state, data/trunk-landings.tsv, data/trunk-in-use.tsv	core/machines/observers/lane-delivery.sh
 state	coding	initial	The worker is still on it: its last status line is not done.	-
 state	parked	normal	The lane is parked: its branch and state/<id>.parked stay, and its copy and pane are given back.	commit
 state	ready	normal	The worker said done, and the proof for that commit is not complete yet, so the landing check does not start it.	-

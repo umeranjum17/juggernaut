@@ -50,10 +50,10 @@ expect() {  # <lane> <stage word or empty> <pointer or empty>
 printf 'working [at=1]: on it\n' > "$S/a.status"; lane a p1; expect a "" ""                              # coding: not built yet
 lane b p2; printf 'done [at=1]: ready\n' > "$S/b.status"; expect b Built built                              # done, proof incomplete
 lane c p3; land c p3; expect c Landed landed
-lane d p4; land d p4; tab p4 "${H[d]}" 1 live "${H[d]}" >> "$D/trunk-live.tsv"; expect d "In use" in-use
+lane d p4; land d p4; tab p4 "${H[d]}" 1 live "${H[d]}" >> "$D/trunk-in-use.tsv"; expect d "In use" in-use
 lane e p5; land e p5; rel e p5 5 OPEN "$OK"; expect e Landed landed                                          # an open release is still Landed
 assert_equals "Landed" "$(bash "$M/observers/release.sh" stage e)" "an open release is Landed"
-lane f p6; land f p6; tab p6 "${H[f]}" 1 live "${H[f]}" >> "$D/trunk-live.tsv"; rel f p6 6 MERGED "$OK"
+lane f p6; land f p6; tab p6 "${H[f]}" 1 live "${H[f]}" >> "$D/trunk-in-use.tsv"; rel f p6 6 MERGED "$OK"
 assert_equals "Released" "$(bash "$M/observers/release.sh" stage f)" "a merged release is Released"
 expect f "In use" released                                                                                  # the merged release wins the pointer
 lane g p7; land g p7; tab "revert-g" p7 "$(g commit-tree "$BASE^{tree}" -p "$BASE" -m revert)" "$(date +%s)" reverts >> "$D/trunk-landings.tsv"; expect g "" ""

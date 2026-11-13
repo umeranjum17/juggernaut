@@ -127,7 +127,7 @@ reaches_main() {  # <label>
   grep -qxF "merge_rule=gated:$2" "$HOME_D/state/$ID.meta" || fail "$1: the release record must carry the answer given at gated: $(cat "$HOME_D/state/$ID.meta")"
   receipt "$(date +%s)"; out=$(sweep_mog)
   [ "$(merges)" = 1 ] || fail "$1: the green release must merge on that answer: $out"
-  [ ! -e "$HOME_D"/state/trunk-word-live-proj ] && [ ! -e "$HOME_D"/state/trunk-word-release-proj ] && [ ! -e "$HOME_D/data/trunk-words.tsv" ] || fail "$1: no word may be recorded"
+  [ ! -e "$HOME_D"/state/trunk-word-in-use-proj ] && [ ! -e "$HOME_D"/state/trunk-word-release-proj ] && [ ! -e "$HOME_D/data/trunk-words.tsv" ] || fail "$1: no word may be recorded"
   [ ! -e "$HOME_D/config/trunk-live-waiver" ] && [ ! -e "$HOME_D/config/trunk-release-waiver" ] || fail "$1: no waiver may be written"
   # The release PR is the trunk itself going into main: the landed change is in what was pushed, and that PR was merged by the guarded path.
   git --git-dir="$W/origin.git" merge-base --is-ancestor "$(awk -F'\t' '$1 == "l1" { c = $3 } END { print c }' "$HOME_D/data/trunk-landings.tsv")" refs/heads/trunk || fail "$1: the landed change must be in the release"

@@ -86,7 +86,7 @@ run_mover() {  # <extra args>
     "$mover" --base "$C2" --project "$W/proj" --branch trunk "$@" 2>&1
 }
 head_of() { git -C "$W/$1" rev-parse HEAD; }
-row_of() { awk -F'\t' -v k="proj:$1" '$1 == k' "$W/home/data/trunk-live.tsv"; }
+row_of() { awk -F'\t' -v k="proj:$1" '$1 == k' "$W/home/data/trunk-in-use.tsv"; }
 
 test_every_home_moves_or_is_skipped_with_one_row() {
   local out rows rc=0
@@ -101,13 +101,13 @@ test_every_home_moves_or_is_skipped_with_one_row() {
   [ "$(git -C "$W/main" rev-parse main)" = "$C2" ] || fail "Main's main must reach the tip by fast-forward: $out"
   [ "$(head_of pool)" = "$C0" ] && [ "$(git -C "$W/pool" symbolic-ref --short HEAD)" = fix/lane ] || fail "a pool worktree on a lane branch must not be touched"
   git -C "$W/lead-repoint" merge-base --is-ancestor "$X" HEAD 2>/dev/null && fail "the re-point must be reset --keep, not a merge"
-  rows=$(wc -l < "$W/home/data/trunk-live.tsv" | tr -d ' ')
+  rows=$(wc -l < "$W/home/data/trunk-in-use.tsv" | tr -d ' ')
   [ "$rows" = 5 ] || fail "four leads and Main make five rows, got $rows"
   [ "$(row_of lead-ff | cut -f4)" = live ] && [ "$(row_of lead-ff | cut -f5)" = "$C0" ] || fail "a fast-forward row is live with the pre-move HEAD: $(row_of lead-ff)"
   [ "$(row_of lead-repoint | cut -f4)" = "live,re-pointed-from:${X:0:12}" ] && [ "$(row_of lead-repoint | cut -f5)" = "$X" ] || fail "a re-point row names the old sha: $(row_of lead-repoint)"
   [ "$(row_of lead-dirty | cut -f4)" = "skipped:dirty" ] || fail "a dirty lead is skipped:dirty: $(row_of lead-dirty)"
   [ "$(row_of lead-unlanded | cut -f4)" = "skipped:unlanded:secret.txt" ] || fail "an uncontained lead is skipped:unlanded:<paths>: $(row_of lead-unlanded)"
-  [ "$(tail -1 "$W/home/data/trunk-live.tsv" | cut -f1)" = "proj:primary" ] || fail "Main must be the last row"
+  [ "$(tail -1 "$W/home/data/trunk-in-use.tsv" | cut -f1)" = "proj:primary" ] || fail "Main must be the last row"
   assert_contains "$(cat "$W/home/state/trunk-live-restart-pending" 2>/dev/null)" "$C2" "Main must get a restart-pending marker for the new commit"
   pass 'T1 one row per home: two move, two skipped with a reason, Main last, a pool worktree untouched'
 }
@@ -273,7 +273,7 @@ test_home_moves_one_canary_only() {
   out=$(run_mover --home "$W/lead-ff") || fail "the canary move must succeed: $out"
   [ "$(head_of lead-ff)" = "$C2" ] || fail "the canary lead must move"
   [ "$(head_of lead-repoint)" != "$C2" ] && [ "$(git -C "$W/main" rev-parse main)" = "$C0" ] || fail "--home must leave every other home, Main included, alone"
-  [ "$(wc -l < "$W/home/data/trunk-live.tsv" | tr -d ' ')" = 1 ] || fail "the canary writes one row"
+  [ "$(wc -l < "$W/home/data/trunk-in-use.tsv" | tr -d ' ')" = 1 ] || fail "the canary writes one row"
   [ ! -e "$W/home/state/trunk-live-restart-pending" ] || fail "a canary must not mark Main for restart"
   pass 'T2 --home moves exactly one lead'
 }
@@ -364,8 +364,8 @@ test_a_go_live_run_from_a_lead_home_moves_every_home() {
   out=$(run_from_self "$(passing_health_mover)" --base "$C2" --project "$W/proj" --branch trunk) || rc=$?
   [ "$rc" -eq 0 ] || fail "a move from a lead home must succeed when every home can move: $out"
   for id in lead-a lead-b lead-self main; do [ "$(git -C "$W/$id" rev-parse HEAD)" = "$C2" ] || fail "$id must be at the base, not left behind: $out"; done
-  [ "$(cut -d$'\t' -f1 "$SELF/data/trunk-live.tsv" | paste -sd' ' -)" = "proj:lead-a proj:lead-b proj:lead-self proj:primary" ] \
-    || fail "one row per home, Main last: $(cat "$SELF/data/trunk-live.tsv")"
+  [ "$(cut -d$'\t' -f1 "$SELF/data/trunk-in-use.tsv" | paste -sd' ' -)" = "proj:lead-a proj:lead-b proj:lead-self proj:primary" ] \
+    || fail "one row per home, Main last: $(cat "$SELF/data/trunk-in-use.tsv")"
   assert_contains "$(cat "$MAIN/state/trunk-live-restart-pending" 2>/dev/null)" "$C2" "Main, not the lead, gets the restart-pending marker"
   [ ! -e "$SELF/state/trunk-live-restart-pending" ] || fail "the lead home's own state is not Main's"
   pass 'T1d a move run from a lead home reads Main'"'"'s registry and moves every lead, itself and Main, one row each'
@@ -374,13 +374,13 @@ test_a_go_live_run_from_a_lead_home_moves_every_home() {
 test_a_home_left_behind_is_named_and_the_lag_check_reports_it() {
   local out rc=0 lag="$ROOT/bin/jg-trunk-live-lag.sh" now
   lead_world t7; now=$(date +%s)
-  printf 'proj\t%s\t%s\tlive\n' "$C2" "$((now - 1200))" > "$SELF/data/trunk-live.tsv"
+  printf 'proj\t%s\t%s\tlive\n' "$C2" "$((now - 1200))" > "$SELF/data/trunk-in-use.tsv"
   out=$(run_from_self "$lag" "$W/proj") || rc=$?
   [ "$rc" -eq 1 ] && [ "$out" = "lag: homes not In use at the last go-live ${C2:0:12}: lead-a lead-b lead-self primary" ] || fail "every home is behind a 20 minute old go-live: rc=$rc $out"
-  printf 'proj\t%s\t%s\tlive\n' "$C2" "$((now - 60))" > "$SELF/data/trunk-live.tsv"
+  printf 'proj\t%s\t%s\tlive\n' "$C2" "$((now - 60))" > "$SELF/data/trunk-in-use.tsv"
   out=$(run_from_self "$lag" "$W/proj") || fail "a go-live under 10 minutes old is not a lag: $out"
   [ -z "$out" ] || fail "no lag line inside the 10 minutes: $out"
-  printf 'proj\t%s\t%s\tlive\n' "$C2" "$((now - 1200))" > "$SELF/data/trunk-live.tsv"; rc=0
+  printf 'proj\t%s\t%s\tlive\n' "$C2" "$((now - 1200))" > "$SELF/data/trunk-in-use.tsv"; rc=0
   printf 'edit\n' >> "$W/lead-b/AGENTS.md"
   out=$(run_from_self "$(passing_health_mover)" --base "$C2" --project "$W/proj" --branch trunk) || rc=$?
   [ "$rc" -ne 0 ] || fail "a dirty home must fail the move: $out"
@@ -518,8 +518,8 @@ test_live_runs_the_exported_tool_and_the_waiver_spends_no_word() {
   [ "$rc" = 0 ] || fail "live under the waiver must move the home: $out"
   assert_contains "$out" "$TH/state/trunk-live-tool/$TIP/bin/jg-update.sh" "the mover must run from the exported copy of the tip"
   [ "$(git -C "$TW/maincode" rev-parse HEAD)" = "$TIP" ] || fail "Main's code must be at the tip: $out"
-  grep -q "waiver=owner-rule-686826b5" "$TH/data/trunk-live.tsv" || fail "the live row must carry the waiver: $(cat "$TH/data/trunk-live.tsv")"
-  [ ! -e "$TH/state/trunk-word-live-proj" ] && [ ! -e "$TH/data/trunk-words.tsv" ] || fail "a waiver records and spends no word"
+  grep -q "waiver=owner-rule-686826b5" "$TH/data/trunk-in-use.tsv" || fail "the live row must carry the waiver: $(cat "$TH/data/trunk-in-use.tsv")"
+  [ ! -e "$TH/state/trunk-word-in-use-proj" ] && [ ! -e "$TH/data/trunk-words.tsv" ] || fail "a waiver records and spends no word"
   out=$(ttrunk live "$PROJ2" 2>&1) && fail "a project without a waiver line must still need the word: $out"
   assert_contains "$out" "no recorded word from the captain" "the second project keeps need_word"
   pass 'T5 live runs the exported tool; the waiver spends no word and only its project skips the word'
@@ -538,18 +538,18 @@ test_the_landing_check_runs_the_batched_live_step_and_reports_it() {
   [ "$rc" = 2 ] && [ ! -e "$fh/calls" ] || fail "the landing check must have no post-landing suite job (exit $rc, calls: $(cat "$fh/calls" 2>/dev/null))"
   # The live job reports a go-live and a failed move, a new hold once, and nothing for waiting, already live or no waiver.
   : > "$fh/calls"; : > "$ob"; printf '0\n' > "$fh/rc"
-  printf 'live at abc on every home (0 skipped, see data/trunk-live.tsv)\n' > "$fh/verdict"; live
-  assert_contains "$(cat "$ob")" "proj: live at abc on every home" "a go-live is reported"
+  printf 'In use at abc on every home (0 skipped, see data/trunk-in-use.tsv)\n' > "$fh/verdict"; live
+  assert_contains "$(cat "$ob")" "proj: In use at abc on every home" "a go-live is reported"
   : > "$ob"; printf 'the move failed: hook\n' > "$fh/verdict"; printf '3\n' > "$fh/rc"; live
-  assert_contains "$(cat "$ob")" "proj: NOT live: the move failed: hook" "a failed move is reported"
+  assert_contains "$(cat "$ob")" "proj: NOT In use: the move failed: hook" "a failed move is reported"
   : > "$ob"; printf '0\n' > "$fh/rc"
-  for out in 'waiting: live in about 9 min (quiet 20 min, cap 60 min)' 'already live at abc' "not live: it needs the captain's word (no go-live waiver for proj)"; do
+  for out in 'waiting: In use in about 9 min (quiet 20 min, cap 60 min)' 'already In use at abc' "not In use: it needs the captain's word (no go-live waiver for proj)"; do
     printf '%s\n' "$out" > "$fh/verdict"; live
   done
   [ ! -s "$ob" ] || fail "waiting, already live and no waiver add no line: $(cat "$ob")"
   # A home behind the last go-live (the lag script's one line) is reported once per set of homes, and again after it clears and returns.
   printf '#!/usr/bin/env bash\ncat "%s/lag" 2>/dev/null\n' "$fh" > "$fh/bin/jg-trunk-live-lag.sh"; chmod +x "$fh/bin/jg-trunk-live-lag.sh"
-  : > "$ob"; printf 'waiting: live in about 9 min\n' > "$fh/verdict"
+  : > "$ob"; printf 'waiting: In use in about 9 min\n' > "$fh/verdict"
   printf 'lag: homes not In use at the last go-live abc: lead-b\n' > "$fh/lag"; live; live
   [ "$(grep -c "proj: lag: homes not In use at the last go-live abc: lead-b" "$ob")" = 1 ] || fail "a lagging home is reported once: $(cat "$ob")"
   printf 'lag: homes not In use at the last go-live abc: lead-b lead-c\n' > "$fh/lag"; live

@@ -6,7 +6,7 @@
 # bin/jg-ff-lib.sh owns the fast-forward guards; a dirty, diverged or wrongly-branched
 # home is skipped and this hook exits 1 so the live record says the home did not move.
 # The LAST line this hook prints on a failure is its reason; `jg-trunk.sh live` prints it and records it as
-# hook-failed:<reason> in data/trunk-live.tsv.
+# hook-failed:<reason> in data/trunk-in-use.tsv.
 # The one backward move is the pin-back after a red CI (below): the home returns to an earlier trunk commit.
 # It does not restart Squad Leads or rerun the stack: that cost is a separate step.
 set -eu

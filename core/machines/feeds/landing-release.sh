@@ -4,7 +4,7 @@
 # Usage: landing-release.sh [--dry-run]
 #
 # Reads data/trunk-latency.tsv, data/trunk-landing-phases.tsv, data/trunk-resolving.tsv, data/trunk-landings.tsv,
-# data/trunk-live.tsv, data/trunk-releases.tsv and data/trunk-versions.tsv, and turns each row into the move it recorded,
+# data/trunk-in-use.tsv, data/trunk-releases.tsv and data/trunk-versions.tsv, and turns each row into the move it recorded,
 # with the row's own time, as a line of data/machine-moves.log (`<epoch> TAB <machine> TAB <id> TAB <from> TAB <event> TAB
 # <to> TAB <writer>`, the writer being `feed:landing-release`). It changes no record and no writer: the lander is not touched.
 #   landing        <task>.<head>  enqueue (ready), start (launch), conflict, conflict-resolved, give-back, rebase-ok or
@@ -69,7 +69,7 @@ if [ -r "$DATA/trunk-landings.tsv" ]; then
     emit "$at" lane-delivery "$task" landing t4-land landed
     while IFS=$'\t' read -r sha lat; do
       holds "$sha" && { emit "$lat" lane-delivery "$task" landed t7-live live; break; }
-    done < <(awk -F'\t' -v p="$proj" '$1 == p && $4 ~ /^live/ && $3 + 0 > 0 { print $2 "\t" $3 }' "$DATA/trunk-live.tsv" 2>/dev/null | sort -t$'\t' -k2,2n -s)
+    done < <(awk -F'\t' -v p="$proj" '$1 == p && $4 ~ /^live/ && $3 + 0 > 0 { print $2 "\t" $3 }' "$DATA/trunk-in-use.tsv" 2>/dev/null | sort -t$'\t' -k2,2n -s)
     while IFS=$'\t' read -r sha rat; do
       holds "$sha" && { emit "$rat" release "$task" '(none)' open open; break; }
     done < <(awk -F'\t' -v p="$proj" '$1 == p && $6 ~ /^https:\/\// && $5 + 0 > 0 { print $3 "\t" $5 }' "$DATA/trunk-releases.tsv" 2>/dev/null | sort -t$'\t' -k2,2n -s)

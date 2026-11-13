@@ -89,7 +89,7 @@ move_homes() {  # <sha> <branch>
   JG_ROOT_OVERRIDE="$W/main" JG_HOME="$HOME_D" JG_STACK_SKIP=1 JG_HOST_WIRING_SKIP=1 \
     "$W/root/bin/jg-update.sh" --base "$1" --project "$PROJ" --branch "$2" 2>&1
 }
-live_row() { awk -F'\t' '$1 == "proj:lead" { r = $4 } END { print r }' "$HOME_D/data/trunk-live.tsv" 2>/dev/null; }
+live_row() { awk -F'\t' '$1 == "proj:lead" { r = $4 } END { print r }' "$HOME_D/data/trunk-in-use.tsv" 2>/dev/null; }
 
 test_version_two_release_rolls_over_and_names_its_commit() {
   local out sha

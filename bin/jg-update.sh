@@ -75,7 +75,7 @@
 # homes and are never touched). The homes are Main's registry plus Main, whichever home runs this: a lead home follows its
 # parent record up to Main (bin/jg-fleet-homes-lib.sh), so a go-live run from a lead moves every home, itself included.
 # The last line printed names every home that is not at the base (`fleet: not every home is at <sha>: <ids>`) and the exit is
-# 1; a go-live records its `live` row only on exit 0. Each home gets exactly one row in data/trunk-live.tsv:
+# 1; a go-live records its `live` row only on exit 0. Each home gets exactly one row in data/trunk-in-use.tsv:
 #   <project>:<home-id> <sha> <epoch> <status> <pre-move HEAD>      (Main's home id is "primary")
 #   live                        fast-forwarded, or already there
 #   live,re-pointed-from:<sha>  HEAD was not an ancestor but the tip holds its whole tree: reset --keep, never a merge
@@ -135,6 +135,8 @@ SQUAD_LEADS_MD="$(jg_compat_pick "$JG_HOME/data/squad_leads.md")"
 . "$SCRIPT_DIR/jg-squad-lead-parent-lib.sh"
 # shellcheck source=bin/jg-fleet-homes-lib.sh
 . "$SCRIPT_DIR/jg-fleet-homes-lib.sh"
+# shellcheck source=bin/jg-trunk-policy-lib.sh
+. "$SCRIPT_DIR/jg-trunk-policy-lib.sh"
 
 "$SCRIPT_DIR/jg-guard.sh" || true
 
@@ -401,7 +403,8 @@ move_home() {  # <home-id> <dir> <label> <ignore-seed-marker>
     [ -z "$WIRE_FAILED" ] || status="$status,wiring-failed:$WIRE_FAILED"
   fi
   mkdir -p "$DATA"
-  printf '%s:%s\t%s\t%s\t%s\t%s\n' "$(basename "$PROJECT")" "$key" "$BASE" "$(date +%s)" "$status" "$pre" >> "$DATA/trunk-live.tsv"
+  jg_trunk_in_use_migrate "$DATA" "$STATE"
+  printf '%s:%s\t%s\t%s\t%s\t%s\n' "$(basename "$PROJECT")" "$key" "$BASE" "$(date +%s)" "$status" "$pre" >> "$DATA/trunk-in-use.tsv"
 }
 
 # Every home the registry of Main names, then Main (bin/jg-fleet-homes-lib.sh lists them, from whichever home runs this).
@@ -420,7 +423,7 @@ fleet_live_move() {
       lead)
         if ! validate_squad_lead_home "$id" "$dir"; then
           echo "squad_lead $id: skipped: unsafe home: $VALIDATION_ERROR"
-          printf '%s:%s\t%s\t%s\tskipped:unsafe-home\t\n' "$(basename "$PROJECT")" "$id" "$BASE" "$(date +%s)" >> "$DATA/trunk-live.tsv"
+          printf '%s:%s\t%s\t%s\tskipped:unsafe-home\t\n' "$(basename "$PROJECT")" "$id" "$BASE" "$(date +%s)" >> "$DATA/trunk-in-use.tsv"
           behind="$behind $id"; continue
         fi
         move_home "$id" "$VALIDATED_HOME" "squad_lead $id" yes ;;

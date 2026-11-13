@@ -14,7 +14,7 @@
 # is left alone, so a second run posts nothing. The status pill is "In progress" because a landing is on the trunk, not yet
 # In use. Cards go one at a time through sign-off-axi, which holds the board's own lock; a failed post stops the run (one line,
 # the rest wait for the next beat) instead of queueing behind a busy board.
-# A go-live card (key `live-<commit>`, status "In progress": a home that moved to the commit is not proof the change is In use) is posted for each `live*` row of data/trunk-live.tsv that names the project
+# A go-live card (key `live-<commit>`, status "In progress": a home that moved to the commit is not proof the change is In use) is posted for each `live*` row of data/trunk-in-use.tsv that names the project
 # itself, not one home (`<project>:<home>` rows only give the count of homes that moved). It lists the landings since the previous
 # go-live commit (the landed commits that the new commit holds and the previous one does not) and the delivery word of each of them
 # that core/machines/changes.tsv registers, read only through `jg-machine.sh show delivery`; a lane the registry does not name
@@ -104,7 +104,7 @@ live_json() {
     w=$(JG_HOME=$FMH "$FMH/bin/jg-machine.sh" show delivery "$lane" 2>/dev/null | awk -F'\t' '$1 == "state" { print $2 }')
     [ -z "$w" ] || words="$words${words:+, }$lane is $w"
   done < <(awk -F'\t' -v p="$proj" '$2 == p { print $1 "\t" $3 }' "$DATA/trunk-landings.tsv")
-  homes=$(awk -F'\t' -v p="$proj:" -v s="$commit" 'index($1, p) == 1 && $2 == s && $4 ~ /^live/ { h[$1] = 1 } END { print length(h) }' "$DATA/trunk-live.tsv")
+  homes=$(awk -F'\t' -v p="$proj:" -v s="$commit" 'index($1, p) == 1 && $2 == s && $4 ~ /^live/ { h[$1] = 1 } END { print length(h) }' "$DATA/trunk-in-use.tsv")
   case $status in *pinned-behind-*) note=" A red check pinned this go-live behind the trunk tip $(printf '%s' "${status##*pinned-behind-}" | cut -d, -f1)." ;; esac
   if [ "$homes" -gt 0 ]; then homes=" in $homes home(s)"; else homes=''; fi
   [ "$n" -eq 1 ] && count='1 landing' || count="$n landings"
@@ -124,7 +124,7 @@ summary_json() {
     [ -z "$until" ] || [ "$at" -lt "$until" ] || continue
     total=$((total + 1)); [ -n "$first" ] || first=$at; last=$at
     case $kind in full|full-rerun) pass=$((pass + 1)) ;; full-tip-red) red=$((red + 1)) ;; reverts-*) rev=$((rev + 1)) ;; *) other=$((other + 1)) ;; esac
-    lsha=$(awk -F'\t' -v p="$proj" '$1 == p && $4 ~ /^live/ { s = $2 } END { print s }' "$DATA/trunk-live.tsv" 2>/dev/null)
+    lsha=$(awk -F'\t' -v p="$proj" '$1 == p && $4 ~ /^live/ { s = $2 } END { print s }' "$DATA/trunk-in-use.tsv" 2>/dev/null)
     [ -z "$lsha" ] || ! git -C "$FMH/projects/$proj" merge-base --is-ancestor "$commit" "$lsha" 2>/dev/null || live=$((live + 1))
   done < "$DATA/trunk-landings.tsv"
   [ "$total" -gt 0 ] || return 1
@@ -169,7 +169,7 @@ land_cards() {
 live_cards() {
   local proj commit at status _ prev
   declare -A last=()
-  [ -s "$DATA/trunk-live.tsv" ] || return 0
+  [ -s "$DATA/trunk-in-use.tsv" ] || return 0
   while IFS=$'\t' read -r proj commit at status _; do
     case $status in live*) ;; *) continue ;; esac
     [[ $commit =~ ^[0-9a-f]{40}$ ]] || continue
@@ -178,7 +178,7 @@ live_cards() {
     if printf '%s\n' "$have" | grep -qxF "live-$commit"; then already=$((already + 1)); continue; fi
     live_json "$proj" "$commit" "$at" "$status" "$prev" > "$work/card.json" || { drift "go-live-${commit:0:12}" "could not build the go-live card for ${commit:0:12}"; return 1; }
     post_card "go-live ${commit:0:12}" "$work/card.json" || return 1
-  done < <(awk -F'\t' '$1 !~ /:/' "$DATA/trunk-live.tsv")
+  done < <(awk -F'\t' '$1 !~ /:/' "$DATA/trunk-in-use.tsv")
 }
 
 # backfill_cards: one summary card for each UTC day that has landings from before the marker; none when the marker is 0.
