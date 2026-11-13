@@ -401,7 +401,7 @@ classify_refusal() {  # <output file> [<gate log>...]
 }
 
 # Every script the test runner finished in a gate log, as: script TAB exit status TAB failure signature.
-# The signature of a pass is "-". Of a failure it is the script's own "not ok" lines (else its last three lines),
+# The signature of a pass is "-". Of a failure it is the script's own "not ok" lines by test name, without the test's number (else its last three lines),
 # sorted, with temp paths, long numbers and elapsed seconds masked so a pid, a mktemp name or a run time cannot make one red look like two.
 gate_results() {  # <log>
   awk '
@@ -420,7 +420,7 @@ gate_results() {  # <log>
       }
       print $3 "\t" ex "\t" sig; cur = ""; next
     }
-    cur != "" && $0 !~ /^[ \t]*$/ { l = norm($0); t[++nt] = l; if ($0 ~ /^not ok/) f[++nf] = l }
+    cur != "" && $0 !~ /^[ \t]*$/ { l = norm($0); t[++nt] = l; if ($0 ~ /^not ok/) { sub(/^not ok +[0-9]+/, "not ok", l); f[++nf] = l } }
   ' "$1"
 }
 
@@ -566,8 +566,8 @@ gate_figures() {  # <first-run log> <start epoch>
 # Returns 0 when the candidate is cleared, 2 when it is charged with a failure its base does not have, and 1 when it failed for a
 # reason no test script accounts for. The base is the trunk tip for a landing and the commit's parent for a verify.
 full_gate() {  # <candidate> <command> <base>
-  local cand=$1 log="${LAND_ATTEMPT:-$DATA/trunk/gate-$PN-${1:0:12}}-full.log" envf rc=0 mine tipres line s ex sig tex tsig bad='' old='' unexplained quoted again settled now flaky='' t0 passing='' byself='' byparent='' rerun_red noparent=''
-  t0=$(date +%s); GATE_KIND=full; GATE_FIGURES=; GATE_BAD=
+  local badsig='' cand=$1 log="${LAND_ATTEMPT:-$DATA/trunk/gate-$PN-${1:0:12}}-full.log" envf rc=0 mine tipres line s ex sig tex tsig bad='' old='' unexplained quoted again settled now flaky='' t0 passing='' byself='' byparent='' rerun_red noparent=''
+  t0=$(date +%s); GATE_KIND=full; GATE_FIGURES=; GATE_BAD=; GATE_BAD_SIG=
   envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX" 2>/dev/null) || { mkdir -p "$DATA/trunk"; envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX"); }
   gate_exec "$cand" "$2" "$log" "$envf" || rc=$?
   settle_shard_budget "$cand" "$log"
@@ -631,7 +631,7 @@ full_gate() {  # <candidate> <command> <base>
     tsig=$(printf '%s\n' "$tipres" | awk -F'\t' -v s="$s" '$1 == s { sub(/^[^\t]*\t[^\t]*\t/, ""); print; exit }')
     if [ -n "$sig" ] && [ "$tex" = "$ex" ] && [ "$tsig" = "$sig" ]; then old="$old $s"
     elif printf '%s\n' "$byself" | grep -qxF -- "$s"; then byparent="$byparent $s"
-    else bad="$bad $s"; fi
+    else bad="$bad $s"; badsig="$badsig; $s: ${sig:-no test name}"; fi
   done <<< "$mine"
   # shellcheck disable=SC2086
   [ -z "$byparent" ] || { echo "note: $byparent fails by itself on the parent ${3:0:12}, so no lane is charged for it (each recorded and filed as its own fix row)" >&2; record_flaky "$cand" $byparent; }
@@ -639,7 +639,7 @@ full_gate() {  # <candidate> <command> <base>
   # shellcheck disable=SC2086
   [ -z "$old" ] || report_tip_red "$3" $old
   if [ -n "$bad" ]; then
-    GATE_BAD=${bad# }
+    GATE_BAD=${bad# }; GATE_BAD_SIG=${badsig#; }
     tail -n 20 "$log" >&2
     echo "REFUSED: gate 'full' failed (exit $rc) at ${cand:0:12}; this lane introduced or changed the failure of:$bad; full log: $log" >&2
     return 2
@@ -1065,7 +1065,7 @@ land_candidate() {
 
 # --- The merge queue: two or more queued lanes land as one stack (docs/trunk-flow.md "Batch landing") ---
 # B_* are the lanes of one batch, by position: id, original lane commit (C0), its commit as it now sits in the stack (CUR), lane head, branch, record, why it was returned.
-B_ID=(); B_C0=(); B_CUR=(); B_HEAD=(); B_BRANCH=(); B_META=(); B_WHY=(); B_CLASS=(); B_TIP=; B_BASE0=; CHAIN=(); CHAIN_CHANGED=; LANDED=(); LAST_RED=; LAST_RED_CLASS=; GATE_BAD=
+B_ID=(); B_C0=(); B_CUR=(); B_HEAD=(); B_BRANCH=(); B_META=(); B_WHY=(); B_CLASS=(); B_TIP=; B_BASE0=; CHAIN=(); CHAIN_CHANGED=; LANDED=(); LAST_RED=; LAST_RED_CLASS=; GATE_BAD=; GATE_BAD_SIG=
 
 # The lanes <idx>... stacked on <top>, in order: a commit already on its place stays, any other is rebased by the lander onto it.
 # A lane that no longer merges clean drops out (B_WHY). Sets CHAIN (the lanes that stack) and CHAIN_CHANGED (1 when any commit was rebuilt or dropped).
@@ -1158,9 +1158,28 @@ red_pick_try() {  # <idx>   (LAST_RED and LAST_RED_CLASS hold the stack's red)
   for i in "${CHAIN[@]}"; do [ "$i" = "$pick" ] || rest+=("$i"); done
   chain_on "$B_TIP" "${rest[@]}"
   [ "${#CHAIN[@]}" -gt 0 ] || return 1
-  batch_gate "${B_CUR[${CHAIN[${#CHAIN[@]}-1]}]}" "${#CHAIN[@]}" || return 1
+  batch_gate "${B_CUR[${CHAIN[${#CHAIN[@]}-1]}]}" "${#CHAIN[@]}" || { red_note "${CHAIN[@]}"; return 1; }
   land_group || return 2
   B_WHY[pick]="REFUSED: this lane is the red in its batch: $why"; B_CLASS[pick]=$class
+}
+
+# --- A batch never fails twice on the same red (H29a) ---
+# One ledger per project, data/trunk/batch-red-<project>.tsv: key TAB lane count TAB epoch TAB the failing scripts and their test names TAB the refusal.
+# The key is the exact lane commits (as the lanes reported them, in sorted order) on the tree of the trunk tip they were judged on, so a set
+# that changes by one lane, or a tip that moves, is a new question. Only a red the lanes caused (class final) is written: a red from the
+# host's disk or the runner says nothing about the lanes. A set found here is never gated again: a stack is halved at once, and a lane that
+# was red alone before is returned with the script and test that failed.
+red_key() {  # <idx>...   (B_TIP is the tip the set is judged on)
+  local i
+  { git -C "$PROJ" rev-parse "$B_TIP^{tree}"; for i in "$@"; do printf '%s\n' "${B_C0[$i]}"; done | sort; } | sha256sum | cut -d' ' -f1
+}
+red_seen() {  # <idx>...: prints the ledger row of the set when it went red before
+  awk -F'\t' -v k="$(red_key "$@")" '$1 == k { r = $0 } END { if (r != "") print r }' "$DATA/trunk/batch-red-$PN.tsv" 2>/dev/null || true
+}
+red_note() {  # <idx>...   (LAST_RED, GATE_BAD and GATE_BAD_SIG hold the red just seen)
+  [ "${LAST_RED_CLASS:-final}" = final ] || return 0
+  mkdir -p "$DATA/trunk"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$(red_key "$@")" "$#" "$(date +%s)" "$(printf '%s' "${GATE_BAD_SIG:-${GATE_BAD:-no script named}}" | tr '\t\n' '  ')" "$(printf '%s' "$LAST_RED" | tr '\t\n' '  ')" >> "$DATA/trunk/batch-red-$PN.tsv"
 }
 
 # The lanes in CHAIN land in one move: the trunk fast-forwards over the whole stack. One trunk-landings.tsv row per lane.
@@ -1189,7 +1208,7 @@ land_group() {
 # half is judged alone, lands if green, and the rest is judged on the new tip, until the lane that caused the red stands alone; only it is
 # returned; a red whose failing scripts one lane owns skips the halving (red_pick). Prints `landed <id> ...` or `returned <id>: <reason>` for every lane. Exit 0 once every lane has an outcome.
 cmd_land_batch() {
-  local a id i n max proj0='' errf g flag top half res moved rounds=0 l branch head pick
+  local a id i n max proj0='' errf g flag top half res moved rounds=0 l branch head pick seen
   local -a exp todo stack members first rest remaining orig
   case " $* " in *" --force"*|*" -f "*|*" --no-verify "*|*" --skip"*) refuse "a landing is never forced: there is no flag that lands past a conflict, a stale base or a failing check" ;; esac
   n=$#; [ "$n" -ge 2 ] || refuse "a batch stacks 2 or more queued lanes; one lane lands with: jg-trunk.sh land <task>"
@@ -1231,8 +1250,15 @@ cmd_land_batch() {
     chain_on "$B_TIP" "${members[@]}"
     [ "${#CHAIN[@]}" -gt 0 ] || continue
     top=${B_CUR[${CHAIN[${#CHAIN[@]}-1]}]}
-    GATE_BAD=
-    if [ "$flag" = 1 ] && [ -z "$CHAIN_CHANGED" ]; then :; elif batch_gate "$top" "${#CHAIN[@]}"; then if land_group; then continue; fi; moved=1; break; fi
+    GATE_BAD=; GATE_BAD_SIG=; seen=$(red_seen "${CHAIN[@]}")
+    if [ "$flag" = 1 ] && [ -z "$CHAIN_CHANGED" ]; then :
+    elif [ -n "$seen" ]; then
+      # This exact set went red before on this tip: no gate runs for it again.
+      LAST_RED=$(cut -f5 <<< "$seen"); LAST_RED_CLASS=final
+      echo "note: this stack of ${#CHAIN[@]} went red before on this tip; not gated again. It failed: $(cut -f4 <<< "$seen")" >&2
+      [ "${#CHAIN[@]}" -ne 1 ] || LAST_RED="$LAST_RED (red alone before: $(cut -f4 <<< "$seen"))"
+    elif batch_gate "$top" "${#CHAIN[@]}"; then if land_group; then continue; fi; moved=1; break
+    else red_note "${CHAIN[@]}"; fi
     if [ "${#CHAIN[@]}" -eq 1 ]; then
       B_WHY[CHAIN[0]]="REFUSED: this lane is the red in its batch: $LAST_RED"; B_CLASS[CHAIN[0]]=$LAST_RED_CLASS; continue
     fi
