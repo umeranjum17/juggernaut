@@ -238,6 +238,9 @@ journeys:
   nav-removal-gate:
     tier: local
     command: bash journeys/nav-removal-gate.sh
+  machine-moves-log:
+    tier: local
+    command: bash journeys/machine-moves-log.sh
   captain-close-gate:
     tier: local
     command: bash journeys/captain-close-gate.sh

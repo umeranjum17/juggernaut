@@ -3,7 +3,7 @@
 # per-machine flip from shadow to refusal.
 #
 # Usage:
-#   jg-machine-guard.sh edge <machine> <from> <to>   judge one move; exit 0 allowed, exit 1 refused, exit 2 usage
+#   jg-machine-guard.sh edge <machine> <from> <to> [<id>]   judge one move; exit 0 allowed, exit 1 refused, exit 2 usage
 #   jg-machine-guard.sh flip <machine> <seconds>     list the machine in config/machine-enforce, only when quiet
 #   jg-machine-guard.sh enforced <machine>           exit 0 when the machine is listed in config/machine-enforce, else 1
 #
@@ -13,7 +13,10 @@
 # config/machine-enforce is enforced: the same move is logged as `refused`, explained on stderr, and exits 1.
 # Exit 1 is the only refusal. A guard failure (no table, a table that fails its lint, a log that cannot be
 # written) is logged as `error` where it can be and exits 0, so a broken guard never fails the writer.
-# A legal move is silent. The baseline keeps today's states legal: a `<machine> TAB <state>` row allows any
+# A legal move is appended, with the record's id when the writer gave one, to the one move log of every machine,
+# data/machine-moves.log: `<epoch> TAB <machine> TAB <id> TAB <from> TAB <event> TAB <to> TAB <writer>`, the event
+# and writer being the table edge's own (the first edge of that move). A log that cannot be written never fails the writer.
+# The baseline keeps today's states legal: a `<machine> TAB <state>` row allows any
 # move touching that state, and a `<machine> TAB <from> TAB <event> TAB <to>` row allows that move.
 #
 # `flip` is the rule "turn a machine on only after a quiet period": it refuses unless the table passes its
@@ -31,6 +34,7 @@ JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}}"
 DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
 CONFIG="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
 LOG="$DATA/machine-shadow.log"
+MOVES="$DATA/machine-moves.log"
 ENFORCE="$CONFIG/machine-enforce"
 TABLES="${JG_MACHINES_TABLES:-$SCRIPT_DIR/../core/machines/tables}"
 
@@ -45,11 +49,20 @@ in_baseline() {  # <machine> <from> <to>
     "$TABLES/known-baseline.tsv"
 }
 
+# move_line <machine> <id> <from> <to> <edge-check output>: one legal move onto the move log
+move_line() {
+  local event writer
+  event=$(printf '%s\n' "$5" | awk -F'\t' '$1 ~ /^legal / { print $2; exit }')
+  writer=$(printf '%s\n' "$5" | awk -F'\t' '$1 ~ /^legal / { print $3; exit }')
+  mkdir -p "$DATA" 2>/dev/null && printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$1" "$2" "$3" "$event" "$4" "$writer" >>"$MOVES" 2>/dev/null
+  return 0
+}
+
 cmd_edge() {
-  if [ $# -ne 3 ] || ! plain "$1" || ! plain "$2" || ! plain "$3"; then usage; fi
-  local m=$1 from=$2 to=$3 out rc mode=shadow
+  if [ $# -lt 3 ] || [ $# -gt 4 ] || ! plain "$1" || ! plain "$2" || ! plain "$3" || { [ $# -eq 4 ] && ! plain "$4"; }; then usage; fi
+  local m=$1 from=$2 to=$3 id=${4:--} out rc mode=shadow
   out=$(bash "$SCRIPT_DIR/jg-machine.sh" edge-check "$m" "$from" "$to" 2>&1); rc=$?
-  [ "$rc" = 0 ] && return 0
+  [ "$rc" = 0 ] && { move_line "$m" "$id" "$from" "$to" "$out"; return 0; }
   case "$out" in
     lint\ * | *'no table'*) log_line "$m" "$from" "$to" error; echo "jg-machine-guard: $m: no usable table, move allowed" >&2; return 0 ;;
   esac
