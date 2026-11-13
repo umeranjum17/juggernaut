@@ -7,3 +7,8 @@ auto-dispatch	event
 records-reaper	event
 alert-*	event
 line-red-*	event
+lock-lease	event
+status-latency	event
+name	event
+*-reaper	event
+lab-wake	event

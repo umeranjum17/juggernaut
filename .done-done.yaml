@@ -50,6 +50,7 @@ journeys:
     tier: local
     command: bash journeys/trunk-table.sh
   cleanup-table:
+    tier: local
     command: bash journeys/cleanup-table.sh
   worker-table:
     tier: local

@@ -118,6 +118,7 @@ plan=(
   tickets-sync:env
   lookout-adapter:plain
   undelivered-alert:home
+  lock-lease:home
 )
 
 # The sources one step installs from: its own directory, this script (the plan and argument shapes), and every file
