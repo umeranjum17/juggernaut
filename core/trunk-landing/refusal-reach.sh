@@ -10,7 +10,13 @@
 #      starts a new record.
 #   2. A refusal nobody acted on for ALERT_SECS (the head is unchanged) raises ONE alert line that names the lane and the refusal.
 #   3. A refusal that only needs time (away mode, a held decision) is not the worker's to fix and never comes here.
-# State: <MEM>/<task>.<head>.refusal, one line `<first seen epoch> <reason checksum> <last steer epoch> <alerted 0|1>`.
+#   4. A refusal that is the lane's own fault (its conflict, or a red its own change caused) for a lane that has NO running agent
+#      (stopped at Built, or dead) starts ONE new agent for that head (bin/jg-control.sh relaunch), with the refusal as its first
+#      instruction; that note is the steer, so none is sent for the head. A refusal that is not the lane's fault (an environment wait or
+#      hook, a try cap the machine hit, a revert, a lock, a cleanup refusal) starts nothing, and nor does a lane whose agent runs.
+#      Machine: worker `stopped -> starting`, delivery `returned`; the table is refusal_fault_kind and refusal_agent_stopped below.
+# State: <MEM>/<task>.<head>.refusal, one line `<first seen epoch> <reason checksum> <last steer epoch> <alerted 0|1>`;
+# <MEM>/<task>.<head>.refusal.relaunched, one line `<epoch> <ok|failed>`, the one new agent that head has had.
 # Needs from the caller: STATE, MEM, FMH, QUIET (set for a silent sweep), and the task's project and branch.
 
 RESTEER_SECS=600
@@ -39,6 +45,31 @@ refusal_deliver() {  # <note|steer> <task-id> <message>
   esac
 }
 
+# Whether a final refusal is the lane's own fault: `lane` for its conflict or a red its own change caused, `other` for everything else.
+# A positive list, so a new refusal wording starts no agent until it is named here.
+refusal_fault_kind() {  # <reason>
+  case $1 in
+    *'gave up after'*) echo other ;;  # the machine failed the try cap, whatever the red said
+    *' conflicts with '*' in: '*|*'this lane introduced or changed the failure of'*|*'this lane is the red in its batch'*|*"gate 'lint' failed"*|*"gate 'full' failed"*|*"gate 'verify' failed"*) echo lane ;;
+    *) echo other ;;
+  esac
+}
+
+# Whether the lane's agent is provably not running: a verified exit record (jg-control.sh exit, the stop at Built), or the crew state's
+# own positive evidence that the agent is gone. An unknown reading is not proof, so it starts nothing.
+refusal_agent_stopped() {  # <task-id>
+  local bin=${REFUSAL_BIN:-$FMH/bin}
+  [ ! -s "$STATE/$1.exit" ] || return 0
+  JG_HOME="$FMH" "$bin/jg-crew-state.sh" "$1" 2>/dev/null | grep -Eq 'agent gone|agent not running|backend target gone'
+}
+
+# One new agent for a refused head, the refusal as its first instruction. Returns 0 only when the relaunch succeeded.
+refusal_relaunch() {  # <task-id> <note>
+  local bin=${REFUSAL_BIN:-$FMH/bin}
+  [ -f "$STATE/$1.meta" ] || return 1
+  JG_HOME="$FMH" "$bin/jg-control.sh" "$1" relaunch --note "$2" >/dev/null
+}
+
 # Usage: lane_refusal_reach <task-id> <head> <project-dir> <branch> <reason>
 lane_refusal_reach() {
   local id=$1 head=$2 proj=$3 branch=$4 reason sum f now first rsum steered alerted text note limit=1200
@@ -63,8 +94,12 @@ lane_refusal_reach() {
       printf '%s\n' "$sum" > "$note"
     else echo "warning: could not add the refusal note to $id" >&2; fi
   fi
+  text="The lander refused your lane $id at head ${head:0:12}: $reason. Fix it in the lane: change the one commit (amend it, never add a second), prove the new head, and report done again. This steer repeats every $(( RESTEER_SECS / 60 )) minutes until the lane's head changes."
+  if [ "${6:-}" = final ] && [ ! -e "$f.relaunched" ] && [ "$(refusal_fault_kind "$5")" = lane ] && refusal_agent_stopped "$id"; then
+    if refusal_relaunch "$id" "$text"; then printf '%s ok\n' "$now" > "$f.relaunched"; steered=$now
+    else printf '%s failed\n' "$now" > "$f.relaunched"; echo "warning: could not start a new agent for $id: its refusal is steered instead" >&2; fi
+  fi
   if [ "$steered" = 0 ] || { [ $(( now - steered )) -ge "$RESTEER_SECS" ] && ! refusal_unread_steer "$id"; }; then
-    text="The lander refused your lane $id at head ${head:0:12}: $reason. Fix it in the lane: change the one commit (amend it, never add a second), prove the new head, and report done again. This steer repeats every $(( RESTEER_SECS / 60 )) minutes until the lane's head changes."
     if refusal_deliver steer "$id" "$text"; then steered=$now; fi
   fi
   if [ "$alerted" = 0 ] && [ $(( now - first )) -ge "$ALERT_SECS" ]; then
