@@ -323,6 +323,13 @@ journeys:
       grep -q 'Fix tickets filed' "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" &&
       printf '%s\n' '{"target": {"version": "core/fleet-stats/bottlenecks.sh at this head"}, "start": "a fixture home with landing rows, a nightly file, load rows and per-script timing records", "steps": ["run bottlenecks.sh for the fixture day and read each report part", "run it with --daily --file-tickets and read the tickets it filed", "run it again and see no second report and no second ticket"], "result": "the log is the daily report the script wrote: the five report parts, one ticket per flagged script with its numbers, and none while one is open"}' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
 
+  same-red:
+    tier: local
+    command: >-
+      SAME_RED_SHOW="$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" bash tests/jg-trunk-same-red.test.sh >/dev/null 2>&1 &&
+      grep -q 'Fix tickets filed' "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" &&
+      printf '%s\n' '{"target": {"version": "core/trunk-verify/same-red.sh at this head"}, "start": "a fixture home and the real quarantine.sh filer", "steps": ["record the same script red on one tip from three different lanes", "scan and read the one ticket filed", "ask each lane whether it waits, close the ticket, ask again"], "result": "the log holds the red ledger, the shared mark and exactly one fix ticket naming the three lanes"}' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
+
   limit-prompt-move:
     tier: local
     command: bash core/limit-prompt-move/tests/limit-prompt-move-e2e.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
