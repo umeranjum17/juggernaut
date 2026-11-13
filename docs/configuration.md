@@ -2046,7 +2046,7 @@ A herdr, zellij, or cmux home is therefore never told `tmux` is missing, and the
 **Companion-tool wiring**
 
 An install is not wiring: `bin/jg-tool-wiring.sh` runs on every locked session start and writes what the pinned packages carry, once per home.
-It links the skill each package ships, appends done-done's `integrations/juggernaut/brief-include.md` to `config/brief-include.md` as one managed block that a rerun replaces rather than appends, and places done-done's `integrations/juggernaut/merge-gate` as `config/merge-gate` with the executable bit set.
+It links the skill each package ships, appends done-done's `integrations/<juggernaut or firstmate>/brief-include.md` to `config/brief-include.md` as one managed block that a rerun replaces rather than appends, and places done-done's `integrations/<juggernaut or firstmate>/merge-gate` as `config/merge-gate` with the executable bit set.
 A second run writes nothing, an absent package is a silent no-op, and an existing `config/merge-gate` is never replaced, so a home that already has a gate keeps that gate.
 Sign-off arming stays per home and is never done for the user; the first wiring of an unarmed home prints one line naming `bin/jg-procevent-signoff.sh arm`, and an already wired home stays silent.
 

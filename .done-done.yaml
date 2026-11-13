@@ -126,6 +126,9 @@ journeys:
   axi-on-path:
     tier: local
     command: bash tests/jg-axi-link.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  tool-wiring:
+    tier: local
+    command: bash journeys/tool-wiring.sh
   relaunch-model-refusal:
     tier: local
     command: bash tests/jg-control.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
