@@ -432,6 +432,23 @@ test_every_landing_writes_its_latency_row_from_the_done_epoch_it_recorded() {
   pass 'a landing records the lane done epoch and writes its latency row at once, with the status file gone'
 }
 
+# The real landing check bounds lint and tests by one shared deadline, and a timeout is retried rather than blamed on the lane.
+test_landing_deadline_spans_both_gates() {
+  local head before state
+  world deadline
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  printf 'gate-lint=sleep 2\ngate-full=sleep 2\nlanding-gate=tests\nflush-at-ready=1\n' > "$HOME_D/config/trunk-policy"
+  lane limit one work.txt
+  before=$(tip); head=$(git -C "$PROJ" rev-parse fm/limit)
+  JG_TEST_SEAM=1 JG_TRUNK_TEST_GATE_SECONDS=3 JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" \
+    bash "$ROOT/core/trunk-landing/trunk-landing.sh" run "$HOME_D" limit "$head" >/dev/null
+  state=$(cat "$HOME_D/data/jg-trunk-landing/limit.$head.state")
+  [ "$(tip)" = "$before" ] || fail "a landing that exceeds the shared deadline must not move the trunk"
+  assert_contains "$state" 'deadline' "the check must report the deadline"
+  [[ $state = "retry 1 "* ]] || fail "a timeout must retry rather than blame the lane: $state"
+  pass 'the landing check bounds lint and tests by one shared deadline'
+}
+
 # jg-i1iv3: a design task's first-draft receipt binds the head the lane proved; the trunk moving under it must not refuse the landing.
 test_a_design_lane_lands_after_the_trunk_moved_on_the_receipt_it_proved() {
   local out id=dz1 h
@@ -549,6 +566,7 @@ test_a_local_lane_lands_with_no_tests_and_the_verify_reverts_a_red() {
   pass 'a local lane lands with no tests at the landing, the verify reverts its red, and landing-gate=tests is the rollback'
 }
 
+test_landing_deadline_spans_both_gates
 test_the_full_gate_charges_a_lane_only_for_what_it_broke
 test_every_landing_writes_its_latency_row_from_the_done_epoch_it_recorded
 test_a_flaky_failure_gets_one_rerun_before_it_is_judged

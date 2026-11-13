@@ -185,6 +185,8 @@ LANDER_ACCOUNT="${CLAUDE_CONFIG_DIR:-}"; unset CLAUDE_CONFIG_DIR
 . "$SCRIPT_DIR/jg-version-branch-lib.sh"
 # shellcheck source=bin/jg-trunk-policy-lib.sh
 . "$SCRIPT_DIR/jg-trunk-policy-lib.sh"
+# shellcheck source=bin/jg-timeout-lib.sh
+. "$SCRIPT_DIR/jg-timeout-lib.sh"
 # shellcheck source=bin/jg-trunk-resolve-lib.sh
 . "$SCRIPT_DIR/jg-trunk-resolve-lib.sh"
 # shellcheck source=core/trunk-landing/refusal-reach.sh
@@ -335,6 +337,21 @@ gate_enter() {
 }
 gate_leave() { unlock "$STATE/.trunk-gate-$PN-${BASHPID:-$$}.lock"; }
 
+# One landing deadline (JG_TRUNK_GATE_DEADLINE, an epoch the lander passes down) bounds every gate command of an attempt; on-demand verify has none.
+gate_deadline_ok() {
+  [ -z "${JG_TRUNK_GATE_DEADLINE:-}" ] || [ "$(date +%s)" -lt "$JG_TRUNK_GATE_DEADLINE" ] || {
+    echo "REFUSED: landing gate exceeded its shared deadline; try again" >&2
+    return 1
+  }
+}
+gate_timed() {
+  local remaining
+  [ -n "${JG_TRUNK_GATE_DEADLINE:-}" ] || { "$@"; return; }
+  remaining=$((JG_TRUNK_GATE_DEADLINE - $(date +%s)))
+  [ "$remaining" -gt 0 ] || return 124
+  jg_run_timed "$remaining" "$@"
+}
+
 # Run a command at a commit's exact tree in a clean clone, logging to <log>; returns the command's exit status.
 # <envfile>, when given, receives the environment the command ended with (NUL separated), so a rerun can use the same one.
 gate_exec() {  # <commit> <command> <log> [<envfile>]
@@ -348,7 +365,7 @@ gate_exec() {  # <commit> <command> <log> [<envfile>]
   "${clean[@]}" git -C "$WORK/tree" checkout -q --detach "$1" || die "cannot check out ${1:0:12} for the gate"
   # shellcheck disable=SC2016 # the trap body expands in the gate's shell
   [ -z "${4:-}" ] || cmd="trap 'env -0 > \"\$JG_GATE_ENV_OUT\"' EXIT; $2"
-  (cd "$WORK/tree" && "${clean[@]}" JG_GATE_ENV_OUT="${4:-/dev/null}" JG_TRUNK_GATE_OUTPUT="${3%.log}.proof" bash -c "$cmd") > "$3" 2>&1 || rc=$?
+  (cd "$WORK/tree" && gate_timed "${clean[@]}" JG_GATE_ENV_OUT="${4:-/dev/null}" JG_TRUNK_GATE_OUTPUT="${3%.log}.proof" bash -c "$cmd") > "$3" 2>&1 || rc=$?
   rm -rf -- "$WORK"; WORK=
   gate_leave
   record_overruns "$1" "$3"
@@ -377,6 +394,7 @@ record_overruns() {  # <commit> <log>
 run_gate_try() {  # <commit> <command> <label>: returns 1 after printing the refusal, for a caller that judges the red itself
   local log="${LAND_ATTEMPT:-$DATA/trunk/gate-$PN-${1:0:12}-$(date +%s)-$$}-$3.log" rc=0
   gate_exec "$1" "$2" "$log" || rc=$?
+  gate_deadline_ok || return 1
   [ "$rc" -eq 0 ] || { tail -n 20 "$log" >&2; echo "REFUSED: gate '$3' failed (exit $rc) at ${1:0:12}; full log: $log" >&2; return 1; }
 }
 run_gate() { run_gate_try "$@" || exit 1; }
@@ -391,6 +409,7 @@ classify_refusal() {  # <output file> [<gate log>...]
   last=$(grep -E '^(REFUSED|error):' "$1" | tail -n 1)
   if grep -q '^ENV:' "$@" 2>/dev/null; then echo env-wait; return; fi
   case $last in
+    *'landing gate exceeded its shared deadline'*) echo retry; return ;;
     *'away mode'*|*'something else moved it'*|*'linked to a decision'*|*'still held'*|*'changed while landing'*|*'kept moving'*|*'proof inputs are incomplete'*) echo wait; return ;;
     "REFUSED: gate "*|"REFUSED: could not read the decisions"*|"REFUSED: this lane is the red"*|"error: cannot check out"*) ;;
     *) echo final; return ;;
@@ -570,6 +589,7 @@ full_gate() {  # <candidate> <command> <base>
   t0=$(date +%s); GATE_KIND=full; GATE_FIGURES=; GATE_BAD=; GATE_BAD_SIG=
   envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX" 2>/dev/null) || { mkdir -p "$DATA/trunk"; envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX"); }
   gate_exec "$cand" "$2" "$log" "$envf" || rc=$?
+  gate_deadline_ok || { rm -f -- "$envf"; return 1; }
   settle_shard_budget "$cand" "$log"
   [ "$rc" -ne 0 ] || { rm -f -- "$envf"; gate_figures "$log" "$t0"; return 0; }
   mine=$(gate_results "$log" | awk -F'\t' '$2 != "0"')
@@ -583,6 +603,7 @@ full_gate() {  # <candidate> <command> <base>
   # what fails again counts (as that second run saw it). A script the rerun does not report keeps its first result.
   quoted=$(printf '%s\n' "$mine" | while IFS= read -r line; do printf ' %q' "${line%%$'\t'*}"; done)
   rerun_scripts "$cand" "$envf" "$DATA/trunk/gate-$PN-${cand:0:12}-full-rerun.log" "$quoted"
+  gate_deadline_ok || { rm -f -- "$envf"; return 1; }
   again=$(gate_results "$DATA/trunk/gate-$PN-${cand:0:12}-full-rerun.log")
   settled=''
   while IFS= read -r line; do
@@ -606,6 +627,7 @@ full_gate() {  # <candidate> <command> <base>
   if [ -z "$mine" ]; then rm -f -- "$envf"; GATE_KIND="full-rerun"; gate_figures "$log" "$t0"; return 0; fi
   # shellcheck disable=SC2046
   tipres=$(tip_results "$3" "$envf" $(printf '%s\n' "$mine" | cut -f1))
+  gate_deadline_ok || { rm -f -- "$envf"; return 1; }
   # A parent that gave no result for a script it has (its run could not start, or died at start) cannot show the lane added the red,
   # so nothing is charged to the lane and nothing is reverted: the failure is one no test accounts for.
   while IFS= read -r line; do

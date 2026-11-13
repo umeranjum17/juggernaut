@@ -88,6 +88,12 @@ esac
 # shellcheck source=core/trunk-landing/verdict.sh
 . "$(dirname "${BASH_SOURCE[0]}")/verdict.sh"
 mval() { sed -n "s/^$2=//p" "$1" | tail -n 1; }
+# One five-minute deadline belongs to the whole landing attempt, lint and tests together (a test seam shortens it).
+landing_deadline() {
+  local seconds=300
+  if [ "${JG_TEST_SEAM:-}" = 1 ] && [[ ${JG_TRUNK_TEST_GATE_SECONDS:-} =~ ^[1-9][0-9]*$ ]]; then seconds=$JG_TRUNK_TEST_GATE_SECONDS; fi
+  printf '%s\n' "$(( $(date +%s) + seconds ))"
+}
 
 # A landed ticket resumes the lanes that wait for it, at once and with no owner turn: each gets one steer and its
 # `waits-for: <ticket>` blocker is resolved in the same send (core/wait-timers/bin/jg-wait-actions-lib.sh owns the rule).
@@ -178,7 +184,7 @@ if [ "$1" = runbatch ]; then
   done
   for arg in "$@"; do printf 'running %s %s\n' "$(date +%s)" "$$" > "$MEM/${arg%%@*}.${arg#*@}.state"; done
   pn=$(basename "$(mval "$STATE/${1%%@*}.meta" project)")
-  out=$(JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" land-batch "$@" 2>&1) || rc=$?
+  out=$(JG_TRUNK_GATE_DEADLINE="$(landing_deadline)" JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" land-batch "$@" 2>&1) || rc=$?
   tip=$(verdict_tip "$pn")  # a lane the stack returned was judged on top of the stack's lanes that landed
   for arg in "$@"; do
     id=${arg%%@*}; head=${arg#*@}; proj=$(mval "$STATE/$id.meta" project); lane_mode=$(mval "$STATE/$id.meta" mode)
@@ -227,7 +233,7 @@ if [ "$1" = run ]; then
   [ -f "$STATE/$id.meta" ] || exit 0
   printf 'running %s %s\n' "$(date +%s)" "$$" > "$MEM/$id.$head.state"
   tip=$(verdict_tip "$(basename "$(mval "$STATE/$id.meta" project)")")
-  out=$(JG_HOME="$FMH" JG_TRUNK_RUN_HELD_BY="$$" JG_TRUNK_EXPECT_HEAD="$head" "$FMH/bin/jg-trunk.sh" land "$id" 2>&1) || rc=$?
+  out=$(JG_TRUNK_GATE_DEADLINE="$(landing_deadline)" JG_HOME="$FMH" JG_TRUNK_RUN_HELD_BY="$$" JG_TRUNK_EXPECT_HEAD="$head" "$FMH/bin/jg-trunk.sh" land "$id" 2>&1) || rc=$?
   request_log=$(mktemp "$MEM/$id.$head.request-XXXXXX.log") || exit 1
   printf '%s\n' "$out" > "$request_log"
   printf '%s\n' "$out" > "$MEM/$id.$head.log"
