@@ -114,6 +114,26 @@ test_a_shard_that_stops_before_its_result_still_writes_a_failed_result() {
   pass 'a shard that stops before its result writes a failed result naming the shard, and an overrun is still named'
 }
 
+# trunk-v4 shard 8 stopped on "no changed-test mapping for source path: tests/jg-machine-call-fixture.sh" and held the green pin:
+# a changed test file that no suite names made the whole selection refuse. It fails as its own record now, once, and every other
+# script in the shards still runs and keeps its own verdict.
+test_an_unmapped_test_file_fails_only_itself() {
+  local fixture=$TMP_ROOT/unmapped-test res=$TMP_ROOT/unmapped-test-results out rc=0
+  required_fixture "$fixture" 'exit 0'
+  printf '#!/usr/bin/env bash\n:\n' >"$fixture/tests/orphan-fixture.sh"
+  git -C "$fixture" add tests/orphan-fixture.sh
+  git -C "$fixture" -c user.name=t -c user.email=t@example.invalid commit -q --amend --no-edit
+  out=$(bash "$fixture/bin/jg-test-run.sh" --required-shards HEAD^ "$res" 2>&1) || rc=$?
+  [ "$rc" = 1 ] || fail "an unmapped test file must refuse the gate with exit 1: rc=$rc $out"
+  assert_not_contains "$out" 'stopped with exit' 'no shard may stop before its result'
+  assert_contains "$out" 'not ok - tests/orphan-fixture.sh: no changed-test mapping for source path: tests/orphan-fixture.sh' 'the file and the cause are named'
+  [ "$(printf '%s\n' "$out" | grep -c '^JG_TEST_END .* tests/orphan-fixture.sh exit=1')" = 1 ] || fail "the file must fail once, in one shard: $out"
+  jq -e '.summary.lanes == 8 and .summary.failed_lanes == 1 and .summary.total == 2 and .summary.failed == 1
+    and ([.scripts[] | select(.path == "tests/required-feature.test.sh" and .exit == 0)] | length) == 1' \
+    "$res/required.json" >/dev/null || fail "the aggregate must hold the other script's pass and only the stray file's failure: $out"
+  pass 'an unmapped test file fails only itself in one shard and the other scripts still run'
+}
+
 # A shard over its wall-clock budget was slowed by the machine, not failed by a test, so it is a warning and never a red,
 # and the budget never cuts it short: trunk-v3 went red at 20eb94ae6054 with all eight shards at 601 to 651 s of 600 s,
 # failed=0, and the budget had stopped each shard before about half its scripts ran. A failed test stays a red.
@@ -683,5 +703,6 @@ test_a_changed_fleet_homes_library_selects_the_move_test
 test_a_changed_dispatch_skill_runs_the_floor_test
 test_the_coverage_time_budget_advises_and_a_script_no_shard_runs_still_refuses
 test_a_quarantined_script_is_listed_not_run_and_the_gate_passes
+test_an_unmapped_test_file_fails_only_itself
 
 printf 'all %s\n' 'jg-test-run limit tests passed'

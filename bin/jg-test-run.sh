@@ -278,6 +278,8 @@ LANE=
 BASE_REF=origin/main
 JSON_PATH=
 SCRIPTS=()
+# Changed test files no suite names. Each fails as its own record, so one stray file never stops the whole selection.
+UNMAPPED_TESTS=()
 EXCLUDE_FAMILIES=()
 MAX_WEIGHT_MS=
 HOSTED_TIMINGS=
@@ -1960,7 +1962,11 @@ select_changed() {
           wanted_scripts+=("$script_name")
           ;;
         __unmapped__:*)
-          die "no changed-test mapping for source path: ${entry#__unmapped__:}"
+          # A test file no suite names fails only itself; any other unmapped source still stops the selection.
+          case "${entry#__unmapped__:}" in
+            tests/*) UNMAPPED_TESTS+=("${entry#__unmapped__:}") ;;
+            *) die "no changed-test mapping for source path: ${entry#__unmapped__:}" ;;
+          esac
           ;;
         *)
           wanted_families+=("$entry")
@@ -2136,6 +2142,8 @@ apply_shard() {
   [ -n "$SHARD" ] || return 0
   index=${SHARD%%of*}
   count=${SHARD#*of}
+  # An unmapped test file is one record, so only the first shard carries it.
+  [ "$index" -eq 1 ] || UNMAPPED_TESTS=()
   i=1
   while [ "$i" -le "$count" ]; do
     loads[i]=0
@@ -2729,7 +2737,7 @@ fi
 # array as an unbound-variable error, while bash 4.4+ makes it a harmless no-op.
 # A contributor on stock macOS who changes only documentation must still get
 # total=0 and exit 0 rather than a crash.
-if [ "${#SCRIPTS[@]}" -eq 0 ]; then
+if [ "${#SCRIPTS[@]}" -eq 0 ] && [ "${#UNMAPPED_TESTS[@]}" -eq 0 ]; then
   log "nothing to run"
   empty_finished_ms=$(now_ms)
   empty_duration=$((empty_finished_ms - RUN_STARTED_MS))
@@ -2762,7 +2770,7 @@ if [ "${#SCRIPTS[@]}" -eq 0 ]; then
 fi
 
 # Verify selected scripts exist before starting.
-for s in "${SCRIPTS[@]}"; do
+for s in "${SCRIPTS[@]+"${SCRIPTS[@]}"}"; do
   [ -f "$s" ] || die "test script not found: $s"
   [ -x "$s" ] || [ -r "$s" ] || die "test script not readable: $s"
 done
@@ -2781,7 +2789,7 @@ if { [ "$MODE" = changed ] || [ "$MODE" = scripts ]; } && [ "$JOBS_EXPLICIT" -eq
     CHANGED_CEILING=1
   fi
   auto_admissible=0
-  for s in "${SCRIPTS[@]}"; do
+  for s in "${SCRIPTS[@]+"${SCRIPTS[@]}"}"; do
     script_allows_concurrency "$s" && auto_admissible=$((auto_admissible + 1))
   done
   if [ "$auto_admissible" -gt 1 ]; then
@@ -2805,7 +2813,7 @@ if [ "$JOBS" -gt 1 ] && [ "$AUTO_CONCURRENCY" -eq 0 ]; then
       portable-serial|portable-serial-*) die "--jobs $JOBS refused: portable serial lanes stay serial; use --jobs 1" ;;
     esac
   fi
-  for s in "${SCRIPTS[@]}"; do
+  for s in "${SCRIPTS[@]+"${SCRIPTS[@]}"}"; do
     if ! script_allows_concurrency "$s"; then
       die "--jobs $JOBS refused: $s is not in the proven-isolated set (see bin/jg-test-isolation-proof.sh --list) and its family has no recorded concurrent proof. Unproven stateful scripts stay serial."
     fi
@@ -2829,7 +2837,7 @@ CONCURRENT_PHASE_BREAK=__jg_test_concurrent_phase_break__
 if [ "$JOBS" -gt 1 ]; then
   SCHEDULE_TMP=$(mktemp "${TMPDIR:-/tmp}/jg-test-sched.XXXXXX")
   : >"$SCHEDULE_TMP"
-  for s in "${SCRIPTS[@]}"; do
+  for s in "${SCRIPTS[@]+"${SCRIPTS[@]}"}"; do
     if script_allows_concurrency "$s"; then
       if is_proven_isolated_script "$s"; then
         phase=0
@@ -2988,6 +2996,18 @@ record_script_result() {  # <script> <rc> <duration> <out> <end_iso> <stream>
   TOTAL=$((TOTAL + 1))
 }
 
+# Record each unmapped changed test file as one failed result naming the file and the cause, and run nothing for it.
+record_unmapped_tests() {
+  local path out
+  for path in "${UNMAPPED_TESTS[@]+"${UNMAPPED_TESTS[@]}"}"; do
+    out="$RUN_TMP/out.unmapped.$TOTAL"
+    printf 'not ok - %s: no changed-test mapping for source path: %s\n' "$path" "$path" >"$out"
+    cat "$out"
+    printf 'JG_TEST_BEGIN %s %s family=%s expected_gate_skip=\n' "$(now_iso)" "$path" "$(family_for_basename "$(basename "$path")")"
+    record_script_result "$path" 1 0 "$out" "$(now_iso)" 1
+  done
+}
+
 # Kill every process still carrying <mark> in its environment, after the bound has
 # stopped the script's process group. A descendant that moved into a process group of
 # its own (setsid) is outside that signal; it still inherits the script's environment,
@@ -3136,8 +3156,10 @@ wall_budget_spent() {  # <next-script> -> 0 when the run must stop here
   return 0
 }
 
+record_unmapped_tests
+
 if [ "$JOBS" -eq 1 ]; then
-  for script in "${SCRIPTS[@]}"; do
+  for script in "${SCRIPTS[@]+"${SCRIPTS[@]}"}"; do
     wall_budget_spent "$script" && break
     run_one_serial "$script"
   done
