@@ -42,6 +42,18 @@
 #   jg-captain-hold.sh reconcile close <task-id> --evidence-file <path>
 #   jg-captain-hold.sh reconcile note <task-id> --note-file <path>
 #
+# THE OWNER'S QUESTION IS A GATE. A `hold` that asks the owner something makes one human gate row that blocks the
+# ticket (bin/jg-beads-write.py `gate`): its title is the question in a few words, its description the whole question,
+# its metadata the `must`, the origin and the close mode. The ticket keeps its status, reads as held by the owner while
+# the gate is open (and is dated and deferred with `--until`), and no list of work or count shows the gate;
+# `jg-backlog.sh questions [--ticket <id>] [--due] [--all] [--json]` lists the questions. `answer` closes the gate
+# with his whole words (`resolution` answered, or released with `--release`), then a ticket that was only the question;
+# `--gate <id>` names one of several open gates. `reconcile close` closes it on evidence (`resolution` reconciled).
+# `open`, `answered`, `blocking`, `phase` and `complete`/`verify` read the gate. `done` refuses a ticket with an open gate.
+# A parked hold, a stop order and a ticket that still carries an old hold-set stamp keep the stamped record described
+# below, and answer the old way, until the pass that moves old holds to gates; JG_CAPTAIN_HOLD_STAMPED=1 is the
+# test seam that makes such a hold.
+#
 # `hold` places an existing task under an active captain hold, or creates the
 # task first when no work item exists to hold (--title required to create; the
 # optional --origin records provenance in the new task's body and supplies the
@@ -675,6 +687,9 @@ verify_hold_durable() {  # <task-id>
   if [ "$state" != "done" ] && [ "$hold_kind" = captain ]; then
     return 0
   fi
+  # A question held as a gate is recorded while it is open, and by his words once it is closed.
+  [ -z "$(gate_rows "$id" --all | jq -r 'select(.state == "open" or .resolution == "answered" or .resolution == "released") | .id')" ] \
+    || return 0
   fail "captain-held task $id is neither held for the captain nor closed with a recorded captain answer"
 }
 
@@ -819,6 +834,7 @@ verify_entry_durable() {  # <origin-or-empty> <entry>; prints "<id> <how> <origi
   id=$(show_field_value "$TASK_SHOW_OUTPUT" id)
   validate_slug backend-task-id "$id"
   stored=$(body_hold_origin "$(decode_shown_value "$(show_field "$TASK_SHOW_OUTPUT" body)")")
+  [ -n "$stored" ] || stored=$(gate_rows "$id" --all | jq -r 'select(.origin != "-") | .origin' | head -1)  # a gate carries the origin as its metadata
   origin_id=$origin
   if [ -n "$origin" ] && [ "$origin" != "$BINDING_ANY" ]; then
     origin_id=$(task_identity "$origin") || exit $?
@@ -855,6 +871,38 @@ report_hold_reconciled() {  # <task-id> <to-word>: the move out of diverged, mad
   [ -e "$DIVERGED_MARK_DIR/$1" ] || return 0
   report_hold_move "$1" diverged "$2"
   rm -f -- "$DIVERGED_MARK_DIR/$1"
+}
+
+# --- the owner's question as a gate ------------------------------------------
+# A hold that asks the owner something is one human gate row that blocks the ticket (bin/jg-beads-write.py
+# `gate`), and his answer closes the gate with his words. A parked hold, a stop order, and a ticket still
+# carrying an old hold-set stamp keep the stamped path below until the pass that moves them.
+gate_rows() {  # <ticket> [--all]: the ticket's questions, one JSON record per line (open ones unless --all)
+  local rows
+  rows=$(backlog_cmd questions --ticket "$1" --json "${@:2}") || fail "the questions on $1 could not be read"
+  printf '%s' "$rows" | jq -c '.[]'
+}
+
+open_gate_ids() {  # <ticket>
+  gate_rows "$1" | jq -r '.id'
+}
+
+hold_is_stamped() {  # <show-output>: does the ticket carry an old hold-set stamp?
+  [ -n "$(body_hold_set_timestamp "$(decode_shown_value "$(show_field "$1" body)")")" ]
+}
+
+# Make the gate, and defer the ticket to its date when the owner said "ask me again later".
+hold_by_gate() {  # <task-id> <task-title> <reason> <until> <must> <origin> <done|release>
+  local id=$1 reason=$3 until=$4 must=$5 origin=$6 title
+  title=$(card_title "$reason")
+  [ -n "$title" ] || title=$(built_title "$2")
+  backlog_cmd gate "$id" --title "$title" --reason "$reason" --close "$7" ${must:+--must "$must"} ${origin:+--origin "$origin"} >/dev/null \
+    || fail "could not make the owner's question on task $id"
+  if [ -n "$until" ]; then
+    backlog_cmd hold "$id" --reason "$reason" --kind captain --until "$until" >/dev/null \
+      || fail "could not defer task $id to $until"
+  fi
+  jg_backlog_ticket_note "$DATA" hold "$id" --reason "$reason"
 }
 
 command_hold() {
@@ -967,42 +1015,50 @@ command_hold() {
         || fail "could not create task $id"
     fi
   fi
-  # Publish the timestamp before the captain-hold annotation. A concurrent
-  # snapshot may see the harmless stamp by itself, but can never see a newly
-  # held task without the timestamp that defines this hold lifecycle's age.
-  task_show_or_fail "$id" "task $id disappeared before recording its hold-set stamp"
-  write_hold_set_stamp "$id" "$(show_field "$show" body)" "$hold_set" "$preserve_hold_set"
-  task_show_or_fail "$id" "task $id disappeared while recording its hold-set stamp"
-  [ -n "$(body_hold_set_timestamp "$(show_field_value "$show" body)")" ] \
-    || fail "task $id did not retain its hold-set stamp"
-  if [ -n "$origin" ]; then
-    origin=$(task_identity "$origin") || exit $?
-    previous_origin=$(body_hold_origin "$(show_field_value "$show" body)")
-    write_hold_origin "$id" "$(show_field "$show" body)" "$origin" || exit $?
-  fi
-  if [ -n "$until" ]; then
-    backlog_cmd hold "$id" --reason "$stored_reason" --kind captain --until "$until" >/dev/null \
-      || hold_status=$?
+  task_show_or_fail "$id" "task $id disappeared before holding it"
+  # JG_CAPTAIN_HOLD_STAMPED keeps the stamped record for the suites of that path (the test seam of an old hold).
+  if [ -z "$own_instruction" ] && [ -z "${JG_CAPTAIN_HOLD_STAMPED:-}" ] && ! hold_is_stamped "$show"; then
+    [ -z "$origin" ] || origin=$(task_identity "$origin") || exit $?
+    hold_by_gate "$id" "$(show_field_value "$show" title)" "$reason" "$until" "$must" "$origin" "$card_close"
+    occurrence=$(gate_rows "$id" --all | wc -l)
   else
-    backlog_cmd hold "$id" --reason "$stored_reason" --kind captain >/dev/null \
-      || hold_status=$?
-  fi
-  if [ "$hold_status" -ne 0 ]; then
-    # A refused re-hold must not associate the previous hold or answer with a
-    # new origin. Restore the old line verbatim, without resolving it again.
+    # Publish the timestamp before the captain-hold annotation. A concurrent
+    # snapshot may see the harmless stamp by itself, but can never see a newly
+    # held task without the timestamp that defines this hold lifecycle's age.
+    task_show_or_fail "$id" "task $id disappeared before recording its hold-set stamp"
+    write_hold_set_stamp "$id" "$(show_field "$show" body)" "$hold_set" "$preserve_hold_set"
+    task_show_or_fail "$id" "task $id disappeared while recording its hold-set stamp"
+    [ -n "$(body_hold_set_timestamp "$(show_field_value "$show" body)")" ] \
+      || fail "task $id did not retain its hold-set stamp"
     if [ -n "$origin" ]; then
-      write_hold_origin "$id" "$(show_field "$show" body)" "$previous_origin" || exit $?
+      origin=$(task_identity "$origin") || exit $?
+      previous_origin=$(body_hold_origin "$(show_field_value "$show" body)")
+      write_hold_origin "$id" "$(show_field "$show" body)" "$origin" || exit $?
     fi
-    fail "could not hold task $id for the captain"
+    if [ -n "$until" ]; then
+      backlog_cmd hold "$id" --reason "$stored_reason" --kind captain --until "$until" >/dev/null \
+        || hold_status=$?
+    else
+      backlog_cmd hold "$id" --reason "$stored_reason" --kind captain >/dev/null \
+        || hold_status=$?
+    fi
+    if [ "$hold_status" -ne 0 ]; then
+      # A refused re-hold must not associate the previous hold or answer with a
+      # new origin. Restore the old line verbatim, without resolving it again.
+      if [ -n "$origin" ]; then
+        write_hold_origin "$id" "$(show_field "$show" body)" "$previous_origin" || exit $?
+      fi
+      fail "could not hold task $id for the captain"
+    fi
+    jg_backlog_ticket_note "$DATA" hold "$id" --reason "$stored_reason"
+    task_show "$id" || fail "task $id disappeared while holding it"
+    show=$TASK_SHOW_OUTPUT
+    hold_kind=$(show_field_value "$show" hold_kind)
+    [ "$hold_kind" = captain ] || fail "task $id did not retain its captain hold"
+    occurrence=$(( $(resolution_record_count "$(show_field "$show" body)") + 1 ))
+    [ -n "$(body_hold_set_timestamp "$(show_field_value "$show" body)")" ] \
+      || fail "task $id lost its hold-set stamp while being held"
   fi
-  jg_backlog_ticket_note "$DATA" hold "$id" --reason "$stored_reason"
-  task_show "$id" || fail "task $id disappeared while holding it"
-  show=$TASK_SHOW_OUTPUT
-  hold_kind=$(show_field_value "$show" hold_kind)
-  [ "$hold_kind" = captain ] || fail "task $id did not retain its captain hold"
-  occurrence=$(( $(resolution_record_count "$(show_field "$show" body)") + 1 ))
-  [ -n "$(body_hold_set_timestamp "$(show_field_value "$show" body)")" ] \
-    || fail "task $id lost its hold-set stamp while being held"
   publish_parent_hold "$id" "$occurrence" needs-decision "$reason"
   # A call is raised first and deferred by its date, so a new dated hold reports both moves.
   [ "$held_from" != - ] || { report_hold_move "$id" - raised; held_from=raised; }
@@ -1162,8 +1218,77 @@ reply_release() {  # <task-id> <title> <card-key>
   return 0
 }
 
+# The owner's answer to a question held as a gate: his words close the gate whole, and then a ticket that was only
+# the question closes too (--release leaves it open and lifts a date it was deferred to). An exact retry finishes
+# what the first call left undone; a different answer to an answered question is refused.
+write_gate_approval() {  # <task-id> <show-output>
+  local id=$1 line body tmp
+  line=$(captain_ask_approval_line "$id" "answer:$DECISION_DIGEST")
+  body=$(decode_shown_value "$(show_field "$2" body)") || fail "could not decode the body of $id"
+  case "$body" in *"$line"*) return 0 ;; esac
+  tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/jg-captain-hold-body.XXXXXX") || fail "cannot stage the approval for $id"
+  printf '%s\n' "${body:+$body$'\n\n'}$line" > "$tmp"
+  backlog_cmd update "$id" --body-file "$tmp" --archive-body >/dev/null \
+    || { rm -f -- "$tmp"; fail "could not record the captain decision on $id"; }
+  rm -f -- "$tmp"
+}
+
+answer_by_gate() {  # <task-id> <release-0-or-1> <card-key> <gate-id-or-empty> <show-output>
+  local id=$1 release=$2 card=$3 gate=$4 show=$5 outcome=answered gates open row shut occurrence from until tmp title
+  [ "$release" = 0 ] || outcome=released
+  gates=$(gate_rows "$id" --all)
+  open=$(printf '%s\n' "$gates" | jq -r 'select(.state == "open") | .id')
+  if [ -z "$gate" ]; then
+    [ "$(printf '%s' "$open" | grep -c .)" -le 1 ] \
+      || fail "task $id has several open questions ($(printf '%s' "$open" | tr '\n' ' ')); name one with --gate <id>"
+    gate=$open
+  fi
+  if [ -z "$gate" ]; then  # none open: the last answer given in these words is the one a retry means
+    gate=$(printf '%s\n' "$gates" | jq -rs --arg w "$DECISION_TEXT" '[.[] | select(.words == $w)] | last | .id // empty')
+  fi
+  [ -n "$gate" ] || fail "the question on task $id was already answered; a second answer does not replace the first"
+  row=$(printf '%s\n' "$gates" | jq -c --arg g "$gate" 'select(.id == $g)')
+  [ -n "$row" ] || fail "task $id has no question $gate"
+  shut=$(printf '%s' "$row" | jq -r 'select(.state == "closed") | .words')
+  if [ -n "$(printf '%s' "$row" | jq -r 'select(.state == "closed") | .id')" ] && [ "$shut" != "$DECISION_TEXT" ]; then
+    fail "the question $gate on task $id was already answered; a second answer does not replace the first"
+  fi
+  occurrence=$(printf '%s\n' "$gates" | jq -rs '[.[] | select(.state == "closed")] | length')
+  from=raised
+  until=$(show_field_value "$show" hold_until)
+  if [ -n "$until" ] && [[ "$until" > "$(date -u +%F)" ]]; then from=deferred; fi
+  if [ -z "$(printf '%s' "$row" | jq -r 'select(.state == "closed") | .id')" ]; then
+    occurrence=$((occurrence + 1))
+    write_gate_approval "$id" "$show"
+    [ "$release" = 1 ] || report_hold_move "$id" "$from" answered
+    tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/jg-captain-hold-words.XXXXXX") || fail "cannot stage the captain decision"
+    printf '%s' "$DECISION_TEXT" > "$tmp"
+    backlog_cmd resolve "$gate" --words-file "$tmp" --resolution "$outcome" >/dev/null \
+      || { rm -f -- "$tmp"; fail "could not close the question $gate on task $id"; }
+    rm -f -- "$tmp"
+  fi
+  task_show_or_fail "$id" "task $id disappeared after answering it"
+  show=$TASK_SHOW_OUTPUT
+  title=$(show_field_value "$show" title)
+  if [ "$release" = 1 ]; then
+    # A date the ticket was deferred to is lifted; a ticket held for another reason keeps its hold.
+    if [ "$(show_field_value "$show" held)" = yes ] && [ "$(show_field_value "$show" hold_kind)" = captain ]; then
+      close_answered "$id" 1 || fail "could not release task $id"
+    fi
+    report_hold_move "$id" "$from" closed
+  else
+    if [ "$(show_field "$show" state)" != "done" ]; then
+      close_answered "$id" 0 || fail "could not close answered captain-held task $id"
+    fi
+    report_hold_move "$id" answered closed
+  fi
+  publish_parent_resolution_then_retire "$id" "$occurrence" "$outcome"
+  [ "$release" = 0 ] || reply_release "$id" "$title" "$card"
+  printf '%s: %s\n' "$outcome" "$id"
+}
+
 command_answer() {
-  local id=${1:-} decision_file='' release=0 card='' title show state hold_kind body outcome recorded_mode occurrence answered_from until
+  local id=${1:-} decision_file='' release=0 card='' title show state hold_kind body outcome recorded_mode occurrence answered_from until gate=
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -1171,6 +1296,7 @@ command_answer() {
       --decision-file) shift; decision_file=${1:-} ;;
       --release) release=1 ;;
       --card) shift; card=${1:-}; validate_slug card-key "$card" ;;
+      --gate) shift; gate=${1:-}; validate_slug gate-id "$gate" ;;
       *) usage >&2; exit 2 ;;
     esac
     shift
@@ -1189,6 +1315,11 @@ command_answer() {
   if [ "$release" = 1 ] && [ -z "$card" ] && [ "$hold_kind" = captain ]; then
     card=$(jg_question_hold_card_key "$id" "$("$SCRIPT_DIR/jg-captain-hold.sh" open "$id" --identity 2>/dev/null)") || card=''
   fi
+  if [ -n "$(gate_rows "$id" --all)" ] && ! hold_is_stamped "$show"; then
+    answer_by_gate "$id" "$release" "$card" "$gate" "$show"
+    return
+  fi
+  [ -z "$gate" ] || fail "task $id has no question $gate"
   # The occurrence the parent line names: the record about to be written is
   # one past those already in the body, and a retry names the newest one.
   occurrence=$(( $(resolution_record_count "$body") + 1 ))
@@ -1677,6 +1808,34 @@ reconcile_list() {
 
 # The moot outcome. The evidence is what closes the call, and the `reconciled`
 # resolution mode is what keeps the record from claiming the captain answered.
+# A moot question held as a gate closes on evidence: the gate records it as reconciled, never as his words, and the ticket closes.
+reconcile_close_gate() {  # <task-id> <show-output>
+  local id=$1 show=$2 gate evidence tmp occurrence
+  evidence="Reconciliation evidence: $DECISION_TEXT"
+  gate=$(open_gate_ids "$id" | head -1)
+  if [ -z "$gate" ]; then  # none open: an exact retry finishes the close the first call began
+    gate=$(gate_rows "$id" --all | jq -rs --arg w "$evidence" '[.[] | select(.resolution == "reconciled" and .words == $w)] | last | .id // empty')
+    [ -n "$gate" ] || fail "task $id has no open question to reconcile"
+  else
+    guard_captain_ask "$id"
+    tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/jg-captain-hold-words.XXXXXX") || fail "cannot stage the evidence"
+    printf '%s' "$evidence" > "$tmp"
+    backlog_cmd resolve "$gate" --words-file "$tmp" --resolution reconciled >/dev/null \
+      || { rm -f -- "$tmp"; fail "could not close the question $gate on task $id"; }
+    rm -f -- "$tmp"
+  fi
+  if [ "$(show_field "$show" state)" != "done" ]; then
+    close_answered "$id" 0 || fail "could not close reconciled captain-held task $id"
+  fi
+  occurrence=$(gate_rows "$id" --all | jq -rs '[.[] | select(.state == "closed")] | length')
+  publish_parent_hold "$id" "$occurrence" resolved reconciled
+  [ "$PARENT_HOLD_PUBLISHED" = 1 ] \
+    || fail "could not publish the reconciled captain-held task $id to its parent"
+  reconcile_request_retire "$id"
+  report_hold_reconciled "$id" closed
+  printf 'reconciled: %s\n' "$id"
+}
+
 reconcile_close() {
   local id=${1:-} evidence_file='' show state hold_kind body occurrence recorded_mode
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
@@ -1699,6 +1858,10 @@ reconcile_close() {
   state=$(show_field "$show" state)
   hold_kind=$(show_field_value "$show" hold_kind)
   body=$(show_field "$show" body)
+  if [ -n "$(gate_rows "$id" --all)" ] && ! hold_is_stamped "$show"; then
+    reconcile_close_gate "$id" "$show"
+    return
+  fi
   occurrence=$(( $(resolution_record_count "$body") + 1 ))
   if [ "$state" = "done" ]; then
     # An exact retry finishes an interrupted close and stays idempotent; a
@@ -2036,11 +2199,16 @@ EOF
 }
 
 command_answered() {  # <task-id>
-  local show body
+  local show body gates
   [ "$#" -eq 1 ] || { usage >&2; exit 2; }
   task_show "$1" || exit 2
   show=$TASK_SHOW_OUTPUT
   body=$(show_field "$show" body)
+  if ! hold_is_stamped "$show"; then  # a question held as a gate is answered when a closed gate carries his words
+    gates=$(gate_rows "$1" --all)
+    [ -z "$(printf '%s\n' "$gates" | jq -r 'select(.state == "open") | .id')" ] || return 1
+    [ -z "$(printf '%s\n' "$gates" | jq -r 'select(.resolution == "answered" or .resolution == "released") | .id')" ] || return 0
+  fi
   # A newly set hold precedes every historical resolution, even a release.
   [ -z "$(body_hold_set_timestamp "$(decode_shown_value "$body")")" ] || return 1
   body_has_resolution_record "$body" || return 1
@@ -2104,7 +2272,9 @@ command_open() {  # <task-id> [--identity] [--distinguish-absent]
   if jg_backlog_row_probe "$data" "$id"; then
     state=${JG_BACKLOG_ROW_STATE%% *}
     if [ "$state" != "done" ] && [ "$JG_BACKLOG_ROW_HOLD_KIND" = captain ]; then
-      if [ "$identity" -eq 1 ]; then
+      if [ "$identity" -eq 1 ] && [ -n "$(open_gate_ids "$id")" ]; then
+        open_gate_ids "$id" | head -1  # a question held as a gate is told apart by its gate
+      elif [ "$identity" -eq 1 ]; then
         task_show "$id" || {
           printf 'jg-captain-hold: captain call %s is open but its record could not be read\n' "$id" >&2
           exit 2

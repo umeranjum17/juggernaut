@@ -16,6 +16,9 @@ its fields stay readable on a closed row and on a row whose date has passed.
 A dated hold is status deferred: bd ready wakes a past-date row to open and clears defer_until, and until that first
 bd ready the row still reads as no longer held, so a due row reads the same on both sides of the wake;
 kind is metadata.kind, else captain for issue_type decision, else issue_type; ask is ask_role (ask, under or -) and labels the labels but project:<repo>, both through --fields, and on a card that has them;
+a question to the owner is a gate row (bin/jg-captain-hold.sh makes it) that blocks its ticket: no list, ready, markdown or count shows the gate,
+the ticket reads as held by the owner while the gate is open and is never blocked by it, and the questions verb lists the gates
+(--ticket <id>, --due leaves out a ticket deferred to a later date, --all adds the answered ones, --json prints records);
 parent is the parent-child edge target (upkeep by label) and item metadata.task, else metadata.legacy_item, both only through --fields;
 show takes a row's id or the name it answers to: the task id its ticket was spawned under (metadata.task) or, after a migration, the slug or feed id it had before (metadata legacy_item, legacy_id, legacy_twin);
 repo is the project:<repo> label; links are external_ref, metadata.prs and metadata.reports.
@@ -32,6 +35,7 @@ import sys
 STATE = {"closed": "done"}
 HELD = {"on_hold", "blocked", "deferred"}
 CORE = {"decision": "captain"}
+GATE = "gate"
 ROW = ["id", "state", "kind", "repo", "title"]
 SHOW = ["id", "title", "state", "blocked", "blocked_by", "held", "hold_reason", "hold_kind", "hold_until",
         "kind", "repo", "priority", "created", "closed", "deps", "links", "body"]
@@ -101,6 +105,22 @@ def holding(row):
     return status in HELD and (status != "deferred" or not until or until > now)
 
 
+def is_gate(row):
+    return row.get("issue_type") == GATE
+
+
+def question(gate):
+    """The full question a gate carries: bd keeps it after `Reason: ` in the description."""
+    text = gate.get("description") or ""
+    return text.partition("Reason: ")[2] or text
+
+
+def gates_of(row, rows, closed=False):
+    """The gates that block this row, the open ones unless closed is asked for."""
+    found = (rows.get(d["depends_on_id"], {}) for d in row.get("dependencies") or [] if d.get("type") == "blocks")
+    return [gate for gate in found if is_gate(gate) and (closed or gate.get("status") != "closed")]
+
+
 def mentions(row):
     """The rows a row links to: its edges alone, since a body's lines became edges when written (bin/jg-beads-links.py)."""
     return {d["depends_on_id"] for d in row.get("dependencies") or [] if d.get("type") != "tracks"}
@@ -140,6 +160,8 @@ def task(row, rows, native=None):
     deps = [d["depends_on_id"] for d in row.get("dependencies") or [] if d.get("type") == "blocks"]
     # bd blocked does not speak for a closed row, so it keeps the edge answer.
     waiting = [d for d in deps if rows.get(d, {"status": "closed"} if PARTIAL else {}).get("status") != "closed"] if native is None or closed else native.get(row["id"], [])
+    waiting = [d for d in waiting if not is_gate(rows.get(d, {}))]
+    asked = [] if closed else gates_of(row, rows)
     until = (row.get("defer_until") or "-")[:10]
     links = ["pr:" + url for url in dict.fromkeys(filter(None, [row.get("external_ref"), *split(meta.get("prs"))]))]
     links += ["report:" + path for path in split(meta.get("reports"))]
@@ -147,11 +169,12 @@ def task(row, rows, native=None):
     return {
         "id": row["id"], "title": row.get("title", ""), "state": "in_flight" if flying(row) else STATE.get(row.get("status"), "queued"),
         "blocked": "yes" if waiting else "no", "blocked_by": ",".join(waiting) or "none",
-        "held": "yes" if holding(row) else "no", "hold_reason": meta.get("hold_reason", "-"),
-        "hold_kind": meta.get("hold_kind", "-"), "hold_until": until, "kind": meta.get("kind") or CORE.get(row.get("issue_type"), row.get("issue_type", "task")),
+        "held": "yes" if holding(row) or asked else "no",
+        "hold_reason": meta.get("hold_reason") or (question(asked[0]) if asked else "-"),
+        "hold_kind": meta.get("hold_kind") or ("captain" if asked else "-"), "gates": [gate["id"] for gate in asked], "hold_until": until, "kind": meta.get("kind") or CORE.get(row.get("issue_type"), row.get("issue_type", "task")),
         "repo": repos[0] if repos else "-", "priority": row.get("priority", "-"),
         "created": "-" if closed else day(row.get("created_at")), "closed": day(row.get("closed_at")),
-        "deps": ",".join("blocked-by:" + d for d in deps) or "none",
+        "deps": ",".join("blocked-by:" + d for d in deps if not is_gate(rows.get(d, {}))) or "none",
         "links": ",".join(links) or "none", "body": row.get("description", ""),
         "mentions": mentions(row), "delivery_state": meta.get("delivery_state", "-"),
         # unproved: the owner's bypass passed the ticket over proving (bypassed_at), so the board says no proof ran.
@@ -311,6 +334,34 @@ def links(tasks, args):
     print("\n".join(sorted(ident for ident in linked if ident not in words)))
 
 
+def questions(rows, args):
+    """Print the owner's questions: the open gates with their ticket, must, age in days and deferral date, or records with --json."""
+    found, _ = flags(args, ("--ticket",), ("--due", "--all", "--json"))
+    now = datetime.datetime.now(datetime.timezone.utc)
+    asked = {gate["id"]: row for row in rows.values() if not is_gate(row) for gate in gates_of(row, rows, closed=True)}
+    wanted = {found["--ticket"], *legacy(rows[found["--ticket"]])} if found.get("--ticket") in rows else {found.get("--ticket")}
+    records = []
+    for gate in sorted((g for g in rows.values() if is_gate(g)), key=lambda g: (g.get("created_at") or "", g["id"])):
+        ticket, meta = asked.get(gate["id"], {}), gate.get("metadata") or {}
+        until = (ticket.get("defer_until") or "-")[:10] if ticket.get("status") == "deferred" else "-"
+        shut = gate.get("status") == "closed"
+        if (shut and "--all" not in found) or (found.get("--ticket") and ticket.get("id") not in wanted):
+            continue
+        if "--due" in found and not shut and until != "-" and until > now.strftime("%Y-%m-%d"):
+            continue
+        made = datetime.datetime.fromisoformat(gate["created_at"].replace("Z", "+00:00")) if gate.get("created_at") else now
+        records.append({"id": gate["id"], "ticket": ticket.get("id", "-"), "title": gate.get("title", ""), "question": question(gate),
+                        "must": meta.get("must", "-"), "origin": meta.get("origin", "-"), "close": meta.get("close", "-"),
+                        "state": "closed" if shut else "open", "resolution": meta.get("resolution", "-"),
+                        "words": gate.get("close_reason") or "", "age": (now - made).days, "until": until})
+    if "--json" in found:
+        print(json.dumps(records))
+    elif records:
+        table("questions", records, ["id", "ticket", "must", "age", "until", "title"], True)
+    else:
+        print("questions: 0 open owner questions")
+
+
 def beads_answer(variable):
     """The rows bd printed into the file this variable names, or None when the caller asked bd nothing."""
     path = os.environ.get(variable)
@@ -327,7 +378,7 @@ def one(ident):
         sys.exit(1)
     edges = row.get("dependencies") or []
     row["dependencies"] = [{"depends_on_id": d["id"], "type": d.get("dependency_type")} for d in edges]
-    print(json.dumps([row] + [{"id": d["id"], "status": d.get("status")} for d in edges]))
+    print(json.dumps([row] + [{key: d.get(key) for key in ("id", "status", "issue_type", "description", "metadata")} for d in edges]))
 
 
 def main():
@@ -339,7 +390,9 @@ def main():
     native = None if blocked is None else {item["id"]: list(item.get("blocked_by") or []) for item in blocked}
     ready_rows = beads_answer("JG_BEADS_READY")
     answer = None if ready_rows is None else [item["id"] for item in ready_rows]
-    tasks = sorted((task(row, rows, native) for row in raw), key=lambda t: (rows[t["id"]].get("created_at") or "", t["id"]))
+    if sys.argv[1:2] == ["questions"]:
+        return questions(rows, sys.argv[2:])
+    tasks = sorted((task(row, rows, native) for row in raw if not is_gate(row)), key=lambda t: (rows[t["id"]].get("created_at") or "", t["id"]))
     tasks.sort(key=lambda t: rows[t["id"]].get("closed_at") or "", reverse=True)
     tasks.sort(key=lambda t: ["in_flight", "queued", "done"].index(t["state"]))
     verb = sys.argv[1] if len(sys.argv) > 1 else ""

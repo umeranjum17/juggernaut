@@ -354,6 +354,7 @@ EOF
 # behind the answered task is released by the close, and the completion gate is
 # satisfied only by a recorded answer.
 test_answer_records_and_closes() {
+  local -x JG_CAPTAIN_HOLD_STAMPED=1  # these cases pin the old stamped hold, which answers the old way until the pass that moves it
   local home id json show
   home=$(make_home answer-close)
   id=jg-sample-guard-review
@@ -463,6 +464,7 @@ SH
 # --release lifts the hold instead of closing, preserving the work item's own
 # body under the record; a re-held task later accepts a new answer.
 test_release_frees_held_work() {
+  local -x JG_CAPTAIN_HOLD_STAMPED=1  # these cases pin the old stamped hold, which answers the old way until the pass that moves it
   local home show out snap
   home=$(make_home release-work)
   cat > "$home/widget-body.txt" <<'EOF'
@@ -552,6 +554,7 @@ EOF
 # fails verify until answer records the captain's word, and an ordinary finished
 # task can never be dressed up as an answered captain call.
 test_out_of_band_close_is_recordable() {
+  local -x JG_CAPTAIN_HOLD_STAMPED=1  # these cases pin the old stamped hold, which answers the old way until the pass that moves it
   local home id show
   home=$(make_home out-of-band)
   id=jg-sample-fullrun-review
@@ -710,6 +713,7 @@ test_terminal_single_owner_status_decision_does_not_block_empty_inventory() {
 }
 
 test_reconcile_retry_after_completed_close_of_a_merged_captain_ask() {
+  local -x JG_CAPTAIN_HOLD_STAMPED=1  # these cases pin the old stamped hold, which answers the old way until the pass that moves it
   local parent mate evidence request out
   parent=$(make_home reconcile-ask-parent)
   mate=$(make_home reconcile-ask-mate)
@@ -742,6 +746,7 @@ test_reconcile_retry_after_completed_close_of_a_merged_captain_ask() {
 }
 
 test_squad_lead_reconcile_publishes_before_request_retirement() {
+  local -x JG_CAPTAIN_HOLD_STAMPED=1  # these cases pin the old stamped hold, which answers the old way until the pass that moves it
   local parent mate channel evidence out show rc request
   parent=$(make_home reconcile-parent-channel)
   mate=$(make_home reconcile-channel-mate)
@@ -911,6 +916,7 @@ test_reconcile_never_closes_through_the_keyed_answer_intake() {
 }
 
 test_normal_answers_retire_pending_reconcile_requests() {
+  local -x JG_CAPTAIN_HOLD_STAMPED=1  # these cases pin the old stamped hold, which answers the old way until the pass that moves it
   local home list id
   home=$(make_home reconcile-normal-answer)
   for id in jg-sample-direct-close jg-sample-direct-release jg-sample-keyed-close; do
@@ -948,6 +954,7 @@ test_normal_answers_retire_pending_reconcile_requests() {
 
 # The two verification outcomes, and the honesty of the record each writes.
 test_reconcile_closes_with_evidence_or_keeps_the_call_open() {
+  local -x JG_CAPTAIN_HOLD_STAMPED=1  # these cases pin the old stamped hold, which answers the old way until the pass that moves it
   local home show list rc out
   home=$(make_home reconcile-outcomes)
   tasks_in "$home" add jg-sample-moot-call "Captain call: ship 0.1.37?" --repo sample >/dev/null
@@ -1056,6 +1063,7 @@ test_reconcile_closes_with_evidence_or_keeps_the_call_open() {
 # identities through the shim, short decision keys in recorded metadata, a
 # concrete-origin binding, and the chat fallback for old rows.
 test_legacy_identities_keep_working() {
+  local -x JG_CAPTAIN_HOLD_STAMPED=1  # these cases pin the old stamped hold, which answers the old way until the pass that moves it
   local home id hold out show legacy_text legacy_digest old_hold
   home=$(make_home legacy-compat)
   id=jg-sample-legacy-review
@@ -1182,6 +1190,7 @@ test_legacy_identities_keep_working() {
 # The intake is channel-agnostic, so chat must reach it the same way a captured
 # review does - for a task-id key, and for a legacy composed identity.
 test_chat_channel_feeds_the_same_keyed_answer_intake() {
+  local -x JG_CAPTAIN_HOLD_STAMPED=1  # these cases pin the old stamped hold, which answers the old way until the pass that moves it
   local home id fb show list
   home=$(make_home chat-channel)
   id=jg-sample-chat-review
@@ -1388,6 +1397,7 @@ EOF
 # same home must still close exactly as before, and discard authority covers
 # unlanded work, never the captain's question.
 test_teardown_never_closes_a_captain_held_task() {
+  local -x JG_CAPTAIN_HOLD_STAMPED=1  # these cases pin the old stamped hold, which answers the old way until the pass that moves it
   local home id plain forced json show
   home=$(make_home teardown-held)
   id=jg-sample-attach-review
@@ -1475,6 +1485,7 @@ test_teardown_never_closes_a_captain_held_task() {
 }
 
 test_retained_row_artifacts_survive_captain_answers() {
+  local -x JG_CAPTAIN_HOLD_STAMPED=1  # these cases pin the old stamped hold, which answers the old way until the pass that moves it
   local home retained_id precedence_id rejected_id rejected_local_id report_question_id
   local approved_id released_id local_id answered_id reportless_scout_id legacy_id
   local repo wt
@@ -2523,6 +2534,7 @@ test_released_merge_passes_the_entrypoint_and_lands() {
 # read a body back: holding a task for the captain, and the cleanup that retains
 # a captain-held row with its deliverable.
 test_hold_decodes_a_bare_scalar_body_without_the_nonref_default() {
+  local -x JG_CAPTAIN_HOLD_STAMPED=1  # these cases pin the old stamped hold, which answers the old way until the pass that moves it
   local home shim id show probe scout
   home=$(make_home nonref-default)
   shim="$home/no-nonref-default"

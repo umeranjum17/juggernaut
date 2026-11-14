@@ -37,9 +37,9 @@ ROWS
 # Migration: each line is the edge row 36 names, in one pass, before any store exists.
 python3 "$MIGRATE" copy --main "$M" --to "$T/copy" || fail "copy failed"
 python3 "$MIGRATE" plan --copy "$T/copy" --out "$T/imp" >/dev/null || fail "plan failed"
-edges() {  # <jsonl rows on stdin>: each edge as old-name type old-name.
+edges() {  # <jsonl rows on stdin>: each edge as old-name type old-name; an edge to a gate (an owner question, which no list shows) is no link between rows.
   python3 -c 'import json, sys; rows = [json.loads(l) for l in sys.stdin]; name = {r["id"]: (r.get("metadata") or {}).get("legacy_item") or r["id"] for r in rows}
-print("\n".join(sorted("%s %s %s" % (name[r["id"]], d["type"], name[d["depends_on_id"]]) for r in rows for d in r.get("dependencies") or [])))'
+print("\n".join(sorted("%s %s %s" % (name[r["id"]], d["type"], name[d["depends_on_id"]]) for r in rows for d in r.get("dependencies") or [] if d["depends_on_id"] in name)))'
 }
 want=$'back blocks card\nkid parent-child gate\nmid blocks tied\nring blocks mid\nside related back\nside related work\ntied related ring\nwork blocks gate'
 [ "$(edges <"$T/imp/main.jsonl")" = "$want" ] || fail "migrated edges: $(edges <"$T/imp/main.jsonl")"
@@ -109,7 +109,9 @@ want=$'n5-gate blocks n5-side\nn5-kid parent-child n5-gate\nn5-late related n5-g
 w update n5-kid --body why
 [ "$(codes "$T/wr" n5-kid)" = "n5-kid=1 " ] || fail "a name the body dropped must free the row"
 assert_contains "$(axi wr relink)" "ok: relink laid 0" "a store with every edge must converge"
-w unhold n5-gate
+# The owner's answer is the release: it closes the gate the hold made, and the work that waited on the ticket is freed.
+printf 'Go ahead.\n' >"$T/wr/answer"
+captain "$T/wr" answer n5-gate --decision-file "$T/wr/answer" --release >/dev/null || fail "release the gate"
 assert_contains "$(stored wr)" "n5-work related n5-gate" "a release must ease the line's edge"
 assert_contains "$(axi wr ready)" n5-work "released work must be ready"
 pass "a write lays each line's edge, keeps a link bd refuses as a cycle, and a body edit or release moves it"

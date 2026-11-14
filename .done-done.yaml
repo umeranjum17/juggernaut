@@ -188,6 +188,9 @@ journeys:
   claude-account-by-model:
     tier: local
     command: bash tests/jg-spawn-account-by-model.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  owner-question-gate:
+    tier: local
+    command: bash journeys/owner-question-gate.sh
   claude-1m-context:
     tier: local
     command: bash tests/jg-spawn-model.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

@@ -21,18 +21,18 @@ def named(body):
             if WORD.match(word) and word.lower() != "upkeep"]
 
 
-def decision(row):
-    """A held row or a design row: the two kinds bin/jg-captain-hold.sh can read as an open decision."""
-    return row.get("status") in view.HELD or "design-ux" in (row.get("labels") or []) or "[design-ux]" in row.get("title", "")
+def decision(row, items=None):
+    """A held row, a row with an open question to the owner, or a design row: the kinds bin/jg-captain-hold.sh can read as an open decision."""
+    return row.get("status") in view.HELD or "design-ux" in (row.get("labels") or []) or "[design-ux]" in row.get("title", "") or bool(items and view.gates_of(row, items))
 
 
-def edge(row, other, kind):
-    """The rows a line joins, dependent first, and the edge type."""
+def edge(row, other, kind, items=None):
+    """The rows a line joins, dependent first, and the edge type; items lets a row with an open gate count as a decision."""
     if kind == "parent":
         return row, other, "parent-child"
-    if decision(other):
+    if decision(other, items):
         return row, other, "blocks"
-    return (other, row, "blocks") if decision(row) else (row, other, "related")
+    return (other, row, "blocks") if decision(row, items) else (row, other, "related")
 
 
 def joined(one, two):
@@ -49,6 +49,8 @@ def lines(items, scope=None):
     """Yield (row, other, kind, word) for each line, other None when no row answers; scope keeps the lines touching one row."""
     names = {scope, *view.legacy(items[scope])} if scope else None
     for row in list(items.values()):
+        if view.is_gate(row):  # a gate's description is the owner's question, never a link
+            continue
         for kind, word in named(row.get("description")):
             if not names or row["id"] == scope or word in names:
                 other = view.named(items.values(), word)

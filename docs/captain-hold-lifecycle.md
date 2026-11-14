@@ -48,7 +48,12 @@ It never reads report bodies, review artifacts, terminal output, or chat.
 ### Creating a hold (`hold`)
 
 The `hold` subcommand is the mandatory captain-hold creation path.
-It works in this order:
+A hold that asks the owner something is one human gate row that blocks the ticket, made through the store's `gate` verb: its title is the question in a few words, its description is the whole question, and its metadata carries the `must` category, the `--origin` and the close mode.
+The ticket keeps its status and reads as held by the owner while the gate is open, and `--until` also defers the ticket to that date.
+A gate is never work: `list`, `ready`, `markdown`, `show` and every count leave it out, and `bin/jg-backlog.sh questions [--ticket <id>] [--due] [--all] [--json]` lists the open ones with their ticket, `must`, age and deferral date (`--due` leaves out a ticket deferred to a later date).
+A repeated hold with the same question finds the open gate and makes no second one.
+A parked hold, a stop order, and a ticket that still carries an old hold-set stamp keep the stamped path described next, until the pass that moves old holds to gates.
+That path works in this order:
 
 1. It uses an existing task, or creates one when nothing exists to hold.
 2. It records the task's UTC hold-set timestamp as the leading line of the task body.
@@ -79,6 +84,12 @@ Repeat and edge cases:
 ### Answering a call (`answer`)
 
 The `answer` subcommand records the captain's exact words and resolves the call in the same act.
+On a question held as a gate, the words close the gate whole (its close reason) and the gate's `resolution` is `answered` or `released`; `answer` then closes a ticket that was only the question, and `--release` leaves the ticket open and lifts a date it was deferred to.
+A ticket with several open gates needs `--gate <id>`.
+An exact retry finishes what the first call left undone, and a second answer never replaces the first.
+`reconcile close` closes a gate on evidence with `resolution` `reconciled`, which is never his answer.
+`done` refuses a ticket with an open gate and is never forced past one.
+The steps below are the stamped path.
 
 | Form | Effect |
 | --- | --- |

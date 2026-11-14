@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+# The owner's question is one gate row on a real Beads store: `hold` makes it (a readable title, the must category), his
+# answer closes it with his words, and no list of work, ready list or count ever shows it. The cases are the S17a proof:
+# a dated hold also defers the ticket, a parked hold makes no gate, an armed board still refuses a hold with no must,
+# `answer --release` leaves the ticket open, spawn and merge blocking see an open gate, `done` is refused past one, and
+# an old stamped hold still answers the old way. JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT name the pinned builds.
+set -u
+export JG_TASK_PRIORITY_CHECK=/nonexistent
+# shellcheck source=tests/lib.sh disable=SC1091
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
+  printf 'skip: real store: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
+  exit 0
+fi
+command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
+
+T=$(jg_test_tmproot jg-captain-hold-gate)
+home=$T/home
+mkdir -p "$home/data" "$home/state" "$home/config" "$home/projects/sample"
+jg_test_beads_home "$home"
+: > "$home/config/backlog-intake-loose"
+fb=$(jg_fakebin "$home")
+jg_fake_exit0 "$fb" tmux treehouse no-mistakes gh gh-axi
+
+hold() {  # <args...>: the hold script on the fixture home
+  PATH="$home/fakebin:$PATH" JG_HOME="$home" JG_STATE_OVERRIDE="$home/state" JG_DATA_OVERRIDE="$home/data" \
+    JG_CONFIG_OVERRIDE="$home/config" "$ROOT/bin/jg-captain-hold.sh" "$@"
+}
+tasks() { jg_test_backlog "$home" "$@"; }
+words() {  # <file> <text>
+  printf '%s\n' "$2" > "$1"
+}
+questions_json() { tasks questions --json "$@"; }
+
+for id in jg-w1 jg-w2 jg-w3 jg-w4; do
+  tasks add "$id" "[feature] Work $id" --repo sample --body "why $id" >/dev/null || fail "add $id"
+done
+
+# hold makes one gate with a readable title and its must; the ticket keeps its status and reads as held by the owner.
+out=$(hold hold jg-w1 --must design-pick --reason "Which route should the build take? Take A or B, the owner decides.") \
+  || fail "hold: $out"
+[ "$out" = jg-w1 ] || fail "hold prints the ticket id: $out"
+q=$(questions_json --ticket jg-w1)
+[ "$(jq length <<<"$q")" = 1 ] || fail "hold must make exactly one gate: $q"
+gate=$(jq -r '.[0].id' <<<"$q")
+[ "$(jq -r '.[0].title' <<<"$q")" = "Which route should the build take?" ] || fail "the gate title must be the question in a few words: $q"
+[ "$(jq -r '.[0].must' <<<"$q")" = design-pick ] || fail "the gate must carry its must category: $q"
+[ "$(jq -r '.[0].question' <<<"$q")" = "Which route should the build take? Take A or B, the owner decides." ] || fail "the gate must keep the whole question: $q"
+show=$(tasks show jg-w1)
+assert_contains "$show" "held: yes" "an open gate must read as held"
+assert_contains "$show" "hold_kind: captain" "an open gate must read as the owner's hold"
+assert_contains "$show" "blocked: no" "a gate is never the ticket's blocker"
+assert_not_contains "$show" "Captain hold set" "a gate hold writes no stamp into the ticket body"
+# A second hold with the same question makes no second gate.
+hold hold jg-w1 --must design-pick --reason "Which route should the build take? Take A or B, the owner decides." >/dev/null || fail "a repeated hold"
+[ "$(questions_json --ticket jg-w1 | jq length)" = 1 ] || fail "a repeated hold must not make a second gate"
+pass "hold makes one gate with a readable title and its must, and no stamp"
+
+# The gate is never work: list, ready, markdown, show and the counts leave it out.
+tasks list --all | grep -q "$gate" && fail "list shows the gate row"
+tasks ready | grep -q "$gate" && fail "ready shows the gate row"
+tasks markdown | grep -q "$gate" && fail "markdown shows the gate row"
+out=$(tasks show "$gate") && fail "show must not treat the gate as a ticket: $out"
+[ "$(tasks list --all | sed -n 's/^count: //p')" = 4 ] || fail "the count of tickets must be 4 with a gate in the store: $(tasks list --all | head -2)"
+tasks list --state held | grep -q "jg-w1" || fail "a ticket with an open gate must read as held in list --state held"
+tasks ready | grep -q "jg-w1" && fail "a ticket with an open gate is not ready work"
+tasks times jg-w1 >/dev/null 2>&1 || :
+tasks times 2>&1 | grep -q "$gate" && fail "times shows the gate row"
+pass "list, ready, markdown, show and the counts show no gate row"
+
+# questions lists the open ones, with ticket, must, age and deferral date.
+out=$(tasks questions)
+assert_contains "$out" "$gate,jg-w1,design-pick,0" "questions must list the open gate with its ticket, must and age"
+pass "questions lists the open questions"
+
+# spawn and merge ask `blocking`: an open gate on the ticket, and on a ticket linked to it, stops the work.
+out=$(hold blocking jg-w1) || fail "blocking must report the open gate on the ticket: $out"
+assert_contains "$out" "jg-w1" "blocking must name the gated ticket"
+tasks update jg-w2 --body "why jg-w2
+linked-to: jg-w1" >/dev/null || fail "link jg-w2 to jg-w1"
+out=$(hold blocking jg-w2) || fail "blocking must see the gate one edge away: $out"
+assert_contains "$out" "jg-w1" "blocking must name the linked gated ticket"
+assert_contains "$(tasks show jg-w2)" "blocked_by: jg-w1" "work linked to a ticket with an open gate waits on that ticket"
+hold blocking jg-w3 >/dev/null && fail "a ticket with no gate and no link is not blocked"
+hold open jg-w1 || fail "an open gate is an open call"
+hold open jg-w1 --identity | grep -qx "$gate" || fail "the identity of an open call must be its gate"
+hold phase jg-w1 | grep -qx raised || fail "the machine's word for an open gate is raised"
+pass "blocking and open see an open gate, on the ticket and one edge away"
+
+# done never forces past an open gate.
+out=$(tasks "done" jg-w1) && fail "done must refuse a ticket with an open gate: $out"
+assert_contains "$out" "open question to the owner" "the refusal must say why"
+assert_contains "$out" "$gate" "the refusal must name the gate"
+tasks show jg-w1 | grep -q "state: done" && fail "the refused done closed the ticket"
+pass "done on a ticket with an open gate is refused and names the gate"
+
+# answer --release closes the gate with his words and leaves the ticket open.
+words "$T/answer" "Take route A. Do not ask again."
+out=$(hold answer jg-w1 --decision-file "$T/answer" --release) || fail "answer --release: $out"
+assert_contains "$out" "released: jg-w1" "answer --release must say released"
+q=$(questions_json --all --ticket jg-w1)
+[ "$(jq -r '.[0].state' <<<"$q")" = closed ] || fail "the gate must be closed: $q"
+[ "$(jq -r '.[0].words' <<<"$q")" = "Take route A. Do not ask again." ] || fail "the gate must carry his words: $q"
+[ "$(jq -r '.[0].resolution' <<<"$q")" = released ] || fail "the gate must record released: $q"
+show=$(tasks show jg-w1)
+assert_contains "$show" "state: queued" "a released ticket stays open"
+assert_contains "$show" "held: no" "a released ticket is no longer held"
+assert_contains "$show" "approved-by-captain: answer:" "his answer is the approval a build needs"
+hold answered jg-w1 || fail "answered must be yes for a closed gate with his words"
+assert_contains "$(tasks show jg-w2)" "blocked: no" "the answer frees the work that waited on the ticket"
+hold blocking jg-w1 >/dev/null && fail "a released ticket is no longer blocked"
+[ "$(tasks questions)" = "questions: 0 open owner questions" ] || fail "no question is open now: $(tasks questions)"
+# A retry with the same words is a no-op; other words never replace the first answer.
+out=$(hold answer jg-w1 --decision-file "$T/answer" --release) || fail "an exact retry must succeed: $out"
+words "$T/other" "Take route B instead."
+out=$(hold answer jg-w1 --decision-file "$T/other" --release 2>&1) && fail "a second answer must not replace the first: $out"
+assert_contains "$out" "second answer does not replace the first" "the refusal must say why"
+[ "$(questions_json --all --ticket jg-w1 | jq -r '.[0].words')" = "Take route A. Do not ask again." ] || fail "his first words must stay"
+pass "answer --release closes the gate with his words and leaves the ticket open"
+
+# answer without --release closes a ticket that was only the question, after the gate.
+hold hold jg-w3 --reason "Should the sample ship on Friday?" >/dev/null || fail "hold jg-w3"
+words "$T/yes" "Yes, ship it on Friday."
+out=$(hold answer jg-w3 --decision-file "$T/yes") || fail "answer: $out"
+assert_contains "$out" "answered: jg-w3" "answer must say answered"
+tasks show jg-w3 | grep -q "state: done" || fail "an answered question closes its ticket"
+[ "$(questions_json --all --ticket jg-w3 | jq -r '.[0].resolution')" = answered ] || fail "the gate must record answered"
+pass "answer closes the gate and then the ticket"
+
+# A hold with a date also defers the ticket; questions --due leaves it out until then.
+out=$(hold hold jg-w2 --reason "Is the rollout wording final?" --until 2099-01-01) || fail "dated hold: $out"
+show=$(tasks show jg-w2)
+assert_contains "$show" "hold_until: 2099-01-01" "a dated hold must defer the ticket"
+assert_contains "$show" "held: yes" "a dated hold is held"
+[ "$(questions_json --due | jq length)" = 0 ] || fail "questions --due must leave out a deferred question: $(questions_json --due)"
+[ "$(questions_json | jq -r '.[0].until')" = 2099-01-01 ] || fail "questions must show the deferral date"
+hold phase jg-w2 | grep -qx deferred || fail "the machine's word for a dated hold is deferred"
+words "$T/later" "Wording is final."
+hold answer jg-w2 --decision-file "$T/later" --release >/dev/null || fail "answer the dated hold"
+tasks show jg-w2 | grep -q "hold_until: 2099-01-01" && fail "releasing lifts the deferral date"
+pass "a dated hold defers the ticket, and questions --due leaves it out"
+
+# A parked hold (his own instruction) makes no gate.
+out=$(hold hold jg-w4 --reason "captain stop order holds this lane; branch preserved unmerged") || fail "parked hold: $out"
+[ "$(questions_json --ticket jg-w4 | jq length)" = 0 ] || fail "a parked hold must make no gate"
+tasks show jg-w4 | grep -q "Captain hold set" || fail "a parked hold keeps the stamped record"
+pass "a parked hold makes no gate"
+
+# An armed board still refuses a hold with no must category and routes it, with no gate made.
+tasks add jg-w5 "[feature] Work jg-w5" --repo sample --body "why jg-w5" >/dev/null || fail "add jg-w5"
+mkdir -p "$home/state/procevent"
+: > "$home/state/procevent/signoff.source"
+out=$(JG_SIGNOFF_SCRIPT="$ROOT/bin/jg-procevent-signoff.sh" hold hold jg-w5 --reason "Should we rename the project?" 2>&1) \
+  && fail "an armed board must refuse a hold with no must: $out"
+assert_contains "$out" "needs a must category" "the refusal must name the rule"
+[ "$(questions_json --ticket jg-w5 | jq length)" = 0 ] || fail "a refused hold must make no gate"
+rm -f "$home/state/procevent/signoff.source"
+pass "a hold with no must on an armed board is refused and routed, with no gate"
+
+# An old stamped hold still answers the old way: the record is in the ticket body and no gate exists.
+tasks add jg-old "[feature] Old call" --repo sample --body "why old" >/dev/null || fail "add jg-old"
+JG_CAPTAIN_HOLD_STAMPED=1 hold hold jg-old --reason "Which of the two plans do we use?" >/dev/null || fail "old stamped hold"
+[ "$(questions_json --ticket jg-old | jq length)" = 0 ] || fail "an old stamped hold has no gate"
+tasks show jg-old --full | grep -q "Captain hold set:" || fail "the old hold carries its stamp"
+hold blocking jg-old >/dev/null || fail "an old stamped hold blocks as before"
+words "$T/old" "Use the first plan."
+hold answer jg-old --decision-file "$T/old" >/dev/null || fail "answer the old stamped hold"
+old_show=$(tasks show jg-old --full)
+assert_contains "$old_show" "Resolution recorded by jg-captain-hold" "the old way writes the record into the body"
+assert_contains "$old_show" "Use the first plan." "the old way keeps his words in the body"
+[ "$(questions_json --all --ticket jg-old | jq length)" = 0 ] || fail "answering an old hold must make no gate"
+pass "an old stamped hold still answers the old way"
+
+# reconcile close closes a gate with evidence, never as his words.
+tasks add jg-w6 "[feature] Work jg-w6" --repo sample --body "why jg-w6" >/dev/null || fail "add jg-w6"
+hold hold jg-w6 --reason "Is the release still on track?" >/dev/null || fail "hold jg-w6"
+hold bind chan-1 >/dev/null || fail "bind"
+printf 'jg-w6\n' | hold reconcile-requests --source-id chan-1 --source "captured board result" >/dev/null || fail "reconcile request"
+words "$T/evidence" "The release shipped on 2026-11-01."
+out=$(hold reconcile close jg-w6 --evidence-file "$T/evidence") || fail "reconcile close: $out"
+q=$(questions_json --all --ticket jg-w6)
+[ "$(jq -r '.[0].resolution' <<<"$q")" = reconciled ] || fail "reconcile records reconciled: $q"
+assert_contains "$(jq -r '.[0].words' <<<"$q")" "Reconciliation evidence: The release shipped" "the evidence is on the gate"
+hold answered jg-w6 && fail "a reconciled gate is not an answer of his"
+pass "reconcile close resolves the gate with evidence"
+
+pass "jg-captain-hold-gate"

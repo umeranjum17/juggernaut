@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """jg-beads-write.py - serve the backlog's add, update, done, block, unblock, start, reopen, hold and unhold on a Beads store.
 
-Usage: BEADS_DIR=<store> jg-beads-write.py <add|create|update|edit|done|close|block|unblock|start|task|reopen|hold|unhold|relink> [args...]
+Usage: BEADS_DIR=<store> jg-beads-write.py <add|create|update|edit|done|close|block|unblock|start|task|reopen|hold|unhold|relink|gate|resolve> [args...]
        BEADS_DIR=<store> jg-beads-write.py <stage <key>...|take <file> <key>...|drop <key>...|public-followup ...>
        BEADS_DIR=<store> jg-beads-write.py <moment|wait|ticket-stage|ticket-drift|times|trace> ...   (the ticket machine's moments, wait and stage: bin/jg-beads-moment.py)
        BEADS_DIR=<store> jg-beads-write.py <beat|reclaim> ...   (a worker's lease: bin/jg-beads-lease.py)
@@ -39,6 +39,8 @@ one bd call, and leaves any row that moved out of the queue.
 A body's linked-to: and parent: lines become edges when written (bin/jg-beads-links.py), and a new row takes the lines that named it first.
 A body that drops a name drops its edge, an edge bd refuses as a cycle lands as related, and unhold eases a line's blocks edge to related
 once neither side is a decision. relink lays every missing edge, for a store whose lines came before edges.
+A question to the owner is a human gate that blocks its ticket (gate), closed with the owner's words as its close reason (resolve);
+the ticket keeps its status, and done refuses a ticket with an open gate and never forces past one.
 """
 import datetime
 import json
@@ -124,7 +126,7 @@ def released(row):
 
 
 def rows():
-    return {row["id"]: row for row in json.loads(bd("list", "--all", "--limit", "0", "--json")) or []}
+    return {row["id"]: row for row in json.loads(bd("list", "--all", "--limit", "0", "--include-gates", "--json")) or []}
 
 
 def lay(ident=None, old=""):
@@ -139,7 +141,7 @@ def lay(ident=None, old=""):
     laid = 0
     for row, other, kind, _ in edges.pending(items, ident):
         if other:
-            one, two, kind = edges.edge(row, other, kind)
+            one, two, kind = edges.edge(row, other, kind, items)
             if kind == "related" or subprocess.run([WRAPPER, "dep", "add", one["id"], two["id"], "--type", kind],
                                                    capture_output=True, check=False).returncode:
                 kind = "related"
@@ -160,7 +162,7 @@ def eased(ident):
     """Turn the blocks edges of a released row's lines to related, so no row waits on what is no longer a decision."""
     items = rows()
     for row, other, kind, _ in edges.lines(items, ident):
-        if other and edges.edge(row, other, kind)[2] == "related" and edges.joined(row, other) == "blocks":
+        if other and edges.edge(row, other, kind, items)[2] == "related" and edges.joined(row, other) == "blocks":
             unlink(row, other)
             bd("dep", "add", row["id"], other["id"], "--type", "related")
 
@@ -406,6 +408,9 @@ def done(args):
     ident = row["id"]
     item = view.task(row, items)
     already = item["state"] == "done"
+    if item["gates"] and not already:  # a question the owner has not answered is never forced past
+        view.refuse("%s has an open question to the owner (%s), so it cannot be closed" % (ident, ", ".join(item["gates"])),
+                    "Run `jg-captain-hold.sh answer %s --decision-file <path>` with the owner's words" % ident, "OPEN_QUESTION")
     words, cmd = links(row, found)
     if words:
         cmd.append("--title=" + " ".join([item["title"], *words]))
@@ -595,6 +600,51 @@ def hold(args):
     respond(found, "hold", ident, "hold %s -> held%s" % (ident, " (%s)" % named if named else ""), tips)
 
 
+def gate(args):
+    """gate <ticket> --title <question> --reason <full question> [--must <category>] [--origin <id>] [--close done|release]: the owner's question as a human gate that blocks the ticket, printing its id.
+
+    A second call with the same question on the same ticket finds the open gate and prints it, so a retry makes no second one."""
+    found, ids = view.flags(args, ("--title", "--reason", "--must", "--origin", "--close"), ())
+    if len(ids) != 1 or not found.get("--title") or not found.get("--reason"):
+        view.refuse("usage: jg-beads-write.py gate <ticket> --title <question> --reason <full question> [--must <category>]")
+    items = rows()
+    row = plain(items, ids[0])
+    if view.is_gate(row):
+        view.refuse("%s is a question, not a ticket" % row["id"])
+    same = [one for one in view.gates_of(row, items) if view.question(one) == found["--reason"]]
+    if same:
+        print(same[0]["id"])
+        return
+    made = json.loads(bd("gate", "create", "--blocks", row["id"], "--type", "human", "--title", found["--title"],
+                         "--reason", found["--reason"], "--json"))
+    meta = [word for key in ("must", "origin", "close") if found.get("--" + key) for word in ("--set-metadata", "%s=%s" % (key, found["--" + key]))]
+    if meta:
+        bd("update", made["id"], *meta)
+    print(made["id"])
+
+
+def resolve(args):
+    """resolve <gate> --words-file <path> --resolution answered|released|reconciled: close the question with the owner's words, whole, as its close reason.
+
+    The resolution is written first, so a close that fails leaves an open gate a retry finishes; a second answer never replaces the first."""
+    found, ids = view.flags(args, ("--words-file", "--resolution"), ())
+    if len(ids) != 1 or found.get("--resolution") not in ("answered", "released", "reconciled") or not found.get("--words-file"):
+        view.refuse("usage: jg-beads-write.py resolve <gate> --words-file <path> --resolution answered|released|reconciled")
+    one = rows().get(ids[0])
+    if one is None or not view.is_gate(one):
+        view.refuse('"%s" is not an owner question' % ids[0], "Run `jg-backlog.sh questions` to list them", "NOT_FOUND", 1)
+    if one["status"] == "closed":
+        view.refuse("%s is already answered; a second answer does not replace the first" % ids[0])
+    with open(found["--words-file"], encoding="utf-8") as source:
+        words = source.read()
+    bd("update", one["id"], "--set-metadata", "resolution=" + found["--resolution"])
+    bd("gate", "resolve", one["id"], "--reason", words)
+    for row in rows().values():  # work that waited on the ticket because of the question no longer does
+        if any(d["depends_on_id"] == one["id"] for d in row.get("dependencies") or []):
+            eased(row["id"])
+    print(one["id"])
+
+
 def unhold(args):
     found, ids = view.flags(args, (), ("--json",))
     if len(ids) != 1:
@@ -765,7 +815,7 @@ def retag(_args):
 def main():
     verb = sys.argv[1] if len(sys.argv) > 1 else ""
     serve = {"add": add, "create": add, "update": update, "edit": update, "done": done, "close": done,
-             "block": block, "unblock": unblock, "start": start, "rename-lane": rename_lane, "task": task, "reopen": reopen, "hold": hold, "unhold": unhold,
+             "block": block, "unblock": unblock, "start": start, "rename-lane": rename_lane, "task": task, "reopen": reopen, "hold": hold, "unhold": unhold, "gate": gate, "resolve": resolve,
              "stage": stage, "take": take, "drop": drop, "relink": relink, "retag": retag,
              "public-followup": lambda args: __import__("jg-beads-followup").main(args),
              "trace": lambda args: __import__("jg-beads-trace").main(args),

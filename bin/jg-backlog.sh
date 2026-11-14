@@ -5,7 +5,7 @@
 #        jg-backlog.sh --help
 #
 # Every routine juggernaut backlog read or mutation goes through this command. It serves
-# `show`, `view`, `list`, `ready`, `ready --spawnable` (the tickets this home can start now, bin/jg-backlog-spawnable.sh, ended at 10 seconds with exit 124), `approve-dispatch`, `markdown`, `add`, `update`, `done`, `block`, `unblock`,
+# `show`, `view`, `list`, `questions` (the owner's open questions: `--ticket <id>`, `--due`, `--all`, `--json`), `ready`, `ready --spawnable` (the tickets this home can start now, bin/jg-backlog-spawnable.sh, ended at 10 seconds with exit 124), `approve-dispatch`, `markdown`, `add`, `update`, `done`, `block`, `unblock`,
 # `start`, `task`, `reopen`, `hold`, `unhold`, `on-report`, `public-followup`, `relink` and `retag` from the store that
 # `config/beads-dir` names (bin/jg-backlog-lib.sh); any other verb exits 2 with nothing
 # run. A relative value of `--to` or any `--*-file` flag (`--body-file`, ...) is made
@@ -261,7 +261,7 @@ case "${1:-}" in
       exit "$_jg_rc"
     fi
     beads_read; exit $? ;;
-  markdown) beads_read; exit $? ;;
+  markdown|questions) beads_read; exit $? ;;
   add|create|update|edit|done|close|block|unblock|start|task|reopen|hold|unhold|on-report|public-followup|relink|retag|moment|wait|ticket-stage|ticket-drift|times|trace|beat|reclaim) ;;
   *) fail "the beads backlog does not serve ${1:-this command}" ;;
 esac
