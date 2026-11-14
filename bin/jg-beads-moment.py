@@ -6,6 +6,7 @@ Usage: BEADS_DIR=<store> jg-beads-write.py moment <ticket> <moment> [--at <RFC33
        BEADS_DIR=<store> jg-beads-write.py ticket-stage <ticket> [--proof <state of the proof run>]
        BEADS_DIR=<store> jg-beads-write.py ticket-drift <ticket> [--forge]
        BEADS_DIR=<store> jg-beads-write.py times <ticket>
+       BEADS_DIR=<store> jg-beads-write.py times --json
 
 moment writes one of eight moments of the ticket machine: approved_at, proved_at, bypassed_at, landing_at, gated_at, returned_at, conflict_at and release_opened_at.
 Each is a provenance event first and then the row's metadata, in that order, because the row write is the signal a reader can poll and
@@ -18,6 +19,9 @@ who `none`. The words are the closed lists of core/machines/ticket-wait.states a
 No stage word is stored, `bd set-state` is never called, and hold_kind is not written: the stage is worked out by bin/jg-beads-stage.py.
 times prints one line `<name><TAB><time>` for each of ready, landed, live and released that the row holds, in that order, and nothing, with exit 0,
 for a row that holds none. The time is the row's RFC3339 string (ready_at, landed_at, live_at, released_at). It never writes.
+times --json names no ticket: it prints one JSON array holding, for every row of the store that holds any of those four stamps, `ticket` and the
+stamps it holds, with pinned_back_at and reverted_at when held, because they undo live_at and landed_at. The reader of the fleet pulse
+(core/fleet-pulse/bin/trunk-pulse.sh) counts from it. It is not cut to a window: a landing that waits to go live may be older than any window.
 Every write prints one line with the seconds it took.
 ticket-drift prints one line `drift<TAB><ticket><TAB>lost<TAB><difference>` for each way the row and the records outside Beads differ
 (bin/jg-beads-drift.py) and nothing when they agree. The forge is read only with --forge. It never writes.
@@ -198,10 +202,28 @@ def ticket_drift(args):
 TIMES = (("ready", "ready_at"), ("landed", "landed_at"), ("live", "live_at"), ("released", "released_at"))
 
 
+# The two moments that undo a stamp; `times --json` carries them beside the four stamps.
+UNDOING = (("pinned_back", "pinned_back_at"), ("reverted", "reverted_at"))
+
+
+def all_times():
+    """Every row that holds a stamp, as `ticket` plus the stamp keys it holds, ready for one JSON array."""
+    found = []
+    for row in json.loads(bd("list", "--all", "--limit", "0", "--json")) or []:
+        meta = row.get("metadata") or {}
+        held = {key: meta[key] for _, key in TIMES + UNDOING if meta.get(key)}
+        if any(meta.get(key) for _, key in TIMES):
+            found.append({"ticket": row["id"], **held})
+    return found
+
+
 def times(args):
-    _, ids = view.flags(args, (), ())
-    if len(ids) != 1:
-        view.refuse("usage: times <ticket>")
+    switches, ids = view.flags(args, (), ("--json",))
+    if "--json" in switches and not ids:
+        print(json.dumps(all_times(), sort_keys=True))
+        return
+    if len(ids) != 1 or switches:
+        view.refuse("usage: times <ticket> | times --json")
     meta = fetch(ids[0]).get("metadata") or {}
     for name, key in TIMES:
         if meta.get(key):
