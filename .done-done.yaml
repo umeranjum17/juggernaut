@@ -1155,6 +1155,9 @@ journeys:
   jg-backlog-row-show:
     tier: local
     command: bash tests/jg-backlog-row-show.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-beads-journal:
+    tier: local
+    command: bash tests/jg-beads-journal.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-beads-lane-s7:
     tier: local
     command: bash tests/jg-beads-lane-s7.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

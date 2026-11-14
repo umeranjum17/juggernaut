@@ -47,8 +47,9 @@
 # Every call forces BD_DISABLE_METRICS=1, DO_NOT_TRACK=1 and BD_NON_INTERACTIVE=1, since bd metrics
 # are on by default, and drops every other BEADS_*, BD_*, DOLT_* and GIT_* variable but BEADS_ACTOR,
 # and every token, secret, password, API key and PAT variable, since bd prints part of one it finds.
-# BEADS_ACTOR is the lane in JG_BACKLOG_LANE when one is named, else the caller's, else juggernaut, so bd's comments and events
-# carry who wrote them.
+# BEADS_ACTOR is the lane in JG_BACKLOG_LANE when one is named, else the caller's, else the name of the home in JG_HOME (`main` or
+# `lead:<id>`, bin/jg-home-name-lib.sh; `juggernaut` with no home), so bd's comments, events and `created_by` carry who wrote them.
+# The store keeps its events journal on (`events-journal true`): init sets it, and check refuses a store where it is off.
 # HOME, XDG_* and TMPDIR point at `<parent>/.jg-beads-env`, because both tools write `$HOME/.dolt`,
 # and dolt's metrics and version check are off there; without that even `dolt version` calls out.
 set -u
@@ -56,6 +57,8 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/jg-pin-lib.sh disable=SC1091
 . "$SCRIPT_DIR/jg-pin-lib.sh"
+# shellcheck source=bin/jg-home-name-lib.sh disable=SC1091
+. "$SCRIPT_DIR/jg-home-name-lib.sh"
 
 # The hold rule. bd keeps ephemeral rows in wisps, so that table carries it too, under its own name.
 HOLD_RULES='issues hold_needs_reason
@@ -134,7 +137,7 @@ env_lock() {
   export XDG_CONFIG_HOME=$HOME/.config XDG_CACHE_HOME=$HOME/.cache
   export XDG_DATA_HOME=$HOME/.local/share XDG_STATE_HOME=$HOME/.local/state
   export BD_DISABLE_METRICS=1 DO_NOT_TRACK=1 BD_NON_INTERACTIVE=1
-  export BEADS_ACTOR=${JG_BACKLOG_LANE:-${BEADS_ACTOR:-juggernaut}}
+  export BEADS_ACTOR=${JG_BACKLOG_LANE:-${BEADS_ACTOR:-$(jg_home_actor "${JG_HOME:-}")}}
   export BEADS_CEILING_DIRECTORIES=$STORE_PARENT GIT_CEILING_DIRECTORIES=$STORE_PARENT
 }
 
@@ -162,6 +165,15 @@ reasonless_rows() {  # <dolt>
     | tail -n +2
 }
 
+# The journal is what a reader asks for the changes since its last read (`events tail`), so a store with it off is unhealthy.
+# Both run from the store's parent, where bd reads and writes config.yaml; the database folder holds another config.
+journal_off() {  # <bd>
+  [ "$(cd -- "$STORE_PARENT" && "$1" config get events-journal 2>/dev/null)" != true ]
+}
+journal_on() {  # <bd>
+  (cd -- "$STORE_PARENT" && "$1" config set events-journal true > /dev/null)
+}
+
 run_init() {  # --prefix <prefix>
   local bd dolt gaps table rule
   [ "$#" -eq 2 ] && [ "$1" = --prefix ] || die "usage: jg-beads.sh init --prefix <prefix>"
@@ -176,7 +188,13 @@ run_init() {  # --prefix <prefix>
   store_mode_check
   db_enter
   gaps=$(hold_rule_gaps "$dolt") || exit $?
-  [ -n "$gaps" ] || die "$BEADS_DIR is already a store; init never runs twice"
+  # A store made before the journal has the rule and no journal: init turns it on and adds nothing else.
+  if [ -z "$gaps" ]; then
+    journal_off "$bd" || die "$BEADS_DIR is already a store; init never runs twice"
+    journal_on "$bd" || exit $?
+    return 0
+  fi
+  journal_on "$bd" || exit $?
   # The status must exist first, or a refused on_hold would be bd's status check and not the rule.
   "$bd" config set status.custom on_hold:frozen > /dev/null || exit $?
   while read -r table rule; do
@@ -212,6 +230,10 @@ run_check() {
   gaps=$(hold_rule_gaps "$PINNED_TOOL") || exit $?
   [ -z "$gaps" ] || die "hold rule missing or changed in $BEADS_DIR: $(cut -d' ' -f2 <<< "$gaps" | tr '\n' ' ')"
   printf 'rule: hold_needs_reason (issues, wisps)\n'
+  pin_check bd
+  ! journal_off "$PINNED_TOOL" || die "the events journal is off in $BEADS_DIR; run jg-beads.sh init to turn it on"
+  printf 'journal: on (events-journal true)\n'
+  pin_check dolt
   gaps=$(reasonless_rows "$PINNED_TOOL") || die "cannot read the deferred rows of $BEADS_DIR"
   [ -z "$gaps" ] || die "deferred with no reason in $BEADS_DIR: $(tr '\n' ' ' <<< "$gaps")"
   telemetry_check "$PINNED_TOOL"

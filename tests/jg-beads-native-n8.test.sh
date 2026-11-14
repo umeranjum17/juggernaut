@@ -22,7 +22,8 @@ printf '%s\n' "$BEADS_DIR" > "$T/home/config/beads-dir"
 jail=()
 command -v bwrap >/dev/null && jail=(bwrap --ro-bind / / --tmpfs /tmp --bind "$T" "$T" --ro-bind "$ROOT" "$ROOT" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent)
 
-bd() { "${jail[@]}" "$WRAPPER" "$@"; }
+# The fixture home pins the default actor (`main`); the ambient JG_HOME may be a Squad Lead home.
+bd() { JG_HOME="$T/home" "${jail[@]}" "$WRAPPER" "$@"; }
 axi() { JG_HOME="$T/home" "${jail[@]}" "$CLI" "$@"; }
 as_lane() {  # <lane> <command...>: one write made from that lane.
   local name=$1
@@ -51,21 +52,21 @@ as_lane s1.1.1 "${jail[@]}" "$WRAPPER" comments add n8-a "from the lane" >/dev/n
 authors=$(bd comments n8-a --json 2>/dev/null | jq -r 'map(.author) | unique | join(",")')
 [ "$authors" = s1.1.1 ] || fail "a lane's comment must carry the lane, got [$authors]"
 printf 'ok - the comment author is the lane\n'
-actors=$(bd dolt sql -q "select distinct actor from events where issue_id = 'n8-a' and event_type <> 'created' order by 1" 2>&1)
+actors=$(bd dolt sql -q "select distinct actor from events where issue_id = 'n8-a' and event_type not in ('created', 'label_added') order by 1" 2>&1)  # the seed (create and its labels) is the default actor's
 assert_contains "$actors" s1.1.1 "the events of a lane's write must carry the lane"
-assert_not_contains "$actors" juggernaut "no event of a lane's write may carry the default actor"
+assert_not_contains "$actors" main "no event of a lane's write may carry the default actor"
 printf 'ok - the events carry the lane\n'
 
-# With no lane the actor is the caller's, else juggernaut.
+# With no lane the actor is the caller's, else the home's name (juggernaut with no home).
 bd comments add n8-a "from nobody" >/dev/null 2>&1 || fail "comment from the default"
-BEADS_ACTOR=fixture "${jail[@]}" "$WRAPPER" comments add n8-a "from the caller" >/dev/null 2>&1 || fail "comment from a named actor"
+BEADS_ACTOR=fixture JG_HOME="$T/home" "${jail[@]}" "$WRAPPER" comments add n8-a "from the caller" >/dev/null 2>&1 || fail "comment from a named actor"
 authors=$(bd comments n8-a --json 2>/dev/null | jq -r 'map(.author) | unique | join(",")')
-[ "$authors" = fixture,juggernaut,s1.1.1 ] || fail "the default and the caller's actor must stay, got [$authors]"
+[ "$authors" = fixture,main,s1.1.1 ] || fail "the default and the caller's actor must stay, got [$authors]"
 printf 'ok - no lane keeps the caller and the default actor\n'
 
 # A start with no lane still names an owner, so a row in flight is never ownerless.
 axi start n8-b >/dev/null || fail "start with no lane"
-[ "$(field n8-b .assignee)" = juggernaut ] || fail "a start with no lane must name the default actor"
+[ "$(field n8-b .assignee)" = main ] || fail "a start with no lane must name the home's name"
 BEADS_ACTOR=fixture axi start n8-c >/dev/null || fail "start from a named actor"
 [ "$(field n8-c .assignee)" = fixture ] || fail "a start must name the caller's actor"
 out=$(axi start n8-a) || fail "start of a row already in flight"
@@ -96,7 +97,7 @@ printf 'ok - a held queued row stays queued\n'
 axi add n8-g "[feature] Legacy flight" --priority 2 --body why >/dev/null || fail "seed a legacy row"
 bd update n8-g --status in_progress >/dev/null 2>&1 || fail "put a legacy row in flight"
 axi hold n8-g --reason "wait legacy" >/dev/null || fail "hold a legacy row"
-[ "$(field n8-g .assignee)" = juggernaut ] || fail "a hold of an ownerless flight must name the actor"
+[ "$(field n8-g .assignee)" = main ] || fail "a hold of an ownerless flight must name the actor"
 [ "$(state_of n8-g)" = in_flight ] || fail "a held legacy flight must read in flight"
 axi unhold n8-g >/dev/null || fail "release the legacy hold"
 [ "$(field n8-g .status)" = in_progress ] || fail "a release must keep the legacy flight"
