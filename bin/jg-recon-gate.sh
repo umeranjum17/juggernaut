@@ -6,6 +6,7 @@
 # bin/jg-brief.sh --scout writes `Recon depth: <level>` into a standard or deep
 # Recon's brief, and .agents/skills/deep-recon/SKILL.md owns the method. Before
 # such a Recon may report `done`, this gate reads data/<task-id>/ and refuses when:
+#   - report.md never names its ticket (the task id) in its title or body;
 #   - report.md lacks one of the 13 template sections (`## <n>. <name>`, in order,
 #     with a body), or a deep report writes "Not applicable" under section 8 or 11;
 #   - a load-bearing claim in claims.jsonl is neither `verified` in checks.jsonl
@@ -171,6 +172,8 @@ if not os.path.isfile(rpath):
     refuse("report.md is missing")
 else:
     report = open(rpath, encoding="utf-8").read()
+    if not re.search(r"(?<![\w-])%s(?![\w-])" % re.escape(task), report, re.I):
+        refuse(f"report.md names no ticket id; write the ticket '{task}' in its title or body")
     heads = [(m.start(), int(m.group(1)), m.group(2).strip())
              for m in re.finditer(r"^## (\d+)\.\s+(.*)$", report, re.M)]
     for i, (pos, num, title) in enumerate(heads):
