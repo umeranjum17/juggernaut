@@ -25,7 +25,7 @@
 #        jg-trunk.sh ci <project-dir> <sha> green|red  record the CI result for a live commit; red moves the green pin, and every home, back to the last green one
 #        jg-trunk.sh release <project-dir>             push the last green commit of the trunk and open the ONE release PR trunk -> default branch, owned by task release-<project>-<trunk>; refuses without his word
 #        jg-trunk.sh publish <project-dir>             under the release waiver: push the green pin once the trunk holds enough, or the tip as a candidate after a red; one batch at a time, never forced
-#        jg-trunk.sh rollover <project-dir>            after the release PR merged, cut the next trunk version (trunk-v2, ...) from the default branch
+#        jg-trunk.sh rollover <project-dir>            after the release PR merged, cut the next trunk version (release/v8, ...) from the default branch
 #        jg-trunk.sh retire <project-dir>              clean up an old trunk unforced: only when its release is proved on main and every hotfix is carried; unlanded work is kept and listed
 #        jg-trunk.sh due <project-dir>                 exit 0 when the oldest unreleased commit is past release-after-hours
 #
@@ -248,7 +248,7 @@ open_project() {  # <project-dir>: sets PROJ PN TRUNK
 
 # The trunk is safe: only this script writes it (JG_TRUNK_WRITER=1 on its own update-ref calls), and even
 # this script can only create it or fast-forward it. A rewind, a force or a delete of refs/heads/<trunk> or
-# a later trunk version (<trunk>-v2, ...) is refused by the project's reference-transaction hook, so no
+# a later trunk version (<trunk>-v2, ... or release/v8, ...) is refused by the project's reference-transaction hook, so no
 # subcommand and no hand can lose a trunk whose release is still open. A transaction that leaves the ref where it
 # is (git 2.56 opens one when a worktree is added on the branch) moves nothing and passes. The one delete it allows is `retire`'s
 # (JG_TRUNK_RETIRE=<ref>), which runs only after the old trunk's release merged and its work is carried.
@@ -257,7 +257,7 @@ ensure_guard() {
   base=$(pol trunk-branch)
   hook="$(git -C "$PROJ" rev-parse --path-format=absolute --git-common-dir)/hooks/reference-transaction"
   # shellcheck disable=SC2016 # the hook body is written out verbatim; its variables expand in the hook
-  want=$(printf '#!/bin/sh\n# managed by bin/jg-trunk.sh: only the lander moves the trunk, and only forward\n[ "$1" = prepared ] || exit 0\nwhile read -r old new ref; do\n  case "$ref" in refs/heads/%s|refs/heads/%s-v[0-9]*) ;; *) continue ;; esac\n  cur=$(git rev-parse -q --verify "$ref^{commit}" 2>/dev/null || true)\n  [ -z "$cur" ] || [ "$cur" != "$new" ] || continue\n  case "$new" in *[!0]*) ;; *) [ "${JG_TRUNK_RETIRE:-}" = "$ref" ] && continue; echo "refused: $ref is a trunk and is never deleted" >&2; exit 1 ;; esac\n  [ -n "${JG_TRUNK_WRITER:-}" ] || { echo "refused: $ref moves only through bin/jg-trunk.sh land; nothing writes it by hand (transaction: $old -> $new, now ${cur:-none})" >&2; exit 1; }\n  [ -z "$cur" ] || git merge-base --is-ancestor "$cur" "$new" || { echo "refused: $ref is never rewound or forced; the trunk only moves forward" >&2; exit 1; }\ndone\nexit 0\n' "$base" "$base")
+  want=$(printf '#!/bin/sh\n# managed by bin/jg-trunk.sh: only the lander moves the trunk, and only forward\n[ "$1" = prepared ] || exit 0\nwhile read -r old new ref; do\n  case "$ref" in refs/heads/%s|refs/heads/%s-v[0-9]*|refs/heads/release/v[0-9]*) ;; *) continue ;; esac\n  cur=$(git rev-parse -q --verify "$ref^{commit}" 2>/dev/null || true)\n  [ -z "$cur" ] || [ "$cur" != "$new" ] || continue\n  case "$new" in *[!0]*) ;; *) [ "${JG_TRUNK_RETIRE:-}" = "$ref" ] && continue; echo "refused: $ref is a trunk and is never deleted" >&2; exit 1 ;; esac\n  [ -n "${JG_TRUNK_WRITER:-}" ] || { echo "refused: $ref moves only through bin/jg-trunk.sh land; nothing writes it by hand (transaction: $old -> $new, now ${cur:-none})" >&2; exit 1; }\n  [ -z "$cur" ] || git merge-base --is-ancestor "$cur" "$new" || { echo "refused: $ref is never rewound or forced; the trunk only moves forward" >&2; exit 1; }\ndone\nexit 0\n' "$base" "$base")
   # A home guard (bin/jg-home-guard.sh) holding the hook file runs this guard first from its chained slot, so it lives there.
   if [ -f "$hook" ] && grep -q '^# managed by bin/jg-home-guard.sh' "$hook"; then
     install_trunk_hook "$hook.chained" "$want"
@@ -2233,7 +2233,7 @@ carry_over() {  # <base>
 }
 
 # Once the release PR has merged, the NEXT trunk version is cut from the default branch and the project moves onto
-# it: <trunk>-v2, -v3, ... Every commit that landed on the old trunk after the release is replayed onto it first (carry_over),
+# it: release/v8, release/v9, ... (the count goes on from the version the last cut recorded). Every commit that landed on the old trunk after the release is replayed onto it first (carry_over),
 # and the green pin follows its commit. The old trunk is left exactly as it was. Returns 1, changing nothing, while the PR is not merged.
 rollover_if_merged() {
   local url ver new base default green
@@ -2243,7 +2243,7 @@ rollover_if_merged() {
   default=$(git -C "$PROJ" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || true); default=${default:-main}
   git -C "$PROJ" fetch -q origin "+refs/heads/$default:refs/remotes/origin/$default" || die "cannot fetch origin/$default to cut the next trunk"
   base=$(rev "refs/remotes/origin/$default") || die "origin/$default is not a commit"
-  ver=$(( $(cat "$STATE/trunk-version-$PN" 2>/dev/null || echo 1) + 1 )); new="$(pol trunk-branch)-v$ver"
+  ver=$(( $(cat "$STATE/trunk-version-$PN" 2>/dev/null || echo 1) + 1 )); new=$(jg_trunk_version_branch "$ver")
   rev "refs/heads/$new" >/dev/null && die "$new already exists in $PROJ; the next trunk is never overwritten"
   carry_over "$base"
   green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true); green=$(awk -v g="$green" '$1 == g { print $2 }' <<<"$CARRY_MAP")
@@ -2348,7 +2348,7 @@ open_release_pr() {  # <default> <title> <body-file>
 # explicit bin/jg-pr-merge.sh <id> <url>. A record already there is kept, and the PR is recorded and armed through
 # jg-pr-check.sh unless the record already names this PR at this head.
 record_release_task() {  # <url> [<head>]
-  local id=release-$PN-$TRUNK meta proj
+  local id meta proj; id=$(jg_trunk_release_id "$PN" "$TRUNK")
   jg_pr_task_id_valid "$id" || die "the release task id '$id' is not a valid task id; the release PR $1 is open but has no task record"
   meta=$STATE/$id.meta
   if [ ! -e "$meta" ]; then
@@ -2388,7 +2388,7 @@ release_commit() {
 # a record of kind release is kept (record_release_task only arms it when it does not name the PR yet). Returns 1 with no
 # output when the last release row is not for this commit, so the caller says "nothing to release" as before.
 adopt_pushed_release() {  # <commit>
-  local url meta=$STATE/release-$PN-$TRUNK.meta kind
+  local url meta kind; meta=$STATE/$(jg_trunk_release_id "$PN" "$TRUNK").meta
   [ "$(awk -F'\t' -v p="$PN" -v t="$TRUNK" 'NF >= 6 && $1 == p { c = ($2 == t ? $3 : "") } END { print c }' "$DATA/trunk-releases.tsv" 2>/dev/null)" = "$1" ] || return 1
   url=$(last_release_url); [ -n "$url" ] || return 1
   if [ -e "$meta" ]; then

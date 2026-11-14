@@ -95,7 +95,9 @@ fi
 
 [ "$#" -eq 5 ] || fail 'expected project, trunk, base, head and PR URL'
 project=$1 trunk=$2 base=$3 head=$4 url=$5
-pn=${project##*/}; id=release-$pn-$trunk; dir=$DATA/$id
+# shellcheck source=bin/jg-trunk-policy-lib.sh
+. "$HERE/jg-trunk-policy-lib.sh"
+pn=${project##*/}; id=$(jg_trunk_release_id "$pn" "$trunk"); dir=$DATA/$id
 mkdir -p "$dir/.done-done/runs"
 # shellcheck source=bin/jg-wake-lib.sh
 . "$HERE/jg-wake-lib.sh"

@@ -137,12 +137,22 @@ jg_trunk_policy() {  # <key> [<project>]
   printf '%s\n' "$val"
 }
 
-# The branch a project's trunk is on now: the version the last rollover recorded (trunk-v2, ...), else the
-# trunk-branch policy value. Usage: jg_trunk_branch <project> [<state-dir>]
+# The branch a project's trunk is on now: the version the last rollover recorded (release/v8, ...; records cut before
+# release/vN keep their trunk-v7 names and are read as they are), else the trunk-branch policy value.
+# Usage: jg_trunk_branch <project> [<state-dir>]
 jg_trunk_branch() {
   local f="${2:-${JG_STATE_OVERRIDE:-${JG_HOME:-.}/state}}/trunk-branch-$1"
   if [ -s "$f" ]; then cat "$f"; else jg_trunk_policy trunk-branch "$1"; fi
 }
+
+# The name of the next working line after version <ver>: release/v<ver>. The one place that builds the name; a rollover cuts it.
+# Usage: jg_trunk_version_branch <ver>
+jg_trunk_version_branch() { printf 'release/v%s\n' "$1"; }
+
+# The task id and record name of a project's release pull request: release-<project>-<branch>, with a / in the branch
+# (release/v8) written as -, so the id is one plain name. A trunk-v7 branch gives the id it always had.
+# Usage: jg_trunk_release_id <project> <branch>
+jg_trunk_release_id() { printf 'release-%s-%s\n' "$1" "${2//\//-}"; }
 
 # The trunk branch a project is on now, printed only when the project is registered local-trunk (data/projects.md)
 # and its trunk exists (state/trunk-tip-<project>, written by `jg-trunk.sh init`); exit 1 with nothing otherwise.

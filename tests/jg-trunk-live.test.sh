@@ -231,8 +231,8 @@ test_the_landing_check_cuts_the_next_trunk_once_the_release_merged() {
   trunk word release "$PROJ" "ship it" >/dev/null 2>&1; trunk release "$PROJ" >/dev/null 2>&1 || fail "release must open"
   out=$(sweep); [ -z "$out" ] || fail "an open release must change nothing: $out"
   printf 'merged\n' > "$W/pr-state"; git -C "$PROJ" push -q origin "$(tip):refs/heads/main"; rm -f "$HOME_D"/data/jg-trunk-landing/.rollover-*
-  out=$(sweep); assert_contains "$out" "release merged: the project is now on trunk-v2" "the check must cut the next trunk"
-  git -C "$PROJ" rev-parse --verify -q trunk-v2 >/dev/null || fail "trunk-v2 must exist"
+  out=$(sweep); assert_contains "$out" "release merged: the project is now on release/v2" "the check must cut the next trunk"
+  git -C "$PROJ" rev-parse --verify -q release/v2 >/dev/null || fail "release/v2 must exist"
   pass 'the landing check cuts the next trunk once the release merged'
 }
 

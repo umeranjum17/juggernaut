@@ -23,7 +23,7 @@
 #    repository chains the trunk guard: both still refuse, reruns and a landing change neither hook, uninstall restores it.
 # T5b A release (and the word for it) carries the last green commit while the tip is ahead of it; with no green recorded it refuses.
 # T9 The trunk is safe until its release PR lands: no write rewinds, forces or deletes it, even the lander's
-#    own; once the release merged, the next trunk version (trunk-v2) is cut from the default branch, recorded,
+#    own; once the release merged, the next trunk version (release/v2) is cut from the default branch, recorded,
 #    and landed on, with the old trunk untouched; while it is open, nothing rolls over.
 # T10 Once the next trunk is cut, the old one is cleaned up unforced - remote branch, local branch, worktrees - only
 #    when its release is proved on main and every hotfix is carried into the new trunk; a copy holding
@@ -410,21 +410,21 @@ test_the_trunk_stays_safe_until_its_release_lands_then_the_next_version_is_cut()
   out=$(trunk rollover "$PROJ" 2>&1) && fail "an open release must not roll the trunk over"
   assert_contains "$out" "rollover skipped" "an open release must say what was skipped"
   assert_contains "$out" "not merged" "an open release must say why nothing moved"
-  plain_git -C "$PROJ" show-ref --verify --quiet refs/heads/trunk-v2 && fail "no next trunk may exist while the release is open"
+  plain_git -C "$PROJ" show-ref --verify --quiet refs/heads/release/v2 && fail "no next trunk may exist while the release is open"
   printf 'merged\n' > "$W/pr-state"; git -C "$PROJ" push -q origin "$old:refs/heads/main"
   out=$(trunk rollover "$PROJ" 2>&1) || fail "a merged release must cut the next trunk: $out"
-  [ "$(git -C "$PROJ" rev-parse trunk-v2)" = "$old" ] || fail "trunk-v2 must be cut from the merged default branch"
+  [ "$(git -C "$PROJ" rev-parse release/v2)" = "$old" ] || fail "release/v2 must be cut from the merged default branch"
   assert_contains "$out" "deleted local trunk" "the proved and carried old trunk must be cleaned up"
   assert_contains "$out" "deleted remote trunk" "the old trunk's remote branch must be deleted"
   git -C "$PROJ" rev-parse --verify -q refs/heads/trunk >/dev/null && fail "the old local trunk must be gone"
-  [ "$(cat "$HOME_D/state/trunk-branch-proj")" = trunk-v2 ] && [ "$(cat "$HOME_D/state/trunk-version-proj")" = 2 ] || fail "the trunk record must name version 2"
-  assert_contains "$(cat "$HOME_D/data/trunk-versions.tsv")" "$(printf 'proj\t2\ttrunk-v2\t%s' "$old")" "the version must be recorded"
+  [ "$(cat "$HOME_D/state/trunk-branch-proj")" = release/v2 ] && [ "$(cat "$HOME_D/state/trunk-version-proj")" = 2 ] || fail "the trunk record must name version 2"
+  assert_contains "$(cat "$HOME_D/data/trunk-versions.tsv")" "$(printf 'proj\t2\trelease/v2\t%s' "$old")" "the version must be recorded"
   out=$(trunk rollover "$PROJ" 2>&1) && fail "one release rolls over once"
   assert_contains "$out" "already rolled over" "a repeated rollover must say why it was skipped"
-  git -C "$PROJ" worktree add -q -b fm/n1 "$W/lanes/n1" trunk-v2; commit_in "$W/lanes/n1" work.txt next "ticket n1"
+  git -C "$PROJ" worktree add -q -b fm/n1 "$W/lanes/n1" release/v2; commit_in "$W/lanes/n1" work.txt next "ticket n1"
   jg_write_meta "$HOME_D/state/n1.meta" "project=$PROJ" "mode=local-trunk" "branch=fm/n1" "worktree=$W/lanes/n1" "spawn_gen=g-n1"; prove n1
   out=$(trunk land n1 2>&1) || fail "a lane must land on the next trunk: $out"
-  [ "$(git -C "$PROJ" rev-parse trunk-v2)" = "$(git -C "$PROJ" rev-parse fm/n1)" ] || fail "the next trunk must hold the landed commit"
+  [ "$(git -C "$PROJ" rev-parse release/v2)" = "$(git -C "$PROJ" rev-parse fm/n1)" ] || fail "the next trunk must hold the landed commit"
   pass 'the trunk is safe until its release lands, then the next version is cut and the project moves onto it'
 }
 
@@ -441,14 +441,14 @@ test_the_old_trunk_is_cleaned_up_unforced_and_only_when_its_work_is_carried() {
   # A commit that reaches the old trunk after the cut was not in the rollover's replay (tests/jg-trunk-rollover.test.sh owns that).
   JG_TRUNK_WRITER=1 commit_in "$wt" hot.txt hotfix "ticket hx"; hot=$(git -C "$wt" rev-parse HEAD)
   out=$(trunk retire "$PROJ" 2>&1) || fail "retire must not fail: $out"
-  assert_contains "$out" "kept trunk: hotfix not carried into trunk-v2: " "a hotfix not carried must keep the old trunk and be listed"
+  assert_contains "$out" "kept trunk: hotfix not carried into release/v2: " "a hotfix not carried must keep the old trunk and be listed"
   assert_contains "$out" "ticket hx" "the uncarried hotfix must be named"
   git -C "$PROJ" rev-parse --verify -q refs/heads/trunk >/dev/null || fail "an old trunk with an uncarried hotfix must not be deleted"
   [ -d "$wt" ] || fail "a worktree on it must not be removed"
-  git -C "$PROJ" worktree add -q -b fm/hx2 "$W/lanes/hx2" trunk-v2; git -C "$W/lanes/hx2" cherry-pick -n "$hot" >/dev/null 2>&1 || fail "the hotfix must cherry-pick"
+  git -C "$PROJ" worktree add -q -b fm/hx2 "$W/lanes/hx2" release/v2; git -C "$W/lanes/hx2" cherry-pick -n "$hot" >/dev/null 2>&1 || fail "the hotfix must cherry-pick"
   git -C "$W/lanes/hx2" -c user.name=t -c user.email=t@example.invalid commit -q -m "ticket hx2: carry hotfix hx"
   jg_write_meta "$HOME_D/state/hx2.meta" "project=$PROJ" "mode=local-trunk" "branch=fm/hx2" "worktree=$W/lanes/hx2" "spawn_gen=g-hx2"; prove hx2
-  trunk land hx2 >/dev/null 2>&1 || fail "the carried hotfix must land on trunk-v2"
+  trunk land hx2 >/dev/null 2>&1 || fail "the carried hotfix must land on release/v2"
   out=$(trunk retire "$PROJ" 2>&1) || fail "retire must not fail: $out"
   assert_contains "$out" "kept worktree $wt: it holds uncommitted work" "a worktree with unlanded work must be kept and listed"
   assert_contains "$out" "kept local trunk" "its branch must be kept with it"
