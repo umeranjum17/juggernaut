@@ -565,7 +565,7 @@ journeys:
     timeout: 10m
   trace-writers:
     tier: local
-    command: JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-trace-writers.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    command: JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-trace-writers.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1 && printf '{"target":{"version":"juggernaut@%s"},"start":"a fixture store holding one ticket","steps":["file the ticket and give it a worker","ask a question and answer it","record ready, landing and evidence","run jg-backlog.sh trace on the ticket"],"result":"one line shows key, title, filed by, worker, commits, state, decision and evidence"}\n' "$(git rev-parse --short HEAD)" > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
     timeout: 10m
   ticket-move:
     tier: local

@@ -125,3 +125,22 @@ out=$(JG_ROOT_OVERRIDE="$ROOT" JG_STATE_OVERRIDE="$T/home/state" JG_DATA_OVERRID
 [ "$(kinds jg-s27c)" = "land:jg-merge-local" ] || fail "jg-s27c must hold one land event from jg-merge-local, got [$(kinds jg-s27c)]"
 [ ! -e "$T/home/data/merge-latency.tsv" ] || fail "no merge-latency.tsv may be written by a merge"
 pass "merge: a local-only landing reads as landed on the ticket with the landed commit, and no latency table is written"
+
+# Slice S11: `jg-backlog.sh trace <ticket>` prints the whole trail of one ticket on one line, after a full fake life with one answered question.
+axi add jg-s11 "[feature] bird's-eye fixture" --priority 2 --body why >/dev/null || fail "file jg-s11"
+bd update jg-s11 --set-metadata task=lane-s11 --assignee fixture-agent >/dev/null || fail "claim jg-s11 for a worker"
+[ "$(axi trace jg-s11 | cut -f4,6,7,8)" = "$(printf 'fixture-agent\t%s\t-\t-' "$(axi ticket-stage jg-s11 | cut -f1)")" ] || fail "a ticket with no commit, question or evidence prints dashes there, got [$(axi trace jg-s11)]"
+gate=$(bd gate create --blocks jg-s11 --reason "which option?" --title "Question: which option?" | sed -n 's/.*bd gate resolve \(.*\)/\1/p')
+[ -n "$gate" ] || fail "the fixture gate must be created"
+[ "$(axi trace jg-s11 | cut -f7)" = "Question: which option? => open" ] || fail "an unanswered question reads open, got [$(axi trace jg-s11 | cut -f7)]"
+bd gate resolve "$gate" --reason "option a" >/dev/null || fail "answer the gate"
+axi trace record lane-s11 commit work-id lane-s11@done-1 --source jg-done --at 1794000000 >/dev/null || fail "ready"
+sha=0123456789abcdef0123456789abcdef01234567
+axi trace record jg-s11 land git-sha "$sha" --source jg-trunk-land --at 1794000100 >/dev/null || fail "land"
+axi trace record jg-s11 used work-id card-1 --source jg-evidence >/dev/null || fail "evidence"
+line=$(axi trace lane-s11) || fail "trace by a task id"
+want=$(printf 'jg-s11\t[feature] bird'"'"'s-eye fixture\t%s\tfixture-agent\t%s\t%s\tQuestion: which option? => option a\tcard-1' "$(row jg-s11 | jq -r .created_by)" "${sha:0:12}" "$(axi ticket-stage jg-s11 | cut -f1)")
+[ "$line" = "$want" ] || fail "the trail line is key, title, filed by, worker, commits, state, decision, evidence; got [$line] want [$want]"
+[ "$(printf '%s\n' "$line" | wc -l)" = 1 ] && [ "$(axi trace jg-s11)" = "$line" ] || fail "one line, the same by ticket id"
+axi trace no-such-ticket >/dev/null 2>&1 && fail "an unknown ticket must be refused"
+pass "trace: one line from key to evidence after a full fake life with one answered question, by ticket id or task id: $(printf '%s' "$line" | tr '\t' '|')"

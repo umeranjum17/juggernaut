@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """jg-beads-trace.py - the adapter verb that writes a ticket's provenance: the event first, then the moment on the row.
 
-Usage: BEADS_DIR=<store> jg-beads-write.py trace record <ticket or task> <kind> <ref-kind> <ref> --source <source> [--at <RFC3339 or epoch seconds>] [--payload <JSON>] [--once]
+Usage: BEADS_DIR=<store> jg-beads-write.py trace <ticket or task>
+       BEADS_DIR=<store> jg-beads-write.py trace record <ticket or task> <kind> <ref-kind> <ref> --source <source> [--at <RFC3339 or epoch seconds>] [--payload <JSON>] [--once]
+
+trace <ticket> only reads: it prints one line of eight tab-separated columns, key, title, filed by, worker, commits, state, decision and
+evidence, each `-` when the row holds none. Filed by is created_by; worker is the assignee (the agent name); commits are the git-sha refs of
+the land events, in time order, once each, else the row's commit; state is the stage word of bin/jg-beads-stage.py; decision is each gate that blocks
+the row as `<question> => <answer>`, or `<question> => open` while it waits, joined by `; `; evidence is the row's evidence list.
 
 --once writes nothing, with exit 0, when the row already holds the moment and nothing undid it (live_at is undone by a later pinned_back_at).
 record takes a ticket id or a task name (the row's metadata.task), so it still finds the ticket after the lane was torn down. It writes the
@@ -18,6 +24,7 @@ import time
 sys.dont_write_bytecode = True
 view = __import__("jg-beads-view")
 moment = __import__("jg-beads-moment")
+rule = __import__("jg-beads-stage")
 
 # source -> (the row's moment key, whether the ref is the landed commit, the row's list that grows by the ref). One line per producer;
 # S12 and S27 added theirs: a pull-request merge sets no commit, the URL in external_ref is its pointer. A key may be a dict by event kind (the ready step records commit and resume under one source); None writes no moment.
@@ -93,7 +100,25 @@ def record(args):
     moment.done(started, "ok: %s %s = %s" % (row["id"], key or kind, when))
 
 
+def show(ticket):
+    """Print the one line that follows a ticket from its key to its evidence."""
+    row = moment.fetch(ticket)
+    full = json.loads(moment.bd("show", row["id"], "--json"))  # a task name is found by the list, whose edges hold only ids
+    row = full[0] if isinstance(full, list) else full
+    meta = row.get("metadata") or {}
+    events = json.loads(moment.bd("provenance", "log", row["id"], "--json") or "[]") or []
+    lands = sorted((e for e in events if e.get("kind") == "land" and e.get("ref_kind") == "git-sha"), key=lambda e: e.get("occurred_at", ""))
+    commits = list(dict.fromkeys(e["ref"][:12] for e in lands)) or ([str(meta["commit"])[:12]] if meta.get("commit") else [])
+    asks = [dep for dep in row.get("dependencies") or [] if dep.get("issue_type") == "gate"]
+    decision = "; ".join("%s => %s" % (dep.get("title", ""), (dep.get("close_reason") or "answered") if dep.get("status") == "closed" else "open") for dep in asks)
+    name, _health = rule.word(row)
+    cells = [row["id"], row.get("title"), row.get("created_by"), row.get("assignee"), ",".join(commits), name, decision, meta.get("evidence")]
+    print("\t".join(str(cell).replace("\t", " ").replace("\n", " ") if cell else "-" for cell in cells))
+
+
 def main(args):
+    if len(args) == 1 and args[0] != "record":
+        return show(args[0])
     if not args or args[0] != "record":
-        view.refuse("usage: trace record <ticket> <kind> <ref-kind> <ref> --source <source>")
+        view.refuse("usage: trace <ticket> | trace record <ticket> <kind> <ref-kind> <ref> --source <source>")
     record(args[1:])
