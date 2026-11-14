@@ -727,7 +727,15 @@ need_word() {  # <in-use|release> <sha>
   local f="$STATE/trunk-word-$1-$PN"
   [ -f "$f" ] && [ "$(cut -f1 "$f")" = "$2" ] || refuse "no recorded word from the captain to $1 ${2:0:12}; record it with: jg-trunk.sh word $1 $PROJ \"<his words>\""
 }
-spend_word() { rm -f -- "$STATE/trunk-word-$1-$PN"; }
+# Spending a word records one `spent-<kind>` row (project, kind, commit, epoch, the command that spent it) in data/trunk-words.tsv,
+# beside the row that granted it, and removes the token. Only a word that is there is spent, so a second call records nothing.
+spend_word() {  # <in-use|release> <command>
+  local f="$STATE/trunk-word-$1-$PN" sha
+  [ -f "$f" ] || return 0
+  sha=$(cut -f1 "$f")
+  row trunk-words.tsv "$PN" "spent-$1" "$sha" "$(date +%s)" "$2"
+  rm -f -- "$f"
+}
 
 touches_protected() {  # <commit-a> <commit-b>: prints the first protected path the diff touches
   local path glob globs
@@ -1970,7 +1978,7 @@ cmd_live() {
   LIVE_WAIVER=$(authority trunk-live-waiver "$green"); LIVE_FLEET=1
   [ -n "$LIVE_WAIVER" ] || need_word in-use "$green"
   go_live "$green" "$tip"
-  [ -n "$LIVE_WAIVER" ] || [ -n "${LIVE_HOME:-}" ] || spend_word in-use
+  [ -n "$LIVE_WAIVER" ] || [ -n "${LIVE_HOME:-}" ] || spend_word in-use live
 }
 
 # The captain waived his go-live word for one project until the stable point; only the Overwatch path records it.
@@ -2354,6 +2362,9 @@ open_release_pr() {  # <default> <title> <body-file>
   esac
 }
 
+# Every write to the release task's record goes through its one owner, bin/jg-release-task.sh.
+release_task() { JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-release-task.sh" "$@"; }
+
 # The release PR's owning task record, state/release-<project>-<trunk>.meta: the guarded merge path (bin/jg-pr-check.sh,
 # bin/jg-pr-merge.sh) records, watches and merges a PR only under a task, and bin/jg-version-branch-lib.sh
 # jg_is_release_head admits this trunk as the head of the one PR allowed into the default branch. No worker owns the
@@ -2363,28 +2374,24 @@ open_release_pr() {  # <default> <title> <body-file>
 # explicit bin/jg-pr-merge.sh <id> <url>. A record already there is kept, and the PR is recorded and armed through
 # jg-pr-check.sh unless the record already names this PR at this head.
 record_release_task() {  # <url> [<head>]
-  local id meta proj; id=$(jg_trunk_release_id "$PN" "$TRUNK")
+  local id meta; id=$(jg_trunk_release_id "$PN" "$TRUNK")
   jg_pr_task_id_valid "$id" || die "the release task id '$id' is not a valid task id; the release PR $1 is open but has no task record"
   meta=$STATE/$id.meta
-  if [ ! -e "$meta" ]; then
-    proj=$(cd "$PROJ" && pwd -P)
-    (umask 077; printf 'kind=release\nproject=%s\nmode=local-trunk\nyolo=off\n' "$proj" > "$meta.tmp.$$") && mv -f "$meta.tmp.$$" "$meta"
-  fi
-  release_merge_authority "$meta"
+  [ -e "$meta" ] || release_task create "$id" "$PROJ" || die "the release task $id was not written; the release PR $1 is open"
+  release_merge_authority "$id"
   if [ "$(jg_dod_meta_value "$meta" pr)" = "$1" ] && { [ -z "${2-}" ] || [ "$(jg_dod_meta_value "$meta" pr_head)" = "$2" ]; }; then return 0; fi
   JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-pr-check.sh" "$id" "$1" >&2 \
     || die "the release PR $1 is open but its task $id was not recorded; fix the cause above, then run bin/jg-pr-check.sh $id $1"
   # jg-pr-check reads a head only from a worktree, and a release has none: the head this release pushed is the PR's head.
-  if [ -n "${2-}" ]; then sed -i '/^pr_head=/d' "$meta"; printf 'pr_head=%s\n' "$2" >> "$meta"; fi
+  [ -z "${2-}" ] || release_task head "$id" "$2" || die "the head $2 of the release PR $1 was not recorded on task $id"
   echo "release task: $id owns the release PR"
 }
 
 # The merge authority of the release record: the captain's standing release word (config/trunk-release-waiver) writes
 # `merge=approved` and the rule it comes from; with no such rule the lines are removed, so a record never outlives the word.
-release_merge_authority() {  # <meta>
+release_merge_authority() {  # <task-id>
   local rule; rule=$(authority trunk-release-waiver "$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)")
-  sed -i -e '/^merge=approved$/d' -e '/^merge_rule=/d' "$1"
-  [ -z "$rule" ] || printf 'merge=approved\nmerge_rule=%s\n' "$rule" >> "$1"
+  release_task authority "$1" "$rule" || die "the merge authority of release task $1 was not recorded"
 }
 
 # The commit a release carries and the captain's release word names: the green pin (state/trunk-green-<project>), never the
@@ -2468,7 +2475,7 @@ push_batch() {  # <rel> <n> <prev> <spend 0|1> <proof 0|1>
   if ! awk -F '\t' -v p="$PN" -v t="$TRUNK" -v h="$rel" -v u="$url" '$1 == p && $2 == t && $3 == h && $6 == u { found=1 } END { exit !found }' "$DATA/trunk-releases.tsv" 2>/dev/null; then
     row trunk-releases.tsv "$PN" "$TRUNK" "$rel" "$n" "$(date +%s)" "$url"
   fi
-  put "$STATE/trunk-released-$PN" "$rel"; [ "$4" != 1 ] || spend_word release
+  put "$STATE/trunk-released-$PN" "$rel"; [ "$4" != 1 ] || spend_word release release
   rm -f -- "$STATE/trunk-release-pending-$PN"
   echo "released $n commits from $TRUNK: $url"
   "$SCRIPT_DIR/../core/machines/release-stamp.sh" "$PROJ" "$base" "$rel" || true
@@ -2488,7 +2495,7 @@ cmd_release() {
   base=$(cat "$STATE/trunk-released-$PN"); n=$(git -C "$PROJ" rev-list --count "$base..$rel")
   if [ "$n" -eq 0 ]; then
     if [ "$(cat "$STATE/trunk-release-pending-$PN" 2>/dev/null || true)" = "$rel" ]; then
-      [ "$(cut -f1 "$STATE/trunk-word-release-$PN" 2>/dev/null || true)" != "$rel" ] || spend_word release
+      [ "$(cut -f1 "$STATE/trunk-word-release-$PN" 2>/dev/null || true)" != "$rel" ] || spend_word release release
       rm -f -- "$STATE/trunk-release-pending-$PN"
     fi
     adopt_pushed_release "$rel" || refuse "nothing to release: $TRUNK has no commits since the last release"

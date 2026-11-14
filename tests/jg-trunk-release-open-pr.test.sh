@@ -130,7 +130,7 @@ test_a_release_keeps_one_url_and_takes_the_open_release_pr_as_success() {
 }
 
 test_the_release_pr_has_an_owning_task_the_guard_admits() {
-  local out meta rc=0
+  local out meta rc=0 sum bad id=release-juggernaut-trunk
   release_world rel-task; git -C "$PROJ" branch release/c-16; meta="$HOME_D/state/release-juggernaut-trunk.meta"
   batch j1; echo open > "$W/state-813"
   out=$(trunk release "$PROJ" 2>&1) || fail "T6: the release with its task record must succeed: $out"
@@ -148,6 +148,14 @@ test_the_release_pr_has_an_owning_task_the_guard_admits() {
   [ "$rc" -ne 0 ] || fail "T6: a pull request from another head into main must still be refused: $out"
   assert_contains "$out" "current version branch is release/c-16" "T6: the refusal must name the version branch"
   grep -qxF "pr=$U/813" "$meta" || fail "T6: a refused pull request must leave the record as it was: $(cat "$meta")"
+  sum=$(cksum < "$meta")
+  for bad in "head $id" "head $id zz" "authority no-such-task rule" "create $id $PROJ"; do
+    read -r -a bad_args <<< "$bad"
+    JG_HOME="$HOME_D" JG_STATE_OVERRIDE="$HOME_D/state" "$W/root/bin/jg-release-task.sh" "${bad_args[@]}" >/dev/null 2>&1 && fail "T6: the owner must refuse: $bad"
+  done
+  [ "$(cksum < "$meta")" = "$sum" ] || fail "T6: a refused write must leave the record as it was: $(cat "$meta")"
+  [ -s "$ROOT/bin/jg-trunk.sh" ] || fail "T6: the script under test is missing"
+  ! grep -n -E "sed -i.*meta|>> *\"\\\$meta\"" "$ROOT/bin/jg-trunk.sh" || fail "T6: bin/jg-trunk.sh must not patch a task record itself"
   pass 'T6 the release records its own task, the guard admits the trunk head into main, and any other head is refused'
 }
 
@@ -330,6 +338,8 @@ out=$(trunk release "$PROJ" 2>&1) && fail 'a missing landing proof row must refu
 assert_contains "$out" "no landing proof row for $later" 'the failure must identify the missing proof'
 pass 'release refuses the later commit when its landing proof row is missing'
 [ ! -e "$HOME_D/state/trunk-word-release-proj" ] || fail 'publication must spend the release word'
+[ "$(awk -F '\t' '$2 == "spent-release"' "$HOME_D/data/trunk-words.tsv" | wc -l)" = 1 ] || fail "publication must record the spent word once: $(cat "$HOME_D/data/trunk-words.tsv")"
+pass 'publication spends the release word and records one spent row'
 rows=$(wc -l < "$HOME_D/data/trunk-releases.tsv")
 cp "$W/saved-proofs" "$proofs"
 # An old trunk with an uncarried hotfix must also refuse, and be retryable.
