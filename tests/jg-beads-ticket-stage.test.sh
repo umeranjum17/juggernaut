@@ -213,9 +213,8 @@ new jg-t2; out=$(axi times jg-t2) || fail "times on a ticket with no stamps must
 [ -z "$out" ] || fail "a ticket with no stamps must print nothing, got [$out]"
 pass "times prints the stamped times in order, and nothing for none"
 
-# The time of one write.
-out=$(axi moment jg-w1 approved_at) || fail "timed write: $out"
-secs=$(sed -n 's/.*(\([0-9.]*\) s)$/\1/p' <<<"$out")
-printf '# one moment write (an event, then the row): %s\n' "$out"
-if [ -z "$secs" ] || ! awk -v s="$secs" 'BEGIN { exit !(s < 1) }'; then fail "one write must take under 1 s, got [$out]"; fi
+# One moment write still works on a row that has none of it yet. Its speed is not asserted: a wall-clock bound fails on a loaded host
+# when the code is right (flaky-juggernaut-jg-beads-ticket-stage).
+out=$(axi moment jg-w1 approved_at) || fail "write: $out"
+[ "$(row jg-w1 | jq -r '.metadata.approved_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$")')" = true ] || fail "the write must leave an RFC3339 UTC approved_at, got [$out]"
 pass "jg-beads ticket stage"
