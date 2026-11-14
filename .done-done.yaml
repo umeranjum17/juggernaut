@@ -1612,6 +1612,9 @@ journeys:
   jg-overwatch-kpi:
     tier: local
     command: bash tests/jg-overwatch-kpi.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-primary-chat-approval:
+    tier: local
+    command: env -u JG_TASK_ID bash tests/jg-primary-chat-approval.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1 && printf '{"target":{"version":"bin/jg-overwatch-kpi.sh hook and bin/jg-inbox.sh primary-chat at this head"},"start":"a primary home whose lock names one session","steps":["submit an order from the locked session through the prompt hook","read it back with the build-approval reader as owner-words","submit from another session, with no lock, and as machine text"],"result":"the locked session files one handled signed chat note with his whole words and an order quoting them is approved; the other cases file no note and approve nothing"}\n' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
   jg-owner-correction:
     tier: local
     command: bash tests/jg-owner-correction.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

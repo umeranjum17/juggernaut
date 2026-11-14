@@ -20,7 +20,11 @@
 # inbox note, not as a prompt, so the chat gateway (core/bus, `ingest`) records
 # it with `record --id <inbox note id>`: the id makes the record idempotent, so
 # a replayed or retried poll never counts one note twice, and it names the
-# message for `tag --message`. The hook is a silent no-op outside a genuine primary
+# message for `tag --message`. The hook also files the words of a message typed in
+# the locked primary session as the handled inbox note `[chat primary <session>:<seq>]`
+# (bin/jg-inbox.sh primary-chat), so an order he gives there signs its ticket
+# with `owner-words: note:<id> "<words>"` and its worker starts without a repeat;
+# a session that is not the locked one files nothing. The hook is a silent no-op outside a genuine primary
 # checkout, and it drops a prompt the operational-input protocol classifies
 # (bin/jg-operational-input.sh) and a harness-started <task-notification> turn,
 # so only what the captain typed is counted. A leading doorbell line is stripped
@@ -161,7 +165,7 @@ newest_seq() {
 # took. With an inbox note id the append is idempotent: a note already in the
 # ledger under that id is left alone. The lock keeps two writers from taking the
 # same seq; a host without flock appends unlocked, as before.
-record_message() { # <text> [<inbox-id>]
+record_message() { # <text> [<inbox-id>] [print-seq]
   mkdir -p "$DATA" 2>/dev/null || return 1
   (
     command -v flock >/dev/null 2>&1 && flock 9
@@ -169,6 +173,7 @@ record_message() { # <text> [<inbox-id>]
       && jq -Rse --arg id "$2" 'any(split("\n")[] | fromjson? | select(type == "object"); .id == $id)' "$LEDGER" >/dev/null 2>&1; then
       exit 0
     fi
+    [ -z "${3:-}" ] || printf '%s\n' "$(( $(newest_seq) + 1 ))"
     printf '%s' "$1" | jq -cRs --argjson seq "$(( $(newest_seq) + 1 ))" --argjson epoch "$(date +%s)" --arg id "${2:-}" \
       '{seq: $seq, epoch: $epoch, text: .[0:200]} + (if $id == "" then {} else {id: $id} end)' >> "$LEDGER" 2>/dev/null
   ) 9>>"$LEDGER.lock"
@@ -235,7 +240,11 @@ case "$1" in
     TEXT=$(printf '%s' "$TEXT" | "$SCRIPT_DIR/jg-operational-input.sh" strip-doorbell 2>/dev/null) || true
     case "${TEXT#"${TEXT%%[![:space:]]*}"}" in ''|'<task-notification>'*) exit 0 ;; esac
     printf '%s' "$TEXT" | "$SCRIPT_DIR/jg-operational-input.sh" classify >/dev/null 2>&1 && exit 0
-    record_message "$TEXT" || true
+    SEQ=$(record_message "$TEXT" "" print-seq) || exit 0
+    # The words of the locked primary session sign orders; machine text never reaches here.
+    SID=$(printf '%s' "$PAYLOAD" | jq -r '(.session_id // "") | tostring' 2>/dev/null) || SID=
+    [ "$2" = claude ] && [ -n "$SID" ] && [ -n "$SEQ" ] \
+      && "$SCRIPT_DIR/jg-inbox.sh" primary-chat "$SID" "$SEQ" "$TEXT" >/dev/null 2>&1
     exit 0
     ;;
   record)

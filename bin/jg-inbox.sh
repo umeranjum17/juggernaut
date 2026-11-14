@@ -24,6 +24,7 @@
 #   jg-inbox.sh note [--request-id <id>] [--json] -   (body from stdin)
 #   jg-inbox.sh announce [--json] <id>
 #   jg-inbox.sh approve <note-id> <ticket-id>
+#   jg-inbox.sh primary-chat <session-id> <seq> <text>...
 #   jg-inbox.sh reply [--json] <id> [--attach <path>]... [--evidence-from <status-line>] [--option <label>]... [--allow-change] [--] <text>... | reply [--json] <id> [--attach <path>]... -
 #   jg-inbox.sh followup <same arguments as reply>
 #   jg-inbox.sh receipts [--after <cursor>] [--all-pending] [--all-handled] [--all-replies]
@@ -51,6 +52,12 @@
 # one record bin/jg-spawn.sh and bin/jg-send.sh accept before a ship is built for a [captain-ask]
 # or Recon/plan-born ticket (bin/jg-captain-ask-lib.sh). It takes only a chat note, the
 # captain's own words, and refuses any other note.
+# `primary-chat` is written by the prompt-submit hook only (bin/jg-overwatch-kpi.sh): the captain's
+# own words typed in the locked primary session become the already-handled note
+# `primary-<session>-<seq>`, whose first line is `[chat primary <session>:<seq>]`, so an order
+# `owner-words: note:<that id> "<his words>"` can start its worker. The session must be the one in
+# state/.lock-session; any other session, a machine prompt or an empty text writes nothing. The
+# note is born handled and appends no wake: he is already talking to the primary.
 # A note already acknowledged (in handled/) gets no wake from `announce` or a
 # request-id replay; both report it as acknowledged and exit 0.
 # It refuses a note whose announcement state is UNKNOWN: a note written before
@@ -490,6 +497,28 @@ cmd_approve() {  # <note-id> <ticket-id>
     || { rm -f -- "$tmp"; die "could not record the approval on $ticket"; }
   rm -f -- "$tmp"
   printf 'approved %s by note %s\n' "$ticket" "$id"
+}
+
+cmd_primary_chat() {  # <session-id> <seq> <text>...
+  local sid=${1:-} seq=${2:-} locked body id path
+  [ "$#" -ge 3 ] || die "usage: jg-inbox.sh primary-chat <session-id> <seq> <text>..."
+  shift 2
+  case "$seq" in ''|*[!0-9]*) die "the message seq must be a number" ;; esac
+  case "$sid" in ''|*[!A-Za-z0-9._-]*|*..*) die "invalid session id" ;; esac
+  # shellcheck source=bin/jg-session-lock-lib.sh
+  . "$SELF_DIR/jg-session-lock-lib.sh"
+  locked=$(jg_session_lock_recorded_session_id "$STATE") \
+    || die "no locked primary session is recorded, so no chat note can be written"
+  [ "$locked" = "$sid" ] || die "session $sid is not the locked primary session; its words sign nothing"
+  [ -n "${*//[[:space:]]/}" ] || die "refusing an empty chat note"
+  id="primary-$sid-$seq"
+  mkdir -p "$INBOX/handled"
+  path="$INBOX/handled/$id.note"
+  [ ! -e "$path" ] || { printf 'exists %s\n' "$id"; return 0; }
+  body="[chat primary $sid:$seq] $*"
+  write_note_file "$path.tmp" "$id" chat-primary "$body" "" ""
+  mv "$path.tmp" "$path"
+  printf 'recorded %s\n' "$id"
 }
 
 captain_ask_ticket_id() { printf 'captain-ask-%s' "$1"; }
@@ -1451,6 +1480,7 @@ case "${1:-}" in
   note)     shift; cmd_note "$@" ;;
   announce) shift; cmd_announce "$@" ;;
   approve)  shift; cmd_approve "$@" ;;
+  primary-chat) shift; cmd_primary_chat "$@" ;;
   reply)    shift; cmd_reply "$@" ;;
   followup) shift; cmd_followup "$@" ;;
   receipts) shift; cmd_receipts "$@" ;;
