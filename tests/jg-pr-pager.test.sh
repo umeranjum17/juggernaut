@@ -7,6 +7,7 @@
 # d) a changed next step restarts the count; merged or closed: no page, and the episode is gone;
 # e) a repository of another lead, or of Main: no page and no episode in the lead home, and the lead's repository pages nothing in Main;
 # f) a local-trunk release that is due with no pull request: one page; with its pull request open: no release page;
+# h) own-task, own-account and foreign pull requests: only the first two are paged, and the foreign one leaves no episode;
 # g) no call of bin/jg-captain-say.sh at any step.
 # Usage: tests/jg-pr-pager.test.sh   (at most 30 s)
 set -euo pipefail
@@ -43,6 +44,7 @@ cat > "$d/stub/gh-axi" <<'STUB'
 # api <path> --jq <expr>: the open list of a repository is stub/prs/<owner__repo>; pulls/<n> answers the commit count.
 case $2 in
   repos/*/pulls\?state=open*) cat "$STUB/prs/$(printf '%s' "${2#repos/}" | sed 's#/pulls.*##; s#/#__#')" 2>/dev/null; [ -e "$STUB/prs/forge-down" ] && exit 1; exit 0 ;;
+  user) echo me ;;
   repos/*/pulls/*) echo 7 ;;
   *) exit 1 ;;
 esac
@@ -60,8 +62,8 @@ export STUB=$d/stub JG_PR_PAGER_GH=$d/stub/gh-axi JG_PR_PAGER_STATE=$d/stub/stat
 for h in "$M" "$L"; do JG_HOME=$h "$ROOT/core/pr-pager/wiring.sh" "$h" >/dev/null; done
 T0=$(date +%s)
 iso() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
-# pr <repo file> <number> <age minutes> [head ref]
-pr() { printf '%s\t%s\t%s\t%s\n' "$2" "https://github.com/${1//__//}/pull/$2" "$(iso $((T0 - $3 * 60)))" "${4:-feature/x}" >> "$STUB/prs/$1"; }
+# pr <repo file> <number> <age minutes> [head ref] [author login, default this home's own]
+pr() { printf '%s\t%s\t%s\t%s\t%s\n' "$2" "https://github.com/${1//__//}/pull/$2" "$(iso $((T0 - $3 * 60)))" "${4:-feature/x}" "${5:-me}" >> "$STUB/prs/$1"; }
 run() {  # <home> <minutes after T0>: the installed shim, as the watcher runs it
   JG_HOME=$1 JG_PR_PAGER_NOW=$((T0 + $2 * 60)) "$1/state/pr-pager.check.sh" 2>&1 || true
 }
@@ -112,6 +114,18 @@ pr o__lt 31 20 trunk; echo 'the merge call' > "$STUB/steps/31"
 out=$(run "$L" 700)
 check 'f) with its pull request open: no release page' "$(grep -c 'release due' <<< "$out" || true)" 0
 check 'f) with its pull request open: that pull request is paged' "$(grep -c 'green: merge it' <<< "$out")" 1
+
+# h) ownership: an own-task pull request by another login and an own-account pull request are paged; a foreign one is not
+clone "$M" ow o/ow; : > "$STUB/prs/o__ow"
+pr o__ow 41 30 feature/a someone-else; pr o__ow 42 30 feature/b me; pr o__ow 43 30 feature/c someone-else
+printf 'pr=https://github.com/o/ow/pull/41\n' > "$M/state/own-task.meta"
+for n in 41 42 43; do echo 'a check is not passing: lint' > "$STUB/steps/$n"; done
+out=$(run "$M" 800)
+check 'h) the own-task pull request is paged' "$(grep -c 'o/ow/pull/41' <<< "$out")" 1
+check 'h) the own-account pull request is paged' "$(grep -c 'o/ow/pull/42' <<< "$out")" 1
+check 'h) the foreign pull request is not paged' "$(grep -c 'o/ow/pull/43' <<< "$out" || true)" 0
+check 'h) the foreign pull request leaves no episode' "$([ -e "$M/state/.pr-pager/o__ow/43" ] && echo yes || echo no)" no
+check 'h) the owned ones keep episodes' "$(find "$M/state/.pr-pager/o__ow" -type f -printf '%f ' | tr ' ' '\n' | sort | tr '\n' ' ')" '41 42 '
 
 check 'g) bin/jg-captain-say.sh was never called' "$(cat "$d/captain-say.log" 2>/dev/null | wc -l | tr -d ' ')" 0
 [ "$fails" -eq 0 ] || { say "$fails check(s) failed"; exit 1; }

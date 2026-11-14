@@ -7,7 +7,8 @@
 # b) the spawn intake takes --shepherd on a publishing ship, refuses it on a scout, on a mode that publishes nothing and on a relaunch;
 # c) a page for a pull request with a live shepherd goes to that lane and the lead's queue gets no line;
 # d) a lane that is done, one with no record for this address, and a failed send all leave the page for the lead;
-# e) the page keeps one episode, so the second page an hour later reaches the lane too.
+# e) the page keeps one episode, so the second page an hour later reaches the lane too;
+# f) a foreign pull request (another author, no task record) beside the own one gets no page, no lane message and no episode.
 # Usage: tests/jg-pr-shepherd.test.sh   (at most 60 s)
 set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
@@ -57,6 +58,7 @@ cat > "$d/stub/gh-axi" <<'STUB'
 #!/usr/bin/env bash
 case $2 in
   repos/*/pulls\?state=open*) cat "$STUB/prs/$(printf '%s' "${2#repos/}" | sed 's#/pulls.*##; s#/#__#')" 2>/dev/null; exit 0 ;;
+  user) echo me ;;
   repos/*/pulls/*) echo 3 ;;
   *) exit 1 ;;
 esac
@@ -77,7 +79,7 @@ chmod +x "$d/stub/gh-axi" "$d/stub/state" "$d/stub/send"
 export STUB=$d/stub JG_PR_PAGER_GH=$d/stub/gh-axi JG_PR_PAGER_STATE=$d/stub/state JG_PR_PAGER_SEND=$d/stub/send
 JG_HOME=$H "$H/core/pr-pager/wiring.sh" "$H" >/dev/null
 T0=$(date +%s); iso() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
-printf '11\t%s\t%s\tfeature/x\n' "$URL" "$(iso $((T0 - 30 * 60)))" > "$STUB/prs/o__ra"
+printf '11\t%s\t%s\tfeature/x\tme\n' "$URL" "$(iso $((T0 - 30 * 60)))" > "$STUB/prs/o__ra"
 echo 'a check is not passing: unit-tests' > "$STUB/steps/11"
 run() { JG_HOME=$H JG_PR_PAGER_NOW=$((T0 + $1 * 60)) "$H/state/pr-pager.check.sh" 2>&1 || true; }
 sent() { [ -f "$STUB/sent.log" ] && grep -c . "$STUB/sent.log" || echo 0; }
@@ -103,6 +105,11 @@ check 'd) a failed send leaves the page for the lead' "$(grep -c '^pr-pager: .*p
 reset; meta https://github.com/o/ra/pull/99 shep1; echo 'working [at=1]: x' > "$H/state/shep1.status"
 out=$(run 0)
 check 'd) a lane that shepherds another pull request is not paged' "$(grep -c '^pr-pager: .*page 1' <<< "$out")$(sent)" 10
+
+reset; printf '12\t%s\t%s\tfeature/y\tsomeone-else\n' "${URL%/*}/12" "$(iso $((T0 - 30 * 60)))" >> "$STUB/prs/o__ra"; echo 'a check is not passing: lint' > "$STUB/steps/12"
+out=$(run 0)
+check 'f) the own pull request is paged and the foreign one is not' "$(grep -c "${URL%/*}/11" <<< "$out")$(grep -c "${URL%/*}/12" <<< "$out" || true)" 10
+check 'f) the foreign pull request leaves no episode' "$([ -e "$H/state/.pr-pager/o__ra/12" ] && echo yes || echo no)" no
 
 [ "$fails" -eq 0 ] || { say "$fails check(s) failed"; exit 1; }
 say 'all pr-shepherd checks passed'

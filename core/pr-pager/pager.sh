@@ -15,6 +15,8 @@
 # A pull request with a live shepherd lane (a task record with `shepherd_of=<its address>` whose newest status line is not
 # done or failed, see bin/jg-brief.sh --shepherd) is paged to that lane through bin/jg-send.sh and not to the lead, so the
 # lane that answers for the merge hears it with no lead turn; when the send fails the page goes to the lead as before.
+# Only a pull request this home owns is paged: its address is the pr= value of a task record in <home>/state, or its author is this
+# home's gh login (the rule of core/merge-on-green/stale-pr-alarm.sh). Every other open pull request is skipped: no page, no episode.
 # Each pull request keeps one episode, state/.pr-pager/<owner__repo>/<number|release>: `since pages same last mainpaged step`.
 # It ends, with no further page, when the pull request is no longer in the open list. A forge failure keeps the
 # episodes and is retried next sweep. JG_PR_PAGER_GH names the gh-axi binary and JG_PR_PAGER_STATE the pr-state command, JG_PR_PAGER_SEND the steer command (tests use stubs).
@@ -39,6 +41,8 @@ AFTER_COMMITS=$(jg_trunk_policy release-after-commits)
 AFTER_SECS=$(( $(jg_trunk_policy release-after-hours) * 3600 ))
 ME=$(cat "$FMH/.jg-squad-lead-home" 2>/dev/null || true)
 api() { timeout "$BUDGET" "$GH" api "$1" --jq "$2" 2>/dev/null; } # <path> <jq> -> jq text, nonzero on failure
+me=$(api user .login) && [ -n "$me" ] || exit 0 # no login, no ownership test: keep the episodes and retry next sweep
+owned=$(cat "$FMH"/state/*.meta 2>/dev/null | sed -n 's/^pr=//p')
 
 # step <url> -> the next step in plain words, nonzero when the forge cannot say.
 step() {
@@ -109,12 +113,14 @@ while IFS=$'\t' read -r repo proj; do
   dir=$MEM/${repo//\//__}
   if ! "$OWNER" mine "$repo" 2>/dev/null; then [ "$?" -ne 1 ] || rm -rf -- "$dir"; continue; fi # another home answers for it: no page, no episode
   [ "$(date +%s)" -lt "$LIMIT" ] || break
-  prs=$(api "repos/$repo/pulls?state=open&per_page=100" '.[]|[.number,.html_url,.created_at,.head.ref]|@tsv') || continue
+  prs=$(api "repos/$repo/pulls?state=open&per_page=100" '.[]|[.number,.html_url,.created_at,.head.ref,.user.login]|@tsv') || continue
   mkdir -p "$dir"
   open=' '; trunk=''; headrefs=' '
-  while IFS=$'\t' read -r num url created head; do
+  while IFS=$'\t' read -r num url created head author; do
     [ -n "$num" ] || continue
-    open="$open$num "; headrefs="$headrefs$head "
+    headrefs="$headrefs$head "
+    [ "$author" = "$me" ] || printf '%s\n' "$owned" | grep -qxF -- "$url" || continue # a foreign pull request: no page, no episode
+    open="$open$num "
     cts=$(date -u -d "$created" +%s 2>/dev/null) || continue
     [ "$(( NOW - cts ))" -ge "$FIRST" ] || continue
     f=$dir/$num
