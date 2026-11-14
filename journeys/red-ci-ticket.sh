@@ -24,7 +24,7 @@ core_beads_home "$REPO" "$H"
 printf -- '- r [direct-PR +yolo] - fixture project (ex/r) (added 2026-11-04)\n' > "$H/data/projects.md"
 git -C "$H/projects/r" init -q && git -C "$H/projects/r" remote add origin https://github.com/ex/r.git
 export JG_STALE_PR_GH=false JG_RED_CI_GH=$REPO/core/merge-on-green/tests/fixtures/red-ci-ticket/gh-axi JG_CHECK_TIMEOUT=60 JG_HOME=$H
-poll() { "$REPO/core/merge-on-green/merge-on-green.sh" check "$H" 2>&1 | grep '^red-ci-ticket:'; }
+poll() { "$REPO/core/merge-on-green/merge-on-green.sh" check "$H" 2>&1 | grep '^alert line-red'; }
 
 log "run: $(basename "$OUT") at $(git -C "$REPO" rev-parse --short HEAD)"
 log "step 1: first watcher poll over two red runs and one green run"

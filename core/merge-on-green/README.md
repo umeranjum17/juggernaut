@@ -83,7 +83,7 @@ the default branch, on every `release/*` branch an open PR targets, and on the h
 - id `ci-red-run-<run id>`, so a run files once, and title `[blocker] CI red: <workflow> <failing job>: find the root cause`.
 - body: the run id and URL, the failing job, the first failing line of its log, and `Never re-run; fix the root cause`.
 
-The ticket is ordinary ready work for the owning lead. It prints `red-ci-ticket: <run URL>: ...; filed <id>` once, remembers the run
+The ticket is ordinary ready work for the owning lead. It raises the one `line-red` alert (`bin/jg-alert.sh`) once, printing its line `alert line-red ... ci-red-run-<id> - red-ci-ticket: <run URL>: ...; filed <id>`, remembers the run
 in `<home>/data/jg-merge-on-green/red-ci-ticket/`, and stays silent on the next poll. A green run, and a red run that a newer run of the
 same workflow superseded, file nothing. A refused add or a forge failure is silent and retried next sweep. Fixing the run is the
 ticket's work; this check never re-runs, cancels or edits a run.
