@@ -480,12 +480,17 @@ test_the_hosted_selection_drops_scripts_whose_tool_the_runner_lacks() {
 }
 
 test_a_weight_cap_defers_slow_suites_and_names_them() {
-  local out
-  out=$(bash "$RUNNER" --list --max-weight-ms 60000 tests/jg-watcher-lock.test.sh tests/jg-wake-queue-live.test.sh 2>&1) || fail "a capped list was refused: $out"
+  local out d=$TMP_ROOT/select-weight
+  # Every shipped script has a done-done entry and so no weight row; the fixture runner carries one slow row of its own.
+  select_fixture "$d"
+  printf 'echo ok\n' >"$d/tests/jg-slow-cap.test.sh"
+  sed -i 's|^tests/jg-merge-on-green.test.sh 900$|tests/jg-slow-cap.test.sh 210766|' "$d/bin/jg-test-run.sh"
+  grep -q '^tests/jg-slow-cap.test.sh 210766$' "$d/bin/jg-test-run.sh" || fail "the fixture runner took no slow weight row"
+  out=$(cd "$d" && bash bin/jg-test-run.sh --list --max-weight-ms 60000 tests/jg-slow-cap.test.sh tests/jg-names-file.test.sh 2>&1) || fail "a capped list was refused: $out"
   assert_contains "$out" 'deferred to the post-merge lane' 'a deferred suite must be named'
-  assert_contains "$out" 'tests/jg-wake-queue-live.test.sh' 'a fast suite must stay selected'
+  assert_contains "$out" 'tests/jg-names-file.test.sh' 'a fast suite must stay selected'
   case $(printf '%s\n' "$out" | grep -v deferred) in
-    *jg-watcher-lock*) fail "the slow suite stayed in the capped selection: $out" ;;
+    *jg-slow-cap*) fail "the slow suite stayed in the capped selection: $out" ;;
   esac
   pass 'a weight cap defers slow suites and names them'
 }
@@ -723,19 +728,20 @@ test_a_changed_core_script_selects_the_scripts_that_name_it() {
 test_a_changed_fleet_homes_library_selects_the_move_test() {
   local d=$TMP_ROOT/select-homes out
   select_fixture "$d"
-  # The library is sourced by bin/jg-update.sh and bin/jg-trunk-live-lag.sh, which no test of it names; the one test
-  # that drives both callers against real homes owns it, and no other script is selected.
+  # The library is sourced by bin/jg-update.sh and bin/jg-trunk-live-lag.sh, which no test of it names. The one test that
+  # drives both callers against real homes has a done-done entry, so `done-done affected` selects it and this runner
+  # selects no script for the change.
   printf '#!/bin/sh\n' >"$d/bin/jg-fleet-homes-lib.sh"
   printf 'echo ok jg-update.sh\n' >"$d/tests/jg-update-local-base.test.sh"
   git -C "$d" -c user.email=t@t -c user.name=t add -A
   git -C "$d" -c user.email=t@t -c user.name=t commit -qm homes
   printf '# change\n' >>"$d/bin/jg-fleet-homes-lib.sh"
-  out=$(cd "$d" && bash bin/jg-test-run.sh --list --changed --base HEAD 2>&1) || fail "a changed fleet-homes library was refused: $out"
-  assert_contains "$out" 'tests/jg-update-local-base.test.sh' 'the test that moves every home must be selected'
+  out=$(cd "$d" && bash bin/jg-test-run.sh --list --changed --base HEAD 2>&1) || :
   case $out in
-    *jg-names-*) fail "a script that does not exercise the library was selected: $out" ;;
+    *jg-update-local-base*|*jg-names-*) fail "the runner selected a script for the fleet-homes library: $out" ;;
   esac
-  pass 'a changed fleet-homes library selects the fleet move test'
+  grep -qF 'command: bash tests/jg-update-local-base.test.sh' "$ROOT/.done-done.yaml" || fail "the move test has no done-done entry"
+  pass 'a changed fleet-homes library selects no script here and the move test is a done-done entry'
 }
 
 # T7 (jg8-t7): a script a journey of .done-done.yaml names is selected by `done-done affected`, never by this runner.
@@ -787,11 +793,14 @@ test_the_coverage_time_budget_advises_and_a_script_no_shard_runs_still_refuses()
   [ "$rc" = 0 ] || fail "a shard 3 s over its target must pass: rc=$rc $out"
   assert_contains "$out" 'JG_TEST_COVERAGE advise ' 'the advise line must be printed'
   assert_contains "$out" 'coverage advice: largest portable serial shard' 'the warning must name the shard'
-  sed -i '/^tests\/jg-x-mode.test.sh$/d' "$fixture/bin/jg-test-run.sh"
+  # Every shipped script has a done-done entry and no lane row, so the fixture grows a script that the serial lane skips.
+  printf 'echo ok\n' >"$fixture/tests/jg-no-shard.test.sh"
+  sed -i 's/^    if is_proven_isolated_script "\$s"; then/if is_proven_isolated_script "$s" || [ "$s" = tests\/jg-no-shard.test.sh ]; then/' "$fixture/bin/jg-test-run.sh"
+  grep -q 'jg-no-shard.test.sh ]; then' "$fixture/bin/jg-test-run.sh" || fail "the fixture runner took no skip"
   rc=0
   out=$(bash "$fixture/bin/jg-test-run.sh" --check-coverage 2>&1) || rc=$?
   [ "$rc" = 1 ] || fail "a script no shard runs must still refuse: rc=$rc $out"
-  assert_contains "$out" 'tests/jg-x-mode.test.sh' 'the refusal must name the script'
+  assert_contains "$out" 'tests/jg-no-shard.test.sh' 'the refusal must name the script'
   pass 'the coverage time budget advises with exit 0 and a script no shard runs still refuses'
 }
 

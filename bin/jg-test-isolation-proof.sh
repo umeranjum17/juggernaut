@@ -154,7 +154,6 @@ exclusion_reason() {
 # path requires a new audit and proof archive.
 list_parallel_candidates() {
   cat <<'EOF'
-tests/jg-x-mode.test.sh
 EOF
 }
 
@@ -167,7 +166,6 @@ list_exclusions_for_report() {
       printf '%s\t%s\n' "$base" "$reason"
     fi
   done <<'EOF'
-jg-watcher-lock.test.sh
 EOF
 }
 

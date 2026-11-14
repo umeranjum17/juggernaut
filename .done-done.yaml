@@ -1986,6 +1986,153 @@ journeys:
   jg-pr-shepherd:
     tier: local
     command: bash journeys/pr-shepherd.sh
+  jg-context-budget:
+    tier: local
+    command: bash tests/jg-context-budget.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-proof-minimum:
+    tier: local
+    command: bash tests/jg-proof-minimum.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-recon-ready:
+    tier: local
+    command: bash tests/jg-recon-ready.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-trunk-release-merge-first:
+    tier: local
+    command: bash tests/jg-trunk-release-merge-first.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-trunk-release-open-pr:
+    tier: local
+    command: bash tests/jg-trunk-release-open-pr.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-trunk-resolve:
+    tier: local
+    command: bash tests/jg-trunk-resolve.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-trunk-retest:
+    tier: local
+    command: bash tests/jg-trunk-retest.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-trunk-rollover:
+    tier: local
+    command: bash tests/jg-trunk-rollover.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-trunk-scope:
+    tier: local
+    command: bash tests/jg-trunk-scope.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-trunk-sealed-ran:
+    tier: local
+    command: bash tests/jg-trunk-sealed-ran.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-trunk-shard-ticket:
+    tier: local
+    command: bash tests/jg-trunk-shard-ticket.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-trunk-spawn:
+    tier: local
+    command: bash tests/jg-trunk-spawn.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-trunk-stack-red-pick:
+    tier: local
+    command: bash tests/jg-trunk-stack-red-pick.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-trunk-two-gates:
+    tier: local
+    command: bash tests/jg-trunk-two-gates.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-trunk-verdict:
+    tier: local
+    command: bash tests/jg-trunk-verdict.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-trunk-verify-grace:
+    tier: local
+    command: bash tests/jg-trunk-verify-grace.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-trunk-verify-milestone:
+    tier: local
+    command: bash tests/jg-trunk-verify-milestone.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-trunk-verify:
+    tier: local
+    command: bash tests/jg-trunk-verify.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-trunk:
+    tier: local
+    command: bash tests/jg-trunk.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-turnend-guard-no-false-blocks:
+    tier: local
+    command: bash tests/jg-turnend-guard-no-false-blocks.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-turnend-guard:
+    tier: local
+    command: bash tests/jg-turnend-guard.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-update-local-base:
+    tier: local
+    command: bash tests/jg-update-local-base.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-update:
+    tier: local
+    command: bash tests/jg-update.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-verify-suites-layout:
+    tier: local
+    command: bash tests/jg-verify-suites-layout.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-version-branch-sync:
+    tier: local
+    command: bash tests/jg-version-branch-sync.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-voice:
+    tier: local
+    command: bash tests/jg-voice.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-wait-next-step:
+    tier: local
+    command: bash tests/jg-wait-next-step.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-wake-core:
+    tier: local
+    command: bash tests/jg-wake-core.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-wake-daemon-lifecycle-e2e:
+    tier: local
+    command: bash tests/jg-wake-daemon-lifecycle-e2e.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-wake-drain-open-decisions-cursor:
+    tier: local
+    command: bash tests/jg-wake-drain-open-decisions-cursor.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-wake-engine:
+    tier: local
+    command: bash tests/jg-wake-engine.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-wake-ledger:
+    tier: local
+    command: bash tests/jg-wake-ledger.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-wake-next:
+    tier: local
+    command: bash tests/jg-wake-next.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-wake-queue-live:
+    tier: local
+    command: bash tests/jg-wake-queue-live.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-watch-arm-handling-delivered:
+    tier: local
+    command: bash tests/jg-watch-arm-handling-delivered.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-watch-beacon:
+    tier: local
+    command: bash tests/jg-watch-beacon.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-watch-handoff:
+    tier: local
+    command: bash tests/jg-watch-handoff.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-watch-large-check-output:
+    tier: local
+    command: bash tests/jg-watch-large-check-output.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-watch-silence-prune:
+    tier: local
+    command: bash tests/jg-watch-silence-prune.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-watch-silent-exit:
+    tier: local
+    command: bash tests/jg-watch-silent-exit.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-watcher-lock:
+    tier: local
+    command: bash tests/jg-watcher-lock.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-whats-left:
+    tier: local
+    command: bash tests/jg-whats-left.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-worker-account-live-e2e:
+    tier: local
+    command: bash tests/jg-worker-account-live-e2e.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-x-mode:
+    tier: local
+    command: bash tests/jg-x-mode.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  juggernaut-axi-serve:
+    tier: local
+    command: bash tests/juggernaut-axi-serve.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  juggernaut-axi:
+    tier: local
+    command: bash tests/juggernaut-axi.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  merge-card-title:
+    tier: local
+    command: bash tests/merge-card-title.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  migration-card-live:
+    tier: local
+    command: bash tests/migration-card-live.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  migration-card-test:
+    tier: local
+    command: bash tests/migration-card.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
 
 secrets:
   allow:

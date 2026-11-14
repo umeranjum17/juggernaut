@@ -517,25 +517,9 @@ cpu_count() {
 # also swallows every test nobody has classified yet. Keeping the two separate
 # is what lets `standalone` carry a concurrent proof while a brand-new test
 # lands in `unclassified` and stays serial until someone proves it.
+# Every script that had a family now has a done-done entry, so `done-done affected` owns it and none is named here.
 family_for_basename() {
   case "$1" in
-    jg-turnend-guard.test.sh|jg-wake-daemon-lifecycle-e2e.test.sh|\
-    jg-watcher-lock.test.sh|jg-watch-handoff.test.sh|jg-wake-next.test.sh|\
-    jg-wake-core.test.sh|jg-wake-queue-live.test.sh|jg-wake-engine.test.sh)
-      printf '%s\n' watcher-wake-lock
-      ;;
-    jg-update.test.sh)
-      printf '%s\n' session-bootstrap
-      ;;
-    jg-worker-account-live-e2e.test.sh)
-      printf '%s\n' live-harness-optin
-      ;;
-    jg-merge-on-green.test.sh|jg-x-mode.test.sh)
-      printf '%s\n' pr-forge
-      ;;
-    jg-wake-drain-open-decisions-cursor.test.sh)
-      printf '%s\n' standalone
-      ;;
     *)
       printf '%s\n' unclassified
       ;;
@@ -584,7 +568,6 @@ list_known_lanes() {
 # isolation proof archive.
 list_proven_isolated() {
   cat <<'EOF'
-tests/jg-x-mode.test.sh
 EOF
 }
 
@@ -593,7 +576,6 @@ EOF
 # refresh procedure are owned by docs/jg-test-portable-shards.md.
 portable_parallel_weight_hints() {
   cat <<'EOF'
-tests/jg-x-mode.test.sh 29896
 EOF
 }
 
@@ -615,7 +597,6 @@ portable_parallel_lane_weight() {
 # its own header owns temporary dependency provisioning.
 list_portable_parallel_1() {
   cat <<'EOF'
-tests/jg-x-mode.test.sh
 EOF
 }
 
@@ -713,35 +694,6 @@ list_portable_serial() {
 portable_serial_weight_hints() {
   cat <<'EOF'
 tests/jg-merge-on-green.test.sh 900
-tests/jg-wake-queue-live.test.sh 19169
-tests/jg-wake-engine.test.sh 65412
-tests/jg-trunk.test.sh 45000
-tests/jg-trunk-verify.test.sh 15000
-tests/jg-trunk-spawn.test.sh 49000
-tests/jg-trunk-scope.test.sh 8000
-tests/jg-turnend-guard.test.sh 97000
-tests/jg-update.test.sh 17444
-tests/jg-wake-daemon-lifecycle-e2e.test.sh 15568
-tests/jg-wake-core.test.sh 4900
-tests/jg-wake-drain-open-decisions-cursor.test.sh 148819
-tests/jg-wake-next.test.sh 4801
-tests/jg-watch-handoff.test.sh 52298
-tests/jg-watcher-lock.test.sh 210766
-tests/jg-watch-silent-exit.test.sh 5000
-tests/jg-watch-silence-prune.test.sh 5000
-tests/jg-worker-account-live-e2e.test.sh 192
-tests/juggernaut-axi-serve.test.sh 1466
-tests/juggernaut-axi.test.sh 29551
-tests/migration-card.test.sh 2469
-tests/migration-card-live.test.sh 83
-tests/merge-card-title.test.sh 1312
-tests/jg-turnend-guard-no-false-blocks.test.sh 465
-tests/jg-version-branch-sync.test.sh 94207
-tests/jg-watch-beacon.test.sh 45490
-tests/jg-whats-left.test.sh 3479
-tests/jg-update-local-base.test.sh 4000
-tests/jg-voice.test.sh 6554
-tests/jg-watch-arm-handling-delivered.test.sh 959
 EOF
 }
 
@@ -899,7 +851,9 @@ select_lane() {
       die "unknown lane '$want' (see --list-lanes)"
       ;;
   esac
-  [ "$found" -eq 1 ] || die "lane '$want' selected no tests"
+  # A lane whose every script has a done-done entry selects nothing here: `done-done affected` owns them.
+  [ "$found" -eq 1 ] || log "lane '$want' selects no test: every script it held has a done-done entry"
+  return 0
 }
 
 run_coverage_guard() {
@@ -937,26 +891,26 @@ run_coverage_guard() {
   saved_scripts=("${SCRIPTS[@]+"${SCRIPTS[@]}"}")
   SCRIPTS=()
   select_lane portable-serial
-  printf '%s\n' "${SCRIPTS[@]+"${SCRIPTS[@]}"}" | LC_ALL=C sort -u >"$tmp/serial"
+  printf '%s\n' "${SCRIPTS[@]+"${SCRIPTS[@]}"}" | sed '/^$/d' | LC_ALL=C sort -u >"$tmp/serial"
   : >"$tmp/serial_shards_raw"
   shard=1
   while [ "$shard" -le "$PORTABLE_SERIAL_SHARDS" ]; do
     SCRIPTS=()
     select_lane "portable-serial-${shard}of${PORTABLE_SERIAL_SHARDS}"
-    if [ "${#SCRIPTS[@]}" -eq 0 ]; then
+    if [ "${#SCRIPTS[@]}" -eq 0 ] && [ -s "$tmp/all" ]; then
       log "coverage guard: portable serial shard $shard of $PORTABLE_SERIAL_SHARDS is empty"
       SCRIPTS=("${saved_scripts[@]+"${saved_scripts[@]}"}")
       rm -rf "$tmp"
       return 1
     fi
-    printf '%s\n' "${SCRIPTS[@]+"${SCRIPTS[@]}"}" >>"$tmp/serial_shards_raw"
+    [ "${#SCRIPTS[@]}" -eq 0 ] || printf '%s\n' "${SCRIPTS[@]}" >>"$tmp/serial_shards_raw"
     serial_ms=$(printf '%s\n' "${SCRIPTS[@]+"${SCRIPTS[@]}"}" | portable_serial_lane_weight)
     [ "$serial_ms" -le "$serial_max_ms" ] || serial_max_ms=$serial_ms
     shard=$((shard + 1))
   done
   SCRIPTS=()
   select_family real-herdr-gated
-  printf '%s\n' "${SCRIPTS[@]+"${SCRIPTS[@]}"}" | LC_ALL=C sort -u >"$tmp/herdr"
+  printf '%s\n' "${SCRIPTS[@]+"${SCRIPTS[@]}"}" | sed '/^$/d' | LC_ALL=C sort -u >"$tmp/herdr"
   SCRIPTS=("${saved_scripts[@]+"${saved_scripts[@]}"}")
 
   # Every serial script runs in exactly one CI shard: no duplicate work across
@@ -1134,10 +1088,11 @@ PY
 # selector below (--all, --family, --lane, --changed, the shards, the coverage guard) reads this list,
 # so an entered script is in none of them. The tables above hold no row for an entered script, and
 # the runner's own test fails when one does. Naming the script on the command line still runs it.
+# A core journey that runs `../tests/<script>` through journeys/core-run.sh enters that script too.
 done_done_entered_scripts() {
   local yaml="$ROOT/.done-done.yaml"
   [ -f "$yaml" ] || return 0
-  grep -oE '(^|[^A-Za-z0-9_./-])tests/[A-Za-z0-9_.-]+\.test\.sh' "$yaml" | grep -oE 'tests/.*' | LC_ALL=C sort -u
+  grep -oE '(^|[^A-Za-z0-9_./-]|\.\./)tests/[A-Za-z0-9_.-]+\.test\.sh' "$yaml" | grep -oE 'tests/.*' | LC_ALL=C sort -u
 }
 
 all_repo_tests() {
@@ -1410,9 +1365,8 @@ families_for_changed_path() {
       printf '%s\n' session-bootstrap
       ;;
     bin/jg-toon-lib.sh)
-      # The TOON renderer sourced by juggernaut-axi and jg-bearings-snapshot.sh.
-      printf '%s\n' "__script__:juggernaut-axi.test.sh"
-      printf '%s\n' "__script__:juggernaut-axi-serve.test.sh"
+      # The TOON renderer sourced by juggernaut-axi and jg-bearings-snapshot.sh. Their suites have done-done entries, so
+      # `done-done affected` selects it; this runner selects nothing.
       ;;
     bin/jg-procevent-quota.sh)
       ;;
@@ -1438,8 +1392,8 @@ families_for_changed_path() {
       ;;
     .pi/extensions/lib/jg-operational-input.ts)
       # The same rule for the operational-input library, whose reach is wider:
-      # every Pi extension that classifies or encodes operational text.
-      printf '%s\n' __script__:jg-turnend-guard.test.sh
+      # every Pi extension that classifies or encodes operational text. The turn-end guard suite has a done-done entry, so
+      # `done-done affected` selects it.
       printf '%s\n' live-harness-optin
       ;;
     .claude/mods/juggernaut-calm/*|.pi/extensions/lib/jg-calm-working-ship.ts|\
@@ -1502,7 +1456,7 @@ families_for_changed_path() {
       # The registry reader that bin/jg-update.sh (the fleet move) and bin/jg-trunk-live-lag.sh source. No test names it,
       # and neither caller is a library the named-script rule follows, so the one test that drives the move and the lag
       # report against real homes (T1d reads the registry from a lead home) owns it, as the one script that runs its code.
-      printf '%s\n' "__script__:jg-update-local-base.test.sh"
+      # That suite has a done-done entry, so `done-done affected` selects it; this runner selects nothing.
       ;;
     bin/jg-task-inbox-lib.sh)
       # The steering-inbox record/doorbell/ladder owner: jg-send's data plane
@@ -1548,8 +1502,8 @@ families_for_changed_path() {
       ;;
     .agents/skills/done-done-verify-suites/SKILL.md|.agents/skills/done-done-verify-suites/suites/*)
       # One suite per file is the layout its own test checks; a suite file is
-      # documentation no other suite reads, so it selects that test alone.
-      printf '%s\n' "__script__:jg-verify-suites-layout.test.sh"
+      # documentation no other suite reads, so it selects that test alone. That test has a done-done entry, so
+      # `done-done affected` selects it; this runner selects nothing.
       ;;
     .agents/skills/task-dispatch/SKILL.md)
       printf '%s\n' pure-contract-unit
