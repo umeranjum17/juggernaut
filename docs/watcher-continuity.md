@@ -256,6 +256,13 @@ Session start runs the same reconcile once in the background, so every home resu
 It also wakes the primary when supervision is needed and the beacon has been stale beyond the guard grace with no turn running.
 Its header owns the exact rules.
 
+### Worker lease
+
+The sentinel also runs the delivery tick for its home, and that tick is how a worker stays live on the board while the watcher is down: `bin/jg-lease-tick.sh` sends each live worker's heartbeat (`bd heartbeat`, as the worker's agent name) when 120 s have passed since the last one, at most 20 a pass, and a lease lasts 300 s.
+The in-progress read shows the lease as `lease_expires_at`; a heartbeat is in no changes read.
+A held ticket has no lease and the tick raises no alarm for it. The tick relaunches nothing and reclaims no lane that has a task record: a dead pane stays with the supervisor and the sentinel's relaunch above.
+The one reclaim is a row in progress with no task record in this home whose lease ran out 10 minutes ago. Its header owns the exact rules.
+
 ## Recovery episode acknowledgement
 
 A recovery episode is one generation of the `state/.watcher-down` marker.
