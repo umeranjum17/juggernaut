@@ -251,6 +251,9 @@ journeys:
   design-call-gate:
     tier: local
     command: bash journeys/design-call-gate.sh
+  design-gate-rebased-lane:
+    tier: local
+    command: bash journeys/design-gate-rebased-lane.sh
   merge-gate-policy:
     tier: local
     command: bash tests/jg-merge-gate-policy.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

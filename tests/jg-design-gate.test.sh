@@ -105,3 +105,22 @@ out=$(JG_HOME=$lead jg_dod_design_gate "$ts" tr "$ts/tr.meta" "$real" 2>&1) && f
 assert_contains "$out" "changes 60 " "a real UI change is measured as the lane's own lines only"
 assert_equals "tweak 0 0" "$(JG_HOME=$main "$ROOT/bin/jg-design-gate.sh" size "$tr" "$tip" "$testsonly" 2>&1)" "size reads the trunk tip as the base"
 pass "a local-trunk lane is measured against its own trunk tip, not a stale origin/main"
+
+# The trunk moves on after the lane was cut and the lane is rebased onto the new tip, while its meta still records the old cut
+# tip: only the lane's own lines count, and a lane that really adds UI lines is still refused (rebase-moves-design-base).
+printf 'trunk-v7\n' > "$ts/trunk-branch-trunk-repo"
+git -C "$tr" checkout -q trunk-v7 && seq 1 300 >> "$tr/app.css" && git -C "$tr" commit -qam "second landed UI slice"
+newtip=$(git -C "$tr" rev-parse HEAD)
+rebased() {  # <branch> <edit command>: one lane commit cut from the OLD tip, then rebased onto the new tip; prints its head
+  git -C "$tr" checkout -q -b "$1" "$tip" && (cd "$tr" && eval "$2") && git -C "$tr" add -A && git -C "$tr" commit -qm "$1"
+  git -C "$tr" rebase -q "$newtip" >/dev/null 2>&1 || fail "fixture rebase of $1 conflicted"
+  git -C "$tr" rev-parse HEAD
+}
+rtests=$(rebased rb-tests 'echo t > b.test.sh')
+rreal=$(rebased rb-ui 'seq 1 60 >> other.css')
+printf 'worktree=%s\nproject=%s\nmode=local-trunk\nbase=%s\ndesign_call=no\n' "$tr" "$tr" "$tip" > "$ts/rb.meta"
+JG_HOME=$lead jg_dod_design_gate "$ts" rb "$ts/rb.meta" "$rtests" >/dev/null 2>&1 || fail "a rebased tests-only lane was refused for the trunk's own UI lines"
+out=$(JG_HOME=$lead jg_dod_design_gate "$ts" rb "$ts/rb.meta" "$rreal" 2>&1) && fail "a rebased lane that adds 60 UI lines passed: $out"
+assert_contains "$out" "changes 60 " "a rebased UI change is measured as the lane's own lines only"
+assert_contains "$out" "first-draft receipt" "a rebased UI change still needs its first-draft receipt"
+pass "a rebased local-trunk lane is measured from the current trunk, not its recorded cut tip"

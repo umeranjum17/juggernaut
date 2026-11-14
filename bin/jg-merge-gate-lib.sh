@@ -27,6 +27,8 @@
 _jg_d=${BASH_SOURCE[0]%/*}
 [ "$_jg_d" != "${BASH_SOURCE[0]}" ] || _jg_d=.
 _JG_GATE_LIB_DIR=$(cd "$_jg_d" && pwd)
+# shellcheck source=bin/jg-trunk-policy-lib.sh
+[ -r "$_jg_d/jg-trunk-policy-lib.sh" ] && . "$_jg_d/jg-trunk-policy-lib.sh"
 if [ -r "$_jg_d/jg-compat.sh" ]; then
   # shellcheck source=bin/jg-compat.sh
   . "$_jg_d/jg-compat.sh"
@@ -191,13 +193,21 @@ jg_design_receipt_value() {  # <state> <id> <head> <label>
     | sed -n -E "s/^$4: ([^[:space:]].*[^[:space:]])[[:space:]]*\$/\1/p" | paste -sd, -
 }
 
-# What a task's UI change is measured against: its recorded base branch, else for a local-trunk lane the trunk tip it was
-# cut from (meta base=<sha>), never the default branch's origin ref, which a local trunk runs ahead of.
+# What a task's UI change is measured against: its recorded base branch, else for a local-trunk lane the CURRENT tip of the
+# project's trunk branch (never the default branch's origin ref, which a local trunk runs ahead of). git merge-base of that tip
+# and the lane head is the lane's fork point, so a lane rebased onto a newer tip is measured from the new one and only its own
+# lines count (rebase-moves-design-base). A trunk branch that cannot be read falls back to the cut tip the meta recorded (base=<sha>).
 jg_design_base() {  # <meta>
-  local meta=$1 b
+  local meta=$1 b wt project tip
   b=$(jg_dod_meta_value "$meta" base_branch)
   if [ -z "$b" ]; then
-    case $(jg_dod_meta_value "$meta" mode) in local|local-trunk) b=$(jg_dod_meta_value "$meta" base) ;; esac
+    case $(jg_dod_meta_value "$meta" mode) in local|local-trunk)
+      b=$(jg_dod_meta_value "$meta" base)
+      wt=$(jg_dod_meta_value "$meta" worktree); project=$(jg_dod_meta_value "$meta" project)
+      if [ -n "$project" ] && [ -d "$wt" ] && declare -F jg_trunk_branch >/dev/null; then
+        tip=$(git -C "$wt" rev-parse -q --verify "refs/heads/$(jg_trunk_branch "$(basename -- "$project")" "$(dirname -- "$meta")")^{commit}" 2>/dev/null) && b=$tip
+      fi ;;
+    esac
   fi
   printf '%s\n' "$b"
 }
