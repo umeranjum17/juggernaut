@@ -761,6 +761,15 @@ if [ "$TOKEN_SAVER_OFF" = 0 ]; then
   CLAUDE_TOKEN_KEYS='"enabledPlugins":{"ponytail@ponytail":false}'
   [ -z "$BASH_OUTPUT_MAX" ] || CLAUDE_TOKEN_KEYS="$CLAUDE_TOKEN_KEYS,\"env\":{\"BASH_MAX_OUTPUT_LENGTH\":\"$BASH_OUTPUT_MAX\"}"
 fi
+# The keys that keep a Claude fleet session thin (workflow text, harness memory, skills outside the role's
+# keep-list), one builder for a worker's inline --settings and a lead's settings file
+# (bin/jg-launch-settings.sh). The brief include files feed its keep-list.
+fleet_launch_keys() {
+  local inc=()
+  [ ! -r "$CONFIG/brief-include.md" ] || inc+=(--include "$CONFIG/brief-include.md")
+  [ ! -r "$CONFIG/brief-include-shared.md" ] || inc+=(--include "$CONFIG/brief-include-shared.md")
+  "$SCRIPT_DIR/jg-launch-settings.sh" "$KIND" "${inc[@]}"
+}
 SUB_HOME_MARKER=".jg-squad-lead-home"
 if [ -e "$STATE" ] || [ -L "$STATE" ]; then
   jg_backlog_directory_present "$STATE" "state directory" || {
@@ -4527,6 +4536,8 @@ BUSY_GEN=
       # Supervisor context cap (config/supervisor-context-cap): the lead's own env, merged with the token saver's env key.
       lead_cap_pairs=$(python3 "$SCRIPT_DIR/jg-context-bound.py" env lead --pairs --config "$CONFIG") || exit 1
       lead_keys=$CLAUDE_TOKEN_KEYS
+      fleet_keys=$(fleet_launch_keys) || exit 1
+      lead_keys=${lead_keys:+$lead_keys,}$fleet_keys
       if [ -n "$lead_cap_pairs" ]; then
         case "$lead_keys" in
           *'"env":{'*) lead_keys=${lead_keys/'"env":{'/'"env":{'$lead_cap_pairs,} ;;
@@ -5227,11 +5238,25 @@ case "$LAUNCH" in
   if [ "$KIND" = squad_lead ]; then
     LAUNCH=${LAUNCH//__CLAUDESETTINGS__/$(shell_quote "$STATE_REAL/$ID.claude-settings.json")}
   else
-    claude_settings="'{\"feedbackDrafts\":\"off\"__CLAUDEATTRIBUTION____CLAUDETOKENKEYS__}'"
+    fleet_keys=$(fleet_launch_keys) || exit 1
+    claude_settings="'{\"feedbackDrafts\":\"off\"__CLAUDEATTRIBUTION____CLAUDETOKENKEYS__,$fleet_keys}'"
     LAUNCH=${LAUNCH//__CLAUDESETTINGS__/$claude_settings}
   fi
   ;;
 esac
+# --strict-mcp-config drops each MCP server the launch does not pass; a project that has its own servers
+# names their file in the registry (mcp=<file>, bin/jg-project-mode.sh) and the launch passes it here.
+if [ "$KIND" != squad_lead ] && [[ $LAUNCH == *' --strict-mcp-config '* ]]; then
+  project_mcp=$("$JG_ROOT/bin/jg-project-mode.sh" --mcp "$(basename "$PROJ_ABS")" 2>/dev/null) || project_mcp=
+  if [ -n "$project_mcp" ]; then
+    case "$project_mcp" in /*) ;; *) project_mcp=$PROJ_ABS/$project_mcp ;; esac
+    if [ ! -r "$project_mcp" ]; then
+      echo "error: spawn refused - the registry names the MCP file $project_mcp for $(basename "$PROJ_ABS") and it is not readable; the launch would start without that project's servers" >&2
+      exit 1
+    fi
+    LAUNCH=${LAUNCH/' --strict-mcp-config '/" --strict-mcp-config --mcp-config $(shell_quote "$project_mcp") "}
+  fi
+fi
 LAUNCH=${LAUNCH//__CLAUDETOKENKEYS__/${CLAUDE_TOKEN_KEYS:+,$CLAUDE_TOKEN_KEYS}}
 if [ "$KEEP_AI_TRAILERS" = 1 ]; then
   LAUNCH=${LAUNCH//__CLAUDEATTRIBUTION__/}

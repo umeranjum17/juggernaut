@@ -171,7 +171,7 @@ test_no_profile_keeps_claude_profile_defaults() {
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
-  expect_code 0 "$status" "claude spawn without profile flags should succeed"
+  expect_code 0 "$status" "claude spawn without profile flags should succeed"$'\n'"$out"
   assert_contains "$out" "spawned $id harness=claude" "spawn did not report claude"
   assert_meta_profile "$HOME_DIR/state/$id.meta" claude default default
 
@@ -1669,6 +1669,94 @@ test_claude_squad_lead_launch_carries_the_attribution_policy() {
 # Token saver (docs/configuration.md "Token saver"): ponytail stays off by
 # default, config/bash-output-max adds the Bash output cap, a value out of range
 # stops the launch, and config/token-saver-off drops every token key.
+# A fleet session carries no personal skills, no workflow text and no other home's memory. A fixture account holds one
+# unknown personal skill, one the scaffold names, one a home include names, and one a plugin ships.
+make_account_skills() {  # <home-dir>
+  local u=$1/user-home name
+  for name in zz-unknown-skill done-done no-mistakes zz-include-named; do
+    mkdir -p "$u/.agents/skills/$name"
+    printf -- '---\nname: %s\ndescription: x\n---\n' "$name" > "$u/.agents/skills/$name/SKILL.md"
+  done
+  mkdir -p "$u/.claude/plugins/cache/mk/fancy/1/skills/paint"
+  printf -- '---\nname: paint\n---\n' > "$u/.claude/plugins/cache/mk/fancy/1/skills/paint/SKILL.md"
+  printf '{"plugins":{"fancy@mk":[{"installPath":"%s"}]}}\n' "$u/.claude/plugins/cache/mk/fancy/1" > "$u/.claude/plugins/installed_plugins.json"
+  printf 'Read the zz-include-named skill when a step starts.\n' > "$1/config/brief-include.md"
+}
+
+test_claude_launch_settings_are_thin_for_both_roles() {
+  local rec id sm out status settings
+  id=profile-thin-worker-z60
+  rec=$(make_spawn_case profile-thin-worker claude "$id")
+  read_case_record "$rec"
+  make_account_skills "$HOME_DIR"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "thin claude worker spawn should succeed"$'\n'"$out"
+  settings=$(claude_settings_json_arg "$(cat "$LAUNCH_LOG")")
+  printf '%s' "$settings" | jq -e '.ultracode == false and .autoMemoryEnabled == false' >/dev/null \
+    || fail "a worker launch leaves the workflow text or harness memory on: $settings"
+  printf '%s' "$settings" | jq -e '.skillOverrides["zz-unknown-skill"] == "off" and .skillOverrides["fancy:paint"] == "off"' >/dev/null \
+    || fail "a worker launch leaves an unknown personal skill or a plugin skill on: $settings"
+  printf '%s' "$settings" | jq -e '.skillOverrides | (has("done-done") or has("no-mistakes") or has("zz-include-named") or has("juggernaut-coding-guidelines") or has("done-done-verify-suites") or has("diagnostic-reasoning")) | not' >/dev/null \
+    || fail "a worker launch turns off a skill its brief names or its role map keeps: $settings"
+  printf '%s' "$settings" | jq -e '.skillOverrides | has("task-dispatch") and has("ship-landing")' >/dev/null \
+    || fail "a worker launch keeps a supervisor skill its role does not read: $settings"
+
+  id=profile-thin-lead-z60
+  rec=$(make_spawn_case profile-thin-lead claude "$id")
+  read_case_record "$rec"
+  make_account_skills "$HOME_DIR"
+  sm="$CASE_DIR/squad-lead-home"
+  make_seeded_squad_lead_home "$sm" "$id"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$sm" --squad-lead)
+  status=$?
+  expect_code 0 "$status" "thin claude squad_lead spawn should succeed"$'\n'"$out"
+  settings=$(claude_settings_json_arg "$(cat "$LAUNCH_LOG")")
+  printf '%s' "$settings" | jq -e '.ultracode == false and .autoMemoryEnabled == false and .skillOverrides["zz-unknown-skill"] == "off"' >/dev/null \
+    || fail "a lead launch is not thin: $settings"
+  printf '%s' "$settings" | jq -e '.skillOverrides | (has("task-dispatch") or has("ship-landing") or has("squad-lead-provisioning") or has("diagnostic-reasoning") or has("done-done") or has("zz-include-named")) | not' >/dev/null \
+    || fail "a lead launch turns off a supervisor skill of its role map: $settings"
+  printf '%s' "$settings" | jq -e '.skillOverrides | has("juggernaut-coding-guidelines")' >/dev/null \
+    || fail "a lead launch keeps a builder-only skill: $settings"
+  pass "a claude worker and a claude lead launch with the workflow text and harness memory off, and each skill outside the role's keep-list off"
+}
+
+test_claude_launch_passes_the_projects_mcp_file_only_when_registered() {
+  local rec id out status launch proj
+  id=profile-mcp-none-z60
+  rec=$(make_spawn_case profile-mcp-none claude "$id")
+  read_case_record "$rec"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "claude spawn with no registered MCP file should succeed"$'\n'"$out"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" " --strict-mcp-config " "a launch with no registered MCP file lost the strict flag"
+  assert_not_contains "$launch" "--mcp-config" "a launch with no registered MCP file passes one"
+
+  id=profile-mcp-file-z60
+  rec=$(make_spawn_case profile-mcp-file claude "$id")
+  read_case_record "$rec"
+  proj=$(basename "$PROJ_DIR")
+  printf '{"mcpServers":{}}\n' > "$PROJ_DIR/.mcp-fleet.json"
+  printf -- '- %s [direct-PR mcp=.mcp-fleet.json] - fixture (added 2026-11-14)\n' "$proj" > "$HOME_DIR/data/projects.md"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "claude spawn with a registered MCP file should succeed"$'\n'"$out"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" " --strict-mcp-config --mcp-config '$PROJ_DIR/.mcp-fleet.json' " \
+    "a launch for a project with a registered MCP file does not pass that file after the strict flag"
+
+  id=profile-mcp-missing-z60
+  rec=$(make_spawn_case profile-mcp-missing claude "$id")
+  read_case_record "$rec"
+  printf -- '- %s [direct-PR mcp=gone.json] - fixture (added 2026-11-14)\n' "$(basename "$PROJ_DIR")" > "$HOME_DIR/data/projects.md"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  [ "$status" -ne 0 ] || fail "a registered MCP file that is not readable must stop the launch"
+  assert_contains "$out" "gone.json" "the refusal does not name the missing MCP file"
+  pass "a launch passes a project's registered MCP file after the strict flag, holds the flag alone with none, and refuses an unreadable file"
+}
+
 test_claude_token_saver_settings() {
   local rec id sm out status settings
   id=profile-claude-token-saver-z41
@@ -2160,7 +2248,7 @@ claude_expected_launch() {  # <launch> <home> <id> <permission-flag>
   [ "$(printf '%s' "$doorbell" | "$ROOT/bin/jg-operational-input.sh" doorbell-kind)" = launch-brief ] \
     || doorbell="not a launch-brief doorbell"
   quoted="'$(printf '%s' "$doorbell" | sed "s/'/'\\\\''/g")'"
-  printf '%s' "$(launch_strip_prefix)export GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true; export COMPACT_ADVISER_DISABLE=1; $(task_inbox_export "$2" "$3")$(jg_test_launch_git_prefix "$1")env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude $4 $(claude_worker_add_dirs "$2" "$3")--settings '{\"feedbackDrafts\":\"off\",\"attribution\":{\"commit\":\"\",\"pr\":\"\",\"sessionUrl\":false},\"enabledPlugins\":{\"ponytail@ponytail\":false}}' $CLAUDE_CONTROL_CHANNEL_FLAG $quoted"
+  printf '%s' "$(launch_strip_prefix)export GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true; export COMPACT_ADVISER_DISABLE=1; $(task_inbox_export "$2" "$3")$(jg_test_launch_git_prefix "$1")env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude $4 $(claude_worker_add_dirs "$2" "$3")--settings '{\"feedbackDrafts\":\"off\",\"attribution\":{\"commit\":\"\",\"pr\":\"\",\"sessionUrl\":false},\"enabledPlugins\":{\"ponytail@ponytail\":false},$(HOME="$2/user-home" "$ROOT/bin/jg-launch-settings.sh" ship)}' $CLAUDE_CONTROL_CHANNEL_FLAG $quoted"
 }
 
 test_claude_permission_mode_bypass_matches_absent_launch() {
@@ -2366,6 +2454,8 @@ test_claude_long_launch_is_delivered_intact
 test_claude_operator_launch_carries_the_attribution_policy
 test_keep_ai_trailers_omits_attribution_settings_and_strip_hooks
 test_claude_token_saver_settings
+test_claude_launch_settings_are_thin_for_both_roles
+test_claude_launch_passes_the_projects_mcp_file_only_when_registered
 test_keep_ai_trailers_reaches_squad_lead_crew_launches
 test_claude_squad_lead_launch_carries_the_attribution_policy
 test_active_dispatch_profile_does_not_block_squad_lead_launch

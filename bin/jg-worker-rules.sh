@@ -29,6 +29,7 @@ rows() {
   while IFS=$'\t' read -r id roles; do
     case "$id" in ''|'#'*) continue ;; esac
     case "$id" in
+      keep:*) ;;
       skill:*) for name in ${id#skill:}; do echo "skill:$name|$roles|.agents/skills/$name/SKILL.md"; done ;;
       *) echo "$id|$roles|AGENTS.md" ;;
     esac

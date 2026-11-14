@@ -35,6 +35,7 @@
 #   - <name> [<mode> +yolo branch=<prefix>] - <desc> (added <date>)  -> <mode> <yolo> <prefix>
 #   - <name> [<mode> forge=gerrit] - <desc> (added <date>)           -> <mode> off, --forge gerrit
 #   - <name> [<mode> forge=forgejo] - <desc> (added <date>)          -> <mode> <yolo>, --forge forgejo
+#   - <name> [<mode> mcp=<file>] - <desc> (added <date>)             -> the project's own MCP server file (--mcp)
 #   <name> may contain spaces; it ends at the literal " [" or " - " that follows it.
 #   Bracket tokens are order-independent: +yolo, branch=<prefix>, and forge=<value>
 #   are recognized by their own shape wherever they appear, and whichever token is
@@ -115,7 +116,12 @@
 # to the forge binding, so it prints even when the forge token is malformed;
 # every path that reads the forge binding (default, --forge, and spawn's
 # forge-agreement check) still refuses.
-# Usage: jg-project-mode.sh [--raw|--branch-prefix [--kind <kind>] [--registered]|--forge] <project-name>
+# mcp=<file> (orthogonal) = the project's own MCP server file, an absolute path or one relative to the
+#   project folder. bin/jg-spawn.sh launches every Claude session with --strict-mcp-config, which drops each
+#   server the launch does not pass, so a project that has its own servers names the file here and the
+#   launch passes it with --mcp-config. --mcp prints the registered value, and nothing when none is
+#   registered; the token never changes the mode, yolo, branch or forge answers.
+# Usage: jg-project-mode.sh [--raw|--branch-prefix [--kind <kind>] [--registered]|--forge|--mcp] <project-name>
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
 [ "$_jg_d" != "${BASH_SOURCE[0]}" ] || _jg_d=.
@@ -149,6 +155,7 @@ REG="$DATA/projects.md"
 RAW=0
 BRANCH_PREFIX_QUERY=0
 WANT_FORGE=0
+WANT_MCP=0
 KIND=
 REGISTERED_ONLY=0
 case "${1:-}" in
@@ -164,8 +171,9 @@ case "${1:-}" in
     done
     ;;
   --forge) WANT_FORGE=1; shift ;;
+  --mcp) WANT_MCP=1; shift ;;
 esac
-NAME=${1:?usage: jg-project-mode.sh [--raw|--branch-prefix [--kind <kind>] [--registered]|--forge] <project-name>}
+NAME=${1:?usage: jg-project-mode.sh [--raw|--branch-prefix [--kind <kind>] [--registered]|--forge|--mcp] <project-name>}
 
 # The unregistered ship-branch prefix: "fm/" without a kind, else named by kind.
 default_prefix() {
@@ -191,6 +199,7 @@ prefix_answer() {  # <registered-or-sentinel>
 }
 
 if [ ! -f "$REG" ]; then
+  [ "$WANT_MCP" -eq 0 ] || exit 0
   echo "warn: no registry at $REG; defaulting $NAME to direct-PR off" >&2
   if [ "$BRANCH_PREFIX_QUERY" -eq 1 ]; then
     prefix_answer "$unset_prefix" || exit 1
@@ -244,6 +253,7 @@ parsed=$(awk -v n="$NAME" -v sentinel="$unset_prefix" '
         if (a[j]=="+yolo") { yolo="on"; continue }
         if (a[j] ~ /^branch=/) { branch = substr(a[j], 8); continue }
         if (a[j] ~ /^forge=/) { forge = a[j]; continue }
+        if (a[j] ~ /^mcp=/) { mcp = substr(a[j], 5); continue }
         if (a[j] ~ /^[^=]+=/) {
           key = substr(a[j], 1, index(a[j], "=") - 1);
           e = dist(key, "forge");
@@ -256,11 +266,13 @@ parsed=$(awk -v n="$NAME" -v sentinel="$unset_prefix" '
     }
     # branch is printed LAST: an empty branch= override must survive as an
     # empty final field, which only holds when nothing follows it.
+    if (mcp != "") print "mcp", mcp
     print "posture", mode, yolo, forge, branch; exit
   }
 ' "$REG")
 
 if [ -z "$parsed" ]; then
+  [ "$WANT_MCP" -eq 0 ] || exit 0
   echo "warn: project \"$NAME\" not in registry; defaulting to direct-PR off" >&2
   if [ "$BRANCH_PREFIX_QUERY" -eq 1 ]; then
     prefix_answer "$unset_prefix" || exit 1
@@ -269,10 +281,12 @@ if [ -z "$parsed" ]; then
 fi
 
 posture=
+mcp_file=
 while IFS=' ' read -r kind rest; do
   case "$kind" in
     near) echo "warn: ignoring \"$rest\" registered for $NAME in $REG; it is not a forge binding, and the forge binding is spelled forge=gerrit or forge=forgejo" >&2 ;;
     posture) posture=$rest ;;
+    mcp) mcp_file=$rest ;;
   esac
 done <<EOF
 $parsed
@@ -290,6 +304,10 @@ esac
 # The retired word no-mistakes is read as direct-PR: a project registered with it proves with done-done and takes the pull request path.
 case "$mode" in no-mistakes-prod-only) ;; *) mode=$(jg_delivery_style_task_mode "$mode") ;; esac
 case "$yolo" in on|off) ;; *) yolo=off ;; esac
+if [ "$WANT_MCP" -eq 1 ]; then
+  [ -z "$mcp_file" ] || echo "$mcp_file"
+  exit 0
+fi
 if [ "$BRANCH_PREFIX_QUERY" -eq 1 ]; then
   prefix_answer "$branch" || exit 1
   exit 0

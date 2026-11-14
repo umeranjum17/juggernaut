@@ -61,6 +61,26 @@ test_the_branch_prefix_follows_the_kind_and_a_registered_prefix_wins() {
   pass "the branch prefix follows the kind and a registered prefix wins"
 }
 
+test_a_registered_mcp_file_is_reported_and_never_changes_the_posture() {
+  local home
+  home=$(mktemp -d "$TMP_ROOT/mcp.XXXXXX")
+  mkdir -p "$home/data"
+  {
+    printf -- '- withmcp [local +yolo mcp=.mcp.json] - has its own servers (added 2026-11-14)\n'
+    printf -- '- mcpfirst [mcp=/abs/servers.json local] - token before the mode (added 2026-11-14)\n'
+    printf -- '- nomcp [local] - none (added 2026-11-14)\n'
+  } > "$home/data/projects.md"
+  q() { JG_HOME="$home" JG_DATA_OVERRIDE="$home/data" "$MODE" "$@" 2>/dev/null; }
+  assert_equals ".mcp.json" "$(q --mcp withmcp)" "a registered MCP file is reported"
+  assert_equals "/abs/servers.json" "$(q --mcp mcpfirst)" "the token may come before the mode"
+  assert_equals "" "$(q --mcp nomcp)" "a project with none reports nothing"
+  assert_equals "" "$(q --mcp stranger)" "an unregistered project reports nothing"
+  assert_equals "local on" "$(q withmcp)" "the token is not read as the mode"
+  assert_equals "local off" "$(q mcpfirst)" "a leading token is not read as the mode"
+  pass "a registered MCP file is reported by --mcp and never changes the posture"
+}
+
 test_an_unregistered_project_defaults_to_a_direct_pr
 test_a_registered_posture_is_never_lowered
 test_the_branch_prefix_follows_the_kind_and_a_registered_prefix_wins
+test_a_registered_mcp_file_is_reported_and_never_changes_the_posture

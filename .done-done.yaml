@@ -175,6 +175,10 @@ journeys:
   pre-push-hook:
     tier: local
     command: bash tests/jg-pre-push.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  spawn-thin-launch:
+    tier: local
+    command: JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash journeys/spawn-thin-launch.sh
+    timeout: 30m
   spawn-dispatch-profile:
     tier: local
     command: bash tests/jg-spawn-dispatch-profile.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
