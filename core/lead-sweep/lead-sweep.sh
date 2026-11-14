@@ -51,6 +51,8 @@ PARK_EMPTY_S=$(( $(num "${JG_LEAD_SWEEP_PARK_EMPTY_H:-}" 2) * 3600 ))
 START_S=$(( $(num "${JG_LEAD_SWEEP_START_MIN:-}" 30) * 60 ))
 QUIET_S=$(( $(num "${JG_LEAD_SWEEP_QUIET_MIN:-}" 60) * 60 ))
 PR_MIN=${JG_LEAD_SWEEP_PR_MIN:-10}; case $PR_MIN in ''|*[!0-9]*) PR_MIN=10 ;; esac
+# shellcheck source=bin/jg-facts-lib.sh disable=SC1091
+. "$(dirname "$SELF")/../../bin/jg-facts-lib.sh"
 umask 077
 mkdir -p "$MEM" || exit 0
 # drift <lane> <note>: a refused or left-alone cleanup is the drift alert, one per lane; a changed reason rings again.
@@ -178,7 +180,7 @@ for id in $order; do
   kind=$(mval "$meta" kind)
   case $kind in ship|scout) ;; *) continue ;; esac
   line=$(tail -n 1 "$STATE/$id.status" 2>/dev/null)
-  ls "$STATE"/.trunk-run-"$id"-*.lock >/dev/null 2>&1 && continue
+  jg_fact_lane_lock_held "$STATE" "$id" && continue
   proj=$(mval "$meta" project); branch=$(mval "$meta" branch); branch=${branch:-fm/$id}
   case $line in
     done\ *|done:*) ended='done' ;;
@@ -193,15 +195,14 @@ for id in $order; do
     '')
       # Never started: one relaunch, then the lane is closed the way a parked one is.
       [ "$kind" = ship ] && [ ! -e "$STATE/$id.parked" ] || continue
-      since=$(mtime "$meta"); tried=$(head -n 1 "$MEM/$id.relaunched" 2>/dev/null)
-      case $tried in ''|*[!0-9]*) tried=0 ;; esac
-      [ "$tried" -le "$since" ] || since=$tried
-      [ $(( NOW - since )) -ge "$START_S" ] || continue
-      if [ "$tried" -eq 0 ]; then
-        if run_as_home "$CONTROL" "$id" relaunch --note "Your session never wrote a status line in $(( START_S / 60 )) minutes. Read your instructions, write a working status line and begin the task." >/dev/null 2>&1; then
-          echo "$NOW" > "$MEM/$id.relaunched"; echo "lead-sweep: $id never started in $(( START_S / 60 )) minutes, relaunched once"
-        else refuse "$id" "never started and could not be relaunched"; fi
-      else park "$id" "never started, even after a relaunch"; fi
+      case $(jg_fact_val "$(jg_fact_sweep_retry "$STATE" "$MEM" "$id" "$NOW" "$START_S")" next) in
+        relaunch)
+          if run_as_home "$CONTROL" "$id" relaunch --note "Your session never wrote a status line in $(( START_S / 60 )) minutes. Read your instructions, write a working status line and begin the task." >/dev/null 2>&1; then
+            echo "$NOW" > "$MEM/$id.relaunched"; echo "lead-sweep: $id never started in $(( START_S / 60 )) minutes, relaunched once"
+          else refuse "$id" "never started and could not be relaunched"; fi ;;
+        park) park "$id" "never started, even after a relaunch" ;;
+        *) continue ;;
+      esac
       continue ;;
     *) ended=gone ;;
   esac

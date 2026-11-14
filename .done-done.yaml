@@ -279,6 +279,9 @@ journeys:
   machine-moves-log:
     tier: local
     command: bash journeys/machine-moves-log.sh
+  typed-ready-proof-retry-facts:
+    tier: local
+    command: bash journeys/typed-ready-proof-retry-facts.sh
   captain-close-gate:
     tier: local
     command: bash journeys/captain-close-gate.sh
@@ -1916,6 +1919,9 @@ journeys:
   jg-machine-moves-log:
     tier: local
     command: bash tests/jg-machine-moves-log.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-typed-facts:
+    tier: local
+    command: bash tests/jg-typed-facts.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-machine-stage-words:
     tier: local
     command: bash tests/jg-machine-stage-words.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

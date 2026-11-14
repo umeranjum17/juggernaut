@@ -178,6 +178,8 @@ LANDER_ACCOUNT="${CLAUDE_CONFIG_DIR:-}"; unset CLAUDE_CONFIG_DIR
 . "$SCRIPT_DIR/jg-bypass-record-lib.sh"
 # shellcheck source=bin/jg-wake-lib.sh
 . "$SCRIPT_DIR/jg-wake-lib.sh"
+# shellcheck source=bin/jg-facts-lib.sh
+. "$SCRIPT_DIR/jg-facts-lib.sh"
 # shellcheck source=bin/jg-lease-lib.sh
 . "$SCRIPT_DIR/jg-lease-lib.sh"
 # shellcheck source=bin/jg-trace-lib.sh
@@ -1008,7 +1010,7 @@ sealed_run_ran() {  # <evidence root> <record file> <selection, one script per l
 # failed or was dirty, never counts. A project with no selector is judged by the change alone. The combined head is not tested here: the
 # line's verify (the green pin) is.
 sealed_run_covers() {  # <id> <candidate>
-  local want c f sel='' have=0 rc=0; [ "${JG_TRUNK_SEALED_REUSE:-1}" != 0 ] || return 1  # 0 always runs the tests (the suites that test the gate itself)
+  local want c f sel='' have=0 rc=0; [ "$(jg_fact_reuse_effective)" = on ] || return 1  # the fact: 0 always runs the tests (the suites that test the gate itself)
   want=$(git -C "$PROJ" rev-parse --verify --quiet "$2^{commit}") || return 1
   for f in "$DATA/$1/.done-done/runs/"*.json; do
     [ -f "$f" ] || continue
