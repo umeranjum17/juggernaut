@@ -172,6 +172,13 @@ NEW_PID=$(head -n 1 "$HOME_DIR/state/.lock")
 assert_not_equals "$OLD_PID" "$NEW_PID" "a new primary process holds the lock"
 assert_alive "$NEW_PID" "the new primary process runs"
 assert_equals "$PANE" "$(lab api snapshot | jq -r --arg s "$(head -n 1 "$HOME_DIR/state/.lock-session")" '.result.snapshot.agents[] | select(.agent_session.value == $s) | .pane_id')" "the new session runs in the same pane"
+# The stand-in takes the lock before the wake, as a primary does, so the relaunch
+# can return between the two: wait for the wake rather than reading it once.
+n=0
+while [ "$n" -lt 40 ] && ! compgen -G "$HOME_DIR/state/wake-taken/*.msg" >/dev/null; do
+  sleep 0.25
+  n=$((n + 1))
+done
 compgen -G "$HOME_DIR/state/wake-taken/*.msg" >/dev/null || fail "the waiting wake was not taken"
 pass "the new session took the waiting wake"
 assert_equals 2 "$(cat "$HOME_DIR/starts")" "the primary started twice"
