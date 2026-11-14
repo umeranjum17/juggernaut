@@ -30,7 +30,7 @@ start claims a row with no owner. A start whose generation is not the one on the
 three, and each moves only from the owner it read.
 With no lane named, start claims an unowned row for the actor (BEADS_ACTOR, else juggernaut), so every in-flight row has an owner.
 bin/jg-beads.sh makes the lane the actor of every bd call, so a comment or an event carries who wrote it.
-bd takes --if-assignee or --force, never both, so closing a blocked row or a parent with an open child is guarded by status alone.
+bd takes --if-assignee or --force, never both, so closing a blocked row is guarded by status alone; a parent with an open child is refused, naming the open pieces.
 stage, take and drop move queued rows, and bd export and bd import carry them.
 stage prints rows as a backlog file, or with --native as export lines, and refuses to leave an active dependent behind.
 take files rows from either in one bd import, skips any already here, and refuses a blocker that neither moves nor is here.
@@ -421,9 +421,12 @@ def done(args):
         cmd.append("--description=" + "\n".join(filter(None, [item["body"], note])))
     if not already:
         cmd += ["--status", "closed", "--if-status", row["status"]]
-        kids = any(d.get("type") == "parent-child" and d["depends_on_id"] == ident and other["status"] != "closed"
-                   for other in items.values() for d in other.get("dependencies") or [])
-        if item["blocked"] == "yes" or kids:
+        pieces = sorted(other["id"] for other in items.values() if other["status"] != "closed"
+                        for d in other.get("dependencies") or [] if d.get("type") == "parent-child" and d["depends_on_id"] == ident)
+        if pieces:  # a closed slice with open work under it is never shown
+            view.refuse("%s has open pieces (%s), so it cannot be closed" % (ident, ", ".join(pieces)),
+                        "Close %s first, then close %s" % (", ".join(pieces), ident), "OPEN_PIECES")
+        if item["blocked"] == "yes":
             cmd.append("--force")
         elif row.get("assignee"):
             cmd += ["--if-assignee", row["assignee"]]

@@ -68,4 +68,12 @@ assert_contains "$(tasks add jg-moved "[feature] again" --body why)" "already ex
 # The owner-rules tree reads the parent from the edge: the slice has no parent: line in its body.
 tree=$(bash "$ROOT/core/owner-rules/bin/jg-owner-rules-tree.sh" <(tasks markdown))
 assert_contains "$tree" "$slice: $slice -> $ask -> [epic root]" "the tree must follow the slice's edge to the ask"
+# A slice closes after its pieces: done is refused with the open piece named, passes once it closes, and epic status counts it.
+out=$(tasks "done" "$slice") && fail "done on a slice with an open piece must be refused"
+assert_contains "$out" "$piece" "the refusal must name the open piece"
+[ "$(field "$slice" .status)" != closed ] || fail "a refused done must leave the slice open"
+tasks "done" "$piece" >/dev/null || fail "close the piece"
+tasks "done" "$slice" >/dev/null || fail "done on a slice whose pieces are closed must pass"
+closed=$(bd_ epic status --json | jq -r --arg a "$ask" '.[] | select(.epic.id == $a) | .closed_children')
+[ "$closed" = 1 ] || fail "epic status must count the closed slice, got: $closed"
 pass "slices are real children: ask, slice, piece, labels, refused fourth level and own ids, epic status, tree"
