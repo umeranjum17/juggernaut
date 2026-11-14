@@ -90,7 +90,6 @@ plan=(
   fleet-report:env
   key-in-env-check:env
   zai-quota-check:env
-  nm-drain:home
   merge-on-green:home
   merge-card:home
   goal-loop:home

@@ -2259,12 +2259,6 @@ journeys:
   merge-on-green-merge-ready-batch:
     tier: local
     command: bash journeys/core-run.sh 'bash merge-on-green/tests/merge-ready-batch.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  nm-drain:
-    tier: local
-    command: bash journeys/core-run.sh 'bash nm-drain/tests/nm-drain.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  nm-drain-uninstall:
-    tier: local
-    command: bash journeys/core-run.sh 'bash nm-drain/tests/nm-drain-uninstall.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   owner-guard-uninstall:
     tier: local
     command: bash journeys/core-run.sh 'bash owner-guard/tests/owner-guard-uninstall.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
