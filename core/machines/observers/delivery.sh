@@ -14,8 +14,10 @@
 #   id, project, commit (a sha, or - to find the trunk commit whose message has the trailer line `Change: <id>`),
 #   switch (the file in config/ that turns it on, or -), proof (see below, or -), what (one plain line).
 # A change that ships behind a switch names that switch there, so this observer finds it; a `Change: <id>` trailer on
-# its commit names the commit. The proof is `switch` (the switch file is present) or `log:<file>:<regex>`, where <file>
-# is under config/, data/ or state/ of the home and the regex matches one line of it (a log line, a counter file).
+# its commit names the commit. The proof is `switch` (the switch file is present), `log:<file>:<regex>`, where <file>
+# is under config/, data/ or state/ of the home and the regex matches one line of it (a log line, a counter file), or
+# `exercise`: data/exercises.tsv (core/machines/exercise.sh writes it) holds a row for the change that names the exact
+# commit each home runs, so a row for an older or newer commit, or for another change, proves nothing.
 # The state, first match wins:
 #   unlanded       the commit is not on the trunk (state/trunk-tip-<project>; HEAD when that is absent)
 #   reverted       the trunk holds a revert of it (`reverts: <sha>` or `This reverts commit <sha>`)
@@ -54,15 +56,28 @@ proof_held() {
   local file re
   case $PROOF in
     switch) [ "$SWITCH" != - ] && [ -e "$CONFIG/$SWITCH" ] && printf 'switch config/%s is present\n' "$SWITCH" ;;
+    exercise) exercised ;;
     log:*) file=${PROOF#log:}; re=${file#*:}; file=${file%%:*}
       grep -Eq -- "$re" "$JG_HOME/$file" 2>/dev/null && printf '%s has a line that matches %s\n' "$file" "$re" ;;
   esac
 }
 
+# One line naming the exercise row of the change at every commit a home runs; nothing when any home's commit has none.
+exercised() {
+  local h full row out=''
+  [ -n "$HEADS" ] || return 0
+  for h in $HEADS; do
+    row=$(awk -F'\t' -v i="$ID" -v h="$h" '$2 == i && $3 == h { w = $4 } END { print w }' "$DATA/exercises.tsv" 2>/dev/null)
+    [ -n "$row" ] || return 0
+    out="${out:+$out; }${h:0:12}: $row"
+  done
+  printf 'exercised at %s\n' "$out"
+}
+
 # Sets WORD (the state) and EVIDENCE (what the proof showed, when in-use).
 classify() {  # <id>
-  local c behind=0 pinned=0 homes=0 sha st
-  WORD=''; EVIDENCE=''; C=''
+  local c behind=0 pinned=0 homes=0 sha st full
+  WORD=''; HEADS=''; EVIDENCE=''; C=''
   load "$1" || return 1
   REPO=$JG_HOME/projects/$PROJECT; git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1 || REPO=$JG_HOME
   TIP=$(cat "$STATE/trunk-tip-$PROJECT" 2>/dev/null); TIP=${TIP:-HEAD}
@@ -71,7 +86,11 @@ classify() {  # <id>
   if [ -n "$(git -C "$REPO" log "$TIP" -n 1 --format=%H --grep="^reverts: $c" --grep="This reverts commit $c" 2>/dev/null)" ]; then WORD=reverted; return 0; fi
   while IFS=$'\t' read -r _ sha st; do
     homes=$((homes + 1))
-    if [ "$sha" != - ] && holds "$c" "$sha"; then continue; fi
+    if [ "$sha" != - ] && holds "$c" "$sha"; then
+      full=$(git -C "$REPO" rev-parse --verify --quiet "$sha^{commit}" 2>/dev/null)
+      case " $HEADS " in *" $full "*) ;; *) HEADS="$HEADS $full" ;; esac
+      continue
+    fi
     behind=$((behind + 1)); case $st in live,pinned-back*) pinned=1 ;; esac
   done < <(awk -F'\t' -v p="$PROJECT:" 'index($1, p) == 1 { k = $1; last[k] = $4; if ($4 ~ /^live/) sha[k] = $2 }
     END { for (k in last) print k "\t" (sha[k] == "" ? "-" : sha[k]) "\t" last[k] }' "$DATA/trunk-in-use.tsv" 2>/dev/null)
@@ -96,9 +115,10 @@ lint() {
     case $sw in -) ;; *[!A-Za-z0-9._-]*|'') echo "$f: switch '$sw' must be - or a file name in config/"; bad=1 ;; esac
     case $proof in
       -) ;;
+      exercise) ;;
       switch) [ "$sw" != - ] || { echo "$f: proof switch needs a switch"; bad=1; } ;;
       log:config/*:?*|log:data/*:?*|log:state/*:?*) case $proof in *..*) echo "$f: proof path must stay in the home"; bad=1 ;; esac ;;
-      *) echo "$f: proof must be -, switch or log:<config|data|state>/<file>:<regex>"; bad=1 ;;
+      *) echo "$f: proof must be -, switch, exercise or log:<config|data|state>/<file>:<regex>"; bad=1 ;;
     esac
   done < <(registry)
   return "$bad"

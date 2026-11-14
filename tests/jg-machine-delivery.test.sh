@@ -30,6 +30,7 @@ commit off.txt $'feature that ships behind a switch\n\nChange: feat-off' >/dev/n
 on=$(commit on.txt $'feature that is switched on\n\nChange: feat-on')
 commit logged.txt $'feature proved by a log line\n\nChange: feat-log' >/dev/null
 commit nosw.txt $'feature with a switch and no proof\n\nChange: feat-noproof' > /dev/null
+commit ex.txt $'feature proved by an exercise at the exact head\n\nChange: feat-ex' >/dev/null
 gone=$(commit gone.txt $'feature that is reverted\n\nChange: feat-gone')
 revert=$(commit revert.txt $'Revert "feature that is reverted"\n\nreverts: '"$gone")
 g checkout -q -b side "$base"; side=$(commit side.txt "side work"); g checkout -q trunk
@@ -38,6 +39,7 @@ printf '%s' "$revert" > "$S/trunk-tip-juggernaut"; ln -s juggernaut "$JG_HOME/pr
   tab feat-on juggernaut - feat-on switch "is switched on"
   tab feat-log juggernaut - - "log:data/feat.log:^counted [1-9]" "no switch, proved by a counter line"
   tab feat-noproof juggernaut - feat-noproof - "a switch and no proof"
+  tab feat-ex juggernaut - - exercise "proved only by an exercise at the head the homes run"
   tab feat-gone juggernaut - - - "is reverted"
   tab feat-side juggernaut "$side" - - "is not on the trunk"
   tab feat-pin pin "$on" - - "a home was pinned back below it"
@@ -76,6 +78,35 @@ printf 'counted 3\n' > "$D/feat.log"; assert_equals in-use "$(word_of feat-log)"
 : > "$C/feat-noproof"; assert_equals in-homes "$(word_of feat-noproof)" "a switch with no named proof is in-homes"
 pass "a change is in-use only with a named proof that holds"
 
+# an exercise record: in-use only when a row names the exact commit every home runs
+EX=$ROOT/core/machines/exercise.sh
+claim() { OUT=$(bash "$CLAIM" "done" "$1" 2>/dev/null); RC=$?; }
+assert_equals in-homes "$(word_of feat-ex)" "no exercise record: in-homes, never in-use"
+claim "feat-ex is live"; expect_code 3 "$RC" "a live claim with no exercise record for its head is unproved"
+assert_contains "$OUT" "in-homes: feat-ex is live" "the claim reads in-homes, not live"
+OUT=$(bash "$EX" record feat-ex "$base" "ran it at an older commit" 2>&1); expect_code 0 "$?" "an exercise at an older commit is recorded"
+assert_equals in-homes "$(word_of feat-ex)" "a row for another commit than the one the homes run proves nothing"
+OUT=$(bash "$EX" record feat-on "$revert" "exercised another change" 2>&1)
+assert_equals in-homes "$(word_of feat-ex)" "a row for another change proves nothing"
+bash "$EX" record feat-ex "$revert" "ran the journey at the tip" >/dev/null; expect_code 0 "$?" "an exercise at the head is recorded"
+assert_equals in-use "$(word_of feat-ex)" "a row at the exact head every home runs: in-use"
+assert_contains "$(bash "$OBS" detail feat-ex)" "exercised at ${revert:0:12}: ran the journey at the tip" "detail names the exact head that was exercised"
+claim "feat-ex is live"; expect_code 3 "$RC" "in-use without its proof clause is extended"
+assert_contains "$OUT" "proof: exercised at ${revert:0:12}" "the claim carries the exercised head"
+live_row juggernaut:lead-a "$on" live "$base"
+live_row juggernaut:lead-a "$revert" live "$base"
+bash "$EX" record feat-ex "$base" "x" >/dev/null
+assert_equals in-use "$(word_of feat-ex)" "a home that moved on to a commit the row names stays in-use"
+git -C "$R" -c user.name=t -c user.email=t@example.test -c commit.gpgsign=false commit -q --allow-empty -m "later work"
+newtip=$(git -C "$R" rev-parse HEAD); printf '%s' "$newtip" > "$S/trunk-tip-juggernaut"
+live_row juggernaut "$newtip" live; live_row juggernaut:primary "$newtip" live "$base"; live_row juggernaut:lead-a "$newtip" live "$base"
+assert_equals in-homes "$(word_of feat-ex)" "every home moved to a newer head with no exercise row: unproved again"
+bash "$EX" record feat-ex "$newtip" "ran it at the new head" >/dev/null
+assert_equals in-use "$(word_of feat-ex)" "an exercise at the new head proves it"
+bash "$EX" record nope "$newtip" x >/dev/null 2>&1; expect_code 1 "$?" "an unregistered change is refused"
+bash "$EX" record feat-ex deadbeef x >/dev/null 2>&1; expect_code 1 "$?" "a commit that does not exist is refused"
+pass "in-use needs an exercise record at the exact head every home runs"
+
 # reverted and pinned-behind
 assert_equals reverted "$(word_of feat-gone)" "a revert on the trunk makes it reverted"
 : > "$C/feat-on"
@@ -95,7 +126,6 @@ bash "$JM" edge-check delivery reverted in-use >/dev/null 2>&1; expect_code 1 "$
 pass "the table holds the observed states and moves"
 
 # the report rule: live is said only for in-use, with the proof
-claim() { OUT=$(bash "$CLAIM" "done" "$1" 2>/dev/null); RC=$?; }
 claim "feat-off is live"; expect_code 3 "$RC" "live for a switched-off change is refused"
 assert_contains "$OUT" "in the homes, off (switch config/feat-off)" "the claim becomes in the homes, off, naming the switch"
 claim "feat-off is live, in the homes, off until config/feat-off exists"; expect_code 0 "$RC" "saying in the homes, off stands"
