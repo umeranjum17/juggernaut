@@ -51,6 +51,8 @@ refused() { settled && grep -qs '^REFUSED' "$HOME_D"/data/jg-trunk-landing/"$1".
 quiet() { rm -f "$HOME_D/state/$1.status"; }
 # mover <id> <file>: a lane that conflicts with nothing lands through the same lander while another lane is gated.
 mover() { lane "$1" "$1" "$2.txt"; quiet "$1"; trunk land "$1" >/dev/null 2>&1 || fail "mover $1 must land"; }
+# attempts <lane>: the landing attempts the check recorded for the lane (one per run of the lander)
+attempts() { find "$HOME_D/data/jg-trunk-landing" -maxdepth 1 -type d -name "$1.*.attempt-*" 2>/dev/null | wc -l; }
 # the return the check recorded for the lane: the first REFUSED line of its attempt log
 verdict() { grep -hm1 '^REFUSED' "$HOME_D"/data/jg-trunk-landing/"$1".*.attempt-*/landing.log 2>/dev/null | head -n 1; }
 
@@ -64,7 +66,12 @@ test_a_lane_gated_while_another_lands_is_returned_for_the_conflict() {
   assert_contains "$(verdict cb)" "conflicts with trunk" "the second lane is returned for a conflict"
   assert_contains "$(verdict cb)" "work.txt" "the return names the conflicting path"
   [ "$(runs cb)" = 1 ] || fail "a conflict stops at the rebase, before any second gate, got $(runs cb) runs"
-  pass 'a lane gated while another lands is rebased on the new tip, conflicts, and is returned with its path after one gate'
+  # The conflict was judged on the tip the rebase met, so the same head is not judged again while that tip stands.
+  kick; wait_for 'the check settles' settled
+  [ "$(attempts cb)" = 1 ] || fail "a conflict a concurrent landing caused is judged once for its head, got $(attempts cb) attempts"
+  [[ $(cat "$HOME_D"/data/jg-trunk-landing/cb.????????????????????????????????????????.state) == final* ]] || fail "the verdict still holds after the check ran again, not a stuck running line: $(cat "$HOME_D"/data/jg-trunk-landing/cb.????????????????????????????????????????.state)"
+  [ "$(cat "$HOME_D"/data/jg-trunk-landing/cb.????????????????????????????????????????.tip)" = "$(tip)" ] || fail "the verdict is stored with the tip the rebase met"
+  pass 'a lane gated while another lands is rebased on the new tip, conflicts, and is returned with its path after one gate, and judged once'
 }
 
 test_a_lane_whose_trunk_keeps_moving_is_gated_again_each_time_and_then_returned() {
@@ -106,9 +113,7 @@ test_a_red_lane_is_returned_for_the_gate_and_the_baseline_names_each_cause() {
   touch "$W/go-cb-1"; wait_for 'cb is returned' refused cb; quiet cb
   assert_contains "$(verdict rb)" "gate 'full' failed" "the red lane is returned for the gate"
   out=$("$ROOT/core/trunk-landing/returns-baseline.sh" "$HOME_D" --heads) || fail "the baseline must run: $out"
-  # A conflict caused by a landing that ran beside it is judged once more on the new tip (verdict.sh stores the tip read before the run), so
-  # the returns of that one head may be 1 or 2; the head count is the stable figure.
-  awk '$1 == "conflict" && $2 >= 1 && $3 == 1 { ok = 1 } END { exit !ok }' <<<"$out" || fail "one source head returned for a conflict: $out"
+  cause_row "$out" conflict 1 1 || fail "one conflict return on one head: $out"
   cause_row "$out" trunk-moved 1 1 || fail "one trunk-moved return on one head: $out"
   cause_row "$out" gate-failure 1 1 || fail "one gate-failure return on one head: $out"
   awk '$1 == "all" && $3 == 3 && $4 == 3 { ok = 1 } END { exit !ok }' <<<"$out" || fail "three returns on three heads, none for the lane that landed: $out"

@@ -286,7 +286,7 @@ if [ "$1" = run ]; then
   if printf '%s\n' "$out" | grep -q "^refusal-class $id: env-wait$"; then
     printf 'env-wait %s\n' "${why:-environment unavailable; see $request_log}" > "$MEM/$id.$head.state"
   else
-    verdict_record "$id" "$head" "$now" "$tip" "$out" "${why:-landing failed; see $request_log}"
+    verdict_record "$id" "$head" "$now" "$(verdict_tip_met "$(mval "$STATE/$id.meta" project)" "$why" "$tip")" "$out" "${why:-landing failed; see $request_log}"
     line=$(cat "$MEM/$id.$head.state")
     if [[ $line == final* ]]; then
       proj=$(mval "$STATE/$id.meta" project)

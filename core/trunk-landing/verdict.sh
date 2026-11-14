@@ -12,6 +12,8 @@
 #   2. Every verdict is stored with the trunk tip it was judged on, in <task>.<head>.tip beside <task>.<head>.state, the way
 #      `jg-trunk.sh land` keys its own admission record by the tip. For one lane it is the tip read before the landing started; for a
 #      stack it is the tip after the stack's own landings, because a returned lane was judged on top of the stack's lanes that landed.
+#      A conflict is stored with the tip its refusal names (verdict_tip_met), the one the rebase met: a landing that ran beside the lane moves
+#      the trunk during the run, and the tip read first would make the check judge the same head again at once.
 #   3. A final conflict, or a final for a trunk something else moved (a home on older code stored it final), holds only while that tip stands: once the trunk moved, the lane is judged again (a conflict attempt stops
 #      at the rebase, before any gate). A conflict with no stored tip (a record from before this rule) is judged again once.
 #      Every other final (a red gate the lane caused, a second commit) holds for its head on any tip, but only while the inputs its
@@ -40,6 +42,14 @@ VERDICT_CONFLICT_RE=' conflicts with [^ ]+ \(([0-9a-f]+)\) in: '
 # The trunk tip the lander will judge the next landing of <project-name> on.
 verdict_tip() {  # <project-name>
   cat "$STATE/trunk-tip-$1" 2>/dev/null || :
+}
+
+# The trunk tip a refusal was judged on: for a conflict, the tip the lander's rebase met, which its refusal names (rule 2); otherwise <fallback>,
+# the tip read before the run. A landing that ran beside this one moves the trunk during the run, so the tip read first is not the tip judged.
+verdict_tip_met() {  # <project dir> <reason> <fallback tip>
+  local met=
+  if [[ $2 =~ $VERDICT_CONFLICT_RE ]]; then met=$(git -C "$1" rev-parse --verify --quiet "${BASH_REMATCH[1]}^{commit}" 2>/dev/null) || met=; fi
+  printf '%s\n' "${met:-$3}"
 }
 
 # The fingerprint of what a refusal of <id> reads that can change without the head changing (rule 6).
