@@ -152,9 +152,9 @@ done
 # shellcheck source=bin/jg-board-link-lib.sh
 . "$HERE/jg-board-link-lib.sh"
 board=$(jg_board_file "$HOME_DIR") || fail 'no proof board is configured'
-JG_HOME=$HOME_DIR "$HERE/../core/merge-card/merge-card" check "$id" "$clone" "$head" "$url" || fail 'merge-card check failed'
+JG_HOME=$HOME_DIR "$HERE/../core/merge-card/merge-card" check --claim-id "$id" "$id" "$clone" "$head" "$url" || fail 'merge-card check failed'
 jq -e --arg h "$head" '.head == $h and .verdict == "pass" and (.check.evidence | length > 0)' "$dir/merge-card.json" >/dev/null || fail 'merge-card did not approve cited evidence'
-JG_HOME=$HOME_DIR "$HERE/../core/merge-card/merge-card" post --board "$board" "$id" "$clone" "$head" "$url" || fail 'merge-card evidence was not posted'
+JG_HOME=$HOME_DIR "$HERE/../core/merge-card/merge-card" post --board "$board" --claim-id "$id" "$id" "$clone" "$head" "$url" || fail 'merge-card evidence was not posted'
 JG_HOME=$HOME_DIR "$HERE/../core/merge-card/merge-card" receipt "$id" "$head" || fail 'merge-card receipt was refused'
 remote_head=$(cd "$project" && gh-axi api "$api" --jq '.head.sha') || fail 'cannot re-read the PR head'
 [ "$remote_head" = "$head" ] || fail 'the PR head changed while publishing proof'

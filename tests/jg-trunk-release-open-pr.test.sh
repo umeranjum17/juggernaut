@@ -297,6 +297,13 @@ if [ "${1:-}" = run ]; then
   jq -n --arg id "$run" --arg head "$head" --arg record "$record" '{run_id:$id,commit:$head,dirty:false,record:$record}'
 elif [ "${1:-}" = check ] && [ "${2:-}" != --help ]; then
   printf '%s\n' "${CLAUDE_CONFIG_DIR:-}" > "$JG_TEST_JUDGE_ACCOUNT"
+  # The release receipt carries one claim id; a check under any other id finds no receipt, as done-done does.
+  claim=; prev=
+  for arg in "$@"; do [ "$prev" != --claim-id ] || claim=$arg; prev=$arg; done
+  if [ "$claim" != "${JG_TEST_RECEIPT_CLAIM:-release-proj-trunk}" ]; then
+    jq -n --arg c "$claim" '{result:"fail",error:("no receipt for claim id " + $c)}'
+    exit 1
+  fi
   name=$(sed -n 's/^evidence: //p' "$JG_TEST_PR_BODY" | tail -n 1)
   jq -n --arg file "$JG_DATA_OVERRIDE/release-proj-trunk/$name" --arg claim 'release proof' '{result:"pass",claim:$claim,evidence:[$file]}'
 else
@@ -390,6 +397,10 @@ awk -F "\t" '$1 != "proj" || $3 != "trunk"' "$HOME_D/data/trunk-versions.tsv" > 
 cp "$W/versions-without-trunk" "$HOME_D/data/trunk-versions.tsv"
 expected_base=$(git -C "$PROJ" merge-base trunk main)
 git -C "$PROJ" config remote.origin.pushurl "$W/no-such-remote.git"
+# The proof checks the release under the receipt's claim id (release-<project>-trunk); a receipt under another id is no match.
+out=$(JG_TEST_RECEIPT_CLAIM=release-other-trunk trunk release "$PROJ" 2>&1) && fail 'a release with no receipt under its claim id must refuse'
+assert_contains "$out" 'merge-card did not approve cited evidence' 'the refusal must say the evidence was not approved'
+pass 'release refuses when the receipt carries another claim id than release-<project>-trunk'
 touch "$W/lint-fail-once"; export JG_RELEASE_LINT_RETRY_SLEEP=0
 out=$(trunk release "$PROJ" 2>&1) || fail "proof retry failed: $out"
 [ ! -e "$W/lint-fail-once" ] || fail 'the failing first read of the published body was never hit'
