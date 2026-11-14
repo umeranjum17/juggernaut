@@ -18,7 +18,6 @@ When any diagnostic needs captain attention, report the plain consequence and re
 
 - `MISSING: <tool> (install: <command>)` - list the missing tools to the captain with a one-line purpose each plus the printed install commands, wait for consent (one approval may cover the list), then run `bin/jg-bootstrap.sh install <approved tools...>`.
   For `treehouse`, this also covers an installed version whose `treehouse get` lacks `--lease`; treat it as an upgrade request.
-  For `no-mistakes`, this also covers an installed version older than 1.46.0, because this repo's PR gate requires structured pipeline attestation that older builds do not write.
   For essential axi-family tools - `gh-axi`, `bin/jg-backlog.sh`, `quota-axi` - an installed version below its floor is a plain upgrade request; [`bin/jg-bootstrap.sh`](../../../bin/jg-bootstrap.sh) owns the floor policy, and never argue the floor down to whatever the home happens to have installed.
     For `quota-axi`, bootstrap requires it because Juggernaut reads its current output directly before resolving every crew-dispatch profile array; without it, report the missing requirement and do not choose around an unexamined candidate.
 - `MISSING_MANUAL: <tool> (instructions: <url>)` - tell the captain why the tool is required and give them the printed instructions URL, but do not pass the tool to `bin/jg-bootstrap.sh install`; wait for the captain to complete the manual installation, then rerun session start to confirm the dependency is present.

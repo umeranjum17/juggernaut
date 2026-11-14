@@ -101,7 +101,6 @@ done <<'LEDGER'
 7|.agents/skills/task-dispatch/SKILL.md|Resolve the project's registered ship-branch prefix the same way,
 7|.agents/skills/task-dispatch/SKILL.md|When the work must start from and target a
 7|.agents/skills/task-dispatch/SKILL.md|For a ship task whose project is this Juggernaut
-7|.agents/skills/task-dispatch/SKILL.md|On a `no-mistakes-prod-only` project, classify the task's surface: internal-only
 7|.agents/skills/task-dispatch/SKILL.md|Record the resulting mode, `yolo` merge posture, and the
 7|.agents/skills/task-dispatch/SKILL.md|Treat file or subsystem overlap as a risk signal
 7|.agents/skills/task-dispatch/SKILL.md|A project's declared machine capacity (`config/project-capacity`) and the machine's load

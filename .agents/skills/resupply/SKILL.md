@@ -12,7 +12,7 @@ metadata:
 # updatejuggernaut
 
 Self-update Juggernaut in place.
-Juggernaut is its own repo, behind the same no-mistakes gate as any project, so new tracked material (`AGENTS.md`, `bin/`, `.agents/skills/`, and public `skills/`) reaches `main` and then sits there until each running Juggernaut pulls it.
+Juggernaut is its own repo, behind the same delivery gate as any project, so new tracked material (`AGENTS.md`, `bin/`, `.agents/skills/`, and public `skills/`) reaches `main` and then sits there until each running Juggernaut pulls it.
 Only `AGENTS.md`, `bin/`, and `.agents/skills/` are a running Juggernaut instruction surface; public `skills/` is installer-facing and is not loaded by Juggernaut.
 This skill performs that pull for the running main Juggernaut and every Squad Lead, without disturbing any in-flight work.
 Updating is consumption, not publication: it only pulls from upstream, so every home runs it regardless of role, and the Juggernaut repository publication boundary (`juggernaut-self-repo`) never applies to it.
@@ -33,7 +33,7 @@ For a remote route, it updates the configured Juggernaut code root on that host 
 It never forces, never creates a merge commit, and never stashes.
 A clean Squad Lead divergence advances with `reset --keep` only when a three-way tree proof shows its complete local result is already present at the target, which recognizes squash-merged contributions without discarding unique content.
 Every other dirty, diverged, offline, or wrong-branch target is skipped and reported, and a genuine divergence leaves a durable `state/.squad-lead-update-reconcile/<id>.pending` record that future bootstrap and update passes surface until convergence clears it.
-A tracked-files fast-forward leaves the gitignored operational dirs (data/, state/, config/, projects/, .no-mistakes/) untouched, so a Squad Lead's in-flight work is never disrupted.
+A tracked-files fast-forward leaves the gitignored operational dirs (data/, state/, config/, projects/) untouched, so a Squad Lead's in-flight work is never disrupted.
 This touches only the Juggernaut repo and its own worktrees, never anything under `projects/`.
 
 ## What it does

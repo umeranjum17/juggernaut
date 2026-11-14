@@ -66,8 +66,8 @@ Treat the ~1h access-token lifetime as an ordinary operational fact, not a non-n
 ## Skill-loading interop gap
 
 rovo's skill loader rejects every Juggernaut skill: `Invalid skill definition in .../SKILL.md: 'metadata -> internal': Input should be a valid string`, because Juggernaut's `metadata.internal` is a boolean and rovo's schema wants a string.
-This blocks `/no-mistakes` and every other Juggernaut skill invocation inside a rovo worker until Juggernaut's `SKILL.md` frontmatter is made rovo-compatible (a separate, deferred follow-up - it touches every skill file and the installer contract, per `../../juggernaut-coding-guidelines/SKILL.md`).
-A `no-mistakes`-mode rovo ship operator is blocked by this gap; a rovo Recon, which invokes no skill, is unaffected.
+This blocks every Juggernaut skill invocation inside a rovo worker until Juggernaut's `SKILL.md` frontmatter is made rovo-compatible (a separate, deferred follow-up - it touches every skill file and the installer contract, per `../../juggernaut-coding-guidelines/SKILL.md`).
+A rovo ship operator that needs a skill is blocked by this gap; a rovo Recon, which invokes no skill, is unaffected.
 
 ## ACP as a future upgrade
 

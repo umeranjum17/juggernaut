@@ -55,7 +55,7 @@ The gate is code, not memory: `bin/jg-role-lib.sh`'s `jg_role_gate_self_publish`
 - `bin/jg-promote.sh` applies the same gate to Recon promotion so the in-place path grants no more than a fresh spawn.
 - `local-only` publishes nothing, so it never needs authority and never takes consent.
 
-An authorized contribution then flows through the task's normal delivery contract - usually no-mistakes - like any other project; the grant answers only "may this publish", never "how".
+An authorized contribution then flows through the task's normal delivery contract like any other project; the grant answers only "may this publish", never "how".
 
 A gate refusal names the exact remedy: write `maintainer <scope>` into `config/juggernaut-role`, or pass `--upstream-consent <scope>` for that one task with the captain's explicit approval.
 Never work around a refusal by pointing the task at a second checkout, fork, or parent clone; `jg_role_self_repo` treats every repository sharing Juggernaut's lineage as Juggernaut's own.
