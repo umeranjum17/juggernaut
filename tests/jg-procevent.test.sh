@@ -1549,7 +1549,7 @@ pass "home sweep refuses safely until runner identity is readable"
 HV="$TMP_ROOT/hv"; new_home "$HV"
 mkdir -p "$HV/state/procevent-inbox"
 printf 'already captured\n' > "$HV/state/procevent-inbox/result-only.1.result"
-sup=$(bash -c '. "$1/bin/jg-supervision-lib.sh"; jg_supervision_needed "$2" && echo yes || echo no' _ "$ROOT" "$HV/state")
+sup=$(JG_HOME="$HV" bash -c '. "$1/bin/jg-supervision-lib.sh"; jg_supervision_needed "$2" && echo yes || echo no' _ "$ROOT" "$HV/state")
 assert_contains "$sup" no "registration-free results do not broaden continuous supervision"
 out=$(pe "$HV" sweep-home)
 assert_contains "$out" "swept: attempted=0" "result-only homes need no process cleanup"
@@ -2193,8 +2193,20 @@ ORPHAN_DESCENDANT=$(cat "$TMP_ROOT/orphan-dead.descendant")
 
 # The reproduction condition itself: the listener is already an orphan in the
 # kernel's sense before anything is asserted about reaping it.
+# The kernel hands an orphan to pid 1 or, on a host whose user manager is a
+# child subreaper, to that manager; either way its parent is no longer inside
+# this test's own process tree.
+in_test_tree() {  # <pid>: 0 when the pid is this shell or one of its descendants
+  local pid=$1 hops=0
+  while [ -n "$pid" ] && [ "$pid" -gt 1 ] && [ "$hops" -lt 64 ]; do
+    [ "$pid" = "$$" ] && return 0
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d '[:space:]')
+    hops=$((hops + 1))
+  done
+  return 1
+}
 orphan_ppid=$(ps -o ppid= -p "$ORPHAN_PID" 2>/dev/null | tr -d '[:space:]')
-[ "$orphan_ppid" = 1 ] \
+{ [ "$orphan_ppid" = 1 ] || { [ -n "$orphan_ppid" ] && ! in_test_tree "$orphan_ppid"; }; } \
   || fail "the listener under test was not reparented away from its session (ppid $orphan_ppid)"
 kill -0 -"$ORPHAN_PID" 2>/dev/null \
   || fail "the listener's process group was not running"
