@@ -18,10 +18,10 @@ git -C "$FM/projects/r" remote add origin https://github.com/ex/r.git
 export STUB_FAIL=$d/fail STUB_ADDS=$d/adds STUB_ADD_FAIL=$d/addfail
 cat > "$FM/bin/jg-backlog.sh" <<'STUB'
 #!/usr/bin/env bash
-# add <id> <title> --kind ship --body <body>: record it; show: never found
+# add <id> <title> -l <label> --kind ship --body <body>: record it; show: never found
 [ "$1" = add ] || exit 1
 [ ! -e "$STUB_ADD_FAIL" ] || exit 1
-printf '%s\n' "$2|$3|$7" >> "$STUB_ADDS"
+printf '%s\n' "$2|$3|$5|$9" >> "$STUB_ADDS"
 STUB
 chmod +x "$FM/bin/jg-backlog.sh"
 # The real alert function, run from the repository so it reads the real alert table.
@@ -39,8 +39,12 @@ check "first poll alerts for exactly two red runs" "$(printf '%s\n' "$out" | wc 
 check "alert names the run, job and routing" "$(printf '%s\n' "$out" | grep "runs/11:")" "alert line-red (P1) at rung 2 for lead: ci-red-run-11 - red-ci-ticket: $U/11: CI behaviour shard 2 went red; filed ci-red-run-11 (r); fix the root cause, never re-run"
 check "the alert is recorded open for the project" "$(grep -c '^state=open$\|^project=r$' "$FM/state/alerts/line-red--ci-red-run-11.rec")" 2
 check "exactly two tickets filed" "$(grep -c "^ci-red-run-" "$STUB_ADDS" || true)" 2
-check "ticket 11 id and title" "$(grep '^ci-red-run-11|' "$STUB_ADDS" | cut -d'|' -f1-2)" "ci-red-run-11|[blocker] CI red: CI behaviour shard 2: find the root cause"
-body=$(grep -A8 '^ci-red-run-11|' "$STUB_ADDS" | sed '1s/^[^|]*|[^|]*|//')
+check "ticket 11 id, title and label" "$(grep '^ci-red-run-11|' "$STUB_ADDS" | cut -d'|' -f1-3)" "ci-red-run-11|CI red: find the root cause|blocker"
+# shellcheck source=tests/title-rule-lib.sh
+. "$SRC/../../tests/title-rule-lib.sh"
+title_rule_ok "$(grep '^ci-red-run-11|' "$STUB_ADDS" | cut -d'|' -f2)" && t=ok || t=bad
+check "ticket 11 title passes the title rule" "$t" ok
+body=$(grep -A8 '^ci-red-run-11|' "$STUB_ADDS" | sed '1s/^[^|]*|[^|]*|[^|]*|//')
 check "body carries the run id" "$(printf '%s\n' "$body" | grep -c '^Run: 11$')" 1
 check "body carries the run URL" "$(printf '%s\n' "$body" | grep -c "^URL: $U/11\$")" 1
 check "body names the failing job" "$(printf '%s\n' "$body" | grep -c '^Failing job: behaviour shard 2$')" 1

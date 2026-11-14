@@ -21,6 +21,8 @@
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
+# shellcheck source=tests/title-rule-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/title-rule-lib.sh"
 JG_TRUNK_FIXTURE_CACHE=1
 
 # shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
@@ -68,7 +70,10 @@ test_a_flaky_failure_gets_one_rerun_before_it_is_judged() {
   assert_contains "$out" "judged flaky" "the landing must say it set a flaky failure aside"
   assert_contains "$out" "gate=full-tip-red" "the tip's own red is still set aside and recorded"
   [ "$(cat "$HOME_D/state/trunk-green-proj")" != "$(tip)" ] || fail "a landing whose gate passed on its one rerun does not move the green pin"
-  assert_contains "$(grep '^add flaky-proj-f ' "$W/backlog-calls")" "[blocker] flaky test t/f.test.sh" "the flaky test is filed as its own fix row"
+  flaky_call=$(grep '^add flaky-proj-f ' "$W/backlog-calls")
+  assert_contains "$flaky_call" "add flaky-proj-f Fix a flaky test -l blocker" "the flaky test is filed as its own fix row with a short title and its label"
+  assert_contains "$flaky_call" "t/f.test.sh failed and then passed" "the flaky test's name is in the body"
+  title_rule_ok "$(printf '%s' "$flaky_call" | sed -E 's/^add [^ ]+ (.*) -l blocker .*/\1/')" || fail "the flaky-test title must pass the title rule: $flaky_call"
   assert_contains "$(cat "$HOME_D/data/trunk/flaky-proj.tsv")" "t/f.test.sh" "the flaky test is recorded"
   # The same script failing on both runs is the lane's own failure.
   lane twice 'echo "not ok - solid case" >&2; exit 1' t/g.test.sh

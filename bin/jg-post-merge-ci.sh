@@ -82,7 +82,7 @@ red_run_url() {  # <repo> <run id>
 file_red_item() {
   local item=$1 filed=$2 run_id=$3 workflow=$4 conclusion=$5 head=$6 body=$7 wake=$8
   if "$SCRIPT_DIR/jg-backlog.sh" add "$item" \
-    "[blocker] $workflow went red at $head (run $run_id)" \
+    "Post-merge CI went red" -l blocker \
     --kind ship --body "$body" >/dev/null 2>&1; then
     printf '%s %s\n' "$run_id" "$head" > "$filed"
     say "filed $item for red run $run_id ($workflow, $conclusion) at head $head"

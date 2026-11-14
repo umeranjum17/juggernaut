@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Replay approve, refine and reject end to end on the real recorded report; every outside command is a stub in a throwaway directory."""
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -58,6 +59,13 @@ def main():
         check(len(minted) == 4, f"one ticket per plan item on each approve, got {len(minted)}")
         check("Add the decisions read and the guarded answer write" in minted[-1], "every plan item becomes a ticket")
         check("From report: data/approve/report.md" in minted[-1], "each ticket names its report")
+        for line in minted:
+            title = re.match(r"add --mint (.*) -l feature --kind ship --body ", line)
+            check(title is not None, f"each ticket is filed with a short title and its label: {line}")
+            words = title.group(1)
+            check(2 <= len(words.split()) <= 7 and len(words) <= 48 and not re.search(r"[\[\]/]|jg-|Main\d|[0-9a-f]{32}", words),
+                  f"each plan ticket's title must pass the title rule: {words}")
+        check("Add the decisions read and the guarded answer write" in minted[-1], "the whole plan line stays in the body")
         check(run("approve", report("approve")).returncode == 1, "an answered version cannot be approved twice")
         (data / "squad_leads.md").write_text("- axi-lead - the AXI domain (home: /tmp/axi; scope: AXI reads; projects: juggernaut-axi; added 2026-10-31)\n")
         done = run("approve", routed)

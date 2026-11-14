@@ -237,6 +237,10 @@ journeys:
   red-ci-ticket:
     tier: local
     command: bash journeys/red-ci-ticket.sh
+  filers-short-titles:
+    tier: local
+    command: bash journeys/filers-short-titles.sh
+    timeout: 10m
   release-cut-orphans:
     tier: local
     command: bash journeys/release-cut-orphans.sh

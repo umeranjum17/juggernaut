@@ -43,14 +43,14 @@ file() {
       | sed 's/\x1b\[[0-9;]*m//g; s/^[0-9TZ:.-]* //' | grep -m1 -E '##\[error\]|(^|[^[:alnum:]])(not ok|FAIL|Error|error:)' | head -c 300 || :)
   fi
   [ -n "$line" ] || line='(no failing line found in the log; open the run)'
-  title="[blocker] CI red: $wf $job: find the root cause"
+  title="CI red: find the root cause"
   body="CI went red: $wf, run $id ($concl) at $sha in $repo (project $proj). Find the root cause.
 Run: $id
 URL: $url
 Failing job: $job
 First failing line: $line
 Never re-run; fix the root cause. bin/jg-ci-rerun.sh refuses a re-run of this run until this ticket carries a 'root-cause:' note."
-  if JG_HOME="$FMH" timeout "$BUDGET" "$FMH/bin/jg-backlog.sh" add "$item" "$title" --kind ship --body "$body" >/dev/null 2>&1 \
+  if JG_HOME="$FMH" timeout "$BUDGET" "$FMH/bin/jg-backlog.sh" add "$item" "$title" -l blocker --kind ship --body "$body" >/dev/null 2>&1 \
     || JG_HOME="$FMH" timeout "$BUDGET" "$FMH/bin/jg-backlog.sh" show "$item" >/dev/null 2>&1; then
     mkdir -p "$MEM" 2>/dev/null && printf '%s\n' "$url" > "$MEM/${repo//\//__}.$id" 2>/dev/null || :
     JG_STATE_OVERRIDE="$FMH/state" "$FMH/bin/jg-alert.sh" raise line-red "$item" --project "$proj" --print \

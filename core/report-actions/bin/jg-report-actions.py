@@ -98,6 +98,16 @@ def names_report(words, path):
         die("his words do not name this report by link or title")
     if not AGREEMENT.search(low):
         die("his words name the report but carry no agreement")
+def short_title(text):
+    """2 to 7 plain words, at most 48 characters, with no id, URL or path: the plan line stays whole in the body."""
+    out = []
+    for word in text.split():
+        if "/" in word or re.match(r"(jg-|Main\d)", word) or re.fullmatch(r"[0-9a-f]{32}", word):
+            continue
+        if len(out) == 7 or len(" ".join(out + [word])) > 48:
+            break
+        out.append(word)
+    return " ".join(out) if len(out) >= 2 else "Approved report step"
 def cmd_approve(path, words):
     approved = lint(path)
     if words is not None:
@@ -109,8 +119,8 @@ def cmd_approve(path, words):
     for line in section(path.read_text(), "Plan").splitlines():
         item = line[2:].strip() if line.startswith("- ") else ""
         if item:
-            out = run([BACKLOG, "add", "--mint", item, "--kind", "ship",
-                       "--body", f"From report: {place}. Owner: {owner}. First PR due: {due}."])
+            out = run([BACKLOG, "add", "--mint", short_title(item), "-l", "feature", "--kind", "ship",
+                       "--body", f"{item} From report: {place}. Owner: {owner}. First PR due: {due}."])
             minted = re.search(r"^ok: added ([A-Za-z0-9._-]+)", out, re.M)
             if not minted:
                 die(f"could not read a ticket id from: {out.strip()}")

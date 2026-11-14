@@ -89,7 +89,11 @@ ask_out=$(run_inbox "$home" note --request-id ask-ticket-1 --json "$ask_body") |
 ask_id=$(printf '%s' "$ask_out" | json_get id)
 ask_ticket="captain-ask-$ask_id"
 ask_show=$(JG_HOME="$home" JG_DATA_OVERRIDE="$home/data" "$ROOT/bin/jg-backlog.sh" show "$ask_ticket" --full) || fail "captain ask ticket is missing"
-assert_contains "$ask_show" '[captain-ask] Keep the dashboard ticketed' "ticket title should retain the captain-ask tag and request"
+assert_contains "$ask_show" 'Keep the dashboard ticketed' "ticket title should carry the plain words of the request"
+ask_title=$(printf '%s\n' "$ask_show" | sed -n 's/^  title: "\{0,1\}\(.*[^"]\)"\{0,1\}$/\1/p' | head -n1)
+# shellcheck source=tests/title-rule-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/title-rule-lib.sh"
+title_rule_ok "$ask_title" || fail "the captain ask ticket title must pass the title rule: $ask_title"
 assert_contains "$ask_show" 'Preserve this original ask body.' "ticket should preserve the full original ask"
 asks_out=$(run_inbox "$home" asks) || fail "captain ask listing should succeed"
 assert_contains "$asks_out" "$ask_ticket" "captain ask listing omitted its ticket"

@@ -531,9 +531,11 @@ ensure_captain_ask_ticket() {  # <note-id> <note-body>
   if show=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SELF_DIR/jg-backlog.sh" show "$ticket" --full 2>/dev/null); then
     return 0
   fi
-  title=$first
+  # shellcheck source=bin/jg-backlog-lib.sh disable=SC1091
+  . "$SELF_DIR/jg-backlog-lib.sh"
+  title=$(jg_backlog_short_title "$first" "Captain ask")
   JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SELF_DIR/jg-backlog.sh" add "$ticket" "$title" \
-    --kind captain --priority 0 --body "$body" >/dev/null || die "captain ask note $id is saved but its ticket $ticket could not be created"
+    -l captain-ask --kind captain --priority 0 --body "$body" >/dev/null || die "captain ask note $id is saved but its ticket $ticket could not be created"
 }
 
 finish_note_result() {  # <outcome> <id> <request-id> <json> <strict-exit> <summary>

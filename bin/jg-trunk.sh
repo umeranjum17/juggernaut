@@ -550,8 +550,8 @@ record_flaky() {  # <commit> <script>...
     id="flaky-$PN-$(printf '%s' "$id" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9\n' '-')"
     filed=$(awk -F'\t' -v s="$s" '$3 == s && $4 != "-" { f = $4 } END { print f }' "$ledger")
     if [ -z "$filed" ] && JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-backlog.sh" add "$id" \
-      "[blocker] flaky test $s on $PN" --kind ship --priority 2 \
-      --body "$s failed and then passed on its one rerun at ${sha:0:12}; the gate set it aside.
+      "Fix a flaky test" -l blocker --kind ship --priority 2 \
+      --body "$s failed and then passed on its one rerun at ${sha:0:12} in $PN; the gate set it aside.
 Why: a flaky test hides real reds and costs every gate a rerun.
 Done when: $s passes every run, or its flaky case is removed." >/dev/null 2>&1; then filed=$id
     elif [ -z "$filed" ]; then echo "warning: could not file the flaky-test row $id" >&2; fi
@@ -573,8 +573,8 @@ settle_shard_budget() {  # <commit> <gate log>
   if [ "$verdict" = advise ] && [ "$last" != open ]; then
     if [ "$verb" = reopen ]; then JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$bl" reopen "$id" >/dev/null 2>&1
     else JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$bl" add "$id" \
-      "[blocker] the test shards are over their time budget on $PN" --kind ship --priority 2 \
-      --body "The coverage guard advises that a portable test shard is over its hinted time budget, or too many scripts have no hint (gate log: $log).
+      "Test shards over time budget" -l blocker --kind ship --priority 2 \
+      --body "The coverage guard advises, in $PN, that a portable test shard is over its hinted time budget, or too many scripts have no hint (gate log: $log).
 Why: a full shard slows every gate and CI run until its hints are refreshed or the shard is split; the hints are tables in bin/jg-test-run.sh.
 Done when: bin/jg-shard-hints-refresh.sh (add --split when the largest shard is still over) has run in a lane, its commit has landed, and the guard prints no advise line." >/dev/null 2>&1; fi \
       || { echo "warning: could not file the shard-budget ticket $id" >&2; return 0; }

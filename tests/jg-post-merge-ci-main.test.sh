@@ -11,6 +11,8 @@ set -u
 # shellcheck source=tests/lib.sh
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/title-rule-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/title-rule-lib.sh"
 
 ALARM="$ROOT/bin/jg-post-merge-ci.sh"
 TMP_ROOT=$(jg_test_tmproot jg-post-merge-ci)
@@ -57,8 +59,12 @@ test_a_red_run_files_one_item_naming_the_run() {
   assert_contains "$out" 'filed' 'the alarm must say it filed the item'
   [ -f "$dir/backlog-adds" ] || fail 'a red run must add a backlog item'
   assert_contains "$(cat "$dir/backlog-adds")" 'ci-red-main-4242' 'the item id must name the red run'
-  assert_contains "$(cat "$dir/backlog-adds")" '[blocker] Behavior suite went red' \
-    'the item title must name the workflow and say it went red'
+  assert_contains "$(cat "$dir/backlog-adds")" 'Post-merge CI went red -l blocker' \
+    'the item title must say CI went red and carry the blocker label'
+  title_rule_ok "$(sed -n '1s/^add [^ ]* \(.*\) -l blocker.*/\1/p' "$dir/backlog-adds")" \
+    || fail "the item title must pass the title rule: $(head -n1 "$dir/backlog-adds")"
+  assert_contains "$(cat "$dir/backlog-adds")" 'Behavior suite went red on main' \
+    'the workflow name moves to the item body'
   assert_contains "$(cat "$dir/backlog-adds")" 'actions/runs/4242' \
     'the item body must carry the failing run url'
   [ -f "$dir/wakes" ] || fail 'a red run must queue a wake'

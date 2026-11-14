@@ -12,6 +12,8 @@
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
+# shellcheck source=tests/title-rule-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/title-rule-lib.sh"
 
 COV='total=1 parallel=1 parallel_max_ms=1 parallel_imbalance_ms=0 parallel_unhinted=0 serial=1 serial_shards=1 serial_unhinted=0 serial_max_ms=1 serial_budget_ms=2 herdr=0'
 
@@ -23,6 +25,8 @@ test_an_advise_line_files_one_ticket_and_an_ok_line_closes_it() {
   printf 'JG_TEST_COVERAGE advise %s\n' "$COV" > "$W/verdict"
   lane s1 one; trunk land s1 >/dev/null 2>&1 || fail "an advise line must never refuse a landing"
   [ "$(grep -c '^add shard-budget-proj ' "$calls")" = 1 ] || fail "one ticket for the advise line: $(cat "$calls" 2>/dev/null)"
+  shard_title=$(sed -n 's/^add shard-budget-proj \(.*\) -l blocker .*/\1/p' "$calls")
+  title_rule_ok "$shard_title" || fail "the shard-budget ticket title must pass the title rule: $(head -n1 "$calls")"
   lane s2 two; trunk land s2 >/dev/null 2>&1 || fail "the second landing must land"
   [ "$(grep -c '^add ' "$calls")" = 1 ] || fail "the next landing's advice must not file a second ticket: $(cat "$calls")"
   printf 'JG_TEST_COVERAGE ok %s\n' "$COV" > "$W/verdict"

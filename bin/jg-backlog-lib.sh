@@ -190,3 +190,19 @@ jg_backlog_beads_serve() {  # <config_dir> <verb> [args...]
     *) jg_backlog_beads_write "$@" ;;
   esac
 }
+
+# A short title for a ticket a script files by itself: 2 to 7 plain words, at most 48 characters, with no [tag], id, URL or path in it.
+# The words it was cut from belong in the ticket body. Prints the title built from <text>, or <fallback> when fewer than 2 plain words remain.
+jg_backlog_short_title() {  # <text> <fallback>
+  local text=$1 fallback=$2 word out='' n=0
+  text=$(printf '%s' "${text%%$'\n'*}" | sed -E 's/\[[A-Za-z-]+\]//g')
+  for word in $text; do
+    case "$word" in */*|jg-*|Main[0-9]*) continue ;; esac
+    [[ $word =~ ^[0-9a-f]{32}$ ]] && continue
+    [ "$n" -lt 7 ] || break
+    [ "${#out}" -eq 0 ] && [ "${#word}" -gt 48 ] && continue
+    [ $(( ${#out} + ${#word} + 1 )) -le 48 ] || break
+    out=${out:+$out }$word; n=$((n + 1))
+  done
+  if [ "$n" -ge 2 ]; then printf '%s\n' "$out"; else printf '%s\n' "$fallback"; fi
+}

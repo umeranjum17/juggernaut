@@ -92,7 +92,7 @@ eval_ticket_round_trip() {
   printf '%s\n' "$store" > "$EVAL_HOME/config/beads-dir"
   BEADS_DIR=$store "$JG_ROOT/bin/jg-beads.sh" init --prefix eval >"$SCRATCH/beads-init.log" 2>&1 \
     || { echo "the throwaway Beads store was not created: $(tail -n 1 "$SCRATCH/beads-init.log")"; return 1; }
-  eval_home bin/jg-backlog.sh add eval-one '[feature] eval ticket' \
+  eval_home bin/jg-backlog.sh add eval-one 'Eval ticket' -l feature \
     --body 'why: the fast evals prove the backlog wrapper keeps a ticket' >"$SCRATCH/ticket-add.log" 2>&1 \
     || { echo "ticket add exited nonzero: $(tail -n 1 "$SCRATCH/ticket-add.log")"; return 1; }
   out=$(eval_home bin/jg-backlog.sh list 2>&1) || { echo "ticket list exited nonzero: $out"; return 1; }
