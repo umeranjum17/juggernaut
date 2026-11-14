@@ -45,7 +45,15 @@ S="$WT/.claude/settings.local.json"
 hook_cmd() { jq -r --arg e "$1" '.hooks[$e][].hooks[].command | select(contains("jg-hook.sh"))' "$S"; }
 run_hook() { printf '%s' "$2" | bash -c "$(hook_cmd "$1")"; }   # <event> <payload>
 INBOX="$H/state/$id.inbox"
-steer() { JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" "$ROOT/bin/jg-send.sh" "$id" "$1" >/dev/null 2>&1 || true; }
+# A steer that is stored but fails to ring still counts, so the send's exit is not the verdict: the store is, and a steer that
+# is not stored fails here with the send's own output instead of as a missing steer further down.
+steer() {
+  local before after sendout
+  before=$(msgs)
+  sendout=$(JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" "$ROOT/bin/jg-send.sh" "$id" "$1" 2>&1) || true
+  after=$(msgs)
+  [ "$after" -gt "$before" ] || fail "the steer '$1' was not stored: $sendout"
+}
 msgs() { find "$INBOX" -maxdepth 1 -name '*.msg' | wc -l | tr -d ' '; }
 mstate() { JG_HOME="$ROOT" JG_STATE_OVERRIDE="$H/state" bash "$ROOT/bin/jg-machine.sh" show message "$id:$1" | awk -F'\t' '$1=="state"{print $2}'; }
 
