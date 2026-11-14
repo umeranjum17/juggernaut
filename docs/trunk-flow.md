@@ -85,7 +85,7 @@ Lanes whose changes select no common test script do not wait for each other (`co
 - a lane that meets two running queues is in both: it waits (`slot full` in its queue-why record) until one of them has ended;
 - a lane whose selection cannot be named, or a project with no selector, meets every queue, so it is the one-queue rule that ran before.
 
-The trunk still moves by the one compare-and-swap of `bin/jg-trunk.sh`; a queue that finds the trunk moved is rebased and gated again, as any lane is. `gate-slots=1` keeps one landing at a time. `tests/jg-trunk-two-gates.test.sh` covers separate queues, one shared queue and a lane that meets two queues.
+The trunk still moves by the one compare-and-swap of `bin/jg-trunk.sh`; a queue that finds the trunk moved is rebased and gated again, as any lane is. `gate-slots=1` keeps one landing at a time. A lane that finds the trunk moved by another landing is rebased and gated again inside the same landing run, up to `move-retries` times (default 8) before the wait "kept moving"; it is never returned to the worker for a base move, and the lane's patch keeps its proof (same-change). A real conflict goes to the home's `conflict-resolver`, one resolution at a time per project. `tests/jg-trunk-base-movement.test.sh` and `tests/jg-trunk-resolve.test.sh` cover them. `tests/jg-trunk-two-gates.test.sh` covers separate queues, one shared queue and a lane that meets two queues.
 
 ## Moving a home onto the trunk
 

@@ -761,6 +761,8 @@ resolve_conflict() {  # <id> <tip> <candidate>: sets RESOLVE_FRESH (the resolved
   RESOLVE_FRESH=''; RESOLVE_WHY=''; RESOLVE_TOUCHED=''
   cmd=$(pol conflict-resolver) || cmd=''
   [ -n "$cmd" ] || return 1
+  # One resolution at a time for a project: a second lane that conflicts waits here, so two agents never edit the lander's copy of one tip together.
+  lock "$STATE/.resolve-$PN.lock"
   limit=$(pol conflict-limit-seconds); [[ $limit =~ ^[0-9]+$ ]] && [ "$limit" -gt 0 ] || limit=600
   scratch="$DATA/trunk/resolve-$PN-${3:0:12}"; ticket=$(jg_dod_meta_value "$META" ticket); ticket=${ticket:-$id}
   mkdir -p "$DATA/trunk"
@@ -771,11 +773,11 @@ resolve_conflict() {  # <id> <tip> <candidate>: sets RESOLVE_FRESH (the resolved
     touched=$(paste -sd' ' "$scratch/touched" 2>/dev/null || :); RESOLVE_TOUCHED=$scratch/touched
     row trunk-resolving.tsv "$id" "$PN" "$2" "$3" resolved "$(date +%s)" "$touched"
     echo "land: the conflict of $id with $TRUNK (${2:0:12}) is resolved in the lander's copy; touched: $touched" >&2
-    rm -f -- "$scratch.why"; return 0
+    rm -f -- "$scratch.why"; unlock "$STATE/.resolve-$PN.lock"; return 0
   fi
   RESOLVE_FRESH=''; RESOLVE_WHY=$(tail -n 1 "$scratch.why" 2>/dev/null || :); rm -f -- "$scratch.why"
   row trunk-resolving.tsv "$id" "$PN" "$2" "$3" returned "$(date +%s)" "$RESOLVE_WHY"
-  return 1
+  unlock "$STATE/.resolve-$PN.lock"; return 1
 }
 
 # The landing run's state `retesting`, after a resolved conflict: only the journeys the touched files affect run again on the resolved
@@ -891,7 +893,7 @@ lane_admit() {  # <id> <tip> <expected head or -> <follow 0|1>
     RESOLVE_WHY=''; RESOLVE_TOUCHED=''
     fresh=$(rebase_commit "$tip" "$LANE_CAND") || { resolve_conflict "$id" "$tip" "$LANE_CAND" && fresh=$RESOLVE_FRESH; } || {
       hit=$(conflict_paths "$tip" "$LANE_CAND")
-      refuse "$LANE_BRANCH conflicts with $TRUNK (${tip:0:12}) in: ${hit:-an unreadable merge}; ${RESOLVE_WHY:+the resolver did not resolve it ($RESOLVE_WHY); }a lane rebases and fixes it, then reports ready again; it is never landed dirty"
+      refuse "$LANE_BRANCH conflicts with $TRUNK (${tip:0:12}) in: ${hit:-an unreadable merge}; ${RESOLVE_WHY:+the resolver did not resolve it ($RESOLVE_WHY); }the lane fixes the conflict in its own change and reports ready again; it is never landed dirty"
     }
     [ -z "$RESOLVE_TOUCHED" ] || retest_resolved "$id" "$tip" "$LANE_CAND" "$fresh"
     [ "$4" != 1 ] || lane_follow "$LANE_BRANCH" "$LANE_CAND" "$fresh" "$(jg_dod_meta_value "$META" worktree)"
@@ -1140,7 +1142,7 @@ land_gates() {  # <id> <candidate> <base>
 }
 
 land_candidate() {
-  local id=${1-} t0=$SECONDS tip base spec cand GATE_KIND='' GATE_FIGURES='' GATE_SPECULATIVE='' gate_rc still=
+  local id=${1-} t0=$SECONDS tip base spec cand GATE_KIND='' GATE_FIGURES='' GATE_SPECULATIVE='' gate_rc still='' tries try
   case " $* " in *" --force"*|*" -f "*|*" --no-verify "*|*" --skip"*) refuse "a landing is never forced: land takes only the task id; there is no flag that lands past a conflict, a stale base or a failing check" ;; esac
   [ $# -le 1 ] || refuse "land takes only the task id; there is no option that forces or skips a gate"
   lane_meta "$id"
@@ -1150,7 +1152,8 @@ land_candidate() {
   # The trunk lock is held only to read the tip and, after the gate, to move it, never across the gate's run: the lane is admitted
   # and gated on the tip it read, and the trunk moves only if it is still there. If a landing or a revert moved it meanwhile, the
   # lane is rebased onto the new tip (a conflict refuses, with its paths) and gated again.
-  for _ in 1 2 3; do
+  tries=$(pol move-retries); [[ $tries =~ ^[0-9]+$ ]] && [ "$tries" -gt 0 ] || tries=8
+  for ((try = 0; try < tries; try++)); do
     lock "$STATE/.trunk-$PN.lock"; tip_adopt_forward; tip_ok; tip=$(rev "refs/heads/$TRUNK"); unlock "$STATE/.trunk-$PN.lock"
     # A lane that starts while another gates on the tip is gated on top of that lane's commit (two gates at once).
     if front_spec "$tip" "$LAND_HEAD"; then base=$FRONT_BASE; spec=1; else base=$tip; spec=; fi
@@ -1195,7 +1198,7 @@ chain_on() {  # <top> <idx>...
       CHAIN_CHANGED=1
       if fresh=$(rebase_commit "$top" "${B_C0[$i]}"); then B_CUR[i]=$fresh; else
         hit=$(conflict_paths "$top" "${B_C0[$i]}")
-        B_WHY[i]="REFUSED: ${B_BRANCH[$i]} conflicts with $TRUNK (${top:0:12}) in: ${hit:-an unreadable merge}; a lane rebases and fixes it, then reports ready again; it is never landed dirty"
+        B_WHY[i]="REFUSED: ${B_BRANCH[$i]} conflicts with $TRUNK (${top:0:12}) in: ${hit:-an unreadable merge}; the lane fixes the conflict in its own change and reports ready again; it is never landed dirty"
         continue
       fi
     fi
