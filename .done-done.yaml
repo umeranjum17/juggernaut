@@ -666,6 +666,9 @@ journeys:
     # was Core suites step 11: Host memory alert routing test
     tier: local
     command: bash journeys/core-run.sh 'bash host-memory/tests/jg-host-memory-alert-routing.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-host-memory-shared-test:
+    tier: local
+    command: bash journeys/core-run.sh 'bash host-memory/tests/jg-host-memory-shared.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1 && printf '{"target":{"version":"jg-host-memory-sampler.sh at this head"},"start":"two fixture homes, each with a live stand-in watcher, and no sampler running","steps":["start the sampler for the first home, then the second, through the lifecycle entry","read the sampler process each home records and each home samples","end the second home watcher and read the registry","stop the first home and read whether the sampler ends"],"result":"one process served both homes, each recorded its own samples, the home with no watcher was dropped, and the last stop ended the sampler"}\n' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
   core-route-change-test:
     # was Core suites step 12: Route change test
     tier: local
@@ -1534,6 +1537,9 @@ journeys:
   jg-stops:
     tier: local
     command: bash tests/jg-stops.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-supervise-daemon-single:
+    tier: local
+    command: bash tests/jg-supervise-daemon-single.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-supervision-host-hook:
     tier: local
     command: bash tests/jg-supervision-host-hook.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

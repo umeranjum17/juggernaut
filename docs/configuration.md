@@ -994,10 +994,10 @@ Unreadable `app.slice` pressure is reported as not judged: pressure then holds n
 It classifies measurable memory as `OK`, `WAIT` (new agents should wait), or `ALERT`, and names the largest consumers by owning task; unavailable measurements read `UNKNOWN`.
 These controls reduce risk but cannot guarantee avoidance of an out-of-memory kill:
 
-- Each watcher loads the `core/host-memory/bin/jg-host-memory-lib.sh` lifecycle functions and supervises one independent sampler per home.
-  The sampler records every 10 seconds by default (`JG_HOST_MEMORY_SECS`) into `state/host-memory.tsv`, even during slow recovery or custom checks.
+- Each watcher loads the `core/host-memory/bin/jg-host-memory-lib.sh` lifecycle functions and registers its home with the one sampler the machine shares (a record under `$XDG_RUNTIME_DIR/jg-host-memory-<uid>`, or `JG_HOST_MEMORY_MACHINE_DIR`).
+  The sampler records every 10 seconds by default (`JG_HOST_MEMORY_SECS`) into each registered home's `state/host-memory.tsv`, even during slow recovery or custom checks.
   Lookout does not currently show host-memory readings.
-  The home-scoped `state/.host-memory-sampler.pid` records PID and process identity; the watcher restarts a dead sampler and stops only the exact recorded PID after verifying its identity, script, home, and state.
+  The home-scoped `state/.host-memory-sampler.pid` records the shared sampler's PID and process identity; the watcher restarts a dead sampler, and the last home to stop ends it, signalling only the exact recorded PID after verifying its identity and script. A home whose watcher is gone drops out of the loop by itself.
 - At the wait or alert level, local `bin/jg-spawn.sh` launches and `bin/jg-control.sh relaunch` refuse to start a new agent and record the reason in `state/admission-refused`, which remains in local state and is not shown by Lookout.
   A refused fresh spawn leaves the task queued; a relaunch refused by its initial admission check leaves the existing agent and task record untouched.
   The replacement launch checks admission again after the old agent stops, so pressure rising between those checks can still prevent replacement; this is not a memory reservation.
@@ -3102,7 +3102,7 @@ JG_CLAUDE_AUTOARM_SYNC_WAIT_MS=800   # milliseconds the --claude turn-end guard 
 JG_CLAUDE_AUTOARM_EPOCH_FRESH=15   # seconds a recorded auto-arm outcome remains eligible for the current event epoch's recovery or failure decision
 JG_CLAUDE_TURNEND_BLOCK_BUDGET=3   # consecutive --claude guard re-blocks before the verified one-time attended fail-open; safely below Claude Code's 8-block override
 JG_ARM_CONFIRM_TIMEOUT=10   # optional seconds override; unset uses jg_watcher_confirmation_budget in bin/jg-wake-lib.sh
-JG_ARM_ATTACH_POLL=0.5  # seconds between checks while jg-watch-arm follows an attached watcher cycle (bin/jg-watch-arm.sh header)
+JG_ARM_ATTACH_POLL=2  # seconds between checks while jg-watch-arm follows an attached watcher cycle (bin/jg-watch-arm.sh header)
 JG_OPENCODE_ARM_READY_TIMEOUT_MS=12000   # optional milliseconds override; unset uses the shared watcher startup budget
 JG_PI_ARM_READY_TIMEOUT_MS=12000   # optional milliseconds override; unset uses the shared watcher startup budget
 JG_WATCH_ARM_RETIRE_TIMEOUT_MS=1000   # milliseconds Pi/OpenCode wait for an unready successor arm to exit before abandoning retries

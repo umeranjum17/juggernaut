@@ -1,6 +1,6 @@
 # host-memory
 
-The per-home host memory sampler lives here, with its existing lifecycle API.
+The one host memory sampler per machine lives here, with its existing lifecycle API.
 `bin/jg-host-memory-lib.sh` is the optional watcher source entrypoint.
 The current fork still uses its own copy until a later fork-side hook lands.
 This first slice relocates the sampler only; the admission rule and alert presentation still live in the fork.
@@ -12,22 +12,30 @@ Kun's diagnostic guard must remain intact when the admission rule moves: the fea
 - `bin/jg-host-memory-sampler.sh` - the sampler, providing lifecycle functions (`jg_memory_sampler_ensure`,
   `jg_memory_sampler_stop`, `jg_memory_sampler_matches`,
   `jg_memory_sampler_tick`, `jg_memory_sampler_interrupt`,
-  `jg_memory_sampler_cleanup`), and executable as
-  `run <HOME> <STATE> <CONFIG>` for the one sampler loop per home.
+  `jg_memory_sampler_cleanup`), executable as `run` (the one machine loop;
+  `run <HOME> <STATE> <CONFIG>` registers that home first) and as
+  `tick <HOME> <STATE> <CONFIG>` (one home's tick, run by the loop in a child).
 - `bin/jg-mem-gate.sh` — the memory gate for heavy jobs (below); unlike
   the sampler it is live once installed.
 - `wiring.sh` — installs the gate and `jg-heavy-adopt` timer.
 - `tests/jg-mem-gate.test.sh` — the gate's integration test.
+- `tests/jg-host-memory-shared.test.sh` - one sampler serves two homes, drops a home whose watcher is gone, and ends with the last home.
 - `tests/jg-heavy-adopt.test.sh` — fixture-backed mover install, traversal and uninstall test.
 
 ## Sampler contract
 
-- CLI: `jg-host-memory-sampler.sh run <HOME> <STATE> <CONFIG>`; any other
-  argv exits 2, a missing state directory exits 1, an already-held sampler
-  lock exits 0. Sourced, it provides the `jg_memory_sampler_*` functions
-  above; the watcher calls `jg_memory_sampler_ensure` to start (or reuse)
-  the loop and `jg_memory_sampler_stop` to end it.
-- Cadence: one sample every `JG_HOST_MEMORY_SECS` (default 10), each tick
+- One sampler per machine: `jg_memory_sampler_ensure` writes this home's record
+  (`<HOME>\t<STATE>\t<CONFIG>\t<bin dir>`) under the machine directory
+  (`$JG_HOST_MEMORY_MACHINE_DIR`, default `$XDG_RUNTIME_DIR/jg-host-memory-<uid>`),
+  starts the loop only when none runs (machine `lock` and `pid`), and copies the
+  loop's PID and identity to the home's `.host-memory-sampler.pid`.
+  `jg_memory_sampler_stop` removes the record; the last home out ends the loop,
+  and a home whose watcher is gone is dropped by the loop itself.
+- CLI: `jg-host-memory-sampler.sh run` or `run <HOME> <STATE> <CONFIG>`, and
+  `tick <HOME> <STATE> <CONFIG>`; any other argv exits 2, a missing state
+  directory exits 1, an already-held machine lock exits 0. Sourced, it provides
+  the `jg_memory_sampler_*` functions above.
+- Cadence: every `JG_HOST_MEMORY_SECS` (default 10) one sample per registered home, each tick (limited to `JG_HOST_MEMORY_TICK_LIMIT`, default 60 s)
   calling the fork guard as
   `jg-jev-mem-guard.sh --config <CONFIG>/host-memory --record
   <STATE>/host-memory.tsv --owned-top-task <STATE> --state-dir ...`.
@@ -55,8 +63,8 @@ Kun's diagnostic guard must remain intact when the admission rule moves: the fea
   `<epoch>\t<available kB>\t<swap used kB>\t<sustained pressure>\t<verdict>`,
   read by the fork's dashboard history), `host-memory-interrupts.tsv`
   (`<epoch>\t<task>\t<action>`), `.host-memory-alerted` (the per-episode
-  latch), `.host-memory-sampler.pid` (`<pid>\t<process identity>`),
-  `.host-memory-sampler.lock`, and `.host-memory-sampler.log`. Config is
+  latch), `.host-memory-sampler.pid` (`<pid>\t<process identity>` of the shared sampler).
+  The loop's `log`, `lock` and `pid` sit in the machine directory. Config is
   read only as `<CONFIG>/host-memory`; thresholds there are owned by the
   guard and never changed here.
 
