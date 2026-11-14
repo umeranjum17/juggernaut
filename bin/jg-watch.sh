@@ -3109,6 +3109,19 @@ admission_retry_waits_memory() {
   return 0
 }
 
+# A launch refused for host memory writes state/admission-refused as "<epoch>\t<task>\t<reason>" and the next admitted
+# launch removes it. While that record is fresh no lane can start, whatever open_lane_count says, so the stalled-backlog
+# timer stays quiet. A record older than JG_ADMISSION_FRESH_SECS (default 900) no longer counts: a refusal nobody
+# retried or cleared must never silence a real stall for good.
+admission_refusal_fresh() {
+  local epoch now fresh=${JG_ADMISSION_FRESH_SECS:-900}
+  case "$fresh" in ''|*[!0-9]*) fresh=900 ;; esac
+  epoch=$(cut -f1 "$STATE/admission-refused" 2>/dev/null | head -n 1) || return 1
+  case "$epoch" in ''|*[!0-9]*) return 1 ;; esac
+  jg_epoch_seconds_to now
+  [ "$((now - epoch))" -lt "$fresh" ]
+}
+
 # The stalled-backlog condition the wait-timers chain escalates
 # (core/wait-timers/README.md "Stalled ready backlog"): a startable item and a
 # free lane. Open captain cards and project capacity exclude items. The result
@@ -3127,6 +3140,10 @@ ready_backlog_stall_state() {
   READY_STALL_MODE=free-lanes
   if [ "$READY_STALL_OPEN" -ge "$READY_STALL_TARGET" ]; then
     READY_STALL_WHY=lanes-full
+    return 1
+  fi
+  if admission_refusal_fresh; then
+    READY_STALL_WHY=host-load
     return 1
   fi
   # Read the same open board used by the question-card command. An unreadable

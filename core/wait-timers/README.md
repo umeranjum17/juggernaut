@@ -201,7 +201,7 @@ An episode reported before the pause is closed with `waiting-timer-cleared` and 
 - A start is a lane id that was not open before; it ends the episode and re-arms the clock.
 - The condition clearing (no startable ready item, a free lane gone) ends the episode, and a reported one is closed with `waiting-timer-cleared`.
 - An unreadable backlog leaves the episode untouched for that poll.
-- While ready work waits but the condition does not hold, `state/.waiting-timers/.ready-backlog-why` holds one tab-separated line: when that reason began, the reason (`lanes-full` or `project-capacity`), and the open/target lane counts. It is the on-disk answer to why a waiting backlog raised no escalation, and it is removed when the condition holds or no ready work waits.
+- While ready work waits but the condition does not hold, `state/.waiting-timers/.ready-backlog-why` holds one tab-separated line: when that reason began, the reason (`lanes-full`, `host-load` while a host-memory launch refusal is under 15 minutes old, or `project-capacity`), and the open/target lane counts. It is the on-disk answer to why a waiting backlog raised no escalation, and it is removed when the condition holds or no ready work waits.
 - Episode record: `state/.waiting-timers/.ready-backlog`, one tab-separated line holding first-observed time, open lane ids (comma-joined, `-` for none), report key (`waiting-timer-<home>-<lead>-g<generation>-ready-backlog`), first report time (0 before it), and last fire time.
 
 ## Provenance: byte-identical to the fork at the move

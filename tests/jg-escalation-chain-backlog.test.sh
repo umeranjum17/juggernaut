@@ -156,6 +156,29 @@ test_stalled_backlog_quiet_without_a_free_lane_or_a_ready_item() {
 }
 
 
+test_a_fresh_host_memory_refusal_keeps_the_stalled_backlog_quiet() {
+  local m l
+  m=$(home admit-main)
+  l=$(lead_home admit-lead "$m")
+  printf '4\n' > "$l/config/lane-target"
+  backlog "$l" add jg-alpha "first item" --priority 1
+  printf '%s\ttask1\thost memory under pressure\n' "$(date +%s)" > "$l/state/admission-refused"
+  cycle "$l"
+  cycle "$l"
+  [ ! -e "$l/state/.waiting-timers/.ready-backlog" ] || fail "a fresh admission refusal still armed a stall"
+  grep -q "$(printf '\thost-load\t')" "$l/state/.waiting-timers/.ready-backlog-why" \
+    || fail "the quiet backlog left no host-load reason: $(cat "$l/state/.waiting-timers/.ready-backlog-why" 2>&1)"
+  printf '%s\ttask1\thost memory under pressure\n' "$(( $(date +%s) - 3600 ))" > "$l/state/admission-refused"
+  cycle "$l"
+  [ -f "$l/state/.waiting-timers/.ready-backlog" ] || fail "an hour-old refusal record silenced a real stall"
+  rm -f "$l/state/.waiting-timers/.ready-backlog"
+  rm -f "$l/state/admission-refused"
+  cycle "$l"
+  [ -f "$l/state/.waiting-timers/.ready-backlog" ] || fail "the stall did not arm once the refusal record was gone"
+  pass "a fresh host-memory refusal keeps the stalled backlog quiet as host-load, and an old or cleared record lets it arm again"
+}
+
+
 test_a_paused_home_silences_its_stalled_backlog_and_rings_when_it_lifts() {
   local m l f before
   m=$(home pause-main)
@@ -294,6 +317,7 @@ test_stalled_backlog_quiet_when_work_starts_in_time
 test_stalled_backlog_quiet_without_a_free_lane_or_a_ready_item
 test_stalled_backlog_skips_open_card_and_full_lanes
 test_stalled_backlog_quiet_when_project_is_at_capacity
+test_a_fresh_host_memory_refusal_keeps_the_stalled_backlog_quiet
 test_a_paused_home_silences_its_stalled_backlog_and_rings_when_it_lifts
 test_ship_ready_line_goes_through_the_pr_check
 test_green_unmerged_pr_raises_slow_delivery_once_and_resolves_on_merge

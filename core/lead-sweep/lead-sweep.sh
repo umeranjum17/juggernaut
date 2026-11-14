@@ -51,8 +51,9 @@ PARK_EMPTY_S=$(( $(num "${JG_LEAD_SWEEP_PARK_EMPTY_H:-}" 2) * 3600 ))
 START_S=$(( $(num "${JG_LEAD_SWEEP_START_MIN:-}" 30) * 60 ))
 QUIET_S=$(( $(num "${JG_LEAD_SWEEP_QUIET_MIN:-}" 60) * 60 ))
 PR_MIN=${JG_LEAD_SWEEP_PR_MIN:-10}; case $PR_MIN in ''|*[!0-9]*) PR_MIN=10 ;; esac
+# The installed copy sits alone in its data directory, so the lib comes from the home; the repo-relative path serves a run from the checkout.
 # shellcheck source=bin/jg-facts-lib.sh disable=SC1091
-. "$(dirname "$SELF")/../../bin/jg-facts-lib.sh"
+if [ -f "$FMH/bin/jg-facts-lib.sh" ]; then . "$FMH/bin/jg-facts-lib.sh"; else . "$(dirname "$SELF")/../../bin/jg-facts-lib.sh"; fi
 umask 077
 mkdir -p "$MEM" || exit 0
 # drift <lane> <note>: a refused or left-alone cleanup is the drift alert, one per lane; a changed reason rings again.
