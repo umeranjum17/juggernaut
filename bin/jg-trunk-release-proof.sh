@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Generate and publish the proof for an already-pushed trunk release.
 # Usage: jg-trunk-release-proof.sh <project> <trunk> <base> <head> <PR URL>
+#
+# The proof is bound to the candidate head it is run for: the landing proof rows, ancestry from the release base, the carry of every
+# older trunk's hotfix, and that no release head this trunk already pushed is missing from the candidate (so a replacement candidate
+# cannot omit or overwrite work). It never reads the current green pin, so a green older candidate stays eligible after the pin
+# advances, and no model judge or second seal is part of it; the forge's required CI is the other gate (bin/jg-pr-merge.sh).
 set -eu
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 HOME_DIR=${JG_HOME:?JG_HOME is required}
@@ -17,8 +22,13 @@ if [ "${1:-}" = capture ]; then
   project=${JG_RELEASE_PROJECT:?} trunk=${JG_RELEASE_TRUNK:?} base=${JG_RELEASE_BASE:?} head=${JG_RELEASE_HEAD:?}
   pn=${project##*/}; out=${DONE_DONE_EVIDENCE_ROOT:?done-done must supply its capture folder}
   [ "$(git rev-parse HEAD)" = "$head" ] || fail 'capture is not at the release head'
-  [ "$(cat "$STATE/trunk-green-$pn")" = "$head" ] || fail 'green pin changed during proof'
   git merge-base --is-ancestor "$base" "$head" || fail 'release base is not an ancestor'
+  # A candidate replaces an earlier one only by carrying it: every head this trunk already pushed must sit under it.
+  while IFS= read -r pushed; do
+    [ -n "$pushed" ] || continue
+    git cat-file -e "$pushed^{commit}" 2>/dev/null || fail "pushed release head $pushed is not in this clone, so the candidate cannot be shown to carry it"
+    git merge-base --is-ancestor "$pushed" "$head" || fail "the candidate $head does not carry the pushed release head $pushed"
+  done < <(awk -F '\t' -v p="$pn" -v t="$trunk" '$1 == p && $2 == t { print $3 }' "$DATA/trunk-releases.tsv" 2>/dev/null)
   [ -r "$DATA/trunk-landing-proofs.tsv" ] && [ -r "$DATA/trunk-versions.tsv" ] || fail 'landing proof or trunk version records are missing'
   commits=$(git rev-list --reverse "$base..$head") || fail 'cannot read the release range'
   [ -n "$commits" ] || fail 'release range is empty'
@@ -43,7 +53,7 @@ if [ "${1:-}" = capture ]; then
   done <<< "$merges"
   versions=$(awk -F '\t' -v p="$pn" '$1 == p { print $2 "\t" $3 "\t" $4 }' "$DATA/trunk-versions.tsv") || fail 'cannot read trunk versions'
   {
-    printf 'Release head: %s\nRelease base: %s\nGreen pin: %s\n' "$head" "$base" "$head"
+    printf 'Release head: %s\nRelease base: %s\n' "$head" "$base"
     accepted=
     while IFS= read -r sha; do
       row=$(awk -F '\t' -v p="$pn" -v h="$sha" '$2 == p && $3 == h { r=$0 } END { print r }' "$DATA/trunk-landing-proofs.tsv")
@@ -92,7 +102,7 @@ if [ "${1:-}" = capture ]; then
     done <<< "$versions"
     printf 'Full-suite CI is a later release pull request gate.\n'
   } > "$out/run.log"
-  jq -n --arg h "$head" '{target:{version:$h},start:"A published trunk release has landing proof records.",steps:["Read the release head and green pin.","Check each landing proof and old trunk tip."],result:"The release head has landing proof, earlier trunk history or a recorded home converge for every commit and no uncarried old trunk hotfix; full-suite CI remains a later gate."}' > "$out/steps.json"
+  jq -n --arg h "$head" '{target:{version:$h},start:"A published trunk release has landing proof records.",steps:["Read the release head and base.","Check each landing proof and old trunk tip."],result:"The release head has landing proof, earlier trunk history or a recorded home converge for every commit and no uncarried old trunk hotfix; full-suite CI remains a later gate."}' > "$out/steps.json"
   exit 0
 fi
 
@@ -131,7 +141,7 @@ root=${record%/.done-done/runs/*}
 [ -d "$root/$run" ] || fail 'done-done capture folder is missing'
 cp -R "$root/$run" "$dir/" || fail 'cannot copy the sealed capture'
 cp "$record" "$dir/.done-done/runs/$run.json" || fail 'cannot copy the sealed record'
-outcome="Release head $head: every commit has a landing proof, earlier trunk history or a recorded home converge, the green pin matches, and no old trunk hotfix is uncarried; whole-suite CI is a later gate"
+outcome="Release head $head: every commit has a landing proof, earlier trunk history or a recorded home converge, it carries every release head already pushed, and no old trunk hotfix is uncarried; whole-suite CI is a later gate"
 (cd "$clone" && JG_HOME=$HOME_DIR "$HERE/jg-checks-write.sh" "$id" --head "$head" --outcome "$outcome" --screen none) || fail 'cannot write the Checks block'
 JG_HOME=$HOME_DIR "$HERE/../core/merge-on-green/checks-lint.sh" "$dir/checks.md" "$dir" || fail 'draft Checks lint failed'
 # Keep the existing PR body and append a fresh Checks block; the newest block is authoritative.
@@ -152,13 +162,6 @@ for try in 1 2 3 4; do
 done
 [ "$lint_published" -eq 1 ] || fail 'published Checks lint failed'
 (cd "$clone" && JG_HOME=$HOME_DIR JG_FORK_BIN=$HERE JG_STATE_OVERRIDE=$STATE JG_RECEIPT_PR=$url "$HERE/../core/receipts/bin/jg-run-receipt.sh" "$id" PASS "$dir/checks.md") || fail 'cannot publish the completion receipt'
-# shellcheck source=bin/jg-board-link-lib.sh
-. "$HERE/jg-board-link-lib.sh"
-board=$(jg_board_file "$HOME_DIR") || fail 'no proof board is configured'
-JG_HOME=$HOME_DIR "$HERE/../core/merge-card/merge-card" check --claim-id "$id" "$id" "$clone" "$head" "$url" || fail 'merge-card check failed'
-jq -e --arg h "$head" '.head == $h and .verdict == "pass" and (.check.evidence | length > 0)' "$dir/merge-card.json" >/dev/null || fail 'merge-card did not approve cited evidence'
-JG_HOME=$HOME_DIR "$HERE/../core/merge-card/merge-card" post --board "$board" --claim-id "$id" "$id" "$clone" "$head" "$url" || fail 'merge-card evidence was not posted'
-JG_HOME=$HOME_DIR "$HERE/../core/merge-card/merge-card" receipt "$id" "$head" || fail 'merge-card receipt was refused'
 remote_head=$(cd "$project" && gh-axi api "$api" --jq '.head.sha') || fail 'cannot re-read the PR head'
 [ "$remote_head" = "$head" ] || fail 'the PR head changed while publishing proof'
 printf 'release proof complete: %s at %s\n' "$url" "$head"

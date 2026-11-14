@@ -2529,10 +2529,10 @@ ci_in_flight() {  # <url>
 #     PR, writes the release row, and runs the release proof, exactly as `release` does;
 #   - a candidate: after a recorded red (data/trunk-ci.tsv) holds the pin down and a commit landed above it, the trunk tip once for
 #     each new tip (state/trunk-candidate-<project>), unless a CI run of the batch is in flight. A green `ci` result on the tip
-#     moves the pin past the red. No release proof: it is made for the green pin, and the candidate is not one yet.
+#     moves the pin past the red. The candidate gets the release proof at its own head, as any release head does.
 # With no waiver nothing is pushed: the word of the captain starts a release (`release`). Prints one line saying what it did.
 cmd_publish() {
-  local green rel tip prev open=0 n flight=0
+  local green rel tip prev open=0 n flight=0 rc
   PRS_URL=; PRS_VAL=
   open_project "${1-}"
   green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
@@ -2559,9 +2559,11 @@ cmd_publish() {
     [ "$flight" = 0 ] || { echo "publish: a CI run of $prev is in flight; the candidate ${tip:0:12} waits"; return 0; }
     n=$(git -C "$PROJ" rev-list --count "$(cat "$STATE/trunk-released-$PN")..$tip")
     echo "publish: pushing the tip ${tip:0:12} as a candidate after a red"
-    push_batch "$tip" "$n" "$prev" 0 0
-    put "$STATE/trunk-candidate-$PN" "$tip"
-    return 0
+    # The candidate gets the same proof as any release head, bound to itself: it needs no green pin to equal it.
+    rc=0; push_batch "$tip" "$n" "$prev" 0 1 || rc=$?
+    # Once it is pushed the tip is recorded, so a proof that fails never makes publish push the same tip twice.
+    [ "$(cat "$STATE/trunk-released-$PN" 2>/dev/null || true)" != "$tip" ] || put "$STATE/trunk-candidate-$PN" "$tip"
+    return "$rc"
   fi
   rel=$green
   holds_enough "$rel" || { echo "publish: the trunk does not hold enough for a release yet; nothing pushed"; return 0; }
