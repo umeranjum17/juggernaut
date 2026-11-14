@@ -103,7 +103,22 @@ test_a_green_open_release_is_not_pushed_into() {
   pass 'T4 a green open release takes no push under the standing word; a red one still takes its fix'
 }
 
+test_a_release_rerun_writes_each_record_key_once() {
+  local meta k
+  world_with_release rerun
+  trunk waiver "$PROJ" --rule "$RULE" --release >/dev/null 2>&1 || fail "T7: the standing word must record"
+  trunk release "$PROJ" >/dev/null 2>&1 || fail "T7: the release must open"
+  trunk release "$PROJ" >/dev/null 2>&1 || fail "T7: the release must run again"
+  meta=$HOME_D/state/$ID.meta
+  for k in pr pr_head merge merge_rule kind mode yolo; do
+    [ "$(grep -c "^$k=" "$meta")" = 1 ] || fail "T7: $k must be written once after a rerun: $(cat "$meta")"
+  done
+  bash -c '. "$1/bin/jg-pr-lib.sh"; jg_pr_metadata_identity_parse "$2"' _ "$ROOT" "$meta" >/dev/null 2>&1 || fail "T7: the identity parse must accept the rerun record: $(cat "$meta")"
+  pass 'T7 a release run twice keeps each record key once and the record parses'
+}
+
 test_a_green_release_merges_on_the_standing_word_and_rolls_over
+test_a_release_rerun_writes_each_record_key_once
 test_a_red_or_unreported_head_is_not_merged
 test_without_the_rule_nothing_merges
 # answered_world <name> <yolo>: the release world with one proved lane l1 of mode local and the given yolo, and a policy that makes
