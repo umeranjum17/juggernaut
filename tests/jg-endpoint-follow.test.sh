@@ -141,10 +141,11 @@ assert_equals "$after" "$(meta_of "$d")" "a second read writes nothing"
 pass "a worker moved by muxr is followed: pane lines and pool account rebound, the rest untouched"
 
 # --- (a2) the name is the record's agent_name=, not the task id ---------------
-d=$(new_case moved-named "agent_name=fix-the-thing-$ID")
+moved_name=$("$ROOT/bin/jg-herdr.sh" agent-name-for "$ID" "Fix the thing") || fail "the title-and-id name of $ID"
+d=$(new_case moved-named "agent_name=$moved_name")
 world "$d" "[$(pane_row w1:p4 "$ID" "$d/wt")]"
 assert_contains "$(read_state "$d")" "backend target gone" "an agent named by the task id is not this worker when the record holds another name"
-world "$d" "[$(pane_row w1:p4 "fix-the-thing-$ID" "$d/wt")]"
+world "$d" "[$(pane_row w1:p4 "$moved_name" "$d/wt")]"
 assert_contains "$(read_state "$d")" "state: working" "the agent that carries the recorded name is followed"
 assert_contains "$(meta_of "$d")" "herdr_pane_id=w1:p4" "the pane id follows the recorded name"
 pass "a moved worker is found by the agent_name= of its record"

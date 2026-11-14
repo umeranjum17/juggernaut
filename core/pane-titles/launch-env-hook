@@ -10,8 +10,10 @@ trap 'rm -f -- "$tmp"' EXIT
 
 title=''
 if [ -n "${JG_TASK_ID:-}" ]; then
-  id=${JG_TASK_ID//[-_]/ }
-  # A title is cosmetic: every lookup failure below degrades to the task id and the launch continues.
+  # The id is small at the end and is never cut: `<title> · <id>`, the ticket (JG_TICKET) when the
+  # spawn exported one, else the task id. A title is cosmetic: every lookup failure below degrades
+  # to the id alone and the launch continues.
+  id=${JG_TICKET:-$JG_TASK_ID}
   title=$id
   home=${JG_HOME:-}
   # jg-spawn.sh exports JG_HOME; a pane started before that (or by a server without it) still carries
@@ -26,7 +28,8 @@ if [ -n "${JG_TASK_ID:-}" ]; then
   elif backlog_title=$(printf '%s\n' "$shown" | sed -n 's/^  title: //p' | head -1); [ -z "$backlog_title" ]; then
     echo "pane-titles: task $JG_TASK_ID has no backlog title; using the task id as the title" >&2
   else
-    title="$id: $backlog_title"
+    backlog_title=${backlog_title#\"}
+    title=${backlog_title%\"}
   fi
 else
   home=${JG_HOME:-$(pwd -P)}
@@ -38,6 +41,7 @@ else
   name=${name//[-_]/ }
   name=${name^}
   title="$name lead"
+  id=''
 fi
 if [ -f "$previous" ]; then
   if [ -x "$previous" ]; then "$previous" "$tmp"; else bash "$previous" "$tmp"; fi || {
@@ -52,7 +56,15 @@ else
   printf 'export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1\n' > "$out"
 fi
 # Keep the tab label and terminal title identical and bounded for Herdr's tab strip.
-title=$(printf '%s' "$title" | tr -cd '[:print:]' | cut -c1-72)
+# Only the title words are cut, to what the 72 characters leave beside the separator and the id.
+title=$(printf '%s' "$title" | tr -cd '[:print:]')
+if [ -n "$id" ] && [ "$title" != "$id" ]; then
+  room=$((72 - ${#id} - 3))
+  [ "$room" -ge 1 ] || room=1
+  title="${title:0:$room} · $id"
+else
+  title=${title:0:72}
+fi
 if [ -n "${HERDR_SESSION:-}" ]; then
   tab_id=$(herdr --session "$HERDR_SESSION" pane current --current | jq -er '.result.pane.tab_id') || {
     echo 'pane-titles: Herdr could not identify the current pane tab' >&2; exit 1;

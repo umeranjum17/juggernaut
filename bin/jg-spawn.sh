@@ -5019,7 +5019,9 @@ preserve_relaunch_meta() {
   if [ "$RELAUNCH" -eq 1 ]; then
     SPAWN_AGENT_NAME=$(sed -n 's/^agent_name=//p' "$RELAUNCH_META" | tail -n 1)
   else
-    SPAWN_AGENT_NAME=$("$SCRIPT_DIR/jg-herdr.sh" agent-name-for "$ID" 2>/dev/null) || SPAWN_AGENT_NAME=
+    # The first spawn reads the ticket title once; a title edited later never changes the name.
+    SPAWN_TITLE=$("$SCRIPT_DIR/jg-backlog.sh" show "${TICKET:-$ID}" --full 2>/dev/null | sed -n 's/^  title: "\{0,1\}//p' | sed 's/"$//' | head -n 1) || SPAWN_TITLE=
+    SPAWN_AGENT_NAME=$("$SCRIPT_DIR/jg-herdr.sh" agent-name-for "$ID" ${SPAWN_TITLE:+"$SPAWN_TITLE"} 2>/dev/null) || SPAWN_AGENT_NAME=
   fi
   [ -z "$SPAWN_AGENT_NAME" ] || echo "agent_name=$SPAWN_AGENT_NAME"
   if [ "$KIND" = ship ]; then

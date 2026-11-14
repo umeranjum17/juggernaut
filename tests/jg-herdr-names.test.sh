@@ -76,6 +76,25 @@ for id in a "$long_a" "$(printf 'x%.0s' $(seq 1 64))" 7-seven-eight-nine-ten-ele
   valid_name "$(jg_backend_herdr_agent_name_for "$id")" || fail "id '$id' maps to a valid name"
 done
 
+# --- the name made at the first spawn: <title words>-<id> ---------------------
+sixty="Make the readable names in the Herdr tab and the agent name plain"
+n=$(jg_backend_herdr_agent_name_for jg8-q1b3n-s5 "$sixty")
+valid_name "$n" && [ "${#n}" -le 32 ] || fail "a 60-character title gives a valid name within 32 ($n)"
+assert_equals "make-the-readable-n-jg8-q1b3n-s5" "$n" "a long title is cut on the title side"
+assert_equals "scroll-fix-muxr" "$(jg_backend_herdr_agent_name_for muxr "[bug] Scroll fix")" "a leading [tag] is not a word"
+n20=$(jg_backend_herdr_agent_name_for abcdefghij-klmnopqrs "$sixty")
+case "$n20" in *-abcdefghij-klmnopqrs) ;; *) fail "an id of 20 characters is never cut ($n20)" ;; esac
+assert_equals "muxr" "$(jg_backend_herdr_agent_name_for muxr)" "a call with no title keeps the id name"
+old_a="live-names-still-say-the-same-thing-here-aa"
+old_b="live-names-still-say-the-same-thing-here-bb"
+oa=$(jg_backend_herdr_agent_name_for "$old_a" "Fix the live names")
+ob=$(jg_backend_herdr_agent_name_for "$old_b" "Fix the live names")
+valid_name "$oa" || fail "an old long id gives a valid name ($oa)"
+case "$oa" in fix-the-live-names-????) ;; *) fail "an old long id gives title words and a checksum ($oa)" ;; esac
+assert_not_equals "$oa" "$ob" "two tickets with one title and long ids never get one name"
+assert_not_equals "$(jg_backend_herdr_agent_name_for t-1 "Same title")" "$(jg_backend_herdr_agent_name_for t-2 "Same title")" "two short ids with one title never get one name"
+assert_equals "$n" "$(jg_backend_herdr_agent_name_for jg8-q1b3n-s5 "$sixty")" "the name is deterministic for one title"
+
 reset_world() {
   : > "$calls"
   cat > "$world" <<EOF
@@ -194,6 +213,21 @@ bash "$names_sh" migrate >"$tmp/named.out" 2>&1; rc=$?
 expect_code 0 "$rc" "migrate with a recorded agent name succeeds ($(cat "$tmp/named.out"))"
 assert_equals "fix-the-thing-named-task" "$(jq -r '.agents[] | select(.pane_id == "w1:p4") | .name' "$world")" "migrate takes the name from agent_name="
 pass "migrate pins the name the record holds"
+
+# After a Herdr restart the agent has a new call-sign: migrate pins the recorded <title>-<id> name again.
+new_name=$(jg_backend_herdr_agent_name_for named-task "Fix the thing")
+jg_write_meta "$home/state/named-task.meta" "backend=herdr" "herdr_session=s" \
+  "herdr_workspace_id=w1" "herdr_tab_id=w1:t4" "herdr_pane_id=w1:p4" "agent_name=$new_name"
+reset_home_world
+jq -c '.tabs += [{"tab_id":"w1:t4","workspace_id":"w1","label":"jg-named-task"}] | .agents += [{"pane_id":"w1:p4","tab_id":"w1:t4","name":"restart-callsign"}]' "$world" > "$world.new" && mv "$world.new" "$world"
+bash "$names_sh" migrate >"$tmp/restart.out" 2>&1; rc=$?
+expect_code 0 "$rc" "migrate after a restart succeeds ($(cat "$tmp/restart.out"))"
+assert_equals "fix-the-thing-named-task" "$(jq -r '.agents[] | select(.pane_id == "w1:p4") | .name' "$world")" "migrate pins the recorded name again after a restart"
+jg_write_meta "$home/state/named-task.meta" "backend=herdr" "herdr_session=s" \
+  "herdr_workspace_id=w1" "herdr_tab_id=w1:t4" "herdr_pane_id=w1:p4" "agent_name=fix-the-thing-named-task"
+bash "$names_sh" migrate >"$tmp/restart2.out" 2>&1
+assert_equals "fix-the-thing-named-task" "$(jq -r '.agents[] | select(.pane_id == "w1:p4") | .name' "$world")" "a title edited after the spawn leaves the recorded name"
+pass "the title-and-id name: shapes, and migrate after a restart"
 
 # An unreadable recorded session is neither a pass nor a rename.
 rm -f "$world"

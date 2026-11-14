@@ -163,10 +163,12 @@ Existing task operations use recorded endpoint ids and do not move a live task w
 
 ### Live names
 
-The first spawn of a ticket makes the agent name once, from the task id, and writes it to the task record as `agent_name=`; a relaunch keeps it, and a record with no `agent_name=` (a lane from before it, a lead) keeps the name made from its id.
+The first spawn of a ticket makes the agent name once, from the ticket title and the task id (`<title words>-<id>`, at most 32 characters, cut on the title side so a short id is never cut), and writes it to the task record as `agent_name=`; a relaunch keeps it, and a record with no `agent_name=` (a lane from before it, a lead) keeps the name made from its id.
 Spawn and relaunch pin each worker's Herdr agent to that recorded name, because Herdr assigns a random call-sign at start and again after a server restart.
 Herdr accepts only 1-32 characters that start with a lowercase letter and continue with lowercase letters, digits, `-` or `_`, and keeps agent names unique in the session.
-`jg_backend_herdr_agent_name_for` maps a task id into that shape: an id that already fits is the name, and a longer id keeps its first 27 characters plus a four-hex checksum of the whole id.
+`jg_backend_herdr_agent_name_for` maps a task id into that shape: with no title, an id that already fits is the name, and a longer id keeps its first 27 characters plus a four-hex checksum of the whole id.
+With a title, an id over 20 characters (an old long id) gives the title words cut to 27 plus the same four-hex checksum, so two tickets never share a name; a title edited after the first spawn changes nothing, because every reader takes the name from `agent_name=`.
+The tab and terminal title read `<title> · <id>`, cutting only the title (`core/pane-titles`).
 A name another agent holds falls back to a checksum variant of the pane, and the spawn then writes the name that stuck back to `agent_name=` and to the row's assignee (only while the first name still owns the row); a refusal warns once with Herdr's own error code and the record keeps the name it made.
 `bin/jg-herdr-names.sh migrate` moves one home's live items to the current names, addressing each by the session, workspace, tab, and pane id in its own task records and never by a name search.
 Run it again after a server restart to restore the agent names.

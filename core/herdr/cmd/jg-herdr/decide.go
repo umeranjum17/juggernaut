@@ -123,6 +123,59 @@ func agentNameFor(id string) string {
 	return name
 }
 
+// agentNameForTitle is the name made once at a ticket's first spawn: the title's words, then
+// the id (`<title words>-<id>`), in herdr's letters and within 32 characters. The cut falls on
+// the title side, so an id of 20 characters or fewer is never cut. An older, longer id cannot
+// be kept whole: its name is the title words cut to 27 and the checksum agentNameVariant makes
+// of the id, so two such tickets with one title still differ. A title with no words gives the
+// name agentNameFor makes from the id alone. Pure: a later title edit never reaches it, because
+// the caller runs it only at the first spawn.
+func agentNameForTitle(title, id string) string {
+	words := titleWords(title)
+	if words == "" {
+		return agentNameFor(id)
+	}
+	slug := agentNameFor(id)
+	if len(id) > 20 || len(slug) > 20 {
+		return agentNameVariant(words, id)
+	}
+	if room := 32 - len(slug) - 1; len(words) > room {
+		words = strings.TrimRight(words[:room], "-")
+	}
+	if words == "" {
+		return slug
+	}
+	return words + "-" + slug
+}
+
+// titleWords lower-cases a title to herdr's letters: a leading [tag] is dropped, every run of
+// other characters becomes one -, and the words start at the first letter.
+func titleWords(title string) string {
+	t := strings.TrimSpace(title)
+	for strings.HasPrefix(t, "[") {
+		end := strings.Index(t, "]")
+		if end < 0 {
+			break
+		}
+		t = strings.TrimSpace(t[end+1:])
+	}
+	var b strings.Builder
+	dash := false
+	for _, c := range []byte(asciiOnly(t)) {
+		switch {
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9' && b.Len() > 0:
+			if dash {
+				b.WriteByte('-')
+				dash = false
+			}
+			b.WriteByte(c)
+		case b.Len() > 0:
+			dash = true
+		}
+	}
+	return b.String()
+}
+
 // stripSpace is `tr -d '[:space:]'`: it drops the six ASCII whitespace bytes.
 func stripSpace(s string) string {
 	return strings.Map(func(r rune) rune {
