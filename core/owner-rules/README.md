@@ -18,8 +18,7 @@ Three brief-time rules are enforced when a lane's brief is created, not left as 
 A refusal exits 1 before `jg-brief.sh` writes `data/<id>/brief.md`, with a one-line reason on stderr.
 
 - `bin/jg-owner-rules-lib.sh` - `jg_owner_rules_check <data> <id> <mode> <kind>`; it reads the item into facts and `policy/gate/brief_rules.rego` decides.
-- The merge gate, `bin/jg-owner-rules-gate.sh`, gathers its facts the same way: `policy/gate/owner_proof.rego` owns the refusal order and `policy/gate/lint_row.rego` the lint rule.
-- `jg-owner-rules-gate.sh diagnose <id> <worktree|-> <head> <pr-url|->` prints the facts the gate judges (`receipt=`, `signature=`, `lint=`, `screen_none=`) and refuses nothing. A local-trunk landing does not run this gate (`docs/trunk-flow.md`); it records the signature after the landing when it exists.
+- The merge-gate step, `bin/jg-owner-rules-gate.sh`, judges nothing (pcp-s7): it exits 0, so an older home's `config/merge-gate` keeps working. Its `init-key` and `sign` commands stay. A local-trunk landing does not run it (`docs/trunk-flow.md`) and records the signature after the landing when it exists.
 - `bin/jg-owner-rules-tree.sh <backlog-file>` - read-only hierarchy report for every backlog item.
 - Seam: `brief-inherit`'s `jg_brief_inherit_shared` (already called by the fork's `jg-brief.sh`) calls it when
   `config/owner-rules` exists. Without that file the check is a no-op, so an unmodified upstream Juggernaut is
@@ -31,23 +30,15 @@ A refusal exits 1 before `jg-brief.sh` writes `data/<id>/brief.md`, with a one-l
 - Test: `tests/owner-rules.test.sh <juggernaut-checkout>` drives the checkout's real `jg-brief.sh`.
 - Done-done proof: `JG_TEST_FORK=<juggernaut-checkout> done-done run owner-rules-hierarchy` records the real brief journey and hierarchy report.
 
-## Merge gate (slice 2)
+## Owner proof signature (was the merge gate, slice 2)
 
-3. **Locally signed done-done receipt.** The gate requires a sealed clean run at the exact merge head and refuses an unsigned or changed receipt, even when `merge-card receipt` accepts its run record.
-   Run `jg-owner-rules-gate.sh init-key` once in the captain's home to create its local key pair.
-   After the passed-proof recipe succeeds on the captain's machine, `jg-owner-rules-gate.sh sign <id> <head> <pr-url|->` signs the normalized receipt with the private key at `${JG_MAIN_HOME:-$JG_HOME}/config/owner-rules-proof.key`; in a lead home with `JG_MAIN_HOME` unset, that is Main's home found through `.jg-squad-lead-parent`, the key is read in place and never copied, and the signature is written under the lead's own `data/`.
-   The gate verifies it with `${JG_MAIN_HOME:-$JG_HOME}/config/owner-rules-proof.pub` and binds the signature to the task, PR scope, exact head, and receipt contents.
-   Keep both keys out of the repository; the private key stays on the captain's machine.
-   A missing signature can be created only by running the explicit signing command after the proof recipe succeeds.
-   `merge-card receipt-json <id> <head>` prints the normalized receipt used by this signature check.
-   A merge whose Checks block says `screen: none` still requires a signed receipt for its text-only Evidence card (`merge-card screen-none`).
-   A no-op without `config/owner-rules`. Needs the sibling `merge-card/` of this checkout.
-4. **Checks-lint PASS.** After receipt authorization, the gate reads `$JG_HOME/data/checks-gate.log` (never reruns lint) and refuses unless the
-   newest row naming the PR url at the merge head is a `pass`, so a later fail takes the verdict back and a `card` row is not a verdict (a local merge matches the report-file rows of its own task folder; they carry no head).
-   `screen: none` exempts capture only. PR merges also require a passed-proof Evidence card on the fleet board, configured by `JG_FLEET_BOARD`, then the one-line `$JG_HOME/config/fleet-board`, then the main home board (`${JG_MAIN_HOME:-$HOME/juggernaut}/config/fleet-board`); a screen-free PR with a signed receipt gets a text-only card automatically. Local merges use the same signature and lint checks but do not need a board card. Refusal:
-   `owner-rules: no checks-lint PASS for <pr> at <head>; run JG_HOME=<home> <XDG_DATA_HOME>/jg-merge-on-green/checks-lint.sh <pr-url> <home>/data/<id> then merge again`.
-- Test: `tests/owner-rules-gate.test.sh` covers receipt and lint refusals, verifies the Evidence-card hint is an executable absolute path, and scans gate/check scripts for bare feature command hints. `tests/gate-contract.test.sh` uses installed `sign-off-axi` to post a merge-card-shaped Evidence card, then proves matching commits pass and mismatches refuse; it skips only when the CLI is absent.
-- Roll out a new refusing gate with `config/owner-rules-canary`, one exact `JG_HOME` path per line; only listed homes enforce the new Evidence-card refusal while other homes retain prior behavior. A canary may self-waive that refusal by writing a future UTC expiry (`YYYY-MM-DDTHH:MMZ`) to `config/owner-rules-canary-waiver`; expired or malformed waivers do not apply. Remove the waiver after resolving any issue, then add homes to the canary file to expand rollout. With no canary config, all homes retain today's enforcement.
+The merge gate used to refuse a merge for a missing receipt, signature, checks-lint row or Evidence card. That generic proof compliance is deleted (pcp-s7): the gate step passes, and the owner's real boundaries stay with their owners - an open decision (`bin/jg-captain-hold.sh blocking`), the owner-guard scan for private details, and the merge authority of `bin/jg-pr-merge.sh`.
+The signature stays as a record the owner can make:
+
+- Run `jg-owner-rules-gate.sh init-key` once in the captain's home to create its local key pair.
+- After a passed-proof recipe, `jg-owner-rules-gate.sh sign <id> <head> <pr-url|->` signs the normalized receipt (`merge-card receipt-json <id> <head>`) with the private key at `${JG_MAIN_HOME:-$JG_HOME}/config/owner-rules-proof.key`; in a lead home with `JG_MAIN_HOME` unset, that is Main's home found through the parent binding, and the signature lands in the lead's own data. The key is never copied.
+- The signature binds the task, PR scope, exact head and receipt contents. Keep both keys out of the repository; the private key stays on the captain's machine.
+- Test: `owner-rules/tests/owner-rules-gate.test.sh` proves that the wired step passes with no receipt, signature, lint row, card or board, that the chained previous gate still decides, and that `init-key` and `sign` work.
 
 ## Lavish refusal: squad lead notes and merge-card posts
 

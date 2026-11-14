@@ -1979,7 +1979,6 @@ case "$PROVIDER" in
     refuse_github_queue_while_away || exit 2
     merge_status=0
     if declare -F jg_dod_receipt_accept >/dev/null; then github_gate 'receipt not accepted for this head' jg_dod_receipt_accept "$STATE" "$ID" "$META" "$JG_PR_MERGE_HEAD" || exit 1; fi
-    if declare -F jg_dod_design_gate >/dev/null; then github_gate 'design receipt missing' jg_dod_design_gate "$STATE" "$ID" "$META" "$JG_PR_MERGE_HEAD" || exit 1; fi
     if declare -F jg_dod_demo_gate >/dev/null; then github_gate 'demo proof missing' jg_dod_demo_gate "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" "$STATE" "$ID" "$META" "$JG_PR_MERGE_HEAD" || exit 1; fi
     if declare -F jg_dod_nav_gate >/dev/null; then
       nav_body=$(gh pr view "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" --json body -q .body 2>/dev/null) || nav_body=
@@ -2084,7 +2083,6 @@ case "$PROVIDER" in
       gitlab_merge_args=(--auto-merge=false)
     fi
     if declare -F jg_dod_receipt_accept >/dev/null; then jg_dod_receipt_accept "$STATE" "$ID" "$META" "$JG_PR_MERGE_HEAD" >&2 || exit 1; fi
-    if declare -F jg_dod_design_gate >/dev/null; then jg_dod_design_gate "$STATE" "$ID" "$META" "$JG_PR_MERGE_HEAD" >&2 || exit 1; fi
     if declare -F jg_dod_demo_gate >/dev/null; then jg_dod_demo_gate "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" "$STATE" "$ID" "$META" "$JG_PR_MERGE_HEAD" >&2 || exit 1; fi
     if declare -F jg_dod_nav_gate >/dev/null; then
       nav_body=$(GITLAB_HOST="$JG_PR_HOST" glab mr view "$PR_NUMBER" -R "$PROJECT_URL" 2>/dev/null) || nav_body=

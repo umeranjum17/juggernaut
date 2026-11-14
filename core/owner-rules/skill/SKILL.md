@@ -41,25 +41,7 @@ Run `bin/jg-owner-rules-tree.sh <backlog-file>` to inspect parent chains and inv
 
 Every lane ships direct-PR, and the real user journey is checked (the done-done check) with its evidence on the sign-off Evidence tab.
 
-Refusal at merge time (`$what` is the PR URL, or `local merge <head>` with no PR, `$2` the worktree, `$3` the merge head):
-
-```
-owner-rules: no passed-proof receipt for $what: seal a clean done-done run at $3 with: cd '$2' && done-done run -- <the command that proves it>
-```
-
-A merge that names no worktree reads `... at $3 with: done-done run -- <the command that proves it> in the copy at $3` instead.
-
-Fix: run that command at the merge head, then merge again.
-A merge whose Checks block says `screen: none` still needs that sealed receipt for its text-only card, with no capture.
-The gate opens with one line saying so.
-
-Refusal (`$src` is the PR URL, `$3` the merge head) when checks-lint has no PASS row for the PR head in `data/checks-gate.log`:
-
-```
-owner-rules: no checks-lint PASS for $src at $3; run JG_HOME=$JG_HOME <XDG_DATA_HOME>/jg-merge-on-green/checks-lint.sh $src $JG_HOME/data/<id> then merge again
-```
-
-Fix: run that command (it logs the row), then merge again.
+The merge gate no longer refuses for a missing receipt, signature, checks-lint row or Evidence card (pcp-s7). The done-done check stays the way a lane proves itself; an open decision, the owner-guard scan and the merge authority are the boundaries that refuse a merge.
 
 ## Design discovery: say `design: required` or `design: none`
 

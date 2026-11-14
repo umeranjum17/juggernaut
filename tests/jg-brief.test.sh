@@ -1446,9 +1446,8 @@ test_design_call_field() {
     --design-call yes --design-reason "new landing page" >/dev/null || fail "design-call yes scaffold failed"
   brief=$(cat "$home/data/brief-design-yes/brief.md")
   assert_contains "$brief" "Design call (first-draft): yes - new landing page" "yes call line missing"
-  assert_contains "$brief" "first-draft receipt: <the run record file>" "yes call must ask for the receipt line"
+  assert_not_contains "$brief" "first-draft receipt:" "no merge or done is refused on a receipt line, so the brief does not ask for one"
   assert_contains "$brief" "never hand-write option HTML" "yes call must forbid hand-authored option HTML"
-  assert_contains "$brief" "judge-only record" "yes call must refuse a judge-only receipt"
   assert_contains "$brief" "jg-design-gate.sh board" "yes call must name the board-post check"
   JG_HOME="$home" "$ROOT/bin/jg-brief.sh" brief-design-no some-proj --mode direct-PR \
     --design-call no --design-reason "one-line copy fix" >/dev/null || fail "design-call no scaffold failed"

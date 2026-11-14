@@ -61,7 +61,6 @@ verdict_inputs() {  # <id>
   {
     git hash-object "$FMH/bin/jg-trunk.sh" "$FMH/bin/jg-merge-gate-lib.sh" "$FMH/bin/jg-dod-lib.sh" 2>/dev/null || :
     jq -Sc 'del(.at)' "$STATE/$1.run-receipt.json" 2>/dev/null || :
-    [ ! -f "$STATE/design-approvals/$1.handroll.json" ] || git hash-object "$STATE/design-approvals/$1.handroll.json"
   } | git hash-object --stdin
 }
 

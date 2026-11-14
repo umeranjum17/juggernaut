@@ -763,17 +763,12 @@ With it present, ship and Recon briefs gain the `# Waiting` section, every brief
 With the file absent, generated briefs omit the waiting section and the no-poll inbox line, the drive text backgrounds the call, recovery sends during an open decision, and a fire-and-forget steer is not owed a retry ring.
 The flag is a home-local preference and is not inherited by Squad Lead homes.
 
-## Design gate (always on)
+## Design option board check
 
-Every design rule is a shell check on recorded files, never a model judgment.
-A change is a small tweak, which a worker may hand-roll, when its UI files change at most 40 lines and it adds no new UI file.
-A UI file that only loses lines adds none, so deleting UI counts as no UI line: taking a page or a stylesheet apart is not design work.
-A small tweak that touches UI files merges only after the task's lead or Main writes a hand-roll approval; the asking worker never can.
-Past that size, or briefed with `--design-call yes`, the change is design work and merges only with a first-draft receipt line.
-The receipt is resolved, never taken on its word: the run record its `first-draft receipt: <ref>` line names must prove a `first-draft-axi make` or `refine` and list every `.html` option the change adds.
+There is no design gate on a merge, a landing or a `done` (pcp-s7): no size rule, hand-roll approval or first-draft receipt line refuses one.
+A real unresolved product choice is held as a decision (`bin/jg-captain-hold.sh`), and an open decision blocks the work linked to it.
+`bin/jg-design-gate.sh board` is the one design check left: it refuses a board post of design options unless the first-draft run record it names made or refined every option.
 A judge-only record does not satisfy it, and hand-authored option HTML never does.
-`bin/jg-design-gate.sh board` refuses a board post of design options that fails the check, and `jg_design_done_gate` refuses a design task's `done`.
-`bin/jg-design-gate.sh`'s header owns the contract, and `bin/jg-merge-gate-lib.sh`'s `jg_dod_design_gate` runs it on both merge paths.
 
 ## TakeOne demo-video rule (config/takeone-demo)
 

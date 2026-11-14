@@ -1499,7 +1499,7 @@ cmd_land() {
     jq -Sc 'del(.at)' "$STATE/$id.run-receipt.json" 2>/dev/null || true
     for key in "$STATE/trunk-tip-$(basename "$proj")" \
       "$CONFIG/trunk-policy" "$CONFIG/merge-gate" "$CONFIG/owner-details-patterns" \
-      "$DATA/$id/checks.md" "$DATA/$id/proof-authorizations/$cand.sig" "$STATE/design-approvals/$id.handroll.json" \
+      "$DATA/$id/checks.md" "$DATA/$id/proof-authorizations/$cand.sig" \
       "$proof_home/config.yaml"; do
       printf '%s\n' "$key"; [ ! -f "$key" ] || git hash-object "$key"
     done

@@ -179,7 +179,6 @@ core/owner-rules/bin/jg-owner-rules-gate.sh  # inline jg-compat env alias
 core/owner-rules/run-hierarchy-proof.sh  # inline jg-compat env alias
 core/owner-rules/run-proof.sh  # inline jg-compat env alias
 core/owner-rules/tests/design-flag.test.sh  # inline jg-compat env alias
-core/owner-rules/tests/gate-contract.test.sh  # inline jg-compat env alias
 core/owner-rules/tests/no-lavish.test.sh  # inline jg-compat env alias
 core/owner-rules/tests/owner-rules-gate.test.sh  # inline jg-compat env alias
 core/owner-rules/tests/owner-rules.test.sh  # inline jg-compat env alias

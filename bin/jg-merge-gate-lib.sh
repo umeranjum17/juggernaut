@@ -10,18 +10,9 @@
 # feature defines the same two functions for homes that install it; core owning a
 # copy is what makes them fire without it. Callers supply jg_dod_meta_value;
 # jg_run_timed and jg_timed_out come from bin/jg-timeout-lib.sh, sourced here.
-# jg_dod_design_gate is the first-draft design-call gate both merge paths call:
-# a task recorded design_call=yes (bin/jg-brief.sh --design-call) merges only when
-# its completion receipt (state/<id>.run-receipt.json, the receipts feature's record)
-# binds the candidate head with verdict PASS and its evidence carries a
-# `first-draft receipt: <ref>` line. design_call=no passes; a record with no
-# design_call (an older task) warns and counts as no. A task past the small-tweak size
-# rule is design work whatever its call, and a smaller UI change needs the lead's or
-# Main's hand-roll approval; bin/jg-design-gate.sh owns that contract. The receipt line
-# is resolved, never believed: its run record must prove a make or refine and list every
-# .html page the change adds, so a judge-only record and hand-authored option HTML are
-# refused by name. jg_design_done_gate applies the same rule at done. jg_dod_demo_gate is the same
-# check for TakeOne demo videos, behind the config/takeone-demo switch.
+# There is no generic design gate: no size rule, hand-roll approval or first-draft receipt line refuses a merge or a done (pcp-s7).
+# An unresolved product choice still blocks through its open decision (jg-captain-hold.sh blocking), and jg_design_fd_check stays for
+# bin/jg-design-gate.sh board. jg_dod_demo_gate is the check for TakeOne demo videos, behind the config/takeone-demo switch.
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 # The hooks also get FM_HOME (the pre-rename name) because installed feature hooks and done-done's merge-gate still read it; delete with the S10 shim.
 _jg_d=${BASH_SOURCE[0]%/*}
@@ -109,21 +100,6 @@ _jg_dod_receipt_line() {  # <state> <id> <head> <label>
     ' "$receipt" >/dev/null 2>&1
 }
 
-# The size rule (bin/jg-design-gate.sh owns it): UI files are matched by name, and a
-# change is a small tweak when they change at most 40 lines and none is new. Both halves
-# are measured with renames detected: a file that only moved is moved on both sides, so
-# it adds no UI line and is not a new UI file. A move is not design work, and counting it
-# as one refused every rename of a UI file at any size; a file that really is added, or
-# really gains lines, still counts and still refuses on its own merits.
-JG_DESIGN_UI_RE='[.](html?|css|scss|sass|less|svg|jsx|tsx|vue|svelte|astro)$'
-JG_DESIGN_TWEAK_LINES=40
-
-# The captain's rule (30 Oct 2026): a design option first-draft did not make or refine is
-# not a design option. `make` and `refine` print one run record naming the page they made, a
-# `judge` record names only what it scored, and hand-authored HTML has none, so the receipt
-# line is resolved and read. A reference is absolute or worktree-relative.
-JG_DESIGN_RECEIPT_LABEL='first-draft receipt'
-
 # A path in absolute form without realpath: a known directory resolves with pwd -P.
 jg_design_path_key() {  # <path>
   local p=$1 d b
@@ -184,70 +160,6 @@ $(printf '%s\n' "$files" | while IFS= read -r key; do jg_design_path_key "$key";
   done
   return "$rc"
 }
-
-# The `<label>: <value>` values of a completion receipt bound to <head> with PASS,
-# comma-joined; empty otherwise. bin/jg-design-gate.sh board takes the same list.
-jg_design_receipt_value() {  # <state> <id> <head> <label>
-  _jg_dod_receipt_line "$1" "$2" "$3" "$4" || return 1
-  jq -r '.evidence // ""' "$1/$2.run-receipt.json" \
-    | sed -n -E "s/^$4: ([^[:space:]].*[^[:space:]])[[:space:]]*\$/\1/p" | paste -sd, -
-}
-
-# What a task's UI change is measured against: its recorded base branch, else for a local-trunk lane the CURRENT tip of the
-# project's trunk branch (never the default branch's origin ref, which a local trunk runs ahead of). git merge-base of that tip
-# and the lane head is the lane's fork point, so a lane rebased onto a newer tip is measured from the new one and only its own
-# lines count (rebase-moves-design-base). A trunk branch that cannot be read falls back to the cut tip the meta recorded (base=<sha>).
-jg_design_base() {  # <meta>
-  local meta=$1 b wt project tip
-  b=$(jg_dod_meta_value "$meta" base_branch)
-  if [ -z "$b" ]; then
-    case $(jg_dod_meta_value "$meta" mode) in local|local-trunk)
-      b=$(jg_dod_meta_value "$meta" base)
-      wt=$(jg_dod_meta_value "$meta" worktree); project=$(jg_dod_meta_value "$meta" project)
-      if [ -n "$project" ] && [ -d "$wt" ] && declare -F jg_trunk_branch >/dev/null; then
-        tip=$(git -C "$wt" rev-parse -q --verify "refs/heads/$(jg_trunk_branch "$(basename -- "$project")" "$(dirname -- "$meta")")^{commit}" 2>/dev/null) && b=$tip
-      fi ;;
-    esac
-  fi
-  printf '%s\n' "$b"
-}
-
-# The .html pages a change adds: the options it presents.
-# ponytail: added pages only, so a design task that rewrites an existing page stays under
-# the size rule; widen this if a rewritten option ever needs the receipt too.
-jg_design_added_pages() {  # <worktree> <base-branch> <head>
-  local wt=$1 base=${2:-main} head=$3 ref mb
-  [ -d "$wt" ] && git -C "$wt" cat-file -e "$head^{commit}" 2>/dev/null || return 1
-  ref=origin/$base
-  git -C "$wt" rev-parse -q --verify "$ref^{commit}" >/dev/null || ref=$base
-  mb=$(git -C "$wt" merge-base "$ref" "$head" 2>/dev/null) || return 1
-  git -C "$wt" diff --name-only --no-renames --diff-filter=A "$mb" "$head" | grep -iE '[.]html?$'
-}
-
-# 0 when a design task's receipt names a record that made or refined every page it adds.
-jg_design_first_draft_ok() {  # <state> <id> <meta> <head>
-  local state=$1 id=$2 meta=$3 head=$4 ref wt page
-  local -a OPTS=()
-  wt=$(jg_dod_meta_value "$meta" worktree)
-  ref=$(jg_design_receipt_value "$state" "$id" "$head" "$JG_DESIGN_RECEIPT_LABEL") || ref=''
-  if [ -n "$wt" ] && [ -d "$wt" ]; then
-    while IFS= read -r page; do [ -n "$page" ] && OPTS+=("$wt/$page"); done \
-      < <(jg_design_added_pages "$wt" "$(jg_design_base "$meta")" "$head")
-  fi
-  jg_design_fd_check --ref "$ref" --root "${wt:-$PWD}" -- ${OPTS[@]+"${OPTS[@]}"}
-}
-
-# 0 for a task that is not design work, and for design work proved by first-draft; 1
-# with the refusal printed when an option it presents has no make or refine record.
-jg_design_done_gate() {  # <state> <id> <meta> <head>
-  local state=$1 id=$2 meta=$3 head=$4 call size
-  [ -n "$state" ] && [ -n "$id" ] && [ -f "$meta" ] || return 0
-  call=$(jg_dod_meta_value "$meta" design_call)
-  size=$(jg_design_size "$(jg_dod_meta_value "$meta" worktree)" "$(jg_design_base "$meta")" "$head") || size=''
-  [ "$call" = yes ] || [ "${size%% *}" = design ] || return 0
-  jg_design_first_draft_ok "$state" "$id" "$meta" "$head"
-}
-
 # jg_ui_card_done_gate is the picture rule at done: a task recorded ui_change=yes
 # (bin/jg-brief.sh --ui-change) reports done only when the board already holds an
 # evidence card with pictures for its PR at this head. The lookup is
@@ -265,74 +177,9 @@ jg_ui_card_done_gate() {  # <id> <meta> <head> <pr-url|->
   printf '%s\n' "$out"
   return 1
 }
-
-jg_design_size() {  # <worktree> <base-branch> <head>: prints `design|tweak <ui-lines> <new-ui-files>`
-  local wt=$1 base=${2:-main} head=$3 ref mb lines new
-  [ -d "$wt" ] && git -C "$wt" cat-file -e "$head^{commit}" 2>/dev/null || return 2
-  ref=origin/$base
-  git -C "$wt" rev-parse -q --verify "$ref^{commit}" >/dev/null || ref=$base
-  mb=$(git -C "$wt" merge-base "$ref" "$head" 2>/dev/null) || return 2
-  # Both halves detect renames. A pure move reads 0 0 here, so it is neither a changed
-  # line nor a new file; the whole numstat line is matched because a rename prints its
-  # paths in git's own compact form and either side may carry the UI extension.
-  # A UI file that only loses lines adds none, so it is not design work and adds no UI
-  # line: taking a page apart is no longer work someone has to design. A file that keeps
-  # a line still measures added plus deleted, so a real rewrite is measured as it was.
-  lines=$(git -C "$wt" diff --numstat -M "$mb" "$head" \
-    | awk -F'\t' -v re="$JG_DESIGN_UI_RE" 'tolower($0) ~ re && $1 != "-" && $1 + 0 > 0 { n += $1 + $2 } END { print n + 0 }')
-  new=$(git -C "$wt" diff --name-only -M --diff-filter=A "$mb" "$head" | grep -ciE "$JG_DESIGN_UI_RE")
-  if [ "$new" -gt 0 ] || [ "$lines" -gt "$JG_DESIGN_TWEAK_LINES" ]; then echo "design $lines $new"; else echo "tweak $lines $new"; fi
-}
-
-jg_design_main_home() {  # <home>: the main home it reports to, following local squad lead parents
-  local h=$1 depth=0
-  while [ "$depth" -lt 8 ]; do
-    [ -e "$(jg_compat_marker "$h")" ] || { printf '%s\n' "$h"; return 0; }
-    declare -F jg_squad_lead_parent_record_parse >/dev/null || return 1
-    jg_squad_lead_parent_record_parse "$(jg_compat_parent_marker "$h")" && [ "$JG_SQUAD_LEAD_PARENT_ROUTE" = local ] || return 1
-    h=$JG_SQUAD_LEAD_PARENT_HOME
-    depth=$((depth + 1))
-  done
-  return 1
-}
-
-jg_design_handroll_ok() {  # <state> <id>: the lead or Main approved hand-rolling this small UI change
-  local f=$1/design-approvals/$2.handroll.json
-  [ -f "$f" ] && [ ! -L "$f" ] && jq -e --arg id "$2" '.schema == 1 and .task == $id and (.by | type == "string" and length > 0)' "$f" >/dev/null 2>&1
-}
-
-jg_dod_design_gate() {  # <state> <id> <meta> <candidate-head>
-  local state=$1 id=$2 meta=$3 head=$4 call size
-  [ -n "$state" ] && [ -n "$id" ] && [ -f "$meta" ] || return 0
-  call=$(jg_dod_meta_value "$meta" design_call)
-  case $call in
-    no|yes) ;;
-    '') echo "warning: $id has no design call recorded (an older brief); counting it as design_call=no" >&2 ;;
-    *) echo "merge refused: design call for $id is malformed ('$call'); expected yes or no"; return 1 ;;
-  esac
-  size=$(jg_design_size "$(jg_dod_meta_value "$meta" worktree)" "$(jg_design_base "$meta")" "$head") \
-    || { [ "$call" = yes ] || echo "warning: cannot measure the UI change of $id at $head; using its design call" >&2; }
-  if [ "$call" != yes ] && [ "${size%% *}" != design ]; then
-    case $size in ''|'tweak 0 0') return 0 ;; esac
-    jg_design_handroll_ok "$state" "$id" && return 0
-    echo "merge refused: $id hand-rolls a small UI change (${size#tweak }: UI lines, new UI files) with no hand-roll approval; its lead or Main runs bin/jg-design-gate.sh handroll $id"
-    return 1
-  fi
-  if _jg_dod_receipt_line "$state" "$id" "$head" "$JG_DESIGN_RECEIPT_LABEL"; then
-    jg_design_first_draft_ok "$state" "$id" "$meta" "$head" && return 0
-    return 1
-  fi
-  if [ "$call" = yes ]; then
-    echo "merge refused: $id is a design task (first-draft: yes) and its completion receipt for this head has no 'first-draft receipt: <ref>' evidence line; produce the design with first-draft and republish the receipt"
-  else
-    echo "merge refused: $id changes ${size#design } (UI lines, new UI files), past the small-tweak size, and its completion receipt for this head has no 'first-draft receipt: <ref>' evidence line; produce the design with first-draft and republish the receipt"
-  fi
-  return 1
-}
-
 # jg_dod_demo_gate is the TakeOne demo-video gate both merge paths call. It is off
 # until the home creates the presence flag config/takeone-demo (docs/configuration.md),
-# and then mirrors jg_dod_design_gate: a task recorded demo_call=yes (bin/jg-brief.sh
+# and then works like the old design gate: a task recorded demo_call=yes (bin/jg-brief.sh
 # --demo-call) merges only when its PASS completion receipt for this head carries a
 # `takeone receipt: <ref>` evidence line. demo_call=no passes; a record with no
 # demo_call (an older task) warns and counts as no. A shell check decides.
@@ -475,9 +322,9 @@ jg_dod_local_nav_fallback() {  # <state> <id> <head>
 }
 
 # The gates a local landing passes, in one place so bin/jg-merge-local.sh and bin/jg-trunk.sh
-# cannot drift: the captain hold, then receipt, design, demo, nav, config/merge-gate and the proof card.
+# cannot drift: the captain hold, then receipt, demo, nav, config/merge-gate and the proof card.
 # Prints the refusal and returns 1; returns 0 when every gate passes.
-# A local-trunk landing (bin/jg-trunk.sh) passes the hold and the design, demo and nav gates here and has its proof checked
+# A local-trunk landing (bin/jg-trunk.sh) passes the hold and the demo and nav gates here and has its proof checked
 # up front by jg_dod_trunk_proof_gaps (receipt, sealed run); its owner signature never refuses it, so it
 # passes `trunk` as <kind>.
 # Usage: jg_dod_local_landing_gates <bin-dir> <config-dir> <home> <state> <id> <meta> <project> <base> <candidate> [trunk]
@@ -491,10 +338,9 @@ jg_dod_local_landing_gates() {
   esac
   if [ "$kind" != trunk ] && declare -F jg_dod_receipt_accept >/dev/null; then jg_dod_receipt_accept "$state" "$id" "$meta" "$candidate" >&2 || return 1; fi
   # A trunk landing lands a rebased candidate, but its completion receipt binds the head the lane proved (jg_dod_trunk_proof_gaps
-  # already kept that proof across a no-change rebase), so the receipt-bound design and demo gates read it at that head.
+  # already kept that proof across a no-change rebase), so the receipt-bound demo gate reads it at that head.
   proved=$candidate
   if [ "$kind" = trunk ] && command -v jq >/dev/null 2>&1; then proved=$(jq -r '.head // empty' "$state/$id.run-receipt.json" 2>/dev/null) || proved=''; proved=${proved:-$candidate}; fi
-  if declare -F jg_dod_design_gate >/dev/null; then jg_dod_design_gate "$state" "$id" "$meta" "$proved" >&2 || return 1; fi
   if declare -F jg_dod_demo_gate >/dev/null; then jg_dod_demo_gate "$config" "$state" "$id" "$meta" "$proved" >&2 || return 1; fi
   if declare -F jg_dod_nav_gate >/dev/null; then jg_dod_nav_gate "$id" "$meta" "$(git -C "$proj" log --format=%B "$base..$candidate")" "commit message" "$(jg_dod_local_nav_fallback "$state" "$id" "$proved")" >&2 || return 1; fi
   [ "$kind" != trunk ] || return 0

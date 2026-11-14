@@ -258,12 +258,6 @@ journeys:
   merge-proof-gate:
     tier: local
     command: bash journeys/merge-proof-gate.sh
-  design-call-gate:
-    tier: local
-    command: bash journeys/design-call-gate.sh
-  design-gate-rebased-lane:
-    tier: local
-    command: bash journeys/design-gate-rebased-lane.sh
   merge-gate-policy:
     tier: local
     command: bash tests/jg-merge-gate-policy.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -908,10 +902,6 @@ journeys:
     # was Core suites step 61: Owner-rules lint-row recorded decisions
     tier: local
     command: bash journeys/core-run.sh 'bash owner-rules/tests/lint-row-recorded.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  core-owner-rules-gate-recorded-decisions:
-    # was Core suites step 62: Owner-rules gate recorded decisions
-    tier: local
-    command: bash journeys/core-run.sh 'bash owner-rules/tests/gate-matrix.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   core-completion-receipt-acceptance-recorded-decisions:
     # was Core suites step 63: Completion-receipt acceptance recorded decisions
     tier: local
@@ -1359,9 +1349,6 @@ journeys:
   jg-design-gate-first-draft:
     tier: local
     command: bash tests/jg-design-gate-first-draft.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-design-gate:
-    tier: local
-    command: bash tests/jg-design-gate.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-devin-signals-live-e2e:
     tier: local
     command: bash tests/jg-devin-signals-live-e2e.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

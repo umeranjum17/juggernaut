@@ -27,12 +27,6 @@
       "no_value": "-",
       "url_pattern": "^https?:"
     },
-    "owner_proof": {
-      "no_value": "-",
-      "waiver_pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}Z$",
-      "card_kind": "evidence",
-      "card_key_suffix_separator": "-"
-    },
     "brief_rules": {
       "skip_kinds": [
         "squad_lead"

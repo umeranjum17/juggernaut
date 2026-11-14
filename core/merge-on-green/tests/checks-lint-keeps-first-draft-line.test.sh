@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # E2E: the evidence lint republishes the task's completion receipt with its own report, and that must not lose the
-# worker's `first-draft receipt: <ref>` line, which the design gate reads from the receipt. Real checks-lint.sh, real
-# receipt publisher and the real jg_dod_design_gate in a temporary home; only done-done and gh are stubs (no network). The gate stays as strict: no line, or a line from another head, is still refused.
+# worker's `first-draft receipt: <ref>` line (the design gate is gone, pcp-s7; the receipt still carries the line for the record). Real checks-lint.sh, real
+# receipt publisher and the real receipt-line reader in a temporary home; only done-done and gh are stubs (no network). No line, or a line from another head, is still not found.
 set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P) # the core tree
 LINT=$ROOT/merge-on-green/checks-lint.sh
@@ -41,14 +41,14 @@ lint() { # the evidence lint: it writes its own report and republishes the recei
   printf '## Checks\noutcome: the lane proves the new screen\nrepro: n/a: no bug\nproof: no verify skill - bash fixture\nevidence: evidence/shot.png\n' >"$d/fm/data/lane-x/report.md"
   JG_HOME=$JG_HOME "$LINT" "$URL" "$d/fm/data/lane-x" 2>&1
 }
-gate() { # the design gate both merge paths run, for the head the receipt binds
+gate() { # the receipt-line reader, for the head the receipt binds
   (
     set -u
     # shellcheck disable=SC2317,SC2329 # the sourced merge-gate lib calls this stub
     jg_dod_meta_value() { sed -n "s/^$2=//p" "$1" | tail -1; }
     # shellcheck source=/dev/null
     . "$d/fm/bin/jg-merge-gate-lib.sh"
-    jg_dod_design_gate "$d/fm/state" lane-x "$d/fm/state/lane-x.meta" "$(git -C "$d/wt" rev-parse HEAD)"
+    _jg_dod_receipt_line "$d/fm/state" lane-x "$(git -C "$d/wt" rev-parse HEAD)" "first-draft receipt"
   )
 }
 
@@ -64,12 +64,12 @@ case $(jq -r .evidence "$d/fm/state/lane-x.run-receipt.json") in
 esac
 if out=$(gate 2>&1); then ok 'the gate still reads the first-draft line after the lint'; else bad "the lint dropped the first-draft line: $out"; fi
 
-# 3. The rule is as strict as before: a task whose receipt never had a line is refused, also after the lint.
+# 3. A receipt that never had a line has none after the lint either.
 rm -f -- "$d/fm/state/lane-x.run-receipt.json"
 publish "$d/no-line.txt"
 lint >/dev/null || true
 if out=$(gate 2>&1); then bad 'a receipt with no first-draft line must still be refused'; else
-  case $out in *"no 'first-draft receipt: <ref>' evidence line"*) ok 'no line is still refused' ;; *) bad "wrong refusal: $out" ;; esac
+  ok 'no line is still not found'
 fi
 
 # 4. A line from an older head is not carried to a newer head.

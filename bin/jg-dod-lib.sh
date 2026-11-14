@@ -24,10 +24,7 @@
 # contract line so brief, spawn record, and worker instructions agree.
 # Callers of the gate are bin/jg-crew-state.sh (current-state done),
 # bin/jg-pr-check.sh (PR registration), and bin/jg-inactive-reconcile.sh
-# (squad_lead ledger-first publish of a child done). A design task's done is refused
-# first while its first-draft rule is unmet: jg_design_done_gate (bin/jg-merge-gate-lib.sh)
-# resolves the `first-draft receipt: <ref>` line in its completion receipt and needs
-# that run record to prove a make or refine of every option the change presents. A ship `done:` is not
+# (squad_lead ledger-first publish of a child done). A ship `done:` is not
 # accepted while the named head exists only in the worker's disposable copy,
 # except when the done names a pull request whose live forge head is exactly
 # that copy's HEAD: the push that opened the PR can leave no remote-tracking
@@ -851,13 +848,6 @@ jg_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
   # only with its board card at that head.
   if declare -F jg_ui_card_done_gate >/dev/null && [ -n "$id" ] && [ -n "$meta" ]; then
     jg_ui_card_done_gate "$id" "$meta" "$design_head" "${url:--}" || return 1
-  fi
-  # The captain's first-draft rule (bin/jg-merge-gate-lib.sh owns it): a design task
-  # reaches done only when its completion receipt names a first-draft record that made
-  # or refined every option it presents. The refusal prints the option by name, so the
-  # done is not accepted and the lane stops here instead of warning.
-  if [ -n "$state" ] && [ -n "$id" ] && [ -n "$meta" ]; then
-    jg_design_done_gate "$state" "$id" "$meta" "$design_head" || return 1
   fi
   if declare -F jg_receipts_accept_done >/dev/null; then jg_receipts_accept_done "$wt" "$mode" "$line" "$state" "$id" "$meta" "$forge_head" || return 1; fi
   # A local-trunk lane's done needs the whole proof at its head, up front: the receipt and a
