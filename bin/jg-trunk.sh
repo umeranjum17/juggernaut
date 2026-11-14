@@ -186,6 +186,9 @@ LANDER_ACCOUNT="${CLAUDE_CONFIG_DIR:-}"; unset CLAUDE_CONFIG_DIR
 . "$SCRIPT_DIR/jg-version-branch-lib.sh"
 # shellcheck source=bin/jg-trunk-policy-lib.sh
 . "$SCRIPT_DIR/jg-trunk-policy-lib.sh"
+# shellcheck source=bin/jg-trunk-carry-lib.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/jg-trunk-carry-lib.sh"
 # shellcheck source=bin/jg-timeout-lib.sh
 . "$SCRIPT_DIR/jg-timeout-lib.sh"
 # shellcheck source=bin/jg-trunk-resolve-lib.sh
@@ -2259,10 +2262,13 @@ rollover_if_merged() {
   retire_old
 }
 
-# Every commit of <old> is in <target>: by ancestry, or by patch when the release was squashed or the fix was cherry-picked.
+# Every commit of <old> is in <target>: by ancestry, or by patch when the release was squashed, rebased or the fix was cherry-picked;
+# an empty commit has nothing to carry (jg-trunk-carry-lib.sh). A compare that fails is not carried.
 carried() {  # <old> <target>
+  local left
   git -C "$PROJ" merge-base --is-ancestor "$1" "$2" 2>/dev/null && return 0
-  ! git -C "$PROJ" cherry "$2" "$1" 2>/dev/null | grep -q '^+'
+  left=$(jg_trunk_uncarried "$PROJ" "$2" "$1") || return 1
+  [ -z "$left" ]
 }
 
 # After a release merged and the next trunk was cut, clean the OLD trunk up: delete its remote branch, its local
@@ -2288,7 +2294,7 @@ retire_old() {
       git -C "$PROJ" cat-file -e "$tip^{commit}" 2>/dev/null || git -C "$PROJ" fetch -q origin "refs/heads/$b" 2>/dev/null </dev/null || true
       git -C "$PROJ" cat-file -e "$tip^{commit}" 2>/dev/null || { blocked="the tip ${tip:0:12} cannot be read"; break; }
       if ! carried "$tip" "$new"; then
-        out=$(git -C "$PROJ" cherry "$new" "$tip" | sed -n 's/^+ //p' | while read -r sha; do git -C "$PROJ" log -1 --format='%h %s' "$sha"; done | paste -sd';' -)
+        out=$(jg_trunk_uncarried "$PROJ" "$new" "$tip" | while read -r sha; do git -C "$PROJ" log -1 --format='%h %s' "$sha"; done | paste -sd';' -)
         blocked="hotfix not carried into $TRUNK: $out"; break
       fi
     done

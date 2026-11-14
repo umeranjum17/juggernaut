@@ -7,6 +7,9 @@ HOME_DIR=${JG_HOME:?JG_HOME is required}
 STATE=${JG_STATE_OVERRIDE:-$HOME_DIR/state}
 DATA=${JG_DATA_OVERRIDE:-$HOME_DIR/data}
 CONFIG=${JG_CONFIG_OVERRIDE:-$HOME_DIR/config}
+# shellcheck source=bin/jg-trunk-carry-lib.sh
+# shellcheck disable=SC1091
+. "$HERE/jg-trunk-carry-lib.sh"
 fail() { printf 'release proof: %s\n' "$*" >&2; exit 1; }
 
 # This command runs inside done-done so its output and step record belong to that run.
@@ -81,8 +84,8 @@ if [ "${1:-}" = capture ]; then
       for tip in $local_tip $remote_tip; do
         git cat-file -e "$tip^{commit}" 2>/dev/null || git fetch -q "$(git -C "$project" remote get-url origin)" "$tip" || fail "cannot inspect old trunk $branch at $tip"
         if ! git merge-base --is-ancestor "$tip" "$head"; then
-          changes=$(git cherry "$head" "$tip") || fail "cannot compare old trunk $branch"
-          if grep -q '^+' <<<"$changes"; then fail "hotfix on $branch is not carried into $head"; fi
+          changes=$(jg_trunk_uncarried . "$head" "$tip") || fail "cannot compare old trunk $branch"
+          if [ -n "$changes" ]; then fail "hotfix on $branch is not carried into $head"; fi
         fi
       done
       printf 'Old trunk checked: %s\n' "$branch"

@@ -352,6 +352,14 @@ git -C "$PROJ" fetch -q "$W/lane" old-hotfix:refs/heads/trunk-old || fail 'impor
 printf 'proj\t0\ttrunk-old\t%s\n' "$(git -C "$W/lane" rev-parse HEAD^)" >> "$HOME_D/data/trunk-versions.tsv"
 out=$(trunk release "$PROJ" 2>&1) && fail 'an uncarried old trunk hotfix must refuse'
 assert_contains "$out" 'hotfix on trunk-old is not carried' 'the refusal must identify the old trunk'
+# An old trunk whose only extra commit is empty has no hotfix to carry: the proof does not name it (ticket trunk-empty-commit-carry).
+git -C "$W/lane" checkout -q -b old-empty "$(tip)^" || fail 'create empty old trunk fixture'
+git -C "$W/lane" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m 'old trunk, nothing changed'
+git -C "$PROJ" fetch -q "$W/lane" old-empty:refs/heads/trunk-empty || fail 'import empty old trunk fixture'
+printf 'proj\t0\ttrunk-empty\t%s\n' "$(git -C "$W/lane" rev-parse HEAD^)" >> "$HOME_D/data/trunk-versions.tsv"
+git -C "$PROJ" branch -q -D trunk-old || fail 'drop the hotfix fixture'
+out=$(trunk release "$PROJ" 2>&1) || :
+assert_not_contains "$out" 'hotfix on trunk-empty' 'an empty commit on an old trunk is not a hotfix'
 cp "$W/saved-versions" "$HOME_D/data/trunk-versions.tsv"
 : > "$W/change-pin"
 out=$(trunk release "$PROJ" 2>&1) && fail 'a changed green pin must refuse'
