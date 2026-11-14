@@ -253,6 +253,8 @@ SH
 chmod +x "$W/fakebin/gh-axi"
 cat > "$W/fakebin/gh" <<SH
 #!/usr/bin/env bash
+# A flag file makes the first read of the published PR body fail, as the forge did on PRs 814 and 817.
+case "\$*" in *author,body,title,files,headRefOid*) [ ! -e "$W/lint-fail-once" ] || { rm -f "$W/lint-fail-once"; echo 'spawnSync gh ETIMEDOUT' >&2; exit 1; } ;; esac
 case "\$*" in
   *author,body,title,files,headRefOid*) jq -n --rawfile body "$W/pr-body" --arg head "\$(git -C "$PROJ" rev-parse trunk)" '{body:\$body,title:"Fixture release",headRefOid:\$head,headRefName:"trunk",files:[],author:{login:"fixture"}}' ;;
   *isDraft*) echo '{"isDraft":false}' ;;
@@ -388,7 +390,10 @@ awk -F "\t" '$1 != "proj" || $3 != "trunk"' "$HOME_D/data/trunk-versions.tsv" > 
 cp "$W/versions-without-trunk" "$HOME_D/data/trunk-versions.tsv"
 expected_base=$(git -C "$PROJ" merge-base trunk main)
 git -C "$PROJ" config remote.origin.pushurl "$W/no-such-remote.git"
+touch "$W/lint-fail-once"; export JG_RELEASE_LINT_RETRY_SLEEP=0
 out=$(trunk release "$PROJ" 2>&1) || fail "proof retry failed: $out"
+[ ! -e "$W/lint-fail-once" ] || fail 'the failing first read of the published body was never hit'
+pass 'a failed first read of the published Checks block is tried again and the release proof still completes'
 [ "$(awk -F '\t' '$1 == "proj" && $3 == "trunk" { print $4 }' "$HOME_D/data/trunk-versions.tsv")" = "$expected_base" ] || fail 'the missing trunk version must record its merge base'
 pass 'a release retry reconstructs and records the missing trunk release base from the default branch'
 log=$(cat "$DONE_DONE_HOME/evidence/"*/run.log)

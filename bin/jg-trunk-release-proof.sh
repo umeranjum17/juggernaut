@@ -138,7 +138,14 @@ remote_head=$(cd "$project" && gh-axi api "$api" --jq '.head.sha') || fail 'cann
 body=$(cd "$project" && gh-axi api "$api" --jq '.body // ""') || fail 'cannot read the PR body'
 body=$(printf '%s\n\n%s\n' "$body" "$(cat "$dir/checks.md")")
 (cd "$project" && gh-axi api PATCH "$api" --raw-field "body=$body" >/dev/null) || fail 'cannot publish the Checks block'
-JG_HOME=$HOME_DIR "$HERE/../core/merge-on-green/checks-lint.sh" "$url" "$dir" || fail 'published Checks lint failed'
+# The forge can serve the old body just after the write, or time out (PR 814: "no Checks block" twelve seconds after the write;
+# PR 817: gh ETIMEDOUT). Either left no receipt and a hand-run proof, so the lint of the published body is tried again a few times.
+lint_published=0
+for try in 1 2 3 4; do
+  if JG_HOME=$HOME_DIR "$HERE/../core/merge-on-green/checks-lint.sh" "$url" "$dir"; then lint_published=1; break; fi
+  [ "$try" -eq 4 ] || sleep "${JG_RELEASE_LINT_RETRY_SLEEP:-5}"
+done
+[ "$lint_published" -eq 1 ] || fail 'published Checks lint failed'
 (cd "$clone" && JG_HOME=$HOME_DIR JG_FORK_BIN=$HERE JG_STATE_OVERRIDE=$STATE JG_RECEIPT_PR=$url "$HERE/../core/receipts/bin/jg-run-receipt.sh" "$id" PASS "$dir/checks.md") || fail 'cannot publish the completion receipt'
 # shellcheck source=bin/jg-board-link-lib.sh
 . "$HERE/jg-board-link-lib.sh"
