@@ -116,6 +116,9 @@ journeys:
   trunk-latency:
     tier: local
     command: (env -u JG_TASK_ID bash tests/jg-trunk-latency.test.sh && env -u JG_TASK_ID bash tests/jg-trunk-queue-why.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  trunk-ci-result:
+    tier: local
+    command: env -u JG_TASK_ID bash tests/jg-trunk-ci-result.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1 && printf '{"target":{"version":"core/trunk-ci/ci-result.sh at this head"},"start":"a real trunk with landed commits and a forge stand-in holding their CI runs","steps":["run the check in watch mode over a green and a red commit","switch to act mode and run it over a new green and a new red commit","run it when more than 2 of the last 20 results are red"],"result":"watch mode records each commit once and changes no trunk record, act mode sends each result to jg-trunk.sh ci and a red moves the green pin back, and a red-heavy trunk is held"}\n' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
   status-latency:
     tier: local
     command: env -u JG_TASK_ID bash tests/jg-status-latency.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

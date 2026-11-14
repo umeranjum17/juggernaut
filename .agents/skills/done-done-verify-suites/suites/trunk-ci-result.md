@@ -1,0 +1,3 @@
+# Trunk CI result reaches the trunk
+
+Trunk CI result: run `done-done run trunk-ci-result` (which runs `bash tests/jg-trunk-ci-result.test.sh`); the real `core/trunk-ci/ci-result.sh` reads a forge stand-in over a real trunk and proves a green and a red commit each get one row in `data/trunk-ci-observed.tsv` with the trunk untouched in watch mode, a commit with a run still going or off the trunk gets none, act mode sends each result to the real `bin/jg-trunk.sh ci` and a red moves the green pin back, act mode holds when more than 2 of the last 20 results are red, a silent forge writes nothing, and the wiring installs and the unwiring removes the check (screen: none).
