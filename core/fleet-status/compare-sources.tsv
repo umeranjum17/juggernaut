@@ -1,0 +1,27 @@
+# compare-sources.tsv - for compare.sh: each machine's raw source records, read WITHOUT its lister (plain find, stat, awk, jq), so a lister that
+# misses or invents a record shows as a difference. Columns: machine, a command that prints `<id><TAB><epoch>` (epoch empty when the source holds no time).
+# It runs with STATE, DATA and CONFIG set. A machine with no row here is compared by count of its lister only and says so.
+account	for t in claude codex; do f=$STATE/$t-accounts.json; if [ -s "$f" ]; then jq -r --arg t $t --arg e "$(stat -c %Y "$f")" '.accounts[]? | "\($t).\(.id)\t\($e)"' "$f"; else printf '%s.unread\t\n' $t; fi; done
+alert	find "$STATE/alerts" -maxdepth 1 -name '*.rec' -printf '%f\t%T@\n' 2>/dev/null | sed 's/\.rec\t/\t/; s/\.[0-9]*$//'
+bypass	awk -F'\t' -v e="$(stat -c %Y "$CONFIG/proof-bypass" 2>/dev/null)" '$1 !~ /^#/ && $1 != "" { print $1 "\t" e }' "$CONFIG/proof-bypass" 2>/dev/null
+cleanup	{ find "$STATE" -maxdepth 1 -name '*.backlog-close' -printf '%f\t%T@\n' | sed 's/\.backlog-close\t/\t/; s/\.[0-9]*$//'; find "${JG_TMP_ROOT:-${TMPDIR:-/tmp}}" -maxdepth 1 -name 'jg-*' -printf 'tmp:%f\t%T@\n' | sed 's/\.[0-9]*$//'; }
+delivering	awk -F'\t' 'NF >= 5 && $1 ~ /^[0-9]+$/ { e[$2] = $1 } END { for (t in e) print t "\t" e[t] }' "$DATA/moves.log" 2>/dev/null
+delivery	awk -F'\t' -v n="$(stat -c %Y "$JG_HOME/core/machines/changes.tsv" 2>/dev/null)" '$1 !~ /^#/ && $1 != "" { print $1 "\t" n }' "$JG_HOME/core/machines/changes.tsv" 2>/dev/null
+hold	grep -l '^decision_keys=.' "$STATE"/*.meta 2>/dev/null | while read -r f; do printf '%s\t%s\n' "$(basename "$f" .meta)" "$(stat -c %Y "$f")"; done
+host	find "$STATE/.stops" -maxdepth 1 -name 'pool-*.pool-full' -printf '%f\t%T@\n' 2>/dev/null | sed 's/^pool-//; s/\.pool-full\t/\t/; s/\.[0-9]*$//'
+landing	find "$DATA/jg-trunk-landing" -maxdepth 1 -name '*.state' -printf '%f\t%T@\n' 2>/dev/null | sed 's/\.state\t/\t/; s/\.[0-9]*$//'
+lane-delivery	find "$STATE" -maxdepth 1 -name '*.meta' -printf '%f\t%T@\n' | sed 's/\.meta\t/\t/; s/\.[0-9]*$//'
+message	find "$STATE" -mindepth 2 -maxdepth 2 -path '*.inbox/*.msg' -printf '%h\t%f\t%T@\n' | awk -F'\t' '{ d=$1; sub(/.*\//,"",d); sub(/\.inbox$/,"",d); n=$2; sub(/\.msg$/,"",n); e=$3; sub(/\..*/,"",e); print d ":" n "\t" e }'
+presence	[ -d "$STATE" ] && printf '%s\t%s\n' "$(basename "$JG_HOME")" "$(date +%s)"
+proving	awk -F'\t' 'NF >= 5 && $1 ~ /^[0-9]+$/ { e[$2] = $1 } END { for (t in e) print t "\t" e[t] }' "$DATA/moves.log" 2>/dev/null
+release	awk -F'\t' '$1 !~ /^revert-/ && !s[$1]++ { print $1 "\t" $4 }' "$DATA/trunk-landings.tsv" 2>/dev/null
+squad-lead	sed -n 's/^- \([^ ]*\) - .*/\1/p' "$DATA/squad_leads.md" 2>/dev/null | while read -r i; do printf '%s\t%s\n' "$i" "$(stat -c %Y "$STATE/$i.meta" 2>/dev/null)"; done
+status-verb	find "$STATE" -maxdepth 1 -name '*.status' -printf '%f\t%T@\n' | sed 's/\.status\t/\t/; s/\.[0-9]*$//'
+supervision	[ -d "$STATE" ] && printf '%s\t%s\n' "$(basename "$JG_HOME")" "$(stat -c %Y "$STATE/.last-watcher-beat" 2>/dev/null)"
+task	find "$STATE" -maxdepth 1 -name '*.meta' -printf '%f\t%T@\n' | sed 's/\.meta\t/\t/; s/\.[0-9]*$//'
+ticket	awk -F'\t' 'NF >= 5 && $1 ~ /^[0-9]+$/ { e[$2] = $1 } END { for (t in e) print t "\t" e[t] }' "$DATA/moves.log" 2>/dev/null
+trunk	find "$STATE" -maxdepth 1 -name 'trunk-tip-*' -printf '%f\t%T@\n' | sed 's/^trunk-tip-//; s/\.[0-9]*$//'
+trunk-pointers	find "$STATE" -maxdepth 1 -name '*.meta' -printf '%f\t%T@\n' | sed 's/\.meta\t/\t/; s/\.[0-9]*$//'
+worker	find "$STATE" -maxdepth 1 -name '*.meta' -printf '%f\t%T@\n' | sed 's/\.meta\t/\t/; s/\.[0-9]*$//'
+markers	while read -r k; do find "$STATE" -maxdepth 1 -name ".$k-*" -printf '%f\t%T@\n'; done < <(awk -F'\t' '$1 == "marker" { print $2 }' "$JG_MACHINES_TABLES/markers.tsv") | sed 's/\.[0-9]*$//'
+wait	find "$STATE" -maxdepth 1 -name '*.status' -printf '%f\t%T@\n' | sed 's/\.status\t/\t/; s/\.[0-9]*$//'

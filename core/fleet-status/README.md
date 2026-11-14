@@ -31,6 +31,15 @@ A missing home lists every machine as unknown. Proof: `bash tests/jg-fleet-diges
 Limit: `readings.sh` runs one observer for each record, so a machine with many records (cleanup, delivering, ticket, task) does not answer in the bound
 on this home today and reads unknown. A batch read in those listers is the follow-up that makes them read.
 
+## Comparison with the source records (jgp-r5-s4)
+
+`compare.sh <home> [--bound <seconds>]` reads each machine as the digest does, reads the same machine's raw source files without its lister
+(`compare-sources.tsv`: plain find, stat, awk), and lists every difference: `missing` (in the source, not in the view), `extra`, `age` (the view's age
+is more than 2 s from the source's), `timeout` (no reading in the bound, with the source's record count) and `nosource`. Each line ends with its reason from
+`compare-explain.tsv`, or `UNEXPLAINED`, and the command exits 1 while one is. It writes nothing. Proof: `bash tests/jg-fleet-compare.test.sh`; the real home is
+compared in `journeys/machine-digest.sh`. On this home a 10 s bound leaves the large machines (cleanup, delivering, hold, landing, proving, release, ticket) as `timeout`;
+a longer `--bound` compares them. A lister that drops a record, or a view that gets an age wrong, is `UNEXPLAINED`.
+
 ## At scale (H38b)
 
 Each home writes one digest, `data/fleet-status/digest.tsv`, with `board.sh --digest <home>`: a `#digest <epoch> <new moves>` line, then

@@ -1,0 +1,13 @@
+# compare-explain.tsv - why a difference between the view and the source records is expected. compare.sh reads it.
+# Columns: kind, machine (or *), then the reason. A difference with no row here prints UNEXPLAINED and compare.sh exits 1.
+# Kinds: unreadable (the home cannot be read), timeout (the machine gave no reading in the bound, so none of its records was compared), missing (a source record the view does not list),
+# extra (a view record the source does not hold), age (the view's age differs from the source's by more than 2 s), nosource (the machine has no raw-source row).
+timeout	*	the observer runs once for each record, and the 24 machines are read at once, so a machine with many records or a busy host does not answer in the bound; the view names it unknown, never fresh, and does not drop it (README, Limit)
+missing	status-verb	a hidden status file (such as .startup-network.status) is a startup record, not a lane; the lister skips dotfiles on purpose
+missing	wait	a hidden status file (such as .startup-network.status) is a startup record, not a lane; the lister skips dotfiles on purpose
+missing	cleanup	a temp entry (jg-*) that other jobs on this host create or remove between the two reads
+extra	*	a record written between the source read and the view read (both read a live home)
+age	presence	presence is read live: its age is 0 by definition, the source clock is the read itself
+age	supervision	the watcher beat is touched while both reads run, so the two ages differ by the time the reads took
+nosource	*	the machine is compared by its record count only
+unreadable	home	the home does not exist or has no state; the view lists every machine unknown, so no record can be compared
