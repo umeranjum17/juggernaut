@@ -182,6 +182,8 @@ The shared gate lifecycle boundary is summarized in [architecture.md](architectu
 | `jg-config-inherit-lib.sh` | Shared primary-to-Squad-Lead inherited local-material propagation and config-reread delivery |
 | `jg-backlog.sh`        | Run `bin/jg-backlog.sh` against this home's backlog from any working directory               |
 | `jg-backlog-lib.sh`    | Shared Beads store selector                  |
+| `jg-backlog-homes.sh`  | `jg-backlog.sh homes --json`: every home and its store as JSON, `"remote": true` for a lead on another machine, so a reader never parses the lead registry |
+| `jg-home-name-lib.sh`  | The home's name in a store, `main` or `lead:<id>`: the actor of its writes and the filer in `created_by` |
 | `jg-goal.sh`             | Declare, show and cancel a Goal: a Beads epic with five ordered steps and a finish line whose proof must fail first; `rows` prints every Goal row for the loop check; `stop` and `resume` hold and release a Goal; `released` keeps the shipped version on the epic; `notice` and `finish` print its one message each, keyed so none repeats, and a finish names the version only where the release record has it; `proof-start`, `prove` and `proof-failed` run the proof step: a pass closes the Goal, a failure adds a fix step or a limit stop |
 | `jg-beads-view.py`       | Render `bd` rows in the read shape `bin/jg-backlog.sh` prints                                |
 | `jg-beads-write.py`      | Serve `bin/jg-backlog.sh` writes on a Beads store, in its reply shape                        |

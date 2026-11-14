@@ -5,7 +5,7 @@
 #        jg-backlog.sh --help
 #
 # Every routine juggernaut backlog read or mutation goes through this command. It serves
-# `show`, `view`, `list`, `ready`, `ready --spawnable` (the tickets this home can start now, bin/jg-backlog-spawnable.sh, ended at 10 seconds with exit 124), `approve-dispatch`, `markdown`, `add`, `update`, `done`, `block`, `unblock`,
+# `show`, `view`, `list`, `ready`, `ready --spawnable` (the tickets this home can start now, bin/jg-backlog-spawnable.sh, ended at 10 seconds with exit 124), `approve-dispatch`, `markdown`, `homes --json` (every home and its store, `"remote": true` for a lead on another machine, bin/jg-backlog-homes.sh), `add`, `update`, `done`, `block`, `unblock`,
 # `start`, `task`, `reopen`, `hold`, `unhold`, `on-report`, `public-followup` and `relink` from the store that
 # `config/beads-dir` names (bin/jg-backlog-lib.sh); any other verb exits 2 with nothing
 # run. A relative value of `--to` or any `--*-file` flag (`--body-file`, ...) is made
@@ -96,6 +96,8 @@ JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$JG_ROOT}}"
 DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
 # shellcheck source=bin/jg-backlog-lib.sh disable=SC1091
 . "$SCRIPT_DIR/jg-backlog-lib.sh"
+# shellcheck source=bin/jg-home-name-lib.sh disable=SC1091
+. "$SCRIPT_DIR/jg-home-name-lib.sh"
 # shellcheck source=bin/jg-backlog-transition-lib.sh disable=SC1091
 . "$SCRIPT_DIR/jg-backlog-transition-lib.sh"
 
@@ -251,6 +253,7 @@ case "${1:-}" in
     fi
     beads_read; exit $? ;;
   markdown) beads_read; exit $? ;;
+  homes) exec "$SCRIPT_DIR/jg-backlog-homes.sh" "${ARGS[@]:1}" ;;
   add|create|update|edit|done|close|block|unblock|start|task|reopen|hold|unhold|on-report|public-followup|relink|moment|wait|ticket-stage|ticket-drift|times|trace) ;;
   *) fail "the beads backlog does not serve ${1:-this command}" ;;
 esac
@@ -411,6 +414,10 @@ JG_BEADS_WIRE_LEAD=$_jg_taxi_sl_wire JG_BEADS_HOME_ID=main
 _jg_lead_marker=$(jg_compat_marker "$JG_HOME")
 [ ! -r "$_jg_lead_marker" ] || JG_BEADS_HOME_ID=$_jg_taxi_sl_wire$(cat "$_jg_lead_marker")
 export JG_BEADS_WIRE_LEAD JG_BEADS_HOME_ID
+# The filer is the home: bd's actor (`created_by`, the journal) and the assignee of a row held with no worker are `main` or
+# `lead:<id>` unless the caller names an actor.
+BEADS_ACTOR=${BEADS_ACTOR:-$(jg_home_actor "$JG_HOME")}
+export BEADS_ACTOR
 jg_backlog_beads_write "$JG_HOME/config" ${ARGS[@]+"${ARGS[@]}"}
 _jg_rc=$?
 case "${1:-}" in add|create) [ "$_jg_rc" -ne 0 ] || key_tool sync >&2 || true ;; esac
