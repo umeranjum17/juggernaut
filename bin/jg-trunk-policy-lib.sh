@@ -126,6 +126,7 @@ jg_trunk_policy() {  # <key> [<project>]
       verify-milestone-minutes) val=15 ;;
       verify-milestone-max) val=50 ;;
       verify-bad-share) val=5 ;;
+      verify-grace) val=0 ;;
       conflict-resolver) val='' ;;
       conflict-limit-seconds) val=600 ;;
       retest-runner) val='' ;;
