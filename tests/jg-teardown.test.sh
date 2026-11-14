@@ -2102,6 +2102,123 @@ test_windowless_leftover_retries_its_retained_legacy_stamp_without_the_flag() {
   pass "a windowless leftover retries its retained legacy stamp without --legacy-record"
 }
 
+# An interrupted control relaunch leaves a record with Herdr's session and workspace but no window,
+# tab or pane: no endpoint exists to close, so the landed-work test alone decides.
+write_windowless_herdr_meta() {  # <case-dir>
+  local case_dir=$1
+  write_windowless_legacy_meta "$case_dir" no-mistakes ship
+  printf '%s\n' 'spawn_gen=s1700000000.1.abc' 'backend=herdr' 'endpoint_task_id=task-x1' \
+    'herdr_session=default' 'herdr_workspace_id=w1' >> "$case_dir/state/task-x1.meta"
+}
+
+test_windowless_herdr_record_tears_down_when_landed_and_refuses_when_not() {
+  local case_dir rc before
+  case_dir=$(make_case windowless-herdr-landed)
+  write_windowless_herdr_meta "$case_dir"
+  seed_backlog_in_flight "$case_dir"
+  wt_commit "$case_dir" "landed work"
+  add_fork_with_pushed_branch "$case_dir"
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "windowless-herdr-landed: a landed Herdr record with no window was refused: $(cat "$case_dir/stderr")"
+  assert_absent "$case_dir/state/task-x1.meta" "windowless-herdr-landed: teardown left the record"
+  [ "$(backlog_row_state "$case_dir")" = "done" ] || fail "windowless-herdr-landed: the backlog item stayed open"
+
+  case_dir=$(make_case windowless-herdr-unlanded)
+  write_windowless_herdr_meta "$case_dir"
+  seed_backlog_in_flight "$case_dir"
+  wt_commit_file "$case_dir" feature.txt unique-herdr-content "real unlanded work"
+  before=$(cksum "$case_dir/state/task-x1.meta" | awk '{print $1, $2}')
+  set +e; run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"; rc=$?; set -e
+  expect_code 1 "$rc" "windowless-herdr-unlanded: unlanded work must refuse"
+  grep -q REFUSED "$case_dir/stderr" || fail "windowless-herdr-unlanded: no REFUSED line"
+  [ "$(cksum "$case_dir/state/task-x1.meta" | awk '{print $1, $2}')" = "$before" ] \
+    || fail "windowless-herdr-unlanded: the refusal modified the record"
+
+  case_dir=$(make_case windowless-herdr-pane)
+  write_windowless_herdr_meta "$case_dir"
+  printf '%s\n' 'herdr_tab_id=w1:t1' 'herdr_pane_id=w1:p1' >> "$case_dir/state/task-x1.meta"
+  seed_backlog_in_flight "$case_dir"
+  wt_commit "$case_dir" "landed work"
+  add_fork_with_pushed_branch "$case_dir"
+  set +e; run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"; rc=$?; set -e
+  expect_code 1 "$rc" "windowless-herdr-pane: a record that still names a pane has an endpoint and must refuse"
+  pass "a Herdr record with no window tears down when landed, and still refuses unlanded work or a named pane"
+}
+
+# A release record has no lane copy and no spawn_gen; its release PR decides.
+add_release_pr_state() {  # <case-dir> <state>
+  cat > "$1/fakebin/gh" <<SH
+#!/usr/bin/env bash
+[ "\${1:-} \${2:-}" = "pr view" ] && { echo $2; exit 0; }
+exit 1
+SH
+  chmod +x "$1/fakebin/gh"
+}
+
+write_release_meta() {  # <case-dir>
+  jg_write_meta "$1/state/task-x1.meta" "project=$1/project" "kind=release" "mode=local-trunk" "yolo=off" \
+    "pr=https://github.com/example/repo/pull/7" "pr_head=b0bf5e0647b0d4eaf39618ec732b5f4e5536469d"
+}
+
+test_release_record_tears_down_only_when_its_pr_merged() {
+  local case_dir rc before state
+  for state in MERGED OPEN; do
+    case_dir=$(make_case "release-$state")
+    write_release_meta "$case_dir"
+    seed_backlog_in_flight "$case_dir" release
+    add_release_pr_state "$case_dir" "$state"
+    before=$(cksum "$case_dir/state/task-x1.meta" | awk '{print $1, $2}')
+    set +e; run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"; rc=$?; set -e
+    if [ "$state" = MERGED ]; then
+      expect_code 0 "$rc" "release-MERGED: a release record with a merged PR must tear down: $(cat "$case_dir/stderr")"
+      assert_absent "$case_dir/state/task-x1.meta" "release-MERGED: teardown left the record"
+    else
+      expect_code 1 "$rc" "release-OPEN: a release record whose PR is open must refuse"
+      grep -q REFUSED "$case_dir/stderr" || fail "release-OPEN: no REFUSED line"
+      [ "$(cksum "$case_dir/state/task-x1.meta" | awk '{print $1, $2}')" = "$before" ] \
+        || fail "release-OPEN: the refusal modified the record"
+      [ "$(backlog_row_state "$case_dir")" = in_flight ] || fail "release-OPEN: the refusal closed the backlog item"
+    fi
+  done
+  pass "a release record with no spawn_gen tears down when its PR merged and refuses while it is open"
+}
+
+# The lander rebases a lane's commit before landing it, so the trunk holds another commit than the
+# lane's HEAD; its own landing row names that commit.
+test_local_trunk_cleanup_by_landing_row() {
+  local scenario case_dir head rebased at rc out
+  for scenario in row-landed row-then-later-work no-row; do
+    case_dir=$(make_case "landing-row-$scenario")
+    write_meta "$case_dir" local-trunk ship
+    printf '%s\n' '- project [local-trunk] - fixture' > "$case_dir/data/projects.md"
+    seed_backlog_in_flight "$case_dir"
+    wt_commit_file "$case_dir" feature.txt 'Umer feature' 'task-x1: feature'
+    head=$(git -C "$case_dir/wt" rev-parse HEAD)
+    at=$(git -C "$case_dir/wt" show -s --format=%ct HEAD)
+    rebased=$(git -C "$case_dir/project" commit-tree "$head^{tree}" -p main -m 'task-x1: feature (rebased)')
+    git -C "$case_dir/project" branch trunk "$rebased"
+    printf '%s\n' trunk > "$case_dir/state/trunk-branch-project"
+    printf '%s\n' "$rebased" > "$case_dir/state/trunk-tip-project"
+    [ "$scenario" = no-row ] || printf 'task-x1\tproject\t%s\t%s\tfull\n' "$rebased" "$at" > "$case_dir/data/trunk-landings.tsv"
+    if [ "$scenario" = row-then-later-work ]; then
+      printf '%s\n' later > "$case_dir/wt/later.txt"
+      git -C "$case_dir/wt" add later.txt
+      GIT_COMMITTER_DATE="@$((at + 100))" git -C "$case_dir/wt" -c user.email=t@t -c user.name=t commit -q -m 'task-x1: later'
+    fi
+    head=$(git -C "$case_dir/wt" rev-parse HEAD)
+    rc=0; out=$(run_teardown "$case_dir" 2>&1) || rc=$?
+    if [ "$scenario" = row-landed ]; then
+      [ "$rc" -eq 0 ] || fail "$scenario: a lane the lander rebased was refused: $out"
+      assert_absent "$case_dir/state/task-x1.meta" "$scenario: teardown left the record"
+    else
+      [ "$rc" -ne 0 ] || fail "$scenario: cleanup discarded unlanded work"
+      assert_refusal_retained_task_state "$case_dir" "$scenario" "$head"
+      assert_contains "$out" REFUSED "$scenario: refusal must name the cause"
+    fi
+  done
+  pass "a lane the lander rebased is cleaned by its landing row, and later or unrecorded work refuses"
+}
+
 test_legacy_record_teardown_completes_when_landed_and_endpoint_dead() {
   local case_dir out
   case_dir=$(make_case legacy-allow)
@@ -4993,6 +5110,9 @@ test_windowless_record_with_spawn_gen_tears_down_when_nothing_is_unlanded
 test_windowless_record_with_spawn_gen_still_refuses_unlanded_work
 test_windowless_record_outside_the_leftover_class_still_refuses
 test_windowless_leftover_retries_its_retained_legacy_stamp_without_the_flag
+test_windowless_herdr_record_tears_down_when_landed_and_refuses_when_not
+test_release_record_tears_down_only_when_its_pr_merged
+test_local_trunk_cleanup_by_landing_row
 test_legacy_record_teardown_completes_when_landed_and_endpoint_dead
 test_legacy_record_teardown_refuses_unlanded_work
 test_legacy_record_teardown_refuses_an_ambiguous_endpoint

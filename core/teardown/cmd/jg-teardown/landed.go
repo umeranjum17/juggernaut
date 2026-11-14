@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -14,10 +15,14 @@ type forgejoRef struct{ host, path, number, login string }
 type landing struct {
 	wt, branch, project, prURL, baseBranch string
 	trunkBranch, trunkGap, laneBase        string
-	outsideOrigin                          bool
-	forgejo                                *forgejoRef
-	gap                                    string
-	contentGap                             string
+	// landedCommit and landedAt are the lander's own record of this lane: the rebased commit it put on
+	// the trunk and the epoch it did so. The lane's HEAD is the pre-rebase commit, so it is not itself
+	// on the trunk.
+	landedCommit, landedAt string
+	outsideOrigin          bool
+	forgejo                *forgejoRef
+	gap                    string
+	contentGap             string
 	// empty is set when laneIsEmpty proved the copy never left its starting commit.
 	empty bool
 }
@@ -52,6 +57,8 @@ func landedFlags(fs *flag.FlagSet, l *landing) (build func()) {
 	fs.StringVar(&l.project, "project", "", "the project clone")
 	fs.StringVar(&l.prURL, "pr-url", "", "the PR recorded for the task")
 	fs.StringVar(&l.trunkBranch, "trunk-branch", "", "the project's local trunk branch, when the project is in local-trunk mode")
+	fs.StringVar(&l.landedCommit, "landed-commit", "", "the commit the lander recorded for this lane when it landed it on the local trunk")
+	fs.StringVar(&l.landedAt, "landed-at", "", "the epoch the lander recorded for that landing")
 	fs.StringVar(&l.laneBase, "lane-base", "", "the commit the lane started on; a copy whose HEAD is still that commit holds no work")
 	fs.StringVar(&l.baseBranch, "base-branch", "", "the task's recorded base branch")
 	fs.BoolVar(&l.outsideOrigin, "pr-outside-origin", false, "the recorded PR lives outside this copy's origin repository")
@@ -255,8 +262,33 @@ func (l *landing) landedOnTrunk() bool {
 	if l.laneIsEmpty() {
 		return false
 	}
-	if !gitOK(l.wt, "merge-base", "--is-ancestor", "HEAD", trunk) {
-		l.gap = "this copy's HEAD is not on the local " + l.trunkBranch
+	if gitOK(l.wt, "merge-base", "--is-ancestor", "HEAD", trunk) {
+		return true
+	}
+	l.gap = "this copy's HEAD is not on the local " + l.trunkBranch
+	return l.landedByRebase(trunk)
+}
+
+// landedByRebase: the lander rebases a lane's commit before it lands it, so the trunk holds a
+// different commit than the lane's HEAD. The lander's record of this lane names that commit and
+// the time it landed. The record proves the landing only when its commit is on the trunk and the
+// lane's HEAD was committed no later than that landing; a commit made after it is work the
+// landing never held, and stays refused.
+func (l *landing) landedByRebase(trunk string) bool {
+	if !shaRe.MatchString(l.landedCommit) || !gitOK(l.wt, "merge-base", "--is-ancestor", l.landedCommit, trunk) {
+		return false
+	}
+	at, err := strconv.ParseInt(l.landedAt, 10, 64)
+	if err != nil {
+		return false
+	}
+	committed, err := git(l.wt, "show", "-s", "--format=%ct", "HEAD")
+	if err != nil {
+		return false
+	}
+	when, err := strconv.ParseInt(strings.TrimSpace(committed), 10, 64)
+	if err != nil || when > at {
+		l.gap = "this copy's HEAD is not on the local " + l.trunkBranch + ", and it was committed after the lander's recorded landing"
 		return false
 	}
 	return true

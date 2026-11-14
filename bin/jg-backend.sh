@@ -612,6 +612,54 @@ jg_backend_validate_task_endpoint() {  # <meta-file> <task-id>
   return 0
 }
 
+# jg_backend_windowless_record_shape: a record that names no window names no
+# live endpoint, so a teardown has nothing to classify or kill. This is the one
+# owner of which windowless records qualify: the record has no window (or an
+# empty one), its backend is tmux or unrecorded, or Herdr with only its session
+# and workspace (no tab or pane, so no pane exists to address), it carries no
+# Orca terminal= or other backend's endpoint keys, and every other identity
+# field passes jg_backend_validate_task_endpoint as if it named the task's own
+# window. A kind=release record has no lane copy, so a missing worktree= is
+# its normal shape. Returns 0 for a qualifying record, 1 otherwise; it reads
+# the record only and never touches a runtime.
+jg_backend_windowless_record_shape() {  # <meta-file> <task-id>
+  local meta=$1 id=$2 window_count backend_count backend kind foreign other shape rc=1
+  window_count=$(LC_ALL=C grep -c '^window=' "$meta" 2>/dev/null || true)
+  backend_count=$(LC_ALL=C grep -c '^backend=' "$meta" 2>/dev/null || true)
+  case "$window_count:$(jg_meta_get "$meta" window)" in 0:|1:) ;; *) return 1 ;; esac
+  case "$backend_count" in 0|1) ;; *) return 1 ;; esac
+  backend=$(jg_meta_get "$meta" backend)
+  foreign='^terminal='
+  for other in $JG_BACKEND_KNOWN; do
+    case "$other" in
+      tmux) ;;
+      herdr)
+        # Herdr addresses a pane by tab and pane id; without both there is no pane.
+        foreign="$foreign|^herdr_tab_id=|^herdr_pane_id="
+        ;;
+      *) foreign="$foreign|^${other}_" ;;
+    esac
+  done
+  case "$backend" in
+    ''|tmux) foreign="$foreign|^herdr_" ;;
+    herdr) ;;
+    *) return 1 ;;
+  esac
+  ! LC_ALL=C grep -Eq "$foreign" "$meta" 2>/dev/null || return 1
+  kind=$(jg_meta_get "$meta" kind)
+  shape=$(umask 077; mktemp "${TMPDIR:-/tmp}/jg-windowless-shape.XXXXXX") || return 1
+  {
+    LC_ALL=C grep -Ev '^(window|backend|herdr_session|herdr_workspace_id)=' "$meta" || true
+    printf 'window=leftover:jg-%s\n' "$id"
+    if [ "$kind" = release ] && ! LC_ALL=C grep -q '^worktree=' "$meta"; then
+      printf 'worktree=/nonexistent/release-has-no-lane-copy\n'
+    fi
+  } > "$shape"
+  if jg_backend_validate_task_endpoint "$shape" "$id" 2>/dev/null; then rc=0; fi
+  rm -f "$shape"
+  return "$rc"
+}
+
 jg_backend_meta_for_window() {  # <target> <state-dir>
   local target=$1 state=$2 meta window terminal
   for meta in "$state"/*.meta; do

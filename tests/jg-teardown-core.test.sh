@@ -254,5 +254,23 @@ rm -f "$lab/ewt/dirty"
 out=$(sa --ticket-closed); rc=$?
 check "a lane with a commit of its own is not dropped, whatever its ticket" "$rc|$(printf '%s' "$out" | grep -c '^resolution=dropped')|$(printf '%s' "$out" | grep -c '^reason=not-on-trunk')" "1|0|1"
 
+# The lander rebases a lane's commit, so the trunk holds a different commit than the lane's HEAD. The
+# lander's record of the lane (commit, epoch) proves the landing only while that commit is on the
+# trunk and the lane's HEAD is no newer than the landing.
+head_time=$(g -C "$lab/ewt" show -s --format=%ct HEAD)
+( cd "$lab/proj" && g checkout -q -f --detach trunk && echo w > w && g add w && g commit -q -m rebased-work && g branch -q -f trunk HEAD && g checkout -q main )
+rebased=$(g -C "$lab/proj" rev-parse trunk)
+sr() { sa "$@"; }
+out=$(sr --landed-commit "$rebased" --landed-at "$head_time"); rc=$?
+check "a lane the lander rebased onto the trunk is cleaned, by its landing record" "$rc|$(printf '%s' "$out" | grep -c '^reason=')" "0|0"
+out=$(sr --landed-commit "$rebased" --landed-at "$((head_time - 1))"); rc=$?
+check "a lane committed after the recorded landing is refused" "$rc|$(printf '%s' "$out" | grep -c '^reason=not-on-trunk')" "1|1"
+out=$(sr --landed-commit "$(g -C "$lab/ewt" rev-parse HEAD)" --landed-at "$head_time"); rc=$?
+check "a landing record whose commit is its own unlanded head is refused" "$rc" 1
+out=$(sr --landed-commit "$(printf '0%.0s' $(seq 40))" --landed-at "$head_time"); rc=$?
+check "a landing record naming a commit the trunk does not hold is refused" "$rc|$(printf '%s' "$out" | grep -c '^reason=not-on-trunk')" "1|1"
+out=$(sr); rc=$?
+check "the same lane with no landing record is still refused" "$rc|$(printf '%s' "$out" | grep -c '^reason=not-on-trunk')" "1|1"
+
 [ "$fails" -eq 0 ] || { printf '%d check(s) failed\n' "$fails"; exit 1; }
 printf 'all jg-teardown-core tests passed\n'

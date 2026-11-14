@@ -578,30 +578,9 @@ TEARDOWN_BACKLOG_APPLIES=0
 TEARDOWN_BACKLOG_SKIP_REASON=
 TEARDOWN_WINDOWLESS=0
 TEARDOWN_WINDOWLESS_SHAPE=0
-TEARDOWN_WINDOW_COUNT=$(LC_ALL=C grep -c '^window=' "$META" 2>/dev/null || true)
-TEARDOWN_BACKEND_COUNT=$(LC_ALL=C grep -c '^backend=' "$META" 2>/dev/null || true)
-case "$TEARDOWN_WINDOW_COUNT:$(jg_meta_get "$META" window)" in
-  0:|1:)
-    case "$TEARDOWN_BACKEND_COUNT:$(jg_meta_get "$META" backend)" in
-      0:|1:tmux)
-        TEARDOWN_FOREIGN_ENDPOINT_KEYS='^terminal='
-        for TEARDOWN_FOREIGN_BACKEND in $JG_BACKEND_KNOWN; do
-          [ "$TEARDOWN_FOREIGN_BACKEND" = tmux ] \
-            || TEARDOWN_FOREIGN_ENDPOINT_KEYS="$TEARDOWN_FOREIGN_ENDPOINT_KEYS|^${TEARDOWN_FOREIGN_BACKEND}_"
-        done
-        if ! LC_ALL=C grep -Eq "$TEARDOWN_FOREIGN_ENDPOINT_KEYS" "$META" 2>/dev/null; then
-          TEARDOWN_SHAPE_META=$(umask 077; mktemp "${TMPDIR:-/tmp}/jg-teardown-shape.XXXXXX") || exit 1
-          { LC_ALL=C grep -v '^window=' "$META" || true; printf 'window=leftover:jg-%s\n' "$ID"; } \
-            > "$TEARDOWN_SHAPE_META"
-          if jg_backend_validate_task_endpoint "$TEARDOWN_SHAPE_META" "$ID" 2>/dev/null; then
-            TEARDOWN_WINDOWLESS_SHAPE=1
-          fi
-          rm -f "$TEARDOWN_SHAPE_META"
-        fi
-        ;;
-    esac
-    ;;
-esac
+if jg_backend_windowless_record_shape "$META" "$ID"; then
+  TEARDOWN_WINDOWLESS_SHAPE=1
+fi
 if [ "$TEARDOWN_CLEANUP_RECOVERY" != orca ] && [ "$TEARDOWN_CLEANUP_RECOVERY" != treehouse ]; then
   if jg_backlog_transition_applies "$CONFIG" "$DATA" "$TEARDOWN_META_KIND"; then
     TEARDOWN_BACKLOG_APPLIES=1
@@ -1739,6 +1718,25 @@ teardown_note_dirty_return() {
   printf '%s\n' "$residue" | sed 's/^/  /' >&2
 }
 
+# A kind=release record has no lane copy, so the landed-work test above has nothing to read. When
+# such a record is also incomplete (no window: the windowless acceptance), its recorded release PR
+# must be merged before the record is cleaned; a PR that is open, closed, unrecorded or unreadable
+# refuses, with the record left whole.
+teardown_is_incomplete_release() {
+  [ "$KIND" = release ] && [ "$TEARDOWN_WINDOWLESS" = 1 ]
+}
+
+teardown_release_gate() {
+  local state=
+  if [ -n "$PR_URL" ]; then
+    state=$(gh pr view "$PR_URL" --json state -q .state 2>/dev/null) || state=
+  fi
+  [ "$state" = MERGED ] && return 0
+  echo "REFUSED: release record $ID names ${PR_URL:-no pull request}, which the forge does not report merged (${state:-unreadable}); nothing was changed." >&2
+  echo "teardown: cleanup refused, reason: no-merge-proof" >&2
+  return 1
+}
+
 # The worktree safety test is Go (core/teardown `safety`, through bin/jg-teardown-core.sh): nothing
 # uncommitted, and nothing unpushed that the forge or the default branch has not absorbed. This
 # function keeps the policy that decides whether to ask (a --force, a scout or a Squad Lead is never
@@ -1770,6 +1768,11 @@ validate_worktree_teardown_safety() {
   project_mode=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-project-mode.sh" --raw "$(basename "$PROJ")") || return 1
   if jg_delivery_style_is "${project_mode%% *}" trunk && [ -e "$STATE/trunk-tip-$(basename "$PROJ")" ]; then
     args+=(--trunk-branch "$(jg_trunk_branch "$(basename "$PROJ")" "$STATE")")
+    # The lander rebases a lane's commit, so its own row names the commit it put on the trunk.
+    local landed_commit landed_at
+    read -r landed_commit landed_at <<< "$(awk -F'\t' -v t="$ID" -v p="$(basename "$PROJ")" \
+      '$1 == t && $2 == p && $3 ~ /^[0-9a-f]{40}$/ { c = $3; e = $4 } END { print c, e }' "$DATA/trunk-landings.tsv" 2>/dev/null)"
+    [ -z "$landed_commit" ] || args+=(--landed-commit "$landed_commit" --landed-at "$landed_at")
   fi
   if [ -n "$PR_URL" ]; then
     ! jg_dod_pr_outside_origin "$WT" "$PR_URL" || args+=(--pr-outside-origin)
@@ -2893,6 +2896,10 @@ if [ "$BACKEND" = orca ] && [ "$KIND" != scout ] && [ "$KIND" != squad_lead ] &&
   fi
   require_orca_worktree_path_match "$ORCA_WORKTREE_ID" "$WT" || exit 1
   ORCA_PATH_MATCH_VERIFIED=1
+fi
+
+if [ "$FORCE" != "--force" ] && [ "$PARK" != 1 ] && teardown_is_incomplete_release; then
+  teardown_release_gate || exit 1
 fi
 
 if teardown_owns_worktree && [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
