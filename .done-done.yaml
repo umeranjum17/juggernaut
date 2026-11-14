@@ -982,6 +982,10 @@ journeys:
     # was Core suites step 82: Merge-card evidence-root message test
     tier: local
     command: bash journeys/core-run.sh 'bash merge-card/tests/dd-root-message.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  core-merge-card-judge-model-test:
+    # Judge model guard: a Fable or Opus done-done judge is refused before any model call
+    tier: local
+    command: bash journeys/core-run.sh 'bash merge-card/tests/judge-model.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   core-merge-card-post-merge-wiring-test:
     # was Core suites step 83: Merge-card post-merge wiring test
     tier: local

@@ -456,6 +456,9 @@ check() {
     # only the repo identity. A done-done of 0.3.1 or newer does that itself with --citation-base;
     # an older one rejects the flag and resolves against its cwd, so probe once (offline, cheap)
     # and, on the older one, hand it the Checks block with its names already resolved, on stdin.
+    # An expensive judge model (Fable or Opus) is refused here, before any model call, naming the cheap one.
+    "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bin/jg-judge-model-guard.sh" --judge "${judge[1]:-}" \
+      --tool-model "$(tool_models_judge 2>/dev/null)" --config "${DONE_DONE_HOME:-$HOME/.done-done}/config.yaml" >&2 || return 1
     if ! python3 - "${DONE_DONE_HOME:-$HOME/.done-done}/config.yaml" "${judge[1]:-}" <<'ROUTE'
 import sys, yaml
 try:

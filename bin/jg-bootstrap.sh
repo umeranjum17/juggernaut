@@ -21,6 +21,7 @@
 #                 "BACKLOG_RECONCILE: code-root <file> is not this home's <file>; ...",
 #                 "BEADS_UNHEALTHY: <why the store failed jg-beads.sh check>",
 #                 "TANGLE: <remediation>",
+#                 "JUDGE_MODEL: <the Fable or Opus done-done judge model, where it is set, and the cheap model to set>",
 #                 "SQUAD_LEAD_SYNC: squad_lead <id>: skipped: <reason>",
 #                 "NUDGE_SQUAD_LEADS: squad_lead <id>: send failed: <reason>",
 #                 "BOOTSTRAP_INFO: nudged jg-<id> with '<message>'",
@@ -1755,6 +1756,10 @@ detect_local_tools() {
   fi
   if command -v done-done >/dev/null 2>&1 && ! tool_version_at_least done-done "$DONE_DONE_AXI_MIN"; then
     echo "MISSING: done-done (install: $(install_cmd done-done))"
+  fi
+  if command -v done-done >/dev/null 2>&1 && [ -x "$JG_ROOT/core/merge-card/bin/jg-judge-model-guard.sh" ]; then
+    judge_refusal=$("$JG_ROOT/core/merge-card/bin/jg-judge-model-guard.sh" --tool-model "$("$SCRIPT_DIR/jg-tool-models.sh" model done-done-judge pi 2>/dev/null)" 2>&1) \
+      || echo "JUDGE_MODEL: $judge_refusal"
   fi
   if command -v sign-off-axi >/dev/null 2>&1 && ! tool_version_at_least sign-off-axi "$SIGN_OFF_AXI_MIN"; then
     echo "MISSING: sign-off-axi (install: $(install_cmd sign-off-axi))"
