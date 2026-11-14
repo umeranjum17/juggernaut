@@ -59,19 +59,6 @@ while :; do
   sleep $((20 + RANDOM % 20))
 done
 [ $# -gt 0 ] || exit 0
-# A heavy job (yarn, a Gradle or Kotlin build, an emulator, a browser) writes bulk scratch, and /tmp is RAM: it gets the
-# disk scratch root as TMPDIR (yarn and node follow it), and a JVM's java.io.tmpdir (the Kotlin daemon's dir) follows too.
-_jg_gate_dir=${BASH_SOURCE[0]%/*}
-if [ -r "$_jg_gate_dir/../../../bin/jg-scratch-root-lib.sh" ]; then
-  # shellcheck source=bin/jg-scratch-root-lib.sh
-  . "$_jg_gate_dir/../../../bin/jg-scratch-root-lib.sh"
-  jg_scratch_pin_tmpdir
-  case "${TMPDIR:-}" in
-    /tmp|/tmp/|/var/tmp|/var/tmp/|'') ;;
-    *) case "${JAVA_TOOL_OPTIONS:-}" in *java.io.tmpdir=*) ;; *) export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:+$JAVA_TOOL_OPTIONS }-Djava.io.tmpdir=$TMPDIR" ;; esac ;;
-  esac
-fi
-unset _jg_gate_dir
 [ $((emu + grd)) -gt 0 ] && { sleep 30 & } && exec 9>&-  # holder child keeps the lock 30 s; this process lets go
 if command -v systemd-run >/dev/null; then
   if err=$(systemd-run --user --scope --quiet --slice=jg-heavy.slice --collect -- true 2>&1); then

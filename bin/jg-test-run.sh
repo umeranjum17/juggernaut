@@ -442,10 +442,6 @@ log() {
 
 # shellcheck source=bin/jg-test-host-lib.sh
 . "$ROOT/bin/jg-test-host-lib.sh"
-# shellcheck source=bin/jg-scratch-root-lib.sh
-. "$ROOT/bin/jg-scratch-root-lib.sh"
-# Every scratch dir of this run (shards, scripts, fixtures, the tools they start) goes on disk, never /tmp (RAM).
-jg_scratch_pin_tmpdir
 # shellcheck source=bin/jg-test-procs-lib.sh
 . "$ROOT/bin/jg-test-procs-lib.sh"
 
@@ -1993,7 +1989,7 @@ if [ "${1:-}" = --required-shards ]; then
   jg_test_host_pin_go_cache
   jg_test_host_warm_go_cache "$ROOT"
   # The eight shards are disjoint, so they run side by side: each one in its own temp and tmux directory
-  # (a short path under the disk scratch root, because a tmux socket path is length-limited), its output kept in its own file and
+  # (a short path under /tmp, because a tmux socket path is length-limited), its output kept in its own file and
   # printed in shard order afterwards so the log reads exactly as the sequential run's did. JG_REQUIRED_SHARD_PARALLEL
   # caps how many run at once (default: every shard, at most one per cpu); 1 gives the old one-after-another run.
   required_cpus=$(nproc 2>/dev/null || echo 1)

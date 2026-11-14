@@ -74,16 +74,6 @@ if grep -qx 'jg-mem-gate: systemd scope unavailable (test user bus unavailable);
   echo 'PASS fallback reports user-manager cause'
 else echo 'FAIL user-manager fallback'; cat "$T/fallback.err"; fail=1; fi
 
-# A heavy job gets the disk scratch root as TMPDIR (and a JVM tmpdir), never /tmp; a TMPDIR the caller set is kept.
-# shellcheck disable=SC2016  # the job body is a literal script
-printf '#!/bin/sh\nprintf "%%s\\n%%s\\n" "$TMPDIR" "$JAVA_TOOL_OPTIONS" >"$SEEN"\n' >"$T/bin/scratchjob"; chmod +x "$T/bin/scratchjob"
-export XDG_RUNTIME_DIR=$T/run2
-env -u TMPDIR -u JG_SCRATCH_ROOT -u JAVA_TOOL_OPTIONS XDG_CACHE_HOME="$T/cache" SEEN="$T/seen1" "$G" "$T/bin/scratchjob" 2>/dev/null
-env TMPDIR="$T/own" XDG_CACHE_HOME="$T/cache" SEEN="$T/seen2" "$G" "$T/bin/scratchjob" 2>/dev/null
-if [ "$(sed -n 1p "$T/seen1")" = "$T/cache/jg-scratch" ] && [ "$(sed -n 2p "$T/seen1")" = "-Djava.io.tmpdir=$T/cache/jg-scratch" ] \
-  && [ "$(sed -n 1p "$T/seen2")" = "$T/own" ]; then echo 'PASS heavy job scratch is on disk, a caller TMPDIR is kept'
-else echo 'FAIL heavy job scratch'; cat "$T/seen1" "$T/seen2" 2>&1; fail=1; fi
-
 # Exercise a real scope when this host has a working user manager; CI may not provide one.
 mv "$T/bin/systemd-run" "$T/systemd-run.stub"
 export XDG_RUNTIME_DIR=$REAL_RUNTIME_DIR

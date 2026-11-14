@@ -15,7 +15,7 @@
 # Run slots.
 #   jg_test_host_admit <max> lets at most <max> runs execute tests on this machine at once; the rest wait, printing one
 #   line that names the runners holding the slots. A slot is a kernel lock on JG_TEST_HOST_SLOTS/slot-<k> (default
-#   <scratch root>/jg-test-runs-<uid>, the disk scratch root of bin/jg-scratch-root-lib.sh) held by a small keeper process that lives exactly as long as its runner: a killed runner
+#   /tmp/jg-test-runs-<uid>) held by a small keeper process that lives exactly as long as its runner: a killed runner
 #   frees its slot within a second, and no test inherits the lock. A run started inside an admitted run (a shard, a
 #   test of the runner) inherits JG_TEST_RUN_SLOT and takes no slot. One whose environment was cleared is recognised
 #   while it waits: a slot held by one of its own ancestors admits it, so it never waits on the run that started it.
@@ -42,15 +42,6 @@
 #   registered every shard runs here, as before. A runner slot is a directory JG_TEST_HOST_SLOTS/runner-<id>.slot-<n>
 #   made atomically and holding its owner's pid, so shards placed at once never overfill a runner, and a slot whose
 #   owner died is taken over.
-# The disk scratch root (bin/jg-scratch-root-lib.sh) holds the run slots; a copy of this file with no sibling lib uses /tmp.
-_jg_host_dir=${BASH_SOURCE[0]%/*}
-if [ -r "$_jg_host_dir/jg-scratch-root-lib.sh" ]; then
-  # shellcheck source=bin/jg-scratch-root-lib.sh
-  . "$_jg_host_dir/jg-scratch-root-lib.sh"
-else
-  jg_scratch_root() { return 1; }
-fi
-unset _jg_host_dir
 
 JG_TEST_HOST_KEEPER=
 JG_TEST_HOST_WAITED_MS=0
@@ -179,7 +170,7 @@ jg_test_host_admit() {  # <max>
   JG_TEST_HOST_WAITED_MS=0
   [ -z "${JG_TEST_RUN_SLOT:-}" ] || return 0
   command -v python3 >/dev/null 2>&1 || { log "warning: no python3, so this run takes no test-run slot and is not queued"; return 0; }
-  dir=${JG_TEST_HOST_SLOTS:-$(jg_scratch_root || echo /tmp)/jg-test-runs-$(id -u)}
+  dir=${JG_TEST_HOST_SLOTS:-/tmp/jg-test-runs-$(id -u)}
   if ! mkdir -p "$dir" 2>/dev/null || ! fifo=$(mktemp -u "${TMPDIR:-/tmp}/jg-test-admit.XXXXXX") || ! mkfifo -m 600 "$fifo"; then
     log "warning: cannot use the test-run slot directory $dir, so this run is not queued"
     return 0
@@ -217,7 +208,7 @@ jg_test_host_arch() {
 
 jg_test_host_runner_slot() {  # <jg-home> <runner id>; claims a free slot on the runner and prints its directory, else fails
   local home=$1 id=$2 record slots free cap n slot owner dir
-  dir=${JG_TEST_HOST_SLOTS:-$(jg_scratch_root || echo /tmp)/jg-test-runs-$(id -u)}
+  dir=${JG_TEST_HOST_SLOTS:-/tmp/jg-test-runs-$(id -u)}
   record=$("$JG_TEST_HOST_ROOT/core/runners/registry.sh" get "$home" "$id" 2>/dev/null) || return 1
   [ "$(printf '%s\n' "$record" | sed -n 's/^arch=//p')" = "$(jg_test_host_arch)" ] || return 1
   slots=$(printf '%s\n' "$record" | sed -n 's/^slots=//p')
