@@ -37,6 +37,7 @@
 #   jg-captain-hold.sh design-card <card-key> --raised-by <ticket> --title <question>
 #   jg-captain-hold.sh design-pick <card-key> --words <the captain's words>
 #   jg-captain-hold.sh diverged
+#   jg-captain-hold.sh to-gates   (the pass that moves each old stamped owner hold to a gate, prints the count; a second run moves none)
 #   jg-captain-hold.sh phase <task-id>
 #   jg-captain-hold.sh reconcile list
 #   jg-captain-hold.sh reconcile close <task-id> --evidence-file <path>
@@ -51,7 +52,7 @@
 # `--gate <id>` names one of several open gates. `reconcile close` closes it on evidence (`resolution` reconciled).
 # `open`, `answered`, `blocking`, `phase` and `complete`/`verify` read the gate. `done` refuses a ticket with an open gate.
 # A parked hold, a stop order and a ticket that still carries an old hold-set stamp keep the stamped record described
-# below, and answer the old way, until the pass that moves old holds to gates; JG_CAPTAIN_HOLD_STAMPED=1 is the
+# below, and answer the old way, until `to-gates` moves old holds to gates; JG_CAPTAIN_HOLD_STAMPED=1 is the
 # test seam that makes such a hold.
 #
 # `hold` places an existing task under an active captain hold, or creates the
@@ -2442,6 +2443,59 @@ command_design_pick() {  # <card-key> --words <the captain's words>
   printf 'design-pick: %s recorded\n' "$key"
 }
 
+# --- the pass that moves old holds to gates -----------------------------------
+# An open owner hold of the old kind carries a stamp (and perhaps an origin line) in its body. The pass makes its gate
+# from the hold's own reason and origin, then takes the two lines out of the body. The ticket keeps its status, so a
+# deferral date stays, and a stop order stays stamped because it is his instruction and asks him nothing. The gate is made
+# first and a retry finds it, so a pass that stopped half way is finished by the next run, and a second run changes nothing.
+body_without_hold_lines() {  # <decoded-task-body>
+  printf '%s\n' "$1" | awk 'NR == 1 && /^Captain hold set: / { next } /^Captain hold origin: / { next } NF || started { started = 1; print }'
+}
+
+hold_to_gate() {  # <task-id>: prints moved, kept or skipped
+  local id=$1 show reason origin body tmp title close=release
+  acquire_task_control_lock "$id"
+  task_show "$id" || { release_task_control_lock; printf 'skipped\n'; return 0; }
+  show=$TASK_SHOW_OUTPUT
+  reason=$(show_field_value "$show" hold_reason)
+  if [ "$(show_field "$show" state)" = "done" ] || [ "$(show_field_value "$show" hold_kind)" != captain ] || ! hold_is_stamped "$show"; then
+    release_task_control_lock; printf 'skipped\n'; return 0
+  fi
+  if jg_ask_own_instruction "$reason"; then
+    release_task_control_lock; printf 'kept\n'; return 0
+  fi
+  body=$(decode_shown_value "$(show_field "$show" body)") || fail "could not decode the body of $id"
+  origin=$(body_hold_origin "$body")
+  [ "$(show_field_value "$show" kind)" != captain ] || close="done"
+  title=$(card_title "$reason")
+  [ -n "$title" ] || title=$(built_title "$(show_field_value "$show" title)")
+  backlog_cmd gate "$id" --title "$title" --reason "$reason" --close "$close" ${origin:+--origin "$origin"} >/dev/null \
+    || fail "could not make the owner's question on task $id"
+  tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/jg-captain-hold-gate.XXXXXX") || fail "cannot stage the body of $id"
+  body_without_hold_lines "$body" > "$tmp"
+  backlog_cmd update "$id" --body-file "$tmp" >/dev/null || { rm -f -- "$tmp"; fail "could not take the old hold lines out of $id"; }
+  rm -f -- "$tmp"
+  release_task_control_lock
+  printf 'moved\n'
+}
+
+command_to_gates() {
+  local id outcome moved=0 kept=0 skipped=0 total=0
+  [ "$#" -eq 0 ] || { usage >&2; exit 2; }
+  require_backlog
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    outcome=$(hold_to_gate "$id") || exit $?
+    case "$outcome" in
+      moved) moved=$((moved + 1)) ;;
+      kept) kept=$((kept + 1)) ;;
+      *) skipped=$((skipped + 1)) ;;
+    esac
+    total=$((total + 1))
+  done < <(backlog_cmd list --state held --fields hold_kind | awk -F, '/^  [^ ]/ && $NF == "captain" { sub(/^  /, "", $1); print $1 }')
+  printf 'to-gates: moved %d of %d owner holds to gates (%d stop orders kept as holds, %d already gates)\n' "$moved" "$total" "$kept" "$skipped"
+}
+
 case "${1:-}" in
   hold) shift; command_hold "$@" ;;
   answer) shift; command_answer "$@" ;;
@@ -2459,6 +2513,7 @@ case "${1:-}" in
   design-card) shift; command_design_card "$@" ;;
   design-pick) shift; command_design_pick "$@" ;;
   diverged) shift; command_diverged "$@" ;;
+  to-gates) shift; command_to_gates "$@" ;;
   reconcile) shift; command_reconcile "$@" ;;
   -h|--help) usage ;;
   *) usage >&2; exit 2 ;;

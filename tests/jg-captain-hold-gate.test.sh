@@ -185,4 +185,41 @@ assert_contains "$(jq -r '.[0].words' <<<"$q")" "Reconciliation evidence: The re
 hold answered jg-w6 && fail "a reconciled gate is not an answer of his"
 pass "reconcile close resolves the gate with evidence"
 
+# The pass moves each open old owner hold to a gate: it keeps the deferral date and the origin, leaves a stop order stamped,
+# prints the count, takes the stamp out of the body, and a second run changes nothing.
+for id in jg-m1 jg-m2 jg-m3 jg-m4; do
+  tasks add "$id" "[feature] Work $id" --repo sample --body "why $id" >/dev/null || fail "add $id"
+done
+JG_CAPTAIN_HOLD_STAMPED=1 hold hold jg-m1 --reason "Should the build take route A or B? The owner decides." >/dev/null || fail "stamped hold m1"
+JG_CAPTAIN_HOLD_STAMPED=1 hold hold jg-m2 --origin jg-m4 --until 2099-01-02 --reason "Do we ship in January?" >/dev/null || fail "stamped dated hold m2"
+JG_CAPTAIN_HOLD_STAMPED=1 hold hold jg-m3 --reason "Captain stop order: keep this parked until he says go." >/dev/null || fail "stamped stop order m3"
+JG_CAPTAIN_HOLD_STAMPED=1 hold hold jg-m5 --title "Is the plan still right?" --reason "Is the plan still right?" >/dev/null || fail "stamped hold that made its own ticket m5"
+before=$(questions_json --all | jq length)
+out=$(hold to-gates) || fail "to-gates: $out"
+assert_contains "$out" "moved 3 of " "the pass prints its count: $out"
+[ "$(questions_json --all | jq length)" = $((before + 3)) ] || fail "the pass must make one gate per moved hold"
+m1=$(questions_json --ticket jg-m1)
+[ "$(jq length <<<"$m1")" = 1 ] && [ "$(jq -r '.[0].question' <<<"$m1")" = "Should the build take route A or B? The owner decides." ] || fail "m1 gate keeps the whole reason: $m1"
+[ "$(jq -r '.[0].title' <<<"$m1")" = "Should the build take route A or B?" ] || fail "m1 gate has the question as its title: $m1"
+m2=$(questions_json --ticket jg-m2)
+[ "$(jq -r '.[0].until' <<<"$m2")" = 2099-01-02 ] || fail "the deferral date must stay: $m2"
+[ "$(jq -r '.[0].origin' <<<"$m2")" = jg-m4 ] || fail "the origin must move onto the gate: $m2"
+[ "$(questions_json --ticket jg-m5 | jq -r '.[0].close')" = 'done' ] || fail "a ticket the hold made closes with its answer"
+[ "$(questions_json --ticket jg-m3 | jq length)" = 0 ] || fail "a stop order must make no gate"
+tasks show jg-m3 --full | grep -q "Captain hold set:" || fail "a stop order keeps its stamp"
+for id in jg-m1 jg-m2 jg-m5; do
+  tasks show "$id" --full | grep -q "Captain hold set:\|Captain hold origin:" && fail "$id must lose its stamp lines"
+  assert_contains "$(tasks show "$id" --full)" "held: yes" "$id reads as held by its gate"
+done
+assert_contains "$(tasks show jg-m1 --full)" "why jg-m1" "the rest of the body stays"
+hold blocking jg-m1 >/dev/null || fail "a moved hold still blocks"
+snap=$(tasks list --all --fields held,hold_kind,hold_until,hold_reason; questions_json --all; tasks show jg-m1 --full; tasks show jg-m2 --full)
+out=$(hold to-gates) || fail "second to-gates: $out"
+assert_contains "$out" "moved 0 of " "a second run moves none: $out"
+[ "$(tasks list --all --fields held,hold_kind,hold_until,hold_reason; questions_json --all; tasks show jg-m1 --full; tasks show jg-m2 --full)" = "$snap" ] || fail "a second run must change nothing"
+words "$T/m1" "Take route B."
+hold answer jg-m1 --decision-file "$T/m1" >/dev/null || fail "answer a moved hold"
+[ "$(questions_json --all --ticket jg-m1 | jq -r '.[0].words')" = "Take route B." ] || fail "a moved hold answers by its gate"
+pass "to-gates moves old owner holds to gates, keeps dates and origins, leaves stop orders, and a second run changes nothing"
+
 pass "jg-captain-hold-gate"

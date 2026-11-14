@@ -52,7 +52,9 @@ A hold that asks the owner something is one human gate row that blocks the ticke
 The ticket keeps its status and reads as held by the owner while the gate is open, and `--until` also defers the ticket to that date.
 A gate is never work: `list`, `ready`, `markdown`, `show` and every count leave it out, and `bin/jg-backlog.sh questions [--ticket <id>] [--due] [--all] [--json]` lists the open ones with their ticket, `must`, age and deferral date (`--due` leaves out a ticket deferred to a later date).
 A repeated hold with the same question finds the open gate and makes no second one.
-A parked hold, a stop order, and a ticket that still carries an old hold-set stamp keep the stamped path described next, until the pass that moves old holds to gates.
+A parked hold, a stop order, and a ticket that still carries an old hold-set stamp keep the stamped path described next.
+`jg-captain-hold.sh to-gates` moves every other old stamped owner hold to a gate: it makes the gate from the hold's own reason and origin, takes the stamp and origin lines out of the body, leaves the ticket's status and deferral date as they are, leaves a stop order stamped, and prints how many holds it moved.
+The gate is made first and a retry finds it, so a second run moves none and changes nothing.
 That path works in this order:
 
 1. It uses an existing task, or creates one when nothing exists to hold.

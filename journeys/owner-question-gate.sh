@@ -9,12 +9,12 @@ LOG=$OUT/${RUN_ID:-owner-question-gate}.log
 st=0
 bash "$REPO/tests/jg-captain-hold-gate.test.sh" >"$LOG" 2>&1 || st=1
 grep -q '^not ok\|^skip' "$LOG" && st=1
-[ "$(grep -c '^ok - ' "$LOG")" -ge 12 ] || st=1
+[ "$(grep -c '^ok - ' "$LOG")" -ge 13 ] || st=1
 cat "$LOG"
 cat >"$OUT/steps.json" <<'J'
 {"target":{"version":"juggernaut bin/jg-captain-hold.sh and bin/jg-backlog.sh at this commit"},
  "start":"a fixture home with a real Beads store and a few tickets",
- "steps":["hold a ticket with a must and read the gate, the lists and the counts","try done on the held ticket","answer it with --release and retry the answer","hold with a date, answer, park a hold, arm the board","answer an old stamped hold and reconcile a gate"],
+ "steps":["hold a ticket with a must and read the gate, the lists and the counts","try done on the held ticket","answer it with --release and retry the answer","hold with a date, answer, park a hold, arm the board","answer an old stamped hold and reconcile a gate","move old stamped holds to gates and run the pass again"],
  "result":"each question is one gate row with his whole words on it, no list or count shows a gate, and an old stamped hold answers as before"}
 J
 exit "$st"
