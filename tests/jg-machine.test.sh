@@ -67,9 +67,18 @@ jm coverage doc; expect_code 0 "$RC" "every edge has a test"; assert_equals "ok 
 jm coverage cov; expect_code 1 "$RC" "an untested edge"
 assert_equals "$(printf 'untested cov draft withdraw draft\nfail cov: 4 edges, 1 untested')" "$OUT" "coverage names the edge"
 pass "coverage matches golden output"
-jm diagram doc; expect_code 0 "$RC" "diagram"
-assert_equals "$(printf 'stateDiagram-v2\n  [*] --> draft\n  draft --> review: submit\n  review --> published: approve\n  review --> draft: reject\n  published --> [*]')" "$OUT" "diagram golden"
-pass "diagram matches golden output"
+jm diagram doc --dot wide; expect_code 0 "$RC" "diagram"
+assert_equals "$(printf '%s\n' 'digraph "doc" {' \
+  '  rankdir=LR; compound=true; newrank=true; nodesep=0.28; ranksep=0.5; bgcolor="transparent"; fontname="Helvetica"; fontsize=10;' \
+  '  node [shape=box, style="rounded", fontname="Helvetica", fontsize=12, margin="0.10,0.05", height=0.36];' \
+  '  edge [fontname="Helvetica", fontsize=11, arrowsize=0.7];' \
+  '  "__init" [shape=circle, style=filled, fillcolor=black, label="", width=0.16, height=0.16, fixedsize=true, class="init"];' \
+  '  "draft" [class="ka"];' '  "review" [class="ka"];' '  "published" [class="kf", label="◎ published"];' \
+  '  "draft" -> "review" [label=" submit\n[the author finishes] ", id="e0_submit"];' \
+  '  "review" -> "published" [label=" approve\n[a reviewer agrees] ", id="e1_approve"];' \
+  '  "review" -> "draft" [label=" reject\n[a reviewer disagrees] ", id="e2_reject"];' \
+  '  "__init" -> "draft";' '}')" "$OUT" "diagram golden"
+pass "diagram prints the dot text of the table: an initial dot, a ring on the final state, event and guard on each arrow"
 jm edge-check doc review published; expect_code 0 "$RC" "a legal move"; assert_equals "$(printf 'legal doc review published\tapprove\treviewer:approve')" "$OUT" "edge-check legal golden"
 jm edge-check doc draft published; expect_code 1 "$RC" "an illegal move"; assert_equals "illegal doc draft published" "$OUT" "edge-check illegal golden"
 jm edge-check doc draft nowhere; expect_code 1 "$RC" "a move to a state the table lacks"; assert_contains "$OUT" "nowhere is not a state" "edge-check names the missing state"

@@ -42,6 +42,10 @@ opa 1.22.0
 lookout-axi lookout-axi@0.1.0
 byokit-accounts @byokit/accounts@0.34.0
 takeone-axi takeone-axi@0.4.0
+# The table engine's diagram command renders its charts with the WebAssembly build of Graphviz (MIT). No bootstrap check installs it:
+# core/machines/bin/chartfit.py stops with this row's install line when the module is missing.
+viz @viz-js/viz@3.31.0
+
 # The backlog store: bin/jg-beads.sh runs a binary only when it hashes to these rows, so install.sh and bin/jg-bootstrap.sh read the hash and never start one.
 bd 1.3.4
 bd-sha256-linux-amd64 9185e9798ba044b288e781f7d57f28a48f558654e94572473e49991826e69930

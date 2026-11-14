@@ -23,7 +23,7 @@ pass "the $n machine tables pass the lint"
 base() { # <extra state line> <extra edge line> ...: a three-state machine plus any extra lines
   { tab machine m carrier owner
     tab state start initial 'The record is filed.' - rest go
-    tab state work normal 'A worker has it.' - waiting '5m -> alert slow-work'
+    tab state work normal 'A worker has it.' - waiting '5m -> alert slow-delivery'
     tab state ended terminal 'The work is finished.' -
     tab edge '(none)' file start w:f - 'a record is filed' t
     tab edge start go work w:f - 'the worker starts' t

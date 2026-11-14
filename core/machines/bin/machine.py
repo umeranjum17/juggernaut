@@ -3,9 +3,11 @@
 import os, re, subprocess, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import alerttable
+import chartfit
 import tablelint
 
-USAGE = "usage: jg-machine.sh show|next <machine> <id> | enum <name> | legal <enum> <value> | write <enum> <value> <file> | check <machine> [--corpus <file>] | coverage|diagram|events|writers <machine> | edge-check <machine> <from> <to>"
+USAGE = "usage: jg-machine.sh show|next <machine> <id> | enum <name> | legal <enum> <value> | write <enum> <value> <file> | check <machine> [--corpus <file>] | coverage|events|writers|escalation <machine> | chart-check <svg>... | diagram <machine> [--out <dir>] [--dot wide|narrow | --mermaid] [--tries N] | edge-check <machine> <from> <to>"
 
 
 def die(msg, rc=2):
@@ -91,11 +93,11 @@ def load(name, depth=0):
     m = {"enum": enum, "name": name, "tdir": tdir, "states": {}, "edges": [], "observer": None, "rows": [], "groups": {}, "comp": {}, "subs": {}, "stages": {}, "open": {}}
     bad, inner = [], []
     for ln in lines:
-        f = ln.split("\t") + [""] * 8
+        f = ln.split("\t") + [""] * 9
         if f[0] == "state":
             if f[1] in m["states"]:
                 bad.append(f"duplicate state {f[1]}")
-            m["states"][f[1]] = {"kind": f[2], "sentence": f[3], "requires": f[4], "mode": f[5], "limit": f[6]}
+            m["states"][f[1]] = {"kind": f[2], "sentence": f[3], "requires": f[4], "mode": f[5], "limit": f[6], "emits": f[7], "alert": f[8]}
         elif f[0] == "edge":
             m["rows"].append(dict(zip(("from", "event", "to", "writer", "command", "guard", "test"), f[1:8])))
         elif f[0] == "group":
@@ -248,9 +250,72 @@ def diagram_body(m, pad):
     return out
 
 
-def diagram(m):
-    """Mermaid state diagram, generated from the table and never hand-drawn."""
+def mermaid(m):
+    """The Mermaid text of the table, for the page of the ticket machine in docs/ (GitHub draws it); the drawn charts are Graphviz."""
     print("\n".join(["stateDiagram-v2"] + diagram_body(m, "  ")))
+
+
+def diagram_files(m, out, tries):
+    """Draw both layouts into `out` (<machine>-LR.svg and -TB.svg, with the dot text of the try that won) and check each; exit 1 on a fault."""
+    os.makedirs(out, exist_ok=True)
+    failed = 0
+    for rankdir, tag in ((chartfit.chartdot.WIDE, "LR"), (chartfit.chartdot.NARROW, "TB")):
+        svg, bad, n = chartfit.fit(m, rankdir, tries)
+        with open(f"{out}/{m['name']}-{tag}.svg", "w", encoding="utf-8") as f:
+            f.write(svg)
+        w = re.search(r'<svg width="(\d+)pt" height="(\d+)pt"', svg)
+        print(f"{'fail' if bad else 'ok'} {m['name']}-{tag}.svg\t{w.group(1)}pt x {w.group(2)}pt\t{len(m['rows'])} arrows\ttry {n}")
+        for b in bad:
+            print(f"  chart {m['name']}-{tag}: {b}")
+        failed += bool(bad)
+    sys.exit(1 if failed else 0)
+
+
+def diagram(m, args):
+    """The command: `diagram <machine> [--out <dir>] [--tries N]` draws and checks; `--dot wide|narrow` prints the dot text of the first try."""
+    out, tries, dot, i = None, 144, None, 0
+    if args == ["--mermaid"]:
+        return mermaid(m)
+    while i < len(args):
+        if args[i] == "--out" and i + 1 < len(args):
+            out, i = args[i + 1], i + 2
+        elif args[i] == "--tries" and i + 1 < len(args) and args[i + 1].isdigit():
+            tries, i = int(args[i + 1]), i + 2
+        elif args[i] == "--dot" and i + 1 < len(args) and args[i + 1] in ("wide", "narrow"):
+            dot, i = args[i + 1], i + 2
+        else:
+            die(USAGE)
+    if dot:
+        print(chartfit.chartdot.dot(m, chartfit.chartdot.WIDE if dot == "wide" else chartfit.chartdot.NARROW))
+        return
+    try:
+        diagram_files(m, out or os.path.join(os.getcwd(), "charts"), tries)
+    except chartfit.NoRenderer as e:
+        die(f"jg-machine: {e}", 1)
+
+
+def chart_check(files):
+    """The chart check alone, on SVG files Graphviz made and chartcheck.plate lifted the labels of; a file named *-TB.svg is a narrow layout."""
+    failed = 0
+    for f in files:
+        try:
+            bad = chartfit.chartcheck.check(open(f, encoding="utf-8").read(), f.endswith("-TB.svg"))
+        except OSError as e:
+            die(f"jg-machine: cannot read {f}: {e.strerror}")
+        print(f"{'fail' if bad else 'ok'} {os.path.basename(f)}")
+        for b in bad:
+            print(f"  chart {os.path.basename(f)}: {b}")
+        failed += bool(bad)
+    sys.exit(1 if failed else 0)
+
+
+def escalation(m):
+    """For each state: its mode, what it emits and to which machine, its timeout, its alert, and who is told first, next, and by a board card."""
+    print("state\tmode\temits\ttimeout\talert\ttold first\ttold next\tboard card")
+    for k, s in m["states"].items():
+        al = alerttable.of(s)
+        first, nxt, card = alerttable.chain(al) if al else ("-", "-", "-")
+        print("\t".join([k, tablelint.mode(s), s.get("emits") or "-", s.get("limit") or "-", al or "-", first, nxt, card]))
 
 
 def events(m):
@@ -298,8 +363,14 @@ def main(a):
         vals = check_enum(a[1])
         print(f"ok enum {a[1]}: {len(vals)} values")
         return
-    if len(a) == 2 and a[0] in ("coverage", "diagram", "events", "writers"):
-        {"coverage": coverage, "diagram": diagram, "events": events, "writers": writers}[a[0]](load(a[1]))
+    if len(a) >= 2 and a[0] == "chart-check":
+        chart_check(a[1:])
+        return
+    if len(a) >= 2 and a[0] == "diagram":
+        diagram(load(a[1]), a[2:])
+        return
+    if len(a) == 2 and a[0] in ("coverage", "events", "writers", "escalation"):
+        {"coverage": coverage, "events": events, "writers": writers, "escalation": escalation}[a[0]](load(a[1]))
         return
     if len(a) == 4 and a[0] == "edge-check":
         edge_check(load(a[1]), a[2], a[3])

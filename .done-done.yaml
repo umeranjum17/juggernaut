@@ -64,6 +64,10 @@ journeys:
   cleanup-table:
     tier: local
     command: bash journeys/cleanup-table.sh
+    command: bash journeys/machine-observers.sh
+  machine-diagram:
+    tier: local
+    command: bash journeys/machine-diagram.sh
   worker-table:
     tier: local
     command: (bash bin/jg-machine.sh check worker && bash bin/jg-machine.sh events worker && bash tests/jg-machine-worker.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -597,6 +601,10 @@ journeys:
     # measured 4.4 s on the host, 2026-11-12 (serial, one run)
     tier: ci
     command: bash tests/jg-machine-task.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  contract-machine-diagram:
+    # measured 1 s without the renderer (the drawing checks skip), 2026-11-12
+    tier: ci
+    command: bash tests/jg-machine-diagram.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   contract-machine:
     # measured 1.4 s on the host, 2026-11-12 (serial, one run)
     tier: ci
