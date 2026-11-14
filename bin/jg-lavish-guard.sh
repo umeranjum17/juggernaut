@@ -83,9 +83,12 @@ done_proof_gate() {  # <status-file> <text>
   wt=$(jg_dod_meta_value "$meta" worktree)
   head=$(git -C "${wt:-/nonexistent}" rev-parse --verify -q 'HEAD^{commit}' 2>/dev/null) \
     || { _unchecked "no head in its isolated copy ${wt:-(none recorded)}"; return 0; }
-  gaps=$(JG_HOME=$home jg_dod_trunk_proof_gaps "$home" "$state" "$id" "$meta" "$head" 'done') && return 0
+  if gaps=$(JG_HOME=$home jg_dod_trunk_proof_gaps "$home" "$state" "$id" "$meta" "$head" 'done'); then
+    # The proof is whole: the lint the landing runs is the one gate left that a worker's own lint can miss.
+    gaps=$(JG_HOME=$home jg_dod_trunk_lint_gap "$meta" "$wt" "$head") && return 0
+  fi
   {
-    printf 'done refused: the landing would refuse head %s of %s for missing proof, so nothing was written to %s:\n' "${head:0:12}" "$id" "$file"
+    printf 'done refused: the landing would refuse head %s of %s, so nothing was written to %s:\n' "${head:0:12}" "$id" "$file"
     printf '%s\n' "$gaps" | sed 's/^/  - /'
     echo 'Complete the proof at this head and append done again; if it cannot be finished, append a blocked: line that says why.'
   } >&2

@@ -307,6 +307,26 @@ jg_dod_trunk_proof_gaps() {
   [ "$gaps" = 0 ]
 }
 
+# The lint the landing runs over a local-trunk lane's changed files (gate-lint, jg_trunk_gate), run at the lane's done so a
+# finding reaches the worker in its own lane and not as a landing return. The largest family of gate failures was this one:
+# a ShellCheck finding the worker's own narrower lint did not show (jgp-r2-s4). The command is the landing's, read the same
+# way, and it runs in the lane's isolated copy, where HEAD^ is the trunk tip a one-commit lane starts on. Prints the tail of
+# the output when the lint is red and returns 1. A project with no gate-lint, a copy that is not clean at <head>, or a run
+# that timed out prints nothing and returns 0: the landing still runs the lint, so a check that cannot run never refuses.
+# Usage: jg_dod_trunk_lint_gap <meta> <worktree> <head>
+jg_dod_trunk_lint_gap() {
+  local meta=$1 wt=$2 head=$3 proj gate out rc=0
+  proj=$(sed -n 's/^project=//p' "$meta" 2>/dev/null | tail -n 1)
+  [ -n "$proj" ] && [ -d "$wt" ] || return 0
+  [ "$(git -C "$wt" rev-parse --verify -q 'HEAD^{commit}' 2>/dev/null)" = "$head" ] || return 0
+  [ -z "$(git -C "$wt" status --porcelain 2>/dev/null)" ] || return 0
+  gate=$(jg_trunk_gate gate-lint "$(basename "$proj")" "$proj" "$head") || return 0
+  out=$(cd "$wt" && jg_run_timed "${JG_DONE_LINT_SECONDS:-600}" bash -c "$gate" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ] || return 0
+  printf 'the lint the landing runs (%s) is red at head %s (exit %s); fix every finding in this lane, run the sealed proof again and report done again:\n%s\n' "$gate" "${head:0:12}" "$rc" "$(printf '%s\n' "$out" | tail -n 20)"
+  return 1
+}
+
 # The nav lines a local-landing lane may state outside its commit message: the evidence of its PASS completion receipt for
 # this head, then its last done line (the `done [at=..]:` prefix removed; a Nav/Removed label after the first on one line
 # starts its own line). Prints nothing when it has neither.

@@ -15,6 +15,10 @@
 # D2 With the whole proof the done line is written; after a conflict fix changes the lane's commit on a moved tip, done
 #    is refused naming the receipt and merge-card gaps of the new head, and is written again once that head is proved.
 #    (A rebase with no change keeps its proof; that case is tests/jg-trunk-proof-same-change.test.sh's.)
+# D4 A lane with the whole proof whose changed file the landing's lint (gate-lint) would refuse: done is refused with the
+#    lint named, the status file is unchanged (the landing's gate-failure return, found in the lane); once the finding is fixed
+#    and the head is proved again, done is written. The lint the landing runs is the lint the done runs.
+# (D4 is jg_dod_trunk_lint_gap in bin/jg-merge-gate-lib.sh, run by the guard.)
 # D3 A check that cannot run lets the line through with one warning: no lane record, no jq, another delivery mode.
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
@@ -105,7 +109,28 @@ test_a_check_that_cannot_run_lets_the_line_through_with_a_warning() {
   pass 'no lane record, no jq and another delivery mode each let the line through with one warning'
 }
 
+test_a_done_whose_lint_the_landing_would_refuse_is_refused_in_the_lane() {
+  local wt h before
+  world d4; bare_lane "$SEED"; wt="$W/lanes/$SEED"
+  printf 'UGLY\n' >> "$wt/work.txt"; git -C "$wt" add work.txt
+  git -C "$wt" -c user.name=t -c user.email=t@example.invalid commit -q --amend --no-edit
+  prove "$SEED"; h=$(head12 "$SEED"); before=$(cat "$HOME_D/state/$SEED.status" 2>/dev/null)
+  append "$SEED" "done [at=1794243000]: ready in branch fm/$SEED (local-trunk)"
+  [ "$RC" = 1 ] || fail "a done the landing's lint would refuse must exit 1, got $RC: $ERR"
+  assert_contains "$ERR" "the lint the landing runs" "the refusal names the lint"
+  assert_contains "$ERR" "at head $h" "the refusal names the head"
+  assert_not_contains "$ERR" "no completion receipt" "the whole proof is not a gap"
+  [ "$(cat "$HOME_D/state/$SEED.status" 2>/dev/null)" = "$before" ] || fail "a refused done must leave the status file unchanged"
+  git -C "$wt" reset -q --hard HEAD^ && git -C "$wt" status --porcelain | grep -q . && fail "the lane must be clean"
+  commit_in "$wt" "$SEED.txt" "$SEED" "ticket $SEED"
+  prove "$SEED"
+  append "$SEED" "done [at=1794244000]: lint fixed; ready in branch fm/$SEED (local-trunk)"
+  [ "$RC" = 0 ] && [ -z "$ERR" ] || fail "the fixed and proved head must be written: rc=$RC $ERR"
+  pass 'a done whose lint the landing would refuse is refused in the lane; the fixed head is written'
+}
+
 test_a_done_with_no_sealed_run_is_refused_and_the_status_file_is_unchanged
+test_a_done_whose_lint_the_landing_would_refuse_is_refused_in_the_lane
 test_a_proved_done_is_written_and_a_conflict_fix_must_prove_its_new_head
 test_a_check_that_cannot_run_lets_the_line_through_with_a_warning
 printf 'jg-lavish-guard-done-proof: ok\n'
