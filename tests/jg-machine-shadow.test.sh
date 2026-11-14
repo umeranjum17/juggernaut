@@ -38,7 +38,9 @@ both() { # <label> <machine> <target>: legal move logs nothing, an illegal one l
 
 # The fixture home holds the real bin/ scripts (linked, as a landed home has them) and the engine's code.
 for f in "$ROOT"/bin/*; do ln -s "$f" "$HOME_DIR/bin/"; done
-cp "$ROOT/core/machines/bin/machine.py" "$ROOT/core/machines/bin/tablelint.py" "$HOME_DIR/core/machines/bin/"
+mkdir -p "$HOME_DIR/core/machines/styles"
+cp "$ROOT"/core/machines/bin/*.py "$HOME_DIR/core/machines/bin/"  # machine.py imports its siblings and reads the alert table, so the fixture takes both
+cp "$ROOT/core/machines/styles/alert-table.tsv" "$HOME_DIR/core/machines/styles/"
 RUN=shadow_demo; shadow_demo() { "$HOME_DIR/bin/jg-machine-shadow.sh" demo r1 target; }
 both "helper" demo target
 RUN=shadow_nosuch; shadow_nosuch() { "$HOME_DIR/bin/jg-machine-shadow.sh" nosuch r1 x; }; expect "a machine with no table" nosuch start 0
