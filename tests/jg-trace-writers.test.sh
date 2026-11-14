@@ -139,7 +139,7 @@ sha=0123456789abcdef0123456789abcdef01234567
 axi trace record jg-s11 land git-sha "$sha" --source jg-trunk-land --at 1794000100 >/dev/null || fail "land"
 axi trace record jg-s11 used work-id card-1 --source jg-evidence >/dev/null || fail "evidence"
 line=$(axi trace lane-s11) || fail "trace by a task id"
-want=$(printf 'jg-s11\t[feature] bird'"'"'s-eye fixture\t%s\tfixture-agent\t%s\t%s\tQuestion: which option? => option a\tcard-1' "$(row jg-s11 | jq -r .created_by)" "${sha:0:12}" "$(axi ticket-stage jg-s11 | cut -f1)")
+want=$(printf 'jg-s11\tbird'"'"'s-eye fixture\t%s\tfixture-agent\t%s\t%s\tQuestion: which option? => option a\tcard-1' "$(row jg-s11 | jq -r .created_by)" "${sha:0:12}" "$(axi ticket-stage jg-s11 | cut -f1)")
 [ "$line" = "$want" ] || fail "the trail line is key, title, filed by, worker, commits, state, decision, evidence; got [$line] want [$want]"
 [ "$(printf '%s\n' "$line" | wc -l)" = 1 ] && [ "$(axi trace jg-s11)" = "$line" ] || fail "one line, the same by ticket id"
 axi trace no-such-ticket >/dev/null 2>&1 && fail "an unknown ticket must be refused"
