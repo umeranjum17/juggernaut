@@ -708,10 +708,6 @@
       "audience": "public-product"
     },
     {
-      "path": "tests/captures/no-mistakes-v1.70.1/README.md",
-      "audience": "maintainer-verification"
-    },
-    {
       "path": "tests/captures/claude-askuserquestion/picker.txt",
       "audience": "maintainer-verification"
     },

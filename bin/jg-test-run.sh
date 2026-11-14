@@ -1585,6 +1585,13 @@ families_for_changed_path() {
       fi
       ;;
     tests/*)
+      # A deleted test-tree file (a retired capture or fixture) has no consuming
+      # suite left to select, the same rule the shared-fixture and bin arms
+      # apply: it selects only suites that still name it and never refuses.
+      if [ ! -e "$path" ]; then
+        scripts_for_test_reference "$path" || families_for_test_reference "$path" || true
+        return 0
+      fi
       printf '%s\n' "__unmapped__:$path"
       ;;
     README.md|LICENSE|assets/*|docs/*|.gitignore)
