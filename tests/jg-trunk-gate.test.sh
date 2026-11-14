@@ -10,7 +10,7 @@
 #    recorded and filed once as its own fix row. A lane is charged for a script only when its parent passes it 3 of 3: one that
 #    fails by itself on the parent is flaky, lands, and is filed once.
 # T12 A landing is one fast check: the lander rebases the lane's one commit onto the tip by itself (the lane follows it),
-#    and a lane lands only with its whole proof at its head (receipt, approved merge-card evidence, sealed done-done run); the owner signature never blocks it.
+#    and a lane lands only with its whole proof at its head (receipt, sealed done-done run; no merge-card judge); the owner signature never blocks it.
 # T13 The journey: four lanes ready at once, three land in order with no human or lead step, the red one is refused, no
 #    landing moves the green pin, and no landing runs a whole suite or moves the pin (the tick's verify does), so a whole suite that would be red
 #    (a shard over its time budget, as trunk-v3 at 9f5bbb3af0d1) stops no landing. A green pin left 6 hours behind 9 landings
@@ -203,17 +203,12 @@ test_done_and_landing_both_refuse_before_starting_on_any_missing_proof_input() {
   lane p1 v1 f1.txt
   # (broken <part>, how it is broken, what the refusal must name)
   for part in receipt-absent:'completion receipt' receipt-fail:'completion receipt' receipt-stale:'completion receipt' \
-              card-absent:'no approved merge-card evidence' card-stale:'no approved merge-card evidence' card-failed:'no approved merge-card evidence' \
-              card-uncited:'no approved merge-card evidence' seal-absent:'no sealed done-done run' seal-stale:'no sealed done-done run' seal-dirty:'no sealed done-done run'; do
+              seal-absent:'no sealed clean done-done run' seal-stale:'no sealed clean done-done run' seal-dirty:'no sealed clean done-done run'; do
     prove "p$id"
     case ${part%%:*} in
       receipt-absent) rm "$HOME_D/state/p$id.run-receipt.json" ;;
       receipt-fail) prove_part "p$id" receipt FAIL ;;
       receipt-stale) sed -i 's/"head":"[0-9a-f]*"/"head":"0000000000000000000000000000000000000000"/' "$HOME_D/state/p$id.run-receipt.json" ;;
-      card-absent) rm "$HOME_D/data/p$id/merge-card.json" ;;
-      card-stale) sed -i 's/"head":"[0-9a-f]*"/"head":"0000000000000000000000000000000000000000"/' "$HOME_D/data/p$id/merge-card.json" ;;
-      card-failed) sed -i 's/"verdict":"pass"/"verdict":"fail"/' "$HOME_D/data/p$id/merge-card.json" ;;
-      card-uncited) sed -i 's/"evidence":\[[^]]*\]/"evidence":[]/' "$HOME_D/data/p$id/merge-card.json" ;;
       seal-absent) rm -f "$HOME_D/data/p$id/.done-done/runs/"*.json ;;
       seal-stale) sed -i 's/"commit":"[0-9a-f]*"/"commit":"0000000000000000000000000000000000000000"/;s/20261109T000000Z-[0-9a-f]*/20261109T000000Z-00000000/' "$HOME_D/data/p$id/.done-done/runs/"*.json ;;
       seal-dirty) sed -i 's/"dirty":false/"dirty":true/' "$HOME_D/data/p$id/.done-done/runs/"*.json ;;
@@ -229,9 +224,9 @@ test_done_and_landing_both_refuse_before_starting_on_any_missing_proof_input() {
     ! git -C "$PROJ" merge-base --is-ancestor "$head" "$(tip)" || fail "a landing with $part landed the lane"
   done
   # Everything missing is named at once, in one pass, not one input per round trip.
-  rm -f "$HOME_D/state/p1.run-receipt.json" "$HOME_D/data/p1/merge-card.json"
+  rm -f "$HOME_D/state/p1.run-receipt.json" "$HOME_D/data/p1/.done-done/runs/"*.json
   out=$(done_gate p1) && fail "a lane with no proof must not be done"
-  assert_contains "$out" "completion receipt" "all missing inputs are named together"; assert_contains "$out" "no approved merge-card evidence" "all missing inputs are named together"
+  assert_contains "$out" "completion receipt" "all missing inputs are named together"; assert_contains "$out" "no sealed clean done-done run" "all missing inputs are named together"
   # A done at a new head needs the whole proof again; proving the new head makes both paths accept.
   commit_in "$W/lanes/ok" a.txt two "ticket ok again"
   out=$(done_gate ok) && fail "a commit after the proof voids it: $out"
@@ -261,18 +256,49 @@ test_a_proof_gap_names_the_reason_merge_card_refused_not_a_missing_run() {
   pass 'a refused sealed run is reported with merge-card'"'"'s own reason, not as a missing run'
 }
 
+# The model-judged merge-card is not a landing input: a lane whose card is absent, failed, stale, uncited or "not checked" (the judge
+# errored or timed out) is done and lands on its receipt and its sealed run, while a missing seal or a failed receipt still refuses.
+test_a_lane_lands_with_no_usable_merge_card_and_a_safety_refusal_still_blocks() {
+  local variant out id=0
+  world nojudge
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
+  for variant in absent failed stale uncited not-checked; do
+    id=$((id + 1)); lane "n$id" "v$id" "n$id.txt"
+    case $variant in
+      absent) rm -f "$HOME_D/data/n$id/merge-card.json" ;;
+      failed) sed -i 's/"verdict":"pass"/"verdict":"fail"/' "$HOME_D/data/n$id/merge-card.json" ;;
+      stale) sed -i 's/"head":"[0-9a-f]*"/"head":"0000000000000000000000000000000000000000"/' "$HOME_D/data/n$id/merge-card.json" ;;
+      uncited) sed -i 's/"evidence":\[[^]]*\]/"evidence":[]/' "$HOME_D/data/n$id/merge-card.json" ;;
+      not-checked) printf '{"head":"%s","verdict":"not checked: the judge timed out"}\n' "$(git -C "$PROJ" rev-parse "fm/n$id")" > "$HOME_D/data/n$id/merge-card.json" ;;
+    esac
+    out=$(done_gate "n$id") || fail "a done with a $variant merge-card must be accepted: $out"
+    trunk proof "n$id" >/dev/null 2>&1 || fail "the landing pre-check must accept a lane whose merge-card is $variant"
+    out=$(trunk land "n$id" 2>&1) || fail "a lane whose merge-card is $variant must land: $out"
+    git -C "$PROJ" cat-file -e "trunk:n$id.txt" || fail "the landed tip must hold the lane n$id (card $variant)"
+  done
+  # The safety refusals are untouched: no card does not stand in for a missing seal or a failed receipt.
+  id=$((id + 1)); lane "n$id" "v$id" "n$id.txt"; rm -f "$HOME_D/data/n$id/merge-card.json" "$HOME_D/data/n$id/.done-done/runs/"*.json
+  out=$(done_gate "n$id") && fail "a lane with no sealed run must not be done: $out"
+  assert_contains "$out" "no sealed clean done-done run" "the missing seal is named"
+  id=$((id + 1)); lane "n$id" "v$id" "n$id.txt"; prove_part "n$id" receipt FAIL
+  out=$(done_gate "n$id") && fail "a lane with a failed receipt must not be done: $out"
+  assert_contains "$out" "completion receipt" "the failed receipt is named"
+  pass 'a lane lands with no usable merge-card, and a missing seal or a failed receipt still refuses'
+}
+test_a_lane_lands_with_no_usable_merge_card_and_a_safety_refusal_still_blocks
+
 # The registered check starts no landing for an incomplete proof, says why once, and lands the same head once the proof is there.
 test_the_check_starts_no_landing_until_the_whole_proof_is_there() {
   local out
   world gatecheck
   cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
-  lane g1 one; rm "$HOME_D/data/g1/merge-card.json"
+  lane g1 one; rm -f "$HOME_D/data/g1/.done-done/runs/"*.json
   out=$(sweep); assert_contains "$out" "g1 waits to land" "an incomplete proof must be reported by the check"
-  assert_contains "$out" "no approved merge-card evidence" "the report names the missing input"
+  assert_contains "$out" "no sealed clean done-done run" "the report names the missing input"
   [ -z "$(find "$HOME_D/data/jg-trunk-landing" -name 'g1.*.state' 2>/dev/null)" ] || fail "no landing may start for an incomplete proof"
   [ -z "$(sweep)" ] || fail "the wait must be reported once"
   [ "$(tip)" != "$(git -C "$PROJ" rev-parse fm/g1)" ] || fail "nothing may land without the proof"
-  prove_part g1 card
+  prove_part g1 seal
   sweep >/dev/null; out=$(sweep)
   [ "$(tip)" = "$(git -C "$PROJ" rev-parse fm/g1)" ] || fail "the same head must land once its proof is complete: $out"
   pass 'the landing check starts nothing until the whole proof is there, then lands the same head'

@@ -869,7 +869,7 @@ if [ -e "$CONFIG/wait-no-turns" ]; then
 fi
 
 # The local-trunk landing rule, in one place for the lane brief and the squad lead charter (local-trunk projects only).
-TRUNK_REBASE_RULE="Juggernaut's landing check rebases your commit onto the latest tip of the local trunk by itself, lints the changed files, runs the changed files' tests against the tip's own result and lands it; you never rebase for it. Your done and the landing both need the whole proof at your exact head: a PASS completion receipt, approved merge-card evidence that cites files, and a sealed done-done run holding them; a PASS receipt alone is refused, and nothing may be committed after the seal. The owner signature is recorded after the landing and never blocks it.
+TRUNK_REBASE_RULE="Juggernaut's landing check rebases your commit onto the latest tip of the local trunk by itself, lints the changed files, runs the changed files' tests against the tip's own result and lands it; you never rebase for it. Your done and the landing both need the whole proof at your exact head: a PASS completion receipt and a sealed clean done-done run at that head; a PASS receipt alone is refused, and nothing may be committed after the seal. No model-judged evidence card is part of it. The owner signature is recorded after the landing and never blocks it.
 If the landing check reports that your change conflicts with the trunk, YOU resolve every conflict in your own change, then report ready again; never hand a conflict to anyone else, and never force a landing: no force flag, no hand-moved trunk ref, no landing past a conflict exists, and a landing that is refused is fixed in the lane and reported ready again."
 jg_brief_local_trunk() {  # <project>: true when the project is registered local (local-trunk read as before)
   jg_delivery_style_is "$(JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-project-mode.sh" --raw "$1" 2>/dev/null | cut -d' ' -f1)" trunk
@@ -1153,6 +1153,21 @@ EOF
 PRIOR_ART_SECTION=$'\n'${PRIOR_ART_SECTION%$'\n'}$'\n'
 # A project registered local-trunk (docs/trunk-flow.md) ships local-trunk tasks; legacy local-only tasks land on the local
 # trunk by themselves. Only that posture gets this section; every other project's brief is exactly as it was.
+# Step 8 of the worker rules. A lane that lands on the local trunk (no pull request) proves with the sealed run and the receipt only;
+# every other lane keeps the evidence-card recipe of its pull request.
+if ! jg_delivery_style_publishes "$MODE" && jg_brief_local_trunk "$REPO"; then
+  PROOF_RECIPE="8. When the landing needs done-done proof, follow this recipe in order, at the head you will report with a clean tree. Commit nothing afterward, not even the receipt, because any later commit moves the head and voids the proof; if you must commit again, redo steps a and b at the new head.
+   a. Run the repository's verify skill sealed under done-done at the final head (for Juggernaut itself the skill is \`done-done-verify-suites\`: \`done-done run -- <the suite command it names>\`), and keep the sealed run record.
+   b. Publish the completion receipt with the Completion receipt command under Definition of done. No evidence card, Checks block or model judge is part of this lane's proof."
+else
+  PROOF_RECIPE="8. When the merge gate needs done-done proof, follow this recipe in order, each step at the head you will push with a clean tree. Commit nothing afterward, not even the receipt, because any later commit moves the PR head and voids the proof; if you must commit again, redo steps a to e at the new head.
+   a. Run the repository's verify skill sealed under done-done at the final head (for Juggernaut itself the skill is \`done-done-verify-suites\`: \`done-done run -- <the suite command it names>\`), and keep the sealed run record.
+   b. Build the Evidence card with \`$JG_ROOT/core/merge-card/merge-card\` (\`check <id> <worktree> <head> <PR url>\` runs the gate's own check, and \`merge-card receipt <id> <head>\` must exit 0).
+   c. Put a \`## Checks\` block in the PR body with four lines: \`outcome:\` (what a user can now do), \`repro:\` (the command that failed before and passes now, or \`repro: n/a: no bug\`), \`proof:\` (the command or file that proves it, with the run id of the sealed run), and \`evidence:\` (file names the sealed run itself wrote; see the binding rule below).
+   Binding evidence rule: every file the \`evidence:\` line cites must be a file your own done-done run wrote, inside that run's capture folder under \`$DATA/$ID/\`, so the run record ties it to the commit it sealed. A file you copied or saved into \`$DATA/\` by hand is not evidence: nothing ties it to a commit, the judge is never asked, and the PR cannot merge. A tooling change with no user-visible screen still needs \`screen: none\` alone on its own line in the Checks block, and still needs the run-owned text captures (the run's own log or output files) cited in \`evidence:\`.
+   d. Before the PR exists, write the same \`## Checks\` block to a draft file (for example \`$DATA/$ID/checks-draft.md\`) and run \`JG_HOME=$JG_HOME $JG_ROOT/core/merge-on-green/checks-lint.sh <draft file> <evidence folder>\` until it prints PASS, so a lint failure shows before the PR is open. Paste the passing block into the PR body, then run the same command with \`<PR url>\` in place of the draft file until it prints PASS.
+   e. Publish the receipt bound to the PR head with the Completion receipt command under Definition of done, with \`JG_RECEIPT_PR=<PR url>\` set to the PR's full URL: a receipt for a PR needs it."
+fi
 TRUNK_SECTION=
 TRUNK_NAME=$(JG_HOME="$JG_HOME" jg_trunk_branch "$REPO" "$STATE" 2>/dev/null || true)
 : "${TRUNK_NAME:=trunk}"
@@ -1310,13 +1325,7 @@ $OPERATOR_PAUSE_INSTRUCTIONS
    Juggernaut's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a juggernaut reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 $SHARED_INFRA_RULE
 
-8. When the merge gate needs done-done proof, follow this recipe in order, each step at the head you will push with a clean tree. Commit nothing afterward, not even the receipt, because any later commit moves the PR head and voids the proof; if you must commit again, redo steps a to e at the new head.
-   a. Run the repository's verify skill sealed under done-done at the final head (for Juggernaut itself the skill is \`done-done-verify-suites\`: \`done-done run -- <the suite command it names>\`), and keep the sealed run record.
-   b. Build the Evidence card with \`$JG_ROOT/core/merge-card/merge-card\` (\`check <id> <worktree> <head> <PR url>\` runs the gate's own check, and \`merge-card receipt <id> <head>\` must exit 0).
-   c. Put a \`## Checks\` block in the PR body with four lines: \`outcome:\` (what a user can now do), \`repro:\` (the command that failed before and passes now, or \`repro: n/a: no bug\`), \`proof:\` (the command or file that proves it, with the run id of the sealed run), and \`evidence:\` (file names the sealed run itself wrote; see the binding rule below).
-   Binding evidence rule: every file the \`evidence:\` line cites must be a file your own done-done run wrote, inside that run's capture folder under \`$DATA/$ID/\`, so the run record ties it to the commit it sealed. A file you copied or saved into \`$DATA/\` by hand is not evidence: nothing ties it to a commit, the judge is never asked, and the PR cannot merge. A tooling change with no user-visible screen still needs \`screen: none\` alone on its own line in the Checks block, and still needs the run-owned text captures (the run's own log or output files) cited in \`evidence:\`.
-   d. Before the PR exists, write the same \`## Checks\` block to a draft file (for example \`$DATA/$ID/checks-draft.md\`) and run \`JG_HOME=$JG_HOME $JG_ROOT/core/merge-on-green/checks-lint.sh <draft file> <evidence folder>\` until it prints PASS, so a lint failure shows before the PR is open. Paste the passing block into the PR body, then run the same command with \`<PR url>\` in place of the draft file until it prints PASS.
-   e. Publish the receipt bound to the PR head with the Completion receipt command under Definition of done, with \`JG_RECEIPT_PR=<PR url>\` set to the PR's full URL: a receipt for a PR needs it.
+$PROOF_RECIPE
 9. If your fix is for a state that should not exist, make the implicit state machine explicit: find the machine, write its transition table, give it one owner, and test each transition (the \`diagnostic-reasoning\` skill, section "Make the implicit state machine explicit").
 
 $WAIT_BLOCK$INBOX_SECTION

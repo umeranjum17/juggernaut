@@ -3,7 +3,7 @@
 # live at once, and the accumulated trunk goes out in one batch release.
 #
 # Usage: jg-trunk.sh init <project-dir> [<base-ref>]   create the trunk (default: the newest release/c-N, else HEAD)
-#        jg-trunk.sh proof <task-id>                   print the proof inputs the task's head still lacks (receipt, merge-card evidence, sealed run); exit 1 when any
+#        jg-trunk.sh proof <task-id>                   print the proof inputs the task's head still lacks (receipt, sealed run); exit 1 when any
 #        jg-trunk.sh land <task-id>                    land the task's one proved commit on the trunk; never goes live
 #        jg-trunk.sh classify <output-file> [<gate-log>...]   print wait, retry or final for a refused landing's output
 #        jg-trunk.sh land-batch <id>[@<head>]...       land 2 to batch-max queued lanes as one stack: one gate over their changed files, one move; a red stack is halved to find and return only the lane that caused it
@@ -43,8 +43,8 @@
 # above the pin), so the go-live and the release never take a combined head no test ran on. Only a conflict in the lane's
 # own change stops it, and the refusal names the paths. The captain hold, the design, demo and nav gates, the ticket reference,
 # the linked-decision block and owner-guard still apply; a red trunk never stops a landing. A landing starts only on a head whose whole proof is there
-# (jg_dod_trunk_proof_gaps in bin/jg-merge-gate-lib.sh, the same check the worker's done runs): a PASS completion receipt, approved
-# merge-card evidence citing files, and a sealed done-done run holding them, all at the lane's own head. A missing input refuses
+# (jg_dod_trunk_proof_gaps in bin/jg-merge-gate-lib.sh, the same check the worker's done runs): a PASS completion receipt and
+# a sealed clean done-done run, both at the lane's own head; no model judge is read. A missing input refuses
 # before anything starts and is named; `proof <task-id>` prints them. The owner signature never refuses a landing: it is
 # recorded after it (data/trunk-landing-proofs.tsv), absent when missing. That row names the account the proof was saved under and the lander's own (proof-account, lander-account; the lander clears CLAUDE_CONFIG_DIR before it reads a proof) and also keeps the gate's figures (gate=ran:<scripts>,
 # failed:<on the first run>,secs:<whole gate>; absent when no gate ran), which the landing's Evidence card (core/landing-card) prints.

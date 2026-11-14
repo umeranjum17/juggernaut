@@ -393,22 +393,42 @@ jg_dod_nav_gate() {  # <id> <meta> <text> [<where>] [<fallback text>]
   return 1
 }
 
-# Reads the sealed-run receipt of <id> at <head>. The compare of the account saved at the passed check belongs to the worker's own
+# Reads the sealed clean done-done run of <id> at <head> (`merge-card capture-json`: a read of the run records, no judge, no model).
+# The compare of the account saved at the passed check belongs to the worker's own
 # done (<kind> = done); every other reader (the lander, crew state, the lavish guard, a lead on another account) reads the proof as
 # the lander does, with the caller's account and proof home cleared, so a proof saved under account A shows under account B.
 # Usage: jg_dod_proof_receipt_read <kind> <home> <merge-card> <id> <head>
 jg_dod_proof_receipt_read() {
-  if [ "$1" = 'done' ]; then JG_HOME=$2 "$3" receipt "$4" "$5"
-  else env -u CLAUDE_CONFIG_DIR -u DONE_DONE_HOME JG_HOME="$2" "$3" receipt "$4" "$5"; fi
+  if [ "$1" = 'done' ]; then JG_HOME=$2 "$3" capture-json "$4" "$5"
+  else env -u CLAUDE_CONFIG_DIR -u DONE_DONE_HOME JG_HOME="$2" "$3" capture-json "$4" "$5"; fi
+}
+
+# A sealed clean done-done run of <id> that stands for <head>: one at <head> itself, else one at the head of a sealed clean run of the
+# lane's own folder that is the same change in <repo> (a rebase with no change). Prints merge-card's reason when the run at <head> was
+# refused, and nothing when none exists. Reads the run records only: no judge, no model.
+# Usage: jg_dod_sealed_run_for <kind> <home> <merge-card> <id> <head> <repo>
+jg_dod_sealed_run_for() {
+  local why f c data=${JG_DATA_OVERRIDE:-$2/data}
+  jg_dod_proof_receipt_read "$1" "$2" "$3" "$4" "$5" >/dev/null 2>&1 && return 0
+  why=$(jg_dod_proof_receipt_read "$1" "$2" "$3" "$4" "$5" 2>&1 >/dev/null)
+  for f in "$data/$4/.done-done/runs/"*.json; do
+    [ -f "$f" ] || continue
+    c=$(jq -r 'select(.exit == 0 and .dirty == false) | .commit // empty' "$f" 2>/dev/null) || continue
+    [ -n "$c" ] && [ "$c" != "$5" ] || continue
+    "$3" same-change "$6" "$c" "$5" >/dev/null 2>&1 || continue
+    jg_dod_proof_receipt_read "$1" "$2" "$3" "$4" "$c" >/dev/null 2>&1 && return 0
+  done
+  printf '%s\n' "$why"; return 1
 }
 
 # The proof a local-trunk lane needs at its exact head, checked once and whole: its completion receipt (PASS, this head, this
-# incarnation), approved merge-card evidence that cites files (core/merge-card's saved pass for this head), and a sealed clean
-# done-done run at this head holding those files (`merge-card receipt`). A PASS receipt alone is not enough. Prints one line per
+# incarnation) and a sealed clean done-done run at this head. A PASS receipt alone is not enough. No model judge is part of it:
+# the merge-card check (a model reading the evidence) is an optional report and never a landing input, so a judge that errors or
+# times out cannot hold a landing; a missing receipt, a missing or dirty sealed run and a changed head still refuse. Prints one line per
 # missing input and returns 1 when any is missing; 0 and no output when all are there. The worker's done and the landing's
 # admission both call it, so neither starts on a head whose proof is incomplete.
-# A rebase with no change keeps the proof: the receipt, and the merge-card check with its sealed run, each count for this head
-# when they are bound to it, or to a head that `merge-card same-change` finds is the same change in the lane's project (the
+# A rebase with no change keeps the proof: the receipt and its sealed run count for this head when they are bound to it,
+# or to a head that `merge-card same-change` finds is the same change in the lane's project (the
 # lander still lints and tests the rebased commit on the tip). A proof bound to another change is named and not kept.
 # The owner's bypass of proving (bin/jg-proof-bypass.sh) stands in for all of it: a bypass record for this exact head
 # (bin/jg-bypass-record-lib.sh) leaves no gap. The worker's done, which comes before the tick writes that record, passes <done> as the
@@ -417,32 +437,24 @@ jg_dod_proof_receipt_read() {
 jg_dod_trunk_proof_gaps() {
   jg_bypass_record_holds "$1" "$2" "$3" "$5" && return 0
   if [ "${6:-}" = 'done' ] && jg_bypass_standing "$1" "$3" "$(basename "$(sed -n 's/^project=//p' "$4" 2>/dev/null | tail -n 1)")" >/dev/null; then return 0; fi
-  local home=$1 state=$2 id=$3 meta=$4 head=$5 r="$2/$3.run-receipt.json" card="${JG_DATA_OVERRIDE:-$1/data}/$3/merge-card.json" gaps=0 mc why
-  local repo rh ch rnote='' cnote=''
+  local home=$1 state=$2 id=$3 meta=$4 head=$5 r="$2/$3.run-receipt.json" gaps=0 mc why
+  local repo rh rnote=''
   mc=$_JG_GATE_LIB_DIR/../core/merge-card/merge-card
   command -v jq >/dev/null 2>&1 || { echo "the proof inputs for $id cannot be checked: jq is required"; return 1; }
   repo=$(sed -n 's/^project=//p' "$meta" 2>/dev/null | tail -n 1)
   rh=$(jq -r '.head // empty' "$r" 2>/dev/null) || rh=''
-  ch=$(jq -r 'select(.verdict == "pass") | .head // empty' "$card" 2>/dev/null) || ch=''
   if [ -n "$rh" ] && [ "$rh" != "$head" ] && ! rnote=$("$mc" same-change "$repo" "$rh" "$head" 2>&1); then
     rnote="; its receipt is for ${rh:0:12} and not kept: ${rnote#merge-card: }"; rh=$head
   fi
-  if [ -n "$ch" ] && [ "$ch" != "$head" ] && ! cnote=$("$mc" same-change "$repo" "$ch" "$head" 2>&1); then
-    cnote="; its check is for ${ch:0:12} and not kept: ${cnote#merge-card: }"; ch=$head
-  fi
-  rh=${rh:-$head}; ch=${ch:-$head}
+  rh=${rh:-$head}
   if ! { [ -f "$r" ] && jq -e --arg h "$rh" --arg g "$(sed -n 's/^spawn_gen=//p' "$meta" 2>/dev/null | tail -n 1)" \
     '.verdict == "PASS" and .head == $h and (($g == "") or (.spawn_gen == $g))' "$r" >/dev/null 2>&1; }; then
     echo "no completion receipt with verdict PASS for head ${head:0:12} of $id (publish it with core/receipts/bin/jg-run-receipt.sh at this head$rnote)"; gaps=1
   fi
-  if ! { [ -f "$card" ] && jq -e --arg h "$ch" 'select(.head == $h and .verdict == "pass") | (.check.evidence // []) | length > 0' "$card" >/dev/null 2>&1; }; then
-    echo "no approved merge-card evidence citing files for head ${head:0:12} of $id (run: JG_HOME=$home $mc check $id <worktree> $head <PR url|->$cnote)"; gaps=1
-  elif ! why=$(jg_dod_proof_receipt_read "${6:-}" "$home" "$mc" "$id" "$ch" 2>&1 >/dev/null); then
-    # merge-card names why it refused (a run that exists but cites other evidence, a changed proof context); say that,
-    # not that no run exists. It prints nothing when no run holds the cited evidence at the head.
+  if ! why=$(jg_dod_sealed_run_for "${6:-}" "$home" "$mc" "$id" "$head" "$repo" 2>&1); then
     why=${why%%$'\n'*}; why=${why#merge-card: }
-    if [ -n "$why" ]; then echo "the sealed done-done run at head ${ch:0:12} of $id was refused: $why"
-    else echo "no sealed done-done run at head ${ch:0:12} of $id holding the cited evidence (run the verify suite sealed: done-done run -- <suite command>; commit nothing after)"; fi
+    if [ -n "$why" ]; then echo "the sealed done-done run at head ${head:0:12} of $id was refused: $why"
+    else echo "no sealed clean done-done run at head ${head:0:12} of $id (run the verify suite sealed: done-done run -- <suite command>; commit nothing after)"; fi
     gaps=1
   fi
   [ "$gaps" = 0 ]
@@ -466,7 +478,7 @@ jg_dod_local_nav_fallback() {  # <state> <id> <head>
 # cannot drift: the captain hold, then receipt, design, demo, nav, config/merge-gate and the proof card.
 # Prints the refusal and returns 1; returns 0 when every gate passes.
 # A local-trunk landing (bin/jg-trunk.sh) passes the hold and the design, demo and nav gates here and has its proof checked
-# up front by jg_dod_trunk_proof_gaps (receipt, merge-card evidence, sealed run); its owner signature never refuses it, so it
+# up front by jg_dod_trunk_proof_gaps (receipt, sealed run); its owner signature never refuses it, so it
 # passes `trunk` as <kind>.
 # Usage: jg_dod_local_landing_gates <bin-dir> <config-dir> <home> <state> <id> <meta> <project> <base> <candidate> [trunk]
 jg_dod_local_landing_gates() {

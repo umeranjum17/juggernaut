@@ -14,7 +14,7 @@
 # (state/trunk-tip-<project>, made by bin/jg-trunk.sh init), whose ship branch is not on the trunk yet and whose
 # state/<task>.status ends with a `done` line, `check` starts `bin/jg-trunk.sh land <task>` detached and records
 # the outcome in <home>/data/jg-trunk-landing/<task>.<head>.state. The worker's done is the signal, and the lane's whole proof must be there at its head (completion
-# receipt, approved merge-card evidence, sealed done-done run: `jg-trunk.sh proof`) before a landing starts; a lane without it is
+# receipt and sealed done-done run, no model judge: `jg-trunk.sh proof`) before a landing starts; a lane without it is
 # reported once and left, and lands on its own once the proof is complete. The owner signature is never waited for. The lander rebases the lane's
 # commit onto the trunk tip by itself, so a moved trunk is never a refusal. Lanes land oldest done first, and a
 # finished landing starts the next at once (`next`), so three lanes ready together land in order with no human or lead step. While one
@@ -489,7 +489,7 @@ for meta in "$STATE"/*.meta; do
     report "$id.$head" "$id waits for the captain's word to land (yolo is off)" "waits for the captain's word: yolo is off and merge=approved is not recorded"
     continue
   fi
-  # A landing starts only on a head whose whole proof is there: receipt, approved merge-card evidence and a sealed done-done run.
+  # A landing starts only on a head whose whole proof is there: receipt and a sealed done-done run.
   if gaps=$(JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" proof "$id" 2>&1); then :; else
     [ -z "$QUIET" ] || continue
     gaps=$(printf '%s' "$gaps" | tr '\n' ';')

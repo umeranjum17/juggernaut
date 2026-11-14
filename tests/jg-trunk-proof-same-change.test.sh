@@ -5,7 +5,7 @@
 # bin/jg-home-health.sh.
 #
 # T19 A proved lane rebased with no change keeps its proof: `jg-trunk.sh proof` prints no gap, the worker's done with its receipt
-#    published again at the new head is accepted while the merge-card check and sealed run stay at the old head, and the lane lands.
+#    published again at the new head is accepted while the sealed run stays at the old head, and the lane lands.
 # T20 A lane whose change differs after the rebase is refused and the refusal names it: the seed is lander-refusal-reaches-worker on
 #    9 Nov, proved at bf4cac943 and rebased at 15:27:21Z to bd60a810e, which dropped one file's hunk and had to seal its run again.
 #    A rebase that changes only a file's mode is another change too.
@@ -32,7 +32,7 @@ test_a_proved_lane_rebased_with_no_change_keeps_its_proof_and_lands() {
   printf '# rebased with no change: %s -> %s\n' "${old:0:12}" "${new:0:12}"
   out=$(trunk proof s1 2>&1) || rc=$?
   [ "$rc" = 0 ] && [ -z "$out" ] || fail "a rebase with no change must keep the proof, got exit $rc: $out"
-  # The worker publishes its receipt again at the new head (the done asks for that); the check and the sealed run stay at the old one.
+  # The worker publishes its receipt again at the new head (the done asks for that); the sealed run stays at the old one.
   prove_part s1 receipt
   out=$(done_gate s1) || fail "the done of a lane rebased with no change must be accepted: $out"
   out=$(trunk proof s1 2>&1) || fail "a receipt at the new head with the check at the old one must be a whole proof: $out"
@@ -56,7 +56,6 @@ test_a_lane_whose_change_differs_after_the_rebase_is_refused_and_named() {
   out=$(trunk proof d1 2>&1) && fail "a lane whose change differs must not keep its proof: $out"
   assert_contains "$out" "no completion receipt with verdict PASS" "the receipt of the other change is not kept"
   assert_contains "$out" "not the same change" "the gap names that the change differs"
-  assert_contains "$out" "no approved merge-card evidence" "the check of the other change is not kept"
   printf '# a changed commit is refused: %s\n' "$(printf '%s' "$out" | head -n 1)"
   refused "a lane whose change differs" d1 "not the same change"
   out=$(done_gate d1) && fail "the done of a lane whose change differs must be refused: $out"
