@@ -2,6 +2,23 @@
 
 The fleet status board (`juggernaut-axi board`, `board.sh`): one row per state machine and home. It writes nothing.
 
+## Readings and freshness (jgp-r5-s1)
+
+`records.tsv` has one row for each of the 24 declared machines: the record lister, and how many seconds a reading stays fresh.
+A lister prints `<id><TAB><epoch>` for each record, where epoch is when the record's source last changed; `listers.sh` holds the listers
+that are more than one line. `readings.sh <home> <machine> [--now <epoch>]` prints one line for each record: machine, id, state,
+observed_at, age and freshness (`fresh`, `stale` or `unknown`). It writes nothing.
+
+- fresh: the age is within the machine's lifetime. stale: it is longer.
+- unknown: the source holds no time, the time is in the future, or the home, the machine or its lister cannot be read. A missing home is one `-` line, never no lines.
+- A state word the table does not have reads state `unknown`. The account observer's `no-reading` is one, so an account with no quota reading reads unknown and unknown.
+- The supervision reading is the age of `state/.last-watcher-beat`, not the clock, so an old beat reads stale. Presence is read live, so its age is 0.
+
+Limits: `ticket`, `delivering` and `proving` list the tickets of `data/moves.log` (their last move); a ticket with no move is not listed, and the
+other two read `unknown` for a ticket outside their stage. `hold` lists the lanes whose record names a decision key: a hold on a Beads row with no lane is not
+listed until a Beads lister exists. The lifetimes are first values, kept in one column of `records.tsv`. Proof: `bash tests/jg-fleet-readings.test.sh`.
+The board's counts still use the record age; showing freshness on the board is the next slice.
+
 ## At scale (H38b)
 
 Each home writes one digest, `data/fleet-status/digest.tsv`, with `board.sh --digest <home>`: a `#digest <epoch> <new moves>` line, then

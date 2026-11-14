@@ -19,7 +19,9 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 ROOT=$(cd "$HERE/../.." && pwd -P)
 BOUND=${JG_BOARD_BOUND:-10}
 
-secs() { case "$1" in *s) echo "${1%s}" ;; *m) echo $((${1%m} * 60)) ;; *h) echo $((${1%h} * 3600)) ;; *d) echo $((${1%d} * 86400)) ;; esac; }
+# shellcheck source=core/fleet-status/lib.sh
+. "$HERE/lib.sh"
+secs() { fs_secs "$@"; }
 
 cell() {  # <home> <machine>
   local home=$1 m=$2 tbl obs lister word i epoch now n=0 none=0 past=0 lim s
@@ -28,9 +30,7 @@ cell() {  # <home> <machine>
   obs=$(awk -F'\t' '$1 == "observer" { print $2; exit }' "$tbl/$m.tsv")
   lister=$(awk -F'\t' -v m="$m" '$1 == m { print $2; exit }' "$HERE/records.tsv")
   if [ -z "$obs" ] || [ -z "$lister" ]; then printf '%s\t%s\tno\t0\t\t0\t0\n' "$(basename "$home")" "$m"; return; fi
-  export JG_HOME=$home JG_STATE_OVERRIDE=$home/state JG_DATA_OVERRIDE=$home/data JG_MACHINES_TABLES=$tbl
-  [ ! -d "$home/config" ] || export JG_CONFIG_OVERRIDE=$home/config
-  STATE=$home/state DATA=$home/data; export STATE DATA
+  fs_env "$home"
   now=$(date +%s)
   declare -A cnt=() limit=()
   while IFS=$'\t' read -r s lim; do limit[$s]=$lim; cnt[$s]=0; done < <(awk -F'\t' '$1 == "state" && $3 != "composite" { print $2 "\t" $7 }' "$tbl/$m.tsv")

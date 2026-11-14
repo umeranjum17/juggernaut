@@ -1742,6 +1742,9 @@ journeys:
   jg-fleet-status:
     tier: local
     command: bash tests/jg-fleet-status.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-fleet-readings:
+    tier: local
+    command: bash tests/jg-fleet-readings.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-fleet-steps:
     tier: local
     command: bash tests/jg-fleet-steps.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
