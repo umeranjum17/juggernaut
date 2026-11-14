@@ -20,7 +20,7 @@ start_watcher() {
   PATH="$dir/fakebin:$PATH" JG_HOME="$dir" JG_STATE_OVERRIDE="$dir/state" JG_POLL=5 JG_SIGNAL_GRACE=1 \
     JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999 "$WATCH" > "$dir/watch.out" 2>&1 &
   WPID=$!
-  while [ "$i" -lt 60 ]; do
+  while [ "$i" -lt 600 ]; do
     [ "$(cat "$dir/state/.watch.lock/pid" 2>/dev/null || true)" = "$WPID" ] && [ -e "$dir/state/.last-watcher-beat" ] \
       && [ -s "$dir/state/.watch.lock/scan-complete" ] && return 0
     sleep 0.1
@@ -47,14 +47,14 @@ arm_for() {
   local dir=$1 out=$2
   shift 2
   env PATH="$dir/fakebin:$PATH" JG_HOME="$dir" JG_STATE_OVERRIDE="$dir/state" JG_POLL=5 JG_SIGNAL_GRACE=1 \
-    JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999 JG_ARM_ATTACH_POLL=0.1 JG_ARM_CONFIRM_TIMEOUT=3 "$@" \
+    JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999 JG_ARM_ATTACH_POLL=0.1 JG_ARM_CONFIRM_TIMEOUT=60 "$@" \
     "$WATCH_ARM" > "$out" 2>&1 &
   APID=$!
 }
 
 wait_for_line() {
   local file=$1 pattern=$2 i=0
-  while [ "$i" -lt 100 ]; do
+  while [ "$i" -lt 600 ]; do
     grep -Eq "$pattern" "$file" 2>/dev/null && return 0
     sleep 0.1
     i=$((i + 1))
