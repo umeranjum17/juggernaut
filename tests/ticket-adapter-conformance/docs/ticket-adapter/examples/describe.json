@@ -1,0 +1,38 @@
+{
+  "operation": "describe",
+  "about": "The backend names itself, says which optional operations it has and lists the fields it knows. The New ticket sheet and the filters are drawn from this.",
+  "request": { "interface": 1 },
+  "response": {
+    "interface": 1,
+    "backend": "example",
+    "capabilities": ["history", "comment"],
+    "fields": [
+      { "name": "title", "type": "string", "label": "Title", "required": true },
+      { "name": "body", "type": "text", "label": "Description" },
+      {
+        "name": "kind",
+        "type": "enum",
+        "label": "Kind",
+        "values": [{ "value": "kind-a", "label": "Kind A" }, { "value": "kind-b", "label": "Kind B" }]
+      },
+      {
+        "name": "status",
+        "type": "enum",
+        "label": "Stage",
+        "values": [
+          { "value": "stage-1", "label": "Stage one" },
+          { "value": "stage-2" },
+          { "value": "stage-3", "label": "Stage three" }
+        ]
+      },
+      { "name": "assignee", "type": "string", "label": "Assignee", "values": [{ "value": "Umer" }] },
+      { "name": "labels", "type": "set", "label": "Labels" },
+      { "name": "parent", "type": "ref", "label": "Parent" },
+      { "name": "links", "type": "links" },
+      { "name": "created_at", "type": "datetime", "readonly": true },
+      { "name": "updated_at", "type": "datetime", "readonly": true },
+      { "name": "extra.estimate", "type": "string", "label": "Estimate" }
+    ]
+  },
+  "exit": 0
+}

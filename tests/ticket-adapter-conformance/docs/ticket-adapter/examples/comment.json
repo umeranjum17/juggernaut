@@ -1,0 +1,17 @@
+{
+  "operation": "comment",
+  "about": "Only a backend that lists comment in its capabilities has this operation.",
+  "request": { "interface": 1, "id": "tk-1004", "text": "Needs a screenshot.", "op_id": "op-comment-0001" },
+  "response": {
+    "event": {
+      "id": "e-3",
+      "at": "2026-11-13T10:00:00Z",
+      "actor": "Umer",
+      "type": "comment",
+      "text": "Needs a screenshot.",
+      "changes": [],
+      "extra": {}
+    }
+  },
+  "exit": 0
+}

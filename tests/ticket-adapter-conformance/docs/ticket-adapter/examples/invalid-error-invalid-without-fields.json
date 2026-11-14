@@ -1,0 +1,6 @@
+{
+  "operation": "create",
+  "side": "error",
+  "breaks": "an invalid refusal must name its fields",
+  "message": { "error": { "code": "invalid", "message": "Refused.", "retryable": false } }
+}

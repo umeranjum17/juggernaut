@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ticket-adapter/v1/list.response.json",
+  "title": "list response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tickets", "complete"],
+  "properties": {
+    "tickets": { "type": "array", "items": { "$ref": "ticket.json" } },
+    "next_cursor": { "$ref": "common.json#/$defs/token" },
+    "complete": { "type": "boolean" }
+  }
+}

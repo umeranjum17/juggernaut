@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ticket-adapter/v1/event.json",
+  "title": "History event",
+  "type": "object",
+  "required": ["id", "at", "actor", "type", "text", "changes", "extra"],
+  "properties": {
+    "id": { "$ref": "common.json#/$defs/token" },
+    "at": { "$ref": "common.json#/$defs/time" },
+    "actor": { "type": ["string", "null"] },
+    "type": { "type": "string", "minLength": 1 },
+    "text": { "type": ["string", "null"] },
+    "changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["field", "from", "to"],
+        "properties": { "field": { "type": "string", "minLength": 1 }, "from": {}, "to": {} }
+      }
+    },
+    "extra": { "type": "object" }
+  }
+}

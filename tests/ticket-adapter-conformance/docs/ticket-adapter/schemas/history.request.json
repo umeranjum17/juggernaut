@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ticket-adapter/v1/history.request.json",
+  "title": "history request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["interface", "id"],
+  "properties": {
+    "interface": { "$ref": "common.json#/$defs/interface" },
+    "id": { "$ref": "common.json#/$defs/token" },
+    "cursor": { "$ref": "common.json#/$defs/token" }
+  }
+}

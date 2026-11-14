@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ticket-adapter/v1/describe.response.json",
+  "title": "describe response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["interface", "backend", "capabilities", "fields"],
+  "properties": {
+    "interface": { "$ref": "common.json#/$defs/interface" },
+    "backend": { "type": "string", "minLength": 1 },
+    "capabilities": { "type": "array", "uniqueItems": true, "items": { "type": "string" } },
+    "fields": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "type"],
+        "properties": {
+          "name": { "$ref": "common.json#/$defs/token" },
+          "type": { "enum": ["string", "text", "enum", "set", "ref", "links", "datetime"] },
+          "label": { "type": "string" },
+          "values": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["value"],
+              "properties": { "value": { "type": "string" }, "label": { "type": "string" } }
+            }
+          },
+          "required": { "type": "boolean" },
+          "readonly": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}

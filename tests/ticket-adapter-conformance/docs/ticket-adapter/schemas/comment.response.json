@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ticket-adapter/v1/comment.response.json",
+  "title": "comment response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event"],
+  "properties": { "event": { "$ref": "event.json" } }
+}

@@ -1,0 +1,23 @@
+{
+  "operation": "update",
+  "about": "unset removes a key from extra, which set cannot express because null is a value.",
+  "request": { "interface": 1, "id": "tk-1004", "rev": "r-9002", "op_id": "op-update-0002", "unset": ["estimate"] },
+  "response": {
+    "ticket": {
+      "id": "tk-1004",
+      "rev": "r-9003",
+      "title": "Write the 0.11 release note",
+      "body": "Two lines.",
+      "kind": "kind-a",
+      "status": "stage-2",
+      "assignee": "Umer",
+      "labels": ["alpha", "beta"],
+      "parent": null,
+      "links": [],
+      "created_at": "2026-11-13T09:00:00Z",
+      "updated_at": "2026-11-13T09:45:00Z",
+      "extra": { "legacy-ref": "L-17" }
+    }
+  },
+  "exit": 0
+}

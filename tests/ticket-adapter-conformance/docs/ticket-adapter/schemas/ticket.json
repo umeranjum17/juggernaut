@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ticket-adapter/v1/ticket.json",
+  "title": "Ticket record",
+  "$defs": {
+    "link": {
+      "description": "A link to another ticket. The type is the backend's own word. Keys beyond these are kept as they are.",
+      "type": "object",
+      "required": ["type", "id"],
+      "properties": { "type": { "type": "string", "minLength": 1 }, "id": { "$ref": "common.json#/$defs/token" } }
+    }
+  },
+  "type": "object",
+  "required": ["id", "rev", "title", "body", "kind", "status", "assignee", "labels", "parent", "links", "created_at", "updated_at", "extra"],
+  "properties": {
+    "id": { "$ref": "common.json#/$defs/token" },
+    "rev": { "$ref": "common.json#/$defs/token" },
+    "title": { "type": "string" },
+    "body": { "type": "string" },
+    "kind": { "type": "string" },
+    "status": { "type": "string" },
+    "assignee": { "type": ["string", "null"] },
+    "labels": { "type": "array", "items": { "type": "string" } },
+    "parent": { "anyOf": [{ "$ref": "common.json#/$defs/token" }, { "type": "null" }] },
+    "links": { "type": "array", "items": { "$ref": "ticket.json#/$defs/link" } },
+    "extra": { "type": "object" },
+    "created_at": { "$ref": "common.json#/$defs/time" },
+    "updated_at": { "$ref": "common.json#/$defs/time" }
+  }
+}

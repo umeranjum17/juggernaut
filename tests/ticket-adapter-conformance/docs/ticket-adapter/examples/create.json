@@ -1,0 +1,35 @@
+{
+  "operation": "create",
+  "about": "The backend assigns id, rev and both times, and answers with the ticket as it read it back.",
+  "request": {
+    "interface": 1,
+    "ticket": {
+      "title": "Write the release note",
+      "body": "Two lines.",
+      "kind": "kind-a",
+      "status": "stage-1",
+      "assignee": "Umer",
+      "labels": ["alpha", "beta"],
+      "extra": { "legacy-ref": "L-17", "estimate": "3" }
+    },
+    "op_id": "op-create-0001"
+  },
+  "response": {
+    "ticket": {
+      "id": "tk-1004",
+      "rev": "r-9001",
+      "title": "Write the release note",
+      "body": "Two lines.",
+      "kind": "kind-a",
+      "status": "stage-1",
+      "assignee": "Umer",
+      "labels": ["alpha", "beta"],
+      "parent": null,
+      "links": [],
+      "created_at": "2026-11-13T09:00:00Z",
+      "updated_at": "2026-11-13T09:00:00Z",
+      "extra": { "legacy-ref": "L-17", "estimate": "3" }
+    }
+  },
+  "exit": 0
+}

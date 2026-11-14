@@ -1,0 +1,6 @@
+{
+  "operation": "update",
+  "side": "error",
+  "breaks": "a conflict must carry the current ticket",
+  "message": { "error": { "code": "conflict", "message": "Stale.", "retryable": false } }
+}

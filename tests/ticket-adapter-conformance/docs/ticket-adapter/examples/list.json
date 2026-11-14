@@ -1,0 +1,42 @@
+{
+  "operation": "list",
+  "about": "Two tickets of a longer list. Following next_cursor until it is absent reads the rest; every page says complete.",
+  "request": { "interface": 1, "limit": 2 },
+  "response": {
+    "tickets": [
+      {
+        "id": "tk-1003",
+        "rev": "r-8770",
+        "title": "Fix the export",
+        "body": "",
+        "kind": "kind-b",
+        "status": "stage-2",
+        "assignee": null,
+        "labels": [],
+        "parent": "tk-1001",
+        "links": [{ "type": "related", "id": "tk-1004" }],
+        "created_at": "2026-11-12T16:00:00Z",
+        "updated_at": "2026-11-13T08:10:00Z",
+        "extra": {}
+      },
+      {
+        "id": "tk-1004",
+        "rev": "r-9001",
+        "title": "Write the release note",
+        "body": "Two lines.",
+        "kind": "kind-a",
+        "status": "stage-1",
+        "assignee": "Umer",
+        "labels": ["alpha", "beta"],
+        "parent": null,
+        "links": [],
+        "created_at": "2026-11-13T09:00:00Z",
+        "updated_at": "2026-11-13T09:00:00Z",
+        "extra": { "legacy-ref": "L-17", "estimate": "3" }
+      }
+    ],
+    "next_cursor": "c-2",
+    "complete": true
+  },
+  "exit": 0
+}

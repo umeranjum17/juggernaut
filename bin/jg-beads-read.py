@@ -3,6 +3,7 @@
 
 Usage: BEADS_DIR=<store>/.beads jg-beads-read.py rev <id>...
        BEADS_DIR=<store>/.beads jg-beads-read.py list [--after <id>] [--limit <1-500>]
+       BEADS_DIR=<store>/.beads jg-beads-read.py show <id>...
        BEADS_DIR=<store>/.beads jg-beads-read.py history <id>
 
 It only reads, and every call goes through bin/jg-beads.sh (JG_BEADS_SH names another wrapper), never bd or dolt directly.
@@ -11,6 +12,8 @@ label, dependency, parent or comment write, so rev is a 16-hex digest of that re
 comment count. Compare it for equality only.
 list walks the store with a cursor: one JSON object `{"rows": [...], "next": <id or null>}`, rows in id order, every row as `bd show --json`
 gives it plus its `rev`. Closed rows and gates are left out, as `bd list` leaves them out, and `--after` takes the previous page's `next`.
+show prints a JSON array of the rows as `bd show --json` gives them, each with its `rev`; a missing id exits 4, and a page of list that cannot be shown exits 5,
+so a caller can tell a ticket that is not there, and a list that would be short, from a store that cannot be read.
 history prints one line per commit that changed the row, newest first, `<commit><TAB><date><TAB><kind><TAB><changed columns>`, from
 dolt_diff_issues: `bd history` lists every commit of the store, so it is not used.
 """
@@ -40,10 +43,13 @@ def ident(value):
     return value
 
 
-def run(args):
+def run(args, fail_code=None, absent=None):
+    """The wrapper's stdout. A failure whose output contains `absent` is a ticket that is not there, so it returns "[]" for show to name."""
     done = subprocess.run([WRAPPER] + args, capture_output=True, text=True)
+    if done.returncode != 0 and absent and absent in done.stdout + done.stderr:
+        return "[]"
     if done.returncode != 0:
-        die("%s failed (%d): %s" % (" ".join(args[:2]), done.returncode, done.stderr.strip() or done.stdout.strip()), done.returncode)
+        die("%s failed (%d): %s" % (" ".join(args[:2]), done.returncode, done.stderr.strip() or done.stdout.strip()), fail_code or done.returncode)
     return done.stdout
 
 
@@ -59,12 +65,12 @@ def rev_of(row):
     return hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()[:16]
 
 
-def show(ids):
-    rows = json.loads(run(["show"] + ids + ["--json", "--include-dependents", "--brief-deps"]) or "[]")
+def show(ids, fail_code=None):
+    rows = json.loads(run(["show"] + ids + ["--json", "--include-dependents", "--brief-deps"], fail_code, "not found") or "[]")
     found = {r["id"]: r for r in rows}
     missing = [i for i in ids if i not in found]
     if missing:
-        die("no such ticket: %s" % ", ".join(missing), 1)
+        die("no such ticket: %s" % ", ".join(missing), fail_code or 4)
     for r in rows:
         r["rev"] = rev_of(r)
     return rows
@@ -93,9 +99,15 @@ def cmd_list(args):
     ids = [r[0] for r in sql("select id from issues where status <> 'closed' and issue_type <> 'gate' and id > '%s' order by id limit %d" % (after, limit + 1))]
     more = len(ids) > limit
     ids = ids[:limit]
-    rows = show(ids) if ids else []
+    rows = show(ids, 5) if ids else []
     rows.sort(key=lambda r: r["id"])
     print(json.dumps({"rows": rows, "next": ids[-1] if more else None}))
+
+
+def cmd_show(args):
+    if not args:
+        die("usage: show <id>...")
+    print(json.dumps(show([ident(a) for a in args])))
 
 
 def cmd_history(args):
@@ -116,7 +128,7 @@ def cmd_history(args):
 
 
 def main(argv):
-    verbs = {"rev": cmd_rev, "list": cmd_list, "history": cmd_history}
+    verbs = {"rev": cmd_rev, "list": cmd_list, "show": cmd_show, "history": cmd_history}
     if not argv or argv[0] not in verbs:
         die("usage: jg-beads-read.py <%s> ..." % "|".join(verbs))
     verbs[argv[0]](argv[1:])

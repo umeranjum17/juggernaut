@@ -1,0 +1,7 @@
+{
+  "operation": "history",
+  "about": "An operation the backend does not have, a request key it does not know or a different interface number.",
+  "request": { "interface": 1, "id": "tk-1004" },
+  "response": { "error": { "code": "unsupported", "message": "This backend keeps no history.", "retryable": false } },
+  "exit": 1
+}

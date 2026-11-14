@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ticket-adapter/v1/get.response.json",
+  "title": "get response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ticket"],
+  "properties": { "ticket": { "$ref": "ticket.json" } }
+}

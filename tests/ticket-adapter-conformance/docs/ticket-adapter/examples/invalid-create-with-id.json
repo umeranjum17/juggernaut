@@ -1,0 +1,6 @@
+{
+  "operation": "create",
+  "side": "request",
+  "breaks": "ticket carries an id: the backend assigns it",
+  "message": { "interface": 1, "ticket": { "id": "tk-1", "title": "x" }, "op_id": "op-1" }
+}

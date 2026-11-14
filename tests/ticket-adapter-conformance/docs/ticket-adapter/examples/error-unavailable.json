@@ -1,0 +1,9 @@
+{
+  "operation": "list",
+  "about": "A read that failed is this, with a non-zero exit. It is never an empty list.",
+  "request": { "interface": 1 },
+  "response": {
+    "error": { "code": "unavailable", "message": "The ticket store could not be read: connection refused.", "retryable": true }
+  },
+  "exit": 1
+}

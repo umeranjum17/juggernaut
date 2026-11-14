@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ticket-adapter/v1/update.request.json",
+  "title": "update request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["interface", "id", "rev", "op_id"],
+  "properties": {
+    "interface": { "$ref": "common.json#/$defs/interface" },
+    "id": { "$ref": "common.json#/$defs/token" },
+    "rev": { "$ref": "common.json#/$defs/token" },
+    "op_id": { "$ref": "common.json#/$defs/op_id" },
+    "set": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "body": { "type": "string" },
+        "kind": { "type": "string" },
+        "status": { "type": "string" },
+        "assignee": { "type": ["string", "null"] },
+        "labels": { "type": "array", "items": { "type": "string" } },
+        "parent": { "anyOf": [{ "$ref": "common.json#/$defs/token" }, { "type": "null" }] },
+        "links": { "type": "array", "items": { "$ref": "ticket.json#/$defs/link" } },
+        "extra": { "type": "object" }
+      }
+    },
+    "unset": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+  },
+  "anyOf": [{ "required": ["set"] }, { "required": ["unset"] }]
+}

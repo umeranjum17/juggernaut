@@ -1,0 +1,6 @@
+{
+  "operation": "update",
+  "side": "request",
+  "breaks": "rev is missing: an edit without the rev it read is refused",
+  "message": { "interface": 1, "id": "tk-1004", "op_id": "op-1", "set": { "title": "x" } }
+}

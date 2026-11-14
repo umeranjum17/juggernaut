@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ticket-adapter/v1/common.json",
+  "title": "Shared pieces",
+  "$defs": {
+    "interface": {
+      "description": "The interface number every request carries. A different number is refused with unsupported.",
+      "const": 1
+    },
+    "token": {
+      "description": "An opaque non-empty string: an id, a rev or a cursor. Compared only for equality.",
+      "type": "string",
+      "minLength": 1
+    },
+    "op_id": {
+      "description": "A client-chosen key for one write; repeating it returns the first result.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "time": { "description": "An RFC 3339 date and time.", "type": "string", "format": "date-time" }
+  }
+}

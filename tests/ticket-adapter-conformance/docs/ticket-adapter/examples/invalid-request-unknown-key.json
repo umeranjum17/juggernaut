@@ -1,0 +1,6 @@
+{
+  "operation": "get",
+  "side": "request",
+  "breaks": "a key the interface does not have",
+  "message": { "interface": 1, "id": "tk-1004", "verbose": true }
+}

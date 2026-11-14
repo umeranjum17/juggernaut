@@ -1,0 +1,30 @@
+{
+  "operation": "update",
+  "about": "The rev the client read is stale. Nothing was written; the error carries the ticket as it is now.",
+  "request": { "interface": 1, "id": "tk-1004", "rev": "r-9001", "op_id": "op-update-0003", "set": { "assignee": null } },
+  "response": {
+    "error": {
+      "code": "conflict",
+      "message": "tk-1004 changed since it was read (rev r-9001, now r-9002).",
+      "retryable": false,
+      "detail": {
+        "current": {
+          "id": "tk-1004",
+          "rev": "r-9002",
+          "title": "Write the 0.11 release note",
+          "body": "Two lines.",
+          "kind": "kind-a",
+          "status": "stage-2",
+          "assignee": "Umer",
+          "labels": ["alpha", "beta"],
+          "parent": null,
+          "links": [],
+          "created_at": "2026-11-13T09:00:00Z",
+          "updated_at": "2026-11-13T09:30:00Z",
+          "extra": { "legacy-ref": "L-17", "estimate": "5" }
+        }
+      }
+    }
+  },
+  "exit": 1
+}

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ticket-adapter/v1/history.response.json",
+  "title": "history response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["events"],
+  "properties": {
+    "events": { "type": "array", "items": { "$ref": "event.json" } },
+    "next_cursor": { "$ref": "common.json#/$defs/token" }
+  }
+}

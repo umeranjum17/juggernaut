@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ticket-adapter/v1/describe.request.json",
+  "title": "describe request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["interface"],
+  "properties": { "interface": { "$ref": "common.json#/$defs/interface" } }
+}

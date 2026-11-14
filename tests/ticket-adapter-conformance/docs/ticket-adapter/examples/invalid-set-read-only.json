@@ -1,0 +1,6 @@
+{
+  "operation": "update",
+  "side": "request",
+  "breaks": "set names a field a client may not change (rev)",
+  "message": { "interface": 1, "id": "tk-1004", "rev": "r-1", "op_id": "op-1", "set": { "rev": "r-2" } }
+}

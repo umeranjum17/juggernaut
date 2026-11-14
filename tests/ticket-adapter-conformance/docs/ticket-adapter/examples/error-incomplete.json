@@ -1,0 +1,13 @@
+{
+  "operation": "list",
+  "about": "A list that cannot be whole is this error, not a short list.",
+  "request": { "interface": 1 },
+  "response": {
+    "error": {
+      "code": "incomplete",
+      "message": "Only part of the ticket store could be read (2 of 40 tickets).",
+      "retryable": true
+    }
+  },
+  "exit": 1
+}

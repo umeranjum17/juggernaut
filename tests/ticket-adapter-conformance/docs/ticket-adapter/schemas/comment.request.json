@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ticket-adapter/v1/comment.request.json",
+  "title": "comment request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["interface", "id", "text", "op_id"],
+  "properties": {
+    "interface": { "$ref": "common.json#/$defs/interface" },
+    "id": { "$ref": "common.json#/$defs/token" },
+    "text": { "type": "string", "minLength": 1 },
+    "op_id": { "$ref": "common.json#/$defs/op_id" }
+  }
+}

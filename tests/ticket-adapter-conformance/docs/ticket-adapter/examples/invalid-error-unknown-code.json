@@ -1,0 +1,6 @@
+{
+  "operation": "get",
+  "side": "error",
+  "breaks": "code is not one of the interface's",
+  "message": { "error": { "code": "gone", "message": "No ticket.", "retryable": false } }
+}

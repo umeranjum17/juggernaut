@@ -1,0 +1,32 @@
+{
+  "operation": "history",
+  "about": "Every event the backend recorded for the ticket, oldest first. The words in type are the backend's own.",
+  "request": { "interface": 1, "id": "tk-1004" },
+  "response": {
+    "events": [
+      {
+        "id": "e-1",
+        "at": "2026-11-13T09:00:00Z",
+        "actor": "Umer",
+        "type": "created",
+        "text": null,
+        "changes": [],
+        "extra": {}
+      },
+      {
+        "id": "e-2",
+        "at": "2026-11-13T09:30:00Z",
+        "actor": "Umer",
+        "type": "changed",
+        "text": null,
+        "changes": [
+          { "field": "title", "from": "Write the release note", "to": "Write the 0.11 release note" },
+          { "field": "status", "from": "stage-1", "to": "stage-2" },
+          { "field": "extra.estimate", "from": "3", "to": "5" }
+        ],
+        "extra": {}
+      }
+    ]
+  },
+  "exit": 0
+}

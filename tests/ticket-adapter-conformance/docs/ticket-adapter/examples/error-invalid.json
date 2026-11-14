@@ -1,0 +1,14 @@
+{
+  "operation": "create",
+  "about": "detail.fields names every field at fault, so a form keeps every word and marks the field.",
+  "request": { "interface": 1, "ticket": { "title": "Write the release note", "status": "stage-9" }, "op_id": "op-create-0002" },
+  "response": {
+    "error": {
+      "code": "invalid",
+      "message": "The ticket was refused.",
+      "retryable": false,
+      "detail": { "fields": [{ "field": "status", "message": "stage-9 is not one of stage-1, stage-2, stage-3" }] }
+    }
+  },
+  "exit": 1
+}

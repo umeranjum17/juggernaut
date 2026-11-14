@@ -1,0 +1,6 @@
+{
+  "operation": "get",
+  "request": { "interface": 1, "id": "tk-9999" },
+  "response": { "error": { "code": "not_found", "message": "No ticket tk-9999.", "retryable": false } },
+  "exit": 1
+}

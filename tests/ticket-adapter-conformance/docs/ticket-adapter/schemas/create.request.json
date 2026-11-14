@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ticket-adapter/v1/create.request.json",
+  "title": "create request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["interface", "ticket", "op_id"],
+  "properties": {
+    "interface": { "$ref": "common.json#/$defs/interface" },
+    "ticket": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "body": { "type": "string" },
+        "kind": { "type": "string" },
+        "status": { "type": "string" },
+        "assignee": { "type": ["string", "null"] },
+        "labels": { "type": "array", "items": { "type": "string" } },
+        "parent": { "anyOf": [{ "$ref": "common.json#/$defs/token" }, { "type": "null" }] },
+        "links": { "type": "array", "items": { "$ref": "ticket.json#/$defs/link" } },
+        "extra": { "type": "object" }
+      }
+    },
+    "op_id": { "$ref": "common.json#/$defs/op_id" }
+  }
+}
