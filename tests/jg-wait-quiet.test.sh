@@ -169,6 +169,21 @@ backdate() {  # <home> <task> <secs>
 }
 
 
+# A ring needs the episode armed in one cycle and observed past its threshold in a later one; a
+# loaded host can end a cycle after the arm and before the ring. Repeat bounded cycles, each
+# followed by 1200 s of test clock on the episode, until <regex> is in the events; the caller's
+# assertion still reports a miss with its full evidence. Only the rings that must happen use it;
+# the quiet lanes keep their fixed cycles.
+ring_until() {  # <home> <task> <extended-regex> [<panes>]
+  local h=$1 t=$2 want=$3 n=0
+  while [ "$n" -lt "${RING_TRIES:-8}" ] && ! grep -qE "$want" "$h/events" 2>/dev/null; do
+    n=$((n + 1))
+    PANES="${4:-${PANES:-}}" cycle "$h"
+    [ ! -f "$h/state/.waiting-timers/$t" ] || backdate "$h" "$t" 1200
+  done
+  return 0
+}
+
 # id:status line, one lane per window; every status is older than the wait thresholds.
 test_parked_and_finished_lanes_ring_no_timer_and_a_blocked_lane_still_does() {
   local m w n=0 i
@@ -188,6 +203,8 @@ test_parked_and_finished_lanes_ring_no_timer_and_a_blocked_lane_still_does() {
     PANES='1 2 3 4' cycle "$m"
     for w in pk rc wk bl; do [ ! -f "$m/state/.waiting-timers/$w" ] || backdate "$m" "$w" 1200; done
   done
+  ring_until "$m" bl "waiting-state bl .*level=owner" '1 2 3 4'
+  ring_until "$m" wk "waiting-state wk .*level=owner" '1 2 3 4'
   printf "events: %s\n" "$(cat "$m/events")" >&2
   for w in pk rc; do
     [ ! -e "$m/state/.waiting-timers/$w" ] || fail "the quiet lane $w armed an episode"
@@ -212,6 +229,7 @@ test_a_pause_with_a_past_real_date_still_rings() {
     PANES='1' cycle "$m"
     [ ! -f "$m/state/.waiting-timers/pp" ] || backdate "$m" pp 6000
   done
+  ring_until "$m" pp "waiting-state pp " 1
   printf "events: %s\n" "$(cat "$m/events")" >&2
   grep -q -E "waiting-state pp " "$m/events" || fail "a pause past its real date did not ring: $(cat "$m/events")"
   pass "a pause whose real date has passed still rings"
@@ -241,6 +259,7 @@ test_a_lane_waiting_for_a_running_ticket_is_quiet_and_rings_when_that_lane_is_go
     PANES='1' cycle "$m"
     [ ! -f "$m/state/.waiting-timers/wf" ] || backdate "$m" wf 1200
   done
+  ring_until "$m" wf "waiting-state wf .*level=owner" 1
   grep -q -E "waiting-state wf .*level=owner" "$m/events" || fail "a lane whose awaited ticket is gone did not ring: $(cat "$m/events")"
   pass "a lane waiting for a running ticket is quiet; it rings once that lane is gone without landing"
 }
