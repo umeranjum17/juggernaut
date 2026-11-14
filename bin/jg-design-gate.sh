@@ -73,7 +73,7 @@ MAIN=$(jg_design_main_home "$JG_HOME") || die "cannot find the main home from $J
 if [ "$TASK_HOME" = "$JG_HOME" ]; then TSTATE=${JG_STATE_OVERRIDE:-$JG_HOME/state}; else TSTATE=$TASK_HOME/state; fi
 wt=$(jg_dod_meta_value "$TSTATE/$ID.meta" worktree)
 head=$(git -C "${wt:-/nonexistent}" rev-parse HEAD 2>/dev/null) || die "cannot read the work copy of $ID from $TSTATE/$ID.meta"
-size=$(jg_design_size "$wt" "$(jg_dod_meta_value "$TSTATE/$ID.meta" base_branch)" "$head") || die "cannot measure the UI change of $ID"
+size=$(jg_design_size "$wt" "$(jg_design_base "$TSTATE/$ID.meta")" "$head") || die "cannot measure the UI change of $ID"
 case $size in design*) die "handroll refused: $ID changes ${size#design } (UI lines, new UI files), past the small-tweak size; it needs first-draft" ;; esac
 mkdir -p "$TSTATE/design-approvals" || die "cannot write $TSTATE/design-approvals"
 jq -n --arg id "$ID" --arg h "$head" --arg sz "$size" --arg by "$JG_HOME" --argjson now "$(date +%s)" \
