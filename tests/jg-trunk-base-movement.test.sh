@@ -102,8 +102,7 @@ test_a_lane_moved_under_once_lands_after_a_second_gate() {
 test_a_red_lane_is_returned_for_the_gate_and_the_baseline_names_each_cause() {
   local out
   move_world baseline; touch "$W/hold-cb" "$W/hold-tb"
-  # One home, three returns: a trunk move (tb), a red gate (rb) and a conflict (cb), and one lane that landed (ca). The conflict comes last:
-  # the check judges a conflict that a landing beside it caused once more, and that second launch holds the queue for 2 minutes.
+  # One home, three returns: a trunk move (tb), a red gate (rb) and a conflict (cb), and one lane that landed (ca).
   lane tb 'tb' tb.txt; kick; wait_for 'tb gates' runs_reach tb 1
   for n in 1 2 3; do mover "m$n" "m$n"; touch "$W/go-tb-$n"; [ "$n" = 3 ] || wait_for "tb gates run $((n + 1))" runs_reach tb $((n + 1)); done
   wait_for 'tb is returned' refused tb; quiet tb  # its worker would fix it; the case leaves it returned once
@@ -113,6 +112,7 @@ test_a_red_lane_is_returned_for_the_gate_and_the_baseline_names_each_cause() {
   touch "$W/go-cb-1"; wait_for 'cb is returned' refused cb; quiet cb
   assert_contains "$(verdict rb)" "gate 'full' failed" "the red lane is returned for the gate"
   out=$("$ROOT/core/trunk-landing/returns-baseline.sh" "$HOME_D" --heads) || fail "the baseline must run: $out"
+  # The conflict a landing beside it caused is judged on the tip the rebase met, so that head is returned once.
   cause_row "$out" conflict 1 1 || fail "one conflict return on one head: $out"
   cause_row "$out" trunk-moved 1 1 || fail "one trunk-moved return on one head: $out"
   cause_row "$out" gate-failure 1 1 || fail "one gate-failure return on one head: $out"

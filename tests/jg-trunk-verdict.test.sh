@@ -5,8 +5,9 @@
 # bin/jg-captain-hold.sh, bin/jg-send.sh and bin/jg-teardown.sh.
 #
 # V1 A stack whose decisions read fails once is not final: the other lane lands, the failed one is tried again after its backoff and lands.
-# V2 A conflict verdict stored on trunk tip T is skipped while the tip is T (no new attempt, one report); when the tip moves it is tried
-#    again once per tip, and the report does not repeat while the reason is the same.
+# V2 A conflict verdict stored on trunk tip T is skipped while the tip is T (no new attempt, one report). A tip that moves in files the
+#    conflict does not name leaves it standing (still no new attempt); a tip that moves a conflicting path tries the lane again once, and
+#    the report does not repeat while the reason is the same.
 # V3 A conflict whose cause left the trunk (the commit it conflicted with was reverted) lands on the next sweep, and the worker is not
 #    steered for the verdict once its tip is gone.
 # V4 A conflict verdict written before the tip was stored (9 Nov: gc-a1 held one for a tip that was gone) is judged again.
@@ -80,7 +81,7 @@ SH
   pass 'a stack whose decisions read fails once is tried again and lands; only its other lane landed on the first sweep'
 }
 
-test_a_conflict_verdict_holds_only_while_its_tip_stands() {
+test_a_conflict_verdict_holds_until_the_trunk_changes_a_conflicting_path() {
   local out n
   conflict_world retip
   out=$(sweep); settle
@@ -88,14 +89,18 @@ test_a_conflict_verdict_holds_only_while_its_tip_stands() {
   out="$out$(sweep)"; settle; out="$out$(sweep)"; settle
   [ "$(attempts c "$C")" = 1 ] || fail "a conflict on an unchanged tip must not be tried again: $(attempts c "$C") attempts"
   [ "$(printf '%s\n' "$out" | grep -c 'c not landed')" = 1 ] || fail "the conflict must be reported once: $out"
-  hand_tip other other.txt x
+  hand_tip other other.txt x; hand_tip another another.txt y
   out=$(sweep); settle
-  [ "$(attempts c "$C")" = 2 ] || fail "a moved tip must give the conflict one more attempt: $(attempts c "$C") attempts"
+  [ "$(attempts c "$C")" = 1 ] || fail "trunk moves in other files must not try the conflict again: $(attempts c "$C") attempts"
+  case $(state_of c "$C") in final*conflicts*work.txt*) ;; *) fail "the conflict verdict still stands with its path: $(state_of c "$C")" ;; esac
+  hand_tip touch work.txt four
+  out="$out$(sweep)"; settle
+  [ "$(attempts c "$C")" = 2 ] || fail "a trunk change to the conflicting path must give the conflict one more attempt: $(attempts c "$C") attempts"
   case $(state_of c "$C") in final*conflicts*) ;; *) fail "c still conflicts on the new tip: $(state_of c "$C")" ;; esac
   out="$out$(sweep)"; settle; out="$out$(sweep)"; settle
   n=$(attempts c "$C"); [ "$n" = 2 ] || fail "the new verdict must hold on its own tip: $n attempts"
   assert_not_contains "$out" "c not landed" "the same conflict on a new tip is not reported again"
-  pass 'a conflict verdict is skipped while its tip stands, tried once per tip change, and not reported again for the same reason'
+  pass 'a conflict verdict holds while the trunk changes no conflicting path, is tried once when one changes, and is not reported again for the same reason'
 }
 
 test_a_conflict_whose_cause_left_the_trunk_lands_and_its_worker_is_not_steered() {
@@ -235,7 +240,7 @@ test_a_final_stays_held_until_a_lander_file_or_the_receipt_changes() {
 }
 
 test_a_stack_whose_decisions_read_fails_once_is_tried_again_and_lands
-test_a_conflict_verdict_holds_only_while_its_tip_stands
+test_a_conflict_verdict_holds_until_the_trunk_changes_a_conflicting_path
 test_a_conflict_whose_cause_left_the_trunk_lands_and_its_worker_is_not_steered
 test_a_conflict_verdict_stored_with_no_tip_is_judged_again
 test_a_red_gate_the_lane_caused_stays_final_for_its_head
