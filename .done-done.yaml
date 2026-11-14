@@ -1037,6 +1037,9 @@ journeys:
   fleet-budget:
     tier: local
     command: bash journeys/fleet-budget.sh
+  lane-place:
+    tier: local
+    command: bash journeys/lane-place.sh
   tier-run:
     tier: local
     command: bash journeys/tier-run.sh
@@ -1460,6 +1463,9 @@ journeys:
   jg-lane-scale-machines:
     tier: local
     command: bash tests/jg-lane-scale-machines.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-lane-place:
+    tier: local
+    command: bash tests/jg-lane-place.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-lane-scale:
     tier: local
     command: bash tests/jg-lane-scale.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

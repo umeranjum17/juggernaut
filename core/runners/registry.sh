@@ -2,7 +2,9 @@
 # runners registry: the machines the owner registered to run work besides this host (H30a).
 # Usage: registry.sh get <jg-home> <id>      print the record as key=value lines; exit 1 when absent or malformed
 #        registry.sh list <jg-home>          print the id of every registered runner; no file or no record prints nothing
-#        registry.sh usable <jg-home>        print the id of every runner whose latest probe passed, own machines first
+#        registry.sh usable <jg-home> [--private]   print the id of every runner whose latest probe passed, own machines first;
+#                                            with --private only runners with private_ok=yes (a private repository stays on owned machines)
+#        registry.sh free <jg-home> <id>     print the free cores of the latest passed probe of the runner; exit 1 when it has none
 # Record  one line of config/runners, `#` lines and blank lines ignored:
 #   <id> ssh=<alias> root=<code root> home=<runner home> arch=<x86_64|arm64> cores=<n> mem_gb=<n> slots=<n> cost_per_hour=<usd> private_ok=<yes|no>
 #   A runner is a remote home of kind runner: no lead agent and no lanes. cost_per_hour 0 is an own machine; above 0 is a cloud machine.
@@ -10,7 +12,7 @@
 #   The latest row of an id decides. A runner with no row, or a failed row, gets no work: `usable` never names it.
 # With no runner registered `usable` prints nothing and every run stays on this host.
 set -u
-usage() { echo "usage: registry.sh get|list|usable <jg-home> [id]" >&2; exit 2; }
+usage() { echo "usage: registry.sh get|list|usable <jg-home> [id|--private] | free <jg-home> <id>" >&2; exit 2; }
 [ "$#" -ge 2 ] && [ -d "$2" ] || usage
 CMD=$1
 HOME_DIR=$2
@@ -75,13 +77,22 @@ case "$CMD" in
     shift
     printf '%s\n' "$@"
     ;;
+  free)
+    [ "$#" -eq 3 ] || usage
+    row=$(latest_health "$3")
+    [ "$(printf '%s' "$row" | cut -f3)" = ok ] || exit 1
+    printf '%s\n' "$(printf '%s' "$row" | cut -f4)"
+    ;;
   usable)
+    PRIVATE=0
+    case "${3:-}" in '') ;; --private) PRIVATE=1 ;; *) usage ;; esac
     # Own machines first (cost 0), then by id, so placement takes the cheapest ready runner.
     records | while read -r id rest; do
       cost=${rest##*cost_per_hour=}
       cost=${cost%% *}
       row=$(latest_health "$id")
       [ "$(printf '%s' "$row" | cut -f3)" = ok ] || continue
+      [ "$PRIVATE" -eq 0 ] || case " $rest " in *" private_ok=yes "*) ;; *) continue ;; esac
       printf '%s\t%s\n' "$cost" "$id"
     done | sort -g -k1,1 -k2,2 | cut -f2
     ;;
