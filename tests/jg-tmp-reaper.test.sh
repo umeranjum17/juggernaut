@@ -211,6 +211,49 @@ pass "50 heartbeat cycles leave the temp directory flat at $after entries"
 
 
 
+# --- leaked test processes ------------------------------------------------------
+# The reaper stops a process a test started (it carries JG_TEST_FIXTURE_PROC) that names a jg-* path in the temp
+# root and is old enough; a process without the mark, a marked one that names no jg-* path and a young one stay.
+P=$TMP_ROOT/proc-tmp
+mkdir -p "$P/jg-fix"
+alive() { [ -d "/proc/$1" ] && ! grep -q '^State:[[:space:]]*[ZX]' "/proc/$1/status" 2>/dev/null; }
+JG_TEST_FIXTURE_PROC=4242 bash -c 'while :; do sleep 1; done' _ "$P/jg-fix" </dev/null >/dev/null 2>&1 &
+LEAK=$!
+JG_TEST_FIXTURE_PROC=4242 bash -c 'while :; do sleep 1; done' _ "$P/other-fix" </dev/null >/dev/null 2>&1 &
+OTHER=$!
+env -u JG_TEST_FIXTURE_PROC bash -c 'while :; do sleep 1; done' _ "$P/jg-fix" </dev/null >/dev/null 2>&1 &
+UNMARKED=$!
+sleep 2.5
+proc_reap() { TMPDIR=$P JG_HOME=$HOME_DIR JG_TMP_ALERT_PCT=100 JG_TEST_PROC_GRACE_SEC=1 JG_TMP_TEST_PROC_AGE_SEC=$1 "$REAPER" check 2>&1; }
+out=$(proc_reap 3600) || fail "reaper check failed with young test processes: $out"
+alive "$LEAK" || fail "a test process under the age limit was stopped"
+out=$(proc_reap 2) || fail "reaper check failed with old test processes: $out"
+[ -z "$out" ] || fail "the process pass printed: $out"
+alive "$LEAK" && fail "an old marked process naming a jg-* path was left running"
+alive "$OTHER" || fail "a marked process that names no jg-* path was stopped"
+alive "$UNMARKED" || fail "a process no test started was stopped"
+grep -q "test-process-reaped pid $LEAK " "$HOME_DIR/state/tmp-reaper.log" || fail "the stop was not logged"
+kill "$OTHER" "$UNMARKED" 2>/dev/null
+pass "the reaper stops an old test process naming a jg-* path and leaves unmarked and young ones"
+
+# A suite stops what it started when it exits, on a normal exit and on a signal, and nothing else.
+JG_TEST_ROOT=$ROOT
+for how in exit term; do
+  pidfile=$TMP_ROOT/leak-$how.pid
+  env -u JG_TEST_FIXTURE_PROC sleep 600 </dev/null >/dev/null 2>&1 &
+  BY=$!
+  case $how in
+    exit) tail='' ;;
+    term) tail='kill -TERM $$; sleep 5' ;;
+  esac
+  JG_TEST_SKIP_ORPHAN_REAP=1 bash -c '. "$1/tests/lib.sh"; sleep 600 </dev/null >/dev/null 2>&1 & echo $! > "$2"; '"$tail" _ "$JG_TEST_ROOT" "$pidfile" >/dev/null 2>&1
+  LEFT=$(cat "$pidfile" 2>/dev/null) || fail "the $how suite did not start its process"
+  alive "$LEFT" && fail "a suite left its own process running after a $how"
+  alive "$BY" || fail "a suite exit stopped a process it did not start ($how)"
+  kill "$BY" 2>/dev/null
+done
+pass "a suite stops the processes it started on exit and on a signal, and no other"
+
 # --- host wiring arms the reaper in a home, and unwiring disarms it --------------
 W=$TMP_ROOT/wired-home
 mkdir -p "$W/state" "$W/data" "$W/config"

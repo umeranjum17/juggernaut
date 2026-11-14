@@ -442,6 +442,8 @@ log() {
 
 # shellcheck source=bin/jg-test-host-lib.sh
 . "$ROOT/bin/jg-test-host-lib.sh"
+# shellcheck source=bin/jg-test-procs-lib.sh
+. "$ROOT/bin/jg-test-procs-lib.sh"
 
 # The effective machine_runs_max (see bin/jg-test-host-lib.sh "Run slots").
 machine_runs_max() {
@@ -2641,6 +2643,7 @@ declare -a WORKER_SCRIPTS=()
 # Invoked indirectly by the EXIT trap below.
 # shellcheck disable=SC2329
 cleanup_run() {
+  jg_test_procs_stop_marked "$$"
   rm -rf "$RUN_TMP"
   jg_test_host_release
 }
@@ -2858,6 +2861,8 @@ run_script_bounded() {  # <script> <out> <stream> <id>
   local JG_BUS_HOMES
   JG_BUS_HOMES="$RUN_TMP/bus-homes.$$"
   export JG_BUS_HOMES
+  # The mark that tells the temp reaper a process belongs to a test; cleanup_run stops what carries it.
+  export JG_TEST_FIXTURE_PROC=$$
   set +e
   local marker="$out.bound"
   if [ "$bound" -gt 0 ]; then
