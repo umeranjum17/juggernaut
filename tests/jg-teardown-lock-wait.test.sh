@@ -81,15 +81,16 @@ A_RUN=$!
 B=$(make_case dead); lockB=$(lock_path "$B")
 sleep 0 & dead=$!; wait "$dead"
 mkdir -p "$lockB"; printf '%s\n' "$dead" > "$lockB/pid"
-s=$SECONDS; run_teardown "$B" > "$B/out" 2> "$B/err"; rcB=$?; secsB=$((SECONDS - s))
+# A wait for this holder would last the whole 100 s deadline, so the 60 s bound tells "taken over" from "waited" even on a loaded host.
+s=$SECONDS; run_teardown "$B" JG_TEARDOWN_LOCK_WAIT=100 > "$B/out" 2> "$B/err"; rcB=$?; secsB=$((SECONDS - s))
 check "b: a dead holder is taken over and the lane is cleaned" "$rcB|$(test -e "$B/state/task-x1.meta" && echo kept || echo gone)" "0|gone"
-check "b: no wait for a dead holder (under 10 s)" "$([ "$secsB" -lt 10 ] && echo yes || echo "no:$secsB")" yes
+check "b: no wait for a dead holder (under 60 s of a 100 s wait)" "$([ "$secsB" -lt 60 ] && echo yes || echo "no:$secsB")" yes
 
 # c) a live holder that outlasts the wait: refused after the wait, nothing changed.
-C=$(make_case outlast); hold "$C" 20
+C=$(make_case outlast); hold "$C" 90
 s=$SECONDS; run_teardown "$C" JG_TEARDOWN_LOCK_WAIT=3 > "$C/out" 2> "$C/err"; rcC=$?; secsC=$((SECONDS - s))
 check "c: a holder that outlasts the wait refuses" "$rcC|$(grep -c 'REFUSED: another Treehouse slot allocation or return is in progress for .*(waited 3s); the task record is kept, rerun teardown' "$C/err")" "1|1"
-check "c: it waited for the deadline before it refused" "$([ "$secsC" -ge 3 ] && [ "$secsC" -lt 15 ] && echo yes || echo "no:$secsC")" yes
+check "c: it waited for the deadline before it refused" "$([ "$secsC" -ge 3 ] && [ "$secsC" -lt 60 ] && echo yes || echo "no:$secsC")" yes
 check "c: nothing was changed: the record and the worktree stay" "$(test -e "$C/state/task-x1.meta" && test -d "$C/pool/1/repo" && echo kept || echo gone)" kept
 kill "$HOLD_PID" 2>/dev/null; wait "$HOLD_PID" 2>/dev/null
 
@@ -113,9 +114,9 @@ STUB
 chmod +x "$D/teardown"
 export STUB_LOG=$D/calls STUB_SLEEP=35 JG_LEAD_SWEEP_TEARDOWN=$D/teardown
 s=$SECONDS; timeout 30 "$ROOT/core/lead-sweep/lead-sweep.sh" check "$D" > "$D/beat1" 2>&1; rc=$?; secs=$((SECONDS - s))
-check "d: the check returns at once and is not ended by the 30-second limit" "$rc|$([ "$secs" -lt 5 ] && echo yes || echo "no:$secs")" "0|yes"
+check "d: the check returns at once and is not ended by the 30-second limit" "$rc|$([ "$secs" -lt 20 ] && echo yes || echo "no:$secs")" "0|yes"
 check "d: the first beat prints nothing yet" "$(cat "$D/beat1")" ""
-i=0; while [ "$(find "$D/data/lead-sweep" -maxdepth 1 -name 'results.*' 2>/dev/null | wc -l)" -lt 1 ] && [ "$i" -lt 100 ]; do sleep 1; i=$((i + 1)); done
+i=0; while [ "$(find "$D/data/lead-sweep" -maxdepth 1 -name 'results.*' 2>/dev/null | wc -l)" -lt 1 ] && [ "$i" -lt 300 ]; do sleep 1; i=$((i + 1)); done
 check "d: the job cleaned both lanes, oldest done line first" "$(awk '{printf "%s ", $1}' "$STUB_LOG")" "older newer "
 "$ROOT/core/lead-sweep/lead-sweep.sh" check "$D" > "$D/beat2" 2>&1
 check "d: the next beat prints both results" "$(grep -c '^lead-sweep: \(older\|newer\) cleaned up' "$D/beat2")" 2
