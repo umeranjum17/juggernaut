@@ -39,6 +39,9 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 UPDATE="$ROOT/bin/jg-update.sh"
+# shellcheck source=bin/jg-home-shape-lib.sh
+# shellcheck disable=SC1091
+. "$ROOT/bin/jg-home-shape-lib.sh"
 jg_git_identity fmtest fmtest@example.com
 TMP_ROOT=$(jg_test_tmproot jg-update-local-base)
 
@@ -629,11 +632,52 @@ test_a_guarded_diverged_half_moved_home_finishes() {
   pass 'T1i a guarded diverged half-moved home finishes through the refreshed guard; an untracked file keeps the refusal'
 }
 
+# T1j The shape of a skipped home is recorded in its row and replays. A lead half-moved to the tip (index equals the tip tree)
+# that also holds an untracked file is skipped; its row carries the shape. A fresh lead is rebuilt from that recorded shape alone
+# and run through the same adopt path: it records the same shape and is skipped the same way, and a row with columns and shape
+# keys a reader does not know still reads.
+test_a_skipped_home_shape_is_recorded_and_replays() {
+  local out shape replayed
+  mover_world t1j
+  git -C "$W/lead-ff" fetch -q "$W/proj" trunk
+  git -C "$W/lead-ff" read-tree -u -m HEAD "$C2" || fail "fixture: cannot stage the tip"
+  printf 'mine\n' > "$W/lead-ff/note.txt"
+  out=$(run_mover) || :
+  [ "$(row_of lead-ff | cut -f4)" = "skipped:dirty" ] || fail "the half-moved lead with a file of its own is skipped: $out"
+  shape=$(jg_home_shape_from_row "$W/home/data/trunk-in-use.tsv" proj:lead-ff)
+  assert_contains "$shape" "ancestry=behind;index=target;dirty=" "the row must carry the shape of the skipped home"
+  assert_contains "$shape" "??:note.txt" "the shape must name the untracked file"
+  [ "$(row_of lead-ff | cut -f6)" = "$shape" ] || fail "the shape is the sixth column: $(row_of lead-ff)"
+  [ -z "$(row_of lead-repoint | cut -f6)" ] || fail "a home that moved carries no shape: $(row_of lead-repoint)"
+  # Replay: a fresh world, a fresh lead at the pre-move HEAD, rebuilt from the recorded shape only.
+  mover_world t1j-replay
+  git -C "$W/lead-ff" fetch -q "$W/proj" trunk
+  jg_home_shape_apply "$W/lead-ff" "$C2" "$shape" || fail "the recorded shape must rebuild"
+  replayed=$(jg_home_shape_record "$W/lead-ff" "$C2")
+  [ "$replayed" = "$shape" ] || fail "the rebuilt home must have the recorded shape: $replayed != $shape"
+  out=$(run_mover) || :
+  [ "$(head_of lead-ff)" != "$C2" ] || fail "the replayed home must be skipped as the real one was: $out"
+  [ "$(row_of lead-ff | cut -f4)" = "skipped:dirty" ] || fail "the replay must reach the recorded outcome: $(row_of lead-ff)"
+  [ "$(row_of lead-ff | cut -f6)" = "$shape" ] || fail "the replay must record the same shape: $(row_of lead-ff)"
+  # The adopt path on the same shape without the file of its own finishes the move.
+  mover_world t1j-adopt
+  git -C "$W/lead-ff" fetch -q "$W/proj" trunk
+  jg_home_shape_apply "$W/lead-ff" "$C2" "ancestry=behind;index=target;dirty=$(jg_home_shape_field "$shape" dirty | sed 's/,??:note.txt//')" || fail "the shape must rebuild"
+  out=$(run_mover) || :
+  [ "$(head_of lead-ff)" = "$C2" ] || fail "the adopt path must carry the same shape without the extra file to the tip: $out"
+  # A reader ignores what it does not know: an extra column and a shape key from a later writer.
+  printf 'proj:lead-ff\t%s\t%s\tskipped:dirty\t%s\t%s;future=1\tfuture-column\n' "$C2" "$(date +%s)" "$C0" "$shape" >> "$W/home/data/trunk-in-use.tsv"
+  [ "$(jg_home_shape_from_row "$W/home/data/trunk-in-use.tsv" proj:lead-ff)" = "$shape;future=1" ] || fail "an unknown column must not hide the shape"
+  [ "$(jg_home_shape_field "$shape;future=1" index)" = target ] || fail "an unknown shape key must not hide a known one"
+  pass 'T1j a skipped home records its shape; a fresh home rebuilt from it is skipped the same way, and the adopt path moves it once its own file is gone; unknown fields are ignored'
+}
+
 test_guarded_linked_home_moves_twice
 
 test_guarded_primary_moves_with_tip
 test_every_home_moves_or_is_skipped_with_one_row
 test_a_half_moved_lead_finishes_its_move
+test_a_skipped_home_shape_is_recorded_and_replays
 test_a_guarded_diverged_half_moved_home_finishes
 test_cache_is_cleared_after_a_move
 test_a_move_rewires_only_the_add_ons_it_changed_and_names_a_failure
