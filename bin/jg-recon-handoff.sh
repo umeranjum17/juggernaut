@@ -3,9 +3,11 @@
 #
 # Usage:
 #   jg-recon-handoff.sh draft   <task-id>                                        record the draft: the sha256 of data/<task-id>/report.md
+#   jg-recon-handoff.sh assign  <task-id> --critic <critic-task-id>              the lead names the critic ticket that holds this draft
 #   jg-recon-handoff.sh verdict <task-id> --critic <id> --hash <sha256> --gaps <k>   the critic's answer for the draft it read
 #   jg-recon-handoff.sh revise  <task-id>                                        record a revised draft after a verdict with gaps
-#   jg-recon-handoff.sh phase   <task-id>                                        print drafted, critiqued, accepted or none
+#   jg-recon-handoff.sh assignee <task-id>                                       print critic, generation and hash of the live assignment, or none
+#   jg-recon-handoff.sh phase   <task-id>                                        print drafted, assigned, critiqued, accepted or none
 #   jg-recon-handoff.sh show    <task-id>                                        print the record, one line per move
 #
 # The record is data/<task-id>/handoff.tsv, append-only: epoch, event, state after, report hash, actor, gaps. Its last line is the state.
@@ -13,6 +15,12 @@
 # nothing written) when the hash it names is not the recorded draft, or when report.md changed after the draft was recorded; a revise is
 # refused when report.md still holds the critiqued draft. A verdict also writes the gate's own lines into critic.md (`Critic:` once, then
 # `Round <n>: new gaps <k> report <sha>`), the format bin/jg-recon-gate.sh reads, so no one installs that file by hand.
+# A critic is a separate ticket of its own (a task directory with its own data): assign records it in this one record, so the assignment
+# survives a restart of any worker, writes the pointer data/<critic>/assignment.tsv (parent, generation, hash) and the critic's own
+# `Critic:` line, and is a no-op for the same critic. Once assigned, only that critic's verdict counts and the parent record alone says
+# whether the draft is accepted: the verdict also writes the critic ticket's own `Round` line, so its gate view follows the parent and
+# never decides it. A revise retires the assignment, so a late verdict cannot seal the new draft; a draft that was never assigned still
+# takes a verdict from any named critic. A second critic while one holds the draft is refused.
 # Each move is judged by bin/jg-machine-guard.sh (shadow, or refusal once `recon` is in config/machine-enforce) before it is written.
 # Exit: 0 done, 1 refused, 2 usage. Data directory: JG_DATA_OVERRIDE, else <JG_HOME>/data.
 set -u
@@ -24,7 +32,7 @@ export JG_HOME
 
 die() { echo "jg-recon-handoff: $*" >&2; exit 2; }
 refuse() { echo "jg-recon-handoff: refused: $*" >&2; exit 1; }
-usage() { sed -n '2,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 task_dir() {  # <task-id> -> the data directory of a plain task id
   case "${1:-}" in ''|*/*|.*) die "task id '${1:-}' is not a plain id" ;; esac
@@ -66,6 +74,49 @@ command_draft() {
   record "$dir" "$id" draft drafted "$hash" researcher 0
 }
 
+# The live assignment of a record's last line: critic, generation (the number of assign moves) and hash; empty when none holds.
+live_assignment() {  # <dir>
+  local line; line=$(last_line "$1")
+  [ -n "$line" ] && [ "$(field "$line" 3)" = assigned ] || return 0
+  printf '%s\t%s\t%s\n' "$(field "$line" 5)" "$(grep -c "$(printf '^[0-9]*\tassign\t')" "$1/handoff.tsv")" "$(field "$line" 4)"
+}
+
+command_assignee() {
+  local dir out; dir=$(task_dir "${1:-}") || exit $?
+  out=$(live_assignment "$dir"); printf '%s\n' "${out:-none}"
+}
+
+command_assign() {
+  local id=${1:-} dir critic='' line hash cdir live gen
+  [ "$#" -ge 1 ] || usage; shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --critic) [ "$#" -ge 2 ] || usage; critic=$2; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  dir=$(task_dir "$id") || exit $?
+  [ -n "$critic" ] || usage
+  case "$critic" in *[[:space:]]*) die "--critic takes one ticket id" ;; esac
+  [ "$(printf '%s' "$critic" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$id" | tr '[:upper:]' '[:lower:]')" ] \
+    && [ "$critic" != self ] || refuse "the critic is a separate ticket: $critic is the researcher's own"
+  cdir=$(task_dir "$critic") || exit $?
+  line=$(last_line "$dir")
+  [ -n "$line" ] || refuse "no draft is recorded: the researcher runs draft first"
+  live=$(live_assignment "$dir")
+  if [ -n "$live" ]; then
+    [ "$(printf '%s' "$live" | cut -f1)" = "$critic" ] || refuse "critic $(printf '%s' "$live" | cut -f1) already holds this draft; a revision retires the assignment"
+    echo "recon $id: $critic already holds this draft (generation $(printf '%s' "$live" | cut -f2))"; return 0
+  fi
+  [ "$(field "$line" 3)" = drafted ] || refuse "the last move is $(field "$line" 2) ($(field "$line" 3)); a critic is assigned to a draft waiting for one"
+  hash=$(field "$line" 4)
+  [ "$(report_hash "$dir")" = "$hash" ] || refuse "report.md changed after the draft was recorded: record the revision first"
+  record "$dir" "$id" assign assigned "$hash" "$critic" 0 || exit $?
+  gen=$(grep -c "$(printf '^[0-9]*\tassign\t')" "$dir/handoff.tsv")
+  printf '%s\t%s\t%s\n' "$id" "$gen" "$hash" > "$cdir/assignment.tsv"
+  grep -q '^Critic:' "$cdir/critic.md" 2>/dev/null || printf 'Critic: %s\n' "$critic" >> "$cdir/critic.md"
+}
+
 command_verdict() {
   local id=${1:-} dir critic='' hash='' gaps='' line cur rec n to event
   [ "$#" -ge 1 ] || usage; shift
@@ -84,23 +135,38 @@ command_verdict() {
   [[ $hash =~ ^[0-9a-f]{64}$ ]] || die "--hash takes the sha256 of the report the critic read"
   line=$(last_line "$dir")
   [ -n "$line" ] || refuse "no draft is recorded: the researcher runs draft first"
-  [ "$(field "$line" 3)" = drafted ] || refuse "the last move is $(field "$line" 2) ($(field "$line" 3)); a verdict answers a draft waiting for its critic"
+  case "$(field "$line" 3)" in
+    drafted|assigned) ;;
+    *) refuse "the last move is $(field "$line" 2) ($(field "$line" 3)); a verdict answers a draft waiting for its critic" ;;
+  esac
+  [ "$(field "$line" 3)" != assigned ] || [ "$critic" = "$(field "$line" 5)" ] \
+    || refuse "critic $(field "$line" 5) holds this draft; a verdict from $critic does not count"
   rec=$(field "$line" 4)
   [ "$hash" = "$rec" ] || refuse "stale verdict: it names report ${hash:0:12} and the recorded draft is ${rec:0:12}"
   cur=$(report_hash "$dir") || exit $?
   [ "$cur" = "$rec" ] || refuse "report.md changed after the draft was recorded (${rec:0:12} -> ${cur:0:12}): record the revision first"
   if [ "$gaps" -eq 0 ]; then event=clear; to=accepted; else event=gaps; to=critiqued; fi
   record "$dir" "$id" "$event" "$to" "$hash" "$critic" "$gaps" || exit $?
-  [ -f "$dir/critic.md" ] && grep -q '^Critic:' "$dir/critic.md" || printf 'Critic: %s\n' "$critic" >> "$dir/critic.md"
-  n=$(( $(grep -c '^Round [0-9]*:' "$dir/critic.md") + 1 ))
-  printf 'Round %s: new gaps %s report %s\n' "$n" "$gaps" "$hash" >> "$dir/critic.md"
+  write_round "$dir" "$critic" "$gaps" "$hash"
+  # The critic ticket's own file follows the parent's verdict: it holds the pointer, never the decision.
+  [ "$(cut -f1 "$DATA/$critic/assignment.tsv" 2>/dev/null)" != "$id" ] || write_round "$DATA/$critic" "$critic" "$gaps" "$hash"
+}
+
+write_round() {  # <dir> <critic> <gaps> <hash>: the gate's own lines in <dir>/critic.md
+  local n
+  [ -f "$1/critic.md" ] && grep -q '^Critic:' "$1/critic.md" || printf 'Critic: %s\n' "$2" >> "$1/critic.md"
+  n=$(( $(grep -c '^Round [0-9]*:' "$1/critic.md") + 1 ))
+  printf 'Round %s: new gaps %s report %s\n' "$n" "$3" "$4" >> "$1/critic.md"
 }
 
 command_revise() {
   local id=${1:-} dir line hash; dir=$(task_dir "$id") || exit $?
   line=$(last_line "$dir")
   [ -n "$line" ] || refuse "no draft is recorded: the researcher runs draft first"
-  [ "$(field "$line" 3)" = critiqued ] || refuse "the last move is $(field "$line" 2) ($(field "$line" 3)); a revision follows a verdict with gaps"
+  case "$(field "$line" 3)" in
+    critiqued|assigned) ;;
+    *) refuse "the last move is $(field "$line" 2) ($(field "$line" 3)); a revision follows a verdict with gaps or a changed draft under review" ;;
+  esac
   hash=$(report_hash "$dir") || exit $?
   [ "$hash" != "$(field "$line" 4)" ] || refuse "report.md still holds the critiqued draft ${hash:0:12}: change it before recording the revision"
   record "$dir" "$id" revise drafted "$hash" researcher 0
@@ -111,6 +177,8 @@ case "$cmd" in
   draft) command_draft "$@" ;;
   verdict) command_verdict "$@" ;;
   revise) command_revise "$@" ;;
+  assign) command_assign "$@" ;;
+  assignee) command_assignee "$@" ;;
   phase) command_phase "$@" ;;
   show) command_show "$@" ;;
   *) usage ;;
