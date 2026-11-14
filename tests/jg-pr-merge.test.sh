@@ -2299,6 +2299,32 @@ test_trunk_release_pull_request_is_admitted_and_merged_with_a_merge_commit() {
   pass "a local-trunk release pull request from the current trunk merges with a merge commit; an older trunk or a feature head into main is refused"
 }
 
+# The release record carries the merge authority rows bin/jg-trunk.sh writes after pr=. The merge path and the PR
+# monitor it arms must read that record as the same PR identity; a row the merge path never writes is still refused.
+test_release_record_with_merge_authority_rows_keeps_its_pr_identity() {
+  local case_dir rc url=https://github.com/example/repo/pull/813 row
+  for row in 'merge=approved
+merge_rule=owner-rule: release word' 'merge=manual' 'foreign=1' 'merge=anything' 'merge_rule='; do
+    case_dir=$(trunk_release_case "release-record-rows-$(printf '%s' "$row" | cksum | cut -d' ' -f1)" trunk-v3)
+    sed -i 's/"baseRefName":"main"/"baseRefName":"main","headRefName":"trunk-v3"/' "$case_dir/github-view.json"
+    # First pass: the merge path records pr= under the task. Then the rows jg-trunk.sh appends after it.
+    JG_TEST_GH_BASE=main JG_TEST_GH_HEAD_REF=trunk-v3 run_pr_merge "$case_dir" task-x1 "$url" \
+      > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "the first merge pass failed: $(cat "$case_dir/stderr")"
+    printf '%s\n' "$row" >> "$case_dir/state/task-x1.meta"
+    # The identity parser is the reader every later caller (crew state, away return, merge authority) goes through.
+    rc=0
+    (. "$ROOT/bin/jg-pr-lib.sh" && jg_pr_metadata_identity_parse "$case_dir/state/task-x1.meta" \
+      && [ "$JG_PR_META_URL" = "$url" ]) || rc=$?
+    case "$row" in
+      merge=approved*|merge=manual)
+        [ "$rc" -eq 0 ] || fail "a record the merge path wrote, with '$row' after pr=, was refused as a forged PR identity" ;;
+      *)
+        [ "$rc" -ne 0 ] || fail "a record with '$row' after pr= must be refused" ;;
+    esac
+  done
+  pass "merge authority rows after pr= keep the PR identity; a foreign row, an unwritten merge value and an empty rule are refused"
+}
+
 # Fixture 1 (slice T3b): the release pull request merges only on its release proof status. A release head of five
 # commits with the status success is green and merges; with no status it is red and nothing reaches the forge; a newest
 # status of failure is red even when an older one passed.
@@ -3566,6 +3592,7 @@ test_bundled_repo_override_args_refuse_before_recording
 test_explicit_merge_method_not_overridden
 test_release_pull_request_defaults_to_a_merge_commit
 test_trunk_release_pull_request_is_admitted_and_merged_with_a_merge_commit
+test_release_record_with_merge_authority_rows_keeps_its_pr_identity
 test_release_pull_request_needs_its_release_proof_status
 test_worker_pull_request_uses_its_committed_receipt
 test_merge_into_a_carried_release_branch_is_refused

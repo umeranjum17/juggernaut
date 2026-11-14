@@ -520,6 +520,13 @@ jg_pr_metadata_identity_parse() {
       # is allowed after pr= like the x_* rows; it carries no PR identity.
       x_request=*|x_request_ts=*|x_followups=*|x_platform=*|x_reply_max_chars=*|control_relaunch_tx=*)
         ;;
+      # The merge authority rows bin/jg-trunk.sh release_merge_authority and the
+      # lead write after pr=: merge=approved|manual and one non-empty merge_rule=
+      # value. Only those exact values pass; any other merge row is foreign.
+      merge=approved|merge=manual)
+        ;;
+      merge_rule=?*)
+        ;;
       *)
         [ "$seen_pr" -eq 0 ] || post_pr_invalid=1
         ;;
