@@ -67,6 +67,14 @@ test_configured_hooks_and_the_launch_overlay_preserve_trunk_protection() {
     [ "$rc" -ne 0 ] || fail "the task overlay bypassed the repository trunk guard"
     assert_contains "$out" 'moves only through' 'the actual configured hook must refuse the unauthorized movement'
     [ "$(tip)" = "$before" ] || fail "a refused transaction moved the trunk"
+    # The trunk writer moves a guarded trunk ref forward from the task hook directory, and a rewind is refused even for it.
+    JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref refs/heads/release/v9 "$before" || fail "the writer could not create a guarded trunk ref under the overlay"
+    JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref refs/heads/release/v9 "$c" "$before" || fail "the writer could not move a guarded trunk ref forward under the overlay"
+    rc=0; out=$(JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref refs/heads/release/v9 "$before" "$c" 2>&1) || rc=$?
+    [ "$rc" -ne 0 ] || fail "the task overlay let a trunk rewind through"
+    assert_contains "$out" 'never rewound' 'the actual hook must refuse a rewind'
+    [ "$(git -C "$PROJ" rev-parse refs/heads/release/v9)" = "$c" ] || fail "a refused rewind moved the ref"
+    git -C "$PROJ" update-ref refs/heads/jg-lane-ok "$before" || fail "the overlay refused a non-trunk branch"
     trunk land hook >/dev/null 2>&1 || fail "the same configured hook must allow the guarded landing"
   ) || fail "configured hook journey failed"
   [ "$(tip)" = "$c" ] || fail "the authorized landing did not move the trunk"
