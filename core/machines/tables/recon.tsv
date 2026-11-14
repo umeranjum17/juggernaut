@@ -1,0 +1,10 @@
+machine	recon	data/<task>/handoff.tsv: one Recon's draft, its critic verdicts and its revisions, each tied to the sha256 of report.md	core/machines/observers/recon.sh
+enum	recon
+state	drafted	initial	A draft is recorded and its critic has not answered for that report hash.	-	waiting	0s -> alert stuck-wait
+state	critiqued	normal	The critic found gaps in that exact draft and the researcher revises it.	-	active
+state	accepted	terminal	The critic found no new gaps in that exact draft.	-
+edge	(none)	draft	drafted	bin/jg-recon-handoff.sh:command_draft	-	the researcher records the draft: the hash of report.md	jg-machine-recon
+edge	drafted	gaps	critiqued	bin/jg-recon-handoff.sh:command_verdict	-	the critic names the draft hash it read, the hash is the recorded one and still the report on disk, and it found one gap or more	jg-machine-recon
+edge	drafted	clear	accepted	bin/jg-recon-handoff.sh:command_verdict	-	the critic names the recorded draft hash and found no new gaps	jg-machine-recon
+edge	critiqued	revise	drafted	bin/jg-recon-handoff.sh:command_revise	-	the researcher records a revised draft whose hash differs from the critiqued one	jg-machine-recon
+observer	bash "$(dirname "$JG_MACHINES_TABLES")/observers/recon.sh" "$1"

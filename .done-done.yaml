@@ -58,6 +58,9 @@ journeys:
   hold-table:
     tier: local
     command: bash journeys/hold-table.sh
+  recon-table:
+    tier: local
+    command: bash journeys/recon-table.sh
   trunk-table:
     tier: local
     command: bash journeys/trunk-table.sh
@@ -1887,6 +1890,9 @@ journeys:
   jg-machine-lint:
     tier: local
     command: bash tests/jg-machine-lint.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-machine-recon:
+    tier: local
+    command: bash tests/jg-machine-recon.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-machine-markers:
     tier: local
     command: bash tests/jg-machine-markers.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
