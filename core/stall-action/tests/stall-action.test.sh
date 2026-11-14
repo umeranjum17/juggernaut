@@ -13,6 +13,8 @@
 #    no start (re-ring only, naming the cause); a fresh beat, a declared wait, a done line and a beat-less task keep their rules;
 # i) a lost worker that was rung and stays lost is relaunched, 3 times in 30 minutes, then the lead is told (alert lost-worker) once;
 #    a billing error is never relaunched and tells the lead at once; a fresh beat resolves the alert; a declared wait is untouched;
+# j) a lane resumed after the ticket it waited for landed (real resume steer, real resolved line) that then ends on a stop failure
+#    is rung once by the stall check;
 # f) the wiring installs a shim that registers, and the unwiring removes it.
 # Usage: stall-action/tests/stall-action.test.sh
 set -euo pipefail
@@ -227,6 +229,29 @@ beat rlost -22 PostToolBatch   # a beat 80 s before the last sweep
 sweep_at 1400
 check "i: a worker that beats again resolves its alert" "$(calls alert 'resolve lost-worker--rlost')" 1
 for t in rlost rbill rwait; do rm -f "$FM/state/$t.meta"; done
+
+# j: a resumed lane is rung again. A lane blocked `waits-for: a1` is resumed when a1 lands: the real landing-time resume
+# (jg_wait_waits_for_resume) sends the real jg-send steer, which appends the `resolved [key=...]` line. The agent then
+# ends its turn on an API error, and the stall check re-rings it, because that closing line is no declared wait and no
+# captain-relevant event. Only the terminal under jg-send is a recorder.
+mkdir -p "$d/fakebin" "$FM/data/jg-trunk-landing"
+# shellcheck disable=SC2016 # the stub expands its own arguments when run
+printf '#!/bin/sh\ncase "$1" in display-message) for a in "$@"; do case "$a" in *cursor_y*) echo 1; exit 0;; esac; done; echo fakepane;; capture-pane) printf "+----+\\n|    |\\n+----+\\n";; list-windows) echo jg-jres;; esac\nexit 0\n' > "$d/fakebin/tmux"
+printf '#!/bin/sh\nexit 0\n' > "$d/fakebin/sleep"; chmod +x "$d/fakebin/tmux" "$d/fakebin/sleep"
+hlane jres
+sed -i 's|^window=.*|window=sess:jg-jres|' "$FM/state/jres.meta"
+status jres "working [at=$NOW]: x"
+status jres "blocked [at=$NOW] [key=wf]: waits-for: a1 my change builds on a1"
+printf 'landed cleaned up\n' > "$FM/data/jg-trunk-landing/a1.$(printf '%040d' 7).state"
+PATH="$d/fakebin:$PATH" JG_HOME=$FM JG_ROOT_OVERRIDE=$FM JG_SEND_SETTLE=0 STATE=$FM/state _JG_WAIT_TIMER_DIR=$ROOT/bin JG_DATA_OVERRIDE=$FM/data \
+  bash -c '. "$1/bin/jg-classify-lib.sh" && . "$1/core/wait-timers/bin/jg-wait-actions-lib.sh" && jg_wait_waits_for_resume a1' _ "$ROOT" > "$d/resume.out" 2>&1 || true
+check "j: the resume steer lands in the lane's inbox" "$(grep -l 'Ticket a1, the one you waited for, has landed' "$FM"/state/jres.inbox/*.msg 2>/dev/null | wc -l | tr -d ' ')" 1
+check "j: the resume appends a resolved line for the blocker's key as the lane's last status line" "$(tail -n 1 "$FM/state/jres.status" | sed -E 's/^(resolved \[key=wf\]).*/\1/')" "resolved [key=wf]"
+beat jres 7 "StopFailure error=rate_limit"
+sweep
+check "j: a resumed lane that ends on a stop failure is rung once with the API error, not interrupted" "$(calls control jres)$(calls send 'jres Your last turn ended on an API error (rate_limit)')" 01
+check "j: the ring is on record" "$(grep -c '"task":"jres".*"step":"ring","ok":true' "$FM/data/stall-action/actions.jsonl")" 1
+rm -f "$FM/state/jres.meta"
 
 # f: the wiring installs and registers, the unwiring removes.
 cat > "$FM/bin/jg-check-register.sh" <<'STUB'
