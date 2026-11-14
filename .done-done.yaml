@@ -1014,33 +1014,43 @@ journeys:
   live-gh-shim:
     tier: live
     command: bash tests/live/gh-shim.sh
+    timeout: 5m
   live-lock-lease:
     tier: live
     command: bash tests/live/lock-lease.sh
+    timeout: 5m
   live-model-turn:
     tier: live
     command: bash tests/live/model-turn.sh
+    timeout: 10m
   live-ready-vs-free:
     tier: live
     command: bash tests/live/ready-vs-free.sh
+    timeout: 5m
   live-steer-read:
     tier: live
     command: bash tests/live/steer-read.sh
+    timeout: 5m
   live-load-memory:
     tier: live
     command: bash tests/live/load-memory.sh
+    timeout: 5m
   live-stranded-release:
     tier: live
     command: bash tests/live/stranded-release.sh
+    timeout: 5m
   live-landed-agent:
     tier: live
     command: bash tests/live/landed-agent.sh
+    timeout: 5m
   live-approval-verify:
     tier: live
     command: bash tests/live/approval-verify.sh
+    timeout: 5m
   live-plan-rows:
     tier: live
     command: bash tests/live/plan-rows.sh "${JG_LIVE_EPIC:-jg-8kugw}"
+    timeout: 5m
   proc-reaper:
     tier: local
     command: bash tests/jg-proc-reaper.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
