@@ -5699,9 +5699,8 @@ fi
 # Durable per-incarnation runtime history, one line per launch that stays
 # running: a fresh spawn once the commit point holds (a rolled-back fresh spawn
 # is not a launch), and every relaunch, whose launch delivery already succeeded.
-# bin/jg-task-outcome.sh reads it at task end to attribute the task to every
-# harness/model/effort it ran on, in order. Best effort: a write failure never
-# blocks the launch.
+# bin/jg-model-allowlist.sh reads it for the models a lane used. Best effort: a
+# write failure never blocks the launch.
 if [ -n "$ID" ] && { [ "$RELAUNCH" -eq 1 ] || [ "$SPAWN_BACKLOG_COMMIT_STATUS" -eq 0 ]; }; then
   [ "$RELAUNCH" -eq 1 ] || rm -f "$STATE/$ID.models"
   printf '%s\t%s\t%s\t%s\n' "$(date +%s)" "${HARNESS:-default}" "${MODEL:-default}" "${EFFORT:-default}" \
@@ -5748,8 +5747,10 @@ jg_account_hook spawn-line
 [ ! -e "$CONFIG/fleet-ledger" ] || [ "$RELAUNCH" -eq 1 ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE JG_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/jg-fleet-ledger.sh" dispatched "$ID" "$KIND" "${PROJ_ABS##*/}" "$HARNESS" "$MODEL" || true
 # The ticket's trail says who started this lane from the first minute: a claim for a spawn, a handoff for a relaunch (with the
 # generation it replaced). A failed write is one warning line and never fails the spawn.
-if [ "$RELAUNCH" -eq 1 ]; then _trace_kind=handoff _trace_payload="{\"from_gen\":\"${RELAUNCH_PRIOR_GEN:-}\",\"gen\":\"$SPAWN_GEN\"}"
-else _trace_kind=claim _trace_payload="{\"gen\":\"$SPAWN_GEN\"}"; fi
+# The payload also names the tool, model and effort the lane starts on, and its kind: the per-model statistics read them from the ticket.
+_trace_runtime=$(jq -cn --arg h "${HARNESS:-default}" --arg m "${MODEL:-default}" --arg e "${EFFORT:-default}" --arg k "$KIND" '{harness: $h, model: $m, effort: $e, kind: $k}')
+if [ "$RELAUNCH" -eq 1 ]; then _trace_kind=handoff _trace_payload=$(jq -cn --arg f "${RELAUNCH_PRIOR_GEN:-}" --arg g "$SPAWN_GEN" --argjson r "$_trace_runtime" '{from_gen: $f, gen: $g} + $r')
+else _trace_kind=claim _trace_payload=$(jq -cn --arg g "$SPAWN_GEN" --argjson r "$_trace_runtime" '{gen: $g} + $r'); fi
 [ "$KIND" = squad_lead ] || JG_HOME=$JG_HOME "$SCRIPT_DIR/jg-backlog.sh" trace record "$ID" "$_trace_kind" work-id "$ID@$SPAWN_GEN" --source jg-spawn --payload "$_trace_payload" >/dev/null \
   || echo "warning: the $_trace_kind of $ID could not be put on its ticket's trail" >&2
 # A shepherd lane answers for one pull request: bind it as the task's pr= now, through the same check every ready report uses, so

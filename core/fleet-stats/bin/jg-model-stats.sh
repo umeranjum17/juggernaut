@@ -12,9 +12,10 @@ unset _jg_old _jg_new 2>/dev/null || true
 #
 # Read-only: it writes nothing and never touches an endpoint. It reads this home,
 # then every locally registered home found through each home's data/squad_leads.md,
-# from three durable sources: data/metrics/task-outcomes.tsv (the authoritative
-# record bin/jg-task-outcome.sh writes per task end, never sampled), the older
-# sampled data/metrics/lanes.tsv (used only for tasks the outcomes file predates,
+# from three durable sources: each home's tickets (jg-backlog.sh times --json: the
+# authoritative record, never sampled; the outcome is read from the ticket's own
+# times and pull request, the models from its claim and handoff events), the older
+# sampled data/metrics/lanes.tsv (used only for tasks the ticket record predates,
 # marked sampled=true), and data/metrics/prs.tsv (one row per merged PR, joined by
 # PR URL for time-to-merge, first-pass, rework, revert and escape counts).
 #
@@ -33,7 +34,7 @@ unset _jg_old _jg_new 2>/dev/null || true
 set -eu
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 exec python3 - "$SCRIPT_DIR" "${JG_HOME:-$SCRIPT_DIR/..}" "$@" <<'PY'
-import json, math, re, statistics, sys
+import json, math, os, re, statistics, subprocess, sys
 from datetime import datetime
 
 sys.path.insert(0, sys.argv[1])
@@ -115,20 +116,50 @@ def add_task(home, task, kind, project, models, started, ended, outcome, pr, sam
     tasks[(home, task, started)] = dict(home=home, task=task, kind=kind or 'ship', project=project or '-',
                                models=models, started=started, ended=ended, outcome=outcome, pr=pr or '',
                                sampled=sampled)
+
+def ticket_outcome(fact, ended):
+    """The outcome a ticket's own record shows: a Recon is a scout, a landed change merged, and a closed one with
+    a pull request closed or with none cancelled; an open ticket has no outcome yet."""
+    if fact.get('kind') == 'scout':
+        return 'scout'
+    if fact.get('landed_at') or fact.get('released_at'):
+        return 'merged'
+    if ended is None:
+        return 'open'
+    return 'closed' if fact.get('pr') else 'cancelled'
+
+BIN = os.environ.get('JG_BIN') or str(ROOT / 'bin')
+def read_tickets(home):
+    """The facts of every ticket of one home that started, closed or landed in the longest window, from its Beads store
+    through the home's own `times --json`; None when the home's store cannot be read."""
+    run = subprocess.run([os.path.join(BIN, 'jg-backlog.sh'), 'times', '--json', '--since', str(NOW - DAY * max(WINDOWS))],
+                         capture_output=True, text=True, env=dict(os.environ, JG_HOME=str(home)), timeout=300)
+    if run.returncode != 0:
+        return None
+    try:
+        return json.loads(run.stdout)
+    except ValueError:
+        return None
+
+unreadable = []
 for name, home in homes.items():
     if home is None:
         continue
-    rows = read_tsv(home / 'data/metrics/task-outcomes.tsv')
-    if rows is None:
+    facts = read_tickets(home)
+    if facts is None:
+        unreadable.append(name)
         continue
     outcome_homes.append(name)
-    for row in rows:
+    for fact in facts:
+        started = to_epoch(fact.get('started'))
+        if not fact.get('task') or started is None:  # a ticket no lane ever worked is no task
+            continue
         outcome_rows += 1
-        models = [parse_incarnation(t) for t in (row.get('models') or '').split(';') if t]
-        add_task(name, row.get('task') or '', row.get('kind') or 'ship', row.get('project') or '-',
-                 models, to_epoch(row.get('started')), to_epoch(row.get('ended')),
-                 row.get('outcome') or 'unknown', row.get('pr') or '', False)
-# lanes.tsv fallback: only for (home, task) the outcomes file does not cover.
+        ended = to_epoch(fact.get('closed'))
+        add_task(name, fact['task'], fact.get('kind'), fact.get('project'),
+                 [tuple(m) for m in fact.get('models') or []], started, ended,
+                 ticket_outcome(fact, ended), fact.get('pr'), False)
+# lanes.tsv fallback: only for (home, task) the ticket record does not cover.
 covered = {(t['home'], t['task']) for t in tasks.values()}
 lane_groups = {}
 for row in lanes or []:
@@ -230,13 +261,15 @@ all_models = model_rows(list(tasks.values()))
 
 limitations = []
 if outcome_rows == 0:
-    limitations.append('No task-outcome records yet; per-model figures come from the sampled lane ledger only and do not cover every task.')
+    limitations.append('No ticket records yet; per-model figures come from the sampled lane ledger only and do not cover every task.')
 elif sampled_rows:
-    limitations.append(f'{sampled_rows} tasks predate the outcome record and come from the sampled lane ledger (marked sampled).')
+    limitations.append(f'{sampled_rows} tasks predate the ticket record and come from the sampled lane ledger (marked sampled).')
 if prs is None:
     limitations.append('No merged-PR record found; time-to-merge, first-pass, rework, revert and escape counts stay unknown.')
 if not outcome_homes:
-    limitations.append('No home has a task-outcome record yet.')
+    limitations.append('No home has a ticket record yet.')
+for name in unreadable:
+    limitations.append(f'{name} has no readable Beads store; its tickets are not counted.')
 for name, home in homes.items():
     if home is None:
         limitations.append(f'{name} is a registered remote home; its task outcomes are not readable locally.')

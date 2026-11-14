@@ -83,15 +83,17 @@ The reader's CLI regression journey is `core/fleet-flow/tests/jg-flow.test.sh`, 
 
 ## Per-model statistics
 
-[`jg-task-outcome.sh`](../bin/jg-task-outcome.sh) appends one durable, append-only row per finished task to the home-local `data/metrics/task-outcomes.tsv`, whose header row and columns are `home`, `task`, `kind`, `project`, `models`, `started`, `ended`, `outcome`, and `pr`; give it the same trust as `state/`.
-`models` lists every launch of the task in order as `harness:model:effort`, joined by `;`, sourced from the `state/<id>.models` history that `jg-spawn.sh` starts on a fresh spawn and appends to on each relaunch, so a mid-task model switch is recorded rather than lost.
-`outcome` is `merged`, `closed`, `cancelled`, `scout`, or `failed`; a Squad Lead retirement is not a task and records nothing.
-The recorder runs best-effort from `bin/jg-teardown.sh` before the task's durable presentation is retired, and never blocks cleanup.
+A task's outcome is read from its ticket in Beads; teardown writes no outcome row.
+The spawn's `claim` event (and a relaunch's `handoff`) puts the tool, model, effort and kind (`ship` or `scout`) of the launch in its payload, so a mid-task model switch stays on the ticket's trail.
+`jg-backlog.sh times --json [--since <epoch>]` prints one fact object per ticket that started, closed or landed since that time (without --since, every ticket holding a stamp): its ticket id, its task, kind, project, pull request, started and closed times, the ready_at, landed_at, live_at and released_at stamps (with pinned_back_at and reverted_at), and every launch as `[tool, model, effort]` in order.
+A ticket with no claim payload (one started before the payload carried the runtime) shows the row's own last tool, model and effort.
+The outcome is `scout` for a Recon, `merged` for a ticket with a landed or released stamp, `closed` for a closed ticket with a pull request, `cancelled` for a closed one with none, and none while the ticket is open; `failed` is not a ticket fact, so a failed task shows as one of those.
+Tickets filed and closed before any lane worked them are not tasks and are left out.
 
-[`jg-model-stats.sh`](../bin/jg-model-stats.sh) reads every local home's `task-outcomes.tsv` and the main home's sampled `lanes.tsv`/`prs.tsv` into `jg-model-stats.v1`: per model over 7- and 30-day windows, started, finished, merged, merge rate, time-to-merge P50/P75, first-pass rate, rework, revert, escape, cancelled/failed, and model switches, each with its sample size.
+[`jg-model-stats.sh`](../bin/jg-model-stats.sh) reads every local home's tickets through that verb and the main home's sampled `lanes.tsv`/`prs.tsv` into `jg-model-stats.v1`: per model over 7- and 30-day windows, started, finished, merged, merge rate, time-to-merge P50/P75, first-pass rate, rework, revert, escape, cancelled/failed, and model switches, each with its sample size.
 The `core/fleet-stats` reader's header owns usage (`--json [--now <epoch>]`), attribution, and uncertainty limits.
 A task is attributed to the model of its final launch, and one that changed model mid-flight counts as a switch under that model.
-Every recorded outcome is authoritative; a sampled lane that predates the recorder is a disclosed fallback, and merge rate is computed over recorded outcomes only so a sampled row never fabricates a rate.
+Every ticket is authoritative; a sampled lane that predates the ticket's claim payload is a disclosed fallback, and merge rate is computed over ticket outcomes only so a sampled row never fabricates a rate.
 First-pass, rework, revert and escape figures use the same recorded merged PRs as merge rate, since a sampled lane only proves the merges it observed and never the tasks that ended without one; the coverage line counts the sampled tasks they leave out.
 Lookout does not include these model statistics in its fleet document; the reader remains available through `jg-model-stats.sh`.
 

@@ -1,23 +1,25 @@
 # fleet-stats
 
-The per-model and per-skill fleet statistics readers, their shared library,
-and the outcome recorder that spawn and teardown call moved **verbatim** out
-of the supervising fork into this feature repository. The statistics remain
-available as CLI readers; Lookout does not display them. The fork-side hook
-continues to run its own readers, and the lock-library line of
-`bin/jg-task-outcome.sh` differs from the original copy (see Layout).
+The per-model and per-skill fleet statistics readers and their shared library
+moved **verbatim** out of the supervising fork into this feature repository.
+The statistics remain available as CLI readers; Lookout does not display them.
+The per-model reader no longer reads an outcome file: it reads each home's
+tickets from Beads (see Layout), and there is no outcome recorder.
 
 ## Layout
 
 - `bin/jg-model-stats.sh` — per-model fleet statistics. Read-only: it writes
   nothing and never touches an endpoint.
-  It reads this home, then every locally registered home, from
-  `data/metrics/task-outcomes.tsv` (authoritative), the older sampled
-  `data/metrics/lanes.tsv` (only for tasks the outcomes file predates, marked
+  It reads this home, then every locally registered home, from each home's
+  tickets (`jg-backlog.sh times --json --since`, authoritative: each task's
+  times and pull request, and its launches from the spawn's `claim` and
+  `handoff` events; see `docs/fleet-ledger.md`), the older sampled
+  `data/metrics/lanes.tsv` (only for tasks the tickets predate, marked
   sampled), and `data/metrics/prs.tsv` (time-to-merge, first-pass, rework,
-  revert and escape counts). It imports `jg_stats_lib` from its own
-  directory, so the moved copy only runs with the library beside it (see the
-  proof below).
+  revert and escape counts). A home whose store cannot be read is named in the
+  limitations. It imports `jg_stats_lib` from its own directory, so the reader
+  only runs with the library beside it. Test: `tests/jg-model-stats.test.sh`
+  on real Beads stores.
 - `bin/jg-skill-stats.sh` — per-skill fleet statistics. Read-only. It reads
   `data/metrics/skills.tsv` (absent file
   reports no rows rather than failing) and enumerates each local home's
@@ -27,15 +29,6 @@ continues to run its own readers, and the lock-library line of
   parsing, tab-separated file reading, and enumerating this home plus every
   locally registered home. Only the two readers import it; all aggregation
   and output stays in the importing reader.
-- `bin/jg-task-outcome.sh` — appends one durable task-outcome line to
-  `<home>/data/metrics/task-outcomes.tsv` per task end. Called best-effort
-  by `bin/jg-teardown.sh` before the task's status and record are retired; a
-  write failure never blocks or fails teardown, and the script itself only
-  ever exits non-zero on a usage error, or with exit 2 when it cannot find its
-  lock library. It sources `jg-wake-lib.sh` from the Juggernaut checkout for the
-  file lock: `JG_BIN` when set, else `$JG_HOME/bin`. The library is not copied
-  into this feature; a missing file prints one error naming the path and exits 2.
-
 - `bin/jg-retro-metrics.sh` - the retro metrics (not moved from the fork;
   new here). `definitions` prints one written definition per metric, with
   `first_pass` defined once. `compute --home <dir> --retro <id>` reads
@@ -85,50 +78,17 @@ continues to run its own readers, and the lock-library line of
 - Library location: each reader puts the directory it lives in first on the
   import path and imports `jg_stats_lib` from there; the library must sit
   next to the reader, never elsewhere.
-- Outcome record: one tab-separated row per ended task in
-  `data/metrics/task-outcomes.tsv` under the header
-  `home\ttask\tkind\tproject\tmodels\tstarted\tended\toutcome\tpr`,
-  where `models` is every `harness:model:effort` the task ran on in launch
-  order joined by `;`, and `outcome` is one of `merged | closed | cancelled |
-  scout | failed`. Writes are idempotent per `(home, task, started)` and
-  serialized under `<file>.lock`.
+- Task outcome: there is no outcome file and no recorder. The reader derives
+  `outcome` from the ticket: `scout` for a Recon, `merged` for a landed or
+  released ticket, `closed` for a closed one with a pull request, `cancelled`
+  for a closed one with none, and none while it is open.
 
-## Provenance: byte-identical to the fork
+## Provenance
 
-Every moved file was compared byte for byte against its fork source at
-`umeranjum17/juggernaut@0689b4b9d9ab3594f846cfe07c400edfa58244bf` at move time,
-keeping file modes (`100755` for the scripts, `100644` for the library, on
-both sides). The one deliberate exception is `fleet-stats/bin/jg-task-outcome.sh`:
-its lock-library source now resolves to `JG_BIN` or `$JG_HOME/bin` instead of a
-sibling file, so its hash below no longer matches the fork and is the moved
-copy's pre-change value:
-
-| moved file | fork source | sha256 |
-|---|---|---|
-| `fleet-stats/bin/jg-model-stats.sh` | `bin/jg-model-stats.sh` | `630cb8b55546174013197ccb5899dfc31394880a8c05ecf52e3cd6fa3dc17390` |
-| `fleet-stats/bin/jg-skill-stats.sh` | `bin/jg-skill-stats.sh` | `11094335fe16c0109bdd4134171e6e5494d35bd85c5c6bda846b9efd26bb5e76` |
-| `fleet-stats/bin/jg_stats_lib.py` | `bin/jg_stats_lib.py` | `0526ca27cdc2982ee6149aee24d866c8c3c4786d05eeb80c013895d076eeba8b` |
-| `fleet-stats/bin/jg-task-outcome.sh` | `bin/jg-task-outcome.sh` | `73e54f05ae45c46bbf92202716205aee044e04a5601f0528977b9707c4a53b14` |
-
-Treat any future diff against the fork file as a contract change, not a
-refactor.
-
-## Side-by-side proof (re-run before the hook swaps the dispatched path)
-
-1. Unpack the fork tree at the commit above into two scratch roots:
-   `git -C <fork> archive 0689b4b9d9ab3594f846cfe07c400edfa58244bf | tar -x -C <rootA>`,
-   then `cp -a <rootA>/. <rootB>/`.
-2. In `rootB` only, overwrite `bin/jg-model-stats.sh`,
-   `bin/jg-skill-stats.sh`, `bin/jg_stats_lib.py` and
-   `bin/jg-task-outcome.sh` with the moved files; `diff -r <rootA> <rootB>`
-   must be empty, and the sha256 and mode of each file must match the table
-   above.
-3. Run `tests/jg-flow.test.sh` in the fork scratch tree (it covers the stats
-   readers and outcome recording; `jg-spawn.sh` and `jg-teardown.sh` stay in the fork and are NOT moved); one
-   PASS proves the
-   identical bytes.
-4. Run the repo CI gate (shellcheck plus syntax check over every feature
-   script) on the PR head. `bin/jg-task-outcome.sh` sources the lock library
-   through a variable path with `# shellcheck source=/dev/null`, so it needs no
-   `SC1091` exemption; the gate's `fleet-stats/bin/` exemption stays for the
-   other moved readers.
+`jg-skill-stats.sh` and `jg_stats_lib.py` were moved byte for byte from
+`umeranjum17/juggernaut@0689b4b9d9ab3594f846cfe07c400edfa58244bf`; treat a diff
+against the fork file as a contract change, not a refactor.
+`jg-model-stats.sh` was moved the same way and then changed by slice S29 of the
+jg-q1b3n plan to read tickets instead of `data/metrics/task-outcomes.tsv`; the
+outcome recorder `jg-task-outcome.sh` and its teardown call were deleted then,
+and the files already written stay on disk, unread.

@@ -128,7 +128,6 @@ core/fleet-stall/tests/fleet-stall-uninstall.test.sh  # inline jg-compat env ali
 core/fleet-stall/uninstall.sh  # inline jg-compat env alias
 core/fleet-stats/bin/jg-model-stats.sh  # inline jg-compat env alias
 core/fleet-stats/bin/jg-skill-stats.sh  # inline jg-compat env alias
-core/fleet-stats/bin/jg-task-outcome.sh  # inline jg-compat env alias
 core/git-identity/tests/git-identity.test.sh  # inline jg-compat env alias
 core/host-memory/bin/jg-heavy-adopt.sh  # inline jg-compat env alias
 core/host-memory/bin/jg-host-memory-sampler.sh  # inline jg-compat env alias

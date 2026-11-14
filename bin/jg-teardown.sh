@@ -3286,14 +3286,6 @@ if [ "$FORCE" != --force ]; then
     JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE JG_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/jg-ticket.sh" "$ID" --stage "done" --state "done" || true
   fi
 fi
-# Durable per-task outcome for per-model fleet statistics, while the record and
-# the spawn-recorded model history still exist. Best effort: a failure never
-# blocks cleanup, and bin/jg-task-outcome.sh itself only fails on a usage error.
-if [ "$FORCE" = --force ]; then
-  JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE JG_DATA_OVERRIDE=$DATA "$SCRIPT_DIR/jg-task-outcome.sh" "$ID" --force || true
-else
-  JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE JG_DATA_OVERRIDE=$DATA "$SCRIPT_DIR/jg-task-outcome.sh" "$ID" || true
-fi
 status_retire_presentation_task "$STATE" "$ID" || exit 1
 jg_wake_queue_prune_task "$STATE" "$ID" "$T" 2>/dev/null || true
 rm -f "$STATE/$ID.turn-ended" \

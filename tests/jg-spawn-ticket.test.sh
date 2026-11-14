@@ -109,6 +109,11 @@ grep -qxF "export JG_TICKET=$c2" "$JG_FAKE_PANE_LOG" || fail "T2 the pane must g
 [ "$(row_field "$T2" id)" = "$c2" ] || fail "T2 the task id must reach the ticket's row, got: $(bl show "$T2" 2>&1 | head -3)"
 [ "$(row_field "$T2" state)" = in_flight ] || fail "T2 the spawn must put the ticket In flight through its task id"
 printf 'ok - T2 ticket %s runs as task %s: record, row, pane and brief carry it\n' "$c2" "$T2"
+# The claim on the ticket's trail names the tool, model, effort and kind the lane started on: the per-model statistics read it there.
+claim=$(BEADS_DIR=$(cat "$H/config/beads-dir") "$ROOT/bin/jg-beads.sh" provenance log "$c2" --json 2>/dev/null | jq -c '[.[] | select(.kind == "claim")][0].payload | if type == "string" then fromjson else . end')
+[ "$(jq -r '[.harness, .kind, .gen] | join(" ")' <<<"$claim")" = "codex ship $(sed -n 's/^spawn_gen=//p' "$H/state/$T2.meta")" ] || fail "T2 the claim must name the tool, kind and generation, got: $claim"
+[ "$(jq -r .model <<<"$claim")" = "$(field "$c2" .metadata.model)" ] && [ "$(jq -r .effort <<<"$claim")" = "$(field "$c2" .metadata.effort)" ] || fail "T2 the claim must name the row's model and effort, got: $claim"
+printf 'ok - T2 the claim on the ticket trail names the tool, model, effort and kind\n'
 
 # T7: the agent name is made once at the first spawn, held in the record, and is the row's assignee; spawn_gen, model and effort
 # go to the row as metadata strings; the pane id is not on the row.

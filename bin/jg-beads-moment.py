@@ -6,7 +6,7 @@ Usage: BEADS_DIR=<store> jg-beads-write.py moment <ticket> <moment> [--at <RFC33
        BEADS_DIR=<store> jg-beads-write.py ticket-stage <ticket> [--proof <state of the proof run>]
        BEADS_DIR=<store> jg-beads-write.py ticket-drift <ticket> [--forge]
        BEADS_DIR=<store> jg-beads-write.py times <ticket>
-       BEADS_DIR=<store> jg-beads-write.py times --json
+       BEADS_DIR=<store> jg-beads-write.py times --json [--since <epoch>]
 
 moment writes one of eight moments of the ticket machine: approved_at, proved_at, bypassed_at, landing_at, gated_at, returned_at, conflict_at and release_opened_at.
 Each is a provenance event first and then the row's metadata, in that order, because the row write is the signal a reader can poll and
@@ -19,9 +19,10 @@ who `none`. The words are the closed lists of core/machines/ticket-wait.states a
 No stage word is stored, `bd set-state` is never called, and hold_kind is not written: the stage is worked out by bin/jg-beads-stage.py.
 times prints one line `<name><TAB><time>` for each of ready, landed, live and released that the row holds, in that order, and nothing, with exit 0,
 for a row that holds none. The time is the row's RFC3339 string (ready_at, landed_at, live_at, released_at). It never writes.
-times --json names no ticket: it prints one JSON array holding, for every row of the store that holds any of those four stamps, `ticket` and the
-stamps it holds, with pinned_back_at and reverted_at when held, because they undo live_at and landed_at. The reader of the fleet pulse
-(core/fleet-pulse/bin/trunk-pulse.sh) counts from it. It is not cut to a window: a landing that waits to go live may be older than any window.
+times --json [--since <epoch>] prints one JSON array instead: a fact object for each ticket, with its `ticket`, `task`, `kind` (ship or scout, from its claim), `project`, `pr`, `started`, `closed`,
+the stamps it holds (ready_at, landed_at, live_at, released_at, with pinned_back_at and reverted_at, which undo live_at and landed_at) and `models`, each tool, model and effort it ran on from the claim and handoff events in time order.
+With --since it holds the tickets that started, closed or landed since that Unix time; without it, every ticket that holds a stamp, not cut to a window: a landing that waits to go live may be older than any window.
+The readers are the fleet pulse (core/fleet-pulse/bin/trunk-pulse.sh) and the per-model statistics (core/fleet-stats/bin/jg-model-stats.sh).
 Every write prints one line with the seconds it took.
 ticket-drift prints one line `drift<TAB><ticket><TAB>lost<TAB><difference>` for each way the row and the records outside Beads differ
 (bin/jg-beads-drift.py) and nothing when they agree. The forge is read only with --forge. It never writes.
@@ -206,28 +207,51 @@ TIMES = (("ready", "ready_at"), ("landed", "landed_at"), ("live", "live_at"), ("
 UNDOING = (("pinned_back", "pinned_back_at"), ("reverted", "reverted_at"))
 
 
-def all_times():
-    """Every row that holds a stamp, as `ticket` plus the stamp keys it holds, ready for one JSON array."""
-    found = []
-    for row in json.loads(bd("list", "--all", "--limit", "0", "--json")) or []:
-        meta = row.get("metadata") or {}
-        held = {key: meta[key] for _, key in TIMES + UNDOING if meta.get(key)}
-        if any(meta.get(key) for _, key in TIMES):
-            found.append({"ticket": row["id"], **held})
-    return found
+def incarnations():
+    """Each ticket's starts, in time order: the claim and handoff events of its trail with the tool, model and effort and kind they name."""
+    read = __import__("jg-beads-read")
+    keys = ("harness", "model", "effort", "kind")
+    cells = ", ".join("json_unquote(json_extract(payload, '$.%s'))" % key for key in keys)
+    starts = {}
+    for ticket, kind, at, *named in read.sql("select issue_id, kind, occurred_at, %s from provenance_events where kind in ('claim', 'handoff') order by occurred_at" % cells):
+        starts.setdefault(ticket, []).append(dict(zip(("event", "at") + keys, [kind, at.replace(" ", "T") + "Z"] + [None if c == "NULL" else c for c in named])))  # dolt prints UTC without a zone
+    return starts
+
+
+def facts(row, starts):
+    """The facts of one ticket the fleet readers use: its times, its pull request and every tool, model and effort it ran on, in order."""
+    meta = row.get("metadata") or {}
+    mine = starts.get(row["id"], [])
+    models = [[s.get("harness") or "default", s.get("model") or "default", s.get("effort") or "default"] for s in mine]
+    if not models:  # a start before the claim named its runtime: the row's own last runtime
+        models = [[meta.get("agent") or "default", meta.get("model") or "default", meta.get("effort") or "default"]]
+    return {"ticket": row["id"], "task": meta.get("task") or "", "kind": next((s["kind"] for s in mine if s.get("kind")), "ship"),
+            "project": next((l[8:] for l in row.get("labels") or [] if l.startswith("project:")), "-"), "pr": row.get("external_ref") or "",
+            "started": mine[0]["at"] if mine else row.get("started_at") or "", "closed": row.get("closed_at") or "", "models": models,
+            **{key: meta.get(key) or "" for _, key in TIMES + UNDOING}}
 
 
 def times(args):
-    switches, ids = view.flags(args, (), ("--json",))
-    if "--json" in switches and not ids:
-        print(json.dumps(all_times(), sort_keys=True))
+    found, ids = view.flags(args, ("--since",), ("--json",))
+    if "--json" not in found:
+        if len(ids) != 1 or "--since" in found:
+            view.refuse("usage: times <ticket> | times --json [--since <epoch>]")
+        meta = fetch(ids[0]).get("metadata") or {}
+        for name, key in TIMES:
+            if meta.get(key):
+                print("%s\t%s" % (name, meta[key]))
         return
-    if len(ids) != 1 or switches:
-        view.refuse("usage: times <ticket> | times --json")
-    meta = fetch(ids[0]).get("metadata") or {}
-    for name, key in TIMES:
-        if meta.get(key):
-            print("%s\t%s" % (name, meta[key]))
+    since = found.get("--since")
+    if ids or (since is not None and not since.isdigit()):
+        view.refuse("usage: times --json [--since <epoch>]", "--since is a Unix time in seconds")
+    starts = incarnations()
+    every = [facts(row, starts) for row in json.loads(bd("list", "--all", "--limit", "0", "--json")) or []]
+    if since is None:
+        kept = [f for f in every if any(f[key] for _, key in TIMES)]
+    else:
+        floor = utc(datetime.datetime.fromtimestamp(int(since), datetime.timezone.utc).isoformat())
+        kept = [f for f in every if max(f["started"], f["closed"], f["landed_at"]) >= floor]
+    print(json.dumps(kept, sort_keys=True))
 
 
 def main(verb, args):
