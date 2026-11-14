@@ -1,0 +1,3 @@
+# Recon journey
+
+Recon journey: run `done-done run recon-journey` (`bash journeys/recon-journey.sh`, which runs `tests/jg-recon-journey.test.sh` and writes its log and `steps.json` into the run's folder); it takes one deep Recon in a throwaway home from its first draft to its cleanup through the real commands: `bin/jg-brief.sh`, `bin/jg-recon-handoff.sh` (submit, the one separate critic, a verdict with gaps, the revision, the same critic's closing verdict, restart reads), `bin/jg-recon-gate.sh` (the exact accepted hash passes) and `core/lead-sweep/lead-sweep.sh` (relay, a pending steer, the quiet hour, cleanup once); a stale verdict and an old relay receipt close nothing, and the report survives cleanup (screen: none).
