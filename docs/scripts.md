@@ -222,6 +222,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-tool-update-check.sh` | Report watched tooling with an update available, and updates installed but left inert by PATH order |
 | `jg-startup-growth-check.sh` | Daily metadata-only growth check for startup memory and tracked startup/instruction surfaces |
 | `jg-context-load.sh` | One context number per role: checks each `ctx-` ceiling of `defaults/token-caps` against the tree or the newest reading, and records one reading per role per day in `data/context-load.tsv` |
+| `jg-contract-carrier.sh` | The supervisor contract's carrier: names for each verified primary harness whether the contract is in the session after a compaction (`file`, `reemit` or `none`), and writes the carrier file with its one import line; session start calls it and prints the contract in the digest when the proof is not `file` |
 | `jg-pr-lib.sh`           | Own canonical task and PR validation plus private atomic PR-poll publication, merge-notification identity, and retirement |
 | `jg-pr-poll.sh`          | Provide the byte-static watcher program for validated pull-request, merge-request, and Gerrit-change poll sidecars |
 | `jg-contributions.sh`    | Observe owned publications, retain exact-head judgments, measure required actors, and wake on maintainer signals |

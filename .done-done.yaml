@@ -1300,6 +1300,12 @@ journeys:
   jg-context-bound:
     tier: local
     command: bash tests/jg-context-bound.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-contract-carrier:
+    tier: local
+    command: bash tests/jg-contract-carrier.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  thin-context:
+    tier: local
+    command: bash journeys/thin-context.sh
   jg-control-pi-live-e2e:
     tier: local
     command: bash tests/jg-control-pi-live-e2e.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

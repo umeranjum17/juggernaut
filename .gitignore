@@ -21,3 +21,4 @@ core/bus/jg-bus
 core/bus/cmd/jg-bus/jg-bus
 core/spawn/jg-spawn-core
 core/teardown/jg-teardown
+CLAUDE.local.md
