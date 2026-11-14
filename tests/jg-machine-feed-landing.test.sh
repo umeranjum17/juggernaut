@@ -5,26 +5,27 @@
 set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/lib-ledger.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib-ledger.sh"
 TMP_ROOT=$(jg_test_tmproot jg-machine-feed-landing)
 H="$TMP_ROOT/home"; D="$H/data"; P="$H/projects/demo"; MOVES="$D/machine-moves.log"
 FEED="$ROOT/core/machines/feeds/landing-release.sh"
 export JG_HOME="$H"
 mkdir -p "$D"
+ledger_home "$H"
 jg_git_init_commit "$P"
 c() { printf '%s\n' "$1" >"$P/$1"; git -C "$P" add "$1"; git -C "$P" -c user.name=t -c user.email=t@example.invalid commit -qm "$1"; git -C "$P" rev-parse HEAD; }
 head1=$(c a); land1=$(c b)   # the lane's head and the trunk commit that carries it
 live1=$(c c); rel1=$(c d); base1=$(c e)
-T=$'\t'
-printf 'task%shead%scommit%sfirst_done%sready%sgate_start%slaunch%slanded%sminutes\n' "$T" "$T" "$T" "$T" "$T" "$T" "$T" "$T" >"$D/trunk-latency.tsv"
-printf 'lane1\t%s\t%s\t1000\t1010\t\t1030\t1100\t2\tqueue\n' "$head1" "$land1" >>"$D/trunk-latency.tsv"
-printf 'lane1\tdemo\t%s\t%s\tno-landing-gate\n' "$land1" 1100 >"$D/trunk-landings.tsv"
-printf 'lane1\tdemo\t%s\t%s\tresolving\t1040\t\nlane1\tdemo\t%s\t%s\tresolved\t1050\t\n' "$land1" "$head1" "$land1" "$head1" >"$D/trunk-resolving.tsv"
-printf 'lane1\tdemo\t%s\t%s\tchecking\t1060\t\n' "$land1" "$head1" >"$D/trunk-landing-phases.tsv"
+# the ledger holds the landing's times: ready 1010, started 1030 (ready plus 20 s of queue), landed 1100
+ledger_landing "$H" lane-1 "$land1" "$head1" 1100 1010 queue 20 50 5 - -
+printf 'lane-1\tdemo\t%s\t%s\tresolving\t1040\t\nlane-1\tdemo\t%s\t%s\tresolved\t1050\t\n' "$land1" "$head1" "$land1" "$head1" >"$D/trunk-resolving.tsv"
+printf 'lane-1\tdemo\t%s\t%s\tchecking\t1060\t\n' "$land1" "$head1" >"$D/trunk-landing-phases.tsv"
 printf 'demo\t%s\t1200\tlive\t%s\n' "$live1" "$land1" >"$D/trunk-in-use.tsv"
 printf 'demo\ttrunk-v1\t%s\t3\t1300\thttps://example.invalid/pull/1\n' "$rel1" >"$D/trunk-releases.tsv"
 printf 'demo\t1\ttrunk-v1\t%s\t1400\n' "$base1" >"$D/trunk-versions.tsv"
 # the lander already logged one move of this run: the feed keeps it and adds no second one
-printf '1100\tlanding\tlane1.%s\tchecking\tcheck-ok\tlanded\tcore/trunk-landing/trunk-landing.sh:run\n' "$head1" >"$MOVES"
+printf '1100\tlanding\tlane-1.%s\tchecking\tcheck-ok\tlanded\tcore/trunk-landing/trunk-landing.sh:run\n' "$head1" >"$MOVES"
 
 "$FEED" 2>/dev/null || fail "the feed failed"
 want="1010 landing enqueue
@@ -58,3 +59,11 @@ pass "a second run adds nothing"
 
 n=$(wc -l <"$MOVES"); "$FEED" --dry-run >/dev/null 2>&1; [ "$(wc -l <"$MOVES")" -eq "$n" ] || fail "--dry-run wrote"
 pass "--dry-run writes nothing"
+
+# The feed follows the ledger: a second landing recorded there becomes its own landing moves with its own times.
+head2=$(c f); land2=$(c g)
+ledger_landing "$H" lane-2 "$land2" "$head2" 2100 2010 queue 30 50 5 - -
+"$FEED" 2>/dev/null || fail "the third run failed"
+got2=$(awk -F'\t' -v h="$head2" '$3 == "lane-2." h || $3 == "lane-2" { print $1, $2, $5 }' "$MOVES" | sort -n -s)
+[ "$got2" = "$(printf '2010 landing enqueue\n2040 landing start\n2040 lane-delivery t3-start\n2100 landing check-ok\n2100 lane-delivery t4-land')" ] || fail "the moves of the added landing are wrong: $got2"
+pass "a landing added to the ledger gets its moves from the ledger's times"

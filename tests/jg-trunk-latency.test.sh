@@ -97,6 +97,7 @@ assert_contains "$(wakes "$H")" "landing took 32 minutes"
 P=$(payload "$H" "$S14" "$S14_COMMIT")
 say "land payload of $S14: $P"
 [ "$(jq -c '[.stage, .queue_s, .landing_s, .gate_s, .load, .queue_why]' <<< "$P")" = '["queue",1346,358,216,7.25,"not recorded"]' ] || fail "the $S14 payload is $P"
+[ "$(jq -r .head <<< "$P")" = "$S14_HEAD" ] || fail "the payload names the lane head the feeds read, got: $P"
 ok "$S14: 32 minutes, one alert naming the queue and its 22 minutes, read from the land payload"
 seed_shard "$H"; ready "$H" "$SHARD" 1794270818; land "$H" "$SHARD" "$SHARD_HEAD" 1794270937
 out=$(tick "$H" 1794270967)

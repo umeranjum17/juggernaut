@@ -10,7 +10,7 @@ A scheduled fleet report card for the board, built by script from durable record
 - `bin/fleet-report.sh <home> post` publishes a board report card named by `config/fleet-board`; the previous card of that window is dismissed.
 - `bin/fleet-report.sh <home> tick` is the scheduled entry: call it from a home check every poll.
   It records alerts, then posts the 4 h card and the 24 h card when their last post is old enough, and stays silent unless a post fails.
-- `bin/fleet-report.sh <home> --goal [--hours N] [--json] [--record]` prints the goal meter of `bin/goal-meter.sh`: landings inside 5 minutes and gate p90 (from `data/trunk-latency.tsv`), stops with their answer times (from `state/chat.jsonl`, Recon lanes counted apart), and leftover records. Rows with no record in a home are named, not guessed. `--record` (and `tick`) appends one row a day to `data/metrics/goal-meter.tsv`.
+- `bin/fleet-report.sh <home> --goal [--hours N] [--json] [--record]` prints the goal meter of `bin/goal-meter.sh`: landings inside 5 minutes and gate p90 (from the ticket ledger, read by `core/trunk-latency/ledger-rows.sh`), stops with their answer times (from `state/chat.jsonl`, Recon lanes counted apart), and leftover records. Rows with no record in a home are named, not guessed. `--record` (and `tick`) appends one row a day to `data/metrics/goal-meter.tsv`.
 - `wiring.sh` (JG_HOME set) registers the `fleet-report` check in a home: a shim that runs `tick`.
 
 ## Check

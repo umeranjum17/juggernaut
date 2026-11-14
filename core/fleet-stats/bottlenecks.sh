@@ -5,7 +5,7 @@
 #                  [--budget-secs <n>] [--fail-pct <n>] [--min-runs <n>] [--daily] [--file-tickets]
 #
 # The report covers the UTC day --day (default today) and the --days days up to its end (default 1), in five parts:
-#   landing steps   queue, landing and gate seconds per landing (count, median, p90, total), from data/trunk-latency.tsv
+#   landing steps   queue, landing and gate seconds per landing (count, median, p90, total), from the ticket ledger (core/trunk-latency/ledger-rows.sh)
 #   verify          the nightly whole-run seconds, from data/trunk/nightly-<project>-<day>.md
 #   queue wait      landings and queue seconds by recorded reason (queue_why)
 #   host load       the one-minute load at each landing (latency rows) and at each gate shard (data/trunk/load-<project>.tsv)
@@ -59,11 +59,13 @@ if [ "$DAILY" -eq 1 ] && [ -f "$OUTF" ]; then echo "already reported $DAY"; exit
 END=$(( $(date -u -d "$DAY" +%s 2>/dev/null) + 86400 )) || die "bad day $DAY"
 [ "$END" -gt 86400 ] || die "bad day $DAY"
 
-REPORT=$(python3 -I - "$DATA" "$PROJECT" "$END" "$DAYS" "$SDAYS" "$BUDGET" "$FAILPCT" "$MINRUNS" "$DAY" <<'PY'
+LANDINGS=$(bash "$ROOT/core/trunk-latency/ledger-rows.sh" "$JG_HOME" "$((END - DAYS * 86400))" "$END" 2>/dev/null)
+
+REPORT=$(python3 -I - "$DATA" "$PROJECT" "$END" "$DAYS" "$SDAYS" "$BUDGET" "$FAILPCT" "$MINRUNS" "$DAY" "$LANDINGS" <<'PY'
 import csv, glob, json, os, re, sys
 from datetime import datetime, timezone
 
-data, project, end, days, sdays, budget, failpct, minruns, day = sys.argv[1:]
+data, project, end, days, sdays, budget, failpct, minruns, day, landings = sys.argv[1:]
 end, days, sdays, budget, failpct, minruns = map(int, (end, days, sdays, budget, failpct, minruns))
 start, sstart = end - days * 86400, end - sdays * 86400
 out = []
@@ -85,12 +87,8 @@ def stat(label, v):
     return f"  {label:<10} n={len(v)} median={pct(v, .5):.0f}s p90={pct(v, .9):.0f}s total={sum(v):.0f}s"
 
 rows = []
-try:
-    with open(os.path.join(data, "trunk-latency.tsv"), newline="") as f:
-        for r in csv.DictReader(f, delimiter="\t"):
-            if start <= (num(r.get("landed")) or 0) < end: rows.append(r)
-except OSError:
-    pass
+for r in csv.DictReader(landings.splitlines(), delimiter="\t"):
+    if start <= (num(r.get("landed")) or 0) < end: rows.append(r)
 
 out.append(f"Bottleneck report for {project}, UTC day {day} ({days} day{'s' if days != 1 else ''} to its end)")
 out.append(""); out.append(f"Landing steps ({len(rows)} landings)")

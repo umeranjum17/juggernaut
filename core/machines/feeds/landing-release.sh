@@ -3,7 +3,7 @@
 #
 # Usage: landing-release.sh [--dry-run]
 #
-# Reads data/trunk-latency.tsv, data/trunk-landing-phases.tsv, data/trunk-resolving.tsv, data/trunk-landings.tsv,
+# Reads the landings' times from the ticket ledger (core/trunk-latency/ledger-rows.sh), data/trunk-landing-phases.tsv, data/trunk-resolving.tsv, data/trunk-landings.tsv,
 # data/trunk-in-use.tsv, data/trunk-releases.tsv and data/trunk-versions.tsv, and turns each row into the move it recorded,
 # with the row's own time, as a line of data/machine-moves.log (`<epoch> TAB <machine> TAB <id> TAB <from> TAB <event> TAB
 # <to> TAB <writer>`, the writer being `feed:landing-release`). It changes no record and no writer: the lander is not touched.
@@ -28,13 +28,15 @@ dry=0
 case "${1:-}" in --dry-run) dry=1 ;; '') ;; *) sed -n '2,3p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;; esac
 
 tmp=$(mktemp) || exit 1
-trap 'rm -f "$tmp" "$tmp.new"' EXIT
+trap 'rm -f "$tmp" "$tmp.new" "$tmp.ledger"' EXIT
 emit() { printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$W" >>"$tmp"; }  # epoch machine id from event to
 isep() { case "$1" in '' | *[!0-9]*) return 1 ;; esac; [ "$1" -gt 0 ]; }
 ishead() { [[ $1 =~ ^[0-9a-f]{40,64}$ ]]; }
 
-# landing: one run per row of trunk-latency.tsv that names its lane head
-if [ -r "$DATA/trunk-latency.tsv" ]; then
+# landing: one run per landing of the ledger that names its lane head
+LEDGER=$tmp.ledger
+JG_DATA_OVERRIDE=$DATA bash "$root/core/trunk-latency/ledger-rows.sh" "$JG_HOME" >"$LEDGER" 2>/dev/null
+if [ -s "$LEDGER" ]; then
   # awk gives each column a value (0 when empty): a tab read would swallow an empty column and shift the rest
   while read -r task head ready launch landed; do
     ishead "$head" || continue
@@ -54,12 +56,12 @@ if [ -r "$DATA/trunk-latency.tsv" ]; then
     done < <(cat "$DATA/trunk-resolving.tsv" "$DATA/trunk-landing-phases.tsv" 2>/dev/null |
              awk -F'\t' -v t="$task" -v h="$head" '$1 == t && $4 == h { print $6 + 0, $5 }' | sort -n -s | awk '{ print $2 "\t" $1 }')
     isep "$landed" && emit "$landed" landing "$id" checking check-ok landed
-  done < <(awk -F'\t' 'NR > 1 && $1 != "" { print $1, $2 == "" ? "-" : $2, $5 + 0, $7 + 0, $8 + 0 }' "$DATA/trunk-latency.tsv")
+  done < <(awk -F'\t' 'NR > 1 && $1 != "" { print $1, $2 == "" ? "-" : $2, $5 + 0, $7 + 0, $8 + 0 }' "$LEDGER")
 fi
 
 # lane-delivery, release: one lane per row of trunk-landings.tsv (the last row of a lane, a revert-<lane> row ends it)
 if [ -r "$DATA/trunk-landings.tsv" ]; then
-  launch_of() { awk -F'\t' -v t="$1" -v c="$2" '$1 == t && $3 == c && $7 + 0 > 0 { l = $7 } END { print l }' "$DATA/trunk-latency.tsv" 2>/dev/null; }
+  launch_of() { awk -F'\t' -v t="$1" -v c="$2" '$1 == t && $3 == c && $7 + 0 > 0 { l = $7 } END { print l }' "$LEDGER" 2>/dev/null; }
   while IFS=$'\t' read -r task proj commit at _rest; do
     [ -n "$task" ] && ishead "$commit" && isep "$at" || continue
     case $task in revert-*) continue ;; esac

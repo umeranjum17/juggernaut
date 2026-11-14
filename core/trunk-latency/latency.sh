@@ -2,7 +2,7 @@
 # trunk-latency: the minutes from a lane's done line to its landing, the stage that held them, and one alert for a landing over the
 # five-minute target. The times live on the ticket in Beads; this script writes no file of its own.
 # Usage: latency.sh measure <jg-home> <task> <commit>   print the landing's timing as one JSON object (the payload of the lander's `land`
-#                                   event): stage, queue_s, landing_s, gate_s, load, queue_why, ready (epoch). Writes nothing.
+#                                   event): head, stage, queue_s, landing_s, gate_s, load, queue_why, ready (epoch). Writes nothing.
 #        latency.sh check <jg-home>   the watcher check: for each landing of the last hour that the check has not read yet, read the
 #                                   ticket's ready time and the landing's `land` event (jg-backlog.sh trace landing), and raise the
 #                                   slow-delivery alert through bin/jg-alert.sh for one over the limit, naming the stage from the payload
@@ -71,9 +71,9 @@ measure() {
     printf "%.0f %s %s %s\n", t / 60, best, (s == "" ? "-" : n["queue"]), (s == "" ? "-" : n["landing"]) }')
   why=$(head -n 1 "$MEM/$task.$head.queue-why" 2>/dev/null)
   [ -n "$why" ] || [ "$stage" != queue ] || why='not recorded'
-  jq -nc --arg stage "$stage" --arg q "$qsecs" --arg l "$lsecs" --arg g "${gate:-}" --arg load "$load" --arg why "$why" --arg ready "$ready" '
+  jq -nc --arg head "${head:-}" --arg stage "$stage" --arg q "$qsecs" --arg l "$lsecs" --arg g "${gate:-}" --arg load "$load" --arg why "$why" --arg ready "$ready" '
     def n: if . == "" or . == "-" then null else tonumber end;
-    {stage: (if $stage == "-" then null else $stage end), queue_s: ($q | n), landing_s: ($l | n), gate_s: ($g | n), load: ($load | n), queue_why: (if $why == "" then null else $why end), ready: ($ready | n)}'
+    {head: (if $head == "" then null else $head end), stage: (if $stage == "-" then null else $stage end), queue_s: ($q | n), landing_s: ($l | n), gate_s: ($g | n), load: ($load | n), queue_why: (if $why == "" then null else $why end), ready: ($ready | n)}'
 }
 
 # check: read what the lander wrote on the ticket and raise the alert for a landing over the limit.

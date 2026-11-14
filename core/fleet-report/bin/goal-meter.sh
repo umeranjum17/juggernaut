@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Goal meter: the numbers of the fleet goal (plan jg-7v6uw, section 11) read from records a home already writes. Read only.
 # Usage: goal-meter.sh <home> [--hours N] [--now <epoch>] [--json] [--record]
-# Reads:  data/trunk-latency.tsv (minutes and gate seconds of each landing: task head commit first_done ready gate_start launch landed minutes stage gate_secs load),
+# Reads:  the landings' minutes and gate seconds from the ticket ledger (core/trunk-latency/ledger-rows.sh),
 #         state/chat.jsonl status rows (blocked, needs-decision and failed lines, and the lane's later lines),
 #         state/*.meta (kind=scout marks a Recon lane; a lane named fable-* is one too) and data/trunk-landings.tsv.
 # A stop from a Recon lane is counted apart, so a Recon's critic wait never hides a worker's stop.
@@ -22,7 +22,7 @@ while [ "$#" -gt 0 ]; do
 done
 case "$hours$now" in *[!0-9]*|'') echo 'goal-meter: --hours and --now need digits' >&2; exit 2 ;; esac
 since=$((now - hours * 3600))
-lat=$home/data/trunk-latency.tsv chat=$home/state/chat.jsonl landed=$home/data/trunk-landings.tsv
+chat=$home/state/chat.jsonl landed=$home/data/trunk-landings.tsv
 
 recon=$(for m in "$home"/state/*.meta; do [ -f "$m" ] || continue
   if grep -q '^kind=scout$' "$m"; then basename "$m" .meta; fi; done | jq -Rn '[inputs]')
@@ -33,7 +33,7 @@ if [ -f "$landed" ]; then
   done
 fi
 
-lands=$( [ -f "$lat" ] && awk -F '\t' -v s="$since" -v n="$now" 'NR > 1 && $8 + 0 >= s && $8 + 0 <= n { print $9 "\t" $11 }' "$lat" || true )
+lands=$(bash "$(dirname "${BASH_SOURCE[0]}")/../../trunk-latency/ledger-rows.sh" "$home" "$since" "$((now + 1))" 2>/dev/null | awk -F '\t' 'NR > 1 { print $9 "\t" $11 }' || true)
 stops=$(mktemp); trap 'rm -f -- "$stops"' EXIT
 { [ -f "$chat" ] && jq -R 'fromjson? // empty' "$chat" 2>/dev/null | jq -sc --argjson now "$now" '
   [.[] | select(.kind == "status") | (.text // "") as $t

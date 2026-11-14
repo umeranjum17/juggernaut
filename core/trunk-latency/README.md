@@ -7,7 +7,7 @@ A landing over the five-minute target raises one alert that names the stage that
 
 `latency.sh measure <jg-home> <task> <commit>` prints one landing's timing as a JSON object, and `bin/jg-trunk.sh` puts it in the payload of the ticket's `land` event (`jg-backlog.sh trace record ... --payload`) at the end of every landing.
 The ticket's row holds the two times, `ready_at` and `landed_at`; the event's payload holds the rest.
-Nothing is written to `data/trunk-latency.tsv` any more; the rows already there stay on disk, unread by this check.
+Nothing is written to `data/trunk-latency.tsv` any more; the rows already there stay on disk, unread. `ledger-rows.sh <home> [<since> [<until>]]` turns the ledger's landings back into rows of the old columns, and the goal meter, the bottlenecks report and the landing-release feed read those rows; the `land` payload carries the lane head for them.
 
 | Payload key | What it holds | Where it is measured from |
 |---|---|---|

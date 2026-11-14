@@ -5,19 +5,20 @@
 set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/lib-ledger.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib-ledger.sh"
 
 BN="$ROOT/core/fleet-stats/bottlenecks.sh"
 T=$(jg_test_tmproot jg-bottlenecks); H=$T/home; D=$H/data
-mkdir -p "$D/trunk" "$D/metrics" "$H/state"
+mkdir -p "$D/trunk" "$D/metrics"
+ledger_home "$H"
 DAYS=2026-11-12; NOON=$(date -u -d "$DAYS 12:00" +%s)
 
-# Landing rows: two in the day (one waited behind a lane, one at no recorded reason), one the day before (left out).
-printf 'task\thead\tcommit\tfirst_done\tready\tgate_start\tlaunch\tlanded\tminutes\tstage\tgate_secs\tload\tqueue_why\tqueue_secs\tlanding_secs\n' > "$D/trunk-latency.tsv"
-{
-printf 'a\th\tc1\t1\t1\t1\t1\t%s\t5\tqueue\t100\t40.0\tbehind lane-x\t200\t30\n' "$NOON"
-printf 'b\th\tc2\t1\t1\t1\t1\t%s\t9\tgate\t300\t60.0\t\t0\t10\n' "$((NOON + 60))"
-printf 'old\th\tc3\t1\t1\t1\t1\t%s\t5\tqueue\t999\t5.0\tbehind old\t999\t999\n' "$((NOON - 86400))"
-} >> "$D/trunk-latency.tsv"
+# Landings in the ticket ledger: two in the day (one waited behind a lane, one at no recorded reason), one the day before (left out).
+HX=$(printf 'a%.0s' {1..40})
+ledger_landing "$H" lane-a "$(printf '1%.0s' {1..40})" "$HX" "$NOON" - queue 200 30 100 40.0 'behind lane-x'
+ledger_landing "$H" lane-b "$(printf '2%.0s' {1..40})" "$HX" "$((NOON + 60))" - gate 0 10 300 60.0 -
+ledger_landing "$H" lane-old "$(printf '3%.0s' {1..40})" "$HX" "$((NOON - 86400))" - queue 999 999 999 5.0 'behind old'
 printf -- '- seconds: 2852\n' > "$D/trunk/nightly-juggernaut-$DAYS.md"
 printf '%s\th\t1of8\t900000\t600000\t70.00\t32\n' "$NOON" > "$D/trunk/load-juggernaut.tsv"
 
@@ -66,6 +67,13 @@ assert_contains "$OUT" "tests/slow.test.sh: mean 200s is over the 120s budget" "
 assert_not_contains "$OUT" "tests/few.test.sh: failed" "a script under 30 runs is not flagged for failing"
 assert_not_contains "$OUT" "tests/fine.test.sh: mean" "a cheap green script is not flagged"
 assert_absent "$D/metrics/bottlenecks-juggernaut-$DAYS.md" "a plain report records nothing"
+
+# The report follows the ledger: one more landing in the day changes the counts and the queue wait it names.
+ledger_landing "$H" lane-c "$(printf '4%.0s' {1..40})" "$HX" "$((NOON + 120))" - queue 500 5 700 20.0 'behind lane-y'
+run
+assert_contains "$OUT" "Landing steps (3 landings)" "a landing added to the ledger is counted"
+assert_contains "$OUT" "behind lane-y: 1 landings, 500s" "its queue wait is named by its reason"
+assert_contains "$OUT" "gate       n=3 median=300s p90=700s total=1100s" "its gate seconds join the report"
 
 run --daily --file-tickets
 assert_equals 0 "$RC" "a daily report that files tickets succeeds"

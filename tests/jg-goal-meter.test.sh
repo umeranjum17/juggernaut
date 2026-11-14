@@ -4,19 +4,23 @@
 # the row. Names core/fleet-report/bin/fleet-report.sh, core/fleet-report/bin/goal-meter.sh and core/fleet-report/wiring.sh.
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
-d=$(mktemp -d "${TMPDIR:-/tmp}/jg-goal-meter.XXXXXX"); trap 'rm -rf -- "$d"' EXIT
-home=$d/home; mkdir -p "$home/data/metrics" "$home/state" "$home/config"
+# shellcheck source=tests/lib.sh
+. "$here/tests/lib.sh"
+# shellcheck source=tests/lib-ledger.sh
+. "$here/tests/lib-ledger.sh"
+d=$(jg_test_tmproot jg-goal-meter)
+home=$d/home; mkdir -p "$home/data/metrics"
 ln -sn "$here/bin" "$home/bin"; ln -sn "$here/core" "$home/core"
+ledger_home "$home"
 NOW=1794000000
 fail=0
 ck() { if [ "$2" = "$3" ]; then echo "ok - $1"; else echo "not ok - $1: want '$3' got '$2'" >&2; fail=1; fi; }
-tab() { local IFS=$'\t'; printf '%s\n' "$*"; }
-{ tab task head commit first_done ready gate_start launch landed minutes stage gate_secs load
-  tab a h1 c1 0 0 '' '' $((NOW - 600)) 2 queue 100 ''
-  tab b h2 c2 0 0 '' '' $((NOW - 500)) 4 gate 200 ''
-  tab c h3 c3 0 0 '' '' $((NOW - 400)) 20 queue 300 ''; } > "$home/data/trunk-latency.tsv"
-tab a p1 c1 $((NOW - 600)) full > "$home/data/trunk-landings.tsv"
-printf 'kind=ship\n' > "$home/state/a.meta"; printf 'kind=ship\n' > "$home/state/live.meta"; printf 'kind=scout\n' > "$home/state/recon-x.meta"
+# Three landings in the ledger: the minutes are the ready time to the landing, the gate seconds are the payload's.
+C1=1111111111111111111111111111111111111111 C2=2222222222222222222222222222222222222222 C3=3333333333333333333333333333333333333333
+ledger_landing "$home" lane-a "$C1" "$C1" $((NOW - 600)) $((NOW - 720)) queue 60 20 100 - -
+ledger_landing "$home" lane-b "$C2" "$C2" $((NOW - 500)) $((NOW - 740)) gate - - 200 - -
+ledger_landing "$home" lane-c "$C3" "$C3" $((NOW - 400)) $((NOW - 1600)) queue 900 200 300 - -
+printf 'kind=ship\n' > "$home/state/lane-a.meta"; printf 'kind=ship\n' > "$home/state/live.meta"; printf 'kind=scout\n' > "$home/state/recon-x.meta"
 row() { printf '{"at":%s,"kind":"status","from":"%s","text":"%s [at=%s]: x"}\n' "$4" "$1" "$2" "$3"; }
 { row lane-w blocked $((NOW - 3000)) $((NOW - 3000)); row lane-w resolved $((NOW - 2800)) $((NOW - 2800))
   row recon-x needs-decision $((NOW - 2000)) $((NOW - 2000)); } > "$home/state/chat.jsonl"
@@ -27,8 +31,15 @@ for pair in '.landings.count=3' '.landings.within_5_min=2' '.landings.pct_within
   '.stops.recon_lines=1' '.stops.recon_lanes=1' '.leftover_records=1'; do
   ck "${pair%%=*}" "$(jq -c "${pair%%=*}" <<<"$out")" "${pair#*=}"
 done
+# The meter follows the ledger: one more landing in it moves the count, the landings inside 5 minutes and the gate p90.
+C4=4444444444444444444444444444444444444444
+ledger_landing "$home" lane-d "$C4" "$C4" $((NOW - 300)) $((NOW - 420)) gate - - 900 - -
+out2=$(bash "$here/core/fleet-report/bin/fleet-report.sh" "$home" --goal --now "$NOW" --json)
+ck 'edited ledger: landings' "$(jq -c .landings.count <<<"$out2")" 4
+ck 'edited ledger: inside 5 min' "$(jq -c .landings.within_5_min <<<"$out2")" 3
+ck 'edited ledger: gate p90' "$(jq -c .gate_p90_secs <<<"$out2")" 300
 text=$(bash "$here/core/fleet-report/bin/fleet-report.sh" "$home" --goal --now "$NOW")
-case $text in *'Landings inside 5 min: 2 of 3 (67%)'*'Recon lines: 1 from 1 lanes'*'Leftover records: 1'*) echo 'ok - text rows' ;; *) echo "not ok - text rows: $text" >&2; fail=1 ;; esac
+case $text in *'Landings inside 5 min: 3 of 4 (75%)'*'Recon lines: 1 from 1 lanes'*'Leftover records: 1'*) echo 'ok - text rows' ;; *) echo "not ok - text rows: $text" >&2; fail=1 ;; esac
 
 # The wiring registers the check, and the registered check records one row a day.
 JG_HOME=$home bash "$here/core/fleet-report/wiring.sh" > "$d/wire.log"
