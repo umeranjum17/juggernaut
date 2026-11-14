@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Every journey entry of .done-done.yaml names a tier (ci, local or live), and the
-# set of tier ci is the 17 contract scripts and the 13 static Core suites steps,
+# set of tier ci is the 18 contract scripts and the 13 static Core suites steps,
 # each a real script with a measured time. The retired Core suites workflow is
 # gone, and each of its 89 steps is accounted for: 5 set-up steps named in the
 # config header, 84 entries that carry a "was Core suites step N" line.
@@ -31,7 +31,7 @@ if [ -z "$notier" ]; then ok "0 entries with no tier"; else bad "entries with no
 
 ci="$(printf '%s\n' "$rows" | awk -F'\t' '$2=="ci"')"
 n="$(printf '%s\n' "$ci" | grep -c .)"
-if [ "$n" = 30 ]; then ok "30 entries in tier ci"; else bad "tier ci has $n entries, want 30"; fi
+if [ "$n" = 31 ]; then ok "31 entries in tier ci"; else bad "tier ci has $n entries, want 31"; fi
 
 while IFS=$'\t' read -r name _ cmd m; do
   [ -n "$name" ] || continue
@@ -55,6 +55,18 @@ nlocal="$(awk '
   /^    # was Core suites step [0-9]+:/ {placed=1}
   END {if (placed && tier=="local") n++; print n+0}' "$CFG")"
 if [ "$nlocal" = 71 ]; then ok "71 Core suites entries in tier local"; else bad "$nlocal Core suites entries in tier local, want 71"; fi
+
+# No mapping in the config may repeat a key: a second "command:" under one entry
+# (or two entries of one name) is a merge-conflict leftover that done-done rejects.
+dups="$(awk '
+  /^[ ]*#/ || /^[ ]*$/ {next}
+  match($0, /^ */) && $0 ~ /^ *[A-Za-z0-9_-]+:/ {
+    ind = RLENGTH; k = $0; sub(/^ */, "", k); sub(/:.*/, "", k)
+    for (i in seen) { split(i, p, SUBSEP); if (p[1] > ind) delete seen[i] }
+    if (((ind, k) in seen)) printf "line %d: duplicate key %s\n", NR, k
+    seen[ind, k] = 1
+  }' "$CFG")"
+if [ -z "$dups" ]; then ok "no duplicate key in .done-done.yaml"; else bad "$dups"; fi
 
 # done-done still reads the config with every entry.
 cnt="$(cd "$ROOT" && done-done 2>/dev/null | sed -n 's/^journeys\[\([0-9]*\)\].*/\1/p')"

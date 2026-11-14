@@ -64,7 +64,6 @@ journeys:
   cleanup-table:
     tier: local
     command: bash journeys/cleanup-table.sh
-    command: bash journeys/machine-observers.sh
   machine-diagram:
     tier: local
     command: bash journeys/machine-diagram.sh
