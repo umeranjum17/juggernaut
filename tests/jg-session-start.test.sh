@@ -2075,6 +2075,7 @@ EOF
   wait_for_network_wake "$home" 60 || fail "the deferred stage never settled wake delivery"
   assert_grep 'check	startup-network' "$queue" \
     "a result the digest could not print never reached the agent: $(cat "$queue" 2>/dev/null)"
+  assert_grep 'alert=host' "$home/state/alerts/host--startup-network.rec" "the failed check did not raise the host alert"
   pass "session start: a deferred result the digest outran still reaches the agent as a wake"
 }
 

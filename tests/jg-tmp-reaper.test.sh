@@ -142,9 +142,12 @@ pass "a stranger's task process does not keep an old sandbox"
 out=$(TMPDIR=$T JG_HOME=$HOME_DIR JG_TMP_ALERT_PCT=1 "$REAPER" check 2>&1)
 assert_contains "$out" "is " "no alert at the threshold"
 assert_contains "$out" "% full" "the alert does not name the use"
+assert_contains "$out" "alert host (P3)" "the line is not the host alert"
+assert_grep 'state=open' "$HOME_DIR/state/alerts/host--tmp-reaper.rec" "the crossing recorded no open host alert"
 out=$(TMPDIR=$T JG_HOME=$HOME_DIR JG_TMP_ALERT_PCT=1 "$REAPER" check 2>&1)
 [ -z "$out" ] || fail "the alert repeated while use stayed over the threshold: $out"
 TMPDIR=$T JG_HOME=$HOME_DIR JG_TMP_ALERT_PCT=101 "$REAPER" check >/dev/null 2>&1
+assert_grep 'state=resolved' "$HOME_DIR/state/alerts/host--tmp-reaper.rec" "use back under the threshold left the host alert open"
 out=$(TMPDIR=$T JG_HOME=$HOME_DIR JG_TMP_ALERT_PCT=1 "$REAPER" check 2>&1)
 assert_contains "$out" "% full" "the alert did not fire again after use dropped"
 pass "alert fires once per crossing"

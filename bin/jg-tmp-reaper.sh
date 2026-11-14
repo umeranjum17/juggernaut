@@ -110,9 +110,13 @@ alert() {
   if [ "$pct" -ge "$ALERT_PCT" ]; then
     [ -e "$ALERT_RECORD" ] && return 0
     : > "$ALERT_RECORD"
-    printf 'tmp: %s is %s%% full (alert at %s%%); something is leaking scratch, or a worker holds large files there\n' "$TMP_ROOT" "$pct" "$ALERT_PCT"
+    JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE bash "$SCRIPT_DIR/jg-alert.sh" raise host tmp-reaper --print \
+      --note "tmp: $TMP_ROOT is $pct% full (alert at $ALERT_PCT%); something is leaking scratch, or a worker holds large files there"
   else
-    rm -f -- "$ALERT_RECORD"
+    if [ -e "$ALERT_RECORD" ]; then   # the episode ended: the next crossing raises a new alert
+      rm -f -- "$ALERT_RECORD"
+      JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE bash "$SCRIPT_DIR/jg-alert.sh" resolve host--tmp-reaper >/dev/null 2>&1 || true
+    fi
   fi
 }
 

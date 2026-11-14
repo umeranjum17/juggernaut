@@ -52,6 +52,7 @@ test_lead_records_without_waking() (
   assert_alert_recorded "$lead/state" "Squad Lead home"
   [ ! -s "$lead/state/.wake-queue" ] || fail "a Squad Lead home queued a wake: $(<"$lead/state/.wake-queue")"
   assert_grep 'host-memory' "$lead/state/.wake-settled" "a Squad Lead home must tally the alert as settled"
+  assert_grep 'rung=0' "$lead/state/alerts/host--host-memory.rec" "a Squad Lead home must raise the host alert at the tick rung"
   pass "a Squad Lead home records the host memory alert and queues no wake"
 )
 
@@ -60,6 +61,7 @@ test_primary_wakes() (
   tick "$main" "$main/state" || fail "the primary tick failed"
   assert_alert_recorded "$main/state" "primary home"
   assert_grep 'host memory ALERT' "$main/state/.wake-queue" "the primary home must queue the alert wake"
+  assert_grep 'rung=3' "$main/state/alerts/host--host-memory.rec" "the primary home must raise the host alert to Main"
   pass "the primary home queues the host memory alert wake"
 )
 
