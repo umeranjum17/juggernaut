@@ -6,12 +6,18 @@ A row idle for 14 days that no parent, link, lane or P0/P1 priority gives a clea
 the reason stated, never closed and never deleted. A captain ask is never closed, moved or edited; it is only listed
 with a tip. Every other row is left alone.
 
-plan() reads and decides; apply() writes through the home's own bin/jg-backlog.sh, so each close and hold reaches the
-board in the same step as any other backlog transition.
+Beads answers two of the questions: `bd stale` lists the rows idle for 14 days (stale_rows) and `bd duplicate <id> --of <twin>`
+closes a duplicate with the link to the row that stays open. A gate row (an owner question) is never a candidate: it is no
+work row, so the plan reads only the home's backlog rows and a stale gate is dropped from bd's answer.
+
+plan() reads and decides; apply() writes through the home's own bin/jg-backlog.sh (done, hold) or bd (duplicate), so each
+close and hold reaches the board in the same step as any other backlog transition.
 """
 import datetime as dt
+import json
 import os
 import re
+from pathlib import Path
 from cleanup import captain_origin
 from hierarchy import field
 from lane import landed_commit
@@ -22,8 +28,27 @@ LANDED = {'landed', 'cleaned', 'in-homes', 'in-homes-off', 'in-use'}
 KINDS = ('done', 'duplicate', 'superseded', 'deferred', 'captain-ask', 'untouched')
 
 
-def decide(it, today, twin, rows):
-    """(kind, evidence) for one open row; `twin` names an earlier open row of the same title, `rows` is the home's {item: row}."""
+def beads_env(source):
+    """The environment of one home's own store, or None for a home with no Beads store named."""
+    named = Path(source) / 'config/beads-dir'
+    store = named.read_text().strip() if named.is_file() else ''
+    return {**os.environ, 'JG_HOME': str(source), 'BEADS_DIR': store} if store else None
+
+
+def stale_rows(homes, home, run):
+    """{(home name, row id): idle days} from `bd stale --days 14` in each home's store. A gate row is no work row and is left out."""
+    found = {}
+    for name, source in homes.items():
+        env = beads_env(source)
+        if not env: continue
+        for row in json.loads(run(['bash', str(home / 'bin/jg-beads.sh'), 'stale', '--days', str(IDLE_DAYS), '--limit', '0', '--json'], env) or '[]'):
+            if row.get('issue_type') == 'gate' or not row.get('updated_at'): continue
+            found[(name, row['id'])] = dt.datetime.fromisoformat(row['updated_at'].replace('Z', '+00:00'))
+    return found
+
+
+def decide(it, today, twin, rows, idle):
+    """(kind, evidence) for one open row; `twin` names an earlier open row of the same title, `rows` is the home's {item: row}, `idle` is when bd says it was last touched, or None."""
     row = it['row']
     if captain_origin(row): return 'captain-ask', 'keep: an owner ask is his to close'
     if it['link'] and it['merged']: return 'done', f"its PR merged: {it['link']}"
@@ -32,15 +57,15 @@ def decide(it, today, twin, rows):
     named = field(row, 'superseded-by')
     if named and named != row['id'] and named in rows: return 'superseded', f'replaced by {named}'
     if twin: return 'duplicate', f'same title as {twin}, which stays open'
-    quiet = it['event'] and (today - dt.datetime.fromtimestamp(it['event'], dt.timezone.utc).date()).days
+    quiet = idle and (today - idle.date()).days
     clear = row.get('held') == 'yes' or it['said'] != 'queued' or it['link'] or str(row.get('priority')) in ('0', '1') \
         or row.get('links') not in (None, '', '-', 'none') or field(row, 'parent') not in ('', 'upkeep')
     if not clear and quiet and quiet >= IDLE_DAYS: return 'deferred', f'idle {quiet} days with no owner, parent, link or lane'
     return 'untouched', ''
 
 
-def plan(items, today):
-    """One decision per open row, in the order the homes were read: (kind, home, item, evidence). Done rows are never read."""
+def plan(items, today, stale):
+    """One decision per open row, in the order the homes were read: (kind, home, item, evidence). Done rows are never read; `stale` is stale_rows' answer."""
     by_home, firsts, out = {}, {}, []
     for it in items:
         by_home.setdefault(it['name'], {})[it['row']['id']] = it['row']
@@ -50,7 +75,7 @@ def plan(items, today):
         title = ' '.join(row['title'].lower().split())  # the exact title: a [blocker] or [feature] tag makes a different row
         # An earlier open twin is the survivor; a row with a lane or a PR of its own is a row with work behind it, so it never closes as one.
         twin = firsts.get((it['name'], title)) if title and it['said'] == 'queued' and not it['link'] else None
-        kind, evidence = decide(it, today, twin, by_home[it['name']])
+        kind, evidence = decide(it, today, twin, by_home[it['name']], stale.get((it['name'], row['id'])))
         if kind in ('untouched', 'deferred', 'captain-ask'): firsts.setdefault((it['name'], title), row['id'])  # only a row that stays open can be the survivor
         out.append((kind, it['name'], row['id'], evidence))
     return out
@@ -61,9 +86,11 @@ def counts(decisions):
 
 
 def commands(decision, today):
-    """The jg-backlog.sh call that carries one decision out, or None when the row is only listed or left alone."""
+    """The jg-backlog.sh call that carries one decision out, or None when the row is only listed, left alone or a duplicate (bd closes it)."""
     kind, _home, item, evidence = decision
-    if kind in ('done', 'duplicate', 'superseded'):
+    if kind == 'duplicate':
+        return None  # bd carries it out: apply() runs `bd duplicate <id> --of <twin>`
+    if kind in ('done', 'superseded'):
         pr = re.search(r'https://\S+', evidence)
         return ['done', item, *(['--pr', pr[0]] if kind == 'done' and pr else []), '--note', f'closed by the fleet tidy {today.isoformat()}: {evidence}']
     if kind == 'deferred':
@@ -76,9 +103,13 @@ def apply(decisions, today, homes, home, run):
     applied, failed = 0, []
     for decision in decisions:
         args = commands(decision, today)
-        if not args: continue
+        if decision[0] == 'duplicate':
+            twin = re.search(r'same title as (\S+?),', decision[3])[1]
+            tool, args, env = 'jg-beads.sh', ['duplicate', decision[2], '--of', twin], beads_env(homes[decision[1]])
+        elif args: tool, env = 'jg-backlog.sh', {**os.environ, 'JG_HOME': str(homes[decision[1]])}
+        else: continue
         try:
-            run(['bash', str(home / 'bin/jg-backlog.sh'), *args], {**os.environ, 'JG_HOME': str(homes[decision[1]])})
+            run(['bash', str(home / 'bin' / tool), *args], env)
             applied += 1
         except RuntimeError as error:
             failed.append((f'{decision[1]}/{decision[2]}', str(error)[:160]))

@@ -2,7 +2,8 @@
 # The fleet backlog tidy on a real Beads store: `sync.py --tidy` plans the captain's clean-up rules over every open row and
 # changes nothing; `--tidy --apply` closes with a named reason (its PR merged, its change landed on the trunk, an earlier row
 # with the same title), defers a row idle for 14 days that nothing gives an owner or value (held with the reason, never
-# closed), and never touches a captain ask. A second run finds nothing left to do.
+# closed), and never touches a captain ask. A duplicate closes through `bd duplicate` and the idle rows come from `bd stale`;
+# an old owner question (a gate row) is never named. A second run finds nothing left to do.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 work=$(mktemp -d "${JG_TICKETS_TEST_ROOT:-${TMPDIR:-/tmp}}/tickets-tidy.XXXXXX")
@@ -34,7 +35,13 @@ printf 'done [at=1700000000]: ready in branch fix/jg-landed\n' > "$JG_HOME/state
 printf 'landed\n' > "$JG_HOME/data/jg-trunk-landing/jg-landed.0000000000000000000000000000000000000001.state"
 printf 'jg-landed\talpha\t38f1eed7e0000000000000000000000000000000\t1700000000\tfull\n' > "$JG_HOME/data/trunk-landings.tsv"
 
-late=$(date -u -d '+20 days' +%F)   # every fixture row was filed today, so this is the day they have all been idle for 20 days
+# bd stale reads the store's own clock, so every row (and an owner question, a gate row) is made 20 days idle in the store itself.
+bdx() { BEADS_DIR=$(cat "$JG_HOME/config/beads-dir") "$JG_HOME/bin/jg-beads.sh" "$@"; }
+gate=$(bdx gate create --blocks jg-dup-a --type human --title 'Umer asks which way' --json | jq -r '.id // .gate.id // .[0].id')
+[ -n "$gate" ] && [ "$gate" != null ] || { echo 'FAIL: no gate row was made'; exit 1; }
+late=$(date -u +%F)
+bdx dolt sql -q "update issues set updated_at = now() - interval 20 day" >/dev/null
+[ "$(bdx stale --days 14 --limit 0 --json | jq -r --arg g "$gate" '[.[].id] | index($g) != null')" = true ] || { echo 'FAIL: bd stale does not list the old gate row, so the fixture proves nothing'; exit 1; }
 tidy() { JG_TIDY_TODAY=$late python3 "$root/tickets-sync/sync.py" --tidy "$@"; }
 open_ids() { (cd "$JG_HOME" && jg-backlog.sh list --limit 100 | grep -o 'jg-[a-z-]*' | sort -u | tr '\n' ' '); }
 before=$(open_ids)
@@ -52,6 +59,7 @@ grep -q '^done: main/jg-landed - landed on the local trunk as 38f1eed7e' "$list"
 grep -q '^duplicate: main/jg-dup-b - same title as jg-dup-a, which stays open' "$list"
 grep -q '^deferred: main/jg-idle - idle 20 days with no owner, parent, link or lane' "$list"
 grep -q '^captain-ask: main/jg-ask - keep' "$list"
+grep -q "$gate" "$list" && { echo 'FAIL: a gate row was named in the tidy list'; exit 1; }
 grep -qE ': main/(jg-wanted|jg-dup-a) ' "$list" && { echo 'FAIL: a row with a clear owner or value was listed'; exit 1; }
 echo 'PASS: the plan names each row, its class and its evidence, and changes nothing'
 
@@ -65,7 +73,8 @@ shown() { (cd "$JG_HOME" && jg-backlog.sh show "$1"); }
 shown jg-merged | grep -q 'state: done'
 shown jg-merged | grep -q "closed by the fleet tidy $late: its PR merged: $merged"
 shown jg-landed | grep -q 'closed by the fleet tidy .*: landed on the local trunk as 38f1eed7e'
-shown jg-dup-b | grep -q 'closed by the fleet tidy .*: same title as jg-dup-a'
+shown jg-dup-b | grep -q 'state: done'
+bdx show jg-dup-b --json | jq -e '.[0].dependencies[] | select(.id == "jg-dup-a" and .dependency_type == "duplicates")' >/dev/null
 shown jg-dup-a | grep -q 'state: queued'
 shown jg-idle | grep -q 'state: queued'
 shown jg-idle | grep -q 'held: yes'
@@ -75,6 +84,7 @@ shown jg-wanted | grep -q 'held: no'
 shown jg-ask | grep -q 'state: queued'
 shown jg-ask | grep -q 'held: no'
 shown jg-ask | grep -q 'Umer wants this thing done soon'
+[ "$(bdx show "$gate" --json | jq -r '.[0].status')" = open ] || { echo 'FAIL: the tidy touched the gate row'; exit 1; }
 echo 'PASS: --apply closes with the reason written on the row, defers the idle row held, and leaves the owner ask and the wanted row as they were'
 
 again=$(tidy --apply)

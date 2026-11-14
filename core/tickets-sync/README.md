@@ -71,9 +71,9 @@ The board's open view (sign-off's Asked block) shows the title and filed date of
 
 `sync.py --tidy` applies the clean-up rules the captain approved on 9 Nov ("Yes, these rules") to every home's open tickets, and `tidy.py` owns them.
 It prints the plan and the counts before and after, writes the full list to `state/tickets-sync/tidy-<day>.txt`, and changes no row; `--tidy --apply` carries the plan out through each home's own `bin/jg-backlog.sh`, so every close and hold reaches the board in the same step.
-A row closes only with a reason written on it: its PR merged or its change landed on the local trunk (done), another open row of the same home has the exact same title (duplicate, the earlier row stays), or it names `superseded-by: <row>` (superseded).
-A row idle for 14 days that no parent, link, lane, hold or P0/P1 priority gives a clear owner or value is held with `--kind parked` and the reason stated, never closed or deleted.
-A captain ask is never closed, held or edited: it is listed with a keep tip.
+A row closes only with a reason written on it: its PR merged or its change landed on the local trunk (done), another open row of the same home has the exact same title (duplicate, closed with `bd duplicate <row> --of <earlier row>`, which links it to the row that stays), or it names `superseded-by: <row>` (superseded).
+A row that `bd stale --days 14` lists and that no parent, link, lane, hold or P0/P1 priority gives a clear owner or value is held with `--kind parked` and the reason stated, never closed or deleted.
+A captain ask is never closed, held or edited: it is listed with a keep tip. A gate row (an owner question) is never named.
 Everything else is left alone.
 `core/tickets-sync/tests/tidy.test.sh` proves each rule on a real Beads store.
 

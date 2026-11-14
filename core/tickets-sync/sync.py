@@ -141,7 +141,7 @@ def store_named(home):
 def tidy_report(items, homes, home, state, apply, run):
     """Plan the fleet tidy over every home's open rows, write the full list beside the sync state, return the summary line."""
     today = dt.date.fromisoformat(os.environ['JG_TIDY_TODAY']) if os.environ.get('JG_TIDY_TODAY') else dt.datetime.now(dt.timezone.utc).date()
-    decisions = tidy.plan(items, today)
+    decisions = tidy.plan(items, today, tidy.stale_rows(homes, home, run))
     count, opened = tidy.counts(decisions), len(decisions)
     closed = count['done'] + count['duplicate'] + count['superseded']
     applied, failed = tidy.apply(decisions, today, homes, home, run) if apply else (0, [])
