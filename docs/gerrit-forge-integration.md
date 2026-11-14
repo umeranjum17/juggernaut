@@ -1,5 +1,7 @@
 # Gerrit forge integration
 
+Status: superseded. Juggernaut no longer ships through a validation pipeline of its own, so the pipeline-first reasoning below (the `no-mistakes` mode, the pipeline's publication steps, and the upstream-contribution option) describes a design that is gone. Read it as history. The forge axis it argues for is owned by `bin/jg-project-mode.sh`, `bin/jg-pr-lib.sh` and the [Gerrit change watch](gerrit-change-watch.md).
+
 This note is the design reasoning for giving Juggernaut a forge axis, worked through Gerrit because Gerrit is the case that forces it.
 It is written for whoever integrates a forge with Juggernaut rather than for the operator of any one fleet, so it argues about axes, vocabulary, and ownership, and never about which projects should be registered how.
 Every question it raises is answered, and each decision is stated in the body where the reasoning for it sits rather than collected into a list at the end.

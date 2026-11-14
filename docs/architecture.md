@@ -95,7 +95,7 @@ After successful outcome publication, the watcher immediately delivers the emitt
 The retirement receipt makes poll cleanup safely retryable across restarts: fixed-path recovery revalidates the same evidence, removes the runnable check first, removes its registration and data sidecars, removes the receipt last, and preserves task metadata including `pr=` and `pr_head=`.
 A concurrent replacement remains armed, every non-merged or invalid observation remains unchanged, and retirement never performs task or persistent Squad Lead cleanup.
 `bin/jg-pr-lib.sh` owns the notification-marker and retirement-receipt formats plus their strict identity mechanics, [`bin/jg-merge-outcome-lib.sh`](../bin/jg-merge-outcome-lib.sh) owns role-routed publication, the local durable row, and marker ordering, and `bin/jg-watch.sh` owns immediate poll-result delivery and retirement.
-No-verb wakes, such as `working:` notes and bare turn-ended signals, are benign only when every referenced task independently has positive evidence that its crew is still working: a currently attributed active no-mistakes step, or an exact busy verdict from the semantic busy-state contract, both read through `bin/jg-crew-state.sh`.
+No-verb wakes, such as `working:` notes and bare turn-ended signals, are benign only when every referenced task independently has positive evidence that its crew is still working: a currently attributed active validation step, or an exact busy verdict from the semantic busy-state contract, both read through `bin/jg-crew-state.sh`.
 A home that creates `config/turnend-churn-absorb` lets each eligible bare turn-ended task that lacks either authoritative proof use a third form: pane content that changed since the previous poll, compared against the same `state/.hash-*` marker the staleness backbone records, which claims no harness semantics and needs no adapter cooperation.
 That form stays opt-in because it infers execution from rendered bytes rather than from a verdict the harness vouches for, so with the flag absent triage behaves exactly as it did before ([`configuration.md`](configuration.md) "Turn-end pane-churn absorb").
 That evidence clears the pane's prior stale classification and wedge-escalation count, then defers such a wake rather than swallowing it, since a crew that has stopped renders nothing further and its now-static pane surfaces through the staleness backbone within a poll or two, even if its final bytes match an earlier stale render.
@@ -308,17 +308,16 @@ If another live session holds the fleet lock, both surfaces keep the alarm but s
 Ship briefs also tell the operator to verify `pwd -P` and `git rev-parse --show-toplevel` before creating its ship branch (`fm/<id>` by default, `feature/`, `fix/` or `chore/` when intake names the kind of work, or the project's registered prefix), then stop with a blocked status if it landed in the primary checkout.
 Placement is proven only at launch, so `bin/jg-spawn.sh` also exports the task id as `JG_TASK_ID` into every ship and Recon pane, and `bin/jg-test-run.sh` refuses to execute the behavior suite from the primary checkout while that marker is set; the runner's header owns the predicate and [`tests/jg-test-run.test.sh`](../tests/jg-test-run.test.sh) pins it.
 
-## No-mistakes gate authority boundary
+## Gate authority boundary
 
-Juggernaut's own no-mistakes gate runs agents inside a checkout that also contains the fleet-captain identity in `AGENTS.md`, so gate execution needs an authority boundary separate from ordinary operator worktree isolation.
-The tracked `.no-mistakes.yaml` sets `disable_project_settings: true`; no-mistakes honors that setting only from the trusted default-branch copy, so a pushed branch cannot enable its own project instructions during validation.
-Independently, the fleet lifecycle entrypoints use `bin/jg-gate-refuse-lib.sh` to refuse gate calls against the real fleet, while permitting validation against a disposable lab home minted by `bin/jg-lab-home.sh`.
+A gate agent runs inside a checkout that also contains the fleet-captain identity in `AGENTS.md`, so gate execution needs an authority boundary separate from ordinary operator worktree isolation.
+The fleet lifecycle entrypoints use `bin/jg-gate-refuse-lib.sh` to refuse gate calls against the real fleet, while permitting validation against a disposable lab home minted by `bin/jg-lab-home.sh`.
 A normal primary checkout or operator worktree remains unaffected.
-The refusal library's header owns the gate detection, lab-home exception, test-harness bypass, and relationship to no-mistakes' HEAD-continuity guard; the lab helper's header owns its usage.
+The refusal library's header owns the gate detection, lab-home exception, and test-harness bypass; the lab helper's header owns its usage.
 
 ## Two task shapes
 
-Ship tasks change projects and ship by project mode (`no-mistakes`, `direct-PR`, `local-only`, or `local-trunk`); Recon tasks leave standalone investigation reports at `data/<id>/report.md` and never push.
+Ship tasks change projects and ship by project mode (`direct-PR`, `local-only`, or `local-trunk`; the old registry word `no-mistakes` still reads as `pr`); Recon tasks leave standalone investigation reports at `data/<id>/report.md` and never push.
 The intake and authority contract in `AGENTS.md` owns when separate Recon research is warranted.
 
 ## Dispatch profiles
@@ -338,7 +337,7 @@ That keeps spawn launch compatible across claude, codex, opencode, pi, pi-signed
 A local route points directly at its home, while a remote route adds an SSH alias and remote Juggernaut code root so the entire home and all of its child work stay on that host.
 Remote placement pins the remote Squad Lead agent to Herdr while leaving the remote home's worker backend selection independent, and every non-doctor primary-to-remote `jg-on` command runs through the remote account's Juggernaut-owned job worker rather than its SSH process or a Herdr pane.
 [`remote-squad-leads.md`](remote-squad-leads.md) owns current setup, supplied-origin provisioning, transport, relay, failure, and retirement behavior.
-`jg-home-seed.sh` provisions a local isolated home, clones the listed PR-based projects into it, initializes newly cloned `no-mistakes` projects, copies the charter to `data/charter.md`, and `jg-spawn.sh --squad-lead` launches it through the same session-provider and status-file path as any direct report.
+`jg-home-seed.sh` provisions a local isolated home, clones the listed PR-based projects into it, copies the charter to `data/charter.md`, and `jg-spawn.sh --squad-lead` launches it through the same session-provider and status-file path as any direct report.
 For a domain whose subject is the Juggernaut repo itself, a deliberate `--no-projects` seed creates a project-less home whose crews take pooled worktrees of that repo instead of separate clones.
 The signal cannot be mixed with project names or omitted accidentally, and a populated home cannot be converted in place; the full seed contract is in [configuration.md](configuration.md#squad-lead-routes-datasquad_leadsmd).
 Herdr Squad Lead and child placement follows the launcher-binding contract in [Watching and task containers](herdr-backend.md#watching-and-task-containers).
@@ -376,7 +375,7 @@ The `data/squad_leads.md` line contract is owned by the [`squad-lead-provisionin
 
 ## Delivery modes are explicit per task
 
-`no-mistakes` tasks run the full validation pipeline, `direct-PR` tasks open PRs without that pipeline, and `local-only` tasks stay local until Juggernaut performs an approved fast-forward merge.
+`direct-PR` tasks open PRs, and `local-only` tasks stay local until Juggernaut performs an approved fast-forward merge.
 `local-trunk` tasks follow `docs/trunk-flow.md` and retain their mode through automatic exact-head landing and cleanup.
 Each task's mode and `yolo` merge posture are Juggernaut's decision at intake.
 The mode is passed explicitly to `bin/jg-brief.sh`, and both values are passed explicitly to `bin/jg-spawn.sh` and `bin/jg-promote.sh`; each command refuses to guess the values it consumes.
@@ -389,20 +388,18 @@ A hook failure or any non-empty candidate other than the verified forge head ref
 The gate's one exception is a done naming a pull request whose live forge head is exactly the worktree HEAD, because the push that opened the PR can leave no remote-tracking ref in the copy.
 `bin/jg-crew-state.sh`, `bin/jg-pr-check.sh`, and the Squad Lead ledger-first publisher call that same gate before treating a ship `done:` as ready.
 The watcher passes every changed ship status through `bin/jg-pr-check.sh --from-status` before it wakes Main, so an accepted ready line records `pr=`, arms the merge poll, posts the ready card, and moves the ticket to review without waiting on Main.
-It is also the one owner of the no-mistakes `--intent` contract those workers follow.
-`data/projects.md` records each project's standing posture and optional `+yolo` merge flag as the captain's default and as context for that decision, including the conditional `no-mistakes-prod-only` policy; a ship spawn that drops below the registered rigor prints a deviation notice and continues.
+`data/projects.md` records each project's standing posture and optional `+yolo` merge flag as the captain's default and as context for that decision; a ship spawn that drops below the registered rigor prints a deviation notice and continues.
 The registry's optional `forge=` token is different in kind: it is the captain's confirmed project fact rather than a standing default, orthogonal to both the mode and `+yolo`, and it changes what a publishing mode publishes rather than Juggernaut's latitude over it ([gerrit-forge-integration.md](gerrit-forge-integration.md) is the design).
-On a `forge=gerrit` project both `no-mistakes` and `direct-PR` end with the worker publishing one squashed change through `gerrit-axi` and reporting `done: PR <change url> published for review`, which `bin/jg-pr-check.sh` registers like any PR URL, `no-mistakes` first running the pipeline with its push, PR, and CI steps skipped, recovering the pipeline's fix commits, and listing each finding and its fix in a `note:` line so Juggernaut can relay what the squash's description hides; `local-only` refuses a forge because it publishes nothing, and `yolo` is refused because a Code-Review+2 is a positive attributed claim that a named human approved.
+On a `forge=gerrit` project `direct-PR` ends with the worker publishing one squashed change through `gerrit-axi` and reporting `done: PR <change url> published for review`, which `bin/jg-pr-check.sh` registers like any PR URL; `local-only` refuses a forge because it publishes nothing, and `yolo` is refused because a Code-Review+2 is a positive attributed claim that a named human approved.
 Juggernaut passes the binding unchanged to `bin/jg-brief.sh --forge` and never infers one from a remote, host, or protocol; a ship spawn reads it from the registry through `bin/jg-project-mode.sh --forge` and refuses a brief that disagrees with it, and a promotion reads it the same way for the binding alone.
 `bin/jg-forge-detect.sh` only proposes a binding at project-add intake; nothing re-derives one from a clone at use time.
-`bin/jg-project-mode.sh` remains the one registry parser for the mechanical consumers that have no task in hand: fleet sync's `local-only` skip and home seeding's refusal and no-mistakes initialization.
+`bin/jg-project-mode.sh` remains the one registry parser for the mechanical consumers that have no task in hand: fleet sync's `local-only` skip and home seeding's refusal.
 The registry's optional `branch=<prefix>` annotation overrides a project's ship-branch prefix (default `fm/`) the same way: Juggernaut resolves it via `bin/jg-project-mode.sh --branch-prefix` at intake and passes it explicitly to `bin/jg-brief.sh --branch-prefix`, which never reads the registry itself; each script's own header owns its side of that contract.
 A task's base branch has no registry entry: it defaults to the project's current version branch, which `bin/jg-version-branch-lib.sh` reads from the project's own refs as its newest `release/c-<N>` and which is the default branch for a project that carries none.
 `bin/jg-brief.sh --project <dir>` records it in the brief, `bin/jg-spawn.sh` resolves the same default and resets the task's copy to `origin/<base>`, records `base_branch=` in task meta, and refuses a brief that disagrees, an explicit `--base-branch` overrides both, and review, cleanup, and promotion read the recorded value instead of the default branch.
 `bin/jg-pr-check.sh` refuses a feature pull request whose base is the default branch and names the version branch, with the release pull request from the version branch into the default branch as the only allowed exception, and `bin/jg-version-branch-sync.sh features` carries a landed release into the open feature pull requests that target it.
 When a selected delivery path calls for a diff, `bin/jg-review-diff.sh` refreshes the authoritative base and, when task meta records a GitHub pull-request `pr=`, always fetches and compares against `refs/pull/<n>/head` by default (recorded `pr_head=` is only an offline fallback) before falling back to the local branch with a warning.
 A GitLab merge request and a Gerrit change expose no such ref, so a task recording one of those diffs the local branch under that same warning, which is its current content.
-[`configuration.md`](configuration.md#gate-defaults-no-mistakesyaml) owns this repo's no-mistakes evidence publication settings, public text-artifact limitation, and local-state tracking boundary.
 PR-based task merges go through `bin/jg-pr-merge.sh`, which records `pr=` and any available `pr_head=` through `bin/jg-pr-check.sh` before calling the forge CLI.
 Every GitHub pull request states on its own page what it is waiting for, as the commit status `juggernaut/waiting-for` carrying one short plain line: `bin/jg-pr-check.sh` publishes it when a pull request is recorded ready, `bin/jg-pr-merge.sh` republishes the reason whenever its gate refuses, and both success before the merge and a proven merge replace it so a pending status never outlives the wait it describes; [`bin/jg-pr-wait.sh`](../bin/jg-pr-wait.sh) sets or clears the same line directly, and `bin/jg-pr-lib.sh`'s `jg_pr_wait_status` owns the mechanics.
 The helper requires a full canonical URL and rejects malformed URLs or repo override flags before recording merge state.
@@ -438,7 +435,6 @@ Teardown is fail-closed for ship worktrees: dirty worktrees refuse, and committe
 A pool worktree is only returned after teardown passes record exclusivity: a contradictory task record or a supported live endpoint refuses without touching either task, and no discard authority relaxes that.
 The durable Treehouse lease is the only ownership store.
 Allocation and return serialize on one project lock per machine-local Juggernaut tree: every home reachable through local parent links shares that lock, and a home seeded from another machine anchors its own, because a lock taken on this filesystem is neither held nor observable across that boundary.
-Before the worktree is returned, teardown concludes the task's own no-mistakes run when it is parked at a gate, including a run whose head the task copy cannot resolve - the shared runs-ledger continuation proof is the only recognition for that case, so cleanup never orphans a parked run the pipeline advanced past the submitted head.
 [`core/teardown/cmd/jg-teardown/main.go`](../core/teardown/cmd/jg-teardown/main.go)'s header owns the landed-work proofs, the worktree safety reads, the process reap and the removal validators; [`bin/jg-teardown.sh`](../bin/jg-teardown.sh)'s header owns the record-exclusivity check, the endpoint-close refusal, the pre-teardown run conclusion, task-owned scratch cleanup, and the stale-lock recovery procedure; [`tests/jg-teardown.test.sh`](../tests/jg-teardown.test.sh) pins the dirty-worktree, open-PR and failed-endpoint refusals, the slot-loss warning, scratch cleanup, and interruption recovery.
 
 ### The retired catalog stays retired
@@ -536,7 +532,7 @@ The procedure and outcome vocabulary are owned by the [`/resupply` skill](../.ag
 
 ## Restart-proof
 
-Fleet state lives in each task's session-provider backend (tmux by hard default, herdr or cmux when selected or auto-detected, zellij/orca when explicitly selected), no-mistakes run records, status event logs, local markdown under `data/` including `data/captain.md`, `data/captain-shared.md`, and `data/learnings.md`, and persistent Squad Lead homes.
+Fleet state lives in each task's session-provider backend (tmux by hard default, herdr or cmux when selected or auto-detected, zellij/orca when explicitly selected), status event logs, local markdown under `data/` including `data/captain.md`, `data/captain-shared.md`, and `data/learnings.md`, and persistent Squad Lead homes.
 For herdr, respawning after a server-restored layout closes and replaces confirmed no-agent or dead task-tab husks instead of requiring manual tab cleanup.
 At session start and again on the watcher's bounded liveness cadence, confirmed-dead Squad Lead agent endpoints are closed and relaunched through the same Squad Lead spawn path, while ambiguous liveness reads are left untouched to avoid duplicate supervisors.
 Use `/intel` before an intentional reset when the conversation may hold durable knowledge that has not yet been written to disk; after that, the next Juggernaut session can reconcile and carry on.
