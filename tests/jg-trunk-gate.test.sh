@@ -26,6 +26,29 @@
 JG_TRUNK_FIXTURE_CACHE=1
 
 # shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
+test_a_changed_file_that_is_not_a_test_is_never_run_bare_on_the_tip() {
+  local out
+  world nontest; rig
+  # The tip carries a library and a command that fail when bash runs them bare; the gate reports a changed path it has no test for
+  # as a failure of the lane that changed it, and names it among the failed scripts.
+  git -C "$PROJ" worktree add -q -b seed "$W/seed" trunk
+  commit_in "$W/seed" t/lib.py 'echo "not ok - lib" >&2; exit 2' "seed lib"
+  commit_in "$W/seed" t/needs-store.sh 'echo "not ok - store" >&2; exit 2' "seed store"
+  JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref refs/heads/trunk "$(git -C "$W/seed" rev-parse HEAD)"
+  git -C "$PROJ" rev-parse trunk > "$HOME_D/state/trunk-tip-proj"
+  printf 'gate-full=export GATE_MARK=yes; bash %s/rig.sh $(git diff --name-only HEAD~1 | grep -E "^t/(lib.py|needs-store.sh)$") t/*.test.sh\n' "$W" >> "$HOME_D/config/trunk-policy"
+  lane lib 'echo "not ok - lib" >&2; exit 2 # changed' t/lib.py
+  out=$(trunk land lib 2>&1) && fail "a changed non-test path the gate failed must stay the lane's failure: $out"
+  assert_contains "$out" "introduced or changed" "the lane is charged for the path it changed"
+  assert_contains "$out" "t/lib.py" "the refusal names the path"
+  [ ! -e "$HOME_D/data/trunk/tip-red-reported-proj.tsv" ] || [ ! -s "$HOME_D/data/trunk/tip-red-reported-proj.tsv" ] || fail "a non-test path is never reported as the tip's red: $(cat "$HOME_D/data/trunk/tip-red-reported-proj.tsv")"
+  ! grep -qs 'alert-line-red' "$HOME_D/state/.wake-queue" || fail "a non-test path must raise no tip-red alert: $(cat "$HOME_D/state/.wake-queue")"
+  ! grep -qs 't/lib.py' "$HOME_D/data/trunk/"tip-results-proj-*.tsv || fail "the tip is never asked for a non-test path's result"
+  ! grep -qsE 'JG_TEST_BEGIN .* t/(lib.py|needs-store.sh) ' "$HOME_D/data/trunk/"gate-proj-*-tip-*.log || fail "no tip run may start a non-test path"
+  pass 'a changed library or store-bound command is never run bare on the tip, so it raises no tip-red alert'
+}
+
+# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
 test_the_full_gate_charges_a_lane_only_for_what_it_broke() {
   local out tipc
   world base; rig; seed_red_tip; tipc=$(tip)
@@ -554,6 +577,7 @@ test_a_local_lane_lands_with_no_tests_and_the_verify_reports_a_red() {
 }
 
 test_landing_deadline_spans_both_gates
+test_a_changed_file_that_is_not_a_test_is_never_run_bare_on_the_tip
 test_the_full_gate_charges_a_lane_only_for_what_it_broke
 test_every_landing_records_the_done_epoch_and_writes_no_latency_row
 test_a_flaky_failure_gets_one_rerun_before_it_is_judged

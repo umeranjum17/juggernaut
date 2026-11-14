@@ -468,9 +468,21 @@ gate_unexplained() {  # <log> <results>
   [ "$claimed" -gt 0 ] && [ "$claimed" = "$counted" ] || echo "the runner reported $counted failed scripts and $claimed finished red"
 }
 
+# A rerun runs tests only. A path the gate failed that is not a test (a library, a command that needs a store, a data file) has no
+# result to compare: bash would parse it bare and exit non-zero on any tree, so it is never rerun, never read from a tip and never
+# reported as the tip's red. Such a path stays what its own gate run said it was, a failure of the lane that changed it.
+is_test_script() {  # <path>
+  case $1 in *.test.sh) return 0 ;; *) return 1 ;; esac
+}
+
 # Rerun test scripts (policy gate-rerun) at a commit's tree in a clean clone, in the environment a gate ended with
 # (<envfile>, minus what only describes that one shell). <scripts> are already shell-quoted, each led by a space.
 rerun_scripts() {  # <commit> <envfile> <log> <quoted scripts>
+  local tests='' q
+  for q in $4; do is_test_script "$q" && tests="$tests $q"; done
+  : > "$3"
+  [ -n "$tests" ] || return 0
+  set -- "$1" "$2" "$3" "$tests"
   # shellcheck disable=SC2016 # the loop expands in the rerun's shell
   gate_exec "$1" "$(printf 'while IFS= read -r -d "" kv; do case "$kv" in PWD=*|OLDPWD=*|SHLVL=*|_=*|JG_GATE_ENV_OUT=*) ;; *) export "$kv" ;; esac; done < %q; %s%s' "$2" "$(pol gate-rerun)" "$4")" "$3" || :
 }
@@ -484,6 +496,7 @@ tip_results() {  # <tip> <envfile> <script>...
   cache="$DATA/trunk/tip-results-$PN-$tree.tsv"
   touch "$cache"
   for s in "$@"; do
+    is_test_script "$s" || continue
     git -C "$PROJ" cat-file -e "$tip:$s" 2>/dev/null || continue
     awk -F'\t' -v s="$s" '$1 == s { f = 1 } END { exit !f }' "$cache" || need="$need $(printf '%q' "$s")"
   done
@@ -663,6 +676,7 @@ _full_gate() {  # <candidate> <command> <base>
   # so nothing is charged to the lane and nothing is reverted: the failure is one no test accounts for.
   while IFS= read -r line; do
     s=${line%%$'\t'*}
+    is_test_script "$s" || continue
     git -C "$PROJ" cat-file -e "$3:$s" 2>/dev/null || continue
     printf '%s\n' "$tipres" | awk -F'\t' -v s="$s" '$1 == s { f = 1 } END { exit !f }' || noparent="$noparent $s"
   done <<< "$mine"
