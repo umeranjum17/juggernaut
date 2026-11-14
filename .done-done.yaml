@@ -2139,6 +2139,60 @@ journeys:
   migration-card-test:
     tier: local
     command: bash tests/migration-card.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  pane-titles:
+    tier: local
+    command: bash journeys/core-run.sh 'bash pane-titles/tests/pane-titles.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  parked-homes-uninstall:
+    tier: local
+    command: bash journeys/core-run.sh 'bash parked-homes/tests/uninstall.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  pipeline-literal-delete-uninstall:
+    tier: local
+    command: bash journeys/core-run.sh 'bash pipeline-literal-delete/tests/pipeline-literal-delete-uninstall.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  pipeline-quota-failover-pi-e2e:
+    tier: local
+    command: bash journeys/core-run.sh 'bash pipeline-quota-failover/tests/pi-quota-failover-e2e.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  pipeline-quota-failover-uninstall:
+    tier: local
+    command: bash journeys/core-run.sh 'bash pipeline-quota-failover/tests/pipeline-quota-failover-uninstall.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  quality-ledger:
+    tier: local
+    command: bash journeys/core-run.sh 'bash quality-ledger/tests/quality.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  read-guard:
+    tier: local
+    command: bash journeys/core-run.sh 'bash read-guard/tests/read-guard.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  route-change-uninstall:
+    tier: local
+    command: bash journeys/core-run.sh 'bash route-change/tests/route-change-uninstall.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  sentinel-dead-relaunch:
+    tier: local
+    command: bash journeys/core-run.sh 'bash sentinel/tests/jg-sentinel-dead-relaunch.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  sentinel-install:
+    tier: local
+    command: bash journeys/core-run.sh 'bash sentinel/tests/jg-sentinel-install.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  sentinel-model-relaunch:
+    tier: local
+    command: bash journeys/core-run.sh 'bash sentinel/tests/jg-sentinel-model-relaunch.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  stall-action-lead-main-rungs:
+    tier: local
+    command: bash journeys/core-run.sh 'bash stall-action/tests/lead-main-rungs.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  status-wait-check:
+    tier: local
+    command: bash journeys/core-run.sh 'bash status-wait-check/tests/status-wait-check.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  supervisor-guard-work-guard:
+    tier: local
+    command: bash journeys/core-run.sh 'bash supervisor-guard/tests/jg-supervisor-work-guard.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  tickets-sync-drop:
+    tier: local
+    command: JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash journeys/core-run.sh 'bash tickets-sync/tests/drop.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  tickets-sync-lead-rows-first:
+    tier: local
+    command: JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash journeys/core-run.sh 'bash tickets-sync/tests/lead-rows-first.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  wait-timers-tmux-e2e:
+    tier: local
+    command: JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash journeys/core-run.sh 'bash wait-timers/tests/jg-wait-timers-tmux-e2e.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  zai-quota-check-uninstall:
+    tier: local
+    command: bash journeys/core-run.sh 'bash zai-quota-check/tests/zai-quota-check-uninstall.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
 
   jg-context-budget:
     tier: local
