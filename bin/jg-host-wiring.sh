@@ -116,7 +116,6 @@ plan=(
   parked-homes:verify
   sentinel:home
   supervisor-guard:home
-  task-priority:plain
   tickets-sync:env
   lookout-adapter:plain
   undelivered-alert:home

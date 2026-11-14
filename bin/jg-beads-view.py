@@ -39,7 +39,7 @@ GATE = "gate"
 ROW = ["id", "state", "kind", "repo", "title"]
 SHOW = ["id", "title", "state", "blocked", "blocked_by", "held", "hold_reason", "hold_kind", "hold_until",
         "kind", "repo", "priority", "created", "closed", "deps", "links", "body"]
-EXTRA = sorted(set(SHOW) - set(ROW)) + ["parent", "item", "ask", "labels"]
+EXTRA = sorted(set(SHOW) - set(ROW)) + ["parent", "item", "ask", "labels", "release"]
 CLIP = {"title": 80, "body": 500}
 STATES = ["queued", "in_flight", "done", "held"]
 PLAIN_NUMBER = re.compile(r"-?\d+(\.\d+)?([eE][+-]?\d+)?\Z")
@@ -183,6 +183,7 @@ def task(row, rows, native=None):
         "parent": next((d["depends_on_id"] for d in row.get("dependencies") or [] if d.get("type") == "parent-child"),
                        "upkeep" if "upkeep" in (row.get("labels") or []) else "-"),
         "item": meta.get("task") or meta.get("legacy_item") or row["id"], "names": legacy(row),
+        "release": meta.get("release") or "-",
         "ask": ask_role(row), "labels": ",".join(l for l in row.get("labels") or [] if not l.startswith("project:")) or "-",
     }
 

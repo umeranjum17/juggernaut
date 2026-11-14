@@ -68,7 +68,7 @@ herdr_test_backlog_ticket() {
   fi
   (
     cd "$home" || exit 1
-    export JG_HOME="$home" JG_CONFIG_OVERRIDE="$home/config" JG_TASK_PRIORITY_CHECK=/nonexistent
+    export JG_HOME="$home" JG_CONFIG_OVERRIDE="$home/config"
     backlog="$HERDR_TEST_SAFETY_DIR/bin/jg-backlog.sh"
     if shown=$("$backlog" show "$id" 2>/dev/null); then
       state=$(printf '%s\n' "$shown" | awk '$1 == "state:" { print $2; exit }')

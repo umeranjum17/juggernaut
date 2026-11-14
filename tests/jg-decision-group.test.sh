@@ -4,7 +4,6 @@
 # card, holds are grouped by the ticket that raised them, new holds are counted per home per day, and no
 # hold changes state. The holds are made by the real bin/jg-captain-hold.sh in a real Beads-backed home.
 set -u
-export JG_TASK_PRIORITY_CHECK=/nonexistent
 # shellcheck source=tests/lib.sh
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"

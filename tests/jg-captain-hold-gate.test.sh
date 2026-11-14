@@ -5,7 +5,6 @@
 # `answer --release` leaves the ticket open, spawn and merge blocking see an open gate, `done` is refused past one, and
 # an old stamped hold still answers the old way. JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT name the pinned builds.
 set -u
-export JG_TASK_PRIORITY_CHECK=/nonexistent
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 

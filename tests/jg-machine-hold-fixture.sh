@@ -2,7 +2,6 @@
 # Shared fixture for the hold machine suites tests/jg-machine-hold.test.sh and tests/jg-machine-hold-b.test.sh: a throwaway home with a real
 # Beads store (no fleet record is copied) and the helpers the two suites read a task's word with. It is sourced, never run.
 set -u
-export JG_TASK_PRIORITY_CHECK=/nonexistent
 # shellcheck source=tests/lib.sh
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"

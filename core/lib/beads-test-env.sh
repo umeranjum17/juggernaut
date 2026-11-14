@@ -5,7 +5,7 @@
 if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
   echo 'skip: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset'; exit 0
 fi
-export JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT JG_TASK_PRIORITY_CHECK=/nonexistent
+export JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
 core_beads_home() {
   local fork=$1 home=$2 prefix=${3:-jg} store tpl
   store=$home-store

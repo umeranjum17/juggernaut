@@ -57,7 +57,7 @@ TICKET_ERRORS = (OSError, ValueError, KeyError, RuntimeError, sp.TimeoutExpired)
 
 def rows(args, env, cwd=None, extra=''):
     # A Beads home's list answers whole titles and bodies on --full, so it needs no read of each truncated row.
-    text = run(args + ['--limit', '100000', '--fields', 'held,hold_kind,hold_reason,closed,created,priority,body,links,ask,labels' + extra] + (['--full'] if extra else []), env, cwd)
+    text = run(args + ['--limit', '100000', '--fields', 'held,hold_kind,hold_reason,closed,created,priority,body,links,ask,labels,release' + extra] + (['--full'] if extra else []), env, cwd)
     result = toon_rows(text)
     if result is None or re.search(r'count: \d+ of (?!0\b)\d+ total', text) and len(result) >= 100000:
         raise RuntimeError('the backlog returned an unreadable or capped task list')
@@ -423,9 +423,6 @@ def sync():
                 tid = ticket(item)
                 if r['state'] == 'done' and r.get('closed', '-') < cutoff and tid not in ledger and tid not in existing and item not in required: continue
                 body = r.get('body', '')
-                def field(key):
-                    m = re.search(r'^\s*' + key + r':\s*(.+)$', body, re.M | re.I)
-                    return m[1].strip() if m else ''
                 held = name in parked or r.get('held') == 'yes' or r.get('hold_kind') == 'parked'
                 # A hold always carries its reason: the source item's own words, or the parking that holds a whole home.
                 # The board caps a reason as it caps a title, so a long note is shortened and the source record keeps it whole.
@@ -438,7 +435,7 @@ def sync():
                     print(f'tickets-sync: {name}/{item} is held with no reason; publishing it unheld')
                 # A release names what the local trunk cut. A PR-era version, a body word about timing or "none" is no release:
                 # send none, so the board keeps no milestone the trunk never cut and no placeholder is stored on a ticket.
-                release_value = release.name(field('release'), cut_names)
+                release_value = release.name('' if r.get('release') == '-' else r.get('release', ''), cut_names)
                 said, done, pr, event = lane_stage(home, source, item, r, prs, run)
                 save(pr_file, prs)
                 done = done or f'{name}/{item}' in closures or existing.get(tid, {}).get('state') == 'done'

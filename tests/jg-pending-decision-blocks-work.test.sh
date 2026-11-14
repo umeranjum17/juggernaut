@@ -9,7 +9,6 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 command -v openssl >/dev/null 2>&1 || { echo "skip: openssl not found"; exit 0; }
-export JG_TASK_PRIORITY_CHECK=/nonexistent
 
 jg_git_identity fmtest fmtest@example.com
 TMP_ROOT=$(jg_test_tmproot jg-pending-decision)

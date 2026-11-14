@@ -1076,10 +1076,6 @@
       "audience": "maintainer-architecture"
     },
     {
-      "path": "core/task-priority/README.md",
-      "audience": "operator-current"
-    },
-    {
       "path": "core/tickets-sync/README.md",
       "audience": "operator-current"
     },

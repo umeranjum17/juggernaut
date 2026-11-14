@@ -22,7 +22,7 @@ mkdir -p "$H/state"
 
 run() {  # <args...>: the command on the fixture home, stdout and stderr together.
   env HOME="$T" TMPDIR="$T" JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" JG_DATA_OVERRIDE="$H/data" \
-    JG_CONFIG_OVERRIDE="$H/config" JG_TASK_PRIORITY_CHECK=/nonexistent "$CLI" "$@" 2>&1
+    JG_CONFIG_OVERRIDE="$H/config" "$CLI" "$@" 2>&1
 }
 bd_() { BEADS_DIR=$(tr -d '[:space:]' < "$H/config/beads-dir") "$ROOT/bin/jg-beads.sh" "$@" 2>/dev/null; }
 

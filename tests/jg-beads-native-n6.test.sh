@@ -17,6 +17,7 @@ H=$T/home
 mkdir -p "$H/config" "$H/state" "$H/data" "$T/user" "$T/real"
 export BEADS_DIR=$T/real/.beads JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
 printf '%s\n' "$BEADS_DIR" > "$H/config/beads-dir"
+: > "$H/config/backlog-intake-loose"  # the fixture files rows by their own words, not by strict intake
 jail=()
 command -v bwrap >/dev/null && jail=(bwrap --ro-bind / / --tmpfs /tmp --bind "$T" "$T" --ro-bind "$ROOT" "$ROOT" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent)
 "${jail[@]}" "$WRAPPER" init --prefix jg >"$T/real-init.log" 2>&1 || fail "init: $(cat "$T/real-init.log")"

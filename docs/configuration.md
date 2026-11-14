@@ -431,11 +431,13 @@ Closed rows move with the rest, so `show` and the write verbs find a row by the 
 
 ### Backlog intake (config/backlog-intake-loose)
 
-`bin/jg-backlog.sh add` files only work that says what it is and why it matters.
-The title starts with a type tag: `[captain-ask]`, `[feature]`, `[design-ux]`, `[security]` or `[blocker]`.
-The first line of the body is a one-line justification; for `[captain-ask]` it is the captain's own words.
-Anything else, such as refactors, extra proof, tooling or review follow-ups, goes in a report instead of the backlog.
-An item without both is refused before it reaches the backlog, and the refusal names what is missing.
+`bin/jg-backlog.sh add` files a ticket as fields, so the board and every reader find each one in the same place.
+The title reads as plain words: 2 to 7 words, at most 48 characters, with no id, `[tag]`, URL or path. The detail goes in the body.
+A leading type tag (`[captain-ask]`, `[feature]`, `[design-ux]`, `[security]` or `[blocker]`) is still taken as input and stored as the label of that name.
+`--priority 0|1|2|3` is required (0 is most urgent; an owner ask gets 0 by itself).
+The body has the sections `Captain`, `Ask`, `Why` and `Done when`, as headings or as lines. Bd checks this itself, with `create --validate` and the `lint.sections.task` setting that `bin/jg-beads.sh init` writes; bd's own task rule also asks for `Acceptance Criteria`. A store made before this rule gets the setting once with `bin/jg-beads.sh config set lint.sections.task "Captain, Ask, Why, Done when"`.
+`--release <name>` stores the release in `metadata.release` and defaults to `later`. A `release:` line in the body is not read.
+An item that fails a rule is refused before it reaches the backlog, and the refusal names the fix.
 `juggernaut-axi ticket` takes the justification as `--why`.
 The optional local, gitignored presence flag `config/backlog-intake-loose` turns the check off for that home.
 

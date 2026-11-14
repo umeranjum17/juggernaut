@@ -60,7 +60,7 @@ REPORT = re.compile(r"data/[^/\s]+/report\.md\Z")
 LABEL = {"queued": "Queued", "in_flight": "In flight", "done": "Done"}
 PR_ERROR = ("--pr must be a canonical pull request URL: https://github.com/<owner>/<repo>/pull/<n> (GitHub) "
             "or https://<host>/<owner>/<repo>/pulls/<n> (Forgejo)")
-FIELDS = ("--kind", "--repo", "--body", "--body-file", "--pr", "--report", "--priority")
+FIELDS = ("--kind", "--repo", "--body", "--body-file", "--pr", "--report", "--priority", "--release")
 STALE = 13
 TAG = re.compile(r"\[(captain-ask|feature|design-ux|security|blocker)\]\s*")
 CAPTAIN = "captain"
@@ -326,6 +326,7 @@ def add(args):
     blockers = [blocker(items, other) for other in found.get("--blocked-by+", [])]
     parent = child_of(items, found) if "--parent" in found else None
     meta = {"kind": found["--kind"]} if "--kind" in found else {}
+    meta["release"] = found.get("--release", "later")
     if "--report" in found:
         meta["reports"] = found["--report"]
     cmd = ["create", "--title=" + " ".join(filter(None, [title, found.get("--pr"), found.get("--report")]))]
@@ -334,6 +335,7 @@ def add(args):
                         ("--deps", ",".join(blockers)), ("--metadata", meta and json.dumps(meta))):
         cmd += [flag, value] if value else []
     cmd += ["--description=" + body] if body else []
+    cmd += ["--validate"] if os.environ.get("JG_BACKLOG_VALIDATE") else []  # strict intake: bd refuses a body without its sections
     cmd += ["-l", "project:" + found["--repo"]] if "--repo" in found else []
     cmd += [flag for label in labels for flag in ("-l", label)]
     cmd += parent_flags(parent, found) if parent else []

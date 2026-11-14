@@ -35,12 +35,12 @@ core_beads_home "$fork" "$JG_HOME"
 core_beads_home "$fork" "$work/parked"
 (cd "$JG_HOME"; jg-backlog.sh add jg-parent '[captain-ask] P1 Parent: Umer release' --repo alpha --priority 0 --body 'type: captain-ask: "Umer telescope focus should be simple"' >/dev/null
  jg-backlog.sh 'done' jg-parent --captain-quote 'Umer focus should be simple' >/dev/null
- jg-backlog.sh add jg-long "Umer 🚢 $(printf 'long title %.0s' {1..30})" --repo alpha --priority 1 --body $'release: v1\nhttps://github.com/example/alpha/pull/123\nhttps://github.com/example/alpha/pull/456' >/dev/null
+ jg-backlog.sh add jg-long "Umer 🚢 $(printf 'long title %.0s' {1..30})" --repo alpha --priority 1 --release v1 --body $'https://github.com/example/alpha/pull/123\nhttps://github.com/example/alpha/pull/456' >/dev/null
  jg-backlog.sh start jg-long >/dev/null
  jg-backlog.sh add jg-upkeep 'Umer maintenance' --repo alpha --priority 2 --body 'parent: upkeep' >/dev/null
  jg-backlog.sh add jg-held 'Umer paused item' --repo alpha --priority 1 --body 'parent: missing' >/dev/null
  jg-backlog.sh hold jg-held --reason 'Umer parked this item' --kind parked >/dev/null
- jg-backlog.sh add jg-voice 'Umer voice practice' --repo ownvoice --priority 2 --body 'release: soon' >/dev/null
+ jg-backlog.sh add jg-voice 'Umer voice practice' --repo ownvoice --priority 2 --release soon >/dev/null
  jg-backlog.sh add jg-ids 'Plain row Main42 (corr=0123abcd) gc-x1' --repo alpha --priority 2 --body 'parent: upkeep' >/dev/null
  jg-backlog.sh add jg-take 'Umer takes' --repo takeone --priority 2 >/dev/null
  jg-backlog.sh add jg-self 'Umer juggernaut maintenance' --repo juggernaut --priority 2 --body 'parent: upkeep' >/dev/null
@@ -48,7 +48,7 @@ core_beads_home "$fork" "$work/parked"
  jg-backlog.sh add jg-gone 'Umer queued item whose worker has gone' --repo alpha --priority 2 >/dev/null
  jg-backlog.sh add jg-inferred 'Umer telescope focus regression' --repo alpha --priority 1 >/dev/null
  jg-backlog.sh add jg-internal 'Umer internal maintenance' --repo herdr --priority 2 --body 'parent: upkeep' >/dev/null
- jg-backlog.sh add jg-child '[captain-ask] P0 Umer settings' --repo alpha --priority 0 --body "$(printf 'Umer notes %.0s' {1..80})"$'\nrelease: trunk-v3\nparent: jg-parent' >/dev/null)
+ jg-backlog.sh add jg-child '[captain-ask] P0 Umer settings' --repo alpha --priority 0 --release trunk-v3 --body "$(printf 'Umer notes %.0s' {1..80})"$'\nparent: jg-parent' >/dev/null)
 (cd "$work/parked"; JG_HOME="$work/parked" jg-backlog.sh add jg-parent 'Umer paused project' --repo beta --priority 2 >/dev/null)
 (cd "$JG_HOME"; jg-backlog.sh add jg-recent 'Umer shipped feature' --repo alpha --priority 2 >/dev/null; jg-backlog.sh 'done' jg-recent >/dev/null)
 git init -q "$JG_HOME/projects/alpha"

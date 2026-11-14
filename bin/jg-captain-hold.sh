@@ -65,9 +65,8 @@
 # Overwatch (bin/jg-board-gate.sh route) instead of held. Creating a missing row uses
 # `add --kind captain`: that kind is backlog metadata, and the Beads
 # store keeps it as native issue type `decision`. Captain holds have no due
-# semantics (`--until` is the optional hold deferral). When the optional
-# task-priority feature is installed, a created task needs `--priority 0-3`; the
-# feature's refusal is returned as-is (bin/jg-backlog.sh owns that hook).
+# semantics (`--until` is the optional hold deferral). A created task goes
+# through `add`, so strict intake there (bin/jg-backlog.sh) reads its title and priority.
 # The command records a UTC `Captain hold set:` timestamp in the task body:
 # repeating an active hold preserves the existing timestamp, while re-holding
 # released work starts a new lifecycle. A task already closed is refused rather
@@ -907,7 +906,7 @@ hold_by_gate() {  # <task-id> <task-title> <reason> <until> <must> <origin> <don
 }
 
 command_hold() {
-  local id=${1:-} priority='' priority_check title='' reason='' repo='' origin='' until='' show state existing_title body='' hold_kind hold_set occurrence held_from
+  local id=${1:-} priority='' title='' reason='' repo='' origin='' until='' show state existing_title body='' hold_kind hold_set occurrence held_from
   local signoff_script existing_hold_kind='' existing_held='' preserve_hold_set=0 stored_reason previous_origin='' hold_status=0 card_close=release must='' refusal rec own_instruction='' raise_rc=0
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
@@ -957,8 +956,7 @@ command_hold() {
   # core/signoff owns the card: it authors the owner-must class itself, decides
   # whether the home is armed, and refuses an ask it cannot author. The older
   # bin/jg-procevent-signoff.sh remains the board's answer intake.
-  # JG_SIGNOFF_SCRIPT names another card path, the same test seam as
-  # JG_TASK_PRIORITY_CHECK below.
+  # JG_SIGNOFF_SCRIPT names another card path, a test seam.
   signoff_script=${JG_SIGNOFF_SCRIPT:-$SCRIPT_DIR/../core/signoff/bin/jg-procevent-signoff.sh}
   if [ -z "$own_instruction" ] && [ "$signoff_script" = "$SCRIPT_DIR/jg-procevent-signoff.sh" ] && [ -z "$until" ] \
     && [ -f "$STATE/procevent/signoff.source" ] && ! refusal=$(jg_ask_gate_refusal "$must"); then
@@ -1001,12 +999,6 @@ command_hold() {
     [ -n "$repo" ] || repo=juggernaut
     validate_one_line repo "$repo"
     [ -z "$origin" ] || body=$(printf 'Origin: %s' "$origin")
-    # Optional task-priority feature: a created task must carry --priority. No-op when not installed.
-    priority_check=${JG_TASK_PRIORITY_CHECK:-${XDG_DATA_HOME:-${HOME:-}/.local/share}/jg-task-priority/check.sh}
-    if [ -x "$priority_check" ]; then
-      "$priority_check" add "$id" "$title" --kind captain ${priority:+--priority "$priority"} >/dev/null \
-        || exit 1
-    fi
     # --kind captain is Beads native type decision.
     if [ -n "$body" ]; then
       backlog_cmd add "$id" "$title" --kind captain --repo "$repo" ${priority:+--priority "$priority"} --body "$body" >/dev/null \

@@ -18,6 +18,7 @@ H=$T/home
 mkdir -p "$H/config" "$H/state" "$H/data" "$T/user" "$T/real"
 export BEADS_DIR=$T/real/.beads JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
 printf '%s\n' "$BEADS_DIR" > "$H/config/beads-dir"
+: > "$H/config/backlog-intake-loose"  # this suite is about the label, and tests/jg-backlog-intake.test.sh is about strict intake
 "$WRAPPER" init --prefix jg >"$T/init.log" 2>&1 || fail "init: $(cat "$T/init.log")"
 bd_() { "$WRAPPER" "$@" 2>/dev/null; }
 tasks() {
@@ -37,8 +38,6 @@ for id in jg-tag jg-lab; do
   [ "$(field "$id" .priority)" = 0 ] || fail "$id: an owner ask stays at priority 0"
   [ "$(role "$id")" = ask ] || fail "$id: the store must answer that it is the ask"
 done
-out=$(tasks add jg-none "Plain words" --body why) && fail "a title with no type must still be refused"
-assert_contains "$out" "label (-l)" "the refusal must name the label way"
 [ "$(tasks add jg-plain -l feature "Plain words" --body why >/dev/null; role jg-plain)" = "" ] || fail "a feature is no owner ask"
 
 # Kind is metadata on a task, never bd's decision type.

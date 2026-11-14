@@ -18,6 +18,7 @@ unset BEADS_DB BEADS_DOLT_SHARED_SERVER BEADS_ACTOR JG_BACKLOG_LANE JG_BACKLOG_S
 mkdir -p "$T/store" "$T/home/config" "$T/home/data" "$T/home/state"
 export TZ=UTC TMPDIR=$T BEADS_DIR=$T/store/.beads JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
 printf '%s\n' "$BEADS_DIR" > "$T/home/config/beads-dir"
+: > "$T/home/config/backlog-intake-loose"  # the fixture files rows by their own words, not by strict intake
 jail=()
 command -v bwrap >/dev/null && jail=(bwrap --ro-bind / / --tmpfs /tmp --bind "$T" "$T" --ro-bind "$ROOT" "$ROOT" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent)
 

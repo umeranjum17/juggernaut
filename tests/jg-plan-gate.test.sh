@@ -26,7 +26,7 @@ run() {  # <home> <cmd> <args...>: the command in a home, stdout and stderr toge
   local h=$1 c=$2
   shift 2
   env HOME="$T" TMPDIR="$T" JG_HOME="$h" JG_STATE_OVERRIDE="$h/state" JG_DATA_OVERRIDE="$h/data" \
-    JG_CONFIG_OVERRIDE="$h/config" JG_TASK_PRIORITY_CHECK=/nonexistent PATH="$T/tools:$PATH" "$c" "$@" 2>&1
+    JG_CONFIG_OVERRIDE="$h/config" PATH="$T/tools:$PATH" "$c" "$@" 2>&1
 }
 bd_() { BEADS_DIR=$(tr -d '[:space:]' < "$1/config/beads-dir") "$ROOT/bin/jg-beads.sh" "${@:2}" 2>/dev/null; }
 ready_in() { bd_ "$1" ready --json --limit 0 | jq -r '[.[].id] | sort | join(",")'; }

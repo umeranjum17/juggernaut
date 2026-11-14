@@ -25,6 +25,7 @@ CODE=https://github.com/acme/app/pull
 store() {
   mkdir -p "$1/config" "$1/data/metrics" "$1/state" "$T/store-$2"
   printf '%s\n' "$T/store-$2/.beads" > "$1/config/beads-dir"
+  : > "$1/config/backlog-intake-loose"  # the fixture files rows by their own words, not by strict intake
   BEADS_DIR=$T/store-$2/.beads "$WRAPPER" init --prefix "$2" >"$T/init-$2.log" 2>&1 || fail "init $2: $(cat "$T/init-$2.log")"
 }
 # ticket <home> <id> <kind> <started days ago> <closed days ago or -> <landed yes|no> <pr number or -> <runtime>...

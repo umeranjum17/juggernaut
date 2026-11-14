@@ -81,7 +81,6 @@ export GIT_AUTHOR_NAME=smoke GIT_AUTHOR_EMAIL=smoke@example.invalid
 export GIT_COMMITTER_NAME=smoke GIT_COMMITTER_EMAIL=smoke@example.invalid
 export HOME=$T/user-home
 mkdir -p "$HOME"
-export JG_TASK_PRIORITY_CHECK=/nonexistent
 
 H=$T/home
 FAKE=$T/fakebin

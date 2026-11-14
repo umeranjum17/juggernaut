@@ -27,7 +27,7 @@ route() {  # <home> <args...>: the command in a home, stdout and stderr together
   local h=$1
   shift
   env HOME="$T" TMPDIR="$T" JG_HOME="$h" JG_STATE_OVERRIDE="$h/state" JG_DATA_OVERRIDE="$h/data" \
-    JG_CONFIG_OVERRIDE="$h/config" JG_TASK_PRIORITY_CHECK=/nonexistent "$CLI" "$@" 2>&1
+    JG_CONFIG_OVERRIDE="$h/config" "$CLI" "$@" 2>&1
 }
 bd_() { BEADS_DIR=$(tr -d '[:space:]' < "$1/config/beads-dir") "$ROOT/bin/jg-beads.sh" "${@:2}" 2>/dev/null; }
 slices_in() { bd_ "$1" list --parent jg-plan --all --limit 0 --json | jq -r '[.[].metadata.plan_slice] | sort | join(",")'; }
@@ -65,14 +65,14 @@ assert_contains "$out" "routed 4 slices" "the route must say what it did"
 lead_backlog() {  # <home> <args...>
   local h=$1
   shift
-  (cd "$h" && JG_HOME="$h" JG_CONFIG_OVERRIDE="$h/config" JG_TASK_PRIORITY_CHECK=/nonexistent "$ROOT/bin/jg-backlog.sh" "$@" 2>&1)
+  (cd "$h" && JG_HOME="$h" JG_CONFIG_OVERRIDE="$h/config" "$ROOT/bin/jg-backlog.sh" "$@" 2>&1)
 }
 out=$(lead_backlog "$L" add jg-x "[feature] Wrong home" --priority 1 --repo juggernaut --body "x" --owner main) && fail "a row of another owner must be refused"
 assert_contains "$out" "owned by main and this home is lead1" "the refusal must name the owner and this home"
 out=$(lead_backlog "$M" add jg-y "[feature] Wrong home" --priority 1 --repo juggernaut --body "y" --owner lead1) && fail "Main must refuse a row of a lead"
 assert_contains "$out" "owned by lead1 and this home is main" "Main must name the lead"
 plan "$(slice N lead1 '[]')" > "$T/new.json"
-out=$(env JG_ROW_OWNER=main bash -c "cd '$L' && JG_HOME='$L' JG_CONFIG_OVERRIDE='$L/config' JG_TASK_PRIORITY_CHECK=/nonexistent '$ROOT/bin/jg-plan-file.sh' '$T/new.json' --owner lead1 2>&1") \
+out=$(env JG_ROW_OWNER=main bash -c "cd '$L' && JG_HOME='$L' JG_CONFIG_OVERRIDE='$L/config' '$ROOT/bin/jg-plan-file.sh' '$T/new.json' --owner lead1 2>&1") \
   && fail "the filing command in the wrong home must be refused"
 assert_contains "$out" "owned by main and this home is lead1" "the filing command must name the owner"
 [ "$(slices_in "$L")" = "B,D" ] || fail "a refused offer must file no row"

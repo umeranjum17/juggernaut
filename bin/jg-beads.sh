@@ -182,6 +182,8 @@ run_init() {  # --prefix <prefix>
   while read -r table rule; do
     "$dolt" sql -q "ALTER TABLE $table ADD CONSTRAINT $rule CHECK ($HOLD_CHECK)" || exit $?
   done <<< "$gaps"
+  # Strict intake (bin/jg-backlog.sh) has bd refuse a new task whose body lacks these sections.
+  "$bd" config set lint.sections.task "Captain, Ask, Why, Done when" > /dev/null || exit $?
   # wisps is not versioned, so a repair of that rule alone leaves nothing to commit.
   "$dolt" add -A && "$dolt" commit --allow-empty --author 'jg-beads <jg-beads@local>' -m 'Add the hold rule' > /dev/null || exit $?
 }

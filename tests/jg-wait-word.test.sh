@@ -52,6 +52,7 @@ test_the_hold_command_writes_the_wait_keys_with_the_hold() {
   mkdir -p "$T/store" "$T/home/config" "$T/home/data" "$T/home/state"
   export TZ=UTC TMPDIR=$T BEADS_DIR=$T/store/.beads JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
   printf '%s\n' "$BEADS_DIR" > "$T/home/config/beads-dir"
+  : > "$T/home/config/backlog-intake-loose"  # the fixture files rows by their own words, not by strict intake
   "$WRAPPER" init --prefix jg >"$T/init.log" 2>&1 || fail "init the store: $(cat "$T/init.log")"
   axi() { JG_HOME="$T/home" "$CLI" "$@"; }
   keys() { "$WRAPPER" show "$1" --json 2>/dev/null | jq -r 'if type == "array" then .[0] else . end | .metadata | [.hold_kind // "-", .wait // "-", .wait_reason // "-"] | join(" ")'; }

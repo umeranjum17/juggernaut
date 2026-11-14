@@ -71,7 +71,7 @@ printf '%s\n' "$T/beads/.beads" > "$H/config/beads-dir"
 JG_BEADS_BD=$BD JG_BEADS_DOLT=$DOLT BEADS_DIR="$T/beads/.beads" "$REPO/bin/jg-beads.sh" init --prefix jg >/dev/null 2>&1 \
   || fail "cannot create the Beads store"
 env_run() {
-  env JG_BEADS_BD="$BD" JG_BEADS_DOLT="$DOLT" JG_TASK_PRIORITY_CHECK=/nonexistent \
+  env JG_BEADS_BD="$BD" JG_BEADS_DOLT="$DOLT" \
     JG_SPAWN_CORE_BIN="$T/spawn-core" JG_ROOT_OVERRIDE='' JG_HOME="$H" \
     JG_STATE_OVERRIDE="$H/state" JG_DATA_OVERRIDE="$H/data" JG_CONFIG_OVERRIDE="$H/config" \
     JG_PROJECTS_OVERRIDE="$T/projects" JG_SPAWN_NO_GUARD=1 JG_BACKEND=tmux \

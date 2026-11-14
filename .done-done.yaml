@@ -782,10 +782,6 @@ journeys:
     # sf-h16: the sentinel's watch pass starts a dead watcher inside 2 runs and raises escalation-stuck
     tier: local
     command: bash journeys/core-run.sh 'bash sentinel/tests/jg-sentinel-watch.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  core-task-priority-test:
-    # was Core suites step 33: Task priority test
-    tier: local
-    command: bash journeys/core-run.sh 'bash task-priority/tests/task-priority.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   core-tickets-sync-real-board-journey:
     # was Core suites step 34: Tickets sync real-board journey
     tier: local
@@ -1180,6 +1176,9 @@ journeys:
   jg-beads-native-whole:
     tier: local
     command: bash tests/jg-beads-native-whole.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-backlog-intake:
+    tier: local
+    command: bash tests/jg-backlog-intake.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-beads-parent:
     tier: local
     command: bash tests/jg-beads-parent.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

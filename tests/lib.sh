@@ -75,8 +75,6 @@ export JG_STATE_BUS_URL="${JG_STATE_BUS_URL:-nats://127.0.0.1:1}"
 # A fixture never calls a real model: the captain voice rewrite (bin/jg-voice.py) runs this command, and `false`
 # refuses the message. tests/jg-voice.test.sh sets its own stub.
 export JG_VOICE_REWRITE_CMD="${JG_VOICE_REWRITE_CMD:-false}"
-# A host-installed task-priority feature must not change what test fixtures can add.
-export JG_TASK_PRIORITY_CHECK=/nonexistent
 
 # The watcher asks the bus command about its own wake queue on every poll (bin/jg-bus.sh watcher),
 # and bin/jg-bus.sh builds that command on first use into the home's own state directory. A fixture
@@ -148,13 +146,14 @@ jg_test_beads_home() {  # <home> [<prefix>=jg]
   rm -rf "$store"
   cp -a "$tpl/$prefix" "$store" || fail "could not copy the Beads store"
   printf '%s\n' "$store/.beads" > "$home/config/beads-dir"
+  : > "$home/config/backlog-intake-loose"  # a fixture files rows by their own words; tests/jg-backlog-intake.test.sh drives strict intake
 }
 
 # Run the backlog wrapper against a fixture home that jg_test_beads_home built.
 jg_test_backlog() {  # <home> <wrapper args...>
   local home=$1
   shift
-  (cd "$home" && JG_HOME="$home" JG_CONFIG_OVERRIDE="$home/config" JG_TASK_PRIORITY_CHECK=/nonexistent \
+  (cd "$home" && JG_HOME="$home" JG_CONFIG_OVERRIDE="$home/config" \
     "$ROOT/bin/jg-backlog.sh" "$@")
 }
 
@@ -172,7 +171,7 @@ jg_test_add() {
 # post, which must name the ticket that raised it) has a raising ticket to name.
 jg_test_raising_ticket() {  # <home> [<ticket>=jg-m1]
   jg_test_beads_home "$1"
-  (cd "$1" && JG_HOME="$1" JG_CONFIG_OVERRIDE="$1/config" JG_TASK_PRIORITY_CHECK=/nonexistent \
+  (cd "$1" && JG_HOME="$1" JG_CONFIG_OVERRIDE="$1/config" \
     "$ROOT/bin/jg-backlog.sh" add "${2:-jg-m1}" "[feature] Ship the fix" --priority 1 --kind ship --repo sample --body "Raising ticket for a fixture card" >/dev/null 2>&1) \
     || fail "could not file the raising ticket ${2:-jg-m1}"
 }

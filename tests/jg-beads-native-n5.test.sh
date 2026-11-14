@@ -60,6 +60,7 @@ command -v bwrap >/dev/null && jail=(bwrap --ro-bind / / --tmpfs /tmp --bind "$T
 home() {  # <name>: a Beads home on its own store.
   mkdir -p "$T/$1/config" "$T/$1/data" "$T/$1/state" "$T/$1/s"
   printf '%s\n' "$T/$1/s/.beads" >"$T/$1/config/beads-dir"
+  : > "$T/$1/config/backlog-intake-loose"  # the fixture files rows by their own words, not by strict intake
   bd_ "$1" init --prefix n5
 }
 bd_() { BEADS_DIR=$T/$1/s/.beads "${jail[@]}" "$WRAPPER" "${@:2}" >/dev/null 2>&1 || fail "$1: bd ${*:2}"; }

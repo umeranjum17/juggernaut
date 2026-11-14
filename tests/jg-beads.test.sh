@@ -240,6 +240,7 @@ crossings() {  # One row set walks store to store, store to file and file to sto
     next=$([ "$h" = xa ] && echo xf || echo xa)
     [ "$h" != xf ] || continue
     printf '%s\n' "$T/$h/s/.beads" > "$T/$h/config/beads-dir"
+    : > "$T/$h/config/backlog-intake-loose"  # the fixture files rows by their own words, not by strict intake
     BEADS_DIR=$T/$h/s/.beads "${jail[@]}" "$WRAPPER" init --prefix jg >/dev/null 2>&1 || fail "a store for $h"
   done
   printf '## In flight\n\n## Queued\n\n## Done\n' > "$T/xf/data/backlog.md"

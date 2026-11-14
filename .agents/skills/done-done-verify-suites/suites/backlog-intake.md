@@ -1,0 +1,3 @@
+# Backlog intake
+
+Backlog intake: run `JG_BEADS_TEST_BD=$(which bd) JG_BEADS_TEST_DOLT=$(which dolt) done-done run jg-backlog-intake` (`bash tests/jg-backlog-intake.test.sh`) to drive the real `bin/jg-backlog.sh add` on a real Beads store with strict intake on; it proves a title that is not plain words is refused with the fix line, a new item with no priority is refused, a body without the sections is refused by bd itself (`create --validate`), `--release` lands in `metadata.release` and a `release:` body line is not read, a leading type tag is still taken as input, an owner ask gets priority 0, and `config/backlog-intake-loose` turns the check off (screen: none).

@@ -22,7 +22,6 @@ TMP_ROOT=$(jg_test_tmproot jg-on-report)
 H=$TMP_ROOT/home
 mkdir -p "$H/state" "$H/data" "$H/config" "$H/bin"
 jg_test_beads_home "$H"
-export JG_TASK_PRIORITY_CHECK=/nonexistent
 export JG_RECON_READY_GATE=$ROOT/bin/jg-recon-gate.sh JG_RECON_READY_BACKLOG=$ROOT/bin/jg-backlog.sh
 
 tasks() { jg_test_backlog "$H" "$@"; }

@@ -13,6 +13,7 @@ export TZ=UTC JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
 command -v bwrap >/dev/null && jail=(bwrap --ro-bind / / --tmpfs /tmp --bind "$T" "$T" --ro-bind "$ROOT" "$ROOT" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent)
 mkdir -p "$T/bd/data" "$T/bd/state" "$T/bd/config" "$T/bd/s"
 printf '%s\n' "$T/bd/s/.beads" > "$T/bd/config/beads-dir"
+: > "$T/bd/config/backlog-intake-loose"  # the fixture files rows by their own words, not by strict intake
 BEADS_DIR=$T/bd/s/.beads "${jail[@]}" "$ROOT/bin/jg-beads.sh" init --prefix jg >/dev/null 2>&1 || fail "a store"
 ask() { JG_HOME="$T/$1" "${jail[@]}" "$CLI" "${@:2}"; }
 same() {  # <args...>: this home's store answers, and answers with a documented result rather than a crash.
@@ -234,6 +235,7 @@ J=$T/jr
 mkdir -p "$J/data" "$J/config" "$J/s" "$J/state/x-inbox" "$T/fb"
 printf '## In flight\n\n## Queued\n\n## Done\n' > "$J/data/backlog.md"
 printf '%s\n' "$J/s/.beads" > "$J/config/beads-dir"; printf 'FMX_PAIRING_TOKEN=test-token\n' > "$J/.env"
+: > "$J/config/backlog-intake-loose"
 BEADS_DIR=$J/s/.beads "${jail[@]}" "$ROOT/bin/jg-beads.sh" init --prefix jg >/dev/null 2>&1 || fail "a journey store"
 printf '#!/usr/bin/env bash\ncase " $* " in *connector/followup*) echo post >> "%s/posts" ;; esac\nprintf 200\n' "$T" > "$T/fb/curl"; chmod +x "$T/fb/curl"; : > "$T/posts"
 pf() { PATH=$T/fb:/usr/bin:/bin JG_ROOT_OVERRIDE=$ROOT JG_HOME=$J JG_STATE_OVERRIDE=$J/state FMX_NOW_OVERRIDE=1787539200 "${jail[@]}" "$@"; }

@@ -26,6 +26,7 @@ printf 'ticket\n' > "$H/config/machine-enforce"
 export TZ=UTC TMPDIR=$T BEADS_DIR=$T/store/.beads JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT JG_HOME=$H JG_DATA_OVERRIDE=$H/data \
   JG_MACHINES_TABLES=$H/core/machines/tables
 printf '%s\n' "$BEADS_DIR" > "$H/config/beads-dir"
+: > "$H/config/backlog-intake-loose"  # the fixture files rows by their own words, not by strict intake
 
 bd() { "$WRAPPER" "$@"; }
 axi() { "$CLI" "$@"; }

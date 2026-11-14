@@ -56,7 +56,7 @@ EVAL_HOME="$SCRATCH/home"
 eval_home() {
   ( cd "$JG_ROOT" && \
     JG_HOME="$EVAL_HOME" JG_STATE_OVERRIDE="$EVAL_HOME/state" JG_DATA_OVERRIDE="$EVAL_HOME/data" \
-    JG_TASK_PRIORITY_CHECK=/nonexistent TMPDIR="$SCRATCH/tmp" "$@" )
+    TMPDIR="$SCRATCH/tmp" "$@" )
 }
 
 # A fresh home renders its fleet view.

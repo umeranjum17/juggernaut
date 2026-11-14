@@ -36,14 +36,12 @@
 #     no longer closes a ticket the captain asked for, because a rejected option is a reason to redo
 #     it, never to cancel. The quote or card is recorded in the ticket note (`done`) and in
 #     data/captain-closures.md; both flags are consumed here and never reach the store.
-#   - `add` (or `create`) whose item does not say what kind of work it is and
-#     why: the title must start with a type tag (or the call carries that type as a label), one of [captain-ask],
-#     [feature], [design-ux], [security] or [blocker], and the first line of
-#     --body or --body-file must be a one-line summary (the captain's own
-#     words for [captain-ask]), followed by short Captain, Ask, Why and Done when
-#     lines. Anything else - refactors, extra proof, tooling,
-#     follow-ups - belongs in a report, not the backlog. The local presence flag
-#     config/backlog-intake-loose in this home turns the check off;
+#   - `add` (or `create`) whose item is not filed as fields: the title must read as plain words
+#     (bin/jg-backlog-lib.sh's jg_backlog_title_refusal: 2 to 7 words, at most 48 characters, no id, [tag], URL or
+#     path; a leading type tag is still taken as input and stored as the label), the call must carry --priority 0 to 3
+#     (an owner ask gets 0), and bd checks the body for the sections of lint.sections.task (`jg-beads.sh init` sets
+#     Captain, Ask, Why and Done when; bd's own task rule adds Acceptance Criteria) with `create --validate`. The
+#     local presence flag config/backlog-intake-loose in this home turns the check off;
 #   - `add`/`create` of a [captain-ask] item with a --priority other than 0, or
 #     `update`/`edit` that would set one on a [captain-ask] row (or retitle a
 #     row to [captain-ask] with one): an owner ask is top priority. Such an add
@@ -52,11 +50,8 @@
 #     sets) names the home that owns the row, and a home files only its own, so the row lives in one store. A
 #     home is `main` or the id in its squad-lead marker. The refusal names the owner; the flag never reaches the
 #     store. Without it nothing is checked;
-#   - `add` (or `create`) that the optional task-priority feature check refuses,
-#     e.g. no `--priority 0-3`; its message and exit status are returned and
-#     nothing runs. The check is ${XDG_DATA_HOME:-~/.local/share}/jg-task-priority/check.sh
-#     (JG_TASK_PRIORITY_CHECK overrides the path); when it is not installed this
-#     does nothing.
+#   - `add --release <name>` names the release the ticket belongs to and stores it as metadata.release (`later` when
+#     absent); a `release:` line in the body is not read.
 # `on-report <ticket-id>` reads the follow-up the ticket's body states ahead, `on-report: triage-build <harness>
 # <model> <effort>`, and prints `<harness> <model> <effort>` when the ticket rests on one of the three records of the
 # captain's yes (bin/jg-captain-ask-lib.sh's captain_ask_build_basis); it exits 2 for no or a malformed line and 3 for
@@ -294,7 +289,7 @@ captain_guard() {  # <backlog args>
     case "$arg" in
       --reason) reason_next=1 ;;
       --reason=*) reason=${arg#--reason=}; reason_given=1 ;;
-      --pr|--report|--note|--until|--kind|--repo|--priority|--body|--body-file|--title) value=1 ;;
+      --pr|--report|--note|--until|--kind|--repo|--priority|--body|--body-file|--title|--release) value=1 ;;
       -*) ;;
       *) id=${id:-$arg} ;;
     esac
@@ -315,17 +310,14 @@ captain_guard() {  # <backlog args>
   esac
 }
 # Reads an add/update argument list: ITEM_TITLE (add's title, or update's --title),
-# ITEM_BODY, ITEM_PRIORITY, and ITEM_ID (update's id).
+# ITEM_PRIORITY, and ITEM_ID (update's id).
 item_args() {  # <add|update args...>
   local verb=$1 mint=0 positional=()
-  ITEM_TITLE='' ITEM_BODY='' ITEM_PRIORITY='' ITEM_ID='' ITEM_LABELS=' '
+  ITEM_TITLE='' ITEM_PRIORITY='' ITEM_ID='' ITEM_LABELS=' '
   shift
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --body) ITEM_BODY=${2-}; shift ;;
-      --body=*) ITEM_BODY=${1#--body=} ;;
-      --body-file) ITEM_BODY=$(cat -- "${2-}" 2>/dev/null); shift ;;
-      --body-file=*) ITEM_BODY=$(cat -- "${1#--body-file=}" 2>/dev/null) ;;
+      --body|--body-file) shift ;;
       --title) ITEM_TITLE=${2-}; shift ;;
       --title=*) ITEM_TITLE=${1#--title=} ;;
       --priority) ITEM_PRIORITY=${2-}; shift ;;
@@ -335,7 +327,7 @@ item_args() {  # <add|update args...>
       --parent=*) mint=1 ;;
       --label|-l) ITEM_LABELS+="${2-} "; shift ;;
       --label=*) ITEM_LABELS+="${1#--label=} " ;;
-      --kind|--repo|--blocked-by|--pr|--report|--prefix) shift ;;
+      --kind|--repo|--blocked-by|--pr|--report|--prefix|--release) shift ;;
       -*) ;;
       *) positional+=("$1") ;;
     esac
@@ -346,21 +338,18 @@ item_args() {  # <add|update args...>
     *) ITEM_ID=${positional[0]-} ;;
   esac
 }
-# Strict intake: a new item names its type and why it is worth doing (see the
-# header), so the backlog holds asked-for or user-facing work, not busy work.
+# Strict intake: a new item is filed as fields (see the header), so the backlog reads as plain titles, a priority and
+# a release, and bd itself refuses a body without its sections.
 intake_check() {
-  local body
+  local why
   [ ! -e "$JG_HOME/config/backlog-intake-loose" ] || return 0
-  case "$ITEM_TITLE" in
-    '[captain-ask]'*|'[feature]'*|'[design-ux]'*|'[security]'*|'[blocker]'*) ;;
-    *) case "$ITEM_LABELS" in
-         *' captain-ask '*|*' feature '*|*' design-ux '*|*' security '*|*' blocker '*) ;;
-         *) fail "a new item needs a type: start the title with [captain-ask], [feature], [design-ux], [security] or [blocker], or pass it as a label (-l); other work goes in a report, not the backlog" ;;
-       esac ;;
+  why=$(jg_backlog_title_refusal "$ITEM_TITLE") \
+    || fail "the title is not a readable title: $why; give 2 to 7 plain words (at most 48 characters, no id, [tag], URL or path) and put the detail in --body"
+  case "$ITEM_PRIORITY" in
+    [0-3]) ;;
+    *) fail "a new item needs a priority: pass --priority 0|1|2|3 (0 is most urgent)" ;;
   esac
-  body=${ITEM_BODY%%$'\n'*}
-  [ -n "${body//[[:space:]]/}" ] \
-    || fail "a new item needs a justification: make the first line of --body say why it is worth doing (the captain's words for [captain-ask])"
+  JG_BACKLOG_VALIDATE=1; export JG_BACKLOG_VALIDATE
 }
 # Owner asks come first: a [captain-ask] item sits at priority 0, so `ready`
 # offers it before any other work, and nothing lowers it (see the header).
@@ -374,7 +363,7 @@ captain_ask_first() {
   fi
   [ "$ask" = 1 ] || return 0
   case "$ITEM_PRIORITY" in
-    '') ARGS+=(--priority 0) ;;
+    '') ARGS+=(--priority 0); ITEM_PRIORITY=0 ;;
     0) ;;
     *) fail "a [captain-ask] item is top priority and stays at 0; drop --priority $ITEM_PRIORITY" ;;
   esac
@@ -393,18 +382,13 @@ owner_check() {
   [ "$ROW_OWNER" = "$me" ] \
     || fail "this row is owned by $ROW_OWNER and this home is $me: file it in $ROW_OWNER's home (bin/jg-plan-route.sh does that for a plan); nothing was filed"
 }
-# New and edited items: strict intake and owner asks first, then the optional
-# task-priority feature (a new task must carry a priority; no-op when not installed).
+# New and edited items: an owner ask is raised to priority 0 first, then strict intake reads the fields.
 case "${1:-}" in
   add|create)
     owner_check
     item_args ${ARGS[@]+"${ARGS[@]}"}
-    intake_check
     captain_ask_first
-    PRIORITY_CHECK="${JG_TASK_PRIORITY_CHECK:-${XDG_DATA_HOME:-${HOME:-}/.local/share}/jg-task-priority/check.sh}"
-    if [ -x "$PRIORITY_CHECK" ]; then
-      "$PRIORITY_CHECK" ${ARGS[@]+"${ARGS[@]}"} >/dev/null || exit $?
-    fi
+    intake_check
     ;;
   update|edit)
     item_args ${ARGS[@]+"${ARGS[@]}"}
