@@ -274,3 +274,26 @@ expect_code 1 "$rc" "T11 with the main home unable to verify the order should wa
 assert_contains "$out" "waits on Main" "T11 the refusal does not say the ticket waits on Main"
 mv "$HOME_DIR/state/captain-approval.key.away" "$HOME_DIR/state/captain-approval.key"
 pass "T11 a lead home verifies the owner's approval through the main home that signed it; a hand-written line is refused; an away main home is named"
+
+# T12 a dotted [captain-ask] ticket (jg-ap.7 runs as task jg-ap-7) is read by its ticket id: refused without the
+# captain's yes, and passing once his answer is recorded on the ticket.
+dot=jg-apdot.7; dot_task=${dot//./-}
+tasks add "$dot" "[captain-ask] dotted ticket" --priority 0 --kind ship --repo proj --body "Fixture dotted ticket" >"$W/add.out" 2>&1 \
+  || fail "T12 could not add the dotted ticket: $(cat "$W/add.out")"
+scaffold "$dot_task" --mode direct-PR || fail "T12 could not scaffold"
+spawn_dot() {
+  local wt="$W/wt-dot-$RANDOM"
+  git -C "$PROJ" worktree add -q --detach "$wt" origin/main >/dev/null 2>&1 || fail "T12 could not prepare the isolated copy"
+  jg_test_run_spawn "$HOME_DIR" "$wt" "$FAKEBIN" "$dot_task" "$PROJ" codex --mode direct-PR --yolo off --ticket "$dot"
+}
+out=$(spawn_dot); rc=$?
+expect_code 1 "$rc" "T12 a dotted [captain-ask] ticket with no yes should be refused: $out"
+assert_contains "$out" "approved-by-captain" "T12 the refusal does not name the missing line"
+refused_clean "$dot_task"
+printf 'Build the dotted ticket.\n' > "$W/decision-dot.txt"
+captain "$HOME_DIR" hold "$dot" --reason "captain must decide" >/dev/null 2>&1 || fail "T12 hold failed"
+captain "$HOME_DIR" answer "$dot" --decision-file "$W/decision-dot.txt" --release >/dev/null 2>&1 || fail "T12 answer failed"
+out=$(spawn_dot); rc=$?
+expect_code 0 "$rc" "T12 the dotted ticket with his recorded yes should spawn: $out"
+assert_grep 'kind=ship' "$HOME_DIR/state/$dot_task.meta" "T12 the answered dotted ticket left no ship task record"
+pass "T12 a dotted ticket's approval is read by its ticket id: refused unsigned, spawns once signed"
