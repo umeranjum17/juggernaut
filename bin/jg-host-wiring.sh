@@ -101,6 +101,8 @@ plan=(
   pr-pager:home
   auto-dispatch:home
   trunk-latency:home
+  trunk-ci:home
+  recon-ready:home
   status-latency:home
   tmp-reaper:home
   landing-card:home

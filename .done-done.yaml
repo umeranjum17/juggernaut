@@ -723,7 +723,7 @@ journeys:
   core-host-wiring-re-run-journey:
     # was Core suites step 24: Host wiring re-run journey
     tier: local
-    command: bash journeys/core-run.sh 'bash ../tests/jg-host-wiring.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    command: bash journeys/core-run.sh 'bash ../tests/jg-host-wiring.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1 && printf '{"target":{"version":"bin/jg-host-wiring.sh at this head"},"start":"a throwaway home and every core feature that carries a wiring.sh","steps":["list the wiring steps and compare them with the core features that carry wiring","wire the home, repeat the wiring and unwire it"],"result":"the entry point runs every core feature that carries wiring, including trunk-ci and recon-ready, and a repeat run changes nothing"}\n' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
   core-one-merge-gate-test:
     # was Core suites step 25: One merge gate test
     tier: local
