@@ -138,7 +138,7 @@ run_spawn() {
 # Ship spawns carry an explicit delivery contract (AGENTS.md section 7); these
 # tests are about profile resolution, so they pass a fixed valid one.
 run_ship_spawn() {
-  run_spawn "$@" --mode no-mistakes --yolo off
+  run_spawn "$@" --mode direct-PR --yolo off
 }
 
 read_case_record() {
@@ -297,7 +297,7 @@ test_relative_home_overrides_launch_with_absolute_cross_process_paths() {
       JG_SPAWN_NO_GUARD=1 JG_FAKE_PANE_PATH="$WT_DIR" TMUX="fake,1,0" \
       CLAUDE_CONFIG_DIR='' JG_FAKE_LAUNCH_LOG="$LAUNCH_LOG" \
       GROK_HOME=home/grok-home PATH="$FAKEBIN_DIR:$PATH" \
-      "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off --ticket "$id" 2>&1
+      "$SPAWN" "$id" "$PROJ_DIR" --mode direct-PR --yolo off --ticket "$id" 2>&1
   )
   status=$?
   expect_code 0 "$status" "spawn with relative home overrides should succeed"
@@ -326,7 +326,7 @@ test_home_defaults_preserve_absolute_or_resolve_relative_paths() {
       JG_SPAWN_NO_GUARD=1 JG_FAKE_PANE_PATH="$WT_DIR" TMUX="fake,1,0" \
       CLAUDE_CONFIG_DIR='' JG_FAKE_LAUNCH_LOG="$LAUNCH_LOG" \
       GROK_HOME=home/grok-home PATH="$FAKEBIN_DIR:$PATH" \
-      "$SPAWN" "$relative_id" "$PROJ_DIR" --mode no-mistakes --yolo off --ticket "$relative_id" 2>&1
+      "$SPAWN" "$relative_id" "$PROJ_DIR" --mode direct-PR --yolo off --ticket "$relative_id" 2>&1
   )
   status=$?
   expect_code 0 "$status" "spawn with relative JG_HOME defaults should succeed"
@@ -346,7 +346,7 @@ test_home_defaults_preserve_absolute_or_resolve_relative_paths() {
       JG_SPAWN_NO_GUARD=1 JG_FAKE_PANE_PATH="$WT_DIR" TMUX="fake,1,0" \
       CLAUDE_CONFIG_DIR='' JG_FAKE_LAUNCH_LOG="$LAUNCH_LOG" \
       GROK_HOME="$linked_home/grok-home" PATH="$FAKEBIN_DIR:$PATH" \
-      "$SPAWN" "$absolute_id" "$PROJ_DIR" --mode no-mistakes --yolo off --ticket "$absolute_id" 2>&1
+      "$SPAWN" "$absolute_id" "$PROJ_DIR" --mode direct-PR --yolo off --ticket "$absolute_id" 2>&1
   )
   status=$?
   expect_code 0 "$status" "spawn with absolute symlink-spelled JG_HOME defaults should succeed"
@@ -374,7 +374,7 @@ test_absolute_override_spelling_is_preserved_in_launch_paths() {
       JG_SPAWN_NO_GUARD=1 JG_FAKE_PANE_PATH="$WT_DIR" TMUX="fake,1,0" \
       CLAUDE_CONFIG_DIR='' JG_FAKE_LAUNCH_LOG="$LAUNCH_LOG" \
       GROK_HOME="$linked_home/grok-home" PATH="$FAKEBIN_DIR:$PATH" \
-      "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off --ticket "$id" 2>&1
+      "$SPAWN" "$id" "$PROJ_DIR" --mode direct-PR --yolo off --ticket "$id" 2>&1
   )
   status=$?
   expect_code 0 "$status" "spawn with absolute symlink-spelled overrides should succeed"
@@ -396,7 +396,7 @@ test_unresolvable_relative_overrides_fail_loudly() {
     cd "$CASE_DIR" || exit 1
     JG_ROOT_OVERRIDE='' JG_HOME=missing-home \
       JG_STATE_OVERRIDE='' JG_DATA_OVERRIDE='' \
-      "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off --ticket "$id" 2>&1
+      "$SPAWN" "$id" "$PROJ_DIR" --mode direct-PR --yolo off --ticket "$id" 2>&1
   )
   status=$?
   expect_code 1 "$status" "spawn with an unresolvable relative home should fail"
@@ -407,7 +407,7 @@ test_unresolvable_relative_overrides_fail_loudly() {
     cd "$CASE_DIR" || exit 1
     JG_ROOT_OVERRIDE='' JG_HOME=home \
       JG_STATE_OVERRIDE=missing-state JG_DATA_OVERRIDE=home/data \
-      "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off --ticket "$id" 2>&1
+      "$SPAWN" "$id" "$PROJ_DIR" --mode direct-PR --yolo off --ticket "$id" 2>&1
   )
   status=$?
   expect_code 1 "$status" "spawn with an unresolvable relative state override should fail"
@@ -418,7 +418,7 @@ test_unresolvable_relative_overrides_fail_loudly() {
     cd "$CASE_DIR" || exit 1
     JG_ROOT_OVERRIDE='' JG_HOME=home \
       JG_STATE_OVERRIDE=home/state JG_DATA_OVERRIDE=missing-data \
-      "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off --ticket "$id" 2>&1
+      "$SPAWN" "$id" "$PROJ_DIR" --mode direct-PR --yolo off --ticket "$id" 2>&1
   )
   status=$?
   expect_code 1 "$status" "spawn with an unresolvable relative data override should fail"
@@ -1177,7 +1177,7 @@ test_native_effort_validator_keeps_axes_separate() {
 test_native_pi_ultra_is_explicit_and_model_scoped() {
   local rec id out launch harness mode native_profile model
   for harness in pi pi-signed; do
-    for mode in no-mistakes direct-PR; do
+    for mode in direct-PR local-only; do
       id="ultra-$harness-$mode"
       rec=$(make_spawn_case "$id" "$harness" "$id")
       read_case_record "$rec"
@@ -1359,7 +1359,7 @@ test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata() {
     JG_SPAWN_NO_GUARD=1 JG_FAKE_PANE_PATH="$WT_DIR" TMUX="fake,1,0" \
     JG_FAKE_LAUNCH_LOG="$LAUNCH_LOG" PATH="$FAKEBIN_DIR:/usr/bin:/bin:/usr/sbin:/sbin" \
     JG_SPAWN_CORE_GO="$core_go" \
-    "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off --ticket "$id" 2>&1)
+    "$SPAWN" "$id" "$PROJ_DIR" --mode direct-PR --yolo off --ticket "$id" 2>&1)
   status=$?
   expect_code 1 "$status" "a missing pi-signed executable should refuse the spawn"
   assert_contains "$out" "pi-signed executable not found on PATH" \
@@ -2121,8 +2121,8 @@ test_launch_environment_inheritance_preserves_on_source_errors
 test_worker_launch_delivers_role_scope() {
   local rec id out launch kind prompt envelope encoded brief_kind brief content first_line role_line task_line inbox
   for brief_kind in heading legacy scaffold; do
-  for kind in no-mistakes direct-PR local-only scout; do
-    [ "$brief_kind" = heading ] && [ "$kind" != no-mistakes ] && continue
+  for kind in direct-PR local-only scout; do
+    [ "$brief_kind" = heading ] && [ "$kind" != direct-PR ] && continue
     id="role-launch-$brief_kind-$kind"
     rec=$(make_spawn_case "$id" codex)
     read_case_record "$rec"

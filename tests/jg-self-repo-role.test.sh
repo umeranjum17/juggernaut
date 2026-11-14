@@ -3,8 +3,8 @@
 # (bin/jg-role-lib.sh, bin/jg-role.sh, and its consumers).
 #
 # Every home runs as a user/operator by default: a ship task whose project is
-# juggernaut's own repository may carry a publishing contract (no-mistakes or
-# direct-PR) only under an explicit grant - the maintainer scope written by
+# juggernaut's own repository may carry a publishing contract (direct-PR)
+# only under an explicit grant - the maintainer scope written by
 # the operator into config/juggernaut-role, or a bounded per-task
 # --upstream-consent recorded in the delivery contract. Role is never inferred
 # from remotes, credentials, or repository ownership. In a squad_lead home the
@@ -546,7 +546,7 @@ write_ship_brief() {  # <home> <id> [<contract-extras>]
       printf 'You are in a disposable git worktree of fixture, at a detached HEAD on a clean copy of its base branch.\nBase branch: %s\n\n' "$base"
     fi
     printf '# Definition of done\n'
-    printf 'Delivery contract: mode=no-mistakes%s\nShip branch: fm/%s\n' "$extras" "$id"
+    printf 'Delivery contract: mode=direct-PR%s\nShip branch: fm/%s\n' "$extras" "$id"
   } > "$home/data/$id/brief.md"
 }
 
@@ -570,7 +570,7 @@ test_spawn_gate_on_self_repo() {
   local home out rc
   home=$(make_role_home spawn-user)
   write_ship_brief "$home" spawn-self-a1
-  out=$(run_spawn "$home" spawn-self-a1 "$ROOT" claude --mode no-mistakes --yolo off); rc=$?
+  out=$(run_spawn "$home" spawn-self-a1 "$ROOT" claude --mode direct-PR --yolo off); rc=$?
   [ "$rc" -ne 0 ] || fail "a user home must not launch a publishing task on juggernaut itself"
   assert_contains "$out" "spawn refused for spawn-self-a1" "the refusal must name the task"
   assert_contains "$out" "user/operator" "the refusal must name the role"
@@ -579,7 +579,7 @@ test_spawn_gate_on_self_repo() {
   if [ -n "$PUB_TARGET" ]; then
     home=$(make_role_home spawn-maint "maintainer $PUB_TARGET")
     write_ship_brief "$home" spawn-self-a2
-    out=$(run_spawn "$home" spawn-self-a2 "$ROOT" claude --mode no-mistakes --yolo off)
+    out=$(run_spawn "$home" spawn-self-a2 "$ROOT" claude --mode direct-PR --yolo off)
     assert_not_contains "$out" "spawn refused" "a matching maintainer home must pass the gate"
     assert_not_contains "$out" "user/operator" "a matching maintainer home must not be told it lacks authority"
   fi
@@ -598,7 +598,7 @@ test_spawn_consent_agreement() {
   # agree, or the worker's contract and the task's authority diverge.
   write_ship_brief "$home" spawn-consent-b1
   rc=0
-  out=$(run_spawn "$home" spawn-consent-b1 "$ROOT" claude --mode no-mistakes --yolo off \
+  out=$(run_spawn "$home" spawn-consent-b1 "$ROOT" claude --mode direct-PR --yolo off \
     --upstream-consent "$PUB_TARGET") || rc=$?
   [ "$rc" -ne 0 ] || fail "a flag-without-brief consent must refuse"
   assert_contains "$out" "upstream-consent mismatch for spawn-consent-b1" \
@@ -608,7 +608,7 @@ test_spawn_consent_agreement() {
   # Consent on the brief but not the flag: same divergence, other direction.
   write_ship_brief "$home" spawn-consent-b2 " upstream-consent=$PUB_TARGET"
   rc=0
-  out=$(run_spawn "$home" spawn-consent-b2 "$ROOT" claude --mode no-mistakes --yolo off) || rc=$?
+  out=$(run_spawn "$home" spawn-consent-b2 "$ROOT" claude --mode direct-PR --yolo off) || rc=$?
   [ "$rc" -ne 0 ] || fail "a brief-without-flag consent must refuse"
   assert_contains "$out" "upstream-consent mismatch for spawn-consent-b2" \
     "a brief token without the flag must refuse"
@@ -616,7 +616,7 @@ test_spawn_consent_agreement() {
   # Both sides agree: the consent carries the task through the gate on a
   # user/operator home.
   write_ship_brief "$home" spawn-consent-b3 " upstream-consent=$PUB_TARGET"
-  out=$(run_spawn "$home" spawn-consent-b3 "$ROOT" claude --mode no-mistakes --yolo off \
+  out=$(run_spawn "$home" spawn-consent-b3 "$ROOT" claude --mode direct-PR --yolo off \
     --upstream-consent "$PUB_TARGET")
   assert_not_contains "$out" "spawn refused" "matching consent must pass the gate"
   assert_not_contains "$out" "upstream-consent mismatch" "agreeing sides must not be reported as a mismatch"
@@ -627,7 +627,7 @@ test_spawn_consent_agreement() {
   git init -q "$proj" || fail "could not initialize foreign fixture"
   git -C "$proj" remote add origin https://github.com/someone/elseware.git
   BRIEF_PROJECT=$proj write_ship_brief "$home" spawn-consent-b4 " upstream-consent=$PUB_TARGET"
-  out=$(run_spawn "$home" spawn-consent-b4 "$proj" claude --mode no-mistakes --yolo off \
+  out=$(run_spawn "$home" spawn-consent-b4 "$proj" claude --mode direct-PR --yolo off \
     --upstream-consent "$PUB_TARGET")
   assert_not_contains "$out" "spawn refused" "consent on an ordinary project must not be gated"
 
@@ -680,7 +680,7 @@ test_squad_lead_spawn_refuses_consent_flag() {
   mkdir -p "$home/data/spawn-sm-c1"
   printf 'You are a squad_lead.\n' > "$home/data/spawn-sm-c1/brief.md"
   rc=0
-  out=$(run_spawn "$home" spawn-sm-c1 "$home" --squad-lead --mode no-mistakes --yolo off \
+  out=$(run_spawn "$home" spawn-sm-c1 "$home" --squad-lead --mode direct-PR --yolo off \
     --upstream-consent github.com/a/b 2>&1) || rc=$?
   [ "$rc" -ne 0 ] || fail "a squad_lead charter must refuse a consent flag"
   assert_contains "$out" "applies only to ship spawns" "a squad_lead charter must refuse a consent flag"
