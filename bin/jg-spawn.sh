@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a operator in a treehouse or Orca worktree, or a
 # squad_lead in its isolated juggernaut home.
-# Usage: jg-spawn.sh <task-id> <project-dir> --ticket <ticket-id> --mode <direct-PR|local|local-only|local-trunk> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--off-critical-path <captain-words>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
+# Usage: jg-spawn.sh <task-id> <project-dir> --ticket <ticket-id> --mode <direct-PR|local|local-only|local-trunk> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--shepherd <pull-request-url>] [--off-critical-path <captain-words>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
 #        jg-spawn.sh <task-id> <project-dir> --ticket <ticket-id> --scout [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
 #        jg-spawn.sh <task-id> [<juggernaut-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --squad-lead
 #   --ticket <ticket-id> is REQUIRED for every fresh ship or scout spawn: the task id is made from the
@@ -71,6 +71,13 @@
 #   exception is --red-fix-of <branch>, which declares the task a fix to that
 #   frozen release's own red checks; <branch> must be the base, and the spawn
 #   records it as red_fix_of= for bin/jg-pr-check.sh and for relaunches.
+#   --shepherd <pull-request-url> makes a ship lane whose only job is that pull
+#   request's merge (bin/jg-brief.sh --shepherd writes its brief). It needs a
+#   delivery mode that publishes a pull request. The spawn records the address as
+#   shepherd_of=, binds it as the task's pr= through bin/jg-pr-check.sh once the
+#   lane runs (a refusal there is one warning line naming the command to rerun),
+#   and a relaunch reuses the record. core/pr-pager/pager.sh pages the lane, not
+#   the lead, while the lane is live. A batch refuses it: one lane, one address.
 #   A ship never runs off the migration's critical path (bin/jg-critical-path.sh
 #   owns the ordered list in config/migration-card and the gate): while a
 #   critical part is not live, a ship brief needs a `Migration row:` line naming
@@ -1486,6 +1493,10 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
     echo "error: --ticket names one task's ticket; a batch spawns each id=repo pair under its own id as the ticket, so spawn a dotted ticket on its own" >&2
     exit 2
   }
+  [ "$SHEPHERD_SET" -eq 0 ] || {
+    echo "error: --shepherd names one lane's pull request; a batch spawns many lanes, so spawn a shepherd on its own" >&2
+    exit 2
+  }
   rc=0
   shared_args=()
   [ -z "$HARNESS_ARG" ] || shared_args+=(--harness "$HARNESS_ARG")
@@ -2779,6 +2790,7 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   if [ "$RELAUNCH" -eq 1 ]; then
     BASE_BRANCH=$(jg_meta_get "$RELAUNCH_META" base_branch)
     RED_FIX_OF=$(jg_meta_get "$RELAUNCH_META" red_fix_of)
+    SHEPHERD=$(jg_meta_get "$RELAUNCH_META" shepherd_of)
     OFF_CRITICAL_PATH=$(jg_meta_get "$RELAUNCH_META" critical_override)
     MIGRATION_ROW=$(jg_meta_get "$RELAUNCH_META" migration_row)
     TICKET=$(jg_meta_get "$RELAUNCH_META" ticket)
@@ -4957,7 +4969,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id cleanup_recovery worktree project harness kind mode yolo branch receipt_required design_call demo_call ui_change tasktmp base_branch migration_row critical_override upstream_consent model effort account account_provider busy_gen spawn_gen agent_name traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id cleanup_recovery worktree project harness kind mode yolo branch receipt_required design_call demo_call ui_change tasktmp base_branch shepherd_of migration_row critical_override upstream_consent model effort account account_provider busy_gen spawn_gen agent_name traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -4977,6 +4989,7 @@ preserve_relaunch_meta() {
   echo "tasktmp=$TASK_TMP"
   [ -z "$BASE_BRANCH" ] || echo "base_branch=$BASE_BRANCH"
   [ -z "$RED_FIX_OF" ] || echo "red_fix_of=$RED_FIX_OF"
+  [ -z "$SHEPHERD" ] || echo "shepherd_of=$SHEPHERD"
   [ -z "$MIGRATION_ROW" ] || echo "migration_row=$MIGRATION_ROW"
   [ -z "$OFF_CRITICAL_PATH" ] || echo "critical_override=$OFF_CRITICAL_PATH"
   [ -z "$UPSTREAM_CONSENT" ] || echo "upstream_consent=$UPSTREAM_CONSENT"
@@ -5704,6 +5717,10 @@ if [ "$RELAUNCH" -eq 1 ]; then _trace_kind=handoff _trace_payload="{\"from_gen\"
 else _trace_kind=claim _trace_payload="{\"gen\":\"$SPAWN_GEN\"}"; fi
 [ "$KIND" = squad_lead ] || JG_HOME=$JG_HOME "$SCRIPT_DIR/jg-backlog.sh" trace record "$ID" "$_trace_kind" work-id "$ID@$SPAWN_GEN" --source jg-spawn --payload "$_trace_payload" >/dev/null \
   || echo "warning: the $_trace_kind of $ID could not be put on its ticket's trail" >&2
+# A shepherd lane answers for one pull request: bind it as the task's pr= now, through the same check every ready report uses, so
+# the pager and the merge watcher find it. The lane is already running, so a refusal is one warning that names the rerun.
+[ "$RELAUNCH" -eq 1 ] || [ -z "$SHEPHERD" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE JG_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/jg-pr-check.sh" "$ID" "$SHEPHERD" >/dev/null \
+  || echo "warning: the shepherd lane $ID is running but its pull request $SHEPHERD was not bound: run bin/jg-pr-check.sh $ID $SHEPHERD" >&2
 # Herdr assigns every agent a random call-sign at start and fresh ones across
 # a server restart, so pin the live agent's display name to this task's id now
 # that the spawn has fully succeeded (the agent is live here; a rename on an

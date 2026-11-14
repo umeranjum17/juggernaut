@@ -14,7 +14,7 @@
 # charters still use a single `{TASK}` charter fill. Juggernaut may adjust other
 # sections when the task genuinely deviates (e.g. working an existing external
 # PR instead of shipping a new one).
-# Usage: jg-brief.sh <task-id> <repo-name> --mode <direct-PR|local|local-only|local-trunk> [--ticket <ticket-id>] [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--migration-row <slug|none>] [--off-critical-path <captain-words>] [--forge <none|gerrit|forgejo> [--shape squash]] [--design-call <yes|no> --design-reason <text>] [--demo-call <yes|no> --demo-reason <text>] [--herdr-lab|--task-text-file <file>] [--medium <mobile|web|desktop|cli|backend>]
+# Usage: jg-brief.sh <task-id> <repo-name> --mode <direct-PR|local|local-only|local-trunk> [--ticket <ticket-id>] [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--shepherd <pull-request-url>] [--migration-row <slug|none>] [--off-critical-path <captain-words>] [--forge <none|gerrit|forgejo> [--shape squash]] [--design-call <yes|no> --design-reason <text>] [--demo-call <yes|no> --demo-reason <text>] [--herdr-lab|--task-text-file <file>] [--medium <mobile|web|desktop|cli|backend>]
 #        jg-brief.sh <task-id> <repo-name> --scout [--ticket <ticket-id>] [--depth <quick|standard|deep>] [--base-branch <branch>] [--herdr-lab]
 #        jg-brief.sh <task-id> --squad-lead {<project>...|--no-projects}
 #   --ticket <ticket-id> (ship and scout) makes the brief the first step of a dispatch from a ticket: it runs
@@ -127,6 +127,14 @@
 # task a fix to that frozen release's own red checks; <branch> must be the
 # --base-branch, and the brief records a "Red-fix of: <branch>" line after the
 # Base branch line. Refused outside ship briefs.
+# --shepherd <pull-request-url> makes the brief a shepherd lane: its only job is
+# to get that open pull request merged. The brief gains a `# Shepherd` section
+# that names the address and tells the lane to fix only what blocks the merge
+# (a red check's cause, a conflict, a review finding), never to waive, skip,
+# weaken or remove a check, and to merge only through bin/jg-pr-merge.sh, so the
+# merge stays under the task's own merge authority. bin/jg-spawn.sh --shepherd
+# records the address and binds the pull request; core/pr-pager/pager.sh pages
+# the lane. Ship briefs on a mode that publishes a pull request only.
 # --migration-row <slug|none> and --off-critical-path <text> write a "Migration
 # row:" and a "Critical-path override:" line under `# Setup` (ship briefs only);
 # bin/jg-critical-path.sh owns the ordered critical list and the gate over them.
@@ -317,6 +325,8 @@ BASE_BRANCH=
 BASE_BRANCH_SET=0
 RED_FIX_OF=
 RED_FIX_OF_SET=0
+SHEPHERD=
+SHEPHERD_SET=0
 MIGRATION_ROW=
 MIGRATION_ROW_SET=0
 OFF_CRITICAL_PATH=
@@ -350,6 +360,7 @@ for a in "$@"; do
       branch-prefix) BRANCH_PREFIX=$a; BRANCH_PREFIX_SET=1 ;;
       base-branch) BASE_BRANCH=$a; BASE_BRANCH_SET=1 ;;
       red-fix-of) RED_FIX_OF=$a; RED_FIX_OF_SET=1 ;;
+      shepherd) SHEPHERD=$a; SHEPHERD_SET=1 ;;
       migration-row) MIGRATION_ROW=$a; MIGRATION_ROW_SET=1 ;;
       off-critical-path) OFF_CRITICAL_PATH=$a; OFF_CRITICAL_PATH_SET=1 ;;
       forge) FORGE=$a; FORGE_SET=1 ;;
@@ -384,6 +395,8 @@ for a in "$@"; do
     --base-branch=*) BASE_BRANCH=${a#--base-branch=}; BASE_BRANCH_SET=1 ;;
     --red-fix-of) want_value="red-fix-of" ;;
     --red-fix-of=*) RED_FIX_OF=${a#--red-fix-of=}; RED_FIX_OF_SET=1 ;;
+    --shepherd) want_value="shepherd" ;;
+    --shepherd=*) SHEPHERD=${a#--shepherd=}; SHEPHERD_SET=1 ;;
     --migration-row) want_value="migration-row" ;;
     --migration-row=*) MIGRATION_ROW=${a#--migration-row=}; MIGRATION_ROW_SET=1 ;;
     --off-critical-path) want_value="off-critical-path" ;;
@@ -574,6 +587,25 @@ if [ "$RED_FIX_OF_SET" -eq 1 ]; then
   fi
   if [ "$RED_FIX_OF" != "$BASE_BRANCH" ]; then
     echo "error: jg-brief.sh: --red-fix-of $RED_FIX_OF must name the base branch this task targets (${BASE_BRANCH:-the default branch}); pass --base-branch $RED_FIX_OF too" >&2
+    exit 1
+  fi
+fi
+if [ "$SHEPHERD_SET" -eq 1 ]; then
+  if [ "$KIND" != ship ]; then
+    echo "error: --shepherd applies only to ship briefs; a scout delivers a report and a squad_lead charter does not carry a pull request to its merge" >&2
+    exit 1
+  fi
+  case "$SHEPHERD" in
+    https://*[[:space:]]*|https://|'') SHEPHERD_BAD=1 ;;
+    https://*/pull/[0-9]*|https://*/merge_requests/[0-9]*|https://*/c/*/+/[0-9]*|https://*/*/-/merge_requests/[0-9]*) SHEPHERD_BAD=0 ;;
+    *) SHEPHERD_BAD=1 ;;
+  esac
+  if [ "$SHEPHERD_BAD" -eq 1 ]; then
+    echo "error: --shepherd takes the full https:// address of one open pull request (got '$SHEPHERD')" >&2
+    exit 1
+  fi
+  if ! jg_delivery_style_publishes "$MODE"; then
+    echo "error: --shepherd is meaningless on $MODE, which opens no pull request; shepherd a pull request on a mode that publishes one" >&2
     exit 1
   fi
 fi
@@ -1094,6 +1126,20 @@ A stale or conflicting change is refused with its paths named and is never lande
 Commit, run the QA step of the Definition of done, and report ready with your done line. Juggernaut's landing check then lands the commit on the trunk and cleans up unforced; you never land, push, go live or release.
 "
 fi
+# A shepherd lane's only job is one pull request's merge. The section overrides the ordinary rule that a ship stops at its ready
+# report, and fences the one shortcut that job invites: getting to green by weakening the check that is red.
+SHEPHERD_SECTION=
+if [ "$SHEPHERD_SET" -eq 1 ]; then
+  SHEPHERD_SECTION="
+# Shepherd
+Shepherd of: $SHEPHERD
+Your only job is to get that pull request merged. Do no other work; the pull request is already open and bound to this task.
+When juggernaut pages you with its next step, do exactly that step on the pull request's own branch: fix the cause of a red check, resolve a conflict, mark a draft ready, answer a review finding.
+Never waive, skip, disable, loosen, re-run past or remove a check, a test or a gate to reach green, and never edit a workflow or a check's own definition to make it pass; a check you cannot make pass for its real cause is \`blocked:\` with the evidence.
+Merge only through \`$JG_ROOT/bin/jg-pr-merge.sh\`, never a lower-level merge command; it refuses a pull request that is not green and not yours to merge. Where it refuses on merge authority, write \`done\` naming the pull request and stop: the merge then waits for that authority, not for you.
+Append \`done [at=<epoch>]: merged $SHEPHERD\` only after the forge shows it merged.
+"
+fi
 DESIGN_SECTION=
 if [ -n "$DESIGN_CALL" ]; then
   DESIGN_SECTION="
@@ -1180,7 +1226,7 @@ cat > "$BRIEF" <<EOF
 You are a operator: an autonomous worker agent managed by juggernaut. Work on your own; do not wait for a human.
 
 $TASK_SECTION$TICKET_SECTION
-$PRIOR_ART_SECTION$TRUNK_SECTION$DESIGN_SECTION$DEMO_SECTION$UI_SECTION$RISK_SECTION
+$PRIOR_ART_SECTION$TRUNK_SECTION$SHEPHERD_SECTION$DESIGN_SECTION$DEMO_SECTION$UI_SECTION$RISK_SECTION
 $HERDR_SECTION
 $STACK_BLOCK$RULES_BLOCK$BUILD_RULE_BLOCK
 

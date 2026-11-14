@@ -1631,6 +1631,9 @@ journeys:
   jg-plan-gate:
     tier: local
     command: bash tests/jg-plan-gate.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-pr-shepherd:
+    tier: local
+    command: bash journeys/pr-shepherd.sh
 
 secrets:
   allow:

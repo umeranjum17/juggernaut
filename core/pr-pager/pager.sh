@@ -12,9 +12,12 @@
 # Main hears of a pull request its lead has not moved. A page never calls bin/jg-captain-say.sh: the owner is not paged.
 # A local-trunk project whose release is due (release-after-commits unreleased commits, or the oldest one past release-after-hours: the rule of `jg-trunk.sh due` plus the count) and which has no
 # open pull request from its trunk branch is paged the same way, as the episode `release`.
+# A pull request with a live shepherd lane (a task record with `shepherd_of=<its address>` whose newest status line is not
+# done or failed, see bin/jg-brief.sh --shepherd) is paged to that lane through bin/jg-send.sh and not to the lead, so the
+# lane that answers for the merge hears it with no lead turn; when the send fails the page goes to the lead as before.
 # Each pull request keeps one episode, state/.pr-pager/<owner__repo>/<number|release>: `since pages same last mainpaged step`.
 # It ends, with no further page, when the pull request is no longer in the open list. A forge failure keeps the
-# episodes and is retried next sweep. JG_PR_PAGER_GH names the gh-axi binary and JG_PR_PAGER_STATE the pr-state command (tests use stubs).
+# episodes and is retried next sweep. JG_PR_PAGER_GH names the gh-axi binary and JG_PR_PAGER_STATE the pr-state command, JG_PR_PAGER_SEND the steer command (tests use stubs).
 set -u
 [ "$#" -eq 2 ] && [ "$1" = check ] && [ -d "$2/state" ] || { echo "usage: pager.sh check <jg-home>" >&2; exit 2; }
 FMH=$(cd "$2" && pwd -P)
@@ -22,6 +25,7 @@ STATE=$FMH/state
 MEM=$STATE/.pr-pager
 GH=${JG_PR_PAGER_GH:-gh-axi}
 PRSTATE=${JG_PR_PAGER_STATE:-$FMH/bin/jg-pr-state.sh}
+SEND=${JG_PR_PAGER_SEND:-$FMH/bin/jg-send.sh}
 OWNER=$FMH/bin/jg-pr-owner.sh
 umask 077
 BUDGET=$(( ${JG_CHECK_TIMEOUT:-30} / 3 )); [ "$BUDGET" -ge 5 ] || BUDGET=5
@@ -51,6 +55,27 @@ step() {
   esac
 }
 
+# shepherd <url> -> the id of the live lane that shepherds this pull request, nonzero when none does.
+shepherd() {
+  local m id last
+  for m in "$STATE"/*.meta; do
+    [ -f "$m" ] || continue
+    grep -qxF "shepherd_of=$1" "$m" 2>/dev/null || continue
+    id=${m##*/}; id=${id%.meta}
+    last=$(tail -n 1 "$STATE/$id.status" 2>/dev/null | sed 's/[ :[].*//')
+    case $last in done|failed) continue ;; esac
+    printf '%s\n' "$id"; return 0
+  done
+  return 1
+}
+
+# deliver <url> <line>: the page to the shepherd lane when one is live and takes it, else the line itself for the lead's queue.
+deliver() {
+  local lane
+  if lane=$(shepherd "$1") && JG_HOME=$FMH timeout "$BUDGET" "$SEND" "$lane" "$2" >/dev/null 2>&1; then return 0; fi
+  printf '%s\n' "$2"
+}
+
 # page <dir> <id> <label> <step> <detail>: one episode, and one page when the first is due or `pr-page-minutes` passed since the last.
 age() { if [ "$1" -lt 7200 ]; then echo "$(( $1 / 60 )) min"; else echo "$(( $1 / 3600 ))h"; fi; }
 page() {
@@ -60,7 +85,7 @@ page() {
   [ "$pages" -eq 0 ] || [ "$(( NOW - last ))" -ge "$PAGE" ] || return 0
   n=$(( pages + 1 ))
   if [ "$old" = "$4" ]; then same=$(( same + 1 )); else same=1 mp=0; fi
-  printf 'pr-pager: %s%s: %s; page %s\n' "$3" "$5" "$4" "$n"
+  deliver "${3%% *}" "$(printf 'pr-pager: %s%s: %s; page %s' "$3" "$5" "$4" "$n")"
   if [ "$same" -ge 6 ] && [ "$mp" -eq 0 ] && [ -n "$ME" ] && report_main "$3: $4 (page $n)"; then mp=1; fi
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$since" "$n" "$same" "$NOW" "$mp" "$4" > "$f.tmp" && mv -f "$f.tmp" "$f"
 }
