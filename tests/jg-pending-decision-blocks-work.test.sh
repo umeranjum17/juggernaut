@@ -240,14 +240,18 @@ expect_code 0 "$rc" "D4 a design card naming its raising ticket should post: $ou
 assert_equals 1 "$(board_items)" "D4 the design card did not reach the board"
 out=$(dcard --raised-by jg-mr2); rc=$?
 expect_code 0 "$rc" "D4 a repeat post should converge: $out"
-tasks_m show "$DCARD" 2>&1 | grep -q 'linked-to: jg-mr2' || fail "D4 the design row is not linked to the ticket that raised it"
+q=$(tasks_m questions --ticket jg-mr2 --json)
+assert_equals "$DCARD,design-pick,1" "$(jq -r '[.[].card, .[].must, length] | join(",")' <<<"$q")" "D4 the card is not one gate on the ticket that raised it"
+tasks_m show "$DCARD" >/dev/null 2>&1 && fail "D4 a design card filed a design row beside its gate"
 out=$(merge jg-mr2 "$pr2" 2>&1); rc=$?
 [ "$rc" -ne 0 ] || fail "D5 the merge of the ticket that raised an open design card went through: $out"
-assert_contains "$out" "$DCARD" "D5 the refusal does not name the open design card"
+assert_contains "$out" "jg-mr2" "D5 the refusal does not name the ticket the open design card stops"
 merged_pr "$pr2" && fail "D5 the refused merge reached the forge"
 printf '{"key":"%s","answer":"yes","label":"yes","close":"done","at":"2026-11-06T07:00:00Z"}\n' "$DCARD" >> "$SO/.sign-off/decisions.answers.jsonl"
 PATH="$MFAKE:$PATH" JG_HOME="$MH" JG_STATE_OVERRIDE="$MH/state" JG_DATA_OVERRIDE="$MH/data" JG_CONFIG_OVERRIDE="$MH/config" \
   SIGN_OFF_HOME="$SO" JG_SEND_SETTLE=0 "$ROOT/bin/jg-board-answers.sh" check >/dev/null 2>&1
+assert_equals "closed,answered,yes" "$(tasks_m questions --ticket jg-mr2 --all --json | jq -r '.[0] | [.state, .resolution, .words] | join(",")')" "D6 the board answer did not close the gate with his words"
+tasks_m show jg-mr2 | grep -q 'state: done' && fail "D6 the pick closed the ticket that raised the card"
 out=$(merge jg-mr2 "$pr2" 2>&1); rc=$?
 expect_code 0 "$rc" "D6 the ticket should merge after the recorded pick: $out"
 merged_pr "$pr2" || fail "D6 the merge did not reach the forge after the recorded pick"

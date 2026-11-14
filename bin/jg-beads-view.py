@@ -351,7 +351,7 @@ def questions(rows, args):
             continue
         made = datetime.datetime.fromisoformat(gate["created_at"].replace("Z", "+00:00")) if gate.get("created_at") else now
         records.append({"id": gate["id"], "ticket": ticket.get("id", "-"), "title": gate.get("title", ""), "question": question(gate),
-                        "must": meta.get("must", "-"), "origin": meta.get("origin", "-"), "close": meta.get("close", "-"),
+                        "must": meta.get("must", "-"), "card": meta.get("card", "-"), "origin": meta.get("origin", "-"), "close": meta.get("close", "-"),
                         "state": "closed" if shut else "open", "resolution": meta.get("resolution", "-"),
                         "words": gate.get("close_reason") or "", "age": (now - made).days, "until": until})
     if "--json" in found:

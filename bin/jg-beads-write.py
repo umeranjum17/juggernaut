@@ -601,23 +601,24 @@ def hold(args):
 
 
 def gate(args):
-    """gate <ticket> --title <question> --reason <full question> [--must <category>] [--origin <id>] [--close done|release]: the owner's question as a human gate that blocks the ticket, printing its id.
+    """gate <ticket> --title <question> --reason <full question> [--must <category>] [--origin <id>] [--close done|release] [--card <key>]: the owner's question as a human gate that blocks the ticket, printing its id.
 
-    A second call with the same question on the same ticket finds the open gate and prints it, so a retry makes no second one."""
-    found, ids = view.flags(args, ("--title", "--reason", "--must", "--origin", "--close"), ())
+    A second call with the same question (or, for a card, the same card key) on the same ticket finds the open gate and prints it, so a retry makes no second one."""
+    found, ids = view.flags(args, ("--title", "--reason", "--must", "--origin", "--close", "--card"), ())
     if len(ids) != 1 or not found.get("--title") or not found.get("--reason"):
         view.refuse("usage: jg-beads-write.py gate <ticket> --title <question> --reason <full question> [--must <category>]")
     items = rows()
     row = plain(items, ids[0])
     if view.is_gate(row):
         view.refuse("%s is a question, not a ticket" % row["id"])
-    same = [one for one in view.gates_of(row, items) if view.question(one) == found["--reason"]]
+    same = [one for one in view.gates_of(row, items)
+            if ((one.get("metadata") or {}).get("card") == found["--card"] if found.get("--card") else view.question(one) == found["--reason"])]
     if same:
         print(same[0]["id"])
         return
     made = json.loads(bd("gate", "create", "--blocks", row["id"], "--type", "human", "--title", found["--title"],
                          "--reason", found["--reason"], "--json"))
-    meta = [word for key in ("must", "origin", "close") if found.get("--" + key) for word in ("--set-metadata", "%s=%s" % (key, found["--" + key]))]
+    meta = [word for key in ("must", "origin", "close", "card") if found.get("--" + key) for word in ("--set-metadata", "%s=%s" % (key, found["--" + key]))]
     if meta:
         bd("update", made["id"], *meta)
     print(made["id"])

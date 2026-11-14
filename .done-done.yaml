@@ -191,6 +191,9 @@ journeys:
   owner-question-gate:
     tier: local
     command: bash journeys/owner-question-gate.sh
+  design-card-gate:
+    tier: local
+    command: bash journeys/design-card-gate.sh
   claude-1m-context:
     tier: local
     command: bash tests/jg-spawn-model.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

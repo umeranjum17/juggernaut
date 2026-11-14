@@ -833,13 +833,12 @@ gates() {  # An open decision stops the work linked to it: by a body line on eit
   same show jg-card
   alike design-card jg-card --raised-by jg-k4 --title "Which layout?"
   alike design-card jg-card --raised-by jg-k4 --title "Which layout?"
-  stopped jg-k4 jg-card
+  stopped jg-k4 jg-k4  # the card is a gate on the ticket that raised it, so the ticket is the stopped work
   alike design-card jg-late --raised-by jg-fin --title "Too late?"  # A closed ticket can still raise a card.
   alike design-pick jg-late --words "Leave it."
-  # Only Beads holds the edge: the row is a labelled decision, and the ticket leaves the ready list until the pick.
-  out=$("${jail[@]}" "$WRAPPER" show jg-card --json 2>/dev/null)
-  assert_contains "$out" '"decision"' "the design row must carry the decision label"
-  assert_contains "$(JG_HOME="$T/bd" "${jail[@]}" "$CLI" show jg-k4)" "blocked-by:jg-card" "the ticket must be blocked by the design row"
+  # Only Beads holds the gate: it carries the card key, no design row exists, and the ticket leaves the ready list until the pick.
+  assert_contains "$(JG_HOME="$T/bd" "${jail[@]}" "$CLI" questions --ticket jg-k4 --json)" '"card": "jg-card"' "the gate must carry the card key"
+  JG_HOME="$T/bd" "${jail[@]}" "$CLI" show jg-card >/dev/null 2>&1 && fail "a design card must file no design row"
   assert_not_contains "$(JG_HOME="$T/bd" "${jail[@]}" "$CLI" ready)" "jg-k4" "a blocked ticket must leave the ready list"
   alike design-pick jg-card --words "Use the compact layout."
   free jg-k4
@@ -856,7 +855,6 @@ gates() {  # An open decision stops the work linked to it: by a body line on eit
   bd_ dep add jg-e2 jg-e1
   bd_ dep add jg-e1 jg-e3
   bd_ dep add jg-e4 jg-e1 --type parent-child
-  bd_ create "[design-ux] Font size" --id jg-e5 --priority 2
   for row in jg-e2 jg-e3 jg-e4; do
     captain "$T/bd" blocking "$row" >/dev/null
     expect_code 1 $? "$row must move before the hold"
@@ -865,8 +863,9 @@ gates() {  # An open decision stops the work linked to it: by a body line on eit
   for row in jg-e2 jg-e3 jg-e4; do
     assert_contains "$(captain "$T/bd" blocking "$row")" "jg-e1" "the edge from $row must stop it"
   done
-  assert_contains "$(captain "$T/bd" design-card jg-e5 --raised-by jg-e3 --title "Font size?")" "already filed" "a retry must find the row"
-  assert_contains "$(captain "$T/bd" blocking jg-e3)" "jg-e5" "a retry must lay the missing edge"
+  assert_contains "$(captain "$T/bd" design-card jg-e5 --raised-by jg-e3 --title "Font size?")" "linked to jg-e3" "a card must make its gate"
+  assert_contains "$(captain "$T/bd" design-card jg-e5 --raised-by jg-e3 --title "Font size?")" "already filed" "a retry must find the gate"
+  assert_contains "$(captain "$T/bd" blocking jg-e3)" "jg-e3" "the gate must stop the ticket that raised the card"
   # A store that cannot answer refuses: exit 2 stops spawn and merge.
   mv "$T/bd/config/beads-dir" "$T/beads-dir"
   captain "$T/bd" blocking jg-e2 >/dev/null

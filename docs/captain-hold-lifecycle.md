@@ -68,7 +68,7 @@ The hold reason, kind and `--until` date sit on the row as plain text, so a reas
 A failed store call stops the command and is never read as "not held".
 `blocking` links a row to a decision by any edge between them in either direction.
 A `linked-to:` or `parent:` line in a body is how a row asks for an edge: the write or the migration lays it, as `blocks` with a decision on one side, `parent-child` for a parent, and `related` otherwise, and `bin/jg-backlog.sh relink` lays any line a raw `bd` write left without one.
-`design-card` also labels its row `decision` and blocks the raising ticket by an edge, so that ticket leaves `ready` until the pick closes the row.
+`design-card` makes one human gate on the raising ticket, with the card key in its metadata and no `[design-ux]` row, so that ticket reads as held and leaves `ready` until the board answer (`design-pick`) closes the gate with the captain's whole words; the ticket itself stays open.
 
 Repeat and edge cases:
 

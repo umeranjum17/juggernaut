@@ -227,11 +227,11 @@
 # `<task-id><TAB><title>` per open call; 1 means none; 2 means it could not be
 # established, which a caller must treat as a refusal.
 #
-# `design-card` and `design-pick` are the two ends of a design card's row, called by
+# `design-card` and `design-pick` are the two ends of a design card, called by
 # bin/jg-question-card.sh (post, --must design-pick) and bin/jg-board-answers.sh. The
-# post files a `[design-ux]` row keyed by the card with `linked-to: <raising ticket>`,
-# so `blocking` finds it from that ticket; a card naming no raising ticket (or one this
-# home lacks) is refused. The answer records the captain's words on the row and closes it.
+# post makes one human gate on the raising ticket, with the card key in its metadata, so
+# `blocking` finds it from that ticket; a card naming no raising ticket (or one this
+# home lacks) is refused. The answer closes the gate with the captain's whole words.
 #
 # `answered` is the read-only predicate bin/jg-backlog.sh asks before it lets a
 # `[captain-ask]` row leave the backlog: exit 0 when the task body carries a
@@ -2362,14 +2362,13 @@ EOF
   [ "$n" -gt 0 ]
 }
 
-# A design card (`jg-question-card.sh post --must design-pick`) is also a
-# `[design-ux]` backlog row keyed by the card and linked to the ticket that
-# raised it, so `blocking` finds it from that ticket; the link is never optional.
-# On a Beads store the row is labelled `decision` and blocks that ticket by an edge,
-# and a retry lays a missing edge. A card naming no raising ticket, or one this
-# home does not carry, is refused.
+# A design card (`jg-question-card.sh post --must design-pick`) is one human gate on the
+# ticket that raised it (bin/jg-beads-write.py `gate`): the gate blocks that ticket, so
+# `blocking` finds it, and carries the card key in its metadata so the board answer finds
+# it. No `[design-ux]` row is filed. A retry finds the open gate; a card naming no raising
+# ticket, or one this home does not carry, is refused.
 command_design_card() {  # <card-key> --raised-by <ticket> --title <question>
-  local key=${1:-} raised='' title='' repo priority_check mark filed=0 label=()
+  local key=${1:-} raised='' title='' mark gate
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -2387,35 +2386,28 @@ command_design_card() {  # <card-key> --raised-by <ticket> --title <question>
   [ -n "${title//[[:space:]]/}" ] || fail "a design card needs --title"
   require_backlog
   task_show "$raised" || fail "refused: $raised, named as the ticket that raised the design card, is not in this home's backlog"
-  repo=$(show_field_value "$TASK_SHOW_OUTPUT" repo)
-  [ -n "$repo" ] || repo=juggernaut
-  validate_one_line repo "$repo"
   # The marker lets the board-answers check find the card's answer without reading the backlog for every answer.
   mark=$STATE/design-cards/$key
   mkdir -p "$STATE/design-cards" || fail "cannot create $STATE/design-cards"
-  ! task_show "$key" || filed=1
-  if [ "$filed" = 0 ]; then
-    priority_check=${JG_TASK_PRIORITY_CHECK:-${XDG_DATA_HOME:-${HOME:-}/.local/share}/jg-task-priority/check.sh}
-    if [ -x "$priority_check" ]; then
-      "$priority_check" add "$key" "[design-ux] $title" --kind captain --priority 1 >/dev/null || exit 1
-    fi
-    label=(--label decision)
-    backlog_cmd add "$key" "[design-ux] $title" --kind captain --repo "$repo" --priority 1 ${label[@]+"${label[@]}"} \
-      --body "$(printf 'Design pick for the captain, raised by %s.\nlinked-to: %s' "$raised" "$raised")" >/dev/null \
-      || fail "could not file the design row for card $key"
-  fi
-  backlog_cmd block "$raised" --by "$key" >/dev/null \
-    || fail "could not link the design row for card $key to $raised"
+  gate=$(card_gate_rows "$key" | jq -r 'select(.state == "open") | .id' | head -1)
+  if [ -n "$gate" ]; then : > "$mark"; printf 'design-card: %s already filed\n' "$key"; return 0; fi
+  backlog_cmd gate "$raised" --title "$title" --reason "$title" --must design-pick --card "$key" --close release >/dev/null \
+    || fail "could not make the design question for card $key on $raised"
   : > "$mark"
-  if [ "$filed" = 1 ]; then printf 'design-card: %s already filed\n' "$key"; return 0; fi
   printf 'design-card: %s linked to %s\n' "$key" "$raised"
 }
 
-# The captain answered the card: record his words on its design row and close it,
-# which releases the work linked to it. A card with no design row is no design
-# card, so that is a quiet no-op; an unreadable backlog is not.
+card_gate_rows() {  # <card-key>: the gates made for that card, one JSON record per line
+  backlog_cmd questions --all --json | jq -c --arg k "$1" '.[] | select(.card == $k)' \
+    || fail "the questions could not be read for card $1"
+}
+
+# The captain answered the card: close its gate with his whole words, which releases the work
+# it blocked; the raising ticket stays open. A card with no gate (an old design row, closed with
+# his words on it as before) or no row at all is no gate card, so that is a quiet no-op; an
+# unreadable backlog is not.
 command_design_pick() {  # <card-key> --words <the captain's words>
-  local key=${1:-} words='' mark
+  local key=${1:-} words='' mark gate tmp
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -2428,10 +2420,22 @@ command_design_pick() {  # <card-key> --words <the captain's words>
   validate_slug card-key "$key"
   [ -n "${words//[[:space:]]/}" ] || fail "design-pick needs --words \"<the captain's words>\""
   mark=$STATE/design-cards/$key
+  require_backlog
+  gate=$(card_gate_rows "$key" | jq -r 'select(.state == "open") | .id' | head -1)
+  if [ -n "$gate" ]; then
+    tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/jg-captain-hold-words.XXXXXX") || fail "cannot stage the captain's pick"
+    printf '%s' "$words" > "$tmp"
+    backlog_cmd resolve "$gate" --words-file "$tmp" --resolution answered >/dev/null \
+      || { rm -f -- "$tmp"; fail "could not record the pick on the design question $gate"; }
+    rm -f -- "$tmp"
+    rm -f -- "$mark"
+    printf 'design-pick: %s recorded\n' "$key"
+    return 0
+  fi
+  # No open gate: a design row filed before gates (a `[design-ux]` ticket keyed by the card) closes with his words.
   task_show "$key" || { rm -f -- "$mark"; return 0; }
   case "$(show_field_value "$TASK_SHOW_OUTPUT" labels)$(show_field_value "$TASK_SHOW_OUTPUT" title)" in *"design-ux"*) ;; *) rm -f -- "$mark"; return 0 ;; esac
   [ "$(show_field "$TASK_SHOW_OUTPUT" state)" != "done" ] || { rm -f -- "$mark"; return 0; }
-  require_backlog
   backlog_cmd "done" "$key" --note "Captain's pick: $(printf '%s' "$words" | tr '\n\r' '  ' | cut -c1-500)" >/dev/null \
     || fail "could not record the pick on design row $key"
   rm -f -- "$mark"
