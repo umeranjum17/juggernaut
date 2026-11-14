@@ -442,6 +442,10 @@ log() {
 
 # shellcheck source=bin/jg-test-host-lib.sh
 . "$ROOT/bin/jg-test-host-lib.sh"
+# shellcheck source=bin/jg-scratch-root-lib.sh
+. "$ROOT/bin/jg-scratch-root-lib.sh"
+# Every scratch dir of this run (shards, scripts, fixtures, the tools they start) goes on disk, never /tmp (RAM).
+jg_scratch_pin_tmpdir
 # shellcheck source=bin/jg-test-procs-lib.sh
 . "$ROOT/bin/jg-test-procs-lib.sh"
 
@@ -1286,8 +1290,9 @@ families_for_changed_path() {
       # resolution in the caller; emit a marker family of __script__
       printf '%s\n' "__script__:$(basename "$path")"
       ;;
-    bin/jg-test-run.sh)
-      # Deliberately the WHOLE family, not just the two contract tests. This
+    bin/jg-test-run.sh|bin/jg-test-host-lib.sh|bin/jg-scratch-root-lib.sh)
+      # The two libraries are the runner's own code (slots, disk scratch root), and the test that names them has a
+      # done-done entry, so the reference scan finds none: they select what the runner selects. Deliberately the WHOLE family, not just the two contract tests. This
       # runner executes every pure-contract-unit script, so a change to it is
       # only proven by running them: its own contract test passing says the
       # runner's logic is right, not that the suite it drives still runs.
@@ -1989,7 +1994,7 @@ if [ "${1:-}" = --required-shards ]; then
   jg_test_host_pin_go_cache
   jg_test_host_warm_go_cache "$ROOT"
   # The eight shards are disjoint, so they run side by side: each one in its own temp and tmux directory
-  # (a short path under /tmp, because a tmux socket path is length-limited), its output kept in its own file and
+  # (a short path under the disk scratch root, because a tmux socket path is length-limited), its output kept in its own file and
   # printed in shard order afterwards so the log reads exactly as the sequential run's did. JG_REQUIRED_SHARD_PARALLEL
   # caps how many run at once (default: every shard, at most one per cpu); 1 gives the old one-after-another run.
   required_cpus=$(nproc 2>/dev/null || echo 1)

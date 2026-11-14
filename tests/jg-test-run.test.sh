@@ -211,6 +211,20 @@ test_a_green_result_is_reused_by_a_second_lane_and_a_red_never() {
   pass 'a green result is reused by a second lane with the same inputs, a changed input runs it again, and a red never'
 }
 
+# The runner puts all its scratch on disk: /tmp is RAM, so with no TMPDIR set the run, its slot directory and every script it runs
+# get TMPDIR under the cache home's jg-scratch, and a caller's own TMPDIR is kept.
+test_a_run_writes_its_scratch_on_disk_and_keeps_a_callers_tmpdir() {
+  local lane=$TMP_ROOT/disk-lane cache=$TMP_ROOT/disk-cache seen=$TMP_ROOT/disk-seen out own=$TMP_ROOT/own-tmp
+  required_fixture "$lane" "printf '%s\n' \"\$TMPDIR\" >'$seen'; f=\$(mktemp); [ -f \"\$f\" ]; rm -f \"\$f\"" 2
+  mkdir -p "$cache" "$own"
+  out=$(cd "$lane" && env -u TMPDIR -u JG_SCRATCH_ROOT -u JG_TEST_HOST_SLOTS -u JG_TEST_RUN_SLOT XDG_CACHE_HOME="$cache" bash bin/jg-test-run.sh tests/required-feature.test.sh 2>&1) || fail "the run failed: $out"
+  case $(cat "$seen") in "$cache"/jg-scratch/*) ;; *) fail "a script must run with TMPDIR under $cache/jg-scratch, saw: $(cat "$seen")" ;; esac
+  [ -d "$cache/jg-scratch/jg-test-runs-$(id -u)" ] || fail "the run slots must live under the disk scratch root"
+  out=$(cd "$lane" && env -u JG_SCRATCH_ROOT -u JG_TEST_RUN_SLOT TMPDIR="$own" XDG_CACHE_HOME="$cache" bash bin/jg-test-run.sh tests/required-feature.test.sh 2>&1) || fail "the run with its own TMPDIR failed: $out"
+  case $(cat "$seen") in "$own"/*) ;; *) fail "a caller's TMPDIR must be kept, saw: $(cat "$seen")" ;; esac
+  pass 'a run puts its scratch on disk under the cache home and keeps a caller TMPDIR'
+}
+
 test_shards_split_a_selection_without_losing_or_repeating_a_script() {
   local scripts k out all seen rc=0
   scripts="tests/jg-ship-local.test.sh tests/jg-pr-wait.test.sh tests/jg-brief.test.sh tests/jg-send-inbox.test.sh tests/jg-prompt-gate.test.sh tests/jg-owner-rules.test.sh tests/jg-mail.test.sh"
@@ -654,7 +668,7 @@ test_a_required_shard_over_its_budget_is_a_warning_and_runs_every_script
 select_fixture() {
   local d=$1
   mkdir -p "$d/bin" "$d/tests" "$d/core/trunk-landing" "$d/core/merge-on-green"
-  cp "$RUNNER" "$ROOT/bin/jg-test-host-lib.sh" "$ROOT/bin/jg-test-procs-lib.sh" "$d/bin/"
+  cp "$RUNNER" "$ROOT/bin/jg-test-host-lib.sh" "$ROOT/bin/jg-test-procs-lib.sh" "$ROOT/bin/jg-scratch-root-lib.sh" "$d/bin/"
   printf '#!/bin/sh\n' >"$d/bin/jg-trunk.sh"
   # shellcheck disable=SC2016
   printf '. "$(dirname "$0")/jg-trunk.sh"\n' >"$d/bin/jg-trunk-policy-lib.sh"
@@ -794,6 +808,7 @@ test_a_hanging_test_is_killed_and_reported_instead_of_holding_the_run
 test_a_slow_passing_script_past_the_per_script_bound_warns_and_passes
 test_a_slow_failing_script_past_the_per_script_bound_stays_red
 test_the_gate_stops_a_hung_script_with_its_children_and_temp_folder_without_a_flag
+test_a_run_writes_its_scratch_on_disk_and_keeps_a_callers_tmpdir
 test_a_test_within_its_limits_is_unaffected
 test_a_weight_cap_defers_slow_suites_and_names_them
 test_the_hosted_selection_drops_scripts_that_hit_the_time_bound_or_have_no_hosted_time
