@@ -37,7 +37,7 @@ def title(row, request=False):
 def parents(tasks):
     """Confirmed ancestry first; infer only a unique request sharing a specific phrase."""
     result = {i: (None if field(r, 'parent') == 'upkeep' else field(r, 'parent')) for i, r in tasks.items()}
-    asks = {i: r for i, r in tasks.items() if (r.get('ask') == 'ask' or '[captain-ask]' in r['title']) and not field(r, 'parent')}
+    asks = {i: r for i, r in tasks.items() if r.get('ask') == 'ask' and not field(r, 'parent')}
     def words(r):
         text = title(r, True) + '\n' + r.get('body', '')
         text = re.sub(r'https?://\S+|\bMain\d+\b|^\s*(?:parent|release|type):.*$', '', text, flags=re.M)

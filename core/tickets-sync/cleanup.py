@@ -65,7 +65,7 @@ def report_message(found, kinds, key, today, closed=()):
 
 
 def captain_origin(row):
-    return row.get('ask') == 'ask' or '[captain-ask]' in row['title'] or bool(re.search(r'type:\s*captain-ask', row.get('body', ''), re.I))
+    return row.get('ask') == 'ask' or bool(re.search(r'type:\s*captain-ask', row.get('body', ''), re.I))
 
 
 def quote(row):

@@ -112,7 +112,7 @@ read_home() {  # <home id> <home path>
        | gsub("^[\"“”]+|[\"“”]+$"; "") | clean | .[0:200]);
     [ .backlog.records[]?
       | select(.structured == true)
-      | (((.ask // "") == "ask") or ((.title // "") | contains("[captain-ask]"))) as $ask
+      | ((.ask // "") == "ask") as $ask
       | select($ask or (.hold_kind == "captain" and .hold_reason != null and .state != "done"))
       | { id, state, ask: $ask, words: words,
           hold: (if .hold_kind == "captain" and .hold_reason != null and .state != "done"
