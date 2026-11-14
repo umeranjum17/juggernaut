@@ -53,3 +53,30 @@ memory-file-cap 1200
 # Status lines kept per lane row. Reason: a status line is a wake event, not
 # current state; bin/jg-crew-state.sh answers current state.
 status-tail 1
+
+# Context ceilings, one number per role and item, read by bin/jg-context-load.sh (its `check` runs in
+# tests/jg-context-budget.test.sh and once a day in bin/jg-startup-growth-check.sh). Source:
+# data/fable-thin-context/report.md sections 6.2 and 8.3 (row 61). Each line lands at today's value, so
+# the check is green on today's tree; the slice that lowers a number lowers its own line in its own
+# commit. The unit is B (bytes) or tok (tokens). A line whose item the tree measures (the two contract
+# lines) is measured at each check; every other is a reading: the newest row of data/context-load.tsv.
+# A reading is a median or one lane, not a sum, so a line holds the reading and is never a target.
+#
+# B   AGENTS.md of a session of this repository (today's tree; the report read 43,367)
+ctx-agents-md 44058
+# B   what a supervisor loads as its role contract: the same file until TC4b moves it
+ctx-supervisor-contract 44058
+# B   tool schemas of a worker's first request
+ctx-worker-tool-schemas 66818
+# B   skill listing of a worker
+ctx-worker-skill-listing 30174
+# B   launch brief and the rules it reads at start: the median. bin/jg-brief-lint.sh reports one brief
+#     over this line (its old 16,000 line never held a brief; the median was 33,965)
+ctx-worker-brief 33965
+# B   static part of the supervision block, Claude Code primary with the host on (TC7 holds it here)
+ctx-supervisor-supervision-static 8466
+# B   memory index of another home, read by a lead or a worker
+ctx-lead-memory-index 25026
+# tok first model call of a worker, and of a lead after a compaction
+ctx-worker-first-call 64731
+ctx-lead-first-call 97147

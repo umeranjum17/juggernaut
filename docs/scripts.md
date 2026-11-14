@@ -221,6 +221,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-worker-rules.sh` | Show, render, measure, and check which part of the instruction surface each role reads, from `defaults/worker-rules.tsv` |
 | `jg-tool-update-check.sh` | Report watched tooling with an update available, and updates installed but left inert by PATH order |
 | `jg-startup-growth-check.sh` | Daily metadata-only growth check for startup memory and tracked startup/instruction surfaces |
+| `jg-context-load.sh` | One context number per role: checks each `ctx-` ceiling of `defaults/token-caps` against the tree or the newest reading, and records one reading per role per day in `data/context-load.tsv` |
 | `jg-pr-lib.sh`           | Own canonical task and PR validation plus private atomic PR-poll publication, merge-notification identity, and retirement |
 | `jg-pr-poll.sh`          | Provide the byte-static watcher program for validated pull-request, merge-request, and Gerrit-change poll sidecars |
 | `jg-contributions.sh`    | Observe owned publications, retain exact-head judgments, measure required actors, and wake on maintainer signals |

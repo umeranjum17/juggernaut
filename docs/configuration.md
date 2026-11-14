@@ -911,6 +911,12 @@ Files end in a `[cut at ...` line with the line range and the `sed` command that
 | `context-file-cap`, `memory-file-cap` | `JG_SESSION_START_CONTEXT_FILE_CAP` (both) | the opening lines of the curated files |
 | `status-tail` | `JG_SESSION_START_STATUS_TAIL` | status lines per lane row |
 
+The `ctx-*` lines of the same file are not print caps: each is the ceiling of one number a role loads (the contract file, a worker's tool schemas, a brief, a first call), at today's value.
+`bin/jg-context-load.sh check` holds each against what the tree measures or the newest reading in `data/context-load.tsv`, `tests/jg-context-budget.test.sh` runs it, and the daily growth check reports a line that is over.
+`bin/jg-context-load.sh read <transcript> <role>` records the first call of a real session, once per role and day.
+`bin/jg-brief-lint.sh` takes its brief budget from `ctx-worker-brief`.
+A slice that lowers a number lowers its own line in its own commit.
+
 No cap touches the lock result, the wake queue and its `WAKE_ACK_REQUIRED` line, the supervision block, or the network checks: those carry an action and print whole.
 The wake queue's own `OPEN DECISIONS` list is newest first, states its total, and ends in `bin/jg-wake-drain.sh --open-decisions`, which prints every open decision without acknowledging or changing anything.
 

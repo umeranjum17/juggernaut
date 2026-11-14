@@ -9,7 +9,8 @@
 # whose header owns the row format). Each finding is one line, and a clean file prints nothing:
 #   <file>:<lines>: conflict <rule>: <lines a> vs <lines b>: <why>      two rules disagree
 #   <file>:<lines>: dead-name <name>: no skill or command of that name  a name to use is not there
-#   <file>:<line>: over-budget <rule>: <bytes> bytes, budget <bytes>    too large; <line> passes it
+#   <file>:<line>: over-budget <rule>: <bytes> bytes, budget <bytes>    too large; <line> passes it (the budget is
+#                                                                       the ctx-worker-brief line of defaults/token-caps)
 # A name is there when a skill folder holds <name>/SKILL.md, or when it is a command (on PATH, or a
 # script of that name in this repository's bin/, core/*/ or core/*/bin/), because a worker can run it.
 # Skill folders: each --skills-dir, else <repo>/.agents/skills, <repo>/skills and $HOME/.agents/skills
@@ -25,7 +26,7 @@ FILES=()
 # A word that can name a skill: lower case, at least one hyphen, nothing else.
 NAME_SHAPE='^[a-z][a-z0-9]*(-[a-z0-9]+)+$'
 
-usage() { sed -n '2,18p' "$0"; }
+usage() { sed -n '2,19p' "$0"; }
 bad() { echo "jg-brief-lint: $*" >&2; exit 2; }
 
 while [ $# -gt 0 ]; do
@@ -41,6 +42,7 @@ done
 [ ${#FILES[@]} -gt 0 ] || bad "name at least one brief or include file (see --help)"
 [ ${#SKILL_DIRS[@]} -gt 0 ] || SKILL_DIRS=("$ROOT/.agents/skills" "$ROOT/skills" "${HOME:-/nonexistent}/.agents/skills")
 [ -f "$RULES" ] && [ -r "$RULES" ] || bad "cannot read the rule table $RULES"
+DEFAULT_RULES=$ROOT/defaults/brief-lint-rules.tsv
 
 # The rule table, one array per row kind; a row that does not parse refuses the whole table.
 BUDGET_ID='' BUDGET_BYTES=0
@@ -74,6 +76,11 @@ while IFS= read -r row || [ -n "$row" ]; do
   esac
   [ "${f[0]}" = budget ] || for p in "${f[@]:2}"; do valid_ere "$p" || bad "$where: not an extended regular expression: $p"; done
 done < "$RULES"
+# The shipped table holds no budget: the one ceiling for a brief is a line of defaults/token-caps.
+if [ -z "$BUDGET_ID" ] && [ "$RULES" = "$DEFAULT_RULES" ]; then
+  BUDGET_BYTES=$("$ROOT/bin/jg-context-load.sh" cap ctx-worker-brief) || bad "no ctx-worker-brief ceiling in defaults/token-caps"
+  BUDGET_ID=ctx-worker-brief
+fi
 
 # 0 when <text> matches <ere> at its end (end=1) or at its start (end=0); `-` always matches.
 at_edge() {
