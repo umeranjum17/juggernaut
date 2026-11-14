@@ -2134,6 +2134,91 @@ journeys:
     tier: local
     command: bash tests/migration-card.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
 
+  jg-context-budget:
+    tier: local
+    command: bash tests/jg-context-budget.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-proof-minimum:
+    tier: local
+    command: bash tests/jg-proof-minimum.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-recon-ready:
+    tier: local
+    command: bash tests/jg-recon-ready.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-trunk-carry:
+    tier: local
+    command: bash tests/jg-trunk-carry.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  account-pool-route-chain:
+    tier: local
+    command: bash journeys/core-run.sh 'bash account-pool/tests/route-chain.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  alerts-model-outage-hook-e2e:
+    tier: local
+    command: bash journeys/core-run.sh 'bash alerts/tests/model-outage-hook-e2e.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  alerts-model-outage-scan-e2e:
+    tier: local
+    command: bash journeys/core-run.sh 'bash alerts/tests/model-outage-scan-e2e.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  codex-supervisor-wake-run-proof:
+    tier: local
+    command: bash core/codex-supervisor-wake/run-proof.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  delete-guard-uninstall:
+    tier: local
+    command: bash journeys/core-run.sh 'bash delete-guard/tests/delete-guard-uninstall.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  engage-route-jg-engage-route:
+    tier: local
+    command: bash journeys/core-run.sh 'bash engage-route/tests/jg-engage-route.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  fleet-flow-jg-flow:
+    tier: local
+    command: bash journeys/core-run.sh 'JG_BIN="$JG_CODE_ROOT/bin" bash fleet-flow/tests/jg-flow.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  fleet-flow-jg-flow-uninstall:
+    tier: local
+    command: bash journeys/core-run.sh 'bash fleet-flow/tests/jg-flow-uninstall.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  fleet-pulse-gate-audit:
+    tier: local
+    command: bash journeys/core-run.sh 'bash fleet-pulse/tests/gate-audit.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  fleet-stall-uninstall:
+    tier: local
+    command: bash journeys/core-run.sh 'bash fleet-stall/tests/fleet-stall-uninstall.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  git-identity-uninstall:
+    tier: local
+    command: bash journeys/core-run.sh 'bash git-identity/tests/git-identity-uninstall.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  host-memory-jg-heavy-adopt:
+    tier: local
+    command: bash journeys/core-run.sh 'bash host-memory/tests/jg-heavy-adopt.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  host-memory-jg-mem-gate-uninstall:
+    tier: local
+    command: bash journeys/core-run.sh 'bash host-memory/tests/jg-mem-gate-uninstall.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  merge-card-card-title:
+    tier: local
+    command: bash journeys/core-run.sh 'bash merge-card/tests/card-title.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  merge-card-e2e:
+    tier: local
+    command: env -u JG_TICKET -u JG_TASK_ID -u JG_HOME -u JG_TASK_INBOX -u CLAUDE_CONFIG_DIR bash journeys/core-run.sh 'bash merge-card/tests/merge-card-e2e.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  merge-card-merge-hooks-e2e:
+    tier: local
+    command: bash journeys/core-run.sh 'bash merge-card/tests/merge-hooks-e2e.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  merge-card-retitle-old-cards:
+    tier: local
+    command: bash journeys/core-run.sh 'bash merge-card/tests/retitle-old-cards.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  merge-on-green-direct-pr:
+    tier: local
+    command: bash journeys/core-run.sh 'bash merge-on-green/tests/merge-on-green-direct-pr.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  merge-on-green-merge-ready-batch:
+    tier: local
+    command: bash journeys/core-run.sh 'bash merge-on-green/tests/merge-ready-batch.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  nm-drain:
+    tier: local
+    command: bash journeys/core-run.sh 'bash nm-drain/tests/nm-drain.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  nm-drain-uninstall:
+    tier: local
+    command: bash journeys/core-run.sh 'bash nm-drain/tests/nm-drain-uninstall.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  owner-guard-uninstall:
+    tier: local
+    command: bash journeys/core-run.sh 'bash owner-guard/tests/owner-guard-uninstall.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  owner-guard-scan-e2e:
+    tier: local
+    command: bash journeys/core-run.sh 'bash owner-guard/tests/scan-e2e.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  owner-rules:
+    tier: local
+    command: bash journeys/core-run.sh 'bash owner-rules/tests/owner-rules.test.sh "$JG_CODE_ROOT"' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'
