@@ -897,12 +897,8 @@ run_coverage_guard() {
   while [ "$shard" -le "$PORTABLE_SERIAL_SHARDS" ]; do
     SCRIPTS=()
     select_lane "portable-serial-${shard}of${PORTABLE_SERIAL_SHARDS}"
-    if [ "${#SCRIPTS[@]}" -eq 0 ] && [ -s "$tmp/all" ]; then
-      log "coverage guard: portable serial shard $shard of $PORTABLE_SERIAL_SHARDS is empty"
-      SCRIPTS=("${saved_scripts[@]+"${saved_scripts[@]}"}")
-      rm -rf "$tmp"
-      return 1
-    fi
+    # A shard may hold no script when each one it held has a done-done entry; the union and duplicate checks below still
+    # refuse a script that is in no shard or in two.
     [ "${#SCRIPTS[@]}" -eq 0 ] || printf '%s\n' "${SCRIPTS[@]}" >>"$tmp/serial_shards_raw"
     serial_ms=$(printf '%s\n' "${SCRIPTS[@]+"${SCRIPTS[@]}"}" | portable_serial_lane_weight)
     [ "$serial_ms" -le "$serial_max_ms" ] || serial_max_ms=$serial_ms

@@ -12,8 +12,14 @@
 #   2. Every verdict is stored with the trunk tip it was judged on, in <task>.<head>.tip beside <task>.<head>.state, the way
 #      `jg-trunk.sh land` keys its own admission record by the tip. For one lane it is the tip read before the landing started; for a
 #      stack it is the tip after the stack's own landings, because a returned lane was judged on top of the stack's lanes that landed.
-#   3. A final conflict, or a final for a trunk something else moved (a home on older code stored it final), holds only while that tip stands: once the trunk moved, the lane is judged again (a conflict attempt stops
-#      at the rebase, before any gate). A conflict with no stored tip (a record from before this rule) is judged again once.
+#      A conflict is stored with the tip its refusal names (verdict_tip_met), the one the rebase met: a landing that ran beside the lane moves
+#      the trunk during the run, and the tip read first would make the check judge the same head again at once.
+#   3. A final for a trunk something else moved (a home on older code stored it final) holds only while that tip stands. A final conflict
+#      holds while the commit its refusal names (the tip the rebase met, not the tip read before the run) is still the trunk's tip, or
+#      while every path the trunk changed since touches none of the conflict's paths: only a trunk change to a conflicting path (or a
+#      rename, which lists both names) can change the lane's conflict, so a landing beside it does not return the lane again. Any other
+#      move judges the lane again (a conflict attempt stops at the rebase, before any gate), and so does a conflict whose commit is gone
+#      from the project or whose paths are unreadable. A conflict with no stored tip (a record from before this rule) is judged again once.
 #      Every other final (a red gate the lane caused, a second commit) holds for its head on any tip, but only while the inputs its
 #      refusal read are the ones stored beside it (rule 6).
 #   4. A final whose cause is the environment, not the commit's own content (a reference-transaction hook the lander may not replace),
@@ -40,6 +46,14 @@ VERDICT_CONFLICT_RE=' conflicts with [^ ]+ \(([0-9a-f]+)\) in: '
 # The trunk tip the lander will judge the next landing of <project-name> on.
 verdict_tip() {  # <project-name>
   cat "$STATE/trunk-tip-$1" 2>/dev/null || :
+}
+
+# The trunk tip a refusal was judged on: for a conflict, the tip the lander's rebase met, which its refusal names (rule 2); otherwise <fallback>,
+# the tip read before the run. A landing that ran beside this one moves the trunk during the run, so the tip read first is not the tip judged.
+verdict_tip_met() {  # <project dir> <reason> <fallback tip>
+  local met=
+  if [[ $2 =~ $VERDICT_CONFLICT_RE ]]; then met=$(git -C "$1" rev-parse --verify --quiet "${BASH_REMATCH[1]}^{commit}" 2>/dev/null) || met=; fi
+  printf '%s\n' "${met:-$3}"
 }
 
 # The fingerprint of what a refusal of <id> reads that can change without the head changing (rule 6).
@@ -85,16 +99,38 @@ verdict_record() {  # <id> <head> <head the branch is at now, or empty> <tip> <j
   done
 }
 
+# Whether the trunk change between <judged commit> and <tip> leaves a conflict in <paths> (space separated) as it was (rule 3).
+verdict_conflict_stands() {  # <project dir> <judged commit> <tip> <paths>
+  local changed p c
+  [ -d "$1" ] && [ -n "$4" ] && [ "$4" != 'an unreadable merge' ] || return 1
+  git -C "$1" cat-file -e "$2^{commit}" 2>/dev/null || return 1
+  changed=$(git -C "$1" diff --name-only --no-renames "$2" "$3" 2>/dev/null) || return 1
+  [[ $changed != *\"* ]] || return 1  # git quotes an odd name: it cannot be compared, judge again
+  while IFS= read -r c; do
+    [ -n "$c" ] || continue
+    [[ $c != *[[:space:]]* ]] || return 1  # a path with a space cannot be told apart in the refusal's list: judge again
+    for p in $4; do [ "$p" != "$c" ] || return 1; done
+  done <<<"$changed"
+  return 0
+}
+
 # Whether the stored `final` verdict of <id> at <head> still holds on the trunk of <project-name> (rules 3 and 4).
-verdict_holds() {  # <id> <head> <state line> <project-name>
-  local tip
+verdict_holds() {  # <id> <head> <state line> <project-name> [<project dir>]
+  local tip cur judged paths
   case $3 in final*) ;; *) return 0 ;; esac
   if [[ $3 =~ $VERDICT_ENV_RE ]]; then [ -z "$(find "$MEM/$1.$2.state" -mmin +"$ENV_FINAL_MINUTES" 2>/dev/null)" ]; return; fi
   if ! [[ $3 =~ $VERDICT_CONFLICT_RE || $3 == *'something else moved it'* ]]; then
     [ "$(cat "$MEM/$1.$2.inputs" 2>/dev/null)" = "$(verdict_inputs "$1")" ]; return
   fi
   tip=$(cat "$MEM/$1.$2.tip" 2>/dev/null) || return 1
-  [ -n "$tip" ] && [ "$tip" = "$(verdict_tip "$4")" ]
+  cur=$(verdict_tip "$4")
+  if [[ $3 =~ $VERDICT_CONFLICT_RE ]]; then
+    judged=${BASH_REMATCH[1]}; paths=${3#*" in: "}; paths=${paths%%;*}
+    [ -n "$tip" ] && [ -n "$cur" ] || return 1
+    [ "${cur:0:${#judged}}" != "$judged" ] || return 0
+    verdict_conflict_stands "${5:-}" "$judged" "$cur" "$paths"; return
+  fi
+  [ -n "$tip" ] && [ "$tip" = "$cur" ]
 }
 
 # Whether <id> was once refused for a conflict (any head): it comes back after fixing it, and lands before lanes ready earlier.

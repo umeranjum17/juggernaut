@@ -185,6 +185,34 @@ captain_ask_build_basis() {  # <ticket> <show-output>; prints the record a build
   return 1
 }
 
+captain_ask_parent_basis() {  # <ticket> <show-output>; 0 when a born-from: recon|plan ticket's parent rests on a record
+  local parent
+  printf '%s\n' "$2" | grep -Eq 'born-from: *(recon|plan)([^A-Za-z]|$)' || return 1
+  parent=$(printf '%s\n' "$2" | sed -nE 's/^  parent:[[:space:]]*([A-Za-z0-9._-]+)[[:space:]]*$/\1/p' | head -1)
+  [ -n "$parent" ] || parent=$(captain_ask_body "$2" | sed -nE 's/^[[:space:]]*parent:[[:space:]]*([A-Za-z0-9._-]+)[[:space:]]*$/\1/p' | head -1)
+  [ -n "$parent" ] && [ "$parent" != "$1" ] || return 1
+  captain_ask_build_basis "$parent" "$(backlog_cmd show "$parent" --full 2>/dev/null)"
+}
+
+# A follow-up stated ahead: a ticket body line `on-report: triage-build <harness> <model> <effort>` says what
+# happens when its Recon report lands. The line is the captain's order, so it counts only while the ticket
+# rests on one of the three records captain_ask_build_basis reads (his recorded approval, his own words in a
+# chat note, or the parent's record); a typed line with none of them is never run.
+captain_ask_on_report() {  # <ticket> <show-output>; prints "<harness> <model> <effort>" or names why it is not run
+  local line words
+  line=$(captain_ask_body "$2" | sed -nE 's/^[[:space:]]*on-report:[[:space:]]*(.*[^[:space:]])[[:space:]]*$/\1/p' | head -1)
+  [ -n "$line" ] || { echo "$1 has no on-report line" >&2; return 2; }
+  # shellcheck disable=SC2086  # the line is split into its words on purpose
+  set -- "$1" "$2" $line
+  if [ "$#" -ne 6 ] || [ "$3" != triage-build ] || [ -n "$(printf '%s' "$4$5$6" | tr -d 'A-Za-z0-9._:/-')" ]; then
+    echo "the on-report line of $1 must read: on-report: triage-build <harness> <model> <effort>" >&2
+    return 2
+  fi
+  captain_ask_build_basis "$1" "$2" >/dev/null || captain_ask_parent_basis "$1" "$2" >/dev/null \
+    || { echo "the on-report line of $1 rests on no record of the captain's yes (his recorded approval, his words in a chat note, or the parent's record), so it is not run" >&2; return 3; }
+  printf '%s %s %s\n' "$4" "$5" "$6"
+}
+
 # Reads its rows with bin/jg-backlog-transition-lib.sh's jg_backlog_row_show over $DATA, which
 # bin/jg-spawn.sh and bin/jg-send.sh source; any row it cannot read is refused, never passed.
 guard_captain_ask_build() {  # <ticket>; refuses an unapproved build, else names its record on stderr

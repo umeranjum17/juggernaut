@@ -3311,7 +3311,7 @@ if jg_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then
       fail() { echo "error: spawn refused: $*" >&2; exit 1; }
       # shellcheck source=bin/jg-captain-ask-lib.sh
       . "$SCRIPT_DIR/jg-captain-ask-lib.sh"
-      guard_captain_ask_build "$ID"
+      guard_captain_ask_build "${TICKET:-$ID}"
       # A decision open on this ticket or on linked work blocks the start.
       SPAWN_LINKED_STATUS=0
       SPAWN_LINKED_CALLS=$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$DATA" \

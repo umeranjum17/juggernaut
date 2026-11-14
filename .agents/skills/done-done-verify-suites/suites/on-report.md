@@ -1,0 +1,3 @@
+# The follow-up stated ahead runs when the report lands
+
+On-report follow-up: run `done-done run on-report` with `JG_BEADS_TEST_BD` and `JG_BEADS_TEST_DOLT` naming the pinned builds (`tests/jg-on-report.test.sh`); the real `bin/jg-backlog.sh on-report`, `add --parent` and `approve-dispatch` over a real Beads store and the real `core/recon-ready/ready.sh check` file the report's first slice under a Recon ticket that states `on-report: triage-build <harness> <model> <effort>` and rests on the owner's chat words, approve it on that route and file nothing on a rerun; a typed line with no record of his yes, a ticket held by an open call, a report with an open decision and a malformed line file nothing; the run writes its log (screen: none).
