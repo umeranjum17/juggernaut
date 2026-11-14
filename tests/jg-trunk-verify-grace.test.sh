@@ -11,7 +11,7 @@
 test_the_grace_is_off_by_default_and_passes_only_a_fully_explained_red_when_a_home_turns_it_on() {
   local c out rc T
   world grace; rig
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   # The grace and its one filer run from a fixture root whose backlog is a stand-in that keeps tickets as files.
   T="$W/tickets"; mkdir -p "$T" "$HOME_D/core/trunk-verify" "$HOME_D/core/trunk-landing"
   cp "$ROOT/core/trunk-verify/grace.sh" "$HOME_D/core/trunk-verify/"; cp "$ROOT/core/trunk-landing/quarantine.sh" "$HOME_D/core/trunk-landing/"

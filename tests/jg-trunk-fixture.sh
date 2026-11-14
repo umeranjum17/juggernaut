@@ -39,7 +39,7 @@ world() {  # <name>: sets W HOME_D PROJ
   # The fixture homes are bare repositories (no beacon, overlay or supervision read); the health check has its own test.
   # shellcheck disable=SC2016 # the stub expands its own argument
   printf '#!/usr/bin/env bash\necho "ok $2"\n' > "$W/root/bin/jg-home-health.sh"
-  ln -s "$ROOT/core" "$W/root/core"; ln -s "$ROOT/policy" "$W/root/policy"
+  ln -sn "$ROOT/core" "$W/root/core"; ln -sn "$ROOT/policy" "$W/root/policy"
   cat > "$W/root/bin/jg-captain-hold.sh" <<'SH'
 #!/usr/bin/env bash
 case "$1" in
@@ -229,7 +229,7 @@ M=\$(git -C "$PROJ" -c user.name=t -c user.email=t@example.invalid commit-tree "
 git -C "$PROJ" push -q origin "\$M:refs/heads/main"; echo merged > "$W/pr-state-1"
 SH
   printf '#!/usr/bin/env bash\necho "checks-lint: PASS"\n' > "$W/checks-lint"
-  ln -s "$W/root/bin" "$HOME_D/bin"   # the merge check runs the home's own bin
+  ln -sn "$W/root/bin" "$HOME_D/bin"   # the merge check runs the home's own bin
   chmod +x "$W/fakebin/gh-axi" "$W/fakebin/gh" "$W/root/bin/jg-pr-state.sh" "$W/root/bin/jg-pr-merge.sh" "$W/checks-lint"
 }
 

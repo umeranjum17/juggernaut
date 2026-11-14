@@ -49,7 +49,7 @@ refused() {  # <wanted text> <env assignments and wrapper args...>; no binary ma
   assert_absent "$LOG" "$*: a binary ran"
 }
 # The path is checked before anything is written.
-ln -s "$T/store/.beads" "$T/linked/.beads"
+ln -sn "$T/store/.beads" "$T/linked/.beads"
 ln -s "$T/repo/a" "$T/alias"
 refused "is not set" -u BEADS_DIR "$WRAPPER" list
 refused "must be absolute" BEADS_DIR=store/.beads "$WRAPPER" list
@@ -947,7 +947,7 @@ merge_home() {  # <home>: a home running this repo's scripts, with a project on 
   local h=$1 f
   mkdir -p "$h/bin" "$h/data" "$h/state" "$h/config" "$h/projects/r" "$h/fake" "$h/user"
   for f in "$ROOT"/bin/*; do ln -s "$f" "$h/bin/${f##*/}"; done
-  ln -s "$ROOT/toolchain.versions" "$h/toolchain.versions"
+  ln -sn "$ROOT/toolchain.versions" "$h/toolchain.versions"
   rm "$h/bin/jg-crew-state.sh"
   printf '#!/usr/bin/env bash\necho "state: done · source: run-step · checks green: PR ready for review"\n' > "$h/bin/jg-crew-state.sh"
   chmod +x "$h/bin/jg-crew-state.sh"

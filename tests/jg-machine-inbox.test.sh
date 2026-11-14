@@ -10,7 +10,7 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 JM="$ROOT/bin/jg-machine.sh"
-T=$(jg_test_tmproot jg-machine-inbox); H=$T/home; S=$H/state; mkdir -p "$S"; ln -s "$ROOT/bin" "$H/bin"
+T=$(jg_test_tmproot jg-machine-inbox); H=$T/home; S=$H/state; mkdir -p "$S"; ln -sn "$ROOT/bin" "$H/bin"
 unset JG_MACHINES_TABLES
 export JG_HOME="$H" JG_STATE_OVERRIDE="$S" JG_DELIVERY_BUS_TIMEOUT=1
 jm() { OUT=$(bash "$JM" "$@" 2>&1); RC=$?; }

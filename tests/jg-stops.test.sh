@@ -34,8 +34,8 @@ pass 'delivery tick runs and clears a stop without a watcher'
 . "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
 world killed-stop
 cp -r "$W/root/bin" "$HOME_D/bin"
-ln -s "$ROOT/core" "$HOME_D/core"
-ln -s "$ROOT/policy" "$HOME_D/policy"
+ln -sn "$ROOT/core" "$HOME_D/core"
+ln -sn "$ROOT/policy" "$HOME_D/policy"
 lane survivor one
 head=$(git -C "$PROJ" rev-parse fm/survivor)
 mkdir -p "$HOME_D/state/.stops"

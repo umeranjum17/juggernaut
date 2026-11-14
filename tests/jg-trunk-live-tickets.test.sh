@@ -24,7 +24,7 @@ land_ticket() {  # <lane> <ticket>: a lane whose commit ends with the Ticket tra
 test_live_pin_back_and_release_write_the_tickets_of_their_commits() {
   local out k2 k4 k1_live
   world livetix; rig; core_beads_home "$ROOT" "$HOME_D"
-  cp "$ROOT/bin/jg-backlog.sh" "$W/root/bin/jg-backlog.sh"; ln -sf "$ROOT/toolchain.versions" "$W/root/toolchain.versions"
+  cp "$ROOT/bin/jg-backlog.sh" "$W/root/bin/jg-backlog.sh"; ln -sfn "$ROOT/toolchain.versions" "$W/root/toolchain.versions"
   file_ticket jg-k1; file_ticket jg-k2; file_ticket jg-k4
   land_ticket k1 jg-k1; land_ticket k2 jg-k2; k2=$(tip); land_ticket k3 jg-elsewhere
   trunk verify "$PROJ" >/dev/null 2>&1 || fail "verify must move the green pin"

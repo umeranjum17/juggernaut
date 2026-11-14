@@ -19,7 +19,7 @@ col() {  # <task> <column>: one field of the task's latency row
 test_a_lane_that_waited_for_a_slot_names_it_on_its_row() {
   local mem sleeper1 sleeper2 head out rc=0 now _
   world qwhy; mem=$HOME_D/data/jg-trunk-landing
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   printf 'flush-at-ready=1\n' >> "$HOME_D/config/trunk-policy"
   mkdir -p "$mem"
   # Two landings are running (two live pids): every gate slot is in use.

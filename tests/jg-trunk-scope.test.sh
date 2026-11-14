@@ -51,7 +51,7 @@ charter() {  # <id> <project>: a squad lead charter naming the project
 
 # The real check must ignore an unborn repository, but preserve initialization refusals once it has commits.
 world empty local-trunk
-cp -r "$ROOT/bin" "$H/bin"; ln -s "$ROOT/core" "$H/core"; ln -s "$ROOT/policy" "$H/policy"
+cp -r "$ROOT/bin" "$H/bin"; ln -sn "$ROOT/core" "$H/core"; ln -sn "$ROOT/policy" "$H/policy"
 rm "$H/state/trunk-tip-proj"
 git -C "$P" update-ref -d refs/heads/trunk
 git -C "$P" update-ref -d refs/heads/main
@@ -75,7 +75,7 @@ for mode in direct-PR no-mistakes local-only; do
   done
   [ "$(git -C "$P" rev-parse trunk)" = "$tip" ] || fail "T1 a $mode project's trunk branch must not move"
   [ ! -e "$(git -C "$P" rev-parse --git-common-dir)/hooks/reference-transaction" ] || fail "T1 no trunk hook may be installed in a $mode project"
-  cp -r "$ROOT/bin" "$H/bin"; ln -s "$ROOT/core" "$H/core"; ln -s "$ROOT/policy" "$H/policy"
+  cp -r "$ROOT/bin" "$H/bin"; ln -sn "$ROOT/core" "$H/core"; ln -sn "$ROOT/policy" "$H/policy"
   out=$(bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$H" 2>&1); sleep 1
   [ -z "$out" ] && [ ! -e "$H/data/jg-trunk-landing/s1.$(git -C "$P" rev-parse fm/s1).state" ] || fail "T1 the landing check must not touch a $mode project: $out"
   [ "$(git -C "$P" rev-parse trunk)" = "$tip" ] || fail "T1 the landing check must not land on a $mode project"

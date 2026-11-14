@@ -12,7 +12,7 @@
 . "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
 
 # mode_world <name>: the fixture world with its code installed in the home, as the landing check reads it.
-mode_world() { world "$1"; cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"; }
+mode_world() { world "$1"; cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"; }
 
 # mode_lane <id> <mode> <yolo> [<extra meta line>]: a proved, ready lane whose record carries this mode word and yolo.
 mode_lane() {

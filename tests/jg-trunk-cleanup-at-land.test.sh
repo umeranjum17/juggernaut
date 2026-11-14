@@ -25,7 +25,7 @@ wait_for() {  # <what> <command...>
 # shellcheck disable=SC2016 # the stand-in bodies are written out verbatim and expand when they run
 stub_world() {  # <name>
   world "$1"
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   cat > "$HOME_D/bin/jg-trunk.sh" <<SH
 #!/usr/bin/env bash
 [ "\$1" = land-batch ] || exit 1

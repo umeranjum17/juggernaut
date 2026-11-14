@@ -16,7 +16,7 @@
 
 # home_world <name>: the check runs the scripts of its own home's bin, with the two stand-ins added.
 home_world() {
-  world "$1"; cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"; rm -f "$W/send-calls"
+  world "$1"; cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"; rm -f "$W/send-calls"
   # shellcheck disable=SC2016 # the stand-in expands when it runs
   printf '#!/usr/bin/env bash\nprintf "%%s\\t%%s\\n" "$1" "$*" >> "%s/relaunch-calls"\n' "$W" > "$HOME_D/bin/jg-control.sh"
   # shellcheck disable=SC2016 # the stand-in expands when it runs

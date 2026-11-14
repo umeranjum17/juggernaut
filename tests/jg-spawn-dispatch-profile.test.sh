@@ -1892,7 +1892,7 @@ test_launch_environment_inaccessible_config_refuses() {
         blocked="$HOME_DIR/config-parent"
         mkdir "$blocked"
         mv "$HOME_DIR/config" "$blocked/config"
-        ln -s config-parent/config "$HOME_DIR/config"
+        ln -sn config-parent/config "$HOME_DIR/config"
       fi
       chmod 600 "$blocked" || fail "could not remove configuration search permission"
       out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \

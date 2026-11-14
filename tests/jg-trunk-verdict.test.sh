@@ -23,7 +23,7 @@
 . "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
 
 # home_world <name>: a fixture world whose home runs the check's scripts from its own bin, as a real home does.
-home_world() { world "$1"; cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"; rm -f "$W/send-calls"; }
+home_world() { world "$1"; cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"; rm -f "$W/send-calls"; }
 settle() {  # wait until no landing is running and the last one has let go of its run lock
   local _
   for _ in $(seq 1 600); do

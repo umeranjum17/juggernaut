@@ -22,7 +22,7 @@ URL=https://github.com/o/ra/pull/11
 
 # A home whose bin and core are the real ones.
 H=$d/home1; mkdir -p "$H/state" "$H/data" "$H/config" "$H/bin" "$H/projects"
-ln -s "$ROOT/core" "$H/core"; for f in "$ROOT"/bin/*; do ln -s "$f" "$H/bin/${f##*/}"; done
+ln -sn "$ROOT/core" "$H/core"; for f in "$ROOT"/bin/*; do ln -s "$f" "$H/bin/${f##*/}"; done
 printf -- '- ra - fixture\n' > "$H/data/projects.md"; printf 'release-after-commits=3\nrelease-after-hours=48\n' > "$H/config/trunk-policy"
 git init -q "$H/projects/ra"; git -C "$H/projects/ra" commit -q --allow-empty -m base; git -C "$H/projects/ra" remote add origin https://github.com/o/ra
 

@@ -25,7 +25,7 @@ FM=$d/fm
 mkdir -p "$HOME" "$FM/config" "$FM/state" "$FM/data" "$FM/config"
 # The scan raises its alert through the home's own alert function, so the fixture home carries the repo's bin and core.
 repo=$(cd "$SRC/../.." && pwd -P)
-cp -r "$repo/bin" "$FM/bin"; ln -s "$repo/core" "$FM/core"; printf 'off\n' >"$FM/config/wake-bus"
+cp -r "$repo/bin" "$FM/bin"; ln -sn "$repo/core" "$FM/core"; printf 'off\n' >"$FM/config/wake-bus"
 export JG_MAIN_HOME=$FM
 fails=0
 check() { if [ "$2" = "$3" ]; then echo "ok: $1"; else printf 'FAIL: %s\n  want: %s\n  got:  %s\n' "$1" "$3" "$2"; fails=$((fails + 1)); fi; }

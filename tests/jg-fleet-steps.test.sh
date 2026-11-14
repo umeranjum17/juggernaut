@@ -15,7 +15,7 @@ now=$(date +%s)
 
 mkhome() {  # <dir>: a lab home with the real hold table
   mkdir -p "$1/state" "$1/data" "$1/config" "$1/core/machines"
-  ln -s "$ROOT/bin" "$1/bin"; ln -s "$ROOT/core/machines/observers" "$1/core/machines/observers"
+  ln -sn "$ROOT/bin" "$1/bin"; ln -sn "$ROOT/core/machines/observers" "$1/core/machines/observers"
   cp -r "$ROOT/core/machines/tables" "$1/core/machines/tables"
 }
 mv_() {  # <log> <age s> <id> <from> <event> <to>

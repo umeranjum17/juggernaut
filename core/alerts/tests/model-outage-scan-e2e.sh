@@ -26,7 +26,7 @@ trap cleanup EXIT
 export HOME=$d/user TMPDIR=$d/tmp
 mkdir -p "$HOME" "$TMPDIR" "$d/fork"
 cp -a "$JG_TEST_FORK/bin" "$d/fork/bin"
-ln -s "$JG_TEST_FORK/core" "$d/fork/core"   # the alert table and the wake bus
+ln -sn "$JG_TEST_FORK/core" "$d/fork/core"   # the alert table and the wake bus
 rm -f "$d/fork/bin/jg-model-outage-lib.sh"
 cat > "$d/fork/bin/jg-backend.sh" <<'FAKE'
 jg_backend_agent_state() { cat "$FAKE_LIVENESS/$4" 2>/dev/null || printf alive; }

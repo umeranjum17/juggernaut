@@ -63,7 +63,7 @@ done
 obs h-open; assert_equals working "$OUT" "an open PR changes nothing"
 obs h-closed; assert_equals "done" "$OUT" "a closed row with a merged PR is not stale"
 # The real reader, in a home it cannot find a task in, gives the same word as the observer.
-R=$T/real; mkdir -p "$R/state" "$R/config"; ln -s "$ROOT/bin" "$R/bin"
+R=$T/real; mkdir -p "$R/state" "$R/config"; ln -sn "$ROOT/bin" "$R/bin"
 want=$(JG_HOME=$R "$ROOT/bin/jg-crew-state.sh" ghost 2>/dev/null | sed -n 's/^state: \([a-z]*\) .*/\1/p')
 OUT=$(JG_HOME=$R bash "$OBS" ghost 2>&1); assert_equals "$want" "$OUT" "observer equals the real jg-crew-state"
 pass "the observer equals jg-crew-state on every fixture state"
@@ -121,7 +121,7 @@ done
 pass "the task table is lint-clean and each state has a golden sentence"
 
 # 4. The fleet view gets a State column only when config/machine-view exists; otherwise its output is unchanged.
-cp "$ROOT/bin/jg-fleet-view.sh" "$H/bin/"; mkdir -p "$H/core"; ln -s "$ROOT/core/machines" "$H/core/machines"
+cp "$ROOT/bin/jg-fleet-view.sh" "$H/bin/"; mkdir -p "$H/core"; ln -sn "$ROOT/core/machines" "$H/core/machines"
 # shellcheck disable=SC2016  # the stand-in expands $JG_HOME when it runs
 printf '#!/usr/bin/env bash\ncat "$JG_HOME/snapshot.json"\n' > "$H/bin/jg-fleet-snapshot.sh"; chmod +x "$H/bin/jg-fleet-snapshot.sh"
 row='endpoint:{exists:true},pr:{url:null},paths:{home:{present:false},worktree:{present:false},report:{present:false}},actions:{watch:"w"},kind:"ship",backend:"tmux",backlog:{repo:"r"}'

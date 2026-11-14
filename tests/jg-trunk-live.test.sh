@@ -29,7 +29,7 @@ fleet_world() {  # <name> [rig]: sets W HOME_D PROJ CODE_ROOT BASE; rig makes th
     git -C "$CODE_ROOT" worktree add -q --detach "$W/$id" "$BASE"; printf '%s\n' "$id" > "$W/$id/.jg-squad-lead-home"
     printf -- '- %s - fixture (home: %s; scope: x; projects: proj; added 2026-11-09)\n' "$id" "$W/$id" >> "$HOME_D/data/squad_leads.md"
   done
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   trunk waiver "$PROJ" --rule owner-rule-test >/dev/null || fail "the Overwatch path must write the waiver"
 }
 
@@ -101,7 +101,7 @@ test_the_registered_check_lands_a_proved_task_without_a_human() {
   local out c
   world auto
   # the check runs the home's own bin, so the fixture home needs the copied bin and a mode the check reads
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   lane a1 one; lane a2 two; rm "$HOME_D/state/a2.status"
   sweep >/dev/null; out=$(sweep)
   [ "$(tip)" = "$(git -C "$PROJ" rev-parse fm/a1)" ] || fail "the check must land the proved task by itself: $out"
@@ -225,7 +225,7 @@ test_a_red_or_unwaived_landing_never_goes_live() {
 test_the_landing_check_cuts_the_next_trunk_once_the_release_merged() {
   local out
   world rolcheck
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   lane k1 one; trunk land k1 >/dev/null 2>&1 || fail "k1 must land"
   trunk verify "$PROJ" >/dev/null 2>&1 || fail "the verify must pass: the release ships the pin it moves"
   trunk word release "$PROJ" "ship it" >/dev/null 2>&1; trunk release "$PROJ" >/dev/null 2>&1 || fail "release must open"
@@ -239,7 +239,7 @@ test_the_landing_check_cuts_the_next_trunk_once_the_release_merged() {
 test_the_watcher_runs_the_landing_check_on_its_fast_tick() {
   local c out rc=0 st
   world outer-watch
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   printf 'off\n' > "$HOME_D/config/wake-bus"
   lane ready one; c=$(git -C "$PROJ" rev-parse fm/ready)
   printf '#!/usr/bin/env bash\nexit 0\n' > "$W/fakebin/tmux"; chmod +x "$W/fakebin/tmux"

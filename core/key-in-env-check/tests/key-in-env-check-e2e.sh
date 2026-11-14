@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2015 # ok/no helpers: the || branch only records a failure
 # key-in-env-check e2e: the real check against a fixture home and real fixture processes
 # (a key-holding parent with child workers in a task worktree, and a key-free worker).
 # Proves hit attribution, first alerting, quiet thresholds, new-name wakes for the
@@ -42,7 +43,7 @@ printf 'worktree=%s\nendpoint_task_id=task-a\n' "$work/wt-a" > "$home/state/task
 export JG_HOME=$home JG_KEY_HOMES=$home
 # The check raises its alert through the home's own alert function, so the fixture home carries the repo's bin and core.
 repo=$(cd "$here/../../.." && pwd)
-cp -r "$repo/bin" "$home/bin"; ln -s "$repo/core" "$home/core"; mkdir -p "$home/config"; printf 'off\n' > "$home/config/wake-bus"
+cp -r "$repo/bin" "$home/bin"; ln -sn "$repo/core" "$home/core"; mkdir -p "$home/config"; printf 'off\n' > "$home/config/wake-bus"
 
 # Fixture trees run under setsid with an empty environment so nothing real (the live fleet's
 # keys, the test shell's own parents) is picked up; JG_KEY_TREES scopes the scan to them.
@@ -133,6 +134,6 @@ woke && ok "finding after clean scan alerts again" || no "finding after clean sc
 # canary / rotated values and full hashes are nowhere in anything the check wrote or printed
 if grep -rqF -- "$canary" "$work/out" "$work/err" "$home" 2>/dev/null; then no "canary value leaked"; else ok "canary value absent from output, errors, incident file and state"; fi
 if grep -rqF -- "$rotated" "$work/out" "$work/err" "$home" 2>/dev/null; then no "rotated key value leaked"; else ok "rotated key value absent from output, errors, incident file and state"; fi
-kill -0 "${pids[0]}" 2>/dev/null && ok "no process signalled" || no "fixture daemon died"
+if kill -0 "${pids[0]}" 2>/dev/null; then ok "no process signalled"; else no "fixture daemon died"; fi
 
 exit "$fail"

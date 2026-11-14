@@ -10,7 +10,7 @@ w=$(mktemp -d "${TMPDIR:-/tmp}/jg-lane-place.XXXXXX") || exit 1
 trap 'rm -rf -- "$w"' EXIT
 H=$w/home; R=$w/root
 mkdir -p "$H/state" "$H/config" "$R/bin"
-ln -s "$here/core" "$R/core"
+ln -sn "$here/core" "$R/core"
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> %s/seed.calls\n' "$w" > "$R/bin/jg-remote-home-seed.sh"; chmod +x "$R/bin/jg-remote-home-seed.sh"
 printf 'MemAvailable: 33554432 kB\n' > "$w/meminfo"
 export JG_FLEET_CORES=32 JG_FLEET_MEMINFO=$w/meminfo JG_ROOT_OVERRIDE=$R

@@ -10,7 +10,7 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 w=$(mktemp -d "${TMPDIR:-/tmp}/jg-fleet-budget.XXXXXX") || exit 1
 trap 'rm -rf -- "$w"' EXIT
 H=$w/home; mkdir -p "$H/state" "$H/config" "$H/core" "$w/bin" "$w/a1"
-ln -s "$here/core/lane-scale" "$H/core/lane-scale"
+ln -sn "$here/core/lane-scale" "$H/core/lane-scale"
 echo '{"accounts":[{"id":"a1","provider":"claude","name":"One","folder":"'"$w/a1"'"}]}' > "$w/registry.json"
 cat > "$w/bin/quota-axi" <<'S'
 #!/usr/bin/env bash

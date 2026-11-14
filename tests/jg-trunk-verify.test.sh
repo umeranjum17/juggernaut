@@ -268,7 +268,7 @@ test_a_verify_over_the_wall_clock_budget_with_no_failed_test_moves_the_pin_and_r
 test_a_red_with_no_failed_test_never_pins_and_a_ready_lane_lands_on_it() {
   local out top k pin
   world nostall; rig
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   lane s1 'exit 0' t/s1.test.sh; trunk land s1 >/dev/null 2>&1 || fail "s1 must land"; top=$(tip)
   [ "$(cat "$HOME_D/state/trunk-green-proj")" != "$top" ] || fail "a landing does not move the green pin"
   pin=$(cat "$HOME_D/state/trunk-green-proj")
@@ -310,7 +310,7 @@ test_a_red_with_no_failed_test_never_pins_and_a_ready_lane_lands_on_it() {
 test_the_tick_verifies_a_landed_pair_that_breaks_together_and_the_pin_moves_only_on_green() {
   local base a b tipc q
   world linered; rig
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   q="$HOME_D/state/.wake-queue"
   # The landing gate is quick and per change (true); the verify runs the whole suite, whose one test fails when both files exist.
   printf 'gate-full=true\ngate-verify=bash %s/rig.sh --all\n' "$W" >> "$HOME_D/config/trunk-policy"
@@ -344,7 +344,7 @@ test_the_tick_verifies_a_landed_pair_that_breaks_together_and_the_pin_moves_only
 test_no_green_for_15_minutes_raises_one_alarm_not_two() {
   local out green q held rung_at old_pin
   world nogreen
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   q="$HOME_D/state/.wake-queue"; green=$(cat "$HOME_D/state/trunk-green-proj")
   assert_contains "$(trunk green-alarm "$PROJ" 2>&1)" "is green at ${green:0:12}" "a trunk at its green pin raises nothing"
   lane a1 one; trunk land a1 >/dev/null 2>&1 || fail "a1 must land"
@@ -394,7 +394,7 @@ test_no_green_for_15_minutes_raises_one_alarm_not_two() {
 test_the_nightly_run_writes_its_report_files_one_flake_ticket_and_traces_a_red_to_its_commit() {
   local base b day report q out runs
   world nightly; rig
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   q="$HOME_D/state/.wake-queue"; day=$(date -u +%F); report="$HOME_D/data/trunk/nightly-proj-$day.md"
   printf 'gate-full=true\ngate-verify=false\ngate-nightly=bash %s/rig.sh --all\nnightly-hour=0\n' "$W" >> "$HOME_D/config/trunk-policy"
   # The day's first commit is two days old; the landing gate is quick, and the verify gate (false) must not be the one the nightly runs.
@@ -449,7 +449,7 @@ SH
 test_a_journey_its_proof_did_not_select_is_charged_to_its_commit_and_counted_as_a_miss() {
   local base b day report out
   world nightmiss; rig; dd_stub
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   day=$(date -u +%F); report="$HOME_D/data/trunk/nightly-proj-$day.md"
   printf 'gate-full=true\ngate-verify=false\ngate-nightly=bash %s/rig.sh --all\nnightly-hour=0\n' "$W" >> "$HOME_D/config/trunk-policy"
   GIT_COMMITTER_DATE=$(date -u -d '3 days ago' +%FT%TZ) lane j0 'journeys:

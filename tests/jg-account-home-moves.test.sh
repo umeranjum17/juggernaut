@@ -9,7 +9,7 @@ T=$(jg_test_tmproot jg-account-home-moves)
 H=$T/home; S=$H/state; MOVES=$H/data/machine-moves.log; SHADOW=$H/data/machine-shadow.log
 export JG_HOME=$H JG_STATE_OVERRIDE=$S JG_DATA_OVERRIDE=$H/data HOME=$T/user
 mkdir -p "$H/data" "$S" "$H/core" "$HOME" "$T/f1" "$T/f2"
-ln -s "$ROOT/bin" "$H/bin"; ln -s "$ROOT/core/machines" "$H/core/machines"; ln -s "$ROOT/core/claude-accounts" "$H/core/claude-accounts"
+ln -sn "$ROOT/bin" "$H/bin"; ln -sn "$ROOT/core/machines" "$H/core/machines"; ln -sn "$ROOT/core/claude-accounts" "$H/core/claude-accounts"
 PICK=$H/core/claude-accounts/bin/claude-accounts-pick; QUOTA=$H/core/claude-accounts/bin/claude-accounts-quota.sh
 export JG_CLAUDE_ACCOUNTS_REGISTRY=$T/registry.json
 printf '{"accounts":[{"provider":"claude","id":"a1","name":"one","folder":"%s"},{"provider":"claude","id":"a2","name":"two","folder":"%s"}]}\n' "$T/f1" "$T/f2" > "$JG_CLAUDE_ACCOUNTS_REGISTRY"

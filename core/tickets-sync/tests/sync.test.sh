@@ -21,8 +21,8 @@ fork=${JG_TEST_FORK:-$(cd "$root/.." && pwd -P)}
 export HOME=$work/user XDG_DATA_HOME=$work/xdg SIGN_OFF_HOME=$work/signoff
 export JG_HOME=$work/main
 mkdir -p "$HOME" "$JG_HOME"/{data,config,state} "$work/parked/data"
-ln -s "$fork/bin" "$JG_HOME/bin"
-ln -s "$fork/core" "$JG_HOME/core"
+ln -sn "$fork/bin" "$JG_HOME/bin"
+ln -sn "$fork/core" "$JG_HOME/core"
 printf '{"schema":2,"items":[]}\n' > "$work/board.json"
 printf '%s\n' "$work/board.json" > "$JG_HOME/config/fleet-board"
 # The local trunk has cut one release, trunk-v3; v1 is a PR-era version no trunk cut.

@@ -57,7 +57,7 @@ test_a_resolution_that_breaks_a_journey_ends_the_run_returned() {
 test_a_runner_that_stops_three_times_waits_for_the_lead_and_the_worker_is_not_told() {
   local c out _ m
   world retest-fault; m=$HOME_D/data/jg-trunk-landing
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   resolver merge "$MERGE_ALL"; retester dead 'echo "runner lost its model"; exit 3'
   conflicting_pair f; c=$(git -C "$PROJ" rev-parse fm/f-b)
   out=

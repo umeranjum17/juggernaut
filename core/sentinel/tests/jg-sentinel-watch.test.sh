@@ -17,7 +17,7 @@ eq() { [ "$1" = "$2" ] || fail "$3: wanted [$2], got [$1]"; pass "$3"; }
 
 H=$d/home S=$H/state
 mkdir -p "$S" "$H/data" "$H/config"
-ln -s "$REPO/bin" "$H/bin"; ln -s "$REPO/core" "$H/core"
+ln -sn "$REPO/bin" "$H/bin"; ln -sn "$REPO/core" "$H/core"
 # The stub watcher start: records the call, and beats only when the lab says it holds.
 cat > "$d/start" <<SH
 #!/usr/bin/env bash

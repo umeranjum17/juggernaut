@@ -21,7 +21,7 @@ landed() {  # <id>...: each lane lands, then a verify moves the green pin to it
 test_a_red_release_is_recorded_and_filed_once() {
   local out second calls pin
   world cw
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   # shellcheck disable=SC2016 # the stand-in script expands its own variables
   printf '#!/usr/bin/env bash\ncat "%s/pr-checks" 2>/dev/null || true\n' "$W" > "$HOME_D/bin/jg-pr-state.sh"; chmod +x "$HOME_D/bin/jg-pr-state.sh"
   landed c1 c2

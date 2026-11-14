@@ -488,7 +488,7 @@ test_the_fleet_moves_past_a_home_with_an_old_fault() {
 trunk_world() {  # <name>: sets TW TH PROJ PROJ2 MAINCODE; a trunk whose tip carries the real bin/
   TW="$TMP_ROOT/$1"; TH="$TW/home"; PROJ="$TH/projects/proj"; PROJ2="$TH/projects/other"
   mkdir -p "$TH/state" "$TH/data" "$TH/config" "$TW/root"
-  cp -r "$ROOT/bin" "$TW/root/bin"; ln -s "$ROOT/core" "$TW/root/core"; ln -s "$ROOT/policy" "$TW/root/policy"
+  cp -r "$ROOT/bin" "$TW/root/bin"; ln -sn "$ROOT/core" "$TW/root/core"; ln -sn "$ROOT/policy" "$TW/root/policy"
   printf '#!/usr/bin/env bash\necho "the home own stale jg-update ran" >&2\nexit 99\n' > "$TW/root/bin/jg-update.sh"
   printf -- '- proj [local-trunk] - fixture (added 2026-11-08)\n- other [local-trunk] - fixture (added 2026-11-08)\n' > "$TH/data/projects.md"
   local p

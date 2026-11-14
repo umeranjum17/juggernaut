@@ -24,7 +24,7 @@ GIT_ID=(-c user.name=t -c user.email=t@example.invalid)
 world() {
   W="$TMP_ROOT/$1"; HOME_D="$W/home"; PROJ="$HOME_D/projects/proj"; HOMEC="$W/homecode"
   mkdir -p "$W/root" "$HOME_D/state" "$HOME_D/data" "$HOME_D/config"
-  cp -r "$ROOT/bin" "$W/root/bin"; ln -s "$ROOT/core" "$W/root/core"; ln -s "$ROOT/policy" "$W/root/policy"
+  cp -r "$ROOT/bin" "$W/root/bin"; ln -sn "$ROOT/core" "$W/root/core"; ln -sn "$ROOT/policy" "$W/root/policy"
   # shellcheck disable=SC2016 # the stub body is written verbatim
   printf '#!/usr/bin/env bash\ncase "$1" in blocking) exit 1 ;; *) exit 0 ;; esac\n' > "$W/root/bin/jg-captain-hold.sh"
   chmod +x "$W/root/bin/jg-captain-hold.sh"

@@ -22,7 +22,7 @@ mkdir -p "$w/config" "$w/folder-acct1" "$w/folder-acct2" "$w/bin" "$w/empty" "$w
 printf 'state=%s\ncommand=%s\n' "$w/pool" "$w/bin/byokit-accounts" > "$w/config/account-pool"
 printf '# a comment\n\ncommand=/usr/bin/byokit-accounts\n' > "$w/cfg-bad/account-pool"
 ln -s "$w/missing" "$w/cfg-link/account-pool"
-ln -s "$w/config/account-pool" "$w/cfg-ok/account-pool"
+ln -sn "$w/config/account-pool" "$w/cfg-ok/account-pool"
 printf 'jg_run_timed() { shift; "$@"; }\n' > "$w/bin/jg-timeout-lib.sh"
 # The stub pool: pick answers TEST_PICK (FOLDER = acct1's folder), or TEST_PICK_RESTED once an account
 # rests, else acct1 until it rests, then acct2, or the --prefer id, in the tool's own store variable;

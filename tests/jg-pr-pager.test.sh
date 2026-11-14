@@ -22,7 +22,7 @@ check() { if [ "$2" = "$3" ]; then say "ok: $1"; else say "FAIL: $1 (want: $3, g
 # A home whose bin is the real bin, except that bin/jg-captain-say.sh records any call.
 mkhome() {  # <dir>
   mkdir -p "$1/state" "$1/data" "$1/config" "$1/bin" "$1/projects"
-  ln -s "$ROOT/core" "$1/core"
+  ln -sn "$ROOT/core" "$1/core"
   for f in "$ROOT"/bin/*; do ln -s "$f" "$1/bin/${f##*/}"; done
   rm "$1/bin/jg-captain-say.sh"; printf '#!/bin/sh\necho "$@" >> %s\n' "$d/captain-say.log" > "$1/bin/jg-captain-say.sh"; chmod +x "$1/bin/jg-captain-say.sh"
   : > "$1/data/projects.md"; printf 'release-after-commits=3\nrelease-after-hours=48\n' > "$1/config/trunk-policy"

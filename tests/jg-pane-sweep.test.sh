@@ -22,7 +22,7 @@ REAL_HERDR=$(command -v herdr); ORIG_PATH=$PATH
 TMP=$(mktemp -d "$(cd "${TMPDIR:-/tmp}" && pwd -P)/jg-pane-sweep.XXXXXX")
 H=$TMP/home; FAKEBIN=$TMP/fakebin
 mkdir -p "$FAKEBIN" "$H/state" "$H/config" "$H/data"
-ln -s "$ROOT/bin" "$H/bin"; ln -s "$ROOT/core" "$H/core"
+ln -sn "$ROOT/bin" "$H/bin"; ln -sn "$ROOT/core" "$H/core"
 printf '%s\n' herdr > "$H/config/backend"
 export JG_HERDR_LAB_STATE_DIR=$TMP/lab-state JG_HERDR_LAB_FLEET_HOME=$HOME
 mkdir -m 700 "$JG_HERDR_LAB_STATE_DIR"

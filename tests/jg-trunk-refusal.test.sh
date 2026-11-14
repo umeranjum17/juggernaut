@@ -10,7 +10,7 @@ sends() { awk -F'\t' -v i="$1" '$1 == i { n++ } END { print n + 0 }' "$W/send-ca
 test_a_refusal_reaches_the_lanes_worker_and_never_sits_silent() {
   local out gone h f real_backlog=0
   world reach
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   # An incomplete proof: the worker is steered with the refusal text, and the done itself names what to run.
   lane r1 one; rm "$HOME_D/data/r1/merge-card.json"
   out=$(done_gate r1) && fail "a done with no merge-card evidence must be refused: $out"

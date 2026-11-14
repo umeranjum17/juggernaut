@@ -8,7 +8,7 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 w=$(mktemp -d "${TMPDIR:-/tmp}/jg-lane-machines.XXXXXX") || exit 1
 trap 'rm -rf -- "$w"' EXIT
 H=$w/home; mkdir -p "$H/state" "$H/config" "$H/core" "$w/ps"
-ln -s "$here/core/lane-scale" "$H/core/lane-scale"
+ln -sn "$here/core/lane-scale" "$H/core/lane-scale"
 printf 'MemAvailable:   33554432 kB\n' > "$w/meminfo"
 fails=0; is() { if [ "$2" = "$3" ]; then echo "ok - $1"; else echo "not ok - $1: got [$2], want [$3]"; fails=$((fails + 1)); fi; }
 # A fixture process list for the host and for each machine: <n> sessions of 1 core each.

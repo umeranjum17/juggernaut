@@ -196,7 +196,7 @@ test_a_landing_rebases_the_lane_by_itself() {
 test_done_and_landing_both_refuse_before_starting_on_any_missing_proof_input() {
   local part out id=1 before head
   world proofgate
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   lane ok one a.txt
   out=$(done_gate ok) || fail "a done with complete matching-head proof must be accepted: $out"
   trunk proof ok >/dev/null 2>&1 || fail "the landing pre-check must accept complete matching-head proof"
@@ -265,7 +265,7 @@ test_a_proof_gap_names_the_reason_merge_card_refused_not_a_missing_run() {
 test_the_check_starts_no_landing_until_the_whole_proof_is_there() {
   local out
   world gatecheck
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   lane g1 one; rm "$HOME_D/data/g1/merge-card.json"
   out=$(sweep); assert_contains "$out" "g1 waits to land" "an incomplete proof must be reported by the check"
   assert_contains "$out" "no approved merge-card evidence" "the report names the missing input"
@@ -282,7 +282,7 @@ test_the_check_starts_no_landing_until_the_whole_proof_is_there() {
 test_three_lanes_land_in_order_a_red_one_is_refused_and_no_whole_suite_runs_per_landing() {
   local base rc out sha n
   world journey; rig; base=$(tip)
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   # The landing gate is the fast check (work.txt). The whole suite is red the way trunk-v3 was at 9f5bbb3af0d1: every script
   # passed and one shard ran over its wall-clock budget. A landing never runs it, so it never stops the next landing.
   printf '#!/usr/bin/env bash\necho run >> %s/suite-runs\necho "JG_TEST_AGGREGATE lanes=8 total=220 failed=0"\necho "jg-test-run: wall-clock budget exceeded: 606087ms > 600000ms" >&2\nexit 1\n' "$W" > "$W/suite-timeout.sh"
@@ -359,7 +359,7 @@ test_a_red_verify_finds_by_hand_is_reverted_and_takes_the_green_pin_back() {
 test_a_green_pin_left_behind_moves_to_the_next_landing_and_the_landing_check_does_not_grow() {
   local base i head row first ran old out
   world stalepin; rig; base=$(tip)
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   # The landing gate judges the changed scripts (as the fast required set does); verify judges every change since the release base.
   printf 'gate-full=bash %s/rig.sh $(git diff --name-only HEAD^ -- t)
 gate-verify=echo run >> %s/suite-runs; bash %s/rig.sh $(git diff --name-only HEAD^ -- t)
@@ -436,7 +436,7 @@ test_every_landing_writes_its_latency_row_from_the_done_epoch_it_recorded() {
 test_landing_deadline_spans_both_gates() {
   local head before state
   world deadline
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   printf 'gate-lint=sleep 2\ngate-full=sleep 2\nlanding-gate=tests\nflush-at-ready=1\n' > "$HOME_D/config/trunk-policy"
   lane limit one work.txt
   before=$(tip); head=$(git -C "$PROJ" rev-parse fm/limit)

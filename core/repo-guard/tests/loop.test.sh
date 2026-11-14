@@ -14,7 +14,7 @@ check() { if [ "$2" = "$3" ]; then echo "ok: $1"; else printf 'FAIL: %s\n  want:
 printf '#!/usr/bin/env bash\nexec gh "$@"\n' >"$d/pkg/gh"
 printf '#!/usr/bin/env bash\necho "real gh $*"\n' >"$d/other/gh"
 chmod +x "$d/pkg/gh" "$d/other/gh"
-ln -s "$d/pkg/gh" "$HOME/.local/bin/gh"
+ln -sn "$d/pkg/gh" "$HOME/.local/bin/gh"
 PATH=$HOME/.local/bin:$PATH "$SRC/wiring.sh" >/dev/null
 # The caller's PATH holds the shim folder first and no other gh (the host may have one), so only the fixture's gh exists.
 mkdir -p "$d/tools"

@@ -23,7 +23,7 @@ rebase_lane() { git -C "$W/lanes/$1" -c user.name=t -c user.email=t@example.inva
 
 test_a_proved_lane_rebased_with_no_change_keeps_its_proof_and_lands() {
   local old new out rc=0
-  world same; cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  world same; cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   lane s1 'the change' s1.txt; old=$(git -C "$PROJ" rev-parse fm/s1)
   # The trunk moves under the proved lane: another lane lands on another file.
   lane s0 'other work' s0.txt; trunk land s0 >/dev/null 2>&1 || fail "s0 must land"
@@ -44,7 +44,7 @@ test_a_proved_lane_rebased_with_no_change_keeps_its_proof_and_lands() {
 
 test_a_lane_whose_change_differs_after_the_rebase_is_refused_and_named() {
   local out rc=0
-  world differs; cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  world differs; cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   # The seed's shape: the proved commit changes two files; the conflict fix rebases it and drops one file's hunk.
   lane d1 'the kept part' d1.txt
   commit_in "$W/lanes/d1" dropped.txt 'the dropped hunk' 'ticket d1 (second part)'

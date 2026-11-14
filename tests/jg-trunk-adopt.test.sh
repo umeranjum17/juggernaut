@@ -61,7 +61,7 @@ test_adopt_tip_ends_a_moved_trunk_with_a_record_and_loses_no_landed_commit() {
 test_landing_adopts_forward_and_refuses_rewind() {
   local old new out
   world auto-adopt
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   old=$(tip)
   lane first one first.txt; trunk land first >/dev/null 2>&1 || fail "first lane must land"
   new=$(tip)
@@ -82,7 +82,7 @@ test_landing_adopts_forward_and_refuses_rewind() {
   assert_contains "$out" 'something else moved it' 'rewind must alarm'
   [ "$(cat "$HOME_D/state/trunk-tip-proj")" = "$old" ] || fail "rewind must not change the record"
   world auto-release
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   old=$(tip); lane released one release.txt; trunk land released >/dev/null 2>&1 || fail "released lane must land"
   new=$(tip); printf '%s\n' "$old" > "$HOME_D/state/trunk-tip-proj"
   printf '%s\n' "$new" > "$HOME_D/state/trunk-released-proj"

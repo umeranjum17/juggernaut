@@ -20,7 +20,7 @@ test_a_landing_and_the_landers_revert_write_provenance_on_the_ticket() {
   local c r msg
   world prov; rig; core_beads_home "$ROOT" "$HOME_D"
   cp "$ROOT/bin/jg-backlog.sh" "$W/root/bin/jg-backlog.sh"
-  ln -sf "$ROOT/toolchain.versions" "$W/root/toolchain.versions"
+  ln -sfn "$ROOT/toolchain.versions" "$W/root/toolchain.versions"
   printf 'gate-full=! grep -q BAD work.txt\ngate-verify=bash %s/rig.sh --all\n' "$W" >> "$HOME_D/config/trunk-policy"
   JG_HOME=$HOME_D "$ROOT/bin/jg-backlog.sh" add jg-j9 "[feature] fixture j9" --priority 2 --body why >/dev/null || fail "file the ticket"
   bd update jg-j9 --set-metadata task=j9 >/dev/null || fail "join the ticket to its task name"

@@ -11,7 +11,7 @@
 test_two_judges_that_agree_raise_nothing_and_two_that_differ_raise_judge_split() {
   local c tree led alerts out
   world judge; rig
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   # Both gates run the same scripts; the landing gate runs them at the landing, the verify gate runs them whole.
   printf 'gate-full=bash %s/rig.sh --all\ngate-verify=bash %s/rig.sh --all\ngate-slots=1\n' "$W" "$W" >> "$HOME_D/config/trunk-policy"
   led="$HOME_D/data/trunk/judge-proj.tsv"; alerts="$HOME_D/state/alerts"

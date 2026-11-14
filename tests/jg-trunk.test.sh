@@ -119,7 +119,7 @@ test_a_home_with_other_shas_is_contained_only_when_the_trunk_took_its_changes() 
 test_admission_is_shared_by_manual_and_automatic_requests() {
   local c out rc=0 first_log
   world admission
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   lane once BAD; c=$(git -C "$PROJ" rev-parse fm/once)
   printf 'gate-full=echo first >> "%s/calls"; while [ ! -e "%s/release" ]; do sleep 0.1; done; echo original; exit 1\n' "$W" "$W" >> "$HOME_D/config/trunk-policy"
   JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D" >/dev/null
@@ -468,7 +468,7 @@ test_the_old_trunk_is_cleaned_up_unforced_and_only_when_its_work_is_carried() {
 test_l3_environment_wait_is_not_retried_in_batches() {
   local h n
   world l3-batch
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   lane b1 good b1.txt; lane b2 good b2.txt
   printf 'gate-full=echo attempt >> "%s/calls"; echo ENV: missing-fixture; exit 1\n' "$W" >> "$HOME_D/config/trunk-policy"
   sweep >/dev/null; sleep 1
@@ -498,7 +498,7 @@ test_l3_environment_facts_retirement_and_self_init() {
   [ -n "$(find "$HOME_D/data/jg-trunk-landing/retired" -name 'facts.*.state' -print -quit)" ] || fail "the old admission key must retire"
 
   world l3-retire
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   mkdir -p "$HOME_D/data/jg-trunk-landing"
   lane stale good; old=$(git -C "$PROJ" rev-parse fm/stale)
   printf 'final REFUSED: trunk moved\n' > "$HOME_D/data/jg-trunk-landing/stale.$old.state"
@@ -509,7 +509,7 @@ test_l3_environment_facts_retirement_and_self_init() {
   [ -f "$HOME_D/data/jg-trunk-landing/retired/stale.$old.state" ] || fail "superseded final must be retained in retired"
 
   world l3-init
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   other="$HOME_D/projects/other"; jg_git_init_commit "$other"
   printf '%s\n' '- other [local-trunk] - fixture' >> "$HOME_D/data/projects.md"
   out=$(sweep)

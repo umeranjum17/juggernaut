@@ -25,5 +25,5 @@ core_beads_home() {
   printf '%s\n' "$store/.beads" > "$home/config/beads-dir"
   : > "$home/config/backlog-intake-loose"
   case ":$PATH:" in *":$fork/bin:"*) ;; *) PATH=$fork/bin:$PATH; export PATH ;; esac
-  [ -e "$home/toolchain.versions" ] || ln -s "$fork/toolchain.versions" "$home/toolchain.versions"
+  [ -e "$home/toolchain.versions" ] || ln -sn "$fork/toolchain.versions" "$home/toolchain.versions"
 }

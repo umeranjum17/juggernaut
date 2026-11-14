@@ -147,7 +147,7 @@ mkdir -p "$FAKEBIN" "$LABROOT/treehouse" "$LABHOME/.claude"
 wire_treehouse_root() {  # <repo-root>
   printf 'root = "%s"\n' "$LABROOT/treehouse" > "$1/treehouse.toml"
 }
-ln -s "$CRED_HOME/.claude/.credentials.json" "$LABHOME/.claude/.credentials.json"
+ln -sn "$CRED_HOME/.claude/.credentials.json" "$LABHOME/.claude/.credentials.json"
 "$ROOT/bin/jg-live-lab.sh" claude-config "$LABHOME" >/dev/null || fail "cannot seed the lab's own Claude config"
 printf '[user]\n\tname = Umer\n\temail = umer@example.invalid\n' > "$LABHOME/.gitconfig"
 

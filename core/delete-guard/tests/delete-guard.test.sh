@@ -97,7 +97,7 @@ case "$out" in *"alert security (P0) at rung 4 for owner: delete-guard-"*"delete
 
 # Replay of the fixture log, one sweep per row: only the 14:22 literal /home/you/scratch-test block wakes; the
 # build probes, variable targets and that task's $d repeat 15 s later are counted.
-mkdir -p "$T/replay/state"; ln -s "$T/fm/bin" "$T/replay/bin"; ln -s "$T/fm/core" "$T/replay/core"; mkdir -p "$T/replay/config"; cp "$T/fm/config/wake-bus" "$T/replay/config/"; wakes=()
+mkdir -p "$T/replay/state"; ln -sn "$T/fm/bin" "$T/replay/bin"; ln -sn "$T/fm/core" "$T/replay/core"; mkdir -p "$T/replay/config"; cp "$T/fm/config/wake-bus" "$T/replay/config/"; wakes=()
 while IFS= read -r row; do
   printf '%s\n' "$row" >> "$T/replay/state/delete-guard.log"
   HOME=/home/you "$T/home/.local/share/jg-delete-guard/check.sh" "$T/replay" >/dev/null

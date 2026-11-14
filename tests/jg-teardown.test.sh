@@ -4855,7 +4855,7 @@ prepare_teardown_source_copy() {  # <case-dir>
       ln -s "$f" "$dest/$base"
     fi
   done
-  ln -s "$ROOT/toolchain.versions" "$case_dir/test-root/toolchain.versions"
+  ln -sn "$ROOT/toolchain.versions" "$case_dir/test-root/toolchain.versions"
   cat > "$case_dir/fakebin/treehouse" <<SH
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$case_dir/treehouse.log"

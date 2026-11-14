@@ -21,7 +21,7 @@ landed() { local id out; for id; do lane "$id" "$id"; out=$(trunk land "$id" 2>&
 test_ci_results_reach_the_trunk() {
   local out c1 c2 c3 c4 pin rows
   world ci
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   git -C "$PROJ" remote set-url origin https://github.com/o/r.git  # the forge is read for this repository
   # shellcheck disable=SC2016 # the stand-in script expands its own variables
   printf '#!/usr/bin/env bash\n[ "$1" = api ] && [[ "$2" == repos/o/r/actions/runs?branch=* ]] || exit 1\n[ -f "%s/forge-down" ] && exit 1\njq -r "$4" "%s/runs.json"\n' "$W" "$W" > "$W/fakebin/forge"

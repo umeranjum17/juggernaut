@@ -26,7 +26,7 @@ work=$(mktemp -d "$evidence/stage-board.XXXXXX")
 export HOME=$work/user XDG_DATA_HOME=$work/xdg SIGN_OFF_HOME=$work/signoff
 export JG_HOME=$work/main TMPDIR=$work/tmp
 mkdir -p "$HOME" "$JG_HOME"/{data,config,state,projects/alpha} "$TMPDIR"
-ln -s "$fork/bin" "$JG_HOME/bin"
+ln -sn "$fork/bin" "$JG_HOME/bin"
 printf '{"schema":2,"items":[]}\n' > "$work/board.json"
 printf '%s\n' "$work/board.json" > "$JG_HOME/config/fleet-board"
 mkdir -p "$work/store"

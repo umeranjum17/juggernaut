@@ -16,7 +16,7 @@
 
 # shellcheck disable=SC2016 # the recorder body is written out verbatim and expands when it runs
 rig_send() {  # the steer recorder in the home's own bin, which the landing check calls
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   cat > "$HOME_D/bin/jg-send.sh" <<SH
 #!/usr/bin/env bash
 t=\$1; shift

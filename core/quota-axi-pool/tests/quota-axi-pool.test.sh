@@ -125,7 +125,7 @@ ih=$(mktemp -d "${TMPDIR:-/tmp}/quota-axi-pool-install.XXXXXX") || exit 1
 mkdir -p "$ih/.local/bin" "$ih/real"
 printf '#!/bin/sh\nprintf upstream-ok\n' >"$ih/real/quota-axi"
 chmod +x "$ih/real/quota-axi"
-ln -s "$ih/real/quota-axi" "$ih/.local/bin/quota-axi"
+ln -sn "$ih/real/quota-axi" "$ih/.local/bin/quota-axi"
 orig_target=$(readlink -- "$ih/.local/bin/quota-axi")
 orig_resolved=$(readlink -f "$ih/.local/bin/quota-axi")
 # Refuse when no upstream (empty HOME bin, no PATH hit).

@@ -166,7 +166,7 @@ check "a path that is not a directory is refused" "$(iso "$git_lab/none" | grep 
 # A home whose bin/ is a symlink to a checkout (the session-start suite's fake root, a relocated home)
 # builds from the checkout the link points into, not from a core/ the link's parent lacks.
 mkdir -p "$lab/linked/root"
-ln -s "$ROOT/bin" "$lab/linked/root/bin"
+ln -sn "$ROOT/bin" "$lab/linked/root/bin"
 check "a symlinked bin/ still builds the core from the real checkout" "$(JG_STATE_OVERRIDE=$lab/linked/state "$lab/linked/root/bin/jg-spawn-core.sh" model-flag claude sonnet 2>&1)" "--model 'sonnet' "
 
 # The dispatcher never turns a core that cannot run into an answer.

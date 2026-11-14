@@ -113,7 +113,7 @@ pass "a legal move adds no shadow line, an illegal move adds one"
 # A watcher alive beside the tick changes nothing: one landing run, not two.
 tick_world() {  # <name>: a fixture home that is its own checkout, a stub Herdr with no server, and the wake queue on files
   world "$1"
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   printf 'off\n' > "$HOME_D/config/wake-bus"
   # shellcheck disable=SC2016 # the stub expands its own arguments
   printf '#!/usr/bin/env bash\ncase " $* " in *" status "*) echo %s ;; *) exit 1 ;; esac\n' "'{\"server\":{\"running\":false}}'" > "$W/fakebin/herdr"

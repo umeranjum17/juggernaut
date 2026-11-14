@@ -13,8 +13,8 @@ AXI="$ROOT/bin/juggernaut-axi"
 T=$(jg_test_tmproot jg-fleet-status)
 H=$T/home
 mkdir -p "$H/state/alerts" "$H/data" "$H/config" "$H/core/machines"
-ln -s "$ROOT/bin" "$H/bin"
-ln -s "$ROOT/core/machines/observers" "$H/core/machines/observers"
+ln -sn "$ROOT/bin" "$H/bin"
+ln -sn "$ROOT/core/machines/observers" "$H/core/machines/observers"
 cp -r "$ROOT/core/machines/tables" "$H/core/machines/tables"
 export JG_HOME=$H
 unset JG_STATE_OVERRIDE JG_DATA_OVERRIDE JG_CONFIG_OVERRIDE

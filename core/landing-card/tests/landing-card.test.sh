@@ -25,7 +25,7 @@ unset GIT_CONFIG_COUNT
 mkdir -p "$HOME" "$d/board"; git config --global user.email t@t; git config --global user.name t; git config --global init.defaultBranch trunk
 FM=$d/fm; P=$FM/projects/proj; BOARD=$d/board/decisions.json
 mkdir -p "$FM/state" "$FM/data" "$FM/config" "$FM/bin" "$FM/core" "$P"
-cp "$SRC/../../bin/"jg-*.sh "$FM/bin/"; ln -s "$SRC/../machines" "$FM/core/machines"
+cp "$SRC/../../bin/"jg-*.sh "$FM/bin/"; ln -sn "$SRC/../machines" "$FM/core/machines"
 (cd "$d/board" && sign-off-axi init >/dev/null 2>&1)
 printf "#!/bin/sh\nexec merge-card post --board '%s' \"\$@\"\n" "$BOARD" > "$FM/config/post-merge"
 git -C "$P" init -q
@@ -108,7 +108,7 @@ if XDG_DATA_HOME=$d/share "$SRC/wiring.sh" "$FM" > "$d/wire" 2>&1; then
 else say "FAIL: e: wiring: $(cat "$d/wire")"; fails=$((fails + 1)); fi
 # h) the backfill: a second home with three old landings on two days and no marker.
 FM2=$d/fm2; mkdir -p "$FM2/state" "$FM2/data" "$FM2/config" "$FM2/bin" "$FM2/core"
-cp "$FM/bin/"jg-*.sh "$FM2/bin/"; ln -s "$SRC/../machines" "$FM2/core/machines"; ln -s "$FM/projects" "$FM2/projects"; cp "$FM/config/post-merge" "$FM2/config/"
+cp "$FM/bin/"jg-*.sh "$FM2/bin/"; ln -sn "$SRC/../machines" "$FM2/core/machines"; ln -sn "$FM/projects" "$FM2/projects"; cp "$FM/config/post-merge" "$FM2/config/"
 printf 'one\tproj\t%s\t1793940800\tfull\ntwo\tproj\t%s\t1793940900\tfull-tip-red\nthree\tproj\t%s\t1794100000\tfull\n' "$c1" "$c2" "$c3" > "$FM2/data/trunk-landings.tsv"
 board_before=$(cards | jq length); summaries() { sign-off-axi list "$BOARD" --json --full | jq -r '[.decisions[] | select(.key | startswith("landings-")) | .key] | sort | join(" ")'; }
 check "h: the first run posts one summary per old day and no landing card" "$("$SRC/landing-card.sh" run "$FM2")" 'landing-card: posted 2, 0 already on the board'

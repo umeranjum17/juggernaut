@@ -54,7 +54,7 @@ settle() {  # wait, without the sweep's short bound, until no landing is running
 test_a_refusal_the_machine_caused_is_retried_after_a_backoff_and_never_forgotten() {
   local c out _
   world retry
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   # r1: the gate fails once on a full temp directory, then passes.
   printf 'gate-full=echo run >> "%s/r1-runs"; if [ "$(wc -l < "%s/r1-runs")" = 1 ]; then echo "cat: write error: Disk quota exceeded"; exit 1; fi; exit 0\n' "$W" "$W" >> "$HOME_D/config/trunk-policy"
   lane r1 one; c=$(git -C "$PROJ" rev-parse fm/r1)
@@ -86,7 +86,7 @@ chained_start() { JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/tru
 test_a_wait_whose_reason_cleared_lands_while_the_check_finds_the_trunk_busy() {
   local m w1 w2 n1 busy other
   world wait-cleared; m=$HOME_D/data/jg-trunk-landing
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   # w1, marked land-next, is refused in away mode and waits.
   : > "$HOME_D/state/.afk"
   lane w1 one; w1=$(git -C "$PROJ" rev-parse fm/w1); : > "$HOME_D/state/w1.land-next"

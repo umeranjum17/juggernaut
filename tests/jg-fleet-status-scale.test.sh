@@ -15,7 +15,7 @@ for m in alert worker message presence; do cp "$ROOT/core/machines/tables/$m.tsv
 
 mkhome() {  # <dir>: a lab home sharing the lab tables and the real observers, with three open alerts
   mkdir -p "$1/state/alerts" "$1/data" "$1/config" "$1/core/machines"
-  ln -s "$ROOT/bin" "$1/bin"; ln -s "$ROOT/core/machines/observers" "$1/core/machines/observers"; ln -s "$TABLES" "$1/core/machines/tables"
+  ln -sn "$ROOT/bin" "$1/bin"; ln -sn "$ROOT/core/machines/observers" "$1/core/machines/observers"; ln -s "$TABLES" "$1/core/machines/tables"
   for i in 1 2 3; do printf 'alert=line-red\nsubject=s%s\nprecedence=P1\nrung=1\ntop=4\nsince=1\nrung_at=1\nstate=open\n' "$i" > "$1/state/alerts/line-red--s$i.rec"; done
 }
 mkhome "$H"; : > "$H/data/squad_leads.md"

@@ -529,7 +529,7 @@ EOF
     printf 'harness=pi\n'
     printf 'home=%s\n' "$mate"
   } > "$home/state/$id.meta"
-  ln -s "$ROOT/bin" "$root/bin"
+  ln -sn "$ROOT/bin" "$root/bin"
   make_fake_toolchain "$fakebin"
   make_fake_ps_claude "$fakebin"
   jg_fake_exit0 "$fakebin" pi
@@ -577,7 +577,7 @@ EOF
     printf 'herdr_tab_id=t-old\n'
     printf 'herdr_pane_id=p-old\n'
   } > "$home/state/$id.meta"
-  ln -s "$ROOT/bin" "$root/bin"
+  ln -sn "$ROOT/bin" "$root/bin"
   make_fake_toolchain "$fakebin"
   make_fake_ps_claude "$fakebin"
   jg_fake_exit0 "$fakebin" pi
@@ -1946,7 +1946,7 @@ EOF
   worktree="$world/child-worktree"
   crew_state="$world/slow-crew-state.sh"
   calls="$world/no-mistakes-state.calls"
-  ln -s "$ROOT/bin" "$root/bin"
+  ln -sn "$ROOT/bin" "$root/bin"
   make_fake_toolchain "$fakebin"
   make_fake_ps_claude "$fakebin"
   jg_git_init_commit "$worktree"

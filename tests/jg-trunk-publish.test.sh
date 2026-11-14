@@ -119,7 +119,7 @@ test_the_landing_check_publishes_by_itself() {
   local out
   pubworld tick; waive; landed t1
   printf 'release-after-commits=1\n' >> "$HOME_D/config/trunk-policy"
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   out=$(JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D" 2>&1) || fail "T6: the check must not fail: $out"
   for _ in $(seq 1 100); do [ -z "$(pushed)" ] || break; sleep 0.2; done
   [ "$(pushed)" = "$(green)" ] || fail "T6: one tick must push the green pin: $out"

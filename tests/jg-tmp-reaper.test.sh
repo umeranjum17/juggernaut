@@ -214,7 +214,7 @@ pass "50 heartbeat cycles leave the temp directory flat at $after entries"
 # --- host wiring arms the reaper in a home, and unwiring disarms it --------------
 W=$TMP_ROOT/wired-home
 mkdir -p "$W/state" "$W/data" "$W/config"
-ln -s "$ROOT/bin" "$W/bin"
+ln -sn "$ROOT/bin" "$W/bin"
 env -u JG_STATE_OVERRIDE bash "$ROOT/core/tmp-reaper/wiring.sh" "$W" >/dev/null 2>&1 || fail "wiring did not arm the reaper"
 env -u JG_STATE_OVERRIDE bash "$ROOT/core/tmp-reaper/wiring.sh" "$W" >/dev/null 2>&1 || fail "a second wiring run was refused"
 [ -x "$W/state/tmp-reaper.check.sh" ] || fail "wiring left no state/tmp-reaper.check.sh"

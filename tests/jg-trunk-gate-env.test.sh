@@ -21,7 +21,7 @@ export JG_TRUNK_SEALED_REUSE=0   # this suite tests the gate's own environment, 
 
 W=$(jg_test_tmproot jg-trunk-gate-env); HOME_D="$W/home"; PROJ="$HOME_D/projects/proj"
 mkdir -p "$W/root" "$HOME_D/state" "$HOME_D/data" "$HOME_D/config"
-cp -r "$ROOT/bin" "$W/root/bin"; ln -s "$ROOT/core" "$W/root/core"; ln -s "$ROOT/policy" "$W/root/policy"
+cp -r "$ROOT/bin" "$W/root/bin"; ln -sn "$ROOT/core" "$W/root/core"; ln -sn "$ROOT/policy" "$W/root/policy"
 printf '#!/usr/bin/env bash\nexit 1\n' > "$W/root/bin/jg-captain-hold.sh"   # no open decision blocks the lane
 # A stand-in for bin/jg-test-run.sh that keeps its marker contract, so a red first run is rerun.
 cat > "$W/rig.sh" <<'SH'

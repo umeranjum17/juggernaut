@@ -25,7 +25,7 @@ JG_TRUNK_FIXTURE_CACHE=1
 # shellcheck disable=SC2016 # the gate body is written out verbatim and expands when the gate runs it
 slow_world() {  # <name> [<extra policy line>]
   world "$1"
-  ln -s "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  ln -sn "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   cat > "$W/slow-gate.sh" <<SH
 #!/usr/bin/env bash
 printf 'start %s\n' "\$(date +%s.%N)" >> "$W/gate-runs"

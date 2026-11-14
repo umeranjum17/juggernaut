@@ -42,7 +42,7 @@ for f in "$ROOT"/bin/*; do
 done
 cp "$OLD" "$work/old/bin/backends/herdr.sh"
 # A base adapter that already forwards decisions to the Go command finds its source here.
-ln -s "$ROOT/core" "$work/old/core"
+ln -sn "$ROOT/core" "$work/old/core"
 
 # Synthetic answers: every shape a broken or future herdr could send that the readers meet.
 syn=$work/synthetic
