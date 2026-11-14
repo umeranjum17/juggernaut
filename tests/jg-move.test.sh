@@ -7,7 +7,7 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 T=$(jg_test_tmproot jg-move); H=$T/home; mkdir -p "$H/core/machines" "$H/state" "$H/data"
-cp -r "$ROOT/core/machines/tables" "$ROOT"/core/machines/*.states "$H/core/machines/"
+cp -r "$ROOT/core/machines/tables" "$ROOT/core/machines/maps" "$ROOT"/core/machines/*.states "$H/core/machines/"
 sed -i 's|^observer	.*|observer	cat "$(dirname "$JG_MACHINES_TABLES")/../../state/$1.stage"|' "$H/core/machines/tables/ticket.tsv"
 export JG_HOME=$H JG_DATA_OVERRIDE=$H/data JG_MACHINES_TABLES=$H/core/machines/tables
 LOG=$H/data/moves.log
@@ -79,3 +79,22 @@ rm "$H/config/machine-enforce"
 echo 'done [at=7]: early again' | bash "$ROOT/bin/jg-lavish-guard.sh" --append "$H/state/t6.status" || fail "after the rollback the done line was refused"
 assert_contains "$(cat "$SH")" "ticket	intake	claim-done	shadow" "after the rollback the move is logged as shadow"
 pass "an enforced ticket table refuses an illegal done line and close; deleting the switch file returns to shadow"
+
+# 7. A move the ticket already made (core/machines/maps/ticket-traffic.tsv) is no move: nothing logged, nothing refused, enforced or not.
+#    The caller is the real one: the spawn's claim, through the trace writer, asks for start while the ticket reads building.
+rm -f "$LOG" "$SH"; mkdir -p "$H/config"; echo ticket > "$H/config/machine-enforce"
+echo building > "$H/state/t9.stage"
+mv_ --shadow t9 start; expect_code 0 "$RC" "a settled move exits 0"
+mv_ t9 start; expect_code 0 "$RC" "a settled move is not refused without --shadow either"
+[ ! -e "$LOG" ] && [ ! -e "$SH" ] || fail "a settled move wrote a line: $(cat "$LOG" "$SH" 2>/dev/null)"
+mv_ --shadow t9 close-not-an-edge; expect_code 1 "$RC" "an enforced move that is not settled is still refused"
+echo released > "$H/state/t10.stage"
+mv_ --shadow t10 go-live; expect_code 0 "$RC" "a live moment for a released ticket is settled"
+echo intake > "$H/state/t11.stage"
+mv_ --shadow t11 start; expect_code 1 "$RC" "an unapproved ticket still cannot start, enforced"
+assert_contains "$(cat "$SH")" "ticket	intake	start	refused" "the refusal of an unsettled pair is logged"
+echo building > "$H/state/t12.stage"
+RC=0; bash -c '. "$1/bin/jg-backlog-transition-lib.sh"; jg_backlog_close_transition "" "$2/state/t12.marker" "$2/data" t12 "$2/state"' _ "$ROOT" "$H" >/dev/null 2>&1 || RC=$?
+assert_equals "t12	building	close	closed" "$(grep "	t12	" "$LOG" | tail -1 | cut -f2-)" "a lane with nothing to land closes from building"
+rm "$H/config/machine-enforce"
+pass "a repeated move is settled; an unsettled illegal pair is still refused when enforced; building and batched can close"

@@ -5,9 +5,10 @@ import os, re, subprocess, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import alerttable
 import chartfit
+import reconcile
 import tablelint
 
-USAGE = "usage: jg-machine.sh show|next <machine> <id> | enum <name> | legal <enum> <value> | write <enum> <value> <file> | check <machine> [--corpus <file>] | coverage|events|writers|escalation <machine> | chart-check <svg>... | diagram <machine> [--out <dir>] [--dot wide|narrow | --mermaid] [--tries N] | edge-check <machine> <from> <to>"
+USAGE = "usage: jg-machine.sh show|next <machine> <id> | enum <name> | legal <enum> <value> | write <enum> <value> <file> | check <machine> [--corpus <file>] | coverage|events|writers|escalation <machine> | chart-check <svg>... | diagram <machine> [--out <dir>] [--dot wide|narrow | --mermaid] [--tries N] | edge-check <machine> <from> <to> | reconcile <machine> [--shadow <file>] [--moves <file>] | settled <machine> <state> <event>"
 
 
 def die(msg, rc=2):
@@ -372,6 +373,15 @@ def main(a):
     if len(a) == 2 and a[0] in ("coverage", "events", "writers", "escalation"):
         {"coverage": coverage, "events": events, "writers": writers, "escalation": escalation}[a[0]](load(a[1]))
         return
+    if len(a) == 4 and a[0] == "settled":
+        reconcile.settled(load(a[1]), a[2], a[3])
+    if len(a) >= 2 and a[0] == "reconcile":
+        opt = dict(zip(a[2::2], a[3::2]))
+        home = os.environ.get("JG_HOME") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..")
+        data = os.environ.get("JG_DATA_OVERRIDE") or os.path.join(home, "data")
+        if len(a) % 2 or set(opt) - {"--shadow", "--moves"}:
+            die(USAGE)
+        reconcile.reconcile(load(a[1]), opt.get("--shadow", f"{data}/machine-shadow.log"), opt.get("--moves", f"{data}/moves.log"))
     if len(a) == 4 and a[0] == "edge-check":
         edge_check(load(a[1]), a[2], a[3])
     if len(a) != 3 or a[0] not in ("show", "next"):

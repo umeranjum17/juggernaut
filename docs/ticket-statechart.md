@@ -5,7 +5,7 @@ It is a hierarchical statechart: a stage can hold sub-states, and a move that le
 The tables are `core/machines/tables/ticket.tsv` (machine 0 of the state-machine plan), `delivering.tsv` (machine 20) and `proving.tsv` (the proof run that fills `proving`).
 This slice is report-only: no script writes a move yet, and the engine never changes a record.
 
-- **Seven stages** and **seventeen moves**: `file`, `approve`, `start`, `reclaim`, `claim-done` (twice: from building, and again from proving with another head), `prove-fail`, `prove-pass`, `bypass`, `answer`, `relayed` (a Recon's findings reached the owner, from proving), `new-head`, `refuse`, `release`, `revert-released`, `close` and `drop`.
+- **Seven stages**, **twenty edges** and **seventeen events** (`close` leaves `released`, `building`, `delivering.batched` and `delivering.live`): `file`, `approve`, `start`, `reclaim`, `claim-done` (twice: from building, and again from proving with another head), `prove-fail`, `prove-pass`, `bypass`, `answer`, `relayed` (a Recon's findings reached the owner, from proving), `new-head`, `refuse`, `release`, `revert-released`, `close` and `drop`.
 - **`delivering`** holds seven sub-states, `queued`, `resolving`, `rebased`, `gated`, `batched`, `live` and `joining`, and the two ends `on-main` and `returned`. It has twelve events.
 - **`proving`** holds the proof run: `planned`, `writing`, `running`, `judged`, `reviewing`, `waiting` and the ends `sealed`, `failed` and `aborted`.
 - A stage is never `unknown`. Who owes the next move (the wait) and how the ticket fares (the health) are separate words, listed in `core/machines/maps/ticket-words.tsv`.
@@ -80,6 +80,9 @@ stateDiagram-v2
   delivering --> released: release
   released --> building: revert-released
   released --> closed: close
+  building --> closed: close
+  delivering.batched --> closed: close
+  delivering.live --> closed: close
   intake --> closed: drop
   ready --> closed: drop
   building --> closed: drop

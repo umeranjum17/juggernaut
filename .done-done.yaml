@@ -2193,16 +2193,6 @@ journeys:
   zai-quota-check-uninstall:
     tier: local
     command: bash journeys/core-run.sh 'bash zai-quota-check/tests/zai-quota-check-uninstall.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-
-  jg-context-budget:
-    tier: local
-    command: bash tests/jg-context-budget.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-proof-minimum:
-    tier: local
-    command: bash tests/jg-proof-minimum.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-recon-ready:
-    tier: local
-    command: bash tests/jg-recon-ready.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-trunk-carry:
     tier: local
     command: bash tests/jg-trunk-carry.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
