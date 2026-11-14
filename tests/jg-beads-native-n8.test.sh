@@ -55,7 +55,7 @@ assert_contains "$actors" s1.1.1 "the events of a lane's write must carry the la
 assert_not_contains "$actors" juggernaut "no event of a lane's write may carry the default actor"
 printf 'ok - the events carry the lane\n'
 
-# With no lane the actor is the caller's, else the home's name (juggernaut with no home).
+# With no lane the actor is the caller's, else juggernaut.
 bd comments add n8-a "from nobody" >/dev/null 2>&1 || fail "comment from the default"
 BEADS_ACTOR=fixture "${jail[@]}" "$WRAPPER" comments add n8-a "from the caller" >/dev/null 2>&1 || fail "comment from a named actor"
 authors=$(bd comments n8-a --json 2>/dev/null | jq -r 'map(.author) | unique | join(",")')
@@ -64,7 +64,7 @@ printf 'ok - no lane keeps the caller and the default actor\n'
 
 # A start with no lane still names an owner, so a row in flight is never ownerless.
 axi start n8-b >/dev/null || fail "start with no lane"
-[ "$(field n8-b .assignee)" = main ] || fail "a start with no lane must name the home's name"
+[ "$(field n8-b .assignee)" = juggernaut ] || fail "a start with no lane must name the default actor"
 BEADS_ACTOR=fixture axi start n8-c >/dev/null || fail "start from a named actor"
 [ "$(field n8-c .assignee)" = fixture ] || fail "a start must name the caller's actor"
 out=$(axi start n8-a) || fail "start of a row already in flight"
@@ -95,7 +95,7 @@ printf 'ok - a held queued row stays queued\n'
 axi add n8-g "[feature] Legacy flight" --priority 2 --body why >/dev/null || fail "seed a legacy row"
 bd update n8-g --status in_progress >/dev/null 2>&1 || fail "put a legacy row in flight"
 axi hold n8-g --reason "wait legacy" >/dev/null || fail "hold a legacy row"
-[ "$(field n8-g .assignee)" = main ] || fail "a hold of an ownerless flight must name the actor"
+[ "$(field n8-g .assignee)" = juggernaut ] || fail "a hold of an ownerless flight must name the actor"
 [ "$(state_of n8-g)" = in_flight ] || fail "a held legacy flight must read in flight"
 axi unhold n8-g >/dev/null || fail "release the legacy hold"
 [ "$(field n8-g .status)" = in_progress ] || fail "a release must keep the legacy flight"

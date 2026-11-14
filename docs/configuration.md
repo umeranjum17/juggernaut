@@ -393,7 +393,7 @@ The fleet view prints that scorecard on every render from the local ledger alone
 
 Every home keeps its backlog in a Beads store.
 The absolute `BEADS_DIR` in `config/beads-dir` names it, and `bin/jg-backlog.sh` is the one command that reads and writes it.
-`bin/jg-beads.sh` is the only guarded way to run `bd` and `dolt`; `bin/jg-beads.sh check` proves the pinned versions, the hold rule, the events journal on and telemetry off (`init` turns the journal on, and run again on an older store it turns it on and changes nothing else). The journal gives a reader the changes since its last read: `jg-beads.sh events tail --since <seq>`. The actor of a home's own writes is the home's name, `main` or `lead:<id>`, so `created_by` says who filed; `jg-backlog.sh homes --json` lists every home with its store and marks a lead on another machine `"remote": true`.
+`bin/jg-beads.sh` is the only guarded way to run `bd` and `dolt`; `bin/jg-beads.sh check` proves the pinned versions, the hold rule and telemetry off.
 The wrapper serves `show`, `list`, `ready`, `add`, `update`, `done`, `block`, `unblock`, `start`, `reopen`, `hold`, `unhold` and `public-followup`, and refuses every other write.
 
 A Goal lives in a small Goal-only Beads store of its own. `config/goal-beads-dir` (or `GOAL_BEADS_DIR`) names its absolute `BEADS_DIR`, outside any git tree, and `bin/jg-goal.sh` reaches it only through `bin/jg-beads.sh`. The pinned bd and dolt must be in place; the wrapper's refusal is the message, and nothing falls back to another bd. Create the store with `BEADS_DIR=<dir> bin/jg-beads.sh init --prefix goal`.
