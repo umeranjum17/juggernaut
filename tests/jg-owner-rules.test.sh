@@ -221,8 +221,9 @@ test_add_files_its_own_enforcement_ticket() {
   assert_grep 'Enforced by: bin/jg-live-claim.sh' "$backlog" "the ticket lost the enforcement point"
   assert_grep 'Enforcement today: bin/jg-live-claim.sh already carries this rule' "$backlog" \
     "the ticket did not say what enforces the rule today"
-  assert_grep '[captain-ask] Enforce the owner rule: never forecast a date in a captain report' "$backlog" \
-    "the ticket is not an owner ask carrying the rule"
+  assert_grep '"title":"Enforce the owner rule: never forecast a date in a captain report"' "$backlog" \
+    "the ticket title carries a tag or lost the rule"
+  assert_grep '"labels":["captain-ask"]' "$backlog" "the ticket is not an owner ask carrying the label"
 
   JG_HOME="$home" JG_ROOT_OVERRIDE="$ROOT" "$RULES" add --kind owner \
     --words "never forecast a date in a captain report" --scope x --enforce bin/jg-live-claim.sh \

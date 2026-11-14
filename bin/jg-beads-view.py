@@ -15,7 +15,7 @@ A held row is status on_hold, blocked or deferred, and reads as queued, or in fl
 its fields stay readable on a closed row and on a row whose date has passed.
 A dated hold is status deferred: bd ready wakes a past-date row to open and clears defer_until, and until that first
 bd ready the row still reads as no longer held, so a due row reads the same on both sides of the wake;
-kind is metadata.kind, else captain for issue_type decision, else issue_type;
+kind is metadata.kind, else captain for issue_type decision, else issue_type; ask is ask_role (ask, under or -) and labels the labels but project:<repo>, both through --fields, and on a card that has them;
 parent is the parent-child edge target (upkeep by label) and item metadata.task, else metadata.legacy_item, both only through --fields;
 show takes a row's id or the name it answers to: the task id its ticket was spawned under (metadata.task) or, after a migration, the slug or feed id it had before (metadata legacy_item, legacy_id, legacy_twin);
 repo is the project:<repo> label; links are external_ref, metadata.prs and metadata.reports.
@@ -35,7 +35,7 @@ CORE = {"decision": "captain"}
 ROW = ["id", "state", "kind", "repo", "title"]
 SHOW = ["id", "title", "state", "blocked", "blocked_by", "held", "hold_reason", "hold_kind", "hold_until",
         "kind", "repo", "priority", "created", "closed", "deps", "links", "body"]
-EXTRA = sorted(set(SHOW) - set(ROW)) + ["parent", "item"]
+EXTRA = sorted(set(SHOW) - set(ROW)) + ["parent", "item", "ask", "labels"]
 CLIP = {"title": 80, "body": 500}
 STATES = ["queued", "in_flight", "done", "held"]
 PLAIN_NUMBER = re.compile(r"-?\d+(\.\d+)?([eE][+-]?\d+)?\Z")
@@ -120,6 +120,19 @@ def named(rows, ident):
 PARTIAL = bool(os.environ.get("JG_BEADS_PARTIAL"))  # the rows are a part of the store: a row left out is closed
 
 
+def ask_role(row):
+    """The one answer to "is this an owner ask": ask for the ask itself, under for a row below one, - for neither.
+
+    The captain-ask label says it; a row from before the label, whose title still starts with the tag, is the ask itself until
+    the one-time pass (jg-backlog.sh retag) has labelled it. A labelled row with a parent edge is below an ask: the label
+    is copied down to every slice, so the edge is what tells a slice from the ask."""
+    if row.get("title", "").startswith("[captain-ask]"):
+        return "ask"
+    if "captain-ask" not in (row.get("labels") or []):
+        return "-"
+    return "under" if any(d.get("type") == "parent-child" for d in row.get("dependencies") or []) else "ask"
+
+
 def task(row, rows, native=None):
     """native is bd blocked's answer as {id: [open blockers]}; None works the answer out from the blocks edges."""
     meta = row.get("metadata") or {}
@@ -147,6 +160,7 @@ def task(row, rows, native=None):
         "parent": next((d["depends_on_id"] for d in row.get("dependencies") or [] if d.get("type") == "parent-child"),
                        "upkeep" if "upkeep" in (row.get("labels") or []) else "-"),
         "item": meta.get("task") or meta.get("legacy_item") or row["id"], "names": legacy(row),
+        "ask": ask_role(row), "labels": ",".join(l for l in row.get("labels") or [] if not l.startswith("project:")) or "-",
     }
 
 
@@ -165,7 +179,7 @@ def table(name, tasks, fields, full=False):
 
 def card(item, hint=None):
     print("task:")
-    for field in SHOW + (["parent"] if item["parent"] != "-" else []) + (["unproved"] if item["unproved"] != "-" else []):
+    for field in SHOW + (["parent"] if item["parent"] != "-" else []) + (["unproved"] if item["unproved"] != "-" else []) + [f for f in ("ask", "labels") if item[f] != "-"]:
         value = clip(item, field, hint)
         print("  %s: %s" % (field, scalar(value)))
 
@@ -252,7 +266,7 @@ def file_row(item, items):
     words = ["- [%s] %s - %s" % ("x" if item["state"] == "done" else " ", item["item"], item["title"])]
     words += [link.partition(":")[2] for link in links]
     words += ["blocked-by: " + items.get(ident, ident) for ident in waiting]
-    tags = [("repo", item["repo"]), ("kind", "-" if item["kind"] == "task" else item["kind"]), ("priority", item["priority"])]
+    tags = [("repo", item["repo"]), ("kind", "-" if item["kind"] == "task" else item["kind"]), ("ask", item["ask"]), ("priority", item["priority"])]
     if item["held"] == "yes" or (item["state"] == "done" and item["hold_kind"] != "-"):
         # A closed row keeps its hold kind and reason: a non-release answer is not a delivery.
         reason = base64.b64encode(item["hold_reason"].encode()).decode()

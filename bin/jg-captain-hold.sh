@@ -2147,7 +2147,7 @@ decision_open() {  # <task-id>
   task_show "$target" || { printf 'jg-captain-hold: task %s could not be read\n' "$target" >&2; exit 2; }
   show=$TASK_SHOW_OUTPUT
   [ "$(show_field "$show" state)" != "done" ] || return 1
-  case "$(show_field_value "$show" title)" in *"[design-ux]"*) ;; *) return 1 ;; esac  # the one design tag
+  case "$(show_field_value "$show" labels)$(show_field_value "$show" title)" in *"design-ux"*) ;; *) return 1 ;; esac  # the one design mark: its label, or the old title tag
   status=0
   (command_answered "$target") || status=$?
   case "$status" in 0) return 1 ;; 1) ;; *) exit 2 ;; esac
@@ -2259,7 +2259,7 @@ command_design_pick() {  # <card-key> --words <the captain's words>
   [ -n "${words//[[:space:]]/}" ] || fail "design-pick needs --words \"<the captain's words>\""
   mark=$STATE/design-cards/$key
   task_show "$key" || { rm -f -- "$mark"; return 0; }
-  case "$(show_field_value "$TASK_SHOW_OUTPUT" title)" in *"[design-ux]"*) ;; *) rm -f -- "$mark"; return 0 ;; esac
+  case "$(show_field_value "$TASK_SHOW_OUTPUT" labels)$(show_field_value "$TASK_SHOW_OUTPUT" title)" in *"design-ux"*) ;; *) rm -f -- "$mark"; return 0 ;; esac
   [ "$(show_field "$TASK_SHOW_OUTPUT" state)" != "done" ] || { rm -f -- "$mark"; return 0; }
   require_backlog
   backlog_cmd "done" "$key" --note "Captain's pick: $(printf '%s' "$words" | tr '\n\r' '  ' | cut -c1-500)" >/dev/null \

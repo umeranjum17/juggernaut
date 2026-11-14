@@ -40,7 +40,6 @@
       "parent_exempt_kinds": [
         "scout"
       ],
-      "ask_prefix": "[captain-ask]",
       "order_pattern": "(^|[^[:alnum:]])Main[0-9]+",
       "upkeep_parent": "upkeep",
       "parent_line_pattern": "^[[:space:]]*parent:",

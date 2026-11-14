@@ -88,8 +88,17 @@ if JG_HOME=$home JG_ADDONS_DIR=$addons JG_SQUAD_LEAD_CHARTER=x bash "$FM/bin/jg-
   ok "pass: squad_lead charter is exempt"
 else no "squad_lead charter refused"; fi
 
+# The store answers "is this an owner ask": the label, the old tag of a row the one-time pass has not reached, and a slice below an ask.
+(cd "$home" && JG_HOME=$home bash "$FM/bin/jg-backlog.sh" add jg-label-ask -l captain-ask "Labelled ask" --priority 0 --kind ship --repo sample --body "A body line.") >/dev/null 2>&1 || no "fixture: the labelled ask"
+BEADS_DIR=$(cat "$home/config/beads-dir") "$FM/bin/jg-beads.sh" create --title="[captain-ask] Old row" --id jg-old-ask -p 0 -l project:sample >/dev/null 2>&1 || no "fixture: the old row"
+(cd "$home" && JG_HOME=$home bash "$FM/bin/jg-backlog.sh" add --parent jg-with-ask "[feature] Slice" --priority 1 --repo sample --body "A body line.") >/dev/null 2>&1 || no "fixture: the slice"
+is "pass: an ask filed with the captain-ask label" "$(brief jg-label-ask --mode direct-PR)" "rc=0"
+is "pass: an old row with the tag in its title and no label" "$(brief jg-old-ask --mode direct-PR)" "rc=0"
+is "pass: a slice below an ask serves it" "$(brief jg-with-ask.1 --mode direct-PR)" "rc=0"
+
 tree=$(bash "$addons/owner-rules/bin/jg-owner-rules-tree.sh" <(cd "$home" && JG_HOME=$home bash "$FM/bin/jg-backlog.sh" markdown))
 if printf '%s\n' "$tree" | grep -qF 'jg-with-main: jg-with-main -> jg-with-ask -> [epic root]'; then ok "tree: prints epic parent chain"; else no "tree: epic parent chain missing"; fi
+if printf '%s\n' "$tree" | grep -qF 'jg-label-ask: jg-label-ask -> [epic root]'; then ok "tree: a labelled ask is an epic root"; else no "tree: labelled ask is no epic root"; fi
 if printf '%s\n' "$tree" | grep -qF 'jg-cycle-a: jg-cycle-a -> jg-cycle-b -> jg-cycle-a -> [cycle: jg-cycle-a]'; then ok "tree: reports cycle"; else no "tree: cycle unreported"; fi
 if printf '%s\n' "$tree" | grep -A8 '^Items with no valid parent:' | grep -qF '  jg-cycle-a'; then ok "tree: lists invalid items"; else no "tree: invalid items list missing cycle"; fi
 

@@ -30,11 +30,12 @@ field() {  # <id> <jq filter>: one field of a row, as bd stores it.
   bd_ show "$1" --json | jq -r "(if type == \"array\" then .[0] else . end) | $2"
 }
 
-# A decision is written as the decision type, with no kind kept in metadata, and callers still read captain.
+# Kind captain is metadata on a task, never bd's decision type, and callers read captain.
 out=$(tasks add jg-ask "[captain-ask] Pick the route" --kind captain --priority 0 --body why --json) || fail "add a decision: $out"
 assert_contains "$out" '"kind": "captain"' "the add reply must show captain"
-[ "$(field jg-ask .issue_type)" = decision ] || fail "a decision must be stored as type decision"
-[ "$(field jg-ask '.metadata.kind // "none"')" = none ] || fail "a decision must keep no kind in metadata"
+[ "$(field jg-ask .issue_type)" = task ] || fail "kind captain must be stored as type task"
+[ "$(field jg-ask '.metadata.kind // "none"')" = captain ] || fail "kind captain must be kept in metadata"
+[ "$(field jg-ask '.title')" = "Pick the route" ] && [ "$(field jg-ask '.labels | join(",")')" = captain-ask ] || fail "the tag must leave the title and become the label"
 assert_contains "$(tasks show jg-ask --full)" "kind: captain" "show must read the decision as captain"
 assert_contains "$(tasks list --kind captain --fields kind)" "jg-ask,queued,captain" "list by kind must find the decision"
 assert_contains "$(tasks add jg-ask "[captain-ask] Pick the route" --kind captain --priority 0 --body why)" "already exists" "a rerun must converge"
@@ -43,12 +44,14 @@ assert_contains "$(tasks add jg-ask "[captain-ask] Pick the route" --kind captai
 tasks add jg-ship "[feature] Ship it" --kind ship --priority 2 --body why >/dev/null || fail "add a ship"
 [ "$(field jg-ship .issue_type)" = task ] && [ "$(field jg-ship .metadata.kind)" = ship ] || fail "a ship must stay a task with kind metadata"
 
-# Changing the kind moves the row between the two forms and back.
-tasks update jg-ship --kind captain >/dev/null || fail "make it a decision"
-[ "$(field jg-ship .issue_type)" = decision ] && [ "$(field jg-ship '.metadata.kind // "none"')" = none ] || fail "a ship made captain must become a decision"
+# Changing the kind rewrites the metadata; a row of the old decision type becomes a task.
+tasks update jg-ship --kind captain >/dev/null || fail "make it captain"
+[ "$(field jg-ship .issue_type)" = task ] && [ "$(field jg-ship .metadata.kind)" = captain ] || fail "a ship made captain must stay a task with kind captain"
 assert_contains "$(tasks show jg-ship --full)" "kind: captain" "the changed row must read as captain"
-tasks update jg-ship --kind recon >/dev/null || fail "make it a recon"
-[ "$(field jg-ship .issue_type)" = task ] && [ "$(field jg-ship .metadata.kind)" = recon ] || fail "a decision made recon must become a task with kind metadata"
+bd_ create "Old decision" --id jg-dec --type decision >/dev/null || fail "seed an old decision row"
+assert_contains "$(tasks show jg-dec --full)" "kind: captain" "a decision row from before must still read as captain"
+tasks update jg-dec --kind recon >/dev/null || fail "make it a recon"
+[ "$(field jg-dec .issue_type)" = task ] && [ "$(field jg-dec .metadata.kind)" = recon ] || fail "a decision made recon must become a task with kind metadata"
 
 # A row written before this change, with kind in metadata, still reads as captain beside the new form.
 bd_ create "[captain-ask] Old form" --id jg-old --metadata '{"kind":"captain"}' >/dev/null || fail "seed an old row"
@@ -59,16 +62,15 @@ assert_contains "$out" jg-ask "a decision must list beside it"
 # A held decision reads its hold kind like any other row.
 bd_ update jg-ask --status on_hold --set-metadata hold_reason="owner picks" --set-metadata hold_kind=captain >/dev/null || fail "hold the decision"
 assert_contains "$(tasks show jg-ask --full)" "hold_kind: captain" "a held decision must keep its hold kind"
-[ "$(field jg-ask .issue_type)" = decision ] || fail "a hold must keep the decision type"
 
 # --mint leaves the id to bd, under the store prefix.
 out=$(tasks add --mint "[feature] Mint me" --priority 2 --body why --json) || fail "mint: $out"
 id=$(printf '%s\n' "$out" | jq -r .task.id)
 case "$id" in jg-*[!a-z0-9]* | jg-) fail "a minted id must be bd's own: $id" ;; jg-*) ;; *) fail "a minted id must carry the store prefix: $id" ;; esac
 case "$id" in *mint*) fail "a minted id must not be built from the title: $id" ;; esac
-[ "$(field "$id" .title)" = "[feature] Mint me" ] || fail "the minted row must answer to its id"
+[ "$(field "$id" .title)" = "Mint me" ] || fail "the minted row must answer to its id"
 out=$(tasks add --mint "[captain-ask] Mint a decision" --kind captain --body why --json) || fail "mint a decision: $out"
-[ "$(field "$(printf '%s\n' "$out" | jq -r .task.id)" .issue_type)" = decision ] || fail "a minted decision must be a decision"
+[ "$(field "$(printf '%s\n' "$out" | jq -r .task.id)" .metadata.kind)" = captain ] || fail "a minted decision must carry kind captain"
 out=$(tasks add --mint "[feature] Prefixed" --prefix zz --body why) && fail "a prefix cannot go with a mint"
 assert_contains "$out" "--prefix cannot go with --mint" "the refusal must say why"
-pass "beads native types and ids: decisions are decision rows, callers read captain, mint gives a bd id"
+pass "beads native types and ids: kind is metadata, callers read captain, mint gives a bd id"

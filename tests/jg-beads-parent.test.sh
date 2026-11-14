@@ -34,13 +34,12 @@ labels() { field "$1" '.labels | sort | join(",")'; }
 # The ask is minted; it carries labels beyond the two a slice inherits.
 ask=$(tasks add --mint "[captain-ask] Plan it" --repo sample --label other --body why --json | jq -r .task.id) || fail "mint the ask"
 [ -n "$ask" ] && [ "$ask" != null ] || fail "the ask must have an id"
-[ "$(labels "$ask")" = "other,project:sample" ] || fail "the ask labels: $(labels "$ask")"
-bd_ update "$ask" --add-label captain-ask >/dev/null
+[ "$(labels "$ask")" = "captain-ask,other,project:sample" ] || fail "the ask labels: $(labels "$ask")"
 
 # A slice is bd's child of the ask, numbered by bd, with exactly the two labels plus the call's own.
 slice=$(tasks add --parent "$ask" "[feature] Slice one" --label extra --body why --json | jq -r .task.id) || fail "file a slice"
 [ "$slice" = "$ask.1" ] || fail "the slice must take bd's child id, got $slice"
-[ "$(labels "$slice")" = "captain-ask,extra,project:sample" ] || fail "the slice must take only captain-ask, project and its own label: $(labels "$slice")"
+[ "$(labels "$slice")" = "captain-ask,extra,feature,project:sample" ] || fail "the slice must take only captain-ask, project, its tag and its own label: $(labels "$slice")"
 [ "$(field "$slice" '.dependencies[0].id + " " + .dependencies[0].dependency_type')" = "$ask parent-child" ] || fail "the slice must hang under the ask"
 [ "$(field "$ask" .issue_type)" = epic ] || fail "the parent must become an epic"
 epics=$(bd_ epic status --json)
@@ -49,7 +48,7 @@ epics=$(bd_ epic status --json)
 # A piece is the slice's child; the slice becomes an epic too, and the call's repo replaces the parent's.
 piece=$(tasks add --parent "$slice" "[feature] Piece" --repo other --body why --json | jq -r .task.id) || fail "file a piece"
 [ "$piece" = "$slice.1" ] || fail "the piece must take bd's child id, got $piece"
-[ "$(labels "$piece")" = "captain-ask,project:other" ] || fail "the piece labels: $(labels "$piece")"
+[ "$(labels "$piece")" = "captain-ask,feature,project:other" ] || fail "the piece labels: $(labels "$piece")"
 
 # A piece has no parts, and an own id cannot go with --parent.
 out=$(tasks add --parent "$piece" "[feature] Too deep") && fail "a fourth level must be refused"

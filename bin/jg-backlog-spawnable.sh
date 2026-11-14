@@ -34,21 +34,25 @@ sed -n 's/^- \(.*\)$/\1/p' "$DATA/projects.md" 2>/dev/null \
   | sed -e 's/ \[.*$//' -e 's/ - .*$//' > "$tmp/projects"
 for f in "$STATE"/*.meta; do [ -e "$f" ] && basename "$f" .meta; done > "$tmp/lanes"
 
-# A card is an unclosed decision row or an unclosed [design-ux] row; it blocks the rows it
-# is linked to by an edge in either direction (links are edges, `tracks` aside). A startable
-# row is open, not blocked, not deferred, not a decision, and has no assignee or hold reason.
+# A card is an unclosed row of kind captain (metadata.kind, or bd's old decision type) or an unclosed design-ux row (the label, or the
+# old title tag); it blocks the rows it is linked to by an edge in either direction (links are edges, `tracks` aside). A startable
+# row is open, not blocked, not deferred, not a card, and has no assignee or hold reason.
 # Each row comes out once per project label, so the registered-project pick stays here.
+card() {  # <alias of the row that may be a card>
+  printf "(%s.issue_type = 'decision' OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(%s.metadata, '\$.kind')), '') = 'captain' OR LOCATE('[design-ux]', %s.title) > 0
+    OR EXISTS (SELECT 1 FROM labels cl WHERE cl.issue_id = %s.id AND cl.label = 'design-ux'))" "$1" "$1" "$1" "$1"
+}
 query="SELECT i.id, l.label FROM issues i JOIN labels l ON l.issue_id = i.id AND l.label LIKE 'project:%'
-  WHERE i.status = 'open' AND i.is_blocked = 0 AND i.issue_type <> 'decision' AND i.ephemeral = 0
+  WHERE i.status = 'open' AND i.is_blocked = 0 AND NOT $(card i) AND i.ephemeral = 0
     AND (i.defer_until IS NULL OR i.defer_until <= NOW())
     AND COALESCE(i.assignee, '') = ''
     AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(i.metadata, '\$.hold_reason')), '') = ''
     AND NOT EXISTS (SELECT 1 FROM dependencies d JOIN issues c ON c.id = d.depends_on_issue_id
       WHERE d.issue_id = i.id AND d.type <> 'tracks' AND c.status <> 'closed'
-        AND (c.issue_type = 'decision' OR LOCATE('[design-ux]', c.title) > 0))
+        AND $(card c))
     AND NOT EXISTS (SELECT 1 FROM dependencies d JOIN issues c ON c.id = d.issue_id
       WHERE d.depends_on_issue_id = i.id AND d.type <> 'tracks' AND c.status <> 'closed'
-        AND (c.issue_type = 'decision' OR LOCATE('[design-ux]', c.title) > 0))
+        AND $(card c))
   ORDER BY i.priority, i.created_at, i.id, l.label"
 BEADS_DIR=$store "$SCRIPT_DIR/jg-beads.sh" dolt sql -q "$query" > "$tmp/rows" 2>"$tmp/err" \
   || die "the store read failed: $(head -c 300 "$tmp/err")"

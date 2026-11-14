@@ -65,7 +65,7 @@ def report_message(found, kinds, key, today, closed=()):
 
 
 def captain_origin(row):
-    return '[captain-ask]' in row['title'] or bool(re.search(r'type:\s*captain-ask', row.get('body', ''), re.I))
+    return row.get('ask') == 'ask' or '[captain-ask]' in row['title'] or bool(re.search(r'type:\s*captain-ask', row.get('body', ''), re.I))
 
 
 def quote(row):
@@ -75,7 +75,7 @@ def quote(row):
 
 def owner_decision(row):
     """A ticket that still holds the captain's call: his ask or quoted words, a captain hold, or a design pick."""
-    return captain_origin(row) or row.get('hold_kind') == 'captain' or '[design-ux]' in row['title'] \
+    return captain_origin(row) or row.get('hold_kind') == 'captain' or 'design-ux' in row.get('labels', '') or '[design-ux]' in row['title'] \
         or request_title(row, True) != request_title(row)
 
 

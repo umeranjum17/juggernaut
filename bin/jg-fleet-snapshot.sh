@@ -475,7 +475,7 @@ backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
     def links($rest): [$rest | scan(url_pattern)];
     def strip_trailing_metadata:
       reduce range(0; 20) as $_ (.;
-        sub("[[:space:]]*\\([[:space:]]*(?:(?:repo|kind|priority|hold|hold-kind|hold-until):[[:space:]]*[^)]*|(?:since|merged|reported|done)[[:space:]]+[^)]*)[[:space:]]*\\)[[:space:]]*$"; ""));
+        sub("[[:space:]]*\\([[:space:]]*(?:(?:repo|kind|ask|priority|hold|hold-kind|hold-until):[[:space:]]*[^)]*|(?:since|merged|reported|done)[[:space:]]+[^)]*)[[:space:]]*\\)[[:space:]]*$"; ""));
     def strip_title_artifacts:
       sub("[[:space:]]+-[[:space:]]+data/[^[:space:])]+/report\\.md$"; "")
       | sub("[[:space:]]+data/[^[:space:])]+/report\\.md$"; "")
@@ -532,6 +532,7 @@ backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
              title:title_of($rest),
              repo:metadata($rest; "repo"),
              kind:kind_of($rest),
+             ask:metadata($rest; "ask"),
              priority:metadata($rest; "priority"),
              hold_reason:hold_metadata($rest),
              hold_kind:metadata($rest; "hold-kind"),

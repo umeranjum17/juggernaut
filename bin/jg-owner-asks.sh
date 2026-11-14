@@ -9,7 +9,7 @@
 #
 # Source: this home's backlog and the backlog of every registered local Squad Lead home
 # (data/squad_leads.md), read through `jg-fleet-snapshot.sh --contribution-input`, the snapshot's
-# own backlog reader. The rows kept are every [captain-ask] ticket and every other task held for
+# own backlog reader. The rows kept are every owner ask (the captain-ask label, or the old title tag) ticket and every other task held for
 # the captain. A remote Squad Lead home is not read; it is named as not read.
 # The line for an ask is the owner's quoted words: the ticket body's `Captain:` line, else its
 # first line of prose, else the title without its tag. The ticket id stays in the JSON only.
@@ -112,7 +112,7 @@ read_home() {  # <home id> <home path>
        | gsub("^[\"“”]+|[\"“”]+$"; "") | clean | .[0:200]);
     [ .backlog.records[]?
       | select(.structured == true)
-      | (((.title // "") | contains("[captain-ask]"))) as $ask
+      | (((.ask // "") == "ask") or ((.title // "") | contains("[captain-ask]"))) as $ask
       | select($ask or (.hold_kind == "captain" and .hold_reason != null and .state != "done"))
       | { id, state, ask: $ask, words: words,
           hold: (if .hold_kind == "captain" and .hold_reason != null and .state != "done"

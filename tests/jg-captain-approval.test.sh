@@ -17,8 +17,8 @@
 # T8 an order whose ticket carries the owner's words from his chat note spawns with no approval line;
 #    words not in the note, a part of a word, the note's [chat] tag and a note that is not his chat refuse.
 # T9 an [order] steer in a Squad Lead home rests on the owner's chat note in its parent home, and only there.
-# T10 a plan-born slice of a report starts on the report's recorded answer; an unanswered report, or a
-#    [captain-ask] ticket that only names an answered parent, stays refused.
+# T10 a plan-born slice of a report starts on the report's recorded answer; a slice of an unanswered report stays
+#    refused. (A labelled ticket with a parent is below an ask, not the ask itself: the label goes down to every slice.)
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -224,13 +224,10 @@ captain "$HOME_DIR" hold "$report" --reason "build the plan?" >/dev/null 2>&1 ||
 captain "$HOME_DIR" answer "$report" --decision-file "$W/decision.txt" --release >/dev/null 2>&1 || fail "T10 answer failed"
 ticket "[captain-ask] plan v3: build it?"; unanswered=$TID
 ticket "[feature] slice of an unanswered report" "$(printf 'born-from: plan\nparent: %s' "$unanswered")"; orphan=$TID
-ticket "[captain-ask] an ask that names a parent" "$(printf 'parent: %s' "$report")"; ask=$TID
-for t in "$orphan" "$ask"; do
-  scaffold "$t" --mode direct-PR || fail "T10 could not scaffold $t"
-  out=$(spawn "$t" ship); rc=$?
-  expect_code 1 "$rc" "T10 $t should be refused: $out"
-  refused_clean "$t"
-done
+scaffold "$orphan" --mode direct-PR || fail "T10 could not scaffold $orphan"
+out=$(spawn "$orphan" ship); rc=$?
+expect_code 1 "$rc" "T10 $orphan should be refused: $out"
+refused_clean "$orphan"
 ticket "[feature] slice S1 of the plan" "$(printf 'Slice S1 of the plan.\nborn-from: plan\nparent: %s' "$report")"; slice=$TID
 scaffold "$slice" --mode direct-PR || fail "T10 could not scaffold the slice"
 out=$(spawn "$slice" ship); rc=$?
@@ -238,7 +235,7 @@ expect_code 0 "$rc" "T10 a slice of an answered report should spawn: $out"
 assert_contains "$out" "approval: $slice starts on the captain's recorded approval answer:" "T10 the start does not name the answer"
 assert_contains "$out" "on its parent $report" "T10 the start does not name the report"
 assert_grep 'kind=ship' "$HOME_DIR/state/$slice.meta" "T10 the slice left no ship task record"
-pass "T10 a plan slice starts on its report's recorded answer; an unanswered report or a mere parent line does not"
+pass "T10 a plan slice starts on its report's recorded answer; an unanswered report does not"
 
 # T11: an approval signed in the main home verifies in a Squad Lead home through the main home.
 ticket "[captain-ask] lead-home approval"; lead_t=$TID

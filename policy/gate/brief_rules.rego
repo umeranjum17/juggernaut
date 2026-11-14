@@ -8,6 +8,8 @@
 # input.ids         every item id in the backlog, any status
 # input.parent      the target of the item's parent-child edge, or upkeep for that label ("" or absent: none)
 # input.labels      the item's labels
+# input.ask         the store's answer to "is this an owner ask" (bin/jg-beads-view.py's ask_role): ask for the ask itself,
+#                   under for a row below one, - or absent for neither
 # The design flag is a body line "design: required|none": required adds the brief line, a design-like line that is
 # not exact is refused, and design-sounding work with no line only gets a note.
 # decision.why      no_ask, no_parent or bad_design when refused; note says the item reads like design work
@@ -23,9 +25,9 @@ body := array.slice(input.entry_lines, 1, count(input.entry_lines))
 
 matching(pattern, lines) := [l | some l in lines; regex.match(pattern, l)]
 
-captain_ask if startswith(input.title, rules.ask_prefix)
+captain_ask if input.ask == "ask"
 
-has_ask if captain_ask
+has_ask if input.ask in {"ask", "under"}
 
 has_ask if count(matching(rules.order_pattern, input.entry_lines)) > 0
 

@@ -23,7 +23,7 @@ def named(body):
 
 def decision(row):
     """A held row or a design row: the two kinds bin/jg-captain-hold.sh can read as an open decision."""
-    return row.get("status") in view.HELD or "[design-ux]" in row.get("title", "")
+    return row.get("status") in view.HELD or "design-ux" in (row.get("labels") or []) or "[design-ux]" in row.get("title", "")
 
 
 def edge(row, other, kind):

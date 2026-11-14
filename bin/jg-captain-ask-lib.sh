@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 # Shared fork guard for captain asks; callers supply backlog_cmd (a function reading the home's backlog), SCRIPT_DIR, and fail.
 captain_ask_row() {  # <id>; sets CAPTAIN_ASK_SHOW to the row's show output when it is a [captain-ask] item
-  local title
   CAPTAIN_ASK_SHOW=''
   [ -n "$1" ] || return 0
   CAPTAIN_ASK_SHOW=$(backlog_cmd show "$1" --full 2>/dev/null) \
     || fail "cannot read $1 to check whether it is a [captain-ask] item; it stays in the backlog until the read succeeds"
-  title=$(printf '%s\n' "$CAPTAIN_ASK_SHOW" | sed -n 's/^  title: //p' | head -1)
-  case "$title" in
-    '') fail "cannot read the title of $1 to check whether it is a [captain-ask] item; it stays in the backlog" ;;
-    *'[captain-ask]'*) ;;
-    *) CAPTAIN_ASK_SHOW='' ;;
-  esac
+  printf '%s\n' "$CAPTAIN_ASK_SHOW" | grep -q '^  title: ' \
+    || fail "cannot read the title of $1 to check whether it is a [captain-ask] item; it stays in the backlog"
+  captain_ask_itself "$CAPTAIN_ASK_SHOW" || CAPTAIN_ASK_SHOW=''
+}
+
+# The ask itself, from a show output: the store's `ask:` line (bin/jg-beads-view.py's ask_role), which reads the captain-ask label
+# and, until the one-time pass (jg-backlog.sh retag) has run, the tag at the front of an old title. A slice under an ask is not the ask.
+captain_ask_itself() {  # <show-output>
+  printf '%s\n' "$1" | grep -qx '  ask: ask'
 }
 
 guard_captain_ask() {  # <id>
@@ -103,7 +105,7 @@ captain_ask_approval_line() {  # <ticket> <ref>; prints the signed line, making 
 }
 
 captain_ask_build_gated() {  # <show-output>; 0 when a ship build needs the captain's approval
-  printf '%s\n' "$1" | sed -n 's/^  title: //p' | head -1 | grep -qF '[captain-ask]' && return 0
+  captain_ask_itself "$1" && return 0
   printf '%s\n' "$1" | grep -Eq 'born-from: *(recon|plan)([^A-Za-z]|$)'
 }
 

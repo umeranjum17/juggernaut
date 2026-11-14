@@ -11,6 +11,7 @@ function save_item(    fields, rest) {
   count++
   order[count] = id
   titles[id] = title
+  asks[id] = (title ~ /\(ask: ask\)/)
   parents[id] = parent
   id = title = parent = ""
 }
@@ -46,7 +47,7 @@ END {
       seen[current] = 1
       parent_id = parents[current]
       if (parent_id == "") {
-        if (titles[current] ~ /^\[captain-ask\]/) chain = chain " -> [epic root]"
+        if (asks[current]) chain = chain " -> [epic root]"
         else { chain = chain " -> [no parent]"; invalid = 1 }
         break
       }

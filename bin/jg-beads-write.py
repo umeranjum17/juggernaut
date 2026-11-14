@@ -7,7 +7,7 @@ Usage: BEADS_DIR=<store> jg-beads-write.py <add|create|update|edit|done|close|bl
 
 bin/jg-backlog-lib.sh's jg_backlog_beads_write starts it after bin/jg-backlog.sh's intake and captain guards.
 Every bd call goes through bin/jg-beads.sh. Replies and refusals print the backlog's lines on stdout.
-kind captain is bd's decision type and shows to callers as captain, any other kind is metadata.kind, repo is the project:<repo> label, the first PR is external_ref, later ones are metadata.prs,
+kind is metadata.kind (a row of bd's old decision type still reads as captain), a leading [tag] of the title is the label of that name and is not stored in the title, repo is the project:<repo> label, the first PR is external_ref, later ones are metadata.prs,
 and reports are metadata.reports, each comma-joined; a PR or report also joins the title, as the backlog writes it.
 A hold is status on_hold with metadata.hold_reason and hold_kind, kept in plain text; a dated hold is status deferred
 with --until as defer_until at UTC midnight, because bd reads a bare date in local time, and bd ready wakes it to open;
@@ -58,9 +58,16 @@ PR_ERROR = ("--pr must be a canonical pull request URL: https://github.com/<owne
             "or https://<host>/<owner>/<repo>/pulls/<n> (Forgejo)")
 FIELDS = ("--kind", "--repo", "--body", "--body-file", "--pr", "--report", "--priority")
 STALE = 13
+TAG = re.compile(r"\[(captain-ask|feature|design-ux|security|blocker)\]\s*")
 CAPTAIN = "captain"
 HOLD_KINDS = ("captain", "external", "load", "parked", "future")
 HOLD_FIELDS = ("hold_reason", "hold_kind")
+
+
+def untag(title):
+    """Split a title's leading type tag off: the label it names (or None) and the words after it."""
+    found = TAG.match(title)
+    return (found.group(1), title[found.end():]) if found else (None, title)
 
 
 def bd(*args):
@@ -268,7 +275,7 @@ def parent_flags(row, found):
     labels = row.get("labels") or []
     mine = [] if "--repo" in found else [label for label in labels if label.startswith("project:")][:1]
     return ["--parent", row["id"], "--no-inherit-labels"] + [
-        flag for label in mine + [l for l in ("captain-ask",) if l in labels] for flag in ("-l", label)]
+        flag for label in mine + (["captain-ask"] if view.ask_role(row) != "-" else []) for flag in ("-l", label)]
 
 
 def epic(row):
@@ -279,6 +286,7 @@ def epic(row):
 
 
 def add(args):
+    args = ["--label" if arg == "-l" else arg for arg in args]
     found, words = view.flags(args, FIELDS + ("--prefix", "--blocked-by", "--label", "--parent"), ("--queue", "--mint", "--json"))
     if "--parent" in found and "--mint" not in found and len(words) == 2:
         view.refuse("--parent cannot go with an own id: bd names a child under its parent",
@@ -295,7 +303,8 @@ def add(args):
         view.refuse("A title is required", 'Run `jg-backlog.sh add <id> "<title>"`')
     body = checked(found)
     items = rows()
-    title = words[-1]
+    tag, title = untag(words[-1])
+    labels = list(dict.fromkeys(found.get("--label+", []) + ([tag] if tag else [])))
     minted = "--mint" in found or "--parent" in found
     ident = None if minted else words[0]
     known = ident and view.named(items.values(), ident)
@@ -312,18 +321,17 @@ def add(args):
                     'Run `jg-backlog.sh add --parent <id> "<title>"` to file a part of a row')
     blockers = [blocker(items, other) for other in found.get("--blocked-by+", [])]
     parent = child_of(items, found) if "--parent" in found else None
-    meta = {"kind": found["--kind"]} if found.get("--kind", CAPTAIN) != CAPTAIN else {}
+    meta = {"kind": found["--kind"]} if "--kind" in found else {}
     if "--report" in found:
         meta["reports"] = found["--report"]
     cmd = ["create", "--title=" + " ".join(filter(None, [title, found.get("--pr"), found.get("--report")]))]
     cmd += ["--json"] if ident is None else ["--id", ident, "--force"]
-    cmd += ["--type", "decision"] if found.get("--kind") == CAPTAIN else []
     for flag, value in (("-p", found.get("--priority")), ("--external-ref", found.get("--pr")),
                         ("--deps", ",".join(blockers)), ("--metadata", meta and json.dumps(meta))):
         cmd += [flag, value] if value else []
     cmd += ["--description=" + body] if body else []
     cmd += ["-l", "project:" + found["--repo"]] if "--repo" in found else []
-    cmd += ["-l", found["--label"]] if "--label" in found else []
+    cmd += [flag for label in labels for flag in ("-l", label)]
     cmd += parent_flags(parent, found) if parent else []
     made = bd(*cmd)
     ident = ident or json.loads(made)["id"]
@@ -350,11 +358,15 @@ def update(args):
         view.refuse("--archive-body requires --body or --body-file",
                     "Inspect the current task first, then pass a replacement body with --body or --body-file")
     words, cmd = links(row, found)
-    title = " ".join([found.get("--title", item["title"]), *words])
+    tag, text = untag(found.get("--title", item["title"]))
+    # A row whose tag still leads its title keeps its type as a label before the title changes, so a retitle never drops an ask.
+    for label in dict.fromkeys(filter(None, [tag, untag(item["title"])[0]])):
+        cmd += [] if label in (row.get("labels") or []) else ["--add-label", label]
+    title = " ".join([text, *words])
     changed = []
     if title != item["title"]:
         cmd.append("--title=" + title)
-    if found.get("--title", item["title"]) != item["title"]:
+    if text != untag(item["title"])[1]:
         changed.append("title")
     if body is not None and body != item["body"]:
         cmd.append("--description=" + body)
@@ -364,9 +376,8 @@ def update(args):
         cmd += ["--add-label", "project:" + found["--repo"]]
         changed.append("repo")
     if found.get("--kind", item["kind"]) != item["kind"]:
-        # Captain is bd's decision type; any other kind is metadata on a task. A row from before keeps kind in metadata.
-        cmd += ["--type", "decision", "--unset-metadata", "kind"] if found["--kind"] == CAPTAIN else \
-            ["--set-metadata", "kind=" + found["--kind"]] + (["--type", "task"] if row.get("issue_type") == "decision" else [])
+        # Every kind is metadata on a task; a row of the old decision type becomes a task.
+        cmd += ["--set-metadata", "kind=" + found["--kind"]] + (["--type", "task"] if row.get("issue_type") == "decision" else [])
         changed.append("kind")
     if found.get("--priority", str(item["priority"])) != str(item["priority"]):
         cmd += ["-p", found["--priority"]]
@@ -712,11 +723,46 @@ def relink(_args):
     print("ok: relink laid %d" % lay())
 
 
+def retag(_args):
+    """The one-time pass over every row: the tag in a title becomes its label, captain-ask goes down every parent edge,
+    a row with a child is an epic, and a decision row becomes a task (an epic with a child) whose kind is metadata.
+    A rerun finds nothing left to change."""
+    items = rows()
+    labels = {ident: set(row.get("labels") or []) for ident, row in items.items()}
+    children = {ident: [] for ident in items}
+    for ident, row in items.items():
+        for edge in row.get("dependencies") or []:
+            if edge.get("type") == "parent-child" and edge.get("depends_on_id") in children:
+                children[edge["depends_on_id"]].append(ident)
+    texts = {}
+    for ident, row in items.items():
+        tag, texts[ident] = untag(row.get("title", ""))
+        labels[ident] |= {tag} if tag else set()
+    pending = [ident for ident in items if "captain-ask" in labels[ident]]
+    while pending:
+        for child in children[pending.pop()]:
+            if "captain-ask" not in labels[child]:
+                labels[child].add("captain-ask")
+                pending.append(child)
+    done = 0
+    for ident, row in items.items():
+        cmd = ["--title=" + texts[ident]] if texts[ident] != row.get("title", "") else []
+        cmd += [flag for label in sorted(labels[ident] - set(row.get("labels") or [])) for flag in ("--add-label", label)]
+        kind = row.get("issue_type")
+        want = "epic" if children[ident] else "task" if kind == "decision" else kind
+        cmd += ["--type", want] if want != kind else []
+        cmd += ["--set-metadata", "kind=" + CAPTAIN] if kind == "decision" and not (row.get("metadata") or {}).get("kind") else []
+        if cmd:
+            bd("update", ident, *cmd)
+            done += 1
+    print("retagged %d of %d rows" % (done, len(items)))
+
+
 def main():
     verb = sys.argv[1] if len(sys.argv) > 1 else ""
     serve = {"add": add, "create": add, "update": update, "edit": update, "done": done, "close": done,
              "block": block, "unblock": unblock, "start": start, "rename-lane": rename_lane, "task": task, "reopen": reopen, "hold": hold, "unhold": unhold,
-             "stage": stage, "take": take, "drop": drop, "relink": relink,
+             "stage": stage, "take": take, "drop": drop, "relink": relink, "retag": retag,
              "public-followup": lambda args: __import__("jg-beads-followup").main(args),
              "trace": lambda args: __import__("jg-beads-trace").main(args),
              **{name: lambda args, name=name: __import__("jg-beads-moment").main(name, args) for name in ("moment", "wait", "ticket-stage", "ticket-drift", "times")}}.get(verb)

@@ -4,7 +4,7 @@
 #
 # The backlog is this home's Beads store, named by the absolute BEADS_DIR in
 # `config/beads-dir`. jg_backlog_beads_read owns every read, jg_backlog_beads_write owns
-# add, update, done, block, unblock, start, reopen, hold, unhold, relink and the
+# add, update, done, block, unblock, start, reopen, hold, unhold, relink, retag and the
 # stage, take and drop a handoff moves rows with, and bin/jg-backlog.sh serves those
 # verbs and refuses every other one. There is no other backend and no fallback: a
 # home with no store named reports that, and its caller stops.
@@ -56,8 +56,8 @@ jg_backlog_task_id_refusal() {  # <ticket-id> <task-id> [<model>]
 
 # The readable-title rule a fresh spawn holds a ticket to: 2 to 7 words, at most 48 characters, no id
 # (jg-..., Main<number>, 32 hex), no [tag], no URL or path. Prints the reason and returns 1 when the title fails.
-# Until the type tag moves to a label (S15a), `add` still stores it at the front of the title, so the one leading
-# type tag ([captain-ask], [feature], [design-ux], [security], [blocker]) is not judged with the words after it.
+# A row from before the type tag became a label (jg-backlog.sh retag) may still carry the tag at the front of its title,
+# so the one leading type tag ([captain-ask], [feature], [design-ux], [security], [blocker]) is not judged with the words after it.
 jg_backlog_title_refusal() {  # <title>
   local title=$1 words
   case $title in

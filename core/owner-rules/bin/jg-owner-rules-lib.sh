@@ -15,7 +15,7 @@
 jg_owner_rules_check() {
   # $3 (the delivery mode) is part of the caller contract; the risk reason it
   # used to read is bin/jg-brief.sh --risk now, so this check never needs it.
-  local data=$1 id=$2 kind=$4 entry title ids verdict bin config backlog='' store row='[]' facts
+  local data=$1 id=$2 kind=$4 entry title ids verdict bin config backlog='' store row='[]' facts ask
   bin=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)/bin
   config=${JG_CONFIG_OVERRIDE:-${JG_HOME:-${data%/*}}/config}
   # shellcheck source=bin/jg-backlog-lib.sh
@@ -31,6 +31,8 @@ jg_owner_rules_check() {
   facts=$(jq -c '(if type == "array" then .[0] else . end) // {}
     | {labels: (.labels // []), parent: ((.dependencies // [] | map(select(.dependency_type == "parent-child"))[0].id)
         // (if (.labels // [] | index("upkeep")) then "upkeep" else "" end))}' <<<"$row" 2>/dev/null) || facts='{"labels":[],"parent":""}'
+  # The store answers whether the row is an owner ask, or sits under one (the label, or the old tag before the one-time pass).
+  ask=$(jg_backlog_beads_read "$config" show "$id" --full 2>/dev/null | sed -n 's/^  ask: //p')
   # Entry = the "- [.] <id> - <title>" line and its indented body, up to the next item or heading.
   entry=$(awk -v id="$id" '
     /^- \[.\] / { on = (substr($0, 7, length(id) + 1) == id " ") } /^## / { on = 0 } on' <<<"$backlog")
@@ -44,8 +46,8 @@ jg_owner_rules_check() {
     {
       printf '%s\n' "$entry" | jq -Rsc 'split("\n")[:-1]'
       printf '%s\n' "$ids" | jq -Rsc 'split("\n") | map(select(. != ""))'
-    } | jq -s --arg id "$id" --arg kind "$kind" --arg title "$title" --argjson facts "$facts" \
-      '{id: $id, kind: $kind, title: $title, entry_lines: .[0], ids: .[1]} + $facts' | "$bin/jg-guard-host.sh" eval gate.brief_rules 2>&1
+    } | jq -s --arg id "$id" --arg kind "$kind" --arg title "$title" --arg ask "${ask:--}" --argjson facts "$facts" \
+      '{id: $id, kind: $kind, title: $title, ask: $ask, entry_lines: .[0], ids: .[1]} + $facts' | "$bin/jg-guard-host.sh" eval gate.brief_rules 2>&1
   ); then
     echo "owner-rules: cannot evaluate the brief rules for $id: ${verdict:-no answer}" >&2
     exit 1

@@ -6,7 +6,7 @@
 #
 # Every routine juggernaut backlog read or mutation goes through this command. It serves
 # `show`, `view`, `list`, `ready`, `ready --spawnable` (the tickets this home can start now, bin/jg-backlog-spawnable.sh, ended at 10 seconds with exit 124), `approve-dispatch`, `markdown`, `add`, `update`, `done`, `block`, `unblock`,
-# `start`, `task`, `reopen`, `hold`, `unhold`, `on-report`, `public-followup` and `relink` from the store that
+# `start`, `task`, `reopen`, `hold`, `unhold`, `on-report`, `public-followup`, `relink` and `retag` from the store that
 # `config/beads-dir` names (bin/jg-backlog-lib.sh); any other verb exits 2 with nothing
 # run. A relative value of `--to` or any `--*-file` flag (`--body-file`, ...) is made
 # absolute against the caller's working directory. Hold reasons are plain text.
@@ -21,9 +21,15 @@
 #     flight without the dispatch artifacts bin/jg-spawn.sh creates - the task record,
 #     status file, and inbox that go with the row (`start <id>` stays a documented
 #     direct transition);
-#   - `rm`/`delete`, `done`/`close`, or `update`/`edit --title` dropping `[captain-ask]`,
-#     unless the row has a merged `pr:` link or a Recon report (see the next entry).
+#   - `rm`/`delete` or `done`/`close` of an owner ask (the row with the `captain-ask` label, or an old row whose
+#     title still starts with the tag), unless the row has a merged `pr:` link or a Recon report (see the next entry).
 #     A raw `hold` is always refused.
+#     The type tag is a label, not title text: a title that starts with [captain-ask], [feature], [design-ux],
+#     [security] or [blocker] is stored without it and with the label of that name (`-l captain-ask "words"` is the
+#     same call), and a kind such as captain is metadata.kind on a task. `show` prints an `ask:` line and `list --fields ask`
+#     gives the column: ask, under an ask, or - from the store, the one answer bin/jg-beads-view.py's ask_role gives. `retag` is the one-time
+#     pass for a home that has old rows: it labels each row from its own tag, copies captain-ask down every parent edge, makes
+#     each row with a child an epic and each decision row a task (or epic) with kind captain, and a rerun changes nothing.
 #   - the same close without delivery evidence and without `--captain-quote '<his words>'` or
 #     `--confirm-card <id>` (a separate board card that names the row and that
 #     `bin/jg-captain-hold.sh answered` finds answered): a recorded answer alone
@@ -31,7 +37,7 @@
 #     it, never to cancel. The quote or card is recorded in the ticket note (`done`) and in
 #     data/captain-closures.md; both flags are consumed here and never reach the store.
 #   - `add` (or `create`) whose item does not say what kind of work it is and
-#     why: the title must start with a type tag, one of [captain-ask],
+#     why: the title must start with a type tag (or the call carries that type as a label), one of [captain-ask],
 #     [feature], [design-ux], [security] or [blocker], and the first line of
 #     --body or --body-file must be a one-line summary (the captain's own
 #     words for [captain-ask]), followed by short Captain, Ask, Why and Done when
@@ -256,7 +262,7 @@ case "${1:-}" in
     fi
     beads_read; exit $? ;;
   markdown) beads_read; exit $? ;;
-  add|create|update|edit|done|close|block|unblock|start|task|reopen|hold|unhold|on-report|public-followup|relink|moment|wait|ticket-stage|ticket-drift|times|trace) ;;
+  add|create|update|edit|done|close|block|unblock|start|task|reopen|hold|unhold|on-report|public-followup|relink|retag|moment|wait|ticket-stage|ticket-drift|times|trace) ;;
   *) fail "the beads backlog does not serve ${1:-this command}" ;;
 esac
 
@@ -275,7 +281,7 @@ if [ "${1:-}" = on-report ]; then
 fi
 
 captain_guard() {  # <backlog args>
-  local verb id='' value=0 title_next=0 has_title=0 new_title='' arg
+  local verb id='' value=0 arg
   local reason='' reason_next=0 reason_given=0
   [ "${1:-}" = task ] && shift
   verb=${1:-}
@@ -285,13 +291,10 @@ captain_guard() {  # <backlog args>
     if [ "$arg" = --json ]; then continue; fi
     if [ "$value" = 1 ]; then value=0; continue; fi
     if [ "$reason_next" = 1 ]; then reason_next=0; reason=$arg; reason_given=1; continue; fi
-    if [ "$title_next" = 1 ]; then title_next=0; new_title=$arg; continue; fi
     case "$arg" in
       --reason) reason_next=1 ;;
       --reason=*) reason=${arg#--reason=}; reason_given=1 ;;
-      --title) title_next=1; has_title=1 ;;
-      --title=*) has_title=1; new_title=${arg#--title=} ;;
-      --pr|--report|--note|--until|--kind|--repo|--priority|--body|--body-file) value=1 ;;
+      --pr|--report|--note|--until|--kind|--repo|--priority|--body|--body-file|--title) value=1 ;;
       -*) ;;
       *) id=${id:-$arg} ;;
     esac
@@ -307,12 +310,7 @@ captain_guard() {  # <backlog args>
       fi
       guard_captain_ask_hold "$id" ;;
     update|edit)
-      if [ "$has_title" = 1 ]; then
-        case "$new_title" in
-          *'[captain-ask]'*) ;;
-          *) guard_captain_ask_close "$id" ;;
-        esac
-      fi
+      # A retitle never drops an ask: the writer moves a leading tag to its label first.
       ;;
   esac
 }
@@ -320,7 +318,7 @@ captain_guard() {  # <backlog args>
 # ITEM_BODY, ITEM_PRIORITY, and ITEM_ID (update's id).
 item_args() {  # <add|update args...>
   local verb=$1 mint=0 positional=()
-  ITEM_TITLE='' ITEM_BODY='' ITEM_PRIORITY='' ITEM_ID=''
+  ITEM_TITLE='' ITEM_BODY='' ITEM_PRIORITY='' ITEM_ID='' ITEM_LABELS=' '
   shift
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -335,6 +333,8 @@ item_args() {  # <add|update args...>
       --mint) mint=1 ;;
       --parent) mint=1; shift ;;
       --parent=*) mint=1 ;;
+      --label|-l) ITEM_LABELS+="${2-} "; shift ;;
+      --label=*) ITEM_LABELS+="${1#--label=} " ;;
       --kind|--repo|--blocked-by|--pr|--report|--prefix) shift ;;
       -*) ;;
       *) positional+=("$1") ;;
@@ -353,7 +353,10 @@ intake_check() {
   [ ! -e "$JG_HOME/config/backlog-intake-loose" ] || return 0
   case "$ITEM_TITLE" in
     '[captain-ask]'*|'[feature]'*|'[design-ux]'*|'[security]'*|'[blocker]'*) ;;
-    *) fail "a new item needs a type: start the title with [captain-ask], [feature], [design-ux], [security] or [blocker]; other work goes in a report, not the backlog" ;;
+    *) case "$ITEM_LABELS" in
+         *' captain-ask '*|*' feature '*|*' design-ux '*|*' security '*|*' blocker '*) ;;
+         *) fail "a new item needs a type: start the title with [captain-ask], [feature], [design-ux], [security] or [blocker], or pass it as a label (-l); other work goes in a report, not the backlog" ;;
+       esac ;;
   esac
   body=${ITEM_BODY%%$'\n'*}
   [ -n "${body//[[:space:]]/}" ] \
@@ -364,6 +367,7 @@ intake_check() {
 captain_ask_first() {
   local ask=0
   case "$ITEM_TITLE" in '[captain-ask]'*) ask=1 ;; esac
+  case "$ITEM_LABELS" in *' captain-ask '*) ask=1 ;; esac
   if [ "$ask" = 0 ] && [ -n "$ITEM_ID" ] && [ -n "$ITEM_PRIORITY" ] && [ "$ITEM_PRIORITY" != 0 ]; then
     captain_ask_row "$ITEM_ID"
     [ -z "$CAPTAIN_ASK_SHOW" ] || ask=1
