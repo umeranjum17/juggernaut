@@ -61,7 +61,7 @@ def reconcile_times():
 
 times = reconcile_times()
 steps = [
-    "Run the feature sync test so a ticket publishes its stage and last event from the lane, and the stale check names a ticket its work contradicts.",
+    "Run the feature sync test so a ticket publishes no invented stage or last event, and the stale check names a ticket its work contradicts.",
     f"Time a reconcile over a drifted disposable board and a settled one: {'; '.join(times) if times else 'no timing printed'}.",
     f"Move real backlog rows through the operator command and the lifecycle transition library: {passed('jg-ticket-writeback-test.log')} checks passed, covering start, done with a delivered PR, a hold with its reason, its release, and the merge path.",
     "Confirm a home with no fleet board writes nothing and still succeeds, so a board problem never fails a transition.",

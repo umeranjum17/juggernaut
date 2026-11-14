@@ -463,28 +463,24 @@ jg_backlog_row_snapshot_probe() {  # <id>
 # bin/jg-ticket.sh owns the write: it takes this home's board, writes only fields
 # that differ, and is a silent no-op (exit 0) when this home has no board, so a
 # board problem never fails a transition. The mapping is the poll's own
-# (core/tickets-sync/sync.py owns state, stage and progress), and `update` moves
-# no stage, so it writes nothing.
+# (core/tickets-sync/sync.py owns state and progress). Only done and close write
+# the board here (state done and the PR); start, reopen, hold, park and unhold
+# write nothing, because the Beads status is the one truth and the board
+# carries no stage or state Juggernaut invented.
 # Usage: jg_backlog_ticket_note <data-dir> <verb> <id> [flag...]
 jg_backlog_ticket_note() {  # <data-dir> <verb> <id> [flag...]
-  local data=$1 verb=$2 id=$3 home tool pr='' reason='' note_out
+  local data=$1 verb=$2 id=$3 home tool pr='' note_out
   local -a args=()
   shift 3
   case "$verb" in
-    start) args=(--stage building --state 'in progress') ;;
-    done|close) args=(--stage "done" --state "done") ;;
-    reopen) args=(--stage queued --state queued) ;;
-    hold|park) args=(--state 'on hold') ;;
-    unhold) args=(--state queued) ;;
+    done|close) args=(--state "done") ;;
     *) return 0 ;;
   esac
   while [ "$#" -gt 0 ]; do
     if [ "$1" = --pr ] && { [ "$verb" = "done" ] || [ "$verb" = "close" ]; }; then pr=${2-}; fi
-    if [ "$1" = --reason ] && { [ "$verb" = hold ] || [ "$verb" = park ]; }; then reason=${2-}; fi
     shift
   done
   [ -z "$pr" ] || args+=(--pr "$pr")
-  [ -z "$reason" ] || args+=(--hold-reason "$reason")
   home=${JG_HOME:-${data%/*}}
   tool=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/jg-ticket.sh
   [ -x "$tool" ] || return 0

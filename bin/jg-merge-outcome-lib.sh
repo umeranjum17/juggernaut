@@ -134,7 +134,7 @@ jg_merge_outcome_report() {  # <home> <state> <task-id> <pr-url> <origin> [autho
   [ "$status" -ne 0 ] || JG_HOME=$home jg_trace_record "$id" land pr "$JG_PR_URL" --source jg-merge --at "$(date +%s)" \
     --payload "{\"origin\":\"$origin\"}" || true
   # The board's ticket still closes here until the board reads the stage from the row (the board-mirror cut, S20a, removes this call).
-  [ "$status" -ne 0 ] || JG_HOME=$home JG_STATE_OVERRIDE=$state "$_JG_MERGE_OUTCOME_LIB_DIR/jg-ticket.sh" "$id" --stage "done" --state "done" --pr "$JG_PR_URL" || true
+  [ "$status" -ne 0 ] || JG_HOME=$home JG_STATE_OVERRIDE=$state "$_JG_MERGE_OUTCOME_LIB_DIR/jg-ticket.sh" "$id" --state "done" --pr "$JG_PR_URL" || true
   # The landed merge reaches this home's active version branch here, so no home
   # depends on an editable hook and no agent has to remember the carry. Off
   # costs one file test; the pass never forces, never touches a dirty copy, and

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Record one task's ticket truth on the fleet board now, from a lifecycle step.
 
-Usage: ticket.py <task> [--stage WORD] [--state WORD] [--pr URL] [--release TEXT] [--hold-reason TEXT]
+Usage: ticket.py <task> [--state WORD] [--pr URL] [--release TEXT] [--hold-reason TEXT]
 
 JG_HOME names the home whose config/fleet-board owns this task, and the task is
 its backlog item id, published as the ticket identity.py names for it in this
@@ -16,9 +16,8 @@ half ticket. Only fields that differ from the board's are written, so a repeated
 lifecycle step appends nothing; state done also sets progress 100, because the
 sync's own completion rule does.
 
-last-event-at is not written here: lane.py derives it from the lane's own status
-stamps and the next poll owns it, so a writer-supplied time would only make the
-poll rewrite the row once.
+No stage and no last-event-at is written here or by the poll: the Beads status
+is the one truth, so the board carries no stage word of Juggernaut's own.
 
 A hold travels with the state: sign-off refuses a ticket held for no reason, so
 `--state "on hold"` needs `--hold-reason <why it waits>`, and any other state
@@ -37,7 +36,6 @@ for _jg_old, _jg_val in list(os.environ.items()):
     if _jg_old.startswith("FM_") and "JG_" + _jg_old[3:] not in os.environ:
         os.environ["JG_" + _jg_old[3:]] = _jg_val
 
-STAGES = ('queued', 'building', 'review', 'merging', 'done')
 STATES = ('queued', 'in progress', 'on hold', 'done')
 
 
@@ -49,7 +47,6 @@ def die(message):
 def main(argv):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('task')
-    parser.add_argument('--stage', choices=STAGES)
     parser.add_argument('--state', choices=STATES)
     parser.add_argument('--pr', default=None, help='the delivered PR URL, or "" to clear it')
     parser.add_argument('--release', default=None, help='the target release, up to 40 characters')
@@ -57,8 +54,8 @@ def main(argv):
     options = parser.parse_args(argv)
     if not options.task or '/' in options.task:
         return die('task must be one backlog item id')
-    if (options.stage, options.state, options.pr, options.release, options.hold_reason) == (None, None, None, None, None):
-        return die('nothing to record: pass --stage, --state, --pr, --hold-reason or --release')
+    if (options.state, options.pr, options.release, options.hold_reason) == (None, None, None, None, None):
+        return die('nothing to record: pass --state, --pr, --hold-reason or --release')
     home = Path(os.environ.get('JG_HOME') or '.').resolve()
     pointer = home / 'config/fleet-board'
     if not pointer.exists():
@@ -85,7 +82,7 @@ def main(argv):
         return die('unreadable board answer for ' + ticket_id)
     if not ticket:
         return 0
-    wanted = {'stage': options.stage, 'state': options.state,
+    wanted = {'state': options.state,
               'pr': options.pr, 'release': options.release}
     write = {}
     for key, value in wanted.items():

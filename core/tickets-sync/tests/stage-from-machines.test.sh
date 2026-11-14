@@ -40,16 +40,16 @@ from lane import stage
 root, source = Path(sys.argv[1]), Path(sys.argv[2])
 for item in ('refused', 'reverted', 'waiting', 'waiting-too', 'delivered-off', 'delivered-on', 'untouched'):
     row = dict(state='queued', title='Umer ' + item, body='', links='')
-    said, board, done, link, event = stage(root, source, item, row, {}, lambda cmd: '')
-    print(item, said, board, done)
+    said, done, link, event = stage(root, source, item, row, {}, lambda cmd: '')
+    print(item, said, done)
 PY
 )
-want='refused rework building False
-reverted rework building False
-waiting ready-to-land merging False
-waiting-too ready-to-land merging False
-delivered-off in-homes-off merging False
-delivered-on in-use merging False
-untouched queued queued False'
+want='refused rework False
+reverted rework False
+waiting ready-to-land False
+waiting-too ready-to-land False
+delivered-off in-homes-off False
+delivered-on in-use False
+untouched queued False'
 [ "$got" = "$want" ] || { printf 'FAIL: the stages read\n%s\nwanted\n%s\n' "$got" "$want"; exit 1; }
 echo 'PASS: a lane reads the word of its machines (rework, ready-to-land, in-homes-off, in-use) and an untouched item reads queued'

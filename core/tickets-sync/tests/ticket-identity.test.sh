@@ -48,9 +48,9 @@ ticket() { sign-off-axi ticket "$board" --id "$1" --title "$2" --progress 0 --de
 ticket "$done_id" 'Umer migrated work that finished'
 ticket "$open_id" 'Umer migrated work still queued'
 ticket "jg-$held_hex" 'Umer migrated work on hold'
-ticket "$(hash lead-a/lead-done)" 'Umer lead work that finished' --state 'in progress' --stage building
+ticket "$(hash lead-a/lead-done)" 'Umer lead work that finished' --state 'in progress'
 ticket "$(hash lead-a/lead-queued)" 'Umer lead work still queued'
-ticket "$(hash lead-a/lead-held)" 'Umer lead work on hold' --state queued --stage queued
+ticket "$(hash lead-a/lead-held)" 'Umer lead work on hold' --state queued
 # An answer to a card that has left the board: sign-off names it on stderr at every read.
 printf '{"key":"gone-card","answer":"yes","label":"Yes","close":"done","at":"2026-10-01T00:00:00Z"}\n' > "$work/board.answers.jsonl"
 for home in "$main" "$lead"; do JG_HOME=$home bash "$root/tickets-sync/wiring.sh" >/dev/null; done
@@ -83,9 +83,9 @@ done
 env -u JG_HOME "$main/state/tickets-stale.check.sh" > "$work/stale-after.out"
 [ ! -s "$work/stale-after.out" ] || { echo "FAIL: the stale check still reports a true board: $(cat "$work/stale-after.out")"; fail=1; }
 
-# A lead's step writer names the same ticket the poll publishes, so starting work shows on the board at once.
+# A start writes no board state or stage of its own: the ticket keeps what the poll published until the next poll.
 in_home "$lead" jg-backlog.sh start lead-queued
-[ "$(state "$(hash lead-a/lead-queued)")" = 'in progress' ] || { echo "FAIL: starting lead-queued did not reach its ticket"; fail=1; }
+[ "$(state "$(hash lead-a/lead-queued)")" = 'queued' ] || { echo "FAIL: starting lead-queued wrote a board state"; fail=1; }
 # A second poll keeps main's finished row done: the lead's open copy never takes its ticket.
 env -u JG_HOME "$main/state/tickets-sync.check.sh" >> "$work/sync.out"
 [ "$(state "$done_id")" = 'done' ] || { echo "FAIL: the lead's open copy reopened main's finished ticket"; fail=1; }

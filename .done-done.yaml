@@ -203,9 +203,6 @@ journeys:
   receipt-candidate-hook:
     tier: local
     command: bash journeys/receipt-candidate-hook.sh
-  tickets-stage-publish:
-    tier: local
-    command: bash core/tickets-sync/run-stage-proof.sh
   tickets-truthful:
     tier: local
     command: bash core/tickets-sync/run-board-proof.sh && bash core/tickets-sync/run-tidy-proof.sh

@@ -7,14 +7,13 @@
 # a release cut records what it knows at the moment it happens instead of leaning
 # on whoever remembers to write a status line before the next poll.
 #
-# Usage: jg-ticket.sh <task-id> [--stage WORD] [--state WORD] [--pr URL] [--release TEXT] [--hold-reason TEXT]
+# Usage: jg-ticket.sh <task-id> [--state WORD] [--pr URL] [--release TEXT] [--hold-reason TEXT]
 #        jg-ticket.sh id <task-id> [home]
 #   id         Print the ticket id the sync publishes for a task, so a card can
 #              name its ticket (--ticket) and the board shows it there. home names
 #              the registered home that owns the task (default: this home, main
 #              or the lead its .jg-squad-lead-home names); core/tickets-sync/identity.py
 #              owns the rule.
-#   --stage    queued | building | review | merging | done
 #   --state    queued | "in progress" | "on hold" | done   (done also sets 100%)
 #   --pr       the delivered PR's full URL; "" clears the linked PRs
 #   --release  this ticket's target release
@@ -81,7 +80,7 @@ if [ "$TASK" = id ] && [ "$#" -ge 1 ] && [ "$#" -le 2 ]; then
   JG_HOME=$JG_HOME exec python3 "$JG_ROOT/core/tickets-sync/identity.py" "$@"
 fi
 [ "$#" -eq 0 ] || case "$1" in
-  --stage|--state|--pr|--release|--hold-reason) ;;
+  --state|--pr|--release|--hold-reason) ;;
   *) usage >&2; exit 2 ;;
 esac
 
