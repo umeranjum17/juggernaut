@@ -81,7 +81,7 @@ Each effective `JG_HOME` contains private operational directories.
 
 - Project and Squad Lead registries.
 - Captain preferences and optional shared captain preferences.
-- Learnings, backlog, briefs, Recon reports, and the optional per-task no-mistakes pipeline-spend ledger.
+- Learnings, backlog, briefs, and Recon reports.
 - The release record that [`bin/jg-live-claim.sh`](../bin/jg-live-claim.sh) reads to decide whether a claimed fix is released.
 - Explicitly installed content-addressed extension packages under `data/extensions/packages/`.
 
@@ -785,12 +785,6 @@ The merge scripts then refuse a task recorded `demo_call=yes` unless its passing
 With the flag absent the scaffold accepts the flags without writing a demo line, and the merge scripts skip the check.
 The flag is a home-local preference and is not inherited by Squad Lead homes.
 `bin/jg-brief.sh`'s header owns the flags, and `bin/jg-merge-gate-lib.sh`'s `jg_dod_demo_gate` owns the check.
-
-## No-mistakes pipeline spend (config/pipeline-spend)
-
-The optional local, gitignored `config/pipeline-spend` presence flag opts this home into recording per-task no-mistakes pipeline spend in `data/pipeline-spend.jsonl` during teardown.
-When the flag is absent, teardown skips recording and the recorder exits before reading task metadata, no-mistakes state, or the spend ledger.
-An existing ledger is left untouched while recording is disabled.
 
 ## Turn-end pane-churn absorb (config/turnend-churn-absorb)
 
@@ -3065,9 +3059,7 @@ JG_PROCEVENT_LAUNCH_CONFIRM_SECONDS=3   # how long reconcile waits for the runne
 JG_WHEN_OUTPUT_TAIL_BYTES=8192          # bound on the command-output tail inside one condition->action outcome document
 JG_CODEX_WATCH_CHECKPOINT=180   # seconds per foreground watcher checkpoint in Codex primary supervision
 JG_CODEX_WATCH_CHECKPOINT_AWAY=3600  # requested away checkpoint bound on a home that runs the supervision host; longer of this and attended bound, capped at 27000
-JG_CREW_STATE_NM_TIMEOUT=10   # seconds allowed per no-mistakes query inside jg-crew-state.sh, and per state-database run-inventory read behind a capped AXI overview
 JG_TEARDOWN_NM_TIMEOUT=10    # seconds allowed per no-mistakes query or abort inside jg-teardown.sh
-JG_CREW_STATE_RUNS_LIMIT=200  # plain runs-ledger rows scanned for fallback attribution; does not change the CLI's AXI overview window (selection owner: bin/jg-nm-run-lib.sh)
 JG_TEARDOWN_NM_RUNS_LIMIT=200  # recent no-mistakes run rows scanned to prove an unresolved-head parked run belongs to teardown's task
 JG_CREW_STATE_BIN=bin/jg-crew-state.sh   # test override for the current-state reader used by watcher triage: the working/paused classification, and the wedge timer's parked-gate wait evidence
 JG_MAIL_USER=      # mail-plane IMAP/SMTP login, from .env or environment (docs/configuration.md "Mail plane")

@@ -1471,7 +1471,7 @@ families_for_changed_path() {
       printf '%s\n' watcher-wake-lock
       ;;
     bin/jg-pr-*|bin/jg-merge-on-green.sh|bin/jg-merge-local.sh|bin/jg-teardown.sh|bin/jg-review-diff.sh|\
-    bin/jg-x-*|bin/jg-check*|bin/jg-pipeline-spend.sh)
+    bin/jg-x-*|bin/jg-check*)
       printf '%s\n' pr-forge
       ;;
     bin/jg-nm-run-lib.sh)

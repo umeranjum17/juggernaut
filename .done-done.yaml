@@ -1306,6 +1306,11 @@ journeys:
   jg-control-primary-relaunch:
     tier: local
     command: bash tests/jg-control-primary-relaunch.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  crew-state-without-pipeline:
+    tier: local
+    command: |
+      printf '{"target":{"version":"jg8-j20d-s2 commit"},"start":"a fleet home whose crew-state reader once asked the pipeline tool for run state","steps":["check the spend script is gone and crew-state names no pipeline tool","read crew state over fixture crews through the real reader","tear down a fixture task under the pool lock"],"result":"crew state reads only pane and status log, and teardown holds the pool lock only around the slot return"}' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
+      { test ! -e bin/jg-pipeline-spend.sh && echo "ok - the pipeline spend script is gone"; ! grep -n -i -E "no-mistakes|no_mistakes|NO_MISTAKES|jg-nm-|nm-run|nm_drain|NM_CONFIG" bin/jg-crew-state.sh && echo "ok - crew state reads a worker only from its pane and status log, naming no pipeline tool"; env -u JG_HOME bash tests/jg-crew-state.test.sh; bash tests/jg-teardown-lock-hold.test.sh; } > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-crew-state:
     tier: local
     command: bash tests/jg-crew-state.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
