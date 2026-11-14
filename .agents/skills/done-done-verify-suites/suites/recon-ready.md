@@ -1,0 +1,3 @@
+# A finished Recon raises one alert with the next items
+
+Recon ready alert: run `done-done run recon-ready` (`core/recon-ready/run-proof.sh`, then `tests/jg-recon-ready.test.sh`); the real `core/recon-ready/ready.sh check` over a fixture home prints one wake line for a Recon whose gate passes, naming its report, its answer, its next items and its open decisions, prints nothing on a rerun, announces a revised report again, and prints nothing for a refused gate, a ship, a Recon still working or a Recon with no report; the real timer rule `jg_wait_timer_quiet` keeps an owner timer for a Recon with no alert and arms none once the alert exists; the run writes `wake.txt`, `recon-ready.log` and `steps.json` (screen: none).

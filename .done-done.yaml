@@ -139,6 +139,9 @@ journeys:
   wait-quiet:
     tier: local
     command: bash tests/jg-wait-quiet.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  recon-ready:
+    tier: local
+    command: bash core/recon-ready/run-proof.sh
   wait-word:
     tier: local
     command: JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-wait-word.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
