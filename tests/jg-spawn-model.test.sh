@@ -192,9 +192,9 @@ pass "T9 a Claude lane on a listed account runs and records the [1m] id, and a r
 # T10
 fresh
 scaffold "$id" || fail "T10 could not scaffold"
-out=$(spawn_claude "$id" --model 'claude-fable-5-2[1m]'); rc=$?
+out=$(spawn_claude "$id" --model 'claude-sonnet-5-5[1m]'); rc=$?
 expect_code 0 "$rc" "T10 a Claude spawn with a [1m] id should succeed: $out"
-[ "$(model_of "$id")" = 'claude-fable-5-2[1m]' ] || fail "T10 the task record holds model=$(model_of "$id"), not claude-fable-5-2[1m]"
+[ "$(model_of "$id")" = 'claude-sonnet-5-5[1m]' ] || fail "T10 the task record holds model=$(model_of "$id"), not claude-sonnet-5-5[1m]"
 pass "T10 an id that already ends in [1m] is not doubled"
 
 # T11

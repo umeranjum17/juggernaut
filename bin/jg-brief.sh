@@ -689,11 +689,14 @@ if [ -n "$TICKET" ]; then
   [ "$KIND" != squad_lead ] || { echo "error: --ticket applies only to ship and scout briefs; a squad_lead starts a home, not a ticket" >&2; exit 1; }
   # shellcheck source=bin/jg-backlog-lib.sh
   . "$SCRIPT_DIR/jg-backlog-lib.sh"
-  [ "$ID" = "$(jg_backlog_task_id "$TICKET")" ] || {
+  # The brief does not know the model; the spawn holds the exact id for it (a Fable model runs as fable-<task id>).
+  TICKET_MODEL=
+  [ "$ID" != "$(jg_backlog_task_id "$TICKET" fable)" ] || TICKET_MODEL=fable
+  [ "$ID" = "$(jg_backlog_task_id "$TICKET" "$TICKET_MODEL")" ] || {
     echo "error: the task id for ticket $TICKET is $(jg_backlog_task_id "$TICKET") (every dot becomes a dash), not $ID" >&2
     exit 1
   }
-  TICKET_OUT=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-backlog.sh" task "$TICKET" 2>&1) || {
+  TICKET_OUT=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-backlog.sh" task "$TICKET" ${TICKET_MODEL:+--model "$TICKET_MODEL"} 2>&1) || {
     echo "error: ticket $TICKET: $(printf '%s\n' "$TICKET_OUT" | sed -n 's/^error: *//p;1{/^error/!p}' | head -1)" >&2
     exit 1
   }
