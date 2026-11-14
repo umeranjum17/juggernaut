@@ -201,10 +201,12 @@ assert_equals "$before" "$(wakes)" "the first high sample raises nothing"
 printf '%s\n' "$(($(date +%s) - 700))" >"$state/.browser-reaper-load"; jg_reaper_load_alarm
 assert_equals "$((before + 1))" "$(wakes)" "ten minutes above the limit posts exactly one wake"
 assert_grep "machine load 999.0" "$JG_WAKE_QUEUE" "the load event names the load"
+assert_grep 'state=open' "$state/alerts/host--browser-reaper-load.rec" "the load wake recorded no open host alert"
 assert_grep "chrome 3 (oldest" "$JG_WAKE_QUEUE" "the load event names the top process group by count and age"
 jg_reaper_load_alarm; assert_equals "$((before + 1))" "$(wakes)" "one wake per episode, not one per sample"
 JG_REAPER_LOADAVG=$home/load-low jg_reaper_load_alarm
 assert_absent "$state/.browser-reaper-load" "a load back under the limit ends the episode"
+assert_grep 'state=resolved' "$state/alerts/host--browser-reaper-load.rec" "the ended episode left the host alert open"
 pass "the load alarm raises one wake per ten-minute episode"
 
 # Machine load is one host fact, so its one owner is the main home: a lead home under

@@ -96,6 +96,11 @@
 # PROGRESS" and names exactly which checks are not yet confirmed, instead of
 # waiting for them. It never reports an unconfirmed check as passed.
 #
+# CONTRACT CARRIER: bin/jg-contract-carrier.sh owns how the primary gets the supervisor contract from a file
+# of its own. A locked start calls its `ensure`; when its `check` does not print `file` (or `ensure` wrote the
+# file at this very start), the digest prints the contract itself, at the start and in the re-emit after a
+# compaction, outside the digest budget.
+#
 # ORDERING, and why FLEET STATE now runs before CONTEXT: this digest is
 # delivered through a harness that truncates an oversized payload from the TAIL,
 # and it has really been truncated in practice - a 70KB digest arrived as lines
@@ -800,6 +805,30 @@ if [ "$LOCK_RC" -ne 0 ]; then
 fi
 REBUILDING_SESSION_PID=$(jg_harness_ancestry_pid 2>/dev/null || true)
 print_agents_refresh_if_required "$REBUILDING_SESSION_PID"
+
+# The supervisor contract has a carrier of its own (bin/jg-contract-carrier.sh). Only a locked session
+# may write it. When the carrier's proof is not `file`, or `ensure` wrote the file just now (this session
+# did not load it), the digest holds the contract itself, at the start and in the re-emit after a
+# compaction. The refresh above already printed it for a pi compaction, so it is not printed twice.
+# The contract is printed outside the digest budget: it must not crowd out the state sections.
+CARRIER="$SCRIPT_DIR/jg-contract-carrier.sh"
+CARRIER_WROTE=0
+if [ "$READ_ONLY" -eq 0 ]; then
+  CARRIER_OUT=$(JG_HOME="$JG_HOME" JG_ROOT_OVERRIDE="$JG_ROOT" "$CARRIER" ensure "$PRIMARY_HARNESS" 2>&1)
+  [ "$?" -ne 3 ] || CARRIER_WROTE=1
+  [ -z "$CARRIER_OUT" ] || printf '%s\n' "$CARRIER_OUT" | jg_digest_say
+fi
+CARRIER_PROOF=$(JG_HOME="$JG_HOME" JG_ROOT_OVERRIDE="$JG_ROOT" "$CARRIER" check "$PRIMARY_HARNESS" 2>/dev/null || true)
+if { [ "$CARRIER_PROOF" != file ] || [ "$CARRIER_WROTE" -eq 1 ]; } && ! agents_refresh_required "$REBUILDING_SESSION_PID"; then
+  CONTRACT_REL=$(JG_ROOT_OVERRIDE="$JG_ROOT" "$CARRIER" contract 2>/dev/null || printf 'AGENTS.md')
+  if [ "$CARRIER_WROTE" -eq 1 ]; then CARRIER_NOTE='carrier file written at this start'; else CARRIER_NOTE="carrier proof: ${CARRIER_PROOF:-none}"; fi
+  section "SUPERVISOR CONTRACT - $CONTRACT_REL ($CARRIER_NOTE)"
+  if [ -f "$JG_ROOT/$CONTRACT_REL" ]; then
+    cat "$JG_ROOT/$CONTRACT_REL"
+  else
+    printf 'The supervisor contract file %s is absent.\n' "$CONTRACT_REL"
+  fi
+fi
 
 # --- 1b. home role -------------------------------------------------------
 # This home's juggernaut-repository role: user/operator unless an explicit

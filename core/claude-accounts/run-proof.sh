@@ -14,7 +14,7 @@ evidence=${DONE_DONE_EVIDENCE_ROOT:?}
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
 mkdir -p "$evidence" "$work/home/state" "$work/home/core"
-ln -s "$repo/lane-scale" "$work/home/core/lane-scale"
+ln -sn "$repo/lane-scale" "$work/home/core/lane-scale"
 export JG_HOME=$work/home
 
 bash "$repo/claude-accounts/tests/claude-accounts.test.sh" >"$evidence/test.txt" 2>&1

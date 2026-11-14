@@ -7,7 +7,7 @@
 # T2b A home read BEFORE a move (check --all) and checked after it (check --before): a fault it already had is carried and
 #    is not a failure, a new fault fails, and the move's own faults (missing-guard, not-at-base) are never carried.
 # T3 The pin-back restores the recorded pre-move HEAD, even when that HEAD is not on the trunk (the first rollback after
-#    the convergence), through the guard, and writes rolled-back:<reason> in trunk-live.tsv.
+#    the convergence), through the guard, and writes rolled-back:<reason> in trunk-in-use.tsv.
 # T4 The pin-back refuses a dirty tree, a HEAD that is not the recorded post-move HEAD, and a home with no record.
 # T5 A home that fails on both commits is recorded rolled-back:start-failed-both with ONE blocked line on the parent
 #    channel; running it again adds nothing (no loop).
@@ -127,7 +127,7 @@ test_the_pinback_restores_the_recorded_pre_move_head() {
   out=$(health pinback "$H" --project juggernaut --key lead1 --reason stale-beacon 2>&1) || fail "the pin-back must pass: $out"
   assert_equals "$PRE" "$(g -C "$H" rev-parse HEAD)" "the home must be back at the pre-move HEAD, which is not on the trunk"
   assert_equals "$PRE" "$(g -C "$H" rev-parse main)" "main must follow"
-  row=$(tail -n 1 "$W/main/data/trunk-live.tsv")
+  row=$(tail -n 1 "$W/main/data/trunk-in-use.tsv")
   assert_equals "juggernaut:lead1"$'\t'"$T"$'\t'"$(printf '%s' "$row" | cut -f3)"$'\t'"rolled-back:stale-beacon"$'\t'"$PRE" "$row" "the row names the home, the moved-to sha, the reason and the pre-move HEAD"
   pass 'the pin-back restores the recorded pre-move HEAD (not on the trunk) through the guard and writes rolled-back:<reason>'
 }
@@ -164,20 +164,20 @@ test_a_home_failing_on_both_commits_is_blocked_once() {
   rc=0; out=$(health verify "$H" "$T" --project juggernaut --key lead1 --session-max 20 2>&1) || rc=$?
   [ "$rc" -ne 0 ] || fail "a failing home must make verify fail"
   assert_equals "$PRE" "$(g -C "$H" rev-parse HEAD)" "the failing home is pinned back to its pre-move HEAD"
-  assert_contains "$(tail -n 1 "$W/main/data/trunk-live.tsv")" "rolled-back:start-failed-both" "a home failing on both commits is recorded start-failed-both"
+  assert_contains "$(tail -n 1 "$W/main/data/trunk-in-use.tsv")" "rolled-back:start-failed-both" "a home failing on both commits is recorded start-failed-both"
   n=$(grep -c '^blocked' "$W/main/state/lead1.status" 2>/dev/null || true)
   assert_equals "1" "$n" "ONE blocked line reaches the parent channel"
-  rows=$(wc -l < "$W/main/data/trunk-live.tsv")
+  rows=$(wc -l < "$W/main/data/trunk-in-use.tsv")
   rc=0; out=$(health verify "$H" "$T" --project juggernaut --key lead1 --session-max 20 2>&1) || rc=$?
   assert_equals "1" "$(grep -c '^blocked' "$W/main/state/lead1.status")" "a second run adds no second blocked line"
-  assert_equals "$rows" "$(wc -l < "$W/main/data/trunk-live.tsv")" "a second run adds no second row (no loop)"
+  assert_equals "$rows" "$(wc -l < "$W/main/data/trunk-in-use.tsv")" "a second run adds no second row (no loop)"
 
   # Failing only on the new commit: pinned back and the old commit is healthy, so the row says why and nothing is blocked.
   SLOW_TRUNK=1 world newonly
   rc=0; out=$(health verify "$H" "$T" --project juggernaut --key lead1 --session-max 1 2>&1) || rc=$?
   assert_equals "1" "$rc" "a failure on the new commit only exits 1"
   assert_equals "$PRE" "$(g -C "$H" rev-parse HEAD)" "the home is pinned back"
-  assert_contains "$(tail -n 1 "$W/main/data/trunk-live.tsv")" "rolled-back:slow-session-start" "the row names the reason"
+  assert_contains "$(tail -n 1 "$W/main/data/trunk-in-use.tsv")" "rolled-back:slow-session-start" "the row names the reason"
   [ ! -s "$W/main/state/lead1.status" ] || fail "no blocked line when the old commit is healthy"
 
   world once

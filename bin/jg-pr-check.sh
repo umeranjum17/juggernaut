@@ -361,7 +361,7 @@ if [ -z "$PR_HEAD" ] || ! jg_dod_forge_head_is_named_head "$MODE"; then
       exit 1
     fi
   fi
-  if ! GATE_REASON=$(jg_dod_accept_ship_done "${KIND:-ship}" "$MODE" "$WT" "$PROJECT" "$DONE_LINE" "$STATE" "$ID" "$META" "" "$RECEIPT_CANDIDATE"); then
+  if ! GATE_REASON=$(jg_dod_accept_ship_done "${KIND:-ship}" "$MODE" "$WT" "$PROJECT" "$DONE_LINE" "$STATE" "$ID" "$META" "$RECEIPT_CANDIDATE"); then
     echo "error: $GATE_REASON" >&2
     exit 1
   fi

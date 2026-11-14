@@ -23,8 +23,17 @@ SECTIONS=(
   "Sources and evidence" "Revision log"
 )
 
+# stamp_round <task>: the critic's last round names the report it read (a fixture's critic.md is written without the hash).
+# A task with a .nostamp file in its data directory is left as written.
+stamp_round() {
+  local f="$HOME_DIR/data/$1/critic.md" n
+  [ -f "$f" ] && [ ! -e "$HOME_DIR/data/$1/.nostamp" ] && [ -f "$HOME_DIR/data/$1/report.md" ] || return 0
+  n=$(grep -n -E '^Round[[:space:]]+[0-9]+:[[:space:]]*new gaps' "$f" | tail -n 1 | cut -d: -f1); [ -n "$n" ] || return 0
+  sed -i -E "${n}s/ report [0-9a-f]+\$//; ${n}s/\$/ report $(sha256sum "$HOME_DIR/data/$1/report.md" | cut -d' ' -f1)/" "$f"
+}
 run_gate() {  # <task> [gate args...]: sets OUT and RC
   local task=$1; shift
+  stamp_round "$task"
   OUT=$(JG_HOME="$HOME_DIR" bash "$GATE" "$task" "$@" 2>&1); RC=$?
 }
 
@@ -174,6 +183,25 @@ test_critic_is_required() {
 
 # K6: a gap found in the last round can be fixed but never re-checked by a
 # further round, so a closure line by the same critic stands in for that round.
+test_a_critic_round_binds_the_report_it_read() {
+  local dir
+  make_recon rg-hash deep; dir="$HOME_DIR/data/rg-hash"; touch "$dir/.nostamp"
+  run_gate rg-hash
+  expect_code 1 "$RC" "a last round that names no report is refused (got: $OUT)"
+  case "$OUT" in *"names no report"*) ;; *) fail "the refusal names the missing hash (got: $OUT)" ;; esac
+  rm -f "$dir/.nostamp"; run_gate rg-hash
+  expect_code 0 "$RC" "a round that names the report it read passes (got: $OUT)"
+  printf '\nA later draft sentence.\n' >> "$dir/report.md"; touch "$dir/.nostamp"
+  run_gate rg-hash
+  expect_code 1 "$RC" "a report changed after the last round is refused (got: $OUT)"
+  case "$OUT" in *"changed after critic round"*) ;; *) fail "the refusal names the changed report (got: $OUT)" ;; esac
+  run_gate rg-hash --step
+  expect_code 0 "$RC" "a deep draft changed after the last round is the step critic (got: $OUT)"
+  case "$OUT" in *"STEP critic"*) ;; *) fail "the step names the critic (got: $OUT)" ;; esac
+  rm -f "$dir/.nostamp"; run_gate rg-hash
+  expect_code 0 "$RC" "a new round naming the new draft passes again (got: $OUT)"
+  pass "jg-recon-gate.sh: a critic round names the report it read, and a report changed after the last round is refused"
+}
 test_closure_check_closes_the_last_round() {
   local dir
   make_recon rg-close deep
@@ -360,6 +388,7 @@ test_deep_may_not_skip_plan_or_acceptance
 test_unverified_load_bearing_claims
 test_refuted_and_single_source_deep_claims
 test_critic_is_required
+test_a_critic_round_binds_the_report_it_read
 test_closure_check_closes_the_last_round
 test_source_budget
 test_quick_and_legacy_are_exempt

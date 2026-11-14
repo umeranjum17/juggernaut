@@ -27,6 +27,8 @@
 _jg_d=${BASH_SOURCE[0]%/*}
 [ "$_jg_d" != "${BASH_SOURCE[0]}" ] || _jg_d=.
 _JG_GATE_LIB_DIR=$(cd "$_jg_d" && pwd)
+# shellcheck source=bin/jg-trunk-policy-lib.sh
+[ -r "$_jg_d/jg-trunk-policy-lib.sh" ] && . "$_jg_d/jg-trunk-policy-lib.sh"
 if [ -r "$_jg_d/jg-compat.sh" ]; then
   # shellcheck source=bin/jg-compat.sh
   . "$_jg_d/jg-compat.sh"
@@ -191,6 +193,25 @@ jg_design_receipt_value() {  # <state> <id> <head> <label>
     | sed -n -E "s/^$4: ([^[:space:]].*[^[:space:]])[[:space:]]*\$/\1/p" | paste -sd, -
 }
 
+# What a task's UI change is measured against: its recorded base branch, else for a local-trunk lane the CURRENT tip of the
+# project's trunk branch (never the default branch's origin ref, which a local trunk runs ahead of). git merge-base of that tip
+# and the lane head is the lane's fork point, so a lane rebased onto a newer tip is measured from the new one and only its own
+# lines count (rebase-moves-design-base). A trunk branch that cannot be read falls back to the cut tip the meta recorded (base=<sha>).
+jg_design_base() {  # <meta>
+  local meta=$1 b wt project tip
+  b=$(jg_dod_meta_value "$meta" base_branch)
+  if [ -z "$b" ]; then
+    case $(jg_dod_meta_value "$meta" mode) in local|local-trunk)
+      b=$(jg_dod_meta_value "$meta" base)
+      wt=$(jg_dod_meta_value "$meta" worktree); project=$(jg_dod_meta_value "$meta" project)
+      if [ -n "$project" ] && [ -d "$wt" ] && declare -F jg_trunk_branch >/dev/null; then
+        tip=$(git -C "$wt" rev-parse -q --verify "refs/heads/$(jg_trunk_branch "$(basename -- "$project")" "$(dirname -- "$meta")")^{commit}" 2>/dev/null) && b=$tip
+      fi ;;
+    esac
+  fi
+  printf '%s\n' "$b"
+}
+
 # The .html pages a change adds: the options it presents.
 # ponytail: added pages only, so a design task that rewrites an existing page stays under
 # the size rule; widen this if a rewritten option ever needs the receipt too.
@@ -211,7 +232,7 @@ jg_design_first_draft_ok() {  # <state> <id> <meta> <head>
   ref=$(jg_design_receipt_value "$state" "$id" "$head" "$JG_DESIGN_RECEIPT_LABEL") || ref=''
   if [ -n "$wt" ] && [ -d "$wt" ]; then
     while IFS= read -r page; do [ -n "$page" ] && OPTS+=("$wt/$page"); done \
-      < <(jg_design_added_pages "$wt" "$(jg_dod_meta_value "$meta" base_branch)" "$head")
+      < <(jg_design_added_pages "$wt" "$(jg_design_base "$meta")" "$head")
   fi
   jg_design_fd_check --ref "$ref" --root "${wt:-$PWD}" -- ${OPTS[@]+"${OPTS[@]}"}
 }
@@ -222,7 +243,7 @@ jg_design_done_gate() {  # <state> <id> <meta> <head>
   local state=$1 id=$2 meta=$3 head=$4 call size
   [ -n "$state" ] && [ -n "$id" ] && [ -f "$meta" ] || return 0
   call=$(jg_dod_meta_value "$meta" design_call)
-  size=$(jg_design_size "$(jg_dod_meta_value "$meta" worktree)" "$(jg_dod_meta_value "$meta" base_branch)" "$head") || size=''
+  size=$(jg_design_size "$(jg_dod_meta_value "$meta" worktree)" "$(jg_design_base "$meta")" "$head") || size=''
   [ "$call" = yes ] || [ "${size%% *}" = design ] || return 0
   jg_design_first_draft_ok "$state" "$id" "$meta" "$head"
 }
@@ -289,7 +310,7 @@ jg_dod_design_gate() {  # <state> <id> <meta> <candidate-head>
     '') echo "warning: $id has no design call recorded (an older brief); counting it as design_call=no" >&2 ;;
     *) echo "merge refused: design call for $id is malformed ('$call'); expected yes or no"; return 1 ;;
   esac
-  size=$(jg_design_size "$(jg_dod_meta_value "$meta" worktree)" "$(jg_dod_meta_value "$meta" base_branch)" "$head") \
+  size=$(jg_design_size "$(jg_dod_meta_value "$meta" worktree)" "$(jg_design_base "$meta")" "$head") \
     || { [ "$call" = yes ] || echo "warning: cannot measure the UI change of $id at $head; using its design call" >&2; }
   if [ "$call" != yes ] && [ "${size%% *}" != design ]; then
     case $size in ''|'tweak 0 0') return 0 ;; esac

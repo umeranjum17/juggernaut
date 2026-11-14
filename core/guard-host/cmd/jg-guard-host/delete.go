@@ -26,7 +26,7 @@ const repeatSecs = 600
 
 var (
 	bareVarRe  = regexp.MustCompile(`^(\$\w+|\$\{[^}]+\})(/+[.]?\*|/+\.|/+)?$`)
-	shellVarRe = regexp.MustCompile(`^(HOME|PWD|OLDPWD|TMPDIR|TMP|TEMP|USER|LOGNAME|SHELL|PATH|IFS|BASH\w*|(XDG|FM|CLAUDE|CODEX|HERDR|PI|OPENCODE|NO_MISTAKES)_\w*)$`)
+	shellVarRe = regexp.MustCompile(`^(HOME|PWD|OLDPWD|TMPDIR|TMP|TEMP|USER|LOGNAME|SHELL|PATH|IFS|BASH\w*|(XDG|FM|CLAUDE|CODEX|HERDR|PI|OPENCODE)_\w*)$`)
 	// decl is an optional declaration keyword before an assignment, with only the plain
 	// flags -r -x -g: -n (a nameref such as declare -n T=HOME) and any other flag change
 	// what the value means, so such a statement never counts as a plain one.

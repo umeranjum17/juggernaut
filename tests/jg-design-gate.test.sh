@@ -84,3 +84,43 @@ out=$(mg h2 "$head") && fail "a hand-roll approval covered a change past the siz
 assert_contains "$out" "past the small-tweak size" "oversize merge needs first-draft"
 mg h2 "$(git -C "$repo" rev-parse tdoc)" >/dev/null || fail "a change with no UI lines needed an approval"
 pass "a hand-roll approval never covers a change past the size rule"
+
+# A local-trunk lane is measured against the trunk tip it was cut from (meta base=<sha>), not against origin/main, which the
+# local trunk runs ahead of: slices already landed on the trunk are not the lane's change (design-gate-stale-base).
+tr=$root/trunk-repo ts=$lead/state
+mkdir -p "$tr" && git -C "$tr" init -q -b main && git -C "$tr" config user.email t@t && git -C "$tr" config user.name t
+seq 1 100 > "$tr/app.css" && git -C "$tr" add -A && git -C "$tr" commit -qm base
+git -C "$tr" update-ref refs/remotes/origin/main HEAD
+git -C "$tr" checkout -q -b trunk-v7 && seq 1 200 >> "$tr/app.css" && git -C "$tr" commit -qam "landed UI slice"
+tip=$(git -C "$tr" rev-parse HEAD)
+lane() {  # <branch> <edit command>: one lane commit on the trunk tip; prints its head
+  git -C "$tr" checkout -q -b "$1" "$tip" && (cd "$tr" && eval "$2") && git -C "$tr" add -A && git -C "$tr" commit -qm "$1"
+  git -C "$tr" rev-parse HEAD
+}
+testsonly=$(lane lane-tests 'mkdir -p tests && echo t > tests/a.test.sh')
+real=$(lane lane-ui 'seq 1 60 >> app.css')
+printf 'worktree=%s\nmode=local-trunk\nbase=%s\ndesign_call=no\n' "$tr" "$tip" > "$ts/tr.meta"
+JG_HOME=$lead jg_dod_design_gate "$ts" tr "$ts/tr.meta" "$testsonly" >/dev/null 2>&1 || fail "a tests-only local-trunk lane was refused by the design gate"
+out=$(JG_HOME=$lead jg_dod_design_gate "$ts" tr "$ts/tr.meta" "$real" 2>&1) && fail "a local-trunk lane that adds 60 UI lines passed: $out"
+assert_contains "$out" "changes 60 " "a real UI change is measured as the lane's own lines only"
+assert_equals "tweak 0 0" "$(JG_HOME=$main "$ROOT/bin/jg-design-gate.sh" size "$tr" "$tip" "$testsonly" 2>&1)" "size reads the trunk tip as the base"
+pass "a local-trunk lane is measured against its own trunk tip, not a stale origin/main"
+
+# The trunk moves on after the lane was cut and the lane is rebased onto the new tip, while its meta still records the old cut
+# tip: only the lane's own lines count, and a lane that really adds UI lines is still refused (rebase-moves-design-base).
+printf 'trunk-v7\n' > "$ts/trunk-branch-trunk-repo"
+git -C "$tr" checkout -q trunk-v7 && seq 1 300 >> "$tr/app.css" && git -C "$tr" commit -qam "second landed UI slice"
+newtip=$(git -C "$tr" rev-parse HEAD)
+rebased() {  # <branch> <edit command>: one lane commit cut from the OLD tip, then rebased onto the new tip; prints its head
+  git -C "$tr" checkout -q -b "$1" "$tip" && (cd "$tr" && eval "$2") && git -C "$tr" add -A && git -C "$tr" commit -qm "$1"
+  git -C "$tr" rebase -q "$newtip" >/dev/null 2>&1 || fail "fixture rebase of $1 conflicted"
+  git -C "$tr" rev-parse HEAD
+}
+rtests=$(rebased rb-tests 'echo t > b.test.sh')
+rreal=$(rebased rb-ui 'seq 1 60 >> other.css')
+printf 'worktree=%s\nproject=%s\nmode=local-trunk\nbase=%s\ndesign_call=no\n' "$tr" "$tr" "$tip" > "$ts/rb.meta"
+JG_HOME=$lead jg_dod_design_gate "$ts" rb "$ts/rb.meta" "$rtests" >/dev/null 2>&1 || fail "a rebased tests-only lane was refused for the trunk's own UI lines"
+out=$(JG_HOME=$lead jg_dod_design_gate "$ts" rb "$ts/rb.meta" "$rreal" 2>&1) && fail "a rebased lane that adds 60 UI lines passed: $out"
+assert_contains "$out" "changes 60 " "a rebased UI change is measured as the lane's own lines only"
+assert_contains "$out" "first-draft receipt" "a rebased UI change still needs its first-draft receipt"
+pass "a rebased local-trunk lane is measured from the current trunk, not its recorded cut tip"

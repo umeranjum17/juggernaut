@@ -44,7 +44,7 @@ RESTART=$((NOW - 600))
 mkdir -p "$HOME_DIR/data" "$STATE" "$HOME_DIR/config" "$HOME_DIR/projects"
 # The sentinel runs the host tool's scripts from JG_HOME/bin, so this fixture home
 # borrows the checkout's bin/.
-ln -s "$ROOT/bin" "$HOME_DIR/bin"
+ln -sn "$ROOT/bin" "$HOME_DIR/bin"
 core_beads_home "$JG_UPSTREAM_ROOT" "$HOME_DIR"
 
 # The herdr stand-in answers only `status`, reporting the server stopped. Every
@@ -213,7 +213,7 @@ oneshot() {  # <home> <path-prefix> <dry-run 0|1>
 
 new_home() {  # <home>
   mkdir -p "$1/state" "$1/data" "$1/config" "$1/projects"
-  ln -s "$ROOT/bin" "$1/bin"
+  ln -sn "$ROOT/bin" "$1/bin"
 }
 
 printf '%s\n' "$EPISODE" > "$IDFILE"

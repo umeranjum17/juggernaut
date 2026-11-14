@@ -299,6 +299,12 @@ JG_TEST_TMPDIR=$(jg_test_tmpdir) || return 1
 [ -n "${JG_BUS_HOMES:-}" ] || JG_TEST_BUS_HOMES_OWN="$JG_TEST_TMPDIR/jg-bus-homes.$$"
 export JG_BUS_HOMES="${JG_BUS_HOMES:-$JG_TEST_BUS_HOMES_OWN}"
 
+# Every process this suite starts carries its pid in the environment, so the suite stops what it left running when it exits
+# and bin/jg-tmp-reaper.sh can tell a test's process from any other (bin/jg-test-procs-lib.sh).
+# shellcheck source=bin/jg-test-procs-lib.sh
+. "$ROOT/bin/jg-test-procs-lib.sh"
+export JG_TEST_FIXTURE_PROC=$$
+
 JG_TEST_CLEANUP_DIRS=()
 JG_TEST_CLEANUP_REGISTRY=$(mktemp "$JG_TEST_TMPDIR/.jg-test-cleanup.$$.XXXXXX") || return 1
 
@@ -454,6 +460,7 @@ jg_test_cleanup() {
   jg_test_reap_buses
   jg_test_reap_watchers
   jg_test_reap_procevent_homes
+  jg_test_procs_stop_marked "$$"
   for d in "${JG_TEST_CLEANUP_DIRS[@]:-}"; do
     [ -n "$d" ] && jg_test_remove_tree "$d"
   done

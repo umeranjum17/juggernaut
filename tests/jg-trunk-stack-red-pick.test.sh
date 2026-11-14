@@ -45,7 +45,7 @@ test_an_unclear_red_still_halves() {
   out=$(trunk land-batch u1 u2 u3 2>&1) || fail "a red stack must still land its green part: $out"
   assert_contains "$out" "returned u3: REFUSED: this lane is the red in its batch" "the guilty lane is found by halving"
   [ "$(landed "$base")" = "ticket u1,ticket u2" ] || fail "the green part lands: $(landed "$base")"
-  [ "$(runs)" = 3 ] || fail "an unclear red halves: stack, first half, second lane of the rest (the last is known red), got $(runs)"
+  [ "$(runs)" = 5 ] || fail "an unclear red halves: stack, both halves at once, then both lanes of the red half at once, got $(runs)"
   pass 'an unclear red still halves'
 }
 

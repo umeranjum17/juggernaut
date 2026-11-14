@@ -119,7 +119,7 @@ step_04() {
   [ "$rows" = "$((LANES - $(printf '%s' "$lost" | wc -w)))" ] || { D="$rows landing rows naming the gate for $LANES lanes (lost: $lost)"; return 1; }
   [ ! -s "$MODEL_LOG" ] || { D="model CLI called: $(head -n 1 "$MODEL_LOG")"; return 1; }
   while IFS= read -r h; do
-    home_run "$h" "$h/bin/jg-trunk.sh" word live "$h/projects/$FA_PROJECT" "fleet-autopilot lab word" > /dev/null 2>&1 \
+    home_run "$h" "$h/bin/jg-trunk.sh" word in-use "$h/projects/$FA_PROJECT" "fleet-autopilot lab word" > /dev/null 2>&1 \
       && home_run "$h" "$h/bin/jg-trunk.sh" live "$h/projects/$FA_PROJECT" > "$h/data/lab-live.log" 2>&1 \
       && [ -s "$h/data/live-moves" ] || { D="live did not move $(basename "$h"): $(tail -n 1 "$h/data/lab-live.log" 2>/dev/null)"; return 1; }
   done < "$LAB/homes.list"

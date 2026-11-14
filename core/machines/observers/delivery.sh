@@ -19,7 +19,7 @@
 # The state, first match wins:
 #   unlanded       the commit is not on the trunk (state/trunk-tip-<project>; HEAD when that is absent)
 #   reverted       the trunk holds a revert of it (`reverts: <sha>` or `This reverts commit <sha>`)
-#   in-homes*      every home row of the project in data/trunk-live.tsv runs a commit that holds the change
+#   in-homes*      every home row of the project in data/trunk-in-use.tsv runs a commit that holds the change
 #                  (the last `live*` row of each home, so a skipped or rolled-back home keeps its older commit), then:
 #       in-homes-off   the switch file is absent
 #       in-use         the switch file is present (when one is named) and the proof holds
@@ -74,7 +74,7 @@ classify() {  # <id>
     if [ "$sha" != - ] && holds "$c" "$sha"; then continue; fi
     behind=$((behind + 1)); case $st in live,pinned-back*) pinned=1 ;; esac
   done < <(awk -F'\t' -v p="$PROJECT:" 'index($1, p) == 1 { k = $1; last[k] = $4; if ($4 ~ /^live/) sha[k] = $2 }
-    END { for (k in last) print k "\t" (sha[k] == "" ? "-" : sha[k]) "\t" last[k] }' "$DATA/trunk-live.tsv" 2>/dev/null)
+    END { for (k in last) print k "\t" (sha[k] == "" ? "-" : sha[k]) "\t" last[k] }' "$DATA/trunk-in-use.tsv" 2>/dev/null)
   if [ "$homes" -eq 0 ] || [ "$behind" -gt 0 ]; then
     if [ "$pinned" = 1 ]; then WORD="pinned-behind"; else WORD=landed; fi; return 0
   fi

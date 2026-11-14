@@ -429,6 +429,110 @@ test_squash_merged_divergence_reconciles() {
   pass "T5b squash-merged divergence heals and rejoins live convergence"
 }
 
+# A conflicting but patch-equivalent divergence heals; a unique commit still refuses.
+# Shape: upstream landed the same patch, then emptied the file, so the tree merge conflicts.
+test_patch_equivalent_conflicting_divergence() {
+  local w out before
+  w=$(new_world t5c)
+  add_sm "$w" sm1
+  printf 'a\n' > "$w/seed/stats.md"
+  git -C "$w/seed" add -A; git -C "$w/seed" commit -qm base-stats; git -C "$w/seed" push -q origin main
+  git -C "$w/sm1" checkout -q --detach origin/main 2>/dev/null || git -C "$w/sm1" checkout -q --detach "$(git -C "$w/seed" rev-parse HEAD)"
+  git -C "$w/sm1" fetch -q origin 2>/dev/null || true
+  git -C "$w/sm1" checkout -q --detach "$(git -C "$w/seed" rev-parse HEAD)"
+  printf 'a\nb\n' > "$w/sm1/stats.md"
+  git -C "$w/sm1" commit -qam same-patch
+  printf 'a\nb\n' > "$w/seed/stats.md"
+  git -C "$w/seed" commit -qam same-patch-upstream
+  : > "$w/seed/stats.md"
+  git -C "$w/seed" commit -qam empty-after
+  git -C "$w/seed" push -q origin main
+
+  out=$(run_update "$w")
+  assert_contains "$out" "squad_lead sm1: reconciled redundant divergence" \
+    "a conflicting patch-equivalent divergence did not heal"
+  [ "$(git -C "$w/sm1" rev-parse HEAD)" = "$(git -C "$w/sm1" rev-parse origin/main)" ] \
+    || fail "patch-equivalent home did not reach origin/main"
+
+  # A second home with an extra unique commit must stay skipped.
+  add_sm "$w" sm2
+  git -C "$w/sm2" checkout -q --detach "$(git -C "$w/seed" rev-parse HEAD~2)"
+  printf 'a\nb\n' > "$w/sm2/stats.md"
+  git -C "$w/sm2" commit -qam same-patch
+  printf 'unique\n' > "$w/sm2/unique.md"
+  git -C "$w/sm2" add -A; git -C "$w/sm2" commit -qm unique-work
+  before=$(git -C "$w/sm2" rev-parse HEAD)
+  out=$(run_update "$w")
+  assert_contains "$out" "squad_lead sm2: skipped: diverged from origin/main" "unique commit was not protected"
+  [ "$(git -C "$w/sm2" rev-parse HEAD)" = "$before" ] || fail "unique work moved"
+  pass "T5c patch-equivalent conflicting divergence heals; unique commit stays"
+}
+
+# A home whose HEAD is a patch-equivalent divergence behind the target, while index and
+# working tree already equal the target tree (a half-finished move), finishes the move.
+# Any extra local change keeps the refusal and loses nothing.
+test_half_moved_index_equal_to_target_finishes() {
+  local w out target
+  w=$(new_world t5d)
+  add_sm "$w" sm1
+  add_sm "$w" sm2
+  printf 'a\n' > "$w/seed/stats.md"
+  git -C "$w/seed" add -A; git -C "$w/seed" commit -qm base-stats; git -C "$w/seed" push -q origin main
+  for h in sm1 sm2; do
+    git -C "$w/$h" fetch -q origin 2>/dev/null || true
+    git -C "$w/$h" checkout -q --detach "$(git -C "$w/seed" rev-parse HEAD)"
+    printf 'a\nb\n' > "$w/$h/stats.md"
+    git -C "$w/$h" commit -qam same-patch
+  done
+  printf 'a\nb\n' > "$w/seed/stats.md"
+  git -C "$w/seed" commit -qam same-patch-upstream
+  : > "$w/seed/stats.md"
+  git -C "$w/seed" commit -qam empty-after
+  git -C "$w/seed" push -q origin main
+  target=$(git -C "$w/seed" rev-parse HEAD)
+  for h in sm1 sm2; do
+    git -C "$w/$h" fetch -q origin 2>/dev/null || true
+    git -C "$w/$h" read-tree -u -m "$(git -C "$w/$h" rev-parse HEAD)" "$target" 2>/dev/null \
+      || { git -C "$w/$h" read-tree "$target"; git -C "$w/$h" checkout-index -a -f; }
+  done
+  # sm2 also holds an untracked file the target does not have: it must stay refused.
+  printf 'mine\n' > "$w/sm2/untracked-note.txt"
+
+  out=$(run_update "$w")
+  assert_contains "$out" "squad_lead sm1: reconciled redundant divergence" \
+    "a half-moved home (index equals target) did not finish its move"
+  [ "$(git -C "$w/sm1" rev-parse HEAD)" = "$target" ] || fail "sm1 HEAD did not reach the target"
+  git -C "$w/sm1" diff --quiet HEAD || fail "sm1 lost or gained changes"
+  assert_contains "$out" "squad_lead sm2: skipped" "an untracked file must keep the refusal"
+  [ -f "$w/sm2/untracked-note.txt" ] || fail "sm2 untracked file was lost"
+  [ "$(git -C "$w/sm2" rev-parse HEAD)" != "$target" ] || fail "sm2 moved despite an untracked file"
+  pass "T5d half-moved home with index equal to target finishes; extra local state stays refused"
+}
+
+# A home whose index and working tree equal an EARLIER target commit C (HEAD behind C, the target past C) finishes: C is
+# adopted, then the guarded fast-forward reaches the target. An extra untracked file keeps the refusal.
+test_half_moved_to_an_earlier_target_finishes() {
+  local w out c1 target h
+  w=$(new_world t5e)
+  add_sm "$w" sm1
+  add_sm "$w" sm2
+  printf 'one\n' > "$w/seed/step.md"; git -C "$w/seed" add -A; git -C "$w/seed" commit -qm step-one; git -C "$w/seed" push -q origin main
+  c1=$(git -C "$w/seed" rev-parse HEAD)
+  printf 'two\n' > "$w/seed/step.md"; git -C "$w/seed" commit -qam step-two; git -C "$w/seed" push -q origin main
+  target=$(git -C "$w/seed" rev-parse HEAD)
+  for h in sm1 sm2; do
+    git -C "$w/$h" fetch -q origin 2>/dev/null || true
+    git -C "$w/$h" read-tree -u -m HEAD "$c1" || fail "fixture: cannot stage the earlier target"
+  done
+  printf 'mine\n' > "$w/sm2/untracked-note.txt"
+  out=$(run_update "$w")
+  [ "$(git -C "$w/sm1" rev-parse HEAD)" = "$target" ] || fail "sm1 must reach the target: $out"
+  git -C "$w/sm1" diff --quiet HEAD || fail "sm1 lost or gained changes"
+  assert_contains "$out" "squad_lead sm2: skipped" "an untracked file must keep the refusal"
+  [ -f "$w/sm2/untracked-note.txt" ] || fail "sm2 untracked file was lost"
+  pass "T5e home half-moved to an earlier target finishes; extra local state stays refused"
+}
+
 # --- T6: the git side is idempotent; the restart set is not -----------------
 # This is the SSHHIP case: that mate's home was already at the target commit, so
 # the old classifier skipped it entirely and its agent kept running the launch-time
@@ -664,6 +768,9 @@ test_dirty_squad_lead_skipped
 test_ignored_untracked_output_does_not_refuse
 test_diverged_squad_lead_skipped
 test_squash_merged_divergence_reconciles
+test_patch_equivalent_conflicting_divergence
+test_half_moved_index_equal_to_target_finishes
+test_half_moved_to_an_earlier_target_finishes
 test_already_current_squad_lead_still_restarts
 test_already_current_unprovable_mate_is_nudged
 test_registry_backstop_dedup_and_self_exclusion

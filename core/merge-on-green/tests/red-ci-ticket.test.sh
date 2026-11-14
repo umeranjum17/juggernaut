@@ -24,6 +24,9 @@ cat > "$FM/bin/jg-backlog.sh" <<'STUB'
 printf '%s\n' "$2|$3|$7" >> "$STUB_ADDS"
 STUB
 chmod +x "$FM/bin/jg-backlog.sh"
+# The real alert function, run from the repository so it reads the real alert table.
+printf '#!/usr/bin/env bash\nexec bash %q "$@"\n' "$SRC/../../bin/jg-alert.sh" > "$FM/bin/jg-alert.sh"
+chmod +x "$FM/bin/jg-alert.sh"
 cp "$SRC/tests/fixtures/red-ci-ticket/gh-axi" "$d/gh-axi"
 export JG_RED_CI_GH=$d/gh-axi
 fails=0
@@ -33,7 +36,8 @@ U=https://github.com/ex/r/actions/runs
 
 out=$(poll)
 check "first poll alerts for exactly two red runs" "$(printf '%s\n' "$out" | wc -l)" 2
-check "alert names the run, job and routing" "$(printf '%s\n' "$out" | grep "runs/11:")" "red-ci-ticket: $U/11: CI behaviour shard 2 went red; filed ci-red-run-11 (r); fix the root cause, never re-run"
+check "alert names the run, job and routing" "$(printf '%s\n' "$out" | grep "runs/11:")" "alert line-red (P1) at rung 2 for lead: ci-red-run-11 - red-ci-ticket: $U/11: CI behaviour shard 2 went red; filed ci-red-run-11 (r); fix the root cause, never re-run"
+check "the alert is recorded open for the project" "$(grep -c '^state=open$\|^project=r$' "$FM/state/alerts/line-red--ci-red-run-11.rec")" 2
 check "exactly two tickets filed" "$(grep -c "^ci-red-run-" "$STUB_ADDS" || true)" 2
 check "ticket 11 id and title" "$(grep '^ci-red-run-11|' "$STUB_ADDS" | cut -d'|' -f1-2)" "ci-red-run-11|[blocker] CI red: CI behaviour shard 2: find the root cause"
 body=$(grep -A8 '^ci-red-run-11|' "$STUB_ADDS" | sed '1s/^[^|]*|[^|]*|//')
@@ -49,18 +53,18 @@ check "superseded old red run files none" "$(grep -c 'ci-red-run-9|' "$STUB_ADDS
 check "second poll files and prints nothing" "$(poll)" ""
 check "second poll adds no ticket" "$(grep -c "^ci-red-run-" "$STUB_ADDS" || true)" 2
 
-rm -rf -- "$FM/data/jg-merge-on-green/red-ci-ticket"; : > "$STUB_ADDS"; : > "$STUB_ADD_FAIL"
+rm -rf -- "$FM/data/jg-merge-on-green/red-ci-ticket" "$FM/state/alerts"; : > "$STUB_ADDS"; : > "$STUB_ADD_FAIL"
 check "a refused add prints nothing" "$(poll)" ""
 rm -f "$STUB_ADD_FAIL"
 check "a refused add is retried next poll" "$(poll | wc -l)" 2
-touch "$STUB_FAIL"; rm -rf -- "$FM/data/jg-merge-on-green/red-ci-ticket"
+touch "$STUB_FAIL"; rm -rf -- "$FM/data/jg-merge-on-green/red-ci-ticket" "$FM/state/alerts"
 check "a forge failure is silent" "$(poll)" ""
 rm -f "$STUB_FAIL"
 
 # The watcher check runs it: merge-on-green.sh check, with no tasks, still reaches the ticket check.
-rm -rf -- "$FM/data/jg-merge-on-green/red-ci-ticket"; : > "$STUB_ADDS"
+rm -rf -- "$FM/data/jg-merge-on-green/red-ci-ticket" "$FM/state/alerts"; : > "$STUB_ADDS"
 cp "$SRC/merge-on-green.sh" "$SRC/red-ci-ticket.sh" "$d/"
-check "merge-on-green.sh check runs the ticket check" "$(JG_CHECK_TIMEOUT=30 "$d/merge-on-green.sh" check "$FM" 2>&1 | grep -c '^red-ci-ticket:')" 2
+check "merge-on-green.sh check runs the ticket check" "$(JG_CHECK_TIMEOUT=30 "$d/merge-on-green.sh" check "$FM" 2>&1 | grep -c '^alert line-red')" 2
 
 [ "$fails" -eq 0 ] || { echo "$fails failure(s)"; exit 1; }
 echo "all red-ci-ticket checks passed"

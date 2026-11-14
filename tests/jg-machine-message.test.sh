@@ -9,7 +9,7 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 JM="$ROOT/bin/jg-machine.sh"
-T=$(cd "$(jg_test_tmproot jg-machine-message)" && pwd); H=$T/home; S=$H/state; mkdir -p "$S" "$T/fakebin"; ln -s "$ROOT/bin" "$H/bin"
+T=$(cd "$(jg_test_tmproot jg-machine-message)" && pwd); H=$T/home; S=$H/state; mkdir -p "$S" "$T/fakebin"; ln -sn "$ROOT/bin" "$H/bin"
 printf '#!/usr/bin/env bash\ncase "${1:-}" in display-message) for a in "$@"; do case "$a" in *cursor_y*) echo 1; exit 0;; esac; done; echo fakepane;; capture-pane) printf "╭────╮\\n│    │\\n╰────╯\\n";; list-windows) echo jg-t1;; esac\nexit 0\n' > "$T/fakebin/tmux"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$T/fakebin/sleep"; chmod +x "$T/fakebin/tmux" "$T/fakebin/sleep"
 jg_write_meta "$S/t1.meta" "window=sess:jg-t1" "kind=ship" "harness=claude"

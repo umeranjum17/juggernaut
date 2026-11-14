@@ -378,7 +378,7 @@ report_requires_wake() {  # <state>
 }
 
 queue_result_wake() {  # <state>
-  jg_wake_append check startup-network \
+  jg_wake_host startup-network \
     "check: startup-network: deferred startup network checks finished ($1); read them with $JG_ROOT/bin/jg-startup-network.sh report" \
     || true
 }

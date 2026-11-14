@@ -291,6 +291,18 @@ evaluate_budget() {
   append_finding "startup memory budget overrun total_estimated_tokens=$total budget=$budget owner=bin/jg-startup-memory-budget.sh"
 }
 
+# Each ceiling of defaults/token-caps against what the tree measures or the newest reading; the owner
+# is bin/jg-context-load.sh, which this only calls.
+evaluate_context_load() {
+  local line
+  while IFS= read -r line; do
+    case "$line" in
+      over\ *) append_finding "context ceiling ${line#over } owner=bin/jg-context-load.sh" ;;
+    esac
+  done < <(JG_HOME="$JG_HOME" JG_ROOT_OVERRIDE="$JG_ROOT" JG_CONFIG_OVERRIDE="$CONFIG_DIR" JG_DATA_OVERRIDE="$DATA_DIR" \
+    "$SCRIPT_DIR/jg-context-load.sh" check 2>/dev/null)
+}
+
 run_check() {
   local now reported_previous
   if ! now=$(check_due); then
@@ -320,6 +332,7 @@ run_check() {
   stat_surface memory data/learnings.md "$DATA_DIR/learnings.md" yes
 
   evaluate_budget
+  evaluate_context_load
 
   if [ -n "$FINDINGS" ]; then
     if [ "$FINDINGS" != "$reported_previous" ]; then

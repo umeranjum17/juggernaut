@@ -39,6 +39,9 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 UPDATE="$ROOT/bin/jg-update.sh"
+# shellcheck source=bin/jg-home-shape-lib.sh
+# shellcheck disable=SC1091
+. "$ROOT/bin/jg-home-shape-lib.sh"
 jg_git_identity fmtest fmtest@example.com
 TMP_ROOT=$(jg_test_tmproot jg-update-local-base)
 
@@ -86,7 +89,7 @@ run_mover() {  # <extra args>
     "$mover" --base "$C2" --project "$W/proj" --branch trunk "$@" 2>&1
 }
 head_of() { git -C "$W/$1" rev-parse HEAD; }
-row_of() { awk -F'\t' -v k="proj:$1" '$1 == k' "$W/home/data/trunk-live.tsv"; }
+row_of() { awk -F'\t' -v k="proj:$1" '$1 == k' "$W/home/data/trunk-in-use.tsv"; }
 
 test_every_home_moves_or_is_skipped_with_one_row() {
   local out rows rc=0
@@ -101,15 +104,36 @@ test_every_home_moves_or_is_skipped_with_one_row() {
   [ "$(git -C "$W/main" rev-parse main)" = "$C2" ] || fail "Main's main must reach the tip by fast-forward: $out"
   [ "$(head_of pool)" = "$C0" ] && [ "$(git -C "$W/pool" symbolic-ref --short HEAD)" = fix/lane ] || fail "a pool worktree on a lane branch must not be touched"
   git -C "$W/lead-repoint" merge-base --is-ancestor "$X" HEAD 2>/dev/null && fail "the re-point must be reset --keep, not a merge"
-  rows=$(wc -l < "$W/home/data/trunk-live.tsv" | tr -d ' ')
+  rows=$(wc -l < "$W/home/data/trunk-in-use.tsv" | tr -d ' ')
   [ "$rows" = 5 ] || fail "four leads and Main make five rows, got $rows"
   [ "$(row_of lead-ff | cut -f4)" = live ] && [ "$(row_of lead-ff | cut -f5)" = "$C0" ] || fail "a fast-forward row is live with the pre-move HEAD: $(row_of lead-ff)"
   [ "$(row_of lead-repoint | cut -f4)" = "live,re-pointed-from:${X:0:12}" ] && [ "$(row_of lead-repoint | cut -f5)" = "$X" ] || fail "a re-point row names the old sha: $(row_of lead-repoint)"
   [ "$(row_of lead-dirty | cut -f4)" = "skipped:dirty" ] || fail "a dirty lead is skipped:dirty: $(row_of lead-dirty)"
   [ "$(row_of lead-unlanded | cut -f4)" = "skipped:unlanded:secret.txt" ] || fail "an uncontained lead is skipped:unlanded:<paths>: $(row_of lead-unlanded)"
-  [ "$(tail -1 "$W/home/data/trunk-live.tsv" | cut -f1)" = "proj:primary" ] || fail "Main must be the last row"
+  [ "$(tail -1 "$W/home/data/trunk-in-use.tsv" | cut -f1)" = "proj:primary" ] || fail "Main must be the last row"
   assert_contains "$(cat "$W/home/state/trunk-live-restart-pending" 2>/dev/null)" "$C2" "Main must get a restart-pending marker for the new commit"
   pass 'T1 one row per home: two move, two skipped with a reason, Main last, a pool worktree untouched'
+}
+
+# A lead whose HEAD is a divergence the tip holds, left half-moved (index and tree already at the tip, HEAD behind), finishes
+# the move; the same lead with an extra untracked file keeps the refusal and loses nothing.
+test_a_half_moved_lead_finishes_its_move() {
+  local out
+  mover_world t1h
+  git -C "$W/lead-repoint" fetch -q "$W/proj" trunk
+  git -C "$W/lead-repoint" read-tree -u -m HEAD "$C2" || fail "fixture: cannot stage the tip"
+  [ "$(git -C "$W/lead-repoint" write-tree)" = "$(git -C "$W/proj" rev-parse "$C2^{tree}")" ] || fail "fixture: index must equal the tip tree"
+  git -C "$W/lead-ff" fetch -q "$W/proj" trunk
+  git -C "$W/lead-ff" checkout -q --detach "$X" 2>/dev/null || :
+  git -C "$W/lead-ff" read-tree -u -m HEAD "$C2" || fail "fixture: cannot stage the tip"
+  printf 'mine\n' > "$W/lead-ff/note.txt"
+  out=$(run_mover) || :
+  [ "$(head_of lead-repoint)" = "$C2" ] || fail "a half-moved lead must reach the tip: $out"
+  git -C "$W/lead-repoint" diff --quiet HEAD || fail "the finished lead must hold no change against the tip"
+  [ "$(row_of lead-repoint | cut -f4)" = "live,re-pointed-from:${X:0:12}" ] || fail "the row must say re-pointed: $(row_of lead-repoint)"
+  [ "$(head_of lead-ff)" != "$C2" ] || fail "a half-moved lead with an untracked file must not move"
+  [ -f "$W/lead-ff/note.txt" ] || fail "the untracked file must be kept"
+  pass 'T1h a half-moved lead (index and tree at the tip) finishes its move; an extra untracked file keeps the refusal'
 }
 
 test_cache_is_cleared_after_a_move() {
@@ -252,7 +276,7 @@ test_home_moves_one_canary_only() {
   out=$(run_mover --home "$W/lead-ff") || fail "the canary move must succeed: $out"
   [ "$(head_of lead-ff)" = "$C2" ] || fail "the canary lead must move"
   [ "$(head_of lead-repoint)" != "$C2" ] && [ "$(git -C "$W/main" rev-parse main)" = "$C0" ] || fail "--home must leave every other home, Main included, alone"
-  [ "$(wc -l < "$W/home/data/trunk-live.tsv" | tr -d ' ')" = 1 ] || fail "the canary writes one row"
+  [ "$(wc -l < "$W/home/data/trunk-in-use.tsv" | tr -d ' ')" = 1 ] || fail "the canary writes one row"
   [ ! -e "$W/home/state/trunk-live-restart-pending" ] || fail "a canary must not mark Main for restart"
   pass 'T2 --home moves exactly one lead'
 }
@@ -343,8 +367,8 @@ test_a_go_live_run_from_a_lead_home_moves_every_home() {
   out=$(run_from_self "$(passing_health_mover)" --base "$C2" --project "$W/proj" --branch trunk) || rc=$?
   [ "$rc" -eq 0 ] || fail "a move from a lead home must succeed when every home can move: $out"
   for id in lead-a lead-b lead-self main; do [ "$(git -C "$W/$id" rev-parse HEAD)" = "$C2" ] || fail "$id must be at the base, not left behind: $out"; done
-  [ "$(cut -d$'\t' -f1 "$SELF/data/trunk-live.tsv" | paste -sd' ' -)" = "proj:lead-a proj:lead-b proj:lead-self proj:primary" ] \
-    || fail "one row per home, Main last: $(cat "$SELF/data/trunk-live.tsv")"
+  [ "$(cut -d$'\t' -f1 "$SELF/data/trunk-in-use.tsv" | paste -sd' ' -)" = "proj:lead-a proj:lead-b proj:lead-self proj:primary" ] \
+    || fail "one row per home, Main last: $(cat "$SELF/data/trunk-in-use.tsv")"
   assert_contains "$(cat "$MAIN/state/trunk-live-restart-pending" 2>/dev/null)" "$C2" "Main, not the lead, gets the restart-pending marker"
   [ ! -e "$SELF/state/trunk-live-restart-pending" ] || fail "the lead home's own state is not Main's"
   pass 'T1d a move run from a lead home reads Main'"'"'s registry and moves every lead, itself and Main, one row each'
@@ -353,19 +377,19 @@ test_a_go_live_run_from_a_lead_home_moves_every_home() {
 test_a_home_left_behind_is_named_and_the_lag_check_reports_it() {
   local out rc=0 lag="$ROOT/bin/jg-trunk-live-lag.sh" now
   lead_world t7; now=$(date +%s)
-  printf 'proj\t%s\t%s\tlive\n' "$C2" "$((now - 1200))" > "$SELF/data/trunk-live.tsv"
+  printf 'proj\t%s\t%s\tlive\n' "$C2" "$((now - 1200))" > "$SELF/data/trunk-in-use.tsv"
   out=$(run_from_self "$lag" "$W/proj") || rc=$?
-  [ "$rc" -eq 1 ] && [ "$out" = "lag: homes not at the last go-live ${C2:0:12}: lead-a lead-b lead-self primary" ] || fail "every home is behind a 20 minute old go-live: rc=$rc $out"
-  printf 'proj\t%s\t%s\tlive\n' "$C2" "$((now - 60))" > "$SELF/data/trunk-live.tsv"
+  [ "$rc" -eq 1 ] && [ "$out" = "lag: homes not In use at the last go-live ${C2:0:12}: lead-a lead-b lead-self primary" ] || fail "every home is behind a 20 minute old go-live: rc=$rc $out"
+  printf 'proj\t%s\t%s\tlive\n' "$C2" "$((now - 60))" > "$SELF/data/trunk-in-use.tsv"
   out=$(run_from_self "$lag" "$W/proj") || fail "a go-live under 10 minutes old is not a lag: $out"
   [ -z "$out" ] || fail "no lag line inside the 10 minutes: $out"
-  printf 'proj\t%s\t%s\tlive\n' "$C2" "$((now - 1200))" > "$SELF/data/trunk-live.tsv"; rc=0
+  printf 'proj\t%s\t%s\tlive\n' "$C2" "$((now - 1200))" > "$SELF/data/trunk-in-use.tsv"; rc=0
   printf 'edit\n' >> "$W/lead-b/AGENTS.md"
   out=$(run_from_self "$(passing_health_mover)" --base "$C2" --project "$W/proj" --branch trunk) || rc=$?
   [ "$rc" -ne 0 ] || fail "a dirty home must fail the move: $out"
   [ "$(printf '%s\n' "$out" | tail -n 1)" = "fleet: not every home is at ${C2:0:12}: lead-b" ] || fail "the failed move names the home left behind: $out"
   out=$(run_from_self "$lag" "$W/proj") && fail "a home left behind must be a lag: $out"
-  [ "$out" = "lag: homes not at the last go-live ${C2:0:12}: lead-b" ] || fail "only the home left behind is named: $out"
+  [ "$out" = "lag: homes not In use at the last go-live ${C2:0:12}: lead-b" ] || fail "only the home left behind is named: $out"
   git -C "$W/lead-b" checkout -q -- AGENTS.md; run_from_self "$(passing_health_mover)" --base "$C2" --project "$W/proj" --branch trunk >/dev/null || fail "the move must finish once the home is clean"
   out=$(run_from_self "$lag" "$W/proj") || fail "no lag once every home is at the commit: $out"
   pass 'T7 a home left behind is named on the failed move, and the lag check reports it after 10 minutes and clears when it catches up'
@@ -467,7 +491,7 @@ test_the_fleet_moves_past_a_home_with_an_old_fault() {
 trunk_world() {  # <name>: sets TW TH PROJ PROJ2 MAINCODE; a trunk whose tip carries the real bin/
   TW="$TMP_ROOT/$1"; TH="$TW/home"; PROJ="$TH/projects/proj"; PROJ2="$TH/projects/other"
   mkdir -p "$TH/state" "$TH/data" "$TH/config" "$TW/root"
-  cp -r "$ROOT/bin" "$TW/root/bin"; ln -s "$ROOT/core" "$TW/root/core"; ln -s "$ROOT/policy" "$TW/root/policy"
+  cp -r "$ROOT/bin" "$TW/root/bin"; ln -sn "$ROOT/core" "$TW/root/core"; ln -sn "$ROOT/policy" "$TW/root/policy"
   printf '#!/usr/bin/env bash\necho "the home own stale jg-update ran" >&2\nexit 99\n' > "$TW/root/bin/jg-update.sh"
   printf -- '- proj [local-trunk] - fixture (added 2026-11-08)\n- other [local-trunk] - fixture (added 2026-11-08)\n' > "$TH/data/projects.md"
   local p
@@ -497,8 +521,8 @@ test_live_runs_the_exported_tool_and_the_waiver_spends_no_word() {
   [ "$rc" = 0 ] || fail "live under the waiver must move the home: $out"
   assert_contains "$out" "$TH/state/trunk-live-tool/$TIP/bin/jg-update.sh" "the mover must run from the exported copy of the tip"
   [ "$(git -C "$TW/maincode" rev-parse HEAD)" = "$TIP" ] || fail "Main's code must be at the tip: $out"
-  grep -q "waiver=owner-rule-686826b5" "$TH/data/trunk-live.tsv" || fail "the live row must carry the waiver: $(cat "$TH/data/trunk-live.tsv")"
-  [ ! -e "$TH/state/trunk-word-live-proj" ] && [ ! -e "$TH/data/trunk-words.tsv" ] || fail "a waiver records and spends no word"
+  grep -q "waiver=owner-rule-686826b5" "$TH/data/trunk-in-use.tsv" || fail "the live row must carry the waiver: $(cat "$TH/data/trunk-in-use.tsv")"
+  [ ! -e "$TH/state/trunk-word-in-use-proj" ] && [ ! -e "$TH/data/trunk-words.tsv" ] || fail "a waiver records and spends no word"
   out=$(ttrunk live "$PROJ2" 2>&1) && fail "a project without a waiver line must still need the word: $out"
   assert_contains "$out" "no recorded word from the captain" "the second project keeps need_word"
   pass 'T5 live runs the exported tool; the waiver spends no word and only its project skips the word'
@@ -512,28 +536,28 @@ test_the_landing_check_runs_the_batched_live_step_and_reports_it() {
   chmod +x "$fh/bin/jg-trunk.sh"; cp "$ROOT/bin/jg-wake-lib.sh" "$ROOT/bin/jg-path-lib.sh" "$fh/bin/"
   local rc=0 ob="$fh/data/jg-trunk-landing/outbox"
   live() { bash "$ROOT/core/trunk-landing/trunk-landing.sh" live "$fh" proj >/dev/null 2>&1; }
-  # No job follows a landing to run the whole suite on this machine: it runs once, on the release pull request in GitHub CI.
+  # No job follows a landing to run the whole suite on this machine: the changed tests run once for each batch, in the tick's verify, off the landing path.
   bash "$ROOT/core/trunk-landing/trunk-landing.sh" post "$fh" t1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa cccccccccccccccccccccccccccccccccccccccc >/dev/null 2>&1 || rc=$?
   [ "$rc" = 2 ] && [ ! -e "$fh/calls" ] || fail "the landing check must have no post-landing suite job (exit $rc, calls: $(cat "$fh/calls" 2>/dev/null))"
   # The live job reports a go-live and a failed move, a new hold once, and nothing for waiting, already live or no waiver.
   : > "$fh/calls"; : > "$ob"; printf '0\n' > "$fh/rc"
-  printf 'live at abc on every home (0 skipped, see data/trunk-live.tsv)\n' > "$fh/verdict"; live
-  assert_contains "$(cat "$ob")" "proj: live at abc on every home" "a go-live is reported"
+  printf 'In use at abc on every home (0 skipped, see data/trunk-in-use.tsv)\n' > "$fh/verdict"; live
+  assert_contains "$(cat "$ob")" "proj: In use at abc on every home" "a go-live is reported"
   : > "$ob"; printf 'the move failed: hook\n' > "$fh/verdict"; printf '3\n' > "$fh/rc"; live
-  assert_contains "$(cat "$ob")" "proj: NOT live: the move failed: hook" "a failed move is reported"
+  assert_contains "$(cat "$ob")" "proj: NOT In use: the move failed: hook" "a failed move is reported"
   : > "$ob"; printf '0\n' > "$fh/rc"
-  for out in 'waiting: live in about 9 min (quiet 20 min, cap 60 min)' 'already live at abc' "not live: it needs the captain's word (no go-live waiver for proj)"; do
+  for out in 'waiting: In use in about 9 min (quiet 20 min, cap 60 min)' 'already In use at abc' "not In use: it needs the captain's word (no go-live waiver for proj)"; do
     printf '%s\n' "$out" > "$fh/verdict"; live
   done
   [ ! -s "$ob" ] || fail "waiting, already live and no waiver add no line: $(cat "$ob")"
   # A home behind the last go-live (the lag script's one line) is reported once per set of homes, and again after it clears and returns.
   printf '#!/usr/bin/env bash\ncat "%s/lag" 2>/dev/null\n' "$fh" > "$fh/bin/jg-trunk-live-lag.sh"; chmod +x "$fh/bin/jg-trunk-live-lag.sh"
-  : > "$ob"; printf 'waiting: live in about 9 min\n' > "$fh/verdict"
-  printf 'lag: homes not at the last go-live abc: lead-b\n' > "$fh/lag"; live; live
-  [ "$(grep -c "proj: lag: homes not at the last go-live abc: lead-b" "$ob")" = 1 ] || fail "a lagging home is reported once: $(cat "$ob")"
-  printf 'lag: homes not at the last go-live abc: lead-b lead-c\n' > "$fh/lag"; live
+  : > "$ob"; printf 'waiting: In use in about 9 min\n' > "$fh/verdict"
+  printf 'lag: homes not In use at the last go-live abc: lead-b\n' > "$fh/lag"; live; live
+  [ "$(grep -c "proj: lag: homes not In use at the last go-live abc: lead-b" "$ob")" = 1 ] || fail "a lagging home is reported once: $(cat "$ob")"
+  printf 'lag: homes not In use at the last go-live abc: lead-b lead-c\n' > "$fh/lag"; live
   [ "$(grep -c "proj: lag: " "$ob")" = 2 ] || fail "a new set of lagging homes is reported: $(cat "$ob")"
-  rm "$fh/lag"; live; printf 'lag: homes not at the last go-live abc: lead-b lead-c\n' > "$fh/lag"; live
+  rm "$fh/lag"; live; printf 'lag: homes not In use at the last go-live abc: lead-b lead-c\n' > "$fh/lag"; live
   [ "$(grep -c "proj: lag: " "$ob")" = 3 ] || fail "a lag that clears and returns is reported again: $(cat "$ob")"
   pass 'T6 the landing check runs no suite after a landing, runs the batched live step on its own, and reports its outcomes'
 }
@@ -566,10 +590,95 @@ test_guarded_linked_home_moves_twice() {
   pass 'fleet live advances a guarded linked home twice'
 }
 
+# The real go-live shape (jg-ff-adopt-diverged): a home guarded by an OLDER guard copy, HEAD a commit that is patch-equivalent to a
+# trunk commit but diverged (trunk-v6 line), index and tree at a later trunk commit T2 whose three-way merge with HEAD conflicts,
+# and the target further on. The old guard refused the re-point to T2, so the home read as dirty and was skipped. The move now
+# refreshes the guard, adopts T2 and reaches the target; an untracked file keeps the refusal and loses nothing.
+test_a_guarded_diverged_half_moved_home_finishes() {
+  local out id t2 target hook
+  W="$TMP_ROOT/diverged-half"; mkdir -p "$W/home/state" "$W/home/data" "$W/home/config"
+  git init -q -b main "$W/proj"
+  commit_file "$W/proj" AGENTS.md v1 c0; mkdir -p "$W/proj/bin"; commit_file "$W/proj" bin/tool.sh a c0b
+  commit_file "$W/proj" f.txt "$(printf 'a\nb\nc\nd\ne\nf\ng\nh')" base
+  git clone -q "$W/proj" "$W/main"
+  C0=$(git -C "$W/main" rev-parse HEAD)
+  git -C "$W/proj" checkout -q -b trunk
+  commit_file "$W/proj" f.txt "$(printf 'a-home\nb\nc\nd\ne\nf\ng\nh')" t1
+  commit_file "$W/proj" f.txt "$(printf 'a-v2\nb\nc\nd\ne\nf\ng\nh')" t2a; commit_file "$W/proj" z.txt zed t2; t2=$(git -C "$W/proj" rev-parse HEAD)
+  commit_file "$W/proj" f.txt "$(printf 'a-v3\nb\nc\nd\ne\nf\ng\nh')" t3; C2=$(git -C "$W/proj" rev-parse HEAD); target=$C2
+  git -C "$W/proj" checkout -q main
+  for id in lead-a lead-b; do
+    git -C "$W/main" worktree add -q --detach "$W/$id" "$C0"; printf '%s\n' "$id" > "$W/$id/.jg-squad-lead-home"
+    printf -- '- %s - fixture (home: %s; scope: x; projects: proj; added 2026-11-08)\n' "$id" "$W/$id" >> "$W/home/data/squad_leads.md"
+    commit_file "$W/$id" f.txt "$(printf 'a-home\nb\nc\nd\ne\nf\ng\nh')" "same patch as t1"
+    X=$(git -C "$W/$id" rev-parse HEAD)
+    git -C "$W/$id" fetch -q "$W/proj" trunk
+    git -C "$W/$id" read-tree -u -m HEAD "$t2" || fail "fixture: cannot stage the earlier target"
+    "$ROOT/bin/jg-home-guard.sh" install "$W/$id" --tip "$X" >/dev/null || fail "install home guard"
+  done
+  git -C "$W/lead-a" merge-tree --write-tree "$X" "$t2" >/dev/null 2>&1 && fail "fixture: the three-way merge into the earlier target must conflict"
+  # The guard in the homes is the older copy: it lacks the patch-equivalence rule.
+  hook="$W/main/.git/hooks/reference-transaction"
+  # shellcheck disable=SC2016 # the pattern names the guard's own variables
+  sed '/patch_held "\$old" "\$new" && return 0/d' "$hook" > "$hook.old" && chmod +x "$hook.old" && mv -f "$hook.old" "$hook"
+  printf 'mine\n' > "$W/lead-b/note.txt"
+  out=$(run_mover) || :
+  [ "$(head_of lead-a)" = "$target" ] || fail "a guarded diverged half-moved home must reach the target: $out"
+  git -C "$W/lead-a" diff --quiet HEAD || fail "the finished home must hold no change against the target"
+  [ -z "$(git -C "$W/lead-a" status --porcelain --untracked-files=no)" ] || fail "the finished home must be clean"
+  [ "$(head_of lead-b)" != "$target" ] || fail "a home with an untracked file must not move"
+  [ -f "$W/lead-b/note.txt" ] || fail "the untracked file must be kept"
+  assert_contains "$out" "squad_lead lead-b: skipped: dirty working tree" "an untracked file must keep the refusal"
+  pass 'T1i a guarded diverged half-moved home finishes through the refreshed guard; an untracked file keeps the refusal'
+}
+
+# T1j The shape of a skipped home is recorded in its row and replays. A lead half-moved to the tip (index equals the tip tree)
+# that also holds an untracked file is skipped; its row carries the shape. A fresh lead is rebuilt from that recorded shape alone
+# and run through the same adopt path: it records the same shape and is skipped the same way, and a row with columns and shape
+# keys a reader does not know still reads.
+test_a_skipped_home_shape_is_recorded_and_replays() {
+  local out shape replayed
+  mover_world t1j
+  git -C "$W/lead-ff" fetch -q "$W/proj" trunk
+  git -C "$W/lead-ff" read-tree -u -m HEAD "$C2" || fail "fixture: cannot stage the tip"
+  printf 'mine\n' > "$W/lead-ff/note.txt"
+  out=$(run_mover) || :
+  [ "$(row_of lead-ff | cut -f4)" = "skipped:dirty" ] || fail "the half-moved lead with a file of its own is skipped: $out"
+  shape=$(jg_home_shape_from_row "$W/home/data/trunk-in-use.tsv" proj:lead-ff)
+  assert_contains "$shape" "ancestry=behind;index=target;dirty=" "the row must carry the shape of the skipped home"
+  assert_contains "$shape" "??:note.txt" "the shape must name the untracked file"
+  [ "$(row_of lead-ff | cut -f6)" = "$shape" ] || fail "the shape is the sixth column: $(row_of lead-ff)"
+  [ -z "$(row_of lead-repoint | cut -f6)" ] || fail "a home that moved carries no shape: $(row_of lead-repoint)"
+  # Replay: a fresh world, a fresh lead at the pre-move HEAD, rebuilt from the recorded shape only.
+  mover_world t1j-replay
+  git -C "$W/lead-ff" fetch -q "$W/proj" trunk
+  jg_home_shape_apply "$W/lead-ff" "$C2" "$shape" || fail "the recorded shape must rebuild"
+  replayed=$(jg_home_shape_record "$W/lead-ff" "$C2")
+  [ "$replayed" = "$shape" ] || fail "the rebuilt home must have the recorded shape: $replayed != $shape"
+  out=$(run_mover) || :
+  [ "$(head_of lead-ff)" != "$C2" ] || fail "the replayed home must be skipped as the real one was: $out"
+  [ "$(row_of lead-ff | cut -f4)" = "skipped:dirty" ] || fail "the replay must reach the recorded outcome: $(row_of lead-ff)"
+  [ "$(row_of lead-ff | cut -f6)" = "$shape" ] || fail "the replay must record the same shape: $(row_of lead-ff)"
+  # The adopt path on the same shape without the file of its own finishes the move.
+  mover_world t1j-adopt
+  git -C "$W/lead-ff" fetch -q "$W/proj" trunk
+  jg_home_shape_apply "$W/lead-ff" "$C2" "ancestry=behind;index=target;dirty=$(jg_home_shape_field "$shape" dirty | sed 's/,??:note.txt//')" || fail "the shape must rebuild"
+  out=$(run_mover) || :
+  [ "$(head_of lead-ff)" = "$C2" ] || fail "the adopt path must carry the same shape without the extra file to the tip: $out"
+  # A reader ignores what it does not know: an extra column and a shape key from a later writer.
+  printf 'proj:lead-ff\t%s\t%s\tskipped:dirty\t%s\t%s;future=1\tfuture-column\n' "$C2" "$(date +%s)" "$C0" "$shape" >> "$W/home/data/trunk-in-use.tsv"
+  [ "$(jg_home_shape_from_row "$W/home/data/trunk-in-use.tsv" proj:lead-ff)" = "$shape;future=1" ] || fail "an unknown column must not hide the shape"
+  [ "$(jg_home_shape_field "$shape;future=1" index)" = target ] || fail "an unknown shape key must not hide a known one"
+  pass 'T1j a skipped home records its shape; a fresh home rebuilt from it is skipped the same way, and the adopt path moves it once its own file is gone; unknown fields are ignored'
+}
+
 test_guarded_linked_home_moves_twice
 
 test_guarded_primary_moves_with_tip
 test_every_home_moves_or_is_skipped_with_one_row
+test_a_half_moved_lead_finishes_its_move
+test_a_skipped_home_shape_is_recorded_and_replays
+test_a_guarded_diverged_half_moved_home_finishes
 test_cache_is_cleared_after_a_move
 test_a_move_rewires_only_the_add_ons_it_changed_and_names_a_failure
 test_a_go_live_run_from_a_lead_home_moves_every_home

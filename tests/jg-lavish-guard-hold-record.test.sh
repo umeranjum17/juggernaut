@@ -14,7 +14,7 @@
 
 TMP_ROOT=$(jg_test_tmproot jg-hold-record)
 W="$TMP_ROOT/w"; STATUS="$W/state/sign-off.status"
-mkdir -p "$W/state"; cp -r "$ROOT/bin" "$W/bin"; ln -s "$ROOT/core" "$W/core"; ln -s "$ROOT/policy" "$W/policy"
+mkdir -p "$W/state"; cp -r "$ROOT/bin" "$W/bin"; ln -sn "$ROOT/core" "$W/core"; ln -sn "$ROOT/policy" "$W/policy"
 # The hold reader: only the hold fixture-hold-1 is on record.
 cat > "$W/bin/jg-captain-hold.sh" <<'SH'
 #!/usr/bin/env bash

@@ -11,7 +11,8 @@
 #   body  run id and URL, failing job, the first failing line of its log, "never re-run; fix the root cause"
 # The ticket is ordinary ready work for the owning lead. bin/jg-ci-rerun.sh is the only re-run path
 # and refuses a red run until that ticket carries a "root-cause:" note.
-# Each filing prints one alert line. The run is remembered in <home>/data/jg-merge-on-green/red-ci-ticket/,
+# Each filing raises the one alert `line-red` (bin/jg-alert.sh, key line-red--ci-red-run-<run id>, project <name>) and prints its
+# line, which the watcher turns into a wake; the table owns the holder and rung. The run is remembered in <home>/data/jg-merge-on-green/red-ci-ticket/,
 # so the next poll files and prints nothing; a failed add or a forge failure is silent and retried next
 # sweep. A green run files nothing. merge-on-green.sh runs this after its own work and hands over its
 # remaining time in JG_RED_CI_LIMIT. JG_RED_CI_GH names the gh-axi binary, JG_RED_CI_LOG_GH the gh binary that reads job logs (tests use recorded fixtures).
@@ -52,7 +53,8 @@ Never re-run; fix the root cause. bin/jg-ci-rerun.sh refuses a re-run of this ru
   if JG_HOME="$FMH" timeout "$BUDGET" "$FMH/bin/jg-backlog.sh" add "$item" "$title" --kind ship --body "$body" >/dev/null 2>&1 \
     || JG_HOME="$FMH" timeout "$BUDGET" "$FMH/bin/jg-backlog.sh" show "$item" >/dev/null 2>&1; then
     mkdir -p "$MEM" 2>/dev/null && printf '%s\n' "$url" > "$MEM/${repo//\//__}.$id" 2>/dev/null || :
-    echo "red-ci-ticket: $url: $wf $job went red; filed $item ($proj); fix the root cause, never re-run"
+    JG_STATE_OVERRIDE="$FMH/state" "$FMH/bin/jg-alert.sh" raise line-red "$item" --project "$proj" --print \
+      --note "red-ci-ticket: $url: $wf $job went red; filed $item ($proj); fix the root cause, never re-run" 2>/dev/null || :
   fi
 }
 

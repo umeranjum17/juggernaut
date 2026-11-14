@@ -7,7 +7,7 @@ set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-T=$(jg_test_tmproot jg-task-inbox-alert); H=$T/home; S=$H/state; mkdir -p "$S"; ln -s "$ROOT/bin" "$H/bin"
+T=$(jg_test_tmproot jg-task-inbox-alert); H=$T/home; S=$H/state; mkdir -p "$S"; ln -sn "$ROOT/bin" "$H/bin"
 export JG_HOME="$H" JG_STATE_OVERRIDE="$S"
 # shellcheck source=bin/jg-task-inbox-lib.sh
 . "$ROOT/bin/jg-task-inbox-lib.sh"

@@ -70,7 +70,7 @@ lab() { PATH="$REAL_PATH" "$HELPER" run "$S" "$@"; }
 
 JG_HOME=$("$ROOT/bin/jg-lab-home.sh" create "$HOME_DIR") || fail "could not create the lab home"
 # The lab home is state-only; the sentinel runs the host tool's scripts from JG_HOME/bin.
-ln -s "$ROOT/bin" "$JG_HOME/bin"
+ln -sn "$ROOT/bin" "$JG_HOME/bin"
 STATE=$JG_HOME/state
 READY=1
 PATH="$REAL_PATH" "$HELPER" provision "$S" >/dev/null || fail "could not provision the lab session"

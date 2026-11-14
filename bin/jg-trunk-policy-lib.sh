@@ -22,7 +22,7 @@
 #                                     is the one test run, and a red it finds reverts the commit that caused it. tests: the landing also runs
 #                                     gate-full over the changed files (the rollback)
 #   gate-verify           the same invariants, then the whole suite: `verify` runs it on a landed commit on
-#                         demand (never per landing: the whole suite runs on the release PR in GitHub CI), and
+#                         demand or from the tick's verify (never per landing: the changed tests run once for each batch, off the landing path), and
 #                         a script that fails there and passes on the commit's parent reverts that one commit
 #                         gate-lint, gate-full and gate-verify defaults are Juggernaut's own suite: they apply only to a repository
 #                         that carries it (bin/jg-test-run.sh at the commit). Any other project runs only a gate its home set for it
@@ -45,10 +45,17 @@
 #   conflict-resolver     (empty)     the command of the agent that resolves a rebase conflict in the lander's copy (bin/jg-trunk-resolve-lib.sh);
 #                                     empty sends every conflict back to the worker, as before
 #   conflict-limit-seconds 600        how long that agent has before the run ends returned
+#   retest-runner         (empty)     the command that runs only the journeys a resolved conflict affects (bin/jg-trunk-retest-lib.sh); empty
+#                                     runs `done-done verify --affected-by <touched files> --extends <lane commit>`
+#   retest-limit-seconds  1200        how long that runner has; a runner past it is a fault of the runner, tried again, never the lane's red
 #   gate-nightly         gate-verify  the nightly whole run's gate: its own key, else gate-verify, else gate-full
 #   nightly-hour         3            the UTC hour from which a tick starts the day's nightly whole run, once a day
 #   verify-width          4           the most batches the line's verify tests at once (and probes it runs at once to find a bad commit),
 #                                     each one heavy slot of core/lane-scale/fleet.sh; 1 tests the whole stack in one run
+#   verify-milestone-minutes 15       a verify milestone (core/trunk-verify/milestone.sh) holds the commits that landed within this many minutes of its first,
+#                                     or at most N commits, N set from the measured bad-commit share so a milestone is red at most half the time
+#   verify-milestone-max  50          the most commits N can be
+#   verify-bad-share      5           the bad-commit share in percent that sets N while the home has fewer than 20 landings
 #   no-green-alarm-minutes 15         the trunk with no green commit this long (since the oldest commit above the green pin landed) raises one alarm to Overwatch
 _JG_TRUNK_PROTECTED='bin/jg-merge-* bin/jg-pr-merge.sh bin/jg-trunk* bin/jg-dod-lib.sh bin/jg-captain-hold.sh bin/jg-test-run.sh bin/jg-lint.sh bin/jg-ci-* bin/jg-update.sh bin/jg-ff-lib.sh bin/jg-stack.sh core/merge-on-green/* core/merge-card/* core/owner-guard/* core/owner-rules/* core/receipts/* core/teardown/* core/delete-guard/* core/kill-guard/* policy/gate/* .github/workflows/*'
 
@@ -116,20 +123,36 @@ jg_trunk_policy() {  # <key> [<project>]
       release-after-commits) val=10 ;;
       no-green-alarm-minutes) val=15 ;;
       verify-width) val=4 ;;
+      verify-milestone-minutes) val=15 ;;
+      verify-milestone-max) val=50 ;;
+      verify-bad-share) val=5 ;;
+      verify-grace) val=0 ;;
       conflict-resolver) val='' ;;
       conflict-limit-seconds) val=600 ;;
+      retest-runner) val='' ;;
+      retest-limit-seconds) val=1200 ;;
       *) return 1 ;;
     esac
   fi
   printf '%s\n' "$val"
 }
 
-# The branch a project's trunk is on now: the version the last rollover recorded (trunk-v2, ...), else the
-# trunk-branch policy value. Usage: jg_trunk_branch <project> [<state-dir>]
+# The branch a project's trunk is on now: the version the last rollover recorded (release/v8, ...; records cut before
+# release/vN keep their trunk-v7 names and are read as they are), else the trunk-branch policy value.
+# Usage: jg_trunk_branch <project> [<state-dir>]
 jg_trunk_branch() {
   local f="${2:-${JG_STATE_OVERRIDE:-${JG_HOME:-.}/state}}/trunk-branch-$1"
   if [ -s "$f" ]; then cat "$f"; else jg_trunk_policy trunk-branch "$1"; fi
 }
+
+# The name of the next working line after version <ver>: release/v<ver>. The one place that builds the name; a rollover cuts it.
+# Usage: jg_trunk_version_branch <ver>
+jg_trunk_version_branch() { printf 'release/v%s\n' "$1"; }
+
+# The task id and record name of a project's release pull request: release-<project>-<branch>, with a / in the branch
+# (release/v8) written as -, so the id is one plain name. A trunk-v7 branch gives the id it always had.
+# Usage: jg_trunk_release_id <project> <branch>
+jg_trunk_release_id() { printf 'release-%s-%s\n' "$1" "${2//\//-}"; }
 
 # The trunk branch a project is on now, printed only when the project is registered local-trunk (data/projects.md)
 # and its trunk exists (state/trunk-tip-<project>, written by `jg-trunk.sh init`); exit 1 with nothing otherwise.
@@ -169,4 +192,25 @@ jg_trunk_gated_answer() {
 # Whether any lane of the project was answered at `gated` (the tick then runs the go-live and publish steps for it).
 jg_trunk_gated_any() {  # <gated-file> <project>
   awk -F'\t' -v p="$2" '$1 == p { f = 1 } END { exit !f }' "$1" 2>/dev/null
+}
+
+# The In use record and word files were once named for "live". Move them to their four-word names, once in a home, with no second
+# path left: data/trunk-live.tsv -> trunk-in-use.tsv (an old file beside a new one is appended to it, then removed) and
+# state/trunk-word-live-<project> -> trunk-word-in-use-<project> (a word already recorded under the new name wins). Safe to call
+# from every reader and mover: with nothing old to move it does nothing. Usage: jg_trunk_in_use_migrate <data-dir> <state-dir>
+jg_trunk_in_use_migrate() {
+  local data=$1 state=$2 old new
+  if [ -f "$data/trunk-live.tsv" ]; then
+    if [ -f "$data/trunk-in-use.tsv" ]; then
+      cat -- "$data/trunk-live.tsv" >> "$data/trunk-in-use.tsv" && rm -f -- "$data/trunk-live.tsv"
+    else
+      mv -f -- "$data/trunk-live.tsv" "$data/trunk-in-use.tsv"
+    fi
+  fi
+  for old in "$state"/trunk-word-live-*; do
+    [ -f "$old" ] || continue
+    new="$state/trunk-word-in-use-${old##*/trunk-word-live-}"
+    if [ -e "$new" ]; then rm -f -- "$old"; else mv -f -- "$old" "$new"; fi
+  done
+  return 0
 }

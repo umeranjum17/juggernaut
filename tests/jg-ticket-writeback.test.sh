@@ -117,7 +117,7 @@ export JG_TICKETS_SYNC="$ROOT/core/tickets-sync/sync.py"
 mirror="$work/mirror"
 mkdir -p "$mirror"/{data,config,state}
 core_beads_home "$ROOT" "$mirror"
-ln -s "$ROOT/bin" "$mirror/bin"
+ln -sn "$ROOT/bin" "$mirror/bin"
 mboard="$work/mirror-board.json"
 printf '{"schema":2,"items":[]}\n' > "$mboard"
 printf '%s\n' "$mboard" > "$mirror/config/fleet-board"

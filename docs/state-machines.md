@@ -16,13 +16,13 @@ The `Ask` column is the command that prints a record's state and its legal moves
 | `account` | `state/<provider>-accounts.json, state/<provider>-accounts-rested/<id> and state/account-assignments.json: one account of the pool (id: <provider>.<account id>; machine 11 of the state-machine plan)` | `core/machines/observers/account.sh` | 5 | 10 | `bin/jg-machine.sh next account <id>` |
 | `alert` | `one record per alert key, state/alerts/<alert>--<subject>.rec (machine 5 of the state-machine plan)` | `bin/jg-alert.sh` | 4 | 7 | `bin/jg-machine.sh next alert <id>` |
 | `bypass` | `config/proof-bypass: one line for each word of the owner (machine 17 of the state-machine plan)` | `bin/jg-proof-bypass.sh` | 2 | 4 | `bin/jg-machine.sh next bypass <id>` |
-| `hold` | `a question held for the owner: the hold on the task (bin/jg-captain-hold.sh) and its card on the board (machine 8 of the state-machine plan)` | `core/machines/observers/hold.sh` | 5 | 8 | `bin/jg-machine.sh next hold <id>` |
+| `hold` | `a question held for the owner: the hold on the task (bin/jg-captain-hold.sh) and its card on the board (machine 8 of the state-machine plan)` | `core/machines/observers/hold.sh` | 5 | 10 | `bin/jg-machine.sh next hold <id>` |
 | `cleanup` | `state/<id>.meta, state/<id>.backlog-close, data/jg-trunk-landing/<id>.<head>.state: one cleanup of a landed lane; or a jg-* entry of the temp folder that the reaper owns (id: tmp:<name>; machine 10 of the state-machine plan)` | `core/machines/observers/cleanup.sh` | 5 | 7 | `bin/jg-machine.sh next cleanup <id>` |
 | `delivering` | `the inside of the ticket stage delivering (machine 20 of the state-machine plan)` | `core/machines/observers/ticket.sh` | 9 | 12 | `bin/jg-machine.sh next delivering <id>` |
-| `delivery` | `a change in core/machines/changes.tsv, its trunk commit, data/trunk-live.tsv and its config/ switch` | `core/machines/observers/delivery.sh` | 7 | 22 | `bin/jg-machine.sh next delivery <id>` |
+| `delivery` | `a change in core/machines/changes.tsv, its trunk commit, data/trunk-in-use.tsv and its config/ switch` | `core/machines/observers/delivery.sh` | 7 | 22 | `bin/jg-machine.sh next delivery <id>` |
 | `host` | `state/.stops/pool-<project>.pool-full` | `bin/jg-spawn.sh` | 2 | 2 | `bin/jg-machine.sh next host <id>` |
 | `landing` | `data/jg-trunk-landing/<task>.<head>[.<ctx>].state, data/trunk-resolving.tsv and data/trunk-landing-phases.tsv: one landing run of a lane (machine 6 of the state-machine plan)` | `core/machines/observers/landing.sh` | 9 | 13 | `bin/jg-machine.sh next landing <id>` |
-| `lane-delivery` | `a lane's state/<id>.status and .meta, data/jg-trunk-landing/<id>.<head>.state, data/trunk-landings.tsv, data/trunk-live.tsv` | `core/machines/observers/lane-delivery.sh` | 12 | 17 | `bin/jg-machine.sh next lane-delivery <id>` |
+| `lane-delivery` | `a lane's state/<id>.status and .meta, data/jg-trunk-landing/<id>.<head>.state, data/trunk-landings.tsv, data/trunk-in-use.tsv` | `core/machines/observers/lane-delivery.sh` | 12 | 17 | `bin/jg-machine.sh next lane-delivery <id>` |
 | `markers` | `state/.<kind>-<pane key> files` | `bin/jg-watch.sh` | 3 | 2 | `bin/jg-machine.sh next markers <id>` |
 | `message` | `state/<task>.inbox/NNN.msg with .delivery.jsonl; the ladder counts are fields (id: <task>:<NNN>; machine 9 of the state-machine plan)` | `core/machines/observers/message.sh` | 5 | 8 | `bin/jg-machine.sh next message <id>` |
 | `presence` | `one presence word per home: state/.afk, its mode line and state/.afk-return-catchup (id: the home name; machine 4 of the state-machine plan)` | `core/machines/observers/presence.sh` | 4 | 6 | `bin/jg-machine.sh next presence <id>` |
@@ -50,11 +50,13 @@ bin/jg-machine.sh next <machine> <id>
 The output lists the record's state and each legal move with its writer, command, and guard.
 [`core/machines/README.md`](../core/machines/README.md) owns the table format, the commands, and the exit codes.
 
-## Ask whether a change is live
+## Ask whether a change is In use
 
 ```sh
 bin/jg-machine.sh show delivery <change-id>
 ```
+
+The answer names a stage with the four words Built, Landed, In use and Released (defined in [`trunk-flow.md`](trunk-flow.md#the-four-words-and-the-end-goal)); `live` alone is not a stage.
 
 A change that ships behind a switch has a row in `core/machines/changes.tsv`, and the answer is `in-homes-off` until the switch is on.
 The state machine slices `sm-s1a-engine` to `sm-s12-enforce` are registered there, behind `config/machine-view` and `config/machine-enforce`.

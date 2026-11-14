@@ -141,8 +141,8 @@ esac
 exit 0
 SH
   # Default hermetic no-mistakes stub: the bare `axi` overview answers
-  # JG_FAKE_AXI_OVERVIEW verbatim (empty by default, so no repository resolves
-  # and the pipeline-spend record is written as unavailable). Without it,
+  # JG_FAKE_AXI_OVERVIEW verbatim (empty by default, so no repository resolves).
+  # Without it,
   # `command -v no-mistakes` would fall through to whatever real binary is on
   # the test runner's own PATH.
   cat > "$fakebin/no-mistakes" <<'SH'
@@ -4371,93 +4371,6 @@ test_scratch_register_and_reap_refuse_unsafe_paths() {
   pass "unsafe scratch paths are refused at registration and skipped at reap"
 }
 
-# Cleanup keeps the task's no-mistakes pipeline spend in this home's records
-# (bin/jg-pipeline-spend.sh) while the task branch that attributes its runs and
-# the task record still exist, then removes both as before.
-test_teardown_records_the_task_pipeline_spend() {
-  local case_dir rc=0 ledger
-  case_dir=$(make_case pipeline-spend)
-  write_meta "$case_dir" no-mistakes ship
-  : > "$case_dir/config/pipeline-spend"
-  land_shippable_commit "$case_dir"
-  mkdir -p "$case_dir/nm"
-  python3 - "$case_dir/nm/state.sqlite" "$case_dir/project" "$(date +%s)" <<'PY'
-import sqlite3
-import sys
-
-database, project, created = sys.argv[1], sys.argv[2], int(sys.argv[3])
-db = sqlite3.connect(database)
-db.executescript("""
-    CREATE TABLE repos (id TEXT PRIMARY KEY, working_path TEXT NOT NULL UNIQUE);
-    CREATE TABLE runs (id TEXT PRIMARY KEY, repo_id TEXT NOT NULL, branch TEXT NOT NULL,
-                       status TEXT NOT NULL, created_at INTEGER NOT NULL);
-    CREATE TABLE agent_invocations (id TEXT, run_id TEXT, purpose TEXT, session_mode TEXT,
-        started_at INTEGER, exit_status TEXT, duration_ms INTEGER, input_tokens INTEGER,
-        output_tokens INTEGER, cache_read_tokens INTEGER, cache_creation_tokens INTEGER,
-        delta_input_tokens INTEGER, delta_output_tokens INTEGER, delta_cache_read_tokens INTEGER);
-""")
-db.execute("INSERT INTO repos VALUES ('r1', ?)", (project,))
-db.execute("INSERT INTO runs VALUES ('01RUN', 'r1', 'fm/task-x1', 'completed', ?)", (created,))
-db.execute("INSERT INTO agent_invocations VALUES ('i1', '01RUN', 'review', 'cold', ?, 'ok', 100, 7, 8, 9, 10, 7, 8, 9)",
-           (created,))
-db.execute("INSERT INTO agent_invocations VALUES ('i2', '01RUN', 'review', 'cold', ?, 'cancelled', 50, "
-           "NULL, NULL, NULL, NULL, NULL, NULL, NULL)", (created + 1,))
-db.commit()
-PY
-  (
-    export NM_HOME="$case_dir/nm" JG_FAKE_AXI_OVERVIEW="repo: $case_dir/project"
-    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
-  ) || rc=$?
-
-  expect_code 0 "$rc" "pipeline-spend: teardown should succeed"
-  ledger=$case_dir/data/pipeline-spend.jsonl
-  assert_present "$ledger" "pipeline-spend: teardown left no pipeline spend record"
-  jq -e '
-    .task == "task-x1" and .spawn_gen == "teardown-test-task-x1"
-    and .source == "no-mistakes-state" and .branch == "fm/task-x1"
-    and [.runs[].id] == ["01RUN"]
-    and .total.invocations == 2 and .total.exit == {"ok": 1, "cancelled": 1}
-    and .total.input_tokens == {"total": 7, "unknown": 1}
-  ' "$ledger" >/dev/null || fail "pipeline-spend: the recorded spend is wrong: $(cat "$ledger")"
-  assert_absent "$case_dir/state/task-x1.meta" "pipeline-spend: teardown kept the task record"
-  ! git -C "$case_dir/project" show-ref --verify --quiet refs/heads/fm/task-x1 \
-    || fail "pipeline-spend: teardown kept the task branch"
-  pass "teardown records the task's pipeline spend before removing its branch and record"
-}
-
-test_teardown_skips_pipeline_spend_when_disabled() {
-  local case_dir rc=0
-  case_dir=$(make_case pipeline-spend-disabled)
-  write_meta "$case_dir" no-mistakes ship
-  land_shippable_commit "$case_dir"
-  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-  expect_code 0 "$rc" "pipeline-spend-disabled: teardown should succeed"
-  assert_absent "$case_dir/data/pipeline-spend.jsonl" \
-    "pipeline-spend-disabled: teardown created a spend ledger without opt-in"
-  assert_absent "$case_dir/state/task-x1.meta" \
-    "pipeline-spend-disabled: teardown kept the task record"
-  pass 'teardown skips all pipeline-spend recording when the home has not opted in'
-}
-
-# An owned ship task whose local copy is already gone still leaves a durable
-# account: the recorder writes an unavailable-source line before the record goes.
-test_teardown_records_unavailable_spend_for_a_gone_worktree() {
-  local case_dir rc=0 ledger
-  case_dir=$(make_case pipeline-spend-gone)
-  write_windowless_legacy_meta "$case_dir" no-mistakes ship "$case_dir/missing-wt"
-  : > "$case_dir/config/pipeline-spend"
-  seed_backlog_in_flight "$case_dir"
-  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-  expect_code 0 "$rc" "pipeline-spend-gone: teardown should succeed"
-  ledger=$case_dir/data/pipeline-spend.jsonl
-  assert_present "$ledger" "pipeline-spend-gone: teardown left no pipeline spend record"
-  jq -e '.task == "task-x1" and .source == "unavailable" and .total == null
-    and (.reason | contains("is gone"))' "$ledger" >/dev/null \
-    || fail "pipeline-spend-gone: the recorded spend is wrong: $(cat "$ledger")"
-  assert_absent "$case_dir/state/task-x1.meta" "pipeline-spend-gone: teardown kept the task record"
-  pass "teardown records unavailable pipeline spend for an owned ship task whose copy is gone"
-}
-
 test_leaked_worktree_process_is_reaped() {
   local case_dir rc pid
   case_dir=$(make_case leaked-process-reap)
@@ -4855,7 +4768,7 @@ prepare_teardown_source_copy() {  # <case-dir>
       ln -s "$f" "$dest/$base"
     fi
   done
-  ln -s "$ROOT/toolchain.versions" "$case_dir/test-root/toolchain.versions"
+  ln -sn "$ROOT/toolchain.versions" "$case_dir/test-root/toolchain.versions"
   cat > "$case_dir/fakebin/treehouse" <<SH
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$case_dir/treehouse.log"
@@ -5167,9 +5080,6 @@ test_transient_index_lock_clears_after_first_attempt_and_retry_succeeds
 test_persistent_index_lock_exhausts_retries_and_refuses_loudly
 test_empty_retry_wait_uses_default_without_aborting
 test_fractional_legacy_retry_wait_refuses_without_arithmetic_error
-test_teardown_records_the_task_pipeline_spend
-test_teardown_skips_pipeline_spend_when_disabled
-test_teardown_records_unavailable_spend_for_a_gone_worktree
 test_leaked_worktree_process_is_reaped
 test_leaked_tasktmp_process_is_reaped
 test_registered_scratch_is_reaped_after_launching_session_is_gone

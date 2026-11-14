@@ -21,7 +21,7 @@ printf '{"schema":2,"items":[]}\n' > "$board"
 . "$root/lib/beads-test-env.sh"
 for home in "$main" "$lead"; do
   mkdir -p "$home"/{data,config,state}
-  ln -s "$fork/bin" "$home/bin"; ln -s "$fork/core" "$home/core"
+  ln -sn "$fork/bin" "$home/bin"; ln -sn "$fork/core" "$home/core"
   printf '%s\n' "$board" > "$home/config/fleet-board"
   core_beads_home "$fork" "$home"
 done

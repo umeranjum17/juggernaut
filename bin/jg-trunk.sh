@@ -12,10 +12,10 @@
 #        jg-trunk.sh cancel <task-id> --reason <text>   Overwatch only: end the task's running landing (a single run or the stack it is in) through the landing check's own path: stops its process group, clears its running state and locks, records why, starts the next ready lane
 #        jg-trunk.sh verify <project-dir> [<sha>]      run the verify gate over every change since the green pin (default: the tip), one verify at a time and the newest wins; green moves the pin, a red it finds reverts the commit that caused it and raises line-red
 #        jg-trunk.sh verify-due <project-dir>          print the tip and exit 0 when a tick should start a verify (tip above the pin, none running, tip not already ended red)
-#        jg-trunk.sh nightly <project-dir>             the nightly whole run: the verify over the whole suite on the tip (gate-nightly), a red traced to its commit and reverted the same way, a flaky script filed, one report a day
+#        jg-trunk.sh nightly <project-dir>             the nightly whole run: the verify over the whole suite on the tip (gate-nightly), a red traced to its commit and reverted the same way, a journey its proof did not select recorded as a miss (core/trunk-verify/miss.sh), a flaky script filed, one report a day
 #        jg-trunk.sh nightly-due <project-dir>         print the day and exit 0 when a tick should start the nightly run (nightly-hour reached, today's run not ended, no verify running)
 #        jg-trunk.sh green-alarm <project-dir>         raise one alarm to Overwatch once the trunk has had no green commit for no-green-alarm-minutes (15)
-#        jg-trunk.sh word live|release <project-dir> "<his words>"   record the captain's word for the commit that would go live or out (both: the last green commit, never the tip)
+#        jg-trunk.sh word in-use|release <project-dir> "<his words>"   record the captain's word for the commit that would be In use or out (both: the last green commit, never the tip)
 #        jg-trunk.sh recover <project-dir> [--prepare <task-id>|--land <task-id>]   report divergence, prepare a merge, or land its exact proved head
 #        jg-trunk.sh adopt-tip <project-dir> --reason <text> [--carried-by <task-id>]   Overwatch only: record the trunk's present tip as the lander's own after something else moved it; only if the record is its ancestor or the tip is on origin/<default>
 #        jg-trunk.sh live <project-dir> [--home <lead-home>]   move every home to the last fully green commit; refuses without his word, a waiver or the answer given at gated; --home moves one lead only
@@ -25,7 +25,7 @@
 #        jg-trunk.sh ci <project-dir> <sha> green|red  record the CI result for a live commit; red moves the green pin, and every home, back to the last green one
 #        jg-trunk.sh release <project-dir>             push the last green commit of the trunk and open the ONE release PR trunk -> default branch, owned by task release-<project>-<trunk>; refuses without his word
 #        jg-trunk.sh publish <project-dir>             under the release waiver: push the green pin once the trunk holds enough, or the tip as a candidate after a red; one batch at a time, never forced
-#        jg-trunk.sh rollover <project-dir>            after the release PR merged, cut the next trunk version (trunk-v2, ...) from the default branch
+#        jg-trunk.sh rollover <project-dir>            after the release PR merged, cut the next trunk version (release/v8, ...) from the default branch
 #        jg-trunk.sh retire <project-dir>              clean up an old trunk unforced: only when its release is proved on main and every hotfix is carried; unlanded work is kept and listed
 #        jg-trunk.sh due <project-dir>                 exit 0 when the oldest unreleased commit is past release-after-hours
 #
@@ -71,7 +71,8 @@
 # as a single landing would refuse it). ONE gate (lint, then the tests of the union of the changed files, judged against the tip) runs on
 # the stack's top and, on green, the trunk fast-forwards over the whole stack in one move. On red the stack is halved (the first half is
 # judged alone and lands if green, the rest is judged on the new tip) until the guilty lane stands alone; only it is returned. A single
-# queued lane keeps the path above. Every landed lane keeps its own data/trunk-landings.tsv row (with batch-from=<tip before the batch>).
+# queued lane keeps the path above. With gate-slots 2 or more the two halves gate at once (core/trunk-landing/bisect.sh), so the guilty lane
+# is found in about log2(stack) rounds of one gate time. Every landed lane keeps its own data/trunk-landings.tsv row (with batch-from=<tip before the batch>).
 # The prior art is bors-ng's batch and bisect and Kubernetes Tide's batch merge (both Apache-2.0): ideas only, nothing copied.
 #
 # A landing holds the trunk lock only to read the tip and to move it, never across its gates: it gates the candidate on the tip it read,
@@ -129,7 +130,7 @@
 # later takes it back below that commit. `live` moves the home only to that commit, so a red commit is never live.
 # `release` ships only the green pin, never the tip. A red `ci` moves the green pin, and every home, back to the
 # newest earlier commit that went live and was not red (else the last release); landings go on.
-# The captain's word: `word` writes state/trunk-word-<live|release>-<project>, bound to the one commit
+# The captain's word: `word` writes state/trunk-word-<in-use|release>-<project>, bound to the one commit
 # it names and spent by the command it allows. A worker never records one.
 #
 # Live moves EVERY home: it exports the tip's own bin/ and core/ to state/trunk-live-tool/<sha>/ and runs that copy's
@@ -151,7 +152,7 @@
 #
 # Every open captain call is a key in bin/jg-trunk-policy-lib.sh with its safe default; nothing
 # here changes with the answer. Records: data/trunk-landings.tsv (task, project, commit, epoch,
-# gate), data/trunk-live.tsv (project, commit, epoch, status), data/trunk-releases.tsv, data/trunk-ci.tsv (project,
+# gate), data/trunk-in-use.tsv (project, commit, epoch, status), data/trunk-releases.tsv, data/trunk-ci.tsv (project,
 # commit, epoch, green|red, and `verify` for a charged verify red that could not be reverted), data/trunk-words.tsv.
 # `live` runs config/live-hook.<project> <project-dir> <sha> when it is executable. With none, a
 # project that shares this home's code origin is moved by bin/jg-trunk-live-home.sh; any other
@@ -185,12 +186,27 @@ LANDER_ACCOUNT="${CLAUDE_CONFIG_DIR:-}"; unset CLAUDE_CONFIG_DIR
 . "$SCRIPT_DIR/jg-version-branch-lib.sh"
 # shellcheck source=bin/jg-trunk-policy-lib.sh
 . "$SCRIPT_DIR/jg-trunk-policy-lib.sh"
+# shellcheck source=bin/jg-trunk-carry-lib.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/jg-trunk-carry-lib.sh"
+# shellcheck source=bin/jg-timeout-lib.sh
+. "$SCRIPT_DIR/jg-timeout-lib.sh"
 # shellcheck source=bin/jg-trunk-resolve-lib.sh
 . "$SCRIPT_DIR/jg-trunk-resolve-lib.sh"
+# shellcheck source=bin/jg-trunk-retest-lib.sh
+. "$SCRIPT_DIR/jg-trunk-retest-lib.sh"
 # shellcheck source=core/trunk-landing/refusal-reach.sh
 . "$SCRIPT_DIR/../core/trunk-landing/refusal-reach.sh"
 # shellcheck source=core/trunk-landing/batch.sh
 . "$SCRIPT_DIR/../core/trunk-landing/batch.sh"
+# shellcheck source=core/trunk-landing/bisect.sh
+. "$SCRIPT_DIR/../core/trunk-landing/bisect.sh"
+# shellcheck source=core/trunk-verify/milestone.sh
+. "$SCRIPT_DIR/../core/trunk-verify/milestone.sh"
+# shellcheck source=core/trunk-verify/judge.sh
+. "$SCRIPT_DIR/../core/trunk-verify/judge.sh"
+# shellcheck source=core/trunk-verify/miss.sh
+. "$SCRIPT_DIR/../core/trunk-verify/miss.sh"
 export JG_HOME JG_CONFIG_OVERRIDE="$CONFIG"
 
 usage() { sed -n '2,/^set -eu$/p' "${BASH_SOURCE[0]}" | sed -e 's/^# \{0,1\}//' -e '$d'; }
@@ -213,6 +229,7 @@ cleanup() {
     fi
   fi
   for l in $LOCKS; do jg_lock_release "$l" || true; done; [ -z "${WORK:-}" ] || rm -rf -- "$WORK"
+  [ -z "${BISECT_DIR:-}" ] || rm -rf -- "$BISECT_DIR"
 }
 trap cleanup EXIT
 lock() { jg_lock_acquire_wait "$1"; LOCKS="$1 $LOCKS"; }
@@ -222,6 +239,7 @@ open_project() {  # <project-dir>: sets PROJ PN TRUNK
   PROJ=${1:?project directory required}
   git -C "$PROJ" rev-parse --git-dir >/dev/null 2>&1 || die "$PROJ is not a git repository"
   PN=$(basename "$PROJ")
+  jg_trunk_in_use_migrate "$DATA" "$STATE"
   TRUNK=$(jg_trunk_branch "$PN" "$STATE")
   git check-ref-format --branch "$TRUNK" >/dev/null 2>&1 || die "invalid trunk-branch '$TRUNK'"
   # The trunk flow is for local-trunk projects ONLY: a no-mistakes, direct-PR or local-only project keeps its own rules.
@@ -233,7 +251,7 @@ open_project() {  # <project-dir>: sets PROJ PN TRUNK
 
 # The trunk is safe: only this script writes it (JG_TRUNK_WRITER=1 on its own update-ref calls), and even
 # this script can only create it or fast-forward it. A rewind, a force or a delete of refs/heads/<trunk> or
-# a later trunk version (<trunk>-v2, ...) is refused by the project's reference-transaction hook, so no
+# a later trunk version (<trunk>-v2, ... or release/v8, ...) is refused by the project's reference-transaction hook, so no
 # subcommand and no hand can lose a trunk whose release is still open. A transaction that leaves the ref where it
 # is (git 2.56 opens one when a worktree is added on the branch) moves nothing and passes. The one delete it allows is `retire`'s
 # (JG_TRUNK_RETIRE=<ref>), which runs only after the old trunk's release merged and its work is carried.
@@ -242,7 +260,7 @@ ensure_guard() {
   base=$(pol trunk-branch)
   hook="$(git -C "$PROJ" rev-parse --path-format=absolute --git-common-dir)/hooks/reference-transaction"
   # shellcheck disable=SC2016 # the hook body is written out verbatim; its variables expand in the hook
-  want=$(printf '#!/bin/sh\n# managed by bin/jg-trunk.sh: only the lander moves the trunk, and only forward\n[ "$1" = prepared ] || exit 0\nwhile read -r old new ref; do\n  case "$ref" in refs/heads/%s|refs/heads/%s-v[0-9]*) ;; *) continue ;; esac\n  cur=$(git rev-parse -q --verify "$ref^{commit}" 2>/dev/null || true)\n  [ -z "$cur" ] || [ "$cur" != "$new" ] || continue\n  case "$new" in *[!0]*) ;; *) [ "${JG_TRUNK_RETIRE:-}" = "$ref" ] && continue; echo "refused: $ref is a trunk and is never deleted" >&2; exit 1 ;; esac\n  [ -n "${JG_TRUNK_WRITER:-}" ] || { echo "refused: $ref moves only through bin/jg-trunk.sh land; nothing writes it by hand (transaction: $old -> $new, now ${cur:-none})" >&2; exit 1; }\n  [ -z "$cur" ] || git merge-base --is-ancestor "$cur" "$new" || { echo "refused: $ref is never rewound or forced; the trunk only moves forward" >&2; exit 1; }\ndone\nexit 0\n' "$base" "$base")
+  want=$(printf '#!/bin/sh\n# managed by bin/jg-trunk.sh: only the lander moves the trunk, and only forward\n[ "$1" = prepared ] || exit 0\nwhile read -r old new ref; do\n  case "$ref" in refs/heads/%s|refs/heads/%s-v[0-9]*|refs/heads/release/v[0-9]*) ;; *) continue ;; esac\n  cur=$(git rev-parse -q --verify "$ref^{commit}" 2>/dev/null || true)\n  [ -z "$cur" ] || [ "$cur" != "$new" ] || continue\n  case "$new" in *[!0]*) ;; *) [ "${JG_TRUNK_RETIRE:-}" = "$ref" ] && continue; echo "refused: $ref is a trunk and is never deleted" >&2; exit 1 ;; esac\n  [ -n "${JG_TRUNK_WRITER:-}" ] || { echo "refused: $ref moves only through bin/jg-trunk.sh land; nothing writes it by hand (transaction: $old -> $new, now ${cur:-none})" >&2; exit 1; }\n  [ -z "$cur" ] || git merge-base --is-ancestor "$cur" "$new" || { echo "refused: $ref is never rewound or forced; the trunk only moves forward" >&2; exit 1; }\ndone\nexit 0\n' "$base" "$base")
   # A home guard (bin/jg-home-guard.sh) holding the hook file runs this guard first from its chained slot, so it lives there.
   if [ -f "$hook" ] && grep -q '^# managed by bin/jg-home-guard.sh' "$hook"; then
     install_trunk_hook "$hook.chained" "$want"
@@ -333,6 +351,21 @@ gate_enter() {
 }
 gate_leave() { unlock "$STATE/.trunk-gate-$PN-${BASHPID:-$$}.lock"; }
 
+# One landing deadline (JG_TRUNK_GATE_DEADLINE, an epoch the lander passes down) bounds every gate command of an attempt; on-demand verify has none.
+gate_deadline_ok() {
+  [ -z "${JG_TRUNK_GATE_DEADLINE:-}" ] || [ "$(date +%s)" -lt "$JG_TRUNK_GATE_DEADLINE" ] || {
+    echo "REFUSED: landing gate exceeded its shared deadline; try again" >&2
+    return 1
+  }
+}
+gate_timed() {
+  local remaining
+  [ -n "${JG_TRUNK_GATE_DEADLINE:-}" ] || { "$@"; return; }
+  remaining=$((JG_TRUNK_GATE_DEADLINE - $(date +%s)))
+  [ "$remaining" -gt 0 ] || return 124
+  jg_run_timed "$remaining" "$@"
+}
+
 # Run a command at a commit's exact tree in a clean clone, logging to <log>; returns the command's exit status.
 # <envfile>, when given, receives the environment the command ended with (NUL separated), so a rerun can use the same one.
 gate_exec() {  # <commit> <command> <log> [<envfile>]
@@ -346,7 +379,7 @@ gate_exec() {  # <commit> <command> <log> [<envfile>]
   "${clean[@]}" git -C "$WORK/tree" checkout -q --detach "$1" || die "cannot check out ${1:0:12} for the gate"
   # shellcheck disable=SC2016 # the trap body expands in the gate's shell
   [ -z "${4:-}" ] || cmd="trap 'env -0 > \"\$JG_GATE_ENV_OUT\"' EXIT; $2"
-  (cd "$WORK/tree" && "${clean[@]}" JG_GATE_ENV_OUT="${4:-/dev/null}" JG_TRUNK_GATE_OUTPUT="${3%.log}.proof" bash -c "$cmd") > "$3" 2>&1 || rc=$?
+  (cd "$WORK/tree" && gate_timed "${clean[@]}" JG_GATE_ENV_OUT="${4:-/dev/null}" JG_TRUNK_GATE_OUTPUT="${3%.log}.proof" bash -c "$cmd") > "$3" 2>&1 || rc=$?
   rm -rf -- "$WORK"; WORK=
   gate_leave
   record_overruns "$1" "$3"
@@ -375,6 +408,7 @@ record_overruns() {  # <commit> <log>
 run_gate_try() {  # <commit> <command> <label>: returns 1 after printing the refusal, for a caller that judges the red itself
   local log="${LAND_ATTEMPT:-$DATA/trunk/gate-$PN-${1:0:12}-$(date +%s)-$$}-$3.log" rc=0
   gate_exec "$1" "$2" "$log" || rc=$?
+  gate_deadline_ok || return 1
   [ "$rc" -eq 0 ] || { tail -n 20 "$log" >&2; echo "REFUSED: gate '$3' failed (exit $rc) at ${1:0:12}; full log: $log" >&2; return 1; }
 }
 run_gate() { run_gate_try "$@" || exit 1; }
@@ -389,6 +423,7 @@ classify_refusal() {  # <output file> [<gate log>...]
   last=$(grep -E '^(REFUSED|error):' "$1" | tail -n 1)
   if grep -q '^ENV:' "$@" 2>/dev/null; then echo env-wait; return; fi
   case $last in
+    *'landing gate exceeded its shared deadline'*|*'the retest runner failed after the conflict'*) echo retry; return ;;
     *'away mode'*|*'something else moved it'*|*'linked to a decision'*|*'still held'*|*'changed while landing'*|*'kept moving'*|*'proof inputs are incomplete'*) echo wait; return ;;
     "REFUSED: gate "*|"REFUSED: could not read the decisions"*|"REFUSED: this lane is the red"*|"error: cannot check out"*) ;;
     *) echo final; return ;;
@@ -399,7 +434,7 @@ classify_refusal() {  # <output file> [<gate log>...]
 }
 
 # Every script the test runner finished in a gate log, as: script TAB exit status TAB failure signature.
-# The signature of a pass is "-". Of a failure it is the script's own "not ok" lines (else its last three lines),
+# The signature of a pass is "-". Of a failure it is the script's own "not ok" lines by test name, without the test's number (else its last three lines),
 # sorted, with temp paths, long numbers and elapsed seconds masked so a pid, a mktemp name or a run time cannot make one red look like two.
 gate_results() {  # <log>
   awk '
@@ -418,7 +453,7 @@ gate_results() {  # <log>
       }
       print $3 "\t" ex "\t" sig; cur = ""; next
     }
-    cur != "" && $0 !~ /^[ \t]*$/ { l = norm($0); t[++nt] = l; if ($0 ~ /^not ok/) f[++nf] = l }
+    cur != "" && $0 !~ /^[ \t]*$/ { l = norm($0); t[++nt] = l; if ($0 ~ /^not ok/) { sub(/^not ok +[0-9]+/, "not ok", l); f[++nf] = l } }
   ' "$1"
 }
 
@@ -451,7 +486,7 @@ tip_results() {  # <tip> <envfile> <script>...
     awk -F'\t' -v s="$s" '$1 == s { f = 1 } END { exit !f }' "$cache" || need="$need $(printf '%q' "$s")"
   done
   if [ -n "$need" ]; then
-    log="$DATA/trunk/gate-$PN-${tip:0:12}-tip-$(date +%s).log"
+    log="$DATA/trunk/gate-$PN-${tip:0:12}-tip-$(date +%s)-${BASHPID:-$$}.log"
     rerun_scripts "$tip" "$envf" "$log" "$need"
     while IFS= read -r line; do
       s=${line%%$'\t'*}
@@ -564,10 +599,25 @@ gate_figures() {  # <first-run log> <start epoch>
 # Returns 0 when the candidate is cleared, 2 when it is charged with a failure its base does not have, and 1 when it failed for a
 # reason no test script accounts for. The base is the trunk tip for a landing and the commit's parent for a verify.
 full_gate() {  # <candidate> <command> <base>
-  local cand=$1 log="${LAND_ATTEMPT:-$DATA/trunk/gate-$PN-${1:0:12}}-full.log" envf rc=0 mine tipres line s ex sig tex tsig bad='' old='' unexplained quoted again settled now flaky='' t0 passing='' byself='' byparent='' rerun_red noparent=''
-  t0=$(date +%s); GATE_KIND=full; GATE_FIGURES=; GATE_BAD=
+  local rc=0 verdict
+  GATE_FAILED=
+  _full_gate "$@" || rc=$?
+  # One verdict per commit (H29g): the judge (the lander's tip run, the verify or the nightly) keeps what it saw on this tree, and a
+  # second judge that saw another failed set raises judge-split. A run that ended for a reason no test accounts for (1) judged nothing.
+  if [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ]; then
+    # shellcheck disable=SC2086
+    verdict=$(judge_record "$PN" "$PROJ" "$DATA" "$SCRIPT_DIR/jg-alert.sh" "${JUDGE_NAME:-tip}" "$1" $GATE_FAILED) \
+      || echo "warning: could not record the verdict of ${1:0:12}" >&2
+    case $verdict in split*) echo "note: judge-split: ${verdict#split }" >&2 ;; esac
+  fi
+  return "$rc"
+}
+_full_gate() {  # <candidate> <command> <base>
+  local badsig='' cand=$1 log="${LAND_ATTEMPT:-$DATA/trunk/gate-$PN-${1:0:12}}-full.log" envf rc=0 mine tipres line s ex sig tex tsig bad='' old='' unexplained quoted again settled now flaky='' t0 passing='' byself='' byparent='' rerun_red noparent=''
+  t0=$(date +%s); GATE_KIND=full; GATE_FIGURES=; GATE_BAD=; GATE_BAD_SIG=
   envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX" 2>/dev/null) || { mkdir -p "$DATA/trunk"; envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX"); }
   gate_exec "$cand" "$2" "$log" "$envf" || rc=$?
+  gate_deadline_ok || { rm -f -- "$envf"; return 1; }
   settle_shard_budget "$cand" "$log"
   [ "$rc" -ne 0 ] || { rm -f -- "$envf"; gate_figures "$log" "$t0"; return 0; }
   mine=$(gate_results "$log" | awk -F'\t' '$2 != "0"')
@@ -581,6 +631,7 @@ full_gate() {  # <candidate> <command> <base>
   # what fails again counts (as that second run saw it). A script the rerun does not report keeps its first result.
   quoted=$(printf '%s\n' "$mine" | while IFS= read -r line; do printf ' %q' "${line%%$'\t'*}"; done)
   rerun_scripts "$cand" "$envf" "$DATA/trunk/gate-$PN-${cand:0:12}-full-rerun.log" "$quoted"
+  gate_deadline_ok || { rm -f -- "$envf"; return 1; }
   again=$(gate_results "$DATA/trunk/gate-$PN-${cand:0:12}-full-rerun.log")
   settled=''
   while IFS= read -r line; do
@@ -591,6 +642,7 @@ full_gate() {  # <candidate> <command> <base>
     else flaky="$flaky $s"; fi
   done <<< "$mine"
   mine=$(printf '%s' "$settled")
+  GATE_FAILED=$(printf '%s\n' "$mine" | cut -f1)  # the verdict of this run on the tree, before any base is read (judge.sh)
   # The rerun is judged as the first run was: a rerun that ended red with no script accounting for it (a runner that died, a count that
   # does not match its scripts) says nothing about the commit, so it is never charged to it.
   rerun_red=$(printf '%s\n' "$again" | awk -F'\t' '$2 != "0"')
@@ -604,6 +656,7 @@ full_gate() {  # <candidate> <command> <base>
   if [ -z "$mine" ]; then rm -f -- "$envf"; GATE_KIND="full-rerun"; gate_figures "$log" "$t0"; return 0; fi
   # shellcheck disable=SC2046
   tipres=$(tip_results "$3" "$envf" $(printf '%s\n' "$mine" | cut -f1))
+  gate_deadline_ok || { rm -f -- "$envf"; return 1; }
   # A parent that gave no result for a script it has (its run could not start, or died at start) cannot show the lane added the red,
   # so nothing is charged to the lane and nothing is reverted: the failure is one no test accounts for.
   while IFS= read -r line; do
@@ -629,7 +682,7 @@ full_gate() {  # <candidate> <command> <base>
     tsig=$(printf '%s\n' "$tipres" | awk -F'\t' -v s="$s" '$1 == s { sub(/^[^\t]*\t[^\t]*\t/, ""); print; exit }')
     if [ -n "$sig" ] && [ "$tex" = "$ex" ] && [ "$tsig" = "$sig" ]; then old="$old $s"
     elif printf '%s\n' "$byself" | grep -qxF -- "$s"; then byparent="$byparent $s"
-    else bad="$bad $s"; fi
+    else bad="$bad $s"; badsig="$badsig; $s: ${sig:-no test name}"; fi
   done <<< "$mine"
   # shellcheck disable=SC2086
   [ -z "$byparent" ] || { echo "note: $byparent fails by itself on the parent ${3:0:12}, so no lane is charged for it (each recorded and filed as its own fix row)" >&2; record_flaky "$cand" $byparent; }
@@ -637,7 +690,7 @@ full_gate() {  # <candidate> <command> <base>
   # shellcheck disable=SC2086
   [ -z "$old" ] || report_tip_red "$3" $old
   if [ -n "$bad" ]; then
-    GATE_BAD=${bad# }
+    GATE_BAD=${bad# }; GATE_BAD_SIG=${badsig#; }
     tail -n 20 "$log" >&2
     echo "REFUSED: gate 'full' failed (exit $rc) at ${cand:0:12}; this lane introduced or changed the failure of:$bad; full log: $log" >&2
     return 2
@@ -654,7 +707,7 @@ conflict_paths() {  # <tip> <candidate>
 }
 
 # The captain's recorded word: spent by the command it allows, valid for one commit only.
-need_word() {  # <live|release> <sha>
+need_word() {  # <in-use|release> <sha>
   local f="$STATE/trunk-word-$1-$PN"
   [ -f "$f" ] && [ "$(cut -f1 "$f")" = "$2" ] || refuse "no recorded word from the captain to $1 ${2:0:12}; record it with: jg-trunk.sh word $1 $PROJ \"<his words>\""
 }
@@ -703,7 +756,7 @@ rebase_commit() {  # <tip> <candidate>
 # lane gets the refusal as before, with the reason). With no resolver set nothing here runs. Prints the resolved commit; returns 1 otherwise.
 resolve_conflict() {  # <id> <tip> <candidate>: sets RESOLVE_FRESH (the resolved commit) or RESOLVE_WHY (the reason)
   local id=$1 cmd limit scratch ticket touched
-  RESOLVE_FRESH=''; RESOLVE_WHY=''
+  RESOLVE_FRESH=''; RESOLVE_WHY=''; RESOLVE_TOUCHED=''
   cmd=$(pol conflict-resolver) || cmd=''
   [ -n "$cmd" ] || return 1
   limit=$(pol conflict-limit-seconds); [[ $limit =~ ^[0-9]+$ ]] && [ "$limit" -gt 0 ] || limit=600
@@ -713,7 +766,7 @@ resolve_conflict() {  # <id> <tip> <candidate>: sets RESOLVE_FRESH (the resolved
   JG_HOME=$JG_HOME JG_DATA_OVERRIDE=$DATA "$SCRIPT_DIR/jg-backlog.sh" moment "$ticket" conflict_at >/dev/null 2>&1 \
     || echo "jg-trunk: warning: conflict_at of $ticket was not written; the resolving run goes on" >&2
   if RESOLVE_FRESH=$(jg_trunk_resolve "$PROJ" "$2" "$3" "$cmd" "$limit" "$scratch" 2>"$scratch.why"); then
-    touched=$(paste -sd' ' "$scratch/touched" 2>/dev/null || :)
+    touched=$(paste -sd' ' "$scratch/touched" 2>/dev/null || :); RESOLVE_TOUCHED=$scratch/touched
     row trunk-resolving.tsv "$id" "$PN" "$2" "$3" resolved "$(date +%s)" "$touched"
     echo "land: the conflict of $id with $TRUNK (${2:0:12}) is resolved in the lander's copy; touched: $touched" >&2
     rm -f -- "$scratch.why"; return 0
@@ -721,6 +774,30 @@ resolve_conflict() {  # <id> <tip> <candidate>: sets RESOLVE_FRESH (the resolved
   RESOLVE_FRESH=''; RESOLVE_WHY=$(tail -n 1 "$scratch.why" 2>/dev/null || :); rm -f -- "$scratch.why"
   row trunk-resolving.tsv "$id" "$PN" "$2" "$3" returned "$(date +%s)" "$RESOLVE_WHY"
   return 1
+}
+
+# The landing run's state `retesting`, after a resolved conflict: only the journeys the touched files affect run again on the resolved
+# commit (policy retest-runner, bin/jg-trunk-retest-lib.sh), and the receipt it writes names that commit and the one it extends. The full
+# proof does not run again. A journey red on the commit ends the run `returned`: the ticket goes back to building (returned_at) and the
+# lane is refused with the journey named. A fault of the runner is refused as a retry; the landing check owns the three tries, and its
+# giving up is the wait `lead`, reason `blocker`, with no steer to the worker (core/trunk-landing/refusal-reach.sh).
+retest_resolved() {  # <id> <tip> <lane head> <resolved commit>: returns 0 to go on to `checking`, else refuses
+  local id=$1 cmd limit scratch ticket rc=0 why
+  cmd=$(pol retest-runner) || cmd=''
+  limit=$(pol retest-limit-seconds); [[ $limit =~ ^[0-9]+$ ]] && [ "$limit" -gt 0 ] || limit=1200
+  scratch="$DATA/trunk/retest-$PN-${4:0:12}"; ticket=$(jg_dod_meta_value "$META" ticket); ticket=${ticket:-$id}
+  row trunk-landing-phases.tsv "$id" "$PN" "$3" "$3" retesting "$(date +%s)" "$(paste -sd' ' "$RESOLVE_TOUCHED" 2>/dev/null || :)"
+  why=$(jg_trunk_retest "$PROJ" "$4" "$3" "$RESOLVE_TOUCHED" "$cmd" "$limit" "$scratch" 2>&1 >/dev/null) || rc=$?
+  [ -z "$why" ] || printf '%s\n' "$why" | sed '/^retest: /!d' >&2
+  why=$(printf '%s\n' "$why" | sed '/^retest: /d')
+  case $rc in
+    0) return 0 ;;
+    1) row trunk-landing-phases.tsv "$id" "$PN" "$3" "$3" returned "$(date +%s)" "$why"
+       JG_HOME=$JG_HOME JG_DATA_OVERRIDE=$DATA "$SCRIPT_DIR/jg-backlog.sh" moment "$ticket" returned_at >/dev/null 2>&1 \
+         || echo "jg-trunk: warning: returned_at of $ticket was not written" >&2
+       refuse "the resolution of $LANE_BRANCH breaks a journey: $why; the lane fixes it and reports ready again; it is never landed dirty" ;;
+    *) refuse "the retest runner failed after the conflict of $id was resolved: $why" ;;
+  esac
 }
 
 # The lane follows its rebased commit, so cleanup finds the branch where the trunk is: in its own clean worktree by
@@ -809,11 +886,12 @@ lane_admit() {  # <id> <tip> <expected head or -> <follow 0|1>
     base=$(git -C "$PROJ" merge-base "$tip" "$LANE_CAND" 2>/dev/null) || refuse "$LANE_BRANCH shares no history with $TRUNK (${tip:0:12}); start the lane on the trunk tip"
     n=$(git -C "$PROJ" rev-list --count "$base..$LANE_CAND")
     [ "$n" = 1 ] || refuse "one commit per ticket: $LANE_BRANCH has $n commits over $TRUNK; squash it to one"
-    RESOLVE_WHY=''
+    RESOLVE_WHY=''; RESOLVE_TOUCHED=''
     fresh=$(rebase_commit "$tip" "$LANE_CAND") || { resolve_conflict "$id" "$tip" "$LANE_CAND" && fresh=$RESOLVE_FRESH; } || {
       hit=$(conflict_paths "$tip" "$LANE_CAND")
       refuse "$LANE_BRANCH conflicts with $TRUNK (${tip:0:12}) in: ${hit:-an unreadable merge}; ${RESOLVE_WHY:+the resolver did not resolve it ($RESOLVE_WHY); }a lane rebases and fixes it, then reports ready again; it is never landed dirty"
     }
+    [ -z "$RESOLVE_TOUCHED" ] || retest_resolved "$id" "$tip" "$LANE_CAND" "$fresh"
     [ "$4" != 1 ] || lane_follow "$LANE_BRANCH" "$LANE_CAND" "$fresh" "$(jg_dod_meta_value "$META" worktree)"
     LANE_CAND=$fresh
   fi
@@ -972,39 +1050,79 @@ unpin_green() {  # <red sha>
   put "$STATE/trunk-green-$PN" "$(rev "$1^")"
 }
 
-# --- Two gates at once (docs/trunk-flow.md "Two gates at once") ---
-# The lane that gates on the real trunk tip is the front: it holds state/.trunk-front-<project>.lock and publishes `<tip> <commit>` in
-# state/trunk-front-<project>. A second lane started while the front gates is speculative: it is admitted and gated on top of the front's
-# commit, waits for the front to end, and lands only if the trunk then stands on that commit. If the front did not land, the lane is
-# gated again on the tip (one more gate). gate-slots (default 2; 1 turns this off) is the most gates that run at once; the lander
-# starts the second one (core/trunk-landing/trunk-landing.sh).
-FRONT=
-front_lock() { printf '%s\n' "$STATE/.trunk-front-$PN.lock"; }
-front_publish() {  # <tip> <commit>: the lane that gates on the real tip becomes the front, when no other lane is
-  [ -n "$FRONT" ] || { jg_lock_try_acquire "$(front_lock)" || return 0; LOCKS="$(front_lock) $LOCKS"; FRONT=1; }
-  put "$STATE/trunk-front-$PN" "$1 $2"
+# --- The chain of fronts (docs/trunk-flow.md "Two gates at once", "The window") ---
+# A lane that gates holds a position of the project's chain. Position 1 is the front: the lane that gates on the real trunk tip. It holds
+# state/.trunk-front-<project>.lock and publishes `<tip> <commit>` in state/trunk-front-<project>. Position k above 1 holds
+# state/.trunk-front-<project>@<k>.lock and publishes in state/trunk-front-<project>@<k>. A lane started while the chain is live takes the
+# position above the highest live one, is gated on top of the commit that position publishes, waits until every position ahead of it has
+# ended, and lands only if the trunk then stands on its base. If a lane ahead did not land, it is gated again on the tip (one more gate).
+# gate-slots (default 2; 1 turns this off) is the most positions; the lander starts the next lane while the highest live position is
+# under the window W (core/trunk-landing/window.sh, core/trunk-landing/trunk-landing.sh).
+# Lanes whose changed tests share no script run in separate queues (core/trunk-landing/partition.sh): each queue keeps its own chain, and the
+# trunk still moves by the one compare-and-swap below, so a queue that finds the trunk moved rebases and is gated again.
+FRONT=  # the position this lane holds, empty for none
+front_name() {  # <position>: the record name; its lock is .<name>.lock. A lane of a test queue (JG_TRUNK_QUEUE, core/trunk-landing/partition.sh) has its own chain: trunk-front-<project>:<queue>
+  local n="trunk-front-$PN${JG_TRUNK_QUEUE:+:$JG_TRUNK_QUEUE}"
+  if [ "$1" -le 1 ]; then printf '%s\n' "$n"; else printf '%s@%s\n' "$n" "$1"; fi
 }
-front_release() {
-  [ -z "$FRONT" ] || { rm -f -- "$STATE/trunk-front-$PN"; unlock "$(front_lock)"; FRONT=; }
-}
-front_alive() {  # true while another lane holds the front
-  local pid; pid=$(cat "$(front_lock)/pid" 2>/dev/null || true)
+front_lock() { printf '%s\n' "$STATE/.$(front_name "$1").lock"; }
+front_holder_alive() {  # <position>: true while another lane holds that position
+  local pid; pid=$(cat "$(front_lock "$1")/pid" 2>/dev/null || true)
   [ -n "$pid" ] && [ "$pid" != "${BASHPID:-$$}" ] && jg_pid_alive "$pid"
 }
-front_spec() {  # <tip> <lane head>: prints the front's commit when this lane may be gated on top of it
-  local ftip='' fcand='' i
-  [ -z "$FRONT" ] && [ "$(pol gate-slots)" -ge 2 ] 2>/dev/null || return 1
-  for i in 1 2 3 4 5 6 7 8; do  # the front publishes right after its admission: wait for that, briefly
-    front_alive || return 1
-    { read -r ftip fcand < "$STATE/trunk-front-$PN"; } 2>/dev/null && [ "$ftip" = "$1" ] && [ -n "$fcand" ] && break
+front_top() {  # the highest position a live lane holds (0: none)
+  local k top=0 max; max=$(pol gate-slots); case $max in ''|*[!0-9]*) max=2 ;; esac
+  for k in $(seq 1 "$max"); do ! front_holder_alive "$k" || top=$k; done
+  printf '%s\n' "$top"
+}
+front_claim() {  # <position>: take it, or return 1
+  jg_lock_try_acquire "$(front_lock "$1")" || return 1
+  LOCKS="$(front_lock "$1") $LOCKS"; FRONT=$1
+}
+front_publish() {  # <tip> <commit>: the lane that gates on the real tip becomes the front, when no other lane is; a lane in the chain publishes its place
+  [ -n "$FRONT" ] || front_claim 1 || return 0
+  put "$STATE/$(front_name "$FRONT")" "$1 $2"
+}
+# The queue columns of a landing row (slice H29i): `queue=<queue>` and `beside=<the other queues whose chain is live now>`, empty for a lane of no
+# queue. The verify (core/trunk-verify/milestone.sh) judges the queues apart only when each landing in its range names every other queue.
+QCOLS=()
+queue_cols() {
+  local d n others=''; QCOLS=()
+  [ -n "${JG_TRUNK_QUEUE:-}" ] || return 0
+  for d in "$STATE/.trunk-front-$PN:"*.lock; do
+    [ -e "$d" ] || continue
+    jg_pid_alive "$(cat "$d/pid" 2>/dev/null || true)" || continue
+    n=${d##*/.trunk-front-"$PN":}; n=${n%.lock}; n=${n%%@*}
+    [ "$n" != "$JG_TRUNK_QUEUE" ] || continue
+    case ",$others," in *",$n,"*) ;; *) others="$others${others:+,}$n" ;; esac
+  done
+  QCOLS=("queue=$JG_TRUNK_QUEUE" "beside=${others:--}")
+}
+front_release() {
+  [ -z "$FRONT" ] || { rm -f -- "$STATE/$(front_name "$FRONT")"; unlock "$(front_lock "$FRONT")"; FRONT=; }
+}
+FRONT_BASE=  # set by front_spec: the commit of the position below this lane
+front_spec() {  # <tip> <lane head>: takes the next position and sets FRONT_BASE to the commit of the one below it, when this lane may be gated on top of it (not for a subshell: it keeps the lock)
+  local ftip='' fcand='' i k max; max=$(pol gate-slots); FRONT_BASE=
+  case $max in ''|*[!0-9]*) return 1 ;; esac
+  [ -z "$FRONT" ] && [ "$max" -ge 2 ] || return 1
+  for i in 1 2 3; do  # two lanes may reach for one position: the loser looks again
+    k=$(front_top); [ "$k" -ge 1 ] && [ "$k" -lt "$max" ] || return 1
+    front_claim $((k + 1)) && break
+  done
+  [ -n "$FRONT" ] || return 1
+  for i in 1 2 3 4 5 6 7 8; do  # the lane below publishes right after its admission: wait for that, briefly
+    front_holder_alive "$k" || break
+    { read -r ftip fcand < "$STATE/$(front_name "$k")"; } 2>/dev/null && [ "$ftip" = "$1" ] && [ -n "$fcand" ] && break
     fcand=; sleep 0.25
   done
-  # A conflict with the front is judged on the tip, not on a commit that may not land.
-  [ -n "$fcand" ] && rebase_commit "$fcand" "$2" >/dev/null || return 1
-  printf '%s\n' "$fcand"
+  # A conflict with the lane below is judged on the tip, not on a commit that may not land.
+  if [ -n "$fcand" ] && front_holder_alive "$k" && rebase_commit "$fcand" "$2" >/dev/null; then FRONT_BASE=$fcand; return 0; fi
+  front_release; return 1
 }
-front_wait() {  # until the front has ended: it landed (the trunk stands on its commit) or it did not
-  while front_alive; do sleep 0.2; done
+front_wait() {  # until every position ahead of this lane has ended: each landed (the trunk stands on its commit) or did not
+  local k
+  for k in $(seq 1 $((FRONT - 1))); do while front_holder_alive "$k"; do sleep 0.2; done; done
 }
 
 # The landing's gates over <cand> judged against <base>: the lint over the changed files, then the changed files' tests. Sets GATE_KIND;
@@ -1033,11 +1151,11 @@ land_candidate() {
   for _ in 1 2 3; do
     lock "$STATE/.trunk-$PN.lock"; tip_adopt_forward; tip_ok; tip=$(rev "refs/heads/$TRUNK"); unlock "$STATE/.trunk-$PN.lock"
     # A lane that starts while another gates on the tip is gated on top of that lane's commit (two gates at once).
-    if base=$(front_spec "$tip" "$LAND_HEAD"); then spec=1; else base=$tip; spec=; fi
+    if front_spec "$tip" "$LAND_HEAD"; then base=$FRONT_BASE; spec=1; else base=$tip; spec=; fi
     lane_admit "$id" "$base" "$LAND_HEAD" 0
     cand=$LANE_CAND
-    if [ -n "$LANE_LANDED" ]; then echo "already landed $id at $cand; not live"; return 0; fi
-    [ -n "$spec" ] || front_publish "$tip" "$cand"
+    if [ -n "$LANE_LANDED" ]; then echo "already landed $id at $cand; not In use"; return 0; fi
+    front_publish "$tip" "$cand"
     # A red on a speculative base is not charged until the lane ahead has ended: it may be that lane's red, and then this lane is gated again.
     GATE_SPECULATIVE=$spec; gate_rc=0; land_gates "$id" "$cand" "$base" || gate_rc=$?
     if [ -n "$spec" ]; then
@@ -1047,23 +1165,23 @@ land_candidate() {
     lock "$STATE/.trunk-$PN.lock"; tip_adopt_forward; tip_ok
     if [ "$gate_rc" -eq 0 ] && [ "$(rev "refs/heads/$TRUNK")" = "$base" ]; then still=1; break; fi
     unlock "$STATE/.trunk-$PN.lock"
-    if [ -n "$spec" ]; then echo "note: the lane ahead of $id did not land; gating it again on the $TRUNK tip $(rev "refs/heads/$TRUNK" | cut -c1-12)" >&2
+    if [ -n "$spec" ]; then front_release; echo "note: the lane ahead of $id did not land; gating it again on the $TRUNK tip $(rev "refs/heads/$TRUNK" | cut -c1-12)" >&2
     else echo "note: $TRUNK moved to $(rev "refs/heads/$TRUNK" | cut -c1-12) while $id was gated at ${tip:0:12}; rebasing it onto the new tip and gating it again" >&2; fi
   done
   [ -n "$still" ] || refuse "the trunk kept moving while $id was gated; it lands on the next try"
   JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref -m "trunk: land $id" "refs/heads/$TRUNK" "$cand" "$base" || refuse "$TRUNK changed while landing $id"
   put "$STATE/trunk-tip-$PN" "$cand"
-  row trunk-landings.tsv "$id" "$PN" "$cand" "$(date +%s)" "$GATE_KIND"
+  queue_cols; row trunk-landings.tsv "$id" "$PN" "$cand" "$(date +%s)" "$GATE_KIND" "${QCOLS[@]}"
   record_gated_answer "$META" "$id" "$cand"
   unlock "$STATE/.trunk-$PN.lock"; front_release
   [ "$cand" = "$LANE_HEAD" ] || lane_follow "$LANE_BRANCH" "$LANE_HEAD" "$cand" "$(jg_dod_meta_value "$META" worktree)"
   landed_effects "$id" "$LANE_HEAD" "$cand"
-  echo "landed $id on $TRUNK (${base:0:12} -> ${cand:0:12}, gate=$GATE_KIND, $((SECONDS - t0))s) in $PROJ; not live: it goes live only on the captain's word"
+  echo "landed $id on $TRUNK (${base:0:12} -> ${cand:0:12}, gate=$GATE_KIND, $((SECONDS - t0))s) in $PROJ; not In use: it is In use only on the captain's word"
 }
 
 # --- The merge queue: two or more queued lanes land as one stack (docs/trunk-flow.md "Batch landing") ---
 # B_* are the lanes of one batch, by position: id, original lane commit (C0), its commit as it now sits in the stack (CUR), lane head, branch, record, why it was returned.
-B_ID=(); B_C0=(); B_CUR=(); B_HEAD=(); B_BRANCH=(); B_META=(); B_WHY=(); B_CLASS=(); B_TIP=; B_BASE0=; CHAIN=(); CHAIN_CHANGED=; LANDED=(); LAST_RED=; LAST_RED_CLASS=; GATE_BAD=
+B_ID=(); B_C0=(); B_CUR=(); B_HEAD=(); B_BRANCH=(); B_META=(); B_WHY=(); B_CLASS=(); B_TIP=; B_BASE0=; CHAIN=(); CHAIN_CHANGED=; LANDED=(); LAST_RED=; LAST_RED_CLASS=; GATE_BAD=; GATE_BAD_SIG=
 
 # The lanes <idx>... stacked on <top>, in order: a commit already on its place stays, any other is rebased by the lander onto it.
 # A lane that no longer merges clean drops out (B_WHY). Sets CHAIN (the lanes that stack) and CHAIN_CHANGED (1 when any commit was rebuilt or dropped).
@@ -1128,6 +1246,15 @@ batch_gate() {  # <top> <stack size>   (B_TIP is the trunk tip the stack sits on
   [ "$rc" -eq 0 ]
 }
 
+# The verdict of the stack in CHAIN: the one its sibling half was gated with at the same time (core/trunk-landing/bisect.sh) when the
+# trunk has not moved since, else a gate of its own. Returns 0 green, 1 red.
+stack_gate() {  # <top> <stack size>
+  local v=0
+  bisect_replay "$B_TIP" "${CHAIN[@]}" || v=$?
+  [ "$v" -ne 2 ] || { batch_gate "$1" "$2"; return; }
+  return "$v"
+}
+
 # The one lane of CHAIN that owns every script the last gate blamed (GATE_BAD): the script is among that lane's own changed files and no
 # other lane of the stack changed it. Prints its index; prints nothing, and the red is unclear, when a blamed script has no owner or two,
 # when the owners differ, or when the red was not charged to a script. An unclear red is halved.
@@ -1156,9 +1283,28 @@ red_pick_try() {  # <idx>   (LAST_RED and LAST_RED_CLASS hold the stack's red)
   for i in "${CHAIN[@]}"; do [ "$i" = "$pick" ] || rest+=("$i"); done
   chain_on "$B_TIP" "${rest[@]}"
   [ "${#CHAIN[@]}" -gt 0 ] || return 1
-  batch_gate "${B_CUR[${CHAIN[${#CHAIN[@]}-1]}]}" "${#CHAIN[@]}" || return 1
+  batch_gate "${B_CUR[${CHAIN[${#CHAIN[@]}-1]}]}" "${#CHAIN[@]}" || { red_note "${CHAIN[@]}"; return 1; }
   land_group || return 2
   B_WHY[pick]="REFUSED: this lane is the red in its batch: $why"; B_CLASS[pick]=$class
+}
+
+# --- A batch never fails twice on the same red (H29a) ---
+# One ledger per project, data/trunk/batch-red-<project>.tsv: key TAB lane count TAB epoch TAB the failing scripts and their test names TAB the refusal.
+# The key is the exact lane commits (as the lanes reported them, in sorted order) on the tree of the trunk tip they were judged on, so a set
+# that changes by one lane, or a tip that moves, is a new question. Only a red the lanes caused (class final) is written: a red from the
+# host's disk or the runner says nothing about the lanes. A set found here is never gated again: a stack is halved at once, and a lane that
+# was red alone before is returned with the script and test that failed.
+red_key() {  # <idx>...   (B_TIP is the tip the set is judged on)
+  local i
+  { git -C "$PROJ" rev-parse "$B_TIP^{tree}"; for i in "$@"; do printf '%s\n' "${B_C0[$i]}"; done | sort; } | sha256sum | cut -d' ' -f1
+}
+red_seen() {  # <idx>...: prints the ledger row of the set when it went red before
+  awk -F'\t' -v k="$(red_key "$@")" '$1 == k { r = $0 } END { if (r != "") print r }' "$DATA/trunk/batch-red-$PN.tsv" 2>/dev/null || true
+}
+red_note() {  # <idx>...   (LAST_RED, GATE_BAD and GATE_BAD_SIG hold the red just seen)
+  [ "${LAST_RED_CLASS:-final}" = final ] || return 0
+  mkdir -p "$DATA/trunk"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$(red_key "$@")" "$#" "$(date +%s)" "$(printf '%s' "${GATE_BAD_SIG:-${GATE_BAD:-no script named}}" | tr '\t\n' '  ')" "$(printf '%s' "$LAST_RED" | tr '\t\n' '  ')" >> "$DATA/trunk/batch-red-$PN.tsv"
 }
 
 # The lanes in CHAIN land in one move: the trunk fast-forwards over the whole stack. One trunk-landings.tsv row per lane.
@@ -1169,14 +1315,15 @@ land_group() {
   [ "$(rev "refs/heads/$TRUNK")" = "$B_TIP" ] || { unlock "$STATE/.trunk-$PN.lock"; return 1; }
   JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref -m "trunk: land a batch of ${#CHAIN[@]}" "refs/heads/$TRUNK" "$top" "$B_TIP" || refuse "$TRUNK changed while landing the batch"
   put "$STATE/trunk-tip-$PN" "$top"
-  for i in "${CHAIN[@]}"; do row trunk-landings.tsv "${B_ID[$i]}" "$PN" "${B_CUR[$i]}" "$(date +%s)" "$GATE_KIND" "batch-from=$B_BASE0"; record_gated_answer "${B_META[$i]}" "${B_ID[$i]}" "${B_CUR[$i]}"; done
+  queue_cols
+  for i in "${CHAIN[@]}"; do row trunk-landings.tsv "${B_ID[$i]}" "$PN" "${B_CUR[$i]}" "$(date +%s)" "$GATE_KIND" "batch-from=$B_BASE0" "${QCOLS[@]}"; record_gated_answer "${B_META[$i]}" "${B_ID[$i]}" "${B_CUR[$i]}"; done
   unlock "$STATE/.trunk-$PN.lock"
   for i in "${CHAIN[@]}"; do
     META=${B_META[$i]}
     lane_follow "${B_BRANCH[$i]}" "${B_HEAD[$i]}" "${B_CUR[$i]}" "$(jg_dod_meta_value "$META" worktree)"
     landed_effects "${B_ID[$i]}" "${B_HEAD[$i]}" "${B_CUR[$i]}"
     LANDED+=("$i")
-    echo "landed ${B_ID[$i]} on $TRUNK (${B_TIP:0:12} -> ${top:0:12}, gate=$GATE_KIND, one stack of ${#CHAIN[@]}) in $PROJ; not live: it goes live only on the captain's word"
+    echo "landed ${B_ID[$i]} on $TRUNK (${B_TIP:0:12} -> ${top:0:12}, gate=$GATE_KIND, one stack of ${#CHAIN[@]}) in $PROJ; not In use: it is In use only on the captain's word"
   done
   B_TIP=$top
 }
@@ -1187,7 +1334,7 @@ land_group() {
 # half is judged alone, lands if green, and the rest is judged on the new tip, until the lane that caused the red stands alone; only it is
 # returned; a red whose failing scripts one lane owns skips the halving (red_pick). Prints `landed <id> ...` or `returned <id>: <reason>` for every lane. Exit 0 once every lane has an outcome.
 cmd_land_batch() {
-  local a id i n max proj0='' errf g flag top half res moved rounds=0 l branch head pick
+  local a id i n max proj0='' errf g flag top half res moved rounds=0 l branch head pick seen
   local -a exp todo stack members first rest remaining orig
   case " $* " in *" --force"*|*" -f "*|*" --no-verify "*|*" --skip"*) refuse "a landing is never forced: there is no flag that lands past a conflict, a stale base or a failing check" ;; esac
   n=$#; [ "$n" -ge 2 ] || refuse "a batch stacks 2 or more queued lanes; one lane lands with: jg-trunk.sh land <task>"
@@ -1229,8 +1376,15 @@ cmd_land_batch() {
     chain_on "$B_TIP" "${members[@]}"
     [ "${#CHAIN[@]}" -gt 0 ] || continue
     top=${B_CUR[${CHAIN[${#CHAIN[@]}-1]}]}
-    GATE_BAD=
-    if [ "$flag" = 1 ] && [ -z "$CHAIN_CHANGED" ]; then :; elif batch_gate "$top" "${#CHAIN[@]}"; then if land_group; then continue; fi; moved=1; break; fi
+    GATE_BAD=; GATE_BAD_SIG=; seen=$(red_seen "${CHAIN[@]}")
+    if [ "$flag" = 1 ] && [ -z "$CHAIN_CHANGED" ]; then :
+    elif [ -n "$seen" ]; then
+      # This exact set went red before on this tip: no gate runs for it again.
+      LAST_RED=$(cut -f5 <<< "$seen"); LAST_RED_CLASS=final
+      echo "note: this stack of ${#CHAIN[@]} went red before on this tip; not gated again. It failed: $(cut -f4 <<< "$seen")" >&2
+      [ "${#CHAIN[@]}" -ne 1 ] || LAST_RED="$LAST_RED (red alone before: $(cut -f4 <<< "$seen"))"
+    elif stack_gate "$top" "${#CHAIN[@]}"; then if land_group; then continue; fi; moved=1; break
+    else red_note "${CHAIN[@]}"; fi
     if [ "${#CHAIN[@]}" -eq 1 ]; then
       B_WHY[CHAIN[0]]="REFUSED: this lane is the red in its batch: $LAST_RED"; B_CLASS[CHAIN[0]]=$LAST_RED_CLASS; continue
     fi
@@ -1242,6 +1396,8 @@ cmd_land_batch() {
       CHAIN=("${orig[@]}")
     fi
     half=$(( ${#CHAIN[@]} / 2 )); first=("${CHAIN[@]:0:half}"); rest=("${CHAIN[@]:half}")
+    # Both halves gate now, at once, each on the tip (gate-slots 2 or more): whichever the loop takes next finds its verdict kept.
+    ! bisect_on || bisect_pair "$half" "${CHAIN[@]}" || true
     stack+=("1:${rest[*]}" "0:${first[*]}")
   done
   [ -n "$moved" ] || break
@@ -1441,8 +1597,8 @@ verify_slot() {  # <sha>
   [ "$(cat "$wf" 2>/dev/null || true)" = "$sha" ]
 }
 
-# The whole suite at a landed commit, on demand: nothing starts it per landing (the whole suite runs on the release pull request in
-# GitHub CI). Green moves the pin; a script that fails there and passes on the commit's parent charges that one commit, which is
+# The whole suite at a landed commit, on demand: nothing starts it per landing (the changed tests run once for each batch, in the
+# tick's verify, off the landing path). Green moves the pin; a script that fails there and passes on the commit's parent charges that one commit, which is
 # reverted, and the green pin goes back below it. A failure no test accounts for runs once more and never moves the pin or reverts.
 # Nothing here stops a landing.
 # The commit of a landed batch that caused the red its top commit shows: the lowest commit of <from>..<top> whose whole suite
@@ -1487,12 +1643,13 @@ cmd_verify_due() {
 }
 
 cmd_verify() {
-  local sha tip rc=0 parent why from culprit='' gate gatekey base attempt bad green started=$SECONDS
+  local sha tip rc=0 parent why from culprit='' gate rawgate gatekey base attempt bad green started=$SECONDS c
   open_project "${1-}"
   # The tip is a ref read, which is atomic, so reading it never waits for a landing; the trunk lock is taken only for a short write.
   tip=$(rev "refs/heads/$TRUNK") || refuse "trunk branch $TRUNK is missing in $PROJ"
   sha=$tip; [ -z "${2-}" ] || sha=$(rev "$2") || die "'${2-}' does not resolve in $PROJ"
   git -C "$PROJ" merge-base --is-ancestor "$sha" "$tip" || refuse "${sha:0:12} is not on $TRUNK"
+  JUDGE_NAME=verify; [ -z "${VERIFY_NIGHTLY:-}" ] || JUDGE_NAME=nightly
   verify_slot "$sha" || { echo "verify: ${sha:0:12} is superseded by a newer verify, so it does not run; a green result there moves the pin over it too"; return 0; }
   parent=$(rev "$sha^" || true)
   # The top of a batch is judged against the trunk before the batch (its row says where that was), so one run covers the whole stack.
@@ -1513,7 +1670,7 @@ cmd_verify() {
     echo "verify: no verify gate for $PN (no gate-verify@$PN or gate-full@$PN); nothing run, nothing marked red" >&2; gate=
   elif [ -n "${VERIFY_NIGHTLY:-}" ]; then echo "verify: the nightly whole run, ${from:+judged against the first commit of the day ${from:0:12}}" >&2
   elif [ -n "$green" ]; then
-    gate=$(gate_from "$gate" "$green"); echo "verify: judging every change since the green pin ${green:0:12}" >&2
+    rawgate=$gate; gate=$(gate_from "$gate" "$green"); echo "verify: judging every change since the green pin ${green:0:12}" >&2
   elif base=$(release_base "$sha"); then
     # Verify judges what the release pull request carries: every change since this trunk's release base, the set CI maps for it.
     gate=$(gate_from "$gate" "$base"); echo "verify: judging every change since the release base ${base:0:12}" >&2
@@ -1523,6 +1680,7 @@ cmd_verify() {
   for attempt in 1 2; do
     rc=0
     if [ -z "$gate" ]; then :
+    elif [ -z "${VERIFY_NIGHTLY:-}" ] && [ -n "$green" ]; then ms_verify "$sha" "$rawgate" "$(cat "$STATE/trunk-green-$PN")" || rc=$?
     elif [ -n "$from" ] && [ "$parent" = "$from" ]; then batch_verify "$sha" "$gate" "$from" || rc=$?
     elif [ -n "$parent" ]; then full_gate "$sha" "$gate" "$parent" || rc=$?
     else run_gate "$sha" "$gate" full || rc=$?; fi
@@ -1544,18 +1702,19 @@ cmd_verify() {
       esac ;;
     2)
       put "$STATE/trunk-verify-last-$PN" "$sha"
+      if [ "${#MS_BAD[@]}" -gt 0 ]; then for c in "${MS_BAD[@]}"; do ms_charge "$c"; done; exit 1; fi
       why="the whole suite fails on it where its parent ${parent:0:12} passes"
       if [ -n "${BATCH_TRACED:-}" ]; then culprit=$BATCH_CULPRIT; elif [ -n "$from" ]; then culprit=$(batch_culprit "$from" "$sha" "$gate"); fi
       if [ -n "$culprit" ] && [ "$culprit" != "$sha" ]; then
         why="the whole suite fails on it where the trunk before it (${from:0:12}) passes"
-        if revert_commit "$culprit" "$why"; then line_red "$culprit" "$why; it was reverted by itself"; exit 1; fi
-      elif revert_commit "$sha" "$why"; then line_red "$sha" "$why; it was reverted by itself"; exit 1; fi
+        if revert_commit "$culprit" "$why"; then line_red "$culprit" "$why; it was reverted by itself"; miss_charge "$culprit" "$sha"; exit 1; fi
+      elif revert_commit "$sha" "$why"; then line_red "$sha" "$why; it was reverted by itself"; miss_charge "$sha"; exit 1; fi
       # The red stays recorded (data/trunk-ci.tsv, source verify) so no later landing moves the pin over it.
       bad=$sha; [ -z "$culprit" ] || bad=$culprit
       lock "$STATE/.trunk-$PN.lock"; unpin_green "$bad"; row trunk-ci.tsv "$PN" "$bad" "$(date +%s)" red verify; unlock "$STATE/.trunk-$PN.lock"
       why="$TRUNK is red at ${bad:0:12}: $why, and it could not be reverted by itself; landings go on, and live stays on the last green commit $(green_short)"
       line_red "$bad" "$why"
-      echo "verify: $why" >&2; exit 1 ;;
+      echo "verify: $why" >&2; miss_charge "$bad" "$sha"; exit 1 ;;
     *)
       put "$STATE/trunk-verify-last-$PN" "$sha"
       echo "verify: ${sha:0:12} is not green after its one rerun, and no failed test is charged to a commit; nothing is reverted and the green pin stays at $(green_short): landings go on" >&2; exit 1 ;;
@@ -1578,12 +1737,13 @@ cmd_nightly_due() {
 }
 
 cmd_nightly() {
-  local tip day from out rc=0 result started=$SECONDS report flaky_ledger flaky_before flaky_new
+  local tip day from out rc=0 result started=$SECONDS report flaky_ledger flaky_before flaky_new miss_ledger miss_before miss_new
   open_project "${1-}"
   tip=$(rev "refs/heads/$TRUNK") || refuse "trunk branch $TRUNK is missing in $PROJ"
   day=$(date -u +%F); report="$DATA/trunk/nightly-$PN-$day.md"; flaky_ledger="$DATA/trunk/flaky-$PN.tsv"
   from=$(git -C "$PROJ" rev-list -1 --before="24 hours ago" "refs/heads/$TRUNK" 2>/dev/null || true)
   flaky_before=$(grep -c . "$flaky_ledger" 2>/dev/null || true)
+  miss_ledger="$DATA/trunk/misses-$PN.tsv"; miss_before=$(grep -c . "$miss_ledger" 2>/dev/null || true)
   out=$(VERIFY_NIGHTLY=1 VERIFY_NIGHTLY_FROM=$from "$SCRIPT_DIR/jg-trunk.sh" verify "$PROJ" "$tip" 2>&1) || rc=$?
   case $out in
     *superseded*) echo "nightly: ${tip:0:12} is superseded by a newer verify, so the whole run did not start; a later tick tries again"; return 0 ;;
@@ -1592,12 +1752,16 @@ cmd_nightly() {
   elif printf '%s\n' "$out" | grep -q '^reverted '; then result="red, traced to its commit and reverted"
   else result="red, not reverted (see the lines below)"; fi
   flaky_new=$(tail -n "+$(( ${flaky_before:-0} + 1 ))" "$flaky_ledger" 2>/dev/null | cut -f3 | sort -u | paste -sd' ' - || true)
+  miss_new=$(tail -n "+$(( ${miss_before:-0} + 1 ))" "$miss_ledger" 2>/dev/null || true)
   mkdir -p "$DATA/trunk"
   {
     printf '# Nightly whole run of %s on %s\n\n' "$PN" "$day"
     printf -- '- tip: %s\n- judged against: %s\n- result: %s\n- seconds: %s\n' "$tip" "${from:-no earlier commit}" "$result" "$((SECONDS - started))"
-    printf -- '- flaky scripts filed (passed on their rerun): %s\n\n' "${flaky_new:-none}"
-    printf '%s\n' "$out" | grep -E '^(verify:|reverted |trunk green|note:|REFUSED|warning:)' | sed 's/^/    /'
+    printf -- '- flaky scripts filed (passed on their rerun): %s\n' "${flaky_new:-none}"
+    printf -- '- failed journeys the proofs selected: %s; missed: %s%s\n\n' "$(printf '%s\n' "$miss_new" | awk -F'\t' '$4 == "selected"' | grep -c . || true)" \
+      "$(printf '%s\n' "$miss_new" | awk -F'\t' '$4 == "missed"' | grep -c . || true)" \
+      "$(printf '%s\n' "$miss_new" | awk -F'\t' '$4 == "missed" { printf " (%s: %s)", substr($2, 1, 12), $3 }')"
+    printf '%s\n' "$out" | grep -E '^(verify:|reverted |trunk green|note:|miss:|REFUSED|warning:)' | sed 's/^/    /'
   } > "$report"
   put "$STATE/trunk-nightly-last-$PN" "$day"
   echo "nightly: $result; report $report"
@@ -1606,18 +1770,24 @@ cmd_nightly() {
 
 green_short() { cut -c1-12 "$STATE/trunk-green-$PN" 2>/dev/null || echo none; }
 
-# The trunk with no green commit for no-green-alarm-minutes raises ONE `line-red` alert through jg-alert.sh; defaults/wake-routing wakes it at once. The wait is counted from the landing of
-# the oldest commit above the green pin (its data/trunk-landings.tsv row, else its commit time). One alarm per green pin
-# (state/trunk-green-alarm-<project> holds the pin it was raised for): a stall that goes on is not raised again, and once the pin moves
-# a new stall can be. Read-only for the trunk; the landing check runs it every minute.
+# The trunk with no green commit for no-green-alarm-minutes raises the `line-red` alert through jg-alert.sh for that green pin, and the alert
+# then climbs its ladder (the lead, Main, then the captain's chat) and rings again at the top, until the pin moves; each minute's run of this
+# command is the tick that does it (`jg-alert.sh climb`). The wait is counted from the landing of the oldest commit above the green pin (its
+# data/trunk-landings.tsv row, else its commit time). A tip at the pin resolves the alarm. Read-only for the trunk; the landing check runs it every minute.
 cmd_green_alarm() {
-  local tip green first at mins age n note
+  local tip green first at mins age n note key rec
   open_project "${1-}"
   tip=$(rev "refs/heads/$TRUNK") || refuse "trunk branch $TRUNK is missing in $PROJ"
   green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
   [ -n "$green" ] || { echo "green-alarm: $PN has no green pin yet"; return 0; }
+  key="line-red--$PN-no-green-${green:0:12}"
   first=$(git -C "$PROJ" rev-list --reverse "$green..$tip" | head -n 1)
-  [ -n "$first" ] || { echo "green-alarm: $TRUNK is green at ${green:0:12}"; return 0; }
+  if [ -z "$first" ]; then
+    for rec in "$STATE"/alerts/line-red--"$PN"-no-green-*.rec; do  # the pin caught up with the tip: every no-green alarm of this project ends
+      [ -e "$rec" ] && JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" resolve "$(basename "$rec" .rec)" >/dev/null 2>&1
+    done
+    echo "green-alarm: $TRUNK is green at ${green:0:12}"; return 0
+  fi
   at=$(awk -F'\t' -v c="$first" '$3 == c { t = $4 } END { print t }' "$DATA/trunk-landings.tsv" 2>/dev/null || true)
   case $at in ''|*[!0-9]*) at=$(git -C "$PROJ" log -1 --format=%ct "$first") ;; esac
   mins=$(pol no-green-alarm-minutes); case $mins in ''|*[!0-9]*) mins=15 ;; esac
@@ -1625,11 +1795,15 @@ cmd_green_alarm() {
   verify_running && { echo "green-alarm: a verify is running on ${tip:0:12}; quiet until it ends"; return 0; }
   [ "$age" -ge $(( mins * 60 )) ] || { echo "green-alarm: no green above ${green:0:12} for $(( age / 60 )) of $mins minutes"; return 0; }
   lock "$STATE/.trunk-green-alarm-$PN.lock"
-  [ "$(cat "$STATE/trunk-green-alarm-$PN" 2>/dev/null || true)" != "$green" ] || { echo "green-alarm: already raised for the green pin ${green:0:12}"; return 0; }
+  if [ -r "$STATE/alerts/$key.rec" ] && [ "$(JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" word "$key")" != resolved ]; then
+    # climb refuses until the rung's (or the repeat's) timer ran out: that refusal is the quiet minute, not an error.
+    { JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" climb "$key" 2>/dev/null || true; } | JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" deliver >/dev/null 2>&1 \
+      || die "could not climb the no-green alarm"
+    echo "green-alarm: ${key} is open; climbed or repeated when its timer ran out"; return 0
+  fi
   n=$(git -C "$PROJ" rev-list --count "$green..$tip")
   note="$TRUNK has had no green commit for $(( age / 60 )) minutes: the tip ${tip:0:12} is $n commit(s) above the last green ${green:0:12}. Landings go on and live stays on ${green:0:12}; a red a hand-run verify or a red CI found took the pin back there."
   raise_line_red "$PN-no-green-${green:0:12}" "$note" || die "could not raise the no-green alarm"
-  put "$STATE/trunk-green-alarm-$PN" "$green"
   echo "green-alarm: raised: $note"
 }
 
@@ -1653,9 +1827,9 @@ begin_move() {
   lock "$STATE/.trunk-move-$PN.lock"
   deadline=$(( SECONDS + ${JG_TRUNK_MOVE_WAIT_MAX:-2700} ))
   while busy=$(running_gate); do
-    [ -n "$said" ] || { echo "live: waiting: a landing's gate is running (pid $busy); the homes move when it ends, before the next gate starts"; said=1; }
+    [ -n "$said" ] || { echo "In use: waiting: a landing's gate is running (pid $busy); the homes move when it ends, before the next gate starts"; said=1; }
     if [ "$SECONDS" -ge "$deadline" ]; then
-      row trunk-live.tsv "$PN" "${1:-none}" "$(date +%s)" "hook-failed:a landing's gate still ran after ${JG_TRUNK_MOVE_WAIT_MAX:-2700}s; the homes stay where they were"
+      row trunk-in-use.tsv "$PN" "${1:-none}" "$(date +%s)" "hook-failed:a landing's gate still ran after ${JG_TRUNK_MOVE_WAIT_MAX:-2700}s; the homes stay where they were"
       echo "error: the move waited ${JG_TRUNK_MOVE_WAIT_MAX:-2700}s for a landing's gate and made no move; the next tick tries again" >&2; exit 3
     fi
     sleep 0.2
@@ -1667,7 +1841,7 @@ begin_move() {
 # Move the home to <sha> through the project's live hook and record it. Exit 3 when the home did not move.
 go_live() {  # <sha> <tip>   LIVE_FLEET=1 (cmd_live) moves every home; a pin-back moves this one
   local sha=$1 hook status=landed-not-live here there why hook_out hook_rc reason prev
-  prev=$(awk -F'\t' -v p="$PN" '$1 == p && $4 ~ /^live/ { c = $2 } END { print c }' "$DATA/trunk-live.tsv" 2>/dev/null || true)
+  prev=$(awk -F'\t' -v p="$PN" '$1 == p && $4 ~ /^live/ { c = $2 } END { print c }' "$DATA/trunk-in-use.tsv" 2>/dev/null || true)
   [ -n "${MOVE_HELD:-}" ] || begin_move "$sha"
   set -- "$sha" "$(rev "refs/heads/$TRUNK")"  # the tip as it stands once the gates have ended
   hook="$CONFIG/live-hook.$PN"
@@ -1678,8 +1852,8 @@ go_live() {  # <sha> <tip>   LIVE_FLEET=1 (cmd_live) moves every home; a pin-bac
   fi
   if [ "$hook" = fleet ]; then
     if why=$(fleet_move "$sha" "$2" 2>&1); then status=live; else
-      row trunk-live.tsv "$PN" "$sha" "$(date +%s)" "hook-failed:$(printf '%s' "$why" | tail -n 1 | cut -c1-200)"
-      echo "error: the fleet move failed for ${sha:0:12}; see the rows in trunk-live.tsv" >&2
+      row trunk-in-use.tsv "$PN" "$sha" "$(date +%s)" "hook-failed:$(printf '%s' "$why" | tail -n 1 | cut -c1-200)"
+      echo "error: the fleet move failed for ${sha:0:12}; see the rows in trunk-in-use.tsv" >&2
       printf '%s\n' "$why"; exit 3  # the move's own last line (the homes left behind) stays last: autolive reports it
     fi
     printf '%s\n' "$why"
@@ -1689,15 +1863,15 @@ go_live() {  # <sha> <tip>   LIVE_FLEET=1 (cmd_live) moves every home; a pin-bac
     [ -z "$hook_out" ] || printf '%s\n' "$hook_out" >&2
     if [ "$hook_rc" -ne 0 ]; then  # the hook's last line is its reason (bin/jg-trunk-live-home.sh)
       reason=$(printf '%s\n' "$hook_out" | tr '\t' ' ' | awk 'NF { l = $0 } END { print substr(l, 1, 200) }')
-      row trunk-live.tsv "$PN" "$sha" "$(date +%s)" "hook-failed:${reason:-hook exited $hook_rc}"
-      echo "error: live hook failed for ${sha:0:12}: ${reason:-hook exited $hook_rc}; the home stays where it was" >&2; exit 3
+      row trunk-in-use.tsv "$PN" "$sha" "$(date +%s)" "hook-failed:${reason:-hook exited $hook_rc}"
+      echo "error: the In use hook failed for ${sha:0:12}: ${reason:-hook exited $hook_rc}; the home stays where it was" >&2; exit 3
     fi
     status=live
   fi
   [ "$sha" = "$2" ] || status="$status,pinned-behind-${2:0:12}"
   case ${LIVE_WAIVER:-} in '') ;; gated:*) status="$status,answer=${LIVE_WAIVER#gated:}" ;; *) status="$status,waiver=$LIVE_WAIVER" ;; esac
-  row trunk-live.tsv "$PN" "$sha" "$(date +%s)" "$status"
-  echo "live: $PN at ${sha:0:12} ($status)"
+  row trunk-in-use.tsv "$PN" "$sha" "$(date +%s)" "$status"
+  echo "In use: $PN at ${sha:0:12} ($status)"
   case $status in live*) live_tickets "$sha" "$prev" || : ;; esac  # a one-home canary moves nothing the fleet runs
 }
 
@@ -1716,7 +1890,7 @@ fleet_move() {  # <sha> <tip>
     find "$STATE/trunk-live-tool" -mindepth 1 -maxdepth 1 ! -name "$sha" -exec rm -rf -- {} +
     mover="$tool/bin/jg-update.sh"
   fi
-  echo "live: moving every home with $mover"
+  echo "In use: moving every home with $mover"
   args=(--base "$sha" --project "$PROJ" --branch "$TRUNK")
   [ -z "${LIVE_HOME:-}" ] || args+=(--home "$LIVE_HOME")
   JG_HOME="$JG_HOME" JG_ROOT_OVERRIDE="$JG_ROOT" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$DATA" "$mover" "${args[@]}"
@@ -1754,29 +1928,29 @@ cmd_autolive() {
   open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"; tip_ok; tip=$(rev "refs/heads/$TRUNK")
   green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
   LIVE_WAIVER=$(authority trunk-live-waiver "$green")
-  [ -n "$LIVE_WAIVER" ] || { echo "autolive: not live: it needs the captain's word (no go-live waiver and no answer at gated for $PN)"; return 0; }
+  [ -n "$LIVE_WAIVER" ] || { echo "autolive: not In use: it needs the captain's word (no go-live waiver and no answer at gated for $PN)"; return 0; }
   if [ -z "$green" ]; then echo "autolive: waiting: no fully green trunk commit yet"; return 0
-  elif awk -F'\t' -v p="$PN" -v g="$green" '$1 == p && $2 == g && $4 ~ /^live/ { f = 1 } END { exit !f }' "$DATA/trunk-live.tsv" 2>/dev/null; then
-    echo "autolive: already live at ${green:0:12}"; return 0
+  elif awk -F'\t' -v p="$PN" -v g="$green" '$1 == p && $2 == g && $4 ~ /^live/ { f = 1 } END { exit !f }' "$DATA/trunk-in-use.tsv" 2>/dev/null; then
+    echo "autolive: already In use at ${green:0:12}"; return 0
   fi
   now=$(date +%s); quiet=$(( $(pol live-quiet-minutes) * 60 )); cap=$(( $(pol live-cap-minutes) * 60 ))
   # A move that failed (some home did not reach the pin) is tried again after the quiet window, not on every tick: each try writes a row per home.
-  failed_at=$(awk -F'\t' -v p="$PN" -v g="$green" '$1 == p && $2 == g && $4 ~ /^hook-failed/ { t = $3 } END { print t + 0 }' "$DATA/trunk-live.tsv" 2>/dev/null || echo 0)
+  failed_at=$(awk -F'\t' -v p="$PN" -v g="$green" '$1 == p && $2 == g && $4 ~ /^hook-failed/ { t = $3 } END { print t + 0 }' "$DATA/trunk-in-use.tsv" 2>/dev/null || echo 0)
   if [ "$failed_at" -gt 0 ] && [ $(( now - failed_at )) -lt "$quiet" ]; then
     echo "autolive: waiting: the last move failed; the next try is in about $(( (quiet - (now - failed_at) + 59) / 60 )) min"; return 0
   fi
-  last=$(awk -F'\t' -v p="$PN" '$1 == p && $4 ~ /^live/ && $3 > m { m = $3 } END { print m + 0 }' "$DATA/trunk-live.tsv" 2>/dev/null || echo 0)
+  last=$(awk -F'\t' -v p="$PN" '$1 == p && $4 ~ /^live/ && $3 > m { m = $3 } END { print m + 0 }' "$DATA/trunk-in-use.tsv" 2>/dev/null || echo 0)
   read -r newest oldest <<< "$(awk -F'\t' -v p="$PN" -v l="$last" '$2 == p && $4 >= l { if (!n || $4 > n) n = $4; if (!o || $4 < o) o = $4 } END { print n + 0, o + 0 }' "$DATA/trunk-landings.tsv" 2>/dev/null || echo "0 0")"
-  [ "${newest:-0}" -gt 0 ] || { echo "autolive: waiting: nothing has landed since the last go-live"; return 0; }
+  [ "${newest:-0}" -gt 0 ] || { echo "autolive: waiting: nothing has landed since the last In use move"; return 0; }
   if [ $(( now - newest )) -lt "$quiet" ] && [ $(( now - oldest )) -lt "$cap" ]; then
     wait_s=$(( quiet - (now - newest) )); [ $(( cap - (now - oldest) )) -ge "$wait_s" ] || wait_s=$(( cap - (now - oldest) ))
-    echo "autolive: waiting: live in about $(( (wait_s + 59) / 60 )) min (quiet $(( quiet / 60 )) min, cap $(( cap / 60 )) min)"; return 0
+    echo "autolive: waiting: In use in about $(( (wait_s + 59) / 60 )) min (quiet $(( quiet / 60 )) min, cap $(( cap / 60 )) min)"; return 0
   fi
   LIVE_FLEET=1; begin_move "$green"  # in this process: the capture below is a subshell, which cannot let go of the trunk lock
   green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || echo "$green"); tip=$(rev "refs/heads/$TRUNK")  # as they stand once the gates have ended
   out=$(go_live "$green" "$tip" 2>&1) && rc=0 || rc=$?
-  if [ "$rc" -ne 0 ]; then echo "autolive: NOT live, the move failed: $(printf '%s' "$out" | tail -n 1 | cut -c1-200)"; return "$rc"; fi
-  echo "autolive: live at ${green:0:12} on every home ($(awk -F'\t' -v s="$green" '$2 == s && $4 ~ /^skipped/ { n++ } END { print n + 0 }' "$DATA/trunk-live.tsv" 2>/dev/null || echo 0) skipped, see data/trunk-live.tsv)"
+  if [ "$rc" -ne 0 ]; then echo "autolive: NOT In use, the move failed: $(printf '%s' "$out" | tail -n 1 | cut -c1-200)"; return "$rc"; fi
+  echo "autolive: In use at ${green:0:12} on every home ($(awk -F'\t' -v s="$green" '$2 == s && $4 ~ /^skipped/ { n++ } END { print n + 0 }' "$DATA/trunk-in-use.tsv" 2>/dev/null || echo 0) skipped, see data/trunk-in-use.tsv)"
 }
 
 cmd_live() {
@@ -1785,9 +1959,9 @@ cmd_live() {
   open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"; tip_ok; tip=$(rev "refs/heads/$TRUNK")
   green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null) || refuse "no fully green trunk commit yet; the home stays where it is"
   LIVE_WAIVER=$(authority trunk-live-waiver "$green"); LIVE_FLEET=1
-  [ -n "$LIVE_WAIVER" ] || need_word live "$green"
+  [ -n "$LIVE_WAIVER" ] || need_word in-use "$green"
   go_live "$green" "$tip"
-  [ -n "$LIVE_WAIVER" ] || [ -n "${LIVE_HOME:-}" ] || spend_word live
+  [ -n "$LIVE_WAIVER" ] || [ -n "${LIVE_HOME:-}" ] || spend_word in-use
 }
 
 # The captain waived his go-live word for one project until the stable point; only the Overwatch path records it.
@@ -1831,11 +2005,11 @@ cmd_cancel() {
 
 cmd_word() {
   local kind=${1-} sha quote=${3-}
-  case $kind in live|release) ;; *) die "usage: jg-trunk.sh word live|release <project-dir> \"<his words>\"" ;; esac
+  case $kind in in-use|release) ;; *) die "usage: jg-trunk.sh word in-use|release <project-dir> \"<his words>\"" ;; esac
   [ -z "${JG_TASK_ID:-}" ] || refuse "a worker never records the captain's word"
   [ -n "$quote" ] || refuse "the captain's own words are required"
   open_project "${2-}"; lock "$STATE/.trunk-$PN.lock"; tip_ok
-  if [ "$kind" = live ]; then sha=$(cat "$STATE/trunk-green-$PN"); else sha=$(release_commit); fi
+  if [ "$kind" = in-use ]; then sha=$(cat "$STATE/trunk-green-$PN"); else sha=$(release_commit); fi
   put "$STATE/trunk-word-$kind-$PN" "$(printf '%s\t%s\t%s' "$sha" "$(date +%s)" "$quote")"
   row trunk-words.tsv "$PN" "$kind" "$sha" "$(date +%s)" "$quote"
   echo "word recorded: $kind ${sha:0:12} in $PN"
@@ -1911,7 +2085,7 @@ cmd_recover() {
   JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref -m "trunk: recover $id" "refs/heads/$TRUNK" "$merge" "$actual" || refuse "trunk changed during recovery"
   put "$STATE/trunk-tip-$PN" "$merge"
   row trunk-landings.tsv "$id" "$PN" "$merge" "$(date +%s)" recovery
-  echo "recovered $TRUNK at $merge; not live"
+  echo "recovered $TRUNK at $merge; not In use"
 }
 
 # The one command that ends a trunk the lander did not leave (tip_ok); Overwatch only.
@@ -1973,7 +2147,7 @@ last_green_before() {  # <red sha>
     grep -Eq "^$PN	$c	[0-9]+	red(	|$)" "$DATA/trunk-ci.tsv" 2>/dev/null && continue
     git -C "$PROJ" merge-base --is-ancestor "$c" "$1" 2>/dev/null || continue
     echo "$c"; return 0
-  done < <(awk -F'\t' -v p="$PN" '$1 == p && $4 ~ /^live/ { print $2 }' "$DATA/trunk-live.tsv" 2>/dev/null | tac)
+  done < <(awk -F'\t' -v p="$PN" '$1 == p && $4 ~ /^live/ { print $2 }' "$DATA/trunk-in-use.tsv" 2>/dev/null | tac)
   # No live commit below it: the last release that is not the red commit itself (the released mark moves at the push, so it can be
   # the very commit CI found red), else the commit before it.
   while IFS= read -r c; do
@@ -2062,7 +2236,7 @@ carry_over() {  # <base>
 }
 
 # Once the release PR has merged, the NEXT trunk version is cut from the default branch and the project moves onto
-# it: <trunk>-v2, -v3, ... Every commit that landed on the old trunk after the release is replayed onto it first (carry_over),
+# it: release/v8, release/v9, ... (the count goes on from the version the last cut recorded). Every commit that landed on the old trunk after the release is replayed onto it first (carry_over),
 # and the green pin follows its commit. The old trunk is left exactly as it was. Returns 1, changing nothing, while the PR is not merged.
 rollover_if_merged() {
   local url ver new base default green
@@ -2072,7 +2246,7 @@ rollover_if_merged() {
   default=$(git -C "$PROJ" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || true); default=${default:-main}
   git -C "$PROJ" fetch -q origin "+refs/heads/$default:refs/remotes/origin/$default" || die "cannot fetch origin/$default to cut the next trunk"
   base=$(rev "refs/remotes/origin/$default") || die "origin/$default is not a commit"
-  ver=$(( $(cat "$STATE/trunk-version-$PN" 2>/dev/null || echo 1) + 1 )); new="$(pol trunk-branch)-v$ver"
+  ver=$(( $(cat "$STATE/trunk-version-$PN" 2>/dev/null || echo 1) + 1 )); new=$(jg_trunk_version_branch "$ver")
   rev "refs/heads/$new" >/dev/null && die "$new already exists in $PROJ; the next trunk is never overwritten"
   carry_over "$base"
   green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true); green=$(awk -v g="$green" '$1 == g { print $2 }' <<<"$CARRY_MAP")
@@ -2088,10 +2262,13 @@ rollover_if_merged() {
   retire_old
 }
 
-# Every commit of <old> is in <target>: by ancestry, or by patch when the release was squashed or the fix was cherry-picked.
+# Every commit of <old> is in <target>: by ancestry, or by patch when the release was squashed, rebased or the fix was cherry-picked;
+# an empty commit has nothing to carry (jg-trunk-carry-lib.sh). A compare that fails is not carried.
 carried() {  # <old> <target>
+  local left
   git -C "$PROJ" merge-base --is-ancestor "$1" "$2" 2>/dev/null && return 0
-  ! git -C "$PROJ" cherry "$2" "$1" 2>/dev/null | grep -q '^+'
+  left=$(jg_trunk_uncarried "$PROJ" "$2" "$1") || return 1
+  [ -z "$left" ]
 }
 
 # After a release merged and the next trunk was cut, clean the OLD trunk up: delete its remote branch, its local
@@ -2117,7 +2294,7 @@ retire_old() {
       git -C "$PROJ" cat-file -e "$tip^{commit}" 2>/dev/null || git -C "$PROJ" fetch -q origin "refs/heads/$b" 2>/dev/null </dev/null || true
       git -C "$PROJ" cat-file -e "$tip^{commit}" 2>/dev/null || { blocked="the tip ${tip:0:12} cannot be read"; break; }
       if ! carried "$tip" "$new"; then
-        out=$(git -C "$PROJ" cherry "$new" "$tip" | sed -n 's/^+ //p' | while read -r sha; do git -C "$PROJ" log -1 --format='%h %s' "$sha"; done | paste -sd';' -)
+        out=$(jg_trunk_uncarried "$PROJ" "$new" "$tip" | while read -r sha; do git -C "$PROJ" log -1 --format='%h %s' "$sha"; done | paste -sd';' -)
         blocked="hotfix not carried into $TRUNK: $out"; break
       fi
     done
@@ -2177,7 +2354,7 @@ open_release_pr() {  # <default> <title> <body-file>
 # explicit bin/jg-pr-merge.sh <id> <url>. A record already there is kept, and the PR is recorded and armed through
 # jg-pr-check.sh unless the record already names this PR at this head.
 record_release_task() {  # <url> [<head>]
-  local id=release-$PN-$TRUNK meta proj
+  local id meta proj; id=$(jg_trunk_release_id "$PN" "$TRUNK")
   jg_pr_task_id_valid "$id" || die "the release task id '$id' is not a valid task id; the release PR $1 is open but has no task record"
   meta=$STATE/$id.meta
   if [ ! -e "$meta" ]; then
@@ -2217,7 +2394,7 @@ release_commit() {
 # a record of kind release is kept (record_release_task only arms it when it does not name the PR yet). Returns 1 with no
 # output when the last release row is not for this commit, so the caller says "nothing to release" as before.
 adopt_pushed_release() {  # <commit>
-  local url meta=$STATE/release-$PN-$TRUNK.meta kind
+  local url meta kind; meta=$STATE/$(jg_trunk_release_id "$PN" "$TRUNK").meta
   [ "$(awk -F'\t' -v p="$PN" -v t="$TRUNK" 'NF >= 6 && $1 == p { c = ($2 == t ? $3 : "") } END { print c }' "$DATA/trunk-releases.tsv" 2>/dev/null)" = "$1" ] || return 1
   url=$(last_release_url); [ -n "$url" ] || return 1
   if [ -e "$meta" ]; then

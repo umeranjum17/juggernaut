@@ -1008,10 +1008,6 @@
       "audience": "operator-current"
     },
     {
-      "path": "core/nm-drain/README.md",
-      "audience": "operator-current"
-    },
-    {
       "path": "core/owner-guard/README.md",
       "audience": "operator-current"
     },

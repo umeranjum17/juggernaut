@@ -5,7 +5,7 @@
 # Records read, never written (the command only reads: it writes no record and runs no move):
 #   data/jg-trunk-landing/<id>.state   the lander's line: running <epoch> [<pid>], wait, retry, env-wait, final or landed
 #   data/trunk-resolving.tsv           the conflict run of bin/jg-trunk.sh (resolving, resolved, returned), by task and lane commit
-#   data/trunk-landing-phases.tsv      the phase rows of bin/jg-trunk.sh lane_admit (checking), the same columns
+#   data/trunk-landing-phases.tsv      the phase rows of bin/jg-trunk.sh lane_admit (retesting, returned, checking), the same columns
 #   data/jg-trunk-landing/retired/     a final the check put aside, and state/<task>.meta with the lane's branch (the head the lane has now)
 # The word of each record line:
 #   landed                      landed
@@ -58,6 +58,6 @@ case $word in
     a=$((10#$a)); [ "$a" -gt 0 ] || { echo running-no-epoch; exit 0; }
     [ $(( $(date +%s) - a )) -le 21600 ] || { echo running-expired; exit 0; }
     case ${b:-0} in *[!0-9]*) echo running-bad-pid; exit 0 ;; esac
-    case $(phase) in resolving) echo resolving ;; resolved) echo retesting ;; checking) echo checking ;; returned) echo returned ;; *) echo rebasing ;; esac ;;
+    case $(phase) in resolving) echo resolving ;; resolved|retesting) echo retesting ;; checking) echo checking ;; returned) echo returned ;; *) echo rebasing ;; esac ;;
   *) echo "$word" ;;
 esac

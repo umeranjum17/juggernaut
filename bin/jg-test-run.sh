@@ -313,7 +313,7 @@ TEST_SPEED_SCRIPT_TIMEOUT_SECONDS=1800
 TEST_SPEED_E2E_SECONDS=60
 TEST_SPEED_UNIT_SECONDS=5
 TEST_SPEED_GATE_SECONDS=600
-# How many runs may execute tests on this machine at once (machine_runs_max; 0 is one per 16 cpus, at least one).
+# How many runs may execute tests on this machine at once (machine_runs_max; 0 is one per 16 cpus, held between 2 and 3).
 TEST_MACHINE_RUNS_MAX=0
 # Hard per-test ceiling on the automatic --changed path: max(120s, 4 x the
 # test's measured hint), so a wedged script ends as a bounded failure naming it
@@ -442,12 +442,20 @@ log() {
 
 # shellcheck source=bin/jg-test-host-lib.sh
 . "$ROOT/bin/jg-test-host-lib.sh"
+# shellcheck source=bin/jg-scratch-root-lib.sh
+. "$ROOT/bin/jg-scratch-root-lib.sh"
+# Every scratch dir of this run (shards, scripts, fixtures, the tools they start) goes on disk, never /tmp (RAM).
+jg_scratch_pin_tmpdir
+# shellcheck source=bin/jg-test-procs-lib.sh
+. "$ROOT/bin/jg-test-procs-lib.sh"
 
 # The effective machine_runs_max (see bin/jg-test-host-lib.sh "Run slots").
 machine_runs_max() {
   local n=$TEST_MACHINE_RUNS_MAX
-  [ "$n" -gt 0 ] || n=$(( $(cpu_count) / 16 ))
-  [ "$n" -ge 1 ] || n=1
+  [ "$n" -gt 0 ] && { printf '%s\n' "$n"; return 0; }
+  n=$(( $(cpu_count) / 16 ))
+  [ "$n" -ge 2 ] || n=2
+  [ "$n" -le 3 ] || n=3
   printf '%s\n' "$n"
 }
 
@@ -509,74 +517,9 @@ cpu_count() {
 # also swallows every test nobody has classified yet. Keeping the two separate
 # is what lets `standalone` carry a concurrent proof while a brand-new test
 # lands in `unclassified` and stays serial until someone proves it.
+# Every script that had a family now has a done-done entry, so `done-done affected` owns it and none is named here.
 family_for_basename() {
   case "$1" in
-    jg-brief.test.sh|jg-crew-state.test.sh|\
-    jg-prior-art-gate.test.sh|jg-recon-gate.test.sh|jg-recon-depth.test.sh|jg-loss-claim-check.test.sh|\
-    jg-captain-hold-lifecycle.test.sh)
-      printf '%s\n' pure-contract-unit
-      ;;
-    jg-turnend-guard.test.sh|jg-wake-daemon-lifecycle-e2e.test.sh|\
-    jg-mail.test.sh|jg-watcher-lock.test.sh|jg-watch-handoff.test.sh|\
-    jg-watch-inventory.test.sh|\
-    jg-wake-next.test.sh|jg-pi-wake-replay.test.sh|\
-    jg-wake-core.test.sh|jg-wake-router.test.sh|\
-    jg-state-bus-parity.test.sh|jg-lease-live.test.sh|jg-reply-bus-parity.test.sh|\
-    jg-reply-engine.test.sh|jg-pending-reply-turn-end.test.sh|\
-    jg-metrics-shadow-parity.test.sh|\
-    jg-bus-service.test.sh|\
-    jg-wake-queue-live.test.sh|jg-wake-engine.test.sh|jg-wake-watcher.test.sh|jg-delivery-record.test.sh|\
-    jg-bus-account-isolation.test.sh|\
-    jg-escalation-workflows.test.sh|jg-bus-leaf-parity.test.sh)
-      printf '%s\n' watcher-wake-lock
-      ;;
-    jg-afk-inject-herdr-e2e.test.sh|jg-backend-herdr-presentation-e2e.test.sh|\
-    jg-backend-herdr-prune-safety-e2e.test.sh|jg-backend-herdr-respawn-idem-e2e.test.sh|\
-    jg-herdr-session-cleanup-e2e.test.sh|jg-backend-herdr-smoke.test.sh|\
-    jg-backend-herdr-workspace-per-home-e2e.test.sh|jg-sentinel-restart-resume.test.sh|\
-    jg-sentinel-herdr-restart-live-e2e.test.sh)
-      printf '%s\n' real-herdr-gated
-      ;;
-    jg-on.test.sh|jg-remote-reply.test.sh|\
-    jg-remote-squad-lead-lifecycle-e2e.test.sh|jg-squad-lead-lifecycle-e2e.test.sh)
-      printf '%s\n' squad_lead
-      ;;
-    jg-axi-link.test.sh|jg-bootstrap.test.sh|jg-fleet-sync.test.sh|jg-gate-refuse.test.sh|\
-    jg-session-start.test.sh|jg-tangle-guard.test.sh|jg-update.test.sh)
-      printf '%s\n' session-bootstrap
-      ;;
-    jg-claude-stop-autoarm-live-e2e.test.sh|jg-claude-midturn-arm-live-e2e.test.sh|\
-    jg-composer-matrix-live-e2e.test.sh|jg-control-pi-live-e2e.test.sh|jg-codex-continuity-live-e2e.test.sh|\
-    jg-codex-hook-layer-live-e2e.test.sh|jg-grok-continuity-live-e2e.test.sh|\
-    jg-cursor-primary-live-e2e.test.sh|jg-harness-adapter-instructions-live-e2e.test.sh|\
-    jg-devin-signals-live-e2e.test.sh|\
-    jg-muse-signals-live-e2e.test.sh|jg-rovo-signals-live-e2e.test.sh|\
-    jg-agy-signals-live-e2e.test.sh|jg-launch-prompt-signals-live-e2e.test.sh|\
-    jg-pi-seeded-home-trust-live-e2e.test.sh|jg-herdr-version-floor-live-e2e.test.sh|\
-    jg-worker-account-live-e2e.test.sh|jg-opencode-primary-live-e2e.test.sh|\
-    jg-pi-branch-live-e2e.test.sh|jg-pi-primary-live-e2e.test.sh|\
-    jg-omp-primary-live-e2e.test.sh|jg-pr-state-live-e2e.test.sh|\
-    jg-sessionstart-hook-live-e2e.test.sh|jg-supervision-host-live-e2e.test.sh|\
-    jg-quota-array-dispatch-live-e2e.test.sh|jg-send-inbox-doorbell-live-e2e.test.sh|\
-    jg-prompt-gate-live-e2e.test.sh|jg-backend-hc-live-e2e.test.sh)
-      printf '%s\n' live-harness-optin
-      ;;
-    jg-backend-tmux-smoke.test.sh|jg-control.test.sh|jg-send-inbox.test.sh|\
-    jg-doorbell-missing-record.test.sh|jg-nudge-residue.test.sh|\
-    jg-spawn-dispatch-profile.test.sh)
-      printf '%s\n' backend-dispatch
-      ;;
-    jg-pr-merge.test.sh|jg-local-suite-tree.test.sh|jg-merge-on-green.test.sh|\
-    jg-teardown.test.sh|jg-x-mode.test.sh)
-      printf '%s\n' pr-forge
-      ;;
-    jg-afk-inject-e2e.test.sh|jg-supervision-host.test.sh)
-      printf '%s\n' afk
-      ;;
-    jg-procevent.test.sh|jg-public-followup.test.sh|\
-    jg-wake-drain-open-decisions-cursor.test.sh)
-      printf '%s\n' standalone
-      ;;
     *)
       printf '%s\n' unclassified
       ;;
@@ -625,11 +568,6 @@ list_known_lanes() {
 # isolation proof archive.
 list_proven_isolated() {
   cat <<'EOF'
-tests/jg-brief.test.sh
-tests/jg-captain-hold-lifecycle.test.sh
-tests/jg-crew-state.test.sh
-tests/jg-pr-merge.test.sh
-tests/jg-x-mode.test.sh
 EOF
 }
 
@@ -638,12 +576,6 @@ EOF
 # refresh procedure are owned by docs/jg-test-portable-shards.md.
 portable_parallel_weight_hints() {
   cat <<'EOF'
-tests/jg-brief.test.sh 10594
-tests/jg-browser-sweep.test.sh 2000
-tests/jg-captain-hold-lifecycle.test.sh 343658
-tests/jg-crew-state.test.sh 82058
-tests/jg-pr-merge.test.sh 300199
-tests/jg-x-mode.test.sh 29896
 EOF
 }
 
@@ -665,17 +597,12 @@ portable_parallel_lane_weight() {
 # its own header owns temporary dependency provisioning.
 list_portable_parallel_1() {
   cat <<'EOF'
-tests/jg-pr-merge.test.sh
-tests/jg-x-mode.test.sh
 EOF
 }
 
 # Portable parallel shard 2: the complementary LPT half of the proven set.
 list_portable_parallel_2() {
   cat <<'EOF'
-tests/jg-captain-hold-lifecycle.test.sh
-tests/jg-crew-state.test.sh
-tests/jg-brief.test.sh
 EOF
 }
 
@@ -766,264 +693,7 @@ list_portable_serial() {
 # balance rather than coverage. That doc owns the refresh procedure.
 portable_serial_weight_hints() {
   cat <<'EOF'
-tests/board-link.test.sh 1700
-tests/jg-afk-inject-e2e.test.sh 42474
-tests/jg-agents-md-floor.test.sh 542
-tests/jg-agy-signals-live-e2e.test.sh 125
-tests/jg-backend-tmux-smoke.test.sh 520
-tests/jg-beads-migrate.test.sh 1700
-tests/jg-beads-native-followup.test.sh 150000
-tests/jg-beads-native-n5.test.sh 140000
-tests/jg-behavior-determinism.test.sh 172000
-tests/jg-board-answers.test.sh 6382
-tests/jg-board-answers-latency.test.sh 90000
-tests/jg-board-asks.test.sh 643
-tests/jg-board-gate.test.sh 40000
-tests/jg-bus-gateway.test.sh 46155
-tests/jg-bus-leaf-parity.test.sh 10999
-tests/jg-bus.test.sh 86
-tests/jg-axi-link.test.sh 900
-tests/jg-bootstrap.test.sh 129297
-tests/jg-browser-reaper.test.sh 2004
-tests/jg-stray-nats-reap.test.sh 2265
-tests/jg-calm-home-links.test.sh 690
-tests/jg-chat-answer-card.test.sh 2129
-tests/jg-ci-required.test.sh 595
-tests/jg-ci-scope.test.sh 1353
-tests/jg-claude-stop-autoarm-live-e2e.test.sh 169
-tests/jg-claude-midturn-arm-live-e2e.test.sh 140
-tests/jg-clause.test.sh 4074
-tests/jg-codex-continuity-live-e2e.test.sh 260
-tests/jg-codex-hook-layer-live-e2e.test.sh 225
-tests/jg-comms-feed.test.sh 1014
-tests/jg-compat-old-records.test.sh 1127
-tests/jg-composer-matrix-live-e2e.test.sh 244
-tests/jg-composer-self-repair.test.sh 51000
-tests/jg-control.test.sh 94076
-tests/jg-cursor-primary-live-e2e.test.sh 384
-tests/jg-deprecated-paths-check.test.sh 3000
-tests/jg-ports-check.test.sh 9010
-tests/jg-decisions-reconcile.test.sh 55000
-tests/jg-design-gate-first-draft.test.sh 1650
-tests/jg-design-gate.test.sh 812
-tests/jg-devin-signals-live-e2e.test.sh 174
-tests/jg-doorbell-missing-record.test.sh 4529
-tests/jg-escalation-chain.test.sh 245000
-tests/jg-escalation-chain-backlog.test.sh 410000
-tests/jg-escalation-chain-signals.test.sh 450000
-tests/jg-escalation-chain-actions.test.sh 305000
-tests/jg-escalation-workflows.test.sh 3200
-tests/jg-fast-evals.test.sh 1136
-tests/jg-fleet-heartbeat.test.sh 3664
-tests/jg-fleet-sync.test.sh 41550
-tests/jg-flow.test.sh 936
-tests/jg-gate-refuse.test.sh 16669
-tests/jg-goal-loop-journey.test.sh 144000
-tests/jg-grok-continuity-live-e2e.test.sh 157
-tests/jg-harness-adapter-instructions-live-e2e.test.sh 199
-tests/jg-harness-quirks.test.sh 644
-tests/jg-herdr-lead-label.test.sh 368
-tests/jg-tool-models.test.sh 4000
-tests/jg-classify-go.test.sh 520
-tests/jg-herdr-go.test.sh 1222
-tests/jg-guard-host.test.sh 6431
-tests/jg-herdr-names.test.sh 2803
-tests/jg-herdr-version-floor-live-e2e.test.sh 249
-tests/jg-hometag-lead-label.test.sh 506
-tests/jg-retired-catalog-check.test.sh 309
-tests/jg-host-wiring.test.sh 1330
-tests/jg-inbox.test.sh 12752
-tests/jg-launch-prompt-signals-live-e2e.test.sh 194
-tests/jg-lint-partitions.test.sh 7835
-tests/jg-local-suite-tree.test.sh 706
 tests/jg-merge-on-green.test.sh 900
-tests/jg-lint-root-memory.test.sh 4969
-tests/jg-context-bound.test.sh 72
-tests/jg-mail.test.sh 15199
-tests/jg-machine-shadow.test.sh 5000
-tests/jg-merge-gate-lib.test.sh 608
-tests/jg-merge-gate-policy.test.sh 30967
-tests/jg-metrics-shadow-parity.test.sh 210
-tests/jg-machine-task.test.sh 1800
-tests/jg-machine-hold.test.sh 80000
-tests/jg-machine-hold-b.test.sh 75000
-tests/jg-muse-signals-live-e2e.test.sh 180
-tests/jg-omp-primary-live-e2e.test.sh 290
-tests/jg-on.test.sh 20997
-tests/jg-opencode-primary-live-e2e.test.sh 341
-tests/jg-overwatch-kpi.test.sh 2289
-tests/jg-owner-correction.test.sh 2003
-tests/jg-owner-rules.test.sh 4200
-tests/jg-pending-reply-turn-end.test.sh 3000
-tests/jg-pi-branch-live-e2e.test.sh 201
-tests/jg-pi-primary-live-e2e.test.sh 394
-tests/jg-pi-seeded-home-trust-live-e2e.test.sh 102
-tests/jg-pi-wake-replay.test.sh 2977
-tests/jg-post-merge-ci-main.test.sh 357
-tests/jg-pr-state-live-e2e.test.sh 242
-tests/jg-pr-state.test.sh 458
-tests/jg-pr-wait.test.sh 362
-tests/jg-pre-push.test.sh 17156
-tests/jg-progress-claim.test.sh 2500
-tests/jg-procevent.test.sh 233712
-tests/jg-project-mode.test.sh 462
-tests/jg-prompt-gate-live-e2e.test.sh 249
-tests/jg-prompt-gate.test.sh 101581
-tests/jg-proof-attach.test.sh 980
-tests/jg-public-followup.test.sh 260000
-tests/jg-quota-array-dispatch-live-e2e.test.sh 284
-tests/jg-release-readiness.test.sh 11877
-tests/jg-release-tag.test.sh 1500
-tests/jg-remote-reply.test.sh 243818
-tests/jg-remote-squad-lead-lifecycle-e2e.test.sh 680926
-tests/jg-reply-bus-parity.test.sh 253
-tests/jg-reply-engine.test.sh 1203
-tests/jg-rovo-signals-live-e2e.test.sh 389
-tests/jg-self-repo-role.test.sh 18448
-tests/jg-send-dormant-lead.test.sh 4831
-tests/jg-send-inbox-doorbell-live-e2e.test.sh 264
-tests/jg-send-inbox.test.sh 53586
-tests/jg-session-start.test.sh 748000
-tests/jg-sessionstart-hook-live-e2e.test.sh 157
-tests/jg-ship-local.test.sh 786
-tests/jg-spawn-clone-identity.test.sh 20000
-tests/jg-spawn-core.test.sh 1238
-tests/jg-spawn-dispatch-profile.test.sh 938199
-tests/jg-squad-lead-dormant.test.sh 2392
-tests/jg-squad-lead-restart-idle.test.sh 14389
-tests/jg-state-bus-parity.test.sh 279
-tests/jg-lease-live.test.sh 183
-tests/jg-bus-service.test.sh 616
-tests/jg-wake-queue-live.test.sh 19169
-tests/jg-wake-watcher.test.sh 41813
-tests/jg-wake-engine.test.sh 65412
-tests/jg-delivery-record.test.sh 200
-tests/jg-bus-account-isolation.test.sh 63398
-tests/jg-squad-lead-lifecycle-e2e.test.sh 14484
-tests/jg-supervision-host-live-e2e.test.sh 223
-tests/jg-supervision-host.test.sh 1062710
-tests/jg-status-digest.test.sh 1334
-tests/jg-stack-owner.test.sh 635
-tests/jg-bus-health.test.sh 5000
-tests/jg-bus-health-extra.test.sh 4000
-tests/jg-tangle-guard.test.sh 58000
-tests/jg-teardown-core.test.sh 4222
-tests/jg-teardown.test.sh 902000
-tests/jg-test-run.test.sh 33000
-tests/jg-ticket-writeback.test.sh 83
-tests/jg-tmp-sweep.test.sh 5192
-tests/jg-tokens-retro.test.sh 615
-tests/jg-trunk.test.sh 45000
-tests/jg-trunk-live.test.sh 44000
-tests/jg-trunk-gate.test.sh 35000
-tests/jg-trunk-queue.test.sh 31000
-tests/jg-trunk-retry.test.sh 20000
-tests/jg-trunk-publish.test.sh 19000
-tests/jg-trunk-golive-guard.test.sh 30000
-tests/jg-trunk-verify.test.sh 15000
-tests/jg-trunk-spawn.test.sh 49000
-tests/jg-spawn-load-admission.test.sh 45000
-tests/jg-spawn-same-file.test.sh 45000
-tests/jg-trunk-scope.test.sh 8000
-tests/jg-worker-rules.test.sh 3633
-tests/jg-turnend-guard.test.sh 97000
-tests/jg-update.test.sh 17444
-tests/jg-wake-daemon-lifecycle-e2e.test.sh 15568
-tests/jg-wake-core.test.sh 4900
-tests/jg-wake-router.test.sh 1211
-tests/jg-wake-route.test.sh 24386
-tests/jg-wake-drain-open-decisions-cursor.test.sh 148819
-tests/jg-wake-next.test.sh 4801
-tests/jg-planned-wait.test.sh 83716
-tests/jg-watch-inventory.test.sh 5002
-tests/jg-watch-handoff.test.sh 52298
-tests/jg-watcher-lock.test.sh 210766
-tests/jg-watch-silent-exit.test.sh 5000
-tests/jg-watch-silence-prune.test.sh 5000
-tests/jg-lock-pi-session-id.test.sh 1000
-tests/jg-worker-account-live-e2e.test.sh 192
-tests/juggernaut-axi-serve.test.sh 1466
-tests/juggernaut-axi.test.sh 29551
-tests/migration-card.test.sh 2469
-tests/migration-card-live.test.sh 83
-tests/merge-card-title.test.sh 1312
-tests/merge-gate-one-entry.test.sh 7202
-tests/jg-bus-machine-service.test.sh 88
-tests/jg-captain-card-two-layers.test.sh 2200
-tests/jg-card-rules.test.sh 3900
-tests/jg-chat-store.test.sh 7108
-tests/jg-dispatch-resolve-codex-routing.test.sh 645
-tests/jg-dispatch-resolve-tiers.test.sh 938
-tests/jg-done-checks.test.sh 7083
-tests/jg-fleet-autosync.test.sh 6509
-tests/jg-fleet-rules.test.sh 470
-tests/jg-git-hooks-refresh.test.sh 300
-tests/jg-install-herdr-retry.test.sh 361
-tests/jg-installed-drift.test.sh 434
-tests/jg-launch-env-strip.test.sh 462
-tests/jg-lavish-guard.test.sh 476
-tests/jg-lavish-session-check.test.sh 529
-tests/jg-licence-check.test.sh 333
-tests/jg-path-guard.test.sh 536
-tests/jg-live-claim.test.sh 919
-tests/jg-loss-claim-check.test.sh 400
-tests/jg-prior-art-gate.test.sh 652
-tests/jg-recon-depth.test.sh 330
-tests/jg-recon-gate.test.sh 1500
-tests/jg-running-products.test.sh 514
-tests/jg-stack.test.sh 53387
-tests/jg-turnend-guard-no-false-blocks.test.sh 465
-tests/jg-version-branch-sync.test.sh 94207
-tests/jg-wake-batching.test.sh 52062
-tests/jg-watch-beacon.test.sh 45490
-tests/jg-whats-left.test.sh 3479
-tests/jg-captain-approval.test.sh 113000
-tests/jg-pending-decision-blocks-work.test.sh 294000
-tests/jg-triage.test.sh 2061
-tests/jg-nudge-residue.test.sh 6000
-tests/jg-wake-schedule.test.sh 78000
-tests/jg-critical-path-spawn.test.sh 57000
-tests/jg-release-smoke.test.sh 84562
-tests/jg-beads-native-n3.test.sh 44000
-tests/jg-beads-native-n8.test.sh 43000
-tests/jg-public-followup-b.test.sh 500000
-tests/jg-public-followup-c.test.sh 500000
-tests/board-link-send.test.sh 784
-tests/jg-afk-telegram.test.sh 912
-tests/jg-away-reach.test.sh 1097
-tests/jg-beads-native-hold.test.sh 19584
-tests/jg-beads-native-n4.test.sh 1500
-tests/jg-beads-native-n6.test.sh 22346
-tests/jg-beads-native-whole.test.sh 9455
-tests/jg-beads.test.sh 42005
-tests/jg-browser-sweep.test.sh 2500
-tests/jg-captain-say-chat.test.sh 138
-tests/jg-ci-rerun.test.sh 10104
-tests/jg-control-pi-live-e2e.test.sh 1500
-tests/jg-critical-path.test.sh 5305
-tests/jg-evidence.test.sh 1178
-tests/jg-goal.test.sh 1500
-tests/jg-held-card-no-fleet-freeze.test.sh 2000
-tests/jg-home-guard.test.sh 3000
-tests/jg-machine-enforce.test.sh 2500
-tests/jg-machine-inbox.test.sh 3500
-tests/jg-machine-index.test.sh 1500
-tests/jg-machine-cleanup.test.sh 1500
-tests/jg-machine-landing.test.sh 3000
-tests/jg-machine-status.test.sh 4000
-tests/jg-machine.test.sh 2000
-tests/jg-merge-alert.test.sh 1726
-tests/jg-proof-gate.test.sh 502
-tests/jg-rejected-state-check-once.test.sh 26500
-tests/jg-sentinel-inbox-ring.test.sh 19000
-tests/jg-ticket-link-guard.test.sh 1152
-tests/jg-trunk-live-home.test.sh 2500
-tests/jg-unit-claim.test.sh 7478
-tests/jg-update-local-base.test.sh 4000
-tests/jg-voice.test.sh 6554
-tests/jg-watch-arm-handling-delivered.test.sh 959
-tests/jg-learnings.test.sh 43017
-tests/jg-brief-lint.test.sh 1000
 EOF
 }
 
@@ -1181,7 +851,9 @@ select_lane() {
       die "unknown lane '$want' (see --list-lanes)"
       ;;
   esac
-  [ "$found" -eq 1 ] || die "lane '$want' selected no tests"
+  # A lane whose every script has a done-done entry selects nothing here: `done-done affected` owns them.
+  [ "$found" -eq 1 ] || log "lane '$want' selects no test: every script it held has a done-done entry"
+  return 0
 }
 
 run_coverage_guard() {
@@ -1219,26 +891,26 @@ run_coverage_guard() {
   saved_scripts=("${SCRIPTS[@]+"${SCRIPTS[@]}"}")
   SCRIPTS=()
   select_lane portable-serial
-  printf '%s\n' "${SCRIPTS[@]+"${SCRIPTS[@]}"}" | LC_ALL=C sort -u >"$tmp/serial"
+  printf '%s\n' "${SCRIPTS[@]+"${SCRIPTS[@]}"}" | sed '/^$/d' | LC_ALL=C sort -u >"$tmp/serial"
   : >"$tmp/serial_shards_raw"
   shard=1
   while [ "$shard" -le "$PORTABLE_SERIAL_SHARDS" ]; do
     SCRIPTS=()
     select_lane "portable-serial-${shard}of${PORTABLE_SERIAL_SHARDS}"
-    if [ "${#SCRIPTS[@]}" -eq 0 ]; then
+    if [ "${#SCRIPTS[@]}" -eq 0 ] && [ -s "$tmp/all" ]; then
       log "coverage guard: portable serial shard $shard of $PORTABLE_SERIAL_SHARDS is empty"
       SCRIPTS=("${saved_scripts[@]+"${saved_scripts[@]}"}")
       rm -rf "$tmp"
       return 1
     fi
-    printf '%s\n' "${SCRIPTS[@]+"${SCRIPTS[@]}"}" >>"$tmp/serial_shards_raw"
+    [ "${#SCRIPTS[@]}" -eq 0 ] || printf '%s\n' "${SCRIPTS[@]}" >>"$tmp/serial_shards_raw"
     serial_ms=$(printf '%s\n' "${SCRIPTS[@]+"${SCRIPTS[@]}"}" | portable_serial_lane_weight)
     [ "$serial_ms" -le "$serial_max_ms" ] || serial_max_ms=$serial_ms
     shard=$((shard + 1))
   done
   SCRIPTS=()
   select_family real-herdr-gated
-  printf '%s\n' "${SCRIPTS[@]+"${SCRIPTS[@]}"}" | LC_ALL=C sort -u >"$tmp/herdr"
+  printf '%s\n' "${SCRIPTS[@]+"${SCRIPTS[@]}"}" | sed '/^$/d' | LC_ALL=C sort -u >"$tmp/herdr"
   SCRIPTS=("${saved_scripts[@]+"${saved_scripts[@]}"}")
 
   # Every serial script runs in exactly one CI shard: no duplicate work across
@@ -1411,12 +1083,26 @@ print(f"JG_TEST_AGGREGATE lanes={len(lanes)} total={total} failed={failed} skipp
 PY
 }
 
+# OLD SELECTOR, KEPT ONLY FOR SCRIPTS WITH NO DONE-DONE ENTRY (jg8-t7, until jg8-t2 lands every entry).
+# A script a journey of .done-done.yaml names is selected by `done-done affected`, never here: every
+# selector below (--all, --family, --lane, --changed, the shards, the coverage guard) reads this list,
+# so an entered script is in none of them. The tables above hold no row for an entered script, and
+# the runner's own test fails when one does. Naming the script on the command line still runs it.
+# A core journey that runs `../tests/<script>` through journeys/core-run.sh enters that script too.
+done_done_entered_scripts() {
+  local yaml="$ROOT/.done-done.yaml"
+  [ -f "$yaml" ] || return 0
+  grep -oE '(^|[^A-Za-z0-9_./-]|\.\./)tests/[A-Za-z0-9_.-]+\.test\.sh' "$yaml" | grep -oE 'tests/.*' | LC_ALL=C sort -u
+}
+
 all_repo_tests() {
   # Deterministic lexical order (same as bash glob expansion under LC_ALL=C).
-  local f
+  local f entered
+  entered=$(done_done_entered_scripts)
   # shellcheck disable=SC2035
   for f in tests/*.test.sh; do
     [ -f "$f" ] || continue
+    printf '%s\n' "$entered" | grep -qxF -- "$f" && continue
     printf '%s\n' "$f"
   done | LC_ALL=C sort
 }
@@ -1472,7 +1158,9 @@ select_family() {
       found=1
     fi
   done < <(all_repo_tests)
-  [ "$found" -eq 1 ] || die "no tests mapped to family '$want'"
+  [ "$found" -eq 1 ] && return 0
+  # A known family whose every script has a done-done entry selects nothing here: `done-done affected` owns them.
+  list_known_families | grep -qxF -- "$want" || die "no tests mapped to family '$want'"
 }
 
 families_for_test_reference() {  # <needle>...
@@ -1547,23 +1235,19 @@ families_for_unmapped_bin() {
 # Conservative path → family map. Over-selects rather than under-selects.
 # Never expands to the complete suite.
 families_for_changed_path() {
-  local path=$1 fixture_ref suite
+  local path=$1 fixture_ref
   case "$path" in
     tests/captures/stuck-live/*)
       # These captured terminal states are read by the signals cases.
-      printf '%s\n' __script__:jg-escalation-chain-signals.test.sh
-      ;;
-    tests/jg-supervision-host.test.sh)
-      # The late half sources the same fixture and test definitions.
-      printf '%s\n' __script__:jg-supervision-host.test.sh
       ;;
     tests/*.test.sh)
       # A single test file change selects only that script via basename family
       # resolution in the caller; emit a marker family of __script__
       printf '%s\n' "__script__:$(basename "$path")"
       ;;
-    bin/jg-test-run.sh)
-      # Deliberately the WHOLE family, not just the two contract tests. This
+    bin/jg-test-run.sh|bin/jg-test-host-lib.sh|bin/jg-scratch-root-lib.sh)
+      # The two libraries are the runner's own code (slots, disk scratch root), and the test that names them has a
+      # done-done entry, so the reference scan finds none: they select what the runner selects. Deliberately the WHOLE family, not just the two contract tests. This
       # runner executes every pure-contract-unit script, so a change to it is
       # only proven by running them: its own contract test passing says the
       # runner's logic is right, not that the suite it drives still runs.
@@ -1605,12 +1289,10 @@ families_for_changed_path() {
     bin/backends/hc*|bin/jg-hc-lab.sh)
       # The Herdr Core adapter and its lab helper are proven by the one hc
       # journey, which drives both against a real core.
-      printf '%s\n' __script__:jg-backend-hc-live-e2e.test.sh
       ;;
     bin/jg-backend.sh)
       printf '%s\n' backend-dispatch
       printf '%s\n' real-herdr-gated
-      printf '%s\n' __script__:jg-backend-hc-live-e2e.test.sh
       ;;
     bin/jg-backend-hometag-lib.sh)
       printf '%s\n' backend-dispatch
@@ -1646,7 +1328,6 @@ families_for_changed_path() {
       printf '%s\n' afk
       ;;
     bin/jg-learnings.py)
-      printf '%s\n' __script__:jg-learnings.test.sh
       ;;
     bin/jg-startup-memory-budget.sh|bin/jg-startup-memory-budget-lib.sh)
       printf '%s\n' squad_lead
@@ -1659,7 +1340,7 @@ families_for_changed_path() {
       printf '%s\n' squad_lead
       ;;
     bin/jg-required-checks.sh|bin/jg-delivery-tick.sh)
-      printf '%s\n' "__script__:jg-stops.test.sh"
+      # Their suite has a done-done entry, so `done-done affected` selects it; this runner selects nothing.
       ;;
     bin/jg-session-start.sh|bin/jg-fleet-sync.sh|\
     bin/jg-sessionstart-nudge.sh|bin/jg-startup-network.sh|bin/jg-tangle*|bin/jg-update.sh|\
@@ -1668,10 +1349,8 @@ families_for_changed_path() {
       ;;
     bin/jg-bootstrap.sh)
       printf '%s\n' session-bootstrap
-      printf '%s\n' "__script__:jg-brief.test.sh"
       ;;
     defaults/brief-lint-rules.tsv)
-      printf '%s\n' "__script__:jg-brief-lint.test.sh"
       ;;
     install.sh|defaults/*|toolchain.versions|bin/jg-pin-lib.sh)
       # The one entry command, the defaults it writes, and the pin table every
@@ -1681,15 +1360,13 @@ families_for_changed_path() {
       ;;
     bin/jg-axi-link.sh)
       printf '%s\n' session-bootstrap
-      printf '%s\n' "__script__:jg-axi-link.test.sh"
       ;;
     bin/jg-quota-axi-lib.sh)
       printf '%s\n' session-bootstrap
       ;;
     bin/jg-toon-lib.sh)
-      # The TOON renderer sourced by juggernaut-axi and jg-bearings-snapshot.sh.
-      printf '%s\n' "__script__:juggernaut-axi.test.sh"
-      printf '%s\n' "__script__:juggernaut-axi-serve.test.sh"
+      # The TOON renderer sourced by juggernaut-axi and jg-bearings-snapshot.sh. Their suites have done-done entries, so
+      # `done-done affected` selects it; this runner selects nothing.
       ;;
     bin/jg-procevent-quota.sh)
       ;;
@@ -1709,15 +1386,14 @@ families_for_changed_path() {
       # scan, which widens to each referencing suite's WHOLE family - and
       # these suites sit in four different families, so that pulls in dozens
       # of suites with nothing to do with Pi.
-      printf '%s\n' __script__:jg-supervision-host.test.sh
       # Whether an arriving outcome still lets the captain type is a fact only
       # a real Pi TUI can answer, so the live guards are selected too.
       printf '%s\n' live-harness-optin
       ;;
     .pi/extensions/lib/jg-operational-input.ts)
       # The same rule for the operational-input library, whose reach is wider:
-      # every Pi extension that classifies or encodes operational text.
-      printf '%s\n' __script__:jg-turnend-guard.test.sh
+      # every Pi extension that classifies or encodes operational text. The turn-end guard suite has a done-done entry, so
+      # `done-done affected` selects it.
       printf '%s\n' live-harness-optin
       ;;
     .claude/mods/juggernaut-calm/*|.pi/extensions/lib/jg-calm-working-ship.ts|\
@@ -1737,8 +1413,7 @@ families_for_changed_path() {
     bin/jg-extension.mjs|bin/jg-extension.sh|docs/examples/process-event-extension/*)
       ;;
     bin/jg-procevent.sh|bin/jg-procevent-lib.sh|bin/jg-procevent-extension-capture.pl)
-      printf '%s\n' __script__:jg-procevent.test.sh
-      printf '%s\n' __script__:jg-remote-reply.test.sh
+      # Their suites have done-done entries, so `done-done affected` selects them; this runner selects nothing.
       ;;
     bin/jg-timeout-lib.sh)
       # The shared hard bound: session start's runtime bound, the fleet/bearings
@@ -1750,7 +1425,7 @@ families_for_changed_path() {
       printf '%s\n' watcher-wake-lock
       ;;
     bin/jg-pr-*|bin/jg-merge-on-green.sh|bin/jg-merge-local.sh|bin/jg-teardown.sh|bin/jg-review-diff.sh|\
-    bin/jg-x-*|bin/jg-check*|bin/jg-pipeline-spend.sh)
+    bin/jg-x-*|bin/jg-check*)
       printf '%s\n' pr-forge
       ;;
     bin/jg-nm-run-lib.sh)
@@ -1781,7 +1456,7 @@ families_for_changed_path() {
       # The registry reader that bin/jg-update.sh (the fleet move) and bin/jg-trunk-live-lag.sh source. No test names it,
       # and neither caller is a library the named-script rule follows, so the one test that drives the move and the lag
       # report against real homes (T1d reads the registry from a lead home) owns it, as the one script that runs its code.
-      printf '%s\n' "__script__:jg-update-local-base.test.sh"
+      # That suite has a done-done entry, so `done-done affected` selects it; this runner selects nothing.
       ;;
     bin/jg-task-inbox-lib.sh)
       # The steering-inbox record/doorbell/ladder owner: jg-send's data plane
@@ -1827,12 +1502,11 @@ families_for_changed_path() {
       ;;
     .agents/skills/done-done-verify-suites/SKILL.md|.agents/skills/done-done-verify-suites/suites/*)
       # One suite per file is the layout its own test checks; a suite file is
-      # documentation no other suite reads, so it selects that test alone.
-      printf '%s\n' "__script__:jg-verify-suites-layout.test.sh"
+      # documentation no other suite reads, so it selects that test alone. That test has a done-done entry, so
+      # `done-done affected` selects it; this runner selects nothing.
       ;;
     .agents/skills/task-dispatch/SKILL.md)
       printf '%s\n' pure-contract-unit
-      printf '%s\n' "__script__:jg-agents-md-floor.test.sh"
       ;;
     .agents/skills/*/SKILL.md|.agents/skills/done-done-verify-suites/features/*.md)
       # The verify skill's feature map is documentation the skill indexes, so it
@@ -1875,18 +1549,14 @@ families_for_changed_path() {
         || printf '%s\n' "__unmapped__:$path"
       ;;
     bin/jg-tool-wiring.sh)
-      # Sourced by bin/jg-bootstrap.sh, which the install test drives on a clean HOME; no test names the file itself.
-      printf '%s\n' "__script__:jg-tool-wiring.test.sh"
+      # Sourced by bin/jg-bootstrap.sh, which the install test drives on a clean HOME; its suite has a done-done entry,
+      # so `done-done affected` selects it and this runner selects nothing.
       ;;
-    tests/jg-alert.d/*|tests/jg-machine-ticket.d/*|tests/live/*)
-      # One case or check per file, run by the one suite that loops over its directory: the case selects that suite.
-      # A suite whose directory is gone, or a file in a directory with no suite, stays unmapped.
-      case "$path" in
-        tests/jg-alert.d/*) suite=jg-alert.test.sh ;;
-        tests/jg-machine-ticket.d/*) suite=jg-machine-ticket.test.sh ;;
-        *) suite=jg-live-checks.test.sh ;;
-      esac
-      if [ -e "tests/$suite" ]; then printf '__script__:%s\n' "$suite"; else printf '%s\n' "__unmapped__:$path"; fi
+    tests/jg-alert.d/*)
+      # Its suite has a done-done entry, so `done-done affected` selects it; this runner selects nothing.
+      ;;
+    tests/jg-machine-ticket.d/*|tests/live/*)
+      # Each file is one case or check of a suite that has a done-done entry, so `done-done affected` selects it; this runner selects nothing.
       ;;
     tests/jg-trunk-fixture.sh|tests/jg-machine-hold-fixture.sh)
       # Each is shared by the parts of one split suite, which are unclassified:
@@ -1925,7 +1595,6 @@ families_for_changed_path() {
       ;;
     policy/gate/*)
       # The merge gate's rules and their data: the test that drives them through the real gate scripts.
-      printf '%s\n' "__script__:jg-merge-gate-policy.test.sh"
       ;;
     journeys/*)
       # A done-done journey is owned by the test that names it: a direct
@@ -2279,7 +1948,7 @@ if [ "${1:-}" = --required-shards ]; then
   jg_test_host_pin_go_cache
   jg_test_host_warm_go_cache "$ROOT"
   # The eight shards are disjoint, so they run side by side: each one in its own temp and tmux directory
-  # (a short path under /tmp, because a tmux socket path is length-limited), its output kept in its own file and
+  # (a short path under the disk scratch root, because a tmux socket path is length-limited), its output kept in its own file and
   # printed in shard order afterwards so the log reads exactly as the sequential run's did. JG_REQUIRED_SHARD_PARALLEL
   # caps how many run at once (default: every shard, at most one per cpu); 1 gives the old one-after-another run.
   required_cpus=$(nproc 2>/dev/null || echo 1)
@@ -2935,6 +2604,7 @@ declare -a WORKER_SCRIPTS=()
 # Invoked indirectly by the EXIT trap below.
 # shellcheck disable=SC2329
 cleanup_run() {
+  jg_test_procs_stop_marked "$$"
   rm -rf "$RUN_TMP"
   jg_test_host_release
 }
@@ -3152,6 +2822,8 @@ run_script_bounded() {  # <script> <out> <stream> <id>
   local JG_BUS_HOMES
   JG_BUS_HOMES="$RUN_TMP/bus-homes.$$"
   export JG_BUS_HOMES
+  # The mark that tells the temp reaper a process belongs to a test; cleanup_run stops what carries it.
+  export JG_TEST_FIXTURE_PROC=$$
   set +e
   local marker="$out.bound"
   if [ "$bound" -gt 0 ]; then

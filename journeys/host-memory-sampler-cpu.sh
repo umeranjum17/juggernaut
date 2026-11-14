@@ -32,7 +32,7 @@ lab() {
   printf '%s\n' "$home/root" > "$home/root/state/.watch.lock/jg-home"
   printf '%s\n' "$tree/bin/jg-watch.sh" > "$home/root/state/.watch.lock/watcher-path"
   bash -c '. "$1/bin/jg-wake-lib.sh"; jg_pid_identity "$2"' _ "$tree" "$watcher" > "$home/root/state/.watch.lock/pid-identity"
-  env JG_HOST_MEMORY_FORK_BIN="$tree/bin" JG_HOME="$home/root" JG_STATE_OVERRIDE="$home/root/state" JG_CONFIG_OVERRIDE="$home/root/config" \
+  env JG_HOST_MEMORY_MACHINE_DIR="$home/machine" JG_HOST_MEMORY_FORK_BIN="$tree/bin" JG_HOME="$home/root" JG_STATE_OVERRIDE="$home/root/state" JG_CONFIG_OVERRIDE="$home/root/config" \
     "$tree/core/host-memory/bin/jg-host-memory-sampler.sh" run "$home/root" "$home/root/state" "$home/root/config" </dev/null >"$home/sampler.log" 2>&1 &
   sampler=$!
   pids+=("$sampler")

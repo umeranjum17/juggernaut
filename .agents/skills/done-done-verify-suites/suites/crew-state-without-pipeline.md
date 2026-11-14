@@ -1,0 +1,3 @@
+# Crew state without the pipeline
+
+Crew state without the pipeline: run `done-done run crew-state-without-pipeline`` with `JG_BEADS_TEST_BD` and `JG_BEADS_TEST_DOLT` naming the pinned builds; the spend script is gone, the real `bin/jg-crew-state.sh` names no pipeline tool, reads a crew only from its pane busy state and status log (busy and idle panes on tmux and herdr, a dead or unreadable endpoint, a ship done gated on its named head, a Recon done gated on its depth report, a squad lead's log, a remote squad lead, a torn-down worktree), and the real `bin/jg-teardown.sh` still takes the pool lock only around the slot return (screen: none).

@@ -597,6 +597,33 @@ jg_lint_run_deprecated() {
   return "$rc"
 }
 
+# A test links a fixture home's entry to the real tree with ln -sn: a plain ln -s into a destination that is
+# already a link to a directory writes the new link INSIDE the real directory (core/core, policy/policy),
+# leaving a stray link in the repo after the run. Only the same-name link, the form that nests, is checked.
+jg_lint_run_test_links() {
+  local path canonical findings
+  local -a link_roots
+  link_roots=()
+  if [ "$EXPLICIT_PATHS" -eq 0 ]; then
+    while IFS= read -r path; do link_roots+=("$path"); done < <(git -C "$ROOT" ls-files -- 'tests/*.sh' 'tests/*/*.sh' 'core/*/tests/*.sh' 'core/*/tests/*/*.sh')
+  else
+    for path in "${ROOTS[@]}"; do
+      [ -f "$path" ] || continue
+      canonical=$(cd "$(dirname "$path")" && printf '%s/%s' "$(pwd -P)" "$(basename "$path")") || continue
+      case "$canonical" in
+        "$ROOT"/tests/*.sh|"$ROOT"/tests/*/*.sh|"$ROOT"/core/*/tests/*.sh|"$ROOT"/core/*/tests/*/*.sh)
+          link_roots+=("${canonical#"$ROOT"/}")
+          ;;
+      esac
+    done
+  fi
+  [ "${#link_roots[@]}" -gt 0 ] || return 0
+  findings=$(cd "$ROOT" && grep -HnP '\bln -sf? +"?[^ ]*/([\w.-]+)"? +"?[^ ]*/\1"?(?=[ ;&|)]|$)' -- "${link_roots[@]}" 2>/dev/null | grep -v 'jg-test-leaves-nothing.test.sh' || true)
+  [ -z "$findings" ] && return 0
+  printf 'jg-lint.sh: a test links a fixture entry with plain ln -s; use ln -sn so it never writes a link inside the real tree:\n%s\n' "$findings" >&2
+  return 1
+}
+
 # bd runs only through bin/jg-beads.sh, the one script allowed to name it.
 jg_lint_run_backend_purity() {
   local findings path canonical
@@ -1133,6 +1160,7 @@ if { [ "$CHANGED_MODE" -eq 1 ] || [ "$CHANGED_BASE_MODE" -eq 1 ]; } && [ "$ROOT_
   printf 'jg-lint.sh: no changed lint targets\n'
   overall_rc=0
   jg_lint_run_backend_purity || overall_rc=$?
+  jg_lint_run_test_links || overall_rc=$?
   jg_lint_run_workflows || overall_rc=$?
   jg_lint_run_deprecated || overall_rc=$?
   exit "$overall_rc"
@@ -1495,6 +1523,7 @@ else
   jg_lint_run_workflows || true
 fi
 jg_lint_run_deprecated || overall_rc=$?
+jg_lint_run_test_links || overall_rc=$?
 
 if [ -n "$TELEMETRY" ]; then
   TELEMETRY_END_EPOCH=$(date +%s)

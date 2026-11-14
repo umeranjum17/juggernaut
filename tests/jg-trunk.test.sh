@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Integration test for bin/jg-trunk.sh: the landing and release flow end to end against real git repositories,
 # a local bare origin, the real gate chain and a stub for the captain-hold reader (tests/jg-trunk-fixture.sh).
+# Adopt-tip and the adoption of a moved trunk are tests/jg-trunk-adopt.test.sh, a refusal reaching the worker is tests/jg-trunk-refusal.test.sh.
 # The check and going live are tests/jg-trunk-live.test.sh, the landing gate and the proof are tests/jg-trunk-gate.test.sh,
 # the merge queue is tests/jg-trunk-queue.test.sh, and verify and the trunk lock are tests/jg-trunk-verify.test.sh.
 # Through tests/jg-trunk-fixture.sh it runs bin/jg-trunk.sh, reads bin/jg-dod-lib.sh and stands in for bin/jg-captain-hold.sh,
@@ -22,7 +23,7 @@
 #    repository chains the trunk guard: both still refuse, reruns and a landing change neither hook, uninstall restores it.
 # T5b A release (and the word for it) carries the last green commit while the tip is ahead of it; with no green recorded it refuses.
 # T9 The trunk is safe until its release PR lands: no write rewinds, forces or deletes it, even the lander's
-#    own; once the release merged, the next trunk version (trunk-v2) is cut from the default branch, recorded,
+#    own; once the release merged, the next trunk version (release/v2) is cut from the default branch, recorded,
 #    and landed on, with the old trunk untouched; while it is open, nothing rolls over.
 # T10 Once the next trunk is cut, the old one is cleaned up unforced - remote branch, local branch, worktrees - only
 #    when its release is proved on main and every hotfix is carried into the new trunk; a copy holding
@@ -37,122 +38,7 @@
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
 
-sends() { awk -F'\t' -v i="$1" '$1 == i { n++ } END { print n + 0 }' "$W/send-calls" 2>/dev/null || echo 0; }
 
-# moved_world <name>: byokit's shape. Lanes l1 and l2 landed; then the trunk branch is set by hand (no hook, as on the real home) to a
-# commit M of origin/main that lacks them. Lane c holds one commit on M whose tree is the merge of the old record and M.
-moved_world() {
-  local base m
-  world "$1"
-  base=$(tip); lane l1 one l1.txt; lane l2 two l2.txt
-  trunk land l1 >/dev/null 2>&1 || fail "l1 must land"; trunk land l2 >/dev/null 2>&1 || fail "l2 must land"
-  OLD=$(tip); printf '%s\n' "$OLD" > "$HOME_D/state/trunk-green-proj"  # verify passed on the last landing
-  git -C "$PROJ" worktree add -q --detach "$W/main-wt" "$base"; commit_in "$W/main-wt" main.txt m "main moves"
-  M=$(git -C "$W/main-wt" rev-parse HEAD); git -C "$PROJ" push -q origin "$M:refs/heads/main"
-  rm -f "$PROJ/.git/hooks/reference-transaction"; plain_git -C "$PROJ" update-ref refs/heads/trunk "$M" "$OLD"
-  C=$(git -C "$PROJ" -c user.name=t -c user.email=t@example.invalid commit-tree "$(git -C "$PROJ" merge-tree --write-tree "$OLD" "$M")" -p "$M" -m "ticket c")
-  git -C "$PROJ" branch -f fm/c "$C"; jg_write_meta "$HOME_D/state/c.meta" "project=$PROJ" "mode=local-trunk" "branch=fm/c"
-  prove c; ready c
-}
-rows_of() { grep -c "" "$HOME_D/data/trunk-adoptions.tsv" 2>/dev/null || echo 0; }
-
-# adopt-tip ends a trunk the lander did not leave: (a) byokit's shape, with the lost commits listed and carried by a lane, (b) pockit's
-# shape, (c) an unexplained move, (d) a worker, (e) the wait class and the one wake naming the command.
-test_adopt_tip_ends_a_moved_trunk_with_a_record_and_loses_no_landed_commit() {
-  local out
-  moved_world adopt-a
-  # (e) before any adoption: every subcommand refuses, the class is wait, and one wake names the command.
-  out=$(trunk land c 2>&1) && fail "a moved trunk must refuse a landing: $out"
-  assert_contains "$out" 'something else moved it' 'the refusal keeps its phrase'
-  printf '%s\n' "$out" > "$W/moved.out"; [ "$(trunk classify "$W/moved.out")" = wait ] || fail "the moved-trunk refusal must be class wait"
-  trunk land c >/dev/null 2>&1 || :
-  trunk land c >/dev/null 2>&1 || :
-  [ "$(grep -c "trunk-moved-proj-${OLD:0:12}-${M:0:12}" "$HOME_D/state/.wake-queue")" = 1 ] || fail "one drift alert, keyed by record and branch, however many refusals: $(cat "$HOME_D/state/.wake-queue" 2>&1)"
-  grep -q "adopt-tip $PROJ --reason .* --carried-by <task-id>" "$HOME_D/state/.wake-queue" || fail "the wake names the exact adopt-tip line and the lane the lost commits need"
-  # (a) the lost commits are listed and refused without --carried-by.
-  out=$(trunk adopt-tip "$PROJ" --reason 'main moved by a fetch' 2>&1) && fail "lost commits without --carried-by must be refused: $out"
-  assert_contains "$out" '2 landed commit' 'the refusal counts the lost commits'; assert_contains "$out" 'ticket l1' 'the refusal lists them'
-  [ "$(cat "$HOME_D/state/trunk-tip-proj")" = "$OLD" ] || fail "a refused adoption leaves the record"
-  # A lane that is not the merge is refused.
-  git -C "$PROJ" branch -f fm/bad "$M"; jg_write_meta "$HOME_D/state/bad.meta" "project=$PROJ" "mode=local-trunk" "branch=fm/bad"
-  out=$(trunk adopt-tip "$PROJ" --reason r --carried-by bad 2>&1) && fail "a lane that is not one commit on the tip must be refused: $out"
-  assert_contains "$out" 'exactly one commit' 'the lane shape is named'
-  # The adoption with the carrying lane.
-  trunk adopt-tip "$PROJ" --reason 'main moved by a fetch' --carried-by c >/dev/null || fail "the carrying lane must allow the adoption"
-  [ "$(cat "$HOME_D/state/trunk-tip-proj")" = "$M" ] || fail "the record follows the tip"
-  [ "$(git -C "$PROJ" for-each-ref --format='%(objectname)' 'refs/jg/trunk-adopted/trunk/')" = "$OLD" ] || fail "a keep ref holds the old record"
-  [ "$(rows_of)" = 1 ] || fail "one row per adoption"
-  grep -q "^proj	$OLD	$M	[0-9]*	on-default	2	c	main moved by a fetch\$" "$HOME_D/data/trunk-adoptions.tsv" || fail "the row must carry both commits, the relation, the lost count, the lane and the reason: $(cat "$HOME_D/data/trunk-adoptions.tsv")"
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$M" ] || fail "an on-default adoption moves a green pin that is not behind the tip to the tip"
-  out=$(trunk land c 2>&1) || fail "the carrying lane lands once the tip is adopted: $out"
-  [ "$(git -C "$PROJ" show trunk:l1.txt)" = one ] && [ "$(git -C "$PROJ" show trunk:main.txt)" = m ] || fail "the landed commits and main's are all on the trunk"
-  out=$(trunk adopt-tip "$PROJ" --reason again 2>&1) || :
-  [ "$(rows_of)" = 1 ] || fail "an adoption at a record that stands writes nothing more"
-  pass 'adopt-tip refuses landed commits left off the trunk, adopts with the carrying lane, keeps the old record, writes one row, and the lane lands'
-}
-
-# A landing sees a forward move from another home and records it without a model turn.
-test_landing_adopts_forward_and_refuses_rewind() {
-  local old new out
-  world auto-adopt
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
-  old=$(tip)
-  lane first one first.txt; trunk land first >/dev/null 2>&1 || fail "first lane must land"
-  new=$(tip)
-  printf '%s\n' "$old" > "$HOME_D/state/trunk-tip-proj"
-  sweep >/dev/null
-  [ "$(cat "$HOME_D/state/trunk-tip-proj")" = "$new" ] || fail "idle forward trunk must be adopted by the landing check"
-  grep -q "^proj	$old	$new	[0-9]*	forward	0	-	" "$HOME_D/data/trunk-adoptions.tsv" || fail "adoption row must name both tips and the reason"
-  lane next two next.txt; sweep >/dev/null
-  [ "$(tip)" = "$(git -C "$PROJ" rev-parse fm/next)" ] || fail "a lane must land after adoption"
-  old=$(tip)
-  git -C "$PROJ" -c core.hooksPath=/dev/null update-ref refs/heads/trunk "$new" "$old"
-  rm -f "$HOME_D/data/jg-trunk-landing/.green-alarm-proj"
-  sweep >/dev/null
-  grep -q "trunk-moved-proj-${old:0:12}-${new:0:12}" "$HOME_D/state/.wake-queue" || fail "idle rewind must alarm"
-  lane rewind three rewind.txt
-  sweep >/dev/null
-  out=$(cat "$HOME_D"/data/jg-trunk-landing/rewind.*.state)
-  assert_contains "$out" 'something else moved it' 'rewind must alarm'
-  [ "$(cat "$HOME_D/state/trunk-tip-proj")" = "$old" ] || fail "rewind must not change the record"
-  world auto-release
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
-  old=$(tip); lane released one release.txt; trunk land released >/dev/null 2>&1 || fail "released lane must land"
-  new=$(tip); printf '%s\n' "$old" > "$HOME_D/state/trunk-tip-proj"
-  printf '%s\n' "$new" > "$HOME_D/state/trunk-released-proj"
-  sweep >/dev/null
-  [ "$(cat "$HOME_D/state/trunk-tip-proj")" = "$new" ] || fail "released forward tip must be adopted"
-  grep -q "^proj	$old	$new	[0-9]*	forward	0	-	" "$HOME_D/data/trunk-adoptions.tsv" || fail "released adoption must be recorded"
-  pass 'landing adopts forward and released tips and refuses a rewind'
-}
-
-test_adopt_tip_takes_a_forward_move_and_refuses_an_unexplained_one_a_worker_and_any_flag() {
-  local out stray
-  world adopt-b
-  lane b1 one b1.txt; trunk land b1 >/dev/null 2>&1 || fail "b1 must land"
-  lane b2 two b2.txt; trunk land b2 >/dev/null 2>&1 || fail "b2 must land"
-  # Each landing moves the green pin to its head, so the record and the pin go back by hand: b1 and b2 stand for commits another home put on the trunk, which no gate here judged.
-  printf '%s\n' "$(git -C "$PROJ" rev-parse trunk~2)" > "$HOME_D/state/trunk-tip-proj"
-  printf '%s\n' "$(git -C "$PROJ" rev-parse trunk~2)" > "$HOME_D/state/trunk-green-proj"
-  # (d) a worker never adopts; no force or skip flag exists; a reason is required.
-  out=$(JG_TASK_ID=b1 trunk adopt-tip "$PROJ" --reason x 2>&1) && fail "a worker must be refused: $out"
-  assert_contains "$out" 'worker never adopts' 'the worker is refused by name'
-  for flag in --force --skip --no-verify; do out=$(trunk adopt-tip "$PROJ" "$flag" --reason x 2>&1) && fail "$flag must be refused: $out"; done
-  out=$(trunk adopt-tip "$PROJ" --reason '  ' 2>&1) && fail "a blank reason must be refused: $out"
-  [ "$(rows_of)" = 0 ] || fail "a refused adoption writes no row"
-  # (b) pockit's shape: the record is an ancestor of the tip, which is not on origin/main: forward, lost 0.
-  trunk adopt-tip "$PROJ" --reason 'fetched from another home' >/dev/null || fail "a forward move must be adopted"
-  [ "$(cat "$HOME_D/state/trunk-tip-proj")" = "$(tip)" ] || fail "the record follows the tip"
-  grep -q "	forward	0	-	fetched from another home\$" "$HOME_D/data/trunk-adoptions.tsv" || fail "the row names the relation and no lost commit"
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(git -C "$PROJ" rev-parse trunk~2)" ] || fail "a forward adoption does not move the green pin to a commit no gate judged"
-  # (c) neither on origin/main nor holding the record: refused.
-  stray=$(git -C "$PROJ" -c user.name=t -c user.email=t@example.invalid commit-tree "$(git -C "$PROJ" hash-object -t tree /dev/null)" -m stray)
-  printf '%s\n' "$stray" > "$HOME_D/state/trunk-tip-proj"
-  out=$(trunk adopt-tip "$PROJ" --reason 'someone moved it' 2>&1) && fail "an unexplained move must be refused: $out"
-  assert_contains "$out" 'not explained' 'the refusal says the move is not explained'
-  [ "$(cat "$HOME_D/state/trunk-tip-proj")" = "$stray" ] || fail "a refused adoption leaves the record"
-  pass 'adopt-tip adopts a forward move, and refuses an unexplained move, a worker, any flag and a blank reason'
-}
 
 test_configured_hooks_and_the_launch_overlay_preserve_trunk_protection() {
   local c before out rc=0 hook_kind owner_hash
@@ -233,7 +119,7 @@ test_a_home_with_other_shas_is_contained_only_when_the_trunk_took_its_changes() 
 test_admission_is_shared_by_manual_and_automatic_requests() {
   local c out rc=0 first_log
   world admission
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   lane once BAD; c=$(git -C "$PROJ" rev-parse fm/once)
   printf 'gate-full=echo first >> "%s/calls"; while [ ! -e "%s/release" ]; do sleep 0.1; done; echo original; exit 1\n' "$W" "$W" >> "$HOME_D/config/trunk-policy"
   JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D" >/dev/null
@@ -307,19 +193,19 @@ test_a_good_lane_lands_but_goes_live_only_on_his_word() {
   assert_contains "$(cat "$HOME_D/data/trunk-landings.tsv")" "$(printf 't1\tproj\t%s' "$c")" "the landing must be logged"
   assert_contains "$(cat "$W/ledger-calls")" "merged t1 local" "land must raise the same merged event as the local merge"
   [ ! -e "$W/live-moves" ] || fail "landing must never run the live hook"
-  [ ! -e "$HOME_D/data/trunk-live.tsv" ] || fail "landing must not record a live move"
-  assert_contains "$out" "not live" "land must say the trunk is not live"
+  [ ! -e "$HOME_D/data/trunk-in-use.tsv" ] || fail "landing must not record a live move"
+  assert_contains "$out" "not In use" "land must say the trunk is not In use"
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$green" ] || fail "a landing must leave the green pin where it was: only a verify moves it"
   out=$(trunk live "$PROJ" 2>&1) && fail "live must refuse without the captain's word"
   assert_contains "$out" "no recorded word from the captain" "live must say it needs his word"
-  out=$(JG_TASK_ID=t1 trunk word live "$PROJ" "go" 2>&1) && fail "a worker must not record the captain's word"
+  out=$(JG_TASK_ID=t1 trunk word in-use "$PROJ" "go" 2>&1) && fail "a worker must not record the captain's word"
   assert_contains "$out" "worker never records" "a worker's word must be refused by name"
-  trunk word live "$PROJ" "" >/dev/null 2>&1 && fail "a word with no quote must refuse"
+  trunk word in-use "$PROJ" "" >/dev/null 2>&1 && fail "a word with no quote must refuse"
   trunk verify "$PROJ" >/dev/null 2>&1 || fail "the verify must pass: it moves the pin that live follows"
-  trunk word live "$PROJ" "go live" >/dev/null 2>&1 || fail "the captain's word must record"
+  trunk word in-use "$PROJ" "go live" >/dev/null 2>&1 || fail "the captain's word must record"
   out=$(trunk live "$PROJ" 2>&1) || fail "live with his word must move the home: $out"
   [ "$(cat "$W/live-moves")" = "$c" ] || fail "the live hook must run at the green commit"
-  assert_contains "$(cat "$HOME_D/data/trunk-live.tsv")" "$(printf '%s\t%s' proj "$c")" "the live move must be logged"
+  assert_contains "$(cat "$HOME_D/data/trunk-in-use.tsv")" "$(printf '%s\t%s' proj "$c")" "the live move must be logged"
   trunk live "$PROJ" >/dev/null 2>&1 && fail "his word is spent by one live"
   [ "$green" != "$c" ] || fail "fixture: the lane must differ from the trunk base"
   pass 'a one-commit lane lands, is logged, and goes live only on the captain'"'"'s recorded word'
@@ -418,9 +304,9 @@ test_a_red_found_after_the_landing_pins_the_home_behind_it() {
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$first" ] || fail "the landing must leave the green pin where it was"
   out=$(trunk verify "$PROJ" "$c" 2>&1) && fail "verify must fail on a commit the whole suite rejects"
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$first" ] || fail "a red verify must take the green pin back below the commit: $out"
-  trunk word live "$PROJ" "go live" >/dev/null || fail "the captain's word must record"
+  trunk word in-use "$PROJ" "go live" >/dev/null || fail "the captain's word must record"
   out=$(trunk live "$PROJ" 2>&1) || fail "live must work with his word: $out"
-  assert_contains "$(cat "$HOME_D/data/trunk-live.tsv")" "pinned-behind" "the live record must say the home is pinned behind"
+  assert_contains "$(cat "$HOME_D/data/trunk-in-use.tsv")" "pinned-behind" "the live record must say the home is pinned behind"
   [ "$(tail -1 "$W/live-moves")" = "$first" ] || fail "the home must stay on the last green commit"
   pass 'a red found after the landing takes the green pin back and pins the home behind it'
 }
@@ -495,16 +381,16 @@ test_a_red_ci_pins_the_home_back_to_the_last_green_commit() {
   local c1 c2 out
   world ci
   lane c1 one; c1=$(git -C "$PROJ" rev-parse fm/c1); trunk land c1 >/dev/null 2>&1 || fail "c1 must land"; trunk verify "$PROJ" >/dev/null 2>&1 || fail "c1 must verify"
-  trunk word live "$PROJ" "go" >/dev/null 2>&1; trunk live "$PROJ" >/dev/null 2>&1 || fail "c1 must go live"
+  trunk word in-use "$PROJ" "go" >/dev/null 2>&1; trunk live "$PROJ" >/dev/null 2>&1 || fail "c1 must go live"
   lane c2 two; c2=$(git -C "$PROJ" rev-parse fm/c2); trunk land c2 >/dev/null 2>&1 || fail "c2 must land"; trunk verify "$PROJ" >/dev/null 2>&1 || fail "c2 must verify"
-  trunk word live "$PROJ" "go" >/dev/null 2>&1; trunk live "$PROJ" >/dev/null 2>&1 || fail "c2 must go live"
+  trunk word in-use "$PROJ" "go" >/dev/null 2>&1; trunk live "$PROJ" >/dev/null 2>&1 || fail "c2 must go live"
   [ "$(tail -1 "$W/live-moves")" = "$c2" ] || fail "fixture: the home must be at c2"
   out=$(trunk ci "$PROJ" "$c2" red 2>&1) || fail "a red CI must record and pin back: $out"
   [ "$(tail -1 "$W/live-moves")" = "$c1" ] || fail "a red CI must move the home back to the last green live commit"
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$c1" ] || fail "the green pin must be the last green commit"
   lane c3 three; out=$(trunk land c3 2>&1) || fail "a red CI never stops a landing: $out"
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$c1" ] || fail "a landing above the CI-red commit leaves the green pin on the last green commit"
-  trunk word live "$PROJ" "go" >/dev/null 2>&1; trunk live "$PROJ" >/dev/null 2>&1 || fail "live after a pin-back must work with his word"
+  trunk word in-use "$PROJ" "go" >/dev/null 2>&1; trunk live "$PROJ" >/dev/null 2>&1 || fail "live after a pin-back must work with his word"
   [ "$(tail -1 "$W/live-moves")" = "$c1" ] || fail "the home must stay pinned on the last green commit"
   # A landed commit that reverts the CI-red one; the verify of the tip above it moves the pin again.
   lane c4 one work.txt "reverts: $c2"; out=$(trunk land c4 2>&1) || fail "the revert lane must land: $out"
@@ -524,21 +410,21 @@ test_the_trunk_stays_safe_until_its_release_lands_then_the_next_version_is_cut()
   out=$(trunk rollover "$PROJ" 2>&1) && fail "an open release must not roll the trunk over"
   assert_contains "$out" "rollover skipped" "an open release must say what was skipped"
   assert_contains "$out" "not merged" "an open release must say why nothing moved"
-  plain_git -C "$PROJ" show-ref --verify --quiet refs/heads/trunk-v2 && fail "no next trunk may exist while the release is open"
+  plain_git -C "$PROJ" show-ref --verify --quiet refs/heads/release/v2 && fail "no next trunk may exist while the release is open"
   printf 'merged\n' > "$W/pr-state"; git -C "$PROJ" push -q origin "$old:refs/heads/main"
   out=$(trunk rollover "$PROJ" 2>&1) || fail "a merged release must cut the next trunk: $out"
-  [ "$(git -C "$PROJ" rev-parse trunk-v2)" = "$old" ] || fail "trunk-v2 must be cut from the merged default branch"
+  [ "$(git -C "$PROJ" rev-parse release/v2)" = "$old" ] || fail "release/v2 must be cut from the merged default branch"
   assert_contains "$out" "deleted local trunk" "the proved and carried old trunk must be cleaned up"
   assert_contains "$out" "deleted remote trunk" "the old trunk's remote branch must be deleted"
   git -C "$PROJ" rev-parse --verify -q refs/heads/trunk >/dev/null && fail "the old local trunk must be gone"
-  [ "$(cat "$HOME_D/state/trunk-branch-proj")" = trunk-v2 ] && [ "$(cat "$HOME_D/state/trunk-version-proj")" = 2 ] || fail "the trunk record must name version 2"
-  assert_contains "$(cat "$HOME_D/data/trunk-versions.tsv")" "$(printf 'proj\t2\ttrunk-v2\t%s' "$old")" "the version must be recorded"
+  [ "$(cat "$HOME_D/state/trunk-branch-proj")" = release/v2 ] && [ "$(cat "$HOME_D/state/trunk-version-proj")" = 2 ] || fail "the trunk record must name version 2"
+  assert_contains "$(cat "$HOME_D/data/trunk-versions.tsv")" "$(printf 'proj\t2\trelease/v2\t%s' "$old")" "the version must be recorded"
   out=$(trunk rollover "$PROJ" 2>&1) && fail "one release rolls over once"
   assert_contains "$out" "already rolled over" "a repeated rollover must say why it was skipped"
-  git -C "$PROJ" worktree add -q -b fm/n1 "$W/lanes/n1" trunk-v2; commit_in "$W/lanes/n1" work.txt next "ticket n1"
+  git -C "$PROJ" worktree add -q -b fm/n1 "$W/lanes/n1" release/v2; commit_in "$W/lanes/n1" work.txt next "ticket n1"
   jg_write_meta "$HOME_D/state/n1.meta" "project=$PROJ" "mode=local-trunk" "branch=fm/n1" "worktree=$W/lanes/n1" "spawn_gen=g-n1"; prove n1
   out=$(trunk land n1 2>&1) || fail "a lane must land on the next trunk: $out"
-  [ "$(git -C "$PROJ" rev-parse trunk-v2)" = "$(git -C "$PROJ" rev-parse fm/n1)" ] || fail "the next trunk must hold the landed commit"
+  [ "$(git -C "$PROJ" rev-parse release/v2)" = "$(git -C "$PROJ" rev-parse fm/n1)" ] || fail "the next trunk must hold the landed commit"
   pass 'the trunk is safe until its release lands, then the next version is cut and the project moves onto it'
 }
 
@@ -555,14 +441,14 @@ test_the_old_trunk_is_cleaned_up_unforced_and_only_when_its_work_is_carried() {
   # A commit that reaches the old trunk after the cut was not in the rollover's replay (tests/jg-trunk-rollover.test.sh owns that).
   JG_TRUNK_WRITER=1 commit_in "$wt" hot.txt hotfix "ticket hx"; hot=$(git -C "$wt" rev-parse HEAD)
   out=$(trunk retire "$PROJ" 2>&1) || fail "retire must not fail: $out"
-  assert_contains "$out" "kept trunk: hotfix not carried into trunk-v2: " "a hotfix not carried must keep the old trunk and be listed"
+  assert_contains "$out" "kept trunk: hotfix not carried into release/v2: " "a hotfix not carried must keep the old trunk and be listed"
   assert_contains "$out" "ticket hx" "the uncarried hotfix must be named"
   git -C "$PROJ" rev-parse --verify -q refs/heads/trunk >/dev/null || fail "an old trunk with an uncarried hotfix must not be deleted"
   [ -d "$wt" ] || fail "a worktree on it must not be removed"
-  git -C "$PROJ" worktree add -q -b fm/hx2 "$W/lanes/hx2" trunk-v2; git -C "$W/lanes/hx2" cherry-pick -n "$hot" >/dev/null 2>&1 || fail "the hotfix must cherry-pick"
+  git -C "$PROJ" worktree add -q -b fm/hx2 "$W/lanes/hx2" release/v2; git -C "$W/lanes/hx2" cherry-pick -n "$hot" >/dev/null 2>&1 || fail "the hotfix must cherry-pick"
   git -C "$W/lanes/hx2" -c user.name=t -c user.email=t@example.invalid commit -q -m "ticket hx2: carry hotfix hx"
   jg_write_meta "$HOME_D/state/hx2.meta" "project=$PROJ" "mode=local-trunk" "branch=fm/hx2" "worktree=$W/lanes/hx2" "spawn_gen=g-hx2"; prove hx2
-  trunk land hx2 >/dev/null 2>&1 || fail "the carried hotfix must land on trunk-v2"
+  trunk land hx2 >/dev/null 2>&1 || fail "the carried hotfix must land on release/v2"
   out=$(trunk retire "$PROJ" 2>&1) || fail "retire must not fail: $out"
   assert_contains "$out" "kept worktree $wt: it holds uncommitted work" "a worktree with unlanded work must be kept and listed"
   assert_contains "$out" "kept local trunk" "its branch must be kept with it"
@@ -578,104 +464,11 @@ test_the_old_trunk_is_cleaned_up_unforced_and_only_when_its_work_is_carried() {
   pass 'the old trunk is cleaned up unforced, only once its release is proved on main and every hotfix is carried'
 }
 
-# shellcheck disable=SC2016 # the gate bodies are written out verbatim and expand when the gate runs them
-test_a_refusal_reaches_the_lanes_worker_and_never_sits_silent() {
-  local out gone h f real_backlog=0
-  world reach
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
-  # An incomplete proof: the worker is steered with the refusal text, and the done itself names what to run.
-  lane r1 one; rm "$HOME_D/data/r1/merge-card.json"
-  out=$(done_gate r1) && fail "a done with no merge-card evidence must be refused: $out"
-  assert_contains "$out" "merge-card check r1" "the done names the command to run"
-  printf '# the done is refused and names what to run: %s\n' "$out"
-  sweep >/dev/null
-  [ "$(sends r1)" = 1 ] || fail "the refused lane's worker must be steered once, got $(sends r1)"
-  assert_contains "$(grep '^r1	' "$W/send-calls")" "proof inputs are incomplete" "the steer carries the refusal text"
-  assert_contains "$(grep '^r1	' "$W/send-calls")" "merge-card check r1" "the steer names what to run"
-  printf '# the lane worker is steered: %s\n' "$(grep '^r1	' "$W/send-calls" | head -n 1)"
-  sweep >/dev/null; [ "$(sends r1)" = 1 ] || fail "the same refusal must not steer again before it is due"
-  # Re-rung while the head is unchanged, unless the worker still has an unread steer (the inbox's own ladder rings that one).
-  rf=$(ls "$HOME_D"/data/jg-trunk-landing/r1.*.refusal); sed -i "s/^\([0-9]*\) \([0-9]*\) [0-9]* /\1 \2 $(( $(date +%s) - 700 )) /" "$rf"
-  mkdir -p "$HOME_D/state/r1.inbox"; : > "$HOME_D/state/r1.inbox/001.msg"
-  sweep >/dev/null; [ "$(sends r1)" = 1 ] || fail "a worker with an unread steer is not steered again"
-  rm "$HOME_D/state/r1.inbox/001.msg"
-  sweep >/dev/null; [ "$(sends r1)" = 2 ] || fail "an unchanged head is steered again when the last steer is due: $(sends r1)"
-  # Nobody acted for ten minutes: one alert names the lane and the refusal.
-  out=$(sweep); [[ $out != *ALERT* ]] || fail "no alert before ten minutes: $out"
-  sed -i "s/^[0-9]* /$(( $(date +%s) - 700 )) /" "$rf"
-  out=$(sweep); assert_contains "$out" "ALERT: r1 has sat refused for over 10 minutes" "the alert names the lane"
-  assert_contains "$out" "no approved merge-card evidence" "the alert names the refusal"
-  printf '# after ten silent minutes: %s\n' "$out"
-  out=$(sweep); [[ $out != *ALERT* ]] || fail "the alert is raised once: $out"
-  # A final refusal (a red gate) tells the ticket and steers the worker once.
-  if [ -n "${JG_BEADS_TEST_BD:-}" ] && [ -n "${JG_BEADS_TEST_DOLT:-}" ]; then
-    jg_test_beads_home "$HOME_D"
-    cp "$ROOT/bin/jg-backlog.sh" "$HOME_D/bin/jg-backlog.sh"
-    cp "$ROOT/toolchain.versions" "$HOME_D/toolchain.versions"
-    jg_test_backlog "$HOME_D" add jg-r2 '[feature] refusal fixture' --kind ship --repo proj --body 'Prove a final refusal reaches its owner.' >/dev/null || fail 'create jg-r2 ticket'
-    jg_test_backlog "$HOME_D" add jg-r5 '[feature] retry fixture' --kind ship --repo proj --body 'Prove exhausted retries reach their owner.' >/dev/null || fail 'create jg-r5 ticket'
-    real_backlog=1
-  else
-    printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s/backlog-calls"\n' "$W" > "$HOME_D/bin/jg-backlog.sh"
-    chmod +x "$HOME_D/bin/jg-backlog.sh"
-    printf '# real ticket assertions skipped: no pinned Beads tools\n'
-  fi
-  cp "$HOME_D/bin/jg-send.sh" "$W/send-stub"
-  cp "$ROOT/bin/jg-send.sh" "$HOME_D/bin/jg-send.sh"
-  printf '#!/usr/bin/env bash\nexit 0\n' > "$W/fakebin/tmux"; chmod +x "$W/fakebin/tmux"
-  lane jg-r2 BAD
-  printf 'kind=ship\nharness=codex\nwindow=sess:jg-jg-r2\n' >> "$HOME_D/state/jg-r2.meta"
-  sweep >/dev/null; sweep >/dev/null
-  assert_contains "$(cat "$HOME_D/state/jg-r2.inbox/001.msg" 2>/dev/null)" "gate 'full' failed" "a final refusal reaches its worker"
-  if [ "$real_backlog" = 1 ]; then
-    assert_contains "$(jg_test_backlog "$HOME_D" show jg-r2 --full)" "gate 'full' failed" "the final refusal reaches its ticket"
-  else assert_contains "$(cat "$W/backlog-calls" 2>/dev/null)" "update jg-r2 --body-file" "the final refusal reaches its ticket"; fi
-  [ "$(find "$HOME_D/state/jg-r2.inbox" -maxdepth 1 -name '*.msg' | wc -l)" = 1 ] || fail "a final refusal sends one steer"
-  assert_not_contains "$(cat "$HOME_D"/data/jg-trunk-landing/jg-r2.*.log)" "unbound variable" "the real lander completes its refusal"
-  assert_contains "$(JG_HOME="$HOME_D" "$HOME_D/bin/jg-machine.sh" show task jg-r2)" "rework" "the refused lane is in rework"
-  cp "$W/send-stub" "$HOME_D/bin/jg-send.sh"
-  # The lane changes its head: the old refusal is history and the new head is judged on its own.
-  gone=$(git -C "$PROJ" rev-parse fm/r1); relane r1 two; ready r1
-  sweep >/dev/null; sweep >/dev/null
-  [ "$(sends r1)" = 2 ] || fail "a lane with a new head is not steered about its old head: $(grep '^r1	' "$W/send-calls" | cut -c1-80)"
-  [ "$(git -C "$PROJ" rev-parse fm/r1)" != "$gone" ] || fail "the lane moved to a new head"
-  [ "$(tip)" = "$(git -C "$PROJ" rev-parse fm/r1)" ] || fail "the new, proved head lands"
-  # A refusal recorded for a head the lane no longer has steers nobody.
-  lane r3 three; printf 'final REFUSED: an old refusal\n' > "$HOME_D/data/jg-trunk-landing/r3.0000000000000000000000000000000000000000.state"
-  sweep >/dev/null; sweep >/dev/null
-  [ "$(sends r3)" = 0 ] || fail "a stale-head refusal must steer nobody: $(grep "^r3	" "$W/send-calls" | cut -c1-300)"
-  # A refusal that only needs time is not the worker's to fix.
-  lane r4 four; : > "$HOME_D/state/.afk"; sweep >/dev/null; sweep >/dev/null; rm "$HOME_D/state/.afk"
-  [ "$(sends r4)" = 0 ] || fail "a wait for time (away mode) must not steer the worker"
-  # An infrastructure failure becomes final only after three attempts and then reaches the owner once.
-  sweep >/dev/null; sweep >/dev/null
-  printf 'gate-full=echo "cat: write error: Disk quota exceeded"; exit 1\n' >> "$HOME_D/config/trunk-policy"
-  cp "$ROOT/bin/jg-send.sh" "$HOME_D/bin/jg-send.sh"
-  lane jg-r5 five jg-r5.txt; printf 'kind=ship\nharness=codex\nwindow=sess:jg-jg-r5\n' >> "$HOME_D/state/jg-r5.meta"
-  h=$(git -C "$PROJ" rev-parse fm/jg-r5); f=$HOME_D/data/jg-trunk-landing/jg-r5.$h.state
-  for n in 1 2 3; do
-    sweep >/dev/null
-    for _ in $(seq 1 600); do
-      if ! grep -qs '^running' "$HOME_D"/data/jg-trunk-landing/*.state && ! compgen -G "$HOME_D/state/.trunk-run-*.lock" >/dev/null; then break; fi
-      sleep 0.2
-    done
-    [ -f "$f" ] || fail "retry $n has no verdict"
-    if [ "$n" -lt 3 ]; then [ ! -d "$HOME_D/state/jg-r5.inbox" ] || fail "retry $n must not steer"; fi
-    touch -d '3 minutes ago' "$f"
-  done
-  sweep >/dev/null
-  [ "$(find "$HOME_D/state/jg-r5.inbox" -maxdepth 1 -name '*.msg' 2>/dev/null | wc -l)" = 1 ] || fail "the final retry verdict must send one steer: $(cat "$f")"
-  if [ "$real_backlog" = 1 ]; then
-    assert_contains "$(jg_test_backlog "$HOME_D" show jg-r5 --full)" "gave up after 3 tries" "the final retry verdict reaches its ticket"
-  else assert_contains "$(cat "$W/backlog-calls")" "update jg-r5 --body-file" "the final retry verdict reaches its ticket"; fi
-  assert_contains "$(JG_HOME="$HOME_D" "$HOME_D/bin/jg-machine.sh" show task jg-r5)" "rework" "the exhausted lane is in rework"
-  pass 'a refusal the worker fixes reaches it by steer, repeats until the head changes, alerts after ten silent minutes, and never steers a stale head or a wait'
-}
 
 test_l3_environment_wait_is_not_retried_in_batches() {
   local h n
   world l3-batch
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   lane b1 good b1.txt; lane b2 good b2.txt
   printf 'gate-full=echo attempt >> "%s/calls"; echo ENV: missing-fixture; exit 1\n' "$W" >> "$HOME_D/config/trunk-policy"
   sweep >/dev/null; sleep 1
@@ -705,7 +498,7 @@ test_l3_environment_facts_retirement_and_self_init() {
   [ -n "$(find "$HOME_D/data/jg-trunk-landing/retired" -name 'facts.*.state' -print -quit)" ] || fail "the old admission key must retire"
 
   world l3-retire
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   mkdir -p "$HOME_D/data/jg-trunk-landing"
   lane stale good; old=$(git -C "$PROJ" rev-parse fm/stale)
   printf 'final REFUSED: trunk moved\n' > "$HOME_D/data/jg-trunk-landing/stale.$old.state"
@@ -716,7 +509,7 @@ test_l3_environment_facts_retirement_and_self_init() {
   [ -f "$HOME_D/data/jg-trunk-landing/retired/stale.$old.state" ] || fail "superseded final must be retained in retired"
 
   world l3-init
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   other="$HOME_D/projects/other"; jg_git_init_commit "$other"
   printf '%s\n' '- other [local-trunk] - fixture' >> "$HOME_D/data/projects.md"
   out=$(sweep)
@@ -779,8 +572,4 @@ test_a_release_carries_the_last_green_commit_while_the_tip_is_ahead
 test_a_red_ci_pins_the_home_back_to_the_last_green_commit
 test_the_trunk_stays_safe_until_its_release_lands_then_the_next_version_is_cut
 test_the_old_trunk_is_cleaned_up_unforced_and_only_when_its_work_is_carried
-test_a_refusal_reaches_the_lanes_worker_and_never_sits_silent
-test_adopt_tip_ends_a_moved_trunk_with_a_record_and_loses_no_landed_commit
-test_adopt_tip_takes_a_forward_move_and_refuses_an_unexplained_one_a_worker_and_any_flag
-test_landing_adopts_forward_and_refuses_rewind
 printf 'jg-trunk: ok\n'

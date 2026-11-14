@@ -96,6 +96,20 @@ for row in "${ROWS[@]}"; do
   ACCOUNTS+=("$(read_one "$id" "$name" "$folder")") || exit 1
 done
 JSON=$(printf '%s\n' "${ACCOUNTS[@]}" | jq -sc --argjson at "$(date +%s)" '{schema: 1, generated_at: $at, accounts: .}') || exit 1
+# A login that stopped or came back is a move of the account machine; the shadow reads the old reading, so it is reported before the swap.
+report_login_moves() {
+  local shadow=$JG_HOME/bin/jg-machine-shadow.sh id was now_out
+  [ -x "$shadow" ] || return 0
+  # the picker's own test for a login problem (core/machines/observers/account.sh)
+  local out_re='sign-?in|log ?in|unauthenticated|not authenticated|no credentials'
+  while IFS=$'\t' read -r id now_out; do
+    was=$(jq -r --arg id "$id" --arg re "$out_re" '[.accounts[]? | select(.id == $id) | ((.problem // "") | test($re; "i") | tostring)] | first // "none"' "$OUT" 2>/dev/null) || was=none
+    [ "$was" != none ] || continue  # an account the last reading did not hold is the machine's add move, not a login move
+    if [ "$now_out" = true ] && [ "$was" = false ]; then "$shadow" account "$PROVIDER.$id" signed-out || true
+    elif [ "$now_out" = false ] && [ "$was" = true ]; then "$shadow" account "$PROVIDER.$id" available || true; fi
+  done < <(jq -r --arg re "$out_re" '.accounts[] | [.id, ((.problem // "") | test($re; "i"))] | @tsv' <<<"$JSON")
+}
+report_login_moves
 mkdir -p "$JG_HOME/state"
 tmp=$(mktemp "$OUT.XXXXXX") && printf '%s\n' "$JSON" >"$tmp" && mv -f "$tmp" "$OUT" || { echo "error: cannot write $OUT" >&2; exit 1; }
 [ "$PRINT" -eq 0 ] || printf '%s\n' "$JSON"

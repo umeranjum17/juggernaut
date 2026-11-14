@@ -22,7 +22,7 @@ trap 'echo "retained fixture: $work"' EXIT
 export HOME=$work/user XDG_DATA_HOME=$work/xdg SIGN_OFF_HOME=$work/signoff
 export JG_HOME=$work/main
 mkdir -p "$HOME" "$JG_HOME"/{data,config,state}
-ln -s "$fork/bin" "$JG_HOME/bin"
+ln -sn "$fork/bin" "$JG_HOME/bin"
 printf '{"schema":2,"items":[]}\n' > "$work/board.json"
 printf '%s\n' "$work/board.json" > "$JG_HOME/config/fleet-board"
 # shellcheck source=core/lib/beads-test-env.sh disable=SC1091

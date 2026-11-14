@@ -21,11 +21,12 @@ type intake struct {
 	kindSet                                        bool
 	harness, model, effort, backend, mode, yolo    string
 	branchPrefix, baseBranch, consent, traceparent string
-	redFixOf, offCritical, ticket                  string
+	redFixOf, offCritical, ticket, shepherd        string
 	harnessSet, modelSet, effortSet, backendSet    bool
 	modeSet, yoloSet, branchPrefixSet              bool
 	baseBranchSet, consentSet, traceparentSet      bool
 	redFixOfSet, offCriticalSet, ticketSet         bool
+	shepherdSet                                    bool
 	relaunch, herdrResumeLockWait                  bool
 	pos                                            []string
 }
@@ -38,7 +39,7 @@ func b2i(b bool) string {
 }
 
 // valueFlags are the flags that take a value, as `--flag value` or `--flag=value`.
-var valueFlags = []string{"harness", "model", "effort", "backend", "mode", "yolo", "branch-prefix", "base-branch", "red-fix-of", "off-critical-path", "ticket", "upstream-consent", "traceparent"}
+var valueFlags = []string{"harness", "model", "effort", "backend", "mode", "yolo", "branch-prefix", "base-branch", "red-fix-of", "off-critical-path", "ticket", "shepherd", "upstream-consent", "traceparent"}
 
 // set records one value flag, the shell's `case "$want_value"`.
 func (t *intake) set(name, v string) {
@@ -65,6 +66,8 @@ func (t *intake) set(name, v string) {
 		t.offCritical, t.offCriticalSet = v, true
 	case "ticket":
 		t.ticket, t.ticketSet = v, true
+	case "shepherd":
+		t.shepherd, t.shepherdSet = v, true
 	case "upstream-consent":
 		t.consent, t.consentSet = v, true
 	case "traceparent":
@@ -134,6 +137,7 @@ func parseIntake(args []string) (*intake, error) {
 		{t.redFixOfSet, t.redFixOf, "error: --red-fix-of requires a non-empty branch name"},
 		{t.offCriticalSet, t.offCritical, "error: --off-critical-path requires the captain's words as a non-empty value"},
 		{t.ticketSet, t.ticket, "error: --ticket requires a non-empty ticket id"},
+		{t.shepherdSet, t.shepherd, "error: --shepherd requires a non-empty pull request address"},
 		{t.consentSet, t.consent, "error: --upstream-consent requires a non-empty <host>/<owner>/<repo> value"},
 		{t.traceparentSet, t.traceparent, "error: --traceparent requires a non-empty value"},
 	} {
@@ -231,6 +235,7 @@ func (t *intake) deliveryRefusal() string {
 			{t.offCriticalSet, "error: --relaunch reuses the task's recorded critical-path decision; --off-critical-path cannot override it"},
 			{t.consentSet, "error: --relaunch reuses the task's recorded upstream consent; --upstream-consent cannot override it"},
 			{t.ticketSet, "error: --relaunch reads the ticket from the task's record; --ticket cannot override it"},
+			{t.shepherdSet, "error: --relaunch reuses the task's recorded shepherd address; --shepherd cannot override it"},
 		} {
 			if c.set {
 				return c.text
@@ -254,6 +259,13 @@ func (t *intake) deliveryRefusal() string {
 		}
 		if t.yolo != "on" && t.yolo != "off" {
 			return fmt.Sprintf("error: --yolo must be on or off (got '%s')", t.yolo)
+		}
+		if t.shepherdSet {
+			if publishes, err := styleIs(t.mode, "publishes"); err != nil {
+				return "error: " + err.Error()
+			} else if !publishes {
+				return fmt.Sprintf("error: --shepherd is meaningless on %s, which opens no pull request; shepherd a pull request on a mode that publishes one", t.mode)
+			}
 		}
 		if t.consentSet {
 			if publishes, err := styleIs(t.mode, "publishes"); err != nil {
@@ -281,6 +293,8 @@ func (t *intake) deliveryRefusal() string {
 		return "error: --red-fix-of applies only to ship spawns; a scout and a squad_lead land no change on a release branch"
 	case t.offCriticalSet:
 		return "error: --off-critical-path applies only to ship spawns; a scout and a squad_lead are never held to the migration's critical path"
+	case t.shepherdSet:
+		return "error: --shepherd applies only to ship spawns; a scout and a squad_lead do not carry a pull request to its merge"
 	case t.consentSet:
 		return "error: --upstream-consent applies only to ship spawns; a scout publishes nothing and a squad_lead records no delivery contract"
 	}
@@ -315,6 +329,8 @@ func (t *intake) shellCode(refusal string) string {
 	line("OFF_CRITICAL_PATH_SET", b2i(t.offCriticalSet))
 	line("TICKET", t.ticket)
 	line("TICKET_SET", b2i(t.ticketSet))
+	line("SHEPHERD", t.shepherd)
+	line("SHEPHERD_SET", b2i(t.shepherdSet))
 	line("UPSTREAM_CONSENT", t.consent)
 	line("UPSTREAM_CONSENT_SET", b2i(t.consentSet))
 	line("TRACEPARENT_ARG", t.traceparent)

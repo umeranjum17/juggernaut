@@ -1,3 +1,5 @@
 # fleet status board (`juggernaut-axi board`)
 
 fleet status board (`juggernaut-axi board`): run `done-done run -- bash tests/jg-fleet-status.test.sh` with the log written into `$DONE_DONE_EVIDENCE_ROOT`; it drives the real CLI over a fixture home and proves one row per machine and home, the count in each state, a record past its state's time limit, a record in no state, a machine with no record lister shown as not wired, a row read past the bound named in `unread`, the four words Built, Landed, In use and Released, and that reading writes nothing. Live and read-only: `JG_HOME=<home> bin/juggernaut-axi board` on the real home (screen: none).
+
+Machine readings (`core/fleet-status/readings.sh`, one lister for each of the 24 machines): run `done-done run -- bash tests/jg-fleet-readings.test.sh` with the log written into `$DONE_DONE_EVIDENCE_ROOT`; it proves, for each machine over fixture source records, a fresh, a stale and an unknown reading with its age, a missing home reading unknown, and the account observer's no-reading reading as state unknown (screen: none).

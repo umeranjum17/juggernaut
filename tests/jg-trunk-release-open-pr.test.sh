@@ -253,6 +253,8 @@ SH
 chmod +x "$W/fakebin/gh-axi"
 cat > "$W/fakebin/gh" <<SH
 #!/usr/bin/env bash
+# A flag file makes the first read of the published PR body fail, as the forge did on PRs 814 and 817.
+case "\$*" in *author,body,title,files,headRefOid*) [ ! -e "$W/lint-fail-once" ] || { rm -f "$W/lint-fail-once"; echo 'spawnSync gh ETIMEDOUT' >&2; exit 1; } ;; esac
 case "\$*" in
   *author,body,title,files,headRefOid*) jq -n --rawfile body "$W/pr-body" --arg head "\$(git -C "$PROJ" rev-parse trunk)" '{body:\$body,title:"Fixture release",headRefOid:\$head,headRefName:"trunk",files:[],author:{login:"fixture"}}' ;;
   *isDraft*) echo '{"isDraft":false}' ;;
@@ -295,6 +297,13 @@ if [ "${1:-}" = run ]; then
   jq -n --arg id "$run" --arg head "$head" --arg record "$record" '{run_id:$id,commit:$head,dirty:false,record:$record}'
 elif [ "${1:-}" = check ] && [ "${2:-}" != --help ]; then
   printf '%s\n' "${CLAUDE_CONFIG_DIR:-}" > "$JG_TEST_JUDGE_ACCOUNT"
+  # The release receipt carries one claim id; a check under any other id finds no receipt, as done-done does.
+  claim=; prev=
+  for arg in "$@"; do [ "$prev" != --claim-id ] || claim=$arg; prev=$arg; done
+  if [ "$claim" != "${JG_TEST_RECEIPT_CLAIM:-release-proj-trunk}" ]; then
+    jq -n --arg c "$claim" '{result:"fail",error:("no receipt for claim id " + $c)}'
+    exit 1
+  fi
   name=$(sed -n 's/^evidence: //p' "$JG_TEST_PR_BODY" | tail -n 1)
   jq -n --arg file "$JG_DATA_OVERRIDE/release-proj-trunk/$name" --arg claim 'release proof' '{result:"pass",claim:$claim,evidence:[$file]}'
 else
@@ -343,6 +352,14 @@ git -C "$PROJ" fetch -q "$W/lane" old-hotfix:refs/heads/trunk-old || fail 'impor
 printf 'proj\t0\ttrunk-old\t%s\n' "$(git -C "$W/lane" rev-parse HEAD^)" >> "$HOME_D/data/trunk-versions.tsv"
 out=$(trunk release "$PROJ" 2>&1) && fail 'an uncarried old trunk hotfix must refuse'
 assert_contains "$out" 'hotfix on trunk-old is not carried' 'the refusal must identify the old trunk'
+# An old trunk whose only extra commit is empty has no hotfix to carry: the proof does not name it (ticket trunk-empty-commit-carry).
+git -C "$W/lane" checkout -q -b old-empty "$(tip)^" || fail 'create empty old trunk fixture'
+git -C "$W/lane" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m 'old trunk, nothing changed'
+git -C "$PROJ" fetch -q "$W/lane" old-empty:refs/heads/trunk-empty || fail 'import empty old trunk fixture'
+printf 'proj\t0\ttrunk-empty\t%s\n' "$(git -C "$W/lane" rev-parse HEAD^)" >> "$HOME_D/data/trunk-versions.tsv"
+git -C "$PROJ" branch -q -D trunk-old || fail 'drop the hotfix fixture'
+out=$(trunk release "$PROJ" 2>&1) || :
+assert_not_contains "$out" 'hotfix on trunk-empty' 'an empty commit on an old trunk is not a hotfix'
 cp "$W/saved-versions" "$HOME_D/data/trunk-versions.tsv"
 : > "$W/change-pin"
 out=$(trunk release "$PROJ" 2>&1) && fail 'a changed green pin must refuse'
@@ -388,7 +405,14 @@ awk -F "\t" '$1 != "proj" || $3 != "trunk"' "$HOME_D/data/trunk-versions.tsv" > 
 cp "$W/versions-without-trunk" "$HOME_D/data/trunk-versions.tsv"
 expected_base=$(git -C "$PROJ" merge-base trunk main)
 git -C "$PROJ" config remote.origin.pushurl "$W/no-such-remote.git"
+# The proof checks the release under the receipt's claim id (release-<project>-trunk); a receipt under another id is no match.
+out=$(JG_TEST_RECEIPT_CLAIM=release-other-trunk trunk release "$PROJ" 2>&1) && fail 'a release with no receipt under its claim id must refuse'
+assert_contains "$out" 'merge-card did not approve cited evidence' 'the refusal must say the evidence was not approved'
+pass 'release refuses when the receipt carries another claim id than release-<project>-trunk'
+touch "$W/lint-fail-once"; export JG_RELEASE_LINT_RETRY_SLEEP=0
 out=$(trunk release "$PROJ" 2>&1) || fail "proof retry failed: $out"
+[ ! -e "$W/lint-fail-once" ] || fail 'the failing first read of the published body was never hit'
+pass 'a failed first read of the published Checks block is tried again and the release proof still completes'
 [ "$(awk -F '\t' '$1 == "proj" && $3 == "trunk" { print $4 }' "$HOME_D/data/trunk-versions.tsv")" = "$expected_base" ] || fail 'the missing trunk version must record its merge base'
 pass 'a release retry reconstructs and records the missing trunk release base from the default branch'
 log=$(cat "$DONE_DONE_HOME/evidence/"*/run.log)

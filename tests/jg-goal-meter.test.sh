@@ -6,7 +6,7 @@ set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 d=$(mktemp -d "${TMPDIR:-/tmp}/jg-goal-meter.XXXXXX"); trap 'rm -rf -- "$d"' EXIT
 home=$d/home; mkdir -p "$home/data/metrics" "$home/state" "$home/config"
-ln -s "$here/bin" "$home/bin"; ln -s "$here/core" "$home/core"
+ln -sn "$here/bin" "$home/bin"; ln -sn "$here/core" "$home/core"
 NOW=1794000000
 fail=0
 ck() { if [ "$2" = "$3" ]; then echo "ok - $1"; else echo "not ok - $1: want '$3' got '$2'" >&2; fail=1; fi; }

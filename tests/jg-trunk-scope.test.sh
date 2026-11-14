@@ -51,7 +51,7 @@ charter() {  # <id> <project>: a squad lead charter naming the project
 
 # The real check must ignore an unborn repository, but preserve initialization refusals once it has commits.
 world empty local-trunk
-cp -r "$ROOT/bin" "$H/bin"; ln -s "$ROOT/core" "$H/core"; ln -s "$ROOT/policy" "$H/policy"
+cp -r "$ROOT/bin" "$H/bin"; ln -sn "$ROOT/core" "$H/core"; ln -sn "$ROOT/policy" "$H/policy"
 rm "$H/state/trunk-tip-proj"
 git -C "$P" update-ref -d refs/heads/trunk
 git -C "$P" update-ref -d refs/heads/main
@@ -75,7 +75,7 @@ for mode in direct-PR no-mistakes local-only; do
   done
   [ "$(git -C "$P" rev-parse trunk)" = "$tip" ] || fail "T1 a $mode project's trunk branch must not move"
   [ ! -e "$(git -C "$P" rev-parse --git-common-dir)/hooks/reference-transaction" ] || fail "T1 no trunk hook may be installed in a $mode project"
-  cp -r "$ROOT/bin" "$H/bin"; ln -s "$ROOT/core" "$H/core"; ln -s "$ROOT/policy" "$H/policy"
+  cp -r "$ROOT/bin" "$H/bin"; ln -sn "$ROOT/core" "$H/core"; ln -sn "$ROOT/policy" "$H/policy"
   out=$(bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$H" 2>&1); sleep 1
   [ -z "$out" ] && [ ! -e "$H/data/jg-trunk-landing/s1.$(git -C "$P" rev-parse fm/s1).state" ] || fail "T1 the landing check must not touch a $mode project: $out"
   [ "$(git -C "$P" rev-parse trunk)" = "$tip" ] || fail "T1 the landing check must not land on a $mode project"
@@ -135,6 +135,16 @@ jgt verify "$P" 2>&1 | grep -q "is registered" && fail "T5 a local-trunk project
 [ "$(JG_HOME="$H" "$ROOT/bin/jg-project-mode.sh" proj 2>/dev/null)" = "local-trunk off" ] || fail "T5 mechanical callers must retain local-trunk"
 [ "$(JG_HOME="$H" "$ROOT/bin/jg-project-mode.sh" --raw proj 2>/dev/null)" = "local-trunk off" ] || fail "T5 --raw must say local-trunk"
 pass "T5 a project registered local-trunk is a trunk project"
+
+# T6 One rule, one wording: the doc, the policy comment, the verify comment and the journey all say the changed tests run once for
+# each batch on the trunk, off the landing path, and none still says the whole suite runs on the release pull request.
+rule="changed tests run once for each batch"
+for f in docs/trunk-flow.md bin/jg-trunk-policy-lib.sh bin/jg-trunk.sh journeys/trunk-landing.sh; do
+  assert_contains "$(cat "$ROOT/$f")" "$rule" "T6 $f must name the batch rule"
+  assert_not_contains "$(cat "$ROOT/$f")" "whole suite runs once, on the release" "T6 $f must not keep the old release-PR rule"
+  assert_not_contains "$(cat "$ROOT/$f")" "whole suite runs on the release" "T6 $f must not keep the old release-PR rule"
+done
+pass "T6 the doc and the code comments name the same batch rule"
 # Drive the public ready-work reader with a priority history above the OS single-argument limit.
 # Only the backlog text source is a stand-in; the reader, awk and ordering are real processes.
 large="$TMP_ROOT/large-ready"; mkdir -p "$large/bin"

@@ -66,7 +66,7 @@ test_queued_lanes_land_as_one_stack_and_a_red_stack_is_bisected() {
   ! git -C "$PROJ" cat-file -e trunk:t/b2.test.sh 2>/dev/null || fail "the red lane is undone"
   git -C "$PROJ" cat-file -e trunk:t/b1.test.sh || fail "the first green lane stays on trunk"
   git -C "$PROJ" cat-file -e trunk:t/b3.test.sh || fail "the last green lane stays on trunk"
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$base" ] || fail "the pin stays below the guilty commit: a landing never moved it and a red verify does not"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(git -C "$PROJ" log -1 --format=%H --grep='^ticket b1$' trunk)" ] || fail "the pin stands on the last commit before the guilty one (b1): a landing never moved it and the verify moves it only that far"
   assert_contains "$out" "b2" "the revert names the lane"
   # A lane that conflicts drops out and is told, with its paths; the rest still land as one stack.
   : > "$W/gate-runs"; base=$(tip)
@@ -85,7 +85,7 @@ test_queued_lanes_land_as_one_stack_and_a_red_stack_is_bisected() {
   assert_contains "$out" "refusal-class d3: final" "a red the lane caused is final"
   case $out in *"returned d1"*|*"returned d2"*|*"returned d4"*) fail "a green lane must not be returned: $out" ;; esac
   [ "$(git -C "$PROJ" log --reverse --format=%s "$base..trunk" | paste -sd, -)" = "ticket d1,ticket d2,ticket d4" ] || fail "the green part lands in order"
-  [ "$(runs)" = 4 ] || fail "four lanes with one red take 4 gate runs (stack, first half, guilty, last lane), got $(runs)"
+  [ "$(runs)" = 5 ] || fail "four lanes with one red take 5 gate runs (stack, both halves, both lanes of the red half), got $(runs)"
   [ "$(git -C "$PROJ" rev-parse fm/d3)" = "$(git -C "$W/lanes/d3" rev-parse HEAD)" ] || fail "the returned lane is left exactly as it was"
   ! git -C "$PROJ" cat-file -e trunk:g3.txt 2>/dev/null || fail "the red lane's change is not on the trunk"
   # The same red on a full temp directory is the machine's: the returned lane is classed retry, not final.
@@ -104,7 +104,7 @@ test_queued_lanes_land_as_one_stack_and_a_red_stack_is_bisected() {
 test_the_landing_check_stacks_ready_lanes_and_keeps_a_single_lane_on_its_own_path() {
   local base out n again
   batch_world watcherbatch; base=$(tip)
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   lane w1 one f1.txt; lane w2 left; lane w3 right; lane w4 four f4.txt
   JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D" >/dev/null
   for _ in $(seq 1 150); do [ "$(git -C "$PROJ" rev-list --count "$base..trunk")" -ge 3 ] && ! grep -qs '^running' "$HOME_D"/data/jg-trunk-landing/*.state && break; sleep 0.2; done
@@ -138,7 +138,7 @@ test_the_queue_flushes_at_a_threshold_on_a_command_and_a_marked_lane_jumps_it() 
   local base out rc=0
   batch_world flushq; base=$(tip)
   printf 'flush-at-ready=3\nflush-after-minutes=20\n' >> "$HOME_D/config/trunk-policy"
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   # Below the threshold and young: two ready lanes wait; nothing lands one by one.
   lane q1 one f1.txt; lane q2 two f2.txt; fresh q1 5; fresh q2 4
   qsweep >/dev/null; unlanded 0 "two young lanes are below flush-at-ready and wait"
@@ -183,7 +183,7 @@ test_the_queue_flushes_at_a_threshold_on_a_command_and_a_marked_lane_jumps_it() 
 test_a_job_the_landing_check_starts_never_outlives_its_fixture() {
   local base job='' pid _
   world reap; base=$(tip)
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   sed -i.bak 's/^gate-full=.*/gate-full=sleep 300/' "$HOME_D/config/trunk-policy"  # the landing's own gate hangs
   lane r1 one f1.txt
   JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D" >/dev/null

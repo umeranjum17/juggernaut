@@ -16,6 +16,9 @@
 #    pull request, not only the last commit's.
 # The nightly whole run (jg8-t5, `jg-trunk.sh nightly`, started by the tick): one report a day, a flaky script filed once, a red traced
 #    to its commit and reverted by the verify's own code.
+# A journey that fails in the nightly run and that its commit's proof did not select (jg8-j31): the second of a fixture day's three
+#    commits breaks it; the run names that commit, its ticket reads building with health red, the miss goes to done-done's audit, and the
+#    report counts one miss. The done-done tool is a stand-in that keeps the contract of `run` and `affected --audit --json`.
 # The done-done journey journeys/trunk-landing.sh runs this file and seals its output.
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
@@ -265,7 +268,7 @@ test_a_verify_over_the_wall_clock_budget_with_no_failed_test_moves_the_pin_and_r
 test_a_red_with_no_failed_test_never_pins_and_a_ready_lane_lands_on_it() {
   local out top k pin
   world nostall; rig
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   lane s1 'exit 0' t/s1.test.sh; trunk land s1 >/dev/null 2>&1 || fail "s1 must land"; top=$(tip)
   [ "$(cat "$HOME_D/state/trunk-green-proj")" != "$top" ] || fail "a landing does not move the green pin"
   pin=$(cat "$HOME_D/state/trunk-green-proj")
@@ -307,7 +310,7 @@ test_a_red_with_no_failed_test_never_pins_and_a_ready_lane_lands_on_it() {
 test_the_tick_verifies_a_landed_pair_that_breaks_together_and_the_pin_moves_only_on_green() {
   local base a b tipc q
   world linered; rig
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   q="$HOME_D/state/.wake-queue"
   # The landing gate is quick and per change (true); the verify runs the whole suite, whose one test fails when both files exist.
   printf 'gate-full=true\ngate-verify=bash %s/rig.sh --all\n' "$W" >> "$HOME_D/config/trunk-policy"
@@ -319,12 +322,12 @@ test_the_tick_verifies_a_landed_pair_that_breaks_together_and_the_pin_moves_only
   for _ in $(seq 1 150); do git -C "$PROJ" log --format=%B trunk | grep -q '^reverts: ' && break; sleep 0.2; done
   git -C "$PROJ" log -1 --format=%B trunk | grep -qx "reverts: $b" || fail "the tick's verify must revert the second change, the one the red is traced to: $(git -C "$PROJ" log -2 --format=%B trunk) log: $(cat "$HOME_D/data/jg-trunk-landing/verify-proj.log" 2>&1)"
   git -C "$PROJ" log --format=%B "$a^..$a" | grep -q '^reverts: ' && fail "the first change stays"
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$base" ] || fail "a red verify must not move the green pin"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$a" ] || fail "a red verify moves the pin only to the last commit before the bad one ($a), not over it"
   for _ in $(seq 1 150); do grep -qs "alert-line-red--proj-${b:0:12}" "$q" && break; sleep 0.2; done
   grep -q "alert-line-red--proj-${b:0:12}" "$q" || fail "line-red must be raised for the traced commit: $(cat "$q" 2>&1)"
   assert_contains "$(grep 'line-red' "$q")" "alert line-red (P1) at rung 2 for lead" "the alert is named line-red"
   # No go-live takes the red head: the home goes live on the pin only, which no landing or red verify moved.
-  trunk word live "$PROJ" "go" >/dev/null 2>&1
+  trunk word in-use "$PROJ" "go" >/dev/null 2>&1
   trunk live "$PROJ" >/dev/null 2>&1 || :
   ! grep -qs "$b" "$W/live-moves" || fail "the red change must never go live: $(cat "$W/live-moves")"
   # The tick verifies the reverted tip: green, and the pin moves to the tip, one verify at a time.
@@ -339,9 +342,9 @@ test_the_tick_verifies_a_landed_pair_that_breaks_together_and_the_pin_moves_only
 # that goes on is not raised again; once the green pin moves, a new stall raises a new one. A landing never moves the pin, so a stall
 # is a tip above the pin that no verify moved it to: here a verify ended on it without a green (state/trunk-verify-last-<project>).
 test_no_green_for_15_minutes_raises_one_alarm_not_two() {
-  local out green q held
+  local out green q held rung_at old_pin
   world nogreen
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   q="$HOME_D/state/.wake-queue"; green=$(cat "$HOME_D/state/trunk-green-proj")
   assert_contains "$(trunk green-alarm "$PROJ" 2>&1)" "is green at ${green:0:12}" "a trunk at its green pin raises nothing"
   lane a1 one; trunk land a1 >/dev/null 2>&1 || fail "a1 must land"
@@ -354,10 +357,22 @@ test_no_green_for_15_minutes_raises_one_alarm_not_two() {
   [ "$(grep -c 'has had no green commit for 16 minutes' "$q")" = 1 ] || fail "the stall must raise one alarm through the landing check, not two: $(cat "$q" 2>&1)"
   grep 'has had no green commit' "$q" | grep -q "alert-line-red--proj-no-green-${green:0:12}" || fail "the stall raises line-red for the lead: $(cat "$q")"
   assert_contains "$(grep 'has had no green commit' "$q")" "live stays on ${green:0:12}" "the alarm says live stays on the last green commit"
-  assert_contains "$(trunk green-alarm "$PROJ" 2>&1)" "already raised for the green pin ${green:0:12}" "a stall that goes on is not raised again"
+  # A stall that goes on climbs the ladder through the same per-minute call: nothing before the 300 s rung timer, then Main, then the
+  # captain's chat (the owner rung), then the same rung again after the 600 s repeat.
+  rung_at=$(sed -n 's/^rung_at=//p' "$HOME_D/state/alerts/line-red--proj-no-green-${green:0:12}.rec")
+  JG_ALERT_NOW=$((rung_at + 299)) trunk green-alarm "$PROJ" >/dev/null 2>&1
+  ! grep -q "at rung 3 for main" "$q" || fail "no climb before the rung timer ran out: $(cat "$q")"
+  JG_ALERT_NOW=$((rung_at + 300)) trunk green-alarm "$PROJ" >/dev/null 2>&1
+  grep "alert-line-red--proj-no-green-${green:0:12}" "$q" | grep -q "at rung 3 for main" || fail "the stall climbs to Main after 300 s: $(cat "$q")"
+  JG_ALERT_NOW=$((rung_at + 600)) trunk green-alarm "$PROJ" >/dev/null 2>&1
+  grep "alert-line-red--proj-no-green-${green:0:12}" "$q" | grep -q "at rung 4 for owner" || fail "the stall climbs to the owner after 300 s more: $(cat "$q")"
+  JG_ALERT_NOW=$((rung_at + 1199)) trunk green-alarm "$PROJ" >/dev/null 2>&1
+  [ "$(grep -c "at rung 4 for owner" "$q")" = 1 ] || fail "the owner rung is not repeated before 600 s: $(cat "$q")"
+  JG_ALERT_NOW=$((rung_at + 1200)) trunk green-alarm "$PROJ" >/dev/null 2>&1
+  [ "$(grep -c "at rung 4 for owner" "$q")" = 2 ] || fail "the owner rung repeats every 600 s while the stall goes on: $(cat "$q")"
   # The pin moves, and a later stall raises a new alarm.
   trunk verify "$PROJ" >/dev/null 2>&1 || fail "the trunk must verify green"
-  green=$(tip); assert_contains "$(trunk green-alarm "$PROJ" 2>&1)" "is green at ${green:0:12}" "a green tip raises nothing"
+  old_pin=$green; green=$(tip); assert_contains "$(trunk green-alarm "$PROJ" 2>&1)" "is green at ${green:0:12}" "a green tip raises nothing"
   lane a2 two; trunk land a2 >/dev/null 2>&1 || fail "a2 must land"
   awk -F'\t' -v OFS='\t' -v t=$(( $(date +%s) - 1200 )) '{ $4 = t; print }' "$HOME_D/data/trunk-landings.tsv" > "$W/rows" && mv "$W/rows" "$HOME_D/data/trunk-landings.tsv"
   # The alarm is quiet while a verify runs (its slot's lock is held), and speaks once it ends.
@@ -366,8 +381,9 @@ test_no_green_for_15_minutes_raises_one_alarm_not_two() {
   assert_contains "$(trunk green-alarm "$PROJ" 2>&1)" "a verify is running" "the alarm is quiet while a verify runs"
   wait "$held"
   out=$(trunk green-alarm "$PROJ" 2>&1); assert_contains "$out" "raised:" "a new stall above a moved pin is raised"
-  [ "$(grep -c 'has had no green commit' "$q")" = 2 ] || fail "each stall is raised once: $(cat "$q")"
-  pass 'a trunk with no green for 15 minutes raises one alarm through the landing check, never two, and a new stall after the pin moved raises one more'
+  [ "$(grep -c 'at rung 2 for lead.*has had no green commit' "$q")" = 2 ] || fail "each stall is raised once: $(cat "$q")"
+  [ "$(sed -n 's/^state=//p' "$HOME_D/state/alerts/line-red--proj-no-green-${old_pin:0:12}.rec")" = resolved ] || fail "the old stall ends when its pin moved"
+  pass 'a trunk with no green for 15 minutes raises one alarm through the landing check that climbs to Main and the owner and repeats while the stall goes on, and a new stall after the pin moved raises one more'
 }
 
 # The nightly whole run (jg8-t5), started by the tick: every script on the tip through the same verify. Of three changes landed since the
@@ -378,7 +394,7 @@ test_no_green_for_15_minutes_raises_one_alarm_not_two() {
 test_the_nightly_run_writes_its_report_files_one_flake_ticket_and_traces_a_red_to_its_commit() {
   local base b day report q out runs
   world nightly; rig
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   q="$HOME_D/state/.wake-queue"; day=$(date -u +%F); report="$HOME_D/data/trunk/nightly-proj-$day.md"
   printf 'gate-full=true\ngate-verify=false\ngate-nightly=bash %s/rig.sh --all\nnightly-hour=0\n' "$W" >> "$HOME_D/config/trunk-policy"
   # The day's first commit is two days old; the landing gate is quick, and the verify gate (false) must not be the one the nightly runs.
@@ -407,6 +423,58 @@ test_the_nightly_run_writes_its_report_files_one_flake_ticket_and_traces_a_red_t
   pass 'the nightly run writes its day report, files the flaky script as one ticket, traces a red to its commit and reverts it, and runs once a day'
 }
 
+# A stand-in for done-done: `run <journey>` fails and leaves a record, `affected --audit <range> --json` reports each journey with a record
+# as a miss unless the journey is listed in $W/dd-selected, and writes the pair into that journey's feature file as the tool does.
+dd_stub() {
+  cat > "$W/fakebin/done-done" <<'SH'
+#!/usr/bin/env bash
+W=@W@
+case $1 in
+  run) : > "$W/dd-failed-$2"; exit 1 ;;
+  affected) top=${3#*..}; caught=0; missed=''; n=0
+    for f in "$W"/dd-failed-*; do
+      [ -e "$f" ] || continue; j=${f##*dd-failed-}; n=$((n + 1))
+      if grep -qx "$j" "$W/dd-selected" 2>/dev/null; then caught=$((caught + 1)); else
+        missed="$missed{\"commit\":\"$top\",\"journey\":\"$j\",\"files\":[\"b.txt\"]},"
+        printf '\nAudit: a change to `b.txt` fails `run %s`, so it is selected with it.\n' "$j" >> ".agents/skills/done-done-verify-proj/features/$j.md"
+      fi
+    done
+    printf '{"command":"affected --audit","failures":%s,"caught":%s,"missed":[%s]}\n' "$n" "$caught" "${missed%,}" ;;
+esac
+SH
+  sed -i "s|@W@|$W|" "$W/fakebin/done-done"; chmod +x "$W/fakebin/done-done"
+}
+
+# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
+test_a_journey_its_proof_did_not_select_is_charged_to_its_commit_and_counted_as_a_miss() {
+  local base b day report out
+  world nightmiss; rig; dd_stub
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
+  day=$(date -u +%F); report="$HOME_D/data/trunk/nightly-proj-$day.md"
+  printf 'gate-full=true\ngate-verify=false\ngate-nightly=bash %s/rig.sh --all\nnightly-hour=0\n' "$W" >> "$HOME_D/config/trunk-policy"
+  GIT_COMMITTER_DATE=$(date -u -d '3 days ago' +%FT%TZ) lane j0 'journeys:
+  pair:
+    command: bash t/pair.test.sh' .done-done.yaml; tip_after_land j0 >/dev/null
+  GIT_COMMITTER_DATE=$(date -u -d '3 days ago' +%FT%TZ) lane j1 'Pair journey. run pair' .agents/skills/done-done-verify-proj/features/pair.md; tip_after_land j1 >/dev/null
+  GIT_COMMITTER_DATE=$(date -u -d '2 days ago' +%FT%TZ) lane j2 '[ ! -e b.txt ] || { echo "not ok - pair" >&2; exit 1; }' t/pair.test.sh; tip_after_land j2 >/dev/null
+  base=$(tip); tip > "$HOME_D/state/trunk-green-proj"
+  lane d1 one a.txt; tip_after_land d1 >/dev/null; lane d2 two b.txt; b=$(tip_after_land d2); lane d3 three c.txt; tip_after_land d3 >/dev/null
+  tip > "$HOME_D/state/trunk-verify-last-proj"
+  sweep >/dev/null
+  for _ in $(seq 1 300); do [ -s "$report" ] && break; sleep 0.2; done
+  [ -s "$report" ] || fail "the nightly run must write its report: $(cat "$HOME_D/data/jg-trunk-landing/nightly-proj.log" 2>&1)"
+  git -C "$PROJ" log --format=%B trunk | grep -qx "reverts: $b" || fail "the run must name the second commit and revert it: $(git -C "$PROJ" log -4 --format=%B trunk)"
+  assert_contains "$(cat "$report")" "selected: 0; missed: 1 (${b:0:12}: pair)" "the report shows the count of selections and of misses"
+  assert_contains "$(cat "$HOME_D/data/trunk/misses-proj.tsv")" "$(printf '%s\tpair\tmissed' "$b")" "the miss is on record for that commit and journey"
+  out=$(JG_HOME="$HOME_D" JG_DATA_OVERRIDE="$HOME_D/data" JG_STATE_OVERRIDE="$HOME_D/state" bash "$ROOT/core/machines/observers/ticket.sh" d2 2>&1)
+  [ "$out" = building ] || fail "the ticket of the charged commit must read building, got: $out"
+  out=$(JG_HOME="$HOME_D" bash "$ROOT/bin/jg-machine.sh" word ticket-words lane-delivery reverted 2>&1)
+  assert_contains "$out" "red" "the reverted word gives the ticket health red"
+  assert_contains "$(git -C "$PROJ" show "trunk:.agents/skills/done-done-verify-proj/features/pair.md")" 'fails `run pair`' "the miss goes to done-done's map as a new commit on the trunk"
+  [ "$(git -C "$PROJ" log --format=%s trunk | grep -c '^Map the journeys pair fails')" = 1 ] || fail "the map change is one commit"
+  pass 'a journey that fails in the nightly run and that its commit proof did not select is charged to that commit, its ticket reads building with health red, the pair goes to the map and the report counts one miss'
+}
+
 test_queued_verifies_run_one_at_a_time_and_only_the_newest_runs
 test_a_verify_moves_the_pin_over_a_red_its_parent_already_had
 test_a_verify_over_the_wall_clock_budget_with_no_failed_test_moves_the_pin_and_records_the_load
@@ -421,4 +489,5 @@ test_a_red_with_no_failed_test_never_pins_and_a_ready_lane_lands_on_it
 test_the_tick_verifies_a_landed_pair_that_breaks_together_and_the_pin_moves_only_on_green
 test_no_green_for_15_minutes_raises_one_alarm_not_two
 test_the_nightly_run_writes_its_report_files_one_flake_ticket_and_traces_a_red_to_its_commit
+test_a_journey_its_proof_did_not_select_is_charged_to_its_commit_and_counted_as_a_miss
 printf 'jg-trunk-verify: ok\n'

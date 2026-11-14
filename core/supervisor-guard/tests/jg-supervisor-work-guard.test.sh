@@ -44,8 +44,8 @@ make_home() {
   mkdir -p "$1/bin" "$1/state"
   git init -q "$1"
   : > "$1/AGENTS.md"
-  ln -s "$CK/bin/jg-primary-scope-lib.sh" "$1/bin/jg-primary-scope-lib.sh"
-  ln -s "$CK/bin/jg-arm-command-policy.mjs" "$1/bin/jg-arm-command-policy.mjs"
+  ln -sn "$CK/bin/jg-primary-scope-lib.sh" "$1/bin/jg-primary-scope-lib.sh"
+  ln -sn "$CK/bin/jg-arm-command-policy.mjs" "$1/bin/jg-arm-command-policy.mjs"
 }
 
 FMH=$(cd "$TMP" && pwd -P)/fmhome

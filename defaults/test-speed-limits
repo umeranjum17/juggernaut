@@ -31,6 +31,6 @@ gate_wall_seconds=600
 script_timeout_seconds=1800
 # machine_runs_max is not a speed limit but the runner's share of the machine:
 # how many runs may execute tests here at once, all homes together; the rest
-# wait for a slot (bin/jg-test-host-lib.sh). 0 is one run per 16 cpus, at least
-# one. The --required-shards gate is one run however many shards it starts.
+# wait for a slot (bin/jg-test-host-lib.sh). 0 is one run per 16 cpus, held between 2 and 3
+# (every run also lowers itself to nice JG_TEST_NICE, default 10). The --required-shards gate is one run however many shards it starts.
 machine_runs_max=0

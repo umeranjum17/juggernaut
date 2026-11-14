@@ -8,7 +8,7 @@
 #   state/<provider>-accounts-rested/<id>   the picker's rest file (core/claude-accounts/bin/claude-accounts-pick rest): the epoch it lasts until
 #   state/account-assignments.json          the picker's recent leases: [{provider, id, at}], each one live for 300 s (JG_ACCOUNT_POOL_ASSIGNMENT_SECONDS)
 # The word, the first line that holds:
-#   no account in the reading   retired       (no reading file at all: no-reading, which is no state of the table, so `jg-machine.sh show` reports it)
+#   no account in the reading   retired       (no reading file at all: no-reading, which is no state of the table, so `jg-machine.sh show` reports it; core/fleet-status/readings.sh maps it to the state unknown)
 #   problem names a sign-in     signed-out    (the picker's own test: sign-in, login, unauthenticated, not authenticated, no credentials)
 #   held (a hold file)          on-hold      (state/<provider>-accounts-held/<id>, core/claude-accounts/bin/claude-accounts-hold.sh)
 #   rested until a future epoch,

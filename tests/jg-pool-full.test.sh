@@ -37,7 +37,7 @@ expect_code 75 "$rc" "second task should defer: $out"
 stop=$(printf '%s\n' "$H/state/.stops/"*.pool-full)
 subject=${stop##*/pool-}; subject=${subject%.pool-full}
 # A landed lane is passed to the real sweep on the delivery tick.
-mkdir -p "$H/bin"
+rmdir "$H/bin" 2>/dev/null; ln -sn "$ROOT/bin" "$H/bin"
 printf '%s\n' "$(git -C "$P" rev-parse HEAD)" > "$H/state/trunk-tip-project"
 printf 'kind=ship\nproject=%s\nbranch=%s\n' "$P" "$(git -C "$P" branch --show-current)" > "$H/state/lane-a.meta"
 printf 'done [at=1]: ready\n' > "$H/state/lane-a.status"
@@ -69,9 +69,27 @@ JG_STOPS_TEST_NOW=1010 bash "$ROOT/bin/jg-delivery-tick.sh" "$H" >/dev/null 2>&1
 grep -q '^resolved .*pool stop cleared' "$W/parent/state/fixture-lead.status" || fail 'parent escalation did not resolve'
 pass 'clearing the stop resolves its parent escalation'
 [ ! -e "$stop" ] || fail 'pool stop remained after both tasks started'
+rm -f "$H/.jg-squad-lead-home" "$H/.jg-squad-lead-parent"
 jg_test_spawn_brief "$H" jg-pool3
 out=$(BAD_TREEHOUSE=1 jg_test_run_spawn "$H" "$P" "$F" jg-pool3 "$P" codex --mode direct-PR --yolo off); rc=$?
 expect_code 1 "$rc" "a non-capacity lease error must remain an error: $out"
 assert_contains "$out" 'broken configuration' 'the actual lease error was lost'
 [ ! -e "$stop" ] || fail 'a non-capacity error opened a pool stop'
 pass 'other lease errors keep their cause and do not defer'
+# A waiter whose ticket already landed leaves the wait; a ticket still waiting keeps it.
+jg_test_spawn_brief "$H" jg-pool4
+out=$(jg_test_run_spawn "$H" "$P" "$F" jg-pool4 "$P" codex --mode direct-PR --yolo off); rc=$?
+expect_code 75 "$rc" "fourth task should defer: $out"
+jg_test_spawn_brief "$H" jg-pool5
+out=$(jg_test_run_spawn "$H" "$P" "$F" jg-pool5 "$P" codex --mode direct-PR --yolo off); rc=$?
+expect_code 75 "$rc" "fifth task should defer: $out"
+stop=$(printf '%s\n' "$H/state/.stops/"*.pool-full)
+subject=${stop##*/pool-}; subject=${subject%.pool-full}
+printf 'jg-pool4\t%s\tabc123\t1\tgate\n' "$P" > "$H/data/trunk-landings.tsv"
+JG_STOPS_TEST_NOW=2000 bash "$ROOT/bin/jg-delivery-tick.sh" "$H" >/dev/null 2>&1
+[ ! -e "$H/state/.pool-waiters/$subject/jg-pool4" ] || fail 'the landed waiter stayed in the wait'
+[ -e "$H/state/.pool-waiters/$subject/jg-pool5" ] && [ -f "$stop" ] || fail 'a ticket still waiting lost its wait'
+printf 'jg-pool5\t%s\tdef456\t2\tgate\n' "$P" >> "$H/data/trunk-landings.tsv"
+JG_STOPS_TEST_NOW=2010 bash "$ROOT/bin/jg-delivery-tick.sh" "$H" >/dev/null 2>&1
+[ ! -e "$stop" ] && [ ! -d "$H/state/.pool-waiters/$subject" ] || fail 'the wait stayed after every waiter landed'
+pass 'a pool-full wait ends when its waiters have landed'

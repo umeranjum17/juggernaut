@@ -37,7 +37,7 @@
 # or a second pass prints nothing twice. finish closes the epic. Its claim goes through bin/jg-live-claim.sh.
 # released records the version the released step shipped (a tag or a commit), on the epic. finish then claims
 # `live: <ref> @ <where>`, so bin/jg-live-claim.sh keeps it only when the home's release record names the ref and its
-# services run; with no ref, or a ref it does not know, the message says merged-not-released.
+# services run; with no ref, or a ref it does not know, the message says Landed, not in use.
 # proof-start, prove and proof-failed are the check's three steps for the `proven` row. proof-start refuses to
 # run when the finish line no longer hashes to finish_hash, in the epic or in data/goals/<id>/finish.json: that
 # is an owner-must stop, never a pass (exit 3). prove closes the proven row and keeps the proof log's path; it is
@@ -219,7 +219,7 @@ finish_goal() {
   [ "$new" = 1 ] || return 0
   ask=$(jq -r '.metadata.goal.ask // .title' <<< "$json")
   ref=$(jq -r '.metadata.released_ref // ""' <<< "$json")
-  claim=$(JG_HOME=$JG_HOME "$SCRIPT_DIR/jg-live-claim.sh" "done" "the Goal is done: $ask${ref:+ - live: $ref @ $(jq -r '.metadata.goal.finish.where // "this home"' <<< "$json")}" 2>/dev/null)
+  claim=$(JG_HOME=$JG_HOME "$SCRIPT_DIR/jg-live-claim.sh" "done" "the Goal is done: $ask${ref:+ - Released, $ref; live: $ref @ $(jq -r '.metadata.goal.finish.where // "this home"' <<< "$json")}" 2>/dev/null)
   printf '%s finished - %s (where: %s; proof log: %s)\n' "$id" "${claim:-the Goal is done: $ask}" \
     "$(jq -r '.metadata.goal.finish.where // "this home"' <<< "$json")" "$(jq -r '.metadata.proof_log // "none"' <<< "$json")"
 }

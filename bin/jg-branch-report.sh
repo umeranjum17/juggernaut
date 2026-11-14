@@ -22,7 +22,7 @@
 # or captain"); --silent true is legal only for a routine outcome.
 # bin/jg-live-claim.sh owns the fixed-means-live rule and is applied to the
 # summary before it is stored: a summary that reports a user-visible fix as done
-# is recorded as `merged-not-released: ...` unless it carries the released ref
+# is recorded as `Landed, not in use: ...` unless it carries the released ref
 # and where it is observable, or states the truth itself.
 # bin/jg-ticket-link-guard.sh owns the ticket rule: a captain verdict names the
 # board ticket link its work belongs to, and is refused here when it names none.
@@ -120,7 +120,7 @@ fi
 
 # The fixed-means-live rule (bin/jg-live-claim.sh owns it): a summary that
 # reports a user-visible fix as done carries the released ref and where it is
-# observable, or reaches the captain plainly as merged-not-released.
+# observable, or reaches the captain plainly as Landed, not in use.
 if [ -x "$SCRIPT_DIR/jg-live-claim.sh" ]; then
   LIVE_RC=0
   LIVE_SUMMARY=$("$SCRIPT_DIR/jg-live-claim.sh" 'done' "$SUMMARY") || LIVE_RC=$?

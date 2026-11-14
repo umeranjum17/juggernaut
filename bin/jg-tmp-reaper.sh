@@ -22,6 +22,10 @@
 #         trunk-landing tree whose processes (or, with none, newest change) are older than its own timeout
 #         (.jg-sandbox-timeout seconds in the folder, else JG_TMP_SANDBOX_TIMEOUT_SEC, default 3600) has them stopped and the
 #         folder removed. A task root, a folder a task meta names, and a sandbox with a process that has a recorded task meta are left alone.
+#         And it stops leaked test processes (bin/jg-test-procs-lib.sh owns the rule): a process that a test started (its
+#         environment carries the JG_TEST_FIXTURE_PROC mark tests/lib.sh and bin/jg-test-run.sh set), whose command line
+#         names a jg-* path in the temp root, and that has run JG_TMP_TEST_PROC_AGE_SEC seconds (default 3600) gets TERM, then
+#         KILL. A process with no mark is never touched. Each stop is logged to state/tmp-reaper.log.
 # arm     Writes state/tmp-reaper.check.sh and binds it with jg-check-register.sh, so the watcher runs
 #         it on the normal check cadence. disarm removes both.
 #
@@ -49,6 +53,8 @@ LOG=$STATE/tmp-reaper.log
 ALERT_RECORD=$STATE/.tmp-reaper-alert
 # shellcheck source=bin/jg-tmp-sandbox-lib.sh
 . "$SCRIPT_DIR/jg-tmp-sandbox-lib.sh"
+# shellcheck source=bin/jg-test-procs-lib.sh
+. "$SCRIPT_DIR/jg-test-procs-lib.sh"
 
 die() { printf 'jg-tmp-reaper: %s\n' "$1" >&2; exit "${2:-1}"; }
 case "$AGE_MIN$ALERT_PCT" in *[!0-9]* | '') die "JG_TMP_REAP_AGE_MIN and JG_TMP_ALERT_PCT must be whole numbers" 2 ;; esac
@@ -110,9 +116,13 @@ alert() {
   if [ "$pct" -ge "$ALERT_PCT" ]; then
     [ -e "$ALERT_RECORD" ] && return 0
     : > "$ALERT_RECORD"
-    printf 'tmp: %s is %s%% full (alert at %s%%); something is leaking scratch, or a worker holds large files there\n' "$TMP_ROOT" "$pct" "$ALERT_PCT"
+    JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE bash "$SCRIPT_DIR/jg-alert.sh" raise host tmp-reaper --print \
+      --note "tmp: $TMP_ROOT is $pct% full (alert at $ALERT_PCT%); something is leaking scratch, or a worker holds large files there"
   else
-    rm -f -- "$ALERT_RECORD"
+    if [ -e "$ALERT_RECORD" ]; then   # the episode ended: the next crossing raises a new alert
+      rm -f -- "$ALERT_RECORD"
+      JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE bash "$SCRIPT_DIR/jg-alert.sh" resolve host--tmp-reaper >/dev/null 2>&1 || true
+    fi
   fi
 }
 
@@ -120,6 +130,7 @@ cmd_check() {
   [ -d "$STATE" ] || die "state directory is missing: $STATE"
   [ -d "$TMP_ROOT" ] || return 0
   reap_sandboxes
+  reap_test_procs
   reap
   alert
 }

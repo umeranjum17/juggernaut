@@ -232,6 +232,18 @@ reset_state() {
 }
 
 
+# Poll until the submitted log holds a line matching <pattern>, up to <secs>.
+# The daemon's startup, signal grace and confirm retries vary with host load, so
+# the test waits for the event itself instead of a fixed sleep.
+wait_submitted() {  # <pattern> <secs>
+  local pattern=$1 deadline=$((SECONDS + $2))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    grep -q "$pattern" "$LOG_FILE" && return 0
+    sleep 0.5
+  done
+  return 1
+}
+
 # The pane drops every Enter of the first injection attempt (5 retries).
 test_resend() {
   reset_state
@@ -240,12 +252,15 @@ test_resend() {
   start_daemon
 
   echo "done: PR https://example.test/pr/first" > "$STATE_DIR/fake-c1.status"
-  sleep 8
+  wait_submitted 'pr/first' 90 || fail "the swallowed digest was never submitted within 90s"
   echo "done: PR https://example.test/pr/second" > "$STATE_DIR/fake-c2.status"
-  sleep 8
+  wait_submitted 'pr/second' 90 || fail "the second digest was never submitted within 90s"
+  sleep 3  # a duplicate submit of either digest would land in this window
 
   local n
-  n=$(grep -c 'pr/first' "$LOG_FILE" || true)
+  # The second digest may also list the first status (one scan reads both files),
+  # so the swallowed digest is the one line that names only the first PR.
+  n=$(grep 'pr/first' "$LOG_FILE" | grep -vc 'pr/second' || true)
   [ "$n" -eq 1 ] || fail "the swallowed digest was submitted $n times, expected exactly 1"
   n=$(grep -c 'pr/second' "$LOG_FILE" || true)
   [ "$n" -eq 1 ] || fail "the second digest was submitted $n times, expected exactly 1"

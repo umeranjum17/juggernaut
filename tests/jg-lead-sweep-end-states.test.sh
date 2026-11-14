@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Journey: lead-sweep.sh check sweeps a lane whose last status line is `resolved` (answered), through the real caller.
+# Journey: lead-sweep.sh run sweeps a lane whose last status line is `resolved` (answered), through the real caller.
 # a) a resolved lane whose head is on the trunk is torn down once, with its id and no --force;
 # b) a resolved lane whose head is not landed is not torn down and is reported once; the next beat prints nothing;
 # c) a done lane that has not landed prints nothing; a paused lane is never touched.
@@ -38,7 +38,7 @@ lane() {
 }
 onto() { git -C "$P" merge -q --no-ff "fm/$1" -m "land $1"; git -C "$P" rev-parse trunk > "$FM/state/trunk-tip-proj"; }
 git -C "$P" rev-parse trunk > "$FM/state/trunk-tip-proj"
-sweep() { : > "$STUB_LOG"; "$SRC/lead-sweep.sh" check "$FM" > "$d/out" 2>&1; }
+sweep() { : > "$STUB_LOG"; "$SRC/lead-sweep.sh" run "$FM" > "$d/out" 2>&1; }
 tore() { grep -c "^$1\$" "$STUB_LOG" || true; }
 
 lane answered 'resolved [at=1]: answered'; lane open 'resolved [at=1]: answered'; lane waiting 'done [at=1]: ready'; lane parked 'paused [at=1]: wait'

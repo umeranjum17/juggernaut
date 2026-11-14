@@ -6,7 +6,7 @@
 # T1 a message that calls a part live while the probe says pending is refused once, and the block names it.
 # T2 the same words pass once that part is live; so do "merged, not live", "working on" and a home with no critical=.
 # T3 a merged switch is a milestone only when its row is live, and the outcome leads with the Live line.
-# T4 the digest's Live now line carries the migration count.
+# T4 the digest's Released now line carries the migration count.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -70,13 +70,13 @@ probe 'nats live' 'accounts pending'
 "$H/bin/jg-migration-card.sh" merge https://github.com/o/r/pull/1 >/dev/null || fail "T3 the merge path failed"
 out=$(cat "$H/state/branch-outcomes.jsonl")
 assert_contains "$out" "merged; accounts still pending" "T3 a pending switch was recorded as live"
-assert_contains "$out" "Live: 1 of 2 critical rows (nats)." "T3 the outcome does not lead with the live count"
+assert_contains "$out" "In use: 1 of 2 critical rows (nats)." "T3 the outcome does not lead with the live count"
 assert_contains "$out" "Merged, not a live measure" "T3 merged lines are not labelled as merged"
 pass "T3 a merged switch whose row is pending is recorded as merged, behind the Live line"
 
 # T4
 printf '%s\n' "$TMP_ROOT/board/board.json" > "$H/config/fleet-board"
 out=$(bash "$H/bin/jg-status-digest.sh" "$H" record "the accounts switch merged" --left "1 part" --blockers none 2>&1)
-assert_contains "$out" "migration: 1 of 2 critical rows live; first pending accounts" "T4 the digest does not carry the migration count"
-pass "T4 the digest's Live now line carries the live count"
+assert_contains "$out" "migration: 1 of 2 critical rows In use; first pending accounts" "T4 the digest does not carry the migration count"
+pass "T4 the digest's Released now line carries the live count"
 echo "all jg-progress-claim tests passed"

@@ -15,6 +15,7 @@ fail() { log "FAIL: $*"; exit 1; }
 : > "$OUT/replay.txt"
 FLAG=$("$REPO/bin/jg-spawn-core.sh" launch-template claude ship | grep -o -e '--disallowedTools=[^ ]* --strict-mcp-config')
 case "$FLAG" in --disallowedTools=AskUserQuestion,*) ;; *) fail "the built worker launch carries no ask-tool deny and connector flag: '$FLAG'" ;; esac
+case "$FLAG" in *",mcp__claude_ai_* --strict-mcp-config") ;; *) fail "the built worker launch does not deny the account connectors by name: '$FLAG'" ;; esac
 log "worker launch tool flags from the built launch: $FLAG"
 ASK='Call the AskUserQuestion tool right now with one question: Which color? options Red and Blue. If you have no such tool, reply exactly NO-ASK-TOOL and nothing else.'
 tmux new-session -d -s lab -n control -x 150 -y 45 -c "$T/work" \

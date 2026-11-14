@@ -213,7 +213,7 @@ settle "$dir/proof.exit"
 assert_equals "$(wake)" "" "a passing proof closes proven with no message"
 assert_equals "$("$LOOP" state "$H" | cut -f2)" finished "only a passing proof finishes the Goal"
 out=$(wake)
-assert_contains "$out" "$id finished - merged-not-released: the Goal is done: make it live" "the finish message goes through the live claim"
+assert_contains "$out" "$id finished - Landed, not in use: the Goal is done: make it live" "the finish message goes through the live claim"
 assert_contains "$out" "proof log: $dir/proof-" "the finish message names the proof log"
 assert_equals "$(wake)" "" "the real finish message goes once"
 assert_equals "$("$LOOP" state "$H")" "" "a finished Goal is closed"

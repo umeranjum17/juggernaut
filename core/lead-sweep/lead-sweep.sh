@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
 # lead-sweep watcher check: every beat, clean up the landed lanes of this home, unforced, with no model turn.
-# Usage: lead-sweep.sh check <jg-home>
+# Usage: lead-sweep.sh check <jg-home>   (the registered check: prints the results of finished jobs, starts a job, returns)
+#        lead-sweep.sh job <jg-home>     (one sweep as its own detached job, one at a time per home; the check starts it)
+#        lead-sweep.sh run <jg-home>     (one sweep in the foreground, printing what a check prints)
+# A teardown can wait minutes for the project's slot lock, so the sweep is not run inside the check's 30-second limit:
+# `check` starts `job` with setsid and returns, and the job's output is published as data/lead-sweep/results.<time> and
+# printed by the next beat. Lanes are swept oldest done line first, so a lane never waits behind a newer one.
 #
 # A lane of this home (state/<id>.meta, kind ship or scout) whose latest status line is `done` or `resolved` (an answered
 # lane) is swept when it has landed:
 #   - ship: its branch head is on the trunk and is not the commit the lane started on (meta base=) (state/trunk-tip-<project> for a local-trunk project, else the default branch
 #     of the clone), or its recorded pull request is merged (GitHub only, asked at most every JG_LEAD_SWEEP_PR_MIN
 #     minutes, default 10, per lane);
-#   - scout (Recon): its report data/<id>/report.md exists.
+#   - scout (Recon): its report data/<id>/report.md exists, Main relayed it (its ticket has the `relayed` move in data/moves.log,
+#     which Main writes with bin/jg-move.sh when it relays the findings), and no message reached its inbox in the last
+#     JG_LEAD_SWEEP_QUIET_MIN minutes (default 60). A done line, a passed critic or a gone agent is not enough; until then the
+#     record, inbox and copy stay (the agent may still end at its done line).
 # The sweep then runs `bin/jg-teardown.sh <id>` and nothing else: no --force, ever. The teardown owns the landed-work test
 # and every gate (unlanded or dirty work, the report, captain-call inventory and depth gates), so a lane with unlanded work
 # or a failing gate is refused and left alone. A lane a landing is running for (state/.trunk-run-<id>-*.lock) is skipped.
@@ -26,7 +34,9 @@
 # JG_LEAD_SWEEP_TEARDOWN, JG_LEAD_SWEEP_GH, JG_LEAD_SWEEP_CONTROL and JG_LEAD_SWEEP_AGENT (<id> -> alive|dead|missing|unknown) name
 # the teardown, gh-axi, control and agent-state commands; JG_LEAD_SWEEP_NOW is the clock (tests point them at stubs).
 set -u
-[ "$#" -eq 2 ] && [ "$1" = check ] && [ -d "$2/state" ] || { echo "usage: lead-sweep.sh check <jg-home>" >&2; exit 2; }
+MODE=${1:-}
+[ "$#" -eq 2 ] && case $MODE in check|job|run) true ;; *) false ;; esac && [ -d "$2/state" ] || { echo "usage: lead-sweep.sh check|job|run <jg-home>" >&2; exit 2; }
+SELF=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/$(basename "${BASH_SOURCE[0]}")
 FMH=$(cd "$2" && pwd -P)
 STATE=$FMH/state
 MEM=$FMH/data/lead-sweep
@@ -38,6 +48,7 @@ num() { case ${1:-} in ''|*[!0-9]*) echo "$2" ;; *) echo "$1" ;; esac; }
 PARK_S=$(( $(num "${JG_LEAD_SWEEP_PARK_H:-}" 24) * 3600 ))
 PARK_EMPTY_S=$(( $(num "${JG_LEAD_SWEEP_PARK_EMPTY_H:-}" 2) * 3600 ))
 START_S=$(( $(num "${JG_LEAD_SWEEP_START_MIN:-}" 30) * 60 ))
+QUIET_S=$(( $(num "${JG_LEAD_SWEEP_QUIET_MIN:-}" 60) * 60 ))
 PR_MIN=${JG_LEAD_SWEEP_PR_MIN:-10}; case $PR_MIN in ''|*[!0-9]*) PR_MIN=10 ;; esac
 umask 077
 mkdir -p "$MEM" || exit 0
@@ -48,6 +59,33 @@ drift() {
   JG_HOME="$FMH" JG_STATE_OVERRIDE="$STATE" "$a" raise drift "lead-sweep-$1" --deliver --ticket "$1" --note "$2" >/dev/null 2>&1 \
     || echo "lead-sweep: $2"
 }
+case $MODE in
+  check)
+    # Print every finished job's results, oldest first, then make sure a job is running. The job itself refuses to start
+    # while another holds the lock, so a beat that finds one running changes nothing.
+    for f in "$MEM"/results.*; do
+      [ -f "$f" ] || continue
+      cat "$f" && rm -f -- "$f"
+    done
+    if [ "${JG_TEST_SEAM:-}" = 1 ] && [ -n "${JG_TEST_DETACHED_REGISTRY:-}" ]; then
+      setsid nohup env JG_LEAD_SWEEP_REGISTER=1 "$SELF" job "$FMH" > /dev/null 2>&1 < /dev/null &
+    else
+      setsid nohup "$SELF" job "$FMH" > /dev/null 2>&1 < /dev/null &
+    fi
+    exit 0 ;;
+  job)
+    # shellcheck source=bin/jg-wake-lib.sh
+    . "$FMH/bin/jg-wake-lib.sh"
+    if [ "${JG_LEAD_SWEEP_REGISTER:-}" = 1 ]; then
+      printf '%s %s\n' "$$" "$(jg_pid_identity "$$" 2>/dev/null)" >> "$JG_TEST_DETACHED_REGISTRY" 2>/dev/null || :
+    fi
+    jg_lock_try_acquire "$MEM/.job.lock" || exit 0
+    trap 'jg_lock_release "$MEM/.job.lock"' EXIT
+    tmp=$(mktemp "$MEM/.job-XXXXXX") || exit 1
+    "$SELF" run "$FMH" > "$tmp" 2>&1 || true
+    if [ -s "$tmp" ]; then mv -- "$tmp" "$MEM/results.$(date +%s).$$"; else rm -f -- "$tmp"; fi
+    exit 0 ;;
+esac
 mval() { sed -n "s/^$2=//p" "$1" | tail -n 1; }
 mtime() { stat -c %Y "$1" 2>/dev/null || echo "$NOW"; }
 run_as_home() { JG_HOME="$FMH" JG_STATE_OVERRIDE="$STATE" "$@"; }
@@ -78,6 +116,16 @@ park() {
   else refuse "$1" "could not be parked ($2): $(printf '%s\n' "$out" | grep -E '^(REFUSED|error)' | tail -n 1 | cut -c1-200)"; fi
 }
 
+# scout_relayed <meta>: succeeds when the scout's ticket has the relayed move and its inbox has been quiet for the quiet window.
+scout_relayed() {
+  local id=${1##*/} ticket last
+  id=${id%.meta}; ticket=$(mval "$1" ticket)
+  [ -n "$ticket" ] && awk -F'\t' -v t="$ticket" '$2 == t && $4 == "relayed" { f = 1 } END { exit !f }' "$FMH/data/moves.log" 2>/dev/null || return 1
+  last=$(find "$STATE/$id.inbox" -type f -printf '%T@\n' 2>/dev/null | sort -n | tail -n 1); last=${last%%.*}
+  case $last in ''|*[!0-9]*) return 0 ;; esac
+  [ $(( NOW - last )) -ge "$QUIET_S" ]
+}
+
 # why_landed <meta> <project> <branch>: prints why the ship lane counts as landed; prints nothing when it does not.
 why_landed() {
   local id=${1##*/} head base target tipf pr slug num asked
@@ -102,9 +150,17 @@ why_landed() {
   return 0
 }
 
-for meta in "$STATE"/*.meta; do
+# Oldest report first: a lane's status file modification time is when it last reported; a lane with no status line
+# is ordered by its record's age.
+order=$(for m in "$STATE"/*.meta; do
+  [ -f "$m" ] || continue
+  i=${m##*/}; i=${i%.meta}
+  if [ -f "$STATE/$i.status" ]; then t=$(mtime "$STATE/$i.status"); else t=$(mtime "$m"); fi
+  printf '%s %s\n' "$t" "$i"
+done | sort -n | cut -d' ' -f2)
+for id in $order; do
+  meta=$STATE/$id.meta
   [ -f "$meta" ] || continue
-  id=$(basename "$meta" .meta)
   kind=$(mval "$meta" kind)
   case $kind in ship|scout) ;; *) continue ;; esac
   line=$(tail -n 1 "$STATE/$id.status" 2>/dev/null)
@@ -139,7 +195,7 @@ for meta in "$STATE"/*.meta; do
   if [ "$ended" = gone ]; then case $(agent_state "$meta") in dead|missing) ;; *) continue ;; esac; fi
   why=
   if [ "$kind" = scout ]; then
-    [ ! -s "$FMH/data/$id/report.md" ] || why='its report exists'
+    [ ! -s "$FMH/data/$id/report.md" ] || ! scout_relayed "$meta" || why='its report exists and Main relayed it'
   else
     [ ! -d "$proj" ] || why=$(why_landed "$meta" "$proj" "$branch")
   fi
@@ -157,7 +213,7 @@ for meta in "$STATE"/*.meta; do
       esac
     fi
     # Only an answered lane is reported: nothing else will ever revisit it. A done lane is waiting for its landing.
-    if [ "$ended" = resolved ] && [ "$(cat "$MEM/$id.reported" 2>/dev/null)" != unlanded ]; then
+    if [ "$ended" = resolved ] && [ "$kind" = ship ] && [ "$(cat "$MEM/$id.reported" 2>/dev/null)" != unlanded ]; then
       echo unlanded > "$MEM/$id.reported"
       drift "$id" "$id ended as resolved, left alone: its work has not landed on the trunk"
     fi

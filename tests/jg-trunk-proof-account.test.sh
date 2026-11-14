@@ -13,7 +13,7 @@
 
 test_a_proof_saved_under_one_account_lands_under_another() {
   local out rc=0 dd a b c row
-  world acct; dd="$W/dd" a="$W/acct-a" b="$W/acct-b" c="$HOME_D/data/q1/merge-card.json"; cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  world acct; dd="$W/dd" a="$W/acct-a" b="$W/acct-b" c="$HOME_D/data/q1/merge-card.json"; cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   mkdir -p "$dd" "$a" "$b"; printf 'judge: {}\n' > "$dd/config.yaml"
   lane q1 'the change' q1.txt
   # The card as `merge-card check` saves it: bound to account A, the proof home and the lane's project.

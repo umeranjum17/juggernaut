@@ -14,7 +14,7 @@ JG_TRUNK_FIXTURE_CACHE=1
 
 hang_world() {  # <name> [<extra policy line>]
   world "$1"
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   printf 'gate-full=sleep 300\ngate-slots=1\n%s\n' "${2-}" >> "$HOME_D/config/trunk-policy"
 }
 kick() { JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D" || fail "the check must not fail"; }

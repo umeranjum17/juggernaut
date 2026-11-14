@@ -1,0 +1,3 @@
+# Verify grace
+
+The verify grace is a tracked policy key, off unless a home turns it on: run `done-done run verify-grace` (journey `journeys/verify-grace.sh` over `tests/jg-trunk-verify-grace.test.sh`, screen: none); the real `bin/jg-trunk.sh verify` runs a lab gate that ends in `core/trunk-verify/grace.sh` over eight shard results; with `verify-grace` unset any failed script is a red, with it at 2 one failed script in one shard passes and the verdict names the script and its one fix ticket (`quarantine.sh ticket`), while a shard that exited non-zero with no counted failure, a missing shard result and three failed scripts are each a red that files no ticket. The log is `grace.log` in the run folder.

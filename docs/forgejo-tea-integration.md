@@ -56,7 +56,7 @@ index,state
 ```
 
 A list read is bounded by `--limit`, so a watched pull request older than that window would never be seen merged.
-The merge watch (`bin/jg-pr-poll.sh`), the terminal-run PR detail (`bin/jg-crew-state.sh`), and teardown's merged-PR proof (`bin/jg-teardown.sh`) therefore read the one pull request by number through `tea api ... /repos/{owner}/{repo}/pulls/{n}`, the same REST record the merge path below reads, and accept only a record whose `merged` field is a boolean (`jg_pr_forgejo_read_record` in `bin/jg-pr-lib.sh`).
+The merge watch (`bin/jg-pr-poll.sh`) and teardown's merged-PR proof (`bin/jg-teardown.sh`) therefore read the one pull request by number through `tea api ... /repos/{owner}/{repo}/pulls/{n}`, the same REST record the merge path below reads, and accept only a record whose `merged` field is a boolean (`jg_pr_forgejo_read_record` in `bin/jg-pr-lib.sh`).
 **Not verified here:** that by-number read was not re-run against the evidence instance; it relies on the same `tea api` pull request record whose `state`, `merged`, and `head.sha` fields the merge path's read-back below did verify.
 
 ## Why the login is resolved fresh, and how

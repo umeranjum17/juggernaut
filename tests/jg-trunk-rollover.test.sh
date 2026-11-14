@@ -89,7 +89,10 @@ move_homes() {  # <sha> <branch>
   JG_ROOT_OVERRIDE="$W/main" JG_HOME="$HOME_D" JG_STACK_SKIP=1 JG_HOST_WIRING_SKIP=1 \
     "$W/root/bin/jg-update.sh" --base "$1" --project "$PROJ" --branch "$2" 2>&1
 }
-live_row() { awk -F'\t' '$1 == "proj:lead" { r = $4 } END { print r }' "$HOME_D/data/trunk-live.tsv" 2>/dev/null; }
+live_row() { awk -F'\t' '$1 == "proj:lead" { r = $4 } END { print r }' "$HOME_D/data/trunk-in-use.tsv" 2>/dev/null; }
+
+# Call one function of the policy library in its own shell, so the test shell keeps its variables.
+policy_lib() { bash -c '. "$1/bin/jg-trunk-policy-lib.sh"; shift; "$@"' _ "$W/root" "$@"; }
 
 test_version_two_release_rolls_over_and_names_its_commit() {
   local out sha
@@ -105,16 +108,23 @@ test_version_two_release_rolls_over_and_names_its_commit() {
   printf 'proj\ttrunk-v2\t%s\t1\t1\thttps://github.com/o/r/pull/9\n' "$sha" > "$HOME_D/data/trunk-releases.tsv"
   printf '%s\n' merged > "$W/pr-state"
   out=$(trunk rollover "$PROJ" 2>&1) || fail "version 2 must roll over: $out"
-  [ "$(git -C "$PROJ" rev-parse refs/heads/trunk-v3)" = "$sha" ] || fail "version 3 must hold the release"
+  [ "$(git -C "$PROJ" rev-parse refs/heads/release/v3)" = "$sha" ] || fail "version 3 must hold the release"
   assert_contains "$out" "$sha" "rollover must name the exact commit"
-  pass 'version 2 release rolls to version 3 and names its commit'
+  [ "$(cat "$HOME_D/state/trunk-branch-proj")" = release/v3 ] || fail "the project is now on release/v3, the old trunk-v2 record was read to count on"
+  [ "$(awk -F'\t' '$1 == "proj" && $2 == 3 { print $3 }' "$HOME_D/data/trunk-versions.tsv")" = release/v3 ] || fail "the version row names release/v3"
+  [ "$(policy_lib jg_trunk_release_id proj trunk-v2)" = release-proj-trunk-v2 ] || fail "a release record under the old name keeps its id"
+  [ "$(policy_lib jg_trunk_release_id proj release/v3)" = release-proj-release-v3 ] || fail "a release/vN line gives a plain one-name id"
+  [ "$(policy_lib jg_trunk_branch proj "$HOME_D/state")" = release/v3 ] || fail "the reader returns the new line"
+  if out=$(git -C "$PROJ" update-ref -d refs/heads/release/v3 2>&1); then fail "release/v3 is a trunk and is never deleted by hand"; fi
+  assert_contains "$out" "refused" "the guard covers the release/vN line"
+  pass 'a release recorded under the old name trunk-v2 rolls on to release/v3 and names its commit; the release/vN line is guarded and a trunk-vN record id is unchanged'
 }
 
 test_a_rollover_replays_every_landed_commit_and_the_green_pin_follows() {
   local out new g n
   lab roll
   out=$(trunk rollover "$PROJ" 2>&1) || fail "T1: the merged release must roll over: $out"
-  new=$(git -C "$PROJ" rev-parse --verify -q refs/heads/trunk-v2) || fail "T1: the next trunk must exist"
+  new=$(git -C "$PROJ" rev-parse --verify -q refs/heads/release/v2) || fail "T1: the next trunk must exist"
   [ "$(git -C "$PROJ" rev-list --count "$M..$new")" = 3 ] || fail "T1: the next trunk must hold the three landed commits above the default branch, got $(git -C "$PROJ" rev-list --count "$M..$new") (today it is cut at the merge commit alone)"
   [ "$(git -C "$PROJ" rev-parse "$new~3")" = "$M" ] || fail "T1: the replay must start on the merge commit"
   [ "$(subjects "$M..$new" | paste -sd,)" = "ticket c1,ticket c2,ticket c3" ] || fail "T1: the replayed commits keep their messages and order: $(subjects "$M..$new" | paste -sd,)"
@@ -125,12 +135,12 @@ test_a_rollover_replays_every_landed_commit_and_the_green_pin_follows() {
   [ "$g" = "$(git -C "$PROJ" rev-parse "$new~1")" ] || fail "T1: the green pin must be the replayed second commit, not main (pin ${g:0:12}, main ${M:0:12})"
   [ "$(cat "$HOME_D/state/trunk-released-proj")" = "$M" ] || fail "T1: the released mark is the default-branch commit the release became"
   n=$(awk -F'\t' '$1 == "proj" && $2 == 2' "$HOME_D/data/trunk-versions.tsv")
-  [ "$(echo "$n" | cut -f1-4)" = "$(printf 'proj\t2\ttrunk-v2\t%s' "$M")" ] || fail "T1: the version row names the commit the trunk was cut from: $n"
+  [ "$(echo "$n" | cut -f1-4)" = "$(printf 'proj\t2\trelease/v2\t%s' "$M")" ] || fail "T1: the version row names the commit the trunk was cut from: $n"
   git -C "$PROJ" merge-base --is-ancestor "$M" "$new" || fail "T1: the new trunk's tip must sit on its version base, so the release is judged against it"
   assert_contains "$out" "deleted local trunk" "T1: the old trunk, carried by patch, must retire"
   assert_contains "$out" "deleted remote trunk" "T1: the old trunk's remote branch must retire"
   git -C "$PROJ" rev-parse --verify -q refs/heads/trunk >/dev/null && fail "T1: the old local trunk must be gone"
-  out=$(move_homes "$g" trunk-v2) || fail "T1: the move must reach every home: $out"
+  out=$(move_homes "$g" release/v2) || fail "T1: the move must reach every home: $out"
   [ "$(git -C "$W/lead" rev-parse HEAD)" = "$g" ] || fail "T1: the home at the old green commit must be on the new green commit: $out"
   [ "$(live_row)" = "live,re-pointed-from:${C2:0:12}" ] || fail "T1: the home must be re-pointed, not skipped: $(live_row)"
   pass 'T1 three landed commits are replayed with equal trees, the green pin is the replayed second, the old trunk retires and the home is re-pointed'
@@ -140,17 +150,17 @@ test_a_second_release_opens_a_new_pull_request_under_a_new_record() {
   local out meta1 meta2 new
   lab again
   trunk rollover "$PROJ" >/dev/null 2>&1 || fail "T2: the merged release must roll over"
-  lane_on trunk-v2 d1 four w4.txt; land d1
+  lane_on release/v2 d1 four w4.txt; land d1
   trunk verify "$PROJ" >/dev/null 2>&1 || fail "T2: d1 must verify on the new trunk"
   trunk word release "$PROJ" "ship the next" >/dev/null 2>&1 || fail "T2: the release word must record"
   out=$(trunk release "$PROJ" 2>&1) || fail "T2: the second release must open: $out"
   assert_contains "$out" "$U/2" "T2: the second release must open a new pull request"
   [ "$(grep -c 'pr create' "$W/gh-calls")" = 2 ] || fail "T2: two releases make two create calls"
-  assert_contains "$(grep 'pr create' "$W/gh-calls" | tail -n 1)" "--head trunk-v2" "T2: the second pull request goes from the new trunk"
-  new=$(awk -F'\t' '$2 == "trunk-v2"' "$HOME_D/data/trunk-releases.tsv")
-  [ "$(echo "$new" | cut -f1,2,4,6)" = "$(printf 'proj\ttrunk-v2\t4\t%s/2' "$U")" ] || fail "T2: the second release ships the three replayed commits and the new one: $new"
-  meta1="$HOME_D/state/release-proj-trunk.meta"; meta2="$HOME_D/state/release-proj-trunk-v2.meta"
-  [ -f "$meta1" ] && [ -f "$meta2" ] || fail "T2: each release has its own record (release-proj-trunk, release-proj-trunk-v2)"
+  assert_contains "$(grep 'pr create' "$W/gh-calls" | tail -n 1)" "--head release/v2" "T2: the second pull request goes from the new trunk"
+  new=$(awk -F'\t' '$2 == "release/v2"' "$HOME_D/data/trunk-releases.tsv")
+  [ "$(echo "$new" | cut -f1,2,4,6)" = "$(printf 'proj\trelease/v2\t4\t%s/2' "$U")" ] || fail "T2: the second release ships the three replayed commits and the new one: $new"
+  meta1="$HOME_D/state/release-proj-trunk.meta"; meta2="$HOME_D/state/release-proj-release-v2.meta"
+  [ -f "$meta1" ] && [ -f "$meta2" ] || fail "T2: each release has its own record (release-proj-trunk, release-proj-release-v2)"
   grep -qxF "pr=$U/1" "$meta1" || fail "T2: the first record names the first pull request: $(cat "$meta1")"
   grep -qxF "pr=$U/2" "$meta2" || fail "T2: the second record names the second pull request: $(cat "$meta2")"
   pass 'T2 a second release from the new trunk opens a new pull request under a new record and ships the carried commits'
@@ -166,7 +176,7 @@ test_a_replay_that_cannot_be_proved_equal_stops_and_changes_nothing() {
   out=$(trunk rollover "$PROJ" 2>&1) && fail "T3: an unprovable replay must stop the rollover: $out"
   [ "$(printf '%s\n' "$out" | grep -c .)" = 1 ] || fail "T3: it must stop with one line: $out"
   assert_contains "$out" "tree" "T3: the line says the trees differ"
-  git -C "$PROJ" rev-parse --verify -q refs/heads/trunk-v2 >/dev/null && fail "T3: no next trunk may be cut"
+  git -C "$PROJ" rev-parse --verify -q refs/heads/release/v2 >/dev/null && fail "T3: no next trunk may be cut"
   [ "$(git -C "$PROJ" rev-parse trunk)" = "$OLD" ] || fail "T3: the old trunk is untouched"
   [ "$(cat "$HOME_D/state/trunk-tip-proj")" = "$OLD" ] && [ "$(cat "$HOME_D/state/trunk-branch-proj")" = trunk ] \
     && [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$C2" ] || fail "T3: the records stay where they were"

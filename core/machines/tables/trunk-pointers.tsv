@@ -1,0 +1,12 @@
+machine	trunk-pointers	where one lane's commit stands against the trunk pointers, in the four delivery words (core/fleet-status/words.tsv): the lane branch, the trunk tip, the homes' live pin, main	core/machines/observers/lane-delivery.sh
+state	built	initial	The change is built in its lane: it is not on the trunk tip yet.	-
+state	landed	normal	The change is on the trunk tip, and no home runs it.	commit
+state	in-use	normal	Every home runs the change, or some homes do.	commit
+state	released	terminal	The change is on main in a release.	-
+edge	(none)	build	built	bin/jg-lavish-guard.sh:append	-	the worker appends a done line for its head	jg-machine-stage-words.test.sh
+edge	built	land	landed	core/trunk-landing/trunk-landing.sh:run	-	bin/jg-trunk.sh land or land-batch writes the lane's data/trunk-landings.tsv row	jg-machine-stage-words.test.sh
+edge	landed	go-live	in-use	bin/jg-trunk.sh:go_live	-	a home moved to a commit that holds the change, and the live row is written	jg-machine-stage-words.test.sh
+edge	in-use	pin-back	landed	bin/jg-trunk.sh:cmd_ci	-	CI is red at a live commit, so every home moves back to the last green commit	jg-machine-stage-words.test.sh
+edge	landed	release	released	bin/jg-pr-merge.sh:main	-	the release pull request that holds the change merged	jg-machine-stage-words.test.sh
+edge	in-use	release	released	bin/jg-pr-merge.sh:main	-	the release pull request that holds the change merged	jg-machine-stage-words.test.sh
+observer	bash "$(dirname "$JG_MACHINES_TABLES")/observers/lane-delivery.sh" pointer "$1"

@@ -26,8 +26,8 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/plain-board.XXXXXX")  # the store and the boar
 export HOME=$work/user XDG_DATA_HOME=$work/xdg SIGN_OFF_HOME=$work/signoff
 export JG_HOME=$work/main TMPDIR=$work/tmp
 mkdir -p "$HOME" "$JG_HOME"/{data,config,state,projects/herdr} "$TMPDIR"
-ln -s "$fork/bin" "$JG_HOME/bin"
-ln -s "$fork/toolchain.versions" "$JG_HOME/toolchain.versions"
+ln -sn "$fork/bin" "$JG_HOME/bin"
+ln -sn "$fork/toolchain.versions" "$JG_HOME/toolchain.versions"
 printf '{"schema":2,"items":[]}\n' > "$work/board.json"
 printf '%s\n' "$work/board.json" > "$JG_HOME/config/fleet-board"
 mkdir -p "$work/store"

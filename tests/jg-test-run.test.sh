@@ -211,6 +211,20 @@ test_a_green_result_is_reused_by_a_second_lane_and_a_red_never() {
   pass 'a green result is reused by a second lane with the same inputs, a changed input runs it again, and a red never'
 }
 
+# The runner puts all its scratch on disk: /tmp is RAM, so with no TMPDIR set the run, its slot directory and every script it runs
+# get TMPDIR under the cache home's jg-scratch, and a caller's own TMPDIR is kept.
+test_a_run_writes_its_scratch_on_disk_and_keeps_a_callers_tmpdir() {
+  local lane=$TMP_ROOT/disk-lane cache=$TMP_ROOT/disk-cache seen=$TMP_ROOT/disk-seen out own=$TMP_ROOT/own-tmp
+  required_fixture "$lane" "printf '%s\n' \"\$TMPDIR\" >'$seen'; f=\$(mktemp); [ -f \"\$f\" ]; rm -f \"\$f\"" 2
+  mkdir -p "$cache" "$own"
+  out=$(cd "$lane" && env -u TMPDIR -u JG_SCRATCH_ROOT -u JG_TEST_HOST_SLOTS -u JG_TEST_RUN_SLOT XDG_CACHE_HOME="$cache" bash bin/jg-test-run.sh tests/required-feature.test.sh 2>&1) || fail "the run failed: $out"
+  case $(cat "$seen") in "$cache"/jg-scratch/*) ;; *) fail "a script must run with TMPDIR under $cache/jg-scratch, saw: $(cat "$seen")" ;; esac
+  [ -d "$cache/jg-scratch/jg-test-runs-$(id -u)" ] || fail "the run slots must live under the disk scratch root"
+  out=$(cd "$lane" && env -u JG_SCRATCH_ROOT -u JG_TEST_RUN_SLOT TMPDIR="$own" XDG_CACHE_HOME="$cache" bash bin/jg-test-run.sh tests/required-feature.test.sh 2>&1) || fail "the run with its own TMPDIR failed: $out"
+  case $(cat "$seen") in "$own"/*) ;; *) fail "a caller's TMPDIR must be kept, saw: $(cat "$seen")" ;; esac
+  pass 'a run puts its scratch on disk under the cache home and keeps a caller TMPDIR'
+}
+
 test_shards_split_a_selection_without_losing_or_repeating_a_script() {
   local scripts k out all seen rc=0
   scripts="tests/jg-ship-local.test.sh tests/jg-pr-wait.test.sh tests/jg-brief.test.sh tests/jg-send-inbox.test.sh tests/jg-prompt-gate.test.sh tests/jg-owner-rules.test.sh tests/jg-mail.test.sh"
@@ -466,12 +480,17 @@ test_the_hosted_selection_drops_scripts_whose_tool_the_runner_lacks() {
 }
 
 test_a_weight_cap_defers_slow_suites_and_names_them() {
-  local out
-  out=$(bash "$RUNNER" --list --max-weight-ms 60000 tests/jg-teardown.test.sh tests/jg-ship-local.test.sh 2>&1) || fail "a capped list was refused: $out"
+  local out d=$TMP_ROOT/select-weight
+  # Every shipped script has a done-done entry and so no weight row; the fixture runner carries one slow row of its own.
+  select_fixture "$d"
+  printf 'echo ok\n' >"$d/tests/jg-slow-cap.test.sh"
+  sed -i 's|^tests/jg-merge-on-green.test.sh 900$|tests/jg-slow-cap.test.sh 210766|' "$d/bin/jg-test-run.sh"
+  grep -q '^tests/jg-slow-cap.test.sh 210766$' "$d/bin/jg-test-run.sh" || fail "the fixture runner took no slow weight row"
+  out=$(cd "$d" && bash bin/jg-test-run.sh --list --max-weight-ms 60000 tests/jg-slow-cap.test.sh tests/jg-names-file.test.sh 2>&1) || fail "a capped list was refused: $out"
   assert_contains "$out" 'deferred to the post-merge lane' 'a deferred suite must be named'
-  assert_contains "$out" 'tests/jg-ship-local.test.sh' 'a fast suite must stay selected'
+  assert_contains "$out" 'tests/jg-names-file.test.sh' 'a fast suite must stay selected'
   case $(printf '%s\n' "$out" | grep -v deferred) in
-    *jg-teardown*) fail "the slow suite stayed in the capped selection: $out" ;;
+    *jg-slow-cap*) fail "the slow suite stayed in the capped selection: $out" ;;
   esac
   pass 'a weight cap defers slow suites and names them'
 }
@@ -553,6 +572,40 @@ i=0; while [ ! -e '$d/release' ] && [ \"\$i\" -lt 600 ]; do sleep 0.2; i=\$((i +
   pass 'a run past the machine limit waits for a slot and starts when it frees; runs inside an admitted run never wait'
 }
 
+# A burst of runs started at once never has more than the slot limit running tests, each runs its scripts at a lower
+# cpu priority than the caller, and the host load at every grant and release is on record. With no machine_runs_max
+# set, the limit is one per 16 cpus held between 2 and 3.
+test_a_burst_of_runs_caps_at_the_slot_limit_under_nice_and_records_the_load() {
+  local d=$TMP_ROOT/burst n pid peak=0 live cap rc=0
+  mkdir -p "$d/running" "$d/nice"
+  printf 'machine_runs_max=0\n' >"$d/limits"
+  cap=$(TEST_SPEED_LIMITS_FILE="$d/limits" bash "$RUNNER" --show-limits 2>/dev/null | sed -n 's/^machine_runs_max=//p')
+  case $cap in 2|3) ;; *) fail "the default slot limit must be 2 or 3, got '$cap'" ;; esac
+  for n in 1 2 3 4 5 6; do
+    write_script "$d/b$n.test.sh" "touch '$d/running/b$n'
+ps -o ni= -p \$\$ | tr -d ' ' >'$d/nice/b$n'
+ls '$d/running' | wc -l >>'$d/counts'
+sleep 1
+rm -f '$d/running/b$n'"
+  done
+  for n in 1 2 3 4 5 6; do
+    env -u JG_TEST_RUN_SLOT -u JG_TRUNK_GATE_OUTPUT JG_TEST_HOST_SLOTS="$d/slots" TEST_SPEED_LIMITS_FILE="$d/limits" \
+      bash "$RUNNER" "$d/b$n.test.sh" >"$d/b$n.out" 2>&1 &
+    eval "pid$n=\$!"
+  done
+  for n in 1 2 3 4 5 6; do eval "pid=\$pid$n"; wait "$pid" || rc=$?; done
+  assert_equals 0 "$rc" "every run in the burst must pass: $(cat "$d"/b*.out)"
+  while read -r live; do [ "$live" -le "$peak" ] || peak=$live; done <"$d/counts"
+  [ "$peak" -ge 1 ] && [ "$peak" -le "$cap" ] || fail "at most $cap runs may test at once, the burst peaked at $peak"
+  for n in 1 2 3 4 5 6; do
+    [ "$(cat "$d/nice/b$n")" -ge 10 ] || fail "run $n ran at nice $(cat "$d/nice/b$n"), not lowered"
+  done
+  assert_equals 6 "$(grep -c "	admit	" "$d/slots/load.tsv")" 'every run records its load at the slot grant'
+  assert_equals 6 "$(grep -c "	release	" "$d/slots/load.tsv")" 'every run records its load at the slot release'
+  awk -F'\t' '$5 !~ /^[0-9.]+$/ { bad = 1 } END { exit bad }' "$d/slots/load.tsv" || fail "a load record has no load1: $(cat "$d/slots/load.tsv")"
+  pass "a burst of 6 runs peaked at $peak of $cap slots, ran at nice 10 or lower priority, and left 12 load records"
+}
+
 # A run of the trunk itself (the lander's gate, the verify) names JG_TRUNK_GATE_OUTPUT. It owns one reserved slot that
 # lane runs never take, so with every general slot held by lane proofs it starts at once; a second trunk run, with the
 # reserved slot held, takes the first general slot that frees, ahead of lane runs that asked for a slot before it.
@@ -607,6 +660,7 @@ test_a_script_that_moves_home_keeps_the_callers_go_build_cache() {
 }
 
 test_a_run_past_the_machine_limit_waits_for_a_slot
+test_a_burst_of_runs_caps_at_the_slot_limit_under_nice_and_records_the_load
 test_a_trunk_run_starts_at_once_and_takes_the_first_free_slot_ahead_of_lane_runs
 test_a_script_that_moves_home_keeps_the_callers_go_build_cache
 test_required_shards_keep_the_union_and_a_failed_shard
@@ -619,7 +673,7 @@ test_a_required_shard_over_its_budget_is_a_warning_and_runs_every_script
 select_fixture() {
   local d=$1
   mkdir -p "$d/bin" "$d/tests" "$d/core/trunk-landing" "$d/core/merge-on-green"
-  cp "$RUNNER" "$ROOT/bin/jg-test-host-lib.sh" "$d/bin/"
+  cp "$RUNNER" "$ROOT/bin/jg-test-host-lib.sh" "$ROOT/bin/jg-test-procs-lib.sh" "$ROOT/bin/jg-scratch-root-lib.sh" "$d/bin/"
   printf '#!/bin/sh\n' >"$d/bin/jg-trunk.sh"
   # shellcheck disable=SC2016
   printf '. "$(dirname "$0")/jg-trunk.sh"\n' >"$d/bin/jg-trunk-policy-lib.sh"
@@ -674,37 +728,56 @@ test_a_changed_core_script_selects_the_scripts_that_name_it() {
 test_a_changed_fleet_homes_library_selects_the_move_test() {
   local d=$TMP_ROOT/select-homes out
   select_fixture "$d"
-  # The library is sourced by bin/jg-update.sh and bin/jg-trunk-live-lag.sh, which no test of it names; the one test
-  # that drives both callers against real homes owns it, and no other script is selected.
+  # The library is sourced by bin/jg-update.sh and bin/jg-trunk-live-lag.sh, which no test of it names. The one test that
+  # drives both callers against real homes has a done-done entry, so `done-done affected` selects it and this runner
+  # selects no script for the change.
   printf '#!/bin/sh\n' >"$d/bin/jg-fleet-homes-lib.sh"
   printf 'echo ok jg-update.sh\n' >"$d/tests/jg-update-local-base.test.sh"
   git -C "$d" -c user.email=t@t -c user.name=t add -A
   git -C "$d" -c user.email=t@t -c user.name=t commit -qm homes
   printf '# change\n' >>"$d/bin/jg-fleet-homes-lib.sh"
-  out=$(cd "$d" && bash bin/jg-test-run.sh --list --changed --base HEAD 2>&1) || fail "a changed fleet-homes library was refused: $out"
-  assert_contains "$out" 'tests/jg-update-local-base.test.sh' 'the test that moves every home must be selected'
+  out=$(cd "$d" && bash bin/jg-test-run.sh --list --changed --base HEAD 2>&1) || :
   case $out in
-    *jg-names-*) fail "a script that does not exercise the library was selected: $out" ;;
+    *jg-update-local-base*|*jg-names-*) fail "the runner selected a script for the fleet-homes library: $out" ;;
   esac
-  pass 'a changed fleet-homes library selects the fleet move test'
+  grep -qF 'command: bash tests/jg-update-local-base.test.sh' "$ROOT/.done-done.yaml" || fail "the move test has no done-done entry"
+  pass 'a changed fleet-homes library selects no script here and the move test is a done-done entry'
 }
 
-test_a_changed_dispatch_skill_runs_the_floor_test() {
-  local d=$TMP_ROOT/select-dispatch out
+# T7 (jg8-t7): a script a journey of .done-done.yaml names is selected by `done-done affected`, never by this runner.
+# The old selectors stay only for scripts with no entry (jg8-t2 enters the rest), and this case fails when an entered
+# script is still selected the old way, by --all, a lane, --changed or a row of a table in the runner.
+test_a_script_with_a_done_done_entry_is_selected_by_no_old_selector() {
+  local d=$TMP_ROOT/select-entered out s base listing
   select_fixture "$d"
   cp "$ROOT/bin/jg-timeout-lib.sh" "$d/bin/"
   cp "$ROOT/tests/git-config-helpers.sh" "$d/tests/"
   mkdir -p "$d/.agents/skills/task-dispatch"
   printf 'original\n' >"$d/.agents/skills/task-dispatch/SKILL.md"
   printf 'echo floor failure; exit 1\n' >"$d/tests/jg-agents-md-floor.test.sh"
+  printf 'echo plain ok\n' >"$d/tests/jg-no-entry.test.sh"
   git -C "$d" add .agents tests
   git -C "$d" -c user.email=t@t -c user.name=t commit -qm dispatch
   printf 'changed\n' >>"$d/.agents/skills/task-dispatch/SKILL.md"
-  out=$(cd "$d" && bash bin/jg-test-run.sh --list --changed --base HEAD 2>&1) || fail "dispatch selection refused: $out"
-  assert_contains "$out" 'tests/jg-agents-md-floor.test.sh' 'a dispatch change must select the floor test'
-  out=$(cd "$d" && bash bin/jg-test-run.sh --changed --base HEAD 2>&1) && fail "a failing floor test passed the gate: $out"
-  assert_contains "$out" 'floor failure' 'the selected floor failure must be reported'
-  pass 'a dispatch skill change runs the floor test and rejects its failure'
+  out=$(cd "$d" && bash bin/jg-test-run.sh --list --all 2>&1) || fail "the fixture listing refused: $out"
+  assert_contains "$out" 'tests/jg-agents-md-floor.test.sh' 'a script with no entry stays in the old selection'
+  printf 'app: fixture\njourneys:\n  floor:\n    tier: local\n    command: bash tests/jg-agents-md-floor.test.sh\n' >"$d/.done-done.yaml"
+  out=$(cd "$d" && bash bin/jg-test-run.sh --list --all 2>&1) || fail "the fixture listing refused: $out"
+  case "$out" in *jg-agents-md-floor.test.sh*) fail "an entered script is still in --all: $out" ;; esac
+  assert_contains "$out" 'tests/jg-no-entry.test.sh' 'a script with no entry stays in the old selection'
+  out=$(cd "$d" && bash bin/jg-test-run.sh --list --changed --base HEAD 2>&1) || :
+  case "$out" in *jg-agents-md-floor.test.sh*) fail "an entered script is still selected by --changed: $out" ;; esac
+  # The real repository: no table of the runner holds a row for an entered script, and no listing selects one.
+  listing=$(bash "$ROOT/bin/jg-test-run.sh" --list --all 2>&1)
+  while IFS= read -r s; do
+    [ -n "$s" ] || continue
+    base=$(basename "$s")
+    if grep -nE -- "(^|[^A-Za-z0-9_.-])${base//./\\.}" "$ROOT/bin/jg-test-run.sh" >"$TMP_ROOT/entered-rows.txt"; then
+      fail "the runner still names the entered script $base: $(cat "$TMP_ROOT/entered-rows.txt")"
+    fi
+    case "$listing" in *"$s"*) fail "--all still selects the entered script $s" ;; esac
+  done < <(grep -oE '(^|[^A-Za-z0-9_./-])tests/[A-Za-z0-9_.-]+\.test\.sh' "$ROOT/.done-done.yaml" | grep -oE 'tests/.*' | LC_ALL=C sort -u)
+  pass 'a script with a done-done entry is selected by no old selector and has no row in the runner'
 }
 
 # A time budget advises and never stops: a tree whose largest serial shard packs 3 s over its target still passes,
@@ -720,11 +793,14 @@ test_the_coverage_time_budget_advises_and_a_script_no_shard_runs_still_refuses()
   [ "$rc" = 0 ] || fail "a shard 3 s over its target must pass: rc=$rc $out"
   assert_contains "$out" 'JG_TEST_COVERAGE advise ' 'the advise line must be printed'
   assert_contains "$out" 'coverage advice: largest portable serial shard' 'the warning must name the shard'
-  sed -i '/^tests\/jg-x-mode.test.sh$/d' "$fixture/bin/jg-test-run.sh"
+  # Every shipped script has a done-done entry and no lane row, so the fixture grows a script that the serial lane skips.
+  printf 'echo ok\n' >"$fixture/tests/jg-no-shard.test.sh"
+  sed -i 's/^    if is_proven_isolated_script "\$s"; then/if is_proven_isolated_script "$s" || [ "$s" = tests\/jg-no-shard.test.sh ]; then/' "$fixture/bin/jg-test-run.sh"
+  grep -q 'jg-no-shard.test.sh ]; then' "$fixture/bin/jg-test-run.sh" || fail "the fixture runner took no skip"
   rc=0
   out=$(bash "$fixture/bin/jg-test-run.sh" --check-coverage 2>&1) || rc=$?
   [ "$rc" = 1 ] || fail "a script no shard runs must still refuse: rc=$rc $out"
-  assert_contains "$out" 'tests/jg-x-mode.test.sh' 'the refusal must name the script'
+  assert_contains "$out" 'tests/jg-no-shard.test.sh' 'the refusal must name the script'
   pass 'the coverage time budget advises with exit 0 and a script no shard runs still refuses'
 }
 
@@ -741,6 +817,7 @@ test_a_hanging_test_is_killed_and_reported_instead_of_holding_the_run
 test_a_slow_passing_script_past_the_per_script_bound_warns_and_passes
 test_a_slow_failing_script_past_the_per_script_bound_stays_red
 test_the_gate_stops_a_hung_script_with_its_children_and_temp_folder_without_a_flag
+test_a_run_writes_its_scratch_on_disk_and_keeps_a_callers_tmpdir
 test_a_test_within_its_limits_is_unaffected
 test_a_weight_cap_defers_slow_suites_and_names_them
 test_the_hosted_selection_drops_scripts_that_hit_the_time_bound_or_have_no_hosted_time
@@ -750,7 +827,7 @@ test_a_deleted_shared_fixture_does_not_refuse_the_changed_selection
 test_a_changed_shared_file_selects_the_scripts_that_name_it
 test_a_changed_core_script_selects_the_scripts_that_name_it
 test_a_changed_fleet_homes_library_selects_the_move_test
-test_a_changed_dispatch_skill_runs_the_floor_test
+test_a_script_with_a_done_done_entry_is_selected_by_no_old_selector
 test_the_coverage_time_budget_advises_and_a_script_no_shard_runs_still_refuses
 test_a_quarantined_script_is_listed_not_run_and_the_gate_passes
 test_an_unmapped_test_file_fails_only_itself

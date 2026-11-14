@@ -73,7 +73,7 @@ bin/jg-remote-home-seed.sh <id> <ssh-alias> <remote-root> <remote-home> {<projec
 ```
 
 You resolve each project's origin yourself - from the captain, the project registry, a clone that exists elsewhere, `gh-axi`, or an explicit paste - and name it as `<project>=<origin-url>`; the seed validates and transports what you supply.
-A remote seed therefore creates nothing in this home beyond the route, the charter brief, and a launch record once it is launched: never clone a project into `projects/`, initialize no-mistakes here, or run a fleet sync just to seed a remote Squad Lead.
+A remote seed therefore creates nothing in this home beyond the route, the charter brief, and a launch record once it is launched: never clone a project into `projects/`, or run a fleet sync just to seed a remote Squad Lead.
 A bare `<project>` remains a convenience for a project this home already has cloned, whose configured origin is read instead.
 [`docs/remote-squad-leads.md`](../../../docs/remote-squad-leads.md#provision-a-route) owns the rest of the operator contract, and [`bin/jg-project-origin-lib.sh`](../../../bin/jg-project-origin-lib.sh) owns the accepted origin forms.
 Pass `--no-projects` in the project position to seed the project-less home described above; the same mutual-exclusion and fail-loud-on-omission rules apply.
@@ -155,11 +155,10 @@ Direct seed without a preexisting brief requires `JG_SQUAD LEAD_CHARTER`.
 Run `bin/jg-home-seed.sh validate` when checking registry integrity; its header owns the complete validation and refusal mechanics.
 
 Seeding is transactional.
-If validation, cloning, no-mistakes initialization, or registry update fails, generated briefs, new homes, new project clones, and registry edits are rolled back.
+If validation, cloning, or registry update fails, generated briefs, new homes, new project clones, and registry edits are rolled back.
 
-Squad Lead project lists may include `no-mistakes` and `direct-PR` projects only.
+Squad Lead project lists may include `direct-PR` projects only.
 `local-only` projects stay with the main Juggernaut.
-For `no-mistakes` projects, seeding initializes only projects newly cloned into a Squad Lead home and refuses to mutate a preexisting clone that is not already initialized.
 
 ## Record intake for an existing or inherited domain
 

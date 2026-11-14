@@ -22,11 +22,7 @@ This record owns concurrent isolation evidence for the portable parallel candida
 
 ## Candidate set
 
-- `tests/jg-brief.test.sh`
-- `tests/jg-captain-hold-lifecycle.test.sh`
-- `tests/jg-crew-state.test.sh`
-- `tests/jg-pr-merge.test.sh`
-- `tests/jg-x-mode.test.sh`
+The archived run below also covered `tests/jg-brief.test.sh`, `tests/jg-captain-hold-lifecycle.test.sh`, `tests/jg-crew-state.test.sh`, `tests/jg-pr-merge.test.sh` and `tests/jg-x-mode.test.sh`. They now have a done-done entry, so `done-done affected` selects them and this candidate set lists none.
 
 ## Durations
 

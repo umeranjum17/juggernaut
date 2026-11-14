@@ -2610,6 +2610,23 @@ jg_wake_lost_worker() {
   pipe_rc=("${PIPESTATUS[@]}"); [ "${pipe_rc[0]}" -eq 0 ] && [ "${pipe_rc[1]}" -eq 0 ]
 }
 
+# jg_wake_host <subject> <line> [<rung>]: the alert `host` (memory, load, disk, temp space, a stray browser, a failed start-up network check),
+# raised through bin/jg-alert.sh. Every call is a new episode (it ends the subject's last record first, so an acknowledged one cannot mute it) and delivers the same `check` wake keyed by the subject with the line as its
+# text, so the check: consumers read what they always read; rung 0 (the tick) only settles the wake in the tally. Take no queue lock first:
+# the delivery appends under it. `jg_wake_host_clear <subject>` ends the episode when its cause is gone.
+jg_wake_host() {
+  local alert="$JG_WAKE_LIB_DIR/jg-alert.sh" pipe_rc
+  jg_wake_host_clear "$1"
+  JG_HOME="${JG_HOME:-$JG_ROOT}" JG_STATE_OVERRIDE="$STATE" \
+    bash "$alert" raise host "$1" --rung "${3:-3}" --wake check --text "$2" --repeat \
+    | JG_HOME="${JG_HOME:-$JG_ROOT}" JG_STATE_OVERRIDE="$STATE" bash "$alert" deliver
+  pipe_rc=("${PIPESTATUS[@]}"); [ "${pipe_rc[0]}" -eq 0 ] && [ "${pipe_rc[1]}" -eq 0 ]
+}
+jg_wake_host_clear() {
+  [ -r "$STATE/alerts/host--$1.rec" ] || return 0
+  JG_HOME="${JG_HOME:-$JG_ROOT}" JG_STATE_OVERRIDE="$STATE" bash "$JG_WAKE_LIB_DIR/jg-alert.sh" resolve "host--$1" >/dev/null
+}
+
 # --- wake urgency routing -----------------------------------------------------
 # One shared rule file gives every event a class, in every home: `now` wakes at once,
 # `batch` waits for a turn that happens anyway, and `silent` is recorded only.

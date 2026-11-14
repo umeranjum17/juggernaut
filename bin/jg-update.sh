@@ -75,8 +75,10 @@
 # homes and are never touched). The homes are Main's registry plus Main, whichever home runs this: a lead home follows its
 # parent record up to Main (bin/jg-fleet-homes-lib.sh), so a go-live run from a lead moves every home, itself included.
 # The last line printed names every home that is not at the base (`fleet: not every home is at <sha>: <ids>`) and the exit is
-# 1; a go-live records its `live` row only on exit 0. Each home gets exactly one row in data/trunk-live.tsv:
-#   <project>:<home-id> <sha> <epoch> <status> <pre-move HEAD>      (Main's home id is "primary")
+# 1; a go-live records its `live` row only on exit 0. Each home gets exactly one row in data/trunk-in-use.tsv:
+#   <project>:<home-id> <sha> <epoch> <status> <pre-move HEAD> [<shape>]     (Main's home id is "primary")
+#   A skipped:* row also carries <shape>, how the home stood against <sha> (bin/jg-home-shape-lib.sh owns the format and its replay);
+#   readers ignore columns and shape keys they do not know.
 #   live                        fast-forwarded, or already there
 #   live,re-pointed-from:<sha>  HEAD was not an ancestor but the tip holds its whole tree: reset --keep, never a merge
 #   skipped:dirty | skipped:unlanded:<paths> | skipped:<other reason>   not touched
@@ -129,12 +131,16 @@ STATE="${JG_STATE_OVERRIDE:-$JG_HOME/state}"
 SQUAD_LEADS_MD="$(jg_compat_pick "$JG_HOME/data/squad_leads.md")"
 # shellcheck source=bin/jg-ff-lib.sh
 . "$SCRIPT_DIR/jg-ff-lib.sh"
+# shellcheck source=bin/jg-home-shape-lib.sh
+. "$SCRIPT_DIR/jg-home-shape-lib.sh"
 # shellcheck source=bin/jg-squad-lead-restart-lib.sh
 . "$SCRIPT_DIR/jg-squad-lead-restart-lib.sh"
 # shellcheck source=bin/jg-squad-lead-parent-lib.sh
 . "$SCRIPT_DIR/jg-squad-lead-parent-lib.sh"
 # shellcheck source=bin/jg-fleet-homes-lib.sh
 . "$SCRIPT_DIR/jg-fleet-homes-lib.sh"
+# shellcheck source=bin/jg-trunk-policy-lib.sh
+. "$SCRIPT_DIR/jg-trunk-policy-lib.sh"
 
 "$SCRIPT_DIR/jg-guard.sh" || true
 
@@ -330,7 +336,7 @@ read_health_before() {  # <dir>
 # A home that fails its health check on the new commit with a fault it did not have before is pinned back (stopped); one that
 # carries a fault from before stays on the new commit and says so in its row (live,pre-existing:<reason>).
 move_home() {  # <home-id> <dir> <label> <ignore-seed-marker>
-  local key=$1 dir=$2 label=$3 seed=$4 pre out mb paths status tmp guard_why carried reason
+  local key=$1 dir=$2 label=$3 seed=$4 pre out mb paths status tmp guard_why carried reason shape
   MOVE_RESULT=skipped
   pre=$(git -C "$dir" rev-parse HEAD 2>/dev/null || true)
   read_health_before "$dir"
@@ -346,6 +352,8 @@ move_home() {  # <home-id> <dir> <label> <ignore-seed-marker>
     && JG_TRUNK_PINBACK=1 git -C "$dir" reset -q --keep "$BASE" 2>/dev/null; then
     FF_STATUS=updated; FF_INSTR=""; echo "$label: pinned back ${pre:0:12}..${BASE:0:12}" > "$tmp"
   else
+    # The guard a home holds may be an older copy; the move is judged by the current one (the recorded tip is kept).
+    [ ! -x "$SCRIPT_DIR/jg-home-guard.sh" ] || "$SCRIPT_DIR/jg-home-guard.sh" refresh "$dir" >/dev/null 2>&1 || true
     JG_TRUNK_LIVE=1 JG_TRUNK_TIP="$BASE" ff_target "$dir" "$label" "$BASE" yes "$seed" "" "" yes > "$tmp"
   fi
   out=$(cat "$tmp"); rm -f -- "$tmp"; printf '%s\n' "$out"
@@ -399,7 +407,11 @@ move_home() {  # <home-id> <dir> <label> <ignore-seed-marker>
     [ -z "$WIRE_FAILED" ] || status="$status,wiring-failed:$WIRE_FAILED"
   fi
   mkdir -p "$DATA"
-  printf '%s:%s\t%s\t%s\t%s\t%s\n' "$(basename "$PROJECT")" "$key" "$BASE" "$(date +%s)" "$status" "$pre" >> "$DATA/trunk-live.tsv"
+  jg_trunk_in_use_migrate "$DATA" "$STATE"
+  # A skipped home is left untouched, so its shape now is the shape that failed the move: the row keeps it for replay.
+  shape=""
+  case $status in skipped:*) shape=$(jg_home_shape_record "$dir" "$BASE" 2>/dev/null || true) ;; esac
+  printf '%s:%s\t%s\t%s\t%s\t%s%s\n' "$(basename "$PROJECT")" "$key" "$BASE" "$(date +%s)" "$status" "$pre" "${shape:+$'\t'$shape}" >> "$DATA/trunk-in-use.tsv"
 }
 
 # Every home the registry of Main names, then Main (bin/jg-fleet-homes-lib.sh lists them, from whichever home runs this).
@@ -418,7 +430,7 @@ fleet_live_move() {
       lead)
         if ! validate_squad_lead_home "$id" "$dir"; then
           echo "squad_lead $id: skipped: unsafe home: $VALIDATION_ERROR"
-          printf '%s:%s\t%s\t%s\tskipped:unsafe-home\t\n' "$(basename "$PROJECT")" "$id" "$BASE" "$(date +%s)" >> "$DATA/trunk-live.tsv"
+          printf '%s:%s\t%s\t%s\tskipped:unsafe-home\t\n' "$(basename "$PROJECT")" "$id" "$BASE" "$(date +%s)" >> "$DATA/trunk-in-use.tsv"
           behind="$behind $id"; continue
         fi
         move_home "$id" "$VALIDATED_HOME" "squad_lead $id" yes ;;

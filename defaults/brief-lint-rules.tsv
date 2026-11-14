@@ -17,11 +17,10 @@
 #
 # The rows are pairs of words a person picked, never a model call, so a finding can be traced to its row.
 # The tool only reports; a finding refuses nothing.
-
-# The 200-line target of the Claude Code memory guidance (code.claude.com/docs/en/memory)
-# at 80 bytes a line. Measured 9 Nov 2026: the median worker brief of 3 to 9 Nov was 32,860 bytes,
-# of which the task was 4.8% (data/fable-opportunity-recon/report.md, 5.2).
-budget	brief-bytes	16000
+#
+# The byte budget of a brief is not a row here: this table has no budget row, and bin/jg-brief-lint.sh
+# takes the ceiling `ctx-worker-brief` from defaults/token-caps through bin/jg-context-load.sh. A table
+# named with --rules may still carry one budget row of its own.
 
 # A wait gets one status word. The shared brief says `paused:` and never `blocked:`, a home
 # addition said every wait is `blocked:`, and a later one said a wait on your own work is `paused:`.

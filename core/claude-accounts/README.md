@@ -39,3 +39,7 @@ Test: `bash claude-accounts/tests/claude-accounts-pick.test.sh`.
 `install-timer.sh [--dry-run] <home>` installs a systemd user timer (`jg-claude-accounts-quota.timer`) that runs the reader every 5 minutes for that home, so `state/claude-accounts.json` stays current for dispatch; `--dry-run` prints what would be written. It copies the reader to `~/.local/share/jg-claude-accounts/` and enables the timer only when something changed. Remove with `uninstall-timer.sh`. Install from merged main only.
 
 Test: `bash claude-accounts/tests/claude-accounts-timer.test.sh`.
+
+## Account drift
+
+`bin/account-drift.sh tick` (run each minute) compares each live Claude lane's recorded account with what the home's pin, by-model map and account holds select for its model now. An idle lane that differs gets a plain relaunch (the pin and the map are re-read, and its inbox goes to the new agent); a busy lane is moved at a later tick that finds it idle; a lane whose last beat is a StopFailure on a held or deselected account gets one relaunch per beat. A refused relaunch raises one capacity alert naming the lane and the account. Test: `bash tests/jg-account-drift.test.sh`.

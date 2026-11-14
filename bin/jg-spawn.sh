@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a operator in a treehouse or Orca worktree, or a
 # squad_lead in its isolated juggernaut home.
-# Usage: jg-spawn.sh <task-id> <project-dir> --ticket <ticket-id> --mode <direct-PR|local|local-only|local-trunk> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--off-critical-path <captain-words>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
+# Usage: jg-spawn.sh <task-id> <project-dir> --ticket <ticket-id> --mode <direct-PR|local|local-only|local-trunk> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--shepherd <pull-request-url>] [--off-critical-path <captain-words>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
 #        jg-spawn.sh <task-id> <project-dir> --ticket <ticket-id> --scout [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
 #        jg-spawn.sh <task-id> [<juggernaut-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --squad-lead
 #   --ticket <ticket-id> is REQUIRED for every fresh ship or scout spawn: the task id is made from the
@@ -71,6 +71,13 @@
 #   exception is --red-fix-of <branch>, which declares the task a fix to that
 #   frozen release's own red checks; <branch> must be the base, and the spawn
 #   records it as red_fix_of= for bin/jg-pr-check.sh and for relaunches.
+#   --shepherd <pull-request-url> makes a ship lane whose only job is that pull
+#   request's merge (bin/jg-brief.sh --shepherd writes its brief). It needs a
+#   delivery mode that publishes a pull request. The spawn records the address as
+#   shepherd_of=, binds it as the task's pr= through bin/jg-pr-check.sh once the
+#   lane runs (a refusal there is one warning line naming the command to rerun),
+#   and a relaunch reuses the record. core/pr-pager/pager.sh pages the lane, not
+#   the lead, while the lane is live. A batch refuses it: one lane, one address.
 #   A ship never runs off the migration's critical path (bin/jg-critical-path.sh
 #   owns the ordered list in config/migration-card and the gate): while a
 #   critical part is not live, a ship brief needs a `Migration row:` line naming
@@ -754,6 +761,15 @@ if [ "$TOKEN_SAVER_OFF" = 0 ]; then
   CLAUDE_TOKEN_KEYS='"enabledPlugins":{"ponytail@ponytail":false}'
   [ -z "$BASH_OUTPUT_MAX" ] || CLAUDE_TOKEN_KEYS="$CLAUDE_TOKEN_KEYS,\"env\":{\"BASH_MAX_OUTPUT_LENGTH\":\"$BASH_OUTPUT_MAX\"}"
 fi
+# The keys that keep a Claude fleet session thin (workflow text, harness memory, skills outside the role's
+# keep-list), one builder for a worker's inline --settings and a lead's settings file
+# (bin/jg-launch-settings.sh). The brief include files feed its keep-list.
+fleet_launch_keys() {
+  local inc=()
+  [ ! -r "$CONFIG/brief-include.md" ] || inc+=(--include "$CONFIG/brief-include.md")
+  [ ! -r "$CONFIG/brief-include-shared.md" ] || inc+=(--include "$CONFIG/brief-include-shared.md")
+  "$SCRIPT_DIR/jg-launch-settings.sh" "$KIND" "${inc[@]}"
+}
 SUB_HOME_MARKER=".jg-squad-lead-home"
 if [ -e "$STATE" ] || [ -L "$STATE" ]; then
   jg_backlog_directory_present "$STATE" "state directory" || {
@@ -1484,6 +1500,10 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   fi
   [ "$TICKET_SET" -eq 0 ] || {
     echo "error: --ticket names one task's ticket; a batch spawns each id=repo pair under its own id as the ticket, so spawn a dotted ticket on its own" >&2
+    exit 2
+  }
+  [ "$SHEPHERD_SET" -eq 0 ] || {
+    echo "error: --shepherd names one lane's pull request; a batch spawns many lanes, so spawn a shepherd on its own" >&2
     exit 2
   }
   rc=0
@@ -2779,6 +2799,7 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   if [ "$RELAUNCH" -eq 1 ]; then
     BASE_BRANCH=$(jg_meta_get "$RELAUNCH_META" base_branch)
     RED_FIX_OF=$(jg_meta_get "$RELAUNCH_META" red_fix_of)
+    SHEPHERD=$(jg_meta_get "$RELAUNCH_META" shepherd_of)
     OFF_CRITICAL_PATH=$(jg_meta_get "$RELAUNCH_META" critical_override)
     MIGRATION_ROW=$(jg_meta_get "$RELAUNCH_META" migration_row)
     TICKET=$(jg_meta_get "$RELAUNCH_META" ticket)
@@ -3242,6 +3263,20 @@ spawn_ticket_refuse() {
   [ "$KIND" = ship ] || return 0
   spawn_ticket_admit
 }
+# The lane takes a lease on the files its ticket names (core/file-lease/lease.sh owns the rules): a hot file
+# another live lane leases refuses the start, and the ticket stays in ready. Nothing exists yet to unwind.
+spawn_file_lease() {
+  local files rc=0 paths
+  files=$(jq -r '(if type == "array" then .[0] else . end) | .metadata.files // empty
+    | if type == "string" then fromjson else . end | .[]?' "$1" 2>&1) \
+    || { echo "error: ticket $TICKET's file list could not be read for its lease: $files" >&2; return 1; }
+  [ -n "$files" ] || return 0
+  mapfile -t paths <<<"$files"
+  JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_CONFIG_OVERRIDE="$CONFIG" JG_FILE_LEASE_REPO="$PROJ_ABS" \
+    "$JG_ROOT/core/file-lease/lease.sh" acquire "$ID" "${paths[@]}" || rc=$?
+  [ "$rc" -eq 0 ] || echo "error: spawn refused: ticket $TICKET could not take its file lease (exit $rc)" >&2
+  return "$rc"
+}
 # The ticket belongs to this repository and may start now (core/spawn/cmd/jg-spawn-core/admit.go): its
 # repository label and files, its open edges and the files of the other live lanes. The rows are read here.
 spawn_ticket_admit() {
@@ -3259,6 +3294,7 @@ spawn_ticket_admit() {
   else
     "$SCRIPT_DIR/jg-spawn-core.sh" admit --project "$(basename "$PROJ_ABS")" --repo "$PROJ_ABS" \
       --ticket "$scratch/ticket" --lanes "$scratch/lanes" || admit_rc=1
+    [ "$admit_rc" -ne 0 ] || spawn_file_lease "$scratch/ticket" || admit_rc=1
   fi
   rm -f -- "$scratch/ticket" "$scratch/lanes" "$scratch/err"
   rmdir -- "$scratch"
@@ -4458,7 +4494,7 @@ BUSY_GEN=
     j_submit=$(json_escape "$busy_cmd_prefix busy $busy_suffix --event user-prompt-submit 2>/dev/null || true")
     j_stopfail=$(json_escape "$busy_cmd_prefix idle $busy_suffix --event stop-failure 2>/dev/null || true")
     j_sessionend=$(json_escape "$busy_cmd_prefix idle $busy_suffix --event session-end 2>/dev/null || true")
-    stop_entry=
+    stop_busy_hook=
     if [ "$KIND" = squad_lead ] && grep -qF '.jg-busy-stop' "$WT/bin/jg-turnend-guard.sh" 2>/dev/null; then
       {
         printf 'writer=%s\n' "$JG_ROOT/bin/jg-busy-event.sh"
@@ -4474,7 +4510,7 @@ BUSY_GEN=
         stop_turnend="touch $(shell_quote "$TURNEND"); "
       fi
       j_stop=$(json_escape "${stop_turnend}$busy_cmd_prefix idle $busy_suffix --event stop 2>/dev/null || true")
-      stop_entry="\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"$j_stop\"}]}],"
+      stop_busy_hook=",{\"type\":\"command\",\"command\":\"$j_stop\"}"
     fi
     # The learn-from-mistakes poll guard (0.12.0+) runs report-only: its deny
     # output is discarded, so a would-be block is only logged to its
@@ -4485,7 +4521,13 @@ BUSY_GEN=
       j_guard=$(json_escape "node $(shell_quote "$poll_guard") >/dev/null 2>&1 || true")
       guard_entries="\"PreToolUse\":[{\"matcher\":\"Bash|Edit|Write|MultiEdit|NotebookEdit\",\"hooks\":[{\"type\":\"command\",\"command\":\"$j_guard\"}]}],\"SessionStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"$j_guard\"}]}],"
     fi
-    hooks_json="\"hooks\":{${guard_entries}\"UserPromptSubmit\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"$j_submit\"}]}],${stop_entry}\"StopFailure\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"$j_stopfail\"}]}],\"SessionEnd\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"$j_sessionend\"}]}]}"
+    # The beat (bin/jg-hook.sh, core/hooks/): one dispatcher entry for each event, a separate hook
+    # object so it never touches the busy-state entries above. PostToolBatch exists only for it.
+    beat_hook() {  # <event>: one hook object running the dispatcher for that event
+      printf '{"type":"command","command":"%s"}' "$(json_escape "$(shell_quote "$JG_ROOT/bin/jg-hook.sh") $1 $(shell_quote "$STATE_REAL") $(shell_quote "$ID") 2>/dev/null || true")"
+    }
+    stop_entry="\"Stop\":[{\"hooks\":[$(beat_hook Stop)${stop_busy_hook}]}],"
+    hooks_json="\"hooks\":{${guard_entries}\"UserPromptSubmit\":[{\"hooks\":[$(beat_hook UserPromptSubmit),{\"type\":\"command\",\"command\":\"$j_submit\"}]}],\"PostToolBatch\":[{\"hooks\":[$(beat_hook PostToolBatch)]}],${stop_entry}\"StopFailure\":[{\"hooks\":[$(beat_hook StopFailure),{\"type\":\"command\",\"command\":\"$j_stopfail\"}]}],\"SessionEnd\":[{\"hooks\":[$(beat_hook SessionEnd),{\"type\":\"command\",\"command\":\"$j_sessionend\"}]}]}"
     if [ "$KIND" = squad_lead ]; then
       session_keys='"feedbackDrafts":"off",'
       if [ "$KEEP_AI_TRAILERS" != 1 ]; then
@@ -4494,6 +4536,8 @@ BUSY_GEN=
       # Supervisor context cap (config/supervisor-context-cap): the lead's own env, merged with the token saver's env key.
       lead_cap_pairs=$(python3 "$SCRIPT_DIR/jg-context-bound.py" env lead --pairs --config "$CONFIG") || exit 1
       lead_keys=$CLAUDE_TOKEN_KEYS
+      fleet_keys=$(fleet_launch_keys) || exit 1
+      lead_keys=${lead_keys:+$lead_keys,}$fleet_keys
       if [ -n "$lead_cap_pairs" ]; then
         case "$lead_keys" in
           *'"env":{'*) lead_keys=${lead_keys/'"env":{'/'"env":{'$lead_cap_pairs,} ;;
@@ -4936,7 +4980,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id cleanup_recovery worktree project harness kind mode yolo branch receipt_required design_call demo_call ui_change tasktmp base_branch migration_row critical_override upstream_consent model effort account account_provider busy_gen spawn_gen agent_name traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id cleanup_recovery worktree project harness kind mode yolo branch receipt_required design_call demo_call ui_change tasktmp base_branch shepherd_of migration_row critical_override upstream_consent model effort account account_provider busy_gen spawn_gen agent_name traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -4956,6 +5000,7 @@ preserve_relaunch_meta() {
   echo "tasktmp=$TASK_TMP"
   [ -z "$BASE_BRANCH" ] || echo "base_branch=$BASE_BRANCH"
   [ -z "$RED_FIX_OF" ] || echo "red_fix_of=$RED_FIX_OF"
+  [ -z "$SHEPHERD" ] || echo "shepherd_of=$SHEPHERD"
   [ -z "$MIGRATION_ROW" ] || echo "migration_row=$MIGRATION_ROW"
   [ -z "$OFF_CRITICAL_PATH" ] || echo "critical_override=$OFF_CRITICAL_PATH"
   [ -z "$UPSTREAM_CONSENT" ] || echo "upstream_consent=$UPSTREAM_CONSENT"
@@ -5193,11 +5238,25 @@ case "$LAUNCH" in
   if [ "$KIND" = squad_lead ]; then
     LAUNCH=${LAUNCH//__CLAUDESETTINGS__/$(shell_quote "$STATE_REAL/$ID.claude-settings.json")}
   else
-    claude_settings="'{\"feedbackDrafts\":\"off\"__CLAUDEATTRIBUTION____CLAUDETOKENKEYS__}'"
+    fleet_keys=$(fleet_launch_keys) || exit 1
+    claude_settings="'{\"feedbackDrafts\":\"off\"__CLAUDEATTRIBUTION____CLAUDETOKENKEYS__,$fleet_keys}'"
     LAUNCH=${LAUNCH//__CLAUDESETTINGS__/$claude_settings}
   fi
   ;;
 esac
+# --strict-mcp-config drops each MCP server the launch does not pass; a project that has its own servers
+# names their file in the registry (mcp=<file>, bin/jg-project-mode.sh) and the launch passes it here.
+if [ "$KIND" != squad_lead ] && [[ $LAUNCH == *' --strict-mcp-config '* ]]; then
+  project_mcp=$("$JG_ROOT/bin/jg-project-mode.sh" --mcp "$(basename "$PROJ_ABS")" 2>/dev/null) || project_mcp=
+  if [ -n "$project_mcp" ]; then
+    case "$project_mcp" in /*) ;; *) project_mcp=$PROJ_ABS/$project_mcp ;; esac
+    if [ ! -r "$project_mcp" ]; then
+      echo "error: spawn refused - the registry names the MCP file $project_mcp for $(basename "$PROJ_ABS") and it is not readable; the launch would start without that project's servers" >&2
+      exit 1
+    fi
+    LAUNCH=${LAUNCH/' --strict-mcp-config '/" --strict-mcp-config --mcp-config $(shell_quote "$project_mcp") "}
+  fi
+fi
 LAUNCH=${LAUNCH//__CLAUDETOKENKEYS__/${CLAUDE_TOKEN_KEYS:+,$CLAUDE_TOKEN_KEYS}}
 if [ "$KEEP_AI_TRAILERS" = 1 ]; then
   LAUNCH=${LAUNCH//__CLAUDEATTRIBUTION__/}
@@ -5683,6 +5742,10 @@ if [ "$RELAUNCH" -eq 1 ]; then _trace_kind=handoff _trace_payload="{\"from_gen\"
 else _trace_kind=claim _trace_payload="{\"gen\":\"$SPAWN_GEN\"}"; fi
 [ "$KIND" = squad_lead ] || JG_HOME=$JG_HOME "$SCRIPT_DIR/jg-backlog.sh" trace record "$ID" "$_trace_kind" work-id "$ID@$SPAWN_GEN" --source jg-spawn --payload "$_trace_payload" >/dev/null \
   || echo "warning: the $_trace_kind of $ID could not be put on its ticket's trail" >&2
+# A shepherd lane answers for one pull request: bind it as the task's pr= now, through the same check every ready report uses, so
+# the pager and the merge watcher find it. The lane is already running, so a refusal is one warning that names the rerun.
+[ "$RELAUNCH" -eq 1 ] || [ -z "$SHEPHERD" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE JG_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/jg-pr-check.sh" "$ID" "$SHEPHERD" >/dev/null \
+  || echo "warning: the shepherd lane $ID is running but its pull request $SHEPHERD was not bound: run bin/jg-pr-check.sh $ID $SHEPHERD" >&2
 # Herdr assigns every agent a random call-sign at start and fresh ones across
 # a server restart, so pin the live agent's display name to this task's id now
 # that the spawn has fully succeeded (the agent is live here; a rename on an

@@ -3598,7 +3598,7 @@ watcher_record_children() {
       written=$records
     fi
     watcher_child_beat "$root"
-    sleep 1
+    sleep "${JG_WATCHER_RECORD_POLL:-2}"
   done
 }
 

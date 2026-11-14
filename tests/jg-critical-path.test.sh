@@ -46,7 +46,7 @@ gate() { "$CP" gate "$BRIEF" "$PROJ" "$@" 2>&1; }
 brief --migration-row deletions || fail "T1 could not scaffold"
 out=$(gate); rc=$?
 expect_code 1 "$rc" "T1 a row past the first pending part should be refused: $out"
-assert_contains "$out" "first part not live: accounts" "T1 the refusal does not name the first part not live"
+assert_contains "$out" "first part not In use: accounts" "T1 the refusal does not name the first part not live"
 assert_contains "$out" "measured accounts is pending" "T1 the refusal does not carry what the probe measured"
 assert_contains "$out" "https://github.com/example/repo/pull/90" "T1 the refusal does not name the pull request"
 pass "T1 a row past the first pending part is refused with the measurement and the pull request"
@@ -83,7 +83,7 @@ probe_state 'nats live' 'accounts live'
 brief --migration-row deletions || fail "T5 could not scaffold"
 out=$(gate); rc=$?
 expect_code 1 "$rc" "T5 deletions should still be refused with accounts live: $out"
-assert_contains "$out" "first part not live: wake" "T5 the refusal does not name wake"
+assert_contains "$out" "first part not In use: wake" "T5 the refusal does not name wake"
 probe_state 'nats live' 'accounts live' 'wake live' 'inbox live'
 out=$(gate); expect_code 0 "$?" "T5 with every critical part live nothing should be refused: $out"
 pass "T5 the refusal follows the first part not live, and lifts when the path is live"

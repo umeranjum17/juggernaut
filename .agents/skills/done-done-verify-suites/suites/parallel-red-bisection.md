@@ -1,0 +1,3 @@
+# Parallel red bisection (the two halves of a red stack gate at once)
+
+Parallel red bisection: run `done-done run -- bash -c 'set -e; bash tests/jg-trunk-bisect.test.sh > "$DONE_DONE_EVIDENCE_ROOT/trunk-bisect.log" 2>&1'`; over a fixture home with real git, the real lander and a gate stand-in that logs its start and end, it proves that a red stack of 4 with one guilty lane is halved with both halves gating at the same time (2 gates at once), that the guilty lane is returned alone while its green siblings land, that the search takes 5 gate runs in 3 rounds, and that `gate-slots=1` keeps the halves one after the other (screen: none).

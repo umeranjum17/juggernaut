@@ -5,7 +5,7 @@
 # registered merge-on-green check over the home; the forge, the merge command and the evidence lint are stand-ins.
 #
 # T1 Rule standing, release PR open and green: the record carries merge=approved and the rule, the check merges through
-#    bin/jg-pr-merge.sh for the release task and its URL, rolls the trunk over in the same pass (trunk-v2 cut), and names
+#    bin/jg-pr-merge.sh for the release task and its URL, rolls the trunk over in the same pass (release/v2 cut), and names
 #    the merge in one wake line; a merge more than 5 minutes after the proof's receipt is called out as over the target.
 # T2 A red head, or a check that has not reported: not merged, nothing rolled over.
 # T3 The rule removed (the record still says merge=approved): not merged. The rule never written: the record carries no approval.
@@ -19,7 +19,7 @@
 . "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
 
 U=https://github.com/o/r/pull
-RULE=owner-rule-5f0e638d
+RULE='owner-rule-5f0e638d'
 ID=release-proj-trunk
 
 world_with_release() {  # <name>
@@ -53,8 +53,8 @@ test_a_green_release_merges_on_the_standing_word_and_rolls_over() {
   assert_contains "$(cat "$W/merge-calls")" "$ID $U/1" "T1: the merge is for the release task and its PR"
   assert_contains "$out" "merged $ID $U/1" "T1: the merge must be named"
   assert_contains "$(JG_HOME="$HOME_D" JG_STATE_OVERRIDE="$HOME_D/state" bash "$ROOT/bin/jg-alert.sh" list)" "slow-delivery--$ID" "T1: a merge 10 minutes after the proof must raise the slow-delivery alert"
-  git -C "$PROJ" rev-parse --verify -q refs/heads/trunk-v2 >/dev/null || fail "T1: the next trunk must be cut in the same pass: $out"
-  [ "$(cat "$HOME_D/state/trunk-branch-proj")" = trunk-v2 ] || fail "T1: the project must be on the next trunk"
+  git -C "$PROJ" rev-parse --verify -q refs/heads/release/v2 >/dev/null || fail "T1: the next trunk must be cut in the same pass: $out"
+  [ "$(cat "$HOME_D/state/trunk-branch-proj")" = release/v2 ] || fail "T1: the project must be on the next trunk"
   assert_contains "$out" "rollover after $ID: release merged" "T1: the rollover must be named"
   [ ! -e "$HOME_D/state/$ID.status" ] || fail "T1: a release has no worker status line"
   pass 'T1 a green release merges through jg-pr-merge on the standing word, the next trunk is cut in the same pass and a slow merge is called out'
@@ -69,7 +69,7 @@ test_a_red_or_unreported_head_is_not_merged() {
   [ "$(merges)" = 0 ] || fail "T2: a red head must not merge: $out"
   printf 'CHECK: CI required (pending)\n' > "$W/ci-state"; out=$(sweep_mog)
   [ "$(merges)" = 0 ] || fail "T2: a check that has not reported must not merge: $out"
-  git -C "$PROJ" rev-parse --verify -q refs/heads/trunk-v2 >/dev/null && fail "T2: nothing may roll over before the merge"
+  git -C "$PROJ" rev-parse --verify -q refs/heads/release/v2 >/dev/null && fail "T2: nothing may roll over before the merge"
   pass 'T2 a red head and a check that has not reported are not merged'
 }
 
@@ -127,7 +127,7 @@ reaches_main() {  # <label>
   grep -qxF "merge_rule=gated:$2" "$HOME_D/state/$ID.meta" || fail "$1: the release record must carry the answer given at gated: $(cat "$HOME_D/state/$ID.meta")"
   receipt "$(date +%s)"; out=$(sweep_mog)
   [ "$(merges)" = 1 ] || fail "$1: the green release must merge on that answer: $out"
-  [ ! -e "$HOME_D"/state/trunk-word-live-proj ] && [ ! -e "$HOME_D"/state/trunk-word-release-proj ] && [ ! -e "$HOME_D/data/trunk-words.tsv" ] || fail "$1: no word may be recorded"
+  [ ! -e "$HOME_D"/state/trunk-word-in-use-proj ] && [ ! -e "$HOME_D"/state/trunk-word-release-proj ] && [ ! -e "$HOME_D/data/trunk-words.tsv" ] || fail "$1: no word may be recorded"
   [ ! -e "$HOME_D/config/trunk-live-waiver" ] && [ ! -e "$HOME_D/config/trunk-release-waiver" ] || fail "$1: no waiver may be written"
   # The release PR is the trunk itself going into main: the landed change is in what was pushed, and that PR was merged by the guarded path.
   git --git-dir="$W/origin.git" merge-base --is-ancestor "$(awk -F'\t' '$1 == "l1" { c = $3 } END { print c }' "$HOME_D/data/trunk-landings.tsv")" refs/heads/trunk || fail "$1: the landed change must be in the release"

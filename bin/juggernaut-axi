@@ -128,7 +128,8 @@ examples:
 HELP
     ;;
     board) cat <<'HELP'
-usage: juggernaut-axi board
+usage: juggernaut-axi board [--steps]
+--steps: time per step (n, median, p90, worst over 7 days; records waiting now), read from each home's rollup, the longest wait first.
 Reads core/machines/tables and each observer in every registered home, each row within 10 s (JG_BOARD_BOUND).
 Words: Built, Landed, In use, Released (core/fleet-status/words.tsv). A row not read in time is listed in unread.
 example: juggernaut-axi board --json
@@ -456,7 +457,14 @@ cmd_pr() {
 }
 
 cmd_board() {
-  [ $# -eq 0 ] || die "board takes no arguments"
+  if [ "${1:-}" = --steps ] && [ $# -eq 1 ]; then
+    "$HOME_ROOT/core/fleet-status/steps.sh" | jq_or_die board-steps '. + {
+      steps: [.steps[] | {home, machine, step, n, median, p90, worst, waiting_now, median_s, p90_s, worst_s, waiting, oldest_s}],
+      help: ["Each home rolls its move log up on its tick; unread names a home with no rollup yet"]}' \
+      || { echo "juggernaut-axi: board steps unreadable" >&2; exit 1; }
+    return
+  fi
+  [ $# -eq 0 ] || die "board takes no arguments but --steps"
   "$HOME_ROOT/core/fleet-status/board.sh" | jq_or_die board '. + {
     total: (.rows | length),
     rows: [.rows[] | {home, machine, wired, records, states: ((.states | to_entries | map("\(.key)=\(.value)") | join(" ")) | if . == "" then "-" else . end), past_limit, no_state}],

@@ -15,7 +15,7 @@
 
 U=https://github.com/example/repo/pull
 setup() {  # <name>
-  world "$1"; cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  world "$1"; cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   printf '#!/usr/bin/env bash\nexit 0\n' > "$W/fakebin/done-done"; chmod +x "$W/fakebin/done-done"
 }
 pb() { JG_HOME="$HOME_D" JG_STATE_OVERRIDE="$HOME_D/state" JG_CONFIG_OVERRIDE="$HOME_D/config" JG_DATA_OVERRIDE="$HOME_D/data" bash "$W/root/bin/jg-proof-bypass.sh" "$@"; }

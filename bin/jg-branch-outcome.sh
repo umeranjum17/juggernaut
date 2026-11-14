@@ -605,7 +605,10 @@ case "$CMD" in
       # Chat words only: the stored row above keeps the label. "merged-not-released:"
       # was sent for work that had not merged, so the chat says only what is always true.
       SENT="$SUMMARY"
-      case "$SUMMARY" in 'merged-not-released:'*) SENT="Not live yet:${SUMMARY#merged-not-released:}" ;; esac
+      case "$SUMMARY" in
+        'merged-not-released:'*) SENT="Not live yet:${SUMMARY#merged-not-released:}" ;;
+        'Landed, not in use:'*|'Built, not landed:'*) SENT="Not in use yet:${SUMMARY#*:}" ;;
+      esac
       "$SCRIPT_DIR/jg-bus.sh" publish outcome "$TASK" "$SENT" >/dev/null 2>&1 || true
     fi
     ;;

@@ -151,7 +151,7 @@ BEAT="$STATE/.last-watcher-beat"
 # "Fresh" reuses the guard's threshold so there is one definition of liveness.
 GRACE=${JG_GUARD_GRACE:-$(jg_poll_derived_grace)}
 # Poll interval while attached to an existing healthy watcher.
-ATTACH_POLL=${JG_ARM_ATTACH_POLL:-0.5}
+ATTACH_POLL=${JG_ARM_ATTACH_POLL:-2}
 # The beacon age at which the watcher's own re-arm evicts a live holder; an
 # attached arm follows a slow holder up to it (attach_and_wait).
 STALL_BOUND=$(jg_watcher_stall_bound)

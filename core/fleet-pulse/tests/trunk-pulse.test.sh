@@ -59,7 +59,7 @@ printf '%s\n' \
   > "$trunk/data/trunk-landings.tsv"
 printf '%s\n' \
   "p	a2	$(ago 150)	live" "p	a3	$(ago 60)	live" "p	a4	$(ago 20)	hook-failed" \
-  "q	b2	$(ago 50)	landed-not-live" > "$trunk/data/trunk-live.tsv"
+  "q	b2	$(ago 50)	landed-not-live" > "$trunk/data/trunk-in-use.tsv"
 printf 'q\ttrunk\tb1\t1\t%s\thttps://github.com/owner/q/pull/1\n' "$(ago 200)" > "$trunk/data/trunk-releases.tsv"
 
 # The trunk lead's channel in Main: one real open keyed ask to Main over 2 h. The rest must not count:
@@ -162,10 +162,10 @@ pass_if no-trunk-records-exit-1 test "$rc:$got" = 1:
 # A pin-back: the newest live row names an older landing, so the later ones wait again.
 pin=$d/pin; mkdir -p "$pin/data"
 printf '%s\n' "t1	p	a1	$(ago 300)	full" "t2	p	a2	$(ago 200)	full" "t3	p	a3	$(ago 100)	full" > "$pin/data/trunk-landings.tsv"
-printf '%s\n' "p	a3	$(ago 90)	live" "p	a1	$(ago 10)	live,pinned-behind-a3" > "$pin/data/trunk-live.tsv"
+printf '%s\n' "p	a3	$(ago 90)	live" "p	a1	$(ago 10)	live,pinned-behind-a3" > "$pin/data/trunk-in-use.tsv"
 expect pin-back-waits-again "$(printf '1\t2\t200')" "$("$tp" "$pin" "$(ago 120)" "$now")"
 # Every landing live: nothing waits.
-printf '%s\n' "p	a3	$(ago 5)	live" >> "$pin/data/trunk-live.tsv"
+printf '%s\n' "p	a3	$(ago 5)	live" >> "$pin/data/trunk-in-use.tsv"
 expect all-live-nothing-waits "$(printf '1\t3\t-')" "$("$tp" "$pin" "$(ago 120)" "$now")"
 
 echo "== lead-asks rules"

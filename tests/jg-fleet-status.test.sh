@@ -2,7 +2,7 @@
 # Behavior test for the fleet status board (core/fleet-status/board.sh) through its real caller, `juggernaut-axi board`.
 # A fixture home holds seeded alerts and steering messages, a copy of the machine tables and links to the real observers.
 # It proves: one row per machine and home with the count in each state, a record past its state's time limit, a record in no
-# state, a machine with no record lister shown as not wired, a row read past the bound named in unread (not left out), the four
+# state, a machine with no observer shown as not wired, a row read past the bound named in unread (not left out), the four
 # words, and that the read writes nothing.
 set -u
 # shellcheck source=tests/lib.sh
@@ -13,8 +13,8 @@ AXI="$ROOT/bin/juggernaut-axi"
 T=$(jg_test_tmproot jg-fleet-status)
 H=$T/home
 mkdir -p "$H/state/alerts" "$H/data" "$H/config" "$H/core/machines"
-ln -s "$ROOT/bin" "$H/bin"
-ln -s "$ROOT/core/machines/observers" "$H/core/machines/observers"
+ln -sn "$ROOT/bin" "$H/bin"
+ln -sn "$ROOT/core/machines/observers" "$H/core/machines/observers"
 cp -r "$ROOT/core/machines/tables" "$H/core/machines/tables"
 export JG_HOME=$H
 unset JG_STATE_OVERRIDE JG_DATA_OVERRIDE JG_CONFIG_OVERRIDE
@@ -30,6 +30,8 @@ alert odd bogus-word 5       # a state word the table does not have: in no state
 printf 'working [at=1]: x\n' > "$H/state/lane-a.status"
 # the wait machine's observer sleeps past the bound, so that row must be named in unread
 sed -i "s|^observer\t.*|observer\tsleep 5; echo working|" "$H/core/machines/tables/wait.tsv"
+# the account table loses its observer, so that machine must be shown as not wired (every machine has a lister now)
+sed -i '/^observer\t/d' "$H/core/machines/tables/account.tsv"
 before=$(cd "$H" && find . -type f -printf '%p %s %T@\n' | sort | md5sum)
 
 export JG_BOARD_BOUND=2
@@ -47,8 +49,8 @@ row alert | jq -e '.wired and .records == 4 and (.states | contains("open=2") an
   || fail "alert row: $(row alert)"
 pass "counts per state, one record past its limit, one in no state"
 
-row account | jq -e '.wired == false and .records == 0' >/dev/null || fail "account (no lister) must be shown as not wired: $(row account)"
-pass "a machine with no record lister is shown as not wired"
+row account | jq -e '.wired == false and .records == 0' >/dev/null || fail "account (no observer) must be shown as not wired: $(row account)"
+pass "a machine with no observer is shown as not wired"
 
 printf '%s\n' "$OUT" | jq -e '[.unread[] | select(.machine == "wait" and (.why | test("not read in 2 s")))] | length == 1' >/dev/null \
   || fail "the slow wait row must be named in unread: $(printf '%s\n' "$OUT" | jq -c .unread)"

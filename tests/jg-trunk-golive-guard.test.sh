@@ -30,7 +30,8 @@ events_line() { tr '\n' ' ' < "$W/events"; }
 # guard_case <caller> <n>: a landing is running its gate, the caller asks to move the homes, and a later landing asks to start.
 guard_case() {
   local caller=$1 n=$2 second=r$2-second late=r$2-late pid1 pid2 pidm
-  lane "$second" two "b$n.txt"; : > "$W/hold"; : > "$W/events"; rm -f "$W/live-moves"
+  # move.out and land*.out start empty here, before the background jobs: a job opens its redirect late, so wait_for could read the last case's file
+  lane "$second" two "b$n.txt"; : > "$W/hold"; : > "$W/events"; : > "$W/move.out"; : > "$W/land2.out"; : > "$W/land3.out"; rm -f "$W/live-moves"
   trunk land "$second" > "$W/land2.out" 2>&1 & pid2=$!
   wait_for "the running landing's gate" gate_running
   case $caller in

@@ -90,16 +90,18 @@ plan=(
   fleet-report:env
   key-in-env-check:env
   zai-quota-check:env
-  nm-drain:home
   merge-on-green:home
   merge-card:home
   goal-loop:home
   critical-stall:home
   stall-action:home
   lead-sweep:home
+  pane-sweep:home
   pr-pager:home
   auto-dispatch:home
   trunk-latency:home
+  trunk-ci:home
+  recon-ready:home
   status-latency:home
   tmp-reaper:home
   landing-card:home
@@ -119,6 +121,7 @@ plan=(
   lookout-adapter:plain
   undelivered-alert:home
   lock-lease:home
+  wake-rollup:home
 )
 
 # The sources one step installs from: its own directory, this script (the plan and argument shapes), and every file

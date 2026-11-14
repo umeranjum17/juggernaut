@@ -43,7 +43,7 @@ prove() {  # <lane>: the receipt, the approved merge-card evidence and the seale
   printf '{"schema":1,"run_id":"20261109T000000Z-%s-ab","commit":"%s","exit":0,"dirty":false,"started_at":"2026-11-09T00:00:00Z","files":["run.log"]}\n' "${h:0:8}" "$h" > "$d/.done-done/runs/run-$h.json"
 }
 land() { tab "$1" "${P[$1]}" "${H[$1]}" "$(date +%s)" full >> "$D/trunk-landings.tsv"; printf '%s\n' "${H[$1]}" > "$S/trunk-tip-${P[$1]}"; }
-live() { tab "$1" "$2" "$(date +%s)" "$3" "$2" >> "$D/trunk-live.tsv"; }  # <project[:home]> <sha> <status>
+live() { tab "$1" "$2" "$(date +%s)" "$3" "$2" >> "$D/trunk-in-use.tsv"; }  # <project[:home]> <sha> <status>
 # see <lane> <event> <word>: the observer names <word>; the state it says it was read from is a state of that older table;
 # the move from the lane's last word is kept for the corpus.
 see() {

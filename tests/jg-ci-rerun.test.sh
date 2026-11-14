@@ -11,7 +11,7 @@ trap 'rm -rf -- "$d"' EXIT
 export HOME=$d/user TMPDIR=$d
 H=$d/home
 mkdir -p "$HOME" "$H/state" "$H/data" "$H/config"
-ln -s "$ROOT/bin" "$H/bin"
+ln -sn "$ROOT/bin" "$H/bin"
 # shellcheck source=core/lib/beads-test-env.sh
 . "$ROOT/core/lib/beads-test-env.sh"
 core_beads_home "$ROOT" "$H"

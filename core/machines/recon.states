@@ -1,0 +1,5 @@
+# recon: the closed list of states of the machine "Recon draft and critic handoff".
+# value<TAB>mark (initial, final or -)<TAB>kind (active, waiting, rest, final)<TAB>meaning
+drafted	initial	waiting	a draft with a recorded report hash waits for its critic
+critiqued	-	active	the critic found gaps in that exact draft and the researcher revises
+accepted	final	final	the critic found no new gaps in that exact draft

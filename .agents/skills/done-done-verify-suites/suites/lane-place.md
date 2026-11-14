@@ -1,0 +1,3 @@
+# Lane place
+
+Lane place: run `done-done run lane-place` (`bash journeys/lane-place.sh`, which runs `tests/jg-lane-place.test.sh` and writes its log and `steps.json` into the run's folder); it runs the real `core/lane-scale/place.sh pick` and `seed` with the real fleet verdict, runner registry and ledger: a host with room keeps the new lead home, a full host picks the first usable runner with a free core (own machines first, a paid one only inside the ledger cap), a private repository goes only to a `private_ok` runner, and `seed` starts the home through `bin/jg-remote-home-seed.sh` (screen: none).

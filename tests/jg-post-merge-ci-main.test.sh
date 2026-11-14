@@ -31,7 +31,7 @@ EOF
   chmod +x "$dir/repo/bin/jg-backlog.sh"
   # The real alert function and its tables raise line-red; only the wake queue is recorded.
   cp "$ROOT/bin/jg-alert.sh" "$ROOT/bin/jg-machine.sh" "$dir/repo/bin/"
-  ln -s "$ROOT/core" "$dir/repo/core"
+  ln -sn "$ROOT/core" "$dir/repo/core"
   cat > "$dir/fakebin/gh" <<EOF
 #!/usr/bin/env bash
 printf '[{"databaseId":4242,"status":"$status","conclusion":"$conclusion","headSha":"abcdef0123456789"}]\\n'

@@ -47,7 +47,7 @@ unset JG_BIN
 # the shape of a home that is its own checkout, which is what the installed copy runs.
 home() {
   mkdir -p "$1/state" "$1/data" "$1/config"
-  [ "${2:-}" != with-bin ] || ln -s "$REPO/bin" "$1/bin"
+  [ "${2:-}" != with-bin ] || ln -sn "$REPO/bin" "$1/bin"
 }
 
 # tick <entry> <home>: one pass with every wake deferring; the captain must hear nothing about it.

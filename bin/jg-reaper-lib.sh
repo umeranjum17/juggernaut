@@ -67,8 +67,8 @@ jg_reaper_log() { # <line>: append one timestamped stop-log line
   printf '[%s] %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$1" >>"$JG_REAPER_STATE/browser-reaper.log" 2>/dev/null || true
 }
 
-jg_reaper_wake() { # <key> <payload>: one check row, only when a wake queue exists
-  declare -F jg_wake_append >/dev/null && jg_wake_append check "$1" "$2" 2>/dev/null || true
+jg_reaper_wake() { # <key> <payload>: the alert host, only when a wake queue exists
+  declare -F jg_wake_host >/dev/null && jg_wake_host "$1" "$2" 2>/dev/null || true
 }
 
 jg_reaper_roots() { # print the fleet temp and scratch roots, one per line
@@ -261,6 +261,7 @@ jg_reaper_load_alarm() { # main home only: one wake per episode of load above fa
   state=$JG_REAPER_STATE/.browser-reaper-load
   if ! jg_reaper_load_above "$load" "$JG_REAPER_LOAD_LIMIT"; then
     rm -f "$state" "$state.raised" 2>/dev/null || true
+    ! declare -F jg_wake_host_clear >/dev/null || jg_wake_host_clear browser-reaper-load 2>/dev/null || true
     return 0
   fi
   first=$(cat "$state" 2>/dev/null) || first=''

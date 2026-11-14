@@ -93,6 +93,9 @@ jg_sm_live_first_line() {
 # durable per-mate relaunch record; recent_attempts below owns bound counting.
 # Fails when the row cannot be appended.
 jg_squad_lead_liveness_ledger_add() {  # <id> <attempt|relaunched|failed|rearmed>
+  # an attempt is the home going down, a relaunch is it coming back: both go to the one move log before the row changes the observer's word
+  local to=; case "$2" in attempt) to=down ;; relaunched) to=idle ;; esac
+  [ -z "$to" ] || [ ! -x "${BASH_SOURCE[0]%/*}/jg-machine-shadow.sh" ] || "${BASH_SOURCE[0]%/*}/jg-machine-shadow.sh" squad-lead "$1" "$to" || true
   printf '%s\t%s\n' "$(date +%s)" "$2" 2>/dev/null >> "$STATE/.squad-lead-relaunch-$1"
 }
 

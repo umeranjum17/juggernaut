@@ -1,0 +1,15 @@
+# ticket-traffic: the named defects of the ticket machine's traffic (core/machines/bin/reconcile.py, `jg-machine.sh reconcile ticket`).
+# verdict<TAB>from<TAB>event<TAB>name<TAB>why
+# settled: a live writer repeats a move the ticket already made, because its observer reads the writer's own record first
+#          (the claim reads the lane meta the spawn wrote, the landing and live and release rows are written before their trace);
+#          bin/jg-move.sh writes nothing for it, logs no shadow line and never refuses it, in shadow or enforced.
+# history: no writer makes the edge today; the line is kept so the count stays true.
+settled	building	start	read-before-claim	the spawn writes the lane before its claim, so the ticket already reads building when the claim asks for start
+settled	delivering.batched	start	claim-after-landing	a lane is claimed for a ticket whose change already landed on the local trunk
+settled	delivering.batched	batch	read-after-landing	the landing row is written before its trace, so the ticket already reads batched when the landing asks for batch
+settled	delivering.live	go-live	read-after-live	the live row is written before its trace, so the ticket already reads live
+settled	delivering.joining	go-live	live-after-release-open	the live moment is written for a ticket whose release pull request already opened
+settled	released	go-live	live-after-release	the live moment is written for a ticket whose release already merged
+settled	released	release	read-after-release	the release is merged before its trace, so the ticket already reads released
+settled	building	revert	revert-after-return	a revert of a returned change: the lane reads reverted, which is building, before the revert is traced
+history	proving.running	new-head	old-done-line-move	a done line chose new-head from a stale state; done_line_move picks claim-done from every proving sub-state today

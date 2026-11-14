@@ -81,7 +81,7 @@ Each effective `JG_HOME` contains private operational directories.
 
 - Project and Squad Lead registries.
 - Captain preferences and optional shared captain preferences.
-- Learnings, backlog, briefs, Recon reports, and the optional per-task no-mistakes pipeline-spend ledger.
+- Learnings, backlog, briefs, and Recon reports.
 - The release record that [`bin/jg-live-claim.sh`](../bin/jg-live-claim.sh) reads to decide whether a claimed fix is released.
 - Explicitly installed content-addressed extension packages under `data/extensions/packages/`.
 
@@ -481,14 +481,6 @@ Bootstrap requires the pinned `bd` and `dolt` (the `toolchain.versions` rows), i
 `bin/jg-backlog.sh` reads `config/beads-dir` of `JG_HOME`, so a bare run from the code root addresses the home's own store whenever the home lives elsewhere.
 Run every routine Juggernaut backlog command through [`bin/jg-backlog.sh`](../bin/jg-backlog.sh).
 
-## Delivery risk (config/delivery-risk-loose)
-
-No-mistakes is for real risk, so a no-mistakes ship brief states which risk it answers: `bin/jg-brief.sh --mode no-mistakes` requires `--risk <release|security|migration|large-change|shared-protocol|fork-repo>`.
-A task that names none of those ships as `--mode direct-PR` with a done-done check, which is the faster route and needs no pipeline.
-The brief records the reason on a `Delivery risk (no-mistakes): <reason>` line, and a value outside the list is refused.
-`--risk` is refused on a `--scout` brief and on a `--squad-lead` charter.
-The local presence flag `config/delivery-risk-loose` turns the question off for this home; an unlisted value is still refused.
-
 ## Migration card (config/migration-card)
 
 The optional local `config/migration-card` holds `key=value` lines: `branch` (the release branch), `target` (lines to delete), `board` (a board file, else `JG_PROOF_BOARD`), `project`, `card` (the key now posted; the script rewrites it), `baseline-deleted`, `baseline-added`, `filer` and `push-hours` (hours of quiet before the daily "no row changed" push, default 24; `defaults/migration-card` lists every key).
@@ -759,7 +751,7 @@ The receipt prevents accidental publication through supported paths; it proves c
 ## Waiting worker spends no turns (config/wait-no-turns)
 
 The optional local, gitignored `config/wait-no-turns` presence flag opts this home into keeping a waiting worker from spending turns until it is answered.
-With it present, ship and Recon briefs gain the `# Waiting` section and the foreground no-mistakes drive text, every brief's inbox section keeps the natural-checkpoint check and adds that a waiting worker does not poll or list its inbox because a waiting instruction rings, a pending-reply recovery waits while that mate has its own open decision or blocker, and a fire-and-forget steer whose doorbell did not land gets one later ring.
+With it present, ship and Recon briefs gain the `# Waiting` section, every brief's inbox section keeps the natural-checkpoint check and adds that a waiting worker does not poll or list its inbox because a waiting instruction rings, a pending-reply recovery waits while that mate has its own open decision or blocker, and a fire-and-forget steer whose doorbell did not land gets one later ring.
 With the file absent, generated briefs omit the waiting section and the no-poll inbox line, the drive text backgrounds the call, recovery sends during an open decision, and a fire-and-forget steer is not owed a retry ring.
 The flag is a home-local preference and is not inherited by Squad Lead homes.
 
@@ -785,12 +777,6 @@ The merge scripts then refuse a task recorded `demo_call=yes` unless its passing
 With the flag absent the scaffold accepts the flags without writing a demo line, and the merge scripts skip the check.
 The flag is a home-local preference and is not inherited by Squad Lead homes.
 `bin/jg-brief.sh`'s header owns the flags, and `bin/jg-merge-gate-lib.sh`'s `jg_dod_demo_gate` owns the check.
-
-## No-mistakes pipeline spend (config/pipeline-spend)
-
-The optional local, gitignored `config/pipeline-spend` presence flag opts this home into recording per-task no-mistakes pipeline spend in `data/pipeline-spend.jsonl` during teardown.
-When the flag is absent, teardown skips recording and the recorder exits before reading task metadata, no-mistakes state, or the spend ledger.
-An existing ledger is left untouched while recording is disabled.
 
 ## Turn-end pane-churn absorb (config/turnend-churn-absorb)
 
@@ -832,17 +818,8 @@ The flag is a home-local supervision-noise preference and is not inherited by Sq
 
 [`architecture.md`](architecture.md) owns the wait-evidence contract and which records may take the ladder away; `bin/jg-watch.sh`'s `wedge_wait_evidence` owns the exact derivation and its fail-closed boundaries.
 
-## Gate defaults (.no-mistakes.yaml)
+## Local test policy
 
-The tracked `.no-mistakes.yaml` sets `test.evidence.store_in_repo: false` and `test.evidence.attach_media: false`, and pins `commands.lint` to `bin/jg-lint.sh`, the same owner CI invokes.
-These evidence settings disable publication to the orphan `no-mistakes/evidence` branch and media attachments, but referenced text artifacts are still inlined into this public repository's PR bodies.
-The [Test instructions in `.no-mistakes.yaml`](../.no-mistakes.yaml) own the permitted evidence content and privacy restrictions; local artifact storage does not make referenced text private.
-Changing these settings does not delete previously published evidence.
-
-The worktree's `.no-mistakes/` stays local and CI rejects tracked entries under that path.
-The [`juggernaut-coding-guidelines` skill](../.agents/skills/juggernaut-coding-guidelines/SKILL.md#no-mistakes-test-configuration) owns why `commands.test` stays absent and targeted validation belongs to the evidence path.
-
-`commands.test` executes code, so no-mistakes honors it only from the default-branch copy of `.no-mistakes.yaml`; a pushed branch cannot change what the gate runs.
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for the Juggernaut-specific local test policy and entry points.
 
 Portable shard evidence and coverage rules are in [jg-test-portable-shards.md](jg-test-portable-shards.md); [herdr-backend.md](herdr-backend.md#destructive-lab-safety) owns the real-Herdr lane's isolation boundary, and [runtime-backends.md](verification/runtime-backends.md#herdr) owns active evidence.
@@ -910,6 +887,12 @@ Files end in a `[cut at ...` line with the line range and the `sed` command that
 | `owner-rules-cap` | `JG_SESSION_START_OWNER_RULES_CAP` | owner rules print whole up to this size, else as an index of every rule |
 | `context-file-cap`, `memory-file-cap` | `JG_SESSION_START_CONTEXT_FILE_CAP` (both) | the opening lines of the curated files |
 | `status-tail` | `JG_SESSION_START_STATUS_TAIL` | status lines per lane row |
+
+The `ctx-*` lines of the same file are not print caps: each is the ceiling of one number a role loads (the contract file, a worker's tool schemas, a brief, a first call), at today's value.
+`bin/jg-context-load.sh check` holds each against what the tree measures or the newest reading in `data/context-load.tsv`, `tests/jg-context-budget.test.sh` runs it, and the daily growth check reports a line that is over.
+`bin/jg-context-load.sh read <transcript> <role>` records the first call of a real session, once per role and day.
+`bin/jg-brief-lint.sh` takes its brief budget from `ctx-worker-brief`.
+A slice that lowers a number lowers its own line in its own commit.
 
 No cap touches the lock result, the wake queue and its `WAKE_ACK_REQUIRED` line, the supervision block, or the network checks: those carry an action and print whole.
 The wake queue's own `OPEN DECISIONS` list is newest first, states its total, and ends in `bin/jg-wake-drain.sh --open-decisions`, which prints every open decision without acknowledging or changing anything.
@@ -988,10 +971,10 @@ Unreadable `app.slice` pressure is reported as not judged: pressure then holds n
 It classifies measurable memory as `OK`, `WAIT` (new agents should wait), or `ALERT`, and names the largest consumers by owning task; unavailable measurements read `UNKNOWN`.
 These controls reduce risk but cannot guarantee avoidance of an out-of-memory kill:
 
-- Each watcher loads the `core/host-memory/bin/jg-host-memory-lib.sh` lifecycle functions and supervises one independent sampler per home.
-  The sampler records every 10 seconds by default (`JG_HOST_MEMORY_SECS`) into `state/host-memory.tsv`, even during slow recovery or custom checks.
+- Each watcher loads the `core/host-memory/bin/jg-host-memory-lib.sh` lifecycle functions and registers its home with the one sampler the machine shares (a record under `$XDG_RUNTIME_DIR/jg-host-memory-<uid>`, or `JG_HOST_MEMORY_MACHINE_DIR`).
+  The sampler records every 10 seconds by default (`JG_HOST_MEMORY_SECS`) into each registered home's `state/host-memory.tsv`, even during slow recovery or custom checks.
   Lookout does not currently show host-memory readings.
-  The home-scoped `state/.host-memory-sampler.pid` records PID and process identity; the watcher restarts a dead sampler and stops only the exact recorded PID after verifying its identity, script, home, and state.
+  The home-scoped `state/.host-memory-sampler.pid` records the shared sampler's PID and process identity; the watcher restarts a dead sampler, and the last home to stop ends it, signalling only the exact recorded PID after verifying its identity and script. A home whose watcher is gone drops out of the loop by itself.
 - At the wait or alert level, local `bin/jg-spawn.sh` launches and `bin/jg-control.sh relaunch` refuse to start a new agent and record the reason in `state/admission-refused`, which remains in local state and is not shown by Lookout.
   A refused fresh spawn leaves the task queued; a relaunch refused by its initial admission check leaves the existing agent and task record untouched.
   The replacement launch checks admission again after the old agent stops, so pressure rising between those checks can still prevent replacement; this is not a memory reservation.
@@ -1066,8 +1049,7 @@ Teardown of a leased home fails closed if `treehouse return` cannot release the 
 
 ### Project modes and backlog handoff
 
-Squad Lead routes cover `no-mistakes` and `direct-PR` projects; `local-only` projects remain main Juggernaut work.
-For `no-mistakes` projects, seeding initializes only projects newly cloned into a Squad Lead home and refuses to mutate a preexisting clone that is not already initialized.
+Squad Lead routes cover `direct-PR` projects; `local-only` projects remain main Juggernaut work.
 
 After creating a Squad Lead, move existing main-backlog queued items that you have judged in-scope with `jg-backlog-handoff.sh <squad-lead-id> <item-key>...`; it refuses In flight, Done, or non-Squad-Lead homes, and its [script header](../bin/jg-backlog-handoff.sh) owns route-specific wake outcomes and retries.
 Set `JG_SQUAD LEAD_CHARTER` to seed from inline charter text when no filled charter brief exists; set `JG_SQUAD LEAD_SCOPE` when the routing scope should differ from the charter text.
@@ -1236,8 +1218,12 @@ It does not apply to a Squad Lead's own agent, which neither reads nor refuses o
 
 A worker never asks the human directly; its question belongs to its lead.
 So every ship and Recon launch hides the runtime's own ask tool, with or without this file: Claude gets `AskUserQuestion` in its `--disallowedTools` list, OpenCode gets `"question":"deny"` in its permission config, and `pi` and `pi-signed` get `ask_user_question` in `--exclude-tools` ahead of any listed names.
-The same Claude list also removes the fan-out, schedule, message, worktree, publish and notify tools a worker may not use, and every Claude launch, Squad Lead included, adds `--strict-mcp-config`, so no MCP server loads and the account's connectors (mail, file sharing, calendar, documents) never reach a fleet session.
-A Claude Squad Lead is launched without the delegation tools `bin/jg-subagent-pretool-check.sh` refuses and without `Artifact`; `bin/jg-spawn-core.sh launch-template claude <kind>` prints each kind's list.
+The same Claude list also removes the fan-out, schedule, message, worktree, publish, notify, plan, send-to-project and MCP-resource tools a worker may not use; it keeps only `NotebookEdit`, `TaskStop`, `WebFetch`, `WebSearch` and `EndConversation` among the deferred names. Every Claude launch, worker and Squad Lead, also denies the pattern `mcp__claude_ai_*`, the account's own connectors by name, so a project's own MCP server keeps its tools; every Claude launch, Squad Lead included, adds `--strict-mcp-config`, so no MCP server loads and the account's connectors (mail, file sharing, calendar, documents) never reach a fleet session.
+Every Claude launch, worker and Squad Lead, also sets the workflow text off (`"ultracode":false`), harness memory off (`"autoMemoryEnabled":false`, so a Squad Lead restart loads no other home's memory index) and each skill that exists and is not in the role's keep-list off (`"skillOverrides"`), from one builder, `bin/jg-launch-settings.sh`.
+The keep-list is the role's rows of `defaults/worker-rules.tsv`, its `keep:` rows (the personal skills the brief scaffold names), and each existing skill a `config/brief-include*.md` file names; the account's user-level settings stay loaded.
+A skill the account syncs from the cloud has no folder to read, so the builder does not list it.
+Because `--strict-mcp-config` drops each server the launch does not pass, a project with its own MCP servers names their file in its registry entry (`mcp=<file>`, absolute or relative to the project folder; `bin/jg-project-mode.sh --mcp <project>`), and a ship or Recon launch passes it with `--mcp-config`; a registered file that is not readable stops the launch.
+A Claude Squad Lead is launched without the delegation tools `bin/jg-subagent-pretool-check.sh` refuses and without `Artifact`, `SendToProject` and `SendToProjectContext`; `bin/jg-spawn-core.sh launch-template claude <kind>` prints each kind's list.
 Otherwise a Squad Lead's agent keeps its tools, and the other runtimes have no ask tool to hide here.
 A dialog that still opens on any runtime is caught by the stuck-worker detector in `bin/jg-stuck-gate-lib.sh`.
 
@@ -1433,7 +1419,7 @@ A release that waits for someone to notice it does not ship, so [`bin/jg-release
 The optional local, gitignored `config/release-readiness` holds `key=value` lines, all optional: `wait-hours` (the limit in whole hours, default 24), `project-dir` (the checkout to measure, default the home, which is the self repository), `board` (a board file, else the one `sign-off-axi` walks), `filer` (default `release-readiness`), and `branch` (only for a checkout that carries no `release/c-<N>` ref).
 The release is ready when the version branch carries at least one change, no open pull request targets it, it carries the default branch, and the checks on its tip are green; a fact that cannot be read leaves it not ready with the reason named, so an unreadable check never produces a card.
 Every line count it prints is `git diff --shortstat <default> <version>` over the whole tree, measured after both refs are fetched, and the command is printed beside the number: the forge's compare list stops at 300 files, so a sum of it undercounts a bigger release and once reported a net removal for a release that only added lines.
-Beside the numbers the card and the digest line carry the release's live state, so "are we live yet?" is answered without asking: the release pull request and its address, the checks and the smoke job's own result on its head, whether it is merged, and how many registered homes already carry the merge commit.
+Beside the numbers the card and the digest line carry the release's stage, so "is it In use yet?" is answered without asking: the release pull request and its address, the checks and the smoke job's own result on its head, whether it is merged, and how many registered homes already carry the merge commit.
 A release whose pull request is merged prints as shipped and is counted from the merge itself; a home whose checkout cannot be read is counted as not checked rather than assumed current.
 A ready release raises exactly one board question through [`bin/jg-question-card.sh`](../bin/jg-question-card.sh), carrying what ships, the measured numbers, the risks and one Approve, and the board holds one release card at a time: an unchanged release is never raised again and a changed one replaces the previous card.
 Past `wait-hours` with no answer, one `bin/jg-inbox.sh` note queues one check so the wait reaches the supervisor, and the same wait is never alerted twice.
@@ -1899,7 +1885,7 @@ Juggernaut invokes the resolve path directly after writing the brief, without a 
 **What the model receives**
 
 When on and at least one rule exists, the tool sends the project name and the brief's task-specific text as state and asks one Choice question whose options are every rule's `when` plus the fixed neutral option for no matching rule; the model never sees quota, catalogs, `why`, `use`, approvals, or confidence floors.
-The task-specific text is the brief's `## Captain's intent` and `## Juggernaut spec` sections under `# Task` that `bin/jg-brief.sh` scaffolds, read by the same parser that feeds `jg-spawn.sh` validation and the no-mistakes `--intent` contract; a brief with neither section is sent whole.
+The task-specific text is the brief's `## Captain's intent` and `## Juggernaut spec` sections under `# Task` that `bin/jg-brief.sh` scaffolds, read by the same parser that feeds `jg-spawn.sh` validation; a brief with neither section is sent whole.
 
 When the sections are sent from a Recon brief, the line `Brief kind: scout (report only)` comes first, taken from the scaffold's Recon contract line; ship briefs and briefs sent whole get no kind line.
 A ship brief's delivery mode is deliberately not sent, because in live runs naming it pushed a routine ship brief toward the hardest tier (see [the verification record](verification/dispatch-resolve.md)).
@@ -2004,7 +1990,6 @@ Every home requires:
 
 - node and git.
 - gh; GitHub authentication through `gh auth login` is needed for a home with a GitHub-hosted project, since the session-start auth probe is skipped while every registered project is local-only.
-- no-mistakes v1.46.0 or newer.
 - Compatible gh-axi.
 - chrome-devtools-axi.
 - Pinned `bd` and `dolt`, as specified in "Backlog" above.
@@ -2021,7 +2006,7 @@ This section is the single owner of that universal toolchain list; backend guide
 Both `install.sh` and every session start also run [`bin/jg-axi-link.sh`](../bin/jg-axi-link.sh), which writes one launcher, `~/.local/bin/juggernaut-axi`, that runs `bin/juggernaut-axi` of the home named by `JG_HOME`, of the checkout the current directory is in, or of the home that wrote it.
 A file already there that is not the launcher is left alone and named.
 
-In that list, no-mistakes runs the validation pipeline, gh-axi and chrome-devtools-axi cover GitHub and browser operations, and the Beads store plus quota-axi back backlog mutations and quota-aware array dispatch.
+In that list, gh-axi and chrome-devtools-axi cover GitHub and browser operations, and the Beads store plus quota-axi back backlog mutations and quota-aware array dispatch.
 A visual report or decision surface is a sign-off board report, published with sign-off-axi; nothing in this list provides a separate review server.
 
 **Backend requirements**
@@ -2160,7 +2145,7 @@ This section is the single owner of the canonical schema.
 - Each entry needs a `name` and at least one of `command` or `git`; an entry may carry both.
 - A `command` entry gives the `PATH` comparison above, and adding `announce_pattern` also reads the tool's own update announcement, which is how a tool that already reports its own updates is read rather than reimplemented.
 - The announcement counts as `update available` only when the version it names is newer than the newest installed copy found; a version already installed is reported only as `update not in effect`, so one completed install does not report both in the same sweep. An announcement naming no readable version is reported as an available update as before.
-- A tool does not always announce a new release on the command that prints its version: `no-mistakes --version` prints only the version, while its other commands carry the announcement.
+- A tool does not always announce a new release on the command that prints its version; the watched-tools file's `command` field names the command that carries the announcement.
 - `announce_args` names the command to search for the announcement in that case, and it is asked only of the copy `PATH` resolves; without it the version probe's own output is searched.
 - An `announce_pattern` that is not a usable extended regular expression stops `arm`, and during a sweep it is reported as that one tool's own check failure so one broken pattern never stops the other watched tools from being checked.
 - A `git` entry reports how many commits the local clone is behind its remote branch, and stays silent when the clone is current or ahead.
@@ -3059,10 +3044,6 @@ JG_PROCEVENT_LAUNCH_CONFIRM_SECONDS=3   # how long reconcile waits for the runne
 JG_WHEN_OUTPUT_TAIL_BYTES=8192          # bound on the command-output tail inside one condition->action outcome document
 JG_CODEX_WATCH_CHECKPOINT=180   # seconds per foreground watcher checkpoint in Codex primary supervision
 JG_CODEX_WATCH_CHECKPOINT_AWAY=3600  # requested away checkpoint bound on a home that runs the supervision host; longer of this and attended bound, capped at 27000
-JG_CREW_STATE_NM_TIMEOUT=10   # seconds allowed per no-mistakes query inside jg-crew-state.sh, and per state-database run-inventory read behind a capped AXI overview
-JG_TEARDOWN_NM_TIMEOUT=10    # seconds allowed per no-mistakes query or abort inside jg-teardown.sh
-JG_CREW_STATE_RUNS_LIMIT=200  # plain runs-ledger rows scanned for fallback attribution; does not change the CLI's AXI overview window (selection owner: bin/jg-nm-run-lib.sh)
-JG_TEARDOWN_NM_RUNS_LIMIT=200  # recent no-mistakes run rows scanned to prove an unresolved-head parked run belongs to teardown's task
 JG_CREW_STATE_BIN=bin/jg-crew-state.sh   # test override for the current-state reader used by watcher triage: the working/paused classification, and the wedge timer's parked-gate wait evidence
 JG_MAIL_USER=      # mail-plane IMAP/SMTP login, from .env or environment (docs/configuration.md "Mail plane")
 JG_MAIL_PASS=      # mail-plane IMAP/SMTP password
@@ -3096,7 +3077,7 @@ JG_CLAUDE_AUTOARM_SYNC_WAIT_MS=800   # milliseconds the --claude turn-end guard 
 JG_CLAUDE_AUTOARM_EPOCH_FRESH=15   # seconds a recorded auto-arm outcome remains eligible for the current event epoch's recovery or failure decision
 JG_CLAUDE_TURNEND_BLOCK_BUDGET=3   # consecutive --claude guard re-blocks before the verified one-time attended fail-open; safely below Claude Code's 8-block override
 JG_ARM_CONFIRM_TIMEOUT=10   # optional seconds override; unset uses jg_watcher_confirmation_budget in bin/jg-wake-lib.sh
-JG_ARM_ATTACH_POLL=0.5  # seconds between checks while jg-watch-arm follows an attached watcher cycle (bin/jg-watch-arm.sh header)
+JG_ARM_ATTACH_POLL=2  # seconds between checks while jg-watch-arm follows an attached watcher cycle (bin/jg-watch-arm.sh header)
 JG_OPENCODE_ARM_READY_TIMEOUT_MS=12000   # optional milliseconds override; unset uses the shared watcher startup budget
 JG_PI_ARM_READY_TIMEOUT_MS=12000   # optional milliseconds override; unset uses the shared watcher startup budget
 JG_WATCH_ARM_RETIRE_TIMEOUT_MS=1000   # milliseconds Pi/OpenCode wait for an unready successor arm to exit before abandoning retries

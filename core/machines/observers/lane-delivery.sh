@@ -4,6 +4,10 @@
 #
 # Usage:
 #   lane-delivery.sh <lane>          print the state word; print nothing for a lane with no record
+#   lane-delivery.sh stage <lane>   print the four-word stage of the change: Built, Landed or In use (core/fleet-status/words.tsv);
+#                                    print nothing for a lane that is not built yet (coding, parked) or was reverted
+#   lane-delivery.sh pointer <lane>  print the trunk-pointers state: built, landed, in-use or released (a merged release wins,
+#                                    read from release.sh); print nothing when the lane has no stage
 #   lane-delivery.sh detail <lane>   print key<TAB>value lines: state, from (the state of an older table it was read from,
 #                                    <table>:<state>, or none for a state no older table holds), commit, chain
 #                                    (the place of the change itself while a refused cleanup stands), evidence
@@ -20,7 +24,7 @@
 #   after the landing (the lane's last row in data/trunk-landings.tsv names commit C in project P):
 #     reverted          a revert-<lane> row follows it
 #     cleanup-refused   state/<lane>.meta still stands and a landing state file of the lane says `landed cleanup refused`
-#     live              the last live row of P in data/trunk-live.tsv (its project row is written only when every home moved) holds C
+#     live              the last live row of P in data/trunk-in-use.tsv (its project row is written only when every home moved) holds C
 #     live-partial      the last live row of some home P:<home> holds C
 #     home-behind       a move row of P or a home of P was written at a commit that holds C
 #     landed            anything else
@@ -33,8 +37,8 @@ STATE=${JG_STATE_OVERRIDE:-$JG_HOME/state}; DATA=${JG_DATA_OVERRIDE:-$JG_HOME/da
 
 mval() { sed -n "s/^$2=//p" "$1" 2>/dev/null | tail -n 1; }
 holds() { git -C "$REPO" merge-base --is-ancestor "$1" "$2" 2>/dev/null; }
-# The data/trunk-live.tsv rows of project P (with the argument `homes`: of its homes P:<home>), as key, sha, status, in file order.
-live_rows() { awk -F'\t' -v p="$P" -v h="${1:-}" '(h == "" && $1 == p) || (h != "" && index($1, p ":") == 1) { print $1 "\t" $2 "\t" $4 }' "$DATA/trunk-live.tsv" 2>/dev/null; }
+# The data/trunk-in-use.tsv rows of project P (with the argument `homes`: of its homes P:<home>), as key, sha, status, in file order.
+live_rows() { awk -F'\t' -v p="$P" -v h="${1:-}" '(h == "" && $1 == p) || (h != "" && index($1, p ":") == 1) { print $1 "\t" $2 "\t" $4 }' "$DATA/trunk-in-use.tsv" 2>/dev/null; }
 
 # Before the landing: sets WORD and FROM from the lane's status, meta and landing state file.
 lane_state() {
@@ -63,15 +67,15 @@ lane_state() {
 trunk_state() {
   local key sha st last moved=
   last=$(live_rows | awk -F'\t' '$3 ~ /^live/ { s = $2 } END { print s }')
-  if [ -n "$last" ] && holds "$C" "$last"; then WORD=live; FROM=delivery:in-homes; EVIDENCE="data/trunk-live.tsv: $P live at ${last:0:12}"; return 0; fi
+  if [ -n "$last" ] && holds "$C" "$last"; then WORD=live; FROM=delivery:in-homes; EVIDENCE="data/trunk-in-use.tsv: $P live at ${last:0:12}"; return 0; fi
   while IFS=$'\t' read -r key sha; do
-    [ -n "$sha" ] && holds "$C" "$sha" && { WORD=live-partial; FROM=delivery:landed; EVIDENCE="data/trunk-live.tsv: $key live at ${sha:0:12}"; return 0; }
+    [ -n "$sha" ] && holds "$C" "$sha" && { WORD=live-partial; FROM=delivery:landed; EVIDENCE="data/trunk-in-use.tsv: $key live at ${sha:0:12}"; return 0; }
   done < <(live_rows homes | awk -F'\t' '$3 ~ /^live/ { s[$1] = $2 } END { for (k in s) print k "\t" s[k] }')
   while IFS=$'\t' read -r key sha st; do
     case $st in held:*) continue ;; esac
     [ -n "$sha" ] && holds "$C" "$sha" && moved="$key ${st:0:80}"
   done < <(live_rows; live_rows homes)
-  if [ -n "$moved" ]; then WORD=home-behind; FROM=delivery:pinned-behind; EVIDENCE="data/trunk-live.tsv: $moved"; return 0; fi
+  if [ -n "$moved" ]; then WORD=home-behind; FROM=delivery:pinned-behind; EVIDENCE="data/trunk-in-use.tsv: $moved"; return 0; fi
   WORD=landed; FROM=landing:landed; EVIDENCE="data/trunk-landings.tsv: $ID at ${C:0:12}"
 }
 
@@ -92,11 +96,25 @@ classify() {  # <lane>: sets WORD FROM C CHAIN EVIDENCE
   done
 }
 
+# The four-word stage of a state, read from the word-* groups of this table (the one place the lists live).
+stage_of() {  # <state>: prints built, landed or in-use, or nothing
+  awk -F'\t' -v s="$1" '$1 == "group" && $2 ~ /^word-/ { for (i = 3; i <= NF; i++) if ($i == s) { print substr($2, 6); exit } }' "$here/../tables/lane-delivery.tsv"
+}
 case ${1:-} in
+  stage|pointer)
+    [ -n "${2:-}" ] || { echo "usage: lane-delivery.sh $1 <lane>" >&2; exit 2; }
+    classify "$2" || exit 0
+    w=$(stage_of "${CHAIN:-$WORD}")
+    if [ "$1" = pointer ]; then
+      [ "$(bash "$here/release.sh" stage "$2" 2>/dev/null)" != Released ] || w=released
+    else
+      case $w in built) w=Built ;; landed) w=Landed ;; in-use) w="In use" ;; esac
+    fi
+    [ -z "$w" ] || printf '%s\n' "$w" ;;
   detail)
     [ -n "${2:-}" ] || { echo "usage: lane-delivery.sh detail <lane>" >&2; exit 2; }
     classify "$2" || exit 1
     printf 'state\t%s\nfrom\t%s\ncommit\t%s\nchain\t%s\nevidence\t%s\n' "$WORD" "$FROM" "${C:-none}" "${CHAIN:-none}" "${EVIDENCE:-none}" ;;
-  ""|-*) echo "usage: lane-delivery.sh <lane> | detail <lane>" >&2; exit 2 ;;
+  ""|-*) echo "usage: lane-delivery.sh <lane> | detail <lane> | stage <lane> | pointer <lane>" >&2; exit 2 ;;
   *) classify "$1" && printf '%s\n' "$WORD" ;;
 esac

@@ -17,6 +17,8 @@
 # stops being shadow for a ticket the observer can place. The illegal move is logged as `refused` (not `shadow`),
 # nothing else is written and the command exits 1, so a writer that reads the exit code refuses its own write.
 # Rollback is deleting the `ticket` line from config/machine-enforce.
+# A move the ticket already made is no move: an event whose (state, event) pair core/machines/maps/ticket-traffic.tsv lists as `settled`
+# (a writer's observer read its own record before the move) exits 0 and writes no line, in shadow or enforced.
 # Env: JG_HOME, JG_DATA_OVERRIDE, JG_MACHINES_TABLES as in bin/jg-machine.sh.
 set -u
 export LC_ALL=C
@@ -50,6 +52,9 @@ else  # no state yet: only the first event of the machine, from (none), is legal
   [ -n "$moves" ] || { printf 'jg-move: %s: %s\n' "$ticket" "${out:-no state and no table}" >&2; refuse "$from"; }
 fi
 to=$(printf '%s\n' "$moves" | awk -F'\t' -v e="$event" '$1 == e { print $2; exit }')
+if [ -z "$to" ] && [ "$unplaced" -eq 0 ] && bash "$JM" settled ticket "$from" "$event" >/dev/null 2>&1; then
+  exit 0  # a move the ticket already made (core/machines/maps/ticket-traffic.tsv): nothing to log, nothing to refuse
+fi
 if [ -z "$to" ]; then
   printf 'jg-move: refused: %s has no move "%s" from %s; legal: %s\n' "$ticket" "$event" "$from" \
     "$(printf '%s\n' "$moves" | cut -f1 | paste -sd' ' -)" >&2

@@ -171,10 +171,6 @@ core/merge-on-green/tests/checks-lint-parity.test.sh  # inline jg-compat env ali
 core/merge-on-green/tests/merge-on-green-uninstall.test.sh  # inline jg-compat env alias
 core/merge-on-green/tests/merge-on-green.test.sh  # inline jg-compat env alias
 core/merge-on-green/uninstall.sh  # inline jg-compat env alias
-core/nm-drain/install.sh  # inline jg-compat env alias
-core/nm-drain/tests/nm-drain-uninstall.test.sh  # inline jg-compat env alias
-core/nm-drain/tests/nm-drain.test.sh  # inline jg-compat env alias
-core/nm-drain/uninstall.sh  # inline jg-compat env alias
 core/owner-guard/install-scan.sh  # inline jg-compat env alias
 core/owner-guard/tests/owner-guard-global.test.sh  # inline jg-compat env alias
 core/owner-guard/tests/owner-guard-merge.test.sh  # inline jg-compat env alias

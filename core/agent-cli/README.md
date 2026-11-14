@@ -25,7 +25,7 @@ jg alert ack <key> [--home]       acknowledge one alert
 jg ask "<question>" --option <a> --option <b> [--recommend <a>] [--owner [--must <category>]]
                                   one decision line; with --owner the ticket is held for the captain first
 jg proof [--wait] [--bound <secs>] [-- <command...>]
-                                  `done-done affected`, or with a command the sealed `done-done run -- <command>`; one background run per ticket; --wait returns at its end or the bound (exit 3)
+                                  `done-done affected`, or with a command the sealed `done-done run -- <command>`; one background run per ticket; when this host's heavy slots are full and a runner has room it runs there as `jg-test-run.sh --changed` and the result is `data/<ticket>/jg-proof.json`; --wait returns at its end or the bound (exit 3)
 jg land [--wait] [--bound <secs>]
                                   where the lane's landing stands: landed, refused, running or queued (place and why); --wait returns at the result or the bound; it starts nothing
 ```

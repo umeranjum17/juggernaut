@@ -21,7 +21,7 @@ export PATH="$FAKEBIN:$PATH"
 # the way a lead does: it confirms delivery and posts the correlated reply.
 mkdir -p "$FAKEROOT/bin"
 for f in "$ROOT"/bin/*; do ln -s "$f" "$FAKEROOT/bin/${f##*/}"; done
-ln -s "$ROOT/toolchain.versions" "$FAKEROOT/toolchain.versions"
+ln -sn "$ROOT/toolchain.versions" "$FAKEROOT/toolchain.versions"
 rm -f "$FAKEROOT/bin/jg-control.sh" "$FAKEROOT/bin/jg-send.sh"
 cat > "$FAKEROOT/bin/jg-control.sh" <<'SH'
 #!/usr/bin/env bash

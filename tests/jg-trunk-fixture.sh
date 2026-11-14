@@ -39,7 +39,7 @@ world() {  # <name>: sets W HOME_D PROJ
   # The fixture homes are bare repositories (no beacon, overlay or supervision read); the health check has its own test.
   # shellcheck disable=SC2016 # the stub expands its own argument
   printf '#!/usr/bin/env bash\necho "ok $2"\n' > "$W/root/bin/jg-home-health.sh"
-  ln -s "$ROOT/core" "$W/root/core"; ln -s "$ROOT/policy" "$W/root/policy"
+  ln -sn "$ROOT/core" "$W/root/core"; ln -sn "$ROOT/policy" "$W/root/policy"
   cat > "$W/root/bin/jg-captain-hold.sh" <<'SH'
 #!/usr/bin/env bash
 case "$1" in
@@ -146,7 +146,11 @@ refused() {  # <what> <id> <expect>: landing refuses, mentions <expect>, and lea
 sweep() {  # one check sweep over the fixture home, then wait for the detached landings it started
   local out
   out=$(JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D") || fail "the check must not fail: $out"
-  for _ in $(seq 1 100); do grep -qs '^running' "$HOME_D"/data/jg-trunk-landing/*.state || break; sleep 0.2; done
+  # A landing ends when its run releases its lock, which is after it records its state (it still tells the lane and starts the next check).
+  for _ in $(seq 1 100); do
+    grep -qs '^running' "$HOME_D"/data/jg-trunk-landing/*.state || compgen -G "$HOME_D/state/.trunk-run-*.lock" >/dev/null || break
+    sleep 0.2
+  done
   printf '%s' "$out"
 }
 
@@ -225,6 +229,16 @@ M=\$(git -C "$PROJ" -c user.name=t -c user.email=t@example.invalid commit-tree "
 git -C "$PROJ" push -q origin "\$M:refs/heads/main"; echo merged > "$W/pr-state-1"
 SH
   printf '#!/usr/bin/env bash\necho "checks-lint: PASS"\n' > "$W/checks-lint"
-  ln -s "$W/root/bin" "$HOME_D/bin"   # the merge check runs the home's own bin
+  ln -sn "$W/root/bin" "$HOME_D/bin"   # the merge check runs the home's own bin
   chmod +x "$W/fakebin/gh-axi" "$W/fakebin/gh" "$W/root/bin/jg-pr-state.sh" "$W/root/bin/jg-pr-merge.sh" "$W/checks-lint"
+}
+
+# conflicting_pair <name>: lane <name>-a lands first; lane <name>-b was made on the old tip and edits the same file differently.
+conflicting_pair() {
+  lane "$1-a" first; lane "$1-b" second
+  trunk land "$1-a" >/dev/null 2>&1 || fail "the first lane must land"
+}
+resolver() {  # <name> <body>: a resolver script the home sets by policy
+  printf '#!/usr/bin/env bash\n%s\n' "$2" > "$W/$1.sh"; chmod +x "$W/$1.sh"
+  printf 'conflict-resolver=bash %s/%s.sh\n' "$W" "$1" >> "$HOME_D/config/trunk-policy"
 }

@@ -14,7 +14,7 @@ bash "$root/tests/cleanup-acts.test.sh" >"$evidence/cleanup-acts-test.log" 2>&1
 bash "$root/tests/cleanup-keeps-question.test.sh" >"$evidence/cleanup-keeps-question-test.log" 2>&1
 export HOME=$work/user XDG_DATA_HOME=$work/xdg SIGN_OFF_HOME=$work/signoff JG_HOME=$work/main
 mkdir -p "$HOME" "$JG_HOME"/{data,config,state} "$work/shim"
-ln -s "$fork/bin" "$JG_HOME/bin"
+ln -sn "$fork/bin" "$JG_HOME/bin"
 cat > "$work/shim/gh-axi" <<'SHIM'
 #!/usr/bin/env bash
 case "${2##*/}" in

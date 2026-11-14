@@ -165,7 +165,8 @@ export JG_POLL=1 JG_SIGNAL_GRACE=0 JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999
 export JG_WAKE_ROUTING="$TMP_ROOT/wake-routing"
 # Keep the real engine watchdog/reaping path, but not its production grace in fixtures.
 export JG_SUPERVISION_ENGINE_GRACE=1
-export JG_ARM_CONFIRM_TIMEOUT=30
+# A loaded host can take over 30s to confirm a watcher (the unrecorded-successor case saw 32s), so the budget is generous: it only bounds a start that never confirms.
+export JG_ARM_CONFIRM_TIMEOUT=120
 unset JG_SUPERVISION_ACTOR JG_BRANCH_REPORT_TURN JG_LEASE_HOLDER_PID PI_CODING_AGENT
 
 # Homes are registered in a file: make_home runs in a command substitution,
@@ -244,7 +245,7 @@ MIRROR_ROOT="$TMP_ROOT/mirror-root"
 mkdir -p "$MIRROR_ROOT"
 git init -q "$MIRROR_ROOT"
 : > "$MIRROR_ROOT/AGENTS.md"
-ln -s "$ROOT/bin" "$MIRROR_ROOT/bin"
+ln -sn "$ROOT/bin" "$MIRROR_ROOT/bin"
 
 # Run the host under the fake harness that holds the home's session lock.
 # Every hook payload in $home/mirror-seed.* is first written to the dialog
@@ -1262,11 +1263,11 @@ make_primary_home() {  # <name>
   home=$(make_home "$1" attended)
   git init -q "$home"
   : > "$home/AGENTS.md"
-  ln -s "$ROOT/bin" "$home/bin"
+  ln -sn "$ROOT/bin" "$home/bin"
   # The watcher's wait-timer tick reads the escalation workflow definition from
   # core/ beside bin/ (bin/jg-escalation-workflows.sh roots itself at the home's
   # own bin path); without it the tick fails and every watcher cycle exits.
-  ln -s "$ROOT/core" "$home/core"
+  ln -sn "$ROOT/core" "$home/core"
   printf '%s\n' "$home"
 }
 
@@ -1348,7 +1349,7 @@ test_claude_stop_hook_delivers_a_main_only_pass_through() {
 test_claude_stop_hook_restores_handoff_when_successor_closed_before_exit_to_main() {
   local home
   home=$(make_primary_home hook-successor-closed-before-return)
-  ln -s "$ROOT/.agents" "$home/.agents"
+  ln -sn "$ROOT/.agents" "$home/.agents"
   echo captain-close-before-return > "$home/stub-mode"
   start_hook_session "$home"
   turn_end "$home"
@@ -1365,7 +1366,7 @@ test_claude_stop_hook_restores_handoff_when_successor_closed_before_exit_to_main
 assert_claude_stop_hook_notifies_when_closed_successor_downtime_restore_fails() {
   local status=$1 home real_mktemp successor
   home=$(make_primary_home "hook-successor-restore-fails-$status")
-  ln -s "$ROOT/.agents" "$home/.agents"
+  ln -sn "$ROOT/.agents" "$home/.agents"
   echo captain-held > "$home/stub-mode"
   mkfifo "$home/stub-release"
   real_mktemp=$(command -v mktemp)
@@ -1418,7 +1419,7 @@ test_claude_stop_hook_notifies_when_closed_announced_successor_downtime_restore_
 test_claude_stop_hook_restores_handoff_when_successor_closed_mid_engine_turn() {
   local home successor
   home=$(make_primary_home hook-successor-closed-before-outcome)
-  ln -s "$ROOT/.agents" "$home/.agents"
+  ln -sn "$ROOT/.agents" "$home/.agents"
   echo captain-held > "$home/stub-mode"
   mkfifo "$home/stub-release"
   start_hook_session "$home"
@@ -1453,7 +1454,7 @@ test_claude_stop_hook_rewakes_a_present_captain_beside_a_quiet_record() {
   local home drained
   home=$(make_primary_home hook-quiet-record)
   # This case runs an engine turn from the primary root, whose prompt reads the skills.
-  ln -s "$ROOT/.agents" "$home/.agents"
+  ln -sn "$ROOT/.agents" "$home/.agents"
   JG_HOME="$home" JG_AFK_MODE=quiet "$CONTRACT" enter --words 'keep routine wakes off my main' >/dev/null 2>&1 \
     || fail "fixture: could not record quiet mode"
   echo captain > "$home/stub-mode"
@@ -1480,7 +1481,7 @@ test_claude_stop_hook_rewakes_a_present_captain_beside_a_quiet_record() {
 test_claude_stop_hook_runs_the_host_without_the_file_and_off_opts_out() {
   local home first
   home=$(make_primary_home hook-default-on)
-  ln -s "$ROOT/.agents" "$home/.agents"
+  ln -sn "$ROOT/.agents" "$home/.agents"
   rm -f "$home/config/supervision-host"
   start_hook_session "$home"
   turn_end "$home"

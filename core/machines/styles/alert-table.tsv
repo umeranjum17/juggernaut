@@ -1,4 +1,4 @@
-# The alert table (section 6.7 of the state-machine plan): the nineteen alerts, the rules that keep one cause from raising many, the ladder and the limits by kind.
+# The alert table (section 6.7 of the state-machine plan): the twenty alerts, the rules that keep one cause from raising many, the ladder and the limits by kind.
 # One reader: bin/jg-alert.sh (row, rules, limit, raise). Every time counts from the moment the state began. Seconds are plain numbers; "beats:N" is N missed beats of the watcher (its grace is the watcher's, not set here).
 # alert:  name, fires on, fires at (seconds, beats:N or "limit" = the limit of its kind), precedence, first rung (0 tick, 1 worker, 2 lead, 3 Main, 4 owner; "wait" = the one the wait names), quiet when (facts joined by +; "never")
 # rule:   id, covering alert ("*" = any alert of the same ticket with a higher precedence), scope the cover and the covered share, alerts kept quiet, why. I6 (presence) holds rung 4 and is applied by the ladder; a "!alert" in its list exempts that alert (escalation-stuck is the page and is never held).
@@ -24,6 +24,7 @@ alert	escalation-stuck	an alert at its top rung past its repeats; a wake not ack
 alert	fleet-blocked	the last-rung conditions B1 to B7 of the self-healing plan (nothing lands, idle with ready work, no account, a supervisor down, the host, paid limits unused)	0	P1	0	never
 alert	quota-unused	the share of an account's window that is left is over the share of its time by 20 points, and a ticket can start	1800	P2	0	host-at-stop+account-on-hold
 alert	quota-blind	the newest quota reading of an account that lanes use is old	1800	P2	0	account-no-lane
+alert	judge-split	two judges (the tip run, the verify, the nightly run) gave one commit tree two different verdicts	0	P1	2	never
 rule	I1	supervision-down	home	stuck-wait,lost-worker,undelivered,ready-idle,slow-delivery	nobody is watching, so every wait would fire
 rule	I2	line-red	project	slow-delivery,stranded	they wait for the line, not for themselves
 rule	I3	capacity	route	lost-worker,stuck-wait	the lanes are stopped by the same cause

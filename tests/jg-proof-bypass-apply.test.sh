@@ -26,7 +26,7 @@ SH
   chmod +x "$W/fakebin/done-done"
 }
 setup() {  # <name>
-  world "$1"; cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  world "$1"; cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   fake_done_done
   rm -f "$HOME_D/bin/jg-fleet-ledger.sh"; cp "$W/root/bin/jg-fleet-ledger.sh" "$HOME_D/bin/"
 }

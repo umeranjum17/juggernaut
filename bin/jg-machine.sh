@@ -5,6 +5,9 @@
 #   jg-machine.sh show <machine> <id>                 the state, its kind, its captain sentence, its required fields
 #   jg-machine.sh next <machine> <id>                 the state and each legal move: event, to, writer, command, guard
 #   jg-machine.sh check <machine> [--corpus <file>]   lint the table; with a corpus, replay it against the table
+#   jg-machine.sh writers <machine>                   report mode: each edge whose writer file calls neither the shadow nor the move command; exit 0
+#   jg-machine.sh reconcile <machine> [--shadow <file>] [--moves <file>]   each observed edge: count, writer, verdict; exit 1 on an UNNAMED one
+#   jg-machine.sh settled <machine> <state> <event>   exit 0 and the name when the move is a repeat of one already made
 #   jg-machine.sh events <machine>                    the events the table declares: event, from, to
 #   jg-machine.sh word <map> <list> <word>            where a word of an older list lands: target, wait, health
 #   jg-machine.sh replay <map> <corpus>               every `list<TAB>word` line of the corpus must have a target

@@ -1,11 +1,24 @@
-worker	for f in "$STATE"/*.meta; do [ -e "$f" ] || continue; i=${f##*/}; printf "%s\t%s\n" "${i%.meta}" "$(stat -c %Y "$f")"; done
-wait	for f in "$STATE"/*.status; do [ -e "$f" ] || continue; i=${f##*/}; printf '%s\t%s\n' "${i%.status}" "$(stat -c %Y "$f")"; done
-lane-delivery	for f in "$STATE"/*.meta; do [ -e "$f" ] || continue; i=${f##*/}; printf '%s\t%s\n' "${i%.meta}" "$(stat -c %Y "$f")"; done
-landing	for f in "$DATA"/jg-trunk-landing/*.state; do [ -e "$f" ] || continue; i=${f##*/}; printf '%s\t%s\n' "${i%.state}" "$(stat -c %Y "$f")"; done
-alert	for f in "$STATE"/alerts/*.rec; do [ -e "$f" ] || continue; i=${f##*/}; printf '%s\t%s\n' "${i%.rec}" "$(stat -c %Y "$f")"; done
-message	for f in "$STATE"/*.inbox/*.msg; do [ -e "$f" ] || continue; d=${f%/*}; d=${d##*/}; n=${f##*/}; printf '%s\t%s\n' "${d%.inbox}:${n%.msg}" "$(stat -c %Y "$f")"; done
-release	awk -F'\t' '$1 !~ /^revert-/ && !s[$1]++ { print $1 "\t" $4 }' "$DATA/trunk-landings.tsv" 2>/dev/null
-trunk	for f in "$STATE"/trunk-tip-*; do [ -e "$f" ] || continue; i=${f##*/trunk-tip-}; printf '%s\t%s\n' "$i" "$(stat -c %Y "$f")"; done
-presence	printf '%s\t%s\n' "$(basename "$JG_HOME")" "$(date +%s)"
-supervision	printf '%s\t%s\n' "$(basename "$JG_HOME")" "$(date +%s)"
-delivery	awk -F'\t' -v n="$(date +%s)" '$1 !~ /^#/ && $1 != "" { print $1 "\t" n }' "$JG_HOME/core/machines/changes.tsv" 2>/dev/null
+account	bash "$FS/listers.sh" account	1800
+alert	for f in "$STATE"/alerts/*.rec; do [ -e "$f" ] || continue; i=${f##*/}; printf '%s\t%s\n' "${i%.rec}" "$(stat -c %Y "$f")"; done	86400
+bypass	bash "$FS/listers.sh" bypass	86400
+cleanup	bash "$FS/listers.sh" cleanup	86400
+delivering	bash "$FS/listers.sh" delivering	86400
+delivery	awk -F'\t' -v n="$(stat -c %Y "$JG_HOME/core/machines/changes.tsv" 2>/dev/null)" '$1 !~ /^#/ && $1 != "" { print $1 "\t" n }' "$JG_HOME/core/machines/changes.tsv" 2>/dev/null	86400
+hold	bash "$FS/listers.sh" hold	86400
+host	bash "$FS/listers.sh" host	86400
+landing	for f in "$DATA"/jg-trunk-landing/*.state; do [ -e "$f" ] || continue; i=${f##*/}; printf '%s\t%s\n' "${i%.state}" "$(stat -c %Y "$f")"; done	86400
+lane-delivery	for f in "$STATE"/*.meta; do [ -e "$f" ] || continue; i=${f##*/}; printf '%s\t%s\n' "${i%.meta}" "$(stat -c %Y "$f")"; done	86400
+markers	bash "$FS/listers.sh" markers	86400
+message	for f in "$STATE"/*.inbox/*.msg; do [ -e "$f" ] || continue; d=${f%/*}; d=${d##*/}; n=${f##*/}; printf '%s\t%s\n' "${d%.inbox}:${n%.msg}" "$(stat -c %Y "$f")"; done	86400
+presence	[ -d "$STATE" ] && printf '%s\t%s\n' "$(basename "$JG_HOME")" "$(date +%s)"	60
+proving	bash "$FS/listers.sh" proving	86400
+release	awk -F'\t' '$1 !~ /^revert-/ && !s[$1]++ { print $1 "\t" $4 }' "$DATA/trunk-landings.tsv" 2>/dev/null	86400
+squad-lead	bash "$FS/listers.sh" squad-lead	86400
+status-verb	bash "$FS/listers.sh" status-verb	86400
+supervision	bash "$FS/listers.sh" supervision	300
+task	bash "$FS/listers.sh" task	86400
+ticket	bash "$FS/listers.sh" ticket	86400
+trunk	for f in "$STATE"/trunk-tip-*; do [ -e "$f" ] || continue; i=${f##*/trunk-tip-}; printf '%s\t%s\n' "$i" "$(stat -c %Y "$f")"; done	86400
+trunk-pointers	bash "$FS/listers.sh" trunk-pointers	86400
+wait	for f in "$STATE"/*.status; do [ -e "$f" ] || continue; i=${f##*/}; printf '%s\t%s\n' "${i%.status}" "$(stat -c %Y "$f")"; done	86400
+worker	for f in "$STATE"/*.meta; do [ -e "$f" ] || continue; i=${f##*/}; printf "%s\t%s\n" "${i%.meta}" "$(stat -c %Y "$f")"; done	86400

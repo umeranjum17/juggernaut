@@ -12,8 +12,12 @@ The records stay the truth: the table never stores a state, and the command neve
 - `jg-machine.sh events <machine>` lists the events a table declares: event, from, to.
 - `jg-machine.sh word <map> <list> <word>`, `replay <map> <corpus>` and `records <map> <records>` read a word map (below).
 - `jg-machine.sh enum <name>` lints one enum file (below) and prints its value count.
+- `jg-machine.sh writers <machine>` lists each edge whose writer file calls neither the shadow nor the move command (`jg-machine-guard`, `jg-machine-shadow`, `jg-move.sh`), then a count line; it only reports and exits 0 (override the folder the writer files are read from: `JG_MACHINES_ROOT`).
 - `jg-machine.sh coverage <machine>` lists each edge whose test id is empty or `-` and exits 1 when there is one.
-- `jg-machine.sh diagram <machine>` prints a Mermaid state diagram generated from the table.
+- `jg-machine.sh diagram <machine> [--out <dir>] [--tries N]` draws the machine with Graphviz, in a wide and a narrow layout, checks each chart and exits 1 on a fault (below). `--dot wide|narrow` prints the dot text of the first try and needs no renderer; `--mermaid` prints the Mermaid text that `docs/ticket-statechart.md` embeds.
+- `jg-machine.sh chart-check <svg>...` runs the chart check alone on SVG files that `diagram` wrote (a file named `*-TB.svg` is a narrow layout).
+- `jg-machine.sh escalation <machine>` prints, for each state, its mode, what it emits, its timeout, its alert, and who is told first, next, and whether a board card reaches the owner.
+- `jg-machine.sh reconcile <machine> [--shadow <file>] [--moves <file>]` lists each edge the writers really made, from the shadow log (and, for `ticket`, the move log): its count, its writer and a verdict, `legal`, `settled`, `history` or `UNNAMED`; it exits 1 while one edge is `UNNAMED`. The names are in `core/machines/maps/<machine>-traffic.tsv`: `settled` is a move a writer repeats because its observer read the writer's own record first (`jg-move.sh` writes nothing for it, enforced or not; `jg-machine.sh settled <machine> <state> <event>` reads it), `history` is an edge no writer makes today. It only reads and changes no enforcement.
 - `jg-machine.sh edge-check <machine> <from> <to>` prints `legal` with the event and writer, or `illegal`, and exits 1 for an illegal move; it only reads, so a writer may call it in shadow.
 
 `bin/jg-move.sh <ticket> <event>` takes one move of the `ticket` table: it reads the ticket's state through the observer, refuses (exit 1, nothing written, the legal events on stderr) an event that state does not have, and appends one line `epoch, ticket, from, event, to` to `data/moves.log` for a legal one.
@@ -33,7 +37,7 @@ Each line has tab-separated columns, and its first column names the line kind.
 | Line | Columns |
 | --- | --- |
 | `machine` | name, carrier (the record family), owner (the one file that owns it) |
-| `state` | name, kind (`initial`, `normal`, `terminal` or `extension`), captain sentence, required fields (`-` for none), then optionally mode (`active`, `waiting`, `rest` or `final`) and its limit |
+| `state` | name, kind (`initial`, `normal`, `terminal` or `extension`), captain sentence, required fields (`-` for none), then optionally mode (`active`, `waiting`, `rest` or `final`), its limit, what it emits (`<event>@<machine>` joined by commas, or `-`) and the alert of its timeout (a name from the alert table, or `-`) |
 | `open` | a state (or `*`), then why it has no move out yet |
 | `edge` | from, event, to, writer (`file:function`), command, guard in words, test id |
 | `observer` | a shell command that prints the state word for the id in `$1` |
@@ -84,6 +88,31 @@ The rule of section 6.12 of the state-machine plan adds these (`core/machines/bi
 
 A state with no mode is `final` when it is `terminal` and `active` otherwise.
 
+## Emits and the alert of a timeout
+
+A state line may carry two more columns after the limit.
+**Emits** lists what entering the state sends, as `<event>@<machine>`: the machine must have a table in the same folder and that table must declare the event, so an event that crosses from one machine to another is written on both sides.
+**Alert** names the alert of the state's timeout. It belongs to a `waiting` state whose limit is `<N><s|m|h|d> -> alert <name>`, and it must be that name.
+An alert named in a limit or in this column must be a row of the alert table (`core/machines/styles/alert-table.tsv`, read by `bin/jg-alert.sh`; override: `JG_ALERT_TABLE`); the lint names the state and lists the legal alerts.
+`escalation` reads the row and the ladder of that alert: who is told first (the holder of the first rung), who next (one rung up), and whether a board card reaches the owner (`yes`, `never`, or `when <fact>`).
+
+## Diagram
+
+`diagram` draws one machine in the notation of section 6.12: an initial dot, a ring on a final state, `event [guard]` on each arrow, a box for a composite stage (its inner table has a chart of its own), a dashed outline for a state at rest, and a dashed cluster for a group.
+The arrow shows the first clause of the guard, cut to a few words; the whole guard stays in the table.
+Graphviz places everything; no coordinate is typed. It writes `<machine>-LR.svg` (wide) and `<machine>-TB.svg` (narrow) and runs the chart check on each.
+`core/machines/bin/chartdot.py` writes the dot text, `chartfit.py` searches layout settings (spacing, label width, arrow order, loop sides) in a fixed order until a chart passes and keeps the first that does, and `chartcheck.py` lifts each label to a top layer on a plate and then fails on:
+
+- two arrows that cross (each arrow is cut into short pieces), named by event and ends;
+- an arrow with no arrowhead;
+- a label that is not on its plate in the top layer;
+- two labels that overlap, and a label that overlaps a state;
+- a narrow layout wider than 450 pt, whose text would fall under 9.5 px on a 390 px screen.
+
+When no try passes, the command writes the chart with the fewest faults, prints each fault and exits 1.
+The renderer is the WebAssembly build of Graphviz (`@viz-js/viz`, MIT) that `toolchain.versions` pins in its `viz` row. Install it with `npm install -g <the pin>`, or set `JG_VIZ_DIR` to a folder that holds `node_modules/@viz-js/viz`; without it `diagram` stops with that line and writes nothing.
+`tests/jg-machine-diagram.test.sh` is the behavior test, and `journeys/machine-diagram.sh` runs it with the renderer required and keeps the charts.
+
 ## Corpus and baseline
 
 A corpus file has one line per observation: a state name, or `from<TAB>event<TAB>to` for a move.
@@ -102,7 +131,7 @@ A `rule` line decides by facts: pull request state, where the work is, supersede
 
 The `delivery` machine answers for one change, never one task: `jg-machine.sh show delivery <id>`.
 Its states are `unlanded`, `landed` (on the trunk), `in-homes` (every home runs the commit), `in-homes-off` (every home has the code and its switch is off), `in-use` (switched on, with a proof that holds), `pinned-behind` and `reverted`.
-`core/machines/observers/delivery.sh` reads the states from the trunk, `data/trunk-live.tsv` and `config/`, and `delivery.sh` also documents the `changes.tsv` registry format.
+`core/machines/observers/delivery.sh` reads the states from the trunk, `data/trunk-in-use.tsv` and `config/`, and `delivery.sh` also documents the `changes.tsv` registry format.
 Every change that ships behind a switch gets a row in `core/machines/changes.tsv` in the same commit, which names the switch file in `config/` and the proof, and its commit carries the trailer line `Change: <id>`.
 A report may say `live` or `done` only for `in-use`, and `bin/jg-live-claim.sh` enforces that for every registered change a claim names, by id or by switch name.
 `in-homes-off` is reported as `in the homes, off`, with the switch file named.

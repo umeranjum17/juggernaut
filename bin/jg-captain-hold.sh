@@ -836,8 +836,29 @@ verify_entry_durable() {  # <origin-or-empty> <entry>; prints "<id> <how> <origi
   printf '%s %s %s\n' "$id" "$how" "$origin_state"
 }
 
+# The hold machine's move log (core/machines/tables/hold.tsv): a writer reports the move it made, with its time, to
+# bin/jg-machine-guard.sh. A report never fails the writer, and a move to the state it is already in is no move.
+hold_word() {  # <task-id>; the machine's word for the task now, or - when it has no hold
+  local word
+  word=$(command_phase "$1" 2>/dev/null) || word=''
+  case "$word" in raised|deferred|answered|closed) printf '%s\n' "$word" ;; *) printf -- '-\n' ;; esac
+}
+
+report_hold_move() {  # <task-id> <from-word-or--> <to-word>
+  [ "$2" != "$3" ] || return 0
+  "$SCRIPT_DIR/jg-machine-guard.sh" edge hold "$2" "$3" "$1" >/dev/null 2>&1 || true
+}
+
+DIVERGED_MARK_DIR="$STATE/hold-diverged"  # one marker per call reported diverged, so the report is made once
+
+report_hold_reconciled() {  # <task-id> <to-word>: the move out of diverged, made only for a call reported diverged
+  [ -e "$DIVERGED_MARK_DIR/$1" ] || return 0
+  report_hold_move "$1" diverged "$2"
+  rm -f -- "$DIVERGED_MARK_DIR/$1"
+}
+
 command_hold() {
-  local id=${1:-} priority='' priority_check title='' reason='' repo='' origin='' until='' show state existing_title body='' hold_kind hold_set occurrence
+  local id=${1:-} priority='' priority_check title='' reason='' repo='' origin='' until='' show state existing_title body='' hold_kind hold_set occurrence held_from
   local signoff_script existing_hold_kind='' existing_held='' preserve_hold_set=0 stored_reason previous_origin='' hold_status=0 card_close=release must='' refusal rec own_instruction='' raise_rc=0
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
@@ -903,12 +924,14 @@ command_hold() {
   esac
   acquire_task_control_lock "$id"
   require_backlog
+  held_from=-
   if task_show "$id"; then
     show=$TASK_SHOW_OUTPUT
     state=$(show_field "$show" state)
     [ "$state" != "done" ] \
       || fail "task $id is already closed; a new captain call needs its own task"
     existing_hold_kind=$(show_field_value "$show" hold_kind)
+    [ "$existing_hold_kind" != captain ] || held_from=$(hold_word "$id")
     existing_held=$(show_field_value "$show" held)
     if [ "$existing_hold_kind" = captain ] && [ "$existing_held" = yes ]; then
       preserve_hold_set=1
@@ -981,6 +1004,9 @@ command_hold() {
   [ -n "$(body_hold_set_timestamp "$(show_field_value "$show" body)")" ] \
     || fail "task $id lost its hold-set stamp while being held"
   publish_parent_hold "$id" "$occurrence" needs-decision "$reason"
+  # A call is raised first and deferred by its date, so a new dated hold reports both moves.
+  [ "$held_from" != - ] || { report_hold_move "$id" - raised; held_from=raised; }
+  if [ -n "$until" ] && [[ "$until" > "$(date -u +%F)" ]]; then report_hold_move "$id" "$held_from" deferred; else report_hold_move "$id" "$held_from" raised; fi
   # Optional sign-off card, raised only while the sign-off adapter is armed here.
   # core/signoff owns the card when it is installed and authors the ask itself;
   # the answer-intake adapter this repo also ships (bin/jg-procevent-signoff.sh)
@@ -1137,7 +1163,7 @@ reply_release() {  # <task-id> <title> <card-key>
 }
 
 command_answer() {
-  local id=${1:-} decision_file='' release=0 card='' title show state hold_kind body outcome recorded_mode occurrence
+  local id=${1:-} decision_file='' release=0 card='' title show state hold_kind body outcome recorded_mode occurrence answered_from until
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -1229,10 +1255,15 @@ command_answer() {
       printf '%s: %s\n' "$outcome" "$id"
       return 0
     fi
+    answered_from=raised
+    until=$(show_field_value "$show" hold_until)
+    if [ -n "$until" ] && [[ "$until" > "$(date -u +%F)" ]]; then answered_from=deferred; fi
     write_resolution_record "$id" "$outcome" "$body"
+    [ "$release" = 1 ] || report_hold_move "$id" "$answered_from" answered
     if ! close_answered "$id" "$release"; then
       fail "could not close answered captain-held task $id"
     fi
+    if [ "$release" = 1 ]; then report_hold_move "$id" "$answered_from" closed; else report_hold_move "$id" answered closed; fi
     remove_interrupted_answer_stamp "$id"
     task_show "$id" || fail "task $id disappeared after closing"
     show=$TASK_SHOW_OUTPUT
@@ -1709,6 +1740,7 @@ reconcile_close() {
   [ "$PARENT_HOLD_PUBLISHED" = 1 ] \
     || fail "could not publish the reconciled captain-held task $id to its parent"
   reconcile_request_retire "$id"
+  report_hold_reconciled "$id" closed
   printf 'reconciled: %s\n' "$id"
 }
 
@@ -1767,6 +1799,7 @@ reconcile_note() {
   reconcile_request_retire "$id" \
     || fail "could not retire the applied reconcile request for $id"
   command_open "$id" || fail "recording the reconcile note released captain-held task $id"
+  report_hold_reconciled "$id" raised
   printf 'still-open: %s\n' "$id"
 }
 
@@ -1988,6 +2021,10 @@ command_diverged() {
         # emitted field uses rather than being trusted to stay one clean line.
         title=$(sanitize_field "$(show_field_value "$show" title)")
         printf '%s\t%s\t%s\t%s\n' "$id" "$origin" "$key" "$title"
+        if [ ! -e "$DIVERGED_MARK_DIR/$id" ]; then
+          report_hold_move "$id" "$(hold_word "$id")" diverged
+          mkdir -p "$DIVERGED_MARK_DIR" 2>/dev/null && : > "$DIVERGED_MARK_DIR/$id" 2>/dev/null
+        fi
         break
       done <<INNER
 $keys

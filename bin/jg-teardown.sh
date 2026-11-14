@@ -109,11 +109,13 @@
 # boundary. Fresh Treehouse spawns for that project in
 # every local Juggernaut home hold the same lock from before slot allocation
 # through metadata publication, closing the publication
-# gap. Slow cleanup work (landed-work proof, pipeline-spend lookup, pane close, final-outcome
+# gap. Slow cleanup work (landed-work proof, pane close, final-outcome
 # delivery) runs outside the lock, so cleanups and spawns of one project do not
 # queue behind each other (tests/jg-teardown-lock-hold.test.sh); the slot-owner
 # checks are repeated inside the lock. Forced squad_lead teardown takes it and runs the same checks for every
 # descendant Treehouse slot before touching any child.
+# A teardown waits for that lock up to JG_TEARDOWN_LOCK_WAIT seconds (default 120) before it refuses; a dead holder is
+# taken over at once. Only then does it refuse, changing nothing.
 # These refusals are not relaxed by --force: --force authorizes discarding THIS
 # task's unlanded work, never another task's live work. Nothing of this task's
 # own is removed by a refusal; reconcile whichever record is wrong and re-run.
@@ -258,12 +260,6 @@
 #     root still exists, so the account's healthy LaunchAgent worker and every
 #     live remote squad_lead worker are out of scope. Best effort: a sweep
 #     failure never blocks this teardown.
-# After Fix 2, when config/pipeline-spend opts this home in, a ship
-# task whose local copy this teardown owns has its no-mistakes pipeline spend
-# recorded by bin/jg-pipeline-spend.sh, which owns the attribution and the
-# ledger. It runs before the task branch it attributes runs by is deleted and
-# before state/<id>.meta is removed, and is best effort: a failure warns and
-# never blocks cleanup.
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
 [ "$_jg_d" != "${BASH_SOURCE[0]}" ] || _jg_d=.
@@ -455,14 +451,18 @@ DESCENDANT_TASK_HOMES=()
 DESCENDANT_TREEHOUSE_LOCK_PATHS=()
 # The shared project pool lock covers only what must be atomic with the slot
 # return: re-proving the slot is still this task's, reaping its processes, and
-# handing the copy back. Everything slow (the landed-work proof, the pipeline-spend lookup,
+# handing the copy back. Everything slow (the landed-work proof,
 # the pane close, the final-outcome delivery) runs outside it, so another
 # cleanup or a spawn of the same project is never queued behind this one.
 teardown_pool_lock_acquire() {
   [ "$TREEHOUSE_SLOT_LOCK_REQUIRED" = 1 ] || return 0
   [ "$TREEHOUSE_PROJECT_LOCK_HELD" != 1 ] || return 0
-  jg_lock_try_acquire "$TREEHOUSE_PROJECT_LOCK" || {
-    echo "REFUSED: another Treehouse slot allocation or return is in progress for $TEARDOWN_LOCK_PROJECT; the task record is kept, rerun teardown" >&2
+  # Wait with a deadline: the lock is held for the short slot return only, and a refusal leaves a landed lane's record
+  # behind. A dead holder is taken over by the acquire itself. A spawn does not wait on this lock, so it is never delayed.
+  local wait=${JG_TEARDOWN_LOCK_WAIT:-120}
+  case $wait in ''|*[!0-9]*) wait=120 ;; esac
+  jg_lock_acquire_wait_max "$TREEHOUSE_PROJECT_LOCK" "$wait" || {
+    echo "REFUSED: another Treehouse slot allocation or return is in progress for $TEARDOWN_LOCK_PROJECT (waited ${wait}s); the task record is kept, rerun teardown" >&2
     return 1
   }
   TREEHOUSE_PROJECT_LOCK_HELD=1
@@ -3005,12 +3005,6 @@ fi
 
 # Every landed/discard-work refusal above has now passed (or --force skipped
 # them).
-if [ "$KIND" = ship ] && [ "$PARK" != 1 ] && teardown_owns_worktree && [ -e "$CONFIG/pipeline-spend" ]; then
-  JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$DATA" JG_CONFIG_OVERRIDE="$CONFIG" \
-    "$SCRIPT_DIR/jg-pipeline-spend.sh" record "$ID" >/dev/null \
-    || echo "warning: could not record $ID's no-mistakes pipeline spend; cleanup continues" >&2
-fi
-
 # Both process reaping and Treehouse return can kill a leased pane's top-level
 # shell. Close Herdr's endpoint under its held focus lock before either runs.
 HERDR_PRESENTATION_JOURNAL="$STATE/$ID.herdr-presentation"

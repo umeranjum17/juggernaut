@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Behavior tests for the delivery machine (core/machines/tables/delivery.tsv) and for jg-live-claim.sh using it.
 # Every record is generated here in the shape its writer prints: a git repo with a trunk, state/trunk-tip-<project>,
-# data/trunk-live.tsv rows, config/ switch files and a seeded registry. No fleet record is copied.
+# data/trunk-in-use.tsv rows, config/ switch files and a seeded registry. No fleet record is copied.
 # A switched-off change and a switched-on one are walked through every state, and a report that says "live" is
 # refused for the first and kept, with its proof, for the second.
 set -u
@@ -22,7 +22,7 @@ commit() {  # <file> <message>: a commit on the current branch; prints its sha
 }
 jm() { OUT=$(bash "$JM" "$@" 2>&1); RC=$?; }
 word_of() { bash "$JM" show delivery "$1" 2>&1 | awk -F'\t' '$1 == "state" { print $2 }'; }
-live_row() { tab "$1" "$2" "$(date +%s)" "$3" "${4:-}" >> "$D/trunk-live.tsv"; }
+live_row() { tab "$1" "$2" "$(date +%s)" "$3" "${4:-}" >> "$D/trunk-in-use.tsv"; }
 
 git init -q -b trunk "$R"
 base=$(commit base.txt "base")
@@ -99,7 +99,7 @@ claim() { OUT=$(bash "$CLAIM" "done" "$1" 2>/dev/null); RC=$?; }
 claim "feat-off is live"; expect_code 3 "$RC" "live for a switched-off change is refused"
 assert_contains "$OUT" "in the homes, off (switch config/feat-off)" "the claim becomes in the homes, off, naming the switch"
 claim "feat-off is live, in the homes, off until config/feat-off exists"; expect_code 0 "$RC" "saying in the homes, off stands"
-claim "feat-side is fixed"; expect_code 3 "$RC" "a change not on the trunk is not fixed"; assert_contains "$OUT" "merged-not-released:" "unlanded reads as merged-not-released"
+claim "feat-side is fixed"; expect_code 3 "$RC" "a change not on the trunk is not fixed"; assert_contains "$OUT" "Built, not landed:" "unlanded reads as Built, not landed"
 claim "feat-gone is done"; expect_code 3 "$RC" "a reverted change is not done"; assert_contains "$OUT" "reverted:" "reverted says reverted"
 : > "$C/feat-on"
 claim "feat-on is live"; expect_code 3 "$RC" "in-use without its proof is extended"

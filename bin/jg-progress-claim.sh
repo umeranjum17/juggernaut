@@ -9,7 +9,7 @@
 #   not run (no jq), and prints nothing.
 #
 # A claim is a sentence that names a part (a slug or name from the probe's part table, see
-# bin/jg-critical-path.sh parts) and says live, switched, landed, shipped, done, running,
+# bin/jg-critical-path.sh parts) and says live, in use, released, switched, landed, shipped, done, running,
 # working, "is on" or "turned on". Merged is not live, so a sentence that also says pending,
 # not live, not yet, not running, not done, "is not" or n't is not a claim. "Working on" is
 # effort and is not a claim. A part is supported only when `jg-critical-path.sh row <slug>`
@@ -18,8 +18,8 @@ set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CP="$SCRIPT_DIR/jg-critical-path.sh"
-CLAIM='(^|[^a-z])(live|switched|landed|shipped|done|running|working|(is|are|now|turned|switched) on)([^a-z]|$)'
-NEGATED="pending|not live|not yet|not running|not done|is not|n't|isn.t"
+CLAIM='(^|[^a-z])(live|in use|released|switched|landed|shipped|done|running|working|(is|are|now|turned|switched) on)([^a-z]|$)'
+NEGATED="pending|not in use|not live|not yet|not running|not done|is not|n't|isn.t"
 
 [ "${1:-}" = pending ] || { echo "usage: jg-progress-claim.sh pending (the Stop payload on stdin)" >&2; exit 2; }
 command -v jq >/dev/null 2>&1 || { printf 'jg-progress-claim: jq is required to read the turn-end payload\n' >&2; exit 2; }

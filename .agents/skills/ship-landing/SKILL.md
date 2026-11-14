@@ -9,7 +9,7 @@ metadata:
 # Ship landing
 
 Landing is delivering: the delivery style owns rebase, push, pull request and CI, and done-done owns the proof before it (`validation-supervision` names the owner of each of the nine steps).
-For PR-based ship tasks, the ready signal depends on mode: `no-mistakes` reports `done [at=<epoch>]: PR <url> checks green` after CI is green, while `direct-PR` reports `done [at=<epoch>]: PR <url>` after opening the PR, each only for a non-draft PR; a lane that deliberately holds a draft declares a wait instead, and `bin/jg-pr-check.sh` refuses to arm merge monitoring on a draft.
+For PR-based ship tasks, the ready signal is `done [at=<epoch>]: PR <url>` after opening the PR, only for a non-draft PR; a lane that deliberately holds a draft declares a wait instead, and `bin/jg-pr-check.sh` refuses to arm merge monitoring on a draft.
 The watcher already ran that ready line through `bin/jg-pr-check.sh --from-status` before the wake: when the task's meta now has that `pr=`, the PR is recorded, its merge poll armed, its ready card posted, and its ticket at review.
 Recording that PR also publishes its one-line wait on the PR page, so anyone reading the PR sees what it waits for instead of asking; `bin/jg-pr-wait.sh <url> set <line>` replaces that line and `bin/jg-pr-wait.sh <url> clear` removes it when you send work back.
 Otherwise run `bin/jg-pr-check.sh <id> <PR url>` yourself with the URL copied from that ready signal or the resolved checks-green `jg-crew-state.sh` line - it records `pr=` and the forge's `pr_head=` when available in the task's meta and arms the watcher's merge poll.
@@ -17,8 +17,6 @@ Otherwise run `bin/jg-pr-check.sh <id> <PR url>` yourself with the URL copied fr
 That blocked reading is the gate working, not a stuck worker, so steer the worker on the commit the refusal names rather than waiting.
 For `local-trunk`, use the automatic exact-head landing and cleanup path in `docs/trunk-flow.md`; live and release still need the captain's recorded word.
 A direct-PR worker pushes that commit to its PR branch, and a local-only worker commits it on its ship branch.
-A no-mistakes worker re-validates it with /no-mistakes so the pipeline stays the one publisher; it never pushes from its copy.
-In no-mistakes mode the earlier `done [at=<epoch>]: {summary}` is the pipeline handoff and is not gated.
 Tell the captain the PR's full `https://...` URL copied from the worker's ready line, the resolved checks-green crew-state line, or the task's `pr=` metadata, and a concise outcome summary.
 Until the captain answers the auto-merge question, the lead makes the merge call itself within one cycle of the required checks going green, and it never leaves that call unnamed: `bin/jg-pr-state.sh --waiting-for <pr url>` prints exactly one `juggernaut/waiting-for: <what>` line naming the draft, the conflicts, the red or unreported required check, or the merge call, and that line belongs in the captain-facing report while the change is in flight.
 The required set a pull request waits on is the fast set in `.github/workflows/ci.yml` - the repo invariants, the sharded changed-file lint, and the changed-file tests - which is why that wait is minutes rather than half an hour; every heavier suite runs post-merge and a red one files a fix-forward item that is never a revert.

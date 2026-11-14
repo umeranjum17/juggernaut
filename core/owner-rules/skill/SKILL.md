@@ -39,9 +39,7 @@ Run `bin/jg-owner-rules-tree.sh <backlog-file>` to inspect parent chains and inv
 
 ## Rule 13: direct-PR plus a done-done check is the default route
 
-`--mode no-mistakes` is only for an npm/store release, sign-in/keys/payment/security code, a data migration, a large change (new subsystem or about 400+ changed lines), shared protocol/crypto, or any PR to the Juggernaut fork (umeranjum17/juggernaut), whose required check "PR must be raised via no-mistakes" demands it. Everything else ships direct-PR, and the real user journey is checked (the done-done check) with its evidence on the sign-off Evidence tab.
-
-The risk reason is a core brief rule, not this feature's: `bin/jg-brief.sh --mode no-mistakes` needs `--risk <reason>`, and a lane with no such risk briefs `--mode direct-PR` (docs/configuration.md "Delivery risk").
+Every lane ships direct-PR, and the real user journey is checked (the done-done check) with its evidence on the sign-off Evidence tab.
 
 Refusal at merge time (`$what` is the PR URL, or `local merge <head>` with no PR, `$2` the worktree, `$3` the merge head):
 

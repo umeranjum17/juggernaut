@@ -14,7 +14,7 @@
 # charters still use a single `{TASK}` charter fill. Juggernaut may adjust other
 # sections when the task genuinely deviates (e.g. working an existing external
 # PR instead of shipping a new one).
-# Usage: jg-brief.sh <task-id> <repo-name> --mode <direct-PR|local|local-only|local-trunk> [--ticket <ticket-id>] [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--migration-row <slug|none>] [--off-critical-path <captain-words>] [--forge <none|gerrit|forgejo> [--shape squash]] [--design-call <yes|no> --design-reason <text>] [--demo-call <yes|no> --demo-reason <text>] [--herdr-lab|--task-text-file <file>] [--medium <mobile|web|desktop|cli|backend>]
+# Usage: jg-brief.sh <task-id> <repo-name> --mode <direct-PR|local|local-only|local-trunk> [--ticket <ticket-id>] [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--shepherd <pull-request-url>] [--migration-row <slug|none>] [--off-critical-path <captain-words>] [--forge <none|gerrit|forgejo> [--shape squash]] [--design-call <yes|no> --design-reason <text>] [--demo-call <yes|no> --demo-reason <text>] [--herdr-lab|--task-text-file <file>] [--medium <mobile|web|desktop|cli|backend>]
 #        jg-brief.sh <task-id> <repo-name> --scout [--ticket <ticket-id>] [--depth <quick|standard|deep>] [--base-branch <branch>] [--herdr-lab]
 #        jg-brief.sh <task-id> --squad-lead {<project>...|--no-projects}
 #   --ticket <ticket-id> (ship and scout) makes the brief the first step of a dispatch from a ticket: it runs
@@ -47,6 +47,9 @@
 #   omitting both still fails loudly so an accidental omission is never silent.
 #   Set JG_SQUAD_LEAD_CHARTER='<charter>' to fill the charter text.
 #   Set JG_SQUAD_LEAD_SCOPE='<scope>' to write a routing scope distinct from the charter text.
+#   --proof minimum --proof-checks <journey[,journey]> [--proof-named-by <who>] (ship, with --ticket) writes `proof: minimum` and
+#   the named checks on the ticket (bin/jg-proof-minimum-lib.sh owns the field) and adds a `# Proof: minimum` section that hands
+#   the list to done-done. Task text that still says "bare-minimum checks" with no such field is refused with the new form.
 #   --herdr-lab is mandatory when the task will issue Herdr lifecycle commands.
 #   It adds the hard isolation contract backed by bin/jg-herdr-lab.sh.
 #   {TASK} and {JUGGERNAUT_SPEC} are filled after scaffolding, so the scaffold
@@ -127,6 +130,14 @@
 # task a fix to that frozen release's own red checks; <branch> must be the
 # --base-branch, and the brief records a "Red-fix of: <branch>" line after the
 # Base branch line. Refused outside ship briefs.
+# --shepherd <pull-request-url> makes the brief a shepherd lane: its only job is
+# to get that open pull request merged. The brief gains a `# Shepherd` section
+# that names the address and tells the lane to fix only what blocks the merge
+# (a red check's cause, a conflict, a review finding), never to waive, skip,
+# weaken or remove a check, and to merge only through bin/jg-pr-merge.sh, so the
+# merge stays under the task's own merge authority. bin/jg-spawn.sh --shepherd
+# records the address and binds the pull request; core/pr-pager/pager.sh pages
+# the lane. Ship briefs on a mode that publishes a pull request only.
 # --migration-row <slug|none> and --off-critical-path <text> write a "Migration
 # row:" and a "Critical-path override:" line under `# Setup` (ship briefs only);
 # bin/jg-critical-path.sh owns the ordered critical list and the gate over them.
@@ -306,6 +317,9 @@ case "$CONFIG" in /*) ;; *) CONFIG="$PWD/$CONFIG" ;; esac
 KIND=ship
 HERDR_LAB=0
 TASK_TEXT_FILE=
+PROOF=
+PROOF_CHECKS=
+PROOF_NAMED_BY=
 DEPTH=
 DEPTH_SET=0
 NO_PROJECTS=0
@@ -317,6 +331,8 @@ BASE_BRANCH=
 BASE_BRANCH_SET=0
 RED_FIX_OF=
 RED_FIX_OF_SET=0
+SHEPHERD=
+SHEPHERD_SET=0
 MIGRATION_ROW=
 MIGRATION_ROW_SET=0
 OFF_CRITICAL_PATH=
@@ -350,6 +366,7 @@ for a in "$@"; do
       branch-prefix) BRANCH_PREFIX=$a; BRANCH_PREFIX_SET=1 ;;
       base-branch) BASE_BRANCH=$a; BASE_BRANCH_SET=1 ;;
       red-fix-of) RED_FIX_OF=$a; RED_FIX_OF_SET=1 ;;
+      shepherd) SHEPHERD=$a; SHEPHERD_SET=1 ;;
       migration-row) MIGRATION_ROW=$a; MIGRATION_ROW_SET=1 ;;
       off-critical-path) OFF_CRITICAL_PATH=$a; OFF_CRITICAL_PATH_SET=1 ;;
       forge) FORGE=$a; FORGE_SET=1 ;;
@@ -366,6 +383,9 @@ for a in "$@"; do
       ui-change) UI_CHANGE=$a ;;
       risk) RISK=$a; RISK_SET=1 ;;
       depth) DEPTH=$a; DEPTH_SET=1 ;;
+      proof) PROOF=$a ;;
+      proof-checks) PROOF_CHECKS=$a ;;
+      proof-named-by) PROOF_NAMED_BY=$a ;;
       *) echo "error: internal parser state for --$want_value" >&2; exit 1 ;;
     esac
     want_value=
@@ -384,6 +404,8 @@ for a in "$@"; do
     --base-branch=*) BASE_BRANCH=${a#--base-branch=}; BASE_BRANCH_SET=1 ;;
     --red-fix-of) want_value="red-fix-of" ;;
     --red-fix-of=*) RED_FIX_OF=${a#--red-fix-of=}; RED_FIX_OF_SET=1 ;;
+    --shepherd) want_value="shepherd" ;;
+    --shepherd=*) SHEPHERD=${a#--shepherd=}; SHEPHERD_SET=1 ;;
     --migration-row) want_value="migration-row" ;;
     --migration-row=*) MIGRATION_ROW=${a#--migration-row=}; MIGRATION_ROW_SET=1 ;;
     --off-critical-path) want_value="off-critical-path" ;;
@@ -414,6 +436,12 @@ for a in "$@"; do
     --ui-change=*) UI_CHANGE=${a#--ui-change=} ;;
     --risk) want_value=risk ;;
     --risk=*) RISK=${a#--risk=}; RISK_SET=1 ;;
+    --proof) want_value=proof ;;
+    --proof=*) PROOF=${a#--proof=} ;;
+    --proof-checks) want_value=proof-checks ;;
+    --proof-checks=*) PROOF_CHECKS=${a#--proof-checks=} ;;
+    --proof-named-by) want_value=proof-named-by ;;
+    --proof-named-by=*) PROOF_NAMED_BY=${a#--proof-named-by=} ;;
     --depth) want_value=depth ;;
     --depth=*) DEPTH=${a#--depth=}; DEPTH_SET=1 ;;
     # yolo never reaches the worker: it is juggernaut's merge authority, not a
@@ -577,6 +605,25 @@ if [ "$RED_FIX_OF_SET" -eq 1 ]; then
     exit 1
   fi
 fi
+if [ "$SHEPHERD_SET" -eq 1 ]; then
+  if [ "$KIND" != ship ]; then
+    echo "error: --shepherd applies only to ship briefs; a scout delivers a report and a squad_lead charter does not carry a pull request to its merge" >&2
+    exit 1
+  fi
+  case "$SHEPHERD" in
+    https://*[[:space:]]*|https://|'') SHEPHERD_BAD=1 ;;
+    https://*/pull/[0-9]*|https://*/merge_requests/[0-9]*|https://*/c/*/+/[0-9]*|https://*/*/-/merge_requests/[0-9]*) SHEPHERD_BAD=0 ;;
+    *) SHEPHERD_BAD=1 ;;
+  esac
+  if [ "$SHEPHERD_BAD" -eq 1 ]; then
+    echo "error: --shepherd takes the full https:// address of one open pull request (got '$SHEPHERD')" >&2
+    exit 1
+  fi
+  if ! jg_delivery_style_publishes "$MODE"; then
+    echo "error: --shepherd is meaningless on $MODE, which opens no pull request; shepherd a pull request on a mode that publishes one" >&2
+    exit 1
+  fi
+fi
 if [ "$MIGRATION_ROW_SET" -eq 1 ] || [ "$OFF_CRITICAL_PATH_SET" -eq 1 ]; then
   if [ "$KIND" != ship ]; then
     echo "error: --migration-row and --off-critical-path apply only to ship briefs; a scout and a charter are never held to the migration's critical path" >&2
@@ -661,6 +708,31 @@ Task id: $ID
 Commit form: end the commit message with the trailer \`Ticket: $TICKET\`."
   if grep -q 'the commit must carry its ticket reference' "$SCRIPT_DIR/jg-trunk.sh" 2>/dev/null; then
     TICKET_SECTION="$TICKET_SECTION Start the subject with the task id \`$ID\`, because the landing check reads it from the commit text."
+  fi
+fi
+# "Bare-minimum checks" is a field on the ticket (bin/jg-proof-minimum-lib.sh), never a sentence: --proof minimum writes
+# it, a ticket that carries it gets the section that hands the list to done-done, and the old sentence with no field is refused.
+if [ "$KIND" = squad_lead ]; then
+  [ -z "$PROOF$PROOF_CHECKS$PROOF_NAMED_BY" ] || { echo "error: --proof, --proof-checks and --proof-named-by apply only to ship briefs" >&2; exit 1; }
+else
+  # shellcheck source=bin/jg-proof-minimum-lib.sh
+  . "$SCRIPT_DIR/jg-proof-minimum-lib.sh"
+  case "$PROOF" in
+    ''|full) [ -z "$PROOF_CHECKS$PROOF_NAMED_BY" ] || { echo "error: --proof-checks and --proof-named-by go with --proof minimum" >&2; exit 1; } ;;
+    minimum)
+      [ "$KIND" = ship ] || { echo "error: --proof minimum applies only to ship briefs" >&2; exit 1; }
+      [ -n "$TICKET" ] || { echo "error: --proof minimum is a field on the ticket; pass --ticket <ticket-id>" >&2; exit 1; }
+      [ -n "$PROOF_CHECKS" ] || { echo "error: --proof minimum needs --proof-checks <journey[,journey]>: the checks the lead names" >&2; exit 1; }
+      jg_proof_minimum_write "$CONFIG" "$TICKET" "$PROOF_CHECKS" "${PROOF_NAMED_BY:-lead}" || exit 1 ;;
+    *) echo "error: --proof is full or minimum (got '$PROOF'); a bypass is the owner's record, never a brief flag" >&2; exit 1 ;;
+  esac
+  PROOF_ROW=
+  [ -z "$TICKET" ] || PROOF_ROW=$(jg_proof_minimum_read "$CONFIG" "$TICKET") || PROOF_ROW=
+  if [ -n "$PROOF_ROW" ]; then
+    TICKET_SECTION="$TICKET_SECTION$(jg_proof_minimum_section "${PROOF_ROW%%$'\t'*}" "${PROOF_ROW#*$'\t'}" "$ID")"
+  elif [ -n "$TASK_TEXT_FILE" ] && jg_proof_minimum_old_sentence "$TASK_TEXT_FILE"; then
+    echo "error: the task text asks for bare-minimum checks in words, and a sentence in a brief is no proof level: $(jg_proof_minimum_form)" >&2
+    exit 1
   fi
 fi
 BRANCH="$BRANCH_PREFIX$ID"
@@ -999,7 +1071,7 @@ Never write \`critic.md\` yourself for a deep Recon; the gate refuses a critic t
 Close every gap the critic finds, then run the gate again.
 "
   else
-    DEPTH_SECTION="${DEPTH_SECTION}Write \`critic.md\` yourself: one round that reads the draft as a hostile reviewer, lists the gaps it found, and carries a \`Round 1: new gaps 0\` line once they are closed.
+    DEPTH_SECTION="${DEPTH_SECTION}Write \`critic.md\` yourself: one round that reads the draft as a hostile reviewer, lists the gaps it found, and carries a \`Round 1: new gaps 0 report <sha256sum of report.md>\` line once they are closed (the hash names the draft it read; a later edit needs a new round).
 "
   fi
   DEPTH_SECTION="$DEPTH_SECTION
@@ -1094,6 +1166,20 @@ A stale or conflicting change is refused with its paths named and is never lande
 Commit, run the QA step of the Definition of done, and report ready with your done line. Juggernaut's landing check then lands the commit on the trunk and cleans up unforced; you never land, push, go live or release.
 "
 fi
+# A shepherd lane's only job is one pull request's merge. The section overrides the ordinary rule that a ship stops at its ready
+# report, and fences the one shortcut that job invites: getting to green by weakening the check that is red.
+SHEPHERD_SECTION=
+if [ "$SHEPHERD_SET" -eq 1 ]; then
+  SHEPHERD_SECTION="
+# Shepherd
+Shepherd of: $SHEPHERD
+Your only job is to get that pull request merged. Do no other work; the pull request is already open and bound to this task.
+When juggernaut pages you with its next step, do exactly that step on the pull request's own branch: fix the cause of a red check, resolve a conflict, mark a draft ready, answer a review finding.
+Never waive, skip, disable, loosen, re-run past or remove a check, a test or a gate to reach green, and never edit a workflow or a check's own definition to make it pass; a check you cannot make pass for its real cause is \`blocked:\` with the evidence.
+Merge only through \`$JG_ROOT/bin/jg-pr-merge.sh\`, never a lower-level merge command; it refuses a pull request that is not green and not yours to merge. Where it refuses on merge authority, write \`done\` naming the pull request and stop: the merge then waits for that authority, not for you.
+Append \`done [at=<epoch>]: merged $SHEPHERD\` only after the forge shows it merged.
+"
+fi
 DESIGN_SECTION=
 if [ -n "$DESIGN_CALL" ]; then
   DESIGN_SECTION="
@@ -1180,7 +1266,7 @@ cat > "$BRIEF" <<EOF
 You are a operator: an autonomous worker agent managed by juggernaut. Work on your own; do not wait for a human.
 
 $TASK_SECTION$TICKET_SECTION
-$PRIOR_ART_SECTION$TRUNK_SECTION$DESIGN_SECTION$DEMO_SECTION$UI_SECTION$RISK_SECTION
+$PRIOR_ART_SECTION$TRUNK_SECTION$SHEPHERD_SECTION$DESIGN_SECTION$DEMO_SECTION$UI_SECTION$RISK_SECTION
 $HERDR_SECTION
 $STACK_BLOCK$RULES_BLOCK$BUILD_RULE_BLOCK
 

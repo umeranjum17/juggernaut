@@ -375,12 +375,25 @@ squad_lead_update_reconcile_clear() { # <state> <id>
   rm -f -- "$marker"
 }
 
+# True when every local-only commit has a patch-equivalent commit in TARGET
+# (git cherry prints no '+' line) and the local-only range holds no merge
+# commit, whose own conflict resolution git cherry does not compare.
+divergence_is_patch_equivalent() { # <dir> <local-commit> <target-commit>
+  local dir=$1 local_commit=$2 target_commit=$3 cherry
+  [ -z "$(git -C "$dir" rev-list --merges "$target_commit..$local_commit" 2>/dev/null)" ] || return 1
+  cherry=$(git -C "$dir" cherry "$target_commit" "$local_commit" 2>/dev/null) || return 1
+  [ -n "$cherry" ] || return 1
+  ! printf '%s\n' "$cherry" | grep -q '^+'
+}
+
 # Prove that merging LOCAL into TARGET from their real merge base adds no tree
-# change to TARGET. A temporary index performs the three-way comparison without
-# touching the worktree or writing a merge commit. Conflicts or any remaining
-# content difference are not redundant and therefore stay diverged.
+# change to TARGET. Either every local-only commit is patch-equivalent in
+# TARGET, or a temporary index performs the three-way comparison without
+# touching the worktree or writing a merge commit. A conflict or content
+# difference with a commit that has no patch-equivalent stays diverged.
 divergence_is_redundant() { # <dir> <local-commit> <target-commit>
   local dir=$1 local_commit=$2 target_commit=$3 ancestor scratch index result=1
+  divergence_is_patch_equivalent "$dir" "$local_commit" "$target_commit" && return 0
   ancestor=$(git -C "$dir" merge-base "$local_commit" "$target_commit" 2>/dev/null) || return 1
   scratch=$(mktemp -d "${TMPDIR:-/tmp}/jg-ff-redundant.XXXXXX" 2>/dev/null) || return 1
   index="$scratch/index"
@@ -515,6 +528,51 @@ ff_rollback_half_move() { # <dir> <old-rev> <new-rev>
   git -C "$dir" read-tree -u -m "$new" "$old" >/dev/null 2>&1 || true
 }
 
+# True when nothing in the home is left to lose beside a tree: the index tree equals <tree>, the tracked
+# working tree equals the index, and no untracked file outside the operational dirs exists.
+ff_state_is_exactly_tree() { # <dir> <tree>
+  local dir=$1 want=$2 got path first
+  got=$(git -C "$dir" write-tree 2>/dev/null) || return 1
+  [ "$got" = "$want" ] || return 1
+  git -C "$dir" diff --quiet -- 2>/dev/null || return 1
+  while IFS= read -r path; do
+    first=${path%%/*}
+    case " $OPERATIONAL_UNTRACKED_DIRS " in *" $first "*) continue ;; esac
+    [ "$path" = "$SUB_HOME_MARKER" ] && continue
+    return 1
+  done < <(git -C "$dir" ls-files --others --exclude-standard 2>/dev/null)
+}
+
+# Finish a half-done move without loss. A killed or refused move can leave the index (and tree) at the
+# target while HEAD is still behind, and reset --keep then sees local changes and refuses. When the index
+# tree, the tracked working tree and the target tree are all equal and no untracked file outside the
+# operational dirs exists, nothing is left to lose, so HEAD alone is re-pointed (reset --soft); any other
+# state returns 1 and keeps the caller's refusal. Never --hard, never a stash.
+ff_finish_half_move() { # <dir> <target-commit>
+  local dir=$1 target=$2 want
+  want=$(git -C "$dir" rev-parse "$target^{tree}" 2>/dev/null) || return 1
+  ff_state_is_exactly_tree "$dir" "$want" || return 1
+  git -C "$dir" reset --soft "$target" >/dev/null 2>&1
+}
+
+# Adopt the earlier trunk commit a half-done move stopped at: the first commit C on the path to <target>
+# (reachable from it, not from HEAD) whose tree is exactly the home's index and working tree, and that either
+# descends from HEAD or holds a redundant divergence from it. HEAD alone moves to C (reset --soft), so the
+# caller's normal guarded fast-forward carries the clean home on to the target. A redundant divergence is
+# adopted only when <allow-divergence> is yes (the same callers that may reset --keep one). Any other state returns 1.
+ff_adopt_half_moved_commit() { # <dir> <target-commit> <allow-divergence>
+  local dir=$1 target=$2 allow_divergence=$3 idx commit tree
+  idx=$(git -C "$dir" write-tree 2>/dev/null) || return 1
+  while read -r commit tree; do
+    [ "$tree" = "$idx" ] || continue
+    git -C "$dir" merge-base --is-ancestor HEAD "$commit" 2>/dev/null \
+      || { [ "$allow_divergence" = yes ] && divergence_is_redundant "$dir" "$(git -C "$dir" rev-parse HEAD)" "$commit"; } || continue
+    ff_finish_half_move "$dir" "$commit" && return 0
+    return 1
+  done < <(git -C "$dir" log --format='%H %T' "$target" --not HEAD 2>/dev/null)
+  return 1
+}
+
 FF_STATUS=""
 FF_INSTR=""
 ff_target() {
@@ -570,6 +628,28 @@ ff_target() {
 
   clear_stray_pool_gitignore_line "$dir"
   dirty=$(dirty_paths "$dir" "$ignore_seed_marker")
+  if [ -n "$dirty" ] && { [ "$contained_repoint" = yes ] || { [ -n "$squad_lead_id" ] && [ -n "$reconciliation_state" ]; }; } \
+    && base_rev=$(git -C "$dir" rev-parse "$base" 2>/dev/null) \
+    && local_rev=$(git -C "$dir" rev-parse HEAD 2>/dev/null) \
+    && ! git -C "$dir" merge-base --is-ancestor HEAD "$base" 2>/dev/null \
+    && divergence_is_redundant "$dir" "$local_rev" "$base_rev"; then
+    instr=$(changed_instr "$dir" "$base")
+    before=$(git -C "$dir" rev-parse --short HEAD)
+    if ff_finish_half_move "$dir" "$base_rev"; then
+      after=$(git -C "$dir" rev-parse --short HEAD)
+      FF_STATUS="updated"
+      FF_INSTR="$instr"
+      [ -z "$reconciliation_state" ] || squad_lead_update_reconcile_clear "$reconciliation_state" "$squad_lead_id" || true
+      echo "$label: reconciled redundant divergence $before..$after (index and tree already at the target)"
+      return 0
+    fi
+  fi
+  local allow_divergence=no
+  if [ "$contained_repoint" = yes ] || { [ -n "$squad_lead_id" ] && [ -n "$reconciliation_state" ]; }; then allow_divergence=yes; fi
+  if [ -n "$dirty" ] && base_rev=$(git -C "$dir" rev-parse "$base" 2>/dev/null) \
+    && ff_adopt_half_moved_commit "$dir" "$base_rev" "$allow_divergence"; then
+    dirty=$(dirty_paths "$dir" "$ignore_seed_marker")
+  fi
   if [ -n "$dirty" ]; then
     echo "$label: skipped: dirty working tree"
     # Name every path, one per line, so a skip stays diagnosable without

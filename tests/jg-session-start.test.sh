@@ -529,7 +529,7 @@ EOF
     printf 'harness=pi\n'
     printf 'home=%s\n' "$mate"
   } > "$home/state/$id.meta"
-  ln -s "$ROOT/bin" "$root/bin"
+  ln -sn "$ROOT/bin" "$root/bin"
   make_fake_toolchain "$fakebin"
   make_fake_ps_claude "$fakebin"
   jg_fake_exit0 "$fakebin" pi
@@ -577,7 +577,7 @@ EOF
     printf 'herdr_tab_id=t-old\n'
     printf 'herdr_pane_id=p-old\n'
   } > "$home/state/$id.meta"
-  ln -s "$ROOT/bin" "$root/bin"
+  ln -sn "$ROOT/bin" "$root/bin"
   make_fake_toolchain "$fakebin"
   make_fake_ps_claude "$fakebin"
   jg_fake_exit0 "$fakebin" pi
@@ -1946,7 +1946,7 @@ EOF
   worktree="$world/child-worktree"
   crew_state="$world/slow-crew-state.sh"
   calls="$world/no-mistakes-state.calls"
-  ln -s "$ROOT/bin" "$root/bin"
+  ln -sn "$ROOT/bin" "$root/bin"
   make_fake_toolchain "$fakebin"
   make_fake_ps_claude "$fakebin"
   jg_git_init_commit "$worktree"
@@ -2075,6 +2075,7 @@ EOF
   wait_for_network_wake "$home" 60 || fail "the deferred stage never settled wake delivery"
   assert_grep 'check	startup-network' "$queue" \
     "a result the digest could not print never reached the agent: $(cat "$queue" 2>/dev/null)"
+  assert_grep 'alert=host' "$home/state/alerts/host--startup-network.rec" "the failed check did not raise the host alert"
   pass "session start: a deferred result the digest outran still reaches the agent as a wake"
 }
 

@@ -1777,7 +1777,7 @@ jg_super_main() {
     # to detect its exit (the kill -0 above) promptly and run housekeeping often
     # enough that batch flushes, stale rechecks, and the catch-all scan fire on
     # cadence. Gating keeps a large fleet cheap between ticks.
-    sleep 1
+    sleep "${JG_SUPERVISE_POLL:-2}"
     if [ "$(_file_age "$STATE/.subsuper-last-housekeep")" -ge "${JG_HOUSEKEEPING_TICK:-$HOUSEKEEPING_TICK_DEFAULT}" ]; then
       _now > "$STATE/.subsuper-last-housekeep"
       housekeeping "$STATE"

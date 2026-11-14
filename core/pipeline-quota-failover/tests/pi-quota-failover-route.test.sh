@@ -150,7 +150,7 @@ is "default chain is Claude Haiku through claude-bridge" "$(PI_QUOTA_FAILOVER_PR
 # through PI_QUOTA_FAILOVER_JG_HOME because it runs from an install dir.
 tmhome=$work/jghome
 mkdir -p "$tmhome/config"
-ln -s "$addons/../bin" "$tmhome/bin"
+ln -sn "$addons/../bin" "$tmhome/bin"
 mkdir -p "$work/install" && cp "$wrapper" "$work/install/pi-quota-failover" # the install dir copy wiring.sh makes
 chain_of() { PI_QUOTA_FAILOVER_JG_HOME=$tmhome PI_QUOTA_FAILOVER_PRINT_CHAIN=1 "$work/install/pi-quota-failover" </dev/null 2>"$work/tm.err"; }
 tm_rule() { printf '{"rules":[{"tool":"no-mistakes-review","when":"fixture","use":%s}]}\n' "$1" >"$tmhome/config/tool-models.json"; }

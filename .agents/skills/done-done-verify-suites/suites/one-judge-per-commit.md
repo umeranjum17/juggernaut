@@ -1,0 +1,3 @@
+# One judge per commit
+
+One judge per commit (H29g): run `done-done run -- bash journeys/one-judge-per-commit.sh`; over a fixture home with real git, the real landing check, the real `bin/jg-trunk.sh verify` and the real `bin/jg-alert.sh`, the lander's tip run and the line's verify keep their failed-script set for one tree in `data/trunk/judge-<project>.tsv` (`core/trunk-verify/judge.sh`); two judges that agree raise nothing, a verify that sees a red the tip run did not raises the alert `judge-split` once for the tree and names both verdicts, and a judge that runs again replaces its own verdict (screen: none).

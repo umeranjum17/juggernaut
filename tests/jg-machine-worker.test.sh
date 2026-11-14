@@ -11,7 +11,7 @@ JM="$ROOT/bin/jg-machine.sh"
 T=$(jg_test_tmproot jg-machine-worker); H=$T/home; S=$H/state
 mkdir -p "$S" "$H/crew" "$H/data" "$H/bin"
 for f in "$ROOT"/bin/*; do ln -s "$f" "$H/bin/"; done
-ln -s "$ROOT/core" "$H/core"
+ln -sn "$ROOT/core" "$H/core"
 rm "$H/bin/jg-crew-state.sh"
 # shellcheck disable=SC2016
 printf '#!/usr/bin/env bash\nprintf "state: %%s · source: none · fixture\\n" "$(cat "$JG_HOME/crew/$1" 2>/dev/null || echo unknown)"\n' > "$H/bin/jg-crew-state.sh"; chmod +x "$H/bin/jg-crew-state.sh"

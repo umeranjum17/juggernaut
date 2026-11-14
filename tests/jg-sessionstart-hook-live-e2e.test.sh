@@ -119,10 +119,10 @@ make_lab() {  # <harness> -> echoes lab dir
   # re-creation of it. Its bootstrap child is a stub: what is under test here is
   # survival across the hook boundary, not the sweeps, which
   # tests/jg-bootstrap.test.sh already owns.
-  ln -sf "$ROOT/bin/jg-startup-network.sh" "$lab/bin/jg-startup-network.sh"
-  ln -sf "$ROOT/bin/jg-timeout-lib.sh" "$lab/bin/jg-timeout-lib.sh"
-  ln -sf "$ROOT/bin/jg-wake-lib.sh" "$lab/bin/jg-wake-lib.sh"
-  ln -sf "$ROOT/bin/jg-session-lock-lib.sh" "$lab/bin/jg-session-lock-lib.sh"
+  ln -sfn "$ROOT/bin/jg-startup-network.sh" "$lab/bin/jg-startup-network.sh"
+  ln -sfn "$ROOT/bin/jg-timeout-lib.sh" "$lab/bin/jg-timeout-lib.sh"
+  ln -sfn "$ROOT/bin/jg-wake-lib.sh" "$lab/bin/jg-wake-lib.sh"
+  ln -sfn "$ROOT/bin/jg-session-lock-lib.sh" "$lab/bin/jg-session-lock-lib.sh"
   cat > "$lab/bin/jg-bootstrap.sh" <<'SH'
 #!/usr/bin/env bash
 # Outlives the hook on purpose: the marker can only appear if the worker was

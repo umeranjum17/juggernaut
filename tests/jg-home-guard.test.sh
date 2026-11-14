@@ -11,7 +11,7 @@
 # T4 The live path (JG_TRUNK_LIVE=1) admits a fast-forward to a newer trunk tip and the contained re-point of a
 #    diverged home whose whole tree the new tip already holds; a divergence that would drop content refuses.
 # T5 The pin-back (JG_TRUNK_PINBACK=1) admits one move to the HEAD recorded before the last live move, from the
-#    guard's own record or a trunk-live.tsv row, and refuses a move to any other commit.
+#    guard's own record or a trunk-in-use.tsv row, and refuses a move to any other commit.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -170,15 +170,15 @@ test_the_pinback_admits_only_the_recorded_pre_move_head() {
   refused "a move to the pre-move HEAD without the pin-back flag" "not on the trunk" g -C "$H" reset -q --keep "$lone"
   JG_TRUNK_PINBACK=1 g -C "$H" reset -q --keep "$lone" || fail "a pin-back to the recorded pre-move HEAD must pass"
   assert_equals "$lone" "$(g -C "$H" rev-parse main)" "the home must be back at its pre-move HEAD"
-  # the same pin-back, admitted by a trunk-live.tsv row instead of the guard's own record
+  # the same pin-back, admitted by a trunk-in-use.tsv row instead of the guard's own record
   mkdir -p "$W/data"
   JG_TRUNK_LIVE=1 g -C "$H" reset -q --keep "$t3" || fail "second live move"
   rm -f "$H/.git/jg-home-guard/pre-move"
   refused "a pin-back with no record of the move" "pre-move" ge JG_TRUNK_PINBACK=1 -- -C "$H" reset -q --keep "$lone"
-  printf 'proj:primary\t%s\t1\tlive,re-pointed-from:x\t%s\n' "$t3" "$lone" > "$W/data/trunk-live.tsv"
-  out=$(JG_DATA_OVERRIDE="$W/data" JG_TRUNK_PINBACK=1 g -C "$H" reset -q --keep "$lone" 2>&1) || fail "a row of trunk-live.tsv must admit the pin-back: $out"
+  printf 'proj:primary\t%s\t1\tlive,re-pointed-from:x\t%s\n' "$t3" "$lone" > "$W/data/trunk-in-use.tsv"
+  out=$(JG_DATA_OVERRIDE="$W/data" JG_TRUNK_PINBACK=1 g -C "$H" reset -q --keep "$lone" 2>&1) || fail "a row of trunk-in-use.tsv must admit the pin-back: $out"
   assert_equals "$lone" "$(g -C "$H" rev-parse main)" "the row-admitted pin-back must move the home"
-  pass 'a pin-back passes only to the recorded pre-move HEAD (guard record or trunk-live.tsv row) and refuses any other commit'
+  pass 'a pin-back passes only to the recorded pre-move HEAD (guard record or trunk-in-use.tsv row) and refuses any other commit'
 }
 
 test_install_check_and_uninstall
