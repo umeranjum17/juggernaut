@@ -13,10 +13,15 @@ core_beads_home() {
   # template beside the homes and every later one copies it, so the cost is paid once per suite.
   tpl=${home%/*}/.beads-template-$prefix
   if [ ! -d "$tpl/.beads" ]; then
-    rm -rf "$tpl.partial"
-    mkdir -p "$tpl.partial"
-    BEADS_DIR=$tpl.partial/.beads "$fork/bin/jg-beads.sh" init --prefix "$prefix" >/dev/null 2>"${TMPDIR:-/tmp}/beads-init.err" \
-      || { echo "FAIL: could not initialise the Beads store for $home: $(tail -3 "${TMPDIR:-/tmp}/beads-init.err" 2>/dev/null)"; exit 1; }
+    # A dolt that dies while it starts (a Go runtime fatal on a host short of threads or memory) leaves nothing half made: the
+    # init is tried up to three times in a clean directory, and a final failure names the first lines of the crash, not its goroutine tail.
+    for _try in 1 2 3; do
+      rm -rf "$tpl.partial"
+      mkdir -p "$tpl.partial"
+      BEADS_DIR=$tpl.partial/.beads "$fork/bin/jg-beads.sh" init --prefix "$prefix" >/dev/null 2>"${TMPDIR:-/tmp}/beads-init.err" && break
+      [ "$_try" -lt 3 ] || { echo "FAIL: could not initialise the Beads store for $home after 3 tries: $(head -3 "${TMPDIR:-/tmp}/beads-init.err" 2>/dev/null)"; exit 1; }
+      sleep "$_try"
+    done
     mv "$tpl.partial" "$tpl"
   fi
   mkdir -p "$home/config" "$home/data"
