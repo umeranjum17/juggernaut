@@ -203,14 +203,15 @@ test_a_red_or_unwaived_landing_never_goes_live() {
   assert_contains "$out" "r1 not landed" "a red head is refused by the landing gate"
   homes_at "$BASE" || fail "a refused head must not move any home: $out"
   # A head that passes the landing check and breaks the whole suite lands green (nothing runs the whole suite after a landing);
-  # once a hand-run verify finds the red, it is reverted, takes the green pin back, and no home ever moves to it.
+  # once a hand-run verify finds the red, it is reported (nothing reverted), takes the green pin back, and no home ever moves to it.
   lane r2 'echo "not ok - r2 breaks the suite" >&2; exit 1' t/r2.test.sh; c=$(git -C "$PROJ" rev-parse fm/r2)
   out=$(fleet_sweeps "landed r2"); assert_contains "$out" "landed r2" "a head that passes the landing check lands"
   case $out in *"whole suite is red"*) fail "no whole suite may run after a landing: $out" ;; esac
-  # The tick's own verify (started by the sweep) and a hand-run one find the same red; whichever runs first reverts it.
+  # The tick's own verify (started by the sweep) and a hand-run one find the same red; whichever runs first reports it.
   trunk verify "$PROJ" "$c" >/dev/null 2>&1 || :
-  for _ in $(seq 1 150); do git -C "$PROJ" log --format=%B trunk | grep -q "^reverts: $c" && break; sleep 0.2; done
-  git -C "$PROJ" log --format=%B trunk | grep -q "^reverts: $c" || fail "a red verify finds is reverted by itself"
+  for _ in $(seq 1 150); do grep -q "$c" "$HOME_D/data/trunk-ci.tsv" 2>/dev/null && break; sleep 0.2; done
+  grep -q "$c" "$HOME_D/data/trunk-ci.tsv" 2>/dev/null || fail "a red verify finds is recorded as red"
+  git -C "$PROJ" log --format=%B trunk | grep -q '^reverts: ' && fail "a red verify finds is never reverted by itself"
   age_landings 30 30; trunk autolive "$PROJ" >/dev/null 2>&1
   homes_at "$BASE" || fail "a red verify found must not move any home, even after the quiet window: $(cat "$HOME_D/data/trunk-in-use.tsv" 2>/dev/null)"
   ! grep -q "	$c	" "$HOME_D/data/trunk-in-use.tsv" 2>/dev/null || fail "the red commit is never live: $(cat "$HOME_D/data/trunk-in-use.tsv")"

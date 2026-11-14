@@ -304,11 +304,11 @@ test_a_red_with_no_failed_test_never_pins_and_a_ready_lane_lands_on_it() {
 }
 
 # The line's verify (jg8-l0d), started by the tick: two changes that each pass the landing gate alone and break together both land and
-# move no pin; the tick's verify is red, traces the red to the second change and reverts it, raises line-red, and the pin and the
-# go-live stay where they were; the next verify, on the reverted tip, is green and moves the pin to the tip.
+# move no pin; the tick's verify is red, traces the red to the second change and reports it (nothing is reverted), raises line-red, and the pin and the
+# go-live stay where they were; the red tip is not verified again each minute.
 # shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
 test_the_tick_verifies_a_landed_pair_that_breaks_together_and_the_pin_moves_only_on_green() {
-  local base a b tipc q
+  local base a b q
   world linered; rig
   cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   q="$HOME_D/state/.wake-queue"
@@ -319,9 +319,11 @@ test_the_tick_verifies_a_landed_pair_that_breaks_together_and_the_pin_moves_only
   lane la one a.txt; a=$(tip_after_land la); lane lb two b.txt; b=$(tip_after_land lb)
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$base" ] || fail "two landings must not move the green pin"
   sweep >/dev/null
-  for _ in $(seq 1 150); do git -C "$PROJ" log --format=%B trunk | grep -q '^reverts: ' && break; sleep 0.2; done
-  git -C "$PROJ" log -1 --format=%B trunk | grep -qx "reverts: $b" || fail "the tick's verify must revert the second change, the one the red is traced to: $(git -C "$PROJ" log -2 --format=%B trunk) log: $(cat "$HOME_D/data/jg-trunk-landing/verify-proj.log" 2>&1)"
-  git -C "$PROJ" log --format=%B "$a^..$a" | grep -q '^reverts: ' && fail "the first change stays"
+  for _ in $(seq 1 150); do grep -q "$b" "$HOME_D/data/trunk-ci.tsv" 2>/dev/null && break; sleep 0.2; done
+  grep -q "$b" "$HOME_D/data/trunk-ci.tsv" 2>/dev/null || fail "the tick's verify must record the second change, the one the red is traced to, as red: log: $(cat "$HOME_D/data/jg-trunk-landing/verify-proj.log" 2>&1)"
+  grep -q "$a" "$HOME_D/data/trunk-ci.tsv" 2>/dev/null && fail "the first change is not charged"
+  [ "$(tip)" = "$b" ] || fail "the tick's verify reverts nothing"
+  git -C "$PROJ" log --format=%B trunk | grep -q '^reverts: ' && fail "no revert commit may exist"
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$a" ] || fail "a red verify moves the pin only to the last commit before the bad one ($a), not over it"
   for _ in $(seq 1 150); do grep -qs "alert-line-red--proj-${b:0:12}" "$q" && break; sleep 0.2; done
   grep -q "alert-line-red--proj-${b:0:12}" "$q" || fail "line-red must be raised for the traced commit: $(cat "$q" 2>&1)"
@@ -330,12 +332,10 @@ test_the_tick_verifies_a_landed_pair_that_breaks_together_and_the_pin_moves_only
   trunk word in-use "$PROJ" "go" >/dev/null 2>&1
   trunk live "$PROJ" >/dev/null 2>&1 || :
   ! grep -qs "$b" "$W/live-moves" || fail "the red change must never go live: $(cat "$W/live-moves")"
-  # The tick verifies the reverted tip: green, and the pin moves to the tip, one verify at a time.
-  tipc=$(tip); sweep >/dev/null
-  for _ in $(seq 1 150); do [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$tipc" ] && break; sleep 0.2; done
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$tipc" ] || fail "a green verify must move the pin to the tip ${tipc:0:12}: $(cat "$HOME_D/data/jg-trunk-landing/verify-proj.log" 2>&1)"
-  sweep >/dev/null; sleep 1; [ "$(tip)" = "$tipc" ] || fail "a tip at the pin starts no verify and moves nothing"
-  pass 'the tick verifies two landed changes that break together: the second is traced and reverted, line-red fires, the pin and live stay put, and a green verify of the reverted tip moves the pin'
+  # The red tip is not verified again each minute, and nothing moves the pin over the red until a repair or a revert lands on a lane.
+  sweep >/dev/null; sleep 1; [ "$(tip)" = "$b" ] || fail "a reported red moves the trunk nowhere"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$a" ] || fail "the pin stays below the reported red"
+  pass 'the tick verifies two landed changes that break together: the second is traced and reported with nothing reverted, line-red fires, and the pin and live stay put'
 }
 
 # A trunk with no green commit for no-green-alarm-minutes (15) raises one alarm to Overwatch through the landing check, and a stall
@@ -389,7 +389,7 @@ test_no_green_for_15_minutes_raises_one_alarm_not_two() {
 # The nightly whole run (jg8-t5), started by the tick: every script on the tip through the same verify. Of three changes landed since the
 # day's first commit, one carries a script that fails once and passes on its rerun, and two pass the landing gate alone and break
 # together. The one run writes its day's report, files the flaky script as exactly one ticket, traces the red to the second of the pair
-# and reverts it with line-red, and the same day starts no second run.
+# and reports it with line-red (nothing reverted), and the same day starts no second run.
 # shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
 test_the_nightly_run_writes_its_report_files_one_flake_ticket_and_traces_a_red_to_its_commit() {
   local base b day report q out runs
@@ -407,10 +407,11 @@ test_the_nightly_run_writes_its_report_files_one_flake_ticket_and_traces_a_red_t
   sweep >/dev/null
   for _ in $(seq 1 300); do [ -s "$report" ] && break; sleep 0.2; done
   [ -s "$report" ] || fail "the nightly run must write its report: $(cat "$HOME_D/data/jg-trunk-landing/nightly-proj.log" 2>&1)"
-  assert_contains "$(cat "$report")" "red, traced to its commit and reverted" "the report names the result"
+  assert_contains "$(cat "$report")" "red, traced to its commit and reported; nothing reverted" "the report names the result"
   assert_contains "$(cat "$report")" "judged against: $base" "the report names the day's first commit it judged against"
   assert_contains "$(cat "$report")" "t/f.test.sh" "the report names the flaky script"
-  git -C "$PROJ" log -1 --format=%B trunk | grep -qx "reverts: $b" || fail "the red must be traced to the second of the pair and reverted: $(git -C "$PROJ" log -2 --format=%B trunk)"
+  grep -q "$b" "$HOME_D/data/trunk-ci.tsv" || fail "the red must be traced to the second of the pair and recorded: $(cat "$HOME_D/data/trunk-ci.tsv" 2>&1)"
+  [ "$(tip)" = "$b" ] || fail "the nightly run reverts nothing"
   for _ in $(seq 1 100); do grep -qs "alert-line-red--proj-${b:0:12}" "$q" && break; sleep 0.2; done
   grep -q "alert-line-red--proj-${b:0:12}" "$q" || fail "line-red must be raised for the traced commit: $(cat "$q" 2>&1)"
   [ "$(grep -c '^add ' "$W/backlog-calls")" = 1 ] || fail "the flaky script must be filed as exactly one ticket: $(cat "$W/backlog-calls")"
@@ -420,7 +421,7 @@ test_the_nightly_run_writes_its_report_files_one_flake_ticket_and_traces_a_red_t
   out=$(trunk nightly-due "$PROJ" 2>&1) && fail "a day with a finished nightly run is not due again: $out"
   runs=$(find "$HOME_D/data/trunk" -name 'nightly-proj-*.md' | grep -c .); sweep >/dev/null; sleep 1
   [ "$(find "$HOME_D/data/trunk" -name 'nightly-proj-*.md' | grep -c .)" = "$runs" ] || fail "a second tick the same day must write no second report"
-  pass 'the nightly run writes its day report, files the flaky script as one ticket, traces a red to its commit and reverts it, and runs once a day'
+  pass 'the nightly run writes its day report, files the flaky script as one ticket, traces a red to its commit and reports it without a revert, and runs once a day'
 }
 
 # A stand-in for done-done: `run <journey>` fails and leaves a record, `affected --audit <range> --json` reports each journey with a record
@@ -463,16 +464,14 @@ test_a_journey_its_proof_did_not_select_is_charged_to_its_commit_and_counted_as_
   sweep >/dev/null
   for _ in $(seq 1 300); do [ -s "$report" ] && break; sleep 0.2; done
   [ -s "$report" ] || fail "the nightly run must write its report: $(cat "$HOME_D/data/jg-trunk-landing/nightly-proj.log" 2>&1)"
-  git -C "$PROJ" log --format=%B trunk | grep -qx "reverts: $b" || fail "the run must name the second commit and revert it: $(git -C "$PROJ" log -4 --format=%B trunk)"
+  grep -q "$b" "$HOME_D/data/trunk-ci.tsv" || fail "the run must name the second commit and record it red: $(cat "$HOME_D/data/trunk-ci.tsv" 2>&1)"
   assert_contains "$(cat "$report")" "selected: 0; missed: 1 (${b:0:12}: pair)" "the report shows the count of selections and of misses"
   assert_contains "$(cat "$HOME_D/data/trunk/misses-proj.tsv")" "$(printf '%s\tpair\tmissed' "$b")" "the miss is on record for that commit and journey"
-  out=$(JG_HOME="$HOME_D" JG_DATA_OVERRIDE="$HOME_D/data" JG_STATE_OVERRIDE="$HOME_D/state" bash "$ROOT/core/machines/observers/ticket.sh" d2 2>&1)
-  [ "$out" = building ] || fail "the ticket of the charged commit must read building, got: $out"
-  out=$(JG_HOME="$HOME_D" bash "$ROOT/bin/jg-machine.sh" word ticket-words lane-delivery reverted 2>&1)
-  assert_contains "$out" "red" "the reverted word gives the ticket health red"
+  grep -q "$b" "$HOME_D/data/trunk-ci.tsv" || fail "the charged commit is recorded red: $(cat "$HOME_D/data/trunk-ci.tsv" 2>&1)"
+  git -C "$PROJ" log --format=%B trunk | grep -q '^reverts: ' && fail "nothing is reverted"
   assert_contains "$(git -C "$PROJ" show "trunk:.agents/skills/done-done-verify-proj/features/pair.md")" 'fails `run pair`' "the miss goes to done-done's map as a new commit on the trunk"
   [ "$(git -C "$PROJ" log --format=%s trunk | grep -c '^Map the journeys pair fails')" = 1 ] || fail "the map change is one commit"
-  pass 'a journey that fails in the nightly run and that its commit proof did not select is charged to that commit, its ticket reads building with health red, the pair goes to the map and the report counts one miss'
+  pass 'a journey that fails in the nightly run and that its commit proof did not select is charged to that commit and reported without a revert, the pair goes to the map and the report counts one miss'
 }
 
 test_queued_verifies_run_one_at_a_time_and_only_the_newest_runs

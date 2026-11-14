@@ -15,8 +15,8 @@
 #    landing moves the green pin, and no landing runs a whole suite or moves the pin (the tick's verify does), so a whole suite that would be red
 #    (a shard over its time budget, as trunk-v3 at 9f5bbb3af0d1) stops no landing. A green pin left 6 hours behind 9 landings
 #    moves to the next landing's head, and the landing's check judges that lane's changed scripts alone, however many landings
-#    sit above the release base. A red a hand-run verify finds is reverted by itself, takes the green pin back below it and
-#    the lane is told; a revert that cannot apply cleanly raises one alert, takes the pin back too, and the next lane still lands.
+#    sit above the release base. A red a hand-run verify finds is reported and never reverted: it takes the green pin back below it, the lane
+#    is told, one alert names its owner, and the next lane still lands.
 # The done-done journey journeys/trunk-landing.sh runs this file and seals its output.
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
@@ -340,10 +340,10 @@ test_three_lanes_land_in_order_a_red_one_is_refused_and_no_whole_suite_runs_per_
   pass 'three lanes land in order with no human step, the red lane is refused, and a landing moves no pin and runs no suite, so a red suite stops no landing'
 }
 
-# A whole-suite run asked for by hand (verify) still finds the commit that broke the suite and reverts it by itself, and takes the
-# green pin back below it; so does a red whose revert cannot apply cleanly.
+# A whole-suite run asked for by hand (verify) still finds the commit that broke the suite, and only reports it (pcp-s5): nothing is
+# reverted, the green pin goes back below it, the lane's ticket and Overwatch are told, and the next lane still lands.
 # shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
-test_a_red_verify_finds_by_hand_is_reverted_and_takes_the_green_pin_back() {
+test_a_red_verify_finds_by_hand_is_reported_and_takes_the_green_pin_back() {
   local rc out before c
   world handverify; rig
   printf 'gate-full=! grep -q BAD work.txt\ngate-verify=bash %s/rig.sh --all\n' "$W" >> "$HOME_D/config/trunk-policy"
@@ -353,28 +353,19 @@ test_a_red_verify_finds_by_hand_is_reverted_and_takes_the_green_pin_back() {
   tip > "$HOME_D/state/trunk-green-proj"  # fixture: a verify that ran before j5 judged the trunk green at j5 (it is the red the next verify finds)
   rc=0; out=$(trunk verify "$PROJ" "$c" 2>&1) || rc=$?
   [ "$rc" -ne 0 ] || fail "verify must fail on a commit that breaks the whole suite: $out"
-  git -C "$PROJ" log --format=%B trunk | grep -q "^reverts: $c" || fail "a red verify finds must be reverted by itself: $out"
-  git -C "$PROJ" cat-file -e "trunk:t/j5.test.sh" 2>/dev/null && fail "the bad commit's change must be undone on the tip"
-  git -C "$PROJ" log --format='%H %s' trunk | grep -q "ticket j5" || fail "the bad commit must stay in the history: the trunk only moves forward"
+  [ "$(tip)" = "$c" ] || fail "the verify reverts nothing: the trunk tip stays on the red commit: $out"
+  git -C "$PROJ" log --format=%B trunk | grep -q '^reverts: ' && fail "no revert commit may exist"
+  assert_contains "$out" "is red at ${c:0:12}" "the verify names the red commit"
+  assert_contains "$out" "nothing was reverted and landings go on; live stays on the last green commit $(git -C "$PROJ" rev-parse --short=12 "$before")" "the verify says nothing was reverted and who owns the repair"
+  assert_contains "$out" "j5 repairs it forward or reverts it on a lane of its own" "the repair owner is named"
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$before" ] || fail "the red commit must take the green pin back below it, so no home goes live on it"
   assert_contains "$(cat "$W/backlog-calls" 2>/dev/null)" "update j5 --body-file" "the lane's ticket is told"
-  assert_contains "$(cat "$HOME_D/state/.wake-queue")" "went red after it landed and was reverted by itself" "Overwatch is told"
-  # A revert that cannot apply cleanly raises one alert and takes the green pin back below the red commit, and the next lane lands.
-  lane k1 'echo "not ok - k1 breaks the suite" >&2; exit 1' t/k1.test.sh; trunk land k1 >/dev/null 2>&1 || fail "k1 must land by hand"
-  lane k2 'exit 0' t/k1.test.sh; git -C "$W/lanes/k2" reset -q --hard trunk; commit_in "$W/lanes/k2" t/k1.test.sh 'echo "not ok - k1 breaks the suite" >&2; echo more; exit 1' "ticket k2"; prove k2
-  trunk land k2 >/dev/null 2>&1 || fail "k2 must land by hand"
-  c=$(git -C "$PROJ" log --format=%H --grep='ticket k1' -n 1 trunk)
-  tip > "$HOME_D/state/trunk-green-proj"  # fixture: a pin above k1, as a green CI result would leave it
-  rc=0; out=$(JG_HOME="$HOME_D" trunk verify "$PROJ" "$c" 2>&1) || rc=$?
-  [ "$rc" -ne 0 ] || fail "a red that cannot be reverted is not green: $out"
-  assert_contains "$out" "could not be reverted by itself; landings go on, and live stays on the last green commit $(git -C "$PROJ" rev-parse --short=12 "$c^")" "the red must say it could not be undone and that landings go on"
-  assert_contains "$(cat "$HOME_D/state/.wake-queue")" "could not be reverted by itself" "Overwatch is told once"
+  assert_contains "$(cat "$HOME_D/state/.wake-queue")" "went red after it landed: " "Overwatch is told"
+  assert_contains "$(cat "$HOME_D/data/trunk-ci.tsv")" "$c"$'\t' "the red stays recorded so no landing moves the pin over it"
   [ ! -e "$HOME_D/state/trunk-red-proj" ] || fail "a red never writes a red pin"
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(git -C "$PROJ" rev-parse "$c^")" ] || fail "a red that cannot be undone must take the green pin back below the red commit"
-  assert_contains "$(cat "$HOME_D/data/trunk-ci.tsv")" "$c"$'\t' "the red that could not be reverted is recorded"
-  lane k3 'exit 0' t/k3.test.sh; out=$(trunk land k3 2>&1) || fail "a red that could not be reverted never stops the next landing: $out"
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(git -C "$PROJ" rev-parse "$c^")" ] || fail "a landing above an unreverted red leaves the green pin below it, so the red is never live"
-  pass 'a red a hand-run verify finds is reverted by itself and takes the green pin back, and so does one that cannot be undone, which stops no landing'
+  lane k3 'exit 0' t/k3.test.sh; out=$(trunk land k3 2>&1) || fail "a reported red never stops the next landing: $out"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$before" ] || fail "a landing above a reported red leaves the green pin below it, so the red is never live"
+  pass 'a red a hand-run verify finds is reported with its owner and not reverted, takes the green pin back, and stops no landing'
 }
 
 # The stall of 10 Nov: the green pin had not moved for 6 hours while 9 commits landed above it, because only the whole suite run
@@ -571,8 +562,8 @@ test_a_ui_lane_states_its_nav_lines_in_the_commit_message_the_receipt_or_the_don
 }
 
 # A local lane lands with no tests at the landing (landing-gate=none, the default): the lint is the only check, the batch's verify is
-# the one test run, and a red it finds is reverted. landing-gate=tests is the rollback: the changed files' tests run at the landing again.
-test_a_local_lane_lands_with_no_tests_and_the_verify_reverts_a_red() {
+# the one test run, and a red it finds is reported. landing-gate=tests is the rollback: the changed files' tests run at the landing again.
+test_a_local_lane_lands_with_no_tests_and_the_verify_reports_a_red() {
   local rc out c before
   world nogate; rig
   printf 'gate-full=bash %s/rig.sh t/n1.test.sh\ngate-verify=bash %s/rig.sh --all\n' "$W" "$W" > "$HOME_D/config/trunk-policy"  # no landing-gate line: the default
@@ -584,12 +575,13 @@ test_a_local_lane_lands_with_no_tests_and_the_verify_reverts_a_red() {
   c=$(tip); printf '%s\n' "$before" > "$HOME_D/state/trunk-green-proj"
   rc=0; out=$(trunk verify "$PROJ" "$c" 2>&1) || rc=$?
   [ "$rc" -ne 0 ] || fail "the verify must find the red: $out"
-  git -C "$PROJ" log --format=%B trunk | grep -q "^reverts: $c" || fail "the verify reverts the commit that caused the red: $out"
+  [ "$(tip)" = "$c" ] || fail "the verify reverts nothing: $out"
+  assert_contains "$out" "is red at ${c:0:12}" "the verify names the commit that caused the red"
   # The rollback key puts the changed-tests gate back at the landing.
   printf 'landing-gate=tests\n' >> "$HOME_D/config/trunk-policy"
-  lane n2 'echo "not ok - n1 breaks the suite" >&2; exit 1' t/n1.test.sh
+  lane n2 'echo "not ok - n2 breaks it another way" >&2; exit 1' t/n1.test.sh
   refused 'a landing with landing-gate=tests' n2 'gate'
-  pass 'a local lane lands with no tests at the landing, the verify reverts its red, and landing-gate=tests is the rollback'
+  pass 'a local lane lands with no tests at the landing, the verify reports its red, and landing-gate=tests is the rollback'
 }
 
 test_landing_deadline_spans_both_gates
@@ -605,12 +597,12 @@ test_done_and_landing_both_refuse_before_starting_on_any_missing_proof_input
 test_a_proof_gap_names_the_reason_merge_card_refused_not_a_missing_run
 test_the_check_starts_no_landing_until_the_whole_proof_is_there
 test_three_lanes_land_in_order_a_red_one_is_refused_and_no_whole_suite_runs_per_landing
-test_a_red_verify_finds_by_hand_is_reverted_and_takes_the_green_pin_back
+test_a_red_verify_finds_by_hand_is_reported_and_takes_the_green_pin_back
 test_a_green_pin_left_behind_moves_to_the_next_landing_and_the_landing_check_does_not_grow
 test_a_lane_proved_at_the_change_the_lander_lands_is_not_tested_again
 test_a_design_lane_lands_after_the_trunk_moved_on_the_receipt_it_proved
 test_a_design_lane_refused_by_a_broken_lander_lands_after_the_lander_is_fixed
 test_a_hand_roll_approval_written_after_a_refusal_is_read_by_the_next_landing
 test_a_ui_lane_states_its_nav_lines_in_the_commit_message_the_receipt_or_the_done_line
-test_a_local_lane_lands_with_no_tests_and_the_verify_reverts_a_red
+test_a_local_lane_lands_with_no_tests_and_the_verify_reports_a_red
 printf 'jg-trunk-gate: ok\n'

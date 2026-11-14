@@ -6,7 +6,7 @@
 # T14 The merge queue: 2 or more queued lanes land as ONE stack (auto-rebased in order, one gate over the union of their changed
 #    files judged against the tip, one trunk move, one trunk-landings.tsv row per lane); a lane that conflicts drops out and is told; a red
 #    stack is halved until only the guilty lane is returned and the green part lands; the stack's landing moves the green pin to its top; a
-#    red a hand-run verify finds after a batch landing is traced to its one commit, reverted, and takes the pin back; a single queued lane keeps the single path.
+#    red a hand-run verify finds after a batch landing is traced to its one commit, reported, and takes the pin back; a single queued lane keeps the single path.
 # T15 The queue's threshold: the landing check holds ready lanes until flush-at-ready are ready or the oldest has waited
 #    flush-after-minutes, then lands them all as one stack; `flush <project>` lands every ready lane at once; a lane marked
 #    `land-next` lands at once, ahead of the queue, while the others keep waiting; a worker marks neither.
@@ -58,16 +58,17 @@ test_queued_lanes_land_as_one_stack_and_a_red_stack_is_bisected() {
   [ "$(git -C "$PROJ" rev-parse fm/b3)" = "$(tip)" ] && [ -z "$(git -C "$W/lanes/b3" status --porcelain)" ] || fail "each lane follows its rebased commit"
   [ "$(grep -c '^merged' "$W/ledger-calls")" = 3 ] || fail "each lane records the same merged event: $(cat "$W/ledger-calls")"
   [ "$(cat "$HOME_D/state/trunk-tip-proj")" = "$(tip)" ] || fail "the tip record follows the one move"
-  # The same stack also proves that a later whole-suite failure reverts only its guilty commit.
+  # The same stack also proves that a later whole-suite failure reports only its guilty commit and reverts nothing.
   local top; top=$(tip); rc=0
   out=$(trunk verify "$PROJ" "$top" 2>&1) || rc=$?
   [ "$rc" -ne 0 ] || fail "the whole suite is red after this stack: $out"
-  git -C "$PROJ" log -1 --format=%s trunk | grep -q '^Revert "ticket b2"' || fail "the guilty lane is reverted"
-  ! git -C "$PROJ" cat-file -e trunk:t/b2.test.sh 2>/dev/null || fail "the red lane is undone"
+  git -C "$PROJ" log --format=%B trunk | grep -q '^reverts: ' && fail "the verify reverts nothing"
+  [ "$(awk -F'\t' '$4 == "red" && $5 == "verify" { print $2 }' "$HOME_D/data/trunk-ci.tsv")" = "$(git -C "$PROJ" log -1 --format=%H --grep='^ticket b2$' trunk)" ] || fail "only the guilty lane b2 is reported red"
+  git -C "$PROJ" cat-file -e trunk:t/b2.test.sh || fail "the red lane stays on the trunk until its owner repairs it"
   git -C "$PROJ" cat-file -e trunk:t/b1.test.sh || fail "the first green lane stays on trunk"
   git -C "$PROJ" cat-file -e trunk:t/b3.test.sh || fail "the last green lane stays on trunk"
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(git -C "$PROJ" log -1 --format=%H --grep='^ticket b1$' trunk)" ] || fail "the pin stands on the last commit before the guilty one (b1): a landing never moved it and the verify moves it only that far"
-  assert_contains "$out" "b2" "the revert names the lane"
+  assert_contains "$out" "b2" "the report names the lane"
   # A lane that conflicts drops out and is told, with its paths; the rest still land as one stack.
   : > "$W/gate-runs"; base=$(tip)
   lane c1 left; lane c2 right; lane c3 three f4.txt

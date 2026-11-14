@@ -7,11 +7,11 @@
 # M3 the commits that landed within 15 minutes of a milestone's first commit are all it holds: lanes landed 20 minutes apart are
 #    separate milestones even when N would allow more.
 # M4 30 lanes with 2 bad ones in different milestones: a red milestone is split with both halves at once until each bad commit stands
-#    alone, both are reverted by one verify, the pin stands on the last commit before the first bad one, the rounds stay within
-#    2 x log2(N), and a second verify moves the pin to the tip.
+#    alone, both are reported (not reverted) by one verify, the pin stands on the last commit before the first bad one, and the rounds stay within
+#    2 x log2(N).
 # M5 (slice H29i) six lanes land in two queues (odd lanes in A, even lanes in B, each beside the other) and lane 4 is bad: the verify judges
-#    each queue on a chain of its own at once, so A's pin moves past B's red; only lane 4 is reverted, it is confirmed on the trunk
-#    first, and the trunk's pin stands on the last commit that is green in its own queue before it (lane 3); the next verify moves it to the tip.
+#    each queue on a chain of its own at once, so A's pin moves past B's red; only lane 4 is reported, it is confirmed on the trunk
+#    first, and the trunk's pin stands on the last commit that is green in its own queue before it (lane 3).
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
@@ -50,7 +50,9 @@ stack() {
   : > "$W/ms.log"
 }
 nth() { git -C "$PROJ" rev-list --reverse "$(cat "$HOME_D/state/trunk-green-proj")..trunk" | sed -n "$1p"; }
-reverted() { git -C "$PROJ" log --format=%B trunk | sed -n 's/^reverts: //p' | sort; }
+# The commits the verify reported red (data/trunk-ci.tsv, source verify), and a check that it reverted nothing (pcp-s5).
+charged() { awk -F'\t' '$4 == "red" && $5 == "verify" { print $2 }' "$HOME_D/data/trunk-ci.tsv" 2>/dev/null | sort -u; }
+no_revert() { ! git -C "$PROJ" log --format=%B trunk | grep -q '^reverts: ' || fail "the verify must revert nothing"; }
 
 test_milestones_hold_n_commits_set_from_the_bad_share() {
   local out
@@ -79,19 +81,18 @@ test_a_milestone_holds_only_the_commits_of_its_window() {
   pass 'a milestone holds only the commits that landed within 15 minutes of its first'
 }
 
-test_two_bad_commits_in_different_milestones_are_each_found_and_reverted() {
+test_two_bad_commits_in_different_milestones_are_each_found_and_reported() {
   local out first want rounds
   stack bad2 30 "5 20" 69 5
   first=$(nth 4)
   want=$(printf '%s\n' "$BAD_AT" | tr ' ' '\n' | sed '/^$/d' | sort)
   out=$(trunk verify "$PROJ" 2>&1) && fail "a red stack must fail the verify: $out"
-  [ "$(reverted)" = "$want" ] || fail "both bad commits must be reverted and no other: got $(reverted | tr '\n' ' ')"
+  [ "$(charged)" = "$want" ] || fail "both bad commits must be reported and no other: got $(charged | tr '\n' ' ')"
+  no_revert
   assert_contains "$out" "its two halves" "a red milestone is split in two halves that run at once"
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$first" ] || fail "the pin must stand on the last commit before the first bad one"
   rounds=$(runs); [ "$rounds" -le $(( 3 + 2 * 2 * 4 )) ] || fail "two bad commits in 30 must cost few runs, ran $rounds"
-  out=$(trunk verify "$PROJ" 2>&1) || fail "the second verify must pass on the reverted trunk: $out"
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(tip)" ] || fail "the second verify must move the pin to the tip"
-  pass "two bad commits of 30 are each reverted by one verify in $rounds gate runs, the pin stops below the first, then moves to the tip"
+  pass "two bad commits of 30 are each reported, none reverted, by one verify in $rounds gate runs, and the pin stops below the first"
 }
 
 # qstack <name> <lanes> <bad index>: lanes land in turn, odd ones in queue A and even ones in queue B, each while the other queue's chain is live.
@@ -123,22 +124,21 @@ test_each_queue_is_verified_apart_and_at_once() {
   assert_contains "$out" "queue A: milestone of 3 commits" "queue A is judged on its own milestone"
   assert_contains "$out" "queue B: milestone of 3 commits" "queue B is judged on its own milestone"
   [ "$(head -n 2 "$W/ms.log" | grep -c '^s ')" = 2 ] || fail "the two queues must run at once: $(tr '\n' ' ' < "$W/ms.log")"
-  [ "$(reverted)" = "$L4" ] || fail "only lane 4 is reverted: got $(reverted | tr '\n' ' ')"
+  [ "$(charged)" = "$L4" ] || fail "only lane 4 is reported: got $(charged | tr '\n' ' ')"
+  no_revert
   pins=$(cat "$HOME_D/state/trunk-green-queues-proj")
   assert_contains "$pins" "A $L5" "queue A's pin moves past B's red"
   assert_contains "$pins" "B $L2" "queue B's pin stands below its red"
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$L3" ] || fail "the trunk's pin must stand on lane 3, the last commit green in its queue before the red"
   case $out in *"charged to no one"*) fail "lane 4 is bad on the trunk too, so it must be charged: $out" ;; esac
-  out=$(trunk verify "$PROJ" 2>&1) || fail "the second verify must pass on the reverted trunk: $out"
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(tip)" ] || fail "the second verify must move the pin to the tip"
-  pass 'two queues are verified apart and at once: the red lane is reverted, the other queue keeps its pin, the trunk pin stops below the red then reaches the tip'
+  pass 'two queues are verified apart and at once: the red lane is reported and not reverted, the other queue keeps its pin, the trunk pin stops below the red'
 }
 
 test_milestones_hold_n_commits_set_from_the_bad_share
 test_each_queue_is_verified_apart_and_at_once
 test_a_high_bad_share_makes_small_milestones
 test_a_milestone_holds_only_the_commits_of_its_window
-test_two_bad_commits_in_different_milestones_are_each_found_and_reverted
+test_two_bad_commits_in_different_milestones_are_each_found_and_reported
 if [ -n "${DONE_DONE_EVIDENCE_ROOT:-}" ]; then
   cat > "$DONE_DONE_EVIDENCE_ROOT/steps.json" <<'JSON'
 {
@@ -147,9 +147,9 @@ if [ -n "${DONE_DONE_EVIDENCE_ROOT:-}" ]; then
   "steps": [
     "the verify cuts the lanes into milestones of N commits or 15 minutes, N from the measured bad-commit share",
     "a red milestone is split with both halves at once until each bad commit stands alone",
-    "each bad commit is reverted and the green pin stands on the last commit before the first bad one"
+    "each bad commit is reported, none reverted, and the green pin stands on the last commit before the first bad one"
   ],
-  "result": "a green stack moves the pin to the tip milestone by milestone; two bad commits of 30 are both reverted by one verify"
+  "result": "a green stack moves the pin to the tip milestone by milestone; two bad commits of 30 are both reported by one verify"
 }
 JSON
 fi

@@ -13,7 +13,7 @@
 # of its range.
 #   ms_verify <top> <gate with HEAD^> <green>   0 every milestone to <top> green, 2 the commits of MS_BAD are charged, 1 a run ended
 #                                               for a reason no test accounts for (nothing charged)
-#   ms_charge <commit>                          revert one charged commit (or record it red when it cannot be undone)
+#   ms_charge <commit>                          report one charged commit as red (nothing is reverted)
 # A commit and its revert (`reverts: <sha>`) are one unit that no cut splits, so a tree that holds a reverted commit is never judged.
 # Per queue (slice H29i): the lander splits ready lanes into queues by the tests they select and records `queue=<name>` and `beside=<the
 # other live queues>` on each landing row (bin/jg-trunk.sh). When every commit above the pin has a queue and every landing names every other
@@ -26,7 +26,7 @@
 # bad on the trunk as well (against its own parent); one that passes there is a hidden dependency between queues and is charged to no one.
 # A range that does not meet those conditions, or whose commits cannot be grafted apart, is verified in one line as before.
 # Needs from the caller: PROJ PN TRUNK STATE DATA, pol, lock, unlock, tip_ok, pin_green, unpin_green, row, put, full_gate, gate_from,
-# revert_commit, line_red, miss_charge (core/trunk-verify/miss.sh), green_short, batch_run and batch_slot (core/trunk-landing/batch.sh).
+# report_red, miss_charge (core/trunk-verify/miss.sh), green_short, batch_run and batch_slot (core/trunk-landing/batch.sh).
 
 MS_FIRST=(); MS_LAST=(); MS_TOP=(); MS_CNT=(); MS_BAD=(); MS_UNACC=''
 MS_Q=''; MS_UNITS_FILE=''; MS_RAW=''; MSQ_DIR=''; MSQ_GREEN=''
@@ -154,15 +154,11 @@ ms_verify() {  # <top> <gate with HEAD^> <green>
 }
 
 ms_charge() {  # <commit>
-  local c=$1 why="the whole suite fails on it where the commits before it pass"
+  local c=$1
   if git -C "$PROJ" log --format=%B "$c..refs/heads/$TRUNK" | grep -qx "reverts: $c"; then
     echo "verify: ${c:0:12} is red and $TRUNK already carries its revert" >&2; return 0
   fi
-  if revert_commit "$c" "$why"; then line_red "$c" "$why; it was reverted by itself"; miss_charge "$c" "${sha:-}"; return 0; fi
-  # The red stays recorded (data/trunk-ci.tsv, source verify) so no later landing moves the pin over it.
-  lock "$STATE/.trunk-$PN.lock"; unpin_green "$c"; row trunk-ci.tsv "$PN" "$c" "$(date +%s)" red verify; unlock "$STATE/.trunk-$PN.lock"
-  line_red "$c" "$TRUNK is red at ${c:0:12}: $why, and it could not be reverted by itself; landings go on, and live stays on the last green commit $(green_short)"
-  miss_charge "$c" "${sha:-}"
+  report_red "$c" "the whole suite fails on it where the commits before it pass" "${sha:-}"
 }
 
 # --- Per queue (slice H29i) ---
