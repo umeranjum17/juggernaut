@@ -2,12 +2,17 @@
 """jg-beads-trace.py - the adapter verb that writes a ticket's provenance: the event first, then the moment on the row.
 
 Usage: BEADS_DIR=<store> jg-beads-write.py trace <ticket or task>
+       BEADS_DIR=<store> jg-beads-write.py trace landing <ticket or task> <commit>
        BEADS_DIR=<store> jg-beads-write.py trace record <ticket or task> <kind> <ref-kind> <ref> --source <source> [--at <RFC3339 or epoch seconds>] [--payload <JSON>] [--once]
 
 trace <ticket> only reads: it prints one line of eight tab-separated columns, key, title, filed by, worker, commits, state, decision and
 evidence, each `-` when the row holds none. Filed by is created_by; worker is the assignee (the agent name); commits are the git-sha refs of
 the land events, in time order, once each, else the row's commit; state is the stage word of bin/jg-beads-stage.py; decision is each gate that blocks
 the row as `<question> => <answer>`, or `<question> => open` while it waits, joined by `; `; evidence is the row's evidence list.
+
+trace landing only reads: it prints `<ready_at><TAB><event time><TAB><payload JSON>` for the land event of that commit (ready_at is `-` when the row
+holds none, the payload `null` when the event has none), and nothing, with exit 0, when the ticket has no such event. The alert of
+core/trunk-latency reads the minutes and the stage that held them from it.
 
 --once writes nothing, with exit 0, when the row already holds the moment and nothing undid it (live_at is undone by a later pinned_back_at).
 record takes a ticket id or a task name (the row's metadata.task), so it still finds the ticket after the lane was torn down. It writes the
@@ -116,7 +121,22 @@ def show(ticket):
     print("\t".join(str(cell).replace("\t", " ").replace("\n", " ") if cell else "-" for cell in cells))
 
 
+def landing(ticket, commit):
+    """Print the ready time, the land event's time and its payload for one landed commit."""
+    row = moment.fetch(ticket)
+    events = json.loads(moment.bd("provenance", "log", row["id"], "--json") or "[]") or []
+    hit = [e for e in events if e.get("kind") == "land" and e.get("ref_kind") == "git-sha" and e.get("ref") == commit]
+    if not hit:
+        return
+    event = max(hit, key=lambda e: e.get("occurred_at", ""))
+    payload = event.get("payload")
+    payload = json.loads(payload) if isinstance(payload, str) and payload else payload
+    print("\t".join([(row.get("metadata") or {}).get("ready_at") or "-", event["occurred_at"], json.dumps(payload, sort_keys=True)]))
+
+
 def main(args):
+    if len(args) == 3 and args[0] == "landing":
+        return landing(args[1], args[2])
     if len(args) == 1 and args[0] != "record":
         return show(args[0])
     if not args or args[0] != "record":

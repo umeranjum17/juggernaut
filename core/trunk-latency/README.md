@@ -1,51 +1,40 @@
 # trunk-latency
 
-Every local-trunk landing gets one row with its measured minutes from the lane's done line to the landing.
+Every local-trunk landing keeps its measured minutes from the lane's done line to the landing on its ticket.
 A landing over the five-minute target raises one alert that names the stage that held it.
 
-`latency.sh check <jg-home>` is the watcher check, and `bin/jg-trunk.sh` runs it at the end of every landing, so a landing writes its row at once.
-The check stays as the backstop that fills rows still missing.
-It reads only records that already exist, and it writes `data/trunk-latency.tsv`.
+## The timing
 
-## The row
+`latency.sh measure <jg-home> <task> <commit>` prints one landing's timing as a JSON object, and `bin/jg-trunk.sh` puts it in the payload of the ticket's `land` event (`jg-backlog.sh trace record ... --payload`) at the end of every landing.
+The ticket's row holds the two times, `ready_at` and `landed_at`; the event's payload holds the rest.
+Nothing is written to `data/trunk-latency.tsv` any more; the rows already there stay on disk, unread by this check.
 
-The check writes one row for each row of `data/trunk-landings.tsv` that has no row yet, keyed by task and commit.
-
-| Field | What it holds | Where it is read |
+| Payload key | What it holds | Where it is measured from |
 |---|---|---|
-| `task`, `commit`, `landed` | the landing row | `data/trunk-landings.tsv` |
-| `ready` (recorded) | the lane's last done epoch, written as `done=<epoch>` on the landing's proofs row while the status file still exists; it is read before the message log | `data/trunk-landing-proofs.tsv` |
-| `head` | the lane head that landed | the receipt of the landing's proof row, in full from the landing records |
-| `first_done`, `ready` | the first and the last `done [at=<epoch>]` line of the lane, after its previous landing and at or before this one | `state/chat.jsonl`, and `state/<task>.status` while it exists |
-| `gate_start` | the start of the worker's first sealed done-done run at the head | `data/<task>/.done-done/runs/*.json` |
-| `launch` | the start of the landing that landed it | `data/jg-trunk-landing/<task>.<head>.launch-*.log`, or `batch.launch-*.log` for a stack |
-| `minutes` | `ready` to `landed`, rounded | |
-| `stage`, `gate_secs` | the stage that held the most seconds, and the gate's seconds | `data/trunk-landing-proofs.tsv` |
+| `trunk` | the trunk branch | the lander |
+| `ready` | the lane's last done epoch | `done=<epoch>` on the landing's row of `data/trunk-landing-proofs.tsv`, written while the status file still exists; else the lane's last `done [at=<epoch>]` line in `state/chat.jsonl` or `state/<task>.status` |
+| `stage`, `gate_s` | the stage that held the most seconds, and the gate's seconds | `data/trunk-landing-proofs.tsv` |
+| `queue_s`, `landing_s` | the seconds of the queue and of the landing step (start lock, rebase, admission); with `gate_s` they add up to the seconds from ready to landed. Both are null when the landing start is not on record | `ready`, the landing start and the landing row |
+| `queue_why` | why the lane waited: `behind <lane>`, `behind attempt of <lane>`, `slot full`, `verify running`, `host load`, `first seen +N s`, or `not recorded` for a queue stage the lander wrote no reason for | `data/jg-trunk-landing/<task>.<head>.queue-why`, written by `core/trunk-landing/queue-why.sh` at the landing start |
 | `load` | the one-minute host load, for a landing at most 10 minutes old | `/proc/loadavg` |
-| `queue_secs`, `landing_secs` | the seconds of the queue and of the landing step (start lock, rebase, admission); with `gate_secs` they are the seconds of each step. Both are empty when the landing start is not on record | `ready`, `launch`, `landed` and `gate_secs` above |
-| `queue_why` | why the lane waited: `behind <lane>`, `behind attempt of <lane>`, `slot full`, `verify running`, `host load`, `first seen +N s`, or `not recorded` for a queue row the lander wrote no reason for | `data/jg-trunk-landing/<task>.<head>.queue-why`, written by `core/trunk-landing/queue-why.sh` at the landing start |
 
-`ready` and `minutes` are the numbers of table T of the plan's `measure.py`, so both readers give one number for one landing.
-A landed lane's status file is removed at cleanup, so the done lines come from the message log.
-A landing with no done line on record gets a row with an empty `ready`: it is counted, not dropped.
-
-`gate_start` is the first record of a test run bound to the head.
-The light gate a worker runs before it writes no record, so the coding-done clock starts at the sealed run.
+The landing start is `data/jg-trunk-landing/<task>.<head>.launch-*.log`, or `batch.launch-*.log` for a stack.
 
 The stages:
 
-- `queue`: from the done line to the landing start. The row and the alert name the reason: another lane's landing ended in that window (`behind <lane>`), another lane's attempt ended refused (`behind attempt of <lane>`), or nothing was ahead and the lander first saw the lane more than 60 s after its done line (`first seen +N s`).
+- `queue`: from the done line to the landing start. The payload names the reason: another lane's landing ended in that window (`behind <lane>`), another lane's attempt ended refused (`behind attempt of <lane>`), or nothing was ahead and the lander first saw the lane more than 60 s after its done line (`first seen +N s`).
 - `landing`: from the start to the gate (start lock, rebase, admission).
 - `gate`: the lint and the changed tests.
 - `before-gate`: the landing start is not on record, so the time before the gate is not split.
 
 ## The alert
 
-A landing over `JG_MERGE_LATENCY_LIMIT_MINUTES` (default 5, the limit `core/merge-on-green` reads too) prints one line, which becomes a check wake.
-The line names the minutes, the stage and that stage's minutes.
-
-A landing more than an hour old when its row is written gets no alert.
-That happens on the first run in a home and after the check was off; the run prints one line that counts those rows and how many were over the limit.
+`latency.sh check <jg-home>` is the watcher check, and `bin/jg-trunk.sh` runs it at the end of every landing.
+For each landing of the last hour that it has not read, it reads the ticket's `ready_at` and the `land` event of that commit (`jg-backlog.sh trace landing <task> <commit>`).
+A landing whose event is not there yet is read again on the next run.
+A landing over `JG_MERGE_LATENCY_LIMIT_MINUTES` (default 5, the limit `core/merge-on-green` reads too) raises one `slow-delivery` alert through `bin/jg-alert.sh`.
+Its note names the minutes, the stage from the payload and that stage's minutes.
+A landing more than an hour old is not read.
 
 ## Wiring
 
@@ -55,6 +44,5 @@ That happens on the first run in a home and after the check was off; the run pri
 
 ## Test
 
-`latency.sh lint <jg-home> [<since epoch>]` exits 1 and names each queue row whose reason is empty or `not recorded`; `bash tests/jg-trunk-queue-why.test.sh` drives the real lander to a `slot full` row and proves the lint and the header migration.
-
-`bash tests/jg-trunk-latency.test.sh` replays the landings of 9 and 10 Nov against a fixture home.
+`bash tests/jg-trunk-latency.test.sh` replays the landings of 9 and 10 Nov against a fixture home with a real Beads store: it records each landing as the ticket's `land` event, and proves the one alert, the limit, the late and the old landing, the wiring, and that no tsv is written.
+`bash tests/jg-trunk-queue-why.test.sh` drives the real lander to a `slot full` wait and reads it from the measured timing.

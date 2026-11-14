@@ -442,20 +442,20 @@ test_a_lane_proved_at_the_change_the_lander_lands_is_not_tested_again() {
   pass 'a lane whose sealed run is for the change the lander lands lands on the lint alone, also after a rebase with no change'
 }
 
-# A landing writes its latency row at once, from the done epoch it recorded while the lane's status file still existed.
-test_every_landing_writes_its_latency_row_from_the_done_epoch_it_recorded() {
-  local out done_at
+# A landing records the lane's done epoch and writes no latency file: its timing is measured from the records for the ticket's land event.
+test_every_landing_records_the_done_epoch_and_writes_no_latency_row() {
+  local out done_at commit payload
   world latency
   lane lat1 one a.txt
   done_at=$(sed -n 's/^done \[at=\([0-9]*\)\].*/\1/p' "$HOME_D/state/lat1.status" | tail -n 1)
   out=$(trunk land lat1 2>&1) || fail "the lane must land: $out"
   rm -f "$HOME_D/state/lat1.status"   # cleanup removes the status file; no chat line exists in this home
   assert_contains "$(tail -n 1 "$HOME_D/data/trunk-landing-proofs.tsv")" "done=$done_at" "the landing must record the lane's done epoch"
-  [ -s "$HOME_D/data/trunk-latency.tsv" ] || fail "the landing must write data/trunk-latency.tsv itself, with no watcher: $out"
-  [ "$(awk -F'\t' '$1 == "lat1" { print $5 }' "$HOME_D/data/trunk-latency.tsv")" = "$done_at" ] \
-    || fail "the latency row must carry the recorded done epoch $done_at: $(cat "$HOME_D/data/trunk-latency.tsv")"
-  [ -n "$(awk -F'\t' '$1 == "lat1" { print $9 }' "$HOME_D/data/trunk-latency.tsv")" ] || fail "the latency row must hold its minutes"
-  pass 'a landing records the lane done epoch and writes its latency row at once, with the status file gone'
+  [ ! -e "$HOME_D/data/trunk-latency.tsv" ] || fail "a landing must write no data/trunk-latency.tsv: $(cat "$HOME_D/data/trunk-latency.tsv")"
+  commit=$(awk -F'\t' '$1 == "lat1" { print $3 }' "$HOME_D/data/trunk-landings.tsv")
+  payload=$(bash "$ROOT/core/trunk-latency/latency.sh" measure "$HOME_D" lat1 "$commit") || fail "the timing of the landing must be measurable: $payload"
+  [ "$(jq -r .ready <<< "$payload")" = "$done_at" ] || fail "the timing must carry the recorded done epoch $done_at: $payload"
+  pass 'a landing records the lane done epoch, measures its timing from it, and writes no latency file'
 }
 
 # The real landing check bounds lint and tests by one shared deadline, and a timeout is retried rather than blamed on the lane.
@@ -594,7 +594,7 @@ test_a_local_lane_lands_with_no_tests_and_the_verify_reverts_a_red() {
 
 test_landing_deadline_spans_both_gates
 test_the_full_gate_charges_a_lane_only_for_what_it_broke
-test_every_landing_writes_its_latency_row_from_the_done_epoch_it_recorded
+test_every_landing_records_the_done_epoch_and_writes_no_latency_row
 test_a_flaky_failure_gets_one_rerun_before_it_is_judged
 test_a_lane_is_charged_only_for_a_script_the_parent_passes_three_times_of_three
 test_a_tip_red_that_prints_its_elapsed_seconds_is_the_same_red_on_every_run

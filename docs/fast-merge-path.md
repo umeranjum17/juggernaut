@@ -102,9 +102,9 @@ A five-minute path that silently takes eleven is the failure this number exists 
 make visible, so read `times` rather than any promise about them.
 
 A local-trunk project has no pull request to merge, so its number is the
-landing: the check `core/trunk-latency` writes one row per landing to
-`data/trunk-latency.tsv` with the minutes from the lane's last `done` line to
-its landing row and the stage that held most of them (the queue before the
-landing starts, the landing's start lock and rebase, or the gate).
+landing: the lander puts the stage that held most of its minutes (the queue
+before the landing starts, the landing's start lock and rebase, or the gate) in
+the payload of the ticket's `land` event, and `core/trunk-latency` reads the
+minutes from the ticket's ready time to that event.
 A landing over the same `JG_MERGE_LATENCY_LIMIT_MINUTES` raises one alert that
 names that stage.

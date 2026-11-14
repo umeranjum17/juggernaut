@@ -921,11 +921,12 @@ lane_admit() {  # <id> <tip> <expected head or -> <follow 0|1>
 # is core/landing-card's, an observer of these records; the PR-flow post-merge hook (merge-card) does not run for a landing.
 landed_effects() {  # <id> <lane head> <landed commit>   (META is the lane's record)
   record_proofs "$1" "$2" "$3" || :
-  # The latency row is written by this landing, not by a watcher; the check stays as the backstop for rows still missing. A landing over the limit raises the slow-delivery alert itself.
-  bash "$JG_ROOT/core/trunk-latency/latency.sh" check "$JG_HOME" >/dev/null 2>&1 || :
+  # The landing's timing rides on the ticket's land event; core/trunk-latency reads it back and raises the slow-delivery alert from it.
+  local timing; timing=$(bash "$JG_ROOT/core/trunk-latency/latency.sh" measure "$JG_HOME" "$1" "$3" 2>/dev/null | jq -c --arg t "$TRUNK" '. + {trunk: $t}' 2>/dev/null) || timing=
   # The same merge alert as bin/jg-merge-local.sh: the opt-in fleet ledger's merged event and the ticket close.
   [ ! -e "$CONFIG/fleet-ledger" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-fleet-ledger.sh" merged "$1" local || true
-  trace_land "$1" jg-trunk-land "$3"
+  trace_land "$1" jg-trunk-land "$3" "$timing"
+  bash "$JG_ROOT/core/trunk-latency/latency.sh" check "$JG_HOME" >/dev/null 2>&1 || :
 }
 
 # One provenance event on the ticket and then the moment on its row (jg-backlog.sh trace record). A failed write is one warning line and
