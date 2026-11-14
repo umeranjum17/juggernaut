@@ -113,7 +113,7 @@
 #      automatically skipped, no-mistakes' own vocabulary), with that skip
 #      kept visible in the detail, unlike a clean passed. Validation readiness
 #      becomes task done only through the mode's final ready declaration and
-#      bin/jg-dod-lib.sh's named-head/custody acceptance. Without that declaration
+#      bin/jg-dod-lib.sh's named-head acceptance. Without that declaration
 #      it reads paused, preserving an output pause, blocker or open decision.
 #      EXCEPT: while
 #      the active step is ci, `axi status` alone cannot tell "still waiting on
@@ -283,7 +283,7 @@ fi
 # not treated as finished-and-safe.
 emit_ship_status_done() {  # [extra-detail]
   local extra=${1:-} reason
-  if reason=$(jg_dod_accept_ship_done "$KIND" "$(meta_value mode)" "$WT" "$(meta_value project)" "$LOG_LINE" "$STATE" "$ID" "$META" "${ACCEPT_RUN_OUT:-}"); then
+  if reason=$(jg_dod_accept_ship_done "$KIND" "$(meta_value mode)" "$WT" "$(meta_value project)" "$LOG_LINE" "$STATE" "$ID" "$META"); then
     emit "done" status-log "$(status_line_note "$LOG_LINE")${extra:+${SEP}$extra}"
   fi
   emit blocked status-log "$reason"
@@ -1126,8 +1126,6 @@ fi
 # --- run-step authoritative path -------------------------------------------
 
 if [ "$HAVE_RUN" = 1 ]; then
-  ACCEPT_RUN_OUT=""
-  [ "$RUN_SOURCE" != full ] || ACCEPT_RUN_OUT=$RUN_OUT
   RUN_STATE=working
   RUN_DETAIL=""
   CI_STEP_STATUS=""
@@ -1267,11 +1265,11 @@ if [ "$HAVE_RUN" = 1 ]; then
 
   # Validation-ready is not task acceptance. Use the existing mode's final
   # declaration predicate (excluding no-mistakes' implementation handoff) and
-  # its head-bound delivery gate, including captured custody evidence. Preserve
+  # its head-bound delivery gate. Preserve
   # the validation outcome/detail regardless of the task-level verdict.
   if [ "$RUN_STATE" = "done" ] && [ "$KIND" = ship ]; then
     if jg_dod_should_gate_ship_done "$KIND" "$(meta_value mode)" "$LOG_LINE"; then
-      if ! ACCEPT_REASON=$(jg_dod_accept_ship_done "$KIND" "$(meta_value mode)" "$WT" "$(meta_value project)" "$LOG_LINE" "$STATE" "$ID" "$META" "$ACCEPT_RUN_OUT"); then
+      if ! ACCEPT_REASON=$(jg_dod_accept_ship_done "$KIND" "$(meta_value mode)" "$WT" "$(meta_value project)" "$LOG_LINE" "$STATE" "$ID" "$META"); then
         emit blocked status-log "$ACCEPT_REASON${SEP}$RUN_DETAIL${SELECTED_RUN_ID:+${SEP}run: $SELECTED_RUN_ID}"
       fi
     else

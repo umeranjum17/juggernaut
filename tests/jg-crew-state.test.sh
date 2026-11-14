@@ -1465,16 +1465,6 @@ test_validation_ready_requires_final_acceptance() {
   out=$(run_crew_state "$d" output-acceptance)
   assert_contains "$out" 'state: done' 'legacy final-ready declaration plus head proof accepts'
   assert_contains "$out" 'run passed: PR state unknown' 'acceptance does not invent forge disposition'
-  JG_FAKE_AXI_STATUS="$JG_FAKE_AXI_STATUS
-branch_sync:
-  state: pipeline_owned
-  next_action:
-    code: recover_custody"
-  # Even recorded forge proof cannot erase explicitly unreturned custody.
-  printf 'pr=https://example.test/o/r/pull/1\npr_head=%s\n' "$JG_FAKE_RUN_HEAD" >> "$d/state/output-acceptance.meta"
-  out=$(run_crew_state "$d" output-acceptance)
-  assert_contains "$out" 'state: blocked' 'final-ready cannot bypass outstanding custody'
-  assert_contains "$out" 'recover_custody' 'custody refusal retains actionable reason'
   JG_FAKE_AXI_STATUS=$(run_passed_no_pr fm/output-acceptance)
   rm "$d/state/output-acceptance.status"
   out=$(run_crew_state "$d" output-acceptance)
@@ -1484,27 +1474,7 @@ branch_sync:
   printf 'done: ready in branch fm/output-acceptance\n' > "$d/state/output-acceptance.status"
   out=$(run_crew_state "$d" output-acceptance)
   assert_contains "$out" 'state: done' 'local-only accepted head is on its shared branch'
-  # The pipeline has a later tree, but no explicit recover action: the existing
-  # local-copy custody predicate still requires that result, not ancestry alone.
-  git -C "$d/wt" checkout -q -b fake-pipeline-result
-  printf 'fake pipeline fix\n' > "$d/wt/result.txt"
-  git -C "$d/wt" add result.txt
-  git -C "$d/wt" commit -q -m 'fake pipeline result'
-  JG_FAKE_RUN_HEAD=$(git -C "$d/wt" rev-parse HEAD)
-  git -C "$d/wt" checkout -q fm/output-acceptance
-  JG_FAKE_AXI_STATUS=$(run_passed_no_pr fm/output-acceptance)
-  out=$(run_crew_state "$d" output-acceptance)
-  assert_contains "$out" 'state: blocked' 'local-only cannot accept an unrecovered pipeline tree'
-  assert_contains "$out" 'does not carry' 'tree custody refusal is explicit'
-  # Unrelated run custody must never contaminate the no-attributed-run fallback.
-  JG_FAKE_AXI_STATUS="$(run_passed_no_pr fm/other-task)
-branch_sync:
-  next_action:
-    code: recover_custody"
-  arm_idle_record "$d/state" output-acceptance
-  out=$(run_crew_state "$d" output-acceptance)
-  assert_contains "$out" 'state: done' 'foreign run custody cannot refuse this local-only declaration'
-  pass 'validation readiness and final output/custody acceptance remain separate'
+  pass 'validation readiness and final output acceptance remain separate'
 }
 
 # (d) terminal validation retains its outcome and bounded forge detail

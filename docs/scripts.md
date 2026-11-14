@@ -74,6 +74,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-owner-correction.sh` | The owner-correction capture check the turn-end guard reads: is the recorded correction (the newest captain message tagged feedback or micromanagement) captured by an owner rule or an enforcement ticket |
 | `jg-question-card.sh`    | Post the board card for a question to the owner through sign-off-axi and print its key so the reply can cite it; `--route <lead>` names the lead that owns the answer |
 | `jg-proof-attach.sh`      | Find a task's done-done receipt and proof media, refuse a text-only card for UI or video work, and put the proof on the ready, review or merged board card and the PR body |
+| `jg-check-live-pipeline.sh` | Refuse while any home still has a no-mistakes pipeline run in flight; the gate before the tool's removal |
 | `jg-checks-write.sh`      | Write a task's `## Checks` block from its sealed done-done run at the head, citing only the run's own files that still hold their sealed bytes |
 | `jg-overwatch-kpi.sh`    | Record each captain message (typed, or a chat note the gateway files once per inbox id), tag it, newest or named by seq or inbox id, as new work, decision answer, feedback, or micromanagement, refuse a feedback or micromanagement tag without a link to a ticket or PR on this repository, and report the misses per day and per week against a target of zero |
 | `jg-question-lib.sh`     | Shared question-rule predicate: does a reply end in a question, and does it cite an open board card |

@@ -117,7 +117,7 @@ jg_dod_pr_outside_origin() { return 0; }
 jg_receipts_accept_done() { return 0; }
 pr_url=https://github.com/o/r/pull/7
 accept() {  # <id> [<forge-head>]
-  jg_dod_accept_ship_done ship direct-PR "$repo" some-proj "done: PR $pr_url" "$st" "$1" "$st/$1.meta" "" ${2:+"$2"} 2>&1
+  jg_dod_accept_ship_done ship direct-PR "$repo" some-proj "done: PR $pr_url" "$st" "$1" "$st/$1.meta" ${2:+"$2"} 2>&1
 }
 meta s1 design_call=yes "pr=$pr_url" "pr_head=$pr_head"
 receipt s1 "$later_head"

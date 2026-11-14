@@ -1237,6 +1237,9 @@ journeys:
   jg-chat-store:
     tier: local
     command: bash tests/jg-chat-store.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-check-live-pipeline:
+    tier: local
+    command: bash tests/jg-check-live-pipeline.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-checks-write:
     tier: local
     command: bash tests/jg-checks-write.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

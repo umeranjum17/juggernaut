@@ -49,10 +49,7 @@
 # patch set carrying the worker copy's HEAD tree. A published-for-review report
 # whose URL is not a canonical Gerrit change is refused outright. A squash is a new commit on the
 # server's base, so the tree rather than the commit is what names the published
-# content. In no-mistakes mode that live read is preceded by
-# jg_dod_nm_custody_returned: a copy that publishes before recovering the
-# pipeline's fix commits agrees with its own unfixed patch set, so the copy must
-# also hold the result of a passed run. These live reads are the one check at the ready
+# content. These live reads are the one check at the ready
 # decision; a later rebase or patch set on the server does not revoke an armed
 # task's done. Teardown's landed-work test remains the complete discard gate.
 # A ship `done:` naming a pull request is also refused while that pull request
@@ -137,8 +134,6 @@
 . "$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)/jg-delivery-style.sh"
 # shellcheck source=bin/jg-classify-lib.sh
 . "$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)/jg-classify-lib.sh"
-# shellcheck source=bin/jg-nm-run-lib.sh
-. "$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)/jg-nm-run-lib.sh"
 # shellcheck source=bin/jg-brief-heading-lib.sh
 . "$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)/jg-brief-heading-lib.sh"
 # shellcheck source=bin/jg-timeout-lib.sh
@@ -650,58 +645,6 @@ jg_dod_gerrit_change_carries_head() {  # <worktree> <url>
   [ -n "$head_tree" ] && [ "$head_tree" = "$revision_tree" ]
 }
 
-# 0 when the run reports no explicit outstanding custody action. Missing legacy
-# branch_sync fields do not invent a recovery obligation or prove product output.
-jg_dod_nm_custody_released() {  # <captured-run-output>
-  local code
-  code=$(jg_nm_branch_sync_nested "$1" next_action code)
-  case "$code" in
-    recover_custody|continue_active_run)
-      printf '%s\n' "the no-mistakes run still holds this copy's branch (next action $code), so its fixes are not recovered into the published work"
-      return 1 ;;
-  esac
-}
-
-# 0 when the worker copy holds the result of its own passed no-mistakes run:
-# the run's outcome is passed, passed-with-skips or passed-with-override (the
-# passing set bin/jg-crew-state.sh reads), that pipeline owns no unreturned work (branch_sync.next_action.code is neither
-# recover_custody nor continue_active_run) and HEAD's tree equals the tree of the
-# pipeline's current head resolved in this copy. On a Gerrit project push is
-# skipped, so a fix round's commits stay in the gate until custody is recovered,
-# and a copy that publishes before recovering has a server patch set that agrees
-# with its own unfixed HEAD - the published-tree check alone accepts it. Trees
-# are compared rather than ancestry because the publish stamps a Change-Id and
-# rewrites the branch's messages. An unreadable status refuses, as an unreadable
-# change does. 1 when refused; stdout then holds a one-line reason.
-jg_dod_nm_custody_returned() {  # <worktree> [<captured-run-output>]
-  local wt=$1 out=${2:-} outcome pipeline_head head_tree pipeline_tree
-  if { [ -z "$out" ] && ! out=$(jg_nm_run_checked "$wt" 15 axi status); } || ! printf '%s\n' "$out" | grep -q '^run:'; then
-    printf '%s\n' "the no-mistakes run for this copy could not be read, so its fixes cannot be proven recovered"
-    return 1
-  fi
-  outcome=$(jg_nm_strip_quotes "$(jg_nm_field "$out" outcome)")
-  case "$outcome" in
-    passed|passed-with-skips|passed-with-override) ;;
-    *)
-      printf '%s\n' "the no-mistakes run for this copy has outcome ${outcome:-(none)}, not a pass, so the published work is not validated"
-      return 1 ;;
-  esac
-  jg_dod_nm_custody_released "$out" || return 1
-  pipeline_head=$(jg_nm_branch_sync_nested "$out" pipeline current_head)
-  [ -n "$pipeline_head" ] || pipeline_head=$(jg_nm_strip_quotes "$(jg_nm_field "$out" head_sha)")
-  [ -n "$pipeline_head" ] || pipeline_head=$(jg_nm_strip_quotes "$(jg_nm_field "$out" head)")
-  head_tree=$(git -C "$wt" rev-parse --verify --quiet 'HEAD^{tree}' 2>/dev/null) || head_tree=
-  pipeline_tree=
-  if jg_pr_head_valid "$pipeline_head"; then
-    pipeline_tree=$(git -C "$wt" rev-parse --verify --quiet "$pipeline_head^{tree}" 2>/dev/null) || pipeline_tree=
-  fi
-  if [ -z "$head_tree" ] || [ -z "$pipeline_tree" ] || [ "$head_tree" != "$pipeline_tree" ]; then
-    printf '%s\n' "this copy's HEAD does not carry the no-mistakes run's result ${pipeline_head:-(unknown head)}, so the pipeline's fixes are not in the published work"
-    return 1
-  fi
-  return 0
-}
-
 # 0 when <sha> is reachable from a ref that survives the disposable worktree:
 # any remote-tracking ref, or - for local-only - heads in the project clone.
 jg_dod_named_head_reachable_outside_worktree() {  # <worktree> <project> <mode> <sha>
@@ -873,16 +816,14 @@ jg_dod_trunk_lane() {  # <mode> <project-dir>
 # checks clear: jg_dod_pr_checks_clear runs last, so a lane that reports done with
 # a red or still-running check is refused by that check's name and sent to the
 # light gate it should have run first.
-# Optional captured run output preserves an explicit unreturned-custody refusal
-# even when the declared head is already on the forge.
 # The optional trailing <forge-head> is the receipt candidate a caller chose; the
 # fork passes only the receipts feature's pick, which must equal the verified
 # forge head (bin/jg-pr-check.sh). When none is given and the done note names the
 # registered pr= in a named-head mode, or a direct-PR outside that origin, the
 # recorded pr_head stands in, so every caller binds the receipt to the same
 # candidate. The receipts feature (jg_receipts_accept_done) uses the head it is given.
-jg_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state> <id> <meta> <run-output> [<forge-head>]]
-  local kind=$1 mode=$2 wt=$3 project=$4 line=$5 state=${6:-} id=${7:-} meta=${8:-} run_out=${9:-} forge_head=${10:-} url sha gerrit recorded_head design_head
+jg_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state> <id> <meta> [<forge-head>]]
+  local kind=$1 mode=$2 wt=$3 project=$4 line=$5 state=${6:-} id=${7:-} meta=${8:-} forge_head=${9:-} url sha gerrit recorded_head design_head
   # A standard or deep Recon's done is accepted only past bin/jg-recon-gate.sh;
   # a quick Recon, a legacy brief and a ship are not its subject.
   if [ "$kind" = scout ] && [ -n "$id" ] && [ "$(status_line_verb "$line")" = "done" ]; then
@@ -923,10 +864,6 @@ jg_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
   # sealed done-done run (jg_dod_trunk_proof_gaps). The landing asks the same question, so a done that passes here lands.
   if [ -n "$state" ] && [ -n "$id" ] && [ -f "$meta" ] && [ -n "$design_head" ] && jg_dod_trunk_lane "$mode" "$project"; then
     jg_dod_trunk_proof_gaps "${JG_HOME:-$(dirname "$state")}" "$state" "$id" "$meta" "$design_head" 'done' || return 1
-  fi
-  [ -z "$run_out" ] || jg_dod_nm_custody_released "$run_out" || return 1
-  if jg_delivery_style_is "$mode" local && [ -n "$run_out" ]; then
-    jg_dod_nm_custody_returned "$wt" "$run_out" || return 1
   fi
   if url=$(jg_dod_pr_url_from_done_note "$(status_line_note "$line")") \
     && jg_dod_recorded_pr_on_forge "$state" "$id" "$meta" "$mode" "$url"; then
