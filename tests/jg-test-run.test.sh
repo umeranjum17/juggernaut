@@ -780,6 +780,21 @@ test_a_script_with_a_done_done_entry_is_selected_by_no_old_selector() {
   pass 'a script with a done-done entry is selected by no old selector and has no row in the runner'
 }
 
+# A shard that holds no script because each one it held has a done-done entry is a valid state: trunk-v7 verify failed on
+# "portable serial shard 2 of 12 is empty" once the journeys took the scripts. The guard still refuses a script in no shard.
+test_an_empty_serial_shard_with_every_script_entered_passes_the_coverage_guard() {
+  local fixture=$TMP_ROOT/coverage-empty out rc=0 empty
+  mkdir -p "$fixture"
+  cp -R "$ROOT/bin" "$ROOT/defaults" "$ROOT/tests" "$ROOT/.done-done.yaml" "$fixture/"
+  empty=$(cd "$fixture" && bash bin/jg-test-run.sh --list --lane portable-serial-2of12 2>/dev/null | grep -c 'tests/' || true)
+  [ "$empty" = 0 ] || fail "the fixture shard 2 was expected empty, holds $empty"
+  out=$(bash "$fixture/bin/jg-test-run.sh" --check-coverage 2>&1) || rc=$?
+  [ "$rc" = 0 ] || fail "an empty shard with every script entered must pass: rc=$rc $out"
+  case $out in *'is empty'*) fail "the guard still calls an empty shard a failure: $out" ;; esac
+  assert_contains "$out" 'JG_TEST_COVERAGE ' 'the coverage line must be printed'
+  pass 'an empty serial shard whose scripts all have done-done entries passes the coverage guard'
+}
+
 # A time budget advises and never stops: a tree whose largest serial shard packs 3 s over its target still passes,
 # with the advise line and a warning, while a script that no shard runs still refuses.
 test_the_coverage_time_budget_advises_and_a_script_no_shard_runs_still_refuses() {
@@ -829,6 +844,7 @@ test_a_changed_core_script_selects_the_scripts_that_name_it
 test_a_changed_fleet_homes_library_selects_the_move_test
 test_a_script_with_a_done_done_entry_is_selected_by_no_old_selector
 test_the_coverage_time_budget_advises_and_a_script_no_shard_runs_still_refuses
+test_an_empty_serial_shard_with_every_script_entered_passes_the_coverage_guard
 test_a_quarantined_script_is_listed_not_run_and_the_gate_passes
 test_an_unmapped_test_file_fails_only_itself
 test_an_unmapped_source_path_fails_only_itself
