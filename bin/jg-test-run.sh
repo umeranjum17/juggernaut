@@ -313,7 +313,7 @@ TEST_SPEED_SCRIPT_TIMEOUT_SECONDS=1800
 TEST_SPEED_E2E_SECONDS=60
 TEST_SPEED_UNIT_SECONDS=5
 TEST_SPEED_GATE_SECONDS=600
-# How many runs may execute tests on this machine at once (machine_runs_max; 0 is one per 16 cpus, at least one).
+# How many runs may execute tests on this machine at once (machine_runs_max; 0 is one per 16 cpus, held between 2 and 3).
 TEST_MACHINE_RUNS_MAX=0
 # Hard per-test ceiling on the automatic --changed path: max(120s, 4 x the
 # test's measured hint), so a wedged script ends as a bounded failure naming it
@@ -448,8 +448,10 @@ log() {
 # The effective machine_runs_max (see bin/jg-test-host-lib.sh "Run slots").
 machine_runs_max() {
   local n=$TEST_MACHINE_RUNS_MAX
-  [ "$n" -gt 0 ] || n=$(( $(cpu_count) / 16 ))
-  [ "$n" -ge 1 ] || n=1
+  [ "$n" -gt 0 ] && { printf '%s\n' "$n"; return 0; }
+  n=$(( $(cpu_count) / 16 ))
+  [ "$n" -ge 2 ] || n=2
+  [ "$n" -le 3 ] || n=3
   printf '%s\n' "$n"
 }
 

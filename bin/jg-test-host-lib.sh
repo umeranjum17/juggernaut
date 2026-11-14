@@ -23,6 +23,12 @@
 #   itself as waiting, and a lane run takes no slot while such a mark of a live runner stands, so the trunk run gets
 #   the first slot that frees. The trunk run also owns one reserved slot, slot-<max+1>, that a lane run never takes: it
 #   tries that slot first, so the landing gate starts at once while every general slot is held by lane proofs.
+#   The default limit is one run per 16 cpus held between 2 and 3 (machine_runs_max in defaults/test-speed-limits
+#   overrides it), so a burst of test suites never takes more than 3 runs of the host at once.
+#   A run that holds a slot lowers its own CPU priority to nice JG_TEST_NICE (default 10; 0 leaves it alone; never
+#   raises priority), so its scripts, shards and their children yield the cpus to agents. Each real slot grant and
+#   release appends one line to JG_TEST_HOST_SLOTS/load.tsv: epoch, event, slot, runner pid, load1, cpu pressure
+#   (/proc/pressure/cpu some avg10), nice and the ms waited, which is the record of the load during a burst.
 #   Time spent waiting is left in JG_TEST_HOST_WAITED_MS. Without python3 or a writable slot directory the run starts
 #   without a slot and says so. jg_test_host_release frees the slot at once.
 #
@@ -39,6 +45,7 @@
 
 JG_TEST_HOST_KEEPER=
 JG_TEST_HOST_WAITED_MS=0
+JG_TEST_HOST_RECORD_DIR=
 
 jg_test_host_pin_go_cache() {
   local cache
@@ -138,6 +145,26 @@ while alive(owner):
 unmark()
 '
 
+# Appends one load record line for this run's slot (see "Run slots"); never fails the run.
+jg_test_host_record_load() {  # <dir> <event> <slot name>
+  local load psi
+  load=$(cut -d' ' -f1 /proc/loadavg 2>/dev/null) || load=
+  psi=$(sed -n 's/^some .*avg10=\([0-9.]*\).*/\1/p' /proc/pressure/cpu 2>/dev/null) || psi=
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$2" "$3" "$$" "${load:-unknown}" "${psi:-unknown}" \
+    "$(ps -o ni= -p $$ 2>/dev/null | tr -d ' ')" "$JG_TEST_HOST_WAITED_MS" >>"$1/load.tsv" 2>/dev/null || :
+}
+
+# Lowers this run's CPU priority so that every process it starts inherits it; never raises priority.
+jg_test_host_lower_priority() {
+  local want=${JG_TEST_NICE:-10} cur
+  case $want in ''|*[!0-9]*) return 0 ;; esac
+  [ "$want" -gt 0 ] || return 0
+  cur=$(ps -o ni= -p $$ 2>/dev/null | tr -d ' ')
+  case $cur in ''|*[!0-9-]*) return 0 ;; esac
+  [ "$cur" -lt "$want" ] || return 0
+  renice -n "$want" -p $$ >/dev/null 2>&1 || log "warning: could not lower this run's cpu priority to nice $want, so its tests run at nice $cur"
+}
+
 jg_test_host_admit() {  # <max>
   local max=$1 dir fifo line begin
   JG_TEST_HOST_WAITED_MS=0
@@ -155,7 +182,12 @@ jg_test_host_admit() {  # <max>
   rm -f -- "$fifo"
   JG_TEST_HOST_WAITED_MS=$(( $(now_ms) - begin ))
   case $line in
-    'slot '*) export JG_TEST_RUN_SLOT="$dir/${line#slot }" ;;
+    'slot '*)
+      export JG_TEST_RUN_SLOT="$dir/${line#slot }"
+      jg_test_host_lower_priority
+      JG_TEST_HOST_RECORD_DIR=$dir
+      jg_test_host_record_load "$dir" admit "${line#slot }"
+      ;;
     'nested '*) export JG_TEST_RUN_SLOT="$dir/${line#nested }"; JG_TEST_HOST_KEEPER= ;;
     *) JG_TEST_HOST_KEEPER=; log "warning: the test-run slot keeper stopped without a slot, so this run is not queued" ;;
   esac
@@ -164,6 +196,7 @@ jg_test_host_admit() {  # <max>
 
 jg_test_host_release() {
   [ -n "$JG_TEST_HOST_KEEPER" ] || return 0
+  [ -z "${JG_TEST_RUN_SLOT:-}" ] || jg_test_host_record_load "${JG_TEST_HOST_RECORD_DIR:-${JG_TEST_RUN_SLOT%/*}}" release "${JG_TEST_RUN_SLOT##*/}"
   kill "$JG_TEST_HOST_KEEPER" 2>/dev/null || :
   wait "$JG_TEST_HOST_KEEPER" 2>/dev/null || :
   JG_TEST_HOST_KEEPER=

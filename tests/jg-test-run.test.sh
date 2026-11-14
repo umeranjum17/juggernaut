@@ -553,6 +553,40 @@ i=0; while [ ! -e '$d/release' ] && [ \"\$i\" -lt 600 ]; do sleep 0.2; i=\$((i +
   pass 'a run past the machine limit waits for a slot and starts when it frees; runs inside an admitted run never wait'
 }
 
+# A burst of runs started at once never has more than the slot limit running tests, each runs its scripts at a lower
+# cpu priority than the caller, and the host load at every grant and release is on record. With no machine_runs_max
+# set, the limit is one per 16 cpus held between 2 and 3.
+test_a_burst_of_runs_caps_at_the_slot_limit_under_nice_and_records_the_load() {
+  local d=$TMP_ROOT/burst n pid peak=0 live cap rc=0
+  mkdir -p "$d/running" "$d/nice"
+  printf 'machine_runs_max=0\n' >"$d/limits"
+  cap=$(TEST_SPEED_LIMITS_FILE="$d/limits" bash "$RUNNER" --show-limits 2>/dev/null | sed -n 's/^machine_runs_max=//p')
+  case $cap in 2|3) ;; *) fail "the default slot limit must be 2 or 3, got '$cap'" ;; esac
+  for n in 1 2 3 4 5 6; do
+    write_script "$d/b$n.test.sh" "touch '$d/running/b$n'
+ps -o ni= -p \$\$ | tr -d ' ' >'$d/nice/b$n'
+ls '$d/running' | wc -l >>'$d/counts'
+sleep 1
+rm -f '$d/running/b$n'"
+  done
+  for n in 1 2 3 4 5 6; do
+    env -u JG_TEST_RUN_SLOT -u JG_TRUNK_GATE_OUTPUT JG_TEST_HOST_SLOTS="$d/slots" TEST_SPEED_LIMITS_FILE="$d/limits" \
+      bash "$RUNNER" "$d/b$n.test.sh" >"$d/b$n.out" 2>&1 &
+    eval "pid$n=\$!"
+  done
+  for n in 1 2 3 4 5 6; do eval "pid=\$pid$n"; wait "$pid" || rc=$?; done
+  assert_equals 0 "$rc" "every run in the burst must pass: $(cat "$d"/b*.out)"
+  while read -r live; do [ "$live" -le "$peak" ] || peak=$live; done <"$d/counts"
+  [ "$peak" -ge 1 ] && [ "$peak" -le "$cap" ] || fail "at most $cap runs may test at once, the burst peaked at $peak"
+  for n in 1 2 3 4 5 6; do
+    [ "$(cat "$d/nice/b$n")" -ge 10 ] || fail "run $n ran at nice $(cat "$d/nice/b$n"), not lowered"
+  done
+  assert_equals 6 "$(grep -c "	admit	" "$d/slots/load.tsv")" 'every run records its load at the slot grant'
+  assert_equals 6 "$(grep -c "	release	" "$d/slots/load.tsv")" 'every run records its load at the slot release'
+  awk -F'\t' '$5 !~ /^[0-9.]+$/ { bad = 1 } END { exit bad }' "$d/slots/load.tsv" || fail "a load record has no load1: $(cat "$d/slots/load.tsv")"
+  pass "a burst of 6 runs peaked at $peak of $cap slots, ran at nice 10 or lower priority, and left 12 load records"
+}
+
 # A run of the trunk itself (the lander's gate, the verify) names JG_TRUNK_GATE_OUTPUT. It owns one reserved slot that
 # lane runs never take, so with every general slot held by lane proofs it starts at once; a second trunk run, with the
 # reserved slot held, takes the first general slot that frees, ahead of lane runs that asked for a slot before it.
@@ -607,6 +641,7 @@ test_a_script_that_moves_home_keeps_the_callers_go_build_cache() {
 }
 
 test_a_run_past_the_machine_limit_waits_for_a_slot
+test_a_burst_of_runs_caps_at_the_slot_limit_under_nice_and_records_the_load
 test_a_trunk_run_starts_at_once_and_takes_the_first_free_slot_ahead_of_lane_runs
 test_a_script_that_moves_home_keeps_the_callers_go_build_cache
 test_required_shards_keep_the_union_and_a_failed_shard
@@ -619,7 +654,7 @@ test_a_required_shard_over_its_budget_is_a_warning_and_runs_every_script
 select_fixture() {
   local d=$1
   mkdir -p "$d/bin" "$d/tests" "$d/core/trunk-landing" "$d/core/merge-on-green"
-  cp "$RUNNER" "$ROOT/bin/jg-test-host-lib.sh" "$d/bin/"
+  cp "$RUNNER" "$ROOT/bin/jg-test-host-lib.sh" "$ROOT/bin/jg-test-procs-lib.sh" "$d/bin/"
   printf '#!/bin/sh\n' >"$d/bin/jg-trunk.sh"
   # shellcheck disable=SC2016
   printf '. "$(dirname "$0")/jg-trunk.sh"\n' >"$d/bin/jg-trunk-policy-lib.sh"
