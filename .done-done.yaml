@@ -502,7 +502,7 @@ journeys:
     command: env -u JG_TASK_ID bash tests/jg-board-answers-route.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   afk-daemon-resend:
     tier: local
-    command: env -u JG_TASK_ID bash tests/jg-supervise-daemon-resend.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    command: env -u JG_TASK_ID bash tests/jg-supervise-daemon-resend.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1 && printf 'run %s at head %s\n' "$RUN_ID" "$(git rev-parse HEAD)" >> "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" && printf '{"target":{"version":"jg-supervise-daemon.sh at this head"},"start":"an afk daemon on a private tmux server whose pane swallows every Enter of the first digest","steps":["write the first status and wait for its digest","write the second status and wait for its digest","count the lines and U+2063 markers the pane submitted"],"result":"the swallowed digest was submitted once, the second digest followed as its own line, and no line went in as user text"}\n' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
   gate-quarantine:
     tier: local
     command: bash journeys/gate-quarantine.sh
