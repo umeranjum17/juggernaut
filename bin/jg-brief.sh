@@ -47,6 +47,9 @@
 #   omitting both still fails loudly so an accidental omission is never silent.
 #   Set JG_SQUAD_LEAD_CHARTER='<charter>' to fill the charter text.
 #   Set JG_SQUAD_LEAD_SCOPE='<scope>' to write a routing scope distinct from the charter text.
+#   --proof minimum --proof-checks <journey[,journey]> [--proof-named-by <who>] (ship, with --ticket) writes `proof: minimum` and
+#   the named checks on the ticket (bin/jg-proof-minimum-lib.sh owns the field) and adds a `# Proof: minimum` section that hands
+#   the list to done-done. Task text that still says "bare-minimum checks" with no such field is refused with the new form.
 #   --herdr-lab is mandatory when the task will issue Herdr lifecycle commands.
 #   It adds the hard isolation contract backed by bin/jg-herdr-lab.sh.
 #   {TASK} and {JUGGERNAUT_SPEC} are filled after scaffolding, so the scaffold
@@ -314,6 +317,9 @@ case "$CONFIG" in /*) ;; *) CONFIG="$PWD/$CONFIG" ;; esac
 KIND=ship
 HERDR_LAB=0
 TASK_TEXT_FILE=
+PROOF=
+PROOF_CHECKS=
+PROOF_NAMED_BY=
 DEPTH=
 DEPTH_SET=0
 NO_PROJECTS=0
@@ -377,6 +383,9 @@ for a in "$@"; do
       ui-change) UI_CHANGE=$a ;;
       risk) RISK=$a; RISK_SET=1 ;;
       depth) DEPTH=$a; DEPTH_SET=1 ;;
+      proof) PROOF=$a ;;
+      proof-checks) PROOF_CHECKS=$a ;;
+      proof-named-by) PROOF_NAMED_BY=$a ;;
       *) echo "error: internal parser state for --$want_value" >&2; exit 1 ;;
     esac
     want_value=
@@ -427,6 +436,12 @@ for a in "$@"; do
     --ui-change=*) UI_CHANGE=${a#--ui-change=} ;;
     --risk) want_value=risk ;;
     --risk=*) RISK=${a#--risk=}; RISK_SET=1 ;;
+    --proof) want_value=proof ;;
+    --proof=*) PROOF=${a#--proof=} ;;
+    --proof-checks) want_value=proof-checks ;;
+    --proof-checks=*) PROOF_CHECKS=${a#--proof-checks=} ;;
+    --proof-named-by) want_value=proof-named-by ;;
+    --proof-named-by=*) PROOF_NAMED_BY=${a#--proof-named-by=} ;;
     --depth) want_value=depth ;;
     --depth=*) DEPTH=${a#--depth=}; DEPTH_SET=1 ;;
     # yolo never reaches the worker: it is juggernaut's merge authority, not a
@@ -693,6 +708,31 @@ Task id: $ID
 Commit form: end the commit message with the trailer \`Ticket: $TICKET\`."
   if grep -q 'the commit must carry its ticket reference' "$SCRIPT_DIR/jg-trunk.sh" 2>/dev/null; then
     TICKET_SECTION="$TICKET_SECTION Start the subject with the task id \`$ID\`, because the landing check reads it from the commit text."
+  fi
+fi
+# "Bare-minimum checks" is a field on the ticket (bin/jg-proof-minimum-lib.sh), never a sentence: --proof minimum writes
+# it, a ticket that carries it gets the section that hands the list to done-done, and the old sentence with no field is refused.
+if [ "$KIND" = squad_lead ]; then
+  [ -z "$PROOF$PROOF_CHECKS$PROOF_NAMED_BY" ] || { echo "error: --proof, --proof-checks and --proof-named-by apply only to ship briefs" >&2; exit 1; }
+else
+  # shellcheck source=bin/jg-proof-minimum-lib.sh
+  . "$SCRIPT_DIR/jg-proof-minimum-lib.sh"
+  case "$PROOF" in
+    ''|full) [ -z "$PROOF_CHECKS$PROOF_NAMED_BY" ] || { echo "error: --proof-checks and --proof-named-by go with --proof minimum" >&2; exit 1; } ;;
+    minimum)
+      [ "$KIND" = ship ] || { echo "error: --proof minimum applies only to ship briefs" >&2; exit 1; }
+      [ -n "$TICKET" ] || { echo "error: --proof minimum is a field on the ticket; pass --ticket <ticket-id>" >&2; exit 1; }
+      [ -n "$PROOF_CHECKS" ] || { echo "error: --proof minimum needs --proof-checks <journey[,journey]>: the checks the lead names" >&2; exit 1; }
+      jg_proof_minimum_write "$CONFIG" "$TICKET" "$PROOF_CHECKS" "${PROOF_NAMED_BY:-lead}" || exit 1 ;;
+    *) echo "error: --proof is full or minimum (got '$PROOF'); a bypass is the owner's record, never a brief flag" >&2; exit 1 ;;
+  esac
+  PROOF_ROW=
+  [ -z "$TICKET" ] || PROOF_ROW=$(jg_proof_minimum_read "$CONFIG" "$TICKET") || PROOF_ROW=
+  if [ -n "$PROOF_ROW" ]; then
+    TICKET_SECTION="$TICKET_SECTION$(jg_proof_minimum_section "${PROOF_ROW%%$'\t'*}" "${PROOF_ROW#*$'\t'}" "$ID")"
+  elif [ -n "$TASK_TEXT_FILE" ] && jg_proof_minimum_old_sentence "$TASK_TEXT_FILE"; then
+    echo "error: the task text asks for bare-minimum checks in words, and a sentence in a brief is no proof level: $(jg_proof_minimum_form)" >&2
+    exit 1
   fi
 fi
 BRANCH="$BRANCH_PREFIX$ID"
