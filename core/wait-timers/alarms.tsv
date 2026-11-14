@@ -12,3 +12,4 @@ status-latency	event
 name	event
 *-reaper	event
 lab-wake	event
+wake-rollup	event

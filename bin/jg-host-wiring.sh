@@ -119,6 +119,7 @@ plan=(
   lookout-adapter:plain
   undelivered-alert:home
   lock-lease:home
+  wake-rollup:home
 )
 
 # The sources one step installs from: its own directory, this script (the plan and argument shapes), and every file

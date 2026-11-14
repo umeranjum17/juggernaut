@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # lead-sweep watcher check: every beat, clean up the landed lanes of this home, unforced, with no model turn.
-# Usage: lead-sweep.sh check <jg-home>
+# Usage: lead-sweep.sh check <jg-home>   (the registered check: prints the results of finished jobs, starts a job, returns)
+#        lead-sweep.sh job <jg-home>     (one sweep as its own detached job, one at a time per home; the check starts it)
+#        lead-sweep.sh run <jg-home>     (one sweep in the foreground, printing what a check prints)
+# A teardown can wait minutes for the project's slot lock, so the sweep is not run inside the check's 30-second limit:
+# `check` starts `job` with setsid and returns, and the job's output is published as data/lead-sweep/results.<time> and
+# printed by the next beat. Lanes are swept oldest done line first, so a lane never waits behind a newer one.
 #
 # A lane of this home (state/<id>.meta, kind ship or scout) whose latest status line is `done` or `resolved` (an answered
 # lane) is swept when it has landed:
@@ -29,7 +34,9 @@
 # JG_LEAD_SWEEP_TEARDOWN, JG_LEAD_SWEEP_GH, JG_LEAD_SWEEP_CONTROL and JG_LEAD_SWEEP_AGENT (<id> -> alive|dead|missing|unknown) name
 # the teardown, gh-axi, control and agent-state commands; JG_LEAD_SWEEP_NOW is the clock (tests point them at stubs).
 set -u
-[ "$#" -eq 2 ] && [ "$1" = check ] && [ -d "$2/state" ] || { echo "usage: lead-sweep.sh check <jg-home>" >&2; exit 2; }
+MODE=${1:-}
+[ "$#" -eq 2 ] && case $MODE in check|job|run) true ;; *) false ;; esac && [ -d "$2/state" ] || { echo "usage: lead-sweep.sh check|job|run <jg-home>" >&2; exit 2; }
+SELF=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/$(basename "${BASH_SOURCE[0]}")
 FMH=$(cd "$2" && pwd -P)
 STATE=$FMH/state
 MEM=$FMH/data/lead-sweep
@@ -52,6 +59,33 @@ drift() {
   JG_HOME="$FMH" JG_STATE_OVERRIDE="$STATE" "$a" raise drift "lead-sweep-$1" --deliver --ticket "$1" --note "$2" >/dev/null 2>&1 \
     || echo "lead-sweep: $2"
 }
+case $MODE in
+  check)
+    # Print every finished job's results, oldest first, then make sure a job is running. The job itself refuses to start
+    # while another holds the lock, so a beat that finds one running changes nothing.
+    for f in "$MEM"/results.*; do
+      [ -f "$f" ] || continue
+      cat "$f" && rm -f -- "$f"
+    done
+    if [ "${JG_TEST_SEAM:-}" = 1 ] && [ -n "${JG_TEST_DETACHED_REGISTRY:-}" ]; then
+      setsid nohup env JG_LEAD_SWEEP_REGISTER=1 "$SELF" job "$FMH" > /dev/null 2>&1 < /dev/null &
+    else
+      setsid nohup "$SELF" job "$FMH" > /dev/null 2>&1 < /dev/null &
+    fi
+    exit 0 ;;
+  job)
+    # shellcheck source=bin/jg-wake-lib.sh
+    . "$FMH/bin/jg-wake-lib.sh"
+    if [ "${JG_LEAD_SWEEP_REGISTER:-}" = 1 ]; then
+      printf '%s %s\n' "$$" "$(jg_pid_identity "$$" 2>/dev/null)" >> "$JG_TEST_DETACHED_REGISTRY" 2>/dev/null || :
+    fi
+    jg_lock_try_acquire "$MEM/.job.lock" || exit 0
+    trap 'jg_lock_release "$MEM/.job.lock"' EXIT
+    tmp=$(mktemp "$MEM/.job-XXXXXX") || exit 1
+    "$SELF" run "$FMH" > "$tmp" 2>&1 || true
+    if [ -s "$tmp" ]; then mv -- "$tmp" "$MEM/results.$(date +%s).$$"; else rm -f -- "$tmp"; fi
+    exit 0 ;;
+esac
 mval() { sed -n "s/^$2=//p" "$1" | tail -n 1; }
 mtime() { stat -c %Y "$1" 2>/dev/null || echo "$NOW"; }
 run_as_home() { JG_HOME="$FMH" JG_STATE_OVERRIDE="$STATE" "$@"; }
@@ -116,9 +150,17 @@ why_landed() {
   return 0
 }
 
-for meta in "$STATE"/*.meta; do
+# Oldest report first: a lane's status file modification time is when it last reported; a lane with no status line
+# is ordered by its record's age.
+order=$(for m in "$STATE"/*.meta; do
+  [ -f "$m" ] || continue
+  i=${m##*/}; i=${i%.meta}
+  if [ -f "$STATE/$i.status" ]; then t=$(mtime "$STATE/$i.status"); else t=$(mtime "$m"); fi
+  printf '%s %s\n' "$t" "$i"
+done | sort -n | cut -d' ' -f2)
+for id in $order; do
+  meta=$STATE/$id.meta
   [ -f "$meta" ] || continue
-  id=$(basename "$meta" .meta)
   kind=$(mval "$meta" kind)
   case $kind in ship|scout) ;; *) continue ;; esac
   line=$(tail -n 1 "$STATE/$id.status" 2>/dev/null)
