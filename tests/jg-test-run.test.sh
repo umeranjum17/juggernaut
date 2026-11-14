@@ -467,11 +467,11 @@ test_the_hosted_selection_drops_scripts_whose_tool_the_runner_lacks() {
 
 test_a_weight_cap_defers_slow_suites_and_names_them() {
   local out
-  out=$(bash "$RUNNER" --list --max-weight-ms 60000 tests/jg-teardown.test.sh tests/jg-ship-local.test.sh 2>&1) || fail "a capped list was refused: $out"
+  out=$(bash "$RUNNER" --list --max-weight-ms 60000 tests/jg-watcher-lock.test.sh tests/jg-wake-queue-live.test.sh 2>&1) || fail "a capped list was refused: $out"
   assert_contains "$out" 'deferred to the post-merge lane' 'a deferred suite must be named'
-  assert_contains "$out" 'tests/jg-ship-local.test.sh' 'a fast suite must stay selected'
+  assert_contains "$out" 'tests/jg-wake-queue-live.test.sh' 'a fast suite must stay selected'
   case $(printf '%s\n' "$out" | grep -v deferred) in
-    *jg-teardown*) fail "the slow suite stayed in the capped selection: $out" ;;
+    *jg-watcher-lock*) fail "the slow suite stayed in the capped selection: $out" ;;
   esac
   pass 'a weight cap defers slow suites and names them'
 }
