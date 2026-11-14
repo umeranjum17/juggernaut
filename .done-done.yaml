@@ -291,6 +291,9 @@ journeys:
   lead-sweep-end-states:
     tier: local
     command: bash journeys/lead-sweep-end-states.sh
+  pane-sweep:
+    tier: local
+    command: bash journeys/pane-sweep.sh
   recon-relayed-cleanup:
     tier: local
     command: bash journeys/recon-relayed-cleanup.sh

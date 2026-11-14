@@ -97,6 +97,7 @@ plan=(
   critical-stall:home
   stall-action:home
   lead-sweep:home
+  pane-sweep:home
   pr-pager:home
   auto-dispatch:home
   trunk-latency:home
