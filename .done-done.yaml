@@ -2067,6 +2067,9 @@ journeys:
   jg-recon-ready:
     tier: local
     command: bash tests/jg-recon-ready.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-outcome-ledger:
+    tier: local
+    command: bash journeys/outcome-ledger.sh
   jg-trunk-release-merge-first:
     tier: local
     command: bash tests/jg-trunk-release-merge-first.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -2265,6 +2268,7 @@ journeys:
   zai-quota-check-uninstall:
     tier: local
     command: bash journeys/core-run.sh 'bash zai-quota-check/tests/zai-quota-check-uninstall.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+
   jg-trunk-carry:
     tier: local
     command: bash tests/jg-trunk-carry.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
