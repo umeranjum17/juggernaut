@@ -7,7 +7,7 @@
 . "$SCRIPT_DIR/../core/wait-timers/bin/jg-wait-timers-lib.sh"
 
 jg_stops_tick() {
-  local now dir src name subject state row owner steps next timer repeat clear record since fired last key line step stop_event_key next_owner parent pool_dir pool_lock completed waiter project holders pool_tasks pool_tmp
+  local now dir src name subject state row owner steps next timer repeat clear record since fired last key line step stop_event_key next_owner parent pool_dir pool_lock completed waiter project holders pool_tasks pool_tmp landings
   now=$(date +%s) || return 1
   if [ "${JG_TEST_SEAM:-0}" = 1 ] && [ -n "${JG_STOPS_TEST_NOW:-}" ]; then now=$JG_STOPS_TEST_NOW; fi
   dir=$STATE/.waiting-timers/.stops
@@ -24,6 +24,16 @@ jg_stops_tick() {
         waiter=${completed##*/.started-}
         rm -f -- "$pool_dir/$waiter" "$completed" || { jg_lock_release "$pool_lock"; return 1; }
       done
+      # A waiter whose ticket already landed (a row of data/trunk-landings.tsv) no longer waits for a copy.
+      landings=${JG_DATA_OVERRIDE:-$JG_HOME/data}/trunk-landings.tsv
+      if [ -f "$landings" ]; then
+        for completed in "$pool_dir"/*; do
+          [ -f "$completed" ] || continue
+          waiter=${completed##*/}
+          awk -F '\t' -v t="$waiter" '$1 == t { found = 1; exit } END { exit !found }' "$landings" || continue
+          rm -f -- "$completed" || { jg_lock_release "$pool_lock"; return 1; }
+        done
+      fi
       if ! compgen -G "$pool_dir/*" >/dev/null; then
         rm -f -- "$src" || { jg_lock_release "$pool_lock"; return 1; }
         rm -f -- "$pool_dir/.project-lock" "$pool_dir/.project"

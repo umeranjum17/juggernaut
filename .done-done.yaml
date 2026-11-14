@@ -1380,7 +1380,7 @@ journeys:
     command: bash tests/jg-pane-sweep.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-pool-full:
     tier: local
-    command: bash tests/jg-pool-full.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    command: JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-pool-full.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1 && printf '{"target":{"version":"juggernaut@%s"},"start":"a project pool is full and two queued tasks wait for a copy","steps":["spawn two tasks into the full pool","record a landing for the first task","run the delivery tick","record a landing for the second task and run the tick again"],"result":"the landed waiter leaves the wait, a waiter still waiting keeps it, and the last landing removes the wait and its detector file"}\n' "$(git rev-parse --short HEAD)" > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
   jg-pool-reserve:
     tier: local
     command: bash tests/jg-pool-reserve.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
