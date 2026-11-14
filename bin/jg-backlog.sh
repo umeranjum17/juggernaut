@@ -6,7 +6,7 @@
 #
 # Every routine juggernaut backlog read or mutation goes through this command. It serves
 # `show`, `view`, `list`, `ready`, `ready --spawnable` (the tickets this home can start now, bin/jg-backlog-spawnable.sh, ended at 10 seconds with exit 124), `approve-dispatch`, `markdown`, `add`, `update`, `done`, `block`, `unblock`,
-# `start`, `task`, `reopen`, `hold`, `unhold`, `public-followup` and `relink` from the store that
+# `start`, `task`, `reopen`, `hold`, `unhold`, `on-report`, `public-followup` and `relink` from the store that
 # `config/beads-dir` names (bin/jg-backlog-lib.sh); any other verb exits 2 with nothing
 # run. A relative value of `--to` or any `--*-file` flag (`--body-file`, ...) is made
 # absolute against the caller's working directory. Hold reasons are plain text.
@@ -51,6 +51,10 @@
 #     nothing runs. The check is ${XDG_DATA_HOME:-~/.local/share}/jg-task-priority/check.sh
 #     (JG_TASK_PRIORITY_CHECK overrides the path); when it is not installed this
 #     does nothing.
+# `on-report <ticket-id>` reads the follow-up the ticket's body states ahead, `on-report: triage-build <harness>
+# <model> <effort>`, and prints `<harness> <model> <effort>` when the ticket rests on one of the three records of the
+# captain's yes (bin/jg-captain-ask-lib.sh's captain_ask_build_basis); it exits 2 for no or a malformed line and 3 for
+# a line with no record, and writes nothing. core/recon-ready runs the follow-up when the Recon's report lands.
 # `task <ticket-id>` prints the task id made from the ticket (bin/jg-backlog-lib.sh's jg_backlog_task_id: every dot
 # becomes a dash) and writes it on the ticket's row as metadata.task, so every script that knows only the task id
 # reaches the row. It refuses a ticket with no row and a task id that a different row already answers to.
@@ -247,7 +251,7 @@ case "${1:-}" in
     fi
     beads_read; exit $? ;;
   markdown) beads_read; exit $? ;;
-  add|create|update|edit|done|close|block|unblock|start|task|reopen|hold|unhold|public-followup|relink|moment|wait|ticket-stage|ticket-drift|times|trace) ;;
+  add|create|update|edit|done|close|block|unblock|start|task|reopen|hold|unhold|on-report|public-followup|relink|moment|wait|ticket-stage|ticket-drift|times|trace) ;;
   *) fail "the beads backlog does not serve ${1:-this command}" ;;
 esac
 
@@ -256,6 +260,14 @@ _jg_taxi_sl_wire="$(jg_compat_legacy_of squad-lead):"
 backlog_cmd() { jg_backlog_beads_read "$JG_HOME/config" "$@"; }
 # shellcheck source=bin/jg-captain-ask-lib.sh disable=SC1091
 . "$SCRIPT_DIR/jg-captain-ask-lib.sh"
+
+if [ "${1:-}" = on-report ]; then
+  [ "${#ARGS[@]}" -eq 2 ] || fail "usage: jg-backlog.sh on-report <ticket-id>"
+  STATE=${JG_STATE_OVERRIDE:-$JG_HOME/state}  # read by bin/jg-captain-ask-lib.sh for the approval key and the chat notes
+  CAPTAIN_ASK_SHOW=$(backlog_cmd show "${ARGS[1]}" --full 2>/dev/null) || fail "cannot read ${ARGS[1]}"
+  captain_ask_on_report "${ARGS[1]}" "$CAPTAIN_ASK_SHOW"
+  exit $?
+fi
 
 captain_guard() {  # <backlog args>
   local verb id='' value=0 title_next=0 has_title=0 new_title='' arg
