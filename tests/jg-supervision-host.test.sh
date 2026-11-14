@@ -165,7 +165,8 @@ export JG_POLL=1 JG_SIGNAL_GRACE=0 JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999
 export JG_WAKE_ROUTING="$TMP_ROOT/wake-routing"
 # Keep the real engine watchdog/reaping path, but not its production grace in fixtures.
 export JG_SUPERVISION_ENGINE_GRACE=1
-export JG_ARM_CONFIRM_TIMEOUT=30
+# A loaded host can take over 30s to confirm a watcher (the unrecorded-successor case saw 32s), so the budget is generous: it only bounds a start that never confirms.
+export JG_ARM_CONFIRM_TIMEOUT=120
 unset JG_SUPERVISION_ACTOR JG_BRANCH_REPORT_TURN JG_LEASE_HOLDER_PID PI_CODING_AGENT
 
 # Homes are registered in a file: make_home runs in a command substitution,
