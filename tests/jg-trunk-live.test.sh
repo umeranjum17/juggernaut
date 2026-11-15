@@ -23,6 +23,7 @@ fleet_world() {  # <name> [rig]: sets W HOME_D PROJ CODE_ROOT BASE; rig makes th
   world "$1"
   [ "${2-}" != rig ] || { rig; printf 'gate-full=! grep -q BAD work.txt\ngate-verify=bash %s/rig.sh --all\n' "$W" >> "$HOME_D/config/trunk-policy"; }
   rm "$HOME_D/config/live-hook.proj"
+  printf 'live-on-green=off\n' >> "$HOME_D/config/trunk-policy"  # these cases drive the tick's quiet window; the green verify's own go-live has its case below
   CODE_ROOT="$W/homecode"; git clone -q "$(git -C "$PROJ" remote get-url origin)" "$CODE_ROOT"
   BASE=$(git -C "$CODE_ROOT" rev-parse HEAD)
   for id in lead-a lead-b; do
@@ -303,6 +304,7 @@ fi
 test_a_landing_on_a_tip_with_only_recorded_reds_moves_the_pin_and_goes_live_by_itself() {
   local out c
   fleet_world oldreds; rig; seed_red_tip; cp "$W/root/bin/jg-backlog.sh" "$HOME_D/bin/jg-backlog.sh"
+  printf 'live-on-green=on\n' >> "$HOME_D/config/trunk-policy"
   cp "$HOME_D/state/trunk-tip-proj" "$HOME_D/state/trunk-green-proj"  # the red tip is the trunk's accepted green: its reds are the parent's own
   printf 'gate-verify=echo run >> %s/suite-runs; export GATE_MARK=yes; bash %s/rig.sh --all\n' "$W" "$W" >> "$HOME_D/config/trunk-policy"
   lane good 'exit 0' t/d.test.sh
@@ -311,10 +313,11 @@ test_a_landing_on_a_tip_with_only_recorded_reds_moves_the_pin_and_goes_live_by_i
   await_green || fail "the tick's verify must move the pin over the tip's recorded reds: $(cat "$HOME_D"/data/jg-trunk-landing/good.*.log "$HOME_D"/data/jg-trunk-landing/verify-proj.log 2>&1)"
   c=$(tip)
   [ -e "$W/suite-runs" ] || fail "the verify, not the landing, ran the suite"
-  age_landings 25 25
-  out=$(fleet_sweeps "proj: live at")
-  assert_contains "$out" "proj: In use at ${c:0:12} on every home" "the quiet trunk must go live by itself over the recorded reds"
-  homes_at "$c" || fail "every home must move to the landed commit: $(cat "$HOME_D/data/trunk-in-use.tsv" 2>/dev/null)"
+  # The green verify takes the homes to the commit it judged itself (trunk-land-during-verify), so no quiet window is waited for.
+  for _ in $(seq 1 150); do homes_at "$c" && break; sleep 0.2; done
+  homes_at "$c" || fail "every home must move to the landed commit once the verify is green: $(cat "$HOME_D/data/trunk-in-use.tsv" 2>/dev/null) $(cat "$HOME_D/data/jg-trunk-landing/verify-proj.log" 2>&1)"
+  for _ in $(seq 1 100); do grep -q "In use at" "$HOME_D/data/jg-trunk-landing/verify-proj.log" && break; sleep 0.2; done  # the verify prints it as it ends
+  assert_contains "$(cat "$HOME_D/data/jg-trunk-landing/verify-proj.log")" "In use at ${c:0:12} on every home" "the verify must report the go-live it made over the recorded reds"
   pass 'a landing on a tip with only recorded reds moves the pin after its lane is torn down and goes live with no hand step'
 }
 

@@ -474,7 +474,59 @@ test_a_journey_its_proof_did_not_select_is_charged_to_its_commit_and_counted_as_
   pass 'a journey that fails in the nightly run and that its commit proof did not select is charged to that commit and reported without a revert, the pair goes to the map and the report counts one miss'
 }
 
+# A running verify holds no landing back and no move of the homes holds a landing back for it (trunk-land-during-verify). Under a go-live
+# waiver a verify is running on the tip, the live step asks to move the homes and a ready lane lands meanwhile; the green verify
+# then moves the pin and goes live over every home. In the second half a verify that finds a red still charges the commit and pins back,
+# moves no home, and a lane that landed during it stays landed.
+# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
+test_landings_go_on_while_a_verify_runs_and_a_green_verify_goes_live() {
+  local c0 c1 c2 bad top pv out
+  world lvd
+  lane l0 one; c0=$(tip_after_land l0); lane l1 two; c1=$(tip_after_land l1)
+  printf '%s\n' "$(git -C "$PROJ" rev-parse "$c0^")" > "$HOME_D/state/trunk-green-proj"  # a pin under the tip, for the verify to move
+  trunk waiver "$PROJ" --rule owner-rule-test >/dev/null || fail "the waiver must be written"
+  printf '#!/usr/bin/env bash\ngit rev-parse HEAD >> %s/verify-ran\nwhile [ ! -e %s/release ] && kill -0 %s 2>/dev/null; do sleep 0.1; done\n' "$W" "$W" "$$" > "$W/slow.sh"
+  printf 'live-quiet-minutes=0\ngate-verify=bash %s/slow.sh\n' "$W" >> "$HOME_D/config/trunk-policy"
+  trunk verify "$PROJ" "$c1" > "$W/v1.out" 2>&1 & pv=$!
+  for _ in $(seq 1 100); do [ -s "$W/verify-ran" ] && break; sleep 0.1; done
+  [ -s "$W/verify-ran" ] || fail "the verify must be running"
+  # The live step asks to move the homes while the verify runs: it steps aside at once and holds no landing back.
+  out=$(timeout 20 env PATH="$W/fakebin:$PATH" JG_HOME="$HOME_D" JG_ROOT_OVERRIDE="$W/root" JG_STATE_OVERRIDE="$HOME_D/state" JG_DATA_OVERRIDE="$HOME_D/data" JG_CONFIG_OVERRIDE="$HOME_D/config" "$W/root/bin/jg-trunk.sh" autolive "$PROJ" 2>&1) || fail "the live step must not wait for a running verify: $out"
+  assert_contains "$out" "a verify is running" "the live step must say it waits for the verify"
+  [ ! -e "$W/live-moves" ] || fail "no home may move while a verify runs"
+  [ -z "$(compgen -G "$HOME_D/state/.trunk-move-proj*")" ] || fail "the live step must let its place go: $(ls -a "$HOME_D/state")"
+  lane l2 three other.txt
+  out=$(timeout 30 env PATH="$W/fakebin:$PATH" JG_HOME="$HOME_D" JG_ROOT_OVERRIDE="$W/root" JG_STATE_OVERRIDE="$HOME_D/state" JG_DATA_OVERRIDE="$HOME_D/data" JG_CONFIG_OVERRIDE="$HOME_D/config" "$W/root/bin/jg-trunk.sh" land l2 2>&1) || fail "a ready lane must land while a verify runs: $out"
+  kill -0 "$pv" 2>/dev/null || fail "the verify must still be running when the lane has landed: $(cat "$W/v1.out")"
+  c2=$(tip); [ "$c2" != "$c1" ] || fail "the lane must be on the trunk"
+  : > "$W/release"
+  wait "$pv" || fail "the verify must finish green: $(cat "$W/v1.out")"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$c1" ] || fail "a green verify moves the pin to the commit it judged, not past the lane that landed meanwhile"
+  [ "$(cat "$W/live-moves" 2>/dev/null)" = "$c1" ] || fail "a green verify must move the homes to the commit it judged: $(cat "$W/live-moves" 2>&1) / $(cat "$W/v1.out")"
+  assert_contains "$(cat "$W/v1.out")" "In use" "the verify must report the go-live"
+
+  # A red verify still charges its commit, takes the pin back and moves no home; a lane that landed during it stays landed.
+  rig; printf 'gate-full=true\n' >> "$HOME_D/config/trunk-policy"
+  lane bad 'echo "not ok - new red" >&2; exit 1' t/e.test.sh; trunk land bad >/dev/null 2>&1 || fail "the red lane lands past a fast gate"; bad=$(tip)
+  rm -f "$W/release" "$W/live-moves" "$W/verify-ran"
+  printf '#!/usr/bin/env bash\nwhile [ ! -e %s/release ] && kill -0 %s 2>/dev/null; do sleep 0.1; done\nbash %s/rig.sh --all\n' "$W" "$$" "$W" > "$W/slow-red.sh"
+  printf 'gate-verify=bash %s/slow-red.sh\n' "$W" >> "$HOME_D/config/trunk-policy"
+  trunk verify "$PROJ" "$bad" > "$W/v2.out" 2>&1 & pv=$!
+  for _ in $(seq 1 100); do [ -e "$HOME_D/state/.trunk-verify-proj.lock" ] && break; sleep 0.1; done
+  lane l3 four more.txt
+  out=$(timeout 30 env PATH="$W/fakebin:$PATH" JG_HOME="$HOME_D" JG_ROOT_OVERRIDE="$W/root" JG_STATE_OVERRIDE="$HOME_D/state" JG_DATA_OVERRIDE="$HOME_D/data" JG_CONFIG_OVERRIDE="$HOME_D/config" "$W/root/bin/jg-trunk.sh" land l3 2>&1) || fail "a ready lane must land while a verify runs: $out"
+  top=$(tip)
+  : > "$W/release"
+  wait "$pv" && fail "a verify that finds a red must not pass"
+  grep -q "$bad" "$HOME_D/data/trunk-ci.tsv" || fail "the red must be charged to the commit that caused it: $(cat "$HOME_D/data/trunk-ci.tsv" 2>&1)"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" != "$bad" ] || fail "a red must take the pin back below the commit"
+  [ ! -e "$W/live-moves" ] || fail "a red verify must move no home: $(cat "$W/live-moves")"
+  [ "$(tip)" = "$top" ] || fail "the lane that landed during the verify stays landed"
+  pass 'landings go on while a verify runs, a green verify moves the pin and the homes, and a red one still charges its commit and pins back'
+}
+
 test_queued_verifies_run_one_at_a_time_and_only_the_newest_runs
+test_landings_go_on_while_a_verify_runs_and_a_green_verify_goes_live
 test_a_verify_moves_the_pin_over_a_red_its_parent_already_had
 test_a_verify_over_the_wall_clock_budget_with_no_failed_test_moves_the_pin_and_records_the_load
 test_a_verify_whose_only_failures_pass_on_rerun_moves_the_pin_and_files_one_row_per_flaky_test

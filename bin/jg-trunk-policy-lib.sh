@@ -42,6 +42,8 @@
 #   flush-after-minutes   20          ...or until the oldest ready lane has waited this long, whichever is first
 #   live-quiet-minutes    20          under a go-live waiver: the trunk goes live once no landing has happened for this long
 #   live-cap-minutes      60          under a go-live waiver: ...or once the oldest landing not yet live is this old, whichever is first
+#   live-on-green         on          under a go-live waiver (or an answer at gated): a green verify runs the live step at once, off the quiet window, so the homes
+#                                     move to the commit it judged while landings go on. off (the rollback): only the tick's quiet-window step moves the homes
 #   pr-page-minutes      60           how often the pull request pager (core/pr-pager) pages the lead of a pull request that is still open
 #   release-after-commits 10          unreleased commits on the trunk that make a release due, beside release-after-hours (whichever is first)
 #   conflict-resolver     (empty)     the command of the agent that resolves a rebase conflict in the lander's copy (bin/jg-trunk-resolve-lib.sh);
@@ -126,6 +128,7 @@ jg_trunk_policy() {  # <key> [<project>]
       flush-after-minutes) val=20 ;;
       live-quiet-minutes) val=20 ;;
       live-cap-minutes) val=60 ;;
+      live-on-green) val=on ;;
       pr-page-minutes) val=60 ;;
       switch-apply) val=report ;;
       switch-decl) val=report ;;

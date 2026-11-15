@@ -21,6 +21,7 @@
 #        jg-trunk.sh adopt-tip <project-dir> --reason <text> [--carried-by <task-id>]   Overwatch only: record the trunk's present tip as the lander's own after something else moved it; only if the record is its ancestor or the tip is on origin/<default>
 #        jg-trunk.sh live <project-dir> [--home <lead-home>]   move every home to the last fully green commit; refuses without his word, a waiver or the answer given at gated; --home moves one lead only
 #        jg-trunk.sh autolive <project-dir>            the batched live step: under a waiver, move every home to the green pin once the trunk is quiet or the hourly cap is due
+#                                                      (a verify's running gate never holds it: it steps aside; a green verify runs it with --now)
 #        jg-trunk.sh waiver <project-dir> --rule <owner-rule-id>   Overwatch only: the captain waived his word for this project's live until the stable point
 #        jg-trunk.sh waiver <project-dir> --rule <owner-rule-id> --release   Overwatch only: the captain's standing word lets this project's green release pull request merge by itself
 #        jg-trunk.sh ci <project-dir> <sha> green|red  record the CI result for a live commit; red moves the green pin, and every home, back to the last green one
@@ -344,7 +345,7 @@ GATE_ENV='HOME PATH USER LOGNAME SHELL LANG LC_ALL TMPDIR JG_HOME'
 # waits for the move, so a move never kills a running gate and no gate runs twice because a home moved. The gate takes its mark
 # first and then looks for the move; the move takes its place first and then looks for marks, so one of them always sees the other.
 gate_enter() {
-  local mark="$STATE/.trunk-gate-$PN-${BASHPID:-$$}.lock" move="$STATE/.trunk-move-$PN.lock"
+  local mark="$STATE/.trunk-gate-$PN-${GATE_TAG:-}${BASHPID:-$$}.lock" move="$STATE/.trunk-move-$PN.lock"
   while :; do
     jg_lock_try_acquire "$mark" || die "cannot mark the gate as running"
     LOCKS="$mark $LOCKS"
@@ -352,7 +353,7 @@ gate_enter() {
     unlock "$mark"; sleep 0.2  # the homes are moving: the gate starts after the move
   done
 }
-gate_leave() { unlock "$STATE/.trunk-gate-$PN-${BASHPID:-$$}.lock"; }
+gate_leave() { unlock "$STATE/.trunk-gate-$PN-${GATE_TAG:-}${BASHPID:-$$}.lock"; }
 
 # One landing deadline (JG_TRUNK_GATE_DEADLINE, an epoch the lander passes down) bounds every gate command of an attempt; on-demand verify has none.
 gate_deadline_ok() {
@@ -1725,6 +1726,17 @@ cmd_verify_due() {
   printf '%s\n' "$tip"
 }
 
+# A green verify takes the homes to the commit it judged, when the project may go live without a word (a waiver or an answer at gated):
+# the live step runs at once, off the tick's quiet window. It prints its own last line and never changes the verify's result.
+live_after_green() {  # <sha>
+  local out
+  [ -z "${JG_TASK_ID:-}" ] || return 0
+  [ "$(pol live-on-green)" = on ] || return 0
+  [ -n "$(authority trunk-live-waiver "$1")" ] || return 0
+  out=$(JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-trunk.sh" autolive "$PROJ" --now 2>&1) || echo "verify: the go-live after the green result failed: $(printf '%s' "$out" | tail -n 1 | cut -c1-200)" >&2
+  printf '%s\n' "$out" | tail -n 3
+}
+
 cmd_verify() {
   local sha tip rc=0 parent why from culprit='' gate rawgate gatekey base attempt bad green started=$SECONDS c
   open_project "${1-}"
@@ -1733,6 +1745,7 @@ cmd_verify() {
   sha=$tip; [ -z "${2-}" ] || sha=$(rev "$2") || die "'${2-}' does not resolve in $PROJ"
   git -C "$PROJ" merge-base --is-ancestor "$sha" "$tip" || refuse "${sha:0:12} is not on $TRUNK"
   JUDGE_NAME=verify; [ -z "${VERIFY_NIGHTLY:-}" ] || JUDGE_NAME=nightly
+  GATE_TAG=verify-  # its gate marks say so: a move of the homes does not wait for a verify's gate, it follows the verify's green result
   verify_slot "$sha" || { echo "verify: ${sha:0:12} is superseded by a newer verify, so it does not run; a green result there moves the pin over it too"; return 0; }
   parent=$(rev "$sha^" || true)
   # The top of a batch is judged against the trunk before the batch (its row says where that was), so one run covers the whole stack.
@@ -1778,6 +1791,7 @@ cmd_verify() {
       # commit that added no failure.
       lock "$STATE/.trunk-$PN.lock"; tip_ok; pin_green "$sha"
       unlock "$STATE/.trunk-$PN.lock"
+      live_after_green "$sha"
       case ${GATE_KIND:-} in
         full-tip-red) echo "trunk green at ${sha:0:12}, with the failures its parent already had set aside" ;;
         full-rerun) echo "trunk green at ${sha:0:12}, with the scripts that passed on their rerun set aside and filed as flaky" ;;
@@ -1900,6 +1914,17 @@ running_gate() {  # prints the pid of a gate that is running, and returns 0; ret
   done
   return 1
 }
+# A verify's gate marks itself with the tag verify- (GATE_TAG), so a move can tell it from a landing's gate.
+verify_gate_running() {
+  local m
+  for m in "$STATE"/.trunk-gate-"$PN"-verify-*.lock; do
+    [ -e "$m" ] || continue
+    if jg_lock_try_acquire "$m"; then jg_lock_release "$m"; else return 0; fi
+  done
+  return 1
+}
+# With MOVE_YIELD_TO_VERIFY set (the live step), a verify's running gate ends the wait: the move lets its place go and returns 4,
+# so no landing's gate waits behind a move that waits for a verify; the green verify takes the homes itself (live_after_green).
 begin_move() {
   local held='' busy said='' deadline
   [ "$BASHPID" = "$$" ] || die "begin_move must run in the main process, before go_live is captured in a subshell"
@@ -1907,6 +1932,7 @@ begin_move() {
   lock "$STATE/.trunk-move-$PN.lock"
   deadline=$(( SECONDS + ${JG_TRUNK_MOVE_WAIT_MAX:-2700} ))
   while busy=$(running_gate); do
+    if [ -n "${MOVE_YIELD_TO_VERIFY:-}" ] && verify_gate_running; then unlock "$STATE/.trunk-move-$PN.lock"; return 4; fi
     [ -n "$said" ] || { echo "In use: waiting: a landing's gate is running (pid $busy); the homes move when it ends, before the next gate starts"; said=1; }
     if [ "$SECONDS" -ge "$deadline" ]; then
       row trunk-in-use.tsv "$PN" "${1:-none}" "$(date +%s)" "hook-failed:a landing's gate still ran after ${JG_TRUNK_MOVE_WAIT_MAX:-2700}s; the homes stay where they were"
@@ -2042,10 +2068,13 @@ authority() {  # <waiver-file> <sha>
 # The batched live step, run on every tick of the landing check for a project with a go-live waiver. It moves every home to the
 # green pin once the trunk has been quiet (no landing for live-quiet-minutes) or the oldest landing that is not live yet is
 # live-cap-minutes old, whichever comes first, so landings never wait on a go-live and a busy trunk still goes live hourly.
+# A verify's running gate never holds the step: it says so and leaves, and the verify's own green result takes the homes (live_after_green,
+# which runs this step with --now: the quiet window and the cap are for the tick, and a green verify is the moment the pin moved).
 # Prints one `autolive: ...` line last; exit 0 for live or waiting, 3 when the move failed.
 cmd_autolive() {
   local green tip out rc now last quiet cap newest oldest wait_s failed_at t0 off dets skipped
   [ -z "${JG_TASK_ID:-}" ] || refuse "a worker never runs the live step"
+  case ${2-} in ''|--now) ;; *) die "usage: jg-trunk.sh autolive <project-dir> [--now]" ;; esac
   open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"; tip_ok; tip=$(rev "refs/heads/$TRUNK")
   green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
   LIVE_WAIVER=$(authority trunk-live-waiver "$green")
@@ -2066,12 +2095,15 @@ cmd_autolive() {
   last=$(awk -F'\t' -v p="$PN" '$1 == p && $4 ~ /^live/ && $3 > m { m = $3 } END { print m + 0 }' "$DATA/trunk-in-use.tsv" 2>/dev/null || echo 0)
   read -r newest oldest <<< "$(awk -F'\t' -v p="$PN" -v l="$last" '$2 == p && $4 >= l { if (!n || $4 > n) n = $4; if (!o || $4 < o) o = $4 } END { print n + 0, o + 0 }' "$DATA/trunk-landings.tsv" 2>/dev/null || echo "0 0")"
   [ "${newest:-0}" -gt 0 ] || { echo "autolive: waiting: nothing has landed since the last In use move"; return 0; }
-  if [ $(( now - newest )) -lt "$quiet" ] && [ $(( now - oldest )) -lt "$cap" ]; then
+  if [ "${2-}" != --now ] && [ $(( now - newest )) -lt "$quiet" ] && [ $(( now - oldest )) -lt "$cap" ]; then
     wait_s=$(( quiet - (now - newest) )); [ $(( cap - (now - oldest) )) -ge "$wait_s" ] || wait_s=$(( cap - (now - oldest) ))
     echo "autolive: waiting: In use in about $(( (wait_s + 59) / 60 )) min (quiet $(( quiet / 60 )) min, cap $(( cap / 60 )) min)"; return 0
   fi
   t0=$(date +%s)
-  LIVE_FLEET=1; begin_move "$green"  # in this process: the capture below is a subshell, which cannot let go of the trunk lock
+  LIVE_FLEET=1; MOVE_YIELD_TO_VERIFY=1; rc=0
+  begin_move "$green" || rc=$?  # in this process: the capture below is a subshell, which cannot let go of the trunk lock
+  MOVE_YIELD_TO_VERIFY=
+  [ "$rc" -ne 4 ] || { echo "autolive: waiting: a verify is running; the homes move when it ends green, and no landing waits for it"; return 0; }
   green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || echo "$green"); tip=$(rev "refs/heads/$TRUNK")  # as they stand once the gates have ended
   out=$(go_live "$green" "$tip" 2>&1) && rc=0 || rc=$?
   if [ "$rc" -ne 0 ]; then echo "autolive: NOT In use, the move failed: $(printf '%s' "$out" | tail -n 1 | cut -c1-200)"; return "$rc"; fi
