@@ -1,0 +1,3 @@
+# Switch declaration at landing
+
+Switch declaration: run `done-done run switch-decl` (`bash tests/jg-switch-decl.test.sh`, its log written into the run's folder); on a fixture home, a one-commit lane that adds `core/<x>/wiring.sh`, an empty-default key to `jg_trunk_policy`, a `toolchain.versions` row or a file under `core/machines/tables/`, with no `Change:` trailer and `changes.tsv` row, lands under the default `switch-decl=report` with a stderr line and a row in `data/switch-decl.tsv` (a wiring fragment the plan array of `bin/jg-host-wiring.sh` does not list is named as never running), is refused under `switch-decl@<project>=refuse` with the addition named and the trunk unmoved, and lands once its trailer has its row; `off` asks nothing (screen: none).

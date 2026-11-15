@@ -165,3 +165,8 @@ The same file holds two `knob` rows, `pr` and `local`, and a `word` row for each
 
 `bin/jg-machine.sh legal <enum> <value>` prints the value or exits 1 with the legal values; `write <enum> <value> <file>` writes a state word to a file only if the enum has it, so a refused write changes nothing. `bin/jg-move.sh` reads its destination through `legal`, and the observer's error on a state outside a table's enum lists the legal values.
 `bin/jg-state-lint.sh` counts the bare state strings in `bin/` and `core/` (a stage, state or status variable set or tested against an enum value as a literal word), prints the count, and with `--check` exits 1 when it is above `core/machines/bare-states.baseline`. It starts at today's count, so a new bare string is refused while the existing ones are cleaned up writer by writer; each cleanup lowers the baseline.
+
+## Switch declaration at landing
+
+A commit that adds a `core/<x>/wiring.sh`, an empty-default key to `jg_trunk_policy`, a `toolchain.versions` row or a file under `core/machines/tables/` ships something behind a switch, so it carries a `Change: <id>` trailer and a row for `<id>` in `changes.tsv` (above).
+`core/machines/switch-decl.sh check <repo> <base> <commit>` reads that; the landing check (`bin/jg-trunk.sh land`) asks it under the policy key `switch-decl`: `report` (the default) says so on stderr and in `data/switch-decl.tsv` and lands, `refuse` (`switch-decl@<project>=refuse`) stops the landing and names the addition, `off` asks nothing. A new wiring fragment that `bin/jg-host-wiring.sh` does not list in its plan is named too, because a fragment outside the plan never runs. `tests/jg-switch-decl.test.sh` runs each case.

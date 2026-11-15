@@ -897,6 +897,21 @@ lane_meta() {  # <task-id>
 # The commit's ticket reference. A lane whose record has `ticket=` (spawned with a ticket) needs a `Ticket:` trailer equal to it. A lane with
 # no `ticket=` (started before the spawn recorded one) keeps the text match of its task id; the `KEY-n` form counts only in a home with a
 # ticket-key file. A message the lander rebased keeps its trailer, so the check reads the commit to land. Refuses (exits) on a miss.
+# A commit that adds a thing which ships behind a switch declares it (core/machines/switch-decl.sh). The switch-decl policy key: report
+# (the default) says so on stderr, records the finding in data/switch-decl.tsv and lands; refuse stops the landing; off does not ask.
+switch_decl_check() {  # <id> <base> <commit>
+  local mode out rc=0 why
+  mode=$(pol switch-decl)
+  [ "$mode" != off ] || return 0
+  out=$(bash "$JG_ROOT/core/machines/switch-decl.sh" check "$PROJ" "$2" "$3") || rc=$?
+  [ "$rc" -ne 0 ] || return 0
+  why=$(printf '%s\n' "$out" | cut -f2 | tr '\n' ';')
+  [ "$rc" -eq 1 ] || { echo "jg-trunk: warning: the switch declaration of $1 was not read (exit $rc)" >&2; return 0; }
+  row switch-decl.tsv "$(date +%s)" "$1" "$PN" "${3:0:12}" "$mode" "$why"
+  [ "$mode" != refuse ] || refuse "$1 adds something that ships behind a switch and does not declare it: $why"
+  echo "jg-trunk: switch-decl (report): $1 adds something that ships behind a switch and does not declare it: $why" >&2
+}
+
 ticket_ref_check() {  # <id> <commit>
   local id=$1 msg ticket keyed=
   msg=$(git -C "$PROJ" log -1 --format=%B "$2")
@@ -952,6 +967,7 @@ lane_admit() {  # <id> <tip> <expected head or -> <follow 0|1>
   if hit=$(touches_protected "$tip" "$LANE_CAND") && [ "$(pol protected-landing)" = refuse ]; then
     refuse "$hit is a protected path; landing requires approval of protected-landing=gate (current protected-landing=refuse)"
   fi
+  switch_decl_check "$id" "$tip" "$LANE_CAND"
   linked=$(JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-captain-hold.sh" blocking "$id") || rc=$?
   case $rc in
     0) refuse "task $id is linked to a decision still open for the captain: $(printf '%s' "$linked" | tr '\t\n' ' ;')" ;;

@@ -2303,6 +2303,9 @@ journeys:
   switch-manifest:
     tier: local
     command: bash tests/jg-switch.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  switch-decl:
+    tier: local
+    command: bash tests/jg-switch-decl.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
 
 secrets:
   allow:
