@@ -310,7 +310,30 @@ test_a_home_with_the_old_live_names_moves_them_once_and_keeps_no_second_path() {
   pass 'the old live record and word files move once to their In use names, with no second path left'
 }
 
+# A go-live restarts the leads the move left on the new bytes, detached and in one restart command, and never Main: the mover names the
+# leads on its restart line, and the restart command (stood in for here, it records its argv) is the one that persists and replaces them.
+test_a_go_live_restarts_the_leads_the_move_names_and_never_fails_the_move_when_it_cannot() {
+  local out c
+  fleet_world golive-restart; lane r1 good; c=$(git -C "$PROJ" rev-parse fm/r1)
+  fleet_sweeps "landed r1" >/dev/null; await_green || fail "the landing must move the green pin"
+  printf '#!/usr/bin/env bash\necho "restart-squad-leads: jg-lead-a jg-lead-b"\necho "nudge-squad-leads: none"\n' > "$W/root/bin/jg-update.sh"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s/restarted"\n' "$W" > "$W/root/bin/jg-squad-lead-restart.sh"
+  chmod +x "$W/root/bin/jg-update.sh" "$W/root/bin/jg-squad-lead-restart.sh"
+  out=$(trunk live "$PROJ" 2>&1) || fail "live: $out"
+  assert_contains "$out" "restarting the leads lead-a lead-b" "the go-live must say it restarts the leads"
+  for _ in $(seq 1 50); do [ -s "$W/restarted" ] && break; sleep 0.2; done
+  assert_equals "$(cat "$W/restarted")" "lead-a lead-b" "one restart command gets the leads the move named, without the jg- prefix"
+  pass 'a go-live restarts the leads the move names, in one detached restart command'
+  rm -f "$W/restarted" "$W/root/bin/jg-squad-lead-restart.sh"; age_live
+  printf '#!/usr/bin/env bash\necho "restart-squad-leads: jg-lead-a"\n' > "$W/root/bin/jg-update.sh"
+  lane r2 two; fleet_sweeps "landed r2" >/dev/null; await_green || fail "r2's landing must move the green pin"
+  out=$(trunk live "$PROJ" 2>&1) || fail "a missing restart command must not fail the move: $out"
+  assert_contains "$out" "bin/jg-squad-lead-restart.sh is missing" "a restart that cannot start is named"
+  pass 'a restart that cannot start is named and never fails the move'
+}
+
 test_a_landing_on_a_tip_with_only_recorded_reds_moves_the_pin_and_goes_live_by_itself
+test_a_go_live_restarts_the_leads_the_move_names_and_never_fails_the_move_when_it_cannot
 test_a_home_with_the_old_live_names_moves_them_once_and_keeps_no_second_path
 test_the_bundled_hook_moves_a_home_that_runs_the_project
 test_the_registered_check_lands_a_proved_task_without_a_human

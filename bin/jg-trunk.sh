@@ -1882,6 +1882,28 @@ begin_move() {
   MOVE_HELD=1
 }
 
+# A lead the move left on the new bytes keeps running its old launch-time wiring until it is replaced, so the leads the mover
+# names on its `restart-squad-leads:` line are restarted by bin/jg-squad-lead-restart.sh (it persists their open records first
+# and restarts one at a time). Main is never in that set: its own move leaves state/trunk-live-restart-pending for its next
+# locked session start, so the leads go first and Main last. The restart runs detached so a landing never waits on a lead's
+# turn; a restart that cannot start is named on a line and never undoes the move.
+restart_moved_leads() {  # <mover output>
+  local list ids='' w restarter="$SCRIPT_DIR/jg-squad-lead-restart.sh"
+  list=$(printf '%s\n' "$1" | sed -n 's/^restart-squad-leads://p' | tail -n 1)
+  for w in $list; do
+    [ "$w" = none ] || ids="$ids ${w#jg-}"
+  done
+  [ -n "$ids" ] || return 0
+  if [ ! -x "$restarter" ]; then
+    echo "actionable: the leads$ids moved but bin/jg-squad-lead-restart.sh is missing; they keep running on their old wiring"; return 0
+  fi
+  mkdir -p "$DATA" 2>/dev/null || true
+  # shellcheck disable=SC2086 # a space-separated id list is the command's own argv
+  JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$DATA" setsid nohup "$restarter" $ids \
+    >> "$DATA/trunk-lead-restart.log" 2>&1 < /dev/null &
+  echo "In use: restarting the leads$ids onto the new wiring, one at a time (log: data/trunk-lead-restart.log)"
+}
+
 # Move the home to <sha> through the project's live hook and record it. Exit 3 when the home did not move.
 go_live() {  # <sha> <tip>   LIVE_FLEET=1 (cmd_live) moves every home; a pin-back moves this one
   local sha=$1 hook status=landed-not-live here there why hook_out hook_rc reason prev
@@ -1901,6 +1923,7 @@ go_live() {  # <sha> <tip>   LIVE_FLEET=1 (cmd_live) moves every home; a pin-bac
       printf '%s\n' "$why"; exit 3  # the move's own last line (the homes left behind) stays last: autolive reports it
     fi
     printf '%s\n' "$why"
+    restart_moved_leads "$why"
     [ -z "${LIVE_HOME:-}" ] || status=canary
   elif [ -x "$hook" ]; then
     hook_out=$("$hook" "$PROJ" "$sha" 2>&1) && hook_rc=0 || hook_rc=$?
