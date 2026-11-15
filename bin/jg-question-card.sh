@@ -7,6 +7,8 @@
 #   jg-question-card.sh post --board <decisions.json> ... (the same flags)
 #   jg-question-card.sh post --route <lead> [--decision-key <slug>] ... (the same flags)
 #   jg-question-card.sh post --must design-pick --raised-by <ticket> ... (a design card)
+#   jg-question-card.sh post --must design-pick --raised-by <ticket> --option a=A --option b=B
+#       --mock a=mocks/<key>/a.html --mock b=mocks/<key>/b.html ... (a design card with mocks)
 #   jg-question-card.sh answer <card-key> --words "<the captain's words>" [--board <decisions.json>]
 #   jg-question-card.sh keys
 #
@@ -49,6 +51,16 @@
 #        row (bin/jg-board-answers.sh). A card a script files as an alert, with
 #        --filer, is not a design ask and is exempt. Only this path files the row: a card posted
 #        straight through sign-off-axi, or into another home's board, does not.
+#        --mock <option>=<file> gives a design card the mock of one option: a file
+#        in the board's mocks folder, named from the board's folder (mocks/<key>/a.html).
+#        A card with any --mock needs --must design-pick and exactly one mock for
+#        every --option, none twice, none for an option the card lacks; a card that
+#        breaks that is refused and nothing is posted. Such a card is posted as a
+#        sign-off-axi design (post --type design), which shows the mocks side by side
+#        and keeps its own Open live link for each; the board record lists them in its
+#        `mocks` field, and one `mock <option>: <file>` line per mock goes to stderr.
+#        The files stay in the mocks folder, and the board serves them, until the pick;
+#        nothing here removes one.
 #        --must <category> is the gate (bin/jg-ask-gate-lib.sh): it is written
 #        into the card's detail field as "must: <category>", and on the
 #        when-it-matters leash a post with none is refused and recorded for
@@ -127,6 +139,7 @@ split_board() {
   MUST=''
   RECORD=''
   RAISED=''
+  MOCKS=()
   ARGS=()
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -154,6 +167,13 @@ split_board() {
         shift
         [ $# -gt 0 ] || die "--raised-by needs the ticket that raised the card"
         RAISED=$1
+        ;;
+      --mock)
+        shift
+        [ $# -gt 0 ] || die "--mock needs <option>=<file>"
+        case "$1" in ?*=?*) ;; *) die "refused: --mock '$1' is not <option>=<file>" ;; esac
+        MOCKS+=("$1")
+        ARGS+=(--mock "$1")
         ;;
       --must)
         shift
@@ -242,8 +262,31 @@ refuse() {  # <the refusal line>
   exit 1
 }
 
+# A card with mocks is a design with one mock per option (see --mock in the
+# header): refuse before anything posts when the mocks and the options differ.
+check_mocks() {
+  local i=0 opt mock value missing='' seen=' '
+  local options=()
+  [ "${#MOCKS[@]}" -gt 0 ] || return 0
+  [ "$MUST" = design-pick ] || die "refused: --mock belongs to a design card; pass --must design-pick"
+  while [ "$i" -lt "${#ARGS[@]}" ]; do
+    [ "${ARGS[$i]}" != --option ] || { opt=${ARGS[$((i + 1))]:-}; options+=("${opt%%=*}"); }
+    i=$((i + 1))
+  done
+  for mock in "${MOCKS[@]}"; do
+    value=${mock%%=*}
+    case " ${options[*]-} " in *" $value "*) ;; *) die "refused: --mock '$value' names no --option of this card" ;; esac
+    case "$seen" in *" $value "*) die "refused: option '$value' has two mocks; a card carries one mock per option" ;; esac
+    seen="$seen$value "
+  done
+  for opt in ${options[@]+"${options[@]}"}; do
+    case "$seen" in *" $opt "*) ;; *) missing="$missing $opt" ;; esac
+  done
+  [ -z "$missing" ] || die "refused: option(s)$missing have no --mock; a design card carries one mock per option"
+}
+
 cmd_post() {
-  local title ask_ref before after key board out link rc=0 refusal rec filer detail raised_rc RECORD=''
+  local title ask_ref before after key board out link mock rc=0 refusal rec filer detail raised_rc RECORD=''
   split_board "$@"
   require_signoff
   title=$(flag_value --title)
@@ -287,6 +330,8 @@ cmd_post() {
     case "$raised_rc" in 0|1) ;; 3) die "refused: --raised-by '$RAISED' is not a ticket in this home's backlog" ;; *) die "refused: could not read this home's backlog to check --raised-by '$RAISED'" ;; esac
   fi
 
+  check_mocks
+
   if [ "$ROUTE" = main ]; then
     # An explicit Main-owned card: its answer wakes Main. The route is still written (as
     # `owner=main`), so no card is left without one and its name never hands it to a task.
@@ -305,10 +350,13 @@ cmd_post() {
     "$(option_count)"
 
   before=$(jg_question_open_keys)
+  # A card with mocks is a design to sign-off-axi; every other card is a decision.
+  local verb=(raise) kind=()
+  [ "${#MOCKS[@]}" -eq 0 ] || { verb=(post); kind=(--type design); }
   if [ -n "$BOARD" ]; then
-    out=$(sign-off-axi raise "$BOARD" ${ARGS[@]+"${ARGS[@]}"} 2>&1) || rc=$?
+    out=$(sign-off-axi "${verb[@]}" "$BOARD" ${kind[@]+"${kind[@]}"} ${ARGS[@]+"${ARGS[@]}"} 2>&1) || rc=$?
   else
-    out=$(sign-off-axi raise ${ARGS[@]+"${ARGS[@]}"} 2>&1) || rc=$?
+    out=$(sign-off-axi "${verb[@]}" ${kind[@]+"${kind[@]}"} ${ARGS[@]+"${ARGS[@]}"} 2>&1) || rc=$?
   fi
   [ -z "$out" ] || printf '%s\n' "$out" >&2
   [ "$rc" -eq 0 ] || die "sign-off-axi refused the card (exit $rc); fix the flag it named and post again"
@@ -339,6 +387,7 @@ cmd_post() {
       || printf 'jg-question-card: posted %s but could not record its detail beside the board\n' "$key" >&2
   fi
   printf '%s\n' "$key"
+  for mock in ${MOCKS[@]+"${MOCKS[@]}"}; do printf 'mock %s: %s\n' "${mock%%=*}" "${mock#*=}" >&2; done
   link=$(jg_board_link decide "$key") && printf 'link: %s\n' "$link" >&2
   # The captain channel sends this card to the captain by the new path
   # (bin/jg-bus.sh): it records and publishes the event and changes

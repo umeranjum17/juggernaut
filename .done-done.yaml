@@ -1276,6 +1276,9 @@ journeys:
   jg-card-rules:
     tier: local
     command: bash tests/jg-card-rules.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-design-card-mocks:
+    tier: local
+    command: bash tests/jg-design-card-mocks.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-chat-answer-card:
     tier: local
     command: bash tests/jg-chat-answer-card.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
