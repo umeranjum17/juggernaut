@@ -446,6 +446,35 @@ queue_has_room() {  # <project> <queue> <landings of that queue running now>
 }
 # Every ready lane waits because every gate slot is in use: record that at this decision (core/trunk-landing/queue-why.sh).
 slots_full() { local at id head; while read -r at id head _; do [ -z "$id" ] || queue_why_wait "$MEM" "$id" "$head" 'slot full'; done <<< "$cands"; }
+# The nothing-lands alert: a project whose oldest ready lane has waited N seconds (JG_NOTHING_LANDS_SECONDS, 1800) while nothing landed in it for
+# N seconds raises one `fleet-blocked` alert to the lead, rung 2 (rung 0 is the tick and rings nobody). It resolves at the next landing, or
+# when the project has no ready lane. It prints nothing to stdout: the tick turns stdout into a wake.
+nothing_lands() {
+  local alert=${JG_TRUNK_LANDING_ALERT:-$FMH/bin/jg-alert.sh} n=${JG_NOTHING_LANDS_SECONDS:-1800} now p cnt oldest last key
+  case $n in ''|*[!0-9]*) n=1800 ;; esac
+  now=$(date +%s)
+  while read -r p cnt oldest; do
+    [ -n "$p" ] || continue
+    last=$(awk -F'\t' -v p="$p" '$2 == p && $4 + 0 > m { m = $4 + 0 } END { print m + 0 }' "$DATA_DIR/trunk-landings.tsv" 2>/dev/null || true); last=${last:-0}
+    key="fleet-blocked--$p-nothing-lands"
+    if [ $((now - oldest)) -ge "$n" ] && [ $((now - last)) -ge "$n" ]; then
+      JG_HOME=$FMH JG_STATE_OVERRIDE=$STATE bash "$alert" raise fleet-blocked "$p-nothing-lands" --rung 2 --project "$p" \
+        --note "$cnt ready lane(s) wait, oldest $(( (now - oldest) / 60 )) min, nothing landed for $(( (now - last) / 60 )) min" --deliver >/dev/null \
+        || echo "trunk-landing: the nothing-lands alert for $p was not raised" >&2
+    else
+      nothing_lands_resolve "$alert" "$key"
+    fi
+  done < <(printf '%s' "$cands" | awk 'NF { c[$4]++; if (!($4 in o) || $1 < o[$4]) o[$4] = $1 } END { for (p in c) print p, c[p], o[p] }')
+  # A project with no ready lane left has nothing to wait for.
+  for key in $(JG_HOME=$FMH JG_STATE_OVERRIDE=$STATE bash "$alert" list 2>/dev/null | grep -E '^fleet-blocked--.+-nothing-lands$'); do
+    p=${key#fleet-blocked--}; p=${p%-nothing-lands}
+    printf '%s' "$cands" | awk -v p="$p" '$4 == p { f = 1 } END { exit !f }' || nothing_lands_resolve "$alert" "$key"
+  done
+}
+nothing_lands_resolve() {  # <alert script> <key>: resolve the alert when it is still live
+  local w; w=$(JG_HOME=$FMH JG_STATE_OVERRIDE=$STATE bash "$1" word "$2" 2>/dev/null) || return 0
+  [ -z "$w" ] || [ "$w" = resolved ] || JG_HOME=$FMH JG_STATE_OVERRIDE=$STATE bash "$1" resolve "$2" >/dev/null 2>&1 || :
+}
 # The cause a late start names when nothing was ahead of the lane: the project's verify holds its slot, or the host load is at its cpu count.
 start_cause() {
   local pn=$1 m="$STATE/.trunk-verify-$1.lock" load cpus
@@ -519,6 +548,7 @@ for f in "$STATE"/trunk-flush-*; do
   printf '%s' "$cands" | awk -v p="${f##*/trunk-flush-}" '$4 == p { f = 1 } END { exit !f }' || rm -f -- "$f"
 done
 # Oldest done first, a lane once returned for a conflict ahead of the rest. A landing already running holds the rest back; its end starts the next one (`next`).
+[ -n "$QUIET" ] || nothing_lands
 [ -n "$cands" ] || exit 0
 if ! mkdir "$MEM/.start" 2>/dev/null; then
   [ -n "$(find "$MEM/.start" -mmin +1 2>/dev/null)" ] || exit 0

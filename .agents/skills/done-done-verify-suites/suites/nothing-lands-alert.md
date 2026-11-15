@@ -1,0 +1,3 @@
+# Nothing-lands alert
+
+A project where ready lanes wait and nothing lands: run `done-done run -- bash -c 'set -e; bash tests/jg-trunk-nothing-lands.test.sh > "$DONE_DONE_EVIDENCE_ROOT/nothing-lands.log" 2>&1'`; over a fixture home with real git, the real landing check and the real `bin/jg-alert.sh`, it proves that a lane ready 10 minutes raises no alert, that a lane ready 31 minutes in a project whose last landing is 31 minutes old raises exactly one `fleet-blocked--<project>-nothing-lands` alert at rung 2 for the lead, that a second tick adds none, that a new landing row or an emptied queue resolves it at the next tick, and that a tick prints nothing to stdout. The test fails if the one call in `core/trunk-landing/trunk-landing.sh` is removed (screen: none).
