@@ -14,7 +14,7 @@
 #   by-ticket  one line per raising ticket: ticket<TAB>raised-by<TAB>cards<TAB>holds (the cards its holds are in)
 #              The raiser is the first `parent:` or `linked-to:` target of the hold's body, else `-`.
 #   per-day    one line per home and day: day<TAB>home<TAB>date<TAB>new
-#              The day is the date of the hold's `Captain hold set:` line; the home is the squad lead
+#              The day is the date the owner's question (its gate) was made, else the date of an old hold's `Captain hold set:` line; the home is the squad lead
 #              id of this home (.jg-squad-lead-home) or `main`.
 #   report     the three above, each under a `# <name>` line.
 #
@@ -36,8 +36,9 @@ home_name() {
 # Print one row per open captain hold: id<TAB>key<TAB>raised-by<TAB>day. Sorted by day then id,
 # so the first row of a key is the earliest hold.
 hold_rows() {
-  local listing id shown body key raiser day
+  local listing id shown body key raiser day gate_days
   listing=$("$BACKLOG" list) || fail "the backlog could not be listed"
+  gate_days=$("$BACKLOG" questions --json) || fail "the open questions could not be read"
   while IFS= read -r id; do
     shown=$("$BACKLOG" show "$id") || fail "task $id could not be read"
     printf '%s\n' "$shown" | grep -q '^  held: yes$' || continue
@@ -45,7 +46,8 @@ hold_rows() {
     body=$(printf '%s\n' "$shown" | sed -n 's/^  body: "\(.*\)"$/\1/p' | sed 's/\\n/\n/g')
     key=$(printf '%s\n' "$body" | sed -n -E 's/^[[:space:]]*question-key:[[:space:]]*([A-Za-z0-9._-]+).*$/\1/p' | head -n 1)
     raiser=$(printf '%s\n' "$body" | sed -n -E 's/^[[:space:]]*(parent|linked-to):[[:space:]]*([A-Za-z0-9._-]+).*$/\2/p' | head -n 1)
-    day=$(printf '%s\n' "$body" | sed -n -E 's/^Captain hold set: ([0-9]{4}-[0-9]{2}-[0-9]{2}).*$/\1/p' | head -n 1)
+    day=$(printf '%s\n' "$gate_days" | jq -r --arg t "$id" '[.[] | select(.ticket == $t)] | sort_by(.day) | first | .day // empty')
+    [ -n "$day" ] || day=$(printf '%s\n' "$body" | sed -n -E 's/^Captain hold set: ([0-9]{4}-[0-9]{2}-[0-9]{2}).*$/\1/p' | head -n 1)
     printf '%s\t%s\t%s\t%s\n' "$id" "${key:-$id}" "${raiser:--}" "${day:-unknown}"
   done < <(printf '%s\n' "$listing" | sed -n -E 's/^[[:space:]]+([A-Za-z0-9._-]+),(queued|in_flight|in-flight|blocked|[a-z_-]+),.*/\1/p') \
     | LC_ALL=C sort -t "$(printf '\t')" -k4,4 -k1,1

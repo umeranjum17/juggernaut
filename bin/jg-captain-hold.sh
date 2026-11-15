@@ -1499,7 +1499,6 @@ reconcile_note() {
     reconcile_request_retire "$id" \
       || fail "could not retire the applied reconcile request for $id"
     command_open "$id" || fail "recording the reconcile note released captain-held task $id"
-    report_hold_reconciled "$id" raised
     printf 'still-open: %s\n' "$id"
     return 0
   fi
@@ -1669,7 +1668,10 @@ command_phase() {  # <task-id>
     return 0
   fi
   if [ "$(show_field "$show" state)" = "done" ] && [ "$(show_field_value "$show" hold_kind)" = captain ]; then echo closed; return 0; fi
-  (command_answered "$id") && echo closed || echo none
+  (command_answered "$id") || { echo none; return 0; }
+  # His words closed the question (answer_by_gate) and the ticket's own close is still to come: answered, not routed yet.
+  if [ "$(show_field "$show" state)" != "done" ] \
+    && [ -n "$(gate_rows "$id" --all | jq -r 'select(.resolution == "answered") | .id')" ]; then echo answered; else echo closed; fi
 }
 
 # Still an open captain call? Exit 0 yes, 1 no, 2 cannot tell (see the header).

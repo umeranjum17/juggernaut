@@ -47,9 +47,9 @@ captain() {  # <home> <fakebin> <args...>
     JG_DATA_OVERRIDE="$h/data" JG_CONFIG_OVERRIDE="$h/config" "$ROOT/bin/jg-captain-hold.sh" "$@"
 }
 printf 'Use the compact layout.\n' > "$TMP_ROOT/pick.txt"
-record_pick() {  # <home> <fakebin> <ticket>: hold, then the captain's recorded answer
+record_pick() {  # <home> <fakebin> <ticket> [answer flag]: hold, then the captain's recorded answer (--release keeps a ticket that has open pieces open)
   captain "$1" "$2" hold "$3" --reason "captain must pick" >/dev/null 2>&1 || fail "could not hold $3"
-  captain "$1" "$2" answer "$3" --decision-file "$TMP_ROOT/pick.txt" >"$TMP_ROOT/pick.out" 2>&1 \
+  captain "$1" "$2" answer "$3" --decision-file "$TMP_ROOT/pick.txt" "${@:4}" >"$TMP_ROOT/pick.out" 2>&1 \
     || fail "could not record the pick on $3: $(cat "$TMP_ROOT/pick.out")"
 }
 
@@ -72,10 +72,11 @@ refused_clean() { [ ! -e "$SH/state/$1.meta" ] || fail "the refused start of $1 
 # S1: the design ticket is only filed - no hold, no ask.
 file_s jg-dz1 "[design-ux] Tickets page design"
 file_s jg-dz2 "[design-ux] Settings page design" "linked-to: jg-sb2"
+file_s jg-dz3 "[design-ux] Tickets filters design"
 file_s jg-sa1 "[feature] Build the tickets page" "linked-to: jg-dz1"
 file_s jg-sb2 "[feature] Build the settings page"
-file_s jg-sc3 "[feature] Build the tickets filters" "parent: jg-dz1"
-for pair in "jg-sa1 jg-dz1" "jg-sb2 jg-dz2" "jg-sc3 jg-dz1"; do  # names it, named by it, parent link
+file_s jg-sc3 "[feature] Build the tickets filters" "parent: jg-dz3"
+for pair in "jg-sa1 jg-dz1" "jg-sb2 jg-dz2" "jg-sc3 jg-dz3"; do  # names it, named by it, parent link
   # shellcheck disable=SC2086
   set -- $pair
   out=$(spawn "$1"); rc=$?
@@ -93,6 +94,7 @@ for t in jg-su1 jg-su2 jg-su3; do
 done
 record_pick "$SH" "$FAKEBIN" jg-dz1
 record_pick "$SH" "$FAKEBIN" jg-dz2
+record_pick "$SH" "$FAKEBIN" jg-dz3 --release  # jg-sc3 is a piece of jg-dz3, which cannot close before it
 for t in jg-sa1 jg-sb2 jg-sc3; do
   out=$(spawn "$t"); rc=$?
   expect_code 0 "$rc" "S3 $t should start after the recorded pick: $out"
@@ -148,13 +150,14 @@ merged_pr() { grep -q "^pr merge ${1##*/} " "$MH/gh.log"; }
 add_row "$MH" jg-mz1 "[design-ux] Tickets page design" ship sample "" >/dev/null || fail "M1 could not file jg-mz1"
 ship_m jg-ma1 "linked-to: jg-mz1"; pa1=$PR
 ship_m jg-mb2; pb2=$PR
-ship_m jg-mc3 "parent: jg-mz1"; pc3=$PR
+add_row "$MH" jg-mz3 "[design-ux] Tickets filters design" ship sample "" >/dev/null || fail "M1 could not file jg-mz3"
+ship_m jg-mc3 "parent: jg-mz3"; pc3=$PR
 ship_m jg-md4; pd4=$PR
 add_row "$MH" jg-mh1 "[feature] Pick the export format" ship sample "" >/dev/null || fail "M1 could not file jg-mh1"
 captain "$MH" "$MFAKE" hold jg-mh1 --reason "captain must pick" >/dev/null 2>&1 || fail "M1 could not hold jg-mh1"
 ship_m jg-mf6 "linked-to: jg-mh1"; pf6=$PR
 add_row "$MH" jg-mz2 "[design-ux] Settings page design" ship sample "linked-to: jg-mb2" >/dev/null || fail "M1 could not file jg-mz2"
-for tuple in "jg-ma1 $pa1 jg-mz1" "jg-mb2 $pb2 jg-mz2" "jg-mc3 $pc3 jg-mz1" "jg-mf6 $pf6 jg-mh1"; do
+for tuple in "jg-ma1 $pa1 jg-mz1" "jg-mb2 $pb2 jg-mz2" "jg-mc3 $pc3 jg-mz3" "jg-mf6 $pf6 jg-mh1"; do
   # shellcheck disable=SC2086
   set -- $tuple
   out=$(merge "$1" "$2" 2>&1); rc=$?
@@ -174,6 +177,7 @@ for pair in "jg-md4 $pd4" "jg-me5 $pe5" "jg-mg7 $pg7"; do
 done
 record_pick "$MH" "$MFAKE" jg-mz1
 record_pick "$MH" "$MFAKE" jg-mz2
+record_pick "$MH" "$MFAKE" jg-mz3 --release  # jg-mc3 is a piece of jg-mz3, which cannot close before it
 captain "$MH" "$MFAKE" answer jg-mh1 --decision-file "$TMP_ROOT/pick.txt" >/dev/null 2>&1 || fail "M3 could not answer jg-mh1"
 for pair in "jg-ma1 $pa1" "jg-mb2 $pb2" "jg-mc3 $pc3" "jg-mf6 $pf6"; do
   # shellcheck disable=SC2086

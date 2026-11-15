@@ -356,7 +356,7 @@ def questions(rows, args):
         records.append({"id": gate["id"], "ticket": ticket.get("id", "-"), "title": gate.get("title", ""), "question": question(gate),
                         "must": meta.get("must", "-"), "card": meta.get("card", "-"), "origin": meta.get("origin", "-"), "close": meta.get("close", "-"),
                         "state": "closed" if shut else "open", "resolution": meta.get("resolution", "-"),
-                        "words": gate.get("close_reason") or "", "age": (now - made).days, "until": until})
+                        "words": gate.get("close_reason") or "", "age": (now - made).days, "day": made.date().isoformat(), "until": until})
     if "--json" in found:
         print(json.dumps(records))
     elif records:

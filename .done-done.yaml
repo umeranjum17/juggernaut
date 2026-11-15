@@ -1261,6 +1261,9 @@ journeys:
   jg-captain-approval:
     tier: local
     command: bash tests/jg-captain-approval.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-captain-approval-b:
+    tier: local
+    command: bash tests/jg-captain-approval-b.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-captain-card-two-layers:
     tier: local
     command: bash tests/jg-captain-card-two-layers.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

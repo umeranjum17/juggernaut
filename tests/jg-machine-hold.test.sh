@@ -17,13 +17,15 @@ assert_equals "raised deferred answered closed" \
 if [ -e "$ROOT/core/machines/tables/captain-call.tsv" ]; then fail "captain-call.tsv is replaced by hold.tsv and must be gone"; fi
 pass "the hold table lints with 4 states and 6 moves, each with a test, and captain-call.tsv is gone"
 
-# A fixture record in every state. Each is made through the real CLI (hold, answer) or, for the answer that is recorded and not yet
-# completed, in the exact body shape write_resolution_record leaves while the close is still to come.
+# A fixture record in every state. Each is made through the real CLI (hold) or, for the answer that is recorded and not yet
+# completed, by closing the question's gate with his words and leaving the ticket held, which is where answer_by_gate stops before the close.
 hold hold h-raised --title "Choose the sample option for h-raised" --reason "$reason" --repo sample >/dev/null || fail "seed raised"
 hold hold h-later --title "Choose the sample option for h-later" --reason "$reason" --repo sample --until 2099-01-01 >/dev/null || fail "seed deferred"
 hold hold h-flight --title "Choose the sample option for h-flight" --reason "$reason" --repo sample >/dev/null || fail "seed answered"
-printf 'Captain hold set: 2026-11-12T10:00:00Z\n\nResolution recorded by jg-captain-hold.\nDecision digest: abc123\nResolution mode: answered\n\nCaptain decision:\nUse the first sample option.\n' > "$T/inflight.body"
-jg_test_backlog "$HOME_DIR" update h-flight --body-file "$T/inflight.body" >/dev/null || fail "write the in-flight answer"
+gate=$(jg_test_backlog "$HOME_DIR" questions --ticket h-flight --json | jq -r '.[0].id'); [ -n "$gate" ] || fail "find the question on h-flight"
+printf 'Use the first sample option.' > "$T/inflight.words"
+BEADS_DIR=$(cat "$HOME_DIR/config/beads-dir") JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT \
+  "$ROOT/bin/jg-beads-write.py" resolve "$gate" --words-file "$T/inflight.words" --resolution answered >/dev/null || fail "write the in-flight answer"
 
 : > "$T/states.corpus"
 for pair in h-raised:raised h-later:deferred h-flight:answered; do
