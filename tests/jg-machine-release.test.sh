@@ -27,6 +27,11 @@ pr() {  # <number> <OPEN|MERGED|CLOSED> none|running|red|green
 bash "$JM" check release >/dev/null; expect_code 0 "$?" "the table lints"
 bash "$JM" coverage release >/dev/null; expect_code 0 "$?" "every move names a test"
 assert_equals 6 "$(grep -c '^state	' "$M/tables/release.tsv")" "six release states"
+esc=$(bash "$JM" escalation release)
+for w in ready red; do
+  assert_contains "$esc" "$w"$'\twaiting\t-\t4h -> alert stranded' "the release state $w declares the 4 h stranded limit"
+done
+assert_equals 2 "$(printf '%s\n' "$esc" | grep -c '4h -> alert stranded')" "only ready and red declare a limit"
 
 # One landed lane per release state; its release pull request is read as gh prints it.
 n=0

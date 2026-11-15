@@ -17,7 +17,7 @@ printf '#!/usr/bin/env bash\nbash "$ROOT/bin/jg-machine-guard.sh" edge m work en
 printf '#!/usr/bin/env bash\necho "writes a state and says nothing"\n' >"$T/root/bin/quiet.sh"
 { tab machine m carrier owner
   tab state start initial 'The record is filed.' - rest go
-  tab state work normal 'A worker has it.' - waiting '5m -> alert slow-work'
+  tab state work normal 'A worker has it.' - waiting '5m -> alert stuck-wait'
   tab state ended terminal 'The work is finished.' -
   tab edge '(none)' file start bin/loud.sh:add - 'a record is filed' t
   tab edge start go work bin/quiet.sh:go - 'the worker starts' t

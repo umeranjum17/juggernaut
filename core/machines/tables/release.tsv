@@ -1,8 +1,8 @@
 machine	release	one release of a project trunk: data/trunk-releases.tsv and its release pull request	core/machines/observers/release.sh
 state	open	initial	A release pull request is open and no check has reported on its head.	-
 state	checking	normal	The hosted checks of the release run.	-
-state	red	normal	A required check of the release failed.	-
-state	ready	normal	Every check is green and the merge waits for yolo or the owner's word.	-
+state	red	normal	A required check of the release failed. The 4 h limit applies while an open ticket waits for the release.	-	waiting	4h -> alert stranded
+state	ready	normal	Every check is green and the merge waits for yolo or the owner's word. The 4 h limit applies while an open ticket waits for the release.	-	waiting	4h -> alert stranded
 state	merged	terminal	The release is on main.	-
 state	abandoned	terminal	The release was closed unmerged, and its tickets join the next release.	-
 group	unmerged	open	checking	red	ready
