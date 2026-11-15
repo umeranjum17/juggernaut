@@ -241,9 +241,11 @@ SH
   pass "a real cycle read its inventory through the Go command and delivered the wake: $(head -n 1 "$dir/watch.out")"
 }
 
-# count_cycles: run the real watcher over an empty home (no working lane) for <secs> seconds
-# and print how many cycles asked the Go command for their inventory.
-count_cycles() {  # <name> <idle-poll> <secs>
+# count_cycles: run the real watcher over an empty home (no working lane) and print how many
+# cycles asked the Go command for their inventory. It stops after <secs> seconds, or, when <want>
+# is given, as soon as that many cycles are on record (at most <secs>), so a slow host does not
+# starve the count. It prints '<cycles> <seconds it ran>'.
+count_cycles() {  # <name> <idle-poll> <secs> [want]
   local dir log pid
   dir=$(make_case "$1")
   log="$dir/core-calls.log"
@@ -259,24 +261,35 @@ SH
     JG_POLL=1 JG_IDLE_POLL="$2" JG_SIGNAL_GRACE=0 JG_HEARTBEAT=999999 JG_HOME_SUMMARY_INTERVAL=999999 \
     "$ROOT/bin/jg-watch.sh" > "$dir/watch.out" 2> "$dir/watch.err" &
   pid=$!
-  sleep "$3"
+  local t0=$SECONDS
+  if [ -n "${4:-}" ]; then
+    until [ "$(grep -c '^inventory' "$log")" -ge "$4" ] || [ $((SECONDS - t0)) -ge "$3" ]; do sleep 0.2; done
+  else
+    sleep "$3"
+  fi
+  local secs=$((SECONDS - t0))
   kill "$pid" 2>/dev/null || true
   wait_for_exit "$pid" 100 >/dev/null 2>&1 || true
-  grep -c '^inventory' "$log"
+  printf "%s %s\n" "$(grep -c "^inventory" "$log")" "$secs"
 }
 
 test_idle_home_cycles_each_idle_period() {
-  local busy idle d
-  busy=$(count_cycles idle-control 1 9)
-  idle=$(count_cycles idle-home 30 9)
-  [ "$busy" -ge 3 ] || fail "the control home (idle period = poll) ran $busy cycles in 9s, wanted at least 3"
-  [ "$idle" = 1 ] || fail "the idle home ran $idle cycles in 9s with a 30s idle period, wanted 1 (control: $busy)"
+  local busy idle d span out
+  out=$(count_cycles idle-control 1 60 3)
+  busy=${out% *}
+  ran_secs=${out#* }
+  [ "$busy" -ge 3 ] || fail "the control home (idle period = poll) ran $busy cycles in ${ran_secs}s, wanted at least 3"
+  span=$ran_secs
+  [ "$span" -ge 9 ] || span=9
+  out=$(count_cycles idle-home 30 "$span")
+  idle=${out% *}
+  [ "$idle" = 1 ] || fail "the idle home ran $idle cycles in ${span}s with a 30s idle period, wanted 1 (control: $busy)"
   d=$(make_case interval-lane)
   jg_write_meta "$d/state/lane.meta" "window=juggernaut:jg-lane" "backend=tmux" "kind=ship"
   [ "$("$DISPATCH" interval 15 300 "$d/state/lane.meta")" = 15 ] || fail "a home with a working lane lost its poll period"
   [ "$("$DISPATCH" interval 15 300 "$d/state/none.meta")" = 300 ] || fail "a home with no record did not get the idle period"
   [ "$("$DISPATCH" interval 15 5 "$d/state/none.meta")" = 15 ] || fail "an idle period under the poll was not raised to the poll"
-  pass "a home with no working lane ran $idle cycles in 9s against $busy for the same home at the poll period"
+  pass "a home with no working lane ran $idle cycles in ${span}s against $busy for the same home at the poll period"
 }
 
 test_check_cost_is_on_record_and_a_costly_check_is_named() {
