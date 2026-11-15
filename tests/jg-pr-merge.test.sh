@@ -1018,6 +1018,8 @@ test_post_merge_cleanup_tears_down_once() {
   log="$case_dir/post-merge.log"
   mkdir -p "$fork"
   cp -a "$ROOT/bin" "$fork/"
+  # The refusal wake goes through jg-alert.sh, which reads its alert table from core/ beside its own bin/.
+  ln -sn "$ROOT/core" "$fork/core"
   cat > "$fork/bin/jg-teardown.sh" <<'SH'
 #!/usr/bin/env bash
 printf 'teardown %s\n' "$*" >> "$POST_MERGE_LOG"
