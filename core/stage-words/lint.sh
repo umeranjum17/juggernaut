@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# The four delivery words and the lint that keeps stage-sense "live" out of tracked text.
+# The five delivery words and the lint that keeps stage-sense "live" out of tracked text.
 #
-# core/stage-words/words.tsv is the one list. Its `word` rows are the four delivery words (Built, Landed, In use,
-# Released); its `sense` rows are the other senses of "live" the lint accepts (a live test, a live pane). Nothing else
+# core/stage-words/words.tsv is the one list. Its `word` rows are the five delivery words (Built, Landed, In homes,
+# In use, Released); its `sense` rows are the other senses of "live" the lint accepts (a live test, a live pane). Nothing else
 # in the repository defines either list.
 #
 # lint.sh [--strict] [--words] [file...]
 #   no file      lints every tracked text file (git ls-files from the repository root)
-#   --words      prints the four words and what each means, then exits
+#   --words      prints the five words and what each means, then exits
 #   --strict     exits 1 when a stage-sense "live" is found; without it the lint is report-only and exits 0
 # A finding is printed as `<file>:<line>: <text>`, one per use of "live" alone: not followed by an accepted noun, not
 # inside a name (`jg-trunk-live`, `live/`, `live.tsv`) and not quoted as code (between backticks).
-# Exit 2 when words.tsv does not hold exactly the four words.
+# Exit 2 when words.tsv does not hold exactly the five words.
 set -u
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -27,7 +27,7 @@ for a in "$@"; do
   esac
 done
 
-[ "$(awk -F'\t' '$1 == "word"' "$TSV" | wc -l)" -eq 4 ] || { echo "lint.sh: $TSV must hold exactly four word rows" >&2; exit 2; }
+[ "$(awk -F'\t' '$1 == "word"' "$TSV" | wc -l)" -eq 5 ] || { echo "lint.sh: $TSV must hold exactly five word rows" >&2; exit 2; }
 
 if [ "${#files[@]}" -eq 0 ]; then
   # This directory holds the list itself, so it is never linted.

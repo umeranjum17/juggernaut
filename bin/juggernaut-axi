@@ -131,7 +131,7 @@ HELP
 usage: juggernaut-axi board [--steps]
 --steps: time per step (n, median, p90, worst over 7 days; records waiting now), read from each home's rollup, the longest wait first.
 Reads core/machines/tables and each observer in every registered home, each row within 10 s (JG_BOARD_BOUND).
-Words: Built, Landed, In use, Released (core/fleet-status/words.tsv). A row not read in time is listed in unread.
+Words: Built, Landed, In homes, In use, Released (core/fleet-status/words.tsv). A row not read in time is listed in unread.
 example: juggernaut-axi board --json
 HELP
     ;;

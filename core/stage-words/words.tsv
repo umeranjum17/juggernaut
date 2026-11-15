@@ -1,5 +1,6 @@
 word	Built	the worker finished its commit
 word	Landed	joined the shared work branch
+word	In homes	the homes run it but a declared switch is still off
 word	In use	the homes run it; nobody else has it
 word	Released	on GitHub main and npm; everyone has it
 sense	live test	a live test

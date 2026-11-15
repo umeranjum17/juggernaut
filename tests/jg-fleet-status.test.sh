@@ -56,9 +56,9 @@ printf '%s\n' "$OUT" | jq -e '[.unread[] | select(.machine == "wait" and (.why |
   || fail "the slow wait row must be named in unread: $(printf '%s\n' "$OUT" | jq -c .unread)"
 pass "a row not read within the bound is named in unread"
 
-printf '%s\n' "$OUT" | jq -e '.words[0] | has("Built") and has("Landed") and has("In use") and has("Released")' >/dev/null \
-  || fail "words must hold Built, Landed, In use and Released"
-pass "the four delivery words are on the board"
+printf '%s\n' "$OUT" | jq -e '.words[0] | has("Built") and has("Landed") and has("In homes") and has("In use") and has("Released")' >/dev/null \
+  || fail "words must hold Built, Landed, In homes, In use and Released"
+pass "the five delivery words are on the board"
 
 TOON=$("$AXI" board 2>/dev/null) || fail "TOON board failed"
 case $TOON in *"rows["*"home,machine,wired,records,states,past_limit,no_state"*) pass "TOON renders the rows as a table" ;; *) fail "TOON rows missing: $TOON" ;; esac

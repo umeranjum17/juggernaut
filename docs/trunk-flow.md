@@ -2,13 +2,14 @@
 
 How a change reaches the captain's users, for every project registered `local-trunk`, in every home. `bin/jg-trunk.sh` owns each step; its header is the command reference, and `bin/jg-trunk-policy-lib.sh` holds every open captain call with its safe default (override in `config/trunk-policy`).
 
-## The four words and the end goal
+## The five words and the end goal
 
-A change moves through four stages, and every report, card and doc names the stage with one of these four words, never with `live` alone (`core/stage-words/lint.sh --words` prints the list; `core/stage-words/lint.sh` lists the lines that still use the old word):
+A change moves through five stages, and every report, card and doc names the stage with one of these five words, never with `live` alone (`core/stage-words/lint.sh --words` prints the list; `core/stage-words/lint.sh` lists the lines that still use the old word):
 
 - **Built**: the worker finished its commit.
 - **Landed**: the commit joined the shared work branch (the trunk).
-- **In use**: the homes run it; nobody else has it. `jg-trunk.sh live` is the command that makes a commit In use.
+- **In homes**: the homes run it, but a declared switch is still off; the board and ticket say `In homes - off: <names>` (`core/machines/observers/delivery.sh stage <id>`).
+- **In use**: the homes run it and no declared switch is off; nobody else has it. `jg-trunk.sh live` is the command that makes a commit In use.
 - **Released**: it is on GitHub main and npm; everyone has it.
 
 The end goal of this flow: changes are Released in small batches every few hours.

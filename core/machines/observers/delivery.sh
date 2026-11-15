@@ -5,6 +5,8 @@
 # Usage:
 #   delivery.sh <id>          print the state word of the registered change <id>; print nothing for an unregistered id
 #   delivery.sh detail <id>   print key<TAB>value lines: state, commit, switch (config/<file> or none), proof (what held, or none)
+#   delivery.sh stage <id>    print the delivery word of the change: Landed, In homes - off: <switch names> (the homes run it
+#                             but a switch is off), In use, or nothing for an unlanded, pinned-behind or reverted change
 #   delivery.sh ids           print every registered change id
 #   delivery.sh mentions      read text on stdin; print each registered id the text names, by its id or by its switch name
 #                             (hyphens, case and punctuation do not matter: "the machine view" names the machine-view switch)
@@ -195,6 +197,16 @@ case ${1:-} in
     classify "$2" || exit 1
     printf 'state\t%s\ncommit\t%s\nswitch\t%s\nproof\t%s\n' "$WORD" "${C:-none}" "$([ "$SWITCH" = - ] && echo none || echo "config/$SWITCH")" "${EVIDENCE:-none}"
     [ -z "$OFF" ] || printf '%s\n' "$OFF" | sed 's/^/off\t/' ;;
-  ""|-*) echo "usage: delivery.sh <id> | detail <id> | ids | mentions | check" >&2; exit 2 ;;
+  stage)
+    [ -n "${2:-}" ] || { echo "usage: delivery.sh stage <id>" >&2; exit 2; }
+    classify "$2" || exit 1
+    case $WORD in
+      landed) echo Landed ;;
+      in-use|in-homes) echo "In use" ;;
+      in-homes-off)
+        names=$(printf '%s\n' "$OFF" | awk 'NF >= 3 { print $3 }' | sort -u | paste -sd, - | sed 's/,/, /g')
+        echo "In homes - off: ${names:-${SWITCH}}" ;;
+    esac ;;
+  ""|-*) echo "usage: delivery.sh <id> | detail <id> | stage <id> | ids | mentions | check" >&2; exit 2 ;;
   *) classify "$1" && printf '%s\n' "$WORD" ;;
 esac

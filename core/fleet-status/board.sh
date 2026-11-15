@@ -12,7 +12,7 @@
 # time limit longer than that limit; the age is the age of the record file), no_state (records whose observer names no state of
 # the table) and wired (the machine has a record lister in records.tsv and an observer in its table).
 # Each row is read within JG_BOARD_BOUND seconds (default 10); a row not read in that time, and a home with no tables, is named
-# in `unread`, never left out. words.tsv maps the four delivery words (Built, Landed, In use, Released) onto machine states.
+# in `unread`, never left out. words.tsv maps the five delivery words (Built, Landed, In homes, In use, Released) onto machine states.
 set -u
 export LC_ALL=C
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)

@@ -53,3 +53,9 @@ delivered-on in-use False
 untouched queued False'
 [ "$got" = "$want" ] || { printf 'FAIL: the stages read\n%s\nwanted\n%s\n' "$got" "$want"; exit 1; }
 echo 'PASS: a lane reads the word of its machines (rework, ready-to-land, in-homes-off, in-use) and an untouched item reads queued'
+
+# The word a ticket shows for a delivered change: In homes with the names of what is off, In use once nothing is off.
+shown() { bash "$root/core/machines/observers/delivery.sh" stage "$1"; }
+[ "$(shown change-off)" = 'In homes - off: switch-off' ] || { echo "FAIL: change-off shows: $(shown change-off)"; exit 1; }
+[ "$(shown change-on)" = 'In use' ] || { echo "FAIL: change-on shows: $(shown change-on)"; exit 1; }
+echo 'PASS: a delivered change shows In homes - off: <names> while a switch is off and In use once none is'
