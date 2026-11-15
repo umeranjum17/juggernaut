@@ -58,9 +58,24 @@ jg_cli_status_append() {
   status=$JG_CLI_STATE/$JG_CLI_TASK.status
   printf '%s [at=%s]%s: %s\n' "$verb" "$(date +%s)" "$tags" "$text" \
     | "$JG_CLI_TOOLS/bin/jg-lavish-guard.sh" --append "$status" || return 1
+  jg_cli_ledger
+}
+
+# jg_cli_ledger: tell the opt-in fleet ledger the status log grew.
+jg_cli_ledger() {
+  local status=$JG_CLI_STATE/$JG_CLI_TASK.status
   if [ -e "$JG_CLI_HOME/config/fleet-ledger" ]; then
     "$JG_CLI_TOOLS/bin/jg-fleet-ledger.sh" appended "$JG_CLI_HOME/config" "$status" >/dev/null 2>&1 || true
   fi
+}
+
+# jg_cli_wait_open <kind> <text> [<writer option>...]: open a typed wait through the one writer (bin/jg-wait-write.sh),
+# which writes the line once and names a wait that is already open.
+jg_cli_wait_open() {
+  local kind=$1 text=$2
+  shift 2
+  JG_HOME=$JG_CLI_HOME "$JG_CLI_TOOLS/bin/jg-wait-write.sh" open "$JG_CLI_STATE/$JG_CLI_TASK.status" "$kind" "$@" -- "$text" >/dev/null || return 1
+  jg_cli_ledger
 }
 
 jg_cli_unread() {  # print the unread steer files of the ticket, in numeric order

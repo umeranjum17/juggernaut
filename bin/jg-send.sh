@@ -284,6 +284,8 @@ fi
 . "$SCRIPT_DIR/jg-line-cap-lib.sh"
 # shellcheck source=bin/jg-wake-lib.sh
 . "$SCRIPT_DIR/jg-wake-lib.sh"
+# shellcheck source=bin/jg-wait-write-lib.sh
+. "$SCRIPT_DIR/jg-wait-write-lib.sh"
 # shellcheck source=bin/jg-task-inbox-lib.sh
 . "$SCRIPT_DIR/jg-task-inbox-lib.sh"
 # shellcheck source=bin/jg-squad-lead-registry-lib.sh
@@ -769,16 +771,18 @@ fi
 # or a worker line the fold read but never listed, leave the watcher's wake
 # path untouched.
 jg_send_close_resolved_keys() { # <answer-text>
-  local note=$1 k close_note append_rc still manual_close_cmd close_lines=() i=0
+  local note=$1 k close_note append_rc still manual_close_cmd close_lines=() closes=() i=0
   note=$(printf '%s' "$note" | tr '\n\r\t' '   ' | LC_ALL=C tr -d '\000-\037\177')
   for k in $RESOLVE_STATUS_KEYS; do
     close_note=$(jg_send_resolve_close_note "$k" "$note")
     jg_cap_line_var "resolved [key=$k]: $close_note" "$RESOLVE_CLOSE_MAX"
     close_lines+=("$JG_LINE_CAP_LINE")
+    closes+=("$k" "$(status_line_note "$JG_LINE_CAP_LINE")")
   done
   [ "${#close_lines[@]}" -gt 0 ] || return 0
+  # The one wait writer closes each wait still open, once, in one self-announced append.
   append_rc=0
-  jg_wake_status_append_self_announced "$STATE" "$RESOLVE_STATUS_FILE" "${close_lines[@]}" || append_rc=$?
+  jg_wait_resolve "$STATE" "$RESOLVE_STATUS_FILE" "${closes[@]}" || append_rc=$?
   if [ "$append_rc" -eq 2 ]; then
     printf -v manual_close_cmd ' %q' "${close_lines[@]}"
     printf -v manual_close_cmd "printf '%%s\\n'%s >> %q" "$manual_close_cmd" "$RESOLVE_STATUS_FILE"

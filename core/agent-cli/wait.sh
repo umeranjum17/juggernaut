@@ -17,5 +17,5 @@ done
 [ -n "$text" ] || jg_cli_die "$usage"
 [ -z "$until_at" ] || text="$text until $until_at"
 jg_cli_context
-jg_cli_status_append paused "$text" "wait=$who" "reason=$reason" || exit 1
+jg_cli_wait_open pause "$text" --who "$who" --reason "$reason" || exit 1
 echo "wait declared for $JG_CLI_TASK: $who owes the next move ($reason). Next: end the turn; jg progress when it clears"

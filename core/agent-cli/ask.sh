@@ -33,7 +33,8 @@ if [ "$owner" = 1 ]; then
   args=(hold "$JG_CLI_TASK" --title "$question" --reason "$text")
   [ -z "$must" ] || args+=(--must "$must")
   "$JG_CLI_TOOLS/bin/jg-captain-hold.sh" "${args[@]}" || exit 1
-  text="captain call, hold $JG_CLI_TASK: $text"
+  jg_cli_wait_open owner-call "$text" --task "$JG_CLI_TASK" || exit 1
+else
+  jg_cli_wait_open decision "$text" || exit 1
 fi
-jg_cli_status_append needs-decision "$text" || exit 1
 echo "decision asked for $JG_CLI_TASK${owner:+ (held for the captain)}. Next: stop; the answer arrives as a steer"

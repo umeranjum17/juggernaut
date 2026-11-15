@@ -196,6 +196,37 @@ func setVerb(set, key string) string {
 	return ""
 }
 
+// humanCallNote opens the note of a needs-decision that is the owner's call. `jg ask --owner` and the
+// typed wait writer (bin/jg-wait-write.sh, which reads this through `human-call-prefix`) are its only producers.
+const humanCallNote = "captain call, hold "
+
+// isHumanCall: an open-set record "<key>\t<verb>\t<note>" that is an owner call.
+func isHumanCall(rec string) bool {
+	f := strings.SplitN(rec, "\t", 3)
+	return len(f) == 3 && f[1] == "needs-decision" && strings.HasPrefix(f[2], humanCallNote)
+}
+
+// humanCalls are the records of the set that are owner calls, in order.
+func humanCalls(set string) []string {
+	var out []string
+	for _, r := range setRecords(set) {
+		if isHumanCall(r) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// setRecord is the record stored for key in an open set, empty when it has none.
+func setRecord(set, key string) string {
+	for _, l := range setRecords(set) {
+		if strings.HasPrefix(l, key+"\t") {
+			return l
+		}
+	}
+	return ""
+}
+
 // supersedes: a working or paused line that states a [key=] is the newest word on that key, so it
 // closes the key's open blocked or needs-decision wait. A keyless working line says nothing about a key.
 func supersedes(line string) bool {
@@ -219,7 +250,7 @@ func foldLine(open, line, kind string) string {
 	verb := lineVerb(line)
 	terminal := strings.IndexByte(u, ':') >= 0 && (verb == "done" || verb == "failed")
 	if terminal && (kind == "ship" || kind == "scout") {
-		return ""
+		return strings.Join(humanCalls(open), "\n")
 	}
 	if !terminal && verb != "needs-decision" && verb != "blocked" && verb != resolveVerb() && verb != captainHeldVerb() && !supersedes(line) {
 		return open
@@ -238,6 +269,11 @@ func foldLine(open, line, kind string) string {
 	}
 	note := lineNote(line)
 	if !transitionAllowed(key, note) && !waitTimerClose(verb, key) {
+		return open
+	}
+	// A human call is closed by its own `resolved` line (or handed to its captain hold), never by a
+	// done, a failed, or a working or paused line that merely restates the key.
+	if verb != "needs-decision" && verb != "blocked" && verb != resolveVerb() && verb != captainHeldVerb() && isHumanCall(setRecord(open, key)) {
 		return open
 	}
 	// An open gate is the one record of its owner call: no status line closes it.
@@ -457,6 +493,8 @@ func decideCommand(cmd string, a []string, out *os.File) (code int, handled bool
 			}
 		}
 		return 1, true
+	case "human-call-prefix":
+		return put(humanCallNote), true
 	case "transition-allowed":
 		return yes(transitionAllowed(arg(0), arg(1))), true
 	case "pending-reply-escalation":

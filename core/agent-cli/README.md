@@ -38,6 +38,7 @@ jg land [--wait] [--bound <secs>]
 - landing state: `core/trunk-landing` records, `data/jg-trunk-landing/<ticket>.<head>.state`
 - alerts: `bin/jg-alert.sh` (records, ladder and the acknowledge move)
 - decision line and the captain hold: `bin/jg-lavish-guard.sh` and `bin/jg-captain-hold.sh`
+- typed wait lines (`jg wait`, `jg ask`) and their one resolution: `bin/jg-wait-write.sh`; a done never closes an owner call
 - inbox and handled record: `bin/jg-task-inbox-lib.sh`, `bin/jg-delivery.sh`
 
 Test: `tests/agent-cli.test.sh` runs `bin/jg` from a real worktree with no variable set.
