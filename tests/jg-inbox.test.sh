@@ -516,13 +516,22 @@ home=$(make_home ready-holder)
 # jg-harness.sh ancestry both classify it without PATH tricks.
 perl -e '$0="claude"; sleep 60' &
 holder_pid=$!
-# Give ps a moment to report the renamed comm.
-sleep 0.2
+# The rename happens after perl starts, so wait until ps reports it instead
+# of guessing a delay: a fixed sleep loses to a loaded host.
+holder_ready=0
+for _ in $(seq 1 100); do
+  if [ "$(ps -o comm= -p "$holder_pid" 2>/dev/null | tr -d ' ')" = "claude" ]; then
+    holder_ready=1
+    break
+  fi
+  sleep 0.1
+done
 kill_holder() {
   kill "$holder_pid" 2>/dev/null || true
   wait "$holder_pid" 2>/dev/null || true
 }
 trap 'kill_holder; jg_test_cleanup' EXIT
+[ "$holder_ready" = 1 ] || fail "holder process never reported comm claude (ps shows: $(ps -o comm= -p "$holder_pid" 2>&1))"
 printf '%s\n' "$holder_pid" > "$home/state/.lock"
 touch "$home/state/.last-watcher-beat"
 held=$(run_inbox "$home" ready) || fail "ready should succeed for a lock-holder harness"
