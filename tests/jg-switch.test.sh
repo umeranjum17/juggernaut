@@ -156,3 +156,22 @@ sw verify --home "$B"; expect_code 0 "$RC" "verify passes once the three rows ar
 assert_contains "$OUT" "detector" "detector lines stay and never fail verify"
 bash "$ROOT/core/machines/observers/delivery.sh" check >"$T/dcheck" 2>&1; expect_code 0 "$?" "every manifest id has a changes.tsv row: $(cat "$T/dcheck")"
 pass "the back-filled manifest reads three owner switches off in a seeded home, and each turns on alone"
+
+# --- the flag sheet: every flag a project has set away from its default, with value, default and flip ---
+F=$T/flags; mkdir -p "$F/config" "$F/state" "$F/data"
+printf -- '- fx [local +yolo] - fixture (added 2026-11-15)\n' > "$F/data/projects.md"
+printf 'gate-lint@fx=true\nbatch-max@other=9\nbatch-max=5\n' > "$F/config/trunk-policy"
+printf 'fx owner-rule-a1 1 until=stable\nother owner-rule-b2 1 until=stable\n' > "$F/config/trunk-live-waiver"
+JG_HOME=$F bash "$ROOT/bin/jg-proof-bypass.sh" grant --project fx --word owner-rule-c3 >/dev/null 2>&1; bid=$(awk -F'\t' '$2 == "project" { print $1 }' "$F/config/proof-bypass")
+sw flags fx --home "$F"; expect_code 0 "$RC" "flags exits 0"
+assert_contains "$OUT" "project fx" "flags names the project"
+assert_contains "$OUT" $'flag\tgate-lint@fx\ttrue\tbin/jg-lint.sh --changed-base HEAD^\tdelete the last gate-lint line for fx' "a policy key set for the project prints value, default and flip"
+assert_contains "$OUT" $'flag\tyolo\ton\toff\tremove +yolo from the fx line' "the registry's yolo prints"
+assert_contains "$OUT" $'flag\ttrunk-live-waiver\towner-rule-a1\tnone\tdelete the fx line' "the project's waiver line prints"
+assert_contains "$OUT" $'flag\tproof-bypass:project\t'"$bid"$'\tnone\tbin/jg-proof-bypass.sh end '"$bid" "a standing project bypass prints with its end command"
+assert_not_contains "$OUT" "other" "another project's lines and a key at its default never print"
+assert_not_contains "$OUT" "batch-max" "a key at its default prints no line"
+mkdir -p "$T/bare/config" "$T/bare/data"; sw flags fx --home "$T/bare"
+assert_contains "$OUT" "no flags set" "a project with nothing set says so"
+sw flags; expect_code 2 "$RC" "flags needs a project"
+pass "the flag sheet prints each set flag with value, default and flip, and nothing else"

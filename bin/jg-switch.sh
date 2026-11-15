@@ -5,6 +5,7 @@
 #   jg-switch.sh status [--home <dir>]... [<change-id>]   per home, one line for each switch still off
 #   jg-switch.sh verify [--home <dir>]... [<change-id>]   status, exit 1 while any manifest row is off (detector lines never count)
 #   jg-switch.sh refresh-releases [--home <dir>]          look up each npm row's latest release into state/tool-releases.tsv
+#   jg-switch.sh flags <project> [--home <dir>]           the flag sheet: every flag that changes how the project ships, with its value, default and flip
 #   jg-switch.sh apply <change-id> <name> [--home <dir>] [--owner-word "<text>"] [--value <v>]
 #                                                         turn one policy row on; the owner's word is required for who=owner
 #
@@ -32,6 +33,9 @@
 # `unknown-release`: printed as `unknown ...` instead of `off ...`, so neither verify nor the delivery observer counts it.
 # The one write is `apply` of a policy row: it appends `<name>=<want>` to config/trunk-policy, which the policy reader
 # takes as the last matching line. It needs --owner-word for a who=owner row; no other kind is written here.
+# The flag sheet (`flags`) prints one tab-separated line per flag: `flag <name> <value> <default> <flip command>`. Flags: each trunk-policy
+# key the home set for the project (`key@project` or `key`), the registry's yolo word, the go-live and release waiver lines, and each
+# standing proof bypass that covers the project. A flag at its default prints no line; a home with none prints `no flags set`.
 # Environment: JG_HOME, JG_SWITCH_MANIFEST, JG_SWITCH_TOOLCHAIN (the pin table, default <repo>/toolchain.versions).
 set -u
 export LC_ALL=C
@@ -212,7 +216,44 @@ cmd_apply() {
   echo "applied $id $name=$want: now $r"
 }
 
+# The flag sheet for one project: what the home set away from the default, and the command that puts each back.
+cmd_flags() {
+  local proj=${1-} home=${JG_HOME:-$ROOT} key val def line n=0 file rule mode yolo id st scope target
+  [ $# -eq 0 ] || shift
+  [ -n "$proj" ] && [[ $proj =~ $NAME_RE ]] || die "usage: flags <project> [--home <dir>]"
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --home) [ $# -ge 2 ] || die "--home needs a directory"; home=$2; shift 2 ;;
+      *) die "unknown option $1" ;;
+    esac
+  done
+  [ -d "$home" ] || die "no such home: $home"
+  echo "project $proj"
+  while IFS= read -r line; do
+    key=${line%%=*}; val=${line#*=}
+    case $key in *@*) [ "${key#*@}" = "$proj" ] || continue; key=${key%@*} ;; esac
+    def=$(JG_CONFIG_OVERRIDE=/nonexistent jg_trunk_policy "$key" "$proj" 2>/dev/null) || def=
+    [ "$val" != "$def" ] || continue
+    tab flag "$key@$proj" "$val" "${def:--}" "delete the last $key line for $proj in $home/config/trunk-policy"; n=$((n + 1))
+  done < <(grep -E "^[A-Za-z0-9-]+(@$proj)?=" "$home/config/trunk-policy" 2>/dev/null)
+  read -r mode yolo < <(JG_HOME=$home JG_DATA_OVERRIDE=$home/data bash "$SCRIPT_DIR/jg-project-mode.sh" --raw "$proj" 2>/dev/null)
+  if [ "${yolo-}" = on ]; then
+    tab flag yolo on off "remove +yolo from the $proj line in $home/data/projects.md"; n=$((n + 1))
+  fi
+  for file in trunk-live-waiver trunk-release-waiver; do
+    rule=$(jg_trunk_waiver_rule "$home/config/$file" "$proj")
+    [ -z "$rule" ] || { tab flag "$file" "$rule" none "delete the $proj line in $home/config/$file"; n=$((n + 1)); }
+  done
+  while IFS=$'\t' read -r id st scope target _; do
+    [ "$st" = standing ] || continue
+    [ "$scope" = home ] || [ "$target" = "$proj" ] || continue
+    tab flag "proof-bypass:$scope" "$id" none "bin/jg-proof-bypass.sh end $id"; n=$((n + 1))
+  done < <(JG_HOME=$home bash "$SCRIPT_DIR/jg-proof-bypass.sh" list --standing 2>/dev/null)
+  [ "$n" -gt 0 ] || echo "no flags set"
+}
+
 case ${1-} in
+  flags) shift; cmd_flags "$@" ;;
   _probe) shift; probe "$@" ;;
   status) shift; cmd_status 0 "$@" ;;
   verify) shift; cmd_status 1 "$@" ;;
