@@ -15,6 +15,7 @@ The lock is same-user writable: this is a cooperative hook preventing accidental
 
 A home's own session may also stop a process whose resolved cwd is under that home's `data/<task>/` or under a worktree a `state/*.meta` record names.
 The home is proved by the guard's ancestry reaching the harness whose pid that home's `state/.lock` records (found from the harness cwd upward); a data entry linked outside `data/`, the account home or a parent of it never qualifies.
+The same home's session may also stop a hung strict descendant of a live `<home>/bin/jg-watch*.sh` run of that same home (for example a stuck trunk publish); the loop process itself and another home's loop children stay refused.
 Everything else keeps the final refusal, and nothing is matched by name or pattern.
 
 Fleet ownership uses resolved cwd or absolute command-line paths under the primary home, `~/firstmate*`, `~/.treehouse/<pool>[/<slot>]/{juggernaut,firstmate}*`, or `~/.local/{share,bin}/jg-*` feature tools.

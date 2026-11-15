@@ -34,10 +34,24 @@ const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { retu
 const tree = (cwd) => execFileSync('sh', ['-c', 'sh -c "sleep 60 & sleep 60 & wait" </dev/null >/dev/null 2>&1 & echo $!'], { cwd, encoding: 'utf8' }).trim();
 const members = (root) => [Number(root), ...execFileSync('pgrep', ['-P', root], { encoding: 'utf8' }).split('\n').filter(Boolean).map(Number)];
 const all = [];
+// A watcher loop of a home: a bin/jg-watch.sh run (cwd outside every owned root) whose child hangs. Returns the loop and child pids.
+const loop = (home) => {
+  fs.mkdirSync(join(home, 'bin'), { recursive: true }); const script = join(home, 'bin', 'jg-watch.sh');
+  fs.writeFileSync(script, '#!/bin/sh\nsleep 60 &\nwait\n', { mode: 0o755 });
+  const pid = execFileSync('sh', ['-c', `${script} </dev/null >/dev/null 2>&1 & echo $!`], { cwd: stray, encoding: 'utf8' }).trim();
+  return { pid, child: execFileSync('sh', ['-c', `for i in 1 2 3 4 5 6 7 8 9 10; do pgrep -P ${pid} && exit; sleep 0.1; done`], { encoding: 'utf8' }).trim() };
+};
 try {
   const owned = tree(join(taskData, 'run')), ownedWt = tree(worktree), unowned = tree(stray), foreign = tree(foreignData), linked = tree(stray);
   all.push(owned, ownedWt, unowned, foreign, linked);
   await new Promise((r) => setTimeout(r, 300));
+  const mine = loop(lead), theirs = loop(join(account, '.treehouse', 'other-abc', '1', 'other'));
+  all.push(mine.pid, theirs.pid);
+  assert(mine.child && theirs.child, 'loop children started');
+  assert.equal(guard(`kill ${mine.child}`), null, 'a hung child of this home\'s own watcher loop');
+  assert.match(guard(`kill ${mine.pid}`) ?? '', /which this task did not start/, 'the loop itself stays refused');
+  assert.match(guard(`kill ${theirs.child}`) ?? '', /which this task did not start/, 'another home\'s loop child');
+  console.log('watcher loop journey: hung child of this home\'s own watcher loop allowed; the loop itself and another home\'s loop child refused');
   const group = members(owned);
   assert(group.length >= 3, 'tree has children');
 

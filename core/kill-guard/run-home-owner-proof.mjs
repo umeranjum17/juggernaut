@@ -37,6 +37,15 @@ try {
   const refused = await ask(`kill ${unowned}`); assert.equal(refused.status, 2); assert.match(refused.stderr, /BLOCKED by the fleet kill guard: "kill \d+" aims at PID \d+ \(sh\), which this task did not start\. .*This block is final/);
   const others = members(unowned); for (const pid of others) assert(alive(pid), 'refused tree untouched');
   log(`\n2. Tree outside the home (cwd <tmp>/elsewhere) -> blocked (exit 2), all ${others.length} processes still alive:\n${refused.stderr.trim()}`);
+  // A hung child of this home's own watcher loop (bin/jg-watch.sh, cwd outside the home's task data) may be stopped; the loop itself and another home's loop children may not.
+  const loopOf = (home) => { fs.mkdirSync(join(home, 'bin'), { recursive: true }); const sc = join(home, 'bin', 'jg-watch.sh'); fs.writeFileSync(sc, '#!/bin/sh\nsleep 120 &\nwait\n', { mode: 0o755 });
+    const pid = Number(execFileSync('sh', ['-c', `${sc} </dev/null >/dev/null 2>&1 & echo $!`], { cwd: elsewhere, encoding: 'utf8' }).trim()); roots.push(pid); return pid; };
+  const myLoop = loopOf(lead), theirLoop = loopOf(join(account, '.treehouse', 'other-abc', '1', 'other')); await sleepMs(400);
+  const myChild = members(myLoop)[1], theirChild = members(theirLoop)[1]; assert(myChild && theirChild);
+  const okLoop = await ask(`kill ${myChild}`, true); assert.equal(okLoop.status, 0, okLoop.stderr); assert.equal(okLoop.sent, 0);
+  const loopSelf = await ask(`kill ${myLoop}`); assert.equal(loopSelf.status, 2);
+  const otherLoop = await ask(`kill ${theirChild}`); assert.equal(otherLoop.status, 2); assert.match(otherLoop.stderr, /which this task did not start/); assert(alive(theirChild));
+  log(`\n2b. Hung child of this home's own watcher loop (bin/jg-watch.sh) -> kill approved (exit 0) and gone; the loop process itself -> blocked (exit 2); a child of another home's watcher loop -> blocked (exit 2), still alive.`);
   const pattern = await ask('pkill -f sleep'); assert.equal(pattern.status, 2); assert.match(pattern.stderr, /name\/pattern kills are forbidden/);
   log(`\n3. pkill -> blocked (exit 2):\n${pattern.stderr.trim()}`);
   for (const pid of others) try { process.kill(pid, 'SIGKILL'); } catch {}

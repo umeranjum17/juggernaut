@@ -79,6 +79,21 @@ function homeOwned(p, home) {
 	} catch {}
 	return roots.some((r) => under(r, p.cwd));
 }
+// A process the home's own watcher loop started: a strict descendant of a live bin/jg-watch*.sh run of that same home (a hung
+// trunk publish, for example). The loop process itself is never owned, so the guard still refuses everything outside its children.
+const LOOP_SCRIPT = /^jg-watch(?:-[a-z]+)?\.sh$/;
+function loopOwned(p, home, table) {
+	try {
+		const bin = `${home}/bin`, seen = new Set();
+		for (let q = table.get(p.ppid); q && !seen.has(q.pid) && q.pid > 1; q = table.get(q.ppid)) {
+			seen.add(q.pid);
+			if (/[ZX]/.test(q.state)) continue;
+			const script = q.argv.slice(0, 3).find((a) => isAbsolute(a) && LOOP_SCRIPT.test(basename(a)));
+			if (script && realpathSync(dirname(script)) === bin) return true;
+		}
+	} catch {}
+	return false;
+}
 // A home or pool slot named juggernaut* or firstmate* is fleet-owned alike: ~/firstmate*, ~/.treehouse/<pool>[/<slot>]/<name>*.
 const NAMED_HOME = /^(?:firstmate[^/]*|\.treehouse\/[^/]+\/(?:[^/]+\/)?(?:juggernaut|firstmate)[^/]*)(?:\/|$)/;
 function fleetPath(path) {
@@ -241,7 +256,7 @@ function reasonFor(p, own, caller, procs, text) {
 		return null;
 	}
 	if (own.has(p.pid) || inCallerWorktree(p.cwd, caller)) return null;
-	if (procs.home && homeOwned(p, procs.home)) return null;
+	if (procs.home && (homeOwned(p, procs.home) || loopOwned(p, procs.home, procs()))) return null;
 	return `PID ${p.pid} (${p.comm}), which this task did not start`;
 }
 
