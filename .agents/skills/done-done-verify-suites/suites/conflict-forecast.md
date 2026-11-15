@@ -1,0 +1,3 @@
+# Conflict forecast
+
+A lane's conflict with the trunk, named before the landing: run `done-done run -- bash -c 'set -e; bash tests/jg-trunk-forecast.test.sh > "$DONE_DONE_EVIDENCE_ROOT/forecast.log" 2>&1'`; over a fixture home with real git and the real landing check, it proves that `jg-trunk.sh forecast <task>` prints `clean` for a lane that merges and `conflict notes.txt` for a same-line conflict, that a dirty lane work tree stays untouched, that `--record` keeps one row per head in `data/trunk-forecast.tsv`, and that the landing check records one row the first time it sees a lane (screen: none).

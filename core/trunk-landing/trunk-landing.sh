@@ -538,6 +538,8 @@ for meta in "$STATE"/*.meta; do
     retry*) verdict_due "$st" || continue ;;
     wait*) [ -z "$QUIET" ] || verdict_due "$st" || continue; report "$id.$head" "$id waits to land: ${line#wait }" "${line#wait }" ;;
   esac
+  # The first sight of a lane also records what its head would conflict with now (data/trunk-forecast.tsv); it only records.
+  [ -n "$QUIET" ] || [ -e "$MEM/$id.$head.seen" ] || JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" forecast "$id" --record >/dev/null 2>&1 || :
   [ -n "$QUIET" ] || queue_seen "$MEM" "$id" "$head"
   # <epoch done> <task> <head> <project> <1, or 0 for a lane marked `land-next`> <1, or 0 for a lane once returned for a conflict>
   cands="$cands$at $id $head $(basename "$proj") $([ -e "$STATE/$id.land-next" ] && echo 0 || echo 1) $( { verdict_returned "$id" || grep -Eq "^final.*$VERDICT_CONFLICT_RE" "$MEM/retired/$id".*.state 2>/dev/null; } && echo 0 || echo 1)"$'\n'

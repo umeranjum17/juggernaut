@@ -4,6 +4,7 @@
 #
 # Usage: jg-trunk.sh init <project-dir> [<base-ref>]   create the trunk (default: the newest release/c-N, else HEAD)
 #        jg-trunk.sh proof <task-id>                   print the proof inputs the task's head still lacks (receipt, sealed run); exit 1 when any
+#        jg-trunk.sh forecast <task-id> [--record]     print `clean` or `conflict <paths>`: where the task's head would conflict with the trunk tip now (merge-tree: no work tree is touched, nothing lands); --record appends one row task head tip verdict paths epoch to data/trunk-forecast.tsv, once per head
 #        jg-trunk.sh land <task-id>                    land the task's one proved commit on the trunk; never goes live
 #        jg-trunk.sh classify <output-file> [<gate-log>...]   print wait, retry or final for a refused landing's output
 #        jg-trunk.sh land-batch <id>[@<head>]...       land 2 to batch-max queued lanes as one stack: one gate over their changed files, one move; a red stack is halved to find and return only the lane that caused it
@@ -720,6 +721,21 @@ _full_gate() {  # <candidate> <command> <base>
 conflict_paths() {  # <tip> <candidate>
   local out; out=$(git -C "$PROJ" merge-tree --write-tree --name-only --no-messages "$1" "$2" 2>/dev/null) && return 0
   printf '%s\n' "$out" | sed 1d | paste -sd' ' -
+}
+
+# A forecast of the lane's landing: the paths where its head conflicts with the trunk tip now. It only reads (merge-tree writes
+# unreferenced objects, never a work tree) and, with --record, keeps one row per head, so a tip that has moved since is not forecast again.
+cmd_forecast() {  # <task-id> [--record]
+  local id=${1:-} branch head tip hit verdict
+  lane_meta "$id"
+  branch=$(jg_dod_meta_value "$META" branch); branch=${branch:-fm/$id}
+  head=$(rev "refs/heads/$branch") || die "branch $branch does not exist in $PROJ"
+  tip=$(rev "refs/heads/$TRUNK") || die "trunk branch $TRUNK is missing in $PROJ"
+  hit=$(conflict_paths "$tip" "$head"); verdict=clean; [ -z "$hit" ] || verdict=conflict
+  if [ "${2:-}" = --record ] && ! awk -F'\t' -v t="$id" -v h="$head" '$1 == t && $2 == h { f = 1 } END { exit !f }' "$DATA/trunk-forecast.tsv" 2>/dev/null; then
+    row trunk-forecast.tsv "$id" "$head" "$tip" "$verdict" "${hit:--}" "$(date +%s)"
+  fi
+  echo "$verdict${hit:+ $hit}"
 }
 
 # The captain's recorded word: spent by the command it allows, valid for one commit only.
@@ -2699,6 +2715,7 @@ cmd_due() {
 
 case "${1:-}" in
   init) shift; cmd_init "$@" ;;
+  forecast) shift; cmd_forecast "$@" ;;
   land) shift; cmd_land "$@" ;;
   land-batch) shift; cmd_land_batch "$@" ;;
   flush) shift; cmd_flush "$@" ;;
