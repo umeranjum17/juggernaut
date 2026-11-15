@@ -149,6 +149,28 @@ test_an_unmapped_test_file_fails_only_itself() {
   pass 'an unmapped test file fails only itself in one shard and the other scripts still run'
 }
 
+# verify-red-unmapped-paths: the line's verify went red on four changed files that no test names by file name (the lease module, the
+# tool-update check, the resolver library and the name gate's allow list), and held the green pin. Each maps now: the three code files
+# select the tests that name what they belong to, and the allow list is data that selects nothing.
+test_four_formerly_unmapped_bin_paths_map_to_their_tests() {
+  local fixture=$TMP_ROOT/mapped-bin res=$TMP_ROOT/mapped-bin-results out rc=0 f
+  required_fixture "$fixture" 'exit 0'
+  write_script "$fixture/tests/names-them.test.sh" '# jg-beads-write.py tool-update-check jg-trunk-resolve'
+  git -C "$fixture" add tests/names-them.test.sh
+  git -C "$fixture" -c user.name=t -c user.email=t@example.invalid commit -q --amend --no-edit
+  for f in jg-beads-lease.py jg-tool-update-check.sh jg-trunk-resolve-lib.sh juggernaut-name-gate.allow; do
+    printf '\n# changed\n' >>"$fixture/bin/$f"
+  done
+  git -C "$fixture" add bin
+  git -C "$fixture" -c user.name=t -c user.email=t@example.invalid commit -q -m 'change four bin paths'
+  out=$(bash "$fixture/bin/jg-test-run.sh" --required-shards HEAD^ "$res" 2>&1) || rc=$?
+  [ "$rc" = 0 ] || fail "four mapped paths must pass the gate: rc=$rc $out"
+  assert_not_contains "$out" 'no changed-test mapping' 'no changed path is reported as unmapped'
+  jq -e '.summary.failed == 0 and ([.scripts[] | select(.path == "tests/names-them.test.sh" and .exit == 0)] | length) == 1' \
+    "$res/required.json" >/dev/null || fail "the test that names them must run once and pass: $out"
+  pass 'the lease module, tool-update check, resolver library and name-gate allow list map without an unmapped failure'
+}
+
 # A shard over its wall-clock budget was slowed by the machine, not failed by a test, so it is a warning and never a red,
 # and the budget never cuts it short: trunk-v3 went red at 20eb94ae6054 with all eight shards at 601 to 651 s of 600 s,
 # failed=0, and the budget had stopped each shard before about half its scripts ran. A failed test stays a red.
@@ -800,9 +822,13 @@ test_a_script_with_a_done_done_entry_is_selected_by_no_old_selector() {
 # A shard that holds no script because each one it held has a done-done entry is a valid state: trunk-v7 verify failed on
 # "portable serial shard 2 of 12 is empty" once the journeys took the scripts. The guard still refuses a script in no shard.
 test_an_empty_serial_shard_with_every_script_entered_passes_the_coverage_guard() {
-  local fixture=$TMP_ROOT/coverage-empty out rc=0 empty
-  mkdir -p "$fixture"
-  cp -R "$ROOT/bin" "$ROOT/defaults" "$ROOT/tests" "$ROOT/.done-done.yaml" "$fixture/"
+  local fixture=$TMP_ROOT/coverage-empty out rc=0 empty held
+  mkdir -p "$fixture/tests"
+  cp -R "$ROOT/bin" "$ROOT/defaults" "$fixture/"
+  cp "$ROOT/tests/git-config-helpers.sh" "$fixture/tests/"
+  # Packing moves a script into shard 2 whenever another leaves it, so the fixture holds only scripts that all have a done-done
+  # entry: every shard is empty, shard 2 for the reason this test names, whatever scripts the real tree holds today.
+  for held in a b; do write_script "$fixture/tests/entered-$held.test.sh" 'exit 0'; printf '# entered: tests/entered-%s.test.sh\n' "$held" >>"$fixture/.done-done.yaml"; done
   empty=$(cd "$fixture" && bash bin/jg-test-run.sh --list --lane portable-serial-2of12 2>/dev/null | grep -c 'tests/' || true)
   [ "$empty" = 0 ] || fail "the fixture shard 2 was expected empty, holds $empty"
   out=$(bash "$fixture/bin/jg-test-run.sh" --check-coverage 2>&1) || rc=$?
@@ -865,6 +891,7 @@ test_the_coverage_time_budget_advises_and_a_script_no_shard_runs_still_refuses
 test_an_empty_serial_shard_with_every_script_entered_passes_the_coverage_guard
 test_a_quarantined_script_is_listed_not_run_and_the_gate_passes
 test_an_unmapped_test_file_fails_only_itself
+test_four_formerly_unmapped_bin_paths_map_to_their_tests
 test_an_unmapped_source_path_fails_only_itself
 
 printf 'all %s\n' 'jg-test-run limit tests passed'

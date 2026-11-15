@@ -1325,6 +1325,24 @@ families_for_changed_path() {
       ;;
     bin/jg-learnings.py)
       ;;
+    bin/jg-beads-lease.py)
+      # Imported by the beads write adapter alone, so the tests that name that adapter run it.
+      scripts_for_test_reference jg-beads-write.py \
+        || printf '%s\n' "__unmapped__:$path"
+      ;;
+    bin/jg-tool-update-check.sh)
+      # Its tests name the core check it runs under, never the script's own file name.
+      scripts_for_test_reference tool-update-check \
+        || printf '%s\n' "__unmapped__:$path"
+      ;;
+    bin/jg-trunk-resolve-lib.sh)
+      # The resolver's tests name its command and its retry, never the library's own file name.
+      scripts_for_test_reference jg-trunk-resolve \
+        || printf '%s\n' "__unmapped__:$path"
+      ;;
+    bin/juggernaut-name-gate.allow)
+      # Data, never a test: the name gate reads it and every lint runs that gate, so no test script is selected.
+      ;;
     bin/jg-startup-memory-budget.sh|bin/jg-startup-memory-budget-lib.sh)
       printf '%s\n' squad_lead
       printf '%s\n' session-bootstrap
