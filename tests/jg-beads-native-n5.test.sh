@@ -78,17 +78,26 @@ NAMES=(work kid side card back stray ring tied nope)
 said="work=0 kid=0 side=1 card=1 back=0 stray=1 ring=0 tied=0 nope=1 "
 "${jail[@]}" python3 "$MIGRATE" cut --home main --dir "$M" --copy "$T/copy" --out "$T/imp" --store "$T/cut/.beads" --order "Umer ordered this cut" >/dev/null 2>"$T/err" || fail "cut: $(cat "$T/err")"
 [ "$(codes "$M" "${NAMES[@]}")" = "$said" ] || fail "edge store: $(codes "$M" "${NAMES[@]}")"
+pass "blocking answers on a cut store as the edges say"  # a slow host still shows progress: the runner ends a script only after a silence
 home ln
 sed -E -e 's/"dependencies": \[[^]]*\]/"dependencies": []/' -e '/"legacy_item": "kid"/s/"description": ""/"description": "parent: gate"/' "$T/imp/main.jsonl" >"$T/lines.jsonl"
 bd_ ln import "$T/lines.jsonl"
 [ -z "$(stored ln)" ] || fail "the body-line store must start with no edge: $(stored ln)"
 assert_contains "$(axi ln relink)" "ok: relink laid 6" "lines must become their edges"
 [ "$(codes "$T/ln" "${NAMES[@]}")" = "$said" ] || fail "body-line store: $(codes "$T/ln" "${NAMES[@]}")"
+pass "blocking answers on a body-line store as the edges say"
 mv "$M/config/beads-dir" "$T/beads-dir"
 [ "$(codes "$M" work stray)" = "work=2 stray=2 " ] || fail "an unreadable store must exit 2"
 mv "$T/beads-dir" "$M/config/beads-dir"
 printf 'short\n' >"$T/said.txt"
-for h in "$M" "$T/ln"; do out=$(captain "$h" answer gate --decision-file "$T/said.txt") || fail "$h: answer: $out"; done
+rowid() {  # <home folder> <old name>: the id a migrated row has in that home's store (a gate's question is asked of the id).
+  BEADS_DIR=$(cat "$1/config/beads-dir") "${jail[@]}" "$WRAPPER" list --all --limit 0 --json 2>/dev/null |
+    python3 -c 'import json, sys; print(next(r["id"] for r in json.load(sys.stdin) if (r.get("metadata") or {}).get("legacy_item") == sys.argv[1]))' "$2"
+}
+for h in "$M" "$T/ln"; do  # a migrated hold is a plain hold: his question is a gate, made on the row, and his answer closes it
+  id=$(rowid "$h" gate) || fail "$h: no row for gate"
+  out=$(captain "$h" hold "$id" --reason "waits on Umer") || fail "$h: hold: $out"
+  out=$(captain "$h" answer "$id" --decision-file "$T/said.txt" --release) || fail "$h: answer: $out"; done
 said=$(codes "$M" "${NAMES[@]}")
 [ "$(codes "$T/ln" "${NAMES[@]}")" = "$said" ] || fail "an answer must free the rows alike"
 pass "blocking gives the same exit codes on a cut store and a body-line store"

@@ -9,7 +9,7 @@ if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
   printf 'skip: real store: JG_BEADS_TEST_BD, JG_BEADS_TEST_DOLT is unset\n'; exit 0; fi
 T=$(jg_test_tmproot jg-beads-followup) CLI="$ROOT/bin/jg-backlog.sh" jail=()
 unset BEADS_DB BEADS_DOLT_SHARED_SERVER
-export TZ=UTC JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
+export TZ=UTC JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT TMPDIR=$T  # TMPDIR is the jail's one writable folder, so every mktemp under it lands
 command -v bwrap >/dev/null && jail=(bwrap --ro-bind / / --tmpfs /tmp --bind "$T" "$T" --ro-bind "$ROOT" "$ROOT" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent)
 mkdir -p "$T/bd/data" "$T/bd/state" "$T/bd/config" "$T/bd/s"
 printf '%s\n' "$T/bd/s/.beads" > "$T/bd/config/beads-dir"
@@ -47,11 +47,13 @@ same public-followup nonsense
 same ready
 ask bd add jg-plain "[feature] Plain row" --body why >/dev/null || fail "a plain row"
 assert_contains "$(promise 'ask bd' jg-plain req)" "already exists" "a promise must not take over a plain row"
+pass "a promise is checked when it is written"  # progress for a slow host: the runner ends a script only after a silence
 # Only the typed verbs move a promise, and a backlog file cannot carry one.
 refused() { local out; out=$(ask bd "$@" pf-one 2>&1) && fail "$1 must refuse a promise"; assert_contains "$out" "cannot change through generic" "$1 must name the typed path"; }
 refused 'done'; refused start; refused reopen; refused hold --reason why; refused update --title moved
 assert_contains "$(. "$ROOT/bin/jg-backlog-lib.sh"; jg_backlog_beads_write "$T/bd/config" stage pf-one 2>&1)" "cannot cross to a backlog file" "a backlog file must refuse a promise"
 assert_contains "$(. "$ROOT/bin/jg-public-followup-lib.sh"; jg_pf_obligation_json "$T/bd" pf-one 2>&1)" '"public_safe_summary"' "the shell reader must see the payload"
+pass "only the typed verbs move a promise"
 # Work bound to a promise: every relation answer, refusal and the delivery state it leaves.
 relation() { jq -n --arg id "$1" --arg task "$2" --arg role "${3:-fulfills}" --argjson generation "${4:-1}" \
   '{relation_id:$id, work_ref:{home_id:"main", task_id:$task}, role:$role, required:true, generation:$generation}' > "$T/$1.json"; }
@@ -91,6 +93,7 @@ same public-followup list --work-ref main/jg-next --json
 # Native shape: one tracks edge that never blocks the work it names.
 [ "$(BEADS_DIR=$T/bd/s/.beads "${jail[@]}" "$ROOT/bin/jg-beads.sh" list --all --limit 0 --json | jq '[.[] | select(.id == "pf-two") | .dependencies[]? | select(.type == "tracks")] | length')" = 1 ] || fail "one tracks edge from the promise to its work"
 assert_contains "$(ask bd ready)" "jg-work" "bound work must stay ready"
+pass "work bound to a promise keeps its relation and its native edge"
 # A work event lands, refuses or supersedes alike, and the promise comes due only when its contract is met.
 event() {  # <event-id> <relation> <generation> <task> <outcome> <deliverables> <successor> [obligation]
   jq -n --arg id "$1" --arg rel "$2" --argjson generation "$3" --arg task "$4" --arg outcome "$5" --argjson items "$6" --argjson next "$7" --arg ob "${8:-pf-two}" \
@@ -135,6 +138,7 @@ report pf-four ev-loud
 report pf-four ev-fail --json
 report pf-four ev-fail
 same public-followup list --json
+pass "a work event lands, refuses or supersedes alike"
 # Delivery: every attempt, receipt, error and waiver answers alike, whatever order it arrives in.
 due() { promise "$1" "$2" req >/dev/null; $1 public-followup bind-work "$2" --relation-file "$T/rel-a.json" >/dev/null 2>&1
   event "ev-$2" rel-a 1 jg-work pr-merged "$url" null "$2"; $1 public-followup work-event "$2" --event-file "$T/ev-$2.json" >/dev/null 2>&1; }
@@ -205,6 +209,7 @@ miss pf-six er-due
 miss pf-six er-ctx --json
 miss pf-six er-due --json
 begin pf-six "$sha" --json
+pass "every delivery attempt, receipt, error and waiver answers alike"
 # A blocker stops an attempt from starting, comes too late once one has, and never strands a waiver: bd enforces the edge only within one id prefix, so this one shares it.
 due same pf-seven; due same pf-eight
 jq '.relation_id = "rel-other"' "$T/rel-a.json" > "$T/rel-other.json"
@@ -220,6 +225,7 @@ waive pf-eight 'owed nothing' captain --json
 same public-followup list --json
 same public-followup ready
 same ready
+pass "a blocker stops an attempt and never strands a waiver"
 # Rival attempts: only the guarded row write decides, so one attempt wins and no post can start twice.
 due 'ask bd' pf-lock
 for n in 1 2 3 4; do (ask bd public-followup begin-delivery pf-lock --payload-hash "$(printf '%064d' "$n")" >/dev/null 2>&1; echo $? > "$T/lock.$n") & done; wait
@@ -230,6 +236,7 @@ due 'ask bd' pf-crash
 BEADS_DIR=$T/bd/s/.beads "${jail[@]}" "$ROOT/bin/jg-beads.sh" update pf-crash --if-status open --status in_progress --metadata "{\"delivery_state\":\"delivery-posting\",\"delivery\":{\"attempt_count\":1,\"payload_digest\":\"$sha\"}}" >/dev/null 2>&1 || fail "a crashed attempt"
 for _ in 1 2; do [ "$(ask bd public-followup begin-delivery pf-crash --payload-hash "$sha" --json | jq .already)" = true ] || fail "the rerun must answer already"; done
 [ "$(notes pf-crash)" = 1 ] || fail "the rerun must log the attempt once, got $(notes pf-crash)"
+pass "rival attempts leave one winner and a crashed attempt one row"
 # The whole promise on a Beads home with no the backlog on the path: it posts once, and a second deliver posts nothing.
 J=$T/jr
 mkdir -p "$J/data" "$J/config" "$J/s" "$J/state/x-inbox" "$T/fb"
