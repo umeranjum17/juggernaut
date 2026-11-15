@@ -2229,6 +2229,9 @@ journeys:
   sentinel-dead-relaunch:
     tier: local
     command: bash journeys/core-run.sh 'bash sentinel/tests/jg-sentinel-dead-relaunch.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  sentinel-false-restart:
+    tier: local
+    command: bash journeys/core-run.sh 'bash sentinel/tests/jg-sentinel-false-restart.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   sentinel-install:
     tier: local
     command: bash journeys/core-run.sh 'bash sentinel/tests/jg-sentinel-install.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

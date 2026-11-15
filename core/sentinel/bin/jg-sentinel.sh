@@ -36,12 +36,18 @@
 #      backend's own HERDR_SESSION, else `default`) as the inode and bind time of its API socket, which the server
 #      recreates on every start. A stopped server is left alone: its supervisor
 #      restarts it, and this script never starts one.
-#   2. On the first identity it records it in state/.sentinel-herdr-identity.
-#      On a changed identity it runs `reconcile`, leaves one pending restart
-#      wake per identity in state/.sentinel-wake-pending (state/.sentinel-woken-for
-#      keeps the identity it was left for), and records the new identity once no
-#      lane is unsettled or 30 minutes have passed since the restart, logging any
-#      lane still unsettled then; until that, every tick reconciles again.
+#   2. Restart detection is a comparison with the last identity looked at, kept in
+#      state/.sentinel-herdr-identity. The first identity is only recorded. A changed
+#      identity is a restart: it is recorded at once, reported once, and runs the
+#      recovery pass (`reconcile`) once, then leaves one pending restart wake per
+#      identity in state/.sentinel-wake-pending (state/.sentinel-woken-for keeps the
+#      identity it was left for). The same identity on the next look is no restart,
+#      whatever the pass found: a lane whose recovery failed is logged and left, never
+#      retried by a repeat look. The one exception is a lane not settled yet (a server
+#      still resuming its sessions): state/.sentinel-herdr-unsettled names that
+#      episode, every tick continues its pass without calling it a restart, and the
+#      mark is dropped once no lane is unsettled or 30 minutes have passed since the
+#      restart, logging any lane still unsettled then.
 #   3. Wakes the primary session when a restart wake is pending, or when
 #      supervision is needed and the watcher beacon is older than the grace
 #      (bin/jg-supervision-lib.sh owns that predicate). A beacon-only wake is
@@ -536,14 +542,35 @@ wake_primary() {  # <body>
   say "primary: woke $target"
 }
 
-# Record <episode> as reconciled once the pass left no lane unsettled, or 30
-# minutes after the restart; until then the next pass reconciles again.
+# Close or keep open <episode> after a pass: reconciled once the pass left no lane
+# unsettled, or 30 minutes after the restart; until then state/.sentinel-herdr-unsettled
+# names it, so the next tick continues its pass.
 settle_episode() {  # <episode>
   [ "$DRY_RUN" = 0 ] || return 0
   if [ -z "$RECONCILE_UNSETTLED" ] || [ $(( $(date +%s) - ${1##*:} )) -ge 1800 ]; then
     [ -z "$RECONCILE_UNSETTLED" ] || say "still not settled 30 minutes after the restart; left to the primary:$RECONCILE_UNSETTLED"
+    rm -f "$STATE/.sentinel-herdr-unsettled"
     printf '%s\n' "$1" >"$STATE/.sentinel-herdr-identity"
+  else
+    printf '%s\n' "$1" >"$STATE/.sentinel-herdr-unsettled"
   fi
+}
+
+# One recovery pass for <episode>: the lanes, the model mismatches, and the one restart
+# wake the primary gets for the identity, whether or not every lane recovered.
+recover_episode() {  # <episode>
+  local rc=0
+  reconcile "$1" || rc=1
+  [ "$(cat "$STATE/.sentinel-woken-for" 2>/dev/null)" = "$1" ] || {
+    printf '%s\n' "$1" >"$STATE/.sentinel-woken-for"
+    printf '%s\n' "The Herdr server restarted at $(date -u +%Y-%m-%dT%H:%M:%SZ), which stopped every agent and watcher in it. The sentinel ran its recovery pass over this home's direct reports; its lines, and any lane it could not recover, are in $LOG. Run bin/jg-session-start.sh if this session was resumed, reconcile what remains, then end the turn so supervision re-arms." \
+      >"$STATE/.sentinel-wake-pending"
+  }
+  settle_episode "$1"
+  JG_SENTINEL_MODEL_EVENT=$1 relaunch_model_mismatches || rc=1
+  # The lead pane is handled above; each lead owns its worker pass.
+  JG_SENTINEL_MODEL_EVENT=$1 relaunch_lead_model_mismatches || rc=1
+  return "$rc"
 }
 
 # The one-shot reconcile: skipped for an episode already recorded as reconciled.
@@ -710,25 +737,15 @@ tick() {
   id=$(herdr_identity)
   [ -n "$id" ] || return 0
   prev=$(cat "$STATE/.sentinel-herdr-identity" 2>/dev/null)
-  if [ "$prev" != "$id" ]; then
-    if [ -n "$prev" ]; then
-      say "herdr session $SESSION restarted (socket $prev -> $id)"
-      if reconcile "$id"; then
-        [ "$(cat "$STATE/.sentinel-woken-for" 2>/dev/null)" = "$id" ] || {
-          printf '%s\n' "$id" >"$STATE/.sentinel-woken-for"
-          printf '%s\n' "The Herdr server restarted at $(date -u +%Y-%m-%dT%H:%M:%SZ), which stopped every agent and watcher in it. The sentinel already reconciled this home's direct reports; its lines are in $LOG. Run bin/jg-session-start.sh if this session was resumed, reconcile what remains, then end the turn so supervision re-arms." \
-          >"$STATE/.sentinel-wake-pending"
-        }
-        settle_episode "$id"
-      else
-        rc=1
-      fi
-      JG_SENTINEL_MODEL_EVENT=$id relaunch_model_mismatches || rc=1
-      # The lead pane is handled above; each lead owns its worker pass.
-      JG_SENTINEL_MODEL_EVENT=$id relaunch_lead_model_mismatches || rc=1
-    else
-      printf '%s\n' "$id" >"$STATE/.sentinel-herdr-identity"
-    fi
+  if [ -z "$prev" ]; then
+    printf '%s\n' "$id" >"$STATE/.sentinel-herdr-identity"
+  elif [ "$prev" != "$id" ]; then
+    say "herdr session $SESSION restarted (socket $prev -> $id)"
+    # Recorded before the pass: this look is the last one, so a pass that fails is no restart next tick.
+    printf '%s\n' "$id" >"$STATE/.sentinel-herdr-identity"
+    recover_episode "$id" || rc=1
+  elif [ "$(cat "$STATE/.sentinel-herdr-unsettled" 2>/dev/null)" = "$id" ]; then
+    recover_episode "$id" || rc=1
   fi
   if [ -f "$STATE/.sentinel-wake-pending" ]; then
     wake_primary "$(cat "$STATE/.sentinel-wake-pending")" && rm -f "$STATE/.sentinel-wake-pending"
