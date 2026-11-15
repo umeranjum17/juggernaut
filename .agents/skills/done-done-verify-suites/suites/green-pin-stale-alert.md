@@ -1,0 +1,3 @@
+# Green pin stale alert
+
+Green pin stale alert: run `done-done run green-pin-stale` (which runs `bash tests/jg-green-pin-stale.test.sh` and writes `green-pin-stale.log` into `$DONE_DONE_EVIDENCE_ROOT`); on a throwaway trunk (a real git repository, the real trunk observer and the real `bin/jg-alert.sh`) the real `core/green-pin-stale/stale.sh` raises one `line-red` alert to Main for a pin 60 minutes old with commits above it, for each cause (red, over budget, verify running) and names it; a second and third tick of the same stall, a pin that moved, a tip at the pin, a fresh landing and a pin 59 minutes old raise nothing; a moved pin ends the alert; the wiring and unwiring round trip.

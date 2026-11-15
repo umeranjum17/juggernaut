@@ -102,6 +102,7 @@ plan=(
   pr-pager:home
   auto-dispatch:home
   trunk-latency:home
+  green-pin-stale:home
   trunk-ci:home
   recon-ready:home
   status-latency:home
