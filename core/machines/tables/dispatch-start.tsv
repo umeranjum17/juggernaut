@@ -1,0 +1,19 @@
+machine	dispatch-start	data/auto-dispatch/<ticket>.start.<attempt> and state/dispatch-approved/<ticket>: one approved ticket the dispatch check starts by itself	core/auto-dispatch/dispatch.sh
+enum	dispatch-start
+state	ready	initial	The lead approved the ticket; no start has been tried for this approval.	-	rest	launch
+state	starting	normal	The spawn runs and has not said what it did.	-	waiting	10m -> time-out
+state	started	normal	The spawn ended well and the lane record is there.	-	rest	reapprove
+state	deferred	normal	The spawn said wait; the same approval starts it again.	-	rest	resume
+state	refused	normal	The spawn failed for a real cause; only a new approval tries again.	-	rest	reapprove
+edge	(none)	approve	ready	bin/jg-backlog.sh:approve_dispatch	-	the lead or the owner approves the ticket with a route; a worker is refused	jg-auto-dispatch
+edge	ready	launch	starting	core/auto-dispatch/dispatch.sh:launch	-	a free lane and a free copy; no lane record and no start of the ticket in flight; one create of the attempt record claims it	jg-auto-dispatch
+edge	starting	spawned	started	core/auto-dispatch/dispatch.sh:run_start	-	the spawn exited 0 and the lane record is there	jg-auto-dispatch
+edge	starting	defer	deferred	core/auto-dispatch/dispatch.sh:run_start	-	the spawn exited 75: a full pool, no copy, the load, the capacity or a locked task set	jg-auto-dispatch
+edge	starting	refuse	refused	core/auto-dispatch/dispatch.sh:run_start	-	the spawn exited with any other code, or exited 0 and left no lane record	jg-auto-dispatch
+edge	starting	adopt	started	core/auto-dispatch/dispatch.sh:start_state	-	the wrapper left no result in 10 minutes and the lane record is there	jg-auto-dispatch
+edge	starting	time-out	refused	core/auto-dispatch/dispatch.sh:start_state	-	the wrapper left no result in 10 minutes and there is no lane record	jg-auto-dispatch
+edge	deferred	resume	starting	core/auto-dispatch/dispatch.sh:launch	-	the next beat with a free lane and a free copy; the same approval, the next attempt, no lead turn	jg-auto-dispatch
+edge	deferred	reapprove	ready	bin/jg-backlog.sh:approve_dispatch	-	a newer approval starts over	jg-auto-dispatch
+edge	refused	reapprove	ready	bin/jg-backlog.sh:approve_dispatch	-	a newer approval starts over; nothing else tries a refused start again	jg-auto-dispatch
+edge	started	reapprove	ready	bin/jg-backlog.sh:approve_dispatch	-	a newer approval starts over	jg-auto-dispatch
+observer	bash "$(dirname "$JG_MACHINES_TABLES")/observers/dispatch-start.sh" "$1"

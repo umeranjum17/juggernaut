@@ -250,6 +250,9 @@
 #   deferred the same way: one `deferred:` line naming the load, exit 75, no
 #   record. bin/jg-reaper-lib.sh owns the limit, the window and the history; a
 #   relaunch and a --squad-lead spawn are never deferred for load.
+#   Task-set lock: a fresh spawn that finds this home's task set locked by another spawn, a forced teardown or another
+#   operation is deferred the same way (one `deferred:` line, exit 75, no record, nothing created), because the lock
+#   is a wait and not a verdict. core/auto-dispatch/dispatch.sh resumes every exit 75 under the same approval.
 #   With no harness arg, a operator/scout spawn resolves the CREW harness only when
 #   config/crew-dispatch.json is absent. When that file exists, operator/scout
 #   spawns require an explicit harness so juggernaut cannot silently skip dispatch
@@ -1706,17 +1709,14 @@ if [ "$RELAUNCH" -eq 0 ]; then
   fi
   if [ "$SPAWN_TASK_SET_RC" -ne 0 ]; then
     case "$(jg_lock_role "$SPAWN_TASK_SET_LOCK" 2>/dev/null || true)" in
-      task-spawn)
-        echo "error: this home's task set is locked by another spawn; refusing to create task $ID rather than racing it" >&2
-        ;;
-      forced-teardown)
-        echo "error: this home's task set is locked by a forced teardown; refusing to create task $ID rather than racing it" >&2
-        ;;
-      *)
-        echo "error: this home's task set is locked by another operation; refusing to create task $ID rather than racing it" >&2
-        ;;
+      task-spawn) SPAWN_TASK_SET_HOLDER="another spawn" ;;
+      forced-teardown) SPAWN_TASK_SET_HOLDER="a forced teardown" ;;
+      *) SPAWN_TASK_SET_HOLDER="another operation" ;;
     esac
-    exit 1
+    # A held lock is a wait, not a verdict: it is the same deferral as a full pool (exit 75, no record, the task stays
+    # queued), so a caller that resumes a deferral resumes this one under the same approval.
+    echo "deferred: this home's task set is locked by $SPAWN_TASK_SET_HOLDER; task $ID was not created and stays queued rather than racing it" >&2
+    exit 75
   fi
   if ! jg_lock_set_role "$SPAWN_TASK_SET_LOCK" task-spawn; then
     jg_lock_release "$SPAWN_TASK_SET_LOCK" || true

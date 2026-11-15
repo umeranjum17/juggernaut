@@ -145,9 +145,18 @@ pass "an unreadable store writes nothing"
 # A stand-in spawn records its arguments (the real spawn needs a pool, a pane and a model); the route comes from the record.
 D2=$TMP_ROOT/home-on
 make_home "$D2"
+# The stand-in does what the real spawn does at its ends: it exits 75 with a deferred: line when told to wait, fails with an error line,
+# or publishes the lane record state/<task>.meta and exits 0. `spawn-mode-<task>` holds defer, fail or nolane (exit 0 with no record).
 cat > "$D2/spawn" <<'SH'
 #!/usr/bin/env bash
+here=$(cd "$(dirname "$0")" && pwd)
 printf '%s\n' "$*" >> "$SPAWN_LOG"
+case "$(cat "$here/spawn-mode-$1" 2>/dev/null)" in
+  defer) echo "deferred: pool for the project is full; task $1 stays queued" >&2; exit 75 ;;
+  fail) echo "error: treehouse could not lease a worktree for task $1" >&2; exit 1 ;;
+  nolane) exit 0 ;;
+esac
+printf 'kind=ship\n' > "$here/state/$1.meta"
 SH
 chmod +x "$D2/spawn"
 for t in a1 a2 b c e; do approve "$D2" "$t" >/dev/null || fail "approve-dispatch $t was refused"; done
@@ -157,7 +166,10 @@ for t in a1 a2 b e d; do
   printf 'Delivery contract: mode=local-trunk\n1. First action: create your branch: `git checkout -b feature/%s --`\n' "$t" > "$D2/data/$t/brief.md"
 done
 mkdir -p "$D2/data/c"
-on_beat() { home_env "$D2" env SPAWN_LOG="$D2/spawn.log" JG_AUTO_DISPATCH_SPAWN="$D2/spawn" JG_AUTO_DISPATCH_PROJECT_MODE="$ROOT/bin/jg-project-mode.sh" "$@" bash "$CHECK" check "$D2" 2>&1; }
+on_beat() { home_env "$D2" env SPAWN_LOG="$D2/spawn.log" JG_AUTO_DISPATCH_SPAWN="$D2/spawn" JG_AUTO_DISPATCH_PROJECT_MODE="$ROOT/bin/jg-project-mode.sh" bash "$CHECK" check "$D2" 2>&1; }
+results_in() { local f n=0; for f in "$1"/data/auto-dispatch/*.start.*; do [ -f "$f" ] && grep -q '^result=' "$f" && n=$((n + 1)); done; echo "$n"; }
+wait_for_results() { local n; for n in $(seq 1 100); do [ "$(results_in "$1")" -ge "$2" ] && return 0; sleep 0.1; done; return 1; }   # <home> <count>
+wait_for_result_in() { local n; for n in $(seq 1 100); do grep -q '^result=' "$1" 2>/dev/null && return 0; sleep 0.1; done; return 1; }   # <record>
 wait_for_spawns() { local n; for n in $(seq 1 50); do [ "$n" -gt 0 ] && [ "$(wc -l < "$D2/spawn.log" 2>/dev/null)" -ge "$1" ] && return 0; sleep 0.1; done; return 1; }
 
 out=$(on_beat) || fail "the check failed with the switch off: $out"
@@ -179,28 +191,114 @@ assert_contains "$out" "d (no approval record)" "the lead is told d has no appro
 assert_not_contains "$out" "b (" "an open decision is the owner's, not named to the lead"
 assert_absent "$D2/data/c/brief.md" "the check wrote no brief"
 rows=$(rows_of "$D2")
-assert_contains "$rows" "a1	started	claude sonnet medium" "a1's row says started"
+assert_contains "$rows" "a1	starting	claude sonnet medium" "a1's row says starting: the launch is not the result"
 [ -z "${DONE_DONE_EVIDENCE_ROOT:-}" ] || { cp "$D2/data/auto-dispatch/rows.tsv" "$DONE_DONE_EVIDENCE_ROOT/auto-dispatch-on-rows.tsv"; cp "$D2/spawn.log" "$DONE_DONE_EVIDENCE_ROOT/auto-dispatch-spawn-calls.log"; }
 pass "switch on: two approved tickets are spawned with their route; the rest are never spawned and the lead hears once"
 
-# A second beat spawns nothing again and says nothing again.
+# The spawn's own end is the result: once both spawns ended well, the next beat's rows say started, and it spawns and says nothing.
+wait_for_results "$D2" 2 || fail "the two starts did not record a result"
 out=$(on_beat) || fail "second beat failed: $out"
 assert_equals "$out" "" "a second beat tells the lead nothing new"
-assert_equals "$(wc -l < "$D2/spawn.log")" 2 "a second beat spawns nothing: the starts are in flight"
-pass "an unchanged beat neither spawns again nor names the same tickets again"
+assert_equals "$(wc -l < "$D2/spawn.log")" 2 "a second beat spawns nothing: the lanes are running"
+assert_contains "$(rows_of "$D2")" "a1	started	claude sonnet medium" "a1's row says started once the spawn ended well"
+assert_contains "$(cat "$D2/data/auto-dispatch/a1.start.1")" "result=started" "the start record holds the spawn's result"
+assert_equals "$(bash "$ROOT/bin/jg-machine.sh" show dispatch-start a1 2>/dev/null | awk -F'\t' '$1 == "state" { print $2 }')" "" "the machine reads no approval outside its home"
+assert_equals "$(JG_HOME="$D2" bash "$ROOT/core/machines/observers/dispatch-start.sh" a1)" started "the machine's observer reads a1 as started"
+assert_equals "$(JG_HOME="$D2" bash "$ROOT/core/machines/observers/dispatch-start.sh" d)" "" "a ticket with no approval record has no start state"
+pass "an unchanged beat neither spawns again nor names the same tickets again; the row follows the spawn's result"
 
-# A start that leaves no lane record is a failed start: named once, not retried until the lead approves again.
-out=$(on_beat JG_AUTO_DISPATCH_IN_FLIGHT=0) || fail "failed-start beat failed: $out"
-assert_contains "$out" "a1 (no lane record after 0 seconds" "a start with no lane record is named to the lead"
-assert_contains "$(rows_of "$D2")" "a1	spawn failed	no lane record" "a1's row says the start failed"
-out=$(on_beat JG_AUTO_DISPATCH_IN_FLIGHT=0) || fail "beat after a failed start failed: $out"
-assert_equals "$out" "" "a failed start is named once"
-assert_equals "$(wc -l < "$D2/spawn.log")" 2 "a failed start is not tried again by itself"
+# The spawn's result decides the row, and the ready state agrees with it (the ticket spawn-ready-state-check). Three tickets, three
+# free lanes: p waits on a full pool and then starts, q fails for a real cause, r exits 0 and leaves no lane record.
+D6=$TMP_ROOT/home-result
+make_home "$D6"
+cp "$D2/spawn" "$D6/spawn"; printf 'on\n' > "$D6/config/auto-dispatch"; printf '3\n' > "$D6/config/lane-target"
+for t in a1 a2 b; do
+  approve "$D6" "$t" >/dev/null || fail "approve-dispatch $t was refused"
+  mkdir -p "$D6/data/$t"
+  # shellcheck disable=SC2016  # the backquotes are the brief's own text
+  printf 'Delivery contract: mode=local-trunk\n1. First action: create your branch: `git checkout -b feature/%s --`\n' "$t" > "$D6/data/$t/brief.md"
+done
+printf 'defer\n' > "$D6/spawn-mode-a1"; printf 'fail\n' > "$D6/spawn-mode-a2"; printf 'nolane\n' > "$D6/spawn-mode-b"
+# b is held by an open decision in the shared stand-in; the real route here is a1, a2 and a third ticket made from c.
+mkdir -p "$D6/data/c"; printf 'a brief\n' > "$D6/data/c/brief.md"
+rb() { home_env "$D6" env SPAWN_LOG="$D6/spawn.log" JG_AUTO_DISPATCH_SPAWN="$D6/spawn" JG_AUTO_DISPATCH_PROJECT_MODE="$ROOT/bin/jg-project-mode.sh" bash "$CHECK" check "$D6" 2>&1; }
+printf '#!/usr/bin/env bash\nexit 1\n' > "$D6/hold"   # no open decision for anyone in this home
+out=$(rb) || fail "the first beat failed: $out"
+for t in a1 a2 b; do wait_for_result_in "$D6/data/auto-dispatch/$t.start.1" || fail "the start of $t did not record a result"; done
+out=$(rb)
+assert_contains "$out" "a2 (error: treehouse could not lease a worktree for task a2)" "a refused start names the spawn's real cause to the lead"
+assert_contains "$(rows_of "$D6")" "a2	spawn failed	error: treehouse could not lease a worktree for task a2" "the row says failed at once, with the cause"
+assert_not_contains "$out" "a1" "a deferral is a wait: the lead is not told about a1"
+assert_contains "$(rows_of "$D6")" "a1	deferred	deferred: pool for the project is full; task a1 stays queued" "the row says deferred, with the spawn's own words"
+assert_equals "$(JG_HOME="$D6" bash "$ROOT/core/machines/observers/dispatch-start.sh" a1)" deferred "the machine's observer reads a1 as deferred"
+assert_equals "$(JG_HOME="$D6" bash "$ROOT/core/machines/observers/dispatch-start.sh" a2)" refused "the machine's observer reads a2 as refused"
+assert_equals "$(bash "$ROOT/bin/jg-machine.sh" check dispatch-start | cut -d: -f1)" "ok dispatch-start" "the dispatch-start table lints clean"
+pass "a deferral and a refusal are told apart at once, with the spawn's own words"
+
+# The deferral clears with no new approval: while the pool stays full each beat tries a1 again as the next attempt, and the first beat after
+# it frees starts it. A refusal is never tried again by itself.
+wait_for_result_in "$D6/data/auto-dispatch/a1.start.2" || fail "the second attempt of a1 did not record a result"
+assert_contains "$(cat "$D6/data/auto-dispatch/a1.start.2")" "result=deferred" "a1 stays deferred while the pool is full"
+rm -f "$D6/spawn-mode-a1"
+rb >/dev/null
+wait_for_result_in "$D6/data/auto-dispatch/a1.start.3" || fail "the third attempt of a1 did not record a result"
+assert_contains "$(cat "$D6/data/auto-dispatch/a1.start.3")" "result=started" "attempt 3 of a1 ended well, with no new approval"
+assert_equals "$(grep -c -- '^a1 ' "$D6/spawn.log")" 3 "a1 was spawned once for each attempt"
+rb >/dev/null
+assert_contains "$(rows_of "$D6")" "a1	started" "a1's row says started"
+assert_equals "$(grep -c -- '^a2 ' "$D6/spawn.log")" 1 "a refused start is not tried again by itself"
+pass "a deferred start resumes under the same approval; a refused start does not"
+
+# A restart creates no duplicate: further beats, and two runs at once, spawn nothing more for a lane that runs.
+for _ in 1 2 3; do rb >/dev/null; done
+rb >/dev/null & rb >/dev/null & wait
+assert_equals "$(grep -c -- '^a1 ' "$D6/spawn.log")" 3 "a restart and two runs at once start a1 no more"
+attempts=("$D6"/data/auto-dispatch/a1.start.[0-9]*)
+assert_equals "${#attempts[@]}" 3 "a1 has exactly its three attempts on record"
+pass "a restart, and two check runs at once, create no duplicate start"
+
+# A new approval starts a refused ticket again.
 sleep 1
-approve "$D2" a1 >/dev/null || fail "approving a1 again was refused"
-on_beat >/dev/null
-wait_for_spawns 3 || fail "a1 was not spawned again after a new approval"
-pass "a failed start waits for the lead's new approval"
+rm -f "$D6/spawn-mode-a2"
+approve "$D6" a2 >/dev/null || fail "approving a2 again was refused"
+rb >/dev/null
+wait_for_result_in "$D6/data/auto-dispatch/a2.start.2" || fail "a2 was not started again after a new approval"
+assert_contains "$(cat "$D6/data/auto-dispatch/a2.start.2")" "result=started" "a2's second attempt ended well"
+pass "a refused start waits for the lead's new approval and then starts"
+
+# The ready state is asked again right before a start: a lane record that is already there (another path started the ticket after
+# the list was read) means no spawn. A dead wrapper is settled by the lane record: there is one, it started; none, it failed.
+D7=$TMP_ROOT/home-preflight
+make_home "$D7"
+cp "$D2/spawn" "$D7/spawn"; printf 'on\n' > "$D7/config/auto-dispatch"; printf '6\n' > "$D7/config/lane-target"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$D7/hold"
+for t in a1 a2 b; do
+  approve "$D7" "$t" >/dev/null || fail "approve-dispatch $t was refused"
+  mkdir -p "$D7/data/$t"
+  # shellcheck disable=SC2016  # the backquotes are the brief's own text
+  printf 'Delivery contract: mode=local-trunk\n1. First action: create your branch: `git checkout -b feature/%s --`\n' "$t" > "$D7/data/$t/brief.md"
+done
+printf 'kind=ship\n' > "$D7/state/a1.meta"                      # a1 already runs: the stand-in list still names it
+printf 'cleanup_recovery=treehouse\n' > "$D7/state/b.meta"       # b's wrapper died and its record only keeps a failed launch's copy: that is no lane
+now=$(date +%s)
+mkdir -p "$D7/data/auto-dispatch"
+printf 'attempt=1\ntask=a2\napproved-at=%s\nlaunched-at=%s\nroute=claude sonnet medium\n' \
+  "$(awk -F= '$1 == "approved-at" { print $2 }' "$D7/state/dispatch-approved/a2")" "$((now - 5000))" > "$D7/data/auto-dispatch/a2.start.1"
+printf 'attempt=1\ntask=b\napproved-at=%s\nlaunched-at=%s\nroute=claude sonnet medium\n' \
+  "$(awk -F= '$1 == "approved-at" { print $2 }' "$D7/state/dispatch-approved/b")" "$((now - 5000))" > "$D7/data/auto-dispatch/b.start.1"
+printf 'kind=ship\n' > "$D7/state/a2.meta"                      # a2's wrapper died after the spawn published the lane
+out=$(home_env "$D7" env SPAWN_LOG="$D7/spawn.log" JG_AUTO_DISPATCH_SPAWN="$D7/spawn" JG_AUTO_DISPATCH_PROJECT_MODE="$ROOT/bin/jg-project-mode.sh" bash "$CHECK" check "$D7" 2>&1)
+sleep 1
+assert_not_contains "$(cat "$D7/spawn.log" 2>/dev/null)" "--ticket a1 " "a lane that already runs is not spawned again"
+assert_not_contains "$(cat "$D7/spawn.log" 2>/dev/null)" "--ticket a2 " "a start whose wrapper died after the lane was published is not spawned again"
+assert_contains "$(rows_of "$D7")" "a1	started	its lane is already running" "a1's row says its lane already runs"
+assert_contains "$(rows_of "$D7")" "a2	started" "a2's row says started: its lane record is there"
+assert_contains "$(rows_of "$D7")" "b	spawn failed	the start left no result in 600 seconds" "a dead wrapper whose record is no lane is a failed start"
+assert_contains "$out" "b (the start left no result in 600 seconds" "that failed start is named to the lead"
+rm -f "$D7/state/a2.meta"
+out=$(home_env "$D7" env SPAWN_LOG="$D7/spawn.log" JG_AUTO_DISPATCH_SPAWN="$D7/spawn" JG_AUTO_DISPATCH_PROJECT_MODE="$ROOT/bin/jg-project-mode.sh" bash "$CHECK" check "$D7" 2>&1)
+assert_contains "$out" "a2 (the start left no result in 600 seconds" "with the lane record gone, a2's dead wrapper is a failed start"
+pass "the lane record settles a start with no result, and a running lane is never spawned again"
 
 # Delivery contract missing: the ticket is named to the lead and not spawned.
 D3=$TMP_ROOT/home-nocontract
@@ -245,7 +343,7 @@ rm -f "$D4/no-copy"
 cb >/dev/null
 for n in $(seq 1 50); do [ -s "$D4/spawn.log" ] && break; sleep 0.1; done
 assert_contains "$(cat "$D4/spawn.log" 2>/dev/null)" "a1 $D4/projects/proj --ticket a1" "a copy frees: the next beat starts a1 with no lead turn"
-assert_contains "$(rows_of "$D4")" "a1	started" "a1's row says started"
+assert_contains "$(rows_of "$D4")" "a1	starting" "a1's row says starting"
 pass "a ticket starts only when a copy is free under the lane limit and the reserve; no copy is a quiet wait"
 
 # Priority order: the store lists a2 before a1 (a2 is the higher priority), one lane is free. The check starts a2 only, not the

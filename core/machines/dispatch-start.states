@@ -1,0 +1,7 @@
+# dispatch-start: the closed list of states of the machine "Dispatch start".
+# value<TAB>mark (initial, final or -)<TAB>kind (active, waiting, rest, final)<TAB>meaning
+ready	initial	rest	the lead approved the ticket and no start has been tried for this approval
+starting	-	waiting	the spawn runs and has not said what it did
+started	-	rest	the spawn ended well and the lane record is there
+deferred	-	rest	the spawn said wait: a full pool, no copy, the load, the capacity or a locked task set
+refused	-	rest	the spawn failed for a real cause, and only a new approval tries again
