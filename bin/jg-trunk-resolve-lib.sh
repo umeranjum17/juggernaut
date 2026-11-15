@@ -5,7 +5,7 @@
 #   jg_trunk_resolve <project-dir> <tip> <lane commit> <resolver command> <limit seconds> <scratch dir>
 #
 # A rebase that meets a conflict is not sent back to the worker. The lander puts the lane's change on the tip in a copy of its own (a
-# detached worktree under <scratch dir>, removed again), leaves the conflict in that copy, and runs the resolver command there with a
+# private clone under <scratch dir>/copy, removed again; it cannot move a project branch), leaves the conflict in that copy, and runs the resolver command there with a
 # time limit. The resolver is an agent the home chose (policy key conflict-resolver); it is told what to resolve in the environment:
 #   JG_RESOLVE_CONFLICTS   the conflicted paths, one per line, in a file          JG_RESOLVE_TIP   the commit the change is put on
 #   JG_RESOLVE_CANDIDATE   the lane's commit                                       JG_RESOLVE_LIMIT the limit in seconds
@@ -22,12 +22,15 @@ jg_trunk_commit_like() {  # <project-dir> <tree> <parent> <lane commit>
 }
 
 jg_trunk_resolve() {  # <project-dir> <tip> <lane commit> <resolver command> <limit seconds> <scratch dir>
-  local proj=$1 tip=$2 cand=$3 cmd=$4 limit=$5 scratch=$6 wt conflicts touched rc=0 out tree fresh marks
+  local proj=$1 tip=$2 cand=$3 cmd=$4 limit=$5 scratch=$6 wt conflicts touched rc=0 out tree fresh marks marktargets
   mkdir -p "$scratch" || { echo "cannot make the resolver's scratch directory $scratch" >&2; return 1; }
   wt="$scratch/copy"; out="$scratch/resolver.log"; : > "$out"
-  git -C "$proj" worktree add -q --detach "$wt" "$tip" >/dev/null 2>&1 || { echo "cannot make the lander's copy at the trunk tip" >&2; return 1; }
-  # shellcheck disable=SC2064 # the paths are fixed now
-  trap "git -C '$proj' worktree remove --force '$wt' >/dev/null 2>&1 || :; git -C '$proj' worktree prune >/dev/null 2>&1 || :; trap - RETURN" RETURN
+  # A private clone, not a worktree: the agent can run any git command in it and cannot move a branch of the project.
+  rm -rf -- "$wt"
+  { git clone -q --shared --no-checkout "$proj" "$wt" && git -C "$wt" remote remove origin && git -C "$wt" checkout -q --detach "$tip"; } >/dev/null 2>&1 \
+    || { rm -rf -- "$wt"; echo "cannot make the lander's copy at the trunk tip" >&2; return 1; }
+  # shellcheck disable=SC2064 # the path is fixed now
+  trap "[ '${wt##*/}' != copy ] || rm -rf -- '$wt'; trap - RETURN" RETURN
   git -C "$wt" -c user.name=jg-trunk -c user.email=jg-trunk@localhost cherry-pick --no-commit "$cand" >/dev/null 2>&1 || :
   conflicts=$(git -C "$wt" diff --name-only --diff-filter=U | sort -u)
   [ -n "$conflicts" ] || { echo "the change puts on the tip without a conflict in the lander's copy; nothing to resolve" >&2; return 1; }
@@ -38,13 +41,16 @@ jg_trunk_resolve() {  # <project-dir> <tip> <lane commit> <resolver command> <li
   if [ "$rc" -ne 0 ]; then
     echo "the resolver could not resolve it: $(grep . "$out" | tail -n 1 | cut -c1-200 || :)" >&2; return 1
   fi
-  touched=$( { printf '%s\n' "$conflicts"; git -C "$wt" diff --name-only; } | grep . | sort -u)
-  marks=$(printf '%s\n' "$touched" | while IFS= read -r p; do [ ! -f "$wt/$p" ] || grep -lE '^(<<<<<<<|>>>>>>>)( |$)' "$wt/$p" 2>/dev/null; done)
+  marktargets=$conflicts
+  marks=$(printf '%s\n' "$marktargets" | while IFS= read -r p; do [ ! -f "$wt/$p" ] || grep -lE '^(<<<<<<<|>>>>>>>)( |$)' "$wt/$p" 2>/dev/null; done)
   [ -z "$marks" ] || { echo "the resolver left a conflict marker in: $(printf '%s' "$marks" | tr '\n' ' ')" >&2; return 1; }
   git -C "$wt" add -A >/dev/null 2>&1
+  touched=$( { printf '%s\n' "$conflicts"; git -C "$wt" diff --cached --name-only --no-renames; } | grep . | sort -u)
   [ -z "$(git -C "$wt" ls-files -u)" ] || { echo "the resolver left a path unmerged" >&2; return 1; }
   tree=$(git -C "$wt" write-tree) || { echo "the resolved tree cannot be written" >&2; return 1; }
-  fresh=$(jg_trunk_commit_like "$proj" "$tree" "$tip" "$cand") || { echo "the resolved commit cannot be made" >&2; return 1; }
+  fresh=$(jg_trunk_commit_like "$wt" "$tree" "$tip" "$cand") || { echo "the resolved commit cannot be made" >&2; return 1; }
+  git -C "$proj" fetch -q --no-tags --no-write-fetch-head "$wt" "$fresh" >/dev/null 2>"$scratch/fetch.err" \
+    || { echo "the resolved commit cannot be brought into the project: $(grep . "$scratch/fetch.err" | tail -n 1 | cut -c1-200)" >&2; return 1; }
   printf '%s\n' "$touched" > "$scratch/touched"
   printf '%s\n' "$fresh"
 }
