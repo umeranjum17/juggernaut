@@ -58,6 +58,13 @@ jg_backlog_task_id_refusal() {  # <ticket-id> <task-id> [<model>]
 # (jg-..., Main<number>, 32 hex), no [tag], no URL or path. Prints the reason and returns 1 when the title fails.
 # A row from before the type tag became a label (jg-backlog.sh retag) may still carry the tag at the front of its title,
 # so the one leading type tag ([captain-ask], [feature], [design-ux], [security], [blocker]) is not judged with the words after it.
+# A plan code is a short letters-and-digits word such as J20d-3, S18c, TC4b or mf-m2. It names a slice of a plan, not
+# an outcome, so it goes in the body. Only the first word is judged: a number later in a plain title stays.
+jg_backlog_title_starts_with_code() {  # <title>
+  local first=${1%%[ :]*}
+  [[ $first =~ ^[A-Za-z][A-Za-z0-9]*(-[A-Za-z0-9]+)*$ && $first =~ [0-9] ]]
+}
+
 jg_backlog_title_refusal() {  # <title>
   local title=$1 words
   case $title in
@@ -71,6 +78,8 @@ jg_backlog_title_refusal() {  # <title>
     printf 'it has %s characters, not 48 or fewer\n' "${#title}"
   elif [[ $title =~ \[[^]]*\] ]]; then
     printf 'it carries a [tag]\n'
+  elif jg_backlog_title_starts_with_code "$title"; then
+    printf 'it starts with a plan code (%s); the code belongs in the body\n' "${title%%[ :]*}"
   elif [[ $title =~ (^|[^[:alnum:]])(jg-[[:alnum:]]|Main[0-9]|[0-9a-f]{32}) ]]; then
     printf 'it carries an id\n'
   elif [[ $title =~ ://|/ ]]; then

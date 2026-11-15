@@ -38,7 +38,7 @@
 #     data/captain-closures.md; both flags are consumed here and never reach the store.
 #   - `add` (or `create`) whose item is not filed as fields: the title must read as plain words
 #     (bin/jg-backlog-lib.sh's jg_backlog_title_refusal: 2 to 7 words, at most 48 characters, no id, [tag], URL or
-#     path; a leading type tag is still taken as input and stored as the label), the call must carry --priority 0 to 3
+#     path, and no plan code such as J20d-3 or mf-m2 at the front (the code goes in the body; bin/jg-retitle.py renames the old ones); a leading type tag is still taken as input and stored as the label), the call must carry --priority 0 to 3
 #     (an owner ask gets 0), and bd checks the body for the sections of lint.sections.task (`jg-beads.sh init` sets
 #     Captain, Ask, Why and Done when; bd's own task rule adds Acceptance Criteria) with `create --validate`. The
 #     local presence flag config/backlog-intake-loose in this home turns the check off;
