@@ -144,7 +144,7 @@ trap 'rm -rf -- "$tmp"' EXIT
 SPAWNABLE_IDS=$tmp/spawnable
 "$BACKLOG" ready --spawnable > "$tmp/out" 2>/dev/null || exit 0   # the store could not answer: write nothing this beat
 awk -F'\t' 'NF >= 2 { print $1 }' "$tmp/out" > "$SPAWNABLE_IDS"
-{ cat "$SPAWNABLE_IDS"; for f in "$APPROVED"/*; do [ -f "$f" ] && basename "$f"; done; } 2>/dev/null | sort -u > "$tmp/candidates"
+for f in "$APPROVED"/*; do [ -f "$f" ] && basename "$f"; done 2>/dev/null | sort -u > "$tmp/approved"
 
 [ ! -x "$SCALE" ] || "$SCALE" check "$FMH" >/dev/null 2>&1   # the lane limit takes its tick on this beat
 free=$(free_lanes)
@@ -152,8 +152,8 @@ now=$(date +%s)
 started=0
 ACT=0; ! switch_on || ACT=1
 : > "$tmp/lead"; : > "$tmp/alerts"
-# List order is the store's; approved tickets the list lacks come last, and they never start.
-{ grep -Fx -f "$SPAWNABLE_IDS" "$tmp/candidates" 2>/dev/null; grep -Fvx -f "$SPAWNABLE_IDS" "$tmp/candidates" 2>/dev/null; } > "$tmp/ordered"
+# List order is the store's priority order and is kept as it is (no sort); approved tickets the list lacks come last, and they never start.
+awk '!seen[$0]++' "$SPAWNABLE_IDS" "$tmp/approved" > "$tmp/ordered"
 while IFS= read -r id; do
   [ -n "$id" ] || continue
   prev=$(last_row "$id"); prev_epoch=${prev%%$'\t'*}; prev_kind=$(printf '%s' "$prev" | cut -f2)

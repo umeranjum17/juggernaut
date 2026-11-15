@@ -247,3 +247,37 @@ for n in $(seq 1 50); do [ -s "$D4/spawn.log" ] && break; sleep 0.1; done
 assert_contains "$(cat "$D4/spawn.log" 2>/dev/null)" "a1 $D4/projects/proj --ticket a1" "a copy frees: the next beat starts a1 with no lead turn"
 assert_contains "$(rows_of "$D4")" "a1	started" "a1's row says started"
 pass "a ticket starts only when a copy is free under the lane limit and the reserve; no copy is a quiet wait"
+
+# Priority order: the store lists a2 before a1 (a2 is the higher priority), one lane is free. The check starts a2 only, not the
+# alphabetically first a1, and a beat after a restart (a new check run with the same rows file) starts nothing more.
+D5=$TMP_ROOT/home-order
+make_home "$D5"
+cp "$D2/spawn" "$D5/spawn"; printf 'on\n' > "$D5/config/auto-dispatch"; printf '1\n' > "$D5/config/lane-target"
+python3 - "$D5" <<'PY'
+import json, sys
+d = sys.argv[1]
+for name in ("all.json", "ready.json"):
+    rows = json.load(open(d + "/" + name))
+    rows.sort(key=lambda r: r["id"] != "a2")   # a2 first, the rest keep their order
+    json.dump(rows, open(d + "/" + name, "w"))
+t = open(d + "/table.txt").read().splitlines()
+a2 = [l for l in t if l.startswith("| a2 ")]
+t = [l for l in t if not l.startswith("| a2 ")]
+i = next(n for n, l in enumerate(t) if l.startswith("| a1 "))
+open(d + "/table.txt", "w").write("\n".join(t[:i] + a2 + t[i:]) + "\n")
+PY
+for t in a1 a2; do
+  approve "$D5" "$t" >/dev/null || fail "approve-dispatch $t was refused"
+  mkdir -p "$D5/data/$t"
+  # shellcheck disable=SC2016  # the backquotes are the brief's own text
+  printf 'Delivery contract: mode=local-trunk\n1. First action: create your branch: `git checkout -b feature/%s --`\n' "$t" > "$D5/data/$t/brief.md"
+done
+ob() { home_env "$D5" env SPAWN_LOG="$D5/spawn.log" JG_AUTO_DISPATCH_SPAWN="$D5/spawn" JG_AUTO_DISPATCH_PROJECT_MODE="$ROOT/bin/jg-project-mode.sh" bash "$CHECK" check "$D5" 2>&1; }
+ob >/dev/null
+for n in $(seq 1 50); do [ -s "$D5/spawn.log" ] && break; sleep 0.1; done
+assert_contains "$(cat "$D5/spawn.log" 2>/dev/null)" "a2 $D5/projects/proj --ticket a2" "the higher-priority a2 starts first"
+assert_not_contains "$(cat "$D5/spawn.log")" "--ticket a1 " "a1 does not start: one lane is free"
+assert_contains "$(rows_of "$D5")" "a1	skipped	no free lane left for it" "a1 waits for a lane"
+ob >/dev/null; ob >/dev/null
+assert_equals "$(wc -l < "$D5/spawn.log")" 1 "a restart (a later beat) starts nothing twice"
+pass "a priority-ordered queue with one free lane starts exactly the highest ticket; a restart adds no duplicate"
