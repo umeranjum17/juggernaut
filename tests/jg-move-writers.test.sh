@@ -44,12 +44,12 @@ axi add jg-w1 "[feature] illegal then legal" --priority 2 --body why >/dev/null 
 stage jg-w1 intake
 axi trace record jg-w1 commit work-id w1@done-1 --source jg-done --at 1794000000 >/dev/null 2>&1 && fail "claim-done from intake must be refused"
 [ "$(events jg-w1)" = 0 ] && [ -z "$(meta jg-w1 ready_at)" ] || fail "a refused move wrote an event or a moment"
-[ "$(moves jg-w1)" = 0 ] || fail "a refused move wrote a move line"
+[ "$(moves jg-w1)" = 1 ] || fail "a refused move wrote a move line (the one line is the add's file move)"
 axi moment jg-w1 proved_at >/dev/null 2>&1 && fail "prove-pass from intake must be refused"
 [ -z "$(meta jg-w1 proved_at)" ] || fail "a refused moment wrote proved_at"
 stage jg-w1 building
 axi trace record jg-w1 commit work-id w1@done-1 --source jg-done --at 1794000000 >/dev/null || fail "claim-done from building must be written"
-[ "$(events jg-w1)" = 1 ] && [ -n "$(meta jg-w1 ready_at)" ] && [ "$(moves jg-w1)" = 1 ] || fail "a legal move must write one move, one event and ready_at"
+[ "$(events jg-w1)" = 1 ] && [ -n "$(meta jg-w1 ready_at)" ] && [ "$(moves jg-w1)" = 2 ] || fail "a legal move must write one move, one event and ready_at"
 stage jg-w1 proving.planned
 axi moment jg-w1 gated_at >/dev/null 2>&1 && fail "gate from proving must be refused"
 pass "a move that is illegal writes no event and no moment; a legal one writes both"

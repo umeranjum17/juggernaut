@@ -286,6 +286,9 @@ journeys:
   typed-ready-proof-retry-facts:
     tier: local
     command: bash journeys/typed-ready-proof-retry-facts.sh
+  refusal-before-write:
+    tier: local
+    command: bash journeys/refusal-before-write.sh
   captain-close-gate:
     tier: local
     command: bash journeys/captain-close-gate.sh

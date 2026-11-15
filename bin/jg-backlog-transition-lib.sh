@@ -937,6 +937,21 @@ jg_backlog_dispatch_rollback() {
   return 0
 }
 
+# The ticket move a close makes: the table has three events into closed (close, answer for a Recon, drop by the lead or the owner),
+# and the ticket's own state says which one it has. Only a close that names the note `dropped` is a drop, and it asks for drop first;
+# any other close never reads as one. The first asked event the state has is the move, and a ticket the observer cannot place gets
+# the first asked event, which jg-move.sh then judges.
+jg_backlog_close_event() {  # <id> [close args]
+  local id=$1 asked='close answer' legal arg prev=''
+  shift
+  for arg in "$@"; do [ "$prev" = --note ] && [ "$arg" = dropped ] && asked='drop close answer'; prev=$arg; done
+  legal=$("${BASH_SOURCE[0]%/*}/jg-machine.sh" next ticket "$id" 2>/dev/null | awk -F'\t' '$1 == "move" { print $2 }') || legal=
+  for arg in $asked; do
+    case " $(printf '%s' "$legal" | tr '\n' ' ') " in *" $arg "*) printf '%s\n' "$arg"; return 0 ;; esac
+  done
+  printf '%s\n' "${asked%% *}"
+}
+
 jg_backlog_close_transition() {
   local meta=$1 marker=$2 data=$3 id=$4 state=$5
   shift 5
@@ -945,10 +960,11 @@ jg_backlog_close_transition() {
     JG_BACKLOG_TRANSITION_ERROR="task $id cannot make the move done from its state; run: bin/jg-machine.sh next task $id"
     return 1
   fi
-  local move_rc=0
-  "${BASH_SOURCE[0]%/*}/jg-move.sh" --shadow "$id" close >/dev/null 2>&1 || move_rc=$?
-  if [ "$move_rc" -eq 1 ]; then  # the ticket's own move: shadow until config/machine-enforce lists ticket (jg-move.sh)
-    JG_BACKLOG_TRANSITION_ERROR="ticket $id cannot make the move close from its state; run: bin/jg-machine.sh next ticket $id"
+  local move_rc=0 event
+  event=$(jg_backlog_close_event "$id" "$@")
+  "${BASH_SOURCE[0]%/*}/jg-move.sh" --shadow "$id" "$event" >/dev/null 2>&1 || move_rc=$?
+  if [ "$move_rc" -eq 1 ]; then  # the ticket's own move: shadow until config/machine-enforce lists ticket (jg-move.sh); a refusal comes before any record is removed or closed
+    JG_BACKLOG_TRANSITION_ERROR="ticket $id cannot make the move $event from its state; run: bin/jg-machine.sh next ticket $id"
     return 1
   fi
   [ -z "$meta" ] || jg_backlog_record_remove "$meta" "task record" "$state" || return 1
