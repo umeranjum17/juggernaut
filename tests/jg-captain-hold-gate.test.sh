@@ -177,6 +177,21 @@ assert_contains "$(jq -r '.[0].words' <<<"$q")" "Reconciliation evidence: The re
 hold answered jg-w6 && fail "a reconciled gate is not an answer of his"
 pass "reconcile close resolves the gate with evidence"
 
+# reconcile note adds a comment on the gate and leaves it open, with no text in the ticket body.
+tasks add jg-w7 "[feature] Work jg-w7" --repo sample --body "why jg-w7" >/dev/null || fail "add jg-w7"
+hold hold jg-w7 --reason "Is the plan still right?" >/dev/null || fail "hold jg-w7"
+printf 'jg-w7\n' | hold reconcile-requests --source-id chan-1 --source "captured board result" >/dev/null || fail "reconcile request w7"
+words "$T/found" "Still open: nothing has shipped."
+out=$(hold reconcile note jg-w7 --note-file "$T/found") || fail "reconcile note: $out"
+assert_contains "$out" "still-open: jg-w7" "the note must say the call is still open"
+q=$(questions_json --ticket jg-w7)
+[ "$(jq length <<<"$q")" = 1 ] || fail "the gate must stay open after a note: $q"
+gate_id=$(jq -r '.[0].id' <<<"$q")
+assert_contains "$(BEADS_DIR=$(cat "$home/config/beads-dir") "$ROOT/bin/jg-beads.sh" comments "$gate_id" 2>&1)" "Still open: nothing has shipped." "the finding is a comment on the gate"
+case "$(tasks show jg-w7 --full)" in *"Still open: nothing"*|*"Captain hold reconciled"*) fail "the note must not go into the ticket body" ;; esac
+hold answered jg-w7 && fail "a note is not an answer"
+pass "reconcile note comments on the gate and leaves it open"
+
 # An old ticket carries its hold as text in the description: the stamp line, the origin line and the hold itself.
 stamped_hold() {  # <id> <reason> [<origin> [<until>]]
   tasks update "$1" --body "Captain hold set: 2026-10-01T10:00:00Z${3:+

@@ -133,7 +133,8 @@
 # captain's words, and closes the task. `note` is the still-active outcome: it
 # appends one dated `Captain hold reconciled:` note and leaves the hold in
 # place. A normal answer also retires the request because the call is settled.
-# `list` is the read-only enumeration.
+# `list` is the read-only enumeration. On a question held as a gate, `note` adds the finding as a comment on the gate
+# and the gate stays open; only a hold with no gate takes the dated note in its body.
 # docs/captain-hold-lifecycle.md owns the semantics.
 #
 # A channel's ONLY job is to turn whatever it received into those keyed lines
@@ -1476,7 +1477,7 @@ reconcile_close() {
 # The still-active outcome. The hold survives, so the call stays the captain's
 # and stays on Captain's Call, now carrying what the re-check found.
 reconcile_note() {
-  local id=${1:-} note_file='' note show body stamp tmp note_digest marker
+  local id=${1:-} note_file='' note show body stamp tmp note_digest marker gate
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -1499,6 +1500,17 @@ reconcile_note() {
   require_backlog
   command_open "$id" \
     || fail "task $id is not an open captain call; a note cannot keep a closed call open"
+  gate=$(open_gate_ids "$id" | head -1)
+  if [ -n "$gate" ]; then  # a question is a gate: the finding is a comment on it, and the gate stays open
+    backlog_cmd note "$gate" --note-file "$note_file" >/dev/null \
+      || fail "could not record the reconcile note on the question $gate of task $id"
+    reconcile_request_retire "$id" \
+      || fail "could not retire the applied reconcile request for $id"
+    command_open "$id" || fail "recording the reconcile note released captain-held task $id"
+    report_hold_reconciled "$id" raised
+    printf 'still-open: %s\n' "$id"
+    return 0
+  fi
   task_show_or_fail "$id" "captain-held task $id is absent from this home's configured backlog (data directory $DATA)"
   body=$(decode_shown_value "$(show_field "$show" body)") \
     || fail "could not decode the existing body for $id"

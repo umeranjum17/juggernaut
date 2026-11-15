@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """jg-beads-write.py - serve the backlog's add, update, done, block, unblock, start, reopen, hold and unhold on a Beads store.
 
-Usage: BEADS_DIR=<store> jg-beads-write.py <add|create|update|edit|done|close|block|unblock|start|task|reopen|hold|unhold|relink|gate|resolve> [args...]
+Usage: BEADS_DIR=<store> jg-beads-write.py <add|create|update|edit|done|close|block|unblock|start|task|reopen|hold|unhold|relink|gate|resolve|note> [args...]
        BEADS_DIR=<store> jg-beads-write.py <stage <key>...|take <file> <key>...|drop <key>...|public-followup ...>
        BEADS_DIR=<store> jg-beads-write.py <moment|wait|ticket-stage|ticket-drift|times|trace> ...   (the ticket machine's moments, wait and stage: bin/jg-beads-moment.py)
        BEADS_DIR=<store> jg-beads-write.py <beat|reclaim> ...   (a worker's lease: bin/jg-beads-lease.py)
@@ -39,7 +39,7 @@ one bd call, and leaves any row that moved out of the queue.
 A body's linked-to: and parent: lines become edges when written (bin/jg-beads-links.py), and a new row takes the lines that named it first.
 A body that drops a name drops its edge, an edge bd refuses as a cycle lands as related, and unhold eases a line's blocks edge to related
 once neither side is a decision. relink lays every missing edge, for a store whose lines came before edges.
-A question to the owner is a human gate that blocks its ticket (gate), closed with the owner's words as its close reason (resolve);
+A question to the owner is a human gate that blocks its ticket (gate), closed with the owner's words as its close reason (resolve), and a re-check's finding is a comment on it (note) that leaves it open;
 the ticket keeps its status, and done refuses a ticket with an open gate and never forces past one.
 """
 import datetime
@@ -656,6 +656,22 @@ def resolve(args):
     print(one["id"])
 
 
+def note(args):
+    """note <gate> --note-file <path>: add the file's text as a comment on the open question, whole; the question stays open.
+
+    The comment is how a re-check says what it found, so the question's close reason stays the owner's words alone."""
+    found, ids = view.flags(args, ("--note-file",), ())
+    if len(ids) != 1 or not found.get("--note-file"):
+        view.refuse("usage: jg-beads-write.py note <gate> --note-file <path>")
+    one = rows().get(ids[0])
+    if one is None or not view.is_gate(one):
+        view.refuse('"%s" is not an owner question' % ids[0], "Run `jg-backlog.sh questions` to list them", "NOT_FOUND", 1)
+    if one["status"] == "closed":
+        view.refuse("%s is already closed; a note cannot keep a closed question open" % ids[0])
+    bd("comments", "add", one["id"], "-f", found["--note-file"])
+    print(one["id"])
+
+
 def unhold(args):
     found, ids = view.flags(args, (), ("--json",))
     if len(ids) != 1:
@@ -826,7 +842,7 @@ def retag(_args):
 def main():
     verb = sys.argv[1] if len(sys.argv) > 1 else ""
     serve = {"add": add, "create": add, "update": update, "edit": update, "done": done, "close": done,
-             "block": block, "unblock": unblock, "start": start, "rename-lane": rename_lane, "task": task, "reopen": reopen, "hold": hold, "unhold": unhold, "gate": gate, "resolve": resolve,
+             "block": block, "unblock": unblock, "start": start, "rename-lane": rename_lane, "task": task, "reopen": reopen, "hold": hold, "unhold": unhold, "gate": gate, "resolve": resolve, "note": note,
              "stage": stage, "take": take, "drop": drop, "relink": relink, "retag": retag,
              "public-followup": lambda args: __import__("jg-beads-followup").main(args),
              "trace": lambda args: __import__("jg-beads-trace").main(args),

@@ -916,8 +916,11 @@ test_reconcile_closes_with_evidence_or_keeps_the_call_open() {
   show=$(tasks_in "$home" show jg-sample-active-call --full)
   assert_contains "$show" "state: queued" "annotating a still-active call closed it"
   assert_contains "$show" "held: yes" "annotating a still-active call released it"
-  assert_contains "$show" "Captain hold reconciled:" "the re-check left no dated note"
-  assert_contains "$show" "Still open: nothing has shipped" "the note body was lost"
+  gate=$(tasks_in "$home" questions --ticket jg-sample-active-call --json | jq -r '.[0].id')
+  [ -n "$gate" ] || fail "annotating a still-active call closed its question"
+  notes=$(BEADS_DIR=$(cat "$home/config/beads-dir") "$ROOT/bin/jg-beads.sh" comments "$gate" 2>&1)
+  assert_contains "$notes" "Still open: nothing has shipped" "the re-check left no note on the question"
+  case "$show" in *"Captain hold reconciled:"*) fail "the note went into the ticket body" ;; esac
   case "$show" in
     *"Resolution recorded by"*) fail "annotating a still-active call wrote a resolution record" ;;
   esac
@@ -936,11 +939,9 @@ test_reconcile_closes_with_evidence_or_keeps_the_call_open() {
   JG_CAPTAIN_HOLD_NOW=2026-09-07T06:01:00Z run_captain "$home" reconcile note jg-sample-active-call \
     --note-file "$home/note.txt" >/dev/null \
     || fail "the second request with the same finding was not recorded"
-  show=$(tasks_in "$home" show jg-sample-active-call --full)
-  [ "$(printf '%s\n' "$show" | grep -o 'Captain hold reconciled:' | wc -l | tr -d ' ')" -eq 2 ] \
-    || fail "a later reconcile request with the same note did not append its own record"
-  assert_contains "$show" "Captain hold reconciled: 2026-09-07T06:01:00Z" \
-    "the second reconcile request lost its own dated note"
+  notes=$(BEADS_DIR=$(cat "$home/config/beads-dir") "$ROOT/bin/jg-beads.sh" comments "$gate" 2>&1)
+  [ "$(printf '%s\n' "$notes" | grep -c 'Still open: nothing has shipped')" -eq 2 ] \
+    || fail "a later reconcile request with the same note did not add its own comment"
 
   list=$(run_captain "$home" reconcile list)
   assert_contains "$list" "reconcile-requests: 0" "the verified requests were not retired: $list"
