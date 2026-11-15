@@ -1898,6 +1898,9 @@ journeys:
   jg-machine-delivery:
     tier: local
     command: bash tests/jg-machine-delivery.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-release-ledger:
+    tier: local
+    command: bash tests/jg-release-ledger.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-machine-feed-landing:
     tier: local
     command: JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-machine-feed-landing.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

@@ -1,0 +1,3 @@
+# Release ledger
+
+Release ledger: run `done-done run jg-release-ledger` (which runs `bash tests/jg-release-ledger.test.sh` and writes its output into `$DONE_DONE_EVIDENCE_ROOT`); `core/release-ledger/ledger.sh build` reads a fixture home's real git history and its landing, proof, latency, in-use and version records, and writes one row per landing with the Built, Landed, In use and Released times, an empty column for a stage never reached, and the revert of a reverted landing; a revert row is never a landing, a second build changes nothing, `--dry-run` writes nothing and a later in-use row keeps the first time (screen: none).
