@@ -13,6 +13,7 @@
 #    is named in the home's row and never blocks the move, and a home rolled back by its health check while already on the
 #    moved commit (the drift Main hit) is still wired to the code it holds; a pipeline config naming the pre-rename wrapper is
 #    migrated by the real pipeline-quota-failover step and every home ends live.
+# T1s A move looks at the switches its range declared once per moved home, after its wiring: the row ends switches-off:<n> (and detectors:<m> above 0); switch-apply=auto first turns on the policy rows marked auto, off reads none.
 # T1d A go-live run from a lead home reads Main's registry: every lead, the lead itself and Main move, one row each (the
 #    fleet's real shape, where the lead's own registry is empty).
 # T7 A move that leaves a home behind names it; bin/jg-trunk-live-lag.sh reports a home not at the last go-live after 10 minutes.
@@ -55,6 +56,7 @@ commit_file() {  # <dir> <file> <content> <message>
 # Main's clone, a home, four leads (worktrees of Main) in the four shapes, and a pool worktree on a lane branch.
 mover_world() {  # <name>: sets W C0 C2 X
   W="$TMP_ROOT/$1"; mkdir -p "$W/home/state" "$W/home/data" "$W/home/config"
+  printf 'switch-apply=off\n' > "$W/home/config/trunk-policy"  # the rows below are the move's own; T1s turns the switch count on
   git init -q -b main "$W/proj"
   commit_file "$W/proj" AGENTS.md v1 c0; mkdir -p "$W/proj/bin"; commit_file "$W/proj" bin/tool.sh a c0b
   git clone -q "$W/proj" "$W/main"
@@ -361,6 +363,57 @@ run_from_self() {  # <script> <args>: as the lead home that owns the trunk runs 
   JG_HOME="$SELF" JG_ROOT_OVERRIDE="$SELF" JG_STACK_SKIP=1 JG_HOST_WIRING_SKIP=1 "$script" "$@" 2>&1
 }
 
+# The move looks at the switches its range declared once per moved home, after that home's wiring: a manifest of one auto row
+# (wiring) and two owner rows leaves two off, and the row says so (`switches-off:2`, then the detector count); the policy key
+# switch-apply=auto first turns on the policy rows the manifest marks auto and never writes an owner row; `off` reads nothing.
+test_a_move_counts_the_switches_its_range_left_off_in_each_home_row() {
+  local out rc=0 ok row sw
+  mover_world t1s
+  ok=$(passing_health_mover)
+  wiring_tip
+  : > "$W/wiring.log"
+  sw=$W/switches.tsv
+  printf 'c1\tfile\tview-one\tnonempty\towner\t-\tneeds the view\n' > "$sw"
+  printf 'c1\tfile\tview-two\tnonempty\towner\t-\tneeds the second view\n' >> "$sw"
+  printf 'c1\twiring\ttickets-sync\t-\tauto\t-\twired by the move\n' >> "$sw"
+  export JG_SWITCH_MANIFEST=$sw
+  printf 'config/\n' >> "$(git -C "$W/main" rev-parse --path-format=absolute --git-path info/exclude)"
+  mkdir -p "$W/lead-ff/config" "$W/main/config"; : > "$W/home/config/trunk-policy"  # the default, report
+  trunk_commit core/tickets-sync/sync.py '# declared change' $'tickets-sync change\n\nTicket: c1'
+  rc=0; out=$(wire_move "$ok") || rc=$?
+  two_skipped "$out" "$rc" || fail "the move must leave only the two skipped leads behind: rc=$rc $out"
+  [ -s "$W/wiring.log" ] || [ "$(grep -c . "$W/user/.local/share/jg-tickets-sync/tickets-sync/sync.py")" -gt 0 ] || fail "the wiring step must have run"
+  row=$(last_row_of lead-ff | cut -f4)
+  case $row in live,switches-off:2,detectors:[0-9]*) ;; *) fail "the row must end with the two owner switches still off and the detector count: $row" ;; esac
+  case $(last_row_of lead-dirty | cut -f4) in skipped:dirty) ;; *) fail "a skipped home carries no switch count: $(last_row_of lead-dirty)" ;; esac
+
+  # A range that declares no switch counts none, and a detector line shows on its own.
+  trunk_commit a.txt more "not a declared change"
+  rc=0; out=$(wire_move "$ok") || rc=$?
+  row=$(last_row_of lead-ff | cut -f4)
+  case $row in live,switches-off:0,detectors:[0-9]*) ;; *) fail "a range with no declared switch reads switches-off:0 and keeps the detector count: $row" ;; esac
+
+  # auto turns on the policy rows marked auto, in the moved home, and never an owner row; report leaves them off.
+  printf 'c2\tpolicy\tprobe-key@proj\ton\tauto\t-\tturned on by the move\n' >> "$sw"
+  trunk_commit core/tickets-sync/sync.py '# second declared change' $'second change\n\nTicket: c2'
+  rc=0; out=$(wire_move "$ok") || rc=$?
+  row=$(last_row_of lead-ff | cut -f4)
+  case $row in live,switches-off:1,*) ;; *) fail "report counts the auto policy row and applies none: $row" ;; esac
+  [ ! -e "$W/lead-ff/config/trunk-policy" ] || fail "report writes no policy line: $(cat "$W/lead-ff/config/trunk-policy")"
+  printf 'switch-apply=auto\n' >> "$W/home/config/trunk-policy"
+  trunk_commit core/tickets-sync/sync.py '# third declared change' $'third change\n\nTicket: c2'
+  rc=0; out=$(wire_move "$ok") || rc=$?
+  row=$(last_row_of lead-ff | cut -f4)
+  case $row in live,switches-off:0,*) ;; *) fail "auto turns the auto policy row on before the count: $row ($out)" ;; esac
+  assert_equals 'probe-key@proj=on' "$(cat "$W/lead-ff/config/trunk-policy")" "auto appends the policy line to the moved home only"
+  printf 'switch-apply=off\n' >> "$W/home/config/trunk-policy"
+  trunk_commit a.txt again "not a declared change either"
+  rc=0; out=$(wire_move "$ok") || rc=$?
+  [ "$(last_row_of lead-ff | cut -f4)" = live ] || fail "off reads no switch and leaves the plain row: $(last_row_of lead-ff)"
+  unset JG_SWITCH_MANIFEST
+  pass 'T1s a move counts the declared switches still off in each home row (and the detector lines), auto turns on its own policy rows, off reads none'
+}
+
 test_a_go_live_run_from_a_lead_home_moves_every_home() {
   local out rc=0 id
   lead_world t1d
@@ -417,6 +470,7 @@ fleet_tip() {
 fleet_world() {
   local id i
   W="$TMP_ROOT/$1"; mkdir -p "$W/home/state" "$W/home/data" "$W/home/config"
+  printf 'switch-apply=off\n' > "$W/home/config/trunk-policy"
   git init -q -b main "$W/proj"
   commit_file "$W/proj" AGENTS.md v1 c0; mkdir -p "$W/proj/bin"
   printf '#!/usr/bin/env bash\nexit 0\n' > "$W/proj/bin/jg-supervision-instructions.sh"; chmod +x "$W/proj/bin/jg-supervision-instructions.sh"
@@ -543,10 +597,12 @@ test_the_landing_check_runs_the_batched_live_step_and_reports_it() {
   : > "$fh/calls"; : > "$ob"; printf '0\n' > "$fh/rc"
   printf 'In use at abc on every home (0 skipped, see data/trunk-in-use.tsv)\n' > "$fh/verdict"; live
   assert_contains "$(cat "$ob")" "proj: In use at abc on every home" "a go-live is reported"
+  : > "$ob"; printf 'In homes at abc on every home (0 skipped, 2 homes still have a switch off, see data/trunk-in-use.tsv)\n' > "$fh/verdict"; live
+  assert_contains "$(cat "$ob")" "proj: In homes at abc on every home" "a go-live that left a switch off is reported with its own words"
   : > "$ob"; printf 'the move failed: hook\n' > "$fh/verdict"; printf '3\n' > "$fh/rc"; live
   assert_contains "$(cat "$ob")" "proj: NOT In use: the move failed: hook" "a failed move is reported"
   : > "$ob"; printf '0\n' > "$fh/rc"
-  for out in 'waiting: In use in about 9 min (quiet 20 min, cap 60 min)' 'already In use at abc' "not In use: it needs the captain's word (no go-live waiver for proj)"; do
+  for out in 'waiting: In use in about 9 min (quiet 20 min, cap 60 min)' 'already In use at abc' 'already In homes at abc (1 home still has a switch off)' "not In use: it needs the captain's word (no go-live waiver for proj)"; do
     printf '%s\n' "$out" > "$fh/verdict"; live
   done
   [ ! -s "$ob" ] || fail "waiting, already live and no waiver add no line: $(cat "$ob")"
@@ -597,6 +653,7 @@ test_guarded_linked_home_moves_twice() {
 test_a_guarded_diverged_half_moved_home_finishes() {
   local out id t2 target hook
   W="$TMP_ROOT/diverged-half"; mkdir -p "$W/home/state" "$W/home/data" "$W/home/config"
+  printf 'switch-apply=off\n' > "$W/home/config/trunk-policy"
   git init -q -b main "$W/proj"
   commit_file "$W/proj" AGENTS.md v1 c0; mkdir -p "$W/proj/bin"; commit_file "$W/proj" bin/tool.sh a c0b
   commit_file "$W/proj" f.txt "$(printf 'a\nb\nc\nd\ne\nf\ng\nh')" base
@@ -681,6 +738,7 @@ test_a_skipped_home_shape_is_recorded_and_replays
 test_a_guarded_diverged_half_moved_home_finishes
 test_cache_is_cleared_after_a_move
 test_a_move_rewires_only_the_add_ons_it_changed_and_names_a_failure
+test_a_move_counts_the_switches_its_range_left_off_in_each_home_row
 test_a_go_live_run_from_a_lead_home_moves_every_home
 test_a_home_left_behind_is_named_and_the_lag_check_reports_it
 test_home_moves_one_canary_only

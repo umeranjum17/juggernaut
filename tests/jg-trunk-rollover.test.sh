@@ -142,7 +142,7 @@ test_a_rollover_replays_every_landed_commit_and_the_green_pin_follows() {
   git -C "$PROJ" rev-parse --verify -q refs/heads/trunk >/dev/null && fail "T1: the old local trunk must be gone"
   out=$(move_homes "$g" release/v2) || fail "T1: the move must reach every home: $out"
   [ "$(git -C "$W/lead" rev-parse HEAD)" = "$g" ] || fail "T1: the home at the old green commit must be on the new green commit: $out"
-  [ "$(live_row)" = "live,re-pointed-from:${C2:0:12}" ] || fail "T1: the home must be re-pointed, not skipped: $(live_row)"
+  [ "$(live_row)" = "live,re-pointed-from:${C2:0:12}" ] || [ "$(live_row | sed "s/,switches-off:.*//")" = "live,re-pointed-from:${C2:0:12}" ] || fail "T1: the home must be re-pointed, not skipped: $(live_row)"
   pass 'T1 three landed commits are replayed with equal trees, the green pin is the replayed second, the old trunk retires and the home is re-pointed'
 }
 

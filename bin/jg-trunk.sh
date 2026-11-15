@@ -1904,9 +1904,25 @@ restart_moved_leads() {  # <mover output>
   echo "In use: restarting the leads$ids onto the new wiring, one at a time (log: data/trunk-lead-restart.log)"
 }
 
+# What a move left off, read from the rows its mover wrote for <sha> at or after <since> (0: every live row of the commit): prints
+# `<homes with a manifest switch off> <detector lines in all homes>`. The word In use stays for a move that left no declared switch off;
+# a move that left one says In homes, because the code is there and the change is not yet in use in that home.
+switch_report() {  # <sha> <since>
+  awk -F'\t' -v s="$1" -v t="$2" '
+    $2 == s && $3 >= t && $4 ~ /^live/ {
+      if (match($4, /switches-off:[0-9]+/) && substr($4, RSTART + 13, RLENGTH - 13) + 0 > 0) h++
+      if (match($4, /detectors:[0-9]+/)) d += substr($4, RSTART + 10, RLENGTH - 10)
+    } END { print h + 0, d + 0 }' "$DATA/trunk-in-use.tsv" 2>/dev/null || echo "0 0"
+}
+# The go-live line's wording for that report: `<verb> ...` unchanged for none, else the same line with the count of homes.
+homes_note() {  # <homes off>: prints the suffix for the In homes wording
+  [ "$1" -eq 1 ] && echo "1 home still has a switch off" || echo "$1 homes still have a switch off"
+}
+
 # Move the home to <sha> through the project's live hook and record it. Exit 3 when the home did not move.
 go_live() {  # <sha> <tip>   LIVE_FLEET=1 (cmd_live) moves every home; a pin-back moves this one
-  local sha=$1 hook status=landed-not-live here there why hook_out hook_rc reason prev
+  local sha=$1 hook status=landed-not-live here there why hook_out hook_rc reason prev t0 off dets
+  t0=$(date +%s)
   prev=$(awk -F'\t' -v p="$PN" '$1 == p && $4 ~ /^live/ { c = $2 } END { print c }' "$DATA/trunk-in-use.tsv" 2>/dev/null || true)
   [ -n "${MOVE_HELD:-}" ] || begin_move "$sha"
   set -- "$sha" "$(rev "refs/heads/$TRUNK")"  # the tip as it stands once the gates have ended
@@ -1938,7 +1954,9 @@ go_live() {  # <sha> <tip>   LIVE_FLEET=1 (cmd_live) moves every home; a pin-bac
   [ "$sha" = "$2" ] || status="$status,pinned-behind-${2:0:12}"
   case ${LIVE_WAIVER:-} in '') ;; gated:*) status="$status,answer=${LIVE_WAIVER#gated:}" ;; *) status="$status,waiver=$LIVE_WAIVER" ;; esac
   row trunk-in-use.tsv "$PN" "$sha" "$(date +%s)" "$status"
-  echo "In use: $PN at ${sha:0:12} ($status)"
+  read -r off dets <<< "$(switch_report "$sha" "$t0")"
+  if [ "$off" -gt 0 ]; then echo "In homes: $PN at ${sha:0:12} ($status; $(homes_note "$off"))"; else echo "In use: $PN at ${sha:0:12} ($status)"; fi
+  [ "$dets" -eq 0 ] || echo "detectors: $dets"
   case $status in live*) live_tickets "$sha" "$prev" || : ;; esac  # a one-home canary moves nothing the fleet runs
 }
 
@@ -1957,7 +1975,7 @@ fleet_move() {  # <sha> <tip>
     find "$STATE/trunk-live-tool" -mindepth 1 -maxdepth 1 ! -name "$sha" -exec rm -rf -- {} +
     mover="$tool/bin/jg-update.sh"
   fi
-  echo "In use: moving every home with $mover"
+  echo "Go-live: moving every home with $mover"
   args=(--base "$sha" --project "$PROJ" --branch "$TRUNK")
   [ -z "${LIVE_HOME:-}" ] || args+=(--home "$LIVE_HOME")
   JG_HOME="$JG_HOME" JG_ROOT_OVERRIDE="$JG_ROOT" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$DATA" "$mover" "${args[@]}"
@@ -1990,7 +2008,7 @@ authority() {  # <waiver-file> <sha>
 # live-cap-minutes old, whichever comes first, so landings never wait on a go-live and a busy trunk still goes live hourly.
 # Prints one `autolive: ...` line last; exit 0 for live or waiting, 3 when the move failed.
 cmd_autolive() {
-  local green tip out rc now last quiet cap newest oldest wait_s failed_at
+  local green tip out rc now last quiet cap newest oldest wait_s failed_at t0 off dets skipped
   [ -z "${JG_TASK_ID:-}" ] || refuse "a worker never runs the live step"
   open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"; tip_ok; tip=$(rev "refs/heads/$TRUNK")
   green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
@@ -1998,7 +2016,10 @@ cmd_autolive() {
   [ -n "$LIVE_WAIVER" ] || { echo "autolive: not In use: it needs the captain's word (no go-live waiver and no answer at gated for $PN)"; return 0; }
   if [ -z "$green" ]; then echo "autolive: waiting: no fully green trunk commit yet"; return 0
   elif awk -F'\t' -v p="$PN" -v g="$green" '$1 == p && $2 == g && $4 ~ /^live/ { f = 1 } END { exit !f }' "$DATA/trunk-in-use.tsv" 2>/dev/null; then
-    echo "autolive: already In use at ${green:0:12}"; return 0
+    read -r off dets <<< "$(switch_report "$green" 0)"
+    [ "$dets" -eq 0 ] || echo "detectors: $dets"
+    if [ "$off" -gt 0 ]; then echo "autolive: already In homes at ${green:0:12} ($(homes_note "$off"))"; else echo "autolive: already In use at ${green:0:12}"; fi
+    return 0
   fi
   now=$(date +%s); quiet=$(( $(pol live-quiet-minutes) * 60 )); cap=$(( $(pol live-cap-minutes) * 60 ))
   # A move that failed (some home did not reach the pin) is tried again after the quiet window, not on every tick: each try writes a row per home.
@@ -2013,11 +2034,16 @@ cmd_autolive() {
     wait_s=$(( quiet - (now - newest) )); [ $(( cap - (now - oldest) )) -ge "$wait_s" ] || wait_s=$(( cap - (now - oldest) ))
     echo "autolive: waiting: In use in about $(( (wait_s + 59) / 60 )) min (quiet $(( quiet / 60 )) min, cap $(( cap / 60 )) min)"; return 0
   fi
+  t0=$(date +%s)
   LIVE_FLEET=1; begin_move "$green"  # in this process: the capture below is a subshell, which cannot let go of the trunk lock
   green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || echo "$green"); tip=$(rev "refs/heads/$TRUNK")  # as they stand once the gates have ended
   out=$(go_live "$green" "$tip" 2>&1) && rc=0 || rc=$?
   if [ "$rc" -ne 0 ]; then echo "autolive: NOT In use, the move failed: $(printf '%s' "$out" | tail -n 1 | cut -c1-200)"; return "$rc"; fi
-  echo "autolive: In use at ${green:0:12} on every home ($(awk -F'\t' -v s="$green" '$2 == s && $4 ~ /^skipped/ { n++ } END { print n + 0 }' "$DATA/trunk-in-use.tsv" 2>/dev/null || echo 0) skipped, see data/trunk-in-use.tsv)"
+  skipped=$(awk -F'\t' -v s="$green" '$2 == s && $4 ~ /^skipped/ { n++ } END { print n + 0 }' "$DATA/trunk-in-use.tsv" 2>/dev/null || echo 0)
+  read -r off dets <<< "$(switch_report "$green" "$t0")"
+  [ "$dets" -eq 0 ] || echo "detectors: $dets"
+  if [ "$off" -gt 0 ]; then echo "autolive: In homes at ${green:0:12} on every home ($skipped skipped, $(homes_note "$off"), see data/trunk-in-use.tsv)"
+  else echo "autolive: In use at ${green:0:12} on every home ($skipped skipped, see data/trunk-in-use.tsv)"; fi
 }
 
 cmd_live() {

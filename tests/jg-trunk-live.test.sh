@@ -153,6 +153,30 @@ test_a_quiet_trunk_goes_live_on_every_home_by_itself() {
   pass 'a quiet trunk goes live on Main and every Squad Lead home by itself, the window is a knob, and a red CI pins every home back'
 }
 
+# A move that leaves a switch its range declared off in some home says In homes (and how many), never In use; a range that declares no
+# switch keeps the old words even with a detector line on. Detector lines are counted on their own `detectors: <m>` line.
+test_a_go_live_that_leaves_a_declared_switch_off_says_in_homes() {
+  local out c
+  fleet_world autolive-homes; printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' c1 file machine-view nonempty owner - "needs the view" > "$W/switches.tsv"
+  export JG_SWITCH_MANIFEST=$W/switches.tsv
+  lane s1 one work.txt "Ticket: c1"; fleet_sweeps "landed s1" >/dev/null; await_green || fail "the landing must move the green pin"
+  c=$(tip); age_landings 25 25
+  out=$(trunk autolive "$PROJ" 2>&1)
+  assert_contains "$(printf '%s\n' "$out" | tail -n 1)" "autolive: In homes at ${c:0:12} on every home (0 skipped, 3 homes still have a switch off" "a switch left off in every home says In homes with the count"
+  assert_contains "$out" "detectors: " "the detector lines are counted on their own line"
+  grep -q "^proj:lead-a	$c	[0-9]*	live,switches-off:1,detectors:[0-9]" "$HOME_D/data/trunk-in-use.tsv" || fail "the home row carries the switch and detector counts: $(cat "$HOME_D/data/trunk-in-use.tsv")"
+  assert_contains "$(trunk autolive "$PROJ" 2>&1 | tail -n 1)" "autolive: already In homes at ${c:0:12}" "a commit already moved says so with the new words"
+  # A range that declares no switch keeps In use, and the detector line is still printed.
+  age_live; lane s2 two work.txt "Ticket: c9"; fleet_sweeps "landed s2" >/dev/null; await_green || fail "s2's landing must move the green pin"
+  c=$(tip); age_landings 25 25
+  out=$(trunk autolive "$PROJ" 2>&1)
+  assert_contains "$(printf '%s\n' "$out" | tail -n 1)" "autolive: In use at ${c:0:12} on every home" "a range with no declared switch keeps In use"
+  assert_contains "$out" "detectors: " "the detector line is printed with the old words too"
+  grep -q "^proj:lead-a	$c	[0-9]*	live,switches-off:0,detectors:[0-9]" "$HOME_D/data/trunk-in-use.tsv" || fail "the row says no switch is off: $(cat "$HOME_D/data/trunk-in-use.tsv")"
+  unset JG_SWITCH_MANIFEST
+  pass 'a go-live says In homes when a declared switch is off in a home, and keeps In use when the range declares none'
+}
+
 # A go-live pinned behind the tip (the green pin is under the trunk tip) moves every home exactly as one at the tip does, and its
 # `live` row is written only once every home is at the pin: a home left behind (dirty here) makes it a failed move naming the home.
 test_a_pinned_behind_go_live_moves_every_home_and_fails_naming_a_home_left_behind() {
@@ -338,6 +362,7 @@ test_a_home_with_the_old_live_names_moves_them_once_and_keeps_no_second_path
 test_the_bundled_hook_moves_a_home_that_runs_the_project
 test_the_registered_check_lands_a_proved_task_without_a_human
 test_a_quiet_trunk_goes_live_on_every_home_by_itself
+test_a_go_live_that_leaves_a_declared_switch_off_says_in_homes
 test_a_pinned_behind_go_live_moves_every_home_and_fails_naming_a_home_left_behind
 test_a_busy_trunk_goes_live_at_the_hourly_cap
 test_a_red_or_unwaived_landing_never_goes_live

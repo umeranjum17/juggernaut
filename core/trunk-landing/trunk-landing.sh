@@ -145,8 +145,8 @@ if [ "$1" = live ]; then
   live=$(printf '%s\n' "$live" | tail -n 1 | cut -c1-300); live=${live#autolive: }
   case $live in
     '') live="NOT In use: the In use step printed nothing (exit $lrc)" ;;
-    waiting:*|"already In use"*|"not In use: it needs"*) exit 0 ;;
-    "In use at"*) ;;
+    waiting:*|"already In use"*|"already In homes"*|"not In use: it needs"*) exit 0 ;;
+    "In use at"*|"In homes at"*) ;;
     *) live="NOT In use: $live" ;;
   esac
   jg_lock_acquire_wait "$MEM/.outbox.lock"

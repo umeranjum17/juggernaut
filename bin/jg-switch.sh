@@ -6,6 +6,8 @@
 #   jg-switch.sh verify [--home <dir>]... [<change-id>]   status, exit 1 while any manifest row is off (detector lines never count)
 #   jg-switch.sh refresh-releases [--home <dir>]          look up each npm row's latest release into state/tool-releases.tsv
 #   jg-switch.sh flags <project> [--home <dir>]           the flag sheet: every flag that changes how the project ships, with its value, default and flip
+#   jg-switch.sh count --home <dir> [<change-id>...]      one line `switches-off:<n> detectors:<m>`: the manifest rows of those changes
+#                                                         that are off, and every detector line (no ids: no manifest row is read)
 #   jg-switch.sh apply <change-id> <name> [--home <dir>] [--owner-word "<text>"] [--value <v>]
 #                                                         turn one policy row on; the owner's word is required for who=owner
 #
@@ -136,7 +138,7 @@ report_home() {  # <home> <change-id|''>
   echo "home $(basename "$home")"
   while IFS=$'\t' read -r id kind name want who _ _ || [ -n "$id" ]; do
     case $id in ''|'#'*) continue ;; esac
-    [ -z "$only" ] || [ "$id" = "$only" ] || continue
+    [ -z "$only" ] || case " $only " in *" $id "*) ;; *) continue ;; esac
     [[ $name =~ $NAME_RE || $kind = waiver ]] || { tab off "$id" "$kind" "$name" bad-name "$who"; rc=1; continue; }
     r=$(run_probe "$home" "$kind" "$name" "$want")
     [ "$r" = on ] && continue
@@ -178,7 +180,7 @@ cmd_status() {  # <verify:0|1> args...
     case $1 in
       --home) [ $# -ge 2 ] || die "--home needs a directory"; homes+=("$2"); shift 2 ;;
       -*) die "unknown option $1" ;;
-      *) only=$1; shift ;;
+      *) only="$only $1"; shift ;;
     esac
   done
   [ -r "$MANIFEST" ] || die "no manifest at $MANIFEST"
@@ -186,6 +188,24 @@ cmd_status() {  # <verify:0|1> args...
   for h in "${homes[@]}"; do [ -d "$h" ] || die "no such home: $h"; report_home "$h" "$only" || rc=1; done
   [ "$verify" -eq 1 ] && return "$rc"
   return 0
+}
+
+# The numbers the go-live row carries: the off rows of the named changes, and the detector lines of the home.
+cmd_count() {  # --home <dir> [<change-id>...]
+  local home="" ids="" out n m
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --home) [ $# -ge 2 ] || die "--home needs a directory"; home=$2; shift 2 ;;
+      -*) die "unknown option $1" ;;
+      *) ids="$ids $1"; shift ;;
+    esac
+  done
+  [ -r "$MANIFEST" ] || die "no manifest at $MANIFEST"
+  [ -d "$home" ] || die "no such home: $home"
+  out=$(report_home "$home" "${ids:--}")
+  n=$(printf '%s\n' "$out" | awk -F'\t' '$1 == "off" && $2 != "-" { n++ } END { print n + 0 }')
+  m=$(printf '%s\n' "$out" | awk -F'\t' '$1 == "off" && $2 == "-" { n++ } END { print n + 0 }')
+  echo "switches-off:$n detectors:$m"
 }
 
 cmd_apply() {
@@ -258,6 +278,7 @@ case ${1-} in
   status) shift; cmd_status 0 "$@" ;;
   verify) shift; cmd_status 1 "$@" ;;
   refresh-releases) shift; cmd_refresh "$@" ;;
+  count) shift; cmd_count "$@" ;;
   apply) shift; cmd_apply "$@" ;;
-  *) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

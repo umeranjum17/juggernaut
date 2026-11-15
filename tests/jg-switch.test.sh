@@ -83,6 +83,17 @@ JG_SWITCH_TIMEOUT=1 sw status c6
 assert_contains "$OUT" $'stubtool\ttimeout' "a check that hangs is bounded and reads timeout"
 pass "a hanging check reads off with reason timeout"
 
+# count: the numbers the go-live row carries. Rows of the named changes that are off, and every detector line; no id reads no row.
+printf '#!/bin/sh\necho "stubtool 1.1.0"\n' > "$T/bin/stubtool"
+rm -f "$H/state/lead-sweep.check.sh" "$H/state/lead-sweep.check-trust"
+sw count --home "$H" c4 c6
+assert_contains "$OUT" "switches-off:" "count prints the off rows"
+case $OUT in switches-off:2\ detectors:*) ;; *) fail "count of two changes with one off row each: $OUT" ;; esac
+sw count --home "$H"
+case $OUT in switches-off:0\ detectors:[1-9]*) ;; *) fail "count with no ids reads no manifest row but still counts the detectors: $OUT" ;; esac
+sw count --home "$T/none"
+[ "$RC" -ne 0 ] || fail "count of a missing home is refused"
+pass "count names the off rows of the given changes and the detector lines"
 # --- the npm kind against the registry: the pin floor, then the cached latest release (refresh-releases) ---
 { tab r1 npm reltool - owner - "pin and release"; } > "$JG_SWITCH_MANIFEST"
 printf 'reltool reltool-pkg@0.1.44\n' > "$JG_SWITCH_TOOLCHAIN"

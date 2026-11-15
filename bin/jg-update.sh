@@ -321,6 +321,34 @@ wire_home() {  # <dir> <label>
   echo "$label: host wiring not whole after the move: $WIRE_FAILED failed (see the jg-host-wiring lines above)" >&2
 }
 
+# The switches the moved range declared (core/machines/switches.tsv, read by bin/jg-switch.sh), looked at once per moved home after
+# its wiring ran. The policy key switch-apply says what the move does with them: off reads nothing, report (the default) counts what is
+# still off, auto first turns on every policy row of those changes that the manifest marks who=auto (owner rows are never written
+# here; wiring and check rows were just brought up by the wiring step). Sets SWITCH_TAIL to the row's tail, `,switches-off:<n>` and,
+# above 0, `,detectors:<m>`; it stays empty when nothing was read (off, no tool or manifest in this mover, an unreadable result).
+switch_home() {  # <dir> <label> <home HEAD before the move>
+  local dir=$1 label=$2 pre=$3 mode ids='' sw="$SCRIPT_DIR/jg-switch.sh" out n m id kind name who
+  SWITCH_TAIL=
+  [ -x "$sw" ] || return 0
+  mode=$(jg_trunk_policy switch-apply "$(basename "$PROJECT")")
+  [ "$mode" != off ] || return 0
+  [ -z "$pre" ] || ids=$(git -C "$dir" log --format=%B "$pre..$BASE" 2>/dev/null | awk '/^(Change|Ticket): / { print $2 }' | sort -u | tr '\n' ' ')
+  if [ "$mode" = auto ] && [ -n "$ids" ]; then
+    # shellcheck disable=SC2086 # the change ids are plain words, split on purpose
+    while IFS=$'\t' read -r _ id kind name _ who; do
+      [ "$kind" = policy ] && [ "$who" = auto ] || continue
+      "$sw" apply "$id" "$name" --home "$dir" >/dev/null 2>&1 || echo "$label: switch $name of $id was not applied"
+    done < <("$sw" status --home "$dir" $ids 2>/dev/null | awk -F'\t' '$1 == "off" && $2 != "-"')
+  fi
+  # shellcheck disable=SC2086
+  out=$("$sw" count --home "$dir" $ids 2>/dev/null) || return 0
+  n=$(printf '%s\n' "$out" | sed -n 's/^switches-off:\([0-9]*\) .*/\1/p')
+  m=$(printf '%s\n' "$out" | sed -n 's/.* detectors:\([0-9]*\)$/\1/p')
+  [ -n "$n" ] && [ -n "$m" ] || return 0
+  SWITCH_TAIL=",switches-off:$n"
+  [ "$m" -eq 0 ] || SWITCH_TAIL="$SWITCH_TAIL,detectors:$m"
+}
+
 # The home's health BEFORE the move, in the file named by $HEALTH_BEFORE: the launch overlays are brought to the tip's hook set
 # first (the refresh a session start makes, which the home may not have had yet), then every fact is read, so the check after
 # the move blames the move only for a fault the home did not already have (bin/jg-home-health.sh check --before).
@@ -405,6 +433,8 @@ move_home() {  # <home-id> <dir> <label> <ignore-seed-marker>
   if [ "$MOVE_RESULT" != skipped ] && [ "$(git -C "$dir" rev-parse HEAD 2>/dev/null)" = "$(git -C "$dir" rev-parse --verify -q "$BASE^{commit}" 2>/dev/null)" ]; then
     wire_home "$dir" "$label"
     [ -z "$WIRE_FAILED" ] || status="$status,wiring-failed:$WIRE_FAILED"
+    switch_home "$dir" "$label" "$pre"
+    status="$status$SWITCH_TAIL"
   fi
   mkdir -p "$DATA"
   jg_trunk_in_use_migrate "$DATA" "$STATE"

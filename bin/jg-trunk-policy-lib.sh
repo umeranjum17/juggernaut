@@ -57,6 +57,8 @@
 #   verify-milestone-minutes 15       a verify milestone (core/trunk-verify/milestone.sh) holds the commits that landed within this many minutes of its first,
 #                                     or at most N commits, N set from the measured bad-commit share so a milestone is red at most half the time
 #   verify-milestone-max  50          the most commits N can be
+#   switch-apply          report      what a go-live move does with the switches its range declared (core/machines/switches.tsv): off reads
+#                                     none, report counts the ones still off in each home's row, auto first turns on the policy rows the manifest marks auto
 #   verify-bad-share      5           the bad-commit share in percent that sets N while the home has fewer than 20 landings
 #   no-green-alarm-minutes 15         the trunk with no green commit this long (since the oldest commit above the green pin landed) raises one alarm to Overwatch
 _JG_TRUNK_PROTECTED='bin/jg-merge-* bin/jg-pr-merge.sh bin/jg-trunk* bin/jg-dod-lib.sh bin/jg-captain-hold.sh bin/jg-test-run.sh bin/jg-lint.sh bin/jg-ci-* bin/jg-update.sh bin/jg-ff-lib.sh bin/jg-stack.sh core/merge-on-green/* core/merge-card/* core/owner-guard/* core/owner-rules/* core/receipts/* core/teardown/* core/delete-guard/* core/kill-guard/* policy/gate/* .github/workflows/*'
@@ -123,6 +125,7 @@ jg_trunk_policy() {  # <key> [<project>]
       live-quiet-minutes) val=20 ;;
       live-cap-minutes) val=60 ;;
       pr-page-minutes) val=60 ;;
+      switch-apply) val=report ;;
       release-after-commits) val=10 ;;
       no-green-alarm-minutes) val=15 ;;
       verify-width) val=4 ;;
