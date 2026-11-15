@@ -96,7 +96,9 @@
 # does. A script that fails there and passes on the commit's parent (or the pin) charges that one commit, which is reported, never reverted
 # (`line-red` is raised through jg-alert.sh naming the commit and its ticket, the ticket is told, and the pin stays where it is). A run that fails with no
 # failed test charged to a commit (a run over its time budget, a shard with no result, a runner that stopped) is a warning and runs
-# once more; it never moves the pin and never reverts. Nothing a verify finds stops a landing: a charged red takes the green pin, and with it
+# once more; it never moves the pin and never reverts. Every verify attempt ends with one record, green, red or incomplete (a signal, a crash,
+# a kill: `verify-due` closes an attempt whose process is gone), in data/trunk-verify.tsv with a dated log (core/trunk-verify/record.sh).
+# Nothing a verify finds stops a landing: a charged red takes the green pin, and with it
 # live, back below that commit, and stays recorded until a repair or a revert lands on a lane of its owner. `green-alarm`
 # (run by the landing check every minute) raises ONE `line-red` alert (jg-alert.sh, a wake that wakes at once) once the oldest commit above the green pin has waited no-green-alarm-minutes (default 15) and
 # no verify is running; one per green pin, so a stall that goes on is not raised twice.
@@ -215,6 +217,8 @@ LANDER_ACCOUNT="${CLAUDE_CONFIG_DIR:-}"; unset CLAUDE_CONFIG_DIR
 . "$SCRIPT_DIR/../core/trunk-verify/miss.sh"
 # shellcheck source=core/trunk-verify/tip-code.sh
 . "$SCRIPT_DIR/../core/trunk-verify/tip-code.sh"
+# shellcheck source=core/trunk-verify/record.sh
+. "$SCRIPT_DIR/../core/trunk-verify/record.sh"
 export JG_HOME JG_CONFIG_OVERRIDE="$CONFIG"
 
 usage() { sed -n '2,/^set -eu$/p' "${BASH_SOURCE[0]}" | sed -e 's/^# \{0,1\}//' -e '$d'; }
@@ -227,7 +231,8 @@ rev() { git -C "$PROJ" rev-parse --verify --quiet "$1^{commit}"; }
 
 LOCKS=''; VERIFY_WANT=''
 cleanup() {
-  local l q
+  local l q rc=$?
+  vr_exit "$rc"
   # A verify that leaves clears its own place in the queue, so a verify that died leaves nothing to wait for.
   if [ -n "${VERIFY_WANT:-}" ]; then
     q="$STATE/.trunk-verify-queue-$PN.lock"
@@ -1780,6 +1785,7 @@ verify_running() {
 cmd_verify_due() {
   local tip green
   open_project "${1-}"
+  vr_reap >&2  # a verify killed where no trap runs still ends with a record, so its tip is not started again
   tip=$(rev "refs/heads/$TRUNK") || return 1
   green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
   [ "$green" != "$tip" ] || return 1
@@ -1806,11 +1812,13 @@ cmd_verify() {
   tip=$(rev "refs/heads/$TRUNK") || refuse "trunk branch $TRUNK is missing in $PROJ"
   sha=$tip; [ -z "${2-}" ] || sha=$(rev "$2") || die "'${2-}' does not resolve in $PROJ"
   git -C "$PROJ" merge-base --is-ancestor "$sha" "$tip" || refuse "${sha:0:12} is not on $TRUNK"
+  # From here the attempt is open, and it ends with one record whatever happens (core/trunk-verify/record.sh).
+  vr_begin "$sha"
   # The verify judges with the tip's own code (core/trunk-verify/tip-code.sh): a repair of the verifier above a frozen pin must reach it.
   if verify_in_tip_code "$tip" "$@"; then exit "$VERIFY_TIP_RC"; fi
   JUDGE_NAME=verify; [ -z "${VERIFY_NIGHTLY:-}" ] || JUDGE_NAME=nightly
   GATE_TAG=verify-  # its gate marks say so: a move of the homes does not wait for a verify's gate, it follows the verify's green result
-  verify_slot "$sha" || { echo "verify: ${sha:0:12} is superseded by a newer verify, so it does not run; a green result there moves the pin over it too"; return 0; }
+  verify_slot "$sha" || { vr_cancel; echo "verify: ${sha:0:12} is superseded by a newer verify, so it does not run; a green result there moves the pin over it too"; return 0; }
   parent=$(rev "$sha^" || true)
   # The top of a batch is judged against the trunk before the batch (its row says where that was), so one run covers the whole stack.
   from=$(awk -F'\t' -v c="$sha" '$3 == c && $6 ~ /^batch-from=/ { f = substr($6, 12) } END { print f }' "$DATA/trunk-landings.tsv" 2>/dev/null || true)
@@ -1855,6 +1863,7 @@ cmd_verify() {
       # commit that added no failure.
       lock "$STATE/.trunk-$PN.lock"; tip_ok; pin_green "$sha"
       unlock "$STATE/.trunk-$PN.lock"
+      vr_end green "the whole range passed and the green pin moved to ${sha:0:12}"
       live_after_green "$sha"
       case ${GATE_KIND:-} in
         full-tip-red) echo "trunk green at ${sha:0:12}, with the failures its parent already had set aside" ;;
@@ -1862,14 +1871,14 @@ cmd_verify() {
         *) echo "trunk green at ${sha:0:12}" ;;
       esac ;;
     2)
-      put "$STATE/trunk-verify-last-$PN" "$sha"
+      vr_end red "a failed test is charged to a commit of ${parent:+${parent:0:12}..}${sha:0:12}"
       if [ "${#MS_BAD[@]}" -gt 0 ]; then for c in "${MS_BAD[@]}"; do ms_charge "$c"; done; exit 1; fi
       why="the whole suite fails on it where its parent ${parent:0:12} passes"
       if [ -n "${BATCH_TRACED:-}" ]; then culprit=$BATCH_CULPRIT; elif [ -n "$from" ]; then culprit=$(batch_culprit "$from" "$sha" "$gate"); fi
       if [ -n "$culprit" ] && [ "$culprit" != "$sha" ]; then why="the whole suite fails on it where the trunk before it (${from:0:12}) passes"; else culprit=$sha; fi
       report_red "$culprit" "$why" "$sha"; exit 1 ;;
     *)
-      put "$STATE/trunk-verify-last-$PN" "$sha"
+      vr_end incomplete "the run failed with no failed test charged to a commit (GATE_KIND=${GATE_KIND:-none}, rc=$rc), after its one rerun"
       if [ "${GATE_KIND:-}" = no-parent ]; then
         echo "verify: ${sha:0:12} is red, but its base could not run the failed scripts, so no commit is charged and nothing is reported against a lane; the green pin stays at $(green_short): landings go on" >&2
       else

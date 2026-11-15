@@ -19,6 +19,6 @@ cat > "$DONE_DONE_EVIDENCE_ROOT/steps.json" <<JSON
 {"target": {"version": "$(git -C "$root" rev-parse --short HEAD)"},
  "start": "the shipped trunk table and generated fixture records, with a real git clone for the red check",
  "steps": ["lint the trunk table and its enum", "list its moves", "read a fixture record in each of the four states through the real observer", "report one legal and one illegal move to the shadow log"],
- "result": "the table lints with 4 states and 6 moves, each fixture prints the right word, a legal move adds no shadow line and an illegal one adds one"}
+ "result": "the table lints with 4 states and 7 moves, each fixture prints the right word, a legal move adds no shadow line and an illegal one adds one"}
 JSON
 exit "$rc"

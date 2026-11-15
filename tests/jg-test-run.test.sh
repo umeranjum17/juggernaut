@@ -111,6 +111,28 @@ test_a_shard_that_stops_before_its_result_still_writes_a_failed_result() {
   pass 'a shard that stops before its result writes a failed result naming the shard, and an overrun is still named'
 }
 
+# verify-dies-silently: a shard once listed 74 changed paths that are no test (bin/*.py, schemas, conformance helpers) and ran each
+# as a script, every one an instant exit 1, so the verify could not end green. The run list takes a *.test.sh and nothing else.
+# Proof: a changed range of a python library, a schema, a conformance helper and one real test lists and runs only the test.
+test_a_changed_range_of_non_test_files_lists_and_runs_only_test_scripts() {
+  local fixture=$TMP_ROOT/non-test res=$TMP_ROOT/non-test-results out lst rc=0
+  required_fixture "$fixture" 'exit 0'
+  mkdir -p "$fixture/schemas" "$fixture/tests/ticket-adapter-conformance"
+  printf 'x = 1\n' >>"$fixture/bin/jg-beads-lease.py"
+  printf '{}\n' >"$fixture/schemas/ticket.schema.json"
+  printf '#!/usr/bin/env bash\ntouch %s/ran-as-script\n' "$TMP_ROOT" >"$fixture/tests/ticket-adapter-conformance/helper.sh"
+  git -C "$fixture" add -A
+  git -C "$fixture" -c user.name=t -c user.email=t@example.invalid commit -q --amend --no-edit
+  lst=$(cd "$fixture" && bash bin/jg-test-run.sh --list --changed --base HEAD^ 2>/dev/null)
+  [ "$lst" = tests/required-feature.test.sh ] || fail "the changed range must list only the test script: $lst"
+  out=$(bash "$fixture/bin/jg-test-run.sh" --required-shards HEAD^ "$res" 2>&1) || rc=$?
+  [ "$rc" = 0 ] || fail "non-test changed files must not refuse the gate: rc=$rc $out"
+  [ ! -e "$TMP_ROOT/ran-as-script" ] || fail "a conformance helper was run as a script"
+  jq -e '.summary.failed == 0 and ([.scripts[].path | select(endswith(".test.sh") | not)] | length) == 0' "$res/required.json" >/dev/null \
+    || fail "the aggregate must hold test scripts only: $out"
+  pass 'a changed range with bin/*.py, schemas and helpers lists and runs only test scripts'
+}
+
 # verify-unmapped-92: a verify candidate with 92 changed paths its own runner cannot map stayed red far past its grace, because each
 # path was recorded as a failed test, and the pin never moved. An unmapped path is a coverage note now: nothing ran for it, so it is
 # no result, it adds nothing to the failed count and it never refuses the gate.
@@ -921,6 +943,7 @@ test_the_coverage_time_budget_advises_and_a_script_no_shard_runs_still_refuses
 test_an_empty_serial_shard_with_every_script_entered_passes_the_coverage_guard
 test_a_quarantined_script_is_listed_not_run_and_the_gate_passes
 test_a_data_file_named_to_the_runner_is_refused_and_never_run
+test_a_changed_range_of_non_test_files_lists_and_runs_only_test_scripts
 test_92_unmapped_paths_are_coverage_notes_and_no_failed_results
 test_a_failing_mapped_test_still_fails_beside_unmapped_paths
 

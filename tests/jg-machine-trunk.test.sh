@@ -13,13 +13,13 @@ mkdir -p "$S" "$D"
 tab() { local IFS=$'\t'; printf '%s\n' "$*"; }
 jm() { OUT=$(bash "$JM" "$@" 2>&1); RC=$?; }
 
-jm check trunk; expect_code 0 "$RC" "the trunk table lints"; assert_equals "ok trunk: 4 states, 6 edges" "$OUT" "lint golden"
+jm check trunk; expect_code 0 "$RC" "the trunk table lints"; assert_equals "ok trunk: 4 states, 7 edges" "$OUT" "lint golden"
 jm enum trunk; expect_code 0 "$RC" "the enum lints"; assert_contains "$OUT" "4 values" "the enum holds four values"
 jm coverage trunk; expect_code 0 "$RC" "every edge names its test"
 assert_equals "clean unverified verifying red" "$(awk -F'\t' '$1=="state"{printf "%s ", $2}' "$ROOT/core/machines/tables/trunk.tsv" | sed 's/ $//')" "the four states"
 # The old trunk-pointers table is gone: the trunk table replaced it. A table of that name now holds the four delivery words (jg-machine-stage-words.test.sh).
 ! grep -q $'^state\tpinned' "$ROOT/core/machines/tables/trunk-pointers.tsv" 2>/dev/null || fail "the old trunk-pointers states must be gone: the trunk table replaces them"
-pass "the trunk table lints with 4 states and 6 moves, each with a test, and the old trunk-pointers states are gone"
+pass "the trunk table lints with 4 states and 7 moves, each with a test, and the old trunk-pointers states are gone"
 
 # A project clone with three commits: base (the pin), one (above the pin), and a revert of one.
 G=$JG_HOME/projects/p; git init -q -b main "$G"
@@ -49,13 +49,13 @@ for st in clean unverified verifying red; do grep -qx "$st" "$T/states.corpus" |
 jm check trunk --corpus "$T/states.corpus"; expect_code 0 "$RC" "every word a fixture printed is a state"
 pass "a fixture record in every state prints the right word"
 
-# Moves: the six legal moves replay clean, and a move that skips the verify is a finding.
+# Moves: the seven legal moves replay clean, and a move that skips the verify is a finding.
 { tab clean land unverified; tab unverified verify verifying; tab verifying pass clean; tab verifying pass-behind unverified
-  tab verifying fail red; tab red revert unverified; } > "$T/moves.corpus"
+  tab verifying fail red; tab verifying incomplete unverified; tab red revert unverified; } > "$T/moves.corpus"
 jm check trunk --corpus "$T/moves.corpus"; expect_code 0 "$RC" "legal moves replay clean"
 tab unverified pass clean > "$T/bad.corpus"; jm check trunk --corpus "$T/bad.corpus"; expect_code 1 "$RC" "a pass with no verify"
 assert_contains "$OUT" "unverified pass clean is not a move" "check names the move"
-pass "check replays the six legal moves and refuses a pass that skips the verify"
+pass "check replays the seven legal moves and refuses a pass that skips the verify"
 
 # The shadow log: a legal move adds no line, an illegal one adds exactly one, and the writer carries on.
 LOG=$D/machine-shadow.log

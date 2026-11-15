@@ -292,8 +292,10 @@ LANE=
 BASE_REF=origin/main
 JSON_PATH=
 SCRIPTS=()
-# Changed paths no suite names. Each fails as its own record, so one stray path never stops the whole selection.
+# Changed paths no suite names: each is one coverage note, never a result, so one stray path never stops or fails a selection.
 UNMAPPED_PATHS=()
+# Paths a selection offered that are no test script (a bin/*.py, a schema, a conformance helper): noted, never run.
+NON_TEST_PATHS=()
 EXCLUDE_FAMILIES=()
 MAX_WEIGHT_MS=
 HOSTED_TIMINGS=
@@ -1141,10 +1143,16 @@ normalize_script_path() {
   esac
 }
 
-# Append unique relative-or-absolute script paths to SCRIPTS.
+# Append unique relative-or-absolute script paths to SCRIPTS. This is the one door into the run list, and the runner starts every
+# entry with bash, so only a *.test.sh gets through: any other path (a library, a schema, a data file) is a coverage note and is
+# never run, whatever selection offered it (verify-dies-silently: 74 non-test paths once ran as scripts, each an instant exit 1).
 add_script() {
   local p existing
   p=$(normalize_script_path "$1")
+  case "$p" in
+    *.test.sh) ;;
+    *) NON_TEST_PATHS+=("$p"); return 0 ;;
+  esac
   for existing in "${SCRIPTS[@]+"${SCRIPTS[@]}"}"; do
     [ "$existing" = "$p" ] && return 0
   done
@@ -1872,8 +1880,8 @@ apply_shard() {
   [ -n "$SHARD" ] || return 0
   index=${SHARD%%of*}
   count=${SHARD#*of}
-  # An unmapped path is one note, so only the first shard carries it.
-  [ "$index" -eq 1 ] || UNMAPPED_PATHS=()
+  # An unmapped or non-test path is one note, so only the first shard carries it.
+  [ "$index" -eq 1 ] || { UNMAPPED_PATHS=(); NON_TEST_PATHS=(); }
   i=1
   while [ "$i" -le "$count" ]; do
     loads[i]=0
@@ -2487,6 +2495,9 @@ note_unmapped_paths() {
   local path
   for path in "${UNMAPPED_PATHS[@]+"${UNMAPPED_PATHS[@]}"}"; do
     printf 'JG_TEST_COVERAGE_NOTE %s: no changed-test mapping for this path, so no test was selected for it\n' "$path"
+  done
+  for path in "${NON_TEST_PATHS[@]+"${NON_TEST_PATHS[@]}"}"; do
+    printf 'JG_TEST_COVERAGE_NOTE %s: not a test script, so it was not run\n' "$path"
   done
 }
 

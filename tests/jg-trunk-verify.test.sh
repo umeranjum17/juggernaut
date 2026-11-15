@@ -260,6 +260,65 @@ test_a_verify_over_the_wall_clock_budget_with_no_failed_test_moves_the_pin_and_r
   pass 'a verify whose shards ran over the wall-clock budget with no failed test moves the pin, warns once and records the load; a failed test stays red'
 }
 
+# verify_records <commit> <result> <count>: data/trunk-verify.tsv holds exactly <count> rows for the commit, each <result>, and each names a dated log
+# that exists and says the same result; verify-due then does not start that tip again (while it is still the tip).
+verify_records() {
+  local c=$1 want=$2 n=$3 got log
+  got=$(awk -F'\t' -v c="$c" '$4 == c' "$HOME_D/data/trunk-verify.tsv" 2>/dev/null)
+  [ "$(printf '%s\n' "$got" | grep -c .)" = "$n" ] || fail "the verify of ${c:0:12} must leave $n record(s): $(cat "$HOME_D/data/trunk-verify.tsv" 2>&1)"
+  [ "$(printf '%s\n' "$got" | cut -f5 | sort -u)" = "$want" ] || fail "the record must say $want: $got"
+  log=$(printf '%s\n' "$got" | tail -n 1 | cut -f7)
+  [ -s "$log" ] || fail "the record must name a kept log: $got"
+  grep -q "^result: $want" "$log" || fail "the log must say the same result: $(cat "$log")"
+  [ -z "$(compgen -G "$HOME_D/state/trunk-verify-run-proj.*")" ] || fail "no open attempt may be left behind: $(ls "$HOME_D/state")"
+  if [ "$want" != green ] && [ "$(tip)" = "$c" ]; then  # a tip a lane landed above meanwhile is a new tip, due again
+    trunk verify-due "$PROJ" >/dev/null 2>&1 && fail "verify-due must not start ${c:0:12} again after an $want record"
+  fi
+  return 0
+}
+
+# verify-dies-silently: a verify that stopped without a word left the tip looking never verified, so the tick started the same run
+# again and again, the pin never moved and go-live stayed blocked. Every way out writes one record (red, green or incomplete) and a log.
+# A signal the verify can see (SIGTERM, with the gate still running) is recorded by the verify itself; a kill -9, where no trap can run,
+# is recorded by the next verify-due, which finds the attempt's process gone.
+# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
+test_a_verify_that_is_killed_leaves_one_record_and_a_log_and_is_not_started_again() {
+  local c1 c2 pv vpid out
+  world killed
+  lane k1 one; c1=$(tip_after_land k1)
+  git -C "$PROJ" rev-parse "$c1^" > "$HOME_D/state/trunk-green-proj"
+  printf '#!/usr/bin/env bash\ngit rev-parse HEAD >> %s/verify-ran\nwhile [ ! -e %s/release ] && kill -0 %s 2>/dev/null; do sleep 0.1; done\n' "$W" "$W" "$$" > "$W/slow.sh"
+  printf 'gate-verify=bash %s/slow.sh\n' "$W" >> "$HOME_D/config/trunk-policy"
+  trunk verify-due "$PROJ" >/dev/null || fail "the tip is due before any verify ran"
+  trunk verify "$PROJ" "$c1" > "$W/v1.out" 2>&1 & pv=$!
+  for _ in $(seq 1 100); do [ -s "$W/verify-ran" ] && break; sleep 0.1; done
+  [ -s "$W/verify-ran" ] || fail "the verify must be running"
+  [ "$(find "$HOME_D/state" -name 'trunk-verify-run-proj.*' | grep -c .)" = 1 ] || fail "a running verify has one open attempt: $(ls "$HOME_D/state")"
+  vpid=$(cut -f3 "$(find "$HOME_D/state" -name 'trunk-verify-run-proj.*')")  # the marker names the verify's own process, not the test's subshell
+  kill -TERM "$vpid"; : > "$W/release"
+  wait "$pv" && fail "a verify stopped by a signal must not end green"
+  verify_records "$c1" incomplete 1
+  grep -q 'stopped by signal TERM' "$HOME_D/data/trunk-verify.tsv" || fail "the record names the signal: $(cat "$HOME_D/data/trunk-verify.tsv")"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" != "$c1" ] || fail "an incomplete verify moves no pin"
+
+  # A kill -9 runs no trap: the attempt stays open until verify-due finds its process gone and closes it, once.
+  rm -f "$W/release" "$W/verify-ran"
+  lane k2 two other.txt; c2=$(tip_after_land k2)
+  trunk verify "$PROJ" "$c2" > "$W/v2.out" 2>&1 & pv=$!
+  for _ in $(seq 1 100); do [ -s "$W/verify-ran" ] && break; sleep 0.1; done
+  [ -s "$W/verify-ran" ] || fail "the second verify must be running"
+  vpid=$(cut -f3 "$(find "$HOME_D/state" -name 'trunk-verify-run-proj.*')")
+  kill -KILL "$vpid"; wait "$pv" 2>/dev/null || :
+  : > "$W/release"; sleep 1
+  [ "$(find "$HOME_D/state" -name 'trunk-verify-run-proj.*' | grep -c .)" = 1 ] || fail "a killed verify leaves its attempt open: $(ls "$HOME_D/state")"
+  out=$(trunk verify-due "$PROJ" 2>&1) && fail "a tip whose verify was killed must not be due again: $out"
+  assert_contains "$out" "closed the verify attempt" "verify-due says it closed the dead attempt"
+  verify_records "$c2" incomplete 1
+  grep -q 'killed or lost' "$HOME_D/data/trunk-verify.tsv" || fail "the record says the verify was lost: $(cat "$HOME_D/data/trunk-verify.tsv")"
+  trunk verify-due "$PROJ" >/dev/null 2>&1; verify_records "$c2" incomplete 1  # a second look writes nothing more
+  pass 'a verify killed by a signal or by kill -9 leaves one incomplete record and a kept log, and its tip is not started again'
+}
+
 # The stall of 10 Nov: trunk-v3's tip verify ended with failed=0, every shard over its wall-clock budget and exit 1. The old verify
 # wrote a red pin, every landing but a fixes-red commit was refused for about 5 hours while 17 lanes waited, and Main cleared the pin
 # by hand. Now that run warns and runs once more, moves the pin nowhere and reverts nothing, and a ready lane lands through the real
@@ -284,6 +343,7 @@ test_a_red_with_no_failed_test_never_pins_and_a_ready_lane_lands_on_it() {
   assert_contains "$out" "no failed test charged to a commit; it is not pinned or reverted, and it runs once more" "the verify must warn and run once more"
   [ "$(grep -c . "$W/verify-runs")" = 2 ] || fail "the suite runs once more, and only once: $(grep -c . "$W/verify-runs") runs"
   assert_contains "$out" "nothing is reverted and the green pin stays at ${pin:0:12}: landings go on" "the verify must say nothing moves"
+  verify_records "$top" incomplete 1  # the one record of that attempt, whatever the rerun did
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$pin" ] || fail "a red with no failed test leaves the pin where it was"
   [ "$(tip)" = "$top" ] || fail "a red with no failed test moves nothing on the trunk"
   if git -C "$PROJ" log --format=%B trunk | grep -q '^reverts: '; then fail "a red with no failed test reverts nothing"; fi
@@ -504,6 +564,7 @@ test_landings_go_on_while_a_verify_runs_and_a_green_verify_goes_live() {
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$c1" ] || fail "a green verify moves the pin to the commit it judged, not past the lane that landed meanwhile"
   [ "$(cat "$W/live-moves" 2>/dev/null)" = "$c1" ] || fail "a green verify must move the homes to the commit it judged: $(cat "$W/live-moves" 2>&1) / $(cat "$W/v1.out")"
   assert_contains "$(cat "$W/v1.out")" "In use" "the verify must report the go-live"
+  verify_records "$c1" green 1
 
   # A red verify still charges its commit, takes the pin back and moves no home; a lane that landed during it stays landed.
   rig; printf 'gate-full=true\n' >> "$HOME_D/config/trunk-policy"
@@ -519,6 +580,7 @@ test_landings_go_on_while_a_verify_runs_and_a_green_verify_goes_live() {
   : > "$W/release"
   wait "$pv" && fail "a verify that finds a red must not pass"
   grep -q "$bad" "$HOME_D/data/trunk-ci.tsv" || fail "the red must be charged to the commit that caused it: $(cat "$HOME_D/data/trunk-ci.tsv" 2>&1)"
+  verify_records "$bad" red 1
   [ "$(cat "$HOME_D/state/trunk-green-proj")" != "$bad" ] || fail "a red must take the pin back below the commit"
   [ ! -e "$W/live-moves" ] || fail "a red verify must move no home: $(cat "$W/live-moves")"
   [ "$(tip)" = "$top" ] || fail "the lane that landed during the verify stays landed"
@@ -526,6 +588,7 @@ test_landings_go_on_while_a_verify_runs_and_a_green_verify_goes_live() {
 }
 
 test_queued_verifies_run_one_at_a_time_and_only_the_newest_runs
+test_a_verify_that_is_killed_leaves_one_record_and_a_log_and_is_not_started_again
 test_landings_go_on_while_a_verify_runs_and_a_green_verify_goes_live
 test_a_verify_moves_the_pin_over_a_red_its_parent_already_had
 test_a_verify_over_the_wall_clock_budget_with_no_failed_test_moves_the_pin_and_records_the_load
