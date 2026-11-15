@@ -775,6 +775,9 @@ action_check() {
     printf '%s\n' "$line"
   fi
   record_write "$FINDINGS" || true
+
+  # The switch manifest's npm rows read this cache; the lookup is a network call, so it runs here and never at go-live.
+  [ ! -x "$SCRIPT_DIR/jg-switch.sh" ] || JG_HOME="$JG_HOME" bash "$SCRIPT_DIR/jg-switch.sh" refresh-releases >/dev/null 2>&1 || true
   return 0
 }
 

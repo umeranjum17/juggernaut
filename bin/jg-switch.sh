@@ -4,6 +4,7 @@
 # Usage:
 #   jg-switch.sh status [--home <dir>]... [<change-id>]   per home, one line for each switch still off
 #   jg-switch.sh verify [--home <dir>]... [<change-id>]   status, exit 1 while any manifest row is off (detector lines never count)
+#   jg-switch.sh refresh-releases [--home <dir>]          look up each npm row's latest release into state/tool-releases.tsv
 #   jg-switch.sh apply <change-id> <name> [--home <dir>] [--owner-word "<text>"] [--value <v>]
 #                                                         turn one policy row on; the owner's word is required for who=owner
 #
@@ -18,11 +19,17 @@
 #   mode    the machine <name> is a line of config/machine-enforce                      reason absent
 #   check   state/<name>.check.sh and state/<name>.check-trust both exist               reason unarmed
 #   wiring  <name> is not a failed step in the home's last data/trunk-in-use.tsv row    reason wiring-failed
-#   npm     `<name> --version` is at or above its toolchain.versions pin (floor only)   reason below-pin | absent
+#   npm     `<name> --version` is at or above its toolchain.versions pin, and not behind the cached latest release
+#                                                                             reason below-pin | behind-release | absent
 #   restart state/trunk-live-restart-pending is not newer than state/.session-start-complete   reason restart-pending
 #   waiver  config/<file> has a line for the project: name is `<file>:<project>`        reason absent
 # Every check runs in its own process under jg-timeout-lib.sh (JG_SWITCH_TIMEOUT seconds, default 20); a check that hits
 # the bound reads off with reason `timeout`, so one stuck kind cannot hang the command.
+# A release lookup is a network call, so it never runs in `status`: `refresh-releases` runs `npm view <package> version` for each
+# npm row (package from the pin row, else the name), each under jg-timeout-lib.sh (JG_SWITCH_REFRESH_TIMEOUT seconds, default 8),
+# and writes `<name> <latest|-> <epoch> <ok|failed>` to state/tool-releases.tsv. The watched tool-update check runs it; go-live never does.
+# A tool at its pin whose cache row is missing, failed or older than 48 hours (JG_SWITCH_RELEASE_MAX_AGE seconds) reads
+# `unknown-release`: printed as `unknown ...` instead of `off ...`, so neither verify nor the delivery observer counts it.
 # The one write is `apply` of a policy row: it appends `<name>=<want>` to config/trunk-policy, which the policy reader
 # takes as the last matching line. It needs --owner-word for a who=owner row; no other kind is written here.
 # Environment: JG_HOME, JG_SWITCH_MANIFEST, JG_SWITCH_TOOLCHAIN (the pin table, default <repo>/toolchain.versions).
@@ -37,6 +44,8 @@ ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 MANIFEST="${JG_SWITCH_MANIFEST:-$ROOT/core/machines/switches.tsv}"
 TOOLCHAIN="${JG_SWITCH_TOOLCHAIN:-$ROOT/toolchain.versions}"
 BOUND="${JG_SWITCH_TIMEOUT:-20}"
+REFRESH_BOUND="${JG_SWITCH_REFRESH_TIMEOUT:-8}"
+RELEASE_MAX_AGE="${JG_SWITCH_RELEASE_MAX_AGE:-172800}"
 NAME_RE='^[A-Za-z0-9._@-]+$'
 
 die() { echo "jg-switch: $*" >&2; exit "${2:-2}"; }
@@ -48,6 +57,16 @@ at_least() {  # <have> <min>: dotted numbers
   [ "$(printf '%s\n%s\n' "$2" "$1" | sort -t. -k1,1n -k2,2n -k3,3n | head -n 1)" = "$2" ]
 }
 last_row_status() { tail -n 1 "$1/data/trunk-in-use.tsv" 2>/dev/null | cut -f4; }
+# The cached latest release against what is installed: `on`, `behind-release`, or `unknown-release` when the row is missing,
+# failed, older than the age bound, or unreadable.
+release_state() {  # <home> <name> <have>
+  local latest at st now
+  IFS=$'\t' read -r latest at st < <(awk -F'\t' -v t="$2" '$1 == t { print $2 "\t" $3 "\t" $4; exit }' "$1/state/tool-releases.tsv" 2>/dev/null)
+  now=$(date +%s)
+  if [ "${st-}" != ok ] || ! [[ ${at-} =~ ^[0-9]+$ ]] || ! [[ ${latest-} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+    || [ $((now - at)) -gt "$RELEASE_MAX_AGE" ]; then echo unknown-release
+  elif at_least "$3" "$latest"; then echo on; else echo behind-release; fi
+}
 probe() {  # <home> <kind> <name> <want>
   local home=$1 kind=$2 name=$3 want=$4 key proj val pin have status
   case $kind in
@@ -71,7 +90,8 @@ probe() {  # <home> <kind> <name> <want>
       pin=$(awk -v t="$name" '$1 == t { n = split($2, a, "@"); print a[n] }' "$TOOLCHAIN" 2>/dev/null | head -n 1)
       have=$(version_of "$name")
       if [ -z "$have" ]; then echo absent
-      elif [ -n "$pin" ] && ! at_least "$have" "$pin"; then echo below-pin; else echo on; fi ;;
+      elif [ -n "$pin" ] && ! at_least "$have" "$pin"; then echo below-pin
+      else release_state "$home" "$name" "$have"; fi ;;
     restart)
       if [ -e "$home/state/trunk-live-restart-pending" ] && ! [ "$home/state/.session-start-complete" -nt "$home/state/trunk-live-restart-pending" ]; then
         echo restart-pending
@@ -116,10 +136,36 @@ report_home() {  # <home> <change-id|''>
     [[ $name =~ $NAME_RE || $kind = waiver ]] || { tab off "$id" "$kind" "$name" bad-name "$who"; rc=1; continue; }
     r=$(run_probe "$home" "$kind" "$name" "$want")
     [ "$r" = on ] && continue
+    [ "$r" != unknown-release ] || { tab unknown "$id" "$kind" "$name" "$r" "$who"; continue; }
     tab off "$id" "$kind" "$name" "$r" "$who"; rc=1
   done < "$MANIFEST"
   detectors "$home"
   return "$rc"
+}
+
+# Look up the latest release of each npm tool the manifest names; one failed lookup is recorded as failed, never fatal.
+cmd_refresh() {
+  local home=${JG_HOME:-$ROOT} tools name pkg out rc tmp
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --home) [ $# -ge 2 ] || die "--home needs a directory"; home=$2; shift 2 ;;
+      *) die "unknown option $1" ;;
+    esac
+  done
+  [ -r "$MANIFEST" ] || die "no manifest at $MANIFEST"
+  [ -d "$home/state" ] || die "no state directory in $home"
+  tools=$(awk -F'\t' '$1 !~ /^#/ && $2 == "npm" && !seen[$3]++ { print $3 }' "$MANIFEST")
+  tmp=$(mktemp "$home/state/.tool-releases.XXXXXX") || die "cannot write in $home/state"
+  for name in $tools; do
+    [[ $name =~ $NAME_RE ]] || continue
+    pkg=$(awk -v t="$name" '$1 == t { print $2; exit }' "$TOOLCHAIN" 2>/dev/null)
+    case ${pkg:1} in *@*) pkg=${pkg%@*} ;; *) pkg=$name ;; esac
+    out=$(jg_run_timed "$REFRESH_BOUND" npm view "$pkg" version 2>/dev/null); rc=$?
+    out=$(printf '%s\n' "$out" | tail -n 1)
+    if [ "$rc" -eq 0 ] && [[ $out =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then tab "$name" "$out" "$(date +%s)" ok
+    else tab "$name" - "$(date +%s)" failed; fi
+  done > "$tmp"
+  mv -f "$tmp" "$home/state/tool-releases.tsv"
 }
 
 cmd_status() {  # <verify:0|1> args...
@@ -170,6 +216,7 @@ case ${1-} in
   _probe) shift; probe "$@" ;;
   status) shift; cmd_status 0 "$@" ;;
   verify) shift; cmd_status 1 "$@" ;;
+  refresh-releases) shift; cmd_refresh "$@" ;;
   apply) shift; cmd_apply "$@" ;;
-  *) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

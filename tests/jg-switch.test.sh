@@ -82,3 +82,43 @@ printf '#!/bin/sh\nsleep 30\n' > "$T/bin/stubtool"
 JG_SWITCH_TIMEOUT=1 sw status c6
 assert_contains "$OUT" $'stubtool\ttimeout' "a check that hangs is bounded and reads timeout"
 pass "a hanging check reads off with reason timeout"
+
+# --- the npm kind against the registry: the pin floor, then the cached latest release (refresh-releases) ---
+{ tab r1 npm reltool - owner - "pin and release"; } > "$JG_SWITCH_MANIFEST"
+printf 'reltool reltool-pkg@0.1.44\n' > "$JG_SWITCH_TOOLCHAIN"
+installed() { printf '#!/bin/sh\necho "reltool %s"\n' "$1" > "$T/bin/reltool"; chmod +x "$T/bin/reltool"; }
+# shellcheck disable=SC2016  # the stub script must keep its own $1 $2 $3 literal
+registry() { printf '#!/bin/sh\n[ "$1 $2 $3" = "view reltool-pkg version" ] || exit 2\n%s\n' "$1" > "$T/bin/npm"; chmod +x "$T/bin/npm"; }
+rel_row() { tab reltool "$1" "$2" "$3" > "$H/state/tool-releases.tsv"; }
+now=$(date +%s)
+rm -f "$H/state/tool-releases.tsv"
+installed 0.1.34; sw status r1
+assert_contains "$OUT" $'off\tr1\tnpm\treltool\tbelow-pin\towner' "installed 0.1.34 under pin 0.1.44 reads below-pin"
+installed 0.1.46; sw status r1
+assert_not_contains "$OUT" $'off\tr1' "installed 0.1.46 above the pin reads on"
+assert_contains "$OUT" $'unknown\tr1\tnpm\treltool\tunknown-release' "no cache reads unknown-release, printed as unknown"
+sw verify r1; expect_code 0 "$RC" "unknown-release is not counted by verify"
+rel_row 0.1.46 "$now" ok; sw status r1
+assert_not_contains "$OUT" "r1" "a fresh cache at the installed version reads on"
+rel_row 0.1.50 "$now" ok; sw status r1
+assert_contains "$OUT" $'off\tr1\tnpm\treltool\tbehind-release\towner' "a fresh cache row newer than installed reads behind-release"
+sw verify r1; expect_code 1 "$RC" "behind-release is counted by verify"
+rel_row 0.1.50 $((now - 49 * 3600)) ok; sw status r1
+assert_contains "$OUT" $'unknown\tr1\tnpm\treltool\tunknown-release' "a cache older than 48 hours reads unknown-release"
+assert_not_contains "$OUT" $'off\tr1' "a stale cache is not counted"
+rel_row - "$now" failed; sw status r1
+assert_contains "$OUT" $'unknown\tr1\tnpm\treltool\tunknown-release' "a failed refresh reads unknown-release"
+pass "the npm kind reads the pin floor, then behind-release, and an unknown release is not counted"
+
+rm -f "$H/state/tool-releases.tsv"
+registry 'echo 0.1.60'; sw refresh-releases
+expect_code 0 "$RC" "refresh-releases succeeds"
+assert_contains "$(cat "$H/state/tool-releases.tsv")" $'reltool\t0.1.60\t' "refresh writes the registry's latest for the pin's package"
+sw status r1
+assert_contains "$OUT" $'off\tr1\tnpm\treltool\tbehind-release\towner' "a refreshed cache is read by status"
+registry 'exit 1'; sw refresh-releases
+assert_contains "$(cat "$H/state/tool-releases.tsv")" $'reltool\t-\t' "a failed lookup is recorded as failed"
+assert_contains "$(cat "$H/state/tool-releases.tsv")" $'\tfailed' "a failed lookup row says failed"
+registry 'sleep 30'; JG_SWITCH_REFRESH_TIMEOUT=1 sw refresh-releases
+assert_contains "$(cat "$H/state/tool-releases.tsv")" $'\tfailed' "a hanging lookup is bounded and recorded as failed"
+pass "refresh-releases writes the cache under a bound and records a failed lookup"
