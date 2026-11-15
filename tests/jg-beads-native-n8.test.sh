@@ -41,7 +41,14 @@ state_of() {  # <id>: the state the backlog lists the row under.
 }
 shape() { bd dolt sql -q 'show tables' 2>&1; bd dolt sql -q 'show create table issues' 2>&1; bd dolt sql -q 'select constraint_name from information_schema.check_constraints order by 1' 2>&1; }
 
-bd init --prefix jg >"$T/real-init.log" 2>&1 || fail "init the store: $(cat "$T/real-init.log")"
+# A dolt that dies while it starts (a Go runtime fatal on a loaded host) leaves nothing usable: the init is tried up to
+# three times in a clean store, and a final failure names the first lines of the crash, not its goroutine tail.
+for try in 1 2 3; do
+  rm -rf "$T/store/.beads"
+  bd init --prefix jg >"$T/real-init.log" 2>&1 && break
+  [ "$try" -lt 3 ] || fail "init the store after 3 tries: $(head -3 "$T/real-init.log")"
+  sleep "$try"
+done
 before=$(shape)
 for id in n8-a n8-b n8-c n8-d n8-e n8-f; do axi add "$id" "[feature] Row $id" --priority 2 --body why >/dev/null || fail "seed $id"; done
 
