@@ -95,6 +95,31 @@ test_an_unmapped_path_is_a_coverage_note_and_a_real_failure_still_reruns_once() 
   pass 'an unmapped path is a coverage note that never runs or files a flake, a real failure still reruns once, and a fake flake row is closed'
 }
 
+# The real runner, carried in the project's own tree as every project does, is the rerun command here. A failed result for a data file
+# (the name gate's allow list, whose lines are commands to bash) must never start it: the allow list below writes a marker file when run.
+# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
+test_the_gate_rerun_never_runs_a_data_file_as_a_command() {
+  local out marker
+  world datafile; rig
+  marker="$W/allow-list-was-run"
+  git -C "$PROJ" worktree add -q -b seed "$W/seed" trunk
+  mkdir -p "$W/seed/bin" "$W/seed/tests"
+  cp -R "$ROOT/bin/." "$W/seed/bin/"; cp -R "$ROOT/defaults" "$W/seed/defaults"; cp "$ROOT/tests/git-config-helpers.sh" "$W/seed/tests/"
+  git -C "$W/seed" add bin defaults tests
+  git -C "$W/seed" -c user.name=t -c user.email=t@example.invalid commit -q -m "seed runner"
+  JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref refs/heads/trunk "$(git -C "$W/seed" rev-parse HEAD)"
+  git -C "$PROJ" rev-parse trunk > "$HOME_D/state/trunk-tip-proj"
+  printf '#!/usr/bin/env bash\necho "JG_TEST_BEGIN 2026-01-01T00:00:00Z t/names.allow family=x expected_gate_skip=none"\necho "JG_TEST_END 2026-01-01T00:00:00Z t/names.allow exit=1 duration_ms=1 gate_skip=false type=test"\necho "JG_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=1"\nexit 1\n' > "$W/fail-allow.sh"
+  # The rig's own gate commands come first in the policy file and are replaced here.
+  sed -i '/^gate-full=/d;/^gate-rerun=/d' "$HOME_D/config/trunk-policy"
+  printf 'gate-full=bash %s/fail-allow.sh\ngate-rerun=bash bin/jg-test-run.sh --jobs 1\n' "$W" >> "$HOME_D/config/trunk-policy"
+  lane allow "touch $marker  # alias for bin/jg-new.sh" t/names.allow
+  out=$(trunk land allow 2>&1) && fail "a data file the gate failed must stay the lane's failure: $out"
+  assert_contains "$out" "t/names.allow" "the lane is charged for the path it changed"
+  [ ! -e "$marker" ] || fail "the gate rerun ran the allow list as a command: $out"
+  pass 'the gate rerun never runs a data file as a command'
+}
+
 # shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
 test_the_full_gate_charges_a_lane_only_for_what_it_broke() {
   local out tipc
@@ -627,6 +652,7 @@ test_landing_deadline_spans_both_gates
 test_every_verify_attempt_keeps_its_own_log_and_phase_history
 test_a_changed_file_that_is_not_a_test_is_never_run_bare_on_the_tip
 test_an_unmapped_path_is_a_coverage_note_and_a_real_failure_still_reruns_once
+test_the_gate_rerun_never_runs_a_data_file_as_a_command
 test_the_full_gate_charges_a_lane_only_for_what_it_broke
 test_every_landing_records_the_done_epoch_and_writes_no_latency_row
 test_a_flaky_failure_gets_one_rerun_before_it_is_judged

@@ -12,6 +12,8 @@
 #   jg-test-run.sh --lane portable-serial-<k>of<n>   (one CI serial shard)
 #   jg-test-run.sh --proven-isolated
 #   jg-test-run.sh tests/<name>.test.sh [more scripts...]
+#   A path named this way must be a *.test.sh: any other path (a data file, a library, a command) is refused with exit 2 before
+#   anything runs, because each named path is started with bash.
 #
 # Local trunk required set (eight shards run side by side, each warned at the CI bound):
 #   jg-test-run.sh --required-shards <base-ref> <output-dir>
@@ -2428,6 +2430,12 @@ case "${MODE:-}" in
     raw=("${SCRIPTS[@]+"${SCRIPTS[@]}"}")
     SCRIPTS=()
     for s in "${raw[@]}"; do
+      # This runner starts each path it is given with bash, so a path that is no test script (a data file such as the name gate's
+      # allow list, a library, a command) is refused before anything runs: bash would execute every line of a data file as a command.
+      case "$s" in
+        *.test.sh) ;;
+        *) die "not a test script, so it is not run: $s (only *.test.sh paths are run by name)" ;;
+      esac
       add_script "$s"
     done
     SELECTION_DESC="scripts"

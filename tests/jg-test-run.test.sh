@@ -178,6 +178,29 @@ test_four_formerly_unmapped_bin_paths_map_to_their_tests() {
   pass 'the lease module, tool-update check, resolver library and name-gate allow list map without an unmapped failure'
 }
 
+# The runner starts every path it is given with bash, so a data file named to it would run each line as a command: the name gate's
+# allow list (bin/juggernaut-name-gate.allow) lists tracked paths, and the gate rerun was seen to run it (88 and 54 lines of errors).
+# A path that is no *.test.sh is refused before anything runs. Proof: an allow list whose first line writes a marker file.
+test_a_data_file_named_to_the_runner_is_refused_and_never_run() {
+  local fixture=$TMP_ROOT/data-file marker=$TMP_ROOT/data-file.marker out rc=0 test_rc=0
+  required_fixture "$fixture" 'exit 0'
+  printf '# Compatibility aliases that a live fleet still calls.\ntouch %s  # alias for bin/jg-new.sh\n' "$marker" >"$fixture/bin/juggernaut-name-gate.allow"
+  out=$(cd "$fixture" && bash bin/jg-test-run.sh --jobs 1 bin/juggernaut-name-gate.allow 2>&1) || rc=$?
+  [ "$rc" = 2 ] || fail "a data file named to the runner must be refused with exit 2, got $rc: $out"
+  [ ! -e "$marker" ] || fail "the allow list was run as a command: its marker file exists"
+  assert_contains "$out" 'bin/juggernaut-name-gate.allow' 'the refusal names the path'
+  assert_contains "$out" 'not a test script' 'the refusal says why'
+  # A test script beside the data file is refused with it: nothing in the call runs.
+  out=$(cd "$fixture" && bash bin/jg-test-run.sh --jobs 1 tests/required-feature.test.sh bin/juggernaut-name-gate.allow 2>&1) || test_rc=$?
+  [ "$test_rc" = 2 ] || fail "a mixed call must be refused whole: rc=$test_rc $out"
+  assert_not_contains "$out" 'ok - required-feature' 'no script of a refused call ran'
+  [ ! -e "$marker" ] || fail "the mixed call ran the allow list"
+  # A test script named by itself still runs.
+  out=$(cd "$fixture" && bash bin/jg-test-run.sh --jobs 1 tests/required-feature.test.sh 2>&1) || fail "a test script named by itself must still run: $out"
+  assert_contains "$out" 'ok - required-feature.test.sh' 'a named test script still runs'
+  pass 'a data file named to the runner is refused and never run'
+}
+
 # A shard over its wall-clock budget was slowed by the machine, not failed by a test, so it is a warning and never a red,
 # and the budget never cuts it short: trunk-v3 went red at 20eb94ae6054 with all eight shards at 601 to 651 s of 600 s,
 # failed=0, and the budget had stopped each shard before about half its scripts ran. A failed test stays a red.
@@ -897,6 +920,7 @@ test_a_script_with_a_done_done_entry_is_selected_by_no_old_selector
 test_the_coverage_time_budget_advises_and_a_script_no_shard_runs_still_refuses
 test_an_empty_serial_shard_with_every_script_entered_passes_the_coverage_guard
 test_a_quarantined_script_is_listed_not_run_and_the_gate_passes
+test_a_data_file_named_to_the_runner_is_refused_and_never_run
 test_92_unmapped_paths_are_coverage_notes_and_no_failed_results
 test_a_failing_mapped_test_still_fails_beside_unmapped_paths
 
