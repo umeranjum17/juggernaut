@@ -240,6 +240,10 @@ func foldLine(open, line, kind string) string {
 	if !transitionAllowed(key, note) && !waitTimerClose(verb, key) {
 		return open
 	}
+	// An open gate is the one record of its owner call: no status line closes it.
+	if verb != "needs-decision" && verb != "blocked" && setHas(open, key) && gateOf(key) == "open" {
+		return open
+	}
 	recs := setDrop(open, key)
 	if verb == "needs-decision" || verb == "blocked" {
 		recs = append(recs, key+"\t"+verb+"\t"+note)
@@ -284,8 +288,13 @@ func plainStatusLines(path string) ([]string, bool) {
 	return readLines(path)
 }
 
-// openDecisions folds a whole status file.
+// openDecisions folds a whole status file, then lets a closed gate drop its key (gates.go).
 func openDecisions(file, kind string) string {
+	inHome(file)
+	return gateOverlay(foldFile(file, kind))
+}
+
+func foldFile(file, kind string) string {
 	lines, ok := plainStatusLines(file)
 	if !ok {
 		return ""
@@ -326,7 +335,8 @@ func currentLine(file, kind string) string {
 	return current
 }
 
-// ownOpenDecisions is the open set minus the keys a supervisor library or the parent raised.
+// ownOpenDecisions is the open set minus the keys a supervisor library or the parent raised. A
+// relayed hold is keyed by its gate id, so it is told by its note: "captain hold <task>: ...".
 func ownOpenDecisions(file string) []string {
 	prefixes := append(reservedPrefixes(), "remote-reply-continuity-", "captain-hold-")
 	var out []string
@@ -336,6 +346,9 @@ recs:
 			if strings.HasPrefix(r, p) {
 				continue recs
 			}
+		}
+		if f := strings.SplitN(r, "	", 3); len(f) == 3 && strings.HasPrefix(f[2], "captain hold ") {
+			continue
 		}
 		out = append(out, r)
 	}

@@ -76,7 +76,8 @@ import (
 // 10: a done or failed line carrying an explicit key closes that key on every kind of lane, not
 // only through the ship/scout terminal rule, so a cursor holding a squad_lead decision its own
 // `done` had answered is discarded.
-const openDecisionsFoldVersion = "11"
+// 12: a status line never closes a key that is the id of an open gate.
+const openDecisionsFoldVersion = "12"
 
 // cursorPath is the sibling cursor file for a status file.
 func cursorPath(statusFile string) string {
@@ -258,6 +259,12 @@ func parseCount(s string) (int64, bool) {
 // openDecisionsIncremental folds the bytes a status file gained since its last call into the
 // persisted open set, and rewrites the cursor. code is 1 only when the cursor cannot be written.
 func openDecisionsIncremental(file, capturedEnd string) (string, int) {
+	inHome(file)
+	set, code := foldIncremental(file, capturedEnd)
+	return gateOverlay(set), code
+}
+
+func foldIncremental(file, capturedEnd string) (string, int) {
 	if !plainReadableFile(file) {
 		return "", 0
 	}

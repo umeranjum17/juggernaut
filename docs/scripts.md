@@ -68,7 +68,7 @@ The shared gate lifecycle boundary is summarized in [architecture.md](architectu
 | [`jg-backlog-handoff.sh`](../bin/jg-backlog-handoff.sh) | Move queued backlog items into a Squad Lead home; its header owns route-specific wake outcomes and retries |
 | `jg-backlog-receive.sh`  | Idempotently ingest one confined remote handoff outbox into the home's backlog       |
 | `jg-bus.sh`              | The captain channel's dispatcher: build the Go command at `core/bus/cmd/jg-bus` once into the home's state directory, then hand it every command. The command records, publishes each captain-facing event, replays what it sends against its own record, runs the NATS/JetStream, and slim Dapr services from their files, starts or verifies the home's JetStream (`ensure`), prints its systemd user unit, installs and starts it as the machine's service (`install-service`, which the update path runs when the stack is skipped), and routes a captain reply by the board route in force, says whether this home owns the machine's bus unit (`owner`) ([channel](captain-channel.md), [bus](bus-service.md)) |
-| `jg-captain-hold.sh`     | Hold tasks for the captain, record the captain's answers, gate investigation completion, and report record divergence between the status log and the backlog |
+| `jg-captain-hold.sh`     | Hold tasks for the captain, record the captain's answers, gate investigation completion, with a gate id as the decision key |
 | `jg-owner-rules.sh`      | Extend, split, and audit the shared owner-rules surface the session digest prints: it appends a `- Kind: owner` entry and files that entry's enforcement ticket, refuses a product rule with the ticket path, reports the owner/product split by kind and can write the owner half back, lists with `check` each rule that still has no kind or names no check file that exists, and refuses an entry with no owner words, no scope, or no enforcement point |
 | `jg-owner-correction.sh` | The owner-correction capture check the turn-end guard reads: is the recorded correction (the newest captain message tagged feedback or micromanagement) captured by an owner rule or an enforcement ticket |
 | `jg-question-card.sh`    | Post the board card for a question to the owner through sign-off-axi and print its key so the reply can cite it; `--route <lead>` names the lead that owns the answer |
@@ -150,6 +150,7 @@ The shared gate lifecycle boundary is summarized in [architecture.md](architectu
 | `jg-procevent-when.sh`   | Fire a trust-bound deterministic action at most once when its registered condition holds, then wake with the outcome |
 | `jg-procevent-signoff.sh` | Bring sign-off board answers to captain holds as keyed answers once a home arms it; a hold's card is posted by `bin/jg-question-card.sh post` |
 | `jg-gate-refuse-lib.sh`  | Shared gate-context lifecycle boundary for real and lab homes                      |
+| `jg-gate-states.sh`      | Print each owner question of a home with its state (open or closed), for the status classifier that reads a gate-id decision key from its gate |
 | `jg-watch-arm.sh`        | Verified home-scoped watcher arm wrapper with loud cycle endings and bounded lifecycle ledger |
 | `jg-watch-checkpoint.sh` | Run one bounded foreground watcher checkpoint for Codex-style supervision            |
 | `jg-watch-core.sh`      | Build and run the watcher's window inventory (`core/watch`): which recorded endpoints a cycle watches, in what order, and the kind, backend and harness each one answers |
@@ -193,7 +194,7 @@ The shared gate lifecycle boundary is summarized in [architecture.md](architectu
 | `jg-exclude-tools-lib.sh` | Parse `config/crew-exclude-tools` and check launch-time runtime support for worker tool exclusions ([configuration.md](configuration.md#worker-tool-exclusions-configcrew-exclude-tools)) |
 | `jg-quota-choose.sh`     | Choose the first candidate with known positive quota from an ordered harness:model list |
 | `jg-vendor-auth-probe.sh`| Run one hard-bounded, non-destructive authentication probe of a named vendor CLI and report the fact |
-| `jg-wake-drain.sh`       | Present and acknowledge the current actor's claimed wake rows alongside status, outcome-backstop, decision, divergence, supervision-host outcome, recovery, and supervision checks |
+| `jg-wake-drain.sh`       | Present and acknowledge the current actor's claimed wake rows alongside status, outcome-backstop, decision, supervision-host outcome, recovery, and supervision checks |
 | `jg-wake-next.sh`        | Fetch the next wake and its acknowledgement token in one call: relay the drain's whole presentation, then print the ready-to-run `--ack-through` command |
 | `jg-wake-grant.sh`       | Serialize Pi supervision-branch wake-row claim activation, publication, release, and deactivation |
 | `jg-wake-lib.sh`         | Shared durable wake queue, recovery generations, portable locks, and watcher identity/health helpers |

@@ -36,7 +36,6 @@
 #   jg-captain-hold.sh blocking <task-id>
 #   jg-captain-hold.sh design-card <card-key> --raised-by <ticket> --title <question>
 #   jg-captain-hold.sh design-pick <card-key> --words <the captain's words>
-#   jg-captain-hold.sh diverged
 #   jg-captain-hold.sh to-gates   (the pass that moves each old stamped owner hold to a gate, prints the count; a second run moves none)
 #   jg-captain-hold.sh phase <task-id>
 #   jg-captain-hold.sh reconcile list
@@ -231,18 +230,17 @@
 # `phase` is the read-only word of the hold machine (core/machines/tables/hold.tsv):
 # raised, deferred, answered, closed or none. An answer recorded and not yet completed
 # is `answered`; a hold dated in the future is `deferred`; a settled call is `closed`.
-# `diverged` is the read-only guard over the seam between the two records of
-# one captain call. See "record divergence" beside command_diverged below.
 #
 # Parent channel: inside a squad_lead home a task held for the captain, and its
 # answer, are captain-facing facts the moment they are recorded, so `hold`
-# publishes `needs-decision [key=captain-hold-<task>-<n>]` and `answer` (and
-# `answers`) the matching `resolved` line on the parent channel through
+# publishes `needs-decision [key=<gate id>]` and `answer` (and `answers`) the
+# matching `resolved` line on the parent channel through
 # bin/jg-parent-channel-lib.sh, whether or not the mate model appends anything.
-# <n> is the count of the ticket's questions, so
-# a released and re-held task opens and closes a distinct parent decision with
-# no new persisted state, and an exact retry republishes the same line, which
-# the channel deduplicates. A main home has no channel and publishes nothing.
+# The key is the id of the question's gate, so the channel line and the gate are
+# one decision and a released and re-held task opens and closes a distinct parent
+# decision; an exact retry republishes the same line, which the channel
+# deduplicates. A hold that makes no gate (a parked hold, a stop order) keeps the
+# key `captain-hold-<task>-<n>`. A main home has no channel and publishes nothing.
 # The hold or answer is already durable in the backlog, so a channel that
 # cannot be written is reported as `actionable:` on stderr rather than undoing
 # the record; bin/jg-inactive-reconcile.sh's diagnostics name a broken binding.
@@ -301,11 +299,12 @@ DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
 . "$SCRIPT_DIR/../core/signoff/bin/jg-signoff-feedback-lib.sh"
 
 PARENT_HOLD_PUBLISHED=0
-publish_parent_hold() {  # <task-id> <occurrence> <verb> <note>
-  local id=$1 occurrence=$2 verb=$3 note=$4 rc=0
+publish_parent_hold() {  # <task-id> <gate-id-or-empty> <occurrence> <verb> <note>
+  local id=$1 key=$2 occurrence=$3 verb=$4 note=$5 rc=0
+  [ -n "$key" ] || key=captain-hold-$id-$occurrence  # no gate: the call is no question the store keeps
   PARENT_HOLD_PUBLISHED=0
   jg_parent_channel_report "$JG_HOME" "$STATE" \
-    "$verb [key=captain-hold-$id-$occurrence]: captain hold $id: $(jg_parent_channel_clean_note "$note")" || rc=$?
+    "$verb [key=$key]: captain hold $id: $(jg_parent_channel_clean_note "$note")" || rc=$?
   case "$rc" in
     0|1) PARENT_HOLD_PUBLISHED=1 ;;
     *) printf 'actionable: task %s is held for the captain in this home but that did not reach the parent channel (rc=%s)\n' "$id" "$rc" >&2 ;;
@@ -701,14 +700,6 @@ report_hold_move() {  # <task-id> <from-word-or--> <to-word>
   "$SCRIPT_DIR/jg-machine-guard.sh" edge hold "$2" "$3" "$1" >/dev/null 2>&1 || true
 }
 
-DIVERGED_MARK_DIR="$STATE/hold-diverged"  # one marker per call reported diverged, so the report is made once
-
-report_hold_reconciled() {  # <task-id> <to-word>: the move out of diverged, made only for a call reported diverged
-  [ -e "$DIVERGED_MARK_DIR/$1" ] || return 0
-  report_hold_move "$1" diverged "$2"
-  rm -f -- "$DIVERGED_MARK_DIR/$1"
-}
-
 # --- the owner's question as a gate ------------------------------------------
 # A hold that asks the owner something is one human gate row that blocks the ticket (bin/jg-beads-write.py
 # `gate`), and his answer closes the gate with his words. A parked hold, a stop order, and a ticket still
@@ -724,11 +715,12 @@ open_gate_ids() {  # <ticket>
 }
 
 # Make the gate, and defer the ticket to its date when the owner said "ask me again later".
+HELD_GATE=''  # the id of the gate hold_by_gate made or found: the key the parent channel carries
 hold_by_gate() {  # <task-id> <task-title> <reason> <until> <must> <origin> <done|release>
   local id=$1 reason=$3 until=$4 must=$5 origin=$6 title
   title=$(card_title "$reason")
   [ -n "$title" ] || title=$(built_title "$2")
-  backlog_cmd gate "$id" --title "$title" --reason "$reason" --close "$7" ${must:+--must "$must"} ${origin:+--origin "$origin"} >/dev/null \
+  HELD_GATE=$(backlog_cmd gate "$id" --title "$title" --reason "$reason" --close "$7" ${must:+--must "$must"} ${origin:+--origin "$origin"}) \
     || fail "could not make the owner's question on task $id"
   if [ -n "$until" ]; then
     backlog_cmd hold "$id" --reason "$reason" --kind captain --until "$until" >/dev/null \
@@ -740,6 +732,7 @@ hold_by_gate() {  # <task-id> <task-title> <reason> <until> <must> <origin> <don
 command_hold() {
   local id=${1:-} priority='' title='' reason='' repo='' origin='' until='' show state existing_title body='' occurrence held_from
   local signoff_script existing_hold_kind='' existing_held='' preserve_hold=0 card_close=release must='' refusal rec own_instruction='' raise_rc=0
+  HELD_GATE=''
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -851,7 +844,7 @@ command_hold() {
     [ "$(show_field_value "$TASK_SHOW_OUTPUT" hold_kind)" = captain ] || fail "task $id did not retain its captain hold"
     occurrence=1
   fi
-  publish_parent_hold "$id" "$occurrence" needs-decision "$reason"
+  publish_parent_hold "$id" "$HELD_GATE" "$occurrence" needs-decision "$reason"
   # A call is raised first and deferred by its date, so a new dated hold reports both moves.
   [ "$held_from" != - ] || { report_hold_move "$id" - raised; held_from=raised; }
   if [ -n "$until" ] && [[ "$until" > "$(date -u +%F)" ]]; then report_hold_move "$id" "$held_from" deferred; else report_hold_move "$id" "$held_from" raised; fi
@@ -1005,7 +998,7 @@ answer_by_gate() {  # <task-id> <release-0-or-1> <card-key> <gate-id-or-empty> <
     fi
     report_hold_move "$id" answered closed
   fi
-  publish_parent_resolution_then_retire "$id" "$occurrence" "$outcome"
+  publish_parent_resolution_then_retire "$id" "$gate" "$occurrence" "$outcome"
   [ "$release" = 0 ] || reply_release "$id" "$title" "$card"
   printf '%s: %s\n' "$outcome" "$id"
 }
@@ -1324,10 +1317,10 @@ reconcile_request_retire() {  # <task-id>
     || fail "could not retire the pending reconcile request for $1"
 }
 
-publish_parent_resolution_then_retire() {  # <task-id> <occurrence> <note>
-  local id=$1 occurrence=$2 note=$3 request
+publish_parent_resolution_then_retire() {  # <task-id> <gate-id> <occurrence> <note>
+  local id=$1 gate=$2 occurrence=$3 note=$4 request
   request=$(reconcile_request_path "$id")
-  publish_parent_hold "$id" "$occurrence" resolved "$note"
+  publish_parent_hold "$id" "$gate" "$occurrence" resolved "$note"
   if [ -e "$request" ] && [ "$PARENT_HOLD_PUBLISHED" != 1 ]; then
     fail "could not publish the answered captain-held task $id to its parent"
   fi
@@ -1443,11 +1436,10 @@ reconcile_close_gate() {  # <task-id> <show-output>
     close_answered "$id" 0 || fail "could not close reconciled captain-held task $id"
   fi
   occurrence=$(gate_rows "$id" --all | jq -rs '[.[] | select(.state == "closed")] | length')
-  publish_parent_hold "$id" "$occurrence" resolved reconciled
+  publish_parent_hold "$id" "$gate" "$occurrence" resolved reconciled
   [ "$PARENT_HOLD_PUBLISHED" = 1 ] \
     || fail "could not publish the reconciled captain-held task $id to its parent"
   reconcile_request_retire "$id"
-  report_hold_reconciled "$id" closed
   printf 'reconciled: %s\n' "$id"
 }
 
@@ -1540,7 +1532,6 @@ reconcile_note() {
   reconcile_request_retire "$id" \
     || fail "could not retire the applied reconcile request for $id"
   command_open "$id" || fail "recording the reconcile note released captain-held task $id"
-  report_hold_reconciled "$id" raised
   printf 'still-open: %s\n' "$id"
 }
 
@@ -1652,128 +1643,6 @@ EOF
 $open
 EOF
   printf 'verified: %s captain-call inventory\n' "$origin"
-}
-
-# --- record divergence ------------------------------------------------------
-#
-# A captain call can be written down twice, and until now nothing said when
-# those two records disagreed. A `resolved [key=...]` line closes the status-log
-# fold outright; the structured captain-held task is closed by a SEPARATE act
-# (`answer` above). Closing only on the status side therefore looks complete
-# there while the durable record still says the captain owes an answer and
-# keeps resurfacing it. The defect was never the separation; it was the silence.
-#
-# `diverged` is a read-only report of that contradiction and nothing else. It
-# closes NOTHING. A captain call closed wrongly disappears without review, which
-# is strictly worse than the noise this prints, so reconciling a divergence stays
-# a human-owned act - and it runs in either direction: record what the captain
-# actually said with `answer`, or re-open the status decision when that
-# resolution was not the captain's word.
-#
-# What it flags, and only this: a task that is still open and still carries the
-# captain-hold annotations, whose key was closed on the status side by the
-# RESOLVE verb. The other closing verb is not a divergence: a `captain-held`
-# close is the VERIFIED transfer to that very task, written by command_complete
-# only after verifying it, so the structured row staying open behind it is the
-# correct state. Neither is a still-open status decision - the OPEN DECISIONS
-# fold already owns that one.
-#
-# Routed work is deliberately irrelevant. When the decision IS the deliverable
-# there is nothing to route, so the test is only whether the status side already
-# declared this task's key resolved.
-# Nor does the report interpret why that resolution exists. A call can turn out
-# not to be a captain arbitration at all - a premise can dissolve, or a question
-# of fact can prove its first reading wrong - so the report says only that the
-# two records disagree and names both reconciliation directions above.
-#
-# Cost stays flat on a healthy home: one backlog listing, one key scan per
-# status log, and the precise per-key fold only for a key that already names a
-# still-open task. If the backlog is unavailable or its listing cannot be parsed,
-# the guard cannot read the structured record and prints nothing.
-#
-# Output: one `<task-id>\t<origin>\t<key>\t<title>` line per divergence, in
-# status-log then key order; nothing when the two records agree.
-
-# Every still-open task id in this home's backlog, one per line. Only the first
-# two comma-separated listing fields are read - both are slugs that precede any
-# quoted title - so a title containing commas or quotes cannot shift them.
-open_task_ids() {
-  local data
-  data=$(jg_backlog_data_absolute "$DATA") || return 1
-  jg_backlog_row_list "$data" 2>/dev/null | awk -F, '
-    /^  [A-Za-z0-9._-]+,/ {
-      id = $1
-      sub(/^ +/, "", id)
-      if ($2 != "done") print id
-    }
-  '
-}
-
-# Every key token stated anywhere in a status log. A cheap candidate scan: it
-# over-includes tokens that are only prose, and status_key_closing_verb below is
-# what actually decides what the stream says about a key.
-status_log_key_tokens() {  # <status-file>
-  grep -o '\[key=[A-Za-z0-9._-]*\]' "$1" 2>/dev/null |
-    sed 's/^\[key=//; s/\]$//' | LC_ALL=C sort -u
-}
-
-list_has_line() {  # <newline-separated-list> <value>
-  case $'\n'"$1"$'\n' in
-    *$'\n'"$2"$'\n'*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-command_diverged() {
-  local ids resolve f origin tokens id keys key show title
-  [ "$#" -eq 0 ] || { usage >&2; exit 2; }
-  # Both records must belong to the SAME home or the comparison is meaningless:
-  # The backlog is $JG_HOME's, so a state dir pointed somewhere else
-  # would report one home's status logs against another home's tasks. Every
-  # production caller pairs the two; a mismatch stays silent rather than
-  # inventing a cross-home divergence.
-  [ "$STATE" = "$JG_HOME/state" ] || return 0
-  ids=$(open_task_ids) || return 0
-  [ -n "$ids" ] || return 0
-  resolve=${JG_CLASSIFY_RESOLVE_VERB:-$JG_CLASSIFY_RESOLVE_VERB_DEFAULT}
-  for f in "$STATE"/*.status; do
-    [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || continue
-    origin=$(basename "$f"); origin=${origin%.status}
-    tokens=$(status_log_key_tokens "$f")
-    [ -n "$tokens" ] || continue
-    while IFS= read -r id; do
-      [ -n "$id" ] || continue
-      # The keys that could name this task in THIS log: the collapsed identity
-      # (the key IS the task id) and, for a pre-collapse row, the legacy derived
-      # one this origin would have minted.
-      keys=$id
-      case "$id" in
-        "$origin-decision-"?*) keys="$keys"$'\n'"${id#"$origin-decision-"}" ;;
-      esac
-      while IFS= read -r key; do
-        list_has_line "$tokens" "$key" || continue
-        [ "$(status_key_closing_verb "$f" "$key")" = "$resolve" ] || continue
-        task_show "$id" || continue
-        show=$TASK_SHOW_OUTPUT
-        [ "$(show_field "$show" state)" != "done" ] || continue
-        [ "$(show_field_value "$show" hold_kind)" = captain ] || continue
-        # The title is the only free-text field here, and the report is
-        # TAB-separated, so it goes through the same sanitizer every other
-        # emitted field uses rather than being trusted to stay one clean line.
-        title=$(sanitize_field "$(show_field_value "$show" title)")
-        printf '%s\t%s\t%s\t%s\n' "$id" "$origin" "$key" "$title"
-        if [ ! -e "$DIVERGED_MARK_DIR/$id" ]; then
-          report_hold_move "$id" "$(hold_word "$id")" diverged
-          mkdir -p "$DIVERGED_MARK_DIR" 2>/dev/null && : > "$DIVERGED_MARK_DIR/$id" 2>/dev/null
-        fi
-        break
-      done <<INNER
-$keys
-INNER
-    done <<EOF
-$ids
-EOF
-  done
 }
 
 command_answered() {  # <task-id>: a closed question carries his words, or a ticket released by them
@@ -2070,7 +1939,6 @@ case "${1:-}" in
   blocking) shift; command_blocking "$@" ;;
   design-card) shift; command_design_card "$@" ;;
   design-pick) shift; command_design_pick "$@" ;;
-  diverged) shift; command_diverged "$@" ;;
   to-gates) shift; command_to_gates "$@" ;;
   reconcile) shift; command_reconcile "$@" ;;
   -h|--help) usage ;;

@@ -16,7 +16,7 @@ This document records the deterministic mechanism, structured surfaces, compatib
 | How is a call closed when it stopped being a question? | [Reconcile](#reconcile-re-check-reality-never-a-blind-close) |
 | Why did a decision card disappear from the board? | [Card hygiene](#card-hygiene-a-landed-subject-is-not-a-live-call) |
 | Where does a hold appear in snapshots and Bearings? | [Structured read surfaces](#structured-read-surfaces) |
-| What does a `RECORD DIVERGENCE` section mean? | [Record divergence](#record-divergence) |
+| What key does a status line carry for an owner question? | [Decision keys are gate ids](#decision-keys-are-gate-ids) |
 | How do rows from older installs still work? | [Compatibility with pre-collapse installs](#compatibility-with-pre-collapse-installs) |
 | Which tests prove this, and how is the record refreshed? | [Verification record](#verification-record) |
 
@@ -42,7 +42,6 @@ It never reads report bodies, review artifacts, terminal output, or chat.
 | `bind`, `unbind`, `binding` | Record that a captured-answer source feeds the keyed-answer intake. | [Source bindings](#source-bindings) |
 | `reconcile-requests` | Internal intake that records a reconcile request from a board selection. | [Reconcile](#reconcile-re-check-reality-never-a-blind-close) |
 | `reconcile close`, `reconcile note`, `reconcile list` | Retire or list pending reconcile requests. | [Verifying and retiring a request](#verifying-and-retiring-a-request) |
-| `diverged` | Read-only report of a call whose two records disagree. | [Record divergence](#record-divergence) |
 | `phase` | Read-only word of one call for the hold machine: raised, deferred, answered, closed or none. | `core/machines/tables/hold.tsv` |
 
 ### Creating a hold (`hold`)
@@ -389,46 +388,15 @@ Queued forge merges cannot be covered locally.
 The forge performs the merge asynchronously after the local command has returned, when no lock this code could hold would still be held.
 The away-posture restriction on queued merges and its residual limits are owned by [architecture.md](architecture.md#delivery-modes-are-explicit-per-task).
 
-## Record divergence
+## Decision keys are gate ids
 
-A captain call can have two records, and closing one does not close the other.
-The status-log fold is the open-decision set `bin/jg-classify-lib.sh` reads from a task's status log, where a keyed `needs-decision` or `blocked` line opens a decision.
-A `resolved [key=...]` line closes the status-log fold.
-The structured captain-held task closes only through `answer`.
-
-Until this guard existed, closing on the status side alone left no trace of the disagreement.
-The fold went quiet, the durable record kept saying the captain owed an answer, and nothing warned.
-
-### What the guard reports
-
-`bin/jg-captain-hold.sh diverged` is the read-only report of that state.
-`bin/jg-wake-drain.sh` prints it as a bounded `RECORD DIVERGENCE` section beside OPEN DECISIONS on every drain.
-
-It flags exactly one condition, where all of these hold:
-
-- The task is still open.
-- The task still carries the captain-hold annotations.
-- The task's key was closed on the status side by the resolve verb, resolved through the collapsed identity (the key is the task id) or the legacy derived one.
-
-It closes nothing, ever.
-A captain call closed wrongly leaves review entirely, so both reconciliation directions stay human-owned, and the printed hint names both.
-
-### States that are not divergence
-
-Three states are deliberately not divergence:
-
-- A `captain-held [key=...]` close is the verified transfer `complete` writes, so the structured row staying open behind it is correct.
-  `bin/jg-classify-lib.sh`'s `status_key_closing_verb` is what keeps the two closing verbs distinguishable.
-- A still-open keyed status decision belongs to the OPEN DECISIONS fold.
-- The absence of a routed work item is legitimate rather than incomplete.
-  When the decision is the deliverable, there is nothing to route, so routed work is no part of the test.
-
-### Cost and scope
-
-Cost stays flat: one `jg-backlog.sh list`, one key scan per status log, and the precise per-key fold only for a key that already names a still-open task.
-The comparison is refused unless the status directory is the active home's own.
-Because the backlog reads that home's backlog, a mismatch would report one home's logs against another's tasks.
-If the backlog is unavailable or its listing cannot be parsed, the guard cannot read the structured record and prints nothing.
+A captain call that asks the owner is one gate in the home's store, and the gate id is the decision key.
+The status-log fold (`bin/jg-classify-lib.sh`) reads a key that is a gate id from the gate: it is open exactly while the gate is open.
+A `resolved [key=<gate id>]` line never closes an open gate, and closing the gate closes the key with no line written.
+A worker's own `needs-decision` for its lead, with a key that is no gate id, is read from the status log as before.
+The parent channel line of a hold, `needs-decision [key=<gate id>]`, and its answer, `resolved [key=<gate id>]`, carry the gate id too; a hold that makes no gate (a parked hold, a stop order) keeps the key `captain-hold-<task>-<n>`.
+One record cannot disagree with itself, so there is no `diverged` command and no `RECORD DIVERGENCE` section.
+`bin/jg-gate-states.sh` hands the gate states to the classifier; when the store cannot be read the classifier reads the status log alone.
 
 ## Compatibility with pre-collapse installs
 
@@ -476,13 +444,11 @@ The suite does not test the accepted merge-to-cleanup re-hold window or asynchro
 - A ship row whose captain hold cannot be read refuses cleanup before any destructive step and surfaces the read failure.
 - A released call whose decision text is `local main`, closed with no artifact, is not published as a local-only landing.
 
-### Divergence coverage
+### Gate-key coverage
 
-- The reconstructed silent-divergence case is signalled.
-  A status resolution over a still-open captain-held task reaches both `diverged` and the drain's `RECORD DIVERGENCE` section, under the collapsed and the legacy identity alike.
-  The backlog task, its hold, and the status log all survive the report unchanged, and the printed hint names both reconciliation directions.
-- The false-signal boundary holds.
-  A captain call with no routed work item, a verified `captain-held` transfer, a still-open status decision, an already answered call, and an ordinary task whose keyed question was answered all stay silent.
+- A status line keyed by a gate id reads open exactly while the gate is open: a `resolved` line over an open gate changes nothing, and the answer closes the key.
+- A worker's own key still closes on its `resolved` line.
+- The parent channel carries the gate id for a hold and for its answer, and a relayed hold is not the lead's own open decision.
 
 ### Completion and verification
 

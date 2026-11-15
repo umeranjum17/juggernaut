@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # End-to-end tests for captain-held tasks: the one primitive behind "a decision
 # is simply a task waiting on the captain", its completion gate, its recorded
-# answers, the record-divergence guard over its two records, and the legacy
+# answers, the gate id a decision key is, and the legacy
 # compatibility for pre-collapse decision identities.
 set -u
 
@@ -638,7 +638,7 @@ test_reconcile_retry_after_completed_close_of_a_merged_captain_ask() {
 }
 
 test_squad_lead_reconcile_publishes_before_request_retirement() {
-  local parent mate channel evidence out show rc request
+  local parent mate channel evidence out show rc request gate
   parent=$(make_home reconcile-parent-channel)
   mate=$(make_home reconcile-channel-mate)
   printf 'reconcile-channel-mate\n' > "$mate/.jg-squad-lead-home"
@@ -671,14 +671,16 @@ test_squad_lead_reconcile_publishes_before_request_retirement() {
   assert_contains "$(tasks_in "$mate" questions --all --ticket reconcile-channel-call --json)" '"resolution": "reconciled"' \
     "request retirement failure lost the reconciled resolution mode"
   [ -f "$request" ] || fail "the request retired despite its forced retirement failure"
-  [ "$(grep -c 'resolved \[key=captain-hold-reconcile-channel-call-1\]: captain hold reconcile-channel-call: reconciled' \
+  gate=$(gate_of "$mate" reconcile-channel-call)
+  [ "$(grep -c "resolved \[key=$gate\]: captain hold reconcile-channel-call: reconciled" \
     <(sed -E 's/ \[at=[0-9]+\]//' "$channel"))" -eq 1 ] \
     || fail "the parent resolution was not published before retirement failed: $(cat "$channel")"
 
   run_captain "$mate" reconcile close reconcile-channel-call --evidence-file "$evidence" >/dev/null \
     || fail "the closed reconciliation could not finish publication and retirement"
   [ ! -e "$request" ] || fail "the retry did not retire the published reconcile request"
-  [ "$(grep -c 'resolved \[key=captain-hold-reconcile-channel-call-1\]: captain hold reconcile-channel-call: reconciled' \
+  gate=$(gate_of "$mate" reconcile-channel-call)
+  [ "$(grep -c "resolved \[key=$gate\]: captain hold reconcile-channel-call: reconciled" \
     <(sed -E 's/ \[at=[0-9]+\]//' "$channel"))" -eq 1 ] \
     || fail "the reconciliation retry duplicated or changed its parent resolution: $(cat "$channel")"
   tasks_in "$mate" add answer-channel-call "Answer the mate call" --kind ship --repo sample >/dev/null \
@@ -699,13 +701,15 @@ test_squad_lead_reconcile_publishes_before_request_retirement() {
   show=$(tasks_in "$mate" show answer-channel-call --full)
   assert_contains "$show" "state: done" "request retirement failure reversed the captain answer"
   [ -f "$request" ] || fail "the normal-answer retry trigger retired after its forced failure"
-  [ "$(grep -c 'resolved \[key=captain-hold-answer-channel-call-1\]: captain hold answer-channel-call: answered' \
+  gate=$(gate_of "$mate" answer-channel-call)
+  [ "$(grep -c "resolved \[key=$gate\]: captain hold answer-channel-call: answered" \
     <(sed -E 's/ \[at=[0-9]+\]//' "$channel"))" -eq 1 ] \
     || fail "the normal answer did not publish before retirement failed: $(cat "$channel")"
   run_captain "$mate" answer answer-channel-call --decision-file "$mate/answer.txt" >/dev/null \
     || fail "the normal-answer retry could not finish request retirement"
   [ ! -e "$request" ] || fail "the normal-answer retry left its request pending"
-  [ "$(grep -c 'resolved \[key=captain-hold-answer-channel-call-1\]: captain hold answer-channel-call: answered' \
+  gate=$(gate_of "$mate" answer-channel-call)
+  [ "$(grep -c "resolved \[key=$gate\]: captain hold answer-channel-call: answered" \
     <(sed -E 's/ \[at=[0-9]+\]//' "$channel"))" -eq 1 ] \
     || fail "the normal-answer retry duplicated its parent resolution: $(cat "$channel")"
   pass "squad_lead resolutions publish before retiring durable retry triggers"
@@ -1139,7 +1143,7 @@ test_origin_slug_validation_precedes_path_construction() {
   pass "completion and verification validate origins before constructing paths"
 }
 
-# --- record divergence ------------------------------------------------------
+# --- decision keys are gate ids ----------------------------------------------
 
 run_drain() {  # <home>
   local home=$1
@@ -1149,66 +1153,65 @@ run_drain() {  # <home>
     "$ROOT/bin/jg-wake-drain.sh" 2>/dev/null
 }
 
-# The false-signal boundary, driven by the shapes that are genuinely fine. A
-# captain call whose deliverable IS the decision has no routed work item at all,
-# and that is legitimate: routed work must never be part of the test. Nor may a
-# verified `captain-held` transfer, a still-open status decision, an already
-# answered call, or an ordinary task that merely had a keyed question answered.
-test_legitimate_holds_produce_no_divergence_signal() {
-  local home id out drain answer
-  home=$(make_home divergence-no-false-signal)
-  id=jg-sample-systems-review
-  tasks_in "$home" add "$id" "Investigate sample systems" --kind scout --repo sample --start >/dev/null \
-    || fail "could not create the investigation fixture"
-  write_origin_meta "$home" "$id"
+open_keys() {  # <home> <status-file>: the keys the classifier reads as open in that log
+  PATH="$1/fakebin:$PATH" JG_HOME="$1" JG_STATE_OVERRIDE="$1/state" JG_DATA_OVERRIDE="$1/data" \
+    JG_CONFIG_OVERRIDE="$1/config" bash -c '. "$1/bin/jg-classify-lib.sh"; status_open_decisions "$2" | cut -f1' _ "$ROOT" "$2"
+}
 
-  # (1) The decision IS the deliverable: held for the captain, nothing routed,
-  # no status line anywhere naming it.
-  run_captain "$home" hold jg-sample-standalone-call \
-    --title "Adopt the sample naming convention" --reason "captain call with no routed work" \
-    --repo sample >/dev/null || fail "could not register the deliverable-is-the-decision call"
-  # (2) The verified transfer: still open structurally, closed on the status side
-  # by the captain-held verb command_complete writes.
-  run_captain "$home" hold jg-sample-transfer-call \
-    --title "Choose the sample retention window" --reason "captain retention choice pending" \
-    --repo sample >/dev/null || fail "could not register the transferred call"
-  # (4) An already answered call whose status line reads resolved.
-  run_captain "$home" hold jg-sample-answered-call \
-    --title "Choose the sample export format" --reason "captain export choice pending" \
-    --repo sample >/dev/null || fail "could not register the answered call"
-  answer="$home/answer.txt"
-  printf 'Export as CSV.\n' > "$answer"
-  run_captain "$home" answer jg-sample-answered-call --decision-file "$answer" >/dev/null \
-    || fail "could not record the captain answer fixture"
-  # (5) An ordinary in-flight work item that is not held for the captain.
-  tasks_in "$home" add jg-sample-plain-work "Ordinary sample work" --kind ship --repo sample --start >/dev/null \
-    || fail "could not create the ordinary work fixture"
+gate_of() {  # <home> <ticket>: the id of the ticket's one question
+  tasks_in "$1" questions --all --ticket "$2" --json | jq -r '.[0].id'
+}
 
-  cat > "$home/state/$id.status" <<'EOF'
-working: report drafted
-needs-decision [key=jg-sample-transfer-call]: choose the retention window
-captain-held [key=jg-sample-transfer-call]: tracked by jg-sample-transfer-call
-needs-decision [key=jg-sample-open-call]: still open on both sides
-needs-decision [key=jg-sample-answered-call]: choose the export format
-resolved [key=jg-sample-answered-call]: answered: CSV
-needs-decision [key=jg-sample-plain-work]: worker question about the sample fixture
-resolved [key=jg-sample-plain-work]: answered: go ahead
-EOF
-  # (3) A still-open status decision whose structured twin is also still open.
-  run_captain "$home" hold jg-sample-open-call \
-    --title "Choose the sample refresh cadence" --reason "captain cadence choice pending" \
-    --repo sample >/dev/null || fail "could not register the still-open call"
+# A key that is a gate id is read from the gate: open exactly while the gate is open, whatever the
+# status log says; a worker's own key is read from the log as before. One record of an owner call
+# cannot disagree with itself, so there is no `diverged` and no RECORD DIVERGENCE section.
+test_decision_key_is_the_gate_id() {
+  local home gate log drain
+  home=$(make_home gate-key)
+  log=$home/state/worker.status
+  run_captain "$home" hold jg-sample-gate-call --title "Choose the sample cadence" \
+    --reason "captain cadence choice pending" --repo sample >/dev/null || fail "could not hold the call"
+  gate=$(gate_of "$home" jg-sample-gate-call)
+  [ -n "$gate" ] && [ "$gate" != null ] || fail "the hold made no gate"
 
-  out=$(run_captain "$home" diverged) || fail "diverged failed on the legitimate shapes"
-  [ -z "$out" ] || fail "legitimate captain holds produced a false divergence signal: $out"
+  printf 'needs-decision [key=%s]: choose the cadence\nneeds-decision [key=worker-own-q]: which fixture\n' "$gate" > "$log"
+  assert_equals "$gate
+worker-own-q" "$(open_keys "$home" "$log")" "a keyed line is open while its gate is open, and so is the worker's own key"
 
-  drain=$(run_drain "$home") || fail "the drain failed on the legitimate shapes"
-  if printf '%s\n' "$drain" | grep -F 'RECORD DIVERGENCE' >/dev/null; then
-    fail "the drain printed a divergence section with nothing diverging: $drain"
-  fi
-  printf '%s\n' "$drain" | grep -F 'jg-sample-open-call' >/dev/null \
-    || fail "setup error: the still-open decision should still reach OPEN DECISIONS: $drain"
-  pass "a captain call with no routed work, a verified transfer, an open decision, and an answered call all stay silent"
+  printf 'resolved [key=%s]: answered: weekly\nresolved [key=worker-own-q]: answered: this one\n' "$gate" >> "$log"
+  assert_equals "$gate" "$(open_keys "$home" "$log")" "a resolved line closes the worker's key and never an open gate"
+  drain=$(run_drain "$home")
+  printf '%s\n' "$drain" | grep -F 'RECORD DIVERGENCE' >/dev/null && fail "the drain still prints a divergence section: $drain"
+  if run_captain "$home" diverged >/dev/null 2>&1; then fail "the diverged command still exists"; fi
+
+  printf 'Weekly.\n' > "$home/answer.txt"
+  run_captain "$home" answer jg-sample-gate-call --decision-file "$home/answer.txt" >/dev/null || fail "could not answer"
+  assert_equals "" "$(open_keys "$home" "$log")" "the answer closes the gate, and the key with it, with no status line written"
+  pass "a keyed line whose key is a gate id is open exactly while the gate is open"
+}
+
+# The parent channel carries the gate id as the key of a hold and of its answer, and a relayed hold is
+# not the lead's own decision.
+test_parent_channel_publishes_the_gate_id() {
+  local parent mate gate channel
+  parent=$(make_home gate-channel-parent)
+  mate=$(make_home gate-channel-mate)
+  printf 'gate-channel-mate\n' > "$mate/.jg-squad-lead-home"
+  printf 'schema=jg-squad-lead-parent.v1\nroute=local\nparent_home=%s\n' "$parent" > "$mate/.jg-squad-lead-parent"
+  channel=$parent/state/gate-channel-mate.status
+  run_captain "$mate" hold jg-sample-relayed --title "Choose the sample window" \
+    --reason "captain window choice pending" --repo sample >/dev/null || fail "could not hold the relayed call"
+  gate=$(gate_of "$mate" jg-sample-relayed)
+  grep -qF "needs-decision [key=$gate]" <(sed -E 's/ \[at=[0-9]+\]//' "$channel") \
+    || fail "the hold did not publish its gate id: $(cat "$channel")"
+  ! grep -q 'captain-hold-' "$channel" || fail "the channel still carries a captain-hold key: $(cat "$channel")"
+  assert_equals "" "$(PATH="$parent/fakebin:$PATH" JG_HOME="$parent" JG_STATE_OVERRIDE="$parent/state" bash -c '. "$1/bin/jg-classify-lib.sh"; status_own_open_decisions "$2"' _ "$ROOT" "$channel")" \
+    "a relayed hold is not the lead's own open decision"
+  printf 'Friday.\n' > "$mate/answer.txt"
+  run_captain "$mate" answer jg-sample-relayed --decision-file "$mate/answer.txt" >/dev/null || fail "could not answer the relayed call"
+  grep -qF "resolved [key=$gate]" <(sed -E 's/ \[at=[0-9]+\]//' "$channel") \
+    || fail "the answer did not publish its gate id: $(cat "$channel")"
+  pass "the parent channel publishes the gate id for a hold and its answer"
 }
 
 # The originating work item is itself the captain call, which is what the policy
@@ -2582,7 +2585,8 @@ test_reconcile_closes_with_evidence_or_keeps_the_call_open
 test_legacy_identities_keep_working
 test_chat_channel_feeds_the_same_keyed_answer_intake
 test_origin_slug_validation_precedes_path_construction
-test_legitimate_holds_produce_no_divergence_signal
+test_decision_key_is_the_gate_id
+test_parent_channel_publishes_the_gate_id
 test_teardown_never_closes_a_captain_held_task
 test_retained_row_artifacts_survive_captain_answers
 test_interrupted_cleanup_keeps_the_captain_call_recoverable

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# done-done journey: a question held for the owner has 5 states. The real jg-machine.sh lints the hold table and lists its moves; the behavior
+# done-done journey: a question held for the owner has 4 states. The real jg-machine.sh lints the hold table and lists its moves; the behavior
 # tests (tests/jg-machine-hold.test.sh and tests/jg-machine-hold-b.test.sh) read a fixture record in every state through the real observer and the real bin/jg-captain-hold.sh,
 # and checks that a legal move adds no line to the shadow log.
 set -u
@@ -18,7 +18,7 @@ cat "$out"
 cat > "$DONE_DONE_EVIDENCE_ROOT/steps.json" <<JSON
 {"target": {"version": "$(git -C "$root" rev-parse --short HEAD)"},
  "start": "the shipped hold table and generated fixture records made through the real captain-hold command and a real Beads store",
- "steps": ["lint the hold table and its enum", "list its moves", "read a fixture record in each of the five states through the real observer", "report five legal moves and four illegal ones to the shadow log"],
- "result": "the table lints with 5 states and 10 moves, each fixture prints the right word, a legal move adds no shadow line and an illegal one adds one"}
+ "steps": ["lint the hold table and its enum", "list its moves", "read a fixture record in each of the three open states through the real observer", "report four legal moves and four illegal ones to the shadow log"],
+ "result": "the table lints with 4 states and 6 moves, each fixture prints the right word, a legal move adds no shadow line and an illegal one adds one"}
 JSON
 exit "$rc"

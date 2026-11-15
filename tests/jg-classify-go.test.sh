@@ -87,5 +87,19 @@ check "no binary and no toolchain exits 2, not a verdict" "$?" 2
 check "an unknown command exits 2" "$("$ROOT/bin/jg-classify.sh" nonsense >/dev/null 2>&1; echo $?)" 2
 check "a custom captain expression replaces the default set" "$(JG_CAPTAIN_RE='deploy' yn status_is_captain_relevant 'deploy finished')|$(JG_CAPTAIN_RE='deploy' yn status_is_captain_relevant 'merged x')" "yes|no"
 
+# A key that is a gate id is read from the gate (a fake gate-state command stands for the store): open exactly while
+# the gate is open, never closed by a status line; a worker's own key folds from the log as before.
+printf '#!/usr/bin/env bash\ncat "%s/gates"\n' "$lab" > "$lab/gate-states"; chmod +x "$lab/gate-states"
+mkdir -p "$lab/home/state"; s=$lab/home/state/g.status
+printf 'needs-decision [key=jg-g1]: pick\nneeds-decision [key=own]: which\nresolved [key=jg-g1]: ok\nresolved [key=own]: ok\n' > "$s"
+printf 'jg-g1\topen\n' > "$lab/gates"
+check "an open gate stays open over a resolved line and a worker's own key closes" "$(JG_CLASSIFY_GATE_STATES=$lab/gate-states status_open_decisions "$s" | cut -f1)" "jg-g1"
+printf 'jg-g1\tclosed\n' > "$lab/gates"
+check "a closed gate closes its key with no line written" "$(JG_CLASSIFY_GATE_STATES=$lab/gate-states status_open_decisions "$s" | cut -f1)|$(JG_CLASSIFY_GATE_STATES=$lab/gate-states status_open_decisions_incremental "$s" | cut -f1)" "|"
+printf 'needs-decision [key=jg-g1]: pick\n' > "$s"
+check "a gate that cannot be read leaves the status log's own answer" "$(JG_CLASSIFY_GATE_STATES=$lab/none status_open_decisions "$s" | cut -f1)" "jg-g1"
+printf 'needs-decision [key=jg-g9]: captain hold t: pick\nneeds-decision [key=w]: mine\n' > "$s"
+check "a relayed hold keyed by its gate id is not the task's own decision" "$(status_own_open_decisions "$s" | cut -f1)" "w"
+
 [ "$fails" -eq 0 ] || { printf '%d check(s) failed\n' "$fails"; exit 1; }
 printf 'all jg-classify-go tests passed\n'

@@ -410,8 +410,7 @@ _jg_open_set_verb() {  # <open-set> <key> [<out-var>]
 # The verb that last moved <key> in a status stream: the opening verb while it is open, the
 # closing verb (resolved, or the verified captain-held transfer) once it is closed, nothing when no
 # line ever stated a transition for it. A captain-held close means the durable task holds the
-# question; a resolved close claims it settled, so a structured row still open behind it is a
-# contradiction (bin/jg-captain-hold.sh's `diverged`).
+# question; a resolved close claims it settled. A key that is a gate id is read from the gate.
 status_key_closing_verb() {  # <status-file> <key>
   _jg_classify_go key-closing-verb "$1" "$2"
 }

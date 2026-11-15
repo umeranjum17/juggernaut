@@ -978,7 +978,7 @@ Never append \`working:\` merely to acknowledge receipt or announce that a marke
 When a routed-work phase has a supervisor-actionable material change worth reporting under the rule above, give that reported phase a stable key.
 If its first reportable event is \`working [key=<work-slug>]: {material phase}\`, use the same key on its later \`$PAUSED_VERB\`, \`done\`, \`failed\`, \`needs-decision\`, or \`blocked\` event so the earlier working phase is superseded.
 When a keyed phase ends without another reportable state, append \`resolved [key=<work-slug>] [at=<epoch>]: {why it is no longer active}\`.
-\`resolved\` separately closes an escalated decision or blocker, and only a \`resolved\` line carrying that decision's exact key closes it: a later \`done\` or \`working\` event never does, even when the answer is what started that work.
+\`resolved\` separately closes an escalated decision or blocker, and only a \`resolved\` line carrying that decision's exact key closes it: a later \`done\` or \`working\` event never does, even when the answer is what started that work. A key that is the id of an owner question stays open exactly while its gate is open; never write \`resolved\` for it.
 The main juggernaut's answer normally writes that closing line at answer time; when a blocker or wait clears WITHOUT an answer from the main juggernaut, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (keyed with \`[key=<slug>]\` if you opened it with one) as your domain resumes.
 Routine internal supervision, heartbeats, retries, and operator churn stay inside your own home and must not touch that status file.
 
@@ -1123,7 +1123,7 @@ $OPERATOR_PAUSE_INSTRUCTIONS
 6. If a decision belongs to a human (product choices, destructive actions),
    run \`jg ask "<question>" --option <a> --option <b> --recommend <a>\` (\`--owner\` when it is the captain's call) and stop. Juggernaut will reply with the decision.
    \`jg alert\` lists the alerts that name your ticket, and \`jg alert ack <key>\` acknowledges one.
-   A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
+   A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work. A key that is the id of an owner question stays open exactly while its gate is open; never write \`resolved\` for it.
    Juggernaut's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a juggernaut reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 $SHARED_INFRA_RULE
 
@@ -1331,7 +1331,7 @@ $OPERATOR_PAUSE_INSTRUCTIONS
 6. If a decision belongs above the implementation worker (product choices, destructive actions),
    run \`jg ask "<question>" --option <a> --option <b> --recommend <a>\` (\`--owner\` when it is the captain's call) and stop. Juggernaut will reply with the decision.
    \`jg alert\` lists the alerts that name your ticket, and \`jg alert ack <key>\` acknowledges one.
-   A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
+   A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work. A key that is the id of an owner question stays open exactly while its gate is open; never write \`resolved\` for it.
    Juggernaut's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a juggernaut reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 $SHARED_INFRA_RULE
 

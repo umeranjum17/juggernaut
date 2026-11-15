@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The captain-hold writer reports its moves to the one move log (data/machine-moves.log): a hold writes held, an answer writes answered and
-# closed, so held -> answered has a time; a diverged call and its reconcile are reported once. Every record is made through the real
+# closed, so held -> answered has a time; every record is made through the real
 # bin/jg-captain-hold.sh over a real Beads store; the log is read as written.
 # shellcheck source=tests/jg-machine-hold-fixture.sh
 # shellcheck disable=SC1091
@@ -23,12 +23,6 @@ assert_equals "(none)>raised raised>closed" "$(moves_of m-rel)" "a released answ
 hold hold m-later --title "Choose the sample option for m-later" --reason "$reason" --repo sample --until 2099-01-01 >/dev/null || fail "seed m-later"
 assert_equals "(none)>raised raised>deferred" "$(moves_of m-later)" "a dated hold reports raised, then deferred"
 pass "a release and a dated hold report their own moves"
-
-hold hold m-div --title "Choose the sample option for m-div" --reason "$reason" --repo sample >/dev/null || fail "seed m-div"
-printf 'needs-decision [key=m-div]: choose the sample option\nresolved [key=m-div]: answered: first option\n' > "$HOME_DIR/state/m-origin.status"
-hold diverged >/dev/null; hold diverged >/dev/null
-assert_equals "(none)>raised raised>diverged" "$(moves_of m-div)" "a diverged call is reported once, however often it is listed"
-pass "a diverged call is reported once"
 
 [ ! -s "$SHADOW" ] || fail "a writer report reached the shadow log: $(cat "$SHADOW")"
 pass "no report was an illegal move"

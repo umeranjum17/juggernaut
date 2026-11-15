@@ -69,8 +69,8 @@ $ cat $P/state/mate.status   (final parent channel)
 working: delegated scope
 done [key=child-outcome-child-done-05b032a1]: child child done: PR https://github.com/kunchenguid/juggernaut/pull/9999 checks green pr=https://github.com/kunchenguid/juggernaut/pull/9999 mode=no-mistakes yolo=off
 done [key=child-pr-child]: child child PR ready: https://github.com/kunchenguid/juggernaut/pull/9999 mode=no-mistakes yolo=off
-needs-decision [key=captain-hold-child-call-1]: captain hold child-call: rollout window choice pending
-resolved [key=captain-hold-child-call-1]: captain hold child-call: answered
+needs-decision [key=<gate id of child-call>]: captain hold child-call: rollout window choice pending
+resolved [key=<gate id of child-call>]: captain hold child-call: answered
 
 $ parent watcher wakes, one per delivered line (4 signals)
 signal: $P/state/mate.status

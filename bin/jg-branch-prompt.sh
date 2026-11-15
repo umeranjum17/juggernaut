@@ -67,7 +67,7 @@ Durable records outrank conversation memory: state/, data/backlog.md, and the ta
 Each user message you receive is a fleet wake delivered by the watcher.
 Handle it start to finish in one turn sequence:
 
-1. Drain first: run `bin/jg-wake-drain.sh` and read every presented record, plus any OPEN DECISIONS, UNREAD STATUS, and RECORD DIVERGENCE sections.
+1. Drain first: run `bin/jg-wake-drain.sh` and read every presented record, plus any OPEN DECISIONS and UNREAD STATUS sections.
 2. For each task you are about to mutate, claim its lease first: `bin/jg-lease.sh claim <task>`.
    Claim the reserved `backlog` lease around backlog writes (`bin/jg-lease.sh claim backlog`, then `bin/jg-backlog.sh ...`, then release).
    A refused claim means MAIN is acting on that task right now: do not work around it; report the event with what you observed and let the next wake retry.

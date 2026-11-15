@@ -62,4 +62,6 @@ if stale && ! build; then
   exit 2
 fi
 
+# The gate overlay reads owner questions through this command; an empty value switches it off.
+export JG_CLASSIFY_GATE_STATES=${JG_CLASSIFY_GATE_STATES-$SCRIPT_DIR/jg-gate-states.sh}
 exec "$BIN" "$@"
