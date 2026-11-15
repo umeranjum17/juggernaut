@@ -48,6 +48,11 @@ SH
 chmod +x "$W/teardown"
 export SWEEP_LOG="$W/sweep.log" JG_LEAD_SWEEP_TEARDOWN="$W/teardown" PATH="$F:$PATH"
 JG_STOPS_TEST_NOW=100 bash "$ROOT/bin/jg-delivery-tick.sh" "$H" >/dev/null 2>&1
+# The sweep runs as a detached job: wait until it has logged and released its lock before reading the log.
+for _ in $(seq 1 300); do
+  [ -s "$SWEEP_LOG" ] && [ ! -e "$H/data/lead-sweep/.job.lock" ] && break
+  sleep 0.1
+done
 [ "$(cat "$SWEEP_LOG")" = lane-a ] || fail 'delivery tick did not ask the sweep to clean the landed lane without force'
 grep -q 'lane-a.*lane-b' "$H/state/.wake-bus.outbox.jsonl" || fail 'lead wake does not name both holders'
 pass 'delivery tick asks the unforced sweep and reports the holders'
