@@ -73,11 +73,13 @@ lapsed jg-solo && fail "the tick must have sent the heartbeat that is 130 s afte
 pass "a heartbeat leaves the changes read empty and the in-progress read shows the lease"
 
 # --- 6 minutes with 21 live panes (one more than a pass serves): the watcher's 30 s tick, then the sentinel's 60 s tick alone. ---
-for n in $(seq 1 21); do seed "jg-p$n" "pane-$n-agent"; done
+# The runner ends a script whose output stops for its whole bound, so each slow step of this phase prints a line.
+for n in $(seq 1 21); do seed "jg-p$n" "pane-$n-agent"; pass "live pane $n of 21 is seeded"; done
 for gap in 30 60; do
   for step in $(seq 1 $((360 / gap))); do
     age "$gap"; tick || fail "the tick failed"
     [ "$(held_leases)" = 22 ] || fail "a lease lapsed at $((step * gap)) s with a $gap s tick: $(held_leases) of 22 hold one"
+    pass "a $gap s tick, step $step: all 22 leases hold"
   done
   pass "over 6 minutes of a $gap s tick no lease of 22 live panes lapses (a pass serves 20)"
 done
