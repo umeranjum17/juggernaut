@@ -29,6 +29,7 @@ git -C "$PROJ" fetch -q && git -C "$PROJ" remote set-head origin main >/dev/null
 jg_test_spawn_home "$SH"
 FAKEBIN=$(make_spawn_fakebin "$W/fake")
 jg_test_fake_sleep_noop "$FAKEBIN"
+jg_test_pin_real_tools "$W/realbin"
 printf 'wait_pressure=100\nalert_pressure=100\nwait_available_gb=0\nalert_available_gb=0\n' > "$SH/config/host-memory"
 jg_test_beads_home "$SH"
 
