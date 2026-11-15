@@ -3,6 +3,8 @@
 # five-minute target. The times live on the ticket in Beads; this script writes no file of its own.
 # Usage: latency.sh measure <jg-home> <task> <commit>   print the landing's timing as one JSON object (the payload of the lander's `land`
 #                                   event): head, stage, queue_s, landing_s, gate_s, load, queue_why, ready (epoch). Writes nothing.
+#        latency.sh summary --tsv <file> [--from <epoch> --to <epoch>] [--stall-gap 1800]   print the 12 summary lines of a latency
+#                                   tsv (the old data/trunk-latency.tsv columns): the medians, the re-done lanes and the stall line. Read only.
 #        latency.sh check <jg-home>   the watcher check: for each landing of the last hour that the check has not read yet, read the
 #                                   ticket's ready time and the landing's `land` event (jg-backlog.sh trace landing), and raise the
 #                                   slow-delivery alert through bin/jg-alert.sh for one over the limit, naming the stage from the payload
@@ -24,6 +26,63 @@
 # through bin/jg-alert.sh, one key per landing. The minutes are the ticket's ready time to the event's time. A landing more than an hour
 # old is not read: the check ran late or was off.
 set -u
+# summary: the minutes from done to landing, the re-done lanes by day and the stall line, read from a tsv with the columns first_done,
+# ready and landed (epochs). Rows: the three are integers and from <= landed < to. Median: the middle value, the mean of the two middle
+# values for an even count. p90: the ascending value at 0-based index min(n-1, floor(0.9 n)). A lane is re-done when ready > first_done; its
+# day is the UTC date of first_done. Stall: each gap of --stall-gap seconds or more between consecutive distinct landed epochs is a stretch;
+# it counts when two or more rows have a [ready, landed] interval overlapping it; the share divides by the summed landed - ready of all rows.
+summary() {
+  local tsv='' from=0 to=9999999999 gap=1800
+  while [ "$#" -gt 0 ]; do
+    case $1 in
+      --tsv|--from|--to|--stall-gap) [ "$#" -ge 2 ] || { echo "latency: $1 needs a value" >&2; return 2; } ;;
+    esac
+    case $1 in
+      --tsv) tsv=$2 ;; --from) from=$2 ;; --to) to=$2 ;; --stall-gap) gap=$2 ;;
+      *) echo "usage: latency.sh summary --tsv <file> [--from <epoch> --to <epoch>] [--stall-gap 1800]" >&2; return 2 ;;
+    esac
+    shift 2
+  done
+  [ -f "$tsv" ] || { echo "latency: summary needs --tsv <file>: no such file: ${tsv:-none}" >&2; return 2; }
+  case $from$to$gap in *[!0-9]*) echo "latency: --from, --to and --stall-gap are whole seconds" >&2; return 2 ;; esac
+  [ "$gap" -gt 0 ] || { echo "latency: --stall-gap must be above 0" >&2; return 2; }
+  awk -F'\t' -v lo="$from" -v hi="$to" -v gap="$gap" '
+    function isint(v) { return v ~ /^[0-9]+$/ }
+    function isort(a, n,   i, j, t) { for (i = 2; i <= n; i++) { t = a[i]; for (j = i - 1; j >= 1 && a[j] > t; j--) a[j + 1] = a[j]; a[j + 1] = t } }
+    function median(a, n) { return n % 2 ? a[(n + 1) / 2] : (a[n / 2] + a[n / 2 + 1]) / 2 }
+    function p90(a, n,   i) { i = int(0.9 * n); if (i > n - 1) i = n - 1; return a[i + 1] }
+    NR == 1 { for (i = 1; i <= NF; i++) col[$i] = i; next }
+    isint($(col["landed"])) && isint($(col["first_done"])) && isint($(col["ready"])) && $(col["landed"]) >= lo && $(col["landed"]) < hi {
+      n++; L[n] = $(col["landed"]) + 0; F[n] = $(col["first_done"]) + 0; R[n] = $(col["ready"]) + 0
+    }
+    END {
+      if (!n) { print "latency: no landing in the window" > "/dev/stderr"; exit 1 }
+      for (i = 1; i <= n; i++) {
+        A[i] = (L[i] - R[i]) / 60; B[i] = (L[i] - F[i]) / 60; all += L[i] - R[i]
+        if (R[i] > F[i]) { h = (R[i] - F[i]) / 3600; nr++; H[nr] = h; tot += h; day = strftime("%Y-%m-%d", F[i], 1); dn[day]++; dh[day] += h }
+        seen[L[i]] = 1
+      }
+      isort(A, n); isort(B, n)
+      printf "landings %d\n", n
+      printf "ready_to_landed_min median %.1f p90 %.1f\n", median(A, n), p90(A, n)
+      printf "first_done_to_landed_min median %.1f p90 %.1f\n", median(B, n), p90(B, n)
+      printf "redone lanes %d hours %.1f\n", nr, tot
+      nd = 0; for (d in dn) days[++nd] = d; isort(days, nd)
+      for (i = 1; i <= nd; i++) printf "redone_day %s lanes %d hours %.1f share_pct %.0f\n", days[i], dn[days[i]], dh[days[i]], 100 * dh[days[i]] / tot
+      isort(H, nr); line = ""; top = 0
+      for (i = nr; i >= 1 && i > nr - 5; i--) { line = line sprintf(" %.1f", H[i]); top += H[i] }
+      printf "redone_top5 hours%s share_pct %.0f\n", line, 100 * top / tot
+      m = 0; for (e in seen) E[++m] = e + 0; isort(E, m)
+      for (k = 1; k < m; k++) {
+        a = E[k]; b = E[k + 1]; if (b - a < gap) continue
+        c = 0; sum = 0
+        for (i = 1; i <= n; i++) { o = (L[i] < b ? L[i] : b) - (R[i] > a ? R[i] : a); if (o > 0) { c++; sum += o } }
+        if (c >= 2) { st++; lh += sum / 3600 }
+      }
+      printf "stall gap_s %d stretches %d lane_hours %.1f total_lane_hours %.1f share_pct %.0f\n", gap, st, lh, all / 3600, 100 * lh / (all / 3600)
+    }' "$tsv"
+}
+if [ "${1:-}" = summary ]; then shift; summary "$@"; exit $?; fi
 [ "$#" -ge 2 ] && [ -d "$2/state" ] || { echo "usage: latency.sh check <jg-home> | measure <jg-home> <task> <commit>" >&2; exit 2; }
 verb=$1
 FMH=$(cd "$2" && pwd -P)

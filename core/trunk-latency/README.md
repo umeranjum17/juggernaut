@@ -36,6 +36,11 @@ A landing over `JG_MERGE_LATENCY_LIMIT_MINUTES` (default 5, the limit `core/merg
 Its note names the minutes, the stage from the payload and that stage's minutes.
 A landing more than an hour old is not read.
 
+## The summary
+
+`latency.sh summary --tsv <file> [--from <epoch> --to <epoch>] [--stall-gap 1800]` reads a latency tsv (the old `data/trunk-latency.tsv` columns, or the rows `ledger-rows.sh` prints) and writes nothing.
+It prints the landings in the window, the median and p90 minutes from ready and from the first done line to the landing, the re-done lanes (ready later than the first done line) by UTC day with the five largest, and the stall line: the gaps of `--stall-gap` seconds or more between landings that two or more lanes waited through, with their lane-hours and share of all waiting lane-hours. It needs `gawk` for the UTC day.
+
 ## Wiring
 
 `wiring.sh [--dry-run] <jg-home>` installs the check, writes the shim `state/trunk-latency.check.sh`, and registers it with `bin/jg-check-register.sh`.

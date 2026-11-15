@@ -10,9 +10,27 @@
 # L2 the limit is JG_MERGE_LATENCY_LIMIT_MINUTES, the one core/merge-on-green reads.
 # L3 a landing more than an hour old when the check first runs raises no alert; a landing whose ticket has no event yet is read again later.
 # L4 the wiring installs the check, registers it, and the installed shim runs it; the unwiring removes it.
+# S1 `latency.sh summary` prints the 12-line summary of a latency tsv: tests/fixtures/trunk-latency.tsv holds invented lanes with a stall behind
+#    one landing, two lanes done again and a day split; a bad row and a landing outside the window are not counted; a bad option is refused.
 # With DONE_DONE_EVIDENCE_ROOT set it writes trunk-latency.log and the payload of L1 as trunk-latency.json there.
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+# S1 reads a file only, so it runs without a Beads store.
+SUMMARY_TSV=$ROOT/tests/fixtures/trunk-latency.tsv
+sum_out=$(bash "$ROOT/core/trunk-latency/latency.sh" summary --tsv "$SUMMARY_TSV" --from 1794009600 --to 1794614400) || fail "summary failed: $sum_out"
+[ "$sum_out" = "landings 11
+ready_to_landed_min median 8.3 p90 100.0
+first_done_to_landed_min median 70.0 p90 105.0
+redone lanes 3 hours 4.1
+redone_day 2026-11-07 lanes 2 hours 3.0 share_pct 73
+redone_day 2026-11-08 lanes 1 hours 1.1 share_pct 27
+redone_top5 hours 1.9 1.1 1.0 share_pct 100
+stall gap_s 1800 stretches 3 lane_hours 5.1 total_lane_hours 5.8 share_pct 87" ] || fail "the summary is: $sum_out"
+bash "$ROOT/core/trunk-latency/latency.sh" summary --tsv "$SUMMARY_TSV" --from 1794009600 --to 1794614400 --stall-gap 20000 | tail -n 1 | grep -qx 'stall gap_s 20000 stretches 0 lane_hours 0.0 total_lane_hours 5.8 share_pct 0' || fail "a wider stall gap must find no stretch"
+if bash "$ROOT/core/trunk-latency/latency.sh" summary --tsv "$SUMMARY_TSV" --bogus 1 2>/dev/null; then fail "an unknown option must be refused"; fi
+printf 'ok - S1 summary prints the 12 lines of the fixture, honours --stall-gap and refuses a bad option\n'
+
 if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
   printf 'skip: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
   exit 0
