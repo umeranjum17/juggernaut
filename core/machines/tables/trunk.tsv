@@ -9,6 +9,6 @@ edge	unverified	verify	verifying	bin/jg-trunk.sh:cmd_verify	-	the tick starts a 
 edge	verifying	pass	clean	bin/jg-trunk.sh:pin_green	-	the verify passed and the verified commit is the tip	jg-machine-trunk
 edge	verifying	pass-behind	unverified	bin/jg-trunk.sh:pin_green	-	the verify passed and a landing came meanwhile: the pin moves and the tip is above it again	jg-machine-trunk
 edge	verifying	fail	red	bin/jg-trunk.sh:cmd_verify	-	the verify failed on a test charged to a commit	jg-machine-trunk
-edge	verifying	incomplete	unverified	bin/jg-trunk.sh:cmd_verify	-	the verify ended with no verdict (a rerun's failure no test accounts for, a signal, a crash, a kill): one incomplete record and a log are written, and the tick does not start that tip again	jg-machine-trunk
+edge	verifying	incomplete	unverified	bin/jg-trunk.sh:cmd_verify	-	the verify ended with no verdict (a rerun's failure no test accounts for, a signal, a crash, a kill): one incomplete record and a log are written, and the tick starts that tip again until its retries are spent (JG_VERIFY_INCOMPLETE_RETRIES, default 1), then one line-red alert reports it and the tip is not started again	jg-machine-trunk
 edge	red	revert	unverified	bin/jg-trunk.sh:revert_commit	-	the traced commit is reverted	jg-machine-trunk
 observer	bash "$(dirname "$JG_MACHINES_TABLES")/observers/trunk.sh" "$1"

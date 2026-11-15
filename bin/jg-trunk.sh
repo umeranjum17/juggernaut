@@ -97,7 +97,8 @@
 # (`line-red` is raised through jg-alert.sh naming the commit and its ticket, the ticket is told, and the pin stays where it is). A run that fails with no
 # failed test charged to a commit (a run over its time budget, a shard with no result, a runner that stopped) is a warning and runs
 # once more; it never moves the pin and never reverts. Every verify attempt ends with one record, green, red or incomplete (a signal, a crash,
-# a kill: `verify-due` closes an attempt whose process is gone), in data/trunk-verify.tsv with a dated log (core/trunk-verify/record.sh).
+# a kill: `verify-due` closes an attempt whose process is gone), in data/trunk-verify.tsv with a dated log (core/trunk-verify/record.sh). A tip whose
+# verify ended incomplete is started again (JG_VERIFY_INCOMPLETE_RETRIES retries, default 1); after that one line-red alert reports it and the tip waits for a move.
 # Nothing a verify finds stops a landing: a charged red takes the green pin, and with it
 # live, back below that commit, and stays recorded until a repair or a revert lands on a lane of its owner. `green-alarm`
 # (run by the landing check every minute) raises ONE `line-red` alert (jg-alert.sh, a wake that wakes at once) once the oldest commit above the green pin has waited no-green-alarm-minutes (default 15) and
@@ -1780,8 +1781,8 @@ verify_running() {
 }
 
 # `verify-due <project>`: prints the trunk tip and returns 0 when a tick should start a verify: the tip is above the green pin, no
-# verify is running, and the tip is not one a verify already ended on without moving the pin (a red it could not revert, or a failure no
-# test accounts for), so a red tip is not run again each minute. A repair or a revert landed by its owner moves the tip, which is due again.
+# verify is running, and the tip is not one a verify already ended on without moving the pin (a red it could not revert, or an incomplete
+# end whose retries are spent: core/trunk-verify/record.sh), so a red tip is not run again each minute. A repair or a revert landed by its owner moves the tip, which is due again.
 cmd_verify_due() {
   local tip green
   open_project "${1-}"

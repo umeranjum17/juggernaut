@@ -213,28 +213,36 @@ pass "50 heartbeat cycles leave the temp directory flat at $after entries"
 
 # --- leaked test processes ------------------------------------------------------
 # The reaper stops a process a test started (it carries JG_TEST_FIXTURE_PROC) that names a jg-* path in the temp
-# root and is old enough; a process without the mark, a marked one that names no jg-* path and a young one stay.
+# root and is old enough, and only when the suite that started it (the mark's owner) is gone: a process without the mark, a marked
+# one that names no jg-* path, a young one and one whose owner still runs stay (ticket verify-killer: a reaper with no owner
+# scope could stop another lane's or a running verify's processes).
 P=$TMP_ROOT/proc-tmp
 mkdir -p "$P/jg-fix"
 alive() { [ -d "/proc/$1" ] && ! grep -q '^State:[[:space:]]*[ZX]' "/proc/$1/status" 2>/dev/null; }
-JG_TEST_FIXTURE_PROC=4242 bash -c 'while :; do sleep 1; done' _ "$P/jg-fix" </dev/null >/dev/null 2>&1 &
+(exit 0) & GONE=$!; wait "$GONE"   # a pid that no longer runs: the owner of a suite that was killed
+sleep 600 >/dev/null 2>&1 & RUNNING_OWNER=$!   # a suite that still runs
+JG_TEST_FIXTURE_PROC=$GONE bash -c 'while :; do sleep 1; done' _ "$P/jg-fix" </dev/null >/dev/null 2>&1 &
 LEAK=$!
-JG_TEST_FIXTURE_PROC=4242 bash -c 'while :; do sleep 1; done' _ "$P/other-fix" </dev/null >/dev/null 2>&1 &
+JG_TEST_FIXTURE_PROC=$GONE bash -c 'while :; do sleep 1; done' _ "$P/other-fix" </dev/null >/dev/null 2>&1 &
 OTHER=$!
 env -u JG_TEST_FIXTURE_PROC bash -c 'while :; do sleep 1; done' _ "$P/jg-fix" </dev/null >/dev/null 2>&1 &
 UNMARKED=$!
+JG_TEST_FIXTURE_PROC=$RUNNING_OWNER bash -c 'while :; do sleep 1; done' _ "$P/jg-fix" </dev/null >/dev/null 2>&1 &
+LIVE_OWNED=$!
 sleep 2.5
 proc_reap() { TMPDIR=$P JG_HOME=$HOME_DIR JG_TMP_ALERT_PCT=100 JG_TEST_PROC_GRACE_SEC=1 JG_TMP_TEST_PROC_AGE_SEC=$1 "$REAPER" check 2>&1; }
 out=$(proc_reap 3600) || fail "reaper check failed with young test processes: $out"
 alive "$LEAK" || fail "a test process under the age limit was stopped"
 out=$(proc_reap 2) || fail "reaper check failed with old test processes: $out"
 [ -z "$out" ] || fail "the process pass printed: $out"
-alive "$LEAK" && fail "an old marked process naming a jg-* path was left running"
+alive "$LEAK" && fail "an old marked process of a gone owner naming a jg-* path was left running"
 alive "$OTHER" || fail "a marked process that names no jg-* path was stopped"
 alive "$UNMARKED" || fail "a process no test started was stopped"
+alive "$LIVE_OWNED" || fail "an old marked process whose owner still runs was stopped: the reaper reached a running suite's process"
 grep -q "test-process-reaped pid $LEAK " "$HOME_DIR/state/tmp-reaper.log" || fail "the stop was not logged"
-kill "$OTHER" "$UNMARKED" 2>/dev/null
-pass "the reaper stops an old test process naming a jg-* path and leaves unmarked and young ones"
+! grep -q "test-process-reaped pid $LIVE_OWNED " "$HOME_DIR/state/tmp-reaper.log" || fail "the stop of a live owner's process was logged"
+kill "$OTHER" "$UNMARKED" "$LIVE_OWNED" "$RUNNING_OWNER" 2>/dev/null
+pass "the reaper stops an old test process of a gone owner naming a jg-* path and leaves unmarked, young and live-owner ones"
 
 # A suite stops what it started when it exits, on a normal exit and on a signal, and nothing else.
 JG_TEST_ROOT=$ROOT

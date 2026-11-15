@@ -260,10 +260,11 @@ test_a_verify_over_the_wall_clock_budget_with_no_failed_test_moves_the_pin_and_r
   pass 'a verify whose shards ran over the wall-clock budget with no failed test moves the pin, warns once and records the load; a failed test stays red'
 }
 
-# verify_records <commit> <result> <count>: data/trunk-verify.tsv holds exactly <count> rows for the commit, each <result>, and each names a dated log
-# that exists and says the same result; verify-due then does not start that tip again (while it is still the tip).
+# verify_records <commit> <result> <count> [retry]: data/trunk-verify.tsv holds exactly <count> rows for the commit, each <result>, and each names a dated
+# log that exists and says the same result; verify-due then does not start that tip again (while it is still the tip), except with `retry`:
+# an incomplete end with a retry left is due once more (ticket verify-killer).
 verify_records() {
-  local c=$1 want=$2 n=$3 got log
+  local c=$1 want=$2 n=$3 retry=${4:-} got log
   got=$(awk -F'\t' -v c="$c" '$4 == c' "$HOME_D/data/trunk-verify.tsv" 2>/dev/null)
   [ "$(printf '%s\n' "$got" | grep -c .)" = "$n" ] || fail "the verify of ${c:0:12} must leave $n record(s): $(cat "$HOME_D/data/trunk-verify.tsv" 2>&1)"
   [ "$(printf '%s\n' "$got" | cut -f5 | sort -u)" = "$want" ] || fail "the record must say $want: $got"
@@ -271,7 +272,9 @@ verify_records() {
   [ -s "$log" ] || fail "the record must name a kept log: $got"
   grep -q "^result: $want" "$log" || fail "the log must say the same result: $(cat "$log")"
   [ -z "$(compgen -G "$HOME_D/state/trunk-verify-run-proj.*")" ] || fail "no open attempt may be left behind: $(ls "$HOME_D/state")"
-  if [ "$want" != green ] && [ "$(tip)" = "$c" ]; then  # a tip a lane landed above meanwhile is a new tip, due again
+  if [ "$retry" = retry ] && [ "$(tip)" = "$c" ]; then
+    [ "$(trunk verify-due "$PROJ" 2>&1)" = "$c" ] || fail "verify-due must start ${c:0:12} once more after its first $want record"
+  elif [ "$want" != green ] && [ "$(tip)" = "$c" ]; then  # a tip a lane landed above meanwhile is a new tip, due again
     trunk verify-due "$PROJ" >/dev/null 2>&1 && fail "verify-due must not start ${c:0:12} again after an $want record"
   fi
   return 0
@@ -282,7 +285,7 @@ verify_records() {
 # A signal the verify can see (SIGTERM, with the gate still running) is recorded by the verify itself; a kill -9, where no trap can run,
 # is recorded by the next verify-due, which finds the attempt's process gone.
 # shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
-test_a_verify_that_is_killed_leaves_one_record_and_a_log_and_is_not_started_again() {
+test_a_verify_that_is_killed_leaves_one_record_and_a_log_and_is_due_for_one_retry() {
   local c1 c2 pv vpid out
   world killed
   lane k1 one; c1=$(tip_after_land k1)
@@ -297,7 +300,7 @@ test_a_verify_that_is_killed_leaves_one_record_and_a_log_and_is_not_started_agai
   vpid=$(cut -f3 "$(find "$HOME_D/state" -name 'trunk-verify-run-proj.*')")  # the marker names the verify's own process, not the test's subshell
   kill -TERM "$vpid"; : > "$W/release"
   wait "$pv" && fail "a verify stopped by a signal must not end green"
-  verify_records "$c1" incomplete 1
+  verify_records "$c1" incomplete 1 retry
   grep -q 'stopped by signal TERM' "$HOME_D/data/trunk-verify.tsv" || fail "the record names the signal: $(cat "$HOME_D/data/trunk-verify.tsv")"
   [ "$(cat "$HOME_D/state/trunk-green-proj")" != "$c1" ] || fail "an incomplete verify moves no pin"
 
@@ -311,12 +314,40 @@ test_a_verify_that_is_killed_leaves_one_record_and_a_log_and_is_not_started_agai
   kill -KILL "$vpid"; wait "$pv" 2>/dev/null || :
   : > "$W/release"; sleep 1
   [ "$(find "$HOME_D/state" -name 'trunk-verify-run-proj.*' | grep -c .)" = 1 ] || fail "a killed verify leaves its attempt open: $(ls "$HOME_D/state")"
-  out=$(trunk verify-due "$PROJ" 2>&1) && fail "a tip whose verify was killed must not be due again: $out"
+  out=$(trunk verify-due "$PROJ" 2>&1) || fail "a tip whose verify was killed is due for its one retry: $out"
   assert_contains "$out" "closed the verify attempt" "verify-due says it closed the dead attempt"
-  verify_records "$c2" incomplete 1
+  verify_records "$c2" incomplete 1 retry
   grep -q 'killed or lost' "$HOME_D/data/trunk-verify.tsv" || fail "the record says the verify was lost: $(cat "$HOME_D/data/trunk-verify.tsv")"
-  trunk verify-due "$PROJ" >/dev/null 2>&1; verify_records "$c2" incomplete 1  # a second look writes nothing more
-  pass 'a verify killed by a signal or by kill -9 leaves one incomplete record and a kept log, and its tip is not started again'
+  trunk verify-due "$PROJ" >/dev/null 2>&1; verify_records "$c2" incomplete 1 retry  # a second look writes nothing more
+  pass 'a verify killed by a signal or by kill -9 leaves one incomplete record and a kept log, and its tip is due for one retry'
+}
+
+# ticket verify-killer: a verify that ended with no result says nothing about the commit, and the pin stays put while nothing runs it again.
+# The tip is retried once (JG_VERIFY_INCOMPLETE_RETRIES, default 1); when the retry ends incomplete too, one line-red alert reports it, the
+# tip is not started again, and a later look neither starts it nor raises a second alert. A tip that moves is due again.
+# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
+test_an_incomplete_tip_is_retried_once_then_reported_and_not_looped() {
+  local c1 c2 q
+  world retry
+  lane i1 one; c1=$(tip_after_land i1)
+  git -C "$PROJ" rev-parse "$c1^" > "$HOME_D/state/trunk-green-proj"
+  printf '#!/usr/bin/env bash\necho run >> %s/incomplete-runs\necho "JG_TEST_AGGREGATE lanes=1 total=1 failed=0 skipped_gate=0"\nexit 1\n' "$W" > "$W/incomplete.sh"
+  printf 'gate-verify=bash %s/incomplete.sh\n' "$W" >> "$HOME_D/config/trunk-policy"
+  q="$HOME_D/state/.wake-queue"
+  [ "$(trunk verify-due "$PROJ" 2>&1)" = "$c1" ] || fail "the tip is due before any verify ran"
+  trunk verify "$PROJ" "$c1" > "$W/i1.out" 2>&1 && fail "a verify with no result must not end green"
+  verify_records "$c1" incomplete 1 retry   # the first incomplete end: the tip is due once more
+  ! grep -q "verify-incomplete-${c1:0:12}" "$q" 2>/dev/null || fail "the first incomplete end is retried, not reported: $(cat "$q")"
+  trunk verify "$PROJ" "$c1" > "$W/i2.out" 2>&1 && fail "the retry has no result either, so it is not green"
+  verify_records "$c1" incomplete 2   # the retry ended incomplete: the tip is not due again
+  [ "$(grep -c "verify-incomplete-${c1:0:12}" "$q" 2>/dev/null)" = 1 ] || fail "the spent retry raises one line-red alert: $(cat "$q" 2>&1)"
+  for _ in 1 2 3; do trunk verify-due "$PROJ" >/dev/null 2>&1 && fail "a tip whose retry is spent is never started in a loop"; done
+  [ "$(grep -c "verify-incomplete-${c1:0:12}" "$q")" = 1 ] || fail "later looks raise no second alert: $(cat "$q")"
+  [ "$(grep -c . "$W/incomplete-runs")" = 4 ] || fail "two verifies of two runs each, and no more: $(grep -c . "$W/incomplete-runs") runs"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" != "$c1" ] || fail "an incomplete verify moves no pin"
+  lane i2 two other.txt; c2=$(tip_after_land i2)
+  [ "$(trunk verify-due "$PROJ" 2>&1)" = "$c2" ] || fail "a tip that moved is due again, with its own retries"
+  pass 'a verify tip that ended incomplete is retried once, then reported by one alert and not started again until the tip moves'
 }
 
 # The stall of 10 Nov: trunk-v3's tip verify ended with failed=0, every shard over its wall-clock budget and exit 1. The old verify
@@ -343,7 +374,7 @@ test_a_red_with_no_failed_test_never_pins_and_a_ready_lane_lands_on_it() {
   assert_contains "$out" "no failed test charged to a commit; it is not pinned or reverted, and it runs once more" "the verify must warn and run once more"
   [ "$(grep -c . "$W/verify-runs")" = 2 ] || fail "the suite runs once more, and only once: $(grep -c . "$W/verify-runs") runs"
   assert_contains "$out" "nothing is reverted and the green pin stays at ${pin:0:12}: landings go on" "the verify must say nothing moves"
-  verify_records "$top" incomplete 1  # the one record of that attempt, whatever the rerun did
+  verify_records "$top" incomplete 1 retry  # the one record of that attempt, whatever the rerun did
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$pin" ] || fail "a red with no failed test leaves the pin where it was"
   [ "$(tip)" = "$top" ] || fail "a red with no failed test moves nothing on the trunk"
   if git -C "$PROJ" log --format=%B trunk | grep -q '^reverts: '; then fail "a red with no failed test reverts nothing"; fi
@@ -355,12 +386,15 @@ test_a_red_with_no_failed_test_never_pins_and_a_ready_lane_lands_on_it() {
   git -C "$PROJ" log -1 --format=%s trunk | grep -qx 'ticket s2' || fail "the ready lane must land on a trunk whose suite ended red with no failed test: $out $(cat "$HOME_D"/data/jg-trunk-landing/s2.*.log 2>&1)"
   [ "$(find "$HOME_D/state" -name 'trunk-red*' -o -name '*cleared*' -o -name '*.land-next' -o -name 'trunk-flush-*' | grep -c .)" = 0 ] \
     || fail "no marker file is written or needed: $(ls "$HOME_D/state")"
-  # The tick's verify of s2's tip ends the same way: two runs, no pin, no revert; and a tip it ended on is not run again each minute.
-  for _ in $(seq 1 150); do [ "$(grep -c . "$W/verify-runs")" = 4 ] && break; sleep 0.2; done
-  [ "$(grep -c . "$W/verify-runs")" = 4 ] || fail "the tick must verify s2's tip, run twice: $(grep -c . "$W/verify-runs") runs"
+  # The tick's verify of s2's tip ends the same way: no pin, no revert. The tick retries that tip once (the first manual verify's tip may be
+  # retried too, before s2 lands), and a tip whose retry ended the same way is not run again each minute (ticket verify-killer).
+  s2=$(tip); rows() { awk -F'\t' -v c="$s2" '$4 == c' "$HOME_D/data/trunk-verify.tsv" 2>/dev/null | grep -c .; }
+  for _ in $(seq 1 150); do sweep >/dev/null; [ "$(rows)" = 2 ] && break; sleep 0.2; done
+  [ "$(rows)" = 2 ] || fail "the tick must verify s2's tip and retry it once: $(rows) records: $(cut -f4,5 "$HOME_D/data/trunk-verify.tsv" 2>&1)"
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$pin" ] || fail "a red with no failed test moves no pin, even after the next landing"
-  sweep >/dev/null; sleep 2; [ "$(grep -c . "$W/verify-runs")" = 4 ] || fail "a tip a verify ended on is not verified again: $(grep -c . "$W/verify-runs") runs"
-  pass 'a red with no failed test warns, runs once more, moves and reverts nothing, a ready lane lands on it with no hand step, and the tip is not verified again'
+  runs=$(grep -c . "$W/verify-runs"); sweep >/dev/null; sleep 2; sweep >/dev/null
+  [ "$(grep -c . "$W/verify-runs")" = "$runs" ] && [ "$(rows)" = 2 ] || fail "a tip whose retry ended the same way is not verified again: $(grep -c . "$W/verify-runs") runs, was $runs"
+  pass 'a red with no failed test warns, runs once more, moves and reverts nothing, a ready lane lands on it with no hand step, and the tip is retried once, then not verified again'
 }
 
 # The line's verify (jg8-l0d), started by the tick: two changes that each pass the landing gate alone and break together both land and
@@ -588,7 +622,8 @@ test_landings_go_on_while_a_verify_runs_and_a_green_verify_goes_live() {
 }
 
 test_queued_verifies_run_one_at_a_time_and_only_the_newest_runs
-test_a_verify_that_is_killed_leaves_one_record_and_a_log_and_is_not_started_again
+test_a_verify_that_is_killed_leaves_one_record_and_a_log_and_is_due_for_one_retry
+test_an_incomplete_tip_is_retried_once_then_reported_and_not_looped
 test_landings_go_on_while_a_verify_runs_and_a_green_verify_goes_live
 test_a_verify_moves_the_pin_over_a_red_its_parent_already_had
 test_a_verify_over_the_wall_clock_budget_with_no_failed_test_moves_the_pin_and_records_the_load
