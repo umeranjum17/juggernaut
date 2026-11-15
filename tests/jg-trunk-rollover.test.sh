@@ -12,6 +12,9 @@
 #    commits with the lane that landed after the rollover.
 # T3 A replay that cannot be proved equal stops with one line and changes nothing: no ref, no record, no row moves and the
 #    old trunk is untouched.
+# T4 Each replayed commit keeps its lane's landing proof at its new id (a copy of the row, carried-from the old id), so the
+#    release proof of the re-cut trunk writes the Green pin line and one Landing row per commit, naming the lane, and no
+#    Legacy landing; a rollover that finds no row to carry adds none.
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
@@ -184,7 +187,53 @@ test_a_replay_that_cannot_be_proved_equal_stops_and_changes_nothing() {
   pass 'T3 a replay that cannot be proved equal stops with one line and changes no ref, record or row'
 }
 
+test_a_re_cut_keeps_each_lanes_proof_row_at_its_new_head() {
+  local out new proofs n id old newc log wt
+  lab recut
+  proofs="$HOME_D/data/trunk-landing-proofs.tsv"
+  n=$(wc -l < "$proofs")
+  trunk rollover "$PROJ" >/dev/null 2>&1 || fail "T4: the merged release must roll over"
+  new=$(git -C "$PROJ" rev-parse refs/heads/release/v2)
+  [ "$(wc -l < "$proofs")" = $((n + 3)) ] || fail "T4: the three replayed lanes each get one row at the new head, nothing else is added: $(cat "$proofs")"
+  for id in c1 c2 c3; do
+    case $id in c1) old=$C1; newc=$(git -C "$PROJ" rev-parse "$new~2") ;; c2) old=$C2; newc=$(git -C "$PROJ" rev-parse "$new~1") ;; c3) old=$C3; newc=$new ;; esac
+    [ "$old" != "$newc" ] || fail "T4: fixture: $id must be a new commit"
+    out=$(awk -F'\t' -v i="$id" -v c="$newc" '$1 == i && $3 == c' "$proofs")
+    [ -n "$out" ] || fail "T4: lane $id must have a proof row at its replayed head ${newc:0:12}"
+    assert_contains "$out" "carried-from=${old:0:12}" "T4: the copied row says where it came from"
+    assert_contains "$out" "receipt=PASS@" "T4: the copied row keeps the lane's receipt"
+    [ -n "$(awk -F'\t' -v i="$id" -v c="$old" '$1 == i && $3 == c' "$proofs")" ] || fail "T4: the lane's row at its old head stays"
+  done
+  # The re-cut trunk's release proof, driven through the real capture over a clean copy of the release head.
+  wt="$W/recut-head"; git -C "$PROJ" worktree add -q --detach "$wt" "$new"
+  mkdir -p "$W/recut-out"
+  (cd "$wt" && JG_HOME="$HOME_D" JG_STATE_OVERRIDE="$HOME_D/state" JG_DATA_OVERRIDE="$HOME_D/data" JG_RELEASE_PROJECT="$PROJ" \
+    JG_RELEASE_TRUNK=release/v2 JG_RELEASE_BASE="$M" JG_RELEASE_HEAD="$new" DONE_DONE_EVIDENCE_ROOT="$W/recut-out" \
+    PATH="$W/fakebin:$PATH" "$ROOT/bin/jg-trunk-release-proof.sh" capture) >"$W/recut.out" 2>&1 || fail "T4: the re-cut trunk's release proof must pass: $(cat "$W/recut.out")"
+  log=$(cat "$W/recut-out/run.log")
+  assert_contains "$log" "Green pin: $new" "T4: the log has the Green pin line"
+  for id in c1 c2 c3; do
+    [ "$(printf '%s\n' "$log" | grep -c "^Landing: $id proj ")" = 1 ] || fail "T4: the log has one Landing row for lane $id: $log"
+  done
+  [ "$(printf '%s\n' "$log" | grep -c '^Landing: ')" = 3 ] || fail "T4: one Landing row per commit above the base: $log"
+  printf '%s\n' "$log" | grep -q 'Legacy landing' && fail "T4: a re-cut commit is not a legacy landing: $log"
+  pass 'T4 a re-cut keeps each lane proof row at its new head, and the release log has the Green pin line and one Landing row per commit'
+}
+
+test_a_rollover_with_no_proof_rows_adds_none() {
+  local before
+  lab norows
+  rm -f "$HOME_D/data/trunk-landing-proofs.tsv"
+  trunk rollover "$PROJ" >/dev/null 2>&1 || fail "T4b: the merged release must roll over without proof rows"
+  [ ! -e "$HOME_D/data/trunk-landing-proofs.tsv" ] || fail "T4b: no proof row is invented: $(cat "$HOME_D/data/trunk-landing-proofs.tsv")"
+  before=$(git -C "$PROJ" rev-parse refs/heads/release/v2)
+  [ -n "$before" ] || fail "T4b: the next trunk must exist"
+  pass 'T4b a rollover with no landing proof rows carries none and still cuts the next trunk'
+}
+
 test_version_two_release_rolls_over_and_names_its_commit
+test_a_re_cut_keeps_each_lanes_proof_row_at_its_new_head
+test_a_rollover_with_no_proof_rows_adds_none
 test_a_rollover_replays_every_landed_commit_and_the_green_pin_follows
 test_a_second_release_opens_a_new_pull_request_under_a_new_record
 test_a_replay_that_cannot_be_proved_equal_stops_and_changes_nothing

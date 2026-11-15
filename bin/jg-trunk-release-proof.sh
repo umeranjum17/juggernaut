@@ -4,7 +4,7 @@
 #
 # The proof is bound to the candidate head it is run for: the landing proof rows, ancestry from the release base, the carry of every
 # older trunk's hotfix, and that no release head this trunk already pushed is missing from the candidate (so a replacement candidate
-# cannot omit or overwrite work). It never reads the current green pin, so a green older candidate stays eligible after the pin
+# cannot omit or overwrite work). Its log holds the head, the base, the Green pin line and one row per commit. It never reads the current green pin, so a green older candidate stays eligible after the pin
 # advances, and no model judge or second seal is part of it; the forge's required CI is the other gate (bin/jg-pr-merge.sh).
 set -eu
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
@@ -53,7 +53,9 @@ if [ "${1:-}" = capture ]; then
   done <<< "$merges"
   versions=$(awk -F '\t' -v p="$pn" '$1 == p { print $2 "\t" $3 "\t" $4 }' "$DATA/trunk-versions.tsv") || fail 'cannot read trunk versions'
   {
-    printf 'Release head: %s\nRelease base: %s\n' "$head" "$base"
+    # The pin line names the commit this release ships as the green pin; it is the release head itself, never the live pin file, which
+    # moves on after the push (so a green older candidate stays eligible). The log keeps it, with one Landing row per commit below.
+    printf 'Release head: %s\nRelease base: %s\nGreen pin: %s\n' "$head" "$base" "$head"
     accepted=
     while IFS= read -r sha; do
       row=$(awk -F '\t' -v p="$pn" -v h="$sha" '$2 == p && $3 == h { r=$0 } END { print r }' "$DATA/trunk-landing-proofs.tsv")
