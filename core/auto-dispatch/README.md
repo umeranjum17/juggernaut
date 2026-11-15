@@ -64,6 +64,7 @@ For each "would start" ticket it runs `bin/jg-spawn.sh <task> projects/<project>
 - the spawn's output is `data/auto-dispatch/<id>.log`, and the row is `started`.
 
 The spawn keeps its own refusals (owner asks, plan tickets with no recorded yes, quota, pool).
+Before each start it asks `core/pool-reserve/reserve.sh admit` for a copy of the ticket's project (the lane limit and the two copies kept for a red fix). With no copy free the row says `no free copy`, nothing is spawned, the lead hears nothing, and a later beat starts it.
 A start that leaves no lane record in 10 minutes becomes a `spawn failed` row; it is not tried again until the lead approves the ticket anew.
 
 ## What the lead hears

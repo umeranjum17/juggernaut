@@ -12,7 +12,9 @@
 #   3. it is not in the spawnable list (held, taken by a lane, closed, or its project is not this home's);
 #   4. no brief  data/<id>/brief.md is missing or empty;
 #   5. the approval record has no route (harness, model, effort);
-#   6. no free lane is left for it.
+#   6. no free lane is left for it;
+#   7. no free copy: with the switch on, core/pool-reserve/reserve.sh `admit` refuses a copy of its project (the lane limit and the
+#      two copies kept for a red fix). That is a wait, not a failure: the row says so, nothing is spawned, and a later beat starts it.
 # A ticket that passes all six is a "would start" row, in list order, as many as there are free lanes. The check writes no
 # brief and picks no route.
 # The switch is config/auto-dispatch: its first word `on` makes the check act, anything else or no file leaves it watch only.
@@ -44,6 +46,7 @@ HOLD=${JG_AUTO_DISPATCH_HOLD:-$FMH/bin/jg-captain-hold.sh}
 SPAWN=${JG_AUTO_DISPATCH_SPAWN:-$FMH/bin/jg-spawn.sh}
 PROJECT_MODE=${JG_AUTO_DISPATCH_PROJECT_MODE:-$FMH/bin/jg-project-mode.sh}
 ALERT=${JG_AUTO_DISPATCH_ALERT:-$FMH/bin/jg-alert.sh}
+RESERVE=${JG_AUTO_DISPATCH_RESERVE:-$FMH/core/pool-reserve/reserve.sh}
 TOLD=$DATA/auto-dispatch/told.tsv
 SCALE=${JG_AUTO_DISPATCH_SCALE:-$FMH/core/lane-scale/scale.sh}
 APPROVED=$STATE/dispatch-approved
@@ -171,6 +174,8 @@ while IFS= read -r id; do
     route$'\t'*)
       if [ "$started" -ge "$free" ]; then row="skipped"$'\t'"no free lane left for it"
       elif [ "$ACT" -eq 0 ]; then started=$((started + 1)); row="would start"$'\t'"${v#route$'\t'}"
+      elif [ -x "$RESERVE" ] && ! "$RESERVE" admit "$FMH" "$FMH/projects/$(awk -F'\t' -v id="$id" '$1 == id { print $2 }' "$tmp/out")" >/dev/null 2>&1; then
+        row="skipped"$'\t'"no free copy (the copies left are kept for a red fix)"
       elif why=$(launch "$id" "$(awk -F'\t' -v id="$id" '$1 == id { print $2 }' "$tmp/out")" "${v#route$'\t'}"); then
         started=$((started + 1)); row="started"$'\t'"${v#route$'\t'}"
       else row="skipped"$'\t'"$why"; idle=1; fi ;;

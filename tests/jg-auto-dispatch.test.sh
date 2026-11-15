@@ -224,3 +224,26 @@ out=$(ra)
 assert_contains "$out" "alert ready-idle (P3) at rung 2 for lead: a1" "10 minutes after the refusal the lead gets the ready-idle alert"
 assert_equals "$(ra | grep -c 'ready-idle')" 0 "the alert is printed once, not every beat"
 pass "an unstarted ticket with a free lane raises ready-idle after 10 minutes, once"
+
+# Free copy: with the switch on, a ticket that passed every other reason starts only while its project has a copy the lane limit
+# and the red-fix reserve allow. No copy is a wait (a row, no spawn, nothing for the lead); the next beat with a copy starts it.
+D4=$TMP_ROOT/home-copy
+make_home "$D4"
+cp "$D2/spawn" "$D4/spawn"; printf 'on\n' > "$D4/config/auto-dispatch"
+printf '#!/usr/bin/env bash\n[ ! -e "%s/no-copy" ] || { echo "deferred: no copy" >&2; exit 75; }\n' "$D4" > "$D4/reserve"; chmod +x "$D4/reserve"
+approve "$D4" a1 >/dev/null; mkdir -p "$D4/data/a1"
+# shellcheck disable=SC2016  # the backquotes are the brief's own text
+printf 'Delivery contract: mode=local-trunk\n1. First action: create your branch: `git checkout -b feature/a1 --`\n' > "$D4/data/a1/brief.md"
+cb() { home_env "$D4" env SPAWN_LOG="$D4/spawn.log" JG_AUTO_DISPATCH_SPAWN="$D4/spawn" JG_AUTO_DISPATCH_RESERVE="$D4/reserve" \
+  JG_AUTO_DISPATCH_PROJECT_MODE="$ROOT/bin/jg-project-mode.sh" bash "$CHECK" check "$D4" 2>&1; }
+: > "$D4/no-copy"
+out=$(cb)
+assert_not_contains "$out" "a1" "no free copy: the lead is not told about a1"
+assert_absent "$D4/spawn.log" "no free copy: nothing is spawned"
+assert_contains "$(rows_of "$D4")" "a1	skipped	no free copy" "no free copy: the row says it waits for a copy"
+rm -f "$D4/no-copy"
+cb >/dev/null
+for n in $(seq 1 50); do [ -s "$D4/spawn.log" ] && break; sleep 0.1; done
+assert_contains "$(cat "$D4/spawn.log" 2>/dev/null)" "a1 $D4/projects/proj --ticket a1" "a copy frees: the next beat starts a1 with no lead turn"
+assert_contains "$(rows_of "$D4")" "a1	started" "a1's row says started"
+pass "a ticket starts only when a copy is free under the lane limit and the reserve; no copy is a quiet wait"
