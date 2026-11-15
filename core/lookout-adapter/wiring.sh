@@ -12,12 +12,13 @@ unset _jg_old _jg_new 2>/dev/null || true
 #   --dry-run    print every step and the unit; change nothing.
 # The legacy dashboard is removed, so installation cannot roll back to it.
 # Settings (environment): JG_HOME (default ~/juggernaut), PORT (default 4390),
-# BIND (default: this host's tailnet address), SPARE_PORT (default 4395).
+# BIND (default: this host's tailnet address), SPARE_PORT (default 4395), PROBE_WAIT (seconds the spare port gets to answer, default 90;
+# a loaded host starts the command slowly, so the probe retries until the deadline and says why it gave up).
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 mode=apply
 for arg in "$@"; do case $arg in --dry-run) mode=dry ;; *) echo "usage: wiring.sh [--dry-run]" >&2; exit 2 ;; esac; done
-JG_HOME=${JG_HOME:-$HOME/juggernaut} PORT=${PORT:-4390} SPARE_PORT=${SPARE_PORT:-4395}
+JG_HOME=${JG_HOME:-$HOME/juggernaut} PORT=${PORT:-4390} SPARE_PORT=${SPARE_PORT:-4395} PROBE_WAIT=${PROBE_WAIT:-90}
 OLD="jg-dashboard.service fm-dashboard.service fm-dashboard-lookout.service" NEW=jg-dashboard-lookout.service
 unit_dir=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
 BIND=${BIND:-$(tailscale ip -4 | head -1)}
@@ -46,8 +47,13 @@ probe=jg-dashboard-lookout-probe
 run systemd-run --user --collect --unit "$probe" --setenv=JG_HOME="$JG_HOME" "$here/fleet-serve" --bind "$BIND" --port "$SPARE_PORT"
 if [ "$mode" = apply ]; then
   trap 'systemctl --user stop "$probe" 2>/dev/null || true' EXIT
-  for _ in $(seq 100); do curl -fs "http://$BIND:$SPARE_PORT/api/fleet" -o /dev/null && break; sleep 0.3; done
-  curl -fs "http://$BIND:$SPARE_PORT/api/fleet" | python3 -c 'import json, sys; d = json.load(sys.stdin); assert d["fleet"]["lanes"], "no lanes"' || { echo "install: the spare port does not serve the fleet; nothing was changed" >&2; exit 1; }
+  deadline=$((SECONDS + PROBE_WAIT)) why=""
+  until curl -fs "http://$BIND:$SPARE_PORT/api/fleet" -o /dev/null; do
+    if ! systemctl --user is-active --quiet "$probe"; then why="the probe unit stopped before it answered (journalctl --user -u $probe)"; break; fi
+    if [ "$SECONDS" -ge "$deadline" ]; then why="no answer from $BIND:$SPARE_PORT within ${PROBE_WAIT}s (raise PROBE_WAIT on a loaded host)"; break; fi
+    sleep 0.3
+  done
+  curl -fs "http://$BIND:$SPARE_PORT/api/fleet" | python3 -c 'import json, sys; d = json.load(sys.stdin); assert d["fleet"]["lanes"], "no lanes"' || { echo "install: the spare port does not serve the fleet: ${why:-it answered without lanes}; nothing was changed" >&2; exit 1; }
   [ "$(curl -s -o /dev/null -w '%{http_code}' "http://$BIND:$SPARE_PORT/tickets")" = 301 ] || { echo "install: /tickets does not redirect to sign-off; nothing was changed" >&2; exit 1; }
   systemctl --user stop "$probe"; trap - EXIT
 else

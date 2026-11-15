@@ -1025,7 +1025,7 @@ journeys:
   core-lookout-front-and-install-dry-run-test:
     # was Core suites step 88: Lookout front and install dry-run test
     tier: local
-    command: bash journeys/core-run.sh 'bash lookout-adapter/tests/front.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    command: bash journeys/core-run.sh 'bash lookout-adapter/tests/front.test.sh && bash lookout-adapter/tests/wiring.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   core-machine-tables-sealed-proof:
     # was Core suites step 89: Machine tables sealed proof
     tier: local
