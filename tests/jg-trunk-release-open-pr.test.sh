@@ -340,6 +340,26 @@ pass 'release refuses the later commit when its landing proof row is missing'
 [ ! -e "$HOME_D/state/trunk-word-release-proj" ] || fail 'publication must spend the release word'
 [ "$(awk -F '\t' '$2 == "spent-release"' "$HOME_D/data/trunk-words.tsv" | wc -l)" = 1 ] || fail "publication must record the spent word once: $(cat "$HOME_D/data/trunk-words.tsv")"
 pass 'publication spends the release word and records one spent row'
+# A commit with no row of its own is adopted, and named, when a sealed clean run with a PASS receipt proves the release head's tree
+# (ticket release-proof-adopted-commit); a run of any other tree adopts nothing. The release below is the real caller.
+cover_dir="$HOME_D/data/first/.done-done/runs"; mkdir -p "$cover_dir"
+cover_commit=$(git -C "$PROJ" rev-parse fm/first)
+grep -q "receipt=PASS@${cover_commit:0:12}" "$proofs" || fail "fixture: the first lane's proof row must carry its PASS receipt"
+cover_run() {  # <tree> <exit>: a sealed run of the first lane's head
+  printf '{"schema":1,"run_id":"cover-run","commit":"%s","tree":"%s","exit":%s,"dirty":false,"files":[]}\n' "$cover_commit" "$1" "$2" > "$cover_dir/cover-run.json"
+}
+cover_run "$(git -C "$PROJ" rev-parse "$later~1^{tree}")" 0
+out=$(trunk release "$PROJ" 2>&1) && fail 'a sealed run of another tree must adopt nothing'
+assert_contains "$out" "no landing proof row for $later" 'a run of another tree must leave the commit stopped'
+cover_run "$(git -C "$PROJ" rev-parse "$later^{tree}")" 1
+out=$(trunk release "$PROJ" 2>&1) && fail 'a failed sealed run must adopt nothing'
+assert_contains "$out" "no landing proof row for $later" 'a failed run must leave the commit stopped'
+cover_run "$(git -C "$PROJ" rev-parse "$later^{tree}")" 0
+out=$(trunk release "$PROJ" 2>&1) || fail "a commit covered by a sealed clean run of the release head tree must be adopted: $out"
+assert_contains "$(cat "$DONE_DONE_HOME/evidence/"*/run.log)" "Adopted commit: $later (no landing proof row;" 'the run log must name the adopted commit'
+assert_contains "$(cat "$HOME_D/data/$id/checks.md")" "covered by a sealed clean run of the release head tree: $later" 'the Checks block must name the adopted commit'
+rm -f "$cover_dir/cover-run.json"
+pass 'release adopts a commit with no landing row when a sealed clean run proves the head tree, names it in the log and the Checks block, and still stops when no such run exists'
 rows=$(wc -l < "$HOME_D/data/trunk-releases.tsv")
 cp "$W/saved-proofs" "$proofs"
 # An old trunk with an uncarried hotfix must also refuse, and be retryable.

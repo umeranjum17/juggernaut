@@ -4,7 +4,8 @@
 #
 # The proof is bound to the candidate head it is run for: the landing proof rows, ancestry from the release base, the carry of every
 # older trunk's hotfix, and that no release head this trunk already pushed is missing from the candidate (so a replacement candidate
-# cannot omit or overwrite work). Its log holds the head, the base, the Green pin line and one row per commit. It never reads the current green pin, so a green older candidate stays eligible after the pin
+# cannot omit or overwrite work). A commit with no row of its own is adopted only when a sealed clean done-done run with a PASS receipt already
+# proves the release head's tree; the log and the Checks block name it. Its log holds the head, the base, the Green pin line and one row per commit. It never reads the current green pin, so a green older candidate stays eligible after the pin
 # advances, and no model judge or second seal is part of it; the forge's required CI is the other gate (bin/jg-pr-merge.sh).
 set -eu
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
@@ -16,6 +17,25 @@ CONFIG=${JG_CONFIG_OVERRIDE:-$HOME_DIR/config}
 # shellcheck disable=SC1091
 . "$HERE/jg-trunk-carry-lib.sh"
 fail() { printf 'release proof: %s\n' "$*" >&2; exit 1; }
+
+# A commit with no landing proof row of its own (a captain's hand commit) is adopted, never silently, when a sealed clean done-done run
+# already proves the release head's tree and carries a PASS completion receipt: the proof rows of the lanes name each receipt
+# (receipt=PASS@<head>), and that lane's folder holds its sealed runs. Prints "<task> <run id> <run commit>" for the first such run.
+# A tree no sealed run covers adopts nothing.
+release_cover() {  # <release head>
+  local tree task rcpt f c
+  tree=$(git rev-parse "$1^{tree}") || return 1
+  while IFS=$'\t' read -r task rcpt; do
+    [[ $task =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || continue
+    for f in "$DATA/$task/.done-done/runs/"*.json; do
+      [ -f "$f" ] || continue
+      c=$(jq -r --arg t "$tree" 'select(.exit == 0 and .dirty == false and .tree == $t) | .commit // empty' "$f" 2>/dev/null) || continue
+      [ -n "$c" ] && [ "${c:0:${#rcpt}}" = "$rcpt" ] || continue
+      printf '%s %s %s\n' "$task" "$(jq -r '.run_id // empty' "$f")" "$c"; return 0
+    done
+  done < <(awk -F '\t' -v p="$pn" '$2 == p { for (i = 5; i <= NF; i++) if ($i ~ /^receipt=PASS@./) { print $1 "\t" substr($i, 14); break } }' "$DATA/trunk-landing-proofs.tsv")
+  return 1
+}
 
 # This command runs inside done-done so its output and step record belong to that run.
 if [ "${1:-}" = capture ]; then
@@ -82,6 +102,14 @@ if [ "${1:-}" = capture ]; then
             continue
           fi
         fi
+        cover=$(release_cover "$head" || true)
+        if [ -n "$cover" ]; then
+          read -r cover_task cover_run cover_commit <<< "$cover"
+          printf 'Adopted commit: %s (no landing proof row; tree %s is proven by sealed clean run %s of %s at %s, receipt PASS)\n' \
+            "$sha" "$(git rev-parse "$head^{tree}")" "$cover_run" "$cover_task" "$cover_commit"
+          accepted+="$sha"$'\n'
+          continue
+        fi
         fail "no landing proof row for $sha"
       fi
       accepted+="$sha"$'\n'
@@ -144,6 +172,9 @@ root=${record%/.done-done/runs/*}
 cp -R "$root/$run" "$dir/" || fail 'cannot copy the sealed capture'
 cp "$record" "$dir/.done-done/runs/$run.json" || fail 'cannot copy the sealed record'
 outcome="Release head $head: every commit has a landing proof, earlier trunk history or a recorded home converge, it carries every release head already pushed, and no old trunk hotfix is uncarried; whole-suite CI is a later gate"
+# A commit adopted under a covering sealed run is named here, never left silent.
+adopted=$(sed -n 's/^Adopted commit: \([0-9a-f]*\) .*/\1/p' "$dir/$run/run.log" | paste -sd, -)
+[ -z "$adopted" ] || outcome="$outcome; adopted with no landing proof row of its own, covered by a sealed clean run of the release head tree: $adopted"
 (cd "$clone" && JG_HOME=$HOME_DIR "$HERE/jg-checks-write.sh" "$id" --head "$head" --outcome "$outcome" --screen none) || fail 'cannot write the Checks block'
 JG_HOME=$HOME_DIR "$HERE/../core/merge-on-green/checks-lint.sh" "$dir/checks.md" "$dir" || fail 'draft Checks lint failed'
 # Keep the existing PR body and append a fresh Checks block; the newest block is authoritative.
