@@ -648,6 +648,43 @@ test_a_local_lane_lands_with_no_tests_and_the_verify_reports_a_red() {
   pass 'a local lane lands with no tests at the landing, the verify reports its red, and landing-gate=tests is the rollback'
 }
 
+# A required script that failed and then only skipped on its rerun was never shown to pass (verify-skip-not-pass): the verify stays
+# incomplete, the green pin stays put, nothing is charged or reverted, and the report names the script. A script that really passes on
+# its rerun still goes green.
+# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
+test_a_script_that_skips_on_its_rerun_is_incomplete_never_green() {
+  local rc out before c
+  world skiprerun; rig
+  printf 'gate-full=! grep -q BAD work.txt\ngate-verify=bash %s/rig.sh --all\n' "$W" >> "$HOME_D/config/trunk-policy"
+  # Runs 1, 3, ... fail; runs 2, 4, ... (the rerun of each verify attempt) only skip, as the stuck run's capability-skipped scripts did.
+  lane s1 'n=$(cat '"$W"'/s-runs 2>/dev/null || echo 0); n=$((n + 1)); echo $n > '"$W"'/s-runs; [ $((n % 2)) -eq 0 ] || { echo "not ok - needs the tool" >&2; exit 1; }; echo "skip: the tool is not installed"; exit 0' t/s.test.sh
+  before=$(tip)
+  trunk land s1 >/dev/null 2>&1 || fail "s1 passes the fast check and lands"; c=$(tip)
+  printf '%s\n' "$before" > "$HOME_D/state/trunk-green-proj"
+  rc=0; out=$(trunk verify "$PROJ" "$c" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "a script that only skipped on its rerun must not make the verify green: $out"
+  assert_contains "$out" "is incomplete: these required scripts failed, then skipped on their rerun" "the report says the verify is incomplete"
+  assert_contains "$out" "t/s.test.sh" "the report names the skipped script"
+  assert_not_contains "$out" "trunk green at" "a skipped script is never a pass"
+  assert_not_contains "$out" "judged flaky" "a skipped script is not flaky"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$before" ] || fail "an incomplete verify leaves the green pin where it was"
+  [ "$(tip)" = "$c" ] || fail "an incomplete verify reverts nothing"
+  [ ! -e "$HOME_D/data/trunk/flaky-proj.tsv" ] || ! grep -q 't/s.test.sh' "$HOME_D/data/trunk/flaky-proj.tsv" || fail "a skipped script is never recorded as flaky"
+  ! grep -q 'went red after it landed' "$HOME_D/state/.wake-queue" 2>/dev/null || fail "an incomplete verify charges nobody"
+  # The control, in a world of its own: a script that really passes on its rerun is flaky, and the verify goes green and moves the pin.
+  world passrerun; rig
+  printf 'gate-full=! grep -q BAD work.txt\ngate-verify=bash %s/rig.sh --all\n' "$W" >> "$HOME_D/config/trunk-policy"
+  lane p1 'n=$(cat '"$W"'/p-runs 2>/dev/null || echo 0); n=$((n + 1)); echo $n > '"$W"'/p-runs; [ $((n % 2)) -eq 0 ] || { echo "not ok - flaky" >&2; exit 1; }; exit 0' t/p.test.sh
+  before=$(tip)
+  trunk land p1 >/dev/null 2>&1 || fail "p1 passes the fast check and lands"; c=$(tip)
+  printf '%s\n' "$before" > "$HOME_D/state/trunk-green-proj"
+  rc=0; out=$(trunk verify "$PROJ" "$c" 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] || fail "a script that passes on its rerun still goes green: $out"
+  assert_contains "$out" "judged flaky" "the real pass is set aside as flaky"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$c" ] || fail "a real pass moves the green pin"
+  pass 'a required script that failed and then only skipped on its rerun leaves the verify incomplete and names it, while a real pass on the rerun still goes green'
+}
+
 test_landing_deadline_spans_both_gates
 test_every_verify_attempt_keeps_its_own_log_and_phase_history
 test_a_changed_file_that_is_not_a_test_is_never_run_bare_on_the_tip
@@ -666,6 +703,7 @@ test_a_proof_gap_names_the_reason_merge_card_refused_not_a_missing_run
 test_the_check_starts_no_landing_until_the_whole_proof_is_there
 test_three_lanes_land_in_order_a_red_one_is_refused_and_no_whole_suite_runs_per_landing
 test_a_red_verify_finds_by_hand_is_reported_and_takes_the_green_pin_back
+test_a_script_that_skips_on_its_rerun_is_incomplete_never_green
 test_a_green_pin_left_behind_moves_to_the_next_landing_and_the_landing_check_does_not_grow
 test_a_lane_proved_at_the_change_the_lander_lands_is_not_tested_again
 test_a_routine_lane_lands_with_no_design_or_owner_gate_and_a_decision_or_credential_still_refuses

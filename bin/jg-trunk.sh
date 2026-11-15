@@ -56,7 +56,9 @@
 # and the ticket closes on the first gate log that carries `JG_TEST_COVERAGE ok`. The advice never refuses a landing.
 # The changed-files gate charges a lane only for what it broke. When it fails, the lander first reruns the failing scripts once on
 # the lane, and a script that passes on the rerun is flaky and not charged: each such script is recorded
-# (data/trunk/flaky-<project>.tsv) and filed once as its own [blocker] fix row, never a landing stop. A script that fails on the lane
+# (data/trunk/flaky-<project>.tsv) and filed once as its own [blocker] fix row, never a landing stop. A script that ends its rerun
+# with exit 0 only because it skipped (`gate_skip=true`) was never shown to pass: it is not flaky, the gate is incomplete (the pin
+# does not move, nothing is charged, no verdict is kept) and the report names the script. A script that fails on the lane
 # and passed the tip's first run is run twice more on the tip; one that fails in either run fails by itself there and is flaky too. It then reruns exactly the failing test
 # scripts on the trunk tip's own tree in a clean clone, in the environment the gate ended with (policy gate-rerun),
 # and compares each one's exit status and failing test names. A script that fails the same way on the tip is the tip's
@@ -495,6 +497,12 @@ gate_unexplained() {  # <log> <results>
   [ "$claimed" -gt 0 ] && [ "$claimed" = "$counted" ] || echo "the runner reported $counted failed scripts and $claimed finished red"
 }
 
+# The scripts a log shows finishing green only because they skipped (`exit=0 gate_skip=true`): a skip proves nothing about the script, so it
+# is never a pass. Prints one script a line.
+gate_skipped() {  # <log>
+  awk '/^JG_TEST_END / && / exit=0 / && / gate_skip=true( |$)/ { print $3 }' "$1"
+}
+
 # A rerun runs tests only. A path the gate failed that is not a test (a library, a command that needs a store, a data file) has no
 # result to compare: bash would parse it bare and exit non-zero on any tree, so it is never rerun, never read from a tip and never
 # reported as the tip's red. Such a path stays what its own gate run said it was, a failure of the lane that changed it.
@@ -658,8 +666,14 @@ gate_figures() {  # <first-run log> <start epoch>
 # reason no test script accounts for. The base is the trunk tip for a landing and the commit's parent for a verify.
 full_gate() {  # <candidate> <command> <base>
   local rc=0 verdict
-  GATE_FAILED=
+  GATE_FAILED=; GATE_SKIPPED=
   _full_gate "$@" || rc=$?
+  # A script that failed and then only skipped on its rerun was never shown to pass: the gate is incomplete, never green. Nothing is
+  # charged and no verdict is kept (a real red in the same run still wins, as 2).
+  if [ "$rc" -eq 0 ] && [ -n "$GATE_SKIPPED" ]; then
+    echo "REFUSED: gate 'full' at ${1:0:12} is incomplete: these required scripts failed, then skipped on their rerun, so no run showed them pass:$GATE_SKIPPED" >&2
+    rc=1
+  fi
   # One verdict per commit (H29g): the judge (the lander's tip run, the verify or the nightly) keeps what it saw on this tree, and a
   # second judge that saw another failed set raises judge-split. A run that ended for a reason no test accounts for (1) judged nothing.
   if [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ]; then
@@ -671,7 +685,7 @@ full_gate() {  # <candidate> <command> <base>
   return "$rc"
 }
 _full_gate() {  # <candidate> <command> <base>
-  local badsig='' cand=$1 log rerun_log envf rc=0 mine tipres line s ex sig tex tsig bad='' old='' unexplained quoted again settled now flaky='' t0 passing='' byself='' byparent='' rerun_red noparent=''
+  local badsig='' cand=$1 log rerun_log envf rc=0 mine tipres line s ex sig tex tsig bad='' old='' unexplained quoted again skipped settled now flaky='' t0 passing='' byself='' byparent='' rerun_red noparent=''
   t0=$(date +%s); GATE_KIND=full; GATE_FIGURES=; GATE_BAD=; GATE_BAD_SIG=
   gate_stem "$cand"; log=$(gate_log full)
   envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX" 2>/dev/null) || { mkdir -p "$DATA/trunk"; envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX"); }
@@ -693,12 +707,14 @@ _full_gate() {  # <candidate> <command> <base>
   rerun_scripts "$cand" "$envf" "$rerun_log" "$quoted"
   gate_deadline_ok || { rm -f -- "$envf"; return 1; }
   again=$(gate_results "$rerun_log")
+  skipped=$(gate_skipped "$rerun_log")
   settled=''
   while IFS= read -r line; do
     s=${line%%$'\t'*}
     now=$(printf '%s\n' "$again" | awk -F'\t' -v s="$s" '$1 == s { print; exit }')
     if [ -z "$now" ]; then settled="$settled$line"$'\n'
     elif [ "$(printf '%s' "$now" | cut -f2)" != 0 ]; then settled="$settled$now"$'\n'
+    elif printf '%s\n' "$skipped" | grep -qxF -- "$s"; then GATE_SKIPPED="$GATE_SKIPPED $s"
     else flaky="$flaky $s"; fi
   done <<< "$mine"
   mine=$(printf '%s' "$settled")

@@ -164,10 +164,12 @@ for s in "$@"; do
   echo "JG_TEST_BEGIN 2026-01-01T00:00:00Z $s family=x expected_gate_skip=none"
   # Like the real runner: a path that is no test script is a coverage note, never a result: nothing runs and nothing is counted.
   case $s in
-    *.test.sh) bash "$s" 2>&1; rc=$? ;;
+    *.test.sh) out=$(bash "$s" 2>&1); rc=$?; [ -z "$out" ] || printf '%s\n' "$out" ;;
     *) echo "JG_TEST_COVERAGE_NOTE $s: no changed-test mapping for this path, so no test was selected for it"; continue ;;
   esac
-  echo "JG_TEST_END 2026-01-01T00:00:00Z $s exit=$rc duration_ms=1 gate_skip=false type=test"
+  # Like the real runner: a green script whose first meaningful line starts with `skip:` is a gate skip.
+  gs=false; [ "$rc" -ne 0 ] || [ "$(printf '%s\n' "$out" | grep -m1 -v '^[[:space:]]*$' | cut -c1-5)" != 'skip:' ] || gs=true
+  echo "JG_TEST_END 2026-01-01T00:00:00Z $s exit=$rc duration_ms=1 gate_skip=$gs type=test"
   total=$((total + 1)); [ "$rc" -eq 0 ] || failed=$((failed + 1))
 done
 echo "JG_TEST_SUMMARY total=$total failed=$failed skipped_gate=0 duration_ms=1"
