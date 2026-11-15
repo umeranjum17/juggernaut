@@ -21,7 +21,8 @@
 JG_TRUNK_FIXTURE_CACHE=1
 
 # The stand-in gate logs its start and end. While $W/hold exists the first gate to start stays open until $W/release exists, so the
-# case controls when the first gate ends and the overlap does not depend on how loaded the host is.
+# case controls when the first gate ends and the overlap does not depend on how loaded the host is. While $W/hold-all exists every gate stays
+# open until $W/release exists, for a case that needs a second queue's gate still running when a later lane is swept.
 # shellcheck disable=SC2016 # the gate body is written out verbatim and expands when the gate runs it
 slow_world() {  # <name> [<extra policy line>]
   world "$1"
@@ -29,7 +30,7 @@ slow_world() {  # <name> [<extra policy line>]
   cat > "$W/slow-gate.sh" <<SH
 #!/usr/bin/env bash
 printf 'start %s\n' "\$(date +%s.%N)" >> "$W/gate-runs"
-if [ -f "$W/hold" ] && [ "\$(grep -c '^start' "$W/gate-runs")" = 1 ]; then
+if [ -f "$W/hold-all" ] || { [ -f "$W/hold" ] && [ "\$(grep -c '^start' "$W/gate-runs")" = 1 ]; }; then
   for _ in \$(seq 1 300); do [ -f "$W/release" ] && break; sleep 0.1; done
 else sleep 1; fi
 rc=0; ! grep -rq BAD --include='*.txt' . || rc=1
@@ -190,7 +191,7 @@ test_lanes_that_select_one_script_share_a_queue() {
 
 test_a_lane_that_meets_two_queues_waits_for_one_of_them() {
   local base
-  selector_world both 'gate-slots=3'; base=$(tip); : > "$W/hold"
+  selector_world both 'gate-slots=3'; base=$(tip); : > "$W/hold-all"
   lane m1 'm1' qa/x.txt; kick; wait_for 'the first lane gates' has_starts 1; wait_for 'the first lane is the front' front_published
   lane m2 'm2' qb/y.txt; kick; wait_for 'the second queue gates' two_queues
   # m3 changes a file in each queue's directory: its selection meets both queues.
