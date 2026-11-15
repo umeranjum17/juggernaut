@@ -4145,10 +4145,14 @@ elif [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] && [ "$BACKEND" != orca 
   # Copies follow the lane limit and two stay free for a red fix (core/pool-reserve).
   reserve_args=(); [ -z "$RED_FIX_OF" ] || reserve_args=(--red-fix)
   reserve_rc=0
-  "$SCRIPT_DIR/../core/pool-reserve/reserve.sh" admit "$JG_HOME" "$PROJ_ABS" ${reserve_args[@]+"${reserve_args[@]}"} || reserve_rc=$?
+  reserve_err=$("$SCRIPT_DIR/../core/pool-reserve/reserve.sh" admit "$JG_HOME" "$PROJ_ABS" ${reserve_args[@]+"${reserve_args[@]}"} 2>&1 >/dev/null) || reserve_rc=$?
+  [ -z "$reserve_err" ] || printf '%s\n' "$reserve_err" >&2
   if [ "$reserve_rc" -eq 75 ]; then
     [ "$HERDR_PROJECTION_ABORT_CLEANUP" = 1 ] || rovo_endpoint_cleanup
-    echo "deferred: task $ID stays queued until a copy frees" >&2
+    case "$reserve_err" in
+      *"cannot be counted"*) echo "deferred: task $ID stays queued: the copy count is unknown, the start retries" >&2 ;;
+      *) echo "deferred: task $ID stays queued until a copy frees" >&2 ;;
+    esac
     exit 75
   fi
   [ "$reserve_rc" -eq 0 ] || { echo "error: the copy reserve check failed (exit $reserve_rc) for task $ID" >&2; exit 1; }

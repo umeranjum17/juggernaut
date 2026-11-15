@@ -5,6 +5,8 @@
 # An ordinary lane may lease a copy only while the leased copies are fewer than the lane limit, so the last two copies of the
 # cap stay free. A red-fix lane (jg-spawn.sh --red-fix-of) may use them, up to the cap. A home with no lane limit
 # (core/lane-scale/scale.sh target prints "-") is left to the pool's own max_trees. This script leases, ends and removes nothing.
+# A status that cannot be read leaves the count unknown: that is a third answer, not zero. admit then exits 75 with a "deferred:"
+# line that says the copies cannot be counted, and the start retries on its own (the same approval, the next beat).
 # JG_POOL_RESERVE_STATUS names the command that prints `treehouse status` for a project (a test points it at a stand-in);
 # JG_POOL_RESERVE_KEEP overrides the number of reserved copies (default 2).
 set -u
@@ -31,8 +33,15 @@ case "$CMD" in
     l=$(lane_limit)
     case "$l" in ''|*[!0-9]*) exit 0 ;; esac
     cap=$((l + RESERVE))
-    if [ -n "${JG_POOL_RESERVE_STATUS:-}" ]; then out=$("$JG_POOL_RESERVE_STATUS" "$PROJECT" 2>/dev/null)
-    else out=$(cd "$PROJECT" && treehouse status 2>/dev/null); fi || out=
+    # An unread count is its own state, never zero: a status that fails leaves the copies unknown, and the start waits and retries.
+    status_err=$(mktemp "${TMPDIR:-/tmp}/jg-pool-reserve.XXXXXX") || exit 1
+    if [ -n "${JG_POOL_RESERVE_STATUS:-}" ]; then out=$("$JG_POOL_RESERVE_STATUS" "$PROJECT" 2>"$status_err")
+    else out=$(cd "$PROJECT" && treehouse status 2>"$status_err"); fi && read_ok=1 || read_ok=0
+    cause=$(grep -v '^[[:space:]]*$' "$status_err" | tail -n 1 | tr '\t\r' '  ' | cut -c1-160); rm -f -- "$status_err"
+    if [ "$read_ok" -eq 0 ]; then
+      echo "deferred: the copies of $(basename "$PROJECT") cannot be counted (treehouse status failed${cause:+: $cause}); the start retries" >&2
+      exit 75
+    fi
     leased=$(printf '%s\n' "$out" | grep -Ec '^[0-9]+[[:space:]]+leased([[:space:]]|$)')
     [ "$RED" -eq 1 ] && room=$cap || room=$l
     if [ "$leased" -ge "$room" ]; then

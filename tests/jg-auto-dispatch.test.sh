@@ -339,7 +339,15 @@ out=$(cb)
 assert_not_contains "$out" "a1" "no free copy: the lead is not told about a1"
 assert_absent "$D4/spawn.log" "no free copy: nothing is spawned"
 assert_contains "$(rows_of "$D4")" "a1	skipped	no free copy" "no free copy: the row says it waits for a copy"
-rm -f "$D4/no-copy"
+printf '#!/usr/bin/env bash\n[ ! -e "%s/unread" ] || { echo "deferred: the copies of proj cannot be counted (treehouse status failed); the start retries" >&2; exit 75; }\n[ ! -e "%s/no-copy" ] || { echo "deferred: no copy" >&2; exit 75; }\n' "$D4" "$D4" > "$D4/reserve"
+: > "$D4/unread"; rm -f "$D4/no-copy"
+out=$(cb)
+assert_not_contains "$out" "a1" "unknown copy count: the lead is not told about a1"
+assert_absent "$D4/spawn.log" "unknown copy count: nothing is spawned"
+assert_contains "$(rows_of "$D4")" "a1	skipped	copy count unknown" "unknown copy count: the row says the count is unknown, not that no copy is free"
+cb >/dev/null
+assert_equals "$(grep -c 'a1	skipped	copy count unknown' "$D4/data/auto-dispatch/rows.tsv")" 1 "unknown copy count: the row is written once while the count stays unknown"
+rm -f "$D4/unread"
 cb >/dev/null
 for n in $(seq 1 50); do [ -s "$D4/spawn.log" ] && break; sleep 0.1; done
 assert_contains "$(cat "$D4/spawn.log" 2>/dev/null)" "a1 $D4/projects/proj --ticket a1" "a copy frees: the next beat starts a1 with no lead turn"

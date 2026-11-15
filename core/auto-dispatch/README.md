@@ -66,6 +66,7 @@ For each "would start" ticket it runs `bin/jg-spawn.sh <task> projects/<project>
 
 The spawn keeps its own refusals (owner asks, plan tickets with no recorded yes, quota, pool).
 Before each start it asks `core/pool-reserve/reserve.sh admit` for a copy of the ticket's project (the lane limit and the two copies kept for a red fix). With no copy free the row says `no free copy`, nothing is spawned, the lead hears nothing, and a later beat starts it.
+With the pool unreadable the row says `copy count unknown` instead (one row until the verdict changes), nothing is spawned, the lead hears nothing, and the next beat that can read the pool starts it.
 
 ## The spawn's result is the row
 

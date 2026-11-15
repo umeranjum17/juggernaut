@@ -6,6 +6,7 @@
 # T3 four copies leased (the cap): the red-fix lane defers too.
 # T4 one copy leased: an ordinary lane reaches the lease.
 # T5 no lane limit: the check steps aside and the pool's own limit governs.
+# T6 the pool cannot be read (status fails): the start defers with exit 75 and says the count is unknown, asks for no copy, and the next try with a readable pool reaches the lease.
 set -u
 # shellcheck source=tests/fixtures.sh
 . "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
@@ -21,7 +22,7 @@ cat > "$F/treehouse" <<'SH'
 #!/usr/bin/env bash
 case ${1:-} in
   get) echo "get" >> "$GET_LOG"; echo 'Error: stand-in lease refused' >&2; exit 1 ;;
-  status) i=0; while [ "$i" -lt "${LEASED:-0}" ]; do i=$((i + 1)); printf '%s    leased       /fixture/%s  (held by lane-%s)\n' "$i" "$i" "$i"; done ;;
+  status) [ "${LEASED:-0}" != unreadable ] || { echo 'Error: stand-in pool read failed' >&2; exit 1; }; i=0; while [ "$i" -lt "${LEASED:-0}" ]; do i=$((i + 1)); printf '%s    leased       /fixture/%s  (held by lane-%s)\n' "$i" "$i" "$i"; done ;;
   *) exit 1 ;;
 esac
 SH
@@ -60,6 +61,18 @@ spawn 1
 expect_code 1 "$rc" "T4 an ordinary lane under the limit should reach the lease: $out"
 assert_contains "$out" "stand-in lease refused" "T4 the lane did not reach the lease"
 pass "an ordinary lane under the lane limit reaches the lease"
+: > "$GET_LOG"
+spawn unreadable
+expect_code 75 "$rc" "T6 an unreadable pool should defer, not pass or fail: $out"
+assert_contains "$out" "cannot be counted" "T6 the deferral does not say the count is unknown"
+assert_contains "$out" "stand-in pool read failed" "T6 the deferral does not carry the real cause"
+assert_contains "$out" "the copy count is unknown, the start retries" "T6 the spawn's last line does not name the retry"
+[ ! -e "$H/state/$id.meta" ] || fail "T6 the deferred lane wrote a task record"
+[ ! -s "$GET_LOG" ] || fail "T6 an unknown count still asked for a copy"
+out=$(LEASED=1 jg_test_run_spawn "$H" "$P" "$F" "$id" "$P" codex --mode direct-PR --yolo off); rc=$?
+expect_code 1 "$rc" "T6 the retry with a readable pool should reach the lease: $out"
+assert_contains "$out" "stand-in lease refused" "T6 the retry did not reach the lease"
+pass "an unreadable pool defers as unknown, and a later try with a readable pool reaches the lease"
 rm -f "$H/state/lane-limit" "$H/config/lane-scale"
 spawn 9
 expect_code 1 "$rc" "T5 with no lane limit the check should step aside: $out"

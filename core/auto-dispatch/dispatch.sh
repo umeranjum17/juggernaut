@@ -289,8 +289,12 @@ while IFS= read -r id; do
     route$'\t'*)
       if [ "$started" -ge "$free" ]; then detail="no free lane left for it"; waits=1
       elif [ "$ACT" -eq 0 ]; then started=$((started + 1)); kind="would start"; detail=${v#route$'\t'}
-      elif [ -x "$RESERVE" ] && ! "$RESERVE" admit "$FMH" "$FMH/projects/$(awk -F'\t' -v id="$id" '$1 == id { print $2 }' "$tmp/out")" >/dev/null 2>&1; then
-        detail="no free copy (the copies left are kept for a red fix)"; waits=1
+      elif [ -x "$RESERVE" ] && ! admit_err=$("$RESERVE" admit "$FMH" "$FMH/projects/$(awk -F'\t' -v id="$id" '$1 == id { print $2 }' "$tmp/out")" 2>&1 >/dev/null); then
+        case "$admit_err" in
+          *"cannot be counted"*) detail="copy count unknown (the pool could not be read; the next beat retries)" ;;
+          *) detail="no free copy (the copies left are kept for a red fix)" ;;
+        esac
+        waits=1
       elif detail=$(launch "$id" "$(awk -F'\t' -v id="$id" '$1 == id { print $2 }' "$tmp/out")" "${v#route$'\t'}"); then
         started=$((started + 1)); kind=starting; detail=${v#route$'\t'}
       else idle=1; fi ;;
