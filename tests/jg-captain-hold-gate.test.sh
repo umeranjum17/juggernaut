@@ -221,4 +221,36 @@ hold answer jg-m1 --decision-file "$T/m1" >/dev/null || fail "answer a moved hol
 [ "$(questions_json --all --ticket jg-m1 | jq -r '.[0].words')" = "Take route B." ] || fail "a moved hold answers by its gate"
 pass "to-gates moves old owner holds to gates, keeps dates and origins, leaves stop orders, and a second run changes nothing"
 
+# The answers intake closes gates: a gate id is the key; a ticket id with one open gate closes that gate; with two
+# open gates it is refused naming both; an answer with no words and the value `reconcile` are refused.
+for id in jg-k1 jg-k2 jg-k3 jg-k4; do
+  tasks add "$id" "[feature] Work $id" --repo sample --body "why $id" >/dev/null || fail "add $id"
+done
+hold hold jg-k1 --reason "Take route A or B? The owner decides." >/dev/null || fail "hold k1"
+hold hold jg-k2 --reason "Ship the small slice first? The owner decides." >/dev/null || fail "hold k2"
+hold hold jg-k3 --reason "Which colour? The owner decides." >/dev/null || fail "hold k3"
+hold hold jg-k3 --reason "Which width? The owner decides." >/dev/null || fail "second hold k3"
+hold hold jg-k4 --reason "Reconcile this one? The owner decides." >/dev/null || fail "hold k4"
+k1=$(questions_json --ticket jg-k1 | jq -r '.[0].id')
+k3=$(questions_json --ticket jg-k3 | jq -r '.[].id' | paste -sd' ')
+[ "$(wc -w <<<"$k3")" = 2 ] || fail "k3 must have two open gates: $k3"
+out=$(printf '%s\tTake route A.\tRoute A\n' "$k1" | hold answers --source board-test 2>&1) || fail "a gate id key must close its gate: $out"
+assert_contains "$out" "closed: $k1" "the keyed answer must report the gate closed"
+q=$(questions_json --all --ticket jg-k1)
+[ "$(jq -r '.[0].state' <<<"$q")" = closed ] || fail "the keyed gate must be closed: $q"
+assert_contains "$(jq -r '.[0].words' <<<"$q")" "Answer: Take route A." "the gate must carry his words"
+[ "$(jq -r ".[0].resolution" <<<"$q")" = released ] || fail "the gate must close the way its own close mode says (a ticket that is work is released): $q"
+hold answered jg-k1 >/dev/null || fail "a keyed answer must read as answered"
+out=$(printf 'jg-k2\tYes, small first.\tYes\n' | hold answers --source board-test 2>&1) || fail "a ticket id with one open gate must close it: $out"
+[ "$(questions_json --all --ticket jg-k2 | jq -r '.[0].state')" = closed ] || fail "the ticket's one gate must close"
+out=$(printf 'jg-k3\tBlue.\tBlue\n' | hold answers --source board-test 2>&1) && fail "a ticket with two open gates must be refused: $out"
+for g in $k3; do assert_contains "$out" "$g" "the refusal must name both gates: $out"; done
+[ "$(questions_json --ticket jg-k3 | jq length)" = 2 ] || fail "a refused answer must close neither gate"
+out=$(printf '%s\t\tNothing\n' "$(awk '{print $1}' <<<"$k3")" | hold answers --source board-test 2>&1) && fail "an answer with no words must be refused: $out"
+assert_contains "$out" "refused" "the empty answer must be refused"
+out=$(printf '%s\treconcile\tReconcile\n' "$(awk '{print $1}' <<<"$k3")" | hold answers --source board-test 2>&1) && fail "reconcile must stay refused on a gate id: $out"
+assert_contains "$out" "refused" "reconcile must be refused"
+[ "$(questions_json --ticket jg-k3 | jq length)" = 2 ] || fail "refused answers must close no gate"
+pass "the answers intake closes a gate by its id or its ticket's one gate, refuses two, empty words and reconcile"
+
 pass "jg-captain-hold-gate"

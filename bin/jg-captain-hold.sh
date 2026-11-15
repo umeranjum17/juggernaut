@@ -109,10 +109,12 @@
 # ONE KEYED-ANSWER INTAKE, FED BY EVERY CHANNEL.
 # "A keyed answer resolves its matching captain-held task" is a single
 # capability, owned here and nowhere else. `answers` reads
-# `<task-id>\t<answer>\t<label>[\t<mode>]` lines on stdin and resolves each named
-# task through the very same `answer` path above, so every guard applies
-# identically no matter which channel the answer arrived on. The key IS the
-# task id - no identity arithmetic. The optional fourth field selects the close:
+# `<key>\t<answer>\t<label>[\t<mode>]` lines on stdin and resolves each named
+# question through the very same `answer` path above, so every guard applies
+# identically no matter which channel the answer arrived on. The key is a
+# question's gate id; a key that is a ticket id (a card posted before gates) resolves that ticket's one open
+# question, and is refused naming both when the ticket has two. An answer with no words is refused. The close
+# comes from the question's `close` unless the line names a mode. The optional fourth field selects the close:
 # empty or `done` completes the task, `release` lifts the hold so held work
 # resumes; anything else is skipped. A key that names no task, a task that is
 # not held for the captain, or a task already closed is reported as `skipped:`
@@ -1510,6 +1512,32 @@ sanitize_reconcile_provenance() {
   printf '%s' "$1" | tr '\n\r\t' '   ' | LC_ALL=C tr -d '\000-\037\177' | cut -c1-1024
 }
 
+gate_row_of() {  # <key>: the question record whose id is the key, or nothing when the key is no question
+  backlog_cmd questions --all --json 2>/dev/null | jq -c --arg k "$1" '.[] | select(.id == $k)' 2>/dev/null
+}
+
+# A keyed answer whose key is a question's own id: the question's ticket takes the answer, closed the way the question
+# says (`close` on the gate, unless the line names a mode), and the same `answer` path writes his words on the gate.
+answer_gate_key() {  # <key> <source> <answer> <label> <mode> <decision-tmp> <err-tmp>; prints closed:/skipped:
+  local key=$1 row ticket close reason release_flag=''
+  row=$(gate_row_of "$key")
+  ticket=$(jq -r '.ticket' <<<"$row")
+  close=${5:-$(jq -r '.close' <<<"$row")}
+  case "$close" in release) release_flag=--release ;; ''|-|done) : ;; *)
+    printf 'skipped: %s (unknown close mode %s)\n' "$key" "$(sanitize_field "$close")"; return 1 ;;
+  esac
+  keyed_decision_text "$2" "$ticket" "$3" "$4" > "$6" || fail "cannot stage the captain decision for $key"
+  # shellcheck disable=SC2086  # release_flag is empty or a single literal flag.
+  if "$0" answer "$ticket" --gate "$key" --decision-file "$6" $release_flag ${release_flag:+--card "$key"} </dev/null >/dev/null 2>"$7"; then
+    [ ! -s "$7" ] || cat "$7" >&2
+    printf 'closed: %s\n' "$key"
+    return 0
+  fi
+  reason=$(tr -d '\n' < "$7" | sed 's/^jg-captain-hold: //')
+  printf 'skipped: %s (%s)\n' "$key" "$reason"
+  return 1
+}
+
 command_answers() {
   local origin='' source='' row rest key answer label mode id show state hold_kind body digest legacy_digest legacy_key
   local recorded_digest recorded_mode occurrence tmp err closed=0 skipped=0 permanent=0 reason release_flag tab=$'\t'
@@ -1547,7 +1575,11 @@ command_answers() {
     case "$key" in *[!A-Za-z0-9._-]*) continue ;; esac
     [ "${#key}" -le 128 ] || continue
     answer=$(sanitize_field "${answer:-}")
-    [ -n "$answer" ] || continue
+    if [ -z "$answer" ]; then
+      printf 'refused: %s (an answer needs his words)\n' "$key" >&2
+      skipped=$((skipped + 1)); permanent=$((permanent + 1))
+      continue
+    fi
     label=$(sanitize_field "${label:-}")
     if [ "$answer" = "$RECONCILE_VALUE" ]; then
       printf 'refused: %s (reconcile requests require a bound captured source)\n' "$key" >&2
@@ -1574,9 +1606,16 @@ command_answers() {
       # must not be spent as a skip.
       [ "$resolve_rc" -ne 124 ] \
         || fail "the backlog backend exceeded its read bound resolving $key"
+      if [ -n "$(gate_row_of "$key")" ]; then
+        answer_gate_key "$key" "$source" "$answer" "$label" "$mode" "$tmp" "$err" && closed=$((closed + 1)) || skipped=$((skipped + 1))
+        continue
+      fi
       printf 'skipped: %s (no captain-held task with that id)\n' "$key"
       skipped=$((skipped + 1))
       continue
+    fi
+    if [ -z "${mode:-}" ] && [ "$(gate_rows "$id" 2>/dev/null | jq -rs 'if length == 1 then .[0].close else "" end')" = release ]; then
+      release_flag=--release  # the one open question says it releases
     fi
     keyed_decision_text "$source" "$id" "$answer" "$label" > "$tmp" \
       || fail "cannot stage the captain decision for $id"
