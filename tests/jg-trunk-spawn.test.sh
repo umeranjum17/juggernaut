@@ -94,9 +94,11 @@ printf '{"head":"%s","verdict":"pass","check":{"claim":"a user can land","eviden
 printf '{"schema":1,"run_id":"20261109T000000Z-%s-ab","commit":"%s","exit":0,"dirty":false,"started_at":"2026-11-09T00:00:00Z","files":["run.log"]}\n' "${head:0:8}" "$head" > "$d/.done-done/runs/run-$head.json"
 printf 'done [at=%s]: ready in branch %s (local-trunk)\n' "$(date +%s)" "$branch" >> "$HOME_DIR/state/$id.status"
 JG_HOME="$HOME_DIR" PATH="$FAKEBIN:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_DIR" >/dev/null
-for _ in $(seq 1 150); do
-  [ ! -s "$HOME_DIR/data/jg-trunk-landing/outbox" ] || break
-  grep -qE '^(final|wait) ' "$HOME_DIR/data/jg-trunk-landing/$id.$head.state" && break
+# The landing runs in the background and a loaded gate stretches it past any short wait (a 127s run of this test hit a 30s one and
+# read an empty outbox), so wait on its own end, bounded by the 5-minute landing deadline, and name a landing that never ends.
+landing_end=$(( $(date +%s) + 330 ))
+until [ -s "$HOME_DIR/data/jg-trunk-landing/outbox" ] || grep -qE '^(final|wait) ' "$HOME_DIR/data/jg-trunk-landing/$id.$head.state" 2>/dev/null; do
+  [ "$(date +%s)" -lt "$landing_end" ] || fail "T2 the background landing neither reported nor settled within its 5-minute deadline: $(cat "$HOME_DIR/data/jg-trunk-landing/$id.$head.state" 2>/dev/null)"
   sleep 0.2
 done
 out=$(JG_HOME="$HOME_DIR" PATH="$FAKEBIN:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_DIR")
