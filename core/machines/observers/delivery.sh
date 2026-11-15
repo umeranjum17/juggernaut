@@ -29,6 +29,11 @@
 #   pinned-behind  a home was pinned back (`live,pinned-back-from:*`) to a commit that lacks the change
 #   landed         anything else: on the trunk, and some home does not run it yet
 # The switch and the proof are read in the home that asks, because config/ is per home.
+# A change with rows in the switch manifest (core/machines/switches.tsv, override JG_SWITCH_MANIFEST) is read there instead
+# of from its switch column: bin/jg-switch.sh reads each of its rows in every home of the fleet (the registered local leads
+# and Main), and a row that is off in any home gives in-homes-off, with `detail` naming the home and the row. All rows on
+# in every home is in-use. A change with no manifest row keeps the switch column. `check` also refuses a manifest id with no
+# row in changes.tsv.
 # A home with no row of the project (Main, for a project a Squad Lead runs) reads the go-live record of the lead whose
 # entry in data/squad_leads.md lists the project: that home's data/trunk-in-use.tsv, state/trunk-tip-<project> and
 # projects/<project>. Nothing is copied or written; a lead home that is missing leaves the word as read here and prints one stderr line.
@@ -39,11 +44,29 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P); root=$(cd "$here/../../..
 JG_HOME=${JG_HOME:-${JG_ROOT_OVERRIDE:-$root}}
 STATE=${JG_STATE_OVERRIDE:-$JG_HOME/state}; DATA=${JG_DATA_OVERRIDE:-$JG_HOME/data}; CONFIG=${JG_CONFIG_OVERRIDE:-$JG_HOME/config}
 CHANGES=${JG_DELIVERY_CHANGES:-$here/../changes.tsv}
+MANIFEST=${JG_SWITCH_MANIFEST:-$here/../switches.tsv}
 
 registry() { grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$CHANGES" 2>/dev/null; }
 load() {  # <id>: sets ID PROJECT COMMIT SWITCH PROOF from the registry, or returns 1
   local line; line=$(registry | awk -F'\t' -v i="$1" '$1 == i { print; exit }'); [ -n "$line" ] || return 1
   IFS=$'\t' read -r ID PROJECT COMMIT SWITCH PROOF _ <<< "$line"
+}
+manifest_rows() { grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$MANIFEST" 2>/dev/null; }
+# The homes of the fleet, one directory per line: every registered local lead, then Main (bin/jg-fleet-homes-lib.sh).
+fleet_dirs() {
+  ( b=$root/bin
+    # shellcheck source=bin/jg-compat.sh
+    . "$b/jg-compat.sh"; . "$b/jg-squad-lead-parent-lib.sh"; . "$b/jg-squad-lead-registry-lib.sh"; . "$b/jg-fleet-homes-lib.sh"
+    jg_fleet_homes "$JG_HOME" "$JG_HOME" | cut -f3 ) 2>/dev/null
+}
+# One line per off manifest row of $ID in the fleet's homes: `<home> <kind> <name> <reason>`; nothing when all are on.
+manifest_off() {
+  local h out
+  manifest_rows | awk -F'\t' -v i="$ID" '$1 == i { f = 1 } END { exit !f }' || return 0
+  while IFS= read -r h; do
+    out=$(JG_SWITCH_MANIFEST=$MANIFEST bash "$root/bin/jg-switch.sh" status --home "$h" "$ID" 2>/dev/null) || continue
+    printf '%s\n' "$out" | awk -v h="$(basename "$h")" '$1 == "off" && $2 == i { print h, $3, $4, $5 }' i="$ID"
+  done < <(fleet_dirs)
 }
 holds() { git -C "$REPO" merge-base --is-ancestor "$1" "$2" 2>/dev/null; }
 
@@ -97,7 +120,7 @@ exercised() {
 # Sets WORD (the state) and EVIDENCE (what the proof showed, when in-use).
 classify() {  # <id>
   local c behind=0 pinned=0 homes=0 sha st full
-  WORD=''; HEADS=''; EVIDENCE=''; C=''
+  WORD=''; HEADS=''; EVIDENCE=''; C=''; OFF=''
   load "$1" || return 1
   REPO=$JG_HOME/projects/$PROJECT; git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1 || REPO=$JG_HOME
   TIP=$(cat "$STATE/trunk-tip-$PROJECT" 2>/dev/null); TIP=${TIP:-HEAD}
@@ -117,6 +140,11 @@ classify() {  # <id>
     END { for (k in last) print k "\t" (sha[k] == "" ? "-" : sha[k]) "\t" last[k] }' "$ROWS" 2>/dev/null)
   if [ "$homes" -eq 0 ] || [ "$behind" -gt 0 ]; then
     if [ "$pinned" = 1 ]; then WORD="pinned-behind"; else WORD=landed; fi; return 0
+  fi
+  if manifest_rows | awk -F'\t' -v i="$ID" '$1 == i { f = 1 } END { exit !f }'; then
+    OFF=$(manifest_off)
+    if [ -n "$OFF" ]; then WORD=in-homes-off; return 0; fi
+    EVIDENCE=$(proof_held); : "${EVIDENCE:=every manifest row is on in every home}"; WORD=in-use; return 0
   fi
   if [ "$SWITCH" != - ] && [ ! -e "$CONFIG/$SWITCH" ]; then WORD=in-homes-off; return 0; fi
   EVIDENCE=$(proof_held)
@@ -142,6 +170,9 @@ lint() {
       *) echo "$f: proof must be -, switch, exercise or log:<config|data|state>/<file>:<regex>"; bad=1 ;;
     esac
   done < <(registry)
+  while IFS=$'\t' read -r id _; do
+    registry | awk -F'\t' -v i="$id" '$1 == i { f = 1 } END { exit !f }' || { echo "switches manifest: id $id has no row in changes.tsv"; bad=1; }
+  done < <(manifest_rows | cut -f1 | sort -u)
   return "$bad"
 }
 
@@ -162,7 +193,8 @@ case ${1:-} in
   detail)
     [ -n "${2:-}" ] || { echo "usage: delivery.sh detail <id>" >&2; exit 2; }
     classify "$2" || exit 1
-    printf 'state\t%s\ncommit\t%s\nswitch\t%s\nproof\t%s\n' "$WORD" "${C:-none}" "$([ "$SWITCH" = - ] && echo none || echo "config/$SWITCH")" "${EVIDENCE:-none}" ;;
+    printf 'state\t%s\ncommit\t%s\nswitch\t%s\nproof\t%s\n' "$WORD" "${C:-none}" "$([ "$SWITCH" = - ] && echo none || echo "config/$SWITCH")" "${EVIDENCE:-none}"
+    [ -z "$OFF" ] || printf '%s\n' "$OFF" | sed 's/^/off\t/' ;;
   ""|-*) echo "usage: delivery.sh <id> | detail <id> | ids | mentions | check" >&2; exit 2 ;;
   *) classify "$1" && printf '%s\n' "$WORD" ;;
 esac

@@ -139,6 +139,7 @@ Every change that ships behind a switch gets a row in `core/machines/changes.tsv
 A report may say `live` or `done` only for `in-use`, and `bin/jg-live-claim.sh` enforces that for every registered change a claim names, by id or by switch name.
 `in-homes-off` is reported as `in the homes, off`, with the switch file named.
 The switch is read in the home that asks, so the same change can be `in-use` in one home and `in-homes-off` in another.
+A change with rows in `core/machines/switches.tsv` is read from that manifest in every home of the fleet instead: one row off in any home is `in-homes-off`, and `detail` names the home and the row. `delivery.sh check` refuses a manifest id with no `changes.tsv` row.
 
 ## Sealed proof
 

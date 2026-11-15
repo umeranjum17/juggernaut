@@ -156,6 +156,31 @@ assert_contains "$(cat "$T/main.err")" "no data/trunk-in-use.tsv" "one stderr li
 rm -f "$M/data/squad_leads.md"; assert_equals unlanded "$(main_word)" "remove the registry line: as before again"
 pass "Main reads the lead's go-live record"
 
+# the switch manifest: two homes, one row off in the second is in-homes-off and names it; all on is in-use
+MA=$T/ma; MB=$T/mb; MR=$MA/projects/juggernaut; mkdir -p "$MR" "$MA/state" "$MA/data" "$MA/config" "$MB/data" "$MB/config" "$MB/state"
+mg() { git -C "$MR" -c user.name=t -c user.email=t@example.test -c commit.gpgsign=false "$@"; }
+git init -q -b trunk "$MR"; printf x > "$MR/x"; mg add -A; mg commit -q -m "base"
+printf 'y' > "$MR/y"; mg add -A; mg commit -q -m $'manifest change\n\nChange: feat-man'
+mtip=$(mg rev-parse HEAD); printf '%s' "$mtip" > "$MA/state/trunk-tip-juggernaut"
+printf -- '- lead-b - the lead (home: %s; scope: all; projects: juggernaut; added 2026-11-01)\n' "$MB" > "$MA/data/squad_leads.md"
+tab juggernaut:primary "$mtip" "$(date +%s)" live "$mtip" > "$MA/data/trunk-in-use.tsv"
+tab juggernaut:lead-b "$mtip" "$(date +%s)" live "$mtip" >> "$MA/data/trunk-in-use.tsv"
+tab feat-man juggernaut - feat-man - "declares manifest rows" > "$T/man-changes.tsv"
+tab feat-man file feat-man-one present auto - absent > "$T/man-switches.tsv"
+tab feat-man file feat-man-two present auto - absent >> "$T/man-switches.tsv"
+man() { JG_HOME=$MA JG_DELIVERY_CHANGES=$T/man-changes.tsv JG_SWITCH_MANIFEST=$T/man-switches.tsv bash "$OBS" "$@"; }
+: > "$MA/config/feat-man-one"; : > "$MA/config/feat-man-two"; : > "$MB/config/feat-man-one"
+assert_equals in-homes-off "$(man feat-man)" "one manifest row off in the second home: in-homes-off"
+OUT=$(man detail feat-man); assert_contains "$OUT" "mb file feat-man-two absent" "detail names the home and the row that is off"
+: > "$MB/config/feat-man-two"; assert_equals in-use "$(man feat-man)" "every row on in every home: in-use"
+assert_contains "$(man detail feat-man)" "every manifest row is on" "detail says why it is in-use"
+rm -f "$MA/config/feat-man-one"; assert_equals in-homes-off "$(man feat-man)" "a row off in the first home counts too"
+printf 'feat-orphan\tfile\tz\tpresent\tauto\t-\tabsent\n' >> "$T/man-switches.tsv"
+OUT=$(man check); RC=$?; expect_code 1 "$RC" "a manifest id with no changes.tsv row is refused"; assert_contains "$OUT" "feat-orphan" "the defect names the id"
+: > "$T/man-switches.tsv"; : > "$MA/config/feat-man-one"
+assert_equals in-homes-off "$(JG_HOME=$MA JG_DELIVERY_CHANGES=$T/man-changes.tsv JG_SWITCH_MANIFEST=$T/man-switches.tsv bash -c 'rm -f "$JG_HOME/config/feat-man-one"; bash "$0" feat-man' "$OBS")" "an id with no manifest rows keeps the switch column"
+pass "the delivery observer reads the switch manifest in every home"
+
 # the shipped registry and the shipped state machine slices
 unset JG_DELIVERY_CHANGES
 bash "$OBS" check; expect_code 0 "$?" "the shipped registry lints"
