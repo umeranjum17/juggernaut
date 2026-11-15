@@ -132,9 +132,11 @@ run_pr_merge() {  # <home> <id> <url>
     "$ROOT/bin/jg-pr-merge.sh" "$@"
 }
 
+# A loaded gate runs many suites at once, so the ceiling is a minute, not a few
+# seconds; the loop still ends at once when the process dies.
 wait_for_test_file() {  # <path> <pid>
   local path=$1 pid=$2 i=0
-  while [ "$i" -lt 500 ]; do
+  while [ "$i" -lt 6000 ]; do
     [ -e "$path" ] && return 0
     kill -0 "$pid" 2>/dev/null || return 1
     sleep 0.01
@@ -2187,13 +2189,7 @@ SH
     JG_TEST_RACE_RELEASE="$release" run_pr_merge "$home" "$id" "$pr" \
     > "$home/race-pr.out" 2> "$home/race-pr.err" &
   merge_pid=$!
-  i=0
-  while [ "$i" -lt 500 ]; do
-    [ -e "$ready" ] && break
-    kill -0 "$merge_pid" 2>/dev/null || break
-    sleep 0.01
-    i=$((i + 1))
-  done
+  wait_for_test_file "$ready" "$merge_pid" || true
   if [ ! -e "$ready" ]; then
     : > "$release"
     wait "$merge_pid" 2>/dev/null || true
@@ -2270,13 +2266,7 @@ SH
     "$ROOT/bin/jg-merge-local.sh" "$local_id" \
     > "$local_home/race-local.out" 2> "$local_home/race-local.err" &
   local_pid=$!
-  i=0
-  while [ "$i" -lt 500 ]; do
-    [ -e "$local_ready" ] && break
-    kill -0 "$local_pid" 2>/dev/null || break
-    sleep 0.01
-    i=$((i + 1))
-  done
+  wait_for_test_file "$local_ready" "$local_pid" || true
   if [ ! -e "$local_ready" ]; then
     : > "$local_release"
     wait "$local_pid" 2>/dev/null || true
