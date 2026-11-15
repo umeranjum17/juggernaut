@@ -89,6 +89,7 @@ verdict_line() {  # <id> <head> <jg-trunk output> <reason>
 verdict_record() {  # <id> <head> <head the branch is at now, or empty> <tip> <jg-trunk output> <reason>
   local line h inputs
   line=$(verdict_line "$1" "$2" "$5" "$6"); inputs=$(verdict_inputs "$1")
+  [ "$(cat "$MEM/$1.$2.state" 2>/dev/null)" = "$line" ] || trail_refused "$1" "$2" "$line"  # a new verdict reaches the ticket at once (ticket-trail.sh)
   for h in "$2" "$3"; do
     [ -n "$h" ] || continue
     [ "$h" = "$2" ] || cp -f -- "$MEM/$1.$2.retries" "$MEM/$1.$h.retries" 2>/dev/null || :

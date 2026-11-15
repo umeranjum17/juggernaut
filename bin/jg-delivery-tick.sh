@@ -49,6 +49,8 @@ tick_ladder_wake() { case ${JG_WAKE_LAST:-} in now:*) printf '%s\n' "$1" ;; esac
 JG_LADDER_WAKE=tick_ladder_wake jg_task_inbox_walk "$H/state" || echo "jg-delivery-tick: a steering-inbox step could not write its record in $H" >&2
 # Each ready or resumed lane reaches its ticket's trail within the tick (bin/jg-ready-trace.sh); it never stops the pass.
 bash "$SCRIPT_DIR/jg-ready-trace.sh" "$H" >&2 || echo "jg-delivery-tick: the ready trail step failed in $H" >&2
+# A lane's declared wait (a park included) reaches its ticket in the same tick (bin/jg-wait-trace.sh); it never stops the pass.
+bash "$SCRIPT_DIR/jg-wait-trace.sh" "$H" >&2 || echo "jg-delivery-tick: the wait trail step failed in $H" >&2
 # A Built lane (done line, PASS receipt at its branch head) has its agent stopped at once; the copy, branch and record stay.
 bash "$SCRIPT_DIR/../core/lane-end/stop-at-built.sh" "$H" >&2 || echo "jg-delivery-tick: the stop-at-built step failed in $H" >&2
 # Each live worker keeps its lease on its ticket, and a row no record of this home holds returns to ready (bin/jg-lease-tick.sh); it never stops the pass.

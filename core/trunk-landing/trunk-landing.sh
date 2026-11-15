@@ -75,6 +75,8 @@ mkdir -p "$MEM" || exit 0
 . "$FMH/bin/jg-wake-lib.sh"
 # shellcheck source=core/trunk-landing/refusal-reach.sh
 . "$(dirname "${BASH_SOURCE[0]}")/refusal-reach.sh"
+# shellcheck source=core/trunk-landing/ticket-trail.sh
+. "$(dirname "${BASH_SOURCE[0]}")/ticket-trail.sh"
 # shellcheck source=core/trunk-landing/cleanup-retry.sh
 . "$(dirname "${BASH_SOURCE[0]}")/cleanup-retry.sh"
 # shellcheck source=core/trunk-landing/queue-why.sh
@@ -212,7 +214,7 @@ if [ "$1" = runbatch ]; then
     jg_lock_try_acquire "$STATE/.trunk-run-${arg%%@*}-${arg#*@}.lock" || { for cleanup_arg in "$@"; do rm -f -- "$MEM/${cleanup_arg%%@*}.${cleanup_arg#*@}.state"; done; exit 0; }
     locked="$locked $arg"
   done
-  for arg in "$@"; do printf 'running %s %s\n' "$(date +%s)" "$$" > "$MEM/${arg%%@*}.${arg#*@}.state"; done
+  for arg in "$@"; do printf 'running %s %s\n' "$(date +%s)" "$$" > "$MEM/${arg%%@*}.${arg#*@}.state"; trail_proved "${arg%%@*}"; done
   pn=$(basename "$(mval "$STATE/${1%%@*}.meta" project)")
   # The lander's output is read as it comes: a lane is cleaned up at its own landed line, not when the whole stack ends.
   out_file=$(mktemp "$MEM/batch.out-XXXXXX.log") || exit 1; cleaned=
@@ -267,6 +269,7 @@ if [ "$1" = run ]; then
   # old head does not hold it back) finds the lane cleaned up: landing it again would only write a refusal for a lane with no record.
   [ -f "$STATE/$id.meta" ] || exit 0
   printf 'running %s %s\n' "$(date +%s)" "$$" > "$MEM/$id.$head.state"
+  trail_proved "$id"
   tip=$(verdict_tip "$(basename "$(mval "$STATE/$id.meta" project)")")
   out=$(JG_TRUNK_GATE_DEADLINE="$(landing_deadline)" JG_HOME="$FMH" JG_TRUNK_RUN_HELD_BY="$$" JG_TRUNK_EXPECT_HEAD="$head" "$FMH/bin/jg-trunk.sh" land "$id" 2>&1) || rc=$?
   request_log=$(mktemp "$MEM/$id.$head.request-XXXXXX.log") || exit 1

@@ -947,7 +947,7 @@ ticket_ref_check() {  # <id> <commit>
 # linked decisions, the design/demo/nav gates and owner-guard. Refuses (exits) on any failure. Sets LANE_BRANCH, LANE_HEAD, LANE_CAND
 # (the commit to land) and LANE_LANDED (1 when the lane is already on <tip>). <follow> 1 moves the lane branch to its rebased commit now.
 lane_admit() {  # <id> <tip> <expected head or -> <follow 0|1>
-  local id=$1 tip=$2 base n hit rc=0 linked fresh gaps
+  local id=$1 tip=$2 base n hit rc=0 linked fresh gaps ticket
   LANE_BRANCH=$(jg_dod_meta_value "$META" branch); LANE_BRANCH=${LANE_BRANCH:-fm/$id}
   git check-ref-format --branch "$LANE_BRANCH" >/dev/null 2>&1 || die "task $id has an invalid ship branch '$LANE_BRANCH'"
   LANE_HEAD=$(rev "refs/heads/$LANE_BRANCH") || die "branch $LANE_BRANCH does not exist in $PROJ"
@@ -977,6 +977,10 @@ lane_admit() {  # <id> <tip> <expected head or -> <follow 0|1>
   fi
   # The admission is over, so the landing run is in its state `checking` (data/trunk-landing-phases.tsv; core/machines/observers/landing.sh reads it).
   row trunk-landing-phases.tsv "$id" "$PN" "$tip" "$LANE_HEAD" checking "$(date +%s)" ""
+  # The ticket reads delivering.rebased from here: the lane sits clean on the tip and its quick check runs.
+  ticket=$(jg_dod_meta_value "$META" ticket); ticket=${ticket:-$id}
+  JG_HOME=$JG_HOME JG_DATA_OVERRIDE=$DATA "$SCRIPT_DIR/jg-backlog.sh" moment "$ticket" landing_at >/dev/null 2>&1 \
+    || echo "jg-trunk: warning: landing_at of $ticket was not written" >&2
   n=$(git -C "$PROJ" rev-list --count "$tip..$LANE_CAND")
   [ "$n" = 1 ] && [ "$(git -C "$PROJ" rev-list --parents -n 1 "$LANE_CAND" | wc -w)" = 2 ] || refuse "one commit per ticket: $LANE_BRANCH has $n commits over $TRUNK; squash it to one"
   ticket_ref_check "$id" "$LANE_CAND"

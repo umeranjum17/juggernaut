@@ -36,6 +36,7 @@ rule = __import__("jg-beads-stage")
 SOURCES = {
     "jg-trunk-land": ("landed_at", True, None),
     "jg-trunk-revert": ("reverted_at", False, None),
+    "jg-trunk-refuse": (None, False, None),
     "jg-trunk-live": ("live_at", False, None),
     "jg-trunk-pin-back": ("pinned_back_at", False, None),
     "jg-trunk-release": ("released_at", False, None),
