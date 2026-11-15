@@ -27,6 +27,7 @@ home=$(cd "$home" 2>/dev/null && pwd -P) || unreadable
 tbl=$home/core/machines/tables/$m.tsv
 [ -d "$home/state" ] && [ -f "$tbl" ] || unreadable
 fs_env "$home"
+export FS_NOW=$now   # a lister that reads the clock reads this one, so a reading is never later than the caller's now
 lister=$(fs_record "$m" 2); life=$(fs_record "$m" 3)
 obs=$(awk -F'\t' '$1 == "observer" { print $2; exit }' "$tbl")
 [ -n "$lister" ] && [ -n "$obs" ] && [[ $life =~ ^[0-9]+$ ]] || unreadable

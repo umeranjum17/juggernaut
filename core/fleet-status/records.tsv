@@ -10,7 +10,7 @@ landing	for f in "$DATA"/jg-trunk-landing/*.state; do [ -e "$f" ] || continue; i
 lane-delivery	for f in "$STATE"/*.meta; do [ -e "$f" ] || continue; i=${f##*/}; printf '%s\t%s\n' "${i%.meta}" "$(stat -c %Y "$f")"; done	86400
 markers	bash "$FS/listers.sh" markers	86400
 message	for f in "$STATE"/*.inbox/*.msg; do [ -e "$f" ] || continue; d=${f%/*}; d=${d##*/}; n=${f##*/}; printf '%s\t%s\n' "${d%.inbox}:${n%.msg}" "$(stat -c %Y "$f")"; done	86400
-presence	[ -d "$STATE" ] && printf '%s\t%s\n' "$(basename "$JG_HOME")" "$(date +%s)"	60
+presence	[ -d "$STATE" ] && printf '%s\t%s\n' "$(basename "$JG_HOME")" "${FS_NOW:-$(date +%s)}"	60
 proving	bash "$FS/listers.sh" proving	86400
 release	awk -F'\t' '$1 !~ /^revert-/ && !s[$1]++ { print $1 "\t" $4 }' "$DATA/trunk-landings.tsv" 2>/dev/null	86400
 squad-lead	bash "$FS/listers.sh" squad-lead	86400
