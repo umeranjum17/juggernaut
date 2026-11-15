@@ -10,7 +10,9 @@ MOVES="$H/data/machine-moves.log"; SHADOW="$H/data/machine-shadow.log"
 export JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" JG_MACHINES_TABLES="$TABLES"
 mkdir -p "$H/data" "$H/state" "$H/bin" "$H/core/machines/bin" "$TABLES"
 for f in "$ROOT"/bin/*; do ln -s "$f" "$H/bin/"; done
-cp "$ROOT/core/machines/bin/machine.py" "$ROOT/core/machines/bin/tablelint.py" "$H/core/machines/bin/"
+mkdir -p "$H/core/machines/styles"
+cp "$ROOT"/core/machines/bin/*.py "$H/core/machines/bin/"  # machine.py imports its siblings and reads the alert table, so the fixture takes both
+cp "$ROOT/core/machines/styles/alert-table.tsv" "$H/core/machines/styles/"
 { printf 'machine\tdemo\trec\tx\n'
   printf 'state\tstart\tinitial\tStart.\t-\nstate\ttarget\tnormal\tTarget.\t-\nstate\tother\tnormal\tOther.\t-\n'
   printf 'edge\tstart\tgo\ttarget\tw:f\t-\tg\tt\nedge\ttarget\tback\tother\tw:f\t-\tg\tt\n'

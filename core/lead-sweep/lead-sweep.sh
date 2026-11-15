@@ -14,7 +14,8 @@
 #     minutes, default 10, per lane);
 #   - scout (Recon): its report data/<id>/report.md exists, Main relayed it (its ticket has the `relayed` move in data/moves.log,
 #     which Main writes with bin/jg-move.sh when it relays the findings), and no message reached its inbox in the last
-#     JG_LEAD_SWEEP_QUIET_MIN minutes (default 60). A done line, a passed critic or a gone agent is not enough; until then the
+#     JG_LEAD_SWEEP_QUIET_MIN minutes (default 60). With a handoff record (jg-recon-handoff.sh) the draft must be accepted and the relayed
+#     move must not be older than that verdict; a steer still waiting in the inbox keeps the Recon. A done line, a passed critic or a gone agent is not enough; until then the
 #     record, inbox and copy stay (the agent may still end at its done line).
 # The sweep then runs `bin/jg-teardown.sh <id>` and nothing else: no --force, ever. The teardown owns the landed-work test
 # and every gate (unlanded or dirty work, the report, captain-call inventory and depth gates), so a lane with unlanded work
@@ -116,11 +117,24 @@ park() {
   else refuse "$1" "could not be parked ($2): $(printf '%s\n' "$out" | grep -E '^(REFUSED|error)' | tail -n 1 | cut -c1-200)"; fi
 }
 
-# scout_relayed <meta>: succeeds when the scout's ticket has the relayed move and its inbox has been quiet for the quiet window.
+# scout_relayed <meta>: succeeds when the scout's current draft is relayed and its inbox has been quiet for the quiet window.
+# A Recon with a handoff record (core/machines/tables/recon.tsv, read through its observer) is judged by that record: its phase must be
+# accepted, and the relayed move must come at or after the accepting verdict, so a relay receipt for an older draft, or a draft still
+# waiting for its critic, never closes it. With a record, a steer still waiting in its inbox also keeps it. A Recon with no record keeps the old test.
 scout_relayed() {
-  local id=${1##*/} ticket last
+  local id=${1##*/} ticket last phase accepted relayed
   id=${id%.meta}; ticket=$(mval "$1" ticket)
-  [ -n "$ticket" ] && awk -F'\t' -v t="$ticket" '$2 == t && $4 == "relayed" { f = 1 } END { exit !f }' "$FMH/data/moves.log" 2>/dev/null || return 1
+  [ -n "$ticket" ] || return 1
+  relayed=$(awk -F'\t' -v t="$ticket" '$2 == t && $4 == "relayed" { r = $1 } END { print r }' "$FMH/data/moves.log" 2>/dev/null)
+  [ -n "$relayed" ] || return 1
+  phase=$(JG_HOME="$FMH" JG_DATA_OVERRIDE="$FMH/data" "$FMH/core/machines/observers/recon.sh" "$id" 2>/dev/null || echo none)
+  if [ "$phase" != none ]; then
+    [ "$phase" = accepted ] || return 1
+    accepted=$(awk -F'\t' '$3 == "accepted" { a = $1 } END { print a }' "$FMH/data/$id/handoff.tsv" 2>/dev/null)
+    case $accepted$relayed in *[!0-9]*) return 1 ;; esac
+    [ "$relayed" -ge "$accepted" ] || return 1
+    [ -z "$(find "$STATE/$id.inbox" -maxdepth 1 -type f -name '*.msg' 2>/dev/null | head -n 1)" ] || return 1
+  fi
   last=$(find "$STATE/$id.inbox" -type f -printf '%T@\n' 2>/dev/null | sort -n | tail -n 1); last=${last%%.*}
   case $last in ''|*[!0-9]*) return 0 ;; esac
   [ $(( NOW - last )) -ge "$QUIET_S" ]

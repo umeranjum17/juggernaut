@@ -7,6 +7,8 @@
 # c) a Recon with a report, Main's relayed move, a quiet inbox and a passing gate is closed; a Recon whose gate refuses is reported once; a Recon with no report is left;
 # l) a Recon with a report is left until its ticket has the relayed move and its inbox has been quiet 60 minutes, whatever its done
 #    line, a gone agent or a passed critic; a message in that hour restarts the hour; an agent that ends at its done line keeps its copy;
+# m) a Recon with a handoff record is closed only when its current draft is accepted and the relay is not older than that verdict:
+#    an old relay receipt does not close a new draft, a draft waiting for its critic keeps it, and a pending steer keeps it;
 # g) a done lane still on its recorded base (no commit of its own) is never torn down;
 # d) a working lane, a done lane not landed, a lead and a lane a landing is running for are never touched;
 # e) a done lane whose pull request is merged is torn down; an open one is not, and the forge is asked once per window;
@@ -156,6 +158,28 @@ check "l: a relayed Recon with no inbox is cleaned up" "$(tore lgone)" 1
 touch -d "@$((now - 70 * 60))" "$FM/state/lrec.inbox/1.msg"; sweep
 check "l: a quiet hour after the relay cleans it up, once" "$(tore lrec)" 1
 check "l: it says why" "$(grep -c '^lead-sweep: lrec cleaned up (its report exists and Main relayed it)' "$d/out")" 1
+# m: the Recon table decides: an old relay receipt cannot close a new draft
+H=$SRC/../../bin/jg-recon-handoff.sh; mkdir -p "$FM/bin"; cp "$H" "$SRC/../../bin/jg-machine-guard.sh" "$FM/bin/" 2>/dev/null || true
+mkdir -p "$FM/core/machines"; cp -r "$SRC/../machines/observers" "$SRC/../machines/tables" "$FM/core/machines/" 2>/dev/null || true
+mkdir -p "$FM/data/mrec"; echo draft1 > "$FM/data/mrec/report.md"
+lane mrec scout 'done [at=1]: report' ticket=t-mrec
+hand() { JG_HOME=$FM JG_DATA_OVERRIDE=$FM/data "$FM/bin/jg-recon-handoff.sh" "$@" >/dev/null; }
+sha() { sha256sum "$FM/data/mrec/report.md" | cut -d' ' -f1; }
+hand draft mrec; hand verdict mrec --critic c1 --hash "$(sha)" --gaps 1
+printf '%s\tt-mrec\tproving\trelayed\tproving\n' "$(date +%s)" >> "$FM/data/moves.log"   # the receipt of draft 1
+echo draft2 > "$FM/data/mrec/report.md"; hand revise mrec
+sweep
+check "m: a relay receipt for an older draft does not close a revised draft waiting for its critic" "$(tore mrec)" 0
+sleep 1; hand verdict mrec --critic c1 --hash "$(sha)" --gaps 0
+sweep
+check "m: an accepted draft whose only relay receipt is older is not closed" "$(tore mrec)" 0
+sleep 1; printf '%s\tt-mrec\tproving\trelayed\tproving\n' "$(date +%s)" >> "$FM/data/moves.log"
+mkdir -p "$FM/state/mrec.inbox"; echo steer > "$FM/state/mrec.inbox/1.msg"; touch -d "@$((now - 70 * 60))" "$FM/state/mrec.inbox/1.msg"
+sweep
+check "m: a pending steer keeps an accepted, relayed Recon" "$(tore mrec)" 0
+mkdir -p "$FM/state/mrec.inbox/handled"; mv "$FM/state/mrec.inbox/1.msg" "$FM/state/mrec.inbox/handled/"; touch -d "@$((now - 70 * 60))" "$FM/state/mrec.inbox/handled/1.msg"
+sweep
+check "m: the accepted draft, relayed after its verdict, is cleaned up" "$(tore mrec)" 1
 # f: the wiring installs a shim that registers, and the unwiring removes it
 if [ -x "$SRC/../../bin/jg-check-register.sh" ]; then
   mkdir -p "$FM/bin"; cp "$SRC/../../bin/"jg-*.sh "$FM/bin/" 2>/dev/null || true
