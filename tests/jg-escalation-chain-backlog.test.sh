@@ -3,6 +3,25 @@ set -eu
 # shellcheck source=tests/jg-escalation-chain-fixture.sh
 . "$(dirname "${BASH_SOURCE[0]}")/jg-escalation-chain-fixture.sh"
 
+# One tick can read the backlog, the board or a hold lookup too slowly on a loaded host and then leaves the
+# episode as it was (the stalled-backlog condition is "unknown", never "false"); the next tick reads it again.
+# So a step that expects the chain to move repeats the bounded cycle until its own condition holds, and the
+# caller's assertion still reports a miss with its full evidence.
+cycle_until_true() {  # <home> <command...>
+  local h=$1 n=1
+  shift
+  cycle "$h"
+  while ! "$@" && [ "$n" -lt "${CYCLE_TRIES:-8}" ]; do
+    n=$((n + 1))
+    cycle "$h"
+  done
+  return 0
+}
+armed() { [ -f "$1/state/.waiting-timers/.ready-backlog" ]; }
+quiet_why() { grep -q "$(printf '\t%s\t' "$2")" "$1/state/.waiting-timers/.ready-backlog-why" 2>/dev/null; }
+fired() { [ "$(grep -c 'waiting-timer-backlog-overdue' "$2" 2>/dev/null)" -ge "$1" ]; }
+lane_is_w1() { [ "$(cut -f2 "$1/state/.waiting-timers/.ready-backlog" 2>/dev/null)" = w1 ]; }
+
 test_stalled_backlog_wakes_the_lead_and_main_and_refires() {
   local m l f relay first nudged card
   m=$(home backlog-main)
@@ -11,22 +30,21 @@ test_stalled_backlog_wakes_the_lead_and_main_and_refires() {
   printf '2\n' > "$l/config/lane-target"
   backlog "$l" add jg-alpha "first item" --priority 1
   f="$m/state/lead1.status"
-  cycle "$l"
-  cycle "$l"
+  cycle_until_true "$l" armed "$l"
   [ -f "$l/state/.waiting-timers/.ready-backlog" ] || fail "ready work on a free lane armed no episode: $(cat "$l/err")"
   ! grep -q 'waiting-timer-backlog-overdue' "$f" || fail "Main was told before the lead had 10 minutes"
   backdate_backlog "$l" 500
   cycle "$l"
   ! grep -q 'waiting-timer-backlog-overdue' "$f" || fail "Main was told before 10 minutes passed"
   backdate_backlog "$l" 200
-  cycle "$l"
+  cycle_until_true "$l" fired 1 "$f"
   grep -q '^blocked \[key=waiting-timer-[0-9a-f]*-lead1-g[0-9]*-ready-backlog\] \[at=[0-9]*\]: waiting-timer-backlog-overdue: lead1 (ready work jg-alpha, free lanes 0/2 open, nothing started for [0-9]*s' "$f" \
     || fail "a stalled backlog did not reach Main: $(cat "$f") $(cat "$l/err")"
   grep -q '^check: ready backlog stalled: jg-alpha waits with free lanes (0/2 open)' "$l/events" || fail "the lead was not woken again: $(cat "$l/events")"
   cycle "$l"
   [ "$(grep -c 'waiting-timer-backlog-overdue' "$f")" -eq 1 ] || fail "the stall re-fired inside the interval"
   backdate_backlog "$l" 901
-  cycle "$l"
+  cycle_until_true "$l" fired 2 "$f"
   [ "$(grep -c 'waiting-timer-backlog-overdue' "$f")" -eq 2 ] || fail "the stall did not re-fire after the interval: $(cat "$f")"
   [ "$(grep -c '^check: ready backlog stalled' "$l/events")" -eq 2 ] || fail "the lead was not woken on the re-fire"
   # The report itself is Main's event; the next cycle's relay steers the lead.
@@ -94,7 +112,7 @@ SH
   cycle "$l"
   [ ! -e "$l/state/.waiting-timers/.ready-backlog" ] || fail "the eleven-field lane summary was not counted"
   rm -f "$l/home/.local/share/jg-fleet-flow/jg-flow-check.sh"
-  cycle "$l"
+  cycle_until_true "$l" armed "$l"
   [ -e "$l/state/.waiting-timers/.ready-backlog" ] || fail "a free lane and unheld ticket armed no stall"
   pass "only a free lane and an unheld ticket arm the ready backlog timer"
 }
@@ -106,12 +124,12 @@ test_stalled_backlog_quiet_when_work_starts_in_time() {
   printf '2\n' > "$l/config/lane-target"
   backlog "$l" add jg-alpha "first item"
   backlog "$l" add jg-beta "second item"
-  cycle "$l"
+  cycle_until_true "$l" armed "$l"
   backdate_backlog "$l" 1000
   printf 'kind=ship\nbackend=tmux\nwindow=fake:1\n' > "$l/state/w1.meta"
   : > "$l/state/w1.status"
   prime_status_seen "$l/state" "$l/state/w1.status"
-  PANES=1 cycle "$l"
+  PANES=1 cycle_until_true "$l" lane_is_w1 "$l"
   [ ! -e "$m/state/lead1.status" ] || ! grep -q 'waiting-timer-backlog-overdue' "$m/state/lead1.status" \
     || fail "a lead that started work was escalated"
   IFS=$'\t' read -r since lanes _ _ _ < "$l/state/.waiting-timers/.ready-backlog"
@@ -142,8 +160,7 @@ test_stalled_backlog_quiet_without_a_free_lane_or_a_ready_item() {
   : > "$l/state/w1.status"
   prime_status_seen "$l/state" "$l/state/w1.status"
   backlog "$l" add jg-alpha "first item"
-  JG_CREW_STATE_BIN="$crew" PANES=1 cycle "$l"
-  JG_CREW_STATE_BIN="$crew" PANES=1 cycle "$l"
+  JG_CREW_STATE_BIN="$crew" PANES=1 cycle_until_true "$l" quiet_why "$l" lanes-full
   [ ! -e "$l/state/.waiting-timers/.ready-backlog" ] || fail "a home at its floor with a worker working armed a stall"
   grep -q "$(printf '\tlanes-full\t1/1')" "$l/state/.waiting-timers/.ready-backlog-why" \
     || fail "the quiet backlog left no reason: $(cat "$l/state/.waiting-timers/.ready-backlog-why" 2>&1)"
@@ -163,17 +180,16 @@ test_a_fresh_host_memory_refusal_keeps_the_stalled_backlog_quiet() {
   printf '4\n' > "$l/config/lane-target"
   backlog "$l" add jg-alpha "first item" --priority 1
   printf '%s\ttask1\thost memory under pressure\n' "$(date +%s)" > "$l/state/admission-refused"
-  cycle "$l"
-  cycle "$l"
+  cycle_until_true "$l" quiet_why "$l" host-load
   [ ! -e "$l/state/.waiting-timers/.ready-backlog" ] || fail "a fresh admission refusal still armed a stall"
   grep -q "$(printf '\thost-load\t')" "$l/state/.waiting-timers/.ready-backlog-why" \
     || fail "the quiet backlog left no host-load reason: $(cat "$l/state/.waiting-timers/.ready-backlog-why" 2>&1)"
   printf '%s\ttask1\thost memory under pressure\n' "$(( $(date +%s) - 3600 ))" > "$l/state/admission-refused"
-  cycle "$l"
+  cycle_until_true "$l" armed "$l"
   [ -f "$l/state/.waiting-timers/.ready-backlog" ] || fail "an hour-old refusal record silenced a real stall"
   rm -f "$l/state/.waiting-timers/.ready-backlog"
   rm -f "$l/state/admission-refused"
-  cycle "$l"
+  cycle_until_true "$l" armed "$l"
   [ -f "$l/state/.waiting-timers/.ready-backlog" ] || fail "the stall did not arm once the refusal record was gone"
   pass "a fresh host-memory refusal keeps the stalled backlog quiet as host-load, and an old or cleared record lets it arm again"
 }
@@ -188,11 +204,10 @@ test_a_paused_home_silences_its_stalled_backlog_and_rings_when_it_lifts() {
   mkdir -p "$l/data"
   backlog "$l" add jg-alpha "first item" --priority 1
   f="$m/state/lead1.status"
-  cycle "$l"
-  cycle "$l"
+  cycle_until_true "$l" armed "$l"
   [ -f "$l/state/.waiting-timers/.ready-backlog" ] || fail "ready work on a free lane armed no episode: $(cat "$l/err")"
   backdate_backlog "$l" 1000
-  cycle "$l"
+  cycle_until_true "$l" fired 1 "$f"
   grep -q '^blocked \[key=waiting-timer-[0-9a-f]*-lead1-g[0-9]*-ready-backlog\].*: waiting-timer-backlog-overdue:' "$f" \
     || fail "the unpaused home never reached Main: $(cat "$f") $(cat "$l/err")"
   # Main pauses this home: the stalled backlog goes quiet and its open report closes.
@@ -211,10 +226,10 @@ test_a_paused_home_silences_its_stalled_backlog_and_rings_when_it_lifts() {
   [ ! -e "$l/state/.waiting-timers/.ready-backlog" ] || fail "a paused home armed a backlog episode again"
   # The resume order puts the backlog back on its ladder.
   rm -f "$l/data/paused-for-juggernaut.md"
-  cycle "$l"
+  cycle_until_true "$l" armed "$l"
   [ -f "$l/state/.waiting-timers/.ready-backlog" ] || fail "the removed pause record did not re-arm the backlog: $(cat "$l/err")"
   backdate_backlog "$l" 1000
-  cycle "$l"
+  cycle_until_true "$l" fired "$((before + 1))" "$f"
   [ "$(grep -c 'waiting-timer-backlog-overdue' "$f")" -gt "$before" ] \
     || fail "the resumed home never rang again: $(cat "$f")"
   pass "a paused home arms and escalates no stalled backlog, closes the report it left open, and rings again when the record goes"
@@ -300,12 +315,12 @@ test_stalled_backlog_quiet_when_project_is_at_capacity() {
   : > "$l/state/w1.status"
   prime_status_seen "$l/state" "$l/state/w1.status"
   backlog "$l" add jg-alpha "capped item" --repo proj
-  PANES=1 cycle "$l"
+  PANES=1 cycle_until_true "$l" quiet_why "$l" project-capacity
   [ ! -e "$l/state/.waiting-timers/.ready-backlog" ] || fail "an item whose project is at capacity armed a stall"
   grep -q "$(printf '\tproject-capacity\t')" "$l/state/.waiting-timers/.ready-backlog-why" \
     || fail "the capacity hold left no reason: $(cat "$l/state/.waiting-timers/.ready-backlog-why" 2>&1)"
   backlog "$l" add jg-beta "uncapped item"
-  PANES=1 cycle "$l"
+  PANES=1 cycle_until_true "$l" armed "$l"
   [ -e "$l/state/.waiting-timers/.ready-backlog" ] || fail "an uncapped item on a free lane armed no stall: $(cat "$l/err")"
   [ ! -e "$l/state/.waiting-timers/.ready-backlog-why" ] || fail "an armed stall kept a quiet reason"
   pass "an item whose project is at capacity cannot start, so it never arms the chain"
