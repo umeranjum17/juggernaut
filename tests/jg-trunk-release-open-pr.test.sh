@@ -458,7 +458,22 @@ test_a_home_that_cannot_pass_the_merge_gate_waits_on_main_at_the_release() {
   pass 'T8 a home with no proof board and no approval key refuses the release at its start, waits on Main with the command and records nothing; with both it releases'
 }
 
+test_the_release_task_inherits_the_project_yolo() {
+  local out id=release-juggernaut-trunk meta
+  release_world rel-yolo-on; meta="$HOME_D/state/$id.meta"
+  sed -i 's/^- juggernaut \[local-trunk\]/- juggernaut [local-trunk +yolo]/' "$HOME_D/data/projects.md"
+  batch j1; echo open > "$W/state-813"
+  out=$(trunk release "$PROJ" 2>&1) || fail "T9: the release of a +yolo project must succeed: $out"
+  grep -qxF yolo=on "$meta" || fail "T9: a +yolo project's release task must record yolo=on: $(cat "$meta")"
+  release_world rel-yolo-off; meta="$HOME_D/state/$id.meta"
+  batch j1; echo open > "$W/state-813"
+  out=$(trunk release "$PROJ" 2>&1) || fail "T9: the release of a project without yolo must succeed: $out"
+  grep -qxF yolo=off "$meta" || fail "T9: a project without yolo must record yolo=off: $(cat "$meta")"
+  pass 'T9 a release task records the registry yolo of its project: on for +yolo, off without'
+}
+
 test_a_release_keeps_one_url_and_takes_the_open_release_pr_as_success
+test_the_release_task_inherits_the_project_yolo
 test_a_home_that_cannot_pass_the_merge_gate_waits_on_main_at_the_release
 test_a_pushed_release_without_its_record_gets_the_record_and_no_second_push
 test_the_release_proof_status_reaches_the_forge

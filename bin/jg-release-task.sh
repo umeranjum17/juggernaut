@@ -8,12 +8,14 @@
 # No worker owns a release, so its record names no window, worktree or branch; bin/jg-trunk.sh decides what a release
 # needs and asks this script to write it, and the PR's own fields (pr, pr_head from a worktree) stay with bin/jg-pr-check.sh.
 # Each write holds the record's lock, edits a private copy and moves it into place, so a refused write leaves the record
-# as it was. create never overwrites; authority and head refuse a record that is not there.
+# as it was. create records yolo as the project's registered posture at that moment (bin/jg-project-mode.sh, on or off),
+# so a +yolo project's release inherits it. create never overwrites; authority and head refuse a record that is not there.
 set -eu
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 JG_ROOT="${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$JG_ROOT}}"
 STATE="${JG_STATE_OVERRIDE:-$JG_HOME/state}"
+DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
 # shellcheck source=bin/jg-pr-lib.sh
 . "$SCRIPT_DIR/jg-pr-lib.sh"
 # shellcheck source=bin/jg-wake-lib.sh
@@ -38,7 +40,9 @@ case $cmd in
     proj=${3-}; [ -d "$proj" ] || die "create needs the project directory"
     [ ! -e "$meta" ] || die "the record of $id is already there; it is kept"
     proj=$(cd "$proj" && pwd -P)
-    (umask 077; printf 'kind=release\nproject=%s\nmode=local-trunk\nyolo=off\n' "$proj" > "$meta.tmp.$$") && publish
+    yolo=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-project-mode.sh" --raw "$(basename "$proj")" 2>/dev/null | cut -d' ' -f2 || true)
+    [ "$yolo" = on ] || yolo=off
+    (umask 077; printf 'kind=release\nproject=%s\nmode=local-trunk\nyolo=%s\n' "$proj" "$yolo" > "$meta.tmp.$$") && publish
     ;;
   authority)
     [ -f "$meta" ] || die "no record of $id"
