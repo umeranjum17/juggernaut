@@ -53,6 +53,26 @@ RUN=backlog_close
 backlog_close() { bash -c '. "$1/bin/jg-backlog-transition-lib.sh"; jg_backlog_close_transition "" "$2/t1.marker" "$2/data" t1 "$2/state"' _ "$ROOT" "$HOME_DIR" >/dev/null 2>&1; true; }
 both "backlog close" task "done"
 
+# Refusal before the write: with the machine in config/machine-enforce the close asks first (jg-machine-shadow.sh --refuse).
+# An illegal move exits 1 and the task record stays as it was; a legal move writes; a machine not listed stays in shadow.
+close_t9() { bash -c '. "$1/bin/jg-backlog-transition-lib.sh"; jg_backlog_close_transition "$2/state/t9.meta" "$2/t9.marker" "$2/data" t9 "$2/state"; rc=$?; printf "%s\n" "${JG_BACKLOG_TRANSITION_ERROR-}"; exit $rc' _ "$ROOT" "$HOME_DIR" 2>&1; }
+seed task "done"
+printf 'branch=feature/t9\n' > "$HOME_DIR/state/t9.meta"; before=$(cat "$HOME_DIR/state/t9.meta")
+observe task other  # a state the table has no move from to done
+out=$(close_t9); rc=$?
+[ ! -e "$HOME_DIR/state/t9.meta" ] || fail "shadow: an illegal close must go on writing (rc $rc: $out)"
+printf '%s\n' "$before" > "$HOME_DIR/state/t9.meta"
+mkdir -p "$HOME_DIR/config"; printf 'task\n' > "$HOME_DIR/config/machine-enforce"
+out=$(close_t9); rc=$?
+[ "$rc" -ne 0 ] || fail "enforced: an illegal close must be refused"
+[ "$(cat "$HOME_DIR/state/t9.meta" 2>/dev/null)" = "$before" ] || fail "enforced: the refused close changed the task record"
+assert_contains "$out" "task t9 cannot make the move done" "the refusal names the task and the move"
+assert_contains "$(tail -n 1 "$LOG")" "refused" "the refusal is logged as refused"
+observe task start  # the legal move
+out=$(close_t9); [ ! -e "$HOME_DIR/state/t9.meta" ] || fail "enforced: a legal close must write"
+rm -f "$HOME_DIR/config/machine-enforce"
+pass "enforced machine: an illegal close is refused before any write, a legal one writes, shadow still allows"
+
 RUN=landing_run
 rm -f "$HOME_DIR/bin/jg-trunk.sh" "$HOME_DIR/bin/jg-teardown.sh"  # fakes: a landing that succeeds and a cleanup that succeeds
 printf '#!/bin/sh\nexit 0\n' > "$HOME_DIR/bin/jg-trunk.sh"; cp "$HOME_DIR/bin/jg-trunk.sh" "$HOME_DIR/bin/jg-teardown.sh"; chmod +x "$HOME_DIR/bin/jg-trunk.sh" "$HOME_DIR/bin/jg-teardown.sh"

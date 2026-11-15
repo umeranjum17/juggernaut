@@ -940,7 +940,11 @@ jg_backlog_dispatch_rollback() {
 jg_backlog_close_transition() {
   local meta=$1 marker=$2 data=$3 id=$4 state=$5
   shift 5
-  "${BASH_SOURCE[0]%/*}/jg-machine-shadow.sh" task "$id" "done" || true  # shadow report of the move (jg-machine-shadow.sh)
+  # the task machine's move, asked before any write: shadow until config/machine-enforce lists task, then a refusal writes nothing
+  if ! "${BASH_SOURCE[0]%/*}/jg-machine-shadow.sh" --refuse task "$id" "done"; then
+    JG_BACKLOG_TRANSITION_ERROR="task $id cannot make the move done from its state; run: bin/jg-machine.sh next task $id"
+    return 1
+  fi
   local move_rc=0
   "${BASH_SOURCE[0]%/*}/jg-move.sh" --shadow "$id" close >/dev/null 2>&1 || move_rc=$?
   if [ "$move_rc" -eq 1 ]; then  # the ticket's own move: shadow until config/machine-enforce lists ticket (jg-move.sh)
