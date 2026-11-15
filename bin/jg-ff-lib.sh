@@ -310,7 +310,7 @@ dirty_paths() { # <dir> [ignore_seed_marker]
 }
 
 # Old Treehouse pools made Treehouse append this one line to a home's tracked
-# .gitignore; the pool now lives in the git dir, so the line is a leftover edit.
+# .gitignore; the pool now lives outside every home tree, so the line is a leftover edit.
 # Drop it from the working copy when it is the only thing that edit holds for the
 # line: an exact whole-line match, absent from HEAD, with the file's index entry
 # equal to HEAD. Every other edit in the file stays and is reported as dirty.

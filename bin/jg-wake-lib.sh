@@ -1918,27 +1918,35 @@ jg_treehouse_project_lock_path() {  # <project-dir>
 # two clones of one origin that share a directory name (Main's projects/pockit
 # and a Squad Lead home's projects/pockit) land on one pool whose copies all
 # belong to the first clone. A home below the root therefore gives each of its
-# clones its own pool root under that home; the root home keeps Treehouse's
-# default root, so its existing pools stay where they are. A project that
-# already carries its own treehouse.toml keeps it.
+# clones its own pool root; the root home keeps Treehouse's default root, so its
+# existing pools stay where they are. A project that already carries its own
+# treehouse.toml keeps it.
+# The pool root sits outside every home directory tree (JG_WORKER_POOL_DIR, else
+# $XDG_DATA_HOME or ~/.local/share, under juggernaut-worker-pools/<home key>): a
+# worker copy below a home would load that home's CLAUDE.md and its @AGENTS.md
+# import from a parent directory and stop on Claude's external-imports dialog.
+# A root outside every git repo also needs no tracked .gitignore line. A toml
+# this function wrote for an older root (<home>/.treehouse-pool or the home's
+# git directory) is moved; live slots under that root stay found because slot
+# detection reads each pool's own state.
 jg_treehouse_clone_pool_prepare() {  # <project-dir>
-  local project=$1 home root top gitdir toml pool_root old_root exclude
+  local project=$1 home root top gitdir toml pool_root exclude key old_toml
   [ -d "$project" ] || return 1
   home=$(CDPATH='' cd -- "$JG_HOME" 2>/dev/null && pwd -P) || return 1
   root=$(jg_juggernaut_root_home "$home") || return 1
   [ "$home" != "$root" ] || return 0
   top=$(git -C "$project" rev-parse --show-toplevel 2>/dev/null) || return 1
   toml="$top/treehouse.toml"
-  # Treehouse appends its pool root to the tracked .gitignore of the repo that
-  # holds the pool, and it never reads info/exclude, so the pool lives in the
-  # home's git directory, which no tracked file covers. A toml this function
-  # wrote for the old <home>/.treehouse-pool root is moved; live slots under
-  # that root stay found because slot detection reads each pool's own state.
+  key=$(printf '%s' "$home" | git hash-object --stdin 2>/dev/null) || return 1
+  pool_root="${JG_WORKER_POOL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/juggernaut-worker-pools}/$(basename "$home")-${key:0:12}"
   gitdir=$(git -C "$home" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
-  pool_root="$gitdir/treehouse-pool"
-  old_root="$home/.treehouse-pool"
   if [ -e "$toml" ] || [ -L "$toml" ]; then
-    [ ! -L "$toml" ] && [ "$(cat "$toml" 2>/dev/null)" = "root = \"$old_root\"" ] || return 0
+    [ ! -L "$toml" ] || return 0
+    old_toml=$(cat "$toml" 2>/dev/null)
+    case "$old_toml" in
+      "root = \"$home/.treehouse-pool\""|"root = \"$gitdir/treehouse-pool\"") ;;
+      *) return 0 ;;
+    esac
   fi
   mkdir -p "$pool_root" || return 1
   printf 'root = "%s"\n' "$pool_root" > "$toml" || return 1

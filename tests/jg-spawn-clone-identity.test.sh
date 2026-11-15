@@ -97,14 +97,14 @@ test_each_clone_gets_its_own_pool() {
   git clone -q "$origin" "$mclone" 2>/dev/null || fail "main clone"
   git clone -q "$origin" "$lclone" 2>/dev/null || fail "lead clone"
   real_home=$HOME
-  export HOME="$dir/home" TREEHOUSE_NO_UPDATE_CHECK=1
+  export HOME="$dir/home" TREEHOUSE_NO_UPDATE_CHECK=1 JG_WORKER_POOL_DIR="$dir/pools"; unset XDG_DATA_HOME
   # shellcheck source=bin/jg-wake-lib.sh
   . "$(dirname "${BASH_SOURCE[0]}")/../bin/jg-wake-lib.sh"
   JG_HOME=$main jg_treehouse_clone_pool_prepare "$mclone" || fail "root home prepare"
   JG_HOME=$lead jg_treehouse_clone_pool_prepare "$lclone" || fail "lead home prepare"
   mcopy=$(cd "$mclone" && treehouse get --lease 2>/dev/null) || fail "main lease"
   lcopy=$(cd "$lclone" && treehouse get --lease 2>/dev/null) || fail "lead lease"
-  HOME=$real_home
+  HOME=$real_home; unset JG_WORKER_POOL_DIR
   [ -z "$(git -C "$lead" status --short)" ] || fail "spawn pool dirtied the lead home: $(git -C "$lead" status --short)"
   [ "$(cat "$lead/.gitignore")" = "$(printf 'state/\nprojects/')" ] || fail "spawn pool edited the lead home .gitignore"
   printf 'lead home git status: clean (%s entries); tracked .gitignore: unchanged\n' "$(git -C "$lead" status --short | wc -l)"
@@ -113,7 +113,8 @@ test_each_clone_gets_its_own_pool() {
     || fail "main copy $mcopy is not a copy of the main clone"
   [ "$(cd "$(git -C "$lcopy" rev-parse --git-common-dir)" && pwd -P)" = "$(cd "$lclone/.git" && pwd -P)" ] \
     || fail "lead copy $lcopy is not a copy of the lead clone"
-  case "$lcopy" in "$lead"/.git/treehouse-pool/*) ;; *) fail "lead copy $lcopy is outside the lead pool";; esac
+  case "$lcopy" in "$dir/pools/lead-"*) ;; *) fail "lead copy $lcopy is not in the worker pool outside every home";; esac
+  case "$lcopy" in "$main"/*|"$lead"/*) fail "lead copy $lcopy sits inside a home tree and would load its CLAUDE.md";; esac
   printf 'main copy %s; lead copy %s\n' "$mcopy" "$lcopy"
   pass "each clone leases from its own pool"
 }
