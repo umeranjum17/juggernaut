@@ -19,6 +19,7 @@ H=$T/home
 jg_test_beads_home "$H"
 : > "$H/config/backlog-intake-loose"
 mkdir -p "$H/state"
+pass "plan file: the fixture home has its Beads store"  # the runner ends a script whose output stops for its whole bound; each phase prints one line
 
 run() {  # <args...>: the command on the fixture home, stdout and stderr together.
   env HOME="$T" TMPDIR="$T" JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" JG_DATA_OVERRIDE="$H/data" \
@@ -62,14 +63,17 @@ plan "$(slice P "$mine" '["bin/p.sh"]' '["Q"]')" "$(slice Q "$mine" '["bin/q.sh"
 out=$(run "$T/cycle.json" --owner "$mine") && fail "a cycle must be refused"
 assert_contains "$out" "cycle" "the refusal must say cycle"
 [ "$(rows)" = "$before" ] || fail "a refused plan must file no row"
+pass "plan file: each refusal filed nothing"
 
 # The plan of 6 slices (and one of another home) is filed.
 plan "$A" "$B" "$C" "$D" "$E" "$F" "$X" > "$T/plan.json"
 out=$(run "$T/plan.json" --owner "$mine" --dry-run) || fail "dry run: $out"
 assert_contains "$out" "would file D" "the dry run must list the slices"
 [ "$(rows)" = "$before" ] || fail "a dry run must file no row"
+pass "plan file: the dry run listed the slices and filed nothing"
 out=$(run "$T/plan.json" --owner "$mine") || fail "filing: $out"
 assert_contains "$out" "validate passed" "validate must pass"
+pass "plan file: the plan was filed and validate passed"
 [ "$(rows)" = $((before + 6)) ] || fail "6 rows must be filed, and none for the other owner's slice"
 
 row_of() { bd_ list --parent jg-plan --all --limit 0 --json | jq -r --arg s "$1" '.[] | select(.metadata.plan_slice == $s) | .id'; }
@@ -83,10 +87,12 @@ field() { bd_ show "$(row_of "$1")" --json | jq -r "(if type == \"array\" then .
 [ "$(field D '[.dependencies[] | select(.dependency_type == "blocks") | .id] | length')" = 2 ] || fail "D must hold two edges"
 [ "$(field F '[.dependencies[] | select(.dependency_type == "blocks") | .id] | join(",")')" = jg-pre ] || fail "F must wait on the store row"
 [ "$(bd_ show jg-plan --json | jq -r '(if type == "array" then .[0] else . end).issue_type')" = epic ] || fail "the plan row must be an epic"
+pass "plan file: labels, edges, files and the epic"
 
 # `ready` offers only the rows with no open edge.
 ready=$(bd_ ready --limit 0 --json | jq -r '.[].metadata.plan_slice // empty' | sort | tr '\n' ' ')
 [ "$ready" = "A E " ] || fail "ready must list A and E only, got: $ready"
+pass "plan file: ready lists the rows with no open edge"
 
 # A second filing of the same plan is refused and files nothing.
 out=$(run "$T/plan.json" --owner "$mine") && fail "a second filing must be refused"
