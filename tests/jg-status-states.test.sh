@@ -100,14 +100,15 @@ chg=$(jg_states_render_file "$c") || fail "T4 render failed"
 [ -z "$(jg_states_render_file "$c")" ] || fail "T4 a charter that already matches was rewritten"
 pass "T4 a charter's States: line is rendered again from the contract and nothing else changes"
 
-# T4b the real launch: a Squad Lead spawn renders its seeded charter again from the contract.
+# T4b the real launch: a Squad Lead spawn renders its seeded charter again from the contract. The harness is named, because
+# a spawn with none reads the host (config, then detection), and a host with no worker runtime found has none to launch.
 sm="$W/lead-home"; mkdir -p "$sm/data" "$sm/bin"
 printf '# Juggernaut\n' > "$sm/AGENTS.md"; printf 'st-lead-t4\n' > "$sm/.jg-squad-lead-home"
 printf '%s\n' 'projects/' 'state/' 'data/' 'config/' > "$sm/.gitignore"
 git -C "$sm" init -q -b main
 printf '# Charter\nStates: working, done.\nkeep this line\n' > "$sm/data/charter.md"
 jg_test_spawn_brief "$HOME_DIR" st-lead-t4
-out=$(jg_test_run_spawn "$HOME_DIR" "$W/lead-pane" "$FAKEBIN" st-lead-t4 "$sm" --squad-lead); rc=$?
+out=$(jg_test_run_spawn "$HOME_DIR" "$W/lead-pane" "$FAKEBIN" st-lead-t4 "$sm" codex --squad-lead); rc=$?
 expect_code 0 "$rc" "T4b the Squad Lead spawn should succeed: $out"
 [ "$(sed -n 2p "$sm/data/charter.md")" = "$WANT" ] || fail "T4b the launch left a stale States: line in the charter"
 [ "$(sed -n 3p "$sm/data/charter.md")" = "keep this line" ] || fail "T4b the launch changed another charter line"

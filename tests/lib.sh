@@ -205,6 +205,34 @@ pass() {
   printf 'ok - %s\n' "$1"
 }
 
+# Run independent test functions a few at a time and print each one's report in the order given, as soon as it and
+# every function before it are done, so a suite of many spawn cases keeps its output steady and its order fixed.
+# Each function runs in its own subshell: its `fail` ends only that case, and the suite ends non-zero once the
+# last report is printed. Cases must not share a directory or a file; a case that does, runs in the plain list.
+# The window is JG_TEST_CASE_JOBS wide (default 4).
+jg_test_run_cases() {  # <function>...
+  local jobs=${JG_TEST_CASE_JOBS:-4} dir fn i=0 next=0 bad=0
+  local -a pids=() names=()
+  case $jobs in '' | *[!0-9]* | 0) jobs=1 ;; esac
+  dir=$(mktemp -d "$(jg_test_tmpdir)/jg-cases.XXXXXX") || fail "could not make the case report directory"
+  _jg_test_case_reap() {
+    wait "${pids[next]}" || { bad=1; printf 'not ok - case %s failed\n' "${names[next]}" >&2; }
+    cat "$dir/$next.out"
+    next=$((next + 1))
+  }
+  for fn in "$@"; do
+    [ $((i - next)) -lt "$jobs" ] || _jg_test_case_reap
+    names[i]=$fn
+    ( "$fn" ) > "$dir/$i.out" 2>&1 &
+    pids[i]=$!
+    i=$((i + 1))
+  done
+  while [ "$next" -lt "$i" ]; do _jg_test_case_reap; done
+  unset -f _jg_test_case_reap
+  rm -rf -- "$dir"
+  [ "$bad" -eq 0 ] || exit 1
+}
+
 # Harness argument assertions reuse the emitted prefix rather than duplicating
 # its per-spawn env-file path. The dispatch suite executes it separately to prove
 # credential preservation, hooks-path selection and invalid-count refusal.

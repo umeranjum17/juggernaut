@@ -117,7 +117,8 @@ printf 'ok - T2 the claim on the ticket trail names the tool, model, effort and 
 
 # T7: the agent name is made once at the first spawn, held in the record, and is the row's assignee; spawn_gen, model and effort
 # go to the row as metadata strings; the pane id is not on the row.
-AGENT=$("$ROOT/bin/jg-herdr.sh" agent-name-for "$T2") || fail "T7 the agent name of $T2"
+# The spawn names the lane from the ticket's title words and its task id, so the test asks for the same name.
+AGENT=$("$ROOT/bin/jg-herdr.sh" agent-name-for "$T2" "Second slice of work") || fail "T7 the agent name of $T2"
 [ "$(sed -n 's/^agent_name=//p' "$H/state/$T2.meta")" = "$AGENT" ] || fail "T7 the record must hold agent_name=$AGENT: $(cat "$H/state/$T2.meta")"
 [ "$(field "$c2" .assignee)" = "$AGENT" ] || fail "T7 the assignee must be the agent name, got [$(field "$c2" .assignee)]"
 GEN1=$(sed -n 's/^spawn_gen=//p' "$H/state/$T2.meta")

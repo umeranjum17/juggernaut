@@ -75,7 +75,8 @@ assert_contains "$out" "validate passed" "validate must pass"
 row_of() { bd_ list --parent jg-plan --all --limit 0 --json | jq -r --arg s "$1" '.[] | select(.metadata.plan_slice == $s) | .id'; }
 field() { bd_ show "$(row_of "$1")" --json | jq -r "(if type == \"array\" then .[0] else . end) | $2"; }
 [ -z "$(row_of X)" ] || fail "the slice of another home must not be filed"
-[ "$(field A '.labels | join(",")')" = "project:juggernaut" ] || fail "the repository label: $(field A '.labels | join(",")')"
+# The [feature] title tag is filed as the row's type label (jg-backlog.sh add), beside the repository label.
+[ "$(field A '.labels | sort | join(",")')" = "feature,project:juggernaut" ] || fail "the type and repository labels: $(field A '.labels | join(",")')"
 [ "$(field A '.metadata.files')" = '["bin/a.sh","tests/a.test.sh"]' ] || fail "files field: $(field A '.metadata.files')"
 [ "$(field A '.metadata.new_files')" = '["bin/a.sh","tests/a.test.sh"]' ] || fail "new files field"
 [ "$(field B '.metadata.new_files')" = '[]' ] || fail "no new files on B"

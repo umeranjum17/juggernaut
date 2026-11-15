@@ -121,7 +121,7 @@ exclusion_reason() {
     jg-backend-tmux-smoke.test.sh)
       printf '%s\n' 'real tmux on a private socket; keep exclusive of default-server contention class'
       ;;
-    jg-spawn-dispatch-profile.test.sh)
+    jg-spawn-dispatch-profile.test.sh|jg-spawn-dispatch-profile-part[234].test.sh)
       printf '%s\n' 'real isolated git worktrees plus spawn settle loops; gray zone until dedicated proof'
       ;;
     jg-teardown.test.sh)

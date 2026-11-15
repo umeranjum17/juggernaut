@@ -60,6 +60,8 @@ fi
 exit 0
 SH
   chmod +x "$fakebin/timeout" "$fakebin/cursor-agent"
+  # A spawn sleeps between its pane steps; the fake pane needs no wait.
+  jg_test_fake_sleep_noop "$fakebin"
   make_spawn_pi_probe "$fakebin" pi
   make_spawn_pi_probe "$fakebin" pi-signed
   printf '%s\n' "$fakebin"
@@ -69,6 +71,8 @@ make_spawn_case() {
   local name=$1 harness=$2 case_dir home proj wt fakebin launchlog id
   shift 2
   case_dir="$TMP_ROOT/$name"
+  # Cases run side by side, so one name must belong to one case: a reused name would make two cases share a directory.
+  mkdir "$case_dir" 2>/dev/null || fail "case name $name is used twice in this suite"
   home="$case_dir/home"
   proj="$case_dir/project"
   wt="$case_dir/wt"
@@ -108,6 +112,8 @@ task_inbox_export() {  # <home> <id>
 
 calm_host_memory() {  # prints a host-memory probe root that never reads as pressured
   local root=$TMP_ROOT/calm-host
+  # Built once, because cases that run side by side read this one probe and a rewrite would show them a half-written file.
+  [ ! -s "$root/cgroup/user.slice/user-$(id -u).slice/user@$(id -u).service/app.slice/memory.pressure" ] || { printf '%s\n' "$root"; return 0; }
   mkdir -p "$root/proc/pressure" "$root/cgroup/user.slice/user-$(id -u).slice/user@$(id -u).service/app.slice" || return 1
   printf 'MemTotal: 67108864 kB\nMemAvailable: 53687091 kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n' > "$root/proc/meminfo"
   printf 'some avg10=1.00 avg60=1.00 avg300=1.00 total=1\n' > "$root/proc/pressure/memory"
@@ -1471,6 +1477,379 @@ test_pi_approve_probe_omits_unsupported_flag() {
   pass "Pi approve probing omits --approve when help does not advertise it"
 }
 
+# config/crew-exclude-tools: per-home worker tool exclusions (jg-spawn header).
+write_exclude_file() {  # <home> <line>...
+  local home=$1
+  shift
+  printf '%s\n' "$@" > "$home/config/crew-exclude-tools"
+}
+
+test_pi_exclude_tools_reach_ship_and_scout_launches() {
+  local harness rec id out status launch kindflag
+  for harness in pi pi-signed; do
+    for kindflag in --ship --scout; do
+      id="excl-${harness}-${kindflag#--}-z9a"
+      rec=$(make_spawn_case "excl-${harness}-${kindflag#--}" "$harness" "$id")
+      read_case_record "$rec"
+      write_exclude_file "$HOME_DIR" '# hide the write tools' '' \
+        '  mcp__tracker__editIssue  ' 'mcp__tracker__createPage' 'mcp__other-srv__tool.v2'
+      if [ "$kindflag" = --scout ]; then
+        out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --scout)
+      else
+        out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+      fi
+      status=$?
+      expect_code 0 "$status" "$harness $kindflag spawn with exclusions should succeed"$'\n'"$out"
+      launch=$(cat "$LAUNCH_LOG")
+      assert_contains "$launch" "--exclude-tools 'ask_user_question,mcp__tracker__editIssue,mcp__tracker__createPage,mcp__other-srv__tool.v2' " \
+        "$harness $kindflag launch must carry the comma-joined, quoted exclusion list"
+    done
+  done
+  pass "Pi and pi-signed ship and scout launches carry the configured tool exclusions"
+}
+
+test_pi_exclude_tools_worker_registry_reports() {
+  local harness kindflag scenario case_name rec id out status report
+  command -v node >/dev/null 2>&1 || fail "node is required to drive Pi worker exclusion reporting"
+  for harness in pi pi-signed; do
+    for kindflag in --ship --scout; do
+      for scenario in matched unmatched unverified; do
+        id="excl-registry-${harness}-${kindflag#--}-${scenario}"
+        case_name=$id
+        [ "$scenario" != unmatched ] || case_name="josé-$id"
+        rec=$(make_spawn_case "$case_name" "$harness" "$id")
+        read_case_record "$rec"
+        case "$scenario" in
+          matched) write_exclude_file "$HOME_DIR" 'mcp__tracker__editIssue' ;;
+          unmatched) write_exclude_file "$HOME_DIR" 'mcp__tracker__editIssu' 'mcp__tracker__createIssu' ;;
+          unverified) write_exclude_file "$HOME_DIR" 'mcp__offline__executeWrite' ;;
+        esac
+        if [ "$kindflag" = --scout ]; then
+          out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --scout)
+        else
+          out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+        fi
+        expect_code 0 "$?" "$harness $kindflag registry-report spawn should succeed: $out"
+        out=$(EXT_PATH="$HOME_DIR/state/$id.pi-ext.ts" STATUS_FILE="$HOME_DIR/state/$id.status" \
+          EXCLUDE_FILE="$HOME_DIR/config/crew-exclude-tools" TURNEND="$HOME_DIR/state/$id.turn-ended" \
+          TASK_ID="$id" BUSY_EVENT="$ROOT/bin/jg-busy-event.sh" \
+          SCENARIO="$scenario" node --input-type=module 2>&1 <<'JS'
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { appendFileSync, existsSync, readFileSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { setTimeout } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
+const status = () => existsSync(process.env.STATUS_FILE) ? readFileSync(process.env.STATUS_FILE, "utf8") : "";
+const before = status();
+const stateDir = dirname(process.env.STATUS_FILE);
+const genFile = join(stateDir, process.env.TASK_ID + ".busy-gen");
+const gen = readFileSync(genFile, "utf8").trim();
+const busy = () => {
+  const [version, ...fields] = readFileSync(join(stateDir, process.env.TASK_ID + ".busy-state"), "utf8").trim().split(" ");
+  assert.equal(version, "v1");
+  const { ts, ...record } = Object.fromEntries(fields.map((field) => field.split("=")));
+  assert.match(ts, /^\d+$/);
+  return record;
+};
+const seeded = busy();
+assert.deepEqual(seeded, { gen, seq: "1", state: "busy", source: "jg-spawn", event: "launch-brief" });
+const handlers = {};
+let tools = [];
+const extension = await import(pathToFileURL(process.env.EXT_PATH).href);
+extension.default({
+  on: (name, handler) => { handlers[name] = handler; },
+  events: { on() {} },
+  getAllTools: () => tools,
+});
+assert.equal(status(), before, "registration must not validate against a registry that has not loaded yet");
+assert.deepEqual(busy(), seeded, "registration must not change busy state");
+if (process.env.SCENARIO !== "unverified") {
+  tools = [{ name: "mcp__tracker__editIssue" }, { name: "mcp__tracker__createIssue" }];
+}
+rmSync(process.env.TURNEND, { force: true });
+await handlers.agent_start();
+const started = { gen, seq: "2", state: "busy", source: "pi-ext", event: "agent-start" };
+assert.deepEqual(busy(), started, "agent_start must publish a generation-bound Pi busy event");
+const after = status();
+if (process.env.SCENARIO === "matched") {
+  assert.equal(after, before, "an exact match must produce no report");
+} else {
+  const report = after.slice(before.length);
+  assert.match(report, /^note \[at=\d+\]: warning: /);
+  assert.ok(report.includes(process.env.EXCLUDE_FILE), "the report must identify the config file");
+  assert.ok(report.includes("unmatched exclusion entries"));
+  assert.ok(report.includes("unverified"), "absence must never imply validity");
+  const missing = process.env.SCENARIO === "unmatched"
+    ? ["mcp__tracker__editIssu", "mcp__tracker__createIssu"]
+    : ["mcp__offline__executeWrite"];
+  for (const name of missing) assert.ok(report.includes(name), "every unmatched entry must be reported: " + name);
+  assert.ok(!report.includes("mcp__tracker__editIssue"), "a loaded tool must not be reported");
+}
+await handlers.agent_settled({}, { isIdle: () => false });
+assert.deepEqual(busy(), started, "a continuation must stay busy even when agent_settled fires");
+await handlers.turn_end();
+for (let attempt = 0; attempt < 100 && !existsSync(process.env.TURNEND); attempt++) {
+  await setTimeout(10);
+}
+assert.ok(existsSync(process.env.TURNEND), "reporting must preserve turn-end notification");
+assert.deepEqual(busy(), started, "an inner turn boundary must not mark the worker idle");
+await handlers.agent_settled({}, { isIdle: () => true });
+assert.deepEqual(busy(), { gen, seq: "3", state: "idle", source: "pi-ext", event: "agent-settled" });
+await handlers.agent_start();
+assert.deepEqual(busy(), { gen, seq: "4", state: "busy", source: "pi-ext", event: "agent-start" });
+assert.equal(status(), after, "report once per worker incarnation, not on every turn");
+appendFileSync(process.env.STATUS_FILE, "done: completed task\n");
+const completed = status();
+await handlers.agent_settled({}, { isIdle: () => true });
+assert.deepEqual(busy(), { gen, seq: "5", state: "idle", source: "pi-ext", event: "agent-settled" });
+assert.equal(status(), completed, "a reporting extension must not supersede a terminal worker status");
+const replacementGen = execFileSync(process.env.BUSY_EVENT, ["arm", stateDir, process.env.TASK_ID], { encoding: "utf8" }).trim();
+assert.notEqual(replacementGen, gen, "relaunch must mint a new generation");
+const replacement = busy();
+assert.deepEqual(replacement, { gen: replacementGen, seq: "1", state: "busy", source: "jg-spawn", event: "launch-brief" });
+await handlers.agent_settled({}, { isIdle: () => true });
+assert.deepEqual(busy(), replacement, "a stale extension must not clear its replacement's busy state");
+await handlers.agent_start();
+assert.deepEqual(busy(), replacement, "a stale extension must not publish into its replacement's generation");
+assert.equal(readFileSync(genFile, "utf8").trim(), replacementGen);
+assert.equal(status(), completed, "stale lifecycle events must not repeat exclusion warnings");
+JS
+        )
+        status=$?
+        expect_code 0 "$status" "$harness $kindflag $scenario worker registry check failed: $out"
+        if [ "$scenario" != matched ]; then
+          report=$(bash -c '. "$1/bin/jg-classify-lib.sh"; scan_unread_surface_lines "$2"' \
+            _ "$ROOT" "$HOME_DIR/state")
+          expect_code 0 "$?" "the supervisor's unread-status consumer should succeed"
+          assert_contains "$report" "$HOME_DIR/config/crew-exclude-tools" "the supervisor must see the exclusion warning even after done"
+          assert_contains "$report" "unverified" "the supervisor must see that exclusions remain unverified"
+        fi
+      done
+    done
+  done
+  pass "Pi worker registries report unmatched and unverified exclusions without reporting exact matches"
+}
+
+# A worker never asks the human directly: its question belongs to the lead, so each runtime that
+# can hide its ask tool at launch does (claude, opencode, pi, pi-signed); the rest are covered by
+# the stuck-worker detector alone.
+test_workers_cannot_ask_the_user() {
+  local harness rec id out launch want
+  for harness in claude opencode pi pi-signed; do
+    case "$harness" in
+      claude) want="--disallowedTools=AskUserQuestion," ;;
+      opencode) want='"question":"deny"' ;;
+      *) want="--exclude-tools 'ask_user_question' " ;;
+    esac
+    id="noask-${harness}-z4a"
+    rec=$(make_spawn_case "noask-${harness}" "$harness" "$id")
+    read_case_record "$rec"
+    out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+    expect_code 0 "$?" "$harness ship spawn should succeed"$'\n'"$out"
+    launch=$(cat "$LAUNCH_LOG")
+    assert_contains "$launch" "$want" "$harness worker launch must hide its ask-user tool"
+  done
+  id=noask-codex-z4b
+  rec=$(make_spawn_case noask-codex codex "$id")
+  read_case_record "$rec"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  expect_code 0 "$?" "codex ship spawn should succeed"
+  assert_not_contains "$(cat "$LAUNCH_LOG")" "AskUserQuestion" "codex launch carries no ask-user flag"
+  pass "ship workers launch with their ask-user tool hidden on claude, opencode, pi and pi-signed"
+}
+
+test_pi_exclude_tools_absent_and_empty_lists() {
+  local rec id out status launch
+  id=excl-absent-z9b
+  rec=$(make_spawn_case excl-absent pi "$id")
+  read_case_record "$rec"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  expect_code 0 "$?" "Pi spawn without the file should succeed"
+  assert_contains "$(cat "$LAUNCH_LOG")" "--exclude-tools 'ask_user_question' " "an absent file must add only the ask-user exclusion"
+
+  id=excl-empty-z9c
+  rec=$(make_spawn_case excl-empty pi "$id")
+  read_case_record "$rec"
+  write_exclude_file "$HOME_DIR" '# nothing yet' ''
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  expect_code 0 "$?" "Pi spawn with a comment-only file should succeed"
+  assert_contains "$(cat "$LAUNCH_LOG")" "--exclude-tools 'ask_user_question' " "a file with no entries must add only the ask-user exclusion"
+
+  local harness
+  for harness in claude codex; do
+    id="excl-${harness}-empty-z9d"
+    rec=$(make_spawn_case "excl-${harness}-empty" "$harness" "$id")
+    read_case_record "$rec"
+    write_exclude_file "$HOME_DIR" '# nothing yet' ''
+    out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+    status=$?
+    expect_code 0 "$status" "$harness spawn with an empty exclusion list should succeed"$'\n'"$out"
+    assert_not_contains "$(cat "$LAUNCH_LOG")" "--exclude-tools" "$harness must receive no exclusion flag"
+  done
+  pass "an absent or empty exclusion list leaves every runtime unaffected"
+}
+
+test_exclude_tools_non_pi_runtime_refuses_non_empty_list() {
+  local harness rec id out status
+  for harness in claude codex grok; do
+    id="excl-refuse-${harness}-z9i"
+    rec=$(make_spawn_case "excl-refuse-${harness}" "$harness" "$id")
+    read_case_record "$rec"
+    write_exclude_file "$HOME_DIR" 'mcp__srv__writeTool'
+    out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+    status=$?
+    expect_code 1 "$status" "$harness spawn with a non-empty exclusion list must refuse"
+    assert_contains "$out" "config/crew-exclude-tools" "the $harness refusal must name the config file"
+    assert_contains "$out" "$harness runtime cannot hide tools" "the $harness refusal must name the runtime"
+    [ ! -s "$LAUNCH_LOG" ] || fail "$harness launched despite an unhonorable exclusion list"
+    [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "$harness refusal still wrote a task record"
+  done
+  # A raw launch command cannot receive the flag, Pi-named or not.
+  id=excl-refuse-raw-z9j
+  rec=$(make_spawn_case excl-refuse-raw pi "$id")
+  read_case_record "$rec"
+  write_exclude_file "$HOME_DIR" 'mcp__srv__writeTool'
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" "pi Verify this adapter")
+  status=$?
+  expect_code 1 "$status" "a raw launch with a non-empty exclusion list must refuse"
+  assert_contains "$out" "config/crew-exclude-tools" "the raw-launch refusal must name the config file"
+  [ ! -s "$LAUNCH_LOG" ] || fail "a raw launch ignored the exclusion list"
+  pass "a runtime that cannot hide tools, or a raw launch, refuses a non-empty exclusion list"
+}
+
+test_pi_exclude_tools_malformed_entry_refuses_before_endpoint() {
+  local rec id out status bad n=0
+  for bad in 'two words' 'a,b' 'mcp__srv__tool;rm' '*' 'mcp__srv__*Admin' 'quote'"'"'d' "mcp__srv__\$X"; do
+    n=$((n + 1))
+    id="excl-bad-$n-z9e"
+    rec=$(make_spawn_case "excl-bad-$n" pi "$id")
+    read_case_record "$rec"
+    write_exclude_file "$HOME_DIR" 'mcp__srv__good' "$bad"
+    out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+    status=$?
+    expect_code 1 "$status" "malformed entry '$bad' must refuse the spawn"
+    assert_contains "$out" "config/crew-exclude-tools has a malformed entry '$bad'" \
+      "the refusal must name the malformed entry '$bad'"
+    [ ! -s "$LAUNCH_LOG" ] || fail "a malformed exclusion entry '$bad' still launched a worker"
+    [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "a malformed exclusion entry '$bad' still wrote a task record"
+  done
+  pass "a malformed exclusion entry refuses the spawn before any launch or record"
+}
+
+test_pi_exclude_tools_read_failure_refuses_before_launch() {
+  local harness kind rec id out status bash_env
+  for harness in pi pi-signed; do
+    for kind in ship scout; do
+      id="excl-read-failure-${harness}-${kind}"
+      rec=$(make_spawn_case "$id" "$harness" "$id")
+      read_case_record "$rec"
+      write_exclude_file "$HOME_DIR" 'mcp__srv__writeTool'
+      bash_env="$CASE_DIR/remove-exclusions.bash"
+      # Make the file disappear immediately after its readability check, without
+      # sleeps or permission assumptions (chmod alone would not fail as root).
+      cat > "$bash_env" <<'SH'
+function [ {
+  local status=0
+  builtin test "${@:1:$#-1}" || status=$?
+  if builtin [ "$#" -eq 4 ] && builtin [ "$1" = '!' ] &&
+    builtin [ "$2" = -r ] &&
+    builtin [ "$3" = "${JG_CONFIG_OVERRIDE:-}/crew-exclude-tools" ]; then
+    rm -f -- "$3"
+  fi
+  return "$status"
+}
+SH
+      if [ "$kind" = scout ]; then
+        out=$(BASH_ENV="$bash_env" run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --scout)
+      else
+        out=$(BASH_ENV="$bash_env" run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+      fi
+      status=$?
+      [ ! -e "$HOME_DIR/config/crew-exclude-tools" ] || fail "the read-failure injection did not remove the list"
+      expect_code 1 "$status" "$harness $kind must refuse when the checked exclusion file cannot be opened"
+      assert_contains "$out" "error: cannot read config/crew-exclude-tools" "the refusal must explain the read failure"
+      [ ! -s "$LAUNCH_LOG" ] || fail "$harness $kind launched despite the unreadable exclusion list"
+      [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "$harness $kind read failure still wrote a task record"
+    done
+  done
+  pass "Pi and pi-signed ship and scout launches refuse when the exclusion file disappears after its checks"
+}
+
+test_pi_exclude_tools_do_not_leak_across_homes_or_to_squad_leads() {
+  local rec_a rec_b id_a id_b launch sm out status
+  id_a=excl-home-a-z9f
+  id_b=excl-home-b-z9g
+  rec_a=$(make_spawn_case excl-home-a pi "$id_a")
+  read_case_record "$rec_a"
+  write_exclude_file "$HOME_DIR" 'mcp__srv__writeTool'
+  run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id_a" "$PROJ_DIR" >/dev/null
+  expect_code 0 "$?" "home A spawn should succeed"
+  assert_contains "$(cat "$LAUNCH_LOG")" "--exclude-tools 'ask_user_question,mcp__srv__writeTool'" "home A lost its own exclusions"
+
+  # A second home running the same code, with no file of its own, inherits nothing.
+  rec_b=$(make_spawn_case excl-home-b pi "$id_b")
+  read_case_record "$rec_b"
+  run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id_b" "$PROJ_DIR" >/dev/null
+  expect_code 0 "$?" "home B spawn should succeed"
+  assert_not_contains "$(cat "$LAUNCH_LOG")" "mcp__srv__writeTool" "home B must not inherit home A's exclusions"
+
+  # A seeded squad_lead agent is unaffected even in the home that has the file.
+  id_a=excl-sm-z9h
+  rec_a=$(make_spawn_case excl-sm codex "$id_a")
+  read_case_record "$rec_a"
+  printf '%s\n' pi > "$HOME_DIR/config/squad-lead-harness"
+  write_exclude_file "$HOME_DIR" 'mcp__srv__writeTool'
+  sm="$CASE_DIR/squad-lead-home"
+  make_seeded_squad_lead_home "$sm" "$id_a"
+  sm=$(cd "$sm" && pwd -P)
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id_a" "$sm" --squad-lead)
+  status=$?
+  expect_code 0 "$status" "Pi squad_lead spawn should succeed"$'\n'"$out"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "jg-primary-turnend-guard.ts" "squad_lead launch was not the Pi squad_lead shape"
+  assert_not_contains "$launch" "--exclude-tools" "a squad_lead's own agent must not receive the worker exclusions"
+  pass "exclusions stay in the home that configured them and skip squad_lead agents"
+}
+
+test_batch_forwards_shared_profile_flags() {
+  local rec id1 id2 out status
+  id1=profile-batch-a-z9
+  id2=profile-batch-b-z10
+  rec=$(make_spawn_case profile-batch claude "$id1" "$id2")
+  read_case_record "$rec"
+  enable_dispatch_profile "$HOME_DIR"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id1=$PROJ_DIR" "$id2=$PROJ_DIR" --harness codex --model gpt-5 --effort high)
+  status=$?
+  expect_code 0 "$status" "batch spawn with shared profile flags should succeed"
+  assert_contains "$out" "spawned $id1 harness=codex" "first batch task did not use shared harness"
+  assert_contains "$out" "spawned $id2 harness=codex" "second batch task did not use shared harness"
+  assert_meta_profile "$HOME_DIR/state/$id1.meta" codex gpt-5 high
+  assert_meta_profile "$HOME_DIR/state/$id2.meta" codex gpt-5 high
+  pass "batch dispatch forwards shared --harness, --model, and --effort to every pair"
+}
+
+test_claude_forwards_juggernaut_config_dir_when_set() {
+  local rec id out status launch
+  id=profile-claude-cfgdir-z17
+  rec=$(make_spawn_case profile-claude-cfgdir claude "$id")
+  read_case_record "$rec"
+
+  # A creatable path: this spawn now pre-registers workspace trust in that store
+  # (bin/jg-claude-trust.sh), so an unwritable directory is a genuine blocker.
+  # The forwarding assertion below is what this case proves and is unchanged.
+  out=$(JG_TEST_CLAUDE_CONFIG_DIR="$CASE_DIR/claude-work" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "claude spawn with CLAUDE_CONFIG_DIR set should succeed"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "CLAUDE_CONFIG_DIR='$CASE_DIR/claude-work' env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions " \
+    "claude launch did not forward juggernaut's CLAUDE_CONFIG_DIR to the operator pane"
+  pass "claude forwards juggernaut's CLAUDE_CONFIG_DIR so the operator uses the same credential store"
+}
+
 test_claude_omits_config_dir_prefix_when_unset() {
   local rec id out status launch
   id=profile-claude-nocfgdir-z18
@@ -2111,13 +2490,6 @@ SH
   done
 }
 
-test_launch_environment_allowlist
-test_launch_exports_jg_home_to_hook_and_agent
-test_launch_environment_invalid_config_refuses
-test_launch_environment_inaccessible_config_refuses
-test_launch_environment_inherited_by_squad_lead
-test_launch_environment_inheritance_preserves_on_source_errors
-
 test_worker_launch_delivers_role_scope() {
   local rec id out launch kind prompt envelope encoded brief_kind brief content first_line role_line task_line inbox
   for brief_kind in heading legacy scaffold; do
@@ -2375,89 +2747,111 @@ test_non_claude_harness_ignores_claude_permission_mode() {
   pass "config/claude-permission-mode changes claude launches only"
 }
 
-test_launch_preserves_inherited_git_config
-test_worker_launch_delivers_role_scope
-test_no_profile_keeps_claude_profile_defaults
-test_claude_launch_brief_publishes_record_doorbell
-test_claude_squad_lead_launch_brief_publishes_into_its_own_home
-test_claude_spawn_refuses_when_the_brief_record_cannot_publish
-test_non_cursor_launch_clears_inherited_cursor_markers
-test_relative_home_overrides_launch_with_absolute_cross_process_paths
-test_home_defaults_preserve_absolute_or_resolve_relative_paths
-test_absolute_override_spelling_is_preserved_in_launch_paths
-test_unresolvable_relative_overrides_fail_loudly
-test_active_dispatch_profile_requires_explicit_harness_for_ship
-test_active_dispatch_profile_requires_explicit_harness_for_scout
-test_active_dispatch_profile_allows_explicit_harness
-test_active_dispatch_profile_allows_positional_harness
-test_active_dispatch_profile_allows_raw_launch_command
-test_chained_raw_launch_strips_ai_trailer_in_every_step
-test_claude_threads_model_and_effort
-test_codex_threads_model_and_effort
-test_codex_threads_model_and_max_effort
-test_codex_omits_max_effort_for_unsupported_model
-test_codex_operator_launch_disables_the_hook_layer
-test_codex_squad_lead_launch_keeps_the_hook_layer
-test_grok_threads_model_and_reasoning_effort
-test_grok_omits_invalid_max_reasoning_effort
-test_grok_omits_invalid_xhigh_reasoning_effort
-test_cursor_threads_model_workspace_and_omits_effort_axis
-test_cursor_refuses_model_absent_from_live_catalog
-test_cursor_failed_catalog_probe_does_not_block_spawn
-test_opencode_squad_lead_writes_exact_channel_grant
-test_opencode_refuses_a_model_that_cannot_run_an_agent
-test_opencode_threads_model_and_effort_variant
-test_opencode_without_effort_keeps_launch_config_unchanged
-test_opencode_go_model_takes_per_task_store_when_auth_has_key
-test_opencode_go_model_keeps_shared_store_without_key
-test_opencode_console_model_keeps_shared_store
-test_opencode_console_provider_keeps_shared_store
-test_opencode_no_model_keeps_shared_store
-test_opencode_equal_task_ids_in_two_homes_get_two_stores
-test_opencode_hostile_task_id_is_refused
-test_opencode_emits_variant_for_openai_family_effort
-test_opencode_omits_variant_when_model_family_lacks_effort
-test_native_effort_validator_keeps_axes_separate
-test_native_pi_ultra_is_explicit_and_model_scoped
-test_batch_preserves_native_ultra
-test_pi_scout_launch_enters_recorded_worktree
-test_pi_threads_model_and_max_effort
-test_pi_tui_mode_probe_is_safe_for_old_and_new_pi
-test_pi_signed_threads_shared_pi_profile_and_preserves_identity
-test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata
-test_pi_signed_persistent_squad_lead_uses_pi_extensions_and_identity
-test_pi_seeded_squad_lead_preapproves_project_trust
-test_pi_worker_launch_omits_seeded_home_approve
-test_pi_refuses_a_claude_model_before_any_pane_exists
-test_pi_approve_probe_omits_unsupported_flag
-test_pi_exclude_tools_reach_ship_and_scout_launches
-test_pi_exclude_tools_worker_registry_reports
-test_pi_exclude_tools_absent_and_empty_lists
-test_workers_cannot_ask_the_user
-test_exclude_tools_non_pi_runtime_refuses_non_empty_list
-test_pi_exclude_tools_malformed_entry_refuses_before_endpoint
-test_pi_exclude_tools_read_failure_refuses_before_launch
-test_pi_exclude_tools_do_not_leak_across_homes_or_to_squad_leads
-test_batch_forwards_shared_profile_flags
-test_claude_forwards_juggernaut_config_dir_when_set
-test_claude_omits_config_dir_prefix_when_unset
-test_claude_permission_mode_bypass_matches_absent_launch
-test_claude_permission_mode_auto_swaps_only_the_permission_flag
-test_claude_permission_mode_auto_reaches_scout_launch
-test_claude_worker_launch_covers_task_channel_dirs
-test_claude_permission_mode_invalid_refuses_before_endpoint_or_metadata
-test_non_claude_harness_ignores_claude_permission_mode
-test_non_claude_harness_ignores_config_dir
-test_claude_task_launch_carries_control_channel_authority
-test_claude_squad_lead_launch_omits_task_control_channel_authority
-test_claude_long_launch_is_delivered_intact
-test_claude_operator_launch_carries_the_attribution_policy
-test_keep_ai_trailers_omits_attribution_settings_and_strip_hooks
-test_claude_token_saver_settings
-test_claude_launch_settings_are_thin_for_both_roles
-test_claude_launch_passes_the_projects_mcp_file_only_when_registered
-test_keep_ai_trailers_reaches_squad_lead_crew_launches
-test_claude_squad_lead_launch_carries_the_attribution_policy
-test_active_dispatch_profile_does_not_block_squad_lead_launch
+# The cases share nothing but the read-only fixtures built here, so they run a few at a time. One case is a real spawn, costing
+# seconds of Beads work, so the whole list is more than one script may take under the gate's bound: it is dealt out
+# round-robin to JG_DISPATCH_PROFILE_PARTS scripts, this one the first and tests/jg-spawn-dispatch-profile-part<N>.test.sh the rest.
+JG_DISPATCH_PROFILE_PARTS=4
+JG_DISPATCH_PROFILE_PART=${JG_DISPATCH_PROFILE_PART:-1}
+case $JG_DISPATCH_PROFILE_PART in [1-4]) ;; *) fail "JG_DISPATCH_PROFILE_PART must be 1 to $JG_DISPATCH_PROFILE_PARTS, got $JG_DISPATCH_PROFILE_PART" ;; esac
+DISPATCH_PROFILE_CASES=(
+  test_launch_environment_allowlist
+  test_launch_exports_jg_home_to_hook_and_agent
+  test_launch_environment_invalid_config_refuses
+  test_launch_environment_inaccessible_config_refuses
+  test_launch_environment_inherited_by_squad_lead
+  test_launch_environment_inheritance_preserves_on_source_errors
+  test_launch_preserves_inherited_git_config
+  test_worker_launch_delivers_role_scope
+  test_no_profile_keeps_claude_profile_defaults
+  test_claude_launch_brief_publishes_record_doorbell
+  test_claude_squad_lead_launch_brief_publishes_into_its_own_home
+  test_claude_spawn_refuses_when_the_brief_record_cannot_publish
+  test_non_cursor_launch_clears_inherited_cursor_markers
+  test_relative_home_overrides_launch_with_absolute_cross_process_paths
+  test_home_defaults_preserve_absolute_or_resolve_relative_paths
+  test_absolute_override_spelling_is_preserved_in_launch_paths
+  test_unresolvable_relative_overrides_fail_loudly
+  test_active_dispatch_profile_requires_explicit_harness_for_ship
+  test_active_dispatch_profile_requires_explicit_harness_for_scout
+  test_active_dispatch_profile_allows_explicit_harness
+  test_active_dispatch_profile_allows_positional_harness
+  test_active_dispatch_profile_allows_raw_launch_command
+  test_chained_raw_launch_strips_ai_trailer_in_every_step
+  test_claude_threads_model_and_effort
+  test_codex_threads_model_and_effort
+  test_codex_threads_model_and_max_effort
+  test_codex_omits_max_effort_for_unsupported_model
+  test_codex_operator_launch_disables_the_hook_layer
+  test_codex_squad_lead_launch_keeps_the_hook_layer
+  test_grok_threads_model_and_reasoning_effort
+  test_grok_omits_invalid_max_reasoning_effort
+  test_grok_omits_invalid_xhigh_reasoning_effort
+  test_cursor_threads_model_workspace_and_omits_effort_axis
+  test_cursor_refuses_model_absent_from_live_catalog
+  test_cursor_failed_catalog_probe_does_not_block_spawn
+  test_opencode_squad_lead_writes_exact_channel_grant
+  test_opencode_refuses_a_model_that_cannot_run_an_agent
+  test_opencode_threads_model_and_effort_variant
+  test_opencode_without_effort_keeps_launch_config_unchanged
+  test_opencode_go_model_takes_per_task_store_when_auth_has_key
+  test_opencode_go_model_keeps_shared_store_without_key
+  test_opencode_console_model_keeps_shared_store
+  test_opencode_console_provider_keeps_shared_store
+  test_opencode_no_model_keeps_shared_store
+  test_opencode_equal_task_ids_in_two_homes_get_two_stores
+  test_opencode_hostile_task_id_is_refused
+  test_opencode_emits_variant_for_openai_family_effort
+  test_opencode_omits_variant_when_model_family_lacks_effort
+  test_native_effort_validator_keeps_axes_separate
+  test_native_pi_ultra_is_explicit_and_model_scoped
+  test_batch_preserves_native_ultra
+  test_pi_scout_launch_enters_recorded_worktree
+  test_pi_threads_model_and_max_effort
+  test_pi_tui_mode_probe_is_safe_for_old_and_new_pi
+  test_pi_signed_threads_shared_pi_profile_and_preserves_identity
+  test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata
+  test_pi_signed_persistent_squad_lead_uses_pi_extensions_and_identity
+  test_pi_seeded_squad_lead_preapproves_project_trust
+  test_pi_worker_launch_omits_seeded_home_approve
+  test_pi_refuses_a_claude_model_before_any_pane_exists
+  test_pi_approve_probe_omits_unsupported_flag
+  test_pi_exclude_tools_reach_ship_and_scout_launches
+  test_pi_exclude_tools_worker_registry_reports
+  test_pi_exclude_tools_absent_and_empty_lists
+  test_workers_cannot_ask_the_user
+  test_exclude_tools_non_pi_runtime_refuses_non_empty_list
+  test_pi_exclude_tools_malformed_entry_refuses_before_endpoint
+  test_pi_exclude_tools_read_failure_refuses_before_launch
+  test_pi_exclude_tools_do_not_leak_across_homes_or_to_squad_leads
+  test_batch_forwards_shared_profile_flags
+  test_claude_forwards_juggernaut_config_dir_when_set
+  test_claude_omits_config_dir_prefix_when_unset
+  test_claude_permission_mode_bypass_matches_absent_launch
+  test_claude_permission_mode_auto_swaps_only_the_permission_flag
+  test_claude_permission_mode_auto_reaches_scout_launch
+  test_claude_worker_launch_covers_task_channel_dirs
+  test_claude_permission_mode_invalid_refuses_before_endpoint_or_metadata
+  test_non_claude_harness_ignores_claude_permission_mode
+  test_non_claude_harness_ignores_config_dir
+  test_claude_task_launch_carries_control_channel_authority
+  test_claude_squad_lead_launch_omits_task_control_channel_authority
+  test_claude_long_launch_is_delivered_intact
+  test_claude_operator_launch_carries_the_attribution_policy
+  test_keep_ai_trailers_omits_attribution_settings_and_strip_hooks
+  test_claude_token_saver_settings
+  test_claude_launch_settings_are_thin_for_both_roles
+  test_claude_launch_passes_the_projects_mcp_file_only_when_registered
+  test_keep_ai_trailers_reaches_squad_lead_crew_launches
+  test_claude_squad_lead_launch_carries_the_attribution_policy
+  test_active_dispatch_profile_does_not_block_squad_lead_launch
+)
+selected=()
+for i in "${!DISPATCH_PROFILE_CASES[@]}"; do
+  [ $((i % JG_DISPATCH_PROFILE_PARTS + 1)) -eq "$JG_DISPATCH_PROFILE_PART" ] && selected+=("${DISPATCH_PROFILE_CASES[i]}")
+done
+calm_host_memory >/dev/null || fail "cannot create the calm host-memory probe"
+# The Beads template store is built on first use; built here, the cases that run side by side only copy it.
+jg_test_beads_home "$TMP_ROOT/warm-template-home"
+jg_test_run_cases "${selected[@]}"
 
-echo "# all jg-spawn-dispatch-profile tests passed"
+echo "# all jg-spawn-dispatch-profile tests passed (part $JG_DISPATCH_PROFILE_PART of $JG_DISPATCH_PROFILE_PARTS)"
