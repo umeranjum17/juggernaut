@@ -178,6 +178,22 @@ test_the_queue_flushes_at_a_threshold_on_a_command_and_a_marked_lane_jumps_it() 
   pass 'the queue flushes and prioritizes marked and returned lanes'
 }
 
+# No flush-at-ready key: the default is 1, so one ready lane lands on the first tick. With flush-at-ready@proj=3 the same lane waits.
+test_a_lone_ready_lane_lands_by_default_and_a_raised_threshold_holds_it() {
+  local base
+  batch_world lone; base=$(tip)
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
+  sed -i.bak '/^flush-at-ready=/d' "$HOME_D/config/trunk-policy"
+  ! grep -q flush-at-ready "$HOME_D/config/trunk-policy" || fail "the case runs with no flush-at-ready key"
+  printf 'flush-at-ready@proj=3\n' >> "$HOME_D/config/trunk-policy"
+  lane l1 one f1.txt; fresh l1 1
+  qsweep >/dev/null; unlanded 0 "with flush-at-ready@proj=3 a lone young lane is held"
+  sed -i.bak '/^flush-at-ready@/d' "$HOME_D/config/trunk-policy"
+  qsweep >/dev/null; settled 1
+  [ "$(git -C "$PROJ" log --format=%s "$base..trunk")" = "ticket l1" ] || fail "with no key a lone ready lane lands on the first tick"
+  pass 'a lone ready lane lands by default and a raised flush-at-ready holds it'
+}
+
 # The landing check starts each landing with setsid, so the job leads its own process group and outlives the check that
 # started it. Two such jobs kept polling a lock in their deleted fixture homes for 3 hours: a suite's cleanup must stop
 # every job a check started (tests/lib.sh jg_test_reap_detached), even one still running when its fixture goes.
@@ -225,4 +241,5 @@ test_queued_lanes_land_as_one_stack_and_a_red_stack_is_bisected
 test_a_job_the_landing_check_starts_never_outlives_its_fixture
 test_the_landing_check_stacks_ready_lanes_and_keeps_a_single_lane_on_its_own_path
 test_the_queue_flushes_at_a_threshold_on_a_command_and_a_marked_lane_jumps_it
+test_a_lone_ready_lane_lands_by_default_and_a_raised_threshold_holds_it
 printf 'jg-trunk-queue: ok\n'

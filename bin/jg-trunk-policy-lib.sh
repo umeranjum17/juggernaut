@@ -38,7 +38,7 @@
 #   gate-slots            2           the most landing gates that run at once: a second lane is gated on top of the first one's commit and lands right behind it; 1 lands one lane at a time
 #   move-retries          8           how many times one landing run takes the lane onto a trunk another landing moved and gates it again before it ends
 #                                     with the wait "kept moving" (each time the tip moved, a lane landed, so the retry is the base-movement race only)
-#   flush-at-ready        3           the landing check holds ready lanes until this many are ready (or flush-after-minutes passes), then lands them all as one batch; 1 lands every lane as soon as it is ready
+#   flush-at-ready        1           the landing check holds ready lanes until this many are ready (or flush-after-minutes passes), then lands them all as one batch; 1 lands every lane as soon as it is ready (a larger number holds them)
 #   flush-after-minutes   20          ...or until the oldest ready lane has waited this long, whichever is first
 #   live-quiet-minutes    20          under a go-live waiver: the trunk goes live once no landing has happened for this long
 #   live-cap-minutes      60          under a go-live waiver: ...or once the oldest landing not yet live is this old, whichever is first
@@ -124,7 +124,7 @@ jg_trunk_policy() {  # <key> [<project>]
       landing-gate) val=none ;;
       gate-slots) val=2 ;;
       move-retries) val=8 ;;
-      flush-at-ready) val=3 ;;
+      flush-at-ready) val=1 ;;
       flush-after-minutes) val=20 ;;
       live-quiet-minutes) val=20 ;;
       live-cap-minutes) val=60 ;;

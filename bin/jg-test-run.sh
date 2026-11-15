@@ -1407,6 +1407,11 @@ families_for_changed_path() {
       # The TOON renderer sourced by juggernaut-axi and jg-bearings-snapshot.sh. Their suites have done-done entries, so
       # `done-done affected` selects it; this runner selects nothing.
       ;;
+    bin/jg-trunk-policy-lib.sh)
+      # The trunk policy library, sourced by the landing gate and queue. Their suites name it, but have done-done entries, so the
+      # reference scan finds none: these two run for it.
+      printf '%s\n' "__script__:jg-trunk-gate.test.sh" "__script__:jg-trunk-queue.test.sh"
+      ;;
     bin/jg-procevent-quota.sh)
       ;;
     bin/jg-quota-choose.sh)

@@ -85,7 +85,7 @@
 # (state/trunk-verify-want-<project>) where the newest commit wins, so a verify for an older commit gives up at once and the newest runs.
 # Two gates at once: a lane that starts while another gates on the tip is gated on top of that lane's commit and lands right behind it; if
 # the lane ahead does not land, it is gated again on the tip. gate-slots (default 2; 1 turns it off) is the most gates at once.
-# The queue's threshold: the landing check does not land ready lanes one by one. It holds them until flush-at-ready (default 3) are ready or the
+# The queue's threshold: the landing check does not land ready lanes one by one. It holds them until flush-at-ready (default 1: a lone ready lane lands at once) are ready or the
 # oldest has waited flush-after-minutes (default 20), then lands all of them (batch-max at a time, the rest at once after). `flush` skips the wait
 # for one project: it records state/trunk-flush-<project>, which the check honours until the project has no ready lane left. `land-next` records
 # state/<task>.land-next: that lane goes first and lands at once, with the others only when the threshold is also met. A worker never records either.

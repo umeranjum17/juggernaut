@@ -608,7 +608,7 @@ while read -r pn q; do  # the units, oldest first: a queue that runs now takes o
   # at once). A lane marked `land-next` goes first and lands at once, with or without the others. One queue per stack.
   list=$(printf '%s' "$cands" | awk -v p="$pn" -v q="$q" '$4 == p && $7 == q' | sort -k5,5n -k6,6n -k1,1n -k2,2)
   oldest=$(printf '%s\n' "$list" | sort -n -k1,1 | head -n 1 | cut -d' ' -f1)
-  at_ready=$(polnum flush-at-ready "$pn" 3); after=$(polnum flush-after-minutes "$pn" 20)
+  at_ready=$(polnum flush-at-ready "$pn" 1); after=$(polnum flush-after-minutes "$pn" 20)
   if jg_fact_flush_due "$STATE/trunk-flush-$pn" "$(printf '%s\n' "$list" | grep -c .)" "${oldest:-0}" "$now" "$at_ready" "$after"; then :; else
     list=$(printf '%s\n' "$list" | awk '$5 == 0')
   fi
