@@ -11,7 +11,7 @@
 #        jg-trunk.sh flush <project-dir>               Overwatch only: land every ready lane of the project now, in batches, whatever the threshold says
 #        jg-trunk.sh land-next <task-id>               Overwatch only: mark one ready lane so the landing check lands it at once, ahead of the queue
 #        jg-trunk.sh cancel <task-id> --reason <text>   Overwatch only: end the task's running landing (a single run or the stack it is in) through the landing check's own path: stops its process group, clears its running state and locks, records why, starts the next ready lane
-#        jg-trunk.sh verify <project-dir> [<sha>]      run the verify gate over every change since the green pin (default: the tip), one verify at a time and the newest wins; green moves the pin, a red it finds is reported against the commit that caused it (nothing is reverted) and raises line-red
+#        jg-trunk.sh verify <project-dir> [<sha>]      run the verify gate over every change since the green pin (default: the tip) with the code of the tip it judges (core/trunk-verify/tip-code.sh), one verify at a time and the newest wins; green moves the pin, a red it finds is reported against the commit that caused it (nothing is reverted) and raises line-red
 #        jg-trunk.sh verify-due <project-dir>          print the tip and exit 0 when a tick should start a verify (tip above the pin, none running, tip not already ended red)
 #        jg-trunk.sh nightly <project-dir>             the nightly whole run: the verify over the whole suite on the tip (gate-nightly), a red traced to its commit and reported the same way, a journey its proof did not select recorded as a miss (core/trunk-verify/miss.sh), a flaky script filed, one report a day
 #        jg-trunk.sh nightly-due <project-dir>         print the day and exit 0 when a tick should start the nightly run (nightly-hour reached, today's run not ended, no verify running)
@@ -213,6 +213,8 @@ LANDER_ACCOUNT="${CLAUDE_CONFIG_DIR:-}"; unset CLAUDE_CONFIG_DIR
 . "$SCRIPT_DIR/../core/trunk-verify/judge.sh"
 # shellcheck source=core/trunk-verify/miss.sh
 . "$SCRIPT_DIR/../core/trunk-verify/miss.sh"
+# shellcheck source=core/trunk-verify/tip-code.sh
+. "$SCRIPT_DIR/../core/trunk-verify/tip-code.sh"
 export JG_HOME JG_CONFIG_OVERRIDE="$CONFIG"
 
 usage() { sed -n '2,/^set -eu$/p' "${BASH_SOURCE[0]}" | sed -e 's/^# \{0,1\}//' -e '$d'; }
@@ -1804,6 +1806,8 @@ cmd_verify() {
   tip=$(rev "refs/heads/$TRUNK") || refuse "trunk branch $TRUNK is missing in $PROJ"
   sha=$tip; [ -z "${2-}" ] || sha=$(rev "$2") || die "'${2-}' does not resolve in $PROJ"
   git -C "$PROJ" merge-base --is-ancestor "$sha" "$tip" || refuse "${sha:0:12} is not on $TRUNK"
+  # The verify judges with the tip's own code (core/trunk-verify/tip-code.sh): a repair of the verifier above a frozen pin must reach it.
+  if verify_in_tip_code "$tip" "$@"; then exit "$VERIFY_TIP_RC"; fi
   JUDGE_NAME=verify; [ -z "${VERIFY_NIGHTLY:-}" ] || JUDGE_NAME=nightly
   GATE_TAG=verify-  # its gate marks say so: a move of the homes does not wait for a verify's gate, it follows the verify's green result
   verify_slot "$sha" || { echo "verify: ${sha:0:12} is superseded by a newer verify, so it does not run; a green result there moves the pin over it too"; return 0; }

@@ -16,6 +16,9 @@
 #    green, and the pin moves to that head and to no other commit; nothing is reported or reverted.
 # M7 the same repair, but lane 5 is bad and never repaired: the head run is red, so the milestones are split as before, the bad lanes are reported
 #    and the pin stays below the head.
+# M8 (verify-bootstrap) the repair is in the tip's verifier code, not in the home's installed code: the home still runs a milestone
+#    code that never tries the repair head. The verify judges with the code of the tip it judges, so the red milestone is tried at the
+#    repair head and the pin moves there; the same range judged by the installed code alone charges the repaired commit.
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
@@ -128,6 +131,36 @@ test_a_real_red_still_blocks_the_pin_when_a_repair_exists() {
   pass 'a real red at the head still splits the milestones, is reported, and keeps the pin below the head'
 }
 
+# stale_home_tip_code <name>: the repaired range, then a tip that carries the real verifier code (bin, core, policy) while the home's installed
+# milestone code is one that never tries the repair head.
+stale_home_tip_code() {
+  repaired "$1" "2"
+  rm -f "$W/root/core"; cp -r "$ROOT/core" "$W/root/core"
+  printf '\nms_head_green() { return 1; }  # an installed milestone code from before the repair-head step\n' >> "$W/root/core/trunk-verify/milestone.sh"
+  git -C "$PROJ" worktree add -q -b seedcode "$W/seedcode" trunk
+  mkdir -p "$W/seedcode/policy"; cp -r "$ROOT/bin" "$ROOT/core" "$W/seedcode/"; cp -r "$ROOT/policy/." "$W/seedcode/policy/"
+  git -C "$W/seedcode" add bin core policy
+  git -C "$W/seedcode" -c user.name=t -c user.email=t@example.invalid commit -q -m "the verifier code of the tip"
+  JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref refs/heads/trunk "$(git -C "$W/seedcode" rev-parse HEAD)"
+  tip > "$HOME_D/state/trunk-tip-proj"
+}
+
+test_the_verify_judges_with_the_code_of_the_tip_it_judges() {
+  local out
+  stale_home_tip_code installed
+  out=$(JG_VERIFY_CODE_AT=installed trunk verify "$PROJ" 2>&1) && fail "the installed code alone must split the range and charge the repaired commit: $out"
+  [ -n "$(charged)" ] || fail "the installed code alone reports the repaired commit red: $out"
+  stale_home_tip_code tipcode
+  out=$(trunk verify "$PROJ" 2>&1) || fail "the tip's code must verify the repaired range: $out"
+  assert_contains "$out" "judging with the code of the tip" "the verify names the code it judges with"
+  assert_contains "$out" "runs once at" "the tip's milestone code tries the repair head"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(tip)" ] || fail "the pin must stand on the repair head: $out"
+  [ -z "$(charged)" ] || fail "a repaired red is reported against no commit: $(charged | tr '\n' ' ')"
+  no_revert
+  compgen -G "$HOME_D/data/trunk/.verify-code.*" >/dev/null && fail "the extracted tip code must be removed"
+  pass "a verify run by stale installed code judges with the tip's code, tries the repair head and moves the pin there"
+}
+
 # qstack <name> <lanes> <bad index>: lanes land in turn, odd ones in queue A and even ones in queue B, each while the other queue's chain is live.
 qstack() {
   local i q o body live
@@ -174,6 +207,7 @@ test_a_milestone_holds_only_the_commits_of_its_window
 test_two_bad_commits_in_different_milestones_are_each_found_and_reported
 test_a_later_repair_proves_the_range_at_its_head_and_moves_the_pin_there
 test_a_real_red_still_blocks_the_pin_when_a_repair_exists
+test_the_verify_judges_with_the_code_of_the_tip_it_judges
 if [ -n "${DONE_DONE_EVIDENCE_ROOT:-}" ]; then
   cat > "$DONE_DONE_EVIDENCE_ROOT/steps.json" <<'JSON'
 {
