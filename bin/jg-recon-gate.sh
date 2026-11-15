@@ -40,6 +40,7 @@
 # researcher's report is not its product. It passes with that `Critic:` line and
 # one `Round <n>: new gaps <k>` line, at any depth. `--is-critic` only asks
 # whether the task is one: exit 0 when it is, 1 when it is not, nothing printed.
+# A critic that wrote its rounds to report.md (an older brief) is given this layout by `bin/jg-critic-role.sh migrate`.
 #
 # The owner's bypass (bin/jg-proof-bypass.sh, the record config/proof-bypass) lets a
 # Recon past this depth gate by the same record and command as a ship; the gate prints

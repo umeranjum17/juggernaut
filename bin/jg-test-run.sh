@@ -1513,7 +1513,7 @@ families_for_changed_path() {
       ;;
     bin/jg-lint.sh|bin/jg-lint-workflows.sh|bin/jg-install-shellcheck.sh|\
     bin/jg-install-actionlint.sh|\
-    bin/jg-committed-binary-check.sh|bin/jg-ports-check.sh|bin/jg-brief.sh|bin/jg-prior-art-gate.sh|bin/jg-recon-gate.sh|bin/jg-recon-depth.sh|bin/jg-loss-claim-check.sh|bin/jg-ensure-agents-md.sh|bin/jg-crew-state.sh|\
+    bin/jg-committed-binary-check.sh|bin/jg-ports-check.sh|bin/jg-brief.sh|bin/jg-prior-art-gate.sh|bin/jg-recon-gate.sh|bin/jg-critic-role.sh|bin/jg-recon-depth.sh|bin/jg-loss-claim-check.sh|bin/jg-ensure-agents-md.sh|bin/jg-crew-state.sh|\
     bin/jg-captain-hold.sh|bin/jg-lavish-guard.sh|bin/jg-recon-handoff.sh|bin/jg-supervision*|bin/jg-transition-lib.sh|\
     bin/jg-tmux-lib.sh|bin/jg-marker-lib.sh|bin/jg-operational-input.sh|bin/jg-backlog-lib.sh|\
     bin/jg-vendor-auth-probe.sh|\

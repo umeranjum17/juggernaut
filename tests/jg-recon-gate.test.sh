@@ -294,6 +294,37 @@ test_a_critic_task_passes_on_its_critic_md() {
   pass "jg-recon-gate.sh: a critic task passes on its critic.md and a researcher is not one"
 }
 
+# A critic briefed before the critic.md layout wrote its rounds to report.md, so the gate judged it as a researcher's report and cleanup
+# refused it. bin/jg-critic-role.sh migrate gives it the role: the gate cleanup runs then passes it on its rounds, while a researcher's
+# report and its unfinished critique are never touched and a second run changes nothing.
+test_a_legacy_critic_artifact_gets_its_role_from_one_migration() {
+  local dir=$HOME_DIR/data/rg-legacy-critic mig="$ROOT/bin/jg-critic-role.sh" before out
+  JG_HOME="$HOME_DIR" "$ROOT/bin/jg-brief.sh" rg-legacy-critic some-proj --scout --depth standard >/dev/null 2>&1 || fail "legacy critic scaffold failed"
+  printf '\n%s\n' 'Critic: rg-legacy-critic' 'Round 1: new gaps 2' '- a gap' 'Round 2: new gaps 0 report 0123456789ab' > "$dir/report.md"
+  run_gate rg-legacy-critic
+  expect_code 1 "$RC" "a critic under the researcher's filename is judged as a researcher before the migration (got: $OUT)"
+  JG_HOME="$HOME_DIR" bash "$GATE" rg-legacy-critic --is-critic && fail "the legacy critic has no role before the migration"
+  make_recon rg-legacy-researcher deep
+  printf 'Critic: rg-legacy-researcher-critic\nRound 1: new gaps 3\n' > "$HOME_DIR/data/rg-legacy-researcher/critic.md"
+  before=$(cat "$HOME_DIR/data/rg-legacy-researcher/report.md" "$HOME_DIR/data/rg-legacy-researcher/critic.md")
+  JG_HOME="$HOME_DIR" bash "$mig" check >/dev/null && fail "check should list the legacy critic artifact"
+  out=$(JG_HOME="$HOME_DIR" bash "$mig" migrate 2>&1) || fail "migrate failed: $out"
+  assert_contains "$out" "rg-legacy-critic: report.md -> critic.md" "migrate did not name the legacy critic"
+  assert_absent "$dir/report.md" "the rounds stayed under report.md"
+  assert_grep "Round 2: new gaps 0" "$dir/critic.md" "the rounds were lost in the rename"
+  run_gate rg-legacy-critic
+  expect_code 0 "$RC" "the migrated critic passes the gate cleanup runs (got: $OUT)"
+  JG_HOME="$HOME_DIR" bash "$GATE" rg-legacy-critic --is-critic || fail "--is-critic should accept the migrated critic"
+  [ "$(cat "$HOME_DIR/data/rg-legacy-researcher/report.md" "$HOME_DIR/data/rg-legacy-researcher/critic.md")" = "$before" ] \
+    || fail "migrate touched a researcher's files"
+  run_gate rg-legacy-researcher
+  expect_code 1 "$RC" "a researcher's unfinished critique still stops its cleanup (got: $OUT)"
+  out=$(JG_HOME="$HOME_DIR" bash "$mig" migrate 2>&1) || fail "the second migrate failed: $out"
+  assert_contains "$out" "no legacy critic artifact" "the second migrate changed something: $out"
+  JG_HOME="$HOME_DIR" bash "$mig" check >/dev/null || fail "check should find none after the migration"
+  pass "jg-critic-role.sh: one migration gives a legacy critic artifact its role and leaves a researcher alone"
+}
+
 test_the_owners_bypass_lets_a_recon_through_and_a_waiver_by_main_does_not() {
   local wdir=$HOME_DIR/state/recon-gate-waiver
   make_recon rg-waive deep
@@ -404,6 +435,7 @@ test_closure_check_closes_the_last_round
 test_source_budget
 test_quick_and_legacy_are_exempt
 test_a_critic_task_passes_on_its_critic_md
+test_a_legacy_critic_artifact_gets_its_role_from_one_migration
 test_the_owners_bypass_lets_a_recon_through_and_a_waiver_by_main_does_not
 test_a_deep_draft_with_only_its_critic_open_is_the_step_critic
 test_usage_errors
