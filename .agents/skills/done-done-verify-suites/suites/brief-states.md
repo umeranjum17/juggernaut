@@ -1,0 +1,3 @@
+# Brief states
+
+Brief states: run `done-done run brief-states` (which runs `tests/jg-status-states.test.sh`, then `bin/jg-status-states-lint.sh commit HEAD` on the repository, and writes its log into the run's folder); in a throwaway home, the real `bin/jg-brief.sh` scaffolds a ship brief, a Recon brief and a charter that all carry the `States:` line of `defaults/status-states.tsv`, refuses a home include that defines a state another way (naming its lines), `bin/jg-spawn.sh` refuses a brief that does the same and writes no task record, a Squad Lead launch renders its charter's `States:` line from the table again, and the commit lint fails a commit that adds or renames a status word without changing `bin/jg-brief.sh` (screen: none).

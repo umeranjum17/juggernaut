@@ -2779,6 +2779,20 @@ fi
   echo "error: task $ID has no brief at inaccessible data path $BRIEF" >&2
   exit 1
 }
+# One rule per status state: the brief or charter this launch reads may not define a state another way than the core contract
+# (defaults/status-states.tsv). A charter is rendered from it here, so a charter written before a state changed cannot drift.
+# shellcheck source=bin/jg-status-states-lib.sh
+. "$SCRIPT_DIR/jg-status-states-lib.sh"
+if [ "$KIND" = squad_lead ]; then
+  if _states_rerendered=$(jg_states_render_file "$BRIEF") && [ -n "$_states_rerendered" ]; then
+    echo "note: the charter $BRIEF carried an out-of-date States: line (line $_states_rerendered); it is rendered again from the core contract" >&2
+  fi
+fi
+if ! _states_findings=$(jg_states_check_text "$BRIEF" 2>&1); then
+  echo "error: $BRIEF defines a status state differently from the core contract (defaults/status-states.tsv); fix these lines before spawn:" >&2
+  printf '%s\n' "$_states_findings" >&2
+  exit 1
+fi
 if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   if jg_brief_task_placeholders_present "$BRIEF"; then
     echo "error: $BRIEF still contains {TASK} or {JUGGERNAUT_SPEC}; fill ## Captain's intent and ## Juggernaut spec before spawn" >&2

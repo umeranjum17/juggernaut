@@ -276,7 +276,11 @@ esac
 . "$SCRIPT_DIR/jg-preferred-stack-lib.sh"
 # shellcheck source=bin/jg-version-branch-lib.sh
 . "$SCRIPT_DIR/jg-version-branch-lib.sh"
+# shellcheck source=bin/jg-status-states-lib.sh
+. "$SCRIPT_DIR/jg-status-states-lib.sh"
 PAUSED_VERB=${JG_CLASSIFY_PAUSED_VERB:-$JG_CLASSIFY_PAUSED_VERB_DEFAULT}
+# The one States: line, from the core contract (defaults/status-states.tsv); no brief types a state word of its own.
+STATES_LINE=$(jg_states_line) || exit 1
 IFS= read -r -d '' OPERATOR_PAUSE_INSTRUCTIONS <<EOF || true
    One rule for every wait (your own background shell, pipeline run or validation round, an outside condition, a parked lane, a date): before you end your turn append \`$PAUSED_VERB [at=<epoch>] [wait=<who>] [reason=<word>]: {job and completion condition}\`. Use \`blocked:\` only when you are stuck, or for the waits-for line below.
    \`wait\` is who owes the next move: worker, tick (a script), lead, main, owner or outside (CI, a quota, another ticket, a date). \`reason\` is why: decision, blocker, dependency, quota, ci, approval, review, parked or date. A line with no wait, no reason, another word, or the old placeholder date is refused.
@@ -777,6 +781,14 @@ if [ "$KIND" != squad_lead ] && { [ -e "$BRIEF_INCLUDE_FILE" ] || [ -L "$BRIEF_I
     exit 1
   fi
   [ -n "$(printf '%s' "$BRIEF_INCLUDE_BODY" | tr -d '[:space:]')" ] || BRIEF_INCLUDE_BODY=
+  # One rule per status state: an include that defines a state another way than the core contract is refused, naming its lines.
+  if [ -n "$BRIEF_INCLUDE_BODY" ]; then
+    if ! _bi_findings=$(printf '%s\n' "$BRIEF_INCLUDE_BODY" | jg_states_check_text /dev/stdin 2>&1); then
+      echo "error: $BRIEF_INCLUDE_FILE defines a status state differently from the core contract (defaults/status-states.tsv); fix these lines of the include:" >&2
+      printf '%s\n' "$_bi_findings" | sed 's#^/dev/stdin:#  line #' >&2
+      exit 1
+    fi
+  fi
 fi
 
 _bi=$SCRIPT_DIR/../core/brief-inherit/bin/jg-brief-inherit-lib.sh
@@ -955,7 +967,7 @@ $INBOX_SECTION
 Handle routine work yourself.
 Report only true captain-relevant outcomes or a declared external wait by appending one line:
    \`$STATUS_APPEND\`
-States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.
+$STATES_LINE
 Substitute \`<epoch>\` with the current Unix time in seconds - run \`date +%s\` and write the number it printed; a stamp that is not plain digits records no time at all.
 Use \`$PAUSED_VERB [at=<epoch>] [wait=<who>] [reason=<word>]: {why}\` (never \`blocked:\`) only when your domain is deliberately idling on a known external wait you expect to clear on its own (wait is one of worker, tick, lead, main, owner, outside; reason one of decision, blocker, dependency, quota, ci, approval, review, parked, date; a line without them is refused), naming when it clears with \`until <YYYY-MM-DDTHH:MMZ>\` (UTC) when you know; use \`blocked:\` when you are stuck and need juggernaut to act.
 Use this only for material phase changes, a captain decision, a real blocker, a failure, work ready for review, or work you landed.
@@ -1098,7 +1110,7 @@ The report is the only thing that survives, so anything worth keeping must be in
 3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
 4. Report status by appending one line:
    \`$STATUS_APPEND\`
-   States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.
+   $STATES_LINE
    Substitute \`<epoch>\` with the current Unix time in seconds - run \`date +%s\` and write the number it printed; a stamp that is not plain digits records no time at all.
    Each append wakes juggernaut, so report sparingly: only phase changes a supervisor
    would act on and the needs-decision/blocked/paused/done/failed states. No step-by-step
@@ -1303,7 +1315,7 @@ $RULE1
 3. $FORGE_RULE_LINE
 4. Report status by appending one line:
    \`$STATUS_APPEND\`
-   States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.
+   $STATES_LINE
    Substitute \`<epoch>\` with the current Unix time in seconds - run \`date +%s\` and write the number it printed; a stamp that is not plain digits records no time at all.
    Each append wakes juggernaut, so report sparingly: only phase changes a supervisor
    would act on (setup done, bug reproduced, fix implemented, validation passed) and the

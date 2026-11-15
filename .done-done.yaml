@@ -588,6 +588,9 @@ journeys:
     # measured 0.7 s on the host, 2026-11-12 (serial, one run)
     tier: ci
     command: bash tests/jg-agents-md-floor.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  brief-states:
+    tier: local
+    command: (JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-status-states.test.sh && bash bin/jg-status-states-lint.sh commit HEAD) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   contract-brief-lint:
     # measured 0.6 s on the host, 2026-11-12 (serial, one run)
     tier: ci

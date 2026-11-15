@@ -1,0 +1,24 @@
+# defaults/status-states.tsv - the one core contract for the status words a worker, a lead or Main writes.
+# Owner of the row format: this header. Readers: bin/jg-status-states-lib.sh (renders the `States:` line of every brief
+# and charter), bin/jg-status-states-lint.sh (refuses text that defines a state another way, and a commit that adds or
+# renames a state without updating the brief text). Columns are separated by one TAB; `#` starts a comment line.
+#
+#   state  <word>  <writers>    a status word a status line may start with; <writers> is a comma list of who writes it
+#                               (worker, lead, main); the order of the rows is the order of the rendered `States:` line
+#   close  <word>               a word that closes a decision, blocker or keyed phase; it is not in the `States:` line
+#   wait   <word>...            the words `[wait=<who>]` of a declared wait may take (space separated)
+#   reason <word>...            the words `[reason=<word>]` of a declared wait may take (space separated)
+#
+# `paused` is the default spelling of the declared-wait verb; JG_CLASSIFY_PAUSED_VERB (bin/jg-classify-lib.sh) may
+# rename it, and the rendered line and the lint both follow that rename.
+# A commit that adds, removes or renames a `state`, `close`, `wait` or `reason` word must also change bin/jg-brief.sh
+# (the text of every brief and charter) or bin/jg-dod-lib.sh; bin/jg-status-states-lint.sh commit enforces that.
+state	working	worker,lead
+state	needs-decision	worker,lead
+state	blocked	worker,lead
+state	paused	worker,lead
+state	done	worker,lead
+state	failed	worker,lead
+close	resolved
+wait	worker tick lead main owner outside
+reason	decision blocker dependency quota ci approval review parked date
