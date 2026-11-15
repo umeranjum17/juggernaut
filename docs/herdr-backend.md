@@ -373,6 +373,9 @@ Ordinary non-projected task removal:
 
 Task cleanup acquires that session lock before the task's isolated copy is returned.
 So a contended lock refuses up front while the copy, every durable record, and the endpoint are all intact for a plain rerun.
+Cleanup holds that lock only for the pane close and the proof that the pane is gone, and releases it before the process reap, the safety proof re-run, and the copy's return.
+So a second cleanup in the same session never waits on that slow work, and a parked branch stays recoverable because the return still re-proves it.
+A Squad Lead cleanup keeps its locks to the end, because its forced child cleanup closes each child pane under them.
 
 Forced Squad Lead cleanup recursively preflights every Herdr child endpoint and acquires every affected named-session lock before mutating any child.
 It then retains each child's durable identity unless that exact pane returns structured not-found after its close.

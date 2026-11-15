@@ -2916,13 +2916,14 @@ if teardown_owns_worktree && [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
   fi
 fi
 
-# A Herdr close may reposition shared workspace order, so the whole
-# destructive sequence below (worktree return, pane close, record removal)
-# runs under the named-session presentation lock, acquired BEFORE anything is
-# returned or erased: a contended lock refuses here while the isolated copy,
-# every durable record, and the endpoint are all still intact for a plain
-# rerun. An unresolvable lock path (for example an unreachable server) also
-# refuses before any destructive step.
+# A Herdr close may reposition shared workspace order, so the pane close and
+# the proof that it happened run under the named-session presentation lock,
+# acquired BEFORE anything is returned or erased: a contended lock refuses here
+# while the isolated copy, every durable record, and the endpoint are all still
+# intact for a plain rerun. An unresolvable lock path (for example an
+# unreachable server) also refuses before any destructive step. The lock is
+# released as soon as the pane is confirmed gone, so the slow work after it
+# (reap, return, safety re-proof) never holds it; only a Squad Lead keeps it.
 TEARDOWN_HERDR_SESSION=
 TEARDOWN_HERDR_PANE=
 if [ "$BACKEND" = herdr ]; then
@@ -3101,6 +3102,16 @@ if [ "$BACKEND" = herdr ]; then
     echo "error: herdr pane $T for $ID is not confirmed gone after its close was refused, skipped, or failed; retaining every durable task record - rerun teardown once the close can run under the session lock" >&2
     exit 1
   fi
+fi
+# The session lock guards only the pane close and the proof that it happened:
+# the pane is confirmed gone, so everything below (the orphan sweep, the pool
+# lock, the process reap, the safety proof re-run before the copy is returned,
+# the treehouse return) is slow work that touches no Herdr workspace, and a
+# second cleanup in the same session must not queue behind it. A Squad Lead
+# keeps its locks: its forced child cleanup closes each child's pane under the
+# lock it preflighted.
+if [ "$BACKEND" = herdr ] && [ "$KIND" != squad_lead ]; then
+  teardown_release_herdr_locks
 fi
 
 # Fix 3 (see script header): sweep remote job workers abandoned by an already

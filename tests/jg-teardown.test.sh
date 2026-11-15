@@ -3142,6 +3142,70 @@ SH
   pass "herdr flat teardown refuses before returning the isolated copy under lock contention and the retry completes cleanly"
 }
 
+# The session presentation lock covers only the pane close and the proof that it
+# happened. The fake pane close sees the lock HELD. The fake treehouse return,
+# the slow step that follows (the safety proof is re-run inside it), sees it FREE:
+# the probe takes the very lock a second cleanup of the same session would take.
+# Run as a forced cleanup and as a park, whose branch must survive.
+make_lock_scope_case() {  # <name> <mode>: echoes the case dir
+  local case_dir=$1 lock
+  case_dir=$(make_case "$1")
+  write_meta "$case_dir" "$2" ship
+  configure_flat_herdr_teardown_case "$case_dir"
+  : > "$case_dir/herdr.log"
+  : > "$case_dir/state/task-x1.status"
+  lock=$(JG_FAKE_HERDR_LOG="$case_dir/herdr.log" JG_FAKE_HERDR_CLOSED="$case_dir/closed" PATH="$case_dir/fakebin:$PATH" \
+    bash -c '. "$0/bin/backends/herdr.sh"; jg_backend_herdr_presentation_session_lock_path default' "$ROOT") \
+    || fail "$1: could not resolve the fixture presentation lock path"
+  # probe-lock <step>: records whether a second cleanup could take the session lock right now.
+  cat > "$case_dir/fakebin/probe-lock" <<SH
+#!/usr/bin/env bash
+. "$ROOT/bin/jg-wake-lib.sh"
+if jg_lock_try_acquire "$lock"; then jg_lock_release "$lock"; echo free > "$case_dir/probe-\$1"; else echo held > "$case_dir/probe-\$1"; fi
+SH
+  chmod +x "$case_dir/fakebin/probe-lock"
+  sed -i.bak 's|^  "pane close")$|&\n    probe-lock close|' "$case_dir/fakebin/herdr"
+  rm -f "$case_dir/fakebin/herdr.bak"
+  cat > "$case_dir/fakebin/treehouse" <<SH
+#!/usr/bin/env bash
+probe-lock return
+sleep 1
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/treehouse"
+  echo "$case_dir"
+}
+
+assert_lock_scope() {  # <case-dir> <name>
+  local case_dir=$1 name=$2
+  [ -e "$case_dir/closed" ] || fail "$name: the pane was never closed"
+  [ "$(cat "$case_dir/probe-close" 2>/dev/null)" = held ] \
+    || fail "$name: the session lock was not held while the pane closed ($(cat "$case_dir/probe-close" 2>/dev/null))"
+  [ "$(cat "$case_dir/probe-return" 2>/dev/null)" = free ] \
+    || fail "$name: the session lock was still held during the slow return ($(cat "$case_dir/probe-return" 2>/dev/null))"
+}
+
+test_herdr_cleanup_holds_session_lock_only_for_the_pane_close() {
+  local case_dir
+  case_dir=$(make_lock_scope_case herdr-lock-scope-force local-only)
+  JG_FAKE_HERDR_LOG="$case_dir/herdr.log" JG_FAKE_HERDR_CLOSED="$case_dir/closed" JG_BACKEND_HERDR_IDLE_SHELL_PROOF_POLLS=1 \
+    run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "herdr-lock-scope-force: cleanup failed: $(cat "$case_dir/stderr")"
+  assert_lock_scope "$case_dir" herdr-lock-scope-force
+  [ ! -e "$case_dir/state/task-x1.meta" ] || fail "herdr-lock-scope-force: the record was left behind"
+
+  case_dir=$(make_lock_scope_case herdr-lock-scope-park local-trunk)
+  printf '%s\n' 'branch=fm/task-x1' >> "$case_dir/state/task-x1.meta"
+  JG_FAKE_HERDR_LOG="$case_dir/herdr.log" JG_FAKE_HERDR_CLOSED="$case_dir/closed" JG_BACKEND_HERDR_IDLE_SHELL_PROOF_POLLS=1 \
+    run_teardown "$case_dir" --park > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "herdr-lock-scope-park: park failed: $(cat "$case_dir/stderr")"
+  assert_lock_scope "$case_dir" herdr-lock-scope-park
+  [ -f "$case_dir/state/task-x1.parked" ] || fail "herdr-lock-scope-park: no park record"
+  git -C "$case_dir/project" rev-parse --verify --quiet refs/heads/fm/task-x1 >/dev/null \
+    || fail "herdr-lock-scope-park: the parked branch is gone"
+  pass "herdr cleanup holds the session lock for the pane close only, and a parked branch survives"
+}
+
 test_herdr_flat_teardown_refuses_records_on_unparseable_presence() {
   local case_dir log closed rc
   case_dir=$(make_case herdr-garbage-presence)
@@ -5057,6 +5121,7 @@ test_squad_lead_home_teardown_delivers_final_line_or_refuses
 test_teardown_missing_busy_sidecar_completes
 test_herdr_teardown_clears_escalation_marker
 test_herdr_flat_teardown_refuses_orphaning_records_then_retry_completes
+test_herdr_cleanup_holds_session_lock_only_for_the_pane_close
 test_herdr_flat_teardown_refuses_records_on_unparseable_presence
 test_herdr_flat_teardown_preflight_refuses_before_changes
 test_herdr_teardown_presentation_lock_namespace_is_per_account
