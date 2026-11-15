@@ -180,6 +180,8 @@ After the PR has stayed green at one head for `JG_GREEN_PR_SECS` (default 900), 
 - Merge authority is untouched: the alert only asks; the owner still merges through `bin/jg-pr-merge.sh`.
 - Record: `state/.green-pr/<task>`, one tab-separated line holding last forge read time, first-green time at this head, head, and PR URL.
 
+A steer the worker read (moved to `handled/`) and never answered with a `handled` or `failed` word (`bin/jg-delivery.sh`) is an unhandled steer. `jg_wait_timers_overdue_steers` runs from every tick, at most once per 300 s (`state/.overdue-steers.at`), over each ship and scout inbox (never a squad lead's). 15 minutes after the steer's first ring it raises one `stuck-wait` alert to the lead, keyed `<task>-msg-<seq>`, and resolves it when the word arrives. Steers first signalled before the watermark `state/.overdue-steers.since` (written on the first run) raise one summary alert, `overdue-steers-legacy`, once. Test: `core/wait-timers/tests/overdue-steers-e2e.sh`. Rollback: delete the one call line in `jg_wait_timers_tick`.
+
 ## Stalled ready backlog
 
 A lead that ignores its ready-work wake (`bin/jg-watch.sh` `ready_work_waits_idle`) is the same ladder with the lead as the stuck party.

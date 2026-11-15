@@ -4,7 +4,7 @@
 # Usage: jg-delivery.sh handled <task> <seq> --evidence <kind>:<pointer>
 #        jg-delivery.sh failed  <task> <seq> --reason <text>
 #        jg-delivery.sh show    <task> [<seq>]
-#        jg-delivery.sh overdue <task> [--after <seconds>]     (default 900)
+#        jg-delivery.sh overdue <task> [--after <seconds>] [--read] [--since <epoch>] [--until <epoch>]
 #
 #   stored   the record was renamed into <task>.inbox          (written by the inbox library)
 #   rung     a doorbell was typed for it                       (written by the inbox library)
@@ -22,7 +22,10 @@
 #
 # `overdue` is the sender's timeout. It lists every record that was read or rung but has no
 # handled or failed word after the given age, and exits 1 when it lists any, because no event
-# arrives when a worker never acts. `show` prints one line per record with the five words.
+# arrives when a worker never acts. The age runs from the FIRST ring (else the first store), so a
+# re-ring never resets it. --read lists only records the worker has moved to handled/ and has
+# given no word on; --since and --until keep the records whose first sign falls in that window.
+# The ledger is read in one jq pass. `show` prints one line per record with the five words.
 #
 # Env: JG_HOME (required) or JG_STATE_OVERRIDE; JG_DELIVERY_BUS_TIMEOUT seconds (default 5).
 set -eu
@@ -72,13 +75,40 @@ case "$cmd" in
     case "$seq" in ''|*[!0-9]*) die "the steer number must be digits" ;; esac
     [ -n "$why" ] || die "failed needs a reason"
     claim "$seq" failed "$why" failed ;;
-  show|overdue)
-    after=900; want=
-    if [ "$cmd" = show ]; then want=${1:-}; else
-      [ "${1:-}" != --after ] || after=${2:-}
-      case "$after" in ''|*[!0-9]*) die "--after needs seconds" ;; esac
-    fi
-    now=$(date +%s); late=0
+  overdue)
+    after=900; only_read=0; since=0; until=9999999999
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --read) only_read=1; shift ;;
+        --after|--since|--until) [ $# -ge 2 ] || die "$1 needs a value"
+          case "$2" in ''|*[!0-9]*) die "$1 needs seconds since the epoch or seconds" ;; esac
+          case "$1" in --after) after=$2 ;; --since) since=$2 ;; *) until=$2 ;; esac; shift 2 ;;
+        *) die "unknown overdue option $1 (--help)" ;;
+      esac
+    done
+    places=
+    for f in "$dir"/*.msg; do [ -e "$f" ] || continue; seq=$(jg_task_inbox_seq_of "${f##*/}") && places="$places$seq inbox"$'\n'; done
+    for f in "$dir"/handled/*.msg; do [ -e "$f" ] || continue; seq=$(jg_task_inbox_seq_of "${f##*/}") && places="$places$seq handled"$'\n'; done
+    [ -n "$places" ] || exit 0
+    # One pass over the ledger: per steer the latest store and ring (shown), the first of either (the age's anchor).
+    out=$(jq -nR -r --argjson now "$(date +%s)" --argjson after "$after" --argjson since "$since" --argjson until "$until" \
+        --argjson onlyread "$only_read" --arg places "$places" '
+      ([inputs | fromjson? | select(type == "object" and (.seq | type) == "number")] | group_by(.seq)
+        | map({key: (.[0].seq | tostring), value: .}) | from_entries) as $L
+      | ($places | split("\n") | map(select(length > 0) | split(" ")) | map({seq: (.[0] | tonumber), place: .[1]}) | sort_by(.seq))[]
+      | . as $p | ($L[($p.seq | tostring)] // []) as $r
+      | def at(w; f): [$r[] | select(.word == w) | .at] | if length == 0 then null else f end;
+        def show(v): if v == null then "no" else (v | tostring) end;
+        (at("stored"; max)) as $st | (at("rung"; max)) as $rg | (at("handled"; max)) as $h | (at("failed"; max)) as $x
+      | (at("rung"; min) // at("stored"; min)) as $t0
+      | select($h == null and $x == null and $t0 != null and ($onlyread == 0 or $p.place == "handled")
+               and $t0 >= $since and $t0 <= $until and ($now - $t0) >= $after)
+      | "\("000" + ($p.seq | tostring) | .[-3:]) stored=\(show($st)) rung=\(show($rg)) read=\(if $p.place == "handled" then "yes" else "no" end) handled=no failed=no age=\($now - $t0)s"
+    ' "$ledger" 2>/dev/null) || die "the delivery record could not be read"
+    [ -z "$out" ] || { printf '%s\n' "$out"; exit 1; }
+    exit 0 ;;
+  show)
+    want=${1:-}
     for f in "$dir"/*.msg "$dir"/handled/*.msg; do
       [ -e "$f" ] || continue
       seq=$(jg_task_inbox_seq_of "${f##*/}") || continue
@@ -88,16 +118,9 @@ case "$cmd" in
       out="$out read=$([ "$place" = handled ] && echo yes || echo no)"
       h=$(word_at "$seq" handled); x=$(word_at "$seq" failed)
       out="$out handled=${h:-no} failed=${x:-no}"
-      if [ "$cmd" = show ]; then
-        printf '%03d%s\n' "$seq" "$out"
-        [ -z "$h" ] || printf '    evidence: %s\n' "$(jq -r --argjson s "$seq" 'select(.seq == $s and .word == "handled") | .pointer' "$ledger" | tail -1)"
-        [ -z "$x" ] || printf '    reason: %s\n' "$(jq -r --argjson s "$seq" 'select(.seq == $s and .word == "failed") | .pointer' "$ledger" | tail -1)"
-      elif [ -z "$h" ] && [ -z "$x" ]; then
-        # Age runs from the first sign the worker had it: the ring, else the store.
-        t0=$(word_at "$seq" rung); [ -n "$t0" ] || t0=$(word_at "$seq" stored); [ -n "$t0" ] || continue
-        if [ $((now - t0)) -ge "$after" ]; then late=1; printf '%03d%s age=%ss\n' "$seq" "$out" "$((now - t0))"; fi
-      fi
-    done
-    [ "$late" -eq 0 ] ;;
+      printf '%03d%s\n' "$seq" "$out"
+      [ -z "$h" ] || printf '    evidence: %s\n' "$(jq -r --argjson s "$seq" 'select(.seq == $s and .word == "handled") | .pointer' "$ledger" | tail -1)"
+      [ -z "$x" ] || printf '    reason: %s\n' "$(jq -r --argjson s "$seq" 'select(.seq == $s and .word == "failed") | .pointer' "$ledger" | tail -1)"
+    done ;;
   *) die "unknown command $cmd (--help)" ;;
 esac

@@ -584,6 +584,50 @@ jg_wait_timers_table() {  # <name>
   "$_JG_WAIT_TIMER_DIR/jg-alert.sh" timers 2>/dev/null | awk -F '\t' -v n="$1" '$1 == n { print $2 }'
 }
 
+# jg_wait_timers_overdue_steers: a steer the worker read and never answered with a handled or failed word
+# (bin/jg-delivery.sh) after 15 minutes raises one stuck-wait alert to the lead, keyed <task>-msg-<seq>; it resolves
+# when the word arrives. Runs at most once per 300 s (state/.overdue-steers.at). The first run writes the watermark
+# state/.overdue-steers.since: steers first signalled before it are one summary alert (overdue-steers-legacy), raised
+# once, never one alert each. Ships and scouts only; a squad lead's inbox is never read.
+jg_wait_timers_overdue_steers() {
+  local stamp="$STATE/.overdue-steers.at" mark="$STATE/.overdue-steers.since" alert="$_JG_WAIT_TIMER_DIR/jg-alert.sh"
+  local delivery="$_JG_WAIT_TIMER_DIR/jg-delivery.sh" now last since meta task rows row seq key legacy='' open
+  now=$(date +%s) || return 0
+  last=$(cat "$stamp" 2>/dev/null || true); case "$last" in ''|*[!0-9]*) last=0 ;; esac
+  [ $((now - last)) -ge 300 ] || return 0
+  printf '%s\n' "$now" > "$stamp" || { echo "waiting timers: could not write $stamp" >&2; return 0; }
+  since=$(cat "$mark" 2>/dev/null || true)
+  case "$since" in ''|*[!0-9]*) since=$now; printf '%s\n' "$since" > "$mark" || return 0 ;; esac
+  for meta in "$STATE"/*.meta; do
+    [ -f "$meta" ] && [ ! -L "$meta" ] || continue
+    task=${meta##*/}; task=${task%.meta}
+    grep -qE '^kind=(ship|scout)$' "$meta" 2>/dev/null && [ -d "$STATE/$task.inbox" ] || continue
+    rows=$(JG_STATE_OVERRIDE="$STATE" "$delivery" overdue "$task" --after 900 --read --since "$since" 2>/dev/null || true)
+    while read -r row; do
+      [ -n "$row" ] || continue
+      seq=${row%% *}
+      JG_STATE_OVERRIDE="$STATE" "$alert" raise stuck-wait "$task-msg-$seq" --fact wait=lead --ticket "$task" --deliver \
+        --note "steer $seq to $task was read and has no handled or failed word" >/dev/null 2>&1 \
+        || echo "waiting timers: could not raise the unhandled-steer alert for $task steer $seq" >&2
+    done <<< "$rows"
+    [ -z "$(JG_STATE_OVERRIDE="$STATE" "$delivery" overdue "$task" --after 900 --read --until $((since - 1)) 2>/dev/null || true)" ] || legacy=1
+  done
+  [ -z "$legacy" ] || [ -e "$STATE/alerts/stuck-wait--overdue-steers-legacy.rec" ] \
+    || JG_STATE_OVERRIDE="$STATE" "$alert" raise stuck-wait overdue-steers-legacy --fact wait=lead --deliver \
+      --note "steers read before the unhandled-steer alert existed still have no handled or failed word" >/dev/null 2>&1 \
+    || echo "waiting timers: could not raise the legacy unhandled-steer alert" >&2
+  # Every open per-steer alert climbs its ladder, and resolves once its steer has a word.
+  for open in $(JG_STATE_OVERRIDE="$STATE" "$alert" list 2>/dev/null | grep '^stuck-wait--.*-msg-[0-9]*$' || true); do
+    key=${open#stuck-wait--}; task=${key%-msg-*}; seq=${key##*-msg-}
+    if [ -d "$STATE/$task.inbox" ] && JG_STATE_OVERRIDE="$STATE" "$delivery" overdue "$task" --after 0 --read 2>/dev/null | grep -q "^$seq "; then
+      JG_STATE_OVERRIDE="$STATE" "$alert" climb "$open" 2>/dev/null | JG_STATE_OVERRIDE="$STATE" "$alert" deliver >/dev/null 2>&1 || true
+    else
+      JG_STATE_OVERRIDE="$STATE" "$alert" resolve "$open" >/dev/null 2>&1 || true
+    fi
+  done
+  return 0
+}
+
 jg_wait_timers_tick() {
   local escalate=${JG_WAIT_ESCALATE_SECS:-$(jg_wait_timers_table escalate)} card_secs=${JG_WAIT_CARD_SECS:-$(jg_wait_timers_table card)}
   local interval=${JG_PROMPT_REALERT_SECS:-$(jg_wait_timers_table realert)}
@@ -619,6 +663,7 @@ jg_wait_timers_tick() {
   fresh=$(( ${fresh:-0} * 3 + 30 ))
   if [ -e "$JG_HOME/.jg-squad-lead-home" ]; then actor='owning lead'; lead=1; fi
   mkdir -p "$dir" || return 1
+  jg_wait_timers_overdue_steers
   # A new supervisor session (a restart or a lead's relaunch) re-presents every
   # wait already past its owner alert on its first ticks, so nothing it was told
   # before is lost with the old session.
