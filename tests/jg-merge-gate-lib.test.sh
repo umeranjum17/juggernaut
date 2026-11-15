@@ -102,3 +102,15 @@ dgate >/dev/null && fail "a receipt for another head must be refused"
 mkmeta 'demo_call=bogus\n'
 dgate >/dev/null && fail "a malformed demo call must be refused"
 pass "demo gate refuses a yes task without a bound takeone receipt line once switched on"
+
+# The bash timeout fallback must hand the gate's output back as soon as the gate exits. Its watchdog's sleep used to survive a group kill
+# that raced its fork and hold the output pipe of the $(...) above open for the whole bound, so a gate call under load hung until the
+# 600s bound. With a 60s bound, 40 calls of a gate that exits 0 must take far less than one bound.
+printf '#!/usr/bin/env bash\ntrue\n' > "$home/config/merge-gate"
+start=$SECONDS
+for _ in $(seq 1 40); do
+  JG_TIMEOUT_MECHANISM_OVERRIDE=bash JG_MERGE_GATE_TIMEOUT=60 jg_dod_merge_gate "$home/config" "$home" task "$home/state/task.meta" abc - >/dev/null \
+    || fail "merge gate refused a gate that exits 0 under the bash timeout"
+done
+[ $((SECONDS - start)) -lt 30 ] || fail "40 gate calls under the bash timeout took $((SECONDS - start))s: a watchdog sleep held the output pipe open"
+pass "bash timeout hands the gate output back as soon as the gate exits"

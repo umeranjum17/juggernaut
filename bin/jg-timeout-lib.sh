@@ -118,15 +118,19 @@ jg_run_bash_timeout_body() {
     exit "$command_rc"
   ) &
   child_pid=$!
+  # The watchdog holds none of the caller's output: a sleep that outlives it (the group kill races its fork) must not keep a
+  # command substitution's pipe open for the whole bound. A TERM kills the sleep itself, so none is left behind.
   (
     set +m
-    sleep "$seconds"
+    trap 'kill $(jobs -p) 2>/dev/null; exit 0' TERM
+    sleep "$seconds" &
+    wait
     printf 'expired\n' > "$deadline_status"
     kill -TERM -- "-$child_pid" 2>/dev/null || true
     sleep 0.2
     kill -KILL -- "-$child_pid" 2>/dev/null || true
     exit 124
-  ) &
+  ) </dev/null >/dev/null 2>&1 &
   watchdog_pid=$!
   [ "$monitor_was_on" -eq 1 ] || set +m
 
