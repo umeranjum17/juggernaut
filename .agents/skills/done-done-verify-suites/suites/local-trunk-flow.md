@@ -18,4 +18,6 @@ The carry check of an old trunk: `bash tests/jg-trunk-carry.test.sh` (the same j
 
 Landing while a verify runs: `bash tests/jg-trunk-verify.test.sh` (the trunk-landing journey runs it; `test_landings_go_on_while_a_verify_runs_and_a_green_verify_goes_live`) runs a verify whose gate is held open: the tick's live step steps aside at once and moves no home, a ready lane with its PASS receipt lands meanwhile, the green verify moves the pin to the commit it judged and takes every home there, and a second verify that finds a red still charges its commit, takes the pin back and moves no home, with the lane that landed during it staying landed (screen: none).
 
+The tick starts its verify in its own unit: `bash tests/jg-trunk-unit.test.sh` (the trunk-landing journey runs it) drives the real landing check with a stand-in `systemd-run` and `systemctl`: one unit named `jg-verify-<project>-<epoch>` starts with `KillMode=process`, the home as working directory and absolute log paths, its name is recorded, a tick that finds it active starts nothing, and with no `systemd-run` the verify runs under `setsid nohup` and moves the pin (screen: none).
+
 The queue journey also proves that the landing check does not admit a lane when the task machine reports rework.

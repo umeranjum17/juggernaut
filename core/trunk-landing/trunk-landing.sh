@@ -95,6 +95,8 @@ case $1 in
     fi
     ;;
 esac
+# shellcheck source=core/trunk-landing/unit.sh
+. "$(dirname "${BASH_SOURCE[0]}")/unit.sh"
 # shellcheck source=core/trunk-landing/verdict.sh
 . "$(dirname "${BASH_SOURCE[0]}")/verdict.sh"
 mval() { sed -n "s/^$2=//p" "$1" 2>/dev/null | tail -n 1; }
@@ -364,13 +366,14 @@ for tip in "$STATE"/trunk-tip-*; do
 done
 # Every tick starts the line's verify while a trunk's tip is above its green pin (detached, so it never holds a landing back; the job
 # itself keeps one verify at a time and skips a tip a verify already ended red on). Nothing is printed: a red raises line-red.
+# start_job (unit.sh) runs each of these four jobs in its own systemd user unit when systemd-run exists, else under setsid nohup.
 for tip in "$STATE"/trunk-tip-*; do
   [ -z "$QUIET" ] || break
   [ -f "$tip" ] || continue
   pn=${tip##*/trunk-tip-}
   [ "$(cat "$tip" 2>/dev/null)" != "$(cat "$STATE/trunk-green-$pn" 2>/dev/null)" ] || continue
   [ -d "$FMH/projects/$pn" ] && [ "$(local_trunk "$FMH/projects/$pn")" = yes ] || continue
-  setsid nohup "$SELF" verify "$FMH" "$pn" >/dev/null 2>&1 < /dev/null &
+  start_job verify "$pn"
 done
 # Every tick offers the nightly whole run to each local-trunk project: only a project whose `nightly-due` says it is time gets a detached
 # job (which asks again under its lock).
@@ -381,7 +384,7 @@ for tip in "$STATE"/trunk-tip-*; do
   [ -d "$FMH/projects/$pn" ] && [ "$(local_trunk "$FMH/projects/$pn")" = yes ] || continue
   # Ask first: a tick that is not due starts no process at all, so the nightly job costs every other tick nothing.
   JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" nightly-due "$FMH/projects/$pn" >/dev/null 2>&1 || continue
-  setsid nohup "$SELF" nightly "$FMH" "$pn" >/dev/null 2>&1 < /dev/null &
+  start_job nightly "$pn"
 done
 # Under a go-live waiver every tick starts the batched live step (detached, so it never holds a landing back).
 for tip in "$STATE"/trunk-tip-*; do
@@ -390,7 +393,7 @@ for tip in "$STATE"/trunk-tip-*; do
   pn=${tip##*/trunk-tip-}
   awk -v p="$pn" '$1 == p { f = 1 } END { exit !f }' "$FMH/config/trunk-live-waiver" 2>/dev/null || jg_trunk_gated_any "$FMH/data/trunk-gated.tsv" "$pn" || continue
   [ -d "$FMH/projects/$pn" ] && [ "$(local_trunk "$FMH/projects/$pn")" = yes ] || continue
-  setsid nohup "$SELF" live "$FMH" "$pn" >/dev/null 2>&1 < /dev/null &
+  start_job live "$pn"
 done
 # Under a release waiver every tick starts the publish step (detached, so it never holds a landing back; at most once a minute).
 for tip in "$STATE"/trunk-tip-*; do
@@ -401,7 +404,7 @@ for tip in "$STATE"/trunk-tip-*; do
   [ -d "$FMH/projects/$pn" ] && [ "$(local_trunk "$FMH/projects/$pn")" = yes ] || continue
   [ ! -e "$MEM/.publish-$pn" ] || [ -n "$(find "$MEM/.publish-$pn" -mmin +0 2>/dev/null)" ] || continue
   : > "$MEM/.publish-$pn"
-  setsid nohup "$SELF" publish "$FMH" "$pn" >/dev/null 2>&1 < /dev/null &
+  start_job publish "$pn"
 done
 report() {
   local reason=${3%%; full log:*}
