@@ -126,6 +126,14 @@ check "i: it is reported" "$(grep -c '^lead-sweep: pk24 parked (waiting for 24 h
 sweep; check "i: a parked lane is not parked again" "$(tore 'pk24 --park')" 0
 touch "$FM/state/dirty-pkfresh"; echo x > "$FM/state/dirty-pkfresh"; touch -d "@$((now - 30 * 3600))" "$FM/state/pkfresh.status"; sweep
 check "i: a refused park is reported once and nothing is forced" "$(grep -c '^lead-sweep: pkfresh could not be parked' "$d/out")" 1
+# i2: a declared park (paused ... reason=parked) gives its copy back on the next beat, however fresh the line is
+lane pkdecl ship 'paused [at=1] [wait=lead] [reason=parked]: set aside' "base=$(git -C "$P" rev-parse trunk)"
+lane pkwait ship 'paused [at=1] [wait=outside] [reason=ci]: waits for ci' "base=$(git -C "$P" rev-parse trunk)"
+sweep
+check "i2: a declared park is parked at once" "$(tore 'pkdecl --park')" 1
+check "i2: it says why" "$(grep -c '^lead-sweep: pkdecl parked (declared parked)' "$d/out")" 1
+check "i2: its branch is kept" "$(git -C "$P" rev-parse --verify --quiet refs/heads/fm/pkdecl >/dev/null && echo kept)" kept
+check "i2: a fresh paused line for another reason is left" "$(tore 'pkwait --park')" 0
 # j: never started
 lane ns ship '' ; lane started ship 'working [at=1]: coding'; rm -f "$FM/state/ns.status"
 touch -d "@$((now - 10 * 60))" "$FM/state/ns.meta"; sweep

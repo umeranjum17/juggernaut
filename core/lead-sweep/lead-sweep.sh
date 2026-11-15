@@ -26,7 +26,9 @@
 # drift alert (bin/jg-alert.sh raise --deliver), once per lane and reason (data/lead-sweep/<id>.reported); the same refusal on the next beat prints nothing.
 # The other ends of a lane (machine 10 request; worker expire and retire), each acted on once and never forced:
 #   done, not landed   the agent ends at once (`bin/jg-control.sh <id> exit`); the copy, branch and ticket stay;
-#   parked             a ship lane whose last line is paused, blocked or needs-decision for JG_LEAD_SWEEP_PARK_H hours (default 24;
+#   parked             a ship lane whose last line is a declared park (`paused ... reason=parked`) is parked on the next beat, at once: the
+#                      worker set itself aside, so nothing is waited for. A lane whose last line is any other paused, blocked or
+#                      needs-decision line is parked after JG_LEAD_SWEEP_PARK_H hours (default 24;
 #                      JG_LEAD_SWEEP_PARK_EMPTY_H, default 2, when its branch holds no commit of its own): the agent ends and a
 #                      clean copy goes back (`jg-teardown.sh <id> --park`); the branch, the ticket and the records stay;
 #   never started      a ship lane with no status line JG_LEAD_SWEEP_START_MIN minutes (default 30) after its record was written:
@@ -191,7 +193,9 @@ for id in $order; do
       ended=gone
       if [ "$kind" = ship ] && [ -d "$proj" ] && [ ! -e "$STATE/$id.parked" ]; then
         limit=$PARK_S; own_commit "$meta" "$proj" "$branch" || limit=$PARK_EMPTY_S
-        [ $(( NOW - $(mtime "$STATE/$id.status") )) -lt "$limit" ] || { park "$id" "waiting for $(( limit / 3600 )) hours"; continue; }
+        # A declared park is the worker setting itself aside: its copy goes back on this beat, with no wait.
+        case $line in paused*reason=parked*) limit=0 ;; esac
+        [ $(( NOW - $(mtime "$STATE/$id.status") )) -lt "$limit" ] || { park "$id" "$( [ "$limit" -gt 0 ] && echo "waiting for $(( limit / 3600 )) hours" || echo "declared parked" )"; continue; }
       fi ;;
     '')
       # Never started: one relaunch, then the lane is closed the way a parked one is.
