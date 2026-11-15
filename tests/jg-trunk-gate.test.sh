@@ -25,6 +25,31 @@
 . "$(dirname "${BASH_SOURCE[0]}")/title-rule-lib.sh"
 JG_TRUNK_FIXTURE_CACHE=1
 
+# shellcheck disable=SC2016 # the gate body is written out verbatim and expands when the gate runs it
+# Two verifies of one head each get their own attempt: the second never truncates or reuses the first's log or phase history,
+# and a log shows its output while the gate still runs (the line is there before the gate ends).
+test_every_verify_attempt_keeps_its_own_log_and_phase_history() {
+  local c first firstlog logs n
+  world attempts; rig
+  lane a1 'true' t/a.test.sh
+  trunk land a1 >/dev/null 2>&1 || fail "a1 must land: $(trunk land a1 2>&1)"
+  c=$(tip)
+  printf 'gate-verify=echo attempt-output-$(date +%%s%%N)-$$; sleep 1\n' >> "$HOME_D/config/trunk-policy"
+  trunk verify "$PROJ" "$c" >/dev/null 2>&1 || fail "the first verify must pass"
+  firstlog=$(find "$HOME_D/data/trunk" -name "gate-proj-${c:0:12}-*-full.log"); first=$(cat "$firstlog")
+  trunk verify "$PROJ" "$c" >/dev/null 2>&1 || fail "the second verify must pass"
+  logs=$(find "$HOME_D/data/trunk" -name "gate-proj-${c:0:12}-*-full.log" | sort)
+  [ "$(printf '%s\n' "$logs" | wc -l | tr -d ' ')" = 2 ] || fail "each verify attempt must keep its own full log: $logs"
+  [ "$(cat "$firstlog")" = "$first" ] && [ "$(grep -c '^attempt-output-' <<< "$first")" = 1 ] || fail "the second attempt changed the first attempt's log: $(cat "$firstlog")"
+  [ "$(printf '%s\n' "$logs" | xargs cat | grep -c '^attempt-output-')" = 2 ] || fail "the two attempts must hold two different runs"
+  [ "$(find "$HOME_D/data/trunk" -name "gate-proj-${c:0:12}-*.phases" | wc -l | tr -d ' ')" = 2 ] || fail "each attempt must have its own phase history"
+  while IFS= read -r n; do
+    [ "$(cut -f2 "$n" | paste -sd' ')" = "start end" ] || fail "an attempt's history shows its own phases once: $(cat "$n")"
+    [ "$(cut -f4 "$n" | tail -n 1)" = 0 ] || fail "the history records the exit status: $(cat "$n")"
+  done < <(find "$HOME_D/data/trunk" -name "gate-proj-${c:0:12}-*.phases")
+  pass 'every verify attempt keeps its own log and phase history, and a second run of the same head changes neither'
+}
+
 # shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
 test_a_changed_file_that_is_not_a_test_is_never_run_bare_on_the_tip() {
   local out
@@ -44,7 +69,7 @@ test_a_changed_file_that_is_not_a_test_is_never_run_bare_on_the_tip() {
   [ ! -e "$HOME_D/data/trunk/tip-red-reported-proj.tsv" ] || [ ! -s "$HOME_D/data/trunk/tip-red-reported-proj.tsv" ] || fail "a non-test path is never reported as the tip's red: $(cat "$HOME_D/data/trunk/tip-red-reported-proj.tsv")"
   ! grep -qs 'alert-line-red' "$HOME_D/state/.wake-queue" || fail "a non-test path must raise no tip-red alert: $(cat "$HOME_D/state/.wake-queue")"
   ! grep -qs 't/lib.py' "$HOME_D/data/trunk/"tip-results-proj-*.tsv || fail "the tip is never asked for a non-test path's result"
-  ! grep -qsE 'JG_TEST_BEGIN .* t/(lib.py|needs-store.sh) ' "$HOME_D/data/trunk/"gate-proj-*-tip-*.log || fail "no tip run may start a non-test path"
+  ! grep -rqsE 'JG_TEST_BEGIN .* t/(lib.py|needs-store.sh) ' --include='*-tip.log' "$HOME_D/data" || fail "no tip run may start a non-test path"
   pass 'a changed library or store-bound command is a coverage note, never run bare on the tip and never a red'
 }
 
@@ -59,7 +84,9 @@ test_an_unmapped_path_is_a_coverage_note_and_a_real_failure_still_reruns_once() 
   mkdir -p "$HOME_D/data/trunk"; printf '1\tabc\tbin/old-lib.sh\tflaky-proj-old-lib\n' > "$HOME_D/data/trunk/flaky-proj.tsv"
   lane cov "[ -e $W/seen-n ] || { : > $W/seen-n; echo 'not ok - first run' >&2; exit 1; }; exit 0" t/n.test.sh
   out=$(trunk land cov 2>&1) || fail "an unmapped path must not refuse the lane: $out"
-  rerun=$(cat "$HOME_D"/data/trunk/gate-proj-*-full-rerun.log)
+  rerun=$(find "$HOME_D/data" -name 'gate-full-rerun.log' -exec cat {} +)
+  phases=$(find "$HOME_D/data" -name 'gate.phases' -exec cat {} + | cut -f2,3 | tr '\t\n' ' ')
+  assert_contains "$phases" "start gate-full.log end gate-full.log start gate-full-rerun.log end gate-full-rerun.log" "the attempt's phase history shows the full run, then its rerun"
   assert_contains "$rerun" "t/n.test.sh" "the real failing journey is rerun"
   assert_not_contains "$rerun" "t/orphan.lib" "the unmapped path is never rerun"
   assert_contains "$(cat "$HOME_D/data/trunk/flaky-proj.tsv")" "t/n.test.sh" "the journey that passed on its rerun is recorded flaky"
@@ -597,6 +624,7 @@ test_a_local_lane_lands_with_no_tests_and_the_verify_reports_a_red() {
 }
 
 test_landing_deadline_spans_both_gates
+test_every_verify_attempt_keeps_its_own_log_and_phase_history
 test_a_changed_file_that_is_not_a_test_is_never_run_bare_on_the_tip
 test_an_unmapped_path_is_a_coverage_note_and_a_real_failure_still_reruns_once
 test_the_full_gate_charges_a_lane_only_for_what_it_broke

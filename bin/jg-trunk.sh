@@ -370,7 +370,29 @@ gate_timed() {
   jg_run_timed "$remaining" "$@"
 }
 
-# Run a command at a commit's exact tree in a clean clone, logging to <log>; returns the command's exit status.
+# One gate run (a landing attempt, or one verify gate at one commit) keeps every record under one stem, its attempt id: each phase log
+# is <stem>-<phase>.log and the run's phase history is <stem>.phases (epoch, start|end, log, exit status), written as the phase starts so
+# a reader sees it live. A landing's stem is its attempt folder's; any other run makes its own from the project, commit, a timestamp, the
+# process and a random number, so a later attempt at the same head never reuses it. GATE_STEM is the stem of the run in progress.
+gate_stem() {  # <commit>: sets GATE_STEM
+  if [ -n "${LAND_ATTEMPT:-}" ]; then GATE_STEM=$LAND_ATTEMPT
+  else mkdir -p "$DATA/trunk"; GATE_STEM="$DATA/trunk/gate-$PN-${1:0:12}-$(date +%s)-${BASHPID:-$$}-$RANDOM"; fi
+}
+# The log of one phase of the run in progress: the first free <stem>-<phase>.log (then -2, -3), claimed so it is created empty and never
+# taken twice, and printed. A phase run again in one attempt gets its own file, so no run is ever truncated by a later one.
+gate_log() {  # <phase>
+  local p="$GATE_STEM-$1.log" n=1
+  until ( set -C; : > "$p" ) 2>/dev/null; do
+    [ "$n" -lt 1000 ] || die "cannot claim a log under $GATE_STEM"
+    n=$((n + 1)); p="$GATE_STEM-$1-$n.log"
+  done
+  printf '%s\n' "$p"
+}
+gate_phase() {  # <start|end> <log> [<exit status>]
+  [ -z "${GATE_STEM:-}" ] || printf '%s\t%s\t%s\t%s\n' "$(date +%s)" "$1" "${2##*/}" "${3:-}" >> "$GATE_STEM.phases"
+}
+
+# Run a command at a commit's exact tree in a clean clone, appending to <log> (a fresh path from gate_log); returns the command's exit status.
 # <envfile>, when given, receives the environment the command ended with (NUL separated), so a rerun can use the same one.
 gate_exec() {  # <commit> <command> <log> [<envfile>]
   local rc=0 cmd=$2 name
@@ -383,7 +405,9 @@ gate_exec() {  # <commit> <command> <log> [<envfile>]
   "${clean[@]}" git -C "$WORK/tree" checkout -q --detach "$1" || die "cannot check out ${1:0:12} for the gate"
   # shellcheck disable=SC2016 # the trap body expands in the gate's shell
   [ -z "${4:-}" ] || cmd="trap 'env -0 > \"\$JG_GATE_ENV_OUT\"' EXIT; $2"
-  (cd "$WORK/tree" && gate_timed "${clean[@]}" JG_GATE_ENV_OUT="${4:-/dev/null}" JG_TRUNK_GATE_OUTPUT="${3%.log}.proof" bash -c "$cmd") > "$3" 2>&1 || rc=$?
+  gate_phase start "$3"
+  (cd "$WORK/tree" && gate_timed "${clean[@]}" JG_GATE_ENV_OUT="${4:-/dev/null}" JG_TRUNK_GATE_OUTPUT="${3%.log}.proof" bash -c "$cmd") >> "$3" 2>&1 || rc=$?
+  gate_phase end "$3" "$rc"
   rm -rf -- "$WORK"; WORK=
   gate_leave
   record_overruns "$1" "$3"
@@ -410,7 +434,8 @@ record_overruns() {  # <commit> <log>
 
 # Run a gate command at a commit's exact tree in a clean clone; the log is kept under data/.
 run_gate_try() {  # <commit> <command> <label>: returns 1 after printing the refusal, for a caller that judges the red itself
-  local log="${LAND_ATTEMPT:-$DATA/trunk/gate-$PN-${1:0:12}-$(date +%s)-$$}-$3.log" rc=0
+  local log rc=0
+  gate_stem "$1"; log=$(gate_log "$3")
   gate_exec "$1" "$2" "$log" || rc=$?
   gate_deadline_ok || return 1
   [ "$rc" -eq 0 ] || { tail -n 20 "$log" >&2; echo "REFUSED: gate '$3' failed (exit $rc) at ${1:0:12}; full log: $log" >&2; return 1; }
@@ -482,7 +507,6 @@ is_test_script() {  # <path>
 rerun_scripts() {  # <commit> <envfile> <log> <quoted scripts>
   local tests='' q
   for q in $4; do is_test_script "$q" && tests="$tests $q"; done
-  : > "$3"
   [ -n "$tests" ] || return 0
   set -- "$1" "$2" "$3" "$tests"
   # shellcheck disable=SC2016 # the loop expands in the rerun's shell
@@ -503,7 +527,7 @@ tip_results() {  # <tip> <envfile> <script>...
     awk -F'\t' -v s="$s" '$1 == s { f = 1 } END { exit !f }' "$cache" || need="$need $(printf '%q' "$s")"
   done
   if [ -n "$need" ]; then
-    log="$DATA/trunk/gate-$PN-${tip:0:12}-tip-$(date +%s)-${BASHPID:-$$}.log"
+    log=$(gate_log tip)
     rerun_scripts "$tip" "$envf" "$log" "$need"
     while IFS= read -r line; do
       s=${line%%$'\t'*}
@@ -520,7 +544,7 @@ flaky_on_base() {  # <base> <envfile> <script>...
   shift 2
   for s in "$@"; do quoted="$quoted $(printf '%q' "$s")"; done
   for n in 1 2; do
-    log="$DATA/trunk/gate-$PN-${base:0:12}-parent-$n-$(date +%s).log"
+    log=$(gate_log "parent-$n")
     rerun_scripts "$base" "$envf" "$log" "$quoted"
     gate_results "$log" | awk -F'\t' '$2 != "0" { print $1 }'
   done | sort -u
@@ -647,8 +671,9 @@ full_gate() {  # <candidate> <command> <base>
   return "$rc"
 }
 _full_gate() {  # <candidate> <command> <base>
-  local badsig='' cand=$1 log="${LAND_ATTEMPT:-$DATA/trunk/gate-$PN-${1:0:12}}-full.log" envf rc=0 mine tipres line s ex sig tex tsig bad='' old='' unexplained quoted again settled now flaky='' t0 passing='' byself='' byparent='' rerun_red noparent=''
+  local badsig='' cand=$1 log rerun_log envf rc=0 mine tipres line s ex sig tex tsig bad='' old='' unexplained quoted again settled now flaky='' t0 passing='' byself='' byparent='' rerun_red noparent=''
   t0=$(date +%s); GATE_KIND=full; GATE_FIGURES=; GATE_BAD=; GATE_BAD_SIG=
+  gate_stem "$cand"; log=$(gate_log full)
   envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX" 2>/dev/null) || { mkdir -p "$DATA/trunk"; envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX"); }
   gate_exec "$cand" "$2" "$log" "$envf" || rc=$?
   gate_deadline_ok || { rm -f -- "$envf"; return 1; }
@@ -664,9 +689,10 @@ _full_gate() {  # <candidate> <command> <base>
   # A flaky failure gets one rerun before it is judged: the scripts are rerun once on the candidate, and only
   # what fails again counts (as that second run saw it). A script the rerun does not report keeps its first result.
   quoted=$(printf '%s\n' "$mine" | while IFS= read -r line; do printf ' %q' "${line%%$'\t'*}"; done)
-  rerun_scripts "$cand" "$envf" "$DATA/trunk/gate-$PN-${cand:0:12}-full-rerun.log" "$quoted"
+  rerun_log=$(gate_log full-rerun)
+  rerun_scripts "$cand" "$envf" "$rerun_log" "$quoted"
   gate_deadline_ok || { rm -f -- "$envf"; return 1; }
-  again=$(gate_results "$DATA/trunk/gate-$PN-${cand:0:12}-full-rerun.log")
+  again=$(gate_results "$rerun_log")
   settled=''
   while IFS= read -r line; do
     s=${line%%$'\t'*}
@@ -680,7 +706,7 @@ _full_gate() {  # <candidate> <command> <base>
   # The rerun is judged as the first run was: a rerun that ended red with no script accounting for it (a runner that died, a count that
   # does not match its scripts) says nothing about the commit, so it is never charged to it.
   rerun_red=$(printf '%s\n' "$again" | awk -F'\t' '$2 != "0"')
-  if [ -n "$rerun_red" ] && [ -n "$(gate_unexplained "$DATA/trunk/gate-$PN-${cand:0:12}-full-rerun.log" "$rerun_red")" ]; then
+  if [ -n "$rerun_red" ] && [ -n "$(gate_unexplained "$rerun_log" "$rerun_red")" ]; then
     rm -f -- "$envf"
     echo "REFUSED: gate 'full' at ${cand:0:12}: its rerun failed with no script accounting for it, so no lane is charged; full log: $log" >&2
     return 1
@@ -1085,8 +1111,9 @@ release_tickets() {  # <release pull request URL>
 # --changed against the candidate's parent. Prints nothing and returns 1 when the project has no such selector (the sealed run then can
 # only be judged by its tree) and returns 2 when the selector cannot name a selection (the tests run at the landing).
 landing_selection() {  # <candidate>
-  local log="${LAND_ATTEMPT:-$DATA/trunk/gate-$PN-${1:0:12}}-selection.log"
+  local log
   git -C "$PROJ" cat-file -e "$1:bin/jg-test-run.sh" 2>/dev/null || return 1
+  gate_stem "$1"; log=$(gate_log selection)
   gate_exec "$1" "bin/jg-test-run.sh --changed --base HEAD^ --list" "$log" || return 2
   { grep -E '^[^[:space:]]+\.sh$' "$log" || :; } | sort -u
 }
