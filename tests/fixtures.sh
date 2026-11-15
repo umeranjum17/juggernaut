@@ -155,6 +155,28 @@ SH
   chmod +x "$fakebin/tmux"
 }
 
+# jg_test_pin_real_tools <dir> [tool...]
+# python3 and node on a developer host can be version-manager shims that read the shared tool config on every call; a test
+# run beside other lanes then fails at random when that file is mid-rewrite ("mise ERROR error parsing config file"). Link
+# each real tool (default: python3 and node) into <dir> and put <dir> first on this test's PATH, so no script under test
+# goes through a shim. A tool with no real binary outside a shims folder is left to PATH.
+jg_test_pin_real_tools() {
+  local dir=$1 tool entry real
+  shift
+  [ $# -gt 0 ] || set -- python3 node
+  mkdir -p "$dir" || return 0
+  for tool in "$@"; do
+    real=''
+    while IFS= read -r -d: entry || [ -n "$entry" ]; do
+      case $entry in '' | */shims | */shims/) continue ;; esac
+      [ -x "$entry/$tool" ] && { real=$entry/$tool; break; }
+    done <<<"$PATH"
+    [ -z "$real" ] || ln -sf "$real" "$dir/$tool"
+  done
+  PATH="$dir:$PATH"
+  export PATH
+}
+
 # jg_test_fake_sleep_noop <fakebin>
 jg_test_fake_sleep_noop() {
   local fakebin=$1

@@ -29,6 +29,7 @@ git -C "$PROJ" push -q origin HEAD:refs/heads/main; git -C "$PROJ" fetch -q
 git -C "$PROJ" remote set-head origin main >/dev/null 2>&1 || true
 FAKEBIN=$(make_spawn_fakebin "$W/fake" gh gh-axi)
 jg_test_fake_sleep_noop "$FAKEBIN"
+jg_test_pin_real_tools "$W/realbin"
 sed -i '/^set -u$/a case "$*" in *pane_current_command*) echo bash; exit 0 ;; esac' "$FAKEBIN/tmux"
 jg_test_spawn_home "$H"
 : > "$H/config/backlog-intake-loose"
