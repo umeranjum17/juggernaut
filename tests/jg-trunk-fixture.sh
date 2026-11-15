@@ -162,8 +162,12 @@ rig() {
 total=0 failed=0
 for s in "$@"; do
   echo "JG_TEST_BEGIN 2026-01-01T00:00:00Z $s family=x expected_gate_skip=none"
-  bash "$s" 2>&1; rc=$?
-  echo "JG_TEST_END 2026-01-01T00:00:00Z $s exit=$rc duration_ms=1 gate_skip=false"
+  # Like the real runner: a path that is no test script is a mapping failure, recorded and never run.
+  case $s in
+    *.test.sh) bash "$s" 2>&1; rc=$?; ty=test ;;
+    *) echo "not ok - $s: no changed-test mapping for source path: $s"; echo "$s" >> "${RIG_RAN_LOG:-/dev/null}.mapped"; rc=1; ty=mapping ;;
+  esac
+  echo "JG_TEST_END 2026-01-01T00:00:00Z $s exit=$rc duration_ms=1 gate_skip=false type=$ty"
   total=$((total + 1)); [ "$rc" -eq 0 ] || failed=$((failed + 1))
 done
 echo "JG_TEST_SUMMARY total=$total failed=$failed skipped_gate=0 duration_ms=1"

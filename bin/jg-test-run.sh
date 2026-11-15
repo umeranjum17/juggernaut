@@ -2711,8 +2711,10 @@ quarantine_verdict() {  # <script> <rc>
   fi
 }
 
-record_script_result() {  # <script> <rc> <duration> <out> <end_iso> <stream>
-  local script=$1 rc=$2 duration=$3 out=$4 end_iso=$5 stream=${6:-0}
+# Every result carries a type: mapping (no test names the path, so nothing ran), resource (the script outran its bound, exit 124) or
+# test (the script ran and failed). The type rides the JG_TEST_END line, so the gate, its rerun and the flake intake read one fact.
+record_script_result() {  # <script> <rc> <duration> <out> <end_iso> <stream> [type]
+  local script=$1 rc=$2 duration=$3 out=$4 end_iso=$5 stream=${6:-0} rtype=${7:-}
   local base family expected gate_skip gate_reason fail_delta
   base=$(basename "$script")
   family=$(family_for_basename "$base")
@@ -2745,8 +2747,9 @@ record_script_result() {  # <script> <rc> <duration> <out> <end_iso> <stream>
     log "gate skip: $script: ${gate_reason:-<no reason given>}"
   fi
 
-  printf 'JG_TEST_END %s %s exit=%s duration_ms=%s gate_skip=%s\n' \
-    "$end_iso" "$script" "$rc" "$duration" "$gate_skip"
+  if [ -z "$rtype" ]; then rtype='test'; [ "$rc" -ne 124 ] || rtype=resource; fi
+  printf 'JG_TEST_END %s %s exit=%s duration_ms=%s gate_skip=%s type=%s\n' \
+    "$end_iso" "$script" "$rc" "$duration" "$gate_skip" "$rtype"
 
   quarantine_verdict "$script" "$rc"
   rc=$QUARANTINE_RC
@@ -2764,7 +2767,7 @@ record_script_result() {  # <script> <rc> <duration> <out> <end_iso> <stream>
   TOTAL=$((TOTAL + 1))
 }
 
-# Record each unmapped changed path as one failed result naming the file and the cause, and run nothing for it.
+# Record each unmapped changed path as one failed result of type mapping naming the file and the cause, and run nothing for it.
 record_unmapped_tests() {
   local path out
   for path in "${UNMAPPED_PATHS[@]+"${UNMAPPED_PATHS[@]}"}"; do
@@ -2772,7 +2775,7 @@ record_unmapped_tests() {
     printf 'not ok - %s: no changed-test mapping for source path: %s\n' "$path" "$path" >"$out"
     cat "$out"
     printf 'JG_TEST_BEGIN %s %s family=%s expected_gate_skip=\n' "$(now_iso)" "$path" "$(family_for_basename "$(basename "$path")")"
-    record_script_result "$path" 1 0 "$out" "$(now_iso)" 1
+    record_script_result "$path" 1 0 "$out" "$(now_iso)" 1 mapping
   done
 }
 

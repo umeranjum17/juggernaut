@@ -123,6 +123,9 @@ test_an_unmapped_source_path_fails_only_itself() {
   [ "$rc" = 1 ] || fail "an unmapped source path must refuse the gate with exit 1: rc=$rc $out"
   assert_not_contains "$out" 'stopped with exit' 'no shard may stop before its result'
   assert_contains "$out" 'not ok - bin/jg-orphan-lib.sh: no changed-test mapping for source path: bin/jg-orphan-lib.sh' 'the path and the cause are named'
+  assert_contains "$out" 'JG_TEST_END' 'results are reported'
+  printf '%s\n' "$out" | grep -E '^JG_TEST_END .* bin/jg-orphan-lib.sh exit=1 .* type=mapping$' >/dev/null || fail "the unmapped path must end as a mapping failure, never run: $out"
+  printf '%s\n' "$out" | grep -E '^JG_TEST_END .* tests/required-feature.test.sh exit=0 .* type=test$' >/dev/null || fail "a script that ran carries the type test: $out"
   jq -e '.summary.lanes == 8 and .summary.failed_lanes == 1 and .summary.total == 2 and .summary.failed == 1
     and ([.scripts[] | select(.path == "tests/required-feature.test.sh" and .exit == 0)] | length) == 1' \
     "$res/required.json" >/dev/null || fail "the aggregate must hold the other script's pass and only the stray path's failure: $out"

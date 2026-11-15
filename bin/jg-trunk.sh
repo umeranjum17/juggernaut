@@ -461,6 +461,11 @@ gate_results() {  # <log>
   ' "$1"
 }
 
+# The paths a runner log reports as failed with <type> (mapping, resource or test): the type the runner put on each JG_TEST_END line.
+gate_typed() {  # <log> <type>
+  awk -v t="$2" '/^JG_TEST_END / && $0 !~ / exit=0( |$)/ { ty = "test"; if (match($0, / type=[a-z]+/)) ty = substr($0, RSTART + 6, RLENGTH - 6); if (ty == t) print $3 }' "$1"
+}
+
 # The failures a full gate left behind that no test script accounts for: a gate that failed for another reason
 # (a check before the runner, a runner that died) is never forgiven. Prints nothing when every failure is a script's.
 gate_unexplained() {  # <log> <results>
@@ -556,11 +561,28 @@ report_tip_red() {  # <tip> <script>...
 
 # A script that failed and passed on its rerun is flaky: never a stop, but every occurrence is recorded and each script gets its own
 # fix row, filed once (data/trunk/flaky-<project>.tsv: epoch, commit, script, the row it was filed as; "-" until a filing works).
+# Only a test script can be flaky. Intake refuses any other path (an earlier gate filed a production file or an allow-list this way) and
+# corrects the past: each filed row whose script is no test is closed once (data/trunk/flaky-<project>-corrected.tsv: epoch, script, row).
+correct_fake_flakes() {  # <ledger>
+  local done_ledger="${1%.tsv}-corrected.tsv" s id
+  touch "$done_ledger"
+  while IFS=$'\t' read -r _ _ s id; do
+    [ -n "$s" ] && [ "${id:--}" != - ] || continue
+    ! is_test_script "$s" || continue
+    grep -qxF -- "$id" <(cut -f3 "$done_ledger") && continue
+    if JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-backlog.sh" update "$id" --append-notes "Not a flaky test: $s is not a test script, so it never ran twice. Closed by the flake intake." >/dev/null 2>&1 \
+      && JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-backlog.sh" "done" "$id" >/dev/null 2>&1; then
+      printf '%s\t%s\t%s\n' "$(date +%s)" "$s" "$id" >> "$done_ledger"
+    else echo "warning: could not close the fake flaky-test row $id" >&2; fi
+  done < "$1"
+}
 record_flaky() {  # <commit> <script>...
   local sha=$1 ledger s id filed
   shift
   ledger="$DATA/trunk/flaky-$PN.tsv"; mkdir -p "$DATA/trunk"; touch "$ledger"
+  correct_fake_flakes "$ledger"
   for s in "$@"; do
+    is_test_script "$s" || { echo "note: $s is not a test script, so it is not filed as flaky" >&2; continue; }
     id=$(basename "$s"); id=${id%.sh}; id=${id%.test}
     id="flaky-$PN-$(printf '%s' "$id" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9\n' '-')"
     filed=$(awk -F'\t' -v s="$s" '$3 == s && $4 != "-" { f = $4 } END { print f }' "$ledger")
@@ -617,8 +639,15 @@ gate_figures() {  # <first-run log> <start epoch>
 # reason no test script accounts for. The base is the trunk tip for a landing and the commit's parent for a verify.
 full_gate() {  # <candidate> <command> <base>
   local rc=0 verdict
-  GATE_FAILED=
+  GATE_FAILED=''; GATE_COVERAGE=''
   _full_gate "$@" || rc=$?
+  # The coverage failure is charged to the lane once, named by its paths, even when every script that ran was green.
+  if [ -n "$GATE_COVERAGE" ] && [ "$rc" -ne 1 ]; then
+    rc=2; GATE_KIND=full
+    GATE_BAD="${GATE_BAD:+$GATE_BAD }$GATE_COVERAGE"
+    GATE_BAD_SIG="${GATE_BAD_SIG:+$GATE_BAD_SIG; }coverage: no test names:${GATE_COVERAGE:+ $GATE_COVERAGE}"
+    echo "REFUSED: gate 'full' at ${1:0:12}: one coverage failure, no test names these changed paths and none was run or rerun: $GATE_COVERAGE" >&2
+  fi
   # One verdict per commit (H29g): the judge (the lander's tip run, the verify or the nightly) keeps what it saw on this tree, and a
   # second judge that saw another failed set raises judge-split. A run that ended for a reason no test accounts for (1) judged nothing.
   if [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ]; then
@@ -630,8 +659,8 @@ full_gate() {  # <candidate> <command> <base>
   return "$rc"
 }
 _full_gate() {  # <candidate> <command> <base>
-  local badsig='' cand=$1 log="${LAND_ATTEMPT:-$DATA/trunk/gate-$PN-${1:0:12}}-full.log" envf rc=0 mine tipres line s ex sig tex tsig bad='' old='' unexplained quoted again settled now flaky='' t0 passing='' byself='' byparent='' rerun_red noparent=''
-  t0=$(date +%s); GATE_KIND=full; GATE_FIGURES=; GATE_BAD=; GATE_BAD_SIG=
+  local badsig='' cand=$1 log="${LAND_ATTEMPT:-$DATA/trunk/gate-$PN-${1:0:12}}-full.log" envf rc=0 mine tipres line s ex sig tex tsig bad='' old='' unexplained quoted again settled now flaky='' t0 passing='' byself='' byparent='' rerun_red noparent='' coverage=''
+  t0=$(date +%s); GATE_KIND=full; GATE_COVERAGE=; GATE_FIGURES=; GATE_BAD=; GATE_BAD_SIG=
   envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX" 2>/dev/null) || { mkdir -p "$DATA/trunk"; envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX"); }
   gate_exec "$cand" "$2" "$log" "$envf" || rc=$?
   gate_deadline_ok || { rm -f -- "$envf"; return 1; }
@@ -646,6 +675,13 @@ _full_gate() {  # <candidate> <command> <base>
   fi
   # A flaky failure gets one rerun before it is judged: the scripts are rerun once on the candidate, and only
   # what fails again counts (as that second run saw it). A script the rerun does not report keeps its first result.
+  # A mapping failure (no test names the path) is one coverage failure of the lane: nothing ran for it, so it is never rerun, never read
+  # from a tip and never a flaky row. It is set apart here and charged to the lane once, whatever else this gate finds.
+  coverage=$(gate_typed "$log" mapping | paste -sd' ' -)
+  if [ -n "$coverage" ]; then
+    mine=$(printf '%s\n' "$mine" | while IFS= read -r line; do case " $coverage " in *" ${line%%$'\t'*} "*) ;; *) printf '%s\n' "$line" ;; esac; done)
+    GATE_COVERAGE=$coverage
+  fi
   quoted=$(printf '%s\n' "$mine" | while IFS= read -r line; do printf ' %q' "${line%%$'\t'*}"; done)
   rerun_scripts "$cand" "$envf" "$DATA/trunk/gate-$PN-${cand:0:12}-full-rerun.log" "$quoted"
   gate_deadline_ok || { rm -f -- "$envf"; return 1; }
