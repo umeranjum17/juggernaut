@@ -3800,8 +3800,33 @@ reconcile_requests_detached() {
 # re-arm as a stale watcher. Nothing in the poll reads the feed. The exporter
 # owns its own cursor and lock, so a pass still running from an earlier cycle,
 # or from a watcher that already exited, makes a new start return at once.
+# slow_child_due <name>: is it this cycle's turn to start one of the slow per-home children (the comms-feed
+# export, the escalation tick, the inactive-outcome scan)? Each reads every record of its home, and a home's
+# watcher started all three on every cycle, which across the homes of a host was a fork storm (host load past 24,
+# spawns exiting 75). They now start on the first cycle, then on every JG_SLOW_CHILD_CYCLES-th cycle (default 4)
+# or after JG_SLOW_CHILD_SECS seconds (default 60), whichever comes first, so a slow idle poll still runs them
+# on every cycle. What each child reads, decides and wakes is unchanged; a wake is at most that long later,
+# which is far inside the 120 second owner-alert threshold and the pause cadence they serve.
+declare -A SLOW_CHILD_LAST_CYCLE=() SLOW_CHILD_LAST_AT=()
+WATCH_CYCLE=0
+slow_child_due() {  # <name>
+  local name=$1 now every=${JG_SLOW_CHILD_CYCLES:-4} secs=${JG_SLOW_CHILD_SECS:-60}
+  case "$every" in ''|*[!0-9]*|0) every=4 ;; esac
+  case "$secs" in ''|*[!0-9]*) secs=60 ;; esac
+  jg_epoch_seconds_to now
+  if [ -n "${SLOW_CHILD_LAST_CYCLE[$name]:-}" ] \
+    && [ $((WATCH_CYCLE - SLOW_CHILD_LAST_CYCLE[$name])) -lt "$every" ] \
+    && [ $((now - SLOW_CHILD_LAST_AT[$name])) -lt "$secs" ]; then
+    return 1
+  fi
+  SLOW_CHILD_LAST_CYCLE[$name]=$WATCH_CYCLE
+  SLOW_CHILD_LAST_AT[$name]=$now
+  return 0
+}
+
 COMMS_FEED_PID=
 comms_feed_sync_detached() {
+  slow_child_due comms-feed || return 0
   [ -f "$SCRIPT_DIR/jg-comms-feed.sh" ] && [ ! -L "$SCRIPT_DIR/jg-comms-feed.sh" ] || return 0
   if [ -n "$COMMS_FEED_PID" ]; then
     if kill -0 "$COMMS_FEED_PID" 2>/dev/null; then
@@ -4249,6 +4274,7 @@ EOF
 }
 
 while :; do
+  WATCH_CYCLE=$((WATCH_CYCLE + 1))
   # Each cycle starts with no routing verdict: a class gates only its own cycle.
   # shellcheck disable=SC2034 # Read by wake() in the separately linted transition owner.
   JG_WAKE_LAST=
@@ -4588,7 +4614,9 @@ EOF
   # rungs the definition does not carry yet. The tick prints the wake it already
   # queued, so this cycle ends on it exactly as the ladder's own owner fire did;
   # a tick that cannot read its definition reports it and leaves the poll running.
-  if escalation_reason=$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_CONFIG_OVERRIDE="$CONFIG" POLL="$POLL" \
+  if ! slow_child_due escalation-tick; then
+    :  # not this cycle's turn (slow_child_due owns the cadence)
+  elif escalation_reason=$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_CONFIG_OVERRIDE="$CONFIG" POLL="$POLL" \
     watcher_child "$SCRIPT_DIR/jg-escalation-workflows.sh" tick); then
     # The tick queued this row in its own process, so a batch key this cycle
     # appended earlier can never suppress the delivery of it.
@@ -4607,7 +4635,9 @@ EOF
   # This is mechanical and silent unless a durable terminal-outcome obligation
   # was created, so quiet cycles never wake juggernaut or consume model tokens.
   inactive_out=
-  if inactive_out=$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" \
+  if ! slow_child_due inactive-scan; then
+    :  # not this cycle's turn (slow_child_due owns the cadence)
+  elif inactive_out=$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" \
     watcher_child "$SCRIPT_DIR/jg-inactive-reconcile.sh" scan 2>/dev/null); then
     if [ -n "$inactive_out" ]; then
       wake "check: inactive-outcome"
