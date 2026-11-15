@@ -51,9 +51,10 @@
 # with his whole words (`resolution` answered, or released with `--release`), then a ticket that was only the question;
 # `--gate <id>` names one of several open gates. `reconcile close` closes it on evidence (`resolution` reconciled).
 # `open`, `answered`, `blocking`, `phase` and `complete`/`verify` read the gate. `done` refuses a ticket with an open gate.
-# A parked hold, a stop order and a ticket that still carries an old hold-set stamp keep the stamped record described
-# below, and answer the old way, until `to-gates` moves old holds to gates; JG_CAPTAIN_HOLD_STAMPED=1 is the
-# test seam that makes such a hold.
+# No hold text goes into the description. What a stamp and a resolution block used to record is on the gate: the hold-set
+# time is its `created_at`, the origin its `metadata.origin`, his words its `close_reason`, the mode its `metadata.resolution`.
+# A parked hold, a stop order and the owner's own instruction are a plain hold: the status and its reason are the whole record.
+# An old ticket that still carries a `Captain hold set:` stamp is read only by `to-gates`, which moves it to a gate.
 #
 # `hold` places an existing task under an active captain hold, or creates the
 # task first when no work item exists to hold (--title required to create; the
@@ -67,18 +68,15 @@
 # store keeps it as native issue type `decision`. Captain holds have no due
 # semantics (`--until` is the optional hold deferral). A created task goes
 # through `add`, so strict intake there (bin/jg-backlog.sh) reads its title and priority.
-# The command records a UTC `Captain hold set:` timestamp in the task body:
-# repeating an active hold preserves the existing timestamp, while re-holding
-# released work starts a new lifecycle. A task already closed is refused rather
-# than reopened.
-# `--origin` also records the origin on a `Captain hold origin:` body line, which
-# `complete` and `verify` check. The reason may hold parentheses and line breaks.
+# Repeating an active hold makes no second gate, while re-holding released work
+# starts a new lifecycle. A task already closed is refused rather than reopened.
+# `--origin` records the origin in the gate's metadata, which `complete` and
+# `verify` check. The reason may hold parentheses and line breaks.
 # `--until` records the captain's own deferral date through `hold
 # --until`, so a "revisit later" answer is stored as a date instead of a live
 # card.
 # When this home has armed the sign-off adapter, an undated `hold` also
-# posts a sign-off board card keyed by this home's tag, the task id and the hold
-# stamp; the card goes through bin/jg-question-card.sh post, which owns what a
+# posts a sign-off board card keyed by this home's tag, the task id and the gate; the card goes through bin/jg-question-card.sh post, which owns what a
 # board card is, or through core/signoff/bin/jg-procevent-signoff.sh when that
 # installed adapter authors the ask itself,
 # and a card it cannot post or raise fails the command (the hold stays recorded).
@@ -88,23 +86,11 @@
 # to him, so the hold is the whole result and no card and no Overwatch record are
 # created for it (bin/jg-ask-gate-lib.sh owns the words).
 #
-# `answer` records the captain's exact words and resolves the call in the same
-# act. It requires a non-empty captain decision file of at most 8192 bytes and
-# writes a resolution block while preserving the leading hold-set stamp until
-# the close succeeds (the previous body is preserved and archived through
-# --archive-body). It closes a question with `done` - or,
-# with `--release`, lifts the hold with `unhold` so a captain-gated
-# WORK item resumes without closing - and restores resolution-first body
-# ordering. An exact retry also completes unfinished ordering normalization and
-# is idempotent only when its requested close mode
-# matches the newest record; a changed decision or a mode mismatch is rejected.
-# A re-held task may record a new answer on top. On a task already closed outside this script,
-# `answer` records the missing resolution block (the old `repair` path) only
-# when the task still carries the captain-hold provenance the store preserves
-# through a close, so an ordinary finished task cannot be dressed up as an
-# answered captain call. A hold that expired by date (`--until` in the past) is
-# still answerable: the surviving hold annotations, not the live
-# `held:` bit, prove the captain owned it.
+# `answer` closes the ticket's open gate with the captain's exact words, whole (a non-empty decision file of at most
+# 8192 bytes), then closes a ticket that was only the question with `done` - or, with `--release`, lifts the hold with
+# `unhold` so a captain-gated WORK item resumes without closing. An exact retry finishes what the first call left
+# undone and is idempotent; other words on an answered question are refused. A ticket with no gate is refused: there is
+# no question to answer.
 #
 # ONE KEYED-ANSWER INTAKE, FED BY EVERY CHANNEL.
 # "A keyed answer resolves its matching captain-held task" is a single
@@ -118,9 +104,8 @@
 # empty or `done` completes the task, `release` lifts the hold so held work
 # resumes; anything else is skipped. A key that names no task, a task that is
 # not held for the captain, or a task already closed is reported as `skipped:`
-# and feeds nothing. A replayed delivery whose answer digest and requested
-# close mode both match the newest record is reported `closed:` and is a no-op;
-# a mode mismatch is skipped. The command exits 3 when every skip was permanent
+# and feeds nothing. A replayed delivery that matches the closed question's words
+# is reported `closed:` and is a no-op. The command exits 3 when every skip was permanent
 # (the reserved reconcile value, already closed, not held for the captain, or
 # unknown close mode) and 1 for any other skip; the reserved
 # reconcile value is refused for good, reported once on
@@ -143,8 +128,8 @@
 #
 # `reconcile` is the verify-then-decide half. Both outcomes require the pending
 # request created by the captain's board selection. `close` is the moot outcome:
-# it requires the evidence that made the call moot, writes a `reconciled` resolution record
-# under a `Reconciliation evidence:` label so it can never read as the
+# it requires the evidence that made the call moot, closes the gate with
+# `Reconciliation evidence:` as its reason and `resolution` reconciled so it can never read as the
 # captain's words, and closes the task. `note` is the still-active outcome: it
 # appends one dated `Captain hold reconciled:` note and leaves the hold in
 # place. A normal answer also retires the request because the call is settled.
@@ -174,8 +159,9 @@
 # `--none` is an explicit semantic attestation that the just-reviewed surface
 # has no unresolved captain call, and is refused while the origin still has an
 # open keyed status decision. With a non-empty inventory, every listed task is
-# verified durable (captain-held, or carrying a recorded resolution),
-# is never the origin itself, and, when `hold --origin` recorded one, was held
+# verified durable (an entry is a gate id, or a ticket id that has a gate, open or
+# answered; a ticket held for the owner with no gate counts too),
+# is never the origin itself, and, when its gate's metadata names an origin, was held
 # for this origin; a hold with no recorded origin is accepted on durability
 # alone and named in the output,
 # the inventory is unioned idempotently into the metadata, and every still-open
@@ -205,7 +191,7 @@
 # It prints nothing on these predicate results and mutates nothing, unless
 # `--identity` asks it to print this call's
 # LIFECYCLE identity, which it does on an exit 0 only. That identity - the
-# hold-set stamp and the count of recorded answers - is what distinguishes two
+# open gate's id, or for a plain hold a digest of its reason and date - is what distinguishes two
 # successive calls on one task id: re-holding released work starts a new
 # lifecycle without necessarily touching the task's status log, so a consumer
 # that bounds repeated work per call cannot use the task id alone.
@@ -236,8 +222,8 @@
 # home lacks) is refused. The answer closes the gate with the captain's whole words.
 #
 # `answered` is the read-only predicate bin/jg-backlog.sh asks before it lets a
-# `[captain-ask]` row leave the backlog: exit 0 when the task body carries a
-# recorded captain answer (an evidence-only `reconciled` record or an open hold-set stamp does not count),
+# `[captain-ask]` row leave the backlog: exit 0 when no gate of the ticket is open and one is closed with
+# his words (a gate closed on evidence, `reconciled`, does not count),
 # 1 when it does not, and any other non-zero status when the task cannot be read.
 # It prints nothing.
 #
@@ -247,18 +233,12 @@
 # `diverged` is the read-only guard over the seam between the two records of
 # one captain call. See "record divergence" beside command_diverged below.
 #
-# Resolution records: the block written into the body names this script, the
-# decision digest, and a `Resolution mode:` of answered, released, repaired, or
-# reconciled. Records written by the retired jg-decision-hold.sh (routed,
-# declined, answered, repaired) are recognized everywhere a record is read, so
-# nothing already closed needs rewriting.
-#
 # Parent channel: inside a squad_lead home a task held for the captain, and its
 # answer, are captain-facing facts the moment they are recorded, so `hold`
 # publishes `needs-decision [key=captain-hold-<task>-<n>]` and `answer` (and
 # `answers`) the matching `resolved` line on the parent channel through
 # bin/jg-parent-channel-lib.sh, whether or not the mate model appends anything.
-# <n> is the count of resolution records the body already carries plus one, so
+# <n> is the count of the ticket's questions, so
 # a released and re-held task opens and closes a distinct parent decision with
 # no new persisted state, and an exact retry republishes the same line, which
 # the channel deduplicates. A main home has no channel and publishes nothing.
@@ -603,106 +583,18 @@ meta_value() {  # <meta> <key>
   grep "^$2=" "$1" 2>/dev/null | tail -1 | cut -d= -f2- || true
 }
 
-# A resolution record written by this script or by the retired
-# jg-decision-hold.sh. Both carry the same leader-then-captain-decision shape.
-body_has_resolution_record() {  # <task-body>
-  case "$1" in
-    *"Resolution recorded by jg-captain-hold."*"Captain decision:"*) return 0 ;;
-    *"Resolution recorded by jg-decision-hold."*"Captain decision:"*) return 0 ;;
-    *"Resolution recorded by jg-captain-hold."*"Reconciliation evidence:"*) return 0 ;;
-  esac
-  return 1
-}
-
-# The recorded decision digest of either record format, from the show-escaped
-# body (multi-line bodies print as one quoted line with \n escapes). Records
-# are prepended, so the first match is the newest record.
-recorded_decision_digest() {  # <task-body>
-  local rest=$1
-  case "$rest" in
-    *"Decision digest: "*) rest=${rest#*"Decision digest: "} ;;
-    *) return 1 ;;
-  esac
-  rest=${rest%%\\n*}
-  rest=${rest%%$'\n'*}
-  printf '%s' "$rest"
-}
-
-# How many resolution records the shown body carries, in either record format.
-resolution_record_count() {  # <task-body>
-  local body
-  body=$(decode_shown_value "$1") || return 1
-  printf '%s\n' "$body" \
-    | grep -Ec '^Resolution recorded by jg-(captain|decision)-hold\.$' || true
-}
-
-# The newest record's `Resolution mode:` value; empty for a record predating it.
-recorded_resolution_mode() {  # <task-body>
-  local rest=$1
-  case "$rest" in
-    *"Resolution mode: "*) rest=${rest#*"Resolution mode: "} ;;
-    *) return 1 ;;
-  esac
-  rest=${rest%%\\n*}
-  rest=${rest%%$'\n'*}
-  printf '%s' "$rest"
-}
-
-recorded_resolution_completed() {  # <task-body>
-  local rest
-  rest=$(decode_shown_value "$1") || return 1
-  case "$rest" in *"Resolution mode: "*) ;; *) return 1 ;; esac
-  rest=${rest#*"Resolution mode: "}
-  rest=${rest#*$'\n'}
-  [ "${rest%%$'\n'*}" = "Resolution completed: yes" ]
-}
-
-closed_answer_replay_mode_compatible() {  # <mode> <task-body>
-  case "$1" in
-    answered|repaired|routed) return 0 ;;
-  esac
-  return 1
-}
-
-# The record's label is what keeps an evidence-backed reconciliation from
-# reading as the captain's own words. `reconciled` closes a call that went moot
-# and carries verified evidence; every other mode carries what the captain said.
-resolution_block() {  # <mode>
-  local label='Captain decision:'
-  [ "$1" != reconciled ] || label='Reconciliation evidence:'
-  printf 'Resolution recorded by jg-captain-hold.\nDecision digest: %s\nResolution mode: %s\n\n%s\n%s\n' \
-    "$DECISION_DIGEST" "$1" "$label" "$DECISION_TEXT"
-}
-
-# Durable state of one captain call: an active captain hold (annotations
-# surviving even when a date gate has expired) or a recorded captain answer.
-verify_hold_durable() {  # <task-id>
-  local id=$1 show state hold_kind body
-  task_show "$id" || fail "captain-held task $id is absent from this home's configured backlog (data directory $DATA)"
-  show=$TASK_SHOW_OUTPUT
-  state=$(show_field "$show" state)
-  hold_kind=$(show_field_value "$show" hold_kind)
-  body=$(show_field "$show" body)
-  if body_has_resolution_record "$body"; then
-    return 0
-  fi
-  if [ "$state" != "done" ] && [ "$hold_kind" = captain ]; then
-    return 0
-  fi
-  # A question held as a gate is recorded while it is open, and by his words once it is closed.
-  [ -z "$(gate_rows "$id" --all | jq -r 'select(.state == "open" or .resolution == "answered" or .resolution == "released") | .id')" ] \
-    || return 0
-  fail "captain-held task $id is neither held for the captain nor closed with a recorded captain answer"
-}
-
-# Resolve one inventory entry or channel key to the task that carries it: the
-# exact task id when it exists, else the legacy derived identity. Prints
-# "<resolved id> <how>", where <how> is exact or legacy, so a caller can record
-# which evidence carried the attestation.
+# Resolve one inventory entry or channel key to the task that carries it: the exact task id when it exists, else the
+# ticket a gate id belongs to, else the legacy derived identity. Prints "<resolved id> <how>", where <how> is exact,
+# gate or legacy, so a caller can record which evidence carried the attestation.
 resolve_entry() {  # <origin-or-empty> <entry>; prints "<id> <how>" or fails
-  local origin=$1 entry=$2 legacy
+  local origin=$1 entry=$2 legacy ticket
   if task_show "$entry"; then
     printf '%s exact' "$entry"
+    return 0
+  fi
+  ticket=$(backlog_cmd questions --json --all | jq -r --arg g "$entry" '.[] | select(.id == $g and .ticket != "-") | .ticket' | head -1)
+  if [ -n "$ticket" ]; then
+    printf '%s gate' "$ticket"
     return 0
   fi
   if [ -n "$origin" ] && [ "$origin" != "$BINDING_ANY" ]; then
@@ -711,9 +603,9 @@ resolve_entry() {  # <origin-or-empty> <entry>; prints "<id> <how>" or fails
       printf '%s legacy' "$legacy"
       return 0
     fi
-    fail "no captain-held task $entry in this home's configured backlog (data directory $DATA); the nearest legacy identity $legacy also resolves to nothing"
+    fail "no captain-held task or question $entry in this home's configured backlog (data directory $DATA); the nearest legacy identity $legacy also resolves to nothing"
   fi
-  fail "no captain-held task $entry in this home's configured backlog (data directory $DATA)"
+  fail "no captain-held task or question $entry in this home's configured backlog (data directory $DATA)"
 }
 
 body_hold_set_timestamp() {  # <decoded-task-body>
@@ -722,38 +614,6 @@ body_hold_set_timestamp() {  # <decoded-task-body>
       -e '1s/^Captain hold set: \([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z\)$/\1/p' \
       -e '1s/^Captain hold set: \([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]\)$/\1/p' \
     | head -1
-}
-
-write_hold_set_stamp() {  # <task-id> <shown-body> <timestamp> <preserve-existing-0-or-1>
-  local id=$1 body=$2 hold_set=$3 preserve=$4 existing new_body tmp
-  body=$(decode_shown_value "$body") \
-    || fail "could not decode the existing body for $id"
-  existing=$(body_hold_set_timestamp "$body")
-  if [ "$preserve" = 1 ] && [ -n "$existing" ]; then
-    return 0
-  fi
-  if [ -n "$existing" ]; then
-    body=${body#"Captain hold set: $existing"}
-    case "$body" in
-      $'\n\n'*) body=${body#$'\n\n'} ;;
-      $'\n'*) body=${body#$'\n'} ;;
-    esac
-  fi
-  new_body=$(printf 'Captain hold set: %s' "$hold_set")
-  if [ -n "$body" ]; then
-    new_body=$(printf '%s\n\n%s' "$new_body" "$body")
-  fi
-  tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/jg-captain-hold-stamp.XXXXXX") \
-    || fail "cannot stage the hold-set stamp"
-  if ! printf '%s\n' "$new_body" > "$tmp"; then
-    rm -f -- "$tmp"
-    fail "cannot stage the hold-set stamp for $id"
-  fi
-  if ! backlog_cmd update "$id" --body-file "$tmp" >/dev/null; then
-    rm -f -- "$tmp"
-    fail "could not record the hold-set stamp on $id"
-  fi
-  rm -f -- "$tmp"
 }
 
 # The origin a hold was recorded for lives in the held task's own body, on a
@@ -774,35 +634,6 @@ task_identity() {
   printf '%s' "$id"
 }
 
-write_hold_origin() {  # <task-id> <shown-body> <origin-or-empty>
-  local id=$1 body=$2 origin=$3 stamp rest new_body tmp
-  body=$(decode_shown_value "$body") \
-    || fail "could not decode the existing body for $id"
-  stamp=$(printf '%s\n' "$body" | sed -n 1p)
-  [ -n "$(body_hold_set_timestamp "$body")" ] \
-    || fail "task $id lost its hold-set stamp before its origin was recorded"
-  rest=$(printf '%s\n' "$body" | sed 1d | awk '!/^Captain hold origin: /' \
-    | awk 'NF || started { started = 1; print }')
-  new_body=$stamp
-  if [ -n "$origin" ]; then
-    new_body=$(printf '%s\nCaptain hold origin: %s' "$stamp" "$origin")
-  fi
-  if [ -n "$rest" ]; then
-    new_body=$(printf '%s\n\n%s' "$new_body" "$rest")
-  fi
-  tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/jg-captain-hold-origin.XXXXXX") \
-    || fail "cannot stage the hold origin"
-  if ! printf '%s\n' "$new_body" > "$tmp"; then
-    rm -f -- "$tmp"
-    fail "cannot stage the hold origin for $id"
-  fi
-  if ! backlog_cmd update "$id" --body-file "$tmp" >/dev/null; then
-    rm -f -- "$tmp"
-    fail "could not record the hold origin on $id"
-  fi
-  rm -f -- "$tmp"
-}
-
 refuse_self_inventory() {
   local origin=$1 entry=$2 meta="$STATE/$1.meta"
   if list_has_key "$(meta_value "$meta" decision_keys)" "$entry"; then
@@ -811,14 +642,13 @@ refuse_self_inventory() {
   fail "origin $origin cannot be its own captain-call inventory entry; hold a separate captain task for the call and list that task"
 }
 
-# Resolve one entry and verify the row it names is durably captain-held. A
-# resolution failure that is not the read bound keeps resolve_entry's own
-# status - its stderr already named the entry; 124 means the backend never
-# answered, which is not the same as an unknown entry and must not be spent
-# as absence. The result carries the attestation evidence and whether an
-# origin was recorded, so completion can disclose the legacy fallback.
+# Resolve one entry and verify the ticket it names still carries its owner call. The call is durable while its gate
+# exists, open or answered, or while the ticket is held for the owner with no gate (his own instruction). The origin
+# is read from the gate's metadata. A resolution failure that is not the read bound keeps resolve_entry's own status -
+# its stderr already named the entry; 124 means the backend never answered, which is not the same as an unknown entry
+# and must not be spent as absence. The result says whether an origin was recorded, so completion can disclose it.
 verify_entry_durable() {  # <origin-or-empty> <entry>; prints "<id> <how> <origin-state>"
-  local origin=$1 entry=$2 resolved resolve_status=0 id how stored origin_state=unrecorded origin_id stored_id
+  local origin=$1 entry=$2 resolved resolve_status=0 id how stored origin_id stored_id origin_state=unrecorded gates
   # The origin task is never its own captain-call inventory: it is the work the
   # calls were found in, so accepting it would let a refused hold look recorded.
   if [ -n "$origin" ] && [ "$origin" != "$BINDING_ANY" ] && [ "$entry" = "$origin" ]; then
@@ -832,11 +662,14 @@ verify_entry_durable() {  # <origin-or-empty> <entry>; prints "<id> <how> <origi
   fi
   id=${resolved%% *}
   how=${resolved##* }
-  verify_hold_durable "$id"
+  task_show "$id" || fail "captain-held task $id is absent from this home's configured backlog (data directory $DATA)"
+  gates=$(gate_rows "$id" --all)
+  if [ -z "$gates" ] && { [ "$(show_field "$TASK_SHOW_OUTPUT" state)" = "done" ] || [ "$(show_field_value "$TASK_SHOW_OUTPUT" hold_kind)" != captain ]; }; then
+    fail "captain-held task $id is neither held for the captain nor closed with a recorded captain answer"
+  fi
   id=$(show_field_value "$TASK_SHOW_OUTPUT" id)
   validate_slug backend-task-id "$id"
-  stored=$(body_hold_origin "$(decode_shown_value "$(show_field "$TASK_SHOW_OUTPUT" body)")")
-  [ -n "$stored" ] || stored=$(gate_rows "$id" --all | jq -r 'select(.origin != "-") | .origin' | head -1)  # a gate carries the origin as its metadata
+  stored=$(printf '%s\n' "$gates" | jq -r 'select(.origin != "-") | .origin' | head -1)
   origin_id=$origin
   if [ -n "$origin" ] && [ "$origin" != "$BINDING_ANY" ]; then
     origin_id=$(task_identity "$origin") || exit $?
@@ -889,10 +722,6 @@ open_gate_ids() {  # <ticket>
   gate_rows "$1" | jq -r '.id'
 }
 
-hold_is_stamped() {  # <show-output>: does the ticket carry an old hold-set stamp?
-  [ -n "$(body_hold_set_timestamp "$(decode_shown_value "$(show_field "$1" body)")")" ]
-}
-
 # Make the gate, and defer the ticket to its date when the owner said "ask me again later".
 hold_by_gate() {  # <task-id> <task-title> <reason> <until> <must> <origin> <done|release>
   local id=$1 reason=$3 until=$4 must=$5 origin=$6 title
@@ -908,8 +737,8 @@ hold_by_gate() {  # <task-id> <task-title> <reason> <until> <must> <origin> <don
 }
 
 command_hold() {
-  local id=${1:-} priority='' title='' reason='' repo='' origin='' until='' show state existing_title body='' hold_kind hold_set occurrence held_from
-  local signoff_script existing_hold_kind='' existing_held='' preserve_hold_set=0 stored_reason previous_origin='' hold_status=0 card_close=release must='' refusal rec own_instruction='' raise_rc=0
+  local id=${1:-} priority='' title='' reason='' repo='' origin='' until='' show state existing_title body='' occurrence held_from
+  local signoff_script existing_hold_kind='' existing_held='' preserve_hold=0 card_close=release must='' refusal rec own_instruction='' raise_rc=0
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -931,7 +760,6 @@ command_hold() {
   if [ -z "${reason//[[:space:]]/}" ]; then
     fail 'hold needs --reason "<what the captain has to decide>"; nothing was recorded'
   fi
-  stored_reason=$reason
   if [ -n "$origin" ]; then
     validate_slug origin-id "$origin"
   fi
@@ -941,7 +769,6 @@ command_hold() {
       *) fail "--until must be a YYYY-MM-DD date: $until" ;;
     esac
   fi
-  hold_set=${JG_CAPTAIN_HOLD_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
   # A hold that is our own parked work, his own stop order, or a branch we
   # preserved instead of landing is his instruction, so it records the hold and
   # raises nothing: no card reaches him and no ask goes to Overwatch either
@@ -967,10 +794,6 @@ command_hold() {
     [ -z "$rec" ] || printf 'recorded for Overwatch: %s\n' "${rec#overwatch: }" >&2
     exit 1
   fi
-  case "$hold_set" in
-    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) : ;;
-    *) fail "JG_CAPTAIN_HOLD_NOW must be a UTC YYYY-MM-DDTHH:MM:SSZ timestamp" ;;
-  esac
   acquire_task_control_lock "$id"
   require_backlog
   held_from=-
@@ -983,7 +806,7 @@ command_hold() {
     [ "$existing_hold_kind" != captain ] || held_from=$(hold_word "$id")
     existing_held=$(show_field_value "$show" held)
     if [ "$existing_hold_kind" = captain ] && [ "$existing_held" = yes ]; then
-      preserve_hold_set=1
+      preserve_hold=1
     fi
     if [ -n "$title" ]; then
       existing_title=$(show_field_value "$show" title)
@@ -1011,48 +834,21 @@ command_hold() {
     fi
   fi
   task_show_or_fail "$id" "task $id disappeared before holding it"
-  # JG_CAPTAIN_HOLD_STAMPED keeps the stamped record for the suites of that path (the test seam of an old hold).
-  if [ -z "$own_instruction" ] && [ -z "${JG_CAPTAIN_HOLD_STAMPED:-}" ] && ! hold_is_stamped "$show"; then
+  if [ -z "$own_instruction" ]; then
     [ -z "$origin" ] || origin=$(task_identity "$origin") || exit $?
     hold_by_gate "$id" "$(show_field_value "$show" title)" "$reason" "$until" "$must" "$origin" "$card_close"
     occurrence=$(gate_rows "$id" --all | wc -l)
   else
-    # Publish the timestamp before the captain-hold annotation. A concurrent
-    # snapshot may see the harmless stamp by itself, but can never see a newly
-    # held task without the timestamp that defines this hold lifecycle's age.
-    task_show_or_fail "$id" "task $id disappeared before recording its hold-set stamp"
-    write_hold_set_stamp "$id" "$(show_field "$show" body)" "$hold_set" "$preserve_hold_set"
-    task_show_or_fail "$id" "task $id disappeared while recording its hold-set stamp"
-    [ -n "$(body_hold_set_timestamp "$(show_field_value "$show" body)")" ] \
-      || fail "task $id did not retain its hold-set stamp"
-    if [ -n "$origin" ]; then
-      origin=$(task_identity "$origin") || exit $?
-      previous_origin=$(body_hold_origin "$(show_field_value "$show" body)")
-      write_hold_origin "$id" "$(show_field "$show" body)" "$origin" || exit $?
+    # His own instruction is a plain hold: the status and its reason are the whole record, and no text goes into the
+    # description. A re-hold of a held ticket keeps the hold and starts no second one.
+    if [ "$preserve_hold" = 0 ]; then
+      backlog_cmd hold "$id" --reason "$reason" --kind captain ${until:+--until "$until"} >/dev/null \
+        || fail "could not hold task $id for the captain"
+      jg_backlog_ticket_note "$DATA" hold "$id" --reason "$reason"
     fi
-    if [ -n "$until" ]; then
-      backlog_cmd hold "$id" --reason "$stored_reason" --kind captain --until "$until" >/dev/null \
-        || hold_status=$?
-    else
-      backlog_cmd hold "$id" --reason "$stored_reason" --kind captain >/dev/null \
-        || hold_status=$?
-    fi
-    if [ "$hold_status" -ne 0 ]; then
-      # A refused re-hold must not associate the previous hold or answer with a
-      # new origin. Restore the old line verbatim, without resolving it again.
-      if [ -n "$origin" ]; then
-        write_hold_origin "$id" "$(show_field "$show" body)" "$previous_origin" || exit $?
-      fi
-      fail "could not hold task $id for the captain"
-    fi
-    jg_backlog_ticket_note "$DATA" hold "$id" --reason "$stored_reason"
     task_show "$id" || fail "task $id disappeared while holding it"
-    show=$TASK_SHOW_OUTPUT
-    hold_kind=$(show_field_value "$show" hold_kind)
-    [ "$hold_kind" = captain ] || fail "task $id did not retain its captain hold"
-    occurrence=$(( $(resolution_record_count "$(show_field "$show" body)") + 1 ))
-    [ -n "$(body_hold_set_timestamp "$(show_field_value "$show" body)")" ] \
-      || fail "task $id lost its hold-set stamp while being held"
+    [ "$(show_field_value "$TASK_SHOW_OUTPUT" hold_kind)" = captain ] || fail "task $id did not retain its captain hold"
+    occurrence=1
   fi
   publish_parent_hold "$id" "$occurrence" needs-decision "$reason"
   # A call is raised first and deferred by its date, so a new dated hold reports both moves.
@@ -1093,43 +889,6 @@ command_hold() {
   printf '%s\n' "$id"
 }
 
-# Record a resolution block beneath any leading active hold-set stamp,
-# preserving the previous body below it and archiving the pristine original.
-# Successful closure removes the stamp to restore resolution-first ordering.
-write_resolution_record() {  # <task-id> <mode> <shown-body>
-  local id=$1 mode=$2 body=$3 new_body tmp hold_set
-  new_body=$(resolution_block "$mode")
-  # The captain's recorded answer is the board approval a build of this ticket needs.
-  case "$mode" in
-    answered|released|repaired) new_body=$(printf '%s\n%s' "$new_body" "$(captain_ask_approval_line "$id" "answer:$DECISION_DIGEST")") ;;
-  esac
-  body=$(decode_shown_value "$body") \
-    || fail "could not decode the existing body for $id"
-  hold_set=$(body_hold_set_timestamp "$body")
-  if [ -n "$hold_set" ]; then
-    body=${body#"Captain hold set: $hold_set"}
-    case "$body" in
-      $'\n\n'*) body=${body#$'\n\n'} ;;
-      $'\n'*) body=${body#$'\n'} ;;
-    esac
-    new_body=$(printf 'Captain hold set: %s\n\n%s' "$hold_set" "$new_body")
-  fi
-  if [ -n "$body" ]; then
-    new_body=$(printf '%s\n\n%s' "$new_body" "$body")
-  fi
-  tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/jg-captain-hold-body.XXXXXX") \
-    || fail "cannot stage the resolution record"
-  if ! printf '%s\n' "$new_body" > "$tmp"; then
-    rm -f -- "$tmp"
-    fail "cannot stage the resolution record for $id"
-  fi
-  if ! backlog_cmd update "$id" --body-file "$tmp" --archive-body >/dev/null; then
-    rm -f -- "$tmp"
-    fail "could not record the captain decision on $id"
-  fi
-  rm -f -- "$tmp"
-}
-
 report_retained_artifact_failure() {  # <task-id> <marker-path>
   printf 'jg-captain-hold: cannot apply the artifact recorded for %s in %s: %s\n' \
     "$1" "$2" "${JG_BACKLOG_TRANSITION_ERROR:-no reason reported}" >&2
@@ -1166,38 +925,6 @@ close_answered() {  # <task-id> <release-0-or-1>
     backlog_cmd "done" "$1" "${RETAINED_CLOSE_ARGS[@]+"${RETAINED_CLOSE_ARGS[@]}"}" >/dev/null \
       && jg_backlog_ticket_note "$DATA" "done" "$1" "${RETAINED_CLOSE_ARGS[@]+"${RETAINED_CLOSE_ARGS[@]}"}"
   fi
-}
-
-remove_interrupted_answer_stamp() {  # <task-id>
-  local id=$1 show body existing tmp head rest mode
-  task_show_or_fail "$id" "task $id disappeared after closing"
-  body=$(decode_shown_value "$(show_field "$show" body)") \
-    || fail "could not decode the closed body for $id"
-  existing=$(body_hold_set_timestamp "$body")
-  [ -n "$existing" ] || return 0
-  body=${body#"Captain hold set: $existing"}
-  case "$body" in
-    $'\n\n'*) body=${body#$'\n\n'} ;;
-    $'\n'*) body=${body#$'\n'} ;;
-  esac
-  case "$body" in
-    *"Resolution mode: "*)
-      head=${body%%"Resolution mode: "*}
-      rest=${body#"$head"}
-      rest=${rest#"Resolution mode: "}
-      mode=${rest%%$'\n'*}
-      rest=${rest#"$mode"}
-      body="${head}Resolution mode: ${mode}"$'\n'"Resolution completed: yes${rest}"
-      ;;
-  esac
-  tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/jg-captain-hold-normalize.XXXXXX") \
-    || fail "cannot stage the closed body for $id"
-  if ! printf '%s\n' "$body" > "$tmp" \
-    || ! backlog_cmd update "$id" --body-file "$tmp" >/dev/null; then
-    rm -f -- "$tmp"
-    fail "could not restore the resolution record ordering for $id"
-  fi
-  rm -f -- "$tmp"
 }
 
 # A release from a board answer tells the owner what started: one reply on the
@@ -1283,7 +1010,7 @@ answer_by_gate() {  # <task-id> <release-0-or-1> <card-key> <gate-id-or-empty> <
 }
 
 command_answer() {
-  local id=${1:-} decision_file='' release=0 card='' title show state hold_kind body outcome recorded_mode occurrence answered_from until gate=
+  local id=${1:-} decision_file='' release=0 card='' show hold_kind gate=
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -1302,118 +1029,12 @@ command_answer() {
   require_backlog
   task_show "$id" || fail "captain-held task $id is absent from this home's configured backlog (data directory $DATA)"
   show=$TASK_SHOW_OUTPUT
-  state=$(show_field "$show" state)
   hold_kind=$(show_field_value "$show" hold_kind)
-  body=$(show_field "$show" body)
-  if [ "$release" = 1 ]; then outcome=released; else outcome=answered; fi
-  title=$(show_field_value "$show" title)
   if [ "$release" = 1 ] && [ -z "$card" ] && [ "$hold_kind" = captain ]; then
     card=$(jg_question_hold_card_key "$id" "$("$SCRIPT_DIR/jg-captain-hold.sh" open "$id" --identity 2>/dev/null)") || card=''
   fi
-  if [ -n "$(gate_rows "$id" --all)" ] && ! hold_is_stamped "$show"; then
-    answer_by_gate "$id" "$release" "$card" "$gate" "$show"
-    return
-  fi
-  [ -z "$gate" ] || fail "task $id has no question $gate"
-  # The occurrence the parent line names: the record about to be written is
-  # one past those already in the body, and a retry names the newest one.
-  occurrence=$(( $(resolution_record_count "$body") + 1 ))
-
-  if [ "$state" = "done" ]; then
-    if body_has_resolution_record "$body"; then
-      # An exact compatible retry is an idempotent no-op; drift is rejected.
-      [ "$(recorded_decision_digest "$body" || true)" = "$DECISION_DIGEST" ] \
-        || fail "captain-held task $id records a different captain decision"
-      recorded_mode=$(recorded_resolution_mode "$body" || true)
-      closed_answer_replay_mode_compatible "$recorded_mode" "$body" \
-        || fail "task $id records this resolution with mode ${recorded_mode:-unknown}; it is not a captain-answer replay"
-      [ "$release" = 0 ] \
-        || fail "task $id records this answer with mode ${recorded_mode:-unknown}; --release cannot reopen a closed task"
-      remove_interrupted_answer_stamp "$id"
-      if [ "$recorded_mode" = repaired ]; then
-        publish_parent_resolution_then_retire "$id" $((occurrence - 1)) "answered (repaired)"
-      else
-        publish_parent_resolution_then_retire "$id" $((occurrence - 1)) answered
-      fi
-      printf 'answered: %s\n' "$id"
-      return 0
-    fi
-    [ "$release" = 0 ] || fail "task $id is already closed; --release cannot reopen it"
-    # Closed outside this script: record the captain's answer retroactively.
-    # The store keeps hold_kind through a close, so it is the surviving proof
-    # this really was the captain's item rather than ordinary finished work.
-    [ "$hold_kind" = captain ] \
-      || fail "task $id was never held for the captain; nothing to record an answer on"
-    write_resolution_record "$id" repaired "$body"
-    remove_interrupted_answer_stamp "$id"
-    task_show "$id" || fail "task $id disappeared while recording the answer"
-    show=$TASK_SHOW_OUTPUT
-    [ "$(show_field "$show" state)" = "done" ] || fail "recording the answer reopened closed task $id"
-    body_has_resolution_record "$(show_field "$show" body)" \
-      || fail "captain-held task $id did not retain its durable resolution record"
-    publish_parent_resolution_then_retire "$id" "$occurrence" "answered (repaired)"
-    printf 'repaired: %s\n' "$id"
-    return 0
-  fi
-
-  if [ "$hold_kind" = captain ]; then
-    # Actively the captain's item (a date-expired hold keeps its annotations
-    # and stays answerable). A matching record means an interrupted close to
-    # finish; a different digest is a NEW answer on a re-held task and gets
-    # its own record on top. Either way the close mode is the caller's flag,
-    # checked against an interrupted close's recorded mode so a retry cannot
-    # silently flip a release into a close.
-    if body_has_resolution_record "$body" \
-      && [ "$(recorded_decision_digest "$body" || true)" = "$DECISION_DIGEST" ] \
-      && ! recorded_resolution_completed "$body"; then
-      recorded_mode=$(recorded_resolution_mode "$body" || true)
-      case "$recorded_mode" in
-        released) [ "$release" = 1 ] || fail "task $id records this answer as a release; retry with --release" ;;
-        answered|routed) [ "$release" = 0 ] || fail "task $id records this answer as a close; retry without --release" ;;
-        *) fail "task $id records this resolution with mode ${recorded_mode:-unknown}; it is not a captain-answer replay" ;;
-      esac
-      if ! close_answered "$id" "$release"; then
-        fail "could not close answered captain-held task $id"
-      fi
-      remove_interrupted_answer_stamp "$id"
-      publish_parent_resolution_then_retire "$id" $((occurrence - 1)) "$outcome"
-      [ "$release" = 0 ] || reply_release "$id" "$title" "$card"
-      printf '%s: %s\n' "$outcome" "$id"
-      return 0
-    fi
-    answered_from=raised
-    until=$(show_field_value "$show" hold_until)
-    if [ -n "$until" ] && [[ "$until" > "$(date -u +%F)" ]]; then answered_from=deferred; fi
-    write_resolution_record "$id" "$outcome" "$body"
-    [ "$release" = 1 ] || report_hold_move "$id" "$answered_from" answered
-    if ! close_answered "$id" "$release"; then
-      fail "could not close answered captain-held task $id"
-    fi
-    if [ "$release" = 1 ]; then report_hold_move "$id" "$answered_from" closed; else report_hold_move "$id" answered closed; fi
-    remove_interrupted_answer_stamp "$id"
-    task_show "$id" || fail "task $id disappeared after closing"
-    show=$TASK_SHOW_OUTPUT
-    body_has_resolution_record "$(show_field "$show" body)" \
-      || fail "captain-held task $id did not retain its durable resolution record"
-    publish_parent_resolution_then_retire "$id" "$occurrence" "$outcome"
-    [ "$release" = 0 ] || reply_release "$id" "$title" "$card"
-    printf '%s: %s\n' "$outcome" "$id"
-    return 0
-  fi
-
-  # Not held and not closed: only an already-recorded release replays cleanly.
-  if body_has_resolution_record "$body"; then
-    recorded_mode=$(recorded_resolution_mode "$body" || true)
-    [ "$(recorded_decision_digest "$body" || true)" = "$DECISION_DIGEST" ] \
-      || fail "task $id records a different captain decision with mode ${recorded_mode:-unknown}"
-    [ "$recorded_mode" = released ] && [ "$release" = 1 ] \
-      || fail "task $id records this answer with mode ${recorded_mode:-unknown}; replay requires matching --release"
-    remove_interrupted_answer_stamp "$id"
-    publish_parent_resolution_then_retire "$id" $((occurrence - 1)) released
-    printf 'released: %s\n' "$id"
-    return 0
-  fi
-  fail "task $id is not held for the captain; hold it first or name the right task"
+  [ -n "$(gate_rows "$id" --all)" ] || fail "task $id has no question to the owner; hold it first or name the right task"
+  answer_by_gate "$id" "$release" "$card" "$gate" "$show"
 }
 
 # --- the one keyed-answer intake, and the source bindings that feed it --------
@@ -1497,13 +1118,6 @@ keyed_decision_text() {  # <source> <task-id> <answer> <label>
   [ -z "$4" ] || printf 'Answer as shown to the captain: %s\n' "$4"
 }
 
-legacy_keyed_decision_text() {  # <source> <key> <answer> <label>
-  printf 'Captain answered this decision through %s.\n' "$1"
-  printf 'Decision key: %s\n' "$2"
-  printf 'Answer: %s\n' "$3"
-  [ -z "$4" ] || printf 'Answer as shown to the captain: %s\n' "$4"
-}
-
 sanitize_field() {  # <text>
   printf '%s' "$1" | tr '\n\r\t' '   ' | LC_ALL=C tr -d '\000-\037\177' | cut -c1-512
 }
@@ -1539,8 +1153,8 @@ answer_gate_key() {  # <key> <source> <answer> <label> <mode> <decision-tmp> <er
 }
 
 command_answers() {
-  local origin='' source='' row rest key answer label mode id show state hold_kind body digest legacy_digest legacy_key
-  local recorded_digest recorded_mode occurrence tmp err closed=0 skipped=0 permanent=0 reason release_flag tab=$'\t'
+  local origin='' source='' row rest key answer label mode id show state hold_kind
+  local tmp err closed=0 skipped=0 permanent=0 reason release_flag tab=$'\t'
   local resolve_rc
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -1598,6 +1212,8 @@ command_answers() {
     esac
     resolve_rc=0
     id=$(resolve_entry "$origin" "$key" 2>"$err") || resolve_rc=$?
+    # A gate id names the question, not its ticket: it closes that gate and reports the gate.
+    case "$id" in *' gate') resolve_rc=1; id='' ;; esac
     id=${id%% *}
     if [ "$resolve_rc" -ne 0 ]; then
       # resolve_entry runs in a command substitution, so task_show's exit
@@ -1619,51 +1235,17 @@ command_answers() {
     fi
     keyed_decision_text "$source" "$id" "$answer" "$label" > "$tmp" \
       || fail "cannot stage the captain decision for $id"
-    digest=$(sha256_text "$(cat "$tmp")")
-    legacy_digest=''
-    if [ "$id" != "$key" ]; then
-      legacy_key=$key
-    elif { [ -z "$origin" ] || [ "$origin" = "$BINDING_ANY" ]; } \
-      && [ "${id#*-decision-}" != "$id" ]; then
-      legacy_key=${id#*-decision-}
-    else
-      legacy_key=''
-    fi
-    if [ -n "$legacy_key" ]; then
-      legacy_digest=$(sha256_text "$(legacy_keyed_decision_text "$source" "$legacy_key" "$answer" "$label")")
-    fi
     task_show "$id" || { printf 'skipped: %s (absent)\n' "$id"; skipped=$((skipped + 1)); continue; }
     show=$TASK_SHOW_OUTPUT
     state=$(show_field "$show" state)
     hold_kind=$(show_field_value "$show" hold_kind)
-    body=$(show_field "$show" body)
-    recorded_digest=$(recorded_decision_digest "$body" || true)
-    recorded_mode=$(recorded_resolution_mode "$body" || true)
-    if body_has_resolution_record "$body" \
-      && { [ "$recorded_digest" = "$digest" ] \
-        || { case "$body" in *"Resolution recorded by jg-decision-hold."*) true ;; *) false ;; esac \
-          && [ -n "$legacy_digest" ] && [ "$recorded_digest" = "$legacy_digest" ]; }; }; then
-      if { [ -z "$release_flag" ] && [ "$state" = "done" ] \
-          && closed_answer_replay_mode_compatible "$recorded_mode" "$body"; } \
-        || { [ "$release_flag" = --release ] && [ "$state" != "done" ] \
-          && [ "$hold_kind" != captain ] && [ "$recorded_mode" = released ]; }; then
-        occurrence=$(resolution_record_count "$body")
-        case "$recorded_mode" in
-          repaired) publish_parent_resolution_then_retire "$id" "$occurrence" "answered (repaired)" ;;
-          released) publish_parent_resolution_then_retire "$id" "$occurrence" released ;;
-          *) publish_parent_resolution_then_retire "$id" "$occurrence" answered ;;
-        esac
-        printf 'closed: %s\n' "$id"
-        closed=$((closed + 1))
-        continue
-      fi
-    fi
-    if [ "$state" = "done" ]; then
+    # A ticket whose question is answered and closed takes an exact retry through `answer`, which replays it or refuses it.
+    if [ "$state" = "done" ] && [ -z "$(gate_rows "$id" --all)" ]; then
       printf 'skipped: %s (already closed)\n' "$id"
       skipped=$((skipped + 1)); permanent=$((permanent + 1))
       continue
     fi
-    if [ "$hold_kind" != captain ]; then
+    if [ "$state" != "done" ] && [ "$hold_kind" != captain ] && [ -z "$(gate_rows "$id" --all)" ]; then
       printf 'skipped: %s (not held for the captain)\n' "$id"
       skipped=$((skipped + 1)); permanent=$((permanent + 1))
       continue
@@ -1869,7 +1451,7 @@ reconcile_close_gate() {  # <task-id> <show-output>
 }
 
 reconcile_close() {
-  local id=${1:-} evidence_file='' show state hold_kind body occurrence recorded_mode
+  local id=${1:-} evidence_file='' show
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -1887,56 +1469,8 @@ reconcile_close() {
     || fail "task $id has no pending board-created reconcile request"
   require_backlog
   task_show_or_fail "$id" "captain-held task $id is absent from this home's configured backlog (data directory $DATA)"
-  state=$(show_field "$show" state)
-  hold_kind=$(show_field_value "$show" hold_kind)
-  body=$(show_field "$show" body)
-  if [ -n "$(gate_rows "$id" --all)" ] && ! hold_is_stamped "$show"; then
-    reconcile_close_gate "$id" "$show"
-    return
-  fi
-  occurrence=$(( $(resolution_record_count "$body") + 1 ))
-  if [ "$state" = "done" ]; then
-    # An exact retry finishes an interrupted close and stays idempotent; a
-    # different evidence text on an already closed call is refused.
-    body_has_resolution_record "$body" \
-      || fail "task $id is already closed with no resolution record; use answer to record what closed it"
-    [ "$(recorded_decision_digest "$body" || true)" = "$DECISION_DIGEST" ] \
-      || fail "task $id records a different resolution; it cannot be reconciled again"
-    [ "$(recorded_resolution_mode "$body" || true)" = reconciled ] \
-      || fail "task $id was not closed by reconciliation"
-    occurrence=$(resolution_record_count "$body")
-    remove_interrupted_answer_stamp "$id"
-    publish_parent_hold "$id" "$occurrence" resolved reconciled
-    [ "$PARENT_HOLD_PUBLISHED" = 1 ] \
-      || fail "could not publish the reconciled captain-held task $id to its parent"
-    reconcile_request_retire "$id"
-    printf 'reconciled: %s\n' "$id"
-    return 0
-  fi
-  [ "$hold_kind" = captain ] \
-    || fail "task $id is not held for the captain; there is no captain call to reconcile"
-  guard_captain_ask "$id"
-  if body_has_resolution_record "$body" \
-    && [ "$(recorded_decision_digest "$body" || true)" = "$DECISION_DIGEST" ] \
-    && ! recorded_resolution_completed "$body"; then
-    recorded_mode=$(recorded_resolution_mode "$body" || true)
-    [ "$recorded_mode" = reconciled ] \
-      || fail "task $id records this resolution with mode ${recorded_mode:-unknown}; it is not a reconciliation retry"
-    occurrence=$(resolution_record_count "$body")
-  else
-    write_resolution_record "$id" reconciled "$body"
-  fi
-  close_answered "$id" 0 || fail "could not close reconciled captain-held task $id"
-  remove_interrupted_answer_stamp "$id"
-  task_show_or_fail "$id" "task $id disappeared after closing"
-  body_has_resolution_record "$(show_field "$show" body)" \
-    || fail "captain-held task $id did not retain its durable resolution record"
-  publish_parent_hold "$id" "$occurrence" resolved reconciled
-  [ "$PARENT_HOLD_PUBLISHED" = 1 ] \
-    || fail "could not publish the reconciled captain-held task $id to its parent"
-  reconcile_request_retire "$id"
-  report_hold_reconciled "$id" closed
-  printf 'reconciled: %s\n' "$id"
+  [ -n "$(gate_rows "$id" --all)" ] || fail "task $id has no question to the owner; there is no captain call to reconcile"
+  reconcile_close_gate "$id" "$show"
 }
 
 # The still-active outcome. The hold survives, so the call stays the captain's
@@ -2230,40 +1764,24 @@ EOF
   done
 }
 
-command_answered() {  # <task-id>
-  local show body gates
+command_answered() {  # <task-id>: a closed question carries his words, or a ticket released by them
+  local gates
   [ "$#" -eq 1 ] || { usage >&2; exit 2; }
   task_show "$1" || exit 2
-  show=$TASK_SHOW_OUTPUT
-  body=$(show_field "$show" body)
-  if ! hold_is_stamped "$show"; then  # a question held as a gate is answered when a closed gate carries his words
-    gates=$(gate_rows "$1" --all)
-    [ -z "$(printf '%s\n' "$gates" | jq -r 'select(.state == "open") | .id')" ] || return 1
-    [ -z "$(printf '%s\n' "$gates" | jq -r 'select(.resolution == "answered" or .resolution == "released") | .id')" ] || return 0
-  fi
-  # A newly set hold precedes every historical resolution, even a release.
-  [ -z "$(body_hold_set_timestamp "$(decode_shown_value "$body")")" ] || return 1
-  body_has_resolution_record "$body" || return 1
-  [ "$(recorded_resolution_mode "$body" || true)" != reconciled ]
+  gates=$(gate_rows "$1" --all)
+  [ -z "$(printf '%s\n' "$gates" | jq -r 'select(.state == "open") | .id')" ] || return 1
+  [ -n "$(printf '%s\n' "$gates" | jq -r 'select(.resolution == "answered" or .resolution == "released") | .id')" ]
 }
 
 # The hold machine's word for one task, from the same record `open` and `answered` read plus
 # the body's own completion line (core/machines/observers/hold.sh prints it). Exit 2 when the row cannot be read.
 command_phase() {  # <task-id>
-  local id=${1:-} status=0 show body decoded mode until
+  local id=${1:-} status=0 show until
   [ "$#" -eq 1 ] || { usage >&2; exit 2; }
   (command_open "$id" --distinguish-absent) || status=$?
   case "$status" in 0|1) ;; 3) echo none; return 0 ;; *) exit 2 ;; esac
   task_show "$id" || exit 2
   show=$TASK_SHOW_OUTPUT
-  body=$(show_field "$show" body)
-  decoded=$(decode_shown_value "$body")
-  if body_has_resolution_record "$body" && [ -n "$(body_hold_set_timestamp "$decoded")" ]; then
-    mode=$(recorded_resolution_mode "$body" || true)
-    if [ -n "$mode" ] && [ "$mode" != reconciled ] && ! recorded_resolution_completed "$body"; then
-      echo answered; return 0
-    fi
-  fi
   if [ "$status" -eq 0 ]; then
     until=$(show_field_value "$show" hold_until)
     if [ -n "$until" ] && [[ "$until" > "$(date -u +%F)" ]]; then echo deferred; else echo raised; fi
@@ -2280,7 +1798,7 @@ command_phase() {  # <task-id>
 # printed to stderr, because a mechanical closer must never read "cannot tell"
 # as permission to close.
 command_open() {  # <task-id> [--identity] [--distinguish-absent]
-  local id='' identity=0 distinguish_absent=0 data state show shown_body
+  local id='' identity=0 distinguish_absent=0 data state show
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --identity) identity=1 ;;
@@ -2306,16 +1824,12 @@ command_open() {  # <task-id> [--identity] [--distinguish-absent]
     if [ "$state" != "done" ] && [ "$JG_BACKLOG_ROW_HOLD_KIND" = captain ]; then
       if [ "$identity" -eq 1 ] && [ -n "$(open_gate_ids "$id")" ]; then
         open_gate_ids "$id" | head -1  # a question held as a gate is told apart by its gate
-      elif [ "$identity" -eq 1 ]; then
+      elif [ "$identity" -eq 1 ]; then  # a plain hold, his own instruction: its reason and date tell one hold from the next
         task_show "$id" || {
           printf 'jg-captain-hold: captain call %s is open but its record could not be read\n' "$id" >&2
           exit 2
         }
-        show=$TASK_SHOW_OUTPUT
-        shown_body=$(show_field "$show" body)
-        printf '%s#%s\n' \
-          "$(body_hold_set_timestamp "$(decode_shown_value "$shown_body")")" \
-          "$(resolution_record_count "$shown_body")"
+        printf '%s' "$(show_field_value "$TASK_SHOW_OUTPUT" hold_reason)$(show_field_value "$TASK_SHOW_OUTPUT" hold_until)" | cksum | awk '{printf "%08x\n", $1}'
       fi
       return 0
     fi
@@ -2489,7 +2003,8 @@ hold_to_gate() {  # <task-id>: prints moved, kept or skipped
   task_show "$id" || { release_task_control_lock; printf 'skipped\n'; return 0; }
   show=$TASK_SHOW_OUTPUT
   reason=$(show_field_value "$show" hold_reason)
-  if [ "$(show_field "$show" state)" = "done" ] || [ "$(show_field_value "$show" hold_kind)" != captain ] || ! hold_is_stamped "$show"; then
+  if [ "$(show_field "$show" state)" = "done" ] || [ "$(show_field_value "$show" hold_kind)" != captain ] \
+    || [ -z "$(body_hold_set_timestamp "$(decode_shown_value "$(show_field "$show" body)")")" ]; then
     release_task_control_lock; printf 'skipped\n'; return 0
   fi
   if jg_ask_own_instruction "$reason"; then

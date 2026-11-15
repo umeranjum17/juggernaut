@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # The owner's question is one gate row on a real Beads store: `hold` makes it (a readable title, the must category), his
 # answer closes it with his words, and no list of work, ready list or count ever shows it. The cases are the S17a proof:
-# a dated hold also defers the ticket, a parked hold makes no gate, an armed board still refuses a hold with no must,
-# `answer --release` leaves the ticket open, spawn and merge blocking see an open gate, `done` is refused past one, and
-# an old stamped hold still answers the old way. JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT name the pinned builds.
+# a dated hold also defers the ticket, a parked hold makes no gate and writes no text into the ticket, an armed board
+# still refuses a hold with no must, `answer --release` leaves the ticket open, spawn and merge blocking see an open gate,
+# `done` is refused past one, and a ticket with no gate has no question to answer. JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT name the pinned builds.
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -143,8 +143,15 @@ pass "a dated hold defers the ticket, and questions --due leaves it out"
 # A parked hold (his own instruction) makes no gate.
 out=$(hold hold jg-w4 --reason "captain stop order holds this lane; branch preserved unmerged") || fail "parked hold: $out"
 [ "$(questions_json --ticket jg-w4 | jq length)" = 0 ] || fail "a parked hold must make no gate"
-tasks show jg-w4 | grep -q "Captain hold set" || fail "a parked hold keeps the stamped record"
-pass "a parked hold makes no gate"
+show=$(tasks show jg-w4 --full)
+assert_contains "$show" "hold_kind: captain" "a parked hold is held for the owner"
+assert_not_contains "$show" "Captain hold set" "a parked hold writes no stamp into the ticket"
+hold open jg-w4 --identity | grep -q . || fail "a plain hold still has an identity"
+hold phase jg-w4 | grep -qx raised || fail "the machine's word for a plain hold is raised"
+words "$T/none" "Never mind."
+out=$(hold answer jg-w4 --decision-file "$T/none" 2>&1) && fail "a ticket with no gate has no question to answer: $out"
+assert_contains "$out" "no question to the owner" "the refusal must say why"
+pass "a parked hold makes no gate and writes no text into the ticket"
 
 # An armed board still refuses a hold with no must category and routes it, with no gate made.
 tasks add jg-w5 "[feature] Work jg-w5" --repo sample --body "why jg-w5" >/dev/null || fail "add jg-w5"
@@ -156,20 +163,6 @@ assert_contains "$out" "needs a must category" "the refusal must name the rule"
 [ "$(questions_json --ticket jg-w5 | jq length)" = 0 ] || fail "a refused hold must make no gate"
 rm -f "$home/state/procevent/signoff.source"
 pass "a hold with no must on an armed board is refused and routed, with no gate"
-
-# An old stamped hold still answers the old way: the record is in the ticket body and no gate exists.
-tasks add jg-old "[feature] Old call" --repo sample --body "why old" >/dev/null || fail "add jg-old"
-JG_CAPTAIN_HOLD_STAMPED=1 hold hold jg-old --reason "Which of the two plans do we use?" >/dev/null || fail "old stamped hold"
-[ "$(questions_json --ticket jg-old | jq length)" = 0 ] || fail "an old stamped hold has no gate"
-tasks show jg-old --full | grep -q "Captain hold set:" || fail "the old hold carries its stamp"
-hold blocking jg-old >/dev/null || fail "an old stamped hold blocks as before"
-words "$T/old" "Use the first plan."
-hold answer jg-old --decision-file "$T/old" >/dev/null || fail "answer the old stamped hold"
-old_show=$(tasks show jg-old --full)
-assert_contains "$old_show" "Resolution recorded by jg-captain-hold" "the old way writes the record into the body"
-assert_contains "$old_show" "Use the first plan." "the old way keeps his words in the body"
-[ "$(questions_json --all --ticket jg-old | jq length)" = 0 ] || fail "answering an old hold must make no gate"
-pass "an old stamped hold still answers the old way"
 
 # reconcile close closes a gate with evidence, never as his words.
 tasks add jg-w6 "[feature] Work jg-w6" --repo sample --body "why jg-w6" >/dev/null || fail "add jg-w6"
@@ -184,15 +177,25 @@ assert_contains "$(jq -r '.[0].words' <<<"$q")" "Reconciliation evidence: The re
 hold answered jg-w6 && fail "a reconciled gate is not an answer of his"
 pass "reconcile close resolves the gate with evidence"
 
+# An old ticket carries its hold as text in the description: the stamp line, the origin line and the hold itself.
+stamped_hold() {  # <id> <reason> [<origin> [<until>]]
+  tasks update "$1" --body "Captain hold set: 2026-10-01T10:00:00Z${3:+
+Captain hold origin: $3}
+
+why $1" >/dev/null || fail "stamp $1"
+  tasks hold "$1" --reason "$2" --kind captain ${4:+--until "$4"} >/dev/null || fail "hold $1"
+}
+
 # The pass moves each open old owner hold to a gate: it keeps the deferral date and the origin, leaves a stop order stamped,
 # prints the count, takes the stamp out of the body, and a second run changes nothing.
 for id in jg-m1 jg-m2 jg-m3 jg-m4; do
   tasks add "$id" "[feature] Work $id" --repo sample --body "why $id" >/dev/null || fail "add $id"
 done
-JG_CAPTAIN_HOLD_STAMPED=1 hold hold jg-m1 --reason "Should the build take route A or B? The owner decides." >/dev/null || fail "stamped hold m1"
-JG_CAPTAIN_HOLD_STAMPED=1 hold hold jg-m2 --origin jg-m4 --until 2099-01-02 --reason "Do we ship in January?" >/dev/null || fail "stamped dated hold m2"
-JG_CAPTAIN_HOLD_STAMPED=1 hold hold jg-m3 --reason "Captain stop order: keep this parked until he says go." >/dev/null || fail "stamped stop order m3"
-JG_CAPTAIN_HOLD_STAMPED=1 hold hold jg-m5 --title "Is the plan still right?" --reason "Is the plan still right?" >/dev/null || fail "stamped hold that made its own ticket m5"
+stamped_hold jg-m1 "Should the build take route A or B? The owner decides." || fail "stamped hold m1"
+stamped_hold jg-m2 "Do we ship in January?" jg-m4 2099-01-02 || fail "stamped dated hold m2"
+stamped_hold jg-m3 "Captain stop order: keep this parked until he says go." || fail "stamped stop order m3"
+tasks add jg-m5 "Is the plan still right?" --kind captain --repo sample >/dev/null || fail "add m5"
+stamped_hold jg-m5 "Is the plan still right?" || fail "stamped hold that made its own ticket m5"
 before=$(questions_json --all | jq length)
 out=$(hold to-gates) || fail "to-gates: $out"
 assert_contains "$out" "moved 3 of " "the pass prints its count: $out"

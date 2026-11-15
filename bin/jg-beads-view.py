@@ -162,6 +162,8 @@ def task(row, rows, native=None):
     waiting = [d for d in deps if rows.get(d, {"status": "closed"} if PARTIAL else {}).get("status") != "closed"] if native is None or closed else native.get(row["id"], [])
     waiting = [d for d in waiting if not is_gate(rows.get(d, {}))]
     asked = [] if closed else gates_of(row, rows)
+    # A ticket closed by his answer keeps the mark of the call it was (the store kept hold_kind through a close); a release does not.
+    answered = closed and any((gate.get("metadata") or {}).get("resolution") != "released" for gate in gates_of(row, rows, closed=True))
     until = (row.get("defer_until") or "-")[:10]
     links = ["pr:" + url for url in dict.fromkeys(filter(None, [row.get("external_ref"), *split(meta.get("prs"))]))]
     links += ["report:" + path for path in split(meta.get("reports"))]
@@ -171,7 +173,7 @@ def task(row, rows, native=None):
         "blocked": "yes" if waiting else "no", "blocked_by": ",".join(waiting) or "none",
         "held": "yes" if holding(row) or asked else "no",
         "hold_reason": meta.get("hold_reason") or (question(asked[0]) if asked else "-"),
-        "hold_kind": meta.get("hold_kind") or ("captain" if asked else "-"), "gates": [gate["id"] for gate in asked], "hold_until": until, "kind": meta.get("kind") or CORE.get(row.get("issue_type"), row.get("issue_type", "task")),
+        "hold_kind": meta.get("hold_kind") or ("captain" if asked or answered else "-"), "gates": [gate["id"] for gate in asked], "hold_until": until, "kind": meta.get("kind") or CORE.get(row.get("issue_type"), row.get("issue_type", "task")),
         "repo": repos[0] if repos else "-", "priority": row.get("priority", "-"),
         "created": "-" if closed else day(row.get("created_at")), "closed": day(row.get("closed_at")),
         "deps": ",".join("blocked-by:" + d for d in deps if not is_gate(rows.get(d, {}))) or "none",

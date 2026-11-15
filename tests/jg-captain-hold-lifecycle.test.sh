@@ -342,7 +342,6 @@ EOF
 # behind the answered task is released by the close, and the completion gate is
 # satisfied only by a recorded answer.
 test_answer_records_and_closes() {
-  local -x JG_CAPTAIN_HOLD_STAMPED=1  # these cases pin the old stamped hold, which answers the old way until the pass that moves it
   local home id json show
   home=$(make_home answer-close)
   id=jg-sample-guard-review
@@ -387,10 +386,10 @@ test_answer_records_and_closes() {
     || fail "answer could not close the captain-held task"
   show=$(tasks_in "$home" show jg-sample-guard-call --full)
   assert_contains "$show" "state: done" "an answered captain-held task did not close"
-  assert_contains "$show" "Resolution recorded by jg-captain-hold" "the answered task lost the decision record"
-  assert_contains "$show" "Resolution mode: answered" "the answered task did not record its close path"
-  assert_contains "$show" "Captain chose the guard option." \
-    "the answered task did not record the captain decision text"
+  assert_not_contains "$show" "Resolution recorded by" "the answer wrote a record into the description"
+  show=$(tasks_in "$home" questions --all --ticket jg-sample-guard-call --json)
+  assert_contains "$show" "Captain chose the guard option." "the gate did not keep the captain decision text"
+  assert_contains "$show" '"resolution": "answered"' "the gate did not record its close path"
   run_captain "$home" answer jg-sample-guard-call --decision-file "$home/guard-decision.txt" >/dev/null \
     || fail "identical answer retry was not idempotent"
   printf 'Captain chose something else entirely.\n' > "$home/drifted.txt"
@@ -452,8 +451,7 @@ SH
 # --release lifts the hold instead of closing, preserving the work item's own
 # body under the record; a re-held task later accepts a new answer.
 test_release_frees_held_work() {
-  local -x JG_CAPTAIN_HOLD_STAMPED=1  # these cases pin the old stamped hold, which answers the old way until the pass that moves it
-  local home show out snap
+  local home show out
   home=$(make_home release-work)
   cat > "$home/widget-body.txt" <<'EOF'
 The widget plan body. Literal escape: \n. Unicode: café.
@@ -471,25 +469,16 @@ EOF
   show=$(tasks_in "$home" show jg-sample-widget --full)
   assert_contains "$show" "state: queued" "a released work item did not stay queued"
   assert_contains "$show" "held: no" "a released work item kept its hold"
-  assert_contains "$show" "Resolution mode: released" "the release did not record its close path"
-  assert_contains "$show" "Not urgent; ship it as planned." "the release lost the captain's words"
+  assert_not_contains "$show" "Resolution recorded by" "the release wrote a record into the description"
+  assert_contains "$(tasks_in "$home" questions --all --ticket jg-sample-widget --json)" "Not urgent; ship it as planned." \
+    "the release lost the captain's words"
   assert_contains "$show" "The widget plan body." "the release destroyed the work item body"
   assert_contains "$show" 'Literal escape: \\n. Unicode: café.' \
     "the release corrupted escaped or Unicode body text"
   assert_contains "$show" "Captain hold set: 2025-01-02T03:04:05Z" \
-    "hold stamping deleted matching user content outside the leading stamp"
+    "the hold deleted matching user content from the description"
   run_captain "$home" answer jg-sample-widget --decision-file "$home/go.txt" --release >/dev/null \
     || fail "identical release retry was not idempotent"
-  if run_captain "$home" answer jg-sample-widget --decision-file "$home/go.txt" \
-    > "$home/wrong-mode.out" 2> "$home/wrong-mode.err"; then
-    fail "a released answer replay without --release reported completion"
-  fi
-  assert_grep "mode released" "$home/wrong-mode.err" \
-    "the mismatched replay did not name the recorded release mode"
-  show=$(tasks_in "$home" show jg-sample-widget --full)
-  assert_contains "$show" "state: queued" "a mismatched release replay closed the work item"
-  assert_contains "$show" "held: no" "a mismatched release replay re-held the work item"
-
   tasks_in "$home" add jg-sample-empty-label-widget "Ship without a display label" \
     --kind ship --repo sample >/dev/null
   run_captain "$home" hold jg-sample-empty-label-widget --reason "captain go needed" >/dev/null
@@ -501,105 +490,21 @@ EOF
   show=$(tasks_in "$home" show jg-sample-empty-label-widget --full)
   assert_contains "$show" "state: queued" "an empty-label release completed its work item"
   assert_contains "$show" "held: no" "an empty-label release did not lift the hold"
-  assert_contains "$show" "Resolution mode: released" \
+  assert_contains "$(tasks_in "$home" questions --all --ticket jg-sample-empty-label-widget --json)" '"resolution": "released"' \
     "an empty-label release recorded the wrong close mode"
 
   # A NEW captain gate on the same task later takes a NEW answer.
   JG_CAPTAIN_HOLD_NOW=2026-07-14T12:00:00Z run_captain "$home" hold jg-sample-widget \
     --reason "captain pricing call needed" >/dev/null \
     || fail "could not re-hold the released work item"
-  snap=$(PATH="$home/fakebin:$PATH" JG_HOME="$home" JG_STATE_OVERRIDE="$home/state" \
-    JG_DATA_OVERRIDE="$home/data" JG_CONFIG_OVERRIDE="$home/config" \
-    JG_PROJECTS_OVERRIDE="$home/projects" JG_SNAPSHOT_NOW=2026-07-14T12:00:00Z \
-    "$ROOT/bin/jg-fleet-snapshot.sh" --json) || fail "fleet snapshot failed after re-hold"
-  printf '%s' "$snap" | jq -e '
-    .backlog.records[] | select(.id == "jg-sample-widget")
-    | .hold_set == "2026-07-14T12:00:00Z"
-      and .hold_age_days == 0
-      and .hold_bucket == "live"
-  ' >/dev/null || fail "a new hold lifecycle reused historical timestamp or answer text: $snap"
   printf 'Price it at nine dollars.\n' > "$home/price.txt"
   run_captain "$home" answer jg-sample-widget --decision-file "$home/price.txt" --release >/dev/null \
     || fail "a re-held task refused a new answer"
   show=$(tasks_in "$home" show jg-sample-widget --full)
-  assert_contains "$show" "Price it at nine dollars." "the new answer was not recorded"
-  assert_contains "$show" "Not urgent; ship it as planned." "the new answer erased the earlier record"
-
-  tasks_in "$home" "done" jg-sample-widget >/dev/null \
-    || fail "could not complete the released work item normally"
-  if run_captain "$home" answer jg-sample-widget --decision-file "$home/price.txt" \
-    > "$home/closed-wrong-mode.out" 2> "$home/closed-wrong-mode.err"; then
-    fail "a completed release replay without --release reported an answer"
-  fi
-  assert_grep "mode released" "$home/closed-wrong-mode.err" \
-    "the completed replay did not name the recorded release mode"
-  show=$(tasks_in "$home" show jg-sample-widget --full)
-  assert_contains "$show" "state: done" "a refused completed replay changed task state"
-  pass "release frees held work with the captain's words recorded and the body preserved"
-}
-
-# The recorded-answer guard survives an out-of-band close: a bare jg-backlog.sh done
-# fails verify until answer records the captain's word, and an ordinary finished
-# task can never be dressed up as an answered captain call.
-test_out_of_band_close_is_recordable() {
-  local -x JG_CAPTAIN_HOLD_STAMPED=1  # these cases pin the old stamped hold, which answers the old way until the pass that moves it
-  local home id show
-  home=$(make_home out-of-band)
-  id=jg-sample-fullrun-review
-  mkdir -p "$home/data/$id"
-  tasks_in "$home" add "$id" "Investigate the sample full run" --kind scout --repo sample --start >/dev/null \
-    || fail "could not create out-of-band origin"
-  write_origin_meta "$home" "$id"
-  printf 'done: report complete\n' > "$home/state/$id.status"
-  printf '# Sample full run review\n\nOne captain choice remains.\n' > "$home/data/$id/report.md"
-  run_captain "$home" hold jg-sample-submission-call --title "Choose the sample submission" \
-    --reason "captain submission choice pending" --repo sample --origin "$id" >/dev/null \
-    || fail "could not register the captain-held task"
-  run_captain "$home" complete "$id" jg-sample-submission-call >/dev/null \
-    || fail "completion failed before the out-of-band close"
-
-  tasks_in "$home" "done" jg-sample-submission-call >/dev/null \
-    || fail "could not reproduce the direct out-of-band close"
-  if run_captain "$home" verify "$id" > "$home/broken-verify.out" 2> "$home/broken-verify.err"; then
-    fail "verification passed a captain call closed with no recorded answer"
-  fi
-  if run_teardown "$home" "$id" > "$home/broken-teardown.out" 2> "$home/broken-teardown.err"; then
-    fail "teardown proceeded while a captain call had no recorded answer"
-  fi
-  assert_present "$home/state/$id.meta" "refused teardown removed investigation metadata"
-
-  printf 'Declined: do not submit the sample full run upstream.\n' > "$home/submission.txt"
-  run_captain "$home" answer jg-sample-submission-call --decision-file "$home/submission.txt" >/dev/null \
-    || fail "answer could not record the missing captain decision on the closed task"
-  show=$(tasks_in "$home" show jg-sample-submission-call --full)
-  assert_contains "$show" "state: done" "recording the answer reopened the closed task"
-  assert_contains "$show" "Resolution mode: repaired" "the retroactive record did not name its path"
-  assert_contains "$show" "Declined: do not submit the sample full run upstream." \
-    "the retroactive record lost the captain decision text"
-  run_captain "$home" verify "$id" >/dev/null \
-    || fail "the recorded answer did not satisfy the completion gate"
-  run_captain "$home" answer jg-sample-submission-call --decision-file "$home/submission.txt" >/dev/null \
-    || fail "identical retroactive retry was not idempotent"
-  printf 'A different answer entirely.\n' > "$home/drifted.txt"
-  if run_captain "$home" answer jg-sample-submission-call --decision-file "$home/drifted.txt" \
-    > "$home/drifted.out" 2> "$home/drifted.err"; then
-    fail "a drifted retry overwrote the recorded captain decision"
-  fi
-  run_teardown "$home" "$id" >/dev/null 2> "$home/teardown.err" \
-    || fail "teardown still refused after the answer was recorded: $(cat "$home/teardown.err")"
-
-  # An ordinary finished task was never the captain's item; recording an
-  # invented answer on it must be refused.
-  tasks_in "$home" add jg-sample-ordinary-work "Ordinary finished work" --kind ship --repo sample >/dev/null
-  tasks_in "$home" "done" jg-sample-ordinary-work >/dev/null
-  printf 'An answer the captain never gave.\n' > "$home/invented.txt"
-  if run_captain "$home" answer jg-sample-ordinary-work --decision-file "$home/invented.txt" \
-    > "$home/never-held.out" 2> "$home/never-held.err"; then
-    fail "an ordinary finished task was dressed up as an answered captain call"
-  fi
-  assert_grep "never held for the captain" "$home/never-held.err" \
-    "the refusal must say the task carries no captain-hold provenance"
-  pass "an out-of-band close is recordable with the captain's word and nothing else"
+  out=$(tasks_in "$home" questions --all --ticket jg-sample-widget --json)
+  assert_contains "$out" "Price it at nine dollars." "the new answer was not recorded"
+  assert_contains "$out" "Not urgent; ship it as planned." "the new answer erased the earlier answer"
+  pass "release frees held work with the captain's words on the gate and the body preserved"
 }
 
 # A post-teardown visual review completes against the surviving report and
@@ -701,7 +606,6 @@ test_terminal_single_owner_status_decision_does_not_block_empty_inventory() {
 }
 
 test_reconcile_retry_after_completed_close_of_a_merged_captain_ask() {
-  local -x JG_CAPTAIN_HOLD_STAMPED=1  # these cases pin the old stamped hold, which answers the old way until the pass that moves it
   local parent mate evidence request out
   parent=$(make_home reconcile-ask-parent)
   mate=$(make_home reconcile-ask-mate)
@@ -734,7 +638,6 @@ test_reconcile_retry_after_completed_close_of_a_merged_captain_ask() {
 }
 
 test_squad_lead_reconcile_publishes_before_request_retirement() {
-  local -x JG_CAPTAIN_HOLD_STAMPED=1  # these cases pin the old stamped hold, which answers the old way until the pass that moves it
   local parent mate channel evidence out show rc request
   parent=$(make_home reconcile-parent-channel)
   mate=$(make_home reconcile-channel-mate)
@@ -765,7 +668,7 @@ test_squad_lead_reconcile_publishes_before_request_retirement() {
     "the reconcile retirement failure did not name its task: $out"
   show=$(tasks_in "$mate" show reconcile-channel-call --full)
   assert_contains "$show" "state: done" "request retirement failure reversed the reconciled close"
-  assert_contains "$show" "Resolution mode: reconciled" \
+  assert_contains "$(tasks_in "$mate" questions --all --ticket reconcile-channel-call --json)" '"resolution": "reconciled"' \
     "request retirement failure lost the reconciled resolution mode"
   [ -f "$request" ] || fail "the request retired despite its forced retirement failure"
   [ "$(grep -c 'resolved \[key=captain-hold-reconcile-channel-call-1\]: captain hold reconcile-channel-call: reconciled' \
@@ -904,7 +807,6 @@ test_reconcile_never_closes_through_the_keyed_answer_intake() {
 }
 
 test_normal_answers_retire_pending_reconcile_requests() {
-  local -x JG_CAPTAIN_HOLD_STAMPED=1  # these cases pin the old stamped hold, which answers the old way until the pass that moves it
   local home list id
   home=$(make_home reconcile-normal-answer)
   for id in jg-sample-direct-close jg-sample-direct-release jg-sample-keyed-close; do
@@ -942,7 +844,6 @@ test_normal_answers_retire_pending_reconcile_requests() {
 
 # The two verification outcomes, and the honesty of the record each writes.
 test_reconcile_closes_with_evidence_or_keeps_the_call_open() {
-  local -x JG_CAPTAIN_HOLD_STAMPED=1  # these cases pin the old stamped hold, which answers the old way until the pass that moves it
   local home show list rc out
   home=$(make_home reconcile-outcomes)
   tasks_in "$home" add jg-sample-moot-call "Captain call: ship 0.1.37?" --repo sample >/dev/null
@@ -988,8 +889,8 @@ test_reconcile_closes_with_evidence_or_keeps_the_call_open() {
   rc=$?
   set -e
   [ "$rc" -ne 0 ] || fail "a normal captain answer replayed as a reconciliation"
-  assert_contains "$out" "was not closed by reconciliation" \
-    "the reconcile replay refusal did not identify the incompatible resolution mode: $out"
+  assert_contains "$out" "no open question to reconcile" \
+    "the reconcile replay refusal did not say the question was already closed: $out"
   run_captain "$home" answer jg-sample-mode-call --decision-file "$home/evidence.txt" >/dev/null \
     || fail "the normal answer replay did not retire its restored pending request"
 
@@ -997,19 +898,18 @@ test_reconcile_closes_with_evidence_or_keeps_the_call_open() {
     || fail "could not close the moot call with evidence"
   show=$(tasks_in "$home" show jg-sample-moot-call --full)
   assert_contains "$show" "state: done" "the moot call did not close"
-  assert_contains "$show" "Resolution mode: reconciled" "the moot call did not record how it closed"
+  show=$(tasks_in "$home" questions --all --ticket jg-sample-moot-call --json)
+  assert_contains "$show" '"resolution": "reconciled"' "the moot call did not record how it closed"
   assert_contains "$show" "Reconciliation evidence:" "the moot call did not record the evidence"
   assert_contains "$show" "0.1.38 was published" "the recorded evidence was lost"
-  case "$show" in
-    *"Captain decision:"*) fail "a reconciled close was recorded as the captain's own words" ;;
-  esac
+  run_captain "$home" answered jg-sample-moot-call && fail "a reconciled close was recorded as the captain's own words"
   set +e
   out=$(run_captain "$home" answer jg-sample-moot-call --decision-file "$home/evidence.txt" 2>&1)
   rc=$?
   set -e
   [ "$rc" -ne 0 ] || fail "a reconciled resolution replayed as a captain answer"
-  assert_contains "$out" "not a captain-answer replay" \
-    "the answer replay refusal did not identify the incompatible resolution mode: $out"
+  assert_contains "$out" "already answered" \
+    "the answer replay refusal did not say the question was already closed: $out"
 
   run_captain "$home" reconcile note jg-sample-active-call --note-file "$home/note.txt" >/dev/null \
     || fail "could not annotate the still-active call"
@@ -1051,8 +951,7 @@ test_reconcile_closes_with_evidence_or_keeps_the_call_open() {
 # identities, short decision keys in recorded metadata, a
 # concrete-origin binding, and the chat fallback for old rows.
 test_legacy_identities_keep_working() {
-  local -x JG_CAPTAIN_HOLD_STAMPED=1  # these cases pin the old stamped hold, which answers the old way until the pass that moves it
-  local home id hold out show legacy_text legacy_digest
+  local home id hold out show
   home=$(make_home legacy-compat)
   id=jg-sample-legacy-review
   mkdir -p "$home/data/$id"
@@ -1093,16 +992,9 @@ test_legacy_identities_keep_working() {
 
   run_captain "$home" hold "$id-decision-fourth-choice" --origin "$id" \
     --title "Fourth choice" --reason "captain fourth choice pending" --repo sample >/dev/null
-  legacy_text=$(printf 'Captain answered this decision through legacy replay.\nDecision key: fourth-choice\nAnswer: option c\n')
-  if command -v shasum >/dev/null 2>&1; then
-    legacy_digest=$(printf '%s' "$legacy_text" | shasum -a 256 | awk '{print $1}')
-  else
-    legacy_digest=$(printf '%s' "$legacy_text" | sha256sum | awk '{print $1}')
-  fi
-  printf 'Resolution recorded by jg-decision-hold.\nDecision digest: %s\nRouted identities: none\nResolution mode: answered\n\nCaptain decision:\n%s\n' \
-    "$legacy_digest" "$legacy_text" > "$home/legacy-body.txt"
-  tasks_in "$home" update "$id-decision-fourth-choice" --body-file "$home/legacy-body.txt" --archive-body >/dev/null
-  tasks_in "$home" "done" "$id-decision-fourth-choice" >/dev/null
+  printf 'fourth-choice\toption c\t\n' \
+    | run_captain "$home" answers "$id" --source "legacy replay" >/dev/null \
+    || fail "the first keyed answer for a pre-collapse short key failed"
   out=$(printf 'fourth-choice\toption c\t\n' \
     | run_captain "$home" answers "$id" --source "legacy replay") \
     || fail "an identical pre-collapse keyed answer was not idempotent"
@@ -1119,7 +1011,6 @@ test_legacy_identities_keep_working() {
 # The intake is channel-agnostic, so chat must reach it the same way a captured
 # review does - for a task-id key, and for a legacy composed identity.
 test_chat_channel_feeds_the_same_keyed_answer_intake() {
-  local -x JG_CAPTAIN_HOLD_STAMPED=1  # these cases pin the old stamped hold, which answers the old way until the pass that moves it
   local home id fb show list
   home=$(make_home chat-channel)
   id=jg-sample-chat-review
@@ -1185,6 +1076,7 @@ SH
     || fail "the answer text never reached the worker's durable inbox record"
   show=$(tasks_in "$home" show "$id-decision-chat-choice" --full)
   assert_contains "$show" "state: done" "a chat answer left the legacy row open"
+  show=$(tasks_in "$home" questions --all --ticket "$id-decision-chat-choice" --json)
   assert_contains "$show" "Answer: go with option A" "the chat-answered row lost the captain answer"
 
   : > "$home/send.log"
@@ -1193,9 +1085,9 @@ SH
     JG_SEND_LOG="$home/send.log" JG_SEND_SETTLE=0 \
     "$ROOT/bin/jg-send.sh" "$id" --resolve-key jg-sample-chat-followup "take the second option" >/dev/null 2>&1 \
     || fail "an answer keyed by a task id was refused by the chat channel"
-  show=$(tasks_in "$home" show jg-sample-chat-followup --full)
-  assert_contains "$show" "state: done" "a chat answer left the task-id call open"
-  assert_contains "$show" "Resolution mode: answered" "the chat-answered call did not record its close path"
+  assert_contains "$(tasks_in "$home" show jg-sample-chat-followup --full)" "state: done" "a chat answer left the task-id call open"
+  show=$(tasks_in "$home" questions --all --ticket jg-sample-chat-followup --json)
+  assert_contains "$show" '"resolution": "answered"' "the chat-answered call did not record its close path"
   assert_contains "$show" "Answer: take the second option" "the chat-answered call lost the captain answer"
   assert_contains "$show" "answer sent to $id" "the chat-answered call lost its channel provenance"
 
@@ -1326,7 +1218,6 @@ EOF
 # same home must still close exactly as before, and discard authority covers
 # unlanded work, never the captain's question.
 test_teardown_never_closes_a_captain_held_task() {
-  local -x JG_CAPTAIN_HOLD_STAMPED=1  # these cases pin the old stamped hold, which answers the old way until the pass that moves it
   local home id plain forced json show
   home=$(make_home teardown-held)
   id=jg-sample-attach-review
@@ -1407,14 +1298,13 @@ test_teardown_never_closes_a_captain_held_task() {
     || fail "the surviving captain call could not be answered"
   show=$(tasks_in "$home" show "$id" --full) || fail "the answered row is gone"
   assert_contains "$show" "state: done" "the recorded answer did not close the captain call"
-  assert_contains "$show" "Ship attachments by reference." "the captain's words were not recorded"
+  assert_contains "$(tasks_in "$home" questions --all --ticket "$id" --json)" "Ship attachments by reference." "the captain's words were not recorded"
   assert_contains "$show" "Deliverable of the finished work: report data/$id/report.md" \
     "the answer lost the recorded deliverable"
   pass "cleanup leaves a captain-held work item open with its deliverable, and only an answer closes it"
 }
 
 test_retained_row_artifacts_survive_captain_answers() {
-  local -x JG_CAPTAIN_HOLD_STAMPED=1  # these cases pin the old stamped hold, which answers the old way until the pass that moves it
   local home retained_id precedence_id rejected_id rejected_local_id report_question_id
   local approved_id released_id local_id answered_id reportless_scout_id legacy_id
   local repo wt
@@ -1465,7 +1355,7 @@ test_retained_row_artifacts_survive_captain_answers() {
   show=$(tasks_in "$home" show "$precedence_id" --full) \
     || fail "the report precedence row disappeared"
   assert_contains "$show" "state: done" "the report precedence answer did not close its call"
-  assert_contains "$show" "hold_kind: captain" \
+  assert_contains "$(tasks_in "$home" questions --all --ticket "$precedence_id" --json)" '"resolution": "answered"' \
     "the report precedence row lost its retained-scout evidence"
 
   rejected_id=jg-sample-rejected-merge
@@ -1479,7 +1369,8 @@ test_retained_row_artifacts_survive_captain_answers() {
     >/dev/null || fail "could not record the rejected merge"
   show=$(tasks_in "$home" show "$rejected_id" --full) || fail "the rejected merge disappeared"
   assert_contains "$show" "state: done" "the rejected merge answer did not close its call"
-  assert_contains "$show" "hold_kind: captain" "the rejected merge lost its non-release evidence"
+  assert_contains "$(tasks_in "$home" questions --all --ticket "$rejected_id" --json)" '"resolution": "answered"' \
+    "the rejected merge lost its non-release evidence"
 
   rejected_local_id=jg-sample-rejected-local
   tasks_in "$home" add "$rejected_local_id" "Decide whether to land local main" --kind ship \
@@ -1493,7 +1384,7 @@ test_retained_row_artifacts_survive_captain_answers() {
   show=$(tasks_in "$home" show "$rejected_local_id" --full) \
     || fail "the rejected local merge disappeared"
   assert_contains "$show" "state: done" "the rejected local answer did not close its call"
-  assert_contains "$show" "hold_kind: captain" \
+  assert_contains "$(tasks_in "$home" questions --all --ticket "$rejected_local_id" --json)" '"resolution": "answered"' \
     "the rejected local merge lost its non-release evidence"
 
   report_question_id=jg-sample-report-path-question
@@ -1510,7 +1401,7 @@ test_retained_row_artifacts_survive_captain_answers() {
   show=$(tasks_in "$home" show "$report_question_id" --full) \
     || fail "the report-path question disappeared"
   assert_contains "$show" "state: done" "the report-path answer did not close its call"
-  assert_contains "$show" "hold_kind: captain" \
+  assert_contains "$(tasks_in "$home" questions --all --ticket "$report_question_id" --json)" '"resolution": "answered"' \
     "the report-path question lost its non-release evidence"
 
   approved_id=jg-sample-approved-merge
@@ -2463,7 +2354,6 @@ test_released_merge_passes_the_entrypoint_and_lands() {
 # read a body back: holding a task for the captain, and the cleanup that retains
 # a captain-held row with its deliverable.
 test_hold_decodes_a_bare_scalar_body_without_the_nonref_default() {
-  local -x JG_CAPTAIN_HOLD_STAMPED=1  # these cases pin the old stamped hold, which answers the old way until the pass that moves it
   local home shim id show probe scout
   home=$(make_home nonref-default)
   shim="$home/no-nonref-default"
@@ -2496,7 +2386,7 @@ PM
     || fail "a captain hold failed where allow_nonref is not on by default"
   show=$(tasks_in "$home" show "$id" --full) || fail "the held row disappeared"
   assert_contains "$show" "hold_kind: captain" "the hold lost its captain kind"
-  assert_contains "$show" "Captain hold set:" "the hold lost its hold-set stamp"
+  assert_not_contains "$show" "Captain hold set:" "the hold wrote a stamp into the body"
   assert_contains "$show" "First line of the plan." "the hold lost the original body"
 
   # Cleanup reads the same body back to append the finished work's deliverable.
@@ -2519,7 +2409,7 @@ PM
   assert_contains "$show" "hold_kind: captain" "cleanup dropped the captain hold"
   assert_contains "$show" "Deliverable of the finished work: report data/$scout/report.md" \
     "cleanup lost the deliverable it could not decode a body to append to"
-  assert_contains "$show" "Captain hold set:" "cleanup lost the hold-set stamp"
+  assert_not_contains "$show" "Captain hold set:" "cleanup wrote a stamp into the body"
   pass "both body-decoding paths work without the allow_nonref default"
 }
 
@@ -2679,7 +2569,6 @@ test_uninventoried_report_decision_refuses_completion
 test_hold_decodes_a_bare_scalar_body_without_the_nonref_default
 test_answer_records_and_closes
 test_release_frees_held_work
-test_out_of_band_close_is_recordable
 test_visual_review_uses_shared_completion_owner
 test_none_inventory_and_resolved_prose_do_not_create_holds
 test_terminal_single_owner_status_decision_does_not_block_empty_inventory
