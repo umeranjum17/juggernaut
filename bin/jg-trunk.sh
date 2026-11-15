@@ -773,6 +773,24 @@ rebase_commit() {  # <tip> <candidate>
   jg_trunk_commit_like "$PROJ" "$tree" "$1" "$2"
 }
 
+# A resolution the lander made is kept under the lane's own head (data/trunk/resolved-<project>-<head>.commit and .touched), so a trunk
+# move after it never costs a second resolution: the kept commit replays onto the new tip, and only a move that edits the resolved lines
+# conflicts again and goes to the resolver. The key holds the lane head, so a kept resolution is never used for another head.
+kept_key() {  # <lane head>: the path prefix of the kept resolution
+  printf '%s\n' "$DATA/trunk/resolved-$PN-${1:0:12}"
+}
+keep_resolution() {  # <lane head> <resolved commit> <touched file>
+  local key; key=$(kept_key "$1"); mkdir -p "$DATA/trunk"
+  if [ "$3" != "$key.touched" ]; then cp -- "$3" "$key.touched.new" && mv -f -- "$key.touched.new" "$key.touched" || return 1; fi
+  printf '%s\n' "$2" > "$key.commit.new" && mv -f -- "$key.commit.new" "$key.commit"
+}
+# Prints the kept resolution of <lane head> replayed onto <tip>; returns 1 when none is kept or the replay conflicts.
+replay_kept() {  # <tip> <lane head>
+  local key kept; key=$(kept_key "$2")
+  kept=$(cat "$key.commit" 2>/dev/null) && [ -f "$key.touched" ] && git -C "$PROJ" cat-file -e "$kept^{commit}" 2>/dev/null || return 1
+  rebase_commit "$1" "$kept"
+}
+
 # A rebase that met a conflict goes to the landing run's state `resolving` when the home set a resolver (policy conflict-resolver): an
 # agent resolves it in the lander's own copy inside conflict-limit-seconds, and the files it touched are listed on the run
 # (data/trunk-resolving.tsv: task, project, tip, lane commit, state, epoch, touched files or the reason). The run starts with its state and
@@ -913,11 +931,16 @@ lane_admit() {  # <id> <tip> <expected head or -> <follow 0|1>
     n=$(git -C "$PROJ" rev-list --count "$base..$LANE_CAND")
     [ "$n" = 1 ] || refuse "one commit per ticket: $LANE_BRANCH has $n commits over $TRUNK; squash it to one"
     RESOLVE_WHY=''; RESOLVE_TOUCHED=''
-    fresh=$(rebase_commit "$tip" "$LANE_CAND") || { resolve_conflict "$id" "$tip" "$LANE_CAND" && fresh=$RESOLVE_FRESH; } || {
+    fresh=$(rebase_commit "$tip" "$LANE_CAND") \
+      || { fresh=$(replay_kept "$tip" "$LANE_CAND") && RESOLVE_TOUCHED=$(kept_key "$LANE_CAND").touched; } \
+      || { resolve_conflict "$id" "$tip" "$LANE_CAND" && fresh=$RESOLVE_FRESH; } || {
       hit=$(conflict_paths "$tip" "$LANE_CAND")
       refuse "$LANE_BRANCH conflicts with $TRUNK (${tip:0:12}) in: ${hit:-an unreadable merge}; ${RESOLVE_WHY:+the resolver did not resolve it ($RESOLVE_WHY); }the lane fixes the conflict in its own change and reports ready again; it is never landed dirty"
     }
-    [ -z "$RESOLVE_TOUCHED" ] || retest_resolved "$id" "$tip" "$LANE_CAND" "$fresh"
+    if [ -n "$RESOLVE_TOUCHED" ]; then
+      retest_resolved "$id" "$tip" "$LANE_CAND" "$fresh"
+      keep_resolution "$LANE_CAND" "$fresh" "$RESOLVE_TOUCHED" || echo "jg-trunk: warning: the resolution of $id was not kept; a trunk move resolves it again" >&2
+    fi
     [ "$4" != 1 ] || lane_follow "$LANE_BRANCH" "$LANE_CAND" "$fresh" "$(jg_dod_meta_value "$META" worktree)"
     LANE_CAND=$fresh
   fi
@@ -1219,7 +1242,11 @@ chain_on() {  # <top> <idx>...
   for i in "$@"; do
     if [ "$(rev "${B_CUR[$i]}^")" != "$top" ]; then
       CHAIN_CHANGED=1
-      if fresh=$(rebase_commit "$top" "${B_C0[$i]}"); then B_CUR[i]=$fresh; else
+      if fresh=$(rebase_commit "$top" "${B_C0[$i]}"); then B_CUR[i]=$fresh
+      elif replay_kept "$top" "${B_C0[$i]}" >/dev/null; then
+        B_WHY[i]="REFUSED: ${B_BRANCH[$i]} lands on next try with the resolution kept"; B_CLASS[i]="wait"
+        continue
+      else
         hit=$(conflict_paths "$top" "${B_C0[$i]}")
         B_WHY[i]="REFUSED: ${B_BRANCH[$i]} conflicts with $TRUNK (${top:0:12}) in: ${hit:-an unreadable merge}; the lane fixes the conflict in its own change and reports ready again; it is never landed dirty"
         continue
