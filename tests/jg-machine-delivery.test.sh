@@ -10,7 +10,7 @@ set -u
 
 JM="$ROOT/bin/jg-machine.sh"; OBS="$ROOT/core/machines/observers/delivery.sh"; CLAIM="$ROOT/bin/jg-live-claim.sh"
 T=$(jg_test_tmproot jg-machine-delivery)
-export JG_HOME="$T/home" JG_DELIVERY_CHANGES="$T/changes.tsv"
+export JG_HOME="$T/home" JG_DELIVERY_CHANGES="$T/changes.tsv" JG_SWITCH_MANIFEST="$T/no-switches.tsv"
 export GIT_CONFIG_COUNT=0  # the fixture repo takes no launch hook or identity from the session
 unset JG_STATE_OVERRIDE JG_DATA_OVERRIDE JG_CONFIG_OVERRIDE JG_RELEASES_FILE
 R=$JG_HOME/projects/juggernaut; S=$JG_HOME/state; D=$JG_HOME/data; C=$JG_HOME/config

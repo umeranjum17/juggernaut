@@ -122,3 +122,37 @@ assert_contains "$(cat "$H/state/tool-releases.tsv")" $'\tfailed' "a failed look
 registry 'sleep 30'; JG_SWITCH_REFRESH_TIMEOUT=1 sw refresh-releases
 assert_contains "$(cat "$H/state/tool-releases.tsv")" $'\tfailed' "a hanging lookup is bounded and recorded as failed"
 pass "refresh-releases writes the cache under a bound and records a failed lookup"
+
+# --- the back-filled manifest: the real core/machines/switches.tsv against a seeded home (S8) ---
+# Three owner switches shipped off and only now declared. The fixture home has none of them on, plus the standing findings
+# no change declared; each is then turned on one at a time and only its own line goes.
+export JG_SWITCH_MANIFEST=$ROOT/core/machines/switches.tsv
+B=$T/backfill; mkdir -p "$B/config" "$B/state" "$B/data"
+tab juggernaut:b1 abc 1 "live,wiring-failed:merge-card" "" > "$B/data/trunk-in-use.tsv"
+printf 'x\n' > "$B/state/trunk-live-restart-pending"
+sw status --home "$B"
+for row in $'sm-s12-enforce\tmode\tticket\tabsent\towner' $'jg8-j32a-resolver\tpolicy\tconflict-resolver\tunset\towner' \
+  $'jg8-j32b-retest\tpolicy\tretest-runner\tunset\towner'; do
+  assert_contains "$OUT" "off"$'\t'"$row" "the seeded home reads the declared switch off: ${row%%$'\t'*}"
+done
+assert_contains "$OUT" $'off\t-\tdetector\tmerge-card\twiring-failed\tauto' "the seeded wiring failure is a detector line"
+assert_contains "$OUT" $'off\t-\tdetector\tinstalled-drift\tunarmed\tauto' "the unarmed drift check is a detector line"
+assert_contains "$OUT" $'off\t-\tdetector\ttool-update-check\tunarmed\tauto' "the unarmed tool-update check is a detector line"
+assert_contains "$OUT" $'off\t-\tdetector\trestart-marker\trestart-pending\towner' "the restart marker is a detector line"
+assert_equals 3 "$(printf '%s\n' "$OUT" | grep -c $'^off\t[^-]')" "exactly three manifest rows are off"
+assert_equals 0 "$(awk -F'\t' '$1 !~ /^#/ && $5 != "owner"' "$ROOT/core/machines/switches.tsv" | wc -l | tr -d ' ')" "every back-filled row is who=owner"
+sw verify --home "$B"; expect_code 1 "$RC" "verify exits 1 while the three rows are off"
+sw apply sm-s12-enforce ticket --home "$B" --owner-word x
+[ "$RC" -ne 0 ] || fail "apply writes only policy rows, never the mode row"
+printf 'ticket\n' > "$B/config/machine-enforce"; sw status --home "$B"
+assert_not_contains "$OUT" $'\tsm-s12-enforce\t' "a machine line in config/machine-enforce turns the mode row on"
+assert_contains "$OUT" $'\tjg8-j32a-resolver\t' "turning on one row leaves the others off"
+sw apply jg8-j32a-resolver conflict-resolver --home "$B" --owner-word "owner said so" --value 'echo r'; sw status --home "$B"
+assert_not_contains "$OUT" $'\tjg8-j32a-resolver\t' "a conflict-resolver line turns its row on"
+assert_contains "$OUT" $'\tjg8-j32b-retest\t' "the retest row is still off"
+sw apply jg8-j32b-retest retest-runner --home "$B" --owner-word "owner said so" --value 'echo t'; sw status --home "$B"
+assert_not_contains "$OUT" $'off\tjg8' "a retest-runner line turns the last row on"
+sw verify --home "$B"; expect_code 0 "$RC" "verify passes once the three rows are on"
+assert_contains "$OUT" "detector" "detector lines stay and never fail verify"
+bash "$ROOT/core/machines/observers/delivery.sh" check >"$T/dcheck" 2>&1; expect_code 0 "$?" "every manifest id has a changes.tsv row: $(cat "$T/dcheck")"
+pass "the back-filled manifest reads three owner switches off in a seeded home, and each turns on alone"

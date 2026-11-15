@@ -1,3 +1,6 @@
 # switches.tsv - the switch manifest read by bin/jg-switch.sh.
 # Columns (tab separated): change-id, kind, name, want, who (auto|owner), expires (YYYY-MM-DD or -), reason.
 # Kinds are listed in the header of bin/jg-switch.sh. A change declares its rows in the same commit as its changes.tsv row.
+sm-s12-enforce	mode	ticket	-	owner	-	a machine is enforced only when its name is a line of config/machine-enforce; the owner flips it (jg-machine-guard.sh flip)
+jg8-j32a-resolver	policy	conflict-resolver	set	owner	-	no conflict-resolver line: every conflict goes back to the worker; the owner sets the agent command
+jg8-j32b-retest	policy	retest-runner	set	owner	-	no retest-runner line: a resolved conflict retests with the default done-done runner; the owner sets the command

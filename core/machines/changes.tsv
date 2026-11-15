@@ -16,3 +16,5 @@ sm-s9-wait	juggernaut	d4f02c378075fa15419a504660b800eff9662c4a	machine-view	swit
 sm-s10-records	juggernaut	2dc8b8b7034b9c8c0dadea4e62f47ec6b2ae7332	machine-view	switch	one registry of every versioned record shape in bin/
 sm-s11-adoption	juggernaut	952c2c71ad05afc3a282dc2b8ea302dbc6c629ec	machine-enforce	log:config/machine-enforce:.	writers report an illegal move to the machine tables in shadow
 sm-s12-enforce	juggernaut	38f1eed7e0f316ec3787d973160f35678dd0713b	machine-enforce	log:config/machine-enforce:.	a machine listed in config/machine-enforce refuses an illegal move
+jg8-j32a-resolver	juggernaut	ff8795d39dd2b6b482c59900a94481132d63178b	-	-	a rebase conflict goes to resolving: the home's conflict-resolver agent resolves it in the lander's copy
+jg8-j32b-retest	juggernaut	49e03978fbd8e1e2689e730c7dfd614975a589f8	-	-	after a resolved conflict the retest-runner runs only the journeys the touched files affect
