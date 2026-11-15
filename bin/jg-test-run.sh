@@ -694,6 +694,21 @@ list_portable_serial() {
 portable_serial_weight_hints() {
   cat <<'EOF'
 tests/jg-merge-on-green.test.sh 900
+tests/jg-backlog-ask-label.test.sh 500
+tests/jg-beads-read.test.sh 32636
+tests/jg-board-beads-journey.test.sh 500
+tests/jg-captain-hold-gate.test.sh 500
+tests/jg-done-yaml-dup-keys.test.sh 500
+tests/jg-fleet-compare.test.sh 15500
+tests/jg-fleet-digest.test.sh 7303
+tests/jg-lease-tick.test.sh 500
+tests/jg-recon-journey.test.sh 3500
+tests/jg-refusal-before-write.test.sh 500
+tests/jg-ticket-adapter.test.sh 500
+tests/jg-trunk-base-movement.test.sh 57544
+tests/jg-trunk-nothing-lands.test.sh 6000
+tests/jg-trunk-resolve-retry.test.sh 21500
+tests/jg-watch-poll-fork-budget.test.sh 25000
 EOF
 }
 
