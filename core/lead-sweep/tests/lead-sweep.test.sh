@@ -15,7 +15,9 @@
 # h) a done lane that has not landed has its agent ended once, with its copy and branch kept; one whose agent is gone is not touched;
 # i) a lane parked (paused, blocked, needs-decision) is left until 24 h (2 h with no commit of its own), then parked once, never forced;
 # j) a lane that never started is left for 30 minutes, relaunched once, then parked; a lane that started is not relaunched;
-# k) a lane whose agent is gone is cleaned up when its work landed, and left alone when it did not.
+# k) a lane whose agent is gone is cleaned up when its work landed, and left alone when it did not;
+# o) a lane someone waits for (an unread steer, a steer read after its done line, a relaunch after it) is never ended, parked or torn down, and a
+#    waited-for agent that is gone raises one P1 alert to Main at once.
 # Usage: lead-sweep/tests/lead-sweep.test.sh
 set -euo pipefail
 SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
@@ -38,7 +40,7 @@ cat > "$d/control" <<'STUB'
 #!/usr/bin/env bash
 printf 'control %s\n' "$*" >> "$STUB_LOG"
 [ ! -e "$JG_STATE_OVERRIDE/nocontrol-$1" ] || exit 1
-[ "$2" != exit ] || date +%s > "$JG_STATE_OVERRIDE/$1.exit"
+[ "$2" != exit ] || { date +%s > "$JG_STATE_OVERRIDE/$1.exit"; echo dead > "$JG_STATE_OVERRIDE/agent-$1"; }   # a stopped agent is dead
 STUB
 cat > "$d/agent" <<'STUB'
 #!/usr/bin/env bash
@@ -164,6 +166,8 @@ sweep
 check "l: a message in the last hour keeps a relayed Recon" "$(tore lrec)" 0
 check "l: a relayed Recon with no inbox is cleaned up" "$(tore lgone)" 1
 touch -d "@$((now - 70 * 60))" "$FM/state/lrec.inbox/1.msg"; sweep
+check "l: an unread message keeps a relayed Recon, however old" "$(tore lrec)" 0
+mkdir -p "$FM/state/lrec.inbox/handled"; mv "$FM/state/lrec.inbox/1.msg" "$FM/state/lrec.inbox/handled/"; touch -d "@$((now - 70 * 60))" "$FM/state/lrec.inbox/handled/1.msg"; sweep
 check "l: a quiet hour after the relay cleans it up, once" "$(tore lrec)" 1
 check "l: it says why" "$(grep -c '^lead-sweep: lrec cleaned up (its report exists and Main relayed it)' "$d/out")" 1
 # m: the Recon table decides: an old relay receipt cannot close a new draft
@@ -201,5 +205,32 @@ if [ -x "$SRC/../../bin/jg-check-register.sh" ]; then
   else say "FAIL: f: wiring: $(cat "$d/wire")"; fails=$((fails + 1)); fi
   XDG_DATA_HOME=$d/share "$SRC/unwiring.sh" "$FM" > /dev/null 2>&1; check "f: the unwiring removes the shim" "$(ls "$FM/state/lead-sweep.check.sh" 2>/dev/null || echo gone)" gone
 fi
+# o: a lane someone waits for is live, whatever its last line says (worker-stop-alert). A second fixture home runs the real alert path.
+FM=$d/fm2; P=$FM/projects/proj; mkdir -p "$FM/state" "$FM/data" "$P"; ln -sn "$SRC/../../bin" "$FM/bin"; ln -sn "$SRC/../../core" "$FM/core"
+git -C "$P" init -q; echo 1 > "$P/f"; git -C "$P" add f; git -C "$P" commit -qm base; git -C "$P" rev-parse trunk > "$FM/state/trunk-tip-proj"
+stamp() { touch -d "@$((now - 100))" "$FM/state/$1.status"; }   # the done line is older than the steers below
+steer() { mkdir -p "$FM/state/$1.inbox"; echo "please answer" > "$FM/state/$1.inbox/1.msg"; }
+ends() { grep -c "^control $1 exit\$" "$STUB_LOG" || true; }
+lane w1 ship 'done [at=1]: ready'; steer w1; stamp w1
+lane w2 ship 'done [at=1]: ready'; steer w2; stamp w2; onto w2
+lane w3 ship 'paused [at=1] [wait=lead] [reason=parked]: set aside'; steer w3; stamp w3
+lane w4 ship 'done [at=1]: ready'; stamp w4; mkdir -p "$FM/state/w4.inbox/handled"; echo read > "$FM/state/w4.inbox/handled/1.msg"
+lane w5 ship 'done [at=1]: ready'; stamp w5; onto w5; date +%s > "$FM/state/w5.exit"
+lane w6 ship 'done [at=1]: ready'; steer w6; stamp w6; onto w6; echo dead > "$FM/state/agent-w6"
+lane w7 ship 'done [at=1]: ready'; stamp w7
+sweep
+check "o: a done lane with an unread steer keeps its agent" "$(ends w1)" 0
+check "o: a landed lane with an unread steer is not torn down" "$(tore w2)" 0
+check "o: a declared park with an unread steer is not parked" "$(tore 'w3 --park')" 0
+check "o: a steer newer than the done line, already read, keeps the agent" "$(ends w4)" 0
+check "o: a lane relaunched after its done line is not torn down" "$(tore w5)" 0
+check "o: a done lane nobody waits for is still ended once" "$(ends w7)" 1
+check "o: a waited-for agent that is gone raises one alert" "$(JG_HOME=$FM JG_STATE_OVERRIDE=$FM/state "$FM/bin/jg-alert.sh" list | grep -c '^worker-stopped--w6$')" 1
+check "o: the alert is P1 at Main's rung" "$(sed -n 's/^\(precedence\|rung\)=//p' "$FM/state/alerts/worker-stopped--w6.rec" | paste -sd' ')" "P1 3"
+check "o: the alert reached Main at once, as one wake" "$(grep -c 'alert worker-stopped (P1) at rung 3 for main: w6' "$FM/state/.wake-queue")" 1
+sweep
+check "o: a second beat raises no second alert" "$(find "$FM/state/alerts" -name 'worker-stopped--w6*' | wc -l | tr -d ' ')" 1
+mkdir -p "$FM/state/w1.inbox/handled"; mv "$FM/state/w1.inbox/1.msg" "$FM/state/w1.inbox/handled/"; touch -d "@$((now - 200))" "$FM/state/w1.inbox/handled/1.msg"; sweep
+check "o: once the steer is read and answered the done lane is ended once" "$(ends w1)" 1
 [ "$fails" -eq 0 ] || { say "FAILED: $fails"; exit 1; }
 say "PASS: lead-sweep"

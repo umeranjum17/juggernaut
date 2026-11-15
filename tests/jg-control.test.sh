@@ -324,6 +324,30 @@ test_exit_types_each_harness_verified_command() {
   pass "jg-control exit: every verified harness gets its own verified exit command"
 }
 
+# A waited-for agent that ends raises one P1 alert to its owner at once (core/lead-sweep never ends one, but Main and the delivery tick can).
+test_exit_of_a_waited_for_agent_raises_a_p1_alert() {
+  local dir out rc rec
+  dir=$(new_case exit-waited)
+  add_task "$dir" t1 claude
+  alive_as "$dir" claude
+  mkdir -p "$dir/home/state/t1.inbox"
+  printf 'schema=jg-task-inbox.v1\nticket=t1\nkind=steer\n--\nplease answer the critic round\n' > "$dir/home/state/t1.inbox/001.msg"
+  out=$(run_control "$dir" t1 exit); rc=$?
+  expect_code 0 "$rc" "exit of a waited-for agent should still succeed"$'\n'"$out"
+  rec=$dir/home/state/alerts/worker-stopped--t1.rec
+  assert_present "$rec" "the stop of an agent with an unread steer should raise the worker-stopped alert"
+  assert_equals "P1 3 open" "$(sed -n 's/^\(precedence\|rung\|state\)=//p' "$rec" | paste -sd' ')" "the alert is P1, rings Main first and is open"
+  assert_contains "$(cat "$dir/home/state/.wake-queue")" "alert worker-stopped (P1) at rung 3 for main: t1" "Main is woken at once with the alert, never a routine line"
+  # The same lane with nobody waiting ends with no alert.
+  dir=$(new_case exit-unwaited)
+  add_task "$dir" t2 claude
+  alive_as "$dir" claude
+  out=$(run_control "$dir" t2 exit); rc=$?
+  expect_code 0 "$rc" "exit of an agent nobody waits for should succeed"$'\n'"$out"
+  assert_absent "$dir/home/state/alerts/worker-stopped--t2.rec" "no alert when nobody waits for the agent"
+  pass "jg-control exit: a waited-for agent that ends raises one P1 alert to Main at once; an unwaited one raises none"
+}
+
 test_interrupt_sends_each_harness_verified_key() {
   local dir out rc harness expected key repeat clear got want
   for harness in $VERIFIED_HARNESSES; do
@@ -1408,6 +1432,7 @@ test_claude_exit_confirmation_refusals
 test_submitted_claude_exit_confirmation
 
 test_exit_types_each_harness_verified_command
+test_exit_of_a_waited_for_agent_raises_a_p1_alert
 test_interrupt_sends_each_harness_verified_key
 test_devin_interrupt_invalidates_busy
 test_devin_idle_interrupt_sends_one_press

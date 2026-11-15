@@ -11,6 +11,7 @@
 #   jg_fact_flush <flush-file> <ready> <oldest> <now> <at-ready> <after-min>    ready: whether a queue's flush is due, and why
 #   jg_fact_sweep_retry <state-dir> <mem-dir> <id> <now> <start-s>              retry: the never-started relaunch budget and the next step
 #   jg_fact_wake <state-dir> <file>                        cursor: the reported and classified positions of one wake stream
+#   jg_fact_lane_waited <state-dir> <id> <recon-phase> <agent-state cmd...>   waited: whether anyone waits for the lane's agent, and why
 #
 # The *_effective, *_at, *_due and *_next forms print one word (or return a status) for a caller that needs only the decision.
 
@@ -87,6 +88,35 @@ jg_fact_sweep_retry() {  # <state-dir> <mem-dir> <id> <now> <start-s>
   elif [ "$tried" -eq 0 ]; then nxt="relaunch"
   else nxt="park"; fi
   printf 'retries\t%s\nbudget\t1\nclock_since\t%s\nclock_basis\t%s\nparked\t%s\nlock\t%s\nnext\t%s\n' "$([ "$tried" -eq 0 ] && echo 0 || echo 1)" "$since" "$basis" "$parked" "$lock" "$nxt"
+}
+
+# --- waited: whether anyone waits for the agent of a lane (core/lead-sweep, bin/jg-worker-stop-alert.sh) -------------------
+# A lane's last status line says what the worker reported, not whether the work is over: a steer or a relaunch after a done line makes
+# the lane live again (machine worker, edge done -> working "rework"). The agent of a waited-for lane is never ended unseen. Reasons, in order:
+#   steer       an unread steer is in state/<id>.inbox/
+#   round       the lane is a Recon whose draft has an open critic round (phase drafted, assigned or critiqued; the caller reads it
+#               from core/machines/observers/recon.sh, and passes none when the lane has no handoff record)
+#   steer-read  a steer is newer than the lane's last status line (the worker took it and has not reported since)
+#   relaunched  the agent is alive and its last exit record is newer than the last status line: it was started again after the lane ended
+# The agent state (alive, dead, missing, unknown) is asked only for the last reason, as the trailing command: `<cmd...>` prints it.
+jg_fact_lane_waited() {  # <state-dir> <id> <recon-phase> <agent-state cmd...>
+  local state=$1 id=$2 phase=$3 inbox why=- unread oldest=0 f at status_at exited
+  shift 3
+  inbox=$state/$id.inbox
+  unread=$(find "$inbox" -maxdepth 1 -type f -name '*.msg' 2>/dev/null | wc -l | tr -d ' ')
+  status_at=$(stat -c %Y "$state/$id.status" 2>/dev/null || echo 0)
+  if [ "$unread" -gt 0 ]; then
+    why=steer
+    for f in "$inbox"/*.msg; do at=$(stat -c %Y "$f" 2>/dev/null || echo 0); [ "$oldest" -ne 0 ] && [ "$at" -ge "$oldest" ] || oldest=$at; done
+  else
+    case $phase in drafted | assigned | critiqued) why=round ;; esac
+    if [ "$why" = - ] && [ -n "$(find "$inbox/handled" -maxdepth 1 -type f -name '*.msg' -newer "$state/$id.status" 2>/dev/null | head -n 1)" ]; then why=steer-read; fi
+    if [ "$why" = - ]; then
+      exited=$(head -n 1 "$state/$id.exit" 2>/dev/null); case $exited in '' | *[!0-9]*) exited=0 ;; esac
+      if [ "$exited" -gt "$status_at" ] && [ "$("$@" 2>/dev/null)" = alive ]; then why=relaunched; fi
+    fi
+  fi
+  printf 'waited\t%s\nreason\t%s\nunread\t%s\nsince\t%s\n' "$([ "$why" = - ] && echo no || echo yes)" "$why" "$unread" "$oldest"
 }
 
 # --- cursor: the positions of one wake stream (bin/jg-wake-lib.sh) -------------------------------------------------------

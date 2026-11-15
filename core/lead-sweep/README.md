@@ -21,6 +21,20 @@ A lane (kind ship or scout) whose latest status line is `done` or `resolved` (an
 A `resolved` lane that has not landed is left alone and reported once; a `done` lane that has not landed is waiting for its landing and prints nothing.
 A lane that is still working, a lead, and a lane a landing is running for are never touched.
 
+## A lane someone waits for is never ended
+
+A lane whose agent someone waits for is live, whatever its last status line says.
+The sweep never ends, parks or cleans up such a lane (`jg_fact_lane_waited` in `bin/jg-facts-lib.sh` is the one reader). Someone waits when:
+
+- an unread steer is in the lane's inbox;
+- the lane is a Recon whose draft has an open critic round;
+- a steer is newer than the lane's last status line (the worker took it and has not reported since);
+- the agent is alive and was started again after the lane ended (its exit record is newer than its last status line).
+
+When the agent of such a lane is already dead or missing, the sweep raises the `worker-stopped` alert (P1, first rung Main, `bin/jg-worker-stop-alert.sh`) at once, once per lane.
+`bin/jg-control.sh exit` raises the same alert when it ends a waited-for agent, so an end by Main or the delivery tick is never unseen either.
+The lane is swept again after the worker answers: its new status line is newer than the steer.
+
 ## Other ends of a lane
 
 Each is acted on once and never forced (limits: `JG_LEAD_SWEEP_PARK_H`, `JG_LEAD_SWEEP_PARK_EMPTY_H`, `JG_LEAD_SWEEP_START_MIN`):

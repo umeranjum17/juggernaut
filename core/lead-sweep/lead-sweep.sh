@@ -24,6 +24,9 @@
 # a `done` lane that has not landed is waiting for its landing and prints nothing.
 # Output, which becomes a check wake: `lead-sweep: <id> cleaned up (<why>)` once. A cleanup that is refused or left alone is the
 # drift alert (bin/jg-alert.sh raise --deliver), once per lane and reason (data/lead-sweep/<id>.reported); the same refusal on the next beat prints nothing.
+# A lane someone waits for is live and is never ended, parked or cleaned up by this sweep: an unread steer in its inbox, an open Recon critic
+# round, a steer newer than its last status line, or a relaunch after its done line (bin/jg-facts-lib.sh jg_fact_lane_waited). A done line does not
+# end it. When the agent of such a lane is already dead or missing, the sweep raises the worker-stopped alert (P1, bin/jg-worker-stop-alert.sh) at once.
 # The other ends of a lane (machine 10 request; worker expire and retire), each acted on once and never forced:
 #   done, not landed   the agent ends at once (`bin/jg-control.sh <id> exit`); the copy, branch and ticket stay;
 #   parked             a ship lane whose last line is a declared park (`paused ... reason=parked`) is parked on the next beat, at once: the
@@ -108,6 +111,19 @@ agent_state() {
   ( . "$FMH/bin/jg-backend.sh" >/dev/null 2>&1 \
       && jg_backend_agent_state "$(jg_backend_of_meta "$1")" "$(jg_backend_target_of_meta "$1")" "$1" "$id" ) 2>/dev/null || echo unknown
 }
+# recon_phase <id> <kind>: the phase of a Recon's handoff record, none for any other lane or a Recon with no record.
+recon_phase() {
+  local p=none
+  [ "$2" != scout ] || p=$(JG_HOME="$FMH" JG_DATA_OVERRIDE="$FMH/data" "$FMH/core/machines/observers/recon.sh" "$1" 2>/dev/null || echo none)
+  printf '%s\n' "${p:-none}"
+}
+# lost_waited <lane> <why>: the agent of a waited-for lane is gone: a P1 alert to its owner, once per lane (the alert holds one live record per key).
+lost_waited() {
+  if [ -x "$FMH/bin/jg-worker-stop-alert.sh" ]; then run_as_home "$FMH/bin/jg-worker-stop-alert.sh" raise "$1" lost "$2" >/dev/null 2>&1 && return 0; fi
+  [ "$(cat "$MEM/$1.reported" 2>/dev/null)" != "waited-lost-$2" ] || return 0
+  printf 'waited-lost-%s\n' "$2" > "$MEM/$1.reported"
+  echo "lead-sweep: $1's agent is gone and someone waits for it ($2)"
+}
 # own_commit <meta> <project> <branch>: succeeds when the lane's branch holds a commit past the one it started on.
 own_commit() {
   local head base; head=$(git -C "$2" rev-parse --verify --quiet "refs/heads/$3^{commit}") || head=
@@ -185,6 +201,14 @@ for id in $order; do
   line=$(tail -n 1 "$STATE/$id.status" 2>/dev/null)
   jg_fact_lane_lock_held "$STATE" "$id" && continue
   proj=$(mval "$meta" project); branch=$(mval "$meta" branch); branch=${branch:-fm/$id}
+  if [ -n "$line" ]; then
+    # A lane someone waits for is live, whatever its last line says: nothing here ends it. A waited-for agent that is gone is a loss.
+    waited=$(jg_fact_lane_waited "$STATE" "$id" "$(recon_phase "$id" "$kind")" agent_state "$meta")
+    if [ "$(jg_fact_val "$waited" waited)" = yes ]; then
+      case $(agent_state "$meta") in dead|missing) lost_waited "$id" "$(jg_fact_val "$waited" reason)" ;; esac
+      continue
+    fi
+  fi
   case $line in
     done\ *|done:*) ended='done' ;;
     resolved\ *|resolved:*) ended=resolved ;;

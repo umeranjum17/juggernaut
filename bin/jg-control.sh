@@ -1485,12 +1485,18 @@ case "$VERB" in
     echo "interrupt-delivered $ID harness=$HARNESS backend=$BACKEND verified=$proof"
     ;;
   exit)
+    # Ask before the stop whether someone waits for this agent (bin/jg-worker-stop-alert.sh): the answer changes once it has stopped.
+    WAITED_FOR=$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-worker-stop-alert.sh" waited "$ID" alive 2>/dev/null) || WAITED_FOR=
     result=$(do_exit)
     # Every outcome that proves the agent stopped records its epoch, so the
     # sentinel's reconcile leaves this lane down until a spawn newer than it.
     case "$result" in
       stopped|already-stopped|endpoint-gone)
-        printf '%s\n' "$(date +%s)" >"$STATE/$ID.exit" || die "task $ID stopped, but its exit record could not be written" ;;
+        printf '%s\n' "$(date +%s)" >"$STATE/$ID.exit" || die "task $ID stopped, but its exit record could not be written"
+        # A waited-for agent that ended is a P1 alert to its owner at once, never a routine line.
+        [ -z "$WAITED_FOR" ] || [ "$result" = already-stopped ] \
+          || JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-worker-stop-alert.sh" raise "$ID" ended "$WAITED_FOR" \
+          || echo "warning: the stop of waited-for task $ID could not be raised as an alert" >&2 ;;
     esac
     echo "$result $ID harness=$HARNESS backend=$BACKEND endpoint=$T worktree=$WT"
     ;;
