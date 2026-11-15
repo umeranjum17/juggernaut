@@ -12,6 +12,10 @@
 # M5 (slice H29i) six lanes land in two queues (odd lanes in A, even lanes in B, each beside the other) and lane 4 is bad: the verify judges
 #    each queue on a chain of its own at once, so A's pin moves past B's red; only lane 4 is reported, it is confirmed on the trunk
 #    first, and the trunk's pin stands on the last commit that is green in its own queue before it (lane 3).
+# M6 (forward repair) lane 2 is bad and a later lane repairs it: the red milestone is not split. The whole range runs once at the repair head, it is
+#    green, and the pin moves to that head and to no other commit; nothing is reported or reverted.
+# M7 the same repair, but lane 5 is bad and never repaired: the head run is red, so the milestones are split as before, the bad lanes are reported
+#    and the pin stays below the head.
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
@@ -95,6 +99,35 @@ test_two_bad_commits_in_different_milestones_are_each_found_and_reported() {
   pass "two bad commits of 30 are each reported, none reverted, by one verify in $rounds gate runs, and the pin stops below the first"
 }
 
+# repaired <name> <bad indexes>: five lanes with those bad ones, then a sixth lane that rewrites lane 2's failing test to pass (a repair landed above the red).
+repaired() {
+  BAD_AT=''; stack "$1" 5 "$2" 93 24
+  lane repair 'exit 0' t/l2.test.sh; trunk land repair >/dev/null 2>&1 || fail "the repair must land"
+}
+
+test_a_later_repair_proves_the_range_at_its_head_and_moves_the_pin_there() {
+  local out
+  repaired fixed "2"
+  out=$(trunk verify "$PROJ" 2>&1) || fail "a range repaired at its head must verify: $out"
+  assert_contains "$out" "runs once at" "the red milestone is tried at the repair head"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(tip)" ] || fail "the pin must stand on the repair head: $out"
+  [ -z "$(charged)" ] || fail "a repaired red is reported against no commit: $(charged | tr '\n' ' ')"
+  no_revert
+  [ "$(runs)" = 2 ] || fail "one red milestone and one head run are two runs: $(runs)"
+  pass 'a red milestone that a later commit repaired is proved by one run at the repair head, and the pin moves only there'
+}
+
+test_a_real_red_still_blocks_the_pin_when_a_repair_exists() {
+  local out
+  repaired unfixed "2 5"
+  out=$(trunk verify "$PROJ" 2>&1) && fail "an unrepaired red must fail the verify: $out"
+  assert_contains "$out" "runs once at" "the head is tried first"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" != "$(tip)" ] || fail "the pin must not reach the head over a real red: $out"
+  [ "$(charged)" = "$(printf '%s\n' "$BAD_AT" | tr ' ' '\n' | sed '/^$/d' | sort)" ] || fail "the red commits of the range must be reported: got $(charged | tr '\n' ' ')"
+  no_revert
+  pass 'a real red at the head still splits the milestones, is reported, and keeps the pin below the head'
+}
+
 # qstack <name> <lanes> <bad index>: lanes land in turn, odd ones in queue A and even ones in queue B, each while the other queue's chain is live.
 qstack() {
   local i q o body live
@@ -139,6 +172,8 @@ test_each_queue_is_verified_apart_and_at_once
 test_a_high_bad_share_makes_small_milestones
 test_a_milestone_holds_only_the_commits_of_its_window
 test_two_bad_commits_in_different_milestones_are_each_found_and_reported
+test_a_later_repair_proves_the_range_at_its_head_and_moves_the_pin_there
+test_a_real_red_still_blocks_the_pin_when_a_repair_exists
 if [ -n "${DONE_DONE_EVIDENCE_ROOT:-}" ]; then
   cat > "$DONE_DONE_EVIDENCE_ROOT/steps.json" <<'JSON'
 {

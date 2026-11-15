@@ -11,6 +11,7 @@
 # commit. The pin moves to the last commit before the first bad one at each step. The bad commits are not reverted here: the caller
 # reverts each one (MS_BAD), and the later milestones are judged against the one before them, so one verify finds every bad commit
 # of its range.
+# A red milestone is first tried at the repair head: when the whole range to <top> is green there, a later commit repaired it, and the pin moves to <top>.
 #   ms_verify <top> <gate with HEAD^> <green>   0 every milestone to <top> green, 2 the commits of MS_BAD are charged, 1 a run ended
 #                                               for a reason no test accounts for (nothing charged)
 #   ms_charge <commit>                          report one charged commit as red (nothing is reverted)
@@ -127,6 +128,17 @@ ms_resolve() {  # <gate> <base> <real base> <lo> <hi>
   case $rb in 0) ms_pin "${MS_LAST[hi]}" "${MS_LAST[mid]}" ;; 2) ms_resolve "$gate" "$ta" "${MS_LAST[mid]}" "$(( mid + 1 ))" "$hi" ;; *) MS_UNACC=1 ;; esac
 }
 
+# A red milestone may be one a later commit repaired: the milestone runs with the runner and tests of its own tree, so a fix landed above it is never
+# used there. The whole range <judge>..<top> is therefore run once at <top> with the same gate, and green there proves every commit of the range
+# (the pin moves to <top>); red there leaves the milestone to be split as before, so a real red is still found and still blocks the pin.
+ms_head_green() {  # <raw gate> <judge> <top>
+  local rc=0
+  echo "verify: red below ${3:0:12}; the whole range ${2:0:12}..${3:0:12} runs once at ${3:0:12} in case a later commit repaired it" >&2
+  full_gate "$3" "$(gate_from "$1" "$2")" "$2" || rc=$?
+  [ "$rc" -eq 0 ] || return 1
+  ms_pin "$3" "$2"
+}
+
 ms_verify() {  # <top> <gate with HEAD^> <green>
   local top=$1 raw=$2 base=$3 judge n mins gate m cnt i rc
   judge=$base; n=$(ms_size); mins=$(ms_num verify-milestone-minutes 15)
@@ -142,7 +154,7 @@ ms_verify() {  # <top> <gate with HEAD^> <green>
     rc=0; full_gate "$m" "$gate" "$judge" || rc=$?
     case $rc in
       0) ms_pin "$m" "$judge" ;;
-      2) ms_resolve "$gate" "$judge" "$judge" 0 $(( ${#MS_TOP[@]} - 1 )) ;;
+      2) if [ "$m" != "$top" ] && ms_head_green "$raw" "$judge" "$top"; then m=$top; else ms_resolve "$gate" "$judge" "$judge" 0 $(( ${#MS_TOP[@]} - 1 )); fi ;;
       *) MS_UNACC=1 ;;
     esac
     # A red milestone does not stop the walk: the next one is judged against this one, so every bad commit of the range is found now.
