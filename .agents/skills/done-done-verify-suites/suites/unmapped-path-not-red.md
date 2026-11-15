@@ -1,0 +1,3 @@
+# Unmapped path is a note, never a red: the full gate judges the scripts that ran, by whichever runner the tree carries
+
+Run `done-done run jg-trunk-gate` (`tests/jg-trunk-gate.test.sh`); over a fixture home with real git and the real `bin/jg-trunk.sh`, its cases `an unmapped path an older runner failed is a note and never a red` and `a real failure beside unmapped paths an older runner failed still refuses` prove that failed results an older runner (the one a milestone's own tree carries) recorded for changed paths no test names end the gate green with one note naming each path, with no rerun, no parent read, no flaky row and no refusal, while a failing selected test beside them still refuses the lane and is the only path charged (screen: none).

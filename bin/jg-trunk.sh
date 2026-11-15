@@ -511,6 +511,14 @@ gate_skipped() {  # <log>
   awk '/^JG_TEST_END / && / exit=0 / && / gate_skip=true( |$)/ { print $3 }' "$1"
 }
 
+# Failed results an older runner recorded for a changed path no test names: a result that is no test script and whose own failure is the
+# runner's "no changed-test mapping" line. Nothing ran for such a path, so it is a coverage gap and never a red: the gate's run is judged
+# by the scripts that did run, and a gate built from an older tree (a milestone's own runner) cannot turn one stray path into a red.
+# Prints the result lines it recognises, so the caller can name each path in its note and take them out of the failures.
+gate_unmapped() {  # <failed results, as gate_results prints them>
+  printf '%s\n' "$1" | awk -F'\t' '$1 !~ /\.test\.sh$/ && index($3, "no changed-test mapping for source path") && $3 !~ / \| /'
+}
+
 # A rerun runs tests only. A path the gate failed that is not a test (a library, a command that needs a store, a data file) has no
 # result to compare: bash would parse it bare and exit non-zero on any tree, so it is never rerun, never read from a tip and never
 # reported as the tip's red. Such a path stays what its own gate run said it was, a failure of the lane that changed it.
@@ -693,7 +701,7 @@ full_gate() {  # <candidate> <command> <base>
   return "$rc"
 }
 _full_gate() {  # <candidate> <command> <base>
-  local badsig='' cand=$1 log rerun_log envf rc=0 mine tipres line s ex sig tex tsig bad='' old='' unexplained quoted again skipped settled now flaky='' t0 passing='' byself='' byparent='' rerun_red noparent=''
+  local badsig='' cand=$1 log rerun_log envf rc=0 mine tipres line s ex sig tex tsig bad='' old='' unexplained quoted again skipped settled now flaky='' t0 passing='' byself='' byparent='' rerun_red noparent='' unmapped=''
   t0=$(date +%s); GATE_KIND=full; GATE_FIGURES=; GATE_BAD=; GATE_BAD_SIG=
   gate_stem "$cand"; log=$(gate_log full)
   envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX" 2>/dev/null) || { mkdir -p "$DATA/trunk"; envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX"); }
@@ -707,6 +715,14 @@ _full_gate() {  # <candidate> <command> <base>
     rm -f -- "$envf"; tail -n 20 "$log" >&2
     echo "REFUSED: gate 'full' failed (exit $rc) at ${cand:0:12}; full log: $log" >&2
     return 1
+  fi
+  # A path no test names is a note and never a red, by whichever runner the tree carries. The count above still holds them, so a failure
+  # no script accounts for is refused as before; only the judging below leaves them out.
+  unmapped=$(gate_unmapped "$mine")
+  if [ -n "$unmapped" ]; then
+    echo "note: no test names these changed paths, so none ran for them; a coverage note, never a red: $(printf '%s\n' "$unmapped" | cut -f1 | paste -sd' ' -)" >&2
+    mine=$(printf '%s\n' "$mine" | grep -vxFf <(printf '%s\n' "$unmapped") || true)
+    if [ -z "$mine" ]; then rm -f -- "$envf"; gate_figures "$log" "$t0"; return 0; fi
   fi
   # A flaky failure gets one rerun before it is judged: the scripts are rerun once on the candidate, and only
   # what fails again counts (as that second run saw it). A script the rerun does not report keeps its first result.

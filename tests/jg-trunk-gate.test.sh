@@ -95,6 +95,57 @@ test_an_unmapped_path_is_a_coverage_note_and_a_real_failure_still_reruns_once() 
   pass 'an unmapped path is a coverage note that never runs or files a flake, a real failure still reruns once, and a fake flake row is closed'
 }
 
+# unmapped-path-not-red: the gate runs the runner its own tree carries, so a milestone built before the runner stopped recording a path
+# no test names as a failed result still hands the gate such results (the 5110436ecb9a verify ended red on 15 of them, and the pin
+# stayed put). The gate judges the scripts that ran: each such path is one note, never a red, a rerun, a parent read or a flaky row.
+# This stand-in is that older runner: a path that is no test script is a failed result with the old "no changed-test mapping" line.
+# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
+old_runner() {
+  cat > "$W/oldrig.sh" <<'SH'
+#!/usr/bin/env bash
+total=0 failed=0
+for s in "$@"; do
+  echo "JG_TEST_BEGIN 2026-01-01T00:00:00Z $s family=unclassified expected_gate_skip="
+  case $s in
+    *.test.sh) out=$(bash "$s" 2>&1); rc=$?; [ -z "$out" ] || printf '%s\n' "$out" ;;
+    *) echo "not ok - $s: no changed-test mapping for source path: $s"; rc=1 ;;
+  esac
+  echo "JG_TEST_END 2026-01-01T00:00:00Z $s exit=$rc duration_ms=1 gate_skip=false"
+  total=$((total + 1)); [ "$rc" -eq 0 ] || failed=$((failed + 1))
+done
+echo "JG_TEST_SUMMARY total=$total failed=$failed skipped_gate=0 duration_ms=1"
+[ "$failed" -eq 0 ]
+SH
+}
+
+# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
+test_an_unmapped_path_an_older_runner_failed_is_a_note_and_never_a_red() {
+  local out
+  world oldmap; rig; old_runner
+  printf 'gate-full=bash %s/oldrig.sh t/orphan-a.lib t/orphan-b.lib t/orphan-c.sh t/n.test.sh\n' "$W" >> "$HOME_D/config/trunk-policy"
+  lane old "exit 0" t/n.test.sh
+  out=$(trunk land old 2>&1) || fail "unmapped paths an older runner failed must not refuse the lane: $out"
+  assert_contains "$out" 'a coverage note, never a red: t/orphan-a.lib t/orphan-b.lib t/orphan-c.sh' 'one note names every unmapped path'
+  assert_not_contains "$out" 'REFUSED' 'no refusal for an unmapped path'
+  [ ! -e "$HOME_D/data/trunk/flaky-proj.tsv" ] || [ ! -s "$HOME_D/data/trunk/flaky-proj.tsv" ] || fail "an unmapped path is never a flaky row: $(cat "$HOME_D/data/trunk/flaky-proj.tsv")"
+  ! grep -qs 'flaky-proj' "$W/backlog-calls" || fail "an unmapped path files no ticket: $(cat "$W/backlog-calls")"
+  ! find "$HOME_D/data" -name 'gate-*-tip*.log' | grep -q . || fail "the tip is never asked for an unmapped path"
+  pass 'an unmapped path an older runner recorded as failed is one note, and the lane lands with no rerun, no parent read and no flake row'
+}
+
+# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
+test_a_real_failure_beside_unmapped_paths_an_older_runner_failed_still_refuses() {
+  local out
+  world oldred; rig; old_runner
+  printf 'gate-full=bash %s/oldrig.sh t/orphan-a.lib t/n.test.sh\n' "$W" >> "$HOME_D/config/trunk-policy"
+  lane oldred "echo 'not ok - broken by the lane' >&2; exit 1" t/n.test.sh
+  out=$(trunk land oldred 2>&1) && fail "a failing selected test must still refuse the lane: $out"
+  assert_contains "$out" 'this lane introduced or changed the failure of: t/n.test.sh' 'the real failure is charged to the lane'
+  assert_not_contains "$out" 'this lane introduced or changed the failure of: t/orphan-a.lib' 'the unmapped path is not charged'
+  assert_contains "$out" 'a coverage note, never a red: t/orphan-a.lib' 'the unmapped path is still noted'
+  pass 'a failing selected test still refuses the lane beside unmapped paths, and only it is charged'
+}
+
 # The real runner, carried in the project's own tree as every project does, is the rerun command here. A failed result for a data file
 # (the name gate's allow list, whose lines are commands to bash) must never start it: the allow list below writes a marker file when run.
 # shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
@@ -689,6 +740,8 @@ test_landing_deadline_spans_both_gates
 test_every_verify_attempt_keeps_its_own_log_and_phase_history
 test_a_changed_file_that_is_not_a_test_is_never_run_bare_on_the_tip
 test_an_unmapped_path_is_a_coverage_note_and_a_real_failure_still_reruns_once
+test_an_unmapped_path_an_older_runner_failed_is_a_note_and_never_a_red
+test_a_real_failure_beside_unmapped_paths_an_older_runner_failed_still_refuses
 test_the_gate_rerun_never_runs_a_data_file_as_a_command
 test_the_full_gate_charges_a_lane_only_for_what_it_broke
 test_every_landing_records_the_done_epoch_and_writes_no_latency_row
