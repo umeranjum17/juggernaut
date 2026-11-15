@@ -28,6 +28,7 @@ add_hold() {  # <id> <raiser> <question key or empty>
   env_run "$HOLD" hold "$1" --reason "lab question" >/dev/null 2>&1 || fail "could not hold $1"
 }
 
+day_start=$(date -u +%F)
 jg_test_add "$home" jg-r1 "[feature] raiser one"
 jg_test_add "$home" jg-r2 "[feature] raiser two"
 add_hold jg-q1 jg-r1 which-db
@@ -40,7 +41,7 @@ before=$(for i in 1 2 3 4 5; do jg_test_backlog "$home" show "jg-q$i" | grep -E 
 out=$(env_run "$GROUP" report) || fail "report failed: $out"
 after=$(for i in 1 2 3 4 5; do jg_test_backlog "$home" show "jg-q$i" | grep -E '^  (state|held|hold_kind):'; done)
 
-today=$(date -u +%F)
+day_end=$(date -u +%F)
 tab=$'\t'
 want_cards="card${tab}which-db${tab}jg-q1${tab}jg-r1${tab}jg-q2,jg-q3"
 printf '%s\n' "$out" | grep -qxF "$want_cards" || fail "three holds with one key are not one card with two links: $out"
@@ -49,7 +50,9 @@ printf '%s\n' "$out" | grep -qxF "card${tab}jg-q5${tab}jg-q5${tab}jg-r2${tab}-" 
 [ "$(printf '%s\n' "$out" | grep -c '^card')" = 3 ] || fail "expected three cards: $out"
 printf '%s\n' "$out" | grep -qxF "ticket${tab}jg-r1${tab}2${tab}3" || fail "grouping by raising ticket jg-r1 is wrong: $out"
 printf '%s\n' "$out" | grep -qxF "ticket${tab}jg-r2${tab}2${tab}2" || fail "grouping by raising ticket jg-r2 is wrong: $out"
-printf '%s\n' "$out" | grep -qxF "day${tab}umer${tab}$today${tab}5" || fail "new decisions per home per day is wrong: $out"
+# The gate day is UTC: a run that crosses UTC midnight splits the five holds over the two days, so count them across both.
+days=$(printf '%s\n' "$out" | awk -F'\t' -v a="$day_start" -v b="$day_end" -v h=umer '$1 == "day" && $2 == h && ($3 == a || $3 == b) { n += $4 } END { print n + 0 }')
+[ "$days" = 5 ] || fail "new decisions per home per day is wrong: $out"
 [ -n "$before" ] && [ "$before" = "$after" ] || fail "a hold changed state while grouping"
 printf '%s\n' "$before" | grep -c 'held: yes' | grep -qx 5 || fail "not every hold is still held"
 env_run "$GROUP" nonsense >/dev/null 2>&1 && fail "an unknown command must exit non-zero"
