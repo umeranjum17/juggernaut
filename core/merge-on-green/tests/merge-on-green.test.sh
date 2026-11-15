@@ -27,8 +27,10 @@ export JG_STRANDED_ALERT=$SRC/../../bin/jg-alert.sh
 mog() { JG_CHECK_TIMEOUT=30 "$SRC/merge-on-green.sh" check "$FM" 2>&1; }
 # newwakes: the wake lines the central stranded alert added to the fixture home's queue since the last call.
 newwakes() { local q=$FM/state/.wake-queue n; : >> "$q"; n=$(wc -l < "$q"); tail -n +"$(( $(cat "$d/seen-wakes" 2>/dev/null || echo 0) + 1 ))" "$q" | cut -f5; echo "$n" > "$d/seen-wakes"; }
-meta() { # <task> <yolo> <head> <gen> -> meta + matching PASS receipt
+meta() { # <task> <on|off|approved> <head> <gen> -> meta + matching PASS receipt; approved = merge=approved, yolo off (the lint still runs)
+  local ap=; [ "$2" != approved ] || { ap='merge=approved'; set -- "$1" off "$3" "$4"; }
   printf 'yolo=%s\npr=https://github.com/ex/r/pull/%s\npr_head=%s\nspawn_gen=%s\n' "$2" "${1#t}" "$3" "$4" > "$FM/state/$1.meta"
+  [ -z "$ap" ] || echo "$ap" >> "$FM/state/$1.meta"
   printf '{\n  "verdict": "PASS",\n  "head": "%s",\n  "spawn_gen": "%s"\n}\n' "$3" "$4" > "$FM/state/$1.run-receipt.json"
 }
 ready() { printf 'state: done · source: run-step · checks green: PR ready for review\n'; }
@@ -108,7 +110,7 @@ check "a: nothing linted" "$(wc -l 2>/dev/null < "$STUB_DIR/lint-calls" || echo 
 check "a: nothing merged" "$([ -e "$STUB_DIR/merge-calls" ] && echo called || echo never)" never
 
 # (b) lint FAIL: no merge, exactly one wake line naming task, PR URL and the refusal reason.
-meta t2 on "$H1" s1
+meta t2 approved "$H1" s1
 touch "$STUB_DIR/lint-fail"
 out=$(mog)
 check "b: exactly one line" "$(printf '%s\n' "$out" | wc -l)" 1
@@ -119,7 +121,7 @@ check "b: no merge call" "$([ -e "$STUB_DIR/merge-calls" ] && echo called || ech
 rm "$STUB_DIR/lint-fail" "$FM/state/t2.meta" "$FM/state/t2.run-receipt.json"
 
 # (c) receipt head mismatch: no merge, one wake line.
-meta t3 on "$H1" s1
+meta t3 approved "$H1" s1
 printf '{\n  "verdict": "PASS",\n  "head": "%s",\n  "spawn_gen": "s1"\n}\n' "$H2" > "$FM/state/t3.run-receipt.json"
 out=$(mog)
 check "c: exactly one line" "$(printf '%s\n' "$out" | wc -l)" 1
@@ -138,7 +140,7 @@ check "d: normal merged line in the task status" "$(sed -E 's/^done \[at=[0-9]+\
 # (e) same head not retried after a merge, and not retried after a refusal either.
 check "e: silent after merged head" "$(mog)" ""
 check "e: still one merge call" "$(wc -l < "$STUB_DIR/merge-calls")" 1
-meta t4 on "$H2" s4
+meta t4 approved "$H2" s4
 touch "$STUB_DIR/merge-refuse"
 out=$(mog)
 check "e: refusal -> one line" "$(printf '%s\n' "$out" | wc -l)" 1
@@ -152,11 +154,11 @@ check "e: refused merge writes no status line" "$([ -e "$FM/state/t4.status" ] &
 # (f) not-ready resolved state and no pr_head: silent, no gate commands ran.
 rm "$STUB_DIR/merge-refuse"
 mkdir -p "$STUB_DIR/not-ready"
-meta t5 on "$H1" s5
+meta t5 approved "$H1" s5
 printf 'yolo=on\npr=https://github.com/ex/r/pull/6\n' > "$FM/state/t6.meta"
 touch "$STUB_DIR/not-ready/t5"
 before=$(wc -l 2>/dev/null < "$STUB_DIR/lint-calls" || echo 0)
-meta t7 on "$H1" s7
+meta t7 approved "$H1" s7
 mkdir -p "$STUB_DIR/merged"
 touch "$STUB_DIR/merged/t7"
 check "f: already-merged PR -> silent" "$(mog)" ""
@@ -167,7 +169,7 @@ check "f: lint not consulted" "$(wc -l 2>/dev/null < "$STUB_DIR/lint-calls" || e
 
 # (i) JG_CHECK_TIMEOUT too small to fit a merge: nothing is started and the head is never recorded,
 # so the next sweep can retry instead of a watcher kill burning the recorded head silently.
-meta t8 on "$H1" s8
+meta t8 approved "$H1" s8
 check "i: too-small bound -> silent" "$(JG_CHECK_TIMEOUT=4 "$SRC/merge-on-green.sh" check "$FM" 2>&1)" ""
 check "i: no merge started" "$(wc -l < "$STUB_DIR/merge-calls")" 2
 check "i: head not recorded" "$([ -e "$FM/data/jg-merge-on-green/t8.head" ] && echo recorded || echo never)" never
@@ -175,7 +177,7 @@ rm "$FM/state/t8.meta" "$FM/state/t8.run-receipt.json"
 
 # (j) a gate refusal wakes once per task+head+reason+receipt: repeats are silent, a changed reason,
 # receipt or head wakes again, and past refusals never block the merge itself.
-meta t9 on "$H1" s9
+meta t9 approved "$H1" s9
 printf '{\n  "verdict": "FAIL",\n  "head": "%s",\n  "spawn_gen": "s9"\n}\n' "$H1" > "$FM/state/t9.run-receipt.json"
 out=$(mog)
 check "j: verdict refusal wakes once" "$(printf '%s\n' "$out" | wc -l)" 1
@@ -190,7 +192,7 @@ check "j: changed reason wakes again" "$(printf '%s\n' "$out" | wc -l)" 1
 has "j: changed reason named" "$out" "run receipt verdict is PENDING, not PASS"
 check "j: repeat changed reason silent" "$(mog)" ""
 printf '{\n  "verdict": "PASS",\n  "head": "%s",\n  "spawn_gen": "s9"\n}\n' "$H1" > "$FM/state/t9.run-receipt.json"
-printf 'yolo=on\npr=https://github.com/ex/r/pull/9\npr_head=%s\nspawn_gen=s9\n' "$H2" > "$FM/state/t9.meta"
+printf 'yolo=off\nmerge=approved\npr=https://github.com/ex/r/pull/9\npr_head=%s\nspawn_gen=s9\n' "$H2" > "$FM/state/t9.meta"
 out=$(mog)
 check "j: new head wakes again" "$(printf '%s\n' "$out" | wc -l)" 1
 has "j: new head reason" "$out" "run receipt head $H1 != meta pr_head"
@@ -201,7 +203,7 @@ check "j: lint refusal wakes once" "$(printf '%s\n' "$out" | wc -l)" 1
 has "j: lint refusal reason" "$out" "checks lint refused"
 check "j: repeat lint refusal silent" "$(mog)" ""
 rm "$STUB_DIR/lint-fail"
-meta t9 on "$H2" s9
+meta t9 approved "$H2" s9
 out=$(mog)
 check "j: gates pass after refusals -> merged" "$(printf '%s\n' "$out" | wc -l)" 1
 has "j: merged line" "$out" "merged t9 https://github.com/ex/r/pull/9"
@@ -211,7 +213,7 @@ rm "$FM/state/t9.meta" "$FM/state/t9.run-receipt.json"
 
 # (k) a command this check kills on its own timeout is no attempt: one truthful timeout wake per
 # task+head+reason, no merge attempt recorded, and the next sweep still retries silently.
-meta t10 on "$H1" s10
+meta t10 approved "$H1" s10
 touch "$STUB_DIR/lint-slow"
 out=$(JG_CHECK_TIMEOUT=12 "$SRC/merge-on-green.sh" check "$FM" 2>&1)
 check "k: lint timeout wakes once" "$(printf '%s\n' "$out" | wc -l)" 1
@@ -236,7 +238,7 @@ check "k: head recorded after merge" "$(cat "$FM/data/jg-merge-on-green/t10.head
 rm "$FM/state/t10.meta" "$FM/state/t10.run-receipt.json"
 
 # (l) merge=manual: skipped silently even though every gate would pass; nothing read, linted or merged.
-meta t11 on "$H1" s11
+meta t11 approved "$H1" s11
 echo merge=manual >> "$FM/state/t11.meta"
 lint_before=$(wc -l < "$STUB_DIR/lint-calls")
 check "l: merge=manual -> silent" "$(mog)" ""
@@ -249,7 +251,7 @@ rm "$FM/state/t11.meta" "$FM/state/t11.run-receipt.json"
 # the task is skipped silently after the lint, before the receipt or merge, with no recorded
 # attempt, on the first sweep and every repeat; the same task merges once the gate returns a plain
 # PASS.
-meta t12 on "$H1" s12
+meta t12 approved "$H1" s12
 touch "$STUB_DIR/lint-notproven"
 check "m: not proven -> silent" "$(mog)" ""
 check "m: repeat not proven silent" "$(mog)" ""
@@ -264,7 +266,7 @@ rm "$FM/state/t12.meta" "$FM/state/t12.run-receipt.json"
 # (n) the done-to-merged minutes are recorded for every merge, and a merge over the five-minute
 # target raises the slow-delivery alert. The forge's merge time comes from the gh
 # stub, so the number is the one the record holds rather than the moment the sweep ran.
-meta t13 on "$H1" s13
+meta t13 approved "$H1" s13
 now=$(date +%s)
 # The merge (jg-pr-merge, stubbed here) writes landed_at on the ticket; the stub `times` serves the row.
 printf 'ready\t%s\nlanded\t%s\n' "$(rfc "$((now - 780))")" "$(rfc "$now")" > "$STUB_DIR/times/t13"
@@ -278,7 +280,7 @@ rm "$FM/state/t13.meta" "$FM/state/t13.run-receipt.json"
 
 # (n2) a refusal wake names the real refusal, not the `armed:` and `WARNING:` notices printed first;
 # a worker's `ready [at=N key=..]` hand-off line still gets a latency row.
-meta t95 on "$H1" s95
+meta t95 approved "$H1" s95
 now=$(date +%s)
 printf 'ready\t%s\nlanded\t%s\n' "$(rfc "$((now - 60))")" "$(rfc "$now")" > "$STUB_DIR/times/t95"
 touch "$STUB_DIR/merge-noisy"
@@ -292,7 +294,7 @@ has "n2: the ticket's ready time is measured" "$out" "in 1m from its done line"
 rm "$FM/state/t95.meta" "$FM/state/t95.run-receipt.json"
 
 # (o) a merge inside the target is recorded and reported without the over-target wording.
-meta t14 on "$H2" s14
+meta t14 approved "$H2" s14
 now=$(date +%s)
 printf 'ready\t%s\nlanded\t%s\n' "$(rfc "$((now - 120))")" "$(rfc "$now")" > "$STUB_DIR/times/t14"
 out=$(mog)
@@ -317,8 +319,8 @@ rm "$FM/state/t16.meta" "$FM/state/t16.run-receipt.json"
 
 # (q) a red PR elsewhere never holds a green one: the red release PR is skipped, the green one lands in
 # the same sweep, and only the green one reaches the merge call.
-meta t17 on "$H1" s17
-meta t18 on "$H2" s18
+meta t17 approved "$H1" s17
+meta t18 approved "$H2" s18
 mkdir -p "$STUB_DIR/red"
 touch "$STUB_DIR/red/t17"
 calls_before=$(wc -l < "$STUB_DIR/merge-calls")
@@ -469,6 +471,15 @@ chmod 700 "$FM4/state/merge-on-green.check.sh"
 out=$(XDG_DATA_HOME=$d/data4 "$SRC/wiring.sh" "$FM4" 2>&1) && rc=0 || rc=$?
 check "l: a shim running another home's gate refuses" "$rc" 1
 has "l: the refusal names the home it runs for" "$out" "not for this home"
+
+# (m) a +yolo task merges with no judged evidence lint: a failing lint is never consulted (captain, 15 Nov).
+touch "$STUB_DIR/lint-fail"
+meta t20 on "$H1" s20
+lint_before=$(wc -l < "$STUB_DIR/lint-calls")
+out=$(mog)
+has "m: yolo merged with no lint" "$out" "merged t20 https://github.com/ex/r/pull/20"
+check "m: yolo never consulted the lint" "$(wc -l < "$STUB_DIR/lint-calls")" "$lint_before"
+rm "$STUB_DIR/lint-fail" "$FM/state/t20.meta" "$FM/state/t20.run-receipt.json"
 
 # A direct-PR task (no pipeline run) has its own journey; the core-merge-on-green-test entry of .done-done.yaml runs it through this suite.
 bash "$SRC/tests/merge-on-green-direct-pr.test.sh" || fails=$((fails + 1))

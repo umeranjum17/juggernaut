@@ -1963,13 +1963,13 @@ case "$PROVIDER" in
       exit 1
     fi
     if declare -F jg_dod_merge_gate >/dev/null; then github_gate 'proof or evidence gate refused the merge' jg_dod_merge_gate "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" "$JG_HOME" "$ID" "$META" "$JG_PR_MERGE_HEAD" "$URL" || exit 1; fi
-    if declare -F jg_dod_proof_gate >/dev/null; then github_gate 'proof card missing' jg_dod_proof_gate "$JG_HOME" "$ID" "$JG_PR_MERGE_HEAD" "$URL" || exit 1; fi
+    if declare -F jg_dod_proof_gate >/dev/null; then github_gate 'proof card missing' jg_dod_proof_gate "$JG_HOME" "$ID" "$JG_PR_MERGE_HEAD" "$URL" "$META" || exit 1; fi
     github_gate 'release proof or receipt check refused the merge' jg_proof_merge_gate "$META" "$PR_OWNER/$PR_REPO" "$PR_NUMBER" "$JG_PR_MERGE_HEAD" || exit 1
     # The evidence lint runs here, in the merge's own call, so the lead no
     # longer spends one model turn reading PASS and a second one merging. It is
     # the lint the merge-on-green gate runs, over the same evidence folder
     # (data/<task>); a FAIL refuses the merge with the lint's own message.
-    run_merge_checks_lint || exit 1
+    if declare -F jg_merge_yolo_on >/dev/null && jg_merge_yolo_on "$META"; then :; else run_merge_checks_lint || exit 1; fi
     # The away record is locked first, so this last presence and authority read
     # and the forge command below share one live-owner critical section.
     hold_away_record_for_merge || exit 1

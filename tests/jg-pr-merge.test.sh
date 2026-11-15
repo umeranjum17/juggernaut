@@ -896,6 +896,46 @@ LINT
   pass "jg-pr-merge runs the evidence lint itself: FAIL refuses, PASS merges in one call"
 }
 
+# On a +yolo project a green in-scope PR merges with no merge card and no judged evidence lint: the
+# same board with no proof media and a failing lint refuses without +yolo, merges with it, and a red
+# check still refuses on +yolo (captain, 15 Nov).
+test_yolo_merge_needs_no_card_or_judged_lint() {
+  local case_dir rc head=5656565656565656565656565656565656565656 yolo
+  for yolo in off on red; do
+    case_dir=$(make_case "yolo-no-card-$yolo")
+    mkdir -p "$case_dir/wt" "$case_dir/home/data/task-x1"
+    add_gh_mocks "$case_dir" "$head"
+    : > "$case_dir/gh-axi.log"
+    [ "$yolo" = off ] || printf 'yolo=on\n' >> "$case_dir/state/task-x1.meta"
+    [ "$yolo" != red ] || write_github_red_json "$case_dir" "$head" ci
+    # shellcheck disable=SC2016 # the stub reads its own arguments
+    printf '#!/usr/bin/env bash\ncase "$1" in list) echo "{\\"decisions\\":[]}" ;; post) exit 0 ;; esac\n' > "$case_dir/fakebin/sign-off-axi"
+    chmod +x "$case_dir/fakebin/sign-off-axi"
+    printf '#!/bin/sh\nexec x post --board %s "$@"\n' "$case_dir/board.json" > "$case_dir/home/config/post-merge"
+    echo '{"decisions":[]}' > "$case_dir/board.json"
+    printf '#!/usr/bin/env bash\necho "checks-lint: FAIL: not judged"\nexit 1\n' > "$case_dir/lint.sh"
+    chmod +x "$case_dir/lint.sh"
+    set +e
+    PATH="$case_dir/fakebin:$PATH" JG_PR_MERGE_CHECKS_LINT="$case_dir/lint.sh" run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/91 \
+      > "$case_dir/stdout" 2> "$case_dir/stderr"
+    rc=$?
+    set -e
+    case $yolo in
+      off)
+        expect_code 1 "$rc" "yolo-off: a project without +yolo still needs its card"
+        assert_no_grep 'pr merge' "$case_dir/gh.log" "yolo-off: the forge merged with no card" ;;
+      on)
+        expect_code 0 "$rc" "yolo-on: a green PR must merge with no card and no judged lint"
+        assert_logged_gh_merge "$case_dir" 91 example/repo --squash ;;
+      red)
+        expect_code 1 "$rc" "yolo-red: a red check must still refuse on +yolo"
+        assert_grep "check 'ci' is not green" "$case_dir/stderr" "yolo-red: the red check was not named"
+        assert_no_grep 'pr merge' "$case_dir/gh.log" "yolo-red: the forge merged a red PR" ;;
+    esac
+  done
+  pass "a +yolo green PR merges with no merge card or judged lint; non-yolo still needs one; red still refuses"
+}
+
 test_github_merged_outcome_is_verified() {
   local case_dir rc
   case_dir=$(make_case github-verified-merged)
@@ -3557,6 +3597,7 @@ test_pr_metadata_is_recorded_before_the_forge_call
 test_merge_failure_propagates_after_recording
 test_merge_gate_refuses_without_the_merge_card_add_on
 test_merge_runs_the_evidence_lint_itself
+test_yolo_merge_needs_no_card_or_judged_lint
 test_github_open_unqueued_outcome_refuses
 test_github_mergeable_unknown_retries_then_succeeds
 test_github_mergeable_unknown_exhausts_bound_and_reports_pending

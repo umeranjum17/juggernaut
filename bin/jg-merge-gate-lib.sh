@@ -369,14 +369,23 @@ jg_dod_local_landing_gates() {
   return 0
 }
 
+# jg_merge_yolo_on: 0 when the task's record says its project is +yolo. On such a project a
+# green in-scope PR merges by itself (captain, 15 Nov), so the judged evidence lint and the
+# proof card are no blocker there; every deterministic guard (green required checks, red
+# refusal, escalation, an open captain decision, the completion receipt) still runs.
+jg_merge_yolo_on() {  # <meta>
+  [ -n "${1:-}" ] && [ "$(jg_dod_meta_value "$1" yolo)" = on ]
+}
+
 # jg_dod_proof_gate is the proof-card gate both merge paths call: a merge lands only
 # when its proof card is on the board, so no lead has to remember it. It runs
 # bin/jg-proof-attach.sh with --require, which posts the card when it is missing and
 # refuses when the proof, the board client or the board is not there. A home with no
 # board anywhere (its own config/post-merge, $JG_PROOF_BOARD, or its parent's) has
 # nowhere to post and is not gated. A shell check decides.
-jg_dod_proof_gate() {  # <home> <id> <candidate-head> <pr-url|->
+jg_dod_proof_gate() {  # <home> <id> <candidate-head> <pr-url|-> [<meta>]
   local home=$1 id=$2 head=$3 url=${4:--} out rc=0 args=()
+  jg_merge_yolo_on "${5:-}" && return 0
   # shellcheck source=bin/jg-board-link-lib.sh
   if ! declare -F jg_board_file >/dev/null; then . "$_JG_GATE_LIB_DIR/jg-board-link-lib.sh" || return 0; fi
   jg_board_file "$home" >/dev/null || return 0

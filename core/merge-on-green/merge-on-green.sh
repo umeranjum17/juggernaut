@@ -173,16 +173,19 @@ for m in "$STATE"/*.meta; do
 
   # 1. The evidence gate, run as its own command, must print PASS; a not-proven PASS is the lead's
   # proof gap to file first: skip silently before the receipt or merge.
-  lint_out=$(JG_HOME="$FMH" timeout "$BUDGET" "$LINT" "$pr" "$FMH/data/$task" 2>&1); lint_rc=$?
-  if timed_out "$lint_rc"; then
-    refuse "checks lint timed out after ${BUDGET}s, no verdict; retrying next sweep" ''
-    continue
+  # A +yolo project merges green work without the judged evidence lint (captain, 15 Nov).
+  if [ "$yolo" != on ]; then
+    lint_out=$(JG_HOME="$FMH" timeout "$BUDGET" "$LINT" "$pr" "$FMH/data/$task" 2>&1); lint_rc=$?
+    if timed_out "$lint_rc"; then
+      refuse "checks lint timed out after ${BUDGET}s, no verdict; retrying next sweep" ''
+      continue
+    fi
+    if [ "$lint_rc" -ne 0 ] || ! printf '%s\n' "$lint_out" | grep -q 'PASS'; then
+      refuse "checks lint refused: $(first_reason "$lint_out" "$lint_rc")" ''
+      continue
+    fi
+    printf '%s\n' "$lint_out" | grep -q 'checks-lint: PASS: not-proven:' && continue
   fi
-  if [ "$lint_rc" -ne 0 ] || ! printf '%s\n' "$lint_out" | grep -q 'PASS'; then
-    refuse "checks lint refused: $(first_reason "$lint_out" "$lint_rc")" ''
-    continue
-  fi
-  printf '%s\n' "$lint_out" | grep -q 'checks-lint: PASS: not-proven:' && continue
 
   # 2. The completion receipt must be a PASS for exactly this head and spawn generation.
   rcpt=$STATE/$task.run-receipt.json
