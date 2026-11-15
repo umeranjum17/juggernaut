@@ -353,9 +353,9 @@ asks() {  # These rows land on the store alone, so this runs after everything th
   chat=$(reader "$T/bd" "$ROOT/bin/jg-inbox.sh" note --request-id bd-chat --json '[chat test] Build it' | grep -m1 '^{' | jq -r .id)
   assert_contains "$(reader "$T/bd" "$ROOT/bin/jg-inbox.sh" approve "$chat" "captain-ask-$note")" "approved captain-ask-$note" "an approval must record with the old engine absent"
   # A routed decision clears its edge on the store too.
-  reader "$T/bd" "$ROOT/bin/jg-decision-hold.sh" hold jg-k1 size --title "[feature] Pick a size" --reason "captain must pick" >/dev/null || fail "a decision must hold"
+  reader "$T/bd" "$ROOT/bin/jg-captain-hold.sh" hold jg-k1-decision-size --origin jg-k1 --title "[feature] Pick a size" --reason "captain must pick" >/dev/null || fail "a decision must hold"
   reader "$T/bd" "$CLI" add jg-sized "[feature] Set the size" --priority 2 --body why --blocked-by jg-k1-decision-size >/dev/null || fail "routed work must file"
-  assert_contains "$(reader "$T/bd" "$ROOT/bin/jg-decision-hold.sh" resolve jg-k1 size --decision-file "$T/said.txt" --routed-to jg-sized)" "resolved: jg-k1-decision-size" "a routed decision must resolve"
+  assert_contains "$(reader "$T/bd" "$ROOT/bin/jg-captain-hold.sh" answer jg-k1-decision-size --decision-file "$T/said.txt")" "closed: jg-k1-decision-size" "a routed decision must resolve"
   assert_contains "$(reader "$T/bd" "$CLI" show jg-sized --full)" "blocked_by: none" "a routed decision must clear its edge"
 }
 answers() {  # An answer closes the held row, so this runs after everything that compares it.

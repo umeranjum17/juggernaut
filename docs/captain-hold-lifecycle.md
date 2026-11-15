@@ -433,7 +433,7 @@ If the backlog is unavailable or its listing cannot be parsed, the guard cannot 
 ## Compatibility with pre-collapse installs
 
 The collapse is the change that made a decision an ordinary captain-held task whose key is its task id.
-Older installs created derived `<origin>-decision-<key>` identities through the retired `bin/jg-decision-hold.sh`.
+Older installs created derived `<origin>-decision-<key>` identities through a script that no longer exists.
 Those rows are already plain task ids, so they render, answer, verify, and close through the collapsed surfaces with no data migration.
 
 Three legacy inputs are resolved in place:
@@ -449,13 +449,6 @@ The hold script makes no second lookup and never starts `bd` itself; every store
 An id that no row answers to is refused once, naming the id.
 
 A markdown home keeps its legacy rows verbatim, so its resolution is unchanged.
-
-### The `jg-decision-hold.sh` shim
-
-`bin/jg-decision-hold.sh` itself remains for one release as a thin command-mapping shim over `bin/jg-captain-hold.sh`.
-In-flight work briefed before the collapse therefore keeps working, and the shim's header owns the exact mapping.
-The shim recognizes an exact replay of a pre-collapse routed resolution by its historical answer digest and routed ids.
-It then finishes any still-recorded dependency-edge cleanup without rewriting the old decision text.
 
 ## Verification record
 
