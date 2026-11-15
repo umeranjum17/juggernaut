@@ -171,3 +171,16 @@ for target in "$home" "$lead"; do
   [ -f "$target/config/machine-view" ] || no 'repeat wiring lost the machine view'
 done
 pass 'host wiring enables the machine view in main and lead homes'
+
+# installed-drift and tool-update-check: the detectors are armed by wiring, and the owner's tool list is never invented.
+det=$tmp/detectors
+mkdir -p "$det/config" "$det/bin" "$det/state" "$det/data"
+install -m 755 "$here/bin/jg-check-register.sh" "$det/bin/"
+bash "$here/core/installed-drift/wiring.sh" "$det" >"$tmp/det-drift.log" 2>&1 || { cat "$tmp/det-drift.log" >&2; no 'installed-drift wiring failed'; }
+[ -x "$det/state/installed-drift.check.sh" ] || no 'installed-drift wiring left no check shim'
+bash "$here/core/tool-update-check/wiring.sh" "$det" >"$tmp/det-tool.log" 2>&1 || { cat "$tmp/det-tool.log" >&2; no 'tool-update-check wiring failed with no registry'; }
+grep -qx 'not armed: no watched-tools registry' "$tmp/det-tool.log" || no 'tool-update-check without a registry did not say so'
+[ ! -e "$det/state/tool-update-check.check.sh" ] && [ ! -e "$det/config/watched-tools.json" ] || no 'tool-update-check wiring armed or created a registry on its own'
+bash "$here/core/installed-drift/unwiring.sh" "$det" >/dev/null 2>&1 || no 'installed-drift unwiring failed'
+[ ! -e "$det/state/installed-drift.check.sh" ] || no 'installed-drift unwiring left the shim'
+pass 'detector wiring arms installed-drift, leaves tool-update-check unarmed without a registry, and unwires'

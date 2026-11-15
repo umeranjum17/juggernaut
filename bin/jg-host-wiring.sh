@@ -96,6 +96,8 @@ plan=(
   critical-stall:home
   stall-action:home
   lead-sweep:home
+  installed-drift:home
+  tool-update-check:home
   pane-sweep:home
   pr-pager:home
   auto-dispatch:home
@@ -128,6 +130,8 @@ plan=(
 step_sources() {  # <name>
   printf '%s\n' "core/$1" bin/jg-host-wiring.sh
   case $1 in
+    installed-drift) printf '%s\n' bin/jg-installed-drift.sh ;;
+    tool-update-check) printf '%s\n' bin/jg-tool-update-check.sh ;;
     delete-guard | repo-guard) printf '%s\n' core/guard-host ;;
     owner-guard | owner-rules) printf '%s\n' core/lib/merge-gate-lib.sh ;;
     limit-prompt-move) printf '%s\n' core/parked-homes/bin/jg-parked-homes-lib.sh core/account-pool/bin/jg-account-pool-lib.sh ;;

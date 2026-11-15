@@ -41,6 +41,17 @@ printf 'x\n' >"$share/jg-orphan/x.sh"
 out=$(drift) || fail "an unknown-origin copy must still exit 0"
 assert_contains "$out" "unknown origin $share/jg-orphan" "a copy with no discoverable repo directory is reported, never passed"
 
+# An fm-<x> copy whose jg-<x> twin is installed is legacy: hidden by default, printed by --all; one without a twin stays.
+mkdir -p "$repo/core/twin/bin" "$share/fm-twin" "$share/jg-twin" "$share/fm-solo"
+printf 'a\n' >"$repo/core/twin/bin/t.sh"; printf 'old\n' >"$share/fm-twin/t.sh"; cp -p "$repo/core/twin/bin/t.sh" "$share/jg-twin/t.sh"
+rm -rf "$share/jg-orphan"
+printf 'old\n' >"$share/fm-solo/s.sh"
+out=$(drift)
+case $out in *fm-twin*) fail "a legacy fm- copy with an installed jg- twin must be hidden, got: $out" ;; esac
+assert_contains "$out" "unknown origin $share/fm-solo" "an fm- copy with no jg- twin is not legacy and stays visible"
+out=$(JG_HOME=$WORK/home "$ROOT/bin/jg-installed-drift.sh" --all --root "$repo" --data-home "$share")
+assert_contains "$out" "$share/fm-twin/t.sh" "--all prints the legacy copy"
+
 # arm is the registration an feature installer performs: it must leave a bound check in a real home.
 mkdir -p "$WORK/armed/state"
 JG_HOME=$WORK/armed JG_STATE_OVERRIDE=$WORK/armed/state "$ROOT/bin/jg-installed-drift.sh" arm >/dev/null \

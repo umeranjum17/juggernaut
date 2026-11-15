@@ -5,7 +5,7 @@
 # fix never reaches the running copy by itself and a retired file can keep running for days. This check
 # compares every regular file of every installed copy with its repo counterpart.
 #
-# Usage: jg-installed-drift.sh [--root DIR] [--data-home DIR]
+# Usage: jg-installed-drift.sh [--all] [--root DIR] [--data-home DIR]
 #        jg-installed-drift.sh arm | disarm
 #
 # Output: one line per finding, and nothing at all when every copy matches. The exit is 0 even with findings,
@@ -22,6 +22,10 @@
 # git scaffolding its own `git init` writes under `hooks/`, its runtime `state/`, and its own `home` and
 # `unit.*` records - so those local artifacts are not compared and every other running-only file is reported.
 #
+# Legacy copies: an fm-<x> copy whose jg-<x> twin is installed in the same prefix is legacy (the twin is what
+# runs), so its findings are not printed by default; --all prints them. An fm-<x> copy with no jg-<x> twin is
+# not legacy and stays in the default output. Nothing is deleted either way.
+#
 # JG_HOME and JG_STATE_OVERRIDE name the home and its state directory, XDG_DATA_HOME names the install prefix,
 # and --root or --data-home override the repo root and that prefix. arm writes state/installed-drift.check.sh
 # and binds it with jg-check-register.sh; disarm retires it with jg-check-unregister.sh.
@@ -33,6 +37,7 @@ JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$REPO_ROOT}}"
 STATE="${JG_STATE_OVERRIDE:-$JG_HOME/state}"
 ROOT=$REPO_ROOT
 DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}
+ALL=0
 
 die() { printf 'jg-installed-drift: %s\n' "$1" >&2; exit "${2:-1}"; }
 
@@ -71,6 +76,7 @@ cmd_check() {
   local d
   for d in "$DATA_HOME"/fm-* "$DATA_HOME"/jg-*; do
     [ -d "$d" ] && [ ! -L "$d" ] || continue
+    [ "$ALL" = 1 ] || [ "${d##*/}" = "${d##*/fm-}" ] || [ ! -d "$DATA_HOME/jg-${d##*/fm-}" ] || continue
     scan_copy "$d" "${d##*/}"
   done
   return 0
@@ -88,6 +94,7 @@ cmd_arm() {
 
 while [ "$#" -gt 0 ]; do
   case $1 in
+    --all) ALL=1; shift ;;
     --root) ROOT=${2:?--root needs a directory}; shift 2 ;;
     --data-home) DATA_HOME=${2:?--data-home needs a directory}; shift 2 ;;
     arm | check) CMD=$1; shift ;;
