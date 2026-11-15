@@ -16,7 +16,7 @@ command -v sign-off-axi >/dev/null || { echo 'sign-off-axi is required' >&2; exi
 command -v chrome-devtools-axi >/dev/null || { echo 'chrome-devtools-axi is required' >&2; exit 1; }
 ver=$(sign-off-axi --version | head -n1)
 case $ver in 0.6.9|0.6.[1-9][0-9]*|0.[7-9]*|0.[1-9][0-9]*|[1-9]*) ;; *)
-  echo "sign-off-axi $ver is older than 0.6.9 (needs --stage and --last-event-at)" >&2; exit 1 ;;
+  echo "sign-off-axi $ver is older than 0.6.9" >&2; exit 1 ;;
 esac
 real_home=${HOME:-/home/you}
 repo=$(cd "$(dirname "$0")/.." && pwd -P)

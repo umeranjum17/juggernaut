@@ -1562,9 +1562,10 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ]; then
       exit 2
       ;;
   esac
-  TICKET_TASK=$(jg_backlog_task_id "$TICKET")
-  if [ "$ID" != "$TICKET_TASK" ]; then
-    echo "error: spawn refused: the task id for ticket $TICKET is $TICKET_TASK (every dot becomes a dash), not $ID; run bin/jg-backlog.sh task $TICKET to print it" >&2
+  # The model is not chosen yet (a profile may supply it), so only the two shapes pass here; the exact id for the
+  # resolved model is held again once the model is known.
+  if [ "$ID" != "$(jg_backlog_task_id "$TICKET")" ] && [ "$ID" != "$(jg_backlog_task_id "$TICKET" fable)" ]; then
+    echo "error: spawn refused: $(jg_backlog_task_id_refusal "$TICKET" "$ID" ''); run bin/jg-backlog.sh task $TICKET to print it" >&2
     exit 2
   fi
 fi
@@ -2326,6 +2327,13 @@ fi
 # Every model pick this home makes reaches its launch through here, so the
 # per-provider allow-list refuses an off-list model once.
 jg_model_allowlist_require "$HARNESS" "$MODEL" || exit 1
+# A Fable worker works the ticket itself: its task id is fable-<ticket task id>, and no other model runs under that id.
+if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ]; then
+  if ! TASK_ID_WHY=$(jg_backlog_task_id_refusal "$TICKET" "$ID" "$MODEL"); then
+    echo "error: spawn refused: $TASK_ID_WHY; run bin/jg-backlog.sh task $TICKET --model $MODEL to print it" >&2
+    exit 2
+  fi
+fi
 # Worker account pin (header above): resolved before any endpoint, worktree, or
 # record exists. An absent pin selects nothing and leaves every later launch
 # step exactly as it was. A pinned Claude root is exported here as well, so the
@@ -3256,7 +3264,7 @@ spawn_ticket_refuse() {
     echo "error: ticket $TICKET has no readable title ($why); give it one with bin/jg-backlog.sh update $TICKET --title '<2 to 7 words>' and re-run" >&2
     return 1
   fi
-  if ! out=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-backlog.sh" task "$TICKET" 2>&1); then
+  if ! out=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-backlog.sh" task "$TICKET" ${MODEL:+--model "$MODEL"} 2>&1); then
     echo "error: spawn refused: $(printf '%s\n' "$out" | sed -n 's/^error: *//p' | head -1)" >&2
     return 1
   fi
@@ -5019,7 +5027,9 @@ preserve_relaunch_meta() {
   if [ "$RELAUNCH" -eq 1 ]; then
     SPAWN_AGENT_NAME=$(sed -n 's/^agent_name=//p' "$RELAUNCH_META" | tail -n 1)
   else
-    SPAWN_AGENT_NAME=$("$SCRIPT_DIR/jg-herdr.sh" agent-name-for "$ID" 2>/dev/null) || SPAWN_AGENT_NAME=
+    # The first spawn reads the ticket title once; a title edited later never changes the name.
+    SPAWN_TITLE=$("$SCRIPT_DIR/jg-backlog.sh" show "${TICKET:-$ID}" --full 2>/dev/null | sed -n 's/^  title: "\{0,1\}//p' | sed 's/"$//' | head -n 1) || SPAWN_TITLE=
+    SPAWN_AGENT_NAME=$("$SCRIPT_DIR/jg-herdr.sh" agent-name-for "$ID" ${SPAWN_TITLE:+"$SPAWN_TITLE"} 2>/dev/null) || SPAWN_AGENT_NAME=
   fi
   [ -z "$SPAWN_AGENT_NAME" ] || echo "agent_name=$SPAWN_AGENT_NAME"
   if [ "$KIND" = ship ]; then

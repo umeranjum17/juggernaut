@@ -125,14 +125,13 @@ feed_assignee "$upkeep" | jq -e '.lead == "main" and .live == false and (.lead !
 # The added field takes nothing away: the feed's newest line for the live ticket reads back as the same record.
 sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --json | jq -e \
   --slurpfile feed <(jq -s --arg id "$(ticket_id main/jg-long)" 'map(select(.id == $id)) | last' "$work/board.tickets.jsonl") \
-  '.ticket.title == $feed[0].title and .ticket.progress == $feed[0].progress and .ticket.stage == $feed[0].stage and .ticket.state == $feed[0].state and .ticket.last_event_at == $feed[0].last_event_at'
+  '.ticket.title == $feed[0].title and .ticket.progress == $feed[0].progress and .ticket.state == $feed[0].state'
 echo 'PASS: the feed record carries a never-blank owner with the live or last worker, and no worker yet'
 # A backlog record carries a date and no time, so a ticket with no lane event is stamped with the start of that day:
 # a later hour would sit in the future and hold off the board's six-hour stall line, which is how a queued item came
 # to show nothing but 0% for fifteen hours. A ticket that never gets this field can never show as stalled at all.
-day=$(date -u -d "$(date -u +%F)" +%s)
-sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-voice)" --json | jq -e --argjson day "$day" '.ticket.last_event_at == $day and .ticket.stage == "queued"'
-echo 'PASS: a queued ticket with no lane event is stamped at the start of its day, so the stall line can fire'
+sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-voice)" --json | jq -e '(.ticket.last_event_at // null) == null and (.ticket.stage // null) == null'
+echo 'PASS: a queued ticket carries no invented stage or last-event time'
 # Board wins over a drifted ledger that already recorded project cleared.
 sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-internal)" --project herdr >/dev/null
 python3 - <<PY
@@ -153,13 +152,13 @@ sign-off-axi project "$work/board.json" --json | jq -e '[.projects[] | .name | a
 sign-off-axi project "$work/board.json" --json | jq -e '([.projects[] | .name] | sort) == ["juggernaut", "ownvoice"] and (.projects[] | select(.name == "ownvoice") | .icon.sha256) == "'"$(sha256sum "$root/tickets-sync/icons/ownvoice.png" | cut -d" " -f1)"'"'
 cmp "$root/tickets-sync/icons/ownvoice.png" "$work/icons/ownvoice.png"
 test ! -e "$work/icons/takeone.png"
-sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --json | jq -e '.ticket.progress == 0 and .ticket.state == "in progress" and .ticket.stage == "building" and .ticket.last_event_at == 1700000050'
+sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --json | jq -e '.ticket.progress == 0 and .ticket.state == "in progress" and (.ticket.stage // null) == null and (.ticket.last_event_at // null) == null'
 printf 'working [key=nm-umer-ci] [at=1700000100]: checking CI\n' >> "$JG_HOME/state/jg-long.status"
 "$JG_HOME/state/tickets-sync.check.sh"
-sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --json | jq -e '.ticket.progress == 0 and .ticket.stage == "building" and .ticket.last_event_at == 1700000100'
+sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --json | jq -e '.ticket.progress == 0 and (.ticket.stage // null) == null and (.ticket.last_event_at // null) == null'
 printf 'done [at=1700000200]: ready to merge\n' >> "$JG_HOME/state/jg-long.status"
 "$JG_HOME/state/tickets-sync.check.sh"
-sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --json | jq -e '.ticket.progress == 0 and .ticket.stage == "merging" and (.ticket.description | startswith("Stage: ready-to-land")) and .ticket.last_event_at == 1700000200'
+sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --json | jq -e '.ticket.progress == 0 and (.ticket.stage // null) == null and (.ticket.description | startswith("Stage:") | not) and (.ticket.last_event_at // null) == null'
 # A PR-era version already on an open ticket is cleared by the next pass; a release the trunk cut stays.
 sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --release v0.3.0 >/dev/null
 sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --json | jq -e '.ticket.release == "v0.3.0"'
@@ -170,7 +169,7 @@ sign-off-axi ticket "$work/board.json" --id "$child" --json | jq -e '.ticket.rel
 sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-voice)" --json | jq -e '(.ticket.release // "") == ""'
 printf 'cancelled [at=1700000300]: Umer cancelled this task\n' >> "$JG_HOME/state/jg-long.status"
 "$JG_HOME/state/tickets-sync.check.sh"
-sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --json | jq -e '.ticket.progress == 100 and .ticket.state == "done" and .ticket.stage == "done" and .ticket.last_event_at == 1700000300'
+sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --json | jq -e '.ticket.progress == 100 and .ticket.state == "done" and (.ticket.stage // null) == null and (.ticket.last_event_at // null) == null'
 JG_HOME="$JG_HOME" python3 "$XDG_DATA_HOME/jg-tickets-sync/tickets-sync/sync.py" --close main/jg-held --reason superseded --reconcile
 sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-held)" --json | jq -e '.ticket.progress == 100 and .ticket.hold == false'
 before=$(sha256sum "$work/board.tickets.jsonl" "$work/board.projects.jsonl")
@@ -233,12 +232,12 @@ echo 'PASS: full-body parent beyond list truncation and source revision refresh'
 # The lifecycle writer records what a merge, a dispatch or a cleanup knows at the
 # moment it happens; a repeated step appends nothing, and an unknown ticket is a no-op.
 WRITER="$XDG_DATA_HOME/jg-tickets-sync/tickets-sync/ticket.py"
-JG_HOME="$JG_HOME" python3 "$WRITER" jg-refresh --stage merging --pr https://github.com/example/alpha/pull/999 --release v9
-sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-refresh)" --json | jq -e '.ticket.stage == "merging" and .ticket.prs == ["https://github.com/example/alpha/pull/999"] and .ticket.release == "v9"'
+JG_HOME="$JG_HOME" python3 "$WRITER" jg-refresh --pr https://github.com/example/alpha/pull/999 --release v9
+sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-refresh)" --json | jq -e '(.ticket.stage // null) == null and .ticket.prs == ["https://github.com/example/alpha/pull/999"] and .ticket.release == "v9"'
 before=$(sha256sum "$work/board.tickets.jsonl")
-JG_HOME="$JG_HOME" python3 "$WRITER" jg-refresh --stage merging --pr https://github.com/example/alpha/pull/999 --release v9
-JG_HOME="$JG_HOME" python3 "$WRITER" jg-never-published --stage building
-JG_HOME="$work/no-board" python3 "$WRITER" jg-refresh --stage building
+JG_HOME="$JG_HOME" python3 "$WRITER" jg-refresh --pr https://github.com/example/alpha/pull/999 --release v9
+JG_HOME="$JG_HOME" python3 "$WRITER" jg-never-published --state queued
+JG_HOME="$work/no-board" python3 "$WRITER" jg-refresh --state queued
 test "$before" = "$(sha256sum "$work/board.tickets.jsonl")"
 JG_HOME="$JG_HOME" python3 "$WRITER" jg-refresh --state "done"
 sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-refresh)" --json | jq -e '.ticket.state == "done" and .ticket.progress == 100'

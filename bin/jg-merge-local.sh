@@ -163,7 +163,7 @@ after=$(git -C "$PROJ" rev-parse --short "$DEFAULT")
 # A local-only landing has no PR: the ticket reads as landed from the land event for the landed commit and landed_at with its commit.
 JG_HOME=$JG_HOME jg_trace_record "$ID" land git-sha "$candidate" --source jg-merge-local --at "$(date +%s)" || true
 # The board's ticket still closes here until the board-mirror cut (S20a) removes the call.
-JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-ticket.sh" "$ID" --stage "done" --state "done" || true
+JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-ticket.sh" "$ID" --state "done" || true
 if [ "$before" != "$after" ] && declare -F jg_merge_post_hook >/dev/null; then jg_merge_post_hook "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" "$JG_HOME" "$ID" "$META" "$candidate" - >&2; fi
 # One board alert for this proven landing, filed here so it never depends on a lead
 # remembering; a board that is down queues it and bin/jg-watch.sh retries it.

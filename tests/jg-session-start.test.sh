@@ -922,6 +922,25 @@ EOF
   pass "a digest with $n open decisions is $bytes bytes (cap $cap); safety inputs print whole; the full-list command prints all $n"
 }
 
+test_machines_section_names_every_machine() {
+  # A home with no machine tables cannot be read: the section must list every one of the 24 declared machines
+  # as unknown, never print nothing.
+  local rec root home fakebin out section n
+  rec=$(new_world machines-section)
+  IFS='|' read -r root home fakebin <<MACHINES_REC
+$rec
+MACHINES_REC
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" "Machines (stale and unknown first" "the digest has no machines section"
+  section=$(printf '%s\n' "$out" | awk '/Machines \(stale and unknown first/ { on = 1; next } on && /^(AFK|Home drift)/ { exit } on')
+  assert_contains "$section" "machines: 24 declared, 0 fresh, 0 stale, 24 unknown" "the machines summary did not count every machine unknown"
+  n=$(printf '%s\n' "$section" | grep -c ': unknown - ')
+  [ "$n" -eq 24 ] || fail "the machines section named $n of 24 unknown machines"
+  pass "the machines section names all 24 machines of a home that cannot be read as unknown"
+}
+
 test_lock_refusal_read_only_path() {
   local rec root home fakebin holder_pid out status
   rec=$(new_world lock-refusal)
@@ -3006,6 +3025,7 @@ test_context_digest_absent_empty_present
 test_learnings_index_and_body_cap
 test_context_digest_proof_bypass
 test_context_owner_rules_whole
+test_machines_section_names_every_machine
 test_lock_refusal_read_only_path
 test_lock_write_failure_read_only_path
 test_trace_context_effective_state_is_frozen_after_lock

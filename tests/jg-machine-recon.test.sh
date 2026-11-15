@@ -12,10 +12,10 @@ jm() { OUT=$(bash "$JM" "$@" 2>&1); RC=$?; }
 rh() { OUT=$(bash "$RH" "$@" 2>&1); RC=$?; }
 sha() { sha256sum "$1" | cut -d' ' -f1; }
 
-jm check recon; expect_code 0 "$RC" "the recon table lints"; assert_equals "ok recon: 3 states, 4 edges" "$OUT" "lint golden"
+jm check recon; expect_code 0 "$RC" "the recon table lints"; assert_equals "ok recon: 4 states, 8 edges" "$OUT" "lint golden"
 jm enum recon; expect_code 0 "$RC" "the enum lints"
 jm coverage recon; expect_code 0 "$RC" "every edge names its test"
-pass "the recon table lints with 3 states and 4 moves, each with a test"
+pass "the recon table lints with 4 states and 8 moves, each with a test"
 
 rh phase rc-1; assert_equals none "$OUT" "no record yet"
 rh draft rc-1; expect_code 1 "$RC" "a draft needs a report"
@@ -71,3 +71,49 @@ pass "the record, critic.md and the table agree"
 bash "$ROOT/bin/jg-machine-guard.sh" edge recon accepted drafted rc-1 >/dev/null 2>&1; expect_code 0 "$?" "an illegal move in shadow is allowed by the guard"
 LOG=$JG_HOME/data/machine-shadow.log; [ -s "$LOG" ] || fail "the illegal move left no shadow line"
 pass "an illegal move out of accepted is logged by the guard in shadow"
+
+# Critic ticket assignment (a separate ticket, its own task directory) and parent verdict ownership.
+mkdir -p "$JG_HOME/data/rc-2" "$JG_HOME/data/rc-2-critic" "$JG_HOME/data/rc-2-critic-b"; D2=$JG_HOME/data/rc-2; C=$JG_HOME/data/rc-2-critic
+echo "plan one" > "$D2/report.md"; G1=$(sha "$D2/report.md")
+rh assign rc-2 --critic rc-2-critic; expect_code 1 "$RC" "no critic before a draft"; assert_contains "$OUT" "no draft is recorded" "the refusal names the cause"
+rh draft rc-2; expect_code 0 "$RC" "rc-2 draft is recorded"
+rh assign rc-2 --critic rc-2; expect_code 1 "$RC" "the researcher is not its own critic"; assert_contains "$OUT" "separate ticket" "the refusal names the cause"
+rh assign rc-2 --critic no-such-ticket; expect_code 2 "$RC" "the critic ticket must exist"
+rh assign rc-2 --critic rc-2-critic; expect_code 0 "$RC" "the critic ticket is assigned"
+assert_equals assigned "$(bash "$RH" phase rc-2)" "an assigned draft reads assigned"
+assert_equals "assigned" "$(bash "$ROOT/core/machines/observers/recon.sh" rc-2)" "the observer reads assigned"
+assert_equals "$(printf 'rc-2-critic\t1\t%s' "$G1")" "$(bash "$RH" assignee rc-2)" "the assignee names critic, generation and hash"
+assert_equals "$(printf 'rc-2\t1\t%s' "$G1")" "$(cat "$C/assignment.tsv")" "the critic ticket holds the pointer to its parent"
+assert_equals "Critic: rc-2-critic" "$(cat "$C/critic.md")" "the critic ticket names itself as the gate reads it"
+
+# The assignment is the record on disk: a new process in another directory, with only JG_HOME, reads the same answer (a restart).
+RESTART=$(cd / && env -i PATH="$PATH" JG_HOME="$JG_HOME" bash "$RH" assignee rc-2)
+assert_equals "$(printf 'rc-2-critic\t1\t%s' "$G1")" "$RESTART" "the assignment survives a restart"
+rh assign rc-2 --critic rc-2-critic; expect_code 0 "$RC" "assigning the same critic again is a no-op"
+assert_contains "$OUT" "already holds" "the retry says so"
+assert_equals 2 "$(grep -c . "$D2/handoff.tsv")" "the retry wrote no second assignment"
+rh assign rc-2 --critic rc-2-critic-b; expect_code 1 "$RC" "a second critic is refused while one holds the draft"
+assert_contains "$OUT" "already holds" "the refusal names the holder"
+
+# Only the assigned critic's verdict counts, and the parent record alone decides.
+rh verdict rc-2 --critic rc-2-critic-b --hash "$G1" --gaps 0; expect_code 1 "$RC" "another critic's verdict is refused"
+assert_contains "$OUT" "does not count" "the refusal names the cause"
+assert_equals assigned "$(bash "$RH" phase rc-2)" "a verdict from another ticket closed nothing"
+echo "plan two" > "$D2/report.md"; G2=$(sha "$D2/report.md")
+rh verdict rc-2 --critic rc-2-critic --hash "$G1" --gaps 0; expect_code 1 "$RC" "the verdict for a report changed under review is refused"
+rh revise rc-2; expect_code 0 "$RC" "a changed report retires the assignment"
+assert_equals drafted "$(bash "$RH" phase rc-2)" "the revision waits for a critic again"
+assert_equals none "$(bash "$RH" assignee rc-2)" "no assignment holds the new draft"
+rh verdict rc-2 --critic rc-2-critic --hash "$G1" --gaps 0; expect_code 1 "$RC" "a late verdict for the old draft is refused"
+assert_contains "$OUT" "stale verdict" "the refusal says stale"
+rh assign rc-2 --critic rc-2-critic; expect_code 0 "$RC" "the same critic ticket takes the next generation"
+assert_equals "$(printf 'rc-2-critic\t2\t%s' "$G2")" "$(bash "$RH" assignee rc-2)" "generation 2 holds the new hash"
+rh verdict rc-2 --critic rc-2-critic --hash "$G2" --gaps 0; expect_code 0 "$RC" "the assigned critic's verdict is recorded"
+assert_equals accepted "$(bash "$RH" phase rc-2)" "the parent record accepts the draft"
+assert_equals none "$(bash "$RH" assignee rc-2)" "a finished review holds no assignment"
+assert_equals "$(printf 'Critic: rc-2-critic\nRound 1: new gaps 0 report %s' "$G2")" "$(cat "$D2/critic.md")" "the parent critic.md is in the gate's format"
+assert_equals "$(printf 'Critic: rc-2-critic\nRound 1: new gaps 0 report %s' "$G2")" "$(cat "$C/critic.md")" "the critic ticket's file follows the parent's verdict"
+OUTG=$(JG_HOME=$JG_HOME bash "$ROOT/bin/jg-recon-gate.sh" rc-2-critic 2>&1); expect_code 0 "$?" "the gate passes the critic ticket on the owner's lines"
+assert_contains "$OUTG" "PASS - critic task" "the gate reads the critic ticket's file"
+assert_equals "assign revise assign clear" "$(cut -f2 "$D2/handoff.tsv" | tr '\n' ' ' | sed 's/ $//' | sed 's/^draft //')" "the record holds the assignments in order"
+pass "critic ticket assignment, parent verdict ownership and restart survival drive through the real script"

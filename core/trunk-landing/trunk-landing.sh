@@ -14,7 +14,7 @@
 # (state/trunk-tip-<project>, made by bin/jg-trunk.sh init), whose ship branch is not on the trunk yet and whose
 # state/<task>.status ends with a `done` line, `check` starts `bin/jg-trunk.sh land <task>` detached and records
 # the outcome in <home>/data/jg-trunk-landing/<task>.<head>.state. The worker's done is the signal, and the lane's whole proof must be there at its head (completion
-# receipt, approved merge-card evidence, sealed done-done run: `jg-trunk.sh proof`) before a landing starts; a lane without it is
+# receipt and sealed done-done run, no model judge: `jg-trunk.sh proof`) before a landing starts; a lane without it is
 # reported once and left, and lands on its own once the proof is complete. The owner signature is never waited for. The lander rebases the lane's
 # commit onto the trunk tip by itself, so a moved trunk is never a refusal. Lanes land oldest done first, and a
 # finished landing starts the next at once (`next`), so three lanes ready together land in order with no human or lead step. While one
@@ -304,6 +304,8 @@ command -v jq >/dev/null 2>&1 || exit 0
 export JG_HOME=$FMH JG_CONFIG_OVERRIDE=$FMH/config
 # shellcheck source=bin/jg-trunk-policy-lib.sh disable=SC1091
 . "$FMH/bin/jg-trunk-policy-lib.sh"
+# shellcheck source=bin/jg-facts-lib.sh disable=SC1091
+. "$FMH/bin/jg-facts-lib.sh"
 jg_trunk_in_use_migrate "$FMH/data" "$FMH/state"
 QUIET=; [ "$1" != next ] || QUIET=1
 # A policy number, or its default when the home's value is not a whole number.
@@ -452,10 +454,7 @@ start_cause() {
   awk -v l="${load:-0}" -v c="$cpus" 'BEGIN { exit !(l >= c) }' && echo 'host load' || :
 }
 # The worker's own ready report: the last line of its status file is `done [at=<epoch>]: ...`. Prints the epoch of that report.
-ready_at() {
-  local line; line=$(tail -n 1 "$STATE/$1.status" 2>/dev/null || true)
-  case $line in done\ *|done:*) printf '%s\n' "$(printf '%s' "$line" | sed -n 's/^done[^[]*\[at=\([0-9]*\)\].*/\1/p')" | grep . || echo 0 ;; *) return 1 ;; esac
-}
+ready_at() { jg_fact_ready_at "$STATE" "$1"; }  # the typed ready fact (bin/jg-facts-lib.sh)
 cands=
 for meta in "$STATE"/*.meta; do
   [ -f "$meta" ] || continue
@@ -490,7 +489,7 @@ for meta in "$STATE"/*.meta; do
     report "$id.$head" "$id waits for the captain's word to land (yolo is off)" "waits for the captain's word: yolo is off and merge=approved is not recorded"
     continue
   fi
-  # A landing starts only on a head whose whole proof is there: receipt, approved merge-card evidence and a sealed done-done run.
+  # A landing starts only on a head whose whole proof is there: receipt and a sealed done-done run.
   if gaps=$(JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" proof "$id" 2>&1); then :; else
     [ -z "$QUIET" ] || continue
     gaps=$(printf '%s' "$gaps" | tr '\n' ';')
@@ -569,7 +568,7 @@ while read -r pn q; do  # the units, oldest first: a queue that runs now takes o
   list=$(printf '%s' "$cands" | awk -v p="$pn" -v q="$q" '$4 == p && $7 == q' | sort -k5,5n -k6,6n -k1,1n -k2,2)
   oldest=$(printf '%s\n' "$list" | sort -n -k1,1 | head -n 1 | cut -d' ' -f1)
   at_ready=$(polnum flush-at-ready "$pn" 3); after=$(polnum flush-after-minutes "$pn" 20)
-  if [ -e "$STATE/trunk-flush-$pn" ] || [ "$(printf '%s\n' "$list" | grep -c .)" -ge "$at_ready" ] || [ $(( now - ${oldest:-0} )) -ge $(( after * 60 )) ]; then :; else
+  if jg_fact_flush_due "$STATE/trunk-flush-$pn" "$(printf '%s\n' "$list" | grep -c .)" "${oldest:-0}" "$now" "$at_ready" "$after"; then :; else
     list=$(printf '%s\n' "$list" | awk '$5 == 0')
   fi
   [ -n "$list" ] || continue

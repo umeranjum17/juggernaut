@@ -451,6 +451,7 @@ DIGEST_CAP=$(cap_value digest-cap 40000 "${JG_DIGEST_CAP:-}")
 DIGEST_RESERVE=$(cap_value digest-reserve 2500 "${JG_DIGEST_RESERVE:-}")
 BACKLOG_CAP=$(cap_value backlog-cap 5000 "${JG_SESSION_START_BACKLOG_CAP:-}")
 LANES_CAP=$(cap_value lanes-cap 6000 "${JG_SESSION_START_LANES_CAP:-}")
+MACHINES_CAP=$(cap_value machines-cap 3500 "${JG_SESSION_START_MACHINES_CAP:-}")
 ORPHAN_CAP=$(cap_value orphan-cap 600 "${JG_SESSION_START_ORPHAN_CAP:-}")
 COMMITMENTS_CAP=$(cap_value commitments-cap 2500 "${JG_SESSION_START_COMMITMENTS_CAP:-}")
 INDEX_CAP=$(cap_value index-cap 1500 "${JG_SESSION_START_INDEX_CAP:-}")
@@ -1138,6 +1139,10 @@ fi
 subsection "Home drift (the code copies that run here)"
 # bin/jg-fleet-autosync.sh owns the count and the guard; this line only reports it.
 { "$SCRIPT_DIR/jg-fleet-autosync.sh" digest 2>/dev/null || printf 'unavailable\n'; } | jg_digest_say
+
+subsection "Machines (stale and unknown first; core/fleet-status/digest.sh)"
+# core/fleet-status/digest.sh owns the rollup, the order and the cut; this section only gives it what is left of the digest.
+{ bash "$SCRIPT_DIR/../core/fleet-status/digest.sh" "$JG_HOME" --cap "$(jg_digest_avail "$MACHINES_CAP")" 2>/dev/null || printf 'unavailable\n'; } | jg_digest_say
 
 subsection "AFK"
 # The away posture is the record (bin/jg-afk-contract.sh); the legacy flag

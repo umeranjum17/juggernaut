@@ -19,11 +19,11 @@
 #                         the changed files map to, in eight shards run side by side (HEAD^ is the trunk tip:
 #                         the lander rebases the lane first)
 #   landing-gate          none        none: a landing runs the lint and no tests; the line's verify (one run for a batch, off the landing path)
-#                                     is the one test run, and a red it finds reverts the commit that caused it. tests: the landing also runs
+#                                     is the one test run, and a red it finds is reported against the commit that caused it (never reverted). tests: the landing also runs
 #                                     gate-full over the changed files (the rollback)
 #   gate-verify           the same invariants, then the whole suite: `verify` runs it on a landed commit on
 #                         demand or from the tick's verify (never per landing: the changed tests run once for each batch, off the landing path), and
-#                         a script that fails there and passes on the commit's parent reverts that one commit
+#                         a script that fails there and passes on the commit's parent reports that one commit
 #                         gate-lint, gate-full and gate-verify defaults are Juggernaut's own suite: they apply only to a repository
 #                         that carries it (bin/jg-test-run.sh at the commit). Any other project runs only a gate its home set for it
 #                         (gate-verify@<project>, else gate-full@<project> for verify), and with none there is no gate: nothing runs and
@@ -36,6 +36,8 @@
 #   release-after-hours   48          age of the oldest unreleased commit that makes a release due
 #   batch-max             5           the most queued lanes the merge queue stacks into one landing (2 or more queued lanes land as one stack)
 #   gate-slots            2           the most landing gates that run at once: a second lane is gated on top of the first one's commit and lands right behind it; 1 lands one lane at a time
+#   move-retries          8           how many times one landing run takes the lane onto a trunk another landing moved and gates it again before it ends
+#                                     with the wait "kept moving" (each time the tip moved, a lane landed, so the retry is the base-movement race only)
 #   flush-at-ready        3           the landing check holds ready lanes until this many are ready (or flush-after-minutes passes), then lands them all as one batch; 1 lands every lane as soon as it is ready
 #   flush-after-minutes   20          ...or until the oldest ready lane has waited this long, whichever is first
 #   live-quiet-minutes    20          under a go-live waiver: the trunk goes live once no landing has happened for this long
@@ -115,6 +117,7 @@ jg_trunk_policy() {  # <key> [<project>]
       batch-max) val=5 ;;
       landing-gate) val=none ;;
       gate-slots) val=2 ;;
+      move-retries) val=8 ;;
       flush-at-ready) val=3 ;;
       flush-after-minutes) val=20 ;;
       live-quiet-minutes) val=20 ;;

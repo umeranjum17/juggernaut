@@ -120,7 +120,6 @@ def write_assignee(path, tid, record, desired, ends_with_newline, reason='', ass
             if value: line['prs'] = [value]
             else: line.pop('prs', None)
         elif key in ('hold', 'asked'): line[key] = value == 'yes'
-        elif key == 'last-event-at': line['last_event_at'] = int(value)
         elif value == '': line.pop(key, None)
         else: line[key] = value
     # The newest line is the whole record, so a hold's reason travels with it and a release drops it.
@@ -166,7 +165,7 @@ def drop_report(homes, existing, home, board, state, before, apply, run):
             items.append(dict(name=name, source=source, row=r, tid=identity.ticket_id(name, r['item'], r['id'])))
     carded = drop.waiting_cards(json.loads(run(['sign-off-axi', 'list', str(board), '--json'])).get('decisions', []))
     # A lead home sees only its own rows, so it cannot tell another home's board tickets from leftovers: it leaves them to the parent.
-    board_open = [] if identity.is_lead(home) else [t for t in existing.values() if t.get('state') != 'done' and t.get('stage') != 'done']
+    board_open = [] if identity.is_lead(home) else [t for t in existing.values() if t.get('state') != 'done']
     decisions = drop.plan(items, before, carded, board_open, {i['tid'] for i in items})
     applied, failed = drop.apply(decisions, homes, home, board, run) if apply else (0, [])
     count, per_home = drop.counts(decisions, failed if apply else None)
@@ -247,7 +246,7 @@ def sync():
             return ((t.get('project') or '').lower(), t.get('parent') or '', ' '.join((t.get('title') or '').split()).lower())
         tracked = {}
         for t in existing.values():
-            if t.get('state') != 'done' and t.get('stage') != 'done':
+            if t.get('state') != 'done':
                 tracked.setdefault(work_key(t), []).append(t['id'])
         changed = 0
         items = []
@@ -297,12 +296,12 @@ def sync():
                 if any(o != tid for o in tracked.get(work_key(desired), [])): return
                 # A leaf's state is derived from its work. Reuse the poll's publisher to correct it;
                 # grouping rows and already-settled leaves need no write on this check.
-                if 'stage' not in desired or (existing.get(tid, {}).get('state') or '') == desired['state']:
+                if not desired['state'] or (existing.get(tid, {}).get('state') or '') == desired['state']:
                     return
             digest = hashlib.sha256(json.dumps(desired, sort_keys=True).encode()).hexdigest()
             old = existing.get(tid, {})
             def settled(key, value):
-                stored = old.get({'pr': 'prs', 'last-event-at': 'last_event_at'}.get(key, key))
+                stored = old.get({'pr': 'prs'}.get(key, key))
                 if key == 'assignee': return stored == value
                 # The board stores an absent field as null, and derives a grouping row's roll-up.
                 if stored is None: stored = [] if key == 'pr' else ''
@@ -310,12 +309,7 @@ def sync():
                 elif key in ('hold', 'asked'): value = value == 'yes'
                 return key in derived or stored == value
             # Board wins over ledger: a prior digest can drift after a partial write.
-            # Until the board takes the machines' own stage words, a word it cannot show is the description's first line
-            # ("Stage: <word>"), so a new word with the same board stage rewrites the description, and so does going back to
-            # a word the board shows.
-            def exact(text): return text.partition('\n')[0] if text.startswith('Stage: ') else ''
-            restage = bool(old) and exact(description) != exact(old.get('description') or '')
-            matched = all(settled(k, v) for k, v in desired.items()) and not restage
+            matched = all(settled(k, v) for k, v in desired.items())
             if not matched and any(o != tid for o in tracked.get(work_key(desired), [])):
                 ledger[tid] = digest; save(ledger_file, ledger)
                 # Another ticket already covers this work, so no field of it is published: it still names its owner.
@@ -332,7 +326,7 @@ def sync():
             # The board refuses a new ticket without a description and wants its "# Ask", "# Why" and "# Done when"
             # headings each at the start of a line, so the task body goes whole, line breaks kept. Only a new row sends it,
             # so words written on the board afterwards stay.
-            summary = '' if old and not restage else description or desired.get('title') or tid
+            summary = '' if old else description or desired.get('title') or tid
             if summary: args += ['--description', summary]
             run(args); changed += 1
             if 'assignee' in desired:
@@ -342,7 +336,6 @@ def sync():
             updated = dict(old)
             for key, value in desired.items():
                 if key == 'pr': updated['prs'] = [value] if value else []
-                elif key == 'last-event-at': updated['last_event_at'] = int(value)
                 elif key in ('hold', 'asked'): updated[key] = value == 'yes'
                 else: updated[key] = value
             if summary: updated['description'] = summary
@@ -446,10 +439,10 @@ def sync():
                 # A release names what the local trunk cut. A PR-era version, a body word about timing or "none" is no release:
                 # send none, so the board keeps no milestone the trunk never cut and no placeholder is stored on a ticket.
                 release_value = release.name(field('release'), cut_names)
-                said, stage, done, pr, event = lane_stage(home, source, item, r, prs, run)
+                said, done, pr, event = lane_stage(home, source, item, r, prs, run)
                 save(pr_file, prs)
                 done = done or f'{name}/{item}' in closures or existing.get(tid, {}).get('state') == 'done'
-                if done: said = stage = 'done'
+                if done: said = 'done'
                 parent = ancestry[item]
                 root_ask = item in asks
                 title = request_title(r, root_ask)
@@ -466,13 +459,10 @@ def sync():
                     required.add(parent); ids.append(parent)
                 parent_id = ticket(parent) if parent in tasks else '' if root_ask else upkeep_id
                 desired = dict(title=title, progress=100 if done and item not in parents else 0, state='' if item in parents else 'done' if done else 'on hold' if held else 'queued' if said == 'queued' else 'in progress', pr=pr, release=release_value[:40], parent=parent_id, priority=f"P{r['priority']}" if str(r.get('priority')) in ('0', '1', '2', '3') else '', project=project, hold='yes' if held and not done else 'no', asked='yes' if root_ask else 'no', assignee=lane_assignee(source, item, name, ran=done or said != 'queued'))
-                if item not in parents:
-                    desired['stage'] = stage
-                    if event is not None: desired['last-event-at'] = event
                 if all(i['name'] != name or i['row']['id'] != item for i in items): items.append(dict(tid=tid, name=name, row=r, event=event, parked=name in parked, source=source, said=said, link=pr, merged=bool(prs.get(pr, {}).get('merged'))))
                 if claims.setdefault(tid, f'{name}/{item}') != f'{name}/{item}': continue
                 publish(tid, desired, ('progress',) if item in parents else (), f'{name}/{item}', hold_reason,
-                        fit_description(f'Stage: {said}\n\n{body.strip()}'.strip() if said != stage else body.strip(), f'{name}/{item}'))
+                        fit_description(body.strip(), f'{name}/{item}'))
         if options.tidy:
             print(tidy_report(items, homes, home, state, options.apply, run)); return
         if options.cleanup:

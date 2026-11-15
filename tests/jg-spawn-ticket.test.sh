@@ -12,6 +12,7 @@
 # T4 the start-up sweep's one read finds the child's row by its task id.
 # T5 a teardown closes the child's row.
 # T6 --squad-lead and --relaunch take no --ticket; a relaunch reads ticket= from the record.
+# T8 a Fable model runs the ticket as task fable-<task id> on the ticket's own row; any other id for a Fable model is refused.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -48,7 +49,7 @@ brief_and_spawn() {
     || { out=$(cat "$W/brief.out"); rc=1; return; }
   sed -i 's/{TASK}/Exercise the ticket join./;s/{JUGGERNAUT_SPEC}/Exercise the ticket join end to end./' "$H/data/$id/brief.md"
   git -C "$PROJ" worktree add -q --detach "$wt" origin/main >/dev/null 2>&1 || fail "could not prepare the isolated copy"
-  out=$(jg_test_run_spawn "$H" "$wt" "$FAKEBIN" "$id" "$PROJ" codex --mode direct-PR --yolo off --ticket "$tkt" "$@"); rc=$?
+  out=$(jg_test_run_spawn "$H" "$wt" "$FAKEBIN" "$id" "$PROJ" "${SPAWN_HARNESS:-codex}" --mode direct-PR --yolo off --ticket "$tkt" "$@"); rc=$?
 }
 
 # The ask and its slices as real children (bd numbers them): ticket jg-x.N runs as task jg-x-N; a piece jg-x.N.M as jg-x-N-M.
@@ -174,3 +175,22 @@ out=$(HOME="$H/user-home" PATH="$FAKEBIN:$PATH" JG_ROOT_OVERRIDE='' JG_HOME="$H"
   "$ROOT/bin/jg-teardown.sh" "$T2" 2>&1) || fail "T5 the teardown should succeed: $out"
 [ "$(field "$c2" .status)" = closed ] || fail "T5 the teardown must close the child's row: $(bl show "$c2" 2>&1 | head -5)"
 printf 'ok - T5 a teardown closed the row of %s\n' "$c2"
+
+# T8: a Fable worker works the ticket itself: --ticket jg-x.1.1 with a Fable model runs as task fable-jg-x-1-1 on the
+# row jg-x.1.1 (no twin row), and a Fable model under any other task id, or a fable- id on another model, is refused.
+FT=$(task_of "$piece"); FID="fable-$FT"; FABLE=claude-fable-5-2
+plain_brief "$FT"; plain_brief "$FID"
+out=$(bare "$FT" "$PROJ" claude --mode direct-PR --yolo off --ticket "$piece" --model "$FABLE"); rc=$?
+expect_code 2 "$rc" "T8 a Fable model under the plain task id should be refused: $out"
+assert_contains "$out" "on a Fable model is $FID" "T8 the refusal must name the id a Fable model runs as"
+out=$(bare "$FID" "$PROJ" codex --mode direct-PR --yolo off --ticket "$piece" --model gpt-5.6-sol); rc=$?
+expect_code 2 "$rc" "T8 a fable- id on another model should be refused: $out"
+assert_contains "$out" "is for a Fable model" "T8 the refusal must say the id is for a Fable model"
+! compgen -G "$H/state/$FID.meta" >/dev/null || fail "T8 a refused spawn wrote a task record"
+rm -f "$H/data/$FID/brief.md"
+SPAWN_HARNESS=claude brief_and_spawn "$FID" "$piece" --model "$FABLE"
+expect_code 0 "$rc" "T8 the Fable spawn of ticket $piece should launch as $FID: $out"
+[ "$(sed -n 's/^ticket=//p' "$H/state/$FID.meta")" = "$piece" ] || fail "T8 the record must hold ticket=$piece: $(cat "$H/state/$FID.meta")"
+[ "$(field "$piece" .metadata.task)" = "$FID" ] || fail "T8 the row must hold metadata.task=$FID"
+[ "$(row_field "$FID" id)" = "$piece" ] || fail "T8 the Fable task id must reach the ticket's own row, got: $(bl show "$FID" 2>&1 | head -3)"
+printf 'ok - T8 a Fable worker runs as %s on row %s; any other id for a Fable model is refused\n' "$FID" "$piece"

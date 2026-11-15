@@ -8,6 +8,7 @@
 #    admitted on the new tip, its rebase conflicts, and it is returned with the conflicting path. It is gated once and never again.
 # M2 A trunk-moved return: a lane that conflicts with nothing is gated while three other lanes land, one per gate round. Each move
 #    costs it a whole gate run (3 runs), and after the third move it is returned "the trunk kept moving". One move less and it lands.
+# M2b The same three moves with the default move-retries land the lane after a fourth gate run, with no return and no worker round.
 # M3 One move: a lane moved under once is rebased, gated one more time, and lands (2 runs).
 # M4 A gate-failure return, and the baseline (core/trunk-landing/returns-baseline.sh) over the attempt records those landings left: it
 #    prints one return for each cause, split by cause and by source head, and names no return for a lane that landed.
@@ -76,7 +77,7 @@ test_a_lane_gated_while_another_lands_is_returned_for_the_conflict() {
 
 test_a_lane_whose_trunk_keeps_moving_is_gated_again_each_time_and_then_returned() {
   local base
-  move_world moved; base=$(tip); : > "$W/hold-tb"
+  move_world moved; echo move-retries=3 >> "$HOME_D/config/trunk-policy"; base=$(tip); : > "$W/hold-tb"
   lane tb 'tb' tb.txt; kick; wait_for 'the lane gates' runs_reach tb 1
   mover m1 m1; touch "$W/go-tb-1"; wait_for 'one move costs a second gate run' runs_reach tb 2
   mover m2 m2; touch "$W/go-tb-2"; wait_for 'a second move costs a third gate run' runs_reach tb 3
@@ -86,6 +87,20 @@ test_a_lane_whose_trunk_keeps_moving_is_gated_again_each_time_and_then_returned(
   ! git -C "$PROJ" log --format=%s "$base..trunk" | grep -q 'ticket tb' || fail "the returned lane is not on the trunk"
   [ "$(git -C "$PROJ" rev-list --count "$base..trunk")" = 3 ] || fail "the three movers landed"
   pass 'each trunk move under a gated lane costs a whole gate run, and a lane moved under three times is returned as trunk moved'
+}
+
+test_a_lane_moved_under_three_times_lands_with_the_default_retries() {
+  local base
+  move_world three; base=$(tip); : > "$W/hold-tc"
+  lane tc 'tc' tc.txt; kick; wait_for 'the lane gates' runs_reach tc 1
+  mover n1 n1; touch "$W/go-tc-1"; wait_for 'a second gate run' runs_reach tc 2
+  mover n2 n2; touch "$W/go-tc-2"; wait_for 'a third gate run' runs_reach tc 3
+  mover n3 n3; touch "$W/go-tc-3"; wait_for 'a fourth gate run' runs_reach tc 4
+  touch "$W/go-tc-4"; wait_for 'the lane lands' settled; wait_for 'the trunk holds all four lanes' trunk_has "$base" 4
+  [ "$(git -C "$PROJ" log -1 --format=%s trunk)" = "ticket tc" ] || fail "the moved-under lane is on top: $(git -C "$PROJ" log --format=%s "$base..trunk")"
+  [ -z "$(verdict tc)" ] || fail "the lane is not returned: $(verdict tc)"
+  [ "$(attempts tc)" = 1 ] || fail "one landing run, no second round, got $(attempts tc)"
+  pass 'a lane moved under three times is rebased each time and lands in one landing run with no return'
 }
 
 test_a_lane_moved_under_once_lands_after_a_second_gate() {
@@ -101,7 +116,7 @@ test_a_lane_moved_under_once_lands_after_a_second_gate() {
 
 test_a_red_lane_is_returned_for_the_gate_and_the_baseline_names_each_cause() {
   local out
-  move_world baseline; touch "$W/hold-cb" "$W/hold-tb"
+  move_world baseline; echo move-retries=3 >> "$HOME_D/config/trunk-policy"; touch "$W/hold-cb" "$W/hold-tb"
   # One home, three returns: a trunk move (tb), a red gate (rb) and a conflict (cb), and one lane that landed (ca).
   lane tb 'tb' tb.txt; kick; wait_for 'tb gates' runs_reach tb 1
   for n in 1 2 3; do mover "m$n" "m$n"; touch "$W/go-tb-$n"; [ "$n" = 3 ] || wait_for "tb gates run $((n + 1))" runs_reach tb $((n + 1)); done
@@ -134,6 +149,7 @@ test_the_baseline_refuses_a_home_with_no_attempt_records() {
 
 test_a_lane_gated_while_another_lands_is_returned_for_the_conflict
 test_a_lane_whose_trunk_keeps_moving_is_gated_again_each_time_and_then_returned
+test_a_lane_moved_under_three_times_lands_with_the_default_retries
 test_a_lane_moved_under_once_lands_after_a_second_gate
 test_a_red_lane_is_returned_for_the_gate_and_the_baseline_names_each_cause
 test_the_baseline_refuses_a_home_with_no_attempt_records

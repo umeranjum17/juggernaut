@@ -295,23 +295,12 @@ if [ "${1:-}" = run ]; then
     --slurpfile steps "$root/$run/steps.json" \
     '{schema:1,run_id:$id,journey:null,command:"bash release-proof capture",commit:$head,tree:$tree,dirty:false,started_at:"2026-11-10T00:00:00Z",ended_at:"2026-11-10T00:00:01Z",exit:0,files:[{path:($id + "/run.log"),sha256:$hash,bytes:$bytes}],tool:"0.6.26",steps:$steps[0]}' > "$record"
   jq -n --arg id "$run" --arg head "$head" --arg record "$record" '{run_id:$id,commit:$head,dirty:false,record:$record}'
-elif [ "${1:-}" = check ] && [ "${2:-}" != --help ]; then
-  printf '%s\n' "${CLAUDE_CONFIG_DIR:-}" > "$JG_TEST_JUDGE_ACCOUNT"
-  # The release receipt carries one claim id; a check under any other id finds no receipt, as done-done does.
-  claim=; prev=
-  for arg in "$@"; do [ "$prev" != --claim-id ] || claim=$arg; prev=$arg; done
-  if [ "$claim" != "${JG_TEST_RECEIPT_CLAIM:-release-proj-trunk}" ]; then
-    jq -n --arg c "$claim" '{result:"fail",error:("no receipt for claim id " + $c)}'
-    exit 1
-  fi
-  name=$(sed -n 's/^evidence: //p' "$JG_TEST_PR_BODY" | tail -n 1)
-  jq -n --arg file "$JG_DATA_OVERRIDE/release-proj-trunk/$name" --arg claim 'release proof' '{result:"pass",claim:$claim,evidence:[$file]}'
 else
   printf 'unexpected done-done command: %s\n' "$*" >&2
   exit 1
 fi
 SH
-export JG_TEST_CHANGE_PIN="$W/change-pin" JG_TEST_JUDGE_ACCOUNT="$W/judge-account" JG_TEST_PR_BODY="$W/pr-body"
+export JG_TEST_CHANGE_PIN="$W/change-pin" JG_TEST_PR_BODY="$W/pr-body"
 chmod +x "$W/fakebin/done-done"
 # The board is a file of cards; this stand-in keeps the calls merge-card makes (list, post, dismiss, restore) so the
 # test needs no installed sign-off-axi, which a CI runner lacks.
@@ -361,10 +350,11 @@ git -C "$PROJ" branch -q -D trunk-old || fail 'drop the hotfix fixture'
 out=$(trunk release "$PROJ" 2>&1) || :
 assert_not_contains "$out" 'hotfix on trunk-empty' 'an empty commit on an old trunk is not a hotfix'
 cp "$W/saved-versions" "$HOME_D/data/trunk-versions.tsv"
+# The proof is bound to the candidate head, not to the current green pin: a pin that moves during the proof is not a refusal.
 : > "$W/change-pin"
-out=$(trunk release "$PROJ" 2>&1) && fail 'a changed green pin must refuse'
-assert_contains "$out" 'green pin changed' 'the refusal must identify the changed pin'
+out=$(trunk release "$PROJ" 2>&1) || fail "a moved green pin must not refuse a candidate that is green at its own head: $out"
 rm "$W/change-pin"
+pass 'release proof stays valid for its own head after the green pin moves'
 # A merge that is not a trunk-home-converge does not vouch for the commit it carries. The capture runs the helper the
 # release runs inside done-done, here on a clone of the lane at that merge, so the real trunk and its record stay put.
 git -C "$W/lane" checkout -q -b stray-side "$legacy^" || fail 'create stray branch'
@@ -380,6 +370,15 @@ out=$(cd "$W/stray" && JG_HOME="$HOME_D" JG_STATE_OVERRIDE="$W/stray-state" JG_R
   fail 'a plain merge must not vouch for its second parent'
 assert_contains "$out" "no landing proof row for $stray" 'the refusal must name the commit a plain merge carried'
 pass 'release refuses a commit carried only by a merge that is not a trunk-home-converge'
+# A replacement candidate must carry every release head already pushed: one that omits it is refused, naming the head.
+git -C "$W/stray" fetch -q "$W/lane" || fail 'fetch the lane for the omission fixture'
+omit=$(git -C "$W/stray" rev-parse "$later^") || fail 'resolve the omitting candidate'
+git -C "$W/stray" checkout -q --detach "$omit" || fail 'check out a candidate that omits the pushed release head'
+out=$(cd "$W/stray" && JG_HOME="$HOME_D" JG_STATE_OVERRIDE="$W/stray-state" JG_RELEASE_PROJECT="$PROJ" JG_RELEASE_TRUNK=trunk \
+  JG_RELEASE_BASE="$base" JG_RELEASE_HEAD="$omit" DONE_DONE_EVIDENCE_ROOT="$W/stray-out" "$W/root/bin/jg-trunk-release-proof.sh" capture 2>&1) &&
+  fail 'a candidate that omits a pushed release head must refuse'
+assert_contains "$out" "does not carry the pushed release head $later" 'the refusal must name the omitted release head'
+pass 'release refuses a replacement candidate that omits a release head already pushed'
 # A Revert commit has no landing proof row of its own; the record names the commit it reverts as reverts-<sha>.
 # The capture is accepted only when that row exists for the exact revert sha and the reverted commit is itself proven.
 git -C "$W/lane" checkout -q -b revert-side "$(tip)" || fail 'create revert branch'
@@ -405,10 +404,6 @@ awk -F "\t" '$1 != "proj" || $3 != "trunk"' "$HOME_D/data/trunk-versions.tsv" > 
 cp "$W/versions-without-trunk" "$HOME_D/data/trunk-versions.tsv"
 expected_base=$(git -C "$PROJ" merge-base trunk main)
 git -C "$PROJ" config remote.origin.pushurl "$W/no-such-remote.git"
-# The proof checks the release under the receipt's claim id (release-<project>-trunk); a receipt under another id is no match.
-out=$(JG_TEST_RECEIPT_CLAIM=release-other-trunk trunk release "$PROJ" 2>&1) && fail 'a release with no receipt under its claim id must refuse'
-assert_contains "$out" 'merge-card did not approve cited evidence' 'the refusal must say the evidence was not approved'
-pass 'release refuses when the receipt carries another claim id than release-<project>-trunk'
 touch "$W/lint-fail-once"; export JG_RELEASE_LINT_RETRY_SLEEP=0
 out=$(trunk release "$PROJ" 2>&1) || fail "proof retry failed: $out"
 [ ! -e "$W/lint-fail-once" ] || fail 'the failing first read of the published body was never hit'
@@ -428,8 +423,7 @@ gate_out=$(PATH="$W/fakebin:$PATH" JG_HOME="$HOME_D" JG_PROOF_BOARD="$W/board.js
 [ "${gate_rc:-0}" -eq 0 ] || fail "release merge proof refused: $gate_out"
 [ -f "$HOME_D/state/$id.run-receipt.json" ] || fail "release head $head has no completion receipt"
 [ "$(jq -r .head "$HOME_D/state/$id.run-receipt.json")" = "$head" ] || fail 'receipt must bind the release head'
-[ -f "$HOME_D/data/$id/merge-card.json" ] || fail 'release has no approved merge-card evidence'
-[ "$(cat "$W/judge-account")" = "$W/account" ] || fail 'judge did not use the home account pin'
+[ ! -e "$HOME_D/data/$id/merge-card.json" ] || fail 'the release must not run the merge-card model judge'
 pass 'release produces proof at its own head'
 }
 

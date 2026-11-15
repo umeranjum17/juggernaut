@@ -17,7 +17,7 @@ group	word-landed	landed	home-behind
 group	word-in-use	live-partial	live
 edge	coding	s27-park	parked	bin/jg-teardown.sh:main	-	bin/jg-teardown.sh <id> --park gives back the copy and the pane of a clean copy at its branch tip and writes state/<id>.parked	jg-machine-lane-delivery.test.sh
 edge	coding	t1-done	ready	bin/jg-lavish-guard.sh:append	-	the worker appends a done line for its head	jg-machine-lane-delivery.test.sh
-edge	ready	t2-proof	admitted	core/trunk-landing/trunk-landing.sh:check	-	bin/jg-trunk.sh proof finds the receipt, the merge-card evidence and the sealed run at the head	jg-machine-lane-delivery.test.sh
+edge	ready	t2-proof	admitted	core/trunk-landing/trunk-landing.sh:check	-	bin/jg-trunk.sh proof finds the receipt and the sealed run at the head	jg-machine-lane-delivery.test.sh
 edge	admitted	t3-start	landing	core/trunk-landing/trunk-landing.sh:check	-	no landing runs and the flush rule lets the lane go	jg-machine-lane-delivery.test.sh
 edge	landing	t4-land	landed	core/trunk-landing/trunk-landing.sh:run	-	bin/jg-trunk.sh land or land-batch writes the lane's data/trunk-landings.tsv row	jg-machine-lane-delivery.test.sh
 edge	landing	t4-refuse	refused	core/trunk-landing/trunk-landing.sh:run	-	the lander refuses; the state file holds wait, retry or final with the reason	jg-machine-lane-delivery.test.sh

@@ -32,7 +32,7 @@ publish() {  # <task>: the poll's own ticket creation, so the writer has a row t
   local id
   id=$(ticket_id "$1")
   # A new ticket needs its own description (sign-off-axi refuses one without), as the poll gives it.
-  sign-off-axi ticket "$board" --id "$id" --title "Ticket for $1" --progress 0 --state queued --stage queued \
+  sign-off-axi ticket "$board" --id "$id" --title "Ticket for $1" --progress 0 --state queued \
     --description "$(printf 'Ticket for %s.\n# Ask\n- Show the work on the board.\n# Why\n- The board follows the work.\n# Done when\n- The ticket reads done.' "$1")" >/dev/null
 }
 
@@ -43,45 +43,56 @@ publish jg-shipone
 publish jg-shiptwo
 publish jg-heldone
 
-# 1. The operator's own command: `start` builds, `done --pr` closes with the delivered PR.
+# 1. The operator's own command: start, hold and reopen write nothing to the board (no stage, no state, no
+# board-only key) while the Beads status moves; `done --pr` closes the ticket with the delivered PR.
+feed="$work/board.tickets.jsonl"
+board_sum() { sha256sum "$board" "$feed" 2>/dev/null; }
+bd_status() { BEADS_DIR=$(cat "$home/config/beads-dir") bash "$ROOT/bin/jg-beads.sh" show "$1" --json 2>/dev/null | jq -r 'if type == "array" then .[0] else . end | .status'; }
+before=$(board_sum)
 out=$(bash "$ROOT/bin/jg-backlog.sh" start jg-shipone 2>&1) || fail "start failed: $out"
-assert_equals 'in progress' "$(ticket_field "$(ticket_id jg-shipone)" state)" 'start must mark the ticket in progress'
-assert_equals building "$(ticket_field "$(ticket_id jg-shipone)" stage)" 'start must move the ticket to building'
+assert_equals "$before" "$(board_sum)" 'start must write nothing to the board'
+out=$(bash "$ROOT/bin/jg-backlog.sh" hold jg-shipone --reason 'waiting on the colour pick' 2>&1) || fail "hold failed: $out"
+assert_equals "$before" "$(board_sum)" 'hold must write nothing to the board'
+assert_equals on_hold "$(bd_status jg-shipone)" 'bd must show the held status'
+out=$(bash "$ROOT/bin/jg-backlog.sh" unhold jg-shipone 2>&1) || fail "unhold failed: $out"
+assert_equals "$before" "$(board_sum)" 'unhold must write nothing to the board'
+assert_equals queued "$(ticket_field "$(ticket_id jg-shipone)" state)" 'the board state must stay what the poll published'
+assert_equals null "$(ticket_field "$(ticket_id jg-shipone)" stage)" 'no stage may be written for the ticket'
+assert_not_contains "$(cat "$feed" 2>/dev/null)" '"stage"' 'no stage may reach the board feed'
+assert_not_contains "$(cat "$feed" 2>/dev/null)" 'last_event_at' 'no last event time may reach the board feed'
+out=$(bash "$ROOT/bin/jg-backlog.sh" start jg-shipone 2>&1) || fail "second start failed: $out"
+assert_equals in_progress "$(bd_status jg-shipone)" 'bd must show the started status'
 out=$(bash "$ROOT/bin/jg-backlog.sh" "done" jg-shipone --pr https://github.com/example/demo/pull/31 2>&1) || fail "done failed: $out"
 assert_equals "done" "$(ticket_field "$(ticket_id jg-shipone)" state)" 'done must close the ticket'
 assert_equals 100 "$(ticket_field "$(ticket_id jg-shipone)" progress)" 'done must record 100%'
 assert_equals 'https://github.com/example/demo/pull/31' "$(sign-off-axi ticket "$board" --id "$(ticket_id jg-shipone)" --json | jq -r '.ticket.prs[0]')" 'done must link the delivered PR'
-pass 'a backlog start and done write the ticket with no poll'
+before=$(board_sum)
+out=$(bash "$ROOT/bin/jg-backlog.sh" reopen jg-shipone 2>&1) || fail "reopen failed: $out"
+assert_equals "$before" "$(board_sum)" 'reopen must write nothing to the board'
+assert_equals open "$(bd_status jg-shipone)" 'bd must show the reopened status'
+pass 'start, hold and reopen write no stage or state; done closes the ticket with its PR'
 
-# 2. The lifecycle transition library, which spawn, teardown and bootstrap use.
-# shellcheck source=/dev/null
+# 2. The lifecycle transition library, which spawn, teardown and bootstrap use, writes nothing for start, hold and unhold.
+before=$(board_sum)
 out=$(bash -c '
   set -u
   . "$1/bin/jg-backlog-lib.sh"
   . "$1/bin/jg-backlog-transition-lib.sh"
   jg_backlog_start "$JG_HOME/data" jg-shiptwo || exit 1
+  jg_backlog_ticket_note "$JG_HOME/data" start jg-shiptwo || exit 1
   jg_backlog_ticket_note "$JG_HOME/data" hold jg-shiptwo --reason "the captain is choosing between two designs" || exit 1
+  jg_backlog_ticket_note "$JG_HOME/data" unhold jg-shiptwo || exit 1
 ' _ "$ROOT" 2>&1) || fail "the transition library failed: $out"
-assert_equals building "$(ticket_field "$(ticket_id jg-shiptwo)" stage)" 'the lifecycle start must move the ticket to building'
-assert_equals 'on hold' "$(ticket_field "$(ticket_id jg-shiptwo)" state)" 'a hold must put the ticket on hold'
-assert_equals true "$(ticket_field "$(ticket_id jg-shiptwo)" hold)" 'a hold must mark the ticket held'
-assert_equals 'the captain is choosing between two designs' "$(ticket_field "$(ticket_id jg-shiptwo)" hold_reason)" 'a hold must carry its reason'
-bash -c '
-  set -u
-  . "$1/bin/jg-backlog-lib.sh"
-  . "$1/bin/jg-backlog-transition-lib.sh"
-  jg_backlog_ticket_note "$JG_HOME/data" unhold jg-shiptwo
-' _ "$ROOT" >/dev/null 2>&1 || fail 'the release path failed'
-assert_equals queued "$(ticket_field "$(ticket_id jg-shiptwo)" state)" 'a release must return the ticket to queued'
-assert_equals false "$(ticket_field "$(ticket_id jg-shiptwo)" hold)" 'a release must clear the hold'
-pass 'the lifecycle transition library writes its ticket state, hold and release'
+assert_equals "$before" "$(board_sum)" 'start, hold and unhold must write nothing to the board'
+assert_equals null "$(ticket_field "$(ticket_id jg-shiptwo)" hold)" 'no hold may be written for the ticket'
+pass 'the lifecycle transition library writes no stage, state or hold'
 
-# 3. A captain-held row closed by an answer closes its ticket too.
+# 3. A captain hold writes no board state either; the Beads status carries it.
 printf 'held\n' > "$home/config/parked-homes"
 bash "$ROOT/bin/jg-captain-hold.sh" hold jg-heldone --reason 'pick a colour' >/dev/null 2>&1 || true
-assert_equals 'on hold' "$(ticket_field "$(ticket_id jg-heldone)" state)" 'a captain hold must put the ticket on hold'
+assert_equals queued "$(ticket_field "$(ticket_id jg-heldone)" state)" 'a captain hold must not write a board state'
 rm -f "$home/config/parked-homes"
-pass 'a captain hold writes the ticket it holds'
+pass 'a captain hold leaves the board state to the poll'
 
 # 4. A home with no board writes nothing and still succeeds, so a board problem
 # can never fail a transition.
@@ -89,7 +100,6 @@ noBoard="$work/no-board"
 mkdir -p "$noBoard"/{data,config,state}
 core_beads_home "$ROOT" "$noBoard"
 (cd "$noBoard" && JG_HOME="$noBoard" jg-backlog.sh add jg-lonely 'Ship without a board' --repo demo --priority 2 >/dev/null)
-feed="$work/board.tickets.jsonl"
 before=$(sha256sum "$feed")
 out=$(JG_HOME="$noBoard" bash "$ROOT/bin/jg-backlog.sh" start jg-lonely 2>&1) || fail "a boardless home failed its transition: $out"
 assert_equals "$before" "$(sha256sum "$feed")" 'a boardless home must leave every board alone'
@@ -105,7 +115,6 @@ publish jg-merged
 url='https://github.com/example/demo/pull/33'
 out=$(bash -c '. "$1/bin/jg-merge-outcome-lib.sh"; jg_merge_outcome_report "$2" "$2/state" jg-merged "$3" poll' _ "$ROOT" "$home" "$url" 2>&1) || fail "the merge path failed: $out"
 assert_equals "done" "$(ticket_field "$(ticket_id jg-merged)" state)" 'the merge path must close the ticket'
-assert_equals "done" "$(ticket_field "$(ticket_id jg-merged)" stage)" 'the merge path must move the ticket to done'
 assert_equals "$url" "$(sign-off-axi ticket "$board" --id "$(ticket_id jg-merged)" --json | jq -r '.ticket.prs[0]')" \
   'the merge path must link the delivered PR'
 pass 'the merge path closes the ticket with the delivered PR'

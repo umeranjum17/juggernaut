@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Remove the trunk-latency registered check and installed command. Usage: unwiring.sh [--dry-run] <jg-home>
-# The rows in data/trunk-latency.tsv stay: they are the home's record, not part of the wiring.
+# Any rows already in data/trunk-latency.tsv stay: they are the home's record, not part of the wiring.
 set -euo pipefail
 DRY=0; [ "${1:-}" = --dry-run ] && { DRY=1; shift; }
 [ "$#" -eq 1 ] && [ -d "$1" ] || { echo 'usage: unwiring.sh [--dry-run] <jg-home>' >&2; exit 2; }

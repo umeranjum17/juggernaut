@@ -10,13 +10,13 @@
 #    recorded and filed once as its own fix row. A lane is charged for a script only when its parent passes it 3 of 3: one that
 #    fails by itself on the parent is flaky, lands, and is filed once.
 # T12 A landing is one fast check: the lander rebases the lane's one commit onto the tip by itself (the lane follows it),
-#    and a lane lands only with its whole proof at its head (receipt, approved merge-card evidence, sealed done-done run); the owner signature never blocks it.
+#    and a lane lands only with its whole proof at its head (receipt, sealed done-done run; no merge-card judge); the owner signature never blocks it.
 # T13 The journey: four lanes ready at once, three land in order with no human or lead step, the red one is refused, no
 #    landing moves the green pin, and no landing runs a whole suite or moves the pin (the tick's verify does), so a whole suite that would be red
 #    (a shard over its time budget, as trunk-v3 at 9f5bbb3af0d1) stops no landing. A green pin left 6 hours behind 9 landings
 #    moves to the next landing's head, and the landing's check judges that lane's changed scripts alone, however many landings
-#    sit above the release base. A red a hand-run verify finds is reverted by itself, takes the green pin back below it and
-#    the lane is told; a revert that cannot apply cleanly raises one alert, takes the pin back too, and the next lane still lands.
+#    sit above the release base. A red a hand-run verify finds is reported and never reverted: it takes the green pin back below it, the lane
+#    is told, one alert names its owner, and the next lane still lands.
 # The done-done journey journeys/trunk-landing.sh runs this file and seals its output.
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
@@ -203,17 +203,12 @@ test_done_and_landing_both_refuse_before_starting_on_any_missing_proof_input() {
   lane p1 v1 f1.txt
   # (broken <part>, how it is broken, what the refusal must name)
   for part in receipt-absent:'completion receipt' receipt-fail:'completion receipt' receipt-stale:'completion receipt' \
-              card-absent:'no approved merge-card evidence' card-stale:'no approved merge-card evidence' card-failed:'no approved merge-card evidence' \
-              card-uncited:'no approved merge-card evidence' seal-absent:'no sealed done-done run' seal-stale:'no sealed done-done run' seal-dirty:'no sealed done-done run'; do
+              seal-absent:'no sealed clean done-done run' seal-stale:'no sealed clean done-done run' seal-dirty:'no sealed clean done-done run'; do
     prove "p$id"
     case ${part%%:*} in
       receipt-absent) rm "$HOME_D/state/p$id.run-receipt.json" ;;
       receipt-fail) prove_part "p$id" receipt FAIL ;;
       receipt-stale) sed -i 's/"head":"[0-9a-f]*"/"head":"0000000000000000000000000000000000000000"/' "$HOME_D/state/p$id.run-receipt.json" ;;
-      card-absent) rm "$HOME_D/data/p$id/merge-card.json" ;;
-      card-stale) sed -i 's/"head":"[0-9a-f]*"/"head":"0000000000000000000000000000000000000000"/' "$HOME_D/data/p$id/merge-card.json" ;;
-      card-failed) sed -i 's/"verdict":"pass"/"verdict":"fail"/' "$HOME_D/data/p$id/merge-card.json" ;;
-      card-uncited) sed -i 's/"evidence":\[[^]]*\]/"evidence":[]/' "$HOME_D/data/p$id/merge-card.json" ;;
       seal-absent) rm -f "$HOME_D/data/p$id/.done-done/runs/"*.json ;;
       seal-stale) sed -i 's/"commit":"[0-9a-f]*"/"commit":"0000000000000000000000000000000000000000"/;s/20261109T000000Z-[0-9a-f]*/20261109T000000Z-00000000/' "$HOME_D/data/p$id/.done-done/runs/"*.json ;;
       seal-dirty) sed -i 's/"dirty":false/"dirty":true/' "$HOME_D/data/p$id/.done-done/runs/"*.json ;;
@@ -229,9 +224,9 @@ test_done_and_landing_both_refuse_before_starting_on_any_missing_proof_input() {
     ! git -C "$PROJ" merge-base --is-ancestor "$head" "$(tip)" || fail "a landing with $part landed the lane"
   done
   # Everything missing is named at once, in one pass, not one input per round trip.
-  rm -f "$HOME_D/state/p1.run-receipt.json" "$HOME_D/data/p1/merge-card.json"
+  rm -f "$HOME_D/state/p1.run-receipt.json" "$HOME_D/data/p1/.done-done/runs/"*.json
   out=$(done_gate p1) && fail "a lane with no proof must not be done"
-  assert_contains "$out" "completion receipt" "all missing inputs are named together"; assert_contains "$out" "no approved merge-card evidence" "all missing inputs are named together"
+  assert_contains "$out" "completion receipt" "all missing inputs are named together"; assert_contains "$out" "no sealed clean done-done run" "all missing inputs are named together"
   # A done at a new head needs the whole proof again; proving the new head makes both paths accept.
   commit_in "$W/lanes/ok" a.txt two "ticket ok again"
   out=$(done_gate ok) && fail "a commit after the proof voids it: $out"
@@ -261,18 +256,49 @@ test_a_proof_gap_names_the_reason_merge_card_refused_not_a_missing_run() {
   pass 'a refused sealed run is reported with merge-card'"'"'s own reason, not as a missing run'
 }
 
+# The model-judged merge-card is not a landing input: a lane whose card is absent, failed, stale, uncited or "not checked" (the judge
+# errored or timed out) is done and lands on its receipt and its sealed run, while a missing seal or a failed receipt still refuses.
+test_a_lane_lands_with_no_usable_merge_card_and_a_safety_refusal_still_blocks() {
+  local variant out id=0
+  world nojudge
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
+  for variant in absent failed stale uncited not-checked; do
+    id=$((id + 1)); lane "n$id" "v$id" "n$id.txt"
+    case $variant in
+      absent) rm -f "$HOME_D/data/n$id/merge-card.json" ;;
+      failed) sed -i 's/"verdict":"pass"/"verdict":"fail"/' "$HOME_D/data/n$id/merge-card.json" ;;
+      stale) sed -i 's/"head":"[0-9a-f]*"/"head":"0000000000000000000000000000000000000000"/' "$HOME_D/data/n$id/merge-card.json" ;;
+      uncited) sed -i 's/"evidence":\[[^]]*\]/"evidence":[]/' "$HOME_D/data/n$id/merge-card.json" ;;
+      not-checked) printf '{"head":"%s","verdict":"not checked: the judge timed out"}\n' "$(git -C "$PROJ" rev-parse "fm/n$id")" > "$HOME_D/data/n$id/merge-card.json" ;;
+    esac
+    out=$(done_gate "n$id") || fail "a done with a $variant merge-card must be accepted: $out"
+    trunk proof "n$id" >/dev/null 2>&1 || fail "the landing pre-check must accept a lane whose merge-card is $variant"
+    out=$(trunk land "n$id" 2>&1) || fail "a lane whose merge-card is $variant must land: $out"
+    git -C "$PROJ" cat-file -e "trunk:n$id.txt" || fail "the landed tip must hold the lane n$id (card $variant)"
+  done
+  # The safety refusals are untouched: no card does not stand in for a missing seal or a failed receipt.
+  id=$((id + 1)); lane "n$id" "v$id" "n$id.txt"; rm -f "$HOME_D/data/n$id/merge-card.json" "$HOME_D/data/n$id/.done-done/runs/"*.json
+  out=$(done_gate "n$id") && fail "a lane with no sealed run must not be done: $out"
+  assert_contains "$out" "no sealed clean done-done run" "the missing seal is named"
+  id=$((id + 1)); lane "n$id" "v$id" "n$id.txt"; prove_part "n$id" receipt FAIL
+  out=$(done_gate "n$id") && fail "a lane with a failed receipt must not be done: $out"
+  assert_contains "$out" "completion receipt" "the failed receipt is named"
+  pass 'a lane lands with no usable merge-card, and a missing seal or a failed receipt still refuses'
+}
+test_a_lane_lands_with_no_usable_merge_card_and_a_safety_refusal_still_blocks
+
 # The registered check starts no landing for an incomplete proof, says why once, and lands the same head once the proof is there.
 test_the_check_starts_no_landing_until_the_whole_proof_is_there() {
   local out
   world gatecheck
   cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
-  lane g1 one; rm "$HOME_D/data/g1/merge-card.json"
+  lane g1 one; rm -f "$HOME_D/data/g1/.done-done/runs/"*.json
   out=$(sweep); assert_contains "$out" "g1 waits to land" "an incomplete proof must be reported by the check"
-  assert_contains "$out" "no approved merge-card evidence" "the report names the missing input"
+  assert_contains "$out" "no sealed clean done-done run" "the report names the missing input"
   [ -z "$(find "$HOME_D/data/jg-trunk-landing" -name 'g1.*.state' 2>/dev/null)" ] || fail "no landing may start for an incomplete proof"
   [ -z "$(sweep)" ] || fail "the wait must be reported once"
   [ "$(tip)" != "$(git -C "$PROJ" rev-parse fm/g1)" ] || fail "nothing may land without the proof"
-  prove_part g1 card
+  prove_part g1 seal
   sweep >/dev/null; out=$(sweep)
   [ "$(tip)" = "$(git -C "$PROJ" rev-parse fm/g1)" ] || fail "the same head must land once its proof is complete: $out"
   pass 'the landing check starts nothing until the whole proof is there, then lands the same head'
@@ -314,10 +340,10 @@ test_three_lanes_land_in_order_a_red_one_is_refused_and_no_whole_suite_runs_per_
   pass 'three lanes land in order with no human step, the red lane is refused, and a landing moves no pin and runs no suite, so a red suite stops no landing'
 }
 
-# A whole-suite run asked for by hand (verify) still finds the commit that broke the suite and reverts it by itself, and takes the
-# green pin back below it; so does a red whose revert cannot apply cleanly.
+# A whole-suite run asked for by hand (verify) still finds the commit that broke the suite, and only reports it (pcp-s5): nothing is
+# reverted, the green pin goes back below it, the lane's ticket and Overwatch are told, and the next lane still lands.
 # shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
-test_a_red_verify_finds_by_hand_is_reverted_and_takes_the_green_pin_back() {
+test_a_red_verify_finds_by_hand_is_reported_and_takes_the_green_pin_back() {
   local rc out before c
   world handverify; rig
   printf 'gate-full=! grep -q BAD work.txt\ngate-verify=bash %s/rig.sh --all\n' "$W" >> "$HOME_D/config/trunk-policy"
@@ -327,28 +353,19 @@ test_a_red_verify_finds_by_hand_is_reverted_and_takes_the_green_pin_back() {
   tip > "$HOME_D/state/trunk-green-proj"  # fixture: a verify that ran before j5 judged the trunk green at j5 (it is the red the next verify finds)
   rc=0; out=$(trunk verify "$PROJ" "$c" 2>&1) || rc=$?
   [ "$rc" -ne 0 ] || fail "verify must fail on a commit that breaks the whole suite: $out"
-  git -C "$PROJ" log --format=%B trunk | grep -q "^reverts: $c" || fail "a red verify finds must be reverted by itself: $out"
-  git -C "$PROJ" cat-file -e "trunk:t/j5.test.sh" 2>/dev/null && fail "the bad commit's change must be undone on the tip"
-  git -C "$PROJ" log --format='%H %s' trunk | grep -q "ticket j5" || fail "the bad commit must stay in the history: the trunk only moves forward"
+  [ "$(tip)" = "$c" ] || fail "the verify reverts nothing: the trunk tip stays on the red commit: $out"
+  git -C "$PROJ" log --format=%B trunk | grep -q '^reverts: ' && fail "no revert commit may exist"
+  assert_contains "$out" "is red at ${c:0:12}" "the verify names the red commit"
+  assert_contains "$out" "nothing was reverted and landings go on; live stays on the last green commit $(git -C "$PROJ" rev-parse --short=12 "$before")" "the verify says nothing was reverted and who owns the repair"
+  assert_contains "$out" "j5 repairs it forward or reverts it on a lane of its own" "the repair owner is named"
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$before" ] || fail "the red commit must take the green pin back below it, so no home goes live on it"
   assert_contains "$(cat "$W/backlog-calls" 2>/dev/null)" "update j5 --body-file" "the lane's ticket is told"
-  assert_contains "$(cat "$HOME_D/state/.wake-queue")" "went red after it landed and was reverted by itself" "Overwatch is told"
-  # A revert that cannot apply cleanly raises one alert and takes the green pin back below the red commit, and the next lane lands.
-  lane k1 'echo "not ok - k1 breaks the suite" >&2; exit 1' t/k1.test.sh; trunk land k1 >/dev/null 2>&1 || fail "k1 must land by hand"
-  lane k2 'exit 0' t/k1.test.sh; git -C "$W/lanes/k2" reset -q --hard trunk; commit_in "$W/lanes/k2" t/k1.test.sh 'echo "not ok - k1 breaks the suite" >&2; echo more; exit 1' "ticket k2"; prove k2
-  trunk land k2 >/dev/null 2>&1 || fail "k2 must land by hand"
-  c=$(git -C "$PROJ" log --format=%H --grep='ticket k1' -n 1 trunk)
-  tip > "$HOME_D/state/trunk-green-proj"  # fixture: a pin above k1, as a green CI result would leave it
-  rc=0; out=$(JG_HOME="$HOME_D" trunk verify "$PROJ" "$c" 2>&1) || rc=$?
-  [ "$rc" -ne 0 ] || fail "a red that cannot be reverted is not green: $out"
-  assert_contains "$out" "could not be reverted by itself; landings go on, and live stays on the last green commit $(git -C "$PROJ" rev-parse --short=12 "$c^")" "the red must say it could not be undone and that landings go on"
-  assert_contains "$(cat "$HOME_D/state/.wake-queue")" "could not be reverted by itself" "Overwatch is told once"
+  assert_contains "$(cat "$HOME_D/state/.wake-queue")" "went red after it landed: " "Overwatch is told"
+  assert_contains "$(cat "$HOME_D/data/trunk-ci.tsv")" "$c"$'\t' "the red stays recorded so no landing moves the pin over it"
   [ ! -e "$HOME_D/state/trunk-red-proj" ] || fail "a red never writes a red pin"
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(git -C "$PROJ" rev-parse "$c^")" ] || fail "a red that cannot be undone must take the green pin back below the red commit"
-  assert_contains "$(cat "$HOME_D/data/trunk-ci.tsv")" "$c"$'\t' "the red that could not be reverted is recorded"
-  lane k3 'exit 0' t/k3.test.sh; out=$(trunk land k3 2>&1) || fail "a red that could not be reverted never stops the next landing: $out"
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(git -C "$PROJ" rev-parse "$c^")" ] || fail "a landing above an unreverted red leaves the green pin below it, so the red is never live"
-  pass 'a red a hand-run verify finds is reverted by itself and takes the green pin back, and so does one that cannot be undone, which stops no landing'
+  lane k3 'exit 0' t/k3.test.sh; out=$(trunk land k3 2>&1) || fail "a reported red never stops the next landing: $out"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$before" ] || fail "a landing above a reported red leaves the green pin below it, so the red is never live"
+  pass 'a red a hand-run verify finds is reported with its owner and not reverted, takes the green pin back, and stops no landing'
 }
 
 # The stall of 10 Nov: the green pin had not moved for 6 hours while 9 commits landed above it, because only the whole suite run
@@ -416,20 +433,20 @@ test_a_lane_proved_at_the_change_the_lander_lands_is_not_tested_again() {
   pass 'a lane whose sealed run is for the change the lander lands lands on the lint alone, also after a rebase with no change'
 }
 
-# A landing writes its latency row at once, from the done epoch it recorded while the lane's status file still existed.
-test_every_landing_writes_its_latency_row_from_the_done_epoch_it_recorded() {
-  local out done_at
+# A landing records the lane's done epoch and writes no latency file: its timing is measured from the records for the ticket's land event.
+test_every_landing_records_the_done_epoch_and_writes_no_latency_row() {
+  local out done_at commit payload
   world latency
   lane lat1 one a.txt
   done_at=$(sed -n 's/^done \[at=\([0-9]*\)\].*/\1/p' "$HOME_D/state/lat1.status" | tail -n 1)
   out=$(trunk land lat1 2>&1) || fail "the lane must land: $out"
   rm -f "$HOME_D/state/lat1.status"   # cleanup removes the status file; no chat line exists in this home
   assert_contains "$(tail -n 1 "$HOME_D/data/trunk-landing-proofs.tsv")" "done=$done_at" "the landing must record the lane's done epoch"
-  [ -s "$HOME_D/data/trunk-latency.tsv" ] || fail "the landing must write data/trunk-latency.tsv itself, with no watcher: $out"
-  [ "$(awk -F'\t' '$1 == "lat1" { print $5 }' "$HOME_D/data/trunk-latency.tsv")" = "$done_at" ] \
-    || fail "the latency row must carry the recorded done epoch $done_at: $(cat "$HOME_D/data/trunk-latency.tsv")"
-  [ -n "$(awk -F'\t' '$1 == "lat1" { print $9 }' "$HOME_D/data/trunk-latency.tsv")" ] || fail "the latency row must hold its minutes"
-  pass 'a landing records the lane done epoch and writes its latency row at once, with the status file gone'
+  [ ! -e "$HOME_D/data/trunk-latency.tsv" ] || fail "a landing must write no data/trunk-latency.tsv: $(cat "$HOME_D/data/trunk-latency.tsv")"
+  commit=$(awk -F'\t' '$1 == "lat1" { print $3 }' "$HOME_D/data/trunk-landings.tsv")
+  payload=$(bash "$ROOT/core/trunk-latency/latency.sh" measure "$HOME_D" lat1 "$commit") || fail "the timing of the landing must be measurable: $payload"
+  [ "$(jq -r .ready <<< "$payload")" = "$done_at" ] || fail "the timing must carry the recorded done epoch $done_at: $payload"
+  pass 'a landing records the lane done epoch, measures its timing from it, and writes no latency file'
 }
 
 # The real landing check bounds lint and tests by one shared deadline, and a timeout is retried rather than blamed on the lane.
@@ -545,8 +562,8 @@ test_a_ui_lane_states_its_nav_lines_in_the_commit_message_the_receipt_or_the_don
 }
 
 # A local lane lands with no tests at the landing (landing-gate=none, the default): the lint is the only check, the batch's verify is
-# the one test run, and a red it finds is reverted. landing-gate=tests is the rollback: the changed files' tests run at the landing again.
-test_a_local_lane_lands_with_no_tests_and_the_verify_reverts_a_red() {
+# the one test run, and a red it finds is reported. landing-gate=tests is the rollback: the changed files' tests run at the landing again.
+test_a_local_lane_lands_with_no_tests_and_the_verify_reports_a_red() {
   local rc out c before
   world nogate; rig
   printf 'gate-full=bash %s/rig.sh t/n1.test.sh\ngate-verify=bash %s/rig.sh --all\n' "$W" "$W" > "$HOME_D/config/trunk-policy"  # no landing-gate line: the default
@@ -558,17 +575,18 @@ test_a_local_lane_lands_with_no_tests_and_the_verify_reverts_a_red() {
   c=$(tip); printf '%s\n' "$before" > "$HOME_D/state/trunk-green-proj"
   rc=0; out=$(trunk verify "$PROJ" "$c" 2>&1) || rc=$?
   [ "$rc" -ne 0 ] || fail "the verify must find the red: $out"
-  git -C "$PROJ" log --format=%B trunk | grep -q "^reverts: $c" || fail "the verify reverts the commit that caused the red: $out"
+  [ "$(tip)" = "$c" ] || fail "the verify reverts nothing: $out"
+  assert_contains "$out" "is red at ${c:0:12}" "the verify names the commit that caused the red"
   # The rollback key puts the changed-tests gate back at the landing.
   printf 'landing-gate=tests\n' >> "$HOME_D/config/trunk-policy"
-  lane n2 'echo "not ok - n1 breaks the suite" >&2; exit 1' t/n1.test.sh
+  lane n2 'echo "not ok - n2 breaks it another way" >&2; exit 1' t/n1.test.sh
   refused 'a landing with landing-gate=tests' n2 'gate'
-  pass 'a local lane lands with no tests at the landing, the verify reverts its red, and landing-gate=tests is the rollback'
+  pass 'a local lane lands with no tests at the landing, the verify reports its red, and landing-gate=tests is the rollback'
 }
 
 test_landing_deadline_spans_both_gates
 test_the_full_gate_charges_a_lane_only_for_what_it_broke
-test_every_landing_writes_its_latency_row_from_the_done_epoch_it_recorded
+test_every_landing_records_the_done_epoch_and_writes_no_latency_row
 test_a_flaky_failure_gets_one_rerun_before_it_is_judged
 test_a_lane_is_charged_only_for_a_script_the_parent_passes_three_times_of_three
 test_a_tip_red_that_prints_its_elapsed_seconds_is_the_same_red_on_every_run
@@ -579,12 +597,12 @@ test_done_and_landing_both_refuse_before_starting_on_any_missing_proof_input
 test_a_proof_gap_names_the_reason_merge_card_refused_not_a_missing_run
 test_the_check_starts_no_landing_until_the_whole_proof_is_there
 test_three_lanes_land_in_order_a_red_one_is_refused_and_no_whole_suite_runs_per_landing
-test_a_red_verify_finds_by_hand_is_reverted_and_takes_the_green_pin_back
+test_a_red_verify_finds_by_hand_is_reported_and_takes_the_green_pin_back
 test_a_green_pin_left_behind_moves_to_the_next_landing_and_the_landing_check_does_not_grow
 test_a_lane_proved_at_the_change_the_lander_lands_is_not_tested_again
 test_a_design_lane_lands_after_the_trunk_moved_on_the_receipt_it_proved
 test_a_design_lane_refused_by_a_broken_lander_lands_after_the_lander_is_fixed
 test_a_hand_roll_approval_written_after_a_refusal_is_read_by_the_next_landing
 test_a_ui_lane_states_its_nav_lines_in_the_commit_message_the_receipt_or_the_done_line
-test_a_local_lane_lands_with_no_tests_and_the_verify_reverts_a_red
+test_a_local_lane_lands_with_no_tests_and_the_verify_reports_a_red
 printf 'jg-trunk-gate: ok\n'

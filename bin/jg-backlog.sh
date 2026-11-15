@@ -55,8 +55,8 @@
 # <model> <effort>`, and prints `<harness> <model> <effort>` when the ticket rests on one of the three records of the
 # captain's yes (bin/jg-captain-ask-lib.sh's captain_ask_build_basis); it exits 2 for no or a malformed line and 3 for
 # a line with no record, and writes nothing. core/recon-ready runs the follow-up when the Recon's report lands.
-# `task <ticket-id>` prints the task id made from the ticket (bin/jg-backlog-lib.sh's jg_backlog_task_id: every dot
-# becomes a dash) and writes it on the ticket's row as metadata.task, so every script that knows only the task id
+# `task <ticket-id> [--model <model>]` prints the task id made from the ticket (bin/jg-backlog-lib.sh's jg_backlog_task_id:
+# every dot becomes a dash, and a Fable model puts fable- in front, so a Fable worker works the ticket itself) and writes it on the ticket's row as metadata.task, so every script that knows only the task id
 # reaches the row. It refuses a ticket with no row and a task id that a different row already answers to.
 # Ticket keys (bin/jg-ticket-key.sh owns the contract): a key such as JG-101 given where a
 # task id goes is resolved to its slug first, `show` prints the key under the id, `list --keys`
@@ -234,7 +234,12 @@ approve_dispatch() {
 
 set -o pipefail
 # The task id is made here, in the one function that makes it, and handed to the writer with the ticket.
-[ "${1:-}" != task ] || { [ "${#ARGS[@]}" -eq 2 ] || fail "usage: jg-backlog.sh task <ticket-id>"; ARGS+=("$(jg_backlog_task_id "${ARGS[1]}")"); }
+if [ "${1:-}" = task ]; then
+  TASK_MODEL=
+  if [ "${#ARGS[@]}" -eq 4 ] && [ "${ARGS[2]}" = --model ]; then TASK_MODEL=${ARGS[3]}; ARGS=("${ARGS[@]:0:2}")
+  elif [ "${#ARGS[@]}" -ne 2 ]; then fail "usage: jg-backlog.sh task <ticket-id> [--model <model>]"; fi
+  ARGS+=("$(jg_backlog_task_id "${ARGS[1]}" "$TASK_MODEL")")
+fi
 case "${1:-}" in
   approve-dispatch) approve_dispatch "${ARGS[@]:1}"; exit $? ;;
   show|view) beads_read | key_tool annotate-show; exit $? ;;

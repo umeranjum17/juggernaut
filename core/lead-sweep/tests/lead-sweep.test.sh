@@ -180,6 +180,11 @@ check "m: a pending steer keeps an accepted, relayed Recon" "$(tore mrec)" 0
 mkdir -p "$FM/state/mrec.inbox/handled"; mv "$FM/state/mrec.inbox/1.msg" "$FM/state/mrec.inbox/handled/"; touch -d "@$((now - 70 * 60))" "$FM/state/mrec.inbox/handled/1.msg"
 sweep
 check "m: the accepted draft, relayed after its verdict, is cleaned up" "$(tore mrec)" 1
+# n: the INSTALLED copy, alone in a directory with no bin next to it, finds the facts lib through the home argument
+mkdir -p "$d/installed" "$FM/bin"; cp "$SRC/lead-sweep.sh" "$d/installed/lead-sweep.sh"; cp "$SRC/../../bin/jg-facts-lib.sh" "$FM/bin/"
+if "$d/installed/lead-sweep.sh" run "$FM" > "$d/inst" 2>&1; then check "n: the installed copy runs from the home" ok ok
+else say "FAIL: n: installed copy: $(cat "$d/inst")"; fails=$((fails + 1)); fi
+check "n: the installed copy found the lib" "$(grep -c 'No such file' "$d/inst" || true)" 0
 # f: the wiring installs a shim that registers, and the unwiring removes it
 if [ -x "$SRC/../../bin/jg-check-register.sh" ]; then
   mkdir -p "$FM/bin"; cp "$SRC/../../bin/"jg-*.sh "$FM/bin/" 2>/dev/null || true

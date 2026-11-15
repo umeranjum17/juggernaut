@@ -192,6 +192,32 @@ test_a_deep_draft_says_done_with_its_critic_open() {
   pass 'a deep Recon says done with its draft while only the critic is open, with no needs-decision line, and cleanup still waits'
 }
 
+test_a_scout_draft_is_submitted_with_no_commit() {
+  command -v jq >/dev/null 2>&1 || { pass 'skipped: jq not found'; return; }
+  local id=rc-draft home dir log
+  home=$(recon_home draft "$id"); dir=$home/data/$id; log=$home/data/moves.log
+  jg_write_meta "$home/state/$id.meta" "window=juggernaut:jg-$id" "worktree=$home/projects/none" \
+    "project=$home/projects/sample" "harness=claude" "kind=scout" "mode=scout"
+  JG_HOME="$home" JG_DATA_OVERRIDE="$home/data" "$ROOT/bin/jg-brief.sh" "$id" sample --scout --depth quick >/dev/null 2>&1 \
+    || fail 'could not scaffold the quick Recon'
+  # The ticket stage comes from a stage file, so the move is judged by the real table: a ticket's observer needs a store row.
+  mkdir -p "$home/core/machines"; cp -r "$ROOT/core/machines/tables" "$ROOT"/core/machines/*.states "$home/core/machines/"
+  # shellcheck disable=SC2016
+  sed -i 's|^observer\t.*|observer\tcat "$(dirname "$JG_MACHINES_TABLES")/../../state/$1.stage"|' "$home/core/machines/tables/ticket.tsv"
+  printf 'building\n' > "$home/state/$id.stage"; printf '# Draft\n\nNo captain choice.\n' > "$dir/report.md"
+  PATH="$home/fakebin:$PATH" JG_HOME="$home" JG_STATE_OVERRIDE="$home/state" JG_DATA_OVERRIDE="$home/data" JG_CONFIG_OVERRIDE="$home/config" \
+    "$ROOT/bin/jg-captain-hold.sh" complete "$id" --none >/dev/null 2>&1 || fail 'could not attest the completion gate'
+  JG_MACHINES_TABLES="$home/core/machines/tables" recon_append "$home" "$id" 'done [at=1]: draft ready'
+  [ "$RC" -eq 0 ] || fail "a scout's draft with no commit was refused: $ERR"
+  assert_grep "$id	building	submit-draft	proving" "$log" "the scout's done line is the move submit-draft"
+  assert_no_grep 'claim-done' "$log" 'a scout makes no commit move'
+  printf 'proving.running\n' > "$home/state/$id.stage"
+  JG_MACHINES_TABLES="$home/core/machines/tables" recon_append "$home" "$id" 'done [at=2]: revised draft ready'
+  [ "$RC" -eq 0 ] || fail "a revised draft was refused: $ERR"
+  assert_grep "$id	proving.running	submit-draft	proving" "$log" 'a revised draft is submitted from proving'
+  pass 'a scout submits a draft with no commit: the done line makes the move submit-draft, from building and again from proving'
+}
+
 test_tonights_report_link_is_refused
 test_a_lavish_publish_command_is_refused
 test_clean_report_text_passes
@@ -201,4 +227,5 @@ test_the_lead_report_helper_refuses_before_append
 test_a_recon_done_waits_for_both_gates
 test_a_critic_task_done_needs_no_report
 test_a_deep_draft_says_done_with_its_critic_open
+test_a_scout_draft_is_submitted_with_no_commit
 printf 'jg-lavish-guard: ok\n'

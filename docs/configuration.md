@@ -883,6 +883,7 @@ Files end in a `[cut at ...` line with the line range and the `sed` command that
 | `backlog-cap` | `JG_SESSION_START_BACKLOG_CAP` | the in-flight, held, blocked and ready listings together |
 | `lanes-cap` | `JG_SESSION_START_LANES_CAP` | the lane rows |
 | `orphan-cap`, `commitments-cap` | `JG_SESSION_START_ORPHAN_CAP`, `JG_SESSION_START_COMMITMENTS_CAP` | orphan status logs, public commitments |
+| `machines-cap` | `JG_SESSION_START_MACHINES_CAP` | the machines section (`core/fleet-status/digest.sh`) |
 | `index-cap` | `JG_SESSION_START_INDEX_CAP` | the heading index of the learnings file and of a long owner-rules file |
 | `owner-rules-cap` | `JG_SESSION_START_OWNER_RULES_CAP` | owner rules print whole up to this size, else as an index of every rule |
 | `context-file-cap`, `memory-file-cap` | `JG_SESSION_START_CONTEXT_FILE_CAP` (both) | the opening lines of the curated files |

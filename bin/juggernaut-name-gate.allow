@@ -221,7 +221,6 @@ core/signoff/bin/jg-procevent-signoff.sh  # inline jg-compat env alias
 core/signoff/tests/jg-procevent-signoff.test.sh  # inline jg-compat env alias
 core/supervisor-guard/tests/jg-supervisor-work-guard.test.sh  # inline jg-compat env alias
 core/tickets-sync/install.sh  # inline jg-compat env alias
-core/tickets-sync/run-stage-proof.sh  # inline jg-compat env alias
 core/tickets-sync/sync.py  # inline jg-compat env alias
 core/tickets-sync/tests/sync.test.sh  # inline jg-compat env alias
 core/tickets-sync/ticket.py  # inline jg-compat env alias

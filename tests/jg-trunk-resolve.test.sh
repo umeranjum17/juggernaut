@@ -7,6 +7,7 @@
 # T2 A resolver that gives up ends the run `returned` with its reason: the refusal carries the reason, the trunk does not move, and the
 #    worker is told as before. A resolver that passes its limit is stopped and ends `returned` inside the limit.
 # T3 With no resolver set, the conflict is refused as before and no resolving row is written.
+# T4 Two lanes that conflict with the same tip land at once: the resolver runs for one lane at a time, never two together.
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
@@ -63,7 +64,26 @@ test_with_no_resolver_a_conflict_is_refused_as_before() {
   pass 'with no resolver set the conflict is refused as before'
 }
 
+test_two_conflicting_lanes_are_resolved_one_at_a_time() {
+  local depth
+  world serial
+  # shellcheck disable=SC2016 # the resolver script expands its own variables
+  resolver serial 'echo "start" >> "$0.log"; sleep 1; while IFS= read -r f; do printf "merged\n" > "$f"; done < "$JG_RESOLVE_CONFLICTS"; echo "end" >> "$0.log"'
+  printf 'retest-runner=true\n' >> "$HOME_D/config/trunk-policy"
+  # all three lanes start on the same tip, so both later lanes meet the first one's landing as a conflict at once
+  lane s-a first; lane s-b second; lane s-c third
+  trunk land s-a >/dev/null 2>&1 || fail "the first lane must land"
+  trunk land s-b >/dev/null 2>&1 & local p1=$!
+  trunk land s-c >/dev/null 2>&1 & local p2=$!
+  wait "$p1" "$p2" || :
+  [ "$(grep -c '^start' "$W/serial.sh.log")" -ge 2 ] || fail "both lanes needed the resolver: $(cat "$W/serial.sh.log")"
+  depth=$(awk '/^start/ { d++; if (d > m) m = d } /^end/ { d-- } END { print m + 0 }' "$W/serial.sh.log")
+  [ "$depth" = 1 ] || fail "two resolvers ran together (depth $depth): $(paste -sd' ' "$W/serial.sh.log")"
+  pass 'two lanes that conflict at once are resolved one at a time'
+}
+
 test_a_conflict_is_resolved_in_the_landers_copy_and_the_lane_lands
+test_two_conflicting_lanes_are_resolved_one_at_a_time
 test_a_resolver_that_gives_up_or_passes_its_limit_returns_the_lane
 test_with_no_resolver_a_conflict_is_refused_as_before
 printf 'jg-trunk-resolve: ok\n'

@@ -58,7 +58,7 @@ make_recon() {  # <task> <level>
     '{"claim":"C-1","status":"verified","method":"reread","note":"exact words match"}' \
     '{"claim":"C-10","status":"verified","method":"run","note":"re-measured"}' > "$dir/checks.jsonl"
   {
-    printf '# Report\n\n'
+    printf '# Report for %s\n\n' "$id"
     n=1
     for title in "${SECTIONS[@]}"; do
       printf '## %d. %s\n' "$n" "$title"
@@ -78,6 +78,16 @@ expect_refused() {  # <task> <fragment> <label>
   run_gate "$1"
   expect_code 1 "$RC" "$3: should be refused (got: $OUT)"
   assert_contains "$OUT" "$2" "$3: the refusal did not say why (got: $OUT)"
+}
+
+test_report_must_name_its_ticket() {
+  make_recon rg-noticket standard
+  sed -i '1s/.*/# Report/' "$HOME_DIR/data/rg-noticket/report.md"
+  expect_refused rg-noticket "names no ticket id" "a report with no ticket id"
+  printf '\nTicket: rg-noticket\n' >> "$HOME_DIR/data/rg-noticket/report.md"
+  run_gate rg-noticket
+  expect_code 0 "$RC" "a report naming its ticket in the body should pass (got: $OUT)"
+  pass "jg-recon-gate.sh: a report that names no ticket id in its title or body is refused, and passes once the ticket id is written"
 }
 
 test_passing_recons_pass() {
@@ -383,6 +393,7 @@ test_board_report_is_written_by_the_command() {
 }
 
 test_passing_recons_pass
+test_report_must_name_its_ticket
 test_missing_and_empty_sections_are_refused
 test_deep_may_not_skip_plan_or_acceptance
 test_unverified_load_bearing_claims

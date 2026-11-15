@@ -24,8 +24,34 @@ jg_backlog_beads_store() {  # <config_dir>: prints the BEADS_DIR, or refuses.
 
 # The task id of a ticket: its id with every dot made a dash (jg-x.1 gives jg-x-1, jg-x.1.1 gives jg-x-1-1).
 # The ticket is given and the task id is made from it, never the other way; this is the one place that makes it.
-jg_backlog_task_id() {  # <ticket-id>
-  printf '%s\n' "${1//./-}"
+jg_backlog_task_id() {  # <ticket-id> [<model>]
+  if jg_backlog_model_is_fable "${2:-}"; then
+    printf 'fable-%s\n' "${1//./-}"
+  else
+    printf '%s\n' "${1//./-}"
+  fi
+}
+
+# A Fable model (claude-fable-5-2, with or without a provider prefix or a context suffix). A Fable worker works
+# the ticket itself under the id fable-<task id>, so its trace and its model-guard allow entry name the ticket and
+# no twin row exists.
+jg_backlog_model_is_fable() {  # <model>
+  case "${1##*/}" in *fable*) return 0 ;; *) return 1 ;; esac
+}
+
+# Prints the refusal line and returns 1 when <task-id> is not the id the ticket gives under <model>.
+jg_backlog_task_id_refusal() {  # <ticket-id> <task-id> [<model>]
+  local want
+  want=$(jg_backlog_task_id "$1" "${3:-}")
+  [ "$2" = "$want" ] && return 0
+  if jg_backlog_model_is_fable "${3:-}"; then
+    printf 'the task id for ticket %s on a Fable model is %s (fable- then every dot made a dash), not %s\n' "$1" "$want" "$2"
+  elif [ "$2" = "fable-$want" ]; then
+    printf 'the task id %s is for a Fable model; ticket %s on model %s runs as %s\n' "$2" "$1" "${3:-none}" "$want"
+  else
+    printf 'the task id for ticket %s is %s (every dot becomes a dash), not %s\n' "$1" "$want" "$2"
+  fi
+  return 1
 }
 
 # The readable-title rule a fresh spawn holds a ticket to: 2 to 7 words, at most 48 characters, no id

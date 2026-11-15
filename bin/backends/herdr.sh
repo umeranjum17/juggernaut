@@ -3229,10 +3229,14 @@ jg_backend_herdr_agent_identity_raw() {  # <session> <pane> -> <agent>\t<status>
 # with a digit, so the id is mapped into that shape. A valid id of 32 or fewer
 # characters is the name unchanged. A longer id keeps its first 27 characters
 # and gains "-<4 hex>" of a checksum of the whole id, so two long ids that
-# share a prefix still get different names. Pure: no herdr call.
-jg_backend_herdr_agent_name_for() {  # <task-id> -> <agent-name>
+# share a prefix still get different names. With a <title> (the first spawn of a
+# ticket) the name is `<title words>-<id>`, cut on the title side to 32 characters,
+# so an id of 20 or fewer characters is never cut; a longer id keeps the title
+# words cut to 27 and the checksum. The name is made once and read from the task
+# record's agent_name= after that. Pure: no herdr call.
+jg_backend_herdr_agent_name_for() {  # <task-id> [<title>] -> <agent-name>
   [ -n "${1:-}" ] || return 1
-  jg_backend_herdr_go agent-name-for "$1"
+  if [ -n "${2:-}" ]; then jg_backend_herdr_go agent-name-for "$1" "$2"; else jg_backend_herdr_go agent-name-for "$1"; fi
 }
 
 # jg_backend_herdr_agent_name_variant: <name> cut to 27 characters and made

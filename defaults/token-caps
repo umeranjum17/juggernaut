@@ -80,3 +80,7 @@ ctx-lead-memory-index 25026
 # tok first model call of a worker, and of a lead after a compaction
 ctx-worker-first-call 64731
 ctx-lead-first-call 97147
+
+# The machines section: one line for each stale or unknown machine, then the fresh ones on one line. Stale and unknown print first,
+# so a cut drops fresh machines first and the marker counts what was cut.
+machines-cap 3500

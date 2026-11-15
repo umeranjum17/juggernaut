@@ -10,6 +10,7 @@ done
 unset _jg_old _jg_new 2>/dev/null || true
 
 set -euo pipefail
+unset JG_TICKET
 ADDON=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 T=$(mktemp -d); trap 'rm -rf -- "$T"' EXIT
 HOME=$T/user; FMH=$T/home; LEAD=$T/lead; XDG_DATA_HOME=$HOME/.local/share
@@ -49,17 +50,28 @@ export PATH="$T/bin:$PATH"
 [ -f "$FMH/state/muxr.meta" ] || { echo 'worker metadata fixture missing' >&2; exit 1; }
 JG_HOME="$FMH" JG_TASK_ID=muxr "$FMH/config/launch-env-hook" "$T/worker.exports" > "$T/worker.osc"
 [ "$(bash -c '. "$1"; printf "%s|%s" "$KEEP_VALUE" "$CLAUDE_CODE_DISABLE_TERMINAL_TITLE"' _ "$T/worker.exports")" = 'chain|1' ]
-grep -Fq $'\033]0;muxr: Scroll fix\007' "$T/worker.osc"
-grep -Fq -- '--session fixture tab rename w1:t1 muxr: Scroll fix' "$HERDR_LOG"
+grep -Fq $'\033]0;Scroll fix · muxr\007' "$T/worker.osc"
+grep -Fq -- '--session fixture tab rename w1:t1 Scroll fix · muxr' "$HERDR_LOG"
 # A pane without JG_HOME (the shared Herdr server carries none) must not fail the launch over a cosmetic title.
 env -u JG_HOME -u JG_TASK_INBOX JG_TASK_ID=muxr "$FMH/config/launch-env-hook" "$T/nohome.exports" > "$T/nohome.osc" 2> "$T/nohome.err"
 [ "$(bash -c '. "$1"; printf "%s|%s" "$KEEP_VALUE" "$CLAUDE_CODE_DISABLE_TERMINAL_TITLE"' _ "$T/nohome.exports")" = 'chain|1' ]
 grep -Fq $'\033]0;muxr\007' "$T/nohome.osc"
 grep -Fq -- '--session fixture tab rename w1:t1 muxr' "$HERDR_LOG"
 grep -Fq 'no backlog helper' "$T/nohome.err"
+# A long title is cut and the id stays whole at the end; a ticket from JG_TICKET names the id.
+long=$(printf 'word %.0s' $(seq 30))
+printf '%s\n' "- [ ] muxr - $long" > "$FMH/data/backlog.md"
+JG_HOME="$FMH" JG_TASK_ID=muxr "$FMH/config/launch-env-hook" "$T/long.exports" > "$T/long.osc"
+long_title=$(sed -e 's/^\x1b\]0;//' -e 's/\x07$//' "$T/long.osc")
+[ "${#long_title}" -le 72 ] && [[ "$long_title" == *' · muxr' ]]
+grep -Fq -- "tab rename w1:t1 $long_title" "$HERDR_LOG"
+sid=jg8-q1b3n-s5
+JG_HOME="$FMH" JG_TASK_ID=muxr JG_TICKET=$sid "$FMH/config/launch-env-hook" "$T/ticket.exports" > "$T/ticket.osc"
+grep -Fq " · $sid"$'\007' "$T/ticket.osc"
+printf '%s\n' '- [ ] muxr - Scroll fix' > "$FMH/data/backlog.md"
 # Without JG_HOME the home still resolves from the absolute inbox path jg-spawn.sh exports.
 env -u JG_HOME JG_TASK_ID=muxr JG_TASK_INBOX="$FMH/state/muxr.inbox" "$FMH/config/launch-env-hook" "$T/inbox.exports" > "$T/inbox.osc"
-grep -Fq $'\033]0;muxr: Scroll fix\007' "$T/inbox.osc"
+grep -Fq $'\033]0;Scroll fix · muxr\007' "$T/inbox.osc"
 # A JG_HOME with no backlog helper degrades the same way.
 env -u JG_TASK_INBOX JG_HOME="$T/empty" JG_TASK_ID=muxr "$FMH/config/launch-env-hook" "$T/empty.exports" > "$T/empty.osc" 2>/dev/null
 grep -Fq $'\033]0;muxr\007' "$T/empty.osc"

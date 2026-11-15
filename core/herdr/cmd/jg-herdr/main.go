@@ -45,7 +45,8 @@
 //	  release-floor-verdict <proto> <ver> <min-proto> <min-ver>
 //	                                                         0 at or above, 1 below, 2 indeterminate
 //	  presentation-preference <file>           off, on or default
-//	  agent-name-for <task-id>                 herdr's agent name (exit 1 for an empty id)
+//	  agent-name-for <task-id> [title]         herdr's agent name: the id, or with a title `<title words>-<id>`
+//	                                           within 32 characters (exit 1 for an empty id)
 //	  agent-name-variant <name> <salt>         <name> cut to 27 characters, plus a checksum
 //	  submit-confirm-budget <seconds> <minimum>
 //
@@ -166,11 +167,18 @@ func main() {
 		need(rest, 1, cmd)
 		fmt.Println(presentationPreference(rest[0]))
 	case "agent-name-for":
-		need(rest, 1, cmd)
+		if len(rest) < 1 || len(rest) > 2 {
+			fmt.Fprint(os.Stderr, usage)
+			os.Exit(2)
+		}
 		if rest[0] == "" {
 			os.Exit(1)
 		}
-		fmt.Print(agentNameFor(rest[0]))
+		if len(rest) == 2 {
+			fmt.Print(agentNameForTitle(rest[1], rest[0]))
+		} else {
+			fmt.Print(agentNameFor(rest[0]))
+		}
 	case "agent-name-variant":
 		need(rest, 2, cmd)
 		fmt.Print(agentNameVariant(rest[0], rest[1]))

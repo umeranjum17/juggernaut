@@ -117,7 +117,7 @@ journeys:
     command: env -u JG_TASK_ID bash tests/jg-trunk-parallel-batch.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   trunk-latency:
     tier: local
-    command: (env -u JG_TASK_ID bash tests/jg-trunk-latency.test.sh && env -u JG_TASK_ID bash tests/jg-trunk-queue-why.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    command: (env -u JG_TASK_ID JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-trunk-latency.test.sh && env -u JG_TASK_ID bash tests/jg-trunk-queue-why.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   trunk-ci-result:
     tier: local
     command: env -u JG_TASK_ID bash tests/jg-trunk-ci-result.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1 && printf '{"target":{"version":"core/trunk-ci/ci-result.sh at this head"},"start":"a real trunk with landed commits and a forge stand-in holding their CI runs","steps":["run the check in watch mode over a green and a red commit","switch to act mode and run it over a new green and a new red commit","run it when more than 2 of the last 20 results are red"],"result":"watch mode records each commit once and changes no trunk record, act mode sends each result to jg-trunk.sh ci and a red moves the green pin back, and a red-heavy trunk is held"}\n' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
@@ -203,9 +203,6 @@ journeys:
   receipt-candidate-hook:
     tier: local
     command: bash journeys/receipt-candidate-hook.sh
-  tickets-stage-publish:
-    tier: local
-    command: bash core/tickets-sync/run-stage-proof.sh
   tickets-truthful:
     tier: local
     command: bash core/tickets-sync/run-board-proof.sh && bash core/tickets-sync/run-tidy-proof.sh
@@ -279,6 +276,9 @@ journeys:
   machine-moves-log:
     tier: local
     command: bash journeys/machine-moves-log.sh
+  typed-ready-proof-retry-facts:
+    tier: local
+    command: bash journeys/typed-ready-proof-retry-facts.sh
   captain-close-gate:
     tier: local
     command: bash journeys/captain-close-gate.sh
@@ -562,7 +562,7 @@ journeys:
     timeout: 10m
   trace-writers:
     tier: local
-    command: JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-trace-writers.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    command: JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-trace-writers.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1 && printf '{"target":{"version":"juggernaut@%s"},"start":"a fixture store holding one ticket","steps":["file the ticket and give it a worker","ask a question and answer it","record ready, landing and evidence","run jg-backlog.sh trace on the ticket"],"result":"one line shows key, title, filed by, worker, commits, state, decision and evidence"}\n' "$(git rev-parse --short HEAD)" > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
     timeout: 10m
   ticket-move:
     tier: local
@@ -1748,6 +1748,9 @@ journeys:
   jg-fleet-readings:
     tier: local
     command: bash tests/jg-fleet-readings.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  machine-digest:
+    tier: local
+    command: bash journeys/machine-digest.sh
   jg-fleet-steps:
     tier: local
     command: bash tests/jg-fleet-steps.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -1913,6 +1916,9 @@ journeys:
   jg-machine-moves-log:
     tier: local
     command: bash tests/jg-machine-moves-log.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-typed-facts:
+    tier: local
+    command: bash tests/jg-typed-facts.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-machine-stage-words:
     tier: local
     command: bash tests/jg-machine-stage-words.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

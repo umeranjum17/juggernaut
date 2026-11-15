@@ -1,0 +1,3 @@
+# Beads read facts
+
+Beads read facts: run `JG_BEADS_TEST_BD=$(which bd) JG_BEADS_TEST_DOLT=$(which dolt) done-done run -- bash tests/jg-beads-read.test.sh` to drive the real `bin/jg-beads-read.py` on a throwaway embedded Beads store; it proves the rev moves on a row write, a label, a comment, a dependency, a dependent and a parent write and stays put on a read or a no-op write, the cursor list walks every open row once with closed rows and gates left out and the same ids as `bd list`, and the history names the commits that changed one ticket and the columns each changed (screen: none).

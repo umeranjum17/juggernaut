@@ -3,7 +3,7 @@
 # the shared fixture tests/jg-trunk-fixture.sh: real git repositories and the real gate chain.
 # Many lanes land past a quick gate and sit above the green pin. The line's verify then:
 # B1 a green stack under N commits is one milestone run (core/trunk-verify/milestone.sh) and moves the pin to the tip.
-# B2 on a red, splits the red milestone in two halves that run at once, reverts only the commit that added the red, keeps every other
+# B2 on a red, splits the red milestone in two halves that run at once, reports only the commit that added the red, keeps every other
 #    lane, and moves the pin to the last commit before the red.
 # B4 with one heavy slot (core/lane-scale/fleet.sh) the runs wait for it one by one: same result, never two at once.
 # B5 a stack of 16 commits (milestones of 13 and 3) is traced to one commit in few runs, counted in runs, not seconds.
@@ -42,7 +42,8 @@ stack() {
   : > "$W/par.log"
 }
 
-reverted() { git -C "$PROJ" log --format=%B trunk | grep -x "reverts: .*" | sed 's/^reverts: //'; }
+# The commits the verify reported red (data/trunk-ci.tsv, source verify); it reverts nothing (pcp-s5).
+reverted() { awk -F'\t' '$4 == "red" && $5 == "verify" { print $2 }' "$HOME_D/data/trunk-ci.tsv" 2>/dev/null | sort -u; }
 
 test_batches_test_at_once_and_a_green_stack_moves_the_pin_to_the_tip() {
   local out
@@ -54,24 +55,25 @@ test_batches_test_at_once_and_a_green_stack_moves_the_pin_to_the_tip() {
   pass 'a green stack of 8 is one milestone run and moves the pin to the tip'
 }
 
-test_a_red_batch_is_searched_in_parallel_and_only_its_commit_goes_back() {
+test_a_red_batch_is_searched_in_parallel_and_only_its_commit_is_reported() {
   local out
   stack red 8 5
   out=$(trunk verify "$PROJ" 2>&1) && fail "a stack with a red must not verify green: $out"
-  [ "$(reverted)" = "$BAD" ] || fail "only the bad commit ${BAD:0:12} may be reverted, got: $(reverted)"
-  [ "$(reverted | wc -l)" = 1 ] || fail "exactly one commit goes back"
+  [ "$(reverted)" = "$BAD" ] || fail "only the bad commit ${BAD:0:12} may be reported, got: $(reverted)"
+  [ "$(reverted | wc -l)" = 1 ] || fail "exactly one commit is reported"
   assert_contains "$out" "its two halves" "the red milestone is split in two halves"
   [ "$(maxat)" -ge 2 ] || fail "the halves must run at once, at most $(maxat) overlapped"
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(git -C "$PROJ" rev-parse "$BAD^")" ] || fail "a red verify moves the pin to the last commit before the bad one"
+  git -C "$PROJ" log --format=%B trunk | grep -q '^reverts: ' && fail "the verify reverts nothing"
   git -C "$PROJ" ls-tree -r --name-only trunk | grep -q 't/l6.test.sh' || fail "the lanes after the bad one stay on the trunk"
-  pass 'a red batch is searched with probes at once; only the commit that added the red is reverted, every other lane stays'
+  pass 'a red batch is searched with probes at once; only the commit that added the red is reported, nothing is reverted'
 }
 
 test_one_heavy_slot_keeps_the_runs_one_after_another() {
   local out
   stack slot 6 3; printf 'heavy_slots=1\n' >> "$HOME_D/config/lane-scale"
   out=$(trunk verify "$PROJ" 2>&1) && fail "must be red: $out"
-  [ "$(reverted)" = "$BAD" ] || fail "the same commit is reverted with one slot, got: $(reverted)"
+  [ "$(reverted)" = "$BAD" ] || fail "the same commit is reported with one slot, got: $(reverted)"
   [ "$(maxat)" = 1 ] || fail "one heavy slot lets one run at a time: $(maxat)"
   [ -z "$(ls "$HOME_D/state/heavy-slots" 2>/dev/null)" ] || fail "every slot is given back: $(ls "$HOME_D/state/heavy-slots")"
   pass 'with one heavy slot the batches wait their turn, give the slot back, and find the same commit'
@@ -88,7 +90,7 @@ test_a_stack_of_sixteen_commits_is_traced_in_few_rounds() {
 }
 
 test_batches_test_at_once_and_a_green_stack_moves_the_pin_to_the_tip
-test_a_red_batch_is_searched_in_parallel_and_only_its_commit_goes_back
+test_a_red_batch_is_searched_in_parallel_and_only_its_commit_is_reported
 test_one_heavy_slot_keeps_the_runs_one_after_another
 test_a_stack_of_sixteen_commits_is_traced_in_few_rounds
 if [ -n "${DONE_DONE_EVIDENCE_ROOT:-}" ]; then
@@ -99,10 +101,10 @@ if [ -n "${DONE_DONE_EVIDENCE_ROOT:-}" ]; then
   "steps": [
     "the line's verify judges the stack by milestone",
     "a red milestone is split in two halves that run at once",
-    "the commit that added the red is reverted and every other lane stays",
+    "the commit that added the red is reported, nothing is reverted",
     "one heavy slot keeps the runs one after another and finds the same commit"
   ],
-  "result": "all green moves the green pin to the tip; a red reverts only its bad commit and leaves the pin below it; a stack of 16 is traced in at most 12 gate runs"
+  "result": "all green moves the green pin to the tip; a red reports only its bad commit and leaves the pin below it; a stack of 16 is traced in at most 12 gate runs"
 }
 JSON
 fi

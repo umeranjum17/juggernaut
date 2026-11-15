@@ -12,14 +12,14 @@ test_a_refusal_reaches_the_lanes_worker_and_never_sits_silent() {
   world reach
   cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   # An incomplete proof: the worker is steered with the refusal text, and the done itself names what to run.
-  lane r1 one; rm "$HOME_D/data/r1/merge-card.json"
-  out=$(done_gate r1) && fail "a done with no merge-card evidence must be refused: $out"
-  assert_contains "$out" "merge-card check r1" "the done names the command to run"
+  lane r1 one; rm -f "$HOME_D/data/r1/.done-done/runs/"*.json
+  out=$(done_gate r1) && fail "a done with no sealed run must be refused: $out"
+  assert_contains "$out" "done-done run -- " "the done names the command to run"
   printf '# the done is refused and names what to run: %s\n' "$out"
   sweep >/dev/null
   [ "$(sends r1)" = 1 ] || fail "the refused lane's worker must be steered once, got $(sends r1)"
   assert_contains "$(grep '^r1	' "$W/send-calls")" "proof inputs are incomplete" "the steer carries the refusal text"
-  assert_contains "$(grep '^r1	' "$W/send-calls")" "merge-card check r1" "the steer names what to run"
+  assert_contains "$(grep '^r1	' "$W/send-calls")" "done-done run -- " "the steer names what to run"
   printf '# the lane worker is steered: %s\n' "$(grep '^r1	' "$W/send-calls" | head -n 1)"
   sweep >/dev/null; [ "$(sends r1)" = 1 ] || fail "the same refusal must not steer again before it is due"
   # Re-rung while the head is unchanged, unless the worker still has an unread steer (the inbox's own ladder rings that one).
@@ -32,7 +32,7 @@ test_a_refusal_reaches_the_lanes_worker_and_never_sits_silent() {
   out=$(sweep); [[ $out != *ALERT* ]] || fail "no alert before ten minutes: $out"
   sed -i "s/^[0-9]* /$(( $(date +%s) - 700 )) /" "$rf"
   out=$(sweep); assert_contains "$out" "ALERT: r1 has sat refused for over 10 minutes" "the alert names the lane"
-  assert_contains "$out" "no approved merge-card evidence" "the alert names the refusal"
+  assert_contains "$out" "no sealed clean done-done run" "the alert names the refusal"
   printf '# after ten silent minutes: %s\n' "$out"
   out=$(sweep); [[ $out != *ALERT* ]] || fail "the alert is raised once: $out"
   # A final refusal (a red gate) tells the ticket and steers the worker once.

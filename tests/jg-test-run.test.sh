@@ -452,6 +452,23 @@ test_a_deleted_shared_fixture_does_not_refuse_the_changed_selection() {
   pass 'a deleted shared test fixture never refuses the changed selection'
 }
 
+# jg8-j20d-s8 deleted the nine captured pipeline outputs under tests/captures/ and trunk's changed selection
+# refused each one as unmapped, so the whole suite went red. A deleted capture has no reader left to select.
+test_a_deleted_capture_file_does_not_refuse_the_changed_selection() {
+  local fixture=$TMP_ROOT/retire-capture res=$TMP_ROOT/retire-capture-results out rc=0
+  required_fixture "$fixture" 'exit 0'
+  mkdir -p "$fixture/tests/captures/retired-tool"
+  printf 'x\n' >"$fixture/tests/captures/retired-tool/overview.toon"
+  git -C "$fixture" add tests
+  git -C "$fixture" -c user.name=t -c user.email=t@example.invalid commit -qm 'add capture'
+  git -C "$fixture" rm -q tests/captures/retired-tool/overview.toon
+  git -C "$fixture" -c user.name=t -c user.email=t@example.invalid commit -qm 'retire the capture'
+  out=$(bash "$fixture/bin/jg-test-run.sh" --required-shards HEAD^ "$res" 2>&1) || rc=$?
+  assert_not_contains "$out" 'no changed-test mapping' "a deleted capture must not be refused as unmapped: $out"
+  jq -e '.summary.failed == 0' "$res/required.json" >/dev/null || fail "a deleted capture must fail no shard: $out"
+  pass 'a deleted capture file never refuses the changed selection'
+}
+
 # The hosted job (--hosted) leaves out a script tests/hosted-needs.tsv lists while a tool it needs is not on the runner's PATH,
 # and names it; the same selection without the flag still lists every one, so the scripts run on our host.
 test_the_hosted_selection_drops_scripts_whose_tool_the_runner_lacks() {
@@ -839,6 +856,7 @@ test_the_hosted_selection_drops_scripts_that_hit_the_time_bound_or_have_no_hoste
 test_the_hosted_selection_drops_scripts_whose_tool_the_runner_lacks
 test_a_deleted_journey_does_not_refuse_the_changed_selection
 test_a_deleted_shared_fixture_does_not_refuse_the_changed_selection
+test_a_deleted_capture_file_does_not_refuse_the_changed_selection
 test_a_changed_shared_file_selects_the_scripts_that_name_it
 test_a_changed_core_script_selects_the_scripts_that_name_it
 test_a_changed_fleet_homes_library_selects_the_move_test

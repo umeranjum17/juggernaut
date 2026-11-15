@@ -43,12 +43,6 @@ def evidence(source, item, row):
     return terminal or bool(explicit), link
 
 
-# The board's stage words until it accepts the machines' own (slice C2): each machine word's nearest board stage. The
-# exact word travels in the ticket's description, so the board shows both. A word not listed here is the worker's own.
-BOARD_STAGE = {'queued': 'queued', 'done': 'merging', 'ready-to-land': 'merging', 'cleaned': 'merging', 'landed': 'merging', 'in-homes': 'merging',
-               'in-homes-off': 'merging', 'in-use': 'merging', 'reverted': 'merging'}
-
-
 def machine(home, source, script, *args):
     """One read-only machine observer (core/machines/observers) run on `source`'s records; empty when it cannot answer."""
     path = home / 'core/machines/observers' / script
@@ -149,11 +143,10 @@ def newest_event(source, item, row):
 
 
 def stage(home, source, item, row, cache, run):
-    """(machine word, board stage, done, PR link, newest event) for one ticket leaf."""
+    """(machine word, done, PR link, newest event) for one ticket leaf; the board stage is not written, Beads status is the truth."""
     terminal, link = evidence(source, item, row)
     done = row['state'] == 'done' or terminal
     match = PR.fullmatch(link)
-    old = {}
     if match and not done:
         old = cache.get(link, {})
         # A merged or closed PR never reopens, so a read that proved one is kept and the sync stops re-asking GitHub for
@@ -168,6 +161,4 @@ def stage(home, source, item, row, cache, run):
             cache[link] = old
         done = old['merged']
     said = 'done' if done else word(home, source, item, row)
-    # A worker's own PR in review is the one thing the board's stage knows that the task machine does not.
-    review = said == 'working' and old.get('state') == 'open' and not old.get('draft')
-    return said, 'review' if review else BOARD_STAGE.get(said, 'done' if done else 'building'), done, link, newest_event(source, item, row)
+    return said, done, link, newest_event(source, item, row)

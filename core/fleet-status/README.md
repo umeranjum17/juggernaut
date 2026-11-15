@@ -19,6 +19,18 @@ other two read `unknown` for a ticket outside their stage. `hold` lists the lane
 listed until a Beads lister exists. The lifetimes are first values, kept in one column of `records.tsv`. Proof: `bash tests/jg-fleet-readings.test.sh`.
 The board's counts still use the record age; showing freshness on the board is the next slice.
 
+## Machine digest (jgp-r5-s2)
+
+`digest.sh <home> [--cap <bytes>] [--now <epoch>]` rolls the readings of all 24 machines into one bounded view that the session digest prints
+(the "Machines" subsection, cap `machines-cap`, default 3500 bytes). A summary line counts fresh, stale and unknown machines; then one line for each
+machine that is not fresh, unknown first, then stale; then one line that names the fresh machines. Under a cap that is too small the last lines are cut
+and a marker says how many machines, and how many of them stale or unknown, were not shown, so a fresh machine always drops before a stale one.
+The machines are read in parallel; one that has not answered in `JG_MACHINE_DIGEST_BOUND` seconds (default 10) reads unknown, never left out.
+A missing home lists every machine as unknown. Proof: `bash tests/jg-fleet-digest.test.sh`, and `tests/jg-session-start.test.sh` for the printed section.
+
+Limit: `readings.sh` runs one observer for each record, so a machine with many records (cleanup, delivering, ticket, task) does not answer in the bound
+on this home today and reads unknown. A batch read in those listers is the follow-up that makes them read.
+
 ## At scale (H38b)
 
 Each home writes one digest, `data/fleet-status/digest.tsv`, with `board.sh --digest <home>`: a `#digest <epoch> <new moves>` line, then

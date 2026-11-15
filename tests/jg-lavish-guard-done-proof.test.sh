@@ -2,7 +2,7 @@
 # Integration test for the done proof check of bin/jg-lavish-guard.sh --append: a local-trunk lane's worker cannot write
 # `done` while the landing would refuse its head for missing proof (jg_dod_trunk_proof_gaps), sees the gap list at once,
 # also after a conflict fix, and its status file is left unchanged.
-# Built from the real failure of opp-c1-checks-writer on 9 Nov: it wrote done with a PASS receipt and no merge-card
+# Built from the real failure of opp-c1-checks-writer on 9 Nov: it wrote done with a PASS receipt and no sealed run
 # evidence the landing would accept, and learned it only from the landing's refusal; after the rebase its new head
 # 1581b9add had neither receipt nor merge-card ("proof inputs are incomplete: no completion receipt with verdict PASS for
 # head 1581b9add439 ...;no approved merge-card evidence citing files for head 1581b9add439 ..."), and it landed 53 minutes
@@ -10,7 +10,7 @@
 # Each case pipes the line through the status command the generated brief gives a worker (bin/jg-brief.sh), with no
 # JG_HOME, into a fixture home of tests/jg-trunk-fixture.sh (real git, the real merge-card check, a sealed run record).
 #
-# D1 A lane with a PASS receipt and no merge-card: done is refused with exit 1 and the merge-card gap, the status file is
+# D1 A lane with a PASS receipt and no sealed run: done is refused with exit 1 and the merge-card gap, the status file is
 #    unchanged, and a blocked: line still goes through.
 # D2 With the whole proof the done line is written; after a conflict fix changes the lane's commit on a moved tip, done
 #    is refused naming the receipt and merge-card gaps of the new head, and is written again once that head is proved.
@@ -38,22 +38,22 @@ append() {
 }
 head12() { git -C "$W/lanes/$1" rev-parse HEAD | cut -c1-12; }
 
-test_a_done_with_no_merge_card_is_refused_and_the_status_file_is_unchanged() {
+test_a_done_with_no_sealed_run_is_refused_and_the_status_file_is_unchanged() {
   local before h
   world d1; bare_lane "$SEED"; prove_part "$SEED" receipt; h=$(head12 "$SEED")
   append "$SEED" 'working [at=1794240000]: Checks block written from the sealed run'
   [ "$RC" = 0 ] && [ -z "$ERR" ] || fail "a working line must pass with no word: rc=$RC $ERR"
   before=$(cat "$HOME_D/state/$SEED.status")
   append "$SEED" "done [at=1794243000]: ready in branch fm/$SEED (local-trunk)"
-  [ "$RC" = 1 ] || fail "a done with no merge-card must exit 1, got $RC: $ERR"
-  assert_contains "$ERR" "no approved merge-card evidence citing files for head $h of $SEED" "the refusal names the missing merge-card at the head"
+  [ "$RC" = 1 ] || fail "a done with no sealed run must exit 1, got $RC: $ERR"
+  assert_contains "$ERR" "no sealed clean done-done run at head $h of $SEED" "the refusal names the missing sealed run at the head"
   assert_not_contains "$ERR" "no completion receipt" "the PASS receipt at this head is not a gap"
   assert_contains "$ERR" "blocked:" "the refusal says what to write when the proof cannot be finished"
   [ "$(cat "$HOME_D/state/$SEED.status")" = "$before" ] || fail "a refused done must leave the status file unchanged: $(cat "$HOME_D/state/$SEED.status")"
-  append "$SEED" 'blocked [at=1794243100]: the merge-card check cannot read the sealed run'
+  append "$SEED" 'blocked [at=1794243100]: the sealed run cannot be written'
   [ "$RC" = 0 ] || fail "a blocked line must go through: $ERR"
   assert_contains "$(tail -n 1 "$HOME_D/state/$SEED.status")" "blocked [at=1794243100]" "the blocked line is written"
-  pass 'a done with no merge-card exits 1 with the gap and an unchanged status file; blocked: still goes through'
+  pass 'a done with no sealed run exits 1 with the gap and an unchanged status file; blocked: still goes through'
 }
 
 test_a_proved_done_is_written_and_a_conflict_fix_must_prove_its_new_head() {
@@ -77,7 +77,7 @@ test_a_proved_done_is_written_and_a_conflict_fix_must_prove_its_new_head() {
   append "$SEED" "done [at=1794244000]: conflict fixed; ready in branch fm/$SEED (local-trunk)"
   [ "$RC" = 1 ] || fail "a done after a conflict fix with no new proof must exit 1, got $RC: $ERR"
   assert_contains "$ERR" "no completion receipt with verdict PASS for head $h of $SEED" "the receipt gap of the new head is named"
-  assert_contains "$ERR" "no approved merge-card evidence citing files for head $h of $SEED" "the merge-card gap of the new head is named"
+  assert_contains "$ERR" "no sealed clean done-done run at head $h of $SEED" "the sealed-run gap of the new head is named"
   [ "$(cat "$HOME_D/state/$SEED.status")" = "$before" ] || fail "the refused done must leave the status file unchanged"
   prove "$SEED"
   append "$SEED" "done [at=1794245000]: conflict fixed; ready in branch fm/$SEED (local-trunk)"
@@ -105,7 +105,7 @@ test_a_check_that_cannot_run_lets_the_line_through_with_a_warning() {
   pass 'no lane record, no jq and another delivery mode each let the line through with one warning'
 }
 
-test_a_done_with_no_merge_card_is_refused_and_the_status_file_is_unchanged
+test_a_done_with_no_sealed_run_is_refused_and_the_status_file_is_unchanged
 test_a_proved_done_is_written_and_a_conflict_fix_must_prove_its_new_head
 test_a_check_that_cannot_run_lets_the_line_through_with_a_warning
 printf 'jg-lavish-guard-done-proof: ok\n'

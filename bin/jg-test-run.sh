@@ -1481,7 +1481,7 @@ families_for_changed_path() {
     bin/jg-lint.sh|bin/jg-lint-workflows.sh|bin/jg-install-shellcheck.sh|\
     bin/jg-install-actionlint.sh|\
     bin/jg-committed-binary-check.sh|bin/jg-ports-check.sh|bin/jg-brief.sh|bin/jg-prior-art-gate.sh|bin/jg-recon-gate.sh|bin/jg-recon-depth.sh|bin/jg-loss-claim-check.sh|bin/jg-ensure-agents-md.sh|bin/jg-crew-state.sh|\
-    bin/jg-captain-hold.sh|bin/jg-decision-hold.sh|bin/jg-supervision*|bin/jg-transition-lib.sh|\
+    bin/jg-captain-hold.sh|bin/jg-decision-hold.sh|bin/jg-lavish-guard.sh|bin/jg-recon-handoff.sh|bin/jg-supervision*|bin/jg-transition-lib.sh|\
     bin/jg-tmux-lib.sh|bin/jg-marker-lib.sh|bin/jg-operational-input.sh|bin/jg-backlog-lib.sh|\
     bin/jg-vendor-auth-probe.sh|\
     bin/jg-primary-scope-lib.sh|bin/jg-project-mode.sh|bin/jg-forge-detect.sh|bin/jg-promote.sh|\
@@ -1585,6 +1585,13 @@ families_for_changed_path() {
       fi
       ;;
     tests/*)
+      # A deleted test-tree file (a retired capture or fixture) has no consuming
+      # suite left to select, the same rule the shared-fixture and bin arms
+      # apply: it selects only suites that still name it and never refuses.
+      if [ ! -e "$path" ]; then
+        scripts_for_test_reference "$path" || families_for_test_reference "$path" || true
+        return 0
+      fi
       printf '%s\n' "__unmapped__:$path"
       ;;
     README.md|LICENSE|assets/*|docs/*|.gitignore)
