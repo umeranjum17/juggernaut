@@ -156,6 +156,7 @@ done
 for edit in '.schema_version = 2' '.error_code = "Not Safe"' '.state = "posted"' '.total_chunks = 2' '.state = "partial"' '.attempt_count = -1' '.occurred_at = "soon"' '.next_attempt_at = "soon"' '.extra = 1'; do
   n=$((n + 1)); jq "$edit" "$T/er.json" > "$T/er$n.json"; miss pf-two "er$n"
 done
+pass "delivery receipts and errors are checked when they are written"  # progress for a slow host: the runner ends a script only after a silence
 jq '.attempt_count = 2 | .state = "partial" | .total_chunks = 3 | .posted_chunks = 1' "$T/er.json" > "$T/er-part.json"
 jq '.attempt_count = 0 | .state = "expired-action-required"' "$T/er.json" > "$T/er-late.json"
 jq '.attempt_count = 0 | .state = "context-blocked"' "$T/er.json" > "$T/er-ctx.json"
@@ -191,6 +192,7 @@ post pf-two rc
 post pf-two rc-other
 begin pf-two "$sha"
 miss pf-two er
+pass "delivery attempts keep the typed path"  # progress for a slow host: the runner ends a script only after a silence
 waive pf-two reason captain
 [ "$(notes pf-two)" = 5 ] || fail "each delivery record must be one comment, got $(notes pf-two)"
 waive pf-five 'owed nothing' captain --json
@@ -257,6 +259,7 @@ pf "$ROOT/bin/jg-public-followup.sh" deliver pf-j >/dev/null || fail "journey de
 pf "$ROOT/bin/jg-public-followup.sh" deliver pf-j >/dev/null || fail "journey repeat"
 [ "$(wc -l < "$T/posts")" = 1 ] || fail "one post from two delivers, got $(wc -l < "$T/posts")"
 [ "$(ask jr public-followup list --delivery-state posted --json | jq '.public_followups | length')" = 1 ] || fail "the promise must end posted"
+pass "the whole promise posts once on a Beads home"  # progress for a slow host: the runner ends a script only after a silence
 # A crash between the comment and the row write folds on the rerun, so the answer stays one event.
 promise 'ask bd' pf-gap req >/dev/null
 ask bd public-followup bind-work pf-gap --relation-file "$T/rel-a.json" >/dev/null
@@ -265,6 +268,7 @@ BEADS_DIR=$T/bd/s/.beads "${jail[@]}" "$ROOT/bin/jg-beads.sh" comment pf-gap "$(
 ask bd public-followup work-event pf-gap --event-file "$T/ev-gap.json" --json > "$T/gap.out" || fail "the rerun must accept the logged event"
 [ "$(jq -r '.already, .task.public_followup.delivery.state' "$T/gap.out" | paste -sd' ')" = "true ready" ] || fail "the rerun must answer already and ready: $(cut -c1-200 "$T/gap.out")"
 [ "$(ask bd public-followup list --delivery-state ready --json | jq '[.public_followups[] | select(.id == "pf-gap")] | length')" = 1 ] || fail "the rerun must leave the row ready"
+pass "a crash between the comment and the row write folds on the rerun"  # progress for a slow host: the runner ends a script only after a silence
 # Writers of one id race to one row with one delivery key.
 for n in 1 2 3 4; do promise 'ask bd' pf-race req --json > "$T/race.$n" 2>/dev/null & done; wait
 [ "$(ask bd public-followup list --json | jq '[.public_followups[] | select(.id == "pf-race")] | length')" = 1 ] || fail "one promise from four writers"
