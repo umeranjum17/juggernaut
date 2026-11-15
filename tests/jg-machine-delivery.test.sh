@@ -141,6 +141,21 @@ claim "the build is fixed; screen: none"; expect_code 0 "$RC" "a claim that name
 OUT=$(bash "$CLAIM" working "feat-off is live" 2>&1); expect_code 0 "$?" "only a done report is judged"
 pass "live-claim says live only for in-use, with the proof"
 
+# Main holds no go-live rows for a project a Squad Lead runs: it reads the lead's record, read only
+M=$T/main; mkdir -p "$M/data" "$M/config"; : > "$M/config/feat-on"
+tab_lead() { printf -- '- lead-a - the lead (home: %s; scope: all; projects: other, juggernaut; added 2026-11-01)\n' "$JG_HOME"; }
+main_word() { JG_HOME=$M bash "$OBS" feat-on 2>"$T/main.err"; }
+assert_equals unlanded "$(main_word)" "no row, no registry entry and no repository here: as before (unlanded)"
+tab_lead > "$M/data/squad_leads.md"
+assert_equals in-use "$(main_word)" "no row here, a lead lists the project: the lead's record says in-use"
+assert_equals in-use "$(: > "$C/feat-on"; bash "$OBS" feat-on; rm -f "$C/feat-on")" "the lead home's own run is unchanged"
+stray=$(find "$M" -type f ! -name squad_leads.md ! -name feat-on); assert_equals "" "$stray" "nothing is copied into Main"
+printf -- '- lead-b - other (home: %s/nowhere; scope: x; projects: juggernaut; added 2026-11-01)\n' "$T" > "$M/data/squad_leads.md"
+assert_equals unlanded "$(main_word)" "a lead home with no record leaves the word as before"
+assert_contains "$(cat "$T/main.err")" "no data/trunk-in-use.tsv" "one stderr line names the missing record"
+rm -f "$M/data/squad_leads.md"; assert_equals unlanded "$(main_word)" "remove the registry line: as before again"
+pass "Main reads the lead's go-live record"
+
 # the shipped registry and the shipped state machine slices
 unset JG_DELIVERY_CHANGES
 bash "$OBS" check; expect_code 0 "$?" "the shipped registry lints"

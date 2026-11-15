@@ -29,6 +29,9 @@
 #   pinned-behind  a home was pinned back (`live,pinned-back-from:*`) to a commit that lacks the change
 #   landed         anything else: on the trunk, and some home does not run it yet
 # The switch and the proof are read in the home that asks, because config/ is per home.
+# A home with no row of the project (Main, for a project a Squad Lead runs) reads the go-live record of the lead whose
+# entry in data/squad_leads.md lists the project: that home's data/trunk-in-use.tsv, state/trunk-tip-<project> and
+# projects/<project>. Nothing is copied or written; a lead home that is missing leaves the word as read here and prints one stderr line.
 # The command only reads: it writes no record and runs no move.
 set -u
 export LC_ALL=C
@@ -62,6 +65,23 @@ proof_held() {
   esac
 }
 
+# Sets ROWS (the go-live record), and TIP and REPO, from the lead home that runs the project, when the asking home has no
+# row of it. The lead is the first local entry of data/squad_leads.md whose projects: list names the project and whose
+# (home: ...) holds data/trunk-in-use.tsv. Nothing is copied or written.
+record_home() {
+  local h
+  grep -q "^$PROJECT:" "$ROWS" 2>/dev/null && return 0
+  h=$(sed -nE '/^- [A-Za-z0-9._-]+ - .*\(home:/ {
+    s/^.*\(home:[[:space:]]*([^;)]*);.*projects:[[:space:]]*([^;)]*);.*$/\1\t\2/p }' "$DATA/squad_leads.md" 2>/dev/null |
+    awk -F'\t' -v p="$PROJECT" '{ n = split($2, a, /[ ,]+/); for (i = 1; i <= n; i++) if (a[i] == p) { print $1; exit } }')
+  [ -n "$h" ] || return 0
+  if [ ! -f "$h/data/trunk-in-use.tsv" ]; then echo "delivery.sh: lead home $h has no data/trunk-in-use.tsv; $ID stays as read here" >&2; return 0; fi
+  ROWS=$h/data/trunk-in-use.tsv
+  [ -f "$h/state/trunk-tip-$PROJECT" ] && TIP=$(cat "$h/state/trunk-tip-$PROJECT")
+  git -C "$h/projects/$PROJECT" rev-parse --git-dir >/dev/null 2>&1 && REPO=$h/projects/$PROJECT
+  return 0
+}
+
 # One line naming the exercise row of the change at every commit a home runs; nothing when any home's commit has none.
 exercised() {
   local h full row out=''
@@ -81,6 +101,7 @@ classify() {  # <id>
   load "$1" || return 1
   REPO=$JG_HOME/projects/$PROJECT; git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1 || REPO=$JG_HOME
   TIP=$(cat "$STATE/trunk-tip-$PROJECT" 2>/dev/null); TIP=${TIP:-HEAD}
+  ROWS=$DATA/trunk-in-use.tsv; record_home; TIP=${TIP:-HEAD}
   c=$(commit_on_trunk); C=$c
   [ -n "$c" ] || { WORD=unlanded; return 0; }
   if [ -n "$(git -C "$REPO" log "$TIP" -n 1 --format=%H --grep="^reverts: $c" --grep="This reverts commit $c" 2>/dev/null)" ]; then WORD=reverted; return 0; fi
@@ -93,7 +114,7 @@ classify() {  # <id>
     fi
     behind=$((behind + 1)); case $st in live,pinned-back*) pinned=1 ;; esac
   done < <(awk -F'\t' -v p="$PROJECT:" 'index($1, p) == 1 { k = $1; last[k] = $4; if ($4 ~ /^live/) sha[k] = $2 }
-    END { for (k in last) print k "\t" (sha[k] == "" ? "-" : sha[k]) "\t" last[k] }' "$DATA/trunk-in-use.tsv" 2>/dev/null)
+    END { for (k in last) print k "\t" (sha[k] == "" ? "-" : sha[k]) "\t" last[k] }' "$ROWS" 2>/dev/null)
   if [ "$homes" -eq 0 ] || [ "$behind" -gt 0 ]; then
     if [ "$pinned" = 1 ]; then WORD="pinned-behind"; else WORD=landed; fi; return 0
   fi
