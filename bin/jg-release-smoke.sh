@@ -189,13 +189,15 @@ must_merge() {  # <what>
   [ "$MERGE_CALLED" -eq 1 ] || fail "$1: the merge never reached the forge"
 }
 
+# A ticket body carries the sections bd's lint.sections.task requires; $1 is the ask, $2 extra body lines.
+body() { printf '## Captain\nThe smoke lane.\n## Ask\n%s\n## Why\nThe smoke lane needs this ticket.\n## Done when\nThe lane reads its outcome.\n## Acceptance Criteria\nThe lane passes.\n%s' "$1" "${2:-}"; }
+
 # ---- lane 1: design -------------------------------------------------------
 LANE=design
 mkproject "$T/p-design" release/c-6
-tasks add smoke-dz1 "[design-ux] Tickets page design" --kind ship --repo sample --body "The page needs a design pick." >/dev/null || fail "cannot file the design ticket"
-tasks add smoke-sa1 "[feature] Build the tickets page" --kind ship --repo sample --body "Customers need the page.
-linked-to: smoke-dz1" >/dev/null || fail "cannot file the linked ship"
-tasks add smoke-su1 "[feature] Fix the footer" --kind ship --repo sample --body "The footer is broken." >/dev/null || fail "cannot file the unrelated ship"
+tasks add smoke-dz1 "[design-ux] Tickets page design" --kind ship --repo sample --priority 2 --body "$(body "The page needs a design pick.")" >/dev/null || fail "cannot file the design ticket"
+tasks add smoke-sa1 "[feature] Build the tickets page" --kind ship --repo sample --priority 2 --body "$(body "Customers need the page." "linked-to: smoke-dz1")" >/dev/null || fail "cannot file the linked ship"
+tasks add smoke-su1 "[feature] Fix the footer" --kind ship --repo sample --priority 2 --body "$(body "The footer is broken.")" >/dev/null || fail "cannot file the unrelated ship"
 GH_HEAD_REF=fm/smoke-sa1 merge smoke-sa1 201 release/c-6 "$T/p-design"
 must_refuse "linked ship with an open design pick" "smoke-dz1"
 merge smoke-su1 202 release/c-6 "$T/p-design"

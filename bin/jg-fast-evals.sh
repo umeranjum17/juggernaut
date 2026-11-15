@@ -92,8 +92,8 @@ eval_ticket_round_trip() {
   printf '%s\n' "$store" > "$EVAL_HOME/config/beads-dir"
   BEADS_DIR=$store "$JG_ROOT/bin/jg-beads.sh" init --prefix eval >"$SCRATCH/beads-init.log" 2>&1 \
     || { echo "the throwaway Beads store was not created: $(tail -n 1 "$SCRATCH/beads-init.log")"; return 1; }
-  eval_home bin/jg-backlog.sh add eval-one 'Eval ticket' -l feature \
-    --body 'why: the fast evals prove the backlog wrapper keeps a ticket' >"$SCRATCH/ticket-add.log" 2>&1 \
+  eval_home bin/jg-backlog.sh add eval-one 'Eval ticket' -l feature --priority 2 \
+    --body $'## Captain\nThe fast evals.\n## Ask\nKeep the ticket.\n## Why\nThe fast evals prove the backlog wrapper keeps a ticket.\n## Done when\nThe list returns it.\n## Acceptance Criteria\nThe list counts one.' >"$SCRATCH/ticket-add.log" 2>&1 \
     || { echo "ticket add exited nonzero: $(tail -n 1 "$SCRATCH/ticket-add.log")"; return 1; }
   out=$(eval_home bin/jg-backlog.sh list 2>&1) || { echo "ticket list exited nonzero: $out"; return 1; }
   printf '%s\n' "$out" | grep -q 'count: 1' || { echo "the list does not count the ticket just added"; return 1; }

@@ -1535,7 +1535,9 @@ test_branch_prefix_command_is_shell_safe() {
   local home id prefix marker brief command repo branch
   home="$TMP_ROOT/branch-prefix-shell-safe-home"
   mkdir -p "$home/config" && : > "$home/config/delivery-risk-loose"
-  marker="$TMP_ROOT/branch-prefix-shell-safe-marker"
+  # A bare file name, created in the fixture repo's directory when the prefix is executed: an absolute marker
+  # would put TMP_ROOT in the prefix, and a TMPDIR under a dot folder (~/.cache) is not a valid git ref.
+  marker=pwned-marker
   id='brief-branch-safe-g3'
   prefix="\$(touch\${IFS}$marker)"
   mkdir -p "$home/data"
@@ -1548,7 +1550,7 @@ test_branch_prefix_command_is_shell_safe() {
   repo="$TMP_ROOT/branch-prefix-shell-safe-repo"
   git init -q "$repo" || fail "could not initialize shell-safety fixture repository"
   ( cd "$repo" && eval "$command" ) || fail "generated branch-creation command did not run"
-  assert_absent "$marker" "generated branch command executed the prefix's command substitution"
+  assert_absent "$repo/$marker" "generated branch command executed the prefix's command substitution"
   branch=$(git -C "$repo" branch --show-current)
   [ "$branch" = "$prefix$id" ] \
     || fail "generated branch command did not create the literal configured branch (got '$branch')"
