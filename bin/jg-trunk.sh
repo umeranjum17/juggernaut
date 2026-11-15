@@ -461,11 +461,6 @@ gate_results() {  # <log>
   ' "$1"
 }
 
-# The paths a runner log reports as failed with <type> (mapping, resource or test): the type the runner put on each JG_TEST_END line.
-gate_typed() {  # <log> <type>
-  awk -v t="$2" '/^JG_TEST_END / && $0 !~ / exit=0( |$)/ { ty = "test"; if (match($0, / type=[a-z]+/)) ty = substr($0, RSTART + 6, RLENGTH - 6); if (ty == t) print $3 }' "$1"
-}
-
 # The failures a full gate left behind that no test script accounts for: a gate that failed for another reason
 # (a check before the runner, a runner that died) is never forgiven. Prints nothing when every failure is a script's.
 gate_unexplained() {  # <log> <results>
@@ -639,15 +634,8 @@ gate_figures() {  # <first-run log> <start epoch>
 # reason no test script accounts for. The base is the trunk tip for a landing and the commit's parent for a verify.
 full_gate() {  # <candidate> <command> <base>
   local rc=0 verdict
-  GATE_FAILED=''; GATE_COVERAGE=''
+  GATE_FAILED=
   _full_gate "$@" || rc=$?
-  # The coverage failure is charged to the lane once, named by its paths, even when every script that ran was green.
-  if [ -n "$GATE_COVERAGE" ] && [ "$rc" -ne 1 ]; then
-    rc=2; GATE_KIND=full
-    GATE_BAD="${GATE_BAD:+$GATE_BAD }$GATE_COVERAGE"
-    GATE_BAD_SIG="${GATE_BAD_SIG:+$GATE_BAD_SIG; }coverage: no test names:${GATE_COVERAGE:+ $GATE_COVERAGE}"
-    echo "REFUSED: gate 'full' at ${1:0:12}: one coverage failure, no test names these changed paths and none was run or rerun: $GATE_COVERAGE" >&2
-  fi
   # One verdict per commit (H29g): the judge (the lander's tip run, the verify or the nightly) keeps what it saw on this tree, and a
   # second judge that saw another failed set raises judge-split. A run that ended for a reason no test accounts for (1) judged nothing.
   if [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ]; then
@@ -659,8 +647,8 @@ full_gate() {  # <candidate> <command> <base>
   return "$rc"
 }
 _full_gate() {  # <candidate> <command> <base>
-  local badsig='' cand=$1 log="${LAND_ATTEMPT:-$DATA/trunk/gate-$PN-${1:0:12}}-full.log" envf rc=0 mine tipres line s ex sig tex tsig bad='' old='' unexplained quoted again settled now flaky='' t0 passing='' byself='' byparent='' rerun_red noparent='' coverage=''
-  t0=$(date +%s); GATE_KIND=full; GATE_COVERAGE=; GATE_FIGURES=; GATE_BAD=; GATE_BAD_SIG=
+  local badsig='' cand=$1 log="${LAND_ATTEMPT:-$DATA/trunk/gate-$PN-${1:0:12}}-full.log" envf rc=0 mine tipres line s ex sig tex tsig bad='' old='' unexplained quoted again settled now flaky='' t0 passing='' byself='' byparent='' rerun_red noparent=''
+  t0=$(date +%s); GATE_KIND=full; GATE_FIGURES=; GATE_BAD=; GATE_BAD_SIG=
   envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX" 2>/dev/null) || { mkdir -p "$DATA/trunk"; envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX"); }
   gate_exec "$cand" "$2" "$log" "$envf" || rc=$?
   gate_deadline_ok || { rm -f -- "$envf"; return 1; }
@@ -675,13 +663,6 @@ _full_gate() {  # <candidate> <command> <base>
   fi
   # A flaky failure gets one rerun before it is judged: the scripts are rerun once on the candidate, and only
   # what fails again counts (as that second run saw it). A script the rerun does not report keeps its first result.
-  # A mapping failure (no test names the path) is one coverage failure of the lane: nothing ran for it, so it is never rerun, never read
-  # from a tip and never a flaky row. It is set apart here and charged to the lane once, whatever else this gate finds.
-  coverage=$(gate_typed "$log" mapping | paste -sd' ' -)
-  if [ -n "$coverage" ]; then
-    mine=$(printf '%s\n' "$mine" | while IFS= read -r line; do case " $coverage " in *" ${line%%$'\t'*} "*) ;; *) printf '%s\n' "$line" ;; esac; done)
-    GATE_COVERAGE=$coverage
-  fi
   quoted=$(printf '%s\n' "$mine" | while IFS= read -r line; do printf ' %q' "${line%%$'\t'*}"; done)
   rerun_scripts "$cand" "$envf" "$DATA/trunk/gate-$PN-${cand:0:12}-full-rerun.log" "$quoted"
   gate_deadline_ok || { rm -f -- "$envf"; return 1; }

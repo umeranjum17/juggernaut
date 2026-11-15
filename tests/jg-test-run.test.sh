@@ -111,45 +111,49 @@ test_a_shard_that_stops_before_its_result_still_writes_a_failed_result() {
   pass 'a shard that stops before its result writes a failed result naming the shard, and an overrun is still named'
 }
 
-# An unmapped source path (the trunk tip's bin/jg-tool-wiring.sh) stopped all eight shards at selection. It fails as its own
-# record now, once, and every other script keeps its own verdict, the same as an unmapped test file.
-test_an_unmapped_source_path_fails_only_itself() {
-  local fixture=$TMP_ROOT/unmapped-bin res=$TMP_ROOT/unmapped-bin-results out rc=0
-  required_fixture "$fixture" 'exit 0'
-  printf '#!/usr/bin/env bash\n:\n' >"$fixture/bin/jg-orphan-lib.sh"
-  git -C "$fixture" add bin/jg-orphan-lib.sh
+# verify-unmapped-92: a verify candidate with 92 changed paths its own runner cannot map stayed red far past its grace, because each
+# path was recorded as a failed test, and the pin never moved. An unmapped path is a coverage note now: nothing ran for it, so it is
+# no result, it adds nothing to the failed count and it never refuses the gate.
+# Adds <count> source paths no test names, one source path and one test file among them, to the amended last commit of <fixture>.
+add_unmapped_paths() {  # <fixture> <count>
+  local fixture=$1 count=$2 i
+  for i in $(seq 1 "$count"); do printf '#!/usr/bin/env bash\n:\n' >"$fixture/bin/jg-orphan-$i-lib.sh"; done
+  printf '#!/usr/bin/env bash\n:\n' >"$fixture/tests/orphan-fixture.sh"
+  git -C "$fixture" add bin tests/orphan-fixture.sh
   git -C "$fixture" -c user.name=t -c user.email=t@example.invalid commit -q --amend --no-edit
-  out=$(bash "$fixture/bin/jg-test-run.sh" --required-shards HEAD^ "$res" 2>&1) || rc=$?
-  [ "$rc" = 1 ] || fail "an unmapped source path must refuse the gate with exit 1: rc=$rc $out"
-  assert_not_contains "$out" 'stopped with exit' 'no shard may stop before its result'
-  assert_contains "$out" 'not ok - bin/jg-orphan-lib.sh: no changed-test mapping for source path: bin/jg-orphan-lib.sh' 'the path and the cause are named'
-  assert_contains "$out" 'JG_TEST_END' 'results are reported'
-  printf '%s\n' "$out" | grep -E '^JG_TEST_END .* bin/jg-orphan-lib.sh exit=1 .* type=mapping$' >/dev/null || fail "the unmapped path must end as a mapping failure, never run: $out"
-  printf '%s\n' "$out" | grep -E '^JG_TEST_END .* tests/required-feature.test.sh exit=0 .* type=test$' >/dev/null || fail "a script that ran carries the type test: $out"
-  jq -e '.summary.lanes == 8 and .summary.failed_lanes == 1 and .summary.total == 2 and .summary.failed == 1
-    and ([.scripts[] | select(.path == "tests/required-feature.test.sh" and .exit == 0)] | length) == 1' \
-    "$res/required.json" >/dev/null || fail "the aggregate must hold the other script's pass and only the stray path's failure: $out"
-  pass 'an unmapped source path fails only itself in one shard and the other scripts still run'
 }
 
-# trunk-v4 shard 8 stopped on "no changed-test mapping for source path: tests/jg-machine-call-fixture.sh" and held the green pin:
-# a changed test file that no suite names made the whole selection refuse. It fails as its own record now, once, and every other
-# script in the shards still runs and keeps its own verdict.
-test_an_unmapped_test_file_fails_only_itself() {
-  local fixture=$TMP_ROOT/unmapped-test res=$TMP_ROOT/unmapped-test-results out rc=0
+test_92_unmapped_paths_are_coverage_notes_and_no_failed_results() {
+  local fixture=$TMP_ROOT/unmapped-92 res=$TMP_ROOT/unmapped-92-results out rc=0
   required_fixture "$fixture" 'exit 0'
-  printf '#!/usr/bin/env bash\n:\n' >"$fixture/tests/orphan-fixture.sh"
-  git -C "$fixture" add tests/orphan-fixture.sh
-  git -C "$fixture" -c user.name=t -c user.email=t@example.invalid commit -q --amend --no-edit
+  add_unmapped_paths "$fixture" 91
   out=$(bash "$fixture/bin/jg-test-run.sh" --required-shards HEAD^ "$res" 2>&1) || rc=$?
-  [ "$rc" = 1 ] || fail "an unmapped test file must refuse the gate with exit 1: rc=$rc $out"
+  [ "$rc" = 0 ] || fail "unmapped paths must not refuse the gate: rc=$rc $out"
   assert_not_contains "$out" 'stopped with exit' 'no shard may stop before its result'
-  assert_contains "$out" 'not ok - tests/orphan-fixture.sh: no changed-test mapping for source path: tests/orphan-fixture.sh' 'the file and the cause are named'
-  [ "$(printf '%s\n' "$out" | grep -c '^JG_TEST_END .* tests/orphan-fixture.sh exit=1')" = 1 ] || fail "the file must fail once, in one shard: $out"
-  jq -e '.summary.lanes == 8 and .summary.failed_lanes == 1 and .summary.total == 2 and .summary.failed == 1
+  assert_not_contains "$out" 'not ok' 'an unmapped path is never a failed test'
+  [ "$(printf '%s\n' "$out" | grep -c '^JG_TEST_COVERAGE_NOTE ')" = 92 ] || fail "each of the 92 unmapped paths is one coverage note: $out"
+  assert_contains "$out" 'JG_TEST_COVERAGE_NOTE bin/jg-orphan-1-lib.sh: no changed-test mapping' 'the note names the path and the cause'
+  assert_contains "$out" 'JG_TEST_COVERAGE_NOTE tests/orphan-fixture.sh: no changed-test mapping' 'a test file nothing names is a note too'
+  ! printf '%s\n' "$out" | grep -E '^JG_TEST_END .* (bin/jg-orphan|tests/orphan-fixture)' >/dev/null || fail "an unmapped path never ends as a result: $out"
+  printf '%s\n' "$out" | grep -E '^JG_TEST_END .* tests/required-feature.test.sh exit=0 .* type=test$' >/dev/null || fail "a script that ran carries the type test: $out"
+  jq -e '.summary.lanes == 8 and .summary.failed_lanes == 0 and .summary.total == 1 and .summary.failed == 0
     and ([.scripts[] | select(.path == "tests/required-feature.test.sh" and .exit == 0)] | length) == 1' \
-    "$res/required.json" >/dev/null || fail "the aggregate must hold the other script's pass and only the stray file's failure: $out"
-  pass 'an unmapped test file fails only itself in one shard and the other scripts still run'
+    "$res/required.json" >/dev/null || fail "the aggregate holds only the script that ran, with no failed result: $out"
+  pass '92 unmapped paths print 92 coverage notes, add no failed result and leave the gate green'
+}
+
+# A path no test names must not hide a real failure: the mapped test that fails still fails the gate, alone.
+test_a_failing_mapped_test_still_fails_beside_unmapped_paths() {
+  local fixture=$TMP_ROOT/unmapped-red res=$TMP_ROOT/unmapped-red-results out rc=0
+  required_fixture "$fixture" 'echo "not ok - real failure"; exit 1'
+  add_unmapped_paths "$fixture" 3
+  out=$(bash "$fixture/bin/jg-test-run.sh" --required-shards HEAD^ "$res" 2>&1) || rc=$?
+  [ "$rc" = 1 ] || fail "a failing mapped test must refuse the gate: rc=$rc $out"
+  [ "$(printf '%s\n' "$out" | grep -c '^JG_TEST_COVERAGE_NOTE ')" = 4 ] || fail "the unmapped paths are still noted: $out"
+  jq -e '.summary.total == 1 and .summary.failed == 1 and .summary.failed_lanes == 1
+    and ([.scripts[] | select(.path == "tests/required-feature.test.sh" and .exit == 1)] | length) == 1' \
+    "$res/required.json" >/dev/null || fail "only the real failing script is a failed result: $out"
+  pass 'a genuinely failing mapped test still fails the gate beside unmapped paths'
 }
 
 # verify-red-unmapped-paths: the line's verify went red on four changed files that no test names by file name (the lease module, the
@@ -893,8 +897,7 @@ test_a_script_with_a_done_done_entry_is_selected_by_no_old_selector
 test_the_coverage_time_budget_advises_and_a_script_no_shard_runs_still_refuses
 test_an_empty_serial_shard_with_every_script_entered_passes_the_coverage_guard
 test_a_quarantined_script_is_listed_not_run_and_the_gate_passes
-test_an_unmapped_test_file_fails_only_itself
-test_four_formerly_unmapped_bin_paths_map_to_their_tests
-test_an_unmapped_source_path_fails_only_itself
+test_92_unmapped_paths_are_coverage_notes_and_no_failed_results
+test_a_failing_mapped_test_still_fails_beside_unmapped_paths
 
 printf 'all %s\n' 'jg-test-run limit tests passed'

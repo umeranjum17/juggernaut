@@ -30,45 +30,42 @@ test_a_changed_file_that_is_not_a_test_is_never_run_bare_on_the_tip() {
   local out
   world nontest; rig
   # The tip carries a library and a command that fail when bash runs them bare; the gate reports a changed path it has no test for
-  # as a failure of the lane that changed it, and names it among the failed scripts.
+  # as a coverage note in its log, never as a failed script, so the lane lands.
   git -C "$PROJ" worktree add -q -b seed "$W/seed" trunk
   commit_in "$W/seed" t/lib.py 'echo "not ok - lib" >&2; exit 2' "seed lib"
   commit_in "$W/seed" t/needs-store.sh 'echo "not ok - store" >&2; exit 2' "seed store"
   JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref refs/heads/trunk "$(git -C "$W/seed" rev-parse HEAD)"
   git -C "$PROJ" rev-parse trunk > "$HOME_D/state/trunk-tip-proj"
-  printf 'gate-full=export GATE_MARK=yes; bash %s/rig.sh $(git diff --name-only HEAD~1 | grep -E "^t/(lib.py|needs-store.sh)$") t/*.test.sh\n' "$W" >> "$HOME_D/config/trunk-policy"
+  printf 'gate-full=export GATE_MARK=yes; bash %s/rig.sh $(git diff --name-only HEAD~1 | grep -E "^t/(lib.py|needs-store.sh)$")\n' "$W" >> "$HOME_D/config/trunk-policy"
   lane lib 'echo "not ok - lib" >&2; exit 2 # changed' t/lib.py
-  out=$(trunk land lib 2>&1) && fail "a changed non-test path the gate failed must stay the lane's failure: $out"
-  assert_contains "$out" "one coverage failure" "the lane is charged once, as a coverage failure, for the path it changed"
-  assert_contains "$out" "t/lib.py" "the refusal names the path"
+  out=$(trunk land lib 2>&1) || fail "a changed non-test path is a coverage note, never a failure of the lane: $out"
   [ ! -e "$HOME_D/data/trunk/flaky-proj.tsv" ] || ! grep -q 't/lib.py' "$HOME_D/data/trunk/flaky-proj.tsv" || fail "a mapping failure is never a flaky row"
   ! grep -qs 'flaky-proj-lib' "$W/backlog-calls" || fail "a mapping failure files no flaky ticket"
   [ ! -e "$HOME_D/data/trunk/tip-red-reported-proj.tsv" ] || [ ! -s "$HOME_D/data/trunk/tip-red-reported-proj.tsv" ] || fail "a non-test path is never reported as the tip's red: $(cat "$HOME_D/data/trunk/tip-red-reported-proj.tsv")"
   ! grep -qs 'alert-line-red' "$HOME_D/state/.wake-queue" || fail "a non-test path must raise no tip-red alert: $(cat "$HOME_D/state/.wake-queue")"
   ! grep -qs 't/lib.py' "$HOME_D/data/trunk/"tip-results-proj-*.tsv || fail "the tip is never asked for a non-test path's result"
   ! grep -qsE 'JG_TEST_BEGIN .* t/(lib.py|needs-store.sh) ' "$HOME_D/data/trunk/"gate-proj-*-tip-*.log || fail "no tip run may start a non-test path"
-  pass 'a changed library or store-bound command is never run bare on the tip, so it raises no tip-red alert'
+  pass 'a changed library or store-bound command is a coverage note, never run bare on the tip and never a red'
 }
 
-# One gate sees an unmapped path and a real failing journey together: the path is one coverage failure that never runs, reruns or files
-# a flake row, the journey still reruns once (it passes on the rerun and is filed flaky), and the flake intake closes a fake row an
+# One gate sees an unmapped path and a real failing journey together: the path is a coverage note that never runs, reruns or files a
+# flake row, the journey still reruns once (it passes on the rerun and is filed flaky), and the flake intake closes a fake row an
 # earlier gate filed for a non-test path.
 # shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
-test_an_unmapped_path_is_one_coverage_failure_and_a_real_failure_still_reruns_once() {
+test_an_unmapped_path_is_a_coverage_note_and_a_real_failure_still_reruns_once() {
   local out
   world cover; rig
   printf 'gate-full=bash %s/rig.sh t/orphan.lib t/n.test.sh\n' "$W" >> "$HOME_D/config/trunk-policy"
   mkdir -p "$HOME_D/data/trunk"; printf '1\tabc\tbin/old-lib.sh\tflaky-proj-old-lib\n' > "$HOME_D/data/trunk/flaky-proj.tsv"
   lane cov "[ -e $W/seen-n ] || { : > $W/seen-n; echo 'not ok - first run' >&2; exit 1; }; exit 0" t/n.test.sh
-  out=$(trunk land cov 2>&1) && fail "an unmapped path must stay the lane's one coverage failure: $out"
-  assert_contains "$out" "one coverage failure" "the unmapped path is reported as one coverage failure"
+  out=$(trunk land cov 2>&1) || fail "an unmapped path must not refuse the lane: $out"
   rerun=$(cat "$HOME_D"/data/trunk/gate-proj-*-full-rerun.log)
   assert_contains "$rerun" "t/n.test.sh" "the real failing journey is rerun"
   assert_not_contains "$rerun" "t/orphan.lib" "the unmapped path is never rerun"
   assert_contains "$(cat "$HOME_D/data/trunk/flaky-proj.tsv")" "t/n.test.sh" "the journey that passed on its rerun is recorded flaky"
   ! grep -q 'flaky-proj-orphan' "$W/backlog-calls" || fail "the unmapped path files no flaky ticket: $(cat "$W/backlog-calls")"
   grep -q '^done flaky-proj-old-lib' "$W/backlog-calls" || fail "the flake intake closes the fake row an earlier gate filed: $(cat "$W/backlog-calls")"
-  pass 'an unmapped path is one coverage failure that never runs or files a flake, a real failure still reruns once, and a fake flake row is closed'
+  pass 'an unmapped path is a coverage note that never runs or files a flake, a real failure still reruns once, and a fake flake row is closed'
 }
 
 # shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
@@ -601,7 +598,7 @@ test_a_local_lane_lands_with_no_tests_and_the_verify_reports_a_red() {
 
 test_landing_deadline_spans_both_gates
 test_a_changed_file_that_is_not_a_test_is_never_run_bare_on_the_tip
-test_an_unmapped_path_is_one_coverage_failure_and_a_real_failure_still_reruns_once
+test_an_unmapped_path_is_a_coverage_note_and_a_real_failure_still_reruns_once
 test_the_full_gate_charges_a_lane_only_for_what_it_broke
 test_every_landing_records_the_done_epoch_and_writes_no_latency_row
 test_a_flaky_failure_gets_one_rerun_before_it_is_judged

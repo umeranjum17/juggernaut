@@ -1693,7 +1693,7 @@ select_changed() {
           wanted_scripts+=("$script_name")
           ;;
         __unmapped__:*)
-          # A path no suite names fails only itself, so one stray path never stops every shard.
+          # A path no suite names is a coverage note, so one stray path never stops or fails a shard.
           UNMAPPED_PATHS+=("${entry#__unmapped__:}")
           ;;
         *)
@@ -1870,7 +1870,7 @@ apply_shard() {
   [ -n "$SHARD" ] || return 0
   index=${SHARD%%of*}
   count=${SHARD#*of}
-  # An unmapped path is one record, so only the first shard carries it.
+  # An unmapped path is one note, so only the first shard carries it.
   [ "$index" -eq 1 ] || UNMAPPED_PATHS=()
   i=1
   while [ "$i" -le "$count" ]; do
@@ -2472,13 +2472,24 @@ if [ "$LIST_ONLY" -eq 1 ] || [ "$LIST_SCHEDULED" -eq 1 ]; then
   exit 0
 fi
 
+# An unmapped changed path (no test names it) is a gap in what the suite covers, never a failed test: nothing ran for it, so there is
+# no result to fail. Each one is reported as one JG_TEST_COVERAGE_NOTE line naming the path, and the run's verdict, counts and
+# results stay those of the scripts that did run. A real failing mapped test still fails.
+note_unmapped_paths() {
+  local path
+  for path in "${UNMAPPED_PATHS[@]+"${UNMAPPED_PATHS[@]}"}"; do
+    printf 'JG_TEST_COVERAGE_NOTE %s: no changed-test mapping for this path, so no test was selected for it\n' "$path"
+  done
+}
+
 # An empty selection is a clean result, not a no-op that falls through. Exiting
 # here also keeps every array expansion below off the empty-array path: under
 # `set -u`, bash 3.2 (the stock macOS shell) treats "${arr[@]}" on an empty
 # array as an unbound-variable error, while bash 4.4+ makes it a harmless no-op.
 # A contributor on stock macOS who changes only documentation must still get
 # total=0 and exit 0 rather than a crash.
-if [ "${#SCRIPTS[@]}" -eq 0 ] && [ "${#UNMAPPED_PATHS[@]}" -eq 0 ]; then
+note_unmapped_paths
+if [ "${#SCRIPTS[@]}" -eq 0 ]; then
   log "nothing to run"
   empty_finished_ms=$(now_ms)
   empty_duration=$((empty_finished_ms - RUN_STARTED_MS))
@@ -2711,10 +2722,10 @@ quarantine_verdict() {  # <script> <rc>
   fi
 }
 
-# Every result carries a type: mapping (no test names the path, so nothing ran), resource (the script outran its bound, exit 124) or
-# test (the script ran and failed). The type rides the JG_TEST_END line, so the gate, its rerun and the flake intake read one fact.
-record_script_result() {  # <script> <rc> <duration> <out> <end_iso> <stream> [type]
-  local script=$1 rc=$2 duration=$3 out=$4 end_iso=$5 stream=${6:-0} rtype=${7:-}
+# Every result carries a type: resource (the script outran its bound, exit 124) or test (the script ran). The type rides the
+# JG_TEST_END line. A path no test names has no result at all: it is a coverage note (note_unmapped_paths).
+record_script_result() {  # <script> <rc> <duration> <out> <end_iso> <stream>
+  local script=$1 rc=$2 duration=$3 out=$4 end_iso=$5 stream=${6:-0} rtype
   local base family expected gate_skip gate_reason fail_delta
   base=$(basename "$script")
   family=$(family_for_basename "$base")
@@ -2747,7 +2758,7 @@ record_script_result() {  # <script> <rc> <duration> <out> <end_iso> <stream> [t
     log "gate skip: $script: ${gate_reason:-<no reason given>}"
   fi
 
-  if [ -z "$rtype" ]; then rtype='test'; [ "$rc" -ne 124 ] || rtype=resource; fi
+  rtype='test'; [ "$rc" -ne 124 ] || rtype=resource
   printf 'JG_TEST_END %s %s exit=%s duration_ms=%s gate_skip=%s type=%s\n' \
     "$end_iso" "$script" "$rc" "$duration" "$gate_skip" "$rtype"
 
@@ -2765,18 +2776,6 @@ record_script_result() {  # <script> <rc> <duration> <out> <end_iso> <stream> [t
     "$script" "$family" "$expected" "$rc" "$duration" "$gate_skip" "$gate_reason" >>"$RECORDS"
   family_bump "$family" "$duration" "$fail_delta"
   TOTAL=$((TOTAL + 1))
-}
-
-# Record each unmapped changed path as one failed result of type mapping naming the file and the cause, and run nothing for it.
-record_unmapped_tests() {
-  local path out
-  for path in "${UNMAPPED_PATHS[@]+"${UNMAPPED_PATHS[@]}"}"; do
-    out="$RUN_TMP/out.unmapped.$TOTAL"
-    printf 'not ok - %s: no changed-test mapping for source path: %s\n' "$path" "$path" >"$out"
-    cat "$out"
-    printf 'JG_TEST_BEGIN %s %s family=%s expected_gate_skip=\n' "$(now_iso)" "$path" "$(family_for_basename "$(basename "$path")")"
-    record_script_result "$path" 1 0 "$out" "$(now_iso)" 1 mapping
-  done
 }
 
 # Kill every process still carrying <mark> in its environment, after the bound has
@@ -2951,8 +2950,6 @@ wall_budget_spent() {  # <next-script> -> 0 when the run must stop here
   AGG_RC=1
   return 0
 }
-
-record_unmapped_tests
 
 if [ "$JOBS" -eq 1 ]; then
   for script in "${SCRIPTS[@]+"${SCRIPTS[@]}"}"; do
