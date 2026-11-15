@@ -1,0 +1,3 @@
+# Switch manifest
+
+Switch manifest: run `done-done run switch-manifest` (`bash tests/jg-switch.test.sh`, its log written into the run's folder); on a fixture home with one manifest row of each kind off, `bin/jg-switch.sh status` prints one `off` line each with its reason and who and the seeded detector lines, prints none once each is on, `verify` exits 1 until every row is on, `apply` of an owner row is refused without `--owner-word`, and a policy `apply` appends `key@project=<value>` that `jg_trunk_policy` reads; a hanging check reads `timeout`; it reads only the fixture (screen: none).

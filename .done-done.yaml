@@ -2297,6 +2297,9 @@ journeys:
   owner-rules:
     tier: local
     command: bash journeys/core-run.sh 'bash owner-rules/tests/owner-rules.test.sh "$JG_CODE_ROOT"' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  switch-manifest:
+    tier: local
+    command: bash tests/jg-switch.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
 
 secrets:
   allow:

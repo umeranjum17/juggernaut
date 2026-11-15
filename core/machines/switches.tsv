@@ -1,0 +1,3 @@
+# switches.tsv - the switch manifest read by bin/jg-switch.sh.
+# Columns (tab separated): change-id, kind, name, want, who (auto|owner), expires (YYYY-MM-DD or -), reason.
+# Kinds are listed in the header of bin/jg-switch.sh. A change declares its rows in the same commit as its changes.tsv row.

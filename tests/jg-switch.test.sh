@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# Behavior tests for bin/jg-switch.sh, the switch manifest reader. A fixture home carries known config/, state/, a last
+# go-live row and a stub toolchain; one manifest row of each kind is off, then each is turned on, and the real script's
+# status, verify and apply are read. Nothing under the real home is touched.
+set -u
+# shellcheck source=tests/lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+SW="$ROOT/bin/jg-switch.sh"
+T=$(jg_test_tmproot jg-switch)
+H=$T/lead; mkdir -p "$H/config" "$H/state" "$H/data" "$T/bin"
+export JG_HOME=$H JG_SWITCH_MANIFEST=$T/switches.tsv JG_SWITCH_TOOLCHAIN=$T/toolchain.versions
+unset JG_CONFIG_OVERRIDE JG_STATE_OVERRIDE JG_DATA_OVERRIDE
+tab() { local IFS=$'\t'; printf '%s\n' "$*"; }
+{
+  tab c1 file machine-view nonempty owner - "needs the view"
+  tab c2 policy conflict-resolver@juggernaut set owner - "resolver"
+  tab c3 mode ticket - owner - "enforce ticket"
+  tab c4 check lead-sweep - auto - "armed"
+  tab c5 wiring merge-card - auto - "wired"
+  tab c6 npm stubtool - owner - "pin"
+  tab c7 restart trunk-live-restart-pending - owner - "restart"
+  tab c8 waiver trunk-live-waiver:juggernaut - owner - "waiver"
+} > "$JG_SWITCH_MANIFEST"
+printf 'stubtool stubtool@1.2.0\n' > "$JG_SWITCH_TOOLCHAIN"
+printf '#!/bin/sh\necho "stubtool 1.1.0"\n' > "$T/bin/stubtool"; chmod +x "$T/bin/stubtool"
+export PATH="$T/bin:$PATH"
+tab juggernaut:a1 abc 1 "live,wiring-failed:merge-card,claude-accounts" "" > "$H/data/trunk-in-use.tsv"
+: > "$H/config/machine-view"
+printf 'x\n' > "$H/state/trunk-live-restart-pending"
+
+sw() { OUT=$(bash "$SW" "$@" 2>&1); RC=$?; }
+
+sw status
+expect_code 0 "$RC" "status exits 0 while switches are off"
+assert_contains "$OUT" "home lead" "status names the home"
+assert_contains "$OUT" $'off\tc1\tfile\tmachine-view\tempty\towner' "an empty switch file reads off with its reason and who"
+assert_contains "$OUT" $'off\tc2\tpolicy\tconflict-resolver@juggernaut\tunset\towner' "an unset policy key reads off"
+assert_contains "$OUT" $'off\tc3\tmode\tticket\tabsent\towner' "a machine not enforced reads off"
+assert_contains "$OUT" $'off\tc4\tcheck\tlead-sweep\tunarmed\tauto' "an unarmed check reads off"
+assert_contains "$OUT" $'off\tc5\twiring\tmerge-card\twiring-failed\tauto' "a failed wiring step of the last row reads off"
+assert_contains "$OUT" $'off\tc6\tnpm\tstubtool\tbelow-pin\towner' "a tool under its pin reads off"
+assert_contains "$OUT" $'off\tc7\trestart\ttrunk-live-restart-pending\trestart-pending\towner' "a restart marker reads off"
+assert_contains "$OUT" $'off\tc8\twaiver\ttrunk-live-waiver:juggernaut\tabsent\towner' "a missing waiver line reads off"
+assert_contains "$OUT" $'off\t-\tdetector\tmerge-card\twiring-failed\tauto' "a failed wiring step is also a detector line"
+assert_contains "$OUT" $'off\t-\tdetector\tclaude-accounts\twiring-failed\tauto' "every failed step is a detector line"
+assert_contains "$OUT" $'off\t-\tdetector\tinstalled-drift\tunarmed\tauto' "an absent drift check shim is a detector line"
+assert_contains "$OUT" $'off\t-\tdetector\trestart-marker\trestart-pending\towner' "the restart marker is a detector line"
+sw status c3
+assert_not_contains "$OUT" $'\tc1\t' "a change id narrows the list"
+pass "status prints one off line per kind and the seeded detector lines"
+
+sw verify; expect_code 1 "$RC" "verify exits 1 while manifest rows are off"
+sw verify c9; expect_code 0 "$RC" "verify of a change with no rows passes"
+
+sw apply c2 'conflict-resolver@juggernaut' --value 'echo r'
+[ "$RC" -ne 0 ] || fail "apply of an owner row without --owner-word was refused"
+assert_absent "$H/config/trunk-policy" "a refused apply writes nothing"
+sw apply c4 lead-sweep --owner-word x
+[ "$RC" -ne 0 ] || fail "apply writes only policy rows"
+sw apply c2 'conflict-resolver@juggernaut' --owner-word "owner said so" --value 'echo r'
+expect_code 0 "$RC" "apply with the owner's word"
+assert_equals 'conflict-resolver@juggernaut=echo r' "$(cat "$H/config/trunk-policy")" "apply appends key@project=value"
+got=$(. "$ROOT/bin/jg-trunk-policy-lib.sh"; JG_CONFIG_OVERRIDE=$H/config jg_trunk_policy conflict-resolver juggernaut)
+assert_equals 'echo r' "$got" "jg_trunk_policy reads the appended line"
+pass "apply refuses without the owner's word and appends the policy line with it"
+
+printf 'x\n' > "$H/config/machine-view"
+printf 'ticket\n' > "$H/config/machine-enforce"
+: > "$H/state/lead-sweep.check.sh"; : > "$H/state/lead-sweep.check-trust"
+tab juggernaut:a2 def 2 live "" > "$H/data/trunk-in-use.tsv"
+printf '#!/bin/sh\necho "stubtool 1.2.3"\n' > "$T/bin/stubtool"
+: > "$H/state/.session-start-complete"; touch -d '1 minute ago' "$H/state/trunk-live-restart-pending"
+printf 'juggernaut 1 1 until=stable\n' > "$H/config/trunk-live-waiver"
+sw status
+assert_not_contains "$OUT" $'off\tc' "every manifest row turned on prints no off line"
+sw verify; expect_code 0 "$RC" "verify exits 0 once every row is on"
+assert_contains "$OUT" "detector" "detector lines remain and never fail verify"
+pass "each switch turned on prints nothing and verify passes"
+
+printf '#!/bin/sh\nsleep 30\n' > "$T/bin/stubtool"
+JG_SWITCH_TIMEOUT=1 sw status c6
+assert_contains "$OUT" $'stubtool\ttimeout' "a check that hangs is bounded and reads timeout"
+pass "a hanging check reads off with reason timeout"

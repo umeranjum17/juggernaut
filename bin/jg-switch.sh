@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+# jg-switch.sh - the reader of the switch manifest: which switches a change declared are still off in a home.
+#
+# Usage:
+#   jg-switch.sh status [--home <dir>]... [<change-id>]   per home, one line for each switch still off
+#   jg-switch.sh verify [--home <dir>]... [<change-id>]   status, exit 1 while any manifest row is off (detector lines never count)
+#   jg-switch.sh apply <change-id> <name> [--home <dir>] [--owner-word "<text>"] [--value <v>]
+#                                                         turn one policy row on; the owner's word is required for who=owner
+#
+# Output, per home: `home <id>` then `off <change-id> <kind> <name> <reason> <who>` for each manifest row that is off, then
+# `off - detector <name> <reason> <who>` for each standing finding that no change declared (a wiring step that failed in the
+# home's last go-live row, an unarmed check, a restart marker). A home with nothing off prints only its header.
+#
+# Manifest (core/machines/switches.tsv, or JG_SWITCH_MANIFEST), tab separated: change-id, kind, name, want, who, expires, reason.
+# There is no command column: every kind's check lives here, so a data file never carries a command. Kinds:
+#   file    config/<name> exists (want present) or is non-empty (want nonempty)        reason absent | empty
+#   policy  jg_trunk_policy <key>[@project] equals want; want `set` = any value         reason unset | differs
+#   mode    the machine <name> is a line of config/machine-enforce                      reason absent
+#   check   state/<name>.check.sh and state/<name>.check-trust both exist               reason unarmed
+#   wiring  <name> is not a failed step in the home's last data/trunk-in-use.tsv row    reason wiring-failed
+#   npm     `<name> --version` is at or above its toolchain.versions pin (floor only)   reason below-pin | absent
+#   restart state/trunk-live-restart-pending is not newer than state/.session-start-complete   reason restart-pending
+#   waiver  config/<file> has a line for the project: name is `<file>:<project>`        reason absent
+# Every check runs in its own process under jg-timeout-lib.sh (JG_SWITCH_TIMEOUT seconds, default 20); a check that hits
+# the bound reads off with reason `timeout`, so one stuck kind cannot hang the command.
+# The one write is `apply` of a policy row: it appends `<name>=<want>` to config/trunk-policy, which the policy reader
+# takes as the last matching line. It needs --owner-word for a who=owner row; no other kind is written here.
+# Environment: JG_HOME, JG_SWITCH_MANIFEST, JG_SWITCH_TOOLCHAIN (the pin table, default <repo>/toolchain.versions).
+set -u
+export LC_ALL=C
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=bin/jg-timeout-lib.sh
+. "$SCRIPT_DIR/jg-timeout-lib.sh"
+# shellcheck source=bin/jg-trunk-policy-lib.sh
+. "$SCRIPT_DIR/jg-trunk-policy-lib.sh"
+MANIFEST="${JG_SWITCH_MANIFEST:-$ROOT/core/machines/switches.tsv}"
+TOOLCHAIN="${JG_SWITCH_TOOLCHAIN:-$ROOT/toolchain.versions}"
+BOUND="${JG_SWITCH_TIMEOUT:-20}"
+NAME_RE='^[A-Za-z0-9._@-]+$'
+
+die() { echo "jg-switch: $*" >&2; exit "${2:-2}"; }
+tab() { local IFS=$'\t'; printf '%s\n' "$*"; }
+
+# --- the checks: one kind per case, run as `_probe <home> <kind> <name> <want>`; prints `on` or the reason it is off ---
+version_of() { "$1" --version 2>/dev/null | sed -nE 's/.*[vV]?([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' | head -n 1; }
+at_least() {  # <have> <min>: dotted numbers
+  [ "$(printf '%s\n%s\n' "$2" "$1" | sort -t. -k1,1n -k2,2n -k3,3n | head -n 1)" = "$2" ]
+}
+last_row_status() { tail -n 1 "$1/data/trunk-in-use.tsv" 2>/dev/null | cut -f4; }
+probe() {  # <home> <kind> <name> <want>
+  local home=$1 kind=$2 name=$3 want=$4 key proj val pin have status
+  case $kind in
+    file)
+      [ -e "$home/config/$name" ] || { echo absent; return; }
+      if [ "$want" = nonempty ] && [ ! -s "$home/config/$name" ]; then echo empty; else echo on; fi ;;
+    policy)
+      key=${name%%@*}; proj=; [ "$key" = "$name" ] || proj=${name#*@}
+      val=$(JG_CONFIG_OVERRIDE="$home/config" jg_trunk_policy "$key" "$proj") || val=
+      if [ "$want" = set ]; then { [ -n "$val" ] && echo on; } || echo unset
+      elif [ "$val" = "$want" ]; then echo on; else echo differs; fi ;;
+    mode) grep -qxF -- "$name" "$home/config/machine-enforce" 2>/dev/null && echo on || echo absent ;;
+    check) [ -f "$home/state/$name.check.sh" ] && [ -f "$home/state/$name.check-trust" ] && echo on || echo unarmed ;;
+    wiring)
+      status=$(last_row_status "$home")
+      case $status in
+        *wiring-failed:*) case ",${status##*wiring-failed:}," in *",$name,"*) echo wiring-failed; return ;; esac ;;
+      esac
+      echo on ;;
+    npm)
+      pin=$(awk -v t="$name" '$1 == t { n = split($2, a, "@"); print a[n] }' "$TOOLCHAIN" 2>/dev/null | head -n 1)
+      have=$(version_of "$name")
+      if [ -z "$have" ]; then echo absent
+      elif [ -n "$pin" ] && ! at_least "$have" "$pin"; then echo below-pin; else echo on; fi ;;
+    restart)
+      if [ -e "$home/state/trunk-live-restart-pending" ] && ! [ "$home/state/.session-start-complete" -nt "$home/state/trunk-live-restart-pending" ]; then
+        echo restart-pending
+      else echo on; fi ;;
+    waiver)
+      grep -q "^${name#*:} " "$home/config/${name%%:*}" 2>/dev/null && echo on || echo absent ;;
+    *) echo "unknown-kind" ;;
+  esac
+}
+
+# Run one check under the bound: prints `on`, a reason, or `timeout`.
+run_probe() {  # <home> <kind> <name> <want>
+  local out rc
+  out=$(jg_run_timed "$BOUND" bash "$0" _probe "$@" 2>/dev/null); rc=$?
+  if jg_timed_out "$rc" 2>/dev/null || [ "$rc" -eq 124 ]; then echo timeout; return; fi
+  [ "$rc" -eq 0 ] && [ -n "$out" ] || { echo error; return; }
+  printf '%s\n' "$out"
+}
+
+# --- the standing findings no change declared (never counted by verify) ---
+detectors() {  # <home>
+  local home=$1 status steps step name
+  status=$(last_row_status "$home")
+  case $status in
+    *wiring-failed:*)
+      steps=${status##*wiring-failed:}
+      for step in ${steps//,/ }; do tab off - detector "$step" wiring-failed auto; done ;;
+  esac
+  for name in installed-drift tool-update-check; do
+    [ -f "$home/state/$name.check.sh" ] || tab off - detector "$name" unarmed auto
+  done
+  [ "$(probe "$home" restart trunk-live-restart-pending -)" = on ] || tab off - detector restart-marker restart-pending owner
+}
+
+# Print one home's report; returns 1 when a manifest row is off.
+report_home() {  # <home> <change-id|''>
+  local home=$1 only=$2 id kind name want who r rc=0
+  echo "home $(basename "$home")"
+  while IFS=$'\t' read -r id kind name want who _ _ || [ -n "$id" ]; do
+    case $id in ''|'#'*) continue ;; esac
+    [ -z "$only" ] || [ "$id" = "$only" ] || continue
+    [[ $name =~ $NAME_RE || $kind = waiver ]] || { tab off "$id" "$kind" "$name" bad-name "$who"; rc=1; continue; }
+    r=$(run_probe "$home" "$kind" "$name" "$want")
+    [ "$r" = on ] && continue
+    tab off "$id" "$kind" "$name" "$r" "$who"; rc=1
+  done < "$MANIFEST"
+  detectors "$home"
+  return "$rc"
+}
+
+cmd_status() {  # <verify:0|1> args...
+  local verify=$1 only="" homes=() h rc=0; shift
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --home) [ $# -ge 2 ] || die "--home needs a directory"; homes+=("$2"); shift 2 ;;
+      -*) die "unknown option $1" ;;
+      *) only=$1; shift ;;
+    esac
+  done
+  [ -r "$MANIFEST" ] || die "no manifest at $MANIFEST"
+  [ ${#homes[@]} -gt 0 ] || homes=("${JG_HOME:-$ROOT}")
+  for h in "${homes[@]}"; do [ -d "$h" ] || die "no such home: $h"; report_home "$h" "$only" || rc=1; done
+  [ "$verify" -eq 1 ] && return "$rc"
+  return 0
+}
+
+cmd_apply() {
+  local id=${1-} name=${2-} home=${JG_HOME:-$ROOT} word="" value="" row kind want who r
+  [ -n "$id" ] && [ -n "$name" ] || die "usage: apply <change-id> <name> [--home <dir>] [--owner-word <text>] [--value <v>]"
+  shift 2
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --home) home=${2-}; shift 2 ;;
+      --owner-word) word=${2-}; shift 2 ;;
+      --value) value=${2-}; shift 2 ;;
+      *) die "unknown option $1" ;;
+    esac
+  done
+  [ -r "$MANIFEST" ] || die "no manifest at $MANIFEST"
+  row=$(awk -F'\t' -v i="$id" -v n="$name" '$1 == i && $3 == n { print; exit }' "$MANIFEST")
+  [ -n "$row" ] || die "no manifest row $id $name"
+  IFS=$'\t' read -r _ kind _ want who _ <<< "$row"
+  [ "$who" != owner ] || [ -n "$word" ] || die "$id $name is the owner's call: pass --owner-word with the owner's words"
+  [ "$kind" = policy ] || die "apply writes only policy rows; $name is kind $kind"
+  [[ $name =~ $NAME_RE ]] || die "bad name $name"
+  [ "$want" != set ] || want=$value
+  [ -n "$want" ] || die "$name wants any value: pass --value"
+  case $want in *$'\n'*) die "a value takes one line" ;; esac
+  [ -d "$home/config" ] || die "no config directory in $home"
+  printf '%s=%s\n' "$name" "$want" >> "$home/config/trunk-policy"
+  r=$(run_probe "$home" policy "$name" "$(awk -F'\t' -v i="$id" -v n="$name" '$1 == i && $3 == n { print $4; exit }' "$MANIFEST")")
+  echo "applied $id $name=$want: now $r"
+}
+
+case ${1-} in
+  _probe) shift; probe "$@" ;;
+  status) shift; cmd_status 0 "$@" ;;
+  verify) shift; cmd_status 1 "$@" ;;
+  apply) shift; cmd_apply "$@" ;;
+  *) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac
