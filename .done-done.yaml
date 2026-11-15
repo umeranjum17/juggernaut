@@ -1194,6 +1194,9 @@ journeys:
   jg-beads-parent:
     tier: local
     command: bash tests/jg-beads-parent.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-beads-move:
+    tier: local
+    command: bash tests/jg-beads-move.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-beads-ticket-stage:
     tier: local
     command: bash tests/jg-beads-ticket-stage.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

@@ -5,7 +5,7 @@
 #        jg-backlog.sh --help
 #
 # Every routine juggernaut backlog read or mutation goes through this command. It serves
-# `show`, `view`, `list`, `questions` (the owner's open questions: `--ticket <id>`, `--due`, `--all`, `--json`), `ready`, `ready --spawnable` (the tickets this home can start now, bin/jg-backlog-spawnable.sh, ended at 10 seconds with exit 124), `approve-dispatch`, `markdown`, `homes --json` (every home and its store, `"remote": true` for a lead on another machine, bin/jg-backlog-homes.sh), `add`, `update`, `done`, `block`, `unblock`,
+# `show`, `view`, `list`, `questions` (the owner's open questions: `--ticket <id>`, `--due`, `--all`, `--json`), `ready`, `ready --spawnable` (the tickets this home can start now, bin/jg-backlog-spawnable.sh, ended at 10 seconds with exit 124), `approve-dispatch`, `markdown`, `homes --json` (every home and its store, `"remote": true` for a lead on another machine, bin/jg-backlog-homes.sh), `tree --homes` (one tree across every home, bin/jg-backlog-tree.py), `add`, `update`, `done`, `block`, `unblock`,
 # `start`, `task`, `reopen`, `hold`, `unhold`, `on-report`, `public-followup`, `relink` and `retag` from the store that
 # `config/beads-dir` names (bin/jg-backlog-lib.sh); any other verb exits 2 with nothing
 # run. A relative value of `--to` or any `--*-file` flag (`--body-file`, ...) is made
@@ -260,6 +260,7 @@ case "${1:-}" in
     beads_read; exit $? ;;
   markdown|questions) beads_read; exit $? ;;
   homes) exec "$SCRIPT_DIR/jg-backlog-homes.sh" "${ARGS[@]:1}" ;;
+  tree) exec python3 "$SCRIPT_DIR/jg-backlog-tree.py" "${ARGS[@]:1}" ;;
   add|create|update|edit|done|close|block|unblock|start|task|reopen|hold|unhold|on-report|public-followup|relink|retag|moment|wait|ticket-stage|ticket-drift|times|trace|beat|reclaim) ;;
   *) fail "the beads backlog does not serve ${1:-this command}" ;;
 esac

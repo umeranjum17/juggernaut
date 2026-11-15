@@ -355,7 +355,7 @@ move_rows() { # <keys...>
   jg_backlog_beads_write "$SUB_HOME/config" take "$rows" "$@" || rc=$?
   [ "$rc" -ne 2 ] || return 1
   [ "$rc" -eq 0 ] || return 3
-  jg_backlog_beads_write "$CONFIG" drop "$@" || return 3
+  jg_backlog_beads_write "$CONFIG" drop --to "lead:$ID" "$@" || return 3
 }
 
 # A public commitment made through the relay binds its work by home AND id, so an

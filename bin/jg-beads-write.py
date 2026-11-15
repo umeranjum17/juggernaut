@@ -32,7 +32,8 @@ With no lane named, start claims an unowned row for the actor (BEADS_ACTOR, else
 bin/jg-beads.sh makes the lane the actor of every bd call, so a comment or an event carries who wrote it.
 bd takes --if-assignee or --force, never both, so closing a blocked row is guarded by status alone; a parent with an open child is refused, naming the open pieces.
 stage, take and drop move queued rows, and bd export and bd import carry them.
-stage prints rows as a backlog file, or with --native as export lines, and refuses to leave an active dependent behind.
+stage prints rows as a backlog file, or with --native as export lines, and refuses to leave an active dependent behind. A native move also carries the rows' questions (open, or answered with the owner's words)
+and their provenance logs, and names a parent that stays behind external:<home>:<id>; take then adds one handoff event to each log, and `drop --to <home>` gives that parent a tracks edge to the moved row.
 take files rows from either in one bd import, skips any already here, and refuses a blocker that neither moves nor is here.
 A backlog file's rows carry what its format holds, and the since date stays behind. drop deletes rows filed elsewhere, in
 one bd call, and leaves any row that moved out of the queue.
@@ -704,6 +705,49 @@ def exported():
     return lines
 
 
+def home_name():
+    """This home's name in a store: `main`, or `lead:<id>` for a Squad Lead home (bin/jg-home-name-lib.sh)."""
+    for marker in (".jg-squad-lead-home", ".fm-secondmate-home"):
+        try:
+            with open(os.path.join(os.environ.get("JG_HOME", ""), marker), encoding="utf-8") as handle:
+                named = handle.read().strip()
+        except OSError:
+            continue
+        if named:
+            return "lead:" + named
+    return "main"
+
+
+def carried(items, picked):
+    """The lines of a move, in bd's export shape: the rows, every question that blocks them (open or answered, with the owner's words),
+    each row's provenance log as one `_type: provenance` line, and a parent that stays behind named as external:<home>:<id>."""
+    moving = {row["id"] for row in picked}
+    gates = {gate["id"] for row in picked for gate in view.gates_of(row, items, closed=True)}
+    out = []
+    for line in exported():
+        row = json.loads(line)
+        if row.get("id") not in moving | gates:
+            continue
+        for edge in row.get("dependencies") or []:
+            if edge.get("type") == "parent-child" and edge["depends_on_id"] not in moving:
+                edge["depends_on_id"] = "external:%s:%s" % (home_name(), edge["depends_on_id"])
+        out.append(json.dumps(row))
+    for row in picked:
+        events = json.loads(bd("provenance", "log", row["id"], "--json") or "[]") or []
+        out.append(json.dumps({"_type": "provenance", "issue": row["id"], "from": home_name(), "events": events}))
+    return "".join(line + "\n" for line in out)
+
+
+def settle_log(line):
+    """Write a moved row's log here: every old event as it was, then one handoff event naming the home it left. A rerun records nothing twice."""
+    for event in line["events"]:
+        flags = {"--kind": event["kind"], "--source": event.get("source"), "--ref-kind": event.get("ref_kind"), "--ref": event.get("ref"),
+                 "--at": event["occurred_at"], "--actor": event.get("actor") or home_name(), "--payload": json.dumps(event["payload"]) if event.get("payload") else None}
+        bd("provenance", "record", "--issue", line["issue"], *[word for name, value in flags.items() if value for word in (name, value)])
+    bd("provenance", "record", "--issue", line["issue"], "--kind", "handoff", "--source", "jg-backlog-handoff", "--ref-kind", "work-id",
+       "--ref", "%s:%s" % (line["from"], line["issue"]), "--at", datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+
+
 def stage(args):
     native = args[:1] == ["--native"]
     items = rows()
@@ -718,7 +762,7 @@ def stage(args):
     if not native and any("followup" in (row.get("metadata") or {}) for row in picked):
         view.refuse("a public follow-up cannot cross to a backlog file: its record would be lost")
     if native:
-        print("".join(line + "\n" for line in exported() if json.loads(line).get("id") in moving), end="")
+        print(carried(items, picked), end="")
         return
     names = {ident: view.task(row, items)["item"] for ident, row in items.items()}
     print("## In flight\n\n## Queued\n")
@@ -762,6 +806,8 @@ def take(args):
     path, keys = args[0], args[1:]
     with open(path, encoding="utf-8") as source:
         found = [json.loads(line) for line in source] if path.endswith(".jsonl") else file_rows(path)
+    logs = [line for line in found if line.get("_type") == "provenance"]
+    found = [line for line in found if line.get("_type") != "provenance"]
     items, picked = rows(), []
     for key in keys:
         row = view.named(found, key)
@@ -773,6 +819,8 @@ def take(args):
             view.refuse('Task "%s" has no dash, and a Beads id needs one' % key, "Rename it first")
         if view.named(items.values(), key) is None:
             picked.append(row)
+    picked += [gate for gate in found if view.is_gate(gate) and view.named(items.values(), gate["id"]) is None and gate not in picked
+               and any(edge["depends_on_id"] == gate["id"] for row in picked for edge in row.get("dependencies") or [])]
     moving = {row["id"] for row in picked}
     for row in picked:
         for edge in row.get("dependencies") or []:
@@ -788,16 +836,28 @@ def take(args):
         bd("import", path + ".take.jsonl")
         os.unlink(path + ".take.jsonl")
         lay()
+        for line in logs:
+            if line["issue"] in moving:
+                settle_log(line)
 
 
-def drop(keys):
+def drop(args):
+    """drop [--to <home name>] <key>...: remove moved rows (and the questions that blocked them) from this home. With --to, a parent that stays
+    here gets a `tracks` edge to the row in the home it went to, so the ask still reaches its part."""
+    to = args[1] if args[:1] == ["--to"] else ""
+    keys = args[2 * bool(to):]
     items = rows()
     found = [row for row in (view.named(items.values(), key) for key in keys) if row]
     moved = [row["id"] for row in found if view.task(row, items)["state"] != "queued"]
     if moved:
         view.refuse("these rows left the queue during the move and stay here: " + ", ".join(moved))
+    for row in found:
+        for edge in row.get("dependencies") or []:
+            if to and edge.get("type") == "parent-child" and edge["depends_on_id"] in items:
+                bd("dep", "add", edge["depends_on_id"], "external:%s:%s" % (to, row["id"]), "-t", "tracks")
+    gates = {gate["id"] for row in found for gate in view.gates_of(row, items, closed=True)}
     if found:
-        bd("delete", *[row["id"] for row in found], "--force")
+        bd("delete", *[row["id"] for row in found], *sorted(gates), "--force")
 
 
 def relink(_args):
