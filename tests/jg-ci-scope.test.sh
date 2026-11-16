@@ -60,6 +60,7 @@ bus core/brief-inherit/bin/jg-brief-inherit-lib.sh
 evals toolchain.versions
 evals bin/jg-lib.sh
 evals defaults/captain-voice-worker.md
+evals defaults/status-states.tsv
 shell tests/jg-bus.test.sh
 shell bin/backends/tmux.sh
 ROWS
