@@ -7,6 +7,7 @@
 # c) a landing whose sha is not in a release reads superseded-sha when a copy of its ticket is released, after-last-release when newer;
 # d) without the stray commit the same fixture exits 0 and the report says nothing is unexplained;
 # e) a landing row that vanishes leaves its commit unexplained, never dropped;
+# g) a recorded hand commit explains a commit that has no landing row, and only with a maker and a path;
 # f) a missing source record exits 2 and is named; the report lands in data/jg-ledger/reconcile.md.
 # Usage: tests/jg-ledger-reconcile.test.sh
 set -euo pipefail
@@ -65,16 +66,17 @@ rels "$X"
 run() { JG_HOME=$H bash "$BIN" 2>"$d/err"; }
 rc=0; run > "$d/out" || rc=$?
 REPORT=$H/data/jg-ledger/reconcile.md
-cell() { awk -F'|' -v r="$1" -v c="$2" '$2 ~ "^ " r " $" { gsub(/ /, "", $c); print $c }' "$d/out"; }   # row <release>, column number of the table line (3 = commits)
+cell() { awk -F'|' -v r="$1" -v c="$2" '$2 ~ "^ " r " $" { gsub(/ /, "", $c); print $c }' "${RPT:-$d/out}"; }   # row <release>, column number of the table line (3 = commits)
 [ -z "${DONE_DONE_EVIDENCE_ROOT:-}" ] || cp "$d/out" "$DONE_DONE_EVIDENCE_ROOT/reconcile.md"
 
 # a) classes of the first release: 8 commits = 4 landed, 1 revert, 1 unrecorded revert, 1 merge, 1 pre-ledger; 6 landing rows (4 + revert + repeat)
 check "a: first release git commits" "$(cell trunk 3)" 8
 check "a: first release landing rows" "$(cell trunk 4)" 6
 check "a: first release ledger tickets" "$(cell trunk 5)" 4
-check "a: first release classes" "$(for c in 6 7 8 9 10 11 12 13; do cell trunk $c; done | tr '\n' ' ')" "4 1 1 0 1 1 1 0 "
+check "a: first release classes" "$(for c in 6 7 8 9 10 11 12 13 14; do cell trunk $c; done | tr '\n' ' ')" "4 1 1 0 0 1 1 1 0 "
 # second release: a rebased copy and the stray commit
-check "a: second release classes" "$(for c in 3 4 6 7 8 9 10 11 12 13; do cell release/v2 $c; done | tr '\n' ' ')" "2 0 0 0 0 1 0 0 0 1 "
+check "a: second release classes" "$(for c in 3 4 6 7 8 9 10 11 12 13 14; do cell release/v2 $c; done | tr '
+' ' ')" "2 0 0 0 0 1 0 0 0 0 1 "
 # b) unexplained
 check "b: exit 1" "$rc" 1
 check "b: the stray commit is printed as unexplained" "$(grep -c "commit ${X:0:12} is in no landing row" "$d/out")" 1
@@ -96,6 +98,17 @@ check "d: the stray commit is outside every release" "$(grep -c "${X:0:12}" "$d/
 line=$(JG_HOME=$H bash "$ROOT/bin/jg-outcome-ledger.sh" summary)
 check "s4: digest line releases equal the report's ledger tickets" "$(printf '%s\n' "$line" | sed 's/.*released \([0-9]*\), release-raised \([0-9]*\),.*/\1 \2/' | awk '{ print $1 + $2 }')" "$(awk -F'|' '/^\| / && !/^\| (release \||---)/ { n += $5 } END { print n }' "$REPORT")"
 check "s4: digest line quotes the report's ticket total and unexplained count" "${line##*; }" "reconcile report of $(date -u -r "$REPORT" +%F): $(awk -F'|' '/^\| / && !/^\| (release \||---)/ { n += $5 } END { print n }' "$REPORT") release tickets, 0 unexplained"
+# g) a recorded hand commit: the stray commit comes back into the second release, a record with its maker and path explains it
+rels "$X"; mkdir -p "$H/data/jg-ledger"
+printf '%s\tumer\n' "${X:0:12}" > "$H/data/jg-ledger/hand-commits.tsv"   # no path taken: not a record
+rc=0; run > "$d/out5" || rc=$?
+check "g: a row with no path does not explain the commit" "$rc" 1
+printf '# sha\tmaker\tpath\tnote\n%s\tumer\tcommitted on a home main, then merged into the trunk\ta hand edit\n' "${X:0:12}" > "$H/data/jg-ledger/hand-commits.tsv"
+rc=0; run > "$d/out5" || rc=$?
+check "g: a recorded hand commit exits 0" "$rc" 0
+check "g: second release counts it as a hand commit" "$(for c in 3 9 10 14; do RPT=$d/out5 cell release/v2 $c; done | tr '\n' ' ')" "2 1 1 0 "
+check "g: the report names the maker and the path" "$(grep -c "^Hand commit ${X:0:12} made by umer: committed on a home main" "$d/out5")" 1
+rm "$H/data/jg-ledger/hand-commits.tsv"; rels "$K"
 # e) a landing record that vanishes: its commit is in the range with no row, and it is unexplained, never dropped
 sed -i '1d' "$H/data/trunk-landings.tsv"   # tkA no longer has a landing row (the repeated tkADup row now lands the commit, under its own ticket)
 rc=0; run > "$d/out3" || rc=$?

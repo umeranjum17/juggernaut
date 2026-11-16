@@ -12,6 +12,9 @@
 #   revert             the commit is the revert that a `reverts-<sha12>` landings row records
 #   revert-unrecorded  the subject starts `Revert "` (git's own revert form) and no landings row records it: a revert made outside the landing
 #   rebased-copy       no row names this sha, but the subject starts with a ticket id that landed under another sha (the lander rebases)
+#   hand-commit        a commit made by hand on a home's main that reached the trunk with no landing row; $DATA/jg-ledger/hand-commits.tsv
+#                      records it (sha, maker, path it took, note; tab separated, # starts a comment). A row with no maker or no path
+#                      does not count: the commit stays `unexplained`, because the record is what explains it.
 #   merge              a merge commit (a release or lane pull request merge); it carries no ticket of its own
 #   pre-ledger         older than the first landings row of the project: history from before the trunk flow kept records
 #   unexplained        none of the above. Never folded into another class; the command exits 1.
@@ -27,7 +30,7 @@ export LC_ALL=C
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 JG_HOME=${JG_HOME:-${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd -P)}}
 DATA=${JG_DATA_OVERRIDE:-$JG_HOME/data}
-LANDINGS=$DATA/trunk-landings.tsv RELEASES=$DATA/trunk-releases.tsv
+LANDINGS=$DATA/trunk-landings.tsv RELEASES=$DATA/trunk-releases.tsv HANDS=$DATA/jg-ledger/hand-commits.tsv
 REPORT=$DATA/jg-ledger/reconcile.md
 [ "$#" -le 1 ] || { echo "usage: jg-ledger-reconcile.sh [<project>]" >&2; exit 64; }
 ONLY=${1-}
@@ -70,12 +73,14 @@ while read -r proj; do
   # ledger rows of this project: ticket, commit12, stage, flag
   awk -F'\t' -v p="$proj" '$3 == p { print $2 "\t" $4 "\t" $5 "\t" $8 }' "$tmp/ledger.tsv" > "$tmp/pl"
   awk -F'\t' '{ print substr($3, 1, 12) }' "$tmp/rev" | sort -u > "$tmp/undone12"
+  # hand commits recorded with a maker and a path: sha12, maker, path
+  if [ -r "$HANDS" ]; then awk -F'\t' '$1 !~ /^#/ && length($1) >= 12 && $2 != "" && $3 != "" { print substr($1, 1, 12) "\t" $2 "\t" $3 }' "$HANDS" > "$tmp/hands"; else : > "$tmp/hands"; fi
 
   # The releases in order of first appearance, each with the last head recorded for its branch.
   awk -F'\t' -v p="$proj" 'NF >= 6 && $1 == p { if (!($2 in o)) { o[$2] = ++n; ord[n] = $2 } h[$2] = $3 } END { for (i = 1; i <= n; i++) print ord[i] "\t" h[ord[i]] }' "$RELEASES" > "$tmp/rels"
   prev=; last_head=; : > "$tmp/inrange"; : > "$tmp/copied"; : > "$tmp/detail"
-  say "| release | git commits | landing rows | ledger tickets | landed | revert | revert-unrecorded | rebased-copy | merge | pre-ledger | duplicate rows | unexplained |"
-  say "|---|---|---|---|---|---|---|---|---|---|---|---|"
+  say "| release | git commits | landing rows | ledger tickets | landed | revert | revert-unrecorded | rebased-copy | hand-commit | merge | pre-ledger | duplicate rows | unexplained |"
+  say "|---|---|---|---|---|---|---|---|---|---|---|---|---|"
   while IFS=$'\t' read -r br head; do
     if ! full=$(git -C "$repo" rev-parse -q --verify "$head^{commit}" 2>/dev/null); then
       unexpl "$proj $br: release head $head does not resolve in the clone, so this release was not replayed"; continue
@@ -83,24 +88,26 @@ while read -r proj; do
     git -C "$repo" log --format='%H%x09%P%x09%ct%x09%s' "$full" ${prev:+"^$prev"} > "$tmp/log"
     awk -F'\t' '{ print $1 }' "$tmp/log" >> "$tmp/inrange"
     # one line per commit of the range: sha, class, ticket, subject
-    awk -F'\t' -v first="$first_epoch" -v land="$tmp/land" -v rev="$tmp/rev" -v tk="$tmp/tickets" '
-      BEGIN { while ((getline l < land) > 0) { split(l, a, "\t"); lt[a[1]] = a[2] }
+    awk -F'\t' -v first="$first_epoch" -v land="$tmp/land" -v rev="$tmp/rev" -v tk="$tmp/tickets" -v hands="$tmp/hands" '
+      BEGIN { while ((getline l < hands) > 0) { split(l, a, "\t"); hc[a[1]] = a[2] }
+               while ((getline l < land) > 0) { split(l, a, "\t"); lt[a[1]] = a[2] }
               while ((getline l < rev) > 0) { split(l, a, "\t"); rv[a[1]] = a[2] }
               while ((getline l < tk) > 0) tick[l] = 1 }
       { sha = $1; n = split($2, par, " "); subj = $4; w = subj; sub(/[: ].*/, "", w); c = "unexplained"; t = "-"
         if (sha in lt) { c = "landed"; t = lt[sha] }
         else if (sha in rv) { c = "revert"; t = rv[sha] }
         else if (subj ~ /^Revert "/) c = "revert-unrecorded"
+        else if (substr(sha, 1, 12) in hc) { c = "hand-commit"; t = hc[substr(sha, 1, 12)] }
         else if (w in tick) { c = "rebased-copy"; t = w }
         else if (n > 1) c = "merge"
         else if ($3 + 0 < first) c = "pre-ledger"
         print sha "\t" c "\t" t "\t" subj }' "$tmp/log" > "$tmp/cls"
     total=$(wc -l < "$tmp/cls")
     cnt() { awk -F'\t' -v c="$1" '$2 == c' "$tmp/cls" | wc -l; }
-    nl=$(cnt landed); nr=$(cnt revert); nv=$(cnt revert-unrecorded); nb=$(cnt rebased-copy); nm=$(cnt merge); npl=$(cnt pre-ledger); nu=$(cnt unexplained)
+    nl=$(cnt landed); nr=$(cnt revert); nv=$(cnt revert-unrecorded); nb=$(cnt rebased-copy); nh=$(cnt hand-commit); nm=$(cnt merge); npl=$(cnt pre-ledger); nu=$(cnt unexplained)
     nd=$(rows_in "$tmp/cls" "$tmp/dup" | wc -l)
     rows=$(( $(rows_in "$tmp/cls" "$tmp/land" | wc -l) + $(rows_in "$tmp/cls" "$tmp/rev" | wc -l) + nd ))
-    sum=$(( nl + nr + nv + nb + nm + npl + nu ))
+    sum=$(( nl + nr + nv + nb + nh + nm + npl + nu ))
     [ "$sum" -eq "$total" ] || unexpl "$proj $br: the classes add to $sum but git shows $total commits"
     while IFS=$'\t' read -r sha _ _ subj; do
       unexpl "$proj $br: commit ${sha:0:12} is in no landing row, no revert, no ticket-named copy, not a merge and not older than the records: $subj"
@@ -117,15 +124,16 @@ while read -r proj; do
     while read -r c; do unexpl "$proj $br: the ledger shows a release row for commit $c, which no landing row of this release names"; done < <(comm -13 "$tmp/land12" "$tmp/led12")
     undone=$(comm -12 "$tmp/land12" "$tmp/undone12" | wc -l)
 
-    say "| $br | $total | $rows | $nt | $nl | $nr | $nv | $nb | $nm | $npl | $nd | $nu |"
+    say "| $br | $total | $rows | $nt | $nl | $nr | $nv | $nb | $nh | $nm | $npl | $nd | $nu |"
     {
       printf '### %s\n\n' "$br"
       printf 'Head %s. Git has %s commits, the landing records have %s rows for them, the ledger lists %s tickets with a release row.\n' "\`${full:0:12}\`" "$total" "$rows" "$nt"
-      printf 'Commits minus landing rows is %s. Commits with no row of their own: merges (%s), ticket-named copies (%s), unrecorded reverts (%s), pre-ledger (%s). Repeated rows with no commit of their own: %s.\n' \
-        "$(( total - rows ))" "$nm" "$nb" "$nv" "$npl" "$nd"
+      printf 'Commits minus landing rows is %s. Commits with no row of their own: merges (%s), ticket-named copies (%s), unrecorded reverts (%s), recorded hand commits (%s), pre-ledger (%s). Repeated rows with no commit of their own: %s.\n' \
+        "$(( total - rows ))" "$nm" "$nb" "$nv" "$nh" "$npl" "$nd"
       printf 'Landed commits that a revert undid (counted as landed, ledger flag reverted): %s.\n\n' "$undone"
+      awk -F'\t' 'NR == FNR { p[$1] = $3; next } $2 == "hand-commit" { printf "Hand commit %s made by %s: %s\n", substr($1, 1, 12), $3, p[substr($1, 1, 12)] }' "$tmp/hands" "$tmp/cls"
       printf 'Tickets: '
-      awk -F'\t' '$3 != "-" { print $3 }' "$tmp/cls" | sort -u | tr '\n' ' '
+      awk -F'\t' '$3 != "-" && $2 != "hand-commit" { print $3 }' "$tmp/cls" | sort -u | tr '\n' ' '
       printf '\n\n'
     } >> "$tmp/detail"
     prev=$full; last_head=$full
