@@ -10,17 +10,20 @@
 #
 # Output: one line per finding, and nothing at all when every copy matches. The exit is 0 even with findings,
 # because this is a watcher check, not a gate, and the check never repairs or deletes a copy.
-#   differ <installed path> <repo path>   the two files differ
-#   missing <installed path> <repo path>  the copy holds a file its repo directory does not
-#   unknown origin <installed path>       no repo directory can be discovered for this copy
+#   differ <installed path> <repo path>   the installed file and its repo counterpart hold different content
+#
+# Only differing content is drift. An installed copy also holds files the package installer creates at runtime
+# (prev-hooks-path, link-target, upstream, *.real, hooks.d copies, identity.gitconfig) and some directories under
+# the prefix are data, not installs (jg-beads, fm-claude-quota, fm-glm-queue, jg-nm-drain, backups). Neither has
+# a repo counterpart to differ from, so a file with no counterpart and a directory with no discoverable repo
+# directory are skipped silently rather than reported.
 #
 # Origin of a copy, first match that names an existing directory wins: <copy>/.jg-origin, whose first line is
 # the repo directory the copy was installed from, else <root>/core/<name>, where <name> is the copy's
 # directory name without its fm- or jg prefix. The repo counterpart of an installed file is that file's path
-# inside the repo directory, or the only file of the same basename anywhere under it; a file with neither is
-# reported missing. A copy also grows files the repo never installs - Python bytecode, `*.bak-*` backups, the
-# git scaffolding its own `git init` writes under `hooks/`, its runtime `state/`, and its own `home` and
-# `unit.*` records - so those local artifacts are not compared and every other running-only file is reported.
+# inside the repo directory, or the only file of the same basename anywhere under it. A copy also grows Python
+# bytecode, `*.bak-*` backups, the git scaffolding its own `git init` writes under `hooks/`, its runtime
+# `state/`, and its own `home` and `unit.*` records; those are not compared.
 #
 # Legacy copies: an fm-<x> copy whose jg-<x> twin is installed in the same prefix is legacy (the twin is what
 # runs), so its findings are not printed by default; --all prints them. An fm-<x> copy with no jg-<x> twin is
@@ -57,18 +60,12 @@ counterpart() { # counterpart <repo dir> <relative path>: print the repo file, o
 
 scan_copy() { # scan_copy <installed copy> <name-with-prefix>: print one line per finding in this copy.
   local copy=$1 name=${2#??-} src rel repo
-  if ! src=$(origin "$copy" "$name"); then
-    printf 'unknown origin %s\n' "$copy"
-    return 0
-  fi
+  src=$(origin "$copy" "$name") || return 0
   while IFS= read -r -d '' f; do
     rel=${f#"$copy"/}
     case $rel in __pycache__/* | *.pyc | *.bak-* | hooks/* | state/* | home | unit.*) continue ;; esac
-    if ! repo=$(counterpart "$src" "$rel"); then
-      printf 'missing %s %s\n' "$f" "$src/$rel"
-    elif ! cmp -s "$f" "$repo"; then
-      printf 'differ %s %s\n' "$f" "$repo"
-    fi
+    repo=$(counterpart "$src" "$rel") || continue
+    cmp -s "$f" "$repo" || printf 'differ %s %s\n' "$f" "$repo"
   done < <(find "$copy" -type f -print0 2>/dev/null)
 }
 
