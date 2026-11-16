@@ -12,7 +12,7 @@
 #                                                 already running, or its code could not be read: a note says which)
 # Needs from the caller: PROJ, DATA, JG_ROOT, SCRIPT_DIR.
 
-VERIFY_TIP_RC=0
+export VERIFY_TIP_RC=0
 
 verify_in_tip_code() {  # <tip> <arguments of verify...>
   local tip=$1 code rc=0
