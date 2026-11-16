@@ -100,5 +100,19 @@ is "Codex probe exits 0 with the repository check skipped" "$rc" "0"
 file_has "the Codex agent key is set" "$config" '^agent: codex$'
 file_has "the Codex model key is set" "$config" '^    model: gpt-6.1-sol$'
 
+# 6. The default route model is the no-mistakes-review entry of config/tool-models.json in the home (JG_HOME): an
+# entry moves it with no code change, removing the file or an entry for another harness gives the built-in route.
+repo=$(cd "$here/../../.." && pwd)
+home=$work/home
+mkdir -p "$home/config" && ln -sn "$repo/bin" "$home/bin"
+planned() { JG_HOME=$home "$script" --dry-run --config "$config" 2>&1 | sed -n 's/^dry-run: would set agent=pi and agent_config.pi.model=\([^ ]*\) in .*/\1/p'; }
+is "no tool-models file: the planned route is the built-in one" "$(planned)" "$route"
+printf '{"rules":[{"tool":"no-mistakes-review","when":"fixture","use":{"harness":"pi","model":"ollama-cloud/deepseek-v4.1-flash"}}]}\n' >"$home/config/tool-models.json"
+is "a no-mistakes-review entry moves the planned route" "$(planned)" "ollama-cloud/deepseek-v4.1-flash"
+printf '{"rules":[{"tool":"no-mistakes-review","when":"fixture","use":{"harness":"claude","model":"claude-haiku-5-5"}}]}\n' >"$home/config/tool-models.json"
+is "an entry for another harness keeps the built-in route" "$(planned)" "$route"
+rm -f "$home/config/tool-models.json"
+is "removing the file gives the built-in route again" "$(planned)" "$route"
+
 echo
 if [ "$fails" = 0 ]; then echo "all tests passed"; else echo "$fails test(s) failed"; exit 1; fi

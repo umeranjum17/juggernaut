@@ -5,14 +5,21 @@
 # Each hit is sent as numbered code lines with two lines of context; files with secret-looking names are never sent.
 # A live call sends those excerpts to the model provider, so it runs only with --opt-in, which the caller gives per
 #   project and only after the owner approved it. --replay reads a saved reply instead: nothing is sent, so it needs no opt-in.
-# The model command is PSM_READ_COMMAND (prompt on stdin, reply on stdout); default `claude -p --model claude-haiku-5-5`
-#   with tools and sessions off. Spend cap: the estimated price of the call (bytes/4 tokens in, 3000 out, at
+# The model command is PSM_READ_COMMAND (prompt on stdin, reply on stdout); default `claude -p --model <model>`
+#   with tools and sessions off. <model> is the claude model an entry tagged project-state-map in config/tool-models.json
+#   (bin/jg-tool-models.sh) names, read at every call, else claude-haiku-5-5. Spend cap: the estimated price of the call (bytes/4 tokens in, 3000 out, at
 #   PSM_PRICE_IN and PSM_PRICE_OUT dollars per million tokens, defaults 1 and 5, unverified) must not pass --max-usd
 #   (default 0.05); a call over the cap is not made, and a cap of 0 turns the read step off.
 # Exit: 2 bad input, 3 refused before any call (no opt-in, step off, over the cap), 4 the reply is not a valid map.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+# The claude model of the default read command: the project-state-map entry of config/tool-models.json, else Haiku.
+psm_default_model() {
+  local tm=$here/../../../bin/jg-tool-models.sh model=''
+  [ ! -x "$tm" ] || model=$("$tm" model project-state-map claude) || model=''
+  printf '%s\n' "${model:-claude-haiku-5-5}"
+}
 hits='' pdir='' out='' optin=0 cap=${PSM_MAX_USD:-0.05} replay=''
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -68,7 +75,7 @@ else
   if [ "$cap" = 0 ] || [ "$cap" = 0.0 ]; then echo 'psm-read: refused, the spend cap is 0 so the read step is off' >&2; exit 3; fi
   [ "$optin" = 1 ] || { echo 'psm-read: refused, a live read sends code excerpts to the model provider and needs --opt-in for this project' >&2; exit 3; }
   awk -v e="$est" -v c="$cap" 'BEGIN { exit !(e + 0 > c + 0) }' && { echo "psm-read: refused, the estimated price \$$est for $bytes bytes of excerpts is over the cap \$$cap; no call was made" >&2; exit 3; }
-  read -r -a cmd <<< "${PSM_READ_COMMAND:-claude -p --model claude-haiku-5-5 --tools '' --no-session-persistence --disable-slash-commands --setting-sources project}"
+  read -r -a cmd <<< "${PSM_READ_COMMAND:-claude -p --model $(psm_default_model) --tools '' --no-session-persistence --disable-slash-commands --setting-sources project}"
   timeout "${PSM_READ_SECONDS:-120}" "${cmd[@]}" < "$t/prompt" > "$t/reply" || { echo 'psm-read: the model command failed' >&2; exit 4; }
   mode=live
 fi

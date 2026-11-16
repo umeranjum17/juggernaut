@@ -1835,15 +1835,17 @@ Squad Lead homes inherit the file with the other shared config.
 | `worker-default` | `bin/jg-spawn.sh` | Model a worker launch records when no model was chosen and the entry names the launching harness. `bin/jg-spawn.sh` otherwise refuses a spawn or relaunch whose model is empty or `default`. |
 | `done-done-judge` | `core/merge-card/merge-card` | Model that judges the Evidence card. The harness must be `pi`, and the model carries its provider prefix. |
 | `supervision-engine` | `bin/jg-supervision-engine-lib.sh` | Default model of the supervision engine when its harness matches the entry. |
-| `no-mistakes-review` | `core/pipeline-quota-failover/pi-quota-failover` | Model of the no-mistakes review chain, and of the account-pool route that names no model. The harness must be `pi`, and the model carries its provider prefix. The installed wrapper finds the home through `PI_QUOTA_FAILOVER_JG_HOME`, then `JG_HOME`, then `~/juggernaut`; `PI_QUOTA_FAILOVER_CHAIN` still wins. |
+| `no-mistakes-review` | `core/pipeline-quota-failover/pi-quota-failover`, `core/pipeline-quota-failover/switch.sh` | Model of the no-mistakes review chain, and of the account-pool route that names no model; `switch.sh` plans the same model when no pin or pool pick names one. The harness must be `pi`, and the model carries its provider prefix. The installed wrapper finds the home through `PI_QUOTA_FAILOVER_JG_HOME`, then `JG_HOME`, then `~/juggernaut`; `PI_QUOTA_FAILOVER_CHAIN` still wins. |
 | `voice-rewrite` | `bin/jg-voice.py` | Model of the default voice rewrite command. The harness must be `claude`. `JG_VOICE_REWRITE_CMD` and `config/voice-rewrite-command` still win. |
 | `inbox-stt` | `bin/jg-inbox.sh` (`say`) | Speech-to-text model. The harness must be `pi` and the model carries the prefix `amazon-bedrock/`. `JG_INBOX_STT_MODEL` still wins, and the entry wins over `config/inbox-stt-model`. |
 | `inbox-ask` | `bin/jg-inbox.sh` (`ask`) | Side-question model, with the same rules as `inbox-stt`. `JG_INBOX_ASK_MODEL` still wins over the entry, and the entry wins over `config/inbox-ask-model`. |
 | `voice-relay` | `bin/jg-voice-relay.py` | Nova Sonic model of the voice relay, with the same rules as `inbox-stt`. `JG_VOICE_MODEL` still wins over the entry, and the entry wins over `config/voice-model`. |
+| `project-state-map` | `core/project-state-map/bin/psm-read.sh` | The Claude model of the default project state map read command. The harness must be `claude`. `PSM_READ_COMMAND` still wins. |
 | `route-chain` | `core/account-pool/bin/jg-route-chain-lib.sh`, read by `jg-model-pool`, `jg-route-probe` and the done-done judge | The default free-route chain, in order. `use` is the list of routes; each is `{harness, model}` with an optional `provider` (default: the model's prefix), `billing` (default `plan`) and `only` (`hard`). It replaces only the built-in default chain; a home's own `route=` lines in `config/account-pool` still win. Every route that passes the allow-list stays in the chain. |
 | `model-pool` | `core/account-pool/bin/jg-model-pool` | The Claude model a pick returns when the request names none. The harness must be `claude`. A model the request names still wins. |
 
-Tools in this repository that still choose a model in their own way are listed in the follow-up section of the pull request that added this file.
+Every job in this repository that starts a model reads this file; the table above is the full list.
+The jobs that live in other packages (the done-done author, first-draft and learn-from-mistakes) keep their own defaults until each package reads the file.
 See [`docs/examples/tool-models.json`](examples/tool-models.json) for a starting point.
 
 ## Preferred stack and architecture (config/preferred-stack.json, config/architecture.json)

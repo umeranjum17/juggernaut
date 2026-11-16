@@ -43,6 +43,27 @@ want 'the prompt names the fixture states' "$(grep -c "oneOf('queued', 'working'
 want 'the prompt asks for the map format' "$(grep -c '"machinery":\[' "$d/prompt")" '1'
 want 'a secret-looking file is never sent' "$(grep -c 'stage = oneOf("a"' "$d/prompt" || true)" '0'
 
+# The default read command takes its model from config/tool-models.json: a fake claude records the --model it gets.
+mkdir -p "$d/bin" "$d/home/config"
+cat > "$d/bin/claude" <<S
+#!/usr/bin/env bash
+cat > "$d/prompt"; echo "\$*" > "$d/claude-argv"; cat "$d/fixture-reply.txt"
+S
+chmod +x "$d/bin/claude"
+default_run() { PATH="$d/bin:$PATH" JG_HOME="$d/home" bash "$read_" "$d/hits.json" --opt-in --out "$d/default.json" 2>"$d/default.err"; }
+model_used() { sed -E 's/.*--model ([^ ]+).*/\1/' "$d/claude-argv"; }
+default_run
+want 'no tool-models file: the default read model is Haiku' "$(model_used)" 'claude-haiku-5-5'
+printf '{"rules":[{"tool":"project-state-map","when":"fixture","use":{"harness":"claude","model":"claude-sonnet-5-5"}}]}\n' > "$d/home/config/tool-models.json"
+default_run
+want 'a project-state-map entry moves the read model' "$(model_used)" 'claude-sonnet-5-5'
+printf '{"rules":[{"tool":"project-state-map","when":"fixture","use":{"harness":"pi","model":"ollama-cloud/deepseek-v4.1-flash"}}]}\n' > "$d/home/config/tool-models.json"
+default_run
+want 'an entry for another harness keeps Haiku and says why' "$(model_used) $(grep -c 'TOOL_MODELS:' "$d/default.err")" 'claude-haiku-5-5 1'
+rm -f "$d/home/config/tool-models.json"
+default_run
+want 'removing the file gives Haiku again' "$(model_used)" 'claude-haiku-5-5'
+
 # The spend cap stops a big run before any call; a cap of 0 turns the step off.
 : > "$d/calls"
 want 'over the cap is refused' "$(PSM_READ_COMMAND="$d/model" bash "$read_" "$d/hits.json" --opt-in --max-usd 0.001 2>&1 >/dev/null | grep -c 'is over the cap .0.001; no call was made')" '1'

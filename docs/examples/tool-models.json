@@ -78,6 +78,11 @@
       "why": "This is today's built-in chain. Reorder or replace routes here; each route gets the id route:<model> and the billing plan."
     },
     {
+      "tool": "project-state-map",
+      "when": "The Claude model that reads the search hits for a project state map.",
+      "use": { "harness": "claude", "model": "claude-haiku-5-5" }
+    },
+    {
       "tool": "model-pool",
       "when": "The Claude model a pool pick returns when the request names none.",
       "use": {

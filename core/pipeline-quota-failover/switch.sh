@@ -45,8 +45,17 @@ elif [ -n "${JG_HOME:-}" ]; then
 else
   pool_config=$HOME/juggernaut/config/account-pool
 fi
+# The default route model is the pipeline review model: an entry tagged no-mistakes-review in
+# config/tool-models.json (bin/jg-tool-models.sh) names it, else Claude Haiku through claude-bridge. The entry is
+# read from the home's bin (JG_HOME, else ~/juggernaut) at every call; no home, no file, no entry, or an entry for
+# a harness other than pi keeps the built-in route, and the helper prints one TOOL_MODELS: line for a bad entry.
+default_model=claude-bridge/claude-haiku-5-5
+tm_home=${JG_HOME:-$HOME/juggernaut}
+if [ -x "$tm_home/bin/jg-tool-models.sh" ] && tm_model=$(JG_HOME=$tm_home "$tm_home/bin/jg-tool-models.sh" model no-mistakes-review pi) && [ -n "$tm_model" ]; then
+  default_model=$tm_model
+fi
 agent=pi
-model=claude-bridge/claude-haiku-5-5
+model=$default_model
 agent_set=0
 model_set=0
 while [ $# -gt 0 ]; do
@@ -83,7 +92,7 @@ if [ "$agent_set" = 0 ] && [ "$model_set" = 0 ] && [ -n "$pool_config" ] && [ -f
   case $harness in
     claude)
       agent=pi
-      case $m in '' ) model=claude-bridge/claude-haiku-5-5 ;; */*) model=$m ;; *) model=claude-bridge/$m ;; esac
+      case $m in '' ) model=$default_model ;; */*) model=$m ;; *) model=claude-bridge/$m ;; esac
       ;;
     codex) agent=codex; model=$m ;;
     opencode|cursor) agent=pi; model=$m ;;
