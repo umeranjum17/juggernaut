@@ -1,0 +1,3 @@
+# Panes reaper
+
+Panes reaper: run `done-done run -- bash tests/jg-panes-reaper.test.sh` with the log written into `$DONE_DONE_EVIDENCE_ROOT`; it provisions a named lab session through `bin/jg-herdr-lab.sh` (never the default session), arms `core/tmp-reaper/wiring.sh` in a throwaway home and runs the installed `panes-reaper` check against the real Herdr server. An idle shell pane in a workspace that a task record names, with no record of its own, is named and kept inside its limit, and closed once past it; a pane with a task record, a pane that runs a command, a pane of a workspace no record names and a pane of a child home's workspace are never closed; a session that cannot be read changes nothing. Skips when `herdr` or `jq` is missing.

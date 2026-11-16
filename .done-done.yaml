@@ -1096,6 +1096,9 @@ journeys:
   proc-reaper:
     tier: local
     command: bash tests/jg-proc-reaper.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  panes-reaper:
+    tier: local
+    command: bash tests/jg-panes-reaper.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   lane-scale-machines:
     tier: local
     command: bash journeys/lane-scale-machines.sh

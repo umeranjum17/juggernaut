@@ -2,7 +2,8 @@
 # Arm the temp-directory reaper in one juggernaut home: bin/jg-tmp-reaper.sh arm writes the home's
 # state/tmp-reaper.check.sh and registers it, so jg-* scratch cannot fill the temp directory. It also arms
 # records-reaper (core/tmp-reaper/records.sh check): the files and merged lane branches of a task with no record, and
-# proc-reaper (core/tmp-reaper/proc.sh check): the processes that bin/jg-run-owned.sh started and whose limit or owner has ended. Idempotent.
+# proc-reaper (core/tmp-reaper/proc.sh check): the processes that bin/jg-run-owned.sh started and whose limit or owner has ended, and
+# panes-reaper (core/tmp-reaper/panes.sh check): the Herdr panes of this home's workspaces that no task record owns. Idempotent.
 # Usage: wiring.sh [--dry-run] <jg-home>
 set -euo pipefail
 DRY=0
@@ -13,11 +14,11 @@ SELF_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 [ ! -x "$FMH/core/tmp-reaper/records.sh" ] || SELF_DIR=$FMH/core/tmp-reaper  # the home's own copy, so a later update moves the check
 if [ "$DRY" -eq 1 ]; then
   echo "would run: env -u JG_STATE_OVERRIDE JG_HOME=$FMH $FMH/bin/jg-tmp-reaper.sh arm"
-  for n in records proc; do echo "would arm: $n-reaper (state/$n-reaper.check.sh runs $SELF_DIR/$n.sh check $FMH)"; done
+  for n in records proc panes; do echo "would arm: $n-reaper (state/$n-reaper.check.sh runs $SELF_DIR/$n.sh check $FMH)"; done
   exit 0
 fi
 env -u JG_STATE_OVERRIDE JG_HOME="$FMH" "$FMH/bin/jg-tmp-reaper.sh" arm
-arm_check() {  # <records|proc>: write the home's state/<name>-reaper.check.sh and register it
+arm_check() {  # <records|proc|panes>: write the home's state/<name>-reaper.check.sh and register it
   local name=$1-reaper shim tmp
   shim=$FMH/state/$name.check.sh
   tmp=$(umask 077; mktemp "$FMH/state/.jg-$name.XXXXXX") || { echo "wiring: cannot write the $1 check" >&2; exit 1; }
@@ -28,3 +29,4 @@ arm_check() {  # <records|proc>: write the home's state/<name>-reaper.check.sh a
 }
 arm_check records
 arm_check proc
+arm_check panes
