@@ -2112,6 +2112,9 @@ journeys:
   jg-trunk-unit:
     tier: local
     command: bash tests/jg-trunk-unit.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  trunk-reduce:
+    tier: local
+    command: bash journeys/trunk-reduce.sh
   jg-trunk-verify-grace:
     tier: local
     command: bash tests/jg-trunk-verify-grace.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
