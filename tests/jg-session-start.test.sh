@@ -746,6 +746,29 @@ EOF
   pass "the digest prints a standing proof bypass with its uses and drops an ended one"
 }
 
+# The outcome ledger prints as one digest line when the home has landings, and not at all when it has none.
+test_context_digest_outcome_ledger() {
+  local rec root home fakebin out c f
+  rec=$(new_world outcome-ledger)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  : > "$home/data/captain.md"
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_not_contains "$out" "outcome ledger (" "a home with no landings printed a ledger section"
+  mkdir -p "$home/projects/proj"
+  git -C "$home/projects/proj" init -q -b trunk
+  git -C "$home/projects/proj" -c user.name=t -c user.email=t@t commit -q --allow-empty -m a
+  c=$(git -C "$home/projects/proj" rev-parse HEAD)
+  printf 'tkA\tproj\t%s\t1700000000\tfull\n' "$c" > "$home/data/trunk-landings.tsv"
+  for f in trunk-landing-proofs trunk-in-use trunk-releases trunk-versions; do : > "$home/data/$f.tsv"; done
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" "outcome ledger: landed 1, in use 0, released 0, release-raised 0, reverted 0, duplicate 0; no reconcile report" "the digest did not print the ledger line"
+  pass "the digest prints the outcome ledger line from the home's own records"
+}
+
 # Owner rules stay whole on disk, and the digest reaches every one of them: a long file prints
 # as an index of every rule's title with the line range that holds the rule, never as a
 # silently shortened body. A run that lifts the caps prints every byte.
@@ -3024,6 +3047,7 @@ fi
 test_context_digest_absent_empty_present
 test_learnings_index_and_body_cap
 test_context_digest_proof_bypass
+test_context_digest_outcome_ledger
 test_context_owner_rules_whole
 test_machines_section_names_every_machine
 test_lock_refusal_read_only_path

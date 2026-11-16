@@ -55,10 +55,10 @@ L=$(mkc l "tkL: l" 9)
   printf 'tkL\tproj\t%s\t%s\tfull\n' "$L" "$(t 9)"
 } > "$H/data/trunk-landings.tsv"
 : > "$H/data/trunk-landing-proofs.tsv"; : > "$H/data/trunk-in-use.tsv"
-printf 'proj\t2\ttrunk-v2\t%s\t%s\n' "$M" "$(t 5)" > "$H/data/trunk-versions.tsv"
+printf 'proj\t2\trelease/v2\t%s\t%s\n' "$M" "$(t 5)" > "$H/data/trunk-versions.tsv"
 rels() { # <second release head>
   printf 'proj\ttrunk\t%s\t6\t%s\thttps://example.test/pull/1\n' "$M" "$(t 4)" > "$H/data/trunk-releases.tsv"
-  printf 'proj\ttrunk-v2\t%s\t2\t%s\thttps://example.test/pull/2\n' "$1" "$(t 8)" >> "$H/data/trunk-releases.tsv"
+  printf 'proj\trelease/v2\t%s\t2\t%s\thttps://example.test/pull/2\n' "$1" "$(t 8)" >> "$H/data/trunk-releases.tsv"
 }
 rels "$X"
 
@@ -74,7 +74,7 @@ check "a: first release landing rows" "$(cell trunk 4)" 6
 check "a: first release ledger tickets" "$(cell trunk 5)" 4
 check "a: first release classes" "$(for c in 6 7 8 9 10 11 12 13; do cell trunk $c; done | tr '\n' ' ')" "4 1 1 0 1 1 1 0 "
 # second release: a rebased copy and the stray commit
-check "a: second release classes" "$(for c in 3 4 6 7 8 9 10 11 12 13; do cell trunk-v2 $c; done | tr '\n' ' ')" "2 0 0 0 0 1 0 0 0 1 "
+check "a: second release classes" "$(for c in 3 4 6 7 8 9 10 11 12 13; do cell release/v2 $c; done | tr '\n' ' ')" "2 0 0 0 0 1 0 0 0 1 "
 # b) unexplained
 check "b: exit 1" "$rc" 1
 check "b: the stray commit is printed as unexplained" "$(grep -c "commit ${X:0:12} is in no landing row" "$d/out")" 1
@@ -89,8 +89,13 @@ check "c: after the last release" "$(grep -c "^- after-last-release: ticket tkL"
 rels "$K"; rc=0; run > "$d/out2" || rc=$?
 check "d: a clean replay exits 0" "$rc" 0
 check "d: nothing unexplained" "$(grep -c '^none: every difference has a class' "$d/out2")" 1
-check "d: second release has the copy as its only commit" "$(awk -F'|' '$2 ~ /^ trunk-v2 $/ { gsub(/ /, "", $3); print $3 }' "$d/out2")" 1
+check "d: second release has the copy as its only commit" "$(awk -F'|' '$2 ~ "^ release/v2 $" { gsub(/ /, "", $3); print $3 }' "$d/out2")" 1
 check "d: the stray commit is outside every release" "$(grep -c "${X:0:12}" "$d/out2")" 0
+# s4) the digest line counts the same releases as the report: released plus release-raised rows are its `ledger tickets` column, and the
+# unexplained count is the report's own
+line=$(JG_HOME=$H bash "$ROOT/bin/jg-outcome-ledger.sh" summary)
+check "s4: digest line releases equal the report's ledger tickets" "$(printf '%s\n' "$line" | sed 's/.*released \([0-9]*\), release-raised \([0-9]*\),.*/\1 \2/' | awk '{ print $1 + $2 }')" "$(awk -F'|' '/^\| / && !/^\| (release \||---)/ { n += $5 } END { print n }' "$REPORT")"
+check "s4: digest line quotes the report's ticket total and unexplained count" "${line##*; }" "reconcile report of $(date -u -r "$REPORT" +%F): $(awk -F'|' '/^\| / && !/^\| (release \||---)/ { n += $5 } END { print n }' "$REPORT") release tickets, 0 unexplained"
 # e) a landing record that vanishes: its commit is in the range with no row, and it is unexplained, never dropped
 sed -i '1d' "$H/data/trunk-landings.tsv"   # tkA no longer has a landing row (the repeated tkADup row now lands the commit, under its own ticket)
 rc=0; run > "$d/out3" || rc=$?

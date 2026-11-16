@@ -11,6 +11,7 @@
 #    standing-waiver (a gated yolo), none (a proofs row and no word), unknown (no record names the ticket);
 # i) the publication timing rows: an automatic and a fallback publication with their times and path, a merged one with minutes, an old release
 #    with no publication row reading path unknown, and a missing publications record named;
+# j) one ticket's life in one command (show) and the digest line (summary): a full life, a revert, a duplicate, an unknown ticket, the counts;
 # g) a rerun prints the same rows; a missing source record is named on stderr with exit 2 and the rest still prints.
 # Usage: tests/jg-outcome-ledger.test.sh
 set -euo pipefail
@@ -127,6 +128,18 @@ mv "$H/data/trunk-publications.tsv" "$d/pub.keep"
 rc=0; pubs >/dev/null 2>"$d/errp" || rc=$?
 check "i: a missing publications record is named" "$rc:$(cat "$d/errp")" "2:jg-outcome-ledger: missing source record: $H/data/trunk-publications.tsv"
 mv "$d/pub.keep" "$H/data/trunk-publications.tsv"
+# j) show and summary
+show() { JG_HOME=$H bash "$BIN" show "$1"; }
+check "j: a full life, stage by stage" "$(show tkA | sed -n '1p;3,7p' | tr -s ' ' | tr '\n' '|')" "ticket tkA project proj commit ${A:0:12} flag - owner captain-word proof receipt+merge-card| landed $D1| in-use $D1| released $D3| reverted not recorded|"
+check "j: a stage no record shows reads not recorded" "$(show tkF | grep -c 'not recorded')" "4"
+check "j: a reverted commit shows the revert date" "$(show tkC | grep -c "reverted *$D2")" "1"
+check "j: a duplicate row is its own block, flagged" "$(show tkDup | head -1 | grep -c 'flag duplicate')" "1"
+rc=0; show nope >/dev/null 2>"$d/errs" || rc=$?
+check "j: a ticket no row names exits 1 and says so" "$rc:$(cat "$d/errs")" "1:jg-outcome-ledger: no ledger row names ticket nope"
+rc=0; JG_HOME=$H bash "$BIN" show >/dev/null 2>&1 || rc=$?
+check "j: show with no ticket is a usage error" "$rc" 64
+sum=$(JG_HOME=$H bash "$BIN" summary)
+check "j: the digest line counts" "$sum" "outcome ledger: landed 6, in use 4, released 2, release-raised 4, reverted 1, duplicate 1; no reconcile report"
 # g) rerun and missing sources
 check "g: rerun prints the same rows" "$(ledger | sha256sum)" "$(ledger | sha256sum)"
 mv "$H/data/trunk-releases.tsv" "$d/rel.keep"

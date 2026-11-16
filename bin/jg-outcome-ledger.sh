@@ -4,6 +4,9 @@
 # Usage: jg-outcome-ledger.sh build [<project>]         print the ledger on stdout (tab separated, sorted, no header comments)
 #        jg-outcome-ledger.sh columns                   print the column names
 #        jg-outcome-ledger.sh publications [<project>]  print one timing row per release publication (columns below)
+#        jg-outcome-ledger.sh show <ticket>             print one ticket's life: built, landed, in use, released, reverted, each dated or `not recorded`
+#        jg-outcome-ledger.sh summary [<project>]       print the one digest line: counts of landed, in use, released, release-raised, reverted and
+#                                                       duplicate rows, and the unexplained count of the reconcile report (data/jg-ledger/reconcile.md)
 # Nothing is written: the ledger is a pure read of the sources, so a rerun on the same sources prints the same rows.
 #
 # Columns: date (UTC day), ticket, project, commit (12), stage, proof, bypass, flag, owner.
@@ -38,6 +41,12 @@
 # (a release run by hand on the captain's word); a release with no publications row (older than the writer) reads `unknown`, and its
 # attempt is the release row's time. Open is `-` when the push went into a pull request already open. Merged is the rollover's time.
 #
+# show: one block per landed commit of the ticket (a duplicate row is a block of its own, flagged), each stage on its own line with its date
+#   and the proof; a stage no record shows reads `not recorded`. Exit 1 when no row names the ticket; the exit 2 of build is kept.
+# summary: counts of distinct tickets per stage from the same rows as build, duplicate rows counted apart, so a landed commit a revert undid
+#   is landed and reverted both. A ticket with a released row is released and not also raised. Released plus release-raised is the sum of the `ledger tickets` column of the reconcile report's
+#   table, and the line ends with that report's day, its total and its unexplained count (`no reconcile report` when it was never written). A home with no ledger rows prints nothing.
+#
 # Sources and where they sit: $DATA = ${JG_DATA_OVERRIDE:-$JG_HOME/data}, $STATE = ${JG_STATE_OVERRIDE:-$JG_HOME/state}, the project clone
 # is $JG_HOME/projects/<project>. A source file that is absent is named on stderr as `missing source record: <path>` and the command
 # exits 2 after it printed what the other records show; a clone git cannot read, or a commit it cannot resolve, is named the same way.
@@ -58,8 +67,42 @@ miss() { printf 'jg-outcome-ledger: missing source record: %s\n' "$1" >&2; missi
 case ${1-} in
   columns) printf '%s\n' "$COLUMNS_LINE"; exit 0 ;;
   build|publications) MODE=$1; shift ;;
-  *) echo "usage: jg-outcome-ledger.sh build [<project>] | columns | publications [<project>]" >&2; exit 64 ;;
+  show|summary) VIEW=$1; shift ;;
+  *) echo "usage: jg-outcome-ledger.sh build [<project>] | columns | publications [<project>] | show <ticket> | summary [<project>]" >&2; exit 64 ;;
 esac
+if [ -n "${VIEW-}" ]; then
+  [ "$VIEW" = summary ] || [ -n "${1-}" ] || { echo "usage: jg-outcome-ledger.sh show <ticket>" >&2; exit 64; }
+  only=; [ "$VIEW" != summary ] || only=${1-}
+  rc=0; rows=$("$SCRIPT_DIR/jg-outcome-ledger.sh" build ${only:+"$only"}) || rc=$?
+  [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ] || exit "$rc"
+  [ "$VIEW" != summary ] || [ -n "$rows" ] || exit "$rc"   # a home with no ledger rows has no line to print
+  if [ "$VIEW" = show ]; then
+    printf '%s\n' "$rows" | awk -F'\t' -v t="$1" '
+      $2 != t { next }
+      { k = $4 SUBSEP $8; if (!(k in seen)) { seen[k] = 1; order[++n] = k; proj[k] = $3; fl[k] = $8; ow[k] = $9; pr[k] = $6 }
+        st[k, $5] = $1; if ($5 == "reverted") rv[k] = $8 }
+      END {
+        if (n == 0) { printf "jg-outcome-ledger: no ledger row names ticket %s\n", t > "/dev/stderr"; exit 1 }
+        split("built landed in-use released release-raised reverted", S, " ")
+        for (i = 1; i <= n; i++) { k = order[i]; split(k, kk, SUBSEP)
+          printf "ticket %s  project %s  commit %s  flag %s  owner %s  proof %s\n", t, proj[k], kk[1], fl[k], ow[k], pr[k]
+          for (j = 1; j <= 6; j++) { s = S[j]; if (s == "release-raised" && ((k, "released") in st)) continue
+            printf "  %-14s %s\n", s, ((k, s) in st) ? st[k, s] : "not recorded" } }
+        exit 0 }' || rc=1
+  else
+    printf '%s\n' "$rows" | awk -F'\t' -v rep="$DATA/jg-ledger/reconcile.md" -v day="$(date -u -r "$DATA/jg-ledger/reconcile.md" +%F 2>/dev/null)" '
+      { st = $5 ($8 == "duplicate" ? "-dup" : "")
+        if (st == "released") rel[$2] = 1; else if (st == "release-raised") rai[$2] = 1; else if (!(($2 SUBSEP st) in seen)) { seen[$2 SUBSEP st] = 1; c[st]++ } }
+      END {
+        for (t in rel) c["released"]++
+        for (t in rai) if (!(t in rel)) c["release-raised"]++
+        un = "no reconcile report"; tk = ""
+        while ((getline l < rep) > 0) if (l ~ /^\| / && l !~ /^\| (release \||---)/) { n = split(l, f, "|"); tk += f[5]; u += f[n - 1]; seenrep = 1 }
+        if (seenrep) un = "reconcile report of " day ": " tk " release tickets, " u " unexplained"
+        printf "outcome ledger: landed %d, in use %d, released %d, release-raised %d, reverted %d, duplicate %d; %s\n", c["landed"] + 0, c["in-use"] + 0, c["released"] + 0, c["release-raised"] + 0, c["reverted"] + 0, c["landed-dup"] + 0, un }'
+  fi
+  exit "$rc"
+fi
 ONLY=${1-}
 if ! command -v git >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then echo 'jg-outcome-ledger: needs git and jq' >&2; exit 2; fi
 

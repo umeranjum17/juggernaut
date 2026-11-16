@@ -1234,6 +1234,8 @@ print_learnings "$DATA/learnings.md" "data/learnings.md"
 print_owner_rules "$DATA/owner-rules.md" "data/owner-rules.md (the shared owner rules every session reads; bin/jg-owner-rules.sh writes it)"
 bypass_digest=$(JG_HOME="$JG_HOME" JG_CONFIG_OVERRIDE="$CONFIG" JG_STATE_OVERRIDE="$STATE" bash "$SCRIPT_DIR/jg-proof-bypass.sh" digest 2>/dev/null) || bypass_digest=''
 if [ -n "$bypass_digest" ]; then subsection "proof bypass (config/proof-bypass; bin/jg-proof-bypass.sh)"; printf '%s\n' "$bypass_digest" | jg_digest_say; fi
+ledger_digest=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" JG_STATE_OVERRIDE="$STATE" timeout 5 bash "$SCRIPT_DIR/jg-outcome-ledger.sh" summary 2>/dev/null) || true
+if [ -n "$ledger_digest" ]; then subsection "outcome ledger (bin/jg-outcome-ledger.sh show <ticket>; bin/jg-ledger-reconcile.sh)"; printf '%s\n' "$ledger_digest" | jg_digest_say; fi
 # The role's personality file adds tone only; the voice rules stay in captain-voice.md (bin/jg-voice.py).
 if voice_persona=$(JG_HOME="$JG_HOME" JG_CONFIG_OVERRIDE="$CONFIG" python3 "$SCRIPT_DIR/jg-voice.py" persona 2>/dev/null) && [ -n "$voice_persona" ]; then
   subsection "captain voice personality (config/captain-voice-<role>.md; tone only, the rules are in captain-voice.md)"
