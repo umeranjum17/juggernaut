@@ -9,14 +9,16 @@
 # separately: this script, run by the core's own install or by hand, is the whole catalog.
 #
 # Usage:
-#   jg-host-wiring.sh [--dry-run] [--home <jg-home>] [--unwire] [--list] [--changed]
+#   jg-host-wiring.sh [--dry-run] [--home <jg-home>] [--unwire] [--list] [--changed] [--drift]
 #   jg-host-wiring.sh [--dry-run] <jg-home>          (the home may be the positional argument)
 #
 # <jg-home> is the fleet home with bin/, config/ and state/ in it; JG_HOME names it instead.
 # --dry-run reaches every fragment that supports it and prints, without running, the two that do not.
 # --unwire runs each step's teardown instead, in reverse order; a step with no teardown is named.
 # --list prints "<name><TAB><kind>" per step in run order and writes nothing.
-# --changed runs only the steps whose sources changed since that step last wired this home (the live move runs this).
+# --changed runs only the steps whose sources changed since that step last wired this home, plus every step whose installed
+# copy differs from its source or is gone (the live move runs this, so In use means the copies that run equal the repo's).
+# --drift prints "<step><TAB><installed copy><TAB>differs|missing<TAB><source>" per drifted copy and writes nothing.
 # A rerun is a rerun of each fragment's idempotent wiring and exits 0 when it lands the same wiring;
 # one failed step does not stop the rest, and every failed step is named before a nonzero exit, on the
 # last line as ", failed: <step> ...".
@@ -25,8 +27,9 @@
 # ("<step><TAB><commit><TAB><epoch>"); a failed step, a dry run and a step whose sources hold uncommitted edits
 # record nothing, and --unwire drops the record. A step's sources are its own core/<name>/ directory, this
 # script, and the files it copies or builds from another directory (step_sources). Under --changed a step
-# runs when it has no record, its recorded commit is unknown here, or a source differs between that commit and
-# this checkout's working tree; a home whose sources did not change since its last wiring runs no step.
+# runs when it has no record, its recorded commit is unknown here, a source differs between that commit and this
+# checkout's working tree, or an installed copy it owns (step_copies) differs from its source or is gone; a home
+# whose sources did not change since its last wiring and whose installed copies all match runs no step.
 #
 # A Squad Lead home (marked by jg_compat_marker) never wires the machine-wide units: sentinel (jg-sentinel),
 # host-memory (jg-heavy-adopt timer) and lookout-adapter (the one dashboard). They are single per-machine
@@ -40,7 +43,7 @@
 set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 
-dry=0 unwire=0 list=0 changed_only=0 home=${JG_HOME:-}
+dry=0 unwire=0 list=0 changed_only=0 drift=0 home=${JG_HOME:-}
 while [ "$#" -gt 0 ]; do
   case $1 in
     --home) home=${2:?--home needs a directory}; shift ;;
@@ -48,6 +51,7 @@ while [ "$#" -gt 0 ]; do
     --changed) changed_only=1 ;;
     --unwire) unwire=1 ;;
     --list) list=1 ;;
+    --drift) drift=1 ;;
     -h | --help) awk 'NR > 1 && /^#/ { print; next } NR > 1 { exit }' "$0"; exit 0 ;;
     -*) printf 'jg-host-wiring: unknown option %s\n' "$1" >&2; exit 2 ;;
     *)
@@ -141,6 +145,88 @@ step_sources() {  # <name>
   esac
 }
 
+# The byte-copies one step installs on this host, as "<source in this checkout><TAB><installed path>" lines: the files an
+# installed copy must equal. Only plain copies belong here. A generated file (a shim, a hook wrapper, a unit), a seeded
+# file the owner edits (repo-guard's allow-list) and a copy the wiring installs only where the host already holds the
+# thing it hooks into (claude-model-guard) are left out. A wiring that installs a new copy names it here, or --changed
+# cannot see that copy drift; tests/jg-host-wiring.test.sh fails when an installed file equal to a repo file is unnamed.
+step_copies() {  # <name>
+  local data=${XDG_DATA_HOME:-${HOME:-}/.local/share} c=core/$1
+  into() {  # <installed dir> <source dir> <file>...: each file of the source dir, installed under the same name
+    local to=$1 from=$2 f
+    shift 2
+    for f in "$@"; do printf '%s\t%s\n' "$from/$f" "$to/$f"; done
+  }
+  case $1 in
+    kill-guard | read-guard) into "$data/jg-$1" "$c" guard.mjs ;;
+    delete-guard) into "$data/jg-delete-guard" "$c" check.sh guard.mjs ;;
+    host-memory) into "$data/jg-host-memory" "$c/bin" jg-mem-gate.sh jg-heavy-adopt.sh ;;
+    pipeline-literal-delete) into "$data/jg-pipeline-literal-delete" "$c" context.mjs rule.txt ;;
+    pipeline-quota-failover) into "${HOME:-}/.local/share/jg-pipeline-quota-failover" "$c" pi-quota-failover ;;
+    route-change) into "$data/jg-route-change" "$c" route-change ;;
+    account-pool) into "$data/jg-account-pool" "$c/bin" jg-route-probe jg-route-chain-lib.sh ;;
+    quota-axi-pool) into "$data/jg-quota-axi-pool" "$c/bin" quota-axi-pool ;;
+    git-identity) into "$data/jg-git-identity" "$c" git-identity ;;
+    repo-guard) into "$data/jg-repo-guard" "$c" run-guard ;;
+    fleet-flow) into "$data/jg-fleet-flow" "$c/bin" jg-flow-check.sh ;;
+    fleet-stall) into "$data/jg-fleet-stall" "$c" fleet-stall-check ;;
+    key-in-env-check) into "$data/jg-key-in-env-check" "$c" key-in-env-check ;;
+    merge-on-green)
+      into "$data/jg-merge-on-green" "$c" merge-on-green.sh checks-lint.sh jg-checks-lint.sh stale-pr-alarm.sh \
+        merge-ready-batch.sh red-ci-ticket.sh backlog-shipped-reconcile.sh .done-done.yaml ;;
+    goal-loop) into "$data/jg-goal-loop" "$c" goal-loop.sh proof-run.sh ;;
+    critical-stall) into "$data/jg-critical-stall" "$c" critical-stall.sh ;;
+    stall-action) into "$data/jg-stall-action" "$c" relaunch.sh stall-action.sh ;;
+    lead-sweep) into "$data/jg-lead-sweep" "$c" lead-sweep.sh ;;
+    pane-sweep) into "$data/jg-pane-sweep" "$c" sweep.sh ;;
+    pr-pager) into "$data/jg-pr-pager" "$c" pager.sh ;;
+    auto-dispatch) into "$data/jg-auto-dispatch" "$c" dispatch.sh ;;
+    trunk-latency | status-latency) into "$data/jg-$1" "$c" latency.sh ;;
+    green-pin-stale) into "$data/jg-green-pin-stale" "$c" stale.sh ;;
+    trunk-ci) into "$data/jg-trunk-ci" "$c" ci-result.sh ;;
+    recon-ready) into "$data/jg-recon-ready" "$c" ready.sh ;;
+    landing-card) into "$data/jg-landing-card" "$c" landing-card.sh ;;
+    wake-rollup) into "$data/jg-wake-rollup" "$c" rollup.sh ;;
+    undelivered-alert) into "$data/jg-undelivered-alert" "$c" undelivered-alert.sh ;;
+    lock-lease) into "$data/jg-lock-lease" "$c" lock-lease.check.sh ;;
+    backlog-lock-reclaim) into "$data/jg-backlog-lock-reclaim" "$c" backlog-lock-reclaim.check.sh ;;
+    quota-failover)
+      into "$data/jg-quota-failover/account-pool/bin" core/account-pool/bin jg-account-pool-lib.sh jg-pool-claude-env.sh
+      into "$data/jg-quota-failover/parked-homes/bin" core/parked-homes/bin jg-parked-homes-lib.sh
+      into "$data/jg-quota-failover/quota-failover" "$c" check.sh jg-probe-folder-lib.sh quota-failover ;;
+    limit-prompt-move)
+      into "$data/jg-limit-prompt-move/account-pool/bin" core/account-pool/bin jg-account-pool-lib.sh
+      into "$data/jg-limit-prompt-move/parked-homes/bin" core/parked-homes/bin jg-parked-homes-lib.sh
+      into "$data/jg-limit-prompt-move/limit-prompt-move" "$c" check.sh limit-prompt-move ;;
+    model-gate) into "$data/jg-model-gate" "$c/bin" jg-model-gate ;;
+    owner-guard) into "$data/jg-owner-guard-scan" "$c" scan-check ;;
+    pane-titles) into "$data/jg-pane-titles" "$c" launch-env-hook ;;
+    sentinel) into "$data/jg-sentinel/bin" "$c/bin" jg-sentinel.sh ;;
+    supervisor-guard)
+      into "$data/jg-supervisor-guard" "$c/bin" jg-supervisor-work-pretool-check.sh jg-supervisor-work-decide.mjs \
+        jg-supervisor-work-command-policy.mjs ;;
+    tickets-sync)
+      into "$data/jg-tickets-sync/tickets-sync" "$c" sync.py ticket.py identity.py lane.py hierarchy.py \
+        task_rows.py cleanup.py legacy.py reconcile.py release.py drop.py tidy.py
+      local icon
+      for icon in "$here/$c"/icons/*; do
+        [ -f "$icon" ] || continue
+        into "$data/jg-tickets-sync/tickets-sync/icons" "$c/icons" "${icon##*/}"
+      done ;;
+  esac
+}
+
+# The installed copies of one step that are gone or differ from their source: "<installed><TAB>missing|differs<TAB><source>".
+copy_drift() {  # <name>
+  local src dst
+  while IFS=$'\t' read -r src dst; do
+    [ -f "$here/$src" ] || continue
+    if [ ! -e "$dst" ]; then printf '%s\tmissing\t%s\n' "$dst" "$here/$src"
+    elif ! cmp -s -- "$here/$src" "$dst"; then printf '%s\tdiffers\t%s\n' "$dst" "$here/$src"
+    fi
+  done < <(step_copies "$1")
+}
+
 if [ "$list" = 1 ]; then
   for entry in "${plan[@]}"; do printf '%s\t%s\n' "${entry%%:*}" "${entry##*:}"; done
   exit 0
@@ -173,6 +259,17 @@ lead_home=0
 [ ! -e "$(jg_compat_marker "$home")" ] || lead_home=1
 if [ "$lead_home" = 1 ]; then
   printf 'jg-host-wiring: %s is a Squad Lead home; skipping the machine-wide units:%s (Main owns them)\n' "$home" "${machine_wide% }"
+fi
+
+if [ "$drift" = 1 ]; then
+  for entry in "${plan[@]}"; do
+    name=${entry%%:*}
+    if [ "$lead_home" = 1 ] && [ "${machine_wide#*" $name "}" != "$machine_wide" ]; then continue; fi
+    while IFS=$'\t' read -r copy state source; do
+      printf '%s\t%s\t%s\t%s\n' "$name" "$copy" "$state" "$source"
+    done < <(copy_drift "$name")
+  done
+  exit 0
 fi
 
 if [ "$changed_only" = 1 ] && [ "$unwire" = 1 ]; then
@@ -212,7 +309,8 @@ due() {  # <record key> <name>: 0 when the step must run under --changed
     d=$(git -C "$here" diff --name-only "$rec" "$head" -- 2>/dev/null) || return 0
     diff_of[$rec]=$d
   fi
-  touches "${diff_of[$rec]}${dirty:+$'\n'$dirty}" "$2"
+  touches "${diff_of[$rec]}${dirty:+$'\n'$dirty}" "$2" && return 0
+  [ -n "$(copy_drift "$2")" ]  # a copy edited or deleted since the step wired is drift whatever git says
 }
 
 mark() {  # <record key> <name>: the step wired from this checkout's commit; uncommitted source bytes record nothing

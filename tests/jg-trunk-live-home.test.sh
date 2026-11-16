@@ -7,6 +7,8 @@
 #    home that lacks the commit fetches it from the trunk branch and records "live".
 # T2 A move whose ref update fails after the tree and index were already updated leaves the home clean at
 #    the old commit (not "dirty working tree" on the next run), and the next run moves it.
+# T3 After the home moves, the hook runs the moved checkout's own bin/jg-host-wiring.sh --changed for the home; a step that
+#    fails there is the hook's failure with the steps named, and the home stays at the moved-to commit.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -39,7 +41,8 @@ world() {
   printf '#!/usr/bin/env bash\nexec "%s/root/bin/jg-trunk-live-home.sh" "$@"\n' "$W" > "$HOME_D/config/live-hook.proj"; chmod +x "$HOME_D/config/live-hook.proj"
 }
 
-trunk() { JG_HOME="$HOME_D" JG_ROOT_OVERRIDE="$HOMEC" JG_STATE_OVERRIDE="$HOME_D/state" \
+# tests/lib.sh turns host wiring off for every suite; this one proves the hook runs it, so the move sees it on.
+trunk() { env -u JG_HOST_WIRING_SKIP JG_HOME="$HOME_D" JG_ROOT_OVERRIDE="$HOMEC" JG_STATE_OVERRIDE="$HOME_D/state" \
   JG_DATA_OVERRIDE="$HOME_D/data" JG_CONFIG_OVERRIDE="$HOME_D/config" "$W/root/bin/jg-trunk.sh" "$@"; }
 
 # land_on_trunk <content>: one more commit on the trunk branch, recorded as green with the captain's word.
@@ -47,7 +50,7 @@ land_on_trunk() {
   local br
   br=$(cat "$HOME_D/state/trunk-branch-proj" 2>/dev/null || echo trunk-v3)
   printf '%s\n' "$1" > "$PROJ/work.txt"
-  git -C "$PROJ" add work.txt; git -C "$PROJ" "${GIT_ID[@]}" commit -q -m "ticket $1" 
+  git -C "$PROJ" add -A .; git -C "$PROJ" "${GIT_ID[@]}" commit -q -m "ticket $1" 
   C=$(git -C "$PROJ" rev-parse HEAD)
   git -C "$PROJ" reset -q --hard HEAD~1
   JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref "refs/heads/$br" "$C"
@@ -196,6 +199,42 @@ test_a_home_half_moved_to_an_earlier_target_finishes() {
   pass 'a home half-moved to an earlier target finishes; an extra file or an edit keeps the refusal and loses nothing'
 }
 
+# wiring_stub <fail-steps>: the project's own bin/jg-host-wiring.sh, as the moved checkout carries it: it logs how it was
+# called and, given steps, fails the way the real script does (", failed: <steps>" on its last line).
+wiring_stub() {
+  mkdir -p "$PROJ/bin"
+  {
+    printf '#!/usr/bin/env bash\n'
+    # shellcheck disable=SC2016 # the stub body is written verbatim
+    printf 'printf "%%s|%%s|%%s\\n" "$*" "$JG_HOME" "$JG_ROOT_OVERRIDE" >> %q\n' "$W/wiring.log"
+    if [ -n "$1" ]; then printf 'echo "jg-host-wiring: 3 steps wired, failed: %s" >&2; exit 1\n' "$1"; else printf 'exit 0\n'; fi
+  } > "$PROJ/bin/jg-host-wiring.sh"
+  chmod +x "$PROJ/bin/jg-host-wiring.sh"
+}
+
+test_the_move_runs_the_homes_host_wiring_and_names_a_failed_step() {
+  local out rc=0 row
+  world wired
+  wiring_stub ''
+  land_on_trunk wired
+  out=$(trunk live "$PROJ" 2>&1) || fail "a home whose wiring is whole must go live: $out"
+  [ "$(git -C "$HOMEC" rev-parse HEAD)" = "$C" ] || fail "the home must reach the landed commit: $out"
+  [ "$(cat "$W/wiring.log")" = "--changed $HOME_D|$HOME_D|$HOMEC" ] \
+    || fail "the moved checkout's wiring must run once with --changed for the home: $(cat "$W/wiring.log" 2>&1)"
+  grep -Eq "^proj	$C	[0-9]+	live$" "$HOME_D/data/trunk-in-use.tsv" || fail "the record must say live"
+  world wirefail
+  wiring_stub 'alpha beta'
+  land_on_trunk wirefail
+  out=$(trunk live "$PROJ" 2>&1) || rc=$?
+  [ "$rc" = 3 ] || fail "a failed wiring step must fail the live move, got $rc: $out"
+  assert_contains "$out" "host wiring is not whole: alpha,beta failed" "the live line must name the failed steps"
+  [ "$(git -C "$HOMEC" rev-parse HEAD)" = "$C" ] || fail "the home stays at the moved-to commit when wiring fails"
+  row=$(tail -1 "$HOME_D/data/trunk-in-use.tsv")
+  assert_contains "$row" "hook-failed:the home moved but host wiring is not whole: alpha,beta failed" "the record must carry the failed steps"
+  pass 'the move runs the checkout host wiring for the home, and a failed step is the hook failure with the steps named'
+}
+
+test_the_move_runs_the_homes_host_wiring_and_names_a_failed_step
 test_guarded_home_moves_with_its_recorded_tip
 test_a_home_half_moved_to_an_earlier_target_finishes
 test_the_stray_pool_gitignore_line_is_cleared_and_other_edits_are_kept

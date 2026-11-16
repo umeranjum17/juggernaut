@@ -184,3 +184,104 @@ grep -qx 'not armed: no watched-tools registry' "$tmp/det-tool.log" || no 'tool-
 bash "$here/core/installed-drift/unwiring.sh" "$det" >/dev/null 2>&1 || no 'installed-drift unwiring failed'
 [ ! -e "$det/state/installed-drift.check.sh" ] || no 'installed-drift unwiring left the shim'
 pass 'detector wiring arms installed-drift, leaves tool-update-check unarmed without a registry, and unwires'
+
+# An installed copy that differs from its source, or is gone, is drift whatever git says: a step recorded as wired
+# at this commit reruns under --changed, and only that step. The home is a committed copy of this checkout's bin/ and
+# core/ (so the record, the commit and the sources are real, and a dirty working tree cannot hide a step), the host is
+# a throw-away HOME, and the commands that reach the real service manager are stubs that fail.
+# The launcher injects core.hooksPath and identity includes through GIT_CONFIG_COUNT; a fixture repo must run none of them.
+unset GIT_CONFIG_COUNT
+for v in $(compgen -v | grep -E '^GIT_CONFIG_(KEY|VALUE)_'); do unset "$v"; done
+fx=$tmp/fx
+fxuser=$tmp/fxuser
+fxstubs=$tmp/fxstubs
+mkdir -p "$fx/config" "$fx/state" "$fx/data" "$fxuser" "$fxstubs"
+cp -r "$here/bin" "$here/core" "$fx/"
+for c in systemd-run systemctl tailscale curl; do printf '#!/bin/sh\nexit 1\n' >"$fxstubs/$c"; chmod +x "$fxstubs/$c"; done
+git -C "$fx" init -q
+git -C "$fx" add -A
+git -C "$fx" -c user.name=Fixture -c user.email=fixture@example.invalid commit -q -m fixture
+fxdata=$fxuser/.local/share
+fxwire() {  # fxwire <args>: the fixture home's own entry point, on the throw-away host
+  env -u JG_HOME -u JG_STATE_OVERRIDE -u JG_DATA_OVERRIDE -u JG_CONFIG_OVERRIDE -u JG_ROOT_OVERRIDE \
+    HOME="$fxuser" XDG_DATA_HOME="$fxdata" XDG_CONFIG_HOME="$fxuser/.config" PATH="$fxstubs:$PATH" \
+    bash "$fx/bin/jg-host-wiring.sh" "$@" --home "$fx"
+}
+steps_run() { sed -n 's/^== \([a-z0-9-]*\):.*/\1/p' "$1" | sort | tr '\n' ' '; }  # the steps a run's log shows it ran
+
+# The steps a run named as failed ("..., failed: a b" on its last line; the owner-guard scan counts as owner-guard): a failed step
+# has no record, so the next --changed run reruns it, and a step that failed before may wire on the rerun.
+failed_of() { sed -n 's/.*, failed: *//p' "$1" | tail -n 1 | tr ' ' '\n' | sed 's/-scan$//' | sort -u | tr '\n' ' '; }
+steps_with() {  # steps_with <log> <step>...: the steps that failed in that log, plus the named ones
+  { printf '%s\n' "$(failed_of "$1")" | tr ' ' '\n'; printf '%s\n' "${@:2}"; } | sed '/^$/d' | sort -u | tr '\n' ' '
+}
+
+rc=0
+fxwire >"$tmp/fx-first.log" 2>&1 || rc=$?
+[ "$rc" -eq 1 ] || { tail -n 20 "$tmp/fx-first.log" >&2; no "the first full wiring run of the fixture home exited $rc, not 1 (the steps that need a service manager fail)"; }
+failed=$(failed_of "$tmp/fx-first.log")
+[ -n "$failed" ] || no 'the first full run named no failed step'
+[ -f "$fx/state/host-wiring.tsv" ] || no 'the first full run recorded no wired step'
+
+# Every drifted copy of a step that wired is a defect; a step that failed may hold copies it never installed.
+drift_outside_failed() {  # drift_outside_failed <failed steps>
+  local step copy state source bad=''
+  while IFS=$'\t' read -r step copy state source; do
+    case " $1" in *" $step "*) continue ;; esac
+    bad="$bad $step:$state:${copy#"$fxuser"/}"
+  done < <(fxwire --drift)
+  printf '%s\n' "$bad"
+}
+bad=$(drift_outside_failed "$failed")
+[ -z "$bad" ] || no "a step that wired left a copy that differs from its source:$bad"
+pass 'after a full wiring run every copy of every step that wired equals its source'
+
+# The table names every plain copy: delete each installed file that equals a repo file, and --drift must report each one.
+# repo-guard's allowed-repos is the seeded list the owner edits, so it is installed once and never compared.
+: >"$tmp/fx-expected"
+while IFS= read -r -d '' f; do
+  b=${f##*/}
+  [ "$b" != allowed-repos ] || continue
+  while IFS= read -r s; do
+    if cmp -s "$fx/$s" "$f"; then printf '%s\n' "$f" >>"$tmp/fx-expected"; rm -f -- "$f"; break; fi
+  done < <(git -C "$fx" ls-files | grep -E "(^|/)$b\$")
+done < <(find "$fxdata" -type f -not -path '*/state/*' -print0)
+[ -s "$tmp/fx-expected" ] || no 'the fixture host holds no installed copy'
+fxwire --drift >"$tmp/fx-drift.tsv"
+cut -f2 "$tmp/fx-drift.tsv" | sort >"$tmp/fx-reported"
+unnamed=$(sort "$tmp/fx-expected" | comm -23 - "$tmp/fx-reported")
+[ -z "$unnamed" ] || no "step_copies in jg-host-wiring.sh does not name these installed copies: $unnamed"
+awk -F'\t' 'NF != 4 || $3 != "missing" { bad = 1 } END { exit bad }' "$tmp/fx-drift.tsv" || no '--drift lines are not "<step> <copy> missing <source>"'
+pass '--drift names every installed copy that equals a repo file, and says missing for a deleted one'
+
+# --changed restores them all; the run after it reruns only the steps that failed (they have no record to be current by).
+fxwire --changed >"$tmp/fx-restore.log" 2>&1 || true
+failed=$(failed_of "$tmp/fx-restore.log")
+bad=$(drift_outside_failed "$failed")
+[ -z "$bad" ] || no "--changed left a copy missing or different:$bad"
+while IFS= read -r f; do
+  [ -f "$f" ] || case " $failed" in *" pipeline-quota-failover "*) [ "${f##*/}" = pi-quota-failover ] || no "--changed did not restore $f" ;; *) no "--changed did not restore $f" ;; esac
+done <"$tmp/fx-expected"
+fxwire --changed >"$tmp/fx-second.log" 2>&1 || true
+[ "$(steps_run "$tmp/fx-second.log")" = "$(steps_with "$tmp/fx-restore.log")" ] ||
+  { printf 'ran: [%s] failed before: [%s]\n' "$(steps_run "$tmp/fx-second.log")" "$(steps_with "$tmp/fx-restore.log")" >&2; no 'a second --changed run reran a step that was current'; }
+pass '--changed restores every deleted copy, and the run after it reruns only the steps that failed'
+
+# One step, both ways a copy drifts: deleted, then edited. The step reruns, its copy equals its source, and no step that wired reruns.
+copy=$fxdata/jg-fleet-flow/jg-flow-check.sh
+source=$fx/core/fleet-flow/bin/jg-flow-check.sh
+prev=$tmp/fx-second.log
+for how in deleted edited; do
+  if [ "$how" = deleted ]; then rm -f -- "$copy"; want=missing; else printf '# edited on the host\n' >>"$copy"; want=differs; fi
+  got=$(fxwire --drift | awk -F'\t' '$1 == "fleet-flow"')
+  [ "$got" = "$(printf 'fleet-flow\t%s\t%s\t%s' "$copy" "$want" "$source")" ] || no "a $how copy was not reported as $want: $got"
+  fxwire --changed >"$tmp/fx-$how.log" 2>&1 || true
+  [ "$(steps_run "$tmp/fx-$how.log")" = "$(steps_with "$prev" fleet-flow)" ] ||
+    { printf 'ran: [%s] want: [%s]\n' "$(steps_run "$tmp/fx-$how.log")" "$(steps_with "$prev" fleet-flow)" >&2; no "a $how copy did not rerun exactly its own step"; }
+  cmp -s "$source" "$copy" || no "the rerun left a $how copy different from its source"
+  [ -z "$(fxwire --drift | awk -F'\t' '$1 == "fleet-flow"')" ] || no "--drift still reports a $how copy after the rerun"
+  fxwire --changed >"$tmp/fx-$how-again.log" 2>&1 || true
+  [ "$(steps_run "$tmp/fx-$how-again.log")" = "$(steps_with "$tmp/fx-$how.log")" ] || no "a run after the $how copy was restored reran a current step"
+  prev=$tmp/fx-$how-again.log
+done
+pass 'a deleted or an edited copy reruns exactly its step, restores it, and the next run reruns nothing that wired'
