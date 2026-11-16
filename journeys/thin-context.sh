@@ -89,6 +89,14 @@ JG_HOME="$G" JG_ROOT_OVERRIDE="$G" "$CARRIER" ensure grok > "$OUT/grok-ensure.tx
 [ ! -s "$OUT/grok-ensure.txt" ] && [ ! -e "$G/CLAUDE.local.md" ] || die "ensure grok wrote a file"
 log "grok home: carrier is AGENTS.md itself (read natively, grok inspect); ensure writes nothing; check reads reemit; file after one compaction: not proven"
 
+# Kimi (slice thin-tc5-kimi): kimi 2.3.3 loads AGENTS.md into its system prompt itself (strings of the binary: loadAgentsMdForRoots, AGENTS_MD_PLAIN_NAMES),
+# so Kimi reads AGENTS.md (native). The lab run was not made (kimi -p: no credential configured): the first request after a compaction is not proven.
+K=$(home kimi)
+[ "$(JG_HOME="$K" JG_ROOT_OVERRIDE="$K" "$CARRIER" check kimi)" = reemit ] || die "check kimi is not reemit"
+JG_HOME="$K" JG_ROOT_OVERRIDE="$K" "$CARRIER" ensure kimi > "$OUT/kimi-ensure.txt" 2>&1 || die "ensure kimi failed"
+[ ! -s "$OUT/kimi-ensure.txt" ] && [ ! -e "$K/CLAUDE.local.md" ] || die "ensure kimi wrote a file"
+log "kimi home: carrier is AGENTS.md itself (read natively, binary); ensure writes nothing; check reads reemit; file after one compaction: not proven"
+
 C=$(home claude)
 start "$C" claude --source startup > "$OUT/claude-start.txt"
 grep -q 'wrote CLAUDE.local.md' "$OUT/claude-start.txt" || die "the first claude start did not write the carrier file"

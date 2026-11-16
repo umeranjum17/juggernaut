@@ -53,7 +53,7 @@ codex     none    AGENTS.override.md   copy
 cursor    reemit  -                    native
 opencode  file    -                    native
 grok      reemit  -                    native
-kimi      none    -
+kimi      reemit  -                    native
 '
 
 COPY_LIMIT=32768  # the default read limit of a Codex instruction file, in bytes
