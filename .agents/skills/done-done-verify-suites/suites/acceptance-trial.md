@@ -1,0 +1,3 @@
+# Acceptance trial measures the fleet-throughput trial
+
+Acceptance trial: run `done-done run jg-acceptance-trial` (`bash tests/jg-acceptance-trial.test.sh` writes its log into `$DONE_DONE_EVIDENCE_ROOT`); the real `bin/jg-acceptance-trial.sh` reads a trial record (T0, deadline, roster) and calls the real `bin/jg-ask-record.sh` on a fixture home. The log shows an empty roster as pending before the deadline and failed after it, ten asks that meet every bound as a measured pass with the exact median and p90, a slow ask, a double proof and a home without the change each named, and an ask before T0 or a roster line with a missing field never counted. The six criteria this check cannot measure are listed as unmeasured and never passed (screen: none).
