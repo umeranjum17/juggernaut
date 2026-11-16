@@ -32,6 +32,28 @@ export JG_HOME=$FMH
 . "$BIN/jg-backlog-transition-lib.sh"
 jg_backlog_transition_applies "$CONFIG" "$DATA" ship || exit 0
 
+# Retry pending closes after teardown, with bootstrap's locks.
+if [ -r "$BIN/jg-wake-lib.sh" ]; then
+  (
+  # shellcheck source=bin/jg-wake-lib.sh disable=SC1091
+  . "$BIN/jg-wake-lib.sh"
+  for marker in "$STATE"/*.backlog-close; do
+    [ -f "$marker" ] || continue
+    [ "$(date +%s)" -lt "$LIMIT" ] || break
+    id=${marker##*/}; id=${id%.backlog-close}
+    [ ! -e "$STATE/$id.meta" ] || continue
+    control_lock="$STATE/.control-$id.lock"
+    meta_lock=$(jg_meta_lock_path "$STATE/$id.meta") || continue
+    jg_lock_try_acquire "$control_lock" || continue
+    if jg_lock_try_acquire "$meta_lock"; then
+      jg_backlog_close_marker_replay "$STATE" "$marker" "$DATA" >/dev/null 2>&1 || :
+      jg_lock_release "$meta_lock"
+    fi
+    jg_lock_release "$control_lock"
+  done
+  )
+fi
+
 meta_get() { sed -n "s/^$2=//p" "$1" 2>/dev/null | head -n 1; } # <meta> <key>
 
 # The PR numbers any release record carries, one per line.

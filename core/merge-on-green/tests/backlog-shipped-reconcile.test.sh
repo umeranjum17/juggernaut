@@ -83,4 +83,20 @@ mkmeta jg-via-watcher ship 81; marker jg-via-watcher 81
 out=$(JG_CHECK_TIMEOUT=60 "$SRC/merge-on-green.sh" check "$FM" 2>&1)
 check "merge-on-green check carries the reconcile" "$(printf '%s\n' "$out" | grep -c '^backlog-shipped-reconcile: jg-via-watcher moved out of in flight')" 1
 
+# A finished cleanup's pending close is retried by the watcher. A labelled fix
+# stays open when its source history is missing; an ordinary row closes.
+row retry-fix "retry the fix"; ta start jg-retry-fix
+BEADS_DIR=$(cat "$FM/config/beads-dir") "$REPO/bin/jg-beads.sh" label add jg-retry-fix bottleneck-fix >/dev/null
+row retry-plain "retry the plain item"; ta start jg-retry-plain
+(
+  . "$REPO/bin/jg-backlog-lib.sh"
+  . "$REPO/bin/jg-backlog-transition-lib.sh"
+  jg_backlog_close_marker_write "$FM/state" jg-retry-fix "$FM/data" 1
+  jg_backlog_close_marker_write "$FM/state" jg-retry-plain "$FM/data" 1
+)
+reconcile >/dev/null
+check "missing proof keeps the fix marker" "$([ -f "$FM/state/jg-retry-fix.backlog-close" ] && echo yes)" yes
+check "watcher retries and closes a complete ordinary row" "$([ ! -e "$FM/state/jg-retry-plain.backlog-close" ] && echo yes)" yes
+check "fix remains in flight" "$(section in_flight | grep -c retry-fix)" 1
+
 if [ "$fails" -eq 0 ]; then echo "PASS backlog-shipped-reconcile"; else echo "$fails failed"; exit 1; fi

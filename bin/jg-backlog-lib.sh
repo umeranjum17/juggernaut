@@ -107,9 +107,21 @@ jg_backlog_beads_health() {  # <config_dir>
 
 jg_backlog_beads_write() {  # <config_dir> <a verb of bin/jg-beads-write.py> [args...]
   local bin_dir store
-  store=$(jg_backlog_beads_store "$1") || return 2
+  local config=$1 row labels id
+  store=$(jg_backlog_beads_store "$config") || return 2
   shift
   bin_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+  case "${1:-}" in
+    done|close)
+      id=${2:-}
+      row=$(jg_backlog_beads_read "$config" show "$id" --full) || { echo "cannot read ticket $id for closure gate" >&2; return 1; }
+      labels=$(printf '%s\n' "$row" | sed -n 's/^  labels: //p')
+      labels=${labels#\"}; labels=${labels%\"}
+      case ",$labels," in
+        *,bottleneck-fix,*)
+          "$bin_dir/jg-closure-proof.sh" "$id" | python3 "$bin_dir/jg-closure-gate.py" - "$id" || return 1 ;;
+      esac ;;
+  esac
   BEADS_DIR=$store python3 "$bin_dir/jg-beads-write.py" "$@"
 }
 
