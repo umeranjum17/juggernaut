@@ -7,17 +7,25 @@
 #                                                  file    the harness loads the carrier file by itself, at the start and after a compaction
 #                                                  reemit  session start runs again after a compaction and its output holds the contract
 #                                                  none    neither
-#        jg-contract-carrier.sh ensure <harness>   make a `file` row true: write the carrier file with its one import line
+#        jg-contract-carrier.sh ensure <harness>   make a `file` row true: write the carrier file (an import line, or a copy of the core file)
 #
 # The table below is the one owner of the proofs: one row per verified primary harness. A harness that is
 # not in it, such as `unknown`, reads `none`. `check` prints `file` only when the carrier file is in the home
-# root and holds the import line; before that a row with a candidate file reads its base proof (the report
+# root and holds what its kind names; before that a row with a candidate file reads its base proof (the report
 # data/fable-thin-context/report.md section 6.2: claude is `reemit` until one run of the candidate).
+# A row has one of two kinds of carrier file:
+#   import  the file holds one import line naming the contract file (claude: CLAUDE.local.md expands it)
+#   copy    the file holds a copy of the core file AGENTS.md under one marker line, because the harness does not
+#           expand an import (codex, lab thin-tc5-codex: AGENTS.override.md holding `@AGENTS.md` was not read,
+#           the same text written directly was). The copy must fit the harness's default read limit of 32 KiB;
+#           a larger core file is not copied and the row keeps its base proof.
 # A harness row that reads `none` has no tracked channel after a compaction (docs/sessionstart-nudge.md).
 #
-# ensure: prints nothing when the file already holds the line or the row has no candidate file. It appends
-# the line to an existing file and never rewrites other text in it. It prints one line and exits 3 when it
-# had to write: the session that is starting did not load that file, so session start still prints the
+# ensure: prints nothing when the file already holds what its kind names or the row has no candidate file.
+# An import file gets its line appended and no other text in it is rewritten. A copy file is written whole
+# when it is absent or starts with the marker line (a stale copy is refreshed); a file with other text, a
+# symlink, or a core file over the limit is left alone and ensure says why on one line. It prints one line
+# and exits 3 when it had to write: the session that is starting did not load that file, so session start still prints the
 # contract in its digest this once. It writes nothing, says why on one line and exits 0 for a harness that
 # is not in the table and for a home above a worker copy (the code root is not the home root). It exits 1
 # when the write fails.
@@ -31,21 +39,24 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CODE_ROOT="${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 HOME_ROOT="${JG_HOME:-$CODE_ROOT}"
 
-# harness  base-proof  carrier-file ("-" holds none)
+# harness  base-proof  carrier-file ("-" holds none)  kind (import or copy)
 TABLE='
-claude    reemit  CLAUDE.local.md
+claude    reemit  CLAUDE.local.md      import
 pi        reemit  -
 pi-signed reemit  -
 omp       reemit  -
-codex     none    -
+codex     none    AGENTS.override.md   copy
 cursor    none    -
 opencode  none    -
 grok      none    -
 kimi      none    -
 '
 
-row() {  # <harness>: "<base> <file>" or nothing
-  printf '%s\n' "$TABLE" | awk -v h="$1" '$1 == h { print $2, $3; exit }'
+COPY_LIMIT=32768  # the default read limit of a Codex instruction file, in bytes
+COPY_MARKER='<!-- jg-contract-carrier: copy of AGENTS.md; ensure rewrites this file, edit AGENTS.md instead -->'
+
+row() {  # <harness>: "<base> <file> <kind>" or nothing
+  printf '%s\n' "$TABLE" | awk -v h="$1" '$1 == h { print $2, $3, ($4 == "" ? "-" : $4); exit }'
 }
 
 # The contract today is the whole AGENTS.md; once the supervisor contract has its own file it is that file.
@@ -60,16 +71,43 @@ contract() {
 import_line() { printf '@%s\n' "$(contract)"; }
 
 carrier_file() {  # <harness>: the file name of its row, or nothing
-  local r file
-  r=$(row "$1")
-  file=${r#* }
-  { [ -n "$r" ] && [ "$file" != - ]; } && printf '%s\n' "$file"
+  local file kind
+  read -r _ file kind <<< "$(row "$1")"
+  { [ -n "${file:-}" ] && [ "$file" != - ]; } && printf '%s\n' "$file"
   return 0
 }
 
-holds_line() {  # <path>
-  [ -f "$1" ] && [ ! -L "$1" ] && grep -Fxq -- "$(import_line)" "$1" 2>/dev/null \
-    && [ -f "$HOME_ROOT/$(contract)" ]
+carrier_kind() {  # <harness>: the kind of its row's file
+  local kind
+  read -r _ _ kind <<< "$(row "$1")"
+  printf '%s\n' "${kind:--}"
+}
+
+core_file() { printf '%s/AGENTS.md\n' "$HOME_ROOT"; }
+
+copy_fits() {  # the core file plus its marker line fit the read limit
+  [ -f "$(core_file)" ] && [ $(( $(wc -c < "$(core_file)") + ${#COPY_MARKER} + 1 )) -le "$COPY_LIMIT" ]
+}
+
+copy_is_ours() {  # <path>: a regular file that starts with the marker line
+  [ -f "$1" ] && [ ! -L "$1" ] && [ "$(head -n 1 "$1" 2>/dev/null)" = "$COPY_MARKER" ]
+}
+
+write_copy() {  # <path>
+  { printf '%s\n' "$COPY_MARKER"; cat "$(core_file)"; } > "$1"
+}
+
+holds_line() {  # <path> <kind>: the file holds what its kind names
+  case "$2" in
+    import)
+      [ -f "$1" ] && [ ! -L "$1" ] && grep -Fxq -- "$(import_line)" "$1" 2>/dev/null \
+        && [ -f "$HOME_ROOT/$(contract)" ]
+      ;;
+    copy)
+      copy_fits && copy_is_ours "$1" && tail -n +2 "$1" | cmp -s - "$(core_file)"
+      ;;
+    *) return 1 ;;
+  esac
 }
 
 cmd=${1:-}
@@ -87,7 +125,7 @@ case "$cmd" in
     r=$(row "$harness")
     [ -n "$r" ] || { printf 'none\n'; exit 0; }
     file=$(carrier_file "$harness")
-    if [ -n "$file" ] && holds_line "$HOME_ROOT/$file"; then
+    if [ -n "$file" ] && holds_line "$HOME_ROOT/$file" "$(carrier_kind "$harness")"; then
       printf 'file\n'
     else
       printf '%s\n' "${r%% *}"
@@ -105,8 +143,26 @@ case "$cmd" in
       exit 0
     fi
     target=$HOME_ROOT/$file
-    holds_line "$target" && exit 0
+    kind=$(carrier_kind "$harness")
+    holds_line "$target" "$kind" && exit 0
     [ ! -L "$target" ] || { printf 'jg-contract-carrier: %s is a symlink; wrote nothing\n' "$file"; exit 1; }
+    if [ "$kind" = copy ]; then
+      [ -f "$(core_file)" ] || { printf 'jg-contract-carrier: AGENTS.md is absent; wrote nothing\n'; exit 1; }
+      if ! copy_fits; then
+        printf 'jg-contract-carrier: AGENTS.md is over the %s byte read limit of %s; wrote nothing, the digest holds the contract\n' "$COPY_LIMIT" "$file"
+        exit 0
+      fi
+      if [ -e "$target" ] && ! copy_is_ours "$target"; then
+        printf 'jg-contract-carrier: %s holds text this script did not write; wrote nothing\n' "$file"
+        exit 1
+      fi
+      if ! write_copy "$target" 2>/dev/null; then
+        printf 'jg-contract-carrier: could not write %s\n' "$target"
+        exit 1
+      fi
+      printf 'jg-contract-carrier: wrote %s with a copy of AGENTS.md\n' "$file"
+      exit 3
+    fi
     [ -f "$HOME_ROOT/$(contract)" ] || { printf 'jg-contract-carrier: %s is absent; wrote nothing\n' "$(contract)"; exit 1; }
     if ! printf '%s\n' "$(import_line)" >> "$target" 2>/dev/null; then
       printf 'jg-contract-carrier: could not write %s\n' "$target"

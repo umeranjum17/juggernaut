@@ -5,8 +5,12 @@
 #   ensure writes the carrier file of a fixture claude home with its one import line, and the real
 #   bin/jg-session-start.sh holds the contract in its digest for harness unknown and in the re-emit after a
 #   compaction for harness pi, and stops repeating it for a claude home whose file stands.
+#   Codex (slice thin-tc5-codex): ensure writes AGENTS.override.md as a copy of the core file, not an import
+#   line, check reads file, and the digest stops repeating the contract for a codex home whose copy stands.
 # Step 2 (opt-in, spends model tokens: JG_THIN_CONTEXT_LIVE=1): a real Claude Code session (Haiku) started in
-#   a fixture home that holds only the carrier file reads the contract sentence in its first request.
+#   a fixture home that holds only the carrier file reads the contract sentence in its first request, and a
+#   real Codex session (codex exec, read-only) started in a fixture home whose AGENTS.override.md `ensure`
+#   wrote reads it too.
 #   A request after a compaction is not driven here: print mode has no compaction (unverified).
 set -u
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -79,8 +83,25 @@ start "$P" pi --reemit --source compact > "$OUT/pi-compact.txt"
 grep -q "$MARK" "$OUT/pi-compact.txt" || die "the re-emit after a pi compaction does not hold the contract"
 log "harness pi: the re-emit after a compaction holds the contract"
 
-printf '{"target":{"version":"bin/jg-contract-carrier.sh and bin/jg-session-start.sh at this head"},"start":"fixture homes holding only an AGENTS.md that is the contract, run under a fake harness","steps":["ask the carrier for its proof for each of the nine verified primary harnesses","start a claude home and read the digest and the file the start wrote","re-emit that claude home after a compaction","start a home of harness unknown","start a pi home and re-emit it after a compaction"],"result":"each harness read file, reemit or none; the claude home got CLAUDE.local.md with one import line and stopped repeating the contract after a compaction; harness unknown and pi held the contract in the digest"}\n' > "$OUT/steps.json"
-jg_live_gate opt-in JG_THIN_CONTEXT_LIVE claude
+X=$(home codex)
+start "$X" codex --source startup > "$OUT/codex-start.txt"
+grep -q 'wrote AGENTS.override.md with a copy of AGENTS.md' "$OUT/codex-start.txt" || die "the first codex start did not write the carrier copy"
+grep -q "$MARK" "$OUT/codex-start.txt" || die "the first codex start did not hold the contract"
+grep -q "$MARK" "$X/AGENTS.override.md" || die "the codex carrier file does not hold the contract text"
+grep -q '^@' "$X/AGENTS.override.md" && die "the codex carrier file holds an import line, which codex does not expand"
+[ "$(JG_HOME="$X" JG_ROOT_OVERRIDE="$X" "$CARRIER" check codex)" = file ] || die "check does not read file for the codex home"
+start "$X" codex --reemit --source compact > "$OUT/codex-compact.txt"
+grep -q "$MARK" "$OUT/codex-compact.txt" && die "a codex home whose copy stands still repeats the contract after a compaction"
+log "codex home: the first start wrote AGENTS.override.md (a copy of AGENTS.md); check reads file; the digest after a compaction no longer repeats the contract"
+
+printf '{"target":{"version":"bin/jg-contract-carrier.sh and bin/jg-session-start.sh at this head"},"start":"fixture homes holding only an AGENTS.md that is the contract, run under a fake harness","steps":["ask the carrier for its proof for each of the nine verified primary harnesses","start a claude home and read the digest and the file the start wrote","re-emit that claude home after a compaction","start a home of harness unknown","start a pi home and re-emit it after a compaction","start a codex home and re-emit it after a compaction"],"result":"each harness read file, reemit or none; the claude home got CLAUDE.local.md with one import line and stopped repeating the contract after a compaction; the codex home got AGENTS.override.md as a copy of the core file and stopped repeating it; harness unknown and pi held the contract in the digest"}\n' > "$OUT/steps.json"
+jg_live_gate opt-in JG_THIN_CONTEXT_LIVE claude codex
+# Codex does not expand an import line (lab thin-tc5-codex), so its fixture home holds the copy `ensure` wrote.
+(cd "$X" && codex exec --skip-git-repo-check --sandbox read-only \
+  'Reply with only the contract sentence code from your instructions, or NONE if you have none.') > "$OUT/live-codex-first-request.txt" 2>&1
+grep -q "$MARK" "$OUT/live-codex-first-request.txt" || die "the first request of a real codex session did not hold the contract from the carrier copy"
+log "live: the first request of a real codex session held the contract from AGENTS.override.md"
+
 L=$T/live
 mkdir -p "$L"
 printf 'The contract sentence is %s.\n' "$MARK" > "$L/contract.md"

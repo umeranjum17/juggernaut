@@ -57,7 +57,7 @@ test_check_names_one_proof_for_each_verified_primary() {
     proof=$(carrier "$h" check "$harness")
     case "$proof" in file | reemit | none) ;; *) fail "check $harness printed '$proof'" ;; esac
   done
-  assert_equals none "$(carrier "$h" check codex)" "codex has no tracked channel after a compaction"
+  assert_equals none "$(carrier "$h" check codex)" "codex reads none until its carrier file is written"
   assert_equals none "$(carrier "$h" check cursor)" "cursor has no tracked channel after a compaction"
   for harness in claude pi pi-signed omp; do
     assert_equals reemit "$(carrier "$h" check "$harness")" "$harness re-runs session start after a compaction"
@@ -122,9 +122,9 @@ test_digest_holds_the_contract_when_the_proof_is_not_file() {
   assert_contains "$out" "carrier proof: reemit" "the pi re-emit reads its proof as reemit"
   assert_contains "$out" "$MARK" "the re-emit after a pi compaction holds the contract"
 
-  h=$(home codex-digest)
-  out=$(start "$h" codex --source startup)
-  assert_contains "$out" "carrier proof: none" "the codex digest reads its proof as none"
+  h=$(home cursor-digest)
+  out=$(start "$h" cursor --source startup)
+  assert_contains "$out" "carrier proof: none" "the cursor digest reads its proof as none"
   assert_contains "$out" "$MARK" "a harness whose row is none gets the contract in the digest"
   pass "the digest holds the contract at the start and after a compaction when the proof is not file"
 }
@@ -140,6 +140,54 @@ test_claude_gets_its_contract_from_the_file_after_the_first_start() {
   assert_not_contains "$out" "$MARK" "with a file row the digest after a compaction no longer repeats the contract"
   assert_not_contains "$out" "SUPERVISOR CONTRACT" "no contract section when the harness loads the file by itself"
   pass "a claude home holds the contract in its file and the digest stops repeating it"
+}
+
+test_codex_carries_the_contract_as_a_copy_in_agents_override_md() {
+  local h out code
+  h=$(home codex-copy)
+  out=$(carrier "$h" ensure codex); code=$?
+  assert_equals 3 "$code" "ensure exits 3 when it had to write the copy"
+  assert_contains "$out" "wrote AGENTS.override.md with a copy of AGENTS.md" "ensure prints one line when it wrote"
+  assert_not_contains "$(cat "$h/AGENTS.override.md")" "@AGENTS.md" "codex does not expand an import, so the file holds the text itself"
+  assert_contains "$(cat "$h/AGENTS.override.md")" "$MARK" "the file holds the contract text"
+  assert_equals file "$(carrier "$h" check codex)" "check reads file once the copy is current"
+  out=$(carrier "$h" ensure codex); code=$?
+  assert_equals 0 "$code" "a second ensure has nothing to write"
+  assert_equals "" "$out" "a second ensure prints nothing"
+  assert_equals "$h/AGENTS.override.md" "$(carrier "$h" path codex)" "path names the carrier file in the home root"
+  # A stale copy is not a proof; ensure refreshes it.
+  printf 'a newer rule\n' >> "$h/AGENTS.md"
+  assert_equals none "$(carrier "$h" check codex)" "a copy that no longer matches AGENTS.md reads none"
+  carrier "$h" ensure codex >/dev/null
+  assert_contains "$(cat "$h/AGENTS.override.md")" "a newer rule" "ensure refreshes a stale copy"
+  assert_equals file "$(carrier "$h" check codex)" "check reads file after the refresh"
+  # The first start writes the file and still holds the contract; the next start no longer repeats it.
+  h=$(home codex-digest)
+  out=$(start "$h" codex --source startup)
+  assert_contains "$out" "wrote AGENTS.override.md" "the first codex start writes the copy and says so"
+  assert_contains "$out" "$MARK" "the first start still holds the contract: this session did not load the file"
+  out=$(start "$h" codex --source startup)
+  assert_not_contains "$out" "$MARK" "with a current copy the digest stops repeating the contract"
+  pass "codex carries the contract as a copy of the core file, kept current by ensure"
+}
+
+test_codex_copy_never_overwrites_owner_text_and_respects_the_read_limit() {
+  local h out code
+  h=$(home codex-owner)
+  printf 'my own override\n' > "$h/AGENTS.override.md"
+  out=$(carrier "$h" ensure codex); code=$?
+  assert_equals 1 "$code" "ensure refuses a file with text it did not write"
+  assert_contains "$out" "holds text this script did not write" "ensure says why on one line"
+  assert_equals "my own override" "$(cat "$h/AGENTS.override.md")" "the owner's text is untouched"
+  assert_equals none "$(carrier "$h" check codex)" "an owner's file is no proof"
+  h=$(home codex-big)
+  head -c 40000 /dev/zero | tr '\0' 'x' >> "$h/AGENTS.md"
+  out=$(carrier "$h" ensure codex); code=$?
+  assert_equals 0 "$code" "ensure does not fail the start for a core file over the limit"
+  assert_contains "$out" "read limit" "ensure says the core file is over the limit"
+  assert_absent "$h/AGENTS.override.md" "a core file over the limit is not copied"
+  assert_equals none "$(carrier "$h" check codex)" "the row keeps its base proof when the copy cannot fit"
+  pass "the codex copy keeps the owner's text and the read limit"
 }
 
 test_once_agents_md_is_the_core_file_no_verified_primary_reads_none() {
@@ -168,6 +216,8 @@ test_ensure_keeps_text_the_owner_wrote_in_the_file
 test_ensure_writes_nothing_for_unknown_harness_and_for_a_worker_copy
 test_digest_holds_the_contract_when_the_proof_is_not_file
 test_claude_gets_its_contract_from_the_file_after_the_first_start
+test_codex_carries_the_contract_as_a_copy_in_agents_override_md
+test_codex_copy_never_overwrites_owner_text_and_respects_the_read_limit
 test_once_agents_md_is_the_core_file_no_verified_primary_reads_none
 
 echo "# jg-contract-carrier.test.sh: all assertions passed"
