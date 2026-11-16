@@ -3,11 +3,23 @@
 # SIGN_OFF_TICKETS_ADAPTER set to bin/jg-ticket-adapter.py, lists the same open tickets as bd, shows id, title, status, assignee and parent as bd
 # shows them, adds no board-only key or invented stage, and leaves a closed ticket out. Screenshots at 390 and 1280 px.
 # JG_BEADS_TEST_BD, JG_BEADS_TEST_DOLT name the pinned builds; JG_SIGN_OFF_DIR names a built sign-off checkout (npm run build); each skips without.
+# A home that has the tools installed needs no setting: each unset name falls back to the installed bd, dolt and sign-off-axi package, so
+# a required run (the trunk verify, the landing gate) never skips this journey for a variable nobody set. An installed sign-off-axi that
+# has no ticket adapter (every published build so far) is not a board for this journey: it skips and names that cause.
 # JG_BOARD_JOURNEY_OUT keeps the evidence there; JG_BOARD_JOURNEY_CELLS (default light:390,light:1280) picks the theme:width runs.
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
+JG_BEADS_TEST_BD=${JG_BEADS_TEST_BD:-$(command -v bd 2>/dev/null || :)}
+JG_BEADS_TEST_DOLT=${JG_BEADS_TEST_DOLT:-$(command -v dolt 2>/dev/null || :)}
+if [ -z "${JG_SIGN_OFF_DIR:-}" ] && signoff_bin=$(command -v sign-off-axi 2>/dev/null) && signoff_bin=$(readlink -f "$signoff_bin" 2>/dev/null); then
+  JG_SIGN_OFF_DIR=$(dirname "$(dirname "$signoff_bin")")  # <package>/dist/cli.js -> <package>
+  grep -rqs SIGN_OFF_TICKETS_ADAPTER "$JG_SIGN_OFF_DIR/dist" || {
+    printf 'skip: board journey: the installed sign-off-axi (%s) has no ticket adapter; set JG_SIGN_OFF_DIR to a built sign-off checkout\n' "$JG_SIGN_OFF_DIR"
+    exit 0
+  }
+fi
 for v in JG_BEADS_TEST_BD JG_BEADS_TEST_DOLT JG_SIGN_OFF_DIR; do
   [ -n "${!v:-}" ] || { printf 'skip: board journey: %s is unset\n' "$v"; exit 0; }
 done

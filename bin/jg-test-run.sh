@@ -102,8 +102,9 @@
 #                   advise on a script that runs longer than N seconds (default:
 #                   script_timeout_seconds from the limits file, 1800, so every
 #                   run bounds every script; an explicit 0 disables): a JG_TEST_SLOW line, and the script
-#                   keeps its own result while it keeps writing output. A script
-#                   whose output stops for a whole N seconds is hung and ends as
+#                   keeps its own result while it keeps making progress (new
+#                   output, or file activity in its private temp folder). A
+#                   script with no progress for a whole N seconds is hung and ends as
 #                   exit 124: its process group and every descendant still
 #                   carrying its mark are killed, its private temp folder is
 #                   removed, and a JG_TEST_TIMEOUT line names it. --changed applies a per-test bound automatically,
@@ -1408,9 +1409,8 @@ families_for_changed_path() {
       # `done-done affected` selects it; this runner selects nothing.
       ;;
     bin/jg-trunk-policy-lib.sh)
-      # The trunk policy library, sourced by the landing gate and queue. Their suites name it, but have done-done entries, so the
-      # reference scan finds none: these two run for it.
-      printf '%s\n' "__script__:jg-trunk-gate.test.sh" "__script__:jg-trunk-queue.test.sh"
+      # The trunk policy library, sourced by the landing gate and queue. Their suites have done-done entries, so
+      # `done-done affected` selects them; this runner selects nothing.
       ;;
     bin/jg-procevent-quota.sh)
       ;;
@@ -2016,7 +2016,12 @@ if [ "${1:-}" = --required-shards ]; then
   required_scratch=$(mktemp -d "${TMPDIR:-/tmp}/jg-shards.XXXXXX") || die "cannot create the shard scratch directory"
   required_pids=()
   # shellcheck disable=SC2317,SC2329  # runs from the trap
-  required_stop() { local p; for p in "${required_pids[@]+"${required_pids[@]}"}"; do kill "$p" 2>/dev/null || :; done; rm -rf -- "$required_scratch"; }
+  required_stop() { local p; for p in "${required_pids[@]+"${required_pids[@]}"}"; do kill "$p" 2>/dev/null || :; done; required_remove_scratch; }
+  required_remove_scratch() {
+    chmod -R u+rwX -- "$required_scratch" 2>/dev/null || :
+    rm -rf -- "$required_scratch" || log "could not remove the shard scratch $required_scratch; the aggregate is written regardless"
+    return 0
+  }
   trap 'required_stop; exit 130' INT TERM
 
   # A shard that stops before it writes its result (it died at selection, was killed, or ran out of time) still leaves a
@@ -2082,7 +2087,9 @@ PY
   required_run 1 2 3 4 5 6 7 8
   [ "${#REQUIRED_RED[@]}" -eq 0 ] || required_rc=1
   trap - INT TERM
-  rm -rf -- "$required_scratch"
+  # A cleanup that cannot finish never stops the aggregate: a shard's fixture may leave read-only Git hooks or objects, and the
+  # verdict is the aggregate (trunk tip 57b4e5fb: set -e ended the run here, the shards' 89 results were never aggregated).
+  required_remove_scratch
   bash "$ROOT/bin/jg-test-run.sh" --aggregate-json "$required_dir/required.json" "$required_dir"/shard-{1..8}.json || required_rc=1
   exit "$required_rc"
 fi
@@ -2817,8 +2824,8 @@ reap_marked_processes() {  # <mark>
 # Run <script>, capturing output to <out>. <stream> 1 also echoes it live.
 # <id> only has to be unique within this run. The script runs under the bound
 # script_speed_bound_secs names, and a script that outruns it is terminated and
-# advised (JG_TEST_SLOW) and never stopped while it keeps writing output; a script
-# whose output stops for a whole bound is hung and ends as exit 124, so a hang is
+# advised (JG_TEST_SLOW) and never stopped while it keeps making progress (output, or file
+# activity in its temp folder); a script with no progress for a whole bound is hung and ends as exit 124, so a hang is
 # still a bounded failure while a slow, passing script stays green.
 # The result cache (bin/jg-test-cache.sh, one owner of key, folder and entries). A hit stands in for the run: the output the
 # green entry kept is replayed, so the record, the markers and the gate-skip scan read it as if the script had just run.
@@ -2892,10 +2899,10 @@ run_script_bounded() {  # <script> <out> <stream> <id>
     # Expansion is intentionally deferred to the child bash passed to -c.
     # shellcheck disable=SC2016
     if [ "$stream" -eq 1 ]; then
-      jg_run_advised "$bound" "$out" "$marker" bash -c \
+      jg_run_advised "$bound" "$out" "$marker" --watch-dir "$scratch" bash -c \
         'bash "$1" 2>&1 | tee "$2"; exit "${PIPESTATUS[0]}"' _ "$script" "$out"
     else
-      jg_run_advised "$bound" "$out" "$marker" bash -c \
+      jg_run_advised "$bound" "$out" "$marker" --watch-dir "$scratch" bash -c \
         'exec bash "$1" >"$2" 2>&1' _ "$script" "$out"
     fi
     rc=$?
@@ -2907,20 +2914,20 @@ run_script_bounded() {  # <script> <out> <stream> <id>
     rc=$?
   fi
   # The bound advises: a script that outran it and still finished keeps its own
-  # result, and only a script whose output stopped growing for a whole bound is
+  # result, and only a script with no progress (no new output, no file activity in its temp folder) for a whole bound is
   # ended as hung (exit 124). The line names which of the two it was.
   local verdict=
   [ "$bound" -gt 0 ] && verdict=$(cat "$marker" 2>/dev/null)
   rm -f -- "$marker"
   if [ "$verdict" = hung ] && [ "$rc" -eq 124 ]; then
-    printf 'not ok - %s exceeded the per-script bound of %ss with no output for %ss and was terminated as hung\n' \
+    printf 'not ok - %s exceeded the per-script bound of %ss with no output and no file activity in its temp folder for %ss and was terminated as hung\n' \
       "$script" "$bound" "$bound" >>"$out"
     reap_marked_processes "$mark"
     [ "$stream" -eq 1 ] && tail -1 "$out"
     printf 'JG_TEST_TIMEOUT script=%s bound_secs=%s\n' "$script" "$bound"
     printf 'JG_TEST_TIMEOUT script=%s bound_secs=%s\n' "$script" "$bound" >&2
   elif [ "$verdict" = slow ]; then
-    printf 'JG_TEST_SLOW %s ran past the per-script bound of %ss and was not stopped: it kept writing output (advice only, exit %s; shards that run side by side slow each other)\n' \
+    printf 'JG_TEST_SLOW %s ran past the per-script bound of %ss and was not stopped: it kept making progress, in its output or its temp folder (advice only, exit %s; shards that run side by side slow each other)\n' \
       "$script" "$bound" "$rc" >>"$out"
     [ "$stream" -eq 1 ] && tail -1 "$out"
   fi

@@ -220,31 +220,48 @@ jg_run_timed() {  # <seconds> <command...>
   esac
 }
 
-# jg_run_advised <seconds> <progress-file> <marker-file> <command...>
+# jg_run_advised <seconds> <progress-file> <marker-file> [--watch-dir <dir>] <command...>
 #   The advisory twin of jg_run_timed: the bound warns, it does not kill.
 #   At <seconds> a command still running gets "slow" written to <marker-file>
-#   and keeps running. From then on every <seconds> the watchdog compares the
-#   size of <progress-file> (the file the command's output lands in) with the
-#   last look; a command whose output did not grow for a whole bound is hung,
-#   gets "hung" written to <marker-file>, is TERMed (KILLed 0.2 s later) as a
-#   process group, and reports 124. A command that finishes reports its own
-#   status, whatever the markers say, so the caller reads "slow" as advice.
+#   and keeps running. From then on every <seconds> the watchdog looks for
+#   progress since its last look: the size of <progress-file> (the file the
+#   command's output lands in) changed, or, with --watch-dir, anything under
+#   <dir> was created, written or removed (the command's private temp folder,
+#   where its fixture stores do their work while it prints nothing). A command
+#   with no progress for a whole bound is hung, gets "hung" written to
+#   <marker-file>, is TERMed (KILLed 0.2 s later) as a process group, and
+#   reports 124. A command that finishes reports its own status, whatever the
+#   markers say, so the caller reads "slow" as advice.
 jg_run_advised() {
-  local seconds=$1 progress=$2 marker=$3
+  local seconds=$1 progress=$2 marker=$3 watch_dir=
   shift 3
-  local child_pid watchdog_pid command_rc monitor_was_on=0
+  if [ "${1:-}" = --watch-dir ]; then
+    watch_dir=${2:-}
+    shift 2
+  fi
+  local child_pid watchdog_pid command_rc monitor_was_on=0 stamp=
   case $- in *m*) monitor_was_on=1 ;; esac
   : >"$marker"
+  # The stamp is the time of the watchdog's last look: an entry newer than it is work done since.
+  [ -z "$watch_dir" ] || { stamp="$marker.stamp"; : >"$stamp"; }
   set -m
   ( set +m; exec "$@" ) &
   child_pid=$!
   (
     set +m
-    local last=-1 size
+    local last=-1 size moved
     sleep "$seconds"
     while kill -0 "$child_pid" 2>/dev/null; do
       size=$(wc -c <"$progress" 2>/dev/null | tr -d ' ')
-      if [ "${size:-0}" = "$last" ]; then
+      moved=0
+      [ "${size:-0}" = "$last" ] || moved=1
+      if [ -n "$stamp" ]; then
+        # The new stamp is taken before the look, so a write during the look is seen at the next one.
+        : >"$stamp.next"
+        [ -z "$(find "$watch_dir" -newer "$stamp" -print -quit 2>/dev/null)" ] || moved=1
+        mv -f "$stamp.next" "$stamp"
+      fi
+      if [ "$moved" = 0 ]; then
         printf 'hung\n' >"$marker"
         kill -TERM -- "-$child_pid" 2>/dev/null || true
         sleep 0.2
@@ -260,11 +277,12 @@ jg_run_advised() {
   [ "$monitor_was_on" -eq 1 ] || set +m
   if wait "$child_pid" 2>/dev/null; then command_rc=0; else command_rc=$?; fi
   if [ "$(cat "$marker" 2>/dev/null)" = hung ]; then
-    wait "$watchdog_pid" 2>/dev/null || true
-    return 124
+    command_rc=124
+  else
+    kill -TERM -- "-$watchdog_pid" 2>/dev/null || kill "$watchdog_pid" 2>/dev/null || true
   fi
-  kill -TERM -- "-$watchdog_pid" 2>/dev/null || kill "$watchdog_pid" 2>/dev/null || true
   wait "$watchdog_pid" 2>/dev/null || true
+  [ -z "$stamp" ] || rm -f -- "$stamp" "$stamp.next"
   return "$command_rc"
 }
 

@@ -72,6 +72,18 @@ test_required_shards_keep_the_union_and_a_failed_shard() {
   pass 'the eight required shards keep the selected union and retain a failed shard in the aggregate'
 }
 
+# The runner removes its shard scratch before it aggregates. A shard fixture that leaves a read-only folder (Git hooks, objects) made that
+# removal fail under set -e, so the run ended with eight shard results and no required.json (trunk tip 57b4e5fb).
+test_the_aggregate_is_written_when_the_shard_scratch_cannot_be_removed() {
+  local fixture=$TMP_ROOT/readonly-scratch res=$TMP_ROOT/readonly-scratch-results out rc=0
+  # shellcheck disable=SC2016 # the body runs in the fixture script, not here
+  required_fixture "$fixture" 'mkdir -p "$TMPDIR/hooks/inner"; echo x >"$TMPDIR/hooks/inner/pre"; chmod a-w "$TMPDIR/hooks/inner" "$TMPDIR/hooks"'
+  out=$(bash "$fixture/bin/jg-test-run.sh" --required-shards HEAD^ "$res" 2>&1) || rc=$?
+  [ "$rc" = 0 ] || fail "a read-only leftover in a shard scratch must not stop the run: rc=$rc $out"
+  jq -e '.summary.lanes == 8 and .summary.total == 1 and .summary.failed == 0' "$res/required.json" >/dev/null || fail "the aggregate must hold the one passing script: $out"
+  pass 'the aggregate is written when a shard fixture leaves read-only files in the scratch'
+}
+
 # A script tests/gate-quarantine.tsv lists is selected by the gate's changed files but never run: the gate lists it with its reason and
 # still passes, so one hung or flaky script cannot hold a landing. The same script outside the quarantine fails the gate (the case above).
 test_a_quarantined_script_is_listed_not_run_and_the_gate_passes() {
@@ -420,7 +432,7 @@ test_a_hanging_test_is_killed_and_reported_instead_of_holding_the_run() {
   out=$(TEST_SPEED_LIMITS_FILE="$limits" bash "$RUNNER" --enforce-test-speed --per-script-timeout-secs 1 "$hung" 2>&1) || rc=$?
   ended=$(date +%s)
   [ "$rc" -ne 0 ] || fail "a hanging test must fail the run: $out"
-  assert_contains "$out" "not ok - $hung exceeded the per-script bound of 1s with no output for 1s and was terminated as hung" 'the hung script and the bound that ended it must be named'
+  assert_contains "$out" "not ok - $hung exceeded the per-script bound of 1s with no output and no file activity in its temp folder for 1s and was terminated as hung" 'the hung script and the bound that ended it must be named'
   [ "$((ended - started))" -lt 20 ] || fail "the hang must be bounded well under a gate, took $((ended - started))s"
   pass 'a hanging test is killed and reported instead of holding the run'
 }
@@ -440,6 +452,27 @@ test_a_slow_passing_script_past_the_per_script_bound_warns_and_passes() {
   assert_not_contains "$out" 'terminated as hung' 'a script that keeps writing is not hung'
   assert_contains "$out" 'ok - step 5' 'the slow script must run to its end'
   pass 'a slow script that keeps writing past the per-script bound warns and passes'
+}
+
+# Liveness is progress, not only output: a script that prints nothing for longer than its bound but keeps working in its own temp folder
+# (a fixture store at work; the lifecycle test ended at 1,200 s with database writes still landing) runs to its own result, and the
+# same quiet script that does no work is still ended as hung.
+test_a_quiet_script_that_keeps_working_in_its_temp_folder_is_not_killed() {
+  local busy still rc=0 out
+  busy="$TMP_ROOT/quiet-but-working.test.sh"
+  # shellcheck disable=SC2016  # the loop variable expands in the script under test
+  write_script "$busy" 'for i in 1 2 3 4 5 6 7 8; do echo "$i" >>"$TMPDIR/store"; sleep 0.5; done >/dev/null; echo "ok - finished"'
+  out=$(bash "$RUNNER" --per-script-timeout-secs 1 "$busy" 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] || fail "a quiet script that keeps working must finish and pass: rc=$rc $out"
+  assert_not_contains "$out" 'terminated as hung' 'work in the temp folder is progress'
+  assert_contains "$out" 'JG_TEST_SLOW' 'the run past the bound is still advised'
+  still="$TMP_ROOT/quiet-and-still.test.sh"
+  write_script "$still" 'sleep 30'
+  rc=0
+  out=$(bash "$RUNNER" --per-script-timeout-secs 1 "$still" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "a script with no output and no work must still fail: $out"
+  assert_contains "$out" 'terminated as hung' 'no output and no work is a hang'
+  pass 'a quiet script that keeps working in its temp folder is not killed, and one that does nothing still is'
 }
 
 test_a_slow_failing_script_past_the_per_script_bound_stays_red() {
@@ -755,6 +788,7 @@ test_a_burst_of_runs_caps_at_the_slot_limit_under_nice_and_records_the_load
 test_a_trunk_run_starts_at_once_and_takes_the_first_free_slot_ahead_of_lane_runs
 test_a_script_that_moves_home_keeps_the_callers_go_build_cache
 test_required_shards_keep_the_union_and_a_failed_shard
+test_the_aggregate_is_written_when_the_shard_scratch_cannot_be_removed
 test_a_shard_that_stops_before_its_result_still_writes_a_failed_result
 test_a_required_shard_over_its_budget_is_a_warning_and_runs_every_script
 # select_fixture <dir>: a throwaway repo holding a copy of the runner, the shared
@@ -925,6 +959,7 @@ test_a_run_past_the_gate_budget_fails_without_starting_the_next_test
 test_a_wall_failure_with_no_functional_failure_stays_red_in_aggregate
 test_a_hanging_test_is_killed_and_reported_instead_of_holding_the_run
 test_a_slow_passing_script_past_the_per_script_bound_warns_and_passes
+test_a_quiet_script_that_keeps_working_in_its_temp_folder_is_not_killed
 test_a_slow_failing_script_past_the_per_script_bound_stays_red
 test_the_gate_stops_a_hung_script_with_its_children_and_temp_folder_without_a_flag
 test_a_run_writes_its_scratch_on_disk_and_keeps_a_callers_tmpdir
