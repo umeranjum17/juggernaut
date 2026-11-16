@@ -21,3 +21,5 @@ Landing while a verify runs: `bash tests/jg-trunk-verify.test.sh` (the trunk-lan
 The tick starts its verify in its own unit: `bash tests/jg-trunk-unit.test.sh` (the trunk-landing journey runs it) drives the real landing check with a stand-in `systemd-run` and `systemctl`: one unit named `jg-verify-<project>-<epoch>` starts with `KillMode=process`, the home as working directory and absolute log paths, its name is recorded, a tick that finds it active starts nothing, and with no `systemd-run` the verify runs under `setsid nohup` and moves the pin (screen: none).
 
 The queue journey also proves that the landing check does not admit a lane when the task machine reports rework.
+
+The automatic release is chosen for each project: `bash tests/jg-trunk-autorelease.test.sh` and `bash tests/jg-trunk-publish.test.sh` (the same journey runs them) drive the real `publish`, `autorelease` and landing check; only a project whose line in `config/trunk-release-waiver` carries `scope=autorelease` (written by `jg-trunk.sh waiver <project> --rule <id> --autorelease`) has its batches pushed and moved to main by itself, and a plain `--release` waiver pushes nothing (screen: none).

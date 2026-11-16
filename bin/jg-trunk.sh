@@ -26,8 +26,9 @@
 #        jg-trunk.sh waiver <project-dir> --rule <owner-rule-id> --release   Overwatch only: the captain's standing word lets this project's green release pull request merge by itself
 #        jg-trunk.sh ci <project-dir> <sha> green|red  record the CI result for a live commit; red moves the green pin, and every home, back to the last green one
 #        jg-trunk.sh release <project-dir>             push the last green commit of the trunk and open the ONE release PR trunk -> default branch, owned by task release-<project>-<trunk>; refuses without his word
-#        jg-trunk.sh publish <project-dir>             under the release waiver: push the green pin once the trunk holds enough, or the tip as a candidate after a red; one batch at a time, never forced
-#        jg-trunk.sh autorelease <project-dir>         under the release waiver: when CI required is green on the pushed pin (read from the forge), fast-forward the default branch to it and cut the next trunk version at the tip; red leaves main and files one fix ticket
+#        jg-trunk.sh waiver <project-dir> --rule <owner-rule-id> --autorelease   Overwatch only: the captain chose this project for the automatic release (publish, autorelease); a plain --release waiver does not
+#        jg-trunk.sh publish <project-dir>             for a project chosen for the automatic release: push the green pin once the trunk holds enough, or the tip as a candidate after a red; one batch at a time, never forced
+#        jg-trunk.sh autorelease <project-dir>         for a project chosen for the automatic release: when CI required is green on the pushed pin (read from the forge), fast-forward the default branch to it and cut the next trunk version at the tip; red leaves main and files one fix ticket
 #        jg-trunk.sh rollover <project-dir>            after the release PR merged, cut the next trunk version (release/v8, ...) from the default branch
 #        jg-trunk.sh retire <project-dir>              clean up an old trunk unforced: only when its release is proved on main and every hotfix is carried; unlanded work is kept and listed
 #        jg-trunk.sh due <project-dir>                 exit 0 when the oldest unreleased commit is past release-after-hours
@@ -2234,15 +2235,17 @@ cmd_live() {
 
 # The captain waived his go-live word for one project until the stable point; only the Overwatch path records it.
 cmd_waiver() {
-  local rule=${3-} others wfile=trunk-live-waiver what="go-live"
+  local rule=${3-} others wfile=trunk-live-waiver what="go-live" scope=""
   [ -z "${JG_TASK_ID:-}" ] || refuse "a worker never writes a waiver"
-  case "${4-}" in '') ;; '--release') wfile='trunk-release-waiver'; what="release-merge" ;; *) refuse "unknown waiver option '${4}'; the only one is --release" ;; esac
-  [ "${2-}" = --rule ] && [ -n "$rule" ] || refuse "a $what waiver names the owner rule that grants it: jg-trunk.sh waiver <project-dir> --rule <owner-rule-id> [--release]"
+  case "${4-}" in '') ;; '--release') wfile='trunk-release-waiver'; what="release-merge" ;;
+    '--autorelease') wfile='trunk-release-waiver'; what="automatic release"; scope=" scope=autorelease" ;;
+    *) refuse "unknown waiver option '${4}'; the only ones are --release and --autorelease" ;; esac
+  [ "${2-}" = --rule ] && [ -n "$rule" ] || refuse "a $what waiver names the owner rule that grants it: jg-trunk.sh waiver <project-dir> --rule <owner-rule-id> [--release|--autorelease]"
   case $rule in owner-rule-[A-Za-z0-9]*) ;; *) refuse "'$rule' is not an owner rule id (owner-rule-<id>)" ;; esac
   open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"
   mkdir -p "$CONFIG"
   others=$(grep -v "^$PN " "$CONFIG/$wfile" 2>/dev/null || true)
-  put "$CONFIG/$wfile" "${others:+$others$'\n'}$PN $rule $(date +%s) until=stable"
+  put "$CONFIG/$wfile" "${others:+$others$'\n'}$PN $rule $(date +%s) until=stable$scope"
   echo "$what waiver recorded for $PN under $rule; delete its line in config/$wfile to restore the word"
 }
 
@@ -2887,7 +2890,7 @@ cmd_publish() {
   PRS_URL=; PRS_VAL=
   open_project "${1-}"
   green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
-  [ -n "$(authority trunk-release-waiver "$green")" ] || { echo "publish: $PN has no release waiver and no answer at gated; nothing pushed"; return 0; }
+  [ -n "$(jg_trunk_autorelease_rule "$CONFIG/trunk-release-waiver" "$PN")" ] || [ -n "$(gated_answer "$green")" ] || { echo "publish: $PN is not chosen for the automatic release and has no answer at gated; nothing pushed"; return 0; }
   # The forge is asked before the trunk lock is taken: a slow or hung forge must never stop a landing. A forge that does not
   # answer ends the publish with one line and nothing pushed; the next tick asks again.
   prev=$(last_release_url)
@@ -2953,7 +2956,7 @@ cmd_autorelease() {
   local rel="" url="" default main st
   [ -z "${JG_TASK_ID:-}" ] || refuse "a worker never publishes to the default branch"
   open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"; tip_ok
-  [ -n "$(jg_trunk_waiver_rule "$CONFIG/trunk-release-waiver" "$PN")" ] || { echo "autorelease: not released: it needs the captain's word (no release waiver for $PN)"; return 0; }
+  [ -n "$(jg_trunk_autorelease_rule "$CONFIG/trunk-release-waiver" "$PN")" ] || { echo "autorelease: not released: it needs the captain's word ($PN is not chosen for the automatic release)"; return 0; }
   default=$(default_branch)
   if rollover_if_merged; then echo "autorelease: main holds the release; the project is on $TRUNK"; return 0; fi
   read -r rel url <<< "$(awk -F'\t' -v p="$PN" -v t="$TRUNK" 'NF >= 6 && $1 == p && $2 == t { c = $3; u = $6 } END { print c, u }' "$DATA/trunk-releases.tsv" 2>/dev/null)"

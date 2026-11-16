@@ -190,6 +190,15 @@ jg_trunk_waiver_rule() {
   awk -v p="$2" '$1 == p { r = $2 } END { print r }' "$1" 2>/dev/null || true
 }
 
+# The owner rule under which a project's batches are published and moved to main by themselves (publish, autorelease), printed
+# from the project's last line of config/trunk-release-waiver, or nothing. A release waiver alone only lets a green release pull
+# request merge; the line also carries the field `scope=autorelease` only when the captain chose this project for the automatic
+# release (D1 of jg-7v6uw: Juggernaut first, then project by project). Written only by `jg-trunk.sh waiver <project> --rule <id>
+# --autorelease`. Usage: jg_trunk_autorelease_rule <waiver-file> <project>
+jg_trunk_autorelease_rule() {
+  awk -v p="$2" '$1 == p { r = ""; for (i = 4; i <= NF; i++) if ($i == "scope=autorelease") r = $2 } END { print r }' "$1" 2>/dev/null || true
+}
+
 # The one answer, asked once at `gated` (docs/trunk-flow.md): a lane of mode `local` lands with yolo on, or with the captain's
 # word (merge=approved), and the landing writes one row `<project> <commit> <epoch> <task> <yolo|word>` to data/trunk-gated.tsv.
 # That row carries the change on: the go-live and the release read it in place of a second word. A commit is covered when it is the

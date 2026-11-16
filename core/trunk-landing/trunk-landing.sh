@@ -8,8 +8,8 @@
 #        trunk-landing.sh live <jg-home> <project>                   (what a tick starts under a go-live waiver: the batched live step)
 #        trunk-landing.sh nightly <jg-home> <project>                (what a tick starts once a day from nightly-hour: bin/jg-trunk.sh nightly, the whole suite on the tip through the same verify)
 #        trunk-landing.sh verify <jg-home> <project>                 (what a tick starts while the trunk tip is above the green pin: bin/jg-trunk.sh verify, one at a time)
-#        trunk-landing.sh publish <jg-home> <project>                (what a tick starts under a release waiver: bin/jg-trunk.sh publish, the green pin or a candidate after a red)
-#        trunk-landing.sh autorelease <jg-home> <project>            (what a tick starts under a release waiver: main follows the CI-green pin)
+#        trunk-landing.sh publish <jg-home> <project>                (what a tick starts for a project chosen for the automatic release: bin/jg-trunk.sh publish, the green pin or a candidate after a red)
+#        trunk-landing.sh autorelease <jg-home> <project>            (what a tick starts for a project chosen for the automatic release: main follows the CI-green pin)
 #
 # For each state/<task>.meta in the home with a local-style mode (the table row `local` or its old words) whose project is registered local-trunk and has a trunk
 # (state/trunk-tip-<project>, made by bin/jg-trunk.sh init), whose ship branch is not on the trunk yet and whose
@@ -35,7 +35,7 @@
 # also starts `live` (a detached job, never blocking a landing), which runs `bin/jg-trunk.sh autolive` and reports a go-live,
 # a failed move, a hold or a home still behind the last go-live after 10 minutes (bin/jg-trunk-live-lag.sh) in the outbox: the homes move once the trunk has been quiet for live-quiet-minutes (20) or the
 # oldest landing not yet live is live-cap-minutes (60) old, whichever is first. Only the green pin goes live, so a red suite never does.
-# Under a release waiver (config/trunk-release-waiver) every tick also starts `autorelease` (a detached job, one at a time per project), which runs
+# For a project chosen for the automatic release (`scope=autorelease` in config/trunk-release-waiver) every tick also starts `autorelease` (a detached job, one at a time per project), which runs
 # `bin/jg-trunk.sh autorelease`: once CI required is green on the pushed pin, main fast-forwards to it and the next trunk version is cut; a red
 # or a refusal is reported once in the outbox, and a wait is silent (docs/trunk-flow.md).
 # A landed task resumes the lanes whose blocker says `waits-for: <task>`: one steer each, the blocker closed in the same send.
@@ -421,23 +421,23 @@ for tip in "$STATE"/trunk-tip-*; do
   [ -d "$FMH/projects/$pn" ] && [ "$(local_trunk "$FMH/projects/$pn")" = yes ] || continue
   start_job live "$pn"
 done
-# Under a release waiver every tick starts the publish step (detached, so it never holds a landing back; at most once a minute).
+# For a project chosen for the automatic release every tick starts the publish step (detached, so it never holds a landing back; at most once a minute).
 for tip in "$STATE"/trunk-tip-*; do
   [ -z "$QUIET" ] || break
   [ -f "$tip" ] || continue
   pn=${tip##*/trunk-tip-}
-  awk -v p="$pn" '$1 == p { f = 1 } END { exit !f }' "$FMH/config/trunk-release-waiver" 2>/dev/null || jg_trunk_gated_any "$FMH/data/trunk-gated.tsv" "$pn" || continue
+  [ -n "$(jg_trunk_autorelease_rule "$FMH/config/trunk-release-waiver" "$pn")" ] || jg_trunk_gated_any "$FMH/data/trunk-gated.tsv" "$pn" || continue
   [ -d "$FMH/projects/$pn" ] && [ "$(local_trunk "$FMH/projects/$pn")" = yes ] || continue
   [ ! -e "$MEM/.publish-$pn" ] || [ -n "$(find "$MEM/.publish-$pn" -mmin +0 2>/dev/null)" ] || continue
   : > "$MEM/.publish-$pn"
   start_job publish "$pn"
 done
-# Under a release waiver every tick starts the release step (detached, so it never holds a landing back).
+# For a project chosen for the automatic release every tick starts the release step (detached, so it never holds a landing back).
 for tip in "$STATE"/trunk-tip-*; do
   [ -z "$QUIET" ] || break
   [ -f "$tip" ] || continue
   pn=${tip##*/trunk-tip-}
-  awk -v p="$pn" '$1 == p { f = 1 } END { exit !f }' "$FMH/config/trunk-release-waiver" 2>/dev/null || continue
+  [ -n "$(jg_trunk_autorelease_rule "$FMH/config/trunk-release-waiver" "$pn")" ] || continue
   [ -d "$FMH/projects/$pn" ] && [ "$(local_trunk "$FMH/projects/$pn")" = yes ] || continue
   start_job autorelease "$pn"
 done

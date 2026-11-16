@@ -42,7 +42,7 @@ SH
   printf '#!/usr/bin/env bash\ncat "%s/pr-checks" 2>/dev/null || true\n' "$W" > "$W/root/bin/jg-pr-state.sh"
   chmod +x "$W/fakebin/gh-axi" "$W/fakebin/gh" "$W/root/bin/jg-pr-state.sh"
 }
-waive() { trunk waiver "$PROJ" --rule owner-rule-standing --release >/dev/null 2>&1 || fail "the release waiver must record"; }
+waive() { trunk waiver "$PROJ" --rule owner-rule-standing --autorelease >/dev/null 2>&1 || fail "the release waiver must record"; }
 landed() {  # <id>...: each lane lands, then a verify moves the pin to it
   local id out; for id; do lane "$id" "$id"; out=$(trunk land "$id" 2>&1) || fail "$id must land: $out"; out=$(trunk verify "$PROJ" 2>&1) || fail "$id must verify: $out"; done
 }
@@ -60,7 +60,7 @@ test_publish_pushes_the_green_pin_only_when_the_trunk_holds_enough_and_only_unde
 
   landed q3; mv "$HOME_D/config/trunk-release-waiver" "$W/waiver.off"
   out=$(trunk publish "$PROJ" 2>&1) || fail "T1: publish must exit 0 with no waiver: $out"
-  assert_contains "$out" "no release waiver" "T1: it must say why nothing was pushed"
+  assert_contains "$out" "not chosen for the automatic release and has no answer at gated" "T1: it must say why nothing was pushed"
   [ -z "$(pushed)" ] && [ "$(creates)" = 0 ] || fail "T1: with no waiver nothing may be pushed or opened"
   pass 'T1 with no waiver a trunk that holds enough pushes nothing'
   mv "$W/waiver.off" "$HOME_D/config/trunk-release-waiver"; pin=$(green)
