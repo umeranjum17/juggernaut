@@ -34,7 +34,7 @@ printf '#!/usr/bin/env bash\nprintf "control %%s\\n" "$*" >> "%s/teardown.log"\n
 printf '#!/usr/bin/env bash\necho alive\n' > "$T/agent"
 chmod +x "$T/teardown" "$T/control" "$T/agent"
 export JG_LEAD_SWEEP_TEARDOWN=$T/teardown JG_LEAD_SWEEP_CONTROL=$T/control JG_LEAD_SWEEP_AGENT=$T/agent JG_LEAD_SWEEP_GH=/bin/false
-cleaned() { grep -c "^$ID\$" "$T/teardown.log" 2>/dev/null || true; }
+cleaned() { local n; n=$(grep -sc "^$ID\$" "$T/teardown.log"); echo "${n:-0}"; }
 sweep() { OUT=$(env JG_LEAD_SWEEP_NOW="${1:-$(date +%s)}" bash "$SWEEP" run "$FM" 2>&1); }
 
 # 1. A real deep Recon: the real scaffold, then the files the method writes. No critic.md yet.
@@ -107,6 +107,8 @@ sleep 1; printf '%s\tt-%s\tproving\trelayed\tproving\n' "$(date +%s)" "$ID" >> "
 mkdir -p "$FM/state/$ID.inbox/handled"; echo "one more question" > "$FM/state/$ID.inbox/1.msg"
 sweep "$(( $(date +%s) + 2 * 3600 ))"; assert_equals 0 "$(cleaned)" "a steer still waiting keeps the relayed Recon, even after a quiet hour"
 mv "$FM/state/$ID.inbox/1.msg" "$FM/state/$ID.inbox/handled/"
+# The researcher answers the steer with a new done line; a steer read after the last status line still keeps the Recon (core/lead-sweep).
+sleep 1; echo "done [at=3]: answered the steer" >> "$FM/state/$ID.status"
 sweep; assert_equals 0 "$(cleaned)" "a message handled just now restarts the quiet hour"
 sweep "$(( $(date +%s) + 2 * 3600 ))"
 assert_equals 1 "$(cleaned)" "the accepted, relayed Recon is cleaned up after the quiet hour, once"
