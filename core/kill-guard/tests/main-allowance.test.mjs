@@ -11,10 +11,10 @@ for (const [_jgOld, _jgVal] of Object.entries(process.env))
     process.env[`JG_${_jgOld.slice(3)}`] = _jgVal;
 const original = Object.fromEntries(['readFileSync', 'realpathSync', 'readdirSync', 'lstatSync', 'appendFileSync', 'mkdirSync', 'existsSync'].map(k => [k, fs[k]]));
 const temp = fs.mkdtempSync(join(tmpdir(), 'kill-main-'));
-const account = userInfo().homedir, home = `${account}/juggernaut`, audit = join(temp, 'audit.jsonl');
+const account = userInfo().homedir, audit = join(temp, 'audit.jsonl');
 Object.assign(process.env, { HOME: join(temp, 'home'), XDG_CONFIG_HOME: join(temp, 'config'), TMPDIR: temp });
 fs.mkdirSync(process.env.HOME);
-let lock = '4001', fake = true, reused = false, logFailure = false, symlinkLock = false;
+let home = `${account}/juggernaut`, lock = '4001', fake = true, reused = false, logFailure = false, symlinkLock = false;
 const project = join(temp, 'project'); fs.mkdirSync(project); execFileSync('git', ['init', '-q', project]);
 const procs = new Map();
 const put = (pid, comm, cwd = home, ppid = 1, argv = [comm]) => procs.set(pid, { pid, comm, cwd, ppid, argv, start: '12345', tty: '0' });
@@ -86,6 +86,11 @@ try {
   lock = '4001oops'; deny('kill 5001'); lock = '4001';
   procs.get(4001).cwd = '/outside'; deny('kill 5001'); procs.get(4001).cwd = home;
   logFailure = true; deny('kill 5001'); logFailure = false;
+  // A fleet whose Main is named firstmate is Main by the same proof: its lock, its harness and its home paths.
+  home = `${account}/firstmate`; put(4001, 'codex'); put(process.pid, 'node', home, 4001); put(5001, 'sleep', `${home}/projects/demo`);
+  allow('kill 5001'); put(5001, 'sleep', '/outside'); deny('kill 5001'); put(5001, 'sleep', `${home}/projects/demo`);
+  procs.get(4001).cwd = '/outside'; deny('kill 5001'); procs.get(4001).cwd = home;
+  lock = '999999'; deny('kill 5001'); lock = '4001';
   reused = true; // identity initially consistent but changes before final approval
   const append = fs.readFileSync;
   let reads = 0;

@@ -6,16 +6,16 @@ Workers and leads retain the ordinary ownership rule.
 PID 1, the systemd user manager, herdr server, no-mistakes daemon, sshd, tailscaled and interactive shells remain protected for every caller, including their parent.
 All `pkill` and `killall` commands are refused; use a literal PID.
 
-Main approval requires the guard's actual process ancestry to reach the supplied caller and the live harness PID recorded in `~/juggernaut/state/.lock`.
+Main approval requires the guard's actual process ancestry to reach the supplied caller and the live harness PID recorded in a primary home's `state/.lock`.
 The account home comes from the OS account record, ignoring `HOME`, `JG_HOME` and other environment overrides.
-The lock holder's resolved working directory must be under `~/juggernaut`; a different harness in that ancestry outside the primary home disqualifies the allowance.
+The lock holder's resolved working directory must be under a primary home: `~/juggernaut`, `~/firstmate`, or a home named one per line (absolute, under the account home) in an optional `homes` file beside the installed `guard.mjs`; a different harness in that ancestry outside the primary home disqualifies the allowance.
 A missing, malformed, symlinked, dead or uncertain lock never grants it.
 Environment variables and `--caller` alone cannot select Main.
 The lock is same-user writable: this is a cooperative hook preventing accidental kills, not a security boundary against hostile programs running as that user.
 
 A home's own session may also stop a process whose resolved cwd is under that home's `data/<task>/` or under a worktree a `state/*.meta` record names.
 The home is proved by the guard's ancestry reaching the harness whose pid that home's `state/.lock` records (found from the harness cwd upward); a data entry linked outside `data/`, the account home or a parent of it never qualifies.
-The same home's session may also stop a hung strict descendant of a live `<home>/bin/jg-watch*.sh` run of that same home (for example a stuck trunk publish); the loop process itself and another home's loop children stay refused.
+The same home's session may also stop a hung strict descendant of a live `<home>/bin/jg-watch*.sh` run of that same home (for example a stuck trunk publish), or of a landing job that names that home (`trunk-landing.sh run|runbatch|verify|nightly|live|publish|cleanup <home> ...`, for example a hung gate test in its `/tmp` clone); the loop or job process itself and another home's children stay refused (end a whole landing with `bin/jg-trunk.sh cancel`).
 Everything else keeps the final refusal, and nothing is matched by name or pattern.
 
 Fleet ownership uses resolved cwd or absolute command-line paths under the primary home, `~/firstmate*`, `~/.treehouse/<pool>[/<slot>]/{juggernaut,firstmate}*`, or `~/.local/{share,bin}/jg-*` feature tools.

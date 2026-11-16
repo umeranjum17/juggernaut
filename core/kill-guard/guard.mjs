@@ -12,9 +12,21 @@ for (const [_jgOld, _jgVal] of Object.entries(process.env))
     process.env[`JG_${_jgOld.slice(3)}`] = _jgVal;
 
 const ACCOUNT_HOME = userInfo().homedir; // OS account record, never HOME/JG_HOME
-const MAIN_HOME = `${ACCOUNT_HOME}/juggernaut`;
-const AUDIT = `${dirname(fileURLToPath(import.meta.url))}/state/main-kills.jsonl`;
+const GUARD_DIR = dirname(fileURLToPath(import.meta.url));
+const AUDIT = `${GUARD_DIR}/state/main-kills.jsonl`;
 const under = (root, path) => path === root || path.startsWith(`${root}/`);
+// The primary homes: the product's current and former name under the account home, plus every home the guard directory's own
+// `homes` registry names (one absolute path per line, under the account home), so a fleet whose Main has another name is Main too.
+function mainHomes() {
+	const homes = [`${ACCOUNT_HOME}/juggernaut`, `${ACCOUNT_HOME}/firstmate`];
+	try {
+		for (const line of readFileSync(`${GUARD_DIR}/homes`, "utf8").split("\n")) {
+			const home = line.trim().replace(/\/+$/, "");
+			if (isAbsolute(home) && under(ACCOUNT_HOME, home) && home !== ACCOUNT_HOME) homes.push(home);
+		}
+	} catch {} // no registry: the two names stand
+	return [...new Set(homes)];
+}
 const statOf = (pid) => readFileSync(`/proc/${pid}/stat`, "utf8").split(/\) /).at(-1).trim().split(/\s+/);
 function processOf(pid) {
 	const stat = statOf(pid);
@@ -26,18 +38,19 @@ function processOf(pid) {
 	if (stat[19] !== statOf(pid)[19]) throw new Error(`PID ${pid} changed identity`);
 	return { pid, ppid: +stat[1], starttime: stat[19], state: stat[0], tty: stat[4], argv, comm, cwd };
 }
-function primaryMain(caller, table) {
+function primaryMain(caller, table) { return mainHomes().some((home) => primaryMainOf(home, caller, table)); }
+function primaryMainOf(mainHome, caller, table) {
 	try {
-		const lock = `${MAIN_HOME}/state/.lock`;
+		const lock = `${mainHome}/state/.lock`;
 		if (!lstatSync(lock).isFile() || lstatSync(lock).isSymbolicLink()) return false;
 		const value = readFileSync(lock, "utf8").trim();
 		if (!/^[1-9]\d*$/.test(value)) return false;
 		const anchor = table.get(+value);
-		if (!anchor || !/^(claude|codex|pi|pi-signed|omp|opencode|grok|kimi|cursor-agent)$/.test(anchor.comm) || !anchor.cwd || !under(realpathSync(MAIN_HOME), anchor.cwd) || !anchor.argv.length || /[ZX]/.test(anchor.state)) return false;
+		if (!anchor || !/^(claude|codex|pi|pi-signed|omp|opencode|grok|kimi|cursor-agent)$/.test(anchor.comm) || !anchor.cwd || !under(realpathSync(mainHome), anchor.cwd) || !anchor.argv.length || /[ZX]/.test(anchor.state)) return false;
 		const seen = new Set(); let reachedCaller = false;
 		for (let p = table.get(process.pid); p && !seen.has(p.pid); p = table.get(p.ppid)) {
 			seen.add(p.pid); reachedCaller ||= p.pid === caller;
-			if (/^(claude|codex|pi|pi-signed|omp|opencode|grok|kimi|cursor-agent)$/.test(p.comm) && (!p.cwd || !under(realpathSync(MAIN_HOME), p.cwd))) return false;
+			if (/^(claude|codex|pi|pi-signed|omp|opencode|grok|kimi|cursor-agent)$/.test(p.comm) && (!p.cwd || !under(realpathSync(mainHome), p.cwd))) return false;
 			if (!reachedCaller) continue; // --caller alone is never authority
 			if (p.pid === anchor.pid) return statOf(p.pid)[19] === anchor.starttime;
 		}
@@ -79,17 +92,25 @@ function homeOwned(p, home) {
 	} catch {}
 	return roots.some((r) => under(r, p.cwd));
 }
-// A process the home's own watcher loop started: a strict descendant of a live bin/jg-watch*.sh run of that same home (a hung
-// trunk publish, for example). The loop process itself is never owned, so the guard still refuses everything outside its children.
+// A process the home's own detached job started: a strict descendant of a live bin/jg-watch*.sh run of that same home, or of a landing
+// job of that home (`trunk-landing.sh run|runbatch|verify|nightly|live|publish|cleanup <home> ...`, which the check starts detached: a
+// hung gate test under its /tmp clone, for example). The job process itself is never owned, so the guard still refuses everything
+// outside its children, and another home's job children stay refused.
 const LOOP_SCRIPT = /^jg-watch(?:-[a-z]+)?\.sh$/;
-function loopOwned(p, home, table) {
+const LANDING_JOB = /^(?:run|runbatch|verify|nightly|live|publish|cleanup)$/;
+function homeJob(q, home) {
+	const bin = `${home}/bin`, abs = q.argv.slice(0, 3);
+	const script = abs.find((a) => isAbsolute(a) && LOOP_SCRIPT.test(basename(a)));
+	if (script && realpathSync(dirname(script)) === bin) return true;
+	const at = abs.findIndex((a) => isAbsolute(a) && basename(a) === "trunk-landing.sh");
+	return at >= 0 && LANDING_JOB.test(q.argv[at + 1] ?? "") && isAbsolute(q.argv[at + 2] ?? "") && realpathSync(q.argv[at + 2]) === home;
+}
+function jobOwned(p, home, table) {
 	try {
-		const bin = `${home}/bin`, seen = new Set();
+		const seen = new Set();
 		for (let q = table.get(p.ppid); q && !seen.has(q.pid) && q.pid > 1; q = table.get(q.ppid)) {
 			seen.add(q.pid);
-			if (/[ZX]/.test(q.state)) continue;
-			const script = q.argv.slice(0, 3).find((a) => isAbsolute(a) && LOOP_SCRIPT.test(basename(a)));
-			if (script && realpathSync(dirname(script)) === bin) return true;
+			if (!/[ZX]/.test(q.state) && homeJob(q, home)) return true;
 		}
 	} catch {}
 	return false;
@@ -99,7 +120,7 @@ const NAMED_HOME = /^(?:firstmate[^/]*|\.treehouse\/[^/]+\/(?:[^/]+\/)?(?:jugger
 function fleetPath(path) {
 	try {
 		const resolved = realpathSync(path);
-		return under(realpathSync(MAIN_HOME), resolved) || NAMED_HOME.test(relative(ACCOUNT_HOME, resolved)) ||
+		return mainHomes().some((home) => { try { return under(realpathSync(home), resolved); } catch { return false; } }) || NAMED_HOME.test(relative(ACCOUNT_HOME, resolved)) ||
 			/^\.local\/(?:share|bin)\/jg-[^/]+(?:\/|$)/.test(relative(ACCOUNT_HOME, resolved));
 	} catch { return false; }
 }
@@ -111,13 +132,15 @@ function fleetOwned(p) {
 		return registeredHomes().some((home) => { try { return under(realpathSync(`${home}/projects`), real); } catch { return false; } });
 	} catch { return false; }
 }
-// The primary home plus every lead home its registry names, so a lead's project worktree counts as fleet-owned too.
+// The primary homes plus every lead home their registries name, so a lead's project worktree counts as fleet-owned too.
 function registeredHomes() {
-	const homes = [MAIN_HOME];
-	for (const name of ["squad_leads.md", "secondmates.md"]) {
-		try {
-			for (const m of readFileSync(`${MAIN_HOME}/data/${name}`, "utf8").matchAll(/\(home: (\/[^;)]+?)[;)]/g)) homes.push(m[1]);
-		} catch {}
+	const homes = mainHomes();
+	for (const main of [...homes]) {
+		for (const name of ["squad_leads.md", "secondmates.md"]) {
+			try {
+				for (const m of readFileSync(`${main}/data/${name}`, "utf8").matchAll(/\(home: (\/[^;)]+?)[;)]/g)) homes.push(m[1]);
+			} catch {}
+		}
 	}
 	return homes;
 }
@@ -256,7 +279,7 @@ function reasonFor(p, own, caller, procs, text) {
 		return null;
 	}
 	if (own.has(p.pid) || inCallerWorktree(p.cwd, caller)) return null;
-	if (procs.home && (homeOwned(p, procs.home) || loopOwned(p, procs.home, procs()))) return null;
+	if (procs.home && (homeOwned(p, procs.home) || jobOwned(p, procs.home, procs()))) return null;
 	return `PID ${p.pid} (${p.comm}), which this task did not start`;
 }
 

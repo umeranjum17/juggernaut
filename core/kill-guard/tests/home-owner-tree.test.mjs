@@ -41,6 +41,14 @@ const loop = (home) => {
   const pid = execFileSync('sh', ['-c', `${script} </dev/null >/dev/null 2>&1 & echo $!`], { cwd: stray, encoding: 'utf8' }).trim();
   return { pid, child: execFileSync('sh', ['-c', `for i in 1 2 3 4 5 6 7 8 9 10; do pgrep -P ${pid} && exit; sleep 0.1; done`], { encoding: 'utf8' }).trim() };
 };
+// A detached landing job of a home: `bash <home>/core/trunk-landing/trunk-landing.sh <sub> <home> ...` (cwd outside every owned root)
+// whose gate test child hangs in a /tmp clone. Returns the job and child pids.
+const landing = (home, sub, named = home) => {
+  const dir = join(home, 'core', 'trunk-landing'); fs.mkdirSync(dir, { recursive: true }); const script = join(dir, 'trunk-landing.sh');
+  fs.writeFileSync(script, '#!/bin/sh\nsleep 60 &\nwait\n', { mode: 0o755 });
+  const pid = execFileSync('sh', ['-c', `bash ${script} ${sub} ${named} lane-01 ${'a'.repeat(40)} </dev/null >/dev/null 2>&1 & echo $!`], { cwd: stray, encoding: 'utf8' }).trim();
+  return { pid, child: execFileSync('sh', ['-c', `for i in 1 2 3 4 5 6 7 8 9 10; do pgrep -P ${pid} && exit; sleep 0.1; done`], { encoding: 'utf8' }).trim() };
+};
 try {
   const owned = tree(join(taskData, 'run')), ownedWt = tree(worktree), unowned = tree(stray), foreign = tree(foreignData), linked = tree(stray);
   all.push(owned, ownedWt, unowned, foreign, linked);
@@ -52,6 +60,25 @@ try {
   assert.match(guard(`kill ${mine.pid}`) ?? '', /which this task did not start/, 'the loop itself stays refused');
   assert.match(guard(`kill ${theirs.child}`) ?? '', /which this task did not start/, 'another home\'s loop child');
   console.log('watcher loop journey: hung child of this home\'s own watcher loop allowed; the loop itself and another home\'s loop child refused');
+  const runs = ['run', 'runbatch', 'verify'].map((sub) => landing(lead, sub)), strange = landing(lead, 'lookup'), other = landing(join(account, '.treehouse', 'other-abc', '1', 'other'), 'runbatch');
+  const misnamed = landing(join(account, '.treehouse', 'third-abc', '1', 'third'), 'run', lead); // names this home but is not under it: still this home's job by its argument
+  all.push(...runs.map((r) => r.pid), strange.pid, other.pid, misnamed.pid);
+  for (const r of runs) assert.equal(guard(`kill ${r.child}`), null, 'a hung child of this home\'s own landing job');
+  assert.equal(guard(`kill ${misnamed.child}`), null, 'a landing job names its home in its arguments');
+  assert.match(guard(`kill ${runs[0].pid}`) ?? '', /which this task did not start/, 'the landing job itself stays refused');
+  assert.match(guard(`kill ${strange.child}`) ?? '', /which this task did not start/, 'an unknown landing subcommand');
+  assert.match(guard(`kill ${other.child}`) ?? '', /which this task did not start/, 'another home\'s landing job child');
+  console.log('landing job journey: hung child of this home\'s own landing job allowed; the job itself, an unknown subcommand and another home\'s job child refused');
+  // A Main with another name: the guard directory's own `homes` registry names it, and the same lock-and-ancestry proof then makes it Main.
+  const projectTree = tree(join(lead, 'projects')); all.push(projectTree);
+  const registered = join(temp, 'registered-guard'); fs.mkdirSync(registered);
+  fs.copyFileSync(new URL('../guard.mjs', import.meta.url), join(registered, 'guard.mjs'));
+  assert.match(guard(`kill ${projectTree}`) ?? '', /which this task did not start/, 'an unregistered home is no Main');
+  fs.writeFileSync(join(registered, 'homes'), `relative/path\n${account}\n/elsewhere/home\n${lead}/\n`);
+  const named = await import(join(registered, 'guard.mjs'));
+  assert.equal(named.guard(`kill ${projectTree}`, { reason: 'stuck gate' }), null, 'a registered Main home\'s fleet paths');
+  assert.match(named.guard(`kill ${unowned}`) ?? '', /which this task did not start/, 'a path outside the registered home');
+  console.log('registered Main journey: a Main named by the guard registry may stop fleet processes under its home; relative, account-home and outside-account entries and other paths refused');
   const group = members(owned);
   assert(group.length >= 3, 'tree has children');
 
