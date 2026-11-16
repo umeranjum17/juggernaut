@@ -2350,6 +2350,10 @@ journeys:
   switch-decl:
     tier: local
     command: bash tests/jg-switch-decl.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  in-use-enforced:
+    tier: local
+    command: bash tests/jg-in-use-enforced.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    timeout: 10m
 
 secrets:
   allow:

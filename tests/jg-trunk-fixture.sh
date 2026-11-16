@@ -249,3 +249,58 @@ resolver() {  # <name> <body>: a resolver script the home sets by policy
   printf '#!/usr/bin/env bash\n%s\n' "$2" > "$W/$1.sh"; chmod +x "$W/$1.sh"
   printf 'conflict-resolver=bash %s/%s.sh\n' "$W" "$1" >> "$HOME_D/config/trunk-policy"
 }
+
+# --- the go-live fleet, shared by the suites that move homes (tests/jg-trunk-live.test.sh, tests/jg-in-use-enforced.test.sh) ---
+# A fleet: the code home (a clone of the project's origin, as Main's checkout is) and two registered Squad Lead homes
+# (worktrees of it), all on the last release, a go-live waiver, and the home's own bin so the landing check runs.
+fleet_world() {  # <name> [rig]: sets W HOME_D PROJ CODE_ROOT BASE; rig makes the whole suite (verify, run by hand) the rig's t/*.test.sh
+  local id
+  world "$1"
+  [ "${2-}" != rig ] || { rig; printf 'gate-full=! grep -q BAD work.txt\ngate-verify=bash %s/rig.sh --all\n' "$W" >> "$HOME_D/config/trunk-policy"; }
+  rm "$HOME_D/config/live-hook.proj"
+  printf 'live-on-green=off\n' >> "$HOME_D/config/trunk-policy"  # these cases drive the tick's quiet window; the green verify's own go-live has its case below
+  CODE_ROOT="$W/homecode"; git clone -q "$(git -C "$PROJ" remote get-url origin)" "$CODE_ROOT"
+  BASE=$(git -C "$CODE_ROOT" rev-parse HEAD)
+  for id in lead-a lead-b; do
+    git -C "$CODE_ROOT" worktree add -q --detach "$W/$id" "$BASE"; printf '%s\n' "$id" > "$W/$id/.jg-squad-lead-home"
+    printf -- '- %s - fixture (home: %s; scope: x; projects: proj; added 2026-11-09)\n' "$id" "$W/$id" >> "$HOME_D/data/squad_leads.md"
+  done
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
+  trunk waiver "$PROJ" --rule owner-rule-test >/dev/null || fail "the Overwatch path must write the waiver"
+}
+
+# Sweeps of the landing check, as a home runs them (its own bin, the code home a clone of the origin), until <pattern> shows
+# in what they print or the job that follows a landing has ended; prints what they printed.
+fleet_sweeps() {  # <pattern>
+  local acc='' home
+  for _ in $(seq 1 200); do
+    acc="$acc$(JG_ROOT_OVERRIDE="$CODE_ROOT" JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D")"$'\n'
+    printf '%s' "$acc" | grep -q -- "$1" && break; sleep 0.2
+  done
+  # Each check starts a detached live job; one still running would race the case's own autolive call (a late one went
+  # live first under load), so the sweeps return only once every live job they started has finished.
+  home=$(cd "$HOME_D" && pwd -P)  # the check names the home by its resolved path
+  for _ in $(seq 1 300); do pgrep -f "trunk-landing.sh live $home " >/dev/null || break; sleep 0.2; done
+  printf '%s' "$acc"
+}
+
+homes_at() {  # <sha>: Main's code home and both Squad Lead homes are at it
+  local h
+  for h in "$CODE_ROOT" "$W/lead-a" "$W/lead-b"; do [ "$(git -C "$h" rev-parse HEAD)" = "$1" ] || return 1; done
+}
+
+# age_landings <newest-minutes> <oldest-minutes>: the landings on record happened that long ago (the first the oldest, the last the newest).
+age_landings() {
+  local now t; now=$(date +%s); t=$(wc -l < "$HOME_D/data/trunk-landings.tsv")
+  awk -F'\t' -v OFS='\t' -v n="$now" -v new="$(( $1 * 60 ))" -v old="$(( $2 * 60 ))" -v t="$t" '{ $4 = n - (NR < t ? old : new); print }' "$HOME_D/data/trunk-landings.tsv" > "$HOME_D/data/trunk-landings.tsv.new" \
+    && mv "$HOME_D/data/trunk-landings.tsv.new" "$HOME_D/data/trunk-landings.tsv"
+}
+
+# age_live: every go-live on record happened two hours ago, so a landing after it is a new batch.
+age_live() {
+  awk -F'\t' -v OFS='\t' -v n="$(date +%s)" '{ $3 = n - 7200; print }' "$HOME_D/data/trunk-in-use.tsv" > "$HOME_D/data/trunk-in-use.tsv.new" && mv "$HOME_D/data/trunk-in-use.tsv.new" "$HOME_D/data/trunk-in-use.tsv"
+}
+
+await_green() {  # the tick's verify of the landing has moved the green pin to the trunk tip
+  for _ in $(seq 1 200); do [ "$(cat "$HOME_D/state/trunk-green-proj" 2>/dev/null)" = "$(tip)" ] && return 0; sleep 0.2; done; return 1
+}
