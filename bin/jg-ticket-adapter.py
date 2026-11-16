@@ -6,7 +6,9 @@ Usage: BEADS_DIR=<store>/.beads jg-ticket-adapter.py <describe|list|get|create|u
 One JSON response on stdout and nothing else: exit 0 with the answer, exit 1 with {"error": {...}}. It reaches the store only through
 bin/jg-beads.sh (JG_BEADS_SH names another wrapper) and bin/jg-beads-read.py, whose facts are in data/ta-j1-beads-facts/facts.md.
 The ticket is bd's own row: `id`, `status`, `assignee` and `parent` are bd's words, `kind` is bd's issue type, `body` its description,
-`labels` and `links` (its outgoing edges other than the parent) as bd keeps them. With JG_HOME and a configured fleet, list derives board status and project from the homes and uses home-qualified ids.
+`labels` and `links` (its outgoing edges other than the parent) as bd keeps them. With JG_HOME and a configured fleet, list derives board status and project from the homes and uses home-qualified ids. It reads each home's store with one
+`jg-beads-read.py board` query (bd list and bd show took minutes on a store of thousands of rows), skips a home that names no store, fails when a store it names cannot be read,
+and answers a client that names no limit with pages of 500, since every page reads the whole fleet again.
 `extra` is the row's metadata, key by key and typed as bd keeps it (the interface's conformance script holds extra to exactly what a client put there).
 bd's other columns (priority, notes, design, estimate, due and the like) are not carried: no ticket field names them and extra may not.
 Without a configured fleet, list leaves closed rows out, as bd list does. rev is the read helper's rev (bd's revision with the labels, the edges and the comment count).
@@ -37,6 +39,7 @@ IDENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 BD_KEY = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_./]*$")
 OP_KEEP_SECONDS = 7 * 24 * 3600
 STEP_TIMEOUT = 20
+FLEET_PAGE = 500  # every page reads the whole fleet again, so a client that names no limit gets the largest page, not 50
 BOARD_COLUMNS = ("Waiting for you", "Next up", "Being built", "Done")
 BOARD_HOME = None
 REQUEST_KEYS = {"describe": set(), "list": {"cursor", "limit"}, "get": {"id"}, "create": {"ticket", "op_id"}, "update": {"id", "rev", "set", "unset", "op_id"},
@@ -152,8 +155,11 @@ def fleet_homes():
     for name, path in paths.items():
         try:
             with open(os.path.join(path, "config", "beads-dir")) as handle: store = handle.read().strip()
+        except FileNotFoundError:
+            continue  # a home that names no store has no tickets (the tickets sync skips it the same way); a store it names but cannot be read still refuses below
         except OSError as e:
             raise Refusal("unavailable", "Cannot read %s's store: %s" % (name, e), True)
+        if not store: continue
         if not os.path.isabs(store): raise Refusal("unavailable", "No absolute store for %s." % name)
         homes[name] = (path, store)
     return homes
@@ -200,23 +206,15 @@ def column(row, home):
 
 
 def fleet_rows(name, home, store):
-    env = dict(os.environ, BEADS_DIR=store)
-    result = bd(["list", "--all", "--include-gates", "--flat", "--limit", "0", "--json"], env=env)
-    if result.returncode: raise Refusal("unavailable", "Cannot list %s: %s" % (name, reason(result)), True)
-    rows = json.loads(result.stdout or "[]")
-    cutoff = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=7)).isoformat()
-    ids = [row["id"] for row in rows if row.get("issue_type") != "gate" and (row.get("status") != "closed" or (row.get("closed_at") or "") >= cutoff)]
-    if not ids: return []
-    found = []
-    for start in range(0, len(ids), 300):
-        result = read_helper(["show"] + ids[start:start + 300], env=env)
-        if result.returncode: raise Refusal("incomplete", "Cannot read %s: %s" % (name, reason(result)), True)
-        found.extend((name, home, row) for row in json.loads(result.stdout))
-    return found
+    """The rows the board can show from one home's store: its open rows and the rows closed in the last 7 days, read with one query."""
+    cutoff = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    result = read_helper(["board", cutoff], env=dict(os.environ, BEADS_DIR=store))
+    if result.returncode: raise Refusal("unavailable", "Cannot read %s: %s" % (name, reason(result)), True)
+    return [(name, home, row) for row in json.loads(result.stdout)]
 
 
 def fleet_list(request):
-    cursor, limit = request.get("cursor"), request.get("limit", 50)
+    cursor, limit = request.get("cursor"), request.get("limit", FLEET_PAGE)
     if cursor is not None and not IDENT.fullmatch(cursor): raise invalid([("cursor", "not a fleet cursor")])
     if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 500: raise invalid([("limit", "must be a whole number from 1 to 500")])
     homes = fleet_homes()

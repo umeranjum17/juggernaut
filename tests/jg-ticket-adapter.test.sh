@@ -16,7 +16,7 @@ fi
 
 [ -z "${DONE_DONE_EVIDENCE_ROOT:-}" ] || exec > >(tee "$DONE_DONE_EVIDENCE_ROOT/ticket-adapter.log")
 WRAPPER="$ROOT/bin/jg-beads.sh" ADAPTER="$ROOT/bin/jg-ticket-adapter.py" FIX="$ROOT/tests/fixtures/ticket-adapter" T=$(jg_test_tmproot jg-ticket-adapter)
-unset BEADS_DB BEADS_DOLT_SHARED_SERVER
+unset BEADS_DB BEADS_DOLT_SHARED_SERVER JG_HOME  # the single-store half of this test must not read the fleet of the home it runs in
 mkdir -p "$T/real"
 export BEADS_DIR=$T/real/.beads JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT JG_BEADS_SH=$FIX/faulty-beads.sh
 "$WRAPPER" init --prefix ad >"$T/init.log" 2>&1 || fail "init: $(cat "$T/init.log")"
@@ -107,7 +107,8 @@ BEADS_DIR=$T/fleet/a/.beads "$WRAPPER" init --prefix fa >/dev/null 2>&1 || fail 
 BEADS_DIR=$T/fleet/b/.beads "$WRAPPER" init --prefix fb >/dev/null 2>&1 || fail 'fleet store b init'
 printf '%s\n' "$T/fleet/a/.beads" > "$T/fleet/main/config/beads-dir"
 printf '%s\n' "$T/fleet/b/.beads" > "$T/fleet/lead/config/beads-dir"
-printf '%s\n' "- lead - fixture (home: $T/fleet/lead; scope: test)" > "$T/fleet/main/data/squad_leads.md"
+mkdir -p "$T/fleet/nostore/config"
+printf '%s\n' "- lead - fixture (home: $T/fleet/lead; scope: test)" "- nostore - fixture (home: $T/fleet/nostore; scope: test)" "- gone - fixture (home: $T/fleet/gone; scope: test)" > "$T/fleet/main/data/squad_leads.md"
 a() { BEADS_DIR=$T/fleet/a/.beads "$WRAPPER" "$@" 2>/dev/null; }
 b() { BEADS_DIR=$T/fleet/b/.beads "$WRAPPER" "$@" 2>/dev/null; }
 waiting=$(a q 'Waiting')
@@ -127,13 +128,16 @@ export JG_HOME=$T/fleet/main
 call describe '{"interface":1}'
 expect '[f for f in d["fields"] if f["name"] == "status"][0]["values"] == [{"value": x, "label": x} for x in ["Waiting for you", "Next up", "Being built", "Done"]]' True 'fleet describe columns'
 expect 'any(f["name"] == "project" and f["readonly"] for f in d["fields"])' True 'fleet describe project'
-call list '{"interface":1,"limit":500}'
-[ "$rc" = 0 ] || fail "fleet list: $out"
+call list '{"interface":1}'
+[ "$rc" = 0 ] || fail "fleet list, with a home that names no store and a home that is gone: $out"
+expect 'len(d["tickets"]) + ("next_cursor" in d)' 4 'a client that names no limit gets the whole fleet in one page'
+listed_rev=$(pick "[t['rev'] for t in d['tickets'] if t['id'] == 'lead--$working'][0]")
 expect "{t['title']: (t['status'], t['project']) for t in d['tickets']} == {'Building': ('Being built', 'beta'), 'Finished': ('Done', 'beta'), 'Ready': ('Next up', 'alpha'), 'Waiting': ('Waiting for you', 'alpha')}" True 'fleet columns and projects'
 expect "all(t['id'].startswith(('main--','lead--')) for t in d['tickets'])" True 'fleet ids name their store'
 call get "{\"interface\":1,\"id\":\"lead--$working\"}"
 expect 'd["ticket"]["project"]' beta 'fleet get routes to lead'
 rev=$(pick 'd["ticket"]["rev"]')
+[ "$rev" = "$listed_rev" ] || fail "a ticket listed with rev $listed_rev must be got with the same rev, got $rev"
 call update "{\"interface\":1,\"id\":\"lead--$working\",\"rev\":\"$rev\",\"op_id\":\"fleet-edit\",\"set\":{\"title\":\"Building changed\"}}"
 expect 'd["ticket"]["title"]' 'Building changed' 'fleet write routes to lead'
 [ "$(b show "$working" --json | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["title"])')" = 'Building changed' ] || fail 'write reached wrong store'
@@ -149,4 +153,4 @@ call list '{"interface":1}'
 expect 'd["error"]["code"]' unavailable 'failed home is visible'
 rm -f "$T/fleet/b/.fault"
 unset JG_HOME
-pass 'fleet adapter: two stores, four factual columns, projects, routing, pagination and failure'
+pass 'fleet adapter: two stores, homes with no store, four factual columns, projects, one rev for list and get, routing, pagination and failure'

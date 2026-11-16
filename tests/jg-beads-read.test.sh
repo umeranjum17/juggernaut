@@ -78,6 +78,24 @@ grep -q "^$done_id " "$walk" && fail "a closed row must be left out"
 "$READ" list --limit 0 >/dev/null 2>&1 && fail "limit 0 must be refused"
 "$READ" list --after "x y" >/dev/null 2>&1 && fail "a bad cursor must be refused"
 
+# board: one query gives each row the board can show (open rows, rows closed since the cutoff, no gates) as `show` gives it, rev included.
+old_id=$(mint closed-long-ago); bd_ close "$old_id" >/dev/null
+bd_ dolt sql -q "update issues set closed_at = '2026-01-01 00:00:00' where id = '$old_id'" >/dev/null 2>&1
+since=$(date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)
+"$READ" board "$since" > "$T/board.json" || fail "board failed"
+"$READ" board yesterday >/dev/null 2>&1 && fail "board must refuse a closed-since that is not a UTC stamp"
+jq -e --arg d "$done_id" --arg o "$old_id" --argjson n "$(bd_ list --json --limit 0 | jq length)" '([.[].id] | index($d)) != null and ([.[].id] | index($o)) == null and length == $n + 1' "$T/board.json" >/dev/null || fail "board holds a row closed since the cutoff and leaves out one closed before it"
+[ "$(jq '[.[] | select(.issue_type == "gate")] | length' "$T/board.json")" = 0 ] || fail "board must leave gates out"
+jq -r '.[].id' "$T/board.json" | LC_ALL=C sort -c || fail "board rows must come in id order"
+for id in $t $a $b; do
+  "$READ" show "$id" > "$T/show.json"
+  mine=$(jq -c --arg id "$id" '.[] | select(.id == $id) | {rev, parent, title, status, assignee, labels: (.labels // []), metadata: (.metadata // {}), comment_count, created_at, updated_at,
+      deps: [.dependencies[] | [.id, .dependency_type, .status, .issue_type]] | sort, dependents: [.dependents[] | [.id, .dependency_type]] | sort}' "$T/board.json")
+  theirs=$(jq -c '.[0] | {rev, parent, title, status, assignee, labels: (.labels // []), metadata: (.metadata // {}), comment_count, created_at, updated_at,
+      deps: [(.dependencies // [])[] | [.id, .dependency_type, .status, .issue_type]] | sort, dependents: [(.dependents // [])[] | [.id, .dependency_type]] | sort}' "$T/show.json")
+  [ "$mine" = "$theirs" ] || fail "board must give $id as show does: $mine <> $theirs"
+done
+
 # history: commits that changed the row, newest first, with the columns each changed.
 hist=$("$READ" history "$t") || fail "history failed"
 [ "$(wc -l <<<"$hist")" -ge 8 ] || fail "history must list the commits that changed the row: $hist"
@@ -86,4 +104,4 @@ grep -q "added" <<<"$hist" || fail "history must end at the commit that added th
 other=$(mint untouched)
 [ "$("$READ" history "$other" | wc -l)" -le 2 ] || fail "another ticket's commits must not show in the history"
 "$READ" history rd-nope >/dev/null 2>&1 && fail "history of a missing ticket must be refused"
-pass "beads read facts: rev on every write, cursor list, history"
+pass "beads read facts: rev on every write, cursor list, board, history"

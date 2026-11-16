@@ -4,6 +4,7 @@
 Usage: BEADS_DIR=<store>/.beads jg-beads-read.py rev <id>...
        BEADS_DIR=<store>/.beads jg-beads-read.py list [--after <id>] [--limit <1-500>]
        BEADS_DIR=<store>/.beads jg-beads-read.py show <id>...
+       BEADS_DIR=<store>/.beads jg-beads-read.py board <closed-since>
        BEADS_DIR=<store>/.beads jg-beads-read.py history <id>
 
 It only reads, and every call goes through bin/jg-beads.sh (JG_BEADS_SH names another wrapper), never bd or dolt directly.
@@ -14,6 +15,9 @@ list walks the store with a cursor: one JSON object `{"rows": [...], "next": <id
 gives it plus its `rev`. Closed rows and gates are left out, as `bd list` leaves them out, and `--after` takes the previous page's `next`.
 show prints a JSON array of the rows as `bd show --json` gives them, each with its `rev`; a missing id exits 4, and a page of list that cannot be shown exits 5,
 so a caller can tell a ticket that is not there, and a list that would be short, from a store that cannot be read.
+board prints a JSON array of every row the fleet board can show: each open row and each row closed at or after <closed-since> (a UTC `YYYY-MM-DDTHH:MM:SSZ`),
+gates left out, in id order. Each row has the shape and the `rev` that `show` gives it, so a ticket read here and read again with `show` carries the same rev,
+but one dolt query reads the whole store, because `bd list` and `bd show` open the store once per call and took minutes on a store of thousands of rows.
 history prints one line per commit that changed the row, newest first, `<commit><TAB><date><TAB><kind><TAB><changed columns>`, from
 dolt_diff_issues: `bd history` lists every commit of the store, so it is not used.
 """
@@ -110,6 +114,52 @@ def cmd_show(args):
     print(json.dumps(show([ident(a) for a in args])))
 
 
+def board_query(since):
+    """One SELECT whose every line is one JSON object tagged `t`: a row, a label, an edge (with the far end's status and type) or a comment count."""
+    stamp = lambda column: "date_format(%s, '%%Y-%%m-%%dT%%H:%%i:%%sZ')" % column
+    far = "coalesce(d.depends_on_issue_id, d.depends_on_wisp_id, d.depends_on_external)"  # the far end is a row, a wisp or a name; bd shows all three as an edge
+    shown = "(i.status <> 'closed' or i.closed_at >= '%s') and i.issue_type <> 'gate'" % since
+    return (
+        "select json_object('t', 'row', 'id', i.id, 'title', i.title, 'description', i.description, 'status', i.status, 'issue_type', i.issue_type,"
+        " 'assignee', i.assignee, 'created_at', %s, 'updated_at', %s, 'closed_at', %s, 'metadata', i.metadata, 'revision', cast(i.row_lock as char))"
+        " from issues i where %s"
+        " union all select json_object('t', 'label', 'id', l.issue_id, 'label', l.label) from labels l join issues i on i.id = l.issue_id where %s"
+        " union all select json_object('t', 'edge', 'from', d.issue_id, 'to', %s, 'type', d.type, 'status', x.status, 'issue_type', x.issue_type)"
+        " from dependencies d left join issues x on x.id = %s"
+        " union all select json_object('t', 'comments', 'id', issue_id, 'n', count(*)) from comments group by issue_id"
+    ) % (stamp("i.created_at"), stamp("i.updated_at"), stamp("i.closed_at"), shown, shown, far, far)
+
+
+def cmd_board(args):
+    if len(args) != 1 or not re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", args[0]):
+        die("usage: board <closed-since as YYYY-MM-DDTHH:MM:SSZ>")
+    lines = [l for l in run(["dolt", "sql", "-q", board_query(args[0].replace("T", " ").rstrip("Z"))]).splitlines() if l.startswith("| ")]
+    parts = [json.loads(l[2:-2]) for l in lines[1:]]  # one column: a " | " inside a description is not a cell break
+    rows = {p["id"]: dict(p, labels=[], dependencies=[], dependents=[], comment_count=0) for p in parts if p["t"] == "row"}
+    for p in parts:
+        if p["t"] == "label" and p["id"] in rows:
+            rows[p["id"]]["labels"].append(p["label"])
+        elif p["t"] == "comments" and p["id"] in rows:
+            rows[p["id"]]["comment_count"] = p["n"]
+        elif p["t"] == "edge":
+            if p["from"] in rows:
+                rows[p["from"]]["dependencies"].append({"id": p["to"], "status": p["status"], "issue_type": p["issue_type"], "dependency_type": p["type"]})
+                if p["type"] == "parent-child":
+                    rows[p["from"]]["parent"] = p["to"]
+            if p["to"] in rows:
+                rows[p["to"]]["dependents"].append({"id": p["from"], "dependency_type": p["type"]})
+    out = []
+    for key in sorted(rows):
+        row = rows[key]
+        row.pop("t")
+        if row.get("closed_at") is None:
+            row.pop("closed_at", None)
+        row["labels"].sort()
+        row["rev"] = rev_of(row)
+        out.append(row)
+    print(json.dumps(out))
+
+
 def cmd_history(args):
     if len(args) != 1:
         die("usage: history <id>")
@@ -128,7 +178,7 @@ def cmd_history(args):
 
 
 def main(argv):
-    verbs = {"rev": cmd_rev, "list": cmd_list, "show": cmd_show, "history": cmd_history}
+    verbs = {"rev": cmd_rev, "list": cmd_list, "show": cmd_show, "board": cmd_board, "history": cmd_history}
     if not argv or argv[0] not in verbs:
         die("usage: jg-beads-read.py <%s> ..." % "|".join(verbs))
     verbs[argv[0]](argv[1:])
