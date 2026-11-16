@@ -81,6 +81,14 @@ JG_HOME="$O" JG_ROOT_OVERRIDE="$O" "$CARRIER" ensure opencode > "$OUT/opencode-e
 [ ! -s "$OUT/opencode-ensure.txt" ] && [ ! -e "$O/opencode.json" ] || die "ensure opencode wrote a file"
 log "opencode home: carrier is AGENTS.md itself (read natively, lab, first request after one compaction carried the marker); ensure writes nothing; check reads file"
 
+# Grok (slice thin-tc5-grok): grok 1.0.0 `grok inspect` in a repo with AGENTS.md lists it under Project Instructions, so Grok reads
+# AGENTS.md itself (native). The compaction run was not made (the lab was not signed in): the first request after a compaction is not proven.
+G=$(home grok)
+[ "$(JG_HOME="$G" JG_ROOT_OVERRIDE="$G" "$CARRIER" check grok)" = reemit ] || die "check grok is not reemit"
+JG_HOME="$G" JG_ROOT_OVERRIDE="$G" "$CARRIER" ensure grok > "$OUT/grok-ensure.txt" 2>&1 || die "ensure grok failed"
+[ ! -s "$OUT/grok-ensure.txt" ] && [ ! -e "$G/CLAUDE.local.md" ] || die "ensure grok wrote a file"
+log "grok home: carrier is AGENTS.md itself (read natively, grok inspect); ensure writes nothing; check reads reemit; file after one compaction: not proven"
+
 C=$(home claude)
 start "$C" claude --source startup > "$OUT/claude-start.txt"
 grep -q 'wrote CLAUDE.local.md' "$OUT/claude-start.txt" || die "the first claude start did not write the carrier file"

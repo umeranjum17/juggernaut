@@ -52,7 +52,7 @@ omp       reemit  -
 codex     none    AGENTS.override.md   copy
 cursor    reemit  -                    native
 opencode  file    -                    native
-grok      none    -
+grok      reemit  -                    native
 kimi      none    -
 '
 
