@@ -408,6 +408,36 @@ test_a_red_ci_pins_the_home_back_to_the_last_green_commit() {
   pass 'a red CI pins the green pin and the home back to the last green commit, landings go on, and the pin waits until the red is reverted'
 }
 
+# T6b A red CI on a commit UNDER the green pin never pins a home below that pin: the pin contains the red commit and passed a verify
+# after it. One alert names the red commit. A red on the pinned commit, or one above it, still pins the pin and the homes back.
+test_a_red_ci_under_a_newer_green_pin_moves_nothing() {
+  local c1 c2 c3 c4 out alerts n
+  world ci-under-pin; alerts="$HOME_D/state/alerts"
+  go() { lane "$1" "$1"; trunk land "$1" >/dev/null 2>&1 || fail "$1 must land"; trunk verify "$PROJ" >/dev/null 2>&1 || fail "$1 must verify"
+    trunk word in-use "$PROJ" go >/dev/null 2>&1; trunk live "$PROJ" >/dev/null 2>&1 || fail "$1 must go live"; }
+  go c1; c1=$(tip); go c2; c2=$(tip); go c3; c3=$(tip)
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$c3" ] && [ "$(tail -1 "$W/live-moves")" = "$c3" ] || fail "fixture: the pin and the home must be at c3"
+  out=$(trunk ci "$PROJ" "$c2" red 2>&1) || fail "a red on an ancestor of the pin must record: $out"
+  grep -Eq "^proj	$c2	[0-9]+	red" "$HOME_D/data/trunk-ci.tsv" || fail "the old red must be recorded"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$c3" ] || fail "an older red must leave the green pin at c3: $out"
+  { [ "$(tail -1 "$W/live-moves")" = "$c3" ] && ! grep -q "pinned-behind" "$HOME_D/data/trunk-in-use.tsv" 2>/dev/null; } || fail "an older red must leave every home at c3: $(cat "$HOME_D/data/trunk-in-use.tsv")"
+  assert_contains "$out" "under the green pin ${c3:0:12}" "the red under the pin must be said"
+  grep -q "${c2:0:12}" "$alerts/line-red--proj-ci-${c2:0:12}.rec" 2>/dev/null || fail "one alert must name the red commit: $(ls "$alerts" 2>&1)"
+  trunk ci "$PROJ" "$c2" red >/dev/null 2>&1 || fail "the same red twice must still be accepted"
+  n=$(find "$alerts" -name 'line-red--proj-ci-*' | wc -l)
+  [ "$n" = 1 ] || fail "the same old red must raise one alert, not $n: $(ls "$alerts")"
+  # A red on a commit above the pin still pins back.
+  lane c4 c4; trunk land c4 >/dev/null 2>&1 || fail "c4 must land"; c4=$(tip)
+  out=$(trunk ci "$PROJ" "$c4" red 2>&1) || fail "a red above the pin must record and pin back: $out"
+  assert_contains "$out" "pinning the green pin and the home back" "a red above the pin must pin back"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$c3" ] || fail "a red above the pin must leave the pin on the last green live commit: $out"
+  # A red on the pinned commit itself pins back below it (c2 is red too, so the last green live commit is c1).
+  out=$(trunk ci "$PROJ" "$c3" red 2>&1) || fail "a red on the pinned commit must record and pin back: $out"
+  { [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$c1" ] && [ "$(tail -1 "$W/live-moves")" = "$c1" ]; } || fail "a red on the pin must take the pin and the home back to c1: $out"
+  grep -q "pinned-behind" "$HOME_D/data/trunk-in-use.tsv" || fail "the pin-back must be recorded in the in-use rows"
+  pass 'a red CI under a newer green pin moves nothing and raises one alert, while a red on the pin or above it pins back'
+}
+
 test_the_trunk_stays_safe_until_its_release_lands_then_the_next_version_is_cut() {
   local out old
   world roll
@@ -578,6 +608,7 @@ test_a_red_found_after_the_landing_pins_the_home_behind_it
 test_the_release_is_one_pr_from_the_trunk_on_his_word
 test_a_release_carries_the_last_green_commit_while_the_tip_is_ahead
 test_a_red_ci_pins_the_home_back_to_the_last_green_commit
+test_a_red_ci_under_a_newer_green_pin_moves_nothing
 test_the_trunk_stays_safe_until_its_release_lands_then_the_next_version_is_cut
 test_the_old_trunk_is_cleaned_up_unforced_and_only_when_its_work_is_carried
 printf 'jg-trunk: ok\n'

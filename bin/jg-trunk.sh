@@ -136,8 +136,9 @@
 # The old trunk is left exactly as it was.
 # Pin-back: state/trunk-green-<project> is the newest commit a verify (or a green CI) passed: a landing never moves it, and a red found
 # later takes it back below that commit. `live` moves the home only to that commit, so a red commit is never live.
-# `release` ships only the green pin, never the tip. A red `ci` moves the green pin, and every home, back to the
-# newest earlier commit that went live and was not red (else the last release); landings go on.
+# `release` ships only the green pin, never the tip. A red `ci` on the pin or above it moves the green pin, and every home, back to the
+# newest earlier commit that went live and was not red (else the last release); a red on a commit UNDER the pin moves nothing and raises
+# one line-red alert naming it (ci_record owns the transitions); landings go on.
 # The captain's word: `word` writes state/trunk-word-<in-use|release>-<project>, bound to the one commit
 # it names and spent by the command it allows. A worker never records one.
 #
@@ -2428,8 +2429,18 @@ last_green_before() {  # <red sha>
   printf '%s\n' "$c"
 }
 
+# A red CI on <sha> is OLD when the green pin stands strictly above it: the pin is a commit that passed a verify and contains <sha>, so
+# a home on the pin already runs the red commit's code under a newer pass. Moving the pin down would take every home below that pass.
+red_is_under_pin() {  # <sha>
+  local green; green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
+  [ -n "$green" ] && [ "$green" != "$1" ] && git -C "$PROJ" merge-base --is-ancestor "$1" "$green"
+}
+
 # Record a CI result for a commit of the trunk (the caller holds the trunk lock and has run tip_ok). Green moves the green pin
-# to the commit when the pin lies below it. Red takes the green pin, and every home, back to the last green commit.
+# to the commit when the pin lies below it. A red takes the pin, and every home, back to the last green commit, one transition each:
+#   the red is on the pinned commit itself     -> the pin and every home go back
+#   the red is on a commit above the pin       -> the pin and every home go back
+#   the red is on an ancestor of the pin       -> the pin and every home stay; the red row is recorded and one line-red alert names it
 ci_record() {  # <sha> green|red
   local sha=$1 back
   case $2 in
@@ -2439,6 +2450,11 @@ ci_record() {  # <sha> green|red
       echo "ci green at ${sha:0:12}" ;;
     red)
       row trunk-ci.tsv "$PN" "$sha" "$(date +%s)" red
+      if red_is_under_pin "$sha"; then
+        raise_line_red "$PN-ci-${sha:0:12}" "CI is red at ${sha:0:12}, a commit under the green pin $(cut -c1-12 "$STATE/trunk-green-$PN"); the green pin and every home stay where they are" || true
+        echo "ci RED at ${sha:0:12}, under the green pin $(cut -c1-12 "$STATE/trunk-green-$PN"); the pin and every home stay; landings go on" >&2
+        return 0
+      fi
       back=$(last_green_before "$sha")
       put "$STATE/trunk-green-$PN" "$back"
       raise_line_red "$PN-ci-${sha:0:12}" "CI is red at ${sha:0:12}; the green pin and every home go back to ${back:0:12}"

@@ -77,7 +77,9 @@ test_publish_pushes_the_green_pin_only_when_the_trunk_holds_enough_and_only_unde
   [ "$(pushed)" = "$pin" ] && [ "$(creates)" = 1 ] || fail "T4: nothing may be pushed into the open batch pull request: $out"
   pass 'T4 a due trunk pushes nothing into an open batch pull request'
 
-  # A red on the pushed commit pins back; a commit lands above it.
+  # A red on the pushed commit that is also the green pin pins back; a commit lands above it. (The verifies of q4 q5 q6 moved the pin
+  # above the pushed commit, and a red on a commit under the pin moves nothing: tests/jg-trunk.test.sh owns that case.)
+  printf '%s\n' "$pin" > "$HOME_D/state/trunk-green-proj"
   trunk ci "$PROJ" "$pin" red >/dev/null 2>&1 || fail "T5: the red must record"
   [ "$(green)" != "$(tip)" ] || fail "T5: the pin must stay below the red"
   lane q7 q7; trunk land q7 >/dev/null 2>&1 || fail "T5: q7 must land"; [ "$(green)" != "$(tip)" ] || fail "T5: a landing must leave the pin below the red"
