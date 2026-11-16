@@ -67,7 +67,7 @@ test_a_runner_that_stops_three_times_waits_for_the_lead_and_the_worker_is_not_to
   out="$out$(sweep)"
   grep -q '^final gave up after 3 tries: REFUSED: the retest runner failed' "$m/f-b.$c.state" || fail "three runner faults end the check's tries: $(cat "$m/f-b.$c.state")"
   grep -q '^wait f-b lead blocker' "$W/backlog-calls" || fail "the ticket waits on the lead, reason blocker: $(cat "$W/backlog-calls")"
-  [ "$(grep -c '^wait f-b' "$W/backlog-calls")" = 1 ] || fail "the wait is written once"
+  [ "$(grep -c '^wait f-b lead blocker' "$W/backlog-calls")" = 1 ] || fail "the wait is written once: $(cat "$W/backlog-calls")"
   [ ! -s "$W/send-calls" ] || fail "the worker is not told: $(cat "$W/send-calls")"
   ! grep -q '^moment f-b returned_at' "$W/backlog-calls" || fail "the ticket stays in delivering: no returned_at"
   [ "$(awk -F'\t' '$1 == "f-b" && $5 == "returned" { n++ } END { print n + 0 }' "$HOME_D/data/trunk-landing-phases.tsv")" = 0 ] || fail "a fault of the runner never returns the run"

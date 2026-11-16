@@ -453,7 +453,7 @@ run_gate_try() {  # <commit> <command> <label>: returns 1 after printing the ref
 run_gate() { run_gate_try "$@" || exit 1; }
 
 # What a refused landing means, read from its output (and any gate logs after it): `wait` (only time clears it), `retry` (the machine failed it, not the lane: a full
-# or quota-limited temp directory, a failed checkout, a gate shard whose result is missing, a slow backlog read) or `final` (a change is
+# or quota-limited temp directory, a failed checkout, a gate shard whose result is missing, a slow backlog read, the gate lock held by another run) or `final` (a change is
 # needed: a conflict, a lint or test red charged to the lane). The last refusal line decides; a gate or read refusal is a `retry` only when
 # the output also shows the machine failure. The landing check (core/trunk-landing/trunk-landing.sh) reads this verdict from the
 # `refusal-class` line, and owns the retry count and backoff: this function is the only list of either phrase set.
@@ -463,6 +463,8 @@ classify_refusal() {  # <output file> [<gate log>...]
   if grep -q '^ENV:' "$@" 2>/dev/null; then echo env-wait; return; fi
   case $last in
     *'landing gate exceeded its shared deadline'*|*'the retest runner failed after the conflict'*) echo retry; return ;;
+    # The lander's own lock (gate_enter) was held by another run: the machine's, so the landing is tried again, not steered to the lane.
+    *'cannot mark the gate as running'*) echo retry; return ;;
     *'away mode'*|*'something else moved it'*|*'linked to a decision'*|*'still held'*|*'changed while landing'*|*'kept moving'*|*'proof inputs are incomplete'*) echo wait; return ;;
     "REFUSED: gate "*|"REFUSED: could not read the decisions"*|"REFUSED: this lane is the red"*|"error: cannot check out"*) ;;
     *) echo final; return ;;

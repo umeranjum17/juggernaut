@@ -32,14 +32,15 @@ test_a_refusal_is_classed_wait_retry_or_final_from_its_output() {
   printf '%s\n' "not ok - the lane broke it" "REFUSED: gate 'full' failed (exit 1) at 2222222; full log: /d/gate-full.log" > "$d/test-red"
   printf '%s\n' "REFUSED: away mode: trunk landings stay held" > "$d/away"
   printf '%s\n' "cat: write error: Disk quota exceeded" "REFUSED: fm/x conflicts with trunk (abc) in: work.txt" > "$d/conflict-with-quota"
-  for f in codex decisions batch-red checkout quota; do [ "$(trunk classify "$d/$f")" = retry ] || fail "$f must be classed retry"; done
+  printf '%s\n' "error: cannot mark the gate as running" > "$d/gate-lock"
+  for f in codex decisions batch-red checkout quota gate-lock; do [ "$(trunk classify "$d/$f")" = retry ] || fail "$f must be classed retry"; done
   for f in conflict lint test-red conflict-with-quota; do [ "$(trunk classify "$d/$f")" = final ] || fail "$f must stay final"; done
   [ "$(trunk classify "$d/away")" = wait ] || fail "away mode only needs time"
   printf '%s\n' "REFUSED: gate 'full' failed (exit 1) at 3333333; this lane introduced or changed the failure of: tests/a.test.sh" > "$d/explained-red"
   printf '%s\n' "tests/lib.sh: line 965: printf: write error: Disk quota exceeded" > "$d/gate-full.log"
   [ "$(trunk classify "$d/explained-red")" = final ] || fail "a red with no machine failure in sight is the lane's"
   [ "$(trunk classify "$d/explained-red" "$d/gate-full.log")" = retry ] || fail "a quota error in the gate log is the machine's, not the lane's"
-  pass 'a refusal is classed wait, retry or final from its output: the three infrastructure reds retry; a conflict, a lint red and a lane red stay final'
+  pass 'a refusal is classed wait, retry or final from its output: the three infrastructure reds and a held gate lock retry; a conflict, a lint red and a lane red stay final'
 }
 
 settle() {  # wait, without the sweep's short bound, until no landing is running and the last one has let go of its run lock

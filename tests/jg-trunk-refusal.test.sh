@@ -92,12 +92,14 @@ test_a_refusal_reaches_the_lanes_worker_and_never_sits_silent() {
     touch -d '3 minutes ago' "$f"
   done
   sweep >/dev/null
-  [ "$(find "$HOME_D/state/jg-r5.inbox" -maxdepth 1 -name '*.msg' 2>/dev/null | wc -l)" = 1 ] || fail "the final retry verdict must send one steer: $(cat "$f")"
+  # A machine give-up is the lead's, never a steer to the worker (core/trunk-landing/refusal-reach.sh, rule 2b).
+  [ "$(find "$HOME_D/state/jg-r5.inbox" -maxdepth 1 -name '*.msg' 2>/dev/null | wc -l)" = 0 ] || fail "a machine give-up must send no steer: $(cat "$f")"
+  [ "$(find "$HOME_D/data/jg-trunk-landing" -name 'jg-r5.*.lead-wait' | wc -l)" = 1 ] || fail "a machine give-up puts the ticket on the lead once: $(cat "$f")"
   if [ "$real_backlog" = 1 ]; then
     assert_contains "$(jg_test_backlog "$HOME_D" show jg-r5 --full)" "gave up after 3 tries" "the final retry verdict reaches its ticket"
   else assert_contains "$(cat "$W/backlog-calls")" "update jg-r5 --body-file" "the final retry verdict reaches its ticket"; fi
   assert_contains "$(JG_HOME="$HOME_D" "$HOME_D/bin/jg-machine.sh" show task jg-r5)" "rework" "the exhausted lane is in rework"
-  pass 'a refusal the worker fixes reaches it by steer, repeats until the head changes, alerts after ten silent minutes, and never steers a stale head or a wait'
+  pass 'a refusal the worker fixes reaches it by steer, repeats until the head changes, alerts after ten silent minutes, never steers a stale head or a wait, and sends a machine give-up to the lead with no steer'
 }
 
 test_a_refusal_reaches_the_lanes_worker_and_never_sits_silent

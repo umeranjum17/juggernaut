@@ -1,0 +1,3 @@
+# Machine give-up goes to the lead
+
+Machine give-up goes to the lead: run `done-done run -- bash -c 'bash bin/jg-test-run.sh tests/jg-trunk-refusal-relaunch.test.sh tests/jg-trunk-refusal.test.sh tests/jg-trunk-retest.test.sh tests/jg-trunk-retry.test.sh > "$DONE_DONE_EVIDENCE_ROOT/give-up.log" 2>&1'`; the real landing check and `core/trunk-landing/refusal-reach.sh` over fixture homes prove that a refusal the machine caused until its try cap (`gave up after N tries`) and a conflict only in the shared registry `.done-done.yaml` put the ticket on the wait `lead` once, with the refusal on its note, no steer and no new agent, that a conflict touching the lane's own file stays the lane's, and that a held gate lock is retried and never steered (screen: none).

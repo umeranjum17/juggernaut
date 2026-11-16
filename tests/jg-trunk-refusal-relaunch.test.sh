@@ -10,6 +10,9 @@
 # R3 The same red for a lane whose agent runs: no relaunch, the worker is steered as before.
 # R4 A refusal that is not the lane's fault (the reference-transaction hook, the environment) for a stopped lane: no relaunch.
 # R5 A new head with a new refusal gets its own new agent: the one agent is one per refused head.
+# R6 A conflict only in the registry file every lane shares (`.done-done.yaml`), for a stopped lane: the ticket waits on the lead once,
+#    no new agent and no steer (the lane's own relaunch did not clear it: jgp-r1-ledger-s1 waited 1,087 minutes). A conflict that also
+#    touches the lane's own file stays the lane's.
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
@@ -92,7 +95,35 @@ test_a_new_head_with_a_new_refusal_gets_its_own_agent() {
   pass 'a new refused head gets its own new agent, one per head'
 }
 
+# also_in <id> <file> <content>: the lane's one commit also changes <file>.
+also_in() { printf '%s\n' "$3" > "$W/lanes/$1/$2"; git -C "$W/lanes/$1" add "$2"; git -C "$W/lanes/$1" -c user.name=t -c user.email=t@example.invalid commit -q --amend --no-edit; prove "$1"; }
+
+test_a_conflict_only_in_the_shared_registry_goes_to_the_lead_and_not_to_the_lane() {
+  home_world shared
+  lane s two .done-done.yaml; stopped s; printf 'working [at=1]: still at it\n' >> "$HOME_D/state/s.status"
+  lane a one .done-done.yaml; sweeps
+  [ "$(git -C "$PROJ" show trunk:.done-done.yaml)" = one ] || fail "lane a must land first"
+  ready s; sweeps; sweeps
+  [ "$(relaunches s)" = 0 ] || fail "a shared-file conflict starts no agent: $(relaunches s)"
+  [ "$(steers s)" = 0 ] || fail "a shared-file conflict steers no worker: $(cat "$W/send-calls")"
+  [ "$(grep -c '^wait s lead blocker' "$W/backlog-calls")" = 1 ] || fail "the ticket waits on the lead once: $(cat "$W/backlog-calls")"
+  pass 'a conflict only in the shared registry puts the ticket on the lead once, with no agent and no steer'
+}
+
+test_a_conflict_touching_the_lanes_own_file_too_stays_the_lanes() {
+  home_world mixed
+  lane m two; also_in m .done-done.yaml two; stopped m; printf 'working [at=1]: still at it\n' >> "$HOME_D/state/m.status"
+  lane a one; also_in a .done-done.yaml one; sweeps
+  [ "$(git -C "$PROJ" show trunk:work.txt)" = one ] || fail "lane a must land first"
+  ready m; sweeps
+  [ "$(relaunches m)" = 1 ] || fail "a conflict that also touches the lane's own file is the lane's: $(relaunches m)"
+  ! grep -q '^wait m lead' "$W/backlog-calls" 2>/dev/null || fail "the lead is not asked for the lane's own conflict"
+  pass 'a conflict that also touches the lane own file stays the lane: one new agent, no wait on the lead'
+}
+
 test_a_red_the_lane_caused_starts_one_new_agent_for_a_lane_stopped_at_built
+test_a_conflict_only_in_the_shared_registry_goes_to_the_lead_and_not_to_the_lane
+test_a_conflict_touching_the_lanes_own_file_too_stays_the_lanes
 test_a_conflict_starts_one_new_agent_for_a_lane_whose_agent_died
 test_a_lane_whose_agent_runs_is_steered_and_not_relaunched
 test_a_refusal_that_is_not_the_lanes_fault_starts_no_agent
