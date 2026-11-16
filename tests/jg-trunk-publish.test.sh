@@ -14,6 +14,9 @@
 #    on the candidate moves the pin past the red, and the next landing moves it again.
 # T7 The forge hangs while a publish reads the release PR: no lock is held meanwhile, so a landing starts and lands; the publish is
 #    stopped at the time limit, says so in one line, and pushes nothing.
+# T8 The publication record (jgp-r1-ledger-s3): a publish writes one row of data/trunk-publications.tsv with path `automatic`, and a release
+#    run by hand on the captain's word one with path `fallback`; each carries due, attempt and open times, and `jg-outcome-ledger.sh
+#    publications` reads both back with the merge time from the rollover. A publication record that cannot be written never stops a release.
 # T6 The registered landing check starts the publish step itself within one tick and reports the push in its outbox.
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
@@ -99,6 +102,36 @@ test_publish_pushes_the_green_pin_only_when_the_trunk_holds_enough_and_only_unde
   pass 'T5 after a red the tip is pushed once as a candidate, not while a run is in flight, and its green moves the pin past the red'
 }
 
+test_a_publication_is_recorded_as_automatic_or_fallback_and_a_failed_write_stops_nothing() {
+  local out pin led=$ROOT/bin/jg-outcome-ledger.sh rows
+  pubworld auto; waive; landed a1 a2 a3
+  pin=$(green); out=$(trunk publish "$PROJ" 2>&1) || fail "T8: publish must push: $out"
+  rows=$(grep -c . "$HOME_D/data/trunk-publications.tsv" 2>/dev/null || echo 0)
+  [ "$rows" = 1 ] || fail "T8: one publication row expected, got $rows"
+  [ "$(cut -f3,7 "$HOME_D/data/trunk-publications.tsv")" = "$(printf '%s\tautomatic' "$pin")" ] || fail "T8: the publish must record its commit and path automatic: $(cat "$HOME_D/data/trunk-publications.tsv")"
+  [ "$(cut -f4 "$HOME_D/data/trunk-publications.tsv")" -le "$(cut -f5 "$HOME_D/data/trunk-publications.tsv")" ] || fail "T8: the batch cannot be due after it was pushed"
+  [ "$(cut -f6 "$HOME_D/data/trunk-publications.tsv")" -ge "$(cut -f5 "$HOME_D/data/trunk-publications.tsv")" ] || fail "T8: the pull request opens at or after the attempt"
+  # the rollover that shows the batch merged: the next trunk version, after the attempt
+  printf 'proj\t2\ttrunk-v2\t%s\t%s\n' "$pin" "$(( $(cut -f5 "$HOME_D/data/trunk-publications.tsv") + 600 ))" >> "$HOME_D/data/trunk-versions.tsv"
+  out=$(JG_HOME="$HOME_D" bash "$led" publications 2>&1) || fail "T8: the publications rows must read: $out"
+  [ "$(cut -f1-3 <<<"$out")" = "$(printf 'proj\t%s\tautomatic' "${pin:0:12}")" ] || fail "T8: automatic publication row wrong: $out"
+  [ "$(cut -f8 <<<"$out")" -ge 10 ] || fail "T8: the minutes from due to merge must show: $out"
+
+  pubworld hand; landed b1 b2
+  rm -f "$HOME_D/config/trunk-release-waiver"; trunk word release "$PROJ" "ship it" >/dev/null 2>&1 || fail "T8: the release word must record"
+  pin=$(green); out=$(trunk release "$PROJ" 2>&1) || fail "T8: the release by hand must push: $out"
+  [ "$(cut -f3,7 "$HOME_D/data/trunk-publications.tsv")" = "$(printf '%s\tfallback' "$pin")" ] || fail "T8: a release by hand must record path fallback: $(cat "$HOME_D/data/trunk-publications.tsv")"
+  out=$(JG_HOME="$HOME_D" bash "$led" publications 2>&1) || fail "T8: the fallback row must read: $out"
+  [ "$(cut -f1-3,7,8 <<<"$out")" = "$(printf 'proj\t%s\tfallback\t-\t-' "${pin:0:12}")" ] || fail "T8: fallback row wrong (not merged yet, so no merge time): $out"
+
+  pubworld nowrite; landed c1 c2; rm -f "$HOME_D/config/trunk-release-waiver"; trunk word release "$PROJ" "ship it" >/dev/null 2>&1
+  mkdir "$HOME_D/data/trunk-publications.tsv"   # a record that cannot be written
+  out=$(trunk release "$PROJ" 2>&1) || fail "T8: a release whose publication record cannot be written must still go: $out"
+  [ "$(pushed)" = "$(green)" ] || fail "T8: the release must have pushed the pin: $out"
+  assert_contains "$out" "publication record" "T8: the failed write must be said"
+  pass 'T8 a publish records path automatic and a release by hand records fallback, each with due, attempt and open; a failed record stops no release'
+}
+
 test_a_hung_forge_does_not_hold_the_trunk_lock_and_ends_the_publish_in_one_line() {
   local out pin pid n
   pubworld hang; waive; landed h1 h2 h3
@@ -131,6 +164,7 @@ test_the_landing_check_publishes_by_itself() {
 }
 
 test_publish_pushes_the_green_pin_only_when_the_trunk_holds_enough_and_only_under_the_waiver
+test_a_publication_is_recorded_as_automatic_or_fallback_and_a_failed_write_stops_nothing
 test_a_hung_forge_does_not_hold_the_trunk_lock_and_ends_the_publish_in_one_line
 test_the_landing_check_publishes_by_itself
 printf 'jg-trunk-publish: ok\n'

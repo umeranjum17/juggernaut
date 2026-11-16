@@ -161,7 +161,8 @@
 # Every open captain call is a key in bin/jg-trunk-policy-lib.sh with its safe default; nothing
 # here changes with the answer. Records: data/trunk-landings.tsv (task, project, commit, epoch,
 # gate), data/trunk-in-use.tsv (project, commit, epoch, status), data/trunk-releases.tsv, data/trunk-ci.tsv (project,
-# commit, epoch, green|red, and `verify` for a charged verify red), data/trunk-words.tsv.
+# commit, epoch, green|red, and `verify` for a charged verify red), data/trunk-words.tsv, data/trunk-publications.tsv (project,
+# trunk, commit, due, attempt, open, path automatic|fallback, url: one append-only row per publication, read by jg-outcome-ledger.sh).
 # `live` runs config/live-hook.<project> <project-dir> <sha> when it is executable. With none, a
 # project that shares this home's code origin is moved by bin/jg-trunk-live-home.sh; any other
 # project is recorded as landed but not live.
@@ -2751,10 +2752,31 @@ prove_release() {  # <base> <rel> <url>
     || die "the release proof passed but its status could not be published on ${2:0:12} ($slug)"
 }
 
-push_batch() {  # <rel> <n> <prev> <spend 0|1> <proof 0|1>
+# The epoch a batch fell due: the earlier of the commit that made release-after-commits and the oldest commit plus release-after-hours,
+# read from the commits' own times. Prints nothing when the batch holds no commit.
+publication_due() {  # <base> <rel>
+  local -a cts; local by_count='' by_hours
+  mapfile -t cts < <(git -C "$PROJ" log --reverse --format=%ct "$1..$2")
+  [ "${#cts[@]}" -gt 0 ] || return 0
+  [ "${#cts[@]}" -lt "$(pol release-after-commits)" ] || by_count=${cts[$(( $(pol release-after-commits) - 1 ))]}
+  by_hours=$(( cts[0] + $(pol release-after-hours) * 3600 ))
+  if [ -n "$by_count" ] && [ "$by_count" -lt "$by_hours" ]; then printf '%s\n' "$by_count"; else printf '%s\n' "$by_hours"; fi
+}
+
+# One row for a publication in data/trunk-publications.tsv: when it was due, when the push was tried, when its pull request was opened
+# (`-` when the push went into a pull request already open), and the path: `automatic` (the tick's publish) or `fallback` (a release
+# run by hand on the captain's word). Append-only; a write that fails says so on stderr and never stops the release.
+record_publication() {  # <rel> <due> <attempt> <opened> <path> <url>
+  row trunk-publications.tsv "$PN" "$TRUNK" "$1" "${2:--}" "$3" "$4" "$5" "$6" 2>/dev/null \
+    || echo "warning: the publication record of ${1:0:12} could not be written; the release goes on" >&2
+}
+
+push_batch() {  # <rel> <n> <prev> <spend 0|1> <proof 0|1> <path automatic|fallback>
   release_preflight "$1"
-  local rel=$1 n=$2 prev=$3 default base body url unproved; local -a carried
+  local rel=$1 n=$2 prev=$3 default base body url unproved attempt opened=- due; local -a carried
+  attempt=$(date +%s)
   base=$(cat "$STATE/trunk-released-$PN")
+  due=$(publication_due "$base" "$rel" 2>/dev/null || true)
   default=$(git -C "$PROJ" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || true); default=${default:-main}
   printf 'refs/heads/%s %s refs/heads/%s %s\n' "$TRUNK" "$rel" "$TRUNK" "$base" | (cd "$PROJ" && "$SCRIPT_DIR/../core/owner-guard/owner-guard" pre-push) || refuse "owner-guard refused the batch"
   git -C "$PROJ" push -q origin "$rel:refs/heads/$TRUNK" || die "push of $TRUNK failed (never forced)"
@@ -2770,8 +2792,9 @@ push_batch() {  # <rel> <n> <prev> <spend 0|1> <proof 0|1>
       mapfile -t carried < <(git -C "$PROJ" rev-list "$base..$rel")
       unproved=$(jg_bypass_release_lines "$JG_HOME" "$STATE" "${carried[@]}")
       [ -z "$unproved" ] || { echo; echo "Bypassed, no proof ran:"; printf '%s\n' "$unproved"; }; } > "$body"
-    open_release_pr "$default" "Release: $n tickets from the local $TRUNK" "$body"; url=$REL_URL
+    open_release_pr "$default" "Release: $n tickets from the local $TRUNK" "$body"; url=$REL_URL; opened=$(date +%s)
   fi
+  record_publication "$rel" "$due" "$attempt" "$opened" "$6" "$url"
   put "$STATE/trunk-release-pending-$PN" "$rel"
   if ! awk -F '\t' -v p="$PN" -v t="$TRUNK" -v h="$rel" -v u="$url" '$1 == p && $2 == t && $3 == h && $6 == u { found=1 } END { exit !found }' "$DATA/trunk-releases.tsv" 2>/dev/null; then
     row trunk-releases.tsv "$PN" "$TRUNK" "$rel" "$n" "$(date +%s)" "$url"
@@ -2814,7 +2837,7 @@ cmd_release() {
     waiting=$(JG_HOME=$JG_HOME "$SCRIPT_DIR/jg-pr-state.sh" --all "$prev") || refuse "cannot read the checks of the open release PR $prev; nothing is pushed into it"
     [ -n "$waiting" ] || refuse "the release PR $prev is green and merges on the captain's standing word; nothing is pushed into it, and the later commits go out in the release after it"
   fi
-  push_batch "$rel" "$n" "$prev" 1 1
+  push_batch "$rel" "$n" "$prev" 1 1 fallback
 }
 
 # "Enough" on the trunk, one rule for a release: the commits above the last release number release-after-commits, or the oldest of
@@ -2872,7 +2895,7 @@ cmd_publish() {
     n=$(git -C "$PROJ" rev-list --count "$(cat "$STATE/trunk-released-$PN")..$tip")
     echo "publish: pushing the tip ${tip:0:12} as a candidate after a red"
     # The candidate gets the same proof as any release head, bound to itself: it needs no green pin to equal it.
-    rc=0; push_batch "$tip" "$n" "$prev" 0 1 || rc=$?
+    rc=0; push_batch "$tip" "$n" "$prev" 0 1 automatic || rc=$?
     # Once it is pushed the tip is recorded, so a proof that fails never makes publish push the same tip twice.
     [ "$(cat "$STATE/trunk-released-$PN" 2>/dev/null || true)" != "$tip" ] || put "$STATE/trunk-candidate-$PN" "$tip"
     return "$rc"
@@ -2881,7 +2904,7 @@ cmd_publish() {
   holds_enough "$rel" || { echo "publish: the trunk does not hold enough for a release yet; nothing pushed"; return 0; }
   [ "$open" = 0 ] || { echo "publish: the release PR $prev is open; nothing is pushed into it"; return 0; }
   n=$(git -C "$PROJ" rev-list --count "$(cat "$STATE/trunk-released-$PN")..$rel")
-  push_batch "$rel" "$n" "$prev" 0 1
+  push_batch "$rel" "$n" "$prev" 0 1 automatic
 }
 
 # `CI required` on one exact commit, read from the forge: green, red, pending, absent or unknown. Only a completed check run
