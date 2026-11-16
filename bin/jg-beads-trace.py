@@ -8,7 +8,8 @@ Usage: BEADS_DIR=<store> jg-beads-write.py trace <ticket or task>
 trace <ticket> only reads: it prints one line of eight tab-separated columns, key, title, filed by, worker, commits, state, decision and
 evidence, each `-` when the row holds none. Filed by is created_by; worker is the assignee (the agent name); commits are the git-sha refs of
 the land events, in time order, once each, else the row's commit; state is the stage word of bin/jg-beads-stage.py; decision is each gate that blocks
-the row as `<question> => <answer>`, or `<question> => open` while it waits, joined by `; `; evidence is the row's evidence list.
+the row as `<question> => <answer>`, or `<question> => open` while it waits, joined by `; `; evidence is the row's evidence cards followed by each
+receipt the lane's head was judged by, as `receipt:<verdict>@<head>` (a receipt with no verdict reads `receipt:<ref>`), joined by `,`.
 
 trace landing only reads: it prints `<ready_at><TAB><event time><TAB><payload JSON>` for the land event of that commit (ready_at is `-` when the row
 holds none, the payload `null` when the event has none), and nothing, with exit 0, when the ticket has no such event. The alert of
@@ -106,6 +107,15 @@ def record(args):
     moment.done(started, "ok: %s %s = %s" % (row["id"], key or kind, when))
 
 
+def receipt(event):
+    """One receipt event as `receipt:<verdict>@<head>`; the ref is `<task>@<head 12>` and the payload holds the verdict."""
+    payload = event.get("payload")
+    payload = json.loads(payload) if isinstance(payload, str) and payload else payload
+    verdict = (payload or {}).get("verdict") if isinstance(payload, dict) else None
+    ref = str(event.get("ref") or "")
+    return "receipt:%s@%s" % (verdict, ref.rpartition("@")[2]) if verdict and "@" in ref else "receipt:%s" % ref
+
+
 def show(ticket):
     """Print the one line that follows a ticket from its key to its evidence."""
     row = moment.fetch(ticket)
@@ -118,7 +128,8 @@ def show(ticket):
     asks = [dep for dep in row.get("dependencies") or [] if dep.get("issue_type") == "gate"]
     decision = "; ".join("%s => %s" % (dep.get("title", ""), (dep.get("close_reason") or "answered") if dep.get("status") == "closed" else "open") for dep in asks)
     name, _health = rule.word(row)
-    cells = [row["id"], row.get("title"), row.get("created_by"), row.get("assignee"), ",".join(commits), name, decision, meta.get("evidence")]
+    proof = view.split(meta.get("evidence")) + [receipt(e) for e in sorted((e for e in events if e.get("kind") == "used" and e.get("source") == "jg-receipt"), key=lambda e: e.get("occurred_at", ""))]
+    cells = [row["id"], row.get("title"), row.get("created_by"), row.get("assignee"), ",".join(commits), name, decision, ",".join(dict.fromkeys(proof))]
     print("\t".join(str(cell).replace("\t", " ").replace("\n", " ") if cell else "-" for cell in cells))
 
 
