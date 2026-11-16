@@ -259,6 +259,7 @@ fleet_world() {  # <name> [rig]: sets W HOME_D PROJ CODE_ROOT BASE; rig makes th
   [ "${2-}" != rig ] || { rig; printf 'gate-full=! grep -q BAD work.txt\ngate-verify=bash %s/rig.sh --all\n' "$W" >> "$HOME_D/config/trunk-policy"; }
   rm "$HOME_D/config/live-hook.proj"
   printf 'live-on-green=off\n' >> "$HOME_D/config/trunk-policy"  # these cases drive the tick's quiet window; the green verify's own go-live has its case below
+  printf 'live-quiet-minutes=20\nlive-cap-minutes=60\n' >> "$HOME_D/config/trunk-policy"  # under a waiver an unset window is 0 (the repair posture); these cases time the 20 and 60 minute windows
   CODE_ROOT="$W/homecode"; git clone -q "$(git -C "$PROJ" remote get-url origin)" "$CODE_ROOT"
   BASE=$(git -C "$CODE_ROOT" rev-parse HEAD)
   for id in lead-a lead-b; do

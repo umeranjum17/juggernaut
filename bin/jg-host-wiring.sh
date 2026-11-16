@@ -108,6 +108,7 @@ plan=(
   trunk-latency:home
   green-pin-stale:home
   trunk-ci:home
+  post-merge-ci:home
   recon-ready:home
   status-latency:home
   tmp-reaper:home
@@ -184,6 +185,7 @@ step_copies() {  # <name>
     trunk-latency | status-latency) into "$data/jg-$1" "$c" latency.sh ;;
     green-pin-stale) into "$data/jg-green-pin-stale" "$c" stale.sh ;;
     trunk-ci) into "$data/jg-trunk-ci" "$c" ci-result.sh ;;
+    post-merge-ci) into "$data/jg-post-merge-ci" "$c" check.sh ;;
     recon-ready) into "$data/jg-recon-ready" "$c" ready.sh ;;
     landing-card) into "$data/jg-landing-card" "$c" landing-card.sh ;;
     wake-rollup) into "$data/jg-wake-rollup" "$c" rollup.sh ;;

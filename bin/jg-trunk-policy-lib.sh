@@ -40,8 +40,9 @@
 #                                     with the wait "kept moving" (each time the tip moved, a lane landed, so the retry is the base-movement race only)
 #   flush-at-ready        1           the landing check holds ready lanes until this many are ready (or flush-after-minutes passes), then lands them all as one batch; 1 lands every lane as soon as it is ready (a larger number holds them)
 #   flush-after-minutes   20          ...or until the oldest ready lane has waited this long, whichever is first
-#   live-quiet-minutes    20          under a go-live waiver: the trunk goes live once no landing has happened for this long
-#   live-cap-minutes      60          under a go-live waiver: ...or once the oldest landing not yet live is this old, whichever is first
+#   live-quiet-minutes    20          the trunk goes live once no landing has happened for this long; under a go-live waiver (the repair posture)
+#                                     an unset key is 0 (bin/jg-trunk.sh live_window), a key the home sets always wins
+#   live-cap-minutes      60          ...or once the oldest landing not yet live is this old, whichever is first; 0 under a go-live waiver when unset
 #   live-on-green         on          under a go-live waiver (or an answer at gated): a green verify runs the live step at once, off the quiet window, so the homes
 #                                     move to the commit it judged while landings go on. off (the rollback): only the tick's quiet-window step moves the homes
 #   pr-page-minutes      60           how often the pull request pager (core/pr-pager) pages the lead of a pull request that is still open

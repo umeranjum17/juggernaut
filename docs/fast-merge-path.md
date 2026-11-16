@@ -90,6 +90,14 @@ A merge into `main` or `release/**` starts the full CI run, and
 run and queues the wake that reaches its owner.
 Nothing is reverted, and no other merge waits on it.
 
+The nightly and post-merge run of the behaviour suite is read the same way by the registered check `core/post-merge-ci/check.sh`, every 10 minutes
+(`config/post-merge-ci-minutes`): `bin/jg-post-merge-ci.sh --main` judges a red run by the verify's one rule (`core/trunk-ci/run-rule.py`,
+which asks `core/trunk-verify/reduce.py`) against the last green run, from the two runs' own timing aggregates, so no suite runs again. A new
+failure files one item naming the run and the commit that introduced it; a failure an open item already names updates that item; a timeout, a
+skip or an unreadable aggregate is incomplete and still files the red run. Only with `config/post-merge-ci-restore` (one project directory) does
+a run that is red under the rule (counted failures beyond the grace of 2) also pin the homes back, through `jg-trunk.sh ci`; a carried or
+incomplete result never does.
+
 ## 5. The number
 
 Every merge, whoever makes it (this home, the check, or a person on the forge, found by the poll),

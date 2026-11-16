@@ -100,6 +100,29 @@ test_a_quiet_trunk_goes_live_on_every_home_by_itself() {
   pass 'a quiet trunk goes live on Main and every Squad Lead home by itself, the window is a knob, and a red CI pins every home back'
 }
 
+# The repair posture: under the owner's go-live waiver an unset quiet window and cap are 0, so the first home moves the moment the green
+# pin is there, with no wait for a quiet trunk; a window the home sets still wins; and a pin that went live while the verify ran leaves the
+# next green pin free to move (a move to the older pin must not read as "nothing has landed").
+test_the_repair_posture_moves_the_first_home_at_once_and_a_set_window_wins() {
+  local out c1 c2
+  fleet_world posture; sed -i '/^live-quiet-minutes=/d; /^live-cap-minutes=/d' "$HOME_D/config/trunk-policy"
+  lane q1 one; fleet_sweeps "landed q1" >/dev/null; await_green || fail "q1's landing must move the green pin"
+  c1=$(tip)
+  # The landing check's own tick runs the live step, so no hand call and no quiet minutes stand between the green pin and the homes.
+  for _ in $(seq 1 150); do homes_at "$c1" && break; fleet_sweeps "proj: In use" >/dev/null; sleep 0.2; done
+  homes_at "$c1" || fail "the repair posture must move every home with no quiet window: $(cat "$HOME_D/data/trunk-in-use.tsv" 2>/dev/null)"
+  # The next green pin is not hidden by the earlier move: the landing is older than that move, yet the pin is not live.
+  age_live; lane q2 two; fleet_sweeps "landed q2" >/dev/null; await_green || fail "q2's landing must move the green pin"
+  c2=$(tip)
+  for _ in $(seq 1 150); do homes_at "$c2" && break; fleet_sweeps "proj: In use" >/dev/null; sleep 0.2; done
+  homes_at "$c2" || fail "the next green pin goes live too: $(cat "$HOME_D/data/trunk-in-use.tsv" 2>/dev/null)"
+  # A window the home sets always wins over the posture.
+  printf 'live-quiet-minutes=20\nlive-cap-minutes=60\n' >> "$HOME_D/config/trunk-policy"
+  age_live; lane q3 three; fleet_sweeps "landed q3" >/dev/null; await_green || fail "q3's landing must move the green pin"
+  assert_contains "$(trunk autolive "$PROJ" 2>&1 | tail -n 1)" "autolive: waiting: In use in about" "a window the home set is waited for"
+  pass 'under the waiver an unset quiet window and cap are 0 and the first home moves at once, and a window the home sets wins'
+}
+
 # A move that leaves a switch its range declared off in some home says In homes (and how many), never In use; a range that declares no
 # switch keeps the old words even with a detector line on. Detector lines are counted on their own `detectors: <m>` line.
 test_a_go_live_that_leaves_a_declared_switch_off_says_in_homes() {
@@ -311,6 +334,7 @@ test_a_home_with_the_old_live_names_moves_them_once_and_keeps_no_second_path
 test_the_bundled_hook_moves_a_home_that_runs_the_project
 test_the_registered_check_lands_a_proved_task_without_a_human
 test_a_quiet_trunk_goes_live_on_every_home_by_itself
+test_the_repair_posture_moves_the_first_home_at_once_and_a_set_window_wins
 test_a_go_live_that_leaves_a_declared_switch_off_says_in_homes
 test_a_pinned_behind_go_live_moves_every_home_and_fails_naming_a_home_left_behind
 test_a_busy_trunk_goes_live_at_the_hourly_cap

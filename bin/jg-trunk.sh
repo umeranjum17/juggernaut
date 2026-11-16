@@ -151,7 +151,7 @@
 # autolive is the live step the landing check (core/trunk-landing) runs on every tick for a project with a go-live waiver, with
 # no model turn (none: nothing happens and the word rule stands). It never waits on or blocks a landing. It moves every home to
 # the green pin once no landing has happened for `live-quiet-minutes` (default 20) or the oldest landing that is not live yet
-# is `live-cap-minutes` (default 60) old, whichever comes first (bin/jg-trunk-policy-lib.sh). It moves only to the green pin, so a
+# is `live-cap-minutes` (default 60) old, whichever comes first (bin/jg-trunk-policy-lib.sh); under a waiver an unset window is 0 (live_window). It moves only to the green pin, so a
 # commit whose suite was red is never live (the pin stays below it until a repair or a revert lands). A commit already live is not moved
 # again. A red CI (`ci red`) pins EVERY home back to the last green commit at once.
 #
@@ -2158,6 +2158,16 @@ authority() {  # <waiver-file> <sha>
   if [ -n "$rule" ]; then printf '%s\n' "$rule"; else gated_answer "$2"; fi
 }
 
+# One window of the live step, in minutes. A window the home set in config/trunk-policy always wins. Under a go-live waiver (the repair
+# posture: the owner waived his word for this project until the stable point) an unset window is 0, so the first home moves the moment
+# the green pin does; an answer at gated is not that waiver and keeps the default.
+live_window() {  # <live-quiet-minutes|live-cap-minutes>
+  local set; set=$(_jg_trunk_policy_set "$1" "$PN")
+  if [ -n "$set" ]; then printf '%s\n' "$set"
+  elif [ -n "${LIVE_WAIVER:-}" ] && [ "${LIVE_WAIVER#gated:}" = "$LIVE_WAIVER" ]; then printf '0\n'
+  else pol "$1"; fi
+}
+
 # The batched live step, run on every tick of the landing check for a project with a go-live waiver. It moves every home to the
 # green pin once the trunk has been quiet (no landing for live-quiet-minutes) or the oldest landing that is not live yet is
 # live-cap-minutes old, whichever comes first, so landings never wait on a go-live and a busy trunk still goes live hourly.
@@ -2179,7 +2189,7 @@ cmd_autolive() {
     if [ "$off" -gt 0 ]; then echo "autolive: already In homes at ${green:0:12} ($(homes_note "$off"))"; else echo "autolive: already In use at ${green:0:12}"; fi
     return 0
   fi
-  now=$(date +%s); quiet=$(( $(pol live-quiet-minutes) * 60 )); cap=$(( $(pol live-cap-minutes) * 60 ))
+  now=$(date +%s); quiet=$(( $(live_window live-quiet-minutes) * 60 )); cap=$(( $(live_window live-cap-minutes) * 60 ))
   # A move that failed (some home did not reach the pin) is tried again after the quiet window, not on every tick: each try writes a row per home.
   failed_at=$(awk -F'\t' -v p="$PN" -v g="$green" '$1 == p && $2 == g && $4 ~ /^hook-failed/ { t = $3 } END { print t + 0 }' "$DATA/trunk-in-use.tsv" 2>/dev/null || echo 0)
   if [ "$failed_at" -gt 0 ] && [ $(( now - failed_at )) -lt "$quiet" ]; then
@@ -2187,7 +2197,9 @@ cmd_autolive() {
   fi
   last=$(awk -F'\t' -v p="$PN" '$1 == p && $4 ~ /^live/ && $3 > m { m = $3 } END { print m + 0 }' "$DATA/trunk-in-use.tsv" 2>/dev/null || echo 0)
   read -r newest oldest <<< "$(awk -F'\t' -v p="$PN" -v l="$last" '$2 == p && $4 >= l { if (!n || $4 > n) n = $4; if (!o || $4 < o) o = $4 } END { print n + 0, o + 0 }' "$DATA/trunk-landings.tsv" 2>/dev/null || echo "0 0")"
-  [ "${newest:-0}" -gt 0 ] || { echo "autolive: waiting: nothing has landed since the last In use move"; return 0; }
+  # With both windows 0 nothing is timed, and a green pin that has no live row yet is itself what is waiting to move (a move to an older pin
+  # while the verify ran must not hide the newer pin behind "nothing has landed").
+  [ "${newest:-0}" -gt 0 ] || [ $(( quiet + cap )) -eq 0 ] || { echo "autolive: waiting: nothing has landed since the last In use move"; return 0; }
   if [ "${2-}" != --now ] && [ $(( now - newest )) -lt "$quiet" ] && [ $(( now - oldest )) -lt "$cap" ]; then
     wait_s=$(( quiet - (now - newest) )); [ $(( cap - (now - oldest) )) -ge "$wait_s" ] || wait_s=$(( cap - (now - oldest) ))
     echo "autolive: waiting: In use in about $(( (wait_s + 59) / 60 )) min (quiet $(( quiet / 60 )) min, cap $(( cap / 60 )) min)"; return 0
