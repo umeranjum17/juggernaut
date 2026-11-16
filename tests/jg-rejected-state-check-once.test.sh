@@ -85,11 +85,11 @@ alerts() {  # <dir>: how many times the last cycle's output carries the alert
   grep -c "$ALERT" "$1/out" || true
 }
 
-assert_alert() {  # <dir> <names> <label>
-  local dir=$1 names=$2 label=$3 n
+assert_alert() {  # <dir> <want> <label>
+  local dir=$1 want=$2 label=$3 n
   n=$(alerts "$dir")
   [ "$n" -eq 1 ] || fail "$label: expected one alert, got $n: $(cat "$dir/out") / $(cat "$dir/err")"
-  grep -q "$ALERT:.*$names" "$dir/out" || fail "$label: the alert does not name $names: $(cat "$dir/out")"
+  grep -q "$ALERT:.*$want" "$dir/out" || fail "$label: the alert does not name $want: $(cat "$dir/out")"
 }
 
 assert_silent() {  # <dir> <label>
