@@ -72,6 +72,15 @@ JG_HOME="$K" JG_ROOT_OVERRIDE="$K" "$CARRIER" ensure cursor > "$OUT/cursor-ensur
 [ ! -s "$OUT/cursor-ensure.txt" ] && [ ! -e "$K/CLAUDE.local.md" ] && [ ! -e "$K/.cursor" ] || die "ensure cursor wrote a file"
 log "cursor home: carrier is AGENTS.md itself (read natively, lab); ensure writes nothing; check reads reemit; file after one compaction: not proven"
 
+# OpenCode (slice thin-tc5-opencode): lab, opencode 1.18.25 (run -m opencode/big-pickle), marker JGCARRIER-5517 in AGENTS.md only:
+# first request -> marker; the same session compacted (POST /session/<id>/summarize; the session then held a compaction and a
+# summary message) and asked again -> marker. OpenCode sends AGENTS.md with every request, so it is its own carrier (native).
+O=$(home opencode)
+[ "$(JG_HOME="$O" JG_ROOT_OVERRIDE="$O" "$CARRIER" check opencode)" = file ] || die "check opencode is not file"
+JG_HOME="$O" JG_ROOT_OVERRIDE="$O" "$CARRIER" ensure opencode > "$OUT/opencode-ensure.txt" 2>&1 || die "ensure opencode failed"
+[ ! -s "$OUT/opencode-ensure.txt" ] && [ ! -e "$O/opencode.json" ] || die "ensure opencode wrote a file"
+log "opencode home: carrier is AGENTS.md itself (read natively, lab, first request after one compaction carried the marker); ensure writes nothing; check reads file"
+
 C=$(home claude)
 start "$C" claude --source startup > "$OUT/claude-start.txt"
 grep -q 'wrote CLAUDE.local.md' "$OUT/claude-start.txt" || die "the first claude start did not write the carrier file"

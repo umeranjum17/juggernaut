@@ -51,7 +51,7 @@ pi-signed reemit  -
 omp       reemit  -
 codex     none    AGENTS.override.md   copy
 cursor    reemit  -                    native
-opencode  none    -
+opencode  file    -                    native
 grok      none    -
 kimi      none    -
 '
