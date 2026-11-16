@@ -9,6 +9,7 @@
 #     metadata.ready_at. A later `done` of the same lane records a newer ready_at.
 #   - any other last line, for a lane whose last record was a ready: records `resume` with source jg-done, ref `<task>@resumed-<epoch>`,
 #     and sets metadata.resumed_at, so the stage stops reading ready.
+# A recorded done also asks bin/jg-ask-record.sh to count the worker's model turns (data/ask-turns.tsv); a harness it cannot count writes nothing.
 # A done line writes no moment when its head is the one last offered while the lane still reads ready, and none while a landing stands: a
 # head that is not on the trunk then puts the wait `lead` (reason `decision`) on the row. The last head is kept in state/.ready-trace/<task>.head.
 # What it recorded last is kept in state/.ready-trace/<task> (`ready:<epoch>` or `resumed:<epoch>`), so a tick that finds nothing new
@@ -64,6 +65,7 @@ for meta in "$STATE"/*.meta; do
       if jg_trace_record "$ticket" commit work-id "$id@done-$at" --source jg-done --at "$at" --payload "{\"task\":\"$id\"}"; then
         mkdir -p "$NOTES" && printf 'ready:%s\n' "$at" > "$NOTES/$id"
         [ -z "$head" ] || printf '%s\n' "$head" > "$NOTES/$id.head"
+        "$SCRIPT_DIR/jg-ask-record.sh" turns "$id" >/dev/null 2>&1 || true   # the ask's measurement record keeps the worker's turns
       fi ;;
     *)
       case $note in ready:*) ;; *) continue ;; esac

@@ -19,7 +19,7 @@ who `none`. The words are the closed lists of core/machines/ticket-wait.states a
 No stage word is stored, `bd set-state` is never called, and hold_kind is not written: the stage is worked out by bin/jg-beads-stage.py.
 times prints one line `<name><TAB><time>` for each of ready, landed, live and released that the row holds, in that order, and nothing, with exit 0,
 for a row that holds none. The time is the row's RFC3339 string (ready_at, landed_at, live_at, released_at). It never writes.
-times --json [--since <epoch>] prints one JSON array instead: a fact object for each ticket, with its `ticket`, `task`, `kind` (ship or scout, from its claim), `project`, `pr`, `started`, `closed`,
+times --json [--since <epoch>] prints one JSON array instead: a fact object for each ticket, with its `ticket`, `task`, `kind` (ship or scout, from its claim), `project`, `pr`, `requested_at` (the row's created_at), `started`, `closed`,
 the stamps it holds (ready_at, landed_at, live_at, released_at, with pinned_back_at and reverted_at, which undo live_at and landed_at) and `models`, each tool, model and effort it ran on from the claim and handoff events in time order.
 With --since it holds the tickets that started, closed or landed since that Unix time; without it, every ticket that holds a stamp, not cut to a window: a landing that waits to go live may be older than any window.
 The readers are the fleet pulse (core/fleet-pulse/bin/trunk-pulse.sh) and the per-model statistics (core/fleet-stats/bin/jg-model-stats.sh).
@@ -227,7 +227,7 @@ def facts(row, starts):
         models = [[meta.get("agent") or "default", meta.get("model") or "default", meta.get("effort") or "default"]]
     return {"ticket": row["id"], "task": meta.get("task") or "", "kind": next((s["kind"] for s in mine if s.get("kind")), "ship"),
             "project": next((l[8:] for l in row.get("labels") or [] if l.startswith("project:")), "-"), "pr": row.get("external_ref") or "",
-            "started": mine[0]["at"] if mine else row.get("started_at") or "", "closed": row.get("closed_at") or "", "models": models,
+            "requested_at": row.get("created_at") or "", "started": mine[0]["at"] if mine else row.get("started_at") or "", "closed": row.get("closed_at") or "", "models": models,
             **{key: meta.get(key) or "" for _, key in TIMES + UNDOING}}
 
 

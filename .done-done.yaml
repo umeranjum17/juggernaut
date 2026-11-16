@@ -2070,6 +2070,9 @@ journeys:
   jg-outcome-ledger:
     tier: local
     command: bash journeys/outcome-ledger.sh
+  jg-ask-record:
+    tier: local
+    command: bash journeys/ask-record.sh
   jg-trunk-release-merge-first:
     tier: local
     command: bash tests/jg-trunk-release-merge-first.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

@@ -82,6 +82,7 @@ facts=$(JG_HOME=$M "$CLI" times --json --since $((NOW - 30 * DAY))) || fail "tim
 [ "$(jq length <<<"$facts")" = 6 ] || fail "times --json must list the six tickets this home touched in the window, got: $facts"
 [ "$(jq -r '.[] | select(.ticket == "jg-t2") | .models | map(join(":")) | join(";")' <<<"$facts")" = "$OPUS;$MUSE_H" ] || fail "a relaunch must show both runtimes in order: $facts"
 [ "$(jq -r '.[] | select(.ticket == "jg-t4") | .kind' <<<"$facts")" = scout ] || fail "the claim names a Recon as a scout"
+[ "$(jq '[.[] | select(.requested_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T"))] | length' <<<"$facts")" = 6 ] || fail "times --json must carry each ticket's requested_at, got: $facts"
 JG_HOME=$M "$CLI" times --json --since x >/dev/null 2>&1 && fail "a bad --since must be refused"
 pass "times --json: one fact per ticket with its runtimes in order"
 
