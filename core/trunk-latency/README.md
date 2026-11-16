@@ -15,7 +15,7 @@ Nothing is written to `data/trunk-latency.tsv` any more; the rows already there 
 | `ready` | the lane's last done epoch | `done=<epoch>` on the landing's row of `data/trunk-landing-proofs.tsv`, written while the status file still exists; else the lane's last `done [at=<epoch>]` line in `state/chat.jsonl` or `state/<task>.status` |
 | `stage`, `gate_s` | the stage that held the most seconds, and the gate's seconds | `data/trunk-landing-proofs.tsv` |
 | `queue_s`, `landing_s` | the seconds of the queue and of the landing step (start lock, rebase, admission); with `gate_s` they add up to the seconds from ready to landed. Both are null when the landing start is not on record | `ready`, the landing start and the landing row |
-| `queue_why` | why the lane waited: `behind <lane>`, `behind attempt of <lane>`, `slot full`, `verify running`, `host load`, `first seen +N s`, or `not recorded` for a queue stage the lander wrote no reason for | `data/jg-trunk-landing/<task>.<head>.queue-why`, written by `core/trunk-landing/queue-why.sh` at the landing start |
+| `queue_why` | why the lane waited: `behind <lane>`, `behind attempt of <lane>`, `slot full`, `flush hold`, `verify running`, `host load`, `first seen +N s`, or `not recorded` for a queue stage the lander wrote no reason for | `data/jg-trunk-landing/<task>.<head>.queue-why`, written by `core/trunk-landing/queue-why.sh` at the landing start |
 | `load` | the one-minute host load, for a landing at most 10 minutes old | `/proc/loadavg` |
 
 The landing start is `data/jg-trunk-landing/<task>.<head>.launch-*.log`, or `batch.launch-*.log` for a stack.

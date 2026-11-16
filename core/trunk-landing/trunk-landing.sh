@@ -613,6 +613,7 @@ while read -r pn q; do  # the units, oldest first: a queue that runs now takes o
   oldest=$(printf '%s\n' "$list" | sort -n -k1,1 | head -n 1 | cut -d' ' -f1)
   at_ready=$(polnum flush-at-ready "$pn" 1); after=$(polnum flush-after-minutes "$pn" 20)
   if jg_fact_flush_due "$STATE/trunk-flush-$pn" "$(printf '%s\n' "$list" | grep -c .)" "${oldest:-0}" "$now" "$at_ready" "$after"; then :; else
+    while read -r _ id head _; do [ -z "$id" ] || queue_why_wait "$MEM" "$id" "$head" 'flush hold'; done < <(printf '%s\n' "$list" | awk '$5 != 0')
     list=$(printf '%s\n' "$list" | awk '$5 == 0')
   fi
   [ -n "$list" ] || continue

@@ -21,7 +21,7 @@
 # The stage is the one of queue (the done line to the landing start), landing (the start to the gate: start lock, rebase, admission) and
 # gate (the lint and the changed tests) that held the most seconds, or before-gate when the start is not on record; queue_s, landing_s and
 # gate_s add up to the seconds from ready to landed. A queue stage always names its reason in queue_why: behind <lane>, behind attempt of
-# <lane>, first seen +N s, slot full, or `not recorded`.
+# <lane>, first seen +N s, slot full, flush hold, or `not recorded`.
 # Alert: a landing over JG_MERGE_LATENCY_LIMIT_MINUTES (default 5, the limit core/merge-on-green reads too) raises the slow-delivery alert
 # through bin/jg-alert.sh, one key per landing. The minutes are the ticket's ready time to the event's time. A landing more than an hour
 # old is not read: the check ran late or was off.

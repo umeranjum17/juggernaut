@@ -4,6 +4,7 @@
 #   behind <lane>              another lane's landing ended between this lane's done line and now
 #   behind attempt of <lane>   another lane's attempt ended refused (final, env-wait or retry) in that window
 #   slot full                  the lander declined to start it because every gate slot was in use (queue_why_wait, at that decision)
+#   flush hold                 the lander held it under the flush rule: fewer than flush-at-ready lanes were ready, and neither flush-after-minutes nor a flush request had come (queue_why_wait, at that decision)
 #   verify running             nothing was ahead of it and the project's verify held its slot when the lander started it late
 #   host load                  nothing was ahead of it and the host's one-minute load was at or over its cpu count when it started late
 #   first seen +<N> s          nothing was ahead of it; the lander first saw the lane N seconds after its done line (N over 60)
