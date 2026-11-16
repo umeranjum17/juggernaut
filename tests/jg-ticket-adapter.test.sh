@@ -100,3 +100,53 @@ else
   printf 'skip: conformance script: node is not installed\n'
 fi
 pass "ticket adapter: bd's own words, patch edits, op_id replay, history, failed reads"
+
+# The same executable as the board, over two real stores and synthetic home records.
+mkdir -p "$T/fleet/main/config" "$T/fleet/main/data" "$T/fleet/main/state" "$T/fleet/lead/config" "$T/fleet/lead/state" "$T/fleet/a" "$T/fleet/b"
+BEADS_DIR=$T/fleet/a/.beads "$WRAPPER" init --prefix fa >/dev/null 2>&1 || fail 'fleet store a init'
+BEADS_DIR=$T/fleet/b/.beads "$WRAPPER" init --prefix fb >/dev/null 2>&1 || fail 'fleet store b init'
+printf '%s\n' "$T/fleet/a/.beads" > "$T/fleet/main/config/beads-dir"
+printf '%s\n' "$T/fleet/b/.beads" > "$T/fleet/lead/config/beads-dir"
+printf '%s\n' "- lead - fixture (home: $T/fleet/lead; scope: test)" > "$T/fleet/main/data/squad_leads.md"
+a() { BEADS_DIR=$T/fleet/a/.beads "$WRAPPER" "$@" 2>/dev/null; }
+b() { BEADS_DIR=$T/fleet/b/.beads "$WRAPPER" "$@" 2>/dev/null; }
+waiting=$(a q 'Waiting')
+next=$(a q 'Ready')
+working=$(b q 'Building')
+closed=$(b q 'Finished')
+gate=$(a create --title 'Pick' --type gate --silent)
+a dep add "$waiting" "$gate" --type blocks >/dev/null || fail 'link gate'
+a update "$waiting" --add-label project:alpha >/dev/null || fail 'label waiting'
+a update "$next" --add-label project:alpha >/dev/null || fail 'label next'
+b update "$working" --add-label project:beta >/dev/null || fail 'label working'
+b update "$closed" --add-label project:beta >/dev/null || fail 'label closed'
+b close "$closed" >/dev/null || fail 'close'
+printf 'window=fixture\n' > "$T/fleet/lead/state/$working.meta"
+printf 'working [at=1]: building\n' > "$T/fleet/lead/state/$working.status"
+export JG_HOME=$T/fleet/main
+call describe '{"interface":1}'
+expect '[f for f in d["fields"] if f["name"] == "status"][0]["values"] == [{"value": x, "label": x} for x in ["Waiting for you", "Next up", "Being built", "Done"]]' True 'fleet describe columns'
+expect 'any(f["name"] == "project" and f["readonly"] for f in d["fields"])' True 'fleet describe project'
+call list '{"interface":1,"limit":500}'
+[ "$rc" = 0 ] || fail "fleet list: $out"
+expect "{t['title']: (t['status'], t['project']) for t in d['tickets']} == {'Building': ('Being built', 'beta'), 'Finished': ('Done', 'beta'), 'Ready': ('Next up', 'alpha'), 'Waiting': ('Waiting for you', 'alpha')}" True 'fleet columns and projects'
+expect "all(t['id'].startswith(('main--','lead--')) for t in d['tickets'])" True 'fleet ids name their store'
+call get "{\"interface\":1,\"id\":\"lead--$working\"}"
+expect 'd["ticket"]["project"]' beta 'fleet get routes to lead'
+rev=$(pick 'd["ticket"]["rev"]')
+call update "{\"interface\":1,\"id\":\"lead--$working\",\"rev\":\"$rev\",\"op_id\":\"fleet-edit\",\"set\":{\"title\":\"Building changed\"}}"
+expect 'd["ticket"]["title"]' 'Building changed' 'fleet write routes to lead'
+[ "$(b show "$working" --json | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["title"])')" = 'Building changed' ] || fail 'write reached wrong store'
+call update "{\"interface\":1,\"id\":\"lead--$working\",\"rev\":\"$rev\",\"op_id\":\"fleet-status\",\"set\":{\"status\":\"Done\"}}"
+expect 'd["error"]["code"]' invalid 'derived status is read only'
+call list '{"interface":1,"limit":1}'
+cursor=$(pick 'd["next_cursor"]')
+call list "{\"interface\":1,\"limit\":1,\"cursor\":\"$cursor\"}"
+expect 'len(d["tickets"])' 1 'fleet cursor returns the next page'
+printf 'unreadable\n' > "$T/fleet/b/.fault"
+call list '{"interface":1}'
+[ "$rc" = 1 ] || fail 'failed home must not return an incomplete fleet'
+expect 'd["error"]["code"]' unavailable 'failed home is visible'
+rm -f "$T/fleet/b/.fault"
+unset JG_HOME
+pass 'fleet adapter: two stores, four factual columns, projects, routing, pagination and failure'
