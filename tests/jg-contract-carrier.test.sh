@@ -58,7 +58,7 @@ test_check_names_one_proof_for_each_verified_primary() {
     case "$proof" in file | reemit | none) ;; *) fail "check $harness printed '$proof'" ;; esac
   done
   assert_equals none "$(carrier "$h" check codex)" "codex reads none until its carrier file is written"
-  assert_equals none "$(carrier "$h" check cursor)" "cursor has no tracked channel after a compaction"
+  assert_equals reemit "$(carrier "$h" check cursor)" "cursor reads AGENTS.md natively; after a compaction it keeps the base proof"
   for harness in claude pi pi-signed omp; do
     assert_equals reemit "$(carrier "$h" check "$harness")" "$harness re-runs session start after a compaction"
   done
@@ -123,9 +123,9 @@ test_digest_holds_the_contract_when_the_proof_is_not_file() {
   assert_contains "$out" "$MARK" "the re-emit after a pi compaction holds the contract"
 
   h=$(home cursor-digest)
-  out=$(start "$h" cursor --source startup)
-  assert_contains "$out" "carrier proof: none" "the cursor digest reads its proof as none"
-  assert_contains "$out" "$MARK" "a harness whose row is none gets the contract in the digest"
+  out=$(CURSOR_AGENT=1 start "$h" cursor --source startup)
+  assert_contains "$out" "carrier proof: reemit" "the cursor digest reads its proof as reemit"
+  assert_contains "$out" "$MARK" "a harness whose row is not file gets the contract in the digest"
   pass "the digest holds the contract at the start and after a compaction when the proof is not file"
 }
 

@@ -62,6 +62,16 @@ for harness in claude pi pi-signed omp codex cursor opencode grok kimi; do
   log "check $harness -> $proof"
 done
 
+# Cursor (slice thin-tc5-cursor): lab, cursor-agent 2026.11.05 (-p --mode ask --trust --model auto), marker JGCARRIER-26308,
+# first request: AGENTS.md plain text -> marker; CLAUDE.local.md plain text -> marker; .cursor/rules alwaysApply -> marker;
+# CLAUDE.local.md '@AGENTS.md' beside AGENTS.md -> marker; CLAUDE.local.md '@contract.md' only -> NONE;
+# .cursor/rules/*.mdc|md with no front matter -> NONE; no files -> NONE. A compaction was not run (print mode has none).
+K=$(home cursor)
+[ "$(JG_HOME="$K" JG_ROOT_OVERRIDE="$K" "$CARRIER" check cursor)" = reemit ] || die "check cursor is not reemit"
+JG_HOME="$K" JG_ROOT_OVERRIDE="$K" "$CARRIER" ensure cursor > "$OUT/cursor-ensure.txt" 2>&1 || die "ensure cursor failed"
+[ ! -s "$OUT/cursor-ensure.txt" ] && [ ! -e "$K/CLAUDE.local.md" ] && [ ! -e "$K/.cursor" ] || die "ensure cursor wrote a file"
+log "cursor home: carrier is AGENTS.md itself (read natively, lab); ensure writes nothing; check reads reemit; file after one compaction: not proven"
+
 C=$(home claude)
 start "$C" claude --source startup > "$OUT/claude-start.txt"
 grep -q 'wrote CLAUDE.local.md' "$OUT/claude-start.txt" || die "the first claude start did not write the carrier file"

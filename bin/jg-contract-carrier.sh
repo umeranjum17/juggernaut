@@ -19,6 +19,10 @@
 #           expand an import (codex, lab thin-tc5-codex: AGENTS.override.md holding `@AGENTS.md` was not read,
 #           the same text written directly was). The copy must fit the harness's default read limit of 32 KiB;
 #           a larger core file is not copied and the row keeps its base proof.
+#   native  the harness reads the core file AGENTS.md itself and ensure writes no file (cursor, lab thin-tc5-cursor:
+#           AGENTS.md was read, an @import in CLAUDE.local.md was not expanded, a .cursor/rules file with no front
+#           matter was not read). Whether it stays in the session after a compaction is not proven (print mode has
+#           none), so the row keeps its base proof `reemit` and the digest still prints the contract.
 # A harness row that reads `none` has no tracked channel after a compaction (docs/sessionstart-nudge.md).
 #
 # ensure: prints nothing when the file already holds what its kind names or the row has no candidate file.
@@ -39,14 +43,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CODE_ROOT="${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 HOME_ROOT="${JG_HOME:-$CODE_ROOT}"
 
-# harness  base-proof  carrier-file ("-" holds none)  kind (import or copy)
+# harness  base-proof  carrier-file ("-" holds none)  kind (import, copy or native)
 TABLE='
 claude    reemit  CLAUDE.local.md      import
 pi        reemit  -
 pi-signed reemit  -
 omp       reemit  -
 codex     none    AGENTS.override.md   copy
-cursor    none    -
+cursor    reemit  -                    native
 opencode  none    -
 grok      none    -
 kimi      none    -
