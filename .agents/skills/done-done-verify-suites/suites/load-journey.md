@@ -1,0 +1,3 @@
+# Load journey
+
+Load journey: run `done-done run load-journey` (`core/load-journey/run-proof.sh`, which runs `tests/jg-load-journey.test.sh` and then one journey); the real `bin/jg-load-journey.sh run` makes lab homes that run at the same time, injects each fault into each home (a dead backlog lock, a steer read and never answered), lets the fault's real owner script recover it, and records recovery time and token cost per fault and home; the run fails and names the fault when a recovery is late, a second alarm rings on a known state, or a recovery spends model tokens, and it refuses an unknown fault or fewer lanes than homes; the run also drives one journey over four lab homes and eight lanes and writes `faults.jsonl` and `summary.json` (screen: none).
