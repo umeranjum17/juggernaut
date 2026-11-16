@@ -240,6 +240,7 @@ SH
 case "\${1:-} \${2:-}" in
   "pr view")
     case " \$* " in
+      *" --json state -q .state "*) printf '%s\n' '$state' ; exit 0 ;;
       *"state,headRefOid,url"*) printf '%s\t%s\t%s\n' '$state' '$head' 'https://github.com/example/repo/pull/7' ; exit 0 ;;
       *"headRefOid"*) printf '%s\n' '$head' ; exit 0 ;;
     esac
@@ -2181,6 +2182,66 @@ test_release_record_tears_down_only_when_its_pr_merged() {
     fi
   done
   pass "a release record with no spawn_gen tears down when its PR merged and refuses while it is open"
+}
+
+# A merged ship record with no live endpoint is cleaned up whatever its backlog row or window say:
+# the fixture is the record of a real finished Herdr lane (session and workspace, no window), its
+# copy already returned. The recorded PR decides; an open PR or unlanded work still refuses.
+write_merged_no_endpoint_meta() {  # <case-dir>
+  jg_write_meta "$1/state/task-x1.meta" \
+    "endpoint_task_id=task-x1" "worktree=$1/missing-wt" "project=$1/project" "harness=pi" \
+    "kind=ship" "mode=direct-PR" "yolo=on" "branch=fix/main-wake-on-telegram" \
+    "base_branch=release/c-15" "spawn_gen=s1794049176.2860097.26741" "backend=herdr" \
+    "herdr_session=default" "herdr_workspace_id=w2YB" \
+    "pr=https://github.com/example/repo/pull/7" "pr_head=47ed53cc4aaa5d96d0091a789b250ccb2da30c38"
+}
+
+test_merged_ship_record_with_no_live_endpoint_tears_down() {
+  local case_dir rc before head=47ed53cc4aaa5d96d0091a789b250ccb2da30c38
+  # No window recorded, copy returned, PR merged: cleaned.
+  case_dir=$(make_case merged-nowindow)
+  write_merged_no_endpoint_meta "$case_dir"
+  seed_backlog_in_flight "$case_dir"
+  add_gh_pr_merged_for_head "$case_dir" "$head" MERGED
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "merged-nowindow: a merged record with no window was refused: $(cat "$case_dir/stderr")"
+  assert_absent "$case_dir/state/task-x1.meta" "merged-nowindow: teardown left the record"
+
+  # A recorded window that is dead, no spawn_gen, PR merged: cleaned without --legacy-record.
+  case_dir=$(make_case merged-deadwindow)
+  write_legacy_meta "$case_dir" direct-PR ship
+  printf '%s\n' "pr=https://github.com/example/repo/pull/7" >> "$case_dir/state/task-x1.meta"
+  seed_backlog_in_flight "$case_dir"
+  wt_commit "$case_dir" "landed work"
+  add_fork_with_pushed_branch "$case_dir"
+  add_gh_pr_merged_for_head "$case_dir" "$head" MERGED
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "merged-deadwindow: a merged record with a dead window was refused: $(cat "$case_dir/stderr")"
+  assert_absent "$case_dir/state/task-x1.meta" "merged-deadwindow: teardown left the record"
+
+  # Same dead window with the PR still open: the old refusal stands, record untouched.
+  case_dir=$(make_case open-deadwindow)
+  write_legacy_meta "$case_dir" direct-PR ship
+  printf '%s\n' "pr=https://github.com/example/repo/pull/7" >> "$case_dir/state/task-x1.meta"
+  seed_backlog_in_flight "$case_dir"
+  add_gh_pr_merged_for_head "$case_dir" "$head" OPEN
+  before=$(cksum "$case_dir/state/task-x1.meta" | awk '{print $1, $2}')
+  set +e; run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"; rc=$?; set -e
+  expect_code 1 "$rc" "open-deadwindow: an open PR with no spawn_gen must refuse"
+  [ "$(cksum "$case_dir/state/task-x1.meta" | awk '{print $1, $2}')" = "$before" ] \
+    || fail "open-deadwindow: the refusal modified the record"
+
+  # Merged PR but uncommitted changes in a still-present copy: refused, nothing changed.
+  case_dir=$(make_case merged-dirty)
+  write_windowless_legacy_meta "$case_dir" direct-PR ship
+  printf '%s\n' "pr=https://github.com/example/repo/pull/7" >> "$case_dir/state/task-x1.meta"
+  seed_backlog_in_flight "$case_dir"
+  echo dirty > "$case_dir/wt/dirty.txt"
+  add_gh_pr_merged_for_head "$case_dir" "$head" MERGED
+  set +e; run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"; rc=$?; set -e
+  expect_code 1 "$rc" "merged-dirty: uncommitted changes must refuse"
+  assert_present "$case_dir/state/task-x1.meta" "merged-dirty: the refusal removed the record"
+  pass "a merged record with no live endpoint tears down; an open PR or uncommitted work still refuses"
 }
 
 # The lander rebases a lane's commit before landing it, so the trunk holds another commit than the
@@ -5177,6 +5238,7 @@ test_windowless_record_outside_the_leftover_class_still_refuses
 test_windowless_leftover_retries_its_retained_legacy_stamp_without_the_flag
 test_windowless_herdr_record_tears_down_when_landed_and_refuses_when_not
 test_release_record_tears_down_only_when_its_pr_merged
+test_merged_ship_record_with_no_live_endpoint_tears_down
 test_local_trunk_cleanup_by_landing_row
 test_legacy_record_teardown_completes_when_landed_and_endpoint_dead
 test_legacy_record_teardown_refuses_unlanded_work

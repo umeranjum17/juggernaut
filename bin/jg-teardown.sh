@@ -567,6 +567,13 @@ if [ "$TEARDOWN_META_KIND" = squad_lead ]; then
   }
   SM_LIVENESS_LOCK="$STATE/.squad-lead-liveness-$ID.lock"
 fi
+# The forge's state of the PR a record names (empty when none is recorded or the forge cannot say).
+teardown_recorded_pr_state() {  # <pr-url>
+  [ -z "$1" ] || gh pr view "$1" --json state -q .state 2>/dev/null || true
+}
+
+# The record's own (last) pr= line, as PR_URL reads it later.
+teardown_recorded_pr_url() { grep '^pr=' "$META" 2>/dev/null | tail -1 | cut -d= -f2- || true; }
 TEARDOWN_CLEANUP_RECOVERY=$(jg_meta_get "$META" cleanup_recovery)
 TEARDOWN_META_SPAWN_GEN=
 TEARDOWN_LEGACY_PENDING=0
@@ -604,7 +611,11 @@ if [ "$TEARDOWN_BACKLOG_APPLIES" = 1 ]; then
       # checks below.
       TEARDOWN_WINDOWLESS=1
       TEARDOWN_LEGACY_PENDING=1
-    elif [ "$TEARDOWN_LEGACY_GEN_COUNT" = 0 ] && [ "$LEGACY_RECORD_GIVEN" = 1 ]; then
+    elif [ "$TEARDOWN_LEGACY_GEN_COUNT" = 0 ] \
+      && { [ "$LEGACY_RECORD_GIVEN" = 1 ] \
+        || [ "$(teardown_recorded_pr_state "$(teardown_recorded_pr_url)")" = MERGED ]; }; then
+      # A merged recorded PR is the proof the flag stands for: the endpoint is
+      # still classified dead or agent-less below, and unlanded work still refuses.
       # A record that predates the incarnation field: acceptance is gated later,
       # once the recorded endpoint is known, so its state can be confirmed dead
       # or agent-less before any cleanup decision is made.
@@ -632,7 +643,8 @@ if [ "$TEARDOWN_BACKLOG_APPLIES" = 1 ]; then
         # the abandoned attempt's own stamp.
         if [ "$TEARDOWN_WINDOWLESS_SHAPE" = 1 ]; then
           TEARDOWN_WINDOWLESS=1
-        elif [ "$LEGACY_RECORD_GIVEN" != 1 ]; then
+        elif [ "$LEGACY_RECORD_GIVEN" != 1 ] \
+          && [ "$(teardown_recorded_pr_state "$(teardown_recorded_pr_url)")" != MERGED ]; then
           echo "error: task $ID's record carries the legacy incarnation stamp $JG_BACKLOG_META_SPAWN_GEN left by an abandoned --legacy-record teardown, not an incarnation published by a spawn; refusing automatic teardown - relaunch the task to publish an unambiguous incarnation, then retry teardown, or pass --legacy-record once its recorded endpoint is confirmed dead or agent-less" >&2
           exit 1
         fi
@@ -1727,10 +1739,8 @@ teardown_is_incomplete_release() {
 }
 
 teardown_release_gate() {
-  local state=
-  if [ -n "$PR_URL" ]; then
-    state=$(gh pr view "$PR_URL" --json state -q .state 2>/dev/null) || state=
-  fi
+  local state
+  state=$(teardown_recorded_pr_state "$PR_URL")
   [ "$state" = MERGED ] && return 0
   echo "REFUSED: release record $ID names ${PR_URL:-no pull request}, which the forge does not report merged (${state:-unreadable}); nothing was changed." >&2
   echo "teardown: cleanup refused, reason: no-merge-proof" >&2
