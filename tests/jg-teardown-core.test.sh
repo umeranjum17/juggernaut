@@ -258,7 +258,7 @@ check "a lane with a commit of its own is not dropped, whatever its ticket" "$rc
 # lander's record of the lane (commit, epoch) proves the landing only while that commit is on the
 # trunk and the lane's HEAD is no newer than the landing.
 head_time=$(g -C "$lab/ewt" show -s --format=%ct HEAD)
-( cd "$lab/proj" && g checkout -q -f --detach trunk && echo w > w && g add w && g commit -q -m rebased-work && g branch -q -f trunk HEAD && g checkout -q main )
+( cd "$lab/proj" && g checkout -q -f --detach trunk && echo w > w && echo x > x && g add w x && g commit -q -m rebased-work && g branch -q -f trunk HEAD && g checkout -q main )
 rebased=$(g -C "$lab/proj" rev-parse trunk)
 sr() { sa "$@"; }
 out=$(sr --landed-commit "$rebased" --landed-at "$head_time"); rc=$?
@@ -271,6 +271,22 @@ out=$(sr --landed-commit "$(printf '0%.0s' $(seq 40))" --landed-at "$head_time")
 check "a landing record naming a commit the trunk does not hold is refused" "$rc|$(printf '%s' "$out" | grep -c '^reason=not-on-trunk')" "1|1"
 out=$(sr); rc=$?
 check "the same lane with no landing record is still refused" "$rc|$(printf '%s' "$out" | grep -c '^reason=not-on-trunk')" "1|1"
+
+# A rebased or squashed landing has a new hash. A trunk commit with the lane's tree, or its patch-id on
+# a trunk that moved, proves the landing without any record; a head that differs in content stays refused.
+( cd "$lab/proj" && g branch -q -f trunk "$ebase" && g checkout -q -f --detach trunk && echo w > w && g add w && g commit -q -m "squashed copy" && g branch -q -f trunk HEAD && g checkout -q main )
+out=$(sa); rc=$?
+check "a head whose tree a trunk commit holds under another hash is cleaned" "$rc|$(printf '%s' "$out" | grep -c '^reason=')" "0|0"
+( cd "$lab/proj" && g branch -q -f trunk "$ebase" && g checkout -q -f --detach trunk && echo other > other && g add other && g commit -q -m moved && echo w > w && g add w && g commit -q -m "rebased copy" && g branch -q -f trunk HEAD && g checkout -q main )
+out=$(sa); rc=$?
+check "a head whose patch-id a trunk commit holds on a moved trunk is cleaned" "$rc|$(printf '%s' "$out" | grep -c '^reason=')" "0|0"
+echo dirty > "$lab/ewt/dirty"
+out=$(sa); rc=$?
+check "a tree-equal landing with uncommitted files is still refused" "$rc|$(printf '%s' "$out" | grep -c '^reason=uncommitted')" "1|1"
+rm -f "$lab/ewt/dirty"
+( cd "$lab/proj" && g branch -q -f trunk "$ebase" && g checkout -q -f --detach trunk && echo w2 > w && g add w && g commit -q -m "different content" && g branch -q -f trunk HEAD && g checkout -q main )
+out=$(sa); rc=$?
+check "a head whose content differs from every trunk commit is still refused" "$rc|$(printf '%s' "$out" | grep -c '^reason=not-on-trunk')" "1|1"
 
 [ "$fails" -eq 0 ] || { printf '%d check(s) failed\n' "$fails"; exit 1; }
 printf 'all jg-teardown-core tests passed\n'

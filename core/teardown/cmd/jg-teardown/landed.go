@@ -266,7 +266,35 @@ func (l *landing) landedOnTrunk() bool {
 		return true
 	}
 	l.gap = "this copy's HEAD is not on the local " + l.trunkBranch
-	return l.landedByRebase(trunk)
+	return l.landedByRebase(trunk) || l.landedByContent(trunk)
+}
+
+// landedByContent: a rebased or squashed landing gives the trunk a new hash for the same work. The
+// work is on the trunk when a commit there, since this copy's HEAD forked from it, has the same
+// tree as HEAD or the same patch-id. A head that differs in content matches neither and stays refused.
+func (l *landing) landedByContent(trunk string) bool {
+	base, err := git(l.wt, "merge-base", "HEAD", trunk)
+	if err != nil || base == "" {
+		return false
+	}
+	headTree, err := git(l.wt, "rev-parse", "HEAD^{tree}")
+	if err != nil {
+		return false
+	}
+	headPatch := patchID(l.wt, "HEAD")
+	commits, err := git(l.wt, "rev-list", "--max-count=2000", base+".."+trunk)
+	if err != nil {
+		return false
+	}
+	for _, c := range strings.Fields(commits) {
+		if tree, err := git(l.wt, "rev-parse", c+"^{tree}"); err == nil && tree == headTree {
+			return true
+		}
+		if headPatch != "" && patchID(l.wt, c) == headPatch {
+			return true
+		}
+	}
+	return false
 }
 
 // landedByRebase: the lander rebases a lane's commit before it lands it, so the trunk holds a
