@@ -1304,6 +1304,8 @@ inject_msg() {  # <message> [state]
     INJECT_LAST_FAILURE="Enter confirmation: submit unconfirmed after $retries retries (verdict=${verdict:-none}, bytes=$bytes, text may be in composer)${err:+: $err}"
   fi
   log "inject failed at $INJECT_LAST_FAILURE"
+  # The first trigger of a swallowed Enter is unknown: keep the pane state it left.
+  log "inject pane state after the failed Enter: $(jg_backend_pane_state_line "$backend" "$target" "$msg")"
   return 1
 }
 

@@ -1108,6 +1108,25 @@ jg_backend_resubmit_typed() {  # <backend> <target> <text> <retries> <enter-slee
   printf '%s' "$state"
 }
 
+# jg_backend_pane_state_line: one line naming what a pane's input box holds
+# relative to <text>, the line a caller just typed: the composer verdict, the
+# busy state, how many bytes the box holds, and whether they are `none`, our
+# `whole` text, a `leading-part` of it, or `other` (a person's). It never prints
+# the box's content, so a person's half-typed line cannot reach a log.
+jg_backend_pane_state_line() {  # <backend> <target> <text> [expected-label]
+  local backend=$1 target=$2 want=${3//[[:space:]]/} label=${4:-} held own=none
+  held=$(jg_backend_capture "$backend" "$target" "$JG_COMPOSER_CAPTURE_LINES" "$label" 2>/dev/null)     && held=$(jg_composer_extract_selected_content styled=0 "$held") || held=
+  held=${held//[[:space:]]/}
+  if [ -n "$held" ]; then
+    if [ -n "$want" ] && [ "${held#"$want"}" != "$held" ]; then own=whole
+    elif jg_composer_own_doorbell_length "$held" "$want" >/dev/null; then own=leading-part
+    else own=other; fi
+  fi
+  printf 'composer=%s busy=%s held_bytes=%s own_text=%s' \
+    "$(jg_backend_composer_state "$backend" "$target" "$label" 2>/dev/null)" \
+    "$(jg_backend_busy_state "$backend" "$target")" "${#held}" "$own"
+}
+
 # jg_backend_kill: remove the task's session endpoint. An already-gone target
 # is NOT an error and returns 0 silently, so ordinary cleanup of an
 # already-exited session stays quiet. A nonzero return means the close could

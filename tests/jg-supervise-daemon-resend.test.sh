@@ -267,6 +267,10 @@ test_resend() {
   n=$(awk -F '\t' '{ hex=$1; count += gsub(/e281a3/, "", hex) } END { print count + 0 }' "$LOG_FILE")
   [ "$n" -eq 2 ] || fail "expected 2 U+2063 markers (one per digest, no concatenation), got $n"
   grep -q $'\tuser$' "$LOG_FILE" && fail "a line was submitted as user text"
+  # The failed Enter leaves one line naming the pane state, never its content.
+  n=$(grep -c 'inject pane state after the failed Enter: composer=.* busy=.* held_bytes=[0-9]* own_text=' "$STATE_DIR/.supervise-daemon.log" || true)
+  [ "$n" -ge 1 ] || fail "the failed Enter left no pane-state line in the daemon log"
+  grep 'inject pane state after the failed Enter' "$STATE_DIR/.supervise-daemon.log" | grep -q 'pr/' && fail "the pane-state line printed the input box content"
 
   stop_daemon
   pass "a swallowed digest is submitted once on the next try and the second digest follows"
