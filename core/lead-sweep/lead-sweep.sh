@@ -34,11 +34,21 @@
 #                      needs-decision line is parked after JG_LEAD_SWEEP_PARK_H hours (default 24;
 #                      JG_LEAD_SWEEP_PARK_EMPTY_H, default 2, when its branch holds no commit of its own): the agent ends and a
 #                      clean copy goes back (`jg-teardown.sh <id> --park`); the branch, the ticket and the records stay;
+# A parked lane is rechecked on every beat. bin/jg-teardown-park-lib.sh writes state/<id>.parked with the branch, its head, its base and
+# `owner=lead`, and no other actor revisits that record, so its lead owns what the park left open and this sweep asks it:
+#   landed   its branch head is on the trunk (or its recorded pull request is merged): the park record is cleaned up, the alert this
+#            sweep raised for it is resolved with that commit as proof, and one line says so;
+#   live     the lane has a record again (a respawn): the stale park record would hide the new incarnation from this sweep, so it is cleared;
+#   open     it is not landed: after JG_LEAD_SWEEP_PARKED_RECHECK_MIN minutes (default 60) ONE alert, parked-lane--<subject>, names its branch
+#            and the next step its lead must take - land, re-prove or drop - and the obligation is kept in
+#            data/lead-sweep/<id>.parked-owner (owner=lead, branch, head, next_action). The same alert is rung again only when the step
+#            changes, so one parked lane never carries two alerts;
 #   never started      a ship lane with no status line JG_LEAD_SWEEP_START_MIN minutes (default 30) after its record was written:
 #                      one relaunch with a note; if it still has none after the same time, it is parked as above;
 #   agent gone         a lane whose agent is dead or missing, whatever its last line, is cleaned up when its work has landed.
 # JG_LEAD_SWEEP_TEARDOWN, JG_LEAD_SWEEP_GH, JG_LEAD_SWEEP_CONTROL and JG_LEAD_SWEEP_AGENT (<id> -> alive|dead|missing|unknown) name
-# the teardown, gh-axi, control and agent-state commands; JG_LEAD_SWEEP_NOW is the clock (tests point them at stubs).
+# the teardown, gh-axi, control and agent-state commands; JG_LEAD_SWEEP_NOW is the clock (tests point them at stubs), and
+# JG_LEAD_SWEEP_PARKED_RECHECK_MIN is the parked lane's recheck window in minutes (default 60).
 set -u
 MODE=${1:-}
 [ "$#" -eq 2 ] && case $MODE in check|job|run) true ;; *) false ;; esac && [ -d "$2/state" ] || { echo "usage: lead-sweep.sh check|job|run <jg-home>" >&2; exit 2; }
@@ -56,6 +66,9 @@ PARK_EMPTY_S=$(( $(num "${JG_LEAD_SWEEP_PARK_EMPTY_H:-}" 2) * 3600 ))
 START_S=$(( $(num "${JG_LEAD_SWEEP_START_MIN:-}" 30) * 60 ))
 QUIET_S=$(( $(num "${JG_LEAD_SWEEP_QUIET_MIN:-}" 60) * 60 ))
 PR_MIN=${JG_LEAD_SWEEP_PR_MIN:-10}; case $PR_MIN in ''|*[!0-9]*) PR_MIN=10 ;; esac
+# A parked lane's recheck window: how long a park is left alone before its lead is asked for the next step.
+RECHECK_MIN=${JG_LEAD_SWEEP_PARKED_RECHECK_MIN:-60}; case $RECHECK_MIN in ''|*[!0-9]*) RECHECK_MIN=60 ;; esac
+RECHECK_S=$(( RECHECK_MIN * 60 ))
 # The installed copy sits alone in its data directory, so the lib comes from the home; the repo-relative path serves a run from the checkout.
 # shellcheck source=bin/jg-facts-lib.sh disable=SC1091
 if [ -f "$FMH/bin/jg-facts-lib.sh" ]; then . "$FMH/bin/jg-facts-lib.sh"; else . "$(dirname "$SELF")/../../bin/jg-facts-lib.sh"; fi
@@ -190,30 +203,146 @@ scout_relayed() {
 
 # why_landed <meta> <project> <branch>: prints why the ship lane counts as landed; prints nothing when it does not.
 why_landed() {
-  local id=${1##*/} head base target tipf pr slug num asked
+  local id=${1##*/} head
   id=${id%.meta}
   head=$(git -C "$2" rev-parse --verify --quiet "refs/heads/$3^{commit}") || head=
+  why_landed_record "$1" "$2" "$3" "$head" "$id"
+}
+
+# why_landed_record <record> <project> <branch> <head> <id>: the one landed-work reader, for a lane record (state/<id>.meta) and for the
+# park record that outlives it (both keep project, branch, head, base and pr). Prints why the lane counts as landed; prints nothing when not.
+why_landed_record() {
+  local base target tipf pr slug num asked
   # A lane still on the commit it started on holds no work: that head is an ancestor of the trunk, yet nothing landed.
   base=$(mval "$1" base)
-  [ -z "$base" ] || [ "$head" != "$base" ] || return 0
+  [ -z "$base" ] || [ "$4" != "$base" ] || return 0
   tipf=$STATE/trunk-tip-$(basename "$2")
   if [ -s "$tipf" ]; then target=$(cat "$tipf"); else target=$(git -C "$2" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null) || target=; fi
-  if [ -n "$head" ] && [ -n "$target" ] && git -C "$2" merge-base --is-ancestor "$head" "$target" 2>/dev/null; then
+  if [ -n "$4" ] && [ -n "$target" ] && git -C "$2" merge-base --is-ancestor "$4" "$target" 2>/dev/null; then
     echo 'its head is on the trunk'; return 0
   fi
   pr=$(mval "$1" pr)
   slug=$(printf '%s\n' "$pr" | sed -n 's#^https://github\.com/\([A-Za-z0-9_.-]*/[A-Za-z0-9_.-]*\)/pull/[0-9]*$#\1#p')
   num=${pr##*/}
   [ -n "$slug" ] || return 0
-  asked=$MEM/$id.asked
+  asked=$MEM/$5.asked
   [ -z "$(find "$asked" -mmin "-$PR_MIN" 2>/dev/null)" ] || return 0
   : > "$asked"
   [ "$(timeout 20 "$GH" api "repos/$slug/pulls/$num" --jq .merged 2>/dev/null)" = true ] && echo 'its pull request is merged'
   return 0
 }
 
+# proof_whole <record> <id> <head>: 0 when the completion receipt and the sealed done-done run at that head are whole. The lander's own
+# reader decides (bin/jg-merge-gate-lib.sh jg_dod_trunk_proof_gaps), so a parked lane is never judged by a second proof test; a home with
+# no such lib cannot answer, and then the lead's next step is re-prove.
+proof_whole() {
+  local lib=$FMH/bin/jg-merge-gate-lib.sh
+  [ -r "$lib" ] || return 1
+  # shellcheck disable=SC1090 # the library is the home's own copy, so its path is read at run time
+  ( . "$lib" && jg_dod_trunk_proof_gaps "$FMH" "$STATE" "$2" "$1" "$3" ) >/dev/null 2>&1
+}
+
+# parked_step <record> <head> <head state>: the next step the parked lane's lead must take, from records that already exist; prints one of
+# drop, land or re-prove. <head state> is ok (the branch is there), gone (no such branch) or unknown (its project cannot be read).
+parked_step() {
+  local base status
+  case $3 in
+    gone) echo drop; return 0 ;;   # the branch is gone and its work is not on the trunk: nothing is left to land
+    ok) ;; *) echo re-prove; return 0 ;;   # its project cannot be read: nothing can be landed until its lead decides
+  esac
+  base=$(mval "$1" base)
+  [ -z "$base" ] || [ "$2" != "$base" ] || { echo drop; return 0; }   # it holds no commit of its own
+  status=$STATE/$(mval "$1" task).status
+  if [ ! -r "$status" ] || [ -z "$(grep -E '^done( \[[^]]*\])?:' "$status" | tail -n 1)" ]; then echo re-prove; return 0; fi
+  proof_whole "$1" "$(mval "$1" task)" "$2" && echo land || echo re-prove
+}
+
+# parked_owner_record <id> <project> <branch> <head> <step> <alert key> <recheck due>: the obligation a park leaves, with its owner named.
+# Written whole or not at all; a destination that is not a plain file is never written through.
+parked_owner_record() {
+  local out=$MEM/$1.parked-owner tmp
+  [ ! -L "$out" ] && { [ ! -e "$out" ] || [ -f "$out" ]; } || {
+    echo "lead-sweep: $1 parked-owner record is unsafe; its lead must repair $MEM" >&2; return 1;
+  }
+  tmp=$(mktemp "$MEM/.$1.parked-owner.XXXXXX") || return 1
+  {
+    printf 'home=%s\ntask=%s\nowner=lead\n' "$FMH" "$1"
+    printf 'project=%s\nbranch=%s\nhead=%s\n' "$2" "$3" "$4"
+    printf 'next_action=%s\nalert_key=%s\n' "$5" "$6"
+    printf 'recheck_after=%s\nobserved_at=%s\n' "$7" "$NOW"
+  } > "$tmp" && mv -f -- "$tmp" "$out" || { rm -f -- "$tmp"; return 1; }
+}
+
+# parked_resolve <key> <proof kind> <pointer>: close the one alert this sweep raised for a parked lane, when it is still open.
+parked_resolve() {
+  local rec=$STATE/alerts/$1.rec err
+  [ -f "$rec" ] || return 0
+  case $(sed -n 's/^state=//p' "$rec" | tail -n 1) in resolved) return 0 ;; esac
+  err=$(JG_HOME="$FMH" JG_STATE_OVERRIDE="$STATE" "$FMH/bin/jg-alert.sh" resolve "$1" --proof "$2:$3" 2>&1) \
+    || echo "lead-sweep: the parked-lane alert $1 could not be closed: $err"
+}
+
+# parked_alert <id> <project> <branch> <head> <step> <key> <head state>: one alert naming the branch and the next step its lead must take.
+# The record is keyed by the lane, so a beat that finds the same step prints nothing and raises nothing; only a changed step rings
+# again, which is what makes one park carry one alert.
+parked_alert() {
+  local note rec out
+  note="$1 is parked and its work is not on the trunk: branch $3 at ${4:0:12}; next step for its lead: $5"
+  case $7 in gone) note="$note (its branch is gone)" ;; unknown) note="$note (its project $2 cannot be read)" ;; esac
+  rec=$STATE/alerts/$6.rec
+  if [ -r "$rec" ] && [ "$(sed -n 's/^state=//p' "$rec" | tail -n 1)" != resolved ] \
+    && [ "$(sed -n 's/^note=//p' "$rec" | tail -n 1)" = "$note" ]; then return 0; fi
+  out=$(JG_HOME="$FMH" JG_STATE_OVERRIDE="$STATE" "$FMH/bin/jg-alert.sh" raise parked-lane "${6#parked-lane--}" --deliver --repeat \
+    --home "$FMH" --project "$2" --ticket "$1" --note "$note" --wake check --text "lead-sweep: $note" 2>&1) || {
+    echo "lead-sweep: $note; the alert was refused: $out"; return 1;
+  }
+  echo "lead-sweep: $note"
+}
+
+# parked_recheck: the owner and the recheck a park leaves behind, for every parked lane of this home.
+parked_recheck() {
+  local rec id gen subject key proj branch rhead head hstate why step parked_at due
+  for rec in "$STATE"/*.parked; do
+    [ -f "$rec" ] || continue
+    id=$(mval "$rec" task)
+    [ -n "$id" ] || id=${rec##*/}
+    id=${id%.parked}
+    proj=$(mval "$rec" project); branch=$(mval "$rec" branch); rhead=$(mval "$rec" head)
+    [ -n "$branch" ] || continue
+    gen=$(mval "$rec" spawn_gen); case $gen in ''|*[!A-Za-z0-9._-]*) gen=unknown ;; esac
+    subject=$id; [ "$gen" = unknown ] || subject=$id-$gen
+    key=parked-lane--$subject
+    if [ -e "$STATE/$id.meta" ]; then
+      # The lane is live again: this record belongs to an incarnation that is over, and it would hide the new one from this sweep.
+      rm -f -- "$rec" "$MEM/$id.parked-owner"
+      parked_resolve "$key" task "$id"
+      echo "lead-sweep: $id was parked and has a record again; its parked record is cleared"
+      continue
+    fi
+    parked_at=$(mval "$rec" parked_at); case $parked_at in ''|*[!0-9]*) parked_at=$(mtime "$rec") ;; esac
+    due=$(( parked_at + RECHECK_S ))
+    head=$rhead; hstate=unknown
+    if [ -d "$proj" ]; then
+      head=$(git -C "$proj" rev-parse --verify --quiet "refs/heads/$branch^{commit}" 2>/dev/null) || { head=$rhead; hstate=gone; }
+      [ "$hstate" = gone ] || hstate=ok
+    fi
+    why=$(why_landed_record "$rec" "$proj" "$branch" "$head" "$id")
+    if [ -n "$why" ]; then
+      rm -f -- "$rec" "$MEM/$id.parked-owner"
+      parked_resolve "$key" commit "$head"
+      echo "lead-sweep: $id was parked and $why; its park record is cleaned up"
+      continue
+    fi
+    step=$(parked_step "$rec" "$head" "$hstate")
+    parked_owner_record "$id" "$proj" "$branch" "$head" "$step" "$key" "$due" || continue
+    [ "$NOW" -ge "$due" ] || continue   # the recheck window: a fresh park is left alone until it runs out
+    parked_alert "$id" "$proj" "$branch" "$head" "$step" "$key" "$hstate" || continue
+  done
+}
+
 # Oldest report first: a lane's status file modification time is when it last reported; a lane with no status line
 # is ordered by its record's age.
+parked_recheck
 order=$(for m in "$STATE"/*.meta; do
   [ -f "$m" ] || continue
   i=${m##*/}; i=${i%.meta}

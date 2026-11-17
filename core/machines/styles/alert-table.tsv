@@ -16,6 +16,7 @@ alert	drift	the observer finds that the stage and the records disagree	600	P2	2	
 alert	slow-delivery	stage proving, or delivering in queued, rebased or gated, past the limit for its kind	limit	P3	1	wait=owner+wait=outside,reason=ci|approval|date|review+queued-behind-running-landing
 alert	ready-idle	a ticket in ready and a free lane	600	P3	2	home-paused+capacity-held+owner-card-open
 alert	stranded	stage delivering in batched, live or joining; or a pull request style in queued with no check started	limit	P3	2	never
+alert	parked-lane	a parked lane whose work is not on the trunk and whose next step its lead has not taken	0	P3	2	never
 alert	host	memory, disk or temp space over its limit	0	P3	3	never
 alert	wrong-repo	a spawn refused because the ticket's files are not in this repository	0	P2	2	never
 alert	lock-held	a trunk or landing lock held with no beat of its holder	300	P1	0	holder-beating

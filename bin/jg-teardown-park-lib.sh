@@ -17,7 +17,10 @@
 # lose, and the rule only asks that the branch still exist.
 #
 # The park record is key=value lines, written whole or not at all:
-#   task, kind, project, mode, branch, head (the branch tip at the park), backend, pr (when one was recorded), parked_at
+#   task, kind, project, mode, branch, head (the branch tip at the park), backend, pr (when one was recorded), base and
+#   spawn_gen (when the lane's record names them), owner=lead and owner_home (the home whose lead decides the park), parked_at
+# The owner and the base are what core/lead-sweep reads afterwards: nothing else revisits a parked lane, so its lead owns the
+# next step and the sweep rechecks the branch (README of core/lead-sweep owns the rule).
 # The lane's status log, its steering inbox and data/<id>/ stay as they are, so the lead that parks a lane can steer it
 # again and a later spawn finds its brief.
 #
@@ -92,7 +95,10 @@ EOF_DIRT
 
 # teardown_park_write_record: write state/<id>.parked whole (a temporary file moved into place).
 teardown_park_write_record() {
-  local out="$STATE/$ID.parked" tmp
+  local out="$STATE/$ID.parked" tmp base gen home
+  base=$(jg_meta_get "$META" base); gen=$(jg_meta_get "$META" spawn_gen)
+  # The home whose lead owns the park is the home that holds the record, never a path read from the environment alone.
+  home=$JG_HOME; case $STATE in */state) home=${STATE%/state} ;; esac
   tmp=$(mktemp "$STATE/.$ID.parked.XXXXXX") || return 1
   {
     printf 'task=%s\n' "$ID"
@@ -101,8 +107,11 @@ teardown_park_write_record() {
     printf 'mode=%s\n' "$MODE"
     printf 'branch=%s\n' "$TEARDOWN_PARK_BRANCH"
     printf 'head=%s\n' "$TEARDOWN_PARK_HEAD"
+    [ -z "$base" ] || printf 'base=%s\n' "$base"
+    [ -z "$gen" ] || printf 'spawn_gen=%s\n' "$gen"
     printf 'backend=%s\n' "$BACKEND"
     [ -z "${PR_URL:-}" ] || printf 'pr=%s\n' "$PR_URL"
+    printf 'owner=lead\nowner_home=%s\n' "$home"
     printf 'parked_at=%s\n' "$(date +%s)"
   } > "$tmp" || { rm -f -- "$tmp"; return 1; }
   mv -f -- "$tmp" "$out" || { rm -f -- "$tmp"; return 1; }

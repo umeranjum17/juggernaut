@@ -63,7 +63,8 @@ write_meta() {  # <case> <kind> [branch]
   local c=$1 kind=$2 branch=${3:-fm/$ID}
   jg_write_meta "$c/state/$ID.meta" \
     "window=juggernaut:jg-$ID" "endpoint_task_id=$ID" "worktree=$c/wt" "project=$c/project" \
-    "kind=$kind" "mode=local-trunk" "branch=$branch" "spawn_gen=park-test-$ID"
+    "kind=$kind" "mode=local-trunk" "branch=$branch" "spawn_gen=park-test-$ID" \
+    "base=$(git -C "$c/project" rev-parse --verify -q refs/heads/main 2>/dev/null || true)"
 }
 
 run_park() {  # <case> [args...]: sets RC
@@ -92,6 +93,10 @@ assert_parked() {  # <case> <name>
   assert_grep "branch=fm/$ID" "$c/state/$ID.parked" "$n: the record names the branch"
   assert_grep "head=$head" "$c/state/$ID.parked" "$n: the record names the branch tip"
   assert_grep "project=$c/project" "$c/state/$ID.parked" "$n: the record names the project"
+  assert_grep "base=$(git -C "$c/project" rev-parse refs/heads/main)" "$c/state/$ID.parked" "$n: the record names the commit the lane started on"
+  assert_grep "spawn_gen=park-test-$ID" "$c/state/$ID.parked" "$n: the record names the incarnation"
+  assert_grep "owner=lead" "$c/state/$ID.parked" "$n: the record names the lead as the owner of the park"
+  assert_grep "owner_home=$c" "$c/state/$ID.parked" "$n: the owner is the home whose lead decides it"
   [ ! -e "$c/state/$ID.meta" ] || fail "$n: the lane's task record still stands, so it still names a copy and a pane"
   grep -q '^treehouse return' "$c/calls.log" || fail "$n: the copy was not returned"
   git -C "$c/project" rev-parse --verify -q "refs/heads/fm/$ID" > /dev/null || fail "$n: the branch was deleted"

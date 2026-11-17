@@ -17,7 +17,10 @@
 # j) a lane that never started is left for 30 minutes, relaunched once, then parked; a lane that started is not relaunched;
 # k) a lane whose agent is gone is cleaned up when its work landed, and left alone when it did not;
 # o) a lane someone waits for (an unread steer, a steer read after its done line, a relaunch after it) is never ended, parked or torn down, and a
-#    waited-for agent that is gone raises one P1 alert to Main at once.
+#    waited-for agent that is gone raises one P1 alert to Main at once;
+# p) a parked lane's lead owns the decision a park leaves: its head on the trunk cleans the park record, a lane with a record again
+#    clears the stale one, and every other parked lane raises ONE alert after the recheck window that names its branch and the next
+#    step (land, re-prove or drop), rung again only when that step changes and resolved when the work lands.
 # Usage: lead-sweep/tests/lead-sweep.test.sh
 set -euo pipefail
 SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
@@ -237,5 +240,63 @@ sweep
 check "o: a second beat raises no second alert" "$(find "$FM/state/alerts" -name 'worker-stopped--w6*' | wc -l | tr -d ' ')" 1
 mkdir -p "$FM/state/w1.inbox/handled"; mv "$FM/state/w1.inbox/1.msg" "$FM/state/w1.inbox/handled/"; touch -d "@$((now - 200))" "$FM/state/w1.inbox/handled/1.msg"; sweep
 check "o: once the steer is read and answered the done lane is ended once" "$(ends w1)" 1
+# p: a parked lane keeps state/<id>.parked (task, project, mode, branch, head, base, spawn_gen, owner, owner_home, parked_at). Its lead
+# owns the next step, and the sweep rechecks it: landed cleans it, a live lane clears the stale record, the rest raise one alert.
+parkrec() {  # <id> <head> <base> <gen> [parked_at]: the park record, and the lane record the park removes
+  printf 'task=%s\nkind=ship\nproject=%s\nmode=local-trunk\nbranch=fm/%s\nhead=%s\nbase=%s\nspawn_gen=%s\nbackend=pi\nowner=lead\nowner_home=%s\nparked_at=%s\n' \
+    "$1" "$P" "$1" "$2" "$3" "$4" "$FM" "${5:-$now}" > "$FM/state/$1.parked"
+  rm -f "$FM/state/$1.meta"
+}
+prove_at() {  # <id> <head> <gen>: the PASS receipt and the sealed clean run the lander's own proof reader accepts at that head
+  mkdir -p "$FM/data/$1/.done-done/runs"; printf 'ok\n' > "$FM/data/$1/run.log"
+  printf '{"task":"%s","head":"%s","verdict":"PASS","spawn_gen":"%s"}\n' "$1" "$2" "$3" > "$FM/state/$1.run-receipt.json"
+  printf '{"schema":1,"run_id":"20260101T000000Z-%s-ab","commit":"%s","exit":0,"dirty":false,"started_at":"2026-01-01T00:00:00Z","files":["run.log"]}\n' "${2:0:8}" "$2" > "$FM/data/$1/.done-done/runs/run-$2.json"
+}
+parked_alerts() { ls "$FM/state/alerts" 2>/dev/null | grep -c "^parked-lane--$1" || true; }
+parked_note() { sed -n 's/^note=//p' "$FM/state/alerts/parked-lane--$1.rec" 2>/dev/null | tail -n 1; }
+parked_notes() { grep -c "^lead-sweep: $1 is parked and its work is not on the trunk" "$d/out" || true; }
+old=$((now - 7200)); trunk0=$(git -C "$P" rev-parse trunk)
+lane pp1 ship 'paused [at=1] [wait=lead] [reason=parked]: set aside'; onto pp1
+parkrec pp1 "$(git -C "$P" rev-parse fm/pp1)" "$trunk0" g-pp1 "$old"          # landed: its head is on the trunk
+lane pp2 ship 'done [at=1]: ready'; prove_at pp2 "$(git -C "$P" rev-parse fm/pp2)" g-pp2
+parkrec pp2 "$(git -C "$P" rev-parse fm/pp2)" "$trunk0" g-pp2 "$old"            # built and proved: land
+lane pp3 ship 'done [at=1]: ready'
+parkrec pp3 "$(git -C "$P" rev-parse fm/pp3)" "$trunk0" g-pp3 "$old"             # built, not proved at that head: re-prove
+lane pp4 ship 'paused [at=1] [wait=lead] [reason=parked]: set aside'
+parkrec pp4 "$(git -C "$P" rev-parse fm/pp4)" "$trunk0" g-pp4 "$old"; git -C "$P" branch -D fm/pp4 >/dev/null   # branch gone: drop
+lane pp5 ship 'working [at=1]: coding'
+parkrec pp5 "$(git -C "$P" rev-parse fm/pp5)" "$trunk0" g-pp5 "$old"             # then a record again: the park record is stale
+printf 'kind=ship\nproject=%s\nbranch=fm/pp5\n' "$P" > "$FM/state/pp5.meta"   # the respawn's record
+lane pp6 ship 'paused [at=1] [wait=lead] [reason=parked]: set aside'; git -C "$P" branch -f fm/pp6 "$trunk0"
+parkrec pp6 "$trunk0" "$trunk0" g-pp6 "$old"                                     # no commit of its own: drop
+lane pp7 ship 'paused [at=1] [wait=lead] [reason=parked]: set aside'
+parkrec pp7 "$(git -C "$P" rev-parse fm/pp7)" "$trunk0" g-pp7                     # a fresh park: inside the recheck window
+sweep
+check "p: a parked lane whose head is on the trunk is cleaned up" "$( [ -e "$FM/state/pp1.parked" ] && echo kept || echo cleaned)" cleaned
+check "p: and it says so" "$(grep -c '^lead-sweep: pp1 was parked and its head is on the trunk; its park record is cleaned up' "$d/out")" 1
+check "p: a landed park raises no alert" "$(parked_alerts pp1)" 0
+check "p: a parked lane with a whole proof names land as the next step" "$(parked_note pp2-g-pp2)" "pp2 is parked and its work is not on the trunk: branch fm/pp2 at $(git -C "$P" rev-parse --short=12 fm/pp2); next step for its lead: land"
+check "p: the park record's lead is the owner of the obligation" "$(sed -n 's/^owner=//p' "$FM/data/lead-sweep/pp2.parked-owner")" lead
+check "p: the obligation keeps the branch, head and next step" "$(sed -n 's/^next_action=//p' "$FM/data/lead-sweep/pp2.parked-owner") $(sed -n 's/^branch=//p' "$FM/data/lead-sweep/pp2.parked-owner")" "land fm/pp2"
+check "p: the obligation names when its recheck was due" "$([ -n "$(sed -n 's/^recheck_after=//p' "$FM/data/lead-sweep/pp2.parked-owner")" ] && echo kept)" kept
+check "p: one alert, rung at the lead" "$(sed -n 's/^rung=//p' "$FM/state/alerts/parked-lane--pp2-g-pp2.rec")" 2
+check "p: an unproved park names re-prove" "$(parked_note pp3-g-pp3 | sed 's/.*next step for its lead: //')" re-prove
+check "p: a park with no branch names drop" "$(parked_note pp4-g-pp4 | sed 's/.*next step for its lead: //')" 'drop (its branch is gone)'
+check "p: a park with no commit of its own names drop" "$(parked_note pp6-g-pp6 | sed 's/.*next step for its lead: //')" drop
+check "p: a lane with a record again clears its stale park record" "$( [ -e "$FM/state/pp5.parked" ] && echo kept || echo cleared)" cleared
+check "p: a cleared park raises no alert" "$(parked_alerts pp5)" 0
+check "p: a fresh park is left alone until its recheck window runs out" "$(parked_alerts pp7)" 0
+check "p: the sweep printed the alert line once per lane" "$(parked_notes pp2)$(parked_notes pp3)$(parked_notes pp4)$(parked_notes pp6)" 1111
+sweep
+check "p: a second beat raises no second record for a lane" "$(parked_alerts pp2)" 1
+check "p: and rings nothing more" "$(grep -c "^[0-9]*	[0-9]*	check	pp2-g-pp2	" "$FM/state/.wake-queue")" 1
+prove_at pp3 "$(git -C "$P" rev-parse fm/pp3)" g-pp3; sweep
+check "p: the same alert rings again when the next step changes" "$(parked_note pp3-g-pp3 | sed 's/.*next step for its lead: //')" land
+check "p: it is still one record" "$(parked_alerts pp3)" 1
+check "p: and the changed step is printed once in that beat" "$(grep -c '^lead-sweep: pp3 is parked' "$d/out")" 1
+onto pp2; sweep
+check "p: a parked lane that lands later is cleaned up" "$( [ -e "$FM/state/pp2.parked" ] && echo kept || echo cleaned)" cleaned
+check "p: its one alert is closed with the landed commit as proof" "$(sed -n 's/^state=//p' "$FM/state/alerts/parked-lane--pp2-g-pp2.rec") $(sed -n 's/^proof=//p' "$FM/state/alerts/parked-lane--pp2-g-pp2.rec")" "resolved commit:$(git -C "$P" rev-parse fm/pp2)"
+check "p: its obligation is gone with it" "$( [ -e "$FM/data/lead-sweep/pp2.parked-owner" ] && echo kept || echo cleaned)" cleaned
 [ "$fails" -eq 0 ] || { say "FAILED: $fails"; exit 1; }
 say "PASS: lead-sweep"
