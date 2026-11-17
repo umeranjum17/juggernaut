@@ -5,8 +5,9 @@ package main
 // Receipt transitions (one owner, deliverAsk): pending -> sending -> sent; an API refusal
 // becomes failed and can retry; a lost response or restart during sending becomes ambiguous
 // and is never blindly resent. A new source digest is a new outcome, never an old receipt.
-// This first slice reads this home's asks. Missing origins, primary chat (which has no
-// outbound adapter), and unsafe/missing reports remain explicit failures in the projection.
+// Sources are this home and its local Squad Lead homes (gateway_ask_homes.go); every receipt
+// and origin note stays in this home. Missing origins, primary chat (which has no outbound
+// adapter), unreadable homes and unsafe/missing reports remain explicit in the projection.
 
 import (
 	"bytes"
@@ -19,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -26,8 +28,10 @@ import (
 
 type askOutcome struct {
 	Ticket, Note, Key, Text, Report, Digest, Problem, SourceError string
+	Home                                                          string `json:",omitempty"`
 	Delivery                                                      string
 	Parts                                                         map[string]string
+	src                                                           askHome
 }
 
 var askNote = regexp.MustCompile(`(?:owner-words:|approved-by-captain:)\s*note:([A-Za-z0-9._-]+)`)
@@ -37,11 +41,11 @@ func (a *app) askPath(key string) string {
 	return filepath.Join(a.state, "captain-chat", "ask-outcomes", key+".json")
 }
 
-func (a *app) askSources() ([]askOutcome, error) {
+func (a *app) homeAsks(h askHome) ([]askOutcome, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, filepath.Join(a.root, "bin", "jg-fleet-snapshot.sh"), "--contribution-input")
-	cmd.Env = append(os.Environ(), "JG_HOME="+a.home, "JG_STATE_OVERRIDE="+a.state, "JG_DATA_OVERRIDE="+a.data)
+	cmd.Env = h.env()
 	var diagnostic bytes.Buffer
 	cmd.Stderr = &diagnostic
 	raw, err := cmd.Output()
@@ -69,7 +73,7 @@ func (a *app) askSources() ([]askOutcome, error) {
 		if row.Ask != "ask" {
 			continue
 		}
-		o := askOutcome{Ticket: row.ID, Delivery: "pending", Parts: map[string]string{}}
+		o := askOutcome{Ticket: row.ID, Home: h.ID, Delivery: "pending", Parts: map[string]string{}, src: h}
 		body := strings.Join(row.BodyLines, "\n")
 		if m := askNote.FindStringSubmatch(body); m != nil {
 			o.Note = m[1]
@@ -79,7 +83,7 @@ func (a *app) askSources() ([]askOutcome, error) {
 		}
 		// Task metadata binds aliases; after teardown the canonical task id remains readable.
 		task := strings.ReplaceAll(row.ID, ".", "-")
-		metas, _ := filepath.Glob(filepath.Join(a.state, "*.meta"))
+		metas, _ := filepath.Glob(filepath.Join(h.state, "*.meta"))
 		for _, p := range metas {
 			b, _ := os.ReadFile(p)
 			if strings.Contains("\n"+string(b), "\nticket="+row.ID+"\n") {
@@ -87,19 +91,19 @@ func (a *app) askSources() ([]askOutcome, error) {
 				break
 			}
 		}
-		status, _ := os.ReadFile(filepath.Join(a.state, task+".status"))
+		status, _ := os.ReadFile(filepath.Join(h.state, task+".status"))
 		lines := strings.Split(strings.TrimSpace(string(status)), "\n")
 		last := lines[len(lines)-1]
 		o.Text = "Recorded result (release state unverified):\n" + last
 		terminal := row.State == "done" || strings.HasPrefix(last, "failed ") || strings.HasPrefix(last, "failed:")
-		report := filepath.Join(a.data, task, "report.md")
+		report := filepath.Join(h.data, task, "report.md")
 		if row.ReportPath != "" {
-			report = filepath.Join(a.home, row.ReportPath)
+			report = filepath.Join(h.home, row.ReportPath)
 		}
 		draft, readErr := os.ReadFile(report)
 		hash := fmt.Sprintf("%x", sha256.Sum256(draft))
-		ready, _ := os.ReadFile(filepath.Join(a.state, "recon-ready", task))
-		handoff, _ := os.ReadFile(filepath.Join(a.data, task, "handoff.tsv"))
+		ready, _ := os.ReadFile(filepath.Join(h.state, "recon-ready", task))
+		handoff, _ := os.ReadFile(filepath.Join(h.data, task, "handoff.tsv"))
 		accepted := strings.Fields(strings.TrimSpace(string(handoff)))
 		valid := len(accepted) >= 6 && accepted[len(accepted)-4] == "accepted" && accepted[len(accepted)-3] == hash
 		if readErr == nil && len(draft) > 0 && (valid || len(accepted) == 0 && strings.TrimSpace(string(ready)) == hash) {
@@ -115,8 +119,16 @@ func (a *app) askSources() ([]askOutcome, error) {
 		if strings.TrimSpace(last) == "" && o.Report == "" {
 			o.Text = "Your ask was closed: " + row.Title + ". No final result is recorded."
 		}
+		if row.State == "done" {
+			closures, _ := os.ReadFile(filepath.Join(h.data, "captain-closures.md"))
+			for _, line := range strings.Split(string(closures), "\n") {
+				if f := strings.SplitN(line, "\t", 3); len(f) == 3 && f[1] == row.ID {
+					o.Text, o.Report = "Your ask was closed: "+row.Title+".\n"+f[2], ""
+				}
+			}
+		}
 		o.Digest = hash
-		o.Key = fmt.Sprintf("%x", sha256.Sum256([]byte(row.ID+"\x00"+o.Note+"\x00"+o.Text+"\x00"+hash)))
+		o.Key = fmt.Sprintf("%x", sha256.Sum256([]byte(h.keyTag()+row.ID+"\x00"+o.Note+"\x00"+o.Text+"\x00"+hash)))
 		if b, err := os.ReadFile(a.askPath(o.Key)); err == nil {
 			var saved askOutcome
 			if json.Unmarshal(b, &saved) != nil || saved.Parts == nil || saved.Key != o.Key {
@@ -145,7 +157,7 @@ func (a *app) saveAsk(o *askOutcome) error {
 }
 
 func (a *app) deliverAsk(ad Adapter, o *askOutcome) error {
-	if o.Delivery == "sent" || o.Delivery == "ambiguous" {
+	if o.Delivery == "sent" || o.Delivery == "ambiguous" || o.Delivery == "unreadable" {
 		return nil
 	}
 	if o.Delivery == "sending" {
@@ -174,20 +186,22 @@ func (a *app) deliverAsk(ad Adapter, o *askOutcome) error {
 		return fail("no outbound adapter for the " + origin[1] + " origin")
 	}
 	allowed := strings.FieldsFunc(a.cfgOr("telegram-allow-user", ""), func(r rune) bool { return r == ',' || r == ' ' })
-	if !containsString(allowed, origin[2]) {
+	if !slices.Contains(allowed, origin[2]) {
 		return fail("the origin is no longer an allowed owner chat")
 	}
 	w := where{origin[2], origin[3]}
 	var attachments []string
 	if o.Report != "" {
-		if _, why := a.vetAttachment(ad.Out(), o.Report); why != "" {
-			return fail(why)
+		for _, v := range a.attachmentVetters(o.src) {
+			if _, why := v.vetAttachment(ad.Out(), o.Report); why != "" {
+				return fail(why)
+			}
 		}
 		b, err := os.ReadFile(o.Report)
 		if err != nil || fmt.Sprintf("%x", sha256.Sum256(b)) != o.Digest {
 			return fail("the report changed or cannot be read; this acceptance cannot deliver it")
 		}
-		frozen := a.askPath(o.Key) + ".report.md"
+		frozen := filepath.Join(filepath.Dir(a.askPath(o.Key)), o.Key, "report.md")
 		if err := os.MkdirAll(filepath.Dir(frozen), 0o700); err != nil {
 			return err
 		}
@@ -225,15 +239,6 @@ func (a *app) deliverAsk(ad Adapter, o *askOutcome) error {
 	}
 	o.Delivery, o.Problem = "sent", ""
 	return a.saveAsk(o)
-}
-
-func containsString(all []string, s string) bool {
-	for _, v := range all {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }
 
 func (a *app) followAskOutcomes(ad Adapter) error {

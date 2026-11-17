@@ -2370,6 +2370,16 @@ journeys:
     command: node journeys/codex-lead-queued-wake.mjs
     timeout: 180s
 
+  ask-outcomes:
+    tier: local
+    command: >-
+      python3 journeys/ask-outcomes.py &&
+      bash bin/jg-test-run.sh tests/jg-bus-gateway.test.sh > "$DONE_DONE_EVIDENCE_ROOT/gateway.log" 2>&1 &&
+      bash bin/jg-test-run.sh tests/jg-bus-account-isolation.test.sh > "$DONE_DONE_EVIDENCE_ROOT/accounts.log" 2>&1 &&
+      bash bin/jg-lint.sh > "$DONE_DONE_EVIDENCE_ROOT/lint.log" 2>&1 &&
+      bash bin/jg-doc-audience-check.sh > "$DONE_DONE_EVIDENCE_ROOT/docs.log" 2>&1
+    timeout: 15m
+
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'

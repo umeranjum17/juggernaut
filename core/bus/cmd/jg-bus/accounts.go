@@ -96,18 +96,32 @@ func resolveHome(path string) string {
 	return filepath.Clean(path)
 }
 
-// registeredHomes reads the machine's Squad Lead registry: resolved home path -> id.
-func (a *app) registeredHomes() map[string]string {
-	data := a.registryData()
+// squadLead is one entry of a data directory's Squad Lead registry; remote entries route over SSH.
+type squadLead struct {
+	id, home string
+	remote   bool
+}
+
+// squadLeadEntries reads the Squad Lead registry in one data directory.
+func squadLeadEntries(data string) []squadLead {
 	raw, err := os.ReadFile(filepath.Join(data, "squad_leads.md"))
 	if err != nil {
 		raw, _ = os.ReadFile(filepath.Join(data, "secondmates.md"))
 	}
-	out := map[string]string{}
+	var out []squadLead
 	for _, line := range strings.Split(string(raw), "\n") {
 		if m := registryHomeRe.FindStringSubmatch(line); m != nil && strings.TrimSpace(m[2]) != "" {
-			out[resolveHome(strings.TrimSpace(m[2]))] = m[1]
+			out = append(out, squadLead{m[1], strings.TrimSpace(m[2]), strings.Contains(line, "(host:")})
 		}
+	}
+	return out
+}
+
+// registeredHomes reads the machine's Squad Lead registry: resolved home path -> id.
+func (a *app) registeredHomes() map[string]string {
+	out := map[string]string{}
+	for _, e := range squadLeadEntries(a.registryData()) {
+		out[resolveHome(e.home)] = e.id
 	}
 	return out
 }
