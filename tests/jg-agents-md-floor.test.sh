@@ -33,6 +33,21 @@ for skill in validation-supervision ship-landing; do
   grep -qF -- 'nine steps' "$ROOT/.agents/skills/$skill/SKILL.md" || fail "$skill does not name the owner of the nine steps"
 done
 
+# Owner rule 10445fb9 (captain, 2026-11-11: skip some verification, bare minimum, until the fleet is stable; full
+# checks return only on his word) is enforced by the precedence section and the intake line that point to it. Removing
+# any of these sentences stops a current explicit captain instruction from lowering rigor at a validation or landing
+# choice, or lets one request turn into standing authority.
+precedence=$(awk '/^## Captain instruction precedence$/{f=1;next} /^## /{f=0} f' "$agents")
+for line in 'A current, explicit, concrete captain instruction overrides any conflicting standing rule written above.' \
+  'convert one request into standing authority' \
+  'merge authority is not a substitute for a current explicit captain instruction'; do
+  printf '%s\n' "$precedence" | grep -qF -- "$line" || fail "precedence section lost '$line'"
+done
+grep -qF -- 'A current explicit captain instruction wins; otherwise the project'"'"'s registry entry is the captain'"'"'s standing posture' "$agents" \
+  || fail "AGENTS.md intake lost the rule that a current explicit captain instruction wins over the standing posture"
+grep -qF -- 'the captain-instruction precedence rule below owns when a current explicit captain instruction overrides' "$agents" \
+  || fail "AGENTS.md hard rules no longer point at the precedence section"
+
 rows=0
 while IFS='|' read -r section dest anchor; do
   [ -n "$section" ] || continue
