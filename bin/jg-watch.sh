@@ -4268,7 +4268,7 @@ EOF
     if [ -n "$unalerted_checks" ]; then
       reason="check: rejected unauthenticated state checks:$unalerted_checks"
       JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" raise security "unauthenticated-state-checks-$(date +%s)-$$" \
-        --note "rejected unauthenticated state checks:$unalerted_checks" --deliver || exit 1
+        --security-source unauthenticated-state-checks --note "rejected unauthenticated state checks:$unalerted_checks" --deliver || exit 1
     fi
     # Recorded after the durable append, so a failed append alerts again next sweep.
     # shellcheck disable=SC2086

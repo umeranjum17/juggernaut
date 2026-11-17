@@ -10,7 +10,9 @@ set -u
 
 AL="$ROOT/bin/jg-alert.sh"; JM="$ROOT/bin/jg-machine.sh"; RI="$ROOT/bin/jg-ready-idle.sh"
 T=$(cd "$(jg_test_tmproot jg-alert)" && pwd); H=$T/home
-mkdir -p "$H/state"
+mkdir -p "$H/state" "$H/config"
+printf 'set mode shadow\nset dapr-http-url http://127.0.0.1:1\n' > "$H/config/captain-channel"
+export JG_CAPTAIN_CHANNEL="$H/config/captain-channel"
 export JG_HOME="$H" JG_STATE_OVERRIDE="$H/state"
 al() { OUT=$(bash "$AL" "$@" 2>&1); RC=$?; }
 rec() { bash "$AL" show "$1" | sed -n "s/^$2=//p"; }

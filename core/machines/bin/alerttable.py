@@ -24,12 +24,15 @@ def chain(alert):
     """(first, then, board card) of one alert: the holder of its first rung, the holder one rung up (or -), and whether the owner's card is reached."""
     row = next(r for r in rows("alert") if r[1] == alert)
     prec, first = row[4], row[5]
-    top, lift = next((r[4], r[5]) for r in rows("ladder") if r[1] == prec)
-    card = "yes" if top == "4" else ("when " + lift if lift != "-" else "never")
+    top = next(r[4] for r in rows("ladder") if r[1] == prec)
+    cls = "security-awareness" if alert == "security" else "team-action"
+    ceiling = int(next(r[2] for r in rows("authority") if r[1] == cls))
+    card = "yes" if ceiling == 4 else "when a matching owner gate is open"
     if first == "wait":
         return "the one the wait names", "one rung up", card
     start = int(first)
     top = min(start + 2, 3) if top == "start+2" else int(top)
+    top = min(top, ceiling)
     return HOLDERS[start], HOLDERS[start + 1] if top > start else "-", card
 
 

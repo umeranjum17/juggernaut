@@ -60,8 +60,8 @@ assert_contains "$OUT" "state wait emits 'queue', which is not <event>@<machine>
 pass "the emits column names an event that the receiving machine has"
 
 TABLES=$ROOT/core/machines/tables jm escalation ticket; expect_code 0 "$RC" "escalation reads the shipped ticket table"
-assert_contains "$OUT" "$(printf 'ready\twaiting\t-\t10m -> alert ready-idle\tready-idle\tthe lead\tMain\tnever')" "ready: ready-idle tells the lead, then Main, and no board card"
-assert_contains "$OUT" "$(printf 'released\twaiting\t-\t10m -> alert drift\tdrift\tthe lead\tMain\twhen owner-answer')" "released: drift tells the lead, then Main"
+assert_contains "$OUT" "$(printf 'ready\twaiting\t-\t10m -> alert ready-idle\tready-idle\tthe lead\tMain\twhen a matching owner gate is open')" "ready: owner awareness needs a matching gate"
+assert_contains "$OUT" "$(printf 'released\twaiting\t-\t10m -> alert drift\tdrift\tthe lead\tMain\twhen a matching owner gate is open')" "released: drift tells the lead, then Main"
 pass "escalation prints who is told first, next, and by a board card"
 
 # --- the dot text ----------------------------------------------------------------------------------------------------------------------

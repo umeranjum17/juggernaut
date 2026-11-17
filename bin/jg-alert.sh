@@ -9,6 +9,10 @@
 #   jg-alert.sh raise <alert> <subject> [--mode <delivery word>] [--kind <kind>] [--held <seconds>] [--fact k=v | word]...
 #                     [--home H] [--project P] [--route R] [--machine M] [--ticket T] [--rung N] [--wake <kind> --text <line>] [--repeat]
 #                     [--note <text>] [--deliver | --print]
+#                     [--owner-gate G --ticket T --origin O | --security-source S]
+# Owner delivery requires a current open gate for that ticket/origin or an allowed typed security producer.
+# Team alerts stop at Main, including derived escalation-stuck alerts; facts never grant owner authority.
+# --source-alert K is reserved for escalation-stuck derivation from K's stuck episode.
 #   jg-alert.sh capacity <producer> <text> [--deliver | --print]   raise the capacity alert for a quota, account, model or machine-slot event
 #   jg-alert.sh climb <key> [--now <epoch>]   take the next rung when the rung's timer ran out; at the top rung repeat the ring when the repeat timer ran
 #                                           out, and after the ladder's repeats make the alert stuck (see below)
@@ -28,7 +32,7 @@
 # --note records the producer's own text (one line) in the record and the wake; --deliver pipes the ring through `deliver` at once; --print prints the wake line a registered check hands the watcher instead of a ring.
 # capacity is the one entry every capacity producer calls: the subject is the producer, and a new event of it resolves its last one.
 # A stuck alert (the ladder's column 7 gives the repeats) is quiet and does not climb. Its climb prints a `stuck` line once and the ring of one
-# escalation-stuck alert (the owner's card and page); resolving the stuck alert resolves that card too. escalation-stuck never repeats.
+# escalation-stuck alert with the source's authority; resolving the stuck alert resolves that recovery too. escalation-stuck never repeats.
 # A row whose fires-at is `limit` reads the limit of --kind, or of the kind named like the alert when no --kind is given (stranded: 48 h, or
 # --kind stranded-release: 4 h).
 # deliver turns a ring into the wake its holder reads: the tick only records it (settled, no wake); worker, lead, main and owner get one
@@ -49,6 +53,8 @@ _names() { awk -F'\t' -v k="$1" -v m="$2" -v l="${3:-}" '$1=="state" && (k=="" |
 s_open=$(_names initial ""); s_ack=$(_names normal waiting); s_inh=$(_names normal rest release); s_stuck=$(_names normal rest resolve); s_res=$(_names terminal "")
 _put() { local f=$1; shift; mkdir -p "$(dirname "$f")"; printf '%s\n' "$@" >"$f.tmp.$$" && mv "$f.tmp.$$" "$f"; }
 _set() { local f=$1 k=$2 v=$3; { grep -v "^$k=" "$f" 2>/dev/null; printf '%s=%s\n' "$k" "$v"; } >"$f.tmp.$$" && mv "$f.tmp.$$" "$f"; }
+# shellcheck source=bin/jg-alert-authority-lib.sh
+. "$_root/bin/jg-alert-authority-lib.sh"
 
 # _quiet <quiet-when> <fact>...: 0 when a fact set matches. `+` separates alternatives, `,` joins facts that must all hold, `a|b` lists values.
 _quiet() {
@@ -104,6 +110,7 @@ cmd_timers() {
 
 cmd_raise() {
   local name=${1:-} subj=${2:-} mode='' kind='' held='' facts=() sc_home='' sc_project='' sc_route='' sc_machine='' sc_ticket='' note='' now_deliver=0 now_print=0 rung='' wake='' text='' again=''
+  local cls=team-action gate='' origin='' security='' source='' source_episode='' authority_alert=$name ceiling top
   [ -n "$name" ] && [ -n "$subj" ] || { _rc=2 _die "usage: raise <alert> <subject> [options]"; }
   shift 2
   while [ "$#" -gt 0 ]; do
@@ -113,6 +120,7 @@ cmd_raise() {
     [ "$#" -ge 2 ] || { _rc=2 _die "option $1 needs a value"; }
     case $1 in
       --mode) mode=$2 ;; --kind) kind=$2 ;; --held) held=$2 ;; --fact) facts+=("$2") ;;
+      --owner-gate) gate=$2 ;; --origin) origin=$2 ;; --security-source) security=$2 ;; --source-alert) source=$2 ;;
       --home) sc_home=$2 ;; --project) sc_project=$2 ;; --route) sc_route=$2 ;; --machine) sc_machine=$2 ;; --ticket) sc_ticket=$2 ;; --rung) rung=$2 ;; --wake) wake=$2 ;; --text) text=$2 ;; --note) note=$(printf '%s' "$2" | tr '\t\r\n' '   ') ;;
       *) _rc=2 _die "unknown option $1" ;;
     esac
@@ -133,6 +141,22 @@ cmd_raise() {
     case $start in [0-4]) ;; *) _die "stuck-wait needs --fact wait=worker|lead|main" ;; esac
   fi
   case $rung in '') ;; [0-4]) start=$rung ;; *) _rc=2 _die "--rung is 0 to 4" ;; esac
+  if [ -n "$source" ]; then
+    local parent; parent=$(_rec "$source" authority) || exit 1
+    [ "$name" = escalation-stuck ] && [ "$subj" = "$source" ] && [ "$(_get "$parent" state)" = "$s_stuck" ] \
+      || _die "derived alert needs its exact stuck source; Main recovery required"
+    cls=$(_get "$parent" authority_class); cls=${cls:-team-action}
+    gate=$(_get "$parent" owner_gate); origin=$(_get "$parent" origin); security=$(_get "$parent" security_source)
+    authority_alert=$(_get "$parent" authority_alert); sc_ticket=$(_get "$parent" ticket)
+    source_episode=$(_get "$parent" episode)
+  elif [ -n "$gate" ]; then cls='owner-call'
+  elif [ "$name" = security ]; then cls='security-awareness'
+  fi
+  _authority_check "$cls" "$gate" "$sc_ticket" "$origin" "$security" "$authority_alert" \
+    || _die "invalid $cls authority for $name; Main recovery required"
+  ceiling=$(_rows authority | awk -F'\t' -v c="$cls" '$2==c {print $3}')
+  [ -n "$ceiling" ] || _die "no authority ceiling for $cls"
+  [ "$start" -le "$ceiling" ] || _die "rung $start exceeds $cls authority; Main recovery required"
   text=$(printf '%s' "$text" | tr '\n\t' '  ')
   local key="$name--$subj" file; file="$(_dir)/$key.rec"
   case $key in */*|*..*) _die "bad subject '$subj'" ;; esac
@@ -151,10 +175,15 @@ cmd_raise() {
     fi
   fi
   start=$(_cap "$name" "$prec" "$start" "${facts[@]}")
+  top=$(_top "$prec" "$start" "${facts[@]}")
+  [ "$cls" != owner-call ] || top=$ceiling
+  [ "$top" -le "$ceiling" ] || top=$ceiling
   local now cover; now=${JG_ALERT_NOW:-$(date +%s)}
   cover=$(_cover "$name" "$prec" "$sc_home" "$sc_project" "$sc_route" "$sc_machine" "$sc_ticket" || true)
   local st=$s_open
-  _put "$file" "alert=$name" "subject=$subj" "mode=$mode" "precedence=$prec" "rung=$start" "top=$(_top "$prec" "$start" "${facts[@]}")" \
+  _put "$file" "alert=$name" "subject=$subj" "mode=$mode" "precedence=$prec" "rung=$start" "top=$top" \
+    "authority_class=$cls" "owner_gate=$gate" "origin=$origin" "security_source=$security" "authority_alert=$authority_alert" \
+    "episode=$now-$$-$RANDOM" "source_key=$source" "source_episode=$source_episode" \
     "since=$now" "rung_at=$now" "home=$sc_home" "project=$sc_project" "route=$sc_route" "machine=$sc_machine" "ticket=$sc_ticket" "note=$note" "wake=$wake" "text=$text" "repeats=0" "state=$st"
   if [ -n "$cover" ]; then
     _edge "$st" "$s_inh" || _die "the alert table has no inhibit move"
@@ -187,12 +216,18 @@ _cover() {
 }
 _scope_of() { case $1 in home) echo "$2" ;; project) echo "$3" ;; route) echo "$4" ;; machine) echo "$5" ;; ticket) echo "$6" ;; esac; }
 
-_rec() { local f; f="$(_dir)/${1:?usage: $2 <key>}.rec"; [ -r "$f" ] || _die "no alert '$1'"; printf '%s\n' "$f"; }
+_rec() {
+  case ${1:-} in ''|*/*|*..*) _die "invalid alert key; Main recovery required" ;; esac
+  local f; f="$(_dir)/$1.rec"; [ -r "$f" ] || _die "no alert '$1'"; printf '%s\n' "$f"
+}
 
 cmd_climb() {
   local f now=${JG_ALERT_NOW:-$(date +%s)}; f=$(_rec "${1:-}" climb) || exit 1
   [ "${2:-}" != --now ] || now=${3:?--now needs an epoch}
   local st rung top prec after; st=$(_get "$f" state); rung=$(_get "$f" rung); top=$(_get "$f" top); prec=$(_get "$f" precedence)
+  local ceiling; ceiling=$(_authority_top "$f")
+  [ "$top" -le "$ceiling" ] || { top=$ceiling; _set "$f" top "$top"; }
+  [ "$rung" -le "$top" ] || _die "owner authority no longer valid; Main recovery required for $1"
   _edge "$st" "$st" && [ "$st" = "$s_open" ] || _die "alert '$1' is $st: only an open alert climbs"
   [ "$rung" -lt "$top" ] || { _repeat "$f" "$1" "$now" "$prec" "$rung"; return; }
   after=$(_rows ladder | awk -F'\t' '$2==p {print $3}' p="$prec")
@@ -219,7 +254,8 @@ _repeat() {
   _edge "$s_open" "$s_stuck" || _die "the alert table has no stuck move"
   _set "$f" state "$s_stuck"
   printf 'stuck\t%s\t%s\t%s\n' "$key" "$rung" "$(_holder "$rung")"
-  cmd_raise escalation-stuck "$key" --note "$name sat at rung $rung through $max repeats with no answer"
+  local recovery=$rung; [ "$recovery" -ge 3 ] || recovery=3
+  cmd_raise escalation-stuck "$key" --source-alert "$key" --rung "$recovery" --note "Main recovery required: $name sat at rung $rung through $max repeats with no action"
 }
 _move() {  # _move <key> <from word> <to word>
   local f; f=$(_rec "$1" move) || exit 1
@@ -271,13 +307,23 @@ cmd_deliver() {
     [ "$tag" != stuck ] || continue   # the stuck line only tells the caller; the card's ring is the page
     [ "$tag" = ring ] && [ -n "$holder" ] || _die "not a ring line: '$tag'"
     rec=$(_rec "$key" deliver) || exit 1
+    [ "$(_get "$rec" state)" != "$s_res" ] || _die "resolved alert cannot ring; Main must reconcile $key"
+    [ "$rung" = "$(_get "$rec" rung)" ] && [ "$holder" = "$(_holder "$rung")" ] \
+      || _die "ring does not match $key; Main recovery required"
+    if [ "$holder" = owner ] && { ! _authority_record "$rec" || [ "$(_authority_top "$rec")" != 4 ]; }; then
+      _set "$rec" recovery_owner main
+      jg_wake_append check "alert-authority-$key" "Main recovery required: owner delivery refused for $key" \
+        || _die "Main recovery wake failed for $key"
+      _die "owner delivery refused for $key: missing, stale or invalid authority; Main recovery required"
+    fi
     payload=$(_payload "$key" "$rung" "$holder")
     kind=$(_get "$rec" wake)
     if [ -n "$kind" ] && [ "$holder" != tick ]; then jg_wake_append "$kind" "$(_get "$rec" subject)" "$(_get "$rec" text)" || _die "the wake for $key was not appended"
     elif [ "$holder" = tick ]; then jg_wake_settle check "alert-$key" "$payload"
     else jg_wake_append check "alert-$key" "$payload" || _die "the wake for $key was not appended"; fi
     # The owner's rung is the captain's chat: the same ring goes out as a captain-facing `alert` event (jg-bus.sh owns the Telegram send).
-    [ "$holder" != owner ] || "$_root/bin/jg-bus.sh" publish alert "alert-$key" "$payload" >/dev/null 2>&1 || true
+    [ "$holder" != owner ] || "$_root/bin/jg-bus.sh" publish alert "alert-$key" "$payload" >/dev/null \
+      || _die "owner publication failed for $key; Main recovery required"
   done
 }
 

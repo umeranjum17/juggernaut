@@ -44,4 +44,4 @@ wakes=$(grep '^W' <<<"$rows" | cut -f2-)
 [ -n "$wakes" ] || exit 0
 note=$(printf 'delete guard blocked %s recursive delete(s) of a literal path outside temp and scratch folders, see %s; latest: %s' \
   "$(wc -l <<<"$wakes")" "$LOG" "$(tail -n 5 <<<"$wakes" | paste -sd ';' -)")
-JG_HOME="$1" "$1/bin/jg-alert.sh" raise security "delete-guard-$(date +%s)-$$" --note "$note" --deliver
+JG_HOME="$1" "$1/bin/jg-alert.sh" raise security "delete-guard-$(date +%s)-$$" --security-source delete-guard --note "$note" --deliver

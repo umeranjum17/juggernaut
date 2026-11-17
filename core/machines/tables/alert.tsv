@@ -3,7 +3,7 @@ enum	alert
 state	open	initial	The alert rings and nobody has taken it.	rung,precedence	waiting	5m -> climb
 state	acknowledged	normal	Someone has taken it.	rung,precedence	waiting	10m -> reopen
 state	inhibited	normal	A higher alert covers it.	covered_by	rest	release
-state	stuck	normal	It stayed at its top rung past its repeats, so one card and one page went out; it rings no more.	repeats	rest	resolve
+state	stuck	normal	It exhausted its repeats and retains a recovery with the same recipient authority.	repeats	rest	resolve
 state	resolved	terminal	The cause is gone.	-
 group	live	open	acknowledged	inhibited	stuck
 edge	(none)	fire	open	bin/jg-alert.sh:cmd_raise	-	the named state holds past the row's timer	jg-alert

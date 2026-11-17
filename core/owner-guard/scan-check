@@ -73,7 +73,7 @@ esac
 # The line goes only after the alert is recorded, so a refused alert is tried again on the next run.
 if [ -f "$RES" ]; then
   line=$(cat "$RES" 2>/dev/null || true)
-  if [ -z "$line" ] || JG_HOME="$M" "$M/bin/jg-alert.sh" raise security "owner-details-scan-$(date +%s)-$$" --note "$line" --deliver; then rm -f -- "$RES"; fi
+  if [ -z "$line" ] || JG_HOME="$M" "$M/bin/jg-alert.sh" raise security "owner-details-scan-$(date +%s)-$$" --security-source owner-details-scan --note "$line" --deliver; then rm -f -- "$RES"; fi
 fi
 
 now=$(date +%s)

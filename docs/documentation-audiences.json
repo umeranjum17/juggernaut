@@ -820,6 +820,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/done-done-verify-suites/features/alert-authority.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/done-done-verify-suites/features/tickets-beads-checks.md",
       "audience": "agent-runtime"
     },
