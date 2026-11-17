@@ -1743,6 +1743,8 @@ The four tiers are `easy`, `standard`, `hard`, and `frontier`, and each one's or
 **Fields applied only by typed resolution**
 
 Rule `approval`, `min_confidence`, and `floor`, and profile `provider` and `floor` are optional declarations that only [typed dispatch resolution](#typed-dispatch-resolution-env-typesafe_api_key) applies in code; without that opt-in they are inert, and Juggernaut's own intake reads them as ordinary hints.
+Profile `billing` optionally declares `plan`, `flat-plan`, `credits`, or `overage`; only `flat-plan` changes quota ranking, under the [selection owner's flat-plan procedure](../.agents/skills/quota-array-dispatch/SKILL.md#rank-by-spendpriority).
+For example, a matched profile can be `{"harness":"pi","model":"ollama-cloud/deepseek-v4.1-flash","provider":"ollama-cloud","billing":"flat-plan"}` beside a metered Terra fallback in the same `use` array.
 The resolver supplies the fixed neutral Choice option `No listed rule applies to this task.` for work that matches no listed rule.
 
 - `approval` accepts only `"captain"` and means a task the rule matches is never dispatched from the tool's answer alone.
@@ -1929,12 +1931,13 @@ After the answer, code applies all remaining checks and ranking:
 
 - The confidence floor and the matched rule's `approval` and `floor`.
 - Each candidate's `provider` and `floor`.
+- Each candidate's `route-select` owner-clause decision from `bin/jg-clause.sh` before ranking.
 - Every applicable account-wide and model/product row from one `quota-axi --json` snapshot.
-- The numeric `spendPriority` argmax over candidates, using each candidate's limiting row.
+- The [selection owner's ranking procedure](../.agents/skills/quota-array-dispatch/SKILL.md#rank-by-spendpriority), including explicit flat plans and the numeric `spendPriority` argmax using each metered candidate's limiting row.
 
 The [shared quota library](../bin/jg-quota-axi-lib.sh) accepts schema 5 and schema 6 and implements the [account-matching contract](../.agents/skills/quota-array-dispatch/SKILL.md#1-eligibility).
 
-- An expanded provider with no matching account row leaves the candidate eligible but unranked.
+- An expanded provider with no matching account row leaves the candidate eligible but unranked, including a declared flat plan.
 - Known applicable rows from a provider with partial quota semantics remain rankable; rows whose own status is not known remain unrankable.
 
 **Confidence and fallback rules**

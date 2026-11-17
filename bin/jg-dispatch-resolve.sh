@@ -29,7 +29,11 @@
 #   bin/jg-quota-axi-lib.sh, so a Pi lane such as openai-codex-work/...
 #   reads its own account's row and an expanded provider with no row for the
 #   candidate is unmeasured, never blocked), and the spendPriority argmax over
-#   the eligible candidates. The model never sees quota, catalogs, approvals,
+#   the eligible candidates. An explicit billing=flat-plan profile with no
+#   provider in the snapshot and no floor ranks ahead without a quota scalar;
+#   a present provider row still follows every existing quota gate. Before
+#   ranking, jg-clause.sh applies route-select owner rules to each candidate.
+#   The model never sees quota, catalogs, approvals,
 #   confidence floors, `why`, or `use`. With no rules, it returns a non-clear
 #   result so juggernaut keeps using the existing intake.
 #   docs/configuration.md "Crew dispatch profiles" owns the declared fields and
@@ -188,7 +192,7 @@ include "jg-profile";
   elif (unknown_tiers($tier_map) | length) > 0 then "unknown tier: " + (unknown_tiers($tier_map) | join(", ")) + " (tiers are easy, standard, hard, and frontier)"
   elif (unconfigured_rule_tiers($tier_map) | length) > 0 then "each rule tier needs a tiers entry: " + (unconfigured_rule_tiers($tier_map) | join(", "))
   elif any($tier_map[]; (profiles(.) | length) == 0) then "each tier needs at least one profile"
-  elif any($tier_map[] | profiles(.)[]; profile_bad(.)) then "each tier profile needs harness; model, effort, and floor must be well formed, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\\z when present"
+  elif any($tier_map[] | profiles(.)[]; profile_bad(.)) then "each tier profile needs harness; model, effort, and floor must be well formed; billing must be plan, flat-plan, credits, or overage; provider must match ^[a-z0-9]+(-[a-z0-9]+)*\\z when present"
   elif any($tier_map[]; duplicate_profiles(profiles(.))) then "each tier must not contain duplicate harness, model, and effort profiles"
   elif any($tier_map[] | profiles(.)[]; (verified(.harness) | not)) then "each tier profile must name a verified harness"
   elif any($tier_map[] | profiles(.)[]; (effort_ok(.harness; .model; .effort) | not)) then "each tier profile effort must be supported by its harness and model"
@@ -198,12 +202,12 @@ include "jg-profile";
   elif any((.rules // [])[]; has("select") and .select != "quota-balanced") then
     "unknown select: " + ([.rules[] | select(has("select") and .select != "quota-balanced") | .select] | unique | join(", "))
   elif any((.rules // [])[]; has("floor") and floor_bad(.floor; true)) then "rule floor needs scope, min_percent 0..100, and provider matching ^[a-z0-9]+(-[a-z0-9]+)*\\z"
-  elif any((.rules // [])[] | profiles(.use)[]; profile_bad(.)) then "each use profile needs harness; model, effort, and floor must be well formed, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\\z when present"
+  elif any((.rules // [])[] | profiles(.use)[]; profile_bad(.)) then "each use profile needs harness; model, effort, and floor must be well formed; billing must be plan, flat-plan, credits, or overage; provider must match ^[a-z0-9]+(-[a-z0-9]+)*\\z when present"
   elif any((.rules // [])[]; duplicate_profiles(profiles(.use))) then "each rule use must not contain duplicate harness, model, and effort profiles"
   elif any((.rules // [])[] | profiles(.use)[]; (verified(.harness) | not)) then "each use profile must name a verified harness"
   elif any((.rules // [])[] | profiles(.use)[]; (effort_ok(.harness; .model; .effort) | not)) then "each use profile effort must be supported by its harness and model"
   elif has("default") and (profiles(.default) | length) == 0 then "default must be a profile object or non-empty profile array"
-  elif has("default") and any(profiles(.default)[]; profile_bad(.)) then "each default profile needs harness; model, effort, and floor must be well formed, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\\z when present"
+  elif has("default") and any(profiles(.default)[]; profile_bad(.)) then "each default profile needs harness; model, effort, and floor must be well formed; billing must be plan, flat-plan, credits, or overage; provider must match ^[a-z0-9]+(-[a-z0-9]+)*\\z when present"
   elif has("default") and duplicate_profiles(profiles(.default)) then "default must not contain duplicate harness, model, and effort profiles"
   elif has("default") and any(profiles(.default)[]; (verified(.harness) | not)) then "each default profile must name a verified harness"
   elif has("default") and any(profiles(.default)[]; (effort_ok(.harness; .model; .effort) | not)) then "each default profile effort must be supported by its harness and model"
@@ -394,6 +398,10 @@ RESULT=$(jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg non
   def evaluate($c):
     (provider_of($c)) as $p | (lane_of($c)) as $lane |
     if $p == null then {profile: $c, eligible: false, reason: "no provider family for harness \($c.harness); declare provider on the profile"}
+    elif $c.billing == "flat-plan" and $c.floor == null and
+         (any($q.providers[]; .provider == $p) | not) then
+      {profile: $c, provider: $p, eligible: true, flatPlan: true,
+       reason: "declared flat plan: no quota window applies"}
     elif prov($p; $lane) == null then
       {profile: $c, provider: $p, eligible: true, unranked: true,
        reason: (if any($q.providers[]; .provider == $p)
@@ -494,22 +502,53 @@ RESULT=$(jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg non
   elif $sel.escalate then
     $ev + {status: "escalate", reason: $sel.escalate, candidates: ($answer_use | map(evaluate(.)))}
   elif ($sel.use | length) == 0 then $ev + {status: "escalate", reason: "no profiles configured for \($sel.source)", note: $sel.note, candidates: []}
-  else
-    ($sel.use | map(evaluate(.))) as $cands |
-    ([$cands[] | select(.eligible and ((.unranked // false) | not))]) as $elig |
-    ([$cands[] | select(.unranked)]) as $unranked |
-    if ($elig | length) == 0 then $ev + {status: "escalate", reason: "no rankable eligible candidate", note: $sel.note, candidates: $cands}
+  else $ev + {status: "rank", note: $sel.note, candidates: ($sel.use | map(evaluate(.)))}
+  end') || emit_error "resolution failed"
+
+# The existing clause evaluator owns time windows and owner policy. Pass only
+# this answer's candidates, never all configured routes or another rule's use.
+CANDIDATES='[]'
+HARD=$(jq -r '.tier == "hard" or .tier == "frontier"' <<<"$RESULT")
+while IFS= read -r candidate; do
+  if [ "$(jq -r '.eligible' <<<"$candidate")" = true ]; then
+    verdict=$(bash "$SCRIPT_DIR/jg-clause.sh" decide route-select \
+      "route=route:$(jq -r '.profile.model // .profile.harness' <<<"$candidate")" \
+      "provider=$(jq -r '.provider // ""' <<<"$candidate")" \
+      "harness=$(jq -r '.profile.harness' <<<"$candidate")" \
+      "model=$(jq -r '.profile.model // ""' <<<"$candidate")" \
+      "billing=$(jq -r '.profile.billing // "plan"' <<<"$candidate")" \
+      "only=$(jq -r '.profile.only // ""' <<<"$candidate")" \
+      "hard=$HARD" "project=$PROJECT") || emit_error "owner-rule evaluation failed"
+    jq -e '.action as $a | ["allow", "warn", "skip", "deny"] | index($a) != null' \
+      <<<"$verdict" >/dev/null || emit_error "invalid owner-rule decision"
+    candidate=$(jq -c --argjson v "$verdict" '
+      if $v.action == "skip" or $v.action == "deny" then
+        . + {eligible: false, unranked: false, reason: "owner rule \($v.clause): \($v.reason)"}
+      elif $v.action == "warn" then . + {ownerWarning: $v.reason}
+      else . end' <<<"$candidate") || emit_error "owner-rule result failed"
+  fi
+  CANDIDATES=$(jq -c --argjson c "$candidate" '. + [$c]' <<<"$CANDIDATES") || emit_error "candidate accounting failed"
+done < <(jq -c '.candidates[]?' <<<"$RESULT")
+
+RESULT=$(jq --argjson cands "$CANDIDATES" '
+  . + {candidates: $cands} |
+  if .status != "rank" then . else
+    ([$cands[] | select(.eligible and ((.unranked // false) | not))]) as $eligible |
+    ([$eligible[] | select(.flatPlan)]) as $flat |
+    (if ($flat | length) > 0 then $flat else $eligible end) as $ranked |
+    ([$cands[] | select(.eligible and .unranked)]) as $unranked |
+    if ($ranked | length) == 0 then . + {status: "escalate", reason: "no rankable eligible candidate"}
     else
-      ($elig | max_by(.spendPriority)) as $best |
-      ([$elig[] | select(.spendPriority == $best.spendPriority)] | length) as $ties |
-      if $ties > 1 then $ev + {status: "escalate", reason: "genuine spendPriority tie", note: $sel.note, candidates: $cands}
-      else $ev + {status: "clear", note: $sel.note, candidates: $cands, chosen: $best}
+      ($ranked | max_by(.spendPriority)) as $best |
+      ([$ranked[] | select(.spendPriority == $best.spendPriority)] | length) as $ties |
+      if $ties > 1 then . + {status: "escalate", reason: (if $best.flatPlan then "genuine flat-plan tie" else "genuine spendPriority tie" end)}
+      else . + {status: "clear", chosen: $best}
         + (if ($unranked | length) > 0 then
              {unranked_note: "\($unranked | length) eligible candidate(s) unranked (\([$unranked[].provider] | unique | join(", ")))"}
            else {} end)
       end
     end
-  end') || emit_error "resolution failed"
+  end' <<<"$RESULT") || emit_error "ranking failed"
 
 TEXT=$(jq -r '
   def flat: tostring | gsub("[\t\r\n]"; " ");
@@ -529,9 +568,11 @@ TEXT=$(jq -r '
   (.candidates[]? | "  candidate: \(.profile.harness | flat):\(show(.profile.model))"
       + (if $tier then "  tier=\($tier | flat)" else "" end)
       + (if .provider then "  provider=\(.provider | flat)" else "" end)
+      + (if .flatPlan then "  billing=flat-plan  quota=not-applicable  spendPriority=n/a" else "" end)
       + (if .scope then "  scope=\(.scope | flat)  remaining=\(show(.pct))%  spendPriority=\(show(.spendPriority))  runway=\(show(.runway))" else "" end)
       + (if (.bounds // [] | length) > 1 then "  bounds=" + ([.bounds[] | "\(.scope | flat):\(show(.pct))%/\((.runway // .status) | flat)"] | join(",")) else "" end)
-      + "  -> " + (if .unranked then "eligible, unranked: \(.reason | flat): disclosed uncertainty" elif .eligible then "eligible" else "not eligible: \(.reason | flat)" end)),
+      + "  -> " + (if .unranked then "eligible, unranked: \(.reason | flat): disclosed uncertainty" elif .eligible then "eligible" else "not eligible: \(.reason | flat)" end)
+      + (if .ownerWarning then "  warning: \(.ownerWarning | flat)" else "" end)),
   (if .chosen then "  profile: --harness \(.chosen.profile.harness | shell_arg)"
       + (if .chosen.profile.model then " --model \(.chosen.profile.model | shell_arg)" else "" end)
       + (if .chosen.profile.effort then " --effort \(.chosen.profile.effort | shell_arg)" else "" end)

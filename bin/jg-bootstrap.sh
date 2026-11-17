@@ -1374,6 +1374,9 @@ crew_dispatch_validate() {
       else "default profile model and effort must be non-empty strings when present"
       end
     elif $typed and has("default") and malformed_profile_floors([profiles(.default)[]?]) then "default profile floor needs scope and min_percent 0..100"
+    elif $typed and (configured_profiles | any(. as $p | has("billing") and
+      (["plan", "flat-plan", "credits", "overage"] | index($p.billing) | not))) then
+      "profile billing must be plan, flat-plan, credits, or overage"
     else
       (configured_profiles
         | map(.harness)
