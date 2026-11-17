@@ -137,7 +137,7 @@ def kinds():
 def fleet_homes():
     """The main home and its registered local leads; fail rather than return an incomplete fleet."""
     root = os.environ.get("JG_HOME")
-    if not root or not os.path.isfile(os.path.join(root, "config", "beads-dir")):
+    if not root:
         return {}
     paths = {"main": root}
     registry = os.path.join(root, "data", "squad_leads.md")
@@ -205,22 +205,28 @@ def column(row, home):
     return None
 
 
-def fleet_rows(name, home, store):
-    """The rows the board can show from one home's store: its open rows and the rows closed in the last 7 days, read with one query."""
+def fleet_rows(name, home, store, all_closed=False):
+    """One home's board rows in one query; maintenance may also need older closed card sources."""
     cutoff = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    result = read_helper(["board", cutoff], env=dict(os.environ, BEADS_DIR=store))
+    result = read_helper(["board", '--all' if all_closed else cutoff], env=dict(os.environ, BEADS_DIR=store))
     if result.returncode: raise Refusal("unavailable", "Cannot read %s: %s" % (name, reason(result)), True)
     return [(name, home, row) for row in json.loads(result.stdout)]
+
+
+def fleet_snapshot(all_closed=False):
+    """One complete board read, also used by ticket maintenance without rereading the fleet for each page."""
+    homes = fleet_homes()
+    if not homes: return []
+    with ThreadPoolExecutor(max_workers=min(8, len(homes))) as pool:
+        futures = [pool.submit(fleet_rows, name, home, store, all_closed) for name, (home, store) in homes.items()]
+        return [row for future in futures for row in future.result()]
 
 
 def fleet_list(request):
     cursor, limit = request.get("cursor"), request.get("limit", FLEET_PAGE)
     if cursor is not None and not IDENT.fullmatch(cursor): raise invalid([("cursor", "not a fleet cursor")])
     if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 500: raise invalid([("limit", "must be a whole number from 1 to 500")])
-    homes = fleet_homes()
-    with ThreadPoolExecutor(max_workers=min(8, len(homes))) as pool:
-        futures = [pool.submit(fleet_rows, name, home, store) for name, (home, store) in homes.items()]
-        rows = [row for future in futures for row in future.result()]
+    rows = fleet_snapshot()
     global BOARD_HOME
     tickets = []
     for name, home, row in rows:

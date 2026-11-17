@@ -209,7 +209,7 @@ step_copies() {  # <name>
         jg-supervisor-work-command-policy.mjs ;;
     tickets-sync)
       into "$data/jg-tickets-sync/tickets-sync" "$c" sync.py ticket.py identity.py lane.py hierarchy.py \
-        task_rows.py cleanup.py legacy.py reconcile.py release.py drop.py tidy.py
+        task_rows.py cleanup.py legacy.py reconcile.py release.py drop.py tidy.py beads.py
       local icon
       for icon in "$here/$c"/icons/*; do
         [ -f "$icon" ] || continue

@@ -60,6 +60,11 @@ def main(argv):
     pointer = home / 'config/fleet-board'
     if not pointer.exists():
         return 0
+    # A Beads-backed board reads the source row directly; lifecycle callers have already written that row.
+    # Never send removed feed fields back through the adapter or create a duplicate store row.
+    store = home / 'config/beads-dir'
+    if store.is_file() and store.read_text().strip():
+        return 0
     board = Path(pointer.read_text().strip() or '.')
     if not board.is_absolute():
         board = home / board

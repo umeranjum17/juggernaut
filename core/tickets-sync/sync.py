@@ -204,6 +204,11 @@ def sync():
     if identity.is_lead(home) and not options.drop_pre_beads: return  # the drop closes this home's own rows only; the parent's poll owns the shared board
     board = Path((home / 'config/fleet-board').read_text().strip())
     if not board.is_absolute(): board = home / board
+    if (store_named(home) or os.environ.get('SIGN_OFF_TICKETS_ADAPTER')) and not (options.tidy or options.drop_pre_beads or options.close or options.migrate_legacy):
+        # The current board reads Beads directly. Never republish its rows as legacy feed tickets.
+        import beads
+        beads.poll(home, board, options, run)
+        return
     if options.audit: print(run(['sign-off-axi', 'ticket', str(board), '--json'])); return
     state = home / 'state/tickets-sync'
     state.mkdir(parents=True, exist_ok=True)

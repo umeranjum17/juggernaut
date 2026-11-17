@@ -1,6 +1,21 @@
 # Tickets sync
 
-Run `JG_HOME=<fleet-home> bash tickets-sync/wiring.sh` from merged main to register the existing watcher's poll; `--dry-run` writes nothing.
+## Beads-backed board
+
+The registered sync, stale and daily cleanup checks use the existing Beads ticket adapter.
+The installer gives each check `JG_HOME`, `SIGN_OFF_TICKETS_ADAPTER` and the home's configured `BEADS_DIR`, and re-registers the generated scripts through `jg-check-register.sh`.
+Sync and stale read each named store once through the adapter's fast board query, including open rows and the last seven days of closed rows; no whole-list CLI call or per-ticket read is needed.
+The board owns ticket identities, parents, assignees, projects and derived status; neither check creates rows, appends a legacy ticket feed or overwrites these fields.
+Sync records an observation in `state/tickets-sync/progress.log` when the snapshot changes, while stale is silent after a successful read and reports a real read failure.
+The daily cleanup includes historical closed rows through the same query and uses the existing cleanup and card-reconciliation rules below; owner gates and active work stay open, and ambiguous old card links stay unresolved.
+Backlog transitions already write Beads, so their former mirror-publication calls and the legacy lifecycle ticket writer do nothing for a Beads-backed home.
+Lead checks remain quiet because the parent's poll owns the fleet read.
+
+## Legacy feed commands
+
+The remaining feed-only maintenance commands and the earlier publication path are described below.
+
+Run `JG_HOME=<fleet-home> bash core/tickets-sync/wiring.sh` from merged main to register the existing watcher's poll; `--dry-run` writes nothing.
 Requires Python 3.11+, gh-axi, sign-off-axi 0.9.10+ and Juggernaut's backlog libraries; the board comes from `config/fleet-board`.
 Each home's backlog is read through the provider read verbs of `bin/jg-backlog.sh` from the Beads store `config/beads-dir` names (one `list` per home per pass, done rows and whole bodies included, so no archive copy or full-record read); the view's `parent` and `item` fields give the parent link and the item name the lane files use.
 Open work and seven days of completed work are backfilled by stable home/item hashes (see "Which ticket a row is"); no stage, key or last-event time is written for a ticket: the Beads status is the one truth, and the machines' word for a lane (`core/machines/observers/task.sh`; `delivery.sh` for a landed lane) only decides a ticket's state, owner and whether it is done. No open ticket carries a percent: progress is 0 until the ticket is done (100).

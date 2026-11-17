@@ -133,6 +133,7 @@ def settle(found, items, home, run):
         if kind not in CLOSES or not it: flagged.append((kind, label, detail)); continue
         if label in shut: continue
         if owner_decision(it['row']): flagged.append((kind, label, detail + '; kept: it holds an owner decision')); continue
+        if it['row']['state'] == 'in_flight': flagged.append((kind, label, detail + '; kept: work is in flight')); continue
         if kind == 'duplicate' and re.match('same title as (\\S+)', detail)[1].rstrip(',') in shut:
             flagged.append((kind, label, detail + '; kept: the ticket it duplicates was closed in this pass')); continue
         note = f'closed by the daily clean-up ({kind}: {detail})'

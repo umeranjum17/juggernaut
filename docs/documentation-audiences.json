@@ -824,6 +824,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/done-done-verify-suites/features/tickets-beads-checks.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/done-done-verify-suites/features/account-next-relaunch.md",
       "audience": "agent-runtime"
     },
