@@ -214,6 +214,11 @@ journeys:
   spawn-imports-dialog:
     tier: local
     command: JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-spawn-imports-dialog.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1 && printf '{"target":{"version":"jg-spawn.sh"},"start":"a claude spawn whose pane shows the external-imports dialog","steps":["spawn a claude worker","the pane shows the imports dialog","read the spawn result and the owner store"],"result":"the spawn failed with the cause, sent no key, and the store holds no decline"}\n' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
+  pi-launch-first-turn:
+    tier: local
+    command: >-
+      JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-spawn-pi-first-turn.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1 &&
+      printf '%s\n' '{"target":{"version":"jg-spawn.sh"},"start":"a fixture home, a real git worktree, and a Pi whose help advertises --tui-mode and --approve","steps":["spawn a Pi worker into a managed fleet pool copy and read the staged launch command","spawn the same worker outside the fleet pool","leave the busy record at its launch seed and read the keys and the alert","replace that seed with the adapter first event and read the keys and the alerts"],"result":"the fleet copy launches with --approve and the plain copy does not, a first turn that never starts gets one retried submit and one worker-stopped alert naming the task while a started one gets neither, and the lane stays up"}' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
   spawn-load-admission:
     tier: local
     command: bash tests/jg-spawn-load-admission.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

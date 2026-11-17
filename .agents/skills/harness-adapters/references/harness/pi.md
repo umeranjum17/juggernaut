@@ -33,7 +33,9 @@ Multiple positional arguments become separate queued messages; the spawn templat
 A project trust dialog can appear on the first Pi run in any not-yet-trusted directory that holds a trust-requiring resource such as `.pi/extensions/`, including a clean worktree and a freshly seeded Squad Lead home.
 Accept it with Enter and verify the instructions begin processing.
 The decision persists per path in `~/.pi/agent/trust.json`, or in the pinned root's `trust.json` under a worker account pin, so later spawns in the same pooled slot under that root skip it.
-For unattended seeded Squad Lead launches, `../../../bin/jg-spawn.sh --help` owns the capability-gated project-trust approval mechanics; [runtime verification](../../../../../docs/verification/runtime-backends.md#pi-seeded-squad-lead-project-trust) owns the regression evidence.
+An unattended launch never leaves that dialog to chance: `../../../bin/jg-spawn.sh --help` owns the capability-gated project-trust approval mechanics, which send `--approve` for a seeded Squad Lead launch and for a worker launch whose copy is a managed fleet Treehouse pool slot, and never for a copy outside the fleet pool.
+That launch also proves its first turn started - the busy record moving past the `jg-spawn` seed - retries the submit once, and raises one `worker-stopped` alert naming the task when it did not; [runtime verification](../../../../../docs/verification/runtime-backends.md#pi-seeded-squad-lead-project-trust) owns the regression evidence.
+Never answer the dialog blind from a launch path: Enter on it can select the exit option and kill the worker.
 
 ## Worker turn-end extension
 

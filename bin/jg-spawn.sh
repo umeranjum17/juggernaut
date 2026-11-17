@@ -271,7 +271,12 @@
 #   also adds --approve when that help advertises it, so the first unattended
 #   launch does not stall on Pi's "Trust project folder?" dialog for that home
 #   path; --approve is session-scoped to the launch cwd and does not rewrite the
-#   operator's trust.json. Ordinary Pi worker launches never receive --approve.
+#   operator's trust.json. A Pi/pi-signed WORKER launch (fresh spawn or relaunch)
+#   receives the same session-scoped --approve when its copy is a managed fleet
+#   Treehouse pool slot (jg_treehouse_pool_slot): the copy is fresh every time, so
+#   Pi's trust gate would otherwise park every unattended worker on that dialog
+#   before its first turn. A worker copy outside the fleet pool (a plain linked
+#   worktree, an Orca worktree, a hand-made checkout) keeps the plain launch.
 #   A missing selected executable refuses before endpoint creation, and pi-signed
 #   never falls back to pi.
 #   Devin is worker-only: --permission-mode dangerous and
@@ -462,9 +467,12 @@
 #                  state/<task-id>.claude-settings.json for a squad_lead
 #     __PIBIN__    quoted concrete Pi-family executable path resolved from PATH
 #     __PITUIMODE__ optional --tui-mode regular when that executable advertises it
-#     __PIAPPROVE__ optional --approve on a seeded Pi/pi-signed squad_lead when
-#                  that executable advertises the flag (empty otherwise; session
-#                  trust for the launch cwd only, never a trust.json rewrite)
+#     __PIAPPROVE__ optional --approve when that executable advertises the flag:
+#                  always on a seeded Pi/pi-signed squad_lead, and on a Pi/
+#                  pi-signed WORKER launch whose copy is a managed fleet pool
+#                  slot (pi_project_trust_approve below owns the rule; empty
+#                  otherwise; session trust for the launch cwd only, never a
+#                  trust.json rewrite)
 #     __PIEXCLUDE__ optional ` --exclude-tools '<comma-joined names>'` from
 #                  config/crew-exclude-tools on Pi/pi-signed ship and scout
 #                  launches (supplies its own leading space, empty otherwise)
@@ -2039,6 +2047,25 @@ pi_supports_approve() {
   printf '%s\n' "$help" | grep -Eq -- '(^|[[:space:]])--approve([^[:alnum:]_-]|$)'
 }
 
+# pi_project_trust_approve: the ONE rule for Pi's session-scoped --approve.
+#   - a squad_lead always gets it: its home carries tracked .pi/extensions, and
+#     its first launch is unattended.
+#   - a WORKER (ship or scout, fresh spawn or relaunch) gets it only when its
+#     copy is a managed fleet Treehouse pool slot. Every such copy is a fresh
+#     path Pi has never trusted, so without the flag the launch parks on "Trust
+#     project folder?" before its first turn (reproduced live 2026-11-17: task
+#     jg-rkl2u rendered the dialog and its brief never reached the worker).
+#     The flag is never widened past that: a worktree outside the fleet pool is
+#     not juggernaut's to trust, so it keeps the plain launch.
+# The probe stays here so an older Pi without the flag still launches.
+pi_project_trust_approve() {  # <pi-bin> <kind> <project-dir> <worktree>
+  local bin=$1 kind=$2 project=$3 worktree=$4
+  pi_supports_approve "$bin" || return 0
+  if [ "$kind" = squad_lead ] || jg_treehouse_pool_slot "$project" "$worktree"; then
+    printf ' --approve'
+  fi
+}
+
 # omp pre-launch model validation. `omp models --json` (omp 18.1.11) prints
 # {"models":[{"provider","id","selector":"<provider>/<id>",...}]} for built-in and
 # auto-discovered providers only; it never lists a provider an extension
@@ -2221,15 +2248,9 @@ pi | pi-signed)
     PI_TUI_MODE=' --tui-mode regular'
   fi
   LAUNCH=${LAUNCH//__PITUIMODE__/$PI_TUI_MODE}
-  # Seeded-home signal is .jg-squad-lead-home (required by
-  # validate_juggernaut_home_for_spawn before any squad_lead launch reaches
-  # the pane). Session-only --approve; never expand to a parent path or
-  # rewrite the operator trust store.
-  PI_APPROVE=
-  if [ "$KIND" = squad_lead ] && pi_supports_approve "$PI_BIN"; then
-    PI_APPROVE=' --approve'
-  fi
-  LAUNCH=${LAUNCH//__PIAPPROVE__/$PI_APPROVE}
+  # __PIAPPROVE__ is decided later (pi_project_trust_approve below): the
+  # session-scoped trust flag depends on the launch's own worktree, which is not
+  # allocated yet on a fresh worker spawn.
   # A worker never asks the human directly (its question belongs to the lead), so Pi's
   # ask_user_question is hidden for ship and Recon workers whatever config/crew-exclude-tools holds.
   PI_EXCLUDE_NAMES=$EXCLUDE_TOOLS
@@ -4122,6 +4143,93 @@ agy_wait_for_working() {
   return 1
 }
 
+# --- first-turn proof ------------------------------------------------------
+# A launch records its brief as a submitted turn (jg-busy-event.sh arm seeds
+# state=busy source=jg-spawn event=launch-brief), and that seed is a CLAIM: a
+# launch that parked on a dialog, or whose harness never reached its first turn,
+# leaves exactly that seed behind and reads as ordinary busy for up to an hour.
+# An adapter with a verified semantic source replaces the seed with its own first
+# event (Pi's agent-start), so "the record moved past the seed" is the one proof
+# that the first turn actually started - the same fact every later reader of the
+# record depends on.
+#
+# Only Pi is gated today: its first-turn silence was the one measured in the field
+# (2026-11-17, six leads sat at 0.0% context for 62 to 103 minutes while their
+# record still read the jg-spawn seed, and their Pi input loop never took a typed
+# line either). A harness joins this list only once its own source is proven to
+# post before its first turn, because a gate on an unproven source would alert on
+# healthy lanes.
+first_turn_gated_harness() {  # <harness>
+  case "${1:-}" in
+  pi | pi-signed) return 0 ;;
+  esac
+  return 1
+}
+
+# first_turn_record_advanced: 0 when an adapter event replaced the launch seed
+# of the incarnation armed right now. A missing, malformed, or gen-mismatched
+# record proves nothing, so it reads as "not started yet" (the same answer
+# jg_busy_record_read gives its own callers).
+first_turn_record_advanced() {  # <state-dir> <id>
+  local rec fields r_source r_seq
+  rec=$(jg_busy_record_read "$1" "$2") || return 1
+  # `read -a` never glob-expands a field and leaves the caller's `set --` alone.
+  read -r -a fields <<<"$rec"
+  r_source=${fields[1]:-}
+  r_seq=${fields[3]:-}
+  case "$r_seq" in '' | *[!0-9]*) return 1 ;; esac
+  [ "$r_seq" -gt 1 ] || return 1
+  [ "$r_source" != jg-spawn ]
+}
+
+# first_turn_wait: poll the record for <polls> rounds <interval> seconds apart.
+first_turn_wait() {  # <state-dir> <id> <polls> <interval>
+  local i=0 max=$3 interval=$4
+  while [ "$i" -lt "$max" ]; do
+    first_turn_record_advanced "$1" "$2" && return 0
+    i=$((i + 1))
+    [ "$i" -ge "$max" ] || sleep "$interval"
+  done
+  return 1
+}
+
+# first_turn_gate: prove the first turn started; retry the submit once; then
+# raise ONE worker-stopped alert that names the task (bin/jg-worker-stop-alert.sh,
+# the existing producer for an agent someone waits for that is not doing its
+# work). It never fails the launch: the agent is up and its lane belongs to the
+# fleet, so the loud, actionable outcome is the alert plus a warning line, never
+# a refused spawn that would leave the same idle agent with no record of why.
+#
+# A parked launch dialog (a trust or sign-in prompt) is never answered blind:
+# Enter on Pi's trust dialog can select "No, exit" and kill the worker, so that
+# case skips the retry and alerts straight away. JG_FIRST_TURN_POLLS and
+# JG_FIRST_TURN_INTERVAL exist for the suites and for a host that needs a longer
+# bound; the default allows 120 s per attempt (240 s with the retry), which is
+# above the slowest healthy start measured on this host (193 s during a
+# whole-fleet restart) and short enough to be actionable.
+first_turn_gate() {
+  local polls=${JG_FIRST_TURN_POLLS:-60} interval=${JG_FIRST_TURN_INTERVAL:-2} tail detail
+  [ -n "$BUSY_GEN" ] || return 0
+  [ "$RAW_LAUNCH" -eq 0 ] || return 0
+  first_turn_gated_harness "$HARNESS" || return 0
+  case "$polls" in '' | *[!0-9]* | 0) polls=60 ;; esac
+  case "$interval" in '' | *[!0-9.]*) interval=2 ;; esac
+  first_turn_wait "$STATE_REAL" "$ID" "$polls" "$interval" && return 0
+  tail=$(jg_backend_capture "$BACKEND" "$T" 40 2>/dev/null || true)
+  if [ -n "$tail" ] && printf '%s' "$tail" | jg_busy_launch_prompt_parked "$HARNESS"; then
+    detail="its first turn never started: it is parked on a launch prompt (a trust or sign-in dialog) that no key was sent to"
+  else
+    spawn_send_key "$T" Enter || true
+    first_turn_wait "$STATE_REAL" "$ID" "$polls" "$interval" && return 0
+    detail="its first turn never started, and one retried submit did not start one either"
+  fi
+  printf '%s\n' "$(status_stamp_line "note: warning: $detail; the lane stays up and the fleet is alerted")" >>"$STATE/$ID.status"
+  JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-worker-stop-alert.sh" raise "$ID" lost "$detail" >/dev/null 2>&1 \
+    || echo "warning: task $ID: $detail, and the worker-stopped alert could not be raised" >&2
+  echo "warning: task $ID: $detail; the lane stays up and the fleet is alerted" >&2
+  return 0
+}
+
 agy_spawn_fail() {  # <detail>
   printf '%s\n' "$(status_stamp_line "failed: $1")" >>"$STATE/$ID.status"
   echo "error: $1; inspect window $T" >&2
@@ -5307,7 +5415,13 @@ LAUNCH=${LAUNCH//__OMPEXT__/$sq_ompext}
 LAUNCH=${LAUNCH//__OMPWORKERCFG__/$sq_ompcfg}
 LAUNCH=${LAUNCH//__OPINPUT__/$sq_opinput}
 case "$HARNESS" in
-pi | pi-signed) LAUNCH=${LAUNCH//__PIBIN__/"$(shell_quote "$PI_BIN")"} ;;
+pi | pi-signed)
+  LAUNCH=${LAUNCH//__PIBIN__/"$(shell_quote "$PI_BIN")"}
+  # Session-scoped trust approval; pi_project_trust_approve owns the rule and
+  # needs this launch's own copy, which exists only here. A raw launch command
+  # carries no template placeholder and is never rewritten.
+  LAUNCH=${LAUNCH//__PIAPPROVE__/$([ "$RAW_LAUNCH" -eq 0 ] && pi_project_trust_approve "$PI_BIN" "$KIND" "$PROJ_ABS" "$WT")}
+  ;;
 cursor) LAUNCH=${LAUNCH//__CURSORBIN__/"$(shell_quote "$CURSOR_BIN")"} ;;
 gemini) LAUNCH=${LAUNCH//__GEMINISETTINGS__/"$(shell_quote "$STATE_REAL/$ID.gemini-settings.json")"} ;;
 omp) LAUNCH=${LAUNCH//__OMPBIN__/"$(shell_quote "$OMP_BIN")"} ;;
@@ -5660,6 +5774,13 @@ claude*)
   fi
   ;;
 esac
+
+# Prove the first turn started before this launch counts as delivered. The
+# relaunch path reaches this gate through jg-spawn --relaunch, so both paths
+# share one owner; a lane that never starts its turn is never reported as a
+# healthy spawn - it gets one retried submit and, failing that, one alert
+# naming it.
+first_turn_gate
 
 if [ "$KIND" = squad_lead ] && [ "${JG_SKIP_SQUAD_LEAD_INHERIT:-0}" != 1 ]; then
   if ! jg_config_reread_discard_pending "$PROJ_ABS" "$ID" "$JG_HOME"; then

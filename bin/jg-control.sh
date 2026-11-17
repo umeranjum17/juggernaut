@@ -107,7 +107,10 @@
 #              bin/jg-spawn.sh --relaunch. A failure before publication keeps
 #              the prior durable record in place and reports the concrete
 #              state; it never leaves a half-transitioned task claiming to be
-#              running.
+#              running. Proving the replacement's first turn actually started
+#              (with one retried submit and one alert naming the task when it
+#              did not) belongs to that same launch owner, so a relaunch and a
+#              fresh spawn never answer that question two different ways.
 #
 #   primary    Not a task: this home's own locked primary session (Main). Only
 #              `relaunch --clear-composer` exists, for a wake that waits behind
