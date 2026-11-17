@@ -37,6 +37,8 @@
 # --kind stranded-release: 4 h).
 # deliver turns a ring into the wake its holder reads: the tick only records it (settled, no wake); worker, lead, main and owner get one
 # `check` wake with key alert-<key> that names the alert, its precedence, the rung and the holder. A line that is not a ring is refused.
+# Main's rung in a Squad Lead home goes up the parent channel instead (_route_main), and resolve closes it there; a --wake record keeps
+# the local consumer its producer named.
 # Exit 0 is success, 1 a refusal, 2 a usage error. The table is core/machines/styles/alert-table.tsv (override: JG_ALERT_TABLE).
 set -u
 export LC_ALL=C
@@ -269,15 +271,46 @@ cmd_resolve() {
   local f cur rec; f=$(_rec "${1:-}" resolve) || exit 1
   cur=$(_get "$f" state); [ "$cur" != "$s_res" ] || return 0
   _edge "$cur" "$s_res" || _die "no move from $cur to resolved"
-  _set "$f" state "$s_res"
   # The card of a stuck alert goes with it, so a new episode of the key can be stuck again.
   local card; card="$(_dir)/escalation-stuck--$1.rec"
-  [ "$cur" != "$s_stuck" ] || [ ! -r "$card" ] || [ "$(_get "$card" state)" = "$s_res" ] || _set "$card" state "$s_res"
+  if [ "$cur" = "$s_stuck" ] && [ -r "$card" ] && [ "$(_get "$card" state)" != "$s_res" ]; then
+    _route_close "$card" "escalation-stuck--$1"; _set "$card" state "$s_res"
+  fi
+  _route_close "$f" "$1"
+  _set "$f" state "$s_res"
   for rec in "$(_dir)"/*.rec; do   # release what this alert covered
     [ -r "$rec" ] && [ "$(_get "$rec" covered_by)" = "$1" ] || continue
     _set "$rec" state "$s_open"; _set "$rec" covered_by ""
     printf 'ring\t%s--%s\t%s\t%s\n' "$(_get "$rec" alert)" "$(_get "$rec" subject)" "$(_get "$rec" rung)" "$(_holder "$(_get "$rec" rung)")"
   done
+}
+# _route_main <rec> <key> <payload>: Main's rung. A main home returns 1 (Main reads this home's queue); a Squad Lead home appends one
+# `blocked` line keyed by the alert and its episode to its parent channel (bin/jg-parent-channel-lib.sh owns that binding), so a retry
+# of one episode is one line and a new episode is a new one. An unusable identity or binding, a failed append or a record with no
+# episode is an unknown destination: it is refused with a recovery wake in this home, never delivered to this home's own queue.
+_route_main() {
+  local rec=$1 key=$2 ep rc=0 why
+  # shellcheck source=bin/jg-parent-channel-lib.sh
+  . "$_root/bin/jg-parent-channel-lib.sh"
+  jg_parent_channel_destination "${JG_HOME:-$_root}" "$(dirname "$(_dir)")" >/dev/null || rc=$?
+  [ "$rc" != 1 ] || return 1
+  ep=$(_get "$rec" episode)
+  if [ "$rc" = 0 ] && [ -n "$ep" ]; then
+    jg_parent_channel_report "${JG_HOME:-$_root}" "$(dirname "$(_dir)")" "blocked [key=alert-$key-g$ep]: alert-route: $3" || rc=$?
+    [ "$rc" != 0 ] || { _set "$rec" route_key "alert-$key-g$ep"; return 0; }
+  fi
+  case $rc in 0) why="the record has no episode" ;; 2) why="the Squad Lead identity is unusable" ;; 3) why="the parent binding is missing or unreadable" ;; *) why="the parent channel append failed" ;; esac
+  _set "$rec" route_refused "$why"
+  jg_wake_append check "alert-route-$key" "Main delivery refused for $key: $why; repair the parent binding" || _die "the recovery wake for $key was not appended"
+  _die "Main delivery refused for $key: $why"
+}
+# _route_close <rec> <key>: an alert that reached Main through the parent channel closes there with the same key before it resolves here.
+_route_close() {
+  local rk; rk=$(_get "$1" route_key); [ -n "$rk" ] || return 0
+  # shellcheck source=bin/jg-parent-channel-lib.sh
+  . "$_root/bin/jg-parent-channel-lib.sh"
+  jg_parent_channel_report "${JG_HOME:-$_root}" "$(dirname "$(_dir)")" "resolved [key=$rk]: alert-cleared: $2" \
+    || _die "the parent channel close of $2 failed; it stays open here"
 }
 cmd_show() { cat "$(_rec "${1:-}" show)"; }
 cmd_word() { _get "$(_rec "${1:-}" word)" state; }
@@ -294,7 +327,7 @@ cmd_capacity() {
   shift 2
   # A new event of one producer supersedes its last one: the old record resolves in place (its cover, if any, is the same key).
   local old; old="$(_dir)/capacity--$producer.rec"
-  if [ -r "$old" ] && [ "$(_get "$old" state)" != "$s_res" ]; then _edge "$(_get "$old" state)" "$s_res" && _set "$old" state "$s_res"; fi
+  if [ -r "$old" ] && [ "$(_get "$old" state)" != "$s_res" ]; then _edge "$(_get "$old" state)" "$s_res" && _route_close "$old" "capacity--$producer" && _set "$old" state "$s_res"; fi
   cmd_raise capacity "$producer" --note "$text" "$@"
 }
 
@@ -318,7 +351,8 @@ cmd_deliver() {
     fi
     payload=$(_payload "$key" "$rung" "$holder")
     kind=$(_get "$rec" wake)
-    if [ -n "$kind" ] && [ "$holder" != tick ]; then jg_wake_append "$kind" "$(_get "$rec" subject)" "$(_get "$rec" text)" || _die "the wake for $key was not appended"
+    if [ "$holder" = main ] && [ -z "$kind" ] && _route_main "$rec" "$key" "$payload"; then :
+    elif [ -n "$kind" ] && [ "$holder" != tick ]; then jg_wake_append "$kind" "$(_get "$rec" subject)" "$(_get "$rec" text)" || _die "the wake for $key was not appended"
     elif [ "$holder" = tick ]; then jg_wake_settle check "alert-$key" "$payload"
     else jg_wake_append check "alert-$key" "$payload" || _die "the wake for $key was not appended"; fi
     # The owner's rung is the captain's chat: the same ring goes out as a captain-facing `alert` event (jg-bus.sh owns the Telegram send).

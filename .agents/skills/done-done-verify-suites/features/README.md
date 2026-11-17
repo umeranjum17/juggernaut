@@ -1,6 +1,6 @@
 # Feature map
 
-- [Alert recipient authority](alert-authority.md): run `done-done run alert`.
+- [Alert recipient authority and actor routing](alert-authority.md): run `done-done run alert`.
 - [Codex lead daemon delivers a queued urgent wake to the receiver within 60 seconds, once, behind an older batch row](codex-lead-queued-wake.md): run `done-done run codex-lead-queued-wake`
 - [Shared model pool helper](model-pool-helper.md): `jg-model-pool` pick/next JSON over the account pool with forced-limit A/B and Sol/Goat/Cursor fallovers.
 - [Registered ticket checks observe 2553 real Beads tickets quietly and preserve history](tickets-beads-checks.md): run `done-done run tickets-beads-checks`

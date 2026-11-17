@@ -6,7 +6,10 @@ Recipient authority: `JG_BEADS_TEST_BD="$(command -v bd)" JG_BEADS_TEST_DOLT="$(
 It exhausts team engineering and review alerts, refuses direct and forged owner rungs, rejects missing and stale authority, and preserves the source age and Main recovery.
 All four typed security producers and a matching open owner gate publish to the real bus's isolated event journal; a closed gate or old source episode publishes nothing.
 The transport points at closed localhost port 1, so this proves publication authority without claiming chat delivery or sending live messages.
-Actor routing, action-evidence closure and unified deadlines are outside this authority slice.
+Actor routing: `tests/jg-alert.d/18-routing.sh` keeps a Squad Lead home's lead rung in its own queue and sends its Main rung up the real local or remote parent channel, one line per alert episode, closed on resolve and on a superseding capacity event.
+A producer that names an older wake kind (`--wake`) keeps that home's local consumer.
+A home with an identity but no usable parent binding refuses Main's rung with a recovery wake in that home and writes no guessed parent file.
+Action-evidence closure, unified deadlines and the worker rung's inbox address are outside these slices.
 
 For a candidate that changes the producer bindings, seal the alert journey, its presentation and producer regressions, and changed-shell lint together:
 
@@ -15,7 +18,7 @@ JG_BEADS_TEST_BD="$(command -v bd)" JG_BEADS_TEST_DOLT="$(command -v dolt)" done
 bash journeys/alert.sh && bash tests/jg-machine-diagram.test.sh &&
 bash core/key-in-env-check/tests/key-in-env-check-e2e.sh &&
 bash core/owner-guard/tests/scan-e2e.sh && bash tests/jg-guard-host.test.sh &&
-bash bin/jg-lint.sh bin/jg-alert.sh bin/jg-alert-authority-lib.sh bin/jg-watch.sh core/delete-guard/check.sh core/owner-guard/scan-check tests/jg-alert.test.sh tests/jg-alert.d/07-the-ladder.sh tests/jg-alert.d/13-a-security-producer-raises-one-p0-alert-.sh tests/jg-alert.d/14-h14.sh tests/jg-alert.d/17-authority.sh tests/jg-machine-diagram.test.sh journeys/alert.sh &&
+bash bin/jg-lint.sh bin/jg-alert.sh bin/jg-alert-authority-lib.sh bin/jg-watch.sh core/delete-guard/check.sh core/owner-guard/scan-check tests/jg-alert.test.sh tests/jg-alert.d/07-the-ladder.sh tests/jg-alert.d/13-a-security-producer-raises-one-p0-alert-.sh tests/jg-alert.d/14-h14.sh tests/jg-alert.d/17-authority.sh tests/jg-alert.d/18-routing.sh tests/jg-machine-diagram.test.sh journeys/alert.sh &&
 bash bin/jg-doc-audience-check.sh'
 ```
 
