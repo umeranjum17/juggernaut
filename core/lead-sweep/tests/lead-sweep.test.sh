@@ -26,6 +26,11 @@ export HOME=$d/home TMPDIR=$d GIT_CONFIG_GLOBAL=$d/gitconfig GIT_CONFIG_SYSTEM=/
 unset GIT_CONFIG_COUNT   # a worker's injected hooks path and identity must not reach the fixture clone
 mkdir -p "$HOME"; git config --global user.email t@t; git config --global user.name t; git config --global init.defaultBranch trunk
 FM=$d/fm; P=$FM/projects/proj; mkdir -p "$FM/state" "$FM/data" "$P"
+# Use the actual central alert owner in this fixture, as the waited-for journey below does.
+mkdir -p "$FM/bin" "$FM/core/machines" "$FM/config"; echo off > "$FM/config/wake-bus"
+cp "$SRC/../../bin/"jg-*.sh "$FM/bin/"
+cp -r "$SRC/../machines/observers" "$SRC/../machines/tables" "$SRC/../machines/styles" "$FM/core/machines/"
+ln -sn "$SRC/../bus" "$FM/core/bus"; ln -sn "$SRC/../wake" "$FM/core/wake"
 git -C "$P" init -q; echo 1 > "$P/f"; git -C "$P" add f; git -C "$P" commit -qm base
 export STUB_LOG=$d/calls STUB_MERGED=$d/merged
 cat > "$d/teardown" <<'STUB'

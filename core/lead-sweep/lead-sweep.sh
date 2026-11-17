@@ -61,12 +61,38 @@ PR_MIN=${JG_LEAD_SWEEP_PR_MIN:-10}; case $PR_MIN in ''|*[!0-9]*) PR_MIN=10 ;; es
 if [ -f "$FMH/bin/jg-facts-lib.sh" ]; then . "$FMH/bin/jg-facts-lib.sh"; else . "$(dirname "$SELF")/../../bin/jg-facts-lib.sh"; fi
 umask 077
 mkdir -p "$MEM" || exit 0
-# drift <lane> <note>: a refused or left-alone cleanup is the drift alert, one per lane; a changed reason rings again.
+# capacity_snapshot <lane> <reason> <next action>: retain observations, never a release receipt.
+# The existing central drift alert owns pending/resolved and its original `since`; this file only binds its action
+# to the observed home/task/spawn_gen and copy. A missing generation or copy is explicitly unknown, never free capacity.
+# Refusal -> pending; changed refusal -> same pending episode; successful park/cleanup -> still pending until the
+# preservation and authoritative reusable-slot proof owners settle it. Status, ack and a reduced record count cannot settle it.
+capacity_snapshot() {
+  local id=$1 reason=$2 next=$3 out tmp head=unknown inventory=unknown
+  out=$MEM/$lane_subject.capacity
+  [ ! -L "$out" ] && { [ ! -e "$out" ] || [ -f "$out" ]; } || {
+    echo "lead-sweep: $id capacity snapshot is unsafe; lead must repair its retention destination" >&2; return 1;
+  }
+  [ -z "${lane_wt:-}" ] || [ ! -d "$lane_wt" ] || inventory=copy-present-slot-unverified
+  [ -z "${proj:-}" ] || head=$(git -C "$proj" rev-parse --verify --quiet "refs/heads/$branch^{commit}" 2>/dev/null) || head=unknown
+  tmp=$(mktemp "$MEM/.$id.capacity.XXXXXX") || return 1
+  {
+    printf 'home=%s\ntask=%s\ngeneration=%s\n' "$FMH" "$id" "${lane_gen:-unknown}"
+    printf 'alert_key=drift--lead-sweep-%s\n' "$lane_subject"
+    printf 'project=%s\nworktree=%s\nbranch=%s\nhead=%s\n' "$proj" "${lane_wt:-unknown}" "$branch" "$head"
+    printf 'inventory=%s\nowner=lead\nreason=%s\nnext_action=%s\nobserved_at=%s\n' "$inventory" "$reason" "$next" "$NOW"
+  } > "$tmp" && mv -f -- "$tmp" "$out" || { rm -f -- "$tmp"; return 1; }
+}
+# drift <lane> <note>: a changed reason rings the same episode without resolving it or resetting its age.
 drift() {
-  local a=$FMH/bin/jg-alert.sh
-  JG_HOME="$FMH" JG_STATE_OVERRIDE="$STATE" "$a" resolve "drift--lead-sweep-$1" >/dev/null 2>&1 || true
-  JG_HOME="$FMH" JG_STATE_OVERRIDE="$STATE" "$a" raise drift "lead-sweep-$1" --deliver --ticket "$1" --note "$2" >/dev/null 2>&1 \
-    || echo "lead-sweep: $2"
+  local a=$FMH/bin/jg-alert.sh note="$2; generation=$lane_gen; next actor=lead: preserve all bytes and branch, remedy this refusal through guarded teardown/park, then prove reusable slot; snapshot=$MEM/$lane_subject.capacity" err
+  capacity_snapshot "$1" "$2" 'preserve bytes and branch; use guarded return; prove reusable slot' || {
+    echo "lead-sweep: $1 capacity snapshot failed; lead must repair retention before returning the copy" >&2; return 1;
+  }
+  err=$(JG_HOME="$FMH" JG_STATE_OVERRIDE="$STATE" "$a" raise drift "lead-sweep-$lane_subject" --deliver --repeat \
+    --home "$FMH" --project "$proj" --ticket "$1" --note "$note" --wake check --text "lead-sweep: $note" 2>&1) || {
+    echo "lead-sweep: $note; alert delivery refused: $err"; return 1;
+  }
+  echo "lead-sweep: $note"
 }
 case $MODE in
   check)
@@ -101,8 +127,7 @@ run_as_home() { JG_HOME="$FMH" JG_STATE_OVERRIDE="$STATE" "$@"; }
 # refuse <lane> <text>: a step that failed is one alert per lane and text, like a refused cleanup.
 refuse() {
   [ "$(cat "$MEM/$1.reported" 2>/dev/null)" != "$2" ] || return 0
-  printf '%s\n' "$2" > "$MEM/$1.reported"
-  if declare -F drift >/dev/null 2>&1; then drift "$1" "$1 $2"; else echo "lead-sweep: $1 $2"; fi
+  if drift "$1" "$1 $2"; then printf '%s\n' "$2" > "$MEM/$1.reported"; fi
 }
 # agent_state <meta>: alive, dead, missing or unknown for the lane's recorded endpoint (the backend's own classifier).
 agent_state() {
@@ -134,7 +159,9 @@ own_commit() {
 park() {
   local out rc=0
   out=$(run_as_home "$TEARDOWN" "$1" --park 2>&1) || rc=$?
-  if [ "$rc" -eq 0 ]; then rm -f -- "$MEM/$1.reported"; echo "lead-sweep: $1 parked ($2); its branch and ticket stay"
+  if [ "$rc" -eq 0 ]; then
+    [ ! -f "$MEM/$lane_subject.capacity" ] || capacity_snapshot "$1" "park returned success ($2)" 'verify preserved bytes and authoritative reusable slot; park alone is not recovery'
+    rm -f -- "$MEM/$1.reported"; echo "lead-sweep: $1 parked ($2); its branch and ticket stay"
   else refuse "$1" "could not be parked ($2): $(printf '%s\n' "$out" | grep -E '^(REFUSED|error)' | tail -n 1 | cut -c1-200)"; fi
 }
 
@@ -201,6 +228,15 @@ for id in $order; do
   line=$(tail -n 1 "$STATE/$id.status" 2>/dev/null)
   jg_fact_lane_lock_held "$STATE" "$id" && continue
   proj=$(mval "$meta" project); branch=$(mval "$meta" branch); branch=${branch:-fm/$id}
+  lane_wt=$(mval "$meta" worktree); lane_gen=$(mval "$meta" spawn_gen)
+  case $lane_gen in ''|*[!a-zA-Z0-9._-]*) lane_gen=unknown ;; esac
+  lane_subject=$id-$lane_gen
+  [ "$lane_gen" != unknown ] || lane_subject=$id
+  # A new incarnation must not inherit the previous one's notification cache or close its obligation.
+  if [ "$(cat "$MEM/$id.generation" 2>/dev/null)" != "$lane_gen" ]; then
+    rm -f -- "$MEM/$id.reported"
+    printf '%s\n' "$lane_gen" > "$MEM/$id.generation"
+  fi
   if [ -n "$line" ]; then
     # A lane someone waits for is live, whatever its last line says: nothing here ends it. A waited-for agent that is gone is a loss.
     waited=$(jg_fact_lane_waited "$STATE" "$id" "$(recon_phase "$id" "$kind")" agent_state "$meta")
@@ -258,8 +294,7 @@ for id in $order; do
     fi
     # Only an answered lane is reported: nothing else will ever revisit it. A done lane is waiting for its landing.
     if [ "$ended" = resolved ] && [ "$kind" = ship ] && [ "$(cat "$MEM/$id.reported" 2>/dev/null)" != unlanded ]; then
-      echo unlanded > "$MEM/$id.reported"
-      drift "$id" "$id ended as resolved, left alone: its work has not landed on the trunk"
+      if drift "$id" "$id ended as resolved, left alone: its work has not landed on the trunk"; then echo unlanded > "$MEM/$id.reported"; fi
     fi
     continue
   fi
@@ -269,12 +304,13 @@ for id in $order; do
   [ -n "$last" ] || last=$(printf '%s\n' "$out" | tail -n 1)
   last=$(printf '%s' "$last" | cut -c1-200)
   case $rc in
-    0) rm -f -- "$MEM/$id.reported" "$MEM/$id.asked"; echo "lead-sweep: $id cleaned up ($why)" ;;
-    4) rm -f -- "$MEM/$id.reported" "$MEM/$id.asked"; echo "lead-sweep: $id cleaned up ($why), but a returned worktree slot was lost: $last" ;;
+    0)
+      [ ! -f "$MEM/$lane_subject.capacity" ] || capacity_snapshot "$id" "cleanup returned success ($why)" 'verify preserved bytes and authoritative reusable slot; command success alone is not recovery'
+      rm -f -- "$MEM/$id.reported" "$MEM/$id.asked"; echo "lead-sweep: $id cleaned up ($why)" ;;
+    4) refuse "$id" "cleanup returned but its slot is lost; lead must repair and prove reusable capacity: $last" ;;
     *)
       [ "$(cat "$MEM/$id.reported" 2>/dev/null)" != "$last" ] || continue
-      printf '%s\n' "$last" > "$MEM/$id.reported"
-      drift "$id" "$id ($why) not cleaned up, nothing was forced: ${last:-the cleanup was refused}" ;;
+      if drift "$id" "$id ($why) not cleaned up, nothing was forced: ${last:-the cleanup was refused}"; then printf '%s\n' "$last" > "$MEM/$id.reported"; fi ;;
   esac
 done
 exit 0

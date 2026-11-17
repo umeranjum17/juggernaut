@@ -52,6 +52,11 @@ A step that fails prints one alert per lane and reason, like a refused cleanup.
 The sweep runs `bin/jg-teardown.sh <id>` and never passes `--force`.
 The teardown owns the landed-work test and every gate, so a lane with unlanded work, or a Recon whose report, captain-call inventory or depth gate fails, is refused and stays.
 A refusal is kept in `data/lead-sweep/<id>.reported` and printed once; the same reason on the next beat prints nothing, and a new reason prints again.
+The central drift alert retains its original age when a refusal changes.
+Its subject includes the lane's `spawn_gen`; a legacy lane without that field keeps its existing subject and reports an unknown generation.
+`lead-sweep.sh` owns the capacity observation format and the next action recorded beside the refusal.
+These observations keep the lead responsible for preservation and guarded return; neither a successful command nor a lost slot clears the capacity action.
+Artifact preservation and authoritative slot-reuse proof remain required before capacity recovery can be claimed.
 
 ## Wiring
 

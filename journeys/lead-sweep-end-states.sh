@@ -10,10 +10,16 @@ bash "$REPO/tests/jg-lead-sweep-end-states.test.sh" >"$LOG" 2>&1 || st=1
 grep -q '^FAIL' "$LOG" && st=1
 [ "$(grep -c '^ok: ' "$LOG")" -ge 6 ] || st=1
 cat "$LOG"
+# The capacity path uses the central alert owner; keep its caller and delivery regressions in the same sealed proof.
+for command in 'bash core/lead-sweep/tests/lead-sweep.test.sh' 'bash journeys/alert.sh' 'bash bin/jg-lint.sh' 'bash bin/jg-doc-audience-check.sh'; do
+  name=${command##*/}; name=${name%.sh}
+  bash -c "$command" > "$OUT/$name.log" 2>&1 || st=1
+  cat "$OUT/$name.log"
+done
 cat >"$OUT/steps.json" <<'J'
 {"target":{"version":"juggernaut core/lead-sweep/lead-sweep.sh at this commit"},
- "start":"a fixture home with one resolved lane whose head is on the trunk, one resolved lane not landed, one done lane not landed and one paused lane",
- "steps":["run the lead-sweep check on the home","run the check a second time"],
- "result":"the landed resolved lane is torn down once with no --force; the unlanded resolved lane is left and reported once, and the next beat prints nothing; the done lane and the paused lane are untouched"}
+ "start":"an isolated home with synthetic Git branches, resolved and paused lanes and the real central alert owner",
+ "steps":["sweep a landed resolved lane and an unlanded resolved lane twice","refuse cleanup and change its reason","return a lost-slot result then command success","refuse park then return success","change a lane generation and retain a legacy lane","fail and repair a retention destination","add unread input before a declared park","run the full lead-sweep and central alert integration journeys, lint and documentation checks"],
+ "result":"landed cleanup runs unforced; a refusal retains an original-age, generation-bound lead action and branch; repeated alerts deliver the changed reason; lost slot and command success do not prove reusable capacity; unread input protects the lane; no actual pool or live lane is used"}
 J
 exit "$st"

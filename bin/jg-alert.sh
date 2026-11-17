@@ -141,7 +141,11 @@ cmd_raise() {
     if [ "$cur" != "$s_res" ]; then   # one live record for one key
       if [ -n "$again" ] && [ "$cur" = "$s_open" ]; then
         _set "$file" text "$text"; _set "$file" wake "$wake"
-        printf 'ring\t%s\t%s\t%s\n' "$key" "$(_get "$file" rung)" "$(_holder "$(_get "$file" rung)")"
+        start=$(_get "$file" rung)
+        if [ "$now_print" = 1 ]; then _payload "$key" "$start" "$(_holder "$start")"
+        elif [ "$now_deliver" = 1 ]; then printf 'ring\t%s\t%s\t%s\n' "$key" "$start" "$(_holder "$start")" | cmd_deliver
+        else printf 'ring\t%s\t%s\t%s\n' "$key" "$start" "$(_holder "$start")"; fi
+        return $?
       fi
       return 0
     fi
