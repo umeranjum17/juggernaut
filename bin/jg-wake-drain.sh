@@ -17,6 +17,9 @@
 # scratch here holds a copy of the queue.
 # JG_STATUS_PRESENTATION_LOCK_TIMEOUT sets the positive whole-second wait for
 # presentation-path locks (default 10); queue mutation locks remain blocking.
+# Every signalled status span replays until acknowledgement. OUTCOME_REQUIRED
+# ids must first be handled with --outcome ID --relayed REFERENCE or
+# --outcome ID --classified REASON (nonblank, recorded per actor and home).
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
 [ "$_jg_d" != "${BASH_SOURCE[0]}" ] || _jg_d=.
@@ -55,11 +58,15 @@ SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd
 . "$SCRIPT_DIR/jg-supervision-engine-lib.sh"
 # shellcheck source=bin/jg-afk-contract.sh
 . "$SCRIPT_DIR/jg-afk-contract.sh"
+# shellcheck source=bin/jg-wake-status-lib.sh
+. "$SCRIPT_DIR/jg-wake-status-lib.sh"
 
 DRAIN_TMP=
 DRAIN_VIEW_TMP=
 DRAIN_LOCK_HELD=false
+STATUS_LOCK_HELD=false
 RAW_ROWS=
+STATUS_ROWS=
 RECOVERY_MARKER="$STATE/.watcher-down"
 RECOVERY_MARKER_TOKEN=
 RECOVERY_ACK_REQUIRED=false
@@ -203,6 +210,18 @@ presented_max_row() { # <rows-file>
 
 case "${1:-}" in
   '') ;;
+  --outcome)
+    if [ "$#" -ne 4 ] || { [ "$3" != --relayed ] && [ "$3" != --classified ]; }; then
+      echo 'usage: jg-wake-drain.sh --outcome ID --relayed REFERENCE|--classified REASON' >&2
+      exit 2
+    fi
+    jg_lock_acquire_wait "$STATE/.status-presentation-lock" || exit 1
+    outcome_rc=0
+    jg_wake_status_handle "$2" "${3#--}" "$4" || outcome_rc=$?
+    jg_lock_release "$STATE/.status-presentation-lock"
+    [ "$outcome_rc" -eq 0 ] || echo 'wake drain: outcome handling failed; use a presented id and a nonblank reference or reason' >&2
+    exit "$outcome_rc"
+    ;;
   --ack-through)
     ACK_THROUGH=${2:-}
     case "$ACK_THROUGH" in ''|*[!0-9]*) echo "wake drain: invalid acknowledgement sequence" >&2; exit 2 ;; esac
@@ -218,7 +237,7 @@ case "${1:-}" in
     [ "$#" -eq 1 ] || { echo "wake drain: --open-decisions takes no other argument" >&2; exit 2; }
     OPEN_DECISIONS_ALL=1
     ;;
-  *) echo "usage: jg-wake-drain.sh [--ack-through SEQUENCE --recovery-generation GENERATION | --open-decisions]" >&2; exit 2 ;;
+  *) echo "usage: jg-wake-drain.sh [--ack-through SEQUENCE --recovery-generation GENERATION | --outcome ID --relayed REFERENCE|--classified REASON | --open-decisions]" >&2; exit 2 ;;
 esac
 
 [ "$ACTOR" != branch ] || require_branch_eligible_rows || exit 1
@@ -752,7 +771,7 @@ print_status_presentation() {  # [<deduped-raw-rows>]
     rc=1
   }
   if [ "$rc" -eq 0 ] && [ -n "$rows" ]; then
-    jg_wake_print_annotations "$rows" "$snapshot" || rc=1
+    jg_wake_status_present "$rows" "$snapshot" || rc=1
     if [ "$rc" -eq 0 ]; then
       annotation_manifest=$(jg_wake_annotation_manifest "$rows") || rc=1
       fully_presented=$(printf '%s\n' "$annotation_manifest" | awk -F '\t' '$2 == "direct" { sub(/\.status$/, "", $1); print $1 }') || rc=1
@@ -768,6 +787,9 @@ cleanup() {
   local status=$?
   [ -z "$DRAIN_TMP" ] || rm -f -- "$DRAIN_TMP" 2>/dev/null || true
   [ -z "$DRAIN_VIEW_TMP" ] || rm -f -- "$DRAIN_VIEW_TMP" 2>/dev/null || true
+  if [ "$STATUS_LOCK_HELD" = true ]; then
+    jg_lock_release "$STATE/.status-presentation-lock"
+  fi
   if [ "$DRAIN_LOCK_HELD" = true ]; then
     jg_lock_release "$JG_WAKE_QUEUE_LOCK"
   fi
@@ -890,7 +912,13 @@ if [ -n "$ACK_THROUGH" ]; then
       exit 1
     }
   fi
-  ACK_IDS=$(jg_wake_bus ids-through "$ACK_THROUGH" "$ACK_ROWS_FILE") || ACK_IDS=
+  jg_lock_acquire_wait "$STATE/.status-presentation-lock" || exit 1
+  STATUS_LOCK_HELD=true
+  jg_wake_status_ack check "$ACK_ROWS_FILE" "$ACK_THROUGH" || exit 1
+  ACK_IDS=$(jg_wake_bus ids-through "$ACK_THROUGH" "$ACK_ROWS_FILE") || {
+    echo 'wake drain: acknowledgement ids could not be read safely' >&2
+    exit 1
+  }
   ACK_REMOVED=0
   if [ -n "$ACK_IDS" ]; then
     ACK_REMOVED=$(printf '%s\n' "$ACK_IDS" | awk 'END { print NR }')
@@ -900,6 +928,11 @@ if [ -n "$ACK_THROUGH" ]; then
       exit 1
     }
   fi
+  if [ "$ACK_REMOVED" -gt 0 ]; then
+    jg_wake_status_ack commit "$ACK_ROWS_FILE" "$ACK_THROUGH" || exit 1
+  fi
+  jg_lock_release "$STATE/.status-presentation-lock"
+  STATUS_LOCK_HELD=false
   ACK_QUEUE_LEFT=$(jg_wake_bus count 2>/dev/null || printf '0')
   if [ "${ACK_QUEUE_LEFT:-0}" -eq 0 ]; then
     jg_recovery_marker_ack "$RECOVERY_MARKER" "$ACK_GENERATION"
@@ -1040,6 +1073,7 @@ awk -F '\t' -v seqs="$ACTOR_ROWS_FILE" '
   BEGIN { while ((getline line < seqs) > 0) keep[line]=1 }
   NF >= 5 && ($2 in keep)
 ' "$JG_WAKE_QUEUE" > "$DRAIN_VIEW_TMP" || exit 1
+STATUS_ROWS=$(cat "$DRAIN_VIEW_TMP") || exit 1
 RAW_ROWS=$(jg_wake_print_deduped "$DRAIN_VIEW_TMP") || exit "$?"
 rm -f -- "$DRAIN_VIEW_TMP" || exit 1
 DRAIN_VIEW_TMP=
@@ -1063,7 +1097,10 @@ DRAIN_LOCK_HELD=false
 printf 'WAKE_ACK_REQUIRED: after handling completes run bin/jg-wake-drain.sh --ack-through %s --recovery-generation %s\n' \
   "$ACK_THROUGH" "${RECOVERY_MARKER_TOKEN##*:}" >&2
 
-(print_status_presentation "$RAW_ROWS") || true
+if ! (print_status_presentation "$STATUS_ROWS"); then
+  echo 'wake drain: status presentation incomplete; acknowledgement remains gated until a successful drain' >&2
+  exit 1
+fi
 print_branch_outcomes_section || BRANCH_OUTCOMES_RC=1
 assert_watcher_liveness
 exit "$BRANCH_OUTCOMES_RC"

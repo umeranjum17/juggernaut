@@ -1491,13 +1491,23 @@ handle_wake() {  # <reason> <state>
 
 handle_durable_wakes() {  # <watcher-reason> <state>
   local fallback_reason=$1 state=$2 out err tab epoch sequence kind key payload rest
-  local handled=0 failed=0 ack_through ack_generation
+  local handled=0 failed=0 ack_through ack_generation presentation
   out=$(mktemp "$state/.subsuper-wake-drain.XXXXXX") || return 1
   err=$(mktemp "$state/.subsuper-wake-drain.XXXXXX") || { rm -f "$out"; return 1; }
   if ! "$JG_DAEMON_DIR/jg-wake-drain.sh" > "$out" 2> "$err"; then
     cat "$err" >&2
     rm -f "$out" "$err"
     return 1
+  fi
+  # The row classifier can distil a span to one event. Outcomes need the full
+  # presentation and individual dispositions, so hand them to the supervisor
+  # through the existing durable escalation buffer and leave their rows queued.
+  if grep -q '^OUTCOME_REQUIRED:' "$out"; then
+    presentation=$(cat "$out" "$err") || { rm -f "$out" "$err"; return 1; }
+    failed=0
+    escalate_add "$state" "$presentation" || failed=1
+    rm -f "$out" "$err"
+    return "$failed"
   fi
 
   tab=$(printf '\t')

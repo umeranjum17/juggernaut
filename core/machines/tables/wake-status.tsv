@@ -1,0 +1,17 @@
+machine	wake-status	state/.wake-status-<actor>.json: one signalled task span retained until acknowledgement	bin/jg-wake-status-lib.sh
+state	idle	initial	No presented signal row awaits acknowledgement.	-
+state	presented	normal	A presented span has at least one outcome without a disposition.	-
+state	handled	normal	Every outcome in the presented span has a relay reference or classification reason.	-
+edge	idle	present-outcome	presented	bin/jg-wake-status-lib.sh:jg_wake_status_present	-	all captured bytes were printed successfully	signalled-status-outcomes
+edge	idle	present-routine	handled	bin/jg-wake-status-lib.sh:jg_wake_status_present	-	all captured bytes were printed and no outcome needs handling	signalled-status-outcomes
+edge	presented	replay	presented	bin/jg-wake-status-lib.sh:jg_wake_status_present	-	retain events and stable ids until acknowledgement	signalled-status-outcomes
+edge	presented	handle-one	presented	bin/jg-wake-status-lib.sh:jg_wake_status_handle	-	a presented id and nonblank reference leave another unhandled outcome	signalled-status-outcomes
+edge	presented	handle-last	handled	bin/jg-wake-status-lib.sh:jg_wake_status_handle	-	every outcome now has a disposition	signalled-status-outcomes
+edge	handled	replay	handled	bin/jg-wake-status-lib.sh:jg_wake_status_present	-	no new unhandled outcome was appended	signalled-status-outcomes
+edge	handled	append-outcome	presented	bin/jg-wake-status-lib.sh:jg_wake_status_present	-	new captured bytes contain an outcome	signalled-status-outcomes
+edge	handled	ack	idle	bin/jg-wake-status-lib.sh:jg_wake_status_ack	-	every consumed signal sequence was fully presented and every outcome handled	signalled-status-outcomes
+edge	idle	ack-again	idle	bin/jg-wake-status-lib.sh:jg_wake_status_ack	-	no signal row is consumed again	signalled-status-outcomes
+edge	handled	handle-again	handled	bin/jg-wake-status-lib.sh:jg_wake_status_handle	-	a previously handled presented id still has a nonblank disposition	signalled-status-outcomes
+edge	handled	partial-ack	handled	bin/jg-wake-status-lib.sh:jg_wake_status_ack	-	a higher presented sequence remains queued for this span	signalled-status-outcomes
+# Refused without changing state: acknowledgement with an unseen sequence, changed file, or unhandled outcome; handling an unknown id or blank disposition; corrupt or unsafe journal paths.
+observer	a=${1%%:*}; t=${1#*:}; case $a in main|branch) ;; *) exit 2 ;; esac; f=${JG_STATE_OVERRIDE:-${JG_HOME:?}/state}/.wake-status-$a.json; [ -f "$f" ] || { echo idle; exit; }; jq -r --arg t "$t" 'if ((.[$t].seqs // []) | length) == 0 then "idle" elif any(.[$t].events[]; (.kind | startswith("OUTCOME")) and .disposition == null) then "presented" else "handled" end' "$f"

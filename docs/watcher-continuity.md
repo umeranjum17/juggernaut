@@ -361,6 +361,15 @@ Failing the whole drain would strand the usable rows too.
 
 ### Acknowledgement cutoffs
 
+Signalled status spans also pass the presentation and disposition checks owned by `bin/jg-wake-status-lib.sh`.
+Its actor-local journal retains every new line until acknowledgement, independently of the fleet-wide informational presentation cursor.
+The drain marks outcomes and action lines and prints a stable id for each outcome, including a report buried under later progress in a batch.
+The away daemon buffers the complete outcome presentation for the supervisor and leaves those rows queued for explicit handling.
+Its header names the commands that record a relay reference or classification reason.
+An unseen signal or an outcome without a disposition refuses the acknowledgement before any queue row is consumed.
+An interrupted presentation replays; a new append or rotated log adds fresh events without removing pending outcomes.
+The [wake-status transition table](../core/machines/tables/wake-status.tsv) owns the states and moves.
+
 | Acknowledgement | What it deletes |
 | --- | --- |
 | Main `--ack-through <SEQ>` | Only claimed main rows at or below the cutoff. |
