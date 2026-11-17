@@ -26,6 +26,12 @@
 # ORDERING, and why LOCK now runs before BOOTSTRAP (the old AGENTS.md order
 # was bootstrap-then-lock):
 #
+#   0. captain notes - every unanswered captain inbox note, printed FIRST and
+#                       named as must-answer (bin/jg-captain-note-lib.sh): a
+#                       note whose wake row an earlier acknowledgement retired
+#                       has no other way back, and one sat unanswered for three
+#                       days. Read-only on disk, so it also runs in a
+#                       lock-refused session.
 #   1. lock          - acquire the per-home session lock FIRST, before any
 #                       mutating step runs.
 #   1b. home role    - the resolved juggernaut-repository role line
@@ -69,7 +75,7 @@
 #                       script points back to the emitted harness supervision
 #                       block and deliberately never arms the watcher itself.
 #
-# Those ten names are also the runtime-bound stage list below, so a truncated
+# Those eleven names are also the runtime-bound stage list below, so a truncated
 # startup can name exactly which of them never ran - and the parent banners
 # EVERY nonzero child exit, not only the bound: a child that dies or is killed
 # mid-stage must never truncate the digest silently.
@@ -306,7 +312,7 @@ done
 # The ordered stage list is the contract behind the truncation banner: the child
 # names the stage it is entering, and the parent reports every stage at or after
 # that one as never emitted. Keep it in the exact order the digest prints.
-SESSION_START_STAGES='lock role bootstrap wake-queue supervision-instructions read-once fleet-state network-checks context next-step'
+SESSION_START_STAGES='captain-notes lock role bootstrap wake-queue supervision-instructions read-once fleet-state network-checks context next-step'
 
 stage() {  # <stage-name>: breadcrumb for the parent's truncation banner
   [ -n "${JG_SESSION_START_STAGE_FILE:-}" ] || return 0
@@ -400,6 +406,8 @@ PRIMARY_HARNESS=$("$SCRIPT_DIR/jg-harness.sh" 2>/dev/null || printf unknown)
 . "$SCRIPT_DIR/jg-trace-context-lib.sh"
 # shellcheck source=bin/jg-wake-lib.sh
 . "$SCRIPT_DIR/jg-wake-lib.sh"
+# shellcheck source=bin/jg-captain-note-lib.sh
+. "$SCRIPT_DIR/jg-captain-note-lib.sh"
 # shellcheck source=bin/jg-line-cap-lib.sh
 . "$SCRIPT_DIR/jg-line-cap-lib.sh"
 # shellcheck source=bin/jg-digest-cap-lib.sh
@@ -781,6 +789,25 @@ if [ "$REEMIT" -eq 1 ]; then
 else
   section "SESSION START - $JG_HOME"
 fi
+# Captain notes lead the digest. bin/jg-captain-note-lib.sh owns what counts as
+# an unanswered captain inbox note, its list, and its bounds; this section only
+# gives that list the digest's own byte accounting. It prints nothing when every
+# note is answered, and reads only local files, so a lock-refused session sees it too.
+print_captain_notes_first() {
+  local rows
+  rows=$(jg_captain_notes_must_answer_rows "$STATE") || return 0
+  [ -n "$rows" ] || return 0
+  section "CAPTAIN NOTES - MUST ANSWER"
+  printf '%s\n' "$rows" | jg_digest_say
+  printf "CAPTAIN NOTES: answer each with bin/jg-inbox.sh reply <id> '<answer>' or close it with bin/jg-inbox.sh drain --ack <id>; a wake acknowledgement is refused while one is unanswered.\n" | jg_digest_say
+}
+
+# --- 0. captain notes --------------------------------------------------
+# First, before the lock and every other section: a note whose wake row an
+# earlier acknowledgement retired has no other way back into this session.
+stage captain-notes
+print_captain_notes_first
+
 # --- 1. lock -----------------------------------------------------------
 stage lock
 subsection "LOCK"

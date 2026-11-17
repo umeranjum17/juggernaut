@@ -20,6 +20,12 @@
 # Every signalled status span replays until acknowledgement. OUTCOME_REQUIRED
 # ids must first be handled with --outcome ID --relayed REFERENCE or
 # --outcome ID --classified REASON (nonblank, recorded per actor and home).
+# CAPTAIN NOTES lead every presentation, and they gate the acknowledgement:
+# bin/jg-captain-note-lib.sh owns what counts as an unhandled captain inbox
+# note, lists every one of them at the top of this drain, and refuses an
+# acknowledgement whose batch still holds one with no reply and no drain
+# acknowledgement. A note is read from state/inbox/, not from the queue, so a
+# note whose row an earlier acknowledgement retired cannot disappear again.
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
 [ "$_jg_d" != "${BASH_SOURCE[0]}" ] || _jg_d=.
@@ -60,6 +66,8 @@ SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd
 . "$SCRIPT_DIR/jg-afk-contract.sh"
 # shellcheck source=bin/jg-wake-status-lib.sh
 . "$SCRIPT_DIR/jg-wake-status-lib.sh"
+# shellcheck source=bin/jg-captain-note-lib.sh
+. "$SCRIPT_DIR/jg-captain-note-lib.sh"
 
 DRAIN_TMP=
 DRAIN_VIEW_TMP=
@@ -875,16 +883,27 @@ if [ -n "$ACK_THROUGH" ]; then
     # sequences it consumes. Otherwise the receipt stays pending and every
     # later reconcile scan re-queues the same fingerprint. Attended, a grant
     # names no check row and both scans find nothing.
-    ACK_FINGERPRINTS=$(inactive_outcome_fingerprints "$ACK_THROUGH" 'inactive-outcome:' "$ELIGIBLE_ROWS_FILE") || exit 1
-    ACK_NOTICE_FINGERPRINTS=$(inactive_outcome_fingerprints "$ACK_THROUGH" 'inactive-reconcile:' "$ELIGIBLE_ROWS_FILE") || exit 1
+    ACK_ROWS_FILE=$ELIGIBLE_ROWS_FILE
+    ACK_FINGERPRINTS=$(inactive_outcome_fingerprints "$ACK_THROUGH" 'inactive-outcome:' "$ACK_ROWS_FILE") || exit 1
+    ACK_NOTICE_FINGERPRINTS=$(inactive_outcome_fingerprints "$ACK_THROUGH" 'inactive-reconcile:' "$ACK_ROWS_FILE") || exit 1
   else
     if { [ -e "$MAIN_ROWS_FILE" ] || [ -L "$MAIN_ROWS_FILE" ]; } \
       && ! rows_file_valid "$MAIN_ROWS_FILE"; then
       echo "wake drain: main acknowledgement has an invalid presented-row claim" >&2
       exit 1
     fi
-    ACK_FINGERPRINTS=$(inactive_outcome_fingerprints "$ACK_THROUGH" 'inactive-outcome:' "$MAIN_ROWS_FILE") || exit 1
-    ACK_NOTICE_FINGERPRINTS=$(inactive_outcome_fingerprints "$ACK_THROUGH" 'inactive-reconcile:' "$MAIN_ROWS_FILE") || exit 1
+    ACK_ROWS_FILE=$MAIN_ROWS_FILE
+    ACK_FINGERPRINTS=$(inactive_outcome_fingerprints "$ACK_THROUGH" 'inactive-outcome:' "$ACK_ROWS_FILE") || exit 1
+    ACK_NOTICE_FINGERPRINTS=$(inactive_outcome_fingerprints "$ACK_THROUGH" 'inactive-reconcile:' "$ACK_ROWS_FILE") || exit 1
+  fi
+  # Refuse before anything is consumed: a batch that carries an unanswered
+  # captain note is not handled, however green everything else in it looks.
+  # bin/jg-captain-note-lib.sh owns the test and the refusal text; the rows stay
+  # queued, so the next drain presents the note again.
+  if ! jg_captain_note_ack_gate "$STATE" "$JG_WAKE_QUEUE" "$ACK_ROWS_FILE" "$ACK_THROUGH"; then
+    jg_lock_release "$JG_WAKE_QUEUE_LOCK"
+    DRAIN_LOCK_HELD=false
+    exit 1
   fi
   jg_lock_release "$JG_WAKE_QUEUE_LOCK"
   DRAIN_LOCK_HELD=false
@@ -900,14 +919,12 @@ if [ -n "$ACK_THROUGH" ]; then
   # another actor owns - even one numbered below the cutoff - is never consumed.
   if [ "$ACTOR" = branch ]; then
     require_branch_eligible_rows || exit 1
-    ACK_ROWS_FILE=$ELIGIBLE_ROWS_FILE
-    jg_wake_commit_squad_lead_stall_receipts_through "$ACK_THROUGH" "$ELIGIBLE_ROWS_FILE" || {
+    jg_wake_commit_squad_lead_stall_receipts_through "$ACK_THROUGH" "$ACK_ROWS_FILE" || {
       echo "wake drain: squad_lead stall receipt could not be recorded safely" >&2
       exit 1
     }
   else
-    ACK_ROWS_FILE=$MAIN_ROWS_FILE
-    jg_wake_commit_squad_lead_stall_receipts_through "$ACK_THROUGH" "$MAIN_ROWS_FILE" || {
+    jg_wake_commit_squad_lead_stall_receipts_through "$ACK_THROUGH" "$ACK_ROWS_FILE" || {
       echo "wake drain: squad_lead stall receipt could not be recorded safely" >&2
       exit 1
     }
@@ -1011,6 +1028,7 @@ if [ ! -s "$JG_WAKE_QUEUE" ]; then
   esac
   jg_lock_release "$JG_WAKE_QUEUE_LOCK"
   DRAIN_LOCK_HELD=false
+  jg_captain_notes_must_answer "$STATE" || true
   (print_status_presentation) || true
   print_branch_outcomes_section || BRANCH_OUTCOMES_RC=1
   if [ "$RECOVERY_ACK_REQUIRED" = true ]; then
@@ -1030,6 +1048,7 @@ if [ "$ACTOR" = main ]; then
     # and acknowledges them itself. Say so rather than exiting silently: a
     # drain that prints nothing while the queue is visibly non-empty reads as a
     # lost wake, and leaves the caller with no idea who owns what is queued.
+    jg_captain_notes_must_answer "$STATE" || true
     print_branch_held_notice
     jg_lock_release "$JG_WAKE_QUEUE_LOCK"
     DRAIN_LOCK_HELD=false
@@ -1083,6 +1102,7 @@ case "${JG_WAKE_DRAIN_TEST_DELAY_BEFORE_COMMIT:-0}" in
   ''|*[!0-9]*) ;;
   *) sleep "$JG_WAKE_DRAIN_TEST_DELAY_BEFORE_COMMIT" ;;
 esac
+jg_captain_notes_must_answer "$STATE" || true
 if [ -n "$RAW_ROWS" ]; then
   printf '%s\n' "$RAW_ROWS" || exit "$?"
 fi

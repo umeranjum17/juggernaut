@@ -367,6 +367,11 @@ The drain marks outcomes and action lines and prints a stable id for each outcom
 The away daemon buffers the complete outcome presentation for the supervisor and leaves those rows queued for explicit handling.
 Its header names the commands that record a relay reference or classification reason.
 An unseen signal or an outcome without a disposition refuses the acknowledgement before any queue row is consumed.
+An unanswered captain inbox note in the batch refuses it the same way: the captain's own note is the one wake that must never be retired without an answer.
+`bin/jg-captain-note-lib.sh` owns what counts as unanswered: the note is still in `state/inbox/`, has no reply at `state/inbox/.replies/<id>`, and was not acknowledged by `bin/jg-inbox.sh drain --ack <id>`.
+Every drain and the session digest print those notes first, as a must-answer list.
+A reply or the note's own drain acknowledgement lets the run through.
+The list is read from the notes, not from the queue, so a note whose row an earlier acknowledgement retired still reaches the next session.
 An interrupted presentation replays; a new append or rotated log adds fresh events without removing pending outcomes.
 The [wake-status transition table](../core/machines/tables/wake-status.tsv) owns the states and moves.
 

@@ -3037,6 +3037,48 @@ EOF
   pass "session start rejects Pi loaded markers from previous sessions"
 }
 
+# --- captain notes -----------------------------------------------------------
+
+# An unanswered captain inbox note leads the digest, before the lock: a note
+# whose wake row an earlier acknowledgement retired has no other way back into a
+# session, and one sat unanswered for three days that way (Main42437, Main42458).
+test_captain_notes_lead_the_digest_before_the_lock() {
+  local rec root home fakebin out note_line lock_line note_id
+  rec=$(new_world captain-note)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+
+  JG_HOME="$home" JG_ROOT_OVERRIDE="$root" JG_STATE_OVERRIDE="$home/state" \
+    JG_DATA_OVERRIDE="$home/data" JG_CONFIG_OVERRIDE="$home/config" \
+    PATH="$fakebin:$BASE_PATH" "$ROOT/bin/jg-inbox.sh" note 'Which dashboard should I drop?' >/dev/null \
+    || fail 'the real note producer failed'
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  note_line=$(printf '%s\n' "$out" | grep -n '^CAPTAIN NOTES - MUST ANSWER$' | head -1 | cut -d: -f1)
+  lock_line=$(printf '%s\n' "$out" | grep -n '^LOCK$' | head -1 | cut -d: -f1)
+  [ -n "$note_line" ] || fail "the digest printed no must-answer list for an unanswered captain note: $out"
+  [ -n "$lock_line" ] || fail 'the digest printed no LOCK section'
+  [ "$note_line" -lt "$lock_line" ] \
+    || fail "the captain notes were not printed at the top of the digest (notes at $note_line, lock at $lock_line)"
+  assert_contains "$out" 'Which dashboard should I drop?' 'the digest did not carry the words of the unanswered note'
+
+  # Once the note is answered, a clean digest says nothing about it at all.
+  note_id=$(basename "$(ls "$home/state/inbox"/*.note)" .note)
+  JG_HOME="$home" JG_ROOT_OVERRIDE="$root" JG_STATE_OVERRIDE="$home/state" \
+    JG_DATA_OVERRIDE="$home/data" JG_CONFIG_OVERRIDE="$home/config" \
+    PATH="$fakebin:$BASE_PATH" "$ROOT/bin/jg-inbox.sh" reply "$note_id" 'You can drop the card.' >/dev/null \
+    || fail 'the real reply path failed'
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  if printf '%s\n' "$out" | grep -q '^CAPTAIN NOTES'; then
+    fail 'the digest still listed an answered captain note as must-answer'
+  fi
+
+  pass 'an unanswered captain note leads the digest before the lock, and an answered one is silent'
+}
+
 # JG_SESSION_START_ONLY="<test function> ..." runs just those cases (tests/jg-session-start.test.sh uses it).
 if [ -n "${JG_SESSION_START_ONLY:-}" ]; then
   for case_name in $JG_SESSION_START_ONLY; do "$case_name"; done
@@ -3055,6 +3097,7 @@ test_lock_write_failure_read_only_path
 test_trace_context_effective_state_is_frozen_after_lock
 test_session_lock_concurrent_single_winner
 test_output_ordering_diagnostics_lead
+test_captain_notes_lead_the_digest_before_the_lock
 test_read_once_contract_is_stated_once_before_its_subject
 test_herdr_backend_diagnostics_follow_real_session_start
 test_session_start_relaunches_missing_pi_squad_lead

@@ -308,6 +308,9 @@ journeys:
   captain-close-gate:
     tier: local
     command: bash journeys/captain-close-gate.sh
+  captain-note-ack-gate:
+    tier: local
+    command: bash journeys/captain-note-ack-gate.sh
   stuck-question-replay:
     tier: local
     command: bash journeys/stuck-question-replay.sh
