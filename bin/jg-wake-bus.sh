@@ -17,8 +17,13 @@
 #            every home on the machine, so the Go command (wakebus.go) adds this home's subject to
 #            a stream an earlier build made for another home; a home reads only its own events
 #            (the event's `home`).
-#   outbox   an event the server refuses waits in state/.wake-bus.outbox.jsonl and is
-#            published by the next render, so a bus that is briefly down loses no wake.
+#   outbox   an event that could not be published waits in state/.wake-bus.outbox.jsonl
+#            and is published by the next render, so a bus that is briefly down loses
+#            no wake. A raise owns that rule at the producer's boundary: when the wake
+#            engine refuses the raise, or cannot run at all, the raise owes the row
+#            here with the engine's own cause kept on stderr and still answers success,
+#            because a producer's duty never depends on the store answering and a wake
+#            must never be dropped for a store that is down.
 #
 # Usage: jg-wake-bus.sh raise <kind> <key> <payload> <class> | settle <kind> <key> <payload>
 #        | ack <id>... | ids <kind> <key> | ids-through <max-seq> [<seqs-file>] | count
@@ -142,7 +147,46 @@ live_render() { wake_go render "$STATE"; }
 # event it cannot publish; the read model follows.
 live_raise() { printf '%s' "$3" | live_raise_stdin "$1" "$2" "$4"; } # <kind> <key> <payload> <class>
 live_settle() { printf '%s' "$3" | live_settle_stdin "$1" "$2"; }
-live_raise_stdin() { wake_go raise-stdin "$STATE" "$@" || return 1; live_render; return 0; }
+# owe_raise_stdin <kind> <key> <class>: queue one raise in the outbox from the raise
+# path alone. The engine fixes a row's number and identity; when the engine refused, or
+# could not run, the row takes the legacy number the allocator was built to start beyond
+# (this second in milliseconds plus a random suffix), which the engine's own
+# nextWakeSequence already accounts for, so it stays ordered and unique beside every row
+# the engine writes. The engine's refusal keeps its own cause on stderr; this only makes
+# sure the wake survives it.
+owe_raise_stdin() { # <kind> <key> <class>; the payload arrives on stdin
+  local kind=$1 key=$2 class=$3 payload at rseq id row
+  payload=$(cat)
+  at=$(date -u +%s)
+  rseq=$(( at * 1000 + RANDOM % 1000 ))
+  id="wake/$(live_home_key)/$at-$$-$RANDOM"
+  row=$(jq -nc --arg subject "$SUBJECT_PREFIX.wake.raise" --arg id "$id" \
+    --arg home "$(live_home_key)" --arg kind "$kind" --arg key "$key" --arg payload "$payload" \
+    --arg class "$class" --arg word "${JG_WAKE_WORD:-}" --argjson at "$at" --argjson rseq "$rseq" \
+    '{subject:$subject,v:1,id:$id,home:$home,where:"queue",at:$at,rseq:$rseq,kind:$kind,key:$key,payload:$payload,class:$class}
+     + (if $word == "" then {} else {word:$word} end)') || return 1
+  mkdir -p "$STATE" 2>/dev/null || return 1
+  printf '%s\n' "$row" >> "$LIVE_OUTBOX"
+}
+
+# A raise succeeds when its event is durable, published or owed. That rule holds at
+# the producer's boundary, so this owns it: whether the engine could not make the event
+# durable, could not run, or refused the raise by its own rules, the row is owed here
+# with the engine's cause on stderr, and the render that follows publishes it when the
+# engine can answer at all. A caller therefore never sees a raise that both failed and
+# lost the event; only a row that cannot even be written here fails.
+live_raise_stdin() { # <kind> <key> <class>; the payload arrives on stdin
+  local rc payload
+  payload=$(cat)
+  printf '%s' "$payload" | wake_go raise-stdin "$STATE" "$@"
+  rc=$?
+  if [ "$rc" -eq 0 ]; then live_render; return 0; fi
+  printf '%s' "$payload" | owe_raise_stdin "$@" || return 1
+  printf 'jg-wake-bus.sh: the raise was not published (wake engine status %s); owed it in %s\n' \
+    "$rc" "$LIVE_OUTBOX" >&2
+  live_render >/dev/null 2>&1 || true
+  return 0
+}
 live_settle_stdin() { wake_go settle-stdin "$STATE" "$@" || return 1; live_render; }
 
 # live_publish <subject> <id> <json>: publish one event, or owe it in the outbox.

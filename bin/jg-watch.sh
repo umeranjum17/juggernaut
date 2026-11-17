@@ -379,6 +379,18 @@ _jg_wait_timers_lib=$SCRIPT_DIR/../core/wait-timers/bin/jg-wait-timers-lib.sh
 WATCH_LOCK="$STATE/.watch.lock"
 WATCH_PATH="$SCRIPT_DIR/jg-watch.sh"
 WATCHER_DOWNTIME_MARKER="$STATE/.watcher-down"
+
+# wake_raise_refused <what>: a wake row this cycle set out to record was refused, so
+# the cycle names it and keeps going. Supervision outranks its own wake store: a
+# watcher that exits here stops every other duty this home carries, and the arm can
+# only read that exit as a broken cycle. bin/jg-wake-bus.sh already owes every raise it
+# could not publish, with the store's own cause on stderr, and the actionable reason
+# still leaves through wake below; what reaches this line is the one case left - a row
+# that could not even be written - and it is never swallowed silently.
+wake_raise_refused() {
+  triage_log "wake raise refused ($1); the cycle continues"
+}
+
 # The singleton-lock acquisition, EXIT trap, and the blocking supervision loop
 # all live below the source guard at the very bottom of this file (see "Main
 # entry"). Sourcing this file for unit tests therefore loads the functions -
@@ -4081,7 +4093,7 @@ run_fast_checks() {
       check_capture_skip "$shim"
     elif check_result_reason "$shim"; then
       reason=$JG_CHECK_REASON
-      jg_wake_append check "$shim" "$reason" || exit 1
+      jg_wake_append check "$shim" "$reason" || wake_raise_refused "board-answers"
       wake "$reason"
     fi
   fi
@@ -4253,7 +4265,7 @@ EOF
           wake "$reason"
         fi
         pr_poll_control_release || exit 1
-        jg_wake_append check "$c" "$reason" || exit 1
+        jg_wake_append check "$c" "$reason" || wake_raise_refused "$c"
         touch "$STATE/.last-check"
         wake "$reason"
       fi
@@ -4544,7 +4556,7 @@ EOF
         watcher_beat ready-record
         file_reason="$reason"
         case " $JG_SIGNAL_NEEDS_DECISION_FILES " in *" $f "*) file_reason="needs-decision:$signal_files" ;; esac
-        jg_wake_append signal "$(basename "$f")" "$file_reason" || exit 1
+        jg_wake_append signal "$(basename "$f")" "$file_reason" || wake_raise_refused "signal:$(basename "$f")"
       done <<EOF
 $pending
 EOF
@@ -4593,7 +4605,7 @@ EOF
         while IFS=$(printf '\t') read -r sf sig f; do
           [ -n "$sf" ] || continue
           reportable_signal_path "$f" || continue
-          jg_wake_append signal "$(basename "$f")" "$reason" || exit 1
+          jg_wake_append signal "$(basename "$f")" "$reason" || wake_raise_refused "signal:$(basename "$f")"
         done <<EOF
 $pending
 EOF
@@ -4933,13 +4945,13 @@ EOF
   # at least one row waits, one digest wake carries them all; with none waiting there is no wake.
   if digest_waiting=$(jg_wake_digest_due mark); then
     reason="check: digest - $digest_waiting routine events wait in the queue; none needs a decision now"
-    jg_wake_append check wake-digest "$reason" || exit 1
+    jg_wake_append check wake-digest "$reason" || wake_raise_refused "digest"
     wake "$reason"
   fi
 
   # Asks the ask-default feature recorded are decided on the check cadence.
   if ask_default_tick; then
-    jg_wake_append check ask-default "$ASK_DEFAULT_REASON" || exit 1
+    jg_wake_append check ask-default "$ASK_DEFAULT_REASON" || wake_raise_refused "ask-default"
     wake "$ASK_DEFAULT_REASON"
   fi
 
@@ -4961,7 +4973,7 @@ EOF
       # The rule file decides: an unchanged fleet (`silent@fleet-unchanged heartbeat`) is recorded
       # and never wakes, a changed one wakes and records what it saw.
       hb_class=$(jg_wake_route_class heartbeat heartbeat heartbeat)
-      jg_wake_append heartbeat heartbeat heartbeat || exit 1
+      jg_wake_append heartbeat heartbeat heartbeat || wake_raise_refused "heartbeat"
       touch "$STATE/.last-heartbeat"
       if [ "$hb_class" = now ]; then
         jg_wake_fleet_fp_record
@@ -4974,13 +4986,13 @@ EOF
       # Enqueue first, then record every status log surfaced through its end so the
       # next heartbeat does not re-fire it (enqueue-before-suppress preserved);
       # this wake sends juggernaut to the whole fleet, so every log is read.
-      jg_wake_append heartbeat heartbeat heartbeat || exit 1
+      jg_wake_append heartbeat heartbeat heartbeat || wake_raise_refused "heartbeat"
       touch "$STATE/.last-heartbeat"
       mark_all_captain_relevant_surfaced || true
       wake "heartbeat"
     else
       if ! mark_all_captain_relevant_surfaced; then
-        jg_wake_append heartbeat heartbeat heartbeat || exit 1
+        jg_wake_append heartbeat heartbeat heartbeat || wake_raise_refused "heartbeat"
         touch "$STATE/.last-heartbeat"
         wake "heartbeat"
       fi

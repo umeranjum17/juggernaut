@@ -150,6 +150,38 @@ test_a_lost_record_is_not_acknowledged() {
 }
 
 # A raise the event system refuses is reported on stderr; the steer itself stays stored.
+test_a_refused_raise_is_owed_and_never_lost() {
+  local home="$DIR/owed-home" state="$DIR/owed-home/state" outbox="$DIR/owed-home/state/.wake-bus.outbox.jsonl" rc=0
+  mkdir -p "$state/bus" "$home/config"
+  printf 'now * * * *\n' > "$home/config/wake-routing"
+  # The wake engine cannot run at all: a checkout mid-rebuild. The raise must still
+  # answer success and the event must wait in this home's outbox.
+  # shellcheck disable=SC2016  # the single-quoted script is for the child shell, not this one
+  env JG_HOME="$home" JG_STATE_OVERRIDE="$state" JG_WAKE_ROUTING="$home/config/wake-routing" \
+    JG_BUS_BIN="$home/no-such-jg-bus" JG_BUS_GO=/bin/false \
+    bash -c '. "$1/bin/jg-wake-lib.sh"; jg_wake_append check engine-down "check: the engine cannot run"' \
+    _ "$ROOT" 2> "$DIR/owed.err" || rc=$?
+  assert_equals 0 "$rc" "a raise the engine cannot serve must still succeed"
+  assert_contains "$(cat "$DIR/owed.err")" "no runnable command" "the engine's own cause must stay on stderr"
+  assert_equals 1 "$(awk 'END { print NR + 0 }' "$outbox")" "the event must wait in the outbox"
+  assert_contains "$(cat "$outbox")" 'check: the engine cannot run' "the owed row must carry the event"
+  assert_contains "$(jq -r 'select(.key == "engine-down") | .where' "$outbox")" queue \
+    "the owed row must be a queue row"
+  # The engine runs but refuses every raise (a corrupt row-number record). The row is
+  # owed, the engine's cause is kept, and the render that follows publishes both.
+  printf 'not-a-number\n' > "$state/bus/wake-order"
+  rc=0
+  env JG_HOME="$home" JG_STATE_OVERRIDE="$state" JG_WAKE_ROUTING="$home/config/wake-routing" \
+    "$ROOT/bin/jg-wake-bus.sh" raise check refused-number "check: the allocator refused" now \
+    2> "$DIR/owed2.err" || rc=$?
+  assert_equals 0 "$rc" "a refused raise must still succeed"
+  assert_contains "$(cat "$DIR/owed2.err")" "cannot assign row sequence" "the refusal must keep its cause"
+  assert_equals 0 "$(awk 'END { print NR + 0 }' "$outbox")" "the render after the refusal publishes what it owes"
+  assert_contains "$(cat "$state/.wake-queue")" "engine-down" "the event the engine could not serve must be queued"
+  assert_contains "$(cat "$state/.wake-queue")" "refused-number" "the refused raise must be queued"
+  pass "a raise with no engine, and one the engine refuses, are owed and never lost"
+}
+
 test_a_failed_raise_is_reported_and_the_steer_stays_stored() {
   local rec err
   # shellcheck source=/dev/null
@@ -565,6 +597,7 @@ test_withdraw_takes_only_its_own_row || result=1
 test_inbox_is_raised_at_the_writer_and_acknowledged_on_the_move || result=1
 test_a_lost_record_is_not_acknowledged || result=1
 test_a_failed_raise_is_reported_and_the_steer_stays_stored || result=1
+test_a_refused_raise_is_owed_and_never_lost || result=1
 test_a_second_home_reaches_the_same_stream || result=1
 test_an_inbox_acknowledgement_lands_on_the_inbox_stream || result=1
 test_an_acknowledgement_owed_by_the_outbox_still_settles || result=1

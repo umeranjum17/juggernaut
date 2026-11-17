@@ -104,6 +104,7 @@ The live path keeps its replica, cursor and unpublished events separately:
 - `state/.wake-bus.outbox.jsonl` - events a failed publish still owes the bus. A
   home whose bus is briefly unreachable loses no wake: the event waits here and
   the next render publishes it.
+  A raise owns that rule at its caller: a raise the engine refused, or one the engine could not serve at all, is owed here, keeps the engine's own cause on stderr, and still answers success, so no producer and no supervision cycle stops for a store that is down.
 
 The replica and cursor can be rebuilt from the stream; the outbox and producer high-water number must be retained.
 

@@ -490,6 +490,10 @@ journeys:
   wake-cursor-kill:
     tier: local
     command: bash journeys/wake-cursor-kill.sh
+  wake-raise-outbox:
+    tier: local
+    command: bash journeys/wake-raise-outbox.sh
+    timeout: 5m
   bus-machine-service:
     tier: local
     command: (bash bin/jg-bus-reap.sh >/dev/null 2>&1 || true; bash tests/jg-bus-machine-service.test.sh && bash tests/jg-stack-owner.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
