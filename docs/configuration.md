@@ -12,9 +12,9 @@ Start with the directory layout, then use the setting reference for the behavior
 | Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), [account outage fallbacks](#account-outage-fallbacks-configclaude-account-fallbacks), [Claude 1M context window](#claude-1m-context-window-configclaude-1m-accounts), [model allow-lists](#model-allow-lists-configmodel-allow-listjson), [worker tool exclusions](#worker-tool-exclusions-configcrew-exclude-tools), [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist), [provider credential strip](#provider-credentials-stripped-from-every-launch), and [launch environment hook](#launch-environment-hook-configlaunch-env-hook) |
 | Backlog, preferences, and memory | [Backlog](#backlog-configbeads-dir), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), [external memory tiers](#external-memory-tiers-memory-layering-section), [startup memory budget](#startup-memory-budget-configstartup-memory-budget), [host memory guard](#host-memory-guard-confighost-memory), and [supervisor context cap](#supervisor-context-cap-configsupervisor-context-cap) |
 | Worker lease and the reclaim of an unheld row | [Worker lease](#worker-lease-configlease-reclaim) |
-| Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configcalm) |
+| Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configstealth) |
 | Persistent Squad Leads | [Squad Lead routes](#squad-lead-routes-datasquad_leadsmd) |
-| Release branch that follows main | [Version branch](#version-branch-configversion-branch-releasec-n) |
+| Release branch that follows main | [Version branch](#version-branch-configversion-branch-releasec-) |
 | Home updates after a merge | [Fleet autosync](#fleet-autosync-configfleet-autosync-off) |
 | A release that pushes its own readiness | [Release readiness](#release-readiness-configrelease-readiness) |
 | Landing gates | [Home merge gate](#home-merge-gate-configmerge-gate) |
@@ -382,7 +382,7 @@ While the home runs the host, main's lease-checked commands read the task's leas
 
 ## Overwatch KPI (config/overwatch-kpi)
 
-Every captain message a Claude or Cursor primary receives is recorded and must be tagged in the turn it arrives, and so is every note the captain sends from the chat on his phone (the gateway records it once per inbox note, however often a poll replays it); `bin/jg-overwatch-kpi.sh` owns the ledger, the kinds, and the link a miss needs, and [turnend-guard.md](turnend-guard.md#overwatch-kpi-rule) owns the turn-end refusal.
+Every captain message a Claude or Cursor primary receives is recorded and must be tagged in the turn it arrives, and so is every note the captain sends from the chat on his phone (the gateway records it once per inbox note, however often a poll replays it); `bin/jg-overwatch-kpi.sh` owns the ledger, the kinds, and the link a miss needs, and [turnend-guard.md](turnend-guard.md#overwatch-kpi-tags) owns the turn-end refusal.
 It is on by default.
 A local `config/overwatch-kpi` reading `off` stops recording, which is for a lab whose prompts are scripted rather than typed by a captain.
 `jg-overwatch-kpi.sh tag <kind> [<link>]` tags the newest message; `tag --message <seq|inbox-id> <kind> [<link>]` tags the one named, and refuses an unknown seq or inbox id with exit 2.
@@ -466,7 +466,7 @@ Completion refuses to report success until the item is closed, and session start
 An owner ask comes first: the wrapper files a `[captain-ask]` item at priority 0, so `ready` offers it before other work, and it refuses an `add`, `update` or retitle that would put such an item at any other priority.
 The same wrapper also refuses to remove or close a `[captain-ask]` row, or to drop its tag through `update` or `edit --title`, unless the row links a merged pull request or a Recon report, or the call carries `--captain-quote '<his words>'`, or `--confirm-card <id>` naming a separate board card that names the row and that `bin/jg-captain-hold.sh answered` finds answered. A recorded answer on the row itself no longer closes it, because a rejected option means redo the options, never cancel. The quote or card lands in the ticket note and in `data/captain-closures.md`; it refuses a raw `hold` of such a row, and an unanswered ask in the archive set blocks a close or prune only when that archive would move it past `done_keep`. The refusal names the row and exits 2. The guard covers only commands run through the wrapper, and the automatic dispatch and completion transitions do not use it ([`bin/jg-backlog.sh`](../bin/jg-backlog.sh) owns the complete refusal list).
 
-When a spawn is interrupted after launch delivery began, its exit path re-reads the paired task record and the backlog row under the same per-task lock as the commit, repairs a row the commit believed it had moved, and reports only what was verified or honestly attempted, never intent phrased as outcome ([`bin/jg-spawn.sh`](../bin/jg-spawn.sh); [`tests/jg-backlog-atomicity.test.sh`](../tests/jg-backlog-atomicity.test.sh)).
+When a spawn is interrupted after launch delivery began, its exit path re-reads the paired task record and the backlog row under the same per-task lock as the commit, repairs a row the commit believed it had moved, and reports only what was verified or honestly attempted, never intent phrased as outcome ([`bin/jg-spawn.sh`](../bin/jg-spawn.sh)).
 
 ### Which backlog receives a transition
 
@@ -1562,7 +1562,7 @@ Diagnostics print names only, and no value is copied, logged, written to a recor
 
 The strip runs inside the pane and reads the pane's own environment when it runs, so a name the herdr server exports or a shell profile sets after the launch is built is stripped too.
 Limit: this is not a sandbox, and tools or later shells can still create or reload credentials.
-For the population side of the same problem, [`addons/key-in-env-check`](../addons/key-in-env-check/README.md) scans running processes for provider keys.
+For the population side of the same problem, [`core/key-in-env-check`](../core/key-in-env-check/README.md) scans running processes for provider keys.
 
 Regression coverage plants synthetic credential names only in the pane, never in the launching process, and runs the real builder and every emitted launch in [`tests/jg-launch-env-strip.test.sh`](../tests/jg-launch-env-strip.test.sh) and [`tests/jg-spawn-dispatch-profile.test.sh`](../tests/jg-spawn-dispatch-profile.test.sh).
 
@@ -1574,13 +1574,13 @@ This guarantee also covers raw launch commands, remote Squad Leads, and launches
 Juggernaut provides no configuration or flag to change this value.
 This applies only to agents Juggernaut launches; the captain's own primary Juggernaut session is never given the variable.
 
-[`jg-spawn.sh --help`](../bin/jg-spawn.sh) owns the delivery mechanics, with focused regression coverage in [`tests/jg-spawn-compact-adviser-disable.test.sh`](../tests/jg-spawn-compact-adviser-disable.test.sh) and [`tests/jg-spawn-compact-adviser-disable-remote.test.sh`](../tests/jg-spawn-compact-adviser-disable-remote.test.sh).
+[`jg-spawn.sh --help`](../bin/jg-spawn.sh) owns the delivery mechanics.
 
 ### Git editor setting
 
 Every operator, Recon, and Squad Lead Juggernaut launches starts with `GIT_EDITOR=true` and `GIT_SEQUENCE_EDITOR=true` in its environment, on a fresh spawn and on a relaunch alike, so git never opens an interactive editor in an unattended worker pane.
 This guarantee also covers raw launch commands and launches filtered by `config/launch-env-allowlist`; it does not depend on the destination environment already containing either variable.
-[`jg-spawn.sh --help`](../bin/jg-spawn.sh) owns the delivery mechanics, with focused regression coverage in [`tests/jg-spawn-compact-adviser-disable.test.sh`](../tests/jg-spawn-compact-adviser-disable.test.sh).
+[`jg-spawn.sh --help`](../bin/jg-spawn.sh) owns the delivery mechanics.
 
 ### Commit attribution
 

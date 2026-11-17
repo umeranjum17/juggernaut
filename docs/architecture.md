@@ -294,7 +294,6 @@ Operators never intentionally touch your project clone; [treehouse](https://gith
 The [`jg-spawn.sh` header](../bin/jg-spawn.sh) owns ship/scout durable allocation, failed-launch recovery, worktree isolation, and fresh-base refusal rules, including spawns from linked homes.
 Before any pool copy is allocated, spawn and home seed lease every recorded copy in that project's pool through [`bin/jg-treehouse-protect.py`](../bin/jg-treehouse-protect.py), because treehouse's own liveness is process-based and would show a copy whose task's launching shell has exited as free; the lease, not a process check, keeps a live task's copy from being handed out.
 The script's docstring owns the skip and refusal rules.
-Portable regressions live in [`tests/jg-spawn-pool-base-freshen.test.sh`](../tests/jg-spawn-pool-base-freshen.test.sh) for spawn isolation and base freshness, and [`tests/jg-control-relaunch.test.sh`](../tests/jg-control-relaunch.test.sh) for preserving the recorded copy on relaunch.
 
 The Juggernaut repo has one extra exposure because it can dispatch operators to work on itself.
 Its operating checkout (`JG_ROOT`) and the disposable operator worktrees are all linked git worktrees of the same repository, so the valid discriminator is branch state, not whether the checkout is linked.

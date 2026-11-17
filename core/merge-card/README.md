@@ -1,6 +1,6 @@
 # merge-card
 
-`merge-card` remains the gate/check/post executable documented in the [feature reference](../docs/addons-reference.md#merge-card).
+`merge-card` remains the gate/check/post executable documented in the [command](merge-card).
 
 Homes with `config/owner-rules` use the [owner-rules publication check](../owner-rules/README.md#lavish-refusal-squad-lead-notes-and-merge-card-posts) before posting or restoring a card.
 Its existing config shims are unchanged.

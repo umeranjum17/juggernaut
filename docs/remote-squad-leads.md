@@ -695,7 +695,6 @@ The portable tests use these pieces:
 - A stateful host-local Herdr CLI fixture.
 - A controlled account fixture for the readiness gate.
 
-[`jg-remote-job-launchagent.test.sh`](../tests/jg-remote-job-launchagent.test.sh) exercises the real worker with stubbed asynchronous `launchctl`, covering slow claim sweeps, missing readiness recovery during a sweep, stale readiness without reload, concurrent repair, untracked owners, interrupted repairs, and asynchronous service removal before bootstrap.
 The lifecycle test covers seeding a registered project that this machine has never cloned.
 It asserts that the local project tree is unchanged afterwards.
 It carries Bitbucket, self-hosted, and scp-like origins through to the remote clone.
@@ -710,7 +709,6 @@ bin/jg-test-run.sh tests/jg-crew-state.test.sh
 bin/jg-test-run.sh tests/jg-remote-job.test.sh
 bin/jg-test-run.sh tests/jg-remote-job-claim-reap.test.sh
 bin/jg-test-run.sh tests/jg-remote-job-claim-retention.test.sh
-bin/jg-test-run.sh tests/jg-remote-job-launchagent.test.sh
 bin/jg-test-run.sh tests/jg-remote-transport-lanes.test.sh
 bin/jg-test-run.sh tests/jg-remote-doctor.test.sh
 bin/jg-test-run.sh tests/jg-remote-herdr-guard.test.sh

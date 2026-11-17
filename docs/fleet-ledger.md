@@ -79,7 +79,7 @@ Example:
 `core/fleet-flow` reads retained fleet records into lifecycle, queue-reason, and bottleneck metrics, with optional live capacity observations; `bin/jg-flow.sh` is a thin shim that execs `core/fleet-flow/bin/jg-flow.sh` with `JG_BIN` pointing at this checkout's `bin/`, and the reader's header owns usage, output interpretation, timestamp provenance, and uncertainty limits.
 The Lookout adapter reads lifecycle output and maps supported rows into Lookout's `lookout.fleet.v1` document.
 It does not generate a dashboard `board.json` or embed the full `jg-flow.v1` document.
-The reader's CLI regression journey is `core/fleet-flow/tests/jg-flow.test.sh`, run with `JG_BIN` naming this checkout's `bin/`; the shim's own behavior is covered by [`tests/jg-flow-shim.test.sh`](../tests/jg-flow-shim.test.sh).
+The reader's CLI regression journey is `core/fleet-flow/tests/jg-flow.test.sh`, run with `JG_BIN` naming this checkout's `bin/`.
 
 ## Per-model statistics
 
