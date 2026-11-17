@@ -19,7 +19,7 @@ _subject() { printf '%s' "$1" | tr -c 'A-Za-z0-9._+:()-' '-' | cut -c1-100; }
 cmd_fire() {
   local subject ring
   subject=$(_subject "${1:?usage: fire <subject>}")
-  _alert resolve "ready-idle--$subject" >/dev/null 2>&1 || true
+  _alert resolve "ready-idle--$subject" --proof source:superseded >/dev/null 2>&1 || true
   ring=$(_alert raise ready-idle "$subject") || exit 1
   [ -z "$ring" ] || printf '%s\n' "$ring" | _alert deliver
 }
@@ -31,7 +31,7 @@ cmd_clear() {
     case $key in "ready-idle--$prefix"*) ;; *) continue ;; esac
     # shellcheck source=bin/jg-wake-lib.sh disable=SC1091
     command -v jg_wake_withdraw >/dev/null 2>&1 || . "$_root/bin/jg-wake-lib.sh"
-    _alert resolve "$key" >/dev/null 2>&1 || true
+    _alert resolve "$key" --proof source:condition-ended >/dev/null 2>&1 || true
     jg_wake_withdraw check "alert-$key" || true
   done < <(_alert list)
 }

@@ -30,7 +30,7 @@ BUDGET=$(( ( ${JG_CHECK_TIMEOUT:-30} - 5 ) / 3 )); [ "$BUDGET" -ge 3 ] || BUDGET
 key=lost-worker--$task
 
 if [ "$verb" = clear ]; then
-  [ -e "$FMH/state/alerts/$key.rec" ] && "$ALERT" resolve "$key" >/dev/null 2>&1
+  [ -e "$FMH/state/alerts/$key.rec" ] && "$ALERT" resolve "$key" --proof source:worker-beat >/dev/null 2>&1
   exit 0
 fi
 hash=$4 reason=$5

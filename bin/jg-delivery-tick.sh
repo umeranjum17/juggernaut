@@ -62,7 +62,7 @@ if [ -n "$required_out" ]; then
   JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" bash "$SCRIPT_DIR/jg-alert.sh" raise supervision-down required-checks --home "$H" \
     --note "$(printf '%s' "$required_out" | tr '\n' ' ')" --deliver || echo "jg-delivery-tick: could not report required checks" >&2
 else
-  JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" bash "$SCRIPT_DIR/jg-alert.sh" resolve supervision-down--required-checks >/dev/null 2>&1 || true
+  JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" bash "$SCRIPT_DIR/jg-alert.sh" resolve supervision-down--required-checks --proof source:required-checks-present >/dev/null 2>&1 || true
 fi
 # The stop loop runs after the landing check, including homes without a trunk.
 # shellcheck disable=SC2329 # The EXIT trap calls this after the landing check.

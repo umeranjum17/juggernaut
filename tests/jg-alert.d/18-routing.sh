@@ -32,19 +32,19 @@
   assert_contains "$(cat "$L/state/.wake-queue")" "disk full" "the named wake stays with its local consumer"
   ! grep -q "host--disk" "$CH" || fail "a named local wake reached the parent"
   # Resolve closes the exact parent action; a new episode is a new action.
-  hal "$L" resolve host--mem; expect_code 0 "$RC" "resolve"
+  hal "$L" resolve host--mem --proof source:measured-clear; expect_code 0 "$RC" "resolve"
   assert_equals "" "$(opened "$CH")" "resolve closes the parent action"
   hal "$L" raise host mem --machine m1 --deliver; expect_code 0 "$RC" "a new episode"
   rk2=$(hrec "$L" host--mem route_key); assert_not_equals "$rk" "$rk2" "a new episode has a new key"
   assert_equals "$rk2" "$(opened "$CH")" "only the new episode is open"
-  hal "$L" resolve host--mem
+  hal "$L" resolve host--mem --proof source:superseded
   # A stuck alert's Main recovery card is routed as its own action and closes with its source.
   hal "$L" raise host slow --deliver
   for i in 1 2 3 4; do hal "$L" climb host--slow --now $(( $(hrec "$L" host--slow rung_at) + 3600 )); done
   printf '%s\n' "$OUT" | in_home "$L" bash "$AL" deliver; expect_code 0 $? "the stuck card delivers"
   assert_equals 2 "$(opened "$CH" | wc -l | tr -d ' ')" "the source and its recovery card are open at the parent"
   assert_contains "$(opened "$CH")" "alert-escalation-stuck--host--slow-g" "the card is its own routed action"
-  hal "$L" resolve host--slow; expect_code 0 "$RC" "resolve the stuck source"
+  hal "$L" resolve host--slow --proof source:condition-ended; expect_code 0 "$RC" "resolve the stuck source"
   assert_equals "" "$(opened "$CH")" "resolving the source closes both parent actions"
   # A capacity event that supersedes a routed one closes it at the parent.
   hal "$L" capacity acct "account down" --rung 3 --deliver; expect_code 0 "$RC" "capacity at Main"

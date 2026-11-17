@@ -37,7 +37,7 @@ RELEASE_WAIT=$(( RELEASE_WAIT_MIN * 60 ))
 LIMIT=${JG_STALE_PR_LIMIT:-$(( START + ${JG_CHECK_TIMEOUT:-30} * 4 / 5 ))}
 alert() { JG_HOME=$FMH "$ALERT" "$@"; }
 # page <subject>: one live stranded alert for the subject, rung to the lead (a changed reason replaces the old record).
-page() { alert resolve "stranded--$1" >/dev/null 2>&1; alert raise stranded "$1" | alert deliver; }
+page() { alert resolve "stranded--$1" --proof source:superseded >/dev/null 2>&1; alert raise stranded "$1" | alert deliver; }
 api() { timeout "$BUDGET" "$GH" api "$1" --jq "$2" 2>/dev/null; } # <path> <jq> -> jq text, nonzero on failure
 
 me=$(api user .login) && [ -n "$me" ] || exit 0 # no login, no ownership test: retry next sweep
@@ -93,7 +93,7 @@ for repo in $repos; do
   [ "$cut" = 0 ] || continue
   for f in "$MEM/$key."*; do
     [ -f "$f" ] || continue
-    case $flagged in *" ${f##*.} "*) ;; *) rm -f -- "$f"; alert resolve "stranded--${f##*/}" >/dev/null 2>&1 ;; esac
+    case $flagged in *" ${f##*.} "*) ;; *) rm -f -- "$f"; alert resolve "stranded--${f##*/}" --proof source:pr-clear >/dev/null 2>&1 ;; esac
   done
 done
 exit 0

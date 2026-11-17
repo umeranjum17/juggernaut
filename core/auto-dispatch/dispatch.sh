@@ -257,7 +257,7 @@ record_row() {
   since=$now; [ "$(last_verdict "$id")" != "$row" ] || since=$prev_epoch
   [ "$(last_verdict "$id")" = "$row" ] || printf '%s\t%s\t%s\n' "$now" "$id" "$row" >> "$ROWS"
   if [ "$ACT" -eq 1 ] && [ "$idle" -eq 1 ]; then ready_idle "$id" "$since"; fi
-  case "$row" in started$'\t'*) JG_STATE_OVERRIDE=$STATE "$ALERT" resolve "ready-idle--$id" >/dev/null 2>&1 ;; esac
+  case "$row" in started$'\t'*) JG_STATE_OVERRIDE=$STATE "$ALERT" resolve "ready-idle--$id" --proof source:row-started >/dev/null 2>&1 ;; esac
   case "$row" in started$'\t'*) grep -v -F -- "$id"$'\t' "$TOLD" > "$tmp/told" 2>/dev/null; cat "$tmp/told" > "$TOLD" 2>/dev/null ;; esac
   if [ "$ACT" -eq 1 ] && needs_lead "${row%%$'\t'*}" "${row#*$'\t'}" && ! grep -qxF -- "$id"$'\t'"$row" "$TOLD" 2>/dev/null; then
     printf '%s\t%s\n' "$id" "$row" >> "$TOLD"; printf '%s (%s)\n' "$id" "${row#*$'\t'}" >> "$tmp/lead"

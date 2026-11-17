@@ -2632,7 +2632,7 @@ jg_wake_host() {
 }
 jg_wake_host_clear() {
   [ -r "$STATE/alerts/host--$1.rec" ] || return 0
-  JG_HOME="${JG_HOME:-$JG_ROOT}" JG_STATE_OVERRIDE="$STATE" bash "$JG_WAKE_LIB_DIR/jg-alert.sh" resolve "host--$1" >/dev/null
+  JG_HOME="${JG_HOME:-$JG_ROOT}" JG_STATE_OVERRIDE="$STATE" bash "$JG_WAKE_LIB_DIR/jg-alert.sh" resolve "host--$1" --proof source:measured-clear >/dev/null
 }
 
 # --- wake urgency routing -----------------------------------------------------

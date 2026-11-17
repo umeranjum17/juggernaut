@@ -514,7 +514,7 @@ nothing_lands() {
 }
 nothing_lands_resolve() {  # <alert script> <key>: resolve the alert when it is still live
   local w; w=$(JG_HOME=$FMH JG_STATE_OVERRIDE=$STATE bash "$1" word "$2" 2>/dev/null) || return 0
-  [ -z "$w" ] || [ "$w" = resolved ] || JG_HOME=$FMH JG_STATE_OVERRIDE=$STATE bash "$1" resolve "$2" >/dev/null 2>&1 || :
+  [ -z "$w" ] || [ "$w" = resolved ] || JG_HOME=$FMH JG_STATE_OVERRIDE=$STATE bash "$1" resolve "$2" --proof source:no-ready-lane >/dev/null 2>&1 || :
 }
 # The cause a late start names when nothing was ahead of the lane: the project's verify holds its slot, or the host load is at its cpu count.
 start_cause() {

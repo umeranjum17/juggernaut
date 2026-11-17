@@ -509,7 +509,7 @@ jg_wait_timers_backlog() {  # <now> <interval>
 # jg_wait_timer_green_pr_resolve <task>: the PR is no longer green and unmerged for this task; resolve its alert when one is live.
 jg_wait_timer_green_pr_resolve() {
   local alert="$_JG_WAIT_TIMER_DIR/jg-alert.sh" key="slow-delivery--$1"
-  JG_STATE_OVERRIDE="$STATE" "$alert" word "$key" >/dev/null 2>&1 && JG_STATE_OVERRIDE="$STATE" "$alert" resolve "$key" >/dev/null 2>&1
+  JG_STATE_OVERRIDE="$STATE" "$alert" word "$key" >/dev/null 2>&1 && JG_STATE_OVERRIDE="$STATE" "$alert" resolve "$key" --proof source:pr-not-waiting >/dev/null 2>&1
   return 0
 }
 jg_wait_timer_green_pr_read() {  # <pr-url> -> head on stdout; 0 green, 1 not green, 2 unreadable
@@ -622,7 +622,7 @@ jg_wait_timers_overdue_steers() {
     if [ -d "$STATE/$task.inbox" ] && JG_STATE_OVERRIDE="$STATE" "$delivery" overdue "$task" --after 0 --read 2>/dev/null | grep -q "^$seq "; then
       JG_STATE_OVERRIDE="$STATE" "$alert" climb "$open" 2>/dev/null | JG_STATE_OVERRIDE="$STATE" "$alert" deliver >/dev/null 2>&1 || true
     else
-      JG_STATE_OVERRIDE="$STATE" "$alert" resolve "$open" >/dev/null 2>&1 || true
+      JG_STATE_OVERRIDE="$STATE" "$alert" resolve "$open" --proof source:steer-answered >/dev/null 2>&1 || true
     fi
   done
   return 0

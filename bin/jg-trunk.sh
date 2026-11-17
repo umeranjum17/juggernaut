@@ -1974,7 +1974,7 @@ cmd_green_alarm() {
   first=$(git -C "$PROJ" rev-list --reverse "$green..$tip" | head -n 1)
   if [ -z "$first" ]; then
     for rec in "$STATE"/alerts/line-red--"$PN"-no-green-*.rec; do  # the pin caught up with the tip: every no-green alarm of this project ends
-      [ -e "$rec" ] && JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" resolve "$(basename "$rec" .rec)" >/dev/null 2>&1
+      [ -e "$rec" ] && JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" resolve "$(basename "$rec" .rec)" --proof source:tip-at-pin >/dev/null 2>&1
     done
     echo "green-alarm: $TRUNK is green at ${green:0:12}"; return 0
   fi
@@ -2753,7 +2753,7 @@ adopt_pushed_release() {  # <commit>
 release_preflight() {  # <rel>
   local miss key=stuck-wait--release-preflight-$PN
   miss=$("$SCRIPT_DIR/../core/release-preflight/check.sh" "$JG_HOME") && {
-    [ ! -e "$STATE/alerts/$key.rec" ] || JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" resolve "$key" >/dev/null 2>&1 || true
+    [ ! -e "$STATE/alerts/$key.rec" ] || JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" resolve "$key" --proof source:preflight-pass >/dev/null 2>&1 || true
     return 0
   }
   JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" raise stuck-wait "release-preflight-$PN" --deliver --project "$PN" --fact wait=main --fact reason=approval \

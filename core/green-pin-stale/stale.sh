@@ -59,7 +59,7 @@ for tipfile in "$STATE"/trunk-tip-*; do
   for rec in "$STATE"/alerts/line-red--"$p"-stale-pin-*.rec; do
     [ -e "$rec" ] || continue
     k=$(basename "$rec" .rec)
-    { [ "$tip" = "$green" ] || [ "$k" != "$key" ]; } && live "$k" && "$ALERT" resolve "$k" >/dev/null 2>&1
+    { [ "$tip" = "$green" ] || [ "$k" != "$key" ]; } && live "$k" && "$ALERT" resolve "$k" --proof source:pin-moved >/dev/null 2>&1
   done
   [ "$tip" != "$green" ] || continue
 

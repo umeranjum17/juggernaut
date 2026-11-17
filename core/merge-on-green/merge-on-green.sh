@@ -288,9 +288,9 @@ for repo in $repos; do
   seen=$DATA/open-pr-cap/${repo//\//__}
   open=$(timeout "$BUDGET" gh pr list --repo "$repo" --state open --limit 500 --json number --jq length 2>/dev/null) || continue
   case "$open" in ''|*[!0-9]*) continue ;; esac
-  if [ "$open" -le "$CAP" ]; then rm -f "$seen" 2>/dev/null || :; JG_HOME=$FMH "$ALERT" resolve "stranded--${seen##*/}.open-prs" >/dev/null 2>&1; continue; fi
+  if [ "$open" -le "$CAP" ]; then rm -f "$seen" 2>/dev/null || :; JG_HOME=$FMH "$ALERT" resolve "stranded--${seen##*/}.open-prs" --proof source:under-cap >/dev/null 2>&1; continue; fi
   [ "$(cat "$seen" 2>/dev/null)" = "$open" ] && continue
-  JG_HOME=$FMH "$ALERT" resolve "stranded--${seen##*/}.open-prs" >/dev/null 2>&1
+  JG_HOME=$FMH "$ALERT" resolve "stranded--${seen##*/}.open-prs" --proof source:superseded >/dev/null 2>&1
   JG_HOME=$FMH "$ALERT" raise stranded "${seen##*/}.open-prs" | JG_HOME=$FMH "$ALERT" deliver
   mkdir -p "$DATA/open-pr-cap" 2>/dev/null && printf '%s\n' "$open" > "$seen" 2>/dev/null || :
 done

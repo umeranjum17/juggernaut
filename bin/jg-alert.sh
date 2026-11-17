@@ -16,10 +16,21 @@
 #   jg-alert.sh capacity <producer> <text> [--deliver | --print]   raise the capacity alert for a quota, account, model or machine-slot event
 #   jg-alert.sh climb <key> [--now <epoch>]   take the next rung when the rung's timer ran out; at the top rung repeat the ring when the repeat timer ran
 #                                           out, and after the ladder's repeats make the alert stuck (see below)
-#   jg-alert.sh ack|reopen|resolve <key>      the other moves of the alert machine; resolve also releases the alerts it covered
+#   jg-alert.sh ack <key>                   the one it rang took it: it never takes the alert's deadline
+#   jg-alert.sh reopen <key> [--now <epoch>]  an acknowledged alert whose deadline ran out reopens and rings its rung again (the deadline's
+#                                           one owner; it refuses before the deadline)
+#   jg-alert.sh resolve <key> --proof <kind>:<pointer>
+#                                           the cause is gone: source:<observed> from the producer that re-read it, or the action evidence
+#                                           (status, task, commit, pr or reply: the kinds bin/jg-delivery.sh handled takes). A close with no
+#                                           proof is refused, so a read notice or a vanished queue row can never clear an alert. resolve
+#                                           also releases the alerts it covered
+#   jg-alert.sh overdue [--now <epoch>]     the live alerts whose action deadline ran out: one line each, exit 1 when it lists any
 #   jg-alert.sh show <key> | word <key> | list   print a record, its state word, or every live key
 #   jg-alert.sh deliver                      read ring lines on stdin (what raise, climb and resolve print) and deliver each to its holder
-# A key is <alert>--<subject>. The record is state/alerts/<key>.rec (key=value lines); rung and precedence are fields of it.
+# A key is <alert>--<subject>. The record is state/alerts/<key>.rec (key=value lines); rung, precedence and deadline_at are fields of it.
+# Every live alert carries one action deadline (deadline_at): the epoch its state's next move is due. It is set when the rung is raised or
+# moves (raise, climb, repeat, reopen, release) and when an acknowledgement is taken (that state's own timeout in the machine table). No read,
+# acknowledgement or queue change moves it, so an acknowledged alert still comes due: report section 5.2 and ban B10.
 #
 # raise refuses an unknown alert or mode and a state that has not held for the row's time (--held below fires at), prints nothing
 # for a quiet row (a fact of its "quiet when" holds), records the alert `inhibited` when a rule I1 to I5 covers it, and otherwise
@@ -56,6 +67,40 @@ _names() { awk -F'\t' -v k="$1" -v m="$2" -v l="${3:-}" '$1=="state" && (k=="" |
 s_open=$(_names initial ""); s_ack=$(_names normal waiting); s_inh=$(_names normal rest release); s_stuck=$(_names normal rest resolve); s_res=$(_names terminal "")
 _put() { local f=$1; shift; mkdir -p "$(dirname "$f")"; printf '%s\n' "$@" >"$f.tmp.$$" && mv "$f.tmp.$$" "$f"; }
 _set() { local f=$1 k=$2 v=$3; { grep -v "^$k=" "$f" 2>/dev/null; printf '%s=%s\n' "$k" "$v"; } >"$f.tmp.$$" && mv "$f.tmp.$$" "$f"; }
+
+# The action deadline (report section 5.2, ban B10). One number per live record, deadline_at: the epoch its state's next move is due.
+# _secs turns the table's duration words ("10m") into seconds.
+_secs() {
+  local t=${1:-} n u
+  case $t in '' | *[!0-9smhd]*) echo 0; return 0 ;; esac
+  n=${t%?}; u=${t#"${t%?}"}
+  case $n in '' | *[!0-9]*) echo 0; return 0 ;; esac
+  case $u in s) echo "$n" ;; m) echo $((n * 60)) ;; h) echo $((n * 3600)) ;; d) echo $((n * 86400)) ;; *) echo 0 ;; esac
+}
+# _state_timer <state>: the timeout that state declares in the machine table ("10m -> reopen"), in seconds; 0 when it declares none.
+_state_timer() {
+  local t; t=$(awk -F'\t' -v k="$1" '$1=="state" && $2==k {print $7}' "$_root/core/machines/tables/alert.tsv")
+  _secs "${t%% -> *}"
+}
+# _ladder_timer <precedence> <rung> <top>: seconds until the rung's next move is due: the next rung's step, else the top rung's repeat.
+_ladder_timer() {
+  local step repeat; read -r step repeat < <(_rows ladder | awk -F'\t' -v p="$1" 'p==$2 {print $3, $4}')
+  if [ "${2:-0}" -lt "${3:-0}" ] && [ "${step:-0}" -gt 0 ]; then echo "$step"; else echo "${repeat:-0}"; fi
+}
+# _due <file>: the record's action deadline. A record written before deadlines were recorded derives it: an open alert from its rung's
+# ladder timer, an acknowledged one from the timeout its own state declares. A state with neither is not due at all.
+_due() {
+  local dl st base secs; dl=$(_get "$1" deadline_at); if [ -n "$dl" ]; then echo "$dl"; return 0; fi
+  st=$(_get "$1" state); base=$(_get "$1" rung_at); [ -n "$base" ] || base=$(_get "$1" since)
+  case $st in
+    "$s_open") secs=$(_ladder_timer "$(_get "$1" precedence)" "$(_get "$1" rung)" "$(_get "$1" top)") ;;
+    "$s_ack") secs=$(_state_timer "$st") ;;
+    *) echo 0; return 0 ;;
+  esac
+  echo $(( ${base:-0} + secs ))
+}
+# _stamp_due <file> <now> <seconds>: the state began now, so its next move is due <seconds> later.
+_stamp_due() { _set "$1" rung_at "$2"; _set "$1" deadline_at $(( $2 + $3 )); }
 # shellcheck source=bin/jg-alert-authority-lib.sh
 . "$_root/bin/jg-alert-authority-lib.sh"
 
@@ -191,7 +236,8 @@ cmd_raise() {
   _put "$file" "alert=$name" "subject=$subj" "mode=$mode" "precedence=$prec" "rung=$start" "top=$top" \
     "authority_class=$cls" "owner_gate=$gate" "origin=$origin" "security_source=$security" "authority_alert=$authority_alert" \
     "episode=$now-$$-$RANDOM" "source_key=$source" "source_episode=$source_episode" \
-    "since=$now" "rung_at=$now" "home=$sc_home" "project=$sc_project" "route=$sc_route" "machine=$sc_machine" "ticket=$sc_ticket" "note=$note" "wake=$wake" "text=$text" "repeats=0" "state=$st"
+    "since=$now" "rung_at=$now" "deadline_at=$(( now + $(_ladder_timer "$prec" "$start" "$top") ))" \
+    "home=$sc_home" "project=$sc_project" "route=$sc_route" "machine=$sc_machine" "ticket=$sc_ticket" "note=$note" "wake=$wake" "text=$text" "repeats=0" "state=$st"
   if [ -n "$cover" ]; then
     _edge "$st" "$s_inh" || _die "the alert table has no inhibit move"
     _set "$file" state "$s_inh"; _set "$file" covered_by "$cover"
@@ -235,12 +281,13 @@ cmd_climb() {
   local ceiling; ceiling=$(_authority_top "$f")
   [ "$top" -le "$ceiling" ] || { top=$ceiling; _set "$f" top "$top"; }
   [ "$rung" -le "$top" ] || _die "owner authority no longer valid; Main recovery required for $1"
+  [ "$st" != "$s_ack" ] || { _reopen "$f" "$1" "$now"; return; }
   _edge "$st" "$st" && [ "$st" = "$s_open" ] || _die "alert '$1' is $st: only an open alert climbs"
   [ "$rung" -lt "$top" ] || { _repeat "$f" "$1" "$now" "$prec" "$rung"; return; }
   after=$(_rows ladder | awk -F'\t' '$2==p {print $3}' p="$prec")
   [ "$after" -gt 0 ] || _die "$prec has no climb timer"
   [ $((now - $(_get "$f" rung_at))) -ge "$after" ] || _die "rung timer of $after s has not run out"
-  _set "$f" rung $((rung + 1)); _set "$f" rung_at "$now"
+  _set "$f" rung $((rung + 1)); _stamp_due "$f" "$now" "$(_ladder_timer "$prec" $((rung + 1)) "$top")"
   printf 'ring\t%s\t%s\t%s\n' "$1" $((rung + 1)) "$(_holder $((rung + 1)))"
 }
 # _repeat <file> <key> <now> <precedence> <rung>: the climb of an alert at its top rung. Each repeat timer that runs out rings the rung again, up
@@ -252,7 +299,7 @@ _repeat() {
   [ "${gap:-0}" -gt 0 ] && [ "${max:-0}" -gt 0 ] || _die "$prec has no repeat timer or repeat count in the ladder"
   [ $((now - $(_get "$f" rung_at))) -ge "$gap" ] || _die "alert '$key' is at its top rung $rung: repeat timer of $gap s has not run out"
   n=$(_get "$f" repeats); n=${n:-0}
-  _set "$f" rung_at "$now"
+  _stamp_due "$f" "$now" "$(_ladder_timer "$prec" "$rung" "$(_get "$f" top)")"
   if [ "$n" -lt "$max" ]; then
     _set "$f" repeats $((n + 1))
     printf 'ring\t%s\t%s\t%s\n' "$key" "$rung" "$(_holder "$rung")"
@@ -270,24 +317,83 @@ _move() {  # _move <key> <from word> <to word>
   _edge "$2" "$3" || _die "no move from $2 to $3"
   _set "$f" state "$3"
 }
-cmd_ack() { _move "${1:-}" "$s_open" "$s_ack"; }
-cmd_reopen() { _move "${1:-}" "$s_ack" "$s_open"; }
+cmd_ack() {  # the one it rang took the alert. It never takes the deadline: an acknowledged alert still comes due (B10).
+  local f; f=$(_rec "${1:-}" ack) || exit 1
+  _move "${1:-}" "$s_open" "$s_ack"
+  _set "$f" ack_at "${JG_ALERT_NOW:-$(date +%s)}"
+  _stamp_due "$f" "$(_get "$f" ack_at)" "$(_state_timer "$s_ack")"
+}
+cmd_reopen() {  # the deadline's one owner: an acknowledged alert reopens and rings its rung again once its deadline has run out.
+  local f now=${JG_ALERT_NOW:-$(date +%s)}; f=$(_rec "${1:-}" reopen) || exit 1
+  [ "${2:-}" != --now ] || now=${3:?--now needs an epoch}
+  _reopen "$f" "${1:-}" "$now"
+}
+_reopen() {  # <file> <key> <now>
+  local f=$1 key=$2 now=$3 st dl rung
+  st=$(_get "$f" state); [ "$st" != "$s_open" ] || return 0   # another caller of the same deadline reopened it first
+  [ "$st" = "$s_ack" ] || _die "alert '$key' is $st: only an acknowledged alert reopens"
+  dl=$(_due "$f"); [ "$now" -ge "$dl" ] || _die "alert '$key' is acknowledged: its deadline is $dl, $((dl - now)) s away"
+  _edge "$s_ack" "$s_open" || _die "the alert table has no reopen move"
+  rung=$(_get "$f" rung)
+  _set "$f" state "$s_open"; _set "$f" reopened_at "$now"
+  _stamp_due "$f" "$now" "$(_ladder_timer "$(_get "$f" precedence)" "$rung" "$(_get "$f" top)")"
+  printf 'ring\t%s\t%s\t%s\n' "$key" "$rung" "$(_holder "$rung")"
+}
+# _proof <record> <kind:pointer>: 0 when the close carries domain evidence rather than a read notice. `source` is the producer's own re-read
+# of the condition the alert fired on; status, task, commit, pr and reply are the fleet's action evidence, the kinds bin/jg-delivery.sh
+# handled takes. A status or task pointer must name a record this home holds, so a typed word alone never closes an alert. A commit, pr or
+# reply pointer is recorded as the caller's claim: its domain owner verifies the pointed evidence.
+_proof() {
+  local kind ptr state
+  kind=${2%%:*}; ptr=${2#*:}
+  [ "$2" != "$kind" ] && [ -n "$ptr" ] || return 1
+  case $kind in
+    source|commit|reply|pr) case $ptr in *[!A-Za-z0-9_./=:@+-]*) return 1 ;; esac ;;
+    status|task)
+      case $ptr in '' | *[!A-Za-z0-9._-]*) return 1 ;; esac
+      state=$(dirname "$(_dir)")
+      case $kind in status) [ -r "$state/$ptr.status" ] ;; task) [ -r "$state/$ptr.meta" ] ;; esac ;;
+    *) return 1 ;;
+  esac
+}
 cmd_resolve() {
-  local f cur rec; f=$(_rec "${1:-}" resolve) || exit 1
+  local key=${1:-} proof='' now=${JG_ALERT_NOW:-$(date +%s)}
+  case ${2:-} in '' ) ;; --proof) [ "$#" -eq 3 ] || { _rc=2 _die "usage: resolve <key> --proof <kind>:<pointer>"; }; proof=${3:-} ;; *) _rc=2 _die "unknown option $2" ;; esac
+  local f cur rec; f=$(_rec "$key" resolve) || exit 1
   cur=$(_get "$f" state); [ "$cur" != "$s_res" ] || return 0
+  [ -n "$proof" ] || _die "resolve $key needs --proof <kind>:<pointer>: the source-clear observation or the action evidence; a read notice or a vanished queue row never closes an alert"
+  _proof "$f" "$proof" || _die "'$proof' is not proof for $key: use source:<observed>, status:<task>, task:<ticket>, commit:<rev>, pr:<url> or reply:<id>, and a status or task pointer must name a record this home holds"
   _edge "$cur" "$s_res" || _die "no move from $cur to resolved"
   # The card of a stuck alert goes with it, so a new episode of the key can be stuck again.
-  local card; card="$(_dir)/escalation-stuck--$1.rec"
+  local card; card="$(_dir)/escalation-stuck--$key.rec"
   if [ "$cur" = "$s_stuck" ] && [ -r "$card" ] && [ "$(_get "$card" state)" != "$s_res" ]; then
-    _route_close "$card" "escalation-stuck--$1"; _set "$card" state "$s_res"
+    _route_close "$card" "escalation-stuck--$key"; _set "$card" state "$s_res"
   fi
-  _route_close "$f" "$1"
-  _set "$f" state "$s_res"
+  _route_close "$f" "$key"
+  _set "$f" state "$s_res"; _set "$f" proof "$proof"; _set "$f" resolved_at "$now"
   for rec in "$(_dir)"/*.rec; do   # release what this alert covered
-    [ -r "$rec" ] && [ "$(_get "$rec" covered_by)" = "$1" ] || continue
+    [ -r "$rec" ] && [ "$(_get "$rec" covered_by)" = "$key" ] || continue
     _set "$rec" state "$s_open"; _set "$rec" covered_by ""
+    _stamp_due "$rec" "$now" "$(_ladder_timer "$(_get "$rec" precedence)" "$(_get "$rec" rung)" "$(_get "$rec" top)")"
     printf 'ring\t%s--%s\t%s\t%s\n' "$(_get "$rec" alert)" "$(_get "$rec" subject)" "$(_get "$rec" rung)" "$(_holder "$(_get "$rec" rung)")"
   done
+}
+# cmd_overdue: the alerts whose action deadline ran out and still stand. It prints one line each and exits 1 when it lists any, so a caller
+# reads it as the metric: an acknowledged alert with no action behind it is overdue, never silently cleared (report section 5.2).
+cmd_overdue() {
+  local now=${JG_ALERT_NOW:-$(date +%s)} rec st dl key rc=0
+  [ "${1:-}" != --now ] || now=${2:?--now needs an epoch}
+  for rec in "$(_dir)"/*.rec; do
+    [ -r "$rec" ] || continue
+    st=$(_get "$rec" state)
+    case $st in "$s_open" | "$s_ack") ;; *) continue ;; esac
+    dl=$(_due "$rec")
+    [ "${dl:-0}" -le "$now" ] || continue
+    key=$(basename "$rec" .rec)
+    printf '%s\t%s\tdeadline=%s\toverdue=%ss\n' "$key" "$st" "$dl" $((now - dl))
+    rc=1
+  done
+  return "$rc"
 }
 # _route_main <rec> <key> <payload>: Main's rung. A main home returns 1 (Main reads this home's queue); a Squad Lead home appends one
 # `blocked` line keyed by the alert and its episode to its parent channel (bin/jg-parent-channel-lib.sh owns that binding), so a retry
@@ -366,9 +472,10 @@ cmd_deliver() {
   done
 }
 
-[ "$#" -gt 0 ] || { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,/^set -u/{ /^set -u/d; s/^# \{0,1\}//; p; }' "$0" >&2; exit 2; }
+[ "$#" -gt 0 ] || usage
 c=$1; shift
 case $c in
-  row|limit|timers|raise|capacity|climb|ack|reopen|resolve|show|word|list|deliver) "cmd_$c" "$@" ;;
-  *) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
+  row|limit|timers|raise|capacity|climb|ack|reopen|resolve|overdue|show|word|list|deliver) "cmd_$c" "$@" ;;
+  *) usage ;;
 esac

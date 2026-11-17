@@ -121,7 +121,7 @@ alert() {
   else
     if [ -e "$ALERT_RECORD" ]; then   # the episode ended: the next crossing raises a new alert
       rm -f -- "$ALERT_RECORD"
-      JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE bash "$SCRIPT_DIR/jg-alert.sh" resolve host--tmp-reaper >/dev/null 2>&1 || true
+      JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE bash "$SCRIPT_DIR/jg-alert.sh" resolve host--tmp-reaper --proof source:df-under-limit >/dev/null 2>&1 || true
     fi
   fi
 }

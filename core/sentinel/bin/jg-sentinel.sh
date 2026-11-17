@@ -752,7 +752,7 @@ tick() {
     return "$rc"
   fi
   ring_for_inbox || true
-  jg_supervision_unhealthy "$STATE" "$GRACE" || { JG_STATE_OVERRIDE="$STATE" "$BIN/jg-alert.sh" resolve supervision-down--beacon-old >/dev/null 2>&1 || true; return "$rc"; }
+  jg_supervision_unhealthy "$STATE" "$GRACE" || { JG_STATE_OVERRIDE="$STATE" "$BIN/jg-alert.sh" resolve supervision-down--beacon-old --proof source:beacon-fresh >/dev/null 2>&1 || true; return "$rc"; }
   beat=$(jg_path_mtime "$STATE/.last-watcher-beat")
   read -r last woken_beat <"$STATE/.sentinel-wake-last" 2>/dev/null || true
   age=$(( $(date +%s) - ${last:-0} ))

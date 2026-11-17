@@ -39,7 +39,7 @@
   al raise security fresh --security-source key-in-env
   for i in 1 2 3 4; do al climb security--fresh --now $((2000000000 + i * 600)); expect_code 0 "$RC" "security exhaustion"; done
   cp "$A/state/alerts/escalation-stuck--security--fresh.rec" "$A/retained.rec"
-  al resolve security--fresh
+  al resolve security--fresh --proof source:condition-ended
   al raise security fresh --security-source key-in-env
   cp "$A/retained.rec" "$A/state/alerts/escalation-stuck--security--fresh.rec"
   printf 'ring\tescalation-stuck--security--fresh\t4\towner\n' | bash "$AL" deliver >/dev/null 2>&1

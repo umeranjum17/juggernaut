@@ -148,7 +148,7 @@ post_card() {
   local out
   if out=$("$SIGNOFF" post "$BOARD" --kind evidence --from "$2" --filer juggernaut-landing 2>&1); then
     posted=$((posted + 1))
-    JG_HOME="$FMH" JG_STATE_OVERRIDE="$FMH/state" "$FMH/bin/jg-alert.sh" resolve "drift--landing-card-${1// /-}" >/dev/null 2>&1 || true
+    JG_HOME="$FMH" JG_STATE_OVERRIDE="$FMH/state" "$FMH/bin/jg-alert.sh" resolve "drift--landing-card-${1// /-}" --proof source:card-posted >/dev/null 2>&1 || true
     return 0
   fi
   drift "$1" "card for $1 not posted ($(printf '%s' "$out" | tail -n 1 | cut -c1-160)); the rest wait for the next beat"; return 1

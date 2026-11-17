@@ -154,7 +154,7 @@ report_stale() {  # <pass-output>
     key="$DIR/stale/$id"
     if [ "$n" -eq 0 ]; then
       rm -f "$key" 2>/dev/null || true
-      JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" resolve "drift--fleet-autosync-$id" >/dev/null 2>&1 || true
+      JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" resolve "drift--fleet-autosync-$id" --proof source:behind-0 >/dev/null 2>&1 || true
       continue
     fi
     reason=$(skip_reason "$id" "$1")
@@ -163,7 +163,7 @@ report_stale() {  # <pass-output>
     printf '%s|%s\n' "$n" "$reason" > "$key" 2>/dev/null || true
     [ "$prev" != "$n|$reason" ] || continue
     # A changed distance or reason is a new drift: the old alert resolves so the new one rings.
-    JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" resolve "drift--fleet-autosync-$id" >/dev/null 2>&1 || true
+    JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" resolve "drift--fleet-autosync-$id" --proof source:superseded >/dev/null 2>&1 || true
     JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" raise drift "fleet-autosync-$id" --deliver --home "$id" \
       --note "fleet autosync left $id $n behind: $reason" > /dev/null 2>&1 \
       || echo "actionable: $id is $n merges behind ($reason) and the stale notice could not be queued"

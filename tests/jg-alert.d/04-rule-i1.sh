@@ -5,6 +5,6 @@ al raise stuck-wait s-h1 --home h1 --fact wait=lead; assert_equals "" "$OUT" "su
 assert_equals inhibited "$(bash "$AL" word stuck-wait--s-h1)" "the covered alert is recorded inhibited"
 assert_equals supervision-down--h1 "$(rec stuck-wait--s-h1 covered_by)" "it names its cover"
 al raise stuck-wait s-h2 --home h2 --fact wait=lead; assert_contains "$OUT" "ring" "another home still rings"
-al resolve supervision-down--h1; assert_contains "$OUT" "ring	stuck-wait--s-h1	2	lead" "resolving the cover releases the covered alert with a ring"
+al resolve supervision-down--h1 --proof source:supervision-healthy; assert_contains "$OUT" "ring	stuck-wait--s-h1	2	lead" "resolving the cover releases the covered alert with a ring"
 assert_equals open "$(bash "$AL" word stuck-wait--s-h1)" "the released alert is open"
 pass "supervision-down open raises no wait alert in its home, and resolving it releases them"
