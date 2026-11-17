@@ -3145,7 +3145,7 @@ JG_PENDING_REPLY_GRACE_SECS=120   # seconds after the request turn completes wit
 JG_SUPERVISOR_BACKEND=             # optional supervisor pane backend override; tmux/herdr only, otherwise detects $TMUX_PANE then HERDR_ENV/HERDR_PANE_ID before tmux fallback
 JG_SUPERVISOR_TARGET=              # optional supervisor pane target override; tmux target or herdr <session>:<pane-id>, otherwise auto-detected
 JG_INJECT_SKIP=heartbeat           # |-prefixes force-self-handled bypassing classification; empty disables
-JG_ESCALATE_BATCH_SECS=90          # buffer window for batched escalation digests; 0 = flush immediately
+JG_ESCALATE_BATCH_SECS=            # optional escalation buffer override; bin/jg-supervise-daemon.sh owns the per-role defaults; 0 = flush immediately
 JG_MAX_DEFER_SECS=300              # max buffered escalation age before retry plus wedge alarm; 0 disables
 JG_INJECT_FAIL_SLEEP=30            # seconds to back off when the supervisor pane is unavailable
 JG_INJECT_CONFIRM_RETRIES=3        # daemon Enter-retry attempts after typing a digest once

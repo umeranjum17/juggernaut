@@ -2359,6 +2359,11 @@ journeys:
     command: bash tests/jg-in-use-enforced.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
     timeout: 10m
 
+  codex-lead-queued-wake:
+    tier: local
+    command: node journeys/codex-lead-queued-wake.mjs
+    timeout: 180s
+
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'

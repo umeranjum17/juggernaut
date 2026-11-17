@@ -114,7 +114,8 @@
 #                                   captain-held transfer is never rechecked
 #                                   while an away record exists
 #          JG_ESCALATE_BATCH_SECS   buffer window for batched escalation
-#                                   digests; 0 = flush immediately (default 90)
+#                                   digests; 0 = flush immediately (default 90
+#                                   away, 1 for an always-on lead)
 #          JG_HEARTBEAT_SCAN_SECS   cadence for the catch-all status scan
 #                                   (default 300)
 #          JG_HOUSEKEEPING_TICK     seconds between housekeeping passes while
@@ -1583,6 +1584,11 @@ jg_super_main() {
   if [ "${JG_LEAD_DAEMON:-0}" = 1 ]; then
     printf '%s\n' "$$" > "$STATE/.lead-daemon" \
       || { echo "error: could not write $STATE/.lead-daemon" >&2; jg_lock_release "$LOCK" 2>/dev/null || true; rm -f "$PIDFILE"; exit 1; }
+    # Routing already holds routine events; a lead only needs a short window
+    # to combine one drain's urgent events into a single wake turn.
+    # Resolve once here so immediate handling and housekeeping share the same
+    # delay. An explicit override still wins, as it does for away supervision.
+    JG_ESCALATE_BATCH_SECS=${JG_ESCALATE_BATCH_SECS:-1}
   fi
   # The recorded identity is what proves this daemon still owns supervision after
   # its watcher child exits (jg_afk_daemon_owns_supervision, read by the turn-end

@@ -1282,11 +1282,13 @@ host_memory_surface_queued() {
 # The ordinary arm owner delivers the reason, never a synthetic keyboard ring.
 own_queue_resurface() {
   local row epoch seq kind key reason idle task file after=''
+  local -a query=(oldest)
+  [ "${JG_LEAD_DAEMON:-0}" != 1 ] || query+=(--urgent)
   while :; do
     if [ -n "$after" ]; then
-      row=$(watcher_queue oldest --after "$after") || return 1
+      row=$(watcher_queue "${query[@]}" --after "$after") || return 1
     else
-      row=$(watcher_queue oldest) || return 1
+      row=$(watcher_queue "${query[@]}") || return 1
     fi
     [ -n "$row" ] || return 0
     IFS=$'\t' read -r epoch seq kind key reason idle <<EOF
@@ -1317,18 +1319,22 @@ EOF
         fi
         ;;
     esac
-    break
+    # Routine rows wait for another turn. An always-on lead must look past
+    # them for newly queued urgent work; it has no foreground checkpoint to
+    # restart the watcher and surface that work through recovery.
+    case "$(jg_wake_route_class "$kind" "$key" "$reason")" in
+      now) break ;;
+      *)
+        [ "${JG_LEAD_DAEMON:-0}" = 1 ] || return 0
+        after=$seq
+        ;;
+    esac
   done
-  # A row the routing rules class `batch` waits for a turn that happens anyway, so
-  # re-delivering it here is what turned a routine event into a Stop-owned wake.
-  # resurface_after_downtime asks the same owner (jg_wake_route_class) before it wakes,
-  # so both arm paths use one rule for which queued row is worth a turn. A row that
-  # classes `now` still re-delivers exactly as before.
-  case "$(jg_wake_route_class "$kind" "$key" "$reason")" in
-    now) ;;
-    *) return 0 ;;
-  esac
-  [ "$idle" -ge "$SQUAD_LEAD_WAKE_STALL_SECS" ] || return 0
+  # The daemon consumes and acknowledges the delivered snapshot itself.
+  # Its first delivery must not wait for the ordinary unhandled-row timer.
+  if [ "${JG_LEAD_DAEMON:-0}" != 1 ]; then
+    [ "$idle" -ge "$SQUAD_LEAD_WAKE_STALL_SECS" ] || return 0
+  fi
   squad_lead_in_active_turn '' "$idle" "$JG_HOME" "$seq" && return 0
   watcher_queue resurfaced "$epoch-$seq" >/dev/null || return 1
   case "$kind:$reason" in
@@ -3283,6 +3289,12 @@ idle_wait() {
     sleep "$slice"
     left=$((left - slice))
     touch "$STATE/.last-watcher-beat" 2>/dev/null || true
+    # Idle lanes can receive a parent inbox or another queued urgent check
+    # without any meta record changing. Keep the cheap idle wait, but let the
+    # same queue owner deliver those wakes at the ordinary poll cadence.
+    if [ "${JG_LEAD_DAEMON:-0}" = 1 ]; then
+      own_queue_resurface || { echo "watcher: own wake-queue observation failed" >&2; exit 1; }
+    fi
     [ "$(printf '%s\n' "$STATE"/*.meta | cksum)" = "$(printf '%s\n' "${metas[@]}" | cksum)" ] || return 0
   done
   return 0

@@ -8,9 +8,11 @@ package main
 //	                               the moment it arrives, so the question "what is the oldest wake
 //	                               nobody handled, and for how long?" is answered from events and
 //	                               never by reading state/.wake-queue.
-//	jg-bus watcher oldest [--after <seq>]
+//	jg-bus watcher oldest [--urgent] [--after <seq>]
 //	                               the oldest eligible unsettled row, tab separated: epoch, seq,
 //	                               kind, key, payload, idle seconds. Nothing when the queue is empty.
+//	                               --urgent excludes producer-classed batch/silent rows, without
+//	                               changing the default view or consuming anything.
 //	jg-bus watcher resurfaced <epoch>-<seq>
 //	                               the watcher delivered that row's reason: restart its idle clock.
 //	jg-bus watcher latest <kind> <key>
@@ -74,6 +76,7 @@ type wrow struct {
 	Kind    string `json:"kind"`
 	Key     string `json:"key"`
 	Payload string `json:"payload"`
+	Class   string `json:"class,omitempty"`
 }
 
 // watchFold is the unsettled queue rows by event id.
@@ -104,6 +107,7 @@ func (f *watchFold) apply(body []byte) {
 		Kind    string   `json:"kind"`
 		Key     string   `json:"key"`
 		Payload string   `json:"payload"`
+		Class   string   `json:"class"`
 	}
 	if json.Unmarshal(body, &ev) != nil || ev.ID == "" || ev.Home != f.Home {
 		return
@@ -125,7 +129,7 @@ func (f *watchFold) apply(body []byte) {
 	case ev.Seq != nil:
 		seq = int64(*ev.Seq)
 	}
-	f.Rows[ev.ID] = wrow{ID: ev.ID, At: ev.At, Seq: seq, Kind: ev.Kind, Key: ev.Key, Payload: ev.Payload}
+	f.Rows[ev.ID] = wrow{ID: ev.ID, At: ev.At, Seq: seq, Kind: ev.Kind, Key: ev.Key, Payload: ev.Payload, Class: ev.Class}
 }
 
 // tsvEscape is jq's @tsv for a string: backslash, tab, newline and carriage return.
@@ -315,6 +319,10 @@ func (a *app) watcherCmd(args []string) int {
 	fold := a.view()
 	switch verb {
 	case "oldest":
+		if len(rest) > 0 && rest[0] == "--urgent" {
+			a.urgentRows(fold)
+			rest = rest[1:]
+		}
 		var after int64
 		haveAfter := false
 		if len(rest) == 2 && rest[0] == "--after" {
@@ -355,6 +363,32 @@ func (a *app) watcherCmd(args []string) int {
 		return 0
 	}
 	return die("watcher: unknown verb %q", verb)
+}
+
+// urgentRows preserves the producer's effective class, including a repeated urgent
+// event held as batch by re-alert throttling. Older running consumers saved no class;
+// enrich only their existing rows from the replica/outbox, never replay acknowledgements
+// over a newer fold or resurrect a row the service already removed.
+func (a *app) urgentRows(fold *watchFold) {
+	for _, row := range fold.Rows {
+		if row.Class != "" {
+			continue
+		}
+		for _, name := range []string{".wake-bus.events.jsonl", ".wake-bus.outbox.jsonl"} {
+			for _, line := range strings.Split(readFileString(filepath.Join(a.state, name)), "\n") {
+				var event struct{ ID, Class string }
+				if json.Unmarshal([]byte(line), &event) == nil && event.ID == row.ID && event.Class != "" {
+					row.Class = event.Class
+				}
+			}
+		}
+		fold.Rows[row.ID] = row
+	}
+	for id, row := range fold.Rows {
+		if row.Class == "batch" || row.Class == "silent" {
+			delete(fold.Rows, id)
+		}
+	}
 }
 
 // view is the service's fold with the owed events applied. With the service not running, its fold is
