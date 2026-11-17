@@ -316,7 +316,7 @@ captain_guard() {  # <backlog args>
 # Reads an add/update argument list: ITEM_TITLE (add's title, or update's --title),
 # ITEM_PRIORITY, and ITEM_ID (update's id).
 item_args() {  # <add|update args...>
-  local verb=$1 mint=0 positional=()
+  local verb=$1 positional=()
   ITEM_TITLE='' ITEM_PRIORITY='' ITEM_ID='' ITEM_LABELS=' '
   shift
   while [ "$#" -gt 0 ]; do
@@ -326,9 +326,9 @@ item_args() {  # <add|update args...>
       --title=*) ITEM_TITLE=${1#--title=} ;;
       --priority) ITEM_PRIORITY=${2-}; shift ;;
       --priority=*) ITEM_PRIORITY=${1#--priority=} ;;
-      --mint) mint=1 ;;
-      --parent) mint=1; shift ;;
-      --parent=*) mint=1 ;;
+      --mint) ;;
+      --parent) shift ;;
+      --parent=*) ;;
       --label|-l) ITEM_LABELS+="${2-} "; shift ;;
       --label=*) ITEM_LABELS+="${1#--label=} " ;;
       --kind|--repo|--blocked-by|--pr|--report|--prefix|--release) shift ;;
@@ -337,8 +337,9 @@ item_args() {  # <add|update args...>
     esac
     shift
   done
+  # A word after the id is the title; an add with one word is its title alone and bd names the row (bin/jg-beads-write.py).
   case "$verb" in
-    add|create) if [ "$mint" = 1 ]; then ITEM_TITLE=${positional[0]-}; else ITEM_TITLE=${positional[1]-}; fi ;;
+    add|create) case ${#positional[@]} in 2) ITEM_TITLE=${positional[1]} ;; *) ITEM_TITLE=${positional[0]-} ;; esac ;;
     *) ITEM_ID=${positional[0]-} ;;
   esac
 }

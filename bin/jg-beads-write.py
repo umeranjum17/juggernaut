@@ -87,6 +87,28 @@ def bd(*args):
     return run.stdout
 
 
+def bd_json(*args):
+    """Return the JSON value in the answer to a bd call, or None when bd printed nothing at all.
+
+    bd's stdout is not only the answer: a warning line can sit before the object, and a line bd writes after a write
+    can follow it, so a bare json.loads over the whole of stdout fails once the row is already made. The value starts
+    at the first line that opens one and runs to its own end, so each such line is tried in turn.
+    """
+    text = bd(*args)
+    if not text.strip():
+        return None
+    decoder, offset = json.JSONDecoder(), 0
+    for line in text.splitlines(keepends=True):
+        if line.lstrip()[:1] in ("{", "["):
+            try:
+                return decoder.raw_decode(text[offset:].lstrip())[0]
+            except ValueError:
+                pass
+        offset += len(line)
+    view.refuse("bd printed no JSON in its answer to %s: %s" % (args[0], text.strip().splitlines()[0][:200]),
+                "Report this to the Juggernaut maintainer: the writer reads the JSON value out of bd's stdout")
+
+
 def lane(row):
     """Return the flags that make this run's worker the row's owner, or nothing with no lane named.
 
@@ -127,7 +149,7 @@ def released(row):
 
 
 def rows():
-    return {row["id"]: row for row in json.loads(bd("list", "--all", "--limit", "0", "--include-gates", "--json")) or []}
+    return {row["id"]: row for row in bd_json("list", "--all", "--limit", "0", "--include-gates", "--json") or []}
 
 
 def lay(ident=None, old=""):
@@ -303,15 +325,16 @@ def add(args):
             view.refuse("--prefix cannot go with --mint: bd names a minted id under the store's own prefix",
                         'Run `jg-backlog.sh add <prefix>-<name> "<title>"` to choose the id')
     elif not 1 <= len(words) <= 2:
-        view.refuse("Expected 1-2 positional arguments, got %d" % len(words), 'usage: jg-backlog.sh add <id> "<title>" [flags]')
-    elif len(words) == 1:
-        view.refuse("A title is required", 'Run `jg-backlog.sh add <id> "<title>"`')
+        view.refuse("Expected 1-2 positional arguments, got %d" % len(words),
+                    'usage: jg-backlog.sh add "<title>" [flags], or add <id> "<title>" [flags]')
     body = checked(found)
     items = rows()
     tag, title = untag(words[-1])
     labels = list(dict.fromkeys(found.get("--label+", []) + ([tag] if tag else [])))
-    minted = "--mint" in found or "--parent" in found
-    ident = None if minted else words[0]
+    # One positional is the title and bd names the row; two are the id and the title. An id given as the empty string
+    # is that same mint, which keeps the title's place in the call.
+    minted = "--mint" in found or "--parent" in found or len(words) == 1
+    ident = None if minted else (words[0] or None)
     known = ident and view.named(items.values(), ident)
     if known and known["id"] != ident:
         view.refuse("%s is the task name of row %s, so it cannot be a new id" % (ident, known["id"]),
@@ -345,8 +368,14 @@ def add(args):
                               capture_output=True, text=True, check=False)
         if move.returncode == 1:
             view.refuse("the move file of %s was refused, so nothing was written: %s" % (ident, move.stderr.strip()), "Run: bin/jg-machine.sh next ticket " + ident, "MOVE_REFUSED", 1)
-    made = bd(*cmd)
-    ident = ident or json.loads(made)["id"]
+    # bd names a minted row, so its answer is the only place that id is; a row with its own id is not read back.
+    if ident is None:
+        ident = (bd_json(*cmd) or {}).get("id")
+        if not ident:  # bd wrote the row but its answer held no id to address it by
+            view.refuse("bd named no id in its answer to create, so the new row cannot be addressed",
+                        "Run `jg-backlog.sh list` and report a row that appeared with no id in its answer")
+    else:
+        bd(*cmd)
     if parent:
         epic(parent)
     lay(ident)
@@ -627,8 +656,8 @@ def gate(args):
     if same:
         print(same[0]["id"])
         return
-    made = json.loads(bd("gate", "create", "--blocks", row["id"], "--type", "human", "--title", found["--title"],
-                         "--reason", found["--reason"], "--json"))
+    made = bd_json("gate", "create", "--blocks", row["id"], "--type", "human", "--title", found["--title"],
+                   "--reason", found["--reason"], "--json")
     meta = [word for key in ("must", "origin", "close", "card") if found.get("--" + key) for word in ("--set-metadata", "%s=%s" % (key, found["--" + key]))]
     meta += ["--set-metadata", "expires_at=" + view.question_expiry(made)]
     bd("update", made["id"], *meta)
@@ -736,7 +765,7 @@ def carried(items, picked):
                 edge["depends_on_id"] = "external:%s:%s" % (home_name(), edge["depends_on_id"])
         out.append(json.dumps(row))
     for row in picked:
-        events = json.loads(bd("provenance", "log", row["id"], "--json") or "[]") or []
+        events = bd_json("provenance", "log", row["id"], "--json") or []
         out.append(json.dumps({"_type": "provenance", "issue": row["id"], "from": home_name(), "events": events}))
     return "".join(line + "\n" for line in out)
 
