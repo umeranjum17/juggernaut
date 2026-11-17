@@ -34,6 +34,7 @@
 #   jg-inbox.sh ask  <question>...
 #   jg-inbox.sh list
 #   jg-inbox.sh asks
+#   jg-inbox.sh outcomes   (JSON terminal asks and actual channel receipt or failure)
 #   jg-inbox.sh drain [--ack <id>...]
 #
 # `note --request-id` is the idempotent capture path: a repeat of the same
@@ -1492,6 +1493,7 @@ case "${1:-}" in
   ask)      shift; cmd_ask "$@" ;;
   list)     shift; cmd_list ;;
   asks)     shift; cmd_asks "$@" ;;
+  outcomes) shift; "$SELF_DIR/jg-bus.sh" gateway asks ;;
   drain)    shift; cmd_drain "$@" ;;
   ''|-h|--help|help)
     # The whole header block, found rather than counted: everything after the

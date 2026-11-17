@@ -286,9 +286,12 @@ func (a *app) readTokenFile() (token, file string, present bool, err error) {
 
 // gateway receives chat for the captain: `--once` is one pass, `serve` polls until stopped, `pair`
 // records the owner's id, `setup` is the guided first-time path, `status` reports, `enabled` is the service wiring's silent question,
-// `push <text>` sends one unprompted message to the owner (gateway_push.go).
-// With no token file every subcommand but `status` does nothing.
+// `push <text>` sends one unprompted message to the owner (gateway_push.go); `asks` prints outcome receipts (gateway_asks.go).
+// With no token file every subcommand but `status` and `asks` does nothing.
 func (a *app) gateway(args []string) int {
+	if len(args) == 1 && args[0] == "asks" {
+		return a.gatewayAsks()
+	}
 	if len(args) == 2 && args[0] == "status" && args[1] == "--row" {
 		return a.gatewayRow()
 	}
@@ -342,6 +345,14 @@ func (a *app) gateway(args []string) int {
 				time.Sleep(2 * time.Second)
 			}
 		}()
+		go func() {
+			for {
+				if err := a.followAskOutcomes(ad); err != nil {
+					a.noteFailure("ask outcomes", redact(err.Error(), token))
+				}
+				time.Sleep(30 * time.Second)
+			}
+		}()
 	}
 	if !once {
 		a.beat(ad) // the service is up before its first poll returns
@@ -353,6 +364,11 @@ func (a *app) gateway(args []string) int {
 		}
 		if once && err == nil {
 			err = a.followReplies(ad)
+			if err == nil {
+				if e := a.followAskOutcomes(ad); e != nil {
+					a.noteFailure("ask outcomes", redact(e.Error(), token))
+				}
+			}
 		}
 		if err != nil {
 			a.noteFailure("gateway", redact(err.Error(), token))
