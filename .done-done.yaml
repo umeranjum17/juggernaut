@@ -1,4 +1,5 @@
 app: juggernaut
+skill: .agents/skills/done-done-verify-suites
 journeys:
   startable-set-scale:
     tier: local
@@ -57,7 +58,7 @@ journeys:
     command: (bash bin/jg-machine.sh check landing && bash bin/jg-machine.sh events landing && bash tests/jg-machine-landing.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   hold-table:
     tier: local
-    command: bash journeys/hold-table.sh
+    command: node journeys/hold-table.mjs
   recon-table:
     tier: local
     command: bash journeys/recon-table.sh

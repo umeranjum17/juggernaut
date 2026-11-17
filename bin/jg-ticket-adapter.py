@@ -186,7 +186,7 @@ def column(row, home):
         return "Done" if stamp and stamp >= cutoff else None
     deps = row.get("dependencies") or []
     asked = any(d.get("issue_type") == "gate" and d.get("status") != "closed" and d.get("dependency_type") == "blocks" for d in deps)
-    if asked or (status in ("on_hold", "blocked", "deferred") and meta.get("hold_kind") == "captain"):
+    if asked:
         return "Waiting for you"
     item = str(meta.get("task") or meta.get("legacy_item") or row["id"])
     if not IDENT.fullmatch(item): return None

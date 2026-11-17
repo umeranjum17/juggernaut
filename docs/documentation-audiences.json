@@ -1094,6 +1094,10 @@
     {
       "path": "core/watch/README.md",
       "audience": "maintainer-architecture"
+    },
+    {
+      "path": ".agents/skills/done-done-verify-suites/features/hold-table.md",
+      "audience": "maintainer-verification"
     }
   ]
 }

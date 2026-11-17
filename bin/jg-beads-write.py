@@ -630,8 +630,8 @@ def gate(args):
     made = json.loads(bd("gate", "create", "--blocks", row["id"], "--type", "human", "--title", found["--title"],
                          "--reason", found["--reason"], "--json"))
     meta = [word for key in ("must", "origin", "close", "card") if found.get("--" + key) for word in ("--set-metadata", "%s=%s" % (key, found["--" + key]))]
-    if meta:
-        bd("update", made["id"], *meta)
+    meta += ["--set-metadata", "expires_at=" + view.question_expiry(made)]
+    bd("update", made["id"], *meta)
     print(made["id"])
 
 
@@ -670,6 +670,9 @@ def note(args):
     if one["status"] == "closed":
         view.refuse("%s is already closed; a note cannot keep a closed question open" % ids[0])
     bd("comments", "add", one["id"], "-f", found["--note-file"])
+    # A completed recheck renews the question without replacing the owner's answer.
+    renewed = dict(one, created_at=os.environ.get("JG_CAPTAIN_HOLD_NOW") or datetime.datetime.now(datetime.timezone.utc).isoformat(), metadata={})
+    bd("update", one["id"], "--set-metadata", "expires_at=" + view.question_expiry(renewed))
     print(one["id"])
 
 

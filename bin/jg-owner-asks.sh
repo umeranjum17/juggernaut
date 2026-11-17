@@ -115,7 +115,7 @@ read_home() {  # <home id> <home path>
       | ((.ask // "") == "ask") as $ask
       | select($ask or (.hold_kind == "captain" and .hold_reason != null and .state != "done"))
       | { id, state, ask: $ask, words: words,
-          hold: (if .hold_kind == "captain" and .hold_reason != null and .state != "done"
+          hold: (if .owner_call == true and .hold_kind == "captain" and .hold_reason != null and .state != "done"
                  then {reason: (.hold_reason | clean | .[0:240]), bucket: .hold_bucket, until: .hold_until} else null end),
           waits_on: (.unresolved_blocker_ids // []),
           prs: [ (.links // [])[] | select(test("/pull/[0-9]+")) ],

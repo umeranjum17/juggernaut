@@ -536,6 +536,7 @@ backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
              priority:metadata($rest; "priority"),
              hold_reason:hold_metadata($rest),
              hold_kind:metadata($rest; "hold-kind"),
+             owner_call:(metadata($rest; "owner-call") == "yes"),
              hold_until:metadata($rest; "hold-until"),
              hold_set:null,
              blocked_by:cap($rest; ".*blocked-by:[[:space:]]*(?<v>[^[:space:])]+).*"),
@@ -608,7 +609,7 @@ backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
                elif .hold_until == null and .hold_age_days != null
                     and .hold_age_days >= $age_days then "aged"
                else "live" end)
-          | .captain_actionable = (.hold_bucket == "live")
+          | .captain_actionable = (.owner_call and .hold_bucket == "live")
         else . end)
     | del(.section,.order)
   ' | jg_hold_reason_decode_stream json

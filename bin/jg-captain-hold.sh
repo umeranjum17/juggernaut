@@ -38,6 +38,11 @@
 #   jg-captain-hold.sh design-pick <card-key> --words <the captain's words>
 #   jg-captain-hold.sh to-gates   (the pass that moves each old stamped owner hold to a gate, prints the count; a second run moves none)
 #   jg-captain-hold.sh phase <task-id>
+#   jg-captain-hold.sh reconcile check
+#     Recheck expired open gates through the existing durable request owner; never close on age.
+#     JG_CAPTAIN_CALL_TTL is the gate lifetime in seconds (default 604800); expires_at is stored on new gates.
+#     JG_CAPTAIN_CALL_CAP is the per-home open-gate cap (default 8); one alert is latched until within cap.
+#     The hourly decisions-reconcile check calls this even without a sign-off board.
 #   jg-captain-hold.sh reconcile list
 #   jg-captain-hold.sh reconcile close <task-id> --evidence-file <path>
 #   jg-captain-hold.sh reconcile note <task-id> --note-file <path>
@@ -1391,11 +1396,58 @@ command_reconcile() {
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   case "$action" in
+    check)   reconcile_check "$@" ;;
     list)    reconcile_list "$@" ;;
     close)   reconcile_close "$@" ;;
     note)    reconcile_note "$@" ;;
     *) usage >&2; exit 2 ;;
   esac
+}
+
+# The expiry transition is raised/deferred -> reconciliation requested, with the gate still open.
+# An answer or evidence still goes through the existing answer/close paths; a repeated check is silent.
+reconcile_check() {
+  local questions row current id gate expires until now request count cap mark
+  [ "$#" -eq 0 ] || { usage >&2; exit 2; }
+  cap=${JG_CAPTAIN_CALL_CAP:-8}
+  case "$cap" in ''|*[!0-9]*|0) fail 'JG_CAPTAIN_CALL_CAP must be a positive integer' ;; esac
+  require_backlog
+  questions=$(backlog_cmd questions --json) || fail 'cannot read owner questions for expiry check'
+  count=$(printf '%s' "$questions" | jq 'length') || fail 'cannot count owner questions'
+  now=${JG_CAPTAIN_HOLD_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
+  while IFS= read -r row; do
+    id=$(printf '%s' "$row" | jq -r '.ticket')
+    gate=$(printf '%s' "$row" | jq -r '.id')
+    expires=$(printf '%s' "$row" | jq -r '.expires_at')
+    until=$(printf '%s' "$row" | jq -r '.until')
+    [ "$expires" \< "$now" ] || [ "$expires" = "$now" ] || continue
+    [ "$until" = - ] || [ "$until" \< "${now%%T*}" ] || [ "$until" = "${now%%T*}" ] || continue
+    validate_slug task-id "$id"
+    acquire_task_control_lock "$id"
+    # Re-read this exact gate after the lock: an answer or renewed expiry wins.
+    current=$(gate_rows "$id" | jq -c --arg gate "$gate" 'select(.id == $gate)')
+    if [ -n "$current" ] && [ "$(printf '%s' "$current" | jq -r '.expires_at')" = "$expires" ] \
+      && [ "$(printf '%s' "$current" | jq -r '.until')" = "$until" ]; then
+      request=$(reconcile_request_path "$id")
+      if [ ! -e "$request" ]; then
+        reconcile_request_record "$id" "expired owner question $gate at $expires" \
+          || fail "cannot request recheck of expired owner question $gate"
+        printf 'reconcile: %s expired question %s; recheck its evidence, keep open until settled\n' "$id" "$gate"
+      fi
+    fi
+    release_task_control_lock || fail "cannot release task control for $id"
+  done < <(printf '%s' "$questions" | jq -c '.[]')
+  acquire_task_control_lock captain-call-cap
+  mark="$STATE/.captain-call-cap-alert"
+  if [ "$count" -gt "$cap" ]; then
+    if [ ! -e "$mark" ]; then
+      (umask 077; printf '%s\n' "$count" > "$mark") || fail "cannot record owner-call cap alert"
+      printf 'owner-call cap: %s open questions exceed home cap %s; review existing calls before adding more\n' "$count" "$cap"
+    fi
+  else
+    rm -f -- "$mark" || fail "cannot reset owner-call cap alert"
+  fi
+  release_task_control_lock || fail 'cannot release owner-call cap control'
 }
 
 reconcile_list() {

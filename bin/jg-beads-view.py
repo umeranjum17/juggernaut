@@ -173,6 +173,7 @@ def task(row, rows, native=None):
         "blocked": "yes" if waiting else "no", "blocked_by": ",".join(waiting) or "none",
         "held": "yes" if holding(row) or asked else "no",
         "hold_reason": meta.get("hold_reason") or (question(asked[0]) if asked else "-"),
+        "owner_call": "yes" if asked else "no",
         "hold_kind": meta.get("hold_kind") or ("captain" if asked or answered else "-"), "gates": [gate["id"] for gate in asked], "hold_until": until, "kind": meta.get("kind") or CORE.get(row.get("issue_type"), row.get("issue_type", "task")),
         "repo": repos[0] if repos else "-", "priority": row.get("priority", "-"),
         "created": "-" if closed else day(row.get("created_at")), "closed": day(row.get("closed_at")),
@@ -292,7 +293,7 @@ def file_row(item, items):
     words = ["- [%s] %s - %s" % ("x" if item["state"] == "done" else " ", item["item"], item["title"])]
     words += [link.partition(":")[2] for link in links]
     words += ["blocked-by: " + items.get(ident, ident) for ident in waiting]
-    tags = [("repo", item["repo"]), ("kind", "-" if item["kind"] == "task" else item["kind"]), ("ask", item["ask"]), ("priority", item["priority"])]
+    tags = [("owner-call", "yes" if item["owner_call"] == "yes" else "-"), ("repo", item["repo"]), ("kind", "-" if item["kind"] == "task" else item["kind"]), ("ask", item["ask"]), ("priority", item["priority"])]
     if item["held"] == "yes" or (item["state"] == "done" and item["hold_kind"] != "-"):
         # A closed row keeps its hold kind and reason: a non-release answer is not a delivery.
         reason = base64.b64encode(item["hold_reason"].encode()).decode()
@@ -337,6 +338,21 @@ def links(tasks, args):
     print("\n".join(sorted(ident for ident in linked if ident not in words)))
 
 
+def question_expiry(gate):
+    """One expiry rule for owner gates, including gates created before the protocol.
+
+    Expiry requests a recheck; it never supplies an answer or permission to close.
+    """
+    meta = gate.get("metadata") or {}
+    if meta.get("expires_at"):
+        return meta["expires_at"]
+    ttl = os.environ.get("JG_CAPTAIN_CALL_TTL", "604800")
+    if not ttl.isdigit() or int(ttl) < 1:
+        refuse("JG_CAPTAIN_CALL_TTL must be a positive number of seconds")
+    made = datetime.datetime.fromisoformat(gate["created_at"].replace("Z", "+00:00"))
+    return (made + datetime.timedelta(seconds=int(ttl))).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def questions(rows, args):
     """Print the owner's questions: the open gates with their ticket, must, age in days and deferral date, or records with --json."""
     found, _ = flags(args, ("--ticket",), ("--due", "--all", "--json"))
@@ -356,7 +372,7 @@ def questions(rows, args):
         records.append({"id": gate["id"], "ticket": ticket.get("id", "-"), "title": gate.get("title", ""), "question": question(gate),
                         "must": meta.get("must", "-"), "card": meta.get("card", "-"), "origin": meta.get("origin", "-"), "close": meta.get("close", "-"),
                         "state": "closed" if shut else "open", "resolution": meta.get("resolution", "-"),
-                        "words": gate.get("close_reason") or "", "age": (now - made).days, "day": made.date().isoformat(), "until": until})
+                        "expires_at": question_expiry(gate), "words": gate.get("close_reason") or "", "age": (now - made).days, "day": made.date().isoformat(), "until": until})
     if "--json" in found:
         print(json.dumps(records))
     elif records:
