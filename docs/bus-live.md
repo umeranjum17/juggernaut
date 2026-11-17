@@ -95,6 +95,12 @@ The live path keeps its replica, cursor and unpublished events separately:
   the stream's last sequence, starts the read again at the stream's first message. It moves only after
   the replica holding what it passed is written, each file by rename, so a render
   killed at any point leaves the old position (a re-read the fold absorbs) or the new one.
+  A message the server refuses stops the read before it, and the next render asks again;
+  once `renderRetryLimit` renders (3) have been refused the same message, it is kept on
+  `state/bus/wake-render.dead.jsonl` with its stream, sequence and the server's own words,
+  and the read steps over it, because one message no render can read must not pin the
+  cursor and freeze the whole read model. `state/bus/wake-render.stuck.json` holds the
+  refusal being counted.
 - `state/.wake-bus.outbox.jsonl` - events a failed publish still owes the bus. A
   home whose bus is briefly unreachable loses no wake: the event waits here and
   the next render publishes it.

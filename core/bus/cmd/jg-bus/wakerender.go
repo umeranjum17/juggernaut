@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // busOut is one client call's standard output, its errors discarded.
@@ -111,12 +112,81 @@ type cursorMark struct {
 	last         int64
 }
 
+// renderRetryLimit is how many renders may be refused the same message before the read steps
+// over it. One refusal can be a transport hiccup, so the read stops before it and the next
+// render asks again; a message the server refuses this many renders running is a message no
+// render will ever read, and holding the cursor behind it stops the whole read model, so it is
+// kept on the dead list where an operator can read it and the cursor moves past it.
+const renderRetryLimit = 3
+
+// refusal is the message the server refused this stream, and how many renders it has refused.
+type refusal struct {
+	Seq   int64  `json:"seq"`
+	Tries int    `json:"tries"`
+	Error string `json:"error"`
+}
+
+func (w wakeBusEnv) refusalPath() string {
+	return filepath.Join(w.state, "bus", "wake-render.stuck.json")
+}
+
+// refusals is what each stream's read has been refused so far, empty when nothing has been.
+func (w wakeBusEnv) refusals() map[string]refusal {
+	var r map[string]refusal
+	if json.Unmarshal([]byte(readFileString(w.refusalPath())), &r) != nil || r == nil {
+		return map[string]refusal{}
+	}
+	return r
+}
+
+// saveRefusals records the refusals under the temporary name the render owns, then renames.
+func (w wakeBusEnv) saveRefusals(r map[string]refusal) error {
+	path := w.refusalPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	data, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	tmp := fmt.Sprintf("%s.tmp.%d", path, os.Getpid())
+	if err := os.WriteFile(tmp, append(data, '\n'), 0o644); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+// deadList keeps a message the render stepped over, one JSON line, the shape the bus consumers'
+// own dead list uses, so the wake it carried is found by an operator instead of being lost quietly.
+func (w wakeBusEnv) deadList(stream string, seq int64, tries int, why string) {
+	line, _ := json.Marshal(map[string]any{"at": time.Now().Unix(), "stream": stream, "sequence": seq,
+		"tries": tries, "error": why})
+	path := filepath.Join(w.state, "bus", "wake-render.dead.jsonl")
+	if os.MkdirAll(filepath.Dir(path), 0o755) != nil {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "wake render: cannot write %s: %v\n", path, err)
+		return
+	}
+	defer f.Close()
+	_, _ = f.Write(append(line, '\n'))
+}
+
 // apply appends every message stored since the cursor that belongs to this home, each
 // carrying `.rseq // .seq // <stream sequence>` as its seq, and returns the position it
 // read to without moving the cursor (render commits it). A stream the server made again
 // numbers its messages from 1, so a cursor taken on another stream, or past this one's
 // end, starts again at the first message. A message the stream no longer holds is passed
-// over; any other refusal stops the read before it, so the next render reads it again.
+// over; a message the server refuses stops the read before it, until it has refused
+// renderRetryLimit renders and the message is kept on the dead list instead, so no cursor
+// stays pinned behind one message it can never read.
 func (w wakeBusEnv) apply(stream string, model *bytes.Buffer) (cursorMark, bool) {
 	var info struct {
 		Created string `json:"created"`
@@ -153,14 +223,39 @@ func (w wakeBusEnv) apply(stream string, model *bytes.Buffer) (cursorMark, bool)
 	if last < from && !fresh && (was != "" || made == "") {
 		return cursorMark{}, false
 	}
+	refused := w.refusals()
 	for seq := from; seq <= last; seq++ {
 		raw, err := w.bus("stream", "get", stream, fmt.Sprint(seq), "--json")
 		if err != nil {
 			if strings.Contains(string(raw), "no message found") {
 				continue
 			}
-			last = seq - 1
-			break
+			why := strings.TrimSpace(firstLine(string(raw)))
+			r := refused[stream]
+			if r.Seq != seq {
+				r = refusal{Seq: seq}
+			}
+			r.Tries, r.Error = r.Tries+1, why
+			refused[stream] = r
+			if err := w.saveRefusals(refused); err != nil {
+				fmt.Fprintf(os.Stderr, "wake render: cannot record the refusal of %s %d: %v\n", stream, seq, err)
+			}
+			if r.Tries < renderRetryLimit {
+				last = seq - 1
+				break
+			}
+			w.deadList(stream, seq, r.Tries, why)
+			delete(refused, stream)
+			if err := w.saveRefusals(refused); err != nil {
+				fmt.Fprintf(os.Stderr, "wake render: cannot clear the refusal of %s %d: %v\n", stream, seq, err)
+			}
+			fmt.Fprintf(os.Stderr, "wake render: %s %d refused %d times (%s); kept on %s and stepped over\n",
+				stream, seq, r.Tries, why, filepath.Join(w.state, "bus", "wake-render.dead.jsonl"))
+			continue
+		}
+		if r, seen := refused[stream]; seen && r.Seq == seq {
+			delete(refused, stream)
+			_ = w.saveRefusals(refused)
 		}
 		var msg struct {
 			Data json.RawMessage `json:"data"`

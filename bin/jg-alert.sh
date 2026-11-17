@@ -27,7 +27,8 @@
 # --rung N starts the climb at rung N instead of the row's first rung (the tick-driven climb is not built, so a producer that must
 # wake someone now starts at 1). --wake <kind> --text <line> make deliver append that kind of wake, keyed by the subject, carrying the
 # line, instead of the `check` wake, so a consumer of an older wake kind keeps reading what it read. --repeat rings an alert that is
-# still open again (a producer that fires every window), with the new text, instead of staying silent.
+# still open again (a producer that fires every window), with the new text, instead of staying silent; a repeat carrying the same note
+# and text the record already rang is a replay of one episode, so it rings and delivers nothing (one alert per episode).
 # The row is the same in every delivery mode; the mode is recorded and checked against bin/jg-delivery-style.sh.
 # --note records the producer's own text (one line) in the record and the wake; --deliver pipes the ring through `deliver` at once; --print prints the wake line a registered check hands the watcher instead of a ring.
 # capacity is the one entry every capacity producer calls: the subject is the producer, and a new event of it resolves its last one.
@@ -166,7 +167,11 @@ cmd_raise() {
     local cur; cur=$(_get "$file" state)
     if [ "$cur" != "$s_res" ]; then   # one live record for one key
       if [ -n "$again" ] && [ "$cur" = "$s_open" ]; then
-        _set "$file" text "$text"; _set "$file" wake "$wake"
+        # Deduplicate by key: one episode rings once. The record holds the words it last rang, so a
+        # producer that fires every window - or a wake loop replaying one episode - delivers nothing
+        # while those words are unchanged, which drains the repeat on the delivery already made.
+        if [ "$note" = "$(_get "$file" note)" ] && [ "$text" = "$(_get "$file" text)" ]; then return 0; fi
+        _set "$file" text "$text"; _set "$file" wake "$wake"; _set "$file" note "$note"
         start=$(_get "$file" rung)
         if [ "$now_print" = 1 ]; then _payload "$key" "$start" "$(_holder "$start")"
         elif [ "$now_deliver" = 1 ]; then printf 'ring\t%s\t%s\t%s\n' "$key" "$start" "$(_holder "$start")" | cmd_deliver
