@@ -34,6 +34,7 @@ Each stage writes a file under `data/<task>/`, so the work can resume and every 
 
 1. Brief, `brief-research.md`: the question, scope and non-goals, "Done when", and the depth.
    Ask Overwatch once if something is unclear, then go on.
+   A plan or design Recon that will be sliced into work loads `strike-recon` and writes its asks into `outline.md` first.
 2. Outline, `outline.md`: the template sections to fill, and 3 to 6 perspectives (user, maintainer, operator, security, cost, competitor) with the questions each would ask.
    Say whether the work is depth-first or breadth-first.
 3. Sweep, `sources.jsonl`: one JSON object per line with `id` (`S-n`), `kind`, `title`, `link`, `read` (date), and `licence` when the source is code.
