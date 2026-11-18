@@ -299,7 +299,11 @@ def cmd_schema_check(st, a, d):
     bad = []
     if have != want:
         bad.append("schema.sql differs from schema.sha256")
-    if st.schema_hash() != st.shipped:
+    if os.path.exists(os.path.join(HERE, "tickets.sql")):
+        want = open(os.path.join(HERE, "tickets.sha256")).read().split()[0]
+        if hashlib.sha256(open(os.path.join(HERE, "tickets.sql"), "rb").read()).hexdigest() != want:
+            bad.append("tickets.sql differs from tickets.sha256")
+    if st.schema_hash() != st.shipped or not st.tickets_ok():
         bad.append("the store's rules differ from the shipped schema")
     for b in bad:
         print(b)

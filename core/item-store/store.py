@@ -26,6 +26,7 @@ CLOCK_ALERT = "clock:main/host"
 SCHEMA_ALERT = "schema:main/fleet"     # the store's rules differ from the shipped schema (a dropped or changed trigger)
 FOLD_ALERT = "fold:main/fleet"         # an item differs from the fold of its moves (a write around the log)
 SCHEMA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schema.sql")
+TICKETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tickets.sql")   # the ticket tables: loaded into the same file, hashed on their own
 
 
 class Refused(Exception):
@@ -57,8 +58,32 @@ class Store:
     def _host(self, at):
         self._now[0] = at
 
+    @staticmethod
+    def _digest(rows):
+        return hashlib.sha256("\n".join(r[0] or "" for r in rows).encode()).hexdigest()
+
+    def _ticket_objects(self):
+        """The names of the objects tickets.sql defines, read from a fresh build of it (the file's own words, never a list kept here)."""
+        if not hasattr(self, "_tnames"):
+            c = sqlite3.connect(":memory:")
+            c.executescript(open(TICKETS, encoding="utf-8").read())
+            self._tnames = {r[0]: r[1] for r in c.execute("SELECT name, sql FROM sqlite_master")}
+            c.close()
+        return self._tnames
+
+    def _objects(self, own):
+        """The sql of the live objects, in name order: those tickets.sql defines (own=True) or every other one (own=False)."""
+        names = self._ticket_objects() if os.path.exists(TICKETS) else {}
+        return [(r[1],) for r in self.con.execute("SELECT name, sql FROM sqlite_master ORDER BY name") if (r[0] in names) == own]
+
     def schema_hash(self):
-        return hashlib.sha256("\n".join(r[0] or "" for r in self.con.execute("SELECT sql FROM sqlite_master ORDER BY name")).encode()).hexdigest()
+        """The hash of every object schema.sql defines. An object neither file defines is in it, so a stray table still changes it."""
+        return self._digest(self._objects(False))
+
+    def tickets_ok(self):
+        """The ticket tables are either all absent (not loaded yet) or exactly as tickets.sql builds them."""
+        have = self._objects(True)
+        return not have or self._digest(have) == self._digest([(sql,) for _, sql in sorted(self._ticket_objects().items())])
 
     def as_(self, me):
         """The same store seen by a writer that runs as `me` (what `jg-item` derives from JG_HOME and JG_TASK_ID); it
@@ -435,7 +460,7 @@ class Store:
         shipped rules; it finds a write around the log, as the fold check did, and a write a dropped check let through). Each
         mismatch opens one alert on Main (a repeat is a note), so a dropped trigger or a write around the log is seen."""
         found = []
-        if self.schema_hash() != self.shipped:
+        if self.schema_hash() != self.shipped or not self.tickets_ok():
             found.append((SCHEMA_ALERT, "the store's rules differ from the shipped schema"))
         if fold:
             self._last_fold = at

@@ -6,7 +6,7 @@
 #
 # Every routine juggernaut backlog read or mutation goes through this command. It serves
 # `show`, `view`, `list`, `questions` (the owner's open questions: `--ticket <id>`, `--due`, `--all`, `--json`), `ready`, `ready --spawnable` (the tickets this home can start now, bin/jg-backlog-spawnable.sh, ended at 10 seconds with exit 124), `approve-dispatch`, `markdown`, `homes --json` (every home and its store, `"remote": true` for a lead on another machine, bin/jg-backlog-homes.sh), `tree --homes` (one tree across every home, bin/jg-backlog-tree.py), `add`, `update`, `done`, `block`, `unblock`,
-# `start`, `task`, `reopen`, `hold`, `unhold`, `on-report`, `public-followup`, `relink` and `retag` from the store that
+# `start`, `task`, `reopen`, `hold`, `unhold`, `on-report`, `public-followup`, `relink`, `retag` and `compare` (below) from the store that
 # `config/beads-dir` names (bin/jg-backlog-lib.sh); any other verb exits 2 with nothing
 # run. A relative value of `--to` or any `--*-file` flag (`--body-file`, ...) is made
 # absolute against the caller's working directory. Hold reasons are plain text.
@@ -63,6 +63,10 @@
 # task id goes is resolved to its slug first, `show` prints the key under the id, `list --keys`
 # puts each row's key first, and a successful `add` keys the new ticket when the home has a
 # registered prefix.
+# One engine (expand phase): when the main home has `config/one-engine`, each successful write below is copied into the
+# ticket tables of the host's item store (core/item-store/adapters/tickets.py write); a failed copy prints one
+# `jg-backlog: one-engine copy: ...` line and never fails the Beads write. `compare` runs `bd export` and lists each
+# difference between Beads and that copy, one line each (exit 1 when any). Reads stay on Beads.
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
 [ "$_jg_d" != "${BASH_SOURCE[0]}" ] || _jg_d=.
@@ -261,6 +265,13 @@ case "${1:-}" in
   markdown|questions) beads_read; exit $? ;;
   homes) exec "$SCRIPT_DIR/jg-backlog-homes.sh" "${ARGS[@]:1}" ;;
   tree) exec python3 "$SCRIPT_DIR/jg-backlog-tree.py" "${ARGS[@]:1}" ;;
+  compare)
+    [ "${#ARGS[@]}" -eq 1 ] || fail "compare takes no argument"
+    _jg_store=$(jg_backlog_beads_store "$JG_HOME/config") || exit 2
+    _jg_exp=$(mktemp) || fail "no scratch file"
+    if ! BEADS_DIR=$_jg_store "$SCRIPT_DIR/jg-beads.sh" export > "$_jg_exp"; then rm -f -- "$_jg_exp"; fail "bd export failed"; fi
+    JG_HOME="$JG_HOME" python3 "$JG_ROOT/core/item-store/adapters/tickets.py" compare "$_jg_exp"; _jg_rc=$?
+    rm -f -- "$_jg_exp"; exit "$_jg_rc" ;;
   add|create|update|edit|done|close|block|unblock|start|task|reopen|hold|unhold|on-report|public-followup|relink|retag|moment|wait|ticket-stage|ticket-drift|times|trace|beat|reclaim) ;;
   *) fail "the beads backlog does not serve ${1:-this command}" ;;
 esac
@@ -417,6 +428,11 @@ jg_backlog_beads_write "$JG_HOME/config" ${ARGS[@]+"${ARGS[@]}"}
 _jg_rc=$?
 case "${1:-}" in add|create) [ "$_jg_rc" -ne 0 ] || key_tool sync >&2 || true ;; esac
 [ "$_jg_rc" -eq 0 ] || exit "$_jg_rc"
+# The same write, copied into the item store's ticket tables (header: One engine). Never fails the Beads write.
+_jg_copy=$(JG_HOME="$JG_HOME" BEADS_DIR=$(jg_backlog_beads_store "$JG_HOME/config") \
+  python3 "$JG_ROOT/core/item-store/adapters/tickets.py" write ${ARGS[@]+"${ARGS[@]}"} --source "jg-backlog:$$:$(date +%s%N)" 2>&1) \
+  || printf 'jg-backlog: one-engine copy: %s\n' "$(printf '%s' "$_jg_copy" | head -n 1)" >&2
+unset _jg_copy
 # A write this command performs puts the ticket on the board in the same breath, so the board
 # follows the work and never waits for the next tickets-sync poll; the verb map and the writer are
 # bin/jg-backlog-transition-lib.sh's own.
