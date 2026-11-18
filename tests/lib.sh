@@ -124,7 +124,7 @@ jg_test_beads_home() {  # <home> [<prefix>=jg]
     # suite itself is told to skip (the USR1 trap below).
     printf 'skip: no Beads store: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n' >&2
     kill -s USR1 "$$" 2>/dev/null
-    exit 0
+    exit "${JG_TEST_SKIP_EXIT:-0}"
   fi
   export JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
   # $$ is the suite's own pid in every subshell, so a case built inside $(...) finds the same template.
@@ -581,7 +581,7 @@ trap 'jg_test_cleanup; exit 130' INT
 trap 'jg_test_cleanup; exit 143' TERM
 trap 'jg_test_cleanup; exit 129' HUP
 trap 'jg_test_cleanup; exit 131' QUIT
-trap 'exit 0' USR1  # the suite skips: jg_test_beads_home has no Beads build to give it
+trap 'exit "${JG_TEST_SKIP_EXIT:-0}"' USR1  # the suite skips: jg_test_beads_home has no Beads build to give it
 
 # jg_test_reap_orphans: best-effort sweep for fixture roots left behind by a
 # prior run that was killed hard enough to skip the traps above (e.g. a
@@ -691,18 +691,18 @@ jg_live_gate() {
   if [ "$requested" -eq 0 ]; then
     if [ -n "$disabled_by" ]; then
       printf 'skip: live: disabled by %s=0\n' "$disabled_by"
-      exit 0
+      exit "${JG_TEST_SKIP_EXIT:-0}"
     fi
     case "${JG_LIVE:-}" in
       0)
         printf 'skip: live: disabled by JG_LIVE=0\n'
-        exit 0
+        exit "${JG_TEST_SKIP_EXIT:-0}"
         ;;
       1) requested=1 ;;
       *)
         if [ "$policy" = opt-in ]; then
           printf 'skip: live: opt-in; set %s=1 to run\n' "$primary"
-          exit 0
+          exit "${JG_TEST_SKIP_EXIT:-0}"
         fi
         ;;
     esac
@@ -715,7 +715,7 @@ jg_live_gate() {
       exit 1
     fi
     printf 'skip: live: %s absent\n' "$tool"
-    exit 0
+    exit "${JG_TEST_SKIP_EXIT:-0}"
   done
 
   export DISABLE_AUTOUPDATER=1
