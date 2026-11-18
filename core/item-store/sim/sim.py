@@ -2,7 +2,12 @@
 """Deterministic simulation of the item store: one seed = one fleet day on a fake clock, scripted workers, leads, Main and
 owner (no model calls), seeded faults, and the invariants checked after every step.
 
-  sim.py --seeds 0-99 [--hours 24] [--no-faults] [--out PATH]
+  sim.py --seeds 0-99 [--hours 24] [--no-faults] [--out PATH] [--rates]
+
+Arrivals follow profile-14-17nov.json (the 14-17 Nov fleet window): the dispatch, note and security actors draw their next
+arrival from the kind's per_day (an exponential gap of mean 86400/per_day); every other kind has a top-up stream at its
+per_day that opens an item only while the kind's opens run behind the profile (the lanes' own opens count), so each kind
+lands at the profile's rate. --rates prints each kind's simulated rate against the profile's on stderr and exits 1 on any `off`.
 
 Everything runs in one thread from one heap of timed events; every choice draws from random.Random(seed), so a seed
 replays exactly (the run prints a digest of its whole move log). The store is a real SQLite file in a temporary
@@ -50,8 +55,25 @@ from store import Store, Refused
 
 T0 = 1794614400
 SCRATCH = TMP
+with open(os.path.join(_HERE, "profile-14-17nov.json")) as _f:
+    RATE = {k: v["per_day"] for k, v in json.load(_f)["kinds"].items()}     # the profile's arrivals per day, by kind
+# top-up streams: kind -> (what the item owes, who writes it); a question names what only the owner decides
+KIND_OF = {"dispatch": "work", "owner_note": "tell", "security": "security"}   # the actors that draw their own arrivals: actor -> kind
+SETTLE = {"alert": ("gone:fixed", None), "cleanup": ("cleaned:slot", "adapter:teardown"), "dispatch": ("lane:sim", None),
+          "intake": ("filed:sim", None), "land": ("trunk:sim", "adapter:trunk"), "main-down": ("back:sim", "adapter:supervision"),
+          "merge": ("merged:sim", "adapter:merge"), "release": ("released:sim", "adapter:trunk"), "report": ("acted:sim", None),
+          "steer": ("handled:sim", None), "update": ("home-at:sim", None)}   # kind -> the proof its done close names, and the adapter that closes it
+TOPUP = {"alert": ("a check went red", "adapter:ci"), "cleanup": ("return the copy", "adapter:teardown"),
+         "dispatch": ("start a lane", "lead:"), "intake": ("record an outside note", "adapter:intake"),
+         "land": ("land the commit", "tick"), "main-down": ("Main's watcher beat is old", "adapter:supervision"),
+         "merge": ("merge the pull request", "tick"), "question": ("design pick: which table", "tick"),
+         "release": ("release the pull request", "tick"), "report": ("report the finding", "lead:"),
+         "steer": ("steer a lane", "lead:"),
+         "update": ("update a lane", "lead:"), "wait": ("pick a table", "lead:")}
 OWNER_KINDS = ("question", "security", "main-down")
 OWNER_ONLY = ("design pick", "credential", "spend", "destructive act", "release word", "merge word", "land word")
+STRETCH = 4 * 3                 # the profile's release rate is the fleet's (3 projects), and a day starts cold: its first release pull request opens at once
+LANES = 3                       # lanes per project, in the seed policy
 PROJECTS = {"alpha": "loose", "beta": "standard", "gamma": "tight"}
 FAULTS = ("crash", "lost", "double", "slow", "red", "quota", "restart", "two-writers", "clock-jump", "window-write", "forged-owner", "forged-adapter",
           "late-tick", "watcher-stop")
@@ -94,22 +116,62 @@ class Sim:
         self.r2 = random.Random(seed * 7919 + 17)   # the watcher-stop fault's own draws: the other faults' draws are unchanged
         self.logs = {}                       # each owner channel's and closing adapter's own log: (record id, item key) pairs
         for i, (pj, lvl) in enumerate(sorted(PROJECTS.items())):
-            self.s.set_policy(T0 - 10, pj, lvl, "owner:chat", "seed-policy:%s" % pj, lanes=3)
+            self.s.set_policy(T0 - 10, pj, lvl, "owner:chat", "seed-policy:%s" % pj, lanes=LANES)
             self.logs.setdefault("owner:chat", set()).add(("seed-policy:%s" % pj, "policy:" + pj))
         self.lane_no = 0
+        self.counts, self.counted = {}, 0    # opens per kind (read from the log), and the log seq counted up to
+        self.topup_n = 0
+        self.queued, self.retry = 0, False   # tickets waiting for a free lane
+        self.clock_first = True
+        self.r4 = random.Random(seed * 15485863 + 11)   # the clock faults' own draws: the workload's draws do not decide which seeds jump the clock
+        self.r3 = random.Random(seed * 104729 + 5)   # the top-up streams' own draws: the actors' draws are not shifted by them
 
     # ------------------------------------------------------------------ the event loop
     def at(self, t, fn, *a):
         self.n += 1
         heapq.heappush(self.heap, (t, self.n, fn, a))
 
-    def chance(self, p, fault=None):
-        hit = self.r.random() < p
+    def chance(self, p, fault=None, rng=None):
+        hit = (rng or self.r).random() < p
         if hit and fault:
             if not self.faults:
                 return False
             self.stats[fault] += 1
         return hit
+
+    def gap(self, kind, rng=None):
+        """The next arrival of a kind: exponential, mean 86400 / the profile's per_day, from this seed's own generator."""
+        return max(1, int((rng or self.r).expovariate(RATE[kind] / 86400)))
+
+    def opens(self, kind):
+        """How many items of a kind were opened so far, from the log (every actor, the lanes' next steps and the store's own opens)."""
+        for k, n in self.s.con.execute("SELECT kind, count(*) FROM move WHERE verb='open' AND seq>? GROUP BY kind", (self.counted,)):
+            self.counts[k] = self.counts.get(k, 0) + n
+        self.counted = self.s.one("SELECT max(seq) FROM move") or 0
+        return self.counts.get(kind, 0)
+
+    def behind(self, kind):
+        return self.opens(kind) < RATE[kind] * (self.t - T0) / 86400 - 0.5    # the running count, rounded
+
+    def topup(self, kind):
+        """A kind's stream at the profile's rate: it opens an item only while the kind's opens run behind the profile."""
+        if self.behind(kind):
+            owes, by = TOPUP[kind]
+            pj = self.r3.choice([p for p in sorted(PROJECTS) if kind not in ("land", "merge", "release") or self.s.one("SELECT %s FROM v_policy WHERE project=?" % kind, (p,)) != "owner"])
+            self.topup_n += 1
+            key = "%s:%s/sim%d%s" % (kind, pj, self.topup_n, "@sim%d" % self.topup_n if kind in ("land", "merge", "release") else "")
+            self.arrive("topup:" + key, pj, self.s.open, key, kind, pj, "sim%d" % self.topup_n, owes, by + (pj if by.endswith(":") else ""),
+                        named="lead")
+            if kind != "question":                            # a question waits for him; the rest are settled by whoever owns them
+                self.at(self.t + self.r3.randint(60, 3600), self.settle, key, kind, pj)
+        self.at(self.t + max(1, self.gap(kind, self.r3) // 3), self.topup, kind)   # polls at 3x the rate: a clipped cluster is made up
+
+    def settle(self, key, kind, pj):
+        """A top-up item is closed with the proof its kind names, by the adapter that owns it or by its holder."""
+        it = self.s.item(key)
+        if it:
+            proof, by = SETTLE.get(kind, ("answer:sim", None))
+            self.arrive("settled:" + key, pj, self.s.close, key, "done", proof, by or it["holder_id"])
 
     def now(self):
         """The host clock (maybe jumped): every writer stamps it, and the tick reads it."""
@@ -170,7 +232,20 @@ class Sim:
 
     # ------------------------------------------------------------------ actors (scripted, no model calls)
     def dispatch(self):
-        pj = self.r.choice(sorted(PROJECTS))
+        """A ticket arrives at the profile's rate and waits in a queue for a project with a free lane, as a lead's would."""
+        self.queued += 1
+        self.at(self.t + self.gap("work"), self.dispatch)
+        self.start_lane()
+
+    def start_lane(self):
+        free = [p for p in sorted(PROJECTS) if self.s.one("SELECT count(*) FROM item WHERE kind='work' AND state='open' AND project=?", (p,)) < LANES]
+        if not self.queued or not free:
+            if self.queued and not self.retry:
+                self.retry = True
+                self.at(self.t + 300, self.retry_lane)
+            return
+        self.queued -= 1
+        pj = self.r.choice(free)
         self.lane_no += 1
         key = "%s/jg-%d" % (pj, self.lane_no)
         r = self.arrive("dispatch:" + key, pj, self.s.open, "work:" + key, "work", pj, key, "build " + key, "lead:" + pj,
@@ -178,7 +253,11 @@ class Sim:
         if r == "open" or self.s.item("work:" + key):
             self.stats["lanes"] += 1
             self.at(self.t + self.r.randint(600, 3600), self.worker_step, key, pj, 0)
-        self.at(self.t + self.r.randint(900, 3600), self.dispatch)
+        self.start_lane()
+
+    def retry_lane(self):
+        self.retry = False
+        self.start_lane()
 
     def worker_step(self, key, pj, n):
         if not self.s.item("work:" + key):
@@ -235,7 +314,8 @@ class Sim:
 
     def relaunch(self, key, pj):
         if self.s.item("stuck:%s/%s" % (pj, key)):
-            self.arrive("relaunch:%s@%d" % (key, self.t), pj, self.s.close, "stuck:%s/%s" % (pj, key), "done", "gone: relaunched, it writes again", "lead:" + pj)
+            by = self.s.item("stuck:%s/%s" % (pj, key))["holder_id"]      # the alert may have climbed past the lead: its holder closes it
+            self.arrive("relaunch:%s@%d" % (key, self.t), pj, self.s.close, "stuck:%s/%s" % (pj, key), "done", "gone: relaunched, it writes again", by)
             self.at(self.t + 600, self.worker_step, key, pj, 1)
 
     def page(self, holder, ik, pj, fix=1.0):
@@ -272,11 +352,11 @@ class Sim:
         asked = self.s.item(qk) is not None
         self.arrive("push:%s:%s" % (pj, head), pj, self.s.release_push, pj, pr, head)
         if self.s.one("SELECT release FROM v_policy WHERE project=?", (pj,)) == "machine":
-            self.release_merged(pj, pr, head)
+            self.at(self.t + self.gap("release", self.r3) * STRETCH, self.release_merged, pj, pr, head)   # it batches its interval's landings
         elif fresh or (not asked and self.s.item(qk)):   # a first ask, or a push after his yes that asks again (C1)
             self.stats["owner_items"] += 1
             self.stats["release_questions"] += 1
-            self.at(self.t + self.r.randint(1800, 30000), self.owner_release, pj, pr, head)
+            self.at(self.t + self.r.randint(1800, 30000) * STRETCH, self.owner_release, pj, pr, head)
 
     def owner_release(self, pj, pr, head):
         """He answers the one release question of this pull request; his adapter opens the step in the same write."""
@@ -338,7 +418,7 @@ class Sim:
         nid = "note-%d" % self.t
         self.arrive("note:" + nid, "main", self.s.open, "tell:" + nid, "tell", "main", nid, "reply to his note", "owner:chat")
         self.at(self.t + self.r.randint(10, 600) * (12 if self.chance(0.1, "slow") else 1), self.reply, nid)
-        self.at(self.t + self.r.randint(3600, 14400), self.owner_note)
+        self.at(self.t + self.gap("tell"), self.owner_note)
 
     def reply(self, nid):
         if self.s.item("tell:" + nid):
@@ -346,14 +426,15 @@ class Sim:
 
     def security(self):
         k = "security:fleet/%d" % self.t
-        self.arrive("sec:%d" % self.t, "main", self.s.open, k, "security", "main", "fleet", "a key in a worker's environment", "adapter:security")
-        if self.r.random() < 0.6:
-            self.at(self.t + self.r.randint(60, 1200), self.contain, k)
-        self.at(self.t + self.r.randint(20000, 60000), self.security)
+        if self.behind("security"):       # the store's own security items (a forged stamp) count toward the profile's rate
+            self.arrive("sec:%d" % self.t, "main", self.s.open, k, "security", "main", "fleet", "a key in a worker's environment", "adapter:security")
+            if self.r.random() < 0.6:
+                self.at(self.t + self.r.randint(60, 1200), self.contain, k)
+        self.at(self.t + self.gap("security"), self.security)
 
     def contain(self, k):
         if self.s.item(k):
-            self.arrive("contained:" + k, "main", self.s.close, k, "done", "contained:key rotated", "main")
+            self.arrive("contained:" + k, "main", self.s.close, k, "done", "contained:key rotated", "adapter:security")
 
     def restart_mid_move(self):
         """A writer dies inside a transaction: the first row is written, the connection drops before the commit."""
@@ -372,16 +453,17 @@ class Sim:
         self.at(self.t + self.r.randint(3600, 20000), self.restart_mid_move)
 
     def clock_jump(self):
-        if self.host_off == 0 and self.chance(0.5, "clock-jump"):
-            self.host_off = self.r.choice((-1, 1)) * self.r.choice((1, 7, 30)) * 86400
+        first, self.clock_first = self.clock_first, False      # every seed jumps the host clock at least once (the clock mutant needs it)
+        if self.host_off == 0 and self.chance(1.0 if first else 0.5, "clock-jump", self.r4):
+            self.host_off = self.r4.choice((-1, 1)) * self.r4.choice((1, 7, 30)) * 86400
             self.changed_at = self.t
-            self.at(self.t + self.r.randint(1, 50), self.window_write)
-            self.at(self.t + self.r.randint(600, 3600), self.clock_back)
-        elif self.host_off == 0 and self.chance(0.4, "late-tick"):   # the tick stops, and the clock is stepped while it is down
-            stop = self.r.randint(900, 3600)
+            self.at(self.t + self.r4.randint(1, 50), self.window_write)
+            self.at(self.t + self.r4.randint(600, 3600), self.clock_back)
+        elif self.host_off == 0 and self.chance(0.4, "late-tick", self.r4):   # the tick stops, and the clock is stepped while it is down
+            stop = self.r4.randint(900, 3600)
             self.tick_down = (self.t, self.t + stop)
-            self.at(self.t + self.r.randint(60, stop - 300), self.small_jump, self.r.choice((-1, 1)) * self.r.randint(330, 3600))
-        self.at(self.t + self.r.randint(20000, 40000), self.clock_jump)
+            self.at(self.t + self.r4.randint(60, stop - 300), self.small_jump, self.r4.choice((-1, 1)) * self.r4.randint(330, 3600))
+        self.at(self.t + self.r4.randint(20000, 40000), self.clock_jump)
 
     def small_jump(self, j):
         self.host_off = j
@@ -557,10 +639,12 @@ class Sim:
 
     def run(self):
         for fn in (self.dispatch, self.owner_note, self.security, self.tick, self.reconcile, self.rogue):
-            first = self.t + self.r.randint(0, 600)
+            first = self.t + (self.gap(KIND_OF[fn.__name__]) if fn.__name__ in KIND_OF else self.r.randint(0, 600))
             self.at(first, fn)
             if fn == self.tick:
                 self.at(first + 30, self.tick, "lead")             # a Squad Lead home's tick, behind the same lease
+        for kind in TOPUP:
+            self.at(self.t + max(1, self.gap(kind, self.r3) // 3), self.topup, kind)
         self.at(self.t + self.r2.randint(0, 300), self.supervision)
         self.at(self.t + self.r2.randint(3600, 36000), self.watcher_stop)
         self.at(self.t + 3600, self.restart_mid_move)
@@ -576,12 +660,26 @@ class Sim:
             ok, why = False, "step %d at +%ds: %s" % (self.stats["steps"], self.t - T0, v)
         digest = hashlib.sha256("\n".join(repr(r) for r in self.s.con.execute("SELECT * FROM move ORDER BY seq")).encode()).hexdigest()[:16]
         moves = self.s.one("SELECT count(*) FROM move")
+        self.opens("")
         late_main = self.s.one("SELECT count(*) FROM item WHERE state='open' AND late_at IS NOT NULL AND holder_id='main'")
         self.s.con.close()
         for x in (self.path, self.path + "-journal"):
             if os.path.exists(x):
                 os.unlink(x)
-        return dict(seed=self.seed, ok=ok, why=why, digest=digest, moves=moves, late_main=late_main, **self.stats)
+        return dict(seed=self.seed, ok=ok, why=why, digest=digest, moves=moves, late_main=late_main, opens=self.counts, hours=self.end - T0, **self.stats)
+
+
+def report_rates(res):
+    """One line per kind on stderr: <kind> <simulated per day> <profile per day> ok|off. ok: within 25 % of the profile's
+    rate over all seeds run (a kind under 2 a day: within 1 a day). Returns the exit code: 1 when any line is off."""
+    days = sum(r["hours"] for r in res) / 86400
+    off = 0
+    for kind in sorted(RATE):
+        sim = sum(r["opens"].get(kind, 0) for r in res) / days
+        ok = abs(sim - RATE[kind]) <= (1 if RATE[kind] < 2 else RATE[kind] * 0.25)
+        off += not ok
+        print("%s %.1f %.1f %s" % (kind, sim, RATE[kind], "ok" if ok else "off"), file=sys.stderr)
+    return 1 if off else 0
 
 
 def main():
@@ -590,6 +688,7 @@ def main():
     ap.add_argument("--hours", type=int, default=24)
     ap.add_argument("--no-faults", action="store_true")
     ap.add_argument("--out", default=None)
+    ap.add_argument("--rates", action="store_true", help="print each kind's simulated rate against the profile's on stderr; exit 1 on any off")
     a = ap.parse_args()
     lo, _, hi = a.seeds.partition("-")
     seeds = range(int(lo), int(hi or lo) + 1)
@@ -610,6 +709,8 @@ def main():
     print(json.dumps(summary, indent=1))
     if a.out:
         json.dump(dict(summary=summary, runs=res), open(a.out, "w"), indent=1)
+    if a.rates:
+        sys.exit(report_rates(res))
 
 
 if __name__ == "__main__":
