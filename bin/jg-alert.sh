@@ -208,6 +208,12 @@ cmd_raise() {
   text=$(printf '%s' "$text" | tr '\n\t' '  ')
   local key="$name--$subj" file; file="$(_dir)/$key.rec"
   case $key in */*|*..*) _die "bad subject '$subj'" ;; esac
+  # The item store mirrors the alert (core/item-store/adapters/alerts.py): a repeat of an open key is a note there. Guarded: with
+  # no config/item-store it does nothing, and it never changes this script's output or exit.
+  if [ -n "${JG_HOME:-}" ] && [ -e "$JG_HOME/config/item-store" ]; then
+    python3 -I "$_root/core/item-store/adapters/alerts.py" raise "$name" "$subj" ${security:+--security-source "$security"} \
+      --source "raise:$name:$subj@${JG_ALERT_NOW:-$(date +%s)}" >/dev/null 2>&1 || true
+  fi
   if [ -r "$file" ]; then
     local cur; cur=$(_get "$file" state)
     if [ "$cur" != "$s_res" ]; then   # one live record for one key
@@ -371,6 +377,9 @@ cmd_resolve() {
   fi
   _route_close "$f" "$key"
   _set "$f" state "$s_res"; _set "$f" proof "$proof"; _set "$f" resolved_at "$now"
+  if [ -n "${JG_HOME:-}" ] && [ -e "$JG_HOME/config/item-store" ]; then   # the item store mirrors the close (alerts.py); guarded, output unchanged
+    python3 -I "$_root/core/item-store/adapters/alerts.py" resolve "$key" --proof "$proof" --source "resolve:$key" >/dev/null 2>&1 || true
+  fi
   for rec in "$(_dir)"/*.rec; do   # release what this alert covered
     [ -r "$rec" ] && [ "$(_get "$rec" covered_by)" = "$key" ] || continue
     _set "$rec" state "$s_open"; _set "$rec" covered_by ""

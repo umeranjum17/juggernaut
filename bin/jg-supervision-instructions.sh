@@ -313,6 +313,10 @@ if [ -n "$HOST_SNIPPET" ]; then
 fi
 ordinary_wake_line
 printf '%s\n' '- Fleet reads: for a heartbeat or any look at the fleet, run juggernaut-axi status, then juggernaut-axi lanes, wakes, holds or tasks for the part you need (one bounded table each); the raw scripts remain the writers and the fallback when the command is absent.'
+if [ -e "$CONFIG/item-store" ]; then
+  # shellcheck disable=SC2016  # the backticks are literal text in the instruction
+  printf '%s\n' '- Item store pages: After the drain, run `core/item-store/jg-item pages main`; act on each line; then run the `jg-item ack main <seq>` that its last line names.'
+fi
 printf '\n'
 render_snippet
 printf '\n'

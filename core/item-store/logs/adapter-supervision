@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# The log reader of adapter:supervision: one "<source>\t<item key>" line per write it made (see logs/README.md).
+# It prints the log the adapter appends to, <main home>/state/item-store/supervision-written.log.
+set -eu
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+exec python3 -I -c '
+import sys, os
+sys.path.insert(0, sys.argv[1])
+import itemdb
+f = os.path.join(itemdb.store_dir(os.environ["JG_HOME"]), "supervision-written.log")
+if os.path.exists(f):
+    sys.stdout.write(open(f, encoding="utf-8").read())
+' "$(dirname "$here")"

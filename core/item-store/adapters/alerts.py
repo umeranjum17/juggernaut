@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+"""The alerts adapter (stamp adapter:alerts): every alert bin/jg-alert.sh raises is also one store item keyed by its cause.
+
+  alerts.py raise <alert> <subject> [--security-source <s>] --source <id>
+  alerts.py resolve <key> --proof <p> --source <id>          (<key> is jg-alert's <alert>--<subject>)
+  alerts.py compare <home>                                    (the daily measure against <home>/state/alerts/)
+
+A subject that has a task record (<home>/state/<subject>.meta) is a lane's task id: the item's subject is its ticket and
+its first holder is the lead (Main, in the main home), so the lane's done close drops it with the rest of the lane's
+alerts (Y5). Any other subject stays as given and Main holds it. A host-wide security cause (--security-source) is one
+`security:fleet/<alert>` item, never one per home. The plumbing alerts about delivery and escalation raise no item:
+the late item itself climbs. Every write goes through itemdb.or_intake, so a refused write is listed on Main's board.
+The alert records under state/alerts/ stay authoritative; this adapter only mirrors them. Stdlib only."""
+import argparse, os, sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+import itemdb   # noqa: E402
+import store as S   # noqa: E402
+
+BY = "adapter:alerts"
+PLUMBING = {"undelivered", "slow-delivery", "stuck-wait", "escalation-stuck"}
+
+
+def home_of():
+    h = os.environ.get("JG_HOME")
+    if not h or not os.path.isdir(h):
+        sys.exit("alerts: JG_HOME must name this home's directory")
+    return os.path.realpath(h)
+
+
+def subject_of(home, subject):
+    """(item subject, named holder): a lane's task id maps to its ticket and the lead; anything else stays, with Main."""
+    if os.path.exists(os.path.join(home, "state", subject + ".meta")):
+        return itemdb.task_ref(home, subject)[0], "lead"
+    return subject, "main"
+
+
+def item_key(hid, alert, subject):
+    return S.Store.alert_key(alert, hid, subject)
+
+
+def cmd_raise(a):
+    if a.alert in PLUMBING:
+        return
+    home = home_of()
+    hid = itemdb.home_id(home)
+    st = itemdb.open_db(home, BY)
+    subj, named = subject_of(home, a.subject)
+    at = itemdb.stamp(st)
+    if a.security_source:
+        r = itemdb.or_intake(st, at, a.source, hid, subj, st.open, at, "security:fleet/%s" % a.alert, "security", "main", a.alert,
+                             "%s: raised in home %s (source %s)" % (a.alert, hid, a.security_source), st.me)
+    else:
+        r = itemdb.or_intake(st, at, a.source, hid, subj, st.open, at, item_key(hid, a.alert, subj), "alert", hid, subj,
+                             "%s on %s" % (a.alert, a.subject), st.me, named=named)
+    print(r)
+
+
+def cmd_resolve(a):
+    alert, sep, subject = a.key.partition("--")
+    if not sep or not alert or not subject or alert in PLUMBING:
+        return
+    home = home_of()
+    hid = itemdb.home_id(home)
+    st = itemdb.open_db(home, BY)
+    subj, _ = subject_of(home, subject)
+    key = item_key(hid, alert, subj)
+    if not st.item(key):            # a plumbing alert, one the lane's done close already dropped, or one never mirrored
+        return
+    at = itemdb.stamp(st)
+    print(itemdb.or_intake(st, at, a.source, hid, subj, st.close, at, key, "done", "gone:" + a.proof, st.me))
+
+
+def records(home):
+    """(alert, subject, security source) of each open alert record: every state but resolved is live (jg-alert.sh list)."""
+    d = os.path.join(home, "state", "alerts")
+    out = []
+    for name in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+        if not name.endswith(".rec"):
+            continue
+        f = {}
+        for ln in open(os.path.join(d, name), encoding="utf-8", errors="replace"):
+            k, _, v = ln.rstrip("\n").partition("=")
+            f[k] = v
+        if f.get("state") != "resolved" and f.get("alert") and f.get("subject") and f["alert"] not in PLUMBING:
+            out.append((f["alert"], f["subject"], f.get("security_source", "")))
+    return out
+
+
+def cmd_compare(a):
+    home = os.path.realpath(a.home)
+    hid = itemdb.home_id(home)
+    st = itemdb.open_db(home, BY)
+    want = set()
+    for alert, subject, sec in records(home):
+        want.add("security:fleet/%s" % alert if sec else item_key(hid, alert, subject_of(home, subject)[0]))
+    have = {r[0] for r in st.con.execute(
+        "SELECT key FROM item WHERE state='open' AND kind='alert' AND home=? AND opened_by<>'tick'", (hid,))}
+    have |= {k for k in want if k.startswith("security:fleet/") and st.item(k)}
+    diffs = ["%s missing-item today=open store=absent" % k for k in sorted(want - have)]
+    diffs += ["%s missing-record today=absent store=open" % k for k in sorted(have - want)]
+    print("\n".join(diffs))
+    sys.exit(1 if diffs else 0)
+
+
+def main(argv):
+    p = argparse.ArgumentParser(prog="alerts.py", description=__doc__.split("\n")[0])
+    sp = p.add_subparsers(dest="cmd", required=True)
+    r = sp.add_parser("raise")
+    r.add_argument("alert"); r.add_argument("subject")
+    r.add_argument("--security-source", default=None); r.add_argument("--source", required=True)
+    r.set_defaults(fn=cmd_raise)
+    c = sp.add_parser("resolve")
+    c.add_argument("key"); c.add_argument("--proof", required=True); c.add_argument("--source", required=True)
+    c.set_defaults(fn=cmd_resolve)
+    m = sp.add_parser("compare")
+    m.add_argument("home")
+    m.set_defaults(fn=cmd_compare)
+    a = p.parse_args(argv)
+    a.fn(a)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
