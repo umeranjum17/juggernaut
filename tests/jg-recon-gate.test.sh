@@ -212,6 +212,29 @@ test_a_critic_round_binds_the_report_it_read() {
   expect_code 0 "$RC" "a new round naming the new draft passes again (got: $OUT)"
   pass "jg-recon-gate.sh: a critic round names the report it read, and a report changed after the last round is refused"
 }
+# The researcher's fixes after the last gap round change the report, so the closure line names the draft its checks read.
+write_closure() {  # <dir> <round-3 report sha> <closure line text>
+  printf 'Critic: other-worker\nRound 1: new gaps 2\nRound 2: new gaps 1\nRound 3: new gaps 1 report %s\nClosure check: %s\n' "$2" "$3" > "$1/critic.md"
+}
+test_closure_line_names_the_fixed_report() {
+  local dir old new
+  make_recon rg-clhash deep; dir="$HOME_DIR/data/rg-clhash"; touch "$dir/.nostamp"
+  old=$(sha256sum "$dir/report.md" | cut -d' ' -f1)
+  printf '\nA sentence that fixes the last gap.\n' >> "$dir/report.md"
+  new=$(sha256sum "$dir/report.md" | cut -d' ' -f1)
+  write_closure "$dir" "$old" "1 closed by other-worker report $new"
+  run_gate rg-clhash
+  expect_code 0 "$RC" "a closure line naming the fixed report passes (got: $OUT)"
+  write_closure "$dir" "$old" "1 closed by other-worker report $old"
+  expect_refused rg-clhash "changed after critic round" "a closure line naming the old report"
+  write_closure "$dir" "$old" "1 closed by other-worker"
+  expect_refused rg-clhash "changed after critic round" "a closure line naming no report"
+  write_closure "$dir" "$old" "1 closed by rg-clhash report $new"
+  expect_refused rg-clhash "closure check" "a researcher-written closure line"
+  write_closure "$dir" "$old" "0 closed by other-worker report $new"
+  expect_refused rg-clhash "closes 0 of 1" "a closure line with a short count"
+  pass "jg-recon-gate.sh: a closure line names the report the fixes produced, and only the critic's own line counts"
+}
 test_closure_check_closes_the_last_round() {
   local dir
   make_recon rg-close deep
@@ -432,6 +455,7 @@ test_refuted_and_single_source_deep_claims
 test_critic_is_required
 test_a_critic_round_binds_the_report_it_read
 test_closure_check_closes_the_last_round
+test_closure_line_names_the_fixed_report
 test_source_budget
 test_quick_and_legacy_are_exempt
 test_a_critic_task_passes_on_its_critic_md

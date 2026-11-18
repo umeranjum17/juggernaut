@@ -244,6 +244,11 @@ else:
         # A round is a verdict on the draft it read: its line names that draft's sha256 (a prefix of 12 or more digits).
         last_line = re.findall(r"^Round[ \t]+\d+:[ \t]*new gaps[ \t]+\d+.*$", critic, re.M)[-1]
         named = re.search(r"\breport[ \t]+([0-9a-f]{12,64})\b", last_line)
+        last_pos = [m.start() for m in re.finditer(r"^Round[ \t]+\d+:[ \t]*new gaps[ \t]+\d+", critic, re.M)][-1]
+        closure = re.search(r"^Closure check:[ \t]*(\d+)[ \t]+closed by[ \t]+(\S+)(?:[ \t]+report[ \t]+([0-9a-f]{12,64}))?[ \t]*$", critic[last_pos:], re.M)
+        if last_k > 0 and closure and closure.group(3):
+            # The fixes changed the draft after the round: the closure line names the draft its checks read.
+            named = re.search(r"([0-9a-f]{12,64})", closure.group(3))
         have = hashlib.sha256(open(rpath, "rb").read()).hexdigest() if os.path.isfile(rpath) else ""
         if not named:
             refuse(f"critic.md round {last_n} names no report; write 'Round {last_n}: new gaps {last_k} report <sha256sum of report.md>'")
@@ -253,8 +258,6 @@ else:
             # A fixed last-round gap cannot get another round once the cap is
             # spent, so a closure line by the same separate critic, written after
             # that round, stands in for it. Never the researcher's own word.
-            last_pos = [m.start() for m in re.finditer(r"^Round[ \t]+\d+:[ \t]*new gaps[ \t]+\d+", critic, re.M)][-1]
-            closure = re.search(r"^Closure check:[ \t]*(\d+)[ \t]+closed by[ \t]+(\S+)[ \t]*$", critic[last_pos:], re.M)
             fix = f"critic.md round {last_n} found {last_k} new gaps; close them and run another round, or end with 'Closure check: {last_k} closed by <the critic>'"
             if not closure:
                 refuse(fix)

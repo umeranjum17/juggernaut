@@ -74,7 +74,8 @@ Round 2: new gaps 0 report <sha256sum of report.md as read>
 ```
 
 The last `Round` line names the report it read (`report <sha256 of report.md>`, 12 or more digits): the gate refuses a report changed after that round until the critic reads the new draft and writes a new round.
-The last `Round` line must say `new gaps 0`, or be followed by `Closure check: <k> closed by <critic>`, where `<k>` is that round's gap count and `<critic>` is the same id as the `Critic:` line.
+The last `Round` line must say `new gaps 0`, or be followed by `Closure check: <k> closed by <critic> report <sha256 of report.md>`, where `<k>` is that round's gap count and `<critic>` is the same id as the `Critic:` line.
+The closure line's `report` names the draft the critic read after the researcher's fixes; the gate checks that hash instead of the round's when the round found gaps.
 The closure line is the critic's word that the researcher fixed every gap of the last round; `self` and the researcher's own task id never close a gap.
 A deep Recon allows 3 rounds that found new gaps; the clean round or closure line after them does not count.
 Gaps the critic finds go back to stage 3 as the next sweep round.
