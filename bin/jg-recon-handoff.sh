@@ -21,6 +21,8 @@
 # whether the draft is accepted: the verdict also writes the critic ticket's own `Round` line, so its gate view follows the parent and
 # never decides it. A revise retires the assignment, so a late verdict cannot seal the new draft; a draft that was never assigned still
 # takes a verdict from any named critic. A second critic while one holds the draft is refused.
+# With config/item-store, assign also opens the critic's work item as the child of the Recon's (the link a ready draft finds its critic
+# by), and draft and revise send the round to that critic (core/item-store: jg-item ready); the store adds no rule of its own.
 # Each move is judged by bin/jg-machine-guard.sh (shadow, or refusal once `recon` is in config/machine-enforce) before it is written.
 # Exit: 0 done, 1 refused, 2 usage. Data directory: JG_DATA_OVERRIDE, else <JG_HOME>/data.
 set -u
@@ -42,6 +44,30 @@ task_dir() {  # <task-id> -> the data directory of a plain task id
 sha_of() { sha256sum "$1" | cut -d' ' -f1; }
 last_line() { [ -s "$1/handoff.tsv" ] && tail -n 1 "$1/handoff.tsv" || true; }
 field() { printf '%s\n' "$1" | cut -f"$2"; }  # <line> <column>
+
+# The item store (core/item-store), guarded by the home's own switch: silent, and never a reason to change this command's output or
+# exit; today's record (handoff.tsv) decides. A refused write becomes one intake item on Main (JG_ITEM_OR_INTAKE=1).
+ITEM=$SCRIPT_DIR/../core/item-store/jg-item
+item_store_on() { [ -e "$JG_HOME/config/item-store" ] && [ -x "$ITEM" ]; }
+item_work_key() {  # <task-id> -> key, subject and project of that task's work item
+  JG_HOME=$JG_HOME "$ITEM" key work --task "$1" 2>/dev/null
+}
+item_assign() {  # <recon> <critic>: the critic's work item, linked to the Recon's by parent (the one place a lead names a critic)
+  item_store_on || return 0
+  local key subject project hid
+  IFS=$'\t' read -r key subject project < <(item_work_key "$2") || return 0
+  [ -n "${key:-}" ] && [ -n "${project:-}" ] && [ "$project" != - ] || return 0
+  hid=${key#work:}; hid=${hid%%/*}
+  JG_HOME=$JG_HOME JG_ITEM_OR_INTAKE=1 "$ITEM" open "$key" --kind work --home "$hid" --subject "$subject" --project "$project" \
+    --owes "critique $1" --lane "worker:$hid/$2" --parent "work:$hid/$1" --source "assign:$1@$2" >/dev/null 2>&1 || true
+}
+item_ready() {  # <recon> <draft hash>: the next round goes to the linked critic, or a dispatch asks for one (Y8)
+  item_store_on || return 0
+  local key
+  key=$(item_work_key "$1" | cut -f1)
+  [ -n "$key" ] && JG_HOME=$JG_HOME python3 -I "$SCRIPT_DIR/../core/item-store/adapters/lane.py" has-open "$key" || return 0
+  JG_HOME=$JG_HOME JG_ITEM_OR_INTAKE=1 "$ITEM" ready "$key" "$2" --source "ready:$1@$2" >/dev/null 2>&1 || true
+}
 
 command_phase() {
   local dir line; dir=$(task_dir "${1:-}") || exit $?; line=$(last_line "$dir")
@@ -71,7 +97,8 @@ command_draft() {
   local id=${1:-} dir hash; dir=$(task_dir "$id") || exit $?
   [ -z "$(last_line "$dir")" ] || refuse "a draft is already recorded; a new draft after a verdict with gaps is a revise"
   hash=$(report_hash "$dir") || exit $?
-  record "$dir" "$id" draft drafted "$hash" researcher 0
+  record "$dir" "$id" draft drafted "$hash" researcher 0 || return $?
+  item_ready "$id" "$hash"
 }
 
 # The live assignment of a record's last line: critic, generation (the number of assign moves) and hash; empty when none holds.
@@ -115,6 +142,7 @@ command_assign() {
   gen=$(grep -c "$(printf '^[0-9]*\tassign\t')" "$dir/handoff.tsv")
   printf '%s\t%s\t%s\n' "$id" "$gen" "$hash" > "$cdir/assignment.tsv"
   grep -q '^Critic:' "$cdir/critic.md" 2>/dev/null || printf 'Critic: %s\n' "$critic" >> "$cdir/critic.md"
+  item_assign "$id" "$critic"
 }
 
 command_verdict() {
@@ -169,7 +197,8 @@ command_revise() {
   esac
   hash=$(report_hash "$dir") || exit $?
   [ "$hash" != "$(field "$line" 4)" ] || refuse "report.md still holds the critiqued draft ${hash:0:12}: change it before recording the revision"
-  record "$dir" "$id" revise drafted "$hash" researcher 0
+  record "$dir" "$id" revise drafted "$hash" researcher 0 || return $?
+  item_ready "$id" "$hash"
 }
 
 cmd=${1:-}; [ "$#" -gt 0 ] && shift

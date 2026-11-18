@@ -282,7 +282,7 @@ PAUSED_VERB=${JG_CLASSIFY_PAUSED_VERB:-$JG_CLASSIFY_PAUSED_VERB_DEFAULT}
 # The one States: line, from the core contract (defaults/status-states.tsv); no brief types a state word of its own.
 STATES_LINE=$(jg_states_line) || exit 1
 IFS= read -r -d '' OPERATOR_PAUSE_INSTRUCTIONS <<EOF || true
-   One rule for every wait (your own background shell, pipeline run or validation round, an outside condition, a parked lane, a date): before you end your turn append \`$PAUSED_VERB [at=<epoch>] [wait=<who>] [reason=<word>]: {job and completion condition}\`. Use \`blocked:\` only when you are stuck, or for the waits-for line below.
+   One rule for every wait (your own background shell, pipeline run or validation round, an outside condition, a parked lane, a date): before you end your turn append \`$PAUSED_VERB [at=<epoch>] [wait=<who>] [reason=<word>]: {job and completion condition}\`. Use \`blocked:\` only when you are stuck, or for the waits-for line below. The \`wait=\` word decides who is paged: the holder you name, never the owner directly.
    \`wait\` is who owes the next move: worker, tick (a script), lead, main, owner or outside (CI, a quota, another ticket, a date). \`reason\` is why: decision, blocker, dependency, quota, ci, approval, review, parked or date. A line with no wait, no reason, another word, or the old placeholder date is refused.
    Do not repeat the declaration on every poll. Do not declare active implementation or reasoning as a wait.
    Juggernaut may still raise one first-sight alert; the declared wait then uses the existing long recheck cadence instead of repeated possible-wedge alarms.

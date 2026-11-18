@@ -18,7 +18,17 @@ _JG_WAIT_WRITE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 # 0 when <key> (default: the keyless "default") is open in <status-file> as a decision or a declared wait; with a <note>,
 # only when the open record says exactly that, so a new question on an open key is a new wait and is written.
 jg_wait_is_open() {  # <status-file> <key> [<note>]
-  local file=$1 key=$2 open rec
+  local file=$1 key=$2 open rec home hid rc=0 lane
+  # Once the home reads from the item store (slice 8w writes config/item-store-reads), the store answers, whatever the file's
+  # size (Y9); a question about the note's exact text, or a store that cannot answer, falls back to folding the file.
+  home=${JG_HOME:-$(dirname -- "$(dirname -- "$file")")}
+  lane=$_JG_WAIT_WRITE_DIR/../core/item-store/adapters/lane.py
+  if [ "$#" -lt 3 ] && [ -e "$home/config/item-store" ] && [ -e "$home/config/item-store-reads" ] && [ -f "$lane" ]; then
+    hid=main
+    [ ! -f "$home/.jg-squad-lead-home" ] || hid=$(head -n 1 "$home/.jg-squad-lead-home")
+    JG_HOME=$home python3 -I "$lane" is-open "$hid" "$(basename -- "$file" .status)" "$key" >/dev/null 2>&1 || rc=$?
+    case $rc in 0) return 0 ;; 1) return 1 ;; esac
+  fi
   open=$(status_open_decisions "$file"; status_open_activities "$file")
   rec=$(printf '%s\n' "$open" | awk -F'\t' -v k="$key" '$1 == k { print; exit }')
   [ -n "$rec" ] || return 1

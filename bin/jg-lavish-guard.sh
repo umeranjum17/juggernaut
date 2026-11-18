@@ -53,6 +53,9 @@
 # a wait with no reason, a word outside those lists, or the old placeholder date 2026-12-31 is refused with the new form
 # in the refusal text, and nothing is written. A parked lane is `reason=parked`; the quiet rule keys on that word.
 #
+# The item store (--append on a .status file, only while the home has config/item-store): after a successful append the line is
+# also read into the store by core/item-store/adapters/lane.py, silently; that call never changes this script's output or exit.
+#
 # This file is the one core owner of these refusals. bin/jg-squad-lead-report.sh
 # runs it before a parent-channel append, and the status line bin/jg-brief.sh
 # generates pipes through it, so no captain-facing status or report note can
@@ -236,5 +239,13 @@ if [ -n "$APPEND" ]; then
   esac
   case $APPEND in *.status) done_line_move "$APPEND" "$text" || exit 1 ;; esac
   printf '%s\n' "$text" >> "$APPEND" || exit 1
+  # The item store takes the line too (core/item-store/adapters/lane.py): guarded by the home's own switch, silent, and never
+  # a reason to refuse or fail the append; today's record decides.
+  case $APPEND in
+    *.status)
+      [ -e "${JG_HOME:-$(dirname -- "$(dirname -- "$APPEND")")}/config/item-store" ] &&
+        python3 -I "$(cd "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/core/item-store/adapters/lane.py" read "$APPEND" >/dev/null 2>&1 || true
+      ;;
+  esac
 fi
 exit 0

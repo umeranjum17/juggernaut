@@ -319,6 +319,41 @@ jg_send_chat_steer() {
     >/dev/null 2>&1 || true
 }
 
+# jg_send_item_store <inbox record path>: the steer is also an item of the store (core/item-store), opened the moment its record
+# is durable. With --resolve-key, the wait it answers closes in the same write (one close with the steer as its next step, Y4);
+# without one, or when the store holds no such open wait, the steer alone opens. Guarded by the home's own switch, silent, and
+# never a reason to fail a send that is recorded: a refused write becomes one intake item on Main (JG_ITEM_OR_INTAKE=1).
+jg_send_item_store() {
+  [ -e "$JG_HOME/config/item-store" ] && command -v jq >/dev/null 2>&1 || return 0
+  local root item lane_py n key subject project hid lane owes step src k wk first=1
+  root=$(cd "$SCRIPT_DIR/.." && pwd); item=$root/core/item-store/jg-item; lane_py=$root/core/item-store/adapters/lane.py
+  [ -x "$item" ] || return 0
+  n=$(basename -- "$1" .msg)
+  case $n in ''|*[!0-9]*) return 0 ;; esac
+  n=$((10#$n))
+  IFS=$'\t' read -r key subject project < <(JG_HOME=$JG_HOME "$item" key steer --task "$INBOX_TASK_ID" --n "$n" 2>/dev/null) || return 0
+  [ -n "${key:-}" ] || return 0
+  hid=${key#steer:}; hid=${hid%%/*}; lane=worker:$hid/$INBOX_TASK_ID
+  owes=$(printf '%s' "$MESSAGE" | tr '\n\r\t' '   ' | cut -c1-80)
+  step=$(jq -nc --arg key "$key" --arg home "$hid" --arg subject "$subject" --arg owes "$owes" --arg lane "$lane" \
+    '{key:$key,kind:"steer",home:$home,subject:$subject,owes:$owes,named:"worker",lane:$lane}') || return 0
+  src=send:$INBOX_TASK_ID/$n
+  for k in $RESOLVE_STATUS_KEYS; do
+    wk=$(JG_HOME=$JG_HOME "$item" key wait --task "$INBOX_TASK_ID" --wait "$k" 2>/dev/null | cut -f1)
+    [ -n "$wk" ] || continue
+    JG_HOME=$JG_HOME python3 -I "$lane_py" has-open "$wk" || continue
+    if [ "$first" = 1 ]; then
+      JG_HOME=$JG_HOME JG_ITEM_OR_INTAKE=1 "$item" close "$wk" "done" "answer:$key" --source "$src" --then "[$step]" >/dev/null 2>&1 || true
+      first=0
+    else
+      JG_HOME=$JG_HOME JG_ITEM_OR_INTAKE=1 "$item" close "$wk" "done" "answer:$key" --source "$src" >/dev/null 2>&1 || true
+    fi
+  done
+  [ "$first" = 1 ] || return 0
+  JG_HOME=$JG_HOME JG_ITEM_OR_INTAKE=1 "$item" open "$key" --kind steer --home "$hid" --subject "$subject" --owes "${owes:-steer}" \
+    --named worker --lane "$lane" --source "$src" >/dev/null 2>&1 || true
+}
+
 # jg_send_clear_after_interrupt: muse RESTORES the interrupted prompt back into
 # the composer when Escape cancels a turn, as real bright text (verified: fg
 # 38;2;204;211;219, luminance ~210, muse 0.1.0-R708.1), not de-emphasised ghost
@@ -1156,6 +1191,7 @@ else
     # The record is durable, so the steer is a fact: it also lands on the fleet
     # chat channel, from the call site that already recorded it.
     jg_send_chat_steer
+    jg_send_item_store "$INBOX_RECORD" || true
     # Enqueue IS durable delivery to the task's record: mark the pending
     # expectation delivered now, without resolving it - only a correlated
     # parent report acknowledges the request.
