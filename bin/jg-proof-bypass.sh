@@ -64,6 +64,13 @@ stage_of() {  # <ticket>: the stage word of the ticket, or nothing
   bash "$SCRIPT_DIR/jg-machine.sh" show ticket "$1" 2>/dev/null | awk -F'\t' '$1 == "state" { print $2; exit }'
 }
 
+# The same bypass is one `rule` item in the item store (expand only: config/proof-bypass stays authoritative, and a call that
+# fails or is refused changes nothing here; bypass.py files a refused write as one intake item on Main).
+store_bypass() {  # grant|end|drop <args for bypass.py>
+  [ -e "$JG_HOME/config/item-store" ] || return 0
+  python3 -I "$SCRIPT_DIR/../core/item-store/adapters/bypass.py" "$@" >/dev/null 2>&1 || true
+}
+
 cmd_grant() {
   local scope='' target='-' word='' end='' hours='' t id
   t=$(now)
@@ -103,6 +110,7 @@ cmd_grant() {
   jg_lock_acquire_wait "$STATE/.proof-bypass.lock" || refuse "could not lock the bypass record"
   printf '%s\t%s\t%s\t%s\t%s\t%s\tstanding\t0\t-\t-\n' "$id" "$scope" "$target" "$word" "$t" "$end" >> "$FILE"
   jg_lock_release "$STATE/.proof-bypass.lock" || true
+  store_bypass grant --id "$id" --scope "$scope" --target "$target" --word "$word" --until "$end"
   if [ "$end" = - ]; then end="when the ticket is released or closed"; else end=$(date -u -d "@$end" +%Y-%m-%dT%H:%MZ); fi
   echo "bypass $id standing: $scope ${target/#-/(the home)} under $word, ends $end"
 }
@@ -113,6 +121,7 @@ cmd_end() {
   [ -n "$id" ] || usage
   rows | awk -F'\t' -v i="$id" '$1 == i && $7 == "standing" { f = 1 } END { exit !f }' || refuse "no standing bypass $id"
   write_locked '$1 == i && $7 == "standing" { $7 = "ended"; $9 = t; $10 = "owner" } { print }' -v i="$id" -v t="$(now)"
+  store_bypass end --id "$id" --word "$(awk -F'\t' -v i="$id" '$1 == i { print $4; exit }' "$FILE")"
   echo "bypass $id ended; the next done line in its scope is proved"
 }
 
@@ -162,6 +171,7 @@ cmd_expire() {
   while IFS=$'\t' read -r id why; do
     [ -n "$id" ] || continue
     write_locked '$1 == i && $7 == "standing" { $7 = "ended"; $9 = t; $10 = w } { print }' -v i="$id" -v t="$t" -v w="$why"
+    case $why in "end time"*) store_bypass drop --id "$id" --why expired ;; *) store_bypass drop --id "$id" --why released ;; esac
     echo "proof bypass $id ended: $why"
   done <<< "$ended"
 }

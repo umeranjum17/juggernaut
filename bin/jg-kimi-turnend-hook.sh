@@ -99,6 +99,7 @@ set +e
 exec >/dev/null 2>&1
 payload=
 IFS= read -r payload || [ -n "$payload" ] || exit 0
+[ ! -e "${JG_HOME:-/nonexistent}/config/item-store" ] || printf '%s' "$payload" | python3 -I "$JG_HOME/core/item-store/adapters/turn_end.py" || true
 command -v jq >/dev/null 2>&1 || exit 0
 workspace=$(jq -er 'select(.hook_event_name == "Stop") | .cwd | strings | select(length > 0)' <<< "$payload" 2>/dev/null) || exit 0
 pointer="$workspace/.jg-kimi-turnend"

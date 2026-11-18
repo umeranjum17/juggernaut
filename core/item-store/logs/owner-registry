@@ -1,0 +1,16 @@
+#!/usr/bin/env python3
+"""The log of owner:registry for the stamp check: the cut-over run's own output (state/item-store/cut-over-policy.tsv), never
+data/projects.md. One line per project it wrote: import:projects.md:<project>, then policy:<project>."""
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+import itemdb
+
+home = os.environ.get("JG_HOME") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
+try:
+    lines = open(os.path.join(itemdb.store_dir(home), "cut-over-policy.tsv"), encoding="utf-8").read().splitlines()
+except FileNotFoundError:
+    lines = []
+for ln in lines[1:]:                      # the first line is the table's header
+    project = ln.split("\t", 1)[0]
+    if project:
+        print("import:projects.md:%s\tpolicy:%s" % (project, project))

@@ -176,6 +176,8 @@ trap record_parent_stop_state EXIT
 # stdin.
 PAYLOAD=$(cat 2>/dev/null || true)
 [ -n "$PAYLOAD" ] || exit 0
+# The reply proof: a tell his note opened closes only on the turn that answered it (item store, expand only; never blocking).
+[ ! -e "$JG_HOME/config/item-store" ] || printf '%s' "$PAYLOAD" | python3 -I "$JG_ROOT/core/item-store/adapters/turn_end.py" || true
 
 # jq is the repo's established JSON dependency (bin/jg-x-poll.sh uses the same
 # "missing jq -> silent no-op" degrade). Without it we cannot safely read the

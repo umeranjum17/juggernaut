@@ -333,6 +333,13 @@ valid_note_id() {
   return 0
 }
 
+# His note is also one `tell` item in the item store (expand only: the note file stays authoritative, and a call that fails
+# or is refused changes nothing here; owner.py files a refused write as one intake item on Main).
+store_tell() {  # <message id> <text>
+  [ -e "$JG_HOME/config/item-store" ] || return 0
+  python3 -I "$SELF_DIR/../core/item-store/adapters/owner.py" tell --channel chat --message-id "$1" --subject - --text "$2" >/dev/null 2>&1 || true
+}
+
 note_path() {  # <id>
   if [ -f "$INBOX/$1.note" ]; then
     printf '%s\n' "$INBOX/$1.note"
@@ -519,6 +526,7 @@ cmd_primary_chat() {  # <session-id> <seq> <text>...
   body="[chat primary $sid:$seq] $*"
   write_note_file "$path.tmp" "$id" chat-primary "$body" "" ""
   mv "$path.tmp" "$path"
+  store_tell "$sid:$seq" "$*"
   printf 'recorded %s\n' "$id"
 }
 
@@ -634,6 +642,7 @@ queue_note() {
       return $?
     fi
     mv "$tmp" "$INBOX/$id.note"
+    store_tell "$id" "$body"
     summary=$(note_summary_from_body "$body")
     finish_note_result created "$id" "$request_id" "$json" "$strict" "$summary"
     return $?
@@ -644,6 +653,7 @@ queue_note() {
   id="$(date +%s)-${staging_name#.staging-}"
   write_note_file "$tmp" "$id" "$source" "$body" "$extra" ""
   mv "$tmp" "$INBOX/$id.note"
+  store_tell "$id" "$body"
   summary=$(note_summary_from_body "$body")
   finish_note_result created "$id" "" "$json" "$strict" "$summary"
 }

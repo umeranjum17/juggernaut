@@ -1,0 +1,25 @@
+project	mode	yolo	level	merge	land	release
+a-lt-yolo	local-trunk	on	loose	machine	machine	machine
+b-lt	local-trunk	off	standard	owner	machine	owner
+c-lo	local-only	off	tight	owner	owner	machine
+d-lo-yolo	local-only	on	loose	machine	machine	machine
+e-pr	direct-PR	off	tight	owner	owner	machine
+f-pr-yolo	direct-PR	on	loose	machine	machine	machine
+g-nm	direct-PR	off	tight	owner	owner	machine
+h-nm-yolo	direct-PR	on	loose	machine	machine	machine
+i-local	local	off	tight	owner	owner	machine
+j-local-yolo	local	on	loose	machine	machine	machine
+k-nmpo	no-mistakes-prod-only	off	tight	owner	owner	machine
+l-nmpo-yolo	no-mistakes-prod-only	on	loose	machine	machine	machine
+check a-lt-yolo    resolver: local-trunk on             rules table: machine/machine/machine  policy: loose    ok
+check b-lt         resolver: local-trunk off            rules table: owner/machine/owner      policy: standard ok
+check c-lo         resolver: local-only off             rules table: owner/owner/machine      policy: tight    ok
+check d-lo-yolo    resolver: local-only on              rules table: machine/machine/machine  policy: loose    ok
+check e-pr         resolver: direct-PR off              rules table: owner/owner/machine      policy: tight    ok
+check f-pr-yolo    resolver: direct-PR on               rules table: machine/machine/machine  policy: loose    ok
+check g-nm         resolver: direct-PR off              rules table: owner/owner/machine      policy: tight    ok
+check h-nm-yolo    resolver: direct-PR on               rules table: machine/machine/machine  policy: loose    ok
+check i-local      resolver: local off                  rules table: owner/owner/machine      policy: tight    ok
+check j-local-yolo resolver: local on                   rules table: machine/machine/machine  policy: loose    ok
+check k-nmpo       resolver: no-mistakes-prod-only off  rules table: owner/owner/machine      policy: tight    ok
+check l-nmpo-yolo  resolver: no-mistakes-prod-only on   rules table: machine/machine/machine  policy: loose    ok

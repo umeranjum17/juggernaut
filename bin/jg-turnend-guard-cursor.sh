@@ -126,6 +126,7 @@ case "$LOCK_ATTEMPTS" in ''|*[!0-9]*|0) LOCK_ATTEMPTS=50 ;; esac
 
 PAYLOAD=$(cat 2>/dev/null || true)
 [ -n "$PAYLOAD" ] || exit 0
+[ ! -e "$JG_HOME/config/item-store" ] || printf '%s' "$PAYLOAD" | python3 -I "$JG_ROOT/core/item-store/adapters/turn_end.py" || true
 command -v jq >/dev/null 2>&1 || exit 0
 
 # A malformed payload is uncertainty, not a reason to park: fail open and let

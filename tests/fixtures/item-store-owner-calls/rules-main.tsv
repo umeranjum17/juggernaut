@@ -1,0 +1,25 @@
+# Today's rules on main (d83daf98a, 17 Nov), written from AGENTS.md section 7 lines 175-183 and core/machines/styles/delivery-styles.tsv, not from the import's formula.
+# Who decides each step per registry word and yolo. owner = his word; machine = the tick, an adapter or Main. A step a mode has no use for is
+# "machine" when the earlier word carries it ("with yolo off the one word that lets the lane land carries it on"; a PR's merge is its release).
+# AGENTS.md 182: "yolo governs merge authority only: with it off, the captain approves every PR merge and every local landing; with it on, Overwatch merges green, in-scope work itself."
+# AGENTS.md 177: "local ... with yolo on the landing check lands it by itself, with yolo off it waits for the captain's word. The old words local-only ... and local-trunk are read as before."
+# "Read as before" for local-trunk, from main's own code and test (G34): a yolo-off local-trunk project lands by itself and goes live on his word (standard).
+# tests/jg-local-mode.test.sh:27-30: "Old records are read as before: both old words land by themselves, whatever their yolo says." ... landed old1 || fail "a local-trunk record must land as before"
+# core/trunk-landing/trunk-landing.sh:562-565: only a lane whose mode is `local` with yolo off and no merge=approved "waits for the captain's word to land".
+# docs/trunk-flow.md:24: "A record with an old word lands as it did before."; :49: "A lane with an old word writes no row, so the go-live word, the go-live waiver and the standing release word below are honoured as before".
+# local-only off stays his word: AGENTS.md 177 "local-only (a ready branch that Overwatch fast-forwards with the guarded merge path on that word)"; AGENTS.md 183 "with it off, the captain approves ... every local landing".
+# AGENTS.md 180: "yolo is asked once, at gated: with yolo on the trunk goes In use and is Released as the ONE release pull request with no second word, and with yolo off the one word that lets the lane land carries it on"
+# delivery-styles.tsv: "alias no-mistakes direct-PR"; "knob local ... the guarded local landing, on the merge knob yolo"; no-mistakes-prod-only maps to its most rigorous leg (bin/jg-project-mode.sh header).
+word	yolo	merge	land	release
+direct-PR	off	owner	owner	machine
+direct-PR	on	machine	machine	machine
+no-mistakes	off	owner	owner	machine
+no-mistakes	on	machine	machine	machine
+no-mistakes-prod-only	off	owner	owner	machine
+no-mistakes-prod-only	on	machine	machine	machine
+local	off	owner	owner	machine
+local	on	machine	machine	machine
+local-trunk	off	owner	machine	owner
+local-trunk	on	machine	machine	machine
+local-only	off	owner	owner	machine
+local-only	on	machine	machine	machine

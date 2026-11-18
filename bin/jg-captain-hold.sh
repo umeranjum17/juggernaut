@@ -420,6 +420,54 @@ fail() {
   exit 1
 }
 
+# --- the item store (expand only: today's record decides, and every call here ends `|| true`) ---------------------
+# A hold also opens one owner question in the host's item store, a board answer closes it with his pick. Both run only
+# where config/item-store exists, as this home's own writer (never a worker's), and a refused write becomes one intake
+# item on Main (JG_ITEM_OR_INTAKE=1), never a failure of the hold.
+item_store_question_keys() {  # <task-id>; prints "<key>\t<subject>\t<project>" lines: the step question first when the task has a pull request
+  local task=$1 meta="$STATE/$1.meta" pr='' project='' ji="$SCRIPT_DIR/../core/item-store/jg-item" yolo
+  pr=$(meta_value "$meta" pr); pr=${pr##*/}; project=$(meta_value "$meta" project); project=${project%/}; project=${project##*/}
+  case "$pr" in ''|*[!0-9]*) pr='' ;; esac
+  if [ -n "$pr" ] && [ ! -e "$JG_HOME/.jg-squad-lead-home" ]; then
+    yolo=$("$SCRIPT_DIR/jg-project-mode.sh" --raw "$project" 2>/dev/null | awk '{ print $2 }')
+    [ "$yolo" = on ] || env -u JG_TASK_ID JG_HOME="$JG_HOME" "$ji" key question:merge --task "$task" --pr "$pr" 2>/dev/null || true
+  fi
+  env -u JG_TASK_ID JG_HOME="$JG_HOME" "$ji" key question --task "$task" 2>/dev/null || true
+}
+
+item_store_hold() {  # <task-id> <reason>
+  [ -e "$JG_HOME/config/item-store" ] || return 0
+  local task=$1 reason=$2 key subject project hid text pr url head pj=()
+  IFS=$'\t' read -r key subject project < <(item_store_question_keys "$task" | head -1) || return 0
+  [ -n "$key" ] || return 0
+  hid=${key#question:}; hid=${hid#merge:}; hid=${hid%%/*}
+  text=$reason
+  [ -z "$project" ] || [ "$project" = - ] || pj=(--project "$project")
+  case "$key" in
+    question:merge:*)
+      pr=${key##*@}; url=$(meta_value "$STATE/$task.meta" pr); head=$(meta_value "$STATE/$task.meta" pr_head)
+      text="merge pull request $pr ($url)${head:+ at $head}? $reason" ;;
+  esac
+  env -u JG_TASK_ID JG_HOME="$JG_HOME" JG_ITEM_OR_INTAKE=1 "$SCRIPT_DIR/../core/item-store/jg-item" open "$key" --kind question \
+    --home "$hid" --subject "$subject" --owes "$text" --options 'yes|no' --source "hold:$task@$(date +%s)" --quiet \
+    "${pj[@]+"${pj[@]}"}" >/dev/null 2>&1 || true
+}
+
+item_store_answer() {  # <task-id> <decision-file> <decision text>
+  [ -e "$JG_HOME/config/item-store" ] || return 0
+  local task=$1 file=$2 pick key open
+  pick=$(printf '%s' "$3" | awk '{ print tolower($1); exit }' | tr -d '[:punct:]')
+  open=$(env -u JG_TASK_ID JG_HOME="$JG_HOME" "$SCRIPT_DIR/../core/item-store/jg-item" board 2>/dev/null | awk -F'\t' '{ print $4 }') || return 0
+  while IFS=$'\t' read -r key _; do
+    [ -n "$key" ] || continue
+    printf '%s\n' "$open" | grep -qxF -- "$key" || continue
+    env -u JG_TASK_ID JG_HOME="$JG_HOME" python3 -I "$SCRIPT_DIR/../core/item-store/adapters/owner.py" answer --channel board \
+      --message-id "${file##*/}" --key "$key" --pick "$pick" >/dev/null 2>&1 || true
+    return 0
+  done < <(item_store_question_keys "$task")
+  return 0
+}
+
 validate_slug() {  # <label> <value>
   local label=$1 value=$2
   case "$value" in
@@ -885,6 +933,7 @@ command_hold() {
       fi
     fi
   fi
+  [ -n "$own_instruction" ] || item_store_hold "$id" "$reason"
   printf '%s\n' "$id"
 }
 
@@ -1034,6 +1083,7 @@ command_answer() {
   fi
   [ -n "$(gate_rows "$id" --all)" ] || fail "task $id has no question to the owner; hold it first or name the right task"
   answer_by_gate "$id" "$release" "$card" "$gate" "$show"
+  item_store_answer "$id" "$decision_file" "$DECISION_TEXT"
 }
 
 # --- the one keyed-answer intake, and the source bindings that feed it --------

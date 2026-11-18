@@ -1,0 +1,40 @@
+#!/usr/bin/env python3
+"""The log of owner:rules for the stamp check, from the records his words live in:
+  config/proof-bypass: each bypass's word -> its rule item (`rule:<scope>/<target>`), and for an ended one `bypass-end:<id>`;
+  <home>/state/release-*.meta of every home (kind=release, merge_rule=, pr=, pr_head=): `rules:<rule>@<head>` ->
+  `question:release:<project>@<pull request number>`, his standing release word on that release pull request."""
+import glob, os, re, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+import itemdb
+
+home = os.environ.get("JG_HOME") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
+main = itemdb.main_home(home)
+try:
+    rows = open(os.path.join(main, "config", "proof-bypass"), encoding="utf-8").read().splitlines()
+except FileNotFoundError:
+    rows = []
+for ln in rows:
+    f = ln.split("\t")
+    if len(f) < 7:
+        continue
+    key = "rule:%s/%s" % (f[1], f[2])
+    print("%s\t%s" % (f[3], key))
+    if f[6] == "ended":
+        print("bypass-end:%s\t%s" % (f[0], key))
+homes = [main]
+try:
+    for ln in open(os.path.join(main, "data", "squad_leads.md"), encoding="utf-8"):
+        m = re.match(r"- \S+ - .+ \(home:\s*([^;)]*);", ln)
+        if m and os.path.isdir(m.group(1).strip()):
+            homes.append(m.group(1).strip())
+except FileNotFoundError:
+    pass
+for h in homes:
+    for path in sorted(glob.glob(os.path.join(h, "state", "release-*.meta"))):
+        rec = {}
+        for ln in open(path, encoding="utf-8", errors="replace"):
+            k, _, v = ln.rstrip("\n").partition("=")
+            rec[k] = v
+        if rec.get("kind") == "release" and rec.get("merge_rule") and rec.get("pr") and rec.get("pr_head") and rec.get("project"):
+            project = os.path.basename(rec["project"].rstrip("/"))
+            print("rules:%s@%s\tquestion:release:%s@%s" % (rec["merge_rule"], rec["pr_head"], project, rec["pr"].rstrip("/").rsplit("/", 1)[-1]))

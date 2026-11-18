@@ -69,6 +69,7 @@ ROOT=${GROK_WORKSPACE_ROOT:-${CLAUDE_PROJECT_DIR:-}}
 [ -n "$ROOT" ] || exit 0
 ROOT=${ROOT%/}
 [ -x "$ROOT/bin/jg-turnend-guard.sh" ] || exit 0
+[ ! -e "${JG_HOME:-$ROOT}/config/item-store" ] || printf '%s' "$PAYLOAD" | JG_HOME="${JG_HOME:-$ROOT}" python3 -I "$ROOT/core/item-store/adapters/turn_end.py" || true
 
 if [ "$CAPABILITY" = native ]; then
   printf '%s' "$PAYLOAD" | "$ROOT/bin/jg-turnend-guard.sh"

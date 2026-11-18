@@ -1,0 +1,11 @@
+#!/usr/bin/env python3
+"""The log of owner:board for the stamp check: the pairs adapters/owner.py and adapters/policy.py wrote for his board answers."""
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+import itemdb
+
+home = os.environ.get("JG_HOME") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
+try:
+    sys.stdout.write(open(os.path.join(itemdb.store_dir(home), "owner-board.log"), encoding="utf-8").read())
+except FileNotFoundError:
+    pass
