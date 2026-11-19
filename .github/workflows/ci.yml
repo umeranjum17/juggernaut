@@ -114,6 +114,11 @@ jobs:
           PATH="$RUNNER_TEMP/bin:$PATH" bin/jg-lint-workflows.sh
       - name: Prove complete regression partition
         run: bin/jg-test-run.sh --check-coverage
+      - name: Role packs and root AGENTS.md stay within budget and match the generator
+        run: |
+          set -eu
+          bash tests/role-pack-budget.test.sh
+          bash tests/agents-md-budget.test.sh
       - name: Compatibility pointers must stay intact
         run: |
           set -eu

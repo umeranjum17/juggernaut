@@ -287,6 +287,23 @@ if [ -x "$SCRIPT_DIR/jg-progress-claim.sh" ]; then
   fi
 fi
 
+# --- the captain-chat word lint ----------------------------------------------
+# In the locked primary session, the final message is checked against the internal words of
+# AGENTS.md section 9 (docs/roles/chat-words.tsv, one per line). It prints one line naming each
+# word found and never blocks the turn.
+CHAT_WORDS=$JG_ROOT/docs/roles/chat-words.tsv
+# shellcheck disable=SC1091 # the library sits beside this script
+if [ -r "$CHAT_WORDS" ] && ( . "$SCRIPT_DIR/jg-session-lock-lib.sh" && jg_session_lock_owned_by_self "$STATE" ) >/dev/null 2>&1; then
+  CHAT_MSG=$(printf '%s' "$PAYLOAD" | jq -r 'if type == "object" then ((.last_assistant_message // "") | tostring) else "" end' 2>/dev/null || true)
+  if [ -n "$CHAT_MSG" ]; then
+    while IFS= read -r CHAT_WORD; do
+      [ -n "$CHAT_WORD" ] || continue
+      printf '%s' "$CHAT_MSG" | grep -qiwF -- "$CHAT_WORD" || continue
+      printf 'chat word: the final message says "%s"; captain chat uses the plain word (AGENTS.md section 9)\n' "$CHAT_WORD" >&2
+    done < "$CHAT_WORDS"
+  fi
+fi
+
 # --- the actual predicate ----------------------------------------------------
 # shellcheck source=bin/jg-wake-lib.sh
 . "$SCRIPT_DIR/jg-wake-lib.sh"

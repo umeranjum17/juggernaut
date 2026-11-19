@@ -13,37 +13,41 @@ set -u
 
 agents=$ROOT/AGENTS.md
 
-for heading in '## 1. Identity and prime directives' '## 9. Escalation and captain etiquette' \
-  '## Captain instruction precedence' '### Selected delivery path and merge authority'; do
+# AGENTS.md is generated from docs/roles/rules.tsv (tests/role-pack-budget.test.sh --write): the all pack, then Main's.
+for heading in '## 1. Identity and prime directives' '## 7. Task lifecycle' '## 9. Escalation and captain etiquette' \
+  '## 11. Briefs, self-update, skills and Relay'; do
   grep -qxF -- "$heading" "$agents" || fail "AGENTS.md lost its inline '$heading'"
 done
 for rule in 'Never write to a project.' "Never merge a PR without the captain's explicit word." \
   'Never tear down unlanded work.' 'Operators never address the captain.' 'Report outcomes faithfully.'; do
-  grep -qF -- "**$rule**" "$agents" || fail "AGENTS.md lost hard rule '$rule'"
+  grep -qF -- "**${rule%.}" "$agents" || fail "AGENTS.md lost hard rule '$rule'"
 done
 
 # One owner for each of the nine pipeline steps: the contract and both supervision skills say it, and the old
 # no-mistakes-owns-everything lines are gone.
 ! grep -qF -- 'no-mistakes alone owns' "$agents" || fail "AGENTS.md still gives no-mistakes the nine steps"
 ! grep -qF -- 'escalate whether to use no-mistakes' "$agents" || fail "AGENTS.md still offers a mode to choose for rigor"
-grep -qF -- 'done-done owns review, fixes, tests, and documentation as steps of proving' "$agents" \
+grep -qF -- 'done-done owns review, fixes, tests and documentation' "$agents" \
   || fail "AGENTS.md does not give review, fixes, tests and documentation to done-done"
-grep -qF -- "the wait \`lead\`, reason \`review\`" "$agents" || fail "AGENTS.md lost the review wait"
+grep -qF -- "wait \`lead\`, reason \`review\`" "$agents" || fail "AGENTS.md lost the review wait"
 
 # Owner rule 10445fb9 (captain, 2026-11-11: skip some verification, bare minimum, until the fleet is stable; full
 # checks return only on his word) is enforced by the precedence section and the intake line that point to it. Removing
 # any of these sentences stops a current explicit captain instruction from lowering rigor at a validation or landing
 # choice, or lets one request turn into standing authority.
-precedence=$(awk '/^## Captain instruction precedence$/{f=1;next} /^## /{f=0} f' "$agents")
-for line in 'A current, explicit, concrete captain instruction overrides any conflicting standing rule written above.' \
-  'convert one request into standing authority' \
-  'merge authority is not a substitute for a current explicit captain instruction'; do
+precedence=$(awk '/^## 11\. /{f=1;next} /^## /{f=0} f' "$agents")
+# shellcheck disable=SC2016 # the backticks are literal Markdown
+for line in 'A current, explicit, concrete captain instruction' \
+  'overrides a conflicting standing rule above' \
+  'never infer, broaden or carry it to another case' \
+  'Standing `yolo` is not such an instruction'; do
   printf '%s\n' "$precedence" | grep -qF -- "$line" || fail "precedence section lost '$line'"
 done
-grep -qF -- 'A current explicit captain instruction wins; otherwise the project'"'"'s registry entry is the captain'"'"'s standing posture' "$agents" \
+grep -qF -- 'a current explicit captain instruction, else the project'"'"'s registry entry' "$agents" \
   || fail "AGENTS.md intake lost the rule that a current explicit captain instruction wins over the standing posture"
-grep -qF -- 'the captain-instruction precedence rule below owns when a current explicit captain instruction overrides' "$agents" \
-  || fail "AGENTS.md hard rules no longer point at the precedence section"
+# shellcheck disable=SC2016 # the backticks are literal Markdown
+grep -qF -- 'only a project'"'"'s approved `yolo` posture relaxes this' "$agents" \
+  || fail "AGENTS.md hard rule 2 lost its only standing relaxation"
 
 rows=0
 while IFS='|' read -r section dest anchor; do
@@ -63,7 +67,6 @@ done <<'LEDGER'
 2|.agents/skills/fleet-records/SKILL.md|`docs/configuration.md` is the single owner of the top-level operational-home
 2|.agents/skills/fleet-records/SKILL.md|`JG_HOME` selects an instance's private `data/`, `state/`, `config/`, and
 2|.agents/skills/fleet-records/SKILL.md|Each Squad Lead has a persistent isolated `JG_HOME`, including
-2|AGENTS.md|`bin/jg-send.sh` fails closed unless `JG_HOME` is explicit, so a
 2|.agents/skills/fleet-records/SKILL.md|Tracked files hold shared instructions and tooling; `data/` holds
 4|.agents/skills/task-dispatch/SKILL.md|`docs/configuration.md` owns dispatch-profile and runtime-backend schemas, `bin/jg-harness.sh` owns static
 4|.agents/skills/task-dispatch/SKILL.md|When dispatch profiles exist, consult them at every operator
