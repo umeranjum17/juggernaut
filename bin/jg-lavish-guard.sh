@@ -184,10 +184,9 @@ wait_line_gate() {  # <text>
   done <<< "$1"
 }
 
-# The ticket move of a done line, in shadow (bin/jg-move.sh --shadow): the worker said done, so the ticket makes
+# The ticket move of a done line (bin/jg-move.sh records it in data/moves.log): the worker said done, so the ticket makes
 # claim-done from building (submit-draft for a Recon, which has no commit), or new-head from delivering. Only a line that opens with `done` moves. It runs before the
-# line is written: in shadow it never refuses, and once `ticket` is in config/machine-enforce (bin/jg-move.sh) an
-# illegal move returns 1 and the line is not written.
+# line is written; it returns 1 only when the log cannot be written.
 done_line_move() {  # <status file> <text>
   local id state event here line said_done=''
   while IFS= read -r line; do

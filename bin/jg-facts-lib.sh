@@ -2,8 +2,7 @@
 # jg-facts-lib.sh - the typed facts a guard reads about ready, proof, retry and cursor, one reader per fact.
 #
 # Each reader prints `key<TAB>value` lines and changes nothing. The writers that used to decide from text, a file name or an
-# environment variable now ask the same reader, so the fact a guard reads is the fact the writer acted on. `jg-machine-guard.sh fact`
-# prints any of them (docs: core/machines/README.md "Facts").
+# environment variable now ask the same reader, so the fact a check reads is the fact the writer acted on.
 #
 #   jg_fact_reuse                                          proof: the effective sealed-proof reuse switch, its source and whether its value is valid
 #   jg_fact_writer <ref> <new-sha>                         proof: the trunk-writer capability the reference-transaction hook reads, for one ref move

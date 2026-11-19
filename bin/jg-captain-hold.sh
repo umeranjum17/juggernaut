@@ -232,7 +232,7 @@
 # 1 when it does not, and any other non-zero status when the task cannot be read.
 # It prints nothing.
 #
-# `phase` is the read-only word of the hold machine (core/machines/tables/hold.tsv):
+# `phase` is the read-only word of the hold:
 # raised, deferred, answered, closed or none. An answer recorded and not yet completed
 # is `answered`; a hold dated in the future is `deferred`; a settled call is `closed`.
 #
@@ -740,19 +740,6 @@ verify_entry_durable() {  # <origin-or-empty> <entry>; prints "<id> <how> <origi
   printf '%s %s %s\n' "$id" "$how" "$origin_state"
 }
 
-# The hold machine's move log (core/machines/tables/hold.tsv): a writer reports the move it made, with its time, to
-# bin/jg-machine-guard.sh. A report never fails the writer, and a move to the state it is already in is no move.
-hold_word() {  # <task-id>; the machine's word for the task now, or - when it has no hold
-  local word
-  word=$(command_phase "$1" 2>/dev/null) || word=''
-  case "$word" in raised|deferred|answered|closed) printf '%s\n' "$word" ;; *) printf -- '-\n' ;; esac
-}
-
-report_hold_move() {  # <task-id> <from-word-or--> <to-word>
-  [ "$2" != "$3" ] || return 0
-  "$SCRIPT_DIR/jg-machine-guard.sh" edge hold "$2" "$3" "$1" >/dev/null 2>&1 || true
-}
-
 # --- the owner's question as a gate ------------------------------------------
 # A hold that asks the owner something is one human gate row that blocks the ticket (bin/jg-beads-write.py
 # `gate`), and his answer closes the gate with his words. A parked hold, a stop order, and a ticket still
@@ -783,7 +770,7 @@ hold_by_gate() {  # <task-id> <task-title> <reason> <until> <must> <origin> <don
 }
 
 command_hold() {
-  local id=${1:-} priority='' title='' reason='' repo='' origin='' until='' show state existing_title body='' occurrence held_from
+  local id=${1:-} priority='' title='' reason='' repo='' origin='' until='' show state existing_title body='' occurrence
   local signoff_script existing_hold_kind='' existing_held='' preserve_hold=0 card_close=release must='' refusal rec own_instruction='' raise_rc=0
   HELD_GATE=''
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
@@ -843,14 +830,12 @@ command_hold() {
   fi
   acquire_task_control_lock "$id"
   require_backlog
-  held_from=-
   if task_show "$id"; then
     show=$TASK_SHOW_OUTPUT
     state=$(show_field "$show" state)
     [ "$state" != "done" ] \
       || fail "task $id is already closed; a new captain call needs its own task"
     existing_hold_kind=$(show_field_value "$show" hold_kind)
-    [ "$existing_hold_kind" != captain ] || held_from=$(hold_word "$id")
     existing_held=$(show_field_value "$show" held)
     if [ "$existing_hold_kind" = captain ] && [ "$existing_held" = yes ]; then
       preserve_hold=1
@@ -899,8 +884,6 @@ command_hold() {
   fi
   publish_parent_hold "$id" "$HELD_GATE" "$occurrence" needs-decision "$reason"
   # A call is raised first and deferred by its date, so a new dated hold reports both moves.
-  [ "$held_from" != - ] || { report_hold_move "$id" - raised; held_from=raised; }
-  if [ -n "$until" ] && [[ "$until" > "$(date -u +%F)" ]]; then report_hold_move "$id" "$held_from" deferred; else report_hold_move "$id" "$held_from" raised; fi
   # Optional sign-off card, raised only while the sign-off adapter is armed here.
   # core/signoff owns the card when it is installed and authors the ask itself;
   # the answer-intake adapter this repo also ships (bin/jg-procevent-signoff.sh)
@@ -1004,7 +987,7 @@ write_gate_approval() {  # <task-id> <show-output>
 }
 
 answer_by_gate() {  # <task-id> <release-0-or-1> <card-key> <gate-id-or-empty> <show-output>
-  local id=$1 release=$2 card=$3 gate=$4 show=$5 outcome=answered gates open row shut occurrence from until tmp title
+  local id=$1 release=$2 card=$3 gate=$4 show=$5 outcome=answered gates open row shut occurrence tmp title
   [ "$release" = 0 ] || outcome=released
   gates=$(gate_rows "$id" --all)
   open=$(printf '%s\n' "$gates" | jq -r 'select(.state == "open") | .id')
@@ -1024,13 +1007,9 @@ answer_by_gate() {  # <task-id> <release-0-or-1> <card-key> <gate-id-or-empty> <
     fail "the question $gate on task $id was already answered; a second answer does not replace the first"
   fi
   occurrence=$(printf '%s\n' "$gates" | jq -rs '[.[] | select(.state == "closed")] | length')
-  from=raised
-  until=$(show_field_value "$show" hold_until)
-  if [ -n "$until" ] && [[ "$until" > "$(date -u +%F)" ]]; then from=deferred; fi
   if [ -z "$(printf '%s' "$row" | jq -r 'select(.state == "closed") | .id')" ]; then
     occurrence=$((occurrence + 1))
     write_gate_approval "$id" "$show"
-    [ "$release" = 1 ] || report_hold_move "$id" "$from" answered
     tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/jg-captain-hold-words.XXXXXX") || fail "cannot stage the captain decision"
     printf '%s' "$DECISION_TEXT" > "$tmp"
     backlog_cmd resolve "$gate" --words-file "$tmp" --resolution "$outcome" >/dev/null \
@@ -1045,12 +1024,10 @@ answer_by_gate() {  # <task-id> <release-0-or-1> <card-key> <gate-id-or-empty> <
     if [ "$(show_field_value "$show" held)" = yes ] && [ "$(show_field_value "$show" hold_kind)" = captain ]; then
       close_answered "$id" 1 || fail "could not release task $id"
     fi
-    report_hold_move "$id" "$from" closed
   else
     if [ "$(show_field "$show" state)" != "done" ]; then
       close_answered "$id" 0 || fail "could not close answered captain-held task $id"
     fi
-    report_hold_move "$id" answered closed
   fi
   publish_parent_resolution_then_retire "$id" "$gate" "$occurrence" "$outcome"
   [ "$release" = 0 ] || reply_release "$id" "$title" "$card"

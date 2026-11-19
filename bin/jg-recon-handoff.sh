@@ -23,7 +23,6 @@
 # takes a verdict from any named critic. A second critic while one holds the draft is refused.
 # With config/item-store, assign also opens the critic's work item as the child of the Recon's (the link a ready draft finds its critic
 # by), and draft and revise send the round to that critic (core/item-store: jg-item ready); the store adds no rule of its own.
-# Each move is judged by bin/jg-machine-guard.sh (shadow, or refusal once `recon` is in config/machine-enforce) before it is written.
 # Exit: 0 done, 1 refused, 2 usage. Data directory: JG_DATA_OVERRIDE, else <JG_HOME>/data.
 set -u
 export LC_ALL=C
@@ -79,11 +78,8 @@ command_show() {
   [ -s "$dir/handoff.tsv" ] && cat "$dir/handoff.tsv" || echo none
 }
 
-record() {  # <dir> <id> <event> <to> <hash> <actor> <gaps>; judge the move, then append one line
-  local dir=$1 id=$2 event=$3 to=$4 from
-  from=$(command_phase "$id"); [ "$from" != none ] || from=-
-  "$SCRIPT_DIR/jg-machine-guard.sh" edge recon "$from" "$to" "$id" >/dev/null 2>&1 \
-    || refuse "the recon table has no move from $from to $to ($event)"
+record() {  # <dir> <id> <event> <to> <hash> <actor> <gaps>; append one line
+  local dir=$1 id=$2 event=$3 to=$4
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$event" "$to" "$5" "$6" "$7" >> "$dir/handoff.tsv"
   echo "recon $id: $event -> $to (report ${5:0:12})"
 }

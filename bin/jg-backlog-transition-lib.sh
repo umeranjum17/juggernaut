@@ -942,7 +942,7 @@ jg_backlog_dispatch_rollback() {
 # The ticket move a close makes: the table has three events into closed (close, answer for a Recon, drop by the lead or the owner),
 # and the ticket's own state says which one it has. Only a close that names the note `dropped` is a drop, and it asks for drop first;
 # any other close never reads as one. The first asked event the state has is the move, and a ticket the observer cannot place gets
-# the first asked event, which jg-move.sh then judges.
+# the first asked event, which jg-move.sh then records.
 jg_backlog_close_event() {  # <id> [close args]
   local id=$1 asked='close answer' legal arg prev=''
   shift
@@ -957,15 +957,10 @@ jg_backlog_close_event() {  # <id> [close args]
 jg_backlog_close_transition() {
   local meta=$1 marker=$2 data=$3 id=$4 state=$5
   shift 5
-  # the task machine's move, asked before any write: shadow until config/machine-enforce lists task, then a refusal writes nothing
-  if ! "${BASH_SOURCE[0]%/*}/jg-machine-shadow.sh" --refuse task "$id" "done"; then
-    JG_BACKLOG_TRANSITION_ERROR="task $id cannot make the move done from its state; run: bin/jg-machine.sh next task $id"
-    return 1
-  fi
   local move_rc=0 event
   event=$(jg_backlog_close_event "$id" "$@")
   "${BASH_SOURCE[0]%/*}/jg-move.sh" --shadow "$id" "$event" >/dev/null 2>&1 || move_rc=$?
-  if [ "$move_rc" -eq 1 ]; then  # the ticket's own move: shadow until config/machine-enforce lists ticket (jg-move.sh); a refusal comes before any record is removed or closed
+  if [ "$move_rc" -eq 1 ]; then  # jg-move.sh could not write data/moves.log; nothing is removed or closed yet
     JG_BACKLOG_TRANSITION_ERROR="ticket $id cannot make the move $event from its state; run: bin/jg-machine.sh next ticket $id"
     return 1
   fi

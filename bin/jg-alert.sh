@@ -61,7 +61,6 @@ _die() { printf 'jg-alert: %s\n' "$*" >&2; exit "${_rc:-1}"; }
 _get() { sed -n "s/^$2=//p" "$1" | head -1; }
 _rows() { awk -F'\t' -v k="$1" '$1==k' "$(_table)"; }
 _holder() { case $1 in 0) echo tick ;; 1) echo worker ;; 2) echo lead ;; 3) echo main ;; *) echo owner ;; esac; }
-_edge() { bash "$_root/bin/jg-machine.sh" edge-check alert "$1" "$2" >/dev/null 2>&1; }
 # The four state words come from the machine table (kind initial, mode waiting after it, mode rest, kind terminal), never typed here.
 _names() { awk -F'\t' -v k="$1" -v m="$2" -v l="${3:-}" '$1=="state" && (k=="" || $3==k) && (m=="" || $6==m) && (l=="" || $7==l) {print $2}' "$_root/core/machines/tables/alert.tsv"; }
 s_open=$(_names initial ""); s_ack=$(_names normal waiting); s_inh=$(_names normal rest release); s_stuck=$(_names normal rest resolve); s_res=$(_names terminal "")
@@ -250,7 +249,6 @@ cmd_raise() {
     "since=$now" "rung_at=$now" "deadline_at=$(( now + $(_ladder_timer "$prec" "$start" "$top") ))" \
     "home=$sc_home" "project=$sc_project" "route=$sc_route" "machine=$sc_machine" "ticket=$sc_ticket" "note=$note" "wake=$wake" "text=$text" "repeats=0" "state=$st"
   if [ -n "$cover" ]; then
-    _edge "$st" "$s_inh" || _die "the alert table has no inhibit move"
     _set "$file" state "$s_inh"; _set "$file" covered_by "$cover"
     return 0
   fi
@@ -293,7 +291,7 @@ cmd_climb() {
   [ "$top" -le "$ceiling" ] || { top=$ceiling; _set "$f" top "$top"; }
   [ "$rung" -le "$top" ] || _die "owner authority no longer valid; Main recovery required for $1"
   [ "$st" != "$s_ack" ] || { _reopen "$f" "$1" "$now"; return; }
-  _edge "$st" "$st" && [ "$st" = "$s_open" ] || _die "alert '$1' is $st: only an open alert climbs"
+  [ "$st" = "$s_open" ] || _die "alert '$1' is $st: only an open alert climbs"
   [ "$rung" -lt "$top" ] || { _repeat "$f" "$1" "$now" "$prec" "$rung"; return; }
   after=$(_rows ladder | awk -F'\t' '$2==p {print $3}' p="$prec")
   [ "$after" -gt 0 ] || _die "$prec has no climb timer"
@@ -316,7 +314,6 @@ _repeat() {
     printf 'ring\t%s\t%s\t%s\n' "$key" "$rung" "$(_holder "$rung")"
     return 0
   fi
-  _edge "$s_open" "$s_stuck" || _die "the alert table has no stuck move"
   _set "$f" state "$s_stuck"
   printf 'stuck\t%s\t%s\t%s\n' "$key" "$rung" "$(_holder "$rung")"
   local recovery=$rung; [ "$recovery" -ge 3 ] || recovery=3
@@ -325,7 +322,6 @@ _repeat() {
 _move() {  # _move <key> <from word> <to word>
   local f; f=$(_rec "$1" move) || exit 1
   [ "$(_get "$f" state)" = "$2" ] || _die "alert '$1' is $(_get "$f" state), not $2"
-  _edge "$2" "$3" || _die "no move from $2 to $3"
   _set "$f" state "$3"
 }
 cmd_ack() {  # the one it rang took the alert. It never takes the deadline: an acknowledged alert still comes due (B10).
@@ -344,7 +340,6 @@ _reopen() {  # <file> <key> <now>
   st=$(_get "$f" state); [ "$st" != "$s_open" ] || return 0   # another caller of the same deadline reopened it first
   [ "$st" = "$s_ack" ] || _die "alert '$key' is $st: only an acknowledged alert reopens"
   dl=$(_due "$f"); [ "$now" -ge "$dl" ] || _die "alert '$key' is acknowledged: its deadline is $dl, $((dl - now)) s away"
-  _edge "$s_ack" "$s_open" || _die "the alert table has no reopen move"
   rung=$(_get "$f" rung)
   _set "$f" state "$s_open"; _set "$f" reopened_at "$now"
   _stamp_due "$f" "$now" "$(_ladder_timer "$(_get "$f" precedence)" "$rung" "$(_get "$f" top)")"
@@ -374,7 +369,6 @@ cmd_resolve() {
   cur=$(_get "$f" state); [ "$cur" != "$s_res" ] || return 0
   [ -n "$proof" ] || _die "resolve $key needs --proof <kind>:<pointer>: the source-clear observation or the action evidence; a read notice or a vanished queue row never closes an alert"
   _proof "$f" "$proof" || _die "'$proof' is not proof for $key: use source:<observed>, status:<task>, task:<ticket>, commit:<rev>, pr:<url> or reply:<id>, and a status or task pointer must name a record this home holds"
-  _edge "$cur" "$s_res" || _die "no move from $cur to resolved"
   # The card of a stuck alert goes with it, so a new episode of the key can be stuck again.
   local card; card="$(_dir)/escalation-stuck--$key.rec"
   if [ "$cur" = "$s_stuck" ] && [ -r "$card" ] && [ "$(_get "$card" state)" != "$s_res" ]; then
@@ -450,7 +444,7 @@ cmd_capacity() {
   shift 2
   # A new event of one producer supersedes its last one: the old record resolves in place (its cover, if any, is the same key).
   local old; old="$(_dir)/capacity--$producer.rec"
-  if [ -r "$old" ] && [ "$(_get "$old" state)" != "$s_res" ]; then _edge "$(_get "$old" state)" "$s_res" && _route_close "$old" "capacity--$producer" && _set "$old" state "$s_res" && _store_mirror resolve "capacity--$producer" --proof source:superseded --source "supersede:capacity--$producer@${JG_ALERT_NOW:-$(date +%s)}"; fi
+  if [ -r "$old" ] && [ "$(_get "$old" state)" != "$s_res" ]; then _route_close "$old" "capacity--$producer" && _set "$old" state "$s_res" && _store_mirror resolve "capacity--$producer" --proof source:superseded --source "supersede:capacity--$producer@${JG_ALERT_NOW:-$(date +%s)}"; fi
   cmd_raise capacity "$producer" --note "$text" "$@"
 }
 

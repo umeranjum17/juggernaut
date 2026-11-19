@@ -70,7 +70,7 @@ MACHINE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jg-machine.s
 
 def gate(ticket, *events):
     """Make the ticket's move before anything is written: the first of `events` that the ticket's state has, else the first one, which
-    jg-move.sh then logs as a shadow line or refuses. A refusal (exit 1, once `ticket` is in config/machine-enforce) writes nothing."""
+    jg-move.sh then records in data/moves.log (it refuses only when it cannot write the log)."""
     if not events:
         return
     event = events[0]

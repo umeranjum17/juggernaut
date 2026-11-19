@@ -363,7 +363,7 @@ def add(args):
     cmd += ["-l", "project:" + found["--repo"]] if "--repo" in found else []
     cmd += [flag for label in labels for flag in ("-l", label)]
     cmd += parent_flags(parent, found) if parent else []
-    if ident:  # the ticket's first move, before the row exists (bin/jg-move.sh): a refusal writes no row. A minted id has no name to judge until bd gives it one, and a new record has only this move.
+    if ident:  # the ticket's first move, before the row exists (bin/jg-move.sh records it): a refusal writes no row. A minted id has no name to judge until bd gives it one, and a new record has only this move.
         move = subprocess.run(["bash", os.path.join(os.path.dirname(os.path.abspath(__file__)), "jg-move.sh"), "--shadow", ident, "file"],
                               capture_output=True, text=True, check=False)
         if move.returncode == 1:

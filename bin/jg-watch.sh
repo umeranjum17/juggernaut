@@ -2131,7 +2131,6 @@ phantom_pane_prune() {
     clear_pause_tracking "$key"
     # Withdraw before removing the sidecar, so a failed queue write is retried.
     jg_wake_withdraw stale "$w" || exit 1
-    "$SCRIPT_DIR/jg-machine-shadow.sh" markers ".tracked-$key" removed || true  # shadow report of the move (jg-machine-shadow.sh)
     # The sidecar is removed LAST: a failed marker removal leaves it behind so
     # the next cycle retries the whole prune, while a removed sidecar with
     # markers left behind would strand the orphans unfindable.
