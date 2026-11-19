@@ -18,7 +18,7 @@ jg_git_identity fmtest fmtest@example.invalid
 ITEM=$ROOT/core/item-store
 CLEAN=$ITEM/adapters/cleanup.py
 TMP_ROOT=$(jg_test_tmproot item-store-cleanup)
-unset JG_TASK_ID JG_STATE_OVERRIDE JG_DATA_OVERRIDE JG_CONFIG_OVERRIDE JG_ROOT_OVERRIDE
+unset JG_HOME JG_TASK_ID JG_STATE_OVERRIDE JG_DATA_OVERRIDE JG_CONFIG_OVERRIDE JG_ROOT_OVERRIDE
 export JG_ITEM_TICK_LEASE_S=0
 want() { [ "$3" = "$2" ] || fail "$1: wanted [$2], got [$3]"; pass "$1"; }
 
@@ -51,6 +51,8 @@ world() {
   printf 'done [at=1]: ready in branch fm/%s (local-trunk)\n' "$task" > "$C/state/$task.status"
   touch "$C/state/.last-watcher-beat"
   : > "$C/config/item-store"
+  # a live home holds the project's policy row (policy.py --import --fill-missing); with the store on the row, not the registry's words, gives the mode
+  JG_HOME="$C" python3 -I "$ITEM/adapters/policy.py" --import --fill-missing >/dev/null || fail "world $name: the policy row was not filled"
 }
 ji()  { env JG_HOME="$C" "$ITEM/jg-item" "$@"; }
 cl()  { env JG_HOME="$C" PATH="$C/fakebin:$PATH" JG_ROOT_OVERRIDE="$ROOT" JG_STATE_OVERRIDE="$C/state" JG_DATA_OVERRIDE="$C/data" \
