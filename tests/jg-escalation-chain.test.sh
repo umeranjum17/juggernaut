@@ -2,6 +2,8 @@
 set -eu
 # shellcheck source=tests/jg-escalation-chain-fixture.sh
 . "$(dirname "${BASH_SOURCE[0]}")/jg-escalation-chain-fixture.sh"
+# A cycle ends at its first completed scan; a case that needs more scans cycles again, so none waits on the clock.
+CYCLE_POLLS=0
 
 # A finished ship task on a local-only branch: its work is on the branch, and
 # <landed> says whether the project's main already holds it. The treehouse
@@ -159,6 +161,14 @@ test_busy_lead_is_steered_without_interrupt() {
   pass "a lead busy mid-turn is told its worker is blocked, and is not interrupted"
 }
 
+cycle_until_episode_ends() {  # <home> <task>
+  local n=0
+  while [ "$n" -lt "${CYCLE_TRIES:-8}" ] && [ -e "$1/state/.waiting-timers/$2" ]; do
+    n=$((n + 1))
+    PANES=1 cycle "$1"
+  done
+}
+
 test_lead_stuck_on_a_prompt_reaches_the_board() {
   local m
   m=$(home lead-prompt)
@@ -180,8 +190,9 @@ test_lead_stuck_on_a_prompt_reaches_the_board() {
     || fail "the lead's prompt was neither a card nor recorded for Main: $(cat "$m/data/overwatch-decisions.md" 2>&1)"
   [ "$(grep -c "stale: fake:1 (permission prompt" "$m/events")" -eq 1 ] || fail "the gate re-alerted instead of the chain"
   printf 'all quiet\n> \n' > "$m/panes/1"
-  PANES=1 cycle "$m"
-  PANES=1 cycle "$m"
+  # An episode ends after scans that no longer see its wait; a cycle runs as many scans as the host allows, so
+  # cycle until the episode is gone (bounded) instead of counting on how many scans a time budget holds.
+  cycle_until_episode_ends "$m" lead1
   [ ! -s "$m/cards" ] || ! grep -q '^raise ' "$m/cards" \
     || fail "a card was raised for a stuck lead: $(cat "$m/cards" 2>&1)"
   grep -q '^- Ask: Unblock stuck lead?' "$m/data/overwatch-decisions.md" 2>/dev/null \
@@ -297,16 +308,18 @@ test_two_hops_stuck_at_once() {
 }
 
 test_main_absent_board_card_still_fires() {
-  local m
+  local m n
   m=$(home main-absent)
   printf 'kind=ship\nbackend=tmux\nwindow=fake:1\nharness=claude\n' > "$m/state/w1.meta"
   printf 'blocked [key=dep]: waiting on the vendor\n' > "$m/state/w1.status"
   prime_status_seen "$m/state" "$m/state/w1.status"
   PANES=1 cycle "$m" absent
   backdate "$m" w1 10
-  PANES=1 cycle "$m" absent
-  PANES=1 cycle "$m" absent
-  PANES=1 cycle "$m" absent
+  n=0
+  while [ "$n" -lt "${CYCLE_TRIES:-8}" ] && ! grep -q '^- Ask: ' "$m/data/overwatch-decisions.md" 2>/dev/null; do
+    n=$((n + 1))
+    PANES=1 cycle "$m" absent
+  done
   grep -q 'level=main' "$m/events" || fail "Main's rung never fired: $(cat "$m/events")"
   ! grep -q -- '--key waiting-timer-[0-9a-f]*-w1-.*-dep-card' "$m/cards" 2>/dev/null \
     || fail "a wait Main had not settled went to the captain's board: $(cat "$m/cards" 2>&1)"

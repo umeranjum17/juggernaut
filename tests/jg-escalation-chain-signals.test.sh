@@ -387,12 +387,12 @@ test_memory_refused_launch_reraises_when_admission_clears() {
     || fail "an admitting sample did not raise the retry wake: $(cat "$m/events" 2>&1)"
   touch -d '-15 days' "$m/state/.last-ready-work-check"
   cycle "$m"
-  [ "$(grep -c 'host memory admits launches again' "$m/events")" = 1 ] \
+  [ "$(grep -c '^check: host memory admits launches again' "$m/events")" = 1 ] \
     || fail "one refusal record rang twice: $(cat "$m/events")"
   rm -f "$m/state/admission-refused"
   touch -d '-15 days' "$m/state/.last-ready-work-check"
   cycle "$m"
-  [ "$(grep -c 'host memory admits launches again' "$m/events")" = 1 ] \
+  [ "$(grep -c '^check: host memory admits launches again' "$m/events")" = 1 ] \
     || fail "a cleared refusal record rang again: $(cat "$m/events")"
   pass "a memory-refused launch rings once while its record stands, and stops when it clears"
 }

@@ -96,7 +96,7 @@ cycle() {  # <home> [absent]
   [ "${2:-}" != absent ] || successor=1
   mark="$h/tmp/cycle-mark"
   touch "$mark"
-  env -u JG_TASK_ID JG_WATCH_HANDLING_SUCCESSOR="$successor" HOME="$h/home" XDG_DATA_HOME="$h/home/.local/share" TMPDIR="$h/tmp" PATH="$h/fakebin:$PATH" \
+  env -u JG_TASK_ID -u XDG_RUNTIME_DIR JG_WATCH_HANDLING_SUCCESSOR="$successor" HOME="$h/home" XDG_DATA_HOME="$h/home/.local/share" TMPDIR="$h/tmp" PATH="$h/fakebin:$PATH" \
     JG_HOME="$h" JG_STATE_OVERRIDE="$h/state" JG_CONFIG_OVERRIDE="$h/config" \
     JG_POLL=1 JG_SIGNAL_GRACE=1 JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999 JG_HOME_SUMMARY_INTERVAL=999999 \
     JG_SQUAD_LEAD_LIVENESS_SECS="${LIVENESS:-99999999}" JG_BUSY_TURN_MAX_SECS=999999 JG_STALE_ESCALATE_SECS=999999 \
@@ -117,7 +117,8 @@ cycle() {  # <home> [absent]
     | while IFS= read -r line; do grep -Fxq -- "$line" "$h/events" || printf '%s\n' "$line" >> "$h/events"; done
   seq=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9]*\) --recovery-generation .*/\1/p' "$h/ack")
   gen=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--recovery-generation \([^ ]*\)$/\1/p' "$h/ack")
-  [ -z "$seq" ] || JG_HOME="$h" JG_STATE_OVERRIDE="$h/state" "$FORK/bin/jg-wake-drain.sh" --ack-through "$seq" --recovery-generation "$gen" >/dev/null
+  [ -z "$seq" ] || JG_HOME="$h" JG_STATE_OVERRIDE="$h/state" "$FORK/bin/jg-wake-drain.sh" --ack-through "$seq" --recovery-generation "$gen" >/dev/null \
+    || true  # a refused acknowledgement leaves the row queued, as for Main; it is not a failed cycle
 }
 
 # A cycle stops at its first wake, so a home holding two open waits can report
