@@ -22,7 +22,7 @@ declare -A GAPS=(
 #   history, events and provenance log: the entries of bd's recorded answer, put on the ticket the call names;
 #   memories: the recorded key and value, put in the memory table.
 # Beads' own random ids (a provenance entry's uuid, the id q mints) are cut from both sides; the `revision` hash of a show row is cut too;
-# bd lists the dependencies of a row with several edges in a random order, so two answers that differ in that order alone are equal.
+# bd lists the dependencies of a row with several edges in a random order, so two answers that differ in that order alone are equal (so is a blocked row's blocked_by list).
 mapfile -t fixtures < <(PATH=$t/path python3 -I - "$repo" <<'PY'
 import csv, glob, json, os, sys
 repo = sys.argv[1]
@@ -118,6 +118,8 @@ def parsed(t):
     for row in (v if isinstance(v, list) else []):
         if isinstance(row, dict) and isinstance(row.get("dependencies"), list):
             row["dependencies"].sort(key=lambda d: (d["depends_on_id"], d["type"]))
+        if isinstance(row, dict) and isinstance(row.get("blocked_by"), list):
+            row["blocked_by"].sort()
     return v
 print("same" if got == want or (parsed(got) is not None and parsed(got) == parsed(want)) else "differ")
 PY

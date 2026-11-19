@@ -5,7 +5,7 @@
 Verbs: show list ready blocked export epic status gate list comments history --events provenance log types statuses.
 Each prints what bd printed for the same store: the keys of an export row in its order, bd's two-space JSON. A form whose
 answer needs what the tables do not hold raises NotSupported instead of printing a guess:
-  - a ticket with a link: the edge's created_at, created_by and metadata are not kept (link holds from, to, type);
+  - a `show` row with a link other than blocks, or a linked row with --include-dependents or --brief-deps: bd's form is not recorded;
   - a gate row: await_type is not kept; history, events and provenance entries that were never recorded in ticket_event;
   - `schema`, `memories`, `swarm validate`, `q` and `provenance record` (they create or read what no table holds), and text output.
 A `show --json` row ends with a Dolt `revision` hash of the row's content: it is not derivable and is not printed.
@@ -122,15 +122,32 @@ class Store:
         return sorted((e for e in out if "op" in e), key=lambda e: e.get("seq", 0))
 
 
-def export_row(t, store, links, counts, comments, show=False, embed=False):
-    """One ticket as bd exports it (embed: with its comments, as `bd export` does). NotSupported when bd would print what the tables do not hold."""
+def base_row(t):
+    """The fields of a ticket every bd row starts with, in bd's order."""
     row = {k: t[k] for k in COLUMNS if t[k] not in (None, "") and k not in ("labels", "metadata", "ephemeral", "await_type")}
     if t["metadata"]:
         row["metadata"] = t["metadata"]
     if t["labels"]:
         row["labels"] = t["labels"]
+    return row
+
+
+def show_dependencies(t, store):
+    """A `show` row lists each edge as the ticket it points at, then `dependency_type`; only a blocks edge's form is recorded."""
+    by_id = {x["id"]: x for x in store.tickets()}
+    out = []
+    for edge in store.edges_of.get(t["id"], []):
+        if edge["type"] != "blocks" or edge["depends_on_id"] not in by_id:
+            raise NotSupported("show: bd's form of a %s edge to this ticket is not recorded" % edge["type"])
+        out.append(dict(base_row(by_id[edge["depends_on_id"]]), dependency_type=edge["type"]))
+    return out
+
+
+def export_row(t, store, links, counts, comments, show=False, embed=False):
+    """One ticket as bd exports it (embed: with its comments, as `bd export` does). NotSupported when bd would print what the tables do not hold."""
+    row = base_row(t)
     if store.edges_of.get(t["id"]):
-        row["dependencies"] = store.edges_of[t["id"]]
+        row["dependencies"] = show_dependencies(t, store) if show else store.edges_of[t["id"]]
     if comments.get(t["id"]) and show:
         raise NotSupported("show: a comment's place in a show row is not recorded")
     if embed and comments.get(t["id"]):
@@ -226,6 +243,8 @@ def show(f):
         raise NotSupported("show without --json")
     if f.sw - {"--json", "--include-dependents", "--brief-deps"}:
         raise NotSupported("show")
+    if f.sw & {"--include-dependents", "--brief-deps"} and (store.edges_of.get(t["id"]) or any(to == t["id"] for es in store.links().values() for to, _ in es)):
+        raise NotSupported("show: bd's form of a linked row with --include-dependents or --brief-deps is not recorded")
     links, counts, comments = context(store)
     return dumps([export_row(t, store, links, counts, comments, show=True)]) + "\n", 0
 
@@ -240,13 +259,16 @@ def export(f):
 
 
 def blocked(f):
+    """Each open ticket held by an open blocks edge, as bd prints it: the row's own fields, then the count and the ids of its blockers."""
     store = Store()
     links, _, _ = context(store)
     status = {t["id"]: t["status"] for t in store.tickets()}
+    out = []
     for t in store.tickets():
-        if t["status"] != "closed" and any(ty == "blocks" and status.get(to, "closed") != "closed" for to, ty in links.get(t["id"], [])):
-            raise NotSupported("blocked: the fields bd adds to a blocked row are not recorded")
-    return "[]\n", 0
+        holders = [to for to, ty in links.get(t["id"], []) if ty == "blocks" and status.get(to, "closed") != "closed"]
+        if t["status"] != "closed" and holders:
+            out.append(dict(base_row(t), blocked_by_count=len(holders), blocked_by=holders))
+    return (dumps(out) if out else "[]") + "\n", 0
 
 
 def epic_status(f):
