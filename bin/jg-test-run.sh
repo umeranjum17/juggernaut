@@ -454,6 +454,29 @@ jg_scratch_pin_tmpdir
 # shellcheck source=bin/jg-test-procs-lib.sh
 . "$ROOT/bin/jg-test-procs-lib.sh"
 
+# A tool manager's shims (a folder named `shims` on PATH) refuse once a test moves HOME away from the config it trusts, so a
+# test that runs python3 or node under a throwaway HOME failed in the gate and passed in a lane's shell. Link each real
+# program that sits later in PATH into one folder of this run and put that folder first. A shard finds the parent's folder
+# first on PATH, sees no shim and makes none. TOOLS_BYPASS_DIR names the folder for the caller's cleanup.
+TOOLS_BYPASS_DIR=
+bypass_tool_shims() {
+  local name found dir linked=() IFS=:
+  for name in python3 python node npm npx; do
+    found=$(command -v "$name" 2>/dev/null) || continue
+    [ "$(basename "$(dirname "$found")")" = shims ] || continue
+    for dir in $PATH; do
+      [ -n "$dir" ] && [ "$(basename "$dir")" != shims ] && [ -x "$dir/$name" ] && [ ! -d "$dir/$name" ] || continue
+      [ -n "$TOOLS_BYPASS_DIR" ] || TOOLS_BYPASS_DIR=$(mktemp -d "${TMPDIR:-/tmp}/jg-tools.$$.XXXXXX") || return 0
+      ln -s "$dir/$name" "$TOOLS_BYPASS_DIR/$name" && linked+=("$name")
+      break
+    done
+  done
+  [ "${#linked[@]}" -gt 0 ] || return 0
+  export PATH="$TOOLS_BYPASS_DIR:$PATH"
+  IFS=' '
+  log "tool shims bypassed: ${linked[*]}"
+}
+
 # The effective machine_runs_max (see bin/jg-test-host-lib.sh "Run slots").
 machine_runs_max() {
   local n=$TEST_MACHINE_RUNS_MAX
@@ -1994,7 +2017,8 @@ if [ "${1:-}" = --required-shards ]; then
   # The gate takes one machine run slot for all eight shards, and builds the Go cores once into the shared Go build
   # cache before they start (bin/jg-test-host-lib.sh); the shards inherit both and take no slot of their own.
   jg_test_host_admit "$(machine_runs_max)"
-  trap jg_test_host_release EXIT
+  bypass_tool_shims
+  trap '[ -z "$TOOLS_BYPASS_DIR" ] || rm -rf "$TOOLS_BYPASS_DIR"; jg_test_host_release' EXIT
   jg_test_host_pin_go_cache
   jg_test_host_pin_mise_dirs
   jg_test_host_warm_go_cache "$ROOT"
@@ -2664,6 +2688,7 @@ jg_test_host_admit "$(machine_runs_max)"
 RUN_STARTED_MS=$((RUN_STARTED_MS + JG_TEST_HOST_WAITED_MS))
 jg_test_host_pin_go_cache
 jg_test_host_pin_mise_dirs
+bypass_tool_shims
 
 RUN_TMP=$(mktemp -d "${TMPDIR:-/tmp}/jg-test-run.XXXXXX")
 RECORDS="$RUN_TMP/records.tsv"
@@ -2685,6 +2710,7 @@ declare -a WORKER_SCRIPTS=()
 cleanup_run() {
   jg_test_procs_stop_marked "$$"
   rm -rf "$RUN_TMP"
+  [ -z "$TOOLS_BYPASS_DIR" ] || rm -rf "$TOOLS_BYPASS_DIR"
   jg_test_host_release
 }
 
