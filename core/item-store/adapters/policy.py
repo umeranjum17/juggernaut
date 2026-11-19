@@ -2,7 +2,9 @@
 """policy.py: the owner's project policy, written and read through the item store (docs/item-store.md).
 
   --import [--registry <home>] [--table <rules.tsv>]
-      The one cut-over run: version 1 of every project in <home>/data/projects.md (default: JG_HOME), at one stamp, stamped
+      The one cut-over run: version 1 of every project in <home>/data/projects.md (default: JG_HOME) and in each lead home's own
+      data/projects.md (the homes of <home>/data/squad_leads.md; a project listed twice gets one row; two registries that give
+      it different modes or levels print the conflict and keep the main home's row), at one stamp, stamped
       `owner:registry`, source import:projects.md:<project>. It prints the table it wrote (and, with --table, one check line
       per project) and saves the table to <main home>/state/item-store/cut-over-policy.tsv, which logs/owner-registry reads.
       Version 1 reproduces today's delivery rules exactly: +yolo is loose, local-trunk is standard, everything else is tight.
@@ -75,6 +77,31 @@ def registry(home):
     return out
 
 
+def lead_homes(main):
+    """The local Squad Lead homes of <main>/data/squad_leads.md, read by the registry's own reader (homes.sh, which lists
+    `main` first and the main home itself)."""
+    try:
+        out = subprocess.run([os.path.join(ITEM, "homes.sh"), main], capture_output=True, text=True, timeout=30).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return [p for h, p in (ln.split("\t", 1) for ln in out.splitlines() if "\t" in ln) if h != "main"]
+
+
+def fleet_registry(main):
+    """([(project, word, +yolo, home of its row)], [conflict line]): the main home's registry first, then each lead home's; a
+    project already listed keeps its first row, and a later row that gives a different mode or level is a conflict."""
+    rows, seen, conflicts = [], {}, []
+    for home in [main] + lead_homes(main):
+        for name, word, yolo in registry(home):
+            if name not in seen:
+                seen[name] = (word, yolo, home)
+                rows.append((name, word, yolo, home))
+            elif formula(word, yolo) != formula(*seen[name][:2]):
+                conflicts.append("conflict %s: %s lists %s%s, %s lists %s%s; the row of %s stays" % (
+                    name, seen[name][2], seen[name][0], " +yolo" if seen[name][1] else "", home, word, " +yolo" if yolo else "", seen[name][2]))
+    return rows, conflicts
+
+
 def formula(word, yolo):
     """The import formula: (mode, level). +yolo is loose; local-trunk is standard (lands on a PASS by itself, goes live on
     his word); anything else is tight (his one word merges or lands, and carries the release)."""
@@ -133,9 +160,9 @@ def row_of(st, project, version=None):
 def check_lines(st, reg, tbl):
     """One (project, ok, reference-format line, difference) per registered project, read back from version 1."""
     rules, out = table_of(tbl), []
-    for name, word, yolo in registry(reg):
+    for name, word, yolo, home in fleet_registry(reg)[0]:
         r = row_of(st, name, 1)
-        got = resolver(reg, name)
+        got = resolver(home, name)
         want = rules.get((word, "on" if yolo else "off"))
         if not r:
             out.append((name, False, "check %-12s no policy row" % name, "no policy row"))
@@ -160,12 +187,12 @@ def cmd_import(a):
     st = itemdb.open_db(home, "owner:registry")
     if st.one("SELECT 1 FROM policy WHERE set_by='owner:registry'"):
         die("refused: the cut-over import already ran; a later version comes only from his own message")
-    projects = registry(reg)
+    projects, conflicts = fleet_registry(reg)
     if not projects:
         die("refused: %s lists no project" % os.path.join(reg, "data", "projects.md"))
     at = itemdb.stamp(st)
     try:
-        for name, word, yolo in projects:
+        for name, word, yolo, _ in projects:
             mode, level = formula(word, yolo)
             st.set_policy(at, name, level, "owner:registry", "import:projects.md:" + name, mode=mode, lanes=lanes_of(main, name),
                           trunk=trunk_of(main, name))
@@ -173,13 +200,13 @@ def cmd_import(a):
         die("refused: %s" % e)
     head = "project\tmode\tyolo\tlevel\tmerge\tland\trelease"
     lines = [head]
-    for name, _, _ in projects:
+    for name, _, _, _ in projects:
         _, _, level, mode, merge, land, release, _, _ = row_of(st, name, 1)
         lines.append("\t".join((name, mode, "on" if level == "loose" else "off", level, merge, land, release)))
     os.makedirs(itemdb.store_dir(home), exist_ok=True)
     with open(os.path.join(itemdb.store_dir(home), "cut-over-policy.tsv"), "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
-    print("\n".join(lines))
+    print("\n".join(conflicts + lines))
     if a.table:
         for _, _, ref, _ in check_lines(st, reg, a.table):
             print(ref)
