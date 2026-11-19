@@ -5,6 +5,36 @@
 # Its captured endpoint advances on presentation; its events remain until ack.
 # Each row must have a successful presentation and every OUTCOME a disposition.
 # State transitions: core/machines/tables/wake-status.tsv.
+# The journal keeps every event until its ack, so it can reach tens of megabytes.
+# Present and ack therefore read it once into per-task records
+# (JG_WAKE_STATUS_TASKS) and write it back once: a pass over the whole journal for
+# every signal row outlasts the caller's time bound, the drain is killed before
+# the new endpoint is saved, and the next ack refuses an unchanged status file.
+
+jg_wake_status_index() { # JG_WAKE_STATUS_DATA -> JG_WAKE_STATUS_TASKS[task]=record
+  local names recs i=0 name
+  declare -gA JG_WAKE_STATUS_TASKS=()
+  names=$(printf '%s' "$JG_WAKE_STATUS_DATA" | jq -r 'to_entries[].key') || return 1
+  recs=$(printf '%s' "$JG_WAKE_STATUS_DATA" | jq -c 'to_entries[].value') || return 1
+  [ -n "$names" ] || return 0
+  local -a rec_lines
+  mapfile -t rec_lines <<EOF
+$recs
+EOF
+  while IFS= read -r name; do
+    JG_WAKE_STATUS_TASKS[$name]=${rec_lines[$i]}
+    i=$((i + 1))
+  done <<EOF
+$names
+EOF
+}
+
+jg_wake_status_unindex() { # JG_WAKE_STATUS_TASKS -> JG_WAKE_STATUS_DATA
+  local name
+  JG_WAKE_STATUS_DATA=$(for name in "${!JG_WAKE_STATUS_TASKS[@]}"; do
+    printf '%s\n%s\n' "$name" "${JG_WAKE_STATUS_TASKS[$name]}"
+  done | jq -cRn '[inputs] as $a | reduce range(0; $a | length; 2) as $i ({}; .[$a[$i]] = ($a[$i + 1] | fromjson))') || return 1
+}
 
 jg_wake_status_load() {
   JG_WAKE_STATUS_FILE="$STATE/.wake-status-$ACTOR.json"
@@ -35,12 +65,16 @@ jg_wake_status_save() {
 
 jg_wake_status_present() { # <raw actor rows> <status snapshot>
   local rows=$1 snapshot=$2 _epoch seq kind key _payload task end ident offset data lines record output printed=''
-  jg_wake_status_load || return 1
+  local -A new_seqs=()
+  jg_wake_status_load && jg_wake_status_index || return 1
   while IFS=$'\t' read -r _epoch seq kind key _payload; do
     [ "$kind" = signal ] || continue
     jg_wake_status_key_map "$key" || continue
     task=${JG_WAKE_STATUS_KEY%.status}
-    record=$(printf '%s' "$JG_WAKE_STATUS_DATA" | jq -c --arg t "$task" '.[$t] // {ident:"",end:0,events:[],seqs:[]}') || return 1
+    # Rows after a task's first add only their sequence: its span is already presented.
+    if [ -n "${new_seqs[$task]+x}" ]; then new_seqs[$task]+=",$seq"; continue; fi
+    new_seqs[$task]=$seq
+    record=${JG_WAKE_STATUS_TASKS[$task]:-'{"ident":"","end":0,"events":[],"seqs":[]}'}
     data=$(printf '%s\n' "$snapshot" | awk -F '\t' -v t="$task" '$1 == t { print $2 "\t" $3 }') || return 1
     if [ -n "$data" ]; then
       end=${data%%$'\t'*}; ident=${data#*$'\t'}
@@ -74,11 +108,15 @@ jg_wake_status_present() { # <raw actor rows> <status snapshot>
       [ -z "$output" ] || printf '%s\n' "$output" || return 1
       printed="$printed/$task/"
     fi
-    record=$(printf '%s' "$record" | jq -c --argjson s "$seq" '.seqs = ((.seqs + [$s]) | unique)') || return 1
-    JG_WAKE_STATUS_DATA=$(printf '%s\n%s\n' "$JG_WAKE_STATUS_DATA" "$record" | jq -cs --arg t "$task" '.[0] + {($t):.[1]}') || return 1
+    JG_WAKE_STATUS_TASKS[$task]=$record
   done <<EOF
 $rows
 EOF
+  for task in "${!new_seqs[@]}"; do
+    JG_WAKE_STATUS_TASKS[$task]=$(printf '%s' "${JG_WAKE_STATUS_TASKS[$task]}" | jq -c --argjson s "[${new_seqs[$task]}]" \
+      '.seqs = ((.seqs + $s) | unique)') || return 1
+  done
+  jg_wake_status_unindex || return 1
   if [ -n "$printed" ]; then
     printf 'OUTCOME_HANDLING: use bin/jg-wake-drain.sh --outcome ID --relayed REFERENCE or --classified REASON before acknowledgement.\n' || return 1
   fi
@@ -102,7 +140,8 @@ jg_wake_status_handle() { # <id> <relayed|classified> <reference|reason>
 
 jg_wake_status_ack() { # <check|commit> <actor row file> <cutoff>
   local phase=$1 rows=$2 cutoff=$3 _epoch seq kind key _payload task record unresolved ident size path
-  jg_wake_status_load || return 1
+  local -A task_seqs=() task_checked=()
+  jg_wake_status_load && jg_wake_status_index || return 1
   if [ "$phase" = check ]; then
     JG_WAKE_STATUS_ACK_ROWS=$(awk -F '\t' -v rows="$rows" 'BEGIN {while ((getline s < rows)>0) keep[s]=1} $2 in keep' "$JG_WAKE_QUEUE") || return 1
   fi
@@ -110,12 +149,18 @@ jg_wake_status_ack() { # <check|commit> <actor row file> <cutoff>
     [ "$kind" = signal ] && [ "$seq" -le "$cutoff" ] || continue
     jg_wake_status_key_map "$key" || continue
     task=${JG_WAKE_STATUS_KEY%.status}
-    record=$(printf '%s' "$JG_WAKE_STATUS_DATA" | jq -c --arg t "$task" '.[$t] // {}') || return 1
+    record=${JG_WAKE_STATUS_TASKS[$task]:-'{}'}
     if [ "$phase" = check ]; then
-      if ! printf '%s' "$record" | jq -e --argjson s "$seq" '(.seqs // []) | index($s) != null' >/dev/null; then
+      if [ -z "${task_seqs[$task]+x}" ]; then
+        task_seqs[$task]=" $(printf '%s' "$record" | jq -r '(.seqs // []) | map(tostring) | join(" ")') " || return 1
+      fi
+      if [[ "${task_seqs[$task]}" != *" $seq "* ]]; then
         printf 'wake drain: signal %s row %s has not been fully presented; drain again before acknowledgement\n' "$key" "$seq" >&2
         return 1
       fi
+      # The file and outcome checks depend on the task alone, not the row.
+      [ -z "${task_checked[$task]+x}" ] || continue
+      task_checked[$task]=1
       path="$STATE/$task.status"
       if [ -e "$path" ] || [ -L "$path" ]; then
         [ -f "$path" ] && [ -r "$path" ] && [ ! -L "$path" ] || {
@@ -133,12 +178,13 @@ jg_wake_status_ack() { # <check|commit> <actor row file> <cutoff>
         printf 'wake drain: acknowledgement refused; relay or classify each outcome first:\n%s\n' "$unresolved" >&2
         return 1
       fi
-    else
-      JG_WAKE_STATUS_DATA=$(printf '%s' "$JG_WAKE_STATUS_DATA" | jq -c --arg t "$task" --argjson n "$cutoff" \
-        '.[$t].events=[] | .[$t].seqs |= map(select(. > $n))') || return 1
+    elif [ -z "${task_checked[$task]+x}" ]; then
+      task_checked[$task]=1
+      JG_WAKE_STATUS_TASKS[$task]=$(printf '%s' "$record" | jq -c --argjson n "$cutoff" \
+        '.events=[] | .seqs |= map(select(. > $n))') || return 1
     fi
   done <<EOF
 $JG_WAKE_STATUS_ACK_ROWS
 EOF
-  [ "$phase" != commit ] || jg_wake_status_save
+  [ "$phase" != commit ] || { jg_wake_status_unindex && jg_wake_status_save; }
 }
