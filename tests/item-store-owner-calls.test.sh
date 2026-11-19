@@ -91,11 +91,16 @@ out=$(ji open question:merge:main/C5@9 --kind question --home main --subject C5 
 case $out in refused*) ok "c6 Main's step question whose text does not name the pull request is refused" ;; *) bad "c6 text without the pull request" "[$out]" ;; esac
 
 # ------------------------------------------------------------------ d: after the cut-over
-out=$(py "$H" 'import os, sys; sys.path.insert(0, os.environ["ITEM"]); import itemdb, store as S
+# a registry write is version 1 only for a project with no row and the source import:projects.md:<project>
+regwrite() { # project source
+  PROJ=$1 SRC=$2 py "$H" 'import os, sys; sys.path.insert(0, os.environ["ITEM"]); import itemdb, store as S
 st = itemdb.open_db(os.environ["JG_HOME"], "owner:registry"); at = itemdb.stamp(st)
-try: st.set_policy(at, "newp", "tight", "owner:registry", "import:projects.md:newp"); print("written")
-except S.Refused as e: print("refused")')
-want "d1 after the cut-over a registry row is refused" refused "$out"
+try: st.set_policy(at, os.environ["PROJ"], "tight", "owner:registry", os.environ["SRC"]); print("written")
+except S.Refused as e: print("refused")'
+}
+want "d1a after the cut-over a registry row for a project with no row is version 1" written "$(regwrite regp import:projects.md:regp)"
+want "d1b a second registry row for the same project is refused" refused "$(regwrite regp import:projects.md:regp)"
+want "d1c a registry row with another project's source is refused" refused "$(regwrite newp import:projects.md:other)"
 out=$(env JG_ITEM_OR_INTAKE=1 JG_HOME="$H" "$JI" open work:main/W1 --kind work --home main --subject W1 --owes "do it" --project newp --source d2)
 want "d2 a new project's lane goes to intake" "intake" "$out"
 out=$(pol --propose --project newp --level tight --mode direct-PR)
