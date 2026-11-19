@@ -42,16 +42,19 @@ func TestGatewayCardButtons(t *testing.T) {
 		}
 	}))
 	defer bot.Close()
-	var published []string
-	dapr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		published = append(published, string(b))
-	}))
-	defer dapr.Close()
 	home := t.TempDir()
 	tokenFile, conf := filepath.Join(home, "tg.token"), filepath.Join(home, "conf")
 	os.WriteFile(tokenFile, []byte(tok+"\n"), 0o600)
-	os.WriteFile(conf, []byte(fmt.Sprintf("set mode live\nset telegram-token-file %s\nset telegram-allow-user 42\nset telegram-api-url %s\nset dapr-http-url %s\nset dapr-pubsub p\nset subject-prefix jg.captain\n", tokenFile, bot.URL, dapr.URL)), 0o600)
+	os.WriteFile(conf, []byte(fmt.Sprintf("set mode direct\nset telegram-token-file %s\nset telegram-allow-user 42\nset telegram-api-url %s\nset subject-prefix jg.captain\n", tokenFile, bot.URL)), 0o600)
+	published := func() (out []string) { // the reply events the record holds
+		data, _ := os.ReadFile(filepath.Join(home, "state", "rec"))
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.Contains(line, `"kind":"reply"`) {
+				out = append(out, line)
+			}
+		}
+		return out
+	}
 	newApp := func() *app { // a restart: the same state on disk, nothing in memory
 		state := filepath.Join(home, "state")
 		return &app{root: filepath.Join(home, "root"), home: home, state: state, data: filepath.Join(home, "data"), configFiles: []string{conf},
@@ -129,15 +132,15 @@ func TestGatewayCardButtons(t *testing.T) {
 	ingest(tap(2, 42, 42, msg+5, data[0]))
 	ingest(tap(3, 42, 42, msg, "c:deadbeef0000:0"))
 	ingest(tap(4, 42, 42, msg, strings.Replace(data[0], ":0", ":9", 1)))
-	if len(published) != 0 || count("editMessageText") != 0 {
-		t.Fatalf("published %v, edits %d: want no answer from a stranger or a forged tap", published, count("editMessageText"))
+	if len(published()) != 0 || count("editMessageText") != 0 {
+		t.Fatalf("published() %v, edits %d: want no answer from a stranger or a forged tap", published(), count("editMessageText"))
 	}
 
 	// The owner taps Yes: the answer goes out as a reply event, the tap is acknowledged, the message
 	// shows the answer and has no buttons.
 	ingest(tap(5, 42, 42, msg, data[0]))
-	if len(published) != 1 || !strings.Contains(published[0], `"key":"merge-pr"`) || !strings.Contains(published[0], `"answer":"yes"`) || !strings.Contains(published[0], `"label":"Yes"`) {
-		t.Fatalf("published %v: want one reply event answering yes", published)
+	if len(published()) != 1 || !strings.Contains(published()[0], `"key":"merge-pr"`) || !strings.Contains(published()[0], `"answer":"yes"`) || !strings.Contains(published()[0], `"label":"Yes"`) {
+		t.Fatalf("published() %v: want one reply event answering yes", published())
 	}
 	edit := last("editMessageText")
 	kb, _ := edit["reply_markup"].(map[string]any)
@@ -151,8 +154,8 @@ func TestGatewayCardButtons(t *testing.T) {
 	// A late tap, from this restarted gateway, is refused and answers nothing again.
 	a = newApp()
 	ingest(tap(6, 42, 42, msg, data[1]))
-	if got := last("answerCallbackQuery")["text"]; got != "Already answered." || len(published) != 1 {
-		t.Fatalf("late tap: toast %v, published %d: want Already answered and no second answer", got, len(published))
+	if got := last("answerCallbackQuery")["text"]; got != "Already answered." || len(published()) != 1 {
+		t.Fatalf("late tap: toast %v, published() %d: want Already answered and no second answer", got, len(published()))
 	}
 
 	// The board answers a card: the message is edited, and a tap after that is late.
@@ -190,8 +193,8 @@ func TestGatewayCardButtons(t *testing.T) {
 		t.Fatalf("edit %v, sends %d: want the same message with three buttons", edit, count("sendMessage"))
 	}
 	ingest(tap(8, 42, 42, atoi(changeMsg), data[2]))
-	if !strings.Contains(published[len(published)-1], `"answer":"c"`) {
-		t.Fatalf("published %v: want the new option answered", published)
+	if !strings.Contains(published()[len(published())-1], `"answer":"c"`) {
+		t.Fatalf("published() %v: want the new option answered", published())
 	}
 	a.sendEvent(ad, owner, card("drop-me", 5000, "Rename it?", yes, no))
 	dropMsg := a.cards()["drop-me"].Message
@@ -199,10 +202,10 @@ func TestGatewayCardButtons(t *testing.T) {
 	if !strings.Contains(last("editMessageText")["text"].(string), "No longer needed.") {
 		t.Fatalf("edit %v: want the withdrawal shown", last("editMessageText"))
 	}
-	before := len(published)
+	before := len(published())
 	ingest(tap(9, 42, 42, atoi(dropMsg), "c:"+cardHash("drop-me")+":0"))
-	if got := last("answerCallbackQuery")["text"]; got != "This card is closed." || len(published) != before {
-		t.Fatalf("tap on a withdrawn card: toast %v, published %d: want it refused", got, len(published)-before)
+	if got := last("answerCallbackQuery")["text"]; got != "This card is closed." || len(published()) != before {
+		t.Fatalf("tap on a withdrawn card: toast %v, published() %d: want it refused", got, len(published())-before)
 	}
 
 	// An edit the chat refuses is tried again on the next pass and only once it works.

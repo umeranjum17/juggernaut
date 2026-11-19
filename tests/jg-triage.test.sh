@@ -30,7 +30,7 @@ STUB
 case "${1:-}" in
   status)
     if [ -e "$JG_HOME/stack.down" ]; then echo "STACK_FAILED: router: not running (unit inactive)"; exit 1; fi
-    for p in bus wake-engine router dapr gateway; do echo "$p running pid 100"; done
+    for p in bus wake-engine router scheduler gateway; do echo "$p running pid 100"; done
     ;;
   up)
     echo up >> "$JG_HOME/calls.log"

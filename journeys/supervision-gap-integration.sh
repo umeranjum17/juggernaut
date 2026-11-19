@@ -28,7 +28,6 @@ cat > "$JG_HOME/state/slow.check.sh" <<'SH'
 while [ ! -e "$JG_HOME/state/release-slow" ]; do sleep 0.1; done
 SH
 chmod 0700 "$JG_HOME/state/slow.check.sh"
-export JG_WAKE_BUS_URL=nats://127.0.0.1:1 JG_STATE_BUS_URL=nats://127.0.0.1:1 JG_KV_URL=nats://127.0.0.1:1
 export JG_POLL=1 JG_CHECK_INTERVAL=0 JG_CHECK_TIMEOUT=120 JG_GUARD_GRACE=30
 printf 'off\n' > "$JG_HOME/config/wake-bus"
 bash "$ROOT/bin/jg-check-register.sh" slow >/dev/null

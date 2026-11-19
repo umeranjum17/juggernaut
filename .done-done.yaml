@@ -469,26 +469,17 @@ journeys:
   kill-guard-home-owner:
     tier: local
     command: node core/kill-guard/run-home-owner-proof.mjs
-  wake-bus-live:
-    tier: local
-    command: bash journeys/wake-bus-live.sh
   wedge-marker:
     tier: local
     command: bash bin/jg-test-run.sh tests/jg-bus.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  wake-cursor-kill:
-    tier: local
-    command: bash journeys/wake-cursor-kill.sh
   wake-raise-outbox:
     tier: local
     command: bash journeys/wake-raise-outbox.sh
     timeout: 5m
   bus-machine-service:
     tier: local
-    command: (bash bin/jg-bus-reap.sh >/dev/null 2>&1 || true; bash tests/jg-bus-machine-service.test.sh && bash tests/jg-stack-owner.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    command: bash tests/jg-stack-owner.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
     timeout: 5m
-  stray-nats-reap:
-    tier: local
-    command: (bash tests/jg-stray-nats-reap.test.sh && bash bin/jg-stray-nats-reap.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   escalation-optimize:
     tier: local
     command: bash core/escalation-optimize/tests/jg-escalation-optimize.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -610,10 +601,6 @@ journeys:
     # measured 22.8 s on the host, 2026-11-12 (serial, one run)
     tier: ci
     command: bash tests/jg-brief.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  contract-bus-machine-service:
-    # measured 12.6 s on the host, 2026-11-12 (serial, one run)
-    tier: ci
-    command: bash tests/jg-bus-machine-service.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   contract-lint-partitions:
     # measured 12.0 s on the host, 2026-11-12 (serial, one run)
     tier: ci
@@ -1235,24 +1222,9 @@ journeys:
   jg-browser-sweep:
     tier: local
     command: bash tests/jg-browser-sweep.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-bus-account-isolation:
-    tier: local
-    command: bash tests/jg-bus-account-isolation.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-bus-gateway:
     tier: local
     command: bash tests/jg-bus-gateway.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-bus-health-extra:
-    tier: local
-    command: bash tests/jg-bus-health-extra.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-bus-health:
-    tier: local
-    command: bash tests/jg-bus-health.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-bus-leaf-parity:
-    tier: local
-    command: bash tests/jg-bus-leaf-parity.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-bus-service:
-    tier: local
-    command: bash tests/jg-bus-service.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-calm-home-links:
     tier: local
     command: bash tests/jg-calm-home-links.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -1516,9 +1488,6 @@ journeys:
   jg-remote-reply:
     tier: local
     command: bash tests/jg-remote-reply.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-reply-bus-parity:
-    tier: local
-    command: bash tests/jg-reply-bus-parity.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-reply-engine:
     tier: local
     command: bash tests/jg-reply-engine.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -1591,9 +1560,6 @@ journeys:
   jg-stage-words:
     tier: local
     command: bash tests/jg-stage-words.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-state-bus-parity:
-    tier: local
-    command: bash tests/jg-state-bus-parity.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-status-digest:
     tier: local
     command: bash tests/jg-status-digest.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -2336,7 +2302,6 @@ journeys:
     command: >-
       python3 journeys/ask-outcomes.py &&
       bash bin/jg-test-run.sh tests/jg-bus-gateway.test.sh > "$DONE_DONE_EVIDENCE_ROOT/gateway.log" 2>&1 &&
-      bash bin/jg-test-run.sh tests/jg-bus-account-isolation.test.sh > "$DONE_DONE_EVIDENCE_ROOT/accounts.log" 2>&1 &&
       bash bin/jg-lint.sh > "$DONE_DONE_EVIDENCE_ROOT/lint.log" 2>&1 &&
       bash bin/jg-doc-audience-check.sh > "$DONE_DONE_EVIDENCE_ROOT/docs.log" 2>&1
     timeout: 15m

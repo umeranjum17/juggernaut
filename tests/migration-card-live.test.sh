@@ -156,12 +156,12 @@ assert_contains "$(cat "$(card_page)/index.html")" "config/crew-dispatch.json pa
 P=$T/push; PLOG=$T/push-calls.log; PUB=$T/published.log
 mkdir -p "$P/config" "$P/state" "$P/data/migration-card" "$T/board2"
 printf '{"schema":2,"items":[]}\n' >"$T/board2/board.json"
-printf 'branch=release/c-2\ntarget=100000\nboard=%s/board2/board.json\ncard=push-card\nfiler=test\nproject=Test\ncritical=nats,accounts\n' "$T" >"$P/config/migration-card"
+printf 'branch=release/c-2\ntarget=100000\nboard=%s/board2/board.json\ncard=push-card\nfiler=test\nproject=Test\ncritical=queue,accounts\n' "$T" >"$P/config/migration-card"
 cat >"$T/probe-stub.sh" <<'F'
 #!/usr/bin/env bash
 case ${1-} in
   --quiet) cp "$STUB_ROWS" "$JG_HOME/data/migration-card/live.tsv" ;;
-  nats) grep '^NATS server' "$STUB_ROWS" ;;
+  queue) grep '^Queue server' "$STUB_ROWS" ;;
   accounts) grep '^per-home accounts' "$STUB_ROWS" ;;
 esac
 F
@@ -174,7 +174,7 @@ F
 chmod +x "$T/probe-stub.sh" "$T/bus-stub.sh"
 export STUB_ROWS=$T/stub-rows.tsv PUBLISHED=$PUB
 set_rows() {  # <accounts-state>
-  printf 'NATS server\tlive\tpid 1\t-\nper-home accounts\t%s\tthe server runs without accounts\thttps://example.test/o/r/pull/9\nwake queue\tpending\tno stream\t-\n' \
+  printf 'Queue server\tlive\tpid 1\t-\nper-home accounts\t%s\tthe server runs without accounts\thttps://example.test/o/r/pull/9\nwake queue\tpending\tno stream\t-\n' \
     "$1" >"$STUB_ROWS"
 }
 push_pass() { JG_HOME=$P FAKE_LOG=$PLOG JG_MIGRATION_LIVE_BIN=$T/probe-stub.sh JG_BUS_CMD=$T/bus-stub.sh JG_MIGRATION_CARD_NOW=$1 "$ROOT/bin/jg-migration-card.sh" live --quiet; }
@@ -187,7 +187,7 @@ out=$(push_pass "$T0" 2>&1)
 assert_equals "" "$out" "a push pass prints nothing"
 assert_equals 1 "$(posts)" "a row change posts one card"
 assert_equals 1 "$(published)" "a row change sends one chat message"
-assert_contains "$(cat "$PUB")" "NATS server: live" "the digest names the first critical row"
+assert_contains "$(cat "$PUB")" "Queue server: live" "the digest names the first critical row"
 assert_contains "$(cat "$PUB")" "per-home accounts: pending - the server runs without accounts https://example.test/o/r/pull/9" "a pending critical row carries its detail and pull request"
 assert_contains "$(cat "$PUB")" "Other rows: 0 of 1 live." "the digest counts the rows that are not critical"
 push_pass "$((T0 + 3600))"

@@ -123,8 +123,8 @@ If this home's gateway service is running, stop it first.`)
 	if rc := a.pair(ad); rc != 0 {
 		return rc
 	}
-	if m := a.channelMode(); m != "live" && m != "direct" {
-		say("note: channel mode is %q; the gateway stays off until it is live or direct", m)
+	if m := a.channelMode(); m != "direct" {
+		say("note: channel mode is %q; the gateway stays off until it is direct", m)
 	}
 	say("Next: run bin/jg-stack.sh up to start the gateway service.")
 	return 0

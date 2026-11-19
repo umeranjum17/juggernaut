@@ -16,7 +16,7 @@ const command = (file, args, runEnv = base) => {
   assert.ifError(r.error); assert.equal(r.status, 0, `${file} failed: ${r.stderr}`); return r.stdout;
 };
 const version = command('git', ['rev-parse', '--short', 'HEAD']).trim();
-const sess = 'codex-lead-lab', unreachable = 'nats://127.0.0.1:1', doorbellRe = /read '([^']+\.msg)'/;
+const sess = 'codex-lead-lab', doorbellRe = /read '([^']+\.msg)'/;
 let made = '', labHome = '', tmuxDir = '', cpMade = '', cpHome = '', env = {}, failure = null, recordBody = null;
 let checkpoint = { attempted: false, status: null, signal: null, stdout: '', stderr: '' };
 const read = (f) => fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '';
@@ -28,7 +28,6 @@ const isolate = (home) => {
   for (const [name, body] of [['wake-bus', 'off\n'], ['captain-channel', 'set mode off\n'], ['bus-homes', '']]) fs.writeFileSync(path.join(configDir, name), body);
   for (const f of ['.last-fast-check', '.last-check', '.last-heartbeat']) fs.writeFileSync(path.join(stateDir, f), '');
   return { ...base, JG_HOME: home,
-    JG_KV_URL: unreachable, JG_STATE_BUS_URL: unreachable, JG_WAKE_BUS_URL: unreachable,
     JG_BUS_HOMES: path.join(configDir, 'bus-homes'), JG_CAPTAIN_CHANNEL: path.join(configDir, 'captain-channel'),
     JG_FAST_CHECK_INTERVAL: '86400', JG_CHECK_INTERVAL: '86400', JG_HEARTBEAT: '86400' };
 };

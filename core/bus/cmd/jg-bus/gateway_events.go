@@ -7,7 +7,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -18,27 +17,6 @@ import (
 
 // chatKinds are the events the owner hears in the chat (summary is Main's own turn summary, bin/jg-captain-say.sh); probes and the chat's own events stay off it.
 var chatKinds = map[string]bool{"card": true, "card-close": true, "outcome": true, "alert": true, "digest": true, "summary": true}
-
-// realHome says whether the owner may hear from a home: the gateway's own home, or a member of the
-// machine registry that is not a throw-away location. A test home never joins that registry (see
-// registerHome), so the card a test suite publishes into the shared bus is refused here rather than
-// reaching the owner's chat. An event with no home is from a publisher older than the field.
-func (a *app) realHome(home string) bool {
-	if home == "" {
-		return true
-	}
-	home = resolveHome(home)
-	if home == resolveHome(a.home) {
-		return true
-	}
-	state, member := a.registeredStates()[home]
-	if !member {
-		return false
-	}
-	_, labHomeDir := labHome(home, a.root)
-	_, labStateDir := labHome(state, a.root)
-	return !labHomeDir && !labStateDir
-}
 
 // retryWindow is how long a failing send is tried again, with a doubling wait, before it is named undelivered.
 var retryWindow = 10 * time.Minute
@@ -107,50 +85,4 @@ func (a *app) sendToChat(ev event) error {
 		}
 	}
 	return err
-}
-
-// deliverEvent is the consumer's handler: a failing send is tried again with a doubling wait until the
-// window ends, then the event is named in the undelivered record. A call that can never work (a
-// blocked bot, a bad request) is not tried again.
-func (a *app) deliverEvent(ad *telegram, owner string, body []byte) (err error) {
-	var ev event
-	if json.Unmarshal(eventBody(body), &ev) != nil || !chatKinds[ev.Kind] {
-		return nil
-	}
-	if !a.realHome(ev.Home) { // named once in the log, then dropped: sending it again could not change the answer
-		a.noteFailure("gateway "+ev.Kind+" not sent", "the "+ev.Key+" event comes from "+ev.Home+", which is not a registered home")
-		return nil
-	}
-	for wait, spent := 2*time.Second, time.Duration(0); ; wait = min(2*wait, time.Minute) {
-		if err = a.sendEvent(ad, owner, ev); err == nil {
-			return nil
-		}
-		var se *sendError
-		if errors.As(err, &se) && (se.code == 400 || se.code == 403) || spent+wait > retryWindow {
-			a.noteUndelivered(ad.Name(), redact(err.Error(), ad.token), string(body))
-			return err
-		}
-		ad.sleep(wait)
-		spent += wait
-	}
-}
-
-// gatewayPart is the durable consumer `captain-gateway` on CAPTAIN. It starts at new events, so a first
-// start does not replay a week of old cards into the chat.
-func (a *app) gatewayPart(ad *telegram, owner string) *part {
-	p := a.routerPart()
-	p.name, p.filter, p.deliver = "captain-gateway", a.cfgOr("subject-prefix", "")+".>", "new"
-	p.handle = func(body []byte) error { return a.deliverEvent(ad, owner, body) }
-	return p
-}
-
-// serveGatewayEvents runs the consumer for as long as the gateway runs; a failure is tried again.
-func (a *app) serveGatewayEvents(ad *telegram, owner string) {
-	if a.channelMode() == "direct" { // nothing is published for the consumer to read
-		return
-	}
-	for {
-		a.serveConsumer(a.gatewayPart(ad, owner))
-		time.Sleep(5 * time.Second)
-	}
 }

@@ -1,125 +1,32 @@
 #!/usr/bin/env bash
-# jg-kv-lib.sh - the one owner of the JetStream key-value client surface.
+# jg-kv-lib.sh - the one owner of the key-value store the task leases live in.
 #
-# WHY. Two paths keep records in a JetStream key-value bucket: the task leases,
-# which are live (bin/jg-lease-lib.sh), and the busy events, still mirrored in
-# shadow (bin/jg-state-bus.sh). Both need the same things - which server, which
-# client binary, how a bucket comes into being, and how a value is read, written,
-# deleted and revisioned - so this library owns them once instead of each path
-# re-spelling a client call.
+# WHY. The task leases (bin/jg-lease-lib.sh) keep records in one SQLite file, state/kv.db. They
+# need the same things - how a bucket comes into being, and how a value is read, written,
+# deleted and revisioned - so this library owns them once instead of each path re-spelling a
+# store call.
 #
 # CONTRACT.
-#   server   JG_KV_URL, else JG_STATE_BUS_URL, else the `nats-url` key of the
-#            home's config/state-bus, else nats://127.0.0.1:4222.
-#   client   JG_NATS_BIN when set, else `nats` on PATH.
-#   auth     the machine runs one account per home, so a client that connects as the
-#            empty user is refused. jg_kv_run authenticates every call as the home that
-#            owns the state directory, with the name and the credentials file that
-#            `bin/jg-bus.sh login` prints - the one function core/bus/cmd/jg-bus writes the
-#            machine's accounts file from, answering only when that file holds the account
-#            (<state>/bus/<account>.pass). A machine with no accounts, or a home that has not
-#            joined one, gets no credentials at all.
-#   gate     jg_kv_ready fails, printing the reason into JG_KV_WHY, when either
-#            the client or the server is missing. It never decides whether that
-#            is a skip or a refusal: the shadow mirror skips, a live lease
+#   store    $JG_KV_STATE/kv.db (the home's state directory), read and written through python3's
+#            sqlite3.
+#   gate     jg_kv_ready fails, printing the reason into JG_KV_WHY, when python3 with sqlite3 is
+#            missing. It never decides whether that is a skip or a refusal: a live lease
 #            decision refuses, and that choice belongs to the caller.
 #   values   bytes. A value read back with jg_kv_get is the value written, with no
 #            quoting, escaping or JSON in the way.
 #   revision jg_kv_revision prints the revision the key's current value holds,
 #            which is the compare-and-set token a claiming writer pins its write
-#            to. A store whose client cannot report a revision therefore cannot
-#            grant a takeover safely, and this library says so instead of guessing.
+#            to.
 #
 # Callers resolve their home and state before sourcing this; nothing here has a
 # side effect at source time. set -u safe, and every function returns non-zero
 # rather than exiting, so a caller keeps the last word.
 #
-# Sourced by bin/jg-lease-lib.sh and bin/jg-state-bus.sh.
+# Sourced by bin/jg-lease-lib.sh.
 
-# shellcheck disable=SC2034 # kept for the NATS functions until slice 11b5
-JG_KV_HISTORY=8
 JG_KV_WHY=
 JG_KV_READY=
-JG_KV_URL_RESOLVED=
-JG_KV_CLIENT=
 JG_KV_STATE=
-
-# jg_kv_home_url <home-dir>: the server address in force for one home.
-jg_kv_home_url() { # <home-dir>
-  local home=$1 url value
-  url=${JG_KV_URL:-${JG_STATE_BUS_URL:-}}
-  if [ -z "$url" ] && [ -f "$home/config/state-bus" ]; then
-    value=$(awk '$1 == "nats-url" { sub(/^[^ ]+[ \t]+/, ""); print; exit }' \
-      "$home/config/state-bus" 2>/dev/null)
-    url=$value
-  fi
-  printf '%s\n' "${url:-nats://127.0.0.1:4222}"
-}
-
-# jg_kv_resolve <home-dir>: resolve the URL and the client once per shell.
-jg_kv_resolve() { # <home-dir>
-  local home=$1
-  if [ -z "$JG_KV_URL_RESOLVED" ]; then
-    JG_KV_URL_RESOLVED=$(jg_kv_home_url "$home") || return 1
-  fi
-  if [ -z "$JG_KV_CLIENT" ]; then
-    if [ -n "${JG_NATS_BIN:-}" ]; then
-      JG_KV_CLIENT=$JG_NATS_BIN
-    else
-      JG_KV_CLIENT=$(command -v nats 2>/dev/null || true)
-    fi
-  fi
-  if [ -z "$JG_KV_STATE" ]; then
-    JG_KV_STATE=${JG_STATE_OVERRIDE:-$home/state}
-  fi
-  [ -n "$JG_KV_CLIENT" ] || { JG_KV_WHY="no nats client found (set JG_NATS_BIN)"; return 1; }
-  return 0
-}
-
-# jg_kv_login <state-dir>: this home's account name and its credentials file, tab
-# separated, asked of the one function that also writes the server's accounts block
-# (bin/jg-bus.sh login), so the name and the password can never drift from what the
-# server loaded, and answered only when that block really holds this home's account. A
-# machine where that command cannot answer (no Go toolchain and no built command, no
-# accounts, or this home has not joined) keeps no credentials for this home, which is how
-# an unauthenticated server is called without them. The answer is kept for the rest of
-# the shell.
-JG_KV_LOGIN_STATE=
-JG_KV_LOGIN=
-jg_kv_login() { # <state-dir>
-  local state=$1 bus
-  if [ "$JG_KV_LOGIN_STATE" != "$state" ]; then
-    bus=${BASH_SOURCE[0]%/*}/jg-bus.sh
-    JG_KV_LOGIN=$(JG_HOME=$(dirname -- "$state") JG_STATE_OVERRIDE=$state "$bus" login 2>/dev/null) || JG_KV_LOGIN=
-    JG_KV_LOGIN_STATE=$state
-  fi
-  [ -n "$JG_KV_LOGIN" ] && printf '%s\n' "$JG_KV_LOGIN"
-}
-
-# jg_kv_run <client> <url> <state-dir> [args...]: one client call, authenticated as the
-# home that owns <state-dir> when the machine keeps credentials for it. The password
-# travels in NATS_PASSWORD, never on the argument list, so it never shows in `ps`.
-# JG_KV_DEADLINE, when set, is the whole call's limit in seconds: the client's own
-# --timeout bounds a request, not a subscription waiting for its message.
-jg_kv_run() { # <client> <url> <state-dir> [args...]
-  local client=$1 url=$2 state=$3 login account cred pass deadline=()
-  shift 3
-  [ -z "${JG_KV_DEADLINE:-}" ] || deadline=(timeout "$JG_KV_DEADLINE")
-  if login=$(jg_kv_login "$state"); then
-    account=${login%%$'\t'*}
-    cred=${login#*$'\t'}
-    if [ -s "$cred" ] && pass=$(tr -d '\n' < "$cred"); then
-      NATS_USER=$account NATS_PASSWORD=$pass ${deadline[@]+"${deadline[@]}"} "$client" -s "$url" --timeout 10s "$@"
-      return
-    fi
-  fi
-  ${deadline[@]+"${deadline[@]}"} "$client" -s "$url" --timeout 10s "$@"
-}
-
-# jg_kv_call <args...>: one client call, with the server named explicitly.
-jg_kv_call() {
-  jg_kv_run "$JG_KV_CLIENT" "$JG_KV_URL_RESOLVED" "$JG_KV_STATE" "$@"
-}
 
 # jg_kv_py <op> [args...]: the one SQLite call every bucket function below makes. The store is
 # one file, $JG_KV_STATE/kv.db, table kv(bucket, key, value, revision, PRIMARY KEY(bucket, key)).
@@ -178,9 +85,6 @@ elif op == "revision":
 
 # jg_kv_db: the path of the store file, resolved from the home on the first jg_kv_ready.
 jg_kv_db() { printf '%s/kv.db\n' "${JG_KV_STATE:-${JG_STATE_OVERRIDE:-}}"; }
-
-# STUB (slice 11b1): the NATS functions above (jg_kv_home_url, jg_kv_resolve, jg_kv_login,
-# jg_kv_run, jg_kv_call) are no longer called by the bucket functions; slice 11b5 deletes them.
 
 # jg_kv_ready <home-dir>: 0 iff python3 runs, so a caller can tell a missing store from a
 # missing record. The store is a file in the home's state directory.

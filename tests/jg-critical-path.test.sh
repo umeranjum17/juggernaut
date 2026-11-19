@@ -30,8 +30,8 @@ SH
 chmod +x "$W/probe"
 export JG_MIGRATION_LIVE_BIN="$W/probe" JG_TEST_PROBE_STATE="$W/probe.state" JG_HOME="$HOME_DIR"
 probe_state() { printf '%s\n' "$@" > "$JG_TEST_PROBE_STATE"; }
-probe_state 'nats live' 'accounts pending'
-printf 'critical=nats,accounts,wake,inbox\nproject=proj\n' > "$HOME_DIR/config/migration-card"
+probe_state 'queue live' 'accounts pending'
+printf 'critical=queue,accounts,wake,inbox\nproject=proj\n' > "$HOME_DIR/config/migration-card"
 
 N=0
 # brief <brief-args...>: scaffold a real ship brief; sets BRIEF to its path.
@@ -79,27 +79,27 @@ assert_contains "$out" "Critical-path override" "T4 the refusal does not name th
 pass "T4 an override is admitted only when the brief quotes the same words"
 
 # T5
-probe_state 'nats live' 'accounts live'
+probe_state 'queue live' 'accounts live'
 brief --migration-row deletions || fail "T5 could not scaffold"
 out=$(gate); rc=$?
 expect_code 1 "$rc" "T5 deletions should still be refused with accounts live: $out"
 assert_contains "$out" "first part not In use: wake" "T5 the refusal does not name wake"
-probe_state 'nats live' 'accounts live' 'wake live' 'inbox live'
+probe_state 'queue live' 'accounts live' 'wake live' 'inbox live'
 out=$(gate); expect_code 0 "$?" "T5 with every critical part live nothing should be refused: $out"
 pass "T5 the refusal follows the first part not live, and lifts when the path is live"
 
 # T6
-probe_state 'nats live' 'accounts pending'
-assert_equals "$(printf 'nats\naccounts\nwake\ninbox')" "$("$CP" list)" "T6 list is not the configured order"
+probe_state 'queue live' 'accounts pending'
+assert_equals "$(printf 'queue\naccounts\nwake\ninbox')" "$("$CP" list)" "T6 list is not the configured order"
 assert_equals "accounts" "$("$CP" first-pending)" "T6 first-pending is not accounts"
-assert_equals "nats live accounts pending wake absent inbox absent" "$("$CP" rows | cut -f1,2 | tr '\t\n' '  ' | sed 's/ $//')" "T6 rows are not slug and state in order"
-assert_equals "nats" "$(JG_MIGRATION_LIVE_BIN="$W/no-such-probe" "$CP" first-pending)" "T6 an unreadable probe was not taken as pending"
+assert_equals "queue live accounts pending wake absent inbox absent" "$("$CP" rows | cut -f1,2 | tr '\t\n' '  ' | sed 's/ $//')" "T6 rows are not slug and state in order"
+assert_equals "queue" "$(JG_MIGRATION_LIVE_BIN="$W/no-such-probe" "$CP" first-pending)" "T6 an unreadable probe was not taken as pending"
 brief || fail "T6 could not scaffold"
 out=$("$CP" gate "$BRIEF" "$W/other" 2>&1); expect_code 0 "$?" "T6 another project should not be held to the path: $out"
 printf 'branch=release/c-6\n' > "$HOME_DIR/config/migration-card"
 assert_equals "" "$("$CP" list)$("$CP" rows)$("$CP" first-pending)" "T6 a home with no critical= key printed something"
 out=$(gate); expect_code 0 "$?" "T6 a home with no critical= key should be unchanged: $out"
-printf 'critical=nats,accounts,wake,inbox\nproject=proj\n' > "$HOME_DIR/config/migration-card"
+printf 'critical=queue,accounts,wake,inbox\nproject=proj\n' > "$HOME_DIR/config/migration-card"
 out=$(JG_HOME="$HOME_DIR" "$ROOT/bin/jg-brief.sh" cp-scout proj --scout --migration-row none 2>&1); rc=$?
 expect_code 1 "$rc" "T6 a scout brief should refuse --migration-row: $out"
 pass "T6 other projects, unconfigured homes and scouts are unchanged; an unreadable probe is pending"

@@ -16,7 +16,6 @@ BIN=${GOAL_PINNED_BIN:-$HOME/.cache/fm-scratch/beads-native-n5/bin}
 T=$(mktemp -d)
 W=$T/w H=$W/home F=$W/forge STORE=$W/store/.beads
 mkdir -p "$H/state" "$H/config" "$H/data" "$F" "$W/store" "$W/probes"
-for s in nats dapr; do printf '#!/bin/sh\necho up\n' > "$W/probes/$s"; chmod +x "$W/probes/$s"; done
 printf '%s\n' "$STORE" > "$H/config/goal-beads-dir"
 export JG_BEADS_BD=$BIN/bd JG_BEADS_DOLT=$BIN/dolt
 BEADS_DIR=$STORE "$REPO/bin/jg-beads.sh" init --prefix goal >/dev/null 2>&1 || { echo "fixture: the Goal store did not start"; exit 1; }

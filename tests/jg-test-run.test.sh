@@ -523,7 +523,7 @@ test_a_test_within_its_limits_is_unaffected() {
   pass 'a test within its limits is unaffected'
 }
 
-# A branch that retires a journey with its test (go-shell GS6 deleted the Dapr worker's journey and
+# A branch that retires a journey with its test (go-shell GS6 deleted a worker's journey and
 # test) must still select its changed tests: the deleted journey has no owner left, so it selects
 # nothing, while a deleted journey another test still names selects that test.
 test_a_deleted_journey_does_not_refuse_the_changed_selection() {

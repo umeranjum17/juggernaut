@@ -49,10 +49,8 @@ func TestGatewayChatRow(t *testing.T) {
 		}
 	}))
 	defer bot.Close()
-	dapr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	defer dapr.Close()
 	tokenFile, conf, state, data := filepath.Join(home, "tg.token"), filepath.Join(home, "conf"), filepath.Join(home, "state"), filepath.Join(home, "data")
-	os.WriteFile(conf, []byte(fmt.Sprintf("set gateway-adapters telegram\nset telegram-token-file %s\nset telegram-allow-user 42\nset telegram-api-url %s\nset dapr-http-url %s\nset dapr-pubsub p\nset subject-prefix jg.captain\n", tokenFile, bot.URL, dapr.URL)), 0o600)
+	os.WriteFile(conf, []byte(fmt.Sprintf("set gateway-adapters telegram\nset telegram-token-file %s\nset telegram-allow-user 42\nset telegram-api-url %s\nset subject-prefix jg.captain\n", tokenFile, bot.URL)), 0o600)
 	os.MkdirAll(data, 0o700)
 	a := &app{root: root, home: home, state: state, data: data, configFiles: []string{conf}, record: state + "/rec", log: state + "/log"}
 	row := func() string {

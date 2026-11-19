@@ -334,9 +334,6 @@ func (a *app) gateway(args []string) int {
 		a.typing = a.typerFor(ad)
 		a.typing.stopOnSignal()
 		go a.typing.run()
-		if len(allow) > 0 {
-			go a.serveGatewayEvents(ad, allow[0]) // cards, outcomes, alerts and digests out to the chat
-		}
 		go func() { // replies are not held behind a 30 s long poll
 			for {
 				if err := a.followReplies(ad); err != nil {

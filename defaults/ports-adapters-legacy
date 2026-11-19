@@ -7,8 +7,6 @@ core/delete-guard/pi-extension.ts pi-engine-kit
 core/kill-guard/pi-extension.ts pi-engine-kit
 core/pipeline-literal-delete/pi-literal-delete.ts pi-engine-kit
 core/read-guard/pi-extension.ts pi-engine-kit
-journeys/wake-bus-live.sh message-bus
-journeys/wake-cursor-kill.sh message-bus
 .pi/extensions/jg-branch-supervision.ts pi-engine-kit
 .pi/extensions/jg-calm.ts pi-engine-kit
 .pi/extensions/jg-primary-pi-watch.ts pi-engine-kit

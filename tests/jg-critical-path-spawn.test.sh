@@ -51,8 +51,8 @@ chmod +x "$W/probe"
 export JG_MIGRATION_LIVE_BIN="$W/probe"
 export JG_TEST_PROBE_STATE="$W/probe.state"
 probe_state() { printf '%s\n' "$@" > "$JG_TEST_PROBE_STATE"; }
-probe_state 'nats live' 'accounts pending'
-printf 'critical=nats,accounts,wake,inbox\nproject=proj\n' > "$HOME_DIR/config/migration-card"
+probe_state 'queue live' 'accounts pending'
+printf 'critical=queue,accounts,wake,inbox\nproject=proj\n' > "$HOME_DIR/config/migration-card"
 
 N=0
 fresh() { N=$((N + 1)); id=jg-cp$N; }

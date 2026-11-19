@@ -12,16 +12,15 @@
 #      allocator's own refusal): the real bin/jg-watch.sh runs one cycle over a changed
 #      status log and names the wake it raised, exits 0, and that raise is owed too.
 #      Before this change the same cycle exits 1 at its raise site and raises nothing;
-#   3. the engine and the store come back (a throwaway JetStream server, a real build):
-#      the owed rows publish, the outbox empties, and the read model every other reader
-#      opens holds the watcher's wake.
+#   3. the engine comes back (a real build): the render folds the owed rows and the read
+#      model every other reader opens holds the watcher's wake.
 set -u
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 OUT=${DONE_DONE_EVIDENCE_ROOT:?run through done-done}
 LOG=$OUT/${RUN_ID:-wake-raise-outbox}.log
 T=$(mktemp -d)
 : > "$LOG"
-trap 'kill "${srv:-0}" 2>/dev/null; rm -rf -- "$T"' EXIT
+trap 'rm -rf -- "$T"' EXIT
 hm=$T/home
 st=$hm/state
 outbox=$st/.wake-bus.outbox.jsonl
@@ -41,7 +40,6 @@ export JG_HOME=$hm JG_STATE_OVERRIDE=$st JG_DATA_OVERRIDE=$hm/data \
 # The wake engine cannot run: bin/jg-bus.sh owns that verdict, and it is exactly what a
 # checkout mid-rebuild hands a producer - no runnable binary and no way to build one.
 export JG_BUS_BIN=$T/no-such-jg-bus JG_BUS_GO=/bin/false
-unset JG_WAKE_BUS_URL JG_NATS_BIN
 
 say "== 1. the producer queues a raise the engine cannot serve"
 ( . "$REPO/bin/jg-wake-lib.sh"
@@ -79,36 +77,14 @@ n=$(jq -c 'select(.key == "alpha-one.status")' "$outbox" 2>/dev/null | awk 'END 
 say "  owed rows for alpha-one.status: $n (expected 2: the producer's and the watcher's)"
 [ "$n" = 2 ] || bad "the watcher's own raise was not owed"
 
-say "== 3. the owed rows publish and reach the read model once the store answers"
-SERVER=${JG_NATS_SERVER:-$(command -v nats-server 2>/dev/null || true)}
-CLIENT=${JG_NATS_BIN:-$(command -v nats 2>/dev/null || true)}
-if [ -z "$SERVER" ] || [ -z "$CLIENT" ]; then
-  say "  skip: nats-server or the nats client is not installed, so publication stays unverified"
-else
-  mkdir -p "$T/store"
-  "$SERVER" -js -a 127.0.0.1 -p -1 -sd "$T/store" > "$T/nats.log" 2>&1 & srv=$!
-  port=
-  for _ in $(seq 200); do
-    port=$(sed -n 's/.*Listening for client connections on 127\.0\.0\.1:\([0-9][0-9]*\).*/\1/p' "$T/nats.log" 2>/dev/null | head -n 1)
-    [ -n "$port" ] && break
-    sleep 0.05
-  done
-  if [ -z "$port" ]; then
-    bad "the throwaway server never listened"
-  else
-    printf '1\n' > "$st/bus/wake-order"
-    export JG_WAKE_BUS_URL=nats://127.0.0.1:$port JG_NATS_BIN=$CLIENT
-    "$REPO/bin/jg-wake-bus.sh" render > "$T/render.log" 2>&1
-    say "  render rc=$?"
-    sed -n '1,3p' "$T/render.log" | sed 's/^/  render: /'
-    owed 0
-    say "  read model rows: $(awk 'END { print NR + 0 }' "$st/.wake-queue" 2>/dev/null)"
-    say "  read model rows naming alpha-one.status: $(grep -c 'alpha-one.status' "$st/.wake-queue" 2>/dev/null)"
-    [ "$(grep -c 'alpha-one.status' "$st/.wake-queue" 2>/dev/null)" = 2 ] \
-      || bad "the published rows are not both in the read model"
-    "$CLIENT" -s "nats://127.0.0.1:$port" --timeout 5s stream info JG_WAKE 2>/dev/null \
-      | sed -n 's/^ *\(State:\|Messages:\).*/  stream \1/p' | sort -u | head -3
-  fi
-fi
+say "== 3. the owed rows reach the read model once the engine runs"
+printf '1\n' > "$st/bus/wake-order"
+"$REPO/bin/jg-wake-bus.sh" render > "$T/render.log" 2>&1
+say "  render rc=$?"
+sed -n '1,3p' "$T/render.log" | sed 's/^/  render: /'
+say "  read model rows: $(awk 'END { print NR + 0 }' "$st/.wake-queue" 2>/dev/null)"
+say "  read model rows naming alpha-one.status: $(grep -c 'alpha-one.status' "$st/.wake-queue" 2>/dev/null)"
+[ "$(grep -c 'alpha-one.status' "$st/.wake-queue" 2>/dev/null)" = 2 ] \
+  || bad "the owed rows are not both in the read model"
 say "journey failures=$fails"
 exit "$([ "$fails" -eq 0 ] && echo 0 || echo 1)"

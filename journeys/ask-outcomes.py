@@ -118,9 +118,8 @@ def main(lab):
         token.write_text("000000:synthetic-only\n")
         token.chmod(0o600)
         (home / "config/captain-channel").write_text(
-            f"set mode live\nset gateway-adapters telegram\nset telegram-token-file {token}\n"
-            f"set telegram-allow-user 42\nset telegram-api-url http://127.0.0.1:{server.server_port}\n"
-            f"set dapr-http-url http://127.0.0.1:{server.server_port}\n")
+            f"set mode direct\nset gateway-adapters telegram\nset telegram-token-file {token}\n"
+            f"set telegram-allow-user 42\nset telegram-api-url http://127.0.0.1:{server.server_port}\n")
         run("jg-beads.sh", "init", "--prefix", "jg")
         (home / "config/beads-dir").write_text(env["BEADS_DIR"] + "\n")
         (home / "config/backlog-intake-loose").touch()

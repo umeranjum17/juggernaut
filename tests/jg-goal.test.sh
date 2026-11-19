@@ -121,7 +121,6 @@ close_steps() {  # <goal>: close every step, as the lead and the proof would
   done
 }
 mkdir -p "$T/probes"
-for s in nats dapr; do printf '#!/bin/sh\necho up\n' > "$T/probes/$s"; chmod +x "$T/probes/$s"; done
 export JG_LIVE_SERVICES_PROBES=$T/probes
 fin=$("$GOAL" declare --ask "ref goal" --repo o/r --where "this home" -- false) || fail "declare the finish goal"
 "$GOAL" released "$fin" v9 >/dev/null

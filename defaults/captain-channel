@@ -1,30 +1,13 @@
-# Captain channel routing: where the bus is, what it carries, and how the captain
-# hears about it. bin/jg-bus.sh is the one reader; a home's config/captain-channel
-# overrides any single key here, and JG_CAPTAIN_CHANNEL overrides both files.
+# Captain channel routing: how the captain hears about a change of state.
+# bin/jg-bus.sh is the one reader; a home's config/captain-channel overrides any single key
+# here, and JG_CAPTAIN_CHANNEL overrides both files.
 #
-# The channel is LIVE: a captain-facing change of state is recorded and published
-# to the bus by this path.
-#   mode          direct  record it, then send it through the chat in-process; no bus (the shipped value).
-#                 live    record and publish, and name an event the bus does not
-#                         take in the undelivered record.
-#                 shadow  record and publish only. This is the one-step reversal.
+# A captain-facing change of state is recorded, then sent through the chat in-process.
+#   mode          direct  record it, then send it through the chat in-process (the shipped value).
 #                 off     do nothing at all.
-#   The transport itself is not a key here: bin/jg-bus.sh publishes through the Dapr
-#   sidecar, and core/bus/dapr/components/pubsub.yaml picks what the bus really is.
-#   nats-url      the server core/bus/nats.conf starts; dapr-http-url/-ports are
-#                 the sidecar started beside it.
-#   stream        the JetStream stream core/bus/stream.json creates for subject-prefix.
-#                 The metric server stays off in this step (see jg-bus.sh serve): a
-#                 metrics port is shared machine surface and nothing scrapes it yet.
+#   subject-prefix  the name every recorded event carries before its kind.
 set mode direct
-set nats-url nats://127.0.0.1:4222
-set dapr-http-url http://127.0.0.1:3500
-set dapr-http-port 3500
-set dapr-grpc-port 50001
-set dapr-app-id juggernaut-bus
-set dapr-pubsub captain-channel
 set subject-prefix jg.captain
-set stream CAPTAIN
 # Chat gateway (jg-bus gateway, docs/captain-chat.md). Optional: with no token file at the path
 # below (mode 600) it is off, silently. `jg-bus gateway setup` guides you through making your own
 # bot, storing its token and pairing; `jg-bus gateway pair` alone sets telegram-allow-user.
