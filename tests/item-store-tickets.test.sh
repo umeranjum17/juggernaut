@@ -86,6 +86,35 @@ python3 "$TK" compare "$FX/export.jsonl" >/dev/null; expect_code 0 $? "compare o
 [ "$(sql "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('ticket','link','ticket_change')")" = 3 ] || fail "three ticket tables"
 pass "import then compare: no difference"
 
+# --- re-import: a changed row updates, an equal row is not rewritten, a new row inserts, a second run is a no-op
+cp "$FX/export.jsonl" "$T/resync.jsonl"
+log0=$(sql 'SELECT count(*) FROM ticket_change')
+out=$(python3 "$TK" import --home main "$T/resync.jsonl"); expect_code 0 $? "re-import of equal rows"
+assert_contains "$out" "0 inserted, 0 updated, 11 unchanged" "an equal re-import counts 11 unchanged"
+[ "$(sql 'SELECT count(*) FROM ticket_change')" = "$log0" ] || fail "an equal row was rewritten: the log grew"
+python3 - "$T/resync.jsonl" <<'PY'
+import json, sys
+p = sys.argv[1]; rows = [json.loads(l) for l in open(p)]
+for r in rows:
+    if r["id"] == "jg-ready1": r["title"] = "changed after the first export"; r["labels"].append("later")
+rows.append(dict(rows[0], id="jg-resync-new", title="a new row", dependencies=[]))
+open(p, "w").write("".join(json.dumps(r) + "\n" for r in rows))
+PY
+out=$(python3 "$TK" import --home main "$T/resync.jsonl"); expect_code 0 $? "re-import with a changed and a new row"
+assert_contains "$out" "1 inserted, 1 updated, 10 unchanged" "one inserted, one updated, the rest unchanged"
+[ "$(sql "SELECT title FROM ticket WHERE home='main' AND id='jg-ready1'")" = "changed after the first export" ] || fail "the changed row did not update"
+[ "$(sql "SELECT count(*) FROM ticket WHERE home='main' AND id='jg-ready1'")" = 1 ] || fail "an update made a second row"
+[ "$(sql "SELECT count(*) FROM ticket WHERE id='jg-resync-new'")" = 1 ] || fail "the new row did not insert"
+[ "$(sql 'SELECT count(*) FROM ticket_change')" = "$((log0 + 2))" ] || fail "only the two touched rows wrote to the log"
+out=$(python3 "$TK" import --home main "$T/resync.jsonl")
+assert_contains "$out" "0 inserted, 0 updated, 12 unchanged" "a second run is a no-op"
+[ "$(sql 'SELECT count(*) FROM ticket_change')" = "$((log0 + 2))" ] || fail "a second run wrote to the log"
+python3 "$TK" compare "$T/resync.jsonl" >/dev/null; expect_code 0 $? "compare is empty after the re-sync"
+# put the store back to the fixture for the steps below: the changed row re-imports, the new row is dropped by the log
+python3 "$TK" import --home main "$FX/export.jsonl" >/dev/null
+python3 -c 'import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute("INSERT INTO ticket_change(at,home,id,verb,source,row,links) VALUES(1,?,?,?,?,NULL,?)",("main","jg-resync-new","test","t:undo","[]")); c.commit()' "$DB"
+pass "re-import: a changed row updates, an equal row is not rewritten, a new row inserts, a second run is a no-op"
+
 # --- every write verb through jg-backlog.sh leaves compare empty
 : > "$T/home/config/one-engine"
 step() { local what=$1; shift; out=$("$BL" "$@" 2>&1); expect_code 0 $? "$what: $out"

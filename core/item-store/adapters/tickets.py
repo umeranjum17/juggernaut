@@ -3,7 +3,10 @@
 bin/jg-backlog.sh in the same call that writes Beads when the main home has config/one-engine. Reads stay on Beads.
 
   tickets.py import --home <home id> <bd export jsonl>   every row and link of one home's store, keyed (home, id): an id
-                                                         another home also holds is a different ticket, never a refusal
+                                                         another home also holds is a different ticket, never a refusal.
+                                                         Inserts a new row, updates a row whose fields, labels, metadata or
+                                                         links changed, leaves an equal row alone; prints the three counts,
+                                                         and a second run prints 0 inserted, 0 updated
   tickets.py write <verb> <args...> --source <id>         after a successful Beads write of that verb: copies the rows the
                                                          call touched from a fresh `bd export` (the ids named in the args,
                                                          the new ids of an add; relink and retag: every row that differs).
@@ -163,15 +166,25 @@ def cmd_import(a):
     st = open_tickets(home())
     con = st.con
     at, src = int(time.time()), "import:%s:%d" % (a.home, time.time_ns())
+    counts = {"inserted": 0, "updated": 0, "unchanged": 0}
     con.execute("BEGIN IMMEDIATE")
     try:
         for r in rows.values():
+            have = copy_of(con, a.home, r["id"])
+            if have is None:
+                counts["inserted"] += 1
+            elif diffs(norm(r), have):
+                counts["updated"] += 1
+            else:
+                counts["unchanged"] += 1       # an equal row is never rewritten: no log row
+                continue
             change(st, at, a.home, "import", src, r)
         con.execute("COMMIT")
     except Exception:
         con.execute("ROLLBACK")
         raise
-    print("import: %d tickets from %s" % (len(rows), a.home))
+    print("import: %d tickets from %s: %d inserted, %d updated, %d unchanged"
+          % (len(rows), a.home, counts["inserted"], counts["updated"], counts["unchanged"]))
     return 0
 
 
