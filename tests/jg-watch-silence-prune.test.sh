@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The phantom-pane prune removes every marker a vanished pane owns, including the two silence markers.
 # A pane the backend reports absent loses all of them; a pane the backend still lists keeps all of them.
-# The prune also reports its move to the markers table in shadow (data/machine-shadow.log): nothing for a
-# legal move, one line for an illegal one, and the prune itself is the same either way.
+# The prune no longer reports its move to the machine tables in shadow (jg-nukte slice 8b2 removed that call):
+# data/machine-shadow.log stays empty whatever the marker's state, and the prune itself is the same either way.
 set -u
 # shellcheck source=tests/wake-helpers.sh
 . "$(dirname "${BASH_SOURCE[0]}")/wake-helpers.sh"
@@ -50,5 +50,5 @@ test_prune() ( # <observed state> <shadow lines wanted>
 
 result=0
 test_prune orphan 0 || result=1
-test_prune owned 1 || result=1
+test_prune owned 0 || result=1
 exit "$result"

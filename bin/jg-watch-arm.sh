@@ -298,7 +298,12 @@ cycle_mark_predecessor_successor() {
     }
     END {
       for (i = 1; i <= NR; i += 1) {
-        if (i == last) sub(/\tsuccessor=none$/, "\t" replacement, lines[i])
+        if (i == last) {
+          # A record carries fields after successor= (the supervision-gap class), so the field is replaced in place.
+          n = split(lines[i], parts, "\t")
+          lines[i] = ""
+          for (j = 1; j <= n; j += 1) lines[i] = lines[i] (j > 1 ? "\t" : "") (parts[j] == "successor=none" ? replacement : parts[j])
+        }
         print lines[i]
       }
     }

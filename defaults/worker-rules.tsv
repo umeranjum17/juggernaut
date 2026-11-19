@@ -6,22 +6,19 @@
 # A `keep:<names>` row names personal skills the brief scaffold names, outside this repository's own surface: it only feeds
 # bin/jg-launch-settings.sh's keep-list, and `check` and `measure` do not read it.
 agents-preamble	all
-agents:1. Identity and prime directives	overwatch,squad_lead
-agents:2. Layout and state	overwatch,squad_lead
-agents:3. Session start (run once at every session start)	overwatch,squad_lead
-agents:4. Harness and runtime dispatch	overwatch,squad_lead
-agents:5. Recovery	overwatch,squad_lead
-agents:6. Project and knowledge management	overwatch,squad_lead
-agents:7. Task lifecycle	overwatch,squad_lead
-agents:8. Supervision protocol	overwatch,squad_lead
-agents:9. Escalation and captain etiquette	overwatch,squad_lead
-agents:10. Backlog contract	overwatch,squad_lead
-agents:11. Operator briefs	overwatch,squad_lead
-agents:12. Self-update	overwatch
-agents:13. Agent-only reference skills	overwatch,squad_lead
-agents:14. Relay	overwatch
-agents:Captain instruction precedence	overwatch,squad_lead
-agents:Maintaining this file	overwatch,squad_lead,builder
+agents:1. Identity and prime directives	all
+agents:11. Briefs, self-update, skills and Relay	all
+agents:Maintaining this file	all
+agents:main:1. Identity and prime directives	overwatch,squad_lead
+agents:main:2. Layout, session start, dispatch and recovery	overwatch,squad_lead
+agents:main:7. Task lifecycle	overwatch,squad_lead
+agents:main:8. Supervision protocol	overwatch,squad_lead
+agents:main:9. Escalation and captain etiquette	overwatch,squad_lead
+agents:main:10. Backlog contract	overwatch,squad_lead
+agents:main:11. Briefs, self-update, skills and Relay	overwatch,squad_lead
+agents:main:Maintaining this file	overwatch,squad_lead
+skill:blitz council spotrep status-check swarm war-room	overwatch,squad_lead
+skill:op-order strike-recon	overwatch,squad_lead,scout
 skill:juggernaut-coding-guidelines	builder,reviewer
 skill:done-done-verify-suites	builder,reviewer
 skill:prior-art	builder,scout

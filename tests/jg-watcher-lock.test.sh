@@ -358,13 +358,13 @@ test_slow_comms_feed_sync_keeps_beacon_fresh() (
 )
 
 # A slow child the pass must wait on keeps the beacon fresh, but only up to the
-# child cap: a wedged child must still age the beacon so the stale refusal and
-# then the stall-bound eviction fire. The child is the real fleet-ledger capture,
+# child cap: a wedged child must still age the beacon so the arm sees a slow beat and
+# then the stall-bound eviction fires. The child is the real fleet-ledger capture,
 # which appends to a ledger that is a FIFO with no reader, so it stays in
 # progress until this case opens the FIFO (the comms-feed exporter skips a
 # ledger that is not a regular file). Grace 3s, cap 8s, stall bound 12s.
 test_slow_inline_child_keeps_beacon_until_cap() (
-  local dir state fakebin ledger pid='' arm='' i age status t0 lock_pid
+  local dir state fakebin ledger pid='' arm='' i age status lock_pid
   dir=$(make_case slow-inline-child)
   state="$dir/state"
   fakebin="$dir/fakebin"
@@ -386,7 +386,6 @@ test_slow_inline_child_keeps_beacon_until_cap() (
     sleep 0.1
   done
   [ -d "$state/.fleet-ledger.lock" ] || fail "the ledger capture never started: $(cat "$dir/watch.err")"
-  t0=$SECONDS
   # Inside the cap: a live, working watcher.
   sleep 5
   status=0
@@ -396,16 +395,28 @@ test_slow_inline_child_keeps_beacon_until_cap() (
     || fail "re-arm inside the child cap did not attach: $(cat "$dir/rearm.out" "$dir/rearm.err")"
   age=$(bash -c '. "$1"; jg_watcher_progress_age "$2"' _ "$LIB" "$state")
   [ "$age" -lt 3 ] || fail "beacon is ${age}s old inside the child cap (grace 3s)"
-  # Past the cap the child is wedged: the beacon ages and a re-arm refuses.
-  sleep $((t0 + 13 - SECONDS))
+  # Past the cap the child is wedged: the beacon ages. Wait on that event, not on a clock, and a re-arm then
+  # stands down on the live holder, which is below the stall bound (the slow-beat rule of jg-7v6uw-s50).
+  for ((i=0; i<300; i++)); do
+    age=$(bash -c '. "$1"; jg_watcher_progress_age "$2"' _ "$LIB" "$state")
+    [ "$age" -lt 3 ] || break
+    sleep 0.1
+  done
+  [ "$age" -ge 3 ] || fail "the beacon never aged past the grace although the child was wedged past the cap"
+  [ "$age" -lt 12 ] || fail "fixture: the beacon passed the stall bound before the re-arm ($age s)"
   [ -d "$state/.fleet-ledger.lock" ] || fail "the ledger capture finished early; the case proves nothing"
   status=0
   "$WATCH" > "$dir/rearm.out" 2> "$dir/rearm.err" || status=$?
-  if [ "$status" -eq 0 ] || ! grep -F 'heartbeat is stale' "$dir/rearm.err" >/dev/null; then
-    fail "a child wedged past the cap kept the beacon fresh: $(cat "$dir/rearm.out" "$dir/rearm.err")"
+  if [ "$status" -ne 0 ] || ! grep -Fx "watcher: already running pid $pid" "$dir/rearm.out" >/dev/null; then
+    fail "a live holder with an aged beacon under the stall bound did not stand the re-arm down: $(cat "$dir/rearm.out" "$dir/rearm.err")"
   fi
-  # Past the cap plus the stall bound the wedged watcher is replaced.
-  sleep $((t0 + 22 - SECONDS))
+  # Past the stall bound the wedged watcher is replaced.
+  for ((i=0; i<300; i++)); do
+    age=$(bash -c '. "$1"; jg_watcher_progress_age "$2"' _ "$LIB" "$state")
+    [ "$age" -lt 12 ] || break
+    sleep 0.1
+  done
+  [ "$age" -ge 12 ] || fail "the beacon never reached the stall bound"
   "$WATCH" > "$dir/evict.out" 2> "$dir/evict.err" &
   arm=$!
   for ((i=0; i<150; i++)); do

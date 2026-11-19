@@ -31,8 +31,8 @@ pass "measure prints before and after"
 
 mapfile=$WORK/map.tsv
 bad() { JG_WORKER_RULES_MAP=$mapfile "$tool" check >"$WORK/out" 2>&1 && fail "$1: check passed"; grep -q "$2" "$WORK/out" || fail "$1: wanted '$2', got $(cat "$WORK/out")"; }
-grep -v '^agents:14' "$ROOT/defaults/worker-rules.tsv" > "$mapfile"
-bad "dropped section" 'no role reads: agents:14. Relay'
+grep -v '^agents:main:10' "$ROOT/defaults/worker-rules.tsv" > "$mapfile"
+bad "dropped section" 'no role reads: agents:main:10. Backlog contract'
 { cat "$ROOT/defaults/worker-rules.tsv"; printf 'skill:prior-art\tscout\n'; } > "$mapfile"
 bad "skill named twice" 'named twice: skill:prior-art'
 sed 's/^agents-preamble\tall/agents-preamble\tcaptain/' "$ROOT/defaults/worker-rules.tsv" > "$mapfile"

@@ -91,6 +91,10 @@ fi
 drain=$("$JG_REPO/bin/jg-wake-drain.sh" 2>&1)
 printf '%s\n' "$drain" > "$JG_HOME/engine-drain.$n"
 ack=$(printf '%s\n' "$drain" | sed -n 's/^WAKE_ACK_REQUIRED: after handling completes run bin\/jg-wake-drain.sh //p' | tail -1)
+# The drain refuses an acknowledgement until each presented outcome is relayed or classified.
+for id in $(printf '%s\n' "$drain" | sed -n 's/^OUTCOME_REQUIRED: //p' | sort -u); do
+  "$JG_REPO/bin/jg-wake-drain.sh" --outcome "$id" --classified 'the stub engine reviewed the outcome' >/dev/null 2>&1
+done
 task=$(sed -n 's/^tasks=//p' "$STATE/.supervision-host-turn" | awk '{ print $1 }')
 [ -n "$task" ] || task=fleet
 verdict=routine
@@ -318,8 +322,8 @@ marker_kind() {  # <home>
 engine_calls() { find "$1" -maxdepth 1 -name 'engine-call.*' 2>/dev/null | wc -l | tr -d ' '; }
 handled_count() { local n; n=$(grep -c '	handled	' "$1/state/.supervision-host.log" 2>/dev/null); printf '%s\n' "${n:-0}"; }
 handled_at_least() { [ "$(handled_count "$1")" -ge "$2" ]; }
-append_status() {  # <home> <text>
-  printf '%s [at=%s]: %s\n' "${3:-working}" "$(date +%s)" "$2" >> "$1/state/demo.status"
+append_status() {  # <home> <text> [state] [task]
+  printf '%s [at=%s]: %s\n' "${3:-working}" "$(date +%s)" "$2" >> "$1/state/${4:-demo}.status"
 }
 
 # --- report surface -----------------------------------------------------------
@@ -1314,9 +1318,14 @@ hook_exited() { [ -s "$1/hook.rc" ]; }
 # Main's rewoken turn drains; the caller runs the printed acknowledgement
 # (MAIN_ACK) when that turn's handling is done.
 main_drain() {  # <home>; prints the drain and sets MAIN_ACK
-  local out
+  local out id
   out=$(JG_HOME="$1" "$FAKE_CLAUDE" -c '"$0" 2>&1' "$ROOT/bin/jg-wake-drain.sh")
   MAIN_ACK=$(printf '%s\n' "$out" | sed -n 's/^WAKE_ACK_REQUIRED: after handling completes run bin\/jg-wake-drain.sh //p' | tail -1)
+  # The drain refuses an acknowledgement until each presented outcome is relayed or classified.
+  for id in $(printf '%s\n' "$out" | sed -n 's/^OUTCOME_REQUIRED: //p' | sort -u); do
+    JG_HOME="$1" "$FAKE_CLAUDE" -c '"$0" "$@" >/dev/null 2>&1' "$ROOT/bin/jg-wake-drain.sh" --outcome "$id" --classified 'main reviewed the outcome' \
+      || fail "main could not classify outcome $id"
+  done
   printf '%s\n' "$out"
 }
 
@@ -1600,7 +1609,8 @@ test_successor_close_during_main_turn_is_delivered_at_the_next_turn_end() {
   assert_rewoke_main "$home" "successor close (first)"
   successor=$(cat "$home/state/.watch.lock/pid")
   main_drain "$home" >/dev/null
-  append_status "$home" 'which region?' needs-decision
+  # The later close is another task's: a status file that grew after main's drain presented it cannot be acknowledged.
+  append_status "$home" 'which region?' needs-decision other
   wait_until 250 bash -c '! kill -0 "$1" 2>/dev/null' _ "$successor" || fail "fixture: the successor did not close on the later decision"
   # shellcheck disable=SC2086 # the printed acknowledgement arguments
   [ -z "$MAIN_ACK" ] || JG_HOME="$home" "$FAKE_CLAUDE" -c '"$0" "$@" >/dev/null 2>&1' "$ROOT/bin/jg-wake-drain.sh" $MAIN_ACK \
@@ -2728,7 +2738,7 @@ test_park_limit_lets_a_turn_outlive_the_boundary() {
 # owner's predecessor arm makes the first cycle a handling successor. The home
 # names no usable engine, so every attended close passes straight to main.
 test_first_cycle_status_streams_and_owner_options_reach_it() {
-  local home stale fresh generation predecessor
+  local home stale fresh generation predecessor id
   home=$(make_home stream attended pi)
   start_host "$home"
   wait_until 150 grep -qs '^watcher: started pid=' "$home/host.out" \
@@ -2740,7 +2750,10 @@ test_first_cycle_status_streams_and_owner_options_reach_it() {
   [ "$(sed -n '1p' "$home/host.out" | cut -c1-17)" = 'watcher: started ' ] || fail "stream: the status line must come first"
   assert_re '^signal: .*demo.status' "$home/host.out" "stream: the close must follow the status line"
   # Main handles that close, so the next cycle has no episode to resurface.
-  JG_HOME="$home" "$ROOT/bin/jg-wake-drain.sh" >/dev/null 2> "$home/drain.err" || fail "stream: main's drain failed"
+  JG_HOME="$home" "$ROOT/bin/jg-wake-drain.sh" > "$home/drain.out" 2> "$home/drain.err" || fail "stream: main's drain failed"
+  while IFS= read -r id; do
+    JG_HOME="$home" "$ROOT/bin/jg-wake-drain.sh" --outcome "$id" --classified 'main reviewed the outcome' >/dev/null 2>&1 || fail "stream: main could not classify outcome $id"
+  done < <(sed -n 's/^OUTCOME_REQUIRED: //p' "$home/drain.out" | sort -u)
   ack_drain_err "$home/state" "$home/drain.err" >/dev/null 2>&1 || fail "stream: main's acknowledgement failed: $(cat "$home/drain.err")"
   # Pass-through can leave a successor watcher running. Retire that cycle so
   # the orphan-arm fixture below owns the watcher we later ask --restart to replace.
@@ -2789,9 +2802,12 @@ test_first_cycle_status_streams_and_owner_options_reach_it() {
 
 # Main's side of a handed-back wake: drain, then run the printed acknowledgement.
 main_drain_and_ack() {  # <home>
-  local out ack
+  local out ack id
   out=$(JG_HOME="$1" "$ROOT/bin/jg-wake-drain.sh" 2>&1)
   ack=$(printf '%s\n' "$out" | sed -n 's/^WAKE_ACK_REQUIRED: after handling completes run bin\/jg-wake-drain.sh //p' | tail -1)
+  for id in $(printf '%s\n' "$out" | sed -n 's/^OUTCOME_REQUIRED: //p' | sort -u); do
+    JG_HOME="$1" "$ROOT/bin/jg-wake-drain.sh" --outcome "$id" --classified 'main reviewed the outcome' >/dev/null 2>&1 || fail "main could not classify outcome $id"
+  done
   # shellcheck disable=SC2086 # the printed acknowledgement arguments
   [ -z "$ack" ] || JG_HOME="$1" "$ROOT/bin/jg-wake-drain.sh" $ack >/dev/null 2>&1 || fail "main's acknowledgement failed: $ack"
 }
