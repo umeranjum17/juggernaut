@@ -121,11 +121,24 @@ resume_waiters() {  # <landed task id>
     jg-resume "$FMH" "$lib" "$1" 2>>"$MEM/resume.log" || :
 }
 
+# The landing in the item store (core/item-store/adapters/trunk.py), where the home has config/item-store: the lane's land item closes with the commit
+# now on the trunk (the lander may have re-cut it), read from the lane's landing row. Today's records decide, so a failure here changes nothing.
+store_landed() {  # <task-id> <lane head>
+  local key subject hid commit
+  [ -e "$FMH/config/item-store" ] || return 0
+  commit=$(awk -F'\t' -v i="$1" '$1 == i { c = $3 } END { print c }' "$DATA_DIR/trunk-landings.tsv" 2>/dev/null)
+  IFS=$'\t' read -r key subject _ <<<"$("$FMH/core/item-store/jg-item" key land --task "$1" --head "$2" 2>/dev/null)" || return 0
+  [ -n "$commit" ] && [ -n "$key" ] || return 0
+  hid=${key#land:}; hid=${hid%%/*}
+  python3 -I "$FMH/core/item-store/adapters/trunk.py" landed "$hid" "$subject" "$2" "$commit" --source "land:$1@$commit" >/dev/null 2>&1 || :
+}
+
 # A lane the lander reports landed: cleaned up at once, never forced (cleanup-retry.sh), its waiters resumed, one outbox line.
 # The lander rebased the lane, so its branch may now be at another head: the same state stands for that head.
 landed_lane() {  # <task-id> <head> <outbox text after the id and mode>
   local id=$1 head=$2 proj br now res lane_mode
   proj=$(mval "$STATE/$id.meta" project); lane_mode=$(mval "$STATE/$id.meta" mode)
+  store_landed "$id" "$head"
   br=$(mval "$STATE/$id.meta" branch); br=${br:-fm/$id}
   now=$(git -C "$proj" rev-parse --verify --quiet "refs/heads/$br^{commit}" 2>/dev/null) || now=
   [ "$now" != "$head" ] || now=

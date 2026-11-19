@@ -32,6 +32,7 @@
 #        jg-trunk.sh rollover <project-dir>            after the release PR merged, cut the next trunk version (release/v8, ...) from the default branch
 #        jg-trunk.sh retire <project-dir>              clean up an old trunk unforced: only when its release is proved on main and every hotfix is carried; unlanded work is kept and listed
 #        jg-trunk.sh due <project-dir>                 exit 0 when the oldest unreleased commit is past release-after-hours
+#        jg-trunk.sh release-daily                     Main's daily check: lists in the item store, once, each open release PR that nothing there asks or releases (records only)
 #
 # The flow is the same for every project IN local-trunk MODE (data/projects.md `[local-trunk]`); every subcommand
 # refuses any other project, whose own delivery rules are unchanged: a lane's one commit lands on the local trunk by itself once the
@@ -233,6 +234,9 @@ pol() { jg_trunk_policy "$1" "${PN:-}"; }
 put() { printf '%s\n' "$2" > "$1.tmp.$$" && mv -f "$1.tmp.$$" "$1"; }
 row() { mkdir -p "$DATA"; local f=$1; shift; printf '%s\n' "$(IFS=$'\t'; echo "$*")" >> "$DATA/$f"; }
 rev() { git -C "$PROJ" rev-parse --verify --quiet "$1^{commit}"; }
+# The item store's record of the same facts (core/item-store/adapters/trunk.py), only where the home has config/item-store. Today's records decide:
+# a store call never changes this script's output or exit status, and a refused write is an intake item on Main, not an error here.
+store_trunk() { [ -e "$JG_HOME/config/item-store" ] || return 0; python3 -I "$JG_ROOT/core/item-store/adapters/trunk.py" "$@" >/dev/null 2>&1 || true; }
 
 LOCKS=''; VERIFY_WANT=''
 cleanup() {
@@ -2563,6 +2567,12 @@ main_is_ancestor_of_trunk() {  # <main commit>
     && git -C "$PROJ" merge-base --is-ancestor "$1" "refs/heads/$TRUNK" 2>/dev/null
 }
 
+# The merged release pull request, in the item store: the push whose row names this URL is the head that was released.
+store_released() {  # <release pull request URL>
+  local head; head=$(awk -F'\t' -v p="$PN" -v u="$1" 'NF >= 6 && $1 == p && $6 == u { h = $3 } END { print h }' "$DATA/trunk-releases.tsv" 2>/dev/null)
+  [ -z "$head" ] || store_trunk released "$PN" "${1##*/}" "$head" --project-dir "$PROJ" --source "merged:${1##*/}@$head"
+}
+
 # Once the release PR has merged, the NEXT trunk version is cut from the default branch and the project moves onto
 # it: release/v8, release/v9, ... (the count goes on from the version the last cut recorded). Every commit that landed on the old trunk after the release is replayed onto it first (carry_over),
 # and the green pin follows its commit. The old trunk is left exactly as it was. Returns 1, changing nothing, while the PR is not merged.
@@ -2590,6 +2600,7 @@ rollover_if_merged() {
   JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref -m "trunk: version $ver after $url" "refs/heads/$new" "$CARRY_TIP" ""
   put "$STATE/trunk-tip-$PN" "$CARRY_TIP"; put "$STATE/trunk-green-$PN" "${green:-$base}"; put "$STATE/trunk-released-$PN" "$base"
   put "$STATE/trunk-branch-$PN" "$new"; put "$STATE/trunk-version-$PN" "$ver"; put "$STATE/trunk-rolled-$PN" "$url"
+  store_released "$url"
   row trunk-versions.tsv "$PN" "$ver" "$new" "$base" "$(date +%s)"
   carry_proofs
   release_tickets "$url" || :
@@ -2790,6 +2801,16 @@ record_publication() {  # <rel> <due> <attempt> <opened> <path> <url>
     || echo "warning: the publication record of ${1:0:12} could not be written; the release goes on" >&2
 }
 
+# The push into the release pull request, and the captain's word that allowed it, in the item store. Called before the word is spent (its token
+# holds the epoch the word was recorded at). Only a push that spends a word (`release`) is compared with the store's yes.
+store_release_push() {  # <rel> <url> <spend 0|1>
+  local pr=${2##*/} f="$STATE/trunk-word-release-$PN"
+  store_trunk pushed "$PN" "$pr" "$1" --source "push:$1"
+  [ "$3" = 1 ] || return 0
+  [ ! -f "$f" ] || [ "$(cut -f1 "$f")" != "$1" ] || store_trunk word "$PN" "$pr" "$1" --word-id "$(cut -f2 "$f")@$1"
+  store_trunk agree "$PN" "$pr" "$1"
+}
+
 push_batch() {  # <rel> <n> <prev> <spend 0|1> <proof 0|1> <path automatic|fallback>
   release_preflight "$1"
   local rel=$1 n=$2 prev=$3 default base body url unproved attempt opened=- due; local -a carried
@@ -2818,7 +2839,7 @@ push_batch() {  # <rel> <n> <prev> <spend 0|1> <proof 0|1> <path automatic|fallb
   if ! awk -F '\t' -v p="$PN" -v t="$TRUNK" -v h="$rel" -v u="$url" '$1 == p && $2 == t && $3 == h && $6 == u { found=1 } END { exit !found }' "$DATA/trunk-releases.tsv" 2>/dev/null; then
     row trunk-releases.tsv "$PN" "$TRUNK" "$rel" "$n" "$(date +%s)" "$url"
   fi
-  put "$STATE/trunk-released-$PN" "$rel"; [ "$4" != 1 ] || spend_word release release
+  put "$STATE/trunk-released-$PN" "$rel"; store_release_push "$rel" "$url" "$4"; [ "$4" != 1 ] || spend_word release release
   rm -f -- "$STATE/trunk-release-pending-$PN"
   echo "released $n commits from $TRUNK: $url"
   "$SCRIPT_DIR/../core/machines/release-stamp.sh" "$PROJ" "$base" "$rel" || true
@@ -2998,6 +3019,8 @@ cmd_proof() {
   gaps=$(jg_dod_trunk_proof_gaps "$JG_HOME" "$STATE" "$id" "$meta" "$head") || { printf '%s\n' "$gaps"; return 1; }
 }
 
+cmd_release_daily() { store_trunk daily; }
+
 cmd_due() {
   local first
   open_project "${1-}"; tip_ok
@@ -3034,6 +3057,7 @@ case "${1:-}" in
   publish) shift; cmd_publish "$@" ;;
   autorelease) shift; cmd_autorelease "$@" ;;
   due) shift; cmd_due "$@" ;;
+  release-daily) shift; cmd_release_daily ;;
   -h|--help|help) usage ;;
   *) usage >&2; exit 2 ;;
 esac

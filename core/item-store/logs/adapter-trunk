@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# The trunk adapter's own record for the stamp check: one `<source>\t<item key>` line per write it made
+# (core/item-store/adapters/trunk.py appends them to <main home>/state/item-store/trunk-written.log in the same call).
+# Prints nothing while the adapter has written nothing. The log sits beside fleet.db, in the main home's state.
+set -u
+d=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)
+home=${JG_HOME:-$d}
+# A Squad Lead home writes the main home's store: follow its parent binding as itemdb.main_home does.
+for _ in 1 2 3 4 5 6 7 8; do
+  p=$(sed -n 's/^parent_home=//p' "$home/.jg-squad-lead-parent" 2>/dev/null | head -n 1)
+  [ -n "$p" ] && [ -d "$p" ] || break
+  home=$p
+done
+f=$home/state/item-store/trunk-written.log
+[ -f "$f" ] || exit 0
+cat "$f"

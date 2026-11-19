@@ -1,0 +1,25 @@
+#!/usr/bin/env python3
+"""The log of owner:trunk-word for the stamp check: each release word in data/trunk-words.tsv whose commit was pushed into a release
+pull request (data/trunk-releases.tsv) -> `trunk-word:<epoch>@<commit>` and the question it answers, question:release:<project>@<pull request>."""
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+import itemdb
+
+home = os.environ.get("JG_HOME") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
+data = os.environ.get("JG_DATA_OVERRIDE") or os.path.join(itemdb.main_home(home), "data")
+
+
+def rows(name):
+    try:
+        return [ln.split("\t") for ln in open(os.path.join(data, name), encoding="utf-8").read().splitlines() if ln.strip()]
+    except OSError:
+        return []
+
+
+pushed = {}
+for f in rows("trunk-releases.tsv"):
+    if len(f) >= 6:
+        pushed.setdefault((f[0], f[2]), f[5].rstrip("/").rsplit("/", 1)[-1])
+for f in rows("trunk-words.tsv"):
+    if len(f) >= 4 and f[1] == "release" and (f[0], f[2]) in pushed:
+        print("trunk-word:%s@%s\tquestion:release:%s@%s" % (f[3], f[2], f[0], pushed[(f[0], f[2])]))
