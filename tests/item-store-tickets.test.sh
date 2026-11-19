@@ -133,19 +133,66 @@ out=$("$BL" compare 2>&1); expect_code 1 $? "compare sees a copy-only change"
 assert_contains "$out" 'jg-gate labels beads=["project:p"] copy=["extra", "project:p"]' "a label in the copy only is listed"
 pass "compare lists each field, label, metadata key and link that differs in one copy, one line each"
 
-# --- one id, one home
+# --- a ticket is keyed (home, id): two homes may share an id
 cp "$FX/export.jsonl" "$T/other.jsonl"
-before=$(sql 'SELECT count(*) FROM ticket_change')
-out=$(python3 "$TK" import --home crewhouse "$T/other.jsonl"); expect_code 1 $? "a second import under another home exits 1"
-assert_contains "$out" 'import: jg-ready1 is in main and crewhouse' "it names each id with both homes"
-[ "$(printf '%s\n' "$out" | wc -l)" = 11 ] || fail "one line per shared id"
-[ "$(sql 'SELECT count(*) FROM ticket_change')" = "$before" ] || fail "a refused import wrote rows"
-python3 "$TK" import --home crewhouse <(sed -n 1p "$T/other.jsonl" | sed 's/jg-ready1/jg-other1/') >/dev/null; expect_code 0 $? "a fresh id imports under another home"
-[ "$(sql "SELECT home FROM ticket WHERE id='jg-other1'")" = crewhouse ] || fail "ticket.home records the home"
-printf '%s\n' '{"id":"jg-other1","title":"same id","status":"open","priority":2,"issue_type":"task","created_at":"2026-11-12T00:00:00Z"}' >> "$ROWS"
-out=$(python3 "$TK" write add jg-other1 --source t:2); expect_code 1 $? "a create of an id another home holds is refused"
-assert_contains "$out" 'jg-other1 is in crewhouse, not main' "the refusal names both homes"
-pass "one id names one ticket: a shared id stops an import and a create, and writes nothing"
+python3 - "$T/other.jsonl" <<'PY'      # the same ids in another home: different titles
+import json, sys
+p = sys.argv[1]; rows = [json.loads(l) for l in open(p)]
+for r in rows: r["title"] = "crewhouse " + r["title"]
+open(p, "w").write("".join(json.dumps(r) + "\n" for r in rows))
+PY
+main_before=$(python3 "$TK" compare "$ROWS")
+out=$(python3 "$TK" import --home crewhouse "$T/other.jsonl"); expect_code 0 $? "an id another home holds imports under its own home: $out"
+[ "$(sql "SELECT count(*) FROM ticket WHERE home='crewhouse'")" = 11 ] || fail "crewhouse holds its 11 tickets beside main's"
+[ "$(sql "SELECT count(*) FROM ticket WHERE id='jg-ready1'")" = 2 ] || fail "the shared id is two rows"
+[ "$(sql "SELECT title FROM ticket WHERE id='jg-ready1' AND home='crewhouse'")" = "crewhouse row ready1" ] || fail "crewhouse reads its own row"
+[ "$(sql "SELECT title FROM ticket WHERE id='jg-ready1' AND home='main'")" = "row ready1" ] || fail "main reads its own row"
+[ "$(python3 "$TK" compare "$ROWS")" = "$main_before" ] || fail "crewhouse's rows changed what compare reports for main"
+mkdir -p "$T/crew/state"; printf 'crewhouse\n' > "$T/crew/.jg-squad-lead-home"; printf 'parent_home=%s\n' "$T/home" > "$T/crew/.jg-squad-lead-parent"
+out=$(JG_HOME=$T/crew python3 "$TK" compare "$T/other.jsonl"); expect_code 0 $? "compare of crewhouse's export is empty: $out"
+[ "$(JG_HOME=$T/crew python3 "$TK" show jg-ready1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["title"])')" = "crewhouse row ready1" ] || fail "show reads the caller's own home"
+[ "$(python3 "$TK" show crewhouse:jg-ready1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["title"])')" = "crewhouse row ready1" ] || fail "show home:id reads the named home"
+[ "$(python3 "$TK" ready --now 2026-11-20T00:00:00Z)" = "$(cat "$FX/ready.expected")" ] || fail "ready is scoped to this home"
+cp "$ROWS" "$T/rows.main"
+python3 - "$ROWS" <<'PY'
+import json, sys
+p = sys.argv[1]; rows = [json.loads(l) for l in open(p)]
+for r in rows:
+    if r["id"] == "jg-ready1": r["title"] = "main only"
+open(p, "w").write("".join(json.dumps(r) + "\n" for r in rows))
+PY
+python3 "$TK" write update jg-ready1 --source t:keyed; expect_code 0 $? "a write in main"
+[ "$(sql "SELECT title FROM ticket WHERE id='jg-ready1' AND home='main'")" = "main only" ] || fail "the write changed main's row"
+[ "$(sql "SELECT title FROM ticket WHERE id='jg-ready1' AND home='crewhouse'")" = "crewhouse row ready1" ] || fail "a write in main changed crewhouse's row"
+cp "$T/rows.main" "$ROWS"
+python3 "$TK" import --home crewhouse "$T/other.jsonl" >/dev/null; expect_code 0 $? "the same id twice in one home stays one row"
+[ "$(sql "SELECT count(*) FROM ticket WHERE id='jg-ready1' AND home='crewhouse'")" = 1 ] || fail "a re-import made a second row"
+pass "two homes share an id: each reads its own row, compare is empty for both, a write in one leaves the other alone"
+
+# --- a store made before the key (id unique across homes) is migrated, losing no row
+M=$T/old; mkdir -p "$M/state/item-store"
+python3 - "$ROOT" "$M" "$FX/export.jsonl" "$TK" <<'PY'
+import json, os, sqlite3, sys
+root, m, export, tk = sys.argv[1:]
+sys.path.insert(0, root + "/core/item-store"); import itemdb
+os.makedirs(m + "/config", exist_ok=True)
+st = itemdb.open_db(m, "t"); st.con.close()
+old = open(root + "/tests/fixtures/item-store-tickets/tickets-before-key.sql").read()
+con = sqlite3.connect(m + "/state/item-store/fleet.db"); con.executescript(old)
+con.execute("INSERT INTO ticket_change(at,home,id,verb,source,row,links) VALUES(1,'main','jg-a','import','s:1',?,?)",
+            (json.dumps({"title": "old a", "labels": "[]", "metadata": "{}", "ephemeral": 0}), json.dumps([{"to": "jg-b", "type": "blocks"}])))
+con.execute("INSERT INTO ticket_change(at,home,id,verb,source,row,links) VALUES(2,'main','jg-b','import','s:2',?,'[]')",
+            (json.dumps({"title": "old b", "labels": "[]", "metadata": "{}", "ephemeral": 0}),))
+con.commit()
+PY
+JG_HOME=$M python3 "$TK" ready >/dev/null; expect_code 0 $? "opening an old store migrates it"
+msql() { python3 -c 'import sqlite3,sys; [print("|".join(map(str,r))) for r in sqlite3.connect(sys.argv[1]).execute(sys.argv[2])]' "$M/state/item-store/fleet.db" "$1"; }
+[ "$(msql 'SELECT count(*) FROM ticket')" = 2 ] || fail "the migration kept both tickets"
+[ "$(msql "SELECT home||from_id||to_id FROM link")" = "mainjg-ajg-b" ] || fail "the migration kept the link, now with its home"
+[ "$(msql 'SELECT count(*) FROM ticket_change')" = 2 ] || fail "the log was kept"
+[ "$(msql "SELECT count(*) FROM sqlite_master WHERE name='ticket_change_old' OR name='ticket_change_home'")" = 0 ] || fail "the old objects are gone"
+JG_HOME=$M python3 "$TK" ready >/dev/null; expect_code 0 $? "a migrated store opens again"
+pass "an old store migrates to the (home, id) key keeping every ticket, link and log row"
 
 # --- the store's audit: the ticket tables are known, a stray table is not
 audit() { python3 - "$ROOT/core/item-store" "$T/home" <<'PY'
