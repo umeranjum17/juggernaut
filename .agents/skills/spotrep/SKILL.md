@@ -36,11 +36,12 @@ Keep the reply to 15 lines or fewer.
 When the list is empty, write `Nothing needs you now.` and the number of items checked.
 A missing field in the snapshot is unverified; say so in one line.
 
-**Work**, three lines:
+**Work**, up to four lines:
 
 - Landed: the count of the snapshot's recent completions, and the three newest by name.
 - Underway: the count of live workers, and the name of each worker the snapshot shows as stuck.
 - Next: the count of queued items, and the first blocker or date.
+- Swarms: run `bin/jg-swarm-check.sh status --short` and give one line per running swarm; leave this line out when it prints `no swarm is running`.
 
 End with: `Say /sitrep for the full list, or /debrief to walk this session's events and open decisions one by one.`
 
