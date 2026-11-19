@@ -200,15 +200,33 @@ jg_backlog_beads_read() {  # <config_dir> <show|view|list|ready|markdown|links|q
   return "$rc"
 }
 
-# One verb, read or write, for bin/jg-backlog-transition-lib.sh's row calls.
+# One engine (header of bin/jg-backlog.sh): the write a home just made to Beads, copied into the item store's ticket tables under
+# that home's id. Every writer calls this after its own write, so no path leaves the copy behind. A failed copy prints one line and
+# never fails the Beads write.
+jg_backlog_one_engine_copy() {  # <config_dir> <verb> [args...]
+  local config=$1 home root copy
+  shift
+  home=${config%/*}
+  root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+  copy=$(JG_HOME="$home" BEADS_DIR=$(jg_backlog_beads_store "$config") \
+    python3 "$root/core/item-store/adapters/tickets.py" write "$@" --source "jg-backlog:$$:$(date +%s%N)" 2>&1) \
+    || printf 'jg-backlog: one-engine copy: %s\n' "$(printf '%s' "$copy" | head -n 1)" >&2
+  return 0
+}
+
+# One verb, read or write, for bin/jg-backlog-transition-lib.sh's row calls (spawn start, teardown close) and the captain-hold
+# scripts. A write is copied into the item store like one made through bin/jg-backlog.sh.
 jg_backlog_beads_serve() {  # <config_dir> <verb> [args...]
+  local config=$1 rc
   case "${2:-}" in
     show|view|list|ready|links|questions)
-      local config=$1
       shift
       jg_backlog_beads_read "$config" "$@"
       ;;
-    *) jg_backlog_beads_write "$@" ;;
+    *)
+      jg_backlog_beads_write "$@"; rc=$?
+      [ "$rc" -ne 0 ] || jg_backlog_one_engine_copy "$config" "${@:2}"
+      return "$rc" ;;
   esac
 }
 

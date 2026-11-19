@@ -198,6 +198,32 @@ python3 "$TK" import --home crewhouse "$T/other.jsonl" >/dev/null; expect_code 0
 [ "$(sql "SELECT count(*) FROM ticket WHERE id='jg-ready1' AND home='crewhouse'")" = 1 ] || fail "a re-import made a second row"
 pass "two homes share an id: each reads its own row, compare is empty for both, a write in one leaves the other alone"
 
+# --- a lead home's write reaches the store under the lead's home id (the one-engine flag is the main home's)
+mkdir -p "$T/lead/config" "$T/lead/data" "$T/lead/state"; printf 'crewhouse\n' > "$T/lead/.jg-squad-lead-home"
+printf 'parent_home=%s\n' "$T/home" > "$T/lead/.jg-squad-lead-parent"
+cp "$T/home/config/beads-dir" "$T/lead/config/beads-dir"; : > "$T/lead/config/backlog-intake-loose"
+python3 "$TK" import --home crewhouse "$ROWS" >/dev/null
+lead_bl() { JG_HOME=$T/lead JG_DATA_OVERRIDE=$T/lead/data JG_STATE_OVERRIDE=$T/lead/state "$BL" "$@" 2>&1; }
+out=$(lead_bl start jg-unres); expect_code 0 $? "a lead home starts a ticket: $out"
+case $out in *"one-engine copy"*) fail "the lead home's copy failed: $out" ;; esac
+[ "$(sql "SELECT status FROM ticket WHERE home='crewhouse' AND id='jg-unres'")" = in_progress ] || fail "a lead home's start did not reach the store row of its own home"
+out=$(lead_bl "done" jg-unres); expect_code 0 $? "a lead home closes a ticket: $out"
+[ "$(sql "SELECT status FROM ticket WHERE home='crewhouse' AND id='jg-unres'")" = closed ] || fail "a lead home's close did not reach the store row of its own home"
+n=$(sql "SELECT count(*) FROM ticket_change"); lead_bl "done" jg-unres >/dev/null
+[ "$(sql "SELECT count(*) FROM ticket_change")" = "$n" ] || fail "a second close wrote to the log again"
+[ "$(sql "SELECT status FROM ticket WHERE home='main' AND id='jg-unres'")" != closed ] || fail "a lead home's close changed main's row"
+pass "a lead home's start and close reach the store under its own home id, run twice safe"
+# teardown, spawn and the captain-hold scripts close and start through jg_backlog_beads_serve, not jg-backlog.sh: same copy
+serve() { JG_HOME=$T/lead JG_DATA_OVERRIDE=$T/lead/data JG_STATE_OVERRIDE=$T/lead/state BEADS_ACTOR=lead:crewhouse \
+  bash -c '. "$1"; shift; jg_backlog_beads_serve "$@"' _ "$ROOT/bin/jg-backlog-lib.sh" "$T/lead/config" "$@" 2>&1; }
+out=$(serve start jg-rel); expect_code 0 $? "serve starts a ticket: $out"
+[ "$(sql "SELECT status FROM ticket WHERE home='crewhouse' AND id='jg-rel'")" = in_progress ] || fail "an internal start (spawn) did not reach the store row of the lead's home"
+out=$(serve "done" jg-rel); expect_code 0 $? "serve closes a ticket: $out"
+[ "$(sql "SELECT status FROM ticket WHERE home='crewhouse' AND id='jg-rel'")" = closed ] || fail "an internal close (teardown) did not reach the store row of the lead's home"
+n=$(sql "SELECT count(*) FROM ticket_change"); serve "done" jg-rel >/dev/null
+[ "$(sql "SELECT count(*) FROM ticket_change")" = "$n" ] || fail "a second internal close wrote to the log again"
+pass "an internal close and start (teardown, spawn) reach the store under the lead's home id, run twice safe"
+
 # --- the stray lead:* copy: dropped only where the plain home exists, run twice safe
 python3 "$TK" import --home lead:crewhouse "$T/other.jsonl" >/dev/null; expect_code 0 $? "a stray lead:crewhouse copy imports"
 python3 "$TK" import --home lead:ghost "$T/other.jsonl" >/dev/null; expect_code 0 $? "a lead:ghost copy imports (no plain ghost home)"
