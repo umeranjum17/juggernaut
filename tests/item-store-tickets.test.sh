@@ -169,6 +169,24 @@ python3 "$TK" import --home crewhouse "$T/other.jsonl" >/dev/null; expect_code 0
 [ "$(sql "SELECT count(*) FROM ticket WHERE id='jg-ready1' AND home='crewhouse'")" = 1 ] || fail "a re-import made a second row"
 pass "two homes share an id: each reads its own row, compare is empty for both, a write in one leaves the other alone"
 
+# --- the stray lead:* copy: dropped only where the plain home exists, run twice safe
+python3 "$TK" import --home lead:crewhouse "$T/other.jsonl" >/dev/null; expect_code 0 $? "a stray lead:crewhouse copy imports"
+python3 "$TK" import --home lead:ghost "$T/other.jsonl" >/dev/null; expect_code 0 $? "a lead:ghost copy imports (no plain ghost home)"
+[ "$(sql "SELECT count(*) FROM link WHERE home LIKE 'lead:%'")" = 6 ] || fail "the stray copies carry links"
+plain_before=$(sql "SELECT home, id, title FROM ticket WHERE home NOT LIKE 'lead:%' ORDER BY home, id")
+out=$(python3 "$TK" drop-lead-homes); expect_code 0 $? "drop-lead-homes: $out"
+[ "$(sql "SELECT count(*) FROM ticket WHERE home='lead:crewhouse'")" = 0 ] || fail "lead:crewhouse rows are dropped"
+[ "$(sql "SELECT count(*) FROM link WHERE home='lead:crewhouse'")" = 0 ] || fail "lead:crewhouse links are dropped"
+[ "$(sql "SELECT count(*) FROM ticket WHERE home='lead:ghost'")" = 11 ] || fail "lead:ghost has no plain home: kept"
+[ "$(sql "SELECT home, id, title FROM ticket WHERE home NOT LIKE 'lead:%' ORDER BY home, id")" = "$plain_before" ] || fail "a plain home's rows changed"
+case "$out" in *"11 tickets of lead:crewhouse"*) ;; *) fail "the drop prints what it dropped: $out" ;; esac
+log_before=$(sql "SELECT count(*) FROM ticket_change")
+out2=$(python3 "$TK" drop-lead-homes); expect_code 0 $? "the second drop runs"
+[ "$(sql "SELECT count(*) FROM ticket_change")" = "$log_before" ] || fail "a second drop wrote to the log"
+[ "$(sql "SELECT count(*) FROM ticket WHERE home='lead:ghost'")" = 11 ] || fail "a second drop touched lead:ghost"
+case "$out2" in *"lead:crewhouse"*) fail "a second drop names a drop again: $out2" ;; esac
+pass "drop-lead-homes: removes lead:* rows only where the plain home exists, keeps the rest, a second run changes nothing"
+
 # --- a store made before the key (id unique across homes) is migrated, losing no row
 M=$T/old; mkdir -p "$M/state/item-store"
 python3 - "$ROOT" "$M" "$FX/export.jsonl" "$TK" <<'PY'

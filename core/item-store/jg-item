@@ -3,8 +3,9 @@
 
 `by` is never an argument: it is derived from where this runs (`jg-item whoami` prints it).
   JG_TASK_ID set             -> worker:<home id>/<task id>
-  $JG_HOME/.jg-squad-lead-home exists -> lead:<home id>   (the home id is that file's first line)
-  otherwise                  -> main                      (the home id of the main home is "main")
+  otherwise                  -> the home id (itemdb.home_id): "main", or the first line of $JG_HOME/.jg-squad-lead-home
+`whoami` prints that home id; the `by` a Squad Lead home writes under is lead:<home id> (derive_by), and no table keys a row
+on it: a home column always holds the plain home id.
 The store is one file per host: <main home>/state/item-store/fleet.db. A Squad Lead home finds the main home through its
 `.jg-squad-lead-parent` binding (`parent_home=<path>`), followed until a home has none; `jg-item where` prints the file.
 Every write needs --source (the outside record's id): the pair (source, item key) is written once, so a call run twice
@@ -55,6 +56,13 @@ def derive_by(home):
     if task:
         return "worker:%s/%s" % (hid, task)
     return "main" if hid == "main" else "lead:" + hid
+
+
+def whoami(home):
+    """What `jg-item whoami` prints: worker:<home id>/<task> for a task, else the home id itself - one value with home_id."""
+    task = os.environ.get("JG_TASK_ID")
+    hid = D.home_id(home)
+    return "worker:%s/%s" % (hid, task) if task else hid
 
 
 def open_store(home, me):
@@ -373,7 +381,7 @@ def main(argv):
     home = jg_home()
     try:
         if a.cmd in ("whoami", "where"):        # identity and place only: the store is not opened
-            print(derive_by(home) if a.cmd == "whoami" else D.db_path(home))
+            print(whoami(home) if a.cmd == "whoami" else D.db_path(home))
             return
         if a.cmd == "key":                     # the contract only: the store is not opened
             print(cmd_key(None, a, None))

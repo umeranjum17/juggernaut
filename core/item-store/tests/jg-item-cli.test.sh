@@ -37,7 +37,8 @@ out=$(jg open k --kind dispatch --home muxr --subject s --owes x --source s:1 --
 [ "$out" = "refused: unknown option --by" ] && [ "$rc" -eq 2 ] && ok a-by-refused || bad a-by-refused "[$out] exit $rc"
 want a-whoami-main main jg whoami
 want a-whoami-worker-main worker:main/jg-9 env JG_TASK_ID=jg-9 JG_HOME="$H" "$ITEM" whoami
-want a-whoami-lead lead:muxr jl whoami
+want a-whoami-lead muxr jl whoami
+want a-whoami-is-home-id "$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import itemdb; print(itemdb.home_id(sys.argv[2]))' "$(dirname "$ITEM")" "$L")" jl whoami
 want a-whoami-worker-lead worker:muxr/jg-9 env JG_TASK_ID=jg-9 JG_HOME="$L" "$ITEM" whoami
 want a-where-main "$DB" jg where
 want a-where-lead "$DB" jl where

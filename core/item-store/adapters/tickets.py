@@ -10,6 +10,10 @@ bin/jg-backlog.sh in the same call that writes Beads when the main home has conf
                                                          A no-op when the main home has no config/one-engine
   tickets.py ready [--now <iso>]                          one query: the ids `bd ready` gives, for this home
   tickets.py show <id | home:id>                          one copy row as JSON: this home's, or the named home's
+  tickets.py drop-lead-homes                              drops the rows of every home named lead:<id> while the plain <id> home
+                                                         holds tickets (a copy imported under the old whoami id), through
+                                                         the log's own drop; prints one line per home dropped, run twice
+                                                         changes nothing
   tickets.py compare <bd export jsonl>                    each id whose fields, labels, metadata keys or links differ, one
                                                          line `<id> <field> beads=<v> copy=<v>`; exit 1 when any
 A ticket is keyed (home, id). Every read is scoped to the home JG_HOME names; a cross-home read names home:id.
@@ -171,6 +175,28 @@ def cmd_import(a):
     return 0
 
 
+def cmd_drop_lead_homes(a):
+    st = open_tickets(home())
+    con = st.con
+    at, dropped = int(time.time()), []
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        for (h,) in con.execute("SELECT DISTINCT home FROM ticket WHERE home LIKE 'lead:%' ORDER BY home").fetchall():
+            if not con.execute("SELECT 1 FROM ticket WHERE home = ? LIMIT 1", (h[len("lead:"):],)).fetchone():
+                continue
+            ids = [i for (i,) in con.execute("SELECT id FROM ticket WHERE home = ? ORDER BY id", (h,)).fetchall()]
+            for i in ids:     # row NULL is the log's drop: ticket_drop removes the ticket and its links
+                con.execute("INSERT INTO ticket_change (at, home, id, verb, source, row, links) VALUES (?,?,?,?,?,NULL,'[]')",
+                            (at, h, i, "drop-lead-home", "drop-lead-homes:%d" % time.time_ns()))
+            dropped.append("dropped: %d tickets of %s (plain home %s kept)" % (len(ids), h, h[len("lead:"):]))
+        con.execute("COMMIT")
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
+    print("\n".join(dropped) if dropped else "drop-lead-homes: nothing to drop")
+    return 0
+
+
 def beads_export():
     """A fresh `bd export` through the one guarded path (bin/jg-beads.sh)."""
     h = home()
@@ -262,8 +288,8 @@ def cmd_show(a):
 
 
 def main(argv):
-    if not argv or argv[0] not in ("import", "write", "ready", "compare", "show"):
-        print("usage: tickets.py import|write|ready|compare|show ...", file=sys.stderr)
+    if not argv or argv[0] not in ("import", "write", "ready", "compare", "show", "drop-lead-homes"):
+        print("usage: tickets.py import|write|ready|compare|show|drop-lead-homes ...", file=sys.stderr)
         return 2
     cmd, rest = argv[0], argv[1:]
     try:
@@ -277,6 +303,8 @@ def main(argv):
             return cmd_ready(type("A", (), dict(now=rest[1] if rest[:1] == ["--now"] and len(rest) == 2 else None)))
         if cmd == "show" and len(rest) == 1:
             return cmd_show(type("A", (), dict(ref=rest[0])))
+        if cmd == "drop-lead-homes" and not rest:
+            return cmd_drop_lead_homes(None)
         if cmd == "compare" and len(rest) == 1:
             return cmd_compare(type("A", (), dict(export=rest[0])))
     except Refused as e:
