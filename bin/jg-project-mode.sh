@@ -30,8 +30,9 @@
 #
 # THE POLICY ROW DECIDES MODE AND YOLO. Where the main home has config/item-store, the mode and yolo are read from the
 # project's newest policy row (python3 -I core/item-store/adapters/policy.py --row <project>: its level loose is yolo on),
-# never from the registry's words; the output format is unchanged. A project with no row prints the unregistered
-# fallback (direct-PR off) and the registration gap line. The registry keeps the clone facts only (name, branch=,
+# never from the registry's words; the output format is unchanged. The row decides only for a project this home's own
+# registry lists: an unlisted clone (such as a lead home's copy of a project it does not manage) prints the unregistered
+# fallback (direct-PR off), so no trunk flow starts on it. A listed project with no row prints the same fallback and the registration gap line. The registry keeps the clone facts only (name, branch=,
 # forge=, mcp=), and a mode word or +yolo still in it is ignored there (`policy.py --registry-check` lists them,
 # `--rewrite-registry` removes them). Without config/item-store, or with JG_PROJECT_MODE_FROM=registry (policy.py --check
 # compares the row with the registry's words), the registry's words decide as below.
@@ -305,9 +306,8 @@ parsed=$(awk -v n="$NAME" -v sentinel="$unset_prefix" '
 ' "$REG")
 
 row_answer=$(policy_row) || row_answer=
-if [ -z "$parsed" ] && [ -n "$row_answer" ]; then
-  parsed="posture direct-PR off none $unset_prefix"     # no registry line: the row still decides, with no forge and no prefix
-fi
+# A project this home's registry does not list never reaches the policy row: a clone the home does not manage keeps the fallback below.
+[ -n "$parsed" ] || row_answer=
 if [ -z "$parsed" ]; then
   [ "$WANT_MCP" -eq 0 ] || exit 0
   echo "warn: project \"$NAME\" not in registry; defaulting to direct-PR off" >&2

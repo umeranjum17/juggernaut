@@ -69,6 +69,20 @@ printf -- '- late - added after the cut-over\n' >> "$H/data/projects.md"
 check "d3 a registered project with no row is direct-PR off" "direct-PR off" "$(JG_HOME=$H "$ROOT/bin/jg-project-mode.sh" late 2>/dev/null)"
 case $(JG_HOME=$H "$ROOT/bin/jg-project-mode.sh" late 2>&1 >/dev/null) in *'no policy row'*) ok "d4 and it says there is no row" ;; *) bad d4 "no warning" ;; esac
 
+# f: the row decides only for a project this home's own registry lists (an unlisted clone keeps the fallback, so trunk-landing skips it)
+check "f1 listed in the main home: the row decides (local-trunk, yolo on)" "local-trunk on" "$(JG_HOME=$H "$ROOT/bin/jg-project-mode.sh" --raw a-lt-yolo 2>/dev/null)"
+L=$d/lead; mkdir -p "$L/data" "$L/state" "$L/config" "$L/projects"; cp -R "$H/state/item-store" "$L/state/"; : > "$L/config/item-store"
+printf -- '- other - x\n' > "$L/data/projects.md"
+git init -q "$L/projects/a-lt-yolo" && git -C "$L/projects/a-lt-yolo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m c && git -C "$L/projects/a-lt-yolo" branch trunk
+refs=$(git -C "$L/projects/a-lt-yolo" for-each-ref)
+check "f2 a row for a project the home does not list: --raw is the fallback" "direct-PR off" "$(JG_HOME=$L "$ROOT/bin/jg-project-mode.sh" --raw a-lt-yolo 2>/dev/null)"
+check "f3 and the plain answer is the fallback" "direct-PR off" "$(JG_HOME=$L "$ROOT/bin/jg-project-mode.sh" a-lt-yolo 2>/dev/null)"
+# trunk-landing's own filter: a clone whose mode is not a trunk style is never initialized
+. "$ROOT/bin/jg-delivery-style.sh"
+jg_delivery_style_is "$(JG_HOME=$L "$ROOT/bin/jg-project-mode.sh" --raw a-lt-yolo 2>/dev/null | cut -d' ' -f1)" trunk && inited=yes || inited=no
+check "f4 trunk-landing's filter skips the unlisted clone" no "$inited"
+check "f5 the clone's refs are untouched" "$refs" "$(git -C "$L/projects/a-lt-yolo" for-each-ref)"
+
 # e: the daily check of big flat files
 B=$d/big; mkdir -p "$B/state/sub"
 truncate -s 2M "$B/state/sub/huge.log"; printf small > "$B/state/small.txt"
