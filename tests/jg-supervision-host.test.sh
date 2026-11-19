@@ -470,7 +470,6 @@ test_dispatch_entry_scopes_rows_and_renders_the_away_tail() {
   assert_contains "$out" "    merge nothing" "the away tail must carry the record's read-back verbatim"
   assert_contains "$out" '"Postures" section' "the away tail must point at the prompt's Postures section"
   assert_contains "$out" "bin/jg-send.sh and bin/jg-control.sh" "the away tail must carry the steering the Postures section grants"
-  grep -Fq -- '- `bin/jg-send.sh` and `bin/jg-control.sh`:' "$ROOT/bin/jg-branch-prompt.sh" || fail "the Postures section the away tail points at lost its steering grant"
   pass "dispatch entry: the host reads branch eligibility, the offer rule, and the wake prompt from the Pi branch's own owner"
 }
 

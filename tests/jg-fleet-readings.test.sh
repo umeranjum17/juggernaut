@@ -27,7 +27,7 @@ printf 'alert=line-red\nsubject=x\nprecedence=P1\nrung=1\ntop=4\nsince=1\nrung_a
 printf 'b1\thome\t-\tword\t%s\t%s\tstanding\t0\t-\t-\n' "$T0" "$((T0 + 86400))" > "$H/config/proof-bypass"; at "$H/config/proof-bypass"
 : > "$H/state/t1.backlog-close"; at "$H/state/t1.backlog-close"
 printf '%s\tt1\tdelivering.queued\tnew-head\tproving.planned\n' "$T0" > "$H/data/moves.log"
-{ grep '^#' "$ROOT/core/machines/changes.tsv"; printf 'c1\tproj\t-\t-\t-\twhat\n'; } > "$H/core/machines/changes.tsv"; at "$H/core/machines/changes.tsv"
+{ grep '^#' "$ROOT/core/machines/changes.tsv"; printf 'c1\tproj\t-\t-\t-\twhat\n'; } > "$H/core/machines/changes.tsv"; at "$H/core/machines/changes.tsv" # pins-ok: copies the table header into a fixture, asserts no phrase
 printf 'project=proj\ndecision_keys=k1\n' > "$H/state/t1.meta"; at "$H/state/t1.meta"
 at "$H/state/.stops"; : > "$H/state/.stops/pool-proj.pool-full"; at "$H/state/.stops/pool-proj.pool-full"
 : > "$H/data/jg-trunk-landing/t1.abc123.state"; at "$H/data/jg-trunk-landing/t1.abc123.state"

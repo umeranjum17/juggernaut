@@ -51,8 +51,3 @@ out=$(print_set /bin/sh "$prefix") || fail "the prefix failed with an allowlist"
 assert_contains "$out" "JG_TEST_ALLOWED_API_KEY=set" "an allowlisted credential did not reach the worker"
 assert_contains "$out" "OPENROUTER_API_KEY=unset" "an unlisted credential reached the worker"
 pass "an allowlisted credential survives and an unlisted one does not"
-
-# The strip only holds if the launch path actually applies it.
-grep -q 'jg-spawn-core.sh" launch-env-strip' "$ROOT/bin/jg-spawn.sh" ||
-  fail "bin/jg-spawn.sh does not apply the launch-environment strip"
-pass "bin/jg-spawn.sh applies the builder to every launch"

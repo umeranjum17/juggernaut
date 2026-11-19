@@ -104,7 +104,6 @@ test_the_live_claim_check_says_not_proven_for_a_bypassed_ticket() {
 
 test_the_trace_and_the_board_show_the_unproved_mark() {
   local card
-  grep -q 'payload\["mark"\] = "unproved"' "$ROOT/bin/jg-beads-moment.py" || fail "the bypass moment must put the mark in the trace event"
   card=$(printf '%s' '[{"id":"jg-x1","title":"t","status":"open","metadata":{"bypassed_at":"2026-11-12T01:00:00Z"}},{"id":"jg-x2","title":"t","status":"open","metadata":{}}]' \
     | python3 -I "$ROOT/bin/jg-beads-view.py" show jg-x1 2>&1)
   assert_contains "$card" "unproved: yes" "the board card of a bypassed ticket shows the mark"

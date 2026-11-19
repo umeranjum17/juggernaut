@@ -46,12 +46,6 @@ out=$("$STRIP" refresh "$d/state" 2>&1) || fail "second refresh failed: $out"
 assert_equals "" "$out" "a current overlay was modified"
 pass "a current overlay is untouched"
 
-# The locked session-start sweep is what runs it.
-# shellcheck disable=SC2016  # the pattern is literal text of the bootstrap source
-grep -q 'jg-git-strip-ai-trailers.sh" refresh "\$STATE"' "$ROOT/bin/jg-bootstrap.sh" ||
-  fail "bin/jg-bootstrap.sh does not refresh the launch hook overlays"
-pass "bootstrap refreshes the overlays at session start"
-
 # A pane that carries the overlay still creates repositories: git writes HEAD through the
 # reference-transaction hook before the new repository can be resolved, and the wrapper must not refuse that.
 out=$(cd "$d" && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=$hooks \

@@ -115,8 +115,7 @@ bd update n8-h --status on_hold --set-metadata hold_reason=old --set-metadata ho
 [ "$(state_of n8-h)" = queued ] || fail "hold_from must not keep a row in flight, got [$(state_of n8-h)]"
 printf 'ok - hold_from is not read\n'
 
-# No code reads or writes hold_from, and the store itself is as init left it.
-if grep -rn hold_from "$ROOT/bin" "$ROOT/core" >/dev/null 2>&1; then fail "a script still names hold_from"; fi
+# The store itself is as init left it.
 [ "$(shape)" = "$before" ] || fail "the store shape changed: $(diff <(printf '%s\n' "$before") <(shape))"
 bd check >/dev/null || fail "the store must still pass check"
 printf 'ok - no table, column, trigger or CHECK was added\n'

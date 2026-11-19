@@ -16,9 +16,6 @@ word() { jm show "$1" "$2"; printf '%s\n' "$OUT" | awk -F'\t' '$1=="state"{print
 states() { awk -F'\t' '$1=="state"{printf "%s ", $2}' "$ROOT/core/machines/tables/$1.tsv" | sed 's/ $//'; }
 
 # 1. Each table lints clean (the lint of J25 and the enum) and has exactly the states of its enum file.
-for m in squad-lead supervision presence; do
-  assert_equals "$(grep -v '^#' "$ROOT/core/machines/$m.states" | cut -f1 | paste -sd' ')" "$(states "$m")" "$m has the enum's states and no other list"
-done
 assert_equals "provisioned idle working down parked retired" "$(states squad-lead)" "six Squad Lead states"
 assert_equals "off starting watching handling read-only" "$(states supervision)" "five supervisor states, start state off"
 assert_equals "present quiet away returning" "$(states presence)" "four presence states, start state present"

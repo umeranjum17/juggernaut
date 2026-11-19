@@ -52,7 +52,7 @@ drift_reasons() {
 
 if [ "${1:-}" = --drift ]; then
   shift
-  mapfile -t files < <(grep -rlE --include='*.sh' --include='*.go' needs-decision "$ROOT/bin" "$ROOT/core" | grep -v '/tests/')
+  mapfile -t files < <(grep -rlE --include='*.sh' --include='*.go' needs-decision "$ROOT/bin" "$ROOT/core" | grep -v '/tests/') # pins-ok: drift scanner reads source as data, asserts no phrase
   drift_arms "${files[@]}"
   drift_reasons "$@"
   exit 0

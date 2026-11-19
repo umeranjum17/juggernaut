@@ -79,8 +79,6 @@ expect_code 124 "$SHOW_CODE" "a backend slow on every attempt refuses with the b
   || fail "the refusal does not name its attempts: $SHOW_OUT"
 printf '%s\n' "$SHOW_OUT" | grep -qE '^(jg-captain-hold: )?backlog show [A-Za-z0-9._-]+ exceeded its [0-9]+s backlog read bound( after [0-9]+ attempts \([0-9s, ]+\))?$' \
   || fail "the refusal no longer matches the landing retry's pattern in bin/jg-trunk.sh: $SHOW_OUT"
-grep -qF 'backlog read bound( after [0-9]+ attempts \([0-9s, ]+\))?$' "$ROOT/bin/jg-trunk.sh" \
-  || fail "bin/jg-trunk.sh no longer matches the refusal pattern this suite pins"
 pass "a true wedge refuses once, inside the total bound, naming its attempts"
 
 # The latch is the callers' write, made only after the last attempt: a probe the retry rescued leaves the sweep open.

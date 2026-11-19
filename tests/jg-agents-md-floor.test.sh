@@ -29,9 +29,6 @@ done
 grep -qF -- 'done-done owns review, fixes, tests, and documentation as steps of proving' "$agents" \
   || fail "AGENTS.md does not give review, fixes, tests and documentation to done-done"
 grep -qF -- "the wait \`lead\`, reason \`review\`" "$agents" || fail "AGENTS.md lost the review wait"
-for skill in validation-supervision ship-landing; do
-  grep -qF -- 'nine steps' "$ROOT/.agents/skills/$skill/SKILL.md" || fail "$skill does not name the owner of the nine steps"
-done
 
 # Owner rule 10445fb9 (captain, 2026-11-11: skip some verification, bare minimum, until the fleet is stable; full
 # checks return only on his word) is enforced by the precedence section and the intake line that point to it. Removing

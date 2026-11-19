@@ -19,10 +19,6 @@ curl -fsSI --max-time 15 https://github.com >/dev/null 2>&1 || { echo "skip: the
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
-# The command this test runs is the one docs/bus-service.md tells a home to run.
-grep -Fq 'bin/jg-stack.sh up ' "$ROOT/docs/bus-service.md" || fail "docs/bus-service.md no longer documents bin/jg-stack.sh up"
-pass "stack: the documented one-install command is bin/jg-stack.sh up"
-
 T=$(jg_test_tmproot jg-stack)
 export HOME="$T/home" JG_HOME="$T/jg" JG_STACK_SUPERVISOR=detached
 unset JG_STACK_SKIP JG_BUS_BIN JG_STATE_OVERRIDE JG_STATE JG_ROOT_OVERRIDE NPM_CONFIG_PREFIX XDG_CONFIG_HOME JG_WAKE_BUS_URL

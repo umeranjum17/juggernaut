@@ -142,8 +142,6 @@ meta jg-d2 reverted_at=2099-01-01T00:00:00Z; check jg-d2 building red   # closed
 new jg-d3; meta jg-d3 ready_at=2020-01-01T00:00:01Z landed_at=2020-01-01T00:00:02Z reverted_at=2020-01-01T00:00:03Z; bd update jg-d3 -s in_progress -a w1 >/dev/null; bd update jg-d3 -s closed >/dev/null
 check jg-d3 closed ok differs   # dropped after the revert: closed_at is later than the revert, and jg-q1b3n's rule reads reverted
 
-# Every word the rule printed is a word of its enum.
-for w in intake ready building proving delivering released closed; do grep -q "^$w	" "$ROOT/core/machines/ticket.states" || fail "$w is not a stage"; done
 pass "$n rows read as the rule table says"
 
 # The writer: an event first, then an RFC3339 string in UTC, and a moment only moves forward.

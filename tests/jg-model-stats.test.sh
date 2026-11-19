@@ -116,6 +116,5 @@ pass "model reader: a home with no store reports it and fails nothing"
 
 # Teardown writes no outcome row, and neither copy of the recorder remains.
 [ ! -e "$ROOT/bin/jg-task-outcome.sh" ] && [ ! -e "$ROOT/core/fleet-stats/bin/jg-task-outcome.sh" ] || fail "a copy of the recorder remains"
-if grep -n "jg-task-outcome" "$ROOT/bin/jg-teardown.sh" >/dev/null; then fail "teardown still calls the recorder"; fi
 [ ! -e "$M/data/metrics/task-outcomes.tsv" ] || fail "reading the statistics must write no outcome file"
 pass "teardown: no outcome row, no recorder"

@@ -35,7 +35,7 @@ f=$(JG_TRUNK_RETIRE=refs/heads/trunk "$G" fact writer refs/heads/trunk "$zero");
 # the hook text is rendered by ensure_guard's own `want=$(printf ...)` line, so the test runs that very line and installs its output
 base=trunk
 # shellcheck disable=SC2016,SC2154,SC2034 # the grep pattern is literal text; `want` is set by the evaluated line
-eval "$(grep -m1 '^  want=\$(printf' "$ROOT/bin/jg-trunk.sh" | sed 's/^ *//')"
+eval "$(grep -m1 '^  want=\$(printf' "$ROOT/bin/jg-trunk.sh" | sed 's/^ *//')" # pins-ok: runs the installer's own hook line, asserts no phrase
 # shellcheck disable=SC2154
 printf '%s' "$want" > "$P/.git/hooks/reference-transaction"; chmod +x "$P/.git/hooks/reference-transaction"
 next=$(git -C "$P" commit-tree -p "$tip" -m next "$(git -C "$P" rev-parse "$tip^{tree}")")
