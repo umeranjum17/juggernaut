@@ -2104,6 +2104,15 @@ It uses the same live Squad Lead discovery and propagation helper as bootstrap; 
 - That live discovery starts from `state/*.meta` records with `kind=squad_lead`; `data/squad_leads.md` only backfills `home=` for older or incomplete meta records.
 - Skipped items, such as a destination checkout that does not yet gitignore the item, are visible warnings but not hard failures.
 
+## Project registry (data/projects.md) and the policy row
+
+Where the main home has `config/item-store`, `data/projects.md` keeps clone facts only: the project's name, `branch=<prefix>`, `forge=<value>`, `mcp=<file>` and its description.
+A project's delivery mode and yolo live in its policy row in the item store, read by [`bin/jg-project-mode.sh`](../bin/jg-project-mode.sh) through `core/item-store/adapters/policy.py --row` (level `loose` prints yolo on); a project with no row prints `direct-PR off` and the registration gap line.
+The row changes only by the captain's own message (`policy.py --from-message`) or his yes to Main's proposal (`policy.py --propose`).
+A mode word or `+yolo` still in a registry line is ignored; `policy.py --registry-check data/projects.md` lists such lines (exit 1), and `policy.py --rewrite-registry data/projects.md --dry-run|--apply` removes them, refusing while a project has no row and keeping the old file beside it as `projects.md.before-policy`.
+Without `config/item-store`, the registry's words decide as before.
+`core/item-store/adapters/daily_files.py <home>` opens one `intake:<home id>/big-files@<date>` item for each home whose `state/` holds a file over 1 MB.
+
 ## Forge selection (data/projects.md forge= token)
 
 A project with no `forge=` token is served by the GitHub tooling, `gh` and `gh-axi`, exactly as before the token existed, and the token changes nothing for existing entries.

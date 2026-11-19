@@ -18,9 +18,16 @@
       `owner.py answer ... --pick yes` writes version n (owner.py reads the text back through this module's `apply`).
   --row <project>
       Prints the newest version as one line; exit 1 when the project has no row.
+  --registry-check <projects.md>
+      Prints each line of the registry that still carries a mode word or `+yolo` (the registry keeps clone facts only: name, remote,
+      branch=, forge=, mcp=); exit 1 when there is one.
+  --rewrite-registry <projects.md> --dry-run | --apply
+      Rewrites those lines to clone facts only. --dry-run prints each line before and after and writes nothing; --apply keeps a copy
+      beside the file as projects.md.before-policy (an older copy stays) and writes the new text. Either refuses, and writes nothing,
+      while a project it would rewrite has no policy row (its mode would be lost). A line with nothing to drop is never touched.
 A project registered after the cut-over gets its version 1 only through --from-message or --propose.
 Exit: 0 done, 1 refused or a difference, 2 usage."""
-import argparse, os, re, subprocess, sys
+import argparse, os, re, shutil, subprocess, sys
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ITEM = os.path.dirname(HERE)
@@ -75,6 +82,59 @@ def registry(home):
             word = left[0] if left else "no-mistakes"
         out.append((name, word, yolo))
     return out
+
+
+def stale_lines(path):
+    """(line number, project, line, rewritten line) for each registry line whose brackets hold +yolo or a mode word (the name
+    ends at the first ` [` or ` - `, as the resolver reads it); the rewrite keeps branch=, forge= and mcp= in their order and
+    drops the brackets when none is left."""
+    out = []
+    for n, ln in enumerate(open(path, encoding="utf-8").read().split("\n")):
+        if not ln.startswith("- "):
+            continue
+        rest = ln[2:]
+        cut = [i for i in (rest.find(" ["), rest.find(" - ")) if i > 0]
+        if not cut or not rest[min(cut):].startswith(" [") or "]" not in rest[min(cut):]:
+            continue
+        i = min(cut)
+        toks, tail = rest[i + 2:].split("]", 1)[0].split(), rest[i + 2:].split("]", 1)[1]
+        keep = [t for t in toks if re.match(r"(branch|forge|mcp)=", t)]
+        if len(keep) != len(toks):
+            out.append((n + 1, rest[:i], ln, "- " + rest[:i] + (" [%s]" % " ".join(keep) if keep else "") + tail))
+    return out
+
+
+def cmd_registry_check(a):
+    stale = stale_lines(a.registry_check)
+    for n, _, ln, _ in stale:
+        print("%d: %s" % (n, ln))
+    sys.exit(1 if stale else 0)
+
+
+def cmd_rewrite_registry(a):
+    if a.dry_run == a.apply:
+        die("policy --rewrite-registry: give exactly one of --dry-run and --apply", 2)
+    path = a.rewrite_registry
+    stale = stale_lines(path)
+    st = itemdb.open_db(jg_home(), "owner:registry")
+    lost = [name for _, name, _, _ in stale if not row_of(st, name)]
+    if lost:
+        die("refused: no policy row for %s; the rewrite would lose its mode (run --import first)" % ", ".join(lost))
+    for n, _, ln, new in stale:
+        print("%d: %s\n -> %s" % (n, ln, new))
+    if a.dry_run or not stale:
+        return print("%d line(s) to rewrite" % len(stale)) if a.dry_run else print("nothing to rewrite")
+    text = open(path, encoding="utf-8").read().split("\n")
+    for n, _, _, new in stale:
+        text[n - 1] = new
+    keep = path + ".before-policy"
+    if not os.path.exists(keep):
+        shutil.copy2(path, keep)
+    tmp = path + ".tmp-policy"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(text))
+    os.replace(tmp, path)
+    print("rewrote %d line(s); the old file is kept as %s" % (len(stale), keep))
 
 
 def lead_homes(main):
@@ -135,6 +195,7 @@ def trunk_of(main, project):
 def resolver(reg, project):
     env = dict(os.environ, JG_HOME=reg, JG_DATA_OVERRIDE=os.path.join(reg, "data"))
     env.pop("JG_ROOT_OVERRIDE", None)
+    env["JG_PROJECT_MODE_FROM"] = "registry"       # --check compares the row with the registry's words, never with itself
     return subprocess.run([os.path.join(ROOT, "bin", "jg-project-mode.sh"), "--raw", project], env=env,
                           capture_output=True, text=True).stdout.split()
 
@@ -303,6 +364,10 @@ def main(argv):
     g.add_argument("--from-message", action="store_true")
     g.add_argument("--propose", action="store_true")
     g.add_argument("--row")
+    g.add_argument("--registry-check")
+    g.add_argument("--rewrite-registry")
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--apply", action="store_true")
     p.add_argument("--registry")
     p.add_argument("--table")
     p.add_argument("--channel", choices=("chat", "board"))
@@ -318,6 +383,10 @@ def main(argv):
             cmd_check(a)
         elif a.row:
             cmd_row(a)
+        elif a.registry_check:
+            cmd_registry_check(a)
+        elif a.rewrite_registry:
+            cmd_rewrite_registry(a)
         else:
             need = ("channel", "message_id", "project", "level") if a.from_message else ("project", "level")
             miss = [n for n in need if getattr(a, n) is None]

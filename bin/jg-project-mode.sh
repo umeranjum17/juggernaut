@@ -28,6 +28,14 @@
 # bin/jg-promote.sh, which takes the forge binding from here because it is a
 # project fact rather than a task choice.
 #
+# THE POLICY ROW DECIDES MODE AND YOLO. Where the main home has config/item-store, the mode and yolo are read from the
+# project's newest policy row (python3 -I core/item-store/adapters/policy.py --row <project>: its level loose is yolo on),
+# never from the registry's words; the output format is unchanged. A project with no row prints the unregistered
+# fallback (direct-PR off) and the registration gap line. The registry keeps the clone facts only (name, branch=,
+# forge=, mcp=), and a mode word or +yolo still in it is ignored there (`policy.py --registry-check` lists them,
+# `--rewrite-registry` removes them). Without config/item-store, or with JG_PROJECT_MODE_FROM=registry (policy.py --check
+# compares the row with the registry's words), the registry's words decide as below.
+#
 # Registry line format (data/projects.md):
 #   - <name> - <desc> (added <date>)                                 -> no-mistakes off fm/  (legacy default)
 #   - <name> [<mode>] - <desc> (added <date>)                        -> <mode> off fm/
@@ -173,6 +181,31 @@ case "${1:-}" in
   --forge) WANT_FORGE=1; shift ;;
   --mcp) WANT_MCP=1; shift ;;
 esac
+# The main home of this one: a Squad Lead home names it in its parent binding.
+main_home_dir() {
+  local p
+  p=$(sed -n 's/^parent_home=//p' "$JG_HOME/.jg-squad-lead-parent" 2>/dev/null | head -n 1)
+  if [ -n "$p" ] && [ -d "$p" ]; then echo "$p"; else echo "$JG_HOME"; fi
+}
+# Whether the row decides this call: not under JG_PROJECT_MODE_FROM=registry, not for the prefix and mcp answers (the registry's own), and only with the store on.
+row_wanted() {
+  [ "${JG_PROJECT_MODE_FROM:-}" != registry ] && [ "$BRANCH_PREFIX_QUERY" -eq 0 ] && [ "$WANT_MCP" -eq 0 ] && [ -e "$(main_home_dir)/config/item-store" ]
+}
+# The project's policy row as "<mode> <yolo>"; status 1 with nothing printed when the registry decides or the project has no row.
+policy_row() {
+  local row m l err rc=0 tmp
+  row_wanted || return 1
+  tmp=$(mktemp "${TMPDIR:-/tmp}/jg-project-mode.XXXXXX") || return 1
+  row=$(JG_HOME=$JG_HOME python3 -I "$JG_ROOT/core/item-store/adapters/policy.py" --row "$NAME" 2>"$tmp") || rc=$?
+  err=$(cat "$tmp"); rm -f -- "$tmp"
+  if [ "$rc" -ne 0 ] || [ -n "$err" ]; then
+    [ "$rc" -eq 1 ] && [ -z "$err" ] || echo "warn: the policy row of $NAME could not be read (exit $rc): ${err:-no output}" >&2
+    return 1
+  fi
+  m=${row#mode=}; m=${m%% *}; l=${row#*level=}; l=${l%% *}
+  [ -n "$m" ] && [ "$m" != "$row" ] || return 1
+  if [ "$l" = loose ]; then echo "$m on"; else echo "$m off"; fi
+}
 NAME=${1:?usage: jg-project-mode.sh [--raw|--branch-prefix [--kind <kind>] [--registered]|--forge|--mcp] <project-name>}
 
 # The unregistered ship-branch prefix: "fm/" without a kind, else named by kind.
@@ -271,6 +304,10 @@ parsed=$(awk -v n="$NAME" -v sentinel="$unset_prefix" '
   }
 ' "$REG")
 
+row_answer=$(policy_row) || row_answer=
+if [ -z "$parsed" ] && [ -n "$row_answer" ]; then
+  parsed="posture direct-PR off none $unset_prefix"     # no registry line: the row still decides, with no forge and no prefix
+fi
 if [ -z "$parsed" ]; then
   [ "$WANT_MCP" -eq 0 ] || exit 0
   echo "warn: project \"$NAME\" not in registry; defaulting to direct-PR off" >&2
@@ -297,6 +334,14 @@ done <<EOF
 $posture
 EOF
 forge=${rest_forge:-none}
+if row_wanted; then
+  if [ -n "$row_answer" ]; then
+    mode=${row_answer% *}; yolo=${row_answer#* }
+  else
+    echo "warn: project \"$NAME\" has no policy row; defaulting to direct-PR off" >&2
+    mode=direct-PR; yolo=off
+  fi
+fi
 case "$mode" in
   no-mistakes-prod-only) ;;
   *) jg_delivery_style_accepts "$mode" || { echo "warn: unknown mode \"$mode\" for $NAME; defaulting to direct-PR off" >&2; mode=direct-PR; yolo=off; branch=$unset_prefix; } ;;
