@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# STUB (slice 8b1): `check`, `reconcile` and `writers` exit 0 printing nothing; `settled` exits 1 (nothing is a repeat: there is no moves log).
 # jg-machine.sh - ask one command for a record's state and its legal moves, from a machine table.
 #
 # Usage:
@@ -17,12 +18,15 @@
 # A machine is one TSV table, <machine>.tsv, in core/machines/tables (override: JG_MACHINES_TABLES).
 # core/machines/README.md owns the table format, the lint rules, the output and the exit codes.
 # The command only reads: it runs the table's observer, never a move's command.
+# check, reconcile, writers and settled are stubs (see the first line).
 # Exit 0 is success, 1 a finding (a table defect, a record in no state, a corpus line the table lacks), 2 a usage error.
 set -u
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 JG_MACHINES_TABLES=${JG_MACHINES_TABLES:-$root/core/machines/tables}
 export JG_MACHINES_TABLES
 case "${1:-}" in
+  check|reconcile|writers) exit 0 ;;
+  settled) exit 1 ;;
   word|replay|records) exec python3 -I -B "$root/core/machines/bin/wordmap.py" "$@" ;;
   *) exec python3 -I -B "$root/core/machines/bin/machine.py" "$@" ;;
 esac
