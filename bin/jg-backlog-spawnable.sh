@@ -26,7 +26,6 @@ CONFIG="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
 
 die() { printf 'jg-backlog-spawnable: %s\n' "$1" >&2; exit "${2:-2}"; }
 
-store=$(jg_backlog_beads_store "$CONFIG") || exit 2
 tmp=$(mktemp -d) || die "no scratch directory"
 trap 'rm -rf -- "$tmp"' EXIT
 # Registered project names: the text between "- " and the first " [" or " - ".
@@ -54,8 +53,19 @@ query="SELECT i.id, l.label FROM issues i JOIN labels l ON l.issue_id = i.id AND
       WHERE d.depends_on_issue_id = i.id AND d.type <> 'tracks' AND c.status <> 'closed'
         AND $(card c))
   ORDER BY i.priority, i.created_at, i.id, l.label"
-BEADS_DIR=$store "$SCRIPT_DIR/jg-beads.sh" dolt sql -q "$query" > "$tmp/rows" 2>"$tmp/err" \
-  || die "the store read failed: $(head -c 300 "$tmp/err")"
+# With the main home's config/one-engine-read the same rows come from the ticket tables (tickets.py spawnable; exit 3 says the flag
+# is absent), laid out as the table below so the pick after it is one code path.
+tables=0
+if JG_HOME="$JG_HOME" python3 "$JG_ROOT/core/item-store/adapters/tickets.py" spawnable > "$tmp/ticket-rows" 2>"$tmp/err"; then
+  { printf '| id | label |\n'; awk -F'\t' '{ printf "| %s | %s |\n", $1, $2 }' "$tmp/ticket-rows"; } > "$tmp/rows"; tables=1
+elif [ "$?" -ne 3 ]; then
+  die "the tables read failed: $(head -c 300 "$tmp/err")"
+fi
+if [ "$tables" = 0 ]; then
+  store=$(jg_backlog_beads_store "$CONFIG") || exit 2
+  BEADS_DIR=$store "$SCRIPT_DIR/jg-beads.sh" dolt sql -q "$query" > "$tmp/rows" 2>"$tmp/err" \
+    || die "the store read failed: $(head -c 300 "$tmp/err")"
+fi
 
 # The answer is a table: borders, a header row, then `| id | project:<name> |` rows.
 list=$(awk -v lanes="$tmp/lanes" -v projects="$tmp/projects" '

@@ -66,7 +66,10 @@
 # One engine (expand phase): when the main home has `config/one-engine`, each successful Beads write of any writer (jg_backlog_beads_write: this command, spawn, teardown, the captain-hold scripts, handoff and receive) is copied into the
 # ticket tables of the host's item store (core/item-store/adapters/tickets.py write); a failed copy prints one
 # `jg-backlog: one-engine copy: ...` line and never fails the Beads write. `compare` runs `bd export` and lists each
-# difference between Beads and that copy, one line each (exit 1 when any). Reads stay on Beads.
+# difference between Beads and that copy, one line each (exit 1 when any). Reads stay on Beads, unless the main home has
+# `config/one-engine-read`: then `show`, `view`, `list`, `ready`, `markdown`, `questions` and `tree` answer from those tables
+# in the same text, each read also asks Beads, and a different answer opens one `intake` item on Main naming both
+# (removing the flag returns every read to Beads). `homes` reads files, not Beads, so it is the same on both paths.
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
 [ "$_jg_d" != "${BASH_SOURCE[0]}" ] || _jg_d=.
@@ -210,7 +213,24 @@ done
 ARGS=(${_jg_keyed[@]+"${_jg_keyed[@]}"})
 unset _jg_keyed _jg_arg _jg_slug
 key_tool() { JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$TICKET_KEY" "$@"; }
-beads_read() { jg_backlog_beads_read "$JG_HOME/config" ${ARGS[@]+"${ARGS[@]}"}; }
+# One engine (read phase): with the main home's config/one-engine-read every read verb answers from the ticket tables
+# (core/item-store/adapters/tickets.py read), asks Beads too, and a different answer opens one intake item on Main.
+one_engine_read() {
+  local home=$JG_HOME n=0 parent
+  while [ "$n" -lt 8 ]; do
+    parent=$(sed -n 's/^parent_home=//p' "$(jg_compat_parent_marker "$home")" 2>/dev/null | head -n 1)
+    [ -n "$parent" ] || break
+    home=$parent; n=$((n + 1))
+  done
+  [ -e "$home/config/one-engine-read" ]
+}
+beads_read() {
+  if one_engine_read; then
+    JG_HOME="$JG_HOME" python3 "$JG_ROOT/core/item-store/adapters/tickets.py" read ${ARGS[@]+"${ARGS[@]}"} --shadow
+  else
+    jg_backlog_beads_read "$JG_HOME/config" ${ARGS[@]+"${ARGS[@]}"}
+  fi
+}
 # approve-dispatch <id> --harness <h> --model <m> --effort <e>: the lead's or the owner's yes that the dispatch check
 # (core/auto-dispatch) may start this ticket by itself, on that route. It writes state/dispatch-approved/<id>, the only
 # record the check trusts: a line typed into a ticket body is not one. A worker session (JG_TASK_ID set) is refused.
@@ -264,7 +284,9 @@ case "${1:-}" in
     beads_read; exit $? ;;
   markdown|questions) beads_read; exit $? ;;
   homes) exec "$SCRIPT_DIR/jg-backlog-homes.sh" "${ARGS[@]:1}" ;;
-  tree) exec python3 "$SCRIPT_DIR/jg-backlog-tree.py" "${ARGS[@]:1}" ;;
+  tree)
+    if one_engine_read; then JG_HOME="$JG_HOME" exec python3 "$JG_ROOT/core/item-store/adapters/tickets.py" tree "${ARGS[@]:1}"; fi
+    exec python3 "$SCRIPT_DIR/jg-backlog-tree.py" "${ARGS[@]:1}" ;;
   compare)
     [ "${#ARGS[@]}" -eq 1 ] || fail "compare takes no argument"
     _jg_store=$(jg_backlog_beads_store "$JG_HOME/config") || exit 2

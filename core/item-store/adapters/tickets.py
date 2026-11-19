@@ -13,14 +13,25 @@ bin/jg-backlog.sh in the same call that writes Beads when the main home has conf
                                                          A no-op when the main home has no config/one-engine
   tickets.py ready [--now <iso>]                          one query: the ids `bd ready` gives, for this home
   tickets.py show <id | home:id>                          one copy row as JSON: this home's, or the named home's
+  tickets.py read <verb> [args] [--shadow]                a backlog read answered from the tables, in exactly the text
+                                                         bin/jg-backlog.sh prints from Beads: bin/jg-beads-view.py renders
+                                                         the rows rebuilt from the copy, so the two paths share one renderer.
+                                                         verb: view|show, list, ready, markdown, questions. list, markdown,
+                                                         questions and view are also subcommands of their own name.
+                                                         --shadow also asks Beads and, when the two answers differ, opens
+                                                         intake:main/tickets-differ-<verb>-<epoch> naming both
+  tickets.py spawnable                                    bin/jg-backlog-spawnable.sh's query on the tables: one `<id>\t<project:label>` line per
+                                                         startable row and project label (open, not blocked, not a decision card, no assignee or
+                                                         hold reason, no open card linked either way)
+  tickets.py tree --homes                                 bin/jg-backlog-tree.py over the tables instead of each Beads store
   tickets.py drop-lead-homes                              drops the rows of every home named lead:<id> while the plain <id> home
                                                          holds tickets (a copy imported under the old whoami id), through
                                                          the log's own drop; prints one line per home dropped, run twice
                                                          changes nothing
   tickets.py compare <bd export jsonl>                    each id whose fields, labels, metadata keys or links differ, one
                                                          line `<id> <field> beads=<v> copy=<v>`; exit 1 when any
-A ticket is keyed (home, id). Every read is scoped to the home JG_HOME names; a cross-home read names home:id.
-JG_HOME names this home (the store is the main home's state/item-store/fleet.db). Exit 0 ok, 1 refused or a difference,
+JG_NOW (an ISO time) replaces the clock for ready's dated holds, in tests. A ticket is keyed (home, id). Every read is scoped to the home JG_HOME names; a cross-home read names home:id.
+JG_HOME names this home (the store is the main home's state/item-store/fleet.db). Exit 0 ok, 1 refused or a difference, 3 spawnable with no config/one-engine-read,
 2 usage. Python stdlib only."""
 import json, os, sqlite3, subprocess, sys, time
 
@@ -248,17 +259,8 @@ def cmd_write(a):
 
 
 def cmd_ready(a):
-    now = a.now or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     h = home()
-    st = open_tickets(h)
-    for (i,) in st.con.execute("""
-        SELECT t.id FROM ticket t
-         WHERE t.home = ? AND (t.status = 'open' OR (t.status = 'deferred' AND t.defer_until IS NOT NULL AND t.defer_until <= ?))
-           AND t.ephemeral = 0 AND t.issue_type IS NOT 'gate'
-           AND coalesce(json_extract(t.metadata, '$.hold_reason'), '') = '' AND coalesce(t.assignee, '') = ''
-           AND NOT EXISTS (SELECT 1 FROM link l JOIN ticket b ON b.home = l.home AND b.id = l.to_id
-                            WHERE l.home = t.home AND l.from_id = t.id AND l.type = 'blocks' AND b.status IS NOT 'closed')
-         ORDER BY t.priority, t.created_at, t.id""", (itemdb.home_id(h), now)):
+    for i in ready_ids(open_tickets(h).con, itemdb.home_id(h), a.now or now_iso()):
         print(i)
     return 0
 
@@ -294,9 +296,153 @@ def cmd_show(a):
     return 0
 
 
+READ_VERBS = ("view", "show", "list", "ready", "markdown", "questions")
+VIEW = os.path.join(STORE, "..", "..", "bin", "jg-beads-view.py")
+LIB = os.path.join(STORE, "..", "..", "bin", "jg-backlog-lib.sh")
+COLS = ("id", "title", "description", "priority", "issue_type", "assignee", "created_at", "closed_at", "close_reason", "status",
+        "defer_until", "external_ref", "labels", "metadata", "ephemeral")
+
+
+def now_iso():
+    return os.environ.get("JG_NOW") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def ready_ids(con, home_id, now, repo=None):
+    """The ids `bd ready` gives for one home, in its order (priority, age, id); repo keeps the rows labelled project:<repo>."""
+    out = []
+    for (i, labels) in con.execute("""
+        SELECT t.id, t.labels FROM ticket t
+         WHERE t.home = ? AND (t.status = 'open' OR (t.status = 'deferred' AND t.defer_until IS NOT NULL AND t.defer_until <= ?))
+           AND t.ephemeral = 0 AND t.issue_type IS NOT 'gate'
+           AND coalesce(json_extract(t.metadata, '$.hold_reason'), '') = '' AND coalesce(t.assignee, '') = ''
+           AND NOT EXISTS (SELECT 1 FROM link l JOIN ticket b ON b.home = l.home AND b.id = l.to_id
+                            WHERE l.home = t.home AND l.from_id = t.id AND l.type = 'blocks' AND b.status IS NOT 'closed')
+         ORDER BY t.priority, t.created_at, t.id""", (home_id, now)):
+        if repo is None or "project:" + repo in json.loads(labels):
+            out.append(i)
+    return out
+
+
+def bd_rows(con, home_id):
+    """One home's tickets in bd's JSON shape (what `bd list --json` gives the view): a field the copy holds as NULL is absent,
+    each link is a dependency edge, and an ephemeral row is left out as bd leaves it out of a list."""
+    edges = {}
+    for f, t, ty in con.execute("SELECT from_id, to_id, type FROM link WHERE home = ? ORDER BY from_id, to_id, type", (home_id,)):
+        edges.setdefault(f, []).append({"depends_on_id": t, "type": ty})
+    rows = []
+    for r in con.execute("SELECT %s FROM ticket WHERE home = ? AND ephemeral = 0 ORDER BY created_at, id" % ", ".join(COLS), (home_id,)):
+        row = {k: v for k, v in zip(COLS, r) if v is not None and k != "ephemeral"}
+        row["labels"], row["metadata"] = json.loads(row["labels"]), json.loads(row["metadata"])
+        row["dependencies"] = edges.get(row["id"], [])
+        rows.append(row)
+    return rows
+
+
+def render(rows, verb, args, ready=None):
+    """The text and exit code bin/jg-beads-view.py gives these rows; ready is bd ready's answer, the ids in its order."""
+    env = dict(os.environ)
+    tmp = None
+    if ready is not None:
+        import tempfile
+        tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        json.dump([{"id": i} for i in ready], tmp)
+        tmp.close()
+        env["JG_BEADS_READY"] = tmp.name
+    try:
+        run = subprocess.run([sys.executable, VIEW, "view" if verb == "show" else verb] + args, input=json.dumps(rows),
+                             capture_output=True, text=True, env=env)
+    finally:
+        if tmp:
+            os.unlink(tmp.name)
+    return run.stdout, run.returncode
+
+
+def from_tables(h, verb, args):
+    con = open_tickets(h).con
+    home_id = itemdb.home_id(h)
+    ready, repo = None, None
+    if verb == "ready":
+        for k, w in enumerate(args):
+            repo = w[len("--repo="):] if w.startswith("--repo=") else args[k + 1] if w == "--repo" and k + 1 < len(args) else repo
+        ready = ready_ids(con, home_id, now_iso(), repo)
+    return render(bd_rows(con, home_id), verb, args, ready)
+
+
+def from_beads(h, verb, args):
+    """The same read through bin/jg-backlog-lib.sh's Beads path, the answer the tables are compared with."""
+    run = subprocess.run(["bash", "-c", '. "$1"; shift; jg_backlog_beads_read "$@"', "_", LIB, os.path.join(h, "config"), verb] + args,
+                         capture_output=True, text=True)
+    return run.stdout, run.returncode
+
+
+def open_differ(h, verb, mine, beads):
+    st = open_tickets(h)
+    at = itemdb.stamp(st)
+    key = "intake:main/tickets-differ-%s-%d" % (verb, at)
+    lines = list(zip(mine[0].splitlines() + [""], beads[0].splitlines() + [""]))
+    one = next(((a, b) for a, b in lines if a != b), ("", ""))
+    text = "the tickets tables and Beads answer `%s` differently (exit %d vs %d): tables %r, beads %r" % (verb, mine[1], beads[1], one[0][:60], one[1][:60])
+    itemdb.or_intake(st, at, key, itemdb.home_id(h), "tickets", st.open, at, key, "intake", itemdb.home_id(h), "tickets", text[:300], st.me)
+
+
+def cmd_read(a):
+    h = home()
+    mine = from_tables(h, a.verb, a.args)
+    if a.shadow:
+        beads = from_beads(h, a.verb, a.args)
+        if beads != mine:
+            open_differ(h, a.verb, mine, beads)
+    sys.stdout.write(mine[0])
+    return mine[1]
+
+
+def cmd_spawnable(a):
+    h = home()
+    if not os.path.exists(os.path.join(itemdb.main_home(h), "config", "one-engine-read")):
+        return 3
+    con = open_tickets(h).con
+    card = """(%s.issue_type = 'decision' OR coalesce(json_extract(%s.metadata, '$.kind'), '') = 'captain'
+              OR instr(%s.title, '[design-ux]') > 0 OR EXISTS (SELECT 1 FROM json_each(%s.labels) WHERE value = 'design-ux'))"""
+    c = lambda x: card % (x, x, x, x)
+    q = """SELECT t.id, j.value FROM ticket t JOIN json_each(t.labels) j ON j.value LIKE 'project:%%'
+     WHERE t.home = ? AND t.status = 'open' AND t.ephemeral = 0 AND t.issue_type IS NOT 'gate' AND NOT %s
+       AND (t.defer_until IS NULL OR t.defer_until <= ?)
+       AND coalesce(t.assignee, '') = '' AND coalesce(json_extract(t.metadata, '$.hold_reason'), '') = ''
+       AND NOT EXISTS (SELECT 1 FROM link l JOIN ticket b ON b.home = l.home AND b.id = l.to_id
+                        WHERE l.home = t.home AND l.from_id = t.id AND l.type = 'blocks' AND b.status IS NOT 'closed')
+       AND NOT EXISTS (SELECT 1 FROM link l JOIN ticket x ON x.home = l.home AND x.id = l.to_id
+                        WHERE l.home = t.home AND l.from_id = t.id AND x.status IS NOT 'closed' AND %s)
+       AND NOT EXISTS (SELECT 1 FROM link l JOIN ticket x ON x.home = l.home AND x.id = l.from_id
+                        WHERE l.home = t.home AND l.to_id = t.id AND x.status IS NOT 'closed' AND %s)
+     ORDER BY t.priority, t.created_at, t.id, j.value""" % (c("t"), c("x"), c("x"))
+    for i, label in con.execute(q, (itemdb.home_id(h), now_iso())):
+        print("%s\t%s" % (i, label))
+    return 0
+
+
+def cmd_tree(a):
+    """bin/jg-backlog-tree.py with its one loader swapped: a home's rows come from the tables, not from its Beads store."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("jg_backlog_tree", os.path.join(STORE, "..", "..", "bin", "jg-backlog-tree.py"))
+    tree = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tree)
+    h = home()
+    con = open_tickets(h).con
+
+    def load(name, _store):
+        have = {r[0] for r in con.execute("SELECT DISTINCT home FROM ticket")}
+        home_id = name if name in have else name.split(":", 1)[-1]
+        rows = [r for r in bd_rows(con, home_id) if r.get("issue_type") != "gate"]
+        for r in rows:
+            r["parent"] = next((d["depends_on_id"] for d in r["dependencies"] if d["type"] == "parent-child"), None)
+        return rows
+    tree.load = load
+    return tree.main(a.args)
+
+
 def main(argv):
-    if not argv or argv[0] not in ("import", "write", "ready", "compare", "show", "drop-lead-homes"):
-        print("usage: tickets.py import|write|ready|compare|show|drop-lead-homes ...", file=sys.stderr)
+    if not argv or argv[0] not in ("import", "write", "ready", "compare", "show", "drop-lead-homes", "read", "tree", "spawnable") + READ_VERBS:
+        print("usage: tickets.py import|write|ready|compare|show|drop-lead-homes|read|tree ...", file=sys.stderr)
         return 2
     cmd, rest = argv[0], argv[1:]
     try:
@@ -306,7 +452,15 @@ def main(argv):
             i = rest.index("--source")
             args = rest[:i] + rest[i + 2:]
             return cmd_write(type("A", (), dict(verb=args[0], args=args[1:], source=rest[i + 1])))
-        if cmd == "ready":
+        if cmd == "read" and rest and rest[0] in READ_VERBS:
+            return cmd_read(type("A", (), dict(verb=rest[0], args=[x for x in rest[1:] if x != "--shadow"], shadow="--shadow" in rest)))
+        if cmd in ("view", "list", "markdown", "questions"):
+            return cmd_read(type("A", (), dict(verb=cmd, args=[x for x in rest if x != "--shadow"], shadow="--shadow" in rest)))
+        if cmd == "spawnable" and not rest:
+            return cmd_spawnable(None)
+        if cmd == "tree":
+            return cmd_tree(type("A", (), dict(args=[x for x in rest if x != "--shadow"])))
+        if cmd == "ready" and (not rest or rest[0] == "--now"):
             return cmd_ready(type("A", (), dict(now=rest[1] if rest[:1] == ["--now"] and len(rest) == 2 else None)))
         if cmd == "show" and len(rest) == 1:
             return cmd_show(type("A", (), dict(ref=rest[0])))
@@ -320,7 +474,7 @@ def main(argv):
     except Exception as e:      # a refusal of the store's own rules, or any other fault: one line, never a trace
         print("%s: %s" % (cmd, str(e).splitlines()[0] if str(e) else type(e).__name__))
         return 1
-    print("usage: tickets.py import --home <id> <export> | write <verb> <args...> --source <id> | ready [--now <iso>] | compare <export> | show <id|home:id>", file=sys.stderr)
+    print("usage: tickets.py read <verb> [args] [--shadow] | tree --homes | import --home <id> <export> | write <verb> <args...> --source <id> | ready [--now <iso>] | compare <export> | show <id|home:id>", file=sys.stderr)
     return 2
 
 
