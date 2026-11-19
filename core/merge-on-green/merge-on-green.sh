@@ -81,6 +81,11 @@ LEAD_NOTE='lead: clear it and merge through bin/jg-pr-merge.sh; only a genuine h
 
 timed_out() { [ "$1" = 124 ] || [ "$1" = 137 ]; }
 
+# mstore <merge.py args>: the item store records each merge beside today's rule (core/item-store/adapters/merge.py). Guarded by
+# config/item-store and ending in `|| :`, so this script's own decisions, output and exit never change; a refusal is one intake item.
+HID=main; [ ! -f "$FMH/.jg-squad-lead-home" ] || read -r HID < "$FMH/.jg-squad-lead-home" || :
+mstore() { [ -e "$FMH/config/item-store" ] || return 0; JG_HOME="$FMH" timeout "$BUDGET" python3 -I "$SRC/../item-store/adapters/merge.py" "$@" >/dev/null 2>&1 || :; }
+
 # merge_minutes <task>: the whole minutes from the ticket's ready time to its landed time, read from
 # `jg-backlog.sh times <task>`; empty when the ticket has no ready time or no landed time. The merge itself
 # writes landed_at (bin/jg-merge-outcome-lib.sh), so the number is the record's own, and a merge over
@@ -224,6 +229,9 @@ for m in "$STATE"/*.meta; do
     continue
   fi
 
+  # The store's merge step opens now that the pull request is mergeable (record only: today's rule above decided).
+  mstore step "$HID" "$task" "$pr" "$pr_head" --source "mergeable:${pr##*/}@$pr_head"
+
   # 3. Merge through jg-pr-merge.sh only: its own live green check, head pin and refusal rules stay in
   # charge, no --auto is ever passed. The attempted head is recorded first, so a check killed between
   # record and merge cannot retry the same head next sweep.
@@ -243,6 +251,9 @@ for m in "$STATE"/*.meta; do
     continue
   fi
   if [ "$merge_rc" -eq 0 ]; then
+    # The store's merge step closes done with the merge commit (the forge's, else the head the merge was pinned to).
+    mcommit=$(timeout "$BUDGET" gh pr view "$pr" --json mergeCommit --jq '.mergeCommit.oid // empty' 2>/dev/null) || mcommit=
+    mstore merged "$HID" "$task" "$pr" "${mcommit:-$pr_head}" --source "merged:${pr##*/}@$pr_head"
     # The merge wrote landed_at on the ticket; the number is its ready time to that landing.
     latency=$(merge_minutes "$task")
     # A merge over the limit is the alert table's slow-delivery row (bin/jg-alert.sh); the merged line below carries the minutes.

@@ -30,6 +30,23 @@ RED='select(.conclusion=="failure" or .conclusion=="timed_out" or .conclusion=="
 # The newest completed run of each workflow, kept only when red: a fixed workflow's old red run is not ticketed.
 NEWEST_RED=".workflow_runs|group_by(.workflow_id)|map(max_by(.created_at))|.[]|$RED|[.id,.name,.html_url,.head_sha,.conclusion]|@tsv"
 
+# ci_blocker <head sha> <run id>: the item store files the red run as a blocker under the open merge, land or release step of the
+# pull request whose head it is (a task's ticket, or <project>@<n> for a release record). Guarded by config/item-store, never
+# changes this script's output or exit (core/item-store/adapters/merge.py red).
+ci_blocker() {
+  [ -e "$FMH/config/item-store" ] || return 0
+  local m subj='' hid=main kind pr
+  [ ! -f "$FMH/.jg-squad-lead-home" ] || read -r hid < "$FMH/.jg-squad-lead-home" || :
+  for m in "$FMH"/state/*.meta; do
+    [ -f "$m" ] && grep -qx "pr_head=$1" "$m" || continue
+    kind=$(sed -n 's/^kind=//p' "$m" | tail -n 1); pr=$(sed -n 's/^pr=//p' "$m" | tail -n 1)
+    if [ "$kind" = release ]; then subj=$(basename "$(sed -n 's/^project=//p' "$m" | tail -n 1)")@${pr##*/}
+    else subj=$(sed -n 's/^ticket=//p' "$m" | tail -n 1); [ -n "$subj" ] || subj=$(basename "$m" .meta); fi
+    break
+  done
+  [ -z "$subj" ] || JG_HOME="$FMH" timeout "$BUDGET" python3 -I "$(dirname "${BASH_SOURCE[0]}")/../item-store/adapters/merge.py" red "$hid" "$subj" "$2" --source "ci:$2" >/dev/null 2>&1 || :
+}
+
 # file <repo> <project> <run id> <workflow> <url> <sha> <conclusion>
 file() {
   local repo=$1 proj=$2 id=$3 wf=$4 url=$5 sha=$6 concl=$7 job='' jid='' line='' item title body
@@ -53,6 +70,7 @@ Never re-run; fix the root cause. bin/jg-ci-rerun.sh refuses a re-run of this ru
   if JG_HOME="$FMH" timeout "$BUDGET" "$FMH/bin/jg-backlog.sh" add "$item" "$title" -l blocker --kind ship --body "$body" >/dev/null 2>&1 \
     || JG_HOME="$FMH" timeout "$BUDGET" "$FMH/bin/jg-backlog.sh" show "$item" >/dev/null 2>&1; then
     mkdir -p "$MEM" 2>/dev/null && printf '%s\n' "$url" > "$MEM/${repo//\//__}.$id" 2>/dev/null || :
+    ci_blocker "$sha" "$id"
     JG_STATE_OVERRIDE="$FMH/state" "$FMH/bin/jg-alert.sh" raise line-red "$item" --project "$proj" --print \
       --note "red-ci-ticket: $url: $wf $job went red; filed $item ($proj); fix the root cause, never re-run" 2>/dev/null || :
   fi
