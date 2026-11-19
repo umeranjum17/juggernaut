@@ -41,7 +41,7 @@ printf 'working [at=1]: x\n' > "$H/state/t1.status"; at "$H/state/t1.status"
 : > "$T/tmp/jg-old-entry"; at "$T/tmp/jg-old-entry"
 before=$(cd "$H" && find . -type f -printf '%p %s %T@\n' | sort | md5sum)
 
-machines=$(find "$ROOT/core/machines/tables" -name '*.tsv' -printf '%f\n' | sed 's/\.tsv$//' | sort)
+machines=$(cut -f1 "$ROOT/core/fleet-status/records.tsv" | sort)
 [ "$(printf '%s\n' "$machines" | wc -l)" -eq 24 ] || fail "expected 24 declared machines, found $(printf '%s\n' "$machines" | wc -l)"
 
 f() { printf '%s\n' "$line" | cut -f"$1"; }   # one column of the reading line
@@ -52,6 +52,11 @@ for m in $machines; do
   line=$(first "$m" "$((T0 + 5))"); rm=$(f 1) rid=$(f 2) rstate=$(f 3) rage=$(f 5) rfresh=$(f 6)
   [ "$rm" = "$m" ] && [ "$rid" != - ] && [ "$rfresh" = fresh ] && [ "$rage" -ge 0 ] && [ "$rage" -le 6 ] || fail "$m: expected a fresh reading with its age, got: $line"
   [ -n "$rstate" ] || fail "$m: a reading must carry a state: $line"
+  if [ "$m" = presence ]; then   # its record time is the caller's now (records.tsv), so it reads fresh at any clock and never stale or unknown by age
+    line=$(first "$m" "$((T0 + life + 100))"); [ "$(f 6)" = fresh ] && [ "$(f 5)" = 0 ] || fail "presence must read fresh at age 0 under any clock, got: $line"
+    line=$("$RD" "$T/no-such-home" "$m"); [ "$line" = "$(printf '%s\t-\tunknown\t\t\tunknown' "$m")" ] || fail "$m: a missing home must read unknown, got: $line"
+    pass "$m: fresh at the caller's clock, unknown for a missing home"; continue
+  fi
   line=$(first "$m" "$((T0 + life + 100))"); rage=$(f 5) rfresh=$(f 6)
   [ "$rfresh" = stale ] && [ "$rage" -gt "$life" ] || fail "$m: expected a stale reading older than $life s, got: $line"
   line=$(first "$m" "$((T0 - 100))"); rage=$(f 5) rfresh=$(f 6)

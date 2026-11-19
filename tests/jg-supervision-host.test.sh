@@ -29,6 +29,8 @@ NODE_BIN=$(node -p process.execPath)
 command -v perl >/dev/null 2>&1 || { printf 'skip: perl absent\n'; exit 0; }
 
 TMP_ROOT=$(jg_test_tmproot jg-supervision-host)
+# An installed sign-off-axi would read the captain's real board: the fixture homes arm a board-answers check, so keep its board inside the test.
+export SIGN_OFF_HOME="$TMP_ROOT/sign-off-home"; mkdir -p "$SIGN_OFF_HOME"
 FAKEBIN=$(jg_fakebin "$TMP_ROOT/fakebin")
 ln -s /bin/bash "$FAKEBIN/claude"
 FAKE_CLAUDE="$FAKEBIN/claude"

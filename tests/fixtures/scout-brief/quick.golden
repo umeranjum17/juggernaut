@@ -33,7 +33,7 @@ The report is the only thing that survives, so anything worth keeping must be in
    Whenever you mention a PR anywhere - a status line, your terminal, a summary - write its full
    https:// URL exactly as the forge printed it, never a bare number such as "PR 108"; juggernaut
    copies that URL from your line rather than assembling one.
-   One rule for every wait (your own background shell, pipeline run or validation round, an outside condition, a parked lane, a date): before you end your turn append `paused [at=<epoch>] [wait=<who>] [reason=<word>]: {job and completion condition}`. Use `blocked:` only when you are stuck, or for the waits-for line below.
+   One rule for every wait (your own background shell, pipeline run or validation round, an outside condition, a parked lane, a date): before you end your turn append `paused [at=<epoch>] [wait=<who>] [reason=<word>]: {job and completion condition}`. Use `blocked:` only when you are stuck, or for the waits-for line below. The `wait=` word decides who is paged: the holder you name, never the owner directly.
    `wait` is who owes the next move: worker, tick (a script), lead, main, owner or outside (CI, a quota, another ticket, a date). `reason` is why: decision, blocker, dependency, quota, ci, approval, review, parked or date. A line with no wait, no reason, another word, or the old placeholder date is refused.
    Do not repeat the declaration on every poll. Do not declare active implementation or reasoning as a wait.
    Juggernaut may still raise one first-sight alert; the declared wait then uses the existing long recheck cadence instead of repeated possible-wedge alarms.
