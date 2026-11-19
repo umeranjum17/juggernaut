@@ -37,7 +37,16 @@ Budget        measured by a dry run, never guessed
 
 3. Build the waves from the Files fields: two slices share a wave only when they share no file and neither reads what
    the other creates. Every slice of a wave is cut from the same commit: the trunk tip after the previous wave landed.
-4. Dry run: a worker of the order's model carries out the first order on a scratch copy and reports where it got stuck.
+4. Write orders/plan.json beside the orders in the form of the swarm interface's section 1: plan, title, report,
+   intent, prior_art, and per slice id, title, owner_home, project, size, risk, depends_on, files, machine, order,
+   owner_word and gate. A slice id is lowercase letters and digits. A title is 2 to 7 plain words, at most 48
+   characters, with no path, slash or id (strict intake refuses others). Dependent slices share one owner home. An
+   owner-only slice carries owner_word: one plain question about the product, two options, a recommendation and
+   the must design-pick; a money call is settled in the report's open decisions before the swarm, never in a slice. A slice that waits on another
+   home's row or a tool version carries gate; a slice that waits on anything else stays out of plan.json and the
+   report names it for Main to start by hand. Check the file with bin/jg-swarm-plan-check.sh orders/plan.json
+   until it prints its ok line (the filer's own dry run needs the plan row filed, so /blitz runs it later).
+5. Dry run: a worker of the order's model carries out the first order on a scratch copy and reports where it got stuck.
    Fix the order, then record its measured time as the budget for that size of order.
 
 ## Gates
@@ -45,6 +54,7 @@ Budget        measured by a dry run, never guessed
 - No two orders in one wave name the same file; the union of a wave's file lists has no repeated path.
 - An owner-gated order never holds a wave: when its word is not in at its wave's start, the next wave runs and the
   gated order runs later, alone, cut from that day's trunk tip.
+- orders/plan.json exists, names every order, and its depends_on lists match the orders' Depends on fields.
 - Every order has fixture acceptance, a rollback and an expand path.
 - An order names only paths that exist in a worker's copy, or absolute paths with hashes.
 - Ready-to-copy sources: before publication, every acceptance command of an order that copies files is run on exactly
