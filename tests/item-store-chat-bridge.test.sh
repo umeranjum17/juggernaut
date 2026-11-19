@@ -4,6 +4,7 @@
 # fixture record, state/captain-channel.jsonl, written the way core/bus/cmd/jg-bus writes it (one JSON event per line).
 # a: would-send lists a question once and acks. b: a security item and a main-down item, climbed to him by the tick, give one line each.
 # c: compare against a fixture channel record (paired, an unpaged channel event, an unsent page, a rerun, summary and reply events).
+# c7-c9: history from before the bridge began is never compared; compare waits for the first would-send.
 # d: received writes the tell, and with a pick closes the question. e: chat-wiring.sh --dry-run.
 set -u
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
@@ -72,6 +73,17 @@ want "c5 a turn summary and a reply event write no intake and no would-send line
 ev "$now" card late-one "A decision waits for you: T-ONE again"
 br compare --now "$now" >/dev/null
 want "c6 an event less than 15 minutes old waits for its page" 2 "$(intakes)"
+
+# history: a card the channel sent long before the bridge began, and a compare before the first would-send
+ev "$((now - 100000))" card old-history "A decision waits for you: T-OLD, sent before the bridge"
+br compare --now "$later" >/dev/null
+want "c7 a channel event from before the bridge began opens nothing" 2 "$(intakes)"
+mv "$S/chat-bridge-start" "$S/start.hold"; cur=$(cat "$S/chat-compare.json")
+br compare --now "$((later + 5000))" >/dev/null
+want "c8 before the first would-send compare opens nothing and keeps its cursor" "2 $cur" "$(intakes) $(cat "$S/chat-compare.json")"
+mv "$S/start.hold" "$S/chat-bridge-start"
+rm -f "$S/chat-compare.json"; br compare --now "$later" >/dev/null
+want "c9 a compare from byte 0 skips every event older than the bridge" 2 "$(intakes)"
 
 # ------------------------------------------------------------------ d: his messages
 out=$(br received --message-id m-d1 --text "how is T-ONE going?")

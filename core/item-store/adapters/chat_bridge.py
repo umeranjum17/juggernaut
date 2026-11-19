@@ -7,9 +7,10 @@ items. It sends nothing. Run on Main's home, behind `config/chat-store` (chat-wi
   would-send
       Reads `pages owner` from the reader's cursor (this bridge is the one reader of it), appends one line per listed item,
       `<seq>\\t<item key>\\t<the text it would send>`, to <store dir>/chat-would-send.log, then acks the count line's ack=.
-      A second call lists nothing new. A turn summary, a reply and a voice message are not items and have no page.
+      The first call also writes <store dir>/chat-bridge-start, the time the bridge began: no channel event older than that
+      (less 15 minutes) is compared, because no page could have paired with it. A second call lists nothing new. A turn summary, a reply and a voice message are not items and have no page.
   compare [--now <epoch>]
-      Reads the captain channel's own record, $STATE/captain-channel.jsonl (core/bus/cmd/jg-bus: one JSON event per line,
+      Before the first would-send it waits and opens nothing. Reads the captain channel's own record, $STATE/captain-channel.jsonl (core/bus/cmd/jg-bus: one JSON event per line,
       appended before anything is published) from its own byte cursor (<store dir>/chat-compare.json). It opens one
       `intake:main/chat-<item key>` item on Main (source `chat-compare:<item key>`) for
         - a would-send line, 15 minutes old, that no channel event names (the item key, or its subject, the ticket id, in
@@ -61,9 +62,24 @@ def one_line(text):
 
 # ------------------------------------------------------------------ would-send
 
+def start_path(d):
+    return os.path.join(d, "chat-bridge-start")
+
+
+def bridge_start(d):
+    """The epoch the bridge began (its first would-send), or None before that."""
+    try:
+        return int(open(start_path(d), encoding="utf-8").read().strip())
+    except (OSError, ValueError):
+        return None
+
+
 def cmd_would_send(a):
     home = jg_home()
     st, d = opened(home)
+    if bridge_start(d) is None:
+        with open(start_path(d), "w", encoding="utf-8") as fh:
+            fh.write("%d\n" % time.time())
     lines, last = st.pages(READER)
     rows = []
     for ln in lines[:-1]:                      # the last line is the count line: pages: ... ack=<seq>
@@ -97,8 +113,9 @@ def save_state(d, s):
     os.replace(tmp, state_path(d))
 
 
-def read_new_events(path, start):
-    """(owner-bound events from byte `start`, the byte offset after the last whole line). A half-written last line waits."""
+def read_new_events(path, start, since):
+    """(owner-bound events from byte `start` no older than `since`, the byte offset after the last whole line). A half-written
+    last line waits. An older event is history from before the bridge and is skipped."""
     try:
         with open(path, "rb") as fh:
             fh.seek(start)
@@ -112,7 +129,7 @@ def read_new_events(path, start):
             e = json.loads(ln)
         except ValueError:
             continue
-        if isinstance(e, dict) and e.get("kind") in OWNER_KINDS and isinstance(e.get("at"), int):
+        if isinstance(e, dict) and e.get("kind") in OWNER_KINDS and isinstance(e.get("at"), int) and e["at"] >= since:
             out.append({k: e.get(k, "") for k in ("at", "kind", "key", "subject", "text")})
     return out, end
 
@@ -155,8 +172,12 @@ def cmd_compare(a):
     home = jg_home()
     st, d = opened(home)
     now = a.now if a.now is not None else int(time.time())
+    began = bridge_start(d)
+    if began is None:
+        print("compare: 0 intake items opened (the bridge has not begun: no would-send yet)")
+        return
     s = load_state(d)
-    new, s["bytes"] = read_new_events(os.path.join(itemdb.main_home(home), "state", "captain-channel.jsonl"), s["bytes"])
+    new, s["bytes"] = read_new_events(os.path.join(itemdb.main_home(home), "state", "captain-channel.jsonl"), s["bytes"], began - WINDOW)
     s["events"] += new
     ws = would_lines(st, d)
     at = itemdb.stamp(st)
