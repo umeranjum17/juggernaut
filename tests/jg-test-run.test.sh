@@ -771,6 +771,20 @@ i=0; while [ ! -e '$d/$name-release' ] && [ \"\$i\" -lt 1200 ]; do sleep 0.2; i=
   pass 'a trunk run starts at once on its reserved slot, and a second takes the first free slot ahead of lane runs'
 }
 
+# A test that moves HOME still finds the caller's mise state, data and cache, so a python3 shim starts quietly.
+test_a_script_that_moves_home_keeps_the_callers_mise_dirs() {
+  local d=$TMP_ROOT/mise-dirs out want
+  mkdir -p "$d"
+  write_script "$d/moves-home.test.sh" "HOME='$d/home'; echo \"state=\${MISE_STATE_DIR:-unset} data=\${MISE_DATA_DIR:-unset} cache=\${MISE_CACHE_DIR:-unset}\""
+  want="state=$HOME/.local/state/mise data=$HOME/.local/share/mise cache=$HOME/.cache/mise"
+  [ -d "$HOME/.local/state/mise" ] || want=${want/state=$HOME\/.local\/state\/mise/state=unset}
+  [ -d "$HOME/.local/share/mise" ] || want=${want/data=$HOME\/.local\/share\/mise/data=unset}
+  [ -d "$HOME/.cache/mise" ] || want=${want/cache=$HOME\/.cache\/mise/cache=unset}
+  out=$(env -u MISE_STATE_DIR -u MISE_DATA_DIR -u MISE_CACHE_DIR -u XDG_STATE_HOME -u XDG_DATA_HOME -u XDG_CACHE_HOME bash "$RUNNER" "$d/moves-home.test.sh" 2>&1) || fail "the probe run failed: $out"
+  assert_contains "$out" "$want" 'a script that moves HOME must keep the caller mise directories'
+  pass 'a script that moves HOME keeps the caller mise directories'
+}
+
 # A test that moves HOME still builds Go from the caller's own build cache.
 test_a_script_that_moves_home_keeps_the_callers_go_build_cache() {
   local d=$TMP_ROOT/gocache want out
@@ -787,6 +801,7 @@ test_a_run_past_the_machine_limit_waits_for_a_slot
 test_a_burst_of_runs_caps_at_the_slot_limit_under_nice_and_records_the_load
 test_a_trunk_run_starts_at_once_and_takes_the_first_free_slot_ahead_of_lane_runs
 test_a_script_that_moves_home_keeps_the_callers_go_build_cache
+test_a_script_that_moves_home_keeps_the_callers_mise_dirs
 test_required_shards_keep_the_union_and_a_failed_shard
 test_the_aggregate_is_written_when_the_shard_scratch_cannot_be_removed
 test_a_shard_that_stops_before_its_result_still_writes_a_failed_result

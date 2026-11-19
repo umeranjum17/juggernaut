@@ -1996,6 +1996,7 @@ if [ "${1:-}" = --required-shards ]; then
   jg_test_host_admit "$(machine_runs_max)"
   trap jg_test_host_release EXIT
   jg_test_host_pin_go_cache
+  jg_test_host_pin_mise_dirs
   jg_test_host_warm_go_cache "$ROOT"
   # The eight shards are disjoint, so they run side by side: each one in its own temp and tmux directory
   # (a short path under the disk scratch root, because a tmux socket path is length-limited), its output kept in its own file and
@@ -2657,11 +2658,12 @@ if [ "$PER_SCRIPT_TIMEOUT_SECS" -gt 0 ] || [ "$CHANGED_CEILING" -eq 1 ]; then
 fi
 
 # A run that executes scripts holds a machine run slot until it exits, and every script it starts shares one Go
-# build cache (bin/jg-test-host-lib.sh). Time spent waiting for the slot is the machine's, so it is taken off the
+# build cache and the caller's mise state (bin/jg-test-host-lib.sh). Time spent waiting for the slot is the machine's, so it is taken off the
 # run's own wall clock.
 jg_test_host_admit "$(machine_runs_max)"
 RUN_STARTED_MS=$((RUN_STARTED_MS + JG_TEST_HOST_WAITED_MS))
 jg_test_host_pin_go_cache
+jg_test_host_pin_mise_dirs
 
 RUN_TMP=$(mktemp -d "${TMPDIR:-/tmp}/jg-test-run.XXXXXX")
 RECORDS="$RUN_TMP/records.tsv"

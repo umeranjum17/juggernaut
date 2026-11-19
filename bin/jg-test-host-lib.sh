@@ -12,6 +12,15 @@
 #   content-addressed and safe for builds running at once. jg_test_host_warm_go_cache compiles every core module into
 #   it once, so shards that start together link from it instead of each compiling the same packages at the same time.
 #
+# Toolchain state.
+#   Tool shims on PATH (python3 under mise) keep their trust records, their installs and the versions they resolved
+#   in the caller's own mise state, data and cache directories. A test that moves HOME to a throwaway one makes the
+#   shim see none of it: it refuses a config file it does not trust, or fetches every "latest" version from the
+#   network and prints its warnings into the script's output, so a script that reads the backlog through python3
+#   failed in the gate and passed on a developer's shell. jg_test_host_pin_mise_dirs resolves the three directories
+#   once, before any script moves HOME, and exports MISE_STATE_DIR, MISE_DATA_DIR and MISE_CACHE_DIR. A caller that
+#   set one keeps it, and a host with no such directory is left as it is.
+#
 # Run slots.
 #   jg_test_host_admit <max> lets at most <max> runs execute tests on this machine at once; the rest wait, printing one
 #   line that names the runners holding the slots. A slot is a kernel lock on JG_TEST_HOST_SLOTS/slot-<k> (default
@@ -65,6 +74,19 @@ jg_test_host_pin_go_cache() {
     /*) export GOCACHE="$cache" ;;
     *) log "warning: go env GOCACHE named no cache directory (${cache:-nothing}), so every test that moves HOME compiles Go again" ;;
   esac
+}
+
+jg_test_host_pin_mise_dirs() {
+  local spec name xdg sub base dir
+  for spec in STATE:XDG_STATE_HOME:.local/state DATA:XDG_DATA_HOME:.local/share CACHE:XDG_CACHE_HOME:.cache; do
+    IFS=: read -r name xdg sub <<<"$spec"
+    name=MISE_${name}_DIR
+    [ -z "${!name:-}" ] || continue
+    base=${!xdg:-${HOME:-}/$sub}
+    dir=$base/mise
+    case $dir in /*) [ -d "$dir" ] && export "$name=$dir" ;; esac
+  done
+  return 0
 }
 
 jg_test_host_warm_go_cache() {  # <repository root>
