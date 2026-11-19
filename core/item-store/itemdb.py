@@ -97,16 +97,29 @@ class ProdStore(S.Store):
         return super().open(at, key, kind, home, subject, owes, by, source=source, named=named, **kw)
 
 
+def add_missing_views(con, shipped):
+    """The migration of a file made by an older schema.sql: a view holds no data, so each read-only view the shipped schema defines and
+    the file lacks is created from the shipped text. A view already there is never changed (that is a reviewed rule change of its own)."""
+    have = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='view'")}
+    for name, sql in shipped.execute("SELECT name, sql FROM sqlite_master WHERE type='view' ORDER BY rowid").fetchall():
+        if name not in have:
+            con.execute(sql)
+
+
 def open_db(home, by):
     """The one way to open the store. The schema runs once, when the file is created; after that the file is attached
     (Store(path) on an existing file fails). WAL and a 10 s busy wait, because every home of the host writes it."""
     d = store_dir(home)
     os.makedirs(d, exist_ok=True)
     path = os.path.join(d, "fleet.db")
-    st = ProdStore(path, me=by, attach=os.path.exists(path))
+    attach = os.path.exists(path)
+    st = ProdStore(path, me=by, attach=attach)
     st.con.execute("PRAGMA busy_timeout=10000")
     st.con.execute("PRAGMA journal_mode=WAL")
-    st.shipped = S.Store(":memory:").schema_hash()       # the rules as shipped in schema.sql, for the audit
+    fresh = S.Store(":memory:")
+    if attach:
+        add_missing_views(st.con, fresh.con)
+    st.shipped = fresh.schema_hash()                     # the rules as shipped in schema.sql, for the audit
     st.boot = boot_id()
     return st
 

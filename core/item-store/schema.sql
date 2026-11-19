@@ -1,5 +1,5 @@
 -- The item store: one SQLite file per host for everything the fleet owes (docs/item-store.md).
--- One file per host. Four tables (item, move, cursor, policy). The rules are two read-only views (kind, rung):
+-- One file per host. Four tables (item, move, cursor, policy). The rules are read-only views (kind and rung, and the alert ladder's three):
 -- a view cannot be written, so a rule changes only by a reviewed edit of this file (a migration).
 -- One noun: an ITEM is one thing someone owes, by when. Every item has the same three states
 -- (open, done, dropped) and the same five moves (open, note, hand, climb, close).
@@ -58,6 +58,53 @@ CREATE VIEW kind(kind, first, deadline_s, ceiling, proof, closer, means) AS VALU
   ('rule',      'outside',2592000,'outside', 'owner:',             'owner',   'an owner standing rule or bypass, in force until its end date'),
   ('intake',    'main',     3600, 'main',    'filed:',             'ladder',  'an arrival no adapter could sort'),
   ('blocker',   'named',    7200, 'main',    'gone:',              'ladder',  'a red check or other fault that holds a step back; it names that step (parent) and closes done in the same write as the step''s done close');
+
+-- ---------------------------------------------------------------- the alert ladder (read-only)
+-- What bin/jg-alert.sh reads today from the alert table (core/machines/styles/alert-table.tsv), as rules of the store.
+-- alert_kind: each alert's precedence (P0 first) and its first rung (0 tick, 1 worker, 2 lead, 3 Main, 4 owner; 'wait' = the one the wait
+--   names). fires_at is seconds, 'beats:N' or 'limit' (the limit of its kind, see alert_limit).
+-- alert_ladder: per precedence, the seconds to the next rung (step_s), the seconds between repeats (repeat_s), the top rung ('start+2' =
+--   two rungs above the first, at most 3), the candidate lift fact (never authority; '-' = none) and the repeats at the top rung
+--   before one derived recovery (repeats_at_top).
+-- alert_limit: the slow-delivery limit in seconds for a kind of work (0 = none): stranded, stranded-release, every ship-* and recon-* kind.
+CREATE VIEW alert_kind(alert, precedence, first_rung, fires_at) AS VALUES
+  ('security',          'P0', '4',    '0'),
+  ('line-red',          'P1', '2',    '0'),
+  ('supervision-down',  'P1', '1',    'beats:2'),
+  ('stuck-wait',        'P2', 'wait', '0'),
+  ('lost-worker',       'P2', '0',    '900'),
+  ('capacity',          'P2', '1',    '0'),
+  ('undelivered',       'P2', '2',    '300'),
+  ('drift',             'P2', '2',    '600'),
+  ('slow-delivery',     'P3', '1',    'limit'),
+  ('ready-idle',        'P3', '2',    '600'),
+  ('stranded',          'P3', '2',    'limit'),
+  ('parked-lane',       'P3', '2',    '0'),
+  ('host',              'P3', '3',    '0'),
+  ('wrong-repo',        'P2', '2',    '0'),
+  ('lock-held',         'P1', '0',    '300'),
+  ('orphan-process',    'P3', '0',    '0'),
+  ('escalation-stuck',  'P1', '3',    '0'),
+  ('fleet-blocked',     'P1', '0',    '0'),
+  ('quota-unused',      'P2', '0',    '1800'),
+  ('quota-blind',       'P2', '0',    '1800'),
+  ('worker-stopped',    'P1', '3',    '0'),
+  ('judge-split',       'P1', '2',    '0');
+
+CREATE VIEW alert_ladder(precedence, step_s, repeat_s, top, lift, repeats_at_top) AS VALUES
+  ('P0',   0,  600, '4',       '-',            3),
+  ('P1', 300,  600, '4',       '-',            3),
+  ('P2', 300,  600, 'start+2', 'owner-answer', 3),
+  ('P3',   0, 3600, '3',       '-',            3);
+
+CREATE VIEW alert_limit(kind, limit_s) AS VALUES
+  ('stranded',          172800),
+  ('stranded-release',   14400),
+  ('ship-delivering',      300),
+  ('ship-proving',         900),
+  ('ship-reviewing',       900),
+  ('recon-standard',       600),
+  ('recon-deep',             0);
 
 -- ---------------------------------------------------------------- the move log (append-only; the one write path)
 CREATE TABLE move (
