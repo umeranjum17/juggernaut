@@ -20,7 +20,8 @@
 # `Critic:` line, and is a no-op for the same critic. Once assigned, only that critic's verdict counts and the parent record alone says
 # whether the draft is accepted: the verdict also writes the critic ticket's own `Round` line, so its gate view follows the parent and
 # never decides it. A revise retires the assignment, so a late verdict cannot seal the new draft; a draft that was never assigned still
-# takes a verdict from any named critic. A second critic while one holds the draft is refused.
+# takes a verdict from any named critic. A second critic while one holds the draft is refused: with config/item-store the store answers it (an
+# open work item whose parent is the Recon's work), `refused: <recon> already has an open critic <id>`.
 # With config/item-store, assign also opens the critic's work item as the child of the Recon's (the link a ready draft finds its critic
 # by), and draft and revise send the round to that critic (core/item-store: jg-item ready); the store adds no rule of its own.
 # Exit: 0 done, 1 refused, 2 usage. Data directory: JG_DATA_OVERRIDE, else <JG_HOME>/data.
@@ -68,6 +69,15 @@ item_ready() {  # <recon> <draft hash>: the next round goes to the linked critic
   JG_HOME=$JG_HOME JG_ITEM_OR_INTAKE=1 "$ITEM" ready "$key" "$2" --source "ready:$1@$2" >/dev/null 2>&1 || true
 }
 
+item_open_critic() {  # <recon> -> the task id of the critic's open work item, empty when none (or no store)
+  item_store_on || return 0
+  local key out
+  key=$(item_work_key "$1" | cut -f1)
+  [ -n "$key" ] || return 0
+  out=$(JG_HOME=$JG_HOME python3 -I "$SCRIPT_DIR/../core/item-store/adapters/lane.py" open-child "$key" 2>/dev/null) || return 0
+  out=${out#work:*/}; printf '%s\n' "${out%%#*}"
+}
+
 command_phase() {
   local dir line; dir=$(task_dir "${1:-}") || exit $?; line=$(last_line "$dir")
   if [ -n "$line" ]; then field "$line" 3; else echo none; fi
@@ -110,7 +120,7 @@ command_assignee() {
 }
 
 command_assign() {
-  local id=${1:-} dir critic='' line hash cdir live gen
+  local id=${1:-} dir critic='' line hash cdir live gen open
   [ "$#" -ge 1 ] || usage; shift
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -127,10 +137,11 @@ command_assign() {
   line=$(last_line "$dir")
   [ -n "$line" ] || refuse "no draft is recorded: the researcher runs draft first"
   live=$(live_assignment "$dir")
-  if [ -n "$live" ]; then
-    [ "$(printf '%s' "$live" | cut -f1)" = "$critic" ] || refuse "critic $(printf '%s' "$live" | cut -f1) already holds this draft; a revision retires the assignment"
+  if [ -n "$live" ] && [ "$(printf '%s' "$live" | cut -f1)" = "$critic" ]; then
     echo "recon $id: $critic already holds this draft (generation $(printf '%s' "$live" | cut -f2))"; return 0
   fi
+  open=$(item_open_critic "$id")
+  [ -z "$open" ] || refuse "$id already has an open critic $open"
   [ "$(field "$line" 3)" = drafted ] || refuse "the last move is $(field "$line" 2) ($(field "$line" 3)); a critic is assigned to a draft waiting for one"
   hash=$(field "$line" 4)
   [ "$(report_hash "$dir")" = "$hash" ] || refuse "report.md changed after the draft was recorded: record the revision first"

@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # Waiting-state timers, called once per jg-watch.sh poll, independent of pane
-# churn, busy proofs, and stale/wedge suppression. This is the stuck-worker
-# escalation chain; core/wait-timers/README.md owns its rungs, thresholds and
-# record format. The owner alert and the pause cadence are no longer here: the
-# escalation workflow definition decides and delivers those two rungs
-# (bin/jg-escalation-workflows.sh, live), and this file keeps the rungs the
-# definition does not carry yet - the escalation to Main, the board card and the
-# re-alert cadence - riding the owner time the definition stamps.
+# churn, busy proofs, and stale/wedge suppression. A wait climbs by the store's
+# tick (core/item-store); this file no longer escalates a lane to Main, posts a
+# card for it or re-alerts it. It keeps the owner table's own steps (the
+# account-down and silent rows), the episode record they time from, Main's
+# relay of a lead's report, the stalled ready backlog, the green-PR watcher and
+# the unhandled-steer alert; core/wait-timers/README.md owns their record format.
 # Each recorded task owns one durable episode under state/.waiting-timers/.
 # A home with a pause record (bin/jg-pause-lib.sh, the one owner) silences its
 # stalled ready backlog as well: no episode, no escalation, and the clock starts
@@ -20,14 +19,7 @@
 # Time starts at first observation and survives watcher restarts.
 # Changing state/declaration/endpoint clears and re-arms the episode; a paused
 # episode instead keys on window, verb and phase key, so reason-text churn on
-# the same pause re-arms nothing. A paused wait rechecks at the
-# JG_PAUSE_RESURFACE_SECS cadence, never the owner-alert threshold, and never
-# escalates. Every other rung, once reached, fires again every
-# JG_PROMPT_REALERT_SECS while the wait stays open, and a new supervisor session
-# re-presents every open wait on its first tick.
-# An unresolved wait re-fires at every due recheck until its source clears.
-# Queue acknowledgement is not handling. Expected pauses retain the change gate
-# and its bounded backstop; unchanged pauses are logged without another wake.
+# the same pause re-arms nothing.
 # Parent reports use the existing local/remote parent channel. Only the main
 # home posts a board card, so only what Main cannot settle reaches the captain.
 # An episode key is waiting-timer-<home>-<task>-g<generation>-<source key>, so a
@@ -108,87 +100,6 @@ jg_wait_timer_report() {  # <status-line>
     echo "waiting timers: parent channel publication failed (code $rc; inspect identity/binding or destination permissions)" >&2
     return 1
   }
-}
-
-# Pause re-raise gate (README "Re-raise until the wait is handled"). The sidecar
-# state/.waiting-timers/.raised/<task> holds what the last raise said: a
-# fingerprint of the wait, when that hop's first raise happened, and whether the
-# hop's backstop raise was spent. It lives beside the episode record, not in it,
-# so the record layout other readers parse is unchanged.
-jg_wait_timer_fingerprint() {  # <hop> <key> <window> <verb> <actor> <declaration> <wsrc> <until>
-  # The [at=] stamp moves on every refresh and a silent wait restates its age on
-  # every scan; neither is the wait changing.
-  local text
-  text=$(printf '%s' "$6" | tr '\t\n' '  ' | sed 's/\[at=[0-9]*\]//g')
-  [ "$7" != silent ] || text=silent
-  printf '%s\n' "$1|$2|$3|$4|$5|$8|$text" | hash_pane
-}
-
-jg_wait_timer_raised_save() {  # <task> <fingerprint> <hop-start> <backstop-spent>
-  local file="$STATE/.waiting-timers/.raised/$1"
-  mkdir -p "${file%/*}" && printf '%s\t%s\t%s\n' "$2" "$3" "$4" > "$file.tmp.$$" && mv "$file.tmp.$$" "$file"
-}
-
-# Exit 0 raises (wakes), 1 stays silent. A raise that cannot be recorded still
-# wakes, so a broken sidecar costs tokens and never a missed wait.
-jg_wait_timer_raise_gate() {  # <task> <fingerprint> <hop-start> <longest-interval> <now> <forced>
-  local file="$STATE/.waiting-timers/.raised/$1" sfp='' start='' spent=0
-  if [ -f "$file" ] && [ ! -L "$file" ]; then IFS=$'\t' read -r sfp start spent < "$file" || sfp=''; fi
-  case "$start:$spent" in *[!0-9:]*|:*) sfp='' ;; esac
-  # No record: the hop's first raise (the owner rung, or an escalation from before
-  # this record existed) already said what the wait says now.
-  [ -n "$sfp" ] || { sfp=$2 start=$3 spent=0; }
-  if [ "$6" = 1 ] || [ "$sfp" != "$2" ]; then
-    jg_wait_timer_raised_save "$1" "$2" "$5" 0 || true
-    return 0
-  fi
-  if [ "$spent" -eq 0 ] && [ $(($5 - start)) -ge "$4" ]; then
-    jg_wait_timer_raised_save "$1" "$2" "$start" 1 || true
-    return 0
-  fi
-  jg_wait_timer_raised_save "$1" "$2" "$start" "$spent" || true
-  return 1
-}
-
-# The top of the ladder is not rung forever. A wait whose board card is posted
-# is at its top rung; it wakes its owner at most spec.topRung.repeats more
-# times (core/bus/workflows/escalation-optimization.json, the one owner of the
-# number), then is only that one card, which stays open until the wait clears.
-# state/.waiting-timers/.top-fires/<task> holds the wait key and the wakes sent
-# at the top, so a new wait of the same task counts again from zero.
-_JG_WAIT_TIMER_LIB_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-jg_wait_timer_top_repeats() {
-  local f
-  for f in "${JG_ESCALATION_OPT:-}" "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}/escalation-optimization.json" \
-    "$_JG_WAIT_TIMER_LIB_DIR/../../bus/workflows/escalation-optimization.json"; do
-    [ -n "$f" ] && [ -f "$f" ] || continue
-    jq -er '.spec.topRung.repeats | select(type == "number" and . >= 0)' "$f" && return 0
-    echo "waiting timers: $f has no spec.topRung.repeats" >&2
-    return 1
-  done
-  echo "waiting timers: the escalation optimization definition is missing" >&2
-  return 1
-}
-
-jg_wait_timer_top_fires() {  # <task> <key>: the wakes already sent at the top for this wait
-  local file="$STATE/.waiting-timers/.top-fires/$1" k='' n=0
-  if [ -f "$file" ] && [ ! -L "$file" ]; then IFS=$'\t' read -r k n < "$file" || k=''; fi
-  case "$n" in ''|*[!0-9]*) n=0 ;; esac
-  [ "$k" = "$2" ] || n=0
-  printf '%s\n' "$n"
-}
-
-jg_wait_timer_top_fires_save() {  # <task> <key> <count>
-  local file="$STATE/.waiting-timers/.top-fires/$1"
-  mkdir -p "${file%/*}" && printf '%s\t%s\n' "$2" "$3" > "$file.tmp.$$" && mv "$file.tmp.$$" "$file"
-}
-
-# The durable record of a re-raise that did not wake: when, which wait, which hop.
-jg_wait_timer_unchanged_log() {  # <now> <task> <key> <hop> <age>
-  local log="$STATE/.waiting-timers/.unchanged.log"
-  printf '%s\t%s\t%s\t%s\tunchanged for %ss; not raised\n' "$1" "$2" "$3" "$4" "$5" >> "$log" || return 0
-  [ "$(wc -c < "$log" 2>/dev/null || echo 0)" -le 262144 ] \
-    || { tail -n 500 "$log" > "$log.tmp.$$" && mv "$log.tmp.$$" "$log"; } || true
 }
 
 # An immediate native push wake already told the owner about this blocked pane,
@@ -631,7 +542,6 @@ jg_wait_timers_overdue_steers() {
 jg_wait_timers_tick() {
   local escalate=${JG_WAIT_ESCALATE_SECS:-$(jg_wait_timers_table escalate)} card_secs=${JG_WAIT_CARD_SECS:-$(jg_wait_timers_table card)}
   local interval=${JG_PROMPT_REALERT_SECS:-$(jg_wait_timers_table realert)}
-  local top_max; top_max=$(jg_wait_timer_top_repeats) || return 1
   # The owner alert and the pause cadence are the escalation workflow
   # definition's timers, and the owner rung itself is delivered there
   # (bin/jg-escalation-workflows.sh, live on every poll). The two numbers are
@@ -648,9 +558,9 @@ jg_wait_timers_tick() {
   paused_alert=$(printf '%s\n' "$numbers" | awk -F '\t' '$1 == "pause" { print $2 }')
   # The silent source lapses on the definition's silence timer, not the poll bound.
   silence=$(printf '%s\n' "$numbers" | awk -F '\t' '$1 == "silence" { print $2 }')
-  local meta task backend window session native sessions='|' blocked='|' unknown='|' rows actor=Main lead=''
+  local meta task backend window session native sessions='|' blocked='|' unknown='|' rows lead=''
   local dir="$STATE/.waiting-timers" now record declaration verb signature old since owner parent key misses age reason until bound lapse rc
-  local top wait_state pause_key dkey src source card last wsrc fresh session_id fired every level pending='' hop hopstart ceiling fp forced deadline acts
+  local wait_state pause_key dkey src card last wsrc fresh
   for native in "$alert" "$paused_alert" "$escalate" "$card_secs" "$interval"; do
     case "$native" in ''|*[!0-9]*|0* ) echo "waiting timers: thresholds must be positive decimal seconds" >&2; return 1 ;; esac
     [ "${#native}" -le 9 ] || { echo "waiting timers: threshold exceeds nine digits" >&2; return 1; }
@@ -661,23 +571,9 @@ jg_wait_timers_tick() {
   # POLL may be fractional (sleep accepts 0.2); whole seconds are enough here.
   fresh=${POLL:-15}; fresh=${fresh%%.*}
   fresh=$(( ${fresh:-0} * 3 + 30 ))
-  if [ -e "$JG_HOME/.jg-squad-lead-home" ]; then actor='owning lead'; lead=1; fi
+  if [ -e "$JG_HOME/.jg-squad-lead-home" ]; then lead=1; fi
   mkdir -p "$dir" || return 1
   jg_wait_timers_overdue_steers
-  # A new supervisor session (a restart or a lead's relaunch) re-presents every
-  # wait already past its owner alert on its first ticks, so nothing it was told
-  # before is lost with the old session.
-  session_id=$(cat "$STATE/.lock" "$STATE/.lock-session" 2>/dev/null | hash_pane) || return 1
-  if [ -f "$dir/.presented" ] && [ "$(cat "$dir/.presented")" != "$session_id" ]; then
-    for record in "$dir"/*; do
-      [ -f "$record" ] && [ ! -L "$record" ] || continue
-      IFS=$'\t' read -r old since owner parent key misses card last < "$record" || continue
-      case "$owner" in ''|*[!0-9]*) continue ;; esac
-      [ "$owner" -gt 1 ] || continue
-      jg_wait_timer_save "$record" "$old" "$since" "$owner" "${parent:-0}" "$key" "${misses:-0}" "${card:-0}" 1 || return 1
-    done
-  fi
-  [ "$(cat "$dir/.presented" 2>/dev/null)" = "$session_id" ] || printf '%s\n' "$session_id" > "$dir/.presented" || return 1
   # One bounded native read per recorded session, not one per lane. A session whose
   # read fails is unknown for this poll: its lanes keep their episodes untouched
   # while every other lane is still monitored.
@@ -856,24 +752,12 @@ EOF
     [ "$declaration" != herdr-blocked ] || verb=herdr-blocked
     # An open decision names its key so the recipient clears the right one.
     [ -z "$dkey" ] || verb="$verb key=$dkey"
-    # A declared pause is an expected wait, so its owner recheck rides the
-    # JG_PAUSE_RESURFACE_SECS cadence (the same bound the stale path uses),
-    # never the blocked/decision owner-alert threshold, and it never escalates.
-    # Every report prints the exact unresolved source, not just the episode.
-    source=$(printf '%s' "$declaration" | tr '\t\n' '  ' | cut -c1-160)
-    # The owner rung and the pause cadence are not here: the escalation workflow
-    # definition delivers them and stamps the episode's owner time. What follows
-    # still owns the escalation, the board card and the re-alert cadence, and
-    # rides the owner stamp the definition wrote.
-    every=$interval
-    if status_is_paused "$declaration"; then every=$paused_alert; fi
-    [ "$wait_state" != paused-no-date ] || every=$JG_WAIT_PLACEHOLDER_SECS
     # A stuck state with a row in the owner table (jg-wait-actions-lib.sh) gets
     # its owner's steps from the ladder, each in the place of the rung due now.
     # A step stamps the owner time, so the next rung times from it; the row's
     # last step, "lead", clears that stamp, so the owner rung then wakes this
     # home's own owner and the Main rung follows as for any wait. A wait with
-    # no row, or whose step failed, climbs as before.
+    # no row, or whose step failed, is only an episode here: the store's tick climbs it.
     if ! status_is_paused "$declaration" && [ "$parent" -eq 0 ] \
       && { { [ "$owner" -le 1 ] && [ "$age" -ge "$alert" ]; } || { [ "$owner" -gt 1 ] && [ "$((now - owner))" -ge "$((escalate - alert))" ]; }; } \
       && jg_wait_action_next "$task" "$now" "$wsrc" "$(status_line_verb "$declaration")" "$dkey" "$declaration" \
@@ -883,97 +767,8 @@ EOF
       jg_wait_timer_save "$record" "$signature" "$since" "$owner" "$parent" "$key" "$misses" "$card" "$last" || return 1
       continue
     fi
-    [ "$owner" -gt 1 ] || continue
-    acts=$(jg_wait_action_spent "$task" "$since")
-    # What this wait says now, for the re-raise gate: the hop it sits on and its
-    # fingerprint. The hop moves up the ladder as the rungs below are reached.
-    deadline=''
-    if status_is_paused "$declaration"; then deadline=$(status_paused_until "$declaration") || deadline=''; fi
-    if ! status_is_paused "$declaration" && [ "$parent" -eq 0 ] \
-      && [ "$((now - owner))" -ge "$((escalate - alert))" ] && [ "$age" -ge "$escalate" ]; then
-      if [ -n "$lead" ]; then
-        jg_wait_timer_report "blocked [key=$key]: waiting-timer-overdue: $task ($verb, observed ${age}s, since=$since); owning lead has not cleared the wait${acts:+; the ladder already took: $acts}; Main must unblock or steer the lead; source=[$source]" || continue
-        parent=$now
-        jg_wait_timer_save "$record" "$signature" "$since" "$owner" "$parent" "$key" "$misses" "$card" "$last" || return 1
-        fp=$(jg_wait_timer_fingerprint main "$key" "$window" "$verb" "$actor" "$declaration" "$wsrc" "$deadline") || return 1
-        jg_wait_timer_raised_save "$task" "$fp" "$now" 0 || true
-      else
-        # The reason line's leading word is the wake kind every consumer
-        # classifies by, so it must read "check:" like the kind this row is
-        # queued under: a prefix outside that taxonomy classifies as no wake at
-        # all, and the escalation then reaches nobody.
-        reason="check: waiting-state $task ($verb, observed ${age}s, level=main${acts:+; the ladder already took: $acts}; Main must unblock it now) id=$key source=[$source]"
-        jg_wake_append check "$key-escalation" "$reason" || return 1
-        parent=$now
-        jg_wait_timer_save "$record" "$signature" "$since" "$owner" "$parent" "$key" "$misses" "$card" "$last" || return 1
-        fp=$(jg_wait_timer_fingerprint main "$key" "$window" "$verb" "$actor" "$declaration" "$wsrc" "$deadline") || return 1
-        jg_wait_timer_raised_save "$task" "$fp" "$now" 0 || true
-        wake "$reason"
-      fi
-    fi
-    # Only the main home posts a card: what Main cannot settle reaches the captain.
-    # An account outage already raised its own card (renew the account or not).
-    if [ -z "$lead" ] && ! status_is_paused "$declaration" && [ "$parent" -gt 0 ] && [ "$card" -eq 0 ] && [ "$age" -ge "$card_secs" ] \
-      && ! jg_wait_action_raised_card "$task" "$since"; then
-      jg_wait_timer_card "$task" "$key-card" "$verb" "$source" || true
-      card=$now
-      jg_wait_timer_save "$record" "$signature" "$since" "$owner" "$parent" "$key" "$misses" "$card" "$last" || return 1
-    fi
-    # Every rung reached fires again while the wait stays open.
-    fired=$owner
-    for native in "$parent" "$card" "$last"; do [ "$native" -le "$fired" ] || fired=$native; done
-    [ "$last" -eq 1 ] || [ "$((now - fired))" -ge "$every" ] || continue
-    forced=0; [ "$last" -ne 1 ] || forced=1
-    # Reading or acknowledging a wake is not an unblock. An unresolved blocker
-    # must ring at every due recheck until its source clears, even unchanged.
-    status_is_paused "$declaration" || forced=1
-    [ "$wait_state" != paused-no-date ] || forced=1
-    last=$now
-    jg_wait_timer_save "$record" "$signature" "$since" "$owner" "$parent" "$key" "$misses" "$card" "$last" || return 1
-    # Expected pauses keep the change gate; unresolved waits always re-fire.
-    if status_is_paused "$declaration"; then
-      hop=pause hopstart=$owner ceiling=$paused_alert
-    else
-      hop=owner hopstart=$owner ceiling=$alert
-      [ "$parent" -eq 0 ] || { hop=main hopstart=$parent; }
-      [ "$card" -eq 0 ] || { hop=card hopstart=$card; }
-      for native in "$escalate" "$card_secs" "$interval"; do [ "$native" -le "$ceiling" ] || ceiling=$native; done
-    fi
-    fp=$(jg_wait_timer_fingerprint "$hop" "$key" "$window" "$verb" "$actor" "$declaration" "$wsrc" "$deadline") || return 1
-    if ! jg_wait_timer_raise_gate "$task" "$fp" "$hopstart" "$ceiling" "$now" "$forced"; then
-      jg_wait_timer_unchanged_log "$now" "$task" "$key" "$hop" "$((now - hopstart))"
-      # Keeping the one open board card is not a wake, so it stays on its cadence.
-      if [ -z "$lead" ] && [ "$parent" -gt 0 ] && [ "$card" -ne 0 ]; then jg_wait_timer_card "$task" "$key-card" "$verb" "$source" || true; fi
-      continue
-    fi
-    # At the top rung (the posted card) the wait wakes its owner a few more times, then is only that card.
-    if [ -z "$lead" ] && [ "$card" -ne 0 ] && ! status_is_paused "$declaration"; then
-      top=$(jg_wait_timer_top_fires "$task" "$key")
-      if [ "$top" -ge "$top_max" ]; then
-        jg_wait_timer_unchanged_log "$now" "$task" "$key" card-only "$((now - hopstart))"
-        jg_wait_timer_card "$task" "$key-card" "$verb" "$source" || true
-        continue
-      fi
-      jg_wait_timer_top_fires_save "$task" "$key" "$((top + 1))" || true
-    fi
-    level=owner
-    if [ "$parent" -gt 0 ] && [ -n "$lead" ]; then
-      jg_wait_timer_report "blocked [key=$key]: waiting-timer-overdue: $task ($verb, observed ${age}s, since=$since); still not cleared; Main must unblock or steer the lead; source=[$source]" || true
-    elif [ "$parent" -gt 0 ]; then
-      level=main
-      [ "$card" -eq 0 ] || jg_wait_timer_card "$task" "$key-card" "$verb" "$source" || true
-    fi
-    reason="check: waiting-state $task ($verb, observed ${age}s, level=$level; still open, $actor must recheck and unblock) id=$key source=[$source]"
-    if ! jg_wake_queued_keys check | grep -Fx "$key-$level-again" >/dev/null; then
-      jg_wake_append check "$key-$level-again" "$reason" || return 1
-    fi
-    [ -n "$pending" ] || pending=$reason
   done
   if [ -z "$lead" ]; then jg_wait_timers_relay "$now" "$interval" "$card_secs" || return 1; fi
-  # Its own fire wakes once, after every lane's re-fire rows are queued.
   if [ -n "$lead" ]; then jg_wait_timers_backlog "$now" "$interval" || return 1; fi
-  # Re-fires queue their rows first and wake once, so every open wait is
-  # re-presented in one cycle.
-  [ -z "$pending" ] || wake "$pending"
   return 0
 }

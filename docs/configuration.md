@@ -803,7 +803,7 @@ The flag is a home-local supervision-noise preference and is not inherited by Sq
 
 The watcher treats a worker or Squad Lead pane showing a permission or trust prompt as stuck at once.
 It approves only an OpenCode read it can prove is inside this fleet's own files, and rejects one that touches a secrets path (`.env`, `~/.config`, or a home's `data/` or `config/`), telling the worker why.
-Every other prompt wakes the owning home at once and then rides the stuck-worker escalation chain: owner, Main, then a board card from the main home only ([`core/wait-timers/README.md`](../core/wait-timers/README.md) owns the rungs).
+Every other prompt wakes the owning home at once and then then climbs the item store's one ladder: owner, Main, and only what Main cannot settle, the captain ([`core/item-store`](../core/item-store) owns the tick; [`core/wait-timers/README.md`](../core/wait-timers/README.md) owns what the timer library still does).
 While the same prompt stays on screen it is approved, rejected, or re-alerted again every 10 minutes (`JG_PROMPT_REALERT_SECS`), with no once-per-prompt latch.
 The optional local, gitignored `config/prompt-approve-off` presence flag turns approval off, so every prompt that is not rejected rides the chain.
 `bin/jg-prompt-gate-lib.sh` owns the roots and the records, and `bin/jg-prompt-gate.py` owns the matcher.

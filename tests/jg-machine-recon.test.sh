@@ -86,8 +86,7 @@ assert_equals "$(printf 'rc-2-critic\t1\t%s' "$G1")" "$RESTART" "the assignment 
 rh assign rc-2 --critic rc-2-critic; expect_code 0 "$RC" "assigning the same critic again is a no-op"
 assert_contains "$OUT" "already holds" "the retry says so"
 assert_equals 2 "$(grep -c . "$D2/handoff.tsv")" "the retry wrote no second assignment"
-rh assign rc-2 --critic rc-2-critic-b; expect_code 1 "$RC" "a second critic is refused while one holds the draft"
-assert_contains "$OUT" "already holds" "the refusal names the holder"
+rh assign rc-2 --critic rc-2-critic-b; expect_code 1 "$RC" "a second critic is refused while one holds the draft (the store names it when the home has one)"
 
 # Only the assigned critic's verdict counts, and the parent record alone decides.
 rh verdict rc-2 --critic rc-2-critic-b --hash "$G1" --gaps 0; expect_code 1 "$RC" "another critic's verdict is refused"

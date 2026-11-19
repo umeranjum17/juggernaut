@@ -10,6 +10,7 @@ the store yet, and `compare` measures how far the two agree.
                                  goes to its end, so the history before the cut-over is never replayed; a second run writes nothing
   lane.py is-open <home id> <task> <wait key>      exit 0 when wait:<home id>/<task>#<key> is open, 1 when not, 2 when the store cannot answer
   lane.py has-open <item key>    exit 0 when that item is open, 1 when not, 2 when the store cannot answer
+  lane.py open-child <item key>  print the key of an open work item whose parent is that item (a Recon's critic), exit 0; exit 1 when none, 2 when the store cannot answer
   lane.py compare <home>         today's records against the store, one line per difference, exit 1 when any (a finished lane waits for nothing)
 
 Each line maps to the first row that matches (the replay's table, frozen/final/probe/replay_c.py on_worker_line):
@@ -445,6 +446,15 @@ def main(argv):
                 print("\n".join(diffs)) if diffs else None
                 return 1 if diffs else 0
             ln.scan() if cmd == "scan" else ln.import_home()
+        elif cmd == "open-child" and len(args) == 1:
+            home = os.environ.get("JG_HOME")
+            if not home or not need_store_file(home):
+                return 2
+            row = itemdb.open_db(home, BY).one("SELECT key FROM item WHERE state='open' AND kind='work' AND parent=? ORDER BY key LIMIT 1", (args[0],))
+            if not row:
+                return 1
+            print(row)
+            return 0
         elif cmd in ("is-open", "has-open"):
             home = os.environ.get("JG_HOME")
             if not home or not need_store_file(home):
@@ -458,11 +468,11 @@ def main(argv):
                 return 0 if any(st.item(K.key("wait", args[0], task=args[1], wait=x)) for x in ks) else 1
             return 2
         else:
-            print("usage: lane.py read <status file> | scan <home> | import <home> | compare <home> | is-open <home id> <task> <key> | has-open <key>", file=sys.stderr)
+            print("usage: lane.py read <status file> | scan <home> | import <home> | compare <home> | is-open <home id> <task> <key> | has-open <key> | open-child <key>", file=sys.stderr)
             return 2
     except Exception as e:       # the real cause, never a trace into a worker's pipe
         print("lane.py: %s: %s" % (type(e).__name__, e), file=sys.stderr)
-        return 2 if cmd in ("is-open", "has-open") else 1
+        return 2 if cmd in ("is-open", "has-open", "open-child") else 1
     return 0
 
 

@@ -12,9 +12,9 @@
 # core code change. This step puts that definition in charge of the rungs it
 # carries: the owner alert at JG_WAIT_ALERT_SECS (120s) for a lane in a declared
 # wait, and the pause cadence at JG_PAUSE_RESURFACE_SECS (14400s) for a lane in
-# a declared pause. The escalation rung, the board card and the re-alert cadence
-# are still the ladder's own (core/wait-timers/README.md), and the definition
-# grows to carry them next.
+# a declared pause. A wait's later rungs (Main, the board card, the re-alert) are
+# the item store's tick (core/item-store); core/wait-timers/README.md owns what
+# the timer library still does.
 #
 # CONTRACT (this header is the one owner of the timer's shape).
 #   definition  core/bus/workflows/escalation-wait-timers.json, overridable per home

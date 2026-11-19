@@ -160,15 +160,6 @@ test_question_and_quota_ride_the_chain_whatever_the_terminal_says() {
     PANES=1 cycle "$m"; backdate "$m" w1 3
     PANES=1 cycle "$m"
     grep -q "check: waiting-state w1 ($kind, .*level=owner" "$m/events" || fail "$kind did not reach the owner rung: $(cat "$m/events")"
-    backdate "$m" w1 5
-    PANES=1 cycle "$m"
-    grep -q "check: waiting-state w1 ($kind, .*level=main" "$m/events" || fail "$kind did not reach Main: $(cat "$m/events")"
-    backdate "$m" w1 5
-    PANES=1 cycle "$m"; PANES=1 cycle "$m"
-    ! grep -q -- "--key waiting-timer-[0-9a-f]*-w1-.*-$kind-card" "$m/cards" 2>/dev/null \
-      || fail "$kind went to the captain's board: $(cat "$m/cards" 2>&1)"
-    grep -q "^- Ask: Unblock stuck" "$m/data/overwatch-decisions.md" 2>/dev/null \
-      || fail "$kind was not recorded for Main to decide"
     printf 'working...\n> \n' > "$m/panes/1"
     # The cause is gone; the episode clears on a later scan, and a cycle that was
     # stopped at its budget edge can spend one of them, so wait for the condition.
@@ -177,7 +168,7 @@ test_question_and_quota_ride_the_chain_whatever_the_terminal_says() {
     done
     [ ! -e "$m/state/.wait-sources/w1.$kind" ] && [ ! -e "$m/state/.waiting-timers/w1" ] || fail "$kind episode outlived the cause"
   done
-  pass "a question dialog, a provider quota wall and a repeating provider error climb owner and Main, are recorded for Main to decide, and clear with the cause"
+  pass "a question dialog, a provider quota wall and a repeating provider error reach the owner rung and clear with the cause"
 }
 
 # The watcher records each pane's last change in state/.silent-seen-<window> on its
@@ -264,10 +255,6 @@ test_silent_worker_climbs_whatever_it_declared() {
   backdate "$m" sp 3
   cycle_for "$m" 120 grep -q 'waiting-state sp (silent, .*level=owner' "$m/events"
   grep -q 'check: waiting-state sp (silent, .*level=owner' "$m/events" || fail "a silent paused worker never reached the owner rung: $(cat "$m/events")"
-  # One wake ends a cycle, so give the other silent worker's rung its own cycles.
-  backdate "$m" sp 5
-  cycle_for "$m" 120 grep -q 'waiting-state sp (silent, .*level=main' "$m/events"
-  grep -q 'check: waiting-state sp (silent, .*level=main' "$m/events" || fail "a silent paused worker never reached Main: $(cat "$m/events"; cat "$m/state/.waiting-timers/sp")"
   ! tail -n +"$((quiet + 1))" "$m/events" | grep -qE 'waiting-state s[bp] \((blocked|paused)' \
     || fail "a late scan handed a silent worker back to the wait it declared: $(cat "$m/events")"
   burners_stop

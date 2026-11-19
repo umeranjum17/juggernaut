@@ -242,8 +242,9 @@ eq draft-ready-without-critic-asks-for-one "$(sq "SELECT kind,state FROM item WH
 RH assign recon-r --critic crit-c; rc=$?
 eq assign-exit "$rc" "0"
 eq assign-links-the-critic "$(sq "SELECT kind,state,parent,holder_id,subject,project FROM item WHERE key='work:main/crit-c'")" "work|open|work:main/recon-r|worker:main/crit-c|CC-1|alpha"
-RH assign recon-r --critic crit-d; rc=$?
+out=$(env -u JG_TASK_ID JG_HOME="$H" "$ROOT/bin/jg-recon-handoff.sh" assign recon-r --critic crit-d 2>&1); rc=$?
 eq second-critic-refused-by-the-script "$rc" "1"
+eq second-critic-refusal-names-the-open-critic "${out##*refused: }" "recon-r already has an open critic crit-c"
 eq store-holds-one-critic-link "$(sq "SELECT count(*) FROM item WHERE kind='work' AND state='open' AND parent='work:main/recon-r'")" "1"
 eq ready-sends-the-round-to-the-critic "$(env -u JG_TASK_ID JG_HOME="$H" "$ITEM" ready work:main/recon-r d2 --source ready:test:d2)" "round"
 eq round-is-a-steer-to-the-critic-lane "$(sq "SELECT kind,holder,holder_id FROM item WHERE key='steer:main/crit-c/round@d2'")" "steer|worker|worker:main/crit-c"
