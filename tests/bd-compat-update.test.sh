@@ -10,14 +10,14 @@ py=; for c in /usr/bin/python3 /usr/local/bin/python3 "$(command -v python3)"; d
 [ -n "$py" ] || exit 1
 ln -s "$py" "$t/path/python3"          # the one tool on PATH: neither bd nor dolt can run
 fail=0
-# a fixture counts when its form is a recorded `update` form whose call is the update verb (close, defer and the rest are the link family's)
+# a fixture counts when its form is a recorded `update` form whose call is the update verb or `gate resolve` (close, defer and the rest are the link family's)
 mapfile -t fixtures < <(PATH=$t/path python3 -I - "$repo" <<'PY'
 import csv, glob, json, os, sys
 repo = sys.argv[1]
 forms = {r[0] for r in csv.reader(open(os.path.join(repo, "core/item-store/adapters/bd-forms.tsv")), delimiter="\t") if r[2:3] == ["update"]}
 for p in sorted(glob.glob(os.path.join(repo, "tests/fixtures/bd-forms/*.json")), key=lambda p: int(os.path.basename(p)[:-5])):
     d = json.load(open(p))
-    if d["form"] in forms and d["argv"][:1] == ["update"]:
+    if d["form"] in forms and (d["argv"][:1] == ["update"] or d["argv"][:2] == ["gate", "resolve"]):
         print(p)
 PY
 )

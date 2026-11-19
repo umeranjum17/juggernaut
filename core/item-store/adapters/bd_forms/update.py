@@ -1,4 +1,4 @@
-"""bd_forms/update.py: `bd update <id>... [flags]` answered from the tickets tables of fleet.db (mode tables of bd_compat.py).
+"""bd_forms/update.py: `bd update <id>... [flags]` and `bd gate resolve <id> --reason <text>` answered from the tickets tables of fleet.db (mode tables of bd_compat.py).
 run(argv, stdin_text) -> (stdout_text, exit_status). Each flag has one handler in FLAGS that edits one ticket row; a call
 that names a flag outside FLAGS raises NotSupported. Writes go through tickets.change, one log row per ticket.
 Exit 0 done; 1 a failure (unknown id, bad value); 2 the hold-reason rule jg-beads.sh adds to bd; 13 a stale --if-status or
@@ -242,8 +242,32 @@ def export_row(t):
     return body
 
 
+def resolve_gate(argv):
+    """gate resolve <id> --reason <text>: close the gate row and keep the reason as its close reason."""
+    rest = argv[2:]
+    if len(rest) != 3 or rest[1] != "--reason" or rest[0].startswith("-"):
+        raise NotSupported("gate resolve")
+    ident, reason = rest[0], rest[2]
+    try:
+        h = tickets.home()
+        home_id = itemdb.home_id(h)
+        store = tickets.open_tickets(h)
+        t = tickets.copy_of(store.con, home_id, ident)
+        if t is None:
+            raise Failed("no issue found matching %r" % ident)
+        if t["issue_type"] != "gate":
+            raise Failed("%s is not a gate" % ident)
+        t["status"], t["closed_at"], t["close_reason"] = "closed", now_iso(), reason
+        tickets.change(store, int(time.time()), home_id, "gate-resolve", "bd-gate-resolve:%d#%s" % (time.time_ns(), ident), export_row(t))
+    except (tickets.Refused, itemdb.Unbound) as e:
+        raise Failed(str(e))
+    return "✓ Gate resolved: %s\n  Reason: %s\n" % (ident, reason), 0
+
+
 def run(argv, stdin_text):
     try:
+        if argv[:2] == ["gate", "resolve"]:
+            return resolve_gate(argv)
         return answer(Call(argv[1:], stdin_text))
     except Failed as e:
         sys.stderr.write("%s\n" % e)

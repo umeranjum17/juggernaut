@@ -15,8 +15,8 @@ TWO_WORD = {"dep", "gate", "label", "config", "backup", "comments", "dolt", "swa
 FAMILIES = {
     "read": "show list ready blocked export history comments events provenance q types statuses schema memories epic swarm-validate gate-list".split(),
     "create": "create comment comments-add import remember gate-create".split(),
-    "update": ["update"],
-    "link": "close delete defer undefer dep-add dep-remove gate-resolve label-add label-remove".split(),
+    "update": ["update", "gate-resolve"],
+    "link": "close delete defer undefer dep-add dep-remove label-add label-remove".split(),
     "admin": "init check serve heartbeat config-set backup-init backup-restore backup-sync dolt".split(),
 }
 FAMILY_OF = {verb: fam for fam, verbs in FAMILIES.items() for verb in verbs}
