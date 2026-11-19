@@ -179,7 +179,7 @@ mkdir -p "$FM/state/lrec.inbox/handled"; mv "$FM/state/lrec.inbox/1.msg" "$FM/st
 check "l: a quiet hour after the relay cleans it up, once" "$(tore lrec)" 1
 check "l: it says why" "$(grep -c '^lead-sweep: lrec cleaned up (its report exists and Main relayed it)' "$d/out")" 1
 # m: the Recon table decides: an old relay receipt cannot close a new draft
-H=$SRC/../../bin/jg-recon-handoff.sh; mkdir -p "$FM/bin"; cp "$H" "$SRC/../../bin/jg-machine-guard.sh" "$FM/bin/" 2>/dev/null || true
+H=$SRC/../../bin/jg-recon-handoff.sh; mkdir -p "$FM/bin"; cp "$H" "$FM/bin/" 2>/dev/null || true
 mkdir -p "$FM/core/machines"; cp -r "$SRC/../machines/observers" "$SRC/../machines/tables" "$FM/core/machines/" 2>/dev/null || true
 mkdir -p "$FM/data/mrec"; echo draft1 > "$FM/data/mrec/report.md"
 lane mrec scout 'done [at=1]: report' ticket=t-mrec

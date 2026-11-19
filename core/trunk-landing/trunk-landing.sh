@@ -317,7 +317,6 @@ if [ "$1" = run ]; then
   printf '%s\n' "$out" > "$request_log"
   printf '%s\n' "$out" > "$MEM/$id.$head.log"
   if [ "$rc" -eq 0 ]; then
-    JG_HOME="$FMH" "$FMH/bin/jg-machine-shadow.sh" landing "$id.$head" landed || true  # shadow report of the move (jg-machine-shadow.sh)
     landed_lane "$id" "$head" "on the local trunk (not In use yet: In use follows the answer given at gated, the captain's word or the project's waiver, and its quiet window)"
     partition_forget "$id" "$head"
     "$SELF" next "$FMH" >/dev/null 2>&1 || :
