@@ -39,6 +39,10 @@ set -u
 SESSION_START="$ROOT/bin/jg-session-start.sh"
 BASE_PATH=${JG_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 TMP_ROOT=$(jg_test_tmproot jg-session-start-tests)
+# The fake tmux never starts a first turn, so the spawn's first-turn proof for a Pi relaunch would poll its whole 120 s.
+export JG_FIRST_TURN_POLLS=2 JG_FIRST_TURN_INTERVAL=0
+# A run inside a real Herdr pane would give the Pi fixtures that pane's session identity, so a competing lock holder would read as this session's own.
+unset HERDR_PANE_ID
 SESSION_START_TEST_HARNESS_PID=$$
 SESSION_START_SECOND_MATE_ID="fmtest-sm-${TMP_ROOT##*.}"
 SESSION_START_SECOND_MATE_TMP="/tmp/jg-$SESSION_START_SECOND_MATE_ID"
@@ -1191,7 +1195,7 @@ EOF
   context_line=$(printf '%s\n' "$out" | grep -n '^CONTEXT$' | head -1 | cut -d: -f1)
   fleet_line=$(printf '%s\n' "$out" | grep -n '^FLEET STATE$' | head -1 | cut -d: -f1)
   next_line=$(printf '%s\n' "$out" | grep -n '^NEXT STEP$' | head -1 | cut -d: -f1)
-  inventory_line=$(printf '%s\n' "$out" | grep -n '^--- task-a ---$' | head -1 | cut -d: -f1)
+  inventory_line=$(printf '%s\n' "$out" | grep -n '^task-a ship | ' | head -1 | cut -d: -f1)
 
   if [ -z "$lock_line" ] || [ -z "$boot_line" ] || [ -z "$wake_line" ] \
     || [ -z "$read_once_line" ] || [ -z "$context_line" ] || [ -z "$fleet_line" ] \
@@ -1824,7 +1828,7 @@ EOF
   assert_contains "$out" "MISSING: node (install:" "jg-bootstrap.sh's real detect line did not appear verbatim"
   # jg-wake-drain.sh's real drained record (raw tab-separated queue line).
   assert_contains "$out" "$(printf 'signal\ttask-z.status\tneeds-decision: pick a library')" "jg-wake-drain.sh's real drained record did not appear"
-  assert_contains "$out" "wake annotation: latest wake-EVENT observed at drain, not current state: task-z.status: needs-decision: pick a library" "jg-session-start.sh did not preserve the drain's separate annotation line"
+  assert_contains "$out" "wake annotation: ACTION: task-z.status: needs-decision: pick a library" "jg-session-start.sh did not preserve the drain's separate annotation line"
 
   pass "jg-session-start.sh composes the real jg-lock.sh, jg-bootstrap.sh, and jg-wake-drain.sh output verbatim"
 }
