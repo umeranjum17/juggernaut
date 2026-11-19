@@ -48,7 +48,7 @@ var retryWindow = 10 * time.Minute
 func (a *app) chatTarget() (*telegram, string, error) {
 	token, _, present, err := a.readTokenFile()
 	owner := strings.FieldsFunc(a.cfgOr("telegram-allow-user", ""), func(r rune) bool { return r == ',' || r == ' ' })
-	if !present || len(owner) == 0 || a.channelMode() != "live" || a.cfgOr("gateway-adapters", "telegram") != "telegram" {
+	if !present || len(owner) == 0 || !a.chatOn() || a.cfgOr("gateway-adapters", "telegram") != "telegram" {
 		return nil, "", nil
 	}
 	return &telegram{base: strings.TrimRight(a.cfgOr("telegram-api-url", "https://api.telegram.org"), "/"), token: token, sleep: time.Sleep}, owner[0], err
@@ -146,6 +146,9 @@ func (a *app) gatewayPart(ad *telegram, owner string) *part {
 
 // serveGatewayEvents runs the consumer for as long as the gateway runs; a failure is tried again.
 func (a *app) serveGatewayEvents(ad *telegram, owner string) {
+	if a.channelMode() == "direct" { // nothing is published for the consumer to read
+		return
+	}
 	for {
 		a.serveConsumer(a.gatewayPart(ad, owner))
 		time.Sleep(5 * time.Second)

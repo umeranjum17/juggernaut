@@ -9,9 +9,10 @@
 # is gone.
 #
 # CONTRACT.
-#   config   config/wake-bus may set `nats-url <url>`, or `off` to return the home to
-#            the file behaviour; JG_WAKE_BUS_URL overrides the address. No file means
-#            the bus is on.
+#   config   config/wake-bus carries `nats-url <url>` to turn the bus on, or `off` to return
+#            the home to the file behaviour; JG_WAKE_BUS_URL overrides the address. No file,
+#            or a file with no `nats-url` line, means the bus is off. STUB (slice 11b1): the
+#            wake queue and the task inboxes stay on local files; slice 11b5 deletes the bus code.
 #   streams  JG_WAKE carries jg.<home>.wake.> and JG_INBOX jg.<home>.inbox.> for every
 #            home, file storage, kept JG_BUS_MAX_AGE (default 168h). One server serves
 #            every home on the machine, so the Go command (wakebus.go) adds this home's subject to
@@ -123,7 +124,8 @@ live_home_key() { home_key "$STATE"; }
 # home to the file behaviour on the spot - rows wait in this home's own outbox and
 # nothing is published - without reverting the change.
 live_enabled() {
-  [ -f "$HOME_DIR/config/wake-bus" ] || return 0
+  [ -f "$HOME_DIR/config/wake-bus" ] || return 1
+  grep -q '^[[:space:]]*nats-url[[:space:]]' "$HOME_DIR/config/wake-bus" 2>/dev/null || return 1
   ! grep -qw off "$HOME_DIR/config/wake-bus" 2>/dev/null
 }
 

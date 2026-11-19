@@ -207,6 +207,12 @@ func (a *app) emitDoc(kind, doc string, fallback func() error) int {
 	} else if err := appendLine(a.record, doc); err != nil {
 		a.noteFailure("record", err.Error())
 	}
+	if mode == "direct" { // the chat in-process; the bus is never posted to, and a chat event is only recorded
+		if ferr := fallback(); ferr != nil && !isChatEvent(subject) {
+			a.noteUndelivered("direct", ferr.Error(), doc)
+		}
+		return 0
+	}
 	target := a.busTarget() + "/" + subject
 	status, out, err := post(target, doc, map[string]string{"Content-Type": "application/json"})
 	accepted := err == nil && ok2xx(status)
@@ -334,8 +340,11 @@ func (a *app) config(args []string) int {
 // services this home started.
 func (a *app) status() int {
 	target := "none"
-	if a.channelMode() == "live" {
+	switch a.channelMode() {
+	case "live":
 		target = a.busTarget()
+	case "direct":
+		target = "chat"
 	}
 	fmt.Printf("mode %s, delivery %s\n", a.channelMode(), target)
 	fmt.Printf("record %s: %d event(s), %d undelivered\n", a.record, countLines(a.record), countLines(a.undelivered))

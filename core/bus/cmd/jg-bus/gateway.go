@@ -306,7 +306,7 @@ func (a *app) gateway(args []string) int {
 	}
 	once := args[0] == "--once"
 	token, file, present, err := a.readTokenFile()
-	wanted := a.channelMode() == "live" && present && a.cfgOr("gateway-adapters", "telegram") == "telegram"
+	wanted := a.chatOn() && present && a.cfgOr("gateway-adapters", "telegram") == "telegram"
 	if args[0] == "enabled" {
 		if wanted {
 			return 0

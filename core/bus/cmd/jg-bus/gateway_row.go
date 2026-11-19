@@ -94,7 +94,7 @@ func (a *app) gatewayRow() int {
 		return 0
 	}
 	token, file, present, err := a.readTokenFile()
-	if !present || a.channelMode() != "live" || !slices.Contains(strings.Fields(a.cfgOr("gateway-adapters", "telegram")), "telegram") {
+	if !present || !a.chatOn() || !slices.Contains(strings.Fields(a.cfgOr("gateway-adapters", "telegram")), "telegram") {
 		return row("absent", "off: no bot token on this machine; connect your own with jg-bus gateway setup")
 	}
 	if err != nil {

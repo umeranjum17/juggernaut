@@ -75,6 +75,10 @@
 #
 # Env: JG_BUS_LEAF_<KEY> overrides one config key (see `config`), JG_NATS_SERVER
 # and JG_NATS_BIN pin the server and client binaries.
+# STUB (slice 11b1): this script publishes nothing now; slice 11b5 deletes the bus code below.
+# shellcheck disable=SC2317,SC2329 # the code below is unreachable until slice 11b5 deletes it
+exit 0
+
 set -u
 export LC_ALL=C
 

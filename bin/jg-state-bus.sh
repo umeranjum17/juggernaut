@@ -51,6 +51,10 @@
 # never vacuous.
 #
 # Env: JG_KV_URL / JG_STATE_BUS_URL, JG_STATE_BUS_SHADOW=on, JG_NATS_BIN.
+# STUB (slice 11b1): this script publishes nothing now; slice 11b5 deletes the bus code below.
+# shellcheck disable=SC2317,SC2329 # the code below is unreachable until slice 11b5 deletes it
+exit 0
+
 set -u
 
 SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)"

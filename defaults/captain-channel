@@ -4,8 +4,9 @@
 #
 # The channel is LIVE: a captain-facing change of state is recorded and published
 # to the bus by this path.
-#   mode          live    record and publish, and name an event the bus does not
-#                         take in the undelivered record (the shipped value).
+#   mode          direct  record it, then send it through the chat in-process; no bus (the shipped value).
+#                 live    record and publish, and name an event the bus does not
+#                         take in the undelivered record.
 #                 shadow  record and publish only. This is the one-step reversal.
 #                 off     do nothing at all.
 #   The transport itself is not a key here: bin/jg-bus.sh publishes through the Dapr
@@ -15,7 +16,7 @@
 #   stream        the JetStream stream core/bus/stream.json creates for subject-prefix.
 #                 The metric server stays off in this step (see jg-bus.sh serve): a
 #                 metrics port is shared machine surface and nothing scrapes it yet.
-set mode live
+set mode direct
 set nats-url nats://127.0.0.1:4222
 set dapr-http-url http://127.0.0.1:3500
 set dapr-http-port 3500

@@ -36,6 +36,7 @@
 #
 # Sourced by bin/jg-lease-lib.sh and bin/jg-state-bus.sh.
 
+# shellcheck disable=SC2034 # kept for the NATS functions until slice 11b5
 JG_KV_HISTORY=8
 JG_KV_WHY=
 JG_KV_READY=
@@ -120,13 +121,74 @@ jg_kv_call() {
   jg_kv_run "$JG_KV_CLIENT" "$JG_KV_URL_RESOLVED" "$JG_KV_STATE" "$@"
 }
 
-# jg_kv_ready <home-dir>: 0 iff a client is present and its server answers, so a
-# caller can tell a missing store from a missing record.
+# jg_kv_py <op> [args...]: the one SQLite call every bucket function below makes. The store is
+# one file, $JG_KV_STATE/kv.db, table kv(bucket, key, value, revision, PRIMARY KEY(bucket, key)).
+# A revision comes from one counter that only rises (table kv_seq), so a key deleted and made
+# again never repeats a revision a stale reader still holds. A create fails when the key exists;
+# an update is `UPDATE ... WHERE revision = ?` and wins only when one row changed.
+# The value of a put arrives on stdin; every other value is an argument.
+# shellcheck disable=SC2016 # the program is Python, not shell.
+JG_KV_PY='
+import os, sqlite3, sys
+op, args = sys.argv[1], sys.argv[2:]
+os.makedirs(os.path.dirname(args[0]), exist_ok=True)
+db = sqlite3.connect(args[0], timeout=5, isolation_level=None)
+db.execute("PRAGMA busy_timeout=5000")
+db.execute("PRAGMA journal_mode=WAL")
+db.execute("CREATE TABLE IF NOT EXISTS kv(bucket TEXT NOT NULL, key TEXT NOT NULL, value BLOB, revision INTEGER NOT NULL, PRIMARY KEY(bucket, key))")
+db.execute("CREATE TABLE IF NOT EXISTS kv_seq(n INTEGER PRIMARY KEY AUTOINCREMENT)")
+a = args[1:]
+def nxt():
+    return db.execute("INSERT INTO kv_seq DEFAULT VALUES").lastrowid
+def out(b):
+    sys.stdout.buffer.write(b)
+if op == "ensure":
+    pass
+elif op == "get":
+    r = db.execute("SELECT value FROM kv WHERE bucket=? AND key=?", a[:2]).fetchone()
+    if r is None: sys.exit(1)
+    out(r[0] if isinstance(r[0], bytes) else r[0].encode())
+elif op == "put":
+    v = sys.stdin.buffer.read()
+    db.execute("BEGIN IMMEDIATE")
+    db.execute("INSERT INTO kv VALUES(?,?,?,?) ON CONFLICT(bucket, key) DO UPDATE SET value=excluded.value, revision=excluded.revision", (a[0], a[1], v, nxt()))
+    db.execute("COMMIT")
+elif op == "create":
+    db.execute("BEGIN IMMEDIATE")
+    if db.execute("SELECT 1 FROM kv WHERE bucket=? AND key=?", a[:2]).fetchone():
+        db.execute("ROLLBACK"); sys.exit(1)
+    db.execute("INSERT INTO kv VALUES(?,?,?,?)", (a[0], a[1], a[2].encode(), nxt()))
+    db.execute("COMMIT")
+elif op == "update":
+    db.execute("BEGIN IMMEDIATE")
+    c = db.execute("UPDATE kv SET value=?, revision=? WHERE bucket=? AND key=? AND revision=?", (a[2].encode(), nxt(), a[0], a[1], int(a[3])))
+    if c.rowcount != 1:
+        db.execute("ROLLBACK"); sys.exit(1)
+    db.execute("COMMIT")
+elif op == "del":
+    db.execute("DELETE FROM kv WHERE bucket=? AND key=?", a[:2])
+elif op == "keys":
+    for (k,) in db.execute("SELECT key FROM kv WHERE bucket=? ORDER BY key", a[:1]):
+        if k.startswith(a[1]): print(k)
+elif op == "revision":
+    r = db.execute("SELECT revision FROM kv WHERE bucket=? AND key=?", a[:2]).fetchone()
+    if r is None: sys.exit(1)
+    print(r[0])
+'
+
+# jg_kv_db: the path of the store file, resolved from the home on the first jg_kv_ready.
+jg_kv_db() { printf '%s/kv.db\n' "${JG_KV_STATE:-${JG_STATE_OVERRIDE:-}}"; }
+
+# STUB (slice 11b1): the NATS functions above (jg_kv_home_url, jg_kv_resolve, jg_kv_login,
+# jg_kv_run, jg_kv_call) are no longer called by the bucket functions; slice 11b5 deletes them.
+
+# jg_kv_ready <home-dir>: 0 iff python3 runs, so a caller can tell a missing store from a
+# missing record. The store is a file in the home's state directory.
 jg_kv_ready() { # <home-dir>
   [ -n "$JG_KV_READY" ] && return 0
-  jg_kv_resolve "$1" || return 1
-  if ! jg_kv_call kv ls >/dev/null 2>&1; then
-    JG_KV_WHY="the event system at $JG_KV_URL_RESOLVED does not answer"
+  [ -n "$JG_KV_STATE" ] || JG_KV_STATE=${JG_STATE_OVERRIDE:-$1/state}
+  if ! python3 -I -c 'import sqlite3' >/dev/null 2>&1; then
+    JG_KV_WHY="python3 with sqlite3 is not available"
     return 1
   fi
   JG_KV_WHY=
@@ -134,14 +196,12 @@ jg_kv_ready() { # <home-dir>
   return 0
 }
 
-# jg_kv_ensure_bucket <bucket> [history]: create the bucket when it is absent, so
-# a home that has never written to it needs no separate provisioning step.
+# jg_kv_ensure_bucket <bucket> [history]: a bucket is a column value, so it needs no step;
+# this opens the file so a home that has never written to it fails here, not later.
 jg_kv_ensure_bucket() { # <bucket> [history]
-  local bucket=$1 history=${2:-$JG_KV_HISTORY}
-  jg_kv_call kv info "$bucket" >/dev/null 2>&1 && return 0
-  jg_kv_call kv add "$bucket" --history "$history" --storage file >/dev/null 2>&1 || {
+  python3 -I -c "$JG_KV_PY" ensure "$(jg_kv_db)" >/dev/null 2>&1 || {
     # shellcheck disable=SC2034 # Read by the caller's own refusal or skip text.
-    JG_KV_WHY="cannot create the $bucket bucket on $JG_KV_URL_RESOLVED"
+    JG_KV_WHY="cannot open the store at $(jg_kv_db)"
     return 1
   }
 }
@@ -149,51 +209,40 @@ jg_kv_ensure_bucket() { # <bucket> [history]
 # jg_kv_get <bucket> <key>: the value's bytes on stdout; fails when the key is
 # absent or unreadable.
 jg_kv_get() { # <bucket> <key>
-  jg_kv_call kv get "$1" "$2" --raw 2>/dev/null
+  python3 -I -c "$JG_KV_PY" get "$(jg_kv_db)" "$1" "$2" 2>/dev/null
 }
 
 # jg_kv_put <bucket> <key>: the value arrives on stdin.
 jg_kv_put() { # <bucket> <key>
-  jg_kv_call kv put "$1" "$2" >/dev/null 2>&1
+  python3 -I -c "$JG_KV_PY" put "$(jg_kv_db)" "$1" "$2" >/dev/null 2>&1
 }
 
-# jg_kv_create <bucket> <key> <value>: write only when the key is new or its last
-# operation was a delete, so two writers cannot both create it.
+# jg_kv_create <bucket> <key> <value>: write only when the key is new, so two writers
+# cannot both create it.
 jg_kv_create() { # <bucket> <key> <value>
-  jg_kv_call kv create "$1" "$2" "$3" >/dev/null 2>&1
+  python3 -I -c "$JG_KV_PY" create "$(jg_kv_db)" "$1" "$2" "$3" >/dev/null 2>&1
 }
 
 # jg_kv_update <bucket> <key> <value> <revision>: write only when the key still
 # holds <revision>, so a writer that read a record cannot overwrite a newer one.
 jg_kv_update() { # <bucket> <key> <value> <revision>
-  jg_kv_call kv update "$1" "$2" "$3" "$4" >/dev/null 2>&1
+  python3 -I -c "$JG_KV_PY" update "$(jg_kv_db)" "$1" "$2" "$3" "$4" >/dev/null 2>&1
 }
 
 # jg_kv_del <bucket> <key>: drop the key, whether or not it exists.
 jg_kv_del() { # <bucket> <key>
-  jg_kv_call kv del -f "$1" "$2" >/dev/null 2>&1 || true
+  python3 -I -c "$JG_KV_PY" del "$(jg_kv_db)" "$1" "$2" >/dev/null 2>&1 || true
 }
 
 # jg_kv_keys <bucket> <prefix>: the keys this bucket holds under one prefix.
 jg_kv_keys() { # <bucket> <prefix>
-  jg_kv_call kv ls "$1" 2>/dev/null | awk -v p="$2" 'index($0, p) == 1' || true
+  python3 -I -c "$JG_KV_PY" keys "$(jg_kv_db)" "$1" "$2" 2>/dev/null || true
 }
 
-# jg_kv_revision <bucket> <key>: the revision the key's current value holds. The
-# client reports it only in its history table, whose second column is the
-# revision, so a row contributes a revision only when that column is a number;
-# the newest such row wins. Fails when the key is absent or reports none.
+# jg_kv_revision <bucket> <key>: the revision the key's current value holds. Fails when the
+# key is absent.
 jg_kv_revision() { # <bucket> <key>
-  local rev
-  rev=$(jg_kv_call kv history "$1" "$2" 2>/dev/null | awk -F'│' '
-    NF >= 4 {
-      r = $3
-      gsub(/[^0-9]/, "", r)
-      if (r != "") last = r
-    }
-    END { if (last != "") print last; else exit 1 }') || return 1
-  case "$rev" in '' | *[!0-9]*) return 1 ;; esac
-  printf '%s\n' "$rev"
+  python3 -I -c "$JG_KV_PY" revision "$(jg_kv_db)" "$1" "$2" 2>/dev/null
 }
 
 # jg_kv_home_key <state-dir>: a stable short name for one home, so one bucket

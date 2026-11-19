@@ -1,3 +1,6 @@
+// STUB (slice 11b1): the NATS and Dapr bus is off in `direct` mode; slice 11b5 deletes the code
+// that still posts to it.
+//
 // Command jg-bus is the captain channel's one command: the live tee, the three
 // services it talks to, the reply router, and the parity replay.
 //
@@ -28,6 +31,8 @@
 //	         `config <key>` prints the value in force.
 //	mode     `set mode live` is the one switch that decides what this path does, and
 //	         live is what ships:
+//	           direct  record it, then send it through the chat in-process; nothing goes to the bus.
+//	                   A send that fails is named undelivered. This is the shipped value.
 //	           live    record it, publish it, and name it undelivered when the bus does not take it.
 //	           shadow  record and publish only, and name nothing undelivered. This is the
 //	                   one-step reversal.
@@ -366,9 +371,15 @@ func (a *app) cfgOr(key, fallback string) string {
 	return fallback
 }
 
-// channelMode is what this path does: live, shadow or off. Mode is the one switch.
+// channelMode is what this path does: direct, live, shadow or off. Mode is the one switch.
 func (a *app) channelMode() string {
 	return a.cfgOr("mode", "live")
+}
+
+// chatOn is whether the chat gateway runs: the modes that deliver to the owner's chat.
+func (a *app) chatOn() bool {
+	m := a.channelMode()
+	return m == "live" || m == "direct"
 }
 
 // busFile is the service file in force: a home override first, then the shipped one.
