@@ -4380,10 +4380,6 @@ while :; do
   # poll cannot reach is silent and can never fail or delay a wake.
   JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE watcher_child "$SCRIPT_DIR/jg-wake-bus.sh" inbox-settle >/dev/null 2>"$STATE/.inbox-settle.err" \
     || echo "watcher: inbox settle failed: $(tr '\n' ' ' < "$STATE/.inbox-settle.err" | cut -c1-200)" >&2
-  # Migration step 5e shadow: the same task leases and busy events, mirrored to
-  # the key-value bus beside the files (docs/state-shadow.md). Off costs one file
-  # test, and a mirror that cannot reach its bus can never fail or delay a wake.
-  [ ! -e "$CONFIG/state-bus" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE watcher_child "$SCRIPT_DIR/jg-state-bus.sh" sync >/dev/null 2>&1 || true
   # Migration step 5g shadow: the host and fleet numbers on Prometheus plus
   # node_exporter, beside the shell collection (docs/metrics-shadow.md). Off costs
   # one file test, and a shadow that cannot start can never fail or delay a wake.
@@ -4405,11 +4401,6 @@ while :; do
   # repost after grace, and escalate once if the recovery turn is also missed.
   # No conversation scraping; unresolved records are never silently expired.
   jg_pending_reply_tick "$STATE" || true
-  # Migration step 5d shadow: the same waiters, timers and replies, mirrored to the
-  # bus as durable workflow events beside the records (docs/reply-shadow.md). Off
-  # costs one file test, and a mirror that cannot reach its bus can never fail or
-  # delay a reply, a repost or an escalation.
-  [ ! -e "$CONFIG/reply-bus" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE watcher_child "$SCRIPT_DIR/jg-reply-bus.sh" sync >/dev/null 2>&1 || true
   # The same wait, decided by the workflow definition instead of by hand
   # (bin/jg-reply-engine.sh): it folds the event log, records what it would do and
   # acts on nothing. Off costs one file test, and an engine that cannot fold can

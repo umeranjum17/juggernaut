@@ -15,8 +15,8 @@
 # entrypoints refuse the other actor while it is live.
 #
 # CONTRACT.
-#   - Record: one JetStream key-value key per task in the bucket `JG_LEASES`,
-#     `lease/<home>/<task>`, and its value is one line
+#   - Record: one row per task in the SQLite file state/kv.db,
+#     key `lease/<home>/<task>`, and its value is one line
 #     "<actor>\t<pid>\t<epoch>". <home> is the home directory's name plus the
 #     first eight hex digits of its path hash, so two homes that both run a task
 #     named `lane-a` never share a key and the key stays inside the charset a KV

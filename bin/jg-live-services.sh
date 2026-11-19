@@ -7,9 +7,8 @@
 #   Exit 0 when every required service runs, 1 when any is down.
 #
 # THE CHOSEN DESIGN. Required services:
-#   nats     the JetStream server (nats-server)
-#   dapr     the sidecar every publish goes through (daprd); the Go bus header
-#            (core/bus/cmd/jg-bus) names it as the publish path, so it is required
+#   none by default: the chat sends in-process and the wake queue and the leases use
+#   local files, so no bus process is required.
 # A wake engine (jg-wake-engine) and a router (jg-router) are required only when this
 # checkout ships them under core/*/cmd/. When it does not, the output says plainly
 # that they are not part of the chosen design, and they never fail the check.
@@ -44,7 +43,7 @@ esac
 # real_probe <service>: print the pid or unit status and return 0 when it runs.
 real_probe() {
   local svc=$1 unit pid='' proc
-  case $svc in nats) unit=$PREFIX-bus.service ;; *) unit=$PREFIX-$svc.service ;; esac
+  unit=$PREFIX-$svc.service
   if command -v systemctl >/dev/null 2>&1 && [ "$(systemctl --user is-active "$unit" 2>/dev/null)" = active ]; then
     pid=$(systemctl --user show -p MainPID --value "$unit" 2>/dev/null)
     printf 'pid %s, unit %s active\n' "${pid:-?}" "$unit"
@@ -53,7 +52,6 @@ real_probe() {
   pid=$([ -r "$STATE/bus/$svc.pid" ] && tr -cd '0-9' < "$STATE/bus/$svc.pid")
   if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then printf 'pid %s, detached\n' "$pid"; return 0; fi
   case $svc in
-    nats) proc=nats-server ;; dapr) proc=daprd ;;
     wake-engine) proc=jg-wake-engine ;; router) proc=jg-router ;;
   esac
   pid=$(pgrep -x "$proc" 2>/dev/null | head -n 1)
@@ -72,7 +70,7 @@ probe() {  # <service>
   real_probe "$1"
 }
 
-required=(nats dapr)
+required=()
 absent=()
 for opt in wake-engine router; do
   if compgen -G "$ROOT/core/*/cmd/jg-$opt" >/dev/null 2>&1; then required+=("$opt")
@@ -80,7 +78,7 @@ for opt in wake-engine router; do
 done
 
 down=()
-for svc in "${required[@]}"; do
+for svc in ${required[@]+"${required[@]}"}; do
   detail=$(probe "$svc"); rc=$?
   if [ "$rc" -eq 0 ]; then state=UP; else state=DOWN; down+=("$svc"); fi
   [ "$quiet" = 1 ] || printf '%s %s %s\n' "$state" "$svc" "$detail"

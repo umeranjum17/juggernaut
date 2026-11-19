@@ -10,7 +10,7 @@
 # script that already owns it and adds no probe of its own:
 #   session-lock    state/.lock holder (bin/jg-inbox.sh ready)
 #   wake-consumer   whether the live session consumes wakes (bin/jg-inbox.sh ready)
-#   stack           bus, wake engine, router, dapr, gateway (bin/jg-stack.sh status)
+#   stack           jg-bus build, gateway (bin/jg-stack.sh status)
 #   backlog-lock    a 0-byte data/backlog.md.lock left by a dead writer
 #   squad-lead      each registered Squad Lead's endpoint (bin/jg-squad-lead-liveness-lib.sh, read-only probe)
 #   sentinel        jg-sentinel not running (bin/jg-bootstrap.sh detect lines)
@@ -19,7 +19,6 @@
 #   config          invalid config and a code-root backlog fork (bin/jg-bootstrap.sh detect lines)
 #   login           gh sign-in (gh auth status; skipped with --offline)
 #   tmp             /tmp space and inode pressure (bin/jg-tmp-sweep.sh check)
-#   stray-servers   leftover throwaway nats-servers (bin/jg-stray-nats-reap.sh dry run; report only)
 #
 # --fix repairs only these findings, each through the script that guards it:
 #   stack          bin/jg-stack.sh up
@@ -58,7 +57,7 @@ set -u
 SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-ALL_CHECKS="session-lock wake-consumer stack backlog-lock squad-lead sentinel tools checkout config login tmp stray-servers"
+ALL_CHECKS="session-lock wake-consumer stack backlog-lock squad-lead sentinel tools checkout config login tmp"
 
 die() { printf 'jg-triage: %s\n' "$*" >&2; exit 2; }
 usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "${BASH_SOURCE[0]}"; }
@@ -466,21 +465,6 @@ fix_tmp() {
   return "$rc"
 }
 
-check_stray_servers() {
-  if [ ! -x "$SCRIPT_DIR/jg-stray-nats-reap.sh" ]; then
-    emit stray-servers "" skip "bin/jg-stray-nats-reap.sh is not here"
-    return
-  fi
-  local out n
-  out=$(run_timed 30 "$SCRIPT_DIR/jg-stray-nats-reap.sh" 2>/dev/null) || out=""
-  n=$(printf '%s\n' "$out" | grep -c '^would stop ')
-  if [ "$n" -gt 0 ]; then
-    emit stray-servers "" info "$n leftover throwaway nats-server(s)" "run: bin/jg-stray-nats-reap.sh --stop"
-  else
-    emit stray-servers "" ok "no leftover throwaway nats-server"
-  fi
-}
-
 # ---------------------------------------------------------------- run
 run_check() {  # <check>
   case $1 in
@@ -495,7 +479,6 @@ run_check() {  # <check>
     config) check_config ;;
     login) check_login ;;
     tmp) check_tmp ;;
-    stray-servers) check_stray_servers ;;
   esac
 }
 run_fix() {  # <check> <target>

@@ -18,13 +18,13 @@ CHECK="$ROOT/bin/jg-live-claim.sh"
 REPORT="$ROOT/bin/jg-squad-lead-report.sh"
 TMP_ROOT=$(jg_test_tmproot jg-live-claim)
 
-# Fake service probes: every required service up, unless a case removes one.
+# No bus service is required any more, so the check is up with no probes; a case that needs a
+# down service points JG_LIVE_SERVICES_BIN at a fake check that reports one.
 PROBES="$TMP_ROOT/probes"
 mkdir -p "$PROBES"
-for svc in nats dapr; do
-  printf '#!/bin/sh\necho "pid 4242"\n' > "$PROBES/$svc"; chmod +x "$PROBES/$svc"
-done
 export JG_LIVE_SERVICES_PROBES="$PROBES"
+FAKE_DOWN="$TMP_ROOT/fake-down.sh"
+printf '#!/bin/sh\necho "DOWN gateway not running"\necho "LIVE_SERVICES: DOWN gateway"\nexit 1\n' > "$FAKE_DOWN"; chmod +x "$FAKE_DOWN"
 LIVE_SERVICES="$ROOT/bin/jg-live-services.sh"
 
 # One home with an optional release record; every case reads its own.
@@ -141,19 +141,15 @@ test_the_lead_report_path_keeps_a_live_claim() {
 test_a_down_service_refuses_the_live_claim() {
   local dir claim='Fixed it; Released, v1.2.3; live: v1.2.3 @ https://app.test; carries: #12; waiting: none' out rc=0
   dir=$(home down-service 'v1.2.3 2026-11-01T09:00Z app.test')
-  mv "$PROBES/dapr" "$PROBES/dapr.off"; mv "$PROBES/nats" "$PROBES/nats.off"
   out=$(bash "$LIVE_SERVICES" 2>&1) || rc=$?
-  [ "$rc" -eq 1 ] || fail "the service check must exit 1 with services down, got $rc"
-  assert_contains "$out" 'DOWN nats' 'a stopped service is named'
-  assert_contains "$out" 'DOWN dapr' 'every stopped service is named'
-  assert_contains "$out" 'LIVE_SERVICES: DOWN nats dapr' 'the verdict lists every down service'
+  [ "$rc" -eq 0 ] || fail "the service check must exit 0 when nothing is required, got $rc"
+  assert_contains "$out" 'LIVE_SERVICES: ok' 'no required service means the check passes'
   assert_contains "$out" 'NOT-IN-DESIGN wake-engine' 'the output says which services are not part of the design'
   assert_contains "$out" 'NOT-IN-DESIGN router' 'the router is named as not in the design'
-  verdict "$dir" 'done' "$claim"
+  JG_LIVE_SERVICES_BIN="$FAKE_DOWN" verdict "$dir" 'done' "$claim"
   [ "$RC" -eq 3 ] || fail "a recorded release with services down must not stand, got $RC"
   assert_equals "Landed, not in use: $claim" "$OUT" 'the claim is rewritten as merged-not-released'
-  assert_contains "$ERR" 'LIVE_SERVICES: DOWN nats dapr' 'the refusal names the down services'
-  mv "$PROBES/dapr.off" "$PROBES/dapr"; mv "$PROBES/nats.off" "$PROBES/nats"
+  assert_contains "$ERR" 'LIVE_SERVICES: DOWN gateway' 'the refusal names the down services'
   verdict "$dir" 'done' "$claim"
   [ "$RC" -eq 0 ] || fail "with every service up the live claim must stand, got $RC: $ERR"
   pass 'a live claim is refused while a required service is down and stands when all run'

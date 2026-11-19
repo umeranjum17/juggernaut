@@ -863,7 +863,7 @@ squad_lead_handoff_detect() {
 }
 
 # --- the message bus binaries --------------------------------------------------
-# The JetStream server and the client that drives its streams ship as release
+# The policy engine and the backlog store's binaries ship as release
 # archives, not npm packages, so this is the one owner of how they land: the
 # pinned version from toolchain.versions, the asset for this platform, into the
 # same user-local bin directory every other install uses.
@@ -895,14 +895,6 @@ bus_release_asset() {
     return 0
   }
   case "$1" in
-    nats-server) repo=nats-io/nats-server; stem="nats-server-v$version-$os-$arch"; ext=tar.gz ;;
-    nats) repo=nats-io/natscli; stem="nats-$version-$os-$arch"; ext=zip ;;
-    # The sidecar's archive holds the binary at its root (an empty directory name).
-    daprd) printf 'https://github.com/dapr/dapr/releases/download/v%s/daprd_%s_%s.tar.gz .tar.gz\n' \
-      "$version" "$os" "$arch"; return 0 ;;
-    # The workflow engine's timer service; its archive holds a binary named `scheduler`.
-    dapr-scheduler) printf 'https://github.com/dapr/dapr/releases/download/v%s/scheduler_%s_%s.tar.gz .tar.gz\n' \
-      "$version" "$os" "$arch"; return 0 ;;
     # The policy engine ships as one bare binary, not an archive; the second field "-.bin" says so.
     opa)
       stem="opa_${os}_$arch"
@@ -928,7 +920,6 @@ bus_install_hint() {  # <tool>
 # build off its pin never lands and neither one starts here, even for a version.
 bus_tool_install() {
   local tool=$1 asset url stem ext dir dest tmp out member=$1 want=
-  [ "$tool" != dapr-scheduler ] || member=scheduler
   [ "$tool" != dolt ] || member=bin/dolt
   if [ "$tool" = bd ] || [ "$tool" = dolt ]; then
     want=$(jg_pin_sha_want "$tool") || { echo "error: toolchain.versions has no $tool build for this platform" >&2; return 1; }
@@ -980,12 +971,6 @@ bus_tool_install() {
   mv -f -- "$tmp/$stem/$member" "$dest" || { rm -rf -- "$tmp"; return 1; }
   rm -rf -- "$tmp"
   [ -z "$want" ] || { printf '%s: %s\n' "$tool" "$(jg_pin_version "$tool")"; return 0; }
-  # The scheduler has no version flag, so the pin it was installed at is its version.
-  if [ "$tool" = dapr-scheduler ]; then
-    jg_pin_version "$tool" >"$dest.version" || return 1
-    printf '%s: %s\n' "$tool" "$(cat "$dest.version")"
-    return 0
-  fi
   printf '%s: %s\n' "$tool" "$("$dest" --version 2>&1 | head -n 1)"
 }
 
@@ -996,7 +981,7 @@ install_cmd() {
     cmux) echo "brew install --cask cmux  # or see https://cmux.com" ;;
     treehouse) echo "curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh" ;;
     no-mistakes) echo "curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh" ;;
-    nats-server|nats|daprd|dapr-scheduler|opa) bus_install_hint "$1" ;;
+    opa) bus_install_hint "$1" ;;
     learn-from-mistakes) echo "npm install -g $(jg_pin_npm learn-from-mistakes) && ln -sf learn-from-mistakes-axi \"\$(dirname \"\$(command -v learn-from-mistakes-axi)\")/learn-from-mistakes\"" ;;
     *)
       # Every npm tool installs the exact build its toolchain.versions row names, so this
@@ -1033,7 +1018,7 @@ missing_tool_diagnostic() {
 # jg_backend_required_tools (bin/jg-backend.sh). So a herdr/zellij/cmux home is
 # never told tmux is missing, and only orca drops treehouse. A backend value with
 # no verified dependency set is reported before the universal checks continue.
-COMMON_TOOLS="node git gh no-mistakes gh-axi chrome-devtools-axi quota-axi learn-from-mistakes done-done sign-off-axi nats-server nats opa"
+COMMON_TOOLS="node git gh no-mistakes gh-axi chrome-devtools-axi quota-axi learn-from-mistakes done-done sign-off-axi opa"
 BACKEND=$(jg_backend_name)
 BACKEND_VALID=1
 if ! BACKEND_TOOLS=$(jg_backend_required_tools "$BACKEND"); then
@@ -1056,8 +1041,6 @@ LEARN_FROM_MISTAKES_AXI_MIN=$(jg_pin_version learn-from-mistakes) || LEARN_FROM_
 # moves installation, detection and this diagnostic together.
 DONE_DONE_AXI_MIN=$(jg_pin_version done-done) || DONE_DONE_AXI_MIN=0.0.0
 SIGN_OFF_AXI_MIN=$(jg_pin_version sign-off-axi) || SIGN_OFF_AXI_MIN=0.0.0
-NATS_SERVER_MIN=$(jg_pin_version nats-server) || NATS_SERVER_MIN=0.0.0
-NATS_MIN=$(jg_pin_version nats) || NATS_MIN=0.0.0
 
 treehouse_supports_lease() {
   treehouse get --help 2>&1 | grep -Eq '(^|[^[:alnum:]_-])--lease([^[:alnum:]_-]|$)'
@@ -1070,11 +1053,7 @@ treehouse_supports_lease() {
 tool_version_parts() {  # <tool>
   local tool=$1 output parts major minor patch extra
   command -v "$tool" >/dev/null 2>&1 || return 1
-  if [ "$tool" = dapr-scheduler ]; then
-    output=$(cat "$(command -v "$tool").version" 2>/dev/null) || return 1
-  else
-    output=$("$tool" --version 2>/dev/null) || return 1
-  fi
+  output=$("$tool" --version 2>/dev/null) || return 1
   parts=$(printf '%s\n' "$output" | sed -nE 's/.*[vV]?([0-9]+)\.([0-9]+)\.([0-9]+).*/\1 \2 \3/p' | head -n 1)
   IFS=' ' read -r major minor patch extra <<< "$parts"
   [ -n "$major" ] && [ -n "$minor" ] && [ -n "$patch" ] && [ -z "$extra" ] || return 1
@@ -1733,14 +1712,6 @@ detect_local_tools() {
   for t in $COMMON_TOOLS; do
     command -v "$t" >/dev/null || missing_tool_diagnostic "$t"
   done
-  # The bus binaries ship as release archives, so their row is an exact version
-  # rather than an npm build; a present but older binary is still a MISSING line.
-  if command -v nats-server >/dev/null 2>&1 && ! tool_version_at_least nats-server "$NATS_SERVER_MIN"; then
-    echo "MISSING: nats-server (install: $(install_cmd nats-server))"
-  fi
-  if command -v nats >/dev/null 2>&1 && ! tool_version_at_least nats "$NATS_MIN"; then
-    echo "MISSING: nats (install: $(install_cmd nats))"
-  fi
   # The treehouse lease-support upgrade check is only relevant when the resolved
   # backend actually requires treehouse (every backend except orca, which owns its
   # own worktrees); an orca home must not be told to upgrade a provider it never uses.

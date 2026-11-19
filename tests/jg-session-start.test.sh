@@ -1008,9 +1008,9 @@ EOF
   assert_not_contains "$out" "git -C $root checkout main" "read-only bootstrap printed a state-changing checkout remediation"
 
   # Detect-only bootstrap diagnostics still ran (the fakebin's PATH excludes
-  # NATS, so bootstrap's own read-only tool-detection line fires
+  # the opa tool, so bootstrap's own read-only tool-detection line fires
   # deterministically regardless of what is installed on the test host).
-  assert_contains "$out" "MISSING: nats-server (install:" "detect-only bootstrap diagnostics did not run on the read-only path"
+  assert_contains "$out" "MISSING: opa (install:" "detect-only bootstrap diagnostics did not run on the read-only path"
 
   # The mutating squad_lead sweep must NOT have run: no SQUAD_LEAD_SYNC/
   # NUDGE_SQUAD_LEADS line, and the sowed squad_lead meta's target dir is

@@ -62,7 +62,7 @@ grep -q '16,546 of 31,832' "$LOG" || fails=1
   grep -o '<tr><td>[^<]*</td><td>[^<]*</td><td>[^<]*' "$T/board/reports/$(sed -n 's/^card=//p' "$JG_HOME/config/migration-card")/index.html"
 } >> "$LOG" 2>&1
 rows=$(sed -n '/^== live rows/,/^== the cadence/p' "$LOG" | grep -c $'\t')
-[ "$rows" = 19 ] || { echo "FAIL: the probe wrote $rows part rows, not 19" >> "$LOG"; fails=1; }
+[ "$rows" = 16 ] || { echo "FAIL: the probe wrote $rows part rows, not 16" >> "$LOG"; fails=1; }
 [ -n "$(bash "$REPO/bin/jg-migration-live.sh" --link 2>/dev/null)" ] || { echo "FAIL: --link printed no link for the posted card" >> "$LOG"; fails=1; }
 sed -n '/^== live rows/,/^== the cadence/p' "$LOG" | grep -q $'^wake queue\t' || { echo "FAIL: the wake queue row is missing" >> "$LOG"; fails=1; }
 sed -n '/^== live rows/,/^== the cadence/p' "$LOG" | awk -F'\t' 'NF >= 3 && $2 !~ /^(live|pending|absent)$/ { found=1 } END { exit !found }' &&
