@@ -14,7 +14,7 @@ alerts (Y5). Any other subject stays as given and Main holds it. A host-wide sec
 `security:fleet/<alert>` item, never one per home. The plumbing alerts about delivery and escalation raise no item:
 the late item itself climbs. Every write goes through itemdb.or_intake, so a refused write is listed on Main's board.
 The alert records under state/alerts/ stay authoritative; this adapter only mirrors them. Stdlib only."""
-import argparse, os, sys
+import argparse, os, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 import itemdb   # noqa: E402
@@ -128,14 +128,14 @@ def cmd_import(a):
         if st.item(key):
             there += 1
             continue
-        mirror(st, home, hid, alert, subject, sec, "import:%s/%s--%s" % (hid, alert, subject))
+        mirror(st, home, hid, alert, subject, sec, "import:%s/%s--%s@%d" % (hid, alert, subject, time.time_ns()))
         opened += 1
     want = wanted(home, hid)
     for key, subj in open_items(st, hid):
         if key in want:
             continue
         at = itemdb.stamp(st)
-        itemdb.or_intake(st, at, "import:%s/gone:%s" % (hid, key), hid, subj, st.close, at, key, "done", "gone:import-absent-today", st.me)
+        itemdb.or_intake(st, at, "import:%s/gone:%s@%d" % (hid, key, time.time_ns()), hid, subj, st.close, at, key, "done", "gone:import-absent-today", st.me)
         closed += 1
     tail = ", closed %d" % closed if closed else ""
     print("alerts import %s: opened %d, already open %d%s" % (hid, opened, there, tail) if opened or closed else

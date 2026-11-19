@@ -75,6 +75,21 @@ check compare-lists-record-only "ghost:main/x missing-item today=open store=abse
 check compare-exit-1 1 "$rc"
 rm -f "$H/state/alerts/ghost--x.rec"
 
+# 5b. a key that comes back is mirrored and closed again, and a move whose own mirror was lost is healed by the next move of any alert
+JG_ALERT_NOW=$((now + 10)) alert_h raise supervision-down beacon-old >/dev/null 2>&1
+JG_ALERT_NOW=$((now + 11)) alert_h resolve supervision-down--beacon-old --proof source:beacon-fresh >/dev/null 2>&1
+JG_ALERT_NOW=$((now + 20)) alert_h raise supervision-down beacon-old >/dev/null 2>&1
+JG_ALERT_NOW=$((now + 21)) alert_h resolve supervision-down--beacon-old --proof source:beacon-fresh >/dev/null 2>&1
+check second-episode-resolve-closes 0 "$(q "select count(*) from item where key='supervision-down:main/beacon-old' and state='open'")"
+check second-episode-compare-clean "" "$(JG_HOME=$H python3 -I "$ALERTS" compare "$H")"
+printf 'alert=lost-mirror\nsubject=y\nstate=open\nprecedence=P2\nrung=0\n' > "$H/state/alerts/lost-mirror--y.rec"
+check lost-mirror-is-a-difference 1 "$(JG_HOME=$H python3 -I "$ALERTS" compare "$H" >/dev/null; echo $?)"
+JG_ALERT_NOW=$((now + 30)) alert_h raise lost-worker box2 >/dev/null 2>&1
+check next-move-heals-lost-mirror "" "$(JG_HOME=$H python3 -I "$ALERTS" compare "$H")"
+rm -f "$H/state/alerts/lost-mirror--y.rec"
+JG_ALERT_NOW=$((now + 31)) alert_h resolve lost-worker--box2 --proof source:seen-alive >/dev/null 2>&1
+check removed-record-heals-on-next-move "" "$(JG_HOME=$H python3 -I "$ALERTS" compare "$H")"
+
 # 6. an alert opened with no holder named is one intake item, and no alert
 python3 -I - "$ROOT/core/item-store" "$H" <<'PY' || bad no-named-fixture "fixture failed"
 import sys

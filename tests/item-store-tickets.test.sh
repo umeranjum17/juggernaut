@@ -134,6 +134,37 @@ step "done" "done" jg-new --pr https://github.com/o/r/pull/9
 [ "$(sql "SELECT status FROM ticket WHERE id='jg-new'")" = closed ] || fail "the copy followed the ticket to closed"
 pass "each write verb leaves compare empty (add update hold unhold start reopen block unblock task done)"
 
+# --- a write levels every row it changed, named in its args or not (a close ends the gates under a ticket, a take brings rows, a drop deletes them)
+step add add jg-gone "A row a drop will remove"
+python3 - "$ROWS" <<'PY'
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+side = next(r for r in rows if r["id"] == "jg-new")                                                 # a row no arg of the next write names
+side["metadata"] = dict(side.get("metadata") or {}, pinned_back_at="2026-11-19T00:00:00Z")
+side["closed_at"] = "2026-11-19T00:00:00Z"
+rows = [r for r in rows if r["id"] != "jg-gone"]                                                    # a row a drop removed
+rows.append(dict(id="jg-taken", title="A taken row", status="closed", closed_at="2026-11-19T00:00:00Z", priority=2, issue_type="task", created_at="2026-11-19T00:00:00Z", labels=[], metadata={}))
+open(sys.argv[1], "w").write("".join(json.dumps(r) + "\n" for r in rows))
+PY
+out=$("$BL" compare 2>&1); expect_code 1 $? "unnamed changes are differences: $out"
+step "a write that names none of the changed rows" update jg-ready1 --body "Captain: z"
+[ "$(sql "SELECT count(*) FROM ticket WHERE id='jg-taken'")" = 1 ] || fail "a row that arrived with the write was not copied"
+[ "$(sql "SELECT count(*) FROM ticket WHERE id='jg-gone'")" = 0 ] || fail "a row Beads no longer holds stayed in the copy"
+n=$(sql "SELECT count(*) FROM ticket_change"); step "the same write again" update jg-ready1 --body "Captain: z"
+[ "$(sql "SELECT count(*) FROM ticket_change")" = "$n" ] || fail "a second write of an equal copy wrote to the log"
+pass "a write copies every changed, new or removed row, named or not, and a repeat writes nothing"
+# the move verbs (handoff stage, take, drop) write Beads through jg_backlog_beads_write itself: the copy follows the same way
+python3 - "$ROWS" <<'PY'
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+rows.append(dict(id="jg-moved", title="A moved row", status="closed", closed_at="2026-11-19T00:00:00Z", priority=2, issue_type="task", created_at="2026-11-19T00:00:00Z", labels=[], metadata={}))
+open(sys.argv[1], "w").write("".join(json.dumps(r) + "\n" for r in rows))
+PY
+out=$(bash -c '. "$1"; jg_backlog_beads_write "$2" start jg-new' _ "$ROOT/bin/jg-backlog-lib.sh" "$T/home/config" 2>&1); expect_code 0 $? "the shared Beads writer: $out"
+[ "$(sql "SELECT count(*) FROM ticket WHERE id='jg-moved'")" = 1 ] || fail "a call to the shared writer did not reach the copy (handoff and receive use it directly)"
+out=$("$BL" compare 2>&1); expect_code 0 $? "compare after the shared writer: $out"
+pass "every caller of the shared Beads writer leaves compare empty"
+
 # --- a difference in one copy only: one line each
 cp "$ROWS" "$T/rows.good"
 python3 - "$ROWS" <<'PY'

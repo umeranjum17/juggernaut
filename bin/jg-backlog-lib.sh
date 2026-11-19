@@ -122,7 +122,9 @@ jg_backlog_beads_write() {  # <config_dir> <a verb of bin/jg-beads-write.py> [ar
           "$bin_dir/jg-closure-proof.sh" "$id" | python3 "$bin_dir/jg-closure-gate.py" - "$id" || return 1 ;;
       esac ;;
   esac
-  BEADS_DIR=$store python3 "$bin_dir/jg-beads-write.py" "$@"
+  BEADS_DIR=$store python3 "$bin_dir/jg-beads-write.py" "$@" || return $?
+  # Every writer comes through here, so none leaves the copy behind (stage only reads).
+  [ "${1:-}" = stage ] || jg_backlog_one_engine_copy "$config" "$@"
 }
 
 # The rows a read needs, as bd's JSON. Sets `one` (the id a fast show fetched) and `open` (a listing left its closed rows out) for the caller.
@@ -214,19 +216,15 @@ jg_backlog_one_engine_copy() {  # <config_dir> <verb> [args...]
   return 0
 }
 
-# One verb, read or write, for bin/jg-backlog-transition-lib.sh's row calls (spawn start, teardown close) and the captain-hold
-# scripts. A write is copied into the item store like one made through bin/jg-backlog.sh.
+# One verb, read or write, for bin/jg-backlog-transition-lib.sh's row calls (spawn start, teardown close) and the captain-hold scripts.
 jg_backlog_beads_serve() {  # <config_dir> <verb> [args...]
-  local config=$1 rc
+  local config=$1
   case "${2:-}" in
     show|view|list|ready|links|questions)
       shift
       jg_backlog_beads_read "$config" "$@"
       ;;
-    *)
-      jg_backlog_beads_write "$@"; rc=$?
-      [ "$rc" -ne 0 ] || jg_backlog_one_engine_copy "$config" "${@:2}"
-      return "$rc" ;;
+    *) jg_backlog_beads_write "$@" ;;
   esac
 }
 

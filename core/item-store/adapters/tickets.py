@@ -32,8 +32,6 @@ import itemdb  # noqa: E402
 BY = "adapter:tickets"
 FIELDS = ("title", "description", "priority", "issue_type", "assignee", "created_at", "closed_at", "close_reason",
           "status", "defer_until", "external_ref")
-BULK = {"relink", "retag"}             # verbs that touch rows their args do not name
-NEW_ROWS = {"add", "create"}           # verbs that file a row (bd names a minted id): the new ids are touched too
 
 
 class Refused(Exception):
@@ -226,17 +224,9 @@ def beads_export():
     return rows
 
 
-def touched(verb, args, beads, known):
-    if verb in BULK:
-        return set(beads)
-    words = {w.split("=", 1)[-1] for w in args}
-    ids = {i for i in beads if i in words}
-    if verb in NEW_ROWS:
-        ids |= {i for i in beads if i not in known}
-    return ids
-
-
 def cmd_write(a):
+    """Bring this home's copy level with a fresh export: a verb touches rows its args never name (a close ends the gates under it, a
+    take brings rows and edges, a drop deletes rows), so the copy is judged row by row, never by the ids a call named."""
     h = home()
     if not os.path.exists(os.path.join(itemdb.main_home(h), "config", "one-engine")):
         return 0
@@ -244,12 +234,16 @@ def cmd_write(a):
     beads = beads_export()
     st = open_tickets(h)
     con = st.con
-    known = {i for (i,) in con.execute("SELECT id FROM ticket WHERE home = ?", (home_id,))}
-    for i in sorted(touched(a.verb, a.args, beads, known)):
+    now = int(time.time())
+    for i in sorted(beads):
         have = copy_of(con, home_id, i)
         if have is not None and not diffs(norm(beads[i]), have):
             continue
-        change(st, int(time.time()), home_id, a.verb, "%s#%s" % (a.source, i), beads[i])
+        change(st, now, home_id, a.verb, "%s#%s" % (a.source, i), beads[i])
+    for (i,) in list(con.execute("SELECT id FROM ticket WHERE home = ?", (home_id,))) if beads else ():  # an empty export is no drop
+        if i not in beads:
+            con.execute("INSERT INTO ticket_change (at, home, id, verb, source, row, links) VALUES (?,?,?,?,?,NULL,'[]')",
+                        (now, home_id, i, a.verb, "%s#%s" % (a.source, i)))
     return 0
 
 

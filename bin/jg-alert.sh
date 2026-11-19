@@ -114,6 +114,9 @@ _store_mirror() {
   [ -e "$home/config/item-store" ] || return 0
   JG_HOME=$home python3 -I "$_root/core/item-store/adapters/alerts.py" "$@" >/dev/null 2>&1 || true
 }
+# _store_sync: after a move that wrote records, the store's items are brought level with the records (alerts.py import). A move whose own
+# mirror was refused or lost (a busy store, a source the store already holds) leaves nothing behind: the next move of any alert heals it.
+_store_sync() { _store_mirror import "${JG_HOME:-$(dirname "$(dirname "$(_dir)")")}"; }
 
 # _quiet <quiet-when> <fact>...: 0 when a fact set matches. `+` separates alternatives, `,` joins facts that must all hold, `a|b` lists values.
 _quiet() {
@@ -379,7 +382,7 @@ cmd_resolve() {
   fi
   _route_close "$f" "$key"
   _set "$f" state "$s_res"; _set "$f" proof "$proof"; _set "$f" resolved_at "$now"
-  _store_mirror resolve "$key" --proof "$proof" --source "resolve:$key"
+  _store_mirror resolve "$key" --proof "$proof" --source "resolve:$key@${JG_ALERT_NOW:-$(date +%s)}"
   for rec in "$(_dir)"/*.rec; do   # release what this alert covered
     [ -r "$rec" ] && [ "$(_get "$rec" covered_by)" = "$key" ] || continue
     _set "$rec" state "$s_open"; _set "$rec" covered_by ""
@@ -485,6 +488,7 @@ usage() { sed -n '2,/^set -u/{ /^set -u/d; s/^# \{0,1\}//; p; }' "$0" >&2; exit 
 [ "$#" -gt 0 ] || usage
 c=$1; shift
 case $c in
-  row|limit|timers|raise|capacity|climb|ack|reopen|resolve|overdue|show|word|list|deliver) "cmd_$c" "$@" ;;
+  raise|capacity|resolve) "cmd_$c" "$@"; _rc=$?; _store_sync; exit "$_rc" ;;
+  row|limit|timers|climb|ack|reopen|overdue|show|word|list|deliver) "cmd_$c" "$@" ;;
   *) usage ;;
 esac

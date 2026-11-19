@@ -63,8 +63,7 @@
 # task id goes is resolved to its slug first, `show` prints the key under the id, `list --keys`
 # puts each row's key first, and a successful `add` keys the new ticket when the home has a
 # registered prefix.
-# One engine (expand phase): when the main home has `config/one-engine`, each successful write below, and each start, close or hold that spawn,
-# teardown and the captain-hold scripts make through jg_backlog_beads_serve, is copied into the
+# One engine (expand phase): when the main home has `config/one-engine`, each successful Beads write of any writer (jg_backlog_beads_write: this command, spawn, teardown, the captain-hold scripts, handoff and receive) is copied into the
 # ticket tables of the host's item store (core/item-store/adapters/tickets.py write); a failed copy prints one
 # `jg-backlog: one-engine copy: ...` line and never fails the Beads write. `compare` runs `bd export` and lists each
 # difference between Beads and that copy, one line each (exit 1 when any). Reads stay on Beads.
@@ -429,8 +428,6 @@ jg_backlog_beads_write "$JG_HOME/config" ${ARGS[@]+"${ARGS[@]}"}
 _jg_rc=$?
 case "${1:-}" in add|create) [ "$_jg_rc" -ne 0 ] || key_tool sync >&2 || true ;; esac
 [ "$_jg_rc" -eq 0 ] || exit "$_jg_rc"
-# The same write, copied into the item store's ticket tables (header: One engine). Never fails the Beads write.
-jg_backlog_one_engine_copy "$JG_HOME/config" ${ARGS[@]+"${ARGS[@]}"}
 # A write this command performs puts the ticket on the board in the same breath, so the board
 # follows the work and never waits for the next tickets-sync poll; the verb map and the writer are
 # bin/jg-backlog-transition-lib.sh's own.
