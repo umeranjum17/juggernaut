@@ -53,6 +53,25 @@ check alerts-import-twice-says-so "alerts import main: nothing to import (3 alre
 check alerts-compare-clean "" "$(py "$H" alerts.py compare "$H")"
 check alerts-compare-clean-prints-no-blank-line 0 "$(py "$H" alerts.py compare "$H" | wc -c)"
 
+# 1b. an alert resolved today whose item is still open closes on the next import; a live one, a security one and another home's stay;
+# run twice safe
+rec "$H" lost-worker box1 resolved
+rm -f "$H/state/alerts/lost-worker--lane1.rec"
+check alerts-compare-lists-resolved-today "2" "$(py "$H" alerts.py compare "$H" | grep -c 'today=absent store=open')"
+out=$(py "$H" alerts.py import "$H")
+check alerts-import-closes-resolved-today "done" "$(q "select state from item where key='lost-worker:main/box1'")"
+check alerts-import-closes-removed-record "done" "$(q "select state from item where key='lost-worker:main/T-1'")"
+check alerts-import-keeps-security-fleet-item open "$(q "select state from item where key='security:fleet/security'")"
+check alerts-import-says-closed "alerts import main: opened 0, already open 1, closed 2" "$out"
+before=$(q "select count(*) from move")
+out=$(py "$H" alerts.py import "$H")
+check alerts-import-closing-twice-writes-nothing "$before" "$(q "select count(*) from move")"
+check alerts-import-closing-twice-says-so "alerts import main: nothing to import (1 already open)" "$out"
+check alerts-compare-clean-after-close "" "$(py "$H" alerts.py compare "$H")"
+rec "$H" lost-worker box1 open
+rec "$H" lost-worker lane1 open
+py "$H" alerts.py import "$H" >/dev/null
+
 # 2. a lead home's alerts import into the same store under its own home id
 rec "$L" capacity route-chain open
 py "$L" alerts.py import "$L" >/dev/null

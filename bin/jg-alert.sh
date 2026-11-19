@@ -104,6 +104,15 @@ _stamp_due() { _set "$1" rung_at "$2"; _set "$1" deadline_at $(( $2 + $3 )); }
 # shellcheck source=bin/jg-alert-authority-lib.sh
 . "$_root/bin/jg-alert-authority-lib.sh"
 
+# _store_mirror <verb> <args>...: the item store mirrors every alert move (core/item-store/adapters/alerts.py). The home is JG_HOME, else the
+# home that holds this state directory, so a producer that names only JG_STATE_OVERRIDE is mirrored too. Guarded: with no
+# config/item-store it does nothing, and it never changes this script's output or exit.
+_store_mirror() {
+  local home=${JG_HOME:-$(dirname "$(dirname "$(_dir)")")}
+  [ -e "$home/config/item-store" ] || return 0
+  JG_HOME=$home python3 -I "$_root/core/item-store/adapters/alerts.py" "$@" >/dev/null 2>&1 || true
+}
+
 # _quiet <quiet-when> <fact>...: 0 when a fact set matches. `+` separates alternatives, `,` joins facts that must all hold, `a|b` lists values.
 _quiet() {
   local q=$1 alt part k v f ok hit; shift
@@ -208,12 +217,8 @@ cmd_raise() {
   text=$(printf '%s' "$text" | tr '\n\t' '  ')
   local key="$name--$subj" file; file="$(_dir)/$key.rec"
   case $key in */*|*..*) _die "bad subject '$subj'" ;; esac
-  # The item store mirrors the alert (core/item-store/adapters/alerts.py): a repeat of an open key is a note there. Guarded: with
-  # no config/item-store it does nothing, and it never changes this script's output or exit.
-  if [ -n "${JG_HOME:-}" ] && [ -e "$JG_HOME/config/item-store" ]; then
-    python3 -I "$_root/core/item-store/adapters/alerts.py" raise "$name" "$subj" ${security:+--security-source "$security"} \
-      --source "raise:$name:$subj@${JG_ALERT_NOW:-$(date +%s)}" >/dev/null 2>&1 || true
-  fi
+  # A repeat of an open key is a note in the store.
+  _store_mirror raise "$name" "$subj" ${security:+--security-source "$security"} --source "raise:$name:$subj@${JG_ALERT_NOW:-$(date +%s)}"
   if [ -r "$file" ]; then
     local cur; cur=$(_get "$file" state)
     if [ "$cur" != "$s_res" ]; then   # one live record for one key
@@ -377,9 +382,7 @@ cmd_resolve() {
   fi
   _route_close "$f" "$key"
   _set "$f" state "$s_res"; _set "$f" proof "$proof"; _set "$f" resolved_at "$now"
-  if [ -n "${JG_HOME:-}" ] && [ -e "$JG_HOME/config/item-store" ]; then   # the item store mirrors the close (alerts.py); guarded, output unchanged
-    python3 -I "$_root/core/item-store/adapters/alerts.py" resolve "$key" --proof "$proof" --source "resolve:$key" >/dev/null 2>&1 || true
-  fi
+  _store_mirror resolve "$key" --proof "$proof" --source "resolve:$key"
   for rec in "$(_dir)"/*.rec; do   # release what this alert covered
     [ -r "$rec" ] && [ "$(_get "$rec" covered_by)" = "$key" ] || continue
     _set "$rec" state "$s_open"; _set "$rec" covered_by ""
@@ -447,7 +450,7 @@ cmd_capacity() {
   shift 2
   # A new event of one producer supersedes its last one: the old record resolves in place (its cover, if any, is the same key).
   local old; old="$(_dir)/capacity--$producer.rec"
-  if [ -r "$old" ] && [ "$(_get "$old" state)" != "$s_res" ]; then _edge "$(_get "$old" state)" "$s_res" && _route_close "$old" "capacity--$producer" && _set "$old" state "$s_res"; fi
+  if [ -r "$old" ] && [ "$(_get "$old" state)" != "$s_res" ]; then _edge "$(_get "$old" state)" "$s_res" && _route_close "$old" "capacity--$producer" && _set "$old" state "$s_res" && _store_mirror resolve "capacity--$producer" --proof source:superseded --source "supersede:capacity--$producer@${JG_ALERT_NOW:-$(date +%s)}"; fi
   cmd_raise capacity "$producer" --note "$text" "$@"
 }
 

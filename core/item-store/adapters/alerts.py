@@ -5,7 +5,8 @@
   alerts.py resolve <key> --proof <p> --source <id>          (<key> is jg-alert's <alert>--<subject>)
   alerts.py compare <home>                                    (the daily measure against <home>/state/alerts/)
   alerts.py import <home>                                     (the cut-over: one item for each alert open today in <home>, source
-                                                               import:<home id>/<key>; a second run changes nothing and says so)
+                                                               import:<home id>/<key>, and the close of each item whose alert is
+                                                               absent or resolved today; a second run changes nothing and says so)
 
 A subject that has a task record (<home>/state/<subject>.meta) is a lane's task id: the item's subject is its ticket and
 its first holder is the lead (Main, in the main home), so the lane's done close drops it with the rest of the lane's
@@ -91,15 +92,22 @@ def records(home):
     return out
 
 
+def open_items(st, hid):
+    """(key, subject) of each open alert item this home holds, its own tick's plumbing excluded (the compare's `have`)."""
+    return list(st.con.execute("SELECT key, subject FROM item WHERE state='open' AND kind='alert' AND home=? AND opened_by<>'tick'", (hid,)))
+
+
+def wanted(home, hid):
+    return {"security:fleet/%s" % alert if sec else item_key(hid, alert, subject_of(home, subject)[0])
+            for alert, subject, sec in records(home)}
+
+
 def cmd_compare(a):
     home = os.path.realpath(a.home)
     hid = itemdb.home_id(home)
     st = itemdb.open_db(home, BY)
-    want = set()
-    for alert, subject, sec in records(home):
-        want.add("security:fleet/%s" % alert if sec else item_key(hid, alert, subject_of(home, subject)[0]))
-    have = {r[0] for r in st.con.execute(
-        "SELECT key FROM item WHERE state='open' AND kind='alert' AND home=? AND opened_by<>'tick'", (hid,))}
+    want = wanted(home, hid)
+    have = {k for k, _ in open_items(st, hid)}
     have |= {k for k in want if k.startswith("security:fleet/") and st.item(k)}
     diffs = ["%s missing-item today=open store=absent" % k for k in sorted(want - have)]
     diffs += ["%s missing-record today=absent store=open" % k for k in sorted(have - want)]
@@ -109,11 +117,12 @@ def cmd_compare(a):
 
 
 def cmd_import(a):
-    """Open the item of each alert that is open today and has none; the alerts raised before the adapter was wired were never mirrored."""
+    """Open the item of each alert that is open today and has none; the alerts raised before the adapter was wired were never mirrored.
+    Close the item of each alert that is absent or resolved today: its clearing never reached the store."""
     home = os.path.realpath(a.home)
     hid = itemdb.home_id(home)
     st = itemdb.open_db(home, BY)
-    opened = there = 0
+    opened = there = closed = 0
     for alert, subject, sec in records(home):
         key = "security:fleet/%s" % alert if sec else item_key(hid, alert, subject_of(home, subject)[0])
         if st.item(key):
@@ -121,7 +130,15 @@ def cmd_import(a):
             continue
         mirror(st, home, hid, alert, subject, sec, "import:%s/%s--%s" % (hid, alert, subject))
         opened += 1
-    print("alerts import %s: opened %d, already open %d" % (hid, opened, there) if opened else
+    want = wanted(home, hid)
+    for key, subj in open_items(st, hid):
+        if key in want:
+            continue
+        at = itemdb.stamp(st)
+        itemdb.or_intake(st, at, "import:%s/gone:%s" % (hid, key), hid, subj, st.close, at, key, "done", "gone:import-absent-today", st.me)
+        closed += 1
+    tail = ", closed %d" % closed if closed else ""
+    print("alerts import %s: opened %d, already open %d%s" % (hid, opened, there, tail) if opened or closed else
           "alerts import %s: nothing to import (%d already open)" % (hid, there))
 
 

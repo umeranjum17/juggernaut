@@ -95,6 +95,17 @@ check refused-raise-no-alert 0 "$(q "select count(*) from item where key like ':
 jg close work:main/lane1 "done" receipt:abc --source st:lane1 >/dev/null 2>&1
 check lane-done-closes-alerts 0 "$(q "select count(*) from item where kind='alert' and state='open' and subject='T-1'")"
 
+# 7b. every path that clears an alert record closes its item: a producer that names only the state directory (no JG_HOME), and a
+# new capacity event that supersedes the last one of its producer
+alert_h raise lost-worker box2 >/dev/null 2>&1
+JG_HOME='' JG_STATE_OVERRIDE=$H/state bash "$ROOT/bin/jg-alert.sh" resolve lost-worker--box2 --proof source:seen-alive >/dev/null 2>&1
+check resolve-by-state-dir-closes-item "done gone:source:seen-alive" "$(q "select state || ' ' || outcome from item where key='lost-worker:main/box2'")"
+JG_ALERT_NOW=$((now + 10)) alert_h capacity prodx "first event" >/dev/null 2>&1
+check capacity-first-opens-item open "$(q "select state from item where key='capacity:main/prodx'")"
+JG_ALERT_NOW=$((now + 20)) alert_h capacity prodx "second event" >/dev/null 2>&1
+check capacity-supersede-closes-the-old-item 1 "$(q "select count(*) from move where key='capacity:main/prodx' and verb='close'")"
+check capacity-supersede-opens-the-new-item 1 "$(q "select count(*) from item where key='capacity:main/prodx' and state='open'")"
+
 # 8. Main-down from a lead home: stale beat opens, fresh beat closes done back:, the main home writes nothing
 touch -d '20 minutes ago' "$H/state/.last-watcher-beat"
 before=$(q "select count(*) from move")
