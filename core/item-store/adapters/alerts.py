@@ -103,7 +103,8 @@ def cmd_compare(a):
     have |= {k for k in want if k.startswith("security:fleet/") and st.item(k)}
     diffs = ["%s missing-item today=open store=absent" % k for k in sorted(want - have)]
     diffs += ["%s missing-record today=absent store=open" % k for k in sorted(have - want)]
-    print("\n".join(diffs))
+    if diffs:
+        print("\n".join(diffs))
     sys.exit(1 if diffs else 0)
 
 

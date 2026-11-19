@@ -20,7 +20,7 @@ the home runs the released tip.
 
   import <home>
       The cut-over: the cleanup item of each finished lane whose copy is still in <home> and that has none open (source
-      import:<home id>/<task>). A second run changes nothing and says so.
+      import:<home id>/<task>); an open cleanup item whose copy is gone closes. A second run changes nothing and says so.
 
 Every write goes through itemdb.or_intake: a refused write is one intake item on Main. A call on an item that is no longer
 open writes nothing and never runs the cleanup."""
@@ -188,27 +188,39 @@ def uncleaned(s):
             yield task
 
 
+def open_without_copy(s):
+    """The open cleanup tasks of the session's home whose copy is no longer on disk: nothing is left to return."""
+    rows = s.st.con.execute("SELECT key FROM item WHERE kind='cleanup' AND state='open' AND home=? ORDER BY key", (s.hid,)).fetchall()
+    return [key.split("/", 1)[1] for (key,) in rows if not copy_exists(s.home, key.split("/", 1)[1])]
+
+
 def cmd_import(a):
-    """A finished lane's cleanup item was opened by its done line; a lane that finished before the cut-over never had one."""
+    """A finished lane's cleanup item was opened by its done line; a lane that finished before the cut-over never had one.
+    An open cleanup item whose copy is already gone closes, the way the sweep closes it: today's record is the copy on disk."""
     s = Session(a.home)
+    gone = open_without_copy(s)
+    for task in gone:
+        do_run(s, s.hid, task, "import-closed:%s/%s" % (s.hid, task))
     todo = list(uncleaned(s))
     for task in todo:
         ticket, _ = itemdb.task_ref(s.home, task)
         s.put("import:%s/%s" % (s.hid, task), ticket, s.st.open, keys.key("cleanup", s.hid, task=task), "cleanup", s.hid, ticket,
               "return the finished lane's copy", STAMP)
     there = s.st.one("SELECT count(*) FROM item WHERE kind='cleanup' AND state='open' AND home=?", (s.hid,)) - len(todo)
-    print("cleanup import %s: opened %d, already open %d" % (s.hid, len(todo), there) if todo else
-          "cleanup import %s: nothing to import (%d already open)" % (s.hid, there))
+    if todo:
+        print("cleanup import %s: opened %d, already open %d%s" % (s.hid, len(todo), there, ", closed %d" % len(gone) if gone else ""))
+    elif gone:
+        print("cleanup import %s: closed %d, nothing to open" % (s.hid, len(gone)))
+    else:
+        print("cleanup import %s: nothing to import (%d already open)" % (s.hid, there))
 
 
 def cmd_compare(a):
     s, out = Session(), []
     for task in uncleaned(s):
         out.append("lane %s: finished, its copy is still here, and no cleanup item is open" % task)
-    for (key,) in s.st.con.execute("SELECT key FROM item WHERE kind='cleanup' AND state='open' AND home=? ORDER BY key", (s.hid,)).fetchall():
-        task = key.split("/", 1)[1]
-        if not copy_exists(s.home, task):
-            out.append("cleanup %s: open, and no copy is on disk" % key)
+    for task in open_without_copy(s):
+        out.append("cleanup %s: open, and no copy is on disk" % keys.key("cleanup", s.hid, task=task))
     paths = homes(s.main)
     for hid, release, st in update_items(s.st, ("open", "done")):
         if hid not in paths:

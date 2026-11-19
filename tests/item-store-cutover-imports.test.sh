@@ -51,6 +51,7 @@ out=$(py "$H" alerts.py import "$H")
 check alerts-import-twice-writes-nothing "$before" "$(q "select count(*) from move")"
 check alerts-import-twice-says-so "alerts import main: nothing to import (3 already open)" "$out"
 check alerts-compare-clean "" "$(py "$H" alerts.py compare "$H")"
+check alerts-compare-clean-prints-no-blank-line 0 "$(py "$H" alerts.py compare "$H" | wc -c)"
 
 # 2. a lead home's alerts import into the same store under its own home id
 rec "$L" capacity route-chain open
@@ -78,4 +79,33 @@ echo hi > "$H/state/ghost.inbox/001.msg"; echo hi > "$H/state/lane1.inbox/002.ms
 echo 'working [at=1]: x' > "$H/state/lane1.status"
 out=$(py "$H" lane.py compare "$H")
 check lane-compare-gone-lane-inbox-ignored "lane1 steer#2 today=open store=closed" "$(printf '%s\n' "$out" | grep steer)"
+
+# 5. cleanup import: an open cleanup whose copy is gone from disk closes (nothing is left to return); run twice safe
+printf 'ticket=T-4\nproject=/x/proj\n' > "$H/state/gone1.meta"; echo 'done [at=1]: ready' > "$H/state/gone1.status"
+py "$H" cleanup.py import "$H" >/dev/null
+rm -f "$H/state/gone1.meta"
+check cleanup-compare-lists-open-without-copy "cleanup cleanup:main/gone1: open, and no copy is on disk" "$(py "$H" cleanup.py compare "$H")"
+out=$(py "$H" cleanup.py import "$H")
+check cleanup-import-closes-open-without-copy "done" "$(q "select state from item where key='cleanup:main/gone1'")"
+check cleanup-import-closes-says-so "cleanup import main: closed 1, nothing to open" "$out"
+check cleanup-compare-clean-after-close "" "$(py "$H" cleanup.py compare "$H")"
+before=$(q "select count(*) from move")
+py "$H" cleanup.py import "$H" >/dev/null
+check cleanup-import-closing-twice-writes-nothing "$before" "$(q "select count(*) from move")"
+
+# 6. lane import: each wait that is open today (a lead's, an owner's) opens with the work; a finished lane's stale pause is no wait
+for t in wl wo; do printf 'ticket=T-%s\nproject=/x/proj\n' "$t" > "$H/state/$t.meta"; done
+printf 'working [at=1]: go\npaused [at=2] [wait=main] [reason=dependency] [key=dep]: waits for the release\n' > "$H/state/wl.status"
+printf 'paused [at=2] [wait=captain] [reason=credential] [key=cred]: needs the account\n' > "$H/state/wo.status"
+printf 'ticket=T-fin\nproject=/x/proj\n' > "$H/state/wf.meta"
+printf 'paused [at=2] [wait=main] [reason=approval] [key=old]: recheck\ndone [at=3]: landed\n' > "$H/state/wf.status"
+py "$H" lane.py import "$H" >/dev/null
+check lane-import-opens-the-work open "$(q "select state from item where key='work:main/wl'")"
+check lane-import-opens-the-lead-wait open "$(q "select state from item where key='wait:main/wl#dep'")"
+check lane-import-opens-the-owner-wait open "$(q "select state from item where key='wait:main/wo#cred'")"
+check lane-import-skips-finished-lane 0 "$(q "select count(*) from item where key like '%/wf%' and kind in ('work','wait')")"
+check lane-compare-clean-after-import "" "$(py "$H" lane.py compare "$H" | grep -v ' steer#')"
+before=$(q "select count(*) from move")
+py "$H" lane.py import "$H" >/dev/null
+check lane-import-twice-writes-nothing "$before" "$(q "select count(*) from move")"
 exit "$fail"

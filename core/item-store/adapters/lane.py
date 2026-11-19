@@ -5,12 +5,12 @@ the store yet, and `compare` measures how far the two agree.
 
   lane.py read <status file>     the lines past the file's byte cursor, one row each; a second run with nothing new writes nothing
   lane.py scan <home>            `read` on every <home>/state/*.status (never parent-replies.status, a channel, not a lane)
-  lane.py import <home>          the home's one-time cut-over: work for every task record whose newest line is not done or
-                                 failed (source import:<home id>/<task>); the byte cursor of every status file that has none
+  lane.py import <home>          the home's one-time cut-over: work, and each wait open today, for every task record whose newest line is
+                                 not done or failed (source import:<home id>/<task>); the byte cursor of every status file that has none
                                  goes to its end, so the history before the cut-over is never replayed; a second run writes nothing
   lane.py is-open <home id> <task> <wait key>      exit 0 when wait:<home id>/<task>#<key> is open, 1 when not, 2 when the store cannot answer
   lane.py has-open <item key>    exit 0 when that item is open, 1 when not, 2 when the store cannot answer
-  lane.py compare <home>         today's records against the store, one line per difference, exit 1 when any
+  lane.py compare <home>         today's records against the store, one line per difference, exit 1 when any (a finished lane waits for nothing)
 
 Each line maps to the first row that matches (the replay's table, frozen/final/probe/replay_c.py on_worker_line):
  0 any line, while worker-stopped:<home>/<ticket> is open: that alert closes done (the worker wrote again)
@@ -338,11 +338,27 @@ class Lane:
             if not self.st.one("SELECT 1 FROM item WHERE key=? AND state='open'", (self.wk,)):
                 self.put(self.wk, self.st.open, self.wk, "work", self.hid, self.ticket, "the lane's task (imported at the cut-over)", BY,
                          lane=self.wid, project=self.project)
+            self.open_waits(os.path.join(sd, task + ".status"))
             self.flush()
+
+    def open_waits(self, path):
+        """The waits open today in one status file, each opened as its last wait line opens it (rows 6, 9, 10); one already open stays."""
+        for k, (verb, tags, text, ln, wf) in sorted(self.fold(path).items()):
+            if not self.wait_open(self.task, k, wf):
+                self.wait(verb, tags, text, ln, tags.get("wait") in ("owner", "captain") or "captain-held" in ln)
+
+    def wait_open(self, task, k, wf):
+        """Whether the store holds the wait today's fold leaves open under key k; a waits-for line is a blocker, or a dispatch for its ticket."""
+        st, hid = self.st, self.hid
+        if wf:
+            return bool(st.one("SELECT 1 FROM item WHERE state='open' AND home=? AND (key LIKE ? OR key=?)",
+                               (hid, "waits-for:%s/%s#%%" % (hid, task), K.key("dispatch", hid, ticket=wf))))
+        return bool(st.one("SELECT 1 FROM item WHERE state='open' AND kind='wait' AND home=? AND key=?", (hid, K.key("wait", hid, task=task, wait=k))))
 
     # ---------------------------------------------------------------- compare
     def fold(self, path):
-        """The keys today's fold leaves open in one status file (bin/jg-classify-lib.sh), as the store keys them."""
+        """The waits today's fold leaves open in one status file (bin/jg-classify-lib.sh), by the key the store gives them:
+        (verb, tags, text, line, the ticket a waits-for line waits for or None) of each one's last wait line."""
         rows = []
         for fn in ("status_open_decisions", "status_open_activities"):       # one process each: the library may end its shell
             out = subprocess.run(["bash", "-c", '. "$1/bin/jg-classify-lib.sh"; "$2" "$3"', "_", ROOT, fn, path],
@@ -353,7 +369,7 @@ class Lane:
             for ln in open(path, encoding="utf-8", errors="replace"):
                 v, tags, text = parse(ln.rstrip("\n"))
                 if v in WAIT_VERBS:
-                    last[slug(tags.get("key") or ("pause" if v == "paused" else "default"))] = (v, tags.get("wait"), text)
+                    last[slug(tags.get("key") or ("pause" if v == "paused" else "default"))] = (v, tags, text, ln.rstrip("\n"))
         except OSError:
             pass
         keys = {}
@@ -363,11 +379,11 @@ class Lane:
                 k = slug(f[0])
                 if f[1] == "paused" and k == "default":
                     k = "pause"
-                v, w, text = last.get(k, (f[1], None, ""))
-                if v == "paused" and w in (None, "", "worker"):
+                v, tags, text, ln = last.get(k, (f[1], {}, "", f[1]))
+                if v == "paused" and tags.get("wait") in (None, "", "worker"):
                     continue                                    # a note on the work (row 8) or a refused line (row 7): no wait item
                 m = WAITS_FOR.match(text)
-                keys[k] = m.group(1) if m else None
+                keys[k] = (v, tags, text, ln, m.group(1) if m else None)
         return keys
 
     def compare(self):
@@ -379,18 +395,11 @@ class Lane:
                 continue
             if self.newest_verb(sf) not in DONE_WORDS + (None,) and not st.item(K.key("work", hid, task=task)):
                 diffs.append("%s work today=open store=closed" % task)
-            want = self.fold(sf)
+            want = {} if self.newest_verb(sf) in DONE_WORDS else self.fold(sf)       # a finished lane waits for nothing: its done closed them
             have = {r[0].split("#", 1)[1] for r in st.con.execute(
                 "SELECT key FROM item WHERE state='open' AND kind='wait' AND home=? AND key LIKE ?", (hid, "wait:%s/%s#%%" % (hid, task)))}
-            for k, wf in sorted(want.items()):
-                if wf:        # a waits-for line is a blocker, or a dispatch for the ticket it waits for
-                    ok = st.one("SELECT 1 FROM item WHERE state='open' AND home=? AND (key LIKE ? OR key=?)",
-                                (hid, "waits-for:%s/%s#%%" % (hid, task), K.key("dispatch", hid, ticket=wf)))
-                elif k in have:
-                    continue
-                else:
-                    ok = False
-                if not ok:
+            for k, row in sorted(want.items()):
+                if not self.wait_open(task, k, row[4]):
                     diffs.append("%s wait#%s today=open store=closed" % (task, k))
             for k in sorted(have - set(want)):
                 diffs.append("%s wait#%s today=closed store=open" % (task, k))
