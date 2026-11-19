@@ -1,7 +1,7 @@
 -- The ticket tables of the one item store (docs/item-store.md): every field the fleet keeps in Beads, beside the items.
 -- Loaded into the same fleet.db after schema.sql (core/item-store/adapters/tickets.py), and never changes it. The store's
 -- audit and `jg-item check` hash this file's objects against tickets.sha256 and everything else against schema.sha256.
--- Five tables: ticket, link, comment and ticket_event are the fold of ticket_change, the append-only log; a writer only INSERTs INTO ticket_change.
+-- Six tables: ticket, link, comment and ticket_event are the fold of ticket_change, the append-only log; a writer only INSERTs INTO ticket_change.
 -- A ticket is keyed on (home, id): ids are NOT unique across homes (every home mints jg- ids from its own counter), so the
 -- same id may be a different ticket in two homes, and one id twice in one home is one row. Every read names its home.
 
@@ -50,6 +50,14 @@ CREATE TABLE comment (
 -- A ticket's comment count is never stored: it is the rows of comment.
 CREATE VIEW v_ticket_comment_count AS
   SELECT t.home, t.id, (SELECT count(*) FROM comment c WHERE c.home = t.home AND c.ticket_id = t.id) AS comment_count FROM ticket t;
+
+-- A home's memories (bd remember, bd memories): key to text. Not a fold of the log; bd_forms/create.py writes it directly.
+CREATE TABLE memory (
+  home  TEXT NOT NULL,
+  key   TEXT NOT NULL,
+  value TEXT NOT NULL,
+  PRIMARY KEY (home, key)
+);
 
 -- The events journal and the provenance log of a ticket, one row per entry. source says which stream (event or provenance), n is the
 -- entry's place in that stream, data the whole entry as Beads gave it. A change whose row has no events (or no provenance) key leaves

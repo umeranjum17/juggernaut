@@ -47,6 +47,7 @@ BY = "adapter:tickets"
 FIELDS = ("title", "description", "priority", "issue_type", "assignee", "created_at", "created_by", "updated_at", "started_at",
           "closed_at", "close_reason", "status", "defer_until", "external_ref")
 COMMENT_KEYS = ("id", "author", "text", "created_at")
+ADDED = ("memory",)                      # tables added to tickets.sql after the first release: an open store gets them (load_missing), a rebuild keeps them
 STREAMS = ("events", "provenance")       # the export may carry either; Beads' own export carries neither, they come from bd events / bd provenance
 
 
@@ -75,7 +76,18 @@ def open_tickets(h):
           or "created_by" not in [c[1] for c in st.con.execute("PRAGMA table_info(ticket)")]
           or "'tracks'" not in st.con.execute("SELECT sql FROM sqlite_master WHERE name = 'link'").fetchone()[0]):   # an older key, or a link table that refuses `tracks`
         rebuild_from_log(st.con, sql.decode("utf-8"))
+    else:
+        load_missing(st.con, sql.decode("utf-8"))
     return st
+
+
+def load_missing(con, sql):
+    """A table tickets.sql gained after this store loaded it (ADDED: it holds no fold of the log) is created beside the others."""
+    have = {r[0] for r in con.execute("SELECT name FROM sqlite_master")}
+    for stmt in statements(sql):
+        m = re.search(r"^CREATE TABLE (\w+)", stmt, re.M)
+        if m and m.group(1) in ADDED and m.group(1) not in have:
+            con.execute(stmt)
 
 
 def statements(script):
@@ -106,7 +118,9 @@ def rebuild_from_log(con, sql):
         for t in ("ticket", "link", "comment", "ticket_event"):
             con.execute("DROP TABLE IF EXISTS " + t)
         for stmt in statements(sql):
-            con.execute(stmt)
+            m = re.search(r"^CREATE TABLE (\w+)", stmt, re.M)
+            if not (m and m.group(1) in ADDED and con.execute("SELECT 1 FROM sqlite_master WHERE name = ?", (m.group(1),)).fetchone()):
+                con.execute(stmt)
         con.execute("INSERT INTO ticket_change (seq, at, home, id, verb, source, row, links) "
                     "SELECT seq, at, home, id, verb, source, row, links FROM ticket_change_old ORDER BY seq")
         after = [con.execute("SELECT count(*) FROM " + t).fetchone()[0] for t in ("ticket", "link", "ticket_change")]

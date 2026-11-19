@@ -14,10 +14,10 @@ import itemdb  # noqa: E402
 TWO_WORD = {"dep", "gate", "label", "config", "backup", "comments", "dolt", "swarm"}
 FAMILIES = {
     "read": "show list ready blocked export history comments events provenance q types statuses schema memories epic swarm gate-list".split(),
-    "create": ["create"],
+    "create": "create comment comments-add import remember gate-create".split(),
     "update": ["update"],
-    "link": "close delete defer undefer comment comments-add dep-add dep-remove gate-create gate-resolve label-add label-remove".split(),
-    "admin": "init check import serve heartbeat remember config-set backup-init backup-restore backup-sync dolt".split(),
+    "link": "close delete defer undefer dep-add dep-remove gate-resolve label-add label-remove".split(),
+    "admin": "init check serve heartbeat config-set backup-init backup-restore backup-sync dolt".split(),
 }
 FAMILY_OF = {verb: fam for fam, verbs in FAMILIES.items() for verb in verbs}
 
