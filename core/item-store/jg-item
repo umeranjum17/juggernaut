@@ -279,8 +279,22 @@ def cmd_digest(st, a, d):
         print("\t".join("" if x is None else str(x) for x in r))
 
 
+def home_trunk(project):
+    """The branch bin/jg-trunk.sh works on for a project in the trunk flow (release/vN per home), from its one resolver;
+    empty when the project is not in the trunk flow here."""
+    home = jg_home()
+    lib = os.path.join(HERE, "..", "..", "bin", "jg-trunk-policy-lib.sh")
+    r = subprocess.run(["bash", "-c", '. "$1" && jg_project_trunk_branch "$2" "$3"', "_", lib,
+                        os.path.join(home, "projects", project), os.path.join(home, "state")],
+                       capture_output=True, text=True, env=dict(os.environ, JG_HOME=home))
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
 def cmd_base(st, a, d):
-    return st.base(a.project)
+    ref = st.base(a.project)
+    if ref.startswith("refs/heads/"):          # a local project: the trunk flow's own branch, when it runs one
+        return "refs/heads/" + (home_trunk(a.project) or ref[len("refs/heads/"):])
+    return ref
 
 
 def cmd_landed(st, a, d):
