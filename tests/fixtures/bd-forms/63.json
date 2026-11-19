@@ -1,0 +1,20 @@
+{
+ "argv": [
+  "gate",
+  "create",
+  "--blocks",
+  "jg-a0001",
+  "--type",
+  "human",
+  "--title",
+  "may it merge?",
+  "--reason",
+  "may it merge?",
+  "--json"
+ ],
+ "stdin": "",
+ "stdout": "{\n  \"await_type\": \"human\",\n  \"created_at\": \"2026-11-19T13:32:27.462149865Z\",\n  \"created_by\": \"main\",\n  \"description\": \"Ad-hoc gate blocking jg-a0001\\n\\nReason: may it merge?\",\n  \"id\": \"jg-r6m\",\n  \"issue_type\": \"gate\",\n  \"priority\": 2,\n  \"schema_version\": 1,\n  \"status\": \"open\",\n  \"title\": \"may it merge?\",\n  \"updated_at\": \"2026-11-19T13:32:27.462149865Z\"\n}\n",
+ "exit": 0,
+ "form": "gate create --blocks --json --reason --title --type",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-a0001\",\"title\":\"merge it\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:32:23Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:32:23Z\",\"metadata\":{\"kind\":\"captain\",\"release\":\"later\"},\"labels\":[\"captain-ask\",\"project:e-pr\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

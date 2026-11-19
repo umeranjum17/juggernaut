@@ -1,0 +1,25 @@
+{
+ "argv": [
+  "create",
+  "--title=Waits on worker one",
+  "--id",
+  "q-blocked",
+  "--force",
+  "-p",
+  "2",
+  "--deps",
+  "w-1",
+  "--metadata",
+  "{\"kind\": \"ship\", \"release\": \"later\"}",
+  "--description=Fixture task q-blocked",
+  "-l",
+  "project:alpha",
+  "-l",
+  "feature"
+ ],
+ "stdin": "",
+ "stdout": "\u2713 Created issue: q-blocked \u2014 Waits on worker one\n  Priority: P2\n  Status: open\n",
+ "exit": 0,
+ "form": "create --deps --description --force --id --metadata --title -l -p",
+ "store": "{\"_type\":\"issue\",\"id\":\"q-ready\",\"title\":\"Ready alpha work\",\"description\":\"Fixture task q-ready\",\"status\":\"open\",\"priority\":1,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T15:38:31Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T15:38:31Z\",\"metadata\":{\"kind\":\"ship\",\"release\":\"later\"},\"labels\":[\"feature\",\"project:alpha\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"w-3\",\"title\":\"Scout three\",\"description\":\"Fixture task w-3\",\"status\":\"in_progress\",\"priority\":1,\"issue_type\":\"task\",\"assignee\":\"main\",\"created_at\":\"2026-11-19T15:38:28Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T15:38:30Z\",\"started_at\":\"2026-11-19T15:38:30Z\",\"metadata\":{\"kind\":\"scout\",\"release\":\"later\"},\"labels\":[\"feature\",\"project:beta\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"w-2\",\"title\":\"Worker two\",\"description\":\"Fixture task w-2\",\"status\":\"in_progress\",\"priority\":1,\"issue_type\":\"task\",\"assignee\":\"main\",\"created_at\":\"2026-11-19T15:38:25Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T15:38:26Z\",\"started_at\":\"2026-11-19T15:38:26Z\",\"metadata\":{\"kind\":\"ship\",\"release\":\"later\"},\"labels\":[\"feature\",\"project:alpha\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"w-1\",\"title\":\"Worker one\",\"description\":\"Fixture task w-1\",\"status\":\"in_progress\",\"priority\":1,\"issue_type\":\"task\",\"assignee\":\"main\",\"created_at\":\"2026-11-19T15:38:21Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T15:38:23Z\",\"started_at\":\"2026-11-19T15:38:23Z\",\"metadata\":{\"kind\":\"ship\",\"release\":\"later\"},\"labels\":[\"feature\",\"project:alpha\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

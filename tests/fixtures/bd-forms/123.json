@@ -1,0 +1,18 @@
+{
+ "argv": [
+  "update",
+  "task-x1",
+  "--description=Teardown fixture task\nlocal main",
+  "--status",
+  "closed",
+  "--if-status",
+  "in_progress",
+  "--if-assignee",
+  "main"
+ ],
+ "stdin": "",
+ "stdout": "\u2713 Updated issue: task-x1 \u2014 teardown fixture task\n",
+ "exit": 0,
+ "form": "update --description --if-assignee --if-status --status",
+ "store": "{\"_type\":\"issue\",\"id\":\"task-x1\",\"title\":\"teardown fixture task\",\"description\":\"Teardown fixture task\",\"status\":\"in_progress\",\"priority\":1,\"issue_type\":\"task\",\"assignee\":\"main\",\"created_at\":\"2026-11-19T15:03:04Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T15:03:06Z\",\"started_at\":\"2026-11-19T15:03:06Z\",\"metadata\":{\"kind\":\"ship\",\"release\":\"later\"},\"labels\":[\"feature\",\"project:demo\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

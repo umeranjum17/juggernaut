@@ -1,0 +1,18 @@
+{
+ "argv": [
+  "create",
+  "--title=fix worker placement when two spaces share a name",
+  "--id",
+  "pf-text",
+  "--force",
+  "--labels",
+  "public-followup",
+  "--metadata",
+  "{\"kind\": \"public-followup\", \"followup\": {\"request\": {\"request_id\": \"req-text\", \"platform\": \"discord\", \"context_binding\": {\"version\": \"ctx1\", \"value\": \"ctx1_req-text\"}, \"public_safe_summary\": \"fix worker placement when two spaces share a name\", \"received_at\": \"2026-07-30T10:00:00Z\", \"followup_expires_at\": \"2026-08-06T10:00:00Z\", \"reservation_expires_at\": \"2026-08-06T10:00:00Z\"}, \"purpose\": \"promised-final\", \"expected_final\": {\"type\": \"pr-merged\", \"project\": \"juggernaut\", \"required_deliverables\": [\"pr_url\"], \"completion_policy\": \"all-required\"}, \"obligation_expires_at\": \"2026-10-01T00:00:00Z\", \"delivery_key\": \"fd1_08QkhYWF-g1PE_5nAWbd-_qmnDVBQRii\"}, \"delivery_state\": \"intent\", \"revision\": 1, \"added_ns\": 1795099930453492873}"
+ ],
+ "stdin": "",
+ "stdout": "\u2713 Created issue: pf-text \u2014 fix worker placement when two spaces share a name\n  Priority: P2\n  Status: open\n",
+ "exit": 0,
+ "form": "create --force --id --labels --metadata --title",
+ "store": ""
+}

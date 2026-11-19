@@ -1,0 +1,23 @@
+{
+ "argv": [
+  "update",
+  "jw-parked",
+  "--unset-metadata",
+  "hold_reason",
+  "--unset-metadata",
+  "hold_kind",
+  "--set-metadata",
+  "wait=none",
+  "--set-metadata",
+  "wait_reason=",
+  "--set-metadata",
+  "wait_at=2026-11-19T15:37:36Z",
+  "--status",
+  "open"
+ ],
+ "stdin": "",
+ "stdout": "\u2713 Updated issue: jw-parked \u2014 fixture jw-parked\n",
+ "exit": 0,
+ "form": "update --set-metadata --status --unset-metadata",
+ "store": "{\"_type\":\"issue\",\"id\":\"jw-date\",\"title\":\"fixture jw-date\",\"description\":\"why\",\"status\":\"deferred\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T15:37:28Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T15:37:34Z\",\"defer_until\":\"2099-01-15T00:00:00Z\",\"metadata\":{\"wait\":\"outside\",\"release\":\"later\",\"wait_at\":\"2026-11-19T15:37:33Z\",\"hold_kind\":\"captain\",\"hold_reason\":\"wait for the date\",\"wait_reason\":\"date\"},\"labels\":[\"feature\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jw-owner\",\"title\":\"fixture jw-owner\",\"description\":\"why\",\"status\":\"on_hold\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T15:37:26Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T15:37:32Z\",\"metadata\":{\"wait\":\"owner\",\"release\":\"later\",\"wait_at\":\"2026-11-19T15:37:31Z\",\"hold_kind\":\"captain\",\"hold_reason\":\"which design?\",\"wait_reason\":\"decision\"},\"labels\":[\"feature\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jw-parked\",\"title\":\"fixture jw-parked\",\"description\":\"why\",\"status\":\"on_hold\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T15:37:24Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T15:37:30Z\",\"metadata\":{\"wait\":\"lead\",\"release\":\"later\",\"wait_at\":\"2026-11-19T15:37:29Z\",\"hold_kind\":\"parked\",\"hold_reason\":\"set aside for later\",\"wait_reason\":\"parked\"},\"labels\":[\"feature\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

@@ -1,0 +1,16 @@
+{
+ "argv": [
+  "list",
+  "--status",
+  "open,in_progress,on_hold,blocked,deferred",
+  "--limit",
+  "0",
+  "--include-gates",
+  "--json"
+ ],
+ "stdin": "",
+ "stdout": "[\n  {\n    \"id\": \"jg-078\",\n    \"title\": \"lead asks?\",\n    \"description\": \"Ad-hoc gate blocking jg-b0001\\n\\nReason: lead asks\",\n    \"status\": \"open\",\n    \"priority\": 2,\n    \"issue_type\": \"gate\",\n    \"created_at\": \"2026-11-19T13:32:46Z\",\n    \"created_by\": \"lead:muxr\",\n    \"updated_at\": \"2026-11-19T13:32:47Z\",\n    \"metadata\": {\n      \"close\": \"done\",\n      \"expires_at\": \"2026-11-26T13:32:45Z\"\n    },\n    \"await_type\": \"human\",\n    \"dependency_count\": 0,\n    \"dependent_count\": 1,\n    \"comment_count\": 0\n  },\n  {\n    \"id\": \"jg-b0001\",\n    \"title\": \"lead call\",\n    \"status\": \"open\",\n    \"priority\": 2,\n    \"issue_type\": \"task\",\n    \"created_at\": \"2026-11-19T13:32:43Z\",\n    \"created_by\": \"lead:muxr\",\n    \"updated_at\": \"2026-11-19T13:32:43Z\",\n    \"metadata\": {\n      \"kind\": \"captain\",\n      \"release\": \"later\"\n    },\n    \"labels\": [\n      \"captain-ask\",\n      \"project:e-pr\"\n    ],\n    \"dependencies\": [\n      {\n        \"issue_id\": \"jg-b0001\",\n        \"depends_on_id\": \"jg-078\",\n        \"type\": \"blocks\",\n        \"created_at\": \"2026-11-19T13:32:46Z\",\n        \"created_by\": \"lead:muxr\",\n        \"metadata\": \"{}\"\n      }\n    ],\n    \"dependency_count\": 1,\n    \"dependent_count\": 0,\n    \"comment_count\": 0\n  }\n]\n",
+ "exit": 0,
+ "form": "list --include-gates --json --limit --status",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-078\",\"title\":\"lead asks?\",\"description\":\"Ad-hoc gate blocking jg-b0001\\n\\nReason: lead asks\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"gate\",\"created_at\":\"2026-11-19T13:32:46Z\",\"created_by\":\"lead:muxr\",\"updated_at\":\"2026-11-19T13:32:47Z\",\"metadata\":{\"close\":\"done\",\"expires_at\":\"2026-11-26T13:32:45Z\"},\"await_type\":\"human\",\"dependency_count\":0,\"dependent_count\":1,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-b0001\",\"title\":\"lead call\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:32:43Z\",\"created_by\":\"lead:muxr\",\"updated_at\":\"2026-11-19T13:32:43Z\",\"metadata\":{\"kind\":\"captain\",\"release\":\"later\"},\"labels\":[\"captain-ask\",\"project:e-pr\"],\"dependencies\":[{\"issue_id\":\"jg-b0001\",\"depends_on_id\":\"jg-078\",\"type\":\"blocks\",\"created_at\":\"2026-11-19T13:32:46Z\",\"created_by\":\"lead:muxr\",\"metadata\":\"{}\"}],\"dependency_count\":1,\"dependent_count\":0,\"comment_count\":0}\n"
+}

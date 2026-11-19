@@ -1,0 +1,12 @@
+{
+ "argv": [
+  "update",
+  "jg-sg1",
+  "--description=Fixture ticket jg-sg1\n\napproved-by-captain: answer:7c2f00d1b5859eb72eb02d66d858685b0a632de09632707944b2f86976cd73d8 sig=dda41424cd33fbd25f6c6bd68bfe010a3c4dab924b05f50853e5688d53906345"
+ ],
+ "stdin": "",
+ "stdout": "\u2713 Updated issue: jg-sg1 \u2014 gated send\n",
+ "exit": 0,
+ "form": "update --description",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-sg1\",\"title\":\"gated send\",\"description\":\"Fixture ticket jg-sg1\",\"status\":\"open\",\"priority\":0,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:49:14Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:49:14Z\",\"metadata\":{\"kind\":\"ship\",\"release\":\"later\"},\"labels\":[\"captain-ask\",\"project:demo\"],\"dependencies\":[{\"issue_id\":\"jg-sg1\",\"depends_on_id\":\"jg-gan\",\"type\":\"blocks\",\"created_at\":\"2026-11-19T13:49:21Z\",\"created_by\":\"main\",\"metadata\":\"{}\"}],\"dependency_count\":1,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-gan\",\"title\":\"captain must decide?\",\"description\":\"Ad-hoc gate blocking jg-sg1\\n\\nReason: captain must decide\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"gate\",\"created_at\":\"2026-11-19T13:49:21Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:49:22Z\",\"metadata\":{\"close\":\"release\",\"expires_at\":\"2026-11-26T13:49:21Z\"},\"await_type\":\"human\",\"dependency_count\":0,\"dependent_count\":1,\"comment_count\":0}\n"
+}

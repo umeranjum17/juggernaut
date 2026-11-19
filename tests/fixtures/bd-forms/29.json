@@ -1,0 +1,22 @@
+{
+ "argv": [
+  "create",
+  "--title=Part that moves",
+  "--json",
+  "--metadata",
+  "{\"release\": \"later\"}",
+  "--description=why",
+  "-l",
+  "feature",
+  "--parent",
+  "jg-q9e",
+  "--no-inherit-labels",
+  "-l",
+  "captain-ask"
+ ],
+ "stdin": "",
+ "stdout": "{\n  \"created_at\": \"2026-11-19T13:37:18.18205987Z\",\n  \"created_by\": \"main\",\n  \"description\": \"why\",\n  \"id\": \"jg-q9e.1\",\n  \"issue_type\": \"task\",\n  \"labels\": [\n    \"captain-ask\",\n    \"feature\"\n  ],\n  \"metadata\": {\n    \"release\": \"later\"\n  },\n  \"priority\": 2,\n  \"schema_version\": 1,\n  \"status\": \"open\",\n  \"title\": \"Part that moves\",\n  \"updated_at\": \"2026-11-19T13:37:18.18205987Z\"\n}\n",
+ "exit": 0,
+ "form": "create --description --json --metadata --no-inherit-labels --parent --title -l",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-q9e\",\"title\":\"Plan the move\",\"description\":\"why\",\"status\":\"open\",\"priority\":0,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:37:16Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:37:16Z\",\"metadata\":{\"release\":\"later\"},\"labels\":[\"captain-ask\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

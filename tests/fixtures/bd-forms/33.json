@@ -1,0 +1,19 @@
+{
+ "argv": [
+  "create",
+  "--title=Plan the move",
+  "--json",
+  "-p",
+  "0",
+  "--metadata",
+  "{\"release\": \"later\"}",
+  "--description=why",
+  "-l",
+  "captain-ask"
+ ],
+ "stdin": "",
+ "stdout": "{\n  \"created_at\": \"2026-11-19T13:37:15.8281047Z\",\n  \"created_by\": \"main\",\n  \"description\": \"why\",\n  \"id\": \"jg-q9e\",\n  \"issue_type\": \"task\",\n  \"labels\": [\n    \"captain-ask\"\n  ],\n  \"metadata\": {\n    \"release\": \"later\"\n  },\n  \"priority\": 0,\n  \"schema_version\": 1,\n  \"status\": \"open\",\n  \"title\": \"Plan the move\",\n  \"updated_at\": \"2026-11-19T13:37:15.8281047Z\"\n}\n",
+ "exit": 0,
+ "form": "create --description --json --metadata --title -l -p",
+ "store": ""
+}

@@ -1,0 +1,10 @@
+{
+ "argv": [
+  "serve"
+ ],
+ "stdin": "",
+ "stdout": "",
+ "exit": 2,
+ "form": "serve",
+ "store": ""
+}

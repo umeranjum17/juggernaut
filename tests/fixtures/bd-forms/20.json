@@ -1,0 +1,20 @@
+{
+ "argv": [
+  "create",
+  "--title=Apply the guard option",
+  "--id",
+  "jg-sample-guard-work",
+  "--force",
+  "--deps",
+  "jg-sample-guard-call",
+  "--metadata",
+  "{\"kind\": \"ship\", \"release\": \"later\"}",
+  "-l",
+  "project:sample"
+ ],
+ "stdin": "",
+ "stdout": "\u2713 Created issue: jg-sample-guard-work \u2014 Apply the guard option\n  Priority: P2\n  Status: open\n",
+ "exit": 0,
+ "form": "create --deps --force --id --metadata --title -l",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-gwx\",\"title\":\"captain guard choice pending?\",\"description\":\"Ad-hoc gate blocking jg-sample-guard-call\\n\\nReason: captain guard choice pending\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"gate\",\"created_at\":\"2026-11-19T13:53:15Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:53:15Z\",\"metadata\":{\"close\":\"done\",\"expires_at\":\"2026-11-26T13:53:14Z\"},\"await_type\":\"human\",\"dependency_count\":0,\"dependent_count\":1,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-sample-guard-call\",\"title\":\"Choose the guard option\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:53:12Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:53:12Z\",\"metadata\":{\"kind\":\"captain\",\"release\":\"later\"},\"labels\":[\"project:sample\"],\"dependencies\":[{\"issue_id\":\"jg-sample-guard-call\",\"depends_on_id\":\"jg-gwx\",\"type\":\"blocks\",\"created_at\":\"2026-11-19T13:53:15Z\",\"created_by\":\"main\",\"metadata\":\"{}\"}],\"dependency_count\":1,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-sample-guard-review\",\"title\":\"Guard the answer path\",\"status\":\"in_progress\",\"priority\":2,\"issue_type\":\"task\",\"assignee\":\"main\",\"created_at\":\"2026-11-19T13:53:06Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:53:08Z\",\"started_at\":\"2026-11-19T13:53:08Z\",\"metadata\":{\"kind\":\"scout\",\"release\":\"later\"},\"labels\":[\"project:sample\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

@@ -1,0 +1,15 @@
+{
+ "argv": [
+  "create",
+  "--title",
+  "Pick",
+  "--type",
+  "gate",
+  "--silent"
+ ],
+ "stdin": "",
+ "stdout": "fa-cqn\n",
+ "exit": 0,
+ "form": "create --silent --title --type",
+ "store": "{\"_type\":\"issue\",\"id\":\"fa-bd0\",\"title\":\"Ready\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T15:18:52Z\",\"updated_at\":\"2026-11-19T15:18:52Z\",\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"fa-4zc\",\"title\":\"Waiting\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T15:18:51Z\",\"updated_at\":\"2026-11-19T15:18:51Z\",\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

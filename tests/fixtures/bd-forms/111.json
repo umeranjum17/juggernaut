@@ -1,0 +1,17 @@
+{
+ "argv": [
+  "update",
+  "jg-fl1",
+  "--remove-label",
+  "project:demo",
+  "--add-label",
+  "project:proj",
+  "--set-metadata",
+  "files=[\"bin/hot.sh\",\"bin/plain.sh\"]"
+ ],
+ "stdin": "",
+ "stdout": "\u2713 Updated issue: jg-fl1 \u2014 lease jg-fl1\n",
+ "exit": 0,
+ "form": "update --add-label --remove-label --set-metadata",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-fl1\",\"title\":\"lease jg-fl1\",\"description\":\"Fixture ticket jg-fl1\",\"status\":\"open\",\"priority\":1,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T14:04:05Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T14:04:05Z\",\"metadata\":{\"kind\":\"ship\",\"release\":\"later\"},\"labels\":[\"feature\",\"project:demo\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

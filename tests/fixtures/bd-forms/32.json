@@ -1,0 +1,17 @@
+{
+ "argv": [
+  "create",
+  "--title=Plain ticket",
+  "--json",
+  "--metadata",
+  "{\"release\": \"later\"}",
+  "--description=why",
+  "-l",
+  "project:sample"
+ ],
+ "stdin": "",
+ "stdout": "{\n  \"created_at\": \"2026-11-19T14:52:09.072677351Z\",\n  \"created_by\": \"main\",\n  \"description\": \"why\",\n  \"id\": \"jg-0mc\",\n  \"issue_type\": \"task\",\n  \"labels\": [\n    \"project:sample\"\n  ],\n  \"metadata\": {\n    \"release\": \"later\"\n  },\n  \"priority\": 2,\n  \"schema_version\": 1,\n  \"status\": \"open\",\n  \"title\": \"Plain ticket\",\n  \"updated_at\": \"2026-11-19T14:52:09.072677351Z\"\n}\n",
+ "exit": 0,
+ "form": "create --description --json --metadata --title -l",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-7dz\",\"title\":\"Small change with a named proof\",\"description\":\"why\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T14:52:00Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T14:52:05Z\",\"metadata\":{\"task\":\"jg-7dz\",\"proof\":\"minimum\",\"release\":\"later\",\"proof_checks\":\"takeone-journey\",\"proof_named_by\":\"lead-umer\"},\"labels\":[\"project:sample\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

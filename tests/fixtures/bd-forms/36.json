@@ -1,0 +1,16 @@
+{
+ "argv": [
+  "create",
+  "--title=moved",
+  "--id",
+  "jg-moved",
+  "--force",
+  "--metadata",
+  "{\"legacy_item\":\"jg-old\"}"
+ ],
+ "stdin": "",
+ "stdout": "\u2713 Created issue: jg-moved \u2014 moved\n  Priority: P2\n  Status: open\n",
+ "exit": 0,
+ "form": "create --force --id --metadata --title",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-3vm\",\"title\":\"Plan it\",\"description\":\"why\",\"status\":\"open\",\"priority\":0,\"issue_type\":\"epic\",\"created_at\":\"2026-11-19T13:50:39Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:50:42Z\",\"metadata\":{\"release\":\"later\"},\"labels\":[\"captain-ask\",\"other\",\"project:sample\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-3vm.1.1\",\"title\":\"Piece\",\"description\":\"why\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:50:46Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:50:46Z\",\"metadata\":{\"release\":\"later\"},\"labels\":[\"captain-ask\",\"feature\",\"project:other\"],\"dependencies\":[{\"issue_id\":\"jg-3vm.1.1\",\"depends_on_id\":\"jg-3vm.1\",\"type\":\"parent-child\",\"created_at\":\"2026-11-19T13:50:46Z\",\"created_by\":\"main\",\"metadata\":\"{}\"}],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-3vm.1\",\"title\":\"Slice one\",\"description\":\"why\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"epic\",\"created_at\":\"2026-11-19T13:50:41Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:50:46Z\",\"metadata\":{\"release\":\"later\"},\"labels\":[\"captain-ask\",\"extra\",\"feature\",\"project:sample\"],\"dependencies\":[{\"issue_id\":\"jg-3vm.1\",\"depends_on_id\":\"jg-3vm\",\"type\":\"parent-child\",\"created_at\":\"2026-11-19T13:50:41Z\",\"created_by\":\"main\",\"metadata\":\"{}\"}],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

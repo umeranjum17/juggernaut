@@ -1,0 +1,12 @@
+{
+ "argv": [
+  "comments",
+  "cf-53q",
+  "--json"
+ ],
+ "stdin": "",
+ "stdout": "[]\n",
+ "exit": 0,
+ "form": "comments --json",
+ "store": "{\"_type\":\"issue\",\"id\":\"cf-53q\",\"title\":\"Write the 0.11 release note !\",\"description\":\"Two lines.\",\"status\":\"in_progress\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T15:17:53Z\",\"created_by\":\"juggernaut\",\"updated_at\":\"2026-11-19T15:18:02Z\",\"started_at\":\"2026-11-19T15:17:58Z\",\"metadata\":{\"legacy-ref\":\"L-17\"},\"labels\":[\"alpha\",\"beta\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

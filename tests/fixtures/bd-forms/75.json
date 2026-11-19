@@ -1,0 +1,15 @@
+{
+ "argv": [
+  "list",
+  "--all",
+  "--limit",
+  "0",
+  "--include-gates",
+  "--json"
+ ],
+ "stdin": "",
+ "stdout": "[]\n",
+ "exit": 0,
+ "form": "list --all --include-gates --json --limit",
+ "store": ""
+}

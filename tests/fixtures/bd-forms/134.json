@@ -1,0 +1,29 @@
+{
+ "argv": [
+  "update",
+  "jg-sample-attach-review",
+  "--status",
+  "open",
+  "--if-status",
+  "in_progress",
+  "-a",
+  "",
+  "--unset-metadata",
+  "agent",
+  "--unset-metadata",
+  "model",
+  "--unset-metadata",
+  "effort",
+  "--unset-metadata",
+  "spawn_gen",
+  "--unset-metadata",
+  "lane",
+  "--if-assignee",
+  "main"
+ ],
+ "stdin": "",
+ "stdout": "\u2713 Updated issue: jg-sample-attach-review \u2014 Investigate sample attachment evidence data/jg-sample-attach-review/report.md\n",
+ "exit": 0,
+ "form": "update --if-assignee --if-status --status --unset-metadata -a",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-6js\",\"title\":\"captain must decide the sibling call?\",\"description\":\"Ad-hoc gate blocking jg-sample-attach-review-call\\n\\nReason: captain must decide the sibling call\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"gate\",\"created_at\":\"2026-11-19T14:04:59Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T14:04:59Z\",\"metadata\":{\"close\":\"done\",\"origin\":\"jg-sample-attach-review\",\"expires_at\":\"2026-11-26T14:04:58Z\"},\"await_type\":\"human\",\"dependency_count\":0,\"dependent_count\":1,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-sample-attach-review-call\",\"title\":\"Sibling captain call for jg-sample-attach-review\",\"description\":\"Origin: jg-sample-attach-review\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T14:04:55Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T14:04:55Z\",\"metadata\":{\"kind\":\"captain\",\"release\":\"later\"},\"labels\":[\"project:sample\"],\"dependencies\":[{\"issue_id\":\"jg-sample-attach-review-call\",\"depends_on_id\":\"jg-6js\",\"type\":\"blocks\",\"created_at\":\"2026-11-19T14:04:59Z\",\"created_by\":\"main\",\"metadata\":\"{}\"}],\"dependency_count\":1,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-u7b\",\"title\":\"captain must choose inline or by-reference attachments?\",\"description\":\"Ad-hoc gate blocking jg-sample-attach-review\\n\\nReason: captain must choose inline or by-reference attachments\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"gate\",\"created_at\":\"2026-11-19T14:04:50Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T14:04:51Z\",\"metadata\":{\"close\":\"release\",\"expires_at\":\"2026-11-26T14:04:50Z\"},\"await_type\":\"human\",\"dependency_count\":0,\"dependent_count\":1,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-sample-attach-review\",\"title\":\"Investigate sample attachment evidence data/jg-sample-attach-review/report.md\",\"description\":\"Deliverable of the finished work: report data/jg-sample-attach-review/report.md\",\"status\":\"in_progress\",\"priority\":2,\"issue_type\":\"task\",\"assignee\":\"main\",\"created_at\":\"2026-11-19T14:04:44Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T14:05:15Z\",\"started_at\":\"2026-11-19T14:04:46Z\",\"metadata\":{\"kind\":\"scout\",\"release\":\"later\",\"reports\":\"data/jg-sample-attach-review/report.md\"},\"labels\":[\"project:sample\"],\"dependencies\":[{\"issue_id\":\"jg-sample-attach-review\",\"depends_on_id\":\"jg-u7b\",\"type\":\"blocks\",\"created_at\":\"2026-11-19T14:04:50Z\",\"created_by\":\"main\",\"metadata\":\"{}\"}],\"dependency_count\":1,\"dependent_count\":0,\"comment_count\":0}\n"
+}

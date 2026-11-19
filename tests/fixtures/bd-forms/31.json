@@ -1,0 +1,18 @@
+{
+ "argv": [
+  "create",
+  "--title=Probe row for main",
+  "--json",
+  "-p",
+  "2",
+  "--metadata",
+  "{\"release\": \"later\"}",
+  "--description=## Captain\nwhat the owner said\n## Ask\nthe change\n## Why\nthe reason\n## Done when\nit works\n## Acceptance Criteria\nit is proved",
+  "--validate"
+ ],
+ "stdin": "",
+ "stdout": "{\n  \"created_at\": \"2026-11-19T13:34:52.188585867Z\",\n  \"created_by\": \"main\",\n  \"description\": \"## Captain\\nwhat the owner said\\n## Ask\\nthe change\\n## Why\\nthe reason\\n## Done when\\nit works\\n## Acceptance Criteria\\nit is proved\",\n  \"id\": \"jg-ady\",\n  \"issue_type\": \"task\",\n  \"metadata\": {\n    \"release\": \"later\"\n  },\n  \"priority\": 2,\n  \"schema_version\": 1,\n  \"status\": \"open\",\n  \"title\": \"Probe row for main\",\n  \"updated_at\": \"2026-11-19T13:34:52.188585867Z\"\n}\n",
+ "exit": 0,
+ "form": "create --description --json --metadata --title --validate -p",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-ask\",\"title\":\"Plan the route\",\"description\":\"## Captain\\nwhat the owner said\\n## Ask\\nthe change\\n## Why\\nthe reason\\n## Done when\\nit works\\n## Acceptance Criteria\\nit is proved\",\"status\":\"open\",\"priority\":0,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:34:46Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:34:46Z\",\"metadata\":{\"release\":\"later\"},\"labels\":[\"captain-ask\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-loose\",\"title\":\"A title that is far too long to read as a title at all\",\"description\":\"plain\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:34:49Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:34:49Z\",\"metadata\":{\"release\":\"later\"},\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-line\",\"title\":\"Plain words two\",\"description\":\"## Captain\\nwhat the owner said\\n## Ask\\nthe change\\n## Why\\nthe reason\\n## Done when\\nit works\\n## Acceptance Criteria\\nit is proved\\nrelease: now\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:34:44Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:34:44Z\",\"metadata\":{\"release\":\"later\"},\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-ok\",\"title\":\"Plain words\",\"description\":\"## Captain\\nwhat the owner said\\n## Ask\\nthe change\\n## Why\\nthe reason\\n## Done when\\nit works\\n## Acceptance Criteria\\nit is proved\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:34:41Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:34:41Z\",\"metadata\":{\"release\":\"v9\"},\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

@@ -1,0 +1,15 @@
+{
+ "argv": [
+  "update",
+  "jg-a0001",
+  "--status",
+  "closed",
+  "--if-status",
+  "open"
+ ],
+ "stdin": "",
+ "stdout": "\u2713 Updated issue: jg-a0001 \u2014 merge it\n",
+ "exit": 0,
+ "form": "update --if-status --status",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-bxo\",\"title\":\"which colour?\",\"description\":\"Ad-hoc gate blocking jg-a0002\\n\\nReason: which colour?\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"gate\",\"created_at\":\"2026-11-19T13:32:37Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:32:38Z\",\"metadata\":{\"close\":\"done\",\"expires_at\":\"2026-11-26T13:32:36Z\"},\"await_type\":\"human\",\"dependency_count\":0,\"dependent_count\":1,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-a0002\",\"title\":\"pick a colour\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:32:34Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:32:34Z\",\"metadata\":{\"kind\":\"captain\",\"release\":\"later\"},\"labels\":[\"captain-ask\",\"project:e-pr\"],\"dependencies\":[{\"issue_id\":\"jg-a0002\",\"depends_on_id\":\"jg-bxo\",\"type\":\"blocks\",\"created_at\":\"2026-11-19T13:32:37Z\",\"created_by\":\"main\",\"metadata\":\"{}\"}],\"dependency_count\":1,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-r6m\",\"title\":\"may it merge?\",\"description\":\"Ad-hoc gate blocking jg-a0001\\n\\nReason: may it merge?\",\"status\":\"closed\",\"priority\":2,\"issue_type\":\"gate\",\"created_at\":\"2026-11-19T13:32:27Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:32:53Z\",\"closed_at\":\"2026-11-19T13:32:53Z\",\"close_reason\":\"yes, merge it\",\"metadata\":{\"close\":\"done\",\"expires_at\":\"2026-11-26T13:32:27Z\",\"resolution\":\"answered\"},\"await_type\":\"human\",\"dependency_count\":0,\"dependent_count\":1,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-a0001\",\"title\":\"merge it\",\"description\":\"approved-by-captain: answer:cf9ff6c1bdb202ee2c0f3cbc6832a3f3a0a0909cf7ff9fa95390d7701764b5e4 sig=67e54b4bb8c9879be29172bc3e3d15de82b9f53f83cd60598a3e81e80da69050\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:32:23Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:32:50Z\",\"metadata\":{\"kind\":\"captain\",\"release\":\"later\"},\"labels\":[\"captain-ask\",\"project:e-pr\"],\"dependencies\":[{\"issue_id\":\"jg-a0001\",\"depends_on_id\":\"jg-r6m\",\"type\":\"blocks\",\"created_at\":\"2026-11-19T13:32:28Z\",\"created_by\":\"main\",\"metadata\":\"{}\"}],\"dependency_count\":1,\"dependent_count\":0,\"comment_count\":0}\n"
+}

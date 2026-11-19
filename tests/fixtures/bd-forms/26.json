@@ -1,0 +1,21 @@
+{
+ "argv": [
+  "create",
+  "--title=Plan the route",
+  "--id",
+  "jg-lab",
+  "--force",
+  "-p",
+  "0",
+  "--metadata",
+  "{\"release\": \"later\"}",
+  "--description=why",
+  "-l",
+  "captain-ask"
+ ],
+ "stdin": "",
+ "stdout": "\u2713 Created issue: jg-lab \u2014 Plan the route\n  Priority: P0\n  Status: open\n",
+ "exit": 0,
+ "form": "create --description --force --id --metadata --title -l -p",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-tag\",\"title\":\"Plan the route\",\"description\":\"why\",\"status\":\"open\",\"priority\":0,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:33:51Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:33:51Z\",\"metadata\":{\"release\":\"later\"},\"labels\":[\"captain-ask\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

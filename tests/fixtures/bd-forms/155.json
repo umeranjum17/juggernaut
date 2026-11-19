@@ -1,0 +1,13 @@
+{
+ "argv": [
+  "update",
+  "cf-53q",
+  "--unset-metadata",
+  "estimate"
+ ],
+ "stdin": "",
+ "stdout": "\u2713 Updated issue: cf-53q \u2014 Write the 0.11 release note !\n",
+ "exit": 0,
+ "form": "update --unset-metadata",
+ "store": "{\"_type\":\"issue\",\"id\":\"cf-53q\",\"title\":\"Write the 0.11 release note !\",\"description\":\"Two lines.\",\"status\":\"in_progress\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T15:17:53Z\",\"created_by\":\"juggernaut\",\"updated_at\":\"2026-11-19T15:18:00Z\",\"started_at\":\"2026-11-19T15:17:58Z\",\"metadata\":{\"estimate\":\"5\",\"legacy-ref\":\"L-17\"},\"labels\":[\"alpha\",\"beta\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

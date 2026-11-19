@@ -1,0 +1,15 @@
+{
+ "argv": [
+  "update",
+  "jt-31j",
+  "--status",
+  "in_progress",
+  "--assignee",
+  "Umer"
+ ],
+ "stdin": "",
+ "stdout": "\u2713 Updated issue: jt-31j \u2014 Working two\n",
+ "exit": 0,
+ "form": "update --assignee --status",
+ "store": "{\"_type\":\"issue\",\"id\":\"jt-31j\",\"title\":\"Working two\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:42:46Z\",\"updated_at\":\"2026-11-19T13:42:46Z\",\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jt-8w7\",\"title\":\"Closed three\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:42:46Z\",\"updated_at\":\"2026-11-19T13:42:46Z\",\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jt-jf0\",\"title\":\"Open one\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:42:45Z\",\"updated_at\":\"2026-11-19T13:42:45Z\",\"dependencies\":[{\"issue_id\":\"jt-jf0\",\"depends_on_id\":\"jt-3oh\",\"type\":\"parent-child\",\"created_at\":\"2026-11-19T13:42:47Z\",\"created_by\":\"juggernaut\",\"metadata\":\"{}\"}],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jt-3oh\",\"title\":\"Epic parent\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:42:44Z\",\"updated_at\":\"2026-11-19T13:42:44Z\",\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

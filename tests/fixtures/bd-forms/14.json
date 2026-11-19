@@ -1,0 +1,13 @@
+{
+ "argv": [
+  "config",
+  "set",
+  "events-journal",
+  "false"
+ ],
+ "stdin": "",
+ "stdout": "Set events-journal = false (in config.yaml)\n",
+ "exit": 0,
+ "form": "config set",
+ "store": ""
+}

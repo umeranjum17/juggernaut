@@ -1,0 +1,12 @@
+{
+ "argv": [
+  "history",
+  "jg-solo",
+  "--events"
+ ],
+ "stdin": "",
+ "stdout": "\n\ud83d\udcdc History events for jg-solo (3 entries)\n\n2026-11-19 15:18:46 status_changed by solo-agent\n  Old: {\"id\":\"jg-solo\",\"title\":\"Row jg-solo\",\"description\":\"why\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T15:18:44Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T15:18:44Z\",\"metadata\":{\"release\":\"later\"},\"labels\":[\"feature\"]}\n  New: {\"assignee\":\"solo-agent\",\"metadata\":{\"release\":\"later\",\"spawn_gen\":\"g1\"},\"status\":\"in_progress\"}\n\n2026-11-19 15:18:44 label_added by main\n  Comment: Added label: feature\n\n2026-11-19 15:18:44 created by main\n\n",
+ "exit": 0,
+ "form": "history --events",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-solo\",\"title\":\"Row jg-solo\",\"description\":\"why\",\"status\":\"in_progress\",\"priority\":2,\"issue_type\":\"task\",\"assignee\":\"solo-agent\",\"created_at\":\"2026-11-19T15:18:44Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T15:18:46Z\",\"started_at\":\"2026-11-19T15:18:46Z\",\"lease_expires_at\":\"2026-11-19T15:23:47Z\",\"heartbeat_at\":\"2026-11-19T15:18:47Z\",\"metadata\":{\"release\":\"later\",\"spawn_gen\":\"g1\"},\"labels\":[\"feature\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

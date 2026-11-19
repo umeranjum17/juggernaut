@@ -1,0 +1,15 @@
+{
+ "argv": [
+  "update",
+  "pf-text",
+  "--if-status",
+  "open",
+  "--metadata",
+  "{\"relations\": [{\"relation_id\": \"rel-code\", \"work_ref\": {\"home_id\": \"main\", \"task_id\": \"work-text\"}, \"role\": \"fulfills\", \"required\": true, \"generation\": 1, \"state\": \"bound\", \"successor_relation_id\": null}], \"delivery_state\": \"pending-work\", \"revision\": 2}"
+ ],
+ "stdin": "",
+ "stdout": "\u2713 Updated issue: pf-text \u2014 fix worker placement when two spaces share a name\n",
+ "exit": 0,
+ "form": "update --if-status --metadata",
+ "store": "{\"_type\":\"issue\",\"id\":\"pf-text\",\"title\":\"fix worker placement when two spaces share a name\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T14:52:12Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T14:52:12Z\",\"metadata\":{\"kind\":\"public-followup\",\"added_ns\":1795099930453492992,\"followup\":{\"purpose\":\"promised-final\",\"request\":{\"platform\":\"discord\",\"request_id\":\"req-text\",\"received_at\":\"2026-07-30T10:00:00Z\",\"context_binding\":{\"value\":\"ctx1_req-text\",\"version\":\"ctx1\"},\"followup_expires_at\":\"2026-08-06T10:00:00Z\",\"public_safe_summary\":\"fix worker placement when two spaces share a name\",\"reservation_expires_at\":\"2026-08-06T10:00:00Z\"},\"delivery_key\":\"fd1_08QkhYWF-g1PE_5nAWbd-_qmnDVBQRii\",\"expected_final\":{\"type\":\"pr-merged\",\"project\":\"juggernaut\",\"completion_policy\":\"all-required\",\"required_deliverables\":[\"pr_url\"]},\"obligation_expires_at\":\"2026-10-01T00:00:00Z\"},\"revision\":1,\"delivery_state\":\"intent\"},\"labels\":[\"public-followup\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

@@ -1,0 +1,19 @@
+{
+ "argv": [
+  "create",
+  "--title=S18c",
+  "--id",
+  "jg-c",
+  "--force",
+  "-p",
+  "2",
+  "--metadata",
+  "{\"release\": \"later\"}",
+  "--description=old c"
+ ],
+ "stdin": "",
+ "stdout": "\u2713 Created issue: jg-c \u2014 S18c\n  Priority: P2\n  Status: open\n",
+ "exit": 0,
+ "form": "create --description --force --id --metadata --title -p",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-b\",\"title\":\"mf-m2: Lone ready lane lands\",\"description\":\"old b\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T14:52:30Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T14:52:30Z\",\"metadata\":{\"release\":\"later\"},\"labels\":[\"feature\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-a\",\"title\":\"J20d-3: nm bin rest and name gate\",\"description\":\"old a\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T14:52:28Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T14:52:28Z\",\"metadata\":{\"release\":\"later\"},\"labels\":[\"feature\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-num\",\"title\":\"Fix the 3 failing checks\",\"description\":\"## Captain\\nwhat the owner said\\n## Ask\\nthe change\\n## Why\\nthe reason\\n## Done when\\nit works\\n## Acceptance Criteria\\nit is proved\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T14:52:26Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T14:52:26Z\",\"metadata\":{\"release\":\"later\"},\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-plain\",\"title\":\"Each change lands by itself\",\"description\":\"## Captain\\nwhat the owner said\\n## Ask\\nthe change\\n## Why\\nthe reason\\n## Done when\\nit works\\n## Acceptance Criteria\\nit is proved\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T14:52:23Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T14:52:23Z\",\"metadata\":{\"release\":\"later\"},\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

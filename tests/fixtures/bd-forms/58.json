@@ -1,0 +1,13 @@
+{
+ "argv": [
+  "dolt",
+  "sql",
+  "-q",
+  "SELECT i.id, l.label FROM issues i JOIN labels l ON l.issue_id = i.id AND l.label LIKE 'project:%'\n  WHERE i.status = 'open' AND i.is_blocked = 0 AND NOT (i.issue_type = 'decision' OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(i.metadata, '$.kind')), '') = 'captain' OR LOCATE('[design-ux]', i.title) > 0\n    OR EXISTS (SELECT 1 FROM labels cl WHERE cl.issue_id = i.id AND cl.label = 'design-ux')) AND i.ephemeral = 0\n    AND (i.defer_until IS NULL OR i.defer_until <= NOW())\n    AND COALESCE(i.assignee, '') = ''\n    AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(i.metadata, '$.hold_reason')), '') = ''\n    AND NOT EXISTS (SELECT 1 FROM dependencies d JOIN issues c ON c.id = d.depends_on_issue_id\n      WHERE d.issue_id = i.id AND d.type <> 'tracks' AND c.status <> 'closed'\n        AND (c.issue_type = 'decision' OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(c.metadata, '$.kind')), '') = 'captain' OR LOCATE('[design-ux]', c.title) > 0\n    OR EXISTS (SELECT 1 FROM labels cl WHERE cl.issue_id = c.id AND cl.label = 'design-ux')))\n    AND NOT EXISTS (SELECT 1 FROM dependencies d JOIN issues c ON c.id = d.issue_id\n      WHERE d.depends_on_issue_id = i.id AND d.type <> 'tracks' AND c.status <> 'closed'\n        AND (c.issue_type = 'decision' OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(c.metadata, '$.kind')), '') = 'captain' OR LOCATE('[design-ux]', c.title) > 0\n    OR EXISTS (SELECT 1 FROM labels cl WHERE cl.issue_id = c.id AND cl.label = 'design-ux')))\n  ORDER BY i.priority, i.created_at, i.id, l.label"
+ ],
+ "stdin": "",
+ "stdout": "+----+--------------+\n| id | label        |\n+----+--------------+\n| a1 | project:proj |\n| a2 | project:proj |\n| b | project:proj |\n| c | project:proj |\n| d | project:proj |\n+----+--------------+\n",
+ "exit": 0,
+ "form": "dolt sql -q",
+ "store": ""
+}

@@ -1,0 +1,24 @@
+{
+ "argv": [
+  "create",
+  "--title=Slice A",
+  "--json",
+  "-p",
+  "2",
+  "--metadata",
+  "{\"release\": \"later\"}",
+  "--description=Slice A\nPlan: jg-plan, slice A (owner main).\nFiles: bin/A.sh",
+  "-l",
+  "project:juggernaut",
+  "-l",
+  "feature",
+  "--parent",
+  "jg-plan",
+  "--no-inherit-labels"
+ ],
+ "stdin": "",
+ "stdout": "{\n  \"created_at\": \"2026-11-19T14:51:39.1297505Z\",\n  \"created_by\": \"main\",\n  \"description\": \"Slice A\\nPlan: jg-plan, slice A (owner main).\\nFiles: bin/A.sh\",\n  \"id\": \"jg-plan.1\",\n  \"issue_type\": \"task\",\n  \"labels\": [\n    \"feature\",\n    \"project:juggernaut\"\n  ],\n  \"metadata\": {\n    \"release\": \"later\"\n  },\n  \"priority\": 2,\n  \"schema_version\": 1,\n  \"status\": \"open\",\n  \"title\": \"Slice A\",\n  \"updated_at\": \"2026-11-19T14:51:39.1297505Z\"\n}\n",
+ "exit": 0,
+ "form": "create --description --json --metadata --no-inherit-labels --parent --title -l -p",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-plan\",\"title\":\"The plan\",\"description\":\"Fixture ticket jg-plan\",\"status\":\"open\",\"priority\":1,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T14:51:19Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T14:51:19Z\",\"metadata\":{\"kind\":\"ship\",\"release\":\"later\"},\"labels\":[\"feature\",\"project:demo\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

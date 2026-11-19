@@ -1,0 +1,15 @@
+{
+ "argv": [
+  "events",
+  "tail",
+  "--since",
+  "0",
+  "--limit",
+  "10"
+ ],
+ "stdin": "",
+ "stdout": "{\"seq\":1,\"ts\":\"2026-11-19T13:36:46Z\",\"op\":\"create\",\"issue_id\":\"jg-s13-a\",\"actor\":\"main\",\"issue\":{\"id\":\"jg-s13-a\",\"title\":\"Filed by main\",\"description\":\"why\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:36:46Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:36:46Z\",\"metadata\":{\"release\":\"later\"},\"labels\":[\"feature\"]}}\n",
+ "exit": 0,
+ "form": "events --limit --since",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-s13-a\",\"title\":\"Filed by main\",\"description\":\"why\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:36:46Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:36:46Z\",\"metadata\":{\"release\":\"later\"},\"labels\":[\"feature\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

@@ -1,0 +1,11 @@
+{
+ "argv": [
+  "show",
+  "jg-fl2"
+ ],
+ "stdin": "",
+ "stdout": "",
+ "exit": 1,
+ "form": "show",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-fl1\",\"title\":\"Spawn fixture ticket\",\"description\":\"Fixture ticket jg-fl1\",\"status\":\"open\",\"priority\":1,\"issue_type\":\"task\",\"assignee\":\"spawn-fixture-ticket-jg-fl1\",\"created_at\":\"2026-11-19T14:04:05Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T14:04:22Z\",\"started_at\":\"2026-11-19T14:04:20Z\",\"metadata\":{\"kind\":\"ship\",\"task\":\"jg-fl1\",\"agent\":\"codex\",\"files\":\"[\\\"bin/hot.sh\\\",\\\"bin/plain.sh\\\"]\",\"model\":\"default\",\"effort\":\"default\",\"release\":\"later\",\"spawn_gen\":\"s1795097055.3924343.1904\"},\"labels\":[\"feature\",\"project:proj\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

@@ -1,0 +1,11 @@
+{
+ "argv": [
+  "q",
+  "edge-a"
+ ],
+ "stdin": "",
+ "stdout": "rd-8gq\n",
+ "exit": 0,
+ "form": "q",
+ "store": "{\"_type\":\"issue\",\"id\":\"rd-4cc\",\"title\":\"target\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:41:29Z\",\"updated_at\":\"2026-11-19T13:41:29Z\",\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

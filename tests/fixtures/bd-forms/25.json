@@ -1,0 +1,19 @@
+{
+ "argv": [
+  "create",
+  "--title=Plain words",
+  "--id",
+  "jg-plain",
+  "--force",
+  "--metadata",
+  "{\"release\": \"later\"}",
+  "--description=why",
+  "-l",
+  "feature"
+ ],
+ "stdin": "",
+ "stdout": "\u2713 Created issue: jg-plain \u2014 Plain words\n  Priority: P2\n  Status: open\n",
+ "exit": 0,
+ "form": "create --description --force --id --metadata --title -l",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-lab\",\"title\":\"Plan the route\",\"description\":\"why\",\"status\":\"open\",\"priority\":0,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:33:53Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:33:53Z\",\"metadata\":{\"release\":\"later\"},\"labels\":[\"captain-ask\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-tag\",\"title\":\"Plan the route\",\"description\":\"why\",\"status\":\"open\",\"priority\":0,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:33:51Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:33:51Z\",\"metadata\":{\"release\":\"later\"},\"labels\":[\"captain-ask\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

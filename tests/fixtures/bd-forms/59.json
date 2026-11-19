@@ -1,0 +1,12 @@
+{
+ "argv": [
+  "epic",
+  "status",
+  "--json"
+ ],
+ "stdin": "",
+ "stdout": "[\n  {\n    \"epic\": {\n      \"id\": \"jg-3vm\",\n      \"title\": \"Plan it\",\n      \"description\": \"why\",\n      \"status\": \"open\",\n      \"priority\": 0,\n      \"issue_type\": \"epic\",\n      \"created_at\": \"2026-11-19T13:50:39Z\",\n      \"created_by\": \"main\",\n      \"updated_at\": \"2026-11-19T13:50:42Z\",\n      \"metadata\": {\n        \"release\": \"later\"\n      },\n      \"labels\": [\n        \"captain-ask\",\n        \"other\",\n        \"project:sample\"\n      ]\n    },\n    \"total_children\": 1,\n    \"closed_children\": 0,\n    \"eligible_for_close\": false\n  }\n]\n",
+ "exit": 0,
+ "form": "epic --json",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-3vm\",\"title\":\"Plan it\",\"description\":\"why\",\"status\":\"open\",\"priority\":0,\"issue_type\":\"epic\",\"created_at\":\"2026-11-19T13:50:39Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:50:42Z\",\"metadata\":{\"release\":\"later\"},\"labels\":[\"captain-ask\",\"other\",\"project:sample\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-3vm.1\",\"title\":\"Slice one\",\"description\":\"why\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:50:41Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:50:41Z\",\"metadata\":{\"release\":\"later\"},\"labels\":[\"captain-ask\",\"extra\",\"feature\",\"project:sample\"],\"dependencies\":[{\"issue_id\":\"jg-3vm.1\",\"depends_on_id\":\"jg-3vm\",\"type\":\"parent-child\",\"created_at\":\"2026-11-19T13:50:41Z\",\"created_by\":\"main\",\"metadata\":\"{}\"}],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}
