@@ -236,6 +236,20 @@ row() { mkdir -p "$DATA"; local f=$1; shift; printf '%s\n' "$(IFS=$'\t'; echo "$
 rev() { git -C "$PROJ" rev-parse --verify --quiet "$1^{commit}"; }
 # The item store's record of the same facts (core/item-store/adapters/trunk.py), only where the home has config/item-store. Today's records decide:
 # a store call never changes this script's output or exit status, and a refused write is an intake item on Main, not an error here.
+# store_covers <rel> <prev>: where the home holds the store's decision (config/item-store-decides) a push goes only when the store's
+# yes covers <rel> (core/item-store/adapters/trunk.py agree: covered head is <rel> or has it under it; a machine release needs none).
+# It applies only when pushing into an OPEN release pull request: a first push opens the pull request, so no pull request number and
+# no yes exist yet to cover, and today's word alone lets it go. A refusal records the push so his question is asked, and `agree` files the intake.
+store_covers() {  # <rel> <prev>
+  local pr out
+  [ -e "$JG_HOME/config/item-store-decides" ] && [ -e "$JG_HOME/config/item-store" ] || return 0
+  [ -n "$2" ] && [ "$(pr_state "$2")" = open ] || return 0
+  pr=${2##*/}
+  out=$(python3 -I "$JG_ROOT/core/item-store/adapters/trunk.py" agree "$PN" "$pr" "$1" 2>/dev/null) || out=
+  [ "$out" != agree ] || return 0
+  store_trunk pushed "$PN" "$pr" "$1" --source "push:$1"
+  refuse "release: waiting for the owner's yes on ${1:0:12}"
+}
 store_trunk() { [ -e "$JG_HOME/config/item-store" ] || return 0; python3 -I "$JG_ROOT/core/item-store/adapters/trunk.py" "$@" >/dev/null 2>&1 || true; }
 
 LOCKS=''; VERIFY_WANT=''
@@ -2877,6 +2891,7 @@ cmd_release() {
     waiting=$(JG_HOME=$JG_HOME "$SCRIPT_DIR/jg-pr-state.sh" --all "$prev") || refuse "cannot read the checks of the open release PR $prev; nothing is pushed into it"
     [ -n "$waiting" ] || refuse "the release PR $prev is green and merges on the captain's standing word; nothing is pushed into it, and the later commits go out in the release after it"
   fi
+  store_covers "$rel" "$prev"
   push_batch "$rel" "$n" "$prev" 1 1 fallback
 }
 

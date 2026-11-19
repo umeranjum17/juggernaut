@@ -86,6 +86,15 @@ timed_out() { [ "$1" = 124 ] || [ "$1" = 137 ]; }
 HID=main; [ ! -f "$FMH/.jg-squad-lead-home" ] || read -r HID < "$FMH/.jg-squad-lead-home" || :
 mstore() { [ -e "$FMH/config/item-store" ] || return 0; JG_HOME="$FMH" timeout "$BUDGET" python3 -I "$SRC/../item-store/adapters/merge.py" "$@" >/dev/null 2>&1 || :; }
 
+# step_is_open <task> <pull request>: whether the store holds that pull request's merge step open (its key is keys.py's).
+step_is_open() {
+  JG_HOME="$FMH" timeout "$BUDGET" python3 -I -c 'import os, sys
+sys.path.insert(0, sys.argv[1]); import itemdb, keys
+home = os.environ["JG_HOME"]; hid = itemdb.home_id(home); ticket, _ = itemdb.task_ref(home, sys.argv[2])
+sys.exit(0 if itemdb.open_db(home, "adapter:merge").item(keys.key("merge", hid, ticket=ticket, pr=sys.argv[3].rstrip("/").rsplit("/", 1)[-1])) else 1)' \
+    "$SRC/../item-store" "$1" "$2" >/dev/null 2>&1
+}
+
 # merge_minutes <task>: the whole minutes from the ticket's ready time to its landed time, read from
 # `jg-backlog.sh times <task>`; empty when the ticket has no ready time or no landed time. The merge itself
 # writes landed_at (bin/jg-merge-outcome-lib.sh), so the number is the record's own, and a merge over
@@ -229,8 +238,21 @@ for m in "$STATE"/*.meta; do
     continue
   fi
 
-  # The store's merge step opens now that the pull request is mergeable (record only: today's rule above decided).
-  mstore step "$HID" "$task" "$pr" "$pr_head" --source "mergeable:${pr##*/}@$pr_head"
+  # The store's merge step opens now that the pull request is mergeable. Where the home holds the store's decision
+  # (config/item-store-decides) the answer decides too: today's rule above passed, so only an open step lets the
+  # merge go on, and any other answer (the leash's refusal is one intake item naming both) stops it. Without that marker it records only.
+  if [ -e "$FMH/config/item-store-decides" ] && [ -e "$FMH/config/item-store" ]; then
+    step=$(JG_HOME="$FMH" timeout "$BUDGET" python3 -I "$SRC/../item-store/adapters/merge.py" step "$HID" "$task" "$pr" "$pr_head" \
+      --source "mergeable:${pr##*/}@$pr_head" 2>/dev/null) || step=
+    # `again` is also the answer for a refusal already filed as intake, so it counts only while the merge step itself is open.
+    [ "$step" != again ] || ! step_is_open "$task" "$pr" || step=open
+    case $step in
+      open) ;;
+      *) refuse "the item store has no open step for it (${step:-no answer}): today's rule allows the merge, his yes or the policy has not opened it" ''; continue ;;
+    esac
+  else
+    mstore step "$HID" "$task" "$pr" "$pr_head" --source "mergeable:${pr##*/}@$pr_head"
+  fi
 
   # 3. Merge through jg-pr-merge.sh only: its own live green check, head pin and refusal rules stay in
   # charge, no --auto is ever passed. The attempted head is recorded first, so a check killed between
