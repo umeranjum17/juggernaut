@@ -3052,14 +3052,6 @@ test_host_outside_the_lock_owner_stands_down() {
 
 test_superseded_host_leaves_the_owner_untouched() {
   local home owner watcher lock_pid
-  # Claim must write a real lease; an unavailable store deliberately degrades
-  # to success without a record and cannot prove the superseded host left it.
-  if [ -z "${JG_NATS_SERVER:-$(command -v nats-server 2>/dev/null || true)}" ] ||
-     [ -z "${JG_NATS_BIN:-$(command -v nats 2>/dev/null || true)}" ]; then
-    printf 'skip: superseded host lease needs nats-server and nats\n'
-    return 0
-  fi
-  jg_test_bus_start "$TMP_ROOT/superseded-lease-bus" || fail "fixture: could not start isolated lease store"
   home=$(make_home superseded away)
   # One fake harness runs the owner host, then, on a signal file, a second host
   # under an auto-arm generation the ledger has already superseded.

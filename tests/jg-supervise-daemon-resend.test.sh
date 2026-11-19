@@ -63,7 +63,6 @@ export XDG_CONFIG_HOME="$JG_HOME/config" XDG_CACHE_HOME="$JG_HOME/cache" XDG_STA
 export XDG_RUNTIME_DIR="$JG_HOME/run"
 # The 10 s wait before a stuck doorbell is keyed out is not under test here; the resend timing is.
 export JG_COMPOSER_DOORBELL_WAIT=1
-export JG_KV_URL=nats://127.0.0.1:1 JG_WAKE_BUS_URL=nats://127.0.0.1:1 JG_STATE_BUS_URL=nats://127.0.0.1:1
 # A fixture is not the machine-service owner; host service findings are not test events.
 mkdir -p "$JG_HOME/config" "$JG_HOME/data" "$JG_HOME/state"
 mkdir -m 700 "$XDG_RUNTIME_DIR"

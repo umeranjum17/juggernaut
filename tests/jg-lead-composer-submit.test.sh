@@ -17,7 +17,6 @@ chmod +x "$WORK/bin/tmux"
 cp "$(command -v bash)" "$WORK/bin/claude"
 export PATH="$WORK/bin:$PATH" JG_HOME="$WORK/home" JG_ROOT_OVERRIDE="$WORK/home"
 export JG_SEND_RETRIES=1 JG_SEND_SLEEP=0.1 JG_TASK_INBOX_GRACE_SECS=1 JG_TASK_INBOX_COMPOSER_SUBMIT_SECS=3
-export JG_KV_URL=nats://127.0.0.1:1 JG_WAKE_BUS_URL=nats://127.0.0.1:1 JG_STATE_BUS_URL=nats://127.0.0.1:1
 tick() { bash "$ROOT/bin/jg-delivery-tick.sh" "$JG_HOME" >>"$WORK/tick.log" 2>&1 || fail "delivery tick failed"; }
 start_lead() {  # <name> <kind>
   printf 'window=%s:jg-%s\nkind=%s\nharness=claude\n' "$1" "$1" "$2" > "$JG_HOME/state/$1.meta"

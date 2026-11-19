@@ -4,7 +4,7 @@
   A=$T/authority; mkdir -p "$A/state" "$A/config" "$A/data"
   export JG_HOME=$A JG_STATE_OVERRIDE=$A/state JG_CONFIG_OVERRIDE=$A/config JG_DATA_OVERRIDE=$A/data
   export JG_CAPTAIN_CHANNEL=$A/config/captain-channel JG_ALERT_NOW=2000000000
-  printf 'set mode shadow\nset dapr-http-url http://127.0.0.1:1\n' > "$JG_CAPTAIN_CHANNEL"
+  printf 'set mode shadow\n' > "$JG_CAPTAIN_CHANNEL"
   pages() { jq -s 'map(select(.kind == "alert")) | length' "$A/state/captain-channel.jsonl"; }
   al raise stuck-wait direct --fact wait=main --rung 4
   expect_code 1 "$RC" "direct team owner rung refused"

@@ -59,19 +59,10 @@ export JG_TEST_SEAM=1
 # tests/jg-spawn-model.test.sh unsets it, because refusing the unchosen model is what it proves.
 export JG_SPAWN_TEST_MODEL_OPTIONAL=1
 # A fixture binds no port and installs no service: bin/jg-stack.sh up is a no-op under this.
-# tests/jg-stack.test.sh unsets it, because starting the stack is what it proves.
 export JG_STACK_SKIP=1
 # A fixture never wires the machine: bin/jg-update.sh skips bin/jg-host-wiring.sh under this.
 # tests/jg-update.test.sh unsets it for the one run that proves the update calls the wiring.
 export JG_HOST_WIRING_SKIP=1
-# A fixture never reaches the machine's real message bus: with no address set, the wake, key-value
-# and state paths fall back to nats://127.0.0.1:4222, which on a host running the bus is the real
-# server (accounts enforced, other homes' streams), so a test would publish into it or be refused by
-# it. Port 1 answers nothing, so those paths take their no-bus behaviour, as in CI. A test that runs
-# its own server sets these to that server's address (jg_test_bus_start does).
-export JG_KV_URL="${JG_KV_URL:-nats://127.0.0.1:1}"
-export JG_WAKE_BUS_URL="${JG_WAKE_BUS_URL:-nats://127.0.0.1:1}"
-export JG_STATE_BUS_URL="${JG_STATE_BUS_URL:-nats://127.0.0.1:1}"
 # A fixture never calls a real model: the captain voice rewrite (bin/jg-voice.py) runs this command, and `false`
 # refuses the message. tests/jg-voice.test.sh sets its own stub.
 export JG_VOICE_REWRITE_CMD="${JG_VOICE_REWRITE_CMD:-false}"
@@ -484,7 +475,6 @@ jg_test_cleanup() {
   local d
   jg_test_reap_detached
   rm -f -- "$JG_TEST_DETACHED_REGISTRY"
-  jg_test_reap_buses
   jg_test_reap_watchers
   jg_test_reap_procevent_homes
   jg_test_procs_stop_marked "$$"
@@ -498,58 +488,6 @@ jg_test_cleanup() {
     rm -f "$JG_TEST_CLEANUP_REGISTRY"
   fi
   [ -z "${JG_TEST_BUS_HOMES_OWN:-}" ] || rm -f -- "$JG_TEST_BUS_HOMES_OWN"
-}
-
-# --- throwaway key-value bus ------------------------------------------------
-#
-# The task leases live in a JetStream key-value bucket and the busy events are
-# mirrored into one in shadow, so the suites that exercise either start a server
-# of their own: a free port, a store inside this test's own temp dir, and no
-# contact with any real home's bus. The pid goes through a `$$`-keyed registry for
-# the same reason the watcher registry does, so a server never outlives its test.
-#
-# A suite whose subject needs the store calls jg_test_bus_start and treats a
-# non-zero return as "this machine has no server or client": CI installs
-# neither, so the case says it skipped instead of failing on a missing tool.
-
-JG_TEST_BUS_REGISTRY=$(mktemp "$JG_TEST_TMPDIR/.jg-test-bus.$$.XXXXXX") || return 1
-
-# jg_test_bus_start <dir>: start a server and export JG_KV_URL and JG_NATS_BIN
-# into the calling shell. Returns 1 when nats-server or the nats client is
-# absent. Call it directly, never in a command substitution: a subshell's exports
-# die with it, so the caller would then talk to the default bus instead.
-jg_test_bus_start() {  # <dir>
-  local dir=$1 server client log port i
-  server=${JG_NATS_SERVER:-$(command -v nats-server 2>/dev/null || true)}
-  client=${JG_NATS_BIN:-$(command -v nats 2>/dev/null || true)}
-  [ -n "$server" ] || return 1
-  [ -n "$client" ] || return 1
-  mkdir -p "$dir/store" || return 1
-  log=$dir/nats.log
-  "$server" -js -a 127.0.0.1 -p -1 -sd "$dir/store" >"$log" 2>&1 &
-  printf '%s\n' "$!" >> "$JG_TEST_BUS_REGISTRY"
-  # shellcheck disable=SC2034 # a bounded retry counter, never read.
-  for i in $(seq 1 200); do
-    port=$(sed -n 's/.*Listening for client connections on 127\.0\.0\.1:\([0-9][0-9]*\).*/\1/p' "$log" 2>/dev/null | head -n 1)
-    if [ -n "$port" ]; then
-      JG_NATS_BIN=$client
-      JG_KV_URL="nats://127.0.0.1:$port"
-      export JG_NATS_BIN JG_KV_URL
-      return 0
-    fi
-    sleep 0.05
-  done
-  return 1
-}
-
-jg_test_reap_buses() {
-  local pid
-  [ -f "$JG_TEST_BUS_REGISTRY" ] || return 0
-  while IFS= read -r pid; do
-    [ -n "$pid" ] || continue
-    kill "$pid" 2>/dev/null || true
-  done < "$JG_TEST_BUS_REGISTRY"
-  rm -f "$JG_TEST_BUS_REGISTRY"
 }
 
 jg_test_tmproot() {

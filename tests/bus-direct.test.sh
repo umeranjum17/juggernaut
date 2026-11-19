@@ -17,7 +17,7 @@ mkdir -p "$STATE" "$HOME_DIR/config" "$HOME_DIR/data"
 printf 'now * * * *\n' > "$HOME_DIR/config/wake-routing"
 printf 'set mode direct\n' > "$DIR/channel.conf"
 export JG_HOME="$HOME_DIR" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$HOME_DIR/data"
-export JG_WAKE_BUS_URL="nats://127.0.0.1:1" JG_WAKE_ROUTING="$HOME_DIR/config/wake-routing"
+export JG_WAKE_ROUTING="$HOME_DIR/config/wake-routing"
 export JG_CAPTAIN_CHANNEL="$DIR/channel.conf"
 [ ! -e "$HOME_DIR/config/wake-bus" ] || fail "the fixture home must have no config/wake-bus"
 
@@ -55,18 +55,6 @@ test_the_channel_mode_is_direct() {
   case "$out" in *"mode direct"*) pass "jg-bus status prints mode direct" ;; *) fail "status: $out" ;; esac
 }
 
-test_the_stubbed_scripts_publish_nothing() {
-  local f before after
-  before=$(find "$STATE" -type f | sort | xargs -r ls -l --time-style=+%s 2>/dev/null | md5sum)
-  for f in jg-reply-bus.sh jg-state-bus.sh jg-bus-leaf.sh; do
-    "$ROOT/bin/$f" publish x y >/dev/null 2>&1 || fail "$f did not exit 0"
-    grep -c 'STUB (slice 11b1)' "$ROOT/bin/$f" | grep -qx 1 || fail "$f lacks its marker"
-  done
-  after=$(find "$STATE" -type f | sort | xargs -r ls -l --time-style=+%s 2>/dev/null | md5sum)
-  assert_equals "$before" "$after" "the stubbed scripts must write nothing"
-  pass "the three stubbed scripts exit 0 and write nothing"
-}
-
 test_the_key_value_surface_keeps_its_contract_on_one_file() {
   local n rev
   # shellcheck source=bin/jg-kv-lib.sh
@@ -94,5 +82,4 @@ test_the_key_value_surface_keeps_its_contract_on_one_file() {
 test_a_wake_is_raised_drained_and_acknowledged_locally
 test_a_handled_steer_is_recorded
 test_the_channel_mode_is_direct
-test_the_stubbed_scripts_publish_nothing
 test_the_key_value_surface_keeps_its_contract_on_one_file
