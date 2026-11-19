@@ -58,13 +58,13 @@ try {
   await cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: theme }] });
   const png = async (name) => { await wait(400); writeFileSync(join(out, `${name}.${theme}.${width}.png`), Buffer.from((await cdp('Page.captureScreenshot', { format: 'png' })).data, 'base64')); };
   await cdp('Page.navigate', { url: `${base}#tickets` });
-  await until(`document.querySelectorAll('.tk-row').length === ${want.length}`, 'one row per open ticket');
-  const page = await js(`({ width: innerWidth, overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth, rows: [...document.querySelectorAll('.tk-row')].map((r) => r.innerText.replace(/\\s+/g, ' ').trim()), groups: [...new Set([...document.querySelectorAll('.tk-row')].map((r) => r.closest('section')?.querySelector('h2')?.textContent))], text: document.body?.innerText })`);
+  await until(`document.querySelectorAll('.tkb-card').length === ${want.length}`, 'one card per open ticket');
+  const page = await js(`({ width: innerWidth, overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth, rows: [...document.querySelectorAll('.tkb-card')].map((r) => r.innerText.replace(/\\s+/g, ' ').trim()), groups: [...new Set([...document.querySelectorAll('.tkb-card')].map((r) => r.closest('section')?.querySelector('h2 > span[dir]')?.textContent))], text: document.body?.innerText })`);
   assert.equal(page.width, width), assert.equal(page.overflow, false, 'no sideways overflow');
   for (const w of want) assert.ok(page.rows.some((r) => r.includes(w.title)), `the page lists ${w.title}`);
   for (const c of expected.closedTitles) assert.ok(!page.text.includes(c), `the page does not list the closed ticket ${c}`);
   const statuses = new Set(want.map((w) => w.status));
-  for (const g of page.groups) assert.ok([...statuses].some((s) => g.startsWith(s)), `group ${g} is a status bd gave`);
+  for (const g of page.groups) assert.ok([...statuses].some((s) => g.toLowerCase() === s.replace(/_/g, ' ')), `group ${g} is a status bd gave`);
   writeFileSync(join(out, `list-facts.${theme}.${width}.json`), JSON.stringify(page, null, 2) + '\n');
   await png('list');
   // Each open ticket's own page shows its id, status, assignee and parent as bd gives them; the first one that has a parent is captured.
@@ -77,7 +77,8 @@ try {
     const sheet = t.text.slice(t.text.indexOf(`\n${w.id}\n`)); // the sheet's own fields follow its id line
     const field = (name) => new RegExp(`\\n${name}\\n([^\\n]*)\\n`).exec(sheet)?.[1];
     assert.equal(t.overflow, false, `no sideways overflow on ${w.id}`);
-    assert.equal(field('Status'), w.status, `${w.id}: status as bd shows it`);
+    const state = await js(`document.querySelector('.tk-sheet .tkb-state')?.innerText.trim()`); // the sheet names the status in its state line, in bd's word made readable
+    assert.equal(state?.toLowerCase(), w.status.replace(/_/g, ' '), `${w.id}: status as bd shows it`);
     assert.equal(field('Assignee'), w.assignee ?? 'Unassigned', `${w.id}: assignee as bd shows it`);
     const parent = want.find((x) => x.id === w.parent);
     assert.equal(field('Part of'), parent ? parent.title : undefined, `${w.id}: parent as bd shows it`);

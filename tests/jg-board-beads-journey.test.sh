@@ -29,7 +29,7 @@ command -v node >/dev/null 2>&1 || { printf 'skip: board journey: node is not in
 WRAPPER="$ROOT/bin/jg-beads.sh" ADAPTER="$ROOT/bin/jg-ticket-adapter.py" JOURNEY="$ROOT/tests/fixtures/board-beads/journey.mjs" T=$(jg_test_tmproot jg-board-beads)
 OUT=${JG_BOARD_JOURNEY_OUT:-${DONE_DONE_EVIDENCE_ROOT:-$T/evidence}}
 mkdir -p "$T/store" "$OUT"
-unset BEADS_DB BEADS_DOLT_SHARED_SERVER JG_BEADS_SH
+unset BEADS_DB BEADS_DOLT_SHARED_SERVER JG_BEADS_SH JG_HOME  # the board must read this throwaway store, not the fleet of the home the test runs in
 export BEADS_DIR=$T/store/.beads JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
 "$WRAPPER" init --prefix jt >"$T/init.log" 2>&1 || fail "init: $(cat "$T/init.log")"
 bd_() { "$WRAPPER" "$@" 2>/dev/null; }
