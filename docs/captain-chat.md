@@ -111,7 +111,6 @@ The script refuses, with exit 1 and the reason on stderr, text that holds a secr
 `bin/jg-captain-card-lib.sh` owns those rules, and `AGENTS.md` section 9 owns the words.
 Exit 2 is a usage error.
 `--asks` appends the same owner-asks block under the text, so a status push lists what is left. Only the text above the block goes through the message rules; the whole message still goes through the secret check.
-`tests/jg-captain-say-chat.test.sh` runs the whole path with a real Dapr sidecar, a real NATS server and a fake Bot API.
 
 ## Pushes to the owner
 
@@ -144,8 +143,6 @@ It makes one `getMe` call and never sends a message.
   The outbound legs are a plain text, a picture and a file sent with `jg-inbox.sh reply` and accepted by Telegram.
   A caption on an album does not count as the text leg.
 - A running gateway also sends the owner every card, outcome, alert, digest and summary event from the bus, through the durable consumer `captain-gateway`.
-  The Dapr sidecar publishes each event inside a CloudEvent envelope, so the consumer and the reply router read the event from the envelope's `data`.
-  A body that is no envelope is read as the event itself.
   It starts at new events, so a first start sends no old ones.
   A send that fails is tried again for 10 minutes, and one the bot can never take (blocked, bad request) is not.
   An event not sent is named in `state/captain-channel-undelivered.jsonl`.

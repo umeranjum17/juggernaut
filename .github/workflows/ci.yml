@@ -316,11 +316,7 @@ jobs:
       - name: Run the fast evals
         run: bin/jg-ci-area-reads.sh --check evals -- bin/jg-fast-evals.sh
 
-  # The bus lane: the pinned JetStream server and client install through this
-  # repository's own install path, and the test that proves a home comes up with
-  # JetStream running then runs for real instead of gate-skipping. It is the lane
-  # that stops every live path in the migration from depending on a server no
-  # install provides (docs/bus-service.md).
+  # The captain channel lane: the Go command builds and the chat runs at parity.
   bus:
     name: Bus service
     runs-on: ubuntu-latest
@@ -332,14 +328,6 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
-      - name: Install the pinned bus server and client
-        run: |
-          set -eu
-          export NPM_CONFIG_PREFIX=$HOME/.local
-          mkdir -p "$NPM_CONFIG_PREFIX/bin"
-          export PATH=$NPM_CONFIG_PREFIX/bin:$PATH
-          bin/jg-bootstrap.sh install nats-server nats daprd
-          echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
       - name: Install the pinned Go toolchain
         uses: actions/setup-go@v5
         with:
@@ -373,21 +361,6 @@ jobs:
         with:
           path: ~/.cache/go-build
           key: go-bus-${{ runner.os }}-${{ hashFiles('core/bus/go.mod') }}
-      - name: Prove a home comes up with JetStream running
-        run: |
-          set -eu
-          nats-server --version
-          nats --version
-          # Through the read trace (bin/jg-ci-area-reads.sh): a file this lane
-          # reads that the Bus area in bin/jg-ci-scope.sh misses fails the lane
-          # here instead of letting a change to it skip the lane green.
-          bin/jg-ci-area-reads.sh --check bus -- bash -c '
-            set -eu
-            tests/jg-bus-service.test.sh
-            tests/jg-bus-machine-service.test.sh
-            tests/jg-stack.test.sh
-            tests/jg-stack-owner.test.sh'
-
       - name: Prove the captain channel's Go command at parity
         run: |
           set -eu

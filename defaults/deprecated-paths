@@ -1,4 +1,4 @@
-# Paths the NATS bus, the Dapr workflows and the Go cores replaced. bin/jg-deprecated-paths-check.sh
+# Paths the Go cores and the item store replaced. bin/jg-deprecated-paths-check.sh
 # reads this file and refuses a change to a listed path unless the change deletes it.
 # docs/deprecated-paths.md owns the evidence for each row and the paths still unconfirmed.
 #

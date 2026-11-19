@@ -54,28 +54,6 @@ transport acknowledgement is never called handled. No event comes when a worker 
 the sender's timeout is `jg-delivery.sh overdue <task> --after <seconds>`, and the doorbell
 stays. `tests/jg-delivery-record.test.sh` proves it on a throwaway server.
 
-## One stream for every home
-
-The machine runs one JetStream. `JG_WAKE` carries each home's `jg.<home>.wake.>` and
-`JG_INBOX` each home's `jg.<home>.inbox.>`, so every home's events are accepted; a
-home reads only the events that name it. A wildcard over the home part is refused
-where the captain channel's `jg.captain.>` overlaps it, so each home adds its own
-subject. A stream an earlier build made for the first home alone
-refused every other home's publish, and each of those wakes waited in the home's
-outbox while the read model looked like a working queue. `bus_ensure_stream` adds the
-home's subject to such a stream in place and keeps its messages. An acknowledgement is published on
-the stream of the record it settles, and one flushed from the outbox keeps the
-`/ack` message id, so the server does not drop it as a duplicate of its raise.
-
-## Probe
-
-`bin/jg-wake-bus-probe.sh` is the measurement: it prints the processes that serve the
-bus, raises one real wake and one real steer through the production writers,
-withdraws and settles them, and prints the `JG_WAKE` and `JG_INBOX` message, sequence
-and consumer counts before and after, the outbox size, and the mtime of the old
-`.wake-queue.seq`. It exits 1 when a stream did not rise, the outbox grew, or
-anything wrote the file queue's sequence file.
-
 ## The read model
 
 `state/.wake-queue` and `state/.wake-settled` still exist, in exactly the format

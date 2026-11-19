@@ -23,4 +23,4 @@ bash bin/jg-lint.sh bin/jg-alert.sh bin/jg-alert-authority-lib.sh bin/jg-watch.s
 bash bin/jg-doc-audience-check.sh'
 ```
 
-Set `JG_CAPTAIN_CHANNEL` to a task-owned channel file with `mode shadow` and `dapr-http-url http://127.0.0.1:1` for the producer regressions.
+Set `JG_CAPTAIN_CHANNEL` to a task-owned channel file with `mode shadow` for the producer regressions.

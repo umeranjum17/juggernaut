@@ -9,4 +9,3 @@
 # - adapter: comma-separated; a path ending in / covers a directory.
 # Add a dependency here in the same change that first uses it. defaults/ports-adapters-legacy lists the old users.
 pi-engine-kit | pi-coding-agent|pi-tui|@earendil-works/pi-ai|Pi (engine )?kit | (from|import|require\()[[:space:]]*\(?['"]@earendil-works/pi-[a-z-]+['"] | core/ports/pi-engine/PORT.md | core/ports/pi-engine/adapter.ts
-message-bus | NATS|nats-server|JetStream|message bus | nats-io/nats|(from|import|require\()[[:space:]]*\(?['"]nats['"]|(^|[;&|(]|exec|command)[[:space:]]*["]?(nats-server|nats)["]?[[:space:]]+(-|pub|sub|req|stream|server|kv) | core/ports/message-bus/PORT.md | core/bus/cmd/jg-bus/
