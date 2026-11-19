@@ -1,0 +1,4 @@
+kind=ship
+project=@D@/projects/alpha
+ticket=T2
+mode=local-trunk

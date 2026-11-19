@@ -1,0 +1,4 @@
+kind=ship
+project=@D@/projects/alpha
+ticket=GU-1
+mode=local-trunk

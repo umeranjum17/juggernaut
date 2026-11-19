@@ -1,0 +1,4 @@
+kind=scout
+project=@D@/projects/alpha
+ticket=RA-1
+mode=local-trunk

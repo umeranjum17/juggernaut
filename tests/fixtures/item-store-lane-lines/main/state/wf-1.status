@@ -1,0 +1,4 @@
+working [at=1]: needs the other ticket
+blocked [at=2] [key=dep]: waits-for: T2 the base must land first
+blocked [at=3] [key=dep2]: waits-for: T9 nothing of T9 runs yet
+resolved [at=4] [key=dep]: T2 landed

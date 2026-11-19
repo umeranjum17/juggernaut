@@ -1,0 +1,2 @@
+working [at=1]: a lane that waits for another ticket
+blocked [at=2] [key=dep] [wait=lead]: waits-for: T9 nothing of T9 runs yet
