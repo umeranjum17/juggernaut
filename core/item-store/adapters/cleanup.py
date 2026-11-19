@@ -18,6 +18,10 @@ the home runs the released tip.
       A finished lane's copy against an open cleanup item, an open cleanup item against a copy on disk, and each update
       item against `git merge-base --is-ancestor` in its home: one line per difference, exit 1 when any.
 
+  import <home>
+      The cut-over: the cleanup item of each finished lane whose copy is still in <home> and that has none open (source
+      import:<home id>/<task>). A second run changes nothing and says so.
+
 Every write goes through itemdb.or_intake: a refused write is one intake item on Main. A call on an item that is no longer
 open writes nothing and never runs the cleanup."""
 import argparse, hashlib, os, re, subprocess, sys
@@ -35,8 +39,8 @@ TEARDOWN_S = 900
 
 
 class Session:
-    def __init__(self):
-        h = os.environ.get("JG_HOME")
+    def __init__(self, home=None):
+        h = home or os.environ.get("JG_HOME")
         if not h or not os.path.isdir(h):
             sys.exit("cleanup.py: JG_HOME must name this home's directory")
         self.home = os.path.realpath(h)
@@ -174,16 +178,33 @@ def newest_line(path):
     return lines[-1] if lines else ""
 
 
-def cmd_compare(a):
-    s, out = Session(), []
+def uncleaned(s):
+    """The tasks of the session's home that finished, whose copy is still here, and that have no open cleanup item."""
     state = os.path.join(s.home, "state")
     for name in sorted(os.listdir(state)) if os.path.isdir(state) else []:
-        if not name.endswith(".meta"):
-            continue
         task = name[:-5]
-        if newest_line(os.path.join(state, task + ".status")).split(" ")[0] == "done" and \
+        if name.endswith(".meta") and newest_line(os.path.join(state, task + ".status")).split(" ")[0] == "done" and \
                 not s.st.item(keys.key("cleanup", s.hid, task=task)):
-            out.append("lane %s: finished, its copy is still here, and no cleanup item is open" % task)
+            yield task
+
+
+def cmd_import(a):
+    """A finished lane's cleanup item was opened by its done line; a lane that finished before the cut-over never had one."""
+    s = Session(a.home)
+    todo = list(uncleaned(s))
+    for task in todo:
+        ticket, _ = itemdb.task_ref(s.home, task)
+        s.put("import:%s/%s" % (s.hid, task), ticket, s.st.open, keys.key("cleanup", s.hid, task=task), "cleanup", s.hid, ticket,
+              "return the finished lane's copy", STAMP)
+    there = s.st.one("SELECT count(*) FROM item WHERE kind='cleanup' AND state='open' AND home=?", (s.hid,)) - len(todo)
+    print("cleanup import %s: opened %d, already open %d" % (s.hid, len(todo), there) if todo else
+          "cleanup import %s: nothing to import (%d already open)" % (s.hid, there))
+
+
+def cmd_compare(a):
+    s, out = Session(), []
+    for task in uncleaned(s):
+        out.append("lane %s: finished, its copy is still here, and no cleanup item is open" % task)
     for (key,) in s.st.con.execute("SELECT key FROM item WHERE kind='cleanup' AND state='open' AND home=? ORDER BY key", (s.hid,)).fetchall():
         task = key.split("/", 1)[1]
         if not copy_exists(s.home, task):
@@ -217,6 +238,7 @@ def main(argv):
     add("update", cmd_update, "home_id", "home_path", "release", source=True)
     add("sweep", cmd_sweep)
     add("compare", cmd_compare, "home")
+    add("import", cmd_import, "home")
     a = p.parse_args(argv)
     a.fn(a)
 

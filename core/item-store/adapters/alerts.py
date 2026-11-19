@@ -4,6 +4,8 @@
   alerts.py raise <alert> <subject> [--security-source <s>] --source <id>
   alerts.py resolve <key> --proof <p> --source <id>          (<key> is jg-alert's <alert>--<subject>)
   alerts.py compare <home>                                    (the daily measure against <home>/state/alerts/)
+  alerts.py import <home>                                     (the cut-over: one item for each alert open today in <home>, source
+                                                               import:<home id>/<key>; a second run changes nothing and says so)
 
 A subject that has a task record (<home>/state/<subject>.meta) is a lane's task id: the item's subject is its ticket and
 its first holder is the lead (Main, in the main home), so the lane's done close drops it with the rest of the lane's
@@ -39,21 +41,23 @@ def item_key(hid, alert, subject):
     return S.Store.alert_key(alert, hid, subject)
 
 
+def mirror(st, home, hid, alert, subject, security_source, source):
+    """The one item of one alert (raise and import share it): a security cause is one fleet item, any other is keyed by its cause."""
+    subj, named = subject_of(home, subject)
+    at = itemdb.stamp(st)
+    if security_source:
+        return itemdb.or_intake(st, at, source, hid, subj, st.open, at, "security:fleet/%s" % alert, "security", "main", alert,
+                                "%s: raised in home %s (source %s)" % (alert, hid, security_source), st.me)
+    return itemdb.or_intake(st, at, source, hid, subj, st.open, at, item_key(hid, alert, subj), "alert", hid, subj,
+                            "%s on %s" % (alert, subject), st.me, named=named)
+
+
 def cmd_raise(a):
     if a.alert in PLUMBING:
         return
     home = home_of()
     hid = itemdb.home_id(home)
-    st = itemdb.open_db(home, BY)
-    subj, named = subject_of(home, a.subject)
-    at = itemdb.stamp(st)
-    if a.security_source:
-        r = itemdb.or_intake(st, at, a.source, hid, subj, st.open, at, "security:fleet/%s" % a.alert, "security", "main", a.alert,
-                             "%s: raised in home %s (source %s)" % (a.alert, hid, a.security_source), st.me)
-    else:
-        r = itemdb.or_intake(st, at, a.source, hid, subj, st.open, at, item_key(hid, a.alert, subj), "alert", hid, subj,
-                             "%s on %s" % (a.alert, a.subject), st.me, named=named)
-    print(r)
+    print(mirror(itemdb.open_db(home, BY), home, hid, a.alert, a.subject, a.security_source, a.source))
 
 
 def cmd_resolve(a):
@@ -103,6 +107,23 @@ def cmd_compare(a):
     sys.exit(1 if diffs else 0)
 
 
+def cmd_import(a):
+    """Open the item of each alert that is open today and has none; the alerts raised before the adapter was wired were never mirrored."""
+    home = os.path.realpath(a.home)
+    hid = itemdb.home_id(home)
+    st = itemdb.open_db(home, BY)
+    opened = there = 0
+    for alert, subject, sec in records(home):
+        key = "security:fleet/%s" % alert if sec else item_key(hid, alert, subject_of(home, subject)[0])
+        if st.item(key):
+            there += 1
+            continue
+        mirror(st, home, hid, alert, subject, sec, "import:%s/%s--%s" % (hid, alert, subject))
+        opened += 1
+    print("alerts import %s: opened %d, already open %d" % (hid, opened, there) if opened else
+          "alerts import %s: nothing to import (%d already open)" % (hid, there))
+
+
 def main(argv):
     p = argparse.ArgumentParser(prog="alerts.py", description=__doc__.split("\n")[0])
     sp = p.add_subparsers(dest="cmd", required=True)
@@ -116,6 +137,9 @@ def main(argv):
     m = sp.add_parser("compare")
     m.add_argument("home")
     m.set_defaults(fn=cmd_compare)
+    i = sp.add_parser("import")
+    i.add_argument("home")
+    i.set_defaults(fn=cmd_import)
     a = p.parse_args(argv)
     a.fn(a)
 

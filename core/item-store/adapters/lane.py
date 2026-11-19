@@ -399,6 +399,8 @@ class Lane:
             if not (name.endswith(".inbox") and os.path.isdir(d)):
                 continue
             task = name[:-len(".inbox")]
+            if not os.path.exists(os.path.join(sd, task + ".meta")):
+                continue          # a gone lane's leftover inbox: nobody reads it, so no steer waits there
             for f in sorted(os.listdir(d)):
                 if re.fullmatch(r"\d+\.msg", f) and os.path.isfile(os.path.join(d, f)):
                     key = K.key("steer", hid, task=task, n=str(int(f[:-4])))
