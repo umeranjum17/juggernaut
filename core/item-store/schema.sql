@@ -1,5 +1,5 @@
 -- The item store: one SQLite file per host for everything the fleet owes (docs/item-store.md).
--- One file per host. Four tables (item, move, cursor, policy). The rules are read-only views (kind and rung, and the alert ladder's three):
+-- One file per host. Four tables (item, move, cursor, policy). The rules are read-only views (kind and rung, and the alert ladder's views):
 -- a view cannot be written, so a rule changes only by a reviewed edit of this file (a migration).
 -- One noun: an ITEM is one thing someone owes, by when. Every item has the same three states
 -- (open, done, dropped) and the same five moves (open, note, hand, climb, close).
@@ -60,7 +60,7 @@ CREATE VIEW kind(kind, first, deadline_s, ceiling, proof, closer, means) AS VALU
   ('blocker',   'named',    7200, 'main',    'gone:',              'ladder',  'a red check or other fault that holds a step back; it names that step (parent) and closes done in the same write as the step''s done close');
 
 -- ---------------------------------------------------------------- the alert ladder (read-only)
--- What bin/jg-alert.sh reads today from the alert table (core/machines/styles/alert-table.tsv), as rules of the store.
+-- What bin/jg-alert.sh reads: the alert ladder, as rules of the store (it replaced the alert table).
 -- alert_kind: each alert's precedence (P0 first) and its first rung (0 tick, 1 worker, 2 lead, 3 Main, 4 owner; 'wait' = the one the wait
 --   names). fires_at is seconds, 'beats:N' or 'limit' (the limit of its kind, see alert_limit).
 -- alert_ladder: per precedence, the seconds to the next rung (step_s), the seconds between repeats (repeat_s), the top rung ('start+2' =
@@ -105,6 +105,52 @@ CREATE VIEW alert_limit(kind, limit_s) AS VALUES
   ('ship-reviewing',       900),
   ('recon-standard',       600),
   ('recon-deep',             0);
+
+-- What the alert table also held, as the same kind of rule: the text of each alert (fires on; quiet when, facts joined by +), the rules
+-- that keep one cause from raising many (I1 to I6; I6 holds rung 4 while presence is away), the recipient ceiling of each authority class,
+-- and the typed producers allowed to raise a security alert. bin/jg-alert.sh and the table engine read them through core/item-store/alertrules.py.
+CREATE VIEW alert_text(alert, fires_on, quiet_when) AS VALUES
+  ('security', 'a secret in the open, a refused delete, an owner detail found, an unregistered check', 'never'),
+  ('line-red', 'health red on the trunk tip, a release or main; or the tip is above the green pin and no verify has started (900 s)', 'verify-running'),
+  ('supervision-down', 'a supervisor session not watching or handling while work is under way', 'never'),
+  ('stuck-wait', 'wait is worker, lead or main', 'wait=owner+wait=outside,reason=ci|date|approval|review|quota+reason=parked'),
+  ('lost-worker', 'health lost, or stage building or proving with no sign of life', 'wait=worker|lead|main|owner|outside|tick'),
+  ('capacity', 'wait reason quota: a quota, an account, a model, no machine slot', 'never'),
+  ('undelivered', 'a message stored or rung and not read', 'home-parked'),
+  ('drift', 'the observer finds that the stage and the records disagree', 'never'),
+  ('slow-delivery', 'stage proving, or delivering in queued, rebased or gated, past the limit for its kind', 'wait=owner+wait=outside,reason=ci|approval|date|review+queued-behind-running-landing'),
+  ('ready-idle', 'a ticket in ready and a free lane', 'home-paused+capacity-held+owner-card-open'),
+  ('stranded', 'stage delivering in batched, live or joining; or a pull request style in queued with no check started', 'never'),
+  ('parked-lane', 'a parked lane whose work is not on the trunk and whose next step its lead has not taken', 'never'),
+  ('host', 'memory, disk or temp space over its limit', 'never'),
+  ('wrong-repo', 'a spawn refused because the ticket''s files are not in this repository', 'never'),
+  ('lock-held', 'a trunk or landing lock held with no beat of its holder', 'holder-beating'),
+  ('orphan-process', 'a process past its limit whose owner record is gone', 'never'),
+  ('escalation-stuck', 'an alert at its top rung past its repeats; a wake not acknowledged for 20 min at a supervisor; or 10 decision records older than 30 min at Main', 'never'),
+  ('fleet-blocked', 'the last-rung conditions B1 to B7 of the self-healing plan (nothing lands, idle with ready work, no account, a supervisor down, the host, paid limits unused)', 'never'),
+  ('quota-unused', 'the share of an account''s window that is left is over the share of its time by 20 points, and a ticket can start', 'host-at-stop+account-on-hold'),
+  ('quota-blind', 'the newest quota reading of an account that lanes use is old', 'account-no-lane'),
+  ('worker-stopped', 'an agent that someone waits for was ended or lost: an unread steer in its inbox, a steer newer than its last status line, an open Recon critic round, or a relaunch after its done line', 'never'),
+  ('judge-split', 'two judges (the tip run, the verify, the nightly run) gave one commit tree two different verdicts', 'never');
+
+CREATE VIEW alert_rule(id, covers, scope, quieted, why) AS VALUES
+  ('I1', 'supervision-down', 'home', 'stuck-wait,lost-worker,undelivered,ready-idle,slow-delivery', 'nobody is watching, so every wait would fire'),
+  ('I2', 'line-red', 'project', 'slow-delivery,stranded', 'they wait for the line, not for themselves'),
+  ('I3', 'capacity', 'route', 'lost-worker,stuck-wait', 'the lanes are stopped by the same cause'),
+  ('I4', 'host', 'machine', 'slow-delivery', 'a loaded machine is slow'),
+  ('I5', '*', 'ticket', '*', 'one page for one ticket'),
+  ('I6', 'presence=away', 'home', 'rung-4:P1,P2,P3,!escalation-stuck', 'the return brief lists them; P0 still reaches the owner');
+
+CREATE VIEW alert_authority(class, ceiling) AS VALUES
+  ('team-action', '3'),
+  ('owner-call', '4'),
+  ('security-awareness', '4');
+
+CREATE VIEW alert_security_source(source) AS VALUES
+  ('key-in-env'),
+  ('delete-guard'),
+  ('owner-details-scan'),
+  ('unauthenticated-state-checks');
 
 -- ---------------------------------------------------------------- the move log (append-only; the one write path)
 CREATE TABLE move (

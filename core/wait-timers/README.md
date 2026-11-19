@@ -51,7 +51,7 @@ provenance table now records history, not the current bytes.
   This library reads `JG_WAIT_ALERT_SECS` and `JG_PAUSE_RESURFACE_SECS` from
   that definition (`bin/jg-escalation-workflows.sh timers`) rather than
   defaulting them, so each number has one owner.
-- Timers: the alert table owns them (`bin/jg-alert.sh timers`, from the
+- Timers: the store ladder owns them (`bin/jg-alert.sh timers`, from the
   stuck-wait ladder and the ready-idle row); the library writes no number. An
   environment override still wins: `JG_WAIT_ESCALATE_SECS` for Main's rung,
   `JG_WAIT_CARD_SECS` (above the escalation threshold) for the
@@ -174,7 +174,7 @@ A recorded ready PR that is green and unmerged under yolo is a slow delivery, no
 It reads the PR from the forge at most every `JG_GREEN_PR_POLL_SECS` (default 120).
 Green means the forge reports the PR open, not a draft, with merge state `CLEAN`, which is the state `bin/jg-pr-merge.sh` merges on.
 Only GitHub is read; any other forge, a missing `gh`, or an unreadable answer stays quiet, and an answer not refreshed for three reads lapses.
-After the PR has stayed green at one head for `JG_GREEN_PR_SECS` (default 900), `jg-alert.sh raise slow-delivery <task> --deliver` raises one alert for the task; the alert table owns its rung and holder (rung 1 until the tick-driven climb exists), and a live alert is never raised twice.
+After the PR has stayed green at one head for `JG_GREEN_PR_SECS` (default 900), `jg-alert.sh raise slow-delivery <task> --deliver` raises one alert for the task; the store ladder owns its rung and holder (rung 1 until the tick-driven climb exists), and a live alert is never raised twice.
 - The alert resolves when the PR merges or closes, goes red or draft, gets a new head (the 15-minute clock re-arms), or yolo is off.
 - A recorded hold also resolves it: a `paused:` or captain-held status line that is still the task's declared wait, or an open captain hold on the task.
 - Merge authority is untouched: the alert only asks; the owner still merges through `bin/jg-pr-merge.sh`.

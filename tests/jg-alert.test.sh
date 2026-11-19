@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Behavior test for the alert table and its raise function (bin/jg-alert.sh, core/machines/styles/alert-table.tsv, core/machines/tables/alert.tsv;
+# Behavior test for the alert ladder (read from the store) and its raise function (bin/jg-alert.sh, core/machines/tables/alert.tsv;
 # slice J10 of the state-machine plan). Everything runs through the real command in a fixture home: a stuck wait raises one alert with the
 # right precedence and rung in each of the four delivery modes; with supervision-down open it raises none; the quiet facts, the limits
 # by kind, the ladder top, rule I5, rule I6 and the four states are each driven once.

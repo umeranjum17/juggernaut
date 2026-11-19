@@ -96,7 +96,7 @@ A state with no mode is `final` when it is `terminal` and `active` otherwise.
 A state line may carry two more columns after the limit.
 **Emits** lists what entering the state sends, as `<event>@<machine>`: the machine must have a table in the same folder and that table must declare the event, so an event that crosses from one machine to another is written on both sides.
 **Alert** names the alert of the state's timeout. It belongs to a `waiting` state whose limit is `<N><s|m|h|d> -> alert <name>`, and it must be that name.
-An alert named in a limit or in this column must be a row of the alert table (`core/machines/styles/alert-table.tsv`, read by `bin/jg-alert.sh`; override: `JG_ALERT_TABLE`); the lint names the state and lists the legal alerts.
+An alert named in a limit or in this column must be an alert of the store ladder (`alert_kind` in `core/item-store/schema.sql`, read by `bin/jg-alert.sh` through `core/item-store/alertrules.py`); the lint names the state and lists the legal alerts.
 `escalation` reads the row and the ladder of that alert: who is told first (the holder of the first rung), who next (one rung up), and whether a board card reaches the owner (`yes`, `never`, or `when <fact>`).
 
 ## Diagram

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# jg-ready-idle.sh - the one producer of the ready-idle alert (alert table row ready-idle, core/machines/styles/alert-table.tsv).
+# jg-ready-idle.sh - the one producer of the ready-idle alert (the ready-idle alert of the store ladder, core/item-store/schema.sql).
 #
 # Usage:
 #   jg-ready-idle.sh fire <subject>     raise ready-idle for the subject and deliver its ring: one wake to the row's first holder

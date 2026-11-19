@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# jg-alert.sh - the alert table and the one function that raises an alert from it (section 6.7 and machine 5 of section 6.12).
+# jg-alert.sh - the alert ladder (read from the store) and the one function that raises an alert from it (section 6.7 and machine 5 of section 6.12).
 #
 # Usage:
 #   jg-alert.sh row <alert>                 print the row: name, fires on, fires at, precedence, first rung, quiet when
@@ -51,15 +51,18 @@
 # `check` wake with key alert-<key> that names the alert, its precedence, the rung and the holder. A line that is not a ring is refused.
 # Main's rung in a Squad Lead home goes up the parent channel instead (_route_main), and resolve closes it there; a --wake record keeps
 # the local consumer its producer named.
-# Exit 0 is success, 1 a refusal, 2 a usage error. The table is core/machines/styles/alert-table.tsv (override: JG_ALERT_TABLE).
+# Exit 0 is success, 1 a refusal, 2 a usage error. The rules are the store's views (core/item-store/schema.sql, read through core/item-store/alertrules.py).
 set -u
 export LC_ALL=C
 _root=$(cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/.." && pwd)
-_table() { printf '%s\n' "${JG_ALERT_TABLE:-$_root/core/machines/styles/alert-table.tsv}"; }
 _dir() { local s=${JG_STATE_OVERRIDE:-${JG_HOME:-$_root}/state}; printf '%s/alerts\n' "$s"; }
 _die() { printf 'jg-alert: %s\n' "$*" >&2; exit "${_rc:-1}"; }
 _get() { sed -n "s/^$2=//p" "$1" | head -1; }
-_rows() { awk -F'\t' -v k="$1" '$1==k' "$(_table)"; }
+# _rows <kind>: the rules of one kind (alert, rule, ladder, limit, authority, security-source), one tab-separated line each, read once from the store's views.
+_rows() {
+  [ -n "${_rules:-}" ] || _rules=$(python3 -I "$_root/core/item-store/alertrules.py" dump) || _die "cannot read the alert rules from the store views"
+  awk -F'\t' -v k="$1" '$1==k' <<<"$_rules"
+}
 _holder() { case $1 in 0) echo tick ;; 1) echo worker ;; 2) echo lead ;; 3) echo main ;; *) echo owner ;; esac; }
 # The four state words come from the machine table (kind initial, mode waiting after it, mode rest, kind terminal), never typed here.
 _names() { awk -F'\t' -v k="$1" -v m="$2" -v l="${3:-}" '$1=="state" && (k=="" || $3==k) && (m=="" || $6==m) && (l=="" || $7==l) {print $2}' "$_root/core/machines/tables/alert.tsv"; }
@@ -160,7 +163,7 @@ cmd_timers() {
   prec=$(_rows alert | awk -F'\t' '$2=="stuck-wait" {print $5}')
   read -r step repeat < <(_rows ladder | awk -F'\t' -v p="$prec" '$2==p {print $3, $4}')
   stall=$(_rows alert | awk -F'\t' '$2=="ready-idle" {print $4}')
-  [ "${step:-0}" -gt 0 ] && [ "${repeat:-0}" -gt 0 ] && [ "${stall:-0}" -gt 0 ] || _die "the alert table has no usable stuck-wait ladder or ready-idle timer"
+  [ "${step:-0}" -gt 0 ] && [ "${repeat:-0}" -gt 0 ] && [ "${stall:-0}" -gt 0 ] || _die "the store has no usable stuck-wait ladder or ready-idle timer"
   printf 'escalate\t%s\ncard\t%s\nrealert\t%s\nready-stall\t%s\n' "$step" $((step * 2)) "$repeat" "$stall"
 }
 

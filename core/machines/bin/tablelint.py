@@ -7,8 +7,10 @@ is final and every other state is active. load() in machine.py calls lint() once
 """
 import os
 import re
+import sys
 
-import alerttable
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "item-store"))
+import alertrules
 
 MODES = ("active", "waiting", "rest", "final")
 TIMEOUT = re.compile(r"\d+[smhd] -> (alert [a-z0-9-]+|[a-z0-9-]+)")
@@ -17,6 +19,12 @@ TIMEOUT = re.compile(r"\d+[smhd] -> (alert [a-z0-9-]+|[a-z0-9-]+)")
 def mode(s):
     """The mode of a state: the one it names, else final for a terminal state and active for the rest."""
     return s.get("mode") or ("final" if s["kind"] == "terminal" else "active")
+
+
+def alert_of(s):
+    """The alert a state's timeout names: the one in its alert column, else the one its limit says; empty for none."""
+    limit = s.get("limit", "")
+    return s.get("alert", "") if s.get("alert", "") not in ("", "-") else (limit.split(" -> alert ", 1)[1] if " -> alert " in limit else "")
 
 
 def words(x):
@@ -31,12 +39,12 @@ def column_defects(m, k, s):
     """The faults of the two columns of a state line (core/machines/README.md): what it emits and to which machine, and the alert of its timeout."""
     bad, limit, alert = [], s.get("limit", ""), s.get("alert", "")
     named = limit.split(" -> alert ", 1)[1] if " -> alert " in limit else ""
-    legal = alerttable.names()
+    legal = alertrules.names()
     if named and named not in legal:
-        bad.append(f"state {k} has a timeout that names the alert {named}, which is not in the alert table (legal: {' '.join(legal)})")
+        bad.append(f"state {k} has a timeout that names the alert {named}, which is not in the store's alert ladder (legal: {' '.join(legal)})")
     if alert not in ("", "-"):
         if alert not in legal:
-            bad.append(f"state {k} names the alert {alert}, which is not in the alert table (legal: {' '.join(legal)})")
+            bad.append(f"state {k} names the alert {alert}, which is not in the store's alert ladder (legal: {' '.join(legal)})")
         elif mode(s) != "waiting" or named != alert:
             bad.append(f"state {k} names the alert {alert}, but its timeout is '{limit or '-'}'")
     for item in [x for x in s.get("emits", "").split(",") if x not in ("", "-")]:

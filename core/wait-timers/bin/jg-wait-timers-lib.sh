@@ -579,7 +579,7 @@ jg_wait_timers_definition_timers() {
   "$_JG_WAIT_TIMER_DIR/jg-escalation-workflows.sh" timers 2>/dev/null
 }
 
-# The ladder's rung timers belong to the alert table (bin/jg-alert.sh timers); an environment override still wins.
+# The ladder's rung timers belong to the store ladder (bin/jg-alert.sh timers); an environment override still wins.
 jg_wait_timers_table() {  # <name>
   "$_JG_WAIT_TIMER_DIR/jg-alert.sh" timers 2>/dev/null | awk -F '\t' -v n="$1" '$1 == n { print $2 }'
 }

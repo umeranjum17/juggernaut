@@ -2608,7 +2608,7 @@ jg_wake_append() {
 }
 
 # jg_wake_lost_worker <window> <reason>: the alert `lost-worker` for a pane that stopped showing life, raised through bin/jg-alert.sh
-# (core/machines/styles/alert-table.tsv). It starts at rung 1 because the tick-driven climb is not built, repeats on every call, and
+# (the store ladder, core/item-store/schema.sql). It starts at rung 1 because the tick-driven climb is not built, repeats on every call, and
 # delivers the same `stale` wake keyed by the window with the reason as its text, so the stale: consumers read what they always read.
 jg_wake_lost_worker() {
   local alert="$JG_WAKE_LIB_DIR/jg-alert.sh" pipe_rc
