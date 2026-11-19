@@ -1,6 +1,6 @@
 ---
 name: quiet
-description: Retired alias of /radio-silence, kept only during the skill-rename migration window. Use when the captain invokes /quiet; load the radio-silence skill and follow it unchanged.
+description: Retired alias of /radio-silence. Use when the captain invokes /quiet; load radio-silence and follow it unchanged.
 user-invocable: true
 metadata:
   internal: true

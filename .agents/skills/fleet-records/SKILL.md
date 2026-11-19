@@ -1,8 +1,6 @@
 ---
 name: fleet-records
-description: >-
-  Agent-only home-layout, knowledge-routing, and backlog-record rules kept out of the always-loaded AGENTS.md.
-  Load before routing durable knowledge, editing a backlog item or task note, handing work across homes, or interpreting home layout.
+description: Load before routing durable knowledge, editing a backlog item or task note, handing work across homes, or interpreting home layout.
 user-invocable: false
 metadata:
   internal: true

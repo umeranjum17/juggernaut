@@ -1,8 +1,6 @@
 ---
 name: captain-hold-lifecycle
-description: >-
-  Agent-only policy for completing investigations and visual reviews without losing unresolved captain calls, and for closing what the captain owns with his actual words.
-  Load before treating an investigation, Recon report, or structured review as complete, before ending a visual review that exposed a captain decision, when recording or routing the captain's answer.
+description: Load before treating an investigation, Recon report or review as complete, and when recording or routing the captain's answer to an unresolved call.
 user-invocable: false
 metadata:
   internal: true

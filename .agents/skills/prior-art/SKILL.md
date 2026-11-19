@@ -1,8 +1,6 @@
 ---
 name: prior-art
-description: >-
-  Load before starting new or complex work: a new feature, a new product surface, an unfamiliar integration, or any change that invents a mechanism the project does not already have.
-  Requires searching online for similar products and open-source projects, checking each candidate's licence, comparing three to five real options, and recording the pick and its reasons.
+description: "Load before starting new or complex work: a new feature, surface or integration, or any change that invents a mechanism the project lacks."
 user-invocable: false
 metadata:
   internal: true

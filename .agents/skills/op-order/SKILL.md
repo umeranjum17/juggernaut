@@ -1,6 +1,6 @@
 ---
 name: op-order
-description: Load when a passed Recon or plan of 3 or more slices is turned into work orders, before writing the first order. Fixed template, pinned sources, exact files, waves by file overlap.
+description: Load when a passed Recon or plan of 3 or more slices is turned into work orders, before writing the first order.
 user-invocable: false
 metadata:
   internal: true

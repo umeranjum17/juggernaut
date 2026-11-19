@@ -1,6 +1,6 @@
 ---
 name: updatefirstmate
-description: Retired alias of resupply, kept only during the skill-rename migration window. Load resupply and follow it unchanged.
+description: Retired alias of resupply. Load resupply and follow it unchanged.
 metadata:
   internal: true
 ---

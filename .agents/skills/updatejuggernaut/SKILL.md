@@ -1,6 +1,6 @@
 ---
 name: updatejuggernaut
-description: Retired alias of /resupply, kept only during the skill-rename migration window. Use when the captain invokes /updatejuggernaut; load the resupply skill and follow it unchanged.
+description: Retired alias of /resupply. Use when the captain invokes /updatejuggernaut; load resupply and follow it unchanged.
 user-invocable: true
 metadata:
   internal: true

@@ -1,6 +1,6 @@
 ---
 name: afk
-description: Retired alias of /watchover, kept only during the skill-rename migration window. Use when the captain invokes /afk; load the watchover skill and follow it unchanged.
+description: Retired alias of /watchover. Use when the captain invokes /afk; load watchover and follow it unchanged.
 user-invocable: true
 metadata:
   internal: true

@@ -1,9 +1,6 @@
 ---
 name: squad-lead-provisioning
-description: >-
-  Agent-only reference for persistent Squad Lead setup and retirement.
-  Use when creating, seeding, validating, launching, recovering, handing backlog to, pushing inherited local material into, or retiring a Squad Lead home, or when editing data/squad_leads.md.
-  Covers local leases, whole-home remote routes, transactional seeding, record intake for an existing or inherited domain, project clone restrictions, Squad Lead harness pins, inherited local-material push, idle charter, handoff helper, and teardown safety.
+description: Use when creating, seeding, launching, recovering, handing backlog to, or retiring a Squad Lead home, or editing data/squad_leads.md.
 user-invocable: false
 metadata:
   internal: true

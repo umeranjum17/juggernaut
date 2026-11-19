@@ -1,6 +1,6 @@
 ---
 name: bearings
-description: Retired alias of /sitrep, kept only during the skill-rename migration window. Use when the captain invokes /bearings; load the sitrep skill and follow it unchanged.
+description: Retired alias of /sitrep. Use when the captain invokes /bearings; load sitrep and follow it unchanged.
 user-invocable: true
 metadata:
   internal: true

@@ -1,8 +1,6 @@
 ---
 name: task-dispatch
-description: >-
-  Agent-only intake and dispatch procedure kept out of the always-loaded AGENTS.md.
-  Load at every intake of project work and before choosing a dispatch profile, effort, or backend, writing a brief, spawning, promoting, or steering a worker.
+description: Load at every intake of project work, and before choosing a dispatch profile, effort or backend, writing a brief, or spawning or steering a worker.
 user-invocable: false
 metadata:
   internal: true

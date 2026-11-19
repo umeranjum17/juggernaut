@@ -1,6 +1,6 @@
 ---
 name: strike-recon
-description: Load at stage 1 of a deep-recon plan or design Recon that will be sliced into work, before writing outline.md: the standing asks its outline answers up front.
+description: Load at stage 1 of a deep-recon plan or design Recon that will be sliced into work, before writing outline.md.
 user-invocable: false
 metadata:
   internal: true

@@ -1,10 +1,6 @@
 ---
 name: sitrep
-description: >-
-  Generate a "pick up where I left off" fleet digest from Juggernaut's live fleet state.
-  Use when the captain invokes /sitrep or asks for a bearings report, morning brief, status report, catch-up, "where did I leave off", or "what's in the works".
-  Plain /sitrep is chat-only by default, and /sitrep file explicitly writes the dated data/status-report-<YYYY-MM-DD>.md artifact; live PR enrichment remains opt-in and composes with both.
-  Also use on a contributions check wake or when filing work linked to an upstream issue.
+description: Use when the captain invokes /sitrep or asks for a status report or catch-up, and on a contributions check wake or when filing work linked to an upstream issue.
 user-invocable: true
 metadata:
   internal: true

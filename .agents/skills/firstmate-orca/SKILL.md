@@ -1,6 +1,6 @@
 ---
 name: firstmate-orca
-description: Retired alias of juggernaut-orca, kept only during the skill-rename migration window. Load juggernaut-orca and follow it unchanged.
+description: Retired alias of juggernaut-orca. Load juggernaut-orca and follow it unchanged.
 metadata:
   internal: true
 ---

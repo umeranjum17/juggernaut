@@ -1,6 +1,6 @@
 ---
 name: firstmate-self-repo
-description: Retired alias of juggernaut-self-repo, kept only during the skill-rename migration window. Load juggernaut-self-repo and follow it unchanged.
+description: Retired alias of juggernaut-self-repo. Load juggernaut-self-repo and follow it unchanged.
 metadata:
   internal: true
 ---

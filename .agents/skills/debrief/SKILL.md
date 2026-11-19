@@ -1,6 +1,6 @@
 ---
 name: debrief
-description: Recap visible session events and guide the captain through visibly unanswered decisions when the captain explicitly invokes /debrief, with a Bearings fallback when /debrief is the session's first real captain message.
+description: Use when the captain invokes /debrief, to recap session events and walk through visibly unanswered decisions.
 user-invocable: true
 metadata:
   internal: true

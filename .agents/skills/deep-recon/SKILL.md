@@ -1,8 +1,6 @@
 ---
 name: deep-recon
-description: >-
-  Load when a Recon brief carries a `# Recon depth` section naming standard or deep, before starting its research, and before intake picks the depth for a Recon or dispatches the critic worker of a deep one.
-  Owns the seven stages, the source budgets, the stop rules, the critic rubric and the 13-section report template that bin/jg-recon-gate.sh checks before a standard or deep Recon may report done.
+description: Load when a Recon brief has a `# Recon depth` section, and before intake picks a Recon's depth or dispatches a deep Recon's critic worker.
 user-invocable: false
 metadata:
   internal: true
