@@ -33,7 +33,7 @@ CREATE TABLE link (
   home    TEXT NOT NULL,                                 -- the home of both ends: a link never crosses homes
   from_id TEXT NOT NULL,                                 -- the dependent ticket
   to_id   TEXT NOT NULL,                                 -- what it depends on or relates to
-  type    TEXT NOT NULL CHECK (type IN ('parent-child', 'blocks', 'related')),
+  type    TEXT NOT NULL CHECK (type IN ('parent-child', 'blocks', 'related', 'tracks')),
   PRIMARY KEY (home, from_id, to_id, type)
 );
 CREATE INDEX link_to ON link(home, to_id, type);

@@ -298,6 +298,26 @@ msql() { python3 -c 'import sqlite3,sys; [print("|".join(map(str,r))) for r in s
 JG_HOME=$M python3 "$TK" ready >/dev/null; expect_code 0 $? "a migrated store opens again"
 pass "an old store migrates to the (home, id) key keeping every ticket, link and log row"
 
+# --- a store made before the link table allowed `tracks` is rebuilt keeping every row, then takes a tracks link
+M2=$T/old-link; mkdir -p "$M2/state/item-store" "$M2/config"
+python3 - "$ROOT" "$M2" <<'PY'
+import json, sqlite3, sys
+root, m = sys.argv[1:]
+sys.path.insert(0, root + "/core/item-store"); import itemdb
+st = itemdb.open_db(m, "t"); st.con.close()
+sql = open(root + "/core/item-store/tickets.sql").read().replace(", 'tracks'", "")
+con = sqlite3.connect(m + "/state/item-store/fleet.db"); con.executescript(sql)
+con.execute("INSERT INTO ticket_change(at,home,id,verb,source,row,links) VALUES(1,'main','jg-a','import','s:1',?,?)",
+            (json.dumps({"title": "a", "labels": "[]", "metadata": "{}", "ephemeral": 0}), json.dumps([{"to": "jg-b", "type": "blocks"}])))
+con.commit()
+PY
+JG_HOME=$M2 python3 "$TK" ready >/dev/null; expect_code 0 $? "opening a store with the old link types rebuilds it"
+m2sql() { python3 -c 'import sqlite3,sys; [print("|".join(map(str,r))) for r in sqlite3.connect(sys.argv[1]).execute(sys.argv[2])]' "$M2/state/item-store/fleet.db" "$1"; }
+[ "$(m2sql "SELECT from_id||to_id||type FROM link")" = "jg-ajg-bblocks" ] || fail "the rebuild kept the link"
+python3 -c 'import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute("INSERT INTO ticket_change(at,home,id,verb,source,row,links) VALUES(2,?,?,?,?,?,?)",("main","jg-a","t","s:2","{\"title\":\"a\"}","[{\"to\":\"external:x\",\"type\":\"tracks\"}]")); c.commit()' "$M2/state/item-store/fleet.db"
+[ "$(m2sql "SELECT type FROM link")" = tracks ] || fail "a tracks link is held"
+pass "a store with the old link types is rebuilt keeping its rows, and then holds a tracks link"
+
 # --- the store's audit: the ticket tables are known, a stray table is not
 audit() { python3 - "$ROOT/core/item-store" "$T/home" <<'PY'
 import sys; sys.path.insert(0, sys.argv[1]); import itemdb

@@ -72,7 +72,8 @@ def open_tickets(h):
     if not st.con.execute("SELECT 1 FROM sqlite_master WHERE name = 'ticket_change'").fetchone():
         st.con.executescript(sql.decode("utf-8"))
     elif (st.con.execute("SELECT 1 FROM sqlite_master WHERE name = 'ticket_change_home'").fetchone()
-          or "created_by" not in [c[1] for c in st.con.execute("PRAGMA table_info(ticket)")]):
+          or "created_by" not in [c[1] for c in st.con.execute("PRAGMA table_info(ticket)")]
+          or "'tracks'" not in st.con.execute("SELECT sql FROM sqlite_master WHERE name = 'link'").fetchone()[0]):   # an older key, or a link table that refuses `tracks`
         rebuild_from_log(st.con, sql.decode("utf-8"))
     return st
 
