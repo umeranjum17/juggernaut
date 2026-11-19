@@ -190,7 +190,7 @@ def do_create(argv, stdin_text):
             links.append((to, ty))
         row = dict(id=ident, title=title, description=description or None, status=status, priority=priority, issue_type=kind,
                    assignee=opt.get("assignee") or None, created_at=sec, labels=sorted(labels), metadata=metadata, ephemeral=0,
-                   dependencies=[{"depends_on_id": to, "type": ty} for to, ty in links])
+                   dependencies=[tickets.new_edge(to, ty) for to, ty in links])
         tickets.change(st, int(time.time()), home_id, "create", "bd-create:%d" % time.time_ns(), row)
         con.execute("COMMIT")
     except BaseException:

@@ -45,9 +45,10 @@ import itemdb  # noqa: E402
 
 BY = "adapter:tickets"
 FIELDS = ("title", "description", "priority", "issue_type", "assignee", "created_at", "created_by", "updated_at", "started_at",
-          "closed_at", "close_reason", "status", "defer_until", "external_ref")
+          "closed_at", "close_reason", "status", "defer_until", "external_ref", "await_type")
 COMMENT_KEYS = ("id", "author", "text", "created_at")
 ADDED = ("memory",)                      # tables added to tickets.sql after the first release: an open store gets them (load_missing), a rebuild keeps them
+EDGE_KEYS = ("depends_on_id", "type", "created_at", "created_by", "metadata")   # a dependency edge as an export row carries it (issue_id is the row's own id)
 STREAMS = ("events", "provenance")       # the export may carry either; Beads' own export carries neither, they come from bd events / bd provenance
 
 
@@ -74,7 +75,9 @@ def open_tickets(h):
         st.con.executescript(sql.decode("utf-8"))
     elif (st.con.execute("SELECT 1 FROM sqlite_master WHERE name = 'ticket_change_home'").fetchone()
           or "created_by" not in [c[1] for c in st.con.execute("PRAGMA table_info(ticket)")]
-          or "'tracks'" not in st.con.execute("SELECT sql FROM sqlite_master WHERE name = 'link'").fetchone()[0]):   # an older key, or a link table that refuses `tracks`
+          or "'tracks'" not in st.con.execute("SELECT sql FROM sqlite_master WHERE name = 'link'").fetchone()[0]   # an older key, or a link table that refuses `tracks`
+          or "created_by" not in [c[1] for c in st.con.execute("PRAGMA table_info(link)")]                        # or one that keeps no edge stamp
+          or "await_type" not in [c[1] for c in st.con.execute("PRAGMA table_info(ticket)")]):                    # or no gate wait
         rebuild_from_log(st.con, sql.decode("utf-8"))
     else:
         load_missing(st.con, sql.decode("utf-8"))
@@ -104,7 +107,7 @@ def statements(script):
 
 def rebuild_from_log(con, sql):
     """A store made from an older tickets.sql (an id unique across homes, or a ticket with no created_by, comment or ticket_event) becomes
-    the current tables. Every table but the log is the fold of ticket_change, so the log is kept as it is - every seq, at and
+    the current tables. Every table but the log and memory is the fold of ticket_change, so the log is kept as it is - every seq, at and
     source - moved aside, and replayed in seq order into the new tables: the triggers rebuild each row (a field the old log never
     held is NULL until the next import fills it). One transaction; the replay must give back every ticket and link row, else nothing changes."""
     con.execute("BEGIN IMMEDIATE")
@@ -148,9 +151,16 @@ def norm(row):
     meta = row.get("metadata") or {}
     comments = sorted(({k: c.get(k) for k in COMMENT_KEYS} for c in row.get("comments") or []), key=lambda c: str(c["id"]))
     streams = {k: [json.dumps(e, sort_keys=True) for e in row[k]] for k in STREAMS if isinstance(row.get(k), list)}
+    edges = {}
+    for d in row.get("dependencies") or []:       # the export's order, one edge per (target, type)
+        edges.setdefault((d["depends_on_id"], d["type"]), {k: d.get(k) for k in EDGE_KEYS})
     return dict(scalars, comments=comments, streams=streams, labels=sorted(row.get("labels") or []), metadata=meta, ephemeral=int(bool(row.get("ephemeral"))),
-                links=sorted({(row["id"], d["depends_on_id"], d["type"])
-                              for d in row.get("dependencies") or []}))
+                links=sorted((row["id"], to, ty) for to, ty in edges), edges=list(edges.values()))
+
+
+def new_edge(to, ty):
+    """A dependency edge a writer adds, stamped as Beads stamps one: now, the actor, and the empty metadata text."""
+    return {"depends_on_id": to, "type": ty, "created_at": now_iso(), "created_by": os.environ.get("BEADS_ACTOR") or "juggernaut", "metadata": "{}"}
 
 
 def change(st, at, home_id, verb, source, row):
@@ -160,7 +170,7 @@ def change(st, at, home_id, verb, source, row):
     body["comments"] = n["comments"]
     for k, v in n["streams"].items():       # a stream the row lacks stays as the copy holds it (see ticket_event)
         body[k] = [json.loads(e) for e in v]
-    links = json.dumps([{"to": t, "type": ty} for _, t, ty in n["links"]])
+    links = json.dumps([dict({"to": e["depends_on_id"]}, **{k: v for k, v in e.items() if k != "depends_on_id" and v is not None}) for e in n["edges"]])
     st.con.execute("INSERT INTO ticket_change (at, home, id, verb, source, row, links) VALUES (?,?,?,?,?,?,?)",
                    (at, home_id, row["id"], verb, source, json.dumps(body), links))
 
@@ -174,6 +184,8 @@ def copy_of(con, home_id, ident):
     d["labels"], d["metadata"] = sorted(json.loads(d["labels"])), json.loads(d["metadata"])
     d["links"] = sorted(con.execute("SELECT from_id, to_id, type FROM link WHERE home = ? AND from_id = ?", (home_id, ident)).fetchall())
     d["links"] = [tuple(x) for x in d["links"]]
+    d["edges"] = [dict(zip(EDGE_KEYS, x)) for x in con.execute(
+        "SELECT to_id, type, created_at, created_by, metadata FROM link WHERE home = ? AND from_id = ? ORDER BY n, to_id, type", (home_id, ident))]
     d["comments"] = [dict(zip(COMMENT_KEYS, x)) for x in con.execute(
         "SELECT id, author, text, created_at FROM comment WHERE home = ? AND ticket_id = ? ORDER BY id", (home_id, ident))]
     d["streams"] = {k: [x for (x,) in con.execute("SELECT data FROM ticket_event WHERE home = ? AND ticket_id = ? AND source = ? ORDER BY n",
@@ -202,6 +214,8 @@ def diffs(beads, copy):
         for lk in sorted(set(beads["links"]) ^ set(copy["links"])):
             side = "beads" if lk in beads["links"] else "copy"
             out.append(("link", ("%s>%s:%s" % lk) if side == "beads" else None, ("%s>%s:%s" % lk) if side == "copy" else None))
+    elif beads["edges"] != copy["edges"]:      # the same links with another stamp, author, metadata or place
+        out.append(("link-detail", beads["edges"], copy["edges"]))
     return out
 
 

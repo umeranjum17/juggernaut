@@ -13,7 +13,7 @@ import itemdb  # noqa: E402
 
 TWO_WORD = {"dep", "gate", "label", "config", "backup", "comments", "dolt", "swarm"}
 FAMILIES = {
-    "read": "show list ready blocked export history comments events provenance q types statuses schema memories epic swarm gate-list".split(),
+    "read": "show list ready blocked export history comments events provenance q types statuses schema memories epic swarm-validate gate-list".split(),
     "create": "create comment comments-add import remember gate-create".split(),
     "update": ["update"],
     "link": "close delete defer undefer dep-add dep-remove gate-resolve label-add label-remove".split(),
@@ -31,8 +31,9 @@ def mode():
 
 
 def verb_of(argv):
-    """The verb: the first word, or the first two when the first is one of TWO_WORD."""
-    if argv and argv[0] in TWO_WORD and len(argv) > 1:
+    """The verb: the first word, or the first two when the first is one of TWO_WORD (`comments <id>` and `swarm <word>` are
+    two words only when the pair is a verb of its own: comments add, swarm validate)."""
+    if argv and argv[0] in TWO_WORD and len(argv) > 1 and (argv[0] not in ("comments", "swarm") or argv[0] + "-" + argv[1] in FAMILY_OF):
         return argv[0] + "-" + argv[1]
     return argv[0] if argv else ""
 
@@ -47,6 +48,8 @@ def unsupported(argv):
 
 
 def run_tables(argv):
+    if argv[:1] == ["--readonly"]:      # bd's global flag in front of the verb: the call is the rest
+        argv = argv[1:]
     verb = verb_of(argv)
     if verb == "dolt":
         sys.stderr.write("Beads is retired: no dolt\n")

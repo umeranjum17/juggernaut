@@ -12,42 +12,17 @@ py=; for c in /usr/bin/python3 /usr/local/bin/python3 "$(command -v python3)"; d
 [ -n "$py" ] || exit 1
 ln -s "$py" "$t/path/python3"          # the one tool on PATH: neither bd nor dolt can run
 fail=0
-# Forms the tables cannot answer yet. bd_forms/read.py raises NotSupported for them (or the dispatcher cannot route the call),
-# so each prints FAIL here without failing the test; a new FAIL outside this list does. Why:
-#   a ticket with a link (edge created_at, created_by, metadata are not kept): list/ready/export forms over linked rows;
-#   a gate row (await_type is not kept); a nested metadata object (the tables keep its keys sorted, bd keeps insertion order);
-#   events, history and provenance that no ticket_event row records; schema, memories, q and provenance record (no table);
-#   check (the admin family answers it), swarm validate and comments <id> (the dispatcher reads them as another verb), --readonly
-#   (the dispatcher reads it as the verb), export and bare `list --json` of an empty store (the recorded store does not match).
-GAPS=(
-  'check'
-  'comments'
-  'comments --json'
-  'events --limit --since'
-  'export'
-  'history --events'
-  'history --events --json'
-  'list --all --include-gates --json --limit --readonly'
-  'list --all --json'
-  'list --all --json --parent'
-  'list --include-gates --json --limit --status'
-  'list --json'
-  'list --json --label --type'
-  'list --json --limit'
-  'list --json --parent'
-  'list --json --parent --status'
-  'memories --json'
-  'provenance --actor --at --issue --kind --ref --ref-kind --source'
-  'provenance --at --issue --kind --payload --ref --ref-kind --source'
-  'provenance --at --issue --kind --payload --source'
-  'provenance --at --issue --kind --ref --ref-kind --source'
-  'provenance --json'
-  'q'
-  'ready --json --parent'
-  'schema'
-  'swarm validate'
+# Forms no table can answer: each prints `known-gap <form>: <reason>` without failing the test; any other mismatch fails.
+declare -A GAPS=(
+  ['check']='bd printed the paths and versions of the machine it ran on; the admin family answers check from the tables'
+  ['comments']="bd renders a comment's text through a terminal markdown renderer (wrap and padding are not derivable)"
 )
-is_gap() { local g; for g in "${GAPS[@]}"; do [ "$g" = "$1" ] && return 0; done; return 1; }
+# Seeds, as the tables hold them (a store export row may carry `events` and `provenance` arrays; memory has a row per key):
+#   export and its recorded store is empty: the recorded stdout is itself an export, so it is the store;
+#   history, events and provenance log: the entries of bd's recorded answer, put on the ticket the call names;
+#   memories: the recorded key and value, put in the memory table.
+# Beads' own random ids (a provenance entry's uuid, the id q mints) are cut from both sides; the `revision` hash of a show row is cut too;
+# bd lists the dependencies of a row with several edges in a random order, so two answers that differ in that order alone are equal.
 mapfile -t fixtures < <(PATH=$t/path python3 -I - "$repo" <<'PY'
 import csv, glob, json, os, sys
 repo = sys.argv[1]
@@ -64,25 +39,98 @@ for fx in "${fixtures[@]}"; do
   mkdir -p "$h/config" "$h/state" "$h/data"
   : >"$h/config/bd-tables"
   PATH=$t/path python3 -I - "$fx" "$t/$n" <<'PY'
-import json, sys
+import json, re, sys
 d = json.load(open(sys.argv[1])); base = sys.argv[2]
-open(base + ".store", "w", encoding="utf-8").write(d["store"] or "")
+form, argv, store, out = d["form"], d["argv"], d["store"] or "", d["stdout"]
+memory = {}
+def attach(ident, key, entries):
+    global store
+    rows = [json.loads(l) for l in store.splitlines() if l.strip()]
+    for r in rows:
+        if r["id"] == ident:
+            r[key] = entries
+    store = "".join(json.dumps(r, separators=(",", ":")) + "\n" for r in rows)
+if form == "export" and not store:
+    store = out
+elif form == "history --events --json":
+    attach(argv[1], "events", json.loads(out))
+elif form == "history --events":
+    entries = []
+    for block in out.split("\n\n")[1:]:
+        lines = block.strip("\n").split("\n")
+        if not lines or not lines[0]:
+            continue
+        date, clock, kind, _, actor = lines[0].split(" ")
+        e = {"id": "e%d" % len(entries), "issue_id": argv[1], "event_type": kind, "actor": actor, "created_at": date + "T" + clock + "Z"}
+        for line in lines[1:]:
+            label, _, text = line.strip().partition(": ")
+            e[{"Old": "old_value", "New": "new_value", "Comment": "comment"}[label]] = text
+        entries.append(e)
+    attach(argv[1], "events", entries)
+elif form == "events --limit --since":
+    for line in out.splitlines():
+        e = json.loads(line)
+        attach(e["issue_id"], "events", [e])
+elif form == "provenance --json":
+    attach(argv[2], "provenance", json.loads(out))
+elif form == "memories --json":
+    memory = {k: v for k, v in json.loads(out).items() if k != "schema_version"}
+open(base + ".store", "w", encoding="utf-8").write(store)
+open(base + ".memory", "w", encoding="utf-8").write(json.dumps(memory))
 open(base + ".stdin", "w", encoding="utf-8", newline="").write(d["stdin"])
-open(base + ".stdout", "w", encoding="utf-8", newline="").write(d["stdout"])
+open(base + ".stdout", "w", encoding="utf-8", newline="").write(out)
 open(base + ".exit", "w").write(str(d["exit"]))
-open(base + ".argv", "wb").write(b"".join(a.encode() + b"\0" for a in d["argv"]))
-open(base + ".form", "w").write(d["form"])
+open(base + ".argv", "wb").write(b"".join(a.encode() + b"\0" for a in argv))
+open(base + ".form", "w").write(form)
 PY
   form=$(cat "$t/$n.form")
   mapfile -d '' -t argv <"$t/$n.argv"
   if ! PATH=$t/path JG_HOME=$h python3 -I "$repo/core/item-store/adapters/tickets.py" import --home main "$t/$n.store" >/dev/null 2>"$t/$n.err"; then
     echo "FAIL $form (import: $(head -1 "$t/$n.err"))"; fail=1; continue
   fi
+  PATH=$t/path JG_HOME=$h python3 -I - "$t/$n.memory" <<'PY'
+import glob, json, os, sqlite3, sys
+mem = json.load(open(sys.argv[1]))
+if mem:
+    con = sqlite3.connect(glob.glob(os.environ["JG_HOME"] + "/state/item-store/fleet.db")[0])
+    con.executemany("INSERT INTO memory (home, key, value) VALUES ('main', ?, ?)", sorted(mem.items()))
+    con.commit()
+PY
   (cd "$t" && PATH=$t/path JG_HOME=$h python3 -I "$repo/core/item-store/adapters/bd_compat.py" "${argv[@]}" <"$t/$n.stdin" >"$t/$n.got" 2>"$t/$n.err")   # from the scratch folder: export -o writes a file there
   rc=$?
-  sed -z 's/,\n *"revision": "[^"]*"//' "$t/$n.got" >"$t/$n.got2"; sed -z 's/,\n *"revision": "[^"]*"//' "$t/$n.stdout" >"$t/$n.want2"
-  if [ "$rc" = "$(cat "$t/$n.exit")" ] && cmp -s "$t/$n.got2" "$t/$n.want2"; then echo "ok $form"
-  elif is_gap "$form"; then echo "FAIL $form (fixture $n: known gap; exit $rc, wanted $(cat "$t/$n.exit"))"
+  PATH=$t/path python3 -I - "$form" "$t/$n.got" "$t/$n.stdout" >"$t/$n.same" <<'PY'
+import json, re, sys
+form, got, want = sys.argv[1], open(sys.argv[2], encoding="utf-8", newline="").read(), open(sys.argv[3], encoding="utf-8", newline="").read()
+cut = lambda t: re.sub(r',\n *"revision": "[^"]*"', "", t)
+if form.startswith("provenance --") and form != "provenance --json":
+    cut = lambda t: re.sub(r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}", "<uuid>", t)
+elif form == "q":
+    cut = lambda t: re.sub(r"^[a-z0-9]+-[0-9a-z]+$", "<id>", t, flags=re.M)
+got, want = cut(got), cut(want)
+def parsed(t):
+    try:
+        v = json.loads(t)
+    except ValueError:
+        try:
+            v = [json.loads(l) for l in t.splitlines()]
+        except ValueError:
+            return None
+    for row in (v if isinstance(v, list) else []):
+        if isinstance(row, dict) and isinstance(row.get("dependencies"), list):
+            row["dependencies"].sort(key=lambda d: (d["depends_on_id"], d["type"]))
+    return v
+print("same" if got == want or (parsed(got) is not None and parsed(got) == parsed(want)) else "differ")
+PY
+  if [ "$rc" = "$(cat "$t/$n.exit")" ] && [ "$(cat "$t/$n.same")" = same ]; then
+    if [[ $form == provenance\ --* && $form != 'provenance --json' ]]; then
+      [ "$(PATH=$t/path JG_HOME=$h python3 -I - <<'PY'
+import glob, os, sqlite3
+print(sqlite3.connect(glob.glob(os.environ["JG_HOME"] + "/state/item-store/fleet.db")[0]).execute("SELECT count(*) FROM ticket_event WHERE source = 'provenance'").fetchone()[0])
+PY
+)" = 1 ] || { echo "FAIL $form (the recorded entry is not in ticket_event)"; fail=1; continue; }
+    fi
+    echo "ok $form"
+  elif [ -n "${GAPS[$form]:-}" ]; then echo "known-gap $form: ${GAPS[$form]}"
   else echo "FAIL $form (fixture $n: exit $rc, wanted $(cat "$t/$n.exit"); $(head -1 "$t/$n.err"))"; fail=1; fi
 done
 exit "$fail"

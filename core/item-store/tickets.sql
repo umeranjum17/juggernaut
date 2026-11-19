@@ -22,6 +22,7 @@ CREATE TABLE ticket (
   status       TEXT,                                     -- Beads' own word (open, in_progress, blocked, on_hold, deferred, closed) while Beads is the record
   defer_until  TEXT,                                     -- the dated hold: with status deferred
   external_ref TEXT,                                     -- the pull request pointer
+  await_type   TEXT,                                     -- a gate's wait (human, ...)
   labels       TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(labels)),     -- JSON list
   metadata     TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(metadata)),   -- JSON object, every key kept
   ephemeral    INTEGER NOT NULL DEFAULT 0 CHECK (ephemeral IN (0, 1)),
@@ -34,6 +35,10 @@ CREATE TABLE link (
   from_id TEXT NOT NULL,                                 -- the dependent ticket
   to_id   TEXT NOT NULL,                                 -- what it depends on or relates to
   type    TEXT NOT NULL CHECK (type IN ('parent-child', 'blocks', 'related', 'tracks')),
+  n          INTEGER NOT NULL DEFAULT 0,                 -- the edge's place in its ticket's dependency list, as the export gave it
+  created_at TEXT,                                       -- the edge's own stamp, author and metadata text (Beads keeps '{}'), as the export gave them
+  created_by TEXT,
+  metadata   TEXT,
   PRIMARY KEY (home, from_id, to_id, type)
 );
 CREATE INDEX link_to ON link(home, to_id, type);
@@ -77,7 +82,7 @@ CREATE TABLE ticket_event (
 );
 
 -- The log. row is the ticket as one JSON object (NULL: the ticket was dropped from this store); links is the JSON list of
--- {"to":..., "type":...} the ticket has after the change. source is the outside record: one call writes each ticket once.
+-- {"to":..., "type":..., "created_at":..., "created_by":..., "metadata":...} (the last three when the export gave them) the ticket has after the change, in the export's order. source is the outside record: one call writes each ticket once.
 CREATE TABLE ticket_change (
   seq    INTEGER PRIMARY KEY,
   at     INTEGER NOT NULL,
@@ -97,23 +102,24 @@ CREATE TRIGGER ticket_change_kept BEFORE DELETE ON ticket_change BEGIN SELECT RA
 CREATE TRIGGER ticket_apply AFTER INSERT ON ticket_change WHEN NEW.row IS NOT NULL
 BEGIN
   INSERT INTO ticket (id, home, title, description, priority, issue_type, assignee, created_at, created_by, updated_at,
-                      started_at, closed_at, close_reason, status, defer_until, external_ref, labels, metadata, ephemeral)
+                      started_at, closed_at, close_reason, status, defer_until, external_ref, await_type, labels, metadata, ephemeral)
   VALUES (NEW.id, NEW.home, json_extract(NEW.row, '$.title'), json_extract(NEW.row, '$.description'),
           json_extract(NEW.row, '$.priority'), json_extract(NEW.row, '$.issue_type'), json_extract(NEW.row, '$.assignee'),
           json_extract(NEW.row, '$.created_at'), json_extract(NEW.row, '$.created_by'),
           json_extract(NEW.row, '$.updated_at'), json_extract(NEW.row, '$.started_at'), json_extract(NEW.row, '$.closed_at'), json_extract(NEW.row, '$.close_reason'),
           json_extract(NEW.row, '$.status'), json_extract(NEW.row, '$.defer_until'), json_extract(NEW.row, '$.external_ref'),
-          coalesce(json_extract(NEW.row, '$.labels'), '[]'), coalesce(json_extract(NEW.row, '$.metadata'), '{}'),
+          json_extract(NEW.row, '$.await_type'), coalesce(json_extract(NEW.row, '$.labels'), '[]'), coalesce(json_extract(NEW.row, '$.metadata'), '{}'),
           coalesce(json_extract(NEW.row, '$.ephemeral'), 0))
   ON CONFLICT (home, id) DO UPDATE SET
     title = excluded.title, description = excluded.description, priority = excluded.priority, issue_type = excluded.issue_type,
     assignee = excluded.assignee, created_at = excluded.created_at, created_by = excluded.created_by,
     updated_at = excluded.updated_at, started_at = excluded.started_at, closed_at = excluded.closed_at,
     close_reason = excluded.close_reason, status = excluded.status, defer_until = excluded.defer_until,
-    external_ref = excluded.external_ref, labels = excluded.labels, metadata = excluded.metadata, ephemeral = excluded.ephemeral;
+    external_ref = excluded.external_ref, await_type = excluded.await_type, labels = excluded.labels, metadata = excluded.metadata, ephemeral = excluded.ephemeral;
   DELETE FROM link WHERE home = NEW.home AND from_id = NEW.id;
-  INSERT OR IGNORE INTO link (home, from_id, to_id, type)
-    SELECT NEW.home, NEW.id, json_extract(value, '$.to'), json_extract(value, '$.type') FROM json_each(NEW.links);
+  INSERT OR IGNORE INTO link (home, from_id, to_id, type, n, created_at, created_by, metadata)
+    SELECT NEW.home, NEW.id, json_extract(value, '$.to'), json_extract(value, '$.type'), key, json_extract(value, '$.created_at'),
+           json_extract(value, '$.created_by'), json_extract(value, '$.metadata') FROM json_each(NEW.links);
   DELETE FROM comment WHERE home = NEW.home AND ticket_id = NEW.id;
   INSERT OR IGNORE INTO comment (home, ticket_id, id, author, text, created_at)
     SELECT NEW.home, NEW.id, json_extract(value, '$.id'), json_extract(value, '$.author'), json_extract(value, '$.text'),

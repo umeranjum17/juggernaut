@@ -238,7 +238,7 @@ def check_close(t, store, home_id, call):
 def export_row(t):
     body = {k: t[k] for k in tickets.FIELDS}
     body.update(labels=t["labels"], metadata=t["metadata"], ephemeral=t["ephemeral"], id=t["id"],
-                dependencies=[{"depends_on_id": to, "type": ty} for _, to, ty in t["links"]])
+                dependencies=t["edges"])
     return body
 
 

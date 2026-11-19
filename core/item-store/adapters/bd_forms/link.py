@@ -60,7 +60,7 @@ def row_of(con, home_id, ident):
         raise tickets.Refused("no issue found matching %r" % ident)
     row = {k: c[k] for k in tickets.FIELDS + ("labels", "metadata", "ephemeral")}
     row["id"] = ident
-    row["dependencies"] = [{"depends_on_id": t, "type": ty} for _, t, ty in c["links"]]
+    row["dependencies"] = c["edges"]
     return row
 
 
@@ -90,7 +90,7 @@ def dep(argv):
         if verb == "add":
             if any(d["depends_on_id"] == to for d in edges):
                 raise tickets.Refused("dependency %s -> %s already exists" % (frm, to))
-            edges.append({"depends_on_id": to, "type": typ})
+            edges.append(tickets.new_edge(to, typ))
         else:
             if not any(d["depends_on_id"] == to for d in edges):
                 raise tickets.Refused("no dependency %s -> %s" % (frm, to))
