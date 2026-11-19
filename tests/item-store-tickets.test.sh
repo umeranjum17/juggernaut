@@ -313,6 +313,34 @@ python3 -c 'import sqlite3,sys; sqlite3.connect(sys.argv[1]).execute("DROP TABLE
 jg_item; expect_code 0 $? "jg-item schema-check passes with the ticket tables"
 pass "audit: the ticket tables pass, a stray table still fails"
 
+# --- the fields Beads prints beyond the first copy: created_by, updated_at, started_at, comments, events, provenance
+F=$T/fields; mkdir -p "$F/config" "$F/state"
+fk() { JG_HOME=$F python3 "$TK" "$@"; }
+fsql() { python3 -c 'import sqlite3,sys; [print("|".join(map(str,r))) for r in sqlite3.connect(sys.argv[1]).execute(sys.argv[2])]' "$F/state/item-store/fleet.db" "$1"; }
+fk import --home main "$FX/export-fields.jsonl" >/dev/null; expect_code 0 $? "import of the all-fields export"
+out=$(fk compare "$FX/export-fields.jsonl"); expect_code 0 $? "compare of the all-fields import is empty: $out"
+[ "$(fsql "SELECT created_by||'|'||updated_at||'|'||started_at FROM ticket WHERE id='jg-fa'")" = "umer|2026-11-19T21:00:00Z|2026-11-19T20:40:00Z" ] || fail "the three new columns hold the export's values"
+[ "$(fsql "SELECT started_at IS NULL FROM ticket WHERE id='jg-fb'")" = 1 ] || fail "a ticket never started has a NULL started_at"
+[ "$(fsql "SELECT comment_count FROM v_ticket_comment_count WHERE id='jg-fa'")" = 2 ] || fail "comment_count is derived from the comment rows"
+[ "$(fsql "SELECT comment_count FROM v_ticket_comment_count WHERE id='jg-fb'")" = 0 ] || fail "a ticket with no comments counts 0"
+[ "$(fsql "SELECT source||n||kind FROM ticket_event WHERE ticket_id='jg-fa' ORDER BY source, n")" = "event0created
+event1status
+provenance0landed" ] || fail "events and provenance land in ticket_event, in order"
+[ "$(fsql "SELECT ref_kind||ref FROM ticket_event WHERE source='provenance'")" = "git-shaabc123" ] || fail "provenance keeps its ref"
+# a field that drifts is named by compare, and so is a lost comment
+python3 -c 'import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute("UPDATE ticket SET updated_at=NULL WHERE id=\"jg-fa\""); c.execute("DELETE FROM comment WHERE id=\"c-1\""); c.commit()' "$F/state/item-store/fleet.db"
+out=$(fk compare "$FX/export-fields.jsonl"); expect_code 1 $? "compare names a drifted field"
+assert_contains "$out" "jg-fa updated_at beads=" "compare names updated_at"
+assert_contains "$out" "jg-fa comments beads=" "compare names the comments"
+fk import --home main "$FX/export-fields.jsonl" >/dev/null; fk compare "$FX/export-fields.jsonl" >/dev/null; expect_code 0 $? "a second import repairs both"
+# Beads' own export carries no events or provenance: a re-export of the same ticket leaves the streams in the copy alone
+python3 -c 'import json,sys; [print(json.dumps({k: v for k, v in json.loads(l).items() if k not in ("events", "provenance")})) for l in open(sys.argv[1])]' "$FX/export-fields.jsonl" > "$T/fields-plain.jsonl"
+python3 -c 'import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute("UPDATE ticket SET title=\"edited\" WHERE id=\"jg-fa\""); c.commit()' "$F/state/item-store/fleet.db"
+fk import --home main "$T/fields-plain.jsonl" >/dev/null; expect_code 0 $? "import of an export with no streams"
+[ "$(fsql "SELECT count(*) FROM ticket_event WHERE ticket_id='jg-fa'")" = 3 ] || fail "a re-export without events leaves the copy's events and provenance"
+fk compare "$T/fields-plain.jsonl" >/dev/null; expect_code 0 $? "compare against an export with no streams is empty"
+pass "the new fields: import fills them, compare is 0 and names a drift, comment_count is derived, a plain re-export keeps the streams"
+
 # --- check: the tables exist, the sql matches its sha, no row breaks the hold rule
 out=$(python3 "$TK" check); expect_code 0 $? "check passes on the imported fixture"
 assert_contains "$out" "tickets: ok ($(sql "SELECT count(*) FROM ticket WHERE home='main'") rows)" "check counts this home's rows"

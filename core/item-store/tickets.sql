@@ -1,7 +1,7 @@
 -- The ticket tables of the one item store (docs/item-store.md): every field the fleet keeps in Beads, beside the items.
 -- Loaded into the same fleet.db after schema.sql (core/item-store/adapters/tickets.py), and never changes it. The store's
 -- audit and `jg-item check` hash this file's objects against tickets.sha256 and everything else against schema.sha256.
--- Three tables: ticket and link are the fold of ticket_change, the append-only log; a writer only INSERTs INTO ticket_change.
+-- Five tables: ticket, link, comment and ticket_event are the fold of ticket_change, the append-only log; a writer only INSERTs INTO ticket_change.
 -- A ticket is keyed on (home, id): ids are NOT unique across homes (every home mints jg- ids from its own counter), so the
 -- same id may be a different ticket in two homes, and one id twice in one home is one row. Every read names its home.
 
@@ -14,6 +14,9 @@ CREATE TABLE ticket (
   issue_type   TEXT,                                     -- task, epic, gate, ...
   assignee     TEXT,
   created_at   TEXT,
+  created_by   TEXT,
+  updated_at   TEXT,
+  started_at   TEXT,                                     -- when the ticket first went in progress
   closed_at    TEXT,
   close_reason TEXT,
   status       TEXT,                                     -- Beads' own word (open, in_progress, blocked, on_hold, deferred, closed) while Beads is the record
@@ -35,6 +38,36 @@ CREATE TABLE link (
 );
 CREATE INDEX link_to ON link(home, to_id, type);
 
+CREATE TABLE comment (
+  home       TEXT NOT NULL,
+  ticket_id  TEXT NOT NULL,
+  id         TEXT NOT NULL,                              -- Beads' own comment id
+  author     TEXT,
+  text       TEXT,
+  created_at TEXT,
+  PRIMARY KEY (home, ticket_id, id)
+);
+-- A ticket's comment count is never stored: it is the rows of comment.
+CREATE VIEW v_ticket_comment_count AS
+  SELECT t.home, t.id, (SELECT count(*) FROM comment c WHERE c.home = t.home AND c.ticket_id = t.id) AS comment_count FROM ticket t;
+
+-- The events journal and the provenance log of a ticket, one row per entry. source says which stream (event or provenance), n is the
+-- entry's place in that stream, data the whole entry as Beads gave it. A change whose row has no events (or no provenance) key leaves
+-- that stream as it was: Beads' export carries neither, so a plain re-export never erases them.
+CREATE TABLE ticket_event (
+  home      TEXT NOT NULL,
+  ticket_id TEXT NOT NULL,
+  source    TEXT NOT NULL CHECK (source IN ('event', 'provenance')),
+  n         INTEGER NOT NULL,
+  kind      TEXT,
+  actor     TEXT,
+  ref_kind  TEXT,                                        -- provenance: what the ref is (a git sha, a pull request, ...)
+  ref       TEXT,
+  at        TEXT,
+  data      TEXT NOT NULL CHECK (json_valid(data)),
+  PRIMARY KEY (home, ticket_id, source, n)
+);
+
 -- The log. row is the ticket as one JSON object (NULL: the ticket was dropped from this store); links is the JSON list of
 -- {"to":..., "type":...} the ticket has after the change. source is the outside record: one call writes each ticket once.
 CREATE TABLE ticket_change (
@@ -55,26 +88,42 @@ CREATE TRIGGER ticket_change_kept BEFORE DELETE ON ticket_change BEGIN SELECT RA
 
 CREATE TRIGGER ticket_apply AFTER INSERT ON ticket_change WHEN NEW.row IS NOT NULL
 BEGIN
-  INSERT INTO ticket (id, home, title, description, priority, issue_type, assignee, created_at, closed_at, close_reason,
-                      status, defer_until, external_ref, labels, metadata, ephemeral)
+  INSERT INTO ticket (id, home, title, description, priority, issue_type, assignee, created_at, created_by, updated_at,
+                      started_at, closed_at, close_reason, status, defer_until, external_ref, labels, metadata, ephemeral)
   VALUES (NEW.id, NEW.home, json_extract(NEW.row, '$.title'), json_extract(NEW.row, '$.description'),
           json_extract(NEW.row, '$.priority'), json_extract(NEW.row, '$.issue_type'), json_extract(NEW.row, '$.assignee'),
-          json_extract(NEW.row, '$.created_at'), json_extract(NEW.row, '$.closed_at'), json_extract(NEW.row, '$.close_reason'),
+          json_extract(NEW.row, '$.created_at'), json_extract(NEW.row, '$.created_by'),
+          json_extract(NEW.row, '$.updated_at'), json_extract(NEW.row, '$.started_at'), json_extract(NEW.row, '$.closed_at'), json_extract(NEW.row, '$.close_reason'),
           json_extract(NEW.row, '$.status'), json_extract(NEW.row, '$.defer_until'), json_extract(NEW.row, '$.external_ref'),
           coalesce(json_extract(NEW.row, '$.labels'), '[]'), coalesce(json_extract(NEW.row, '$.metadata'), '{}'),
           coalesce(json_extract(NEW.row, '$.ephemeral'), 0))
   ON CONFLICT (home, id) DO UPDATE SET
     title = excluded.title, description = excluded.description, priority = excluded.priority, issue_type = excluded.issue_type,
-    assignee = excluded.assignee, created_at = excluded.created_at, closed_at = excluded.closed_at,
+    assignee = excluded.assignee, created_at = excluded.created_at, created_by = excluded.created_by,
+    updated_at = excluded.updated_at, started_at = excluded.started_at, closed_at = excluded.closed_at,
     close_reason = excluded.close_reason, status = excluded.status, defer_until = excluded.defer_until,
     external_ref = excluded.external_ref, labels = excluded.labels, metadata = excluded.metadata, ephemeral = excluded.ephemeral;
   DELETE FROM link WHERE home = NEW.home AND from_id = NEW.id;
   INSERT OR IGNORE INTO link (home, from_id, to_id, type)
     SELECT NEW.home, NEW.id, json_extract(value, '$.to'), json_extract(value, '$.type') FROM json_each(NEW.links);
+  DELETE FROM comment WHERE home = NEW.home AND ticket_id = NEW.id;
+  INSERT OR IGNORE INTO comment (home, ticket_id, id, author, text, created_at)
+    SELECT NEW.home, NEW.id, json_extract(value, '$.id'), json_extract(value, '$.author'), json_extract(value, '$.text'),
+           json_extract(value, '$.created_at') FROM json_each(NEW.row, '$.comments');
+  DELETE FROM ticket_event WHERE home = NEW.home AND ticket_id = NEW.id AND source = 'event' AND json_type(NEW.row, '$.events') = 'array';
+  INSERT INTO ticket_event (home, ticket_id, source, n, kind, actor, ref_kind, ref, at, data)
+    SELECT NEW.home, NEW.id, 'event', key, coalesce(json_extract(value, '$.kind'), json_extract(value, '$.type')), json_extract(value, '$.actor'),
+           NULL, NULL, coalesce(json_extract(value, '$.created_at'), json_extract(value, '$.at')), value FROM json_each(NEW.row, '$.events');
+  DELETE FROM ticket_event WHERE home = NEW.home AND ticket_id = NEW.id AND source = 'provenance' AND json_type(NEW.row, '$.provenance') = 'array';
+  INSERT INTO ticket_event (home, ticket_id, source, n, kind, actor, ref_kind, ref, at, data)
+    SELECT NEW.home, NEW.id, 'provenance', key, json_extract(value, '$.kind'), json_extract(value, '$.actor'), json_extract(value, '$.ref_kind'),
+           json_extract(value, '$.ref'), json_extract(value, '$.created_at'), value FROM json_each(NEW.row, '$.provenance');
 END;
 CREATE TRIGGER ticket_drop AFTER INSERT ON ticket_change WHEN NEW.row IS NULL
 BEGIN
   DELETE FROM link WHERE home = NEW.home AND from_id = NEW.id;
+  DELETE FROM comment WHERE home = NEW.home AND ticket_id = NEW.id;
+  DELETE FROM ticket_event WHERE home = NEW.home AND ticket_id = NEW.id;
   DELETE FROM ticket WHERE home = NEW.home AND id = NEW.id;
 END;
 

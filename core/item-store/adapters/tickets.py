@@ -36,7 +36,7 @@ bin/jg-backlog.sh in the same call that writes Beads when the main home has conf
 JG_NOW (an ISO time) replaces the clock for ready's dated holds, in tests. A ticket is keyed (home, id). Every read is scoped to the home JG_HOME names; a cross-home read names home:id.
 JG_HOME names this home (the store is the main home's state/item-store/fleet.db). Exit 0 ok, 1 refused or a difference, 3 spawnable with no config/one-engine-read,
 2 usage. Python stdlib only."""
-import json, os, sqlite3, subprocess, sys, time
+import json, os, re, sqlite3, subprocess, sys, time
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 STORE = os.path.dirname(HERE)
@@ -44,8 +44,10 @@ sys.path.insert(0, STORE)
 import itemdb  # noqa: E402
 
 BY = "adapter:tickets"
-FIELDS = ("title", "description", "priority", "issue_type", "assignee", "created_at", "closed_at", "close_reason",
-          "status", "defer_until", "external_ref")
+FIELDS = ("title", "description", "priority", "issue_type", "assignee", "created_at", "created_by", "updated_at", "started_at",
+          "closed_at", "close_reason", "status", "defer_until", "external_ref")
+COMMENT_KEYS = ("id", "author", "text", "created_at")
+STREAMS = ("events", "provenance")       # the export may carry either; Beads' own export carries neither, they come from bd events / bd provenance
 
 
 class Refused(Exception):
@@ -69,8 +71,9 @@ def open_tickets(h):
     st = itemdb.open_db(h, BY)
     if not st.con.execute("SELECT 1 FROM sqlite_master WHERE name = 'ticket_change'").fetchone():
         st.con.executescript(sql.decode("utf-8"))
-    elif st.con.execute("SELECT 1 FROM sqlite_master WHERE name = 'ticket_change_home'").fetchone():
-        migrate_to_home_key(st.con, sql.decode("utf-8"))
+    elif (st.con.execute("SELECT 1 FROM sqlite_master WHERE name = 'ticket_change_home'").fetchone()
+          or "created_by" not in [c[1] for c in st.con.execute("PRAGMA table_info(ticket)")]):
+        rebuild_from_log(st.con, sql.decode("utf-8"))
     return st
 
 
@@ -86,22 +89,21 @@ def statements(script):
     return out
 
 
-def migrate_to_home_key(con, sql):
-    """A store made when an id was unique across homes (ticket_change_home refused a second home's id) becomes keyed
-    (home, id). The ticket and link tables are the fold of ticket_change, so the log is kept as it is - every seq, at and
-    source - moved aside, and replayed in seq order into the new tables: the triggers rebuild each row. One transaction;
-    the replay must give back every ticket and link row, else nothing changes."""
+def rebuild_from_log(con, sql):
+    """A store made from an older tickets.sql (an id unique across homes, or a ticket with no created_by, comment or ticket_event) becomes
+    the current tables. Every table but the log is the fold of ticket_change, so the log is kept as it is - every seq, at and
+    source - moved aside, and replayed in seq order into the new tables: the triggers rebuild each row (a field the old log never
+    held is NULL until the next import fills it). One transaction; the replay must give back every ticket and link row, else nothing changes."""
     con.execute("BEGIN IMMEDIATE")
     try:
         before = [con.execute("SELECT count(*) FROM " + t).fetchone()[0] for t in ("ticket", "link", "ticket_change")]
-        for kind, name in con.execute("SELECT type, name FROM sqlite_master WHERE type IN ('view', 'trigger', 'index') "
-                                      "AND name IN ('v_ticket_status', 'ticket_change_home', 'ticket_change_final', "
-                                      "'ticket_change_kept', 'ticket_apply', 'ticket_drop', 'ticket_status', 'link_to', "
-                                      "'ticket_change_once', 'ticket_change_id')").fetchall():
-            con.execute("DROP %s %s" % (kind, name))
+        mine = set(re.findall(r"^CREATE (?:UNIQUE )?(?:VIEW|TRIGGER|INDEX) (\w+)", sql, re.M)) | {"ticket_change_home"}
+        for kind, name in con.execute("SELECT type, name FROM sqlite_master WHERE type IN ('view', 'trigger', 'index')").fetchall():
+            if name in mine:
+                con.execute("DROP %s %s" % (kind, name))
         con.execute("ALTER TABLE ticket_change RENAME TO ticket_change_old")
-        con.execute("DROP TABLE ticket")
-        con.execute("DROP TABLE link")
+        for t in ("ticket", "link", "comment", "ticket_event"):
+            con.execute("DROP TABLE IF EXISTS " + t)
         for stmt in statements(sql):
             con.execute(stmt)
         con.execute("INSERT INTO ticket_change (seq, at, home, id, verb, source, row, links) "
@@ -129,7 +131,9 @@ def norm(row):
     """One export row as the copy holds it: scalars, a sorted label list, a metadata object, and its links."""
     scalars = {k: (row.get(k) if row.get(k) not in ("", None) else None) for k in FIELDS}
     meta = row.get("metadata") or {}
-    return dict(scalars, labels=sorted(row.get("labels") or []), metadata=meta, ephemeral=int(bool(row.get("ephemeral"))),
+    comments = sorted(({k: c.get(k) for k in COMMENT_KEYS} for c in row.get("comments") or []), key=lambda c: str(c["id"]))
+    streams = {k: [json.dumps(e, sort_keys=True) for e in row[k]] for k in STREAMS if isinstance(row.get(k), list)}
+    return dict(scalars, comments=comments, streams=streams, labels=sorted(row.get("labels") or []), metadata=meta, ephemeral=int(bool(row.get("ephemeral"))),
                 links=sorted({(row["id"], d["depends_on_id"], d["type"])
                               for d in row.get("dependencies") or []}))
 
@@ -138,6 +142,9 @@ def change(st, at, home_id, verb, source, row):
     n = norm(row)
     body = {k: n[k] for k in FIELDS + ("ephemeral",)}
     body["labels"], body["metadata"] = json.dumps(n["labels"]), json.dumps(n["metadata"], sort_keys=True)
+    body["comments"] = n["comments"]
+    for k, v in n["streams"].items():       # a stream the row lacks stays as the copy holds it (see ticket_event)
+        body[k] = [json.loads(e) for e in v]
     links = json.dumps([{"to": t, "type": ty} for _, t, ty in n["links"]])
     st.con.execute("INSERT INTO ticket_change (at, home, id, verb, source, row, links) VALUES (?,?,?,?,?,?,?)",
                    (at, home_id, row["id"], verb, source, json.dumps(body), links))
@@ -152,6 +159,11 @@ def copy_of(con, home_id, ident):
     d["labels"], d["metadata"] = sorted(json.loads(d["labels"])), json.loads(d["metadata"])
     d["links"] = sorted(con.execute("SELECT from_id, to_id, type FROM link WHERE home = ? AND from_id = ?", (home_id, ident)).fetchall())
     d["links"] = [tuple(x) for x in d["links"]]
+    d["comments"] = [dict(zip(COMMENT_KEYS, x)) for x in con.execute(
+        "SELECT id, author, text, created_at FROM comment WHERE home = ? AND ticket_id = ? ORDER BY id", (home_id, ident))]
+    d["streams"] = {k: [x for (x,) in con.execute("SELECT data FROM ticket_event WHERE home = ? AND ticket_id = ? AND source = ? ORDER BY n",
+                                                  (home_id, ident, src))] for k, src in (("events", "event"), ("provenance", "provenance"))}
+    d["streams"] = {k: [json.dumps(json.loads(e), sort_keys=True) for e in v] for k, v in d["streams"].items()}
     return d
 
 
@@ -163,6 +175,11 @@ def diffs(beads, copy):
             out.append((k, beads[k], copy[k]))
     if beads["labels"] != copy["labels"]:
         out.append(("labels", beads["labels"], copy["labels"]))
+    if beads["comments"] != copy["comments"]:
+        out.append(("comments", beads["comments"], copy["comments"]))
+    for k, v in beads["streams"].items():     # only a stream the export carries is compared
+        if v != copy["streams"][k]:
+            out.append((k, v, copy["streams"][k]))
     for k in sorted(set(beads["metadata"]) | set(copy["metadata"])):
         if beads["metadata"].get(k) != copy["metadata"].get(k):
             out.append(("metadata." + k, beads["metadata"].get(k), copy["metadata"].get(k)))
@@ -330,7 +347,7 @@ def cmd_show(a):
 READ_VERBS = ("view", "show", "list", "ready", "markdown", "questions")
 VIEW = os.path.join(STORE, "..", "..", "bin", "jg-beads-view.py")
 LIB = os.path.join(STORE, "..", "..", "bin", "jg-backlog-lib.sh")
-COLS = ("id", "title", "description", "priority", "issue_type", "assignee", "created_at", "closed_at", "close_reason", "status",
+COLS = ("id", "title", "description", "priority", "issue_type", "assignee", "created_at", "created_by", "updated_at", "started_at", "closed_at", "close_reason", "status",
         "defer_until", "external_ref", "labels", "metadata", "ephemeral")
 
 
