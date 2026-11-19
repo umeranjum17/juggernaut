@@ -41,8 +41,11 @@ try {
   for (const c of expected.closed) assert.ok(!rows.some((r) => r.id === c), `closed ${c} is left out of the list`);
   writeFileSync(join(out, `api-tickets.${theme}.${width}.json`), JSON.stringify(rows, null, 2) + '\n');
   // 2. The board's own page, at an exact device size.
-  let port; for (let i = 0; i < 100 && !port; i++) { await wait(100); const f = join(prof, 'DevToolsActivePort'); if (existsSync(f)) port = readFileSync(f, 'utf8').split('\n')[0]; }
-  assert.ok(port, 'Chromium opened its DevTools port');
+  // Chromium answers when it answers: a busy host took more than 10 s, so wait until the port file is there, up to one bound a loaded host can meet.
+  let port; const t0 = Date.now(), f = join(prof, 'DevToolsActivePort');
+  while (!port && Date.now() - t0 < 90000 && chrome.exitCode === null) { await wait(100); if (existsSync(f)) port = readFileSync(f, 'utf8').split('\n')[0] || undefined; }
+  assert.ok(port, `Chromium opened its DevTools port (waited ${Date.now() - t0} ms${chrome.exitCode === null ? '' : `, it exited with ${chrome.exitCode}`})`);
+  console.log(`DevTools port ready after ${Date.now() - t0} ms`);
   const target = await (await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: 'PUT' })).json();
   ws = new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((ok, no) => { ws.onopen = ok; ws.onerror = no; });
