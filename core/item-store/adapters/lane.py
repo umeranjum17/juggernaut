@@ -336,10 +336,17 @@ class Lane:
             self.wk, self.wid = K.key("work", self.hid, task=task), "worker:%s/%s" % (self.hid, task)
             self.at = itemdb.stamp(self.st)
             if not self.st.one("SELECT 1 FROM item WHERE key=? AND state='open'", (self.wk,)):
+                self.at = self.cutover_at()
                 self.put(self.wk, self.st.open, self.wk, "work", self.hid, self.ticket, "the lane's task (imported at the cut-over)", BY,
                          lane=self.wid, project=self.project)
             self.open_waits(os.path.join(sd, task + ".status"))
             self.flush()
+
+    def cutover_at(self):
+        """The stamp a lane running today opens at: its project's policy stamp, the cut-over's own, so the lane limit (which stops a lane
+        opened after that stamp) never refuses a lane that is already running. No policy row: now, and the store refuses as before."""
+        set_at = self.st.one("SELECT set_at FROM v_policy WHERE project=?", (self.project,))
+        return min(self.at, set_at) if set_at else self.at
 
     def open_waits(self, path):
         """The waits open today in one status file, each opened as its last wait line opens it (rows 6, 9, 10); one already open stays."""

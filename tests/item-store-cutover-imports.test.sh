@@ -108,4 +108,10 @@ check lane-compare-clean-after-import "" "$(py "$H" lane.py compare "$H" | grep 
 before=$(q "select count(*) from move")
 py "$H" lane.py import "$H" >/dev/null
 check lane-import-twice-writes-nothing "$before" "$(q "select count(*) from move")"
+# 7. lane import: a lane running today is a fact, so none is refused at the project's lane limit (the cut-over's own stamp); a lane opened later is
+for n in 1 2 3 4 5 6; do printf 'ticket=T-r%s\nproject=/x/proj\n' "$n" > "$H/state/r$n.meta"; echo "working [at=1]: go" > "$H/state/r$n.status"; done
+py "$H" lane.py import "$H" >/dev/null
+check lane-import-over-limit-opens-every-lane 6 "$(q "select count(*) from item where kind='work' and state='open' and key like 'work:main/r%'")"
+check lane-import-over-limit-refuses-none 0 "$(q "select count(*) from item where key like 'intake:main/refused-%'")"
+check lane-compare-clean-over-limit "" "$(py "$H" lane.py compare "$H" | grep -v ' steer#')"
 exit "$fail"
