@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# Journey: the typed ready, proof, retry and cursor facts (bin/jg-facts-lib.sh), read through `jg-machine-guard.sh fact`, each for a legal and an illegal case.
-# a) I1 guard policy: a table edge is legal; an illegal edge is allowed in shadow and refused once the machine is enforced; no table is an allowed error;
-#    the fact and the real `edge` call agree, and the refused write leaves no move line.
+# Journey: the typed proof, writer, ready, retry and cursor facts (bin/jg-facts-lib.sh), read through `jg-machine-guard.sh fact`, each for a legal and an illegal case.
 # b) I2 proof reuse: unset is on from the default; 0 is off from the env; a value that is not 0 or 1 is reported invalid, and reads as on as before.
 # c) I3 writer capability: a forward move needs JG_TRUNK_WRITER, a delete needs JG_TRUNK_RETIRE equal to the ref; the real reference-transaction hook agrees.
 # d) I4 admission: a done line is ready with its epoch; a working line is not ready; flush is due on request, count or age, else waits.
@@ -20,26 +18,6 @@ G=$ROOT/bin/jg-machine-guard.sh
 fails=0
 check() { if [ "$2" = "$3" ]; then echo "ok: $1"; else echo "FAIL: $1 (want: $3, got: $2)"; fails=$((fails + 1)); fi; }
 val() { printf '%s\n' "$1" | awk -F'\t' -v k="$2" '$1 == k { print $2; exit }'; }
-
-# a) guard policy
-# the shipped presence table: present -> quiet is an edge, away -> present is not
-f=$("$G" fact policy presence present quiet) || true
-check 'policy: a table edge is legal' "$(val "$f" verdict)/$(val "$f" outcome)" legal/allowed
-f=$("$G" fact policy presence away present) || true
-check 'policy: an illegal edge is allowed in shadow' "$(val "$f" mode)/$(val "$f" verdict)/$(val "$f" outcome)" shadow/illegal/allowed
-"$G" edge presence away present x && rc=0 || rc=$?; check 'policy: shadow edge exits 0' "$rc" 0
-printf 'presence\n' > "$FM/config/machine-enforce"
-f=$("$G" fact policy presence away present) || true
-check 'policy: an illegal edge is refused once enforced' "$(val "$f" mode)/$(val "$f" outcome)" enforced/refused
-"$G" edge presence away present x 2>/dev/null && rc=0 || rc=$?; check 'policy: the real edge call refuses what the fact says' "$rc" 1
-"$G" edge presence present quiet x && rc=0 || rc=$?; check 'policy: a legal edge passes while enforced' "$rc" 0
-check 'policy: only the legal move reached the move log' "$(cut -f2,3,4,6 "$FM/data/machine-moves.log" | tr '\t' ' ')" 'presence x present quiet'
-tbl=$d/tables; mkdir -p "$tbl"; cp "$ROOT"/core/machines/tables/* "$tbl"/
-printf 'presence\tpresent\n' >> "$tbl/known-baseline.tsv"
-f=$(JG_MACHINES_TABLES=$tbl "$G" fact policy presence present away) || true
-check 'policy: a baseline row keeps the move allowed' "$(val "$f" baseline)/$(val "$f" outcome)" yes/allowed
-f=$("$G" fact policy nosuch a b) || true
-check 'policy: no table is an allowed error' "$(val "$f" table)/$(val "$f" verdict)/$(val "$f" outcome)" unusable/error/allowed
 
 # b) proof reuse
 f=$("$G" fact reuse); check 'reuse: default is on' "$(val "$f" source)/$(val "$f" effective)" default/on

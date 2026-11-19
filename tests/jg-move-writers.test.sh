@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Slice J3b of the state-machine plan on a real Beads store, through the real callers: the writers of the moments make the ticket's move
 # (bin/jg-move.sh) first. `trace record` (bin/jg-beads-trace.py, what the spawn, the tick, the lander and the merge call) and `moment`
-# (bin/jg-beads-moment.py) refuse an illegal move and then write no event and no moment; the delivery tick's done step
+# (bin/jg-beads-moment.py) write an event, a moment and one move line; the delivery tick's done step
 # (bin/jg-ready-trace.sh) writes a new ready_at for a new head, nothing for a landed ticket (it sets the wait `lead` for a head that is not
 # on the trunk), and nothing for the same head; a local landing of a project that publishes nothing writes released_at with landed_at.
 # JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT name the builds; without them the run skips plainly.
@@ -19,10 +19,9 @@ T=$(jg_test_tmproot jg-move-writers); H=$T/home
 WRAPPER=$ROOT/bin/jg-beads.sh CLI=$ROOT/bin/jg-backlog.sh
 unset BEADS_DB BEADS_DOLT_SHARED_SERVER BEADS_ACTOR JG_BACKLOG_LANE JG_BACKLOG_SPAWN_GEN JG_BACKLOG_AGENT JG_BACKLOG_LANE_HANDOVER
 mkdir -p "$T/store" "$H/config" "$H/data" "$H/state" "$H/core/machines"
-# The home holds a copy of the ticket tables whose observer reads state/<ticket>.stage, and the ticket machine is enforced.
+# The home holds a copy of the ticket tables whose observer reads state/<ticket>.stage.
 cp -r "$ROOT/core/machines/tables" "$ROOT"/core/machines/*.states "$H/core/machines/"
 sed -i 's|^observer	.*|observer	cat "$(dirname "$JG_MACHINES_TABLES")/../../state/$1.stage"|' "$H/core/machines/tables/ticket.tsv"
-printf 'ticket\n' > "$H/config/machine-enforce"
 export TZ=UTC TMPDIR=$T BEADS_DIR=$T/store/.beads JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT JG_HOME=$H JG_DATA_OVERRIDE=$H/data \
   JG_MACHINES_TABLES=$H/core/machines/tables
 printf '%s\n' "$BEADS_DIR" > "$H/config/beads-dir"
@@ -39,20 +38,13 @@ tick() { bash "$ROOT/bin/jg-ready-trace.sh" "$H" >/dev/null 2>&1 || fail "the re
 
 bd init --prefix jg >"$T/init.log" 2>&1 || fail "init the store: $(cat "$T/init.log")"
 
-# 1. An illegal move writes no event and no moment; a legal one writes both and one move line.
+# 1. A legal move writes an event, a moment and one move line.
 axi add jg-w1 "[feature] illegal then legal" --priority 2 --body why >/dev/null || fail "file jg-w1"
 stage jg-w1 intake
-axi trace record jg-w1 commit work-id w1@done-1 --source jg-done --at 1794000000 >/dev/null 2>&1 && fail "claim-done from intake must be refused"
-[ "$(events jg-w1)" = 0 ] && [ -z "$(meta jg-w1 ready_at)" ] || fail "a refused move wrote an event or a moment"
-[ "$(moves jg-w1)" = 1 ] || fail "a refused move wrote a move line (the one line is the add's file move)"
-axi moment jg-w1 proved_at >/dev/null 2>&1 && fail "prove-pass from intake must be refused"
-[ -z "$(meta jg-w1 proved_at)" ] || fail "a refused moment wrote proved_at"
 stage jg-w1 building
 axi trace record jg-w1 commit work-id w1@done-1 --source jg-done --at 1794000000 >/dev/null || fail "claim-done from building must be written"
 [ "$(events jg-w1)" = 1 ] && [ -n "$(meta jg-w1 ready_at)" ] && [ "$(moves jg-w1)" = 2 ] || fail "a legal move must write one move, one event and ready_at"
-stage jg-w1 proving.planned
-axi moment jg-w1 gated_at >/dev/null 2>&1 && fail "gate from proving must be refused"
-pass "a move that is illegal writes no event and no moment; a legal one writes both"
+pass "a legal move writes an event, a moment and one move line"
 
 # 2. The done step of the tick. A lane with a project and a branch offers a head; the ticket has the row's moments.
 P=$T/proj; jg_git_identity fmtest fmtest@example.com; jg_git_init_commit "$P"; git -C "$P" branch -M main

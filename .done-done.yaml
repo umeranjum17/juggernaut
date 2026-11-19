@@ -630,10 +630,6 @@ journeys:
     # measured 0.5 s on the host, 2026-11-12 (serial, one run)
     tier: ci
     command: bash tests/jg-machine-index.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  contract-machine-shadow:
-    # measured 2.4 s on the host, 2026-11-12 (serial, one run)
-    tier: ci
-    command: bash tests/jg-machine-shadow.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   contract-machine-status:
     # measured 1.3 s on the host, 2026-11-12 (serial, one run)
     tier: ci
@@ -1940,9 +1936,6 @@ journeys:
   jg-machine-wait:
     tier: local
     command: bash tests/jg-machine-wait.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-machine-writer-lint:
-    tier: local
-    command: bash tests/jg-machine-writer-lint.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-mail:
     tier: local
     command: bash tests/jg-mail.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

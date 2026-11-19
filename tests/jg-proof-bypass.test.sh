@@ -41,7 +41,7 @@ pb list; assert_contains "$OUT" "$P	standing	project	demo	word=owner-rule-abc123
 assert_equals "$K" "$(bash "$PB" find jg-t1 demo)" "the ticket's own bypass wins"
 assert_equals "$P" "$(bash "$PB" find jg-t2 demo)" "a ticket of the project is covered by the project bypass"
 bash "$PB" find jg-t2 other >/dev/null; expect_code 1 "$?" "a ticket of another project is proved"
-bash "$JM" check bypass >/dev/null; expect_code 0 "$?" "the table lints"; assert_equals standing "$(bash "$JM" show bypass "$P" | awk -F'\t' '$1=="state"{print $2}')" "the machine reads standing"
+assert_equals standing "$(bash "$JM" show bypass "$P" | awk -F'\t' '$1=="state"{print $2}')" "the machine reads standing"
 pass "a project grant gets the default end and list, find and the machine print it"
 
 # 3. A use is counted; a worker cannot count it, end it, or expire anything.

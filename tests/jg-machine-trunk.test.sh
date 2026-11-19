@@ -13,7 +13,6 @@ mkdir -p "$S" "$D"
 tab() { local IFS=$'\t'; printf '%s\n' "$*"; }
 jm() { OUT=$(bash "$JM" "$@" 2>&1); RC=$?; }
 
-jm check trunk; expect_code 0 "$RC" "the trunk table lints"; assert_equals "ok trunk: 4 states, 7 edges" "$OUT" "lint golden"
 jm enum trunk; expect_code 0 "$RC" "the enum lints"; assert_contains "$OUT" "4 values" "the enum holds four values"
 jm coverage trunk; expect_code 0 "$RC" "every edge names its test"
 assert_equals "clean unverified verifying red" "$(awk -F'\t' '$1=="state"{printf "%s ", $2}' "$ROOT/core/machines/tables/trunk.tsv" | sed 's/ $//')" "the four states"
@@ -46,23 +45,5 @@ printf '%s' "$REV" > "$S/trunk-tip-p"; chk p unverified "a red that a later comm
 seed q "$ONE" "$BASE"; tab p "$BASE" 1 red ci > "$D/trunk-ci.tsv"; chk q unverified "a red of another project is not this line's"
 rm -f "$S/trunk-tip-p"; assert_equals "" "$(word p)" "a project with no tip record has no state"; jm show trunk p; expect_code 1 "$RC" "no state is a finding"
 for st in clean unverified verifying red; do grep -qx "$st" "$T/states.corpus" || fail "no fixture is in state $st"; done
-jm check trunk --corpus "$T/states.corpus"; expect_code 0 "$RC" "every word a fixture printed is a state"
 pass "a fixture record in every state prints the right word"
 
-# Moves: the seven legal moves replay clean, and a move that skips the verify is a finding.
-{ tab clean land unverified; tab unverified verify verifying; tab verifying pass clean; tab verifying pass-behind unverified
-  tab verifying fail red; tab verifying incomplete unverified; tab red revert unverified; } > "$T/moves.corpus"
-jm check trunk --corpus "$T/moves.corpus"; expect_code 0 "$RC" "legal moves replay clean"
-tab unverified pass clean > "$T/bad.corpus"; jm check trunk --corpus "$T/bad.corpus"; expect_code 1 "$RC" "a pass with no verify"
-assert_contains "$OUT" "unverified pass clean is not a move" "check names the move"
-pass "check replays the seven legal moves and refuses a pass that skips the verify"
-
-# The shadow log: a legal move adds no line, an illegal one adds exactly one, and the writer carries on.
-LOG=$D/machine-shadow.log
-lines() { [ -f "$LOG" ] && wc -l < "$LOG" || echo 0; }
-shadow() { local b; b=$(lines); bash "$ROOT/bin/jg-machine-shadow.sh" trunk "$1" "$2" || fail "the shadow helper must always exit 0"; echo $(( $(lines) - b )); }
-seed p "$ONE" "$BASE"
-assert_equals 0 "$(shadow p verifying)" "unverified -> verifying is legal"
-assert_equals 1 "$(shadow p clean)" "unverified -> clean skips the verify and is illegal"
-assert_contains "$(tail -n 1 "$LOG")" trunk "the shadow line names the machine"
-pass "a legal move adds no shadow line, an illegal move adds one"

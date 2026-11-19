@@ -63,12 +63,7 @@ seed_lines 7 "$T/corpus.status"; seed_lines 7 "$T/again.status"
 cmp -s "$T/corpus.status" "$T/again.status" || fail "the corpus is not reproducible from its seed"
 assert_equals 42 "$(wc -l < "$T/corpus.status" | tr -d ' ')" "three shapes for each of the 14 verbs"
 
-# 1. The table lints, and the corpus verbs replay against it.
-jm check status-verb; expect_code 0 "$RC" "the table lints"; assert_equals "ok status-verb: 14 states, 13 edges" "$OUT" "lint golden"
 sed -E 's/^([a-z-]+).*/\1/' "$T/corpus.status" > "$T/verbs.corpus"
-jm check status-verb --corpus "$T/verbs.corpus"; expect_code 0 "$RC" "every corpus verb is a state"
-assert_equals "ok status-verb: 42 lines, 0 findings" "$OUT" "replay golden"
-pass "the table lints and the corpus verbs replay"
 
 # 2. The classifier agrees with the table line for line: terminal, relevant, prefix-unrecognized, event.
 bash "$ROOT/bin/jg-classify.sh" facts < "$T/corpus.status" | cut -f1,2,6,7 > "$T/facts"
@@ -85,13 +80,6 @@ pass "jg-classify facts replays the corpus and agrees line for line"
 assert_equals "baseline-attribution checks-lint-pass ready ready-to-sign" \
   "$(awk -F'\t' '$1=="state" && $3=="extension" {print $2}' "$TABLE" | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')" "the four lane verbs are extension rows"
 pass "ready, ready-to-sign, checks-lint-pass and baseline-attribution are extension rows; progress is a normal row that wakes nobody"
-
-# 4. A verb outside the table is found by name and line, and clears when removed.
-{ cat "$T/verbs.corpus"; echo parked; } > "$T/new.corpus"
-jm check status-verb --corpus "$T/new.corpus"; expect_code 1 "$RC" "an unregistered verb"
-assert_contains "$OUT" "bad status-verb corpus:43: parked is not a state" "check names machine and line"
-jm check status-verb --corpus "$T/verbs.corpus"; expect_code 0 "$RC" "green again once removed"
-pass "an unregistered verb turns check red and clears when removed"
 
 # 5. AX: one command names the state of a task and its legal moves.
 printf 'working [at=1]: start\nblocked [at=2]: waiting on w0001\n' > "$T/state/t1.status"

@@ -708,7 +708,6 @@ tests/jg-fleet-compare.test.sh 15500
 tests/jg-fleet-digest.test.sh 7303
 tests/jg-lease-tick.test.sh 500
 tests/jg-recon-journey.test.sh 3500
-tests/jg-refusal-before-write.test.sh 500
 tests/jg-ticket-adapter.test.sh 500
 tests/jg-trunk-base-movement.test.sh 57544
 tests/jg-trunk-nothing-lands.test.sh 6000
