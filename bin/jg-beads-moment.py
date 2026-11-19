@@ -211,10 +211,9 @@ def incarnations():
     """Each ticket's starts, in time order: the claim and handoff events of its trail with the tool, model and effort and kind they name."""
     read = __import__("jg-beads-read")
     keys = ("harness", "model", "effort", "kind")
-    cells = ", ".join("json_unquote(json_extract(payload, '$.%s'))" % key for key in keys)
     starts = {}
     con = read.table_store()
-    events = read.table_starts(con) if con else read.sql("select issue_id, kind, occurred_at, %s from provenance_events where kind in ('claim', 'handoff') order by occurred_at" % cells)
+    events = read.table_starts(con)
     for ticket, kind, at, *named in events:
         starts.setdefault(ticket, []).append(dict(zip(("event", "at") + keys, [kind, at.replace(" ", "T") + "Z"] + [None if c == "NULL" else c for c in named])))  # dolt prints UTC without a zone
     return starts

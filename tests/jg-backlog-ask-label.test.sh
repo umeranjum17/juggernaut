@@ -14,7 +14,7 @@ fi
 
 WRAPPER="$ROOT/bin/jg-beads.sh" CLI="$ROOT/bin/jg-backlog.sh" T=$(jg_test_tmproot jg-backlog-ask-label)
 unset BEADS_DB BEADS_DOLT_SHARED_SERVER
-H=$T/home
+H=$T/home; export JG_HOME=$H JG_STATE_OVERRIDE=$H/state JG_DATA_OVERRIDE=$H/data JG_CONFIG_OVERRIDE=$H/config
 mkdir -p "$H/config" "$H/state" "$H/data" "$T/user" "$T/real"
 export BEADS_DIR=$T/real/.beads JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
 printf '%s\n' "$BEADS_DIR" > "$H/config/beads-dir"

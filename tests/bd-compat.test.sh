@@ -1,41 +1,48 @@
 #!/usr/bin/env bash
-# bd_compat.py answers a bd call by passing it to the wrapper (mode pass) or from the tickets tables (mode tables).
+# bd_compat.py has one mode, `tables`: it answers a bd call from fleet.db, and bin/jg-beads.sh hands every call to it. No bd, no dolt.
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 repo=$PWD
 t=$(mktemp -d) || exit 1
 trap 'rm -rf -- "$t"' EXIT
-mkdir -p "$t/home" "$t/store"
+mkdir -p "$t/home" "$t/store" "$t/path"
 cp -r "$repo/core/item-store/." "$t/store/"
 rm -rf -- "$t/store/adapters/bd_forms"
 prog=$t/store/adapters/bd_compat.py
 cp "$repo/core/item-store/adapters/bd_compat.py" "$prog" 2>/dev/null
-cat >"$t/beads.sh" <<'S'
-#!/usr/bin/env bash
-echo "args: $*"; cat; exit 7
-S
-chmod +x "$t/beads.sh"
-export JG_HOME=$t/home JG_BEADS_SH=$t/beads.sh
+export JG_HOME=$t/home
 bd() { python3 -I "$prog" "$@"; }
 fail=0
 ok() { echo "ok: $1"; }
 bad() { echo "FAIL: $1"; fail=1; }
 
-# 1: pass mode hands over arguments and stdin, returns the wrapper's status
-out=$(echo piped | bd show x --json 2>/dev/null); rc=$?
-if [ "$rc" = 7 ] && [ "$out" = $'args: show x --json\npiped' ]; then ok "pass mode forwards and exits 7"; else bad "pass mode: rc=$rc out=$out"; fi
-
-# 2: --mode follows config/bd-tables in the main home
-[ "$(bd --mode 2>/dev/null)" = pass ] || bad "--mode without config/bd-tables"
+# 1: --mode prints tables, with or without config/bd-tables, and JG_BEADS_SH is not read
+[ "$(JG_BEADS_SH=/nonexistent bd --mode 2>/dev/null)" = tables ] || bad "--mode without config/bd-tables"
 mkdir -p "$t/home/config"; : >"$t/home/config/bd-tables"
-if [ "$(bd --mode 2>/dev/null)" = tables ]; then ok "--mode pass, then tables"; else bad "--mode with config/bd-tables"; fi
+if [ "$(bd --mode 2>/dev/null)" = tables ]; then ok "--mode prints tables"; else bad "--mode with config/bd-tables"; fi
 
-# 3: tables mode, no family module
+# 2: no family module
 err=$(bd show x --json 2>&1 >/dev/null); rc=$?
 if [ "$rc" = 2 ] && [ "$err" = "bd_compat: form not supported: show --json" ]; then ok "unsupported form exits 2"; else bad "unsupported: rc=$rc err=$err"; fi
 
-# 4: tables mode, a stand-in family module
+# 3: a stand-in family module
 mkdir -p "$t/store/adapters/bd_forms"
 printf 'class NotSupported(Exception):\n    pass\n\ndef run(argv, stdin_text):\n    return ("hello\\n", 3)\n' >"$t/store/adapters/bd_forms/read.py"
 out=$(bd show x --json 2>/dev/null </dev/null); rc=$?
 if [ "$rc" = 3 ] && [ "$out" = hello ]; then ok "family module answers"; else bad "module: rc=$rc out=$out"; fi
+
+# 4: the wrapper runs no bd and no dolt: dolt exits 2, init exits 0 naming the tables, with a PATH that holds neither
+out=$(PATH=$t/path /bin/bash "$repo/bin/jg-beads.sh" dolt version 2>&1 </dev/null); rc=$?
+if [ "$rc" = 2 ] && [ "$out" = "Beads is retired: no dolt" ]; then ok "dolt is retired"; else bad "dolt: rc=$rc out=$out"; fi
+out=$("$repo/bin/jg-beads.sh" init --prefix x 2>&1 </dev/null); rc=$?
+if [ "$rc" = 0 ] && [ "$(wc -l <<<"$out")" = 1 ] && grep -q tables <<<"$out"; then ok "init names the tables"; else bad "init: rc=$rc out=$out"; fi
+
+# 5: every recorded form of tests/fixtures/bd-forms is answered: each family test seeds the store of every fixture of its family, runs the call, and prints a FAIL line per form not answered
+unanswered=0
+for family in read create update link admin; do
+  n=$(bash "$repo/tests/bd-compat-$family.test.sh" 2>&1 | grep -c '^FAIL')
+  [ "$n" = 0 ] || echo "family $family has $n forms not answered"
+  unanswered=$((unanswered + n))
+done
+forms=$(find "$repo/tests/fixtures/bd-forms" -name "*.json" | wc -l)
+if [ "$unanswered" = 0 ] && [ "$forms" -gt 0 ]; then ok "every recorded form answered ($forms fixtures), 0 not supported"; else bad "$unanswered forms not answered"; fi
 exit "$fail"
