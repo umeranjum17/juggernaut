@@ -10,7 +10,7 @@
 //	jg-spawn-core delivery-agree [flags]   brief, mode, branch, consent, forge and yolo agreement
 //	jg-spawn-core delivery-notices [flags] the two "less than the standing posture" notices
 //	jg-spawn-core intake <spawn arguments> the argument grammar and the refusals that need only the arguments
-//	jg-spawn-core admit --project <name> --repo <dir> --ticket <json> --lanes <json>  the ticket belongs here and may start
+//	jg-spawn-core admit --project <name> --repo <dir> --ticket <json> --lanes <json> [--ref <branch>]  the ticket belongs here and may start
 //	jg-spawn-core rovo-override <effort> <data-dir> <state-dir> <id>
 //	jg-spawn-core claude-add-dirs <kind> <state-dir> <data-dir> <code-root> <id>
 //	jg-spawn-core opencode-lead-grant <lead-home> <state-dir> <id> <code-root>

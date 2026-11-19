@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -14,7 +15,11 @@ import (
 // bd list --status in_progress --json for the live lanes) and this command only reads those files and
 // the repository, so each refusal is a pure function of what it is given.
 //
-// Usage: jg-spawn-core admit --project <name> --repo <dir> --ticket <ticket.json> --lanes <lanes.json>
+// Usage: jg-spawn-core admit --project <name> --repo <dir> --ticket <ticket.json> --lanes <lanes.json> [--ref <branch>]
+//
+// A file is looked for in the checked-out copy of --repo. With --ref (a project registered local-trunk,
+// whose lanes start on its trunk tip and whose clone stays on the default branch) it is looked for in
+// that branch's tree instead, so a file that exists only on the trunk is found.
 //
 // A ticket with no `files` field is not judged on its repository, and one with no edge or lane to
 // clash with is admitted: a row made by hand carries no file list (bin/jg-plan-file.sh writes the
@@ -79,8 +84,17 @@ func (r row) repoLabel() string {
 	return ""
 }
 
+// hasFile reports whether the repository has the file: in the checked-out copy, or, with a ref, in that ref's tree.
+func hasFile(repo, ref, f string) bool {
+	if ref == "" {
+		_, err := os.Stat(filepath.Join(repo, f))
+		return err == nil
+	}
+	return exec.Command("git", "-C", repo, "cat-file", "-e", ref+":"+f).Run() == nil
+}
+
 // admission returns every reason the ticket may not start in this repository, in a fixed order.
-func admission(project, repo string, ticket row, lanes []row) []string {
+func admission(project, repo, ref string, ticket row, lanes []row) []string {
 	var why []string
 	files, made := ticket.list("files"), map[string]bool{}
 	if label := ticket.repoLabel(); len(files) > 0 && label != "" && label != project {
@@ -91,7 +105,7 @@ func admission(project, repo string, ticket row, lanes []row) []string {
 	}
 	var missing []string
 	for _, f := range files {
-		if _, err := os.Stat(filepath.Join(repo, f)); err != nil && !made[f] {
+		if !made[f] && !hasFile(repo, ref, f) {
 			missing = append(missing, f)
 		}
 	}
@@ -123,8 +137,8 @@ func admission(project, repo string, ticket row, lanes []row) []string {
 }
 
 func admitCmd(args []string) int {
-	var project, repo, ticketPath, lanesPath string
-	dest := map[string]*string{"--project": &project, "--repo": &repo, "--ticket": &ticketPath, "--lanes": &lanesPath}
+	var project, repo, ticketPath, lanesPath, ref string
+	dest := map[string]*string{"--project": &project, "--repo": &repo, "--ticket": &ticketPath, "--lanes": &lanesPath, "--ref": &ref}
 	for i := 0; i < len(args); i += 2 {
 		p, ok := dest[args[i]]
 		if !ok || i+1 >= len(args) {
@@ -147,7 +161,7 @@ func admitCmd(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: could not read the ticket's rows for the admission check: %v\n", err)
 		return 1
 	}
-	why := admission(project, repo, tickets[0], lanes)
+	why := admission(project, repo, ref, tickets[0], lanes)
 	for _, w := range why {
 		fmt.Fprintf(os.Stderr, "error: spawn refused: %s\n", w)
 	}

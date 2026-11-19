@@ -3359,7 +3359,9 @@ spawn_file_lease() {
 # The ticket belongs to this repository and may start now (core/spawn/cmd/jg-spawn-core/admit.go): its
 # repository label and files, its open edges and the files of the other live lanes. The rows are read here.
 spawn_ticket_admit() {
-  local store scratch admit_rc=0
+  local store scratch admit_rc=0 trunk_ref=
+  # A local-trunk project's files are looked for on its trunk tip, not on the clone's checked-out branch.
+  trunk_ref=$(spawn_trunk_branch) || trunk_ref=
   store=$(tr -d '[:space:]' 2>/dev/null < "$CONFIG/beads-dir") || store=
   if [ -z "$store" ]; then
     echo "error: ticket $TICKET's rows could not be read before dispatch: put an absolute BEADS_DIR in $CONFIG/beads-dir" >&2
@@ -3372,7 +3374,7 @@ spawn_ticket_admit() {
     admit_rc=1
   else
     "$SCRIPT_DIR/jg-spawn-core.sh" admit --project "$(basename "$PROJ_ABS")" --repo "$PROJ_ABS" \
-      --ticket "$scratch/ticket" --lanes "$scratch/lanes" || admit_rc=1
+      --ticket "$scratch/ticket" --lanes "$scratch/lanes" ${trunk_ref:+--ref "$trunk_ref"} || admit_rc=1
     [ "$admit_rc" -ne 0 ] || spawn_file_lease "$scratch/ticket" || admit_rc=1
   fi
   rm -f -- "$scratch/ticket" "$scratch/lanes" "$scratch/err"

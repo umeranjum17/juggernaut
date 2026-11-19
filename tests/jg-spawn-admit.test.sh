@@ -76,3 +76,41 @@ git -C "$PROJ" worktree add -q --detach "$W/wt-jg-ad7" origin/main >/dev/null 2>
 id=jg-ad7; out=$(jg_test_run_spawn "$HOME_DIR" "$W/wt-jg-ad7" "$FAKEBIN" jg-ad7 "$PROJ" codex --mode direct-PR --yolo off); rc=$?
 refused "open-edge: ticket jg-ad7 waits for jg-ad6dep"
 echo "ok - an open edge is refused"
+
+# A project registered local-trunk keeps its clone on the default branch while its lanes start on the trunk tip, so a
+# file that exists only on the trunk is looked for there; a file on neither is still refused, and a project that is
+# not local-trunk is still judged on its checked-out branch.
+TPROJ="$W/tproj"
+git clone -q "$W/origin.git" "$TPROJ" 2>/dev/null
+git -C "$TPROJ" fetch -q; git -C "$TPROJ" remote set-head origin main >/dev/null 2>&1 || true
+git -C "$TPROJ" checkout -q -b release/v12 origin/main
+printf 'c\n' > "$TPROJ/bin/trunk-only.sh"; git -C "$TPROJ" add -A; git -C "$TPROJ" commit -qm "trunk-only file"
+git -C "$TPROJ" rev-parse release/v12 > "$HOME_DIR/state/trunk-tip-tproj"
+printf 'release/v12\n' > "$HOME_DIR/state/trunk-branch-tproj"
+git -C "$TPROJ" checkout -q main
+# lane_in <id> <project dir> <mode> <files json> <start ref>: like lane, for another project and mode.
+lane_in() {
+  local dir=$2 name; name=$(basename "$2"); id=$1
+  jg_test_add "$HOME_DIR" "$id" "[feature] admit $id"
+  bd_ update "$id" --remove-label project:demo --add-label "project:$name" --set-metadata "files=$4" --set-metadata "new_files=[]" >/dev/null 2>&1 \
+    || fail "could not set the plan fields of $id"
+  JG_HOME="$HOME_DIR" "$ROOT/bin/jg-brief.sh" "$id" "$name" --mode "$3" --project "$dir" --migration-row none >/dev/null 2>&1 \
+    || fail "could not scaffold the brief for $id"
+  sed -i "s|{TASK}|Admit $id.|;s|{JUGGERNAUT_SPEC}|Exercise the admission check.|" "$HOME_DIR/data/$id/brief.md"
+  git -C "$dir" worktree add -q --detach "$W/wt-$id" "$5" >/dev/null 2>&1 || fail "could not prepare the isolated copy"
+  out=$(jg_test_run_spawn "$HOME_DIR" "$W/wt-$id" "$FAKEBIN" "$id" "$dir" codex --mode "$3" --yolo off); rc=$?
+}
+printf -- '- tproj [local-trunk] - fixture (added 2026-11-07)\n' > "$HOME_DIR/data/projects.md"
+
+lane_in jg-ad8 "$TPROJ" local-trunk '["bin/trunk-only.sh"]' release/v12
+expect_code 0 "$rc" "a file only the trunk tip has must pass for a local-trunk project: $out"
+echo "ok - a local-trunk project's file that only the trunk has is found"
+
+lane_in jg-ad9 "$TPROJ" local-trunk '["bin/trunk-only.sh","bin/nowhere.sh"]' release/v12
+refused "bin/nowhere.sh"
+echo "ok - a local-trunk project's file on neither the trunk nor the clone is still refused"
+
+printf -- '- tproj [direct-PR] - fixture (added 2026-11-07)\n' > "$HOME_DIR/data/projects.md"
+lane_in jg-ad10 "$TPROJ" direct-PR '["bin/trunk-only.sh"]' origin/main
+refused "bin/trunk-only.sh"
+echo "ok - a project that is not local-trunk is still judged on its checked-out branch"
