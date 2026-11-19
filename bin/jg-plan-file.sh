@@ -7,7 +7,8 @@
 # A plan is a file in the form of data/fable-selfheal-fleet-recon/slices-addendum.json: `plan` names the
 # plan's row (it must exist already and becomes the epic), and each entry of `slices` has id, title,
 # owner_home, project, size, risk, depends_on (a list), files (a list; a trailing " (new)" marks a file
-# the slice makes) and machine. This command files the slices whose owner_home is --owner, and no other.
+# the slice makes), machine, and an optional body (the row's sections). This command files the slices whose
+# owner_home is --owner, and no other. The row's title is the slice title; the slice id goes in the body.
 # For each one it sets:
 #   - the label project:<project>, so the spawn check reads the repository the slice belongs to;
 #   - one dependency edge for each depends_on entry (a slice of this file, or a row already in the store);
@@ -22,7 +23,10 @@
 #   - a depends_on entry that is neither a slice of this file filed here nor a row of the store (prose);
 #   - a dependency on a slice of another owner (the gate of a cross-home dependency is a later slice);
 #   - a dependency cycle among the slices;
-#   - a plan row missing from the store, or a slice already filed under it (a second run would duplicate it).
+#   - a plan row missing from the store, or a slice already filed under it (a second run would duplicate it);
+#   - in a home with strict intake (no config/backlog-intake-loose), a slice whose title is not 2 to 7 plain words
+#     (bin/jg-backlog-lib.sh jg_backlog_title_refusal) or whose body lacks ## Captain, ## Ask, ## Why, ## Done when
+#     and ## Acceptance Criteria.
 # --dry-run runs the checks and prints what would be filed. `bd swarm validate` failing after the filing
 # exits 1 with its output; the rows stay filed and the epic is not safe to start from.
 set -u
@@ -130,6 +134,18 @@ for id in "${ORDER[@]}"; do
   [ -z "$row" ] || fail "slice $id is already filed under $PLAN as $row: a second filing would duplicate it"
 done
 
+# Strict intake files a row only with a plain title and the five body sections; check every slice before the first write.
+if [ ! -e "$JG_HOME/config/backlog-intake-loose" ]; then
+  for id in "${ORDER[@]}"; do
+    slice=$(jq -c --arg i "$id" 'select(.id == $i)' <<<"$MINE")
+    why=$(jg_backlog_title_refusal "$(jq -r '.title' <<<"$slice")") || fail "slice $id: the title is not a readable title: $why"
+    for h in Captain Ask Why 'Done when' 'Acceptance Criteria'; do
+      jq -r '.body // ""' <<<"$slice" | grep -q "^## $h" \
+        || fail "slice $id: this home has strict intake, so the slice needs a body with ## $h (and the other four sections)"
+    done
+  done
+fi
+
 if [ "$DRY" = 1 ]; then
   for id in "${ORDER[@]}"; do
     project=$(jq -r --arg i "$id" 'select(.id == $i) | .project' <<<"$MINE")
@@ -143,9 +159,10 @@ for id in "${ORDER[@]}"; do
   slice=$(jq -c --arg i "$id" 'select(.id == $i)' <<<"$MINE")
   title=$(jq -r '.title' <<<"$slice")
   project=$(jq -r '.project' <<<"$slice")
-  body=$(printf '%s\nPlan: %s, slice %s (owner %s).\nFiles: %s' "$title" "$PLAN" "$id" "$OWNER" \
+  sections=$(jq -r '.body // empty' <<<"$slice")
+  body=$(printf '%s\nPlan: %s, slice %s (owner %s).\nFiles: %s' "${sections:-$title}" "$PLAN" "$id" "$OWNER" \
     "$(jq -r '.files | join(", ")' <<<"$slice")")
-  args=(add --parent "$PLAN" "[feature] $id: $title" --repo "$project" --priority 2 --body "$body" --json)
+  args=(add --parent "$PLAN" "[feature] $title" --repo "$project" --priority 2 --body "$body" --json)
   for dep in ${DEPS[$id]}; do args+=(--blocked-by "${ROW[$dep]:-$dep}"); done
   made=$(backlog_ "${args[@]}") || fail "could not file slice $id: $made"
   row=$(jq -r '.task.id // .id // empty' <<<"$made")
