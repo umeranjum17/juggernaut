@@ -105,3 +105,37 @@ other=$(mint untouched)
 [ "$("$READ" history "$other" | wc -l)" -le 2 ] || fail "another ticket's commits must not show in the history"
 "$READ" history rd-nope >/dev/null 2>&1 && fail "history of a missing ticket must be refused"
 pass "beads read facts: rev on every write, cursor list, board, history"
+
+# The table path: with <main home>/config/bd-tables the helper answers its dolt questions from the tickets tables of the one item
+# store and no dolt query runs; without the file it runs as above. A recording wrapper stands in for bin/jg-beads.sh and logs each dolt call.
+H=$T/home TK="$ROOT/core/item-store/adapters/tickets.py"
+mkdir -p "$H/config" "$H/state" "$H/data"
+bd_ export > "$T/export.jsonl" || fail "export of the fixture store"
+JG_HOME=$H python3 "$TK" import --home main "$T/export.jsonl" >/dev/null || fail "import of the fixture store into the scratch fleet.db"
+cat > "$T/record-wrapper" <<SH
+#!/usr/bin/env bash
+[ "\${1:-}" != dolt ] || echo "\$*" >> "$T/dolt-calls"
+exec "$WRAPPER" "\$@"
+SH
+chmod +x "$T/record-wrapper"
+tread() { JG_HOME=$H JG_BEADS_SH=$T/record-wrapper "$READ" "$@"; }
+board_facts='map({id, title, status, issue_type, assignee, labels: (.labels // []), metadata: (.metadata // {}), created_at, closed_at, parent,
+  deps: [(.dependencies // [])[] | [.id, .dependency_type, .status, .issue_type]] | sort, dependents: [(.dependents // [])[] | [.id, .dependency_type]] | sort})'
+: > "$T/dolt-calls"
+tread list --limit 5 > "$T/list-dolt.json" || fail "list without the switch"
+tread board "$since" | jq -S "$board_facts" > "$T/board-dolt.json" || fail "board without the switch"
+tread history "$t" | cut -f1,3 > "$T/history-dolt.txt" || fail "history without the switch"
+[ -s "$T/dolt-calls" ] || fail "without config/bd-tables the helper must ask dolt"
+: > "$H/config/bd-tables"; : > "$T/dolt-calls"
+tread list --limit 5 > "$T/list-tables.json" || fail "list with the switch"
+tread board "$since" | jq -S "$board_facts" > "$T/board-tables.json" || fail "board with the switch"
+tread board --all | jq -e 'map(.id) | index("'"$old_id"'") != null' >/dev/null || fail "board --all with the switch must hold a row closed long ago"
+tread history "$t" > "$T/history-tables.txt" || fail "history with the switch"
+[ ! -s "$T/dolt-calls" ] || fail "with config/bd-tables no dolt query may run: $(cat "$T/dolt-calls")"
+[ "$(jq -c '.rows | map(.id)' "$T/list-dolt.json")" = "$(jq -c '.rows | map(.id)' "$T/list-tables.json")" ] || fail "list must page the same ids from the tables"
+[ "$(jq -c .next "$T/list-dolt.json")" = "$(jq -c .next "$T/list-tables.json")" ] || fail "list must give the same cursor from the tables"
+diff "$T/board-dolt.json" "$T/board-tables.json" >/dev/null || fail "board must give the same rows from the tables: $(diff "$T/board-dolt.json" "$T/board-tables.json" | head -20)"
+grep -q "^[^"$'\t'"]\+"$'\t'"20[0-9-]* [0-9:]*"$'\t'"added"$'\t'".*title" "$T/history-tables.txt" || fail "history from the tables must be a commit, a time, a kind and the changed columns: $(cat "$T/history-tables.txt")"
+tread history rd-nope >/dev/null 2>&1 && fail "history of a missing ticket must be refused from the tables"
+rm -f "$H/config/bd-tables"
+pass "beads read facts: with config/bd-tables list, board and history come from the tickets tables and run no dolt"

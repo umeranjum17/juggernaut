@@ -213,7 +213,9 @@ def incarnations():
     keys = ("harness", "model", "effort", "kind")
     cells = ", ".join("json_unquote(json_extract(payload, '$.%s'))" % key for key in keys)
     starts = {}
-    for ticket, kind, at, *named in read.sql("select issue_id, kind, occurred_at, %s from provenance_events where kind in ('claim', 'handoff') order by occurred_at" % cells):
+    con = read.table_store()
+    events = read.table_starts(con) if con else read.sql("select issue_id, kind, occurred_at, %s from provenance_events where kind in ('claim', 'handoff') order by occurred_at" % cells)
+    for ticket, kind, at, *named in events:
         starts.setdefault(ticket, []).append(dict(zip(("event", "at") + keys, [kind, at.replace(" ", "T") + "Z"] + [None if c == "NULL" else c for c in named])))  # dolt prints UTC without a zone
     return starts
 
