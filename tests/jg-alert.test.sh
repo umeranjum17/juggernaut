@@ -8,7 +8,7 @@ set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-AL="$ROOT/bin/jg-alert.sh"; JM="$ROOT/bin/jg-machine.sh"; RI="$ROOT/bin/jg-ready-idle.sh"
+AL="$ROOT/bin/jg-alert.sh"; RI="$ROOT/bin/jg-ready-idle.sh"
 T=$(cd "$(jg_test_tmproot jg-alert)" && pwd); H=$T/home
 mkdir -p "$H/state" "$H/config"
 printf 'set mode shadow\nset dapr-http-url http://127.0.0.1:1\n' > "$H/config/captain-channel"

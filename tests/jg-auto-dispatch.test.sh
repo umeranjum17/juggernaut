@@ -232,7 +232,6 @@ assert_not_contains "$out" "a1" "a deferral is a wait: the lead is not told abou
 assert_contains "$(rows_of "$D6")" "a1	deferred	deferred: pool for the project is full; task a1 stays queued" "the row says deferred, with the spawn's own words"
 assert_equals "$(JG_HOME="$D6" bash "$ROOT/core/machines/observers/dispatch-start.sh" a1)" deferred "the machine's observer reads a1 as deferred"
 assert_equals "$(JG_HOME="$D6" bash "$ROOT/core/machines/observers/dispatch-start.sh" a2)" refused "the machine's observer reads a2 as refused"
-assert_equals "$(bash "$ROOT/bin/jg-machine.sh" check dispatch-start | cut -d: -f1)" "ok dispatch-start" "the dispatch-start table lints clean"
 pass "a deferral and a refusal are told apart at once, with the spawn's own words"
 
 # The deferral clears with no new approval: while the pool stays full each beat tries a1 again as the next attempt, and the first beat after

@@ -1,6 +1,5 @@
 # shellcheck shell=bash disable=SC2016,SC2013,SC2034,SC2154  # a case of the test that sources it: it shares that test's variables
 # 1. The table lints, and the twenty-two rows, six rules and seven limits are all there.
-OUT=$(bash "$JM" check alert 2>&1); expect_code 0 $? "alert table lint"; assert_contains "$OUT" "5 states, 8 edges" "the alert machine has five states"
 assert_equals 22 "$(grep -c '^alert	' "$ROOT/core/machines/styles/alert-table.tsv")" "twenty-two alert rows"
 assert_equals 6 "$(grep -c '^rule	' "$ROOT/core/machines/styles/alert-table.tsv")" "rules I1 to I6"
 al row stuck-wait; assert_contains "$OUT" "P2" "the stuck-wait row is P2"

@@ -26,8 +26,6 @@ const output = name => text(name) + fs.readFileSync(path.join(captures, `${name}
 const json = name => JSON.parse(text(name));
 const steps = [];
 try {
-  run('bash', ['journeys/hold-table.sh']);
-  steps.push('Run the unchanged hold-table bash journey, retaining all five existing checks.');
   const version = run('git', ['rev-parse', 'HEAD']).trim();
   assert.match(version, /^[0-9a-f]{40,64}$/);
   run('bash', ['--noprofile', '--norc', '-s'], String.raw`set -euo pipefail

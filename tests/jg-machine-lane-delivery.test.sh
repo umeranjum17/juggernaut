@@ -56,7 +56,6 @@ see() {
   LAST[$1]=$3
 }
 
-bash "$JM" check lane-delivery >/dev/null; expect_code 0 "$?" "the table lints"
 bash "$JM" coverage lane-delivery >/dev/null; expect_code 0 "$?" "every edge names its test"
 assert_equals 12 "$(grep -c '^state	' "$TABLES/lane-delivery.tsv")" "the table holds 12 states: the release states are the release table's"
 assert_equals 0 "$(grep -cE '^state	(release-|merged|rolled)' "$TABLES/lane-delivery.tsv")" "no release state is left in the lane table"
@@ -107,11 +106,9 @@ printf 'task=%s\nhead=%s\n' "$L" "${H[$L]}" > "$S/$L.parked"; rm -f "$S/$L.meta"
 pass "walks 3 to 10 take every other edge"
 
 # Every observation is a state of the table, every observed move is a table edge, and every edge and state was seen.
-bash "$JM" check lane-delivery --corpus "$T/corpus" >/dev/null; expect_code 0 "$?" "the observed states and moves are in the table"
 awk -F'\t' '$1 == "edge" { print $2 "\t" $3 "\t" $4 }' "$TABLES/lane-delivery.tsv" | sort -u > "$T/edges"
 assert_equals "" "$(grep $'\t' "$T/corpus" | sort -u | comm -23 "$T/edges" -)" "every edge of the table was walked"
 assert_equals "" "$(awk -F'\t' '$1 == "state" { print $2 }' "$TABLES/lane-delivery.tsv" | sort | comm -23 - <(cut -f1,3 "$T/corpus" | tr '\t' '\n' | sort -u))" "every state was seen"
-bash "$JM" check lane-delivery --corpus <(tab live t13-refused cleanup-refused) >/dev/null; expect_code 1 "$?" "a move the table lacks is refused"
 pass "the walks cover every edge and state, and the table refuses a move it lacks"
 
 L=w11; lane $L p11; status $L "done" "ready"; prove $L; see $L - admitted

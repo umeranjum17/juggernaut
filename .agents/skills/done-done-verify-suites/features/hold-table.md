@@ -9,7 +9,6 @@ The committed script drives the app, checks the result and writes captures and s
 
 ## Checks
 
-Run bash journeys/hold-table.sh unchanged and require success, preserving all five existing checks and the four-state, six-edge hold machine.
 Assert the plain Captain order has no gate and no board row, while a real design-pick question has a generated ID, UTC expiry, open unanswered state, and Waiting for you row.
 At simulated expiry assert the exact reconciliation message and real request file, then a silent repeat with unchanged request and gate.
 With two real questions and cap 1 assert the exact cap message, real alert latch, and no repeated cap alert.

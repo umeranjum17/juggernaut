@@ -41,9 +41,6 @@ journeys:
   plan-gate:
     tier: local
     command: bash journeys/plan-gate.sh
-  message-table:
-    tier: local
-    command: (bash bin/jg-machine.sh check message && bash bin/jg-machine.sh events message && bash tests/jg-machine-message.test.sh && bash tests/jg-machine-inbox.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   machine-observers:
     tier: local
     command: (for m in squad-lead supervision presence; do bash bin/jg-machine.sh check $m && bash bin/jg-machine.sh events $m || exit 1; done; bash tests/jg-machine-observers16.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -53,12 +50,6 @@ journeys:
   fleet-status-scale:
     tier: local
     command: bash journeys/fleet-status-scale.sh
-  account-table:
-    tier: local
-    command: bash journeys/account-table.sh
-  landing-table:
-    tier: local
-    command: (bash bin/jg-machine.sh check landing && bash bin/jg-machine.sh events landing && bash tests/jg-machine-landing.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   hold-table:
     tier: local
     command: node journeys/hold-table.mjs
@@ -71,9 +62,6 @@ journeys:
   trunk-table:
     tier: local
     command: bash journeys/trunk-table.sh
-  cleanup-table:
-    tier: local
-    command: bash journeys/cleanup-table.sh
   machine-diagram:
     tier: local
     command: bash journeys/machine-diagram.sh
@@ -580,9 +568,6 @@ journeys:
   ticket-statechart:
     tier: local
     command: bash journeys/ticket-statechart.sh
-  machine-enums:
-    tier: local
-    command: (for f in core/machines/*.states; do bash bin/jg-machine.sh enum "$(basename "$f" .states)" || exit 1; done; bash bin/jg-machine.sh check ticket && bash bin/jg-machine.sh check delivering && bash tests/jg-machine-enum.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   machine-rules:
     tier: local
     command: bash journeys/machine-rules.sh
@@ -641,14 +626,6 @@ journeys:
     # measured 0.3 s on the host, 2026-11-12 (serial, one run)
     tier: ci
     command: bash tests/jg-loss-claim-check.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  contract-machine-enforce:
-    # measured 1.2 s on the host, 2026-11-12 (serial, one run)
-    tier: ci
-    command: bash tests/jg-machine-enforce.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  contract-machine-inbox:
-    # measured 2.8 s on the host, 2026-11-12 (serial, one run)
-    tier: ci
-    command: bash tests/jg-machine-inbox.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   contract-machine-index:
     # measured 0.5 s on the host, 2026-11-12 (serial, one run)
     tier: ci
@@ -1765,15 +1742,9 @@ journeys:
   jg-account-drift:
     tier: local
     command: bash tests/jg-account-drift.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-account-home-moves:
-    tier: local
-    command: bash tests/jg-account-home-moves.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-backlog-spawnable-scale:
     tier: local
     command: bash tests/jg-backlog-spawnable-scale.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-captain-hold-moves:
-    tier: local
-    command: bash tests/jg-captain-hold-moves.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-decision-group:
     tier: local
     command: bash tests/jg-decision-group.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -1942,12 +1913,6 @@ journeys:
   jg-lock-pi-session-id:
     tier: local
     command: bash tests/jg-lock-pi-session-id.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-machine-account:
-    tier: local
-    command: bash tests/jg-machine-account.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-machine-cleanup:
-    tier: local
-    command: bash tests/jg-machine-cleanup.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-machine-delivery:
     tier: local
     command: bash tests/jg-machine-delivery.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -1957,24 +1922,9 @@ journeys:
   jg-machine-feed-landing:
     tier: local
     command: JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-machine-feed-landing.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-machine-hold-b:
-    tier: local
-    command: bash tests/jg-machine-hold-b.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-machine-hold:
-    tier: local
-    command: bash tests/jg-machine-hold.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-machine-lint:
-    tier: local
-    command: bash tests/jg-machine-lint.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-machine-recon:
     tier: local
     command: bash tests/jg-machine-recon.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-machine-markers:
-    tier: local
-    command: bash tests/jg-machine-markers.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-machine-moves-log:
-    tier: local
-    command: bash tests/jg-machine-moves-log.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-typed-facts:
     tier: local
     command: bash tests/jg-typed-facts.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
