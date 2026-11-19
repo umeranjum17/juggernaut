@@ -8,4 +8,5 @@ bash "$ROOT/core/item-store/tests/item-store.test.sh" || fail=1
 bash "$ROOT/core/item-store/tests/jg-item-cli.test.sh" || fail=1
 bash "$ROOT/core/item-store/tests/wiring.test.sh" || fail=1
 bash "$ROOT/core/item-store/tests/policy-import.test.sh" || fail=1
+bash "$ROOT/core/item-store/tests/policy-fill-missing.test.sh" || fail=1
 exit "$fail"

@@ -252,10 +252,14 @@ BEGIN
   SELECT RAISE(ABORT, 'policy: only the owner''s own message sets a project''s policy')
     WHERE NEW.set_by NOT LIKE 'owner:%' OR length(NEW.source) = 0;
   -- The cut-over run writes every registry row at one stamp. After it, a new project has no row (its lanes go to an
-  -- intake item) until his answer to a policy question writes version 1.
+  -- intake item) until his answer to a policy question writes version 1, or `policy.py --import --fill-missing` writes it
+  -- from the registry: a later registry row is version 1 of a project with no row, source import:projects.md:<project>.
   SELECT RAISE(ABORT, 'policy: the registry import writes version 1 only, in the one cut-over run; later, his answer to a policy question writes it')
     WHERE NEW.set_by = 'owner:registry'
-      AND (NEW.version <> 1 OR EXISTS (SELECT 1 FROM policy WHERE set_by = 'owner:registry' AND set_at <> NEW.set_at));
+      AND (NEW.version <> 1
+           OR (EXISTS (SELECT 1 FROM policy WHERE set_by = 'owner:registry' AND set_at <> NEW.set_at)
+               AND (EXISTS (SELECT 1 FROM policy WHERE project = NEW.project)
+                    OR NEW.source <> 'import:projects.md:' || NEW.project)));
   SELECT RAISE(ABORT, 'policy: the next version is one above the last')
     WHERE NEW.version <> coalesce((SELECT max(version) FROM policy WHERE project = NEW.project), 0) + 1;
 END;

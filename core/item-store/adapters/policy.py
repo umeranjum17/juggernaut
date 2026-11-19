@@ -8,6 +8,10 @@
       `owner:registry`, source import:projects.md:<project>. It prints the table it wrote (and, with --table, one check line
       per project) and saves the table to <main home>/state/item-store/cut-over-policy.tsv, which logs/owner-registry reads.
       Version 1 reproduces today's delivery rules exactly: +yolo is loose, local-trunk is standard, everything else is tight.
+  --import --fill-missing [--registry <home>]
+      For each project of that registry with no policy row, writes version 1 by the same formula, stamped `owner:registry`; prints each
+      project it filled and the count (or `nothing to fill`). It never changes, version-bumps or deletes an existing row, and it appends
+      each filled project to the saved cut-over table. The plain --import still refuses a second run.
   --check <registry home> --table <rules.tsv>
       Reads each version-1 row back through bin/jg-project-mode.sh --raw and the rules table; prints `<project> ok` or the
       difference, one line per project; exit 1 on any difference.
@@ -25,7 +29,7 @@
       Rewrites those lines to clone facts only. --dry-run prints each line before and after and writes nothing; --apply keeps a copy
       beside the file as projects.md.before-policy (an older copy stays) and writes the new text. Either refuses, and writes nothing,
       while a project it would rewrite has no policy row (its mode would be lost). A line with nothing to drop is never touched.
-A project registered after the cut-over gets its version 1 only through --from-message or --propose.
+A project registered after the cut-over gets its version 1 through --from-message, --propose, or --import --fill-missing.
 Exit: 0 done, 1 refused or a difference, 2 usage."""
 import argparse, os, re, shutil, subprocess, sys
 
@@ -239,18 +243,8 @@ def check_lines(st, reg, tbl):
     return out
 
 
-def cmd_import(a):
-    home = jg_home()
-    main = itemdb.main_home(home)
-    if itemdb.home_id(home) != "main":
-        die("refused: the cut-over import runs in the main home only")
-    reg = os.path.realpath(a.registry or home)
-    st = itemdb.open_db(home, "owner:registry")
-    if st.one("SELECT 1 FROM policy WHERE set_by='owner:registry'"):
-        die("refused: the cut-over import already ran; a later version comes only from his own message")
-    projects, conflicts = fleet_registry(reg)
-    if not projects:
-        die("refused: %s lists no project" % os.path.join(reg, "data", "projects.md"))
+def write_v1(st, main, projects):
+    """Version 1 of each (project, word, +yolo, home) given, by the import formula, at one stamp."""
     at = itemdb.stamp(st)
     try:
         for name, word, yolo, _ in projects:
@@ -259,6 +253,23 @@ def cmd_import(a):
                           trunk=trunk_of(main, name))
     except S.Refused as e:
         die("refused: %s" % e)
+
+
+def cmd_import(a):
+    home = jg_home()
+    main = itemdb.main_home(home)
+    if itemdb.home_id(home) != "main":
+        die("refused: the cut-over import runs in the main home only")
+    reg = os.path.realpath(a.registry or home)
+    st = itemdb.open_db(home, "owner:registry")
+    if a.fill_missing:
+        return fill_missing(st, main, reg)
+    if st.one("SELECT 1 FROM policy WHERE set_by='owner:registry'"):
+        die("refused: the cut-over import already ran; a later version comes only from his own message")
+    projects, conflicts = fleet_registry(reg)
+    if not projects:
+        die("refused: %s lists no project" % os.path.join(reg, "data", "projects.md"))
+    write_v1(st, main, projects)
     head = "project\tmode\tyolo\tlevel\tmerge\tland\trelease"
     lines = [head]
     for name, _, _, _ in projects:
@@ -271,6 +282,28 @@ def cmd_import(a):
     if a.table:
         for _, _, ref, _ in check_lines(st, reg, a.table):
             print(ref)
+
+
+def fill_missing(st, main, reg):
+    """Version 1 for each registry project that has no row at all; a project with any row is never touched."""
+    projects, conflicts = fleet_registry(reg)
+    todo = [p for p in projects if not row_of(st, p[0])]
+    if conflicts:
+        print("\n".join(conflicts))
+    if not todo:
+        return print("nothing to fill")
+    write_v1(st, main, todo)
+    path = os.path.join(itemdb.store_dir(main), "cut-over-policy.tsv")     # the stamp check reads the rows' pairs from this log
+    head = not os.path.exists(path)
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write("project\tmode\tyolo\tlevel\tmerge\tland\trelease\n" if head else "")
+        for name, _, _, _ in todo:
+            _, _, level, mode, merge, land, release, _, _ = row_of(st, name, 1)
+            fh.write("\t".join((name, mode, "on" if level == "loose" else "off", level, merge, land, release)) + "\n")
+    for name, word, yolo, _ in todo:
+        mode, level = formula(word, yolo)
+        print("filled %s: mode=%s level=%s" % (name, mode, level))
+    print("filled %d project(s)" % len(todo))
 
 
 def cmd_check(a):
@@ -368,6 +401,7 @@ def main(argv):
     g.add_argument("--rewrite-registry")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--apply", action="store_true")
+    p.add_argument("--fill-missing", action="store_true")
     p.add_argument("--registry")
     p.add_argument("--table")
     p.add_argument("--channel", choices=("chat", "board"))
@@ -376,6 +410,8 @@ def main(argv):
     p.add_argument("--level", choices=LEVELS)
     p.add_argument("--mode")
     a = p.parse_args(argv)
+    if a.fill_missing and not a.imp:
+        die("policy.py: --fill-missing goes with --import", 2)
     try:
         if a.imp:
             cmd_import(a)

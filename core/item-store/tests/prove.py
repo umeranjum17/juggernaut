@@ -470,7 +470,7 @@ def round4():
     # A27: after the cut-over a new project has no row until his answer writes version 1
     s = store()                                          # the cut-over ran at T0 - 10 (muxr, crewhouse)
     cut_log = owner_logs(s)["owner:registry"]            # the cut-over run's own output, written once
-    late = refused(lambda: s.set_policy(t, "newpj", "loose", "owner:registry", "import:projects.md:newpj", mode="local"))
+    late = refused(lambda: s.set_policy(t, "newpj", "loose", "owner:registry", "forged:newpj", mode="local"))
     no_lane = refused(lambda: s.open(t + 1, "work:newpj/jg-n", "work", "newpj", "jg-n", "build", "lead:newpj", source="dn", lane="worker:newpj/jg-n", project="newpj"))
     s.open(t + 2, "intake:newpj/jg-n", "intake", "newpj", "jg-n", "a lane of newpj, which has no policy row", "adapter:status", source="in:jg-n")
     s.open(t + 3, "question:policy/newpj", "question", "main", "policy:newpj", "newpj has no policy: tight, standard or loose?", "main",
@@ -483,7 +483,7 @@ def round4():
     logs = owner_logs(s); logs["owner:registry"] = cut_log
     bad = s.stamp_check(t + 200, logs)
     check("A27", late and no_lane and v == 1 and lane == "open" and [(w, r) for w, r, _ in bad] == [("policy", "newpj2 v1")],
-          "after the cut-over the registry writes no row; a new project's lane goes to intake; his answer to the policy question "
+          "after the cut-over the registry writes no row under a source that is not the import's (a fill is the import's own source, jg-6sa2s); a new project's lane goes to intake; his answer to the policy question "
           "writes version 1 and the lane opens; a row forged at the cut-over's stamp is not in that run's output, so a security item opens", "U14")
 
     # A28: a raw trunk-adapter close of a landing is found within one tick, and the cleanup never reads it as landed
@@ -736,8 +736,8 @@ def refusals():
          lambda: s.open(t, "question:merge:tp4/jg-8@pr8", "question", "tp4", "jg-8", "is the new colour right? pr8", "lead:tp4", source="q77")),
         ("R78", "", "Main opens a step question whose text does not name the pull request",
          lambda: s.open(t, "question:merge:tp4/jg-8@pr8", "question", "tp4", "jg-8", "is the new colour right?", "main", source="q78")),
-        ("R79", "U14", "the registry writes a new project's first policy version 10 days after the cut-over",
-         lambda: s.set_policy(t + 10 * 86400, "newpj", "loose", "owner:registry", "import:projects.md:newpj", mode="local")),
+        ("R79", "U14", "the registry writes a new project's first policy version 10 days after the cut-over, under a source that is not the import's",
+         lambda: s.set_policy(t + 10 * 86400, "newpj", "loose", "owner:registry", "forged:newpj", mode="local")),
         ("R80", "X18", "a policy version stamped 10 days from the host clock",
          lambda: (setattr(s, "_host", t), s.con.execute("INSERT INTO policy(project,version,level,mode,merge,land,release,lanes,trunk,set_at,set_by,source) "
                                                        "VALUES('newpj2',1,'loose','local','machine','machine','machine',4,'main',?,'owner:chat','tg:80')", (t + 10 * 86400,)))),
