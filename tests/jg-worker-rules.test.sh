@@ -15,10 +15,10 @@ tool="$ROOT/bin/jg-worker-rules.sh"
 "$tool" check | grep -q '^ok: roles' || fail "the shipped map must cover the surface"
 pass "the shipped map's union is the whole surface"
 
-whole=$(( $(wc -c < "$ROOT/AGENTS.md") ))
+whole=$("$ROOT/bin/jg-worker-rules.sh" render overwatch | wc -c)
 for role in builder scout reviewer; do
-  got=$("$tool" render "$role" | wc -c)
-  [ "$got" -gt 0 ] && [ "$got" -lt "$whole" ] || fail "$role block is $got bytes, whole AGENTS.md is $whole"
+  got=$("$ROOT/bin/jg-worker-rules.sh" render "$role" | wc -c)
+  [ "$got" -gt 0 ] && [ "$got" -lt "$whole" ] || fail "$role block is $got bytes, the overwatch block is $whole"
 done
 "$tool" render builder | grep -q 'juggernaut-coding-guidelines' || fail "builder must read the coding guidelines"
 ! "$tool" render builder | grep -q 'Never merge a PR without' || fail "builder must not read the supervisor rules"

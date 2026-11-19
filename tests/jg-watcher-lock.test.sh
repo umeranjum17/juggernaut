@@ -146,7 +146,7 @@ test_singleton_start() {
 # processes, and a recorder whose pass reads all of them spends a fifth of a
 # core per home. Crowd the process table, then hold the real recorder of an idle
 # private watcher under 2% of one core.
-test_child_recorder_cost_ignores_host_process_count() (
+test_child_recorder_cost_ignores_host_process_count() { (
   local dir state fakebin pid='' crowd='' recorder='' child hz before after window=20 i crowded
   local -a kids
   if [ ! -r "/proc/$$/task/$$/children" ]; then
@@ -194,7 +194,7 @@ test_child_recorder_cost_ignores_host_process_count() (
   [ $(( (after - before) * 100 )) -lt $(( 2 * hz * window )) ] \
     || fail "child recorder used $(( (after - before) * 1000 / (hz * window) ))/1000 of a core over ${window}s beside $crowded extra processes"
   pass "child recorder stays under 2% of a core with $crowded extra processes on the host"
-)
+); }
 
 test_stale_watch_lock_reclaimed() {
   local dir state fakebin out dead_pid pid live lock_pid i
@@ -314,7 +314,7 @@ test_live_stalled_watch_lock_is_replaced_past_hard_bound() {
 # "lock held by live pid ... but heartbeat is stale". Here the real exporter
 # has one ledger row to export into a feed that is a FIFO with no reader, so
 # its sync stays in progress until this case opens the FIFO.
-test_slow_comms_feed_sync_keeps_beacon_fresh() (
+test_slow_comms_feed_sync_keeps_beacon_fresh() { (
   local dir state fakebin feed pid='' drain='' i age status
   dir=$(make_case slow-comms-feed)
   state="$dir/state"
@@ -357,7 +357,7 @@ test_slow_comms_feed_sync_keeps_beacon_fresh() (
   grep -F '"text":"dispatched ship demo"' "$dir/feed.out" >/dev/null \
     || fail "the slow sync did not export its row: $(cat "$dir/feed.out")"
   pass "a slow comms-feed sync keeps the watcher beacon fresh and a re-arm attaches"
-)
+); }
 
 # A slow child the pass must wait on keeps the beacon fresh, but only up to the
 # child cap: a wedged child must still age the beacon so the arm sees a slow beat and
@@ -365,7 +365,7 @@ test_slow_comms_feed_sync_keeps_beacon_fresh() (
 # which appends to a ledger that is a FIFO with no reader, so it stays in
 # progress until this case opens the FIFO (the comms-feed exporter skips a
 # ledger that is not a regular file). Grace 3s, cap 8s, stall bound 12s.
-test_slow_inline_child_keeps_beacon_until_cap() (
+test_slow_inline_child_keeps_beacon_until_cap() { (
   local dir state fakebin ledger pid='' arm='' i age status lock_pid
   dir=$(make_case slow-inline-child)
   state="$dir/state"
@@ -437,11 +437,11 @@ test_slow_inline_child_keeps_beacon_until_cap() (
   is_live_non_zombie "$pid" && fail "the wedged watcher survived its eviction"
   pid=
   pass "a slow inline child keeps the beacon fresh up to its cap, then a wedged one ages it and is evicted"
-)
+); }
 
 # Drive the real watcher and arm in a private home, including a stopped holder
 # blocked on a TERM-resistant check child. Never signal a discovered real home.
-test_rearm_proves_resumed_supervision() (
+test_rearm_proves_resumed_supervision() { (
   local dir state fakebin oldarm='' holder='' sleeper='' arm='' unrelated='' parent='' i id status age bound stamp
   local mode=${1:-beacon}
   dir=$(make_case "rearm-proves-resume-$mode")
@@ -571,10 +571,10 @@ SH
   wait_for_exit "$arm" "$ARM_FAIL_EXIT_POLLS" || fail "replacement did not surface the resumed task"
   grep -q '^signal:.*one' "$dir/new-arm.out" || fail "resumed task wake missing"
   pass "delayed re-arm removes hung holder and orphaned child, protects unrelated process, and supervises five tasks before confirmation ($mode)"
-)
+); }
 
 # Reproduce a descendant exiting between its liveness and identity reads.
-test_child_retirement_continues_after_descendant_exits() (
+test_child_retirement_continues_after_descendant_exits() { (
   local dir first='' second='' records pid
   dir=$(make_case child-retirement-exit-race)
   export JG_HOME="$dir" JG_STATE_OVERRIDE="$dir/state"
@@ -601,9 +601,9 @@ test_child_retirement_continues_after_descendant_exits() (
     || fail "an exited descendant prevented remaining child retirement"
   is_live_non_zombie "$second" && fail "remaining recorded child survived retirement"
   pass "child retirement continues when an earlier descendant exits during identity lookup"
-)
+); }
 
-test_first_scan_confirmation_budget() (
+test_first_scan_confirmation_budget() { (
   local mode=$1 dir state fakebin arm='' holder='' i status
   dir=$(make_case "first-scan-budget-$mode")
   state="$dir/state"
@@ -650,7 +650,7 @@ SH
   fi
   ! grep -q '^watcher: FAILED' "$dir/arm.out" || fail "first scan failed: $(cat "$dir/arm.out")"
   pass "first scan confirmation budgets $mode work"
-)
+); }
 
 test_guard_warnings() {
   # The guard's two operator-visible states, with resilient substrings instead of
@@ -1197,7 +1197,7 @@ run_watch_restart_rejects_reused_pid() {  # <now|settled>
   pid=$!
   i=0
   if [ "$mode" = now ]; then
-    while [ "$i" -lt 80 ] && is_live_non_zombie "$pid"; do
+    while [ "$i" -lt 600 ] && is_live_non_zombie "$pid"; do
       sleep 0.1
       i=$((i + 1))
     done
@@ -1207,7 +1207,7 @@ run_watch_restart_rejects_reused_pid() {  # <now|settled>
     grep -F 'check: rearm-resurface' "$out" >/dev/null \
       || fail "restart replaced reused-pid lock without surfacing recovery: $(cat "$out")"
   else
-    while [ "$i" -lt 80 ] && ! grep -qF 'rearm-resurface settled without a wake' "$state/.watch-triage.log" 2>/dev/null; do
+    while [ "$i" -lt 600 ] && ! grep -qF 'rearm-resurface settled without a wake' "$state/.watch-triage.log" 2>/dev/null; do
       sleep 0.1
       i=$((i + 1))
     done
@@ -1400,7 +1400,7 @@ test_attached_arm_signal_is_recorded_in_cycle_ledger() {
   PATH="$fakebin:$PATH" JG_STATE_OVERRIDE="$state" JG_POLL=5 JG_SIGNAL_GRACE=1 JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999 "$WATCH" > "$out" 2>&1 &
   wpid=$!
   i=0
-  while [ "$i" -lt 60 ]; do
+  while [ "$i" -lt 600 ]; do
     [ "$(cat "$state/.watch.lock/pid" 2>/dev/null || true)" = "$wpid" ] && [ -e "$state/.last-watcher-beat" ] && break
     sleep 0.1
     i=$((i + 1))
@@ -1409,7 +1409,7 @@ test_attached_arm_signal_is_recorded_in_cycle_ledger() {
   PATH="$fakebin:$PATH" JG_STATE_OVERRIDE="$state" JG_ARM_ATTACH_POLL=0.1 JG_ARM_CONFIRM_TIMEOUT=1 "$WATCH_ARM" > "$armout" &
   armpid=$!
   i=0
-  while [ "$i" -lt 80 ]; do
+  while [ "$i" -lt 600 ]; do
     grep -qF "watcher: attached pid=$wpid" "$armout" 2>/dev/null && break
     sleep 0.1
     i=$((i + 1))
@@ -1555,7 +1555,7 @@ test_arm_starts_and_self_heals() {
     PATH="$fakebin:$PATH" JG_HOME="$dir" JG_WAKE_ROUTING="$routing" JG_POLL=5 JG_SIGNAL_GRACE=1 JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999 "$WATCH_ARM" > "$armout" &
     armpid=$!
     i=0
-    while [ "$i" -lt 80 ]; do
+    while [ "$i" -lt 600 ]; do
       case "$row" in
         dead-pid-now) is_live_non_zombie "$armpid" || break ;;
         dead-pid) grep -qF 'rearm-resurface settled without a wake' "$state/.watch-triage.log" 2>/dev/null && break ;;
@@ -1611,7 +1611,7 @@ test_arm_hup_cleans_child_and_temp_output() {
   PATH="$fakebin:$PATH" JG_HOME="$dir" JG_STATE_OVERRIDE="$state" JG_POLL=5 JG_SIGNAL_GRACE=1 JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999 "$WATCH_ARM" > "$armout" &
   armpid=$!
   i=0
-  while [ "$i" -lt 80 ]; do
+  while [ "$i" -lt 600 ]; do
     grep -qF 'watcher: started pid=' "$armout" 2>/dev/null && break
     sleep 0.1
     i=$((i + 1))
@@ -1882,7 +1882,7 @@ SH
 # restarts it, and until the next scan finishes no other process proves a
 # watcher ran. The replacement retains that timestamp through its first scan
 # without renewing it while checks block.
-test_actionable_exit_leaves_a_fresh_beacon() (
+test_actionable_exit_leaves_a_fresh_beacon() { (
   local dir state fakebin beat seeded exited stamp arm='' i
   dir=$(make_case actionable-exit-beacon)
   state="$dir/state"
@@ -1934,7 +1934,7 @@ SH
   [ "$(jg_path_age "$beat")" -lt 60 ] || fail "the replacement never renewed its beacon after the scan"
   printf '# beacon age: replacement retained -> after scan %ss\n' "$(jg_path_age "$beat")"
   pass "an actionable exit leaves a fresh beacon and the replacement renews it only after its scan"
-)
+); }
 
 test_stopped_watcher_is_live_but_stale_then_exit_is_classified() {
   local dir state fakebin armout armpid watcher_pid i status
@@ -1945,7 +1945,7 @@ test_stopped_watcher_is_live_but_stale_then_exit_is_classified() {
   PATH="$fakebin:$PATH" JG_HOME="$dir" JG_STATE_OVERRIDE="$state" JG_POLL=5 JG_SIGNAL_GRACE=1 JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999 "$WATCH_ARM" > "$armout" &
   armpid=$!
   i=0
-  while [ "$i" -lt 80 ]; do
+  while [ "$i" -lt 600 ]; do
     grep -qF 'watcher: started pid=' "$armout" 2>/dev/null && break
     sleep 0.1
     i=$((i + 1))

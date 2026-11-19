@@ -79,8 +79,8 @@ supervision_read() {  # <dir> <grace>
 }
 
 # --- A live sweep longer than the grace stays supervised; a killed watcher does not.
-test_live_sweep_is_supervised_and_a_killed_watcher_is_not() (
-  local dir state beat runs log grace=6 arm i unhealthy=0 peak=0 samples=0 runs_before runs_during
+test_live_sweep_is_supervised_and_a_killed_watcher_is_not() { (
+  local dir state beat runs log grace=14 arm i unhealthy=0 peak=0 samples=0 runs_before runs_during
   local age_now watcher_pid took detected=no started
   dir=$(make_home sweep)
   state=$dir/state
@@ -90,11 +90,11 @@ test_live_sweep_is_supervised_and_a_killed_watcher_is_not() (
   : > "$log"
   # shellcheck disable=SC2030,SC2031 # Each case runs in its own subshell, so its exports die with it.
   export JG_HOME="$dir" JG_STATE_OVERRIDE="$state" JG_POLL=0.2 JG_SIGNAL_GRACE=0 \
-    JG_GUARD_GRACE=$grace JG_CHECK_INTERVAL=0 JG_CHECK_TIMEOUT=5 JG_HEARTBEAT=999999 JG_WATCHER_RECORD_POLL=1
+    JG_GUARD_GRACE=$grace JG_CHECK_INTERVAL=0 JG_CHECK_TIMEOUT=8 JG_HEARTBEAT=999999 JG_WATCHER_RECORD_POLL=1
   # Four slow checks: one sweep is longer than the grace, the shape a busy home reaches
   # when its checks come due together. The sidecar beats the beacon once per record poll
-  # (default 2s); the grace keeps several beats of margin so scheduler load cannot age it out.
-  register_slow_checks "$dir" 4 2 "$log"
+  # (default 2s); the grace is 14s because the real beacon aged to 10s in the parallel run at host load 20+ (4s alone), so scheduler load cannot age it out.
+  register_slow_checks "$dir" 4 5 "$log"
   "$WATCH_ARM" > "$dir/arm.out" 2>&1 &
   arm=$!
   wait_file "$beat" 600 || fail "the real watcher published no beacon: $(cat "$dir/arm.out")"
@@ -137,10 +137,10 @@ test_live_sweep_is_supervised_and_a_killed_watcher_is_not() (
   [ "$took" -le $((grace + 10)) ] || fail "a killed watcher took ${took}s to report, past the ${grace}s grace window"
   pass "a live watcher stayed supervised through a ${runs_during}-check sweep longer than the ${grace}s grace, and a killed watcher read as unsupervised in ${took}s"
   kill -TERM "$watcher_pid" 2>/dev/null
-)
+); }
 
 # --- A cycle that ends on a delivered wake leaves a supervised home behind.
-test_actionable_exit_leaves_the_home_supervised() (
+test_actionable_exit_leaves_the_home_supervised() { (
   local dir state beat arm
   dir=$(make_home exit)
   state=$dir/state
@@ -161,10 +161,10 @@ test_actionable_exit_leaves_the_home_supervised() (
   [ "$JG_SUP_WATCHER_FRESH" = true ] \
     || fail "the home reads as unsupervised after an actionable exit (beacon $JG_SUP_BEACON_DESC)"
   pass "an actionable exit leaves the home supervised once the hand-off stamp ages out"
-)
+); }
 
 # A stale predecessor must not prevent completed first-scan units from proving progress.
-test_stale_first_scan_progress_and_restart() (
+test_stale_first_scan_progress_and_restart() { (
   local dir state arm pid i checks
   dir=$(make_home first-scan)
   state=$dir/state
@@ -203,11 +203,11 @@ test_stale_first_scan_progress_and_restart() (
   printf 'first-scan: checks before interruption=%s; completed heartbeat=%s; strict guard and supervision=true\n' \
     "$checks" "$(cat "$state/.heartbeat-streak")"
   pass "stale first-scan progress confirms real work, interrupted recovery resumes and completes, and guard agrees"
-)
+); }
 
 # A timed-out contributions check followed by an untrusted orphan must surface the
 # rejection, not crash in the no-control-lock release path.
-test_timeout_and_orphan_release_return() (
+test_timeout_and_orphan_release_return() { (
   local dir state
   dir=$(make_home release-return)
   state=$dir/state
@@ -227,12 +227,12 @@ EOF
   grep -q '^check: rejected unauthenticated state checks:.*orphan.check.sh' "$dir/arm.out" \
     || fail "orphan rejection was not delivered: $(cat "$dir/arm.out")"
   pass "a timed-out contributions check releases without a control lock and the orphan rejection is delivered"
-)
+); }
 
 # The guard and the supervision read must agree on a live watcher still in its first scan: the
 # supervision read calls it "starting" (healthy), so the verdict the guard and the inbox act on
 # must not call the same home down. A disagreement printed "WATCHER DOWN ... last beat: starting".
-test_first_scan_holder_is_not_called_down() (
+test_first_scan_holder_is_not_called_down() { (
   local dir state arm age
   dir=$(make_home first-scan-verdict)
   state=$dir/state
@@ -257,7 +257,7 @@ test_first_scan_holder_is_not_called_down() (
   wait "$arm" 2>/dev/null || true
   age=$(jg_path_age "$state/.last-watcher-beat")
   pass "a live first-scan watcher reads as starting and the guard verdict agrees (beat age ${age}s)"
-)
+); }
 
 if [ "${JG_WATCH_BEACON_FIRST_SCAN_ONLY:-0}" = 1 ]; then
   test_stale_first_scan_progress_and_restart

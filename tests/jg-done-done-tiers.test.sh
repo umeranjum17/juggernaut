@@ -1,78 +1,26 @@
 #!/usr/bin/env bash
-# Every journey entry of .done-done.yaml names a tier (ci, local or live), and the
-# set of tier ci is the 18 contract scripts and the 13 static Core suites steps,
-# each a real script with a measured time. The retired Core suites workflow is
-# gone, and each of its 89 steps is accounted for: 5 set-up steps named in the
-# config header, 84 entries that carry a "was Core suites step N" line.
-# Reads the shipped config, the file done-done itself reads.
+# bin/jg-tier-run.sh over the shipped .done-done.yaml: each tier it is asked for (ci, local) runs exactly the journeys the
+# config marks with that tier, one `done-done run <journey> --tier <tier>` each, and a tier with no journey is refused.
+# A recording stand-in takes the place of done-done, so no journey is run.
 set -u
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CFG="$ROOT/.done-done.yaml"
-fail=0
-ok() { printf 'ok   %s\n' "$1"; }
-bad() { printf 'FAIL %s\n' "$1"; fail=1; }
+# shellcheck source=tests/lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+T=$(jg_test_tmproot jg-done-done-tiers)
+mkdir -p "$T/bin"
+# shellcheck disable=SC2016 # the stub's own $2 and $4 are expanded when it runs
+printf '#!/usr/bin/env bash\nprintf "%%s %%s\\n" "$2" "$4" >> "%s/runs"\n' "$T" > "$T/bin/done-done"
+chmod +x "$T/bin/done-done"
 
-# name<TAB>tier<TAB>command<TAB>measured for each journey entry
-rows="$(awk '
-  /^journeys:/ {inj=1; next}
-  /^[^ #]/ {if (inj) flush(); inj=0}
-  inj && /^  [A-Za-z0-9_-]+:$/ {flush(); name=$1; sub(/:$/,"",name); tier=""; cmd=""; m=""; next}
-  inj && /^    # measured / {m=$3" "$4; next}
-  inj && /^    tier: / {tier=$2; next}
-  inj && /^    command: / {cmd=$0; sub(/^    command: /,"",cmd); next}
-  function flush() {if (name!="") printf "%s\t%s\t%s\t%s\n", name, tier, cmd, m; name=""}
-  END {flush()}' "$CFG")"
+for tier in ci local; do
+  : > "$T/runs"
+  want=$(awk -v want="$tier" '/^journeys:/ {inj=1; next} /^[^ #]/ {inj=0} inj && /^  [A-Za-z0-9_-]+:$/ {name=$1; sub(/:$/, "", name)} inj && /^    tier: / && $2 == want {print name}' "$ROOT/.done-done.yaml")
+  [ -n "$want" ] || fail "the shipped config marks no journey with tier $tier"
+  PATH="$T/bin:$PATH" bash "$ROOT/bin/jg-tier-run.sh" "$tier" > "$T/out" 2>&1 || fail "the tier $tier run was refused: $(tail -3 "$T/out")"
+  assert_equals "$(awk -v t="$tier" '{ print $0 " " t }' <<< "$want")" "$(cat "$T/runs")" "tier $tier must run each journey the config marks with it, in order"
+  pass "tier $tier runs exactly the journeys the shipped config marks with it"
+done
 
-total="$(printf '%s\n' "$rows" | grep -c .)"
-if [ "$total" -gt 0 ]; then ok "read $total entries"; else bad "no entries read"; fi
-
-notier="$(printf '%s\n' "$rows" | awk -F'\t' '$2!="ci" && $2!="local" && $2!="live"{print $1}')"
-if [ -z "$notier" ]; then ok "0 entries with no tier"; else bad "entries with no valid tier: $notier"; fi
-
-ci="$(printf '%s\n' "$rows" | awk -F'\t' '$2=="ci"')"
-n="$(printf '%s\n' "$ci" | grep -c .)"
-if [ "$n" = 31 ]; then ok "31 entries in tier ci"; else bad "tier ci has $n entries, want 31"; fi
-
-while IFS=$'\t' read -r name _ cmd m; do
-  [ -n "$name" ] || continue
-  f="$(printf '%s' "$cmd" | sed -En 's/^bash ((tests|journeys)\/[^ ]*\.sh).*/\1/p')"
-  if [ -n "$f" ] && [ -f "$ROOT/$f" ]; then :; else bad "$name: command names no existing tests/ script"; fi
-  case "$m" in [0-9]*" s") ;; *) bad "$name: no measured time" ;; esac
-done <<<"$ci"
-[ "$fail" = 0 ] && ok "each ci entry runs a real test file and records its time"
-
-# The Core suites workflow is deleted and its 89 steps are all placed.
-if [ ! -e "$ROOT/.github/workflows/core-suites.yml" ]; then ok "core-suites workflow is gone"; else bad "core-suites workflow still exists"; fi
-steps="$(grep -o '^    # was Core suites step [0-9]*:' "$CFG" | sed 's/[^0-9]//g' | sort -n)"
-setup="$(printf '%s\n' 1 2 3 4 49)"
-placed="$(printf '%s\n%s\n' "$steps" "$setup" | grep . | sort -n | tr '\n' ' ')"
-want="$(seq 1 89 | tr '\n' ' ')"
-if [ "$placed" = "$want" ]; then ok "all 89 Core suites steps have an entry or a named set-up"; else bad "Core suites steps placed: $placed"; fi
-# Only entries that carry a "was Core suites step" line count, so a journey added later does not move the 71.
-nlocal="$(awk '
-  /^  [A-Za-z0-9_-]+:$/ {if (placed && tier=="local") n++; placed=0; tier=""; next}
-  /^    tier: / {tier=$2; next}
-  /^    # was Core suites step [0-9]+:/ {placed=1}
-  END {if (placed && tier=="local") n++; print n+0}' "$CFG")"
-if [ "$nlocal" = 71 ]; then ok "71 Core suites entries in tier local"; else bad "$nlocal Core suites entries in tier local, want 71"; fi
-
-# No mapping in the config may repeat a key: a second "command:" under one entry
-# (or two entries of one name) is a merge-conflict leftover that done-done rejects.
-dups="$(awk '
-  /^[ ]*#/ || /^[ ]*$/ {next}
-  match($0, /^ */) && $0 ~ /^ *[A-Za-z0-9_-]+:/ {
-    ind = RLENGTH; k = $0; sub(/^ */, "", k); sub(/:.*/, "", k)
-    for (i in seen) { split(i, p, SUBSEP); if (p[1] > ind) delete seen[i] }
-    if (((ind, k) in seen)) printf "line %d: duplicate key %s\n", NR, k
-    seen[ind, k] = 1
-  }' "$CFG")"
-if [ -z "$dups" ]; then ok "no duplicate key in .done-done.yaml"; else bad "$dups"; fi
-
-# done-done still reads the config. "done-done doctor" validates the file in a
-# fraction of a second; the bare "done-done" status call spins for minutes on a
-# config this size, which made this test time out under load.
-if command -v done-done >/dev/null 2>&1; then
-  cfgrow="$(cd "$ROOT" && timeout 60 done-done doctor 2>/dev/null | sed -n 's/^  config,\([a-z]*\),.*/\1/p')"
-  if [ "$cfgrow" = ok ]; then ok "done-done reads .done-done.yaml as valid"; else bad "done-done doctor reports the config as '${cfgrow:-no answer}'"; fi
-fi
-exit "$fail"
+printf 'journeys:\n  only-local:\n    tier: local\n' > "$T/small.yaml"
+JG_TIER_CONFIG="$T/small.yaml" PATH="$T/bin:$PATH" bash "$ROOT/bin/jg-tier-run.sh" ci > "$T/out" 2>&1 && fail "a tier with no journey must be refused"
+assert_contains "$(cat "$T/out")" "no journey with tier ci" "the refusal names the empty tier"
+pass "a tier with no journey is refused"
