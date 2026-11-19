@@ -312,3 +312,19 @@ jg_item; expect_code 1 $? "jg-item schema-check also fails on a stray table"
 python3 -c 'import sqlite3,sys; sqlite3.connect(sys.argv[1]).execute("DROP TABLE stray")' "$DB"
 jg_item; expect_code 0 $? "jg-item schema-check passes with the ticket tables"
 pass "audit: the ticket tables pass, a stray table still fails"
+
+# --- check: the tables exist, the sql matches its sha, no row breaks the hold rule
+out=$(python3 "$TK" check); expect_code 0 $? "check passes on the imported fixture"
+assert_contains "$out" "tickets: ok ($(sql "SELECT count(*) FROM ticket WHERE home='main'") rows)" "check counts this home's rows"
+setrow() { python3 -c 'import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute("UPDATE ticket SET status=?, defer_until=NULL, metadata=? WHERE id=?", sys.argv[2:5]); c.commit()' "$DB" "$1" "$2" jg-ready1; }
+setrow blocked '{"hold_reason": " "}'
+out=$(python3 "$TK" check); expect_code 2 $? "check refuses a blocked row with a blank hold_reason"
+assert_contains "$out" "tickets: jg-ready1: blocked or on hold with no hold_reason" "check names the row and the rule"
+setrow deferred '{}'
+out=$(python3 "$TK" check); expect_code 2 $? "check refuses a deferred row with no date and no reason"
+assert_contains "$out" "tickets: jg-ready1: deferred with no reason" "check names the deferred rule"
+mkdir -p "$T/bare/state" "$T/bare/config"
+out=$(JG_HOME=$T/bare python3 "$TK" check); expect_code 2 $? "check on a home with no tables"
+assert_contains "$out" "tickets: no tables" "check says there are no tables"
+[ -z "$(JG_HOME=$T/bare python3 -c 'import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute("SELECT 1 FROM sqlite_master WHERE name=\"ticket\"").fetchone() or "")' "$T/bare/state/item-store/fleet.db")" ] || fail "check must not create the tables"
+pass "check: ok on the fixture, names a hold-rule break, says no tables on a bare home"

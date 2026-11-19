@@ -24,6 +24,9 @@ bin/jg-backlog.sh in the same call that writes Beads when the main home has conf
                                                          startable row and project label (open, not blocked, not a decision card, no assignee or
                                                          hold reason, no open card linked either way)
   tickets.py tree --homes                                 bin/jg-backlog-tree.py over the tables instead of each Beads store
+  tickets.py check                                        read-only: whether the tables can be the record. Exit 0 and `tickets: ok (<n> rows)`; exit 2 and
+                                                         one line naming the first fault: no tables, tickets.sql differs from tickets.sha256, or
+                                                         `<id>: <rule>` (blocked or on hold with no hold_reason; deferred with no reason)
   tickets.py drop-lead-homes                              drops the rows of every home named lead:<id> while the plain <id> home
                                                          holds tickets (a copy imported under the old whoami id), through
                                                          the log's own drop; prints one line per home dropped, run twice
@@ -285,6 +288,34 @@ def cmd_compare(a):
     return 1 if lines else 0
 
 
+HOLD_RULES = (
+    ("blocked or on hold with no hold_reason", "status IN ('blocked', 'on_hold') AND trim(coalesce(json_extract(metadata, '$.hold_reason'), '')) = ''"),
+    ("deferred with no reason", "status = 'deferred' AND defer_until IS NULL AND trim(coalesce(json_extract(metadata, '$.hold_reason'), '')) = ''"),
+)
+
+
+def check_fault(con, home_id):
+    """The first fault that keeps the tables from being the record, or None. Reads only: it never loads the tables."""
+    import hashlib
+    if not con.execute("SELECT 1 FROM sqlite_master WHERE name = 'ticket'").fetchone():
+        return "no tables", 0
+    sql = open(os.path.join(STORE, "tickets.sql"), "rb").read()
+    if hashlib.sha256(sql).hexdigest() != open(os.path.join(STORE, "tickets.sha256")).read().split()[0]:
+        return "tickets.sql differs from tickets.sha256", 0
+    for rule, where in HOLD_RULES:
+        row = con.execute("SELECT id FROM ticket WHERE home = ? AND %s ORDER BY id LIMIT 1" % where, (home_id,)).fetchone()
+        if row:
+            return "%s: %s" % (row[0], rule), 0
+    return None, con.execute("SELECT count(*) FROM ticket WHERE home = ?", (home_id,)).fetchone()[0]
+
+
+def cmd_check(a):
+    h = home()
+    fault, n = check_fault(itemdb.open_db(h, BY).con, itemdb.home_id(h))
+    print("tickets: %s" % fault if fault else "tickets: ok (%d rows)" % n)
+    return 2 if fault else 0
+
+
 def cmd_show(a):
     h = home()
     home_id, _, ident = a.ref.rpartition(":") if ":" in a.ref else (itemdb.home_id(h), "", a.ref)
@@ -441,8 +472,8 @@ def cmd_tree(a):
 
 
 def main(argv):
-    if not argv or argv[0] not in ("import", "write", "ready", "compare", "show", "drop-lead-homes", "read", "tree", "spawnable") + READ_VERBS:
-        print("usage: tickets.py import|write|ready|compare|show|drop-lead-homes|read|tree ...", file=sys.stderr)
+    if not argv or argv[0] not in ("import", "write", "ready", "compare", "check", "show", "drop-lead-homes", "read", "tree", "spawnable") + READ_VERBS:
+        print("usage: tickets.py import|write|ready|compare|check|show|drop-lead-homes|read|tree ...", file=sys.stderr)
         return 2
     cmd, rest = argv[0], argv[1:]
     try:
@@ -466,6 +497,8 @@ def main(argv):
             return cmd_show(type("A", (), dict(ref=rest[0])))
         if cmd == "drop-lead-homes" and not rest:
             return cmd_drop_lead_homes(None)
+        if cmd == "check" and not rest:
+            return cmd_check(None)
         if cmd == "compare" and len(rest) == 1:
             return cmd_compare(type("A", (), dict(export=rest[0])))
     except Refused as e:
