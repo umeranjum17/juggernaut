@@ -241,6 +241,17 @@ SPAWNABLE_IDS=$tmp/spawnable
 "$BACKLOG" ready --spawnable > "$tmp/out" 2>/dev/null || exit 0   # the store could not answer: write nothing this beat
 awk -F'\t' 'NF >= 2 { print $1 }' "$tmp/out" > "$SPAWNABLE_IDS"
 for f in "$APPROVED"/*; do [ -f "$f" ] && basename "$f"; done 2>/dev/null | sort -u > "$tmp/approved"
+# The item store (core/item-store) is also told of each approval record: one dispatch item held by the lead until a spawn closes it.
+# Guarded by the home's own switch, silent, and never a reason to change this check's output or exit; today's record decides.
+if [ -e "$FMH/config/item-store" ]; then
+  ROOT=$(cd "$(dirname "$SELF")/../.." && pwd -P)
+  HID=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import itemdb; print(itemdb.home_id(sys.argv[2]))' "$ROOT/core/item-store" "$FMH" 2>/dev/null) || HID=
+  while [ -n "$HID" ] && IFS= read -r id; do
+    [ -n "$id" ] || continue
+    python3 -I "$ROOT/core/item-store/adapters/dispatch.py" approve "$HID" "$id" \
+      --source "approval:$id@$(approved_field "$id" approved-at)" >/dev/null 2>&1 || true
+  done < "$tmp/approved"
+fi
 
 [ ! -x "$SCALE" ] || "$SCALE" check "$FMH" >/dev/null 2>&1   # the lane limit takes its tick on this beat
 free=$(free_lanes)

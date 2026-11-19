@@ -2750,6 +2750,41 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ]; then
     exit "$SPAWN_DEFER_EXIT"
   fi
 fi
+# spawn_item_store <spawned|requeue> [<words>]: the item store (core/item-store) is also told of this spawn's dispatch: `spawned` closes
+# the ticket's dispatch item `lane:<task id>` and opens the lane's work; `requeue` opens a dispatch item that carries <words> and
+# waits until a lane starts (it opens no steer, so no steer clock runs). Guarded by the home's own switch, silent, and never a reason
+# to change this script's output or exit: today's record decides, and a refused write is one intake item on Main.
+spawn_item_store() {
+  [ -e "$JG_HOME/config/item-store" ] && [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] || return 0
+  local adapter hid key n
+  adapter=$SCRIPT_DIR/../core/item-store/adapters/dispatch.py
+  [ -f "$adapter" ] || return 0
+  key=$(JG_HOME=$JG_HOME "$SCRIPT_DIR/../core/item-store/jg-item" key dispatch --ticket "${TICKET:-$ID}" 2>/dev/null | cut -f1) || return 0
+  [ -n "$key" ] || return 0
+  hid=${key#dispatch:}; hid=${hid%%/*}
+  case "$1" in
+  spawned) JG_HOME=$JG_HOME python3 -I "$adapter" spawned "$hid" "$ID" --source "spawn:$ID" >/dev/null 2>&1 || true ;;
+  requeue)
+    n=$(JG_HOME=$JG_HOME python3 -I "$adapter" next "$hid" "${TICKET:-$ID}" 2>/dev/null) || return 0
+    JG_HOME=$JG_HOME python3 -I "$adapter" requeue "$hid" "${TICKET:-$ID}" "$n" --words "$2" --source "requeue:${TICKET:-$ID}#$n" >/dev/null 2>&1 || true
+    ;;
+  esac
+  return 0
+}
+# spawn_item_words: the words this spawn carries: the first line of the brief's captain intent, else the ticket id.
+spawn_item_words() {
+  local w
+  w=$(awk '/^## Captain.s intent/ { on = 1; next } on && NF { print; exit }' "$BRIEF" 2>/dev/null | tr '\t\r' '  ' | cut -c1-200)
+  printf '%s' "${w:-${TICKET:-$ID}}"
+}
+# spawn_item_prior_work: exit 0 and print `open` or `closed` when the store holds work of an earlier lane for this task.
+spawn_item_prior_work() {
+  [ -e "$JG_HOME/config/item-store" ] && [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] || return 1
+  JG_HOME=$JG_HOME python3 -I "$SCRIPT_DIR/../core/item-store/adapters/dispatch.py" prior-work "$ID" 2>/dev/null
+}
+# A lane cleaned before its done line leaves its work open in the store: the ticket is owed a new lane, with the new words.
+SPAWN_PRIOR_WORK=$(spawn_item_prior_work) || SPAWN_PRIOR_WORK=
+[ "$SPAWN_PRIOR_WORK" != open ] || spawn_item_store requeue "$(spawn_item_words)"
 # Project capacity admission (bin/jg-project-capacity-lib.sh owns the
 # declaration, what holds a place, and why this is race-safe). A fresh worker
 # for a project whose declared capacity is already held is deferred here, before
@@ -2793,6 +2828,7 @@ if [ -n "$SPAWN_PROJECT_CAPACITY" ]; then
   fi
   if [ "$JG_PROJECT_CAPACITY_OCCUPANTS" -ge "$SPAWN_PROJECT_CAPACITY" ]; then
     echo "deferred: project $(basename "$PROJ_ABS") admits $SPAWN_PROJECT_CAPACITY worker(s) at once on this machine ($JG_PROJECT_CAPACITY_FILE) and $JG_PROJECT_CAPACITY_OCCUPANTS already hold a place ($JG_PROJECT_CAPACITY_OCCUPANT_IDS); task $ID was not launched and its backlog item stays queued - dispatch it again once one of them records its ready PR or is cleaned up" >&2
+    [ -z "$SPAWN_PRIOR_WORK" ] || spawn_item_store requeue "reopened at the lane limit: $(spawn_item_words)"
     exit "$SPAWN_DEFER_EXIT"
   fi
 fi
@@ -5919,4 +5955,5 @@ fi
 # Best effort: a write failure never blocks the launch.
 [ "$KIND" = squad_lead ] || printf '%s\t%s\t%s\t%s\n' "$WT" "$META_WINDOW" "$ID" "$(date +%s)" \
   >> "$DATA/copy-tasks.tsv" 2>/dev/null || true
+spawn_item_store spawned
 echo "spawned $ID harness=$HARNESS kind=$KIND$SPAWN_DELIVERY window=$META_WINDOW worktree=$WT$SPAWN_ACCOUNT"
