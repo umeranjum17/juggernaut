@@ -215,11 +215,11 @@ For every actionable wake, follow the ordinary-wake continuation in the emitted 
 No turn ends blind while work is under way, including turns described as holding or waiting.
 A stuck worker escalates by itself, operator to its lead, lead to Main, and only what Main cannot settle to a board card, each hop re-firing while the wait stays open (`core/wait-timers/README.md`), so on a stuck-worker wake unblock it or steer its owner rather than waiting for the captain.
 
-- At the start of every wake-handling turn, drain the durable wake queue before peeking, reading beyond the reason line, steering, or starting work.
+- At the start of every wake-handling turn, drain the durable wake queue before peeking, reading beyond each queued record's reason line, steering, or starting work. The queue is the doorbell that wakes Main, and so is the store: a page Main has not read wakes it.
 - Session start is the only exception because its one-shot digest already presented the queue while locked or deliberately left it untouched in lock-refused read-only mode.
-- Treat any `OPEN DECISIONS` section from the drain as actionable reconciliation input even when no wake record was queued.
-- Treat any `UNREAD STATUS` section as newly surfaced status that must be read this turn; those lines are not re-printed after this presentation.
-- After handling all emitted wakes and reconciling the OPEN DECISIONS and UNREAD STATUS sections, run the exact generation-bound `--ack-through` command printed as `WAKE_ACK_REQUIRED`; interruption before that acknowledgement deliberately leaves the work durable for idempotent re-handling.
+- Treat any `OPEN DECISIONS` or `RECORD DIVERGENCE` section from the drain as actionable reconciliation input even when no wake record was queued.
+- Read the drain's `PAGES` section this turn: Main's unread store pages (`jg-item pages main`, at most 200 lines and 32 KiB from Main's cursor); status lines, holds, steers and alerts arrive as pages, and the drain does not re-print status lines. Read each queued record's reason line in `QUEUED` for the `stale:`, `check:`, `signal:` and `heartbeat:` handling below. A home without `config/item-store-reads` keeps the status-line presentation.
+- After handling all emitted wakes and reconciling the OPEN DECISIONS, RECORD DIVERGENCE and PAGES sections, run the exact generation-bound `--ack-through` command printed as `WAKE_ACK_REQUIRED`, which also moves Main's page cursor; interruption before that acknowledgement deliberately leaves the work durable for idempotent re-handling.
 - After any supervision-branch acknowledgement succeeds or reports that a sequence is already processed, never acknowledge that sequence again or retry the refusal.
 - A status line is a wake event, not current state; use `bin/jg-crew-state.sh` when current state matters, especially before re-escalating an old decision, blocker, or pause.
 - `bin/jg-classify-lib.sh` owns the distinction between declared `paused:` waits and `blocked:` events needing Overwatch action; `bin/jg-brief.sh` owns worker declaration instructions.

@@ -4078,6 +4078,22 @@ rejected_checks_record() {
   done
 }
 
+# The second doorbell: Main's store pages (core/item-store, `jg-item pages main`). A page Main has not read rings it like a
+# queued record does, and only while the queue is empty, because a queued record already rings and the drain prints both.
+# Main home only, and only once config/item-store-reads is on; a store that cannot answer rings nothing (jg-item tick says
+# why once). Reading moves no cursor: the drain's acknowledgement does.
+store_pages_doorbell() {
+  local pages unread reason
+  [ -e "$CONFIG/item-store" ] && [ -e "$CONFIG/item-store-reads" ] && [ ! -e "$JG_HOME/.jg-squad-lead-home" ] || return 0
+  [ ! -s "$JG_WAKE_QUEUE" ] || return 0
+  pages=$(JG_HOME="$JG_HOME" python3 -I "$SCRIPT_DIR/../core/item-store/jg-item" pages main 2>/dev/null) || return 0
+  unread=$(printf '%s\n' "$pages" | grep -vc '^pages: ')
+  [ "$unread" -gt 0 ] || return 0
+  reason="check: $unread unread page(s) wait on the item store"
+  jg_wake_append check item-pages "$reason" || wake_raise_refused "item-pages"
+  wake "$reason"
+}
+
 # The captain's board answers must reach Main within a minute, so they do not
 # wait for the slow sweep below. bin/jg-board-answers.sh tick heals its own
 # registration (re-arms it, or says once that it could not) and then runs one
@@ -4126,6 +4142,7 @@ run_fast_checks() {
       wake "$reason"
     fi
   fi
+  store_pages_doorbell
 }
 
 # Slow per-task checks (juggernaut writes these, e.g. a merged-PR poll).

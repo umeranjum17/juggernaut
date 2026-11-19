@@ -304,6 +304,18 @@ printf 'bp-1-aaaaaa\tproject\tpx\towner-rule-px\t1\t%s\tstanding\t0\t-\t-\n' "$(
 out=$(own compare "$HB"); want "i14 a standing bypass without its rule is listed" "bp-1-aaaaaa rule today=standing store=none" "$(printf '%s\n' "$out" | grep 'bp-1-aaaaaa')"
 env JG_HOME="$HB" python3 -I "$AD/bypass.py" grant --id bp-1-aaaaaa --scope project --target px --word owner-rule-px --until "$(( $(date +%s) + 3600 ))" >/dev/null
 out=$(own compare "$HB"); want "i15 the rule item closes it" 0 "$(printf '%s\n' "$out" | grep -c 'bp-1-aaaaaa')"
+# import-holds also opens the rule of each standing bypass granted before the store was on, so compare no longer shows it
+printf 'bp-2-bbbbbb\tproject\tpy\towner-rule-py\t1\t%s\tstanding\t0\t-\t-\n' "$(( $(date +%s) + 3600 ))" >> "$HB/config/proof-bypass"
+out=$(own compare "$HB"); want "i16 a bypass granted before the store was on is listed" "bp-2-bbbbbb rule today=standing store=none" "$(printf '%s\n' "$out" | grep 'bp-2-bbbbbb')"
+out=$(own import-holds "$HB")
+want "i17 import-holds opens its rule item, once" "1 1" "$(open_key rule:project/py "$HB") $(printf '%s\n' "$out" | grep -c '1 rules opened')"
+want "i18 compare no longer lists it" 0 "$(own compare "$HB" | grep -c 'bp-2-bbbbbb')"
+n1=$(sql "$HB" "SELECT count(*) FROM move"); own import-holds "$HB" >/dev/null
+want "i19 import-holds run twice writes nothing" "$n1" "$(sql "$HB" "SELECT count(*) FROM move")"
+# a home with no hold file (no backlog store) holds nothing: compare reads none, never unreadable
+HN=$d/hn; mkhome "$HN"; HH=$HN
+out=$(own compare "$HN"); rc=$?
+want "i20 a home with no hold file compares clean" "0 0" "$rc $(printf '%s\n' "$out" | grep -c unreadable)"
 unset HH
 
 exit "$fail"

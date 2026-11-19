@@ -15,7 +15,9 @@ write the store refuses is listed as one intake item on Main and never lost; the
       Today's records against the store, one line per difference `<record> <what> today=<v> store=<v>`; exit 1 on any.
   import-holds <home>
       The one-time cut-over step: each legacy hold of that home (its channel status file's open `captain hold <ticket>:` keys,
-      and each active captain hold) becomes one open question, written quietly as that home's writer. Run twice, it writes nothing.
+      and each active captain hold) becomes one open question, written quietly as that home's writer. Main's home also opens the
+      rule item of each standing proof bypass already granted (config/proof-bypass), as bypass.py grant would. An absent hold
+      file (no backlog store) reads as no holds, not as unreadable. Run twice, it writes nothing.
 
 His channels' own logs are <store dir>/owner-chat.log and owner-board.log: the adapter appends `<source>\\t<item key>` before
 its write, and logs/owner-chat and logs/owner-board hand them to the tick's stamp check."""
@@ -137,7 +139,7 @@ def backlog_holds(home):
         env.pop(k, None)
     r = subprocess.run([os.path.join(ROOT, "bin", "jg-backlog.sh"), "questions", "--json"], env=env, capture_output=True, text=True)
     if r.returncode != 0:
-        return None
+        return [] if "needs its store" in r.stderr else None      # a home with no hold file holds nothing; any other refusal is unreadable
     try:
         rows = json.loads(r.stdout or "[]")
     except ValueError:
@@ -158,6 +160,7 @@ def inbox_notes(main):
 
 
 def standing_bypasses(main, now):
+    """Each standing proof bypass of config/proof-bypass that has not ended: its fields (id, scope, target, word, ..., end, standing)."""
     try:
         lines = open(os.path.join(main, "config", "proof-bypass"), encoding="utf-8").read().splitlines()
     except OSError:
@@ -166,7 +169,7 @@ def standing_bypasses(main, now):
     for ln in lines:
         f = ln.split("\t")
         if len(f) >= 7 and f[6] == "standing" and not (f[5] != "-" and f[5].isdigit() and int(f[5]) <= now):
-            out.append((f[0], "rule:%s/%s" % (f[1], f[2])))
+            out.append(f)
     return out
 
 
@@ -194,9 +197,9 @@ def cmd_compare(a):
         for nid in inbox_notes(main):
             if not st.item("tell:%s/%s" % (hid, nid)):
                 out.append("%s tell today=waiting store=none" % nid)
-        for bid, key in standing_bypasses(main, int(time.time())):
-            if not st.item(key):
-                out.append("%s rule today=standing store=none" % bid)
+        for f in standing_bypasses(main, int(time.time())):
+            if not st.item("rule:%s/%s" % (f[1], f[2])):
+                out.append("%s rule today=standing store=none" % f[0])
     print("\n".join(out))
     sys.exit(1 if out else 0)
 
@@ -243,7 +246,17 @@ def cmd_import_holds(a):
         key = "question:%s/%s" % (hid, ticket)
         r = write(st, at, source, hid, ticket, st.open, at, key, "question", hid, ticket, text, st.me, quiet=True, options="yes|no")
         opened += r == "open"
-    print("import-holds %s: %d records, %d questions opened" % (hid, lines, opened))
+    rules = 0
+    if hid == "main":                  # a bypass granted before the store was on has no rule item: the same write bypass.py grant makes
+        import time
+        for f in standing_bypasses(home, int(time.time())):
+            r = subprocess.run([sys.executable, "-I", os.path.join(HERE, "bypass.py"), "grant", "--id", f[0], "--scope", f[1], "--target", f[2],
+                                "--word", f[3], "--until", f[5]], env=dict(os.environ, JG_HOME=home), capture_output=True, text=True)
+            lines += 1
+            if r.returncode != 0:
+                die("import-holds %s: bypass %s refused: %s" % (hid, f[0], (r.stdout + r.stderr).strip()))
+            rules += r.stdout.strip() == "open"
+    print("import-holds %s: %d records, %d questions opened%s" % (hid, lines, opened, ", %d rules opened" % rules if rules else ""))
 
 
 def main(argv):
