@@ -10,6 +10,9 @@
 # T2 A lane with its whole proof lands from a caller whose python3 and node refuse, the way a mise shim does when the
 #    caller's mise settings point elsewhere (ten lanes were refused on 10 Nov 2026 with "mise ERROR error parsing config file"):
 #    with an explicit done-done home, and with the sealed run in the evidence root done-done names relative to the lane.
+# T3 A home sets the variables its gate needs once (gate-env@<project>=NAME=value ...): with gate-env@proj=FOO=bar a script that
+#    fails unless FOO is bar passes on its first run, and made to fail once it sees FOO=bar on its rerun too; a word that is not
+#    NAME=value is refused once per run. Without the key the script sees no FOO and fails on its first run and its rerun.
 set -u
 # The fixture lane is judged in its own proof context, not the account or done-done home of whoever runs this suite.
 unset CLAUDE_CONFIG_DIR DONE_DONE_HOME
@@ -90,10 +93,12 @@ cat > "$W/refusing/done-done" <<'SH'
 printf '{"checks":[{"check":"evidence_root","detail":"writable: ../dd-root/../dd-root"}]}\n'
 SH
 chmod +x "$W/refusing/"*
-proved_lane() {  # <id> <evidence-folder>: a lane off the trunk with its whole proof, the sealed run kept in <evidence-folder>
+proved_lane() {  # <id> <evidence-folder> [<file> <path>]: a lane off the trunk with its whole proof, the sealed run kept in <evidence-folder>; <file> goes in at <path>
   local id=$1 ev=$2 h
   git -C "$PROJ" worktree add -q -b "fm/$id" "$W/$id" trunk
-  printf '%s\n' "$id" > "$W/$id/$id.txt"; git -C "$W/$id" add "$id.txt"; git -C "$W/$id" -c user.name=t -c user.email=t@example.invalid commit -q -m "ticket $id"
+  printf '%s\n' "$id" > "$W/$id/$id.txt"; git -C "$W/$id" add "$id.txt"
+  [ -z "${3:-}" ] || { mkdir -p "$(dirname "$W/$id/$4")"; cp "$3" "$W/$id/$4"; git -C "$W/$id" add "$4"; }
+  git -C "$W/$id" -c user.name=t -c user.email=t@example.invalid commit -q -m "ticket $id"
   h=$(git -C "$W/$id" rev-parse HEAD); mkdir -p "$HOME_D/data/$id" "$ev/.done-done/runs"
   jg_write_meta "$HOME_D/state/$id.meta" "project=$PROJ" "mode=local-trunk" "branch=fm/$id" "worktree=$W/$id" "spawn_gen=g-$id"
   printf '{"schema":1,"task":"%s","mode":"local-trunk","spawn_gen":"g-%s","head":"%s","pr":"","verdict":"PASS","at":1,"evidence":"done-done run: ok"}\n' "$id" "$id" "$h" > "$HOME_D/state/$id.run-receipt.json"
@@ -115,3 +120,32 @@ DONE_DONE_HOME="$W/dd-home/./x/.." lands_from_refusing dhome
 proved_lane droot "$W/dd-root"
 lands_from_refusing droot
 pass "T2 a caller whose mise shims refuse lands a lane with its whole proof: the proof check starts no python3 or node"
+
+# The script prints the FOO it sees and keeps it in foo-seen, fails once while foo-flaky exists, and passes only when FOO is bar.
+cat > "$W/foo.test.sh" <<SH
+echo "FOO=\${FOO:-}"; echo "FOO=\${FOO:-}" >> "$W/foo-seen"
+[ ! -e "$W/foo-flaky" ] || { rm -f -- "$W/foo-flaky"; echo "not ok - fails once" >&2; exit 1; }
+[ "\${FOO:-}" = bar ]
+SH
+foo_policy() {  # <script> [<gate-env line>]: the gate runs the lane's <script>
+  printf 'gate-full=bash %s/rig.sh %s\ngate-rerun=bash %s/rig.sh\ngate-lint=true\nlanding-gate=tests\n%s' "$W" "$1" "$W" "${2:-}" > "$HOME_D/config/trunk-policy"
+}
+foo_policy t/foo.test.sh $'gate-env@proj=FOO=bar not-a-pair\n'
+proved_lane fooa "$HOME_D/data/fooa" "$W/foo.test.sh" t/foo.test.sh
+: > "$W/foo-seen"
+out=$(trunk land fooa 2>&1) || fail "T3 with gate-env@proj=FOO=bar the lane must land green: $out"
+[ "$(cat "$W/foo-seen")" = "FOO=bar" ] || fail "T3 the first run must see FOO=bar and pass, got: $(cat "$W/foo-seen"); $out"
+[ "$(printf '%s\n' "$out" | grep -c '^REFUSED: gate-env word is not NAME=value: not-a-pair$')" = 1 ] \
+  || fail "T3 a gate-env word that is not NAME=value must be refused once per run: $out"
+proved_lane foob "$HOME_D/data/foob"
+: > "$W/foo-seen"; : > "$W/foo-flaky"
+out=$(trunk land foob 2>&1) || fail "T3 a script that fails once with gate-env set must pass on its rerun: $out"
+assert_contains "$out" "gate=full-rerun" "T3 the first red must go through the rerun path"
+[ "$(cat "$W/foo-seen")" = $'FOO=bar\nFOO=bar' ] || fail "T3 the first run and the rerun must both see FOO=bar, got: $(cat "$W/foo-seen")"
+# Without the key; the lane adds its own copy of the script, which the trunk tip does not have, so its red is the lane's.
+foo_policy t/fooc/foo.test.sh
+proved_lane fooc "$HOME_D/data/fooc" "$W/foo.test.sh" t/fooc/foo.test.sh
+: > "$W/foo-seen"
+if out=$(trunk land fooc 2>&1); then fail "T3 without gate-env the script must fail and the lane stay unlanded: $out"; fi
+[ "$(cat "$W/foo-seen")" = $'FOO=\nFOO=' ] || fail "T3 without gate-env the first run and the rerun must both see no FOO, got: $(cat "$W/foo-seen")"
+pass "T3 gate-env@proj=FOO=bar reaches the first run and the rerun, a malformed word is refused once, and without it the script fails in both"

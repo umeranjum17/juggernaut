@@ -369,8 +369,21 @@ tip_adopt_forward() {
 # The only variables a gate takes from whoever starts it. A gate gives one result from every caller (a worker session,
 # the lead, the watcher, a bare shell), so its clone and its command start from an empty environment plus these names:
 # a session's git hook settings, task id or account never reach the tests. JG_HOME is the home this script resolved.
-# A gate that needs another variable goes red on its first run, and the miss is added here by name.
-GATE_ENV='HOME PATH USER LOGNAME SHELL LANG LC_ALL TMPDIR JG_HOME'
+# A project whose gate needs more sets it once in config/trunk-policy (gate-env@<project>=NAME=value ...), and every gate command
+# of that project (the first run, the rerun, the tip and parent runs) starts with it, so no rerun can lose a variable its first run had.
+GATE_ENV='HOME PATH USER LOGNAME SHELL LANG LC_ALL TMPDIR JG_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME'
+# The NAME=value words of the project's gate-env key, read once per run and project into GATE_ENV_SET; a word that is not NAME=value
+# is refused once and left out.
+gate_env_set() {
+  local word words
+  [ "${GATE_ENV_FOR-/}" != "$PN" ] || return 0
+  GATE_ENV_FOR=$PN; GATE_ENV_SET=()
+  read -r -a words <<< "$(pol gate-env)"
+  for word in "${words[@]}"; do
+    if [[ $word =~ ^[A-Z_][A-Z0-9_]*= ]]; then GATE_ENV_SET+=("$word")
+    else echo "REFUSED: gate-env word is not NAME=value: $word" >&2; fi
+  done
+}
 
 # A gate marks itself while it runs (state/.trunk-gate-<project>-<pid>.lock) and never starts while a move of the homes is pending
 # (state/.trunk-move-<project>.lock): the move (go_live, begin_move) waits for every marked gate to end, and a gate that would start
@@ -431,6 +444,7 @@ gate_exec() {  # <commit> <command> <log> [<envfile>]
   gate_enter
   local -a clean=(env -i)
   for name in $GATE_ENV; do [ -z "${!name+set}" ] || clean+=("$name=${!name}"); done
+  gate_env_set; clean+=("${GATE_ENV_SET[@]}")
   mkdir -p "$DATA/trunk"
   WORK=$(mktemp -d)
   "${clean[@]}" git clone -q --shared --no-checkout "$PROJ" "$WORK/tree" || die "cannot clone $PROJ for the gate"

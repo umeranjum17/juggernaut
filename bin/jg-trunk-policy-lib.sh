@@ -31,6 +31,9 @@
 #   gate-rerun            bin/jg-test-run.sh --jobs 1   the command that reruns the scripts a failed full gate
 #                                     named, on the trunk tip's tree, to tell the tip's own red from the lane's;
 #                                     the script paths are appended to it
+#   gate-env              (empty)     NAME=value words every gate command of the project starts with, beside the caller's
+#                                     HOME, PATH and the other names bin/jg-trunk.sh passes on (GATE_ENV): the first run,
+#                                     the rerun, the tip run and the parent runs alike
 #   gate-red-ticket       core-self-checks-red   the ticket that receives one note for each new tip red
 #                                     (empty: no note, the alert still goes out)
 #   release-after-hours   48          age of the oldest unreleased commit that makes a release due
@@ -120,6 +123,7 @@ jg_trunk_policy() {  # <key> [<project>]
       nightly-hour) val=3 ;;
       gate-rerun) val='bin/jg-test-run.sh --jobs 1' ;;
       gate-red-ticket) val=core-self-checks-red ;;
+      gate-env) val='' ;;
       release-after-hours) val=48 ;;
       batch-max) val=5 ;;
       landing-gate) val=none ;;
