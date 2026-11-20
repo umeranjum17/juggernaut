@@ -4,7 +4,8 @@
 # worktree; only treehouse and tmux are stubs, as in tests/jg-teardown.test.sh, and the stubs log each call.
 #
 # The rule under test: a copy is returned only when it is clean and its HEAD is the tip of the lane's branch.
-#   (a) clean copy, head on the branch, live worker       -> PARKED: copy returned, pane closed, branch kept, record written
+#   (a) clean copy, head on the branch, live worker       -> PARKED: copy returned, pane closed, branch kept, record written;
+#                                                            the fleet snapshot reads the record as the in-flight row's child
 #   (b) same, worker already gone (pane missing)          -> PARKED the same way
 #   (c) uncommitted tracked change                        -> REFUSED, nothing changed
 #   (d) untracked file that is not the fleet's own        -> REFUSED, nothing changed
@@ -120,6 +121,17 @@ run_park "$c"
 expect_code 0 "$RC" "a: park succeeds: $(cat "$c/stderr")"
 assert_parked "$c" "a (live worker)"
 pass "a: a clean copy at its branch tip gives back its copy and keeps the branch and the record"
+# The parked row stays In flight with no task record: the fleet snapshot reads the park record as its child record, and only
+# without that record does it call the row an orphan.
+orphans() {  # <case>: the main inventory's orphan in-flight ids, one per line
+  (cd "$1" && JG_HOME="$1" JG_CONFIG_OVERRIDE="$1/config" JG_STATE_OVERRIDE="$1/state" JG_DATA_OVERRIDE="$1/data" PATH="$1/fakebin:$PATH" \
+    "$ROOT/bin/jg-fleet-snapshot.sh") | jq -r '.main_inventory.orphan_in_flight[]'
+}
+assert_equals "" "$(orphans "$c")" "a: the parked lane is not an orphan in-flight row"
+mv "$c/state/$ID.parked" "$c/parked.aside"
+assert_equals "$ID" "$(orphans "$c")" "a: control: with no park record the row is an orphan"
+mv "$c/parked.aside" "$c/state/$ID.parked"
+pass "a: the fleet snapshot counts the park record as the in-flight row's child record"
 
 c=$(make_case no-worker)
 # A worker that is gone: closing its window fails with "can't find window", and no window is listed.

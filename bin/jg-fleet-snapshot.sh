@@ -71,7 +71,9 @@
 #   scout_reports[]: present data/<id>/report.md pointers.
 #   main_inventory: {valid,reason,orphan_in_flight[],unstructured_current_count} -
 #     main-home current-inventory checks shared with squad_lead_home_summary_json
-#     (orphan structured in-flight ids with no state/<id>.meta, and unstructured
+#     (orphan structured in-flight ids with no state/<id>.meta and no
+#     state/<id>.parked - a parked lane keeps its row in flight by design,
+#     bin/jg-teardown-park-lib.sh - and unstructured
 #     current backlog rows). Does not invent live tasks; meta remains truth for
 #     workers. Bearings maps failures into omitted[] disclosure (and a Charted
 #     Next gate line) rather than silent empty Underway.
@@ -981,15 +983,17 @@ task_json_lines() {
 main_inventory_json() {  # <backlog-json-file> <tasks-json-file>
   jq -n \
     --slurpfile backlog "$1" \
-    --slurpfile tasks "$2" '
+    --slurpfile tasks "$2" \
+    --slurpfile parked "$PARKED_JSON_FILE" '
     ($backlog[0]) as $backlog
     | ($tasks[0]) as $tasks
+    | ([$tasks[].id] + $parked[0]) as $child_ids
     | ([ $backlog.records[]?
        | select((.state == "in_flight" or .state == "queued") and (.structured | not)) ]) as $unstructured_current
     | ([ $backlog.records[]?
          | select(.state == "in_flight" and .structured and .requires_child_metadata) ]) as $owned_in_flight
     | ([ $owned_in_flight[]
-         | select(.id as $id | [$tasks[].id] | index($id) | not)
+         | select(.id as $id | $child_ids | index($id) | not)
          | .id ]) as $orphan_in_flight
     | (($unstructured_current | length) == 0
        and ($orphan_in_flight | length) == 0) as $valid
@@ -1027,9 +1031,11 @@ squad_lead_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
     --argjson landed_n "$JG_SNAPSHOT_SQUAD_LEAD_LANDED_PER_HOME" \
     --argjson spawnable "${SPAWNABLE_READY:-null}" \
     --slurpfile backlog "$1" \
-    --slurpfile tasks "$2" --slurpfile contributions "$CONTRIBUTIONS_JSON_FILE" "$JG_LANDED_JQ_DEFS"'
+    --slurpfile tasks "$2" --slurpfile parked "$PARKED_JSON_FILE" \
+    --slurpfile contributions "$CONTRIBUTIONS_JSON_FILE" "$JG_LANDED_JQ_DEFS"'
     ($backlog[0]) as $backlog
     | ($tasks[0]) as $tasks
+    | ([$tasks[].id] + $parked[0]) as $child_ids
     | def trunc($n):
       tostring | gsub("\\s+"; " ")
       | if length > $n then .[:$n] + "…" else . end;
@@ -1073,7 +1079,7 @@ squad_lead_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
     | ([ $tasks[] | select(.current_state.state == "unknown") ]) as $unknown_children
     | ([ $owned_in_flight[]
          | select(.requires_child_metadata)
-         | select(.id as $id | [$tasks[].id] | index($id) | not) ]) as $orphan_in_flight
+         | select(.id as $id | $child_ids | index($id) | not) ]) as $orphan_in_flight
     | ([ $tasks[]
          | select(.kind != "squad_lead")
          | select(.id as $id | [$owned_in_flight[].id] | index($id) | not)
@@ -2093,6 +2099,11 @@ SQUAD_LEAD_CURRENT_JSON_FILE="$JSON_TRANSPORT_DIR/squad-lead-current.json"
 SQUAD_LEAD_LANDED_JSON_FILE="$JSON_TRANSPORT_DIR/squad-lead-landed.json"
 printf '%s\n' "$TASKS_JSON" > "$TASKS_JSON_FILE" \
   || { echo "jg-fleet-snapshot: temporary task file write failed" >&2; exit 1; }
+# A parked lane's child record is state/<id>.parked (bin/jg-teardown-park-lib.sh): its row stays In flight with no task record.
+PARKED_JSON_FILE="$JSON_TRANSPORT_DIR/parked.json"
+for parked in "$STATE"/*.parked; do [ -f "$parked" ] && basename "$parked" .parked; done \
+  | jq -Rn '[inputs]' > "$PARKED_JSON_FILE" \
+  || { echo "jg-fleet-snapshot: temporary parked-lane file write failed" >&2; exit 1; }
 
 # The store read for the ready count is bounded at 10 seconds and independent of the
 # rest, so it runs beside them and the summary waits for it only at the end.

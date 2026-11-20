@@ -8,8 +8,9 @@
 #   no beat for JG_LOCK_LEASE_END_S (default 600) and the tick started the holder            -> its process group is ended, the lock broken
 # "The tick started it" is read from the holder's own command line: a detached landing job (`trunk-landing.sh run|runbatch|verify|
 # live|publish`) is what the landing check launches. Any other holder is never ended; it only raises the alert. The alert goes through
-# the `slow-delivery` row of the alert table (bin/jg-alert.sh); the row `lock-held` is H14's rename. Prints one line per break or end,
-# nothing otherwise.
+# the `slow-delivery` row of the alert table (bin/jg-alert.sh); the row `lock-held` is H14's rename. The alert stands only while a tick
+# still finds that holder past the warn age: the tick that does not resolves it, source:lock-released when the lock is gone and
+# source:lock-beat when it beats again. Prints one line per break or end, nothing otherwise.
 set -u
 FMH=${1:?usage: lock-lease.check.sh <jg-home>}
 FMH=$(cd "$FMH" 2>/dev/null && pwd -P) || exit 0
@@ -51,6 +52,7 @@ gone() {
 
 tick_started() { tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null | grep -Eq 'trunk-landing\.sh (run|runbatch|verify|live|publish)( |$)'; }
 
+held=' '  # the alert keys this tick raised: the locks still held past the warn age
 for lock in "$STATE"/.trunk-*.lock; do
   [ -e "$lock" ] || [ -L "$lock" ] || continue
   pid=$(cat "$lock/pid" 2>/dev/null || true)
@@ -70,6 +72,7 @@ for lock in "$STATE"/.trunk-*.lock; do
   idle=$(( now - beat ))
   [ "$idle" -ge "$WARN" ] || continue
   cmd=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | cut -c1-120)
+  held+="slow-delivery--lock-${name#.} "
   bash "$ROOT/bin/jg-alert.sh" raise slow-delivery "lock-${name#.}" --kind ship-delivering --held "$idle" --deliver \
     --note "lock-held: $name has been held ${idle}s with no beat by process $pid ($cmd)" >/dev/null 2>&1 || true
   if [ "$idle" -ge "$END" ] && tick_started "$pid"; then
@@ -81,5 +84,13 @@ for lock in "$STATE"/.trunk-*.lock; do
       echo "lock-lease: ended holder $pid of $name (no beat for ${idle}s, started by the tick) and broke the lock"
     fi
   fi
+done
+bash "$ROOT/bin/jg-alert.sh" list 2>/dev/null | while IFS= read -r key; do
+  case $key in slow-delivery--lock-*) ;; *) continue ;; esac
+  case $held in *" $key "*) continue ;; esac
+  lock=$STATE/.${key#slow-delivery--lock-}
+  proof=source:lock-released
+  [ ! -e "$lock" ] && [ ! -L "$lock" ] || proof=source:lock-beat
+  bash "$ROOT/bin/jg-alert.sh" resolve "$key" --proof "$proof" >/dev/null 2>&1 || echo "lock-lease: could not resolve $key ($proof)"
 done
 exit 0
