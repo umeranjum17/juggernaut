@@ -1,0 +1,16 @@
+# Shipped workflows. A home changes or adds any of them in config/workflows (same lines); a name there wins.
+# <name>: <spec>     a spec is stages split by ">", steps that run at once split by "+", a count as "*N".
+# <name>: off        removes a shipped name in this home.
+# A step is a kind (worker, recon(quick|standard|deep), critic, owner(plan-approval), fanout, war-room(fast|full))
+# or any name in these files. A kind is also a one-step workflow of the same name.
+scout: recon(quick)
+deep: recon(deep) > critic
+blitz: owner(plan-approval) > fanout
+scout-worker: scout > owner > worker
+deep-slices: deep > blitz
+war-room-blitz: war-room(fast) > blitz
+war-room-full-blitz: war-room(full) > blitz
+war-room-lite-blitz: deep > blitz
+limit count: 30
+limit steps: 64
+angles: smallest change | strongest guarantees | outside prior art first

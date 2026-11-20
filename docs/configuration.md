@@ -18,6 +18,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | Home updates after a merge | [Fleet autosync](#fleet-autosync-configfleet-autosync-off) |
 | A release that pushes its own readiness | [Release readiness](#release-readiness-configrelease-readiness) |
 | Landing gates | [Home merge gate](#home-merge-gate-configmerge-gate) |
+| Workflows, in any order and count | [Workflows](#workflows-defaultsworkflows-configworkflows-configworkflow-routes) |
 | Per-run overrides and tuning | [Environment variables](#environment-variables) |
 
 ## JG_HOME
@@ -850,6 +851,25 @@ Until then local files are the only memory owners.
 
 the internal [`fleet-records` skill](../.agents/skills/fleet-records/SKILL.md) owns what a declaration changes about knowledge routing, and the internal [`intel` skill](../.agents/skills/intel/SKILL.md) owns how curation reads the declaration and protects tier-owned entries from pruning.
 The section counts toward the startup memory budget like the rest of its file, so keep it to the mapping rather than restating these rules.
+
+## Workflows (defaults/workflows, config/workflows, config/workflow-routes)
+
+A workflow is a name for a spec of steps: stages split by `>`, steps that run at once split by `+`, a count as `*N`, for example `scout*2 > owner > worker*2`.
+Any step may stand in any stage, in any order and any number of times.
+The only rules are the owner's plan-approval rule (a `worker` or `fanout` after a Recon, critic or war room needs an `owner(plan-approval)` stage between them) and what a step reads.
+`core/workflows/README.md` owns the grammar, the kinds and those two rules.
+
+`defaults/workflows` holds the shipped names, one `<name>: <spec>` line each.
+A home changes or adds a name in `config/workflows` (same lines); a name there wins.
+`<name>: off` removes a shipped name in that home.
+`limit count: <n>` (30 by default) bounds one count and `limit steps: <n>` (64) bounds the steps after expansion; a refusal names the line that raises the limit.
+A home overrides a step kind's worker in `config/workflow-routes` (same `<kind> <harness> <model> <effort>` lines as `defaults/workflow-routes`).
+
+`bin/jg-workflow.sh list` prints every name with its spec and where it came from, and exits 2 with the broken lines shown when a name is refused.
+`bin/jg-workflow.sh define <name> <spec|off> --by owner|main|lead` writes one line into `config/workflows`.
+Only `--by owner` changes or removes a name the file holds.
+`bin/jg-workflow.sh parse <spec|name>` prints the stages of one spec.
+`tests/jg-workflow-parse.test.sh` runs each rule through the real command.
 
 ## Digest print caps (defaults/token-caps, config/token-caps)
 

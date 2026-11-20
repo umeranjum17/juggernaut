@@ -1,0 +1,8 @@
+# Shipped routes: which worker runs each kind of step. One line per kind: <kind> <harness> <model> <effort>.
+# recon(quick) reads recon-quick, recon(deep) and recon(standard) read recon; a kind with no line of its own reads its bare name.
+# A home overrides a kind in config/workflow-routes (same lines); a line there wins.
+recon-quick claude claude-sonnet-5-5 medium
+recon claude claude-opus-5-5 high
+critic claude claude-opus-5-5 high
+worker claude claude-sonnet-5-5 high
+war-room claude claude-opus-5-5 xhigh
