@@ -50,7 +50,7 @@ try {
     const verify = () => { const lines = read(trusted).trimEnd().split('\n'); assert.equal(lines[0], 'jg-custom-check-v1'); assert.equal(lines[1], hash(fs.readFileSync(script))); assert.equal(fs.statSync(script).mode & 0o777, 0o700); assert.equal(fs.statSync(trusted).mode & 0o777, 0o600); return lines[1]; };
     const before = verify(); run(`register-${name}`, 'bash', [path.join(home, 'bin/jg-check-register.sh'), name]); assert.equal(verify(), before);
     const output = run(`environment-${name}`, script, [], { PATH: probe + path.delimiter + env.PATH }).stdout.trimEnd().split('\n');
-    assert.deepEqual(output, [path.join(home, 'bin/jg-ticket-adapter.py'), path.join(env.XDG_DATA_HOME, 'jg-tickets-sync/tickets-sync/sync.py'), ...(name === 'tickets-stale' ? ['--check'] : name === 'tickets-cleanup' ? ['--cleanup'] : [])]);
+    assert.deepEqual(output, [path.join(home, 'bin/jg-ticket-adapter.py'), path.join(repo, 'core/tickets-sync/sync.py'), ...(name === 'tickets-stale' ? ['--check'] : name === 'tickets-cleanup' ? ['--cleanup'] : [])]);
     trust[name] = { sha256: before, checkMode: '0700', trustMode: '0600', suppliedAdapter: true };
   }
   save('registration.json', trust); steps.push('Install, inspect executable trust hashes, re-register all three checks, and verify their default adapter environment.');

@@ -69,10 +69,16 @@ fixture_description=$'Fixture ticket.\n# Ask\n- Show the work on the board.\n# W
 sign-off-axi ticket "$work/board.json" --id jg-legacy-fixture --title 'Needs a parent · alpha' --progress 17 --asked yes --description "$fixture_description" >/dev/null
 sign-off-axi ticket "$work/board.json" --id jg-history-fixture --title 'Umer historical maintenance' --project main --progress 100 --asked no --description "$fixture_description" >/dev/null
 source_before=$(cd "$JG_HOME" && jg-backlog.sh list; cd "$work/parked" && JG_HOME="$work/parked" jg-backlog.sh list)
-bash "$root/tickets-sync/wiring.sh" --dry-run
-test ! -d "$XDG_DATA_HOME/jg-tickets-sync"
-bash "$root/tickets-sync/wiring.sh"
-printf 'not an image' > "$XDG_DATA_HOME/jg-tickets-sync/tickets-sync/icons/takeone.png"
+# The checks run the sync from the checkout their wiring ran from, so a throwaway copy of this checkout's tickets-sync
+# stands in for one home's checkout, and the shared data directory is never written (it was the one copy every home replaced).
+mkdir -p "$work/checkout/core"
+cp -R "$root/tickets-sync" "$work/checkout/core/tickets-sync"
+here=$work/checkout/core/tickets-sync
+bash "$here/wiring.sh" --dry-run
+bash "$here/wiring.sh"
+test ! -e "$XDG_DATA_HOME/jg-tickets-sync"
+grep -qF "$here/sync.py" "$JG_HOME/state/tickets-sync.check.sh"
+printf 'not an image' > "$here/icons/takeone.png"
 env -u JG_HOME "$JG_HOME/state/tickets-sync.check.sh" | tee "$work/first.out"
 # Missing/broken icons are recorded quietly; check stdout would wake Main.
 jq -e '.["alpha-app"] == "no local image" and .takeone == "not a readable png image"' "$JG_HOME/state/tickets-sync/icons-skipped.json"
@@ -82,7 +88,7 @@ grep -q 'homes read' "$work/first.out" && { echo 'FAIL: the routine count line m
 grep -qE '^tickets-sync: [0-9]+ homes read; [0-9]+ tickets changed$' "$JG_HOME/state/tickets-sync/progress.log"
 grep -q continuing "$work/first.out" && { echo 'FAIL: backfill continue must not print to check stdout'; exit 1; }
 rm -f "$JG_HOME/state/tickets-sync/cursor.json" "$JG_HOME/state/tickets-sync/progress.log"
-JG_TICKETS_SYNC_BUDGET_SECS=0 JG_HOME="$JG_HOME" python3 "$XDG_DATA_HOME/jg-tickets-sync/tickets-sync/sync.py" > "$work/continue.out"
+JG_TICKETS_SYNC_BUDGET_SECS=0 JG_HOME="$JG_HOME" python3 "$here/sync.py" > "$work/continue.out"
 grep -q continuing "$work/continue.out" && { echo 'FAIL: backfill continue must stay off stdout'; exit 1; }
 grep -q continuing "$JG_HOME/state/tickets-sync/progress.log"
 test -s "$JG_HOME/state/tickets-sync/cursor.json"
@@ -176,7 +182,7 @@ sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-voice)" --json 
 printf 'cancelled [at=1700000300]: Umer cancelled this task\n' >> "$JG_HOME/state/jg-long.status"
 "$JG_HOME/state/tickets-sync.check.sh"
 sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --json | jq -e '.ticket.progress == 100 and .ticket.state == "done" and (.ticket.stage // null) == null and (.ticket.last_event_at // null) == null'
-JG_HOME="$JG_HOME" python3 "$XDG_DATA_HOME/jg-tickets-sync/tickets-sync/sync.py" --close main/jg-held --reason superseded --reconcile
+JG_HOME="$JG_HOME" python3 "$here/sync.py" --close main/jg-held --reason superseded --reconcile
 sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-held)" --json | jq -e '.ticket.progress == 100 and .ticket.hold == false'
 before=$(sha256sum "$work/board.tickets.jsonl" "$work/board.projects.jsonl")
 rm "$JG_HOME/state/tickets-sync/closures.json"
@@ -237,7 +243,7 @@ echo 'PASS: full-body parent beyond list truncation and source revision refresh'
 
 # The lifecycle writer records what a merge, a dispatch or a cleanup knows at the
 # moment it happens; a repeated step appends nothing, and an unknown ticket is a no-op.
-WRITER="$XDG_DATA_HOME/jg-tickets-sync/tickets-sync/ticket.py"
+WRITER="$here/ticket.py"
 JG_HOME="$JG_HOME" python3 "$WRITER" jg-refresh --pr https://github.com/example/alpha/pull/999 --release v9
 sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-refresh)" --json | jq -e '(.ticket.stage // null) == null and .ticket.prs == ["https://github.com/example/alpha/pull/999"] and .ticket.release == "v9"'
 before=$(sha256sum "$work/board.tickets.jsonl")
@@ -276,12 +282,12 @@ print(f"{time.monotonic() - started:.2f}", done.returncode, len(done.stdout.stri
 }
 drifted=$(ticket_id main/jg-inferred)
 sign-off-axi ticket "$work/board.json" --id "$drifted" --state "in progress" >/dev/null
-read -r secs rc _ <<<"$(timed_reconcile "$XDG_DATA_HOME/jg-tickets-sync/tickets-sync/sync.py")"
+read -r secs rc _ <<<"$(timed_reconcile "$here/sync.py")"
 test "$rc" = 0
 sign-off-axi ticket "$work/board.json" --id "$drifted" --json | jq -e '.ticket.state == "done"' >/dev/null
 echo "reconcile: drifted board settled in ${secs}s"
 before=$(sha256sum "$work/board.tickets.jsonl")
-read -r secs rc quiet <<<"$(timed_reconcile "$XDG_DATA_HOME/jg-tickets-sync/tickets-sync/sync.py")"
+read -r secs rc quiet <<<"$(timed_reconcile "$here/sync.py")"
 test "$rc" = 0
 test "$quiet" = 0
 test "$before" = "$(sha256sum "$work/board.tickets.jsonl")"
@@ -300,7 +306,7 @@ printf 'working [at=1700000000]: started\n' > "$JG_HOME/state/jg-old.status"
 mkdir -p "$JG_HOME/state/lane.inbox"
 printf 'schema=jg-task-inbox.v1\nat=2026-10-28T10:00:00Z\n--\nCaptain: Umer wants the board to show quotes always\n' > "$JG_HOME/state/lane.inbox/001.msg"
 "$JG_HOME/state/tickets-sync.check.sh" >/dev/null
-printf '#!/usr/bin/env bash\nexport JG_HOME=%q\nexec python3 %q --cleanup 2>&1\n' "$JG_HOME" "$XDG_DATA_HOME/jg-tickets-sync/tickets-sync/sync.py" > "$work/cleanup.sh"
+printf '#!/usr/bin/env bash\nexport JG_HOME=%q\nexec python3 %q --cleanup 2>&1\n' "$JG_HOME" "$here/sync.py" > "$work/cleanup.sh"
 sign-off-axi raise "$work/board.json" --ticket "$(ticket_id main/jg-ask3)" --ask-ref jg-ask3 --key jg-ask3 --title "Show quotes always?" --why "Captain ask on record." --outcome yes=Done --outcome no=Not --recommend yes --recommend-reason ok --default yes >/dev/null
 out=$(bash "$work/cleanup.sh")
 grep -q '^tickets-cleanup: closed 1 duplicate; flagged .*no-ask-card.*no-quote.*stale' <<<"$out"
@@ -350,7 +356,7 @@ for row in "fm-legacyask $(jq -nc --argjson o "$owner" '{title:"Umer quoted ask"
   jq -c --arg id "${row%% *}" '. + {id:$id,hold:true,at:"2026-11-04T10:15:53Z"}' <<<"${row#* }" >> "$work/board.tickets.jsonl"
 done
 held_without_reason() { sign-off-axi ticket "$work/board.json" --json | jq '[.tickets[] | select(.hold and ((.hold_reason // "") == ""))] | length'; }
-migrate_legacy() { JG_HOME="$JG_HOME" python3 "$XDG_DATA_HOME/jg-tickets-sync/tickets-sync/sync.py" --migrate-legacy "$@"; }
+migrate_legacy() { JG_HOME="$JG_HOME" python3 "$here/sync.py" --migrate-legacy "$@"; }
 [ "$(held_without_reason)" = 2 ]
 before=$(wc -l < "$work/board.tickets.jsonl")
 migrate_legacy --check | grep -q '^tickets-sync: would release 2 legacy rows held with no reason$'
@@ -366,12 +372,12 @@ sign-off-axi ticket "$work/board.json" --id fm-legacyold --json | jq -e '.ticket
 migrate_legacy | grep -q '^tickets-sync: released 0 legacy rows held with no reason$'
 echo 'PASS: legacy rows held with no reason are released, their titles and owners stay, and a second run finds none'
 
-# Every project image ships from the core icons directory: the installer copies them all, and
+# Every project image ships from the core icons directory the check runs beside, and
 # `sync.py` looks nowhere else, so a project whose image lives there registers on the board.
 (cd "$JG_HOME"; jg-backlog.sh add jg-draft 'Umer first draft practice' --repo first-draft --priority 2 >/dev/null)
 "$JG_HOME/state/tickets-sync.check.sh" >/dev/null
 core_icon="$root/tickets-sync/icons/first-draft.svg"
-cmp "$core_icon" "$XDG_DATA_HOME/jg-tickets-sync/tickets-sync/icons/first-draft.svg"
+cmp "$core_icon" "$here/icons/first-draft.svg"
 sign-off-axi project "$work/board.json" --json | jq -e '[.projects[] | select(.name == "first-draft")] | length == 1 and .[0].icon.sha256 == "'"$(sha256sum "$core_icon" | cut -d" " -f1)"'"'
 cmp "$core_icon" "$work/icons/first-draft.svg"
 echo 'PASS: a project image ships from the core icons directory and registers on the board'

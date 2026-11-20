@@ -3,7 +3,8 @@
 ## Beads-backed board
 
 The registered sync, stale and daily cleanup checks use the existing Beads ticket adapter.
-The installer gives each check `JG_HOME` and `SIGN_OFF_TICKETS_ADAPTER`, and re-registers the generated scripts through `jg-check-register.sh`.
+The wiring gives each check `JG_HOME` and `SIGN_OFF_TICKETS_ADAPTER`, and re-registers the generated scripts through `jg-check-register.sh`.
+Each check runs `sync.py` from the checkout its wiring ran from, and `jg-ticket.sh` runs that checkout's `ticket.py`; nothing is copied to a shared directory, so homes on different versions each run their own and none can replace another's.
 Sync and stale read each named store once through the adapter's fast board query, including open rows and the last seven days of closed rows; no whole-list CLI call or per-ticket read is needed.
 The board owns ticket identities, parents, assignees, projects and derived status; neither check creates rows, appends a legacy ticket feed or overwrites these fields.
 Sync records an observation in `state/tickets-sync/progress.log` when the snapshot changes, while stale is silent after a successful read and reports a real read failure.

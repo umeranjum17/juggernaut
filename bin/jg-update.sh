@@ -286,7 +286,7 @@ DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
 FLEET_RC=0 FLEET_VERDICT=""
 
 # The home's own wiring (bin/jg-host-wiring.sh --changed from the code the home now holds) re-runs every step whose
-# sources changed since that home last wired, so an installed sync.py equals the home's core/ after a live move and a
+# sources changed since that home last wired, so a home's tickets-sync checks run its own core/ after a live move and a
 # move that changed no wired source runs nothing. Run after the move and its health check; a failure never blocks the
 # move or the rollout and sets WIRE_FAILED to the failed steps for the row. JG_HOST_WIRING_SKIP=1 turns it off for a fixture.
 wire_home() {  # <dir> <label>

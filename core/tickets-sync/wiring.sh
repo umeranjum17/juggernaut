@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Usage: JG_HOME=<fleet home> wiring.sh [--dry-run]
 #
-# Installs the sync, its writer and its three registered watcher checks.
+# Registers the sync's three watcher checks. Nothing is copied: each check runs the sync from the checkout this
+# wiring ran from, so a home always runs its own version and no home can replace another's copy.
 # Sync and stale observe Beads tickets without republishing their fields.
 # A failed read names its cause; normal polls remain quiet.
 # Cleanup runs `sync.py --cleanup` and prints one board line a day.
@@ -16,16 +17,11 @@ unset _jg_old _jg_new 2>/dev/null || true
 
 set -euo pipefail
 src=$(cd "$(dirname "$0")/.." && pwd -P)
-dest=${XDG_DATA_HOME:-$HOME/.local/share}/jg-tickets-sync
+sync=$src/tickets-sync/sync.py
 : "${JG_HOME:?set JG_HOME to the fleet home with data/squad_leads.md}"
-if [ "${1:-}" = --dry-run ]; then echo "would install $dest and register tickets-sync, tickets-stale and tickets-cleanup"; exit; fi
+if [ "${1:-}" = --dry-run ]; then echo "would register tickets-sync, tickets-stale and tickets-cleanup to run $sync"; exit; fi
 [ "$#" = 0 ] || { echo 'usage: wiring.sh [--dry-run]' >&2; exit 2; }
-mkdir -p "$dest/tickets-sync/icons" "$JG_HOME/state"
-install -m 755 "$src/tickets-sync/"{sync,ticket}.py "$dest/tickets-sync/"
-install -m 644 "$src/tickets-sync/"{identity,lane,hierarchy,task_rows,cleanup,legacy,reconcile,release,beads}.py "$dest/tickets-sync/"
-cp -f "$src"/tickets-sync/icons/* "$dest/tickets-sync/icons/"
-install -m 644 "$src/tickets-sync/drop.py" "$dest/tickets-sync/"
-install -m 644 "$src/tickets-sync/tidy.py" "$dest/tickets-sync/"
+mkdir -p "$JG_HOME/state"
 for check in tickets-sync tickets-stale tickets-cleanup; do
   args=()
   case $check in tickets-stale) args=(--check) ;; tickets-cleanup) args=(--cleanup) ;; esac
@@ -33,7 +29,7 @@ for check in tickets-sync tickets-stale tickets-cleanup; do
     printf '#!/usr/bin/env bash\nexport JG_HOME=%q\n' "$JG_HOME"
     # shellcheck disable=SC2016 # The generated check expands this default at runtime.
     printf 'export SIGN_OFF_TICKETS_ADAPTER=${SIGN_OFF_TICKETS_ADAPTER:-%q}\n' "$JG_HOME/bin/jg-ticket-adapter.py"
-    printf 'exec python3 %q' "$dest/tickets-sync/sync.py"
+    printf 'exec python3 %q' "$sync"
     [ "${#args[@]}" = 0 ] || printf ' %q' "${args[@]}"
     printf ' 2>&1\n'
   } > "$JG_HOME/state/$check.check.sh"

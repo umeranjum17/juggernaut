@@ -20,10 +20,10 @@
 #   --hold-reason  why an "on hold" state waits; the board refuses a hold with none,
 #              so a state of "on hold" without one writes nothing
 #
-# The writer is core/tickets-sync/ticket.py, installed at
-# ${XDG_DATA_HOME:-$HOME/.local/share}/jg-tickets-sync/tickets-sync/ticket.py
+# The writer is this checkout's own core/tickets-sync/ticket.py, never a shared
+# installed copy, so a home always writes with the version it runs
 # (JG_TICKETS_TICKET overrides the path).
-# When the feature is not installed, or this home has no fleet board, this does
+# When the writer is missing, or this home has no fleet board, this does
 # nothing and exits 0: the board is optional and the poll owns creating tickets.
 # A failure names its cause on stderr and exits 1, so callers guard the call and
 # a board problem never fails a merge, a spawn or a cleanup.
@@ -84,7 +84,7 @@ fi
   *) usage >&2; exit 2 ;;
 esac
 
-WRITER="${JG_TICKETS_TICKET:-${XDG_DATA_HOME:-${HOME:-}/.local/share}/jg-tickets-sync/tickets-sync/ticket.py}"
+WRITER="${JG_TICKETS_TICKET:-$JG_ROOT/core/tickets-sync/ticket.py}"
 [ -f "$WRITER" ] || exit 0
 [ -e "$CONFIG/fleet-board" ] || exit 0
 
