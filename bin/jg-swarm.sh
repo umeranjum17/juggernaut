@@ -261,10 +261,12 @@ if ! done_step cards; then
     [ -z "$(slice_field "$id" card)" ] || continue
     route=main
     [ "$owner" = main ] || route=$owner
-    q=$(jq -r --arg s "$id" '.slices[] | select(.id == $s) | .owner_word | .question, .options.a, .options.b, .recommend' "$DERIVED")
-    { read -r question; read -r a; read -r b; read -r rec; } <<< "$q"
+    q=$(jq -r --arg s "$id" '.slices[] | select(.id == $s) | .owner_word
+      | .question, .options.a, .options.b, .recommend, .why, .outcomes.a, .outcomes.b, .recommend_reason, .default' "$DERIVED")
+    { read -r question; read -r a; read -r b; read -r rec; read -r why; read -r oa; read -r ob; read -r rr; read -r def; } <<< "$q"
     key=$("$CARD" post --ask-ref "$PLAN-word-$id" --title "$question" --must design-pick --raised-by "$PLAN-word-$id" --route "$route" \
-      --option "a=$a" --option "b=$b" --recommend "$rec") || die "the card of slice $id was refused"
+      --option "a=$a" --option "b=$b" --recommend "$rec" --why "$why" --outcome "a=$oa" --outcome "b=$ob" \
+      --recommend-reason "$rr" --default "$def") || die "the card of slice $id was refused"
     [ -n "$key" ] || die "the card of slice $id printed no key"
     edit_plan --arg id "$id" --arg k "$key" '.slices |= map(if .id == $id then . + {card: $k} else . end)'
   done < <(jq -r '.slices[] | select(.owner_word != null) | [.id, .owner_home] | @tsv' "$DERIVED")

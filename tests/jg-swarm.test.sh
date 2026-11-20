@@ -1,18 +1,13 @@
 #!/usr/bin/env bash
-# tests/jg-swarm.test.sh - bin/jg-swarm.sh starts a swarm from a plan file, on real stores with strict intake, a Main home
+# tests/jg-swarm.test.sh - bin/jg-swarm.sh starts a swarm from a plan file, on fixture stores with strict intake, a Main home
 # and a lead home, no model turn. Stand-ins log the send and the card post (the card stand-in files the design row the real
 # post files). Cases: 1 refusals write nothing; 2 the start files, approves, briefs and arms; 3 the chain with the real hold
 # check; 4 safe twice and a resume; 5 the route dry run refuses after the plan rows; 6 the start returns at once and the run goes
 # on detached, and a start while a run holds the lock does nothing; 7 a run stopped part way is resumed by the next start. Cases 1 to 5
-# run the body in the foreground (--wait). JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT name the pinned builds; the suite skips without them.
+# run the body in the foreground (--wait).
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-
-if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
-  printf 'skip: real store: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
-  exit 0
-fi
 
 SWARM="$ROOT/bin/jg-swarm.sh" T=$(jg_test_tmproot jg-swarm)
 T=$(cd "$T" && pwd)
@@ -49,7 +44,11 @@ slice() {  # <id> <owner> <deps json> [<extra json>]
     '{id: $id, title: ("Make part " + $id + " of it"), owner_home: $o, project: "proj", size: "S", risk: "Low", depends_on: $d,
       files: ["bin/\($id).sh (new)"], machine: null, order: ($id + ".md"), owner_word: null, gate: null} + ($x // {})'
 }
-word() { jq -n --arg q "$1" --arg a "$2" --arg b "$3" '{owner_word: {question: $q, options: {a: $a, b: $b}, recommend: "a", must: "design-pick"}}'; }
+word() {  # <question> <option a> <option b>: an owner_word with every field the board needs
+  jq -n --arg q "$1" --arg a "$2" --arg b "$3" '{owner_word: {question: $q, options: {a: $a, b: $b}, why: "The owner picks before the work starts.",
+    outcomes: {a: "We build \($a).", b: "We build \($b)."}, recommend: "a", recommend_reason: "It fits the rest of the page.", default: "a",
+    must: "design-pick"}}'
+}
 mkplan() {  # <dir>: the plan file and its orders in <dir>
   mkdir -p "$1"
   jq -n '{plan: "jg-plan", title: "Swarm start test", report: "/nonexistent/report.md", intent: "The owner wants the swarm run.",
@@ -138,6 +137,9 @@ assert_equals "on" "$(cat "$M/config/auto-dispatch")" "Main's dispatch switch mu
 assert_equals "2" "$(wc -l < "$T/card.log")" "two cards must be posted"
 assert_contains "$(sed -n 1p "$T/card.log")" "--must design-pick --raised-by jg-plan-word-d --route main" "D's card"
 assert_contains "$(sed -n 2p "$T/card.log")" "--must design-pick --raised-by jg-plan-word-f --route lead1" "F's card"
+# T4: each card carries every board field: --why, one --outcome per option, --recommend-reason and --default.
+assert_contains "$(sed -n 1p "$T/card.log")" '--option a=blue --option b=green --recommend a --why The owner picks before the work starts. --outcome a=We build blue. --outcome b=We build green. --recommend-reason It fits the rest of the page. --default a' "D's card must carry the why, both outcomes, the recommend reason and the default"
+assert_contains "$(sed -n 2p "$T/card.log")" '--outcome a=We build small. --outcome b=We build large.' "F's card must carry its own outcomes"
 assert_not_contains "$(cat "$T/card.log")" "--decision-key" "no card may carry a decision key"
 assert_equals "card-1 card-2" "$(jq -r '[.slices[] | select(.owner_word != null) | .card] | join(" ")' "$DP")" "the derived plan must hold each card"
 assert_equals "jg-plan-word-d jg-plan-word-f" "$(jq -r '[.slices[] | select(.owner_word != null) | .word_row] | join(" ")' "$DP")" "the derived plan must hold each word row"

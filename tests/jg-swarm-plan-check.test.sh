@@ -17,7 +17,11 @@ slice() {  # <id> <deps json> [<jq filter to change the slice>]
       depends_on: $d, files: [("bin/" + $id + ".sh (new)")], machine: null, order: ($id + ".md"), owner_word: null, gate: null}' |
     jq -c "${3:-.}"
 }
-word() { jq -n --arg q "$1" '{question: $q, options: {a: "blue", b: "green"}, recommend: "a", must: "design-pick"}'; }
+word() {  # <question>: an owner_word with every field the board needs
+  jq -n --arg q "$1" '{question: $q, options: {a: "blue", b: "green"}, why: "The new button is the first thing a user sees.",
+    outcomes: {a: "The button is blue.", b: "The button is green."}, recommend: "a", recommend_reason: "Blue matches the rest of the page.",
+    default: "a", must: "design-pick"}'
+}
 case_dir() {  # <name> <plan filter> <slice json>...: a plan beside its order files; prints the plan path
   local d=$T/$1 f=$2 s
   shift 2
@@ -72,6 +76,28 @@ assert_contains "$out" "refused: a: owner_word" "an internal word in the questio
 assert_contains "$out" "jg-plan.3" "the card rules' line names jg-plan.3"
 refused "not a question" "refused: a: owner_word" \
   "$(case_dir notq . "$(slice a '[]' ".owner_word = $(word 'Pick the colour' | jq -c .)")")"
+refused "no why" "refused: a: owner_word has no why" \
+  "$(case_dir nowhy . "$(slice a '[]' ".owner_word = $(word "$Q" | jq -c 'del(.why)')")")"
+refused "13-word question" "refused: a: owner_word question has 13 words, 12 at most" \
+  "$(case_dir longq . "$(slice a '[]' ".owner_word = $(word 'Which of the two colours should the new button be on the page?' | jq -c .)")")"
+long=$(printf 'x%.0s' $(seq 1 121))
+refused "outcome of 121 characters" "refused: a: owner_word outcomes.b is over 120 characters" \
+  "$(case_dir longout . "$(slice a '[]' ".owner_word = $(word "$Q" | jq -c --arg l "$long" '.outcomes.b = $l')")")"
+refused "no outcome" "refused: a: owner_word has no outcomes.a" \
+  "$(case_dir noout . "$(slice a '[]' ".owner_word = $(word "$Q" | jq -c 'del(.outcomes.a)')")")"
+refused "no reason for the recommendation" "refused: a: owner_word has no recommend_reason" \
+  "$(case_dir norr . "$(slice a '[]' ".owner_word = $(word "$Q" | jq -c 'del(.recommend_reason)')")")"
+refused "default not a or b" "refused: a: owner_word default is not a or b" \
+  "$(case_dir nodef . "$(slice a '[]' ".owner_word = $(word "$Q" | jq -c '.default = "c"')")")"
+refused "option of 81 characters" "refused: a: owner_word options.a is over 80 characters" \
+  "$(case_dir longopt . "$(slice a '[]' ".owner_word = $(word "$Q" | jq -c --arg l "${long:0:81}" '.options.a = $l')")")"
+refused "why over 200 characters" "refused: a: owner_word why is over 200 characters" \
+  "$(case_dir longwhy . "$(slice a '[]' ".owner_word = $(word "$Q" | jq -c --arg l "${long}${long}" '.why = $l')")")"
+# T6: the card rule sees the why: a path in it is refused with the card rule's own line; a plain why passes.
+refused "a path in the why" "refused: a: owner_word: rule 3, a card names no internal thing and this one says" \
+  "$(case_dir pathwhy . "$(slice a '[]' ".owner_word = $(word "$Q" | jq -c '.why = "See data/x/report.md for the options."')")")"
+out=$(run "$(case_dir plainwhy . "$(slice a '[]' ".owner_word = $(word "$Q" | jq -c '.why = "The report lists both options."')")")") \
+  || fail "a plain why must pass: $out"
 refused "gate to no home" "refused: a: gate" "$(case_dir gate . "$(slice a '[]' '.gate = {waits_for: "nohome"}')")"
 pass "plan check: each bad plan is refused alone with one line"
 

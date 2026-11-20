@@ -16,8 +16,10 @@
 #   - each slice has `owner_home` and `project`, and its `order` file exists beside the plan file;
 #   - each `depends_on` names another slice of this plan with the same `owner_home`, and the dependencies hold no loop
 #     (tsort does not see a slice that names itself, so that is its own check);
-#   - an `owner_word` has a question, options `a` and `b`, `recommend` a or b and `must` design-pick, and
-#     jg_ask_card_refusal (bin/jg-ask-gate-lib.sh) passes for it;
+#   - an `owner_word` has a question (12 words at most), options `a` and `b` (80 characters each), `outcomes.a` and
+#     `outcomes.b` (120 each), `why` (one line, 200), `recommend` a or b with `recommend_reason` (160), `default` a or b
+#     and `must` design-pick, and jg_ask_card_refusal (bin/jg-ask-gate-lib.sh) passes for the question, options, why and
+#     outcomes: the fields the board's `sign-off-axi raise` requires, so the swarm's card step posts on the first try;
 #   - `files` is a list of strings; each entry, after one trailing ` (new)` is removed, is a relative path (not empty,
 #     no leading `/`, `./` or `../`, no `..` part, only the characters A-Za-z0-9._/@+-), so prose is refused;
 #   - two slices of one `project` that name the same path (` (new)` removed) have a `depends_on` path between them,
@@ -84,8 +86,15 @@ if ! jq -e '.slices | type == "array" and length > 0' <<<"$PLAN_JSON" >/dev/null
   finish
 fi
 
+word_field() {  # <slice id> <field> <value> <max characters>: one owner_word text the board requires, on one line
+  local id=$1 f=$2 v=$3 max=$4
+  [ -n "$v" ] || { refuse "$id" "owner_word has no $f"; return 0; }
+  case $v in *$'\n'*) refuse "$id" "owner_word $f is not one line"; return 0 ;; esac
+  [ "$(jq -n --arg v "$v" '$v | length')" -le "$max" ] || refuse "$id" "owner_word $f is over $max characters"
+}
+
 check_word() {  # <slice id> <slice json>: the owner_word rules
-  local id=$1 s=$2 w q a b why
+  local id=$1 s=$2 w q a b why oa ob wy rr n
   w=$(jq -c '.owner_word' <<<"$s")
   [ "$w" != null ] || return 0
   q=$(jq -r '.question | strings' <<<"$w" 2>/dev/null || true)
@@ -93,12 +102,25 @@ check_word() {  # <slice id> <slice json>: the owner_word rules
   b=$(jq -r '.options.b | strings' <<<"$w" 2>/dev/null || true)
   [ -n "$q" ] || { refuse "$id" "owner_word has no question"; return 0; }
   [ -n "$a" ] && [ -n "$b" ] || { refuse "$id" "owner_word needs options a and b"; return 0; }
+  oa=$(jq -r '.outcomes.a | strings' <<<"$w" 2>/dev/null || true)
+  ob=$(jq -r '.outcomes.b | strings' <<<"$w" 2>/dev/null || true)
+  wy=$(jq -r '.why | strings' <<<"$w" 2>/dev/null || true)
+  rr=$(jq -r '.recommend_reason | strings' <<<"$w" 2>/dev/null || true)
+  n=$(wc -w <<<"$q")
+  [ "$n" -le 12 ] || refuse "$id" "owner_word question has $n words, 12 at most"
+  word_field "$id" why "$wy" 200
+  word_field "$id" "options.a" "$a" 80
+  word_field "$id" "options.b" "$b" 80
+  word_field "$id" "outcomes.a" "$oa" 120
+  word_field "$id" "outcomes.b" "$ob" 120
+  word_field "$id" recommend_reason "$rr" 160
+  jq -e '.default == "a" or .default == "b"' <<<"$w" >/dev/null || refuse "$id" "owner_word default is not a or b"
   jq -e '.recommend == "a" or .recommend == "b"' <<<"$w" >/dev/null || refuse "$id" "owner_word recommend is not a or b"
   case $(jq -r '.must // empty' <<<"$w") in
     design-pick) ;;
     *) refuse "$id" "owner_word must is $(jq -r '.must // "unset"' <<<"$w"), not design-pick: an owner word is a product pick only" ;;
   esac
-  if ! why=$(jg_ask_card_refusal "$PLAN-word-$id" 2 "$q" "$a" "$b"); then
+  if ! why=$(jg_ask_card_refusal "$PLAN-word-$id" 2 "$q" "$wy" "$a" "$b" "$oa" "$ob" "$rr"); then
     refuse "$id" "owner_word: ${why#refused: }"
   fi
 }

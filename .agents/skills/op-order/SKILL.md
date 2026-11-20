@@ -48,8 +48,10 @@ Budget        measured by a dry run, never guessed
    intent, prior_art, and per slice id, title, owner_home, project, size, risk, depends_on, files, machine, order,
    owner_word and gate. A slice id is lowercase letters and digits. A title is 2 to 7 plain words, at most 48
    characters, with no path, slash or id (strict intake refuses others). Dependent slices share one owner home. An
-   owner-only slice carries owner_word: one plain question about the product, two options, a recommendation and
-   the must design-pick; a money call is settled in the report's open decisions before the swarm, never in a slice. A slice that waits on another
+   owner-only slice carries owner_word, with every field the board needs (`bin/jg-swarm-plan-check.sh` refuses a miss):
+   `question` (12 words at most, ends in "?"), `options.a` and `options.b` (80 characters each), `outcomes.a` and
+   `outcomes.b` (120 each), `why` (one line, 200), `recommend` (a or b) with `recommend_reason` (160), `default` (a or b)
+   and `must` design-pick; no path or internal name in any text; a money call is settled in the report's open decisions before the swarm, never in a slice. A slice that waits on another
    home's row or a tool version carries gate; a slice that waits on anything else stays out of plan.json and the
    report names it for Main to start by hand. Check the file with bin/jg-swarm-plan-check.sh orders/plan.json
    until it prints its ok line (the filer's own dry run needs the plan row filed, so /blitz runs it later).
