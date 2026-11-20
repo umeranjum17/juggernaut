@@ -1536,14 +1536,20 @@ startup_memory_budget_setup() {
 # MISSING line, and it never fails the boot. It talks to the network (pinned releases), so it
 # belongs to the network half of a split run; JG_STACK_SKIP=1 turns it off for a fixture.
 bus_service() {
-  local out
+  local out rc=0
   # A Squad Lead home runs none of the machine's services: Main owns them, and
   # `jg-stack.sh up` refuses there for that reason.
   [ ! -e "$(jg_compat_marker "$JG_HOME")" ] && [ ! -L "$(jg_compat_marker "$JG_HOME")" ] || return 0
   network_phase || return 0
   [ "${JG_STACK_SKIP:-0}" != 1 ] || return 0
-  if out=$("$SCRIPT_DIR/jg-stack.sh" up 2>&1); then
+  out=$("$SCRIPT_DIR/jg-stack.sh" up 2>&1) || rc=$?
+  if [ "$rc" -eq 0 ]; then
     [ "${JG_BOOTSTRAP_VERBOSE_FACTS:-0}" != 1 ] || echo "BOOTSTRAP_INFO: $(printf '%s\n' "$out" | tail -n 1)"
+    return 0
+  fi
+  # Exit 2 is a refusal, not a fault: the machine's services are not this home's to install.
+  if [ "$rc" -eq 2 ]; then
+    echo "BOOTSTRAP_INFO: $(printf '%s\n' "$out" | tail -n 1)"
     return 0
   fi
   echo "MISSING: $(printf '%s\n' "$out" | grep '^STACK_FAILED:' | head -n 1 | sed 's/^STACK_FAILED: //') (fix, then run: bin/jg-stack.sh up)"
@@ -1790,6 +1796,8 @@ detect_sentinel_service() {
   [ -e "$(jg_compat_marker "$JG_HOME")" ] || [ -L "$(jg_compat_marker "$JG_HOME")" ] && return 0
   command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1 || return 0
   systemctl --user is-active --quiet jg-sentinel && return 0
+  # A home the installed units do not serve offers no command that would take them (bin/jg-unit-claim.sh).
+  "$SCRIPT_DIR/jg-unit-claim.sh" may-install jg-bootstrap sentinel 2>/dev/null || return 0
   local quoted_home quoted_sentinel
   printf -v quoted_home %q "$JG_HOME"
   printf -v quoted_sentinel %q "$JG_ROOT/bin/jg-sentinel.sh"

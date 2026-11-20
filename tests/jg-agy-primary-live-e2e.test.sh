@@ -22,10 +22,12 @@
 # With JG_AGY_PRIMARY_EVIDENCE=<dir> it keeps the pane captures and the
 # conversation transcript there.
 #
-# Isolation: the session start this drives is a real one, and a home the
-# lab-home rule (bin/jg-lab-home-lib.sh) does not recognise would claim the
-# machine's units for itself (bin/jg-unit-claim.sh) and install the stack there.
-# So the throwaway home is a marked lab home (bin/jg-lab-home.sh create) inside a
+# Isolation: the session start this drives is a real one. The owner rule
+# (bin/jg-unit-claim.sh) already refuses a home the machine's units do not serve
+# while their owner is live, but a host whose units are absent or name a deleted
+# home has no owner to refuse for, and a home the lab-home rule
+# (bin/jg-lab-home-lib.sh) does not recognise would then claim them and install
+# the stack there. So the throwaway home is a marked lab home (bin/jg-lab-home.sh create) inside a
 # jg-test-run.* directory, which the rule recognises with no TMPDIR at all - the
 # session runs from an empty environment - and the run refuses to start unless
 # that environment's guard refuses the account's unit directory. The stack and

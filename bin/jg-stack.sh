@@ -23,8 +23,9 @@
 #   callers  bin/jg-bootstrap.sh and bin/jg-update.sh run `up`, so a release never lands on a machine
 #            without its services; install.sh runs it last.
 #   refuse   the machine's long-running services (jg-sentinel) belong to Main, and bin/jg-unit-claim.sh owns
-#            why: a Squad Lead home that installs them takes Main's alerts away with
-#            them, so `up` refuses there with exit 2 and `status` still reports. `up` also
+#            why: a Squad Lead home, or any home the installed units do not serve while
+#            their owner is live, takes Main's alerts away with them, so `up` refuses
+#            there with exit 2 and `status` still reports. `up` also
 #            refuses, exit 2, a throw-away home writing this account's own units or tools
 #            (bin/jg-lab-home-lib.sh).
 # Env: JG_HOME, JG_STATE_OVERRIDE; JG_STACK_UNIT_PREFIX (unit names, default jg); JG_STACK_SUPERVISOR
@@ -44,18 +45,15 @@ export PATH=$NPM_CONFIG_PREFIX/bin:$PATH
 mode=${1:-up}
 case $mode in up|status) ;; -h|--help) awk 'NR > 1 && /^#/ { print; next } NR > 1 { exit }' "$0"; exit 0 ;; *) echo "usage: jg-stack.sh [up|status]" >&2; exit 2 ;; esac
 [ "$mode" = status ] || [ "${JG_STACK_SKIP:-0}" != 1 ] || exit 0
-# A Squad Lead home never claims the machine's services: it would take Main's
-# alerts away with them (bin/jg-unit-claim.sh owns the reason).
-if [ "$mode" = up ] && { [ -e "$JG_HOME/.jg-squad-lead-home" ] || [ -L "$JG_HOME/.jg-squad-lead-home" ]; }; then
-  "$SCRIPT_DIR/jg-unit-claim.sh" refuse jg-stack up
-  exit 2
-fi
-# A throw-away home (a test's) never installs units or tools into this account's own home
-# (bin/jg-lab-home-lib.sh owns the rule and the refusal sentence).
 if [ "$mode" = up ]; then
+  # A throw-away home (a test's) never installs units or tools into this account's own home
+  # (bin/jg-lab-home-lib.sh owns the rule and the refusal sentence).
   # shellcheck source=bin/jg-lab-home-lib.sh
   . "$SCRIPT_DIR/jg-lab-home-lib.sh"
   jg_lab_home_guard "$JG_HOME" "jg-stack up" "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user" "$NPM_CONFIG_PREFIX" || exit 2
+  # Only the home that owns the machine's services installs them: a Squad Lead home or another
+  # home would take Main's alerts away with them (bin/jg-unit-claim.sh owns the rule and the reason).
+  "$SCRIPT_DIR/jg-unit-claim.sh" may-install jg-stack up || exit 2
 fi
 
 fail() {  # <part> <what is missing> <what it blocks>
