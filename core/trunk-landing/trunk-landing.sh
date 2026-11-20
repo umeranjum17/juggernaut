@@ -317,8 +317,8 @@ if [ "$1" = run ]; then
   printf '%s\n' "$out" > "$request_log"
   printf '%s\n' "$out" > "$MEM/$id.$head.log"
   if [ "$rc" -eq 0 ]; then
+    partition_forget "$id" "$head"  # the trunk holds the lane: its queue is free before the landed record reads, not after the cleanup
     landed_lane "$id" "$head" "on the local trunk (not In use yet: In use follows the answer given at gated, the captain's word or the project's waiver, and its quiet window)"
-    partition_forget "$id" "$head"
     "$SELF" next "$FMH" >/dev/null 2>&1 || :
     exit 0
   fi

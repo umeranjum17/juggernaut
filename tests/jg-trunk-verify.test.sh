@@ -451,19 +451,20 @@ test_no_green_for_15_minutes_raises_one_alarm_not_two() {
   [ "$(grep -c 'has had no green commit for 16 minutes' "$q")" = 1 ] || fail "the stall must raise one alarm through the landing check, not two: $(cat "$q" 2>&1)"
   grep 'has had no green commit' "$q" | grep -q "alert-line-red--proj-no-green-${green:0:12}" || fail "the stall raises line-red for the lead: $(cat "$q")"
   assert_contains "$(grep 'has had no green commit' "$q")" "live stays on ${green:0:12}" "the alarm says live stays on the last green commit"
-  # A stall that goes on climbs the ladder through the same per-minute call: nothing before the 300 s rung timer, then Main, then the
-  # captain's chat (the owner rung), then the same rung again after the 600 s repeat.
+  # A stall that goes on climbs the ladder through the same per-minute call: nothing before the 300 s rung timer, then Main. A team alert
+  # stops at Main (bin/jg-alert.sh: facts never grant owner authority), so no owner rung rings, and Main's rung repeats every 600 s.
   rung_at=$(sed -n 's/^rung_at=//p' "$HOME_D/state/alerts/line-red--proj-no-green-${green:0:12}.rec")
   JG_ALERT_NOW=$((rung_at + 299)) trunk green-alarm "$PROJ" >/dev/null 2>&1
   ! grep -q "at rung 3 for main" "$q" || fail "no climb before the rung timer ran out: $(cat "$q")"
   JG_ALERT_NOW=$((rung_at + 300)) trunk green-alarm "$PROJ" >/dev/null 2>&1
   grep "alert-line-red--proj-no-green-${green:0:12}" "$q" | grep -q "at rung 3 for main" || fail "the stall climbs to Main after 300 s: $(cat "$q")"
   JG_ALERT_NOW=$((rung_at + 600)) trunk green-alarm "$PROJ" >/dev/null 2>&1
-  grep "alert-line-red--proj-no-green-${green:0:12}" "$q" | grep -q "at rung 4 for owner" || fail "the stall climbs to the owner after 300 s more: $(cat "$q")"
-  JG_ALERT_NOW=$((rung_at + 1199)) trunk green-alarm "$PROJ" >/dev/null 2>&1
-  [ "$(grep -c "at rung 4 for owner" "$q")" = 1 ] || fail "the owner rung is not repeated before 600 s: $(cat "$q")"
-  JG_ALERT_NOW=$((rung_at + 1200)) trunk green-alarm "$PROJ" >/dev/null 2>&1
-  [ "$(grep -c "at rung 4 for owner" "$q")" = 2 ] || fail "the owner rung repeats every 600 s while the stall goes on: $(cat "$q")"
+  ! grep -q "at rung 4 for owner" "$q" || fail "a team alert must never reach the owner rung: $(cat "$q")"
+  JG_ALERT_NOW=$((rung_at + 899)) trunk green-alarm "$PROJ" >/dev/null 2>&1
+  [ "$(grep -c "at rung 3 for main" "$q")" = 1 ] || fail "Main's rung is not repeated before 600 s: $(cat "$q")"
+  JG_ALERT_NOW=$((rung_at + 900)) trunk green-alarm "$PROJ" >/dev/null 2>&1
+  [ "$(grep -c "at rung 3 for main" "$q")" = 2 ] || fail "Main's rung repeats every 600 s while the stall goes on: $(cat "$q")"
+  ! grep -q "at rung 4 for owner" "$q" || fail "a team alert must never reach the owner rung, even on repeat: $(cat "$q")"
   # The pin moves, and a later stall raises a new alarm.
   trunk verify "$PROJ" >/dev/null 2>&1 || fail "the trunk must verify green"
   old_pin=$green; green=$(tip); assert_contains "$(trunk green-alarm "$PROJ" 2>&1)" "is green at ${green:0:12}" "a green tip raises nothing"
@@ -477,7 +478,7 @@ test_no_green_for_15_minutes_raises_one_alarm_not_two() {
   out=$(trunk green-alarm "$PROJ" 2>&1); assert_contains "$out" "raised:" "a new stall above a moved pin is raised"
   [ "$(grep -c 'at rung 2 for lead.*has had no green commit' "$q")" = 2 ] || fail "each stall is raised once: $(cat "$q")"
   [ "$(sed -n 's/^state=//p' "$HOME_D/state/alerts/line-red--proj-no-green-${old_pin:0:12}.rec")" = resolved ] || fail "the old stall ends when its pin moved"
-  pass 'a trunk with no green for 15 minutes raises one alarm through the landing check that climbs to Main and the owner and repeats while the stall goes on, and a new stall after the pin moved raises one more'
+  pass 'a trunk with no green for 15 minutes raises one alarm through the landing check that climbs to Main, never the owner, and repeats while the stall goes on, and a new stall after the pin moved raises one more'
 }
 
 # The nightly whole run (jg8-t5), started by the tick: every script on the tip through the same verify. Of three changes landed since the
