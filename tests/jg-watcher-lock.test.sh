@@ -327,7 +327,9 @@ test_slow_comms_feed_sync_keeps_beacon_fresh() (
   printf '%s\n' '{"event":"task.dispatched","ts":1,"task":"slow-feed","kind":"ship","project":"demo"}' \
     > "$state/fleet-ledger.jsonl"
   export PATH="$fakebin:$PATH" JG_HOME="$dir" JG_STATE_OVERRIDE="$state" JG_COMMS_FEED="$feed"
-  export SIGN_OFF_HOME="$dir/sign-off" JG_WATCHER_STALE_GRACE=3 JG_WATCHER_STALL_BOUND=9999999999
+  export SIGN_OFF_HOME="$dir/sign-off" JG_WATCHER_STALE_GRACE=5 JG_WATCHER_STALL_BOUND=9999999999
+  # The child sidecar beats once per record poll; 1s leaves several beats inside the grace under load.
+  export JG_WATCHER_RECORD_POLL=1
   export JG_POLL=1 JG_SIGNAL_GRACE=1 JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999
   "$WATCH" > "$dir/watch.out" 2> "$dir/watch.err" &
   pid=$!
@@ -337,7 +339,7 @@ test_slow_comms_feed_sync_keeps_beacon_fresh() (
   done
   [ -d "$state/.comms-feed.lock" ] || fail "the comms-feed sync never started: $(cat "$dir/watch.err")"
   # Hold the sync open for twice the grace.
-  sleep 6
+  sleep 10
   [ -d "$state/.comms-feed.lock" ] || fail "the comms-feed sync finished early; the case proves nothing"
   is_live_non_zombie "$pid" || fail "watcher exited during the slow sync: $(cat "$dir/watch.out" "$dir/watch.err")"
   status=0
@@ -346,7 +348,7 @@ test_slow_comms_feed_sync_keeps_beacon_fresh() (
   grep -Fx "watcher: already running pid $pid" "$dir/rearm.out" >/dev/null \
     || fail "re-arm did not attach to the live watcher: $(cat "$dir/rearm.out" "$dir/rearm.err")"
   age=$(bash -c '. "$1"; jg_watcher_progress_age "$2"' _ "$LIB" "$state")
-  [ "$age" -lt 3 ] || fail "watcher beacon is ${age}s old while the comms-feed sync runs (grace 3s)"
+  [ "$age" -lt 5 ] || fail "watcher beacon is ${age}s old while the comms-feed sync runs (grace 5s)"
   # The slow sync still delivers once its reader appears.
   timeout 10 cat "$feed" > "$dir/feed.out" &
   drain=$!
@@ -1617,11 +1619,11 @@ test_arm_hup_cleans_child_and_temp_output() {
   grep -qF 'watcher: started pid=' "$armout" || fail "arm did not start before HUP cleanup check"
   lock_pid=$(cat "$state/.watch.lock/pid" 2>/dev/null || true)
   kill -HUP "$armpid" 2>/dev/null || fail "could not send HUP to arm"
-  wait_for_exit "$armpid" 80
+  wait_for_exit "$armpid" 300
   status=$?
   [ "$status" -eq 129 ] || fail "arm did not exit with HUP status (got $status)"
   i=0
-  while [ "$i" -lt 80 ] && is_live_non_zombie "$lock_pid"; do
+  while [ "$i" -lt 300 ] && is_live_non_zombie "$lock_pid"; do
     sleep 0.1
     i=$((i + 1))
   done

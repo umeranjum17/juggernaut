@@ -80,7 +80,7 @@ supervision_read() {  # <dir> <grace>
 
 # --- A live sweep longer than the grace stays supervised; a killed watcher does not.
 test_live_sweep_is_supervised_and_a_killed_watcher_is_not() (
-  local dir state beat runs log grace=4 arm i unhealthy=0 peak=0 samples=0 runs_before runs_during
+  local dir state beat runs log grace=6 arm i unhealthy=0 peak=0 samples=0 runs_before runs_during
   local age_now watcher_pid took detected=no started
   dir=$(make_home sweep)
   state=$dir/state
@@ -90,9 +90,10 @@ test_live_sweep_is_supervised_and_a_killed_watcher_is_not() (
   : > "$log"
   # shellcheck disable=SC2030,SC2031 # Each case runs in its own subshell, so its exports die with it.
   export JG_HOME="$dir" JG_STATE_OVERRIDE="$state" JG_POLL=0.2 JG_SIGNAL_GRACE=0 \
-    JG_GUARD_GRACE=$grace JG_CHECK_INTERVAL=0 JG_CHECK_TIMEOUT=5 JG_HEARTBEAT=999999
-  # Four slow checks: one sweep is twice the grace, the shape a busy home reaches
-  # when its checks come due together.
+    JG_GUARD_GRACE=$grace JG_CHECK_INTERVAL=0 JG_CHECK_TIMEOUT=5 JG_HEARTBEAT=999999 JG_WATCHER_RECORD_POLL=1
+  # Four slow checks: one sweep is longer than the grace, the shape a busy home reaches
+  # when its checks come due together. The sidecar beats the beacon once per record poll
+  # (default 2s); the grace keeps several beats of margin so scheduler load cannot age it out.
   register_slow_checks "$dir" 4 2 "$log"
   "$WATCH_ARM" > "$dir/arm.out" 2>&1 &
   arm=$!

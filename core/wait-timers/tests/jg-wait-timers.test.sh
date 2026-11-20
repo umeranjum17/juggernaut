@@ -53,9 +53,40 @@ cycle() {
   case "$rc" in 0|124) ;; *) fail "watcher failed: $(cat "$dir/err")" ;; esac
   cat "$dir/out" >> "$dir/events"
   JG_HOME="$dir" JG_STATE_OVERRIDE="$dir/state" "$DRAIN" > "$dir/drain" 2> "$dir/ack"
+  # The drain refuses an acknowledgement while a presented outcome is unhandled, so this
+  # cycle handles each one as Main does before it acknowledges.
+  sed -n 's/^OUTCOME_REQUIRED: \([0-9a-f]*\)$/\1/p' "$dir/drain" "$dir/ack" | while read -r outcome; do
+    JG_HOME="$dir" JG_STATE_OVERRIDE="$dir/state" "$DRAIN" --outcome "$outcome" --classified 'wait-timers journey outcome' >/dev/null
+  done
   seq=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9]*\) --recovery-generation .*/\1/p' "$dir/ack")
   gen=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--recovery-generation \([^ ]*\)$/\1/p' "$dir/ack")
   [ -z "$seq" ] || JG_HOME="$dir" JG_STATE_OVERRIDE="$dir/state" "$DRAIN" --ack-through "$seq" --recovery-generation "$gen" >/dev/null
+}
+
+# Runs cycles until <command> holds, for a case that waits for an event. Each cycle is cut at
+# its own bound, and a loaded host can spend most of a cycle starting the watcher, so a fixed
+# number of cycles measures the host, not the event. The deadline keeps a missing event a
+# failure: past it this returns, and the case's own assertion fails with its own message.
+EVENT_SECS=${JG_WAIT_TIMERS_EVENT_SECS:-240}
+cycle_until() {  # <command...>
+  local deadline=$((SECONDS + EVENT_SECS))
+  until "$@"; do
+    [ "$SECONDS" -lt "$deadline" ] || return 0
+    cycle
+  done
+}
+owner_alerts() {  # <count>: at least <count> owner alerts are on record
+  [ "$(grep -c 'level=owner' "$dir/events")" -ge "$1" ]
+}
+episode_left() {  # <record> <key>: the episode is gone or no longer carries <key>
+  local key=''
+  [ ! -f "$1" ] || IFS=$'\t' read -r _ _ _ _ key _ < "$1"
+  [ "$key" != "$2" ]
+}
+episode_missed() {  # <record>: the episode is gone or has counted a non-blocked poll
+  local misses=0
+  [ ! -f "$1" ] || IFS=$'\t' read -r _ _ _ _ _ misses _ < "$1"
+  [ ! -f "$1" ] || [ "${misses:-0}" -ge 1 ]
 }
 
 # Arms the lane's episode beside a second lane whose status moves on once the episode is
@@ -68,13 +99,13 @@ arm_episode() {  # <dir>
   prime_status_seen "$1/state" "$1/state/lane-b.status"
   (
     i=0
-    while [ ! -e "$1/state/.waiting-timers/lane" ] && [ "$i" -lt 100 ]; do
+    while [ ! -e "$1/state/.waiting-timers/lane" ] && [ "$i" -lt "$((EVENT_SECS * 10))" ]; do
       sleep 0.1
       i=$((i + 1))
     done
     printf 'working: step two\n' >> "$1/state/lane-b.status"
   ) &
-  cycle
+  cycle_until test -e "$1/state/.waiting-timers/lane"
   wait
 }
 
@@ -106,7 +137,7 @@ for verb in blocked needs-decision; do
   prime_status_seen "$dir/state" "$dir/state/lane.status"
   arm_episode "$dir"
   [ "$verb" != blocked ] || age_episode "$dir"
-  cycle
+  cycle_until grep -q 'check: waiting-state lane .*level=owner' "$dir/events"
   if [ "$verb" = blocked ]; then
     [ ! -s "$channel" ] || fail 'restart escalated before owner response interval'
     IFS=$'\t' read -r sig since owner _parent key _misses < "$dir/state/.waiting-timers/lane"
@@ -121,8 +152,7 @@ for verb in blocked needs-decision; do
   cycle
   cycle
   printf '%s [key=wait]: another condition\n' "$verb" >> "$dir/state/lane.status"
-  cycle
-  cycle
+  cycle_until owner_alerts 2
   [ "$(grep -c 'level=owner' "$dir/events")" -eq 2 ] || fail "$verb did not re-arm"
   pass "$verb owner alert, deduplication, resolution and re-arm"
 done
@@ -136,7 +166,7 @@ printf 'blocked [at=%s] [key=wait]: external condition\n' "$(date +%s)" > "$dir/
 prime_status_seen "$dir/state" "$dir/state/lane.status"
 arm_episode "$dir"
 age_episode "$dir"
-cycle
+cycle_until owner_alerts 1
 [ "$(grep -c 'level=owner' "$dir/events")" -eq 1 ] || fail 'Main-owned wait did not alert Main'
 grep -q 'waiting-state lane (blocked key=wait, .*level=owner' "$dir/events" || fail 'owner recheck did not name the decision key'
 pass 'a Main-owned overdue wait alerts Main once at the owner rung'
@@ -168,11 +198,10 @@ case "$key" in
   *) fail "wait identity is not home/task/generation/key: $key" ;;
 esac
 age_episode "$dir"
-cycle
+cycle_until grep -qF "id=$key source=[blocked [key=cur-wait]: current dependency]" "$dir/events"
 grep -F "id=$key source=[blocked [key=cur-wait]: current dependency]" "$dir/events" >/dev/null || fail 'escalation did not print the exact unresolved source'
 printf 'resolved [key=cur-wait]: dependency arrived\nworking: resumed\n' >> "$dir/state/lane.status"
-cycle
-cycle
+cycle_until episode_left "$dir/state/.waiting-timers/lane" "$key"
 [ -e "$dir/state/.waiting-timers/lane" ] || fail 'a later working line closed the unrelated open decision'
 IFS=$'\t' read -r _sig _since _owner _parent key2 _misses < "$dir/state/.waiting-timers/lane"
 case "$key2" in
@@ -181,11 +210,10 @@ case "$key2" in
 esac
 [ "$key2" != "$key" ] || fail 'a changed wait kept the old identity'
 printf 'resolved [key=old-ask]: decided\n' >> "$dir/state/lane.status"
-for _ in 1 2 3; do [ -e "$dir/state/.waiting-timers/lane" ] || break; cycle; done
+cycle_until test ! -e "$dir/state/.waiting-timers/lane"
 [ ! -e "$dir/state/.waiting-timers/lane" ] || fail 'resolving the last decision left the wait open'
 printf 'blocked: waiting on an unkeyed thing\n' >> "$dir/state/lane.status"
-cycle
-cycle
+cycle_until test -e "$dir/state/.waiting-timers/lane"
 IFS=$'\t' read -r _sig _since _owner _parent key3 _misses < "$dir/state/.waiting-timers/lane"
 case "$key3" in
   waiting-timer-*-lane-g[0-9]*) ;;
@@ -218,9 +246,9 @@ else
 fi
 SH
 chmod +x "$dir/fakebin/herdr"
-cycle
+cycle_until test -e "$dir/state/.waiting-timers/lane"
 printf 'working: more output\n' >> "$dir/state/lane.status"
-cycle
+cycle_until owner_alerts 1
 cycle
 [ "$(grep -c 'level=owner' "$dir/events")" -eq 1 ] || fail 'native blocked timer was reset by output or repeated'
 grep -q 'herdr-blocked' "$dir/events" || fail 'native blocked did not override working'
@@ -228,14 +256,10 @@ grep -q 'herdr-blocked' "$dir/events" || fail 'native blocked did not override w
 printf 'working\n' > "$dir/native"
 # Clearing the episode takes two polls (one missed read is tolerated), and each
 # cycle's watcher is stopped after a few seconds, so repeat until it has cleared.
-for _ in 1 2 3 4 5; do
-  [ -e "$dir/state/.waiting-timers/lane" ] || break
-  cycle
-done
+cycle_until test ! -e "$dir/state/.waiting-timers/lane"
 [ ! -e "$dir/state/.waiting-timers/lane" ] || fail 'native working did not clear the episode'
 printf 'blocked\n' > "$dir/native"
-cycle
-cycle
+cycle_until owner_alerts 2
 [ "$(grep -c 'level=owner' "$dir/events")" -eq 2 ] || fail 'native blocked did not re-arm'
 printf 'working\n' > "$dir/native"
 printf 'blocked [key=waiting-timer-child]: waiting-timer-overdue: child is waiting\n' >> "$dir/state/lane.status"
@@ -258,14 +282,13 @@ printf 'blocked\n' > "$dir/native"
 printf 'working: healthy Cursor\n' > "$dir/state/lane.status"
 prime_status_seen "$dir/state" "$dir/state/lane.status"
 : > "$dir/native-calls"
-cycle
+cycle_until test -s "$dir/native-reads"
 [ ! -e "$dir/state/.waiting-timers/lane" ] || fail 'Cursor native blocked admitted'
 [ -s "$dir/native-reads" ] || fail "Cursor ship did not reach native push reconciliation: $(cat "$dir/out" "$dir/err" "$dir/native-calls")"
 [ -e "$dir/state/.herdr-escalated-fixture_w1_p1" ] || fail 'Cursor push was not consumed'
 [ ! -s "$dir/events" ] || fail 'healthy Cursor ship emitted an alert'
 printf 'blocked [key=cursor-wait]: real dependency\n' >> "$dir/state/lane.status"
-cycle
-cycle
+cycle_until grep -q 'waiting-state lane (blocked' "$dir/events"
 grep -q 'waiting-state lane (blocked' "$dir/events" || fail 'Cursor declaration not monitored'
 pass 'Cursor ship ignores native polling and push blockers but retains declaration monitoring'
 unset JG_BACKEND_HERDR_EVENTS_FORCE JG_BACKEND_HERDR_EVENT_READER
@@ -293,7 +316,7 @@ prime_status_seen "$dir/state" "$dir/state/tmux-lane.status"
 : > "$dir/events"
 # Fast checks run before inventory; exercise their existing portable deadline too.
 export JG_BACKEND_HERDR_READ_TIMEOUT=1 JG_TIMEOUT_MECHANISM_OVERRIDE=bash JG_CHECK_FORCE_FALLBACK=1
-cycle
+cycle_until grep -q 'check: waiting-state tmux-lane .*level=owner' "$dir/events"
 unset JG_BACKEND_HERDR_READ_TIMEOUT JG_TIMEOUT_MECHANISM_OVERRIDE JG_CHECK_FORCE_FALLBACK
 grep -q 'check: waiting-state tmux-lane .*level=owner' "$dir/events" || fail 'stalled native lookup stopped monitoring the healthy tmux lane'
 ! grep -q 'herdr-lane' "$dir/events" || fail 'lane on a stalled native session raised an alert'
@@ -316,18 +339,18 @@ fi
 SH
 chmod +x "$dir/fakebin/herdr"
 prime_status_seen "$dir/state" "$dir/state/lane.status"
-cycle
+cycle_until test -e "$dir/state/.waiting-timers/lane"
 IFS=$'\t' read -r sig since owner _parent key _misses < "$dir/state/.waiting-timers/lane"
 start=$((since - 900))
 printf '%s\t%s\t0\t0\t%s\t0\n' "$sig" "$start" "$key" > "$dir/state/.waiting-timers/lane"
 printf 'working\n' > "$dir/native"
-cycle
+cycle_until episode_missed "$dir/state/.waiting-timers/lane"
 IFS=$'\t' read -r _sig since owner _parent key misses _levels < "$dir/state/.waiting-timers/lane"
 [ "$since" -eq "$start" ] || fail 'one non-blocked poll reset the blocked observation time'
 [ "$misses" -eq 1 ] || fail 'one non-blocked poll was not counted as a miss'
 printf 'blocked\n' > "$dir/native"
 : > "$dir/events"
-cycle
+cycle_until owner_alerts 1
 [ "$(grep -c 'level=owner' "$dir/events")" -eq 1 ] || fail 'flicker re-block did not alert its owner from the preserved observation time'
 pass 'a blocked/working flicker keeps the original blocked observation time'
 
@@ -359,7 +382,7 @@ chmod +x "$dir/fakebin/herdr" "$dir/fakebin/reader"
 export JG_BACKEND_HERDR_EVENTS_FORCE=1 JG_BACKEND_HERDR_EVENT_READER="$dir/fakebin/reader"
 prime_status_seen "$dir/state" "$dir/state/lane.status"
 : > "$dir/events"
-cycle
+cycle_until grep -q 'stale: fixture:w1:p1 (herdr: agent blocked' "$dir/events"
 grep -q 'stale: fixture:w1:p1 (herdr: agent blocked' "$dir/events" || fail 'native push did not wake the owner immediately'
 IFS=$'\t' read -r _sig _since owner _parent _key _misses < "$dir/state/.waiting-timers/lane"
 [ "$owner" -gt 1 ] || fail 'native push wake did not record owner delivery'
@@ -378,13 +401,14 @@ printf 'kind=ship\nbackend=tmux\nwindow=fake:2\n' > "$dir/state/lane-b.meta"
 printf 'working: building\n' > "$dir/state/lane-b.status"
 prime_status_seen "$dir/state" "$dir/state/lane-a.status"
 prime_status_seen "$dir/state" "$dir/state/lane-b.status"
-cycle
+cycle_until test -e "$dir/state/.waiting-timers/lane-a"
 age_episode "$dir" lane-a
 printf 'done: fix complete, PR open\n' >> "$dir/state/lane-b.status"
-cycle
+# The first cycle that wakes at all is the one whose order is asserted.
+cycle_until test -s "$dir/events"
 grep -q '^signal:' "$dir/out" || fail "a due wait alert outran the signal wake: $(cat "$dir/out")"
 ! grep -q 'waiting-state' "$dir/out" || fail 'the wait-timer step ran before the signal scan'
-cycle
+cycle_until grep -q 'check: waiting-state lane-a .*level=owner' "$dir/events"
 grep -q 'check: waiting-state lane-a .*level=owner' "$dir/events" || fail 'the wait alert deferred behind the signal was never delivered'
 pass 'a due wait alert defers to a same-cycle signal and still surfaces next cycle'
 
@@ -396,14 +420,14 @@ printf 'kind=ship\nbackend=tmux\nwindow=fake:1\n' > "$dir/state/lane.meta"
 printf 'paused: waiting on the pipeline run\n' > "$dir/state/lane.status"
 prime_status_seen "$dir/state" "$dir/state/lane.status"
 cycle
-cycle
+cycle_until test -e "$dir/state/.waiting-timers/lane"
 [ -e "$dir/state/.waiting-timers/lane" ] || fail 'a due paused wait armed no episode'
 [ "$(grep -c 'waiting-state lane' "$dir/events")" -eq 0 ] || fail 'a paused wait alerted at the owner-alert threshold'
 IFS=$'\t' read -r sig since owner _parent key _misses < "$dir/state/.waiting-timers/lane"
 start=$((since - 15000))
 printf '%s\t%s\t0\t0\t%s\t0\n' "$sig" "$start" "$key" > "$dir/state/.waiting-timers/lane"
 : > "$dir/events"
-cycle
+cycle_until grep -q 'check: waiting-state lane (paused, observed .*level=owner' "$dir/events"
 grep -q 'check: waiting-state lane (paused, observed .*level=owner' "$dir/events" || fail 'a paused wait never rechecked its owner at the pause cadence'
 ! grep 'waiting-state lane (paused' "$dir/events" | grep -q 'key=' || fail 'an unkeyed paused wait named a decision key'
 printf 'paused [at=%s]: refreshed prose, still waiting on the pipeline run\n' "$(date +%s)" >> "$dir/state/lane.status"
@@ -413,8 +437,7 @@ cycle
 IFS=$'\t' read -r _sig since _owner _parent _key _misses < "$dir/state/.waiting-timers/lane"
 [ "$since" -eq "$start" ] || fail 'refreshed pause prose re-armed the episode'
 printf 'paused [key=phase-two]: a different wait\n' >> "$dir/state/lane.status"
-cycle
-cycle
+cycle_until episode_left "$dir/state/.waiting-timers/lane" "$key"
 IFS=$'\t' read -r _sig since _owner _parent _key _misses < "$dir/state/.waiting-timers/lane"
 [ "$since" -gt "$start" ] || fail 'a pause with a new phase key did not re-arm the episode'
 pass 'a paused wait rechecks at JG_PAUSE_RESURFACE_SECS, survives prose churn, and re-arms on a new key'
