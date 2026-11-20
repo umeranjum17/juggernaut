@@ -93,22 +93,12 @@ fi
 # under the marker. A case that verifies the refusal sets JG_TASK_ID itself.
 unset JG_TASK_ID
 
-# Clear the backlog env overrides: an operator shell may export BEADS_DIR at its
-# live store, and a fixture home must address only its own store through its own
-# config/beads-dir.
-unset BEADS_DIR BEADS_DB BEADS_DOLT_SHARED_SERVER
-
-# Name the pinned bd and dolt for every run in the suite. A case home builds its store inside a $(...) subshell,
-# whose exports die with it, so a later run on a restricted PATH would find no bd or dolt to read that store.
-if [ -n "${JG_BEADS_TEST_BD:-}" ] && [ -n "${JG_BEADS_TEST_DOLT:-}" ]; then
-  export JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
-fi
-
-# Give a fixture home a real Beads store (the only backlog there is). The pinned builds come from
-# JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT; a suite without them skips plainly. One store is built per
-# suite process and copied into each home, because an init costs seconds.
-jg_test_beads_home() {  # <home> [<prefix>=jg]
-  local home=$1 prefix=${2:-jg} tpl store
+# Give a fixture home its backlog: the home's rows in the ticket tables of its own fleet.db, made on the first write.
+# config/beads-dir still names a store directory, because bin/jg-backlog-transition-lib.sh and
+# bin/jg-squad-lead-dormant.sh still read it (slices c1 to c3 retire them); nothing is stored at that path.
+# The skip without JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT stays while tests/jg-test-run-skip.test.sh proves it.
+jg_test_beads_home() {  # <home> [<prefix>, unused: the tables take the ids they are given]
+  local home=$1 store=$1-store
   if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
     # A case home is built inside `d=$(setup ...)`, where `exit` ends only that subshell and stdout becomes the
     # case dir: the skip text would name a directory the suite then creates. The note goes to stderr and the
@@ -117,25 +107,9 @@ jg_test_beads_home() {  # <home> [<prefix>=jg]
     kill -s USR1 "$$" 2>/dev/null
     exit "${JG_TEST_SKIP_EXIT:-0}"
   fi
-  export JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
-  # $$ is the suite's own pid in every subshell, so a case built inside $(...) finds the same template.
-  tpl=$(jg_test_tmpdir)/jg-beads-tpl.$$
-  if [ ! -d "$tpl/$prefix/.beads" ]; then
-    if [ ! -d "$tpl" ]; then
-      mkdir -p "$tpl" || fail "could not make the Beads template root"
-      printf '%s\n%s\n' "$$" "$JG_TEST_OWNER_IDENTITY" > "$tpl/.jg-test-fixture"
-      printf '%s\n' "$tpl" >> "$JG_TEST_CLEANUP_REGISTRY"
-    fi
-    mkdir -p "$tpl/$prefix"
-    BEADS_DIR=$tpl/$prefix/.beads "$ROOT/bin/jg-beads.sh" init --prefix "$prefix" >/dev/null 2>&1 \
-      || fail "could not initialise the Beads template store"
-  fi
-  store=$home-store
   # The backlog reader drops whitespace from the store path it reads, so a home whose path holds a space keeps its store elsewhere.
   case $store in *[[:space:]]*) store=$(jg_test_tmpdir)/beads-stores/$(printf '%s' "$home" | cksum | cut -d' ' -f1) ;; esac
-  mkdir -p "$home/config" "$home/data" "${store%/*}"
-  rm -rf "$store"
-  cp -a "$tpl/$prefix" "$store" || fail "could not copy the Beads store"
+  mkdir -p "$home/config" "$home/data" "$store" || fail "could not make the fixture home $home"
   printf '%s\n' "$store/.beads" > "$home/config/beads-dir"
   : > "$home/config/backlog-intake-loose"  # a fixture files rows by their own words; tests/jg-backlog-intake.test.sh drives strict intake
 }

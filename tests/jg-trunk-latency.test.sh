@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Integration test for the registered check core/trunk-latency on a real Beads store: the lander puts a landing's timing (the stage that held
+# Integration test for the registered check core/trunk-latency on the home's ticket tables: the lander puts a landing's timing (the stage that held
 # it, the seconds of each step, the host load) in the payload of the ticket's `land` event, and a landing over five minutes raises one
 # slow-delivery alert through bin/jg-alert.sh that names the stage it reads from that payload. No data/trunk-latency.tsv is written.
 # It replays the records of two real landings against a fixture home, at the clock of each landing:
@@ -16,7 +16,7 @@
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-# S1 reads a file only, so it runs without a Beads store.
+# S1 reads a file only, so it runs without a backlog.
 SUMMARY_TSV=$ROOT/tests/fixtures/trunk-latency.tsv
 sum_out=$(bash "$ROOT/core/trunk-latency/latency.sh" summary --tsv "$SUMMARY_TSV" --from 1794009600 --to 1794614400) || fail "summary failed: $sum_out"
 [ "$sum_out" = "landings 11
@@ -31,31 +31,24 @@ bash "$ROOT/core/trunk-latency/latency.sh" summary --tsv "$SUMMARY_TSV" --from 1
 if bash "$ROOT/core/trunk-latency/latency.sh" summary --tsv "$SUMMARY_TSV" --bogus 1 2>/dev/null; then fail "an unknown option must be refused"; fi
 printf 'ok - S1 summary prints the 12 lines of the fixture, honours --stall-gap and refuses a bad option\n'
 
-if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
-  printf 'skip: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
-  exit 0
-fi
-
 CHECK=$ROOT/core/trunk-latency/latency.sh
 T=$(jg_test_tmproot jg-trunk-latency)
 LOG=${DONE_DONE_EVIDENCE_ROOT:+$DONE_DONE_EVIDENCE_ROOT/trunk-latency.log}
 say() { printf '%s\n' "$*" | tee -a "${LOG:-/dev/null}"; }
 ok() { say "ok - $1"; }
-unset BEADS_DB BEADS_DOLT_SHARED_SERVER BEADS_ACTOR JG_BACKLOG_LANE JG_BACKLOG_SPAWN_GEN JG_BACKLOG_AGENT JG_BACKLOG_LANE_HANDOVER
+unset BEADS_ACTOR JG_BACKLOG_LANE JG_BACKLOG_SPAWN_GEN JG_BACKLOG_AGENT JG_BACKLOG_LANE_HANDOVER
 export TZ=UTC JG_TRUNK_LATENCY_ALERT=$ROOT/bin/jg-alert.sh JG_TRUNK_LATENCY_BACKLOG=$ROOT/bin/jg-backlog.sh  # the fixture homes hold no bin of their own
-# shellcheck source=core/lib/beads-test-env.sh
-. "$ROOT/core/lib/beads-test-env.sh"
 S14=fric-s14-release-one-url S14_HEAD=c51c26ab2fd909dc744a43bc04cb08ac7ccd0917 S14_COMMIT=f19bfb172622c43cacff1f1d30a33720cfb819b4
 SHARD=fric-gate-shard-timeout SHARD_HEAD=77c927cfa3ea6a35b907cfda47a3c06079ec5741
 
-home() {  # <name>: a home with a real store, an empty set of landing records and a host load of 7.25
+home() {  # <name>: a home with its ticket tables, an empty set of landing records and a host load of 7.25
   local h=$T/$1
   mkdir -p "$h/state" "$h/data/jg-trunk-landing" "$h/bin"
-  core_beads_home "$ROOT" "$h"
+  jg_test_beads_home "$h"
   printf '7.25 6.10 5.00 3/900 4242\n' > "$h/loadavg"
   printf '%s\n' "$h"
 }
-cli() { local h=$1; shift; JG_HOME=$h JG_DATA_OVERRIDE=$h/data BEADS_DIR=$(cat "$h/config/beads-dir") "$ROOT/bin/jg-backlog.sh" "$@"; }
+cli() { local h=$1; shift; JG_HOME=$h JG_DATA_OVERRIDE=$h/data "$ROOT/bin/jg-backlog.sh" "$@"; }
 row() { printf '%s\n' "$2" >> "$1/data/trunk-landings.tsv"; }
 proof() { printf '%s\n' "$2" >> "$1/data/trunk-landing-proofs.tsv"; }
 run_record() {  # <home> <task> <run id> <commit> <started_at>
@@ -64,7 +57,7 @@ run_record() {  # <home> <task> <run id> <commit> <started_at>
 }
 ticket() {  # <home> <task>: a ticket for the lane
   cli "$1" add "$2" "[feature] $2" --priority 2 --body why >/dev/null || fail "file the ticket of $2"
-  BEADS_DIR=$(cat "$1/config/beads-dir") "$ROOT/bin/jg-beads.sh" update "$2" --set-metadata "task=$2" >/dev/null || fail "name the task of $2"
+  JG_HOME=$1 python3 -I "$ROOT/core/item-store/adapters/bd_compat.py" update "$2" --set-metadata "task=$2" >/dev/null || fail "name the task of $2"
 }
 iso() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
 # The records each landing left in the home, as the landing check, the lane and its worker wrote them.

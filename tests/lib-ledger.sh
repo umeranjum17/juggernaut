@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
-# Sourced by a test that reads landing times from the ticket ledger: a fixture home with a real Beads store, and the two records
+# Sourced by a test that reads landing times from the ticket ledger: a fixture home's ticket tables, and the two records
 # a landing leaves there (the lane's ready time and the lander's `land` event with its timing payload) plus its trunk-landings row.
-# Skips plainly without the pinned bd and dolt (core/lib/beads-test-env.sh). Needs tests/lib.sh sourced first.
-# shellcheck source=core/lib/beads-test-env.sh
-. "$ROOT/core/lib/beads-test-env.sh"
-unset BEADS_DB BEADS_DOLT_SHARED_SERVER BEADS_ACTOR JG_BACKLOG_LANE JG_BACKLOG_SPAWN_GEN JG_BACKLOG_AGENT JG_BACKLOG_LANE_HANDOVER
+# Needs tests/lib.sh sourced first.
+unset BEADS_ACTOR JG_BACKLOG_LANE JG_BACKLOG_SPAWN_GEN JG_BACKLOG_AGENT JG_BACKLOG_LANE_HANDOVER
 export TZ=UTC JG_TRUNK_LATENCY_BACKLOG=$ROOT/bin/jg-backlog.sh  # a fixture home holds no bin of its own
 
-ledger_cli() { local h=$1; shift; JG_HOME=$h JG_DATA_OVERRIDE=$h/data BEADS_DIR=$(cat "$h/config/beads-dir") "$ROOT/bin/jg-backlog.sh" "$@"; }
-ledger_home() {  # <home dir>: a home with a real store and no landings
-  mkdir -p "$1/state" "$1/data"
-  core_beads_home "$ROOT" "$1"
+ledger_cli() { local h=$1; shift; JG_HOME=$h JG_DATA_OVERRIDE=$h/data "$ROOT/bin/jg-backlog.sh" "$@"; }
+ledger_home() {  # <home dir>: a home with its ticket tables and no landings
+  mkdir -p "$1/state"
+  jg_test_beads_home "$1"
 }
 # ledger_landing <home> <task> <commit> <head> <landed> <ready|-> <stage> <queue_s|-> <landing_s|-> <gate_s> <load|-> <why|->
 # A first call for a task files its ticket; each call adds the landing's trunk-landings row and its `land` event. The ledger only
@@ -19,7 +17,7 @@ ledger_landing() {
   local h=$1 task=$2 commit=$3 head=$4 landed=$5 ready=$6 payload
   ledger_cli "$h" show "$task" >/dev/null 2>&1 || {
     ledger_cli "$h" add "$task" "[feature] $task" --priority 2 --body why >/dev/null || fail "file the ticket of $task"
-    BEADS_DIR=$(cat "$h/config/beads-dir") "$ROOT/bin/jg-beads.sh" update "$task" --set-metadata "task=$task" >/dev/null || fail "name the task of $task"
+    JG_HOME=$h python3 -I "$ROOT/core/item-store/adapters/bd_compat.py" update "$task" --set-metadata "task=$task" >/dev/null || fail "name the task of $task"
   }
   printf '%s\tdemo\t%s\t%s\tfull\n' "$task" "$commit" "$landed" >> "$h/data/trunk-landings.tsv"
   [ "$ready" = - ] || ledger_cli "$h" trace record "$task" commit work-id "$task@done-$ready" --source jg-done --at "$ready" >/dev/null || fail "record the ready time of $task"

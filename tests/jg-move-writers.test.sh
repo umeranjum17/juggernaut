@@ -1,33 +1,26 @@
 #!/usr/bin/env bash
-# Slice J3b of the state-machine plan on a real Beads store, through the real callers: the writers of the moments make the ticket's move
+# Slice J3b of the state-machine plan on the home's ticket tables, through the real callers: the writers of the moments make the ticket's move
 # (bin/jg-move.sh) first. `trace record` (bin/jg-beads-trace.py, what the spawn, the tick, the lander and the merge call) and `moment`
 # (bin/jg-beads-moment.py) write an event, a moment and one move line; the delivery tick's done step
 # (bin/jg-ready-trace.sh) writes a new ready_at for a new head, nothing for a landed ticket (it sets the wait `lead` for a head that is not
 # on the trunk), and nothing for the same head; a local landing of a project that publishes nothing writes released_at with landed_at.
-# JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT name the builds; without them the run skips plainly.
 # shellcheck disable=SC2016
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
-  printf 'skip: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
-  exit 0
-fi
-
 T=$(jg_test_tmproot jg-move-writers); H=$T/home
-WRAPPER=$ROOT/bin/jg-beads.sh CLI=$ROOT/bin/jg-backlog.sh
-unset BEADS_DB BEADS_DOLT_SHARED_SERVER BEADS_ACTOR JG_BACKLOG_LANE JG_BACKLOG_SPAWN_GEN JG_BACKLOG_AGENT JG_BACKLOG_LANE_HANDOVER
-mkdir -p "$T/store" "$H/config" "$H/data" "$H/state" "$H/core/machines"
+COMPAT=$ROOT/core/item-store/adapters/bd_compat.py CLI=$ROOT/bin/jg-backlog.sh
+unset BEADS_ACTOR JG_BACKLOG_LANE JG_BACKLOG_SPAWN_GEN JG_BACKLOG_AGENT JG_BACKLOG_LANE_HANDOVER
+mkdir -p "$H/config" "$H/data" "$H/state" "$H/core/machines"
 # The home holds a copy of the ticket tables whose observer reads state/<ticket>.stage.
 cp -r "$ROOT/core/machines/tables" "$ROOT"/core/machines/*.states "$H/core/machines/"
 sed -i 's|^observer	.*|observer	cat "$(dirname "$JG_MACHINES_TABLES")/../../state/$1.stage"|' "$H/core/machines/tables/ticket.tsv"
-export TZ=UTC TMPDIR=$T BEADS_DIR=$T/store/.beads JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT JG_HOME=$H JG_DATA_OVERRIDE=$H/data \
+export TZ=UTC TMPDIR=$T JG_HOME=$H JG_DATA_OVERRIDE=$H/data \
   JG_MACHINES_TABLES=$H/core/machines/tables
-printf '%s\n' "$BEADS_DIR" > "$H/config/beads-dir"
 : > "$H/config/backlog-intake-loose"  # the fixture files rows by their own words, not by strict intake
 
-bd() { "$WRAPPER" "$@"; }
+bd() { python3 -I "$COMPAT" "$@"; }
 axi() { "$CLI" "$@"; }
 row() { bd show "$1" --json 2>/dev/null | jq -c 'if type == "array" then .[0] else . end'; }
 meta() { row "$1" | jq -r --arg k "$2" '.metadata[$k] // ""'; }
@@ -36,7 +29,6 @@ moves() { { grep "	$1	" "$H/data/moves.log" 2>/dev/null || true; } | wc -l | tr 
 stage() { printf '%s\n' "$2" > "$H/state/$1.stage"; }
 tick() { bash "$ROOT/bin/jg-ready-trace.sh" "$H" >/dev/null 2>&1 || fail "the ready step failed"; }
 
-bd init --prefix jg >"$T/init.log" 2>&1 || fail "init the store: $(cat "$T/init.log")"
 
 # 1. A legal move writes an event, a moment and one move line.
 axi add jg-w1 "[feature] illegal then legal" --priority 2 --body why >/dev/null || fail "file jg-w1"
@@ -90,4 +82,5 @@ axi add jg-w5 "[feature] landed on the trunk line" --priority 2 --body why >/dev
 stage jg-w5 delivering.gated
 axi trace record jg-w5 land git-sha 0123456789abcdef0123456789abcdef01234567 --source jg-trunk-land --at 1794000600 >/dev/null || fail "the trunk landing"
 [ -z "$(meta jg-w5 released_at)" ] || fail "a landing that publishes later must not write released_at"
+python3 -I "$ROOT/core/item-store/adapters/tickets.py" check >"$T/check.log" 2>&1 || fail "the tables must stay the record: $(cat "$T/check.log")"
 pass "a local landing that publishes nothing writes released_at with landed_at; a trunk landing does not"

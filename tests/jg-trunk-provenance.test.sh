@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
-# Integration test for the lander's provenance writer (jg-q1b3n S8), on a real Beads store through the real jg-backlog.sh.
+# Integration test for the lander's provenance writer (jg-q1b3n S8), on the home's ticket tables through the real jg-backlog.sh.
 # A landing writes a `land` event with the landed commit and then landed_at and commit on the ticket's row; the lander's own revert
 # ends its message with the trailer `Ticket: <ticket>`, writes a `land` event for the revert and then reverted_at, and leaves landed_at
 # and commit as they were; a later landing of the same ticket writes a newer landed_at; a failed write is one warning line and the
-# landing still lands. JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT name the builds; without them the run skips plainly.
+# landing still lands.
 # It proves bin/jg-beads-trace.py (the verb), bin/jg-trunk.sh (the writer) and bin/jg-beads-write.py (its dispatch), the files the changed-test selector maps to it.
-# shellcheck source=core/lib/beads-test-env.sh disable=SC1091
-. "$(dirname "${BASH_SOURCE[0]}")/../core/lib/beads-test-env.sh"
 # shellcheck source=tests/jg-trunk-fixture.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
 
-bd() { BEADS_DIR=$(cat "$HOME_D/config/beads-dir") "$ROOT/bin/jg-beads.sh" "$@"; }
+bd() { JG_HOME=$HOME_D python3 -I "$ROOT/core/item-store/adapters/bd_compat.py" "$@"; }
 row() { bd show "$1" --json | jq -c 'if type == "array" then .[0] else . end'; }
 meta() { row "$1" | jq -r ".metadata.$2 // empty"; }
 events() { bd provenance log "$1" --json | jq -r '[.[] | select(.source == "'"$2"'")] | length'; }
@@ -18,7 +16,7 @@ events() { bd provenance log "$1" --json | jq -r '[.[] | select(.source == "'"$2
 # shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
 test_a_landing_and_the_landers_revert_write_provenance_on_the_ticket() {
   local c r msg
-  world prov; rig; core_beads_home "$ROOT" "$HOME_D"
+  world prov; rig; jg_test_beads_home "$HOME_D"
   cp "$ROOT/bin/jg-backlog.sh" "$W/root/bin/jg-backlog.sh"
   ln -sfn "$ROOT/toolchain.versions" "$W/root/toolchain.versions"
   printf 'gate-full=! grep -q BAD work.txt\ngate-verify=bash %s/rig.sh --all\n' "$W" >> "$HOME_D/config/trunk-policy"

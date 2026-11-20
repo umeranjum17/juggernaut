@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# A Beads-backed home keeps its tickets in the Beads store: the board reads that row directly, so a backlog
+# A home keeps its tickets in its ticket tables: the board reads that row directly, so a backlog
 # transition has no board mirror to write, publish or verify. This test drives the operator's own
 # bin/jg-backlog.sh path, the lifecycle transition library, the captain hold path and the merge path on a
-# real Beads backlog and shows that the Beads status moves while the board file, its ticket feed and
+# home's ticket tables and shows that the row's status moves while the board file, its ticket feed and
 # sign-off-axi are never touched, even where a poll script and a board pointer are present.
 # shellcheck source=tests/lib.sh
 #
@@ -13,9 +13,8 @@
 work=$(jg_test_tmproot jg-ticket-writeback) || exit 1
 home="$work/home"
 mkdir -p "$home"/{data,config,state} "$work/user"
-# shellcheck source=core/lib/beads-test-env.sh
-. "$ROOT/core/lib/beads-test-env.sh"
-core_beads_home "$ROOT" "$home"
+PATH=$ROOT/bin:$PATH  # the transitions below call jg-backlog.sh by name
+jg_test_beads_home "$home"
 board="$work/board.json"
 printf '{"schema":2,"items":[]}\n' > "$board"
 printf '%s\n' "$board" > "$home/config/fleet-board"
@@ -37,7 +36,7 @@ no_board_write() {  # <before sum> <what>
   assert_equals "$1" "$(board_sum)" "$2 must write nothing to the board"
   [ ! -e "$calls" ] || fail "$2 called sign-off-axi: $(cat "$calls")"
 }
-bd_status() { BEADS_DIR=$(cat "$home/config/beads-dir") bash "$ROOT/bin/jg-beads.sh" show "$1" --json 2>/dev/null | jq -r 'if type == "array" then .[0] else . end | .status'; }
+bd_status() { JG_HOME=$home python3 -I "$ROOT/core/item-store/adapters/bd_compat.py" show "$1" --json 2>/dev/null | jq -r 'if type == "array" then .[0] else . end | .status'; }
 
 (cd "$home" && jg-backlog.sh add jg-shipone 'Ship the first thing' --repo demo --priority 1 --body 'release: c-2' >/dev/null
  jg-backlog.sh add jg-shiptwo 'Ship the second thing' --repo demo --priority 1 >/dev/null
@@ -91,7 +90,7 @@ pass 'a captain hold leaves the board to its own read of the store'
 # 4. A home with no board writes nothing and still succeeds, so a board problem can never fail a transition.
 noBoard="$work/no-board"
 mkdir -p "$noBoard"/{data,config,state}
-core_beads_home "$ROOT" "$noBoard"
+jg_test_beads_home "$noBoard"
 (cd "$noBoard" && JG_HOME="$noBoard" jg-backlog.sh add jg-lonely 'Ship without a board' --repo demo --priority 2 >/dev/null)
 out=$(JG_HOME="$noBoard" bash "$ROOT/bin/jg-backlog.sh" start jg-lonely 2>&1) || fail "a boardless home failed its transition: $out"
 no_board_write "$before" 'a boardless home'

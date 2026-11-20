@@ -66,7 +66,7 @@ new_world() {
   fakebin="$w/fakebin"
   mkdir -p "$home/state" "$home/data" "$home/config" "$fakebin"
   # Bootstrap reads the backlog first and stops at a home with no store, which hides the tool diagnostics that follow.
-  # The case runs in a $(...) subshell, so a host without the pinned bd and dolt gets no store here, not a suite exit.
+  # The case runs in a $(...) subshell, and jg_test_beads_home skips the suite without the pinned builds, so such a host gets no backlog here.
   if [ -n "${JG_BEADS_TEST_BD:-}" ] && [ -n "${JG_BEADS_TEST_DOLT:-}" ]; then jg_test_beads_home "$home"; fi
   git init -q -b main "$root"
   git -C "$root" commit -q --allow-empty -m init
@@ -2232,9 +2232,7 @@ test_runtime_bound_truncates_loudly_and_exits_zero() {
   IFS='|' read -r root home fakebin <<EOF
 $rec
 EOF
-  # The bound is three seconds and this case proves where a hung git stops the digest. A Beads store would spend
-  # those seconds reading the backlog in the early stages, so the case runs without one, as it always did.
-  rm -f "$home/config/beads-dir"
+  # The bound is three seconds and this case proves where a hung git stops the digest.
   make_fake_toolchain "$fakebin"
   make_fake_ps_claude "$fakebin"
   make_hanging_tool "$fakebin" git

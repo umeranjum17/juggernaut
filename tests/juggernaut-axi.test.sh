@@ -26,8 +26,7 @@ fix() {  # <id> <title> <priority> <repo> <kind> [add args]
   bk add "$id" "[feature] $title" --priority "$prio" --kind "$kind" --repo "$repo" --body "Fixture task $id" "$@"
 }
 hold_row() {  # <id> <reason> <kind>
-  BEADS_DIR=$(cat "$H/config/beads-dir") JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT \
-    "$ROOT/bin/jg-beads-write.py" hold "$1" --reason "$2" --kind "$3" >/dev/null || fail "hold $1"
+  JG_HOME=$H "$ROOT/bin/jg-beads-write.py" hold "$1" --reason "$2" --kind "$3" >/dev/null || fail "hold $1"
 }
 fix w-1 'Worker one' 1 alpha ship; bk start w-1
 fix w-2 'Worker two' 1 alpha ship; bk start w-2

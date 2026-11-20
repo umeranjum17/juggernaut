@@ -44,18 +44,14 @@ test_the_status_append_refuses_a_wait_without_its_reason() {
 }
 
 test_the_hold_command_writes_the_wait_keys_with_the_hold() {
-  if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
-    printf 'skip: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'; return 0
-  fi
-  local CLI=$ROOT/bin/jg-backlog.sh WRAPPER=$ROOT/bin/jg-beads.sh got
-  unset BEADS_DB BEADS_DOLT_SHARED_SERVER BEADS_ACTOR JG_BACKLOG_LANE JG_BACKLOG_SPAWN_GEN JG_BACKLOG_AGENT JG_BACKLOG_LANE_HANDOVER
-  mkdir -p "$T/store" "$T/home/config" "$T/home/data" "$T/home/state"
-  export TZ=UTC TMPDIR=$T BEADS_DIR=$T/store/.beads JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
-  printf '%s\n' "$BEADS_DIR" > "$T/home/config/beads-dir"
+  local CLI=$ROOT/bin/jg-backlog.sh got
+  unset BEADS_ACTOR JG_BACKLOG_LANE JG_BACKLOG_SPAWN_GEN JG_BACKLOG_AGENT JG_BACKLOG_LANE_HANDOVER
+  mkdir -p "$T/home/config" "$T/home/data" "$T/home/state"
+  export TZ=UTC TMPDIR=$T
   : > "$T/home/config/backlog-intake-loose"  # the fixture files rows by their own words, not by strict intake
-  "$WRAPPER" init --prefix jg >"$T/init.log" 2>&1 || fail "init the store: $(cat "$T/init.log")"
   axi() { JG_HOME="$T/home" "$CLI" "$@"; }
-  keys() { "$WRAPPER" show "$1" --json 2>/dev/null | jq -r 'if type == "array" then .[0] else . end | .metadata | [.hold_kind // "-", .wait // "-", .wait_reason // "-"] | join(" ")'; }
+  bd() { JG_HOME="$T/home" python3 -I "$ROOT/core/item-store/adapters/bd_compat.py" "$@"; }
+  keys() { bd show "$1" --json 2>/dev/null | jq -r 'if type == "array" then .[0] else . end | .metadata | [.hold_kind // "-", .wait // "-", .wait_reason // "-"] | join(" ")'; }
   local id
   for id in jw-parked jw-owner jw-date; do axi add "$id" "[feature] fixture $id" --priority 2 --body why >/dev/null || fail "file $id"; done
 
@@ -65,7 +61,7 @@ test_the_hold_command_writes_the_wait_keys_with_the_hold() {
   got=$(keys jw-owner); [ "$got" = 'captain owner decision' ] || fail "an owner question must show wait owner, reason decision, got: $got"
   axi hold jw-date --reason 'wait for the date' --kind captain --until 2099-01-15 >/dev/null || fail 'dated hold'
   got=$(keys jw-date); [ "$got" = 'captain outside date' ] || fail "a hold to a date must show wait outside, reason date, got: $got"
-  "$WRAPPER" show jw-parked --json | jq -e 'if type == "array" then .[0] else . end | .metadata.hold_reason == "set aside for later" and (.metadata.wait_at | test("^[0-9]{4}-"))' >/dev/null \
+  bd show jw-parked --json | jq -e 'if type == "array" then .[0] else . end | .metadata.hold_reason == "set aside for later" and (.metadata.wait_at | test("^[0-9]{4}-"))' >/dev/null \
     || fail 'hold_reason is kept and the wait carries its time'
   axi hold jw-parked --reason 'set aside for later' --kind parked | grep -q 'already held' || fail 'the same hold again changes nothing'
 

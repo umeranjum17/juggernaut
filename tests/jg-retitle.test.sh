@@ -2,31 +2,21 @@
 # Plain outcome names for tickets. `add` refuses a title that starts with a plan code (J20d-3, S18c, mf-m2) and names the fix;
 # bin/jg-retitle.py `list` names the open rows whose title is not plain words, and `apply` renames them in one pass: a
 # dry run writes nothing, a title that fails the rule stops the whole pass, the plan code and the earlier title move into the
-# body, and a second pass changes nothing. Every call runs on a real embedded store with no network. JG_BEADS_TEST_BD and
-# JG_BEADS_TEST_DOLT name the pinned builds, which skip without them.
+# body, and a second pass changes nothing. Every call runs on the home's ticket tables with no network.
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
-  printf 'skip: real store: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
-  exit 0
-fi
-
-WRAPPER="$ROOT/bin/jg-beads.sh" CLI="$ROOT/bin/jg-backlog.sh" T=$(jg_test_tmproot jg-retitle)
-unset BEADS_DB BEADS_DOLT_SHARED_SERVER
+COMPAT=$ROOT/core/item-store/adapters/bd_compat.py CLI="$ROOT/bin/jg-backlog.sh" T=$(jg_test_tmproot jg-retitle)
 H=$T/home; export JG_HOME=$H JG_STATE_OVERRIDE=$H/state JG_DATA_OVERRIDE=$H/data JG_CONFIG_OVERRIDE=$H/config
-mkdir -p "$H/config" "$H/state" "$H/data" "$T/user" "$T/real"
-export BEADS_DIR=$T/real/.beads JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
-printf '%s\n' "$BEADS_DIR" > "$H/config/beads-dir"
-"$WRAPPER" init --prefix jg >"$T/init.log" 2>&1 || fail "init: $(cat "$T/init.log")"
+mkdir -p "$H/config" "$H/state" "$H/data" "$T/user"
 run() {
   env HOME="$T/user" TMPDIR="$T" PATH=/usr/bin:/bin:"$(dirname "$(command -v python3)")" JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" \
     JG_DATA_OVERRIDE="$H/data" JG_CONFIG_OVERRIDE="$H/config" JG_BOOTSTRAP_NETWORK=skip "$@" 2>&1
 }
 tasks() { run "$CLI" "$@"; }
-field() { "$WRAPPER" show "$1" --json 2>/dev/null | jq -r "(if type == \"array\" then .[0] else . end) | $2"; }
-gone() { [ -z "$("$WRAPPER" show "$1" --json 2>/dev/null | jq -r 'if type == "array" then .[0].id else .id end // empty')" ]; }
+field() { python3 -I "$COMPAT" show "$1" --json 2>/dev/null | jq -r "(if type == \"array\" then .[0] else . end) | $2"; }
+gone() { [ -z "$(python3 -I "$COMPAT" show "$1" --json 2>/dev/null | jq -r 'if type == "array" then .[0].id else .id end // empty')" ]; }
 SECTIONS=$'## Captain\nwhat the owner said\n## Ask\nthe change\n## Why\nthe reason\n## Done when\nit works\n## Acceptance Criteria\nit is proved'
 
 # The create path refuses a title that starts with a code, with or without a leading type tag, and files nothing.
@@ -78,4 +68,5 @@ out=$(run python3 "$ROOT/bin/jg-retitle.py" apply "$map" --write) || fail "secon
 assert_contains "$out" "0 title(s) renamed" "a second pass must change nothing"
 listed=$(run python3 "$ROOT/bin/jg-retitle.py" list) || fail "list again: $listed"
 case $listed in *jg-a*|*jg-b*|*jg-c*) fail "a renamed ticket must leave the list: $listed" ;; esac
+python3 -I "$ROOT/core/item-store/adapters/tickets.py" check >"$T/check.log" 2>&1 || fail "the tables must stay the record: $(cat "$T/check.log")"
 pass "plain ticket names: create refuses a code title; one pass renames open tickets and keeps the code and old title in the body"

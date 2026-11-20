@@ -652,15 +652,13 @@ test_hook_silent_in_idle_squad_lead_home() {
 test_hook_blocks_idle_squad_lead_with_ready_backlog() {
   local dir out status ids
   if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
-    echo 'skip - the ready-work case needs a real store: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT'; return 0
+    echo 'skip - the ready-work case needs a backlog: jg_test_beads_home asks for JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT'; return 0
   fi
   dir=$(make_squad_lead_dir "$TMP_ROOT/hook-squad-lead-ready")
   mkdir -p "$dir/data" "$dir/config"
   : > "$dir/config/backlog-intake-loose"  # bare fixture items for the ready-work case
-  # shellcheck source=/dev/null
-  . "$ROOT/core/lib/beads-test-env.sh"
-  core_beads_home "$ROOT" "$dir"
-  cp "$ROOT"/bin/jg-*-lib.sh "$ROOT/bin/jg-backlog.sh" "$ROOT/bin/jg-beads.sh" \
+  jg_test_beads_home "$dir"
+  cp "$ROOT"/bin/jg-*-lib.sh "$ROOT/bin/jg-backlog.sh" \
     "$ROOT/bin/jg-beads-view.py" "$ROOT/bin/jg-beads-write.py" "$ROOT/bin/jg-beads-followup.py" \
     "$ROOT/bin/jg-beads-links.py" \
     "$ROOT/bin/jg-ticket-key.sh" "$dir/bin/"

@@ -1,18 +1,15 @@
 #!/usr/bin/env bash
-# Integration test for the live, pin-back and release writers of bin/jg-trunk.sh (jg-q1b3n S12), on a real Beads store through the real
+# Integration test for the live, pin-back and release writers of bin/jg-trunk.sh (jg-q1b3n S12), on the home's ticket tables through the real
 # jg-backlog.sh and the real `live` and `rollover` commands. The live step finds its tickets from the `Ticket` trailer of the commits
 # above the last commit that went live, so it still finds them after the lane's cleanup (the stand-in teardown removes the task record at
 # once); a ticket of another home is listed in one line and written nowhere; a second live step skips a ticket that already has live_at;
 # a pin-back writes pinned_back_at to the tickets above the commit the home went back to; a merged release writes released_at for the
 # commits of every release row of its pull request, also when the release was pushed before the live step.
-# JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT name the builds; without them the run skips plainly.
 # It proves bin/jg-trunk.sh (the writers) and bin/jg-beads-trace.py (the sources and --once), the files the changed-test selector maps to it.
-# shellcheck source=core/lib/beads-test-env.sh disable=SC1091
-. "$(dirname "${BASH_SOURCE[0]}")/../core/lib/beads-test-env.sh"
 # shellcheck source=tests/jg-trunk-fixture.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
 
-bd() { BEADS_DIR=$(cat "$HOME_D/config/beads-dir") "$ROOT/bin/jg-beads.sh" "$@"; }
+bd() { JG_HOME=$HOME_D python3 -I "$ROOT/core/item-store/adapters/bd_compat.py" "$@"; }
 meta() { bd show "$1" --json | jq -r 'if type == "array" then .[0] else . end | .metadata.'"$2"' // empty'; }
 events() { bd provenance log "$1" --json | jq -r '[.[] | select(.source == "'"$2"'")] | length'; }
 file_ticket() { JG_HOME=$HOME_D "$ROOT/bin/jg-backlog.sh" add "$1" "[feature] fixture $1" --priority 2 --body why >/dev/null || fail "file $1"
@@ -23,7 +20,7 @@ land_ticket() {  # <lane> <ticket>: a lane whose commit ends with the Ticket tra
 
 test_live_pin_back_and_release_write_the_tickets_of_their_commits() {
   local out k2 k4 k1_live
-  world livetix; rig; core_beads_home "$ROOT" "$HOME_D"
+  world livetix; rig; jg_test_beads_home "$HOME_D"
   cp "$ROOT/bin/jg-backlog.sh" "$W/root/bin/jg-backlog.sh"; ln -sfn "$ROOT/toolchain.versions" "$W/root/toolchain.versions"
   file_ticket jg-k1; file_ticket jg-k2; file_ticket jg-k4
   land_ticket k1 jg-k1; land_ticket k2 jg-k2; k2=$(tip); land_ticket k3 jg-elsewhere

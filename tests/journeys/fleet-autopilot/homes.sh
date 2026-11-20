@@ -15,20 +15,16 @@ home_dir() { printf '%s/homes/home-%02d' "$LAB" "$1"; }
 
 # homes_provision <count>: the clone, the homes, their stores and projects (no trunk yet), the list file $LAB/homes.list
 homes_provision() {
-  local n=$1 i h tip tpl
+  local n=$1 i h tip
   tip=$(git -C "$ROOT" rev-parse HEAD) || return 1
   git clone -q --no-checkout "$ROOT" "$LAB/clone" && git -C "$LAB/clone" checkout -q --detach "$tip" || return 1
-  JG_BEADS_BD=${JG_BEADS_TEST_BD:-$(command -v bd)}; JG_BEADS_DOLT=${JG_BEADS_TEST_DOLT:-$(command -v dolt)}
-  [ -n "$JG_BEADS_BD" ] && [ -n "$JG_BEADS_DOLT" ] || { echo "fleet-autopilot: bd and dolt are required (JG_BEADS_TEST_BD, JG_BEADS_TEST_DOLT)" >&2; return 1; }
-  export JG_BEADS_BD JG_BEADS_DOLT
-  tpl=$LAB/beads-tpl/jg; mkdir -p "$tpl"
-  BEADS_DIR=$tpl/.beads "$ROOT/bin/jg-beads.sh" init --prefix jg > "$LAB/beads-init.log" 2>&1 || { cat "$LAB/beads-init.log" >&2; return 1; }
   : > "$LAB/homes.list"
   for i in $(seq 1 "$n"); do
     h=$(home_dir "$i")
     git -C "$LAB/clone" worktree add -q --detach "$h" "$tip" || return 1
     mkdir -p "$h/state" "$h/data" "$h/config" "$h/projects"
-    cp -a "$tpl" "$LAB/store-$i" && printf '%s\n' "$LAB/store-$i/.beads" > "$h/config/beads-dir" || return 1
+    # The home's backlog is its ticket tables; config/beads-dir is still read by bin/jg-backlog-transition-lib.sh (slices c1 to c3).
+    mkdir -p "$LAB/store-$i" && printf '%s\n' "$LAB/store-$i/.beads" > "$h/config/beads-dir" || return 1
     printf 'gate-full=true\ngate-lint=true\ngate-verify=true\nflush-at-ready=1\n' > "$h/config/trunk-policy"
     # The live hook is the recording stand-in for the home mover (slice T2): it names the home and the commit it was asked to move to.
     # shellcheck disable=SC2016 # the hook body is written literally and expands when the hook runs

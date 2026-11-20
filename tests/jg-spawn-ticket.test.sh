@@ -38,7 +38,7 @@ export JG_FAKE_PANE_LOG="$W/pane.log"
 : > "$JG_FAKE_PANE_LOG"
 
 bl() { jg_test_backlog "$H" "$@"; }
-field() { BEADS_DIR=$(cat "$H/config/beads-dir") "$ROOT/bin/jg-beads.sh" show "$1" --json 2>/dev/null | jq -r "(if type == \"array\" then .[0] else . end) | $2"; }
+field() { JG_HOME=$H python3 -I "$ROOT/core/item-store/adapters/bd_compat.py" show "$1" --json 2>/dev/null | jq -r "(if type == \"array\" then .[0] else . end) | $2"; }
 row_field() { bl show "$1" 2>&1 | sed -n "s/^  $2: *//p" | head -1; }
 N=0
 # brief_and_spawn <task id> <ticket> [spawn args...]: a real brief from the ticket, then the real spawn in its own isolated copy.
@@ -111,7 +111,7 @@ grep -qxF "export JG_TICKET=$c2" "$JG_FAKE_PANE_LOG" || fail "T2 the pane must g
 [ "$(row_field "$T2" state)" = in_flight ] || fail "T2 the spawn must put the ticket In flight through its task id"
 printf 'ok - T2 ticket %s runs as task %s: record, row, pane and brief carry it\n' "$c2" "$T2"
 # The claim on the ticket's trail names the tool, model, effort and kind the lane started on: the per-model statistics read it there.
-claim=$(BEADS_DIR=$(cat "$H/config/beads-dir") "$ROOT/bin/jg-beads.sh" provenance log "$c2" --json 2>/dev/null | jq -c '[.[] | select(.kind == "claim")][0].payload | if type == "string" then fromjson else . end')
+claim=$(JG_HOME=$H python3 -I "$ROOT/core/item-store/adapters/bd_compat.py" provenance log "$c2" --json 2>/dev/null | jq -c '[.[] | select(.kind == "claim")][0].payload | if type == "string" then fromjson else . end')
 [ "$(jq -r '[.harness, .kind, .gen] | join(" ")' <<<"$claim")" = "codex ship $(sed -n 's/^spawn_gen=//p' "$H/state/$T2.meta")" ] || fail "T2 the claim must name the tool, kind and generation, got: $claim"
 [ "$(jq -r .model <<<"$claim")" = "$(field "$c2" .metadata.model)" ] && [ "$(jq -r .effort <<<"$claim")" = "$(field "$c2" .metadata.effort)" ] || fail "T2 the claim must name the row's model and effort, got: $claim"
 printf 'ok - T2 the claim on the ticket trail names the tool, model, effort and kind\n'

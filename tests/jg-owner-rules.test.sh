@@ -206,7 +206,7 @@ test_add_files_its_own_enforcement_ticket() {
   home="$TMP_ROOT/ticket"
   jg_test_beads_home "$home"
   backlog="$home/backlog.dump"
-  dump() { BEADS_DIR=$(cat "$home/config/beads-dir") "$ROOT/bin/jg-beads.sh" list --all --json --limit 0 2>/dev/null | jq -c '.[]' > "$backlog"; }
+  dump() { JG_HOME=$home python3 -I "$ROOT/core/item-store/adapters/bd_compat.py" list --all --json --limit 0 2>/dev/null | jq -c '.[]' > "$backlog"; }
 
   out=$(JG_HOME="$home" JG_ROOT_OVERRIDE="$ROOT" "$RULES" add --kind owner \
     --words "never forecast a date in a captain report" --scope "every captain-facing report" \
