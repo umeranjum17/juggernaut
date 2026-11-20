@@ -2819,7 +2819,20 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] &&
     echo "error: could not resolve the shared Treehouse project lock for $PROJ_ABS" >&2
     exit 1
   }
-  if ! jg_lock_try_acquire "$SPAWN_TREEHOUSE_PROJECT_LOCK"; then
+  # Several spawns of one project wait their turn for the lock, up to a bound; JG_SPAWN_PROJECT_LOCK_WAIT=0 keeps the single try.
+  SPAWN_PROJECT_LOCK_WAIT=${JG_SPAWN_PROJECT_LOCK_WAIT:-240}
+  SPAWN_PROJECT_LOCK_RC=0
+  if [ "$SPAWN_PROJECT_LOCK_WAIT" = 0 ]; then
+    jg_lock_try_acquire "$SPAWN_TREEHOUSE_PROJECT_LOCK" || SPAWN_PROJECT_LOCK_RC=1
+  elif ! jg_lock_try_acquire "$SPAWN_TREEHOUSE_PROJECT_LOCK"; then
+    echo "waiting: the project lock for $(basename "$PROJ_ABS") is held; waiting up to $SPAWN_PROJECT_LOCK_WAIT s" >&2
+    jg_lock_acquire_wait_bounded "$SPAWN_TREEHOUSE_PROJECT_LOCK" "$SPAWN_PROJECT_LOCK_WAIT" || SPAWN_PROJECT_LOCK_RC=$?
+  fi
+  if [ "$SPAWN_PROJECT_LOCK_RC" -eq 124 ]; then
+    echo "deferred: the project lock for $(basename "$PROJ_ABS") stayed held for $SPAWN_PROJECT_LOCK_WAIT s; task $ID was not created and stays queued" >&2
+    exit "$SPAWN_DEFER_EXIT"
+  fi
+  if [ "$SPAWN_PROJECT_LOCK_RC" -ne 0 ]; then
     if [ "$BACKEND" = orca ]; then
       echo "error: another spawn or cleanup holds the shared project lock for $PROJ_ABS; refusing to race its capacity admission" >&2
     else
