@@ -25,13 +25,13 @@ CONFIG="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
 store_of() {  # <config dir>: the store a home's config/beads-dir names, or nothing.
   tr -d '[:space:]' < "$1/beads-dir" 2>/dev/null || true
 }
-entry() {  # <home> <beads_dir or empty> [remote]
-  jq -cn --arg home "$1" --arg dir "$2" --arg remote "${3:-}" \
-    '{home: $home, beads_dir: (if $dir == "" then null else $dir end)} + (if $remote == "1" then {remote: true} else {} end)'
+entry() {  # <home> <beads_dir or empty> [remote] [home dir]
+  jq -cn --arg home "$1" --arg dir "$2" --arg remote "${3:-}" --arg path "${4:-}" \
+    '{home: $home, beads_dir: (if $dir == "" then null else $dir end)} + (if $path == "" then {} else {path: $path} end) + (if $remote == "1" then {remote: true} else {} end)'
 }
 
 {
-  entry "$(jg_home_actor "$JG_HOME")" "$(store_of "$CONFIG")"
+  entry "$(jg_home_actor "$JG_HOME")" "$(store_of "$CONFIG")" "" "$JG_HOME"
   reg=$DATA/squad_leads.md
   if [ -f "$reg" ]; then
     while IFS= read -r line || [ -n "$line" ]; do
@@ -40,7 +40,7 @@ entry() {  # <home> <beads_dir or empty> [remote]
       if [ "$SQUAD_LEAD_REGISTRY_REMOTE" = 1 ]; then
         entry "lead:$SQUAD_LEAD_REGISTRY_ID" "" 1
       else
-        entry "lead:$SQUAD_LEAD_REGISTRY_ID" "$(store_of "$SQUAD_LEAD_REGISTRY_HOME/config")"
+        entry "lead:$SQUAD_LEAD_REGISTRY_ID" "$(store_of "$SQUAD_LEAD_REGISTRY_HOME/config")" "" "$SQUAD_LEAD_REGISTRY_HOME"
       fi
     done < "$reg"
   fi

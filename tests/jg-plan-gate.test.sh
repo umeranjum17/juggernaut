@@ -28,7 +28,7 @@ run() {  # <home> <cmd> <args...>: the command in a home, stdout and stderr toge
   env HOME="$T" TMPDIR="$T" JG_HOME="$h" JG_STATE_OVERRIDE="$h/state" JG_DATA_OVERRIDE="$h/data" \
     JG_CONFIG_OVERRIDE="$h/config" PATH="$T/tools:$PATH" "$c" "$@" 2>&1
 }
-bd_() { BEADS_DIR=$(tr -d '[:space:]' < "$1/config/beads-dir") "$ROOT/bin/jg-beads.sh" "${@:2}" 2>/dev/null; }
+bd_() { JG_HOME=$1 JG_STATE_OVERRIDE=$1/state JG_DATA_OVERRIDE=$1/data JG_CONFIG_OVERRIDE=$1/config "$ROOT/bin/jg-beads.sh" "${@:2}" 2>/dev/null; }
 ready_in() { bd_ "$1" ready --json --limit 0 | jq -r '[.[].id] | sort | join(",")'; }
 slice() {  # <home> <slice id> <epic>: a filed slice row of a plan, as bin/jg-plan-file.sh leaves it; prints the row id
   bd_ "$1" create "Slice $2" -p 1 --parent "$3" --metadata "{\"plan_slice\":\"$2\"}" --silent | tail -n 1

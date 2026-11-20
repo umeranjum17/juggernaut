@@ -291,7 +291,7 @@ case "${1:-}" in
     [ "${#ARGS[@]}" -eq 1 ] || fail "compare takes no argument"
     _jg_store=$(jg_backlog_beads_store "$JG_HOME/config") || exit 2
     _jg_exp=$(mktemp) || fail "no scratch file"
-    if ! BEADS_DIR=$_jg_store "$SCRIPT_DIR/jg-beads.sh" export > "$_jg_exp"; then rm -f -- "$_jg_exp"; fail "bd export failed"; fi
+    if ! JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-beads.sh" export > "$_jg_exp"; then rm -f -- "$_jg_exp"; fail "bd export failed"; fi
     JG_HOME="$JG_HOME" python3 "$JG_ROOT/core/item-store/adapters/tickets.py" compare "$_jg_exp"; _jg_rc=$?
     rm -f -- "$_jg_exp"; exit "$_jg_rc" ;;
   add|create|update|edit|done|close|block|unblock|start|task|reopen|hold|unhold|on-report|public-followup|relink|retag|moment|wait|ticket-stage|ticket-drift|times|trace|beat|reclaim) ;;

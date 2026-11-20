@@ -15,6 +15,6 @@ home=$(dirname "$JG_HOOK_STATE")
 ticket=$(sed -n 's/^ticket=//p' "$JG_HOOK_STATE/$JG_HOOK_ID.meta" 2>/dev/null | head -n 1)
 store=$(tr -d '[:space:]' <"$home/config/beads-dir" 2>/dev/null)
 if [ -n "$ticket" ] && [ -n "$store" ] && [ "$JG_HOOK_EVENT" != SessionEnd ]; then
-  BEADS_DIR=$store timeout 5 "$root/bin/jg-beads.sh" heartbeat "$ticket" >/dev/null 2>&1 || true
+  JG_HOME=$home timeout 5 "$root/bin/jg-beads.sh" heartbeat "$ticket" >/dev/null 2>&1 || true
 fi
 exit 0

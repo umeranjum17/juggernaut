@@ -100,7 +100,7 @@ jg_backlog_beads_health() {  # <config_dir>
   local bin_dir store out rc=0
   store=$(jg_backlog_beads_store "$1" 2>&1) || { printf '%s\n' "$store"; return 2; }
   bin_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-  out=$(BEADS_DIR=$store "$bin_dir/jg-beads.sh" check 2>&1) || rc=$?
+  out=$(JG_HOME="${1%/*}" "$bin_dir/jg-beads.sh" check 2>&1) || rc=$?
   printf '%s\n' "${out##*$'\n'}"
   return "$rc"
 }
@@ -122,7 +122,7 @@ jg_backlog_beads_write() {  # <config_dir> <a verb of bin/jg-beads-write.py> [ar
           "$bin_dir/jg-closure-proof.sh" "$id" | python3 "$bin_dir/jg-closure-gate.py" - "$id" || return 1 ;;
       esac ;;
   esac
-  BEADS_DIR=$store python3 "$bin_dir/jg-beads-write.py" "$@" || return $?
+  BEADS_DIR=$store JG_HOME="${config%/*}" python3 "$bin_dir/jg-beads-write.py" "$@" || return $?
   # Every writer comes through here, so none leaves the copy behind (stage only reads).
   [ "${1:-}" = stage ] || jg_backlog_one_engine_copy "$config" "$@"
 }
@@ -133,13 +133,13 @@ jg_backlog_beads_write() {  # <config_dir> <a verb of bin/jg-beads-write.py> [ar
 # bd hides gate rows from a list, so every list asks for them (--include-gates): the view keeps them out of the work and reads them as questions.
 # A plain list asks bd for the open rows only; --all, --state done and every other verb read the whole store.
 # JG_BACKLOG_SNAPSHOT names one file per supervision cycle: the first whole read fills it, and every later list or whole read of that cycle reuses it.
-jg_backlog_beads_rows() {  # <store> <bin_dir> <err_file> <verb> [args...]: prints rows
-  local store=$1 bin_dir=$2 err=$3 verb=${4:-} word id="" snap=${JG_BACKLOG_SNAPSHOT:-} history="" out one open=""
+jg_backlog_beads_rows() {  # <home> <bin_dir> <err_file> <verb> [args...]: prints rows
+  local home=$1 bin_dir=$2 err=$3 verb=${4:-} word id="" snap=${JG_BACKLOG_SNAPSHOT:-} history="" out one open=""
   shift 4
   case "$verb" in
     show|view)
       for word in "$@"; do case "$word" in -*) ;; *) id=$word ;; esac; done
-      if [ -n "$id" ] && out=$(BEADS_DIR=$store "$bin_dir/jg-beads.sh" show "$id" --json 2>>"$err") \
+      if [ -n "$id" ] && out=$(JG_HOME=$home "$bin_dir/jg-beads.sh" show "$id" --json 2>>"$err") \
         && one=$(printf '%s' "$out" | python3 "$bin_dir/jg-beads-view.py" --one "$id" 2>/dev/null); then
         printf 'partial' >"$err.mode"
         printf '%s' "$one"
@@ -155,10 +155,10 @@ jg_backlog_beads_rows() {  # <store> <bin_dir> <err_file> <verb> [args...]: prin
     return 0
   fi
   if [ -n "$open" ]; then
-    BEADS_DIR=$store "$bin_dir/jg-beads.sh" list --status open,in_progress,on_hold,blocked,deferred --limit 0 --include-gates --json 2>>"$err"
+    JG_HOME=$home "$bin_dir/jg-beads.sh" list --status open,in_progress,on_hold,blocked,deferred --limit 0 --include-gates --json 2>>"$err"
     return
   fi
-  out=$(BEADS_DIR=$store "$bin_dir/jg-beads.sh" list --all --limit 0 --include-gates --json 2>>"$err") || return
+  out=$(JG_HOME=$home "$bin_dir/jg-beads.sh" list --all --limit 0 --include-gates --json 2>>"$err") || return
   [ -z "$snap" ] || { printf '%s' "$out" >"$snap.$$" && mv -f -- "$snap.$$" "$snap"; } 2>/dev/null
   printf '%s' "$out"
 }
@@ -167,8 +167,9 @@ jg_backlog_beads_rows() {  # <store> <bin_dir> <err_file> <verb> [args...]: prin
 # `bd ready` first, because that call wakes a dated hold whose day has come and the listing must show it awake.
 # A list asks `bd blocked` only when it shows blocked rows or the blocked fields, because the call costs about 0.3 s.
 jg_backlog_beads_read() {  # <config_dir> <show|view|list|ready|markdown|links|questions> [args...]
-  local bin_dir store err rows rc=0 scratch word repo="" want_ready="" want_blocked="" partial=""
+  local bin_dir store home err rows rc=0 scratch word repo="" want_ready="" want_blocked="" partial=""
   store=$(jg_backlog_beads_store "$1") || return 2
+  home=${1%/*}
   shift
   bin_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
   case "${1:-}" in
@@ -183,13 +184,13 @@ jg_backlog_beads_read() {  # <config_dir> <show|view|list|ready|markdown|links|q
       case "$word" in --repo=*) repo=${word#--repo=} ;; --repo) repo=- ;; *) [ "$repo" = - ] && repo=$word ;; esac
     done
     [ "$repo" = - ] && repo=""
-    BEADS_DIR=$store "$bin_dir/jg-beads.sh" ready --limit 0 --json ${repo:+--label "project:$repo"} >"$scratch/ready" 2>"$err" || rc=$?
+    JG_HOME=$home "$bin_dir/jg-beads.sh" ready --limit 0 --json ${repo:+--label "project:$repo"} >"$scratch/ready" 2>"$err" || rc=$?
   fi
   if [ "$rc" -eq 0 ] && [ -n "$want_blocked" ]; then
-    BEADS_DIR=$store "$bin_dir/jg-beads.sh" blocked --json >"$scratch/blocked" 2>"$err" || rc=$?
+    JG_HOME=$home "$bin_dir/jg-beads.sh" blocked --json >"$scratch/blocked" 2>"$err" || rc=$?
   fi
   if [ "$rc" -eq 0 ]; then
-    rows=$(jg_backlog_beads_rows "$store" "$bin_dir" "$err" "$@") || rc=$?
+    rows=$(jg_backlog_beads_rows "$home" "$bin_dir" "$err" "$@") || rc=$?
     [ ! -e "$err.mode" ] || partial=1
   fi
   [ "$rc" -eq 0 ] || cat -- "$err" >&2

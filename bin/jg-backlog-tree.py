@@ -22,8 +22,8 @@ def key(home, ident):
     return ident[len("external:"):] if ident.startswith("external:") else "%s:%s" % (home, ident)
 
 
-def load(home, store):
-    run = subprocess.run([os.path.join(HERE, "jg-beads.sh"), "list", "--all", "--limit", "0", "--json"], env={**os.environ, "BEADS_DIR": store},
+def load(home, store, path):
+    run = subprocess.run([os.path.join(HERE, "jg-beads.sh"), "list", "--all", "--limit", "0", "--json"], env={**os.environ, "BEADS_DIR": store, "JG_HOME": path},
                          capture_output=True, text=True, check=False)
     if run.returncode:
         sys.stderr.write("jg-backlog tree: %s left out, its store cannot be read: %s\n" % (home, (run.stderr or run.stdout).strip().splitlines()[-1:] or "no answer"))
@@ -38,7 +38,7 @@ def main(args):
     homes = json.loads(subprocess.run([os.path.join(HERE, "jg-backlog-homes.sh"), "--json"], capture_output=True, text=True, check=True).stdout)
     nodes, children = {}, {}
     for one in homes:
-        for row in load(one["home"], one["beads_dir"]) if one.get("beads_dir") else []:
+        for row in load(one["home"], one["beads_dir"], one["path"]) if one.get("beads_dir") else []:
             nodes[key(one["home"], row["id"])] = row
             for edge in row.get("dependencies") or []:
                 if edge.get("type") == "tracks":  # this row is carried out by the target

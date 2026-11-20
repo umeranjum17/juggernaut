@@ -26,7 +26,7 @@ jg_owner_rules_check() {
     exit 1
   fi
   if store=$(jg_backlog_beads_store "$config" 2>/dev/null); then
-    row=$(BEADS_DIR=$store "$bin/jg-beads.sh" show "$id" --json 2>/dev/null) || row='[]'
+    row=$(JG_HOME="${config%/*}" "$bin/jg-beads.sh" show "$id" --json 2>/dev/null) || row='[]'
   fi
   facts=$(jq -c '(if type == "array" then .[0] else . end) // {}
     | {labels: (.labels // []), parent: ((.dependencies // [] | map(select(.dependency_type == "parent-child"))[0].id)
