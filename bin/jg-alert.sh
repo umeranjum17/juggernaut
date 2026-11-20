@@ -24,6 +24,9 @@
 #                                           (status, task, commit, pr or reply: the kinds bin/jg-delivery.sh handled takes). A close with no
 #                                           proof is refused, so a read notice or a vanished queue row can never clear an alert. resolve
 #                                           also releases the alerts it covered
+#   jg-alert.sh resolve-ticket <ticket> --proof <kind>:<pointer>
+#                                           resolve every live alert that names the ticket (its ticket field or its subject), each with the
+#                                           same proof; a lane's cleanup calls it, so no alert outlives the lane it names
 #   jg-alert.sh overdue [--now <epoch>]     the live alerts whose action deadline ran out: one line each, exit 1 when it lists any
 #   jg-alert.sh show <key> | word <key> | list   print a record, its state word, or every live key
 #   jg-alert.sh deliver                      read ring lines on stdin (what raise, climb and resolve print) and deliver each to its holder
@@ -390,6 +393,21 @@ cmd_resolve() {
     printf 'ring\t%s--%s\t%s\t%s\n' "$(_get "$rec" alert)" "$(_get "$rec" subject)" "$(_get "$rec" rung)" "$(_holder "$(_get "$rec" rung)")"
   done
 }
+# cmd_resolve_ticket: the one place "an alert names a ticket" is decided for a close: the record's ticket field or its subject is the
+# ticket (the same test `jg alert` lists by, core/agent-cli/alerts.sh). Each close is cmd_resolve's own, in a subshell so one refusal
+# is reported and the rest still close. Exit 1 when any close was refused.
+cmd_resolve_ticket() {
+  local ticket=${1:-} rc=0 key rec
+  [ -n "$ticket" ] && [ "${2:-}" = --proof ] && [ "$#" -eq 3 ] || { _rc=2 _die "usage: resolve-ticket <ticket> --proof <kind>:<pointer>"; }
+  case $ticket in */* | *..*) _die "invalid ticket; Main recovery required" ;; esac
+  for rec in "$(_dir)"/*.rec; do
+    [ -r "$rec" ] && [ "$(_get "$rec" state)" != "$s_res" ] || continue
+    [ "$(_get "$rec" ticket)" = "$ticket" ] || [ "$(_get "$rec" subject)" = "$ticket" ] || continue
+    key=$(basename "$rec" .rec)
+    ( cmd_resolve "$key" --proof "$3" ) || rc=1
+  done
+  return "$rc"
+}
 # cmd_overdue: the alerts whose action deadline ran out and still stand. It prints one line each and exits 1 when it lists any, so a caller
 # reads it as the metric: an acknowledged alert with no action behind it is overdue, never silently cleared (report section 5.2).
 cmd_overdue() {
@@ -488,7 +506,7 @@ usage() { sed -n '2,/^set -u/{ /^set -u/d; s/^# \{0,1\}//; p; }' "$0" >&2; exit 
 [ "$#" -gt 0 ] || usage
 c=$1; shift
 case $c in
-  raise|capacity|resolve) "cmd_$c" "$@"; _rc=$?; _store_sync; exit "$_rc" ;;
+  raise|capacity|resolve|resolve-ticket) "cmd_${c//-/_}" "$@"; _rc=$?; _store_sync; exit "$_rc" ;;
   row|limit|timers|climb|ack|reopen|overdue|show|word|list|deliver) "cmd_$c" "$@" ;;
   *) usage ;;
 esac

@@ -3394,6 +3394,11 @@ if [ -d "$STATE" ] && [ "$KIND" != squad_lead ]; then
     "$SCRIPT_DIR/jg-inactive-reconcile.sh" retire "$ID" || true
 fi
 jg_task_files_retire "$STATE" "$ID"
+# The lane is gone, so every alert that names its ticket is moot: resolving them here is the one close the producers cannot make
+# (the steering inbox an `undelivered` alert is read from went with the lane). Best effort; a refusal never blocks cleanup.
+if [ -d "$STATE" ]; then
+  JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" resolve-ticket "$ID" --proof source:lane-cleaned-up >/dev/null || true
+fi
 if [ "$KIND" != scout ] && [ "$KIND" != squad_lead ] && ! jg_delivery_style_is "$MODE" local; then
   "$JG_ROOT/bin/jg-fleet-sync.sh" "$PROJ" || true
 fi
