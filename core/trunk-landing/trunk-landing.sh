@@ -42,6 +42,8 @@
 # A landed task is then cleaned up with bin/jg-teardown.sh, never forced, in the same step that landed it and per lane: a stack's
 # output is read as it comes, and each lane is cleaned at its own `landed` line. A refusal that only needs time is retried at 15 s, 1, 2
 # and 5 minutes; any other refusal is final with its reason from core/machines/cleanup-reason.states and one alert (cleanup-retry.sh).
+# A run that landed lanes then starts the home's dispatch check (state/auto-dispatch.check.sh) once, detached and never waited for, where it ends (a stack of five
+# lanes starts it once): the lane a landing freed, and the slices it unblocked, are filled within seconds, not at the next sweep. JG_LANDING_DISPATCH_KICK=0 turns it off.
 # bin/jg-delivery-tick.sh runs this check, from the watcher's fast tick and from the host sentinel's minute tick, so a worker's done
 # starts the landing within seconds in a supervised home and within a minute when no model or watcher runs; the outcome
 # line of a landing already cleaned up (its record is gone) comes from data/jg-trunk-landing/outbox.
@@ -133,6 +135,20 @@ store_landed() {  # <task-id> <lane head>
   python3 -I "$FMH/core/item-store/adapters/trunk.py" landed "$hid" "$subject" "$2" "$commit" --source "land:$1@$commit" >/dev/null 2>&1 || :
 }
 
+# A landing frees a lane and may unblock slices, so the run that landed lanes starts the home's dispatch check once, where the run ends (a stack of
+# five lanes starts it once, after the last): the freed lane is filled within seconds, not at the next sweep. Detached and never waited for, because the
+# landing check runs under the watcher's 30 s bound. JG_LANDING_DISPATCH_KICK=0 turns it off; a home with no state/auto-dispatch.check.sh has nothing to start.
+DISPATCH_KICK_DUE=
+kick_dispatch() {
+  [ -n "$DISPATCH_KICK_DUE" ] || return 0
+  DISPATCH_KICK_DUE=
+  [ "${JG_LANDING_DISPATCH_KICK:-1}" != 0 ] && [ -x "$STATE/auto-dispatch.check.sh" ] || return 0
+  if command -v setsid >/dev/null 2>&1; then setsid nohup "$STATE/auto-dispatch.check.sh" </dev/null >/dev/null 2>&1 &
+  else nohup "$STATE/auto-dispatch.check.sh" </dev/null >/dev/null 2>&1 &
+  fi
+  return 0
+}
+
 # A lane the lander reports landed: cleaned up at once, never forced (cleanup-retry.sh), its waiters resumed, one outbox line.
 # The lander rebased the lane, so its branch may now be at another head: the same state stands for that head.
 landed_lane() {  # <task-id> <head> <outbox text after the id and mode>
@@ -145,6 +161,7 @@ landed_lane() {  # <task-id> <head> <outbox text after the id and mode>
   res=$(lane_cleanup "$id" "$head" "$now"); rm -f -- "$STATE/$id.land-next"
   window_move "$(basename "$proj")" landed >/dev/null || :
   resume_waiters "$id"
+  DISPATCH_KICK_DUE=1
   cleanup_outbox "landed $id ($lane_mode) $3; $res"
 }
 
@@ -295,6 +312,7 @@ if [ "$1" = runbatch ]; then
   done
   ! window_is_red "$out" || window_move "$pn" red >/dev/null || :
   for arg in "$@"; do partition_forget "${arg%%@*}" "${arg#*@}"; done  # the stack's run has ended: its queue is free for the next start
+  kick_dispatch
   "$SELF" next "$FMH" >/dev/null 2>&1 || :
   exit 0
 fi
@@ -319,6 +337,7 @@ if [ "$1" = run ]; then
   if [ "$rc" -eq 0 ]; then
     partition_forget "$id" "$head"  # the trunk holds the lane: its queue is free before the landed record reads, not after the cleanup
     landed_lane "$id" "$head" "on the local trunk (not In use yet: In use follows the answer given at gated, the captain's word or the project's waiver, and its quiet window)"
+    kick_dispatch
     "$SELF" next "$FMH" >/dev/null 2>&1 || :
     exit 0
   fi
