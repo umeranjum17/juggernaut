@@ -56,6 +56,14 @@
 # The item store (--append on a .status file, only while the home has config/item-store): after a successful append the line is
 # also read into the store by core/item-store/adapters/lane.py, silently; that call never changes this script's output or exit.
 #
+# The status kick (--append on a .status file). After the line is written, the line itself starts what waits on it, so
+# neither waits for its own beat: a `done` line starts the home's delivery pass (bin/jg-delivery-tick.sh with
+# JG_DELIVERY_TICK_KICK=1, which runs the landing check), and a done, paused, blocked, needs-decision or failed line, the
+# lines that take the lane out of dispatch's working count, starts the home's dispatch (state/auto-dispatch.check.sh) when the
+# first word of config/auto-dispatch is `on`. Each start is detached, at most one of each per call however many lines the
+# text has, silent, and never a reason to refuse or fail the append. JG_STATUS_KICK=0 turns both off; JG_STATUS_KICK_TICK
+# and JG_STATUS_KICK_DISPATCH name other programs for them (test hooks).
+#
 # This file is the one core owner of these refusals. bin/jg-squad-lead-report.sh
 # runs it before a parent-channel append, and the status line bin/jg-brief.sh
 # generates pipes through it, so no captain-facing status or report note can
@@ -184,6 +192,39 @@ wait_line_gate() {  # <text>
   done <<< "$1"
 }
 
+# Start <program> with <args> detached from this call: no wait, no output, no inherited stdin, and never a failure here.
+start_detached() {  # <program> [<arg>...]
+  if command -v setsid >/dev/null 2>&1; then
+    setsid nohup "$@" </dev/null >/dev/null 2>&1 &
+  else
+    nohup "$@" </dev/null >/dev/null 2>&1 &
+  fi
+  return 0
+}
+
+# The status kick: what a written status line starts at once (see the header). It runs after the line is written.
+status_kick() {  # <status file> <text>
+  local home line verb tick dispatch kick_tick='' kick_dispatch=''
+  [ "${JG_STATUS_KICK:-1}" != 0 ] || return 0
+  home=${JG_HOME:-$(dirname -- "$(dirname -- "$1")")}
+  while IFS= read -r line; do
+    verb=$(status_line_verb "$line") || continue
+    case $verb in
+      done) kick_tick=1 kick_dispatch=1 ;;
+      paused | blocked | needs-decision | failed) kick_dispatch=1 ;;
+    esac
+  done <<< "$2"
+  if [ -n "$kick_tick" ]; then
+    tick=${JG_STATUS_KICK_TICK:-$home/bin/jg-delivery-tick.sh}
+    [ -f "$tick" ] && JG_DELIVERY_TICK_KICK=1 start_detached bash "$tick" "$home"
+  fi
+  if [ -n "$kick_dispatch" ] && [ "$(awk 'NF { print $1; exit }' "$home/config/auto-dispatch" 2>/dev/null)" = on ]; then
+    dispatch=${JG_STATUS_KICK_DISPATCH:-$home/state/auto-dispatch.check.sh}
+    [ -x "$dispatch" ] && start_detached "$dispatch"
+  fi
+  return 0
+}
+
 # The ticket move of a done line (bin/jg-move.sh records it in data/moves.log): the worker said done, so the ticket makes
 # claim-done from building (submit-draft for a Recon, which has no commit), or new-head from delivering. Only a line that opens with `done` moves. It runs before the
 # line is written; it returns 1 only when the log cannot be written.
@@ -244,6 +285,7 @@ if [ -n "$APPEND" ]; then
     *.status)
       [ -e "${JG_HOME:-$(dirname -- "$(dirname -- "$APPEND")")}/config/item-store" ] &&
         python3 -I "$(cd "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/core/item-store/adapters/lane.py" read "$APPEND" >/dev/null 2>&1 || true
+      status_kick "$APPEND" "$text" || true
       ;;
   esac
 fi

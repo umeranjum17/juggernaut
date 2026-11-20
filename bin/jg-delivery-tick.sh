@@ -3,10 +3,12 @@
 #
 # Usage: jg-delivery-tick.sh <jg-home>
 #
-# A step whose next move is known runs from a tick, never from a model's cycle. Two callers run this
+# A step whose next move is known runs from a tick, never from a model's cycle. Three callers run this
 # pass: the host sentinel (core/sentinel/bin/jg-sentinel.sh), every minute for its own home and each
-# local, unparked lead home, so a worker's done lands while no watcher runs; and the home's watcher
-# (bin/jg-watch.sh) on its fast tick, so a live home acts within seconds. The pass is the trunk landing
+# local, unparked lead home, so a worker's done lands while no watcher runs; the home's watcher
+# (bin/jg-watch.sh) on its fast tick, so a live home acts within seconds; and a worker's own done line
+# (bin/jg-lavish-guard.sh --append, with JG_DELIVERY_TICK_KICK=1), so the lander sees the lane in seconds
+# instead of on the next beat. The pass is the trunk landing
 # check (core/trunk-landing/trunk-landing.sh check), which also starts the go-live and the rollover.
 # It first walks the steering inboxes (jg_task_inbox_walk): each task with an unread record gets one
 # step of the re-ring ladder, which the watcher's window loop runs too, so a steer reaches its worker
@@ -15,8 +17,15 @@
 # landing to run. The stop loop runs after the landing check even when there is no trunk.
 #
 # One runner: the pass holds the home's state/.delivery-tick.lock, and a caller that finds it held does
-# nothing, so the two callers never run one home's pass at the same time. The landing check's own start
+# nothing, so the callers never run one home's pass at the same time. The landing check's own start
 # lock and per-landing run locks still keep one landing per lane.
+#
+# One more pass for a kick that came too late: a kicked call (JG_DELIVERY_TICK_KICK=1) that finds the
+# lock held leaves state/.delivery-tick.again, tries the lock once more and exits 0. A pass removes the
+# mark right after taking the lock, and a pass that ends with the mark present starts one more pass
+# detached, so a done line that arrived after the running pass read its lanes is seen at once. The
+# watcher and the sentinel never leave the mark. JG_DELIVERY_TICK_TRACE=<file> (a test hook) appends one
+# line for each pass that took the lock.
 #
 # One owner of the result: the check's lines belong to the home, whoever ran the pass. They are kept in
 # state/.jg-check-output-trunk-landing and raised as one `check trunk-landing` row in the home's wake
@@ -39,8 +48,29 @@ unset STATE JG_WAKE_QUEUE JG_WAKE_QUEUE_LOCK
 . "$SCRIPT_DIR/jg-task-inbox-lib.sh"
 
 LOCK=$H/state/.delivery-tick.lock
-jg_lock_try_acquire "$LOCK" || exit 0
-trap 'jg_lock_release "$LOCK"' EXIT
+AGAIN=$H/state/.delivery-tick.again
+# A kicked call that finds the lock held leaves the mark first, then tries once more: a pass that ends in between
+# is taken over here, and one that ends later sees the mark.
+if ! jg_lock_try_acquire "$LOCK"; then
+  [ "${JG_DELIVERY_TICK_KICK:-}" = 1 ] || exit 0
+  : > "$AGAIN" 2>/dev/null || true
+  jg_lock_try_acquire "$LOCK" || exit 0
+fi
+rm -f -- "$AGAIN"
+[ -z "${JG_DELIVERY_TICK_TRACE:-}" ] || printf '%s pass %s\n' "$(date +%s)" "$$" >> "$JG_DELIVERY_TICK_TRACE" 2>/dev/null || true
+# Release the lock, then start one more pass, detached, when a kick left the mark while this one ran.
+# shellcheck disable=SC2329 # The EXIT traps call this.
+tick_release() {
+  jg_lock_release "$LOCK"
+  [ -e "$AGAIN" ] || return 0
+  unset JG_DELIVERY_TICK_KICK
+  if command -v setsid >/dev/null 2>&1; then
+    setsid nohup bash "$SCRIPT_DIR/jg-delivery-tick.sh" "$H" </dev/null >/dev/null 2>&1 &
+  else
+    nohup bash "$SCRIPT_DIR/jg-delivery-tick.sh" "$H" </dev/null >/dev/null 2>&1 &
+  fi
+}
+trap tick_release EXIT
 
 # A stale row the ladder queues as due now is printed, as the landing row below is, so a live watcher
 # rings its model at once; otherwise the row waits for the home's next supervision drain.
@@ -70,7 +100,7 @@ tick_stops() (
   # shellcheck source=core/wait-timers/bin/jg-stops-lib.sh
   . "$SCRIPT_DIR/../core/wait-timers/bin/jg-stops-lib.sh" && jg_stops_tick
 )
-trap 'tick_stops || echo "jg-delivery-tick: stop processing failed in $H" >&2; jg_lock_release "$LOCK"' EXIT
+trap 'tick_stops || echo "jg-delivery-tick: stop processing failed in $H" >&2; tick_release' EXIT
 # The owner's bypass ends at its end time, and a ticket's when the ticket is released or closed (machine 17).
 bash "$SCRIPT_DIR/jg-proof-bypass.sh" expire >/dev/null 2>&1 || echo "jg-delivery-tick: the proof bypass could not be expired in $H" >&2
 # A lane that reported done inside a standing bypass is passed over proving here, before the landing check reads its proof.
