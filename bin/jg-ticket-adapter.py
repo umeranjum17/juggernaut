@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""jg-ticket-adapter.py - the Beads adapter for the board's ticket interface v1 (sign-off docs/ticket-adapter.md).
+"""jg-ticket-adapter.py - the tickets-table adapter for the board's ticket interface v1 (sign-off docs/ticket-adapter.md).
 
-Usage: BEADS_DIR=<store>/.beads jg-ticket-adapter.py <describe|list|get|create|update|history|comment>   (one JSON request on stdin)
+Usage: JG_HOME=<home> jg-ticket-adapter.py <describe|list|get|create|update|history|comment>   (one JSON request on stdin)
 
 One JSON response on stdout and nothing else: exit 0 with the answer, exit 1 with {"error": {...}}. It reaches the store only through
-bin/jg-beads.sh (JG_BEADS_SH names another wrapper) and bin/jg-beads-read.py, whose facts are in data/ta-j1-beads-facts/facts.md.
+core/item-store/adapters/bd_compat.py and bin/jg-beads-read.py, whose facts are in data/ta-j1-beads-facts/facts.md.
 The ticket is bd's own row: `id`, `status`, `assignee` and `parent` are bd's words, `kind` is bd's issue type, `body` its description,
 `labels` and `links` (its outgoing edges other than the parent) as bd keeps them. With JG_HOME and a configured fleet, list derives board status and project from the homes and uses home-qualified ids. It reads each home's store with one
-`jg-beads-read.py board` query (bd list and bd show took minutes on a store of thousands of rows), skips a home that names no store, fails when a store it names cannot be read,
+`jg-beads-read.py board` query (bd list and bd show took minutes on a store of thousands of rows), fails when a home's tables cannot be read,
 and answers a client that names no limit with pages of 500, since every page reads the whole fleet again.
 `extra` is the row's metadata, key by key and typed as bd keeps it (the interface's conformance script holds extra to exactly what a client put there).
 bd's other columns (priority, notes, design, estimate, due and the like) are not carried: no ticket field names them and extra may not.
@@ -33,7 +33,7 @@ import time
 
 sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.abspath(__file__))
-WRAPPER = os.environ.get("JG_BEADS_SH") or os.path.join(HERE, "jg-beads.sh")
+WRAPPER = os.path.join(HERE, "..", "core", "item-store", "adapters", "bd_compat.py")
 READER = os.path.join(HERE, "jg-beads-read.py")
 IDENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 BD_KEY = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_./]*$")
@@ -63,7 +63,7 @@ def invalid(fields, message="The request was refused."):
 def bd(args, stdin=None, step="bd", env=None):
     """One call of the wrapper; its stderr is the reason when it fails."""
     try:
-        done = subprocess.run([WRAPPER] + args, input=stdin, capture_output=True, text=True, timeout=STEP_TIMEOUT, env=env)
+        done = subprocess.run([sys.executable, "-I", WRAPPER] + args, input=stdin, capture_output=True, text=True, timeout=STEP_TIMEOUT, env=env)
     except subprocess.TimeoutExpired:
         raise Refusal("timeout", "%s did not answer in %d seconds." % (step, STEP_TIMEOUT), True)
     except OSError as e:
@@ -102,7 +102,7 @@ def get_row(ticket_id):
 def to_ticket(row):
     ticket = {"id": row["id"], "rev": row["rev"], "title": row.get("title", ""), "body": row.get("description", ""), "kind": row.get("issue_type", ""),
             "status": row.get("status", ""), "assignee": row.get("assignee") or None, "labels": list(row.get("labels") or []), "parent": row.get("parent") or None,
-            "links": links_of(row), "created_at": row["created_at"], "updated_at": row["updated_at"], "extra": dict(row.get("metadata") or {})}
+            "links": links_of(row), "created_at": row["created_at"], "updated_at": row.get("updated_at") or row["created_at"], "extra": dict(row.get("metadata") or {})}
     if BOARD_HOME:
         name, home = BOARD_HOME
         ticket["id"] = scoped(name, ticket["id"])
@@ -137,7 +137,7 @@ def kinds():
 def fleet_homes():
     """The main home and its registered local leads; fail rather than return an incomplete fleet."""
     root = os.environ.get("JG_HOME")
-    if not root:
+    if not root or os.environ.get("JG_TICKET_ADAPTER_FLAT") == "1":   # flat: one home's rows as bd shows them, no fleet board
         return {}
     paths = {"main": root}
     registry = os.path.join(root, "data", "squad_leads.md")
@@ -151,18 +151,7 @@ def fleet_homes():
                     paths[match[1]] = match[2]
                 elif re.match(r"- \S+ - .*\(host:", line):
                     raise Refusal("unavailable", "A remote home requires a backlog reader.")
-    homes = {}
-    for name, path in paths.items():
-        try:
-            with open(os.path.join(path, "config", "beads-dir")) as handle: store = handle.read().strip()
-        except FileNotFoundError:
-            continue  # a home that names no store has no tickets (the tickets sync skips it the same way); a store it names but cannot be read still refuses below
-        except OSError as e:
-            raise Refusal("unavailable", "Cannot read %s's store: %s" % (name, e), True)
-        if not store: continue
-        if not os.path.isabs(store): raise Refusal("unavailable", "No absolute store for %s." % name)
-        homes[name] = (path, store)
-    return homes
+    return paths
 
 
 def scoped(name, ident):
@@ -205,10 +194,10 @@ def column(row, home):
     return None
 
 
-def fleet_rows(name, home, store, all_closed=False):
+def fleet_rows(name, home, all_closed=False):
     """One home's board rows in one query; maintenance may also need older closed card sources."""
     cutoff = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    result = read_helper(["board", '--all' if all_closed else cutoff], env=dict(os.environ, BEADS_DIR=store))
+    result = read_helper(["board", '--all' if all_closed else cutoff], env=dict(os.environ, JG_HOME=home))
     if result.returncode: raise Refusal("unavailable", "Cannot read %s: %s" % (name, reason(result)), True)
     return [(name, home, row) for row in json.loads(result.stdout)]
 
@@ -218,7 +207,7 @@ def fleet_snapshot(all_closed=False):
     homes = fleet_homes()
     if not homes: return []
     with ThreadPoolExecutor(max_workers=min(8, len(homes))) as pool:
-        futures = [pool.submit(fleet_rows, name, home, store, all_closed) for name, (home, store) in homes.items()]
+        futures = [pool.submit(fleet_rows, name, home, all_closed) for name, home in homes.items()]
         return [row for future in futures for row in future.result()]
 
 
@@ -488,10 +477,10 @@ def state_dir():
     configured = os.environ.get("JG_TICKET_ADAPTER_STATE")
     if configured:
         return configured
-    beads = os.environ.get("BEADS_DIR")
-    if not beads or not os.path.isabs(beads):
-        raise Refusal("unavailable", "BEADS_DIR is not set to the store's .beads folder.", False)
-    return os.path.join(os.path.dirname(beads.rstrip("/")), ".jg-ticket-adapter")
+    home = os.environ.get("JG_HOME")
+    if not home or not os.path.isabs(home):
+        raise Refusal("unavailable", "JG_HOME is not set to the home's absolute folder.", False)
+    return os.path.join(home, "state", ".jg-ticket-adapter")
 
 
 class OpLog:
@@ -554,15 +543,13 @@ def run(op, raw):
     global BOARD_HOME
     request = parse(op, raw)
     homes = fleet_homes()
-    if homes and op == "describe":
-        os.environ["BEADS_DIR"] = homes["main"][1]
     if homes and op not in ("describe", "list"):
         if op == "create":
             name = "main"
         else:
             name, request["id"] = unscoped(request["id"], homes)
-        BOARD_HOME = (name, homes[name][0])
-        os.environ["BEADS_DIR"] = homes[name][1]
+        BOARD_HOME = (name, homes[name])
+        os.environ["JG_HOME"] = homes[name]
         patch = request.get("ticket") if op == "create" else request.get("set")
         if isinstance(patch, dict):
             if "status" in patch or "project" in patch:

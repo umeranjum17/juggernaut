@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""jg-beads-write.py - serve the backlog's add, update, done, block, unblock, start, reopen, hold and unhold on a Beads store.
+"""jg-beads-write.py - serve the backlog's add, update, done, block, unblock, start, reopen, hold and unhold on the tickets tables.
 
-Usage: BEADS_DIR=<store> jg-beads-write.py <add|create|update|edit|done|close|block|unblock|start|task|reopen|hold|unhold|relink|gate|resolve|note> [args...]
-       BEADS_DIR=<store> jg-beads-write.py <stage <key>...|take <file> <key>...|drop <key>...|public-followup ...>
-       BEADS_DIR=<store> jg-beads-write.py <moment|wait|ticket-stage|ticket-drift|times|trace> ...   (the ticket machine's moments, wait and stage: bin/jg-beads-moment.py)
-       BEADS_DIR=<store> jg-beads-write.py <beat|reclaim> ...   (a worker's lease: bin/jg-beads-lease.py)
+Usage: JG_HOME=<home> jg-beads-write.py <add|create|update|edit|done|close|block|unblock|start|task|reopen|hold|unhold|relink|gate|resolve|note> [args...]
+       JG_HOME=<home> jg-beads-write.py <stage <key>...|take <file> <key>...|drop <key>...|public-followup ...>
+       JG_HOME=<home> jg-beads-write.py <moment|wait|ticket-stage|ticket-drift|times|trace> ...   (the ticket machine's moments, wait and stage: bin/jg-beads-moment.py)
+       JG_HOME=<home> jg-beads-write.py <beat|reclaim> ...   (a worker's lease: bin/jg-beads-lease.py)
 
 bin/jg-backlog-lib.sh's jg_backlog_beads_write starts it after bin/jg-backlog.sh's intake and captain guards.
-Every bd call goes through bin/jg-beads.sh. Replies and refusals print the backlog's lines on stdout.
+Every bd call goes through core/item-store/adapters/bd_compat.py. Replies and refusals print the backlog's lines on stdout.
 kind is metadata.kind (a row of bd's old decision type still reads as captain), a leading [tag] of the title is the label of that name and is not stored in the title, repo is the project:<repo> label, the first PR is external_ref, later ones are metadata.prs,
 and reports are metadata.reports, each comma-joined; a PR or report also joins the title, as the backlog writes it.
 A hold is status on_hold with metadata.hold_reason and hold_kind, kept in plain text; a dated hold is status deferred
@@ -29,7 +29,6 @@ start claims a row with no owner. A start whose generation is not the one on the
 (a relaunch) takes it; a row another worker took first exits 13 too. done keeps the assignee as history, reopen clears all
 three, and each moves only from the owner it read.
 With no lane named, start claims an unowned row for the actor (BEADS_ACTOR, else juggernaut), so every in-flight row has an owner.
-bin/jg-beads.sh makes the lane the actor of every bd call, so a comment or an event carries who wrote it.
 bd takes --if-assignee or --force, never both, so closing a blocked row is guarded by status alone; a parent with an open child is refused, naming the open pieces.
 stage, take and drop move queued rows, and bd export and bd import carry them.
 stage prints rows as a backlog file, or with --native as export lines, and refuses to leave an active dependent behind. A native move also carries the rows' questions (open, or answered with the owner's words)
@@ -55,7 +54,7 @@ view = __import__("jg-beads-view")
 edges = __import__("jg-beads-links")
 lease = __import__("jg-beads-lease")
 
-WRAPPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jg-beads.sh")
+WRAPPER = [sys.executable, "-I", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "core", "item-store", "adapters", "bd_compat.py")]
 PR = re.compile(r"https://(github\.com/[^/\s]+/[^/\s]+/pull|[^/\s]+/[^/\s]+/[^/\s]+/pulls)/\d+\Z")
 REPORT = re.compile(r"data/[^/\s]+/report\.md\Z")
 LABEL = {"queued": "Queued", "in_flight": "In flight", "done": "Done"}
@@ -76,7 +75,7 @@ def untag(title):
 
 
 def bd(*args):
-    run = subprocess.run([WRAPPER, *args], capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+    run = subprocess.run([*WRAPPER, *args], capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
     if run.returncode == STALE:
         said = [line.split("mismatch: ", 1)[1] for line in (run.stdout + run.stderr).splitlines() if "mismatch: " in line]
         view.refuse("stale write refused: " + (said[0] if said else "the row moved"),
@@ -165,7 +164,7 @@ def lay(ident=None, old=""):
     for row, other, kind, _ in edges.pending(items, ident):
         if other:
             one, two, kind = edges.edge(row, other, kind, items)
-            if kind == "related" or subprocess.run([WRAPPER, "dep", "add", one["id"], two["id"], "--type", kind],
+            if kind == "related" or subprocess.run([*WRAPPER, "dep", "add", one["id"], two["id"], "--type", kind],
                                                    capture_output=True, check=False).returncode:
                 kind = "related"
                 bd("dep", "add", one["id"], two["id"], "--type", kind)
@@ -728,13 +727,7 @@ def unhold(args):
 
 
 def exported():
-    name = "export-%d.jsonl" % os.getpid()
-    bd("export", "-o", name)
-    path = os.path.join(os.path.dirname(os.environ["BEADS_DIR"].rstrip("/")), name)
-    with open(path, encoding="utf-8") as source:
-        lines = source.read().splitlines()
-    os.unlink(path)
-    return lines
+    return bd("export").splitlines()
 
 
 def home_name():

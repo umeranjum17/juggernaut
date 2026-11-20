@@ -30,7 +30,7 @@
 # which lane it was in. Typical wall time is a few seconds.
 #
 # EXIT. 0 when all three lanes held, 1 when a lane failed or the budget ran out,
-# 2 on a usage error. A missing tool (git, jq, the pinned bd and dolt) fails the run naming it,
+# 2 on a usage error. A missing tool (git, jq, timeout) fails the run naming it,
 # because a smoke that skipped a lane proved nothing about it. The last line is
 # `release smoke: PASS|FAIL ... seconds=<n>`. JG_RELEASE_SMOKE_KEEP=1 keeps the
 # scratch directory for inspection and prints its path.
@@ -64,7 +64,7 @@ fail() {
   exit 1
 }
 
-for tool in git jq timeout "${JG_BEADS_BD:-bd}" "${JG_BEADS_DOLT:-dolt}"; do
+for tool in git jq timeout; do
   command -v "$tool" >/dev/null 2>&1 || fail "$tool is not installed, so the lanes that need it cannot be replayed"
 done
 
@@ -85,10 +85,6 @@ mkdir -p "$HOME"
 H=$T/home
 FAKE=$T/fakebin
 mkdir -p "$H/config" "$T/merge-config" "$H/state" "$H/data" "$FAKE"
-printf '%s\n' "$H/beads/.beads" > "$H/config/beads-dir"
-printf "%s\n" "$H/beads/.beads" > "$T/merge-config/beads-dir"
-mkdir -p "$H/beads"
-BEADS_DIR="$H/beads/.beads" "$REPO/bin/jg-beads.sh" init --prefix smoke >/dev/null 2>&1 || fail "cannot create the Beads store"
 printf '#!/usr/bin/env bash\necho "checks-lint: PASS"\n' > "$T/pass-lint.sh"
 chmod +x "$T/pass-lint.sh"
 printf 'Use the compact layout.\n' > "$T/pick.txt"

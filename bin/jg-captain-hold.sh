@@ -531,7 +531,7 @@ load_decision() {  # <path>; sets DECISION_TEXT and DECISION_DIGEST
   DECISION_DIGEST=$(sha256_text "$decision")
 }
 
-# Mutations address this home's Beads store, named by config/beads-dir.
+# Mutations address this home's tickets tables.
 backlog_cmd() {
   local data
   data=$(jg_backlog_data_absolute "$DATA") || fail "data directory cannot be resolved: $DATA"

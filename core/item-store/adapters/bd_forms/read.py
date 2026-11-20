@@ -239,18 +239,22 @@ def show(f):
     if not f.pos:
         raise NotSupported("show")
     store = Store()
-    t = next((t for t in store.tickets() if t["id"] == f.pos[0]), None)
-    if t is None:
-        sys.stderr.write("Error: no issue found matching %r\n" % f.pos[0])
-        return "", 1
-    if "--json" not in f.sw:
-        raise NotSupported("show without --json")
-    if f.sw - {"--json", "--include-dependents", "--brief-deps"}:
-        raise NotSupported("show")
-    if f.sw & {"--include-dependents", "--brief-deps"} and (store.edges_of.get(t["id"]) or any(to == t["id"] for es in store.links().values() for to, _ in es)):
-        raise NotSupported("show: bd's form of a linked row with --include-dependents or --brief-deps is not recorded")
+    held = {t["id"]: t for t in store.tickets()}
+    rows = []
+    for ident in f.pos:       # one row per id given, in the order given, as bd prints them in one array
+        t = held.get(ident)
+        if t is None:
+            sys.stderr.write("Error: no issue found matching %r\n" % ident)
+            return "", 1
+        if "--json" not in f.sw:
+            raise NotSupported("show without --json")
+        if f.sw - {"--json", "--include-dependents", "--brief-deps"}:
+            raise NotSupported("show")
+        if f.sw & {"--include-dependents", "--brief-deps"} and (store.edges_of.get(t["id"]) or any(to == t["id"] for es in store.links().values() for to, _ in es)):
+            raise NotSupported("show: bd's form of a linked row with --include-dependents or --brief-deps is not recorded")
+        rows.append(t)
     links, counts, comments = context(store)
-    return dumps([export_row(t, store, links, counts, comments, show=True)]) + "\n", 0
+    return dumps([export_row(t, store, links, counts, comments, show=True) for t in rows]) + "\n", 0
 
 
 def export(f):

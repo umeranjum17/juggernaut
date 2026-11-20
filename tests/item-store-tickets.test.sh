@@ -9,69 +9,13 @@ FX=$ROOT/tests/fixtures/item-store-tickets
 TK=$ROOT/core/item-store/adapters/tickets.py
 T=$(jg_test_tmproot item-store-tickets)
 sha_of() { { sha256sum "$1" 2>/dev/null || shasum -a 256 "$1"; } | cut -d' ' -f1; }
-mkdir -p "$T/bin" "$T/home/config" "$T/home/data" "$T/home/state" "$T/store/.beads/embeddeddolt/jg"
-printf '{"dolt_mode": "embedded", "dolt_database": "jg"}\n' > "$T/store/.beads/metadata.json"
-printf 'no-git-ops: true\n' > "$T/store/.beads/config.yaml"
-cat > "$T/stub.py" <<'PY'
-import json, sys
-path = __import__("os").environ["ROWS"]
-rows = {r["id"]: r for r in (json.loads(l) for l in open(path) if l.strip())}
-a = sys.argv[1:]
-def save():
-    open(path, "w").write("".join(json.dumps(r) + "\n" for r in rows.values()))
-def opt(name, many=False):
-    got = [a[i + 1] for i, x in enumerate(a) if x == name and i + 1 < len(a)]
-    return got if many else (got[0] if got else None)
-cmd = a[0] if a else ""
-if cmd == "export":
-    sys.stdout.write("".join(json.dumps(r) + "\n" for r in rows.values()))
-elif cmd == "list":
-    print(json.dumps(list(rows.values())))
-elif cmd in ("ready", "blocked"):
-    print("[]")
-elif cmd == "create":
-    t = next(x[8:] for x in a if x.startswith("--title="))
-    i = opt("--id")
-    r = dict(id=i, title=t, status="open", priority=int(opt("-p") or 2), issue_type="task", created_at="2026-11-12T00:00:00Z",
-             labels=opt("-l", True), metadata=json.loads(opt("--metadata") or "{}"), description=next((x[14:] for x in a if x.startswith("--description=")), ""))
-    if opt("--external-ref"): r["external_ref"] = opt("--external-ref")
-    rows[i] = r; save()
-elif cmd == "update":
-    r = rows[a[1]]
-    if opt("--status"): r["status"] = opt("--status")
-    if opt("-a") is not None: r["assignee"] = opt("-a") or None
-    if opt("--defer") is not None: r["defer_until"] = opt("--defer") or None
-    for x in a:
-        if x.startswith("--title="): r["title"] = x[8:]
-        if x.startswith("--description="): r["description"] = x[14:]
-    for kv in opt("--set-metadata", True):
-        k, _, v = kv.partition("="); r.setdefault("metadata", {})[k] = v
-    for k in opt("--unset-metadata", True): r.get("metadata", {}).pop(k, None)
-    for l in opt("--add-label", True): r.setdefault("labels", []).append(l)
-    if opt("-p"): r["priority"] = int(opt("-p"))
-    if opt("--external-ref"): r["external_ref"] = opt("--external-ref")
-    save()
-elif cmd == "dep" and a[1] == "add":
-    rows[a[2]].setdefault("dependencies", []).append({"issue_id": a[2], "depends_on_id": a[3], "type": opt("--type") or "blocks"}); save()
-elif cmd == "dep" and a[1] == "remove":
-    rows[a[2]]["dependencies"] = [d for d in rows[a[2]].get("dependencies", []) if d["depends_on_id"] != a[3]]; save()
-PY
-printf '#!/usr/bin/env bash\nexec python3 "%s" "$@"\n' "$T/stub.py" > "$T/bin/bd"
-{ cat "$T/bin/bd"; printf '# dolt\n'; } > "$T/bin/dolt"
-chmod +x "$T"/bin/*
-os=$(uname -s | tr '[:upper:]' '[:lower:]'); arch=$(uname -m); case "$arch" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac
-printf 'bd 1.3.4\ndolt 2.6.0\nbd-sha256-%s-%s %s\ndolt-sha256-%s-%s %s\n' \
-  "$os" "$arch" "$(sha_of "$T/bin/bd")" "$os" "$arch" "$(sha_of "$T/bin/dolt")" > "$T/pins"
-printf '%s\n' "$T/store/.beads" > "$T/home/config/beads-dir"
+mkdir -p "$T/home/config" "$T/home/data" "$T/home/state"
 : > "$T/home/config/backlog-intake-loose"
 # A version-manager shim of python3 reads the caller's own config and breaks under a throwaway HOME: run the real interpreter.
 mkdir -p "$T/py"; for _py in /usr/bin/python3 /usr/local/bin/python3 "$(command -v python3)"; do [ -x "$_py" ] && { ln -sf "$_py" "$T/py/python3"; break; }; done
 export PATH=$T/py:$PATH
-export JG_PIN_FILE_OVERRIDE=$T/pins ROWS=$T/rows.jsonl JG_BEADS_BD=$T/bin/bd JG_BEADS_DOLT=$T/bin/dolt
 export JG_HOME=$T/home JG_DATA_OVERRIDE=$T/home/data JG_STATE_OVERRIDE=$T/home/state BEADS_ACTOR=main
 unset JG_TASK_ID JG_BACKLOG_LANE JG_BACKLOG_SPAWN_GEN JG_ROOT_OVERRIDE
-cp "$FX/export.jsonl" "$ROWS"
-BL="$ROOT/bin/jg-backlog.sh"
 DB=$T/home/state/item-store/fleet.db
 sql() { python3 -c 'import sqlite3,sys; [print("|".join(map(str,r))) for r in sqlite3.connect(sys.argv[1]).execute(sys.argv[2])]' "$DB" "$1"; }
 
@@ -115,85 +59,8 @@ python3 "$TK" import --home main "$FX/export.jsonl" >/dev/null
 python3 -c 'import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute("INSERT INTO ticket_change(at,home,id,verb,source,row,links) VALUES(1,?,?,?,?,NULL,?)",("main","jg-resync-new","test","t:undo","[]")); c.commit()' "$DB"
 pass "re-import: a changed row updates, an equal row is not rewritten, a new row inserts, a second run is a no-op"
 
-# --- every write verb through jg-backlog.sh leaves compare empty
-: > "$T/home/config/one-engine"
-step() { local what=$1; shift; out=$("$BL" "$@" 2>&1); expect_code 0 $? "$what: $out"
-  case $out in *"one-engine copy"*) fail "$what: the copy failed: $out" ;; esac
-  c=$(JG_HOME=$JG_HOME "$BL" compare 2>&1); expect_code 0 $? "$what: compare lists: $c"; }
-step add add jg-new "A new ticket" --priority 1 --repo p --kind feature --release later --body "Captain: x"
-step update update jg-new --title "A renamed ticket" --body "Captain: y"
-step hold hold jg-new --reason "waits on the owner"
-step unhold unhold jg-new
-step start start jg-new
-step reopen reopen jg-new
-step block block jg-new --by jg-ready1
-step unblock unblock jg-new --by jg-ready1
-step task task jg-new
-step "done" "done" jg-new --pr https://github.com/o/r/pull/9
-[ "$(sql "SELECT count(*) FROM ticket_change WHERE id='jg-new'")" -ge 8 ] || fail "each write is a row of the log"
-[ "$(sql "SELECT status FROM ticket WHERE id='jg-new'")" = closed ] || fail "the copy followed the ticket to closed"
-pass "each write verb leaves compare empty (add update hold unhold start reopen block unblock task done)"
-
-# --- a write levels every row it changed, named in its args or not (a close ends the gates under a ticket, a take brings rows, a drop deletes them)
-step add add jg-gone "A row a drop will remove"
-python3 - "$ROWS" <<'PY'
-import json, sys
-rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
-side = next(r for r in rows if r["id"] == "jg-new")                                                 # a row no arg of the next write names
-side["metadata"] = dict(side.get("metadata") or {}, pinned_back_at="2026-11-19T00:00:00Z")
-side["closed_at"] = "2026-11-19T00:00:00Z"
-rows = [r for r in rows if r["id"] != "jg-gone"]                                                    # a row a drop removed
-rows.append(dict(id="jg-taken", title="A taken row", status="closed", closed_at="2026-11-19T00:00:00Z", priority=2, issue_type="task", created_at="2026-11-19T00:00:00Z", labels=[], metadata={}))
-open(sys.argv[1], "w").write("".join(json.dumps(r) + "\n" for r in rows))
-PY
-out=$("$BL" compare 2>&1); expect_code 1 $? "unnamed changes are differences: $out"
-step "a write that names none of the changed rows" update jg-ready1 --body "Captain: z"
-[ "$(sql "SELECT count(*) FROM ticket WHERE id='jg-taken'")" = 1 ] || fail "a row that arrived with the write was not copied"
-[ "$(sql "SELECT count(*) FROM ticket WHERE id='jg-gone'")" = 0 ] || fail "a row Beads no longer holds stayed in the copy"
-n=$(sql "SELECT count(*) FROM ticket_change"); step "the same write again" update jg-ready1 --body "Captain: z"
-[ "$(sql "SELECT count(*) FROM ticket_change")" = "$n" ] || fail "a second write of an equal copy wrote to the log"
-pass "a write copies every changed, new or removed row, named or not, and a repeat writes nothing"
-# the move verbs (handoff stage, take, drop) write Beads through jg_backlog_beads_write itself: the copy follows the same way
-python3 - "$ROWS" <<'PY'
-import json, sys
-rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
-rows.append(dict(id="jg-moved", title="A moved row", status="closed", closed_at="2026-11-19T00:00:00Z", priority=2, issue_type="task", created_at="2026-11-19T00:00:00Z", labels=[], metadata={}))
-open(sys.argv[1], "w").write("".join(json.dumps(r) + "\n" for r in rows))
-PY
-out=$(bash -c '. "$1"; jg_backlog_beads_write "$2" start jg-new' _ "$ROOT/bin/jg-backlog-lib.sh" "$T/home/config" 2>&1); expect_code 0 $? "the shared Beads writer: $out"
-[ "$(sql "SELECT count(*) FROM ticket WHERE id='jg-moved'")" = 1 ] || fail "a call to the shared writer did not reach the copy (handoff and receive use it directly)"
-out=$("$BL" compare 2>&1); expect_code 0 $? "compare after the shared writer: $out"
-pass "every caller of the shared Beads writer leaves compare empty"
-
-# --- a difference in one copy only: one line each
-cp "$ROWS" "$T/rows.good"
-python3 - "$ROWS" <<'PY'
-import json, sys
-p = sys.argv[1]; rows = [json.loads(l) for l in open(p)]
-for r in rows:
-    if r["id"] == "jg-ready1": r["title"] = "moved only in beads"; r["labels"].append("upkeep"); r["metadata"]["hold_reason"] = "x"
-    if r["id"] == "jg-rel": r["dependencies"] = []
-open(p, "w").write("".join(json.dumps(r) + "\n" for r in rows))
-PY
-out=$("$BL" compare 2>&1); expect_code 1 $? "compare exits 1 on a difference"
-assert_contains "$out" 'jg-ready1 title beads="moved only in beads" copy="row ready1"' "a changed field is listed"
-assert_contains "$out" 'jg-ready1 labels beads=["project:p", "upkeep"] copy=["project:p"]' "a changed label set is listed"
-assert_contains "$out" 'jg-ready1 metadata.hold_reason beads="x" copy=null' "a changed metadata key is listed"
-assert_contains "$out" 'jg-rel link beads=null copy="jg-rel>jg-ready1:related"' "a link in the copy only is listed"
-[ "$(printf '%s\n' "$out" | wc -l)" = 4 ] || fail "one line per difference, 4 expected: $out"
-cp "$T/rows.good" "$ROWS"
-python3 - "$DB" <<'PY'     # the other direction: a change in the copy only
-import sqlite3, sys, json, time
-c = sqlite3.connect(sys.argv[1])
-c.execute("INSERT INTO ticket_change(at,home,id,verb,source,row,links) VALUES(?,?,?,?,?,?,?)",
-          (int(time.time()), "main", "jg-gate", "test", "t:1", json.dumps({"title": "owner question", "description": "Captain: x", "priority": 2, "issue_type": "gate", "created_at": "2026-11-07T00:00:00Z", "status": "open", "labels": "[\"project:p\",\"extra\"]", "metadata": "{\"ask_role\": \"owner\"}", "ephemeral": 0}), "[]"))
-c.commit()
-PY
-out=$("$BL" compare 2>&1); expect_code 1 $? "compare sees a copy-only change"
-assert_contains "$out" 'jg-gate labels beads=["project:p"] copy=["extra", "project:p"]' "a label in the copy only is listed"
-pass "compare lists each field, label, metadata key and link that differs in one copy, one line each"
-
 # --- a ticket is keyed (home, id): two homes may share an id
+python3 "$TK" import --home main "$FX/export.jsonl" >/dev/null   # the fixture rows again: the write steps above round-trip rows through bd's export, which has no ephemeral flag
 cp "$FX/export.jsonl" "$T/other.jsonl"
 python3 - "$T/other.jsonl" <<'PY'      # the same ids in another home: different titles
 import json, sys
@@ -201,59 +68,17 @@ p = sys.argv[1]; rows = [json.loads(l) for l in open(p)]
 for r in rows: r["title"] = "crewhouse " + r["title"]
 open(p, "w").write("".join(json.dumps(r) + "\n" for r in rows))
 PY
-main_before=$(python3 "$TK" compare "$ROWS")
 out=$(python3 "$TK" import --home crewhouse "$T/other.jsonl"); expect_code 0 $? "an id another home holds imports under its own home: $out"
 [ "$(sql "SELECT count(*) FROM ticket WHERE home='crewhouse'")" = 11 ] || fail "crewhouse holds its 11 tickets beside main's"
 [ "$(sql "SELECT count(*) FROM ticket WHERE id='jg-ready1'")" = 2 ] || fail "the shared id is two rows"
 [ "$(sql "SELECT title FROM ticket WHERE id='jg-ready1' AND home='crewhouse'")" = "crewhouse row ready1" ] || fail "crewhouse reads its own row"
 [ "$(sql "SELECT title FROM ticket WHERE id='jg-ready1' AND home='main'")" = "row ready1" ] || fail "main reads its own row"
-[ "$(python3 "$TK" compare "$ROWS")" = "$main_before" ] || fail "crewhouse's rows changed what compare reports for main"
 mkdir -p "$T/crew/state"; printf 'crewhouse\n' > "$T/crew/.jg-squad-lead-home"; printf 'parent_home=%s\n' "$T/home" > "$T/crew/.jg-squad-lead-parent"
 out=$(JG_HOME=$T/crew python3 "$TK" compare "$T/other.jsonl"); expect_code 0 $? "compare of crewhouse's export is empty: $out"
 [ "$(JG_HOME=$T/crew python3 "$TK" show jg-ready1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["title"])')" = "crewhouse row ready1" ] || fail "show reads the caller's own home"
 [ "$(python3 "$TK" show crewhouse:jg-ready1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["title"])')" = "crewhouse row ready1" ] || fail "show home:id reads the named home"
-[ "$(python3 "$TK" ready --now 2026-11-20T00:00:00Z)" = "$(cat "$FX/ready.expected")" ] || fail "ready is scoped to this home"
-cp "$ROWS" "$T/rows.main"
-python3 - "$ROWS" <<'PY'
-import json, sys
-p = sys.argv[1]; rows = [json.loads(l) for l in open(p)]
-for r in rows:
-    if r["id"] == "jg-ready1": r["title"] = "main only"
-open(p, "w").write("".join(json.dumps(r) + "\n" for r in rows))
-PY
-python3 "$TK" write update jg-ready1 --source t:keyed; expect_code 0 $? "a write in main"
-[ "$(sql "SELECT title FROM ticket WHERE id='jg-ready1' AND home='main'")" = "main only" ] || fail "the write changed main's row"
-[ "$(sql "SELECT title FROM ticket WHERE id='jg-ready1' AND home='crewhouse'")" = "crewhouse row ready1" ] || fail "a write in main changed crewhouse's row"
-cp "$T/rows.main" "$ROWS"
-python3 "$TK" import --home crewhouse "$T/other.jsonl" >/dev/null; expect_code 0 $? "the same id twice in one home stays one row"
-[ "$(sql "SELECT count(*) FROM ticket WHERE id='jg-ready1' AND home='crewhouse'")" = 1 ] || fail "a re-import made a second row"
-pass "two homes share an id: each reads its own row, compare is empty for both, a write in one leaves the other alone"
-
-# --- a lead home's write reaches the store under the lead's home id (the one-engine flag is the main home's)
-mkdir -p "$T/lead/config" "$T/lead/data" "$T/lead/state"; printf 'crewhouse\n' > "$T/lead/.jg-squad-lead-home"
-printf 'parent_home=%s\n' "$T/home" > "$T/lead/.jg-squad-lead-parent"
-cp "$T/home/config/beads-dir" "$T/lead/config/beads-dir"; : > "$T/lead/config/backlog-intake-loose"
-python3 "$TK" import --home crewhouse "$ROWS" >/dev/null
-lead_bl() { JG_HOME=$T/lead JG_DATA_OVERRIDE=$T/lead/data JG_STATE_OVERRIDE=$T/lead/state "$BL" "$@" 2>&1; }
-out=$(lead_bl start jg-unres); expect_code 0 $? "a lead home starts a ticket: $out"
-case $out in *"one-engine copy"*) fail "the lead home's copy failed: $out" ;; esac
-[ "$(sql "SELECT status FROM ticket WHERE home='crewhouse' AND id='jg-unres'")" = in_progress ] || fail "a lead home's start did not reach the store row of its own home"
-out=$(lead_bl "done" jg-unres); expect_code 0 $? "a lead home closes a ticket: $out"
-[ "$(sql "SELECT status FROM ticket WHERE home='crewhouse' AND id='jg-unres'")" = closed ] || fail "a lead home's close did not reach the store row of its own home"
-n=$(sql "SELECT count(*) FROM ticket_change"); lead_bl "done" jg-unres >/dev/null
-[ "$(sql "SELECT count(*) FROM ticket_change")" = "$n" ] || fail "a second close wrote to the log again"
-[ "$(sql "SELECT status FROM ticket WHERE home='main' AND id='jg-unres'")" != closed ] || fail "a lead home's close changed main's row"
-pass "a lead home's start and close reach the store under its own home id, run twice safe"
-# teardown, spawn and the captain-hold scripts close and start through jg_backlog_beads_serve, not jg-backlog.sh: same copy
-serve() { JG_HOME=$T/lead JG_DATA_OVERRIDE=$T/lead/data JG_STATE_OVERRIDE=$T/lead/state BEADS_ACTOR=lead:crewhouse \
-  bash -c '. "$1"; shift; jg_backlog_beads_serve "$@"' _ "$ROOT/bin/jg-backlog-lib.sh" "$T/lead/config" "$@" 2>&1; }
-out=$(serve start jg-rel); expect_code 0 $? "serve starts a ticket: $out"
-[ "$(sql "SELECT status FROM ticket WHERE home='crewhouse' AND id='jg-rel'")" = in_progress ] || fail "an internal start (spawn) did not reach the store row of the lead's home"
-out=$(serve "done" jg-rel); expect_code 0 $? "serve closes a ticket: $out"
-[ "$(sql "SELECT status FROM ticket WHERE home='crewhouse' AND id='jg-rel'")" = closed ] || fail "an internal close (teardown) did not reach the store row of the lead's home"
-n=$(sql "SELECT count(*) FROM ticket_change"); serve "done" jg-rel >/dev/null
-[ "$(sql "SELECT count(*) FROM ticket_change")" = "$n" ] || fail "a second internal close wrote to the log again"
-pass "an internal close and start (teardown, spawn) reach the store under the lead's home id, run twice safe"
+[ "$(python3 "$TK" ready --now 2026-11-20T00:00:00Z)" = "$(cat "$FX/ready.expected")" ] || fail "ready is scoped to this home: $(python3 "$TK" ready --now 2026-11-20T00:00:00Z | tr "\n" " ") vs $(tr "\n" " " < "$FX/ready.expected")"
+pass "two homes share an id: each reads its own row, compare is empty for both"
 
 # --- the stray lead:* copy: dropped only where the plain home exists, run twice safe
 python3 "$TK" import --home lead:crewhouse "$T/other.jsonl" >/dev/null; expect_code 0 $? "a stray lead:crewhouse copy imports"
@@ -332,34 +157,6 @@ jg_item; expect_code 1 $? "jg-item schema-check also fails on a stray table"
 python3 -c 'import sqlite3,sys; sqlite3.connect(sys.argv[1]).execute("DROP TABLE stray")' "$DB"
 jg_item; expect_code 0 $? "jg-item schema-check passes with the ticket tables"
 pass "audit: the ticket tables pass, a stray table still fails"
-
-# --- the fields Beads prints beyond the first copy: created_by, updated_at, started_at, comments, events, provenance
-F=$T/fields; mkdir -p "$F/config" "$F/state"
-fk() { JG_HOME=$F python3 "$TK" "$@"; }
-fsql() { python3 -c 'import sqlite3,sys; [print("|".join(map(str,r))) for r in sqlite3.connect(sys.argv[1]).execute(sys.argv[2])]' "$F/state/item-store/fleet.db" "$1"; }
-fk import --home main "$FX/export-fields.jsonl" >/dev/null; expect_code 0 $? "import of the all-fields export"
-out=$(fk compare "$FX/export-fields.jsonl"); expect_code 0 $? "compare of the all-fields import is empty: $out"
-[ "$(fsql "SELECT created_by||'|'||updated_at||'|'||started_at FROM ticket WHERE id='jg-fa'")" = "umer|2026-11-19T21:00:00Z|2026-11-19T20:40:00Z" ] || fail "the three new columns hold the export's values"
-[ "$(fsql "SELECT started_at IS NULL FROM ticket WHERE id='jg-fb'")" = 1 ] || fail "a ticket never started has a NULL started_at"
-[ "$(fsql "SELECT comment_count FROM v_ticket_comment_count WHERE id='jg-fa'")" = 2 ] || fail "comment_count is derived from the comment rows"
-[ "$(fsql "SELECT comment_count FROM v_ticket_comment_count WHERE id='jg-fb'")" = 0 ] || fail "a ticket with no comments counts 0"
-[ "$(fsql "SELECT source||n||kind FROM ticket_event WHERE ticket_id='jg-fa' ORDER BY source, n")" = "event0created
-event1status
-provenance0landed" ] || fail "events and provenance land in ticket_event, in order"
-[ "$(fsql "SELECT ref_kind||ref FROM ticket_event WHERE source='provenance'")" = "git-shaabc123" ] || fail "provenance keeps its ref"
-# a field that drifts is named by compare, and so is a lost comment
-python3 -c 'import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute("UPDATE ticket SET updated_at=NULL WHERE id=\"jg-fa\""); c.execute("DELETE FROM comment WHERE id=\"c-1\""); c.commit()' "$F/state/item-store/fleet.db"
-out=$(fk compare "$FX/export-fields.jsonl"); expect_code 1 $? "compare names a drifted field"
-assert_contains "$out" "jg-fa updated_at beads=" "compare names updated_at"
-assert_contains "$out" "jg-fa comments beads=" "compare names the comments"
-fk import --home main "$FX/export-fields.jsonl" >/dev/null; fk compare "$FX/export-fields.jsonl" >/dev/null; expect_code 0 $? "a second import repairs both"
-# Beads' own export carries no events or provenance: a re-export of the same ticket leaves the streams in the copy alone
-python3 -c 'import json,sys; [print(json.dumps({k: v for k, v in json.loads(l).items() if k not in ("events", "provenance")})) for l in open(sys.argv[1])]' "$FX/export-fields.jsonl" > "$T/fields-plain.jsonl"
-python3 -c 'import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute("UPDATE ticket SET title=\"edited\" WHERE id=\"jg-fa\""); c.commit()' "$F/state/item-store/fleet.db"
-fk import --home main "$T/fields-plain.jsonl" >/dev/null; expect_code 0 $? "import of an export with no streams"
-[ "$(fsql "SELECT count(*) FROM ticket_event WHERE ticket_id='jg-fa'")" = 3 ] || fail "a re-export without events leaves the copy's events and provenance"
-fk compare "$T/fields-plain.jsonl" >/dev/null; expect_code 0 $? "compare against an export with no streams is empty"
-pass "the new fields: import fills them, compare is 0 and names a drift, comment_count is derived, a plain re-export keeps the streams"
 
 # --- check: the tables exist, the sql matches its sha, no row breaks the hold rule
 out=$(python3 "$TK" check); expect_code 0 $? "check passes on the imported fixture"

@@ -1009,10 +1009,9 @@ main_inventory_json() {  # <backlog-json-file> <tasks-json-file>
 # This mode never reads parent events or terminal text and never aggregates
 # nested squad_leads.
 # The count of tickets this home can start, as JSON: a number, null when the store
-# did not answer within its limit (not known), or "legacy" for a home with no store.
+# did not answer within its limit (not known).
 spawnable_ready_json() {
   local out
-  [ -r "$CONFIG/beads-dir" ] || { printf '"legacy"\n'; return 0; }
   out=$(JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-backlog.sh" ready --spawnable 2>/dev/null) || { printf 'null\n'; return 0; }
   out=$(printf '%s\n' "$out" | sed -n 's/^count: \([0-9][0-9]*\)$/\1/p' | head -1)
   printf '%s\n' "${out:-null}"

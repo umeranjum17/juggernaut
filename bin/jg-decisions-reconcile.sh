@@ -266,7 +266,7 @@ cmd_check() {
     [ -n "$dry" ] && printf 'reconcile: not due for another %ss; pass --force to run now\n' "$due_after"
     return 0
   fi
-  if [ -z "$dry" ] && [ -s "$JG_HOME/config/beads-dir" ]; then
+  if [ -z "$dry" ]; then
     JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$DATA" \
       "$SCRIPT_DIR/jg-captain-hold.sh" reconcile check || die 'owner-question expiry check failed'
   fi

@@ -688,8 +688,8 @@ fi
 if [ -n "${JG_DATA_OVERRIDE:-}" ]; then
   JG_DATA_OVERRIDE=$(resolve_directory_input JG_DATA_OVERRIDE "$JG_DATA_OVERRIDE") || exit 1
 fi
-# The backlog store is named by config/beads-dir read from here, and a spawn changes directory before that read, so a
-# relative config override is made absolute with the state and data ones.
+# A spawn changes directory before it reads the config, so a relative config override is made absolute with the state and
+# data ones.
 if [ -n "${JG_CONFIG_OVERRIDE:-}" ]; then
   JG_CONFIG_OVERRIDE=$(resolve_directory_input JG_CONFIG_OVERRIDE "$JG_CONFIG_OVERRIDE") || exit 1
 fi
@@ -3359,17 +3359,12 @@ spawn_file_lease() {
 # The ticket belongs to this repository and may start now (core/spawn/cmd/jg-spawn-core/admit.go): its
 # repository label and files, its open edges and the files of the other live lanes. The rows are read here.
 spawn_ticket_admit() {
-  local store scratch admit_rc=0 trunk_ref=
+  local scratch admit_rc=0 trunk_ref=
   # A local-trunk project's files are looked for on its trunk tip, not on the clone's checked-out branch.
   trunk_ref=$(spawn_trunk_branch) || trunk_ref=
-  store=$(tr -d '[:space:]' 2>/dev/null < "$CONFIG/beads-dir") || store=
-  if [ -z "$store" ]; then
-    echo "error: ticket $TICKET's rows could not be read before dispatch: put an absolute BEADS_DIR in $CONFIG/beads-dir" >&2
-    return 1
-  fi
   scratch=$(mktemp -d) || return 1
-  if ! BEADS_DIR=$store "$SCRIPT_DIR/jg-beads.sh" show "$TICKET" --json >"$scratch/ticket" 2>"$scratch/err" \
-    || ! BEADS_DIR=$store "$SCRIPT_DIR/jg-beads.sh" list --status in_progress --limit 0 --json >"$scratch/lanes" 2>>"$scratch/err"; then
+  if ! JG_HOME="$JG_HOME" python3 -I "$SCRIPT_DIR/../core/item-store/adapters/bd_compat.py" show "$TICKET" --json >"$scratch/ticket" 2>"$scratch/err" \
+    || ! JG_HOME="$JG_HOME" python3 -I "$SCRIPT_DIR/../core/item-store/adapters/bd_compat.py" list --status in_progress --limit 0 --json >"$scratch/lanes" 2>>"$scratch/err"; then
     echo "error: ticket $TICKET's rows could not be read before dispatch ($(sed -n '1p' "$scratch/err"))" >&2
     admit_rc=1
   else

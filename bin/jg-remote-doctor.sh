@@ -92,7 +92,6 @@ JG_ROOT="${JG_ROOT_OVERRIDE:-$(CDPATH='' cd "$SCRIPT_DIR/.." && pwd -P)}"
 . "$SCRIPT_DIR/jg-backlog-lib.sh"
 # shellcheck source=bin/jg-remote-herdr-owner-lib.sh
 . "$SCRIPT_DIR/jg-remote-herdr-owner-lib.sh"
-# check_beads_store owns the backlog's own tools (the pinned bd and dolt).
 REQUIRED_TOOLS=(git jq herdr treehouse)
 HARNESS_TOOLS=(claude codex opencode pi pi-signed grok kimi)
 OPTIONAL_TOOLS=(tmux no-mistakes gh)
@@ -739,18 +738,6 @@ check_entrypoint_link() {
     "rerun this command with --fix to create it"
 }
 
-# A home on the Beads backlog needs the pinned bd and dolt on this host, and only a
-# person can install them, so every gap in its store is a human one.
-check_beads_store() {
-  local config=${JG_CONFIG_OVERRIDE:-${JG_HOME:-$JG_ROOT}/config} health
-  if health=$(jg_backlog_beads_health "$config"); then
-    set_check beads-store "ok: $health"
-  else
-    set_check beads-store "human: $health" \
-      'install the bd and dolt builds toolchain.versions pins, then repair the store with jg-beads.sh'
-  fi
-}
-
 run_checks() { # <resolved-login-shell>
   local shell=$1
   CHECK_NAMES=()
@@ -762,7 +749,6 @@ run_checks() { # <resolved-login-shell>
   check_launch_agent "$shell"
   check_herdr_server
   check_entrypoint_link
-  check_beads_store
 }
 
 # --- repairs ----------------------------------------------------------------

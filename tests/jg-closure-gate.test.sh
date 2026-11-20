@@ -28,14 +28,10 @@ json.dump(x,open(p,'w'))
 PY
 if python3 "$ROOT/bin/jg-closure-gate.py" "$P" jg-fix >"$T/out" 2>&1; then fail 'open interval accepted'; fi
 grep -q 'unresolved\|worse' "$T/out" || fail 'interval refusal missing reason'
-if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then fail 'real Beads binaries are required'; fi
 H=$T/home
-mkdir -p "$H/config" "$H/state" "$H/data" "$T/user" "$T/real"
-export BEADS_DIR=$T/real/.beads JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
-unset BEADS_DB BEADS_DOLT_SHARED_SERVER
-printf '%s\n' "$BEADS_DIR" > "$H/config/beads-dir"
+mkdir -p "$H/config" "$H/state" "$H/data" "$T/user"
+printf '%s\n' "$T/unused/.beads" > "$H/config/beads-dir"  # kept until jg-backlog-lib stops asking for it (slice c1); the tables are the store
 : > "$H/config/backlog-intake-loose"
-"$ROOT/bin/jg-beads.sh" init --prefix jg >"$T/init" 2>&1 || fail "store init: $(cat "$T/init")"
 tasks() { env HOME="$T/user" TMPDIR="$T" PATH=/usr/bin:/bin JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" JG_DATA_OVERRIDE="$H/data" JG_CONFIG_OVERRIDE="$H/config" JG_BOOTSTRAP_NETWORK=skip "$ROOT/bin/jg-backlog.sh" "$@"; }
 tasks add jg-fix -l bottleneck-fix 'Fix delivery flow' --body why >/dev/null
 if tasks "done" jg-fix >"$T/out" 2>&1; then fail 'missing source accepted'; fi

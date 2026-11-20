@@ -15,10 +15,9 @@
 #        jg-goal.sh prove <goal-id>
 #        jg-goal.sh proof-failed <goal-id> <exit code or lost>
 #
-# A Goal is a Beads epic labelled `goal` in a small Goal-only store of its own, reached only through
-# bin/jg-beads.sh. The store folder is the absolute BEADS_DIR in `config/goal-beads-dir` (or GOAL_BEADS_DIR),
-# never derived, because a store inside a git clone is refused. The pinned bd and dolt must be in place:
-# when the wrapper refuses, its refusal is printed and nothing falls back to another bd.
+# A Goal is an epic labelled `goal` in this home's tickets tables, reached through
+# core/item-store/adapters/bd_compat.py (JG_GOAL_BEADS_BIN names another program for tests). When the tables refuse,
+# their refusal is printed.
 #
 # declare makes the epic and its five steps, ship, merged, released, running and proven, each blocked by
 # the one before. The epic's metadata.goal holds the ask, the finish line (finish.repo, finish.released,
@@ -52,27 +51,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 JG_ROOT="${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 JG_HOME="${JG_HOME:-$JG_ROOT}"
 DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
-CONFIG="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
-BEADS="${JG_GOAL_BEADS_BIN:-$SCRIPT_DIR/jg-beads.sh}"
+if [ -n "${JG_GOAL_BEADS_BIN:-}" ]; then BEADS=("$JG_GOAL_BEADS_BIN"); else BEADS=(python3 -I "$SCRIPT_DIR/../core/item-store/adapters/bd_compat.py"); fi
 STEPS='ship merged released running proven'
 
 usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
 die() { printf 'jg-goal: %s\n' "$*" >&2; exit 2; }
 
-store() {
-  local dir=${GOAL_BEADS_DIR:-}
-  [ -n "$dir" ] || dir=$(tr -d '[:space:]' < "$CONFIG/goal-beads-dir" 2>/dev/null)
-  [ -n "$dir" ] || die "no Goal store: put an absolute BEADS_DIR in $CONFIG/goal-beads-dir"
-  printf '%s\n' "$dir"
-}
+goalstore() { JG_HOME="$JG_HOME" "${BEADS[@]}" "$@"; }
 
-goalstore() { BEADS_DIR=$BEADS_STORE "$BEADS" "$@"; }
-
-# The wrapper's own refusal, such as a missing pinned tool, is the message: the store has no other way in.
+# The tables' own refusal is the message: the store has no other way in.
 need_store() {
-  BEADS_STORE=$(store) || exit $?
   local out
-  out=$(BEADS_DIR=$BEADS_STORE "$BEADS" check 2>&1) || { printf '%s\n' "$out" >&2; die "the Goal store is not ready"; }
+  out=$(JG_HOME="$JG_HOME" python3 -I "$SCRIPT_DIR/../core/item-store/adapters/tickets.py" check 2>&1) || { printf '%s\n' "$out" >&2; die "the Goal store is not ready"; }
 }
 
 sha_of() { { sha256sum || shasum -a 256; } | cut -d' ' -f1; }

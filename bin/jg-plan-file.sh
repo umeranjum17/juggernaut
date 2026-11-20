@@ -62,8 +62,7 @@ done
 [ -r "$PLAN_FILE" ] || fail "cannot read $PLAN_FILE"
 jq -e 'type == "object"' "$PLAN_FILE" >/dev/null 2>&1 || fail "$PLAN_FILE is not a JSON plan"
 
-STORE=$(jg_backlog_beads_store "$CONFIG_DIR") || exit 2
-bd_() { BEADS_DIR=$STORE "$SCRIPT_DIR/jg-beads.sh" "$@"; }
+bd_() { JG_HOME="$JG_HOME" python3 -I "$SCRIPT_DIR/../core/item-store/adapters/bd_compat.py" "$@"; }
 backlog_() { JG_HOME="$JG_HOME" JG_CONFIG_OVERRIDE="$CONFIG_DIR" "$SCRIPT_DIR/jg-backlog.sh" "$@"; }
 
 PLAN=$(jq -r '.plan // empty' "$PLAN_FILE")

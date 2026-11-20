@@ -21,15 +21,12 @@ jg_proof_minimum_valid_checks() {
   case "$1" in ''|*[!A-Za-z0-9._,/-]*|,*|*,|*,,*) return 1 ;; esac
 }
 
-# jg_proof_minimum_store <config>: the ticket store, or the reason it is missing.
-_jg_proof_minimum_bd() {  # <config> <beads args...>
-  local cfg=$1 lib_dir store
+# One bd call, answered from the tickets tables of the home whose config folder is <config>.
+_jg_proof_minimum_bd() {  # <config> <bd args...>
+  local cfg=$1 lib_dir
   shift
   lib_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-  # shellcheck source=bin/jg-backlog-lib.sh disable=SC1091
-  . "$lib_dir/jg-backlog-lib.sh"
-  store=$(jg_backlog_beads_store "$cfg") || return 2
-  BEADS_DIR=$store "$lib_dir/jg-beads.sh" "$@"
+  JG_HOME="${cfg%/config}" python3 -I "$lib_dir/../core/item-store/adapters/bd_compat.py" "$@"
 }
 
 # jg_proof_minimum_write <config> <ticket> <checks> <named-by>: the one writer of the field.

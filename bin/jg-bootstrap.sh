@@ -19,7 +19,7 @@
 #                 <stamp>>; <n> failed attempt(s) ... last: <recorded failure>",
 #                 "BACKLOG_RECONCILE: <id>: <what this home could not reconcile>",
 #                 "BACKLOG_RECONCILE: code-root <file> is not this home's <file>; ...",
-#                 "BEADS_UNHEALTHY: <why the store failed jg-beads.sh check>",
+#                 "BEADS_UNHEALTHY: <why the tickets tables failed tickets.py check>",
 #                 "TANGLE: <remediation>",
 #                 "JUDGE_MODEL: <the Fable or Opus done-done judge model, where it is set, and the cheap model to set>",
 #                 "SQUAD_LEAD_SYNC: squad_lead <id>: skipped: <reason>",
@@ -884,27 +884,18 @@ bus_release_platform() {
 
 # bus_release_asset <tool>: the pinned asset's URL and the directory it unpacks into.
 bus_release_asset() {
-  local version platform os arch stem ext repo
+  local version platform os arch stem
   version=$(jg_pin_version "$1") || return 1
   platform=$(bus_release_platform) || return 1
   os=${platform% *} arch=${platform#* }
-  # The backlog store: bd's archive holds the binary at its root, dolt's under bin/.
-  [ "$1" != bd ] || {
-    printf 'https://github.com/gastownhall/beads/releases/download/v%s/beads_%s_%s_%s.tar.gz .tar.gz\n' \
-      "$version" "$version" "$os" "$arch"
-    return 0
-  }
   case "$1" in
     # The policy engine ships as one bare binary, not an archive; the second field "-.bin" says so.
     opa)
       stem="opa_${os}_$arch"
       { [ "$os" = darwin ] && [ "$arch" = amd64 ]; } || stem=${stem}_static
       printf 'https://github.com/open-policy-agent/opa/releases/download/v%s/%s -.bin\n' "$version" "$stem"; return 0 ;;
-    dolt) repo=dolthub/dolt; stem="dolt-$os-$arch"; ext=tar.gz ;;
     *) return 1 ;;
   esac
-  printf '%s %s.%s\n' \
-    "https://github.com/$repo/releases/download/v$version/$stem.$ext" "$stem" "$ext"
 }
 
 # The hint a missing-tool line prints: the same two steps the install runs.
@@ -916,14 +907,8 @@ bus_install_hint() {  # <tool>
 }
 
 # bus_tool_install <tool>: download the pinned archive and install the binary.
-# bd and dolt are pinned by binary hash and run only through bin/jg-beads.sh, so a
-# build off its pin never lands and neither one starts here, even for a version.
 bus_tool_install() {
-  local tool=$1 asset url stem ext dir dest tmp out member=$1 want=
-  [ "$tool" != dolt ] || member=bin/dolt
-  if [ "$tool" = bd ] || [ "$tool" = dolt ]; then
-    want=$(jg_pin_sha_want "$tool") || { echo "error: toolchain.versions has no $tool build for this platform" >&2; return 1; }
-  fi
+  local tool=$1 asset url stem ext dir dest tmp out member=$1
   asset=$(bus_release_asset "$tool") || { echo "error: no pinned release for $tool" >&2; return 1; }
   url=${asset% *}
   stem=${asset#* }
@@ -963,14 +948,10 @@ bus_tool_install() {
   if [ ! -f "$tmp/$stem/$member" ]; then
     rm -rf -- "$tmp"; echo "error: $tool is not in $url" >&2; return 1
   fi
-  if [ -n "$want" ] && [ "$(jg_pin_sha_of "$tmp/$stem/$member")" != "$want" ]; then
-    rm -rf -- "$tmp"; echo "error: $url does not hold the pinned $tool" >&2; return 1
-  fi
   mkdir -p "$dir" || { rm -rf -- "$tmp"; return 1; }
   chmod 0755 "$tmp/$stem/$member" || { rm -rf -- "$tmp"; return 1; }
   mv -f -- "$tmp/$stem/$member" "$dest" || { rm -rf -- "$tmp"; return 1; }
   rm -rf -- "$tmp"
-  [ -z "$want" ] || { printf '%s: %s\n' "$tool" "$(jg_pin_version "$tool")"; return 0; }
   printf '%s: %s\n' "$tool" "$("$dest" --version 2>&1 | head -n 1)"
 }
 
