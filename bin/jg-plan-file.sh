@@ -17,17 +17,25 @@
 #   - the plan's row as its parent, so the row is an epic.
 # It then runs `bd swarm validate` on the epic and prints the result.
 #
+# A second run on a plan that is partly filed (a stopped start) files only what is missing:
+#   - a slice already filed under the plan (the same plan_slice) is adopted: nothing is filed for it, `filed <id> as <row>`
+#     goes to stdout as for a new one and `adopted <id> as <row>` to stderr;
+#   - a child row of the plan with no plan_slice and the slice's title is a row a stop left before its fields were set:
+#     its fields are set (`completed <id> as <row>` on stderr) and no second row is made;
+#   - two such rows for one slice are refused, naming both.
+# JG_PLAN_FILE_STOP_AFTER=<n> (a test hook) exits 9 right after the n-th row is added and before its fields are set.
+#
 # Refusals (exit 2, nothing filed; every check runs before the first write):
 #   - a plan that is not JSON, names no plan, or has no slices of --owner;
 #   - a slice with no id, title, project, size or risk, a repeated id, or an empty or blank file list;
 #   - a depends_on entry that is neither a slice of this file filed here nor a row of the store (prose);
 #   - a dependency on a slice of another owner (the gate of a cross-home dependency is a later slice);
 #   - a dependency cycle among the slices;
-#   - a plan row missing from the store, or a slice already filed under it (a second run would duplicate it);
+#   - a plan row missing from the store, or two unfinished rows under it with one slice's title (which one is the slice?);
 #   - in a home with strict intake (no config/backlog-intake-loose), a slice whose title is not 2 to 7 plain words
 #     (bin/jg-backlog-lib.sh jg_backlog_title_refusal) or whose body lacks ## Captain, ## Ask, ## Why, ## Done when
 #     and ## Acceptance Criteria.
-# --dry-run runs the checks and prints what would be filed. `bd swarm validate` failing after the filing
+# --dry-run runs the checks and prints what would be filed, adopted or completed. `bd swarm validate` failing after the filing
 # exits 1 with its output; the rows stay filed and the epic is not safe to start from.
 set -u
 
@@ -125,12 +133,31 @@ if [ "${#ORDER[@]}" -lt "${#_ids[@]}" ]; then
   fail "the slices${stuck} depend on each other in a cycle"
 fi
 
-# The plan's row exists, and none of these slices is filed under it already.
+# The plan's row exists. Each slice is then new, adopted (filed already) or completed (a row a stop left without its fields).
 bd_ show "$PLAN" --json >/dev/null 2>&1 || fail "the plan row $PLAN is not in this store: file it first"
-filed=$(bd_ list --parent "$PLAN" --all --limit 0 --json 2>/dev/null | jq -r '.[]? | (.metadata.plan_slice // empty) + " " + .id') || filed=
+declare -A ROW=() HOW=()
+declare -a BARE_IDS=() BARE_TITLES=()
+while IFS=$'\t' read -r slice_id row_id row_title; do
+  [ -n "$row_id" ] || continue
+  if [ "$slice_id" != - ]; then
+    [ -n "${SEEN[$slice_id]:-}" ] && [ -z "${ROW[$slice_id]:-}" ] && { ROW[$slice_id]=$row_id; HOW[$slice_id]=adopt; }
+  else
+    BARE_IDS+=("$row_id"); BARE_TITLES+=("$row_title")
+  fi
+done < <(bd_ list --parent "$PLAN" --all --limit 0 --json 2>/dev/null | jq -r '.[]? | [(.metadata.plan_slice // "-"), .id, .title] | @tsv')
 for id in "${ORDER[@]}"; do
-  row=$(awk -v s="$id" '$1 == s { print $2; exit }' <<<"$filed")
-  [ -z "$row" ] || fail "slice $id is already filed under $PLAN as $row: a second filing would duplicate it"
+  [ -z "${HOW[$id]:-}" ] || continue
+  title=$(jq -r --arg i "$id" 'select(.id == $i) | .title' <<<"$MINE")
+  matches=()
+  for i in "${!BARE_IDS[@]}"; do
+    [ "${BARE_TITLES[$i]}" != "$title" ] || matches+=("${BARE_IDS[$i]}")
+  done
+  case ${#matches[@]} in
+    0) HOW[$id]=new ;;
+    1) HOW[$id]=complete; ROW[$id]=${matches[0]}
+       for i in "${!BARE_IDS[@]}"; do [ "${BARE_IDS[i]}" != "${matches[0]}" ] || BARE_TITLES[i]=; done ;;
+    *) fail "slice $id: $(printf "%s\n" "${matches[@]}" | sort -V | tr "\n" " ")are rows of $PLAN with the title \"$title\" and no plan_slice, so which one is the slice? close the extra row and file again" ;;
+  esac
 done
 
 # Strict intake files a row only with a plain title and the five body sections; check every slice before the first write.
@@ -148,32 +175,48 @@ fi
 if [ "$DRY" = 1 ]; then
   for id in "${ORDER[@]}"; do
     project=$(jq -r --arg i "$id" 'select(.id == $i) | .project' <<<"$MINE")
-    printf 'would file %s (project:%s), after: %s\n' "$id" "$project" "${DEPS[$id]//$'\n'/ }"
+    case ${HOW[$id]} in
+      adopt|complete) printf 'would %s %s as %s\n' "${HOW[$id]}" "$id" "${ROW[$id]}" ;;
+      *) printf 'would file %s (project:%s), after: %s\n' "$id" "$project" "${DEPS[$id]//$'\n'/ }" ;;
+    esac
   done
   exit 0
 fi
 
-declare -A ROW=()
-for id in "${ORDER[@]}"; do
-  slice=$(jq -c --arg i "$id" 'select(.id == $i)' <<<"$MINE")
-  title=$(jq -r '.title' <<<"$slice")
-  project=$(jq -r '.project' <<<"$slice")
-  sections=$(jq -r '.body // empty' <<<"$slice")
-  body=$(printf '%s\nPlan: %s, slice %s (owner %s).\nFiles: %s' "${sections:-$title}" "$PLAN" "$id" "$OWNER" \
-    "$(jq -r '.files | join(", ")' <<<"$slice")")
-  args=(add --parent "$PLAN" "[feature] $title" --repo "$project" --priority 2 --body "$body" --json)
-  for dep in ${DEPS[$id]}; do args+=(--blocked-by "${ROW[$dep]:-$dep}"); done
-  made=$(backlog_ "${args[@]}") || fail "could not file slice $id: $made"
-  row=$(jq -r '.task.id // .id // empty' <<<"$made")
-  [ -n "$row" ] || fail "could not read the new row of slice $id from: $made"
-  ROW[$id]=$row
+# The fields of a row: its files, the plan's slice id, size, risk and machine.
+set_fields() {  # <slice json> <row> <slice id>
+  local slice=$1 row=$2 id=$3 files newfiles
   files=$(jq -c '[.files[] | sub(" \\(new\\)$"; "")]' <<<"$slice")
   newfiles=$(jq -c '[.files[] | select(endswith(" (new)")) | sub(" \\(new\\)$"; "")]' <<<"$slice")
   bd_ update "$row" --set-metadata "files=$files" --set-metadata "new_files=$newfiles" \
     --set-metadata "plan_slice=$id" --set-metadata "size=$(jq -r .size <<<"$slice")" \
     --set-metadata "risk=$(jq -r .risk <<<"$slice")" --set-metadata "machine=$(jq -r '.machine // ""' <<<"$slice")" \
     >/dev/null 2>&1 || fail "slice $id is filed as $row but its fields could not be set"
-  printf 'filed %s as %s\n' "$id" "$row"
+}
+
+added=0
+for id in "${ORDER[@]}"; do
+  slice=$(jq -c --arg i "$id" 'select(.id == $i)' <<<"$MINE")
+  case ${HOW[$id]} in
+    adopt) printf 'adopted %s as %s\n' "$id" "${ROW[$id]}" >&2 ;;
+    complete) set_fields "$slice" "${ROW[$id]}" "$id"; printf 'completed %s as %s\n' "$id" "${ROW[$id]}" >&2 ;;
+    new)
+      title=$(jq -r '.title' <<<"$slice")
+      project=$(jq -r '.project' <<<"$slice")
+      sections=$(jq -r '.body // empty' <<<"$slice")
+      body=$(printf '%s\nPlan: %s, slice %s (owner %s).\nFiles: %s' "${sections:-$title}" "$PLAN" "$id" "$OWNER" \
+        "$(jq -r '.files | join(", ")' <<<"$slice")")
+      args=(add --parent "$PLAN" "[feature] $title" --repo "$project" --priority 2 --body "$body" --json)
+      for dep in ${DEPS[$id]}; do args+=(--blocked-by "${ROW[$dep]:-$dep}"); done
+      made=$(backlog_ "${args[@]}") || fail "could not file slice $id: $made"
+      row=$(jq -r '.task.id // .id // empty' <<<"$made")
+      [ -n "$row" ] || fail "could not read the new row of slice $id from: $made"
+      ROW[$id]=$row
+      added=$((added + 1))
+      [ "$added" != "${JG_PLAN_FILE_STOP_AFTER:-}" ] || exit 9
+      set_fields "$slice" "$row" "$id" ;;
+  esac
+  printf 'filed %s as %s\n' "$id" "${ROW[$id]}"
 done
 
 if out=$(bd_ swarm validate "$PLAN" 2>&1); then

@@ -1,31 +1,25 @@
 #!/usr/bin/env bash
-# A plan file is filed into this home through bin/jg-plan-file.sh on a real Beads store: a plan of 6 slices of
+# A plan file is filed into this home through bin/jg-plan-file.sh on the home's tickets tables: a plan of 6 slices of
 # this home (and one of another home) is filed with the repository label, one edge for each dependency, the file
 # list as a field and the plan's row as the epic; `ready` lists only the rows with no open edge; `bd swarm
 # validate` passes. A slice with no file list, a dependency that is prose, a dependency across homes, a cycle and
-# a second filing are each refused with nothing filed. JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT name the pinned
-# builds; the suite skips without them.
+# a second filing are each refused with nothing filed. A second filing of the same plan adopts the filed slices and
+# files nothing; a row a stop left without its metadata is completed. Every call runs on the home's tickets tables.
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
-  printf 'skip: real store: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
-  exit 0
-fi
-
 CLI="$ROOT/bin/jg-plan-file.sh" T=$(jg_test_tmproot jg-plan-file)
 H=$T/home
-jg_test_beads_home "$H"
+mkdir -p "$H/config" "$H/state" "$H/data"
 : > "$H/config/backlog-intake-loose"
-mkdir -p "$H/state"
-pass "plan file: the fixture home has its Beads store"  # the runner ends a script whose output stops for its whole bound; each phase prints one line
+pass "plan file: the fixture home has its tickets tables"  # the runner ends a script whose output stops for its whole bound; each phase prints one line
 
 run() {  # <args...>: the command on the fixture home, stdout and stderr together.
   env HOME="$T" TMPDIR="$T" JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" JG_DATA_OVERRIDE="$H/data" \
     JG_CONFIG_OVERRIDE="$H/config" "$CLI" "$@" 2>&1
 }
-bd_() { BEADS_DIR=$(tr -d '[:space:]' < "$H/config/beads-dir") "$ROOT/bin/jg-beads.sh" "$@" 2>/dev/null; }
+bd_() { JG_HOME="$H" python3 -I "$ROOT/core/item-store/adapters/bd_compat.py" "$@" 2>/dev/null; }
 
 # The plan's row and one row that is open already, which a slice may depend on.
 jg_test_add "$H" jg-plan "[feature] The plan"
@@ -94,10 +88,79 @@ ready=$(bd_ ready --limit 0 --json | jq -r '.[].metadata.plan_slice // empty' | 
 [ "$ready" = "A E " ] || fail "ready must list A and E only, got: $ready"
 pass "plan file: ready lists the rows with no open edge"
 
-# A second filing of the same plan is refused and files nothing.
-out=$(run "$T/plan.json" --owner "$mine") && fail "a second filing must be refused"
-assert_contains "$out" "already filed" "the refusal must say it is filed"
+# T1: a whole plan filed twice. The second run adopts every slice: it exits 0, names the same rows and files nothing.
+first=$(run "$T/plan.json" --owner "$mine" --dry-run | tr '\n' ' ')
+assert_contains "$first" "would adopt A as" "the dry run on a filed plan must say adopt, not refuse"
+[ "$(rows)" = $((before + 6)) ] || fail "a dry run on a filed plan must file no row"
+rowmap() { bd_ list --parent jg-plan --all --limit 0 --json | jq -r '.[] | "\(.metadata.plan_slice) \(.id)"' | sort | tr '\n' ' '; }
+map1=$(rowmap)
+out=$(run "$T/plan.json" --owner "$mine") || fail "a second filing must be adopted, not refused: $out"
+[ "$(grep -c '^filed ' <<<"$out")" = 6 ] || fail "one 'filed <id> as <row>' for each slice: $out"
+[ "$(grep -c '^adopted ' <<<"$out")" = 6 ] || fail "each slice must be adopted: $out"
 [ "$(rows)" = $((before + 6)) ] || fail "a second filing must add no row"
+[ "$(rowmap)" = "$map1" ] || fail "a second filing must change no slice's row"
+pass "plan file: a second filing adopted all 6 slices and filed nothing"
+
+# A fresh home for the cases below: the plan, one row of the store, and nothing filed under the plan.
+fresh() {  # <name>: sets H, run and bd_ onto a new home with the plan row and the store row.
+  H=$T/$1
+  mkdir -p "$H/config" "$H/state" "$H/data"
+  : > "$H/config/backlog-intake-loose"
+  jg_test_add "$H" jg-plan "[feature] The plan"
+  jg_test_add "$H" jg-pre "[feature] A row of the store"
+}
+each_once() {  # every slice of the plan is under it exactly once
+  local n
+  for n in A B C D E F; do [ "$(bd_ list --parent jg-plan --all --limit 0 --json | jq --arg s "$n" '[.[] | select(.metadata.plan_slice == $s)] | length')" = 1 ] \
+    || fail "slice $n must be under the plan exactly once"; done
+  [ "$(bd_ list --parent jg-plan --all --limit 0 --json | jq length)" = 6 ] || fail "the plan must hold 6 rows"
+}
+
+# T2: stop and resume. A copy of the plan with 2 slices is filed, then the whole plan: 2 adopted, the rest new.
+fresh resume
+plan "$A" "$B" > "$T/part.json"
+run "$T/part.json" --owner "$mine" >/dev/null || fail "the partial plan must file"
+rowsA=$(bd_ list --parent jg-plan --all --limit 0 --json | jq -r '.[] | select(.metadata.plan_slice == "A") | .id')
+out=$(run "$T/plan.json" --owner "$mine") || fail "the resume: $out"
+[ "$(grep -c '^adopted ' <<<"$out")" = 2 ] || fail "2 slices must be adopted: $out"
+assert_contains "$out" "filed A as $rowsA" "an adopted slice keeps its row"
+each_once
+pass "plan file: a resume adopted the 2 filed slices and filed the other 4 once"
+
+# T3: a half row (the slice's title, no metadata) is completed, and no second row is made.
+fresh half
+jg_test_backlog "$H" add --parent jg-plan "[feature] Slice E" --repo juggernaut --priority 2 --body "half" >/dev/null 2>&1 || fail "the half row"
+half=$(bd_ list --parent jg-plan --all --limit 0 --json | jq -r '.[0].id')
+[ "$(bd_ list --parent jg-plan --all --limit 0 --json | jq -r '.[0].metadata.plan_slice // "none"')" = none ] || fail "the half row has no plan_slice"
+out=$(run "$T/plan.json" --owner "$mine" --dry-run) || fail "dry run: $out"
+assert_contains "$out" "would complete E as $half" "the dry run must say complete"
+out=$(run "$T/plan.json" --owner "$mine") || fail "completing: $out"
+assert_contains "$out" "completed E as $half" "the half row must be completed"
+assert_contains "$out" "filed E as $half" "the completed row is named as filed"
+[ "$(field E '.metadata.plan_slice')" = E ] || fail "the half row must carry its plan_slice"
+[ "$(field E '.metadata.files')" = '["bin/e.sh"]' ] || fail "the half row must carry its files"
+each_once
+pass "plan file: a half row was completed and no second row was made"
+
+# Two half rows with one slice's title: that slice is refused with both ids, and nothing is filed.
+fresh twin
+for _ in 1 2; do jg_test_backlog "$H" add --parent jg-plan "[feature] Slice E" --repo juggernaut --priority 2 --body "half" >/dev/null 2>&1 || fail "a half row"; done
+out=$(run "$T/plan.json" --owner "$mine") && fail "two half rows for one slice must be refused"
+assert_contains "$out" "jg-plan.1 jg-plan.2" "the refusal must name both rows"
+[ "$(bd_ list --parent jg-plan --all --limit 0 --json | jq length)" = 2 ] || fail "a refused slice must file no row"
+pass "plan file: two half rows for one slice are refused with both ids"
+
+# T4: a stop right after a create leaves one row with no plan_slice; the next run completes it and files the rest.
+fresh stop
+out=$(JG_PLAN_FILE_STOP_AFTER=1 run "$T/plan.json" --owner "$mine"); st=$?
+[ "$st" = 9 ] || fail "the stop hook must exit 9, got $st: $out"
+[ "$(bd_ list --parent jg-plan --all --limit 0 --json | jq length)" = 1 ] || fail "the stop must leave one row"
+[ "$(bd_ list --parent jg-plan --all --limit 0 --json | jq -r '.[0].metadata.plan_slice // "none"')" = none ] || fail "the stopped row must have no plan_slice"
+out=$(run "$T/plan.json" --owner "$mine") || fail "the resume after a stop: $out"
+assert_contains "$out" "completed A as" "the stopped row must be completed"
+assert_contains "$out" "validate passed" "validate must pass after the resume"
+each_once
+pass "plan file: a stop after a create was resumed, each slice under the plan once"
 
 # A plan owned by nobody here is refused.
 out=$(run "$T/plan.json" --owner nobody) && fail "an owner with no slice must be refused"
