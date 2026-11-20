@@ -5,9 +5,9 @@
 #        jg-backlog.sh --help
 #
 # Every routine juggernaut backlog read or mutation goes through this command. It serves
-# `show`, `view`, `list`, `questions` (the owner's open questions: `--ticket <id>`, `--due`, `--all`, `--json`), `ready`, `ready --spawnable` (the tickets this home can start now, bin/jg-backlog-spawnable.sh, ended at 10 seconds with exit 124), `approve-dispatch`, `markdown`, `homes --json` (every home and its store, `"remote": true` for a lead on another machine, bin/jg-backlog-homes.sh), `tree --homes` (one tree across every home, bin/jg-backlog-tree.py), `add`, `update`, `done`, `block`, `unblock`,
-# `start`, `task`, `reopen`, `hold`, `unhold`, `on-report`, `public-followup`, `relink`, `retag` and `compare` (below) from the store that
-# `config/beads-dir` names (bin/jg-backlog-lib.sh); any other verb exits 2 with nothing
+# `show`, `view`, `list`, `questions` (the owner's open questions: `--ticket <id>`, `--due`, `--all`, `--json`), `ready`, `ready --spawnable` (the tickets this home can start now, bin/jg-backlog-spawnable.sh, ended at 10 seconds with exit 124), `approve-dispatch`, `markdown`, `homes --json` (every home and its directory, `"remote": true` for a lead on another machine, bin/jg-backlog-homes.sh), `tree --homes` (one tree across every home, bin/jg-backlog-tree.py), `add`, `update`, `done`, `block`, `unblock`,
+# `start`, `task`, `reopen`, `hold`, `unhold`, `on-report`, `public-followup`, `relink`, `retag` and `compare` (below) from the ticket tables
+# (bin/jg-backlog-lib.sh); any other verb exits 2 with nothing
 # run. A relative value of `--to` or any `--*-file` flag (`--body-file`, ...) is made
 # absolute against the caller's working directory. Hold reasons are plain text.
 #
@@ -16,7 +16,6 @@
 #
 # Refusals (exit 2, nothing run):
 #   - a caller-supplied --file, because this command owns the addressing;
-#   - a home with no store named in `config/beads-dir` (bin/jg-backlog-lib.sh owns that diagnostic);
 #   - `add` (or its `create` alias) with --start, so neither spelling places a row In
 #     flight without the dispatch artifacts bin/jg-spawn.sh creates - the task record,
 #     status file, and inbox that go with the row (`start <id>` stays a documented
@@ -39,8 +38,8 @@
 #   - `add` (or `create`) whose item is not filed as fields: the title must read as plain words
 #     (bin/jg-backlog-lib.sh's jg_backlog_title_refusal: 2 to 7 words, at most 48 characters, no id, [tag], URL or
 #     path, and no plan code such as J20d-3 or mf-m2 at the front (the code goes in the body; bin/jg-retitle.py renames the old ones); a leading type tag is still taken as input and stored as the label), the call must carry --priority 0 to 3
-#     (an owner ask gets 0), and bd checks the body for the sections of lint.sections.task (`jg-beads.sh init` sets
-#     Captain, Ask, Why and Done when; bd's own task rule adds Acceptance Criteria) with `create --validate`. The
+#     (an owner ask gets 0), and the tables check the body for the sections of lint.sections.task (Captain, Ask, Why and Done when;
+#     the task rule adds Acceptance Criteria) with `create --validate`. The
 #     local presence flag config/backlog-intake-loose in this home turns the check off;
 #   - `add`/`create` of a [captain-ask] item with a --priority other than 0, or
 #     `update`/`edit` that would set one on a [captain-ask] row (or retitle a
@@ -63,13 +62,8 @@
 # task id goes is resolved to its slug first, `show` prints the key under the id, `list --keys`
 # puts each row's key first, and a successful `add` keys the new ticket when the home has a
 # registered prefix.
-# One engine (expand phase): when the main home has `config/one-engine`, each successful Beads write of any writer (jg_backlog_beads_write: this command, spawn, teardown, the captain-hold scripts, handoff and receive) is copied into the
-# ticket tables of the host's item store (core/item-store/adapters/tickets.py write); a failed copy prints one
-# `jg-backlog: one-engine copy: ...` line and never fails the Beads write. `compare` runs `bd export` and lists each
-# difference between Beads and that copy, one line each (exit 1 when any). Reads stay on Beads, unless the main home has
-# `config/one-engine-read`: then `show`, `view`, `list`, `ready`, `markdown`, `questions` and `tree` answer from those tables
-# in the same text, each read also asks Beads, and a different answer opens one `intake` item on Main naming both
-# (removing the flag returns every read to Beads). `homes` reads files, not Beads, so it is the same on both paths.
+# The ticket tables of the host's item store are the one store (core/item-store/adapters/tickets.py): every read verb answers from them. `compare` lists each
+# difference between a fresh export of the tables and the copy the item store keeps (exit 1 when any). `homes` reads files, not the tables.
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
 [ "$_jg_d" != "${BASH_SOURCE[0]}" ] || _jg_d=.
@@ -213,23 +207,8 @@ done
 ARGS=(${_jg_keyed[@]+"${_jg_keyed[@]}"})
 unset _jg_keyed _jg_arg _jg_slug
 key_tool() { JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$TICKET_KEY" "$@"; }
-# One engine (read phase): with the main home's config/one-engine-read every read verb answers from the ticket tables
-# (core/item-store/adapters/tickets.py read), asks Beads too, and a different answer opens one intake item on Main.
-one_engine_read() {
-  local home=$JG_HOME n=0 parent
-  while [ "$n" -lt 8 ]; do
-    parent=$(sed -n 's/^parent_home=//p' "$(jg_compat_parent_marker "$home")" 2>/dev/null | head -n 1)
-    [ -n "$parent" ] || break
-    home=$parent; n=$((n + 1))
-  done
-  [ -e "$home/config/one-engine-read" ]
-}
 beads_read() {
-  if one_engine_read; then
-    JG_HOME="$JG_HOME" python3 "$JG_ROOT/core/item-store/adapters/tickets.py" read ${ARGS[@]+"${ARGS[@]}"} --shadow
-  else
-    jg_backlog_beads_read "$JG_HOME/config" ${ARGS[@]+"${ARGS[@]}"}
-  fi
+  JG_HOME="$JG_HOME" python3 "$JG_ROOT/core/item-store/adapters/tickets.py" read ${ARGS[@]+"${ARGS[@]}"}
 }
 # approve-dispatch <id> --harness <h> --model <m> --effort <e>: the lead's or the owner's yes that the dispatch check
 # (core/auto-dispatch) may start this ticket by itself, on that route. It writes state/dispatch-approved/<id>, the only
@@ -285,13 +264,11 @@ case "${1:-}" in
   markdown|questions) beads_read; exit $? ;;
   homes) exec "$SCRIPT_DIR/jg-backlog-homes.sh" "${ARGS[@]:1}" ;;
   tree)
-    if one_engine_read; then JG_HOME="$JG_HOME" exec python3 "$JG_ROOT/core/item-store/adapters/tickets.py" tree "${ARGS[@]:1}"; fi
-    exec python3 "$SCRIPT_DIR/jg-backlog-tree.py" "${ARGS[@]:1}" ;;
+    JG_HOME="$JG_HOME" exec python3 "$JG_ROOT/core/item-store/adapters/tickets.py" tree "${ARGS[@]:1}" ;;
   compare)
     [ "${#ARGS[@]}" -eq 1 ] || fail "compare takes no argument"
-    _jg_store=$(jg_backlog_beads_store "$JG_HOME/config") || exit 2
     _jg_exp=$(mktemp) || fail "no scratch file"
-    if ! JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-beads.sh" export > "$_jg_exp"; then rm -f -- "$_jg_exp"; fail "bd export failed"; fi
+    if ! jg_backlog_bd "$JG_HOME" export > "$_jg_exp"; then rm -f -- "$_jg_exp"; fail "the export failed"; fi
     JG_HOME="$JG_HOME" python3 "$JG_ROOT/core/item-store/adapters/tickets.py" compare "$_jg_exp"; _jg_rc=$?
     rm -f -- "$_jg_exp"; exit "$_jg_rc" ;;
   add|create|update|edit|done|close|block|unblock|start|task|reopen|hold|unhold|on-report|public-followup|relink|retag|moment|wait|ticket-stage|ticket-drift|times|trace|beat|reclaim) ;;

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """jg-beads-view.py - render bd rows in the read shape the backlog prints.
 
-Usage: jg-beads.sh list --all --limit 0 --json | jg-beads-view.py <list|ready|show|view|markdown|links> [args...]
+Usage: bd_compat.py list --all --limit 0 --json | jg-beads-view.py <list|ready|show|view|markdown|links> [args...]
 
 Reads stdin only, for bin/jg-backlog-lib.sh's jg_backlog_beads_read, and never starts bd.
 Beads answers ready and blocked: when JG_BEADS_READY names a file holding `bd ready --json`, ready prints exactly those rows in bd's order,
@@ -32,6 +32,8 @@ import os
 import re
 import sys
 
+# The one command every helper runs for a bd call: core/item-store/adapters/bd_compat.py answers it from the ticket tables of JG_HOME.
+BD = [sys.executable, "-I", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "core", "item-store", "adapters", "bd_compat.py")]
 STATE = {"closed": "done"}
 HELD = {"on_hold", "blocked", "deferred"}
 CORE = {"decision": "captain"}

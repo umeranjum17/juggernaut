@@ -2,16 +2,14 @@
 # Backlog store access for every script that reads or writes this home's backlog.
 # Usage: . bin/jg-backlog-lib.sh
 #
-# The backlog is this home's Beads store, named by the absolute BEADS_DIR in
-# `config/beads-dir`. jg_backlog_beads_read owns every read, jg_backlog_beads_write owns
+# The backlog is this home's rows in the ticket tables of fleet.db. jg_backlog_beads_read owns every read, jg_backlog_beads_write owns
 # add, update, done, block, unblock, start, reopen, hold, unhold, relink, retag and the
 # stage, take and drop a handoff moves rows with, and bin/jg-backlog.sh serves those
-# verbs and refuses every other one. There is no other backend and no fallback: a
-# home with no store named reports that, and its caller stops.
+# verbs and refuses every other one. There is no other backend and no fallback.
 
-# Reads through bin/jg-beads.sh, the only way bd runs; bin/jg-beads-view.py owns the
-# field mapping. bd's stderr carries routine warnings, so it surfaces only on failure.
-# The store path is never derived, because a store inside a home's git clone is refused.
+# Reads go through core/item-store/adapters/bd_compat.py, which answers each bd call from the tables; bin/jg-beads-view.py owns the
+# field mapping. A call names its home by JG_HOME, the parent of its config directory.
+# jg_backlog_beads_store stays for the callers outside this file that still ask whether a home names a store (slices c2 to c7 and s10 retire them).
 jg_backlog_beads_store() {  # <config_dir>: prints the BEADS_DIR, or refuses.
   local store
   store=$(tr -d '[:space:]' 2>/dev/null < "$1/beads-dir") || store=
@@ -20,6 +18,11 @@ jg_backlog_beads_store() {  # <config_dir>: prints the BEADS_DIR, or refuses.
     return 2
   fi
   printf '%s\n' "$store"
+}
+
+# One bd call, answered from <home>'s rows in the ticket tables.
+jg_backlog_bd() {  # <home> <bd verb> [args...]
+  JG_HOME=$1 python3 -I "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../core/item-store/adapters/bd_compat.py" "${@:2}"
 }
 
 # The task id of a ticket: its id with every dot made a dash (jg-x.1 gives jg-x-1, jg-x.1.1 gives jg-x-1-1).
@@ -90,25 +93,23 @@ jg_backlog_title_refusal() {  # <title>
   return 1
 }
 
-# The backlog as markdown lines, rendered from the store.
+# The backlog as markdown lines, rendered from the tables.
 jg_backlog_text() {  # <config_dir> [<backlog_file>]
   jg_backlog_beads_read "$1" markdown
 }
 
-# The start checks' one line on this home's store: the summary of `jg-beads.sh check`, or why it failed.
+# The start checks' one line on this home's tables: the summary of `tickets.py check`, or why it failed.
 jg_backlog_beads_health() {  # <config_dir>
-  local bin_dir store out rc=0
-  store=$(jg_backlog_beads_store "$1" 2>&1) || { printf '%s\n' "$store"; return 2; }
-  bin_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-  out=$(JG_HOME="${1%/*}" "$bin_dir/jg-beads.sh" check 2>&1) || rc=$?
+  local root out rc=0
+  root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+  out=$(JG_HOME="${1%/*}" python3 -I "$root/core/item-store/adapters/tickets.py" check 2>&1) || rc=$?
   printf '%s\n' "${out##*$'\n'}"
   return "$rc"
 }
 
 jg_backlog_beads_write() {  # <config_dir> <a verb of bin/jg-beads-write.py> [args...]
-  local bin_dir store
+  local bin_dir
   local config=$1 row labels id
-  store=$(jg_backlog_beads_store "$config") || return 2
   shift
   bin_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
   case "${1:-}" in
@@ -122,9 +123,7 @@ jg_backlog_beads_write() {  # <config_dir> <a verb of bin/jg-beads-write.py> [ar
           "$bin_dir/jg-closure-proof.sh" "$id" | python3 "$bin_dir/jg-closure-gate.py" - "$id" || return 1 ;;
       esac ;;
   esac
-  BEADS_DIR=$store JG_HOME="${config%/*}" python3 "$bin_dir/jg-beads-write.py" "$@" || return $?
-  # Every writer comes through here, so none leaves the copy behind (stage only reads).
-  [ "${1:-}" = stage ] || jg_backlog_one_engine_copy "$config" "$@"
+  JG_HOME="${config%/*}" python3 "$bin_dir/jg-beads-write.py" "$@"
 }
 
 # The rows a read needs, as bd's JSON. Sets `one` (the id a fast show fetched) and `open` (a listing left its closed rows out) for the caller.
@@ -139,7 +138,7 @@ jg_backlog_beads_rows() {  # <home> <bin_dir> <err_file> <verb> [args...]: print
   case "$verb" in
     show|view)
       for word in "$@"; do case "$word" in -*) ;; *) id=$word ;; esac; done
-      if [ -n "$id" ] && out=$(JG_HOME=$home "$bin_dir/jg-beads.sh" show "$id" --json 2>>"$err") \
+      if [ -n "$id" ] && out=$(jg_backlog_bd "$home" show "$id" --json 2>>"$err") \
         && one=$(printf '%s' "$out" | python3 "$bin_dir/jg-beads-view.py" --one "$id" 2>/dev/null); then
         printf 'partial' >"$err.mode"
         printf '%s' "$one"
@@ -155,10 +154,10 @@ jg_backlog_beads_rows() {  # <home> <bin_dir> <err_file> <verb> [args...]: print
     return 0
   fi
   if [ -n "$open" ]; then
-    JG_HOME=$home "$bin_dir/jg-beads.sh" list --status open,in_progress,on_hold,blocked,deferred --limit 0 --include-gates --json 2>>"$err"
+    jg_backlog_bd "$home" list --status open,in_progress,on_hold,blocked,deferred --limit 0 --include-gates --json 2>>"$err"
     return
   fi
-  out=$(JG_HOME=$home "$bin_dir/jg-beads.sh" list --all --limit 0 --include-gates --json 2>>"$err") || return
+  out=$(jg_backlog_bd "$home" list --all --limit 0 --include-gates --json 2>>"$err") || return
   [ -z "$snap" ] || { printf '%s' "$out" >"$snap.$$" && mv -f -- "$snap.$$" "$snap"; } 2>/dev/null
   printf '%s' "$out"
 }
@@ -167,8 +166,7 @@ jg_backlog_beads_rows() {  # <home> <bin_dir> <err_file> <verb> [args...]: print
 # `bd ready` first, because that call wakes a dated hold whose day has come and the listing must show it awake.
 # A list asks `bd blocked` only when it shows blocked rows or the blocked fields, because the call costs about 0.3 s.
 jg_backlog_beads_read() {  # <config_dir> <show|view|list|ready|markdown|links|questions> [args...]
-  local bin_dir store home err rows rc=0 scratch word repo="" want_ready="" want_blocked="" partial=""
-  store=$(jg_backlog_beads_store "$1") || return 2
+  local bin_dir home err rows rc=0 scratch word repo="" want_ready="" want_blocked="" partial=""
   home=${1%/*}
   shift
   bin_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -184,10 +182,10 @@ jg_backlog_beads_read() {  # <config_dir> <show|view|list|ready|markdown|links|q
       case "$word" in --repo=*) repo=${word#--repo=} ;; --repo) repo=- ;; *) [ "$repo" = - ] && repo=$word ;; esac
     done
     [ "$repo" = - ] && repo=""
-    JG_HOME=$home "$bin_dir/jg-beads.sh" ready --limit 0 --json ${repo:+--label "project:$repo"} >"$scratch/ready" 2>"$err" || rc=$?
+    jg_backlog_bd "$home" ready --limit 0 --json ${repo:+--label "project:$repo"} >"$scratch/ready" 2>"$err" || rc=$?
   fi
   if [ "$rc" -eq 0 ] && [ -n "$want_blocked" ]; then
-    JG_HOME=$home "$bin_dir/jg-beads.sh" blocked --json >"$scratch/blocked" 2>"$err" || rc=$?
+    jg_backlog_bd "$home" blocked --json >"$scratch/blocked" 2>"$err" || rc=$?
   fi
   if [ "$rc" -eq 0 ]; then
     rows=$(jg_backlog_beads_rows "$home" "$bin_dir" "$err" "$@") || rc=$?
@@ -201,20 +199,6 @@ jg_backlog_beads_read() {  # <config_dir> <show|view|list|ready|markdown|links|q
   rm -f -- "$scratch/ready" "$scratch/blocked" "$scratch/err" "$scratch/err.mode"
   rmdir -- "$scratch"
   return "$rc"
-}
-
-# One engine (header of bin/jg-backlog.sh): the write a home just made to Beads, copied into the item store's ticket tables under
-# that home's id. Every writer calls this after its own write, so no path leaves the copy behind. A failed copy prints one line and
-# never fails the Beads write.
-jg_backlog_one_engine_copy() {  # <config_dir> <verb> [args...]
-  local config=$1 home root copy
-  shift
-  home=${config%/*}
-  root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-  copy=$(JG_HOME="$home" BEADS_DIR=$(jg_backlog_beads_store "$config") \
-    python3 "$root/core/item-store/adapters/tickets.py" write "$@" --source "jg-backlog:$$:$(date +%s%N)" 2>&1) \
-    || printf 'jg-backlog: one-engine copy: %s\n' "$(printf '%s' "$copy" | head -n 1)" >&2
-  return 0
 }
 
 # One verb, read or write, for bin/jg-backlog-transition-lib.sh's row calls (spawn start, teardown close) and the captain-hold scripts.

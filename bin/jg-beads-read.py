@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """jg-beads-read.py - the read facts the ticket adapter needs from a Beads store, each proved in data/ta-j1-beads-facts/facts.md.
 
-Usage: BEADS_DIR=<store>/.beads jg-beads-read.py rev <id>...
-       BEADS_DIR=<store>/.beads jg-beads-read.py list [--after <id>] [--limit <1-500>]
-       BEADS_DIR=<store>/.beads jg-beads-read.py show <id>...
-       BEADS_DIR=<store>/.beads jg-beads-read.py board <closed-since|--all>
-       BEADS_DIR=<store>/.beads jg-beads-read.py history <id>
+Usage: jg-beads-read.py rev <id>...
+       jg-beads-read.py list [--after <id>] [--limit <1-500>]
+       jg-beads-read.py show <id>...
+       jg-beads-read.py board <closed-since|--all>
+       jg-beads-read.py history <id>
 
-It only reads, and every call goes through bin/jg-beads.sh (JG_BEADS_SH names another wrapper), never bd or dolt directly.
+It only reads, and every call goes through core/item-store/adapters/bd_compat.py, which answers from the ticket tables of JG_HOME.
 rev prints one `<id><TAB><rev>` line per id; a missing id is refused. bd's own `revision` moves on every write to the row but not on a
 label, dependency, parent or comment write, so rev is a 16-hex digest of that revision with the labels, the edges both ways and the
 comment count. Compare it for equality only.
@@ -33,7 +33,7 @@ import datetime
 
 sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.abspath(__file__))
-WRAPPER = os.environ.get("JG_BEADS_SH") or os.path.join(HERE, "jg-beads.sh")
+BD = [sys.executable, "-I", os.path.join(HERE, "..", "core", "item-store", "adapters", "bd_compat.py")]
 IDENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 MAX_PAGE = 500
 DEFAULT_PAGE = 50
@@ -52,7 +52,7 @@ def ident(value):
 
 def run(args, fail_code=None, absent=None):
     """The wrapper's stdout. A failure whose output contains `absent` is a ticket that is not there, so it returns "[]" for show to name."""
-    done = subprocess.run([WRAPPER] + args, capture_output=True, text=True)
+    done = subprocess.run(BD + args, capture_output=True, text=True)
     if done.returncode != 0 and absent and absent in done.stdout + done.stderr:
         return "[]"
     if done.returncode != 0:
@@ -83,7 +83,7 @@ def utc(epoch):
 
 
 def stamp(value):
-    """A stored time in dolt's own board form (UTC, whole seconds, a Z), or None."""
+    """A stored time in the board's form (UTC, whole seconds, a Z), or None."""
     if not value:
         return None
     when = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -134,7 +134,7 @@ def table_history(con, row):
 
 def table_starts(con):
     """incarnations' cells from ticket_change: the claims and handoffs of each ticket, as a start is each change that names another tool, model or effort
-    than the change before it: [ticket, kind, time, tool, model, effort, kind], a missing word as NULL, as dolt prints it."""
+    than the change before it: [ticket, kind, time, tool, model, effort, kind], a missing word as NULL, as the board prints it."""
     cells, was = [], {}
     for c in con.execute("select at, id, row from ticket_change where home = ? and row is not null order by seq", (con.home,)):
         meta = json.loads(json.loads(c["row"]).get("metadata") or "{}")

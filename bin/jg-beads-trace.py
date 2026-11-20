@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """jg-beads-trace.py - the adapter verb that writes a ticket's provenance: the event first, then the moment on the row.
 
-Usage: BEADS_DIR=<store> jg-beads-write.py trace <ticket or task>
-       BEADS_DIR=<store> jg-beads-write.py trace landing <ticket or task> <commit>
-       BEADS_DIR=<store> jg-beads-write.py trace record <ticket or task> <kind> <ref-kind> <ref> --source <source> [--at <RFC3339 or epoch seconds>] [--payload <JSON>] [--once]
+Usage: jg-beads-write.py trace <ticket or task>
+       jg-beads-write.py trace landing <ticket or task> <commit>
+       jg-beads-write.py trace record <ticket or task> <kind> <ref-kind> <ref> --source <source> [--at <RFC3339 or epoch seconds>] [--payload <JSON>] [--once]
 
 trace <ticket> only reads: it prints one line of eight tab-separated columns, key, title, filed by, worker, commits, state, decision and
 evidence, each `-` when the row holds none. Filed by is created_by; worker is the assignee (the agent name); commits are the git-sha refs of
