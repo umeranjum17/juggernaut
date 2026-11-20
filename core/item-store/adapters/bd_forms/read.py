@@ -229,10 +229,7 @@ def list_like(verb, f):
         if verb == "list" and not f.pos:
             return "", 2
         raise NotSupported(verb + " without --json")
-    store = Store()
-    if verb == "list" and not store.tickets():      # bd printed nothing at all for a store that holds no ticket
-        return "", 0
-    return dumps(rendered(store, f, verb)) + "\n", 0
+    return dumps(rendered(Store(), f, verb)) + "\n", 0      # no row prints [], as bd's --limit 0 answer did: a reader parses it
 
 
 def show(f):

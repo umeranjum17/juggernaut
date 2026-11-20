@@ -20,7 +20,7 @@ bin/jg-backlog.sh in the same call that writes Beads when the main home has conf
                                                          questions and view are also subcommands of their own name.
                                                          --shadow also asks Beads and, when the two answers differ, opens
                                                          intake:main/tickets-differ-<verb>-<epoch> naming both
-  tickets.py spawnable                                    bin/jg-backlog-spawnable.sh's query on the tables: one `<id>\t<project:label>` line per
+  tickets.py spawnable                                    bin/jg-backlog-spawnable.sh's read of the tables: one `<id>\t<project:label>` line per
                                                          startable row and project label (open, not blocked, not a decision card, no assignee or
                                                          hold reason, no open card linked either way)
   tickets.py tree --homes                                 bin/jg-backlog-tree.py over the tables instead of each Beads store
@@ -34,7 +34,7 @@ bin/jg-backlog.sh in the same call that writes Beads when the main home has conf
   tickets.py compare <bd export jsonl>                    each id whose fields, labels, metadata keys or links differ, one
                                                          line `<id> <field> beads=<v> copy=<v>`; exit 1 when any
 JG_NOW (an ISO time) replaces the clock for ready's dated holds, in tests. A ticket is keyed (home, id). Every read is scoped to the home JG_HOME names; a cross-home read names home:id.
-JG_HOME names this home (the store is the main home's state/item-store/fleet.db). Exit 0 ok, 1 refused or a difference, 3 spawnable with no config/one-engine-read,
+JG_HOME names this home (the store is the main home's state/item-store/fleet.db). Exit 0 ok, 1 refused or a difference,
 2 usage. Python stdlib only."""
 import json, os, re, sqlite3, subprocess, sys, time
 
@@ -475,8 +475,6 @@ def cmd_read(a):
 
 def cmd_spawnable(a):
     h = home()
-    if not os.path.exists(os.path.join(itemdb.main_home(h), "config", "one-engine-read")):
-        return 3
     con = open_tickets(h).con
     card = """(%s.issue_type = 'decision' OR coalesce(json_extract(%s.metadata, '$.kind'), '') = 'captain'
               OR instr(%s.title, '[design-ux]') > 0 OR EXISTS (SELECT 1 FROM json_each(%s.labels) WHERE value = 'design-ux'))"""
