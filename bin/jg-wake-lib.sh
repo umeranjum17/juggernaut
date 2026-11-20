@@ -713,7 +713,7 @@ jg_lock_beat() {  # <lockdir>
 jg_lock_set_role() {
   local lockdir=$1 role=$2 current pid back
   case "$role" in
-    autoarm|terminal-check|task-spawn|forced-teardown) : ;;
+    autoarm|terminal-check|task-spawn|task-spawn-join|forced-teardown) : ;;
     *) return 1 ;;
   esac
   jg_current_pid current || return 1
@@ -1759,6 +1759,83 @@ jg_task_set_lock_path() {  # <state-dir>
   [ -n "$state" ] || return 1
   case "$state" in *[$'\n\r\t']*) return 1 ;; esac
   printf '%s/.task-set.lock\n' "$state"
+}
+
+# The lock above only has to order a fresh spawn against a forced teardown; two spawns never need to exclude each other. A spawn
+# therefore JOINS the task set: it takes the lock for an instant, records itself in <lock>.joined/<task-id>, and lets go, so any
+# number of spawns pass at once. The forced teardown still takes the lock alone, and refuses while a live entry is recorded
+# (jg_task_set_live_joiners). An entry names the joiner's pid and start time, so a spawn that died without leaving is dropped.
+# mkdir-based like every lock here: no flock, so macOS keeps working.
+
+# The start time of a process, as a stable token: field 22 of /proc/<pid>/stat (read after the last ')', since the command name may
+# hold spaces), or `ps -o lstart=` where /proc is absent. Empty when the process is gone.
+jg_task_set_pid_start() {  # <pid>
+  local pid=$1 stat rest
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  if [ -r "/proc/$pid/stat" ]; then
+    stat=$(cat "/proc/$pid/stat" 2>/dev/null) || return 1
+    rest=${stat##*) }
+    # shellcheck disable=SC2086 # Split the stat fields on purpose.
+    set -- $rest
+    [ "$#" -ge 20 ] || return 1
+    printf '%s\n' "${20}"
+  else
+    ps -o lstart= -p "$pid" 2>/dev/null | sed 's/^ *//;s/ *$//'
+  fi
+}
+
+# jg_task_set_join <lock> <task-id>: 0 when joined, 75 when a forced teardown holds the set or the wait ran out.
+jg_task_set_join() {
+  local lock=$1 id=$2 wait=${JG_TASK_SET_JOIN_WAIT:-30} start deadline now pid_start
+  case "$wait" in ''|*[!0-9]*) wait=30 ;; esac
+  case "$id" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
+  jg_epoch_seconds_to start
+  deadline=$((start + wait))
+  while :; do
+    if jg_lock_try_acquire "$lock"; then
+      pid_start=$(jg_task_set_pid_start "$$") || pid_start=
+      if [ -n "$pid_start" ] && jg_lock_set_role "$lock" task-spawn-join \
+        && mkdir -p -- "$lock.joined" \
+        && printf 'pid=%s\nstart=%s\n' "$$" "$pid_start" > "$lock.joined/$id" 2>/dev/null; then
+        jg_lock_release "$lock" || true
+        return 0
+      fi
+      rm -f -- "$lock.joined/$id" 2>/dev/null || true
+      jg_lock_release "$lock" || true
+      return 1
+    fi
+    [ "$(jg_lock_role "$lock" 2>/dev/null || true)" = forced-teardown ] && return 75
+    jg_epoch_seconds_to now
+    [ "$now" -lt "$deadline" ] || return 75
+    sleep 0.2
+  done
+}
+
+# jg_task_set_leave <lock> <task-id>: drop this task's entry; never fails.
+jg_task_set_leave() {
+  local lock=$1 id=$2
+  case "$id" in ''|*[!A-Za-z0-9._-]*) return 0 ;; esac
+  rm -f -- "$lock.joined/$id" 2>/dev/null || true
+  return 0
+}
+
+# jg_task_set_live_joiners <lock>: the ids whose joiner is still running, one per line; the entries of the others are removed.
+jg_task_set_live_joiners() {
+  local lock=$1 entry id pid start now_start
+  for entry in "$lock.joined"/*; do
+    [ -f "$entry" ] || continue
+    id=${entry##*/}
+    pid=$(sed -n 's/^pid=//p' "$entry" 2>/dev/null | head -n 1)
+    start=$(sed -n 's/^start=//p' "$entry" 2>/dev/null | head -n 1)
+    now_start=
+    case "$pid" in ''|*[!0-9]*) ;; *) kill -0 "$pid" 2>/dev/null && now_start=$(jg_task_set_pid_start "$pid" 2>/dev/null || true) ;; esac
+    if [ -n "$now_start" ] && [ "$now_start" = "$start" ]; then
+      printf '%s\n' "$id"
+    else
+      rm -f -- "$entry" 2>/dev/null || true
+    fi
+  done
+  return 0
 }
 
 # The top-most juggernaut home reachable from this one on THIS machine, used as

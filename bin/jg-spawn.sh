@@ -1150,20 +1150,14 @@ spawn_remote_squad_lead() {
     [ -z "$remote_recorded_traceparent" ] || echo "traceparent=$remote_recorded_traceparent"
   } >"$tmp"
   if ! jg_backlog_atomic_transition publish "$tmp" "$meta" "task record" "$STATE"; then
-    if [ "$SPAWN_TASK_SET_LOCK_HELD" = 1 ]; then
-      SPAWN_TASK_SET_LOCK_HELD=0
-      jg_lock_release "$SPAWN_TASK_SET_LOCK" || true
-    fi
+    spawn_task_set_release || true
     jg_lock_release "$remote_lock" || true
     jg_lock_release "$registry_lock" || true
     jg_lock_release "$SPAWN_TASK_LOCK" || true
     echo "error: remote squad_lead $id launched, but its task record could not be published ($JG_BACKLOG_TRANSITION_ERROR)" >&2
     return 1
   fi
-  if [ "$SPAWN_TASK_SET_LOCK_HELD" = 1 ]; then
-    SPAWN_TASK_SET_LOCK_HELD=0
-    jg_lock_release "$SPAWN_TASK_SET_LOCK"
-  fi
+  spawn_task_set_release
   jg_lock_release "$remote_lock" || true
   jg_lock_release "$registry_lock" || true
   jg_lock_release "$SPAWN_TASK_LOCK" || true
@@ -1199,6 +1193,18 @@ SPAWN_META_PUBLISH_STARTED=0
 SPAWN_FRESH_COMMIT_PENDING=0
 SPAWN_TASK_SET_LOCK=
 SPAWN_TASK_SET_LOCK_HELD=0
+SPAWN_TASK_SET_JOINED=0
+# Let go of this spawn's place in the task set: the lock itself when the liveness recovery holds it, the joined entry otherwise.
+spawn_task_set_release() {
+  if [ "$SPAWN_TASK_SET_JOINED" = 1 ]; then
+    SPAWN_TASK_SET_JOINED=0
+    jg_task_set_leave "$SPAWN_TASK_SET_LOCK" "$ID"
+  fi
+  if [ "$SPAWN_TASK_SET_LOCK_HELD" = 1 ]; then
+    SPAWN_TASK_SET_LOCK_HELD=0
+    jg_lock_release "$SPAWN_TASK_SET_LOCK"
+  fi
+}
 SPAWN_TREEHOUSE_PROJECT_LOCK=
 SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=0
 SPAWN_SLOT_CLAIMED=0
@@ -1390,10 +1396,7 @@ spawn_abort_cleanup() {
     SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=0
     jg_lock_release "$SPAWN_TREEHOUSE_PROJECT_LOCK" || true
   fi
-  if [ "$SPAWN_TASK_SET_LOCK_HELD" = 1 ]; then
-    SPAWN_TASK_SET_LOCK_HELD=0
-    jg_lock_release "$SPAWN_TASK_SET_LOCK" || true
-  fi
+  spawn_task_set_release || true
   if [ "$SPAWN_CONTROL_LOCK_HELD" = 1 ]; then
     SPAWN_CONTROL_LOCK_HELD=0
     jg_lock_release "$SPAWN_CONTROL_LOCK" || true
@@ -1698,8 +1701,10 @@ if [ "$RELAUNCH" -eq 0 ]; then
   # already covered by that task's control lock, which the teardown preflight
   # tests.
   #
-  # Refusing rather than waiting is the fail-closed direction: the home may be
-  # moments from removal, so there is nothing worth waiting for.
+  # Spawns do not exclude each other: a fresh spawn JOINS the set (jg_task_set_join takes the lock for an instant and
+  # records itself in <lock>.joined/<id>) and leaves it once its record is published or it exits. A forced teardown takes the
+  # lock alone and refuses while a live entry exists. A spawn that finds a forced teardown holding the set defers at once
+  # (the home may be moments from removal); one that finds another operation holding it waits JG_TASK_SET_JOIN_WAIT seconds.
   SPAWN_TASK_SET_LOCK=$(jg_task_set_lock_path "$STATE") || {
     echo "error: could not resolve the task-set lock for $STATE" >&2
     exit 1
@@ -1708,16 +1713,17 @@ if [ "$RELAUNCH" -eq 0 ]; then
   # itself is unchanged and waiting (bounded) for a sibling recovery's short
   # publication hold keeps the teardown guarantee above while sibling
   # recoveries serialize instead of refusing each other. Every other fresh
-  # spawn still refuses rather than waits.
+  # spawn joins the set as described above.
   SPAWN_TASK_SET_RC=0
   if [ "$KIND" = squad_lead ] && [ "${JG_SQUAD_LEAD_LIVENESS_RECOVERY:-0}" = 1 ]; then
     jg_lock_acquire_wait_bounded "$SPAWN_TASK_SET_LOCK" 600 || SPAWN_TASK_SET_RC=$?
   else
-    jg_lock_try_acquire "$SPAWN_TASK_SET_LOCK" || SPAWN_TASK_SET_RC=$?
+    jg_task_set_join "$SPAWN_TASK_SET_LOCK" "$ID" || SPAWN_TASK_SET_RC=$?
+    [ "$SPAWN_TASK_SET_RC" -ne 0 ] || SPAWN_TASK_SET_JOINED=1
   fi
   if [ "$SPAWN_TASK_SET_RC" -ne 0 ]; then
     case "$(jg_lock_role "$SPAWN_TASK_SET_LOCK" 2>/dev/null || true)" in
-      task-spawn) SPAWN_TASK_SET_HOLDER="another spawn" ;;
+      task-spawn|task-spawn-join) SPAWN_TASK_SET_HOLDER="another spawn" ;;
       forced-teardown) SPAWN_TASK_SET_HOLDER="a forced teardown" ;;
       *) SPAWN_TASK_SET_HOLDER="another operation" ;;
     esac
@@ -1726,12 +1732,14 @@ if [ "$RELAUNCH" -eq 0 ]; then
     echo "deferred: this home's task set is locked by $SPAWN_TASK_SET_HOLDER; task $ID was not created and stays queued rather than racing it" >&2
     exit 75
   fi
-  if ! jg_lock_set_role "$SPAWN_TASK_SET_LOCK" task-spawn; then
-    jg_lock_release "$SPAWN_TASK_SET_LOCK" || true
-    echo "error: could not record task-set lock holder for spawn of $ID" >&2
-    exit 1
+  if [ "$SPAWN_TASK_SET_JOINED" != 1 ]; then
+    if ! jg_lock_set_role "$SPAWN_TASK_SET_LOCK" task-spawn; then
+      jg_lock_release "$SPAWN_TASK_SET_LOCK" || true
+      echo "error: could not record task-set lock holder for spawn of $ID" >&2
+      exit 1
+    fi
+    SPAWN_TASK_SET_LOCK_HELD=1
   fi
-  SPAWN_TASK_SET_LOCK_HELD=1
   spawn_refuse_if_away_spend_cap
   spawn_require_relocated_queued_work
 fi
@@ -5358,13 +5366,9 @@ if [ "$SPAWN_TREEHOUSE_PROJECT_LOCK_HELD" = 1 ]; then
   SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=0
   jg_lock_release "$SPAWN_TREEHOUSE_PROJECT_LOCK"
 fi
-if [ "$SPAWN_TASK_SET_LOCK_HELD" = 1 ]; then
-  # The record is published, so this task is now part of the set a teardown
-  # enumerates and locks per task. The set lock is only needed across that
-  # publication.
-  SPAWN_TASK_SET_LOCK_HELD=0
-  jg_lock_release "$SPAWN_TASK_SET_LOCK"
-fi
+# The record is published, so this task is now part of the set a teardown
+# enumerates and locks per task. The set is only needed across that publication.
+spawn_task_set_release
 "$SCRIPT_DIR/jg-home-summary-refresh.sh" --best-effort || true
 [ "$BACKEND" = orca ] && ORCA_ABORT_CLEANUP=0
 

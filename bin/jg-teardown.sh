@@ -2166,7 +2166,7 @@ preflight_juggernaut_home_process_events() {
 }
 
 preflight_juggernaut_home_process_event_tree() {
-  local home=$1 label=$2 sub_state child_meta child_kind child_home child_wt child_id
+  local home=$1 label=$2 sub_state child_meta child_kind child_home child_wt child_id joiners
   sub_state="$home/state"
   if [ -d "$sub_state" ]; then
     for child_meta in "$sub_state"/*.meta; do
@@ -2220,6 +2220,14 @@ collect_descendant_task_locks() {
   if ! jg_lock_set_role "$task_set_lock" forced-teardown; then
     jg_lock_release "$task_set_lock" || true
     echo "REFUSED: squad_lead home $home could not record its task-set lock holder; forced teardown changed nothing" >&2
+    return 1
+  fi
+  # Fresh spawns do not hold the lock while they publish; they join the set (jg_task_set_join) and leave once their record
+  # is published. A live joiner is a task about to appear, so this teardown refuses rather than race it.
+  joiners=$(jg_task_set_live_joiners "$task_set_lock" | paste -sd, -)
+  if [ -n "$joiners" ]; then
+    jg_lock_release "$task_set_lock" || true
+    echo "REFUSED: squad_lead home $home is publishing a task right now ($joiners); forced teardown changed nothing" >&2
     return 1
   fi
   DESCENDANT_LOCK_PATHS+=("$task_set_lock")
