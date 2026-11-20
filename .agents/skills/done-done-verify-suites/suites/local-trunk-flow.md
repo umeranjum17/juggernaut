@@ -23,3 +23,5 @@ The tick starts its verify in its own unit: `bash tests/jg-trunk-unit.test.sh` (
 The queue journey also proves that the landing check does not admit a lane when the task machine reports rework.
 
 The automatic release is chosen for each project: `bash tests/jg-trunk-autorelease.test.sh` and `bash tests/jg-trunk-publish.test.sh` (the same journey runs them) drive the real `publish`, `autorelease` and landing check; only a project whose line in `config/trunk-release-waiver` carries `scope=autorelease` (written by `jg-trunk.sh waiver <project> --rule <id> --autorelease`) has its batches pushed and moved to main by itself, and a plain `--release` waiver pushes nothing (screen: none).
+
+A trunk branch the home has no record of: `bash tests/jg-trunk-init-existing.test.sh` (the trunk-landing journey runs it) removes a home's trunk record while the branch stays in the shared clone: `jg-trunk.sh init` refuses with the cause and changes nothing, and the landing check reports the refusal once, never again while the cause stands (screen: none).

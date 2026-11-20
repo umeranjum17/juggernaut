@@ -891,6 +891,8 @@ cmd_init() {
   local base=${2-} vb r
   open_project "${1-}"
   [ ! -e "$STATE/trunk-tip-$PN" ] || die "trunk for $PN already exists"
+  # A clone another home also uses can hold the trunk branch while this home has no record of it: the branch is that home's, never recreated here.
+  rev "refs/heads/$TRUNK" >/dev/null && die "branch $TRUNK already exists in $PROJ but this home has no record of it (state/trunk-tip-$PN): another home that shares the clone owns that trunk, or this record was lost; init never overwrites it"
   if [ -z "$base" ]; then
     base=HEAD; vb=$(jg_current_version_branch "$PROJ" || true)
     for r in ${vb:+"origin/$vb" "$vb"}; do if rev "$r" >/dev/null; then base=$r; break; fi; done

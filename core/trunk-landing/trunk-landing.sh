@@ -391,7 +391,11 @@ for proj in "$FMH"/projects/*; do
   if git -C "$proj" rev-parse --git-dir >/dev/null 2>&1 && commits=$(git -C "$proj" rev-list --all --max-count=1 2>/dev/null) && [ -z "$commits" ]; then continue; fi
   jg_lock_try_acquire "$STATE/.trunk-init-$pn.lock" || continue
   if [ ! -e "$STATE/trunk-tip-$pn" ]; then
-    init_out=$(JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" init "$proj" 2>&1) || { [ -n "$QUIET" ] || printf 'trunk-landing: %s\n' "$init_out"; }
+    # A refused init repeats every tick until its cause is fixed, so a refusal is reported when it first appears or changes, never again.
+    if init_out=$(JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" init "$proj" 2>&1); then rm -f -- "$MEM/.init-refused-$pn"
+    elif [ "$init_out" != "$(cat "$MEM/.init-refused-$pn" 2>/dev/null)" ]; then
+      printf '%s\n' "$init_out" > "$MEM/.init-refused-$pn"; [ -n "$QUIET" ] || printf 'trunk-landing: %s\n' "$init_out"
+    fi
   fi
   jg_lock_release "$STATE/.trunk-init-$pn.lock"
 done
