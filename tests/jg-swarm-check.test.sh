@@ -125,8 +125,9 @@ printf 'off\n' > "$L/config/auto-dispatch"; printf '9\n' > "$L/config/lane-targe
 check "a changed switch: no restore line" "$(chk "$L")" ""
 check "a changed switch stays" "$(cat "$L/config/auto-dispatch")" off
 check "a changed lane target stays" "$(cat "$L/config/lane-target")" 9
-# an unreadable home is named on stderr and skipped
-mkdir -p "$T/broken/data/swarm/jg-plan" "$T/broken/config"
+# an unreadable home is named on stderr and skipped: its ticket store is not a database (a home with no store reads as empty)
+mkdir -p "$T/broken/data/swarm/jg-plan" "$T/broken/config" "$T/broken/state/item-store"
+printf 'not a database\n' > "$T/broken/state/item-store/fleet.db"
 cp "$P/swarm.json" "$T/broken/data/swarm/jg-plan/swarm.json"; jq '.state = "running"' "$P/swarm.json" > "$T/broken/data/swarm/jg-plan/swarm.json"
 jq --arg h "$T/broken" '.main_home = $h | .owner_homes.main = $h' "$P/plan.json" > "$T/broken/data/swarm/jg-plan/plan.json"
 check "an unreadable home is skipped" "$(env JG_HOME="$T/broken" JG_SWARM_NOW="$now" "$CHECK" check "$T/broken" 2> "$T/err")" ""

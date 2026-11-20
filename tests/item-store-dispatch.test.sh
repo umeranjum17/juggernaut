@@ -179,10 +179,10 @@ exec(sys.argv[3])
 PY
 }
 
-# the switch off: the spawn writes no store
+# the switch off: the spawn writes no store row (fleet.db is there already: it holds the ticket tables)
 spawn jg-ds0
 eq spawn-switch-off-exit-0 "$rc" "0"
-eq spawn-switch-off-no-store "$(find "$HD/state" -name fleet.db 2>/dev/null | wc -l)" "0"
+eq spawn-switch-off-no-store "$(sq2 "SELECT (SELECT count(*) FROM item) + (SELECT count(*) FROM move) + (SELECT count(*) FROM cursor) + (SELECT count(*) FROM policy)")" "0"
 
 # the switch on, a policy row for the fixture project with one lane: the check opens the dispatch; the spawn closes it, opens the work
 : > "$HD/config/item-store"
