@@ -129,7 +129,7 @@ captain_ask_parent_sig() {  # <ticket> <ref>; prints the parent home's HMAC, els
     || { CAPTAIN_ASK_PARENT_NOTE="the main home $parent did not answer the approval check; the ticket waits on Main"; return 1; }
 }
 
-captain_ask_approved_ref() {  # <ticket> <show-output>; prints the ref of the first line that verifies
+captain_ask_own_ref() {  # <ticket> <show-output>; prints the ref of the first line of the row's own body that verifies
   local key="${STATE:?}/captain-approval.key" ref sig want
   while read -r ref sig; do
     [ -n "$ref" ] || continue
@@ -137,6 +137,45 @@ captain_ask_approved_ref() {  # <ticket> <show-output>; prints the ref of the fi
     if want=$(captain_ask_parent_sig "$1" "$ref") && [ "$sig" = "$want" ]; then printf '%s\n' "$ref"; return 0; fi
   done < <(printf '%s\n' "$2" | grep -Eo 'approved-by-captain: [A-Za-z0-9._:-]+ sig=[0-9a-f]{64}' | sed -E 's/^approved-by-captain: ([^ ]+) sig=/\1 /')
   return 1
+}
+
+# A workflow step row (core/workflows/set.py) that builds from a report names the owner step that gates it: `plan-approved-on: <A>`.
+# The row rests on the yes of A and no other: every row R that A's metadata `wf_approved_row` names (comma separated; a council
+# that stands in for the owner step), else A itself, must have the same `parent:` line as the building row and carry an
+# approved-by-captain line that verifies for R's own id. One hop: R's own plan-approved-on is never followed. A row that cannot
+# be read is a refusal naming it. The metadata is not in a card, so it is read through the tables' own command.
+captain_ask_body_line() {  # <show-output> <key>; prints the value of the first `<key>: <value>` line of the decoded body
+  captain_ask_body "$1" | sed -nE "s/^[[:space:]]*$2:[[:space:]]*([A-Za-z0-9._-]+)[[:space:]]*\$/\1/p" | head -1
+}
+
+captain_ask_plan_ref() {  # <ticket> <show-output>; prints the ref of the yes the gate row rests on
+  local gate parent rows='' r rshow ref first=''
+  gate=$(captain_ask_body_line "$2" plan-approved-on)
+  [ -n "$gate" ] || return 1
+  declare -F jg_backlog_row_show >/dev/null && [ -n "${DATA:-}" ] || return 1
+  parent=$(captain_ask_body_line "$2" parent)
+  [ -n "$parent" ] || return 1
+  if ! rshow=$(jg_backlog_row_show "$(jg_backlog_data_absolute "$DATA")" "$gate" --full); then
+    echo "approval: the plan row $gate that $1 names cannot be read" >&2
+    return 1
+  fi
+  rows=$(JG_HOME="${JG_HOME:-}" python3 -I "${SCRIPT_DIR:?}/../core/item-store/adapters/bd_compat.py" show "$gate" --json 2>/dev/null \
+    | jq -r '.[0].metadata.wf_approved_row // ""' 2>/dev/null | tr ',' ' ')
+  [ -n "${rows// /}" ] || rows=$gate
+  for r in $rows; do
+    if ! rshow=$(jg_backlog_row_show "$(jg_backlog_data_absolute "$DATA")" "$r" --full); then
+      echo "approval: the plan row $r that $1 rests on cannot be read" >&2
+      return 1
+    fi
+    [ "$(captain_ask_body_line "$rshow" parent)" = "$parent" ] || return 1
+    ref=$(captain_ask_own_ref "$r" "$rshow") || return 1
+    [ -n "$first" ] || first=$ref
+  done
+  printf '%s\n' "$first"
+}
+
+captain_ask_approved_ref() {  # <ticket> <show-output>; prints the ref of the yes the row rests on: its own line, else its gate row's
+  captain_ask_own_ref "$1" "$2" || captain_ask_plan_ref "$1" "$2"
 }
 
 captain_ask_build_approved() {  # <ticket> <show-output>; 0 when a line in the body verifies
@@ -226,7 +265,8 @@ guard_captain_ask_build() {  # <ticket>; refuses an unapproved build, else names
     printf 'approval: %s starts on %s\n' "$1" "$basis" >&2
     return 0
   fi
-  if printf '%s\n' "$show" | grep -Eq 'born-from: *(recon|plan)([^A-Za-z]|$)'; then
+  # A row that names its gate (plan-approved-on:) rests on that owner step's yes, never on its parent's.
+  if printf '%s\n' "$show" | grep -Eq 'born-from: *(recon|plan)([^A-Za-z]|$)' && [ -z "$(captain_ask_body_line "$show" plan-approved-on)" ]; then
     # The parent is the row's parent-child edge, which the card prints; a body line is the fallback.
     parent=$(printf '%s\n' "$show" | sed -nE 's/^  parent:[[:space:]]*([A-Za-z0-9._-]+)[[:space:]]*$/\1/p' | head -1)
     [ -n "$parent" ] || parent=$(captain_ask_body "$show" | sed -nE 's/^[[:space:]]*parent:[[:space:]]*([A-Za-z0-9._-]+)[[:space:]]*$/\1/p' | head -1)
