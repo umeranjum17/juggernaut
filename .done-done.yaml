@@ -235,6 +235,10 @@ journeys:
   project-state-map:
     tier: local
     command: bash core/project-state-map/run-proof.sh
+  report-writer:
+    tier: local
+    command: bash core/report-writer/run-proof.sh
+    timeout: 20m
   status-digest:
     tier: local
     command: bash journeys/status-digest.sh

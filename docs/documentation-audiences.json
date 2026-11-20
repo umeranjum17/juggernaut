@@ -1032,6 +1032,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "core/report-writer/README.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "core/report-actions/tests/fixtures/recorded-report.md",
       "audience": "maintainer-verification"
     },
