@@ -26,7 +26,7 @@ The tier is a property of the harness surface, not of the home.
 
 | Tier | What the adapter does | Used by |
 | --- | --- | --- |
-| Run | Executes `bin/jg-session-start.sh` through the native session-open adapter and gates its ordered digest into model context before the first turn. | Claude, `codex exec`, Pi / pi-signed, omp, Cursor |
+| Run | Executes `bin/jg-session-start.sh` through the native session-open adapter and gates its ordered digest into model context before the first turn. | Claude, `codex exec`, Pi / pi-signed, omp, Cursor, agy |
 | Nudge | Asks the agent to run the digest through the native adapter or the tracked session-start instruction. | Grok, OpenCode, and run-tier sources routed to the nudge |
 
 Codex's interactive TUI has no tracked session-open, compaction, or re-emit channel and is not covered by either tier.
@@ -43,6 +43,7 @@ Codex's interactive TUI has no tracked session-open, compaction, or re-emit chan
 | Grok | Nudge | [Grok](#grok) |
 | Cursor | Run | [Cursor](#cursor) |
 | omp | Run | [omp](#omp) |
+| agy | Run | [agy](#agy) |
 | Cursor compaction | Uncovered | [Cursor compaction](#cursor-compaction) |
 
 ### Why the run tier exists
@@ -342,6 +343,14 @@ So this path is intentionally fail-open and cannot use the run tier.
 Grok's guaranteed-loading alternative is a global token-guarded hook like the pattern used by `bin/jg-spawn.sh`.
 That alternative expands trust and writes outside this repository.
 So Juggernaut never installs it or grants folder trust automatically.
+
+### agy
+
+agy is a run-tier harness for a new conversation.
+`.agents/hooks.json` registers a `SessionStart` hook that runs `bin/jg-sessionstart-agy.sh`, which calls `bin/jg-sessionstart-run.sh --source startup` and prints the digest as one `injectSteps` system message.
+agy runs the hook as its own direct child before the first model call, so the session lock names the agy process and the digest is in context for the first turn (verified 1.5.11).
+The payload has no source field and agy fires the event only for a new conversation, so clear, compaction, and resume have no tracked channel.
+agy loads the workspace's hooks only for a trusted folder, and a prompt queued at launch (`--prompt-interactive`) runs before the trust answer loads them, so start plain `agy` and answer the trust dialog before the first message.
 
 ### Cursor
 

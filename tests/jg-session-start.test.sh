@@ -2949,6 +2949,80 @@ EOF
   pass "session start emits the omp block and reports omp extension load state"
 }
 
+test_agy_takes_the_lock_and_gets_its_supervision_block() {
+  local rec root home fakebin out block_count
+  rec=$(new_world agy-supervision-block)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_harness "$fakebin" agy
+
+  out=$(JG_FAKE_HARNESS=agy run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  [ -s "$home/state/.lock" ] || fail "an agy primary must take the session lock"
+  assert_not_contains "$out" "Lock: read-only" "an agy primary must not be left read-only"
+  block_count=$(printf '%s\n' "$out" | grep -c '^SUPERVISION OPERATING INSTRUCTIONS - primary harness:')
+  [ "$block_count" -eq 1 ] || fail "expected exactly one supervision block, got $block_count"
+  assert_contains "$out" "SUPERVISION OPERATING INSTRUCTIONS - primary harness: agy" "agy supervision block missing"
+  assert_contains "$out" "Mode: agy background-task supervision." "agy snippet missing from session start"
+  pass "session start takes the lock for an agy primary and emits the agy block"
+}
+
+# The lock's harness walk with real processes and no stub: a shell whose process
+# name is exactly agy is the session, and a look-alike name is never claimed.
+test_agy_session_lock_walk_matches_the_exact_name_only() {
+  local dir name found probe
+  dir="$TMP_ROOT/agy-lock-walk"
+  mkdir -p "$dir"
+  # shellcheck disable=SC2016 # expanded by the probe shell, not here
+  probe='. "$1"; printf "%s %s\n" "$PPID" "$(jg_harness_ancestry_pid || echo none)"'
+  for name in agy agyd xagy; do
+    ln -sf "$(command -v bash)" "$dir/$name"
+    # The trailing `:` keeps the named shell alive as the probe's parent.
+    # shellcheck disable=SC2016 # expanded by the named shell, not here
+    found=$(env -u CLAUDECODE -u PI_CODING_AGENT -u JG_PI_HARNESS -u GROK_AGENT \
+      "$dir/$name" -c 'bash -c "$1" _ "$2"; :' _ "$probe" "$ROOT/bin/jg-session-lock-lib.sh")
+    case "$name" in
+      agy) [ "${found#* }" = "${found%% *}" ] || fail "the walk did not stop at the agy process (named-shell walk-result: $found)" ;;
+      *) [ "${found#* }" != "${found%% *}" ] || fail "the walk claimed a process named $name (named-shell walk-result: $found)" ;;
+    esac
+  done
+  pass "the session-lock walk finds a process named agy and never agyd or xagy"
+}
+
+# The tracked agy SessionStart registration, run the way agy runs it (`sh -c`
+# from .agents/, a direct child of the agy process) with real processes and no
+# stub `ps`: the run-tier chain puts agy eleven parents above the harness probe,
+# so this pins that both the lock walk and harness detection still reach it.
+test_agy_sessionstart_hook_takes_the_helm_through_the_real_chain() {
+  local rec root home fakebin dir out cmd agy_pid digest
+  rec=$(new_world agy-sessionstart-hook)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  : > "$root/AGENTS.md"
+  mkdir -p "$root/bin"
+  dir=${root%/root}/agy-shell
+  mkdir -p "$dir"
+  ln -sf "$(command -v bash)" "$dir/agy"
+  cmd=$(jq -r '[.[].SessionStart // empty | .[].command] | first // empty' "$ROOT/.agents/hooks.json")
+  [ -n "$cmd" ] || fail "the tracked .agents/hooks.json registers no SessionStart command"
+  # shellcheck disable=SC2016 # expanded by the agy-named shell, not here
+  out=$(cd "$ROOT/.agents" && printf '{}' \
+    | env -u CLAUDECODE -u PI_CODING_AGENT -u JG_PI_HARNESS -u GROK_AGENT \
+      JG_HOME="$home" JG_ROOT_OVERRIDE="$root" PATH="$fakebin:$BASE_PATH" \
+      "$dir/agy" -c 'printf "%s\n" "$$" > "$2"; sh -c "$1"; :' _ "$cmd" "$dir/agy.pid")
+  agy_pid=$(cat "$dir/agy.pid")
+  assert_equals "$agy_pid" "$(head -1 "$home/state/.lock" 2>/dev/null)" "the session lock must name the agy process"
+  digest=$(printf '%s' "$out" | jq -r '.injectSteps[0].systemMessage.systemMessage' 2>/dev/null)
+  [ -n "$digest" ] || fail "the hook must print one injectSteps system message, got: $(printf '%s' "$out" | head -c 300)"
+  assert_contains "$digest" "SUPERVISION OPERATING INSTRUCTIONS - primary harness: agy" "the digest must name agy, not unknown"
+  assert_contains "$digest" "Mode: agy background-task supervision." "the digest must carry the agy protocol"
+  pass "the agy SessionStart registration takes the lock as agy and injects the agy digest through the real process chain"
+}
+
 test_omp_diagnostic_accepts_prelock_loaded_marker() {
   local rec root home fakebin out holder_pid
   rec=$(new_world omp-prelock-loaded-marker)
@@ -3126,6 +3200,9 @@ test_pi_diagnostic_rejects_handoff_generation_marker
 test_pi_diagnostic_accepts_prelock_loaded_marker
 test_omp_supervision_block_and_diagnostic
 test_omp_diagnostic_accepts_prelock_loaded_marker
+test_agy_takes_the_lock_and_gets_its_supervision_block
+test_agy_session_lock_walk_matches_the_exact_name_only
+test_agy_sessionstart_hook_takes_the_helm_through_the_real_chain
 test_pi_diagnostic_rejects_missing_turnend_guard_marker
 test_pi_diagnostic_rejects_previous_session_loaded_marker
 test_runtime_bound_truncates_loudly_and_exits_zero

@@ -41,7 +41,7 @@ Squad Leads: your contract is the first block of `bin/jg-session-start.sh`. Work
 - Run `bin/jg-session-start.sh` once at session start (confirm the digest is present; run-tier harnesses run it, others only nudge: `docs/sessionstart-nudge.md`). Read the whole digest and trust it.
 - If the session lock cannot be verified, report the diagnostic and stay read-only: no spawn, steer, merge, wake drain or other fleet mutation.
 - No `NETWORK CHECKS` item has passed until `bin/jg-startup-network.sh report` says so. Load `session-start-recovery` or `bootstrap-diagnostics` for unfinished checks or diagnostic lines.
-- Load `harness-adapters` before every spawn or recovery. Dispatch only on a verified adapter (`claude`, `codex`, `opencode`, `pi`, `pi-signed`, `grok`, `kimi`, `cursor`, `omp`; `muse`, `gemini`, `rovo`, `agy`, `devin` for operators and Recon only); report any other.
+- Load `harness-adapters` before every spawn or recovery. Dispatch only on a verified adapter (`claude`, `codex`, `opencode`, `pi`, `pi-signed`, `grok`, `kimi`, `cursor`, `omp`, `agy` (no Squad Lead); `muse`, `gemini`, `rovo`, `devin` for operators and Recon only); report any other.
 - Only the captain changes a worker account pin (`config/claude-account`, `config/pi-account`); on refusal report the needed login, never edit the file.
 - Load `task-dispatch` at every intake and before choosing a profile or backend, writing a brief, or spawning or steering a worker. Load `quota-array-dispatch` before choosing among a profile array.
 - A missing dependency, authentication failure, unsupported backend, or version refusal is a blocker; never silently retry on another backend.

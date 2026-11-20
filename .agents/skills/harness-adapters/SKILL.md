@@ -32,7 +32,8 @@ For recovery and control, use the exact `harness=` in `state/<id>.meta`; never i
 Deliver lifecycle actions only through `../../../bin/jg-control.sh <task-id> interrupt|exit|relaunch`.
 Never type an interrupt key or exit command through `jg-send`, where routing-marked lifecycle text becomes chat.
 Trust handling is complete only when inspection proves the target started processing its instructions; delivery success alone is not proof.
-Muse, Gemini, AGY, and Devin are verified only for operator and Recon work, never a Squad Lead or primary.
+Muse, Gemini, and Devin are verified only for operator and Recon work, never a Squad Lead or primary.
+AGY is verified for operator and Recon work and as the primary Overwatch, never a Squad Lead.
 
 ## Detection
 

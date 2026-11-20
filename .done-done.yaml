@@ -315,6 +315,9 @@ journeys:
   claude-midturn-cycle:
     tier: local
     command: bash journeys/claude-midturn-cycle.sh
+  agy-primary:
+    tier: local
+    command: bash journeys/agy-primary.sh
   stuck-live-captures:
     tier: local
     command: bash journeys/stuck-live-captures.sh

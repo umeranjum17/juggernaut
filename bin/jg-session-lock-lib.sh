@@ -26,14 +26,18 @@ unset _JG_SESSION_LOCK_LIB_DIR
 
 # Known harness command names; extend when a new adapter is verified. omp is
 # anchored exactly like pi: its process name is the bare word `omp` (verified,
-# omp 18.1.11), and a substring match would claim ompd or comp.
-JG_HARNESS_RE='claude|codex|opencode|grok|kimi|^pi$|^pi-signed$|^omp$'
+# omp 18.1.11), and a substring match would claim ompd or comp. agy is anchored
+# the same way: the Antigravity CLI is one Go binary whose process name is the
+# bare word `agy`, and it is the direct parent of both its hook commands and its
+# run_command shells (verified, agy 1.5.11), so a substring match would claim
+# any name that merely contains it.
+JG_HARNESS_RE='claude|codex|opencode|grok|kimi|^pi$|^pi-signed$|^omp$|^agy$'
 
 # The same harnesses as exact executable names. Keep in sync with
 # JG_HARNESS_RE. Used only for the stricter path evidence below, where the
 # loose regex would also match ordinary juggernaut paths such as
 # bin/jg-claude-stop-autoarm.sh.
-JG_HARNESS_NAMES=(claude codex opencode grok kimi pi-signed pi omp)
+JG_HARNESS_NAMES=(claude codex opencode grok kimi pi-signed pi omp agy)
 
 # Print the exact harness name carried by executable path $1 - its own basename
 # or any directory component - or return 1.

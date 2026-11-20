@@ -120,6 +120,7 @@ The cd-guard never duplicates shell lexing; it adds only the cd-specific decisio
 | Pi | `.pi/extensions/jg-primary-turnend-guard.ts` `tool_call` handler | Returns `{block: true}`; piggybacks on the already-loaded primary extension so no extra `-e` flag is needed. |
 | omp | `.omp/extensions/jg-primary-turnend-guard.ts` `tool_call` handler | Returns `{block: true, reason}` and omp surfaces the reason to the model; runs before the watcher-arm seatbelt in the same auto-discovered extension, so no `-e` flag is needed. |
 | Cursor | `.cursor/hooks.json` `preToolUse` hook matching `tool_name` `Shell`, forwarding stdin with `--cursor` | Prints Cursor's own `{"permission":"deny","user_message":...}` object on stdout and exits 0, because Cursor reads the returned object rather than the exit status. Without `--cursor` the Cursor-delivered payload is the Claude-settings duplicate Cursor also loads, and allows; `docs/arm-pretool-check.md` owns that shared predicate. |
+| agy | None | Not applicable: every agy `run_command` runs in a fresh `bash -c` that is a direct child of agy (verified 1.5.11), so a `cd` never persists into a later command. |
 
 Each harness runs the cd-guard alongside the watcher-arm seatbelt; the two are independent checks, and either deny blocks the command.
 Every shell variable reference in the Grok hook command carries an inline default (`${GROK_WORKSPACE_ROOT:-}`) because Grok expands the raw hook command before `bash -lc` runs it, the same requirement documented in `docs/arm-pretool-check.md`.

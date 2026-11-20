@@ -130,7 +130,7 @@ fi
 
 case "$HARNESS" in
   codex) SNIPPET="$DOC_DIR/codex.md"; [ "$LEAD_DAEMON" -eq 0 ] || SNIPPET="$DOC_DIR/codex-lead.md" ;;
-  claude|opencode|pi|grok|cursor|omp) SNIPPET="$DOC_DIR/$HARNESS.md" ;;
+  claude|opencode|pi|grok|cursor|omp|agy) SNIPPET="$DOC_DIR/$HARNESS.md" ;;
   pi-signed) SNIPPET="$DOC_DIR/pi.md" ;;
   *) HARNESS=unknown; SNIPPET="$DOC_DIR/unknown.md" ;;
 esac
@@ -240,6 +240,9 @@ repair_line() {
     cursor)
       printf '%s%s\n' "$prefix" 'watcher supervision is owned by the stop-hook park; inspect the hook registration and watcher startup path before ending the turn.'
       ;;
+    agy)
+      printf '%s%s\n' "$prefix" 'repair missing watcher supervision with bin/jg-watch-arm.sh as its own agy background run_command, never shell &.'
+      ;;
     *)
       printf '%s%s\n' "$prefix" 'repair missing watcher supervision according to the session-start block for this harness; do not use shell &.'
       ;;
@@ -272,6 +275,9 @@ ordinary_wake_line() {
       ;;
     cursor)
       printf '%s\n' '- Ordinary wake: the stop-hook park (bin/jg-turnend-guard-cursor.sh) already owns watcher continuity; drain and handle the wake, and do not arm another cycle yourself.'
+      ;;
+    agy)
+      printf '%s\n' '- Ordinary wake: re-arm exactly one bin/jg-watch-arm.sh agy background run_command as directed below.'
       ;;
     *)
       printf '%s\n' '- Ordinary wake: follow the continuation in the harness protocol below; do not use shell &.'

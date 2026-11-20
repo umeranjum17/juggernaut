@@ -1,7 +1,7 @@
 # Antigravity CLI
 
 Antigravity's `agy` TUI, verified end to end on 2026-09-10 with agy 1.2.0 on Linux through the Herdr backend.
-Verified as a OPERATOR and Recon adapter only; `../../../../../bin/jg-spawn.sh` refuses a Squad Lead launch on it because `../../../../../docs/supervision-protocols/` carries no agy wake protocol.
+Verified as an operator and Recon adapter on 2026-09-10, and as the primary Overwatch on 2026-11-20 with agy 1.5.11; `../../../../../bin/jg-spawn.sh` still refuses a Squad Lead launch on it, because no Squad Lead launch on agy has been verified.
 `../../../../../docs/verification/agy.md` owns how every fact below was established and what is still unproven.
 
 ## Operating facts
@@ -12,7 +12,7 @@ Verified as a OPERATOR and Recon adapter only; `../../../../../bin/jg-spawn.sh` 
 | Launch | `agy --prompt-interactive "<brief>" --model <id> --effort <level> --dangerously-skip-permissions`, with the resolved absolute binary; the brief auto-submits with no extra Enter. The spawn pre-registers the worktree in agy's trust store first, then waits for a busy turn (answering the folder-trust dialog if it renders anyway) before reporting success. |
 | Busy state | No hook or plugin writer, so nothing is armed and no record is seeded; on Herdr the native `working` status classifies busy, and everywhere else the `agy-regex` rendered-tail fallback in `../../../../../bin/jg-busy-lib.sh` does. |
 | Rendered tail | Busy status row carries `esc to cancel` on the left; the idle row shows `? for shortcuts` instead. The `Generating...` word beside the braille spinner is free-floating output and is not a signal. |
-| Turn end | No turn-end hook or notification touch exists; completion arrives through the worker status protocol and, on Herdr, the native return to `idle`. |
+| Turn end | A worker's completion arrives through the worker status protocol and, on Herdr, the native return to `idle`; the tracked `Stop` hook runs in a worker too and stays silent outside a primary checkout. |
 | Exit | `/quit`, one Enter; the process exits. |
 | Interrupt | Single `Escape`, which prints the Interrupted row and leaves an idle composer with no repollution, so no clear key follows. |
 | Skill | No verified slash-skill form; use natural language. |
@@ -40,7 +40,7 @@ The unauthenticated failure mode was not observed, so treat any auth prompt or r
 
 Detected by ancestry alone: `../../../../../bin/jg-harness.sh` matches the anchored process name `agy`, never `*agy*`.
 No environment marker is promoted: `AGENT=1` observed on a live TUI is an inherited launcher value, not an agy identity, and agy does not clear an inherited `CLAUDECODE` - but a structural agy ancestor now outranks that retained marker, which `../../../../../bin/jg-harness.sh` decides without depending on the spawn's own launch-boundary marker clearing.
-agy is deliberately absent from the session-lock name vocabulary in `../../../../../bin/jg-session-lock-lib.sh`, where muse, gemini, and rovo are also absent: an operator-only adapter must never own a home session lock.
+The session-lock name vocabulary in `../../../../../bin/jg-session-lock-lib.sh` carries the anchored name `agy`, because agy is the direct parent of both its hook commands and its `run_command` shells, so a primary's session start finds the agy process as the session.
 
 ## Worker busy state and turn end
 
@@ -50,6 +50,14 @@ Teardown removes nothing agy-specific because the spawn leaves nothing behind.
 
 ## Primary integration
 
-Unsupported and unverified.
-`../../../../../docs/supervision-protocols/` carries no agy protocol, no turn-end guard adapter exists for it, and this adapter verified only the operator-side launch, busy state, interrupt, and exit.
-`references/common/primary-hooks.md`'s unsupported-boundary rule applies: never invent a wake protocol from a similar TUI.
+Verified on agy 1.5.11 (`../../../../../docs/verification/agy.md` owns the evidence); the tracked `../../../../../.agents/hooks.json` carries every hook, and agy loads it only once the home's folder is trusted.
+
+| Surface | Fact |
+| --- | --- |
+| Launch | Plain `agy` in the home, trust answered before the first message; a prompt queued with `--prompt-interactive` runs before the trust answer loads the hooks. |
+| Session start | Run tier: the `SessionStart` hook runs `../../../../../bin/jg-sessionstart-agy.sh`, which injects the digest as a system message and takes the lock as the agy process ([`sessionstart-nudge.md`](../../../../../docs/sessionstart-nudge.md#agy)). |
+| Watcher | `bin/jg-watch-arm.sh` as its own `run_command` background task; agy wakes the session with a `<SYSTEM_MESSAGE>` when it exits ([`agy.md`](../../../../../docs/supervision-protocols/agy.md)). |
+| Pre-tool | `PreToolUse` on `run_command` runs `bin/jg-arm-pretool-check.sh --agy`; agy denies on any non-zero hook exit or a `{}` reply, so an allow prints nothing ([`arm-pretool-check.md`](../../../../../docs/arm-pretool-check.md)). |
+| Turn end | `Stop` runs `../../../../../bin/jg-turnend-guard-agy.sh`, which returns `decision: continue` once per turn ([`turnend-guard.md`](../../../../../docs/turnend-guard.md#harness-integrations)). |
+| Persistent cd | Not applicable: every `run_command` is a fresh `bash -c` child of agy, so a `cd` never outlives its command. |
+| Not built | Supervision host, away-mode daemon delivery into an agy pane, the subagent guard, and context re-emit after a compaction. |

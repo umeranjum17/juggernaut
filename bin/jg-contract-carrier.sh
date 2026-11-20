@@ -54,6 +54,7 @@ cursor    reemit  -                    native
 opencode  file    -                    native
 grok      reemit  -                    native
 kimi      reemit  -                    native
+agy       reemit  -                    native
 '
 
 COPY_LIMIT=32768  # the default read limit of a Codex instruction file, in bytes

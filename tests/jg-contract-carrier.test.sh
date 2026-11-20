@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # bin/jg-contract-carrier.sh through its real callers: the script itself, and bin/jg-session-start.sh run
-# in a fixture home under a fake harness. `check` names one proof for each of the nine verified primary
+# in a fixture home under a fake harness. `check` names one proof for each of the ten verified primary
 # harnesses; `ensure` writes the carrier file with its one import line and then `check` reads `file`;
 # the digest holds the contract at the start and in the re-emit after a compaction when the proof is not
 # `file`, for harness `unknown`, and when `ensure` wrote the file just now; a home above a worker copy gets
@@ -12,7 +12,7 @@ set -u
 TMP_ROOT=$(jg_test_tmproot jg-contract-carrier)
 CARRIER="$ROOT/bin/jg-contract-carrier.sh"
 SESSION_START="$ROOT/bin/jg-session-start.sh"
-NINE="claude pi pi-signed omp codex cursor opencode grok kimi"
+PRIMARIES="claude pi pi-signed omp codex cursor opencode grok kimi agy"
 MARK='CONTRACT-FIXTURE-SENTENCE-7f3a'
 
 # A fixture home: its own root, state, data and config, a git repository, and an AGENTS.md holding MARK.
@@ -53,17 +53,18 @@ start() {  # <home> <harness> <session-start args>...: the real session start un
 test_check_names_one_proof_for_each_verified_primary() {
   local h proof harness
   h=$(home table)
-  for harness in $NINE; do
+  for harness in $PRIMARIES; do
     proof=$(carrier "$h" check "$harness")
     case "$proof" in file | reemit | none) ;; *) fail "check $harness printed '$proof'" ;; esac
   done
   assert_equals none "$(carrier "$h" check codex)" "codex reads none until its carrier file is written"
   assert_equals reemit "$(carrier "$h" check cursor)" "cursor reads AGENTS.md natively; after a compaction it keeps the base proof"
+  assert_equals reemit "$(carrier "$h" check agy)" "agy reads AGENTS.md natively; after a compaction it keeps the base proof"
   for harness in claude pi pi-signed omp; do
     assert_equals reemit "$(carrier "$h" check "$harness")" "$harness re-runs session start after a compaction"
   done
   assert_equals none "$(carrier "$h" check unknown)" "a harness outside the table reads none"
-  pass "check prints file, reemit or none for each of the nine verified primaries"
+  pass "check prints file, reemit or none for each of the ten verified primaries"
 }
 
 test_ensure_writes_the_one_import_line_and_check_reads_file() {
@@ -193,7 +194,7 @@ test_codex_copy_never_overwrites_owner_text_and_respects_the_read_limit() {
 test_once_agents_md_is_the_core_file_no_verified_primary_reads_none() {
   local harness core=0 none=''
   [ -f "$ROOT/docs/contract/supervisor.md" ] && core=1
-  for harness in $NINE; do
+  for harness in $PRIMARIES; do
     [ "$(JG_HOME="$ROOT" JG_ROOT_OVERRIDE="$ROOT" "$CARRIER" check "$harness")" != none ] || none="$none $harness"
   done
   if [ "$core" -eq 1 ] && [ -n "$none" ]; then

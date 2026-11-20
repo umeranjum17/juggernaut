@@ -238,6 +238,7 @@ The rule file owns the threshold, never a constant in code: a repeated identical
 - Terminal arm-output classification (`started`, `attached`, or `FAILED`) remains defense in depth for the manual recovery path.
 - Codex retains its bounded foreground checkpoint protocol.
 - Grok retains its tracked background-task notification protocol.
+- agy uses the same shape: the arm is an agy background task whose exit wakes the session.
 
 No adapter starts a replacement with a fire-and-forget shell `&` from a model command.
 The Claude hook's detached handling successor and mid-turn cycle are launched by the hook itself, which waits for the arm's status line before it exits.

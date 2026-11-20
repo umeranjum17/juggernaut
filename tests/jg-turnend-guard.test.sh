@@ -999,6 +999,107 @@ test_grok_adapter_missing_jq_and_no_supervision_allow() {
   pass "jg-turnend-guard-grok: missing jq and no-supervision-needed stops stay silent and bounded"
 }
 
+# agy (Antigravity CLI) runs each command its .agents/hooks.json registers with
+# `sh -c`, from the directory holding hooks.json, as a direct child of the agy
+# process, with the event payload on stdin; it reads the decision from stdout
+# and denies a tool call on ANY non-zero exit. agy_hook drives the TRACKED
+# registration exactly that way, under a shell whose process name is agy, so the
+# harness ancestry the scripts see is agy's own.
+install_agy_hooks() {  # <dir>
+  local dir=$1
+  mkdir -p "$dir/.agents"
+  cp "$ROOT/.agents/hooks.json" "$dir/.agents/hooks.json"
+  cp "$ROOT/bin/jg-turnend-guard-agy.sh" "$ROOT/bin/jg-arm-pretool-check.sh" "$ROOT/bin/jg-arm-command-policy.mjs" "$dir/bin/"
+  chmod +x "$dir/bin/jg-turnend-guard-agy.sh" "$dir/bin/jg-arm-pretool-check.sh"
+}
+
+AGY_SHELL_DIR="$TMP_ROOT/agy-shell"
+mkdir -p "$AGY_SHELL_DIR"
+ln -sf "$(command -v bash)" "$AGY_SHELL_DIR/agy"
+
+agy_hook() {  # <dir> <event> <payload>; prints the hook's stdout, then "exit=<status>"
+  local dir=$1 event=$2 payload=$3 cmd home out status
+  cmd=$(jq -r --arg e "$event" '[.[][$e] // empty | .[] | (.hooks // [.])[] | .command] | first // empty' "$dir/.agents/hooks.json")
+  [ -n "$cmd" ] || fail "the tracked .agents/hooks.json registers no agy $event command"
+  home=$(cd "$dir" && pwd)
+  # shellcheck disable=SC2016 # expanded by the agy-named shell, not here
+  out=$(cd "$dir/.agents" && printf '%s' "$payload" \
+    | env -u CLAUDECODE -u PI_CODING_AGENT -u JG_PI_HARNESS -u GROK_AGENT JG_HOME="$home" \
+      "$AGY_SHELL_DIR/agy" -c 'sh -c "$1"; status=$?; exit "$status"' _ "$cmd" 2>/dev/null)
+  status=$?
+  printf '%s\nexit=%s\n' "$out" "$status"
+}
+
+AGY_STOP_FIRST='{"conversationId":"c1","hookEventName":"Stop","executionNum":0,"continuationActive":false,"terminationReason":"NO_TOOL_CALL","fullyIdle":true}'
+
+test_agy_stop_hook_continues_once_when_unsupervised() {
+  local dir out reason
+  dir=$(make_primary_dir "$TMP_ROOT/agy-stop-blind")
+  install_agy_hooks "$dir"
+  : > "$dir/state/task1.meta"
+  out=$(agy_hook "$dir" Stop "$AGY_STOP_FIRST")
+  assert_contains "$out" "exit=0" "the agy Stop hook must never exit non-zero"
+  [ "$(printf '%s\n' "$out" | sed '$d' | jq -r '.decision' 2>/dev/null)" = continue ] \
+    || fail "an unsupervised agy turn end must return decision continue, got: $out"
+  reason=$(printf '%s\n' "$out" | sed '$d' | jq -r '.reason')
+  assert_contains "$reason" "TURN WOULD END BLIND" "the continue reason must carry the guard banner"
+  assert_contains "$reason" "as its own agy background run_command" "the continue reason must carry agy's own repair line"
+  pass "agy Stop registration: an unsupervised turn end continues once with the agy repair line"
+}
+
+# agy 1.5.11 sent the forced continuation's Stop with continuationActive=false
+# and executionNum=1, against its own docs; either signal alone must allow.
+test_agy_stop_hook_allows_the_continuation_on_either_signal() {
+  local dir out payload
+  dir=$(make_primary_dir "$TMP_ROOT/agy-stop-continuation")
+  install_agy_hooks "$dir"
+  : > "$dir/state/task1.meta"
+  for payload in \
+    '{"conversationId":"c1","executionNum":1,"continuationActive":false,"terminationReason":"NO_TOOL_CALL"}' \
+    '{"conversationId":"c1","executionNum":0,"continuationActive":true,"terminationReason":"NO_TOOL_CALL"}'; do
+    out=$(agy_hook "$dir" Stop "$payload")
+    assert_equals "exit=0" "$(printf '%s\n' "$out" | sed '/^$/d')" "a continuation's Stop must be allowed silently ($payload)"
+  done
+  out=$(agy_hook "$dir" Stop "$AGY_STOP_FIRST")
+  assert_contains "$out" '"continue"' "the same home still continues a first stop, so the allow above is the loop guard"
+  pass "agy Stop registration: executionNum or continuationActive alone ends the forced continuation"
+}
+
+test_agy_stop_hook_silent_when_supervised_scoped_or_unreadable() {
+  local dir base wt out
+  dir=$(make_primary_dir "$TMP_ROOT/agy-stop-idle")
+  install_agy_hooks "$dir"
+  assert_equals "exit=0" "$(agy_hook "$dir" Stop "$AGY_STOP_FIRST" | sed '/^$/d')" "nothing in flight: the stop is allowed silently"
+  : > "$dir/state/task1.meta"
+  assert_equals "exit=0" "$(agy_hook "$dir" Stop 'not json' | sed '/^$/d')" "an unreadable payload is allowed silently"
+  base="$TMP_ROOT/agy-stop-base"
+  wt=$(make_operator_worktree_dir "$base" "$TMP_ROOT/agy-stop-worker")
+  install_agy_hooks "$wt"
+  : > "$wt/state/task1.meta"
+  out=$(agy_hook "$wt" Stop "$AGY_STOP_FIRST")
+  assert_equals "exit=0" "$(printf '%s\n' "$out" | sed '/^$/d')" "an agy worker in a task worktree is never held"
+  pass "agy Stop registration: silent with nothing in flight, on an unreadable payload, and in a worker worktree"
+}
+
+test_agy_pretool_hook_denies_a_bundled_arm_and_is_silent_otherwise() {
+  local dir out
+  command -v node >/dev/null 2>&1 || fail "test host must provide node for the arm policy"
+  dir=$(make_primary_dir "$TMP_ROOT/agy-pretool")
+  install_agy_hooks "$dir"
+  out=$(agy_hook "$dir" PreToolUse '{"toolCall":{"name":"run_command","args":{"CommandLine":"bin/jg-watch-arm.sh &","WaitMsBeforeAsync":500}}}')
+  assert_contains "$out" "exit=0" "a deny must be the stdout decision, never a non-zero exit"
+  [ "$(printf '%s\n' "$out" | sed '$d' | jq -r '.decision' 2>/dev/null)" = deny ] \
+    || fail "a backgrounded arm must be denied with agy's decision object, got: $out"
+  assert_contains "$out" "watcher-background" "the deny names the policy reason"
+  for cmd in 'bin/jg-watch-arm.sh' 'ls -la'; do
+    out=$(agy_hook "$dir" PreToolUse "$(jq -cn --arg c "$cmd" '{toolCall:{name:"run_command",args:{CommandLine:$c}}}')")
+    assert_equals "exit=0" "$(printf '%s\n' "$out" | sed '/^$/d')" "an allowed command prints nothing, so agy keeps its own policy ($cmd)"
+  done
+  out=$(agy_hook "$dir" PreToolUse 'not json')
+  assert_equals "exit=0" "$(printf '%s\n' "$out" | sed '/^$/d')" "an unreadable payload prints nothing and exits 0"
+  pass "agy PreToolUse registration: denies a backgrounded arm on stdout, silent for the standalone arm and other commands"
+}
+
 # Grok loads Claude-compatible settings, so a TRACKED .claude/settings.json entry
 # that also has a .grok/hooks/ counterpart must refuse to run under Grok, or the
 # home gets a duplicate path. The regression this pins: the guard once tested
@@ -2756,6 +2857,13 @@ test_hook_no_afk_ignores_poll_derived_grace() {
   pass "jg-turnend-guard: with away mode off, the poll-derived grace never applies"
 }
 
+# JG_TURNEND_GUARD_ONLY="<test function> ..." runs just those cases (journeys/agy-primary.sh uses it).
+if [ -n "${JG_TURNEND_GUARD_ONLY:-}" ]; then
+  for case_name in $JG_TURNEND_GUARD_ONLY; do "$case_name"; done
+  echo "# jg-turnend-guard.test.sh: selected cases passed"
+  exit 0
+fi
+
 test_predicate_healthy_no_inflight
 test_predicate_unhealthy_no_beacon
 test_predicate_unhealthy_stale_beacon
@@ -2807,6 +2915,10 @@ test_grok_adapter_native_true_allows_without_resume
 test_grok_adapter_snake_case_native_and_camel_precedence
 test_grok_adapter_invalid_inputs_start_neither_path
 test_grok_adapter_missing_jq_and_no_supervision_allow
+test_agy_stop_hook_continues_once_when_unsupervised
+test_agy_stop_hook_allows_the_continuation_on_either_signal
+test_agy_stop_hook_silent_when_supervised_scoped_or_unreadable
+test_agy_pretool_hook_denies_a_bundled_arm_and_is_silent_otherwise
 test_tracked_claude_entries_inert_under_grok
 test_codex_hook_uses_process_pwd_when_payload_cwd_is_outside_root
 test_codex_hook_ignores_nested_git_root_guard

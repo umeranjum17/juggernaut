@@ -2218,7 +2218,7 @@ case "$ARG3" in
   ;;
 esac
 
-# muse, gemini, agy, and devin are verified as OPERATOR/SCOUT adapters only. A squad_lead is
+# muse, gemini, and devin are verified as OPERATOR/SCOUT adapters only. A squad_lead is
 # a juggernaut instance, so it needs a primary supervision protocol.
 # gemini has none: docs/supervision-protocols/ carries no gemini wake protocol
 # and this task verified only operator-side launch, busy state, interrupt, and
@@ -2228,12 +2228,17 @@ esac
 # asyncRewake handlers that juggernaut's primary turn-end supervision is built on
 # (muse 0.1.0-R708.1). Refusing here keeps that gap loud instead of standing up a
 # squad_lead whose supervision cycle could never be armed.
-# agy has none either: it exposes no hook surface for primary supervision and
-# docs/supervision-protocols/ carries no agy wake protocol (agy 1.2.0).
+# agy is a verified primary (docs/supervision-protocols/agy.md), but no Squad
+# Lead launch on it is verified: a lead home's agy must already trust the home
+# before its first turn for .agents/hooks.json to load (agy 1.5.11).
 # devin has none either: only its worker lifecycle hooks are verified, and
 # docs/supervision-protocols/ carries no devin wake protocol (devin 3000.11.1).
-if [ "$KIND" = squad_lead ] && { [ "$HARNESS" = muse ] || [ "$HARNESS" = gemini ] || [ "$HARNESS" = agy ] || [ "$HARNESS" = devin ]; }; then
+if [ "$KIND" = squad_lead ] && { [ "$HARNESS" = muse ] || [ "$HARNESS" = gemini ] || [ "$HARNESS" = devin ]; }; then
   echo "error: $HARNESS is a verified operator/scout adapter only and cannot run a squad_lead; it has no primary supervision protocol. Select a harness verified for squad_leads." >&2
+  exit 1
+fi
+if [ "$KIND" = squad_lead ] && [ "$HARNESS" = agy ]; then
+  echo "error: agy is verified for operators, scouts and the primary, but no squad_lead launch on it is verified. Select a harness verified for squad_leads." >&2
   exit 1
 fi
 
