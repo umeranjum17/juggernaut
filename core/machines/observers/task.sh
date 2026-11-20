@@ -38,6 +38,8 @@ done_line() { [ "$(status_line_verb "$(status_current_line "$STATE/$1.status" "$
 . "$root/bin/jg-delivery-style.sh"
 trunk_lane() { jg_delivery_style_is "$(mval "$1" mode)" local; }
 # Where a finished local-trunk lane stands: cleaned, landed, rework or ready; nothing when no trunk record names it.
+# A one-head `landed` record counts only for the lane's current head, or when the lane has none (cleaned): a lane
+# spawned again under a landed task id is judged by its new head, so its done line reads ready.
 landing() {  # <id>
   local id=$1 f w rest head='' final=0 tsv="$DATA/trunk-landings.tsv"
   grep -q "^revert-$id"$'\t' "$tsv" 2>/dev/null && { echo rework; return; }
@@ -46,7 +48,8 @@ landing() {  # <id>
     [ -f "$f" ] || continue
     [[ ${f##*/} =~ \.[0-9a-f]{40,64}\.[0-9a-f]{40,64}\.state$ ]] && continue
     read -r w rest < "$f"
-    case $w in landed) [ "$rest" = "cleaned up" ] && echo cleaned || echo landed; return ;; final) [ -z "$head" ] && final=1; [[ $f == *".$head.state" ]] && final=1 ;; esac
+    case $w in landed) [ -z "$head" ] || [[ $f == *".$head.state" ]] || continue
+        [ "$rest" = "cleaned up" ] && echo cleaned || echo landed; return ;; final) [ -z "$head" ] && final=1; [[ $f == *".$head.state" ]] && final=1 ;; esac
   done
   [ "$final" = 0 ] || { echo rework; return; }
   if [ ! -f "$STATE/$id.meta" ]; then awk -F'\t' -v i="$id" '$1 == i {f = 1} END {exit !f}' "$tsv" 2>/dev/null && echo cleaned
