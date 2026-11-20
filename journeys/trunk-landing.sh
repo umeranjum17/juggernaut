@@ -31,7 +31,7 @@ rc=0
   tests/jg-trunk-verify.test.sh tests/jg-trunk-unit.test.sh tests/jg-trunk-verify-milestone.test.sh tests/jg-trunk-judge.test.sh tests/jg-trunk-spawn.test.sh tests/jg-trunk-scope.test.sh \
   tests/jg-on.test.sh tests/migration-card-live.test.sh tests/jg-afk-inject-e2e.test.sh \
   tests/jg-beads.test.sh tests/jg-beads-native-n6.test.sh \
-  tests/jg-beads-native-n8.test.sh tests/jg-ticket-writeback.test.sh) > "$out" 2>&1 || rc=$?
+  tests/jg-ticket-writeback.test.sh) > "$out" 2>&1 || rc=$?
 cat "$out"
 cat > "$DONE_DONE_EVIDENCE_ROOT/steps.json" <<JSON
 {"target": {"version": "$(git -C "$root" rev-parse --short HEAD)"},

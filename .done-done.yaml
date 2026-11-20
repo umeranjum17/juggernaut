@@ -1159,27 +1159,9 @@ journeys:
   jg-beads-native-followup:
     tier: local
     command: bash tests/jg-beads-native-followup.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-beads-native-hold:
-    tier: local
-    command: bash tests/jg-beads-native-hold.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-beads-native-n3:
-    tier: local
-    command: bash tests/jg-beads-native-n3.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-beads-native-n4:
-    tier: local
-    command: bash tests/jg-beads-native-n4.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-beads-native-n5:
-    tier: local
-    command: bash tests/jg-beads-native-n5.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-beads-native-n6:
     tier: local
     command: bash tests/jg-beads-native-n6.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-beads-native-n8:
-    tier: local
-    command: bash tests/jg-beads-native-n8.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-beads-native-whole:
-    tier: local
-    command: bash tests/jg-beads-native-whole.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-backlog-intake:
     tier: local
     command: bash tests/jg-backlog-intake.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

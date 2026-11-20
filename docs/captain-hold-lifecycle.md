@@ -487,11 +487,6 @@ That latin-1 byte loss also reproduces natively on the fleet host carrying the o
 
 ### Beads store family
 
-[`tests/jg-beads-native-hold.test.sh`](../tests/jg-beads-native-hold.test.sh) proves:
-
-- The hold script never starts `bd` itself, and an unknown id is refused once naming the id.
-- On a real store, `verify` and `complete` resolve an attested old id through the row's stored old name, and the attested id stays in `decision_keys=` for idempotent re-verification.
-
 One case in the lifecycle suite needs no beads install and always runs.
 It uses a stubbed the backlog that fails any markdown file override, and proves the captain-hold hold, answer, and close mutations reach a beads-configured home without one.
 
