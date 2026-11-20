@@ -53,6 +53,10 @@
 #   <epoch><TAB><id><TAB>would start|skipped|starting|started|deferred|spawn failed<TAB><route, or why>
 # A beat that finds every ticket with the same verdict as its last row writes nothing. Watch only, the check prints nothing,
 # so it wakes no one.
+# Every pass also appends one line to data/auto-dispatch/passes.tsv (the last 5000 lines are kept), whatever its verdicts were:
+#   <epoch><TAB>pass<TAB><candidates><TAB><started><TAB><deferred><TAB><seconds><TAB><switch on|off>
+# candidates are the tickets the pass judged, started the ones it launched, deferred the ones the spawn told to wait; a pass that
+# could not read the store writes no line. The watcher starts the check every minute (bin/jg-watch.sh, JG_DISPATCH_INTERVAL).
 # Switch on, a ticket that passed all six reasons and still has no running start 10 minutes after its refusal (a brief with no
 # delivery contract, an unreadable yolo posture, a failed start) raises the `ready-idle` alert through bin/jg-alert.sh, the
 # alert table's own timer and rung, printed as the check's wake line; a start that takes resolves it. Watch only raises nothing.
@@ -82,6 +86,7 @@ SCALE=${JG_AUTO_DISPATCH_SCALE:-$FMH/core/lane-scale/scale.sh}
 APPROVED=$STATE/dispatch-approved
 IN_FLIGHT_SECONDS=${JG_AUTO_DISPATCH_IN_FLIGHT:-600}
 ROWS=$DATA/auto-dispatch/rows.tsv
+PASSES=$DATA/auto-dispatch/passes.tsv
 CHECK_LOCK=$DATA/auto-dispatch/.check.lock
 CHECK_AGAIN=$DATA/auto-dispatch/.check.again
 RETRY_PENDING=$DATA/auto-dispatch/.retry-pending
@@ -361,7 +366,7 @@ fi
 [ ! -x "$SCALE" ] || "$SCALE" check "$FMH" >/dev/null 2>&1   # the lane limit takes its tick on this beat
 free=$(free_lanes)
 now=$(date +%s)
-started=0
+started=0; launched=0; deferred=0
 ACT=0; ! switch_on || ACT=1
 : > "$tmp/lead"; : > "$tmp/alerts"
 # List order is the store's priority order and is kept as it is (no sort); approved tickets the list lacks come last, and they never start.
@@ -412,14 +417,18 @@ while IFS= read -r id; do
         esac
         waits=1
       elif detail=$(launch "$id" "$(awk -F'\t' -v id="$id" '$1 == id { print $2 }' "$tmp/out")" "${v#route$'\t'}"); then
-        started=$((started + 1)); kind=starting; detail=${v#route$'\t'}
+        started=$((started + 1)); launched=$((launched + 1)); kind=starting; detail=${v#route$'\t'}
       else idle=1; fi ;;
     *) detail=${v#why$'\t'} ;;
   esac
+  [ "$START_STATE" != deferred ] || [ "$kind" = starting ] || deferred=$((deferred + 1))
   # A deferred ticket that waits for a lane or a copy keeps its deferred row; the wait is not a new verdict.
   [ "$START_STATE" != deferred ] || [ "$waits" -eq 0 ] || continue
   record_row "$id" "$idle" "$kind" "$detail"
 done < "$tmp/ordered"
 cat "$tmp/alerts"
+# The pass's own line: the watcher starts this check every minute, and this file is the record that it ran.
+{ printf '%s\tpass\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$(grep -c . "$tmp/ordered")" "$launched" "$deferred" "$SECONDS" "$([ "$ACT" -eq 1 ] && echo on || echo off)" >> "$PASSES"
+  [ "$(wc -l < "$PASSES")" -le 5000 ] || { tail -n 5000 "$PASSES" > "$PASSES.tmp.$$" && mv -f "$PASSES.tmp.$$" "$PASSES"; }; } 2>/dev/null
 [ "$ACT" -eq 0 ] || [ ! -s "$tmp/lead" ] || printf 'auto-dispatch: lead, these tickets are not started by themselves: %s\n' "$(paste -sd';' "$tmp/lead" | sed 's/;/; /g')"
 exit 0
