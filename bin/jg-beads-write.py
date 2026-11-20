@@ -76,7 +76,7 @@ def untag(title):
 
 
 def bd(*args):
-    run = subprocess.run([WRAPPER, *args], capture_output=True, text=True, check=False)
+    run = subprocess.run([WRAPPER, *args], capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
     if run.returncode == STALE:
         said = [line.split("mismatch: ", 1)[1] for line in (run.stdout + run.stderr).splitlines() if "mismatch: " in line]
         view.refuse("stale write refused: " + (said[0] if said else "the row moved"),

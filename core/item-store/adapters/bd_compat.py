@@ -57,7 +57,7 @@ def run_tables(argv):
     module = importlib.util.module_from_spec(spec)
     try:
         spec.loader.exec_module(module)
-        out, status = module.run(argv, "" if sys.stdin.isatty() else sys.stdin.read())
+        out, status = module.run(argv, sys.stdin.read() if takes_stdin(argv) else "")
     except Exception as e:  # noqa: BLE001 - NotSupported may come from the module's own class
         if type(e).__name__ == "NotSupported":
             return unsupported(argv)
@@ -66,6 +66,11 @@ def run_tables(argv):
     sys.stdout.write(out)
     sys.stdout.flush()
     return status
+
+
+def takes_stdin(argv):
+    """Only a form that names stdin (`-` as a file or body, or `--stdin`) reads it: a read on an open pipe or socket would wait for a writer that never ends."""
+    return "-" in argv or "--stdin" in argv
 
 
 def main(argv):
