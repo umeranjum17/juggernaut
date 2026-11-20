@@ -27,6 +27,18 @@
 # teardown use that mode so this side-band publication can never change their
 # result. Without it, failures are printed and returned to the direct caller
 # for tests and diagnostics.
+#
+# --best-effort also never holds up its caller. It tries the refresh lock: when
+# a refresh already runs it touches state/.home-summary-refresh.dirty and exits
+# zero; when none runs it starts this script again detached (setsid nohup, with
+# JG_HOME_SUMMARY_FOREGROUND=1) and exits zero at once. The detached run is the
+# refresh. When it finishes while the dirty mark exists, it removes the mark and
+# refreshes once more, so a burst of calls costs one run plus one extra pass. A
+# mark set in the instant after the running refresh looked is picked up by the
+# next refresh. JG_HOME_SUMMARY_FOREGROUND=1 in the caller's environment keeps
+# the foreground best-effort refresh; a watcher run (JG_HOME_SUMMARY_IF_IDLE=1)
+# is already in the background and keeps its own skip. JG_HOME_SUMMARY_PRODUCER
+# names the producer (default jg-fleet-snapshot.sh) for tests.
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
 [ "$_jg_d" != "${BASH_SOURCE[0]}" ] || _jg_d=.
@@ -63,6 +75,10 @@ REFRESH_LOCK="$STATE/.home-summary-refresh.lock"
 ERROR_LOG_MAX_BYTES=${JG_HOME_SUMMARY_ERROR_LOG_MAX_BYTES:-65536}
 HOME_SUMMARY_TIMEOUT=${JG_HOME_SUMMARY_TIMEOUT:-60}
 HOME_SUMMARY_IF_IDLE=${JG_HOME_SUMMARY_IF_IDLE:-0}
+HOME_SUMMARY_PRODUCER=${JG_HOME_SUMMARY_PRODUCER:-$SCRIPT_DIR/jg-fleet-snapshot.sh}
+HOME_SUMMARY_FOREGROUND=${JG_HOME_SUMMARY_FOREGROUND:-0}
+HOME_SUMMARY_DETACHED=${JG_HOME_SUMMARY_DETACHED:-0}
+DIRTY_MARK="$STATE/.home-summary-refresh.dirty"
 BEST_EFFORT=0
 HOME_SUMMARY_MODE=parent
 HOME_SUMMARY_ERROR=
@@ -101,7 +117,14 @@ case "$HOME_SUMMARY_IF_IDLE" in
   *) HOME_SUMMARY_IF_IDLE=0 ;;
 esac
 
-if [ "$HOME_SUMMARY_MODE" != parent ]; then
+# A best-effort call from a caller that waits (not the watcher, not the detached run) hands off.
+HOME_SUMMARY_HANDOFF=0
+if [ "$HOME_SUMMARY_MODE" = parent ] && [ "$BEST_EFFORT" -eq 1 ] \
+  && [ "$HOME_SUMMARY_FOREGROUND" != 1 ] && [ "$HOME_SUMMARY_IF_IDLE" -eq 0 ]; then
+  HOME_SUMMARY_HANDOFF=1
+fi
+
+if [ "$HOME_SUMMARY_MODE" != parent ] || [ "$HOME_SUMMARY_HANDOFF" -eq 1 ]; then
   # shellcheck source=bin/jg-wake-lib.sh
   # shellcheck disable=SC1091
   . "$SCRIPT_DIR/jg-wake-lib.sh"
@@ -122,8 +145,33 @@ home_summary_fail() {
   return 1
 }
 
+# Try the refresh lock; when a refresh runs, mark the home dirty so it does one more pass, and look once
+# more in case it finished in between. Returns 1 when another refresh holds the lock.
+home_summary_try_lock_or_mark() {
+  jg_lock_try_acquire "$REFRESH_LOCK" && return 0
+  : > "$DIRTY_MARK" 2>/dev/null || true
+  # The run that is about to start reads the records after this point, so the mark is spent.
+  jg_lock_try_acquire "$REFRESH_LOCK" && { rm -f -- "$DIRTY_MARK"; return 0; }
+  return 1
+}
+
+# Return at once: mark the home dirty when a refresh runs, else start the refresh detached.
+home_summary_handoff() {
+  mkdir -p "$STATE" 2>/dev/null || return 0
+  home_summary_try_lock_or_mark || return 0
+  jg_lock_release "$REFRESH_LOCK" || true
+  set -- env JG_HOME_SUMMARY_FOREGROUND=1 JG_HOME_SUMMARY_DETACHED=1 \
+    "$SCRIPT_DIR/jg-home-summary-refresh.sh" --best-effort
+  if command -v setsid >/dev/null 2>&1; then
+    set -- setsid nohup "$@"
+  else
+    set -- nohup "$@"
+  fi
+  "$@" </dev/null >/dev/null 2>&1 &
+  disown 2>/dev/null || true
+}
+
 home_summary_refresh_once() {
-  local producer_rc producer_error
   if ! mkdir -p "$STATE" 2>/dev/null; then
     home_summary_fail "state directory is unavailable: $STATE"
     return 1
@@ -132,12 +180,31 @@ home_summary_refresh_once() {
   trap 'exit 129' HUP
   trap 'exit 130' INT
   trap 'exit 143' TERM
-  if [ "$HOME_SUMMARY_IF_IDLE" -eq 1 ]; then
+  if [ "$HOME_SUMMARY_DETACHED" -eq 1 ]; then
+    home_summary_try_lock_or_mark || return 0
+  elif [ "$HOME_SUMMARY_IF_IDLE" -eq 1 ]; then
     jg_lock_try_acquire "$REFRESH_LOCK" || return 0
   else
     jg_lock_acquire_wait "$REFRESH_LOCK"
   fi
   HOME_SUMMARY_LOCK_HELD=1
+  home_summary_publish || return 1
+  if [ "$BEST_EFFORT" -eq 1 ] && [ -e "$DIRTY_MARK" ]; then
+    rm -f -- "$DIRTY_MARK"
+    home_summary_publish || return 1
+  fi
+  jg_lock_release "$REFRESH_LOCK"
+  HOME_SUMMARY_LOCK_HELD=0
+  trap - EXIT HUP INT TERM
+  # The standing view of what is left follows every publication; its own failure never fails this one.
+  JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$DATA" \
+    "$SCRIPT_DIR/jg-whats-left.sh" write >/dev/null 2>&1 || true
+  return 0
+}
+
+# Produce, validate and atomically publish one ledger; the caller holds the refresh lock.
+home_summary_publish() {
+  local producer_rc producer_error
   HOME_SUMMARY_TMP=$(umask 077; mktemp "$STATE/.home-summary.json.XXXXXX") || {
     home_summary_fail "could not create an atomic publication file in $STATE"
     return 1
@@ -154,7 +221,7 @@ home_summary_refresh_once() {
     JG_DATA_OVERRIDE="$DATA" \
     JG_CONFIG_OVERRIDE="$CONFIG" \
     JG_PROJECTS_OVERRIDE="$PROJECTS" \
-    "$SCRIPT_DIR/jg-fleet-snapshot.sh" --squad-lead-home-summary \
+    "$HOME_SUMMARY_PRODUCER" --squad-lead-home-summary \
       > "$HOME_SUMMARY_TMP" 2> "$HOME_SUMMARY_ERR_TMP"; then
     producer_rc=0
   else
@@ -205,12 +272,6 @@ home_summary_refresh_once() {
     return 1
   fi
   HOME_SUMMARY_TMP=
-  jg_lock_release "$REFRESH_LOCK"
-  HOME_SUMMARY_LOCK_HELD=0
-  trap - EXIT HUP INT TERM
-  # The standing view of what is left follows every publication; its own failure never fails this one.
-  JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$DATA" \
-    "$SCRIPT_DIR/jg-whats-left.sh" write >/dev/null 2>&1 || true
   return 0
 }
 
@@ -238,6 +299,11 @@ if [ "$HOME_SUMMARY_MODE" = log-failure ]; then
   HOME_SUMMARY_ERROR=${JG_HOME_SUMMARY_PARENT_ERROR:-"refresh worker failed"}
   HOME_SUMMARY_FAILURE_STAMP=${JG_HOME_SUMMARY_PARENT_STAMP:-}
   home_summary_log_failure
+  exit 0
+fi
+
+if [ "$HOME_SUMMARY_HANDOFF" -eq 1 ]; then
+  home_summary_handoff
   exit 0
 fi
 
