@@ -23,7 +23,8 @@ Load `quota-array-dispatch` for the orders' model. It chooses harness, model and
 
 ## 3. Start
 
-Run `bin/jg-swarm.sh start <plan.json> --harness <h> --model <m> --effort <e> [--agents <n>]`.
+Run `bin/jg-swarm.sh start <plan.json> --harness <h> --model <m> --effort <e> --order <MainNNN of the owner's message> [--agents <n>]`.
+The order is the plan's `owner_order` when `--order` is left out; each filed row names it, so the brief gate passes with no hand edit.
 On a refusal, tell the owner the concrete reason and the one action that clears it.
 
 ## 4. Tell the owner once

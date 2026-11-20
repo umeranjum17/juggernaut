@@ -3,7 +3,7 @@
 # and a lead home, no model turn. Stand-ins log the send and the card post (the card stand-in files the design row the real
 # post files). Cases: 1 refusals write nothing; 2 the start files, approves, briefs and arms; 3 the chain with the real hold
 # check; 4 safe twice and a resume; 5 the route dry run refuses after the plan rows; 6 the start returns at once and the run goes
-# on detached, and a start while a run holds the lock does nothing; 7 a run stopped part way is resumed by the next start. Cases 1 to 5
+# on detached, and a start while a run holds the lock does nothing; 7 a run stopped part way is resumed by the next start; 8 --order (a [captain-ask] row) names the owner order. Cases 1 to 5
 # run the body in the foreground (--wait).
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
@@ -51,7 +51,7 @@ word() {  # <question> <option a> <option b>: an owner_word with every field the
 }
 mkplan() {  # <dir>: the plan file and its orders in <dir>
   mkdir -p "$1"
-  jq -n '{plan: "jg-plan", title: "Swarm start test", report: "/nonexistent/report.md", intent: "The owner wants the swarm run.",
+  jq -n '{plan: "jg-plan", title: "Swarm start test", report: "/nonexistent/report.md", intent: "The owner wants the swarm run.", owner_order: "Main1",
           prior_art: "Prior art: none needed - the test fixture is neither new nor complex.", slices: $ARGS.positional | map(fromjson)}' --args \
     "$(slice a main '[]')" "$(slice b main '["a"]')" "$(slice d main '["a"]' "$(word 'Which colour should the new button be?' blue green)")" \
     "$(slice e lead1 '[]')" "$(slice f lead1 '["e"]' "$(word 'Which size should the new panel be?' small large)")" > "$1/plan.json"
@@ -104,6 +104,20 @@ assert_equals 2 "$rc" "a Squad Lead home must exit 2"
 [ ! -e "$M/data/swarm" ] && [ ! -e "$L/data/swarm" ] || fail "a refusal must write no data/swarm"
 assert_equals "0 0" "$(rows_in "$M") $(rows_in "$L")" "a refusal must file no row"
 
+# T3: no --order and no owner_order is refused before the first write; a reference that is neither MainNNN nor a [captain-ask] row too.
+jq 'del(.owner_order)' "$W1/in/plan.json" > "$W1/in/noorder.json"
+out=$(start "$M" "$W1/in/noorder.json"); rc=$?
+assert_equals 2 "$rc" "T3: a start with no owner order must exit 2: $out"
+assert_contains "$out" "no owner order" "T3: the refusal must name the owner order"
+out=$(start "$M" "$W1/in/noorder.json" --order "some prose"); rc=$?
+assert_equals 2 "$rc" "T3: an order that is not a reference must exit 2: $out"
+at "$M" "$ROOT/bin/jg-backlog.sh" add jg-plain-row "[feature] An ordinary row" --kind ship --repo proj --priority 2 \
+  --body "$(printf '## Captain\nx\n\n## Ask\nx\n\n## Why\nx\n\n## Done when\nx\n\n## Acceptance Criteria\nx\n')" >/dev/null || fail "T3: the plain row was not filed"
+out=$(start "$M" "$W1/in/noorder.json" --order jg-plain-row); rc=$?
+assert_equals 2 "$rc" "T3: an order that names a row that is no [captain-ask] must exit 2: $out"
+assert_contains "$out" "neither MainNNN nor the id of a [captain-ask] row" "T3: the refusal must say what an order is"
+[ ! -e "$M/data/swarm" ] || fail "T3: a refusal must not create data/swarm/<plan>"
+
 # --- Case 2: the start --------------------------------------------------------------------------------------------------------
 W2=$T/w2
 mkworld "$W2"; strict "$W2"; mkplan "$W2/in"
@@ -112,6 +126,10 @@ assert_equals "1 1" "$(rc_of has_row "$M" jg-plan) $(rc_of has_row "$L" jg-plan)
 out=$(start "$M" "$W2/in/plan.json") || fail "start: $out"
 assert_equals "swarm jg-plan: 5 slices filed and approved in main, lead1; 2 wait for the owner" "$(tail -n 1 <<< "$out")" "the start line"
 DIR=$M/data/swarm/jg-plan DP=$M/data/swarm/jg-plan/plan.json
+assert_equals "Main1" "$(jq -r '.owner_order' "$DP")" "T4: the derived plan must hold the plan's owner_order"
+RA0=$(jq -r '.slices[] | select(.id == "a") | .row' "$DP") RE0=$(jq -r '.slices[] | select(.id == "e") | .row' "$DP")
+assert_contains "$(at "$M" "$ROOT/bin/jg-backlog.sh" show "$RA0" --full)" "Owner order: Main1." "Main's filed row must name the owner order"
+assert_contains "$(at "$L" "$ROOT/bin/jg-backlog.sh" show "$RE0" --full)" "Owner order: Main1." "the lead's filed row must name the owner order"
 row() { jq -r --arg s "$1" '.slices[] | select(.id == $s) | .row' "$DP"; }
 RA=$(row a) RB=$(row b) RD=$(row d) RE=$(row e) RF=$(row f)
 assert_equals "0 0" "$(rc_of has_row "$M" jg-plan) $(rc_of has_row "$L" jg-plan)" "the plan row must be in both stores"
@@ -300,5 +318,16 @@ assert_equals "$({ printf '%s\n' jg-plan jg-plan-word-f; jq -r '.slices[] | sele
   "every slice of the lead must be filed once after the resume"
 assert_equals "1" "$(wc -l < "$T/send.log")" "the lead must be told once"
 assert_equals "2" "$(wc -l < "$T/card.log")" "each card must be posted once"
+
+# --- Case 8: --order alone names the order; it wins over the plan's owner_order -------------------------------------------------------
+W8=$T/w8
+mkworld "$W8"; strict "$W8"; mkplan "$W8/in"
+M=$W8/main L=$W8/lead
+: > "$T/send.log"; : > "$T/card.log"; rm -f "$T/card.base"
+at "$M" "$ROOT/bin/jg-backlog.sh" add jg-ask "[captain-ask] Run the swarm" --kind ship --repo proj --priority 0 \
+  --body "$(printf '## Captain\nx\n\n## Ask\nx\n\n## Why\nx\n\n## Done when\nx\n\n## Acceptance Criteria\nx\n')" >/dev/null || fail "the [captain-ask] row was not filed"
+out=$(start "$M" "$W8/in/plan.json" --order jg-ask) || fail "start with --order: $out"
+assert_equals "jg-ask" "$(jq -r '.owner_order' "$M/data/swarm/jg-plan/plan.json")" "T4: --order must win over the plan's owner_order"
+assert_contains "$(at "$M" "$ROOT/bin/jg-backlog.sh" show "$(jq -r '.slices[0].row' "$M/data/swarm/jg-plan/plan.json")" --full)" "Owner order: jg-ask." "the row must name the --order"
 
 pass "swarm start: refusals write nothing; files, approves, briefs and arms; the chain starts each slice in its turn; safe twice and resumable; the dry run refuses after the plan rows; the start runs detached and a stopped run resumes"

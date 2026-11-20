@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # jg-plan-file.sh - file the slices of a plan file that this home owns into this home's backlog.
 #
-# Usage: jg-plan-file.sh <plan.json> --owner <home> [--dry-run]
+# Usage: jg-plan-file.sh <plan.json> --owner <home> [--order <ref>] [--dry-run]
 #        jg-plan-file.sh --help
 #
 # A plan is a file in the form of data/fable-selfheal-fleet-recon/slices-addendum.json: `plan` names the
@@ -14,7 +14,9 @@
 #   - one dependency edge for each depends_on entry (a slice of this file, or a row already in the store);
 #   - the file list as metadata `files` (a JSON array of paths) and `new_files` (the ones marked new),
 #     plus plan_slice, size, risk and machine;
-#   - the plan's row as its parent, so the row is an epic.
+#   - the plan's row as its parent, so the row is an epic;
+#   - the body line `Owner order: <ref>.` when the plan has an `owner_order` (or --order <ref>, which wins): MainNNN or the id of a
+#     [captain-ask] row, so the owner-rules brief gate finds the order the lane serves. A completed row lacking the line gets it.
 # It then runs `bd swarm validate` on the epic and prints the result.
 #
 # A second run on a plan that is partly filed (a stopped start) files only what is missing:
@@ -54,18 +56,19 @@ fail() {
   exit 2
 }
 
-PLAN_FILE='' OWNER='' DRY=0
+PLAN_FILE='' OWNER='' DRY=0 ORDER_REF=''
 while [ $# -gt 0 ]; do
   case $1 in
     -h|--help) usage; exit 0 ;;
     --owner) [ $# -ge 2 ] || fail "--owner needs a home name"; OWNER=$2; shift ;;
+    --order) [ $# -ge 2 ] || fail "--order needs a reference"; ORDER_REF=$2; shift ;;
     --dry-run) DRY=1 ;;
     -*) fail "unknown flag $1" ;;
     *) [ -z "$PLAN_FILE" ] || fail "one plan file only"; PLAN_FILE=$1 ;;
   esac
   shift
 done
-[ -n "$PLAN_FILE" ] || fail "usage: jg-plan-file.sh <plan.json> --owner <home> [--dry-run]"
+[ -n "$PLAN_FILE" ] || fail "usage: jg-plan-file.sh <plan.json> --owner <home> [--order <ref>] [--dry-run]"
 [ -n "$OWNER" ] || fail "--owner <home> is required: this command files only the slices that home owns"
 [ -r "$PLAN_FILE" ] || fail "cannot read $PLAN_FILE"
 jq -e 'type == "object"' "$PLAN_FILE" >/dev/null 2>&1 || fail "$PLAN_FILE is not a JSON plan"
@@ -75,6 +78,12 @@ backlog_() { JG_HOME="$JG_HOME" JG_CONFIG_OVERRIDE="$CONFIG_DIR" "$SCRIPT_DIR/jg
 
 PLAN=$(jq -r '.plan // empty' "$PLAN_FILE")
 [ -n "$PLAN" ] || fail "the plan file names no plan row (.plan)"
+# The owner order each row names: --order, else the plan's owner_order; none leaves the rows as before.
+[ -n "$ORDER_REF" ] || ORDER_REF=$(jq -r '.owner_order // empty' "$PLAN_FILE")
+case $ORDER_REF in
+  *[!A-Za-z0-9._-]*) fail "the owner order \"$ORDER_REF\" is not one reference: write MainNNN or the id of a [captain-ask] row" ;;
+esac
+ORDER_LINE=${ORDER_REF:+Owner order: $ORDER_REF.}
 
 # The slices of this owner, one compact JSON object per line, in file order.
 MINE=$(jq -c --arg o "$OWNER" '.slices // [] | map(select(.owner_home == $o)) | .[]' "$PLAN_FILE")
@@ -194,18 +203,29 @@ set_fields() {  # <slice json> <row> <slice id>
     >/dev/null 2>&1 || fail "slice $id is filed as $row but its fields could not be set"
 }
 
+# A completed row without the owner order line gets it appended to its body.
+set_order_line() {  # <row> <slice id>
+  [ -n "$ORDER_LINE" ] || return 0
+  local body
+  body=$(bd_ show "$1" --json | jq -r '(if type == "array" then .[0] else . end).description // ""')
+  grep -qxF -- "$ORDER_LINE" <<<"$body" && return 0
+  backlog_ update "$1" --body "$body"$'\n'"$ORDER_LINE" >/dev/null 2>&1 || fail "slice $2 is filed as $1 but its owner order could not be written"
+}
+
 added=0
 for id in "${ORDER[@]}"; do
   slice=$(jq -c --arg i "$id" 'select(.id == $i)' <<<"$MINE")
   case ${HOW[$id]} in
     adopt) printf 'adopted %s as %s\n' "$id" "${ROW[$id]}" >&2 ;;
-    complete) set_fields "$slice" "${ROW[$id]}" "$id"; printf 'completed %s as %s\n' "$id" "${ROW[$id]}" >&2 ;;
+    complete) set_fields "$slice" "${ROW[$id]}" "$id"; set_order_line "${ROW[$id]}" "$id"
+              printf 'completed %s as %s\n' "$id" "${ROW[$id]}" >&2 ;;
     new)
       title=$(jq -r '.title' <<<"$slice")
       project=$(jq -r '.project' <<<"$slice")
       sections=$(jq -r '.body // empty' <<<"$slice")
       body=$(printf '%s\nPlan: %s, slice %s (owner %s).\nFiles: %s' "${sections:-$title}" "$PLAN" "$id" "$OWNER" \
         "$(jq -r '.files | join(", ")' <<<"$slice")")
+      body+=${ORDER_LINE:+$'\n'$ORDER_LINE}
       args=(add --parent "$PLAN" "[feature] $title" --repo "$project" --priority 2 --body "$body" --json)
       for dep in ${DEPS[$id]}; do args+=(--blocked-by "${ROW[$dep]:-$dep}"); done
       made=$(backlog_ "${args[@]}") || fail "could not file slice $id: $made"

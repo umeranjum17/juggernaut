@@ -45,7 +45,8 @@ Budget        measured by a dry run, never guessed
    Wave 1 holds at least as many slices as the owner home's lane target (`config/lane-target`); when the work cannot be
    cut that wide, the report's plan section says why, and Main may run another plan beside it.
 5. Write orders/plan.json beside the orders in the form of the swarm interface's section 1: plan, title, report,
-   intent, prior_art, and per slice id, title, owner_home, project, size, risk, depends_on, files, machine, order,
+   intent, prior_art, owner_order (the `MainNNN` or `[captain-ask]` row of the brief's own order; every filed row names it, and
+   the owner-rules brief gate refuses a lane that names none), and per slice id, title, owner_home, project, size, risk, depends_on, files, machine, order,
    owner_word and gate. A slice id is lowercase letters and digits. A title is 2 to 7 plain words, at most 48
    characters, with no path, slash or id (strict intake refuses others). Dependent slices share one owner home. An
    owner-only slice carries owner_word, with every field the board needs (`bin/jg-swarm-plan-check.sh` refuses a miss):

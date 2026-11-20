@@ -2,7 +2,7 @@
 # jg-swarm.sh - Main starts a swarm: files, approves and briefs every slice of a plan file, posts each owner-only
 # question as a board card, and arms every owner home, so each slice starts on the first beat after its bases land.
 #
-# Usage: jg-swarm.sh start <plan.json> --harness <h> --model <m> --effort <e> [--agents <n>] [--with-others] [--wait]
+# Usage: jg-swarm.sh start <plan.json> --harness <h> --model <m> --effort <e> [--order <ref>] [--agents <n>] [--with-others] [--wait]
 #        jg-swarm.sh --help
 #
 # Main only. The plan file is the input form of bin/jg-swarm-plan-check.sh.
@@ -17,13 +17,17 @@
 # Exit codes: 0 started, already running, or done; 1 failed after a write (data/swarm/<plan>/swarm.json says what is done);
 # 2 refused, nothing written.
 #
+# The owner order is --order, else the plan's `owner_order`: `Main<digits>` or the id of a [captain-ask] row of Main's backlog. Each filed
+# slice row names it (`Owner order: <ref>.`, bin/jg-plan-file.sh), which is what the owner-rules brief gate asks of a lane.
+#
 # Refused before the first write: a plan the plan check refuses (its `refused:` lines are printed), a slice whose project
-# has yolo off in its owner's home, a Squad Lead home, a swarm that is running or finished, a bad flag.
+# has yolo off in its owner's home, no owner order or one that is neither MainNNN nor a [captain-ask] row, a Squad Lead home,
+# a swarm that is running or finished, a bad flag.
 #
 # Writes data/swarm/<plan>/swarm.json (state starting, then running) and records each finished step in `steps`:
 #   checked    plan check, yolo of each owner home, not a Squad Lead home (before the first write)
 #   copied     orders/ (read-only copies) and plan.json, the derived plan: the input plus on each slice body, order_path,
-#              order_sha256, goal, and on an owner-word slice word_row; at the top main_home and owner_homes
+#              order_sha256, goal, and on an owner-word slice word_row; at the top main_home, owner_homes and owner_order
 #   plan-rows  the plan row in Main and in each owner home that lacks it; each word row in Main and in its slice's owner home
 #   routed     bin/jg-plan-route.sh --dry-run, then the route itself; each slice's row and task go into the derived plan.
 #              A dry-run refusal exits 1 and leaves the record at plan-rows
@@ -55,20 +59,20 @@ usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' 
 refuse() { printf 'jg-swarm: %s\n' "$*" >&2; exit 2; }
 die() { printf 'jg-swarm: %s\n' "$*" >&2; exit 1; }
 
-USAGE="usage: jg-swarm.sh start <plan.json> --harness <h> --model <m> --effort <e> [--agents <n>] [--with-others] [--wait]"
+USAGE="usage: jg-swarm.sh start <plan.json> --harness <h> --model <m> --effort <e> [--order <ref>] [--agents <n>] [--with-others] [--wait]"
 MODE=''  # start: the checks, then the job; run: the job (what start starts in the background)
 case ${1-} in
   -h | --help) usage; exit 0 ;;
   start | run) MODE=$1; shift ;;
   *) refuse "$USAGE" ;;
 esac
-IN='' HARNESS='' MODEL='' EFFORT='' AGENTS='' OTHERS=() WAIT=0
+IN='' HARNESS='' MODEL='' EFFORT='' AGENTS='' ORDER='' OTHERS=() WAIT=0
 while [ $# -gt 0 ]; do
   case $1 in
     -h | --help) usage; exit 0 ;;
-    --harness | --model | --effort | --agents)
+    --harness | --model | --effort | --agents | --order)
       [ $# -ge 2 ] || refuse "$1 needs a value"
-      case $1 in --harness) HARNESS=$2 ;; --model) MODEL=$2 ;; --effort) EFFORT=$2 ;; --agents) AGENTS=$2 ;; esac
+      case $1 in --harness) HARNESS=$2 ;; --model) MODEL=$2 ;; --effort) EFFORT=$2 ;; --agents) AGENTS=$2 ;; --order) ORDER=$2 ;; esac
       shift ;;
     --with-others) OTHERS=(--with-others) ;;
     --wait) [ "$MODE" = start ] || refuse "--wait belongs to start"; WAIT=1 ;;
@@ -116,6 +120,11 @@ while IFS=$'\t' read -r owner project slice; do
   mode=$(in_home "$owner" "$SCRIPT_DIR/jg-project-mode.sh" "$project" 2>/dev/null) || mode=
   [ "${mode##* }" = on ] || refuse "refused: $slice: project $project has yolo off in $owner (${mode:-no posture}); a swarm needs yolo on"
 done < <(jq -r '.slices[] | [.owner_home, .project, .id] | @tsv' "$IN")
+# The owner order every slice row will name: --order, else the plan's owner_order; MainNNN, or a [captain-ask] row of Main's backlog.
+[ -n "$ORDER" ] || ORDER=$(jq -r '.owner_order // empty' "$IN")
+[ -n "$ORDER" ] || refuse "no owner order: pass --order <MainNNN of the owner's message> or put owner_order in the plan; the brief gate refuses a lane that names none"
+[[ $ORDER =~ ^Main[0-9]+$ ]] || backlog show "$ORDER" --full 2>/dev/null | grep -qx '  ask: ask' \
+  || refuse "the owner order \"$ORDER\" is neither MainNNN nor the id of a [captain-ask] row in this backlog"
 
 # --- 2. the job: started in the background, or run here -------------------------------------------------------------------
 DIR=$DATA/swarm/$PLAN
@@ -132,7 +141,7 @@ refuse_if_past_starting() {
     || refuse "swarm $PLAN is already $(jq -r '.state' "$REC"); see: bin/jg-swarm-check.sh status $PLAN"
 }
 detach() {  # `run` with this call's arguments, outside this caller's process tree and time bound
-  local run=("$SCRIPT_DIR/jg-swarm.sh" run "$IN" --harness "$HARNESS" --model "$MODEL" --effort "$EFFORT") sd name keep=()
+  local run=("$SCRIPT_DIR/jg-swarm.sh" run "$IN" --harness "$HARNESS" --model "$MODEL" --effort "$EFFORT" --order "$ORDER") sd name keep=()
   [ -z "$AGENTS" ] || run+=(--agents "$AGENTS")
   run+=(${OTHERS[@]+"${OTHERS[@]}"})
   mkdir -p "$DIR"
@@ -188,7 +197,7 @@ if ! done_step copied; then
   step_delay
   mkdir -p "$DIR/orders"
   cp "$IN" "$DERIVED"
-  edit_plan --arg h "$JG_HOME" '. + {main_home: $h, owner_homes: {}}'
+  edit_plan --arg h "$JG_HOME" --arg o "$ORDER" '. + {main_home: $h, owner_homes: {}, owner_order: $o}'
   for owner in "${OWNERS[@]}"; do edit_plan --arg o "$owner" --arg h "$(home_of "$owner")" '.owner_homes[$o] = $h'; done
   while IFS=$'\t' read -r id order title word; do
     copy=$DIR/orders/$order

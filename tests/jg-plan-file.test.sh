@@ -162,6 +162,52 @@ assert_contains "$out" "validate passed" "validate must pass after the resume"
 each_once
 pass "plan file: a stop after a create was resumed, each slice under the plan once"
 
+# T1 (owner order): a plan with owner_order files every row with the line `Owner order: <ref>.`; --order does the same for a
+# plan without the field; a half row lacking the line gets it; a row that has it is not changed.
+order_line() { bd_ show "$1" --json | jq -r '(if type == "array" then .[0] else . end).description' | grep -cxF "Owner order: $2."; }
+fresh ordered
+jq '. + {owner_order: "Main42707"}' "$T/plan.json" > "$T/ordered.json"
+jg_test_backlog "$H" add --parent jg-plan "[feature] Slice E" --repo juggernaut --priority 2 --body "half" >/dev/null 2>&1 || fail "the half row"
+out=$(run "$T/ordered.json" --owner "$mine") || fail "filing with an owner order: $out"
+for n in A B C D E F; do
+  [ "$(order_line "$(row_of $n)" Main42707)" = 1 ] || fail "slice $n's row must carry the line 'Owner order: Main42707.' exactly once"
+done
+assert_contains "$(bd_ show "$(row_of E)" --json | jq -r '.[0].description')" "half" "a completed row keeps its own body"
+out=$(run "$T/ordered.json" --owner "$mine") || fail "a second filing: $out"
+[ "$(order_line "$(row_of A)" Main42707)" = 1 ] || fail "a second filing must not repeat the order line"
+fresh flagged
+run "$T/plan.json" --owner "$mine" --order Main7 >/dev/null || fail "filing with --order"
+[ "$(order_line "$(row_of A)" Main7)" = 1 ] || fail "--order must put its line on the rows"
+fresh flagwins
+run "$T/ordered.json" --owner "$mine" --order Main7 >/dev/null || fail "filing with --order over owner_order"
+[ "$(order_line "$(row_of A)" Main7)" = 1 ] && [ "$(order_line "$(row_of A)" Main42707)" = 0 ] || fail "--order must win over the plan's owner_order"
+fresh plain
+run "$T/plan.json" --owner "$mine" >/dev/null || fail "filing with no order"
+[ "$(bd_ show "$(row_of A)" --json | jq -r '.[0].description' | grep -c '^Owner order:')" = 0 ] || fail "a plan with no order must add no order line"
+out=$(run "$T/plan.json" --owner "$mine" --order "two words") && fail "an order that is not one reference must be refused"
+assert_contains "$out" "owner order" "the refusal must name the order"
+pass "plan file: every filed row names the owner order, once, and --order wins over owner_order"
+
+# T2: the owner-rules brief gate (the one jg-brief.sh runs, as tests/jg-swarm-arm.test.sh reaches it through the arm) passes a
+# row filed with the order line and refuses the same row without it.
+gate() {  # <row>: the brief's stderr; rc= on the last line
+  local out rc
+  out=$(env HOME="$T" JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" JG_DATA_OVERRIDE="$H/data" JG_CONFIG_OVERRIDE="$H/config" \
+    "$ROOT/bin/jg-brief.sh" "${1//./-}" juggernaut --mode local-trunk --ticket "$1" 2>&1 >/dev/null); rc=$?
+  printf '%s\nrc=%s\n' "$out" "$rc"
+}
+fresh gate
+: > "$H/config/delivery-risk-loose"; printf 'on\n' > "$H/config/owner-rules"; mkdir -p "$H/projects/juggernaut"
+run "$T/ordered.json" --owner "$mine" >/dev/null || fail "filing for the gate"
+verdict=$(gate "$(row_of A)")
+assert_contains "$verdict" "rc=0" "the gate must pass a row with the order line: $verdict"
+fresh gate2
+: > "$H/config/delivery-risk-loose"; printf 'on\n' > "$H/config/owner-rules"; mkdir -p "$H/projects/juggernaut"
+run "$T/plan.json" --owner "$mine" >/dev/null || fail "filing for the refusal"
+verdict=$(gate "$(row_of A)")
+assert_contains "$verdict" "owner-rules: no owner ask" "the gate must refuse a row with no order line"
+pass "plan file: the brief gate passes a row with the order line and refuses one without"
+
 # A plan owned by nobody here is refused.
 out=$(run "$T/plan.json" --owner nobody) && fail "an owner with no slice must be refused"
 assert_contains "$out" "no slice owned by nobody" "the refusal must name the owner"

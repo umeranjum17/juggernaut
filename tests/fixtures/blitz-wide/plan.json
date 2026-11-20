@@ -3,6 +3,7 @@
   "title": "Blitz twenty four dummy note lanes",
   "report": "/nonexistent/report.md",
   "intent": "Prove that one swarm start puts twenty or more lanes live at once.",
+  "owner_order": "Main1",
   "prior_art": "Prior art: none needed - each lane writes one dummy note line.",
   "slices": [
     {
