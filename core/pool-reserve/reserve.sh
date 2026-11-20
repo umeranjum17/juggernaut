@@ -3,12 +3,17 @@
 # Usage: reserve.sh limit <jg-home>                         print the copy cap: the lane limit plus the two reserved copies ("-" when the home has no lane limit)
 #        reserve.sh admit <jg-home> <project-dir> [--red-fix]   exit 0 when a new copy may be leased, 75 (with a "deferred:" line) when not
 # An ordinary lane may lease a copy only while the leased copies are fewer than the lane limit, so the last two copies of the
-# cap stay free. A red-fix lane (jg-spawn.sh --red-fix-of) may use them, up to the cap. A home with no lane limit
+# cap stay free. A leased copy counts only when its holder (the name in `(held by <name>)`) has a task record in the home
+# (state/<name>.meta) that is not finished: a task is finished when its status file ends in a `done` line and its record has
+# landed= set, or when jg-crew-state.sh reads `state: done`. A copy with no holder name, an unsafe name, or a state that cannot be
+# read in 5 s counts (unknown is never zero). The copies left out are printed once on stderr as
+# `pool-reserve: not counted (no live lane): <slot>=<name> ...` so Main can clean them up; this script still ends and removes none.
+# A red-fix lane (jg-spawn.sh --red-fix-of) may use them, up to the cap. A home with no lane limit
 # (core/lane-scale/scale.sh target prints "-") is left to the pool's own max_trees. This script leases, ends and removes nothing.
 # A status that cannot be read leaves the count unknown: that is a third answer, not zero. admit then exits 75 with a "deferred:"
 # line that says the copies cannot be counted, and the start retries on its own (the same approval, the next beat).
 # JG_POOL_RESERVE_STATUS names the command that prints `treehouse status` for a project (a test points it at a stand-in);
-# JG_POOL_RESERVE_KEEP overrides the number of reserved copies (default 2).
+# JG_POOL_RESERVE_KEEP overrides the number of reserved copies (default 2); JG_POOL_RESERVE_COUNT_ALL=1 counts every leased copy, finished holders too.
 set -u
 RESERVE=${JG_POOL_RESERVE_KEEP:-2}
 case "$RESERVE" in ''|*[!0-9]*) RESERVE=2 ;; esac
@@ -17,6 +22,17 @@ usage() { echo "usage: reserve.sh limit <jg-home> | admit <jg-home> <project-dir
 CMD=$1; HOME_DIR=$2
 [ -d "$HOME_DIR" ] || usage
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+# live_holder <name>: succeeds when the copy's holder is a live lane (a recorded task that is not finished), and also when that cannot be told.
+live_holder() {
+  local name=$1 meta last
+  case "$name" in ''|*[!A-Za-z0-9._-]*) return 0 ;; esac
+  meta=$HOME_DIR/state/$name.meta
+  [ -f "$meta" ] || return 1
+  last=$(grep -v '^[[:space:]]*$' "$HOME_DIR/state/$name.status" 2>/dev/null | tail -n 1)
+  case "$last" in done*) grep -q '^landed=.' "$meta" && return 1 ;; esac
+  JG_HOME=$HOME_DIR timeout 5 "$HERE/../../bin/jg-crew-state.sh" "$name" 2>/dev/null </dev/null | grep -q '^state: done\b' && return 1
+  return 0
+}
 lane_limit() { "$HERE/../lane-scale/scale.sh" target "$HOME_DIR" 2>/dev/null | awk 'NF { print; exit }'; }
 
 case "$CMD" in
@@ -42,7 +58,12 @@ case "$CMD" in
       echo "deferred: the copies of $(basename "$PROJECT") cannot be counted (treehouse status failed${cause:+: $cause}); the start retries" >&2
       exit 75
     fi
-    leased=$(printf '%s\n' "$out" | grep -Ec '^[0-9]+[[:space:]]+leased([[:space:]]|$)')
+    leased=0; skipped=
+    while read -r slot _ holder; do
+      name=$(printf '%s\n' "$holder" | sed -n 's/.*(held by \([^)]*\)).*/\1/p')
+      if [ "${JG_POOL_RESERVE_COUNT_ALL:-}" = 1 ] || [ -z "$name" ] || live_holder "$name"; then leased=$((leased + 1)); else skipped="$skipped $slot=$name"; fi
+    done < <(printf '%s\n' "$out" | grep -E '^[0-9]+[[:space:]]+leased([[:space:]]|$)')
+    [ -z "$skipped" ] || echo "pool-reserve: not counted (no live lane):$skipped" >&2
     [ "$RED" -eq 1 ] && room=$cap || room=$l
     if [ "$leased" -ge "$room" ]; then
       if [ "$RED" -eq 1 ]; then why="the copy cap of $cap (lane limit $l plus $RESERVE reserved) is reached"
