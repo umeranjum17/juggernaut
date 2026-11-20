@@ -1,0 +1,393 @@
+{
+  "plan": "blitzwide",
+  "title": "Blitz twenty four dummy note lanes",
+  "report": "/nonexistent/report.md",
+  "intent": "Prove that one swarm start puts twenty or more lanes live at once.",
+  "prior_art": "Prior art: none needed - each lane writes one dummy note line.",
+  "slices": [
+    {
+      "id": "d1",
+      "title": "Dummy note lane one",
+      "owner_home": "lead1",
+      "project": "blitzproj",
+      "size": "S",
+      "risk": "Low",
+      "depends_on": [],
+      "files": [
+        "notes/d1.txt (new)"
+      ],
+      "machine": null,
+      "order": "order-dummy.md",
+      "owner_word": null,
+      "gate": null
+    },
+    {
+      "id": "d2",
+      "title": "Dummy note lane two",
+      "owner_home": "lead1",
+      "project": "blitzproj",
+      "size": "S",
+      "risk": "Low",
+      "depends_on": [],
+      "files": [
+        "notes/d2.txt (new)"
+      ],
+      "machine": null,
+      "order": "order-dummy.md",
+      "owner_word": null,
+      "gate": null
+    },
+    {
+      "id": "d3",
+      "title": "Dummy note lane three",
+      "owner_home": "lead1",
+      "project": "blitzproj",
+      "size": "S",
+      "risk": "Low",
+      "depends_on": [],
+      "files": [
+        "notes/d3.txt (new)"
+      ],
+      "machine": null,
+      "order": "order-dummy.md",
+      "owner_word": null,
+      "gate": null
+    },
+    {
+      "id": "d4",
+      "title": "Dummy note lane four",
+      "owner_home": "lead1",
+      "project": "blitzproj",
+      "size": "S",
+      "risk": "Low",
+      "depends_on": [],
+      "files": [
+        "notes/d4.txt (new)"
+      ],
+      "machine": null,
+      "order": "order-dummy.md",
+      "owner_word": null,
+      "gate": null
+    },
+    {
+      "id": "d5",
+      "title": "Dummy note lane five",
+      "owner_home": "lead1",
+      "project": "blitzproj",
+      "size": "S",
+      "risk": "Low",
+      "depends_on": [],
+      "files": [
+        "notes/d5.txt (new)"
+      ],
+      "machine": null,
+      "order": "order-dummy.md",
+      "owner_word": null,
+      "gate": null
+    },
+    {
+      "id": "d6",
+      "title": "Dummy note lane six",
+      "owner_home": "lead1",
+      "project": "blitzproj",
+      "size": "S",
+      "risk": "Low",
+      "depends_on": [],
+      "files": [
+        "notes/d6.txt (new)"
+      ],
+      "machine": null,
+      "order": "order-dummy.md",
+      "owner_word": null,
+      "gate": null
+    },
+    {
+      "id": "d7",
+      "title": "Dummy note lane seven",
+      "owner_home": "lead1",
+      "project": "blitzproj",
+      "size": "S",
+      "risk": "Low",
+      "depends_on": [],
+      "files": [
+        "notes/d7.txt (new)"
+      ],
+      "machine": null,
+      "order": "order-dummy.md",
+      "owner_word": null,
+      "gate": null
+    },
+    {
+      "id": "d8",
+      "title": "Dummy note lane eight",
+      "owner_home": "lead1",
+      "project": "blitzproj",
+      "size": "S",
+      "risk": "Low",
+      "depends_on": [],
+      "files": [
+        "notes/d8.txt (new)"
+      ],
+      "machine": null,
+      "order": "order-dummy.md",
+      "owner_word": null,
+      "gate": null
+    },
+    {
+      "id": "d9",
+      "title": "Dummy note lane nine",
+      "owner_home": "lead1",
+      "project": "blitzproj",
+      "size": "S",
+      "risk": "Low",
+      "depends_on": [],
+      "files": [
+        "notes/d9.txt (new)"
+      ],
+      "machine": null,
+      "order": "order-dummy.md",
+      "owner_word": null,
+      "gate": null
+    },
+    {
+      "id": "d10",
+      "title": "Dummy note lane ten",
+      "owner_home": "lead1",
+      "project": "blitzproj",
+      "size": "S",
+      "risk": "Low",
+      "depends_on": [],
+      "files": [
+        "notes/d10.txt (new)"
+      ],
+      "machine": null,
+      "order": "order-dummy.md",
+      "owner_word": null,
+      "gate": null
+    },
+    {
+      "id": "d11",
+      "title": "Dummy note lane eleven",
+      "owner_home": "lead1",
+      "project": "blitzproj",
+      "size": "S",
+      "risk": "Low",
+      "depends_on": [],
+      "files": [
+        "notes/d11.txt (new)"
+      ],
+      "machine": null,
+      "order": "order-dummy.md",
+      "owner_word": null,
+      "gate": null
+    },
+    {
+      "id": "d12",
+      "title": "Dummy note lane twelve",
+      "owner_home": "lead1",
+      "project": "blitzproj",
+      "size": "S",
+      "risk": "Low",
+      "depends_on": [],
+      "files": [
+        "notes/d12.txt (new)"
+      ],
+      "machine": null,
+      "order": "order-dummy.md",
+      "owner_word": null,
+      "gate": null
+    },
+    {
+      "id": "d13",
+      "title": "Dummy note lane thirteen",
+      "owner_home": "lead1",
+      "project": "blitzproj",
+      "size": "S",
+      "risk": "Low",
+      "depends_on": [],
+      "files": [
+        "notes/d13.txt (new)"
+      ],
+      "machine": null,
+      "order": "order-dummy.md",
+      "owner_word": null,
+      "gate": null
+    },
+    {
+      "id": "d14",
+      "title": "Dummy note lane fourteen",
+      "owner_home": "lead1",
+      "project": "blitzproj",
+      "size": "S",
+      "risk": "Low",
+      "depends_on": [],
+      "files": [
+        "notes/d14.txt (new)"
+      ],
+      "machine": null,
+      "order": "order-dummy.md",
+      "owner_word": null,
+      "gate": null
+    },
+    {
+      "id": "d15",
+      "title": "Dummy note lane fifteen",
+      "owner_home": "lead1",
+      "project": "blitzproj",
+      "size": "S",
+      "risk": "Low",
+      "depends_on": [],
+      "files": [
+        "notes/d15.txt (new)"
+      ],
+      "machine": null,
+      "order": "order-dummy.md",
+      "owner_word": null,
+      "gate": null
+    },
+    {
+      "id": "d16",
+      "title": "Dummy note lane sixteen",
+      "owner_home": "lead1",
+      "project": "blitzproj",
+      "size": "S",
+      "risk": "Low",
+      "depends_on": [],
+      "files": [
+        "notes/d16.txt (new)"
+      ],
+      "machine": null,
+      "order": "order-dummy.md",
+      "owner_word": null,
+      "gate": null
+    },
+    {
+      "id": "d17",
+      "title": "Dummy note lane seventeen",
+      "owner_home": "lead1",
+      "project": "blitzproj",
+      "size": "S",
+      "risk": "Low",
+      "depends_on": [],
+      "files": [
+        "notes/d17.txt (new)"
+      ],
+      "machine": null,
+      "order": "order-dummy.md",
+      "owner_word": null,
+      "gate": null
+    },
+    {
+      "id": "d18",
+      "title": "Dummy note lane eighteen",
+      "owner_home": "lead1",
+      "project": "blitzproj",
+      "size": "S",
+      "risk": "Low",
+      "depends_on": [],
+      "files": [
+        "notes/d18.txt (new)"
+      ],
+      "machine": null,
+      "order": "order-dummy.md",
+      "owner_word": null,
+      "gate": null
+    },
+    {
+      "id": "d19",
+      "title": "Dummy note lane nineteen",
+      "owner_home": "lead1",
+      "project": "blitzproj",
+      "size": "S",
+      "risk": "Low",
+      "depends_on": [],
+      "files": [
+        "notes/d19.txt (new)"
+      ],
+      "machine": null,
+      "order": "order-dummy.md",
+      "owner_word": null,
+      "gate": null
+    },
+    {
+      "id": "d20",
+      "title": "Dummy note lane twenty",
+      "owner_home": "lead1",
+      "project": "blitzproj",
+      "size": "S",
+      "risk": "Low",
+      "depends_on": [],
+      "files": [
+        "notes/d20.txt (new)"
+      ],
+      "machine": null,
+      "order": "order-dummy.md",
+      "owner_word": null,
+      "gate": null
+    },
+    {
+      "id": "d21",
+      "title": "Dummy note lane twenty one",
+      "owner_home": "lead1",
+      "project": "blitzproj",
+      "size": "S",
+      "risk": "Low",
+      "depends_on": [],
+      "files": [
+        "notes/d21.txt (new)"
+      ],
+      "machine": null,
+      "order": "order-dummy.md",
+      "owner_word": null,
+      "gate": null
+    },
+    {
+      "id": "d22",
+      "title": "Dummy note lane twenty two",
+      "owner_home": "lead1",
+      "project": "blitzproj",
+      "size": "S",
+      "risk": "Low",
+      "depends_on": [],
+      "files": [
+        "notes/d22.txt (new)"
+      ],
+      "machine": null,
+      "order": "order-dummy.md",
+      "owner_word": null,
+      "gate": null
+    },
+    {
+      "id": "d23",
+      "title": "Dummy note lane twenty three",
+      "owner_home": "lead1",
+      "project": "blitzproj",
+      "size": "S",
+      "risk": "Low",
+      "depends_on": [],
+      "files": [
+        "notes/d23.txt (new)"
+      ],
+      "machine": null,
+      "order": "order-dummy.md",
+      "owner_word": null,
+      "gate": null
+    },
+    {
+      "id": "d24",
+      "title": "Dummy note lane twenty four",
+      "owner_home": "lead1",
+      "project": "blitzproj",
+      "size": "S",
+      "risk": "Low",
+      "depends_on": [],
+      "files": [
+        "notes/d24.txt (new)"
+      ],
+      "machine": null,
+      "order": "order-dummy.md",
+      "owner_word": null,
+      "gate": null
+    }
+  ]
+}
