@@ -226,21 +226,15 @@ out=$(env JG_HOME="$R" "$JI" stamp-check); rc=$?
 want "r2 a rules close with no such record is found (the close and the step it opened)" "1 2" "$rc $(printf '%s\n' "$out" | grep -c '^stamp ')"
 unset HH
 
-# ------------------------------------------------------------------ i: the hold scripts on real Beads homes, import-holds and compare
+# ------------------------------------------------------------------ i: the hold scripts on homes with ticket tables, import-holds and compare
 # A hold on a yolo-off task that names its pull request asks his merge word; any other hold asks the plain question; his board answer
 # closes it with his pick and a yes on a merge opens the merge. A refused hold call leaves one intake item and the hold itself set.
-if [ -z "${JG_BEADS_TEST_BD:-}" ] && command -v bd >/dev/null 2>&1; then JG_BEADS_TEST_BD=$(command -v bd); fi
-if [ -z "${JG_BEADS_TEST_DOLT:-}" ] && command -v dolt >/dev/null 2>&1; then JG_BEADS_TEST_DOLT=$(command -v dolt); fi
-if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
-  echo "skip i: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset"
-  exit "$fail"
-fi
-export JG_BEADS_TEST_BD JG_BEADS_TEST_DOLT
-# shellcheck source=core/lib/beads-test-env.sh disable=SC1091
-. "$ROOT/core/lib/beads-test-env.sh"
 HB=$d/hb; LB=$d/lb
-mkdir -p "$HB/state" "$LB/state"
-core_beads_home "$ROOT" "$HB"; core_beads_home "$ROOT" "$LB"
+for h in "$HB" "$LB"; do
+  mkdir -p "$h/state" "$h/config" "$h/data"
+  printf '%s\n' "$h-store" > "$h/config/beads-dir"   # kept until bin/jg-backlog-lib.sh stops asking for a store path
+  : > "$h/config/backlog-intake-loose"
+done
 : > "$HB/config/item-store"; : > "$LB/config/item-store"
 cp "$FIX/data/projects.md" "$HB/data/projects.md"
 printf 'muxr\n' > "$LB/.jg-squad-lead-home"

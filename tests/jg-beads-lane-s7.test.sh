@@ -1,28 +1,22 @@
 #!/usr/bin/env bash
-# Slice S7 on a real Beads store: a worker's row is owned by its Herdr agent name, the same across a relaunch, and the
+# Slice S7 on the tickets tables: a worker's row is owned by its Herdr agent name, the same across a relaunch, and the
 # spawn generation is metadata.spawn_gen, with the model and effort beside it. The name is the task record's agent_name= (a record with none keeps the id's name). A start from another generation is refused unless it is a relaunch. The moves run
-# through the transition library the spawn calls. JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT name the builds; without
-# them the run skips plainly.
+# through the transition library the spawn calls.
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
-  printf 'skip: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
-  exit 0
-fi
-
 T=$(jg_test_tmproot jg-beads-lane-s7)
-WRAPPER=$ROOT/bin/jg-beads.sh CLI=$ROOT/bin/jg-backlog.sh
-unset BEADS_DB BEADS_DOLT_SHARED_SERVER BEADS_ACTOR JG_BACKLOG_LANE JG_BACKLOG_SPAWN_GEN JG_BACKLOG_AGENT JG_BACKLOG_LANE_HANDOVER
+BD=$ROOT/core/item-store/adapters/bd_compat.py CLI=$ROOT/bin/jg-backlog.sh
+unset BEADS_ACTOR JG_BACKLOG_LANE JG_BACKLOG_SPAWN_GEN JG_BACKLOG_AGENT JG_BACKLOG_LANE_HANDOVER
 mkdir -p "$T/store" "$T/home/config" "$T/home/data" "$T/home/state"
-export TZ=UTC TMPDIR=$T BEADS_DIR=$T/store/.beads JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
-printf '%s\n' "$BEADS_DIR" > "$T/home/config/beads-dir"
+export TZ=UTC TMPDIR=$T
+printf '%s\n' "$T/store" > "$T/home/config/beads-dir"   # kept until bin/jg-backlog-lib.sh stops asking for a store path
 : > "$T/home/config/backlog-intake-loose"  # the fixture files rows by their own words, not by strict intake
 jail=()
 command -v bwrap >/dev/null && jail=(bwrap --ro-bind / / --tmpfs /tmp --bind "$T" "$T" --ro-bind "$ROOT" "$ROOT" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent)
 
-bd() { "${jail[@]}" "$WRAPPER" "$@"; }
+bd() { JG_HOME="$T/home" "${jail[@]}" python3 -I "$BD" "$@"; }
 axi() { JG_HOME="$T/home" "${jail[@]}" "$CLI" "$@"; }
 field() {  # <id> <jq filter>: one value of the row as bd prints it.
   bd show "$1" --json 2>/dev/null | jq -r "(if type == \"array\" then .[0] else . end) | $2"

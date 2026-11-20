@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bd_compat.py has one mode, `tables`: it answers a bd call from fleet.db, and bin/jg-beads.sh hands every call to it. No bd, no dolt.
+# bd_compat.py has one mode, `tables`: it answers a bd call from fleet.db.
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 repo=$PWD
 t=$(mktemp -d) || exit 1
@@ -15,8 +15,8 @@ fail=0
 ok() { echo "ok: $1"; }
 bad() { echo "FAIL: $1"; fail=1; }
 
-# 1: --mode prints tables, with or without config/bd-tables, and JG_BEADS_SH is not read
-[ "$(JG_BEADS_SH=/nonexistent bd --mode 2>/dev/null)" = tables ] || bad "--mode without config/bd-tables"
+# 1: --mode prints tables, with or without config/bd-tables
+[ "$(bd --mode 2>/dev/null)" = tables ] || bad "--mode without config/bd-tables"
 mkdir -p "$t/home/config"; : >"$t/home/config/bd-tables"
 if [ "$(bd --mode 2>/dev/null)" = tables ]; then ok "--mode prints tables"; else bad "--mode with config/bd-tables"; fi
 
@@ -30,13 +30,7 @@ printf 'class NotSupported(Exception):\n    pass\n\ndef run(argv, stdin_text):\n
 out=$(bd show x --json 2>/dev/null </dev/null); rc=$?
 if [ "$rc" = 3 ] && [ "$out" = hello ]; then ok "family module answers"; else bad "module: rc=$rc out=$out"; fi
 
-# 4: the wrapper runs no bd and no dolt: dolt exits 2, init exits 0 naming the tables, with a PATH that holds neither
-out=$(PATH=$t/path /bin/bash "$repo/bin/jg-beads.sh" dolt version 2>&1 </dev/null); rc=$?
-if [ "$rc" = 2 ] && [ "$out" = "Beads is retired: no dolt" ]; then ok "dolt is retired"; else bad "dolt: rc=$rc out=$out"; fi
-out=$("$repo/bin/jg-beads.sh" init --prefix x 2>&1 </dev/null); rc=$?
-if [ "$rc" = 0 ] && [ "$(wc -l <<<"$out")" = 1 ] && grep -q tables <<<"$out"; then ok "init names the tables"; else bad "init: rc=$rc out=$out"; fi
-
-# 5: every recorded form of tests/fixtures/bd-forms is answered: each family test seeds the store of every fixture of its family, runs the call, and prints a FAIL line per form not answered
+# 4: every recorded form of tests/fixtures/bd-forms is answered: each family test seeds the store of every fixture of its family, runs the call, and prints a FAIL line per form not answered
 unanswered=0
 for family in read create update link admin; do
   n=$(bash "$repo/tests/bd-compat-$family.test.sh" 2>&1 | grep -c '^FAIL')

@@ -119,18 +119,13 @@ eq c2-open-decisions-all-lists-it "$(grep -c 'may jg-9 merge?' "$W/d2.out")" 1
 mkdir -p "$D/state/inbox"; printf 'id=1-abc\nsource=text\n--\nhello\n' > "$D/state/inbox/1-abc.note"
 drain "$D" > "$W/d3.out" 2>&1
 eq c3-a-record-only-in-today-is-under-RECORD-DIVERGENCE "$(sed -n '/^RECORD DIVERGENCE/,$p' "$W/d3.out" | grep -c '^1-abc tell today=waiting store=none$')" 1
-if [ -n "${JG_BEADS_TEST_BD:-}" ] && [ -n "${JG_BEADS_TEST_DOLT:-}" ]; then
-  # shellcheck source=core/lib/beads-test-env.sh disable=SC1091
-  . "$ROOT/core/lib/beads-test-env.sh"
-  E=$W/e; mkdir -p "$E/state"; core_beads_home "$ROOT" "$E"; mkhome "$E" reads
-  rm -f "$E/config/item-store"
-  env JG_HOME="$E" JG_STATE_OVERRIDE="$E/state" JG_DATA_OVERRIDE="$E/data" JG_CONFIG_OVERRIDE="$E/config" "$ROOT/bin/jg-captain-hold.sh" hold jg-a0004 --title "[captain-ask] store off" --reason "set with the store off" --repo e-pr >/dev/null 2>&1
-  : > "$E/config/item-store"
-  drain "$E" > "$W/e1.out" 2>&1
-  eq c4-a-hold-set-only-in-today-is-under-RECORD-DIVERGENCE "$(sed -n '/^RECORD DIVERGENCE/,$p' "$W/e1.out" | grep -c '^jg-a0004 question today=held store=none$')" 1
-else
-  echo "skip c4: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset"
-fi
+E=$W/e; mkhome "$E" reads
+printf '%s\n' "$E-store" > "$E/config/beads-dir"   # kept until bin/jg-backlog-lib.sh stops asking for a store path
+rm -f "$E/config/item-store"
+env JG_HOME="$E" JG_STATE_OVERRIDE="$E/state" JG_DATA_OVERRIDE="$E/data" JG_CONFIG_OVERRIDE="$E/config" "$ROOT/bin/jg-captain-hold.sh" hold jg-a0004 --title "[captain-ask] store off" --reason "set with the store off" --repo e-pr >/dev/null 2>&1
+: > "$E/config/item-store"
+drain "$E" > "$W/e1.out" 2>&1
+eq c4-a-hold-set-only-in-today-is-under-RECORD-DIVERGENCE "$(sed -n '/^RECORD DIVERGENCE/,$p' "$W/e1.out" | grep -c '^jg-a0004 question today=held store=none$')" 1
 F=$W/f; mkhome "$F"       # no config/item-store-reads: the status-line presentation stays
 printf 'needs-decision [key=k1]: pick one\n' > "$F/state/jg-3.status"
 queue "$F" signal jg-3.status 'signal: jg-3.status'

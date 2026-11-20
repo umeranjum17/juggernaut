@@ -129,7 +129,7 @@ done <<'LEDGER'
 7|.agents/skills/task-dispatch/SKILL.md|When a steer answers an open keyed decision or
 7|.agents/skills/task-dispatch/SKILL.md|For the parent-owned correlation, recovery, and escalation contract on
 7|.agents/skills/task-dispatch/SKILL.md|When the captain adds or changes an ask mid-task,
-10|.agents/skills/fleet-records/SKILL.md|The Beads store named by `config/beads-dir` is the durable queue;
+10|.agents/skills/fleet-records/SKILL.md|the durable queue; `bin/jg-backlog.sh markdown` renders it
 10|.agents/skills/fleet-records/SKILL.md|It tracks work items only, never agents; persistent Squad
 10|.agents/skills/fleet-records/SKILL.md|Work routed to a Squad Lead is recorded in
 10|.agents/skills/fleet-records/SKILL.md|When a main-side thread such as a pending captain

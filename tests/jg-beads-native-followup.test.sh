@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# A public follow-up kept as a native Beads row by bin/jg-beads-followup.py, driven through bin/jg-backlog.sh, in a throwaway
+# A public follow-up kept as a ticket row by bin/jg-beads-followup.py, driven through bin/jg-backlog.sh, in a throwaway
 # folder outside any git tree. JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT name the pinned builds; it skips plainly without them.
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
@@ -7,14 +7,12 @@ set -u
 
 if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
   printf 'skip: real store: JG_BEADS_TEST_BD, JG_BEADS_TEST_DOLT is unset\n'; exit 0; fi
-T=$(jg_test_tmproot jg-beads-followup) CLI="$ROOT/bin/jg-backlog.sh" jail=()
-unset BEADS_DB BEADS_DOLT_SHARED_SERVER
-export TZ=UTC JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT TMPDIR=$T  # TMPDIR is the jail's one writable folder, so every mktemp under it lands
+T=$(jg_test_tmproot jg-beads-followup) CLI="$ROOT/bin/jg-backlog.sh" BD="$ROOT/core/item-store/adapters/bd_compat.py" jail=()
+export TZ=UTC TMPDIR=$T  # TMPDIR is the jail's one writable folder, so every mktemp under it lands
 command -v bwrap >/dev/null && jail=(bwrap --ro-bind / / --tmpfs /tmp --bind "$T" "$T" --ro-bind "$ROOT" "$ROOT" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent)
 mkdir -p "$T/bd/data" "$T/bd/state" "$T/bd/config" "$T/bd/s"
-printf '%s\n' "$T/bd/s/.beads" > "$T/bd/config/beads-dir"
+printf '%s\n' "$T/bd/s" > "$T/bd/config/beads-dir"   # kept until bin/jg-backlog-lib.sh stops asking for a store path
 : > "$T/bd/config/backlog-intake-loose"  # the fixture files rows by their own words, not by strict intake
-BEADS_DIR=$T/bd/s/.beads "${jail[@]}" "$ROOT/bin/jg-beads.sh" init --prefix jg >/dev/null 2>&1 || fail "a store"
 ask() { JG_HOME="$T/$1" "${jail[@]}" "$CLI" "${@:2}"; }
 same() {  # <args...>: this home's store answers, and answers with a documented result rather than a crash.
   local out rc=0
@@ -91,7 +89,7 @@ same public-followup supersede-work pf-three --relation rel-gone --successor-fil
 same public-followup supersede-work pf-three --successor-file "$T/rel-next.json"
 same public-followup list --work-ref main/jg-next --json
 # Native shape: one tracks edge that never blocks the work it names.
-[ "$(BEADS_DIR=$T/bd/s/.beads "${jail[@]}" "$ROOT/bin/jg-beads.sh" list --all --limit 0 --json | jq '[.[] | select(.id == "pf-two") | .dependencies[]? | select(.type == "tracks")] | length')" = 1 ] || fail "one tracks edge from the promise to its work"
+[ "$(JG_HOME=$T/bd "${jail[@]}" python3 -I "$BD" list --all --limit 0 --json | jq '[.[] | select(.id == "pf-two") | .dependencies[]? | select(.type == "tracks")] | length')" = 1 ] || fail "one tracks edge from the promise to its work"
 assert_contains "$(ask bd ready)" "jg-work" "bound work must stay ready"
 pass "work bound to a promise keeps its relation and its native edge"
 # A work event lands, refuses or supersedes alike, and the promise comes due only when its contract is met.
@@ -146,7 +144,7 @@ begin() { same public-followup begin-delivery "$1" --payload-hash "$2" "${@:3}";
 post() { same public-followup record-delivery "$1" --receipt-file "$T/$2.json" "${@:3}"; }
 miss() { same public-followup record-error "$1" --error-file "$T/$2.json" "${@:3}"; }
 waive() { same public-followup waive "$1" --reason "$2" --approved-by "$3" "${@:4}"; }
-notes() { BEADS_DIR=$T/bd/s/.beads "${jail[@]}" "$ROOT/bin/jg-beads.sh" comments "$1" --json | jq '[.[] | select(.text | fromjson | .followup == "delivery")] | length'; }
+notes() { JG_HOME=$T/bd "${jail[@]}" python3 -I "$BD" comments "$1" --json | jq '[.[] | select(.text | fromjson | .followup == "delivery")] | length'; }
 sha=$(printf '%064d' 1) sha2=$(printf '%064d' 2) n=0
 jq -n '{state:"posted", request_id:"req-1", platform:"discord", attempt_count:2, total_chunks:1, posted_chunks:1, posted_at:"2026-08-01T10:00:00Z"}' > "$T/rc.json"
 jq -n '{state:"retry-due", attempt_count:1, error_code:"relay.down", occurred_at:"2026-08-01T10:00:00Z", next_attempt_at:"2026-08-01T11:00:00Z"}' > "$T/er.json"
@@ -235,7 +233,7 @@ for n in 1 2 3 4; do (ask bd public-followup begin-delivery pf-lock --payload-ha
 [ "$(ask bd public-followup list --delivery-state delivery-posting --json | jq '[.public_followups[] | select(.id == "pf-lock") | .public_followup.delivery.attempt_count] == [1]')" = true ] || fail "the winner holds attempt one"
 # A crash after the row write leaves no comment, and a rerun fills it in once.
 due 'ask bd' pf-crash
-BEADS_DIR=$T/bd/s/.beads "${jail[@]}" "$ROOT/bin/jg-beads.sh" update pf-crash --if-status open --status in_progress --metadata "{\"delivery_state\":\"delivery-posting\",\"delivery\":{\"attempt_count\":1,\"payload_digest\":\"$sha\"}}" >/dev/null 2>&1 || fail "a crashed attempt"
+JG_HOME=$T/bd "${jail[@]}" python3 -I "$BD" update pf-crash --if-status open --status in_progress --metadata "{\"delivery_state\":\"delivery-posting\",\"delivery\":{\"attempt_count\":1,\"payload_digest\":\"$sha\"}}" >/dev/null 2>&1 || fail "a crashed attempt"
 for _ in 1 2; do [ "$(ask bd public-followup begin-delivery pf-crash --payload-hash "$sha" --json | jq .already)" = true ] || fail "the rerun must answer already"; done
 [ "$(notes pf-crash)" = 1 ] || fail "the rerun must log the attempt once, got $(notes pf-crash)"
 pass "rival attempts leave one winner and a crashed attempt one row"
@@ -243,9 +241,8 @@ pass "rival attempts leave one winner and a crashed attempt one row"
 J=$T/jr
 mkdir -p "$J/data" "$J/config" "$J/s" "$J/state/x-inbox" "$T/fb"
 printf '## In flight\n\n## Queued\n\n## Done\n' > "$J/data/backlog.md"
-printf '%s\n' "$J/s/.beads" > "$J/config/beads-dir"; printf 'FMX_PAIRING_TOKEN=test-token\n' > "$J/.env"
+printf '%s\n' "$J/s" > "$J/config/beads-dir"; printf 'FMX_PAIRING_TOKEN=test-token\n' > "$J/.env"   # beads-dir kept until bin/jg-backlog-lib.sh stops asking
 : > "$J/config/backlog-intake-loose"
-BEADS_DIR=$J/s/.beads "${jail[@]}" "$ROOT/bin/jg-beads.sh" init --prefix jg >/dev/null 2>&1 || fail "a journey store"
 printf '#!/usr/bin/env bash\ncase " $* " in *connector/followup*) echo post >> "%s/posts" ;; esac\nprintf 200\n' "$T" > "$T/fb/curl"; chmod +x "$T/fb/curl"; : > "$T/posts"
 pf() { PATH=$T/fb:/usr/bin:/bin JG_ROOT_OVERRIDE=$ROOT JG_HOME=$J JG_STATE_OVERRIDE=$J/state FMX_NOW_OVERRIDE=1787539200 "${jail[@]}" "$@"; }
 ask jr add jg-work "[feature] Bound work" --body why >/dev/null 2>&1 || fail "journey work"
@@ -264,7 +261,7 @@ pass "the whole promise posts once on a Beads home"  # progress for a slow host:
 promise 'ask bd' pf-gap req >/dev/null
 ask bd public-followup bind-work pf-gap --relation-file "$T/rel-a.json" >/dev/null
 event ev-gap rel-a 1 jg-work pr-merged "$url" null pf-gap
-BEADS_DIR=$T/bd/s/.beads "${jail[@]}" "$ROOT/bin/jg-beads.sh" comment pf-gap "$(jq -c '{followup:"work-event"} + .' "$T/ev-gap.json")" >/dev/null 2>&1 || fail "a comment left by a crash"
+JG_HOME=$T/bd "${jail[@]}" python3 -I "$BD" comment pf-gap "$(jq -c '{followup:"work-event"} + .' "$T/ev-gap.json")" >/dev/null 2>&1 || fail "a comment left by a crash"
 ask bd public-followup work-event pf-gap --event-file "$T/ev-gap.json" --json > "$T/gap.out" || fail "the rerun must accept the logged event"
 [ "$(jq -r '.already, .task.public_followup.delivery.state' "$T/gap.out" | paste -sd' ')" = "true ready" ] || fail "the rerun must answer already and ready: $(cut -c1-200 "$T/gap.out")"
 [ "$(ask bd public-followup list --delivery-state ready --json | jq '[.public_followups[] | select(.id == "pf-gap")] | length')" = 1 ] || fail "the rerun must leave the row ready"

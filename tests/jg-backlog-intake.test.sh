@@ -3,9 +3,8 @@
 # priority, and a body without the sections bd's lint.sections.task asks for (bd itself refuses it, through create --validate);
 # --release lands in metadata.release (`later` when absent) and a `release:` body line is not read; a leading type tag is still
 # taken as input; an owner ask gets priority 0 by itself; and config/backlog-intake-loose turns all of it off. A title passed as
-# the only positional word files that title, an id given as the empty string mints one, and the writer reads the JSON object out of
-# bd's stdout wherever it sits, so a line bd prints around it costs no crash and no stray row. Every call runs on
-# a real embedded store with no network. JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT name the pinned builds, which skip without them.
+# the only positional word files that title, and an id given as the empty string mints one. Every call runs on the home's
+# tickets tables with no network. JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT name the pinned builds, which skip without them.
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -15,20 +14,18 @@ if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
   exit 0
 fi
 
-WRAPPER="$ROOT/bin/jg-beads.sh" CLI="$ROOT/bin/jg-backlog.sh" T=$(jg_test_tmproot jg-backlog-intake)
-unset BEADS_DB BEADS_DOLT_SHARED_SERVER
+BD="$ROOT/core/item-store/adapters/bd_compat.py" CLI="$ROOT/bin/jg-backlog.sh" T=$(jg_test_tmproot jg-backlog-intake)
 H=$T/home
 mkdir -p "$H/config" "$H/state" "$H/data" "$T/user" "$T/real"
-export BEADS_DIR=$T/real/.beads JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
-printf '%s\n' "$BEADS_DIR" > "$H/config/beads-dir"
-"$WRAPPER" init --prefix jg >"$T/init.log" 2>&1 || fail "init: $(cat "$T/init.log")"
+printf '%s\n' "$T/real" > "$H/config/beads-dir"   # kept until bin/jg-backlog-lib.sh stops asking for a store path
+bd_() { JG_HOME=$H python3 -I "$BD" "$@" 2>/dev/null; }
 tasks() {
   env HOME="$T/user" TMPDIR="$T" PATH=/usr/bin:/bin JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" JG_DATA_OVERRIDE="$H/data" \
     JG_CONFIG_OVERRIDE="$H/config" JG_BOOTSTRAP_NETWORK=skip "$CLI" "$@" 2>&1
 }
-field() { "$WRAPPER" show "$1" --json 2>/dev/null | jq -r "(if type == \"array\" then .[0] else . end) | $2"; }
-gone() { [ -z "$("$WRAPPER" show "$1" --json 2>/dev/null | jq -r 'if type == "array" then .[0].id else .id end // empty')" ]; }
-ids() { "$WRAPPER" list --all --limit 0 --json 2>/dev/null | jq -r 'if type == "array" then . else .items end | .[] | .id'; }
+field() { bd_ show "$1" --json | jq -r "(if type == \"array\" then .[0] else . end) | $2"; }
+gone() { [ -z "$(bd_ show "$1" --json | jq -r 'if type == "array" then .[0].id else .id end // empty')" ]; }
+ids() { bd_ list --all --limit 0 --json | jq -r 'if type == "array" then . else .items end | .[] | .id'; }
 made_since() {  # <ids before a call>: the one id the call filed
   comm -13 <(printf '%s\n' "$1" | sort) <(ids | sort)
 }
@@ -84,24 +81,4 @@ made=$(made_since "$before")
 [ "$(printf '%s\n' "$made" | grep -c .)" = 1 ] || fail "an empty id must file exactly one row, filed: $made"
 assert_equals "Relaunch leaves Pi leads idle" "$(field "$made" .title)" "the row must hold the title"
 
-# bd's stdout carries a line before its JSON object: the writer reads the object wherever it sits, so no crash and no stray row.
-# The shim only adds that line, then runs the pinned bd, and its own hash is what the pin table names for this call.
-cat > "$T/bd-with-warning" <<'SHIM'
-#!/usr/bin/env bash
-printf 'warning: the journal is stale\n'
-exec "$REAL_BD" "$@"
-SHIM
-chmod +x "$T/bd-with-warning"
-sha=$( { sha256sum "$T/bd-with-warning" 2>/dev/null || shasum -a 256 "$T/bd-with-warning"; } | cut -d' ' -f1 )
-os=$(uname -s | tr '[:upper:]' '[:lower:]')
-arch=$(uname -m); case "$arch" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac
-sed "s|^bd-sha256-$os-$arch .*|bd-sha256-$os-$arch $sha|" "$ROOT/toolchain.versions" > "$T/pins.versions"
-before=$(ids)
-out=$(REAL_BD=$JG_BEADS_TEST_BD JG_BEADS_BD=$T/bd-with-warning JG_PIN_FILE_OVERRIDE=$T/pins.versions \
-  tasks add "" "A warning line before the object" --priority 2 --body "$SECTIONS") || fail "a line before bd's JSON must cost no add: $out"
-assert_not_contains "$out" 'Traceback' "a line before the object must not crash the add"
-made=$(made_since "$before")
-[ "$(printf '%s\n' "$made" | grep -c .)" = 1 ] || fail "a line before the object must file exactly one row, filed: $made"
-assert_equals "A warning line before the object" "$(field "$made" .title)" "the row must hold the title"
-
-pass "strict intake: title, priority, sections, release field, tag as input, loose flag, title-only and empty-id adds, a line around bd's JSON"
+pass "strict intake: title, priority, sections, release field, tag as input, loose flag, title-only and empty-id adds"

@@ -29,7 +29,7 @@ sed -n 's/^- \(.*\)$/\1/p' "$DATA/projects.md" 2>/dev/null \
   | sed -e 's/ \[.*$//' -e 's/ - .*$//' > "$tmp/projects"
 for f in "$STATE"/*.meta; do [ -e "$f" ] && basename "$f" .meta; done > "$tmp/lanes"
 
-JG_HOME="$JG_HOME" python3 "$JG_ROOT/core/item-store/adapters/tickets.py" spawnable > "$tmp/rows" 2>"$tmp/err" \
+JG_HOME="$JG_HOME" python3 "$SCRIPT_DIR/../core/item-store/adapters/tickets.py" spawnable > "$tmp/rows" 2>"$tmp/err" \
   || die "the tables read failed: $(cat "$tmp/err" "$tmp/rows" | head -c 300)"   # tickets.py names a fault on stdout
 
 # Each row comes out once per project label: keep the first registered project of a row no live lane holds.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # bd_compat.py in mode `tables` answers every recorded form of the `create` family from fleet.db, with the bytes and the exit
 # status bd gave. One `ok <form>` or `FAIL <form>` line per fixture in tests/fixtures/bd-forms whose form has family `create`.
-# Each call runs on a scratch home whose fleet.db holds the fixture's store export. No bd and no dolt run: PATH holds neither.
+# Each call runs on a scratch home whose fleet.db holds the fixture's store export.
 #
 # Three things bd decides at call time cannot repeat, so both sides are masked before the compare: the clock (every
 # ISO time), and an id bd drew itself (a call with no --id and no --parent: it must have the store's prefix and the
@@ -21,7 +21,7 @@ mkdir -p "$t/py"
 for _py in /usr/bin/python3 /usr/local/bin/python3 "$(command -v python3)"; do [ -x "$_py" ] && { ln -sf "$_py" "$t/py/python3"; break; }; done
 OPEN=''
 PATH=$t/py JG_REPO=$repo JG_SCRATCH=$t JG_OPEN_FORMS=$OPEN "$t/py/python3" -I - <<'PY'
-import json, os, re, shutil, sqlite3, subprocess, sys
+import json, os, re, sqlite3, subprocess, sys
 
 repo, scratch = os.environ["JG_REPO"], os.environ["JG_SCRATCH"]
 open_forms = set(os.environ["JG_OPEN_FORMS"].split("\n"))
@@ -32,9 +32,6 @@ for line in open(os.path.join(adapters, "bd-forms.tsv"), encoding="utf-8"):
     p = line.rstrip("\n").split("\t")
     if len(p) >= 3:
         family[p[0]] = p[2]
-for tool in ("bd", "dolt"):
-    if shutil.which(tool, path=os.environ["PATH"]):
-        sys.exit("the test PATH must hold no %s" % tool)
 
 TIME = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z")
 

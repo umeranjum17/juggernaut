@@ -5,7 +5,7 @@ repo=$PWD
 forms=$repo/core/item-store/adapters/bd-forms.tsv
 t=$(mktemp -d) || exit 1
 trap 'rm -rf -- "$t"' EXIT
-# A version-manager shim of python3 breaks under a throwaway PATH: link the real interpreter into the folder that holds no bd and no dolt.
+# A version-manager shim of python3 breaks under a throwaway PATH: link the real interpreter into a folder of its own.
 mkdir -p "$t/py"
 for _py in /usr/bin/python3 /usr/local/bin/python3 "$(python3 -c 'import sys; print(sys.executable)')"; do [ -x "$_py" ] && { ln -sf "$_py" "$t/py/python3"; break; }; done
 export PATH=$t/py:$PATH

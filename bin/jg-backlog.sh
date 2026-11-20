@@ -208,7 +208,7 @@ ARGS=(${_jg_keyed[@]+"${_jg_keyed[@]}"})
 unset _jg_keyed _jg_arg _jg_slug
 key_tool() { JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$TICKET_KEY" "$@"; }
 beads_read() {
-  JG_HOME="$JG_HOME" python3 "$JG_ROOT/core/item-store/adapters/tickets.py" read ${ARGS[@]+"${ARGS[@]}"}
+  JG_HOME="$JG_HOME" python3 "$SCRIPT_DIR/../core/item-store/adapters/tickets.py" read ${ARGS[@]+"${ARGS[@]}"}
 }
 # approve-dispatch <id> --harness <h> --model <m> --effort <e>: the lead's or the owner's yes that the dispatch check
 # (core/auto-dispatch) may start this ticket by itself, on that route. It writes state/dispatch-approved/<id>, the only
@@ -264,12 +264,12 @@ case "${1:-}" in
   markdown|questions) beads_read; exit $? ;;
   homes) exec "$SCRIPT_DIR/jg-backlog-homes.sh" "${ARGS[@]:1}" ;;
   tree)
-    JG_HOME="$JG_HOME" exec python3 "$JG_ROOT/core/item-store/adapters/tickets.py" tree "${ARGS[@]:1}" ;;
+    JG_HOME="$JG_HOME" exec python3 "$SCRIPT_DIR/../core/item-store/adapters/tickets.py" tree "${ARGS[@]:1}" ;;
   compare)
     [ "${#ARGS[@]}" -eq 1 ] || fail "compare takes no argument"
     _jg_exp=$(mktemp) || fail "no scratch file"
     if ! jg_backlog_bd "$JG_HOME" export > "$_jg_exp"; then rm -f -- "$_jg_exp"; fail "the export failed"; fi
-    JG_HOME="$JG_HOME" python3 "$JG_ROOT/core/item-store/adapters/tickets.py" compare "$_jg_exp"; _jg_rc=$?
+    JG_HOME="$JG_HOME" python3 "$SCRIPT_DIR/../core/item-store/adapters/tickets.py" compare "$_jg_exp"; _jg_rc=$?
     rm -f -- "$_jg_exp"; exit "$_jg_rc" ;;
   add|create|update|edit|done|close|block|unblock|start|task|reopen|hold|unhold|on-report|public-followup|relink|retag|moment|wait|ticket-stage|ticket-drift|times|trace|beat|reclaim) ;;
   *) fail "the beads backlog does not serve ${1:-this command}" ;;

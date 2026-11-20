@@ -1,39 +1,29 @@
 #!/usr/bin/env bash
 # A slow backlog read is retried before it counts as a wedge. jg_backlog_row_show is the one row read behind task cleanup,
-# bin/jg-captain-hold.sh and the bootstrap sweeps; a stand-in bd whose `show` is slow on chosen calls proves a read that a
-# retry rescues succeeds and leaves the sweep unlatched, and a backend that is slow on every attempt refuses once, inside the
-# total bound, naming its attempts, and only then latches the sweep.
+# bin/jg-captain-hold.sh and the bootstrap sweeps; a python3 on PATH that is slow on chosen `show` calls that reach
+# bd_compat.py proves a read that a retry rescues succeeds and leaves the sweep unlatched, and a backend that is slow on every
+# attempt refuses once, inside the total bound, naming its attempts, and only then latches the sweep.
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 T=$(jg_test_tmproot jg-backlog-row-show)
-sha_of() { { sha256sum "$1" 2>/dev/null || shasum -a 256 "$1"; } | cut -d' ' -f1; }
-mkdir -p "$T/bin" "$T/config" "$T/data" "$T/store/.beads/embeddeddolt/jg"
-printf '{"dolt_mode": "embedded", "dolt_database": "jg"}\n' > "$T/store/.beads/metadata.json"
-printf 'no-git-ops: true\n' > "$T/store/.beads/config.yaml"
+mkdir -p "$T/bin" "$T/config" "$T/data" "$T/state"
 # SLOW_CALLS is how many leading `show` calls hang; every later call answers at once. CALLS counts the calls made.
-cat > "$T/bin/bd" <<'SH'
+cat > "$T/bin/python3" <<SH
 #!/usr/bin/env bash
-if [ "$1" = show ]; then
-  n=$(($(cat "$CALLS" 2>/dev/null || echo 0) + 1)); printf '%s\n' "$n" > "$CALLS"
-  [ "$n" -gt "$SLOW_CALLS" ] || exec sleep 60
-  python3 -c 'import json,sys; print(json.dumps([r for r in json.load(open(sys.argv[1])) if r["id"]==sys.argv[2]]))' "$ROWS" "$2"
-else
-  echo '[]'
+if [ "\${2:-}" != "\${2%/bd_compat.py}" ] && [ "\${3:-}" = show ]; then
+  n=\$((\$(cat "\$CALLS" 2>/dev/null || echo 0) + 1)); printf '%s\\n' "\$n" > "\$CALLS"
+  [ "\$n" -gt "\$SLOW_CALLS" ] || exec -a "$T/bin/slow-show" sleep 60
 fi
+exec $(python3 -c 'import sys; print(sys.executable)') "\$@"
 SH
-{ cat "$T/bin/bd"; printf '# dolt\n'; } > "$T/bin/dolt"
-chmod +x "$T"/bin/*
-os=$(uname -s | tr '[:upper:]' '[:lower:]')
-arch=$(uname -m); case "$arch" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac
-printf 'bd 1.3.4\ndolt 2.6.0\nbd-sha256-%s-%s %s\ndolt-sha256-%s-%s %s\n' \
-  "$os" "$arch" "$(sha_of "$T/bin/bd")" "$os" "$arch" "$(sha_of "$T/bin/dolt")" > "$T/pins"
-printf '%s\n' "$T/store/.beads" > "$T/config/beads-dir"
-cat > "$T/rows.json" <<'JSON'
-[{"id":"jg-open","title":"open one","status":"open","created_at":"2026-11-01T00:00:00Z","labels":["project:p"]}]
-JSON
-export JG_PIN_FILE_OVERRIDE=$T/pins CALLS=$T/calls ROWS=$T/rows.json JG_BEADS_BD=$T/bin/bd JG_BEADS_DOLT=$T/bin/dolt
+chmod +x "$T/bin/python3"
+printf '%s\n' "$T/store" > "$T/config/beads-dir"   # kept until bin/jg-backlog-lib.sh stops asking for a store path
+printf '%s\n' '{"id":"jg-open","title":"open one","status":"open","created_at":"2026-11-01T00:00:00Z","labels":["project:p"]}' > "$T/rows.jsonl"
+export JG_HOME=$T JG_STATE_OVERRIDE=$T/state CALLS=$T/calls
+python3 "$ROOT/core/item-store/adapters/tickets.py" import --home main "$T/rows.jsonl" >/dev/null || fail "the row did not import"
+export PATH=$T/bin:$PATH
 export JG_CONFIG_OVERRIDE=$T/config JG_BACKLOG_ROW_TIMEOUT_SECS=1
 unset JG_BACKLOG_SNAPSHOT JG_BACKLOG_TIMEOUT
 # shellcheck source=bin/jg-backlog-lib.sh disable=SC1091
@@ -99,6 +89,6 @@ assert_contains "$out" 'jg-open' "a latched read still names its own item"
 pass "the sweep latches only after the last attempt, and a latched sweep reads nothing more"
 
 # Wedged-backend stragglers: every timed-out attempt must have been killed.
-stray=$(pgrep -f "$T/bin/bd" 2>/dev/null | wc -l | tr -d ' ')
+stray=$(pgrep -f "$T/bin/slow-show" 2>/dev/null | wc -l | tr -d ' ')
 [ "$stray" -eq 0 ] || fail "the timed-out attempts left $stray hung backend process(es) behind"
 pass "no timed-out attempt is left running"

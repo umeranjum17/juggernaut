@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # bd_compat.py in mode tables answers the recorded `read` calls from fleet.db with the bytes and exit status bd gave.
-# One scratch home per fixture in tests/fixtures/bd-forms: its store export is imported, then the call is run. No bd, no dolt.
+# One scratch home per fixture in tests/fixtures/bd-forms: its store export is imported, then the call is run.
 # A `show --json` row ends with a Dolt `revision` hash of the row's content: not derivable from the tables, so the module
 # prints no `revision` and the test cuts that key from bd's recorded bytes before comparing.
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
@@ -10,7 +10,7 @@ trap 'rm -rf -- "$t"' EXIT
 mkdir -p "$t/path"
 py=; for c in /usr/bin/python3 /usr/local/bin/python3 "$(command -v python3)"; do [ -x "$c" ] && "$c" -c pass 2>/dev/null && { py=$c; break; }; done
 [ -n "$py" ] || exit 1
-ln -s "$py" "$t/path/python3"          # the one tool on PATH: neither bd nor dolt can run
+ln -s "$py" "$t/path/python3"          # the one tool on PATH
 fail=0
 # Forms no table can answer: each prints `known-gap <form>: <reason>` without failing the test; any other mismatch fails.
 declare -A GAPS=(
