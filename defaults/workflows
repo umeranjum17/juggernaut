@@ -11,6 +11,12 @@ deep-slices: deep > blitz
 war-room-blitz: war-room(fast) > blitz
 war-room-full-blitz: war-room(full) > blitz
 war-room-lite-blitz: deep > blitz
+# pick <test> <value>: <name>, first match wins; a home file with any pick line replaces all of these
+pick title-tag [design-ux]: scout-worker
+pick title-has war room: war-room-blitz
+pick kind recon: deep-slices
+pick label plan: deep-slices
+pick any: worker
 limit count: 30
 limit steps: 64
 angles: smallest change | strongest guarantees | outside prior art first

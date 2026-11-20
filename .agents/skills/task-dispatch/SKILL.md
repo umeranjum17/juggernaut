@@ -45,6 +45,15 @@ A deep Recon needs one separate critic worker after the researcher's draft, neve
 Each later draft is a new `done` line of the researcher; steer the same critic to it.
 `.agents/skills/deep-recon/SKILL.md` owns the stages, budgets and critic rubric, and `bin/jg-recon-gate.sh` refuses `done` for a standard or deep Recon that does not meet them.
 
+### Workflow at intake
+
+After the ticket is filed, give it a workflow; workflows are configuration (`core/workflows/README.md` owns the grammar, `defaults/workflows` and `config/workflows` hold the names and the `pick` rules).
+- When the owner said how to run it, run `bin/jg-workflow.sh words "<his words>"`, then `bin/jg-workflow.sh set <ticket> <spec> --by owner --quote "<his words>" --note <his chat note id> --order <MainNNN>`.
+- When he names a new workflow ("make a workflow called <name>: <words>"), run `words` on his words, then `bin/jg-workflow.sh define <name> <spec> --by owner`; the name is a word at once.
+- When he asks to change or remove a named one, run `define <name> <spec|off> --by owner`; he may also edit `config/workflows` himself, and `bin/jg-workflow.sh list` shows every name and any broken line.
+- Otherwise run `bin/jg-workflow.sh pick <ticket> --set`.
+- Never ask him to pick a workflow; a refused `words` gets one plain question back to him, posted as a board card.
+
 ## Delivery mode, branch, and consent flags
 
 For a registered `local-trunk` project, keep `local-trunk` as the task mode through landing and cleanup (`docs/trunk-flow.md`); never translate it to `local-only`.
