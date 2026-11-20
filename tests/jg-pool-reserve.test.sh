@@ -123,3 +123,30 @@ expect_code 0 "$rc" "T-noname should pass with 3 counted of 4: $out"
 assert_not_contains "$out" "4=" "T-noname the copy with no holder was left uncounted"
 assert_contains "$out" "3=c 5=e" "T-noname the line does not name c and e"
 pass "a leased copy with no holder name is counted"
+# T-flat the cost of admit does not grow with the leased copies: bin/jg-crew-state.sh (a pane read) is asked only for a holder whose status
+# file holds a done line. 24 live holders with no done line, one that is done (no landed=) and one whose note only mentions done: two calls.
+FR=$W/fakeroot; mkdir -p "$FR/core/pool-reserve" "$FR/bin"
+cp "$R" "$FR/core/pool-reserve/reserve.sh"; ln -sn "$ROOT/core/lane-scale" "$FR/core/lane-scale"
+cat > "$FR/bin/jg-crew-state.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$1" >> "$CREW_STATE_LOG"
+[ "$1" = dd ] && echo 'state: done · source: status-log · ready' || echo 'state: working · source: pane · busy'
+SH
+chmod +x "$FR/bin/jg-crew-state.sh"
+cat > "$F/status-many" <<'SH'
+#!/usr/bin/env bash
+n=0; for h in $(seq -f 'w%g' 1 24) dd dn; do n=$((n + 1)); printf '%s    leased       /fixture/%s  (held by %s)\n' "$n" "$h" "$h"; done
+SH
+chmod +x "$F/status-many"
+for i in $(seq 1 24); do printf 'kind=ship\n' > "$H/state/w$i.meta"; printf 'working [at=1]: x\n' > "$H/state/w$i.status"; done
+printf 'kind=ship\n' > "$H/state/dd.meta"; printf 'working [at=1]: x\ndone [at=2]: ready\n' > "$H/state/dd.status"
+printf 'kind=ship\n' > "$H/state/dn.meta"; printf 'working [at=3]: wrote the done-done receipt\n' > "$H/state/dn.status"
+printf '25\n' > "$H/state/lane-limit"
+export CREW_STATE_LOG=$W/crew-state.log; : > "$CREW_STATE_LOG"
+out=$(JG_POOL_RESERVE_STATUS=$F/status-many "$FR/core/pool-reserve/reserve.sh" admit "$H" "$P" 2>&1); rc=$?
+expect_code 75 "$rc" "T-flat 25 live copies of 26 leased, with a limit of 25, should defer: $out"
+assert_contains "$out" "deferred: 25 copies" "T-flat the 25 live copies were not counted: $out"
+assert_not_contains "$out" "w1=" "T-flat a live holder was named as not counted"
+assert_contains "$out" "25=dd" "T-flat the done holder should not count"
+assert_equals "dd dn" "$(sort "$CREW_STATE_LOG" | tr '\n' ' ' | sed 's/ $//')" "T-flat crew-state should be asked for the two holders with a done line only"
+pass "admit asks for a holder's state only when its status file holds a done line"

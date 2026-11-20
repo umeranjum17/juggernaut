@@ -28,6 +28,9 @@ PLAN_RUN=$PLAN_IN
 PROJ_NAME=blitzproj
 if [ "$LIVE" = 1 ]; then PROJ_NAME=juggernaut-scratch; fi
 LANES=24 NEED=20 BOUND=${JG_BLITZ_BOUND:-300} TICK=5
+# T1's own bound: with the project lock covering only the moves that need it, 20 lanes were live 71 s after the start on the stand-in
+# (jg-wflow-5; 101 s with the lock held through each pane wait), so the bound is 90 s; the live mode's is 120 s (267 s before).
+T1_BOUND=${JG_BLITZ_T1_BOUND:-90}; [ "$LIVE" != 1 ] || T1_BOUND=${JG_BLITZ_T1_BOUND:-120}
 STEP_DELAY_T2=${JG_BLITZ_T2_STEP_DELAY:-6}
 T=$(jg_test_tmproot jg-blitz-wide) || fail "no temp root"
 T=$(cd "$T" && pwd -P)
@@ -123,11 +126,11 @@ jg_test_pin_real_tools "$T/realbin"
 # a process of the world starts with (the lead's shim, its arm and the watcher read it, as the watcher's wiring reads its own).
 world_env() {  # <world dir>
   ENV_FILE=$1/env.sh
-  export JG_BLITZ_TERM=$1/term JG_WORKER_POOL_DIR=$1/pools JG_BLITZ_LEASE_LOG=$1/lease.log
+  export JG_BLITZ_TERM=$1/term JG_WORKER_POOL_DIR=$1/pools JG_BLITZ_LEASE_LOG=$1/lease.log JG_SPAWN_PHASE_LOG=$1/phase.log
   mkdir -p "$JG_BLITZ_TERM" "$JG_WORKER_POOL_DIR"
   {
-    printf 'export JG_WORKER_POOL_DIR=%q JG_BLITZ_LEASE_LOG=%q PATH=%q JG_BLITZ_TERM=%q JG_SPAWN_NO_GUARD=1 JG_TEST_FIXTURE_PROC=%q\n' \
-      "$JG_WORKER_POOL_DIR" "$JG_BLITZ_LEASE_LOG" "$PATH" "$JG_BLITZ_TERM" "$$"
+    printf 'export JG_WORKER_POOL_DIR=%q JG_BLITZ_LEASE_LOG=%q JG_SPAWN_PHASE_LOG=%q PATH=%q JG_BLITZ_TERM=%q JG_SPAWN_NO_GUARD=1 JG_TEST_FIXTURE_PROC=%q\n' \
+      "$JG_WORKER_POOL_DIR" "$JG_BLITZ_LEASE_LOG" "$JG_SPAWN_PHASE_LOG" "$PATH" "$JG_BLITZ_TERM" "$$"
     printf 'export JG_BACKEND=tmux\n'
     if [ "$LIVE" = 1 ]; then printf 'export TMUX_TMPDIR=%q\nunset TMUX\n' "$LAB_TMUX_DIR"   # the normal HOME and login stay as they are
     else printf 'export HOME=%q XDG_DATA_HOME=%q XDG_CONFIG_HOME=%q CLAUDE_CONFIG_DIR= TMUX=fake,1,0\n' "$HOME" "$XDG_DATA_HOME" "$XDG_CONFIG_HOME"; fi
@@ -276,11 +279,11 @@ watch_start() {  # <t0 epoch> <max seconds> [<stop after n lines>]
   done
 }
 
-report_live() {  # <label>
+report_live() {  # <label> [<seconds waited>] [<bound seconds>]
   [ -n "$FIRST_N" ] || fail "$1: only $LAST_LIVE of $LANES lanes live by ${2:-$BOUND} s (need $NEED); see the t= lines above"
-  [ "$FIRST_N" -le "$BOUND" ] || fail "$1: $NEED lanes live only at $FIRST_N s, the bound is $BOUND s"
-  if [ -n "$ALL_N" ]; then pass "$1: $LAST_LIVE lanes live in $FIRST_N s; $LANES live in $ALL_N s"
-  else pass "$1: $LAST_LIVE lanes live in $FIRST_N s; $LANES not live by ${2:-$BOUND} s"; fi
+  [ "$FIRST_N" -le "${3:-$BOUND}" ] || fail "$1: $NEED lanes live only at $FIRST_N s, the bound is ${3:-$BOUND} s"
+  if [ -n "$ALL_N" ]; then pass "$1: $NEED lanes live in $FIRST_N s; $LANES live in $ALL_N s"
+  else pass "$1: $NEED lanes live in $FIRST_N s; $LANES not live by ${2:-$BOUND} s"; fi
 }
 
 # lane_times: the t-spawn (the spawn's start to its lane record) and t-lease (the lease call's own time) of each lane, in seconds.
@@ -294,6 +297,31 @@ lane_times() {
     lease=$(awk -F'\t' -v h="$task" '$1 == h { v = $2 } END { print v }' "$W/lease.log" 2>/dev/null)
     printf 't-spawn=%s t-lease=%s lane=%s\n' "$(( born - ${launched:-$born} ))" "${lease:-none}" "$task"
   done | sort -t= -k4
+}
+
+# phase_report: from the spawn phase log (bin/jg-spawn.sh spawn_phase_mark), the time each spawn held the project lock (median and maximum),
+# the number of spawns whose pane-settle wait (lease done to pane settled) overlapped another spawn's, and for each phase between taking
+# and letting go of the lock the median and maximum of the time since the mark before it, in ms.
+phase_report() {
+  [ -s "$JG_SPAWN_PHASE_LOG" ] || { printf 'no spawn phase log\n'; return 0; }
+  sort -t$'\t' -k1,1 -k3,3n "$JG_SPAWN_PHASE_LOG" | awk -F'\t' '
+    function med(a, n,   i, j, t) { for (i = 1; i <= n; i++) for (j = i + 1; j <= n; j++) if (a[j] < a[i]) { t = a[i]; a[i] = a[j]; a[j] = t }; return a[int((n + 1) / 2)] }
+    { at[$1, $2] = $3; if (!($1 in seen)) { seen[$1] = 1; tasks[++nt] = $1 }
+      if ($1 == prev && inlock[$1]) d[$2, ++cnt[$2]] = $3 - last
+      prev = $1; last = $3
+      if ($2 == "lock-held") inlock[$1] = 1
+      if ($2 == "lock-released") inlock[$1] = 0 }
+    END {
+      for (i = 1; i <= nt; i++) { t = tasks[i]
+        if (((t, "lock-held") in at) && ((t, "lock-released") in at)) held[++nh] = at[t, "lock-released"] - at[t, "lock-held"]
+        if (((t, "lease-done") in at) && ((t, "pane-settled") in at)) { ps[++np] = at[t, "lease-done"]; pe[np] = at[t, "pane-settled"] } }
+      for (i = 1; i <= np; i++) { o = 0; for (j = 1; j <= np; j++) if (j != i && ps[j] < pe[i] && ps[i] < pe[j]) o = 1; ov += o }
+      mx = 0; for (i = 1; i <= nh; i++) if (held[i] > mx) mx = held[i]
+      printf "project lock held: median %s ms, max %s ms over %s spawns; pane-settle waits that overlapped another spawn'"'"'s: %s of %s\n", med(held, nh), mx, nh, ov + 0, np
+      n = split("endpoint-made protect-done reserve-done lease-done pane-settled claim-done base-fresh lock-released", ph, " ")
+      for (k = 1; k <= n; k++) { c = cnt[ph[k]]; if (!c) continue; m = 0; for (i = 1; i <= c; i++) { v[i] = d[ph[k], i]; if (v[i] > m) m = v[i] }
+        printf "  phase %-14s median %5s ms, max %5s ms (%s spawns)\n", ph[k], med(v, c), m, c }
+    }'
 }
 
 # live_finish: the live mode after the bound is proved: wait up to 15 minutes for the dummy orders to report done, then the cleanup runs.
@@ -357,8 +385,9 @@ t0=$(date +%s)
 out=$(swarm_start "$W/main" 2>&1) || fail "T1 the start failed: $out"
 printf '%s\n' "$out"
 watch_start "$t0" 600
-report_live "T1 start" 600
+report_live "T1 start" 600 "$T1_BOUND"
 lane_times
+phase_report
 [ "$LIVE" != 1 ] || live_finish
 
 [ "$LIVE" != 1 ] || exit 0   # the live mode is T1 alone

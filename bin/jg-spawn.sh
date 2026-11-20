@@ -222,10 +222,16 @@
 #   holder role is known, otherwise another operation. --relaunch is exempt
 #   because the existing task's control lock covers it.
 #   A fresh Treehouse-backed spawn also takes the project-identity lock in the local
-#   root Juggernaut home's state directory before slot allocation and holds it through
-#   task metadata publication. Teardown holds that same lock while proving and
-#   returning a slot, so allocation cannot reuse a slot before its owner record
-#   is published.
+#   root Juggernaut home's state directory before slot allocation. Teardown holds that
+#   same lock while proving and returning a slot, so allocation cannot reuse a slot
+#   before its owner claim is written. A project with no declared capacity takes it
+#   once its own endpoint is made and holds it only for the moves that touch the
+#   project's shared pool and git directory: the protect pass, the copy reserve, the
+#   lease, the slot owner claim (on the leased path) and, outside local-trunk, the
+#   base refresh's fetches. It lets go before the wait for its own pane to reach the
+#   copy, so the project's other spawns overlap that wait. A pane that never gets
+#   there returns the copy under the lock again. A project with a declared capacity,
+#   and JG_SPAWN_PROJECT_LOCK_SPAN=full, hold it through task metadata publication.
 #   The local root is whatever bin/jg-wake-lib.sh's
 #   jg_juggernaut_root_home resolves, so a home seeded from another machine anchors
 #   that lock itself rather than failing to resolve one;
@@ -842,6 +848,8 @@ spawn_trunk_branch() {
 . "$SCRIPT_DIR/jg-project-capacity-lib.sh"
 # shellcheck source=bin/jg-reaper-lib.sh
 . "$SCRIPT_DIR/jg-reaper-lib.sh"
+# shellcheck source=bin/jg-timing-lib.sh
+. "$SCRIPT_DIR/jg-timing-lib.sh"
 # A fresh lane deferred for project capacity or host load: the sysexits
 # "temporary failure" code, so a caller tells a deferral, which leaves the task
 # exactly as queued as it was, from an ordinary failure.
@@ -1210,6 +1218,18 @@ spawn_task_set_release() {
 }
 SPAWN_TREEHOUSE_PROJECT_LOCK=
 SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=0
+# spawn_phase_mark <phase>: when JG_SPAWN_PHASE_LOG names a file, one `<task> TAB <phase> TAB <epoch ms>` line, so a start of many
+# spawns shows which phase each one spends where (tests/jg-spawn-overlap.test.sh, tests/jg-blitz-wide-e2e.test.sh); otherwise nothing.
+spawn_phase_mark() {
+  [ -z "${JG_SPAWN_PHASE_LOG:-}" ] || printf '%s\t%s\t%s\n' "$ID" "$1" "$(jg_timing_now_ms)" >>"$JG_SPAWN_PHASE_LOG" 2>/dev/null || true
+}
+# Let go of the project lock when this spawn holds it.
+spawn_project_lock_release() {
+  [ "$SPAWN_TREEHOUSE_PROJECT_LOCK_HELD" = 1 ] || return 0
+  SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=0
+  jg_lock_release "$SPAWN_TREEHOUSE_PROJECT_LOCK" || true
+  spawn_phase_mark lock-released
+}
 SPAWN_PROJECT_LOCK_LATE=0
 SPAWN_SLOT_CLAIMED=0
 SPAWN_SLOT_CLAIM_REFUSED=0
@@ -1357,14 +1377,15 @@ spawn_abort_cleanup() {
   # already released that lock and leaves the claim for the next spawn's
   # atomic replacement rather than racing it. The release itself never removes
   # another task's claim.
-  if [ "$SPAWN_SLOT_CLAIMED" = 1 ] && [ -n "${WT:-}" ] &&
+  # The claim names the leased copy, which the pane's own path (WT) is only checked against after the lock is let go.
+  if [ "$SPAWN_SLOT_CLAIMED" = 1 ] && [ -n "${WT:-$SPAWN_TREEHOUSE_LEASE}" ] &&
     [ ! -e "$STATE/$ID.meta" ] && [ ! -L "$STATE/$ID.meta" ] &&
-    jg_treehouse_pool_slot "$PROJ_ABS" "$WT"; then
+    jg_treehouse_pool_slot "$PROJ_ABS" "${WT:-$SPAWN_TREEHOUSE_LEASE}"; then
     SPAWN_SLOT_CLAIMED=0
     if [ "$SPAWN_TREEHOUSE_PROJECT_LOCK_HELD" = 1 ]; then
-      jg_treehouse_slot_owner_release "$WT" "$ID" || true
+      jg_treehouse_slot_owner_release "${WT:-$SPAWN_TREEHOUSE_LEASE}" "$ID" || true
     else
-      echo "warning: leaving task $ID's slot claim on $WT in place; the Treehouse project lock is no longer held, so the next spawn's claim replaces it" >&2
+      echo "warning: leaving task $ID's slot claim on ${WT:-$SPAWN_TREEHOUSE_LEASE} in place; the Treehouse project lock is no longer held, so the next spawn's claim replaces it" >&2
     fi
   fi
   # Failed launches keep their durable lease for explicit teardown, not an
@@ -1396,10 +1417,7 @@ spawn_abort_cleanup() {
       jg_backlog_atomic_transition publish "$SPAWN_META_TMP" "$STATE/$ID.meta" "task record" "$STATE" ||
       echo "error: could not record task $ID's retained lease on $SPAWN_TREEHOUSE_LEASE; reconcile it before retrying" >&2
   fi
-  if [ "$SPAWN_TREEHOUSE_PROJECT_LOCK_HELD" = 1 ]; then
-    SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=0
-    jg_lock_release "$SPAWN_TREEHOUSE_PROJECT_LOCK" || true
-  fi
+  spawn_project_lock_release
   spawn_task_set_release || true
   if [ "$SPAWN_CONTROL_LOCK_HELD" = 1 ]; then
     SPAWN_CONTROL_LOCK_HELD=0
@@ -2799,7 +2817,12 @@ SPAWN_PRIOR_WORK=$(spawn_item_prior_work) || SPAWN_PRIOR_WORK=
 [ "$SPAWN_PRIOR_WORK" != open ] || spawn_item_store requeue "$(spawn_item_words)"
 # The shared Treehouse project lock: several spawns of one project wait their turn for it, up to a bound.
 # A deferral leaves the task exactly as queued as it was, so this runs before any endpoint, record or backlog move exists.
+# A spawn that takes the lock after its endpoint is made closes that endpoint when the lock refuses it (a Herdr projection is the abort trap's).
+spawn_project_lock_endpoint_close() {
+  [ "$SPAWN_PROJECT_LOCK_LATE" != 1 ] || [ "$HERDR_PROJECTION_ABORT_CLEANUP" = 1 ] || rovo_endpoint_cleanup
+}
 spawn_project_lock_take() {
+  spawn_phase_mark lock-wait
   # Several spawns of one project wait their turn for the lock, up to a bound; JG_SPAWN_PROJECT_LOCK_WAIT=0 keeps the single try.
   SPAWN_PROJECT_LOCK_WAIT=${JG_SPAWN_PROJECT_LOCK_WAIT:-240}
   SPAWN_PROJECT_LOCK_RC=0
@@ -2811,6 +2834,7 @@ spawn_project_lock_take() {
   fi
   if [ "$SPAWN_PROJECT_LOCK_RC" -eq 124 ]; then
     echo "deferred: the project lock for $(basename "$PROJ_ABS") stayed held for $SPAWN_PROJECT_LOCK_WAIT s; task $ID was not created and stays queued" >&2
+    spawn_project_lock_endpoint_close
     exit "$SPAWN_DEFER_EXIT"
   fi
   if [ "$SPAWN_PROJECT_LOCK_RC" -ne 0 ]; then
@@ -2819,9 +2843,11 @@ spawn_project_lock_take() {
     else
       echo "error: another Treehouse slot allocation or return is in progress for $PROJ_ABS; refusing to race it" >&2
     fi
+    spawn_project_lock_endpoint_close
     exit 1
   fi
   SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=1
+  spawn_phase_mark lock-held
 }
 
 # The point where a fresh spawn's lease is complete: the slot is claimed and, outside local-trunk, the base is refreshed.
@@ -2830,13 +2856,42 @@ spawn_project_lock_take() {
 # JG_SPAWN_TEST_AFTER_LEASE is a test hook: a command run here, after that decision.
 spawn_lease_complete() {
   if [ "$SPAWN_PROJECT_LOCK_LATE" = 1 ] && [ "$SPAWN_TREEHOUSE_PROJECT_LOCK_HELD" = 1 ]; then
-    SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=0
-    jg_lock_release "$SPAWN_TREEHOUSE_PROJECT_LOCK" || true
+    spawn_project_lock_release
   fi
   [ -z "${JG_SPAWN_TEST_AFTER_LEASE:-}" ] || bash -c "$JG_SPAWN_TEST_AFTER_LEASE" || {
     echo "error: JG_SPAWN_TEST_AFTER_LEASE failed for task $ID" >&2
     exit 1
   }
+}
+
+# A pane that never reached its leased copy: the copy holds nothing of this task's (the base refresh just made it clean), so the lock is
+# taken again, as teardown takes it to return a slot, the claim goes and the copy goes back to the pool for the project's next spawn.
+# A step that refuses keeps the lease for its recovery record, as every other failure after the lease does.
+spawn_return_unsettled_lease() {
+  [ -n "$SPAWN_TREEHOUSE_LEASE" ] || return 0
+  if [ "$SPAWN_TREEHOUSE_PROJECT_LOCK_HELD" != 1 ]; then
+    jg_lock_acquire_wait_bounded "$SPAWN_TREEHOUSE_PROJECT_LOCK" "$SPAWN_PROJECT_LOCK_WAIT" || return 0
+    SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=1
+    spawn_phase_mark lock-held
+  fi
+  if [ "$SPAWN_SLOT_CLAIMED" = 1 ]; then
+    jg_treehouse_slot_owner_release "$SPAWN_TREEHOUSE_LEASE" "$ID" || return 0
+    SPAWN_SLOT_CLAIMED=0
+  fi
+  if (cd "$PROJ_ABS" && treehouse return "$SPAWN_TREEHOUSE_LEASE") >/dev/null 2>&1; then
+    SPAWN_TREEHOUSE_LEASE=
+  else
+    echo "warning: could not return copy $SPAWN_TREEHOUSE_LEASE of task $ID to the pool; it stays leased with a recovery record" >&2
+  fi
+}
+
+# The end of a fresh spawn's lease on <worktree>: the order of the lock's release and the base refresh by project kind.
+spawn_lease_finish() {  # <worktree>
+  local trunk=0
+  ! spawn_trunk_branch >/dev/null || trunk=1
+  [ "$trunk" = 0 ] || spawn_lease_complete
+  freshen_spawn_worktree_base "$1" "$BASE_BRANCH" || exit 1
+  [ "$trunk" = 1 ] || { spawn_phase_mark base-fresh; spawn_lease_complete; }
 }
 
 # Project capacity admission (bin/jg-project-capacity-lib.sh owns the
@@ -2845,10 +2900,10 @@ spawn_lease_complete() {
 # any brief render, endpoint, worktree, record, or backlog move exists, so the
 # deferral leaves the task exactly as queued as it was. A relaunch replaces a
 # worker that already holds a place, and a squad_lead is not a worker.
-# The Treehouse project lock covers the lease and the slot owner claim, and outside local-trunk the base refresh's fetches into
-# the shared git directory (spawn_lease_complete lets it go there). A project with no declared capacity takes it only after the
-# backlog reads, just before the meta lock. A project with a declared capacity takes it here and keeps it through record
-# publication, because its occupants are counted from published records, and so does JG_SPAWN_PROJECT_LOCK_SPAN=full.
+# The Treehouse project lock covers the protect pass, the copy reserve, the lease and the slot owner claim, and outside local-trunk the
+# base refresh's fetches into the shared git directory (spawn_lease_complete lets it go there, before the pane's own wait). A project
+# with no declared capacity takes it after its endpoint is made. A project with a declared capacity takes it here and keeps it through
+# record publication, because its occupants are counted from published records, and so does JG_SPAWN_PROJECT_LOCK_SPAN=full.
 SPAWN_PROJECT_CAPACITY=
 SPAWN_PROJECT_CAPACITY_ANY=
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ]; then
@@ -3512,8 +3567,6 @@ else
   fi
 fi
 
-# The backlog reads above are done and nothing is created yet: a project with no declared capacity now takes its lock.
-[ "$SPAWN_PROJECT_LOCK_LATE" != 1 ] || spawn_project_lock_take
 if [ "$SPAWN_META_LOCK_HELD" != 1 ]; then
   SPAWN_META_LOCK=$(jg_meta_lock_path "$STATE/$ID.meta") || exit 1
   jg_lock_acquire_wait "$SPAWN_META_LOCK"
@@ -3869,6 +3922,7 @@ fi
 # WT_TARGET to $T for them (and for any future backend) - the shared handoff +
 # worktree-detection steps below must never reference an unbound WT_TARGET under set -u.
 : "${WT_TARGET:=$T}"
+spawn_phase_mark endpoint-made
 spawn_send_text_line() { # <target> <text>
   case "$BACKEND" in
   tmux) jg_backend_tmux_send_text_line "$1" "$2" ;;
@@ -4357,6 +4411,8 @@ agy_spawn_fail() {  # <detail>
 if [ "$RELAUNCH" -eq 1 ] && [ "$BACKEND" = orca ]; then
   [ "$KIND" = squad_lead ] || validate_spawn_worktree "relaunch" "$T"
 elif [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] && [ "$BACKEND" != orca ]; then
+  # A project with no declared capacity takes its lock now, with this spawn's own endpoint made and nothing of the project's touched yet.
+  [ "$SPAWN_PROJECT_LOCK_LATE" != 1 ] || spawn_project_lock_take
   # Lease recorded task copies without touching their Git contents, then
   # acquire in the explicit project, never the new pane's inherited cwd.
   jg_local_juggernaut_state_dirs "$STATE" || {
@@ -4368,6 +4424,7 @@ elif [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] && [ "$BACKEND" != orca 
     exit 1
   }
   python3 "$SCRIPT_DIR/jg-treehouse-protect.py" "$PROJ_ABS" "${JG_LOCAL_JUGGERNAUT_STATES[@]}" || exit 1
+  spawn_phase_mark protect-done
   # Copies follow the lane limit and two stay free for a red fix (core/pool-reserve).
   reserve_args=(); [ -z "$RED_FIX_OF" ] || reserve_args=(--red-fix)
   reserve_rc=0
@@ -4382,6 +4439,7 @@ elif [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] && [ "$BACKEND" != orca 
     exit 75
   fi
   [ "$reserve_rc" -eq 0 ] || { echo "error: the copy reserve check failed (exit $reserve_rc) for task $ID" >&2; exit 1; }
+  spawn_phase_mark reserve-done
   lease_error=$(mktemp "$STATE/.treehouse-lease.XXXXXX") || exit 1
   if ! allocated=$(cd "$PROJ_ABS" && treehouse get --lease --lease-holder "$ID" 2>"$lease_error"); then
     if grep -Eq 'all [0-9]+ worktrees are in use or dirty \(max_trees = [0-9]+\)' "$lease_error"; then
@@ -4409,6 +4467,7 @@ elif [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] && [ "$BACKEND" != orca 
   fi
   rm -f -- "$lease_error"
   [ -n "$allocated" ] || { echo "error: treehouse lease returned no worktree for task $ID" >&2; exit 1; }
+  spawn_phase_mark lease-done
   # The lease belongs to this task even if the pool returned another clone.
   # Record it before inspecting Git so every refusal preserves it for recovery.
   SPAWN_TREEHOUSE_LEASE=$allocated
@@ -4427,6 +4486,40 @@ elif [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] && [ "$BACKEND" != orca 
     exit 1
   fi
   spawn_send_text_line "$WT_TARGET" "cd -- $(shell_quote "$allocated")" || exit 1
+
+  # Claim the pool slot for this task. The interactive `treehouse get` sent to
+  # the pane above records only a process lease (Treehouse's durable
+  # `get --lease --lease-holder`, which bin/jg-home-seed.sh uses for squad_lead
+  # homes, is not this path), so Treehouse cannot say which task a slot belongs
+  # to once that task's worker exits - and that is exactly when the slot is
+  # handed on and this task's worktree= line goes stale. The claim is what lets
+  # bin/jg-teardown.sh leave a slot that has since been reassigned untouched, so
+  # a slot that cannot be claimed is refused here, at the cheapest point, rather
+  # than launching a worker whose slot teardown could later release out from
+  # under its successor.
+  # Written under the Treehouse project lock, held from before slot allocation until the claim (and, outside local-trunk,
+  # the base refresh's fetches) is complete, so no other spawn or return sees a half-claim. A project with a declared capacity
+  # holds it through metadata publication instead (spawn_lease_complete). The claim names the leased path itself: the pane's
+  # own path is read only after the lock is let go (below), and `spawn_worktree_isolated` screens the leased path first.
+  if ! spawn_worktree_isolated "$allocated"; then
+    echo "error: leased copy '$allocated' is not an isolated worktree of '$PROJ_ABS' (${SPAWN_WT_REASON:-no reason recorded}); preserving lease for recovery" >&2
+    exit 1
+  fi
+  if jg_treehouse_pool_slot "$PROJ_ABS" "$allocated"; then
+    if ! jg_treehouse_slot_owner_claim "$allocated" "$ID" "$JG_HOME"; then
+      # The slot was never this task's, so the abort cleanup below must not
+      # retain it with a recovery record: teardown of such a record would
+      # return a copy this task never owned.
+      SPAWN_SLOT_CLAIM_REFUSED=1
+      echo "error: could not claim Treehouse pool slot $allocated for task $ID; refusing to launch a worker whose slot cannot later be proved to be its own; inspect window $T" >&2
+      exit 1
+    fi
+    SPAWN_SLOT_CLAIMED=1
+  fi
+  spawn_phase_mark claim-done
+  # The lease is complete: the lock goes (and, outside local-trunk, after the base refresh), then the pane's own wait runs beside the
+  # project's other spawns.
+  spawn_lease_finish "$allocated"
 
   # Wait for the explicit cd: accept only the leased path, with two agreeing
   # reads, never a different isolated copy inherited from the focused pane.
@@ -4480,42 +4573,17 @@ elif [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] && [ "$BACKEND" != orca 
   done
   if [ -z "$WT" ]; then
     echo "error: treehouse get did not enter an isolated worktree within ${JG_SPAWN_WT_POLLS:-60}s (last seen '${last_seen:-none}': $last_reason; spawning project '$PROJ_ABS'); inspect window $T" >&2
+    spawn_return_unsettled_lease
     exit 1
   fi
 
   validate_spawn_worktree "treehouse get" "$T"
+  spawn_phase_mark pane-settled
 
-  # Claim the pool slot for this task. The interactive `treehouse get` sent to
-  # the pane above records only a process lease (Treehouse's durable
-  # `get --lease --lease-holder`, which bin/jg-home-seed.sh uses for squad_lead
-  # homes, is not this path), so Treehouse cannot say which task a slot belongs
-  # to once that task's worker exits - and that is exactly when the slot is
-  # handed on and this task's worktree= line goes stale. The claim is what lets
-  # bin/jg-teardown.sh leave a slot that has since been reassigned untouched, so
-  # a slot that cannot be claimed is refused here, at the cheapest point, rather
-  # than launching a worker whose slot teardown could later release out from
-  # under its successor.
-  # Written under the Treehouse project lock, held from before slot allocation until the claim (and, outside local-trunk,
-  # the base refresh's fetches) is complete, so no other spawn or return sees a half-claim. A project with a declared capacity
-  # holds it through metadata publication instead (spawn_lease_complete).
-  if jg_treehouse_pool_slot "$PROJ_ABS" "$WT"; then
-    if ! jg_treehouse_slot_owner_claim "$WT" "$ID" "$JG_HOME"; then
-      # The slot was never this task's, so the abort cleanup below must not
-      # retain it with a recovery record: teardown of such a record would
-      # return a copy this task never owned.
-      SPAWN_SLOT_CLAIM_REFUSED=1
-      echo "error: could not claim Treehouse pool slot $WT for task $ID; refusing to launch a worker whose slot cannot later be proved to be its own; inspect window $T" >&2
-      exit 1
-    fi
-    SPAWN_SLOT_CLAIMED=1
-  fi
 fi
-if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ]; then
-  spawn_lease_trunk=0
-  ! spawn_trunk_branch >/dev/null || spawn_lease_trunk=1
-  [ "$spawn_lease_trunk" = 0 ] || spawn_lease_complete
-  freshen_spawn_worktree_base "$WT" "$BASE_BRANCH" || exit 1
-  [ "$spawn_lease_trunk" = 1 ] || spawn_lease_complete
+# An Orca worktree has no lease to finish before its pane: its copy is the one Orca made.
+if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] && [ "$BACKEND" = orca ]; then
+  spawn_lease_finish "$WT"
 fi
 
 # Fresh ships/scouts and all relaunches must enter and verify the durable task
@@ -5355,6 +5423,7 @@ if [ "$RELAUNCH" -eq 0 ]; then
     exit 1
   fi
   SPAWN_META_TMP=
+  spawn_phase_mark record-published
 fi
 
 # Fuse the backlog In-flight transition into the publication that just created
@@ -5444,10 +5513,7 @@ fi
 # still being delivered, cannot observe or complete a fresh provisional record
 # between its state check and `jg-backlog.sh start`, and a delivery failure cannot
 # follow a committed In-flight transition.
-if [ "$SPAWN_TREEHOUSE_PROJECT_LOCK_HELD" = 1 ]; then
-  SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=0
-  jg_lock_release "$SPAWN_TREEHOUSE_PROJECT_LOCK"
-fi
+spawn_project_lock_release
 # The record is published, so this task is now part of the set a teardown
 # enumerates and locks per task. The set is only needed across that publication.
 spawn_task_set_release

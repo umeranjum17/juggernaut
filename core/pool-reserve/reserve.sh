@@ -5,8 +5,9 @@
 # An ordinary lane may lease a copy only while the leased copies are fewer than the lane limit, so the last two copies of the
 # cap stay free. A leased copy counts only when its holder (the name in `(held by <name>)`) has a task record in the home
 # (state/<name>.meta) that is not finished: a task is finished when its status file ends in a `done` line and its record has
-# landed= set, or when jg-crew-state.sh reads `state: done`. A copy with no holder name, an unsafe name, or a state that cannot be
-# read in 5 s counts (unknown is never zero). The copies left out are printed once on stderr as
+# landed= set, or when jg-crew-state.sh reads `state: done` (asked only for a holder whose status file holds a done line, because that
+# call reads the holder's pane and its cost would grow with every leased copy). A copy with no holder name, an unsafe name, or a state
+# that cannot be read in 5 s counts (unknown is never zero). The copies left out are printed once on stderr as
 # `pool-reserve: not counted (no live lane): <slot>=<name> ...` so Main can clean them up; this script still ends and removes none.
 # A red-fix lane (jg-spawn.sh --red-fix-of) may use them, up to the cap. A home with no lane limit
 # (core/lane-scale/scale.sh target prints "-") is left to the pool's own max_trees. This script leases, ends and removes nothing.
@@ -30,6 +31,9 @@ live_holder() {
   [ -f "$meta" ] || return 1
   last=$(grep -v '^[[:space:]]*$' "$HOME_DIR/state/$name.status" 2>/dev/null | tail -n 1)
   case "$last" in done*) grep -q '^landed=.' "$meta" && return 1 ;; esac
+  # bin/jg-crew-state.sh reads `state: done` only from a done line in the holder's status file, and it reads the holder's pane first: a
+  # holder whose file has no done line near the start of a line is live without that call, so the cost of admit stays flat as copies grow.
+  grep -Eq '^.{0,80}done' "$HOME_DIR/state/$name.status" 2>/dev/null || return 0
   JG_HOME=$HOME_DIR timeout 5 "$HERE/../../bin/jg-crew-state.sh" "$name" 2>/dev/null </dev/null | grep -q '^state: done\b' && return 1
   return 0
 }
