@@ -34,3 +34,6 @@ script_timeout_seconds=1800
 # wait for a slot (bin/jg-test-host-lib.sh). 0 is one run per 16 cpus, held between 2 and 3
 # (every run also lowers itself to nice JG_TEST_NICE, default 10). The --required-shards gate is one run however many shards it starts.
 machine_runs_max=0
+# machine_runs_burst: extra slots a lane run may take when every machine_runs_max slot is held, only while the machine's
+# cpu pressure (some avg10) is under 10 (bin/jg-test-host-lib.sh). 0 is off.
+machine_runs_burst=0

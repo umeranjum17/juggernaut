@@ -132,7 +132,7 @@
 #                   accepted so the nightly suite's command line stays valid; a
 #                   speed-limit breach is reported in every mode (see below).
 #   --show-limits   print the effective e2e_seconds, unit_seconds,
-#                   gate_wall_seconds, script_timeout_seconds and machine_runs_max from the config file
+#                   gate_wall_seconds, script_timeout_seconds, machine_runs_max and machine_runs_burst from the config file
 #                   and exit without running anything.
 #   --max-wall-ms N fail the run when its measured invocation wall clock exceeds
 #                   N milliseconds, including an empty selection, and stop
@@ -320,6 +320,8 @@ TEST_SPEED_UNIT_SECONDS=5
 TEST_SPEED_GATE_SECONDS=600
 # How many runs may execute tests on this machine at once (machine_runs_max; 0 is one per 16 cpus, held between 2 and 3).
 TEST_MACHINE_RUNS_MAX=0
+# How many extra slots a lane run may take while every general slot is held and the machine's cpu pressure is low (machine_runs_burst; 0 is off).
+TEST_MACHINE_RUNS_BURST=0
 # Hard per-test ceiling on the automatic --changed path: max(120s, 4 x the
 # test's measured hint), so a wedged script ends as a bounded failure naming it
 # within minutes, not at a job cancel (a 1500s flat bound let tests/jg-mail hang
@@ -419,6 +421,8 @@ load_test_speed_limits() {
     case $v in ''|*[!0-9]*) ;; *) TEST_SPEED_SCRIPT_TIMEOUT_SECONDS=$v ;; esac
     v=$(sed -n 's/^machine_runs_max=//p' "$f" | tail -n 1)
     case $v in ''|*[!0-9]*) ;; *) TEST_MACHINE_RUNS_MAX=$v ;; esac
+    v=$(sed -n 's/^machine_runs_burst=//p' "$f" | tail -n 1)
+    case $v in ''|*[!0-9]*) ;; *) TEST_MACHINE_RUNS_BURST=$v ;; esac
     return 0
   done
   return 0
@@ -2016,7 +2020,7 @@ if [ "${1:-}" = --required-shards ]; then
   mkdir -p "$required_dir" || die "cannot create required-set output directory"
   # The gate takes one machine run slot for all eight shards, and builds the Go cores once into the shared Go build
   # cache before they start (bin/jg-test-host-lib.sh); the shards inherit both and take no slot of their own.
-  jg_test_host_admit "$(machine_runs_max)"
+  jg_test_host_admit "$(machine_runs_max)" "$TEST_MACHINE_RUNS_BURST"
   bypass_tool_shims
   trap '[ -z "$TOOLS_BYPASS_DIR" ] || rm -rf "$TOOLS_BYPASS_DIR"; jg_test_host_release' EXIT
   jg_test_host_pin_go_cache
@@ -2366,6 +2370,7 @@ if [ "$SHOW_LIMITS" -eq 1 ]; then
   printf 'gate_wall_seconds=%s\n' "$TEST_SPEED_GATE_SECONDS"
   printf 'script_timeout_seconds=%s\n' "$TEST_SPEED_SCRIPT_TIMEOUT_SECONDS"
   printf 'machine_runs_max=%s\n' "$(machine_runs_max)"
+  printf 'machine_runs_burst=%s\n' "$TEST_MACHINE_RUNS_BURST"
   exit 0
 fi
 
@@ -2684,7 +2689,7 @@ fi
 # A run that executes scripts holds a machine run slot until it exits, and every script it starts shares one Go
 # build cache and the caller's mise state (bin/jg-test-host-lib.sh). Time spent waiting for the slot is the machine's, so it is taken off the
 # run's own wall clock.
-jg_test_host_admit "$(machine_runs_max)"
+jg_test_host_admit "$(machine_runs_max)" "$TEST_MACHINE_RUNS_BURST"
 RUN_STARTED_MS=$((RUN_STARTED_MS + JG_TEST_HOST_WAITED_MS))
 jg_test_host_pin_go_cache
 jg_test_host_pin_mise_dirs
