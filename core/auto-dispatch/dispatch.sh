@@ -23,7 +23,8 @@
 # The switch is config/auto-dispatch: its first word `on` makes the check act, anything else or no file leaves it watch only.
 # Switch on, each "would start" ticket is spawned through bin/jg-spawn.sh with the route of its approval record, as a ship
 # lane in the delivery mode of its brief's `Delivery contract: mode=` line and the project's registered yolo posture, on the
-# branch prefix its brief names. The spawn runs detached (it outlasts the check's bound) under `dispatch.sh run`, which
+# branch prefix its brief names; a brief that carries the Recon contract line (bin/jg-brief.sh --scout writes it) is spawned as a
+# Recon lane with `--scout` and no mode, yolo or branch prefix. The spawn runs detached (it outlasts the check's bound) under `dispatch.sh run`, which
 # writes what the spawn really did into the start record data/auto-dispatch/<id>.start.<attempt> (the spawn's output is
 # data/auto-dispatch/<id>.log). The spawn's exit is the result, and the row follows the result, never the launch:
 #   0   started   the lane record state/<task>.meta is there (an exit 0 with no lane record is a failed start);
@@ -249,27 +250,35 @@ run_start() {
   [ "$result" != deferred ] || schedule_retry "$rec"
 }
 
+# The line every `bin/jg-brief.sh <task> <repo> --scout` brief carries and no ship brief carries (bin/jg-dispatch-resolve.sh reads it too).
+RECON_BRIEF_LINE='This is a SCOUT task: the deliverable is a written report, not a PR.'
+
 # launch <id> <project> <route>: claim the next attempt for the ticket and spawn it detached through `run_start`. Prints
 # "starting" and returns 0, or prints why it cannot be tried and returns 1. A claim another run won is a start in flight.
 launch() {
   local id=$1 project=$2 route=$3 brief=$DATA/$1/brief.md mode yolo branch task harness model effort attempt rec
-  local -a prefix=()
-  mode=$(sed -n 's/^Delivery contract: mode=\([A-Za-z-]*\).*$/\1/p' "$brief" | head -n 1)
-  [ -n "$mode" ] || { echo "the brief has no delivery contract line"; return 1; }
-  yolo=$("$PROJECT_MODE" "$project" 2>/dev/null | awk '{ print $2 }')
-  case "$yolo" in on|off) ;; *) echo "the project's registered yolo posture could not be read"; return 1 ;; esac
-  read -r harness model effort <<< "$route"
-  # shellcheck disable=SC2016  # the backquotes are the brief's own text
-  branch=$(sed -n 's/^1\. First action: create your branch: `git checkout -b \([^ ]*\) --`.*$/\1/p' "$brief" | head -n 1)
+  local -a lane=()
   task=${id//./-}
-  case "$branch" in *"$task") prefix=(--branch-prefix "${branch%"$task"}") ;; esac
+  if grep -qxF "$RECON_BRIEF_LINE" "$brief"; then
+    lane=(--scout)
+  else
+    mode=$(sed -n 's/^Delivery contract: mode=\([A-Za-z-]*\).*$/\1/p' "$brief" | head -n 1)
+    [ -n "$mode" ] || { echo "the brief has no delivery contract line"; return 1; }
+    yolo=$("$PROJECT_MODE" "$project" 2>/dev/null | awk '{ print $2 }')
+    case "$yolo" in on|off) ;; *) echo "the project's registered yolo posture could not be read"; return 1 ;; esac
+    lane=(--mode "$mode" --yolo "$yolo")
+    # shellcheck disable=SC2016  # the backquotes are the brief's own text
+    branch=$(sed -n 's/^1\. First action: create your branch: `git checkout -b \([^ ]*\) --`.*$/\1/p' "$brief" | head -n 1)
+    case "$branch" in *"$task") lane+=(--branch-prefix "${branch%"$task"}") ;; esac
+  fi
+  read -r harness model effort <<< "$route"
   attempt=$(( $(latest_attempt "$id") + 1 )); rec=$START_PREFIX/$id.start.$attempt
   # One create claims the attempt: a second run, or a restart, that reads the same count loses here and starts nothing.
   if ! ( set -C; printf 'attempt=%s\ntask=%s\napproved-at=%s\nlaunched-at=%s\nroute=%s\n' \
       "$attempt" "$task" "$(approved_field "$id" approved-at)" "$now" "$route" > "$rec" ) 2>/dev/null; then echo starting; return 0; fi
   rm -f "$START_PREFIX/$id.start.$((attempt - 3))"   # a deferral retried each beat keeps its last three attempts, not all of them
   ( setsid nohup bash "$SELF" run "$FMH" "$rec" "$task" "$DATA/auto-dispatch/$id.log" \
-      "$SPAWN" "$task" "$FMH/projects/$project" --ticket "$id" --mode "$mode" --yolo "$yolo" "${prefix[@]}" \
+      "$SPAWN" "$task" "$FMH/projects/$project" --ticket "$id" "${lane[@]}" \
       --harness "$harness" --model "$model" --effort "$effort" > /dev/null 2>&1 < /dev/null & ) 2>/dev/null
   echo starting
 }
