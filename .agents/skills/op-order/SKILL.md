@@ -35,9 +35,16 @@ Runs beside   the other slices of its wave
 Budget        measured by a dry run, never guessed
 ```
 
-3. Build the waves from the Files fields: two slices share a wave only when they share no file and neither reads what
+3. A refactor that changes many callers is three orders or more: expand (the new path beside the old, behind a flag),
+   then one order per disjoint set of caller files (each set small enough for one lane: about 8 files and 40 changed
+   lines; sets never sharing a file), then contract (delete the old path) after the stated clean days. A hot file (one
+   that 40 or more changed lines touch, or that three or more sets would need) gets its own order, or a first small
+   order splits it so that later orders touch separate files.
+4. Build the waves from the Files fields: two slices share a wave only when they share no file and neither reads what
    the other creates. Every slice of a wave is cut from the same commit: the trunk tip after the previous wave landed.
-4. Write orders/plan.json beside the orders in the form of the swarm interface's section 1: plan, title, report,
+   Wave 1 holds at least as many slices as the owner home's lane target (`config/lane-target`); when the work cannot be
+   cut that wide, the report's plan section says why, and Main may run another plan beside it.
+5. Write orders/plan.json beside the orders in the form of the swarm interface's section 1: plan, title, report,
    intent, prior_art, and per slice id, title, owner_home, project, size, risk, depends_on, files, machine, order,
    owner_word and gate. A slice id is lowercase letters and digits. A title is 2 to 7 plain words, at most 48
    characters, with no path, slash or id (strict intake refuses others). Dependent slices share one owner home. An
@@ -46,7 +53,9 @@ Budget        measured by a dry run, never guessed
    home's row or a tool version carries gate; a slice that waits on anything else stays out of plan.json and the
    report names it for Main to start by hand. Check the file with bin/jg-swarm-plan-check.sh orders/plan.json
    until it prints its ok line (the filer's own dry run needs the plan row filed, so /blitz runs it later).
-5. Dry run: a worker of the order's model carries out the first order on a scratch copy and reports where it got stuck.
+   `files` entries are repository paths, a new file marked ` (new)`; never prose (bin/jg-swarm-plan-check.sh refuses prose
+   once slice pc1 lands).
+6. Dry run: a worker of the order's model carries out the first order on a scratch copy and reports where it got stuck.
    Fix the order, then record its measured time as the budget for that size of order.
 
 ## Gates
