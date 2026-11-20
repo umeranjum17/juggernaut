@@ -50,7 +50,7 @@ echo "ok - the spawn writes the lane's lease"
 bd_ update jg-fl1 --status open >/dev/null 2>&1 || fail "could not reopen the first lane's row"
 
 lane jg-fl2 '["bin/hot.sh"]'
-expect_code 1 "$rc" "a hot file another live lane leases must refuse the start: $out"
+expect_code 75 "$rc" "a hot file another live lane leases must defer the start: $out"
 assert_contains "$out" "lease-held: bin/hot.sh is leased by the live lane jg-fl1" "the refusal must name the file and the holder"
 [ ! -e "$HOME_DIR/state/jg-fl2.meta" ] || fail "a refused lane wrote a task record"
 [ ! -e "$LEASES/jg-fl2" ] || fail "a refused lane took a lease"

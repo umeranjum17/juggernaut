@@ -253,6 +253,9 @@
 #   Task-set lock: a fresh spawn that finds this home's task set locked by another spawn, a forced teardown or another
 #   operation is deferred the same way (one `deferred:` line, exit 75, no record, nothing created), because the lock
 #   is a wait and not a verdict. core/auto-dispatch/dispatch.sh resumes every exit 75 under the same approval.
+#   Held file: a fresh ship whose only refusals are files other live lanes hold (`held-file:` from the admission, `lease-held:`
+#   from the file lease) is deferred the same way, with one `deferred:` line naming the file and the holder; any other
+#   refusal exits 1. JG_SPAWN_HELD_FILE_REFUSES=1 keeps the exit 1 for a held file.
 #   With no harness arg, a operator/scout spawn resolves the CREW harness only when
 #   config/crew-dispatch.json is absent. When that file exists, operator/scout
 #   spawns require an explicit harness so juggernaut cannot silently skip dispatch
@@ -3395,22 +3398,43 @@ spawn_ticket_refuse() {
   [ "$KIND" = ship ] || return 0
   spawn_ticket_admit
 }
+# A refusal whose every line says a file is held by another live lane is a wait, not a verdict: the holder lands
+# or is cleaned up, and dispatch tries the start again. Prints the one `deferred:` line and returns 0 when <err>
+# holds only lines that start with <prefix> (after the admission's own `error: spawn refused: `); returns 1 for
+# any other refusal, an empty file, or JG_SPAWN_HELD_FILE_REFUSES=1.
+spawn_held_file_defer() {
+  local err=$1 prefix=$2 held
+  [ "${JG_SPAWN_HELD_FILE_REFUSES:-0}" != 1 ] || return 1
+  held=$(awk -v p="$prefix" '{ sub(/^error: spawn refused: /, ""); if (index($0, p) != 1) bad = 1; else { printf "%s%s", sep, $0; sep = "; " } }
+    END { exit (bad || sep == "") }' "$err") || return 1
+  echo "deferred: task $ID waits: $held; the start is tried again after the holder lands" >&2
+}
 # The lane takes a lease on the files its ticket names (core/file-lease/lease.sh owns the rules): a hot file
-# another live lane leases refuses the start, and the ticket stays in ready. Nothing exists yet to unwind.
+# another live lane leases defers the start, and the ticket stays in ready. Nothing exists yet to unwind.
+# Returns 75 for that wait, any other non-zero status for a refusal.
 spawn_file_lease() {
-  local files rc=0 paths
+  local files rc=0 paths lease_err
   files=$(jq -r '(if type == "array" then .[0] else . end) | .metadata.files // empty
     | if type == "string" then fromjson else . end | .[]?' "$1" 2>&1) \
     || { echo "error: ticket $TICKET's file list could not be read for its lease: $files" >&2; return 1; }
   [ -n "$files" ] || return 0
   mapfile -t paths <<<"$files"
+  lease_err=$(mktemp) || return 1
   JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_CONFIG_OVERRIDE="$CONFIG" JG_FILE_LEASE_REPO="$PROJ_ABS" \
-    "$JG_ROOT/core/file-lease/lease.sh" acquire "$ID" "${paths[@]}" || rc=$?
-  [ "$rc" -eq 0 ] || echo "error: spawn refused: ticket $TICKET could not take its file lease (exit $rc)" >&2
+    "$JG_ROOT/core/file-lease/lease.sh" acquire "$ID" "${paths[@]}" 2>"$lease_err" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    if [ "$rc" -eq 1 ] && spawn_held_file_defer "$lease_err" "lease-held:"; then rc=75
+    else
+      cat -- "$lease_err" >&2
+      echo "error: spawn refused: ticket $TICKET could not take its file lease (exit $rc)" >&2
+    fi
+  fi
+  rm -f -- "$lease_err"
   return "$rc"
 }
 # The ticket belongs to this repository and may start now (core/spawn/cmd/jg-spawn-core/admit.go): its
 # repository label and files, its open edges and the files of the other live lanes. The rows are read here.
+# Returns 75 when only files other live lanes hold refuse it, 1 for any other refusal.
 spawn_ticket_admit() {
   local scratch admit_rc=0 trunk_ref=
   # A local-trunk project's files are looked for on its trunk tip, not on the clone's checked-out branch.
@@ -3421,17 +3445,23 @@ spawn_ticket_admit() {
     echo "error: ticket $TICKET's rows could not be read before dispatch ($(sed -n '1p' "$scratch/err"))" >&2
     admit_rc=1
   else
-    "$SCRIPT_DIR/jg-spawn-core.sh" admit --project "$(basename "$PROJ_ABS")" --repo "$PROJ_ABS" \
-      --ticket "$scratch/ticket" --lanes "$scratch/lanes" ${trunk_ref:+--ref "$trunk_ref"} || admit_rc=1
-    [ "$admit_rc" -ne 0 ] || spawn_file_lease "$scratch/ticket" || admit_rc=1
+    if ! "$SCRIPT_DIR/jg-spawn-core.sh" admit --project "$(basename "$PROJ_ABS")" --repo "$PROJ_ABS" \
+      --ticket "$scratch/ticket" --lanes "$scratch/lanes" ${trunk_ref:+--ref "$trunk_ref"} 2>"$scratch/refusal"; then
+      if spawn_held_file_defer "$scratch/refusal" "held-file:"; then admit_rc=75
+      else cat -- "$scratch/refusal" >&2; admit_rc=1; fi
+    else
+      cat -- "$scratch/refusal" >&2
+      spawn_file_lease "$scratch/ticket" || admit_rc=$?
+    fi
   fi
-  rm -f -- "$scratch/ticket" "$scratch/lanes" "$scratch/err"
+  rm -f -- "$scratch/ticket" "$scratch/lanes" "$scratch/err" "$scratch/refusal"
   rmdir -- "$scratch"
   return "$admit_rc"
 }
 if jg_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then
   BACKLOG_TRANSITION=1
-  if [ "$RELAUNCH" -eq 0 ]; then spawn_ticket_refuse || exit 1; fi
+  # Exit 75 is a wait (a file another live lane holds); every other refusal is a failed start.
+  if [ "$RELAUNCH" -eq 0 ]; then spawn_ticket_refuse || { [ "$?" -ne 75 ] || exit 75; exit 1; }; fi
   if jg_backlog_row_probe "$DATA" "$ID"; then
     BACKLOG_ROW_STATE=$JG_BACKLOG_ROW_STATE
     # A fresh ship for a [captain-ask] or Recon/plan-born ticket needs a record of the captain's

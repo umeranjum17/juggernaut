@@ -56,7 +56,8 @@ expect_code 0 "$rc" "a ticket whose files are here and free must launch: $out"
 echo "ok - a ticket of this repository launches"
 
 bd_ update jg-ad3 --status in_progress >/dev/null 2>&1 || fail "could not mark the live lane"
-lane jg-ad4 proj '["bin/other.sh","bin/here.sh"]'
+# The admission's own verdict; tests/jg-spawn-held-file-defers.test.sh covers the wait the spawn makes of it.
+JG_SPAWN_HELD_FILE_REFUSES=1 lane jg-ad4 proj '["bin/other.sh","bin/here.sh"]'
 refused "held-file: bin/here.sh is held by the live lane jg-ad3"
 echo "ok - a file another live lane holds is refused"
 
