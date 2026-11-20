@@ -41,6 +41,8 @@ def h_status(t, value, call):
         t["closed_at"] = call.now
     elif value != "closed":
         t["closed_at"], t["close_reason"] = None, None
+    if value == "in_progress" and not t.get("started_at"):   # bd stamps the first move to in progress, and keeps it after
+        t["started_at"] = call.now
     t["status"] = value
 
 

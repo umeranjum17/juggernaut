@@ -25,7 +25,7 @@ jg_test_fake_sleep_noop "$FAKEBIN"
 jg_test_spawn_home "$HOME_DIR"
 printf 'wait_pressure=100\nalert_pressure=100\nwait_available_gb=0\nalert_available_gb=0\n' > "$HOME_DIR/config/host-memory"
 printf '# the hot files of this home\nbin/hot.sh\n' > "$HOME_DIR/config/hot-files"
-bd_() { BEADS_DIR=$(tr -d '[:space:]' < "$HOME_DIR/config/beads-dir") "$ROOT/bin/jg-beads.sh" "$@"; }
+bd_() { JG_HOME=$HOME_DIR python3 -I "$ROOT/core/item-store/adapters/bd_compat.py" "$@"; }
 LEASES="$HOME_DIR/state/file-leases"
 
 # lane <id> <files json>: file a plan-filed row, scaffold its brief, spawn it; sets id, out, rc.

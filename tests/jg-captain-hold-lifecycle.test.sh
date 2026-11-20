@@ -290,7 +290,7 @@ test_a_parked_hold_raises_no_card() {
   signoff_addon_stub "$addons"
   tasks_in "$home" add "$id" "Route the card" --kind ship --repo sample --start >/dev/null \
     || fail "could not create the parked fixture"
-  BEADS_DIR=$(cat "$home/config/beads-dir") "$ROOT/bin/jg-beads.sh" update "$id" --status on_hold \
+  JG_HOME=$home python3 -I "$ROOT/core/item-store/adapters/bd_compat.py" update "$id" --status on_hold \
     --set-metadata hold_reason="waiting on a parked lane" --set-metadata hold_kind=parked >/dev/null \
     || fail "could not park the fixture"
   out=$(hold_with_reason "$home" "$addons" "$log" "$id" "who signs off the release" 2>&1) || rc=$?
@@ -924,7 +924,7 @@ test_reconcile_closes_with_evidence_or_keeps_the_call_open() {
   assert_contains "$show" "held: yes" "annotating a still-active call released it"
   gate=$(tasks_in "$home" questions --ticket jg-sample-active-call --json | jq -r '.[0].id')
   [ -n "$gate" ] || fail "annotating a still-active call closed its question"
-  notes=$(BEADS_DIR=$(cat "$home/config/beads-dir") "$ROOT/bin/jg-beads.sh" comments "$gate" 2>&1)
+  notes=$(JG_HOME=$home python3 -I "$ROOT/core/item-store/adapters/bd_compat.py" comments "$gate" --json | jq -r '.[].text')
   assert_contains "$notes" "Still open: nothing has shipped" "the re-check left no note on the question"
   case "$show" in *"Captain hold reconciled:"*) fail "the note went into the ticket body" ;; esac
   case "$show" in
@@ -945,7 +945,7 @@ test_reconcile_closes_with_evidence_or_keeps_the_call_open() {
   JG_CAPTAIN_HOLD_NOW=2026-09-07T06:01:00Z run_captain "$home" reconcile note jg-sample-active-call \
     --note-file "$home/note.txt" >/dev/null \
     || fail "the second request with the same finding was not recorded"
-  notes=$(BEADS_DIR=$(cat "$home/config/beads-dir") "$ROOT/bin/jg-beads.sh" comments "$gate" 2>&1)
+  notes=$(JG_HOME=$home python3 -I "$ROOT/core/item-store/adapters/bd_compat.py" comments "$gate" --json | jq -r '.[].text')
   [ "$(printf '%s\n' "$notes" | grep -c 'Still open: nothing has shipped')" -eq 2 ] \
     || fail "a later reconcile request with the same note did not add its own comment"
 

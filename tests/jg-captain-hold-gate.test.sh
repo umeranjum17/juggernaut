@@ -187,7 +187,7 @@ assert_contains "$out" "still-open: jg-w7" "the note must say the call is still 
 q=$(questions_json --ticket jg-w7)
 [ "$(jq length <<<"$q")" = 1 ] || fail "the gate must stay open after a note: $q"
 gate_id=$(jq -r '.[0].id' <<<"$q")
-assert_contains "$(BEADS_DIR=$(cat "$home/config/beads-dir") "$ROOT/bin/jg-beads.sh" comments "$gate_id" 2>&1)" "Still open: nothing has shipped." "the finding is a comment on the gate"
+assert_contains "$(JG_HOME=$home python3 -I "$ROOT/core/item-store/adapters/bd_compat.py" comments "$gate_id" --json | jq -r '.[].text')" "Still open: nothing has shipped." "the finding is a comment on the gate"
 case "$(tasks show jg-w7 --full)" in *"Still open: nothing"*|*"Captain hold reconciled"*) fail "the note must not go into the ticket body" ;; esac
 hold answered jg-w7 && fail "a note is not an answer"
 pass "reconcile note comments on the gate and leaves it open"

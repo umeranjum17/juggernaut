@@ -30,7 +30,6 @@ if python3 "$ROOT/bin/jg-closure-gate.py" "$P" jg-fix >"$T/out" 2>&1; then fail 
 grep -q 'unresolved\|worse' "$T/out" || fail 'interval refusal missing reason'
 H=$T/home
 mkdir -p "$H/config" "$H/state" "$H/data" "$T/user"
-printf '%s\n' "$T/unused/.beads" > "$H/config/beads-dir"  # kept until jg-backlog-lib stops asking for it (slice c1); the tables are the store
 : > "$H/config/backlog-intake-loose"
 tasks() { env HOME="$T/user" TMPDIR="$T" PATH=/usr/bin:/bin JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" JG_DATA_OVERRIDE="$H/data" JG_CONFIG_OVERRIDE="$H/config" JG_BOOTSTRAP_NETWORK=skip "$ROOT/bin/jg-backlog.sh" "$@"; }
 tasks add jg-fix -l bottleneck-fix 'Fix delivery flow' --body why >/dev/null

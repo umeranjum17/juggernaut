@@ -242,61 +242,36 @@ test_a_goal_step_waiting_is_ready_work_named_in_the_row() {
 test_a_goal_step_waiting_is_ready_work_named_in_the_row
 
 # The ready count is the store's count of tickets that can start, written by the real refresh
-# and read by the real heartbeat. A stand-in bd serves 200 ready rows, 6 of which name a
-# registered project and can start; the rest name no project or another one. The reader asks
-# the store's dolt one indexed query, so the stand-in dolt answers it with the project-labelled
-# rows as a table.
-store_home() {  # <dir> -> a home with a stand-in store, its pinned tools, and one registered project
-  local d=$1 os arch
-  mkdir -p "$d/bin" "$d/state" "$d/config" "$d/data" "$d/store/.beads/embeddeddolt/jg"
-  printf '{"dolt_mode": "embedded", "dolt_database": "jg"}\n' > "$d/store/.beads/metadata.json"
-  printf 'no-git-ops: true\n' > "$d/store/.beads/config.yaml"
-  cat > "$d/bin/bd" <<'SH'
+# and read by the real heartbeat. The home's tickets tables hold 200 ready rows, 6 of which name a
+# registered project and can start; the rest name no project or another one. A stand-in python3
+# can make the tables' spawnable read slow (STUB_SLEEP); every other call runs the real one.
+store_home() {  # <dir> -> a home whose tickets tables hold the rows, and one registered project
+  local d=$1
+  mkdir -p "$d/bin" "$d/state" "$d/config" "$d/data"
+  cat > "$d/bin/python3" <<SH
 #!/usr/bin/env bash
-case "$1" in
-  ready) [ -z "${STUB_SLEEP:-}" ] || sleep "$STUB_SLEEP"; cat "$ROWS_READY" ;;
-  list) cat "$ROWS_ALL" ;;
-  blocked) echo '[]' ;;
-esac
+case " \$* " in *"/tickets.py spawnable "*) [ -z "\${STUB_SLEEP:-}" ] || sleep "\$STUB_SLEEP" ;; esac
+exec "$(python3 -c 'import sys; print(sys.executable)')" "\$@"
 SH
-  cat > "$d/bin/dolt" <<'SH'
-#!/usr/bin/env bash
-[ -z "${STUB_SLEEP:-}" ] || sleep "$STUB_SLEEP"; cat "$ROWS_TABLE"
-SH
-  chmod +x "$d"/bin/*
-  os=$(uname -s | tr '[:upper:]' '[:lower:]')
-  arch=$(uname -m); case "$arch" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac
-  sha() { { sha256sum "$1" 2>/dev/null || shasum -a 256 "$1"; } | cut -d' ' -f1; }
-  printf 'bd 1.3.4\ndolt 2.6.0\nbd-sha256-%s-%s %s\ndolt-sha256-%s-%s %s\n' \
-    "$os" "$arch" "$(sha "$d/bin/bd")" "$os" "$arch" "$(sha "$d/bin/dolt")" > "$d/pins"
-  printf '%s\n' "$d/store/.beads" > "$d/config/beads-dir"
+  chmod +x "$d/bin/python3"
   printf -- '- proj [local-trunk] - the one project (added 2026-11-01)\n' > "$d/data/projects.md"
   python3 - "$d" <<'PY'
 import json, sys
 d = sys.argv[1]
-rows = []
-for i in range(200):
-    labels = ["project:proj"] if i < 6 else (["project:other"] if i < 100 else [])
-    rows.append({"id": "t%d" % i, "title": "[feature] row %d" % i, "status": "open", "issue_type": "task",
-                 "created_at": "2026-11-01T00:00:00Z", "labels": labels, "metadata": {},
-                 "dependency_count": 0, "dependent_count": 0})
-json.dump(rows, open(d + "/ready.json", "w"))
-json.dump(rows, open(d + "/all.json", "w"))
-with open(d + "/table.txt", "w") as t:  # the one query's answer: id and project label, as dolt prints it
-    t.write("+----+---------------+\n| id | label         |\n+----+---------------+\n")
-    for r in rows:
-        for l in r["labels"]:
-            t.write("| %s | %s |\n" % (r["id"], l))
-    t.write("+----+---------------+\n")
+with open(d + "/rows.jsonl", "w") as out:
+    for i in range(200):
+        labels = ["project:proj"] if i < 6 else (["project:other"] if i < 100 else [])
+        out.write(json.dumps({"id": "t%d" % i, "title": "[feature] row %d" % i, "status": "open", "issue_type": "task",
+                              "created_at": "2026-11-01T00:00:00Z", "labels": labels, "metadata": {}}) + "\n")
 PY
+  JG_HOME="$d" python3 -I "$ROOT/core/item-store/adapters/bd_compat.py" import "$d/rows.jsonl" >/dev/null || fail "seed the tables"
   touch "$d/state/.last-watcher-beat"
 }
 
-store_env() {  # <dir> command...: run with the home's stand-in store
+store_env() {  # <dir> command...: run on the home's tables, with the stand-in python3 first on PATH
   local d=$1
   shift
-  env JG_HOME="$d" JG_PIN_FILE_OVERRIDE="$d/pins" JG_BEADS_BD="$d/bin/bd" JG_BEADS_DOLT="$d/bin/dolt" \
-    ROWS_READY="$d/ready.json" ROWS_ALL="$d/all.json" ROWS_TABLE="$d/table.txt" "$@"
+  env JG_HOME="$d" PATH="$d/bin:$PATH" "$@"
 }
 
 test_ready_count_is_what_can_start_and_never_from_an_old_number() {

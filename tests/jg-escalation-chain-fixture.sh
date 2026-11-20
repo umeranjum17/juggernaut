@@ -12,8 +12,11 @@ set -eu
 TMP_ROOT=$(jg_test_tmproot jg-escalation-chain)
 FORK="$TMP_ROOT/fork"
 mkdir -p "$FORK"
-# toolchain.versions pins the bd and dolt that the copied backlog scripts run.
+# toolchain.versions is the pin table the copied scripts read.
 cp -a "$ROOT/bin" "$ROOT/core" "$ROOT/toolchain.versions" "$FORK/"
+# The fork is the code root the copied scripts read (core/item-store/adapters/tickets.py among them); it holds no .git,
+# so the worktree-tangle check stays inert as wake-helpers.sh wants.
+export JG_ROOT_OVERRIDE=$FORK
 # The steer and interrupt endpoints record their calls in the calling home. A home
 # holding a real-steer file also delivers each steer through the real jg-send (kept
 # as jg-send-real.sh), so its inbox records and decision closes are the real ones.
@@ -225,11 +228,11 @@ lead_home() {  # <name> <main> -> lead home path
   printf '%s\n' "$l"
 }
 
-# A home's backlog is a real Beads store, built on first use; its item ids carry the store's prefix.
+# A home's backlog is its tickets tables, which need no store: a first use only marks the home's intake loose.
 backlog() {  # <home> <backlog args...>
   local h=$1
   shift
-  [ -s "$h/config/beads-dir" ] || jg_test_beads_home "$h"
+  [ -e "$h/config/backlog-intake-loose" ] || { mkdir -p "$h/config" && : > "$h/config/backlog-intake-loose"; }
   JG_HOME="$h" "$FORK/bin/jg-backlog.sh" "$@" >/dev/null || fail "fixture: tasks $*"
 }
 

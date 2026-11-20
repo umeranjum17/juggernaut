@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Behavior tests for bin/jg-goal.sh. The guards run against a recording stand-in for bin/jg-beads.sh.
-# The real store cases need the pinned builds named by JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT, and skip
-# plainly without them. Every store sits in a throwaway folder outside any git tree.
+# Behavior tests for bin/jg-goal.sh. The guards run against a recording stand-in for the tables' bd_compat.py
+# (JG_GOAL_BEADS_BIN); the real cases run on the home's tickets tables. Every home sits in a throwaway folder
+# outside any git tree.
 # This is also the test that owns journeys/goal-loop.sh (the done-done journey that drives a Goal from
 # ask to one finish message on a fake forge), so a change to that journey selects this script.
 set -u
@@ -11,7 +11,8 @@ set -u
 GOAL="$ROOT/bin/jg-goal.sh" T=$(jg_test_tmproot jg-goal)
 mkdir -p "$T/home/config" "$T/home/data"
 export JG_HOME=$T/home LOG=$T/beads.log
-unset JG_DATA_OVERRIDE JG_CONFIG_OVERRIDE GOAL_BEADS_DIR
+unset JG_DATA_OVERRIDE JG_CONFIG_OVERRIDE
+COMPAT=$ROOT/core/item-store/adapters/bd_compat.py
 
 # The journey this test owns ships with it, and runs under done-done where the pinned tools are set up.
 # No CI lane parses journeys/, so this owner is the cheap gate that it is present and still parses.
@@ -19,11 +20,10 @@ unset JG_DATA_OVERRIDE JG_CONFIG_OVERRIDE GOAL_BEADS_DIR
 bash -n "$ROOT/journeys/goal-loop.sh" || fail 'journeys/goal-loop.sh does not parse'
 pass 'the goal-loop journey is present and parses'
 
-# A stand-in wrapper: it records each call, and its `check` can refuse as the real one does with an unpinned tool.
+# A stand-in for the tables: it records each call.
 cat > "$T/beads" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$LOG"
-if [ "$1" = check ] && [ -e "$LOG.refuse" ]; then echo "jg-beads: bd is not the pinned bd 1.3.4" >&2; exit 2; fi
 [ "$1" != create ] || echo goal-fake
 SH
 chmod +x "$T/beads"
@@ -48,16 +48,13 @@ fails "cannot run (exit 126)" declare --ask x --repo o/r -- "$T"
 fails "limits must be whole numbers" declare --ask x --repo o/r --attempts 0 -- false
 assert_absent "$LOG" "a refused proof must not reach the store"
 
-# A home with no store named, then a store the wrapper refuses.
-fails "no Goal store" declare --ask x --repo o/r -- false
-printf '%s\n' "$T/store/.beads" > "$T/home/config/goal-beads-dir"
-touch "$LOG.refuse"
+# A home whose tables do not exist yet: the tables' refusal is the message, and no Goal starts.
 out=$("$GOAL" declare --ask x --repo o/r -- false 2>&1)
-expect_code 2 "$?" "an unpinned tool"
-assert_contains "$out" "is not the pinned bd 1.3.4" "the wrapper's refusal must be the message"
+expect_code 2 "$?" "a home with no tables"
+assert_contains "$out" "tickets: no tables" "the tables' refusal must be the message"
 assert_contains "$out" "Goal store is not ready" "declare must say it stopped"
-assert_not_contains "$(cat "$LOG")" create "an unpinned tool must not start a Goal"
-rm -f "$LOG.refuse"
+assert_absent "$LOG" "a home with no tables must not start a Goal"
+python3 -I "$COMPAT" create "seed row" --id goal-seed --force >/dev/null || fail "make the home's tables"
 
 # Declare writes the epic, five blocked steps and the finish record.
 rm -f "$LOG"
@@ -71,21 +68,13 @@ printf '#!/bin/sh\nexit 1\n' > "$T/p.sh"; chmod +x "$T/p.sh"
 "$GOAL" declare --ask "ship it" --repo o/r -- "$T/p.sh" >/dev/null || fail "declare with a proof script"
 assert_present "$T/home/data/goals/goal-fake/proof-script" "the proof script is copied beside the finish line"
 
-if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
-  printf 'skip: real store: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
-  pass "jg-goal guards"
-  exit 0
-fi
+pass "jg-goal guards"
 
-# The real pinned tools, through the real wrapper.
+# The real tables of the home, and a second home for the fold.
 unset JG_GOAL_BEADS_BIN
-export JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
-mkdir -p "$T/real" "$T/fold"
 rm -rf "$T/home/data/goals"
-for s in real fold; do
-  BEADS_DIR=$T/$s/.beads "$ROOT/bin/jg-beads.sh" init --prefix goal >/dev/null 2>&1 || fail "init the $s store"
-done
-printf '%s\n' "$T/real/.beads" > "$T/home/config/goal-beads-dir"
+mkdir -p "$T/fold/config" "$T/fold/data"
+real() { python3 -I "$COMPAT" "$@" 2>/dev/null; }
 id=$("$GOAL" declare --ask "make it live" --repo o/r --where "this home" --attempts 4 -- test -f "$T/live") || fail "real declare"
 out=$("$GOAL" show "$id")
 assert_contains "$out" "ask: make it live" "show must print the ask"
@@ -93,31 +82,31 @@ assert_contains "$out" "state: open" "a new Goal is open"
 assert_contains "$out" "proof: test -f $T/live" "show must print the proof"
 for step in ship merged released running proven; do assert_contains "$out" "$step open" "step $step"; done
 assert_contains "$("$GOAL" show)" "make it live" "show with no id lists the open Goals"
-rows=$(BEADS_DIR=$T/real/.beads "$ROOT/bin/jg-beads.sh" show "$id" --json 2>/dev/null)
+rows=$(real show "$id" --json 2>/dev/null)
 assert_equals "$(jq -r '.[0].metadata.goal.limits.attempts' <<< "$rows")" 4 "the attempts limit is kept, and the fix steps default"
 assert_equals "$(jq -r '.[0].metadata.goal.limits.fix_steps' <<< "$rows")" 5 "the fix steps limit defaults to 5"
 assert_equals "$(jq -c .proof "$T/home/data/goals/$id/finish.json" | tr -d '\n')" "[\"test\",\"-f\",\"$T/live\"]" "the finish line is on disk"
 hash=$(jq -r '.[0].metadata.goal.finish_hash' <<< "$rows")
 assert_equals "$(jq -Sc . "$T/home/data/goals/$id/finish.json" | tr -d '\n' | sha256sum | cut -d' ' -f1)" "$hash" "the stored hash is the hash of the finish line"
-ready=$(BEADS_DIR=$T/real/.beads "$ROOT/bin/jg-beads.sh" ready --parent "$id" --json 2>/dev/null | jq -r '.[].title')
+ready=$(real ready --parent "$id" --json 2>/dev/null | jq -r '.[].title')
 assert_equals "$ready" "ship" "only the first step is ready"
 
-# The fold: a second store takes the Goal by export and import with its ids, edges and finish line.
-BEADS_DIR=$T/real/.beads "$ROOT/bin/jg-beads.sh" export > "$T/goals.jsonl" 2>/dev/null || fail "export the Goal store"
-BEADS_DIR=$T/fold/.beads "$ROOT/bin/jg-beads.sh" import "$T/goals.jsonl" >/dev/null 2>&1 || fail "import into the second store"
-assert_equals "$(GOAL_BEADS_DIR=$T/fold/.beads "$GOAL" show "$id")" "$out" "the second store must show the same Goal"
-folded=$(BEADS_DIR=$T/fold/.beads "$ROOT/bin/jg-beads.sh" show "$id" --json 2>/dev/null)
+# The fold: a second home takes the Goal by export and import with its ids, edges and finish line.
+real export > "$T/goals.jsonl" || fail "export the Goal rows"
+JG_HOME=$T/fold python3 -I "$COMPAT" import "$T/goals.jsonl" >/dev/null 2>&1 || fail "import into the second home"
+assert_equals "$(JG_HOME=$T/fold "$GOAL" show "$id")" "$out" "the second home must show the same Goal"
+folded=$(JG_HOME=$T/fold python3 -I "$COMPAT" show "$id" --json 2>/dev/null)
 assert_equals "$(jq -r '.[0].metadata.goal.finish_hash' <<< "$folded")" "$hash" "the fold must keep the finish line hash"
-assert_equals "$(BEADS_DIR=$T/fold/.beads "$ROOT/bin/jg-beads.sh" ready --parent "$id" --json 2>/dev/null | jq -r '.[].title')" "ship" "the fold must keep the step order"
+assert_equals "$(JG_HOME=$T/fold python3 -I "$COMPAT" ready --parent "$id" --json 2>/dev/null | jq -r '.[].title')" "ship" "the fold must keep the step order"
 
 # The released ref is kept on the epic, and the finish message claims it live only where the release record names it.
 fails "needs a Goal id and the released ref" released "$id"
 assert_equals "$("$GOAL" released "$id" v9)" "released $id: v9" "released must say what it kept"
-rows=$(BEADS_DIR=$T/real/.beads "$ROOT/bin/jg-beads.sh" show "$id" --json 2>/dev/null)
+rows=$(real show "$id" --json 2>/dev/null)
 assert_equals "$(jq -r '.[0].metadata.released_ref' <<< "$rows")" v9 "the released ref is on the epic"
 close_steps() {  # <goal>: close every step, as the lead and the proof would
-  for row in $(BEADS_DIR=$T/real/.beads "$ROOT/bin/jg-beads.sh" list --parent "$1" --json 2>/dev/null | jq -r '.[].id' | sort); do
-    BEADS_DIR=$T/real/.beads "$ROOT/bin/jg-beads.sh" close "$row" --force --reason test >/dev/null 2>&1
+  for row in $(real list --parent "$1" --json 2>/dev/null | jq -r '.[].id' | sort); do
+    "$ROOT/bin/jg-backlog.sh" "done" "$row" >/dev/null 2>&1
   done
 }
 mkdir -p "$T/probes"

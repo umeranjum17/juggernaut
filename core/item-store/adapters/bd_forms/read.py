@@ -384,7 +384,7 @@ def provenance_record(f):
             sys.stderr.write("Error: no issue found matching %r\n" % ident)
             return "", 1
         now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        entry = {"id": str(uuid.uuid4()), "issue_id": ident, "kind": f.val["--kind"]}
+        entry = {"id": "", "issue_id": ident, "kind": f.val["--kind"]}
         for key, flag in (("actor", "--actor"), ("ref", "--ref"), ("ref_kind", "--ref-kind")):
             if flag in f.val:
                 entry[key] = f.val[flag]
@@ -392,6 +392,11 @@ def provenance_record(f):
         if "--payload" in f.val:
             entry["payload"] = f.val["--payload"]
         entry["occurred_at"] = f.val.get("--at", now)
+        # As in bd, the id is the entry's content, so a writer that fires twice records one entry.
+        entry["id"] = str(uuid.uuid5(uuid.NAMESPACE_URL, json.dumps(entry, sort_keys=True)))
+        if any(json.loads(x).get("id") == entry["id"] for x in c["streams"]["provenance"]):
+            st.con.execute("ROLLBACK")
+            return "✓ Recorded %s provenance %s on %s\n" % (entry["kind"], entry["id"], ident), 0
         entry["created_at"] = now
         row = {k: c[k] for k in tickets.FIELDS + ("labels", "metadata", "ephemeral", "comments")}
         row.update(id=ident, dependencies=c["edges"], events=[json.loads(x) for x in c["streams"]["events"]],

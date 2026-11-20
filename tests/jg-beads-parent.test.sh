@@ -1,27 +1,18 @@
 #!/usr/bin/env bash
 # Slices are real children: `add --parent` files a child under bd's own numbering, three levels deep (ask, slice, piece),
 # gives the child only the labels a slice needs, makes the parent an epic, and refuses a fourth level and the own ids that
-# would collide with a child's task name. The owner-rules tree then reads the parent from the edge. Every call runs on a
-# real embedded store with no network. JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT name the pinned builds, which skip without them.
+# would collide with a child's task name. The owner-rules tree then reads the parent from the edge. Every call runs on the
+# home's tickets tables with no network.
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
-  printf 'skip: real store: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
-  exit 0
-fi
-
-WRAPPER="$ROOT/bin/jg-beads.sh" CLI="$ROOT/bin/jg-backlog.sh" T=$(jg_test_tmproot jg-beads-parent)
-unset BEADS_DB BEADS_DOLT_SHARED_SERVER
+COMPAT="$ROOT/core/item-store/adapters/bd_compat.py" CLI="$ROOT/bin/jg-backlog.sh" T=$(jg_test_tmproot jg-beads-parent)
 H=$T/home
-mkdir -p "$H/config" "$H/state" "$H/data" "$T/user" "$T/real"
-export BEADS_DIR=$T/real/.beads JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
-printf '%s\n' "$BEADS_DIR" > "$H/config/beads-dir"
+mkdir -p "$H/config" "$H/state" "$H/data" "$T/user"
 : > "$H/config/backlog-intake-loose"
-"$WRAPPER" init --prefix jg >"$T/real-init.log" 2>&1 || fail "init: $(cat "$T/real-init.log")"
 
-bd_() { "$WRAPPER" "$@" 2>/dev/null; }
+bd_() { JG_HOME=$H python3 -I "$COMPAT" "$@" 2>/dev/null; }
 tasks() {  # <backlog args...>: the CLI on the Beads home, stdout and stderr together.
   env HOME="$T/user" TMPDIR="$T" PATH=/usr/bin:/bin JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" JG_DATA_OVERRIDE="$H/data" \
     JG_CONFIG_OVERRIDE="$H/config" JG_BOOTSTRAP_NETWORK=skip "$CLI" "$@" 2>&1
@@ -76,4 +67,5 @@ tasks "done" "$piece" >/dev/null || fail "close the piece"
 tasks "done" "$slice" >/dev/null || fail "done on a slice whose pieces are closed must pass"
 closed=$(bd_ epic status --json | jq -r --arg a "$ask" '.[] | select(.epic.id == $a) | .closed_children')
 [ "$closed" = 1 ] || fail "epic status must count the closed slice, got: $closed"
+JG_HOME=$H python3 -I "$ROOT/core/item-store/adapters/tickets.py" check >"$T/check.log" 2>&1 || fail "the tables must stay the record: $(cat "$T/check.log")"
 pass "slices are real children: ask, slice, piece, labels, refused fourth level and own ids, epic status, tree"

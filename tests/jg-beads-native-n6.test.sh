@@ -1,28 +1,19 @@
 #!/usr/bin/env bash
-# Behavior tests for native types and ids on a Beads backlog: a captain decision is written as bd's decision type and
-# callers still read it as captain, and --mint leaves the id to bd. Every call runs on a real embedded store with no
-# network. JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT name the pinned builds, which skip plainly without them.
+# Behavior tests for native types and ids on the backlog: a captain decision is written as kind metadata on a task and
+# callers still read it as captain, and --mint leaves the id to the store. Every call runs on the home's tickets tables
+# with no network.
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
-  printf 'skip: real store: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
-  exit 0
-fi
-
-WRAPPER="$ROOT/bin/jg-beads.sh" CLI="$ROOT/bin/jg-backlog.sh" T=$(jg_test_tmproot jg-beads-native-n6)
-unset BEADS_DB BEADS_DOLT_SHARED_SERVER
+COMPAT="$ROOT/core/item-store/adapters/bd_compat.py" CLI="$ROOT/bin/jg-backlog.sh" T=$(jg_test_tmproot jg-beads-native-n6)
 H=$T/home
-mkdir -p "$H/config" "$H/state" "$H/data" "$T/user" "$T/real"
-export BEADS_DIR=$T/real/.beads JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
-printf '%s\n' "$BEADS_DIR" > "$H/config/beads-dir"
+mkdir -p "$H/config" "$H/state" "$H/data" "$T/user"
 : > "$H/config/backlog-intake-loose"  # the fixture files rows by their own words, not by strict intake
 jail=()
 command -v bwrap >/dev/null && jail=(bwrap --ro-bind / / --tmpfs /tmp --bind "$T" "$T" --ro-bind "$ROOT" "$ROOT" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent)
-"${jail[@]}" "$WRAPPER" init --prefix jg >"$T/real-init.log" 2>&1 || fail "init: $(cat "$T/real-init.log")"
 
-bd_() { "${jail[@]}" "$WRAPPER" "$@" 2>/dev/null; }
+bd_() { JG_HOME=$H "${jail[@]}" python3 -I "$COMPAT" "$@" 2>/dev/null; }
 tasks() {  # <backlog args...>: the CLI on the Beads home, stdout and stderr together.
   env HOME="$T/user" TMPDIR="$T" PATH=/usr/bin:/bin JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" JG_DATA_OVERRIDE="$H/data" \
     JG_CONFIG_OVERRIDE="$H/config" JG_BOOTSTRAP_NETWORK=skip "${jail[@]}" "$CLI" "$@" 2>&1
@@ -74,4 +65,5 @@ out=$(tasks add --mint "[captain-ask] Mint a decision" --kind captain --body why
 [ "$(field "$(printf '%s\n' "$out" | jq -r .task.id)" .metadata.kind)" = captain ] || fail "a minted decision must carry kind captain"
 out=$(tasks add --mint "[feature] Prefixed" --prefix zz --body why) && fail "a prefix cannot go with a mint"
 assert_contains "$out" "--prefix cannot go with --mint" "the refusal must say why"
+JG_HOME=$H "${jail[@]}" python3 -I "$ROOT/core/item-store/adapters/tickets.py" check >"$T/check.log" 2>&1 || fail "the tables must stay the record: $(cat "$T/check.log")"
 pass "beads native types and ids: kind is metadata, callers read captain, mint gives a bd id"

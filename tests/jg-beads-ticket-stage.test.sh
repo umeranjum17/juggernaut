@@ -1,32 +1,25 @@
 #!/usr/bin/env bash
-# Slice J2 on a real Beads store, through the real caller (jg-backlog.sh): the stage rule of section 6.3 gives the stage, sub-state
+# Slice J2 on the home's tickets tables, through the real caller (jg-backlog.sh): the stage rule of section 6.3 gives the stage, sub-state
 # and health of a fixture row for every row of its table, and the one adapter verb writes the seven new moments (an event first, then
 # an RFC3339 string in UTC on the row) and the three wait keys. The older moments (ready_at, landed_at, ...) belong to jg-q1b3n's
 # writers, which are not on this trunk yet, so each fixture lays them with bd directly. The same rows are read by jg-q1b3n's rule
-# (section 6.5), held here as a second table, and the two must agree for every row that table already names. JG_BEADS_TEST_BD and
-# JG_BEADS_TEST_DOLT name the builds; without them the run skips plainly.
+# (section 6.5), held here as a second table, and the two must agree for every row that table already names.
 # It also proves the drift check (slice J4, bin/jg-beads-drift.py) through jg-backlog.sh ticket-drift.
 # It proves bin/jg-beads-stage.py (the rule), bin/jg-beads-drift.py and bin/jg-beads-moment.py (the writer), the files the changed-test selector maps to it.
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
-  printf 'skip: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
-  exit 0
-fi
-
 T=$(jg_test_tmproot jg-beads-ticket-stage)
-WRAPPER=$ROOT/bin/jg-beads.sh CLI=$ROOT/bin/jg-backlog.sh
-unset BEADS_DB BEADS_DOLT_SHARED_SERVER BEADS_ACTOR JG_BACKLOG_LANE JG_BACKLOG_SPAWN_GEN JG_BACKLOG_AGENT JG_BACKLOG_LANE_HANDOVER
-mkdir -p "$T/store" "$T/home/config" "$T/home/data" "$T/home/state"
-export TZ=UTC TMPDIR=$T BEADS_DIR=$T/store/.beads JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
-printf '%s\n' "$BEADS_DIR" > "$T/home/config/beads-dir"
+COMPAT=$ROOT/core/item-store/adapters/bd_compat.py CLI=$ROOT/bin/jg-backlog.sh
+unset BEADS_ACTOR JG_BACKLOG_LANE JG_BACKLOG_SPAWN_GEN JG_BACKLOG_AGENT JG_BACKLOG_LANE_HANDOVER
+mkdir -p "$T/home/config" "$T/home/data" "$T/home/state"
+export TZ=UTC TMPDIR=$T
 : > "$T/home/config/backlog-intake-loose"  # the fixture files rows by their own words, not by strict intake
 jail=()
 command -v bwrap >/dev/null && jail=(bwrap --ro-bind / / --tmpfs /tmp --bind "$T" "$T" --ro-bind "$ROOT" "$ROOT" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent)
 
-bd() { "${jail[@]}" "$WRAPPER" "$@"; }
+bd() { JG_HOME="$T/home" "${jail[@]}" python3 -I "$COMPAT" "$@"; }
 axi() { JG_HOME="$T/home" "${jail[@]}" "$CLI" "$@"; }
 row() { bd show "$1" --json 2>/dev/null | jq -c 'if type == "array" then .[0] else . end'; }
 count() { bd list --all --limit 0 --json 2>/dev/null | jq length; }
@@ -84,8 +77,6 @@ check() {
   fi
   pass "$id reads $want ($health); jg-q1b3n reads [$w]${mode/agree/}"
 }
-
-bd init --prefix jg >"$T/init.log" 2>&1 || fail "init the store: $(cat "$T/init.log")"
 
 t0=2026-11-12T09:00:00Z t1=2026-11-12T09:10:00Z t2=2026-11-12T09:20:00Z t3=2026-11-12T09:30:00Z t4=2026-11-12T09:40:00Z t5=2026-11-12T09:50:00Z t6=2026-11-12T10:00:00Z
 pr=https://github.com/example/proj/pull/7
@@ -171,7 +162,7 @@ before=$(count)
 axi wait jg-w1 owner decision >/dev/null || fail "wait"
 [ "$(row jg-w1 | jq -r '[.metadata.wait, .metadata.wait_reason, (.metadata.wait_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$") | tostring)] | join(",")')" = owner,decision,true ] || fail "the wait keys: $(row jg-w1 | jq -c .metadata)"
 [ "$(count)" = "$before" ] || fail "a wait must add no child row ($before rows, then $(count))"
-[ "$(bd children jg-w1 --json 2>/dev/null | jq 'length' 2>/dev/null || echo 0)" = 0 ] || fail "a wait must leave the ticket with no child"
+[ "$(bd list --all --json --parent jg-w1 2>/dev/null | jq length)" = 0 ] || fail "a wait must leave the ticket with no child"
 row jg-w1 | jq -e '.metadata | has("stage") or has("hold_kind")' >/dev/null && fail "no stage word and no hold_kind are written"
 axi wait jg-w1 none >/dev/null || fail "ending a wait"
 [ "$(row jg-w1 | jq -r '.metadata.wait + "|" + .metadata.wait_reason')" = "none|" ] || fail "a wait ends by writing none"
@@ -216,4 +207,5 @@ pass "times prints the stamped times in order, and nothing for none"
 # when the code is right (flaky-juggernaut-jg-beads-ticket-stage).
 out=$(axi moment jg-w1 approved_at) || fail "write: $out"
 [ "$(row jg-w1 | jq -r '.metadata.approved_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$")')" = true ] || fail "the write must leave an RFC3339 UTC approved_at, got [$out]"
+JG_HOME="$T/home" python3 -I "$ROOT/core/item-store/adapters/tickets.py" check >"$T/check.log" 2>&1 || fail "the tables must stay the record: $(cat "$T/check.log")"
 pass "jg-beads ticket stage"
