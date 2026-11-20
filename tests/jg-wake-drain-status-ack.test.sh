@@ -90,8 +90,10 @@ test_big_journal_is_read_a_bounded_number_of_times_and_acks() {
   reads=$(count_reads_over "$log" "$((size / 2))")
   [ "$reads" -le 12 ] \
     || fail "the large journal was read $reads times for $SIGNALLED signal rows; the cost must not grow with the row count"
-  grep -F 'wake annotation: STATUS: sig1.status: working [at=1795000000]: task 1 is going' "$dir/out" >/dev/null \
-    || fail "the signalled status line was not presented"
+  grep -F 'wake annotation: STATUS: sig1.status: note [at=1795000001]: still going' "$dir/out" >/dev/null \
+    || fail "the newest signalled status line was not presented"
+  grep -F 'wake annotation: sig1.status: 1 earlier event(s) not shown' "$dir/out" >/dev/null \
+    || fail "the first task's cut was not counted"
   grep -F 'wake annotation: STATUS: sig40.status: note [at=1795000001]: still going' "$dir/out" >/dev/null \
     || fail "the last signalled status was not presented"
   pass "a $size-byte journal is read $reads times for $SIGNALLED rows and the acknowledgement lands"
@@ -127,8 +129,48 @@ test_a_rewrite_after_presentation_still_refuses() {
   pass "a replaced status file refuses the acknowledgement"
 }
 
+# A home nobody drained for days: hundreds of queued rows, one signalled log of hundreds of outcomes, and an unsignalled log
+# of hundreds of unread notes. One drain must print a bounded page of each, count what it left, and acknowledge only through
+# what it showed; the hidden outcomes need no disposition and the rest of the queue follows the acknowledgement.
+test_a_flooded_home_prints_a_bounded_page_and_acks() {
+  local dir state i id out
+  dir=$(make_case flooded); state="$dir/state"
+  i=1
+  while [ "$i" -le 450 ]; do
+    printf 'done [at=1795000000]: item %s report\n' "$i" >> "$state/big.status"
+    printf 'note [at=1795000001]: unread note %s\n' "$i" >> "$state/quiet.status"
+    i=$((i + 1))
+  done
+  append_wake "$state" signal big.status "signal: big.status" >/dev/null || fail "could not queue the signal row"
+  i=1
+  while [ "$i" -le 450 ]; do
+    append_wake "$state" check "chk$i" "check: chk$i is red" >/dev/null || fail "could not queue a check row"
+    i=$((i + 1))
+  done
+  JG_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/out" 2> "$dir/err" || fail "the flooded drain failed: $(tail -3 "$dir/err")"
+  [ "$(wc -c < "$dir/out")" -lt 120000 ] || fail "the flooded drain printed $(wc -c < "$dir/out") bytes"
+  grep -F 'WAKE QUEUE: 451 queued event(s)' "$dir/out" >/dev/null || fail "the page did not count the queue: $(grep -c . "$dir/out") lines"
+  [ "$(grep -c 'check: chk' "$dir/out")" -le 60 ] || fail "the page printed more than 60 queued rows"
+  [ "$(grep -c '^wake annotation: OUTCOME: big.status' "$dir/out")" -le 10 ] || fail "the annotation replayed more than 10 events of one task"
+  grep -F 'wake annotation: big.status: ' "$dir/out" | grep -F 'earlier event(s) not shown' >/dev/null \
+    || fail "the annotation did not count the events it left out"
+  [ "$(grep -c '^quiet unread\|^quiet note' "$dir/out")" -le 20 ] || fail "the unread section printed more than 20 lines"
+  grep -F 'UNREAD STATUS: 430 earlier unread line(s) not shown' "$dir/out" >/dev/null || fail "the unread section did not count its cut"
+  while IFS= read -r id; do
+    JG_STATE_OVERRIDE="$state" "$DRAIN" --outcome "$id" --classified "test relays nothing" > /dev/null 2>&1 || fail "could not classify outcome $id"
+  done <<EOF
+$(sed -n 's/^OUTCOME_REQUIRED: //p' "$dir/out")
+EOF
+  ack_drain_err "$state" "$dir/err" || fail "the acknowledgement of the shown page refused: $(tail -3 "$dir/err")"
+  JG_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/out2" 2> "$dir/err2" || fail "the next drain failed"
+  grep -F 'check: chk60 is red' "$dir/out2" >/dev/null || fail "the next page did not follow the acknowledgement"
+  out=$(grep -c 'check: chk' "$dir/out2")
+  pass "a flooded home prints $(wc -c < "$dir/out") bytes, acknowledges through its page and the next drain shows the next $out rows"
+}
+
 test_big_journal_is_read_a_bounded_number_of_times_and_acks
 test_a_real_append_after_presentation_still_refuses
 test_a_rewrite_after_presentation_still_refuses
+test_a_flooded_home_prints_a_bounded_page_and_acks
 
 echo "# jg-wake-drain-status-ack.test.sh: all assertions passed"

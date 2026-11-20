@@ -11,6 +11,7 @@
 //	jg-classify paused-until <line>                    epoch the pause expects to clear
 //	jg-classify utc-epoch <YYYY-MM-DDTHH:MM[:SS]Z>     UTC ISO time to epoch seconds
 //	jg-classify facts                                  one tab-separated verdict row per stdin line
+//	jg-classify unread-surface                         the stdin lines the drain's unread surface accepts
 //	jg-classify span-events <kind>                      captured stdin span's needs flag and events
 //	jg-classify verb|note|untimed|stamp-line|at-epoch <line>      the status-line grammar
 //	jg-classify key <keyless> <line>                   the decision key, exit 1 for a bad slug
@@ -40,7 +41,7 @@ import (
 )
 
 const usage = "usage: jg-classify last-line|declared-wait|is-terminal|is-relevant|is-paused|is-held|is-paused-or-held|" +
-	"paused-until|utc-epoch|facts|span-events|verb|note|untimed|stamp-line|stamp-width|at-epoch|key|key-before-colon|" +
+	"paused-until|utc-epoch|facts|unread-surface|span-events|verb|note|untimed|stamp-line|stamp-width|at-epoch|key|key-before-colon|" +
 	"key-at-note-head|kind|event-recorded|transition-allowed|pending-reply-escalation|fold-line|drop|open-set-has|" +
 	"open-set-verb|open-decisions|current-line|own-open-decisions|has-open-needs-decision|key-closing-verb|" +
 	"open-decisions-incremental|scan-open-decisions-incremental|cursor-path|file-ident|file-size|file-mtime|" +
@@ -120,6 +121,8 @@ func run(args []string, in *os.File, out, errw *os.File) int {
 		return 0
 	case "facts":
 		return facts(in, out)
+	case "unread-surface":
+		return unreadSurface(in, out)
 	}
 	fmt.Fprintf(errw, "jg-classify: unknown command %q\n", cmd)
 	return 2
@@ -152,5 +155,47 @@ func facts(in, out *os.File) int {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", b(isTerminalVerb(line)), b(isCaptainRelevant(line)),
 			b(isPaused(line)), b(isCaptainHeld(line)), b(isPausedOrHeld(line)), b(prefixUnrecognized(line)),
 			b(!blank(line) && lineIsEvent(line, legacy)), until)
+	}
+}
+
+// isUnreadSurface: an informational note, or a resolve or captain-held line whose reserved key may move on its note.
+// Those lines never fold into OPEN DECISIONS, so the drain's unread-status surface is their only presentation.
+func isUnreadSurface(line string) bool {
+	if blank(line) {
+		return false
+	}
+	switch lineVerb(line) {
+	case "note":
+		return true
+	case resolveVerb(), captainHeldVerb():
+	default:
+		return false
+	}
+	key, ok := decisionKey(line, "default")
+	if !ok {
+		return false
+	}
+	for _, p := range reservedPrefixes() {
+		if strings.HasPrefix(key, p) {
+			return transitionAllowed(key, lineNote(line))
+		}
+	}
+	return false
+}
+
+// unreadSurface prints the stdin lines isUnreadSurface accepts, so a log of thousands of unread lines costs one
+// process and not four per line.
+func unreadSurface(in, out *os.File) int {
+	r := bufio.NewReaderSize(in, 1<<20)
+	w := bufio.NewWriterSize(out, 1<<20)
+	defer w.Flush()
+	for {
+		line, err := r.ReadString('\n')
+		if line == "" && err != nil {
+			return 0
+		}
+		if line = strings.TrimSuffix(line, "\n"); isUnreadSurface(line) {
+			fmt.Fprintln(w, line)
+		}
 	}
 }

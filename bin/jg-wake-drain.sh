@@ -457,8 +457,10 @@ EOF
 # including the empty-queue fast path - so a buried answer cannot be swallowed
 # when the fold later advances the cursor. Prints nothing when nothing is
 # unread, which is the common case.
+UNREAD_STATUS_CAP_DEFAULT=20
+
 print_unread_status_section() {
-  local snapshot=${1:-} unread task line shown=0
+  local snapshot=${1:-} unread task line shown=0 seen=0 total skip
 
   if [ -n "$snapshot" ]; then
     unread=$(scan_unread_surface_snapshot "$STATE" "$snapshot") || return 1
@@ -467,12 +469,20 @@ print_unread_status_section() {
   fi
   [ -n "$unread" ] || return 0
 
+  # The newest UNREAD_STATUS_CAP lines print, then one line counts the rest: these lines surface once, and a status log
+  # nobody drained for days holds thousands. The status logs keep every line.
+  total=$(printf '%s\n' "$unread" | grep -c .) || true
+  skip=$((total - ${UNREAD_STATUS_CAP:-$UNREAD_STATUS_CAP_DEFAULT}))
+  [ "$skip" -gt 0 ] || skip=0
   while IFS=$(printf '\t') read -r task line; do
     [ -n "$task" ] || continue
     [ -n "$line" ] || continue
+    seen=$((seen + 1))
+    if [ "$seen" -le "$skip" ]; then continue; fi
     line="$task $line"
     if [ "$shown" -eq 0 ]; then
       printf 'UNREAD STATUS (new since last drain, not re-printed after this presentation):\n' || return 1
+      [ "$skip" -eq 0 ] || printf 'UNREAD STATUS: %d earlier unread line(s) not shown; each stays in its state/<task>.status\n' "$skip" || return 1
     fi
     printf '%s\n' "$line" || return 1
     shown=$((shown + 1))
@@ -855,6 +865,33 @@ build_queued_view() {  # <rows>
   done <<EOF
 $(printf '%s\n' "$rows" | sort -s -t "$(printf '\t')" -k2,2n)
 EOF
+}
+
+# Cut the deduped queued rows to what one drain prints: oldest first, at most WAKE_ROWS_CAP_LINES rows and
+# WAKE_ROWS_CAP_BYTES bytes (a fifth of the digest cap: the queue is never cut by the digest), and always the first row. A queue that grew while no drain finished held thousands of
+# wakes and one drain printed them all, tens of megabytes. Sets RAW_TEXT, RAW_N (every queued row) and RAW_CUT (the
+# sequence of the last row shown when rows were left over, else 0): the acknowledgement then stops there and the rest
+# come on the next drain.
+WAKE_ROWS_CAP_LINES=60
+WAKE_ROWS_CAP_BYTES=10240
+
+build_raw_view() {  # <rows>
+  local out meta
+  out=$(printf '%s\n' "$1" | LC_ALL=C sort -s -t "$(printf '\t')" -k2,2n | LC_ALL=C awk -F '\t' \
+    -v cap_lines="$WAKE_ROWS_CAP_LINES" -v cap_bytes="$WAKE_ROWS_CAP_BYTES" '
+    $2 !~ /^[0-9]+$/ { next }
+    { n++ }
+    over { next }
+    { len = length($0) + 1 }
+    shown > 0 && (shown >= cap_lines || used + len > cap_bytes) { over = 1; cut = last; next }
+    { print; used += len; shown++; last = $2 }
+    END { print "@@meta " n + 0 " " cut + 0 }') || return 1
+  meta=${out##*$'\n'}
+  RAW_TEXT=${out%$'\n'*}
+  [ "$out" != "$meta" ] || RAW_TEXT=''
+  meta=${meta#@@meta }
+  RAW_N=${meta% *}
+  RAW_CUT=${meta#* }
 }
 
 # Read Main's pages once, before anything prints. Sets PAGES_OUT, and PAGES_ACK to the ack= of the count line when the read
@@ -1294,7 +1331,13 @@ if [ "$STORE_MODE" = true ]; then
   printf 'QUEUED (each queued wake record'"'"'s reason line, oldest first):\n%squeued: %d\n' "$QUEUED_TEXT" "$QUEUED_N" || exit "$?"
   [ "$QUEUED_CUT" -eq 0 ] || printf 'QUEUED: more records follow; they are presented on the next drain once you acknowledge these\n' || exit "$?"
 elif [ -n "$RAW_ROWS" ]; then
-  printf '%s\n' "$RAW_ROWS" || exit "$?"
+  build_raw_view "$RAW_ROWS" || exit "$?"
+  [ -z "$RAW_TEXT" ] || printf '%s\n' "$RAW_TEXT" || exit "$?"
+  if [ "$RAW_CUT" -gt 0 ]; then
+    ACK_THROUGH=$RAW_CUT
+    STATUS_ROWS=$(printf '%s\n' "$STATUS_ROWS" | awk -F '\t' -v cut="$RAW_CUT" '$2 + 0 <= cut') || exit 1
+    printf 'WAKE QUEUE: %d queued event(s), the oldest shown; the rest follow on the next drain once you acknowledge these (they stay in state/.wake-queue)\n' "$RAW_N" || exit "$?"
+  fi
 fi
 jg_recovery_marker_snapshot "$RECOVERY_MARKER" || exit 1
 RECOVERY_MARKER_TOKEN=$JG_RECOVERY_MARKER_TOKEN

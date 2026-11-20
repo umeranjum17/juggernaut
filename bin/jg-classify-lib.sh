@@ -870,20 +870,13 @@ $fully_presented
       f="$state/$task.status"
       offset=$(status_presentation_cursor_offset "$f") || return 1
       lines=$(status_new_lines_since_cursor "$f" "$endpoint") || return 1
+      lines=$(printf '%s\n' "$lines" | status_unread_surface_lines) || return 1
       # Once any informational line in this span is presented fleet-wide, the
       # contiguous cursor may advance through the captured endpoint. Routine
       # lines remain unacknowledged only while they are the sole unread content,
       # preserving delayed signal annotations without replaying a handled note
       # that happened to follow a routine line.
-      while IFS= read -r line || [ -n "$line" ]; do
-        case "$line" in
-          *[![:space:]]*)
-            if status_line_is_unread_surface "$line"; then safe=true; break; fi
-            ;;
-        esac
-      done <<EOF
-$lines
-EOF
+      [ -z "$lines" ] || safe=true
       if [ "$safe" = false ]; then endpoint=$offset; fi
     fi
     printf '%s\t%s\t%s\n' "$task" "$endpoint" "$ident" || return 1
@@ -1005,31 +998,11 @@ status_new_lines_since_cursor() {  # <status-file> [<captured-end-offset>]
   return "$rc"
 }
 
-# 0 when a status line is an informational `note:` or a reserved-key
-# pending-reply resolution. Those lines never fold into OPEN DECISIONS, so the
-# drain's unread-status surface is their only guaranteed presentation.
-status_line_is_unread_surface() {  # <status-line>
-  local line=$1 verb key note resolve held prefix
-  [ -n "$line" ] || return 1
-  verb=$(status_line_verb "$line")
-  [ "$verb" = note ] && return 0
-  resolve=${JG_CLASSIFY_RESOLVE_VERB:-$JG_CLASSIFY_RESOLVE_VERB_DEFAULT}
-  held=${JG_CLASSIFY_CAPTAIN_HELD_VERB:-$JG_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}
-  case "$verb" in
-    "$resolve"|"$held") ;;
-    *) return 1 ;;
-  esac
-  key=$(_jg_decision_key "$line") || return 1
-  note=$(status_line_note "$line")
-  for prefix in ${JG_CLASSIFY_RESERVED_KEY_PREFIXES:-$JG_CLASSIFY_RESERVED_KEY_PREFIXES_DEFAULT}; do
-    case "$key" in
-      "$prefix"*)
-        _jg_decision_key_transition_allowed "$key" "$note"
-        return
-        ;;
-    esac
-  done
-  return 1
+# The lines on stdin that are an informational `note:` or a reserved-key pending-reply resolution, in one process.
+# Those lines never fold into OPEN DECISIONS, so the drain's unread-status surface is their only guaranteed
+# presentation. One classifier call per line cost minutes on a log of thousands of unread lines.
+status_unread_surface_lines() {
+  _jg_classify_go unread-surface
 }
 
 # Fleet-wide unread informational lines: one "<task>\t<status-line>" row per
@@ -1044,10 +1017,10 @@ scan_unread_surface_lines() {  # <state>
     [ "$f" = "$exclude" ] && continue
     task=$(basename "$f"); task="${task%.status}"
     lines=$(status_new_lines_since_cursor "$f") || return 1
+    lines=$(printf '%s\n' "$lines" | status_unread_surface_lines) || return 1
     [ -n "$lines" ] || continue
     while IFS= read -r line; do
       [ -n "$line" ] || continue
-      status_line_is_unread_surface "$line" || continue
       printf '%s\t%s\n' "$task" "$line"
     done <<EOF
 $lines
@@ -1061,11 +1034,11 @@ scan_unread_surface_snapshot() {  # <state> <task-and-endpoint-snapshot>
   while IFS=$(printf '\t') read -r task endpoint ident; do
     [ -n "$task" ] || continue
     f="$state/$task.status"
-    lines=$(status_new_lines_since_cursor "$f" "$endpoint") || return 1
+    lines=$(status_new_lines_since_cursor "$f") || return 1
+    lines=$(printf '%s\n' "$lines" | status_unread_surface_lines) || return 1
     [ -n "$lines" ] || continue
     while IFS= read -r line; do
       [ -n "$line" ] || continue
-      status_line_is_unread_surface "$line" || continue
       printf '%s\t%s\n' "$task" "$line"
     done <<EOF
 $lines

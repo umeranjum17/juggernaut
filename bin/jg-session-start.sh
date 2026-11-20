@@ -156,7 +156,9 @@
 # Lead home once started at 85 percent of its context on a 300 KB digest. bin/jg-digest-cap-lib.sh
 # owns the byte budget. The lock result, the wake queue and its WAKE_ACK_REQUIRED line,
 # the supervision block and the network checks are counted but never cut: they carry an
-# action. Every other section prints at most min(its own cap, what the digest has left),
+# action. The drain bounds the wake queue itself: one drain prints at most 60 rows or
+# 10 KiB, 40 annotation events shared across the signalled tasks and the newest 20 unread status lines,
+# each cut ending in a count and a pointer, and the rest follows once those are acknowledged. Every other section prints at most min(its own cap, what the digest has left),
 # newest and most urgent first, and a cut ends in a "[cut: K of N <items> shown; all of
 # them: <command>]" line (or the file's own "[cut at ..." line with the sed range), so
 # information moves behind a pointer and nothing is deleted. The last line reports the

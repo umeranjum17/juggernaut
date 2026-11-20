@@ -63,8 +63,42 @@ jg_wake_status_save() {
   return 1
 }
 
+# One task's replay shows its newest JG_WAKE_STATUS_ROOM events (set by the presentation) and one line counting the rest.
+# The journal keeps every event until its ack and a status file read from its first byte holds thousands, so replaying
+# them all made one drain tens of megabytes and minutes long. An outcome the cap hides before any drain showed it can
+# never be shown, so it is classified as not shown in the same pass; the ack then asks only for outcomes a reader saw. Sets JG_WAKE_STATUS_RECORD.
+jg_wake_status_print_task() { # <task> <record>
+  local task=$1 room=$JG_WAKE_STATUS_ROOM shown out
+  JG_WAKE_STATUS_RECORD=$2
+  out=$(printf '%s' "$JG_WAKE_STATUS_RECORD" | jq -r --arg t "$task" --argjson room "$room" '
+    .events as $all | ([($all | length) - $room, 0] | max) as $cut | $all[$cut:] as $shown |
+    ($shown | length),
+    ($shown[] | "wake annotation: \(.kind): \($t).status: \(.line)",
+      (if .kind | startswith("OUTCOME") then "OUTCOME_REQUIRED: \(.id)" else empty end)),
+    (if $cut > 0 then "wake annotation: \($t).status: \($cut) earlier event(s) not shown, "
+      + "\($all[:$cut] | map(select((.kind | startswith("OUTCOME")) and .disposition == null and .shown != true)) | length) of them outcomes, "
+      + "classified as not shown; the full text stays in state/\($t).status" else empty end)') || return 1
+  shown=${out%%$'\n'*}
+  JG_WAKE_STATUS_RECORD=$(printf '%s' "$JG_WAKE_STATUS_RECORD" | jq -c --argjson room "$shown" '
+    (.events | length) as $n | .events |= to_entries | .events |= map(
+      if .key >= $n - $room then .value.shown = true
+      elif (.value.kind | startswith("OUTCOME")) and .value.disposition == null and .value.shown != true
+      then .value.disposition = {kind: "classified", reference: "not shown: replay cap"} else . end | .value)') || return 1
+  [ "$out" = "$shown" ] || printf '%s\n' "${out#*$'\n'}" || return 1
+}
+
 jg_wake_status_present() { # <raw actor rows> <status snapshot>
-  local rows=$1 snapshot=$2 _epoch seq kind key _payload task end ident offset data lines record output printed=''
+  local rows=$1 snapshot=$2 _epoch seq kind key _payload task end ident offset data lines record printed='' tasks cap
+  # Each signalled task gets an equal share of JG_WAKE_ANNOTATION_CAP events (default 40), at most JG_WAKE_STATUS_TASK_CAP
+  # (default 10) and at least one, so a late task is never starved by an early one and the replay stays bounded.
+  local JG_WAKE_STATUS_ROOM=${JG_WAKE_STATUS_TASK_CAP:-10}
+  case "$JG_WAKE_STATUS_ROOM" in ''|*[!0-9]*) JG_WAKE_STATUS_ROOM=10 ;; esac
+  cap=${JG_WAKE_ANNOTATION_CAP:-40}
+  case "$cap" in ''|*[!0-9]*) cap=40 ;; esac
+  tasks=$(printf '%s\n' "$rows" | awk -F '\t' '$3 == "signal" && !seen[$4]++ { n++ } END { print n + 0 }') || return 1
+  [ "$tasks" -gt 0 ] || tasks=1
+  [ $((cap / tasks)) -ge "$JG_WAKE_STATUS_ROOM" ] || JG_WAKE_STATUS_ROOM=$((cap / tasks))
+  [ "$JG_WAKE_STATUS_ROOM" -ge 1 ] || JG_WAKE_STATUS_ROOM=1
   local -A new_seqs=()
   jg_wake_status_load && jg_wake_status_index || return 1
   while IFS=$'\t' read -r _epoch seq kind key _payload; do
@@ -102,10 +136,8 @@ jg_wake_status_present() { # <raw actor rows> <status snapshot>
       return 1
     fi
     if [[ "$printed" != *"/$task/"* ]]; then
-      output=$(printf '%s' "$record" | jq -r --arg t "$task" '.events[] |
-      "wake annotation: \(.kind): \($t).status: \(.line)",
-      (if .kind | startswith("OUTCOME") then "OUTCOME_REQUIRED: \(.id)" else empty end)') || return 1
-      [ -z "$output" ] || printf '%s\n' "$output" || return 1
+      jg_wake_status_print_task "$task" "$record" || return 1
+      record=$JG_WAKE_STATUS_RECORD
       printed="$printed/$task/"
     fi
     JG_WAKE_STATUS_TASKS[$task]=$record

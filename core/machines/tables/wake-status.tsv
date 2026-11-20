@@ -13,5 +13,6 @@ edge	handled	ack	idle	bin/jg-wake-status-lib.sh:jg_wake_status_ack	-	every consu
 edge	idle	ack-again	idle	bin/jg-wake-status-lib.sh:jg_wake_status_ack	-	no signal row is consumed again	signalled-status-outcomes
 edge	handled	handle-again	handled	bin/jg-wake-status-lib.sh:jg_wake_status_handle	-	a previously handled presented id still has a nonblank disposition	signalled-status-outcomes
 edge	handled	partial-ack	handled	bin/jg-wake-status-lib.sh:jg_wake_status_ack	-	a higher presented sequence remains queued for this span	signalled-status-outcomes
+# A presentation shows a task's newest events only (bin/jg-wake-status-lib.sh jg_wake_status_print_task); an outcome it leaves out is classified "not shown: replay cap" in the same pass, so the state counts only outcomes a reader saw.
 # Refused without changing state: acknowledgement with an unseen sequence, changed file, or unhandled outcome; handling an unknown id or blank disposition; corrupt or unsafe journal paths.
 observer	a=${1%%:*}; t=${1#*:}; case $a in main|branch) ;; *) exit 2 ;; esac; f=${JG_STATE_OVERRIDE:-${JG_HOME:?}/state}/.wake-status-$a.json; [ -f "$f" ] || { echo idle; exit; }; jq -r --arg t "$t" 'if ((.[$t].seqs // []) | length) == 0 then "idle" elif any(.[$t].events[]; (.kind | startswith("OUTCOME")) and .disposition == null) then "presented" else "handled" end' "$f"
