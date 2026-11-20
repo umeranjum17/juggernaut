@@ -12,6 +12,10 @@
 #    `next` holds the council with the must `plan-approval` once, and a second `next` holds nothing new.
 # T4 approve: `approve` runs the swarm once with the plan path and the profile of the record; a second `approve` says already started.
 # T5 off: JG_WAR_ROOM_NEXT=0 and a draft: no `next` runs.
+# T6 fast: `start --depth standard --synthesis-depth deep --no-variant-critics`: a variant's draft files no critic; the variants
+#    keep depth standard, the synthesis is briefed deep and still gets its own separate critic. A war room started with no flag keeps
+#    the one depth for the synthesis (T2 checks it).
+# T7 refusal: --no-variant-critics with --depth deep, or a synthesis depth that is not standard or deep, exits 2 and writes nothing.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -65,14 +69,15 @@ starts_of() { grep -c . "$STARTS/$1" 2>/dev/null || echo 0; }
 questions_of() { jg_test_backlog "$HOME_DIR" questions --ticket "$1" --json 2>/dev/null | jq 'length' 2>/dev/null; }
 
 # A council whose three variants are live: start writes its record.
-new_council() {  # <id> -> sets V1 V2 V3 (the variant tasks)
-  jg_test_add "$HOME_DIR" "$1" "[feature] War room council"
+new_council() {  # <id> [start flags...] -> sets V1 V2 V3 (the variant tasks)
+  local id=$1; shift
+  jg_test_add "$HOME_DIR" "$id" "[feature] War room council"
   local out
-  out=$(war_room start "$1" --project proj --angles alpha,bravo,gamma --depth standard --harness codex --model gpt-5.5 --effort high) \
-    || fail "$1: start should make three lanes live: $out"
-  [ -s "$HOME_DIR/data/war-room/$1/record" ] || fail "$1: start should write data/war-room/$1/record"
-  V1=$(task_of "$(child_titled "$1" 'alpha variant Recon')"); V2=$(task_of "$(child_titled "$1" 'bravo variant Recon')")
-  V3=$(task_of "$(child_titled "$1" 'gamma variant Recon')")
+  out=$(war_room start "$id" --project proj --angles alpha,bravo,gamma --depth standard --harness codex --model gpt-5.5 --effort high "$@") \
+    || fail "$id: start should make three lanes live: $out"
+  [ -s "$HOME_DIR/data/war-room/$id/record" ] || fail "$id: start should write data/war-room/$id/record"
+  V1=$(task_of "$(child_titled "$id" 'alpha variant Recon')"); V2=$(task_of "$(child_titled "$id" 'bravo variant Recon')")
+  V3=$(task_of "$(child_titled "$id" 'gamma variant Recon')")
 }
 
 # T1: a draft starts next; the critic is filed, started once and assigned.
@@ -108,6 +113,7 @@ stask=$(task_of "$synth")
 for v in "$V1" "$V2" "$V3"; do
   grep -q "$HOME_DIR/data/$v/report.md" "$HOME_DIR/data/$stask/brief.md" || fail "T2 the synthesis brief lacks the report path of $v"
 done
+grep -qx 'Recon depth: standard' "$HOME_DIR/data/$stask/brief.md" || fail "T2 a council with no depth flag should brief the synthesis at the variants' depth"
 grep -q 'strike-recon' "$HOME_DIR/data/$stask/brief.md" || fail "T2 the synthesis brief lacks strike-recon"
 grep -q "$stask/orders/plan.json" "$HOME_DIR/data/$stask/brief.md" || fail "T2 the synthesis brief lacks its plan path"
 war_room next "$council" > /dev/null || fail "T2 a second next should exit 0"
@@ -163,3 +169,49 @@ out=$(JG_WAR_ROOM_NEXT=0 handoff draft "$V1") || fail "T5 the draft should be re
 [ "$(children "$council" | grep -c .)" = "$before" ] || fail "T5 a draft with JG_WAR_ROOM_NEXT=0 filed a ticket"
 [ "$(handoff assignee "$V1")" = none ] || fail "T5 a draft with JG_WAR_ROOM_NEXT=0 assigned a critic"
 pass "T5 JG_WAR_ROOM_NEXT=0: no next runs"
+
+# T6: the fast war room: standard variants with no critic lanes, then a deep synthesis with its own critic.
+council=jg-wnc
+new_council "$council" --synthesis-depth deep --no-variant-critics
+grep -qx 'synthesis_depth=deep' "$HOME_DIR/data/war-room/$council/record" || fail "T6 the record lacks synthesis_depth=deep"
+grep -qx 'variant_critics=0' "$HOME_DIR/data/war-room/$council/record" || fail "T6 the record lacks variant_critics=0"
+for v in "$V1" "$V2" "$V3"; do
+  grep -qx 'Recon depth: standard' "$HOME_DIR/data/$v/brief.md" || fail "T6 the brief of $v is not standard"
+  printf '# Report of %s\n' "$v" > "$HOME_DIR/data/$v/report.md"
+  out=$(handoff draft "$v") || fail "T6 the draft of $v should be recorded: $out"
+done
+/bin/sleep 4
+before=$(children "$council" | grep -c .)
+[ "$before" = 3 ] || fail "T6 a draft of a fast variant filed a critic: $(children "$council" | tr '\n' ' ')"
+for v in "$V1" "$V2" "$V3"; do : > "$W/gate-pass/$v"; done
+out=$(war_room next "$council") || fail "T6 next should exit 0: $out"
+for angle in alpha bravo gamma; do
+  child_titled "$council" "$angle variant Recon critic" > /dev/null && fail "T6 next filed a critic for $angle"
+done
+synth=$(child_titled "$council" 'synthesis Recon') || fail "T6 no synthesis ticket after next: $out"
+stask=$(task_of "$synth")
+[ "$(starts_of "$stask")" = 1 ] || fail "T6 the synthesis should be spawned once, was $(starts_of "$stask")"
+grep -qx 'Recon depth: deep' "$HOME_DIR/data/$stask/brief.md" || fail "T6 the synthesis brief is not deep"
+printf '# Report of %s\n' "$stask" > "$HOME_DIR/data/$stask/report.md"
+out=$(handoff draft "$stask") || fail "T6 the synthesis draft should be recorded: $out"
+scritic=''
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  scritic=$(child_titled "$council" 'synthesis Recon critic' || true)
+  [ -n "$scritic" ] && break
+  /bin/sleep 0.5
+done
+[ -n "$scritic" ] || fail "T6 the synthesis got no separate critic within 5 s of its draft"
+[ "$(handoff assignee "$stask" | cut -f1)" = "$(task_of "$scritic")" ] || fail "T6 the synthesis critic is not assigned: $(handoff assignee "$stask")"
+pass "T6 fast: no variant critic, a deep synthesis, its own critic assigned"
+
+# T7: a refused combination writes nothing.
+council=jg-wnd
+jg_test_add "$HOME_DIR" "$council" "[feature] War room refusal"
+out=$(war_room start "$council" --project proj --angles alpha --depth deep --no-variant-critics --harness codex --model gpt-5.5 --effort high); rc=$?
+[ "$rc" = 2 ] || fail "T7 --no-variant-critics with deep variants should exit 2, exited $rc: $out"
+assert_contains "$out" "needs --depth standard" "T7 the refusal should name the cause: $out"
+out=$(war_room start "$council" --project proj --angles alpha --depth standard --synthesis-depth quick --harness codex --model gpt-5.5 --effort high); rc=$?
+[ "$rc" = 2 ] || fail "T7 a synthesis depth of quick should exit 2, exited $rc: $out"
+[ ! -e "$HOME_DIR/data/war-room/$council" ] || fail "T7 a refused start wrote data/war-room/$council"
+[ "$(children "$council" | grep -c .)" = 0 ] || fail "T7 a refused start filed a ticket"
+pass "T7 a refused combination exits 2 and writes nothing"

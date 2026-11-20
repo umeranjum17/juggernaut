@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Checks the strike-recon and op-order skills, their trigger-index lines and the deep-recon pointer.
+# Checks the strike-recon and op-order skills, their trigger-index lines, the deep-recon pointer and the war-room modes.
 set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
 fail=0
@@ -22,4 +22,10 @@ for s in strike-recon op-order; do
   check "$s: listed once in trigger index" test "$(grep -c "^- \`$s\` - " "$index")" -eq 1
 done
 check "deep-recon names strike-recon once" test "$(grep -c "\`strike-recon\`" "$deep")" -eq 1
+war="$root/.agents/skills/war-room/SKILL.md"
+what=$(sed -n '/^## What it does/,/^## Intake/p' "$war")
+for mode in fast full lite; do
+  check "war-room: What it does names $mode" grep -q "/war-room $mode <problem>" <<< "$what"
+done
+check "war-room: What it does says fast runs when no word is given" grep -q '/war-room <problem>. with no word runs .fast.' <<< "$what"
 exit "$fail"

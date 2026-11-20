@@ -9,8 +9,11 @@ metadata:
 # /war-room
 
 ## What it does
-Runs independent deep Recons from different angles, a critic for each, and one synthesis that writes the report, the work orders and `orders/plan.json`.
-`/war-room lite <problem>` runs only the synthesis Recon, its critic and the dry run.
+Runs independent Recons from different angles, then one synthesis that writes the report, the work orders and `orders/plan.json`.
+- `/war-room fast <problem>`: three variant Recons at `--depth standard`, started together, with no critic lane (each writes its own critic round); then the deep synthesis with its separate critic, and the dry run.
+- `/war-room full <problem>`: three deep variant Recons, a critic for each, the deep synthesis, its critic and the dry run, all at the strongest profile.
+- `/war-room lite <problem>`: only the synthesis Recon, its critic and the dry run.
+- `/war-room <problem>` with no word runs `fast` (the owner's pick, 20 Nov).
 
 ## Intake
 1. Load `task-dispatch`.
@@ -20,8 +23,8 @@ Runs independent deep Recons from different angles, a critic for each, and one s
 
 ## Lanes
 - Three variant Recons, one angle each. Default angles: the smallest change; the strongest guarantees; outside prior art first. The owner may name others.
-- Start all variants with one command, never one by one: `bin/jg-war-room.sh start <council> --project <p> --angles <a,b,c> --depth deep --harness <h> --model <m> --effort <e>`. It files each variant's child ticket (found again by its title, never filed twice), writes its brief and starts every lane without a live task record at once. Exit 0 means every lane is live; a line that says `not started` names the refusal.
-- One critic ticket for each variant, then the synthesis Recon and its critic, then the dry run of order 1.
+- Start all variants with one command, never one by one: `bin/jg-war-room.sh start <council> --project <p> --angles <a,b,c> --depth deep --harness <h> --model <m> --effort <e>` for `full`; for `fast` use `--depth standard --synthesis-depth deep --no-variant-critics` instead. It files each variant's child ticket (found again by its title, never filed twice), writes its brief and starts every lane without a live task record at once. Exit 0 means every lane is live; a line that says `not started` names the refusal.
+- One critic ticket for each variant (not in `fast`), then the synthesis Recon and its critic, then the dry run of order 1. In `fast`, when the handoff does not start `next` by itself after a standard variant's done line, run `bin/jg-war-room.sh next <council>` by hand.
 - Load `quota-array-dispatch` for the profile. Use the strongest profile at xhigh for Recons, critics and the synthesis. Mix families only when the owner asks: then one variant on each verified family with quota.
 - Run the dry run on the first order's model.
 - Tell the owner the lane count and that the strong lanes cost most.

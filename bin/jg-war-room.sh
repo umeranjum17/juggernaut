@@ -2,7 +2,7 @@
 # jg-war-room.sh - run a /war-room: start its variant Recons together, move it by itself to the owner's plan approval, start /blitz.
 #
 # Usage: jg-war-room.sh start <council-ticket> --project <name> --angles <a,b,c> --depth <standard|deep>
-#                       --harness <h> --model <m> --effort <e>
+#                       --harness <h> --model <m> --effort <e> [--synthesis-depth <standard|deep>] [--no-variant-critics]
 #        jg-war-room.sh next <council-ticket>
 #        jg-war-room.sh approve <council-ticket> --words <the owner's words> [--by <who>]
 #        jg-war-room.sh --help
@@ -16,20 +16,26 @@
 #   3. Start: every lane that has no live task record is started at the same moment, one `bin/jg-spawn.sh <task> <project dir>
 #      --ticket <row> --scout --harness <h> --model <m> --effort <e>` for each lane in the background (a scout takes no --mode
 #      or --yolo), and the command waits up to 300 s (JG_WAR_ROOM_WAIT) for each to have a task record or an exit code.
-# It also writes data/war-room/<council>/record (council, project, angles, depth, harness, model, effort), which `next` reads, and it
+# --depth is the depth of the variants. --synthesis-depth is the depth of the synthesis Recon `next` starts later (default: --depth).
+# --no-variant-critics makes `next` file no critic lane for a variant: that variant writes its own critic round (`Critic: self`, which
+# the gate accepts at standard depth only) and the synthesis keeps its separate critic. /war-room fast is
+# `--depth standard --synthesis-depth deep --no-variant-critics`; /war-room full is `--depth deep`.
+# It also writes data/war-room/<council>/record (council, project, angles, depth, harness, model, effort, synthesis_depth,
+# variant_critics), which `next` reads (a record without the last two is `--depth` for the synthesis and a critic for each variant), and it
 # prints one line for each angle, in the order given:
 #   <angle>: <task> live                     the spawn left the lane's task record
 #   <angle>: <task> already live             the lane had a task record before this run; nothing was started
 #   <angle>: <task> not started: <reason>    the spawn's last line (an exit of 75 is a wait: run the command again)
 #   <angle>: not started: <reason>           no ticket or brief could be made
-# Exit 0 when every lane is live, 1 otherwise. Exit 2 for usage, an unknown council, depth or project, with nothing written.
+# Exit 0 when every lane is live, 1 otherwise. Exit 2 for usage, an unknown council, depth or project, or --no-variant-critics with
+# deep variants, with nothing written.
 #
 # next: one idempotent step that does what is due and nothing else (one run at a time for a council; a second waits its turn).
 # bin/jg-recon-handoff.sh starts it, detached, after each successful draft, revise or verdict of a council's lane
 # (JG_WAR_ROOM_NEXT=0 turns that off); it can still be run by hand. Each lane below is filed as a child of the council, briefed
 # the way `start` briefs one, and started once (a lane that has a task record, a status line or an exit code 0 is never started again):
 #   a. a variant or the synthesis whose handoff phase is `drafted`: its critic, titled `<lane title> critic`, then
-#      `bin/jg-recon-handoff.sh assign <lane> --critic <critic>`;
+#      `bin/jg-recon-handoff.sh assign <lane> --critic <critic>` (a variant gets none when the record says variant_critics=0);
 #   b. every variant passes bin/jg-recon-gate.sh: the synthesis Recon, with the three report paths;
 #   c. the synthesis passes its gate: the dry run of order 1;
 #   d. the dry run is done (its status line) and `bin/jg-swarm-plan-check.sh <synthesis>/orders/plan.json` passes: the council is held
@@ -62,6 +68,7 @@ export JG_HOME
 usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
 refuse() { printf 'jg-war-room: %s\n' "$*" >&2; exit 2; }
 USAGE="usage: jg-war-room.sh start <council-ticket> --project <name> --angles <a,b,c> --depth <standard|deep> --harness <h> --model <m> --effort <e>
+                                   [--synthesis-depth <standard|deep>] [--no-variant-critics]
        jg-war-room.sh next <council-ticket>
        jg-war-room.sh approve <council-ticket> --words <the owner's words> [--by <who>]"
 
@@ -70,7 +77,7 @@ bd_() { python3 -I "$SCRIPT_DIR/../core/item-store/adapters/bd_compat.py" "$@"; 
 
 # --- The council and its lanes -----------------------------------------------------------------------------------
 COUNCIL='' COUNCIL_TITLE='' RUN=''
-PROJECT='' ANGLES='' DEPTH='' HARNESS='' MODEL='' EFFORT='' PROJECT_DIR=''
+PROJECT='' ANGLES='' DEPTH='' HARNESS='' MODEL='' EFFORT='' PROJECT_DIR='' SYNTH_DEPTH='' VARIANT_CRITICS=1
 
 # open_council <council>: the ticket must exist; the files of its lanes live in data/war-room/<council>/.
 open_council() {
@@ -168,13 +175,14 @@ cmd_start() {
   local need raw angle title row task why waited rc reason lane state status=0 lanes=() angle_list=()
   while [ $# -gt 0 ]; do
     case $1 in
-      --project|--angles|--depth|--harness|--model|--effort)
+      --project|--angles|--depth|--synthesis-depth|--harness|--model|--effort)
         [ $# -ge 2 ] || refuse "$1 needs a value"
         case $1 in
-          --project) PROJECT=$2 ;; --angles) ANGLES=$2 ;; --depth) DEPTH=$2 ;;
+          --project) PROJECT=$2 ;; --angles) ANGLES=$2 ;; --depth) DEPTH=$2 ;; --synthesis-depth) SYNTH_DEPTH=$2 ;;
           --harness) HARNESS=$2 ;; --model) MODEL=$2 ;; --effort) EFFORT=$2 ;;
         esac
         shift ;;
+      --no-variant-critics) VARIANT_CRITICS=0 ;;
       -*) refuse "unknown flag $1" ;;
       *) [ -z "$COUNCIL" ] || refuse "one council ticket only"; COUNCIL=$1 ;;
     esac
@@ -184,15 +192,19 @@ cmd_start() {
   for need in PROJECT ANGLES DEPTH HARNESS MODEL EFFORT; do
     [ -n "${!need}" ] || refuse "--$(printf '%s' "$need" | tr '[:upper:]' '[:lower:]') is missing"
   done
+  SYNTH_DEPTH=${SYNTH_DEPTH:-$DEPTH}
   case $DEPTH in standard|deep) ;; *) refuse "--depth is standard or deep (got '$DEPTH')" ;; esac
+  case $SYNTH_DEPTH in standard|deep) ;; *) refuse "--synthesis-depth is standard or deep (got '$SYNTH_DEPTH')" ;; esac
+  [ "$VARIANT_CRITICS" = 1 ] || [ "$DEPTH" = standard ] \
+    || refuse "--no-variant-critics needs --depth standard: a deep Recon's critic may not be its own"
   case $WAIT in ''|*[!0-9]*) refuse "JG_WAR_ROOM_WAIT is a whole number of seconds" ;; esac
   PROJECT_DIR=$PROJECTS/$PROJECT
   [ -d "$PROJECT_DIR" ] || refuse "no project $PROJECT: $PROJECT_DIR is not a directory"
   open_council "$COUNCIL"
   mkdir -p "$RUN" || refuse "cannot write $RUN"
   # What `next` needs to carry on from here; written before the first lane starts, so a draft that comes early finds it.
-  printf 'council=%s\nproject=%s\nangles=%s\ndepth=%s\nharness=%s\nmodel=%s\neffort=%s\n' \
-    "$COUNCIL" "$PROJECT" "$ANGLES" "$DEPTH" "$HARNESS" "$MODEL" "$EFFORT" > "$RUN/record.tmp"
+  printf 'council=%s\nproject=%s\nangles=%s\ndepth=%s\nharness=%s\nmodel=%s\neffort=%s\nsynthesis_depth=%s\nvariant_critics=%s\n' \
+    "$COUNCIL" "$PROJECT" "$ANGLES" "$DEPTH" "$HARNESS" "$MODEL" "$EFFORT" "$SYNTH_DEPTH" "$VARIANT_CRITICS" > "$RUN/record.tmp"
   mv "$RUN/record.tmp" "$RUN/record" || refuse "cannot write $RUN/record"
 
   # Tickets and briefs, then every start at the same moment.
@@ -247,8 +259,10 @@ read_record() {
     case $key in
       project) PROJECT=$value ;; angles) ANGLES=$value ;; depth) DEPTH=$value ;;
       harness) HARNESS=$value ;; model) MODEL=$value ;; effort) EFFORT=$value ;;
+      synthesis_depth) SYNTH_DEPTH=$value ;; variant_critics) VARIANT_CRITICS=$value ;;
     esac
   done < "$RUN/record"
+  SYNTH_DEPTH=${SYNTH_DEPTH:-$DEPTH}
   PROJECT_DIR=$PROJECTS/$PROJECT
 }
 
@@ -324,7 +338,7 @@ step_synthesis() {
   # shellcheck disable=SC2016  # the backquotes are the brief's own text
   run_lane synthesis "synthesis Recon" "Write the synthesis of council $COUNCIL from its variant reports." \
     "The report passes bin/jg-recon-gate.sh, its critic has closed every gap and orders/plan.json passes bin/jg-swarm-plan-check.sh." \
-    "$DEPTH" "Role: synthesis" "$(council_ref "write the synthesis of its variant reports:$reports.")" \
+    "$SYNTH_DEPTH" "Role: synthesis" "$(council_ref "write the synthesis of its variant reports:$reports.")" \
     "$(printf 'Run `strike-recon` at stage 1 on the variant reports above, and end with `op-order`: the work orders and the plan %s/<this task>/orders/plan.json, which `%s/bin/jg-swarm-plan-check.sh` must pass.\n%s' \
       "$DATA" "$JG_ROOT" "$(recon_lines '<this task>')")" || return 0
   SYNTH_TASK=$LANE_TASK
@@ -376,7 +390,7 @@ cmd_next() {
     row=$(child_titled "$angle variant Recon")
     if [ -z "$row" ]; then VARIANTS+=(-); [ -n "$WAITS" ] || WAITS="waits: $angle no lane"; continue; fi
     task=$(task_of "$row"); VARIANTS+=("$task")
-    step_critic "$angle variant Recon" "$task"
+    [ "$VARIANT_CRITICS" = 0 ] || step_critic "$angle variant Recon" "$task"
   done
   row=$(child_titled "synthesis Recon")
   if [ -n "$row" ]; then SYNTH_TASK=$(task_of "$row"); step_critic "synthesis Recon" "$SYNTH_TASK"; fi
