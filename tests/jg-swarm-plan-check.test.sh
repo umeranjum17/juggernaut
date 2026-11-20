@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # bin/jg-swarm-plan-check.sh checks a swarm plan file with no store: a good plan of three slices prints its ok line and
 # writes nothing; each bad plan below is refused alone with one `refused:` line that names the slice and the reason;
-# a plan with two bad slices gets two lines.
+# a plan with two bad slices gets two lines; `files` entries must be paths, two slices of one project that name one
+# file need a dependency path between them, and `--repo/--ref` finds each existing path in the ref.
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -13,7 +14,7 @@ Q='Which colour should the new button be?'
 slice() {  # <id> <deps json> [<jq filter to change the slice>]
   jq -n --arg id "$1" --argjson d "$2" \
     '{id: $id, title: ("Make part " + $id + " of it"), owner_home: "main", project: "proj", size: "S", risk: "Low",
-      depends_on: $d, files: ["bin/x.sh (new)"], machine: null, order: ($id + ".md"), owner_word: null, gate: null}' |
+      depends_on: $d, files: [("bin/" + $id + ".sh (new)")], machine: null, order: ($id + ".md"), owner_word: null, gate: null}' |
     jq -c "${3:-.}"
 }
 word() { jq -n --arg q "$1" '{question: $q, options: {a: "blue", b: "green"}, recommend: "a", must: "design-pick"}'; }
@@ -34,7 +35,8 @@ p=$(case_dir good . "$(slice a '[]')" "$(slice b '["a"]')" \
   "$(slice c '[]' ".owner_word = $(word "$Q" | jq -c .) | .gate = {tool: \"jq\", min: \"1.0\"}")")
 before=$(cd "$T/good" && find . | sort | tr '\n' ' ')
 out=$(run "$p") || fail "a good plan must exit 0: $out"
-assert_equals "$out" "plan jg-plan: 3 slices ok" "the ok line"
+assert_equals "$out" "wave 1: 2 slices can start at once
+plan jg-plan: 3 slices ok" "the wave line, then the ok line"
 assert_equals "$(cd "$T/good" && find . | sort | tr '\n' ' ')" "$before" "the check writes no file"
 pass "plan check: a good plan prints its ok line and writes nothing"
 
@@ -80,3 +82,48 @@ out=$(run "$p") || rc=$?
 [ "$rc" = 2 ] || fail "two bad slices: exit 2 expected, got $rc"
 assert_equals "$(printf '%s\n' "$out" | grep -c '^refused: ')" 2 "two bad slices give two refused lines"
 pass "plan check: two bad slices give two refused lines"
+
+# 4. The `files` entries: paths only, one trailing ` (new)`, no shared file between unordered slices of one project.
+refused "files missing" "refused: a: files is missing" "$(case_dir nofiles . "$(slice a '[]' 'del(.files)')")"
+refused "files empty" "refused: a: files is missing, empty" "$(case_dir emptyfiles . "$(slice a '[]' '.files = []')")"
+refused "files not strings" "refused: a: files is missing, empty, or not a list of strings" \
+  "$(case_dir numfiles . "$(slice a '[]' '.files = [1]')")"
+refused "prose in files" "refused: a: files entry is not a path: the verify path in bin/jg-trunk.sh" \
+  "$(case_dir prose . "$(slice a '[]' '.files = ["bin/x.sh", "the verify path in bin/jg-trunk.sh"]')")"
+for bad in "/etc/x" "./bin/x.sh" "../x" "bin/../x" "bin/x,sh" "bin/[x].sh" " (new)"; do
+  refused "bad path $bad" "refused: a: files entry is not a path: $bad" \
+    "$(case_dir "badpath" . "$(slice a '[]' ".files = [\"$bad\"]")")"
+done
+p=$(case_dir newok . "$(slice a '[]' '.files = ["tests/new.test.sh (new)", "bin/@a+b-c_1.sh"]')")
+out=$(run "$p") || fail "a (new) entry and a plain path must pass: $out"
+refused "double new" "refused: a: files entry is not a path: tests/new.test.sh (new) (new)" \
+  "$(case_dir newnew . "$(slice a '[]' '.files = ["tests/new.test.sh (new) (new)"]')")"
+pass "plan check: a files entry is a path, with at most one trailing (new)"
+
+SHARE='.files = ["bin/x.sh"]'
+refused "shared file" "refused: a: shares a file with b and neither depends on the other: bin/x.sh" \
+  "$(case_dir share . "$(slice a '[]' "$SHARE")" "$(slice b '[]' "$SHARE")")"
+refused "shared file, (new) removed" "shares a file with b and neither depends on the other: bin/x.sh" \
+  "$(case_dir sharenew . "$(slice a '[]' "$SHARE")" "$(slice b '[]' '.files = ["bin/x.sh (new)"]')")"
+refused "two files shared, one line" "refused: a: shares a file with b and neither depends on the other: bin/x.sh" \
+  "$(case_dir sharetwo . "$(slice a '[]' '.files = ["bin/x.sh", "bin/y.sh"]')" "$(slice b '[]' '.files = ["bin/x.sh", "bin/y.sh"]')")"
+p=$(case_dir chain . "$(slice a '[]' "$SHARE")" "$(slice b '["a"]' "$SHARE")" "$(slice c '["b"]' "$SHARE")")
+out=$(run "$p") || fail "slices ordered by depends_on may share a file: $out"
+assert_contains "$out" "wave 1: 1 slices can start at once" "a chain starts one slice"
+p=$(case_dir other . "$(slice a '[]' "$SHARE")" "$(slice b '[]' "$SHARE | .project = \"other\"")")
+out=$(run "$p") || fail "slices of two projects may name one path: $out"
+pass "plan check: unordered slices of one project may not share a file"
+
+# 5. --repo/--ref: an entry not marked (new) must exist in the ref.
+R=$T/repo
+git init -q -b main "$R" && git -C "$R" config user.email t@example.com && git -C "$R" config user.name t
+mkdir -p "$R/bin" && printf 'x\n' > "$R/bin/x.sh" && git -C "$R" add . && git -C "$R" commit -q -m one
+git -C "$R" checkout -q -b other && printf 'y\n' > "$R/bin/y.sh" && git -C "$R" add . && git -C "$R" commit -q -m two
+git -C "$R" checkout -q main
+p=$(case_dir ref . "$(slice a '[]' '.files = ["bin/x.sh", "bin/z.sh (new)"]')")
+out=$(run "$p" --repo "$R" --ref main) || fail "a path on main and a (new) path must pass: $out"
+out=$(run "$(case_dir refother . "$(slice a '[]' '.files = ["bin/y.sh"]')")" --repo "$R" --ref main) && fail "bin/y.sh is only on another branch: $out"
+assert_contains "$out" "refused: a: files entry is not in main: bin/y.sh" "the ref check names the entry"
+out=$(run "$p" --repo "$R") && fail "--repo without --ref must be a usage error: $out"
+assert_contains "$out" "usage:" "--repo needs --ref"
+pass "plan check: --repo and --ref find each existing path in the ref"

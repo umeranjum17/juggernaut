@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # jg-swarm-plan-check.sh - check a swarm plan file before anything is written.
 #
-# Usage: jg-swarm-plan-check.sh <plan.json>
+# Usage: jg-swarm-plan-check.sh <plan.json> [--repo <dir> --ref <ref>]
 #
-# Reads the plan file and the order files beside it; needs no home and no store, and writes nothing.
-# Exit 0 prints `plan <plan>: <n> slices ok`. Exit 2 prints one `refused: <plan id or slice id>: <reason>` line for
+# Reads the plan file and the order files beside it; needs no home and no store, and writes nothing (with --repo and
+# --ref it also reads that git repository, read-only).
+# Exit 0 prints `wave 1: <n> slices can start at once` (the slices with no `depends_on`), then
+# `plan <plan>: <n> slices ok`. Exit 2 prints one `refused: <plan id or slice id>: <reason>` line for
 # every problem found, all of them, and nothing else. (A usage error also exits 2.)
 #
 # Checks:
@@ -16,6 +18,11 @@
 #     (tsort does not see a slice that names itself, so that is its own check);
 #   - an `owner_word` has a question, options `a` and `b`, `recommend` a or b and `must` design-pick, and
 #     jg_ask_card_refusal (bin/jg-ask-gate-lib.sh) passes for it;
+#   - `files` is a list of strings; each entry, after one trailing ` (new)` is removed, is a relative path (not empty,
+#     no leading `/`, `./` or `../`, no `..` part, only the characters A-Za-z0-9._/@+-), so prose is refused;
+#   - two slices of one `project` that name the same path (` (new)` removed) have a `depends_on` path between them,
+#     direct or through other slices; else one line names the pair and the first shared path;
+#   - with `--repo <dir> --ref <ref>` (both or neither): an entry not marked ` (new)` exists in <ref> of <dir>;
 #   - a `gate` is null, {waits_for: "<home>:<row id>"} or {tool, min}.
 set -euo pipefail
 
@@ -28,8 +35,24 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 case ${1-} in
   -h | --help) awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; exit 0 ;;
 esac
-[ $# -eq 1 ] || { echo "usage: jg-swarm-plan-check.sh <plan.json>" >&2; exit 2; }
-PLAN_FILE=$1
+usage() { echo "usage: jg-swarm-plan-check.sh <plan.json> [--repo <dir> --ref <ref>]" >&2; exit 2; }
+PLAN_FILE=${1-}
+[ -n "$PLAN_FILE" ] || usage
+shift
+REPO='' REF=''
+while [ $# -gt 0 ]; do
+  case $1 in
+    --repo) [ $# -ge 2 ] || usage; REPO=$2; shift 2 ;;
+    --ref) [ $# -ge 2 ] || usage; REF=$2; shift 2 ;;
+    *) usage ;;
+  esac
+done
+{ [ -n "$REPO" ] && [ -n "$REF" ]; } || { [ -z "$REPO" ] && [ -z "$REF" ]; } || usage
+if [ -n "$REPO" ]; then
+  case $REF in -*) echo "jg-swarm-plan-check: the ref must not start with a dash: $REF" >&2; exit 2 ;; esac
+  git -C "$REPO" rev-parse --verify -q "$REF^{commit}" >/dev/null ||
+    { echo "jg-swarm-plan-check: no commit $REF in the repository $REPO" >&2; exit 2; }
+fi
 [ -f "$PLAN_FILE" ] || { echo "jg-swarm-plan-check: no such plan file: $PLAN_FILE" >&2; exit 2; }
 PLAN_DIR=$(cd "$(dirname "$PLAN_FILE")" && pwd)
 
@@ -37,6 +60,8 @@ REFUSALS=()
 refuse() { REFUSALS+=("refused: $1: $2"); }  # <plan or slice id> <reason>
 finish() {
   [ ${#REFUSALS[@]} -eq 0 ] || { printf '%s\n' "${REFUSALS[@]}"; exit 2; }
+  printf 'wave 1: %s slices can start at once\n' \
+    "$(jq '[.slices[] | select((.depends_on // []) | length == 0)] | length' "$PLAN_FILE")"
   printf 'plan %s: %s slices ok\n' "$PLAN" "$(jq '.slices | length' "$PLAN_FILE")"
 }
 field() { jq -r --arg k "$2" '.[$k] | if type == "string" then . else empty end' <<<"$1"; }  # <json> <key>
@@ -88,6 +113,40 @@ check_gate() {  # <slice id> <slice json>
     <<<"$g" >/dev/null || refuse "$id" "gate is neither {waits_for: \"<home>:<row id>\"} nor {tool, min}"
 }
 
+check_files() {  # <slice id> <slice json>: `files` are paths; with --repo/--ref the existing ones are in the ref
+  local id=$1 e p
+  if ! jq -e '.files | type == "array" and length > 0 and all(.[]; type == "string")' <<<"$2" >/dev/null; then
+    refuse "$id" "files is missing, empty, or not a list of strings"
+    return 0
+  fi
+  while IFS= read -r e; do
+    p=${e%" (new)"}
+    if [ -z "$p" ] || [[ $p == /* || $p == ./* || $p == ../* || $p =~ (^|/)\.\.(/|$) || ! $p =~ ^[A-Za-z0-9._/@+-]+$ ]]; then
+      refuse "$id" "files entry is not a path: $e"
+    elif [ -n "$REPO" ] && [ "$p" = "$e" ] && ! git -C "$REPO" cat-file -e "$REF:$p" 2>/dev/null; then
+      refuse "$id" "files entry is not in $REF: $e"
+    fi
+  done < <(jq -r '.files[]' <<<"$2")
+}
+
+# Unordered slices of one project that name one path: one line per pair, the first shared path only. A slice reaches
+# another through depends_on, directly or through others; the closure is a fixpoint, so a loop (refused below) ends it.
+shared_file_pairs() {  # <plan json>: prints `<a> <b> <path>` per pair, in plan order
+  jq -r '
+    def paths: [.files // [] | .[] | strings | sub(" \\(new\\)$"; "") | select(test("^[A-Za-z0-9._/@+-]+$"))];
+    [.slices[] | select((.id | type) == "string")] as $ss
+    | ($ss | map({key: .id, value: ((.depends_on // []) | if type == "array" then map(tostring) else [] end)}) | from_entries) as $dep
+    | def up: (. + (map($dep[.] // []) | add // [])) | unique;
+      def reach($i): [$i] | until(up == .; up);
+      range(0; $ss | length) as $x | range($x + 1; $ss | length) as $y
+    | $ss[$x] as $a | $ss[$y] as $b
+    | select($a.id != $b.id and $a.project == $b.project)
+    | select((reach($a.id) | index($b.id)) == null and (reach($b.id) | index($a.id)) == null)
+    | ([($a | paths | .[]) as $p | select(($b | paths | index($p)) != null) | $p] | first) as $path
+    | select($path != null)
+    | "\($a.id) \($b.id) \($path)"' <<<"$1"
+}
+
 declare -A HOME_OF=()
 SLICES=$(jq -c '.slices[]' <<<"$PLAN_JSON")
 while IFS= read -r s; do  # first pass: ids and owner homes
@@ -122,6 +181,7 @@ while IFS= read -r s; do
     elif [ -z "${SEEN[$d]+x}" ] && [ -z "${HOME_OF[$d]+x}" ]; then refuse "$id" "depends_on names no slice: $d"
     elif [ "${HOME_OF[$d]-}" != "$home" ]; then refuse "$id" "depends_on $d, which has another owner_home"; fi
   done < <(jq -r '.depends_on // [] | .[] | tostring' <<<"$s")
+  check_files "$id" "$s"
   check_word "$id" "$s"
   check_gate "$id" "$s"
 done <<<"$SLICES"
@@ -129,4 +189,7 @@ done <<<"$SLICES"
 if ! jq -r '.slices[] | .id as $s | (.depends_on // [])[] | select(. != $s) | "\(.) \($s)"' <<<"$PLAN_JSON" | tsort >/dev/null 2>&1; then
   refuse "$P" "dependency loop among the slices"
 fi
+while read -r a b path; do
+  [ -z "$a" ] || refuse "$a" "shares a file with $b and neither depends on the other: $path"
+done < <(shared_file_pairs "$PLAN_JSON")
 finish
