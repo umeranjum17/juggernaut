@@ -399,12 +399,13 @@ Leases stay on either way; the file turns only the reclaim.
 
 ## Backlog (config/beads-dir)
 
-Every home keeps its backlog in a Beads store.
-The absolute `BEADS_DIR` in `config/beads-dir` names it, and `bin/jg-backlog.sh` is the one command that reads and writes it.
-`bin/jg-beads.sh` is the only guarded way to run `bd` and `dolt`; `bin/jg-beads.sh check` proves the pinned versions, the hold rule, the events journal on and telemetry off (`init` turns the journal on, and run again on an older store it turns it on and changes nothing else). The journal gives a reader the changes since its last read: `jg-beads.sh events tail --since <seq>`. The actor of a home's own writes is the home's name, `main` or `lead:<id>`, so `created_by` says who filed; `jg-backlog.sh homes --json` lists every home with its store and marks a lead on another machine `"remote": true`.
+Every home keeps its backlog as its own rows in the tickets tables of `fleet.db`, and `bin/jg-backlog.sh` is the one command that reads and writes them.
+`config/beads-dir` must still name a path: the lifecycle transitions, captain holds and the flow check refuse a home without it, though nothing is stored there ([`bin/jg-backlog-lib.sh`](../bin/jg-backlog-lib.sh)).
+`python3 -I core/item-store/adapters/tickets.py check` proves the tables.
+The actor of a home's own writes is the home's name, `main` or `lead:<id>`, so `created_by` says who filed; `jg-backlog.sh homes --json` lists every home with its store and marks a lead on another machine `"remote": true`.
 The wrapper serves `show`, `list`, `ready`, `add`, `update`, `done`, `block`, `unblock`, `start`, `reopen`, `hold`, `unhold` and `public-followup`, and refuses every other write.
 
-A Goal lives in a small Goal-only Beads store of its own. `config/goal-beads-dir` (or `GOAL_BEADS_DIR`) names its absolute `BEADS_DIR`, outside any git tree, and `bin/jg-goal.sh` reaches it only through `bin/jg-beads.sh`. The pinned bd and dolt must be in place; the wrapper's refusal is the message, and nothing falls back to another bd. Create the store with `BEADS_DIR=<dir> bin/jg-beads.sh init --prefix goal`.
+A Goal is an epic labelled `goal` in this home's tickets tables; `bin/jg-goal.sh` reaches it through `core/item-store/adapters/bd_compat.py` and prints the tables' refusal when they refuse.
 
 The `start`, `reopen` and `done` moves write only if the row still has the status they read, so a row a second writer moved refuses with exit 13, `code: STALE_WRITE`, and changes nothing.
 [`bin/jg-backlog-transition-lib.sh`](../bin/jg-backlog-transition-lib.sh) drives the same provider directly, so spawn, teardown and bootstrap keep their gates on that store.
@@ -416,7 +417,7 @@ The session digest, the fleet snapshot, the inbox status, the owner's asks, the 
 `bin/jg-backlog-handoff.sh` moves rows between homes by `bd export` and `bd import`, and keeps the body, holds, blockers and links.
 A crash leaves the rows on both sides and rerunning the same handoff finishes the move.
 A remote handoff stages the rows on the receiver, and asks it first, so a home that cannot file rows refuses before anything is staged.
-Bootstrap and `bin/jg-remote-doctor.sh` run `bin/jg-beads.sh check` and report any failure.
+Bootstrap runs `python3 -I core/item-store/adapters/tickets.py check` and reports a failure as `BEADS_UNHEALTHY`.
 
 [`bin/jg-beads-migrate.py`](../bin/jg-beads-migrate.py) `cut` moves a home that still holds old markdown files (`data/backlog.md`, `data/done-archive.md`) into a store, run on a written order and never by default.
 The cut holds `data/backlog.md.lock` so no writer can touch the old files, imports the plan, checks the store against the manifest row by row, writes `config/beads-dir`, and leaves the old files read-only.
@@ -435,7 +436,7 @@ Closed rows move with the rest, so `show` and the write verbs find a row by the 
 The title reads as plain words: 2 to 7 words, at most 48 characters, with no id, `[tag]`, URL or path. The detail goes in the body.
 A leading type tag (`[captain-ask]`, `[feature]`, `[design-ux]`, `[security]` or `[blocker]`) is still taken as input and stored as the label of that name.
 `--priority 0|1|2|3` is required (0 is most urgent; an owner ask gets 0 by itself).
-The body has the sections `Captain`, `Ask`, `Why` and `Done when`, as headings or as lines. Bd checks this itself, with `create --validate` and the `lint.sections.task` setting that `bin/jg-beads.sh init` writes; bd's own task rule also asks for `Acceptance Criteria`. A store made before this rule gets the setting once with `bin/jg-beads.sh config set lint.sections.task "Captain, Ask, Why, Done when"`.
+The body has the sections `Captain`, `Ask`, `Why` and `Done when`, as headings or as lines; the tables check it with `create --validate`.
 `--release <name>` stores the release in `metadata.release` and defaults to `later`. A `release:` line in the body is not read.
 An item that fails a rule is refused before it reaches the backlog, and the refusal names the fix.
 `juggernaut-axi ticket` takes the justification as `--why`.
@@ -448,7 +449,7 @@ Captain rows have no due date; `--until` remains the optional hold deferral.
 A hold with `--until` is a native `deferred` row and a hold with no date is `on_hold`.
 `bd ready` wakes a deferred row once its date passes: the row reads `open`, its date clears, and its hold reason and kind stay, so it remains answerable and the work behind it stays stopped until it closes.
 `start` takes a due row in either form and refuses one whose date is still ahead.
-`bin/jg-beads.sh` refuses a `create` or `update` that defers a row with no reason in the same call, or strips a deferred row's reason; that rule is ours and no store CHECK holds it, so `bin/jg-beads.sh check` names any deferred row that arrived with no reason by another door, such as `bd defer`, which stays whole and keeps none, or an import.
+The tables refuse a `create` or `update` that defers a row with no reason in the same call, or strips a deferred row's reason; `tickets.py check` names any deferred row that arrived with no reason by another door, such as an import.
 
 Do not register a Beads `types.custom` `captain` type for this: captain is a hold kind.
 
@@ -470,7 +471,7 @@ When a spawn is interrupted after launch delivery began, its exit path re-reads 
 
 ### Which backlog receives a transition
 
-Automatic transitions address the store named by the target home's own `config/beads-dir`, so the change lands in the home that owns the task regardless of the caller's working directory.
+Automatic transitions address the target home's own rows in the tickets tables, so the change lands in the home that owns the task regardless of the caller's working directory.
 
 ### Exemptions and refusal conditions
 
@@ -482,13 +483,9 @@ A home with no store, an unresolvable configured data directory, or one containi
 `jg-backlog-handoff.sh` keeps its own fleet-level validation and moves the rows through the stores; its [script header](../bin/jg-backlog-handoff.sh) owns route-specific wake outcomes and remote outbox release.
 It moves in-scope queued items only and refuses in-flight and done records, which stay with their home.
 
-### Required tools
-
-Bootstrap requires the pinned `bd` and `dolt` (the `toolchain.versions` rows), installed each against its recorded hash and never started; see "Toolchain" below for missing-tool reporting.
-
 ### Using a separate operational home
 
-`bin/jg-backlog.sh` reads `config/beads-dir` of `JG_HOME`, so a bare run from the code root addresses the home's own store whenever the home lives elsewhere.
+`bin/jg-backlog.sh` reads the rows of `JG_HOME`, so a bare run from the code root addresses the home's own store whenever the home lives elsewhere.
 Run every routine Juggernaut backlog command through [`bin/jg-backlog.sh`](../bin/jg-backlog.sh).
 
 ## Migration card (config/migration-card)
@@ -2003,7 +2000,6 @@ Every home requires:
 - gh; GitHub authentication through `gh auth login` is needed for a home with a GitHub-hosted project, since the session-start auth probe is skipped while every registered project is local-only.
 - Compatible gh-axi.
 - chrome-devtools-axi.
-- Pinned `bd` and `dolt`, as specified in "Backlog" above.
 - Compatible quota-axi.
 - done-done (`done-done-axi`, at its [`toolchain.versions`](../toolchain.versions) row).
 - sign-off-axi (at its `toolchain.versions` row).
@@ -2017,7 +2013,7 @@ This section is the single owner of that universal toolchain list; backend guide
 Both `install.sh` and every session start also run [`bin/jg-axi-link.sh`](../bin/jg-axi-link.sh), which writes one launcher, `~/.local/bin/juggernaut-axi`, that runs `bin/juggernaut-axi` of the home named by `JG_HOME`, of the checkout the current directory is in, or of the home that wrote it.
 A file already there that is not the launcher is left alone and named.
 
-In that list, gh-axi and chrome-devtools-axi cover GitHub and browser operations, and the Beads store plus quota-axi back backlog mutations and quota-aware array dispatch.
+In that list, gh-axi and chrome-devtools-axi cover GitHub and browser operations, and quota-axi backs quota-aware array dispatch.
 A visual report or decision surface is a sign-off board report, published with sign-off-axi; nothing in this list provides a separate review server.
 
 **Backend requirements**
@@ -2056,9 +2052,9 @@ Sign-off arming stays per home and is never done for the user; the first wiring 
 
 **Missing-tool diagnostics**
 
-`bd`, `dolt` and `quota-axi` are essential bootstrap tools in every profile.
+`quota-axi` is an essential bootstrap tool in every profile.
 
-- An absent or unpinned `bd` or `dolt` reports a `MISSING:` line naming the pinned row; a home with no `config/beads-dir` refuses lifecycle mutation until the store is configured.
+- A home with no `config/beads-dir` refuses lifecycle mutation until that file names a path.
 - An absent or incompatible `gh-axi` reports `MISSING: gh-axi (install: npm install -g gh-axi && gh-axi setup hooks)`.
 - An absent or too-old `quota-axi` reports `MISSING: quota-axi (install: npm install -g quota-axi)`; Juggernaut cannot resolve a profile array without a compatible binary.
 

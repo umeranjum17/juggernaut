@@ -412,7 +412,7 @@ Three legacy inputs are resolved in place:
 ### Legacy ids on a Beads store
 
 On a Beads store, an attested old id reaches its row through the name the provider's own `show` answers to.
-The hold script makes no second lookup and never starts `bd` itself; every store read goes through [`bin/jg-beads.sh`](../bin/jg-beads.sh).
+The hold script makes no second lookup; every store read goes through [`bin/jg-backlog-lib.sh`](../bin/jg-backlog-lib.sh), which the tickets tables answer.
 An id that no row answers to is refused once, naming the id.
 
 A markdown home keeps its legacy rows verbatim, so its resolution is unchanged.

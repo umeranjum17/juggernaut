@@ -190,7 +190,7 @@ The shared gate lifecycle boundary is summarized in [architecture.md](architectu
 | `jg-beads-view.py`       | Render `bd` rows in the read shape `bin/jg-backlog.sh` prints                                |
 | `jg-beads-write.py`      | Serve `bin/jg-backlog.sh` writes on a Beads store, in its reply shape                        |
 | `jg-beads-followup.py`   | Keep a public follow-up as one native row on a Beads store                           |
-| `jg-beads.sh`            | The one guarded way to run `bd` and `dolt`: pinned builds, one embedded stealth store outside any git tree, no shared server, metrics off, and a store rule that a blocked or held row needs a reason, which `check` reports when missing; every `bd` verb is served but those in its one refusal list, each with its rule |
+| `jg-beads.sh`            | A stub until it is deleted: hands each `bd` call to `core/item-store/adapters/bd_compat.py`, which answers from the tickets tables in `fleet.db` |
 | `jg-backlog-transition-lib.sh` | Pair task-record changes with their backlog transitions and replay interrupted closes |
 | `jg-quota-axi-lib.sh`    | Shared `quota-axi` compatibility floor and quota snapshot schema validation           |
 | `jg-project-capacity-lib.sh` | Per-project worker capacity: `config/project-capacity` parsing, what holds a place, and the spawn-time fit check ([configuration.md](configuration.md#project-capacity-configproject-capacity)) |

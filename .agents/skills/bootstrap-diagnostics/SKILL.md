@@ -28,8 +28,8 @@ When any diagnostic needs captain attention, report the plain consequence and re
 - `TANGLE: <remediation>` - the primary checkout is stranded on a feature branch instead of its default branch; `AGENTS.md` section 8 explains why this guard exists and what it protects.
   The work is safe on that branch ref; restore the primary to its default branch with the printed `git -C <root> checkout <default>`, then re-validate that branch in a proper worktree.
   This is the only sanctioned Juggernaut-initiated git write to the primary, and it is a non-destructive branch switch that strands nothing.
-- `BEADS_UNHEALTHY: <reason>` - this home's backlog is in Beads and its store failed `bin/jg-beads.sh check`: a build that is not the pinned one, a store that is not embedded and stealth, the hold rule gone or changed, or telemetry not off.
-  Treat backlog reads and writes as unsafe until the printed reason is fixed; a missing or unpinned bd or dolt is a human install, and `bin/jg-beads.sh init` restores a gone rule but never a changed one.
+- `BEADS_UNHEALTHY: <reason>` - this home's tickets tables failed `python3 -I core/item-store/adapters/tickets.py check`.
+  Treat backlog reads and writes as unsafe until the printed reason is fixed.
 - `STARTUP_MEMORY_BUDGET: invalid config/startup-memory-budget - <reason>` - the visible startup-memory budget is not a safe one-line positive decimal file; do not infer the default or propagate it.
   Correct the local primary file, then rerun session start so the normal convergence path can deliver the validated value to Squad Lead homes.
 - `UNIT_HOME: <unit> serves <other home>, not this home` or `UNIT_HOME: <unit> is installed but not running` - one of the machine's four long-running services does not serve Main, so this home gets no alert from it. Main moves them at every session start (`bin/jg-unit-claim.sh claim`), so a line that survives the digest means that move failed: the claim's own failure line above it names the real cause. A Squad Lead home is refused that command on purpose, because Main owns the units there too.
