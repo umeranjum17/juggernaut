@@ -1207,6 +1207,7 @@ spawn_task_set_release() {
 }
 SPAWN_TREEHOUSE_PROJECT_LOCK=
 SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=0
+SPAWN_PROJECT_LOCK_LATE=0
 SPAWN_SLOT_CLAIMED=0
 SPAWN_SLOT_CLAIM_REFUSED=0
 SPAWN_TREEHOUSE_LEASE=
@@ -2793,32 +2794,9 @@ spawn_item_prior_work() {
 # A lane cleaned before its done line leaves its work open in the store: the ticket is owed a new lane, with the new words.
 SPAWN_PRIOR_WORK=$(spawn_item_prior_work) || SPAWN_PRIOR_WORK=
 [ "$SPAWN_PRIOR_WORK" != open ] || spawn_item_store requeue "$(spawn_item_words)"
-# Project capacity admission (bin/jg-project-capacity-lib.sh owns the
-# declaration, what holds a place, and why this is race-safe). A fresh worker
-# for a project whose declared capacity is already held is deferred here, before
-# any brief render, endpoint, worktree, record, or backlog move exists, so the
-# deferral leaves the task exactly as queued as it was. A relaunch replaces a
-# worker that already holds a place, and a squad_lead is not a worker.
-SPAWN_PROJECT_CAPACITY=
-SPAWN_PROJECT_CAPACITY_ANY=
-if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ]; then
-  SPAWN_CAPACITY_CONFIG=$(jg_project_capacity_config_dir "$JG_HOME" "$CONFIG") || {
-    echo "error: could not resolve the root Juggernaut home that declares project capacity for $PROJ_ABS" >&2
-    exit 1
-  }
-  if ! jg_project_capacity_lookup "$SPAWN_CAPACITY_CONFIG" "$(basename "$PROJ_ABS")"; then
-    echo "error: spawn refused: the project capacity declaration is unreadable ($JG_PROJECT_CAPACITY_ERROR); fix it so the captain's worker limits are known (docs/configuration.md \"Project capacity\")" >&2
-    exit 1
-  fi
-  SPAWN_PROJECT_CAPACITY=$JG_PROJECT_CAPACITY
-  SPAWN_PROJECT_CAPACITY_ANY=$JG_PROJECT_CAPACITY_ANY
-fi
-if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] &&
-  { [ "$BACKEND" != orca ] || [ -n "$SPAWN_PROJECT_CAPACITY_ANY" ]; }; then
-  SPAWN_TREEHOUSE_PROJECT_LOCK=$(jg_treehouse_project_lock_path "$PROJ_ABS") || {
-    echo "error: could not resolve the shared Treehouse project lock for $PROJ_ABS" >&2
-    exit 1
-  }
+# The shared Treehouse project lock: several spawns of one project wait their turn for it, up to a bound.
+# A deferral leaves the task exactly as queued as it was, so this runs before any endpoint, record or backlog move exists.
+spawn_project_lock_take() {
   # Several spawns of one project wait their turn for the lock, up to a bound; JG_SPAWN_PROJECT_LOCK_WAIT=0 keeps the single try.
   SPAWN_PROJECT_LOCK_WAIT=${JG_SPAWN_PROJECT_LOCK_WAIT:-240}
   SPAWN_PROJECT_LOCK_RC=0
@@ -2841,6 +2819,60 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] &&
     exit 1
   fi
   SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=1
+}
+
+# The point where a fresh spawn's lease is complete: the slot is claimed and, outside local-trunk, the base is refreshed.
+# A project with no declared capacity lets the project lock go here, so the rest of the launch (brief render, launch
+# preparation, record publication), which touches only this spawn's own copy and record, runs beside the project's other spawns.
+# JG_SPAWN_TEST_AFTER_LEASE is a test hook: a command run here, after that decision.
+spawn_lease_complete() {
+  if [ "$SPAWN_PROJECT_LOCK_LATE" = 1 ] && [ "$SPAWN_TREEHOUSE_PROJECT_LOCK_HELD" = 1 ]; then
+    SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=0
+    jg_lock_release "$SPAWN_TREEHOUSE_PROJECT_LOCK" || true
+  fi
+  [ -z "${JG_SPAWN_TEST_AFTER_LEASE:-}" ] || bash -c "$JG_SPAWN_TEST_AFTER_LEASE" || {
+    echo "error: JG_SPAWN_TEST_AFTER_LEASE failed for task $ID" >&2
+    exit 1
+  }
+}
+
+# Project capacity admission (bin/jg-project-capacity-lib.sh owns the
+# declaration, what holds a place, and why this is race-safe). A fresh worker
+# for a project whose declared capacity is already held is deferred here, before
+# any brief render, endpoint, worktree, record, or backlog move exists, so the
+# deferral leaves the task exactly as queued as it was. A relaunch replaces a
+# worker that already holds a place, and a squad_lead is not a worker.
+# The Treehouse project lock covers the lease and the slot owner claim, and outside local-trunk the base refresh's fetches into
+# the shared git directory (spawn_lease_complete lets it go there). A project with no declared capacity takes it only after the
+# backlog reads, just before the meta lock. A project with a declared capacity takes it here and keeps it through record
+# publication, because its occupants are counted from published records, and so does JG_SPAWN_PROJECT_LOCK_SPAN=full.
+SPAWN_PROJECT_CAPACITY=
+SPAWN_PROJECT_CAPACITY_ANY=
+if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ]; then
+  SPAWN_CAPACITY_CONFIG=$(jg_project_capacity_config_dir "$JG_HOME" "$CONFIG") || {
+    echo "error: could not resolve the root Juggernaut home that declares project capacity for $PROJ_ABS" >&2
+    exit 1
+  }
+  if ! jg_project_capacity_lookup "$SPAWN_CAPACITY_CONFIG" "$(basename "$PROJ_ABS")"; then
+    echo "error: spawn refused: the project capacity declaration is unreadable ($JG_PROJECT_CAPACITY_ERROR); fix it so the captain's worker limits are known (docs/configuration.md \"Project capacity\")" >&2
+    exit 1
+  fi
+  SPAWN_PROJECT_CAPACITY=$JG_PROJECT_CAPACITY
+  SPAWN_PROJECT_CAPACITY_ANY=$JG_PROJECT_CAPACITY_ANY
+fi
+if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] &&
+  { [ "$BACKEND" != orca ] || [ -n "$SPAWN_PROJECT_CAPACITY_ANY" ]; }; then
+  SPAWN_TREEHOUSE_PROJECT_LOCK=$(jg_treehouse_project_lock_path "$PROJ_ABS") || {
+    echo "error: could not resolve the shared Treehouse project lock for $PROJ_ABS" >&2
+    exit 1
+  }
+  # A project with no declared capacity takes the lock later, after the backlog reads; any other takes it now.
+  SPAWN_PROJECT_LOCK_LATE=0
+  if [ -z "$SPAWN_PROJECT_CAPACITY" ] && [ "${JG_SPAWN_PROJECT_LOCK_SPAN:-}" != full ] && [ "$BACKEND" != orca ]; then
+    SPAWN_PROJECT_LOCK_LATE=1
+  else
+    spawn_project_lock_take
+  fi
 fi
 if [ -n "$SPAWN_PROJECT_CAPACITY" ]; then
   if ! jg_project_capacity_occupants "$SPAWN_TREEHOUSE_PROJECT_LOCK" "$PROJ_ABS" "$STATE" "$ID"; then
@@ -3450,6 +3482,8 @@ else
   fi
 fi
 
+# The backlog reads above are done and nothing is created yet: a project with no declared capacity now takes its lock.
+[ "$SPAWN_PROJECT_LOCK_LATE" != 1 ] || spawn_project_lock_take
 if [ "$SPAWN_META_LOCK_HELD" != 1 ]; then
   SPAWN_META_LOCK=$(jg_meta_lock_path "$STATE/$ID.meta") || exit 1
   jg_lock_acquire_wait "$SPAWN_META_LOCK"
@@ -4431,8 +4465,9 @@ elif [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] && [ "$BACKEND" != orca 
   # a slot that cannot be claimed is refused here, at the cheapest point, rather
   # than launching a worker whose slot teardown could later release out from
   # under its successor.
-  # Written under the Treehouse project lock held from before slot allocation
-  # through metadata publication, so no other spawn or return sees a half-claim.
+  # Written under the Treehouse project lock, held from before slot allocation until the claim (and, outside local-trunk,
+  # the base refresh's fetches) is complete, so no other spawn or return sees a half-claim. A project with a declared capacity
+  # holds it through metadata publication instead (spawn_lease_complete).
   if jg_treehouse_pool_slot "$PROJ_ABS" "$WT"; then
     if ! jg_treehouse_slot_owner_claim "$WT" "$ID" "$JG_HOME"; then
       # The slot was never this task's, so the abort cleanup below must not
@@ -4446,7 +4481,11 @@ elif [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] && [ "$BACKEND" != orca 
   fi
 fi
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ]; then
+  spawn_lease_trunk=0
+  ! spawn_trunk_branch >/dev/null || spawn_lease_trunk=1
+  [ "$spawn_lease_trunk" = 0 ] || spawn_lease_complete
   freshen_spawn_worktree_base "$WT" "$BASE_BRANCH" || exit 1
+  [ "$spawn_lease_trunk" = 1 ] || spawn_lease_complete
 fi
 
 # Fresh ships/scouts and all relaunches must enter and verify the durable task
