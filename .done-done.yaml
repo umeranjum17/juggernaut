@@ -3,7 +3,7 @@ skill: .agents/skills/done-done-verify-suites
 journeys:
   signalled-status-outcomes:
     tier: local
-    command: bash tests/jg-wake-next.test.sh > "$DONE_DONE_EVIDENCE_ROOT/outcomes.log" 2>&1
+    command: bash tests/jg-wake-next.test.sh > "$DONE_DONE_EVIDENCE_ROOT/outcomes.log" 2>&1 && bash tests/jg-wake-drain-status-ack.test.sh < /dev/null > "$DONE_DONE_EVIDENCE_ROOT/status-ack.log" 2>&1
   startable-set-scale:
     tier: local
     command: bash journeys/startable-set-scale.sh

@@ -19,7 +19,9 @@
 # presentation-path locks (default 10); queue mutation locks remain blocking.
 # Every signalled status span replays until acknowledgement. OUTCOME_REQUIRED
 # ids must first be handled with --outcome ID --relayed REFERENCE or
-# --outcome ID --classified REASON (nonblank, recorded per actor and home).
+# --outcome ID --classified REASON (nonblank, recorded per actor and home);
+# --outcomes-before EPOCH --classified REASON classifies, in one locked pass, every
+# open outcome first presented before EPOCH (bin/jg-wake-status-lib.sh owns the rule).
 # CAPTAIN NOTES lead every presentation, and they gate the acknowledgement:
 # bin/jg-captain-note-lib.sh owns what counts as an unhandled captain inbox
 # note, lists every one of them at the top of this drain, and refuses an
@@ -239,6 +241,18 @@ case "${1:-}" in
     [ "$outcome_rc" -eq 0 ] || echo 'wake drain: outcome handling failed; use a presented id and a nonblank reference or reason' >&2
     exit "$outcome_rc"
     ;;
+  --outcomes-before)
+    if [ "$#" -ne 4 ] || [ "$3" != --classified ]; then
+      echo 'usage: jg-wake-drain.sh --outcomes-before EPOCH --classified REASON' >&2
+      exit 2
+    fi
+    jg_lock_acquire_wait "$STATE/.status-presentation-lock" || exit 1
+    outcome_rc=0
+    jg_wake_status_classify_before "$2" "$4" || outcome_rc=$?
+    jg_lock_release "$STATE/.status-presentation-lock"
+    [ "$outcome_rc" -eq 0 ] || echo 'wake drain: bulk classification failed; use a whole-second epoch and a nonblank reason' >&2
+    exit "$outcome_rc"
+    ;;
   --ack-through)
     ACK_THROUGH=${2:-}
     case "$ACK_THROUGH" in ''|*[!0-9]*) echo "wake drain: invalid acknowledgement sequence" >&2; exit 2 ;; esac
@@ -260,7 +274,7 @@ case "${1:-}" in
     [ "$#" -eq 1 ] || { echo "wake drain: --open-decisions takes no other argument" >&2; exit 2; }
     OPEN_DECISIONS_ALL=1
     ;;
-  *) echo "usage: jg-wake-drain.sh [--ack-through SEQUENCE --recovery-generation GENERATION [--pages-ack SEQUENCE] | --outcome ID --relayed REFERENCE|--classified REASON | --open-decisions]" >&2; exit 2 ;;
+  *) echo "usage: jg-wake-drain.sh [--ack-through SEQUENCE --recovery-generation GENERATION [--pages-ack SEQUENCE] | --outcome ID --relayed REFERENCE|--classified REASON | --outcomes-before EPOCH --classified REASON | --open-decisions]" >&2; exit 2 ;;
 esac
 
 [ "$ACTOR" != branch ] || require_branch_eligible_rows || exit 1

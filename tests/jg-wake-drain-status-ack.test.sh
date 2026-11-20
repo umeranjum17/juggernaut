@@ -168,9 +168,85 @@ EOF
   pass "a flooded home prints $(wc -c < "$dir/out") bytes, acknowledges through its page and the next drain shows the next $out rows"
 }
 
+# The drain's ack command and the open-outcome ids a refusal names (jg-xfli2).
+ack_cmd() { sed -n 's/^WAKE_ACK_REQUIRED: after handling completes run bin\/jg-wake-drain.sh //p' "$1"; }
+refused_ids() { grep -E '^wake drain: [0-9a-f]{64}$|^[0-9a-f]{64}$' "$1" | sed 's/^wake drain: //'; }
+
+# A home whose acknowledgement nobody could land: three tasks, each signalled by many rows, re-drained three times while
+# their logs grew. Every outcome is held and refused once, a handled outcome is never asked for again, and one locked pass
+# classifies every outcome presented before a cut while one presented after it stays open.
+test_outcomes_are_held_once_and_classified_in_bulk_before_a_cut() {
+  local dir state round t i ack cut n log size reads
+  dir=$(make_case bulk-cut); state="$dir/state"
+  for round in 1 2 3; do
+    for t in a b c; do
+      i=1
+      while [ "$i" -le 4 ]; do
+        printf 'done [at=1795000000]: %s round %s item %s report\n' "$t" "$round" "$i" >> "$state/$t.status"
+        append_wake "$state" signal "$t.status" "signal: $t.status" >/dev/null || fail "could not queue a signal row"
+        i=$((i + 1))
+      done
+    done
+    JG_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/out$round" 2> "$dir/err$round" || fail "drain $round failed: $(tail -3 "$dir/err$round")"
+  done
+  n=$(jq '[.[].events[] | select(.kind | startswith("OUTCOME"))] | length' "$state/.wake-status-main.json")
+  [ "$n" = 36 ] || fail "36 report lines across 36 signal rows and 3 drains are held as $n outcomes, not once each"
+  [ "$(jq '[.[].events[].id] | (length == (unique | length))' "$state/.wake-status-main.json")" = true ] \
+    || fail "the journal holds an outcome id twice"
+  ack=$(ack_cmd "$dir/err3")
+  # shellcheck disable=SC2086 # the drain's own two-flag acknowledgement command
+  if JG_STATE_OVERRIDE="$state" "$DRAIN" $ack 2> "$dir/refused"; then fail "open outcomes were acknowledged"; fi
+  grep -F 'acknowledgement refused; 36 outcome(s) in 3 task(s)' "$dir/refused" >/dev/null \
+    || fail "one refusal did not count every open outcome of every task: $(head -2 "$dir/refused")"
+  [ "$(refused_ids "$dir/refused" | wc -l)" -le 20 ] || fail "the refusal listed more than 20 ids"
+  [ "$(refused_ids "$dir/refused" | sort | uniq -d | wc -l)" -eq 0 ] || fail "the refusal named an id twice"
+  grep -F '16 more not listed' "$dir/refused" >/dev/null || fail "the refusal did not count the ids it left out"
+  grep -F -- '--outcomes-before' "$dir/refused" >/dev/null || fail "the refusal did not name the bulk command"
+  [ "$(wc -c < "$dir/refused")" -lt 4096 ] || fail "the refusal printed $(wc -c < "$dir/refused") bytes"
+
+  # A handled outcome is never asked for again.
+  i=$(sed -n 's/^OUTCOME_REQUIRED: //p' "$dir/out3" | head -1)
+  JG_STATE_OVERRIDE="$state" "$DRAIN" --outcome "$i" --classified 'test read it' >/dev/null || fail "could not classify $i"
+  JG_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/out4" 2> "$dir/err4" || fail "the replay drain failed"
+  if grep -F "OUTCOME_REQUIRED: $i" "$dir/out4" >/dev/null; then fail "a handled outcome was required again"; fi
+  grep -F 'outcome(s) an earlier drain showed still need a relay or classification' "$dir/out4" >/dev/null \
+    || fail "the replay did not count the open outcomes it no longer shows"
+
+  # The cut: everything presented so far, then one report presented after it.
+  cut=$(( $(jq '[.[].events[].at] | max' "$state/.wake-status-main.json") + 1 ))
+  while [ "$(date +%s)" -lt "$cut" ]; do sleep 0.2; done
+  printf 'done [at=1795000001]: a report after the cut\n' >> "$state/b.status"
+  append_wake "$state" signal b.status "signal: b.status" >/dev/null || fail "could not queue the late signal row"
+  JG_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/out5" 2> "$dir/err5" || fail "the late drain failed"
+  log="$dir/jq-reads.log"; : > "$log"
+  make_counting_jq "$dir/fakebin" "$log"
+  size=$(wc -c < "$state/.wake-status-main.json" | tr -d '[:space:]')
+  PATH="$dir/fakebin:$PATH" JG_STATE_OVERRIDE="$state" "$DRAIN" --outcomes-before "$cut" --classified 'bulk: read in the session digest' \
+    > "$dir/bulk" 2>&1 || fail "the bulk classification failed: $(cat "$dir/bulk")"
+  grep -F "classified 35 outcome(s) presented before $cut" "$dir/bulk" >/dev/null \
+    || fail "the bulk pass did not classify the 35 open outcomes before the cut: $(cat "$dir/bulk")"
+  reads=$(count_reads_over "$log" "$((size / 2))")
+  [ "$reads" -le 2 ] || fail "the bulk pass read the journal $reads times; it must be one pass"
+  [ "$(jq '[.[].events[] | select(.disposition.reference == "bulk: read in the session digest")] | length' "$state/.wake-status-main.json")" = 35 ] \
+    || fail "the bulk pass did not record its one reason on every outcome"
+  ack=$(ack_cmd "$dir/err5")
+  # shellcheck disable=SC2086
+  if JG_STATE_OVERRIDE="$state" "$DRAIN" $ack 2> "$dir/refused2"; then fail "the outcome after the cut was acknowledged unhandled"; fi
+  grep -F 'acknowledgement refused; 1 outcome(s) in 1 task(s)' "$dir/refused2" >/dev/null \
+    || fail "the outcome after the cut is not the one left open: $(head -2 "$dir/refused2")"
+  i=$(refused_ids "$dir/refused2")
+  JG_STATE_OVERRIDE="$state" "$DRAIN" --outcome "$i" --relayed 'test relay' >/dev/null || fail "could not relay the late outcome"
+  # shellcheck disable=SC2086
+  JG_STATE_OVERRIDE="$state" "$DRAIN" $ack 2> "$dir/ack.err" || fail "the acknowledgement still refused: $(head -3 "$dir/ack.err")"
+  if JG_STATE_OVERRIDE="$state" "$DRAIN" --outcomes-before "$cut" --classified ' ' >/dev/null 2>&1; then fail "a blank bulk reason passed"; fi
+  if JG_STATE_OVERRIDE="$state" "$DRAIN" --outcomes-before soon --classified 'x' >/dev/null 2>&1; then fail "a non-epoch cut passed"; fi
+  pass "36 outcomes over 37 rows are held once, refused in one bounded list, and one pass before the cut leaves only the late one"
+}
+
 test_big_journal_is_read_a_bounded_number_of_times_and_acks
 test_a_real_append_after_presentation_still_refuses
 test_a_rewrite_after_presentation_still_refuses
 test_a_flooded_home_prints_a_bounded_page_and_acks
+test_outcomes_are_held_once_and_classified_in_bulk_before_a_cut
 
 echo "# jg-wake-drain-status-ack.test.sh: all assertions passed"

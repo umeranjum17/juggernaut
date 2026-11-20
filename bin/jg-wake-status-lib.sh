@@ -10,6 +10,11 @@
 # (JG_WAKE_STATUS_TASKS) and write it back once: a pass over the whole journal for
 # every signal row outlasts the caller's time bound, the drain is killed before
 # the new endpoint is saved, and the next ack refuses an unchanged status file.
+# Each event is held once per id and carries .at, the epoch of the drain that first
+# presented it, so --outcomes-before classifies every outcome presented before a cut
+# in one pass (an event from a journal written before .at existed counts as older
+# than any cut). An outcome with a disposition is never asked for again, and a
+# refused acknowledgement counts every open outcome at once and lists a bounded page.
 
 jg_wake_status_index() { # JG_WAKE_STATUS_DATA -> JG_WAKE_STATUS_TASKS[task]=record
   local names recs i=0 name
@@ -48,6 +53,7 @@ jg_wake_status_load() {
       (.ident | type == "string") and (.end | type == "number" and . >= 0 and floor == .) and
       (.events | type == "array" and all(.[]; (.id | test("^[0-9a-f]{64}$")) and
         (.kind == "STATUS" or .kind == "ACTION" or .kind == "OUTCOME" or .kind == "OUTCOME ACTION") and (.line | type == "string") and
+        (.at == null or (.at | type == "number" and . >= 0 and floor == .)) and
         (.disposition == null or (.disposition | (.kind == "relayed" or .kind == "classified") and (.reference | test("\\S")))))) and
       (.seqs | type == "array" and all(.[]; type == "number" and . > 0 and floor == .)))' >/dev/null \
       || { printf 'wake drain: invalid status journal %s\n' "$JG_WAKE_STATUS_FILE" >&2; return 1; }
@@ -74,10 +80,13 @@ jg_wake_status_print_task() { # <task> <record>
     .events as $all | ([($all | length) - $room, 0] | max) as $cut | $all[$cut:] as $shown |
     ($shown | length),
     ($shown[] | "wake annotation: \(.kind): \($t).status: \(.line)",
-      (if .kind | startswith("OUTCOME") then "OUTCOME_REQUIRED: \(.id)" else empty end)),
+      (if (.kind | startswith("OUTCOME")) and .disposition == null then "OUTCOME_REQUIRED: \(.id)" else empty end)),
     (if $cut > 0 then "wake annotation: \($t).status: \($cut) earlier event(s) not shown, "
       + "\($all[:$cut] | map(select((.kind | startswith("OUTCOME")) and .disposition == null and .shown != true)) | length) of them outcomes, "
-      + "classified as not shown; the full text stays in state/\($t).status" else empty end)') || return 1
+      + "classified as not shown; the full text stays in state/\($t).status"
+      + ($all[:$cut] | map(select((.kind | startswith("OUTCOME")) and .disposition == null and .shown == true)) | length
+        | if . > 0 then "; \(.) outcome(s) an earlier drain showed still need a relay or classification" else "" end)
+      else empty end)') || return 1
   shown=${out%%$'\n'*}
   JG_WAKE_STATUS_RECORD=$(printf '%s' "$JG_WAKE_STATUS_RECORD" | jq -c --argjson room "$shown" '
     (.events | length) as $n | .events |= to_entries | .events |= map(
@@ -88,7 +97,8 @@ jg_wake_status_print_task() { # <task> <record>
 }
 
 jg_wake_status_present() { # <raw actor rows> <status snapshot>
-  local rows=$1 snapshot=$2 _epoch seq kind key _payload task end ident offset data lines record printed='' tasks cap
+  local rows=$1 snapshot=$2 _epoch seq kind key _payload task end ident offset data lines record printed='' tasks cap now
+  now=$(date +%s) || return 1
   # Each signalled task gets an equal share of JG_WAKE_ANNOTATION_CAP events (default 40), at most JG_WAKE_STATUS_TASK_CAP
   # (default 10) and at least one, so a late task is never starved by an early one and the replay stays bounded.
   local JG_WAKE_STATUS_ROOM=${JG_WAKE_STATUS_TASK_CAP:-10}
@@ -118,19 +128,21 @@ jg_wake_status_present() { # <raw actor rows> <status snapshot>
       # Include the physical home, file identity and span start in the id.
       # A rotated file or a different home cannot reuse a handled outcome.
       data=$(printf '%s' "$lines" | perl -MDigest::SHA=sha256_hex -MJSON::PP -MEncode=decode_utf8 -e '
-        my ($home,$task,$ident,$pos)=@ARGV; my @events;
+        my ($home,$task,$ident,$pos,$now)=@ARGV; my @events;
         while (my $line=<STDIN>) {
           my $start=$pos; $pos+=length($line); chomp $line;
           next unless $line =~ /\S/;
           my $action=$line =~ /^(blocked|needs-decision)(?:[\s:]|$)/i;
           my $outcome=$line =~ /^(done|failed)(?:[\s:]|$)|\b(report|pr|landed)\b|https:\/\/\S+\/pull\//i;
           my $kind=$outcome ? ($action ? "OUTCOME ACTION" : "OUTCOME") : $action ? "ACTION" : "STATUS";
-          push @events,{id=>sha256_hex(join("\0",$home,$task,$ident,$start,$line)),kind=>$kind,line=>decode_utf8($line)};
+          push @events,{id=>sha256_hex(join("\0",$home,$task,$ident,$start,$line)),kind=>$kind,line=>decode_utf8($line),at=>$now+0};
         }
         print JSON::PP->new->utf8->encode(\@events);
-      ' "$(cd "$STATE" && pwd -P)" "$task" "$ident" "$offset") || return 1
+      ' "$(cd "$STATE" && pwd -P)" "$task" "$ident" "$offset" "$now") || return 1
+      # An id already held is the same line at the same offset of the same file: keep the held event and its disposition.
       record=$(printf '%s\n%s\n' "$record" "$data" | jq -cs --arg i "$ident" --argjson e "$end" \
-        '.[0].ident=$i | .[0].end=$e | .[0].events += .[1] | .[0]') || return 1
+        '(.[0].events | map({key: .id, value: true}) | from_entries) as $held
+         | .[0].ident=$i | .[0].end=$e | .[0].events += [.[1][] | select($held[.id] | not)] | .[0]') || return 1
     elif [ -e "$STATE/$task.status" ] || [ -L "$STATE/$task.status" ]; then
       printf 'wake drain: cannot present signalled status %s safely\n' "$task" >&2
       return 1
@@ -150,7 +162,7 @@ EOF
   done
   jg_wake_status_unindex || return 1
   if [ -n "$printed" ]; then
-    printf 'OUTCOME_HANDLING: use bin/jg-wake-drain.sh --outcome ID --relayed REFERENCE or --classified REASON before acknowledgement.\n' || return 1
+    printf 'OUTCOME_HANDLING: use bin/jg-wake-drain.sh --outcome ID --relayed REFERENCE or --classified REASON before acknowledgement, or --outcomes-before %s --classified REASON for every outcome presented so far.\n' "$((now + 1))" || return 1
   fi
   jg_wake_status_save
 }
@@ -170,8 +182,23 @@ jg_wake_status_handle() { # <id> <relayed|classified> <reference|reason>
   jg_wake_status_save
 }
 
+# Classify every open outcome first presented before <cut> with one reason, in one pass over the journal.
+jg_wake_status_classify_before() { # <cut epoch> <reason>
+  local cut=$1 reason=$2 out
+  case "$cut" in ''|*[!0-9]*) return 2 ;; esac
+  [[ "$reason" = *[![:space:]]* ]] || return 2
+  jg_wake_status_load || return 1
+  out=$(printf '%s' "$JG_WAKE_STATUS_DATA" | jq -c --argjson cut "$cut" --arg r "$reason" '
+    def open: (.kind | startswith("OUTCOME")) and .disposition == null and (.at // 0) < $cut;
+    ([.[]?.events[]? | select(open)] | length),
+    map_values(.events |= map(if open then .disposition = {kind: "classified", reference: $r} else . end))') || return 1
+  JG_WAKE_STATUS_DATA=${out#*$'\n'}
+  jg_wake_status_save || return 1
+  printf 'wake drain: classified %s outcome(s) presented before %s\n' "${out%%$'\n'*}" "$cut"
+}
+
 jg_wake_status_ack() { # <check|commit> <actor row file> <cutoff>
-  local phase=$1 rows=$2 cutoff=$3 _epoch seq kind key _payload task record unresolved ident size path
+  local phase=$1 rows=$2 cutoff=$3 _epoch seq kind key _payload task record unresolved='' ident size path
   local -A task_seqs=() task_checked=()
   jg_wake_status_load && jg_wake_status_index || return 1
   if [ "$phase" = check ]; then
@@ -205,11 +232,9 @@ jg_wake_status_ack() { # <check|commit> <actor row file> <cutoff>
           return 1
         fi
       fi
-      unresolved=$(printf '%s' "$record" | jq -r '.events[] | select((.kind | startswith("OUTCOME")) and .disposition == null) | .id') || return 1
-      if [ -n "$unresolved" ]; then
-        printf 'wake drain: acknowledgement refused; relay or classify each outcome first:\n%s\n' "$unresolved" >&2
-        return 1
-      fi
+      unresolved+=$(printf '%s' "$record" | jq -r --arg t "$task" \
+        '.events[] | select((.kind | startswith("OUTCOME")) and .disposition == null) | "\(.id)\t\($t)"') || return 1
+      unresolved+=$'\n'
     elif [ -z "${task_checked[$task]+x}" ]; then
       task_checked[$task]=1
       JG_WAKE_STATUS_TASKS[$task]=$(printf '%s' "$record" | jq -c --argjson n "$cutoff" \
@@ -218,5 +243,16 @@ jg_wake_status_ack() { # <check|commit> <actor row file> <cutoff>
   done <<EOF
 $JG_WAKE_STATUS_ACK_ROWS
 EOF
+  if [[ "$unresolved" = *[![:space:]]* ]]; then
+    # One refusal for every open outcome in the batch, each id once and at most 20 listed.
+    printf '%s' "$unresolved" | awk -F '\t' -v cut="$(($(date +%s) + 1))" '
+      NF >= 2 && !seen[$1]++ { n++; if (!(($2) in tasks)) { tasks[$2] = 1; t++ } if (n <= 20) ids = ids $1 "\n" }
+      END {
+        printf "wake drain: acknowledgement refused; %d outcome(s) in %d task(s) need a relay or classification first:\n%s", n, t, ids
+        if (n > 20) printf "wake drain: %d more not listed\n", n - 20
+        printf "wake drain: handle each with --outcome ID --relayed REFERENCE|--classified REASON, or classify every outcome presented so far with bin/jg-wake-drain.sh --outcomes-before %s --classified REASON\n", cut
+      }' >&2
+    return 1
+  fi
   [ "$phase" != commit ] || { jg_wake_status_unindex && jg_wake_status_save; }
 }

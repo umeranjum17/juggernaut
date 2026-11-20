@@ -9,5 +9,6 @@ Record a mixture of relay references and classification reasons through the drai
 Require unknown ids, blank dispositions, foreign-home ids and foreign-actor ids to refuse.
 After acknowledgement, append fresh lines and signal again; require only the new span to appear and require a fresh disposition for its outcome.
 Also cover an append between presentation and acknowledgement, file rotation and an older cutoff.
+`tests/jg-wake-drain-status-ack.test.sh` (captured as `status-ack.log`) drives a backlog of three tasks re-drained without acknowledgement: each outcome is held once, one bounded refusal counts every open outcome, a handled outcome is not asked for again, and `--outcomes-before` classifies every outcome presented before a cut in one pass while a later one stays open.
 Interrupted-output and branch-grant fault injection remain outside this journey; existing actor eligibility and cursor suites own those integration boundaries.
 Save the real transcript, queue states and steps.json under done-done's evidence directory.
