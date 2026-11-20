@@ -1725,6 +1725,26 @@ jg_lock_release() {
   rmdir "$lockdir" 2>/dev/null || true
 }
 
+# jg_lock_reap_temp <dir> <mktemp-prefix>...
+#
+# The caller holds the lock that serializes every writer of these temp files.
+# A writer that was killed hard (SIGKILL, OOM, a group kill after its deadline)
+# never ran its EXIT trap, so the files it was holding stay in <dir> for good.
+# Under the lock no live writer exists, so each `<prefix>.XXXXXX` file (the
+# six-character mktemp suffix, so `<prefix>-x.XXXXXX` and `<prefix>.lock` are never
+# matched) is a leftover and is removed. Prints nothing and never fails.
+jg_lock_reap_temp() {
+  local dir=$1 prefix leftover
+  shift
+  for prefix in "$@"; do
+    for leftover in "$dir/$prefix".??????; do
+      [ -f "$leftover" ] && [ ! -L "$leftover" ] || continue
+      rm -f -- "$leftover" 2>/dev/null || true
+    done
+  done
+  return 0
+}
+
 jg_meta_lock_path() {
   local meta=$1 dir base id
   dir=${meta%/*}

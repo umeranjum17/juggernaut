@@ -102,4 +102,24 @@ took=$(( $(now_ms) - start ))
 [ "$(runs)" -eq 1 ] || fail "T3: wanted 1 run, got $(runs)"
 note "T3 call=${took}ms runs=$(runs)"
 pass "T3: a call without --best-effort waits for its refresh (${took} ms)"
+# T4: a refresh killed hard leaves its temp files, and the next refresh removes them.
+# The stand-in producer kills its own refresh worker with SIGKILL, so no EXIT trap runs.
+KILLER="$TMP_ROOT/killer-producer.sh"
+cat > "$KILLER" <<'STUB'
+#!/usr/bin/env bash
+kill -9 "$PPID"
+sleep 5
+STUB
+chmod +x "$KILLER"
+quiesce
+env PATH="$HOME_DIR/fakebin:$PATH" JG_HOME="$HOME_DIR" JG_STATE_OVERRIDE="$STATE" \
+  JG_DATA_OVERRIDE="$HOME_DIR/data" JG_HOME_SUMMARY_PRODUCER="$KILLER" \
+  "$ROOT/bin/jg-home-summary-refresh.sh" >/dev/null 2>&1 && fail "T4: the killed refresh reported success"
+leaked=$(find "$STATE" -maxdepth 1 \( -name '.home-summary.json.??????' -o -name '.home-summary-error.??????' \) | wc -l | tr -d '[:space:]')
+[ "$leaked" -ge 2 ] || fail "T4: the killed refresh left $leaked temp files, wanted at least 2 (the leak was not reproduced)"
+refresh || fail "T4: the next refresh exited non-zero"
+left=$(find "$STATE" -maxdepth 1 \( -name '.home-summary.json.??????' -o -name '.home-summary-error.??????' \) | wc -l | tr -d '[:space:]')
+[ "$left" -eq 0 ] || fail "T4: $left temp files were left after the next refresh"
+note "T4 leaked_after_kill=$leaked left_after_next_refresh=$left"
+pass "T4: a hard-killed refresh leaks $leaked temp files and the next refresh removes them"
 [ -z "${DONE_DONE_EVIDENCE_ROOT:-}" ] || cp "$EVIDENCE" "$DONE_DONE_EVIDENCE_ROOT/summary-refresh-async.log"

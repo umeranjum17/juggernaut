@@ -20,6 +20,8 @@
 # timeout owner bounds the complete refresh with JG_HOME_SUMMARY_TIMEOUT
 # (default 60 seconds). No reader can observe temporary output through the
 # ledger path.
+# A refresh killed hard cannot run its cleanup, so each refresh removes the
+# temp files such a run left (jg_lock_reap_temp) once it holds the lock.
 #
 # With --best-effort, a failure is appended to the bounded home-local
 # state/.home-summary-refresh.log when available, with stderr as the bounded
@@ -188,6 +190,8 @@ home_summary_refresh_once() {
     jg_lock_acquire_wait "$REFRESH_LOCK"
   fi
   HOME_SUMMARY_LOCK_HELD=1
+  # A refresh killed hard never ran its EXIT trap; holding the lock, no other writer of these exists.
+  jg_lock_reap_temp "$STATE" .home-summary.json .home-summary-error
   home_summary_publish || return 1
   if [ "$BEST_EFFORT" -eq 1 ] && [ -e "$DIRTY_MARK" ]; then
     rm -f -- "$DIRTY_MARK"
