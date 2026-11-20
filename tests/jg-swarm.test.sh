@@ -2,8 +2,9 @@
 # tests/jg-swarm.test.sh - bin/jg-swarm.sh starts a swarm from a plan file, on real stores with strict intake, a Main home
 # and a lead home, no model turn. Stand-ins log the send and the card post (the card stand-in files the design row the real
 # post files). Cases: 1 refusals write nothing; 2 the start files, approves, briefs and arms; 3 the chain with the real hold
-# check; 4 safe twice and a resume; 5 the route dry run refuses after the plan rows. JG_BEADS_TEST_BD and
-# JG_BEADS_TEST_DOLT name the pinned builds; the suite skips without them.
+# check; 4 safe twice and a resume; 5 the route dry run refuses after the plan rows; 6 the start returns at once and the run goes
+# on detached, and a start while a run holds the lock does nothing; 7 a run stopped part way is resumed by the next start. Cases 1 to 5
+# run the body in the foreground (--wait). JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT name the pinned builds; the suite skips without them.
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -74,7 +75,12 @@ while [ \$# -gt 0 ]; do case \$1 in --raised-by) raised=\$2 ;; --title) title=\$
 echo "card-\$n"
 SH
 chmod +x "$T/send" "$T/card"
-start() {  # <home> <plan.json> [<args>]
+start() {  # <home> <plan.json> [<args>]: the foreground run, as the start ran before it detached
+  local h=$1 p=$2
+  shift 2
+  at "$h" "$SWARM" start "$p" --harness claude --model sonnet --effort medium --wait "$@"
+}
+bgstart() {  # <home> <plan.json> [<args>]: the start as a caller runs it
   local h=$1 p=$2
   shift 2
   at "$h" "$SWARM" start "$p" --harness claude --model sonnet --effort medium "$@"
@@ -196,15 +202,101 @@ mkworld "$W5"; mkplan "$W5/in"
 M=$W5/main L=$W5/lead
 : > "$L/config/backlog-intake-loose"
 jg_test_add "$L" jg-plan "[feature] The plan"
-jq -n '{plan: "jg-plan", slices: [{id: "e", title: "Filed ahead of the start", owner_home: "lead1", project: "proj", size: "S", risk: "Low", depends_on: [], files: ["bin/e.sh"], machine: null}]}' > "$W5/pre.json"
-at "$L" env JG_ROW_OWNER=lead1 "$ROOT/bin/jg-plan-file.sh" "$W5/pre.json" --owner lead1 >/dev/null || fail "the slice was not filed ahead"
+for _ in 1 2; do   # two rows of the plan with slice e's title and no plan_slice: which one is the slice? (a stop twice, or a hand filing)
+  at "$L" env JG_ROW_OWNER=lead1 "$ROOT/bin/jg-backlog.sh" add --parent jg-plan "[feature] Make part e of it" --repo proj --priority 2 \
+    --body "$(printf '## Captain\nx\n## Ask\nx\n## Why\nx\n## Done when\nx\n## Acceptance Criteria\nx\n')" >/dev/null || fail "the row was not filed ahead"
+done
 strict "$W5"
 before_lead=$(row_ids "$L")
 out=$(start "$M" "$W5/in/plan.json"); rc=$?
 assert_equals 1 "$rc" "a dry run refusal must exit 1: $out"
-assert_contains "$out" "already" "the filer's refusal must be named"
+assert_contains "$out" "which one is the slice" "the filer's refusal must be named"
 assert_equals "starting|checked copied plan-rows" "$(jq -r '"\(.state)|\(.steps | join(" "))"' "$M/data/swarm/jg-plan/swarm.json")" "the record must stop at plan-rows"
 assert_equals "jg-plan jg-plan-word-d jg-plan-word-f " "$(row_ids "$M")" "Main must hold the plan row and the word rows, no slice"
 assert_equals "$(printf '%s' "$before_lead" | tr ' ' '\n' | sed '/^$/d' | { cat; echo jg-plan-word-f; } | sort | tr '\n' ' ')" "$(row_ids "$L")" "the lead must gain only its word row"
 
-pass "swarm start: refusals write nothing; files, approves, briefs and arms; the chain starts each slice in its turn; safe twice and resumable; the dry run refuses after the plan rows"
+# --- the detached run -----------------------------------------------------------------------------------------------------------
+# <plan dir>: the pid the run's lock records (the test started that run), once the lock is taken; empty after <s> seconds.
+lock_pid() {
+  local _ p
+  for _ in $(seq 1 "${2:-100}"); do
+    p=$(cat "$1/.run.lock/pid" 2>/dev/null) && [ -n "$p" ] && { printf '%s\n' "$p"; return 0; }
+    sleep 0.1
+  done
+  return 1
+}
+reap_on_exit() {  # <pid>: the suite's cleanup stops the run's process group, as it does for a trunk-landing job
+  printf '%s %s\n' "$1" "$(jg_test_pid_identity "$1" 2>/dev/null)" >> "$JG_TEST_DETACHED_REGISTRY"
+}
+wait_state() {  # <plan dir> <state> <seconds>
+  local _
+  for _ in $(seq 1 "$3"); do
+    [ "$(jq -r '.state' "$1/swarm.json" 2>/dev/null)" = "$2" ] && return 0
+    sleep 1
+  done
+  return 1
+}
+# The row ids a finished start leaves in Main, once each: the plan row, the two word rows and Main's slice rows.
+expect_ids() {  # <the derived plan.json>
+  { printf '%s\n' jg-plan jg-plan-word-d jg-plan-word-f; jq -r '.slices[] | select(.owner_home == "main") | .row' "$1"; } | sort | tr '\n' ' '
+}
+
+# --- Case 6: the start returns at once and runs detached; a second start does nothing ------------------------------------------------
+W6=$T/w6
+mkworld "$W6"; strict "$W6"; mkplan "$W6/in"
+M=$W6/main L=$W6/lead DIR=$W6/main/data/swarm/jg-plan
+: > "$T/send.log"; : > "$T/card.log"; rm -f "$T/card.base"
+t0=$(date +%s)
+out=$(JG_SWARM_STEP_DELAY=3 bgstart "$M" "$W6/in/plan.json"); rc=$?
+t1=$(date +%s)
+assert_equals 0 "$rc" "a start with no --wait must exit 0: $out"
+[ $((t1 - t0)) -lt 10 ] || fail "the start must return within 10 s, it took $((t1 - t0)) s"
+assert_equals "swarm jg-plan: started in the background; follow it with bin/jg-swarm-check.sh status jg-plan" "$out" "the start line"
+RUNPID=$(lock_pid "$DIR") || fail "the background run never took its lock"
+reap_on_exit "$RUNPID"
+[ "$(jq -r '.state // "none"' "$DIR/swarm.json" 2>/dev/null || echo none)" != running ] || fail "the swarm must not be running yet: the start did not wait for the run"
+out=$(bgstart "$M" "$W6/in/plan.json"); rc=$?
+assert_equals 0 "$rc" "a start while a run holds the lock must exit 0: $out"
+assert_equals "swarm jg-plan: already running (log data/swarm/jg-plan/start.log)" "$out" "the second start must say it is already running"
+out=$(start "$M" "$W6/in/plan.json"); rc=$?
+assert_equals 0 "$rc" "a --wait start while a run holds the lock must exit 0: $out"
+assert_contains "$out" "already running" "a --wait start must say it is already running"
+wait_state "$DIR" running 120 || fail "the background run never reached running: $(cat "$DIR/start.log" 2>/dev/null)"
+assert_equals "checked copied plan-rows routed approved cards armed:main sent:lead1" "$(jq -r '.steps | join(" ")' "$DIR/swarm.json")" "the background run must record every step"
+assert_equals "$(expect_ids "$DIR/plan.json")" "$(row_ids "$M")" "Main must hold each row once after the start and the second start"
+assert_equals "1" "$(wc -l < "$T/send.log")" "the second start must send nothing more: one message to the lead"
+assert_equals "2" "$(wc -l < "$T/card.log")" "the second start must post no card more"
+[ ! -e "$DIR/.run.lock" ] || fail "a finished run must release its lock"
+out=$(bgstart "$M" "$W6/in/plan.json"); rc=$?
+assert_equals 2 "$rc" "a start of a running swarm must exit 2"
+assert_contains "$out" "status" "the refusal must name status"
+
+# --- Case 7: a run stopped part way is resumed by the next start -----------------------------------------------------------------------
+W7=$T/w7
+mkworld "$W7"; strict "$W7"; mkplan "$W7/in"
+M=$W7/main L=$W7/lead DIR=$W7/main/data/swarm/jg-plan
+: > "$T/send.log"; : > "$T/card.log"; rm -f "$T/card.base"
+out=$(bgstart "$M" "$W7/in/plan.json") || fail "start: $out"
+RUNPID=$(lock_pid "$DIR") || fail "the background run never took its lock"
+reap_on_exit "$RUNPID"
+for _ in $(seq 1 600); do   # after the second slice of Main is filed: the plan row, two word rows, two slices
+  [ "$(rows_in "$M")" -ge 5 ] && break
+  kill -0 "$RUNPID" 2>/dev/null || break
+done
+kill -KILL -- "-$RUNPID" 2>/dev/null || kill -KILL "$RUNPID" 2>/dev/null
+sleep 1
+kill -0 "$RUNPID" 2>/dev/null && fail "the run must be stopped"
+assert_equals "starting" "$(jq -r '.state' "$DIR/swarm.json")" "a stopped run must leave the record at starting"
+case " $(jq -r '.steps | join(" ")' "$DIR/swarm.json") " in *" approved "*) fail "the stop came after the run ended; the test needs it part way" ;; esac
+out=$(bgstart "$M" "$W7/in/plan.json"); rc=$?
+assert_equals 0 "$rc" "the start after a stop must exit 0: $out"
+assert_equals "swarm jg-plan: started in the background; follow it with bin/jg-swarm-check.sh status jg-plan" "$out" "the resume start line"
+RUNPID=$(lock_pid "$DIR") && reap_on_exit "$RUNPID"
+wait_state "$DIR" running 120 || fail "the resumed run never reached running: $(cat "$DIR/start.log" 2>/dev/null)"
+assert_equals "$(expect_ids "$DIR/plan.json")" "$(row_ids "$M")" "every slice of Main must be filed once after the resume"
+assert_equals "$({ printf '%s\n' jg-plan jg-plan-word-f; jq -r '.slices[] | select(.owner_home == "lead1") | .row' "$DIR/plan.json"; } | sort | tr '\n' ' ')" "$(row_ids "$L")" \
+  "every slice of the lead must be filed once after the resume"
+assert_equals "1" "$(wc -l < "$T/send.log")" "the lead must be told once"
+assert_equals "2" "$(wc -l < "$T/card.log")" "each card must be posted once"
+
+pass "swarm start: refusals write nothing; files, approves, briefs and arms; the chain starts each slice in its turn; safe twice and resumable; the dry run refuses after the plan rows; the start runs detached and a stopped run resumes"

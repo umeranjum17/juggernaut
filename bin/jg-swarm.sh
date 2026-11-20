@@ -2,18 +2,25 @@
 # jg-swarm.sh - Main starts a swarm: files, approves and briefs every slice of a plan file, posts each owner-only
 # question as a board card, and arms every owner home, so each slice starts on the first beat after its bases land.
 #
-# Usage: jg-swarm.sh start <plan.json> --harness <h> --model <m> --effort <e> [--agents <n>] [--with-others]
+# Usage: jg-swarm.sh start <plan.json> --harness <h> --model <m> --effort <e> [--agents <n>] [--with-others] [--wait]
 #        jg-swarm.sh --help
 #
-# Main only. The plan file is the input form of bin/jg-swarm-plan-check.sh. Prints
+# Main only. The plan file is the input form of bin/jg-swarm-plan-check.sh.
+# `start` runs every check that writes nothing in the foreground (a refusal is printed, exit 2), then starts the work as a
+# background job that no caller's time bound can stop, and returns within seconds:
+#   swarm <plan>: started in the background; follow it with bin/jg-swarm-check.sh status <plan>
+# The job is `jg-swarm.sh run <the same arguments>` in its own systemd user unit (jg-swarm-<plan>-<epoch>) when systemd-run exists,
+# else under setsid nohup; its output is data/swarm/<plan>/start.log. It holds data/swarm/<plan>/.run.lock for its whole life, so
+# `start` while a job runs prints `swarm <plan>: already running (log data/swarm/<plan>/start.log)` and exits 0, and `start` after a
+# stopped job resumes it: a record left at `starting` files nothing twice. `start --wait` runs the job in the foreground and prints
 #   swarm <plan>: <n> slices filed and approved in <owner>[, <owner>...]; <k> wait for the owner
-# Exit codes: 0 done; 1 failed after a write (data/swarm/<plan>/swarm.json says what is done); 2 refused, nothing written.
+# Exit codes: 0 started, already running, or done; 1 failed after a write (data/swarm/<plan>/swarm.json says what is done);
+# 2 refused, nothing written.
 #
 # Refused before the first write: a plan the plan check refuses (its `refused:` lines are printed), a slice whose project
-# has yolo off in its owner's home, a Squad Lead home, a swarm already running, a bad flag.
+# has yolo off in its owner's home, a Squad Lead home, a swarm that is running or finished, a bad flag.
 #
-# Writes data/swarm/<plan>/swarm.json (state starting, then running) and records each finished step in `steps`, so a
-# second run of a record left at `starting` resumes and files nothing twice:
+# Writes data/swarm/<plan>/swarm.json (state starting, then running) and records each finished step in `steps`:
 #   checked    plan check, yolo of each owner home, not a Squad Lead home (before the first write)
 #   copied     orders/ (read-only copies) and plan.json, the derived plan: the input plus on each slice body, order_path,
 #              order_sha256, goal, and on an owner-word slice word_row; at the top main_home and owner_homes
@@ -25,7 +32,7 @@
 #   armed:main bin/jg-swarm-arm.sh in Main, when Main owns a slice
 #   sent:<id>  one message to each lead: run bin/jg-swarm-arm.sh on the derived plan
 # Test hooks: JG_SWARM_SEND (default bin/jg-send.sh), JG_SWARM_CARD (default bin/jg-question-card.sh),
-# JG_SWARM_ARM (default bin/jg-swarm-arm.sh).
+# JG_SWARM_ARM (default bin/jg-swarm-arm.sh), JG_SWARM_STEP_DELAY=<s> (the job sleeps that long before each step it runs).
 # shellcheck disable=SC2016 # jq programs hold $vars on purpose.
 set -euo pipefail
 
@@ -37,6 +44,8 @@ DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
 . "$SCRIPT_DIR/jg-compat.sh"
 # shellcheck source=bin/jg-squad-lead-registry-lib.sh disable=SC1091
 . "$SCRIPT_DIR/jg-squad-lead-registry-lib.sh"
+# shellcheck source=core/trunk-landing/unit.sh disable=SC1091
+. "$SCRIPT_DIR/../core/trunk-landing/unit.sh"
 export JG_HOME
 SEND=${JG_SWARM_SEND:-$SCRIPT_DIR/jg-send.sh}
 CARD=${JG_SWARM_CARD:-$SCRIPT_DIR/jg-question-card.sh}
@@ -46,12 +55,14 @@ usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' 
 refuse() { printf 'jg-swarm: %s\n' "$*" >&2; exit 2; }
 die() { printf 'jg-swarm: %s\n' "$*" >&2; exit 1; }
 
+USAGE="usage: jg-swarm.sh start <plan.json> --harness <h> --model <m> --effort <e> [--agents <n>] [--with-others] [--wait]"
+MODE=''  # start: the checks, then the job; run: the job (what start starts in the background)
 case ${1-} in
   -h | --help) usage; exit 0 ;;
-  start) shift ;;
-  *) refuse "usage: jg-swarm.sh start <plan.json> --harness <h> --model <m> --effort <e> [--agents <n>] [--with-others]" ;;
+  start | run) MODE=$1; shift ;;
+  *) refuse "$USAGE" ;;
 esac
-IN='' HARNESS='' MODEL='' EFFORT='' AGENTS='' OTHERS=()
+IN='' HARNESS='' MODEL='' EFFORT='' AGENTS='' OTHERS=() WAIT=0
 while [ $# -gt 0 ]; do
   case $1 in
     -h | --help) usage; exit 0 ;;
@@ -60,13 +71,14 @@ while [ $# -gt 0 ]; do
       case $1 in --harness) HARNESS=$2 ;; --model) MODEL=$2 ;; --effort) EFFORT=$2 ;; --agents) AGENTS=$2 ;; esac
       shift ;;
     --with-others) OTHERS=(--with-others) ;;
+    --wait) [ "$MODE" = start ] || refuse "--wait belongs to start"; WAIT=1 ;;
     -*) refuse "unknown flag $1" ;;
     *) [ -z "$IN" ] || refuse "one plan file only"; IN=$1 ;;
   esac
   shift
 done
 [ -n "$IN" ] && [ -n "$HARNESS" ] && [ -n "$MODEL" ] && [ -n "$EFFORT" ] \
-  || refuse "usage: jg-swarm.sh start <plan.json> --harness <h> --model <m> --effort <e> [--agents <n>] [--with-others]"
+  || refuse "$USAGE"
 [ -r "$IN" ] || refuse "cannot read $IN"
 case $AGENTS in '' | [1-9] | [1-9]*[0-9]) ;; *) refuse "--agents is a whole number above 0" ;; esac
 case $AGENTS in *[!0-9]*) refuse "--agents is a whole number above 0" ;; esac
@@ -105,13 +117,51 @@ while IFS=$'\t' read -r owner project slice; do
   [ "${mode##* }" = on ] || refuse "refused: $slice: project $project has yolo off in $owner (${mode:-no posture}); a swarm needs yolo on"
 done < <(jq -r '.slices[] | [.owner_home, .project, .id] | @tsv' "$IN")
 
-# --- 2. the record ------------------------------------------------------------------------------------------------------
+# --- 2. the job: started in the background, or run here -------------------------------------------------------------------
 DIR=$DATA/swarm/$PLAN
-REC=$DIR/swarm.json DERIVED=$DIR/plan.json
+REC=$DIR/swarm.json DERIVED=$DIR/plan.json LOCK=$DIR/.run.lock LOG=$DIR/start.log
+lock_held() {  # a run of this plan is alive: its lock names a live pid
+  local pid
+  pid=$(cat "$LOCK/pid" 2>/dev/null) || return 1
+  case $pid in '' | *[!0-9]*) return 1 ;; esac
+  kill -0 "$pid" 2>/dev/null
+}
+already_running() { printf 'swarm %s: already running (log data/swarm/%s/start.log)\n' "$PLAN" "$PLAN"; exit 0; }
+refuse_if_past_starting() {
+  [ ! -e "$REC" ] || [ "$(jq -r '.state' "$REC")" = starting ] \
+    || refuse "swarm $PLAN is already $(jq -r '.state' "$REC"); see: bin/jg-swarm-check.sh status $PLAN"
+}
+detach() {  # `run` with this call's arguments, outside this caller's process tree and time bound
+  local run=("$SCRIPT_DIR/jg-swarm.sh" run "$IN" --harness "$HARNESS" --model "$MODEL" --effort "$EFFORT") sd name keep=()
+  [ -z "$AGENTS" ] || run+=(--agents "$AGENTS")
+  run+=(${OTHERS[@]+"${OTHERS[@]}"})
+  mkdir -p "$DIR"
+  sd=$(unit_tool systemd-run)
+  if [ -n "$sd" ]; then
+    while IFS= read -r name; do keep+=("--setenv=$name"); done < <(compgen -e | grep -E '^(JG_|BEADS_|BD_|DOLT_|XDG_|LC_|LANG$|PATH$|HOME$|TMPDIR$)')
+    "$sd" --user --collect --quiet --unit="jg-swarm-${PLAN//[^A-Za-z0-9_.-]/_}-$(date +%s)" --working-directory="$PWD" "${keep[@]}" \
+      --property=StandardOutput=append:"$LOG" --property=StandardError=append:"$LOG" "${run[@]}" >/dev/null 2>&1 && return 0
+  fi
+  setsid nohup "${run[@]}" >> "$LOG" 2>&1 < /dev/null &
+}
+lock_held && already_running
+refuse_if_past_starting
+if [ "$MODE" = start ] && [ "$WAIT" = 0 ]; then
+  detach
+  printf 'swarm %s: started in the background; follow it with bin/jg-swarm-check.sh status %s\n' "$PLAN" "$PLAN"
+  exit 0
+fi
+# The job: it holds the lock for its whole life; a lock left by a dead run is taken over by the next one.
+# shellcheck source=bin/jg-wake-lib.sh disable=SC1091
+. "$SCRIPT_DIR/jg-wake-lib.sh"
 mkdir -p "$DIR"
-if [ -e "$REC" ]; then
-  [ "$(jq -r '.state' "$REC")" = starting ] || refuse "swarm $PLAN is already $(jq -r '.state' "$REC"); see: bin/jg-swarm-check.sh status $PLAN"
-else
+jg_lock_try_acquire "$LOCK" || already_running
+trap 'jg_lock_release "$LOCK"' EXIT
+step_delay() { [ -z "${JG_SWARM_STEP_DELAY:-}" ] || sleep "$JG_SWARM_STEP_DELAY"; }
+refuse_if_past_starting
+
+# --- 3. the record ------------------------------------------------------------------------------------------------------
+if [ ! -e "$REC" ]; then
   owners_json=$(for owner in "${OWNERS[@]}"; do
     task=$owner
     jq -n --arg o "$owner" --arg h "$(home_of "$owner")" --arg t "$task" '{($o): {home: $h, task: $t}}'
@@ -129,12 +179,13 @@ mark() { jq --arg s "$1" '.steps += [$s]' "$REC" > "$REC.new" && mv "$REC.new" "
 edit_plan() { jq "$@" "$DERIVED" > "$DERIVED.new" && mv "$DERIVED.new" "$DERIVED"; }
 slice_field() { jq -r --arg s "$1" --arg f "$2" '.slices[] | select(.id == $s) | .[$f] // empty' "$DERIVED"; }
 
-# --- 3. copied ----------------------------------------------------------------------------------------------------------
+# --- 4. copied ----------------------------------------------------------------------------------------------------------
 sections() {  # <ask> <why> <done when> <acceptance>: the five sections of a row (interface section 6)
   printf '## Captain\n%s\n\n## Ask\n%s\n\n## Why\n%s\n\n## Done when\n%s\n\n## Acceptance Criteria\n%s\n' "${INTENT:0:300}" "$1" "$2" "$3" "$4"
 }
 INTENT=$(jq -r '.intent' "$IN")
 if ! done_step copied; then
+  step_delay
   mkdir -p "$DIR/orders"
   cp "$IN" "$DERIVED"
   edit_plan --arg h "$JG_HOME" '. + {main_home: $h, owner_homes: {}}'
@@ -159,7 +210,7 @@ if ! done_step copied; then
   mark copied
 fi
 
-# --- 4. plan-rows -------------------------------------------------------------------------------------------------------
+# --- 5. plan-rows -------------------------------------------------------------------------------------------------------
 add_row() {  # <owner> <id> <title> <project> <ask>: skipped when the row exists
   local owner=$1 id=$2
   in_home "$owner" "$SCRIPT_DIR/jg-backlog.sh" show "$id" >/dev/null 2>&1 && return 0
@@ -168,6 +219,7 @@ add_row() {  # <owner> <id> <title> <project> <ask>: skipped when the row exists
       "Every slice row of plan $PLAN is done.")" >/dev/null || die "could not file $id in $owner"
 }
 if ! done_step plan-rows; then
+  step_delay
   first_project=$(jq -r '.slices[0].project' "$IN")
   PLAN_TITLE=$(jq -r '.title' "$IN")
   for owner in main "${OWNERS[@]}"; do
@@ -182,8 +234,9 @@ if ! done_step plan-rows; then
   mark plan-rows
 fi
 
-# --- 5. routed ----------------------------------------------------------------------------------------------------------
+# --- 6. routed ----------------------------------------------------------------------------------------------------------
 if ! done_step routed; then
+  step_delay
   out=$("$SCRIPT_DIR/jg-plan-route.sh" "$DERIVED" --dry-run 2>&1) || die "$out"
   out=$("$SCRIPT_DIR/jg-plan-route.sh" "$DERIVED" 2>&1) || die "$out"
   while read -r _ id _ row; do
@@ -193,15 +246,17 @@ if ! done_step routed; then
   mark routed
 fi
 
-# --- 6. approved --------------------------------------------------------------------------------------------------------
+# --- 7. approved --------------------------------------------------------------------------------------------------------
 if ! done_step approved; then
+  step_delay
   "$SCRIPT_DIR/jg-plan-gate.sh" approve "$DERIVED" --harness "$HARNESS" --model "$MODEL" --effort "$EFFORT" >/dev/null \
     || die "the approval of plan $PLAN failed"
   mark approved
 fi
 
-# --- 7. cards -----------------------------------------------------------------------------------------------------------
+# --- 8. cards -----------------------------------------------------------------------------------------------------------
 if ! done_step cards; then
+  step_delay
   while IFS=$'\t' read -r id owner; do
     [ -z "$(slice_field "$id" card)" ] || continue
     route=main
@@ -216,14 +271,15 @@ if ! done_step cards; then
   mark cards
 fi
 
-# --- 8. armed:main, sent:<lead> -----------------------------------------------------------------------------------------
+# --- 9. armed:main, sent:<lead> -----------------------------------------------------------------------------------------
 ARM_ARGS=()
 [ -z "$AGENTS" ] || ARM_ARGS=(--agents "$AGENTS")
 for owner in "${OWNERS[@]}"; do
   if [ "$owner" = main ]; then
-    done_step armed:main || { "$ARM" "$DERIVED" ${ARM_ARGS[@]+"${ARM_ARGS[@]}"} ${OTHERS[@]+"${OTHERS[@]}"} >/dev/null || die "arming Main failed"; mark armed:main; }
+    done_step armed:main || { step_delay; "$ARM" "$DERIVED" ${ARM_ARGS[@]+"${ARM_ARGS[@]}"} ${OTHERS[@]+"${OTHERS[@]}"} >/dev/null || die "arming Main failed"; mark armed:main; }
   else
     done_step "sent:$owner" || {
+      step_delay
       "$SEND" "$owner" "Swarm $PLAN is routed to you. Run: bin/jg-swarm-arm.sh $DERIVED${AGENTS:+ --agents $AGENTS}" >/dev/null \
         || die "the message to $owner was not sent"
       mark "sent:$owner"
@@ -231,7 +287,7 @@ for owner in "${OWNERS[@]}"; do
   fi
 done
 
-# --- 9. running ---------------------------------------------------------------------------------------------------------
+# --- 10. running ---------------------------------------------------------------------------------------------------------
 jq '.state = "running"' "$REC" > "$REC.new" && mv "$REC.new" "$REC"
 printf 'swarm %s: %s slices filed and approved in %s; %s wait for the owner\n' "$PLAN" "$(jq '.slices | length' "$DERIVED")" \
   "$(printf '%s\n' "${OWNERS[@]}" | paste -sd, - | sed 's/,/, /g')" "$(jq '[.slices[] | select(.owner_word != null)] | length' "$DERIVED")"
