@@ -269,7 +269,7 @@ if prs is None:
 if not outcome_homes:
     limitations.append('No home has a ticket record yet.')
 for name in unreadable:
-    limitations.append(f'{name} has no readable Beads store; its tickets are not counted.')
+    limitations.append(f'{name} has no readable tickets tables; its tickets are not counted.')
 for name, home in homes.items():
     if home is None:
         limitations.append(f'{name} is a registered remote home; its task outcomes are not readable locally.')

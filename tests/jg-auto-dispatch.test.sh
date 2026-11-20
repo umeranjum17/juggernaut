@@ -19,8 +19,6 @@ CHECK="$ROOT/core/auto-dispatch/dispatch.sh"
 make_home() {  # <dir>
   local d=$1
   mkdir -p "$d/state" "$d/config" "$d/data"
-  printf '%s\n' "$d/store" > "$d/config/beads-dir"   # kept until bin/jg-backlog-lib.sh stops asking for a store path
-  : > "$d/config/one-engine-read"   # kept until bin/jg-backlog-spawnable.sh reads the tables without it
   printf -- '- proj [local-trunk] - the one project (added 2026-11-01)\n' > "$d/data/projects.md"
   python3 - "$d" <<'PY'
 import json, sys

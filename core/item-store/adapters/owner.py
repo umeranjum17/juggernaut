@@ -139,7 +139,7 @@ def backlog_holds(home):
         env.pop(k, None)
     r = subprocess.run([os.path.join(ROOT, "bin", "jg-backlog.sh"), "questions", "--json"], env=env, capture_output=True, text=True)
     if r.returncode != 0:
-        return [] if "needs its store" in r.stderr else None      # a home with no hold file holds nothing; any other refusal is unreadable
+        return None      # a refusal is unreadable, never an empty list
     try:
         rows = json.loads(r.stdout or "[]")
     except ValueError:

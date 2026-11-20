@@ -7,7 +7,7 @@ Each prints what bd printed for the same store: the keys of an export row in its
 answer needs what the tables do not hold raises NotSupported instead of printing a guess:
   - a `show` row whose edge points at a ticket this home does not hold, or a linked row with --include-dependents or --brief-deps: bd's form is not recorded;
   - `comments` of a text other than one plain line of at most 60 characters, or of several comments: bd renders the text through a markdown renderer;
-  - a gate row: await_type is not kept; history, events and provenance entries that were never recorded in ticket_event;
+  - history and events entries that were never recorded in ticket_event (a ticket with no provenance entries answers []);
   - `schema`, `memories`, `swarm validate`, `q` and `provenance record` (they create or read what no table holds), and text output.
 A `show --json` row ends with a Dolt `revision` hash of the row's content: it is not derivable and is not printed.
 Python stdlib only."""
@@ -300,9 +300,13 @@ def epic_status(f):
 
 
 def gate_list(f):
-    if any(t["issue_type"] == "gate" and t["status"] != "closed" for t in Store().tickets()):
-        raise NotSupported("a gate's await_type is not kept")
-    return "null\n", 0
+    """gate list --json: the open gate rows as list rows, or null when there are none. Every gate the tables hold was made by
+    `gate create`, whose one recorded type is human, so a gate row with no await_type kept is a human gate."""
+    store = Store()
+    links, counts, comments = context(store)
+    gates = [dict(export_row(t, store, links, counts, comments), await_type=t["await_type"] or "human")
+             for t in store.tickets() if t["issue_type"] == "gate" and t["status"] != "closed"]
+    return (dumps(gates) if gates else "null") + "\n", 0
 
 
 def comments(f):
@@ -332,9 +336,13 @@ def stream(verb, f):
     """provenance log --json: the entries ticket_event recorded for the ticket."""
     if "--json" not in f.sw or len(f.pos) < 1:
         raise NotSupported(verb)
-    entries = Store().stream(f.pos[-1], "provenance")
-    if not entries:
-        raise NotSupported(verb + ": no entries recorded for the ticket")
+    store = Store()
+    entries = store.stream(f.pos[-1], "provenance")
+    if not entries:   # a ticket with no log answers an empty list; a ticket this home does not hold is an error
+        if store.con.execute("SELECT 1 FROM ticket WHERE home = ? AND id = ?", (store.home, f.pos[-1])).fetchone() is None:
+            sys.stderr.write("Error: no issue found matching %r\n" % f.pos[-1])
+            return "", 1
+        return "[]\n", 0
     return dumps(entries) + "\n", 0
 
 

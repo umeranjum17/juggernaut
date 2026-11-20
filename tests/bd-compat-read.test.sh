@@ -14,7 +14,6 @@ ln -s "$py" "$t/path/python3"          # the one tool on PATH
 fail=0
 # Forms no table can answer: each prints `known-gap <form>: <reason>` without failing the test; any other mismatch fails.
 declare -A GAPS=(
-  ['check']='bd printed the paths and versions of the machine it ran on; the admin family answers check from the tables'
   ['comments']="bd renders a comment's text through a terminal markdown renderer: only a one-line plain text of at most 60 characters is answered (the recorded shape); a longer, multi-line or markdown text (headings, lists, emphasis, code) and a ticket with several comments are not recorded"
 )
 # Seeds, as the tables hold them (a store export row may carry `events` and `provenance` arrays; memory has a row per key):

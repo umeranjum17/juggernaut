@@ -180,7 +180,7 @@ def task(row, rows, native=None):
         "repo": repos[0] if repos else "-", "priority": row.get("priority", "-"),
         "created": "-" if closed else day(row.get("created_at")), "closed": day(row.get("closed_at")),
         "deps": ",".join("blocked-by:" + d for d in deps if not is_gate(rows.get(d, {}))) or "none",
-        "links": ",".join(links) or "none", "body": row.get("description", ""),
+        "links": ",".join(links) or "none", "body": row.get("description") or "",
         "mentions": mentions(row), "delivery_state": meta.get("delivery_state", "-"),
         # unproved: the owner's bypass passed the ticket over proving (bypassed_at), so the board says no proof ran.
         "unproved": "yes" if meta.get("bypassed_at") else "-",

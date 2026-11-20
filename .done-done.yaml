@@ -152,7 +152,7 @@ journeys:
     timeout: 10m
   typed-wait-writer:
     tier: local
-    command: JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-wait-write.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    command: bash tests/jg-wait-write.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
     timeout: 10m
   spawn-admit:
     tier: local
@@ -578,7 +578,7 @@ journeys:
     timeout: 10m
   model-stats:
     tier: local
-    command: JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-model-stats.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1 && printf '{"target":{"version":"juggernaut@%s"},"start":"two fixture homes, each with its own Beads store holding tickets that were started, relaunched, landed and closed","steps":["run the per-model statistics reader over both homes","read each model row","confirm that reading the statistics writes no outcome file"],"result":"the log shows the per-model table read from the tickets, with finished, merged, merge rate, time to merge and model switches per model"}\n' "$(git rev-parse --short HEAD)" > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
+    command: bash tests/jg-model-stats.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1 && printf '{"target":{"version":"juggernaut@%s"},"start":"two fixture homes, each with its own Beads store holding tickets that were started, relaunched, landed and closed","steps":["run the per-model statistics reader over both homes","read each model row","confirm that reading the statistics writes no outcome file"],"result":"the log shows the per-model table read from the tickets, with finished, merged, merge rate, time to merge and model switches per model"}\n' "$(git rev-parse --short HEAD)" > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
     timeout: 10m
   ticket-move:
     tier: local
@@ -1147,15 +1147,12 @@ journeys:
   jg-backlog-row-show:
     tier: local
     command: bash tests/jg-backlog-row-show.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-beads-journal:
+  jg-backlog-handoff-move:
     tier: local
-    command: bash tests/jg-beads-journal.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    command: bash tests/jg-backlog-handoff-move.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-beads-lane-s7:
     tier: local
     command: bash tests/jg-beads-lane-s7.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-beads-migrate:
-    tier: local
-    command: bash tests/jg-beads-migrate.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-beads-native-followup:
     tier: local
     command: bash tests/jg-beads-native-followup.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -1168,9 +1165,6 @@ journeys:
   jg-beads-parent:
     tier: local
     command: bash tests/jg-beads-parent.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-beads-move:
-    tier: local
-    command: bash tests/jg-beads-move.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-beads-ticket-stage:
     tier: local
     command: bash tests/jg-beads-ticket-stage.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -1517,7 +1511,7 @@ journeys:
     command: bash tests/jg-spawn-core.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   answer-route:
     tier: local
-    command: JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-answer-route.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    command: bash tests/jg-answer-route.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-spawn-lock-deferral:
     tier: local
     command: JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-spawn-lock-deferral.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

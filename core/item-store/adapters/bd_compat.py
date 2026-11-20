@@ -9,13 +9,13 @@ STORE = os.path.dirname(HERE)
 sys.path.insert(0, STORE)
 import itemdb  # noqa: E402
 
-TWO_WORD = {"dep", "gate", "label", "config", "backup", "comments", "swarm"}
+TWO_WORD = {"dep", "gate", "label", "comments", "swarm"}
 FAMILIES = {
     "read": "show list ready blocked export history comments events provenance q types statuses schema memories epic swarm-validate gate-list".split(),
     "create": "create comment comments-add import remember gate-create".split(),
     "update": ["update", "gate-resolve"],
     "link": "close delete defer undefer dep-add dep-remove label-add label-remove".split(),
-    "admin": "init check serve heartbeat config-set backup-init backup-restore backup-sync".split(),
+    "admin": ["heartbeat"],
 }
 FAMILY_OF = {verb: fam for fam, verbs in FAMILIES.items() for verb in verbs}
 

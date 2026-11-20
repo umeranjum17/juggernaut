@@ -2,7 +2,7 @@
 # done-done journey: replay a stalled ready backlog in real time with the shipped timings.
 # A disposable main home and Squad Lead home each run the real bin/jg-watch.sh and
 # bin/jg-wake-drain.sh as a supervision loop over a copy of this checkout; the lead's
-# backlog is a real Beads backlog with one ready item and four free lanes, and nothing
+# backlog is its tickets tables with one ready item and four free lanes, and nothing
 # starts. Only the terminal (one idle lead pane), the board, and the steer and interrupt
 # endpoints are recorders, because a disposable lead has no live pane to type into.
 # Expected: the lead's ready-work wake at once, the backstop at 10 minutes (lead re-woken,
@@ -59,9 +59,9 @@ printf 'schema=jg-squad-lead-parent.v1\nroute=local\nparent_home=%s\n' "$M" > "$
 printf 'kind=squad_lead\nmode=squad_lead\nbackend=tmux\nwindow=fake:1\nharness=claude\nhome=%s\n' "$L" > "$M/state/lead1.meta"
 : > "$M/state/lead1.status"
 printf '4\n' > "$L/config/lane-target"
-# shellcheck source=core/lib/beads-test-env.sh
-. "$REPO/core/lib/beads-test-env.sh"
-core_beads_home "$FORK" "$L"
+# The home's backlog is its tickets tables: a config and data folder, loose intake, and the checkout's bin/ on PATH.
+mkdir -p "$L/config" "$L/data" && : > "$L/config/backlog-intake-loose"
+PATH=$FORK/bin:$PATH; export PATH
 JG_HOME="$L" "$FORK/bin/jg-backlog.sh" add jg-alpha "[feature] ship the routed fix" --priority 1 --body "users wait on the routed fix" >/dev/null || { echo "fixture: backlog add failed"; exit 1; }
 
 START=$(date +%s)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""jg-beads-read.py - the read facts the ticket adapter needs from a Beads store, each proved in data/ta-j1-beads-facts/facts.md.
+"""jg-beads-read.py - the read facts the ticket adapter needs from this home's tickets tables.
 
 Usage: jg-beads-read.py rev <id>...
        jg-beads-read.py list [--after <id>] [--limit <1-500>]
@@ -7,33 +7,29 @@ Usage: jg-beads-read.py rev <id>...
        jg-beads-read.py board <closed-since|--all>
        jg-beads-read.py history <id>
 
-It only reads, and every call goes through core/item-store/adapters/bd_compat.py, which answers from the ticket tables of JG_HOME.
-rev prints one `<id><TAB><rev>` line per id; a missing id is refused. bd's own `revision` moves on every write to the row but not on a
-label, dependency, parent or comment write, so rev is a 16-hex digest of that revision with the labels, the edges both ways and the
-comment count. Compare it for equality only.
-list walks the store with a cursor: one JSON object `{"rows": [...], "next": <id or null>}`, rows in id order, every row as `bd show --json`
-gives it plus its `rev`. Closed rows and gates are left out, as `bd list` leaves them out, and `--after` takes the previous page's `next`.
-show prints a JSON array of the rows as `bd show --json` gives them, each with its `rev`; a missing id exits 4, and a page of list that cannot be shown exits 5,
+It only reads, and every verb answers from the ticket tables of JG_HOME's item store, opened read-only.
+rev prints one `<id><TAB><rev>` line per id; a missing id is refused. A row's `revision` is the seq of its last ticket_change, which an edge
+write to another row does not move, so rev is a 16-hex digest of that revision with the labels, the edges both ways and the comment count.
+Compare it for equality only.
+list walks the rows with a cursor: one JSON object `{"rows": [...], "next": <id or null>}`, rows in id order, every row as show gives it.
+Closed rows and gates are left out, and `--after` takes the previous page's `next`.
+show prints a JSON array of the named rows, each with its `rev`; a missing id exits 4, and a page of list that cannot be shown exits 5,
 so a caller can tell a ticket that is not there, and a list that would be short, from a store that cannot be read.
 board prints a JSON array of every row the fleet board can show: each open row and each row closed at or after <closed-since> (a UTC `YYYY-MM-DDTHH:MM:SSZ`),
-gates left out, in id order. Each row has the shape and the `rev` that `show` gives it, so a ticket read here and read again with `show` carries the same rev,
-but one read of the tables covers the whole store, because `bd list` and `bd show` open the store once per call and took minutes on a store of thousands of rows.
-With --all, that same query includes older closed rows for ticket maintenance and card reconciliation.
-history prints one line per commit that changed the row, newest first, `<commit><TAB><date><TAB><kind><TAB><changed columns>`, from
-ticket_change: `bd history` lists every commit of the store, so it is not used.
+gates left out, in id order, in one query. Each row has the shape and the `rev` that `show` gives it, so a ticket read here and read again with `show`
+carries the same rev. With --all, that same query includes older closed rows for ticket maintenance and card reconciliation.
+history prints one line per change that altered the row, newest first, `<source><TAB><date><TAB><kind><TAB><changed columns>`, from ticket_change.
 """
 import hashlib
 import json
 import os
 import re
 import sqlite3
-import subprocess
 import sys
 import datetime
 
 sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.abspath(__file__))
-BD = [sys.executable, "-I", os.path.join(HERE, "..", "core", "item-store", "adapters", "bd_compat.py")]
 IDENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 MAX_PAGE = 500
 DEFAULT_PAGE = 50
@@ -48,16 +44,6 @@ def ident(value):
     if not IDENT.match(value):
         die("not a ticket id: %r" % value)
     return value
-
-
-def run(args, fail_code=None, absent=None):
-    """The wrapper's stdout. A failure whose output contains `absent` is a ticket that is not there, so it returns "[]" for show to name."""
-    done = subprocess.run(BD + args, capture_output=True, text=True)
-    if done.returncode != 0 and absent and absent in done.stdout + done.stderr:
-        return "[]"
-    if done.returncode != 0:
-        die("%s failed (%d): %s" % (" ".join(args[:2]), done.returncode, done.stderr.strip() or done.stdout.strip()), fail_code or done.returncode)
-    return done.stdout
 
 
 class Tables(sqlite3.Connection):
@@ -95,13 +81,14 @@ def table_ids(con, after, limit):
                                       (con.home, after, limit + 1))]
 
 
-def table_parts(con, since):
+def table_parts(con, since, ids=None):
     """What board_query's one SELECT gives, as the same tagged objects, from ticket, link and ticket_change. The tables keep no comments, so no `comments` part;
-    the revision is the seq of the ticket's last change and updated_at its time."""
+    the revision is the seq of the ticket's last change and updated_at its time. With ids, those rows alone, gates included."""
     shown = {}
+    which = ("t.id in (%s)" % ",".join("?" * len(ids))) if ids else "t.issue_type <> 'gate' and t.ephemeral = 0"
     for r in con.execute("select t.*, (select max(seq) from ticket_change c where c.home = t.home and c.id = t.id) as seq,"
                          " (select at from ticket_change c where c.home = t.home and c.id = t.id order by seq desc limit 1) as last"
-                         " from ticket t where t.home = ? and t.issue_type <> 'gate' and t.ephemeral = 0 order by t.id", (con.home,)):
+                         " from ticket t where t.home = ? and " + which + " order by t.id", (con.home, *(ids or ()))):
         closed = stamp(r["closed_at"])
         if since is None or r["status"] != "closed" or (closed or "") >= since.replace(" ", "T") + "Z":
             shown[r["id"]] = r
@@ -152,14 +139,37 @@ def rev_of(row):
     return hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()[:16]
 
 
+def table_rows(con, since=None, ids=None):
+    """The rows table_parts names, each in the shape `show` prints, with its rev, in id order."""
+    parts = table_parts(con, since, ids)
+    rows = {p["id"]: dict(p, labels=[], dependencies=[], dependents=[], comment_count=0) for p in parts if p["t"] == "row"}
+    for p in parts:
+        if p["t"] == "label" and p["id"] in rows:
+            rows[p["id"]]["labels"].append(p["label"])
+        elif p["t"] == "edge":
+            if p["from"] in rows:
+                rows[p["from"]]["dependencies"].append({"id": p["to"], "status": p["status"], "issue_type": p["issue_type"], "dependency_type": p["type"]})
+                if p["type"] == "parent-child":
+                    rows[p["from"]]["parent"] = p["to"]
+            if p["to"] in rows:
+                rows[p["to"]]["dependents"].append({"id": p["from"], "dependency_type": p["type"]})
+    out = []
+    for key in sorted(rows):
+        row = rows[key]
+        row.pop("t")
+        if row.get("closed_at") is None:
+            row.pop("closed_at", None)
+        row["labels"].sort()
+        row["rev"] = rev_of(row)
+        out.append(row)
+    return out
+
+
 def show(ids, fail_code=None):
-    rows = json.loads(run(["show"] + ids + ["--json", "--include-dependents", "--brief-deps"], fail_code, "not found") or "[]")
-    found = {r["id"]: r for r in rows}
-    missing = [i for i in ids if i not in found]
+    rows = table_rows(table_store(), ids=ids)
+    missing = [i for i in ids if i not in {r["id"] for r in rows}]
     if missing:
         die("no such ticket: %s" % ", ".join(missing), fail_code or 4)
-    for r in rows:
-        r["rev"] = rev_of(r)
     return rows
 
 
@@ -202,31 +212,7 @@ def cmd_board(args):
     if len(args) != 1 or args[0] != '--all' and not re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", args[0]):
         die("usage: board <closed-since as YYYY-MM-DDTHH:MM:SSZ|--all>")
     since = None if args[0] == '--all' else args[0].replace("T", " ").rstrip("Z")
-    con = table_store()
-    parts = table_parts(con, since)
-    rows = {p["id"]: dict(p, labels=[], dependencies=[], dependents=[], comment_count=0) for p in parts if p["t"] == "row"}
-    for p in parts:
-        if p["t"] == "label" and p["id"] in rows:
-            rows[p["id"]]["labels"].append(p["label"])
-        elif p["t"] == "comments" and p["id"] in rows:
-            rows[p["id"]]["comment_count"] = p["n"]
-        elif p["t"] == "edge":
-            if p["from"] in rows:
-                rows[p["from"]]["dependencies"].append({"id": p["to"], "status": p["status"], "issue_type": p["issue_type"], "dependency_type": p["type"]})
-                if p["type"] == "parent-child":
-                    rows[p["from"]]["parent"] = p["to"]
-            if p["to"] in rows:
-                rows[p["to"]]["dependents"].append({"id": p["from"], "dependency_type": p["type"]})
-    out = []
-    for key in sorted(rows):
-        row = rows[key]
-        row.pop("t")
-        if row.get("closed_at") is None:
-            row.pop("closed_at", None)
-        row["labels"].sort()
-        row["rev"] = rev_of(row)
-        out.append(row)
-    print(json.dumps(out))
+    print(json.dumps(table_rows(table_store(), since)))
 
 
 def cmd_history(args):

@@ -1,8 +1,4 @@
-backup init	2	admin	-
-backup restore --force	1	admin	-
-backup sync	2	admin	-
 blocked --json	1661	read	list
-check	83	read	-
 close	14	update	done
 close --force --reason	13	update	done
 close --reason	17	update	done
@@ -11,7 +7,6 @@ comment --json --stdin	3	create	-
 comments	3	read	-
 comments --json	103	read	-
 comments add -f	3	create	-
-config set	2	update	-
 create - --body-file --json --labels --metadata --status --title	1	create	add
 create --defer --force --id	1	create	add
 create --deps --description --force --id --metadata --title -l -p	1	create	add
@@ -50,7 +45,7 @@ create --silent --title --type	1	create	add
 create --title	1	create	add
 create -t	1	create	add
 defer --until	1	update	-
-delete --force	1	update	-
+delete --force	1	link	-
 dep add	34	link	-
 dep add --type	32	link	-
 dep add -t	1	link	-
@@ -67,9 +62,6 @@ heartbeat	63	admin	-
 history --events	2	read	-
 history --events --json	11	read	-
 import	5	create	-
-init --force --prefix	1	admin	-
-init --prefix	80	admin	-
-init --prefix --server	1	admin	-
 list	12	read	list
 list --all --include-gates --json --limit	3606	read	list
 list --all --include-gates --json --limit --readonly	1	read	list
@@ -97,7 +89,6 @@ ready --json --limit	30	read	ready
 ready --json --parent	2	read	ready
 remember --key	1	create	-
 schema	1	read	-
-serve	1	admin	-
 show	4	read	show
 show --brief-deps --include-dependents --json	127	read	show
 show --json	2094	read	show

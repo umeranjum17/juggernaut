@@ -90,10 +90,8 @@ open_request() {  # <id>: whether a marked request to this lead still awaits its
 }
 
 quiet_secs() {  # <id> <lead-home>: seconds since its newest record changed
-  local f m newest=0 store
-  store=$(jg_backlog_beads_store "$2/config" 2>/dev/null) || store=
-  for f in "$STATE/$1.status" "$STATE/$1.inbox" "$STATE/$1.inbox/handled" "$store" "$2/state/.wake-queue"; do
-    [ -n "$f" ] || continue
+  local f m newest=0
+  for f in "$STATE/$1.status" "$STATE/$1.inbox" "$STATE/$1.inbox/handled" "$2/state/.wake-queue"; do
     m=$(jg_lock_path_mtime "$f") || continue
     [ "${m:-0}" -le "$newest" ] || newest=$m
   done

@@ -60,19 +60,11 @@ EOF
 chmod +x "$T/fakebin/tmux" "$T/fakebin/gh"
 : > "$T/tmux.log"
 
-# The backlog is a Beads store (pinned bd and dolt, run only through bin/jg-beads.sh): a spawn reads it
-# first and refuses a task with no item there, so the home gets its own store and the two spawned tasks
-# get their items.
-BD=${JG_BEADS_BD:-${JG_BEADS_TEST_BD:-$(command -v bd)}}
-DOLT=${JG_BEADS_DOLT:-${JG_BEADS_TEST_DOLT:-$(command -v dolt)}}
-[ -n "$BD" ] && [ -n "$DOLT" ] || fail "the pinned bd and dolt are required (bin/jg-bootstrap.sh install bd dolt)"
-mkdir -p "$T/beads"
-printf '%s\n' "$T/beads/.beads" > "$H/config/beads-dir"
-JG_BEADS_BD=$BD JG_BEADS_DOLT=$DOLT BEADS_DIR="$T/beads/.beads" "$REPO/bin/jg-beads.sh" init --prefix jg >/dev/null 2>&1 \
-  || fail "cannot create the Beads store"
+# The backlog is the home's tickets tables: a spawn reads it first and refuses a task with no item there,
+# so the two spawned tasks get their items. The fixture files them by their own words, not by strict intake.
+: > "$H/config/backlog-intake-loose"
 env_run() {
-  env JG_BEADS_BD="$BD" JG_BEADS_DOLT="$DOLT" \
-    JG_SPAWN_CORE_BIN="$T/spawn-core" JG_ROOT_OVERRIDE='' JG_HOME="$H" \
+  env JG_SPAWN_CORE_BIN="$T/spawn-core" JG_ROOT_OVERRIDE='' JG_HOME="$H" \
     JG_STATE_OVERRIDE="$H/state" JG_DATA_OVERRIDE="$H/data" JG_CONFIG_OVERRIDE="$H/config" \
     JG_PROJECTS_OVERRIDE="$T/projects" JG_SPAWN_NO_GUARD=1 JG_BACKEND=tmux \
     PATH="$T/fakebin:/usr/bin:/bin" "$@"

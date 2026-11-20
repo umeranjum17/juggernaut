@@ -19,7 +19,6 @@ fi
 exec $(python3 -c 'import sys; print(sys.executable)') "\$@"
 SH
 chmod +x "$T/bin/python3"
-printf '%s\n' "$T/store" > "$T/config/beads-dir"   # kept until bin/jg-backlog-lib.sh stops asking for a store path
 printf '%s\n' '{"id":"jg-open","title":"open one","status":"open","created_at":"2026-11-01T00:00:00Z","labels":["project:p"]}' > "$T/rows.jsonl"
 export JG_HOME=$T JG_STATE_OVERRIDE=$T/state CALLS=$T/calls
 python3 "$ROOT/core/item-store/adapters/tickets.py" import --home main "$T/rows.jsonl" >/dev/null || fail "the row did not import"

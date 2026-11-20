@@ -2,9 +2,13 @@
 
 run(argv, stdin_text) -> (stdout_text, exit_status); raises NotSupported for a form bd-forms.tsv does not record for this family,
 and for a recorded form whose answer the tables cannot hold. A link change is one tickets.change row of the dependent ticket,
-so the `link` table follows it. Answered: dep add (--type / -t: every type bd accepts), dep remove.
+so the `link` table follows it. Answered: dep add (--type / -t: every type bd accepts), dep remove, and delete <id>... --force:
+each ticket is dropped by one change row with no ticket (its links, comments and log go with it); a ticket linked to one of them
+is rewritten first, without its edge to it and with each mention of its id in the description as [deleted:<id>], as bd did.
+The answer is bd's: the counts of tickets, links, labels and log events removed and of tickets whose text changed; bd counted
+events from its own event table, which no export carried, so the tables count the log events they hold.
 Python stdlib only."""
-import os, sys, time
+import os, re, sys, time
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ADAPTERS = os.path.dirname(HERE)
@@ -64,7 +68,7 @@ def row_of(con, home_id, ident):
     c = tickets.copy_of(con, home_id, ident)
     if c is None:
         raise tickets.Refused("no issue found matching %r" % ident)
-    row = {k: c[k] for k in tickets.FIELDS + ("labels", "metadata", "ephemeral")}
+    row = {k: c[k] for k in tickets.FIELDS + ("labels", "metadata", "ephemeral", "comments")}   # the change rewrites the comment table
     row["id"] = ident
     row["dependencies"] = c["edges"]
     return row
@@ -111,9 +115,59 @@ def dep(argv):
     return text, 0
 
 
+def delete(argv):
+    ids = [a for a in argv[1:] if not a.startswith("-")]
+    if not ids or [a for a in argv[1:] if a.startswith("-")] != ["--force"]:
+        raise NotSupported(form_of(argv))
+    h = tickets.home()
+    home_id = tickets.itemdb.home_id(h)
+    st = tickets.open_tickets(h)
+    con = st.con
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        gone = list(dict.fromkeys(ids))
+        for ident in gone:
+            row_of(con, home_id, ident)   # refuses a ticket this home does not hold
+        marks = ",".join("?" * len(gone))
+        links = con.execute("SELECT count(*) FROM link WHERE home = ? AND (from_id IN (%s) OR to_id IN (%s))" % (marks, marks),
+                            (home_id, *gone, *gone)).fetchone()[0]
+        labels = sum(len(row_of(con, home_id, ident)["labels"]) for ident in gone)
+        events = con.execute("SELECT count(*) FROM ticket_event WHERE home = ? AND source = 'event' AND ticket_id IN (%s)" % marks,
+                             (home_id, *gone)).fetchone()[0]
+        near = [f for (f,) in con.execute(
+            "SELECT from_id FROM link WHERE home = ? AND to_id IN (%s) AND from_id NOT IN (%s) UNION "
+            "SELECT to_id FROM link WHERE home = ? AND from_id IN (%s) AND to_id NOT IN (%s) ORDER BY 1"
+            % (marks, marks, marks, marks), (home_id, *gone, *gone, home_id, *gone, *gone))]
+        mention = re.compile(r"(?<![A-Za-z0-9_.-])(%s)(?![A-Za-z0-9_-])" % "|".join(re.escape(i) for i in sorted(gone, key=len, reverse=True)))
+        texts = 0
+        for ident in near:
+            if tickets.copy_of(con, home_id, ident) is None:   # an edge to a ticket another home holds
+                continue
+            row = row_of(con, home_id, ident)
+            edges = [d for d in row["dependencies"] if d["depends_on_id"] not in gone]
+            text = mention.sub(r"[deleted:\1]", row.get("description") or "")
+            if text != (row.get("description") or ""):
+                row["description"], texts = text, texts + 1
+            elif edges == row["dependencies"]:
+                continue
+            row["dependencies"] = edges
+            write(st, home_id, "delete", row)
+        at, source = int(time.time()), "bd_compat:delete#%d" % time.time_ns()
+        for ident in gone:
+            con.execute("INSERT INTO ticket_change (at, home, id, verb, source, row) VALUES (?,?,?,?,?,NULL)", (at, home_id, ident, "delete", source))
+        con.execute("COMMIT")
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
+    return ("✓ Deleted %d issue(s)\n  Removed %d dependency link(s)\n  Removed %d label(s)\n  Removed %d event(s)\n"
+            "  Updated text references in %d issue(s)\n" % (len(gone), links, labels, events, texts)), 0
+
+
 def run(argv, stdin_text):
     if form_of(argv) not in recorded_forms():
         raise NotSupported(form_of(argv))
     if argv[:2] in (["dep", "add"], ["dep", "remove"]):
         return dep(argv)
+    if argv[:1] == ["delete"]:
+        return delete(argv)
     raise NotSupported(form_of(argv))

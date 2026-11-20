@@ -89,7 +89,7 @@ def h_metadata(t, value, call):
         raise Failed("--metadata: %s" % (str(e).splitlines() or ["invalid JSON"])[0])
     if not isinstance(meta, dict):
         raise Failed("--metadata must be a JSON object")
-    t["metadata"] = meta
+    t["metadata"] = dict(t["metadata"], **meta)   # bd merges the object's keys into the row's metadata; --unset-metadata removes one
 
 
 def h_set_metadata(t, value, call):
@@ -240,7 +240,7 @@ def check_close(t, store, home_id, call):
 def export_row(t):
     body = {k: t[k] for k in tickets.FIELDS}
     body.update(labels=t["labels"], metadata=t["metadata"], ephemeral=t["ephemeral"], id=t["id"],
-                dependencies=t["edges"])
+                dependencies=t["edges"], comments=t["comments"])   # the change rewrites the comment table: a row without them loses them
     return body
 
 

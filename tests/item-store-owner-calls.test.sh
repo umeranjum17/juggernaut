@@ -232,7 +232,6 @@ unset HH
 HB=$d/hb; LB=$d/lb
 for h in "$HB" "$LB"; do
   mkdir -p "$h/state" "$h/config" "$h/data"
-  printf '%s\n' "$h-store" > "$h/config/beads-dir"   # kept until bin/jg-backlog-lib.sh stops asking for a store path
   : > "$h/config/backlog-intake-loose"
 done
 : > "$HB/config/item-store"; : > "$LB/config/item-store"

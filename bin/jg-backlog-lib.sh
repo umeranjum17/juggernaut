@@ -9,17 +9,6 @@
 
 # Reads go through core/item-store/adapters/bd_compat.py, which answers each bd call from the tables; bin/jg-beads-view.py owns the
 # field mapping. A call names its home by JG_HOME, the parent of its config directory.
-# jg_backlog_beads_store stays for the callers outside this file that still ask whether a home names a store (slices c2 to c7 and s10 retire them).
-jg_backlog_beads_store() {  # <config_dir>: prints the BEADS_DIR, or refuses.
-  local store
-  store=$(tr -d '[:space:]' 2>/dev/null < "$1/beads-dir") || store=
-  if [ -z "$store" ]; then
-    printf 'jg-backlog: the beads backlog needs its store: put an absolute BEADS_DIR in %s/beads-dir\n' "$1" >&2
-    return 2
-  fi
-  printf '%s\n' "$store"
-}
-
 # One bd call, answered from <home>'s rows in the ticket tables.
 jg_backlog_bd() {  # <home> <bd verb> [args...]
   JG_HOME=$1 python3 -I "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../core/item-store/adapters/bd_compat.py" "${@:2}"

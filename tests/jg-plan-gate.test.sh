@@ -1,17 +1,11 @@
 #!/usr/bin/env bash
-# bin/jg-plan-gate.sh and core/plan-gate/check.sh through their real callers, on real Beads stores
-# (JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT name the pinned builds; the suite skips without them).
+# bin/jg-plan-gate.sh and core/plan-gate/check.sh through their real callers, on the homes' tickets tables.
 # A row of a lead's store that waits for a row of Main's store is not ready; one tick of the check closes the
 # gate when Main's row closes, and the row is ready. The same for a tool version. A plan's approval writes the
 # dispatch approval record on each slice of the file, in the home that owns it, and on no other row.
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-
-if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
-  printf 'skip: real store: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
-  exit 0
-fi
 
 GATE="$ROOT/bin/jg-plan-gate.sh" CHECK="$ROOT/core/plan-gate/check.sh" T=$(jg_test_tmproot jg-plan-gate)
 M=$T/main L=$T/lead
@@ -55,7 +49,7 @@ out=$(run "$M" "$CHECK" "$M") || fail "check: $out"
 case ",$(ready_in "$L")," in *",$LB,"*) fail "the row must stay gated while Main's row is open" ;; esac
 
 # Main's row closes; one tick of Main's check closes the lead's gate, and the row is ready.
-bd_ "$M" close "$MA" >/dev/null
+run "$M" "$ROOT/bin/jg-backlog.sh" 'done' "$MA" >/dev/null || fail "close Main's row"
 out=$(run "$M" "$CHECK" "$M") || fail "check: $out"
 assert_contains "$out" "closed" "the tick must say which gate it closed"
 case ",$(ready_in "$L")," in *",$LB,"*) ;; *) fail "the row must be ready after one tick, ready: $(ready_in "$L")" ;; esac

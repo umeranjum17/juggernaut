@@ -410,11 +410,6 @@ jg_pf_deliverable_problem() {
 
 # --- the promised contract --------------------------------------------------
 
-# A home keeps its promises in its Beads store, so a store is the whole requirement.
-jg_pf_backlog_tool() {  # <home>
-  jg_backlog_beads_store "$1/config" >/dev/null 2>&1
-}
-
 # jg_pf_obligation_json <home> <obligation-id>: the complete typed obligation
 # payload on stdout, empty when that home's backlog simply has no such
 # public-followup item, and a non-zero exit ONLY when the backlog could not be

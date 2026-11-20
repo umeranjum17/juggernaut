@@ -1,6 +1,6 @@
-# Beads ticket checks
+# Ticket checks
 
-Run `done-done run -- node journeys/tickets-beads-checks.mjs` with real Python on PATH, a registered task TMPDIR outside every Git tree and pinned installed `JG_BEADS_TEST_BD` / `JG_BEADS_TEST_DOLT` executables.
+Run `done-done run -- node journeys/tickets-beads-checks.mjs` with real Python on PATH and a registered task TMPDIR outside every Git tree.
 The [feature](../features/tickets-beads-checks.md) describes the isolated real-product journey, registration, 2,553-ticket timing, source preservation, repeat polls and historical cleanup safeguards.
 The run captures timing, registration, command logs, source/projection comparisons, resulting cards/state and steps in its sealed evidence directory.
 

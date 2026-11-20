@@ -12,8 +12,6 @@ set -u
 T=$(jg_test_tmproot jg-spawnable-scale)
 H=$T/home
 mkdir -p "$H/config" "$H/data" "$H/state"
-printf '%s\n' "$T/store" > "$H/config/beads-dir"   # kept until bin/jg-backlog-lib.sh stops asking for a store path
-: > "$H/config/one-engine-read"   # kept until bin/jg-backlog-spawnable.sh reads the tables without it
 printf -- '- demo [local-trunk] - the registered project (added 2026-11-01)\n' > "$H/data/projects.md"
 spawnable() { (cd "$H" && JG_HOME="$H" "$ROOT/bin/jg-backlog.sh" ready --spawnable); }
 seed() {  # <bulk row count>: the six small-board rows, the open decision card, and that many bulk rows, imported into the tables

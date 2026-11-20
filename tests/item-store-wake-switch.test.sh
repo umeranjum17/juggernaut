@@ -120,7 +120,6 @@ mkdir -p "$D/state/inbox"; printf 'id=1-abc\nsource=text\n--\nhello\n' > "$D/sta
 drain "$D" > "$W/d3.out" 2>&1
 eq c3-a-record-only-in-today-is-under-RECORD-DIVERGENCE "$(sed -n '/^RECORD DIVERGENCE/,$p' "$W/d3.out" | grep -c '^1-abc tell today=waiting store=none$')" 1
 E=$W/e; mkhome "$E" reads
-printf '%s\n' "$E-store" > "$E/config/beads-dir"   # kept until bin/jg-backlog-lib.sh stops asking for a store path
 rm -f "$E/config/item-store"
 env JG_HOME="$E" JG_STATE_OVERRIDE="$E/state" JG_DATA_OVERRIDE="$E/data" JG_CONFIG_OVERRIDE="$E/config" "$ROOT/bin/jg-captain-hold.sh" hold jg-a0004 --title "[captain-ask] store off" --reason "set with the store off" --repo e-pr >/dev/null 2>&1
 : > "$E/config/item-store"

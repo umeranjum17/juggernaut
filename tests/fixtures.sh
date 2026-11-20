@@ -208,8 +208,8 @@ jg_test_spawn_home() {
 }
 
 # jg_test_spawn_item <home> <id>
-# A spawn reads the backlog first: a home with no store refuses it, and so does a task with no item
-# there, so the fixture home gets both (tests/lib.sh jg_test_beads_home).
+# A spawn reads the backlog first and refuses a task with no item there, so the fixture home gets one
+# (tests/lib.sh jg_test_beads_home).
 # A Beads id has a prefix and a hyphen, so the fixture task ids do too.
 jg_test_spawn_item() {
   local home=$1 id=$2
@@ -219,7 +219,7 @@ jg_test_spawn_item() {
   if [ -e "$home/config" ] || [ -L "$home/config" ]; then [ -d "$home/config" ] && [ -x "$home/config" ] || return 0; fi
   # A hostile id is a case that spawn must refuse as an invalid task id before it reads any backlog, so there is no ticket to file.
   case $id in *[!A-Za-z0-9._-]*) return 0 ;; esac
-  [ -s "$home/config/beads-dir" ] || jg_test_beads_home "$home"   # kept: tests/lib.sh jg_test_beads_home writes the file
+  [ -e "$home/config/backlog-intake-loose" ] || jg_test_beads_home "$home"
   jg_test_backlog "$home" show "$id" >/dev/null 2>&1 || jg_test_add "$home" "$id" "[feature] Spawn fixture $id"
 }
 

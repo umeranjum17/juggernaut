@@ -221,7 +221,7 @@ jg_backlog_addressing() {  # <data-dir>
 }
 
 jg_backlog_transition_applies() {  # <config-dir> <data-dir> <kind>
-  local config=$1 authorized_data=$2 kind=$3
+  local authorized_data=$2 kind=$3
   JG_BACKLOG_TRANSITION_SKIP=
   if [ "$kind" = squad_lead ]; then
     JG_BACKLOG_TRANSITION_SKIP="squad_leads are not backlog items"
@@ -231,9 +231,6 @@ jg_backlog_transition_applies() {  # <config-dir> <data-dir> <kind>
     JG_BACKLOG_TRANSITION_ERROR="data directory cannot be resolved: $2"
     return 2
   }
-  if ! JG_BACKLOG_TRANSITION_ERROR=$(jg_backlog_beads_store "$config" 2>&1 >/dev/null); then
-    return 2
-  fi
   jg_backlog_source_present "$2" "$authorized_data" || return 2
   return 0
 }

@@ -89,7 +89,6 @@ assign() {  # <slug> [<project>]; the caller holds the lock
 # Open tickets as `since<TAB>slug<TAB>repo-less title`, oldest first.
 open_items() {
   local text
-  jg_backlog_beads_store "$CONFIG" >/dev/null 2>&1 || return 0
   text=$(jg_backlog_text "$CONFIG") || return 1
   printf '%s\n' "$text" | awk '
     /^## / { open = ($0 !~ /^## Done/); next }

@@ -10,7 +10,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | Juggernaut's code, private files, or project location | [JG_HOME](#jg_home) and [operational home layout](#operational-home-layout-and-state) |
 | Task windows and worker tools | [Runtime backend](#runtime-backend-configbackend--jg_backend) and [harness support](#harness-support) |
 | Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), [account outage fallbacks](#account-outage-fallbacks-configclaude-account-fallbacks), [Claude 1M context window](#claude-1m-context-window-configclaude-1m-accounts), [model allow-lists](#model-allow-lists-configmodel-allow-listjson), [worker tool exclusions](#worker-tool-exclusions-configcrew-exclude-tools), [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist), [provider credential strip](#provider-credentials-stripped-from-every-launch), and [launch environment hook](#launch-environment-hook-configlaunch-env-hook) |
-| Backlog, preferences, and memory | [Backlog](#backlog-configbeads-dir), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), [external memory tiers](#external-memory-tiers-memory-layering-section), [startup memory budget](#startup-memory-budget-configstartup-memory-budget), [host memory guard](#host-memory-guard-confighost-memory), and [supervisor context cap](#supervisor-context-cap-configsupervisor-context-cap) |
+| Backlog, preferences, and memory | [Backlog](#backlog-tickets-tables), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), [external memory tiers](#external-memory-tiers-memory-layering-section), [startup memory budget](#startup-memory-budget-configstartup-memory-budget), [host memory guard](#host-memory-guard-confighost-memory), and [supervisor context cap](#supervisor-context-cap-configsupervisor-context-cap) |
 | Worker lease and the reclaim of an unheld row | [Worker lease](#worker-lease-configlease-reclaim) |
 | Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configstealth) |
 | Persistent Squad Leads | [Squad Lead routes](#squad-lead-routes-datasquad_leadsmd) |
@@ -397,13 +397,12 @@ It is on by default.
 A local `config/lease-reclaim` reading `report` prints what the tick would reclaim, one `would reclaim <ticket> from <name>` line each, and writes nothing.
 Leases stay on either way; the file turns only the reclaim.
 
-## Backlog (config/beads-dir)
+## Backlog (tickets tables)
 
 Every home keeps its backlog as its own rows in the tickets tables of `fleet.db`, and `bin/jg-backlog.sh` is the one command that reads and writes them.
-`config/beads-dir` must still name a path: the lifecycle transitions, captain holds and the flow check refuse a home without it, though nothing is stored there ([`bin/jg-backlog-lib.sh`](../bin/jg-backlog-lib.sh)).
 `python3 -I core/item-store/adapters/tickets.py check` proves the tables.
 The actor of a home's own writes is the home's name, `main` or `lead:<id>`, so `created_by` says who filed; `jg-backlog.sh homes --json` lists every home with its store and marks a lead on another machine `"remote": true`.
-The wrapper serves `show`, `list`, `ready`, `add`, `update`, `done`, `block`, `unblock`, `start`, `reopen`, `hold`, `unhold` and `public-followup`, and refuses every other write.
+`bin/jg-backlog.sh` serves `show`, `list`, `ready`, `add`, `update`, `done`, `block`, `unblock`, `start`, `reopen`, `hold`, `unhold` and `public-followup`, and refuses every other write.
 
 A Goal is an epic labelled `goal` in this home's tickets tables; `bin/jg-goal.sh` reaches it through `core/item-store/adapters/bd_compat.py` and prints the tables' refusal when they refuse.
 
@@ -412,23 +411,12 @@ The `start`, `reopen` and `done` moves write only if the row still has the statu
 `bin/jg-pr-merge.sh`, `bin/jg-merge-local.sh` and `core/merge-on-green/` read holds and linked decisions through `bin/jg-captain-hold.sh`, close rows through that provider, and refuse a merge when the store cannot be read.
 A worker's row is owned by its Herdr agent name, the task record's `agent_name=` (made once at the first spawn; a record with none keeps `jg_backend_herdr_agent_name_for` of the task id), the same across a relaunch; `metadata.spawn_gen` is the task record's `spawn_gen`, and `metadata.agent`, `metadata.model` and `metadata.effort` are its harness, model and effort. The pane id is not on the row.
 A spawn whose `spawn_gen` is not the one on the row refuses with exit 13 and starts nothing that stays; a relaunch takes the row over, `done` keeps the assignee as history, and `reopen` clears all three.
-bd has no guard on metadata, so that check is a read then a write with a short gap, and the owner guard alone cannot tell a second spawn from a relaunch.
+The tables have no guard on metadata, so that check is a read then a write with a short gap, and the owner guard alone cannot tell a second spawn from a relaunch.
 The session digest, the fleet snapshot, the inbox status, the owner's asks, the Squad Lead dormant sweep, ticket keys, the what's-left view, voice status, the flow check and the owner rules read that store, and a failed read reports the failure rather than an empty backlog.
-`bin/jg-backlog-handoff.sh` moves rows between homes by `bd export` and `bd import`, and keeps the body, holds, blockers and links.
+`bin/jg-backlog-handoff.sh` moves rows between homes by an export and an import through `core/item-store/adapters/bd_compat.py`, and keeps the body, holds, blockers and links.
 A crash leaves the rows on both sides and rerunning the same handoff finishes the move.
 A remote handoff stages the rows on the receiver, and asks it first, so a home that cannot file rows refuses before anything is staged.
 Bootstrap runs `python3 -I core/item-store/adapters/tickets.py check` and reports a failure as `BEADS_UNHEALTHY`.
-
-[`bin/jg-beads-migrate.py`](../bin/jg-beads-migrate.py) `cut` moves a home that still holds old markdown files (`data/backlog.md`, `data/done-archive.md`) into a store, run on a written order and never by default.
-The cut holds `data/backlog.md.lock` so no writer can touch the old files, imports the plan, checks the store against the manifest row by row, writes `config/beads-dir`, and leaves the old files read-only.
-Any failure puts the home back on its old files by itself.
-`back` undoes a finished or stopped cut, restores the old files and config, and keeps the store aside.
-It refuses while the store holds rows written since the cut, naming them, and `--drop-new-writes` goes back anyway with those rows saved in `data/beads-after-cut.<at>.jsonl`.
-A cut needs a plan from just before it, because it refuses a home whose old files changed since the copy.
-A cut switches the home to the store in the same step, so it runs only once that home's own `bin/` already carries the Beads reader: a home still running an earlier release stays on its old files until it updates.
-The lock stops every writer for the whole cut, so cut a home only while it is quiet, with no lane writing to it.
-A parked home's rows cut with main under a `parked-home:<name>` label.
-Closed rows move with the rest, so `show` and the write verbs find a row by the name it carried before the move as well as by its new id.
 
 ### Backlog intake (config/backlog-intake-loose)
 
@@ -2054,7 +2042,6 @@ Sign-off arming stays per home and is never done for the user; the first wiring 
 
 `quota-axi` is an essential bootstrap tool in every profile.
 
-- A home with no `config/beads-dir` refuses lifecycle mutation until that file names a path.
 - An absent or incompatible `gh-axi` reports `MISSING: gh-axi (install: npm install -g gh-axi && gh-axi setup hooks)`.
 - An absent or too-old `quota-axi` reports `MISSING: quota-axi (install: npm install -g quota-axi)`; Juggernaut cannot resolve a profile array without a compatible binary.
 

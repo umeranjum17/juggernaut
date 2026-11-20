@@ -1,24 +1,23 @@
 #!/usr/bin/env bash
-# A move keeps its link and its log: two fixture homes with ticket tables, a ticket moved from main to a lead through the real hand-off.
-# The moved child names its parent that stayed behind as external:main:<id> and the parent tracks it; its provenance log equals the old one
-# plus one handoff event; an open and an answered gate arrive with it, the answer with his words; `tree --homes` prints ask, moved ticket
-# and child as one tree; a second hand-off of the same ticket adds nothing.
+# A hand-off on the tickets tables: a main home and a lead bound to it (the lead's tables are main's fleet.db), with no Beads tool.
+# Each home files under its own name (main, lead:design); a ticket with no log answers an empty provenance log; delete --force drops
+# tickets, their questions and the edges other tickets kept to them, and refuses a ticket the home does not hold. Then a ticket moves
+# from main to the lead through the real hand-off: the moved child names its parent that stayed behind as external:main:<id> and the
+# parent tracks it; its provenance log equals the old one plus one handoff event; an open and an answered gate arrive with it, the
+# answer with his words; `tree --homes` prints ask, moved ticket and child as one tree; a second hand-off of the same ticket adds nothing.
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
-  echo 'skip: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset'; exit 0
-fi
 
-T=$(jg_test_tmproot jg-beads-move) CLI="$ROOT/bin/jg-backlog.sh" BD="$ROOT/core/item-store/adapters/bd_compat.py"
+T=$(jg_test_tmproot jg-backlog-handoff-move) CLI="$ROOT/bin/jg-backlog.sh" BD="$ROOT/core/item-store/adapters/bd_compat.py"
 M=$T/main L=$T/lead
 for h in "$M" "$L"; do
   mkdir -p "$h/config" "$h/data" "$h/state" "$h/bin"
-  printf '%s\n' "$h-store" > "$h/config/beads-dir"   # kept until bin/jg-backlog-lib.sh stops asking for a store path
   : > "$h/config/backlog-intake-loose"
 done
 : > "$L/AGENTS.md"
 printf 'design\n' > "$L/.jg-squad-lead-home"
+printf 'parent_home=%s\n' "$M" > "$L/.jg-squad-lead-parent"   # the lead's tables are main's fleet.db, as a live lead's are
 printf -- '- design - work (home: %s; scope: work; projects: acme; added 2026-07-09)\n' "$L" > "$M/data/squad_leads.md"
 
 as() {  # <home> <command...>: that home's reader, with a throwaway HOME and a bare PATH beside the checkout's bin.
@@ -30,6 +29,39 @@ as() {  # <home> <command...>: that home's reader, with a throwaway HOME and a b
 bd_() { local home=$1; shift; JG_HOME=$home python3 -I "$BD" "$@" 2>/dev/null; }
 row() { bd_ "$1" list --all --include-gates --limit 0 --json | jq -c ".[] | select(.id == \"$2\")"; }
 log() { bd_ "$1" provenance log "$2" --json | jq -c '[.[] | {kind, source, ref, ref_kind, actor, occurred_at}] | sort_by(.occurred_at, .kind)'; }
+unset BEADS_ACTOR JG_BACKLOG_LANE
+
+# Each home files under its own name: the CLI names the filer, and created_by keeps it.
+mine=$(as "$M" "$CLI" add "[feature] Filed by main" --body why --json | jq -r .task.id) || fail "file in main"
+theirs=$(as "$L" "$CLI" add "[feature] Filed by the lead" --body why --json | jq -r .task.id) || fail "file in the lead"
+assert_equals "$(row "$M" "$mine" | jq -r .created_by)" main "a ticket filed in main must name main"
+assert_equals "$(row "$L" "$theirs" | jq -r .created_by)" lead:design "a ticket filed in the lead must name lead:design"
+[ -z "$(row "$M" "$theirs")" ] || fail "the lead's ticket must stay out of main's list"
+printf 'ok - each home files under its own name\n'
+
+# A ticket with no log answers an empty list; a ticket the home does not hold is an error.
+assert_equals "$(bd_ "$M" provenance log "$mine" --json | jq -c .)" "[]" "a ticket with no log must answer []"
+JG_HOME=$M python3 -I "$BD" provenance log jg-nothing --json >/dev/null 2>&1
+expect_code 1 "$?" "provenance log of a ticket the home does not hold"
+printf 'ok - provenance log answers an empty log and refuses an unknown ticket\n'
+
+# delete --force drops the ticket and its question; the ticket that waited on it keeps no edge to it, and its mention is marked.
+gone=$(as "$M" "$CLI" add "[feature] Goes away" --body why --json | jq -r .task.id) || fail "file the ticket to delete"
+waits=$(as "$M" "$CLI" add "[feature] Waits on it" --body why --json | jq -r .task.id) || fail "file the waiting ticket"
+bd_ "$M" dep add "$waits" "$gone" >/dev/null || fail "make the edge"
+bd_ "$M" update "$waits" --description "Starts once $gone lands." >/dev/null || fail "name the ticket in the body"
+question=$(bd_ "$M" gate create --blocks "$gone" --type human --title "Keep it" --reason "ask" --json | jq -r .id)
+JG_HOME=$M python3 -I "$BD" delete "$gone" jg-nothing --force >/dev/null 2>&1
+expect_code 1 "$?" "a delete that names a ticket the home does not hold"
+[ -n "$(row "$M" "$gone")" ] || fail "a refused delete must drop nothing"
+said=$(bd_ "$M" delete "$gone" "$question" --force) || fail "delete --force"
+assert_contains "$said" "✓ Deleted 2 issue(s)" "the answer must count the deleted tickets"
+assert_contains "$said" "Updated text references in 1 issue(s)" "the answer must count the rewritten mention"
+assert_equals "$(row "$M" "$waits" | jq -r .description)" "Starts once [deleted:$gone] lands." "a mention of a deleted ticket must be marked"
+[ -z "$(row "$M" "$gone")$(row "$M" "$question")" ] || fail "the deleted ticket and its question must be gone"
+assert_equals "$(row "$M" "$waits" | jq -c '[.dependencies[]? | .depends_on_id]')" "[]" "the waiting ticket must keep no edge to a deleted one"
+assert_equals "$(row "$L" "$theirs" | jq -r .id)" "$theirs" "a delete in main must leave the lead's tickets"
+printf 'ok - delete --force drops the tickets and the edges to them\n'
 
 # The ask and its part, filed in main with real work behind the part: two events, one open and one answered question.
 ask=$(as "$M" "$CLI" add --mint "[captain-ask] Plan the move" --body why --json | jq -r .task.id) || fail "file the ask"

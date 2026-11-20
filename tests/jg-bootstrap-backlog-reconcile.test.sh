@@ -12,7 +12,6 @@ T=$(jg_test_tmproot jg-bootstrap-backlog-reconcile)
 
 HOME_DIR=$T/home
 mkdir -p "$HOME_DIR/state" "$HOME_DIR/projects" "$HOME_DIR/config" "$HOME_DIR/data"
-printf '%s\n' "$T/unused/.beads" > "$HOME_DIR/config/beads-dir"  # kept until jg-backlog-transition-lib stops asking for it (slices c2 to c7); the tables are the store
 : > "$HOME_DIR/config/backlog-intake-loose"
 FAKEBIN=$(jg_fakebin "$HOME_DIR")
 jg_fake_exit0 "$FAKEBIN" tmux treehouse no-mistakes gh gh-axi

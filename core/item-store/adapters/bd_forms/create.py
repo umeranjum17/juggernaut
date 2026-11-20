@@ -8,7 +8,7 @@ Also answered, each written through tickets.change or its own table: `comment` a
 (rows by tickets.change, `_type: memory` lines into the memory table), `remember --key` (the memory table) and `gate create --blocks`
 (a gate row, plus the blocked ticket's new link; a gate's await_type is always human, the one type the form records).
 A form it cannot answer with bd's exact bytes raises NotSupported: a call it has no recorded answer for (a flag it does not know, a missing
-parent, dependency, ticket or file, a failed --validate, a gate of another type). The hold-reason rule (a deferred row needs a hold reason) is kept:
+parent, dependency, ticket or file, a gate of another type). A failed --validate refuses with exit 1, naming the missing sections. The hold-reason rule (a deferred row needs a hold reason) is kept:
 it refuses with exit 2. Python stdlib only."""
 import json, os, re, secrets, sys, time, uuid
 
@@ -22,8 +22,9 @@ VALUE = {"--title": "title", "-t": "type", "--type": "type", "-p": "priority", "
          "--metadata": "metadata", "-s": "status", "--status": "status", "-a": "assignee", "--assignee": "assignee",
          "--defer": "defer", "--deps": "deps", "-l": "labels", "--labels": "labels", "--blocks": "blocks", "--reason": "reason"}
 FLAG = {"--force": "force", "--json": "json", "--silent": "silent", "--validate": "validate", "--no-inherit-labels": "no_inherit"}
-REQUIRED = {"bug": ("## Steps to Reproduce", "## Acceptance Criteria"), "epic": ("## Success Criteria",),
-            "task": ("## Acceptance Criteria",), "feature": ("## Acceptance Criteria",), "chore": ("## Acceptance Criteria",)}
+# The sections --validate asks of each type: bd's own rules, and for a task the sections a Juggernaut home set in lint.sections.task.
+REQUIRED = {"bug": ("Steps to Reproduce", "Acceptance Criteria"), "epic": ("Success Criteria",),
+            "task": ("Captain", "Ask", "Why", "Done when", "Acceptance Criteria"), "feature": ("Acceptance Criteria",), "chore": ("Acceptance Criteria",)}
 LINKS = ("blocks", "related", "parent-child")
 HOLD_REASON = re.compile(r'"hold_reason"\s*:\s*"\s*[^"\s]')
 
@@ -127,11 +128,17 @@ def issue_json(row):
     return json_text(out)
 
 
+class Invalid(Exception):
+    """A body --validate refuses: the message names every missing section."""
+
+
 def check_validate(opt, kind, description):
+    """A section is there as a `## <name>` heading or a `<name>:` line, in any case."""
     if opt.get("validate"):
-        for section in REQUIRED.get(kind, ()):
-            if section not in description:
-                raise NotSupported("--validate refusal")
+        missing = [name for name in REQUIRED.get(kind, ())
+                   if not re.search(r"^\s*(?:#+\s*%s\s*$|%s\s*:)" % ((re.escape(name),) * 2), description or "", re.M | re.I)]
+        if missing:
+            raise Invalid("validation failed for %s: missing required sections: %s" % (kind, ", ".join("## " + m for m in missing)))
 
 
 def existing(con, home_id, ident):
@@ -189,14 +196,14 @@ def do_create(argv, stdin_text):
             existing(con, home_id, to)
             links.append((to, ty))
         row = dict(id=ident, title=title, description=description or None, status=status, priority=priority, issue_type=kind,
-                   assignee=opt.get("assignee") or None, created_at=sec, labels=sorted(labels), metadata=metadata, ephemeral=0,
+                   assignee=opt.get("assignee") or None, created_at=sec, created_by=actor(), labels=sorted(labels), metadata=metadata, ephemeral=0,
                    dependencies=[tickets.new_edge(to, ty) for to, ty in links])
         tickets.change(st, int(time.time()), home_id, "create", "bd-create:%d" % time.time_ns(), row)
         con.execute("COMMIT")
     except BaseException:
         con.execute("ROLLBACK")
         raise
-    shown = dict(row, by=os.environ.get("BEADS_ACTOR") or "juggernaut", created_nano=nano, description=description)
+    shown = dict(row, by=row["created_by"], created_nano=nano, description=description)
     if opt.get("json"):
         return issue_json(shown), 0
     if opt.get("silent"):
@@ -358,7 +365,11 @@ def do_gate_create(argv):
 def run(argv, stdin_text):
     head = argv[:1]
     if head == ["create"]:
-        return do_create(argv, stdin_text)
+        try:
+            return do_create(argv, stdin_text)
+        except Invalid as e:
+            sys.stderr.write("Error: %s\n" % e)
+            return "", 1
     if head in (["comment"], ["comments"]) and (head == ["comment"] or argv[1:2] == ["add"]):
         return do_comment(argv, stdin_text)
     if head == ["import"]:

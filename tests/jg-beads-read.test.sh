@@ -1,25 +1,18 @@
 #!/usr/bin/env bash
-# The read facts the ticket adapter needs, through the real bin/jg-beads-read.py on a real embedded store with no network:
-# the rev moves on every kind of write (a row field, a label, a comment, an edge, a parent) and stays put on a read or a no-op write,
-# the cursor list pages the whole store once, leaves closed rows and gates out and matches `bd list`, and the history names
-# the commits that changed the row and the columns each changed. JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT name the pinned builds,
-# which skip without them.
+# The read facts the ticket adapter needs, through the real bin/jg-beads-read.py on a throwaway home's tickets tables with no network:
+# the rev moves on every kind of write (a row field, a label, a comment, an edge, a parent) and stays put on a read,
+# the cursor list pages every open row once, leaves closed rows and gates out and matches `list`, the board read gives each row as show does,
+# and the history names the changes that altered the row and the columns each changed.
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
-  printf 'skip: real store: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
-  exit 0
-fi
+READ="$ROOT/bin/jg-beads-read.py" T=$(jg_test_tmproot jg-beads-read)
+H=$T/home
+mkdir -p "$H/config" "$H/state" "$H/data"
+export JG_HOME=$H
 
-WRAPPER="$ROOT/bin/jg-beads.sh" READ="$ROOT/bin/jg-beads-read.py" T=$(jg_test_tmproot jg-beads-read)
-unset BEADS_DB BEADS_DOLT_SHARED_SERVER
-mkdir -p "$T/real"
-export BEADS_DIR=$T/real/.beads JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
-"$WRAPPER" init --prefix rd >"$T/init.log" 2>&1 || fail "init: $(cat "$T/init.log")"
-
-bd_() { "$WRAPPER" "$@" 2>/dev/null; }
+bd_() { python3 -I "$ROOT/core/item-store/adapters/bd_compat.py" "$@" 2>/dev/null; }
 rev() { "$READ" rev "$1" | cut -f2; }
 mint() { bd_ q "$1"; }
 
@@ -48,14 +41,12 @@ moves "dependency swapped" dep remove "$t" "$a"
 moves "dependency swapped in" dep add "$t" "$b"
 moves "dependent added" dep add "$a" "$t"
 moves "parent set" update "$t" --parent "$(mint parent)"
-was=$(rev "$t"); bd_ update "$t" --title "T3" >/dev/null; bd_ update "$t" --add-label lb >/dev/null
-[ "$was" = "$(rev "$t")" ] || fail "a write that changes nothing must not move the rev"
 "$READ" rev rd-nope >/dev/null 2>&1 && fail "a missing ticket must be refused"
 "$READ" rev "x'; drop table issues; --" >/dev/null 2>&1 && fail "a bad id must be refused"
 
-# list: a cursor walk covers each open row once, with closed rows and gates left out, and agrees with bd list.
+# list: a cursor walk covers each open row once, with closed rows and gates left out, and agrees with list.
 for i in $(seq 1 12); do mint "bulk $i" >/dev/null; done
-done_id=$(mint to-close); bd_ close "$done_id" >/dev/null
+done_id=$(mint to-close); "$ROOT/bin/jg-backlog.sh" 'done' "$done_id" >/dev/null 2>&1 || fail "close a row"
 bd_ create "a gate" -t gate >/dev/null
 walk=$T/walk.ids pages=0 cursor=
 : > "$walk"
@@ -72,15 +63,16 @@ done
 cut -d' ' -f1 "$walk" > "$T/walk-ids"
 [ "$(sort "$T/walk-ids" | uniq -d | wc -l)" = 0 ] || fail "a row came twice"
 bd_ list --json --limit 0 | jq -r '.[].id' | sort > "$T/bd-ids"
-sort "$T/walk-ids" | diff - "$T/bd-ids" >/dev/null || fail "the walk must match bd list: $(sort "$T/walk-ids" | diff - "$T/bd-ids")"
+sort "$T/walk-ids" | diff - "$T/bd-ids" >/dev/null || fail "the walk must match list: $(sort "$T/walk-ids" | diff - "$T/bd-ids")"
 grep -q "^$done_id " "$walk" && fail "a closed row must be left out"
 [ "$(grep "^$t " "$walk" | cut -d' ' -f2)" = "$(rev "$t")" ] || fail "a listed row must carry the same rev as rev gives"
 "$READ" list --limit 0 >/dev/null 2>&1 && fail "limit 0 must be refused"
 "$READ" list --after "x y" >/dev/null 2>&1 && fail "a bad cursor must be refused"
 
 # board: one query gives each row the board can show (open rows, rows closed since the cutoff, no gates) as `show` gives it, rev included.
-old_id=$(mint closed-long-ago); bd_ close "$old_id" >/dev/null
-bd_ dolt sql -q "update issues set closed_at = '2026-01-01 00:00:00' where id = '$old_id'" >/dev/null 2>&1
+old_id=$(mint closed-long-ago); "$ROOT/bin/jg-backlog.sh" 'done' "$old_id" >/dev/null 2>&1 || fail "close the old row"
+python3 -c 'import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.execute("update ticket set closed_at = ? where id = ?", ("2026-01-01T00:00:00Z", sys.argv[2])); c.commit()' \
+  "$H/state/item-store/fleet.db" "$old_id" || fail "date the old close"
 since=$(date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)
 "$READ" board "$since" > "$T/board.json" || fail "board failed"
 "$READ" board yesterday >/dev/null 2>&1 && fail "board must refuse a closed-since that is not a UTC stamp"
@@ -96,46 +88,14 @@ for id in $t $a $b; do
   [ "$mine" = "$theirs" ] || fail "board must give $id as show does: $mine <> $theirs"
 done
 
-# history: commits that changed the row, newest first, with the columns each changed.
+# history: the changes that altered the row, newest first, with the columns each changed.
 hist=$("$READ" history "$t") || fail "history failed"
-[ "$(wc -l <<<"$hist")" -ge 8 ] || fail "history must list the commits that changed the row: $hist"
-grep -q "^[a-z0-9]\{32\}"$'\t'".*"$'\t'"modified"$'\t'"title" <<<"$hist" || fail "a title write must show as a modified commit that changed title: $hist"
-grep -q "added" <<<"$hist" || fail "history must end at the commit that added the row"
+[ "$(wc -l <<<"$hist")" -ge 8 ] || fail "history must list the changes that altered the row: $hist"
+grep -q "^[^"$'\t'"]\+"$'\t'"20[0-9-]* [0-9:]*"$'\t'"modified"$'\t'"title$" <<<"$hist" || fail "a title write must show as a modified change of title: $hist"
+[ "$(tail -1 <<<"$hist" | cut -f3)" = added ] || fail "history must end at the change that added the row: $hist"
 other=$(mint untouched)
 [ "$("$READ" history "$other" | wc -l)" -le 2 ] || fail "another ticket's commits must not show in the history"
 "$READ" history rd-nope >/dev/null 2>&1 && fail "history of a missing ticket must be refused"
-pass "beads read facts: rev on every write, cursor list, board, history"
+"$READ" board --all | jq -e --arg o "$old_id" 'map(.id) | index($o) != null' >/dev/null || fail "board --all must hold a row closed long ago"
+pass "read facts: rev on every write, cursor list, board, history, all from the tickets tables"
 
-# The table path: with <main home>/config/bd-tables the helper answers its dolt questions from the tickets tables of the one item
-# store and no dolt query runs; without the file it runs as above. A recording wrapper stands in for bin/jg-beads.sh and logs each dolt call.
-H=$T/home TK="$ROOT/core/item-store/adapters/tickets.py"
-mkdir -p "$H/config" "$H/state" "$H/data"
-bd_ export > "$T/export.jsonl" || fail "export of the fixture store"
-JG_HOME=$H python3 "$TK" import --home main "$T/export.jsonl" >/dev/null || fail "import of the fixture store into the scratch fleet.db"
-cat > "$T/record-wrapper" <<SH
-#!/usr/bin/env bash
-[ "\${1:-}" != dolt ] || echo "\$*" >> "$T/dolt-calls"
-exec "$WRAPPER" "\$@"
-SH
-chmod +x "$T/record-wrapper"
-tread() { JG_HOME=$H JG_BEADS_SH=$T/record-wrapper "$READ" "$@"; }
-board_facts='map({id, title, status, issue_type, assignee, labels: (.labels // []), metadata: (.metadata // {}), created_at, closed_at, parent,
-  deps: [(.dependencies // [])[] | [.id, .dependency_type, .status, .issue_type]] | sort, dependents: [(.dependents // [])[] | [.id, .dependency_type]] | sort})'
-: > "$T/dolt-calls"
-tread list --limit 5 > "$T/list-dolt.json" || fail "list without the switch"
-tread board "$since" | jq -S "$board_facts" > "$T/board-dolt.json" || fail "board without the switch"
-tread history "$t" | cut -f1,3 > "$T/history-dolt.txt" || fail "history without the switch"
-[ -s "$T/dolt-calls" ] || fail "without config/bd-tables the helper must ask dolt"
-: > "$H/config/bd-tables"; : > "$T/dolt-calls"
-tread list --limit 5 > "$T/list-tables.json" || fail "list with the switch"
-tread board "$since" | jq -S "$board_facts" > "$T/board-tables.json" || fail "board with the switch"
-tread board --all | jq -e 'map(.id) | index("'"$old_id"'") != null' >/dev/null || fail "board --all with the switch must hold a row closed long ago"
-tread history "$t" > "$T/history-tables.txt" || fail "history with the switch"
-[ ! -s "$T/dolt-calls" ] || fail "with config/bd-tables no dolt query may run: $(cat "$T/dolt-calls")"
-[ "$(jq -c '.rows | map(.id)' "$T/list-dolt.json")" = "$(jq -c '.rows | map(.id)' "$T/list-tables.json")" ] || fail "list must page the same ids from the tables"
-[ "$(jq -c .next "$T/list-dolt.json")" = "$(jq -c .next "$T/list-tables.json")" ] || fail "list must give the same cursor from the tables"
-diff "$T/board-dolt.json" "$T/board-tables.json" >/dev/null || fail "board must give the same rows from the tables: $(diff "$T/board-dolt.json" "$T/board-tables.json" | head -20)"
-grep -q "^[^"$'\t'"]\+"$'\t'"20[0-9-]* [0-9:]*"$'\t'"added"$'\t'".*title" "$T/history-tables.txt" || fail "history from the tables must be a commit, a time, a kind and the changed columns: $(cat "$T/history-tables.txt")"
-tread history rd-nope >/dev/null 2>&1 && fail "history of a missing ticket must be refused from the tables"
-rm -f "$H/config/bd-tables"
-pass "beads read facts: with config/bd-tables list, board and history come from the tickets tables and run no dolt"

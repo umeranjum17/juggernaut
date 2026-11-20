@@ -1,23 +1,17 @@
 #!/usr/bin/env bash
 # Strict intake reads fields, not text: `add` refuses a title that is not plain words (and names the fix), a new item with no
-# priority, and a body without the sections bd's lint.sections.task asks for (bd itself refuses it, through create --validate);
+# priority, and a body without the sections a task needs (the tables refuse it, through create --validate);
 # --release lands in metadata.release (`later` when absent) and a `release:` body line is not read; a leading type tag is still
 # taken as input; an owner ask gets priority 0 by itself; and config/backlog-intake-loose turns all of it off. A title passed as
 # the only positional word files that title, and an id given as the empty string mints one. Every call runs on the home's
-# tickets tables with no network. JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT name the pinned builds, which skip without them.
+# tickets tables with no network.
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
-  printf 'skip: real store: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
-  exit 0
-fi
-
 BD="$ROOT/core/item-store/adapters/bd_compat.py" CLI="$ROOT/bin/jg-backlog.sh" T=$(jg_test_tmproot jg-backlog-intake)
 H=$T/home
 mkdir -p "$H/config" "$H/state" "$H/data" "$T/user" "$T/real"
-printf '%s\n' "$T/real" > "$H/config/beads-dir"   # kept until bin/jg-backlog-lib.sh stops asking for a store path
 bd_() { JG_HOME=$H python3 -I "$BD" "$@" 2>/dev/null; }
 tasks() {
   env HOME="$T/user" TMPDIR="$T" PATH=/usr/bin:/bin JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" JG_DATA_OVERRIDE="$H/data" \
@@ -42,9 +36,9 @@ assert_contains "$out" "carries an id" "the refusal must name the id"
 out=$(tasks add jg-noprio "Plain words" --body "$SECTIONS") && fail "no priority must be refused"
 assert_contains "$out" "--priority 0|1|2|3" "the refusal must name the flag"
 
-# A body without the sections is refused by bd itself.
+# A body without the sections is refused by the tables.
 out=$(tasks add jg-nosec "Plain words" --priority 2 --body "just a line") && fail "a body without the sections must be refused"
-assert_contains "$out" "missing required sections" "bd must refuse the body"
+assert_contains "$out" "missing required sections" "the tables must refuse the body"
 assert_contains "$out" "Done when" "the refusal must name a missing section"
 gone jg-nosec || fail "a body bd refused must file nothing"
 

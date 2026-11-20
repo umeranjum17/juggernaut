@@ -733,7 +733,6 @@ tests/jg-captain-hold-gate.test.sh 500
 tests/jg-done-yaml-dup-keys.test.sh 500
 tests/jg-fleet-compare.test.sh 15500
 tests/jg-fleet-digest.test.sh 7303
-tests/jg-lease-tick.test.sh 500
 tests/jg-recon-journey.test.sh 3500
 tests/jg-ticket-adapter.test.sh 500
 tests/jg-trunk-base-movement.test.sh 57544

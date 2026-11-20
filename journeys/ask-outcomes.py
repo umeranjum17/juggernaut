@@ -5,7 +5,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import tempfile
 import threading
@@ -82,7 +81,7 @@ class Bot(BaseHTTPRequestHandler):
 
 def main(lab):
     home = lab / "home"
-    for name in ("config", "data", "state", "user", "cache", "tmp", "store"):
+    for name in ("config", "data", "state", "user", "cache", "tmp"):
         (home / name).mkdir(parents=True)
     env = {k: v for k, v in os.environ.items()
            if not k.startswith(("JG_", "BEADS_", "GIT_", "CLAUDE_", "CODEX_"))}
@@ -91,9 +90,7 @@ def main(lab):
                TMPDIR=str(home / "tmp"), GOCACHE=str(home / "cache/go"),
                JG_HOME=str(home), JG_STATE_OVERRIDE=str(home / "state"),
                JG_DATA_OVERRIDE=str(home / "data"), JG_CONFIG_OVERRIDE=str(home / "config"),
-               JG_BEADS_BD=os.environ.get("JG_BEADS_TEST_BD") or shutil.which("bd"),
-               JG_BEADS_DOLT=os.environ.get("JG_BEADS_TEST_DOLT") or shutil.which("dolt"),
-               BEADS_DIR=str(home / "store/.beads"), JG_VOICE_REWRITE_CMD="/bin/false",
+               JG_VOICE_REWRITE_CMD="/bin/false",
                JG_BUS_HOMES=str(home / "no-machine-members"))
 
     def run(script, *args, stdin=None, in_env=None):
@@ -120,8 +117,6 @@ def main(lab):
         (home / "config/captain-channel").write_text(
             f"set mode direct\nset gateway-adapters telegram\nset telegram-token-file {token}\n"
             f"set telegram-allow-user 42\nset telegram-api-url http://127.0.0.1:{server.server_port}\n")
-        run("jg-beads.sh", "init", "--prefix", "jg")
-        (home / "config/beads-dir").write_text(env["BEADS_DIR"] + "\n")
         (home / "config/backlog-intake-loose").touch()
 
         def ask(ticket, message, origin="telegram", result="failed: Umer could not finish the work."):
@@ -256,7 +251,7 @@ def main(lab):
         squad(lab, home, env, run, check, rows, tick)
         (EVIDENCE / "steps.json").write_text(json.dumps({
             "target": {"version": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()},
-            "start": "isolated home, real embedded Beads store, no Main, loopback Bot API",
+            "start": "isolated home on its own tickets tables, no Main, loopback Bot API",
             "steps": steps, "result": "all recorded assertions passed; no live chat used"}, indent=2))
     finally:
         barrier.set()
@@ -269,7 +264,7 @@ def squad(lab, home, env, run, check, rows, tick):
     """A captain ask routed to a Squad Lead home answers its origin chat from Main's gateway."""
     def seed(name, parent):
         child = lab / name
-        for part in ("config", "data", "state", "store"):
+        for part in ("config", "data", "state"):
             (child / part).mkdir(parents=True)
         (child / ".jg-squad-lead-parent").write_text(
             f"schema=jg-squad-lead-parent.v1\nroute=local\nparent_home={parent}\n")
@@ -277,10 +272,7 @@ def squad(lab, home, env, run, check, rows, tick):
         (child / "AGENTS.md").write_text("# Lab Squad Lead home\n")
         (child / "bin").mkdir()
         child_env = {k: v for k, v in env.items() if not k.startswith(("JG_", "BEADS_"))}
-        child_env.update(JG_HOME=str(child), BEADS_DIR=str(child / "store/.beads"),
-                         JG_BEADS_BD=env["JG_BEADS_BD"], JG_BEADS_DOLT=env["JG_BEADS_DOLT"])
-        run("jg-beads.sh", "init", "--prefix", "sl", in_env=child_env)
-        (child / "config/beads-dir").write_text(child_env["BEADS_DIR"] + "\n")
+        child_env.update(JG_HOME=str(child))
         (child / "config/backlog-intake-loose").touch()
         with (home / "data/squad_leads.md").open("a") as registry:
             registry.write(f"- {name} - lab lead (home: {child}; scope: lab; projects: lab; added 2026-11-17)\n")
@@ -352,6 +344,7 @@ def squad(lab, home, env, run, check, rows, tick):
           handed["Delivery"] == "sent" and requests[-1]["reply"] == 25 and "stopped in the Squad Lead" in requests[-1]["text"])
     count = len(requests)
 
+    (lab / "another-main").mkdir()   # a real main home that is not this one: the stranger's tickets live in its tables
     stranger, stranger_env = seed("sl-stranger", lab / "another-main")
     routed(stranger, stranger_env, "sl-elsewhere", 23, b"# Not for this chat\n")
     with (home / "data/squad_leads.md").open("a") as registry:

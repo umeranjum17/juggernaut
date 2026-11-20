@@ -11,7 +11,6 @@ BD=$ROOT/core/item-store/adapters/bd_compat.py CLI=$ROOT/bin/jg-backlog.sh
 unset BEADS_ACTOR JG_BACKLOG_LANE JG_BACKLOG_SPAWN_GEN JG_BACKLOG_AGENT JG_BACKLOG_LANE_HANDOVER
 mkdir -p "$T/store" "$T/home/config" "$T/home/data" "$T/home/state"
 export TZ=UTC TMPDIR=$T
-printf '%s\n' "$T/store" > "$T/home/config/beads-dir"   # kept until bin/jg-backlog-lib.sh stops asking for a store path
 : > "$T/home/config/backlog-intake-loose"  # the fixture files rows by their own words, not by strict intake
 jail=()
 command -v bwrap >/dev/null && jail=(bwrap --ro-bind / / --tmpfs /tmp --bind "$T" "$T" --ro-bind "$ROOT" "$ROOT" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent)
@@ -48,7 +47,6 @@ spawn() {  # <op> <id> <spawn gen>: the library's answer on the home.
 export JG_HERDR_BIN=$T/jg-herdr
 "$ROOT/bin/jg-herdr.sh" agent-name-for jg-s7a >/dev/null || fail "build the agent-name core"
 
-bd init --prefix jg >"$T/init.log" 2>&1 || fail "init the store: $(cat "$T/init.log")"
 axi add jg-s7a "[feature] Worker row" --priority 2 --body why >/dev/null || fail "seed the row"
 id_name=$("$ROOT/bin/jg-herdr.sh" agent-name-for jg-s7a)
 [ "$id_name" = jg-s7a ] || fail "the agent name of the seeded id must be the id, got [$id_name]"

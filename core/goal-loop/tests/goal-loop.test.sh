@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Behavior tests for core/goal-loop: the check reduces every Goal to finished, stopped, waiting or next with no
 # model, wakes the lead once for each new next step, and wires and unwires as a registered watcher check.
-# The reduction runs on recorded Goal rows; the real-store case runs on the home's tickets tables and skips plainly
-# without JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT.
+# The reduction runs on recorded Goal rows; the real-store case runs on the home's tickets tables.
 set -u
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 # shellcheck source=tests/lib.sh disable=SC1091
@@ -168,19 +167,12 @@ assert_equals "$(stat -c %a "$T/w/state/goal-loop.check.sh")" 700 "the shim is p
 assert_absent "$T/w/state/goal-loop.check.sh" "unwiring removes the shim"
 assert_absent "$T/share/jg-goal-loop" "unwiring removes the installed check"
 
-# Still skipped without JG_BEADS_TEST_BD: on the tables, bin/jg-goal.sh prove cannot close the proven step (bd_compat.py answers no close).
-if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
-  printf 'skip: real store: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
-  pass "goal-loop"
-  exit 0
-fi
-
 # The real store, the home's tickets tables: a declared Goal walks from ship to running by the lead's closes, and the check owns proven.
 export JG_GOAL_BIN=$ROOT/bin/jg-goal.sh JG_HOME=$H
 unset JG_GOAL_PROOF_RUN
 GOALCLI=$ROOT/bin/jg-goal.sh
 bdw() { python3 -I "$ROOT/core/item-store/adapters/bd_compat.py" "$@"; }
-closed() { "$ROOT/bin/jg-backlog.sh" 'done' "$1" --note "$2"; }   # bd close: the backlog's done verb (bd-forms.tsv)
+closed() { "$ROOT/bin/jg-backlog.sh" 'done' "$1" --note "$2"; }   # a step closes through the backlog's done verb
 python3 -I "$ROOT/core/item-store/adapters/tickets.py" import --home main /dev/null >/dev/null || fail "make the tables"
 settle() { for _ in $(seq 100); do [ -f "$1" ] && return 0; sleep 0.1; done; fail "no proof result in $1"; }
 close_to_running() { for n in 1 2 3 4; do closed "$1.$n" test >/dev/null 2>&1 || fail "close step $n"; done; }

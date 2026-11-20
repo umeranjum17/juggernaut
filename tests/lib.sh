@@ -94,23 +94,9 @@ fi
 unset JG_TASK_ID
 
 # Give a fixture home its backlog: the home's rows in the ticket tables of its own fleet.db, made on the first write.
-# config/beads-dir still names a store directory, because bin/jg-backlog-transition-lib.sh and
-# bin/jg-squad-lead-dormant.sh still read it (slices c1 to c3 retire them); nothing is stored at that path.
-# The skip without JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT stays while tests/jg-test-run-skip.test.sh proves it.
 jg_test_beads_home() {  # <home> [<prefix>, unused: the tables take the ids they are given]
-  local home=$1 store=$1-store
-  if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
-    # A case home is built inside `d=$(setup ...)`, where `exit` ends only that subshell and stdout becomes the
-    # case dir: the skip text would name a directory the suite then creates. The note goes to stderr and the
-    # suite itself is told to skip (the USR1 trap below).
-    printf 'skip: no Beads store: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n' >&2
-    kill -s USR1 "$$" 2>/dev/null
-    exit "${JG_TEST_SKIP_EXIT:-0}"
-  fi
-  # The backlog reader drops whitespace from the store path it reads, so a home whose path holds a space keeps its store elsewhere.
-  case $store in *[[:space:]]*) store=$(jg_test_tmpdir)/beads-stores/$(printf '%s' "$home" | cksum | cut -d' ' -f1) ;; esac
-  mkdir -p "$home/config" "$home/data" "$store" || fail "could not make the fixture home $home"
-  printf '%s\n' "$store/.beads" > "$home/config/beads-dir"
+  local home=$1
+  mkdir -p "$home/config" "$home/data" || fail "could not make the fixture home $home"
   : > "$home/config/backlog-intake-loose"  # a fixture files rows by their own words; tests/jg-backlog-intake.test.sh drives strict intake
 }
 
@@ -493,7 +479,7 @@ trap 'jg_test_cleanup; exit 130' INT
 trap 'jg_test_cleanup; exit 143' TERM
 trap 'jg_test_cleanup; exit 129' HUP
 trap 'jg_test_cleanup; exit 131' QUIT
-trap 'exit "${JG_TEST_SKIP_EXIT:-0}"' USR1  # the suite skips: jg_test_beads_home has no Beads build to give it
+trap 'exit "${JG_TEST_SKIP_EXIT:-0}"' USR1  # the suite skips: a case built in a subshell cannot exit the suite itself
 
 # jg_test_reap_orphans: best-effort sweep for fixture roots left behind by a
 # prior run that was killed hard enough to skip the traps above (e.g. a

@@ -12,7 +12,7 @@ and answers a client that names no limit with pages of 500, since every page rea
 `extra` is the row's metadata, key by key and typed as bd keeps it (the interface's conformance script holds extra to exactly what a client put there).
 bd's other columns (priority, notes, design, estimate, due and the like) are not carried: no ticket field names them and extra may not.
 Without a configured fleet, list leaves closed rows out, as bd list does. rev is the read helper's rev (bd's revision with the labels, the edges and the comment count).
-history is bd's event log (actor, type, old and new values) with the comments merged in, oldest first.
+history is the row's ticket_change log in bd's event shape (actor, type, old and new values) with the comments merged in, oldest first.
 
 A write holds one lock for the whole step: it replays an answered op_id, checks the rev, calls bd and reads the ticket back. bd has no
 compare-and-set, so the lock closes the window against other writers of this adapter only; a bd run by hand can still write between
@@ -394,7 +394,8 @@ def op_update(request):
         raise invalid(problems)
     if row["rev"] != request["rev"]:
         raise Refusal("conflict", "%s changed since it was read (rev %s, now %s)." % (row["id"], request["rev"], row["rev"]), False, {"current": to_ticket(row)})
-    flags = bd_flags(patch)
+    # set.extra is a patch: the tables' --metadata writes the whole object, so it carries the row's other keys too.
+    flags = bd_flags(dict(patch, extra=dict(row.get("metadata") or {}, **patch["extra"])) if isinstance(patch.get("extra"), dict) else patch)
     if "labels" in patch:
         have = set(row.get("labels") or [])
         flags += [x for l in sorted(have - set(patch["labels"])) for x in ("--remove-label", l)] + [x for l in patch["labels"] if l not in have for x in ("--add-label", l)]
@@ -454,14 +455,39 @@ def changes_of(event):
     return out
 
 
+HISTORY_FIELDS = ("title", "description", "issue_type", "status", "assignee", "metadata")
+
+
+def change_events(ticket_id):
+    """The row's changes from ticket_change, oldest first, in bd's event shape: the first is `created`, a later one `status_changed` when
+    the status moved and `updated` when another field did (a change of no such field is left out); old_value and new_value name the
+    fields it changed. The tables keep the writer of each change, not a person, so the actor is the row's creator, then each writer."""
+    read = __import__("jg-beads-read")
+    try:
+        con = read.table_store()
+        changes = con.execute("select seq, at, source, row from ticket_change where home = ? and id = ? and row is not null order by seq",
+                              (con.home, ticket_id)).fetchall()
+    except (SystemExit, Exception) as e:  # table_store exits when there is no store; either way the history cannot be read
+        raise Refusal("unavailable", "The history could not be read: %s" % (e if str(e) else "no tickets tables"), True)
+    events, before = [], None
+    for change in changes:
+        now = json.loads(change["row"])
+        now["metadata"] = json.loads(now.get("metadata") or "{}")
+        keys = [k for k in HISTORY_FIELDS if before is not None and now.get(k) != before.get(k)]
+        if before is None or keys:
+            events.append({"id": str(change["seq"]), "created_at": read.utc(change["at"]).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                           "actor": (now.get("created_by") if before is None else None) or change["source"].split(":", 1)[0],
+                           "event_type": "created" if before is None else "status_changed" if "status" in keys else "updated",
+                           "old_value": json.dumps({k: before[k] for k in keys}) if keys else "",
+                           "new_value": json.dumps({k: now[k] for k in keys}) if keys else ""})
+        before = now
+    return events
+
+
 def op_history(request):
     row = get_row(request["id"])
-    done = bd(["history", row["id"], "--events", "--json"])
-    if done.returncode != 0:
-        raise Refusal("unavailable", "The history could not be read: %s" % reason(done), True)
-    # bd lists newest first and stamps whole seconds; reversing keeps its order inside one second.
-    events = [{"id": e["id"], "at": e["created_at"], "actor": e.get("actor") or None, "type": e["event_type"], "text": e.get("comment"), "changes": changes_of(e), "extra": {}}
-              for e in reversed(json.loads(done.stdout or "[]"))]
+    events = [{"id": e["id"], "at": e["created_at"], "actor": e["actor"], "type": e["event_type"], "text": None, "changes": changes_of(e), "extra": {}}
+              for e in change_events(row["id"])]
     events += [comment_event(c) for c in comments_of(row["id"])]
     events.sort(key=lambda e: (e["at"], e["type"] != "created"))  # whole seconds: the creation comes first inside its own second.
     return {"events": events}

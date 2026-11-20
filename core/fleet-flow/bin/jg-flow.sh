@@ -186,7 +186,6 @@ def backlog_rows(name, home, state='queued'):
         result = subprocess.run(['bash', '-c', '''
 . "$1/jg-backlog-lib.sh"
 . "$1/jg-backlog-transition-lib.sh"
-jg_backlog_beads_store "$JG_HOME/config" >/dev/null || exit 2
 exec bash "$1/jg-backlog.sh" list --state "$2" --fields blocked_by,held,hold_kind,hold_reason
 ''', 'jg-flow', str(Path(sys.argv[4]).parent), state], capture_output=True, text=True, timeout=20,
             env=dict(os.environ, JG_HOME=str(home), JG_DATA_OVERRIDE=''))

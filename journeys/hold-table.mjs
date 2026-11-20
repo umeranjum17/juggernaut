@@ -10,10 +10,6 @@ fs.mkdirSync(captures, { recursive: true });
 const log = path.join(evidence, 'hold-table-capture.log');
 fs.writeFileSync(log, '');
 const env = { ...process.env, DONE_DONE_EVIDENCE_ROOT: evidence, HOLD_TABLE_CAPTURE: captures };
-for (const key of ['JG_BEADS_TEST_BD', 'JG_BEADS_TEST_DOLT']) {
-  assert.ok(env[key] && path.isAbsolute(env[key]), `${key} must supply its installed pinned absolute path`);
-  fs.accessSync(env[key], fs.constants.X_OK);
-}
 function run(command, args, input) {
   const result = spawnSync(command, args, { env, input, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
   fs.appendFileSync(log, `$ ${command} ${args.join(' ')}\n${result.stdout || ''}${result.stderr || ''}\nexit=${result.status} signal=${result.signal || ''}\n`);
@@ -29,7 +25,6 @@ try {
   const version = run('git', ['rev-parse', 'HEAD']).trim();
   assert.match(version, /^[0-9a-f]{40,64}$/);
   run('bash', ['--noprofile', '--norc', '-s'], String.raw`set -euo pipefail
-export JG_BEADS_TEST_BD JG_BEADS_TEST_DOLT
 source tests/lib.sh
 fixture=$(jg_test_tmproot owner-waits)
 home=$fixture/home
@@ -131,7 +126,7 @@ run board-final board
   board('board-final', ['jg-choice', 'jg-choice2']);
   fs.writeFileSync(path.join(evidence, 'steps.json'), JSON.stringify({
     target: { version: `juggernaut@${version}` },
-    start: 'A fresh isolated real Beads home and an empty sample project; no installed home state copied.',
+    start: 'A fresh isolated home on its tickets tables and an empty sample project; no installed home state copied.',
     steps,
     result: `jg-order has no question or board row. ${finalChoice.id} and ${finalChoice2.id} remain ${finalChoice.state}, unanswered, and Waiting for you. Observed expiry: ${expiryMessage}. Observed cap: ${capMessage}. Repeated checks preserve the request and alert latch without repeating their alerts.`
   }, null, 2) + '\n');

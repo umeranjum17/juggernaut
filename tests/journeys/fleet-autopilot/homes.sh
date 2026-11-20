@@ -23,8 +23,6 @@ homes_provision() {
     h=$(home_dir "$i")
     git -C "$LAB/clone" worktree add -q --detach "$h" "$tip" || return 1
     mkdir -p "$h/state" "$h/data" "$h/config" "$h/projects"
-    # The home's backlog is its ticket tables; config/beads-dir is still read by bin/jg-backlog-transition-lib.sh (slices c1 to c3).
-    mkdir -p "$LAB/store-$i" && printf '%s\n' "$LAB/store-$i/.beads" > "$h/config/beads-dir" || return 1
     printf 'gate-full=true\ngate-lint=true\ngate-verify=true\nflush-at-ready=1\n' > "$h/config/trunk-policy"
     # The live hook is the recording stand-in for the home mover (slice T2): it names the home and the commit it was asked to move to.
     # shellcheck disable=SC2016 # the hook body is written literally and expands when the hook runs

@@ -16,8 +16,6 @@ The shared gate lifecycle boundary is summarized in [architecture.md](architectu
 | `jg-fleet-sync.sh`       | Refresh project clones with safe fast-forwards, self-heals, `STUCK:` reports, branch pruning, and bounded recovery from an orphaned `.git/packed-refs.lock` |
 | `jg-fleet-snapshot.sh`   | Print structured fleet snapshot JSON and refresh only its parent-side remote-ledger cache (schema `jg-fleet-snapshot.v1`) |
 | `jg-home-summary-refresh.sh` | Atomically publish this home's structured summary ledger                         |
-| `jg-beads-migrate-check.sh` | Dry-run the Beads migration on copies of every home through the guarded wrapper and stop unless every home matches the manifest; `--rehearse <home>` then cuts a throwaway copy of that home and goes back |
-| `jg-beads-migrate.py` | Turn a copy of every home's tickets into per-home Beads import files, a manifest and the groups to settle by hand; `cut` moves one home to its store on an order and `back` undoes it |
 | `jg-whats-left.sh` | Render the standing view of what is left (`state/whats-left.md`) from the backlog, status and holds; refreshed on every summary publication |
 | `jg-owner-asks.sh` | List the owner's open asks in his own words, grouped Needs you / Not done / Done (verified), from every home's `[captain-ask]` tickets and captain holds; `--json` for the board; the Telegram `/status` reply and `jg-captain-say.sh --asks` use it |
 | `jg-triage.sh` | Check this home's health in one command (session lock, wake consumer, bus stack, backlog lock, Squad Leads, sentinel, tools, checkout, config, login, /tmp, stray servers); `--fix` repairs the safe ones through their guarded scripts; `--porcelain`, `--context`, `--agent` ([contract](triage.md)) |
@@ -190,7 +188,6 @@ The shared gate lifecycle boundary is summarized in [architecture.md](architectu
 | `jg-beads-view.py`       | Render `bd` rows in the read shape `bin/jg-backlog.sh` prints                                |
 | `jg-beads-write.py`      | Serve `bin/jg-backlog.sh` writes on a Beads store, in its reply shape                        |
 | `jg-beads-followup.py`   | Keep a public follow-up as one native row on a Beads store                           |
-| `jg-beads.sh`            | A stub until it is deleted: hands each `bd` call to `core/item-store/adapters/bd_compat.py`, which answers from the tickets tables in `fleet.db` |
 | `jg-backlog-transition-lib.sh` | Pair task-record changes with their backlog transitions and replay interrupted closes |
 | `jg-quota-axi-lib.sh`    | Shared `quota-axi` compatibility floor and quota snapshot schema validation           |
 | `jg-project-capacity-lib.sh` | Per-project worker capacity: `config/project-capacity` parsing, what holds a place, and the spawn-time fit check ([configuration.md](configuration.md#project-capacity-configproject-capacity)) |

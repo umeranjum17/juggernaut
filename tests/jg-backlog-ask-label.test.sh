@@ -10,7 +10,6 @@ set -u
 BD="$ROOT/core/item-store/adapters/bd_compat.py" CLI="$ROOT/bin/jg-backlog.sh" T=$(jg_test_tmproot jg-backlog-ask-label)
 H=$T/home; export JG_HOME=$H JG_STATE_OVERRIDE=$H/state JG_DATA_OVERRIDE=$H/data JG_CONFIG_OVERRIDE=$H/config
 mkdir -p "$H/config" "$H/state" "$H/data" "$T/user" "$T/real"
-printf '%s\n' "$T/real" > "$H/config/beads-dir"   # kept until bin/jg-backlog-lib.sh stops asking for a store path
 : > "$H/config/backlog-intake-loose"  # this suite is about the label, and tests/jg-backlog-intake.test.sh is about strict intake
 bd_() { python3 -I "$BD" "$@" 2>/dev/null; }
 tasks() {

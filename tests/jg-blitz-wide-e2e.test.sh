@@ -20,12 +20,6 @@ set -u
 # shellcheck source=tests/fixtures.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
-: "${JG_BEADS_TEST_BD:=$(command -v bd || true)}" "${JG_BEADS_TEST_DOLT:=$(command -v dolt || true)}"
-export JG_BEADS_TEST_BD JG_BEADS_TEST_DOLT
-if [ -z "$JG_BEADS_TEST_BD" ] || [ -z "$JG_BEADS_TEST_DOLT" ]; then
-  printf 'skip: real store: bd and dolt are not installed (JG_BEADS_TEST_BD, JG_BEADS_TEST_DOLT)\n'
-  exit 0
-fi
 command -v treehouse >/dev/null 2>&1 || { printf 'skip: treehouse is not installed\n'; exit 0; }
 
 PLAN_IN=$ROOT/tests/fixtures/blitz-wide/plan.json
@@ -134,7 +128,7 @@ world_env() {  # <world dir>
   {
     printf 'export JG_WORKER_POOL_DIR=%q JG_BLITZ_LEASE_LOG=%q PATH=%q JG_BLITZ_TERM=%q JG_SPAWN_NO_GUARD=1 JG_TEST_FIXTURE_PROC=%q\n' \
       "$JG_WORKER_POOL_DIR" "$JG_BLITZ_LEASE_LOG" "$PATH" "$JG_BLITZ_TERM" "$$"
-    printf 'export JG_BACKEND=tmux JG_BEADS_TEST_BD=%q JG_BEADS_TEST_DOLT=%q\n' "$JG_BEADS_TEST_BD" "$JG_BEADS_TEST_DOLT"
+    printf 'export JG_BACKEND=tmux\n'
     if [ "$LIVE" = 1 ]; then printf 'export TMUX_TMPDIR=%q\nunset TMUX\n' "$LAB_TMUX_DIR"   # the normal HOME and login stay as they are
     else printf 'export HOME=%q XDG_DATA_HOME=%q XDG_CONFIG_HOME=%q CLAUDE_CONFIG_DIR= TMUX=fake,1,0\n' "$HOME" "$XDG_DATA_HOME" "$XDG_CONFIG_HOME"; fi
   } > "$ENV_FILE"

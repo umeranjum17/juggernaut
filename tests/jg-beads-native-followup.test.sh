@@ -1,17 +1,14 @@
 #!/usr/bin/env bash
 # A public follow-up kept as a ticket row by bin/jg-beads-followup.py, driven through bin/jg-backlog.sh, in a throwaway
-# folder outside any git tree. JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT name the pinned builds; it skips plainly without them.
+# folder outside any git tree, on that home's tickets tables.
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
-  printf 'skip: real store: JG_BEADS_TEST_BD, JG_BEADS_TEST_DOLT is unset\n'; exit 0; fi
 T=$(jg_test_tmproot jg-beads-followup) CLI="$ROOT/bin/jg-backlog.sh" BD="$ROOT/core/item-store/adapters/bd_compat.py" jail=()
 export TZ=UTC TMPDIR=$T  # TMPDIR is the jail's one writable folder, so every mktemp under it lands
 command -v bwrap >/dev/null && jail=(bwrap --ro-bind / / --tmpfs /tmp --bind "$T" "$T" --ro-bind "$ROOT" "$ROOT" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent)
 mkdir -p "$T/bd/data" "$T/bd/state" "$T/bd/config" "$T/bd/s"
-printf '%s\n' "$T/bd/s" > "$T/bd/config/beads-dir"   # kept until bin/jg-backlog-lib.sh stops asking for a store path
 : > "$T/bd/config/backlog-intake-loose"  # the fixture files rows by their own words, not by strict intake
 ask() { JG_HOME="$T/$1" "${jail[@]}" "$CLI" "${@:2}"; }
 same() {  # <args...>: this home's store answers, and answers with a documented result rather than a crash.
@@ -241,7 +238,7 @@ pass "rival attempts leave one winner and a crashed attempt one row"
 J=$T/jr
 mkdir -p "$J/data" "$J/config" "$J/s" "$J/state/x-inbox" "$T/fb"
 printf '## In flight\n\n## Queued\n\n## Done\n' > "$J/data/backlog.md"
-printf '%s\n' "$J/s" > "$J/config/beads-dir"; printf 'FMX_PAIRING_TOKEN=test-token\n' > "$J/.env"   # beads-dir kept until bin/jg-backlog-lib.sh stops asking
+printf 'FMX_PAIRING_TOKEN=test-token\n' > "$J/.env"
 : > "$J/config/backlog-intake-loose"
 printf '#!/usr/bin/env bash\ncase " $* " in *connector/followup*) echo post >> "%s/posts" ;; esac\nprintf 200\n' "$T" > "$T/fb/curl"; chmod +x "$T/fb/curl"; : > "$T/posts"
 pf() { PATH=$T/fb:/usr/bin:/bin JG_ROOT_OVERRIDE=$ROOT JG_HOME=$J JG_STATE_OVERRIDE=$J/state FMX_NOW_OVERRIDE=1787539200 "${jail[@]}" "$@"; }

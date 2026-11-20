@@ -46,7 +46,6 @@ herdr_test_require_beads() { return 0; }
 herdr_test_backlog_ticket() {
   local home=$1 id=$2 shown state
   mkdir -p "$home/config" || return 1
-  [ -s "$home/config/beads-dir" ] || printf '%s\n' "$home-store" > "$home/config/beads-dir"   # kept until bin/jg-backlog-lib.sh stops asking for a store path
   (
     cd "$home" || exit 1
     export JG_HOME="$home" JG_CONFIG_OVERRIDE="$home/config"

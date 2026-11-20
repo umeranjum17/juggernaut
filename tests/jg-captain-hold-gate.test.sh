@@ -1,17 +1,13 @@
 #!/usr/bin/env bash
-# The owner's question is one gate row on a real Beads store: `hold` makes it (a readable title, the must category), his
+# The owner's question is one gate row on the home's tickets tables: `hold` makes it (a readable title, the must category), his
 # answer closes it with his words, and no list of work, ready list or count ever shows it. The cases are the S17a proof:
 # a dated hold also defers the ticket, a parked hold makes no gate and writes no text into the ticket, an armed board
 # still refuses a hold with no must, `answer --release` leaves the ticket open, spawn and merge blocking see an open gate,
-# `done` is refused past one, and a ticket with no gate has no question to answer. JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT name the pinned builds.
+# `done` is refused past one, and a ticket with no gate has no question to answer.
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
-  printf 'skip: real store: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
-  exit 0
-fi
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
 
 T=$(jg_test_tmproot jg-captain-hold-gate)

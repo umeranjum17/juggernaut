@@ -10,9 +10,9 @@ unset _jg_old _jg_new 2>/dev/null || true
 
 set -eu
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
-# A fixture home on the tickets tables (fleet.db); config/beads-dir is kept until bin/jg-backlog-lib.sh stops asking for a store path.
+# A fixture home on the tickets tables (fleet.db).
 core_tables_home() {  # <checkout> <home>
-  mkdir -p "$2/config" "$2/data" && printf '%s\n' "$2" > "$2/config/beads-dir" && : > "$2/config/backlog-intake-loose"
+  mkdir -p "$2/config" "$2/data" && : > "$2/config/backlog-intake-loose"
   case ":$PATH:" in *":$1/bin:"*) ;; *) PATH=$1/bin:$PATH; export PATH ;; esac
   JG_HOME=$2 python3 -I "$1/core/item-store/adapters/tickets.py" import --home main /dev/null >/dev/null
 }

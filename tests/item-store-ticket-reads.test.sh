@@ -9,7 +9,6 @@ FX=$ROOT/tests/fixtures/item-store-tickets
 TK=$ROOT/core/item-store/adapters/tickets.py
 T=$(jg_test_tmproot item-store-ticket-reads)
 mkdir -p "$T/home/config" "$T/home/data" "$T/home/state"
-printf '%s\n' "$T/store" > "$T/home/config/beads-dir"   # kept until bin/jg-backlog-lib.sh stops asking for a store path
 : > "$T/home/config/backlog-intake-loose"
 mkdir -p "$T/py"; for _py in /usr/bin/python3 /usr/local/bin/python3 "$(command -v python3)"; do [ -x "$_py" ] && { ln -sf "$_py" "$T/py/python3"; break; }; done
 export PATH=$T/py:$PATH
@@ -33,12 +32,9 @@ assert_contains "$out" "not found" "an unknown id says so"
 pass "all ${#READS[@]} reads answer from the tables, and an unknown id is refused"
 
 # --- tree and ready --spawnable
-FLAG=$T/home/config/one-engine-read   # kept until bin/jg-backlog-spawnable.sh reads the tables without it
-: > "$FLAG"
 printf -- '- p\n' > "$T/home/data/projects.md"
 out=$("$BL" ready --spawnable 2>&1); expect_code 0 $? "ready --spawnable from the tables: $out"
 [ "$out" = "$(printf 'count: 4\njg-ready1\tp\njg-unres\tp\njg-child\tp\njg-rel\tp')" ] || fail "spawnable differs from the startable rows of the fixture: $out"
-rm -f "$FLAG"
 out=$("$BL" tree --homes 2>&1); expect_code 0 $? "tree from the tables: $out"
 [ "$out" = "$(printf 'main:jg-ready1  [open]  row ready1\n  main:jg-child  [open]  row child')" ] || fail "tree differs from the fixture's parent edge: $out"
 pass "ready --spawnable and tree read the tables"

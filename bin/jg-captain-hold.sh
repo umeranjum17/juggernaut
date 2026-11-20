@@ -540,9 +540,6 @@ backlog_cmd() {
 
 # shellcheck source=bin/jg-captain-ask-lib.sh disable=SC1091
 . "$SCRIPT_DIR/jg-captain-ask-lib.sh"
-require_backlog() {
-  jg_backlog_beads_store "$(jg_backlog_config_of "$(jg_backlog_data_absolute "$DATA")")" >/dev/null || exit 2
-}
 
 # Read one row into TASK_SHOW_OUTPUT; a non-zero return means the row is
 # absent. A read that could not finish inside its bound is NOT absence, and
@@ -829,7 +826,6 @@ command_hold() {
     exit 1
   fi
   acquire_task_control_lock "$id"
-  require_backlog
   if task_show "$id"; then
     show=$TASK_SHOW_OUTPUT
     state=$(show_field "$show" state)
@@ -1051,7 +1047,6 @@ command_answer() {
   validate_slug task-id "$id"
   load_decision "$decision_file"
   acquire_task_control_lock "$id"
-  require_backlog
   task_show "$id" || fail "captain-held task $id is absent from this home's configured backlog (data directory $DATA)"
   show=$TASK_SHOW_OUTPUT
   hold_kind=$(show_field_value "$show" hold_kind)
@@ -1199,7 +1194,6 @@ command_answers() {
   fi
   [ -n "$source" ] || fail "--source provenance is required so the durable decision records where the answer came from"
   source=$(sanitize_field "$source")
-  require_backlog
   tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/jg-keyed-decision.XXXXXX") || fail "cannot stage the captain decision"
   err=$(umask 077; mktemp "${TMPDIR:-/tmp}/jg-keyed-decision-err.XXXXXX") \
     || { rm -f -- "$tmp"; fail "cannot stage the captain decision diagnostics"; }
@@ -1373,7 +1367,6 @@ command_reconcile_requests() {
   [ -n "$source" ] || fail "--source provenance is required"
   origin=$(read_binding "$source_id") || fail "cannot verify the binding for source $source_id"
   [ -n "$origin" ] || fail "source $source_id is not bound; no reconcile requests were created"
-  require_backlog
   while IFS= read -r row; do
     id=${row%%"$tab"*}
     note=''
@@ -1438,7 +1431,6 @@ reconcile_check() {
   [ "$#" -eq 0 ] || { usage >&2; exit 2; }
   cap=${JG_CAPTAIN_CALL_CAP:-8}
   case "$cap" in ''|*[!0-9]*|0) fail 'JG_CAPTAIN_CALL_CAP must be a positive integer' ;; esac
-  require_backlog
   questions=$(backlog_cmd questions --json) || fail 'cannot read owner questions for expiry check'
   count=$(printf '%s' "$questions" | jq 'length') || fail 'cannot count owner questions'
   now=${JG_CAPTAIN_HOLD_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
@@ -1539,7 +1531,6 @@ reconcile_close() {
   acquire_task_control_lock "$id"
   reconcile_request_read "$id" \
     || fail "task $id has no pending board-created reconcile request"
-  require_backlog
   task_show_or_fail "$id" "captain-held task $id is absent from this home's configured backlog (data directory $DATA)"
   [ -n "$(gate_rows "$id" --all)" ] || fail "task $id has no question to the owner; there is no captain call to reconcile"
   reconcile_close_gate "$id" "$show"
@@ -1568,7 +1559,6 @@ reconcile_note() {
   acquire_task_control_lock "$id"
   reconcile_request_read "$id" \
     || fail "task $id has no pending board-created reconcile request"
-  require_backlog
   command_open "$id" \
     || fail "task $id is not an open captain call; a note cannot keep a closed call open"
   gate=$(open_gate_ids "$id" | head -1)
@@ -1627,7 +1617,6 @@ command_complete() {
     CAPTAIN_META_LOCK_HELD=1
     [ -f "$meta" ] || fail "task metadata disappeared while recording completion"
   fi
-  require_backlog
   origin_exists_here "$origin" || fail "origin $origin is not owned by the active home $JG_HOME"
   if [ "$#" -eq 1 ] && [ "$1" = --none ]; then
     supplied=''
@@ -1701,7 +1690,6 @@ command_verify() {
   validate_slug origin-id "$origin"
   meta="$STATE/$origin.meta"
   [ -f "$meta" ] || fail "origin metadata is absent: $meta"
-  require_backlog
   reviewed=$(meta_value "$meta" decisions_reviewed)
   [ "$reviewed" = 1 ] || fail "origin $origin has no completed captain-call inventory"
   keys=$(meta_value "$meta" decision_keys)
@@ -1892,7 +1880,6 @@ command_design_card() {  # <card-key> --raised-by <ticket> --title <question>
   validate_slug raised-by "$raised"
   validate_one_line title "$title"
   [ -n "${title//[[:space:]]/}" ] || fail "a design card needs --title"
-  require_backlog
   task_show "$raised" || fail "refused: $raised, named as the ticket that raised the design card, is not in this home's backlog"
   # The marker lets the board-answers check find the card's answer without reading the backlog for every answer.
   mark=$STATE/design-cards/$key
@@ -1928,7 +1915,6 @@ command_design_pick() {  # <card-key> --words <the captain's words>
   validate_slug card-key "$key"
   [ -n "${words//[[:space:]]/}" ] || fail "design-pick needs --words \"<the captain's words>\""
   mark=$STATE/design-cards/$key
-  require_backlog
   gate=$(card_gate_rows "$key" | jq -r 'select(.state == "open") | .id' | head -1)
   if [ -n "$gate" ]; then
     tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/jg-captain-hold-words.XXXXXX") || fail "cannot stage the captain's pick"
@@ -1990,7 +1976,6 @@ hold_to_gate() {  # <task-id>: prints moved, kept or skipped
 command_to_gates() {
   local id outcome moved=0 kept=0 skipped=0 total=0
   [ "$#" -eq 0 ] || { usage >&2; exit 2; }
-  require_backlog
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     outcome=$(hold_to_gate "$id") || exit $?

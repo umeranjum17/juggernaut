@@ -12,7 +12,6 @@ py=$(python3 -c 'import sys; print(sys.executable)')   # the real interpreter: a
 # shellcheck disable=SC2016  # the stand-in expands its own variables when it runs
 printf '#!/usr/bin/env bash\ncase "${2:-}" in */bd_compat.py) printf "%%s\\n" "${*:3}" >> "$LOG" ;; esac\nexec %q "$@"\n' "$py" > "$T/bin/python3"
 chmod +x "$T/bin/python3"
-printf '%s\n' "$T/store" > "$T/config/beads-dir"   # kept until bin/jg-backlog-lib.sh stops asking for a store path
 cat > "$T/rows.jsonl" <<'JSON'
 {"id":"jg-open","title":"open one","status":"open","created_at":"2026-11-01T00:00:00Z","dependencies":[{"issue_id":"jg-open","depends_on_id":"jg-gone","type":"blocks"}],"labels":["project:p"]}
 {"id":"jg-gone","title":"finished one","status":"closed","created_at":"2026-10-01T00:00:00Z","closed_at":"2026-10-02T00:00:00Z","labels":["project:p"]}

@@ -42,6 +42,7 @@ once neither side is a decision. relink lays every missing edge, for a store who
 A question to the owner is a human gate that blocks its ticket (gate), closed with the owner's words as its close reason (resolve), and a re-check's finding is a comment on it (note) that leaves it open;
 the ticket keeps its status, and done refuses a ticket with an open gate and never forces past one.
 """
+import base64
 import datetime
 import json
 import os
@@ -798,9 +799,27 @@ def stage(args):
     print("\n## Done")
 
 
+FILE_TAG = r"\s*\((?:repo|kind|priority|since|done|merged|hold|until|hold-kind|hold-until)[: ][^)]*\)"
+
+
+def parse_item(section, head):
+    """One `- [ ] <id> - <title> (tag: value)...` line of a backlog file: its id, title, status, hold, tags, blockers and pull requests."""
+    rest = head[3]
+    tag = lambda k: (re.search(r"\(%s:? ([^)]*)\)" % k, rest) or [None, None])[1]
+    hold = tag("hold")
+    if hold is not None:
+        coded = re.match(r"(?:fm|jg)-hold-v1:([A-Za-z0-9+/=_-]+)", hold.strip())
+        hold = base64.b64decode(coded[1] + "==").decode("utf8", "replace") if coded else hold.strip()
+    status = ("closed" if head[1] == "x" or section == "Done" else ("deferred" if tag("hold-until") else "on_hold") if hold is not None
+              else "in_progress" if section == "In flight" else "open")
+    title = re.sub(r"\s*blocked-by: \S+", "", re.sub(FILE_TAG, "", rest)).strip()
+    return dict(item=head[2], title=title or head[2], status=status, hold=hold, blocked=re.findall(r"blocked-by: ([^\s)]+)", rest),
+                repo=tag("repo"), priority=tag("priority"), kind=tag("kind"), hold_kind=tag("hold-kind"), hold_until=tag("hold-until"),
+                prs=re.findall(r"https://\S+/pull/\d+", rest))
+
+
 def file_rows(path):
-    """A backlog file's rows as bd import rows, read by the parser the cut uses."""
-    parse_item = __import__("jg-beads-migrate").parse_item
+    """A backlog file's rows as bd import rows."""
     found, row, section = [], None, ""
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     with open(path, encoding="utf-8") as source:
@@ -809,7 +828,7 @@ def file_rows(path):
             if line.startswith("## "):
                 section, row = line[3:].strip(), None
             elif head:
-                item = parse_item("", "", section, head)
+                item = parse_item(section, head)
                 words = item["title"].split()
                 meta = {"kind": item["kind"], "hold_reason": item["hold"], "hold_kind": item["hold_kind"],
                         "prs": ",".join(item["prs"][1:]), "reports": ",".join(word for word in words if REPORT.match(word))}
