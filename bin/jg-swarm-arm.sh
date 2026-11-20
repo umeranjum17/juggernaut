@@ -21,6 +21,10 @@
 # lane_target_before, lane_target_wrote, agents, rows, words, gated), writes `on` to config/auto-dispatch and, with
 # --agents, <n> to config/lane-target, and prints
 #   armed <n> slices of <plan> in <owner>; <k> wait for the owner; <g> gated
+# then starts one dispatch pass in the background so the first ready slices start now, not at the next check sweep
+# (every 300 s): it runs this home's `state/auto-dispatch.check.sh`, the shim the watcher runs, detached, and never
+# waits for it. It prints `dispatch started: the first ready slices start now`, or, with no executable shim,
+# `dispatch waits for the next check sweep: no state/auto-dispatch.check.sh`. JG_SWARM_ARM_KICK=0 starts no pass.
 # switch_before, lane_target_before and armed_at come from this plan's own arm.json when it exists, else (the first two)
 # from the oldest other `armed` arm.json of this home, else from the files: the last swarm to finish puts back what
 # was there before any swarm, and arming twice changes nothing.
@@ -200,3 +204,12 @@ mkdir -p "$CONFIG"
 printf 'on\n' > "$CONFIG/auto-dispatch"
 [ -z "$AGENTS" ] || printf '%s\n' "$AGENTS" > "$CONFIG/lane-target"
 printf 'armed %s slices of %s in %s; %s wait for the owner; %s gated\n' "${#ROWS[@]}" "$PLAN" "$OWNER" "${#WORDS[@]}" "${#GATED[@]}"
+
+# One dispatch pass now: the watcher's own shim, detached; arming never waits for it.
+shim=$STATE/auto-dispatch.check.sh
+if [ ! -x "$shim" ]; then
+  echo "dispatch waits for the next check sweep: no state/auto-dispatch.check.sh"
+elif [ "${JG_SWARM_ARM_KICK:-1}" != 0 ]; then
+  setsid nohup "$shim" >/dev/null 2>&1 </dev/null &
+  echo "dispatch started: the first ready slices start now"
+fi

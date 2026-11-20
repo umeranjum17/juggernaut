@@ -3,7 +3,8 @@
 # strict intake, with no model turn. Plan jg-plan: A; B and C after A (C has an owner word); D with a tool gate.
 # Journey: arm -> briefs, the word gate, the tool gate, the switch and its record -> auto-dispatch beats start A, then B
 # (not C), then C once the owner picks, and the worker's read command prints the pick -> a second arm changes nothing ->
-# a row outside the plan is refused and a second plan keeps the first record's "before" values.
+# a row outside the plan is refused and a second plan keeps the first record's "before" values. Arming also starts one
+# dispatch pass at once through the home's check shim (T-kick), and says it waits for the sweep when there is none (T-no-shim).
 # JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT name the pinned builds; the suite skips without them.
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
@@ -70,7 +71,9 @@ TASK_C=${C//./-}
 
 # --- Case 1: arm ------------------------------------------------------------------------------------------------------
 out=$(run "$ARM" "$T/plan.json") || fail "arm: $out"
-assert_equals "armed 4 slices of jg-plan in main; 1 wait for the owner; 1 gated" "$out" "arm must print its one line"
+assert_equals "armed 4 slices of jg-plan in main; 1 wait for the owner; 1 gated" "$(head -n 1 <<< "$out")" "arm must print its one line"
+# T-no-shim: this home has no state/auto-dispatch.check.sh yet, so arming says it waits for the sweep and still exits 0.
+assert_contains "$out" "dispatch waits for the next check sweep: no state/auto-dispatch.check.sh" "T-no-shim: arm without a shim must say it waits"
 for s in a b c d; do
   row=$(slice_row $s) task=$(slice_row $s); task=${task//./-}
   brief=$M/data/$task/brief.md
@@ -107,7 +110,17 @@ assert_equals "$A $B $C $D|jg-plan-word-c|$D" "$(jq -r '"\(.rows | join(" "))|\(
 assert_equals "$T/plan.json|armed|main" "$(jq -r '"\(.plan_file)|\(.state)|\(.home)"' "$REC")" "arm must record the plan file, state and home"
 armed_at=$(jq -r '.armed_at' "$REC")
 sleep 1
+# T-kick: with the home's shim in place, arming starts it detached; the marker shows it ran within 5 s.
+printf '#!/usr/bin/env bash\ntouch "%s/kick.marker"\n' "$T" > "$M/state/auto-dispatch.check.sh"; chmod 700 "$M/state/auto-dispatch.check.sh"
 out=$(run "$ARM" "$T/plan.json" --agents 7) || fail "arm with --agents: $out"
+assert_contains "$out" "dispatch started: the first ready slices start now" "T-kick: arm with a shim must say dispatch started"
+for _ in $(seq 1 50); do [ -e "$T/kick.marker" ] && break; sleep 0.1; done
+[ -e "$T/kick.marker" ] || fail "T-kick: the shim did not run within 5 s of arming"
+rm -f "$T/kick.marker"
+out=$(JG_SWARM_ARM_KICK=0 run "$ARM" "$T/plan.json") || fail "arm with the kick off: $out"
+sleep 1
+[ ! -e "$T/kick.marker" ] || fail "T-kick: JG_SWARM_ARM_KICK=0 must start no pass"
+assert_not_contains "$out" "dispatch started" "T-kick: JG_SWARM_ARM_KICK=0 must not say a pass started"
 assert_equals "7" "$(cat "$M/config/lane-target")" "--agents must set the lane target"
 assert_equals "absent absent 7 7 $armed_at" "$(jq -r '"\(.switch_before) \(.lane_target_before) \(.lane_target_wrote) \(.agents) \(.armed_at)"' "$REC")" "a second arm keeps the first record's before values and time"
 printf '25\n' > "$M/config/lane-target"
@@ -156,6 +169,6 @@ out=$(run "$ARM" "$T/plan.json" --with-others) || fail "--with-others must arm: 
 rm -f "$M/state/dispatch-approved/jg-other"
 run "$ROOT/bin/jg-plan-gate.sh" approve "$T/in2.json" --harness claude --model sonnet --effort medium >/dev/null || fail "approve of plan 2 failed"
 out=$(run "$ARM" "$T/plan2.json") || fail "a second plan must arm while the first plan's rows are approved: $out"
-assert_equals "armed 1 slices of jg-plan2 in main; 0 wait for the owner; 0 gated" "$out" "the second plan's line"
+assert_equals "armed 1 slices of jg-plan2 in main; 0 wait for the owner; 0 gated" "$(head -n 1 <<< "$out")" "the second plan's line"
 assert_equals "absent absent" "$(jq -r '"\(.switch_before) \(.lane_target_before)"' "$M/data/swarm/jg-plan2/arm.json")" "the second plan must copy the first record's before values"
 pass "swarm arm: briefs, word gate, plan gate, switch and record; the chain starts each slice in its turn; safe twice; others refused"
