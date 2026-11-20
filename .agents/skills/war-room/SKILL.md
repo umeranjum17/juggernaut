@@ -33,22 +33,24 @@ Runs independent deep Recons from different angles, a critic for each, and one s
 - "Round 3 is the last round that may report gaps. A gap you cannot close in one revision moves to section 7 or 10 with its reason, and the critic closes it as carried."
 
 ## Critics
-1. When a Recon reports its draft, spawn its critic.
-2. Run `bin/jg-recon-handoff.sh assign <task> --critic <critic task>`. That record, not a name, links the draft to its critic.
+1. `bin/jg-war-room.sh next <council>` does this step: when a lane's draft is recorded, it files, briefs and starts the lane's critic and runs `bin/jg-recon-handoff.sh assign <task> --critic <critic task>`. That record, not a name, links the draft to its critic.
+2. The recon handoff starts `next` by itself after each `draft`, `revise` and `verdict` of a council lane (`JG_WAR_ROOM_NEXT=0` turns that off; run `next` by hand then).
 3. The critic's spec: read with the deep-recon rubric, and end each round with `bin/jg-recon-handoff.sh verdict <task> --critic <critic task> --hash <sha256 of report.md> --gaps <k>`.
 4. The verdict writes `critic.md`. For council lanes this replaces deep-recon's step "Overwatch installs it".
 5. Where the handoff does not send a round to the critic by itself, send one steer per round naming the draft's hash.
 
 ## Synthesis
-1. When every variant passes `bin/jg-recon-gate.sh <task>` (recon-ready announces each once), start the synthesis with the three report paths.
+1. `next` does this step: when every variant passes `bin/jg-recon-gate.sh <task>`, it starts the synthesis with the three report paths.
 2. Its spec requires `strike-recon` at stage 1 and `op-order` with `orders/plan.json` at the end.
 
 ## Dry run
-When the synthesis passes, dispatch the dry run of order 1 on a scratch copy. The synthesis fixes the order and records the measured budget.
+`next` dispatches the dry run of order 1 on a scratch copy when the synthesis passes. The synthesis fixes the order and records the measured budget.
 
 ## Report to the owner
+When the dry run is done and `bin/jg-swarm-plan-check.sh` passes the plan, `next` holds the council for the owner's plan approval and prints `owner approval asked`.
 Send one message with:
 - the answer;
 - the slice and wave counts;
-- each owner-only decision as a board card;
-- `say /blitz <path of orders/plan.json>`.
+- each owner-only decision as a board card.
+
+After the owner's yes, run `bin/jg-war-room.sh approve <council> --words "<the owner's words>"`. It records the approval and starts `/blitz` on the plan once.
