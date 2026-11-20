@@ -20,6 +20,7 @@ Runs independent deep Recons from different angles, a critic for each, and one s
 
 ## Lanes
 - Three variant Recons, one angle each. Default angles: the smallest change; the strongest guarantees; outside prior art first. The owner may name others.
+- Start all variants with one command, never one by one: `bin/jg-war-room.sh start <council> --project <p> --angles <a,b,c> --depth deep --harness <h> --model <m> --effort <e>`. It files each variant's child ticket (found again by its title, never filed twice), writes its brief and starts every lane without a live task record at once. Exit 0 means every lane is live; a line that says `not started` names the refusal.
 - One critic ticket for each variant, then the synthesis Recon and its critic, then the dry run of order 1.
 - Load `quota-array-dispatch` for the profile. Use the strongest profile at xhigh for Recons, critics and the synthesis. Mix families only when the owner asks: then one variant on each verified family with quota.
 - Run the dry run on the first order's model.
