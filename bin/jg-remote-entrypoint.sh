@@ -52,7 +52,7 @@ unset _jg_d
 set -eu
 
 PROTOCOL=1
-DOCTOR_SHA256=9451150a925354fa71571f35d91c31782be4bde6c5f20ce51cb36ec95c3e7821
+DOCTOR_SHA256=550349be3f3ea8403e3d500109eeb824084ff09fbabf8674e69b404b0ac84ca1
 REAL_SOURCE=$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "${BASH_SOURCE[0]}" 2>/dev/null) ||
   REAL_SOURCE=$(realpath "${BASH_SOURCE[0]}" 2>/dev/null) ||
   REAL_SOURCE=${BASH_SOURCE[0]}

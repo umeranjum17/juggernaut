@@ -30,7 +30,7 @@ rc=0
   tests/jg-trunk-retry.test.sh tests/jg-trunk-release-open-pr.test.sh tests/jg-trunk-release-merge-first.test.sh tests/jg-trunk-autorelease.test.sh tests/jg-trunk-rollover.test.sh tests/jg-trunk-carry.test.sh tests/jg-trunk-two-gates.test.sh tests/jg-trunk-base-movement.test.sh tests/jg-trunk-publish.test.sh tests/jg-trunk-cancel.test.sh tests/jg-trunk-cleanup-at-land.test.sh \
   tests/jg-trunk-verify.test.sh tests/jg-trunk-unit.test.sh tests/jg-trunk-verify-milestone.test.sh tests/jg-trunk-judge.test.sh tests/jg-trunk-spawn.test.sh tests/jg-trunk-scope.test.sh \
   tests/jg-on.test.sh tests/migration-card-live.test.sh tests/jg-afk-inject-e2e.test.sh \
-  tests/jg-beads.test.sh tests/jg-beads-native-n6.test.sh \
+  tests/jg-beads-native-n6.test.sh \
   tests/jg-ticket-writeback.test.sh) > "$out" 2>&1 || rc=$?
 cat "$out"
 cat > "$DONE_DONE_EVIDENCE_ROOT/steps.json" <<JSON

@@ -24,19 +24,31 @@ unit_active() {
 }
 
 # start_job <verify|nightly|live|publish|autorelease> <project>: start `trunk-landing.sh <kind> <home> <project>` detached.
+# In order: a transient user unit; when the user manager refuses it, a transient scope (also its own cgroup, off the starting service's);
+# and only then `setsid nohup`, which leaves the job in the starting service's cgroup, so a restart of that service would stop it. Every
+# refusal is written with its reason to unit-<kind>-<project>.log, so a verify that later ends "stopped by signal TERM" can be read against it.
 start_job() {
-  local kind=$1 pn=$2 run rec log unit
+  local kind=$1 pn=$2 run rec log unit why
   run=$(unit_tool systemd-run)
+  rec=$MEM/unit-$kind-$pn; log=$MEM/unit-$kind-$pn.log
   if [ -n "$run" ]; then
-    rec=$MEM/unit-$kind-$pn; log=$MEM/unit-$kind-$pn.log
     if [ -s "$rec" ] && unit_active "$(cat "$rec")"; then return 0; fi
     unit=jg-$kind-$pn-$(date +%s)
-    if "$run" --user --collect --quiet --property=KillMode=process --unit="$unit" --working-directory="$FMH" \
+    if why=$("$run" --user --collect --quiet --property=KillMode=process --unit="$unit" --working-directory="$FMH" \
         --setenv=PATH="$PATH" --property=StandardOutput=append:"$log" --property=StandardError=append:"$log" \
-        "$SELF" "$kind" "$FMH" "$pn" >/dev/null 2>&1; then
+        "$SELF" "$kind" "$FMH" "$pn" 2>&1 >/dev/null); then
       printf '%s\n' "$unit" > "$rec"
       return 0
     fi
+    printf '%s start_job %s %s: systemd-run refused the unit (%s); trying a scope\n' "$(date -u +%FT%TZ)" "$kind" "$pn" "$(printf '%s' "$why" | tr '\n' ' ' | cut -c1-300)" >> "$log"
+    # A detached starter (this tick never waits for the job): the scope, and when the manager refuses that too, the plain setsid job.
+    setsid nohup bash -c '
+      run=$1 unit=$2 fmh=$3 path=$4 log=$5 self=$6 kind=$7 pn=$8
+      "$run" --user --scope --quiet --unit="$unit" --working-directory="$fmh" --setenv=PATH="$path" "$self" "$kind" "$fmh" "$pn" && exit 0
+      printf "%s start_job %s %s: the scope was refused too, so the job stays in the starting service cgroup (setsid only)\n" "$(date -u +%FT%TZ)" "$kind" "$pn" >> "$log"
+      exec "$self" "$kind" "$fmh" "$pn"' _ "$run" "$unit" "$FMH" "$PATH" "$log" "$SELF" "$kind" "$pn" >>"$log" 2>&1 < /dev/null &
+    return 0
   fi
+  printf '%s start_job %s %s: no systemd-run, so the job stays in the starting service'"'"'s cgroup (setsid only)\n' "$(date -u +%FT%TZ)" "$kind" "$pn" >> "$log" 2>/dev/null || :
   setsid nohup "$SELF" "$kind" "$FMH" "$pn" >/dev/null 2>&1 < /dev/null &
 }

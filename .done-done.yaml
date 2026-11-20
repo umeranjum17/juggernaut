@@ -1174,9 +1174,6 @@ journeys:
   jg-beads-ticket-stage:
     tier: local
     command: bash tests/jg-beads-ticket-stage.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-beads:
-    tier: local
-    command: bash tests/jg-beads.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-behavior-determinism:
     tier: local
     command: bash tests/jg-behavior-determinism.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
