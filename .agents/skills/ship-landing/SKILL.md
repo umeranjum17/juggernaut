@@ -25,6 +25,8 @@ A captain instruction to merge is explicit authority; `yolo` is the only standin
 For any custom `state/<id>.check.sh` you write yourself, keep it an ordinary single-link mode-`0700` file, print one line only when Juggernaut should wake, print nothing otherwise, finish before `JG_CHECK_TIMEOUT`, then bind its current bytes with `bin/jg-check-register.sh <id>` before the watcher may execute it.
 Retire a custom check only through `bin/jg-check-unregister.sh <id>` (or `bin/jg-teardown.sh` for a spawned task); never hand-compose an `rm` with `$STATE`/`$ID`.
 
+A steer never tells a local-trunk lane to rebase, because the landing check rebases its commit itself: `bin/jg-send.sh` refuses it with exit 2 unless the lander refused the lane's head for a conflict, or `--allow-rebase-steer` is passed when the owner asked for it.
+
 Tear down a ship task only after landing is confirmed.
 On a confirmed merge of a ship task, `bin/jg-watch.sh` runs `bin/jg-teardown.sh <id>` itself, without `--force`.
 A refusal becomes one `check: cleanup after the merge of <id> was refused: ...` wake, so the work to unblock it lands on you rather than on a memory: settle the gate the refusal names, then tear the task down yourself.

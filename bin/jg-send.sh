@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Steer a task by durable record: write the message into the task's steering
 # inbox and ring a constant doorbell line into its terminal, best-effort.
-# Usage: jg-send.sh <target> [--resolve-key <key>]... [--fire-and-forget <delivery-id>] <text...>
+# Usage: jg-send.sh <target> [--resolve-key <key>]... [--fire-and-forget <delivery-id>] [--allow-rebase-steer] <text...>
 #   <target> may be an exact task id, a legacy jg-<id> task label resolved
 #   through this home's state/<id>.meta, or an explicit well-formed backend
 #   target. jg-send refuses unresolved guesses rather than falling back to a
@@ -11,6 +11,12 @@
 # before anything is marked, recorded, or typed, because an empty marked
 # squad_lead request delivers only marker and correlation bytes and leaves the
 # parent waiting on a reply to nothing.
+# A text that tells a local-trunk lane (its meta says mode=local-trunk) to rebase is refused with exit 2, because the landing check
+# rebases the commit itself; an instruction (it starts with "rebase" or says "rebase on/onto/to/your/the/again/and", any case) is
+# told from a mention ("never rebase", "do not rebase", "no rebase"). It goes through when the lander refused the lane's current
+# head (git -C <its worktree> rev-parse HEAD) for a conflict, which is the line `final ... conflicts with ...` in
+# data/jg-trunk-landing/<task>.<head>.state (core/trunk-landing/verdict.sh keeps it), or when --allow-rebase-steer is passed before
+# the text because the owner asked for it. Cost: one meta read and one git call per send to a local-trunk lane.
 # Special keys instead of text: jg-send.sh <target> --key Enter
 # Key support is backend-specific: tmux/herdr support Escape, Enter, and C-c;
 # Orca currently supports Enter and C-c only, and rejects Escape.
@@ -301,6 +307,22 @@ jg_send_id_from_meta() { # <meta-file>
   printf '%s' "${base%.meta}"
 }
 
+# A local-trunk lane's commit is rebased by the landing check itself, so a steer that tells the lane to rebase is
+# refused unless the lander refused this very head for a conflict (see the header). Cost: one meta read and one git call.
+jg_send_refuse_trunk_rebase() { # <message>
+  local task wt head text
+  [ "$ALLOW_REBASE_STEER" = 0 ] && [ -n "$TARGET_META" ] || return 0
+  [ "$(jg_meta_get "$TARGET_META" mode)" = local-trunk ] || return 0
+  text=$(printf '%s' "$1" | sed -E "s/(never|not|no|n.t)[[:space:]]+re-?base//Ig")
+  printf '%s' "$text" | grep -qiE '^[[:space:]]*re-?base|(^|[^[:alnum:]_])re-?base[[:space:]]+(on|onto|to|your|the|again|and)([^[:alnum:]_]|$)' || return 0
+  task=$(jg_send_id_from_meta "$TARGET_META")
+  wt=$(jg_meta_get "$TARGET_META" worktree)
+  head=$(git -C "$wt" rev-parse HEAD 2>/dev/null) || head=
+  [ -z "$head" ] || [[ $(cat "$JG_HOME/data/jg-trunk-landing/$task.$head.state" 2>/dev/null) != final*' conflicts with '* ]] || return 0
+  echo "refused: a local-trunk lane never rebases; the landing check rebases its commit. Send the landing's queue reason instead, or pass --allow-rebase-steer when the owner asked for it." >&2
+  exit 2
+}
+
 # #fleet: the steer is also a message on the fleet chat channel, written here
 # because this is the call site that already records the send (bin/jg-chat.sh).
 # Best-effort by contract: a chat problem never changes the outcome of a send.
@@ -551,6 +573,7 @@ fi
 # message exactly as before, so ordinary sends are byte-identical.
 RESOLVE_KEYS=
 FIRE_AND_FORGET_ID=
+ALLOW_REBASE_STEER=0
 jg_send_add_resolve_key() { # <key>
   local k=$1
   case "$k" in
@@ -592,6 +615,10 @@ while :; do
     }
     FIRE_AND_FORGET_ID=$2
     shift 2
+    ;;
+  --allow-rebase-steer)
+    ALLOW_REBASE_STEER=1
+    shift
     ;;
   --fire-and-forget=*)
     [ -z "$FIRE_AND_FORGET_ID" ] || {
@@ -906,6 +933,7 @@ else
     echo "error: a text steer requires a nonempty message; nothing was sent (an empty marked request would deliver only marker and correlation bytes and leave the parent waiting on a reply to nothing)" >&2
     exit 1
   fi
+  jg_send_refuse_trunk_rebase "$MESSAGE"
   order_route_tag=''
   if [[ "$MESSAGE" =~ (^|[[:space:]])\[(order|route)\]([[:space:]]|$) ]]; then
     order_route_tag=${BASH_REMATCH[2]}
