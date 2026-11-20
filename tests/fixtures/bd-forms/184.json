@@ -1,0 +1,12 @@
+{
+ "argv": [
+  "comments",
+  "cm-one"
+ ],
+ "stdin": "",
+ "stdout": "\nComments on cm-one:\n\n[main] at 2026-11-19 14:01\n  \n    Still open: nothing has shipped.                                            \n\n",
+ "exit": 0,
+ "form": "comments",
+ "store": "{\"_type\":\"issue\",\"id\":\"cm-one\",\"title\":\"Commented\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T10:00:00Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T10:00:00Z\",\"comments\":[{\"id\":\"5a1f0c2e-0000-5000-8000-000000000001\",\"issue_id\":\"cm-one\",\"author\":\"main\",\"text\":\"Still open: nothing has shipped.\\n\",\"created_at\":\"2026-11-19T14:01:16Z\"}],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":1}\n",
+ "derived": "one plain one-line comment: a different text in the shape of recorded fixture 11; the padding of the text line to 80 columns is read from that one recorded line (a longer text and a second comment are not recorded)"
+}

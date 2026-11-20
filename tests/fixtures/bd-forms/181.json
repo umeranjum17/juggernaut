@@ -1,0 +1,13 @@
+{
+ "argv": [
+  "show",
+  "pc-kid",
+  "--json"
+ ],
+ "stdin": "",
+ "stdout": "[\n  {\n    \"id\": \"pc-kid\",\n    \"title\": \"Kid\",\n    \"status\": \"open\",\n    \"priority\": 2,\n    \"issue_type\": \"task\",\n    \"created_at\": \"2026-11-19T10:00:00Z\",\n    \"created_by\": \"main\",\n    \"updated_at\": \"2026-11-19T10:00:00Z\",\n    \"dependencies\": [\n      {\n        \"id\": \"pc-epic\",\n        \"title\": \"Epic\",\n        \"status\": \"open\",\n        \"priority\": 2,\n        \"issue_type\": \"task\",\n        \"created_at\": \"2026-11-19T10:00:00Z\",\n        \"created_by\": \"main\",\n        \"updated_at\": \"2026-11-19T10:00:00Z\",\n        \"dependency_type\": \"parent-child\"\n      }\n    ],\n    \"dependent_count\": 0,\n    \"dependency_count\": 0,\n    \"comment_count\": 0,\n    \"parent\": \"pc-epic\",\n    \"revision\": \"0\"\n  }\n]\n",
+ "exit": 0,
+ "form": "show --json",
+ "store": "{\"_type\":\"issue\",\"id\":\"pc-epic\",\"title\":\"Epic\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T10:00:00Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T10:00:00Z\",\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"pc-kid\",\"title\":\"Kid\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T10:00:00Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T10:00:00Z\",\"dependencies\":[{\"issue_id\":\"pc-kid\",\"depends_on_id\":\"pc-epic\",\"type\":\"parent-child\",\"created_at\":\"2026-11-19T10:00:00Z\",\"created_by\":\"main\",\"metadata\":\"{}\"}],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n",
+ "derived": "show --json of a parent-child row: the edge is listed like a blocks edge with dependency_type, `parent` follows comment_count as in the recorded list --json rows; no recorded show fixture holds this edge"
+}

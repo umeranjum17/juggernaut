@@ -15,7 +15,7 @@ fail=0
 # Forms no table can answer: each prints `known-gap <form>: <reason>` without failing the test; any other mismatch fails.
 declare -A GAPS=(
   ['check']='bd printed the paths and versions of the machine it ran on; the admin family answers check from the tables'
-  ['comments']="bd renders a comment's text through a terminal markdown renderer (wrap and padding are not derivable)"
+  ['comments']="bd renders a comment's text through a terminal markdown renderer: only a one-line plain text of at most 60 characters is answered (the recorded shape); a longer, multi-line or markdown text (headings, lists, emphasis, code) and a ticket with several comments are not recorded"
 )
 # Seeds, as the tables hold them (a store export row may carry `events` and `provenance` arrays; memory has a row per key):
 #   export and its recorded store is empty: the recorded stdout is itself an export, so it is the store;
@@ -117,7 +117,7 @@ def parsed(t):
             return None
     for row in (v if isinstance(v, list) else []):
         if isinstance(row, dict) and isinstance(row.get("dependencies"), list):
-            row["dependencies"].sort(key=lambda d: (d["depends_on_id"], d["type"]))
+            row["dependencies"].sort(key=lambda d: (d.get("depends_on_id", d.get("id")), d.get("type", d.get("dependency_type"))))
         if isinstance(row, dict) and isinstance(row.get("blocked_by"), list):
             row["blocked_by"].sort()
     return v
@@ -131,7 +131,8 @@ print(sqlite3.connect(glob.glob(os.environ["JG_HOME"] + "/state/item-store/fleet
 PY
 )" = 1 ] || { echo "FAIL $form (the recorded entry is not in ticket_event)"; fail=1; continue; }
     fi
-    echo "ok $form"
+    note=$(PATH=$t/path python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1])).get("derived", ""))' "$fx")
+    echo "ok $form${note:+ (derived, no recorded bytes for it: $note)}"
   elif [ -n "${GAPS[$form]:-}" ]; then echo "known-gap $form: ${GAPS[$form]}"
   else echo "FAIL $form (fixture $n: exit $rc, wanted $(cat "$t/$n.exit"); $(head -1 "$t/$n.err"))"; fail=1; fi
 done

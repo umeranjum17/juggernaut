@@ -5,12 +5,13 @@
 Verbs: show list ready blocked export epic status gate list comments history --events provenance log types statuses.
 Each prints what bd printed for the same store: the keys of an export row in its order, bd's two-space JSON. A form whose
 answer needs what the tables do not hold raises NotSupported instead of printing a guess:
-  - a `show` row with a link other than blocks, or a linked row with --include-dependents or --brief-deps: bd's form is not recorded;
+  - a `show` row whose edge points at a ticket this home does not hold, or a linked row with --include-dependents or --brief-deps: bd's form is not recorded;
+  - `comments` of a text other than one plain line of at most 60 characters, or of several comments: bd renders the text through a markdown renderer;
   - a gate row: await_type is not kept; history, events and provenance entries that were never recorded in ticket_event;
   - `schema`, `memories`, `swarm validate`, `q` and `provenance record` (they create or read what no table holds), and text output.
 A `show --json` row ends with a Dolt `revision` hash of the row's content: it is not derivable and is not printed.
 Python stdlib only."""
-import importlib.util, json, os, sys, time, uuid
+import importlib.util, json, os, re, sys, time, uuid
 
 ADAPTERS = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, ADAPTERS)
@@ -133,12 +134,13 @@ def base_row(t):
 
 
 def show_dependencies(t, store):
-    """A `show` row lists each edge as the ticket it points at, then `dependency_type`; only a blocks edge's form is recorded."""
+    """A `show` row lists each edge as the ticket it points at, then `dependency_type`. Recorded for a blocks edge; every other type is derived
+    the same way (tests/bd-compat-read.test.sh names each derived fixture)."""
     by_id = {x["id"]: x for x in store.tickets()}
     out = []
     for edge in store.edges_of.get(t["id"], []):
-        if edge["type"] != "blocks" or edge["depends_on_id"] not in by_id:
-            raise NotSupported("show: bd's form of a %s edge to this ticket is not recorded" % edge["type"])
+        if edge["depends_on_id"] not in by_id:
+            raise NotSupported("show: bd's form of a %s edge to a ticket this home does not hold is not recorded" % edge["type"])
         out.append(dict(base_row(by_id[edge["depends_on_id"]]), dependency_type=edge["type"]))
     return out
 
@@ -159,6 +161,8 @@ def export_row(t, store, links, counts, comments, show=False, embed=False):
     row["dependent_count" if show else "dependency_count"] = dependents if show else blocking
     row["dependency_count" if show else "dependent_count"] = blocking if show else dependents
     row["comment_count"] = len(comments.get(t["id"], []))
+    if show and parent_of(links, t["id"]):
+        row["parent"] = parent_of(links, t["id"])
     return row
 
 
@@ -303,10 +307,24 @@ def gate_list(f):
 def comments(f):
     if len(f.pos) != 1:
         raise NotSupported("comments")
-    rows = Store().comments(f.pos[0])
-    if rows or "--json" not in f.sw:
-        raise NotSupported("comments: bd's text and JSON for a ticket with comments is not recorded")
-    return "[]\n", 0
+    store = Store()
+    ident = f.pos[0]
+    if not any(t["id"] == ident for t in store.tickets()):
+        raise NotSupported("comments: bd's answer for a ticket that does not exist is not recorded")
+    rows = store.comments(ident)
+    if "--json" in f.sw:
+        return dumps([{"id": i, "issue_id": ident, "author": a, "text": x, "created_at": c} for i, a, x, c in rows]) + "\n", 0
+    if not rows:
+        raise NotSupported("comments: bd's text form of a ticket with no comment is not recorded")
+    return "\nComments on %s:\n\n%s" % (ident, "".join(comment_block(*r[1:]) for r in rows)), 0
+
+
+def comment_block(author, text, created_at):
+    """One comment as bd's markdown renderer printed the recorded one: a header, then the text indented by four and padded to 80 columns."""
+    body = text[:-1] if text.endswith("\n") else text
+    if "\n" in body or len(body) > 60 or not body or not re.fullmatch(r"[A-Za-z0-9 .,:;'?!()-]+", body) or body != body.strip():
+        raise NotSupported("comments: bd renders this text through a markdown renderer; only one plain line of at most 60 characters is recorded")
+    return "[%s] at %s %s\n  \n%s\n\n" % (author, created_at[:10], created_at[11:16], "    " + body.ljust(76))
 
 
 def stream(verb, f):
