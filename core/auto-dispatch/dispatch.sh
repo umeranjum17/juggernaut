@@ -2,6 +2,7 @@
 # auto-dispatch watcher check: every beat, write down which tickets this home would start by itself, and, with the home's
 # switch on, start them. With the switch off (the default) it is watch only: it starts nothing.
 # Usage: dispatch.sh check <jg-home>
+#        dispatch.sh pass <jg-home>              one pass of the check, with no lock (the check's own step)
 #        dispatch.sh state <jg-home> <id>        print the start state of an approved ticket (the machine's observer)
 #        dispatch.sh run <jg-home> <record> <task> <log> <spawn command...>   the detached wrapper of one start
 #
@@ -26,8 +27,11 @@
 # writes what the spawn really did into the start record data/auto-dispatch/<id>.start.<attempt> (the spawn's output is
 # data/auto-dispatch/<id>.log). The spawn's exit is the result, and the row follows the result, never the launch:
 #   0   started   the lane record state/<task>.meta is there (an exit 0 with no lane record is a failed start);
-#   75  deferred  the spawn said wait (pool full, no copy, load, capacity, a locked task set): the NEXT BEAT STARTS IT AGAIN under
-#               the same approval, as the next attempt, with no lead turn and no new approval;
+#   75  deferred  the spawn said wait (pool full, no copy, load, capacity, a locked task set): a delayed check starts it AGAIN
+#               under the same approval, as the next attempt, with no lead turn and no new approval. The delay is
+#               JG_DISPATCH_RETRY_DELAY seconds (default 20; 0 turns the retry off and leaves it to the next beat), doubled for
+#               each deferred attempt of the ticket before it in a row, never over 160; one retry waits for the whole home
+#               (data/auto-dispatch/.retry-pending holds its due epoch), and it tries every deferred ticket;
 #   else failed   the spawn's last line is the cause: named to the lead once, and not tried again until a new approval.
 # Before a launch the check asks the ready state again: a lane record already there means the ticket is running (no spawn), and a
 # start record of the ticket without a result is a start in flight (no second spawn). Each attempt is claimed by creating its
@@ -36,6 +40,13 @@
 # core/machines/tables/dispatch-start.tsv is the table of these states (ready, starting, started, deferred, refused);
 # `dispatch.sh state <jg-home> <id>` is its observer.
 # The lane target, the quota gates and the brief gates stay: the spawn applies its own and may refuse.
+# The check runs one pass at a time per home: it holds the lock directory data/auto-dispatch/.check.lock (the holder's pid in it;
+# a dead holder's lock is taken over). A call that finds a pass running leaves the mark data/auto-dispatch/.check.again FIRST,
+# tries the lock once more, and else exits 0 printing nothing; the holder releases the lock after each pass, and when the mark is
+# there takes the lock again, removes the mark and makes one more pass (at most 3 passes in one call; a mark left after the
+# third starts one detached check, so it is never left for the next beat). So any number of events may start the check at once.
+# A detached check (a retry, or that last one) prints nothing, so it names no ticket to the lead and raises no alert: the next
+# beat does, from the same rows.
 # Switch on, the check prints ONE line a beat when a ticket newly needs the lead (no approval record, no brief, no route, no
 # delivery contract, a failed start); the line wakes the lead, and data/auto-dispatch/told.tsv keeps a ticket from being named twice for the same reason.
 # Output: the one file data/auto-dispatch/rows.tsv, one row per verdict CHANGE of a ticket:
@@ -46,14 +57,15 @@
 # delivery contract, an unreadable yolo posture, a failed start) raises the `ready-idle` alert through bin/jg-alert.sh, the
 # alert table's own timer and rung, printed as the check's wake line; a start that takes resolves it. Watch only raises nothing.
 # JG_AUTO_DISPATCH_BACKLOG, _HOLD, _SPAWN, _ALERT and _PROJECT_MODE name the backlog, captain-hold, spawn and project-mode commands
-# (and JG_AUTO_DISPATCH_IN_FLIGHT the 600 seconds a start may take); tests point them at stand-ins.
+# (and JG_AUTO_DISPATCH_IN_FLIGHT the 600 seconds a start may take); tests point them at stand-ins, and
+# JG_DISPATCH_TEST_RELEASE_DELAY (seconds, default none) holds the lock that long before a pass's release.
 set -u
 case "${1:-}" in
-  check) [ "$#" -eq 2 ] ;;
+  check|pass) [ "$#" -eq 2 ] ;;
   state) [ "$#" -eq 3 ] ;;
   run) [ "$#" -ge 6 ] ;;
   *) false ;;
-esac && [ -d "$2/state" ] || { echo "usage: dispatch.sh check <jg-home> | state <jg-home> <id> | run <jg-home> <record> <task> <log> <spawn command...>" >&2; exit 2; }
+esac && [ -d "$2/state" ] || { echo "usage: dispatch.sh check <jg-home> | pass <jg-home> | state <jg-home> <id> | run <jg-home> <record> <task> <log> <spawn command...>" >&2; exit 2; }
 FMH=$(cd "$2" && pwd -P)
 SELF=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/$(basename "${BASH_SOURCE[0]}")
 STATE=${JG_STATE_OVERRIDE:-$FMH/state}
@@ -70,6 +82,14 @@ SCALE=${JG_AUTO_DISPATCH_SCALE:-$FMH/core/lane-scale/scale.sh}
 APPROVED=$STATE/dispatch-approved
 IN_FLIGHT_SECONDS=${JG_AUTO_DISPATCH_IN_FLIGHT:-600}
 ROWS=$DATA/auto-dispatch/rows.tsv
+CHECK_LOCK=$DATA/auto-dispatch/.check.lock
+CHECK_AGAIN=$DATA/auto-dispatch/.check.again
+RETRY_PENDING=$DATA/auto-dispatch/.retry-pending
+RETRY_DELAY=${JG_DISPATCH_RETRY_DELAY:-20}
+MAX_PASSES=3
+LOCK_HELD=0
+QUIET=${JG_DISPATCH_DETACHED:-}   # set by detach: this check has no reader, so it keeps the lead's note and the alert for a beat
+case "$RETRY_DELAY" in ''|*[!0-9]*) RETRY_DELAY=20 ;; esac
 umask 077
 mkdir -p "$DATA/auto-dispatch" || exit 0
 export JG_HOME=$FMH
@@ -174,9 +194,41 @@ start_state() {
 # last_line <log>: the last line of the spawn's output as one short line with no tab.
 last_line() { grep -v '^[[:space:]]*$' "$1" 2>/dev/null | tail -n 1 | tr '\t\r' '  ' | cut -c1-200; }
 
+# detach <command...>: run it in its own session, with no input and no output, and return at once.
+detach() {
+  if command -v setsid >/dev/null 2>&1; then ( env JG_DISPATCH_DETACHED=1 setsid nohup "$@" > /dev/null 2>&1 < /dev/null & ) 2>/dev/null
+  else ( env JG_DISPATCH_DETACHED=1 nohup "$@" > /dev/null 2>&1 < /dev/null & ) 2>/dev/null; fi
+}
+
+# retry_delay <id> <attempt>: the seconds to wait before the retry of a deferred attempt: the base delay, doubled for each attempt
+# before it in a row that was deferred too (the start records hold the last three), never over 160.
+retry_delay() {
+  local id=$1 delay=$RETRY_DELAY n=$(($2 - 1))
+  while [ "$n" -ge 1 ] && [ "$delay" -lt 160 ] && [ "$(start_field "$START_PREFIX/$id.start.$n" result)" = deferred ]; do
+    delay=$((delay * 2)); n=$((n - 1))
+  done
+  [ "$delay" -le 160 ] && echo "$delay" || echo 160
+}
+
+# schedule_retry <record>: one delayed check for the home. The mark holds its due epoch and is created with noclobber, so the second
+# deferral of a pass leaves the first one's retry alone; the delayed check removes the mark before it runs, and a mark more than a
+# minute overdue belongs to a retry that died (a restart), so it is replaced.
+schedule_retry() {
+  local base=${1##*/} id attempt delay now pending
+  [ "$RETRY_DELAY" -gt 0 ] || return 0
+  id=${base%.start.*}; attempt=${base##*.start.}
+  now=$(date +%s)
+  pending=$(cat "$RETRY_PENDING" 2>/dev/null)
+  case "$pending" in ''|*[!0-9]*) ;; *) [ $((now - pending)) -gt 60 ] && rm -f -- "$RETRY_PENDING" ;; esac
+  delay=$(retry_delay "$id" "$attempt")
+  ( set -C; printf '%s\n' $((now + delay)) > "$RETRY_PENDING" ) 2>/dev/null || return 0
+  # shellcheck disable=SC2016  # the delayed shell expands its own arguments
+  detach bash -c 'sleep "$1"; rm -f -- "$2"; exec bash "$3" check "$4"' _ "$delay" "$RETRY_PENDING" "$SELF" "$FMH"
+}
+
 # run_start <record> <task> <log> <spawn command...>: the detached wrapper of one start. It runs the spawn and writes what the
 # spawn really did into the record: the exit 0 with the lane record there is `started`, the exit 75 is `deferred` (the spawn
-# said wait; the next beat starts it again), anything else is `refused` with the spawn's last line as its cause.
+# said wait; a delayed check starts it again), anything else is `refused` with the spawn's last line as its cause.
 run_start() {
   local rec=$1 task=$2 log=$3 rc=0 result reason=
   shift 3
@@ -189,6 +241,7 @@ run_start() {
   [ -n "$reason" ] || [ "$result" = started ] || reason="the spawn exited $rc with no output"
   { cat "$rec"; printf 'result=%s\nrc=%s\nended-at=%s\nreason=%s\n' "$result" "$rc" "$(date +%s)" "$reason"; } > "$rec.tmp.$$" \
     && mv -f "$rec.tmp.$$" "$rec"
+  [ "$result" != deferred ] || schedule_retry "$rec"
 }
 
 # launch <id> <project> <route>: claim the next attempt for the ticket and spawn it detached through `run_start`. Prints
@@ -230,7 +283,59 @@ ready_idle() {
     --note "$1 may start and a lane is free, but no start is running" 2>/dev/null >> "$tmp/alerts"
 }
 
+# take_lock: claim the check lock, a directory whose one `mkdir` is the atomic step; the holder's pid is written into it. Returns 1
+# while a live pass holds it. A lock whose pid is dead (or that never got one, and is over a minute old) is moved aside, which one
+# taker wins, and claimed again.
+take_lock() {
+  local pid moved stale=$CHECK_LOCK.stale.$$
+  claim_lock && return 0
+  pid=$(cat "$CHECK_LOCK/pid" 2>/dev/null)
+  case "$pid" in
+    '') [ -n "$(find "$CHECK_LOCK" -maxdepth 0 -mmin +1 2>/dev/null)" ] || return 1 ;;
+    *[!0-9]*) ;;
+    *) ! kill -0 "$pid" 2>/dev/null || return 1 ;;
+  esac
+  mv "$CHECK_LOCK" "$stale" 2>/dev/null || return 1
+  moved=$(cat "$stale/pid" 2>/dev/null)
+  if [ "$moved" != "$pid" ]; then mv "$stale" "$CHECK_LOCK" 2>/dev/null; return 1; fi   # it was a live holder's fresh lock: give it back
+  rm -f -- "$stale/pid"; rmdir "$stale" 2>/dev/null
+  claim_lock
+}
+claim_lock() { mkdir "$CHECK_LOCK" 2>/dev/null || return 1; printf '%s\n' "$$" > "$CHECK_LOCK/pid"; LOCK_HELD=1; }
+
+# release_lock [hook]: give the lock back. `hook` holds it first for JG_DISPATCH_TEST_RELEASE_DELAY seconds, so a test can place a
+# call in the gap between a pass's end and its release.
+release_lock() {
+  [ "$LOCK_HELD" -eq 1 ] || return 0
+  [ "${1:-}" != hook ] || [ -z "${JG_DISPATCH_TEST_RELEASE_DELAY:-}" ] || sleep "$JG_DISPATCH_TEST_RELEASE_DELAY"
+  rm -f -- "$CHECK_LOCK/pid"; rmdir "$CHECK_LOCK" 2>/dev/null
+  LOCK_HELD=0
+}
+
+# check_call: one call of the check. The order is what keeps a mark from being lost: a caller that cannot take the lock writes the
+# mark BEFORE it tries once more, and the holder releases BEFORE it reads the mark. The holder takes the lock again before it
+# removes the mark, so two passes never overlap, and a mark made before a pass starts is covered by that pass.
+check_call() {
+  local passes=0
+  if ! take_lock; then
+    : > "$CHECK_AGAIN"
+    take_lock || return 0
+  fi
+  trap release_lock EXIT
+  while :; do
+    rm -f -- "$CHECK_AGAIN"
+    bash "$SELF" pass "$FMH"
+    passes=$((passes + 1))
+    release_lock hook
+    [ -e "$CHECK_AGAIN" ] || return 0
+    if [ "$passes" -ge "$MAX_PASSES" ]; then detach bash "$SELF" check "$FMH"; return 0; fi   # the cap bounds this call, never leaves a mark for the next beat
+    take_lock || return 0   # another pass took it after our release: it starts after the mark, so it covers it
+  done
+}
+
 case "$1" in
+  check) check_call; exit 0 ;;
+  pass) ;;
   run) shift 2; run_start "$@"; exit $? ;;
   state) now=$(date +%s); [ -f "$APPROVED/$3" ] || exit 0; start_state "$3"; echo "$START_STATE"; exit 0 ;;
 esac
@@ -267,10 +372,10 @@ record_row() {
   local id=$1 idle=$2 row=$3$'\t'$4 since
   since=$now; [ "$(last_verdict "$id")" != "$row" ] || since=$prev_epoch
   [ "$(last_verdict "$id")" = "$row" ] || printf '%s\t%s\t%s\n' "$now" "$id" "$row" >> "$ROWS"
-  if [ "$ACT" -eq 1 ] && [ "$idle" -eq 1 ]; then ready_idle "$id" "$since"; fi
+  if [ "$ACT" -eq 1 ] && [ "$idle" -eq 1 ] && [ -z "$QUIET" ]; then ready_idle "$id" "$since"; fi
   case "$row" in started$'\t'*) JG_STATE_OVERRIDE=$STATE "$ALERT" resolve "ready-idle--$id" --proof source:row-started >/dev/null 2>&1 ;; esac
   case "$row" in started$'\t'*) grep -v -F -- "$id"$'\t' "$TOLD" > "$tmp/told" 2>/dev/null; cat "$tmp/told" > "$TOLD" 2>/dev/null ;; esac
-  if [ "$ACT" -eq 1 ] && needs_lead "${row%%$'\t'*}" "${row#*$'\t'}" && ! grep -qxF -- "$id"$'\t'"$row" "$TOLD" 2>/dev/null; then
+  if [ "$ACT" -eq 1 ] && [ -z "$QUIET" ] && needs_lead "${row%%$'\t'*}" "${row#*$'\t'}" && ! grep -qxF -- "$id"$'\t'"$row" "$TOLD" 2>/dev/null; then
     printf '%s\t%s\n' "$id" "$row" >> "$TOLD"; printf '%s (%s)\n' "$id" "${row#*$'\t'}" >> "$tmp/lead"
   fi
 }
