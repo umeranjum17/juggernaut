@@ -2,7 +2,7 @@
 
 run(argv, stdin_text) -> (stdout_text, exit_status); raises NotSupported for a form bd-forms.tsv does not record for this family,
 and for a recorded form whose answer the tables cannot hold. A link change is one tickets.change row of the dependent ticket,
-so the `link` table follows it. Answered: dep add (--type / -t: blocks, parent-child, tracks), dep remove.
+so the `link` table follows it. Answered: dep add (--type / -t: every type bd accepts), dep remove.
 Python stdlib only."""
 import os, sys, time
 
@@ -12,7 +12,13 @@ sys.path.insert(0, ADAPTERS)
 import tickets  # noqa: E402
 
 FAMILY = "link"
-ADDED = {"blocks": "depends on", "parent-child": "is a child of", "tracks": "tracks"}   # the phrase bd prints for each type it was recorded with
+ADDED = {"blocks": "depends on", "parent-child": "is a child of", "tracks": "tracks",   # the phrase bd prints for each type it accepts
+         "related": "is related to", "conditional-blocks": "conditionally depends on", "waits-for": "waits for",
+         "discovered-from": "was discovered from", "replies-to": "replies to", "relates-to": "relates to",
+         "duplicates": "duplicates", "supersedes": "is superseded by", "authored-by": "was authored by",
+         "assigned-to": "is assigned to", "approved-by": "was approved by", "attests": "attests", "caused-by": "was caused by",
+         "delegated-from": "was delegated from", "until": "is active until", "validates": "validates"}
+ALIAS = {"blocked-by": "blocks", "depends-on": "blocks"}   # bd stores these as blocks
 
 
 class NotSupported(Exception):
@@ -76,7 +82,7 @@ def write(st, home_id, verb, row):
 def dep(argv):
     verb = argv[1]
     (frm, to), typ = split_args(argv)
-    typ = typ or "blocks"
+    typ = ALIAS.get(typ, typ or "blocks")
     if verb == "add" and typ not in ADDED:
         raise NotSupported(form_of(argv))
     h = tickets.home()

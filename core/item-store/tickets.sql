@@ -34,7 +34,8 @@ CREATE TABLE link (
   home    TEXT NOT NULL,                                 -- the home of both ends: a link never crosses homes
   from_id TEXT NOT NULL,                                 -- the dependent ticket
   to_id   TEXT NOT NULL,                                 -- what it depends on or relates to
-  type    TEXT NOT NULL CHECK (type IN ('parent-child', 'blocks', 'related', 'tracks')),
+  type    TEXT NOT NULL CHECK (type IN ('parent-child', 'blocks', 'related', 'tracks', 'conditional-blocks', 'waits-for', 'discovered-from', 'replies-to', 'relates-to',
+                                  'duplicates', 'supersedes', 'authored-by', 'assigned-to', 'approved-by', 'attests', 'caused-by', 'delegated-from', 'until', 'validates')),
   n          INTEGER NOT NULL DEFAULT 0,                 -- the edge's place in its ticket's dependency list, as the export gave it
   created_at TEXT,                                       -- the edge's own stamp, author and metadata text (Beads keeps '{}'), as the export gave them
   created_by TEXT,

@@ -75,7 +75,7 @@ def open_tickets(h):
         st.con.executescript(sql.decode("utf-8"))
     elif (st.con.execute("SELECT 1 FROM sqlite_master WHERE name = 'ticket_change_home'").fetchone()
           or "created_by" not in [c[1] for c in st.con.execute("PRAGMA table_info(ticket)")]
-          or "'tracks'" not in st.con.execute("SELECT sql FROM sqlite_master WHERE name = 'link'").fetchone()[0]   # an older key, or a link table that refuses `tracks`
+          or not all(t in st.con.execute("SELECT sql FROM sqlite_master WHERE name = 'link'").fetchone()[0] for t in ("'tracks'", "'validates'"))   # an older key, or a link table that refuses a type bd accepts
           or "created_by" not in [c[1] for c in st.con.execute("PRAGMA table_info(link)")]                        # or one that keeps no edge stamp
           or "await_type" not in [c[1] for c in st.con.execute("PRAGMA table_info(ticket)")]):                    # or no gate wait
         rebuild_from_log(st.con, sql.decode("utf-8"))
