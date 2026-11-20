@@ -30,9 +30,7 @@ ln -sn "$fork/bin" "$JG_HOME/bin"
 ln -sn "$fork/toolchain.versions" "$JG_HOME/toolchain.versions"
 printf '{"schema":2,"items":[]}\n' > "$work/board.json"
 printf '%s\n' "$work/board.json" > "$JG_HOME/config/fleet-board"
-mkdir -p "$work/store"
-printf '%s\n' "$work/store/.beads" > "$JG_HOME/config/beads-dir"
-BEADS_DIR="$work/store/.beads" "$fork/bin/jg-beads.sh" init --prefix plain >/dev/null 2>&1 || { echo 'cannot create the Beads store (set JG_BEADS_BD and JG_BEADS_DOLT to the pinned builds)' >&2; exit 1; }
+JG_HOME=$JG_HOME python3 -I "$fork/core/item-store/adapters/tickets.py" import --home main /dev/null >/dev/null || { echo 'cannot create the tickets tables' >&2; exit 1; }
 (cd "$JG_HOME"; "$fork/bin/jg-backlog.sh" add plain-row $'[feature] Umer plain words data/umer/report.md\n... (truncated, 90 chars total - use show plain-row --full)' --repo herdr --priority 1 --body $'Plain board proof row\nparent: upkeep' >/dev/null)
 git init -q "$JG_HOME/projects/herdr"
 git -C "$JG_HOME/projects/herdr" remote add origin https://github.com/example/herdr.git

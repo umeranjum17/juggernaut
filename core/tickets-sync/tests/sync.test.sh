@@ -29,10 +29,16 @@ printf '%s\n' "$work/board.json" > "$JG_HOME/config/fleet-board"
 printf 'alpha\ttrunk-v3\t9e050a45\t2\t1700000000\thttps://github.com/example/alpha/pull/9\n' > "$JG_HOME/data/trunk-releases.tsv"
 printf '%s\n' "- parked - Umer project (home: $work/parked; scope: demo)" > "$JG_HOME/data/squad_leads.md"
 printf 'parked\n' > "$JG_HOME/config/parked-homes"
-# shellcheck source=core/lib/beads-test-env.sh disable=SC1091
-. "$root/lib/beads-test-env.sh"
-core_beads_home "$fork" "$JG_HOME"
-core_beads_home "$fork" "$work/parked"
+# Still skipped without JG_BEADS_TEST_BD: on the tables sign-off-axi refuses the fixture's board ticket (a gap outside the Beads callers).
+if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then echo 'skip: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset'; exit 0; fi
+# A fixture home on the tickets tables (fleet.db).
+core_tables_home() {  # <checkout> <home>
+  mkdir -p "$2/config" "$2/data" && : > "$2/config/backlog-intake-loose"
+  case ":$PATH:" in *":$1/bin:"*) ;; *) PATH=$1/bin:$PATH; export PATH ;; esac
+  JG_HOME=$2 python3 -I "$1/core/item-store/adapters/tickets.py" import --home main /dev/null >/dev/null
+}
+core_tables_home "$fork" "$JG_HOME"
+core_tables_home "$fork" "$work/parked"
 (cd "$JG_HOME"; jg-backlog.sh add jg-parent '[captain-ask] P1 Parent: Umer release' --repo alpha --priority 0 --body 'type: captain-ask: "Umer telescope focus should be simple"' >/dev/null
  jg-backlog.sh 'done' jg-parent --captain-quote 'Umer focus should be simple' >/dev/null
  jg-backlog.sh add jg-long "Umer 🚢 $(printf 'long title %.0s' {1..30})" --repo alpha --priority 1 --release v1 --body $'https://github.com/example/alpha/pull/123\nhttps://github.com/example/alpha/pull/456' >/dev/null

@@ -38,7 +38,6 @@ case $RESURFACE in ''|*[!0-9]*) RESURFACE=1800 ;; esac
 now=$(date +%s)
 umask 077
 
-[ -n "${GOAL_BEADS_DIR:-}" ] || [ -s "$HOME_DIR/config/goal-beads-dir" ] || exit 0
 mkdir -p "$DATA"
 
 err=$DATA/.read.err

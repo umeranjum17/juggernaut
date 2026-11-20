@@ -2,10 +2,10 @@
 
   run(argv, stdin_text) -> (stdout_text, exit_status)
 
-Forms (bd-forms.tsv, family admin): init, backup init, backup restore --force, backup sync, heartbeat, serve, dolt.
+Forms (bd-forms.tsv, family admin): init, backup init, backup restore --force, backup sync, heartbeat, serve.
 Also check (tickets.py check) and config set, which the dispatcher routes here. Nothing here changes a table: the calls
 print what bd printed for the recorded call. `init` prints bd's nothing on stdout and one line naming the tables on stderr.
-`dolt` exits 2 with `Beads is retired: no dolt`. A form bd_forms does not know (import and remember are the create
+A form bd_forms does not know (import and remember are the create
 family's, a flag or argument count never recorded) raises NotSupported. Python stdlib only."""
 import os, sys
 
@@ -14,7 +14,7 @@ sys.path.insert(0, ADAPTERS)
 import tickets  # noqa: E402
 import itemdb  # noqa: E402  (tickets.py put the store folder on the path)
 
-INIT_USAGE = "jg-beads: usage: jg-beads.sh init --prefix <prefix>\n"
+INIT_USAGE = "bd_compat: usage: init --prefix <prefix>\n"
 
 
 class NotSupported(Exception):
@@ -25,7 +25,7 @@ def init(args):
     if len(args) == 2 and args[0] == "--prefix" and not args[1].startswith("-"):
         sys.stderr.write("bd init: the tickets tables in fleet.db are the store; nothing to create\n")
         return "", 0
-    if "--prefix" in args:                      # --force, --server and the rest: bin/jg-beads.sh refused them
+    if "--prefix" in args:                      # --force, --server and the rest: refused, as bd's guard did
         sys.stderr.write(INIT_USAGE)
         return "", 2
     raise NotSupported("init")
@@ -72,16 +72,11 @@ def serve(args):
     return "", 2
 
 
-def dolt(args):
-    sys.stderr.write("Beads is retired: no dolt\n")
-    return "", 2
-
-
 def run(argv, stdin_text):
     verb, args = (argv[0] if argv else ""), argv[1:]
     if verb == "config" and args[:1] == ["set"]:
         return config_set(args[1:])
-    handler = {"init": init, "check": check, "backup": backup, "heartbeat": heartbeat, "serve": serve, "dolt": dolt}.get(verb)
+    handler = {"init": init, "check": check, "backup": backup, "heartbeat": heartbeat, "serve": serve}.get(verb)
     if not handler:
         raise NotSupported(verb)
     return handler(args)

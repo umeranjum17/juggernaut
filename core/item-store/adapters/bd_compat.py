@@ -9,13 +9,13 @@ STORE = os.path.dirname(HERE)
 sys.path.insert(0, STORE)
 import itemdb  # noqa: E402
 
-TWO_WORD = {"dep", "gate", "label", "config", "backup", "comments", "dolt", "swarm"}
+TWO_WORD = {"dep", "gate", "label", "config", "backup", "comments", "swarm"}
 FAMILIES = {
     "read": "show list ready blocked export history comments events provenance q types statuses schema memories epic swarm-validate gate-list".split(),
     "create": "create comment comments-add import remember gate-create".split(),
     "update": ["update", "gate-resolve"],
     "link": "close delete defer undefer dep-add dep-remove label-add label-remove".split(),
-    "admin": "init check serve heartbeat config-set backup-init backup-restore backup-sync dolt".split(),
+    "admin": "init check serve heartbeat config-set backup-init backup-restore backup-sync".split(),
 }
 FAMILY_OF = {verb: fam for fam, verbs in FAMILIES.items() for verb in verbs}
 
@@ -45,9 +45,6 @@ def run_tables(argv):
     if argv[:1] == ["--readonly"]:      # bd's global flag in front of the verb: the call is the rest
         argv = argv[1:]
     verb = verb_of(argv)
-    if verb == "dolt":
-        sys.stderr.write("Beads is retired: no dolt\n")
-        return 2
     family = FAMILY_OF.get(verb)
     path = os.path.join(HERE, "bd_forms", "%s.py" % family) if family else ""
     if not family or not os.path.isfile(path):

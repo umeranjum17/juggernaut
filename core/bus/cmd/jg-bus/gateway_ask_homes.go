@@ -28,12 +28,12 @@ func (h askHome) keyTag() string {
 }
 
 // env is the environment that reads the home's backlog. A child read drops every inherited
-// home override and store pin, so nothing of this home's own store or config reaches it.
+// home override and backlog snapshot, so nothing of this home's own config reaches it.
 func (h askHome) env() []string {
 	var env []string
 	for _, kv := range os.Environ() {
 		name, _, _ := strings.Cut(kv, "=")
-		if h.ID != "" && (name == "BEADS_DIR" || name == "JG_BACKLOG_SNAPSHOT" ||
+		if h.ID != "" && (name == "JG_BACKLOG_SNAPSHOT" ||
 			strings.HasPrefix(name, "JG_") && strings.HasSuffix(name, "_OVERRIDE")) {
 			continue
 		}

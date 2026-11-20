@@ -23,9 +23,14 @@ no() { printf 'not ok - %s\n' "$1"; fails=$((fails + 1)); }
 is() { if [ "$2" = "$3" ]; then ok "$1"; else no "$1: got [$2], want [$3]"; fi; }
 
 home=$work/home; mkdir -p "$home/config" "$home/data" "$home/state"
-. "$addons/lib/beads-test-env.sh"
+# A fixture home on the tickets tables (fleet.db).
+core_tables_home() {  # <checkout> <home>
+  mkdir -p "$2/config" "$2/data" && : > "$2/config/backlog-intake-loose"
+  case ":$PATH:" in *":$1/bin:"*) ;; *) PATH=$1/bin:$PATH; export PATH ;; esac
+  JG_HOME=$2 python3 -I "$1/core/item-store/adapters/tickets.py" import --home main /dev/null >/dev/null
+}
 root=$(cd "$addons/.." && pwd)
-core_beads_home "$root" "$home"
+core_tables_home "$root" "$home"
 export JG_HOME=$home
 add() {  # <id> <title> [<body>]
   (cd "$home" && bash "$root/bin/jg-backlog.sh" add "$1" "$2" --priority 0 --kind ship --repo sample --body "${3:-Fixture ticket $1}") >/dev/null 2>"$work/add.err" \

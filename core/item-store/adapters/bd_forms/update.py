@@ -1,7 +1,7 @@
 """bd_forms/update.py: `bd update <id>... [flags]` and `bd gate resolve <id> --reason <text>` answered from the tickets tables of fleet.db (mode tables of bd_compat.py).
 run(argv, stdin_text) -> (stdout_text, exit_status). Each flag has one handler in FLAGS that edits one ticket row; a call
 that names a flag outside FLAGS raises NotSupported. Writes go through tickets.change, one log row per ticket.
-Exit 0 done; 1 a failure (unknown id, bad value); 2 the hold-reason rule jg-beads.sh adds to bd; 13 a stale --if-status or
+Exit 0 done; 1 a failure (unknown id, bad value); 2 the hold-reason rule; 13 a stale --if-status or
 --if-assignee guard (nothing written). The same guards, in the same order, as bd 1.3. Python stdlib only."""
 import json, os, re, sys, time
 
@@ -189,7 +189,7 @@ class Call:
 
 
 def check_reason_rule(call, store, home_id):
-    """The hold-reason rule of bin/jg-beads.sh: a call that defers a row names a reason, and one that strips a reason
+    """The hold-reason rule: a call that defers a row names a reason, and one that strips a reason
     moves the row out of deferred."""
     deferring = reason = strips = moves = False
     for handler, value in call.steps:

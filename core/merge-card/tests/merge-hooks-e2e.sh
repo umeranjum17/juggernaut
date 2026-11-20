@@ -26,7 +26,13 @@ export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
 mkdir -p "$HOME" "$TMPDIR" "$d/fork"
 cp -a "$JG_TEST_FORK/bin" "$JG_TEST_FORK/toolchain.versions" "$d/fork/"
-. "$addons/lib/beads-test-env.sh"
+ln -sn "$JG_TEST_FORK/core" "$d/fork/core"   # the backlog library finds the tables adapter beside its bin/
+# A fixture home on the tickets tables (fleet.db).
+core_tables_home() {  # <checkout> <home>
+  mkdir -p "$2/config" "$2/data" && : > "$2/config/backlog-intake-loose"
+  case ":$PATH:" in *":$1/bin:"*) ;; *) PATH=$1/bin:$PATH; export PATH ;; esac
+  JG_HOME=$2 python3 -I "$1/core/item-store/adapters/tickets.py" import --home main /dev/null >/dev/null
+}
 # No rewriting: jg-dod-lib.sh and jg-merge-outcome-lib.sh load the feature
 # library themselves from JG_ADDONS_DIR, and jg-merge-local.sh calls the hooks.
 
@@ -37,7 +43,7 @@ for mode in present; do  # the gate hooks are native to jg-merge-local; no absen
   home=$d/$mode
   repo=$home/project
   mkdir -p "$home/state" "$home/config" "$home/data"
-  core_beads_home "$d/fork" "$home"
+  core_tables_home "$d/fork" "$home"
   git init -q -b main "$repo"
   git -C "$repo" config user.name Umer
   git -C "$repo" config user.email umer@example.invalid

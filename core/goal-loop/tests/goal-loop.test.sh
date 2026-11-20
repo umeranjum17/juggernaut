@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Behavior tests for core/goal-loop: the check reduces every Goal to finished, stopped, waiting or next with no
 # model, wakes the lead once for each new next step, and wires and unwires as a registered watcher check.
-# The reduction runs on recorded Goal rows; the real-store case needs JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT
-# and skips plainly without them.
+# The reduction runs on recorded Goal rows; the real-store case runs on the home's tickets tables and skips plainly
+# without JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT.
 set -u
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 # shellcheck source=tests/lib.sh disable=SC1091
@@ -11,7 +11,7 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 LOOP="$ROOT/core/goal-loop/goal-loop.sh" T=$(jg_test_tmproot goal-loop)
 H=$T/home
 mkdir -p "$H/state" "$H/config" "$H/data"
-unset GOAL_BEADS_DIR JG_GOAL_RESURFACE_SECS
+unset JG_GOAL_RESURFACE_SECS
 
 # A stand-in `jg-goal.sh`: rows prints the recorded rows, or refuses with the recorded reason. notice and finish
 # record the call and the message key on the epic as the real verbs do, and finish closes the epic.
@@ -49,13 +49,8 @@ rows() {
 wake() { "$LOOP" check "$H"; }
 state() { "$LOOP" state "$H" | cut -f2,3; }
 
-# A home with no Goal store named is silent and writes nothing.
-rows open open open open open
-assert_equals "$(wake)" "" "a home with no Goal store is silent"
-assert_absent "$H/data/jg-goal-loop" "a home with no Goal store keeps no records"
-printf '%s\n' "$T/store/.beads" > "$H/config/goal-beads-dir"
-
 # One Goal, walked step by step: a new next step rings once, a taken step is waiting, and a close moves it on.
+rows open open open open open
 out=$(wake)
 assert_contains "$out" "goal-a is ready for its ship step (ship it)" "the first open step is the next step"
 assert_equals "$(wake)" "" "the same next step does not ring twice"
@@ -136,15 +131,15 @@ printf '[]\n' > "$ROWS"
 assert_equals "$(wake)" "" "an empty store is silent"
 
 # A store that cannot be read: one wake per reason, the wrapper's text is the reason, a read that works clears it.
-echo "jg-beads: bd is not the pinned bd 1.3.4" > "$ROWS.refuse"
+echo "tickets: no tables" > "$ROWS.refuse"
 out=$(wake)
-assert_contains "$out" "the Goal store could not be read - jg-beads: bd is not the pinned bd 1.3.4" "the refusal text is the reason"
+assert_contains "$out" "the Goal store could not be read - tickets: no tables" "the refusal text is the reason"
 assert_equals "$(wake)" "" "the same refusal rings once"
-echo "jg-beads: dolt is missing" > "$ROWS.refuse"
-assert_contains "$(wake)" "dolt is missing" "a new reason rings"
+echo "tickets: tickets.sql differs from tickets.sha256" > "$ROWS.refuse"
+assert_contains "$(wake)" "tickets.sql differs" "a new reason rings"
 rm -f "$ROWS.refuse"; wake >/dev/null
-echo "jg-beads: dolt is missing" > "$ROWS.refuse"
-assert_contains "$(wake)" "dolt is missing" "a refusal after a good read rings again"
+echo "tickets: tickets.sql differs from tickets.sha256" > "$ROWS.refuse"
+assert_contains "$(wake)" "tickets.sql differs" "a refusal after a good read rings again"
 rm -f "$ROWS.refuse"
 echo "not json" > "$ROWS"
 "$LOOP" check "$H" >/dev/null 2>&1
@@ -173,29 +168,29 @@ assert_equals "$(stat -c %a "$T/w/state/goal-loop.check.sh")" 700 "the shim is p
 assert_absent "$T/w/state/goal-loop.check.sh" "unwiring removes the shim"
 assert_absent "$T/share/jg-goal-loop" "unwiring removes the installed check"
 
+# Still skipped without JG_BEADS_TEST_BD: on the tables, bin/jg-goal.sh prove cannot close the proven step (bd_compat.py answers no close).
 if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
   printf 'skip: real store: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
   pass "goal-loop"
   exit 0
 fi
 
-# The real pinned store: a declared Goal walks from ship to running by the lead's closes, and the check owns proven.
-export JG_GOAL_BIN=$ROOT/bin/jg-goal.sh JG_HOME=$H JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
+# The real store, the home's tickets tables: a declared Goal walks from ship to running by the lead's closes, and the check owns proven.
+export JG_GOAL_BIN=$ROOT/bin/jg-goal.sh JG_HOME=$H
 unset JG_GOAL_PROOF_RUN
-mkdir -p "$T/real"
 GOALCLI=$ROOT/bin/jg-goal.sh
-bdw() { BEADS_DIR=$T/real/.beads "$ROOT/bin/jg-beads.sh" "$@"; }
-BEADS_DIR=$T/real/.beads "$ROOT/bin/jg-beads.sh" init --prefix goal >/dev/null 2>&1 || fail "init the store"
-printf '%s\n' "$T/real/.beads" > "$H/config/goal-beads-dir"
+bdw() { python3 -I "$ROOT/core/item-store/adapters/bd_compat.py" "$@"; }
+closed() { "$ROOT/bin/jg-backlog.sh" 'done' "$1" --note "$2"; }   # bd close: the backlog's done verb (bd-forms.tsv)
+python3 -I "$ROOT/core/item-store/adapters/tickets.py" import --home main /dev/null >/dev/null || fail "make the tables"
 settle() { for _ in $(seq 100); do [ -f "$1" ] && return 0; sleep 0.1; done; fail "no proof result in $1"; }
-close_to_running() { for n in 1 2 3 4; do bdw close "$1.$n" --reason test >/dev/null 2>&1 || fail "close step $n"; done; }
+close_to_running() { for n in 1 2 3 4; do closed "$1.$n" test >/dev/null 2>&1 || fail "close step $n"; done; }
 fixrow() { bdw list --parent "$1" --all --json 2>/dev/null | jq -r '.[] | select(.metadata.kind == "fix" and .status != "closed") | .id'; }
 
 id=$("$GOALCLI" declare --ask "make it live" --repo o/r -- test -f "$T/live") || fail "real declare"
 assert_contains "$(wake)" "$id is ready for its ship step (make it live)" "a declared Goal rings for its first step"
 steps=(ship merged released running)
 for i in 0 1 2 3; do
-  bdw close "$id.$((i + 1))" --reason "test" >/dev/null 2>&1 || fail "close ${steps[$i]}"
+  closed "$id.$((i + 1))" "test" >/dev/null 2>&1 || fail "close ${steps[$i]}"
   [ "$i" -lt 3 ] || break
   assert_contains "$(wake)" "ready for its ${steps[$((i + 1))]} step" "closing ${steps[$i]} moves the Goal on"
 done
@@ -206,7 +201,7 @@ settle "$dir/proof.exit"
 assert_equals "$(wake)" "" "reading a failed proof wakes nobody"
 assert_equals "$(find "$dir" -name 'proof-*.log' | wc -l)" 1 "the failed proof's log is kept"
 assert_contains "$(wake)" "$id is ready for its fix step" "a failed proof gives the lead a fix step"
-bdw close "$(fixrow "$id")" --reason fixed >/dev/null 2>&1 || fail "close the fix"
+closed "$(fixrow "$id")" fixed >/dev/null 2>&1 || fail "close the fix"
 touch "$T/live"
 assert_equals "$(wake)" "" "the proof is started again"
 settle "$dir/proof.exit"
@@ -225,7 +220,7 @@ dir=$H/data/goals/$id
 close_to_running "$id"
 for round in 1 2; do
   wake >/dev/null; settle "$dir/proof.exit"; wake >/dev/null
-  [ "$round" = 2 ] || { assert_contains "$(wake)" "ready for its fix step" "round $round gives a fix step"; bdw close "$(fixrow "$id")" --reason x >/dev/null 2>&1; }
+  [ "$round" = 2 ] || { assert_contains "$(wake)" "ready for its fix step" "round $round gives a fix step"; closed "$(fixrow "$id")" x >/dev/null 2>&1; }
 done
 assert_contains "$(wake)" "$id is stopped (limit): the proof failed 2 times running" "the same failure twice is a limit stop"
 assert_equals "$(fixrow "$id")" "" "a limit stop adds no fix step"

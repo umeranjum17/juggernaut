@@ -133,11 +133,6 @@ def write_assignee(path, tid, record, desired, ends_with_newline, reason='', ass
         feed.write(('' if ends_with_newline else '\n') + json.dumps(line) + '\n')
     return line
 
-def store_named(home):
-    # The rule is bin/jg-backlog-lib.sh's jg_backlog_beads_store: a home has a store when config/beads-dir names one, and a blank file names none.
-    named = home / 'config/beads-dir'
-    return named.is_file() and bool(named.read_text().strip())
-
 def tidy_report(items, homes, home, state, apply, run):
     """Plan the fleet tidy over every home's open rows, write the full list beside the sync state, return the summary line."""
     today = dt.date.fromisoformat(os.environ['JG_TIDY_TODAY']) if os.environ.get('JG_TIDY_TODAY') else dt.datetime.now(dt.timezone.utc).date()
@@ -159,7 +154,6 @@ def drop_report(homes, existing, home, board, state, before, apply, run):
     belong to an open row and a done twin."""
     items = []
     for name, source in homes.items():
-        if not store_named(source): continue
         env = {k: v for k, v in os.environ.items() if k not in ('JG_DATA_OVERRIDE', 'JG_ROOT_OVERRIDE')} | {'JG_HOME': str(source)}
         for r in rows(['bash', str(home / 'bin/jg-backlog.sh'), 'list', '--all'], env, extra=',item'):
             items.append(dict(name=name, source=source, row=r, tid=identity.ticket_id(name, r['item'], r['id'])))
@@ -204,7 +198,7 @@ def sync():
     if identity.is_lead(home) and not options.drop_pre_beads: return  # the drop closes this home's own rows only; the parent's poll owns the shared board
     board = Path((home / 'config/fleet-board').read_text().strip())
     if not board.is_absolute(): board = home / board
-    if (store_named(home) or os.environ.get('SIGN_OFF_TICKETS_ADAPTER')) and not (options.tidy or options.drop_pre_beads or options.close or options.migrate_legacy):
+    if not (options.tidy or options.drop_pre_beads or options.close or options.migrate_legacy):
         # The current board reads Beads directly. Never republish its rows as legacy feed tickets.
         import beads
         beads.poll(home, board, options, run)
@@ -261,8 +255,6 @@ def sync():
         tried = set()
         def save(path, value):
             temp = path.with_suffix('.tmp'); temp.write_text(json.dumps(value)); temp.replace(path)
-        no_store_file = state / 'no-store-homes.json'
-        no_store = set(json.loads(no_store_file.read_text())) if no_store_file.exists() else set()
         # The check names a ticket no home's work accounts for only after one walk has read every home, so the rows its
         # earlier passes of that walk saw travel in its cursor.
         seen = set(resume.get('seen', []))
@@ -376,14 +368,6 @@ def sync():
         # belong to more than one home, so the ordinary main-first walk retains ownership of those rows.
         priority_homes = [(name, source, True) for name, source in homes.items() if name != 'main'] if not options.check and not options.reconcile else []
         for name, source, priority in priority_homes + [(name, source, False) for name, source in ordered]:
-            # A home with no Beads store has no backlog to publish: the sync notes that once in its progress log (never a
-            # wake) and every pass, check and clean-up skips it without a word.
-            if not store_named(source):
-                if not options.check and name not in no_store:
-                    no_store.add(name); save(no_store_file, sorted(no_store))
-                    note(f'{name}: no Beads store named in {source}/config/beads-dir, skipped')
-                continue
-            if name in no_store and not options.check: no_store.discard(name); save(no_store_file, sorted(no_store))
             env = {k: v for k, v in os.environ.items() if k not in ('JG_DATA_OVERRIDE', 'JG_ROOT_OVERRIDE')}
             env['JG_HOME'] = str(source)
             reader = ['bash', str(home / 'bin/jg-backlog.sh')]

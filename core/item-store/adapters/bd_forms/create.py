@@ -2,14 +2,14 @@
 
   run(argv, stdin_text) -> (stdout_text, exit_status)
 
-Answers `create`: one new row, written through tickets.change (the writer `tickets.py write` uses), so
+Answers `create`: one new row, written through tickets.change (the writer every family uses), so
 ticket_change keeps the history. It prints what bd printed: the text block, the --json object or the --silent id line.
 Also answered, each written through tickets.change or its own table: `comment` and `comments add` (the comment table), `import`
 (rows by tickets.change, `_type: memory` lines into the memory table), `remember --key` (the memory table) and `gate create --blocks`
 (a gate row, plus the blocked ticket's new link; a gate's await_type is always human, the one type the form records).
 A form it cannot answer with bd's exact bytes raises NotSupported: a call it has no recorded answer for (a flag it does not know, a missing
-parent, dependency, ticket or file, a failed --validate, a gate of another type). The reason rule of bin/jg-beads.sh (a deferred row needs a hold reason) is kept:
-it refuses with exit 2, as the wrapper did. Python stdlib only."""
+parent, dependency, ticket or file, a failed --validate, a gate of another type). The hold-reason rule (a deferred row needs a hold reason) is kept:
+it refuses with exit 2. Python stdlib only."""
 import json, os, re, secrets, sys, time, uuid
 
 ADAPTERS = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
@@ -67,7 +67,7 @@ def clock():
 
 
 def reason_check(opt):
-    """bin/jg-beads.sh reason_check for a create: a call that defers a row names its hold reason."""
+    """The hold-reason rule for a create: a call that defers a row names its hold reason."""
     deferring = opt.get("status") == "deferred" or bool(opt.get("defer"))
     if deferring and not HOLD_REASON.search("--metadata=" + opt.get("metadata", "")):
         sys.stderr.write("jg-beads: a deferred row needs a reason: pass --set-metadata hold_reason=<text> in the same call\n")

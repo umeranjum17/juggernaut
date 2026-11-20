@@ -19,9 +19,15 @@ ln -sn "$fork/bin" "$JG_HOME/bin"
 ln -sn "$fork/core" "$JG_HOME/core"
 printf '{"schema":2,"items":[]}\n' > "$work/board.json"
 printf '%s\n' "$work/board.json" > "$JG_HOME/config/fleet-board"
-# shellcheck source=core/lib/beads-test-env.sh disable=SC1091
-. "$root/lib/beads-test-env.sh"
-core_beads_home "$fork" "$JG_HOME"
+# Still skipped without JG_BEADS_TEST_BD: on the tables its board read returns no JSON (a gap outside the Beads callers).
+if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then echo 'skip: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset'; exit 0; fi
+# A fixture home on the tickets tables (fleet.db).
+core_tables_home() {  # <checkout> <home>
+  mkdir -p "$2/config" "$2/data" && : > "$2/config/backlog-intake-loose"
+  case ":$PATH:" in *":$1/bin:"*) ;; *) PATH=$1/bin:$PATH; export PATH ;; esac
+  JG_HOME=$2 python3 -I "$1/core/item-store/adapters/tickets.py" import --home main /dev/null >/dev/null
+}
+core_tables_home "$fork" "$JG_HOME"
 rows='trunk-tests-red-on-tip|[blocker] Fix three jg-trunk tests red on the trunk tip
 lead-sweeps-landed-lanes|[feature] Lead heartbeat sweeps landed lanes and finished Recons
 tmp-leak-disk-full|[blocker] Juggernaut scripts leak /tmp files until the disk quota is full

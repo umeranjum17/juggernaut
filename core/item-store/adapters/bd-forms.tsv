@@ -55,7 +55,6 @@ dep add	34	link	-
 dep add --type	32	link	-
 dep add -t	1	link	-
 dep remove	4	link	-
-dolt sql -q	221	admin	-
 epic --json	2	read	-
 events --limit --since	2	read	-
 export	43	read	compare

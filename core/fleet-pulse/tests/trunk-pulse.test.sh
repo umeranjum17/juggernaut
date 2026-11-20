@@ -7,15 +7,18 @@
 # core/fleet-flow, and a merged-PR home still counts its merged PRs. Direct cases pin trunk-pulse.sh's
 # pin-back, release and no-records rules. The check starts registered, as a live home's is, and the watcher's own
 # gate (bin/jg-check-lib.sh) accepts it after the retarget with no hand registration.
-# The trunk home's landings, go-lives and release are the stamps on tickets of a real Beads store
-# (core/lib/beads-test-env.sh; the run skips plainly without JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT).
+# The trunk home's landings, go-lives and release are the stamps on tickets in the home's tickets tables.
 # Throwaway HOME, XDG and TMPDIR; gh is a stub; nothing real is read.
 set -euo pipefail
 export PYTHONDONTWRITEBYTECODE=1
 feature=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 repo=$(cd "$feature/../.." && pwd -P)
-# shellcheck source=core/lib/beads-test-env.sh disable=SC1091
-. "$repo/core/lib/beads-test-env.sh"
+# A fixture home on the tickets tables (fleet.db).
+core_tables_home() {  # <checkout> <home>
+  mkdir -p "$2/config" "$2/data" && : > "$2/config/backlog-intake-loose"
+  case ":$PATH:" in *":$1/bin:"*) ;; *) PATH=$1/bin:$PATH; export PATH ;; esac
+  JG_HOME=$2 python3 -I "$1/core/item-store/adapters/tickets.py" import --home main /dev/null >/dev/null
+}
 d=$(mktemp -d)
 trap 'rm -rf -- "$d"' EXIT
 export HOME=$d/user XDG_CACHE_HOME=$d/cache TMPDIR=$d/tmp
@@ -59,14 +62,14 @@ printf 'tr\t%s\towner/trunk-repo\npr\t%s\towner/pr-repo\n' "$trunk" "$pr" > "$ma
 # nothing. Project q landed tq1, which a release then carried, and tq2 since, which waits. In the 2 h window:
 # landed 3 (t3, tq2, t4), live 1 (t3). Waiting: t4 (30 min) and tq2 (100 min), so the oldest waits 100 min.
 iso() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
-core_beads_home "$repo" "$trunk"
+core_tables_home "$repo" "$trunk"
 ln -sn "$repo/bin" "$trunk/bin"
 tick() {  # <home> <ticket> <key=minutes-ago>...: file a ticket and lay stamps on it, as the trunk writers do
   local home=$1 id=$2 args=() kv
   shift 2
   JG_HOME=$home "$repo/bin/jg-backlog.sh" add "$id" "[feature] fixture $id" --priority 2 --body why >/dev/null
   for kv in "$@"; do args+=(--set-metadata "${kv%%=*}=$(iso "$(ago "${kv#*=}")")"); done
-  BEADS_DIR=$(cat "$home/config/beads-dir") "$repo/bin/jg-beads.sh" update "$id" "${args[@]}" >/dev/null
+  JG_HOME=$home python3 -I "$repo/core/item-store/adapters/bd_compat.py" update "$id" "${args[@]}" >/dev/null
 }
 tick "$trunk" jg-t1 landed_at=300 live_at=150
 tick "$trunk" jg-t2 landed_at=180 live_at=150
@@ -175,14 +178,14 @@ pass_if no-trunk-records-exit-1 test "$rc:$got" = 1:
 # A pin-back: all three landings went live, then the home went back to the first, which gives the two above it
 # pinned_back_at; they wait again from their landing. Live counts each ticket's live_at in the window.
 pin=$d/pin
-core_beads_home "$repo" "$pin"; ln -sn "$repo/bin" "$pin/bin"
+core_tables_home "$repo" "$pin"; ln -sn "$repo/bin" "$pin/bin"
 tick "$pin" jg-p1 landed_at=300 live_at=90
 tick "$pin" jg-p2 landed_at=200 live_at=90 pinned_back_at=10
 tick "$pin" jg-p3 landed_at=100 live_at=90 pinned_back_at=10
 expect pin-back-waits-again "$(printf '3\t3\t200')" "$("$tp" "$pin" "$(ago 400)" "$now")"
 # Every ticket live again after the pin-back: nothing waits.
-JG_HOME=$pin BEADS_DIR=$(cat "$pin/config/beads-dir") "$repo/bin/jg-beads.sh" update jg-p2 --set-metadata "live_at=$(iso "$(ago 5)")" >/dev/null
-JG_HOME=$pin BEADS_DIR=$(cat "$pin/config/beads-dir") "$repo/bin/jg-beads.sh" update jg-p3 --set-metadata "live_at=$(iso "$(ago 5)")" >/dev/null
+JG_HOME=$pin python3 -I "$repo/core/item-store/adapters/bd_compat.py" update jg-p2 --set-metadata "live_at=$(iso "$(ago 5)")" >/dev/null
+JG_HOME=$pin python3 -I "$repo/core/item-store/adapters/bd_compat.py" update jg-p3 --set-metadata "live_at=$(iso "$(ago 5)")" >/dev/null
 expect all-live-nothing-waits "$(printf '1\t3\t-')" "$("$tp" "$pin" "$(ago 120)" "$now")"
 # A reverted landing does not wait.
 tick "$pin" jg-p4 landed_at=50 reverted_at=40

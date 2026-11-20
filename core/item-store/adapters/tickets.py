@@ -1,16 +1,11 @@
 #!/usr/bin/env python3
-"""adapter:tickets - the second copy of the backlog: every field Beads keeps lives in fleet.db too (tickets.sql), written by
-bin/jg-backlog.sh in the same call that writes Beads when the main home has config/one-engine. Reads stay on Beads.
+"""adapter:tickets - the backlog: every field of a ticket lives in fleet.db (tickets.sql), written by bd_compat.py's families.
 
   tickets.py import --home <home id> <bd export jsonl>   every row and link of one home's store, keyed (home, id): an id
                                                          another home also holds is a different ticket, never a refusal.
                                                          Inserts a new row, updates a row whose fields, labels, metadata or
                                                          links changed, leaves an equal row alone; prints the three counts,
                                                          and a second run prints 0 inserted, 0 updated
-  tickets.py write <verb> <args...> --source <id>         after a successful Beads write of that verb: copies the rows the
-                                                         call touched from a fresh `bd export` (the ids named in the args,
-                                                         the new ids of an add; relink and retag: every row that differs).
-                                                         A no-op when the main home has no config/one-engine
   tickets.py ready [--now <iso>]                          one query: the ids `bd ready` gives, for this home
   tickets.py show <id | home:id>                          one copy row as JSON: this home's, or the named home's
   tickets.py read <verb> [args] [--shadow]                a backlog read answered from the tables, in exactly the text
@@ -268,45 +263,6 @@ def cmd_drop_lead_homes(a):
     return 0
 
 
-def beads_export():
-    """A fresh `bd export` through the one guarded path (bin/jg-beads.sh)."""
-    h = home()
-    store = os.environ.get("BEADS_DIR") or open(os.path.join(h, "config", "beads-dir")).read().strip()
-    run = subprocess.run([os.path.join(STORE, "..", "..", "bin", "jg-beads.sh"), "export"], capture_output=True, text=True,
-                         env=dict(os.environ, BEADS_DIR=store))
-    if run.returncode:
-        raise Refused("bd export failed: " + (run.stderr or run.stdout).strip().splitlines()[-1][:200])
-    rows = {}
-    for line in run.stdout.splitlines():
-        if line.startswith("{"):
-            r = json.loads(line)
-            rows[r["id"]] = r
-    return rows
-
-
-def cmd_write(a):
-    """Bring this home's copy level with a fresh export: a verb touches rows its args never name (a close ends the gates under it, a
-    take brings rows and edges, a drop deletes rows), so the copy is judged row by row, never by the ids a call named."""
-    h = home()
-    if not os.path.exists(os.path.join(itemdb.main_home(h), "config", "one-engine")):
-        return 0
-    home_id = itemdb.home_id(h)
-    beads = beads_export()
-    st = open_tickets(h)
-    con = st.con
-    now = int(time.time())
-    for i in sorted(beads):
-        have = copy_of(con, home_id, i)
-        if have is not None and not diffs(norm(beads[i]), have):
-            continue
-        change(st, now, home_id, a.verb, "%s#%s" % (a.source, i), beads[i])
-    for (i,) in list(con.execute("SELECT id FROM ticket WHERE home = ?", (home_id,))) if beads else ():  # an empty export is no drop
-        if i not in beads:
-            con.execute("INSERT INTO ticket_change (at, home, id, verb, source, row, links) VALUES (?,?,?,?,?,NULL,'[]')",
-                        (now, home_id, i, a.verb, "%s#%s" % (a.source, i)))
-    return 0
-
-
 def cmd_ready(a):
     h = home()
     for i in ready_ids(open_tickets(h).con, itemdb.home_id(h), a.now or now_iso()):
@@ -516,17 +472,13 @@ def cmd_tree(a):
 
 
 def main(argv):
-    if not argv or argv[0] not in ("import", "write", "ready", "compare", "check", "show", "drop-lead-homes", "read", "tree", "spawnable") + READ_VERBS:
-        print("usage: tickets.py import|write|ready|compare|check|show|drop-lead-homes|read|tree ...", file=sys.stderr)
+    if not argv or argv[0] not in ("import", "ready", "compare", "check", "show", "drop-lead-homes", "read", "tree", "spawnable") + READ_VERBS:
+        print("usage: tickets.py import|ready|compare|check|show|drop-lead-homes|read|tree ...", file=sys.stderr)
         return 2
     cmd, rest = argv[0], argv[1:]
     try:
         if cmd == "import" and len(rest) == 3 and rest[0] == "--home":
             return cmd_import(type("A", (), dict(home=rest[1], export=rest[2])))
-        if cmd == "write" and "--source" in rest and len(rest) >= 3:
-            i = rest.index("--source")
-            args = rest[:i] + rest[i + 2:]
-            return cmd_write(type("A", (), dict(verb=args[0], args=args[1:], source=rest[i + 1])))
         if cmd == "read" and rest and rest[0] in READ_VERBS:
             return cmd_read(type("A", (), dict(verb=rest[0], args=[x for x in rest[1:] if x != "--shadow"], shadow="--shadow" in rest)))
         if cmd in ("view", "list", "markdown", "questions"):
@@ -551,7 +503,7 @@ def main(argv):
     except Exception as e:      # a refusal of the store's own rules, or any other fault: one line, never a trace
         print("%s: %s" % (cmd, str(e).splitlines()[0] if str(e) else type(e).__name__))
         return 1
-    print("usage: tickets.py read <verb> [args] [--shadow] | tree --homes | import --home <id> <export> | write <verb> <args...> --source <id> | ready [--now <iso>] | compare <export> | show <id|home:id>", file=sys.stderr)
+    print("usage: tickets.py read <verb> [args] [--shadow] | tree --homes | import --home <id> <export> | ready [--now <iso>] | compare <export> | show <id|home:id>", file=sys.stderr)
     return 2
 
 

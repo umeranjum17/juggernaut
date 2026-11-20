@@ -33,8 +33,6 @@ for check in tickets-sync tickets-stale tickets-cleanup; do
     printf '#!/usr/bin/env bash\nexport JG_HOME=%q\n' "$JG_HOME"
     # shellcheck disable=SC2016 # The generated check expands this default at runtime.
     printf 'export SIGN_OFF_TICKETS_ADAPTER=${SIGN_OFF_TICKETS_ADAPTER:-%q}\n' "$JG_HOME/bin/jg-ticket-adapter.py"
-    # shellcheck disable=SC2016 # Keep the generated check's environment and config lookup literal.
-    printf 'if [ -z "${BEADS_DIR:-}" ] && [ -f "$JG_HOME/config/beads-dir" ]; then export BEADS_DIR="$(cat "$JG_HOME/config/beads-dir")"; fi\n'
     printf 'exec python3 %q' "$dest/tickets-sync/sync.py"
     [ "${#args[@]}" = 0 ] || printf ' %q' "${args[@]}"
     printf ' 2>&1\n'
