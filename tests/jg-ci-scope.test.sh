@@ -61,7 +61,9 @@ evals toolchain.versions
 evals bin/jg-lib.sh
 evals defaults/captain-voice-worker.md
 evals defaults/status-states.tsv
-shell tests/jg-bus.test.sh
+evals docs/roles/worker.md
+bus tests/bus-direct.test.sh
+shell tests/bus-direct.test.sh
 shell bin/backends/tmux.sh
 ROWS
   pass 'a change to a file a suite reads owes that suite, and the gate refuses it skipped'
@@ -76,7 +78,9 @@ test_documentation_and_media_stay_cheap() {
   done
   out=$(scope_of docs/bus-service.md)
   assert_contains "$out" 'behavior=true' 'the bus doc is read by the bus suite, so it is not cheap'
-  pass 'documentation and media stay cheap, except the bus doc the bus suite reads'
+  out=$(scope_of docs/roles/worker.md)
+  assert_contains "$out" 'behavior=true' 'a role pack is printed into every brief, so it is not cheap'
+  pass 'documentation and media stay cheap, except the bus doc and the role packs that suites read'
 }
 
 test_an_unreadable_diff_owes_every_area() {

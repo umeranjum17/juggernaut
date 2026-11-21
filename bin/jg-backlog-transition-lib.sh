@@ -191,9 +191,11 @@ jg_backlog_data_relative() {  # <data-dir>
 }
 
 
-# The config directory of the home that owns <data>, by jg_backlog_ticket_publish's rule.
+# The config directory of the home that owns <data>. The store names its home by this directory's parent
+# (bin/jg-backlog-lib.sh), so it is always <home>/config: JG_CONFIG_OVERRIDE moves settings, not the ticket store,
+# and honoring it here read another home's tickets, which let a merge pass an open design decision.
 jg_backlog_config_of() {  # <data-dir>
-  printf '%s\n' "${JG_CONFIG_OVERRIDE:-${JG_HOME:-${1%/*}}/config}"
+  printf '%s\n' "${JG_HOME:-${1%/*}}/config"
 }
 
 # The data boundary is authorized first and unconditionally; the Beads store

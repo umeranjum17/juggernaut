@@ -308,7 +308,7 @@ jobs:
       - name: Run the fast evals
         run: bin/jg-ci-area-reads.sh --check evals -- bin/jg-fast-evals.sh
 
-  # The captain channel lane: the Go command builds and the chat runs at parity.
+  # The captain channel lane: the Go command builds and the chat runs direct, with no bus.
   bus:
     name: Bus service
     runs-on: ubuntu-latest
@@ -353,10 +353,10 @@ jobs:
         with:
           path: ~/.cache/go-build
           key: go-bus-${{ runner.os }}-${{ hashFiles('core/bus/go.mod') }}
-      - name: Prove the captain channel's Go command at parity
+      - name: Prove the captain channel's Go command in direct mode
         run: |
           set -eu
-          bin/jg-ci-area-reads.sh --check bus -- tests/jg-bus.test.sh
+          bin/jg-ci-area-reads.sh --check bus -- tests/bus-direct.test.sh
 
   # The tier-ci set: the journeys .done-done.yaml marks `tier: ci`, run by
   # done-done itself, and nothing else. It is the second half of the fast required
