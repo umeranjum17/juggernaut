@@ -3,7 +3,7 @@
 # With a trunk ref, require the named test for every changed e6 fragment or test.
 set -euo pipefail
 
-suites=(inventory forms contract e6land2 e6homes)
+suites=(inventory forms contract e6land2 e6homes e6steer)
 if [ "$#" -gt 0 ]; then
   base=$(git merge-base "$1" HEAD)
   changed=$(git diff --name-only --no-renames "$base" -- \
