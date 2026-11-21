@@ -200,9 +200,96 @@ test_the_one_definition_names_the_step_of_every_lane_and_phase() {
   f=$(fact "$dir" ghost); check_step "$f" none "a lane with no record owes nothing"
   pass "the one definition names relay, assign, verdict and revise for each lane and phase, and each move of the real handoff takes the step"
 }
+# --- 4. a deep Recon inside its critic loop (jg-6xe) --------------------------------------------------------------------------
+# The case that started it: jg-6si-1 was a deep Recon whose researcher said "draft ready" and whose critic reported a round. Both done lines
+# demanded a relay; Main relayed, and the lead-sweep, which cleans a relayed Recon, took the work copy while the critic loop was still open.
+# A relay is owed only once the loop has closed: the depth gate stops reading the step `critic` (bin/jg-recon-gate.sh --step).
+make_deep_recon() { # <dir> <id>: the real scaffold and every file the method writes, except critic.md (a deep draft whose only open item is its critic)
+  local dir=$1 id=$2 d n title kinds=(code docs upstream oss community run)
+  d=$dir/data/$id
+  JG_HOME="$dir" bash "$ROOT/bin/jg-brief.sh" "$id" some-proj --scout --depth deep > /dev/null 2>&1 || fail "jg-brief.sh could not scaffold the deep Recon $id"
+  : > "$d/sources.jsonl"
+  for n in $(seq 1 20); do printf '{"id":"S-%d","kind":"%s","title":"source %d","link":"x/%d","read":"2026-11-05"}\n' "$n" "${kinds[$((n % 5))]}" "$n" "$n" >> "$d/sources.jsonl"; done
+  printf '%s\n' '{"id":"C-1","text":"first claim","kind":"fact","sources":["S-1","S-2"],"load_bearing":true}' \
+    '{"id":"C-2","text":"second claim","kind":"measure","sources":["S-4","S-5"],"load_bearing":true}' > "$d/claims.jsonl"
+  printf '%s\n' '{"claim":"C-1","status":"verified","method":"reread","note":"exact words"}' \
+    '{"claim":"C-2","status":"verified","method":"run","note":"re-measured"}' > "$d/checks.jsonl"
+  {
+    printf '# Report for %s\n\n' "$id"; n=1
+    for title in "Answer" "What was asked" "Method and depth record" "Prior art and options" "Findings" "Design" "Not checked" \
+      "Implementation plan" "Risks and mitigations" "Open decisions" "Acceptance test" "Sources and evidence" "Revision log"; do
+      printf '## %d. %s\n' "$n" "$title"
+      if [ "$title" = "Not checked" ]; then printf 'Nothing load-bearing is left unchecked.\n\n'; else printf 'Body of %s, citing [C-1] and [C-2].\n\n' "$title"; fi
+      n=$((n + 1))
+    done
+  } > "$d/report.md"
+}
+gate_reads() { # <dir> <id> [gate arguments]: the depth gate's own reading of a Recon
+  JG_HOME="$1" JG_DATA_OVERRIDE="$1/data" JG_STATE_OVERRIDE="$1/state" bash "$ROOT/bin/jg-recon-gate.sh" "${@:2}" 2>&1
+}
+
+test_a_deep_recon_in_its_critic_loop_owes_no_relay_until_the_loop_closes() {
+  local dir state now d v1 v2 out f
+  dir=$(make_home critic-loop); state=$dir/state; now=$(date +%s); d=$dir/data/jg-6si-1
+  make_deep_recon "$dir" jg-6si-1
+  add_lane "$dir" jg-6si-1 T-6si scout; add_lane "$dir" jg-6si-1-critic T-6si-c scout
+  status_line "$dir" jg-6si-1 working $((now - 2000)) "researching"
+  status_line "$dir" jg-6si-1 "done" $((now - 1500)) "draft ready for the separate critic"
+  # The critic is a separate worker in a data directory of its own: critic.md names the task itself and there is no report (the layout the gate knows).
+  printf 'Critic: jg-6si-1-critic\nRound 1: new gaps 2\n- a gap\n' > "$dir/data/jg-6si-1-critic/critic.md"
+  status_line "$dir" jg-6si-1-critic "done" $((now - 1200)) "round 1 ready"
+  v1=$(sha256sum "$d/report.md" | cut -d' ' -f1)
+
+  # The replay is not vacuous: the gate reads the step critic for the researcher, and the critic's own task is a critic task.
+  assert_contains "$(gate_reads "$dir" jg-6si-1 --step)" 'STEP critic' "the draft is not in the step critic"
+  gate_reads "$dir" jg-6si-1-critic --is-critic > /dev/null || fail "the critic's task is not a critic task to the gate"
+
+  # Neither done line owes a relay, no alert is raised for them, and the sweep that Main ran on them goes through.
+  check_step "$(fact "$dir" jg-6si-1)" none "a deep draft whose critic is open"
+  assert_contains "$(val "$(fact "$dir" jg-6si-1)" reason)" 'critic loop' "the researcher's reason must name the critic loop"
+  check_step "$(fact "$dir" jg-6si-1-critic)" none "a critic's round result"
+  nxt "$dir" tick || fail "the tick failed"
+  [ -z "$(alertcmd "$dir" word done-unhandled--jg-6si-1 2>/dev/null)" ] || fail "the researcher's draft-ready line raised a relay alert"
+  [ -z "$(alertcmd "$dir" word done-unhandled--jg-6si-1-critic 2>/dev/null)" ] || fail "the critic's round result raised a relay alert"
+  nxt "$dir" open > /dev/null && fail "the open list names finished work inside the critic loop"
+  signal "$dir" jg-6si-1; signal "$dir" jg-6si-1-critic
+  drain "$dir" > "$dir/out" 2> "$dir/err" || fail "the drain failed: $(tail -3 "$dir/err")"
+  drain "$dir" --outcomes-before "$(( $(date +%s) + 1 ))" --classified handled > "$dir/sweep" 2>&1 \
+    || fail "the sweep over the two critic-loop done lines was refused: $(cat "$dir/sweep")"
+  assert_contains "$(cat "$dir/sweep")" 'classified 2 outcome(s)' "the sweep classifies both critic-loop outcomes"
+
+  # The researcher closes the gap and says done again: the critic still has to read the new draft, so still no relay.
+  printf '\nA closed gap.\n' >> "$d/report.md"; v2=$(sha256sum "$d/report.md" | cut -d' ' -f1)
+  status_line "$dir" jg-6si-1 "done" $((now - 900)) "gap closed, new draft ready for the same critic"
+  printf 'Critic: jg-6si-1-critic\nRound 1: new gaps 2 report %s\n- a gap\n' "$v1" > "$d/critic.md"
+  assert_contains "$(gate_reads "$dir" jg-6si-1 --step)" 'STEP critic' "the revised draft is not in the step critic"
+  check_step "$(fact "$dir" jg-6si-1)" none "a revised draft the critic has not read"
+  nxt "$dir" tick || fail "the tick after the revision failed"
+  [ -z "$(alertcmd "$dir" word done-unhandled--jg-6si-1 2>/dev/null)" ] || fail "the revised draft raised a relay alert before the critic read it"
+
+  # A hole other than the critic is not the critic loop: the relay stays owed.
+  cp "$d/report.md" "$dir/report.keep"; grep -v '^## 6\. Design$' "$dir/report.keep" > "$d/report.md"
+  check_step "$(fact "$dir" jg-6si-1)" relay "a deep draft with a hole other than its critic"
+  cp "$dir/report.keep" "$d/report.md"
+
+  # The critic reads the new draft and finds nothing new: the loop is closed, the final done line owes the relay, and only now the alert is due.
+  printf 'Critic: jg-6si-1-critic\nRound 1: new gaps 2 report %s\n- a gap\nRound 2: new gaps 0 report %s\n' "$v1" "$v2" > "$d/critic.md"
+  out=$(gate_reads "$dir" jg-6si-1 --step); assert_contains "$out" 'PASS' "the closed loop is not a gate PASS: $out"
+  f=$(fact "$dir" jg-6si-1); check_step "$f" relay "the final done line of a closed critic loop"
+  assert_contains "$(val "$f" how)" 'bin/jg-move.sh T-6si relayed' "the relay is recorded on the Recon's ticket"
+  check_step "$(fact "$dir" jg-6si-1-critic)" none "the critic's round result is never the Recon's relay"
+  nxt "$dir" tick || fail "the tick after the loop closed failed"
+  [ "$(alertcmd "$dir" word done-unhandled--jg-6si-1)" = open ] || fail "the final done line of a finished Recon raised no alert"
+  [ -z "$(alertcmd "$dir" word done-unhandled--jg-6si-1-critic 2>/dev/null)" ] || fail "the critic's lane raised an alert of its own"
+  relay "$dir" T-6si || fail "could not record the relay"
+  nxt "$dir" tick || fail "the tick after the relay failed"
+  [ "$(alertcmd "$dir" word done-unhandled--jg-6si-1)" = resolved ] || fail "the relay did not close the alert"
+  pass "a deep Recon's draft-ready line and its critic's round results owe no relay and raise no alert while the critic loop is open; the final done line of the closed loop owes it"
+}
 test_a_sweep_over_two_finished_recons_is_refused_and_named
 test_a_sweep_with_nothing_owed_still_classifies
 test_a_done_line_with_no_next_action_raises_a_p1_that_only_the_step_closes
 test_the_one_definition_names_the_step_of_every_lane_and_phase
+test_a_deep_recon_in_its_critic_loop_owes_no_relay_until_the_loop_closes
 
 echo "# jg-finished-work.test.sh: all assertions passed"
