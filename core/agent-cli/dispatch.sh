@@ -306,7 +306,17 @@ cmd_run() {
   fi
   out=$(mktemp "${TMPDIR:-/tmp}/jg-dispatch.XXXXXX") || return 5
   err=$(mktemp "${TMPDIR:-/tmp}/jg-dispatch.XXXXXX") || { rm -f -- "$out"; return 5; }
-  "$script" "$@" >"$out" 2>"$err"
+  case "$script:${1:-}" in
+    "$ROOT/bin/jg-procevent-remote-reply.sh":arm-locked|\
+    "$ROOT/bin/jg-procevent-remote-reply.sh":retire-quiesce-locked|\
+    "$ROOT/bin/jg-procevent-remote-reply.sh":retire-finalize-locked)
+      # A Bash subshell keeps the dispatcher's PPID for the adapter's lock check.
+      # It isolates the adapter's variables and exits so we can still return the envelope.
+      # Lint the adapter as a separate script, matching this isolation boundary.
+      # shellcheck source=/dev/null
+      ( . "$script" "$@" ) >"$out" 2>"$err" ;;
+    *) "$script" "$@" >"$out" 2>"$err" ;;
+  esac
   rc=$?
   cat "$err" >&2
   # The script's exit through the entry's exit map; a code the map does not name is a refusal.
