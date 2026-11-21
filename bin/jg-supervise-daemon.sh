@@ -739,6 +739,10 @@ escalate_add() {  # <state> <distilled-item>
     unknown_wake_acknowledged "$state" "$line" && return 0
   fi
   buf="$state/.subsuper-escalations"
+  # The item's own text is its key: an event already waiting in the buffer is the
+  # same event, so it is not buffered again (the digest carries it once). A
+  # delivered event leaves the buffer (escalate_flush), so a later repeat is new.
+  [ -s "$buf" ] && grep -Fxq -- "$item" "$buf" && return 0
   [ -s "$buf" ] || _now > "${buf}.since"
   printf '%s\n' "$item" >> "$buf"
 }

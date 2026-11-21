@@ -1124,6 +1124,9 @@ journeys:
   jg-autoarm-host-load:
     tier: local
     command: bash tests/jg-autoarm-host-load.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-away-escalation-buffer:
+    tier: local
+    command: bash tests/jg-away-escalation-buffer.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-away-reach:
     tier: local
     command: bash tests/jg-away-reach.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
