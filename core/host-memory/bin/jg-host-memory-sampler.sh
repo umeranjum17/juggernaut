@@ -2,9 +2,10 @@
 # One memory sampler per machine, shared by every home on it.
 # A home's jg-watch.sh registers it with jg_memory_sampler_ensure (a record under the machine directory) and
 # unregisters with jg_memory_sampler_stop; the first ensure starts the one loop and the last stop ends it.
-# Every JG_HOST_MEMORY_SECS (default 10) the loop runs one tick per registered home, each in its own child
-# (tick HOME STATE CONFIG) so a home keeps its own wake queue, latch and interrupt log; a home whose watcher
-# is gone is dropped. Each ALERT episode attempts one owned-task interrupt and queues a durable wake,
+# Every JG_HOST_MEMORY_SECS (default 10) one guard reads the machine and records each registered home's verdict.
+# The loop drops homes whose watcher is gone and dispatches only alert transitions to home-scoped children,
+# so each home keeps its own wake queue, latch and interrupt log.
+# Each ALERT episode attempts one owned-task interrupt and queues a durable wake,
 # except in a Squad Lead home under a local root, which records the alert without a wake.
 # The home's .host-memory-sampler.pid names the shared process and proves the home is registered.
 # Sourced by the watcher for lifecycle functions; executable as run (the machine loop) or tick HOME STATE CONFIG.
@@ -99,7 +100,7 @@ jg_memory_sampler_interrupt() {
 }
 
 jg_memory_sampler_tick() {
-  local out root task reason action epoch stop=0 latch="$STATE/.host-memory-alerted" lead=0
+  local out root lead=0
   # The guard walks the squad_lead homes below these itself, and only when it names consumers,
   # so an ordinary tick reads no task record.
   local -a dirs=(--state-dir "$JG_HOME" "$STATE")
@@ -111,6 +112,11 @@ jg_memory_sampler_tick() {
     printf 'host memory guard failed: %s\n' "$out" >&2
     return 0
   }
+  jg_memory_sampler_apply "$out" "$lead"
+}
+
+jg_memory_sampler_apply() {
+  local out=$1 lead=$2 task reason action epoch stop=0 latch="$STATE/.host-memory-alerted"
   case "${out%%$'\t'*}" in
     ALERT) ;;
     WAIT|OK) [ ! -e "$latch" ] || { rm -f "$latch"; jg_wake_host_clear host-memory; }; return 0 ;;
@@ -152,23 +158,32 @@ jg_memory_sampler_cleanup() {
   jg_lock_release "$machine/lock"
 }
 
-# One tick for one home, in the caller's own process: sources that home's libraries, which read STATE at source time.
-jg_memory_sampler_tick_home() {
+jg_memory_sampler_watcher_live() {
+  local home=$1 state=$2 bindir=$3 watcher
+  [ -d "$state" ] && [ -d "$bindir" ] || return 1
+  IFS= read -r watcher 2>/dev/null < "$state/.watch.lock/pid" || return 1
+  jg_pid_alive "$watcher" && jg_watcher_lock_matches_pid "$state" "$bindir/jg-watch.sh" "$watcher" "$home"
+}
+
+# A home-scoped child loads that home's wake library, which reads STATE at source time.
+jg_memory_sampler_run_home() {
   JG_HOME=$1 STATE=$2 CONFIG=$3
+  shift 3
   SAMPLER_DIR=${JG_HOST_MEMORY_FORK_BIN:-${MEMORY_SAMPLER_PATH%/*}}
   [ -d "$STATE" ] && [ -d "$SAMPLER_DIR" ] || return 3
   # shellcheck source=bin/jg-wake-lib.sh
   . "$SAMPLER_DIR/jg-wake-lib.sh"
-  watcher=$(cat "$STATE/.watch.lock/pid" 2>/dev/null || true)
-  jg_pid_alive "$watcher" && jg_watcher_lock_matches_pid "$STATE" "$SAMPLER_DIR/jg-watch.sh" "$watcher" "$JG_HOME" || return 3
+  jg_memory_sampler_watcher_live "$JG_HOME" "$STATE" "$SAMPLER_DIR" || return 3
   trap 'exit 0' HUP INT TERM
-  jg_memory_sampler_tick
+  if [ "$#" -eq 0 ]; then jg_memory_sampler_tick
+  else jg_memory_sampler_apply "$1" "$2"; fi
 }
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   set -u
   case "${1:-}:$#" in
-    tick:4) jg_memory_sampler_tick_home "$2" "$3" "$4"; exit $? ;;
+    tick:4) jg_memory_sampler_run_home "$2" "$3" "$4"; exit $? ;;
+    apply:6) jg_memory_sampler_run_home "$2" "$3" "$4" "$5" "$6"; exit $? ;;
     run:1) ;;
     run:4) ;; # run HOME STATE CONFIG: this home is registered first, then the one shared loop runs
     *) exit 2 ;;
@@ -188,21 +203,38 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   mv "$machine/pid.$$" "$machine/pid" || exit 1
   secs=${JG_HOST_MEMORY_SECS:-}
   case "$secs" in ''|*[!0-9]*|0) secs=10 ;; esac
-  limit=
-  command -v timeout >/dev/null 2>&1 && limit="timeout -k 5 ${JG_HOST_MEMORY_TICK_LIMIT:-60}"
+  limit=()
+  command -v timeout >/dev/null 2>&1 && limit=(timeout -k 5 "${JG_HOST_MEMORY_TICK_LIMIT:-60}")
   while [ -d "$SAMPLER_DIR" ]; do
     start=$(date +%s)
-    served=0
+    count=0
+    home_args=() homes=() states=() configs=() bindirs=() leads=()
     for record in "$machine/homes"/*; do
       [ -f "$record" ] || continue
       IFS=$'\t' read -r home state config bindir < "$record" || { rm -f "$record"; continue; }
-      served=1
-      # shellcheck disable=SC2086 # $limit is a command prefix or empty.
-      env JG_HOME="$home" JG_STATE_OVERRIDE="$state" JG_CONFIG_OVERRIDE="$config" JG_HOST_MEMORY_FORK_BIN="$bindir" \
-        $limit "$MEMORY_SAMPLER_PATH" tick "$home" "$state" "$config" </dev/null
-      [ "$?" -ne 3 ] || rm -f "$record" "$state/.host-memory-sampler.pid"
+      if ! jg_memory_sampler_watcher_live "$home" "$state" "$bindir"; then
+        rm -f "$record" "$state/.host-memory-sampler.pid"
+        continue
+      fi
+      lead=0
+      if root=$(jg_juggernaut_root_home "$home") && [ ! "$root" -ef "$home" ]; then lead=1
+      else root=; fi
+      home_args+=(--sample-home "$home" "$state" "$config" "$root")
+      homes[count]=$home states[count]=$state configs[count]=$config bindirs[count]=$bindir leads[count]=$lead
+      count=$((count + 1))
     done
-    [ "$served" -eq 1 ] || break
+    [ "$count" -gt 0 ] || break
+    verdicts=$(${limit[@]+"${limit[@]}"} "$SAMPLER_DIR/jg-jev-mem-guard.sh" "${home_args[@]}") \
+      || printf 'host memory sampler: shared guard exited %s\n' "$?" >&2
+    while IFS= read -r result; do
+      index=${result%%$'\t'*}
+      case "$index" in ''|*[!0-9]*) continue ;; esac
+      [ "$index" -lt "$count" ] || continue
+      out=${result#*$'\t'}
+      home=${homes[index]} state=${states[index]} config=${configs[index]}
+      env JG_HOME="$home" JG_STATE_OVERRIDE="$state" JG_CONFIG_OVERRIDE="$config" JG_HOST_MEMORY_FORK_BIN="${bindirs[index]}" \
+        ${limit[@]+"${limit[@]}"} "$MEMORY_SAMPLER_PATH" apply "$home" "$state" "$config" "$out" "${leads[index]}" </dev/null
+    done <<< "$verdicts"
     remaining=$((secs - ($(date +%s) - start)))
     if [ "$remaining" -gt 0 ]; then sleep "$remaining" & wait "$!" || true; fi
   done

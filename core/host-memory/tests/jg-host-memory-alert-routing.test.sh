@@ -15,6 +15,7 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/../../../tests/wake-helpers.sh"
 TMP_ROOT=$(jg_test_tmproot jg-host-memory-alert-routing)
 SAMPLER="$ROOT/core/host-memory/bin/jg-host-memory-sampler.sh"
+export JG_HOST_MEMORY_MACHINE_DIR="$TMP_ROOT/machine" JG_HOST_MEMORY_SECS=60
 
 # tick <home> <state> [<proc root>]: one sampler tick for that home, as the sampler's run loop would drive it.
 tick() {
@@ -30,8 +31,12 @@ tick() {
 }
 
 mkdir -p "$TMP_ROOT/proc/pressure"
+mkdir -p "$JG_HOST_MEMORY_MACHINE_DIR" "$TMP_ROOT/collector"
 printf 'MemAvailable: 100000 kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n' > "$TMP_ROOT/proc/meminfo"
 printf 'some avg10=0 avg60=0 avg300=0 total=0\n' > "$TMP_ROOT/proc/pressure/memory"
+JG_HOST_MEMORY_PROC="$TMP_ROOT/proc" JG_HOST_MEMORY_CGROUP_ROOT="$TMP_ROOT/no-cgroup" \
+  "$ROOT/bin/jg-jev-mem-guard.sh" --sample-home "$TMP_ROOT" "$TMP_ROOT/collector" "$TMP_ROOT/config" '' >/dev/null \
+  || fail "the collector did not publish a measurement"
 
 new_home() { # <name>: an empty home with a state directory
   mkdir -p "$TMP_ROOT/$1/state" "$TMP_ROOT/$1/config"

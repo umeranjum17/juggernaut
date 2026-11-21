@@ -16,16 +16,23 @@ Admission refusal and sampler interrupts cannot guarantee avoidance of an oomd k
 
 Usage (bin/jg-jev-mem-guard.sh runs this with python3):
   jg-jev-mem-guard.sh [--config FILE] [--state-dir HOME DIR]...
-      Print "<verdict>\t<summary>" for the host, naming the largest consumers.
+      Classify the collector's latest machine measurement, naming the largest consumers.
   jg-jev-mem-guard.sh [--config FILE] --admit TASK --state DIR
-      Admission for one agent launch (bin/jg-spawn.sh, bin/jg-control.sh relaunch).
+      Fresh admission for one agent launch (bin/jg-spawn.sh, bin/jg-control.sh relaunch).
       Exit 0 admits and removes DIR/admission-refused. Exit 1 refuses: prints the
       reason and writes DIR/admission-refused as "<epoch>\t<task>\t<reason>".
   jg-jev-mem-guard.sh [--config FILE] --record FILE [--state-dir HOME DIR]...
-      One independent sampler sample (bin/jg-host-memory-sampler.sh): appends
+      Record the collector's latest machine measurement: appends
       "<epoch>\t<MemAvailable kB>\t<swap used kB>\t<sustained pressure>\t<verdict>"
       to FILE, trimming to the newest 8640 rows once it exceeds 8760, and prints
       "<verdict>\t<summary>"; an ALERT summary names the largest consumers.
+  jg-jev-mem-guard.sh --sample-home HOME STATE CONFIG ROOT [--sample-home ...]
+      Machine collector protocol: publish one measurement and classify it with each home's
+      CONFIG/host-memory and record it in STATE/host-memory.tsv. Emit only alert
+      transitions as "<zero-based home index>\t<verdict>[\t<summary>\t<owned task>]".
+      ROOT is the local parent root for consumer attribution, or empty.
+      The collector atomically replaces sample.json in the sampler's machine
+      directory. Ordinary readers report UNKNOWN when that snapshot is unavailable or stale.
 
   --owned-top-task DIR appends a tab and the top consumer's task ID only when
       that consumer is a task recorded in DIR (for the sampler's interrupt).
@@ -55,6 +62,7 @@ config file, with the reason on stderr.
 """
 
 import argparse
+import json
 import math
 import os
 import sys
@@ -67,6 +75,15 @@ KEEP_ROWS = 8640
 CGROUP_ROOT = os.environ.get("JG_HOST_MEMORY_CGROUP_ROOT") or "/sys/fs/cgroup"
 GIB_KB = 1048576
 LEAD_KINDS = ("squad_lead", "secondmate")  # secondmate: a record written before the rename (bin/jg-compat.sh)
+
+
+def snapshot_path():
+    return os.path.join(
+        os.environ.get("JG_HOST_MEMORY_MACHINE_DIR") or os.path.join(
+            os.environ.get("XDG_RUNTIME_DIR") or os.environ.get("TMPDIR") or "/tmp",
+            f"jg-host-memory-{os.getuid()}"),
+        "sample.json",
+    )
 
 
 def die(msg):
@@ -82,6 +99,8 @@ def load_config(path):
         lines = open(path).read().splitlines()
     except OSError as e:
         die(f"cannot read {path}: {e.strerror}")
+    except UnicodeError as e:
+        die(f"cannot read {path}: {e}")
     for n, raw in enumerate(lines, 1):
         line = raw.strip()
         if not line or line.startswith("#"):
@@ -275,7 +294,7 @@ def consumers(state_dirs, top=3):
 
 def line(s, v, why, cons):
     if v == "UNKNOWN":
-        return f"UNKNOWN\thost memory is not measurable here (no readable {PROC}/meminfo and {PROC}/pressure/memory)"
+        return "UNKNOWN\tno current machine memory measurement"
     text = summary(s) + "".join(f"; {w}" for w in why)
     return f"{v}\t{text}" + (f"; largest: {', '.join(cons)}" if cons else "")
 
@@ -293,10 +312,10 @@ def replace_text(path, text):
             pass
 
 
-def record(path, s, v):
+def record(path, s, v, sampled_at):
     with open(path, "a") as f:
         pressure = "" if s["pressure"] is None else f"{s['pressure']:.2f}"
-        f.write(f"{int(time.time())}\t{s['available_kb']}\t{s['swap_used_kb']}\t{pressure}\t{v}\n")
+        f.write(f"{sampled_at}\t{s['available_kb']}\t{s['swap_used_kb']}\t{pressure}\t{v}\n")
     with open(path) as f:
         rows = f.readlines()
     if len(rows) > KEEP_ROWS + 120:
@@ -318,31 +337,87 @@ def admit(task, state, s, v, why):
     return 1
 
 
+def shared_sample():
+    try:
+        with open(snapshot_path()) as f:
+            at, period, s = json.load(f)
+        if not 0 <= time.time() - at < 2 * period or (s is not None and not isinstance(s, dict)):
+            return 0, None
+        return int(at), s
+    except (OSError, TypeError, ValueError):
+        return 0, None
+
+
+def render(s, v, why, dirs, owned_state, recorded):
+    cons = consumers(dirs) if v == "ALERT" or (not recorded and v != "UNKNOWN") else []
+    output = line(s, v, why, [text.replace("\n", " ").replace("\r", " ") for _, text in cons])
+    if owned_state:
+        task = cons[0][0][1] if cons and cons[0][0][0] == os.path.realpath(owned_state) else ""
+        output += "\t" + task
+    return output
+
+
+def sample_homes(homes):
+    sampled_at = time.time()
+    s = sample()
+    period = os.environ.get("JG_HOST_MEMORY_SECS", "")
+    period = int(period) if period and all("0" <= digit <= "9" for digit in period) else 0
+    try:
+        replace_text(snapshot_path(), json.dumps([sampled_at, period or 10, s]) + "\n")
+    except OSError as e:
+        print(f"jg-jev-mem-guard: cannot publish {snapshot_path()}: {e}", file=sys.stderr)
+    if s is None:
+        return
+    for index, (home, state, config, root) in enumerate(homes):
+        try:
+            cfg = load_config(os.path.join(config, "host-memory"))
+            v, why = verdict(s, cfg)
+            record(os.path.join(state, "host-memory.tsv"), s, v, int(sampled_at))
+            latched = os.path.exists(os.path.join(state, ".host-memory-alerted"))
+            if v == "ALERT" and not latched:
+                dirs = [(home, state)]
+                if root:
+                    dirs.append((root, os.path.join(root, "state")))
+                print(f"{index}\t{render(s, v, why, dirs, state, recorded=True)}", flush=True)
+            elif v != "ALERT" and latched:
+                print(f"{index}\t{v}", flush=True)
+        except SystemExit:
+            # load_config already reported the invalid home configuration.
+            continue
+        except (OSError, UnicodeError) as e:
+            print(f"jg-jev-mem-guard: {home}: {e}", file=sys.stderr)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Host memory guard: measure, admit, and alert before an oomd kill.")
     parser.add_argument("--config", help="thresholds file (config/host-memory); absent means the defaults")
     parser.add_argument("--admit", metavar="TASK", help="admission for one agent launch; needs --state")
     parser.add_argument("--state", metavar="DIR", help="the launching home's state directory")
-    parser.add_argument("--record", metavar="FILE", help="append one sample to FILE")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--record", metavar="FILE", help="append one sample to FILE")
+    mode.add_argument("--sample-home", nargs=4, metavar=("HOME", "STATE", "CONFIG", "ROOT"), action="append",
+                      help="record a shared sampler measurement for this home")
     parser.add_argument("--owned-top-task", metavar="DIR", help="append the top task ID if owned by DIR")
     parser.add_argument("--state-dir", nargs=2, metavar=("HOME", "DIR"), action="append", default=[],
                         help="explicit home and its state directory whose task records map consumers")
     args = parser.parse_args()
     if args.admit and not args.state:
         die("--admit needs --state")
+    if args.sample_home:
+        if args.admit or args.state_dir or args.owned_top_task or args.config or args.state:
+            die("--sample-home cannot be combined with single-home options")
+        sample_homes(args.sample_home)
+        return
     cfg = load_config(args.config)
-    s = sample()
-    v, why = verdict(s, cfg)
     if args.admit:
+        s = sample()
+        v, why = verdict(s, cfg)
         sys.exit(admit(args.admit, args.state, s, v, why))
+    sampled_at, s = shared_sample()
+    v, why = verdict(s, cfg)
     if args.record and s is not None:
-        record(args.record, s, v)
-    cons = consumers(args.state_dir) if v == "ALERT" or (not args.record and v != "UNKNOWN") else []
-    output = line(s, v, why, [text for _, text in cons])
-    if args.owned_top_task:
-        task = cons[0][0][1] if cons and cons[0][0][0] == os.path.realpath(args.owned_top_task) else ""
-        output += "\t" + task
-    print(output)
+        record(args.record, s, v, sampled_at)
+    print(render(s, v, why, args.state_dir, args.owned_top_task, recorded=bool(args.record)))
 
 
 if __name__ == "__main__":

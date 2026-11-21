@@ -14,12 +14,12 @@ Kun's diagnostic guard must remain intact when the admission rule moves: the fea
   `jg_memory_sampler_tick`, `jg_memory_sampler_interrupt`,
   `jg_memory_sampler_cleanup`), executable as `run` (the one machine loop;
   `run <HOME> <STATE> <CONFIG>` registers that home first) and as
-  `tick <HOME> <STATE> <CONFIG>` (one home's tick, run by the loop in a child).
+  `tick <HOME> <STATE> <CONFIG>` (a standalone tick for one home).
 - `bin/jg-mem-gate.sh` — the memory gate for heavy jobs (below); unlike
   the sampler it is live once installed.
 - `wiring.sh` — installs the gate and `jg-heavy-adopt` timer.
 - `tests/jg-mem-gate.test.sh` — the gate's integration test.
-- `tests/jg-host-memory-shared.test.sh` - one sampler serves two homes, drops a home whose watcher is gone, and ends with the last home.
+- `tests/jg-host-memory-shared.test.sh` - one measurement per interval across three homes, with independent verdicts and alert routing, stale watcher removal and last-home shutdown.
 - `tests/jg-heavy-adopt.test.sh` — fixture-backed mover install, traversal and uninstall test.
 
 ## Sampler contract
@@ -35,11 +35,12 @@ Kun's diagnostic guard must remain intact when the admission rule moves: the fea
   `tick <HOME> <STATE> <CONFIG>`; any other argv exits 2, a missing state
   directory exits 1, an already-held machine lock exits 0. Sourced, it provides
   the `jg_memory_sampler_*` functions above.
-- Cadence: every `JG_HOST_MEMORY_SECS` (default 10) one sample per registered home, each tick (limited to `JG_HOST_MEMORY_TICK_LIMIT`, default 60 s)
-  calling the fork guard as
-  `jg-jev-mem-guard.sh --config <CONFIG>/host-memory --record
-  <STATE>/host-memory.tsv --owned-top-task <STATE> --state-dir ...`.
-  The guard itself stays in the fork and is not moved.
+- Cadence: every `JG_HOST_MEMORY_SECS` (default 10) the guard measures once and records a verdict for each registered home using that home's thresholds.
+  The collector atomically publishes `sample.json` in the machine directory so standalone guard reads use the same measurement.
+  Those reads report UNKNOWN after two missed intervals.
+  Start admission still measures current pressure when it checks a launch.
+  Only alert transitions start a home-scoped delivery child.
+  The guard call and each delivery child are limited to `JG_HOST_MEMORY_TICK_LIMIT` (default 60 s).
 - Verdicts: the guard prints `<verdict>\t<summary>` where verdict is
   `OK`, `WAIT`, `ALERT`, or `UNKNOWN`. `WAIT` and `OK` clear the alert
   latch and record nothing further; only the first `ALERT` of an episode
@@ -59,7 +60,7 @@ Kun's diagnostic guard must remain intact when the admission rule moves: the fea
   settles the alert into its wake tally (`jg_wake_settle`), but queues no wake. A home with no such
   record, including the root and a remote-routed lead, queues the wake as before.
 - State files, all under the home's state directory: `host-memory.tsv`
-  (one sample row per tick:
+  (one row per measured interval:
   `<epoch>\t<available kB>\t<swap used kB>\t<sustained pressure>\t<verdict>`,
   read by the fork's dashboard history), `host-memory-interrupts.tsv`
   (`<epoch>\t<task>\t<action>`), `.host-memory-alerted` (the per-episode

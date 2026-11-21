@@ -984,7 +984,8 @@ It classifies measurable memory as `OK`, `WAIT` (new agents should wait), or `AL
 These controls reduce risk but cannot guarantee avoidance of an out-of-memory kill:
 
 - Each watcher loads the `core/host-memory/bin/jg-host-memory-lib.sh` lifecycle functions and registers its home with the one sampler the machine shares (a record under `$XDG_RUNTIME_DIR/jg-host-memory-<uid>`, or `JG_HOST_MEMORY_MACHINE_DIR`).
-  The sampler records every 10 seconds by default (`JG_HOST_MEMORY_SECS`) into each registered home's `state/host-memory.tsv`, even during slow recovery or custom checks.
+  The sampler takes one machine measurement every 10 seconds by default (`JG_HOST_MEMORY_SECS`) and records a verdict under each registered home's thresholds in its `state/host-memory.tsv`, even during slow recovery or custom checks.
+  Standalone guard diagnostics read that shared measurement.
   Lookout does not currently show host-memory readings.
   The home-scoped `state/.host-memory-sampler.pid` records the shared sampler's PID and process identity; the watcher restarts a dead sampler, and the last home to stop ends it, signalling only the exact recorded PID after verifying its identity and script. A home whose watcher is gone drops out of the loop by itself.
 - At the wait or alert level, local `bin/jg-spawn.sh` launches and `bin/jg-control.sh relaunch` refuse to start a new agent and record the reason in `state/admission-refused`, which remains in local state and is not shown by Lookout.
