@@ -8,6 +8,7 @@
 #    takes the pin back below that commit. A verify whose only failures pass on their one rerun moves the pin too, and each
 #    flaky test is recorded and filed once as its own fix row. A gate shard over its wall-clock budget with no failed test
 #    is a warning and a machine-load row, never a red.
+# A per-commit line-red ends when its commit leaves the line or a later commit is green.
 # A red with no failed test (the stall of 10 Nov) warns and runs once more, pins and reverts nothing, and a ready lane lands on it
 #    through the real check with no hand step and no marker file. A trunk with no green for 15 minutes raises one alarm, not two.
 # No landing or stack holds the trunk lock while its gate runs: a verify finishes and moves the pin, another lane lands,
@@ -481,6 +482,36 @@ test_no_green_for_15_minutes_raises_one_alarm_not_two() {
   pass 'a trunk with no green for 15 minutes raises one alarm through the landing check that climbs to Main, never the owner, and repeats while the stall goes on, and a new stall after the pin moved raises one more'
 }
 
+# A per-commit line-red alert (a charged verify red, an incomplete verify, a red CI) ends when its red is history: the line was cut over
+# (the commit is no longer on the trunk), or a later commit is green. The green pin standing on the red commit itself is not later.
+test_a_per_commit_line_red_ends_when_the_line_is_cut_over_or_a_later_commit_is_green() {
+  local c1 c2 c3 now
+  world oldred
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
+  lane o1 one; c1=$(tip_after_land o1); lane o2 two; c2=$(tip_after_land o2); lane o3 three; c3=$(tip_after_land o3)
+  now=$(date +%s)
+  alert() { JG_STATE_OVERRIDE="$HOME_D/state" "$HOME_D/bin/jg-alert.sh" raise line-red "$1" --project proj --note "red at $1" >/dev/null 2>&1 || fail "line-red $1 must raise"; }
+  state_of() { sed -n 's/^state=//p' "$HOME_D/state/alerts/line-red--$1.rec"; }
+  alert "proj-${c2:0:12}"; alert "proj-verify-incomplete-${c2:0:12}"; alert "proj-ci-${c1:0:12}"; alert "proj-deadbeef0123"
+  printf 'proj\t%s\t%s\tred\n' "$c1" "$((now - 100))" >> "$HOME_D/data/trunk-ci.tsv"
+  # The line was cut over under the fourth alert: its commit is not on the trunk. The others wait on their reds.
+  trunk green-alarm "$PROJ" >/dev/null 2>&1
+  [ "$(state_of proj-deadbeef0123)" = resolved ] || fail "an alert whose commit left the line must resolve"
+  [ "$(state_of "proj-${c2:0:12}")" != resolved ] || fail "a red with no later green stays open"
+  # The pin on the red commit itself is no later green; a pin above a CI red says nothing of it without a CI green row.
+  printf '%s\n' "$c2" > "$HOME_D/state/trunk-green-proj"; trunk green-alarm "$PROJ" >/dev/null 2>&1
+  [ "$(state_of "proj-${c2:0:12}")" != resolved ] && [ "$(state_of "proj-verify-incomplete-${c2:0:12}")" != resolved ] || fail "the pin on the red commit is not a later green"
+  [ "$(state_of "proj-ci-${c1:0:12}")" != resolved ] || fail "a CI red needs a later CI green row, not the pin alone"
+  # A later commit goes green: the pin stands above the red commit.
+  printf '%s\n' "$c3" > "$HOME_D/state/trunk-green-proj"; trunk green-alarm "$PROJ" >/dev/null 2>&1
+  [ "$(state_of "proj-${c2:0:12}")" = resolved ] && [ "$(state_of "proj-verify-incomplete-${c2:0:12}")" = resolved ] || fail "a red under a later green pin must resolve"
+  grep -q '^proof=source:later-commit-green$' "$HOME_D/state/alerts/line-red--proj-${c2:0:12}.rec" || fail "the close names its proof"
+  [ "$(state_of "proj-ci-${c1:0:12}")" != resolved ] || fail "a CI red still needs a CI green row"
+  printf 'proj\t%s\t%s\tgreen\n' "$c3" "$now" >> "$HOME_D/data/trunk-ci.tsv"; trunk green-alarm "$PROJ" >/dev/null 2>&1
+  [ "$(state_of "proj-ci-${c1:0:12}")" = resolved ] || fail "a CI red resolves once a later commit is green in CI"
+  pass 'a per-commit line-red resolves when its commit leaves the line or a later commit is green, and not before'
+}
+
 # The nightly whole run (jg8-t5), started by the tick: every script on the tip through the same verify. Of three changes landed since the
 # day's first commit, one carries a script that fails once and passes on its rerun, and two pass the landing gate alone and break
 # together. The one run writes its day's report, files the flaky script as exactly one ticket, traces the red to the second of the pair
@@ -638,6 +669,7 @@ test_verify_judges_only_the_changes_since_the_green_pin_and_prints_its_seconds
 test_a_red_with_no_failed_test_never_pins_and_a_ready_lane_lands_on_it
 test_the_tick_verifies_a_landed_pair_that_breaks_together_and_the_pin_moves_only_on_green
 test_no_green_for_15_minutes_raises_one_alarm_not_two
+test_a_per_commit_line_red_ends_when_the_line_is_cut_over_or_a_later_commit_is_green
 test_the_nightly_run_writes_its_report_files_one_flake_ticket_and_traces_a_red_to_its_commit
 test_a_journey_its_proof_did_not_select_is_charged_to_its_commit_and_counted_as_a_miss
 printf 'jg-trunk-verify: ok\n'

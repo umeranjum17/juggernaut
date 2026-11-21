@@ -2000,6 +2000,35 @@ cmd_nightly() {
 
 green_short() { cut -c1-12 "$STATE/trunk-green-$PN" 2>/dev/null || echo none; }
 
+# A per-commit `line-red` alert (the keys $PN-<sha12> of a charged verify red, $PN-verify-incomplete-<sha12> and $PN-ci-<sha12> of a red CI)
+# names a commit of the line, so it ends once that red is history. Each minute's green-alarm resolves the open ones of this project when
+#   the commit is no longer on the trunk (the line was cut over), or
+#   a later commit is green: the green pin stands strictly above it; for a CI key, a green CI row of a descendant recorded after its red
+#   (a red CI found under the pin is born with the pin above it, so the pin alone says nothing about it).
+resolve_old_line_reds() {  # <tip> <green pin or empty>
+  local tip=$1 green=$2 rec key sha full why t
+  for rec in "$STATE"/alerts/line-red--"$PN"-*.rec; do
+    [ -e "$rec" ] || continue
+    key=$(basename "$rec" .rec)
+    [ "$(sed -n 's/^project=//p' "$rec")" = "$PN" ] || continue
+    sha=${key##*-}; [[ $sha =~ ^[0-9a-f]{12}$ ]] || continue
+    case ${key#line-red--"$PN"-} in "$sha"|verify-incomplete-"$sha"|ci-"$sha") ;; *) continue ;; esac
+    [ "$(JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" word "$key" 2>/dev/null)" != resolved ] || continue
+    why=''
+    if ! full=$(git -C "$PROJ" rev-parse --verify --quiet "$sha^{commit}") || ! git -C "$PROJ" merge-base --is-ancestor "$full" "$tip"; then
+      why='line-cut-over'
+    elif [ "${key#line-red--"$PN"-}" = "ci-$sha" ]; then
+      t=$(awk -F'\t' -v p="$PN" -v c="$full" '$1 == p && $2 == c && $4 == "red" { t = $3 } END { print t + 0 }' "$DATA/trunk-ci.tsv" 2>/dev/null)
+      while IFS=$'\t' read -r c at; do
+        [ "$c" != "$full" ] && [ "$at" -ge "$t" ] && git -C "$PROJ" merge-base --is-ancestor "$full" "$c" && { why='later-commit-green'; break; }
+      done < <(awk -F'\t' -v p="$PN" '$1 == p && $4 == "green" { print $2 "\t" $3 }' "$DATA/trunk-ci.tsv" 2>/dev/null)
+    elif [ -n "$green" ] && [ "$green" != "$full" ] && git -C "$PROJ" merge-base --is-ancestor "$full" "$green"; then
+      why='later-commit-green'
+    fi
+    [ -z "$why" ] || JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" resolve "$key" --proof "source:$why" >/dev/null 2>&1 || true
+  done
+}
+
 # The trunk with no green commit for no-green-alarm-minutes raises the `line-red` alert through jg-alert.sh for that green pin, and the alert
 # then climbs its ladder (the lead, Main, then the captain's chat) and rings again at the top, until the pin moves; each minute's run of this
 # command is the tick that does it (`jg-alert.sh climb`). The wait is counted from the landing of the oldest commit above the green pin (its
@@ -2009,6 +2038,7 @@ cmd_green_alarm() {
   open_project "${1-}"
   tip=$(rev "refs/heads/$TRUNK") || refuse "trunk branch $TRUNK is missing in $PROJ"
   green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
+  resolve_old_line_reds "$tip" "$green"
   [ -n "$green" ] || { echo "green-alarm: $PN has no green pin yet"; return 0; }
   key="line-red--$PN-no-green-${green:0:12}"
   first=$(git -C "$PROJ" rev-list --reverse "$green..$tip" | head -n 1)
