@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # An order the captain types in the locked primary session signs its ticket (jg-7v6uw-s38).
-# Real prompt hook (bin/jg-overwatch-kpi.sh hook claude) -> real bin/jg-inbox.sh primary-chat ->
+# Real prompt hook (bin/jg-overwatch-kpi.sh hook claude, or hook agy fed agy's PreInvocation payload
+# and transcript) -> real bin/jg-inbox.sh primary-chat ->
 # the real build-approval reader (captain_ask_build_basis in bin/jg-captain-ask-lib.sh).
 #
 # T1 a message typed in the locked primary session files the handled note `[chat primary <session>:<seq>]`
@@ -8,6 +9,9 @@
 # T2 a session that is not the locked one, a home with no lock, and machine text file no note, and an
 #    order quoting such words is not approved.
 # T3 the note appends no wake: it is born handled, so the inbox has nothing pending.
+# T4 an agy primary locked through the real bin/jg-lock.sh files the same signed note from the PreInvocation
+#    that opens a turn on a typed prompt; a background-task wake, a later invocation of the turn, another
+#    conversation and a payload with no readable transcript file none, and the order is approved.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -80,5 +84,73 @@ test_other_sessions_and_machine_text_sign_nothing() {
   pass "another session, a home with no lock, and machine text file no signed note"
 }
 
+# agy's PreInvocation payload and the transcript steps that decide whether a typed prompt opened the turn
+# (shapes captured live from agy 1.5.11, docs/verification/agy.md).
+agy_transcript() {  # <file> <source:type>...  one step per argument, indexed from 0
+  local f=$1 i=0 st
+  shift
+  : > "$f"
+  for st in "$@"; do
+    jq -cn --argjson i "$i" --arg s "${st%%:*}" --arg t "${st#*:}" '{step_index: $i, source: $s, type: $t}' >> "$f"
+    i=$((i + 1))
+  done
+}
+
+# Runs the command the tracked .agents/hooks.json registers for PreInvocation, the way agy does: sh -c from
+# the directory holding hooks.json.
+agy_submit() {  # <dir> <conversation> <invocationNum> <initialNumSteps> <transcript> <prompt>
+  local cmd
+  cmd=$(jq -r '[.[].PreInvocation // empty | .[].command] | first // empty' "$ROOT/.agents/hooks.json")
+  [ -n "$cmd" ] || fail "the tracked .agents/hooks.json registers no PreInvocation command"
+  jq -cn --arg c "$2" --argjson n "$3" --argjson s "$4" --arg t "$5" --arg p "$6" \
+    '{hookEventName: "PreInvocation", conversationId: $c, invocationNum: $n, initialNumSteps: $s, transcriptPath: $t, lastUserInput: $p}' \
+    | (cd "$ROOT/.agents" && JG_ROOT_OVERRIDE="$1" JG_HOME="$1" JG_STATE_OVERRIDE="$1/state" sh -c "$cmd")
+}
+
+test_an_agy_primary_signs_an_order() {
+  local home="$TMP_ROOT/agy" words="Build the retry policy now, with no second approval." tr="$TMP_ROOT/agy-transcript.jsonl" fb n id
+  make_home "$home"
+  fb="$TMP_ROOT/agy-bin"
+  mkdir -p "$fb"
+  ln -sf "$(command -v bash)" "$fb/agy"
+  mkdir -p "$home/state"
+  env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID -u HERDR_PANE_ID ANTIGRAVITY_CONVERSATION_ID=conv-primary-1 JG_HOME="$home" \
+    "$fb/agy" -c "$ROOT/bin/jg-lock.sh; exit \$?" >/dev/null 2>&1 || fail "the agy primary could not take the lock"
+  assert_equals conv-primary-1 "$(head -n 1 "$home/state/.lock-session")" "the lock did not record the agy conversation"
+
+  # Turn 1: the typed prompt is step 0, agy appends an SDK system note before the hook runs.
+  agy_transcript "$tr" USER_EXPLICIT:USER_INPUT SYSTEM_SDK:SYSTEM_MESSAGE
+  agy_submit "$home" conv-primary-1 0 1 "$tr" "$words"
+  id="primary-conv-primary-1-1"
+  [ -f "$home/state/inbox/handled/$id.note" ] || fail "no handled note $id: $(ls -R "$home/state" 2>&1)"
+  assert_equals "[chat primary conv-primary-1:1] $words" "$(awk 'f{print} /^--$/{f=1}' "$home/state/inbox/handled/$id.note")" \
+    "the note does not carry the signed tag and his whole words"
+  approved "$home" "$id" "Build the retry policy now" || fail "the order quoting his agy words was not approved"
+  approved "$home" "$id" "Build the cache now" && fail "words he did not type were approved"
+
+  # The same turn's next model call, a finished background task waking the session (the newest step at
+  # initialNumSteps - 1 is a model step, the wake message comes after it), and a Stop continuation
+  # (invocationNum 1) carry the stale lastUserInput and must not count again.
+  agy_transcript "$tr" USER_EXPLICIT:USER_INPUT SYSTEM_SDK:SYSTEM_MESSAGE MODEL:PLANNER_RESPONSE MODEL:GENERIC MODEL:PLANNER_RESPONSE SYSTEM:SYSTEM_MESSAGE
+  agy_submit "$home" conv-primary-1 1 4 "$tr" "$words"
+  agy_submit "$home" conv-primary-1 0 5 "$tr" "$words"
+  # Another conversation's typed prompt and a payload whose transcript is unreadable file nothing either.
+  agy_transcript "$tr" USER_EXPLICIT:USER_INPUT
+  agy_submit "$home" conv-other-9 0 1 "$tr" "typed in another conversation"
+  agy_submit "$home" conv-primary-1 0 1 "$TMP_ROOT/missing.jsonl" "no transcript"
+  n=$(find "$home/state/inbox" -name '*.note' | wc -l | tr -d ' ')
+  assert_equals 1 "$n" "a wake, a later invocation, another conversation or a missing transcript filed a chat note"
+  # The KPI ledger counts every typed prompt (his words in another conversation too); only the note is session-gated.
+  assert_equals 2 "$(wc -l < "$home/data/overwatch-kpi.jsonl" | tr -d ' ')" \
+    "a wake, a later invocation or an unreadable transcript was counted as a captain message, or a typed prompt was not"
+
+  # Turn 2: the next typed prompt, after the wake, is the next message.
+  agy_transcript "$tr" USER_EXPLICIT:USER_INPUT SYSTEM_SDK:SYSTEM_MESSAGE MODEL:PLANNER_RESPONSE SYSTEM:SYSTEM_MESSAGE MODEL:PLANNER_RESPONSE USER_EXPLICIT:USER_INPUT
+  agy_submit "$home" conv-primary-1 0 6 "$tr" "second order"
+  [ -f "$home/state/inbox/handled/primary-conv-primary-1-3.note" ] || fail "the next typed prompt did not get its own note: $(ls "$home/state/inbox/handled")"
+  pass "an agy primary's typed prompt files a handled, signed chat note that approves an order quoting it; a wake, a repeat call and a foreign conversation file none"
+}
+
 test_the_locked_primary_session_signs_an_order
+test_an_agy_primary_signs_an_order
 test_other_sessions_and_machine_text_sign_nothing

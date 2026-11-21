@@ -204,7 +204,28 @@ jg_harness_pid_alive() {
 # ancestry list an earlier walk already produced, so a caller that walked once
 # need not walk again.
 jg_session_lock_trusted_session_id() {  # [<ancestry-pids>]
-  jg_session_lock_claude_session_id "$@" || jg_session_lock_pi_session_id "$@"
+  jg_session_lock_claude_session_id "$@" || jg_session_lock_pi_session_id "$@" \
+    || jg_session_lock_agy_session_id "$@"
+}
+
+# agy hands every hook and run_command shell ANTIGRAVITY_CONVERSATION_ID, the
+# conversation id its PreInvocation hook payload also names as conversationId
+# (verified live, agy 1.5.11: docs/verification/agy.md). Trust gate: the
+# innermost harness process of this contiguous ancestry must be agy itself, so a
+# codex or Claude started by hand in an agy pane never claims the pane's
+# conversation, and an id merely retained in a helper environment is ignored.
+# The id is read from the environment only, never from ps argv.
+jg_session_lock_agy_session_id() {  # [<ancestry-pids>]
+  local id=${ANTIGRAVITY_CONVERSATION_ID:-} pids=${1:-} pid comm
+  [ -n "$id" ] || return 1
+  case "$id" in *[!A-Za-z0-9._-]*|*..*) return 1 ;; esac
+  if [ -z "$pids" ]; then
+    pids=$(jg_harness_ancestry_pids) || return 1
+  fi
+  pid=${pids%%$'\n'*}
+  comm=$(ps -o comm= -p "$pid" 2>/dev/null) || return 1
+  [ "$(basename -- "$comm")" = agy ] || return 1
+  printf '%s\n' "$id"
 }
 
 # Pi hands its shells no session id, so a Pi primary's id is the one Herdr binds

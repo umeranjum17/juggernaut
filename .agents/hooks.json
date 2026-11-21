@@ -7,6 +7,13 @@
         "timeout": 180
       }
     ],
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "exec ../bin/jg-overwatch-kpi.sh hook agy",
+        "timeout": 10
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "run_command",

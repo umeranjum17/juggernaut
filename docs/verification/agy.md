@@ -133,7 +133,7 @@ $ herdr agent get w2:p1 --session jg-lab-juggernaut-agy-ad-1599574-8823
 
 Herdr tracks agy natively (`antigravity-cli` integration, detected as `agent=agy`), so `jg_backend_herdr_pane_agent_state` returns `live` for every registered agy status and no exit-detection hardening was needed.
 The tmux adapter classifies the anchored process name `agy` as `agent` through the shared name vocabulary in `bin/jg-agent-process-lib.sh`, the muse/omp precedent for short bare-word names.
-agy stays out of the session-lock name vocabulary in `bin/jg-session-lock-lib.sh`, where the other operator-only adapters are also absent.
+The anchored name `agy` is in the session-lock name vocabulary in `bin/jg-session-lock-lib.sh`, and an agy primary records its `ANTIGRAVITY_CONVERSATION_ID` as its trusted session id (see [Primary Overwatch](#primary-overwatch)).
 
 ## Composer: unknown by design
 
@@ -163,7 +163,7 @@ No automatic quota failover was exercised or claimed; every handoff above was an
 | Model | `gemini-3.8-flash-high` for the live guard; `gemini-3.8-flash-medium` for the hook probes |
 | Isolation | A marked lab home (`bin/jg-lab-home.sh create`) inside a `jg-test-run.*` directory, a private tmux server in that home's own socket directory, and the account's normal HOME for agy's sign-in |
 
-Every surface below is a vendor-controlled agy behavior that the tracked `.agents/hooks.json` and its three adapters rely on.
+Every surface below is a vendor-controlled agy behavior that the tracked `.agents/hooks.json` and its adapters rely on.
 
 ### Hook loading and process shape
 
@@ -186,6 +186,7 @@ Under the run-tier session start, the SessionStart hook's own `bin/jg-harness.sh
 | Hook | Payload fact | Decision fact |
 |---|---|---|
 | `SessionStart` | camelCase JSON on stdin | `{"injectSteps":[{"systemMessage":{"systemMessage":"..."}}]}` lands in the conversation as a `SYSTEM_SDK` system message before the first model step |
+| `PreInvocation` | fires before every model call and carries `conversationId`, `invocationNum`, `initialNumSteps`, `transcriptPath` and `lastUserInput`, which stays the newest typed words on every later call | no output keeps agy's own turn |
 | `PreToolUse` (`run_command`) | the command is `.toolCall.args.CommandLine`; the args also carry `WaitMsBeforeAsync` and `IsDaemon` | no output keeps agy's own policy; `{}`, an empty decision or a non-zero exit denies; `{"decision":"deny","reason":"..."}` with exit 0 denies with the reason shown |
 | `Stop` | carries `executionNum` and `continuationActive` | `{"decision":"continue","reason":"..."}` keeps the turn going, and the reason reaches the model as the system message `Stop hook blocked termination: <reason>` |
 
@@ -197,6 +198,25 @@ The forced continuation's own `Stop` payload did not set `continuationActive`, c
 ```
 
 `bin/jg-turnend-guard-agy.sh` therefore lets the turn end on either signal, so it continues at most once per turn.
+
+### Captain prompts and the session id
+
+agy has no prompt-submit event, so `bin/jg-overwatch-kpi.sh hook agy` reads `PreInvocation`.
+The call that opens a typed prompt has `invocationNum` 0, and the transcript step at index `initialNumSteps - 1` is `USER_EXPLICIT` `USER_INPUT`.
+A turn opened by a finished background task also has `invocationNum` 0 and the stale `lastUserInput`, but the step at that index is a model step and the wake message follows it, so the hook files nothing.
+A Stop continuation is `invocationNum` 1 and is skipped the same way.
+Captured on 2026-11-21 against agy 1.5.11 with `gemini-3.8-flash-low`:
+
+```
+PreInvocation {"invocationNum":0,"initialNumSteps":1}   step 0 USER_EXPLICIT USER_INPUT    typed prompt
+PreInvocation {"invocationNum":1,"initialNumSteps":4}   step 3 MODEL GENERIC                same turn, next model call
+PreInvocation {"invocationNum":0,"initialNumSteps":5}   step 4 MODEL PLANNER_RESPONSE       background-task wake
+```
+
+The hook's and `run_command` shell's environment carry `ANTIGRAVITY_CONVERSATION_ID`, equal to the payload's `conversationId`.
+`bin/jg-session-lock-lib.sh` trusts it as the session id only when the innermost harness process of the ancestry is `agy`, so `bin/jg-lock.sh` records it in `state/.lock-session` and `bin/jg-inbox.sh primary-chat` accepts a note only for that conversation.
+A message the captain types while a turn is already running is not proven to open its own `invocationNum` 0 call, so it may file no note; the safe direction is an unsigned message, never a signed one for words he did not type.
+`tests/jg-lock-pi-session-id.test.sh` and `tests/jg-primary-chat-approval.test.sh` pin the logic with real processes; the payload shapes above came from the real binary.
 
 ### Background-task wake
 
