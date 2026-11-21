@@ -9,9 +9,9 @@
 #   the project   its documents, and .done-done/runs/*.json, the done-done run records (the receipts): one names a journey, an
 #                 exit, whether the tree was dirty and the commit it ran on
 #   the release   bin/jg-live-claim.sh, the one owner of "Released" and "In use" (it reads data/releases)
-#   the approval  bin/jg-muster-approval.sh verify <ticket> (exit 0 = his yes holds on the exact checked pack); the command can
-#                 be replaced with JG_MUSTER_APPROVAL_VERIFY. Where it does not exist an approval cannot be read, so a checked
-#                 pack stays in check or approval.
+#   the approval  bin/jg-muster-approval.sh verify <ticket> <project-dir> (exit 0 = his yes holds on the exact checked pack);
+#                 the command can be replaced with JG_MUSTER_APPROVAL_VERIFY. Where it does not exist an approval cannot be
+#                 read, so a checked pack stays in check or approval.
 # Before the manifest the state is the latest stage whose output exists (a spec Objectives table, then docs/charter.md,
 # docs/design/visual-direction.md, docs/domain/model.md or a record in docs/adr, docs/ways-of-working.md, GLOSSARY.md,
 # docs/vision.md, rounds.tsv). The council leaves no record in the frozen formats, so it is never observed here.
@@ -56,7 +56,7 @@ fi
 approved() {
   local v=${JG_MUSTER_APPROVAL_VERIFY:-}
   if [ -n "$v" ]; then bash -c "$v \"\$1\"" _ "$id" >/dev/null 2>&1; return; fi
-  [ -x "$root/bin/jg-muster-approval.sh" ] && "$root/bin/jg-muster-approval.sh" verify "$id" >/dev/null 2>&1
+  [ -x "$root/bin/jg-muster-approval.sh" ] && "$root/bin/jg-muster-approval.sh" verify "$id" "$P" >/dev/null 2>&1
 }
 if ! approved; then
   [ -n "$sha" ] && [ "$manifest" = "$D/manifest-$sha.tsv" ] && echo approval || echo check
