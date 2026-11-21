@@ -1,0 +1,442 @@
+{
+  "area": "outside channels",
+  "owner": "e6relay3",
+  "entries": [
+    {
+      "path": [
+        "relay",
+        "public-followup",
+        "active"
+      ],
+      "meaning": "Check for active public follow-up work.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-public-followup.sh active",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "relay.public-followup.active.v1",
+      "script": "bin/jg-public-followup.sh",
+      "operation": "active",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "public-followup",
+        "register"
+      ],
+      "meaning": "Register public follow-up work.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-public-followup.sh register <obligation-id> --relation <relation-id> --work-home <main|squad_lead:id> --work-id <task-id> --generation <n> [--platform <x|discord>] [--request <request-id>]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "relay.public-followup.register.v1",
+      "script": "bin/jg-public-followup.sh",
+      "operation": "register",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "public-followup",
+        "brief"
+      ],
+      "meaning": "Show instructions for a public follow-up.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-public-followup.sh brief <obligation-id>",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "relay.public-followup.brief.v1",
+      "script": "bin/jg-public-followup.sh",
+      "operation": "brief",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "public-followup",
+        "consume"
+      ],
+      "meaning": "Consume public follow-up results.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-public-followup.sh consume",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "relay.public-followup.consume.v1",
+      "script": "bin/jg-public-followup.sh",
+      "operation": "consume",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "public-followup",
+        "pending"
+      ],
+      "meaning": "Show pending public follow-up work.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-public-followup.sh pending",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "relay.public-followup.pending.v1",
+      "script": "bin/jg-public-followup.sh",
+      "operation": "pending",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "public-followup",
+        "deliver"
+      ],
+      "meaning": "Deliver a public follow-up.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-public-followup.sh deliver <obligation-id> [--text-file <path>]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "relay.public-followup.deliver.v1",
+      "script": "bin/jg-public-followup.sh",
+      "operation": "deliver",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "public-followup",
+        "record-posted"
+      ],
+      "meaning": "Record a posted public follow-up.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-public-followup.sh record-posted <obligation-id> --attempt <n> --chunks <n>",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "relay.public-followup.record-posted.v1",
+      "script": "bin/jg-public-followup.sh",
+      "operation": "record-posted",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "public-followup",
+        "guard-work"
+      ],
+      "meaning": "Check whether work has a public commitment.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-public-followup.sh guard-work <work-home-id> <work-id>",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "relay.public-followup.guard-work.v1",
+      "script": "bin/jg-public-followup.sh",
+      "operation": "guard-work",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "public-followup",
+        "rechain"
+      ],
+      "meaning": "Hand a delivered commitment to follow-on work.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-public-followup.sh rechain <new-obligation-id> --from <delivered-id> --work-home <main|squad_lead:id> --work-id <task-id> --expected <pr-merged|report-ready|local-main> [--deliverable-key <k>]...",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "relay.public-followup.rechain.v1",
+      "script": "bin/jg-public-followup.sh",
+      "operation": "rechain",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "public-followup",
+        "retire"
+      ],
+      "meaning": "Retire a public follow-up commitment.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-public-followup.sh retire <obligation-id> --reason <reason> [--force]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "relay.public-followup.retire.v1",
+      "script": "bin/jg-public-followup.sh",
+      "operation": "retire",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "x-dismiss"
+      ],
+      "meaning": "Dismiss an outside-channel request.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-x-dismiss.sh <request_id>",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "relay.x-dismiss.v1",
+      "script": "bin/jg-x-dismiss.sh",
+      "operation": "-",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "x-followup"
+      ],
+      "meaning": "Post a follow-up for linked work.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-x-followup.sh <task-id> [--image <path>] [--final] --text-file <path>",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "relay.x-followup.v1",
+      "script": "bin/jg-x-followup.sh",
+      "operation": "-",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "x-link",
+        "carry-ts"
+      ],
+      "meaning": "Link work to an outside-channel request.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-x-link.sh <task-id> <request_id> --carry-count <n> --carry-ts <epoch> [--carry-platform <x|discord>] [--carry-max <n>]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "relay.x-link.carry-ts.v1",
+      "script": "bin/jg-x-link.sh",
+      "operation": "--carry-ts",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "x-link"
+      ],
+      "meaning": "Link work to an outside-channel request.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-x-link.sh <task-id> <request_id> [--carry-count <n> --carry-ts <epoch> [--carry-platform <x|discord>] [--carry-max <n>]]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "relay.x-link.v1",
+      "script": "bin/jg-x-link.sh",
+      "operation": "-",
+      "aliases": []
+    },
+    {
+      "path": [
+        "relay",
+        "x-reply"
+      ],
+      "meaning": "Reply to an outside-channel request.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-x-reply.sh <request_id> [--followup] [--image <path>] [--receipt-file <path>] (<text> | --text-file <path> | -)",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "relay.x-reply.v1",
+      "script": "bin/jg-x-reply.sh",
+      "operation": "-",
+      "aliases": []
+    }
+  ],
+  "dropped": [
+    {
+      "script": "bin/jg-x-poll.sh",
+      "operation": "200",
+      "reason": "HTTP result code, not a command; poll accepts no operation.",
+      "run": "FMX_PAIRING_TOKEN= bin/jg-x-poll.sh 200 is an inert poll, as is the no-argument invocation."
+    },
+    {
+      "script": "bin/jg-x-poll.sh",
+      "operation": "204",
+      "reason": "HTTP result code, not a command; poll accepts no operation.",
+      "run": "FMX_PAIRING_TOKEN= bin/jg-x-poll.sh 204 is an inert poll, as is the no-argument invocation."
+    },
+    {
+      "script": "bin/jg-x-poll.sh",
+      "operation": "400",
+      "reason": "HTTP result code, not a command; poll accepts no operation.",
+      "run": "FMX_PAIRING_TOKEN= bin/jg-x-poll.sh 400 is an inert poll, as is the no-argument invocation."
+    },
+    {
+      "script": "bin/jg-x-poll.sh",
+      "operation": "401",
+      "reason": "HTTP result code, not a command; poll accepts no operation.",
+      "run": "FMX_PAIRING_TOKEN= bin/jg-x-poll.sh 401 is an inert poll, as is the no-argument invocation."
+    },
+    {
+      "script": "bin/jg-x-poll.sh",
+      "operation": "403",
+      "reason": "HTTP result code, not a command; poll accepts no operation.",
+      "run": "FMX_PAIRING_TOKEN= bin/jg-x-poll.sh 403 is an inert poll, as is the no-argument invocation."
+    },
+    {
+      "script": "bin/jg-x-poll.sh",
+      "operation": "404",
+      "reason": "HTTP result code, not a command; poll accepts no operation.",
+      "run": "FMX_PAIRING_TOKEN= bin/jg-x-poll.sh 404 is an inert poll, as is the no-argument invocation."
+    },
+    {
+      "script": "bin/jg-x-poll.sh",
+      "operation": "0",
+      "reason": "HTTP result code, not a command; poll accepts no operation.",
+      "run": "FMX_PAIRING_TOKEN= bin/jg-x-poll.sh 0 is an inert poll, as is the no-argument invocation."
+    },
+    {
+      "script": "bin/jg-x-poll.sh",
+      "operation": "1",
+      "reason": "HTTP result code, not a command; poll accepts no operation.",
+      "run": "FMX_PAIRING_TOKEN= bin/jg-x-poll.sh 1 is an inert poll, as is the no-argument invocation."
+    }
+  ]
+}
