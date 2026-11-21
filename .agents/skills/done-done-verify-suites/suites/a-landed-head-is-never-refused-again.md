@@ -1,0 +1,3 @@
+# A head the trunk already holds is never refused or steered again
+
+Landed head never refused: run `done-done run trunk-landing` (its list includes `tests/jg-trunk-refusal.test.sh`); over a fixture home with real git lanes and the real `core/trunk-landing/trunk-landing.sh check`, it proves that a lane the lander just landed over a trunk that moved (its head is now the rebased commit, its proof bound to the head before) gets no proof refusal, no steer and no refusal record while its landing run lives, and is cleaned up once by the check when that run died, and that a lane with no commit of its own (its change is already on the trunk) is cleaned up unforced and closed with one line instead of being refused for an incomplete proof (screen: none).

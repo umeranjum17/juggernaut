@@ -105,6 +105,8 @@ esac
 . "$(dirname "${BASH_SOURCE[0]}")/unit.sh"
 # shellcheck source=core/trunk-landing/verdict.sh
 . "$(dirname "${BASH_SOURCE[0]}")/verdict.sh"
+# shellcheck source=core/trunk-landing/on-trunk.sh
+. "$(dirname "${BASH_SOURCE[0]}")/on-trunk.sh"
 mval() { sed -n "s/^$2=//p" "$1" 2>/dev/null | tail -n 1; }
 # One five-minute deadline belongs to the whole landing attempt, lint and tests together (a test seam shortens it).
 landing_deadline() {
@@ -595,6 +597,8 @@ for meta in "$STATE"/*.meta; do
     fi ;;
   esac
   at=$(ready_at "$id") || continue
+  # A head the trunk holds is judged by nobody: no proof, no refusal, no steer (core/trunk-landing/on-trunk.sh).
+  if lane_on_trunk "$proj" "$head"; then lane_on_trunk_settle "$id" "$head"; continue; fi
   case $line in final*) ;; *) machine_admits "$id" || continue ;; esac
   # The merge switch of the style `local` (docs/trunk-flow.md): a lane of mode `local` lands by itself with yolo on, or once the lead
   # recorded merge=approved; with yolo off it waits for that word. A record with an old word is read as before.

@@ -16,6 +16,7 @@
 #   2c. A final conflict whose every path is a registry file all lanes share (REFUSAL_SHARED_FILES, `.done-done.yaml`) goes the same way:
 #      the lane's own relaunch did not clear it (jgp-r1-ledger-s1 waited 1,087 minutes), so the lead owns it, with no steer to the worker.
 #      Once merge-flow D1 is In use the conflict resolver takes this step instead of the lead.
+#   2d. A head the trunk already holds (lane_on_trunk) is never steered, noted or alerted: a lane just landed has the rebased commit as its head.
 #   3. A refusal that only needs time (away mode, a held decision) is not the worker's to fix and never comes here.
 #   4. A refusal that is the lane's own fault (its conflict, or a red its own change caused) for a lane that has NO running agent
 #      (stopped at Built, or dead) starts ONE new agent for that head (bin/jg-control.sh relaunch), with the refusal as its first
@@ -120,6 +121,8 @@ lane_refusal_reach() {
   if [[ $reason =~ \ conflicts\ with\ [^\ ]+\ \(([0-9a-f]+)\)\ in:\  ]]; then reason=${reason/ (${BASH_REMATCH[1]}) in: / in: }; fi
   # A refusal of a head the lane has moved off is history: nobody is steered about it.
   [ "$(git -C "$proj" rev-parse --verify --quiet "refs/heads/$branch^{commit}" 2>/dev/null)" = "$head" ] || return 0
+  # A head the trunk holds is landed or has nothing to land: it is never refused or steered (core/trunk-landing/on-trunk.sh).
+  ! lane_on_trunk "$proj" "$head" || return 0
   if [ "${6:-}" = final ] && { [[ $reason == *'gave up after'* ]] || refusal_shared_conflict "$reason"; }; then
     refusal_note_once "$id" "$reason" "$MEM/$id.$head.refusal.noted" || echo "warning: could not add the refusal note to $id" >&2
     refusal_wait_lead "$id" "$MEM/$id.$head.lead-wait" || echo "warning: could not put $id on the wait lead" >&2

@@ -102,5 +102,63 @@ test_a_refusal_reaches_the_lanes_worker_and_never_sits_silent() {
   pass 'a refusal the worker fixes reaches it by steer, repeats until the head changes, alerts after ten silent minutes, never steers a stale head or a wait, and sends a machine give-up to the lead with no steer'
 }
 
+# A lane the lander just landed has the rebased commit as its head, and its proof is bound to the head before the rebase. The check meets
+# that head between the trunk move and the landed record (a run that still lives) or after a run that died; neither refuses or steers it.
+test_a_landed_rebased_lane_is_never_refused_or_steered_again() {
+  local old new out nsteer
+  world landed_rebased
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
+  cp "$HOME_D/bin/jg-send.sh" "$W/send-stub"
+  # Both lanes edit nearby lines of one file, so the rebase changes the patch's context: the proof does not follow it (the same-change check).
+  lane l9 'seed' shared.txt; git -C "$W/lanes/l9" reset -q --soft HEAD~1; printf 'a\nb\nc\nd\ne\nf\ng\nh\n' > "$W/lanes/l9/shared.txt"
+  git -C "$W/lanes/l9" add shared.txt; git -C "$W/lanes/l9" -c user.name=t -c user.email=t@example.invalid commit -q -m 'ticket l9'; prove l9
+  trunk land l9 >/dev/null 2>&1 || fail "the seed lane must land"; rm -f "$HOME_D/state/l9.meta"
+  edit_lane() { git -C "$PROJ" worktree add -q -b "fm/$1" "$W/lanes/$1" trunk; sed -i "$2s/.*/$1/" "$W/lanes/$1/shared.txt"
+    git -C "$W/lanes/$1" -c user.name=t -c user.email=t@example.invalid commit -q -am "ticket $1"
+    jg_write_meta "$HOME_D/state/$1.meta" "project=$PROJ" "mode=local-trunk" "branch=fm/$1" "worktree=$W/lanes/$1" "spawn_gen=g-$1"; prove "$1"; ready "$1"; }
+  edit_lane l0 3; edit_lane l1 5; old=$(git -C "$PROJ" rev-parse fm/l1)
+  trunk land l0 >/dev/null 2>&1 || fail "l0 must land"
+  rm -f "$HOME_D/state/l0.meta"
+  trunk land l1 >/dev/null 2>&1 || fail "the lane l1 must land on the moved trunk"
+  new=$(git -C "$PROJ" rev-parse fm/l1)
+  [ "$new" != "$old" ] || fail "the landing must rebase the lane to a new commit"
+  [ "$(tip)" = "$new" ] || fail "the lane's head is the landed commit"
+  printf '# the lane was rebased and landed: %s -> %s\n' "${old:0:12}" "${new:0:12}"
+  # The run that landed it lives and has not recorded `landed` yet.
+  printf 'running %s %s\n' "$(date +%s)" "$$" > "$HOME_D/data/jg-trunk-landing/l1.$old.state"
+  out=$(sweep); sweep >/dev/null
+  assert_not_contains "$out" "proof" "the landed head is not judged for its proof"
+  [ "$(sends l1)" = 0 ] || fail "a landed lane must never be steered: $(grep '^l1	' "$W/send-calls" | cut -c1-200)"
+  compgen -G "$HOME_D/data/jg-trunk-landing/l1.$new.refusal*" >/dev/null && fail "a landed head gets no refusal record"
+  [ ! -s "$W/teardown-calls" ] || fail "a landing that still runs is cleaned by that run, not by the check: $(cat "$W/teardown-calls")"
+  # The run died before the cleanup: the check ends it once.
+  rm -f "$HOME_D/data/jg-trunk-landing/l1.$old.state"
+  sweep >/dev/null; sweep >/dev/null
+  nsteer=$(sends l1); [ "$nsteer" = 0 ] || fail "a landed lane must never be steered: $nsteer"
+  [ "$(grep -c '^l1$' "$W/teardown-calls")" = 1 ] || fail "the check cleans the landed lane up once: $(cat "$W/teardown-calls")"
+  assert_contains "$(cat "$HOME_D/data/jg-trunk-landing/l1.$new.state")" "landed" "the landed head carries a landed record"
+  assert_not_contains "$out" "not landed" "no refusal is reported for a landed lane"
+  pass 'a landed rebased lane is never refused or steered: its head is on the trunk, a living run is left to finish and a dead one is finished once'
+}
+
+# A lane that proves the trunk already has its change makes no commit: its head is the base. It closes cleanly, not as a refused proof.
+test_a_lane_with_no_commit_closes_cleanly_and_is_not_refused_for_its_proof() {
+  local out
+  world nocommit
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
+  git -C "$PROJ" worktree add -q -b fm/n1 "$W/lanes/n1" trunk
+  jg_write_meta "$HOME_D/state/n1.meta" "project=$PROJ" "mode=local-trunk" "branch=fm/n1" "worktree=$W/lanes/n1" "spawn_gen=g-n1"
+  ready n1
+  out=$(sweep); out=$out$(sweep)  # the outbox is read at the start of the next sweep
+  assert_not_contains "$out" "proof inputs are incomplete" "a lane with no commit is not refused for its proof"
+  assert_not_contains "$out" "proof is incomplete" "a lane with no commit does not wait to land"
+  [ "$(sends n1)" = 0 ] || fail "a lane with no commit is not steered: $(grep '^n1	' "$W/send-calls" | cut -c1-200)"
+  [ "$(grep -c '^n1$' "$W/teardown-calls")" = 1 ] || fail "the lane with no commit is cleaned up once, unforced: $(cat "$W/teardown-calls" 2>/dev/null)"
+  assert_contains "$out" "closed n1: no commit of its own" "one line says the lane closed with no landing"
+  pass 'a lane with no commit (its head is already on the trunk) closes cleanly: no proof refusal, no steer, one cleanup and one outbox line'
+}
+
 test_a_refusal_reaches_the_lanes_worker_and_never_sits_silent
+test_a_landed_rebased_lane_is_never_refused_or_steered_again
+test_a_lane_with_no_commit_closes_cleanly_and_is_not_refused_for_its_proof
 printf 'jg-trunk-refusal: ok\n'
