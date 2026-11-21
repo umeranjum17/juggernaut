@@ -963,6 +963,31 @@ test_the_coverage_time_budget_advises_and_a_script_no_shard_runs_still_refuses()
   pass 'the coverage time budget advises with exit 0 and a script no shard runs still refuses'
 }
 
+# jg-nj700 (bin/jg-test-ignored-reads.sh): two lanes passed their sealed run with fixture files that sat git-ignored in their own copy and were never committed,
+# so the trunk went red. A changed-files run (the sealed run's selection) now fails when a test reads such a file, and names it.
+# Proof: a test reads tests/fixtures/sample/config/seed.txt, which the fixture's .gitignore ignores (the config/ rule matches below
+# tests/ too). The run fails naming the file while it is untracked, and passes once the file is committed.
+test_a_test_that_reads_an_ignored_uncommitted_file_fails_naming_it_and_passes_once_it_is_tracked() {
+  local fixture=$TMP_ROOT/ignored-read out rc=0 seed=tests/fixtures/sample/config/seed.txt
+  required_fixture "$fixture" "cat \"\$(dirname \"\$0\")/fixtures/sample/config/seed.txt\" >/dev/null"
+  printf 'config/\n' >"$fixture/.gitignore"
+  mkdir -p "$fixture/${seed%/*}"
+  printf 'Umer fixture\n' >"$fixture/$seed"
+  git -C "$fixture" add .gitignore
+  git -C "$fixture" -c user.name=t -c user.email=t@example.invalid commit -q --amend --no-edit
+  [ -z "$(git -C "$fixture" ls-files "$seed")" ] || fail "the seed file must be uncommitted in this fixture"
+  out=$(cd "$fixture" && bash bin/jg-test-run.sh --changed --base HEAD^ 2>&1) || rc=$?
+  [ "$rc" = 1 ] || fail "a read of an ignored uncommitted file must fail the run: rc=$rc $out"
+  assert_contains "$out" "git-ignored file $seed, which the commit does not hold" 'the failure names the file'
+  git -C "$fixture" add -f "$seed"
+  git -C "$fixture" -c user.name=t -c user.email=t@example.invalid commit -q --amend --no-edit
+  rc=0
+  out=$(cd "$fixture" && bash bin/jg-test-run.sh --changed --base HEAD^ 2>&1) || rc=$?
+  [ "$rc" = 0 ] || fail "the same read of a tracked file must pass: rc=$rc $out"
+  assert_not_contains "$out" 'git-ignored file' 'a tracked file is never reported'
+  pass 'a test that reads an ignored uncommitted file fails the changed run naming it, and passes once the file is tracked'
+}
+
 test_a_green_result_is_reused_by_a_second_lane_and_a_red_never
 test_shards_split_a_selection_without_losing_or_repeating_a_script
 test_the_e2e_limit_is_60_seconds_in_config
@@ -996,5 +1021,6 @@ test_a_data_file_named_to_the_runner_is_refused_and_never_run
 test_a_changed_range_of_non_test_files_lists_and_runs_only_test_scripts
 test_92_unmapped_paths_are_coverage_notes_and_no_failed_results
 test_a_failing_mapped_test_still_fails_beside_unmapped_paths
+test_a_test_that_reads_an_ignored_uncommitted_file_fails_naming_it_and_passes_once_it_is_tracked
 
 printf 'all %s\n' 'jg-test-run limit tests passed'

@@ -2713,6 +2713,7 @@ declare -a WORKER_SCRIPTS=()
 # shellcheck disable=SC2329
 cleanup_run() {
   jg_test_procs_stop_marked "$$"
+  "$ROOT/bin/jg-test-ignored-reads.sh" stop "$RUN_TMP" >/dev/null 2>&1 || true
   rm -rf "$RUN_TMP"
   [ -z "$TOOLS_BYPASS_DIR" ] || rm -rf "$TOOLS_BYPASS_DIR"
   jg_test_host_release
@@ -3013,6 +3014,18 @@ wall_budget_spent() {  # <next-script> -> 0 when the run must stop here
   return 0
 }
 
+# A changed-files run is the proof a commit is sound, so it must fail when a test reads a file the commit does not hold.
+IGNORED_READS=0
+if [ "$MODE" = changed ] && [ "${#SCRIPTS[@]}" -gt 0 ]; then
+  if ignored_reads_line=$("$ROOT/bin/jg-test-ignored-reads.sh" start "$ROOT" "$RUN_TMP"); then
+    IGNORED_READS=1
+    log "ignored-file reads: $ignored_reads_line"
+  else
+    printf '%s\n' "$ignored_reads_line"
+    AGG_RC=1
+  fi
+fi
+
 if [ "$JOBS" -eq 1 ]; then
   for script in "${SCRIPTS[@]+"${SCRIPTS[@]}"}"; do
     wall_budget_spent "$script" && break
@@ -3155,6 +3168,10 @@ else
     wall_budget_spent "$script" && break
     run_one_serial "$script"
   done
+fi
+
+if [ "$IGNORED_READS" -eq 1 ] && ! "$ROOT/bin/jg-test-ignored-reads.sh" finish "$RUN_TMP"; then
+  AGG_RC=1
 fi
 
 RUN_FINISHED_ISO=$(now_iso)
