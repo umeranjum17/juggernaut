@@ -1,8 +1,6 @@
 ---
 name: deep-recon
-description: >-
-  Load when a Recon brief carries a `# Recon depth` section naming standard or deep, before starting its research, and before intake picks the depth for a Recon or dispatches the critic worker of a deep one.
-  Owns the seven stages, the source budgets, the stop rules, the critic rubric and the 13-section report template that bin/jg-recon-gate.sh checks before a standard or deep Recon may report done.
+description: Load when a Recon brief has a `# Recon depth` section, and before intake picks a Recon's depth or dispatches a deep Recon's critic worker.
 user-invocable: false
 metadata:
   internal: true
@@ -34,6 +32,7 @@ Each stage writes a file under `data/<task>/`, so the work can resume and every 
 
 1. Brief, `brief-research.md`: the question, scope and non-goals, "Done when", and the depth.
    Ask Overwatch once if something is unclear, then go on.
+   A plan or design Recon that will be sliced into work loads `strike-recon` and writes its asks into `outline.md` first.
 2. Outline, `outline.md`: the template sections to fill, and 3 to 6 perspectives (user, maintainer, operator, security, cost, competitor) with the questions each would ask.
    Say whether the work is depth-first or breadth-first.
 3. Sweep, `sources.jsonl`: one JSON object per line with `id` (`S-n`), `kind`, `title`, `link`, `read` (date), and `licence` when the source is code.
@@ -74,7 +73,8 @@ Round 2: new gaps 0 report <sha256sum of report.md as read>
 ```
 
 The last `Round` line names the report it read (`report <sha256 of report.md>`, 12 or more digits): the gate refuses a report changed after that round until the critic reads the new draft and writes a new round.
-The last `Round` line must say `new gaps 0`, or be followed by `Closure check: <k> closed by <critic>`, where `<k>` is that round's gap count and `<critic>` is the same id as the `Critic:` line.
+The last `Round` line must say `new gaps 0`, or be followed by `Closure check: <k> closed by <critic> report <sha256 of report.md>`, where `<k>` is that round's gap count and `<critic>` is the same id as the `Critic:` line.
+The closure line's `report` names the draft the critic read after the researcher's fixes; the gate checks that hash instead of the round's when the round found gaps.
 The closure line is the critic's word that the researcher fixed every gap of the last round; `self` and the researcher's own task id never close a gap.
 A deep Recon allows 3 rounds that found new gaps; the clean round or closure line after them does not count.
 Gaps the critic finds go back to stage 3 as the next sweep round.

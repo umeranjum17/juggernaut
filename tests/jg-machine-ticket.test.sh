@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Behavior tests for the ticket statechart (core/machines/tables/{ticket,delivering,proving}.tsv) and its word map.
-# The tables lint, the engine accepts a move out of a stage from every sub-state, each defect of the hierarchy is refused by
-# name, the older words (this repository's nine tables, generated status logs, a generated shadow log) all have a target,
+# The engine accepts a move out of a stage from every sub-state, the older words (this repository's nine tables, generated status logs, a generated shadow log) all have a target,
 # and the 21 pull request records get their targets. `--write` regenerates the diagram in docs/ticket-statechart.md.
 # shellcheck disable=SC2016,SC2013,SC2034
 set -u

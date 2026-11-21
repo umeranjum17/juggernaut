@@ -1,0 +1,11 @@
+{
+ "argv": [
+  "blocked",
+  "--json"
+ ],
+ "stdin": "",
+ "stdout": "[]\n",
+ "exit": 0,
+ "form": "blocked --json",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-a0001\",\"title\":\"merge it\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:32:23Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:32:23Z\",\"metadata\":{\"kind\":\"captain\",\"release\":\"later\"},\"labels\":[\"captain-ask\",\"project:e-pr\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

@@ -38,6 +38,11 @@
 #   jg-captain-hold.sh design-pick <card-key> --words <the captain's words>
 #   jg-captain-hold.sh to-gates   (the pass that moves each old stamped owner hold to a gate, prints the count; a second run moves none)
 #   jg-captain-hold.sh phase <task-id>
+#   jg-captain-hold.sh reconcile check
+#     Recheck expired open gates through the existing durable request owner; never close on age.
+#     JG_CAPTAIN_CALL_TTL is the gate lifetime in seconds (default 604800); expires_at is stored on new gates.
+#     JG_CAPTAIN_CALL_CAP is the per-home open-gate cap (default 8); one alert is latched until within cap.
+#     The hourly decisions-reconcile check calls this even without a sign-off board.
 #   jg-captain-hold.sh reconcile list
 #   jg-captain-hold.sh reconcile close <task-id> --evidence-file <path>
 #   jg-captain-hold.sh reconcile note <task-id> --note-file <path>
@@ -227,7 +232,7 @@
 # 1 when it does not, and any other non-zero status when the task cannot be read.
 # It prints nothing.
 #
-# `phase` is the read-only word of the hold machine (core/machines/tables/hold.tsv):
+# `phase` is the read-only word of the hold:
 # raised, deferred, answered, closed or none. An answer recorded and not yet completed
 # is `answered`; a hold dated in the future is `deferred`; a settled call is `closed`.
 #
@@ -415,6 +420,54 @@ fail() {
   exit 1
 }
 
+# --- the item store (expand only: today's record decides, and every call here ends `|| true`) ---------------------
+# A hold also opens one owner question in the host's item store, a board answer closes it with his pick. Both run only
+# where config/item-store exists, as this home's own writer (never a worker's), and a refused write becomes one intake
+# item on Main (JG_ITEM_OR_INTAKE=1), never a failure of the hold.
+item_store_question_keys() {  # <task-id>; prints "<key>\t<subject>\t<project>" lines: the step question first when the task has a pull request
+  local task=$1 meta="$STATE/$1.meta" pr='' project='' ji="$SCRIPT_DIR/../core/item-store/jg-item" yolo
+  pr=$(meta_value "$meta" pr); pr=${pr##*/}; project=$(meta_value "$meta" project); project=${project%/}; project=${project##*/}
+  case "$pr" in ''|*[!0-9]*) pr='' ;; esac
+  if [ -n "$pr" ] && [ ! -e "$JG_HOME/.jg-squad-lead-home" ]; then
+    yolo=$("$SCRIPT_DIR/jg-project-mode.sh" --raw "$project" 2>/dev/null | awk '{ print $2 }')
+    [ "$yolo" = on ] || env -u JG_TASK_ID JG_HOME="$JG_HOME" "$ji" key question:merge --task "$task" --pr "$pr" 2>/dev/null || true
+  fi
+  env -u JG_TASK_ID JG_HOME="$JG_HOME" "$ji" key question --task "$task" 2>/dev/null || true
+}
+
+item_store_hold() {  # <task-id> <reason>
+  [ -e "$JG_HOME/config/item-store" ] || return 0
+  local task=$1 reason=$2 key subject project hid text pr url head pj=()
+  IFS=$'\t' read -r key subject project < <(item_store_question_keys "$task" | head -1) || return 0
+  [ -n "$key" ] || return 0
+  hid=${key#question:}; hid=${hid#merge:}; hid=${hid%%/*}
+  text=$reason
+  [ -z "$project" ] || [ "$project" = - ] || pj=(--project "$project")
+  case "$key" in
+    question:merge:*)
+      pr=${key##*@}; url=$(meta_value "$STATE/$task.meta" pr); head=$(meta_value "$STATE/$task.meta" pr_head)
+      text="merge pull request $pr ($url)${head:+ at $head}? $reason" ;;
+  esac
+  env -u JG_TASK_ID JG_HOME="$JG_HOME" JG_ITEM_OR_INTAKE=1 "$SCRIPT_DIR/../core/item-store/jg-item" open "$key" --kind question \
+    --home "$hid" --subject "$subject" --owes "$text" --options 'yes|no' --source "hold:$task@$(date +%s)" --quiet \
+    "${pj[@]+"${pj[@]}"}" >/dev/null 2>&1 || true
+}
+
+item_store_answer() {  # <task-id> <decision-file> <decision text>
+  [ -e "$JG_HOME/config/item-store" ] || return 0
+  local task=$1 file=$2 pick key open
+  pick=$(printf '%s' "$3" | awk '{ print tolower($1); exit }' | tr -d '[:punct:]')
+  open=$(env -u JG_TASK_ID JG_HOME="$JG_HOME" "$SCRIPT_DIR/../core/item-store/jg-item" board 2>/dev/null | awk -F'\t' '{ print $4 }') || return 0
+  while IFS=$'\t' read -r key _; do
+    [ -n "$key" ] || continue
+    printf '%s\n' "$open" | grep -qxF -- "$key" || continue
+    env -u JG_TASK_ID JG_HOME="$JG_HOME" python3 -I "$SCRIPT_DIR/../core/item-store/adapters/owner.py" answer --channel board \
+      --message-id "${file##*/}" --key "$key" --pick "$pick" >/dev/null 2>&1 || true
+    return 0
+  done < <(item_store_question_keys "$task")
+  return 0
+}
+
 validate_slug() {  # <label> <value>
   local label=$1 value=$2
   case "$value" in
@@ -478,7 +531,7 @@ load_decision() {  # <path>; sets DECISION_TEXT and DECISION_DIGEST
   DECISION_DIGEST=$(sha256_text "$decision")
 }
 
-# Mutations address this home's Beads store, named by config/beads-dir.
+# Mutations address this home's tickets tables.
 backlog_cmd() {
   local data
   data=$(jg_backlog_data_absolute "$DATA") || fail "data directory cannot be resolved: $DATA"
@@ -487,9 +540,6 @@ backlog_cmd() {
 
 # shellcheck source=bin/jg-captain-ask-lib.sh disable=SC1091
 . "$SCRIPT_DIR/jg-captain-ask-lib.sh"
-require_backlog() {
-  jg_backlog_beads_store "$(jg_backlog_config_of "$(jg_backlog_data_absolute "$DATA")")" >/dev/null || exit 2
-}
 
 # Read one row into TASK_SHOW_OUTPUT; a non-zero return means the row is
 # absent. A read that could not finish inside its bound is NOT absence, and
@@ -687,19 +737,6 @@ verify_entry_durable() {  # <origin-or-empty> <entry>; prints "<id> <how> <origi
   printf '%s %s %s\n' "$id" "$how" "$origin_state"
 }
 
-# The hold machine's move log (core/machines/tables/hold.tsv): a writer reports the move it made, with its time, to
-# bin/jg-machine-guard.sh. A report never fails the writer, and a move to the state it is already in is no move.
-hold_word() {  # <task-id>; the machine's word for the task now, or - when it has no hold
-  local word
-  word=$(command_phase "$1" 2>/dev/null) || word=''
-  case "$word" in raised|deferred|answered|closed) printf '%s\n' "$word" ;; *) printf -- '-\n' ;; esac
-}
-
-report_hold_move() {  # <task-id> <from-word-or--> <to-word>
-  [ "$2" != "$3" ] || return 0
-  "$SCRIPT_DIR/jg-machine-guard.sh" edge hold "$2" "$3" "$1" >/dev/null 2>&1 || true
-}
-
 # --- the owner's question as a gate ------------------------------------------
 # A hold that asks the owner something is one human gate row that blocks the ticket (bin/jg-beads-write.py
 # `gate`), and his answer closes the gate with his words. A parked hold, a stop order, and a ticket still
@@ -730,7 +767,7 @@ hold_by_gate() {  # <task-id> <task-title> <reason> <until> <must> <origin> <don
 }
 
 command_hold() {
-  local id=${1:-} priority='' title='' reason='' repo='' origin='' until='' show state existing_title body='' occurrence held_from
+  local id=${1:-} priority='' title='' reason='' repo='' origin='' until='' show state existing_title body='' occurrence
   local signoff_script existing_hold_kind='' existing_held='' preserve_hold=0 card_close=release must='' refusal rec own_instruction='' raise_rc=0
   HELD_GATE=''
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
@@ -789,15 +826,12 @@ command_hold() {
     exit 1
   fi
   acquire_task_control_lock "$id"
-  require_backlog
-  held_from=-
   if task_show "$id"; then
     show=$TASK_SHOW_OUTPUT
     state=$(show_field "$show" state)
     [ "$state" != "done" ] \
       || fail "task $id is already closed; a new captain call needs its own task"
     existing_hold_kind=$(show_field_value "$show" hold_kind)
-    [ "$existing_hold_kind" != captain ] || held_from=$(hold_word "$id")
     existing_held=$(show_field_value "$show" held)
     if [ "$existing_hold_kind" = captain ] && [ "$existing_held" = yes ]; then
       preserve_hold=1
@@ -846,8 +880,6 @@ command_hold() {
   fi
   publish_parent_hold "$id" "$HELD_GATE" "$occurrence" needs-decision "$reason"
   # A call is raised first and deferred by its date, so a new dated hold reports both moves.
-  [ "$held_from" != - ] || { report_hold_move "$id" - raised; held_from=raised; }
-  if [ -n "$until" ] && [[ "$until" > "$(date -u +%F)" ]]; then report_hold_move "$id" "$held_from" deferred; else report_hold_move "$id" "$held_from" raised; fi
   # Optional sign-off card, raised only while the sign-off adapter is armed here.
   # core/signoff owns the card when it is installed and authors the ask itself;
   # the answer-intake adapter this repo also ships (bin/jg-procevent-signoff.sh)
@@ -880,6 +912,7 @@ command_hold() {
       fi
     fi
   fi
+  [ -n "$own_instruction" ] || item_store_hold "$id" "$reason"
   printf '%s\n' "$id"
 }
 
@@ -950,7 +983,7 @@ write_gate_approval() {  # <task-id> <show-output>
 }
 
 answer_by_gate() {  # <task-id> <release-0-or-1> <card-key> <gate-id-or-empty> <show-output>
-  local id=$1 release=$2 card=$3 gate=$4 show=$5 outcome=answered gates open row shut occurrence from until tmp title
+  local id=$1 release=$2 card=$3 gate=$4 show=$5 outcome=answered gates open row shut occurrence tmp title
   [ "$release" = 0 ] || outcome=released
   gates=$(gate_rows "$id" --all)
   open=$(printf '%s\n' "$gates" | jq -r 'select(.state == "open") | .id')
@@ -970,13 +1003,9 @@ answer_by_gate() {  # <task-id> <release-0-or-1> <card-key> <gate-id-or-empty> <
     fail "the question $gate on task $id was already answered; a second answer does not replace the first"
   fi
   occurrence=$(printf '%s\n' "$gates" | jq -rs '[.[] | select(.state == "closed")] | length')
-  from=raised
-  until=$(show_field_value "$show" hold_until)
-  if [ -n "$until" ] && [[ "$until" > "$(date -u +%F)" ]]; then from=deferred; fi
   if [ -z "$(printf '%s' "$row" | jq -r 'select(.state == "closed") | .id')" ]; then
     occurrence=$((occurrence + 1))
     write_gate_approval "$id" "$show"
-    [ "$release" = 1 ] || report_hold_move "$id" "$from" answered
     tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/jg-captain-hold-words.XXXXXX") || fail "cannot stage the captain decision"
     printf '%s' "$DECISION_TEXT" > "$tmp"
     backlog_cmd resolve "$gate" --words-file "$tmp" --resolution "$outcome" >/dev/null \
@@ -991,12 +1020,10 @@ answer_by_gate() {  # <task-id> <release-0-or-1> <card-key> <gate-id-or-empty> <
     if [ "$(show_field_value "$show" held)" = yes ] && [ "$(show_field_value "$show" hold_kind)" = captain ]; then
       close_answered "$id" 1 || fail "could not release task $id"
     fi
-    report_hold_move "$id" "$from" closed
   else
     if [ "$(show_field "$show" state)" != "done" ]; then
       close_answered "$id" 0 || fail "could not close answered captain-held task $id"
     fi
-    report_hold_move "$id" answered closed
   fi
   publish_parent_resolution_then_retire "$id" "$gate" "$occurrence" "$outcome"
   [ "$release" = 0 ] || reply_release "$id" "$title" "$card"
@@ -1020,7 +1047,6 @@ command_answer() {
   validate_slug task-id "$id"
   load_decision "$decision_file"
   acquire_task_control_lock "$id"
-  require_backlog
   task_show "$id" || fail "captain-held task $id is absent from this home's configured backlog (data directory $DATA)"
   show=$TASK_SHOW_OUTPUT
   hold_kind=$(show_field_value "$show" hold_kind)
@@ -1029,6 +1055,7 @@ command_answer() {
   fi
   [ -n "$(gate_rows "$id" --all)" ] || fail "task $id has no question to the owner; hold it first or name the right task"
   answer_by_gate "$id" "$release" "$card" "$gate" "$show"
+  item_store_answer "$id" "$decision_file" "$DECISION_TEXT"
 }
 
 # --- the one keyed-answer intake, and the source bindings that feed it --------
@@ -1167,7 +1194,6 @@ command_answers() {
   fi
   [ -n "$source" ] || fail "--source provenance is required so the durable decision records where the answer came from"
   source=$(sanitize_field "$source")
-  require_backlog
   tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/jg-keyed-decision.XXXXXX") || fail "cannot stage the captain decision"
   err=$(umask 077; mktemp "${TMPDIR:-/tmp}/jg-keyed-decision-err.XXXXXX") \
     || { rm -f -- "$tmp"; fail "cannot stage the captain decision diagnostics"; }
@@ -1341,7 +1367,6 @@ command_reconcile_requests() {
   [ -n "$source" ] || fail "--source provenance is required"
   origin=$(read_binding "$source_id") || fail "cannot verify the binding for source $source_id"
   [ -n "$origin" ] || fail "source $source_id is not bound; no reconcile requests were created"
-  require_backlog
   while IFS= read -r row; do
     id=${row%%"$tab"*}
     note=''
@@ -1391,11 +1416,57 @@ command_reconcile() {
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   case "$action" in
+    check)   reconcile_check "$@" ;;
     list)    reconcile_list "$@" ;;
     close)   reconcile_close "$@" ;;
     note)    reconcile_note "$@" ;;
     *) usage >&2; exit 2 ;;
   esac
+}
+
+# The expiry transition is raised/deferred -> reconciliation requested, with the gate still open.
+# An answer or evidence still goes through the existing answer/close paths; a repeated check is silent.
+reconcile_check() {
+  local questions row current id gate expires until now request count cap mark
+  [ "$#" -eq 0 ] || { usage >&2; exit 2; }
+  cap=${JG_CAPTAIN_CALL_CAP:-8}
+  case "$cap" in ''|*[!0-9]*|0) fail 'JG_CAPTAIN_CALL_CAP must be a positive integer' ;; esac
+  questions=$(backlog_cmd questions --json) || fail 'cannot read owner questions for expiry check'
+  count=$(printf '%s' "$questions" | jq 'length') || fail 'cannot count owner questions'
+  now=${JG_CAPTAIN_HOLD_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
+  while IFS= read -r row; do
+    id=$(printf '%s' "$row" | jq -r '.ticket')
+    gate=$(printf '%s' "$row" | jq -r '.id')
+    expires=$(printf '%s' "$row" | jq -r '.expires_at')
+    until=$(printf '%s' "$row" | jq -r '.until')
+    [ "$expires" \< "$now" ] || [ "$expires" = "$now" ] || continue
+    [ "$until" = - ] || [ "$until" \< "${now%%T*}" ] || [ "$until" = "${now%%T*}" ] || continue
+    validate_slug task-id "$id"
+    acquire_task_control_lock "$id"
+    # Re-read this exact gate after the lock: an answer or renewed expiry wins.
+    current=$(gate_rows "$id" | jq -c --arg gate "$gate" 'select(.id == $gate)')
+    if [ -n "$current" ] && [ "$(printf '%s' "$current" | jq -r '.expires_at')" = "$expires" ] \
+      && [ "$(printf '%s' "$current" | jq -r '.until')" = "$until" ]; then
+      request=$(reconcile_request_path "$id")
+      if [ ! -e "$request" ]; then
+        reconcile_request_record "$id" "expired owner question $gate at $expires" \
+          || fail "cannot request recheck of expired owner question $gate"
+        printf 'reconcile: %s expired question %s; recheck its evidence, keep open until settled\n' "$id" "$gate"
+      fi
+    fi
+    release_task_control_lock || fail "cannot release task control for $id"
+  done < <(printf '%s' "$questions" | jq -c '.[]')
+  acquire_task_control_lock captain-call-cap
+  mark="$STATE/.captain-call-cap-alert"
+  if [ "$count" -gt "$cap" ]; then
+    if [ ! -e "$mark" ]; then
+      (umask 077; printf '%s\n' "$count" > "$mark") || fail "cannot record owner-call cap alert"
+      printf 'owner-call cap: %s open questions exceed home cap %s; review existing calls before adding more\n' "$count" "$cap"
+    fi
+  else
+    rm -f -- "$mark" || fail "cannot reset owner-call cap alert"
+  fi
+  release_task_control_lock || fail 'cannot release owner-call cap control'
 }
 
 reconcile_list() {
@@ -1460,7 +1531,6 @@ reconcile_close() {
   acquire_task_control_lock "$id"
   reconcile_request_read "$id" \
     || fail "task $id has no pending board-created reconcile request"
-  require_backlog
   task_show_or_fail "$id" "captain-held task $id is absent from this home's configured backlog (data directory $DATA)"
   [ -n "$(gate_rows "$id" --all)" ] || fail "task $id has no question to the owner; there is no captain call to reconcile"
   reconcile_close_gate "$id" "$show"
@@ -1489,7 +1559,6 @@ reconcile_note() {
   acquire_task_control_lock "$id"
   reconcile_request_read "$id" \
     || fail "task $id has no pending board-created reconcile request"
-  require_backlog
   command_open "$id" \
     || fail "task $id is not an open captain call; a note cannot keep a closed call open"
   gate=$(open_gate_ids "$id" | head -1)
@@ -1548,7 +1617,6 @@ command_complete() {
     CAPTAIN_META_LOCK_HELD=1
     [ -f "$meta" ] || fail "task metadata disappeared while recording completion"
   fi
-  require_backlog
   origin_exists_here "$origin" || fail "origin $origin is not owned by the active home $JG_HOME"
   if [ "$#" -eq 1 ] && [ "$1" = --none ]; then
     supplied=''
@@ -1622,7 +1690,6 @@ command_verify() {
   validate_slug origin-id "$origin"
   meta="$STATE/$origin.meta"
   [ -f "$meta" ] || fail "origin metadata is absent: $meta"
-  require_backlog
   reviewed=$(meta_value "$meta" decisions_reviewed)
   [ "$reviewed" = 1 ] || fail "origin $origin has no completed captain-call inventory"
   keys=$(meta_value "$meta" decision_keys)
@@ -1813,7 +1880,6 @@ command_design_card() {  # <card-key> --raised-by <ticket> --title <question>
   validate_slug raised-by "$raised"
   validate_one_line title "$title"
   [ -n "${title//[[:space:]]/}" ] || fail "a design card needs --title"
-  require_backlog
   task_show "$raised" || fail "refused: $raised, named as the ticket that raised the design card, is not in this home's backlog"
   # The marker lets the board-answers check find the card's answer without reading the backlog for every answer.
   mark=$STATE/design-cards/$key
@@ -1849,7 +1915,6 @@ command_design_pick() {  # <card-key> --words <the captain's words>
   validate_slug card-key "$key"
   [ -n "${words//[[:space:]]/}" ] || fail "design-pick needs --words \"<the captain's words>\""
   mark=$STATE/design-cards/$key
-  require_backlog
   gate=$(card_gate_rows "$key" | jq -r 'select(.state == "open") | .id' | head -1)
   if [ -n "$gate" ]; then
     tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/jg-captain-hold-words.XXXXXX") || fail "cannot stage the captain's pick"
@@ -1911,7 +1976,6 @@ hold_to_gate() {  # <task-id>: prints moved, kept or skipped
 command_to_gates() {
   local id outcome moved=0 kept=0 skipped=0 total=0
   [ "$#" -eq 0 ] || { usage >&2; exit 2; }
-  require_backlog
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     outcome=$(hold_to_gate "$id") || exit $?

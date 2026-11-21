@@ -179,11 +179,9 @@ wire_move() {  # <mover> [<extra args>]: move every home to TIP with the wiring 
     HOME="$W/user" XDG_DATA_HOME="$W/user/.local/share" XDG_CONFIG_HOME="$W/user/.config" \
     "$mover" --base "$TIP" --project "$W/proj" --branch trunk "$@" 2>&1
 }
-installed_equals_core() {  # <home dir>: every installed tickets-sync file equals that home's core/ copy
-  local f
-  for f in "$1"/core/tickets-sync/*.py; do
-    cmp -s "$f" "$W/user/.local/share/jg-tickets-sync/tickets-sync/${f##*/}" || return 1
-  done
+installed_equals_core() {  # <home dir>: tickets-sync is wired from the commit that home holds, and its check runs that home's own core/
+  [ "$(awk -F'\t' '$1 == "tickets-sync" { print $2 }' "$1/state/host-wiring.tsv" 2>/dev/null)" = "$(head_of "${1##*/}")" ] \
+    && grep -qF "$1/core/tickets-sync/sync.py" "$1/state/tickets-sync.check.sh"
 }
 last_row_of() { row_of "$1" | tail -n 1; }
 two_skipped() {  # <output> <rc>: the move's only verdict is the two leads the fixture always skips
@@ -203,7 +201,7 @@ test_a_move_rewires_only_the_add_ons_it_changed_and_names_a_failure() {
   grep -q " $W/lead-ff\$" "$W/wiring.log" || fail "a lead with no wiring record must wire every step: $out"
   grep -q " $W/main\$" "$W/wiring.log" || fail "Main with no wiring record must wire every step: $out"
   ! grep -q "lead-dirty\|lead-unlanded" "$W/wiring.log" || fail "a skipped home must not be wired"
-  installed_equals_core "$W/lead-ff" || fail "the installed tickets-sync copy must equal core/ after the first move: $out"
+  installed_equals_core "$W/lead-ff" || fail "tickets-sync must run the home's own core/ after the first move: $out"
   [ "$(awk -F'\t' '$1 == "tickets-sync" { print $2 }' "$W/lead-ff/state/host-wiring.tsv")" = "$TIP" ] || fail "the home must record the commit tickets-sync wired from"
 
   # An add-on file changes in the move: only that add-on is wired again, and its installed copy follows core/.
@@ -211,9 +209,10 @@ test_a_move_rewires_only_the_add_ons_it_changed_and_names_a_failure() {
   trunk_commit core/tickets-sync/sync.py '# the landed no-store fix' "tickets-sync change"
   rc=0; out=$(wire_move "$ok") || rc=$?
   two_skipped "$out" "$rc" || fail "the tickets-sync move must leave only the two skipped leads behind: rc=$rc $out"
-  installed_equals_core "$W/lead-ff" || fail "the installed copy must equal the lead's core/ after a move that changed it: $out"
-  installed_equals_core "$W/main" || fail "the installed copy must equal Main's core/ after a move that changed it: $out"
-  grep -q 'the landed no-store fix' "$W/user/.local/share/jg-tickets-sync/tickets-sync/sync.py" || fail "the installed sync.py must carry the change"
+  installed_equals_core "$W/lead-ff" || fail "tickets-sync must be wired from the lead's core/ after a move that changed it: $out"
+  installed_equals_core "$W/main" || fail "tickets-sync must be wired from Main's core/ after a move that changed it: $out"
+  grep -q 'the landed no-store fix' "$W/lead-ff/core/tickets-sync/sync.py" || fail "the home's own sync.py must carry the change"
+  [ ! -e "$W/user/.local/share/jg-tickets-sync" ] || fail "no wiring may write the shared tickets-sync directory every home once replaced"
   [ ! -s "$W/wiring.log" ] || fail "a move that changed only tickets-sync must run no other step: $(cat "$W/wiring.log")"
   assert_contains "$out" "jg-host-wiring: 1 steps wired" "only the changed add-on is wired"
 
@@ -243,7 +242,7 @@ test_a_move_rewires_only_the_add_ons_it_changed_and_names_a_failure() {
   rc=0; out=$(env JG_HOST_WIRING_SKIP=1 JG_ROOT_OVERRIDE="$W/main" JG_HOME="$W/home" JG_STACK_SKIP=1 HOME="$W/user" \
     XDG_DATA_HOME="$W/user/.local/share" "$ok" --base "$TIP" --project "$W/proj" --branch trunk 2>&1) || rc=$?
   two_skipped "$out" "$rc" || fail "the unwired move must leave only the two skipped leads behind: rc=$rc $out"
-  installed_equals_core "$W/lead-ff" && fail "the fixture must start with a copy that lags core/"
+  installed_equals_core "$W/lead-ff" && fail "the fixture must start with tickets-sync wired from an older commit"
   mkdir -p "$W/bin-bad"; cp -r "$ROOT/bin/." "$W/bin-bad/"
   printf '#!/usr/bin/env bash\necho "missing-guard: no home guard hook" >&2\nexit 1\n' > "$W/bin-bad/jg-home-health.sh"; chmod +x "$W/bin-bad/jg-home-health.sh"
   out=$(wire_move "$W/bin-bad/jg-update.sh") || true
@@ -261,6 +260,7 @@ test_a_move_rewires_only_the_add_ons_it_changed_and_names_a_failure() {
   sed '$d' "$W/proj/core/fleet-flow/wiring.sh" > "$W/fleet-flow.sh" && mv -f "$W/fleet-flow.sh" "$W/proj/core/fleet-flow/wiring.sh"
   git -C "$W/proj" add core; git -C "$W/proj" commit -q -m "the real pipeline-quota-failover step"; git -C "$W/proj" checkout -q main
   TIP=$(git -C "$W/proj" rev-parse trunk)
+  mkdir -p "$W/user"
   printf 'agent_path_override:\n  pi: %s\n' "$W/user/.local/share/fm-pipeline-quota-failover/pi-quota-failover" > "$W/user/pipeline.yaml"
   rc=0; out=$(NM_CONFIG="$W/user/pipeline.yaml" wire_move "$ok") || rc=$?
   two_skipped "$out" "$rc" || fail "the legacy-config move must leave only the two skipped leads behind: rc=$rc $out"
@@ -269,7 +269,7 @@ test_a_move_rewires_only_the_add_ons_it_changed_and_names_a_failure() {
   [ "$(sed -n 's/^  pi: //p' "$W/user/pipeline.yaml")" = "$W/user/.local/share/jg-pipeline-quota-failover/pi-quota-failover" ] \
     || fail "the move must leave the key on the current wrapper: $(cat "$W/user/pipeline.yaml")"
   assert_contains "$out" "moved key agent_path_override.pi from the pre-rename" "the first home migrates the key"
-  pass 'T1c a move wires only the add-ons it changed, the copy equals core/, a failure is named in the row, a rolled-back home on the moved commit is wired, a pre-rename pipeline wrapper is migrated'
+  pass 'T1c a move wires only the add-ons it changed, each home runs its own core/, a failure is named in the row, a rolled-back home on the moved commit is wired, a pre-rename pipeline wrapper is migrated'
 }
 
 test_home_moves_one_canary_only() {
@@ -382,7 +382,7 @@ test_a_move_counts_the_switches_its_range_left_off_in_each_home_row() {
   trunk_commit core/tickets-sync/sync.py '# declared change' $'tickets-sync change\n\nTicket: c1'
   rc=0; out=$(wire_move "$ok") || rc=$?
   two_skipped "$out" "$rc" || fail "the move must leave only the two skipped leads behind: rc=$rc $out"
-  [ -s "$W/wiring.log" ] || [ "$(grep -c . "$W/user/.local/share/jg-tickets-sync/tickets-sync/sync.py")" -gt 0 ] || fail "the wiring step must have run"
+  [ -s "$W/wiring.log" ] || installed_equals_core "$W/lead-ff" || fail "the wiring step must have run"
   row=$(last_row_of lead-ff | cut -f4)
   case $row in live,switches-off:2,detectors:[0-9]*) ;; *) fail "the row must end with the two owner switches still off and the detector count: $row" ;; esac
   case $(last_row_of lead-dirty | cut -f4) in skipped:dirty) ;; *) fail "a skipped home carries no switch count: $(last_row_of lead-dirty)" ;; esac

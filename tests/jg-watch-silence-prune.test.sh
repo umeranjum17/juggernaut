@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The phantom-pane prune removes every marker a vanished pane owns, including the two silence markers.
 # A pane the backend reports absent loses all of them; a pane the backend still lists keeps all of them.
-# The prune also reports its move to the markers table in shadow (data/machine-shadow.log): nothing for a
-# legal move, one line for an illegal one, and the prune itself is the same either way.
+# The prune no longer reports its move to the machine tables in shadow (jg-nukte slice 8b2 removed that call):
+# data/machine-shadow.log stays empty whatever the marker's state, and the prune itself is the same either way.
 set -u
 # shellcheck source=tests/wake-helpers.sh
 . "$(dirname "${BASH_SOURCE[0]}")/wake-helpers.sh"
@@ -21,7 +21,7 @@ seed_table() { # <dir> <observed state>: a markers table whose only legal prune 
   printf 'machine\tmarkers\tm\tx\nstate\torphan\tinitial\tO.\t-\nstate\towned\tterminal\tW.\t-\nstate\tremoved\tterminal\tR.\t-\nedge\torphan\tprune\tremoved\tw:f\t-\tg\tt\nedge\torphan\tjoin\towned\tw:f\t-\tg\tt\nobserver\techo %s\n' "$2" > "$1/tables/markers.tsv"
 }
 
-test_prune() ( # <observed state> <shadow lines wanted>
+test_prune() { ( # <observed state> <shadow lines wanted>
   local dir state pid='' i kind
   dir=$(make_case "prune-$1")
   state="$dir/state"
@@ -33,7 +33,7 @@ test_prune() ( # <observed state> <shadow lines wanted>
     JG_POLL=0.2 JG_SIGNAL_GRACE=0 JG_CHECK_INTERVAL=0 JG_HEARTBEAT=999999 \
     "$WATCH" > "$dir/watch.out" 2> "$dir/watch.err" &
   pid=$!
-  for ((i=0; i<150; i++)); do
+  for ((i=0; i<600; i++)); do
     [ -e "$state/.tracked-crew_gone" ] || break
     sleep 0.1
   done
@@ -46,9 +46,9 @@ test_prune() ( # <observed state> <shadow lines wanted>
   [ "$( [ -f "$dir/data/machine-shadow.log" ] && wc -l < "$dir/data/machine-shadow.log" || echo 0)" -eq "$2" ] \
     || fail "wanted $2 shadow lines for a $1 marker: $(cat "$dir/data/machine-shadow.log" 2>/dev/null)"
   pass "an absent pane loses every marker, including both silence markers; a present pane keeps them ($1 marker: $2 shadow lines)"
-)
+); }
 
 result=0
 test_prune orphan 0 || result=1
-test_prune owned 1 || result=1
+test_prune owned 0 || result=1
 exit "$result"

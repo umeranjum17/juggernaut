@@ -1,0 +1,16 @@
+{
+ "argv": [
+  "update",
+  "jg-plan-word-f",
+  "--description=## Captain\nThe plan.\n\n## Ask\nBuild it.\n\n## Why\nA test.\n\n## Done when\nIt passes.\n\n## Acceptance Criteria\nThe output.\nHold slice f.\nanswered on the board",
+  "--status",
+  "closed",
+  "--if-status",
+  "open"
+ ],
+ "stdin": "",
+ "stdout": "\u2713 Updated issue: jg-plan-word-f \u2014 Owner pick before slice f\n",
+ "exit": 0,
+ "form": "update --description --if-status --status",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-mzu\",\"title\":\"Which colour should the new button be?\",\"description\":\"Ad-hoc gate blocking jg-plan-word-f\\n\\nReason: Which colour should the new button be?\",\"status\":\"closed\",\"priority\":2,\"issue_type\":\"gate\",\"created_at\":\"2026-11-19T15:00:23Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T15:00:39Z\",\"closed_at\":\"2026-11-19T15:00:39Z\",\"close_reason\":\"b: green\",\"metadata\":{\"card\":\"card-1\",\"must\":\"design-pick\",\"close\":\"release\",\"expires_at\":\"2026-11-26T15:00:22Z\",\"resolution\":\"answered\"},\"await_type\":\"human\",\"dependency_count\":0,\"dependent_count\":1,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-plan-word-f\",\"title\":\"Owner pick before slice f\",\"description\":\"## Captain\\nThe plan.\\n\\n## Ask\\nBuild it.\\n\\n## Why\\nA test.\\n\\n## Done when\\nIt passes.\\n\\n## Acceptance Criteria\\nThe output.\\nHold slice f.\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T15:00:06Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T15:00:06Z\",\"metadata\":{\"kind\":\"ship\",\"release\":\"later\"},\"labels\":[\"project:proj\"],\"dependencies\":[{\"issue_id\":\"jg-plan-word-f\",\"depends_on_id\":\"jg-mzu\",\"type\":\"blocks\",\"created_at\":\"2026-11-19T15:00:23Z\",\"created_by\":\"main\",\"metadata\":\"{}\"}],\"dependency_count\":1,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-plan\",\"title\":\"Run the plan\",\"description\":\"## Captain\\nThe plan.\\n\\n## Ask\\nBuild it.\\n\\n## Why\\nA test.\\n\\n## Done when\\nIt passes.\\n\\n## Acceptance Criteria\\nThe output.\\nRun the plan.\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T14:59:58Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T14:59:58Z\",\"metadata\":{\"kind\":\"ship\",\"release\":\"later\"},\"labels\":[\"feature\",\"project:proj\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

@@ -1,0 +1,37 @@
+{
+  "juggernaut-primary": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "exec ../bin/jg-sessionstart-agy.sh",
+        "timeout": 180
+      }
+    ],
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "exec ../bin/jg-overwatch-kpi.sh hook agy",
+        "timeout": 10
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "exec ../bin/jg-arm-pretool-check.sh --agy",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "exec ../bin/jg-turnend-guard-agy.sh",
+        "timeout": 60
+      }
+    ]
+  }
+}

@@ -1,6 +1,6 @@
 ---
 name: done-done-verify-suites
-description: Verify Juggernaut core changes through their executable integration journeys and capture output for review.
+description: Use to verify Juggernaut core changes through their integration journeys, sealed under done-done.
 ---
 
 # Verify the Juggernaut core

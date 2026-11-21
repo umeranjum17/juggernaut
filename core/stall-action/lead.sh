@@ -38,9 +38,9 @@ BOUND=$(( $(minutes "$HOME_DIR/config/stall-bound-leads" 10) * 60 ))
 record() { printf '%s\t%s\t%s\t%s\t%s\n' "$NOW" "$1" "$2" "$3" "$4" >> "$LEDGER"; }  # <lead> <rung> <key> <ok|bad>
 done_at() { cat "$LEDGER" 2>/dev/null | awk -F'\t' -v l="$1" -v r="$2" -v k="$3" '$2==l && $3==r && $4==k && $5=="ok" {t=$1} END {print t+0}'; }  # epoch of the last ok row, else 0
 recent_relaunches() { cat "$LEDGER" 2>/dev/null | awk -F'\t' -v l="$1" -v c="$(( NOW - RELAUNCH_WINDOW ))" '$2==l && $3=="relaunch" && $1>=c' | wc -l; }
-alert() {  # <raise|resolve> <alert> <lead> [note]
+alert() {  # <raise|resolve> <alert> <lead> [note] [proof]: a resolve carries the observation that ended the cause
   if [ "$1" = raise ]; then "$ALERT" raise "$2" "lead-$3" --home "$HOME_DIR" --note "$4" >/dev/null 2>&1 || true
-  else "$ALERT" resolve "$2--lead-$3" >/dev/null 2>&1 || true; fi
+  else "$ALERT" resolve "$2--lead-$3" --proof "${5:-source:condition-ended}" >/dev/null 2>&1 || true; fi
 }
 
 # ring <lead> <key> <text>: one fire-and-forget steer; the record holds the key so the same beat or steer is rung once.
@@ -74,7 +74,7 @@ late_beat() {  # <lead> <last beat epoch> <event> <home word>
 undelivered() {  # <lead> <last beat event>
   local id=$1 ev=$2 oldest age=0 first key
   first=$(find "$STATE/$id.inbox" -maxdepth 1 -name '*.msg' -printf '%T@ %p\n' 2>/dev/null | sort -n | head -n 1 | cut -d' ' -f2-)
-  if [ -z "$first" ]; then alert resolve undelivered "$id"; return 0; fi
+  if [ -z "$first" ]; then alert resolve undelivered "$id" '' source:inbox-empty; return 0; fi
   case $ev in UserPromptSubmit|PostToolBatch) return 0 ;; esac
   oldest=$(stat -c %Y "$first" 2>/dev/null) || return 0
   age=$(( NOW - oldest )); key=steer${first##*/}

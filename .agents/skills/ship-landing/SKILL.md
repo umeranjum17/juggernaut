@@ -16,6 +16,7 @@ Otherwise run `bin/jg-pr-check.sh <id> <PR url>` yourself with the URL copied fr
 `bin/jg-dod-lib.sh` owns the named-head gate on that ready signal: a ship `done:` whose named head exists only in the worker's disposable copy is not ready (`bin/jg-crew-state.sh` reports blocked, `bin/jg-pr-check.sh` refuses to register, and a Squad Lead does not publish that done upstream).
 That blocked reading is the gate working, not a stuck worker, so steer the worker on the commit the refusal names rather than waiting.
 For `local-trunk`, use the automatic exact-head landing and cleanup path in `docs/trunk-flow.md`; live and release still need the captain's recorded word.
+While a project's landings are held, mark the lane that fixes the hold's reason, and each lane other lanes wait on, with `bin/jg-trunk.sh land-next <task>`; it lands at once and the rest keep waiting.
 A direct-PR worker pushes that commit to its PR branch, and a local-only worker commits it on its ship branch.
 Tell the captain the PR's full `https://...` URL copied from the worker's ready line, the resolved checks-green crew-state line, or the task's `pr=` metadata, and a concise outcome summary.
 Until the captain answers the auto-merge question, the lead makes the merge call itself within one cycle of the required checks going green, and it never leaves that call unnamed: `bin/jg-pr-state.sh --waiting-for <pr url>` prints exactly one `juggernaut/waiting-for: <what>` line naming the draft, the conflicts, the red or unreported required check, or the merge call, and that line belongs in the captain-facing report while the change is in flight.
@@ -23,6 +24,8 @@ The required set a pull request waits on is the fast set in `.github/workflows/c
 A captain instruction to merge is explicit authority; `yolo` is the only standing routine merge authority.
 For any custom `state/<id>.check.sh` you write yourself, keep it an ordinary single-link mode-`0700` file, print one line only when Juggernaut should wake, print nothing otherwise, finish before `JG_CHECK_TIMEOUT`, then bind its current bytes with `bin/jg-check-register.sh <id>` before the watcher may execute it.
 Retire a custom check only through `bin/jg-check-unregister.sh <id>` (or `bin/jg-teardown.sh` for a spawned task); never hand-compose an `rm` with `$STATE`/`$ID`.
+
+A steer never tells a local-trunk lane to rebase, because the landing check rebases its commit itself: `bin/jg-send.sh` refuses it with exit 2 unless the lander refused the lane's head for a conflict, or `--allow-rebase-steer` is passed when the owner asked for it.
 
 Tear down a ship task only after landing is confirmed.
 On a confirmed merge of a ship task, `bin/jg-watch.sh` runs `bin/jg-teardown.sh <id>` itself, without `--force`.

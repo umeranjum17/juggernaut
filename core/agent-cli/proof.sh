@@ -62,6 +62,19 @@ head=$(git -C "$top" rev-parse HEAD)
 dir=$JG_CLI_HOME/data/$JG_CLI_TASK; rec=$dir/jg-proof.state; log=$dir/jg-proof.log
 dd=${JG_DONE_DONE:-done-done}
 
+# proof_base: where this lane left the trunk, printed for `done-done affected <base>`; nothing when the project has no trunk.
+# Without a base done-done compares to the project's local main, which a trunk project leaves far behind its trunk, so every
+# journey of the lane's trunk history would be selected. The fork point (not the trunk tip) keeps a trunk that moved on out of the diff.
+proof_base() {
+  local trunk proj
+  proj=$(jg_cli_meta_get project)
+  [ -n "$proj" ] || return 0
+  # shellcheck source=bin/jg-trunk-policy-lib.sh
+  . "$JG_CLI_TOOLS/bin/jg-trunk-policy-lib.sh"
+  trunk=$(jg_project_trunk_branch "$proj" "$JG_CLI_STATE") || return 0
+  git -C "$top" merge-base HEAD "refs/heads/$trunk" 2>/dev/null || true
+}
+
 # state record: `running <epoch> <pid> <head>` or `ended <epoch> <rc> <head>`
 proof_line() { cat "$rec" 2>/dev/null || true; }
 proof_running() {  # 0 while a run holds the record and its process lives
@@ -73,7 +86,7 @@ proof_ended() { case $(proof_line) in ended*) return 0 ;; *) return 1 ;; esac; }
 if ! proof_running; then
   [ -z "$(git -C "$top" status --porcelain)" ] || jg_cli_die "the tree is not clean, so a proof would not match one commit. Next: commit your work, then jg proof"
   mkdir -p "$dir"
-  if [ ${#cmd[@]} -gt 0 ]; then run=("$dd" run -- "${cmd[@]}"); else run=("$dd" affected); fi
+  if [ ${#cmd[@]} -gt 0 ]; then run=("$dd" run -- "${cmd[@]}"); else base=$(proof_base); run=("$dd" affected ${base:+"$base"}); fi
   : > "$log"
   # setsid keeps the run alive after this command returns; the record is written by the run's own wrapper.
   export JG_TASK=$JG_CLI_TASK

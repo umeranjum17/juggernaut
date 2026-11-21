@@ -18,7 +18,12 @@
 #   - a Squad Lead home is refused by claim, by `jg-sentinel.sh unit` and by
 #     `jg-stack.sh up`, with one plain reason, and its banner prints no
 #     UNIT_HOME line and no move command at all;
-#   - a checkout that is not the home's own copy never claims the units.
+#   - a checkout that is not the home's own copy never claims the units;
+#   - a scratch home that is its own copy and no Squad Lead, whose units serve
+#     another home that is still live (Main), moves nothing through a real
+#     session start, bootstrap, `jg-stack.sh up` or core/sentinel/wiring.sh,
+#     whichever harness the session start runs under (claude or agy), and
+#     holding one unit does not let it take the rest.
 #
 # This is also the test that owns tests/jg-unit-claim.test.sh (the done-done journey runs this file),
 # so a change to either selects this suite.
@@ -71,8 +76,8 @@ SH
 #!/usr/bin/env bash
 set -u
 case "$*" in
-  *comm=*) printf '/usr/local/bin/claude\n'; exit 0 ;;
-  *args=*) printf 'claude\n'; exit 0 ;;
+  *comm=*) printf '/usr/local/bin/%s\n' "${JG_LAB_HARNESS:-claude}"; exit 0 ;;
+  *args=*) printf '%s\n' "${JG_LAB_HARNESS:-claude}"; exit 0 ;;
   *ppid=*)
     pid=
     previous=
@@ -121,7 +126,8 @@ run_in_home() {  # <dir> <script> [args...]: one command with the lab's PATH and
   local d=$1
   shift
   env -u CLAUDECODE -u PI_CODING_AGENT -u JG_PI_HARNESS -u HERDR_ENV -u HERDR_BIN_PATH \
-    -u JG_STACK_SKIP HOME="$d/home" XDG_CONFIG_HOME="$d/xdg" JG_HOME="$d/mine" JG_ROOT_OVERRIDE="$d/mine" \
+    -u JG_STACK_SKIP HOME="$d/home" XDG_CONFIG_HOME="$d/xdg" XDG_DATA_HOME="$d/xdg-data" \
+    XDG_STATE_HOME="$d/xdg-state" XDG_CACHE_HOME="$d/xdg-cache" JG_HOME="$d/mine" JG_ROOT_OVERRIDE="$d/mine" \
     JG_BUS_BIN="$d/stand-in/jg-bus" PATH="$d/fakebin:$BASE_PATH" "$@"
 }
 
@@ -219,7 +225,64 @@ test_a_foreign_checkout_never_claims() {
   pass "guard: only the home's own copy of Juggernaut reads, reports or moves the machine's units"
 }
 
+# A scratch home under a task's data folder or ~/.cache is its own copy and outside
+# every temp root, so only the owner rule stands between it and Main's units.
+test_scratch_home_never_takes_a_live_owners_units() {
+  local d out rc unit harness sums
+  d=$(make_lab scratch)
+  cp -a "$ROOT/bin" "$d/mine/bin"
+  cp -a "$ROOT/core/sentinel/." "$d/mine/core/sentinel/"
+  printf '%s\n' manual > "$d/mine/config/backlog-backend"
+  printf '%s\n' herdr > "$d/mine/config/backend"
+  # The owner is a live Juggernaut home, as Main is.
+  mkdir -p "$d/other/bin"
+  : > "$d/other/AGENTS.md"
+  lab_env "$d"
+  units_serving "$d" "$d/other"
+  sums=$(cd "$d/xdg/systemd/user" && cksum ./*)
+
+  for harness in claude agy; do
+    rc=0; out=$(run_in_home "$d" env JG_LAB_HARNESS="$harness" "$d/mine/bin/jg-session-start.sh" 2>&1) || rc=$?
+    expect_code 0 "$rc" "the scratch home's session start under $harness"
+    assert_contains "$out" "primary harness: $harness" "the session start must run as the $harness primary"
+    assert_not_contains "$out" "claimed:" "a scratch home's session start under $harness must claim nothing"
+    assert_not_contains "$out" "SENTINEL: jg-sentinel is not running" "a scratch home offers no install command"
+  done
+  # Main's sentinel stopped: still no install command that would take it.
+  grep -vx jg-sentinel "$d/active" > "$d/active.new" && mv "$d/active.new" "$d/active"
+  out=$(run_in_home "$d" env JG_BOOTSTRAP_NETWORK=skip "$d/mine/bin/jg-bootstrap.sh" 2>&1) || true
+  assert_not_contains "$out" "SENTINEL: jg-sentinel is not running" "a scratch home offers no command to take a stopped sentinel"
+  rc=0; out=$(run_in_home "$d" "$d/mine/bin/jg-unit-claim.sh" claim 2>&1) || rc=$?
+  expect_code 0 "$rc" "claim in a scratch home"
+  assert_equals "" "$out" "a scratch home claims silently, even a stopped unit"
+
+  rc=0; out=$(run_in_home "$d" "$d/mine/bin/jg-stack.sh" up 2>&1) || rc=$?
+  expect_code 2 "$rc" "jg-stack.sh up in a scratch home"
+  assert_contains "$out" "jg-stack: up refused: jg-sentinel serves $d/other, the live home that owns the machine services" "the stack refusal must name the owner"
+
+  rc=0; out=$(run_in_home "$d" "$d/mine/core/sentinel/wiring.sh" "$d/mine" 2>&1) || rc=$?
+  expect_code 2 "$rc" "the sentinel wiring in a scratch home"
+  assert_contains "$out" "jg-sentinel-wiring: install refused: jg-sentinel serves $d/other" "the wiring refusal must name the owner"
+
+  for unit in $UNIT_LIST; do
+    assert_equals "$d/other" "$(served_by "$d" "$unit")" "a scratch home must not move $unit"
+  done
+  assert_equals "$sums" "$(cd "$d/xdg/systemd/user" && cksum ./*)" "a scratch home must write no unit file"
+  if grep -Eq '^(daemon-reload|enable|restart)' "$d/log"; then
+    fail "a scratch home must not reload, enable or restart a unit: $(cat "$d/log")"
+  fi
+
+  # The owner itself may install; a scratch home that holds one unit may not take the rest.
+  rc=0; out=$(run_in_home "$d" env JG_HOME="$d/other" "$d/mine/bin/jg-unit-claim.sh" may-install test owner 2>&1) || rc=$?
+  expect_code 0 "$rc" "may-install for the owner: $out"
+  printf '[Service]\nEnvironment="JG_HOME=%s"\nExecStart=/bin/true\n' "$d/mine" > "$d/xdg/systemd/user/jg-router.service"
+  rc=0; out=$(run_in_home "$d" "$d/mine/bin/jg-unit-claim.sh" may-install test scratch 2>&1) || rc=$?
+  expect_code 2 "$rc" "may-install for a scratch home that holds one unit"
+  pass "owner: a scratch home moves none of a live owner's units by any install path, under claude or agy"
+}
+
 test_session_start_claims_the_machine_services
+test_scratch_home_never_takes_a_live_owners_units
 test_status_names_a_dead_and_a_foreign_unit
 test_squad_lead_home_is_refused
 test_a_foreign_checkout_never_claims

@@ -45,14 +45,17 @@
 #                   ready count and its waits are named in the why. A dead
 #                   supervision beat is still STALLED, because a paused home
 #                   still needs a live watcher to lift its own pause.
+#        Incomplete pause orders and due rechecks stay protected; their why
+#        names the missing fields or review and Main's reconciliation action.
 #        A pause record whose content is a report or a lane list rather than a
 #        pause declaration is refused by bin/jg-pause-lib.sh, so the home stays
 #        on its ordinary verdict and the why says which file was refused and
 #        its first line. Nobody else's file pauses a home in silence.
 #        A remote Squad Lead is UNREAD, and a registered home that is not a
 #        directory is STALLED.
-# check  Prints one line per home that turns GAP or STALLED, again every
-#        JG_FLEET_HEARTBEAT_REFIRE_SECS (default 600) while it stays there, and
+# check  Prints one line per home that turns GAP or STALLED, or has a protected
+#        pause needing reconciliation, again every
+#        JG_FLEET_HEARTBEAT_REFIRE_SECS (default 21600, a reminder: an unchanged verdict stays quiet between) while it stays there, and
 #        one line when it recovers; the watcher turns each line into a wake for
 #        Main. An unchanged healthy fleet prints nothing.
 #        A finished lane that was never closed is reported the same way:
@@ -85,7 +88,7 @@ JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}}"
 . "$SCRIPT_DIR/jg-pause-lib.sh"
 STATE="$JG_HOME/state"
 BEACON_SECS=${JG_FLEET_HEARTBEAT_BEACON_SECS:-900}
-REFIRE_SECS=${JG_FLEET_HEARTBEAT_REFIRE_SECS:-600}
+REFIRE_SECS=${JG_FLEET_HEARTBEAT_REFIRE_SECS:-21600}
 READY_MAX_AGE=${JG_READY_MAX_AGE:-900}
 NOW=$(date +%s)
 
@@ -116,6 +119,12 @@ home_row() {
     refused=${refused:+$refused; }$note
   done <<EOF
 $(fleet_pause_refused_records "$home")
+EOF
+  while IFS= read -r note; do
+    [ -n "$note" ] || continue
+    refused=${refused:+$refused; }"pause unreconciled: $note"
+  done <<EOF
+$(fleet_pause_unreconciled_records "$home")
 EOF
   for meta in "$st"/*.meta; do
     [ -f "$meta" ] || continue
@@ -249,10 +258,15 @@ cmd_check() {
     [ ! -f "$rec" ] || IFS=$'\t' read -r old since fired < "$rec"
     [ "$old" = "$verdict" ] || since=$NOW fired=0
     case "$verdict" in
-      GAP|STALLED)
-        if [ "$fired" -eq 0 ] || [ $((NOW - fired)) -ge "$REFIRE_SECS" ]; then
-          printf 'fleet heartbeat: %s %s for %ss - %s\n' "$id" "$verdict" "$((NOW - since))" "$why"
-          fired=$NOW
+      GAP|STALLED|PAUSED)
+        # A protected stop can need a review without becoming dispatchable.
+        if [ "$verdict" != PAUSED ] || [[ "$why" = *'pause unreconciled:'* ]]; then
+          if [ "$fired" -eq 0 ] || [ $((NOW - fired)) -ge "$REFIRE_SECS" ]; then
+            printf 'fleet heartbeat: %s %s for %ss - %s\n' "$id" "$verdict" "$((NOW - since))" "$why"
+            fired=$NOW
+          fi
+        else
+          fired=0
         fi ;;
       *) case "$old" in GAP|STALLED) printf 'fleet heartbeat: %s %s again\n' "$id" "$verdict" ;; esac ;;
     esac

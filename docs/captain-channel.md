@@ -7,27 +7,7 @@ The header of the Go command at [`core/bus/cmd/jg-bus`](../core/bus/cmd/jg-bus/m
 `bin/jg-bus.sh` is the dispatcher that builds that command once and runs it, so every command below keeps its name and this file holds no behaviour of its own.
 This page owns how to run it, how to reverse it, and what its replay proves.
 
-## What is running
-
-`bin/jg-bus.sh serve` starts these services from their files, from the home's `state/bus/` directory so no runtime file lands in the repository.
-
-| Service | File | Role |
-| --- | --- | --- |
-| `nats-server` with JetStream | [`core/bus/nats.conf`](../core/bus/nats.conf) | messages, history, a week of them |
-| `daprd` (slim, no Docker) | [`core/bus/dapr/components/pubsub.yaml`](../core/bus/dapr/components/pubsub.yaml) | the transport binding over NATS |
-
-The server itself is not started by hand on a real home: a home installs it once
-as a systemd user service and `bin/jg-bootstrap.sh` keeps it up. [The message bus](bus-service.md)
-owns that install, the unit, and the CI lane that proves a home comes up with
-JetStream running.
-
-Every one of them is configured by file and none by code.
-The Dapr component decides what the bus really is, so swapping NATS for another broker is a component swap.
-A home overrides any of them under `config/bus/`.
-
 `bin/jg-bus.sh status` reports the mode, the bus target, how many events the record holds, how many did not arrive, and which services are up, read from each service's own unit state in the service manager; a state it cannot read is reported `unknown`, never down.
-`bin/jg-bus.sh stop` stops them.
-The metric server stays off: a metrics port is shared machine surface and nothing scrapes it yet.
 
 ## The path
 
@@ -119,8 +99,6 @@ Still on the old path, deliberately:
   The board, the chat outcome, the status wake, the inbox and the parent channels stay as they are; this path puts his notification on the bus, and those surfaces still hold the record and the decision.
 - The live reply loop.
   The router is proven with a reply event handed to it; consuming replies from the bus and arming that loop is a later step.
-- Workflows, timers and escalation through Dapr.
-  The runtime runs and carries events, and its workflow surface is unused until a step needs it.
 - Every event source that has no single emission command yet, such as a worker status line that becomes a wake.
   They reach the channel when their own path gains its emission.
 - The other shadow paths of the migration: the wake queue and inboxes, pending replies, leases, and the escalation timers stay in shadow, each with its own parity, until its own switch.

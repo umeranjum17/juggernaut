@@ -7,8 +7,6 @@ REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 OUT=${DONE_DONE_EVIDENCE_ROOT:?run through done-done}
 LOG=$OUT/filers-short-titles.txt
 : > "$LOG"
-: "${JG_BEADS_TEST_BD:=$(command -v bd || true)}" "${JG_BEADS_TEST_DOLT:=$(command -v dolt || true)}"
-export JG_BEADS_TEST_BD JG_BEADS_TEST_DOLT
 cd "$REPO" || exit 1
 status=0
 for suite in tests/jg-post-merge-ci-main.test.sh tests/jg-trunk-gate.test.sh tests/jg-trunk-shard-ticket.test.sh \

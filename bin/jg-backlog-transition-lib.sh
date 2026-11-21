@@ -21,11 +21,11 @@
 #
 # SCOPE. jg_backlog_transition_applies is the single gate. It excludes
 # squad_leads (persistent agents are never backlog items, the fleet-records skill).
-# An unresolvable configured data directory or an unusable Beads store returns 2
+# An unresolvable configured data directory or an unusable item store returns 2
 # so callers refuse before mutation.
 #
-# ADDRESSING. Every row read and mutation runs the Beads provider against the
-# store config/beads-dir names. Only the data directory is authorized, because it
+# ADDRESSING. Every row read and mutation runs against the
+# ticket tables of the home's item store. Only the data directory is authorized, because it
 # keeps no backlog file. Each write checks the status it read, so a row that moved
 # underneath a transition refuses with bd's exit 13 and changes nothing.
 #
@@ -191,9 +191,11 @@ jg_backlog_data_relative() {  # <data-dir>
 }
 
 
-# The config directory of the home that owns <data>, by jg_backlog_ticket_publish's rule.
+# The config directory of the home that owns <data>. The store names its home by this directory's parent
+# (bin/jg-backlog-lib.sh), so it is always <home>/config: JG_CONFIG_OVERRIDE moves settings, not the ticket store,
+# and honoring it here read another home's tickets, which let a merge pass an open design decision.
 jg_backlog_config_of() {  # <data-dir>
-  printf '%s\n' "${JG_CONFIG_OVERRIDE:-${JG_HOME:-${1%/*}}/config}"
+  printf '%s\n' "${JG_HOME:-${1%/*}}/config"
 }
 
 # The data boundary is authorized first and unconditionally; the Beads store
@@ -221,7 +223,7 @@ jg_backlog_addressing() {  # <data-dir>
 }
 
 jg_backlog_transition_applies() {  # <config-dir> <data-dir> <kind>
-  local config=$1 authorized_data=$2 kind=$3
+  local authorized_data=$2 kind=$3
   JG_BACKLOG_TRANSITION_SKIP=
   if [ "$kind" = squad_lead ]; then
     JG_BACKLOG_TRANSITION_SKIP="squad_leads are not backlog items"
@@ -231,9 +233,6 @@ jg_backlog_transition_applies() {  # <config-dir> <data-dir> <kind>
     JG_BACKLOG_TRANSITION_ERROR="data directory cannot be resolved: $2"
     return 2
   }
-  if ! JG_BACKLOG_TRANSITION_ERROR=$(jg_backlog_beads_store "$config" 2>&1 >/dev/null); then
-    return 2
-  fi
   jg_backlog_source_present "$2" "$authorized_data" || return 2
   return 0
 }
@@ -497,37 +496,10 @@ jg_backlog_mirror_behind() {  # <id> <cause>
     "$1" "$(printf '%s' "${2:-no cause given}" | sed -n '1p')" >&2
 }
 
-# Make the board show a backlog write now. The poll (core/tickets-sync/sync.py) owns
-# creating a ticket and is idempotent through its ledger, so running it here puts an
-# added row on the board and closes a done one with nobody running a sync by hand,
-# and running it twice changes nothing. A home with no fleet board, or no installed
-# sync, is a silent no-op. Anything else that leaves the board unlike the backlog is
-# reported on stderr and still returns 0, so a board problem never fails a write.
+# The board reads a ticket's row from the ticket tables directly, so a backlog write has no mirror to publish or verify; the
+# function stays because jg_backlog_ticket_note and bin/jg-backlog.sh call it after a write, and it always returns 0.
 # Usage: jg_backlog_ticket_publish <data-dir> <add|done|close> <id>
 jg_backlog_ticket_publish() {  # <data-dir> <verb> <id>
-  local data=$1 verb=$2 id=$3 home sync pointer board tool tid out want
-  home=${JG_HOME:-${data%/*}}
-  sync=${JG_TICKETS_SYNC:-${XDG_DATA_HOME:-${HOME:-}/.local/share}/jg-tickets-sync/tickets-sync/sync.py}
-  pointer=${JG_CONFIG_OVERRIDE:-$home/config}/fleet-board
-  [ -f "$sync" ] && [ -f "$pointer" ] || return 0
-  if [ -s "$home/.jg-squad-lead-home" ] && [ "$(tr -d '[:space:]' < "$home/.jg-squad-lead-home")" != main ]; then
-    printf 'jg-backlog: the parent poll publishes %s to the board\n' "$id" >&2
-    return 0
-  fi
-  IFS= read -r board < "$pointer" || true
-  case "$board" in /*) ;; *) board=$home/$board ;; esac
-  tool=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/jg-ticket.sh
-  tid=$("$tool" id "$id" 2>/dev/null) || return 0
-  if ! command -v python3 >/dev/null 2>&1 || ! command -v sign-off-axi >/dev/null 2>&1; then
-    jg_backlog_mirror_behind "$id" 'python3 and sign-off-axi are needed to publish the ticket'
-    return 0
-  fi
-  out=$(JG_HOME=$home timeout "${JG_TICKETS_PUBLISH_SECS:-90}" python3 "$sync" 2>&1) \
-    || { jg_backlog_mirror_behind "$id" "$out"; return 0; }
-  want='.ticket != null'
-  case "$verb" in done|close) want='.ticket.state == "done"' ;; esac
-  sign-off-axi ticket "$board" --id "$tid" --json 2>/dev/null | jq -e "$want" >/dev/null 2>&1 \
-    || jg_backlog_mirror_behind "$id" "the board does not show it yet${out:+: $out}"
   return 0
 }
 
@@ -940,7 +912,7 @@ jg_backlog_dispatch_rollback() {
 # The ticket move a close makes: the table has three events into closed (close, answer for a Recon, drop by the lead or the owner),
 # and the ticket's own state says which one it has. Only a close that names the note `dropped` is a drop, and it asks for drop first;
 # any other close never reads as one. The first asked event the state has is the move, and a ticket the observer cannot place gets
-# the first asked event, which jg-move.sh then judges.
+# the first asked event, which jg-move.sh then records.
 jg_backlog_close_event() {  # <id> [close args]
   local id=$1 asked='close answer' legal arg prev=''
   shift
@@ -955,15 +927,10 @@ jg_backlog_close_event() {  # <id> [close args]
 jg_backlog_close_transition() {
   local meta=$1 marker=$2 data=$3 id=$4 state=$5
   shift 5
-  # the task machine's move, asked before any write: shadow until config/machine-enforce lists task, then a refusal writes nothing
-  if ! "${BASH_SOURCE[0]%/*}/jg-machine-shadow.sh" --refuse task "$id" "done"; then
-    JG_BACKLOG_TRANSITION_ERROR="task $id cannot make the move done from its state; run: bin/jg-machine.sh next task $id"
-    return 1
-  fi
   local move_rc=0 event
   event=$(jg_backlog_close_event "$id" "$@")
   "${BASH_SOURCE[0]%/*}/jg-move.sh" --shadow "$id" "$event" >/dev/null 2>&1 || move_rc=$?
-  if [ "$move_rc" -eq 1 ]; then  # the ticket's own move: shadow until config/machine-enforce lists ticket (jg-move.sh); a refusal comes before any record is removed or closed
+  if [ "$move_rc" -eq 1 ]; then  # jg-move.sh could not write data/moves.log; nothing is removed or closed yet
     JG_BACKLOG_TRANSITION_ERROR="ticket $id cannot make the move $event from its state; run: bin/jg-machine.sh next ticket $id"
     return 1
   fi

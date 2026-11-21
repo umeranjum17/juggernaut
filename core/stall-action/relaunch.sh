@@ -4,6 +4,7 @@
 # or no-start, and for nothing else (a squad lead is Main's, a worker with no beat record keeps the pane rule).
 # Usage: relaunch.sh act <jg-home> <task> <hash> <reason>
 #        relaunch.sh clear <jg-home> <task>           the worker beats again: resolve its lost-worker alert
+#        relaunch.sh sweep <jg-home>                  resolve every lost-worker alert whose window no task record names any more
 # act does at most one move, records it in data/stall-action/actions.jsonl (the ledger stall-action.sh writes) and prints nothing:
 #   - the reason is an API error of a billing kind (billing_error, account_on_hold): a relaunch on the same account fails the same way,
 #     so the lead is told at once, with the error type named, and the worker is never relaunched here;
@@ -11,13 +12,15 @@
 #     previous relaunch) is at least one wait old (JG_STALL_ACTION_RELAUNCH_WAIT, default 300 s: a new session gets that long to beat):
 #     `bin/jg-control.sh <task> relaunch`; a refused relaunch counts as a try, so a refusal is not retried on every sweep;
 #   - 3 relaunches in the window: the lead is told once per beat, with the three tries named (`jg-alert.sh raise lost-worker`).
-# The alert key is lost-worker--<task>; clear resolves it. Seams: JG_STALL_ACTION_CONTROL, JG_STALL_ACTION_ALERT, JG_STALL_ACTION_NOW,
+# The alert key is lost-worker--<task> from here and lost-worker--<window> from the watcher's stale paths; clear resolves the first. sweep
+# resolves either kind once no task record names the subject (no state/<subject>.meta, no `window=<subject>` line in any meta), because a
+# cleaned-up lane can never beat again to clear it: source:window-gone. Seams: JG_STALL_ACTION_CONTROL, JG_STALL_ACTION_ALERT, JG_STALL_ACTION_NOW,
 # JG_STALL_ACTION_RELAUNCH_WAIT, JG_STALL_ACTION_RELAUNCH_WINDOW.
 set -u
 verb=${1:-}
-case "$verb:$#" in act:5|clear:3) ;; *) echo "usage: relaunch.sh act <jg-home> <task> <hash> <reason> | clear <jg-home> <task>" >&2; exit 2 ;; esac
+case "$verb:$#" in act:5|clear:3|sweep:2) ;; *) echo "usage: relaunch.sh act <jg-home> <task> <hash> <reason> | clear <jg-home> <task> | sweep <jg-home>" >&2; exit 2 ;; esac
 FMH=$(cd "$2" && pwd -P) || exit 2
-task=$3
+task=${3:-}
 export JG_HOME=$FMH
 CONTROL=${JG_STALL_ACTION_CONTROL:-$FMH/bin/jg-control.sh}
 ALERT=${JG_STALL_ACTION_ALERT:-$FMH/bin/jg-alert.sh}
@@ -29,8 +32,19 @@ LEDGER=$FMH/data/stall-action/actions.jsonl
 BUDGET=$(( ( ${JG_CHECK_TIMEOUT:-30} - 5 ) / 3 )); [ "$BUDGET" -ge 3 ] || BUDGET=3
 key=lost-worker--$task
 
+if [ "$verb" = sweep ]; then
+  windows=$(cat "$FMH"/state/*.meta 2>/dev/null | sed -n 's/^window=//p')
+  "$ALERT" list 2>/dev/null | while IFS= read -r k; do
+    case $k in lost-worker--*) ;; *) continue ;; esac
+    subject=${k#lost-worker--}
+    [ ! -e "$FMH/state/$subject.meta" ] || continue
+    ! printf '%s\n' "$windows" | grep -qxF -- "$subject" || continue
+    "$ALERT" resolve "$k" --proof source:window-gone >/dev/null 2>&1 || echo "relaunch: could not resolve $k (source:window-gone)" >&2
+  done
+  exit 0
+fi
 if [ "$verb" = clear ]; then
-  [ -e "$FMH/state/alerts/$key.rec" ] && "$ALERT" resolve "$key" >/dev/null 2>&1
+  [ -e "$FMH/state/alerts/$key.rec" ] && "$ALERT" resolve "$key" --proof source:worker-beat >/dev/null 2>&1
   exit 0
 fi
 hash=$4 reason=$5

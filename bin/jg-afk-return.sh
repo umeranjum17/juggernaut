@@ -47,6 +47,9 @@
 # records carry the original entry boundary and superseded mandates are
 # included so the brief shows every instruction the window ran under.
 #
+# A return killed hard cannot remove its state/.afk-return-*.XXXXXX temp files,
+# so each begin/check removes the ones a dead run left (jg_lock_reap_temp) once it holds the lock.
+#
 # The durable state/.afk-return-catchup file is written BEFORE daemon shutdown,
 # so a crash between stopping, wake presentation, and blocker handling fails
 # closed. It retains the presented wake, buffered-escalation, wedge-marker,
@@ -943,6 +946,9 @@ main() {
   mkdir -p "$STATE" || return 1
   jg_lock_acquire_wait "$LOCK"
   trap 'jg_lock_release "$LOCK"' EXIT
+  # A run killed hard never removed its temp files; holding the lock, no other writer of these exists.
+  jg_lock_reap_temp "$STATE" .afk-return-evidence .afk-return-blockers .afk-return-drain \
+    .afk-return-evidence-filter .afk-return-superseded-filter .afk-return-catchup.pending
   window_epoch=$(window_start_epoch)
   contract_epoch=$(gate_contract_epoch)
   if [ -z "$contract_epoch" ] && jg_afk_contract_present "$STATE"; then

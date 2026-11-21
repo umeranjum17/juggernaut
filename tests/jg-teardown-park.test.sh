@@ -4,7 +4,8 @@
 # worktree; only treehouse and tmux are stubs, as in tests/jg-teardown.test.sh, and the stubs log each call.
 #
 # The rule under test: a copy is returned only when it is clean and its HEAD is the tip of the lane's branch.
-#   (a) clean copy, head on the branch, live worker       -> PARKED: copy returned, pane closed, branch kept, record written
+#   (a) clean copy, head on the branch, live worker       -> PARKED: copy returned, pane closed, branch kept, record written;
+#                                                            the fleet snapshot reads the record as the in-flight row's child
 #   (b) same, worker already gone (pane missing)          -> PARKED the same way
 #   (c) uncommitted tracked change                        -> REFUSED, nothing changed
 #   (d) untracked file that is not the fleet's own        -> REFUSED, nothing changed
@@ -63,7 +64,8 @@ write_meta() {  # <case> <kind> [branch]
   local c=$1 kind=$2 branch=${3:-fm/$ID}
   jg_write_meta "$c/state/$ID.meta" \
     "window=juggernaut:jg-$ID" "endpoint_task_id=$ID" "worktree=$c/wt" "project=$c/project" \
-    "kind=$kind" "mode=local-trunk" "branch=$branch" "spawn_gen=park-test-$ID"
+    "kind=$kind" "mode=local-trunk" "branch=$branch" "spawn_gen=park-test-$ID" \
+    "base=$(git -C "$c/project" rev-parse --verify -q refs/heads/main 2>/dev/null || true)"
 }
 
 run_park() {  # <case> [args...]: sets RC
@@ -92,6 +94,10 @@ assert_parked() {  # <case> <name>
   assert_grep "branch=fm/$ID" "$c/state/$ID.parked" "$n: the record names the branch"
   assert_grep "head=$head" "$c/state/$ID.parked" "$n: the record names the branch tip"
   assert_grep "project=$c/project" "$c/state/$ID.parked" "$n: the record names the project"
+  assert_grep "base=$(git -C "$c/project" rev-parse refs/heads/main)" "$c/state/$ID.parked" "$n: the record names the commit the lane started on"
+  assert_grep "spawn_gen=park-test-$ID" "$c/state/$ID.parked" "$n: the record names the incarnation"
+  assert_grep "owner=lead" "$c/state/$ID.parked" "$n: the record names the lead as the owner of the park"
+  assert_grep "owner_home=$c" "$c/state/$ID.parked" "$n: the owner is the home whose lead decides it"
   [ ! -e "$c/state/$ID.meta" ] || fail "$n: the lane's task record still stands, so it still names a copy and a pane"
   grep -q '^treehouse return' "$c/calls.log" || fail "$n: the copy was not returned"
   git -C "$c/project" rev-parse --verify -q "refs/heads/fm/$ID" > /dev/null || fail "$n: the branch was deleted"
@@ -115,6 +121,17 @@ run_park "$c"
 expect_code 0 "$RC" "a: park succeeds: $(cat "$c/stderr")"
 assert_parked "$c" "a (live worker)"
 pass "a: a clean copy at its branch tip gives back its copy and keeps the branch and the record"
+# The parked row stays In flight with no task record: the fleet snapshot reads the park record as its child record, and only
+# without that record does it call the row an orphan.
+orphans() {  # <case>: the main inventory's orphan in-flight ids, one per line
+  (cd "$1" && JG_HOME="$1" JG_CONFIG_OVERRIDE="$1/config" JG_STATE_OVERRIDE="$1/state" JG_DATA_OVERRIDE="$1/data" PATH="$1/fakebin:$PATH" \
+    "$ROOT/bin/jg-fleet-snapshot.sh") | jq -r '.main_inventory.orphan_in_flight[]'
+}
+assert_equals "" "$(orphans "$c")" "a: the parked lane is not an orphan in-flight row"
+mv "$c/state/$ID.parked" "$c/parked.aside"
+assert_equals "$ID" "$(orphans "$c")" "a: control: with no park record the row is an orphan"
+mv "$c/parked.aside" "$c/state/$ID.parked"
+pass "a: the fleet snapshot counts the park record as the in-flight row's child record"
 
 c=$(make_case no-worker)
 # A worker that is gone: closing its window fails with "can't find window", and no window is listed.

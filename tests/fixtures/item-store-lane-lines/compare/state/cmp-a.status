@@ -1,0 +1,9 @@
+working [at=1]: a lane with every kind of wait
+blocked [at=2] [key=q1]: need a word from main
+paused [at=3] [key=ci] [wait=outside] [reason=quota]: quota resets
+needs-decision [at=4] [key=own] [wait=owner]: pick a colour
+paused [at=5] [wait=worker] [reason=parked]: thinking
+paused [at=6] [reason=quota]: no holder named
+resolved [at=7] [key=nope]: nothing waits on this
+blocked [at=8] [key=gone] [wait=lead]: a wait that is closed again
+resolved [at=9] [key=gone]: closed

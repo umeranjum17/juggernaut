@@ -1,0 +1,14 @@
+{
+ "argv": [
+  "delete",
+  "jg-q9e.1",
+  "jg-2es",
+  "jg-x2z",
+  "--force"
+ ],
+ "stdin": "",
+ "stdout": "\u2713 Deleted 3 issue(s)\n  Removed 3 dependency link(s)\n  Removed 2 label(s)\n  Removed 6 event(s)\n  Updated text references in 0 issue(s)\n",
+ "exit": 0,
+ "form": "delete --force",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-q9e\",\"title\":\"Plan the move\",\"description\":\"why\",\"status\":\"open\",\"priority\":0,\"issue_type\":\"epic\",\"created_at\":\"2026-11-19T13:37:16Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:37:19Z\",\"metadata\":{\"release\":\"later\"},\"labels\":[\"captain-ask\"],\"dependencies\":[{\"issue_id\":\"jg-q9e\",\"depends_on_id\":\"external:lead:design:jg-q9e.1\",\"type\":\"tracks\",\"created_at\":\"2026-11-19T13:37:31Z\",\"created_by\":\"main\",\"metadata\":\"{}\"}],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-2es\",\"title\":\"Which way\",\"description\":\"Ad-hoc gate blocking jg-q9e.1\\n\\nReason: pick one\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"gate\",\"created_at\":\"2026-11-19T13:37:22Z\",\"created_by\":\"juggernaut\",\"updated_at\":\"2026-11-19T13:37:22Z\",\"await_type\":\"human\",\"dependency_count\":0,\"dependent_count\":1,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-x2z\",\"title\":\"Ship it\",\"description\":\"Ad-hoc gate blocking jg-q9e.1\\n\\nReason: may it ship\",\"status\":\"closed\",\"priority\":2,\"issue_type\":\"gate\",\"created_at\":\"2026-11-19T13:37:22Z\",\"created_by\":\"juggernaut\",\"updated_at\":\"2026-11-19T13:37:23Z\",\"closed_at\":\"2026-11-19T13:37:23Z\",\"close_reason\":\"Yes, ship it on Friday.\",\"await_type\":\"human\",\"dependency_count\":0,\"dependent_count\":1,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-q9e.1\",\"title\":\"Part that moves\",\"description\":\"why\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:37:18Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:37:18Z\",\"metadata\":{\"release\":\"later\"},\"labels\":[\"captain-ask\",\"feature\"],\"dependencies\":[{\"issue_id\":\"jg-q9e.1\",\"depends_on_id\":\"jg-2es\",\"type\":\"blocks\",\"created_at\":\"2026-11-19T13:37:22Z\",\"created_by\":\"juggernaut\",\"metadata\":\"{}\"},{\"issue_id\":\"jg-q9e.1\",\"depends_on_id\":\"jg-q9e\",\"type\":\"parent-child\",\"created_at\":\"2026-11-19T13:37:18Z\",\"created_by\":\"main\",\"metadata\":\"{}\"},{\"issue_id\":\"jg-q9e.1\",\"depends_on_id\":\"jg-x2z\",\"type\":\"blocks\",\"created_at\":\"2026-11-19T13:37:22Z\",\"created_by\":\"juggernaut\",\"metadata\":\"{}\"}],\"dependency_count\":2,\"dependent_count\":0,\"comment_count\":0}\n"
+}

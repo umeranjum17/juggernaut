@@ -19,13 +19,13 @@ func upd(id int, kind string, from, chat int, bot bool, text string) string {
 	return fmt.Sprintf(`{"update_id":%d,"message":{"message_id":%d,"text":%q,"from":{"id":%d,"is_bot":%t},"chat":{"id":%d,"type":%q}}}`, id, id*10, text, from, bot, chat, kind)
 }
 
-// A fake Bot API and a fake Dapr sidecar, the real bin/jg-inbox.sh, a scratch home.
+// A fake Bot API and a the real bin/jg-inbox.sh, a scratch home.
 func TestGatewayIngress(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("jg-inbox.sh needs python3")
 	}
 	root, _ := filepath.Abs("../../../..")
-	home, batch, events := t.TempDir(), "", []string{}
+	home, batch := t.TempDir(), ""
 	bot := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.URL.Path, "/bot"+tok+"/") || r.URL.Query().Get("allowed_updates") != `["message","callback_query"]` {
 			http.Error(w, `{"ok":false}`, 404)
@@ -34,19 +34,19 @@ func TestGatewayIngress(t *testing.T) {
 		fmt.Fprintf(w, `{"ok":true,"result":[%s]}`, batch)
 	}))
 	defer bot.Close()
-	dapr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { events = append(events, r.URL.Path) }))
-	defer dapr.Close()
 	tokenFile, conf, state := filepath.Join(home, "tg.token"), filepath.Join(home, "conf"), filepath.Join(home, "state")
 	os.WriteFile(tokenFile, []byte(tok+"\n"), 0o600)
-	os.WriteFile(conf, []byte(fmt.Sprintf("set gateway-adapters telegram\nset telegram-token-file %s\nset telegram-allow-user 42\nset telegram-api-url %s\nset dapr-http-url %s\nset dapr-pubsub p\nset subject-prefix jg.captain\n", tokenFile, bot.URL, dapr.URL)), 0o600)
+	os.WriteFile(conf, []byte(fmt.Sprintf("set gateway-adapters telegram\nset telegram-token-file %s\nset telegram-allow-user 42\nset telegram-api-url %s\nset subject-prefix jg.captain\n", tokenFile, bot.URL)), 0o600)
 	a := &app{root: root, home: home, state: state, data: filepath.Join(home, "data"), configFiles: []string{conf}, record: state + "/rec", log: state + "/log"}
+	recorded := func() int { return countLines(a.record) }
+	recordLine := func() string { return readFileString(a.record) }
 	once := func() int { return a.gateway([]string{"--once"}) }
 
 	// The owner's text, then a stranger, the owner's id in a group, and a bot: one note, three drops.
 	batch = strings.Join([]string{upd(10, "private", 42, 42, false, "hello overwatch"), upd(11, "private", 7, 7, false, "stranger"),
 		upd(12, "supergroup", 42, -9, false, "group"), upd(13, "private", 42, 42, true, "bot")}, ",")
-	if code := once(); code != 0 || len(events) != 1 || !strings.HasSuffix(events[0], "/jg.captain.inbound") {
-		t.Fatalf("exit %d, events %v: want one inbound event", code, events)
+	if code := once(); code != 0 || recorded() != 1 || !strings.Contains(recordLine(), `"subject":"jg.captain.inbound"`) {
+		t.Fatalf("exit %d, events %d: want one inbound event", code, recorded())
 	}
 	// The mirror: the owner's message shows in the wake the session reads, once, with its source;
 	// the three dropped ones show nowhere.
@@ -69,8 +69,8 @@ func TestGatewayIngress(t *testing.T) {
 	os.Remove(state + "/captain-chat/telegram.offset")
 	batch = upd(10, "private", 42, 42, false, "hello overwatch")
 	notes, _ := filepath.Glob(state + "/inbox/*.note")
-	if body, _ := os.ReadFile(notes[0]); once() != 0 || len(events) != 1 || len(notes) != 1 || !strings.Contains(string(body), "[chat telegram 42:100]\nhello overwatch") {
-		t.Fatalf("replay: events %v, notes %v, body %q", events, notes, body)
+	if body, _ := os.ReadFile(notes[0]); once() != 0 || recorded() != 1 || len(notes) != 1 || !strings.Contains(string(body), "[chat telegram 42:100]\nhello overwatch") {
+		t.Fatalf("replay: events %d, notes %v, body %q", recorded(), notes, body)
 	}
 	if strings.Count(wakes(), "captain inbox note") != 1 {
 		t.Fatalf("a replay mirrored the message again: %q", wakes())
@@ -143,11 +143,9 @@ func TestGatewayAnswers(t *testing.T) {
 		fmt.Fprintf(w, `{"ok":true,"result":{"message_id":%d}}`, 900+len(sends))
 	}))
 	defer bot.Close()
-	dapr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	defer dapr.Close()
 	tokenFile, conf, state := filepath.Join(home, "tg.token"), filepath.Join(home, "conf"), filepath.Join(home, "state")
 	os.WriteFile(tokenFile, []byte(tok+"\n"), 0o600)
-	os.WriteFile(conf, []byte(fmt.Sprintf("set gateway-adapters telegram\nset telegram-token-file %s\nset telegram-allow-user 42\nset telegram-api-url %s\nset dapr-http-url %s\nset dapr-pubsub p\nset subject-prefix jg.captain\n", tokenFile, bot.URL, dapr.URL)), 0o600)
+	os.WriteFile(conf, []byte(fmt.Sprintf("set gateway-adapters telegram\nset telegram-token-file %s\nset telegram-allow-user 42\nset telegram-api-url %s\nset subject-prefix jg.captain\n", tokenFile, bot.URL)), 0o600)
 	a := &app{root: root, home: home, state: state, data: filepath.Join(home, "data"), configFiles: []string{conf}, record: state + "/rec", log: state + "/log"}
 	once := func() {
 		if code := a.gateway([]string{"--once"}); code != 0 {
@@ -247,8 +245,8 @@ func TestGatewayPairAndStatus(t *testing.T) {
 	if !strings.Contains(sent, `"chat_id":77`) || strings.Contains(sent, tok) {
 		t.Fatalf("pairing confirmation = %q", sent)
 	}
-	if unit, err := (&app{root: ".", home: home, state: state, runtime: home}).buildUnit("gateway"); err != nil || !strings.Contains(unit, `"gateway" "serve"`) || strings.Contains(unit, tok) {
-		t.Fatalf("gateway unit = %q, %v", unit, err)
+	if unit := captureStdout(func() int { return (&app{root: ".", home: home, state: state, runtime: home}).unit([]string{"gateway"}) }); !strings.Contains(unit, `"gateway" "serve"`) || strings.Contains(unit, tok) {
+		t.Fatalf("gateway unit = %q", unit)
 	}
 }
 
@@ -270,18 +268,18 @@ func TestGatewayPush(t *testing.T) {
 	write := func(extra string) {
 		os.WriteFile(conf, []byte(fmt.Sprintf("set gateway-adapters telegram\nset telegram-token-file %s\nset telegram-allow-user 42\nset telegram-api-url %s\n%s", tokenFile, bot.URL, extra)), 0o600)
 	}
-	write("set mode live\n")
+	write("set mode direct\n")
 	a := &app{root: ".", home: home, state: state, data: filepath.Join(home, "data"), configFiles: []string{conf}, record: state + "/rec", log: state + "/log"}
 	push := func(args ...string) int { return a.gateway(append([]string{"push"}, args...)) }
 
-	if code := push("NATS server: live"); code != 0 || len(sends) != 0 {
+	if code := push("Queue server: live"); code != 0 || len(sends) != 0 {
 		t.Fatalf("no token file: exit %d, %d sends; want a silent no-op", code, len(sends))
 	}
 	os.WriteFile(tokenFile, []byte(tok+"\n"), 0o600)
-	if code := push("NATS server:", "live"); code != 0 || len(sends) != 1 {
+	if code := push("Queue server:", "live"); code != 0 || len(sends) != 1 {
 		t.Fatalf("exit %d, %d sends; want one", code, len(sends))
 	}
-	if sends[0]["chat_id"] != float64(42) || sends[0]["text"] != "NATS server: live" || sends[0]["reply_parameters"] != nil {
+	if sends[0]["chat_id"] != float64(42) || sends[0]["text"] != "Queue server: live" || sends[0]["reply_parameters"] != nil {
 		t.Fatalf("push = %v; want owner 42, the text, no thread", sends[0])
 	}
 	sends = nil

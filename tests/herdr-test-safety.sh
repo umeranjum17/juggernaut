@@ -36,36 +36,16 @@ herdr_forget_inherited_pane() {
   unset HERDR_ENV HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID HERDR_SOCKET_PATH HERDR_SESSION
 }
 
-# herdr_test_require_beads: a spawn reads the home's backlog first and refuses a task with no ticket in a
-# Beads store, so a suite that drives the real jg-spawn.sh needs the pinned bd and dolt. Skips plainly
-# without them, as every Beads fixture suite does (tests/lib.sh jg_test_beads_home).
-herdr_test_require_beads() {
-  JG_BEADS_BD=${JG_BEADS_TEST_BD:-$(command -v bd 2>/dev/null || true)}
-  JG_BEADS_DOLT=${JG_BEADS_TEST_DOLT:-$(command -v dolt 2>/dev/null || true)}
-  if [ -z "$JG_BEADS_BD" ] || [ -z "$JG_BEADS_DOLT" ]; then
-    echo "skip: no Beads store: bd and dolt are not installed (JG_BEADS_TEST_BD, JG_BEADS_TEST_DOLT)"
-    return 1
-  fi
-  export JG_BEADS_BD JG_BEADS_DOLT
-  # An operator shell may export BEADS_DIR at its live store; a fixture home addresses only its own.
-  unset BEADS_DIR BEADS_DB BEADS_DOLT_SHARED_SERVER
-}
+# herdr_test_require_beads: a spawn reads the home's backlog first and refuses a task with no ticket; the home's tickets tables
+# need nothing installed, so this always succeeds (kept for the suites that call it).
+herdr_test_require_beads() { return 0; }
 
-# herdr_test_backlog_ticket <home> <id>: leave the fixture task as a queued ticket in the home's own Beads
-# store, building the store beside the home on first use. A Beads id has a prefix and a hyphen. A task that
-# an earlier spawn and teardown in the same suite already finished is reopened, since spawn dispatches only
-# queued work.
+# herdr_test_backlog_ticket <home> <id>: leave the fixture task as a queued ticket in the home's tickets tables. A ticket id has a
+# prefix and a hyphen. A task that an earlier spawn and teardown in the same suite already finished is reopened, since spawn
+# dispatches only queued work.
 herdr_test_backlog_ticket() {
-  local home=$1 id=$2 store shown state
-  if [ ! -s "$home/config/beads-dir" ]; then
-    store=$home-store
-    mkdir -p "$home/config" "$store" || return 1
-    BEADS_DIR=$store/.beads "$HERDR_TEST_SAFETY_DIR/bin/jg-beads.sh" init --prefix jg >/dev/null 2>&1 || {
-      echo "not ok - could not initialise the Beads store for $home" >&2
-      return 1
-    }
-    printf '%s\n' "$store/.beads" > "$home/config/beads-dir"
-  fi
+  local home=$1 id=$2 shown state
+  mkdir -p "$home/config" || return 1
   (
     cd "$home" || exit 1
     export JG_HOME="$home" JG_CONFIG_OVERRIDE="$home/config"

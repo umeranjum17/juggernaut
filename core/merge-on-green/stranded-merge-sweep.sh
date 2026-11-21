@@ -67,10 +67,10 @@ for repo in $repos; do
     f=$MEM/$key.${b//\//__}
     state=closed
     if [ "$ahead" -eq 0 ]; then
-      rm -f -- "$f" 2>/dev/null; [ "$mode" != check ] || alert resolve "stranded--${f##*/}" >/dev/null 2>&1
+      rm -f -- "$f" 2>/dev/null; [ "$mode" != check ] || alert resolve "stranded--${f##*/}" --proof source:carried >/dev/null 2>&1
     elif printf '%s\n' "$carried" | grep -qxF -- "$b"; then
       state=carried
-      rm -f -- "$f" 2>/dev/null; [ "$mode" != check ] || alert resolve "stranded--${f##*/}" >/dev/null 2>&1
+      rm -f -- "$f" 2>/dev/null; [ "$mode" != check ] || alert resolve "stranded--${f##*/}" --proof source:carried >/dev/null 2>&1
     else
       state=stranded
     fi
@@ -80,7 +80,7 @@ for repo in $repos; do
     if [ -f "$f" ]; then read -r first seen < "$f" 2>/dev/null || :; fi
     case $first in ''|*[!0-9]*) first=$START; seen= ;; esac
     if [ "$(( START - first ))" -ge "$(( HOURS * 3600 ))" ] && [ "$seen" != "$ahead" ]; then
-      alert resolve "stranded--${f##*/}" >/dev/null 2>&1; alert raise stranded "${f##*/}" | alert deliver
+      alert resolve "stranded--${f##*/}" --proof source:superseded >/dev/null 2>&1; alert raise stranded "${f##*/}" | alert deliver
       seen=$ahead
     fi
     mkdir -p "$MEM" 2>/dev/null && printf '%s %s\n' "$first" "$seen" > "$f" 2>/dev/null || :

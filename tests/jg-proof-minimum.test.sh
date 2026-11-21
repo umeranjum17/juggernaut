@@ -22,7 +22,7 @@ task=${tkt//./-}
 text="$TMP_ROOT/task.txt"
 printf 'Fix the label. Run bare-minimum checks only.\n' > "$text"
 brief() { JG_HOME="$H" JG_CONFIG_OVERRIDE="$H/config" "$ROOT/bin/jg-brief.sh" "$task" proj --mode direct-PR --ticket "$tkt" --migration-row none "$@" 2>&1; }
-field() { BEADS_DIR=$(cat "$H/config/beads-dir") "$ROOT/bin/jg-beads.sh" show "$tkt" --json 2>/dev/null | jq -r "(if type == \"array\" then .[0] else . end).metadata.$1 // \"none\""; }
+field() { JG_HOME=$H python3 -I "$ROOT/core/item-store/adapters/bd_compat.py" show "$tkt" --json 2>/dev/null | jq -r "(if type == \"array\" then .[0] else . end).metadata.$1 // \"none\""; }
 
 # M1
 out=$(brief --task-text-file "$text"); rc=$?

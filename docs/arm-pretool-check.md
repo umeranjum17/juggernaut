@@ -24,6 +24,7 @@ It tokenizes the bytes and classifies lexical execution positions only.
 
 - Stdin JSON at `.tool_input.command` for Claude and Codex.
 - Stdin JSON at `.toolInput.command` for Grok.
+- Stdin JSON at `.toolCall.args.CommandLine` for agy, with `--agy`.
 - `--command <exact string>` for OpenCode, Pi, pi-signed, and omp.
 - `--background` as a compatibility-only field that never changes the decision.
 - `--claude` to preserve Claude's stderr-only deny requirement.
@@ -168,9 +169,12 @@ Prose may improve without changing adapter behavior.
 | omp | `event.input.command` | `.omp/extensions/jg-primary-turnend-guard.ts` passes one `--command` argument and returns `{block: true, reason}` only for exit 2; omp surfaces the reason verbatim to the model (verified 18.1.2). |
 | Cursor | `.tool_input.command` | `.cursor/hooks.json` matches `tool_name` `Shell` and forwards stdin with `--cursor`. Cursor reads the RETURNED object rather than the exit status, so `--cursor` prints `{"permission":"deny","user_message":"[code] reason"}` on stdout and exits 0; only that rendering is verified to block the command and surface the reason. |
 
+| agy | `.toolCall.args.CommandLine` | `.agents/hooks.json` matches the `run_command` tool and forwards stdin with `--agy`. agy denies a tool call on ANY non-zero hook exit and on a printed `{}` or empty decision, so `--agy` prints `{"decision":"deny","reason":"[code] reason"}` and exits 0 on a deny and prints nothing on an allow, which leaves agy's own permission policy in charge (verified 1.5.11). |
+
 Cursor also loads `<project>/.claude/settings.json`, so the tracked Claude entry receives the same event. Without `--cursor` a Cursor-delivered payload is that duplicate and allows without re-classifying, decided from the payload's own `cursor_version` by `bin/jg-hook-host-lib.sh`; [`turnend-guard.md`](turnend-guard.md#harness-integrations) owns why that predicate reads the payload rather than the environment.
 
 Grok project hooks require folder trust.
+agy loads `.agents/hooks.json` only for a trusted folder, and a launch that answers the trust dialog loads it after the first turn has already started.
 Cursor project hooks require the workspace to be launched with `--trust`.
 Every shell variable reference in a Grok hook command must carry an inline default such as `${GROK_WORKSPACE_ROOT:-}` because Grok expands the raw hook command before `bash -lc` runs it.
 The tracked Grok adapter therefore references `${GROK_WORKSPACE_ROOT:-}` directly instead of assigning and later reading a shell-local `$root` variable.

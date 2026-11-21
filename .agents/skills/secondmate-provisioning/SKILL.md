@@ -1,6 +1,6 @@
 ---
 name: secondmate-provisioning
-description: Retired alias of squad-lead-provisioning, kept only during the skill-rename migration window. Load squad-lead-provisioning and follow it unchanged.
+description: Retired alias of squad-lead-provisioning. Load it and follow it unchanged.
 metadata:
   internal: true
 ---

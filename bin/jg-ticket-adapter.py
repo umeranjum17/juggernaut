@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
-"""jg-ticket-adapter.py - the Beads adapter for the board's ticket interface v1 (sign-off docs/ticket-adapter.md).
+"""jg-ticket-adapter.py - the tickets-table adapter for the board's ticket interface v1 (sign-off docs/ticket-adapter.md).
 
-Usage: BEADS_DIR=<store>/.beads jg-ticket-adapter.py <describe|list|get|create|update|history|comment>   (one JSON request on stdin)
+Usage: JG_HOME=<home> jg-ticket-adapter.py <describe|list|get|create|update|history|comment>   (one JSON request on stdin)
 
 One JSON response on stdout and nothing else: exit 0 with the answer, exit 1 with {"error": {...}}. It reaches the store only through
-bin/jg-beads.sh (JG_BEADS_SH names another wrapper) and bin/jg-beads-read.py, whose facts are in data/ta-j1-beads-facts/facts.md.
+core/item-store/adapters/bd_compat.py and bin/jg-beads-read.py, whose facts are in data/ta-j1-beads-facts/facts.md.
 The ticket is bd's own row: `id`, `status`, `assignee` and `parent` are bd's words, `kind` is bd's issue type, `body` its description,
-`labels` and `links` (its outgoing edges other than the parent) as bd keeps them. With JG_HOME and a configured fleet, list derives board status and project from the homes and uses home-qualified ids.
+`labels` and `links` (its outgoing edges other than the parent) as bd keeps them. With JG_HOME and a configured fleet, list derives board status and project from the homes and uses home-qualified ids. It reads each home's store with one
+`jg-beads-read.py board` query (bd list and bd show took minutes on a store of thousands of rows), fails when a home's tables cannot be read,
+and answers a client that names no limit with pages of 500, since every page reads the whole fleet again.
 `extra` is the row's metadata, key by key and typed as bd keeps it (the interface's conformance script holds extra to exactly what a client put there).
 bd's other columns (priority, notes, design, estimate, due and the like) are not carried: no ticket field names them and extra may not.
 Without a configured fleet, list leaves closed rows out, as bd list does. rev is the read helper's rev (bd's revision with the labels, the edges and the comment count).
-history is bd's event log (actor, type, old and new values) with the comments merged in, oldest first.
+history is the row's ticket_change log in bd's event shape (actor, type, old and new values) with the comments merged in, oldest first.
 
 A write holds one lock for the whole step: it replays an answered op_id, checks the rev, calls bd and reads the ticket back. bd has no
 compare-and-set, so the lock closes the window against other writers of this adapter only; a bd run by hand can still write between
@@ -31,12 +33,13 @@ import time
 
 sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.abspath(__file__))
-WRAPPER = os.environ.get("JG_BEADS_SH") or os.path.join(HERE, "jg-beads.sh")
+WRAPPER = os.path.join(HERE, "..", "core", "item-store", "adapters", "bd_compat.py")
 READER = os.path.join(HERE, "jg-beads-read.py")
 IDENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 BD_KEY = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_./]*$")
 OP_KEEP_SECONDS = 7 * 24 * 3600
 STEP_TIMEOUT = 20
+FLEET_PAGE = 500  # every page reads the whole fleet again, so a client that names no limit gets the largest page, not 50
 BOARD_COLUMNS = ("Waiting for you", "Next up", "Being built", "Done")
 BOARD_HOME = None
 REQUEST_KEYS = {"describe": set(), "list": {"cursor", "limit"}, "get": {"id"}, "create": {"ticket", "op_id"}, "update": {"id", "rev", "set", "unset", "op_id"},
@@ -60,7 +63,7 @@ def invalid(fields, message="The request was refused."):
 def bd(args, stdin=None, step="bd", env=None):
     """One call of the wrapper; its stderr is the reason when it fails."""
     try:
-        done = subprocess.run([WRAPPER] + args, input=stdin, capture_output=True, text=True, timeout=STEP_TIMEOUT, env=env)
+        done = subprocess.run([sys.executable, "-I", WRAPPER] + args, input=stdin, capture_output=True, text=True, timeout=STEP_TIMEOUT, env=env)
     except subprocess.TimeoutExpired:
         raise Refusal("timeout", "%s did not answer in %d seconds." % (step, STEP_TIMEOUT), True)
     except OSError as e:
@@ -99,7 +102,7 @@ def get_row(ticket_id):
 def to_ticket(row):
     ticket = {"id": row["id"], "rev": row["rev"], "title": row.get("title", ""), "body": row.get("description", ""), "kind": row.get("issue_type", ""),
             "status": row.get("status", ""), "assignee": row.get("assignee") or None, "labels": list(row.get("labels") or []), "parent": row.get("parent") or None,
-            "links": links_of(row), "created_at": row["created_at"], "updated_at": row["updated_at"], "extra": dict(row.get("metadata") or {})}
+            "links": links_of(row), "created_at": row["created_at"], "updated_at": row.get("updated_at") or row["created_at"], "extra": dict(row.get("metadata") or {})}
     if BOARD_HOME:
         name, home = BOARD_HOME
         ticket["id"] = scoped(name, ticket["id"])
@@ -134,7 +137,7 @@ def kinds():
 def fleet_homes():
     """The main home and its registered local leads; fail rather than return an incomplete fleet."""
     root = os.environ.get("JG_HOME")
-    if not root or not os.path.isfile(os.path.join(root, "config", "beads-dir")):
+    if not root or os.environ.get("JG_TICKET_ADAPTER_FLAT") == "1":   # flat: one home's rows as bd shows them, no fleet board
         return {}
     paths = {"main": root}
     registry = os.path.join(root, "data", "squad_leads.md")
@@ -148,15 +151,7 @@ def fleet_homes():
                     paths[match[1]] = match[2]
                 elif re.match(r"- \S+ - .*\(host:", line):
                     raise Refusal("unavailable", "A remote home requires a backlog reader.")
-    homes = {}
-    for name, path in paths.items():
-        try:
-            with open(os.path.join(path, "config", "beads-dir")) as handle: store = handle.read().strip()
-        except OSError as e:
-            raise Refusal("unavailable", "Cannot read %s's store: %s" % (name, e), True)
-        if not os.path.isabs(store): raise Refusal("unavailable", "No absolute store for %s." % name)
-        homes[name] = (path, store)
-    return homes
+    return paths
 
 
 def scoped(name, ident):
@@ -180,7 +175,7 @@ def column(row, home):
         return "Done" if stamp and stamp >= cutoff else None
     deps = row.get("dependencies") or []
     asked = any(d.get("issue_type") == "gate" and d.get("status") != "closed" and d.get("dependency_type") == "blocks" for d in deps)
-    if asked or (status in ("on_hold", "blocked", "deferred") and meta.get("hold_kind") == "captain"):
+    if asked:
         return "Waiting for you"
     item = str(meta.get("task") or meta.get("legacy_item") or row["id"])
     if not IDENT.fullmatch(item): return None
@@ -199,30 +194,28 @@ def column(row, home):
     return None
 
 
-def fleet_rows(name, home, store):
-    env = dict(os.environ, BEADS_DIR=store)
-    result = bd(["list", "--all", "--include-gates", "--flat", "--limit", "0", "--json"], env=env)
-    if result.returncode: raise Refusal("unavailable", "Cannot list %s: %s" % (name, reason(result)), True)
-    rows = json.loads(result.stdout or "[]")
-    cutoff = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=7)).isoformat()
-    ids = [row["id"] for row in rows if row.get("issue_type") != "gate" and (row.get("status") != "closed" or (row.get("closed_at") or "") >= cutoff)]
-    if not ids: return []
-    found = []
-    for start in range(0, len(ids), 300):
-        result = read_helper(["show"] + ids[start:start + 300], env=env)
-        if result.returncode: raise Refusal("incomplete", "Cannot read %s: %s" % (name, reason(result)), True)
-        found.extend((name, home, row) for row in json.loads(result.stdout))
-    return found
+def fleet_rows(name, home, all_closed=False):
+    """One home's board rows in one query; maintenance may also need older closed card sources."""
+    cutoff = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    result = read_helper(["board", '--all' if all_closed else cutoff], env=dict(os.environ, JG_HOME=home))
+    if result.returncode: raise Refusal("unavailable", "Cannot read %s: %s" % (name, reason(result)), True)
+    return [(name, home, row) for row in json.loads(result.stdout)]
+
+
+def fleet_snapshot(all_closed=False):
+    """One complete board read, also used by ticket maintenance without rereading the fleet for each page."""
+    homes = fleet_homes()
+    if not homes: return []
+    with ThreadPoolExecutor(max_workers=min(8, len(homes))) as pool:
+        futures = [pool.submit(fleet_rows, name, home, all_closed) for name, home in homes.items()]
+        return [row for future in futures for row in future.result()]
 
 
 def fleet_list(request):
-    cursor, limit = request.get("cursor"), request.get("limit", 50)
+    cursor, limit = request.get("cursor"), request.get("limit", FLEET_PAGE)
     if cursor is not None and not IDENT.fullmatch(cursor): raise invalid([("cursor", "not a fleet cursor")])
     if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 500: raise invalid([("limit", "must be a whole number from 1 to 500")])
-    homes = fleet_homes()
-    with ThreadPoolExecutor(max_workers=min(8, len(homes))) as pool:
-        futures = [pool.submit(fleet_rows, name, home, store) for name, (home, store) in homes.items()]
-        rows = [row for future in futures for row in future.result()]
+    rows = fleet_snapshot()
     global BOARD_HOME
     tickets = []
     for name, home, row in rows:
@@ -401,7 +394,8 @@ def op_update(request):
         raise invalid(problems)
     if row["rev"] != request["rev"]:
         raise Refusal("conflict", "%s changed since it was read (rev %s, now %s)." % (row["id"], request["rev"], row["rev"]), False, {"current": to_ticket(row)})
-    flags = bd_flags(patch)
+    # set.extra is a patch: the tables' --metadata writes the whole object, so it carries the row's other keys too.
+    flags = bd_flags(dict(patch, extra=dict(row.get("metadata") or {}, **patch["extra"])) if isinstance(patch.get("extra"), dict) else patch)
     if "labels" in patch:
         have = set(row.get("labels") or [])
         flags += [x for l in sorted(have - set(patch["labels"])) for x in ("--remove-label", l)] + [x for l in patch["labels"] if l not in have for x in ("--add-label", l)]
@@ -461,14 +455,39 @@ def changes_of(event):
     return out
 
 
+HISTORY_FIELDS = ("title", "description", "issue_type", "status", "assignee", "metadata")
+
+
+def change_events(ticket_id):
+    """The row's changes from ticket_change, oldest first, in bd's event shape: the first is `created`, a later one `status_changed` when
+    the status moved and `updated` when another field did (a change of no such field is left out); old_value and new_value name the
+    fields it changed. The tables keep the writer of each change, not a person, so the actor is the row's creator, then each writer."""
+    read = __import__("jg-beads-read")
+    try:
+        con = read.table_store()
+        changes = con.execute("select seq, at, source, row from ticket_change where home = ? and id = ? and row is not null order by seq",
+                              (con.home, ticket_id)).fetchall()
+    except (SystemExit, Exception) as e:  # table_store exits when there is no store; either way the history cannot be read
+        raise Refusal("unavailable", "The history could not be read: %s" % (e if str(e) else "no tickets tables"), True)
+    events, before = [], None
+    for change in changes:
+        now = json.loads(change["row"])
+        now["metadata"] = json.loads(now.get("metadata") or "{}")
+        keys = [k for k in HISTORY_FIELDS if before is not None and now.get(k) != before.get(k)]
+        if before is None or keys:
+            events.append({"id": str(change["seq"]), "created_at": read.utc(change["at"]).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                           "actor": (now.get("created_by") if before is None else None) or change["source"].split(":", 1)[0],
+                           "event_type": "created" if before is None else "status_changed" if "status" in keys else "updated",
+                           "old_value": json.dumps({k: before[k] for k in keys}) if keys else "",
+                           "new_value": json.dumps({k: now[k] for k in keys}) if keys else ""})
+        before = now
+    return events
+
+
 def op_history(request):
     row = get_row(request["id"])
-    done = bd(["history", row["id"], "--events", "--json"])
-    if done.returncode != 0:
-        raise Refusal("unavailable", "The history could not be read: %s" % reason(done), True)
-    # bd lists newest first and stamps whole seconds; reversing keeps its order inside one second.
-    events = [{"id": e["id"], "at": e["created_at"], "actor": e.get("actor") or None, "type": e["event_type"], "text": e.get("comment"), "changes": changes_of(e), "extra": {}}
-              for e in reversed(json.loads(done.stdout or "[]"))]
+    events = [{"id": e["id"], "at": e["created_at"], "actor": e["actor"], "type": e["event_type"], "text": None, "changes": changes_of(e), "extra": {}}
+              for e in change_events(row["id"])]
     events += [comment_event(c) for c in comments_of(row["id"])]
     events.sort(key=lambda e: (e["at"], e["type"] != "created"))  # whole seconds: the creation comes first inside its own second.
     return {"events": events}
@@ -484,10 +503,10 @@ def state_dir():
     configured = os.environ.get("JG_TICKET_ADAPTER_STATE")
     if configured:
         return configured
-    beads = os.environ.get("BEADS_DIR")
-    if not beads or not os.path.isabs(beads):
-        raise Refusal("unavailable", "BEADS_DIR is not set to the store's .beads folder.", False)
-    return os.path.join(os.path.dirname(beads.rstrip("/")), ".jg-ticket-adapter")
+    home = os.environ.get("JG_HOME")
+    if not home or not os.path.isabs(home):
+        raise Refusal("unavailable", "JG_HOME is not set to the home's absolute folder.", False)
+    return os.path.join(home, "state", ".jg-ticket-adapter")
 
 
 class OpLog:
@@ -550,15 +569,13 @@ def run(op, raw):
     global BOARD_HOME
     request = parse(op, raw)
     homes = fleet_homes()
-    if homes and op == "describe":
-        os.environ["BEADS_DIR"] = homes["main"][1]
     if homes and op not in ("describe", "list"):
         if op == "create":
             name = "main"
         else:
             name, request["id"] = unscoped(request["id"], homes)
-        BOARD_HOME = (name, homes[name][0])
-        os.environ["BEADS_DIR"] = homes[name][1]
+        BOARD_HOME = (name, homes[name])
+        os.environ["JG_HOME"] = homes[name]
         patch = request.get("ticket") if op == "create" else request.get("set")
         if isinstance(patch, dict):
             if "status" in patch or "project" in patch:

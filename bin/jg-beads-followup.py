@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """jg-beads-followup.py - keep a public follow-up as one native Beads row.
 
-Usage: BEADS_DIR=<store> jg-beads-write.py public-followup <add|bind-work|supersede-work|work-event|begin-delivery|record-delivery|record-error|waive|list|ready> [args...] [--json]
+Usage: jg-beads-write.py public-followup <add|bind-work|supersede-work|work-event|begin-delivery|record-delivery|record-error|waive|list|ready> [args...] [--json]
 
 --json carries the public_followup payload bin/jg-public-followup.sh reads, one contract on either backlog.
 The row has the public-followup label; metadata.followup holds what never changes, metadata.relations the bound work.
@@ -713,9 +713,9 @@ def main(args):
     if verb in ("list", "ready"):
         (listing if verb == "list" else owed)(args[1:])
     elif verb in changes:
-        env = os.path.join(os.path.dirname(os.environ["BEADS_DIR"]), ".jg-beads-env")
-        os.makedirs(env, exist_ok=True)
-        with open(os.path.join(env, "followup.lock"), "w", encoding="utf-8") as lock:
+        state = os.environ.get("JG_STATE_OVERRIDE") or os.path.join(os.environ.get("JG_HOME") or os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."), "state")
+        os.makedirs(state, exist_ok=True)
+        with open(os.path.join(state, "public-followup.lock"), "w", encoding="utf-8") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             changes[verb](args[1:])
     else:

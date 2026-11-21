@@ -5,6 +5,7 @@
 #   (a) acquire writes the holder record (pid, since)         (b) a dead holder's lock is broken at once
 #   (c) a live holder past the warn age: one alert names it   (d) a holder with a fresh beat is left alone
 #   (e) a holder the tick did not start is never ended        (f) a tick-started holder past the end age is ended, its lock freed
+#   (g) the next check resolves each alert whose holder beats again or whose lock is gone
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -12,7 +13,7 @@ CHECK="$ROOT/core/lock-lease/lock-lease.check.sh"
 TMP=$(jg_test_tmproot jg-lock-lease)
 H=$TMP/home; S=$H/state
 mkdir -p "$S" "$H/data" "$H/bin" "$H/core"
-cp "$ROOT"/bin/*.sh "$H/bin/"; cp -R "$ROOT/core/machines" "$H/core/"
+cp "$ROOT"/bin/*.sh "$H/bin/"; cp -R "$ROOT/core/machines" "$ROOT/core/item-store" "$H/core/"  # bin/jg-alert.sh reads its rules from the store views
 export JG_STATE_OVERRIDE=$S JG_HOME=$H JG_LOCK_LEASE_WARN_S=300 JG_LOCK_LEASE_END_S=600
 
 # A holder script. Named like a detached landing job when $1 is trunk-landing.sh, so the check reads it as tick-started.
@@ -77,6 +78,20 @@ out=$(run_at 900); case $out in *"e-1"*) fail "(e) ended a holder the tick did n
 alive "$pid3" || fail "(e) the holder died"
 pass "(e) a holder the tick did not start is never ended, even past the end age"
 reap "$pid3"
+
+# (g) the alerts close with their cause: a holder that beats again, and (e)'s lock once its holder is gone
+L4=$S/.trunk-run-g-1.lock; pid4=$(start_holder other-job.sh "$L4")
+run_at 400 >/dev/null
+grep -qx 'state=open' "$S/alerts/slow-delivery--lock-trunk-run-g-1.lock.rec" 2>/dev/null || fail "(g) fixture: no open alert for the idle holder"
+date +%s > "$L4/beat"
+run_at 0 >/dev/null
+for k in g:lock-beat e:lock-released; do
+  rec=$S/alerts/slow-delivery--lock-trunk-run-${k%%:*}-1.lock.rec
+  if ! grep -qx 'state=resolved' "$rec" || ! grep -qx "proof=source:${k#*:}" "$rec"; then fail "(g) the ${k%%:*} alert is not resolved by ${k#*:}: $(cat "$rec")"; fi
+done
+alive "$pid4" || fail "(g) the beating holder died"
+pass "(g) the check resolves the alert of a holder that beats again and of a lock that is gone"
+reap "$pid4"
 
 # (f) tick-started, past the end age: ended, and the next landing takes the lock
 reap "$pid"; rm -rf "$L" "$S"/alerts

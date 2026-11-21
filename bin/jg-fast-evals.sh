@@ -85,13 +85,9 @@ eval_brief_scaffold() {
 
 # A ticket added through the backlog wrapper is the ticket the list returns.
 eval_ticket_round_trip() {
-  local out store="$SCRATCH/beads/.beads"
-  # The backlog is a Beads store (pinned bd and dolt, run only through bin/jg-beads.sh); the
-  # throwaway home gets its own, so the eval never reads or writes a real one.
-  mkdir -p "$SCRATCH/beads" "$EVAL_HOME/config"
-  printf '%s\n' "$store" > "$EVAL_HOME/config/beads-dir"
-  BEADS_DIR=$store "$JG_ROOT/bin/jg-beads.sh" init --prefix eval >"$SCRATCH/beads-init.log" 2>&1 \
-    || { echo "the throwaway Beads store was not created: $(tail -n 1 "$SCRATCH/beads-init.log")"; return 1; }
+  local out
+  # The backlog is the tickets tables in fleet.db; the throwaway home gets its own, so the eval never reads or writes a real one.
+  mkdir -p "$EVAL_HOME/config"
   eval_home bin/jg-backlog.sh add eval-one 'Eval ticket' -l feature --priority 2 \
     --body $'## Captain\nThe fast evals.\n## Ask\nKeep the ticket.\n## Why\nThe fast evals prove the backlog wrapper keeps a ticket.\n## Done when\nThe list returns it.\n## Acceptance Criteria\nThe list counts one.' >"$SCRATCH/ticket-add.log" 2>&1 \
     || { echo "ticket add exited nonzero: $(tail -n 1 "$SCRATCH/ticket-add.log")"; return 1; }

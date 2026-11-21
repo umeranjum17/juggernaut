@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # done-done journey: a Goal goes from ask to one finish message on a fake forge, in real time.
-# A disposable home holds a real Goal-only store (the pinned bd and dolt through bin/jg-beads.sh) and the real
+# A disposable home holds its Goals in its own tickets tables, with the real
 # bin/jg-goal.sh and core/goal-loop/goal-loop.sh. Each check pass is a fresh process, as a restart is. The fake
 # forge is a folder and a background process that turns a PR green, merges it, tags a release, records it in the
 # home's release record and advances the home, each after a real delay. Only the lead is a script: it takes the
@@ -11,15 +11,10 @@
 set -u
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 OUT=${DONE_DONE_EVIDENCE_ROOT:?run through done-done}
-BIN=${GOAL_PINNED_BIN:-$HOME/.cache/fm-scratch/beads-native-n5/bin}
-[ -x "$BIN/bd" ] && [ -x "$BIN/dolt" ] || { echo "fixture: the pinned bd and dolt are not in $BIN (set GOAL_PINNED_BIN)"; exit 1; }
 T=$(mktemp -d)
-W=$T/w H=$W/home F=$W/forge STORE=$W/store/.beads
-mkdir -p "$H/state" "$H/config" "$H/data" "$F" "$W/store" "$W/probes"
-for s in nats dapr; do printf '#!/bin/sh\necho up\n' > "$W/probes/$s"; chmod +x "$W/probes/$s"; done
-printf '%s\n' "$STORE" > "$H/config/goal-beads-dir"
-export JG_BEADS_BD=$BIN/bd JG_BEADS_DOLT=$BIN/dolt
-BEADS_DIR=$STORE "$REPO/bin/jg-beads.sh" init --prefix goal >/dev/null 2>&1 || { echo "fixture: the Goal store did not start"; exit 1; }
+W=$T/w H=$W/home F=$W/forge
+mkdir -p "$H/state" "$H/config" "$H/data" "$F" "$W/probes"
+JG_HOME=$H python3 -I "$REPO/core/item-store/adapters/tickets.py" import --home main /dev/null >/dev/null || { echo "fixture: the tickets tables did not start"; exit 1; }
 
 cat > "$W/proof-a.sh" <<'SH'
 #!/usr/bin/env bash
@@ -37,22 +32,22 @@ flog() { printf '+%4ss %s\n' "$(( $(date +%s) - START ))" "$*" >> "$OUT/forge.lo
 
 # goal: run bin/jg-goal.sh against the disposable home.
 goal() { env JG_HOME="$H" "$REPO/bin/jg-goal.sh" "$@"; }
-bd() { BEADS_DIR=$STORE "$REPO/bin/jg-beads.sh" "$@"; }
+tickets() { JG_HOME=$H python3 -I "$REPO/core/item-store/adapters/bd_compat.py" "$@"; }
 # One check pass is one fresh process, as a restart between passes is.
 n=0
 pass() {
   n=$((n + 1))
   env -i HOME="$HOME" PATH="$PATH" LANG=C.UTF-8 TMPDIR="$T" JG_HOME="$H" JG_GOAL_BIN="$REPO/bin/jg-goal.sh" \
-    JG_BEADS_BD="$JG_BEADS_BD" JG_BEADS_DOLT="$JG_BEADS_DOLT" JG_LIVE_SERVICES_PROBES="$W/probes" \
+    JG_LIVE_SERVICES_PROBES="$W/probes" \
     "$REPO/core/goal-loop/goal-loop.sh" check "$H" > "$T/pass.$n" 2>> "$T/err"
   if [ -s "$T/pass.$n" ]; then while IFS= read -r l; do log "pass $n: $l"; done < "$T/pass.$n"; else log "pass $n: nothing rung"; fi
 }
 rung() { grep -c "$1" "$T/pass.$n"; }                       # <text>: lines of the last pass that hold the text
 wake_for() { grep -q "$1 is ready for its $2 step" "$T/pass.$n"; }  # <goal> <step>
 messages() { cat "$T"/pass.* | grep -c "$1"; }               # <text>: lines in every pass so far
-row_of() { bd list --parent "$1" --all --json 2>/dev/null | jq -r --arg k "$2" '[.[] | select(.metadata.kind == $k and .status != "closed")] | first | .id // empty'; }
-take() { bd update "$(row_of "$1" "$2")" --status in_progress >/dev/null 2>&1; }  # <goal> <step>
-close_step() { bd close "$(row_of "$1" "$2")" --reason "scripted lead" >/dev/null 2>&1; log "the lead closed the $2 step of $1"; }
+row_of() { tickets list --parent "$1" --all --json 2>/dev/null | jq -r --arg k "$2" '[.[] | select(.metadata.kind == $k and .status != "closed")] | first | .id // empty'; }
+take() { tickets update "$(row_of "$1" "$2")" --status in_progress >/dev/null 2>&1; }  # <goal> <step>
+close_step() { JG_HOME=$H "$REPO/bin/jg-backlog.sh" 'done' "$(row_of "$1" "$2")" --note "scripted lead" >/dev/null 2>&1; log "the lead closed the $2 step of $1"; }
 wait_for() {  # <file> <seconds>
   local deadline=$(( $(date +%s) + $2 ))
   until [ -e "$1" ] || [ "$(date +%s)" -ge "$deadline" ]; do sleep 1; done
@@ -196,7 +191,7 @@ grep -q '^FAIL' "$OUT/checks.txt" && fails=1
 
 cat > "$OUT/steps.json" <<J
 {"target":{"version":"juggernaut $(git -C "$REPO" rev-parse HEAD)"},
- "start":"a disposable home with a real Goal-only store (pinned bd and dolt), the real Goal verbs and watcher check, and a fake forge that merges, tags and advances the home after real delays",
+ "start":"a disposable home with its Goals in its own tickets tables, the real Goal verbs and watcher check, and a fake forge that merges, tags and advances the home after real delays",
  "steps":["declare refuses a passing and a missing proof, and takes a failing one","the lead is woken once for ship and not again","the forge turns the PR green, merges it, tags v1 and advances the home","a stop row sends one message, raises no wake over several passes, and closing it resumes the Goal","the first proof fails and adds a fix step, the second passes","one finish message names v1, the place and the proof log, and a restart sends no second one","the same failure three times is a limit stop, and a changed finish line is a stop with no proof run"],
  "result":"a Goal went from ask to one finish message with no model between steps, and stopped with its reason where it had to"}
 J

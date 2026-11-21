@@ -1,0 +1,26 @@
+{
+ "argv": [
+  "create",
+  "--title=Slice C",
+  "--json",
+  "-p",
+  "2",
+  "--deps",
+  "jg-plan.1",
+  "--metadata",
+  "{\"release\": \"later\"}",
+  "--description=Slice C\nPlan: jg-plan, slice C (owner main).\nFiles: bin/C.sh",
+  "-l",
+  "project:juggernaut",
+  "-l",
+  "feature",
+  "--parent",
+  "jg-plan",
+  "--no-inherit-labels"
+ ],
+ "stdin": "",
+ "stdout": "{\n  \"created_at\": \"2026-11-19T14:51:42.945079631Z\",\n  \"created_by\": \"main\",\n  \"description\": \"Slice C\\nPlan: jg-plan, slice C (owner main).\\nFiles: bin/C.sh\",\n  \"id\": \"jg-plan.2\",\n  \"issue_type\": \"task\",\n  \"labels\": [\n    \"feature\",\n    \"project:juggernaut\"\n  ],\n  \"metadata\": {\n    \"release\": \"later\"\n  },\n  \"priority\": 2,\n  \"schema_version\": 1,\n  \"status\": \"open\",\n  \"title\": \"Slice C\",\n  \"updated_at\": \"2026-11-19T14:51:42.945079631Z\"\n}\n",
+ "exit": 0,
+ "form": "create --deps --description --json --metadata --no-inherit-labels --parent --title -l -p",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-plan\",\"title\":\"The plan\",\"description\":\"Fixture ticket jg-plan\",\"status\":\"open\",\"priority\":1,\"issue_type\":\"epic\",\"created_at\":\"2026-11-19T14:51:19Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T14:51:40Z\",\"metadata\":{\"kind\":\"ship\",\"release\":\"later\"},\"labels\":[\"feature\",\"project:demo\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-plan.1\",\"title\":\"Slice A\",\"description\":\"Slice A\\nPlan: jg-plan, slice A (owner main).\\nFiles: bin/A.sh\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T14:51:39Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T14:51:41Z\",\"metadata\":{\"risk\":\"Low\",\"size\":\"S\",\"files\":\"[\\\"bin/A.sh\\\"]\",\"machine\":\"\",\"release\":\"later\",\"new_files\":\"[]\",\"plan_slice\":\"A\"},\"labels\":[\"feature\",\"project:juggernaut\"],\"dependencies\":[{\"issue_id\":\"jg-plan.1\",\"depends_on_id\":\"jg-plan\",\"type\":\"parent-child\",\"created_at\":\"2026-11-19T14:51:39Z\",\"created_by\":\"main\",\"metadata\":\"{}\"}],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

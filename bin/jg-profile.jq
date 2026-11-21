@@ -33,6 +33,7 @@ def profile_bad($p):
   or ($p | has("model") and ((.model | type) != "string" or (.model | length) == 0))
   or ($p | has("effort") and ((.effort | type) != "string" or (.effort | length) == 0))
   or ($p | has("provider") and (provider_id(.provider) | not))
+  or ($p | has("billing") and (["plan", "flat-plan", "credits", "overage"] | index($p.billing) | not))
   or ($p | has("floor") and floor_bad(.floor; false));
 def duplicate_profiles($items):
   ($items | map([.harness, (.model // null), (.effort // null)] | @json)) as $keys

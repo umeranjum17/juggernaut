@@ -41,11 +41,11 @@ MISS_FILE=$STATE/.sentinel-watch-miss
 . "$BIN/jg-supervision-lib.sh"
 mkdir -p "$STATE"
 
-alert() {  # <raise|resolve> <subject> [note]
+alert() {  # <raise|resolve> <subject> [note] [proof]: a resolve carries the observation that ended the cause
   if [ "$1" = raise ]; then
     JG_STATE_OVERRIDE="$STATE" "$BIN/jg-alert.sh" raise supervision-down "$2" --home "$JG_HOME" --note "$3" >/dev/null 2>&1 || true
   else
-    JG_STATE_OVERRIDE="$STATE" "$BIN/jg-alert.sh" resolve "supervision-down--$2" >/dev/null 2>&1 || true
+    JG_STATE_OVERRIDE="$STATE" "$BIN/jg-alert.sh" resolve "supervision-down--$2" --proof "${4:-source:condition-ended}" >/dev/null 2>&1 || true
   fi
 }
 
@@ -115,7 +115,7 @@ pass() {
   else
     [ "$needed" = no ] || watcher=fresh
     rm -f "$MISS_FILE"
-    alert resolve watcher-dead
+    alert resolve watcher-dead '' source:watcher-alive
   fi
 
   # With no live session nobody reads the queue or the alerts: an old one is an escalation with no reader.
@@ -123,7 +123,7 @@ pass() {
     alert raise escalation-stuck "No session holds the lock: $nwake wake(s) wait, the oldest for ${wake_age}s; $nalert alert(s) are open, the oldest for ${alert_age}s. Start the primary session with bin/jg-session-start.sh."
     action="$action+escalation-stuck"
   else
-    alert resolve escalation-stuck
+    alert resolve escalation-stuck '' source:ring-delivered
   fi
 
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$now" "$beat_age" "$needed" "$watcher" "$session" "$nwake" "$wake_age" "$nalert" "$alert_age" "$action" >>"$HEALTH"

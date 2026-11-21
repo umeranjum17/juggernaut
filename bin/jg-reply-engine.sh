@@ -20,9 +20,8 @@
 #            <key>\t<digest>\t<json>. It is append-only, and the fold keeps the
 #            last event per key, so a changed fact supersedes an earlier one and
 #            a repeat with the same digest is a no-op. The format is transport
-#            neutral on purpose: bin/jg-reply-bus.sh mirrors the same lines onto
-#            JetStream when a bus answers, so a bus-backed transport can feed
-#            this engine later without changing the model or this file.
+#            neutral on purpose, so another transport can feed this engine
+#            without changing the model or this file.
 #   events   waiter  the instance exists: task, grace, delivery state
 #                     (sent | attempted | confirmed | unknown) and its epochs
 #            timer   one stage's timeout: stage, anchor (or none), and whether

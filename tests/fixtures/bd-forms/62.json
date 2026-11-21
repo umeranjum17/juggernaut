@@ -1,0 +1,12 @@
+{
+ "argv": [
+  "export",
+  "-o",
+  "export-3517294.jsonl"
+ ],
+ "stdin": "",
+ "stdout": "",
+ "exit": 0,
+ "form": "export -o",
+ "store": null
+}

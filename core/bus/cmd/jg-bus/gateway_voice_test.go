@@ -35,16 +35,13 @@ func TestGatewayVoice(t *testing.T) {
 	want := "The merge check passed. The local copy is clean. See https://github.com/example/repo/pull/602 key=worktree."
 	stubRewrite(t, want, 0)
 	l := newChatLab(t, true)
-	ad, owner, err := l.a.chatTarget()
+	ad, _, err := l.a.chatTarget()
 	if ad == nil || err != nil {
 		t.Fatalf("chat target %v, %v", ad, err)
 	}
 	ad.sleep = func(time.Duration) {}
-	p := l.a.gatewayPart(ad, owner)
 	text := "The merge guard passed. The worktree is clean. See https://github.com/example/repo/pull/602 key=worktree."
-	if err := p.handle([]byte(l.a.eventJSON(1000, "outcome", "v1", text, ""))); err != nil {
-		t.Fatal(err)
-	}
+	l.a.emit("outcome", "v1", text, "", nil)
 	if len(l.sends) != 1 || l.sends[0]["text"] != want {
 		t.Fatalf("sends %v: want one message reading %q", l.sends, want)
 	}

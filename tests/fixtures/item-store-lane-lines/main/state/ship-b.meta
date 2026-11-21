@@ -1,0 +1,4 @@
+kind=ship
+project=@D@/projects/beta
+ticket=TB-1
+mode=local-trunk

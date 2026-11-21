@@ -12,6 +12,15 @@
 #   content-addressed and safe for builds running at once. jg_test_host_warm_go_cache compiles every core module into
 #   it once, so shards that start together link from it instead of each compiling the same packages at the same time.
 #
+# Toolchain state.
+#   Tool shims on PATH (python3 under mise) keep their trust records, their installs and the versions they resolved
+#   in the caller's own mise state, data and cache directories. A test that moves HOME to a throwaway one makes the
+#   shim see none of it: it refuses a config file it does not trust, or fetches every "latest" version from the
+#   network and prints its warnings into the script's output, so a script that reads the backlog through python3
+#   failed in the gate and passed on a developer's shell. jg_test_host_pin_mise_dirs resolves the three directories
+#   once, before any script moves HOME, and exports MISE_STATE_DIR, MISE_DATA_DIR and MISE_CACHE_DIR. A caller that
+#   set one keeps it, and a host with no such directory is left as it is.
+#
 # Run slots.
 #   jg_test_host_admit <max> lets at most <max> runs execute tests on this machine at once; the rest wait, printing one
 #   line that names the runners holding the slots. A slot is a kernel lock on JG_TEST_HOST_SLOTS/slot-<k> (default
@@ -25,6 +34,14 @@
 #   tries that slot first, so the landing gate starts at once while every general slot is held by lane proofs.
 #   The default limit is one run per 16 cpus held between 2 and 3 (machine_runs_max in defaults/test-speed-limits
 #   overrides it), so a burst of test suites never takes more than 3 runs of the host at once.
+#   jg_test_host_admit <max> <burst> adds burst slots (machine_runs_burst in defaults/test-speed-limits; 0 is off): when
+#   every general slot is held, a lane run (never a trunk run) may take slot-<max+2> to slot-<max+1+burst>, the slots
+#   after the reserved trunk slot, but only while this machine's cpu pressure is low: /proc/pressure/cpu some avg10 under
+#   10, or, where that file is absent (macOS), load1 under 0.8 x cpus. The load average is not used where the pressure
+#   file exists: test runs and agents hold it near half the cpus while agents still feel no stall. The keeper reads the
+#   gauge at each try, a burst slot already granted is kept until its run ends, and the grant is recorded in load.tsv
+#   as the event admit-burst. JG_TEST_HOST_PRESSURE_FILE and JG_TEST_HOST_LOADAVG_FILE name other files for the two
+#   gauges (tests/jg-test-host-burst.test.sh).
 #   A run that holds a slot lowers its own CPU priority to nice JG_TEST_NICE (default 10; 0 leaves it alone; never
 #   raises priority), so its scripts, shards and their children yield the cpus to agents. Each real slot grant and
 #   release appends one line to JG_TEST_HOST_SLOTS/load.tsv: epoch, event, slot, runner pid, load1, cpu pressure
@@ -67,6 +84,19 @@ jg_test_host_pin_go_cache() {
   esac
 }
 
+jg_test_host_pin_mise_dirs() {
+  local spec name xdg sub base dir
+  for spec in STATE:XDG_STATE_HOME:.local/state DATA:XDG_DATA_HOME:.local/share CACHE:XDG_CACHE_HOME:.cache; do
+    IFS=: read -r name xdg sub <<<"$spec"
+    name=MISE_${name}_DIR
+    [ -z "${!name:-}" ] || continue
+    base=${!xdg:-${HOME:-}/$sub}
+    dir=$base/mise
+    case $dir in /*) [ -d "$dir" ] && export "$name=$dir" ;; esac
+  done
+  return 0
+}
+
 jg_test_host_warm_go_cache() {  # <repository root>
   local mod dir out
   [ -n "${GOCACHE:-}" ] && command -v go >/dev/null 2>&1 || return 0
@@ -78,12 +108,12 @@ jg_test_host_warm_go_cache() {  # <repository root>
   done
 }
 
-# The keeper: takes the first free slot, prints "slot <name>" and holds the lock while its runner lives; prints
-# "nested <name>" when an ancestor of the runner holds a slot; otherwise waits, saying so once.
+# The keeper: takes the first free slot, prints "slot <name>" (a burst slot: "burst <name>") and holds the lock while its
+# runner lives; prints "nested <name>" when an ancestor of the runner holds a slot; otherwise waits, saying so once.
 # shellcheck disable=SC2016 # Python source, not shell
 _JG_TEST_HOST_KEEPER_PY='
 import fcntl, os, signal, subprocess, sys, time
-d, n, owner, trunk = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4] == "trunk"
+d, n, owner, trunk, burst = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4] == "trunk", int(sys.argv[5])
 mark = os.path.join(d, "trunk-waiting-%d" % owner)
 def unmark():
     try:
@@ -115,13 +145,40 @@ def trunk_waiting():
         if f.startswith("trunk-waiting-") and f[14:].isdigit() and int(f[14:]) != owner and alive(int(f[14:])):
             return True
     return False
+def gauge(path):
+    try:
+        with open(path) as f:
+            return f.read()
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return ""
+def burst_open():
+    text = gauge(os.environ.get("JG_TEST_HOST_PRESSURE_FILE", "/proc/pressure/cpu"))
+    if text is not None:
+        for line in text.splitlines():
+            if line.startswith("some "):
+                for field in line.split():
+                    if field.startswith("avg10="):
+                        try:
+                            return float(field[6:]) < 10
+                        except ValueError:
+                            return False
+        return False
+    text = gauge(os.environ.get("JG_TEST_HOST_LOADAVG_FILE", "/proc/loadavg"))
+    try:
+        return float(text.split()[0]) < 0.8 * (os.cpu_count() or 1)
+    except (AttributeError, IndexError, ValueError):
+        return False
 told = False
 if trunk:
     open(mark, "w").close()
 while alive(owner):
     holders = []
-    for k in ([n + 1] if trunk else []) + list(range(1, n + 1)):
+    for k in ([n + 1] if trunk else []) + list(range(1, n + 1)) + ([] if trunk else list(range(n + 2, n + 2 + burst))):
         if not trunk and trunk_waiting():
+            break
+        if k > n + 1 and not trunk and not burst_open():
             break
         name = "slot-%d" % k
         fd = os.open(os.path.join(d, name), os.O_RDWR | os.O_CREAT, 0o600)
@@ -134,7 +191,7 @@ while alive(owner):
         os.ftruncate(fd, 0)
         os.write(fd, b"%d\n" % owner)
         unmark()
-        print("slot " + name, flush=True)
+        print(("burst " if k > n + 1 else "slot ") + name, flush=True)
         null = os.open(os.devnull, os.O_WRONLY)
         os.dup2(null, 1)
         os.dup2(null, 2)
@@ -157,8 +214,8 @@ unmark()
 # Appends one load record line for this run's slot (see "Run slots"); never fails the run.
 jg_test_host_record_load() {  # <dir> <event> <slot name>
   local load psi
-  load=$(cut -d' ' -f1 /proc/loadavg 2>/dev/null) || load=
-  psi=$(sed -n 's/^some .*avg10=\([0-9.]*\).*/\1/p' /proc/pressure/cpu 2>/dev/null) || psi=
+  load=$(cut -d' ' -f1 "${JG_TEST_HOST_LOADAVG_FILE:-/proc/loadavg}" 2>/dev/null) || load=
+  psi=$(sed -n 's/^some .*avg10=\([0-9.]*\).*/\1/p' "${JG_TEST_HOST_PRESSURE_FILE:-/proc/pressure/cpu}" 2>/dev/null) || psi=
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$2" "$3" "$$" "${load:-unknown}" "${psi:-unknown}" \
     "$(ps -o ni= -p $$ 2>/dev/null | tr -d ' ')" "$JG_TEST_HOST_WAITED_MS" >>"$1/load.tsv" 2>/dev/null || :
 }
@@ -174,8 +231,8 @@ jg_test_host_lower_priority() {
   renice -n "$want" -p $$ >/dev/null 2>&1 || log "warning: could not lower this run's cpu priority to nice $want, so its tests run at nice $cur"
 }
 
-jg_test_host_admit() {  # <max>
-  local max=$1 dir fifo line begin
+jg_test_host_admit() {  # <max> [<burst>]
+  local max=$1 burst=${2:-0} dir fifo line begin
   JG_TEST_HOST_WAITED_MS=0
   [ -z "${JG_TEST_RUN_SLOT:-}" ] || return 0
   command -v python3 >/dev/null 2>&1 || { log "warning: no python3, so this run takes no test-run slot and is not queued"; return 0; }
@@ -185,17 +242,17 @@ jg_test_host_admit() {  # <max>
     return 0
   fi
   begin=$(now_ms)
-  python3 -c "$_JG_TEST_HOST_KEEPER_PY" "$dir" "$max" "$$" "${JG_TRUNK_GATE_OUTPUT:+trunk}" >"$fifo" &
+  python3 -c "$_JG_TEST_HOST_KEEPER_PY" "$dir" "$max" "$$" "${JG_TRUNK_GATE_OUTPUT:+trunk}" "$burst" >"$fifo" &
   JG_TEST_HOST_KEEPER=$!
   IFS= read -r line <"$fifo" || line=
   rm -f -- "$fifo"
   JG_TEST_HOST_WAITED_MS=$(( $(now_ms) - begin ))
   case $line in
-    'slot '*)
-      export JG_TEST_RUN_SLOT="$dir/${line#slot }"
+    'slot '*|'burst '*)
+      export JG_TEST_RUN_SLOT="$dir/${line#* }"
       jg_test_host_lower_priority
       JG_TEST_HOST_RECORD_DIR=$dir
-      jg_test_host_record_load "$dir" admit "${line#slot }"
+      case $line in burst*) jg_test_host_record_load "$dir" admit-burst "${line#* }" ;; *) jg_test_host_record_load "$dir" admit "${line#* }" ;; esac
       ;;
     'nested '*) export JG_TEST_RUN_SLOT="$dir/${line#nested }"; JG_TEST_HOST_KEEPER= ;;
     *) JG_TEST_HOST_KEEPER=; log "warning: the test-run slot keeper stopped without a slot, so this run is not queued" ;;

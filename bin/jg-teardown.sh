@@ -655,6 +655,11 @@ if [ "$TEARDOWN_BACKLOG_APPLIES" = 1 ]; then
   fi
   [ "$TEARDOWN_LEGACY_PENDING" = 1 ] || TEARDOWN_META_SPAWN_GEN=$JG_BACKLOG_META_SPAWN_GEN
 fi
+# A squad_lead home whose durable parent binding cannot be resolved refuses cleanup (the public follow-up gate below owns when).
+refuse_unbound_parent() {  # <squad_lead id>
+  echo "REFUSED: cannot resolve the primary home for marked squad_lead $1; refusing cleanup without its durable parent binding." >&2
+  exit 1
+}
 # Cleanup never closes a captain call (see the header). Asked here, before any
 # destructive step, so "cannot tell" can refuse while everything is intact.
 TEARDOWN_BACKLOG_TRANSITION=close
@@ -667,6 +672,11 @@ if [ "$TEARDOWN_BACKLOG_APPLIES" = 1 ]; then
     0) TEARDOWN_BACKLOG_TRANSITION=retain ;;
     1) ;;
     *)
+      # A lead home's tickets live in its parent's tables, so a parent record that does not parse is the cause to report.
+      if [ -f "$JG_HOME/$SUB_HOME_MARKER" ] && { [ -e "$JG_HOME/$SUB_HOME_PARENT_MARKER" ] || [ -L "$JG_HOME/$SUB_HOME_PARENT_MARKER" ]; } \
+        && ! jg_squad_lead_parent_record_parse "$JG_HOME/$SUB_HOME_PARENT_MARKER"; then
+        refuse_unbound_parent "$(sed -n '1p' "$JG_HOME/$SUB_HOME_MARKER")"
+      fi
       echo "error: task $ID cannot be torn down because whether its backlog item is still held for the captain could not be read; fix that read and retry rather than risk closing a captain call with no recorded answer" >&2
       [ -z "$TEARDOWN_CAPTAIN_OPEN_OUT" ] || printf '%s\n' "$TEARDOWN_CAPTAIN_OPEN_OUT" >&2
       exit 1
@@ -2166,7 +2176,7 @@ preflight_juggernaut_home_process_events() {
 }
 
 preflight_juggernaut_home_process_event_tree() {
-  local home=$1 label=$2 sub_state child_meta child_kind child_home child_wt child_id
+  local home=$1 label=$2 sub_state child_meta child_kind child_home child_wt child_id joiners
   sub_state="$home/state"
   if [ -d "$sub_state" ]; then
     for child_meta in "$sub_state"/*.meta; do
@@ -2220,6 +2230,14 @@ collect_descendant_task_locks() {
   if ! jg_lock_set_role "$task_set_lock" forced-teardown; then
     jg_lock_release "$task_set_lock" || true
     echo "REFUSED: squad_lead home $home could not record its task-set lock holder; forced teardown changed nothing" >&2
+    return 1
+  fi
+  # Fresh spawns do not hold the lock while they publish; they join the set (jg_task_set_join) and leave once their record
+  # is published. A live joiner is a task about to appear, so this teardown refuses rather than race it.
+  joiners=$(jg_task_set_live_joiners "$task_set_lock" | paste -sd, -)
+  if [ -n "$joiners" ]; then
+    jg_lock_release "$task_set_lock" || true
+    echo "REFUSED: squad_lead home $home is publishing a task right now ($joiners); forced teardown changed nothing" >&2
     return 1
   fi
   DESCENDANT_LOCK_PATHS+=("$task_set_lock")
@@ -2857,8 +2875,7 @@ fi
 # work. Both gates live in bin/jg-public-followup-lib.sh, so a home that never
 # opted into the myjuggernaut relay runs one [ -f ] test and nothing else here.
 if [ "$FORCE" != "--force" ] && [ "$PARK" != 1 ] && [ "$PUBLIC_FOLLOWUP_PARENT_UNRESOLVED" = 1 ]; then
-  echo "REFUSED: cannot resolve the primary home for marked squad_lead $SECOND_MATE_ID; refusing cleanup without its durable parent binding." >&2
-  exit 1
+  refuse_unbound_parent "$SECOND_MATE_ID"
 fi
 if [ "$FORCE" != "--force" ] && [ "$PARK" != 1 ] \
   && [ -n "$PUBLIC_FOLLOWUP_STATE" ] \
@@ -3386,6 +3403,11 @@ if [ -d "$STATE" ] && [ "$KIND" != squad_lead ]; then
     "$SCRIPT_DIR/jg-inactive-reconcile.sh" retire "$ID" || true
 fi
 jg_task_files_retire "$STATE" "$ID"
+# The lane is gone, so every alert that names its ticket is moot: resolving them here is the one close the producers cannot make
+# (the steering inbox an `undelivered` alert is read from went with the lane). Best effort; a refusal never blocks cleanup.
+if [ -d "$STATE" ]; then
+  JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" resolve-ticket "$ID" --proof source:lane-cleaned-up >/dev/null || true
+fi
 if [ "$KIND" != scout ] && [ "$KIND" != squad_lead ] && ! jg_delivery_style_is "$MODE" local; then
   "$JG_ROOT/bin/jg-fleet-sync.sh" "$PROJ" || true
 fi

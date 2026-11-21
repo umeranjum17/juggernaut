@@ -1,0 +1,13 @@
+{
+ "argv": [
+  "update",
+  "rd-4cc",
+  "-s",
+  "in_progress"
+ ],
+ "stdin": "",
+ "stdout": "\u2713 Updated issue: rd-4cc \u2014 T3\n",
+ "exit": 0,
+ "form": "update -s",
+ "store": "{\"_type\":\"issue\",\"id\":\"rd-2xo\",\"title\":\"edge-b\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:41:31Z\",\"updated_at\":\"2026-11-19T13:41:31Z\",\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"rd-8gq\",\"title\":\"edge-a\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:41:30Z\",\"updated_at\":\"2026-11-19T13:41:30Z\",\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"rd-4cc\",\"title\":\"T3\",\"description\":\"D2\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:41:29Z\",\"updated_at\":\"2026-11-19T13:41:40Z\",\"metadata\":{\"k\":\"v\"},\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

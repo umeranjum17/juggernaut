@@ -43,9 +43,7 @@ registry_scope_for_brief() {
   fi
 }
 
-# The first move of a home, (none) -> provisioned, goes to the one move log (bin/jg-machine-guard.sh edge, which never
-# refuses a writer): squad_lead_report_provisioned <id>. The shadow cannot place a home that has no registry line yet,
-# so the writer names the first edge itself, before it writes the line. Later moves go through bin/jg-machine-shadow.sh.
+# The first move of a home, (none) -> provisioned: squad_lead_report_provisioned <id> (kept: bin/jg-home-seed.sh calls it; slice 8b6).
 squad_lead_report_provisioned() {
   local guard=${BASH_SOURCE[0]%/*}/jg-machine-guard.sh
   [ -x "$guard" ] || return 0

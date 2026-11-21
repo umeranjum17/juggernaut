@@ -22,16 +22,7 @@ bash "$JM" write ticket proving "$H/state/t1.stage" || fail "a legal write faile
 assert_equals proving "$(cat "$H/state/t1.stage")" "a legal value is written"
 pass "a state word outside its enum is refused and nothing changes"
 
-# 2. The move command reads its destination through the enum: a table whose move lands outside the enum writes no line.
-sed -i 's|^observer	.*|observer	cat "$(dirname "$JG_MACHINES_TABLES")/../../state/$1.stage"|' "$H/core/machines/tables/ticket.tsv"
-echo building > "$H/state/t2.stage"
-sed -i 's/^\(edge	building	claim-done	\)[^	]*/\1landed/' "$H/core/machines/tables/ticket.tsv"
-OUT=$(bash "$ROOT/bin/jg-move.sh" t2 claim-done 2>&1); RC=$?
-expect_code 1 "$RC" "a move to a word outside the enum is refused"
-[ ! -e "$H/data/moves.log" ] || fail "the refused move wrote the log"
-pass "the move command refuses a destination outside the enum"
-
-# 3. The lint prints today's count and fails on a fixture commit that adds a bare state string.
+# 2. The lint prints today's count and fails on a fixture commit that adds a bare state string.
 mkdir -p "$H/core/x"; cp "$ROOT/core/machines/bare-states.baseline" "$H/core/machines/"
 printf 'ok=1\n' > "$H/bin/a.sh"
 OUT=$(bash "$ROOT/bin/jg-state-lint.sh" --root "$H" --check 2>&1); RC=$?

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# The fleet backlog tidy on a real Beads store: `sync.py --tidy` plans the captain's clean-up rules over every open row and
+# The fleet backlog tidy on the home's tickets tables: `sync.py --tidy` plans the captain's clean-up rules over every open row and
 # changes nothing; `--tidy --apply` closes with a named reason (its PR merged, its change landed on the trunk, an earlier row
 # with the same title), defers a row idle for 14 days that nothing gives an owner or value (held with the reason, never
-# closed), and never touches a captain ask. A duplicate closes through `bd duplicate` and the idle rows come from `bd stale`;
+# closed), and never touches a captain ask. A duplicate closes with a `duplicates` link and the idle rows come from the tables' last-touched times;
 # an old owner question (a gate row) is never named. A second run finds nothing left to do.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -10,15 +10,20 @@ work=$(mktemp -d "${JG_TICKETS_TEST_ROOT:-${TMPDIR:-/tmp}}/tickets-tidy.XXXXXX")
 trap 'rm -rf -- "$work"' EXIT
 fork=${JG_TEST_FORK:-$(cd "$root/.." && pwd -P)}
 export HOME=$work/user XDG_DATA_HOME=$work/xdg JG_HOME=$work/main
+export SIGN_OFF_TICKETS_ADAPTER=$work/main/bin/jg-ticket-adapter.py   # as the installed check names it (wiring.sh)
 unset JG_STATE_OVERRIDE JG_DATA_OVERRIDE JG_CONFIG_OVERRIDE JG_ROOT_OVERRIDE
 mkdir -p "$HOME" "$JG_HOME"/{data/jg-trunk-landing,config,state/tickets-sync}
 ln -sn "$fork/bin" "$JG_HOME/bin"
 ln -sn "$fork/core" "$JG_HOME/core"
 printf '{"schema":2,"items":[]}\n' > "$work/board.json"
 printf '%s\n' "$work/board.json" > "$JG_HOME/config/fleet-board"
-# shellcheck source=core/lib/beads-test-env.sh disable=SC1091
-. "$root/lib/beads-test-env.sh"
-core_beads_home "$fork" "$JG_HOME"
+# A fixture home on the tickets tables (fleet.db).
+core_tables_home() {  # <checkout> <home>
+  mkdir -p "$2/config" "$2/data" && : > "$2/config/backlog-intake-loose"
+  case ":$PATH:" in *":$1/bin:"*) ;; *) PATH=$1/bin:$PATH; export PATH ;; esac
+  JG_HOME=$2 python3 -I "$1/core/item-store/adapters/tickets.py" import --home main /dev/null >/dev/null
+}
+core_tables_home "$fork" "$JG_HOME"
 merged=https://github.com/example/alpha/pull/7
 (cd "$JG_HOME"
  jg-backlog.sh add jg-dup-a 'Umer same title row' --repo alpha --priority 1 >/dev/null
@@ -35,13 +40,14 @@ printf 'done [at=1700000000]: ready in branch fix/jg-landed\n' > "$JG_HOME/state
 printf 'landed\n' > "$JG_HOME/data/jg-trunk-landing/jg-landed.0000000000000000000000000000000000000001.state"
 printf 'jg-landed\talpha\t38f1eed7e0000000000000000000000000000000\t1700000000\tfull\n' > "$JG_HOME/data/trunk-landings.tsv"
 
-# bd stale reads the store's own clock, so every row (and an owner question, a gate row) is made 20 days idle in the store itself.
-bdx() { BEADS_DIR=$(cat "$JG_HOME/config/beads-dir") "$JG_HOME/bin/jg-beads.sh" "$@"; }
+# Every row (and an owner question, a gate row) is made 20 days idle in the tables themselves.
+bdx() { python3 -I "$fork/core/item-store/adapters/bd_compat.py" "$@"; }
 gate=$(bdx gate create --blocks jg-dup-a --type human --title 'Umer asks which way' --json | jq -r '.id // .gate.id // .[0].id')
 [ -n "$gate" ] && [ "$gate" != null ] || { echo 'FAIL: no gate row was made'; exit 1; }
 late=$(date -u +%F)
-bdx dolt sql -q "update issues set updated_at = now() - interval 20 day" >/dev/null
-[ "$(bdx stale --days 14 --limit 0 --json | jq -r --arg g "$gate" '[.[].id] | index($g) != null')" = true ] || { echo 'FAIL: bd stale does not list the old gate row, so the fixture proves nothing'; exit 1; }
+python3 -c 'import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.execute("UPDATE ticket SET updated_at = ?", (sys.argv[2],)); c.commit()' \
+  "$JG_HOME/state/item-store/fleet.db" "$(date -u -d '20 days ago' +%FT%TZ)"
+[ "$(bdx show "$gate" --json | jq -r '.[0].updated_at[:10]')" = "$(date -u -d '20 days ago' +%F)" ] || { echo 'FAIL: the gate row is not 20 days idle, so the fixture proves nothing'; exit 1; }
 tidy() { JG_TIDY_TODAY=$late python3 "$root/tickets-sync/sync.py" --tidy "$@"; }
 open_ids() { (cd "$JG_HOME" && jg-backlog.sh list --limit 100 | grep -o 'jg-[a-z-]*' | sort -u | tr '\n' ' '); }
 before=$(open_ids)

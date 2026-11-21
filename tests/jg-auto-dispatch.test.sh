@@ -15,53 +15,25 @@ TMP_ROOT=$(jg_test_tmproot jg-auto-dispatch)
 TMP_ROOT=$(cd "$TMP_ROOT" && pwd)
 CHECK="$ROOT/core/auto-dispatch/dispatch.sh"
 
-# A home with a stand-in store (bd and dolt stand-ins named by pins), one registered project, and the six ready rows.
+# A home whose tickets tables hold the six ready rows, and one registered project.
 make_home() {  # <dir>
-  local d=$1 os arch
-  mkdir -p "$d/bin" "$d/state" "$d/config" "$d/data" "$d/store/.beads/embeddeddolt/jg"
-  printf '{"dolt_mode": "embedded", "dolt_database": "jg"}\n' > "$d/store/.beads/metadata.json"
-  printf 'no-git-ops: true\n' > "$d/store/.beads/config.yaml"
-  cat > "$d/bin/bd" <<'SH'
-#!/usr/bin/env bash
-case "$1" in
-  ready) cat "$ROWS_READY" ;;
-  list) cat "$ROWS_ALL" ;;
-  show) echo '[{"id":"x","status":"open"}]' ;;
-  blocked) echo '[]' ;;
-esac
-SH
-  # shellcheck disable=SC2016  # the stand-in expands $ROWS_TABLE when it runs, not here
-  printf '#!/usr/bin/env bash\ncat "$ROWS_TABLE"\n' > "$d/bin/dolt"   # the reader's one indexed query
-  chmod +x "$d"/bin/*
-  os=$(uname -s | tr '[:upper:]' '[:lower:]')
-  arch=$(uname -m); case "$arch" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac
-  sha() { { sha256sum "$1" 2>/dev/null || shasum -a 256 "$1"; } | cut -d' ' -f1; }
-  printf 'bd 1.3.4\ndolt 2.6.0\nbd-sha256-%s-%s %s\ndolt-sha256-%s-%s %s\n' \
-    "$os" "$arch" "$(sha "$d/bin/bd")" "$os" "$arch" "$(sha "$d/bin/dolt")" > "$d/pins"
-  printf '%s\n' "$d/store/.beads" > "$d/config/beads-dir"
+  local d=$1
+  mkdir -p "$d/state" "$d/config" "$d/data"
   printf -- '- proj [local-trunk] - the one project (added 2026-11-01)\n' > "$d/data/projects.md"
   python3 - "$d" <<'PY'
 import json, sys
 d = sys.argv[1]
-rows = []
-for i in ["a1", "a2", "b", "c", "d", "e"]:
-    row = {"id": i, "title": "[feature] row " + i, "status": "open", "issue_type": "task",
-           "created_at": "2026-11-01T00:00:00Z", "labels": ["project:proj"], "metadata": {},
-           "dependency_count": 0, "dependent_count": 0}
-    if i == "d":
-        row["description"] = "auto-dispatch: yes"
-    if i == "e":
-        row["metadata"] = {"hold_reason": "waiting for the owner"}
-    rows.append(row)
-json.dump(rows, open(d + "/all.json", "w"))
-json.dump([r for r in rows if not r["metadata"].get("hold_reason")], open(d + "/ready.json", "w"))  # `bd ready` leaves a held row out
-with open(d + "/table.txt", "w") as t:  # the store's answer to the reader's query: startable rows only, held e left out
-    t.write("+----+--------------+\n| id | label        |\n+----+--------------+\n")
-    for r in rows:
-        if not r["metadata"].get("hold_reason"):
-            t.write("| %s | %s |\n" % (r["id"], r["labels"][0]))
-    t.write("+----+--------------+\n")
+with open(d + "/export.jsonl", "w") as out:
+    for i in ["a1", "a2", "b", "c", "d", "e"]:
+        row = {"id": i, "title": "[feature] row " + i, "status": "open", "priority": 1, "issue_type": "task",
+               "created_at": "2026-11-01T00:00:00Z", "labels": ["project:proj"], "metadata": {}}
+        if i == "d":
+            row["description"] = "auto-dispatch: yes"
+        if i == "e":
+            row["metadata"] = {"hold_reason": "waiting for the owner"}
+        out.write(json.dumps(row) + "\n")
 PY
+  JG_HOME="$d" python3 "$ROOT/core/item-store/adapters/tickets.py" import --home main "$d/export.jsonl" >/dev/null || fail "the rows did not import"
   # The captain-hold stand-in: b has an open decision linked to it, the others have none.
   cat > "$d/hold" <<'SH'
 #!/usr/bin/env bash
@@ -76,8 +48,7 @@ SH
 home_env() {  # <dir> command...
   local d=$1
   shift
-  env JG_HOME="$d" JG_PIN_FILE_OVERRIDE="$d/pins" JG_BEADS_BD="$d/bin/bd" JG_BEADS_DOLT="$d/bin/dolt" \
-    ROWS_READY="$d/ready.json" ROWS_ALL="$d/all.json" ROWS_TABLE="$d/table.txt" JG_AUTO_DISPATCH_HOLD="$d/hold" \
+  env JG_HOME="$d" JG_AUTO_DISPATCH_HOLD="$d/hold" \
     JG_AUTO_DISPATCH_BACKLOG="$ROOT/bin/jg-backlog.sh" "$@"
 }
 
@@ -232,7 +203,6 @@ assert_not_contains "$out" "a1" "a deferral is a wait: the lead is not told abou
 assert_contains "$(rows_of "$D6")" "a1	deferred	deferred: pool for the project is full; task a1 stays queued" "the row says deferred, with the spawn's own words"
 assert_equals "$(JG_HOME="$D6" bash "$ROOT/core/machines/observers/dispatch-start.sh" a1)" deferred "the machine's observer reads a1 as deferred"
 assert_equals "$(JG_HOME="$D6" bash "$ROOT/core/machines/observers/dispatch-start.sh" a2)" refused "the machine's observer reads a2 as refused"
-assert_equals "$(bash "$ROOT/bin/jg-machine.sh" check dispatch-start | cut -d: -f1)" "ok dispatch-start" "the dispatch-start table lints clean"
 pass "a deferral and a refusal are told apart at once, with the spawn's own words"
 
 # The deferral clears with no new approval: while the pool stays full each beat tries a1 again as the next attempt, and the first beat after
@@ -359,19 +329,8 @@ pass "a ticket starts only when a copy is free under the lane limit and the rese
 D5=$TMP_ROOT/home-order
 make_home "$D5"
 cp "$D2/spawn" "$D5/spawn"; printf 'on\n' > "$D5/config/auto-dispatch"; printf '1\n' > "$D5/config/lane-target"
-python3 - "$D5" <<'PY'
-import json, sys
-d = sys.argv[1]
-for name in ("all.json", "ready.json"):
-    rows = json.load(open(d + "/" + name))
-    rows.sort(key=lambda r: r["id"] != "a2")   # a2 first, the rest keep their order
-    json.dump(rows, open(d + "/" + name, "w"))
-t = open(d + "/table.txt").read().splitlines()
-a2 = [l for l in t if l.startswith("| a2 ")]
-t = [l for l in t if not l.startswith("| a2 ")]
-i = next(n for n, l in enumerate(t) if l.startswith("| a1 "))
-open(d + "/table.txt", "w").write("\n".join(t[:i] + a2 + t[i:]) + "\n")
-PY
+sed -i 's/"id": "a2", \(.*\)"priority": 1/"id": "a2", \1"priority": 0/' "$D5/export.jsonl"   # a2 is the higher priority
+JG_HOME="$D5" python3 "$ROOT/core/item-store/adapters/tickets.py" import --home main "$D5/export.jsonl" >/dev/null || fail "a2's priority did not import"
 for t in a1 a2; do
   approve "$D5" "$t" >/dev/null || fail "approve-dispatch $t was refused"
   mkdir -p "$D5/data/$t"

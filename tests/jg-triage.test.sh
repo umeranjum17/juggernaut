@@ -30,7 +30,7 @@ STUB
 case "${1:-}" in
   status)
     if [ -e "$JG_HOME/stack.down" ]; then echo "STACK_FAILED: router: not running (unit inactive)"; exit 1; fi
-    for p in bus wake-engine router dapr gateway; do echo "$p running pid 100"; done
+    for p in bus wake-engine router scheduler gateway; do echo "$p running pid 100"; done
     ;;
   up)
     echo up >> "$JG_HOME/calls.log"
@@ -61,11 +61,6 @@ case "${1:-}" in
     ;;
   *) exit 2 ;;
 esac
-STUB
-  cat > "$b/jg-stray-nats-reap.sh" <<'STUB'
-#!/usr/bin/env bash
-[ "$#" -eq 0 ] || { echo "stray stub: only the dry run may be called" >> "$JG_HOME/calls.log"; exit 2; }
-[ ! -e "$JG_HOME/stray.out" ] || cat "$JG_HOME/stray.out"
 STUB
   cat > "$b/jg-harness.sh" <<'STUB'
 #!/usr/bin/env bash
@@ -146,7 +141,6 @@ age_file "$H/data/backlog.md.lock"
 add_lead "$H" lead1 relaunchable
 add_lead "$H" lead2 alive
 printf 'MISSING: no-mistakes 1.44.0 below floor 1.46.0 (install: npm i -g no-mistakes)\nTANGLE: primary on feature/x (restore the primary with: git switch main)\n' > "$H/bootstrap.out"
-printf 'would stop 777 age=90m /tmp/x/nats-server\nskip 778 young\n' > "$H/stray.out"
 set_ready "$H" held true down
 triage "$H" --offline
 expect_code 1 "$RC" "findings exit 1"
@@ -160,8 +154,6 @@ assert_contains "$OUT" "run: npm i -g no-mistakes" "the install line is printed"
 assert_contains "$OUT" "HUMAN  checkout" "a tangled checkout is for a person"
 assert_contains "$OUT" "run: git switch main" "the restore step is printed"
 assert_contains "$OUT" "HUMAN  wake-consumer" "a live session without a wake consumer is for a person"
-assert_contains "$OUT" "INFO   stray-servers" "stray servers are reported"
-assert_contains "$OUT" "run: bin/jg-stray-nats-reap.sh --stop" "the reaper command is printed, not run"
 assert_contains "$OUT" "4 fixable, 3 need you, 0 unreadable. Re-run with --fix." "summary counts"
 [ -z "$(calls "$H")" ] || fail "check mode changed something: $(calls "$H")"
 [ -e "$H/stack.down" ] && [ -e "$H/data/backlog.md.lock" ] && [ -e "$H/tmp.full" ] || fail "check mode removed state"
@@ -203,7 +195,6 @@ assert_contains "$(calls "$H")" "reclaim" "the reclaim script ran"
 assert_contains "$(calls "$H")" "relaunch lead1" "the guarded relaunch ran for the dead lead"
 assert_contains "$(calls "$H")" "sweep" "the guarded sweep ran"
 case "$(calls "$H")" in *"relaunch lead2"*) fail "a live lead was relaunched" ;; esac
-case "$(calls "$H")" in *stray*) fail "the stray reaper was called with an argument" ;; esac
 assert_absent "$H/data/backlog.md.lock" "the stale lock is gone"
 triage "$H" --offline --fix --porcelain
 assert_not_contains "$OUT" "fix " "a second --fix has nothing to repair"

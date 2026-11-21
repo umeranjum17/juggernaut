@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Journey: critical-stall.sh check against a fixture home. The real bin/jg-critical-path.sh reads a stub probe
-# (nats pending, accounts pending, one PR); a gh stub answers the PR's commit time; the card poster
+# (queue pending, accounts pending, one PR); a gh stub answers the PR's commit time; the card poster
 # is a recorder; the real bin/jg-alert.sh raises the alert. a) a row pending 30 h with a 30 h old commit raises one stranded alert and one card; b) the next sweep
 # raises nothing; c) a new 1 h old commit raises nothing; d) a row with no PR raises one "no PR" alert;
 # e) a row turning live clears its first-seen time; f) stale-pr-alarm's record skips the card, not the alert;
@@ -15,7 +15,7 @@ export HOME=$d/home TMPDIR=$d XDG_DATA_HOME=$d/share
 FM=$d/fm
 mkdir -p "$HOME" "$FM/state" "$FM/data" "$FM/config" "$FM/bin"
 cp "$ROOT/bin/jg-critical-path.sh" "$FM/bin/"
-printf 'critical=nats,accounts\nproject=proj\n' > "$FM/config/migration-card"
+printf 'critical=queue,accounts\nproject=proj\n' > "$FM/config/migration-card"
 echo "$d/board.json" > "$FM/config/fleet-board"
 PR=https://github.com/o/r/pull/7
 export STUB_PROBE=$d/probe.state STUB_COMMIT=$d/commit STUB_LOG=$d/calls
@@ -39,16 +39,16 @@ export JG_MIGRATION_LIVE_BIN=$d/probe JG_STALL_GH=$d/gh-axi JG_STALL_ALERT=$SRC/
 NOW=$(date +%s); export JG_STALL_NOW=$NOW
 ago() { date -u -d "@$(( NOW - $1 * 3600 ))" +%Y-%m-%dT%H:%M:%SZ; }
 commit() { printf '%s\t%s\n' "$1" "$(ago "$2")" > "$STUB_COMMIT"; }
-pending_since() { printf 'nats\t%s\n' "$(( NOW - $1 * 3600 ))" > "$FM/data/critical-stall/seen.tsv"; }
+pending_since() { printf 'queue\t%s\n' "$(( NOW - $1 * 3600 ))" > "$FM/data/critical-stall/seen.tsv"; }
 sweep() { : > "$STUB_LOG"; : >> "$FM/state/.wake-queue"; WAKES=$(wc -l < "$FM/state/.wake-queue"); "$SRC/critical-stall.sh" check "$FM" > "$d/out" 2>&1; }
 # The note is now the central stranded alert: the real jg-alert.sh raises it and its wake reaches the queue.
-calls() { if [ "$1" = note ]; then tail -n +"$(( WAKES + 1 ))" "$FM/state/.wake-queue" | grep -c "alert stranded (P3) at rung 2 for lead: nats" || true; else grep -c "^$1 " "$STUB_LOG" || true; fi; }
+calls() { if [ "$1" = note ]; then tail -n +"$(( WAKES + 1 ))" "$FM/state/.wake-queue" | grep -c "alert stranded (P3) at rung 2 for lead: queue" || true; else grep -c "^$1 " "$STUB_LOG" || true; fi; }
 fails=0
 LOG=${DONE_DONE_EVIDENCE_ROOT:+$DONE_DONE_EVIDENCE_ROOT/critical-stall.log}  # the sealed run keeps this log
 say() { printf '%s\n' "$*" | tee -a "${LOG:-/dev/null}"; }
 check() { if [ "$2" = "$3" ]; then say "ok: $1"; else say "FAIL: $1 (want: $3, got: $2)"; fails=$((fails + 1)); fi; }
 
-printf 'nats pending %s\naccounts live -\n' "$PR" > "$STUB_PROBE"
+printf 'queue pending %s\naccounts live -\n' "$PR" > "$STUB_PROBE"
 mkdir -p "$FM/data/critical-stall"
 pending_since 30; commit sha1 30
 sweep
@@ -65,7 +65,7 @@ check "c: a new commit 1 h old raises nothing" "$(calls note)$(calls card)" 00
 commit sha3 40
 sweep
 check "c: a later stall on another commit alerts again" "$(calls note)$(calls card)" 11
-printf 'nats pending no open pull request\naccounts live -\n' > "$STUB_PROBE"
+printf 'queue pending no open pull request\naccounts live -\n' > "$STUB_PROBE"
 sweep
 check "d: no PR for 30 h raises one alert" "$(calls note)" 1
 sweep
@@ -73,12 +73,12 @@ check "d: and only one" "$(calls note)" 0
 pending_since 10; : > "$FM/data/critical-stall/alerts.jsonl"
 sweep
 check "d: a row pending under 24 h raises nothing" "$(calls note)$(calls card)" 00
-printf 'nats live -\naccounts live -\n' > "$STUB_PROBE"
+printf 'queue live -\naccounts live -\n' > "$STUB_PROBE"
 sweep
 check "e: a live row clears its first-seen time" "$(cat "$FM/data/critical-stall/seen.tsv")" ""
 
 # f: stale-pr-alarm already alerted on this pull request after its newest commit: the note goes, the card does not.
-printf 'nats pending %s\naccounts live -\n' "$PR" > "$STUB_PROBE"
+printf 'queue pending %s\naccounts live -\n' "$PR" > "$STUB_PROBE"
 pending_since 30; commit sha4 30; : > "$FM/data/critical-stall/alerts.jsonl"
 mkdir -p "$FM/data/jg-merge-on-green/stale-pr-alarm"
 echo "no checks and no update for 24 h" > "$FM/data/jg-merge-on-green/stale-pr-alarm/o__r.7"
@@ -106,7 +106,7 @@ check "g: the unwiring removes the shim and the command" "$gone" 2
 if [ -n "${DONE_DONE_EVIDENCE_ROOT:-}" ]; then
   cat > "$DONE_DONE_EVIDENCE_ROOT/steps.json" <<'J'
 {"target":{"version":"critical-stall.sh and the real bin/jg-alert.sh from this checkout, run against a fixture home"},
- "start":"a fixture home where the critical row nats has been pending 30 hours with a 30 hour old commit",
+ "start":"a fixture home where the critical row queue has been pending 30 hours with a 30 hour old commit",
  "steps":["the critical-stall check runs and finds the stalled row","the check raises the central stranded alert for the row through jg-alert.sh raise and deliver","the next sweep runs with the alert still live"],
  "result":"the lead's wake queue holds exactly one stranded alert wake for the row and the check printed nothing; the next sweep adds none; the transcript ends with PASS critical-stall"}
 J

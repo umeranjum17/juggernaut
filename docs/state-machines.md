@@ -36,6 +36,7 @@ The `Ask` column is the command that prints a record's state and its legal moves
 | `ticket` | `a ticket: the one Beads row of jg-q1b3n (machine 0 of the state-machine plan)` | `core/machines/observers/ticket.sh` | 7 | 15 | `bin/jg-machine.sh next ticket <id>` |
 | `trunk` | `state/trunk-{tip,green}-<project>, the verify lock state/.trunk-verify-<project>.lock and data/trunk-ci.tsv: the trunk line of one project (machine 7 of the state-machine plan)` | `core/machines/observers/trunk.sh` | 4 | 6 | `bin/jg-machine.sh next trunk <id>` |
 | `wait` | `a task's latest status line (state/<id>.status)` | `core/wait-timers/README.md` | 4 | 10 | `bin/jg-machine.sh next wait <id>` |
+| `wake-status` | `state/.wake-status-<actor>.json: one signalled task span retained until acknowledgement` | `bin/jg-wake-status-lib.sh` | 3 | 11 | `bin/jg-machine.sh next wake-status <id>` |
 | `worker` | `state/<id>.meta, the status log and the endpoint of one agent session of a lane (machine 1 of the state-machine plan)` | `core/machines/observers/worker.sh` | 6 | 11 | `bin/jg-machine.sh next worker <id>` |
 <!-- machines:end -->
 
@@ -44,12 +45,9 @@ The same test reports when this page has drifted from the tables.
 
 ## Ask a machine
 
-```sh
-bin/jg-machine.sh next <machine> <id>
-```
-
-The output lists the record's state and each legal move with its writer, command, and guard.
-[`core/machines/README.md`](../core/machines/README.md) owns the table format, the commands, and the exit codes.
+A ticket's stage and an item's holder come from the item store: read `jg-item board`, or `v_ticket` in `fleet.db`.
+[`item-store.md`](item-store.md) owns the store and its refusals.
+[`core/machines/README.md`](../core/machines/README.md) owns the table format and the commands that still read a table.
 
 ## Ask whether a change is In use
 
@@ -66,4 +64,4 @@ The state machine slices `sm-s1a-engine` to `sm-s12-enforce` are registered ther
 ## Fix a bad state
 
 When a bug is a state that should not exist, follow [Make the implicit state machine explicit](../.agents/skills/diagnostic-reasoning/SKILL.md#make-the-implicit-state-machine-explicit).
-Write the table in `core/machines/tables/`, replay the record that shows the bug with `bin/jg-machine.sh check <machine> --corpus <file>`, fix it at the machine's one owner, and add a test for the move.
+Write the table in `core/machines/tables/` (the store's triggers refuse an illegal ticket move before it is written, see [`item-store.md`](item-store.md)), fix it at the machine's one owner, and add a test for the move.

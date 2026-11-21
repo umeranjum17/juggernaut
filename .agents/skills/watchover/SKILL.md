@@ -1,8 +1,6 @@
 ---
 name: watchover
-description: >-
-  Enter the away posture when the captain invokes /watchover, says they are going afk, `state/.afk-contract` or `state/.afk` exists, an incoming message starts with `JG_INJECT_MARK`, or any `state/.subsuper-*` marker is involved.
-  It writes the durable away-posture record with the captain's away words verbatim as the whole mandate in the same turn as /watchover, before any other work and without waiting for a further go, reads the words back in plain sentences after entry, announces hold-for-return only at entry, keeps the one supervision session running in the away posture (on Pi the supervision branch acts on the words by its own judgment and takes every safe actionable wake with main parked, as the supervision host does on a non-Pi home that runs it; the daemon still delivers batched digests elsewhere for now), and on the first unmarked message renders the return brief from durable records before ordinary work resumes.
+description: Use when the captain invokes /watchover or says they are going afk, when `state/.afk` or `.afk-contract` exists, or on a `JG_INJECT_MARK` message or `state/.subsuper-*` marker.
 user-invocable: true
 metadata:
   internal: true
@@ -72,6 +70,7 @@ No `/back` is needed. The first genuine message is the return signal:
   Run `bin/jg-afk-return.sh` before acting on the message that brought the captain back.
   That script owns the correct-ordered daemon shutdown where a daemon ran, the archive of the posture record, durable wake presentation and post-handling acknowledgement, escalation and wedge evidence, the return brief, and the return-catch-up gate.
   Relay every section of the return brief in its emitted order and in section 9 language; `bin/jg-afk-return.sh` owns that order.
+  Gemini 4 Neon, through agy, writes that relay as a phone read: pipe the brief through `python3 -I core/report-writer/bin/report-writer.py write return --facts -` and send its output, never the raw brief (`core/report-writer/README.md`).
   The gate keeps every open `blocked:` event until that blocker's own resolution is proven: remediate each immediately through the normal lifecycle, or explicitly reclassify it with a durable reason and close its decision key with `resolved [key=...]`, then run `bin/jg-afk-return.sh check`.
   Captain-verdict outcomes are listed under "waiting on you", but do not exempt open blockers: per-blocker provenance is deferred with no owner, and the gate fails safe by keeping every open blocker.
   Once the record is archived, resume full per-wake responsiveness through the emitted primary-harness supervision protocol while blocker handling proceeds, so the gate never creates a blind wait.
@@ -130,6 +129,7 @@ backend (tmux or herdr; see "Auto-discovered supervisor pane" below):
   `pane_input_pending` is the tested fail-closed predicate for callers that need to know whether the composer is unsafe: it treats every result except exact `empty` as pending.
 
 A busy primary pane, or any composer verdict other than `empty`, defers the injection; the buffered escalation survives in `state/.subsuper-escalations` and is retried on the next housekeeping tick.
+The buffer keys each event by its distilled text, so a repeat of an event still waiting is not buffered again, and a delivered event leaves the buffer.
 In afk mode the composer guard is belt-and-suspenders (no human is typing), but it protects against the race window between the captain returning and their message landing, a dead shell, and the daemon's own previous injection sitting unsent.
 
 **Max-defer escape (the daemon must never silently wedge).**

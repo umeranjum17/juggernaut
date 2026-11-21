@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The ports-and-adapters check: a change importing the Pi kit outside its adapter fails, inside it passes,
-# a legacy importer passes, a bus client outside the bus adapter fails, and a plan must name port and adapter.
+# a legacy importer passes, and a plan must name port and adapter.
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 check="$here/bin/jg-ports-check.sh"
@@ -13,7 +13,7 @@ g() { git -C "$tmp/r" -c user.email=fixture@example.invalid -c user.name=Fixture
 git init -q "$tmp/r"
 mkdir -p "$tmp/r/defaults" "$tmp/r/core/ports/pi-engine" "$tmp/r/core/bus/cmd/jg-bus" "$tmp/r/ext" "$tmp/r/tests"
 cp "$here/defaults/ports-adapters" "$tmp/r/defaults/"
-printf 'ext/old.ts message-bus\next/old.ts pi-engine-kit\n' >"$tmp/r/defaults/ports-adapters-legacy"
+printf 'ext/old.ts pi-engine-kit\n' >"$tmp/r/defaults/ports-adapters-legacy"
 printf 'import { x } from "@earendil-works/pi-coding-agent";\n' >"$tmp/r/ext/old.ts"
 printf 'export {};\n' >"$tmp/r/ext/clean.ts"
 g add -A && g commit -q -m base && g branch -q -m main
@@ -54,16 +54,6 @@ printf 'ext/clean.ts pi-engine-kit\n' >>"$tmp/r/defaults/ports-adapters-legacy"
 g commit -qam 'grandfather itself'
 expect_refused 'a change that lists itself as legacy' ext/clean.ts
 pass 'a change cannot add itself to the legacy list'
-
-reset_to_base
-printf 'nats-server -c conf\n' >"$tmp/r/ext/run.sh"
-g add -A && g commit -qm 'bus client outside the adapter'
-expect_refused 'a bus client outside the adapter' ext/run.sh
-reset_to_base
-printf 'nats-server -c conf\n' >"$tmp/r/core/bus/cmd/jg-bus/up.sh"
-g add -A && g commit -qm 'bus client inside the adapter'
-expect_accepted 'a bus client inside the adapter'
-pass 'a bus client is refused outside core/bus/cmd/jg-bus/ and passes inside it'
 
 printf 'Plan: add a widget with the Pi engine kit.\n' >"$tmp/plan.md"
 if bash "$check" --root "$tmp/r" --plan "$tmp/plan.md" >"$tmp/out.log" 2>&1; then no 'a plan with no port was accepted'; fi

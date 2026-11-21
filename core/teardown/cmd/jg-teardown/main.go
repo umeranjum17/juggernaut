@@ -27,8 +27,8 @@
 // answered in-process, not through `landed`.
 //
 // There is no --force here and no override: whether to run these tests at all is the caller's
-// policy, and this command only ever answers it. It never changes a repository except for
-// fetching the refs it compares against.
+// policy, and this command only ever answers it. It never changes a repository except for fetching
+// the refs it compares against; preserve writes only its retention directory.
 package main
 
 import (
@@ -58,6 +58,8 @@ func main() {
 		os.Exit(runDefaultBranch(os.Args[2:]))
 	case "safety":
 		os.Exit(runSafety(os.Args[2:]))
+	case "preserve":
+		os.Exit(runPreserve(os.Args[2:]))
 	default:
 		usage()
 		os.Exit(2)
@@ -65,5 +67,5 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: jg-teardown safety --worktree W --project P [--local] [flags] | landed --worktree W --branch B --project P [flags] | default-branch --project P | reap --label L --task-id ID --backend B --target T --caller-pid N DIR... | validate-removal|validate-child|validate-home|worktree-registered [flags] -- TARGET")
+	fmt.Fprintln(os.Stderr, "usage: jg-teardown safety --worktree W --project P [--local] [flags] | landed --worktree W --branch B --project P [flags] | preserve --worktree W --dest D | default-branch --project P | reap --label L --task-id ID --backend B --target T --caller-pid N DIR... | validate-removal|validate-child|validate-home|worktree-registered [flags] -- TARGET")
 }

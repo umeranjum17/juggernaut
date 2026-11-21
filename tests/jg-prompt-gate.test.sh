@@ -162,8 +162,7 @@ test_lib_switch_and_trust_dialogs() {
 # them shows the pane unblocked, yet the wait is never dropped. An approvable
 # read is approved again every interval, a secrets read is rejected and the
 # worker is told why, and any other prompt wakes Main once at first sight. The
-# wait-timers chain then re-checks the unchanged wait every interval and raises its owner again until the source clears
-# (core/wait-timers/README.md "Re-raise until the wait is handled").
+# unchanged wait then climbs by the item store's tick, not by this watcher.
 test_prompt_still_up_is_acted_on_every_interval() {
   command -v tmux >/dev/null 2>&1 || { printf '# skip: tmux not found\n'; return 0; }
   local lab w=jglab:jg-lead1 n approvals wakes ack ack_args
@@ -203,17 +202,13 @@ test_prompt_still_up_is_acted_on_every_interval() {
     done
   }
 
-  # Main is woken at first sight. The prompt stays up and unchanged, so the wait-timers chain
-  # re-alerts its owner every interval until an action clears the source.
-  realert_log="$TMP_ROOT/a.out"
+  # Main is woken at first sight. The prompt stays up and unchanged, so it is approved again every interval.
   show "$TMP_ROOT/approvable.txt"
-  watch_until "$TMP_ROOT/a.out" "check: waiting-state lead1 .*still open" 2 3 "$realert_log"
+  watch_until "$TMP_ROOT/a.out" "stale: $w (permission prompt" 1 3
   approvals=$(grep -c '"root":"inbox"' "$lab/state/prompt-approvals.jsonl" 2>/dev/null || true)
   wakes=$(grep -c "stale: $w (permission prompt: .*not answered: inbox; the approval sent under a minute ago did not take" "$TMP_ROOT/a.out" || true)
-  n=$(grep -c "check: waiting-state lead1 (prompt, .*level=owner; still open" "$TMP_ROOT/a.out" || true)
-  realerts=$(grep -c "check: waiting-state lead1 .*still open" "$realert_log" 2>/dev/null || true)
-  [ "${approvals:-0}" -ge 3 ] && [ "$wakes" -ge 1 ] && [ "$realerts" -ge 2 ] && [ "$n" -ge 1 ] \
-    || fail "an approvable prompt left on screen was not re-approved every interval, woken at first sight, and re-alerted by the chain (approvals=$approvals wakes=$wakes re-alerts=$realerts re-alerts=$n): $(cat "$TMP_ROOT/a.out")"
+  [ "${approvals:-0}" -ge 3 ] && [ "$wakes" -ge 1 ] \
+    || fail "an approvable prompt left on screen was not re-approved every interval and woken at first sight (approvals=$approvals wakes=$wakes): $(cat "$TMP_ROOT/a.out")"
 
   show "$TMP_ROOT/secret.txt"
   watch_until "$TMP_ROOT/s.out" "stale: $w (permission prompt" 1
@@ -225,17 +220,11 @@ test_prompt_still_up_is_acted_on_every_interval() {
     || fail "a rejection that did not take was not reported: $(cat "$TMP_ROOT/s.out")"
 
   show "$TMP_ROOT/outside.txt"
-  # Count re-alerts for the external prompt separately.
-  realert_log="$TMP_ROOT/b.out"
-  watch_until "$TMP_ROOT/b.out" "check: waiting-state lead1 .*still open" 2 0 "$realert_log"
+  watch_until "$TMP_ROOT/b.out" "stale: $w (permission prompt" 1 0
   n=$(grep -c "stale: $w (permission prompt: .*not answered: outside this fleet's own roots" "$TMP_ROOT/b.out" || true)
   [ "$n" -eq 1 ] || fail "an unanswered prompt did not wake Main exactly once at first sight (wakes=$n): $(cat "$TMP_ROOT/b.out")"
-  realerts=$(grep -c "check: waiting-state lead1 .*still open" "$realert_log" 2>/dev/null || true)
-  [ "$realerts" -ge 2 ] || fail "the chain did not re-alert an unanswered prompt every interval (re-alerts=$realerts): $(cat "$TMP_ROOT/b.out")"
-  n=$(grep -c "check: waiting-state lead1 (prompt, .*level=owner; still open.* source=\[prompt: Access external directory $lab/projects" "$TMP_ROOT/b.out" || true)
-  [ "$n" -ge 1 ] || fail "an unchanged unanswered prompt was not raised after acknowledgement (re-alerts=$n): $(cat "$TMP_ROOT/b.out")"
   [ "$(grep -c '"root"' "$lab/state/prompt-approvals.jsonl")" = "$approvals" ] || fail "a read outside the roots was approved"
-  pass "a prompt that never leaves the screen is approved, rejected, or re-alerted every interval"
+  pass "a prompt that never leaves the screen is approved or rejected every interval and wakes Main once at first sight"
 }
 
 test_allowed_reads_are_approved

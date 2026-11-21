@@ -2927,3 +2927,21 @@ It uses the installed Codex CLI with its normal credential location, handles onl
 Future verification defaults to the cheap native `gpt-6-luna` model.
 A separate observed Hermes Memory 0.9.9 shared-store shutdown wait is outside this guarantee: the final shutdown handler remained live, so control correctly refused a replacement instead of declaring it stopped.
 The current clear mechanics are owned by `bin/jg-control-lib.sh` and `bin/harness-quirks/pi.json`.
+
+## Primary chat approval capture
+
+A captain order typed in the locked primary session signs its ticket only through the handled note `[chat primary <session>:<seq>]`.
+Two parts must both exist for a harness: a trusted session id that `bin/jg-lock.sh` records in `state/.lock-session` (`jg_session_lock_trusted_session_id` in `bin/jg-session-lock-lib.sh`), and a prompt hook that runs `bin/jg-overwatch-kpi.sh hook <harness>`, which calls `bin/jg-inbox.sh primary-chat`.
+`primary-chat` refuses any session that is not the recorded one, and the hook never reads the session id from an untrusted payload for Pi.
+A session id that is not filename-safe, as a Pi session file path, names its notes by a digest of the id.
+Audited 2026-11-21 against the tracked repository:
+
+| Harness | Trusted session id | Typed-prompt capture | Status |
+| --- | --- | --- | --- |
+| claude | `CLAUDE_CODE_SESSION_ID` proven by `CLAUDE_PID` ancestry | `UserPromptSubmit` hook | Captured |
+| agy | `ANTIGRAVITY_CONVERSATION_ID`, innermost process `agy` | `PreInvocation` hook, typed prompt only | Captured |
+| pi, pi-signed | Herdr `agent_session` of the pane, innermost process `pi` | primary extension `input` event, source `interactive` only | Captured; the event shape is from Pi's own extension docs and example, not a live Pi run |
+| codex, cursor, grok, omp, opencode, kimi | none yet | none yet | Not captured: a direct-chat approval in these primaries files no note, so the order is approved by the board or Telegram instead |
+
+`tests/jg-primary-chat-approval.test.sh` pins the captured rows with real processes and the real lock, inbox and approval reader, and the refusals: another session, another Pi pane, a process that is not the harness, an extension-injected prompt and machine text each file no note.
+Each uncaptured harness has its own follow-up ticket because each needs its own live-verified session id and prompt payload.

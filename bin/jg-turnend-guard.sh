@@ -176,6 +176,8 @@ trap record_parent_stop_state EXIT
 # stdin.
 PAYLOAD=$(cat 2>/dev/null || true)
 [ -n "$PAYLOAD" ] || exit 0
+# The reply proof: a tell his note opened closes only on the turn that answered it (item store, expand only; never blocking).
+[ ! -e "$JG_HOME/config/item-store" ] || printf '%s' "$PAYLOAD" | python3 -I "$JG_ROOT/core/item-store/adapters/turn_end.py" || true
 
 # jq is the repo's established JSON dependency (bin/jg-x-poll.sh uses the same
 # "missing jq -> silent no-op" degrade). Without it we cannot safely read the
@@ -282,6 +284,23 @@ if [ -x "$SCRIPT_DIR/jg-progress-claim.sh" ]; then
       printf '●%s\n' '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
     } >&2
     exit 2
+  fi
+fi
+
+# --- the captain-chat word lint ----------------------------------------------
+# In the locked primary session, the final message is checked against the internal words of
+# AGENTS.md section 9 (docs/roles/chat-words.tsv, one per line). It prints one line naming each
+# word found and never blocks the turn.
+CHAT_WORDS=$JG_ROOT/docs/roles/chat-words.tsv
+# shellcheck disable=SC1091 # the library sits beside this script
+if [ -r "$CHAT_WORDS" ] && ( . "$SCRIPT_DIR/jg-session-lock-lib.sh" && jg_session_lock_owned_by_self "$STATE" ) >/dev/null 2>&1; then
+  CHAT_MSG=$(printf '%s' "$PAYLOAD" | jq -r 'if type == "object" then ((.last_assistant_message // "") | tostring) else "" end' 2>/dev/null || true)
+  if [ -n "$CHAT_MSG" ]; then
+    while IFS= read -r CHAT_WORD; do
+      [ -n "$CHAT_WORD" ] || continue
+      printf '%s' "$CHAT_MSG" | grep -qiwF -- "$CHAT_WORD" || continue
+      printf 'chat word: the final message says "%s"; captain chat uses the plain word (AGENTS.md section 9)\n' "$CHAT_WORD" >&2
+    done < "$CHAT_WORDS"
   fi
 fi
 

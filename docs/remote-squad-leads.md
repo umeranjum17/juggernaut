@@ -319,7 +319,7 @@ A file at `~/.local/bin/jg-remote-entrypoint.sh` that is not Juggernaut's own sy
 
 | Requirement | Tools |
 | --- | --- |
-| Always required | `git`, the pinned `bd` and `dolt` of the [Beads store](configuration.md), and the Herdr row of the [backend toolchain table](configuration.md#toolchain) |
+| Always required | `git` and the Herdr row of the [backend toolchain table](configuration.md#toolchain) |
 | At least one of | `claude`, `codex`, `opencode`, `pi`, `pi-signed`, `grok`, or `kimi` |
 | Additionally required on macOS | `lsof`, so the doctor and guard can prove which process owns the session socket |
 
@@ -695,7 +695,6 @@ The portable tests use these pieces:
 - A stateful host-local Herdr CLI fixture.
 - A controlled account fixture for the readiness gate.
 
-[`jg-remote-job-launchagent.test.sh`](../tests/jg-remote-job-launchagent.test.sh) exercises the real worker with stubbed asynchronous `launchctl`, covering slow claim sweeps, missing readiness recovery during a sweep, stale readiness without reload, concurrent repair, untracked owners, interrupted repairs, and asynchronous service removal before bootstrap.
 The lifecycle test covers seeding a registered project that this machine has never cloned.
 It asserts that the local project tree is unchanged afterwards.
 It carries Bitbucket, self-hosted, and scp-like origins through to the remote clone.
@@ -710,7 +709,6 @@ bin/jg-test-run.sh tests/jg-crew-state.test.sh
 bin/jg-test-run.sh tests/jg-remote-job.test.sh
 bin/jg-test-run.sh tests/jg-remote-job-claim-reap.test.sh
 bin/jg-test-run.sh tests/jg-remote-job-claim-retention.test.sh
-bin/jg-test-run.sh tests/jg-remote-job-launchagent.test.sh
 bin/jg-test-run.sh tests/jg-remote-transport-lanes.test.sh
 bin/jg-test-run.sh tests/jg-remote-doctor.test.sh
 bin/jg-test-run.sh tests/jg-remote-herdr-guard.test.sh

@@ -15,7 +15,7 @@
 jg_owner_rules_check() {
   # $3 (the delivery mode) is part of the caller contract; the risk reason it
   # used to read is bin/jg-brief.sh --risk now, so this check never needs it.
-  local data=$1 id=$2 kind=$4 entry title ids verdict bin config backlog='' store row='[]' facts ask
+  local data=$1 id=$2 kind=$4 entry title ids verdict bin config backlog='' row='[]' facts ask
   bin=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)/bin
   config=${JG_CONFIG_OVERRIDE:-${JG_HOME:-${data%/*}}/config}
   # shellcheck source=bin/jg-backlog-lib.sh
@@ -25,9 +25,7 @@ jg_owner_rules_check() {
     echo "owner-rules: cannot read the backlog for $id" >&2
     exit 1
   fi
-  if store=$(jg_backlog_beads_store "$config" 2>/dev/null); then
-    row=$(BEADS_DIR=$store "$bin/jg-beads.sh" show "$id" --json 2>/dev/null) || row='[]'
-  fi
+  row=$(jg_backlog_bd "${config%/*}" show "$id" --json 2>/dev/null) || row='[]'
   facts=$(jq -c '(if type == "array" then .[0] else . end) // {}
     | {labels: (.labels // []), parent: ((.dependencies // [] | map(select(.dependency_type == "parent-child"))[0].id)
         // (if (.labels // [] | index("upkeep")) then "upkeep" else "" end))}' <<<"$row" 2>/dev/null) || facts='{"labels":[],"parent":""}'

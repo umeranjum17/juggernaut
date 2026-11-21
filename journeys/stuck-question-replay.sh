@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # done-done journey: a real Claude worker (Haiku) opens an AskUserQuestion dialog in a private
 # tmux server; the real bin/jg-watch.sh and wait-timers library, with thresholds shortened to
-# seconds, record it as a wait source and climb owner -> Main -> board card, then clear when the
+# seconds, record it as a wait source and reach the owner rung (the store tick climbs it from there), then clear when the
 # dialog is answered. Only the steer/interrupt endpoints and the board are recorders.
 set -u
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -71,12 +71,6 @@ log "wait source: $(cat "$H/state/.wait-sources/w1.question")"
 sleep 3; backdate
 until_seen 'waiting-state w1 \(question.*level=owner' "$H/events" || fail "the question never reached the owner rung"
 log "owner rung fired"
-backdate
-until_seen 'waiting-state w1 \(question.*level=main' "$H/events" || fail "the question never reached Main"
-log "Main rung fired"
-backdate
-until_seen '-w1-.*-question-card' "$H/cards" || fail "no board card was raised: $(cat "$H/err")"
-log "board card raised: $(grep -c raise "$H/cards") raise call(s)"
 tmux send-keys -t lab:w Enter
 for _ in $(seq 1 30); do tmux capture-pane -p -t lab:w | grep -q 'Enter to select' || break; sleep 1; done
 tmux capture-pane -p -t lab:w > "$OUT/pane-answered.txt"
@@ -87,6 +81,6 @@ cp "$H/events" "$OUT/watcher-events.txt"; cp "$H/cards" "$OUT/board-calls.txt"
 log "dialog answered; wait source cleared"
 jq -n --arg v "$(claude --version 2>/dev/null | head -1)" --arg sha "$(git -C "$REPO" rev-parse --short HEAD)" '{target:{version:("bin/jg-watch.sh at " + $sha + " driving " + $v)},
   start:"a real Claude Haiku worker pane with no question open",
-  steps:["the worker opens an AskUserQuestion dialog","the watcher records the dialog as a question wait source","the owner rung fires","the Main rung fires","a board card is raised","the dialog is answered"],
+  steps:["the worker opens an AskUserQuestion dialog","the watcher records the dialog as a question wait source","the owner rung fires","the dialog is answered"],
   result:"the wait source and episode are cleared after the dialog is answered"}' > "$OUT/steps.json"
 log "PASS"

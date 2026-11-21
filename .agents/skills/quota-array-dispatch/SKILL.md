@@ -1,10 +1,6 @@
 ---
 name: quota-array-dispatch
-description: >-
-  Agent-only decision procedure for resolving a matched crew-dispatch profile
-  array from quota-axi's default TOON, ranking by spendPriority after three
-  orthogonal gates.
-  Load when a dispatch rule or default resolves to more than one profile candidate.
+description: Load when a dispatch rule or default resolves to more than one profile candidate.
 user-invocable: false
 metadata:
   internal: true
@@ -21,7 +17,7 @@ The [worker helper](../../../bin/jg-quota-choose.sh) and [typed resolver](../../
 
 ## Safety rules
 
-Overwatch alone resolves a matched profile array: begin with `quota-axi`'s default TOON at the operator or Recon intake, using the skill's narrow TOON-then-`--json` fallback only for genuine ambiguity, evaluate every configured candidate against that current output, and choose with inspectable `spendPriority` as the one quota-perspective ranker after the skill's eligibility, reasoning-class, and runway-feasibility gates.
+Overwatch alone resolves a matched profile array: begin with `quota-axi`'s default TOON at the operator or Recon intake, using the skill's narrow TOON-then-`--json` fallback only for genuine ambiguity, evaluate every configured candidate against that current output, and apply the ranking procedure below after the skill's eligibility, reasoning-class, and runway-feasibility gates.
 Account for every candidate with the catalog evidence, provider relationship, applicable quota and authentication facts, remaining uncertainty, fit and reasoning class, and the spendPriority and runway evidence used in selection; never omit a candidate, guess, fall back silently, or call the result quota-informed without them.
 Establish model support and provider family from that harness's own authoritative catalog, then apply the [account and scope matching rules in `quota-array-dispatch`](#1-eligibility).
 Missing model-level quota, a missing authentication source, unmeasurable headroom, or unmodeled authentication is disclosed uncertainty that keeps a candidate eligible, never a credential or login escalation.
@@ -80,6 +76,7 @@ You establish the remaining relations yourself, in the open, from the candidate'
 
 Confirm the catalog lists the candidate's model and record the provider family it reports.
 A model the catalog does not list is concrete contradictory evidence: block that candidate and quote the catalog result.
+Apply the existing `route-select` owner clauses through `bin/jg-clause.sh` before ranking; a skipped or denied candidate cannot win its matched rule.
 Apply quota at the granularity the vendor actually supplies.
 A provider-level or `all_models`/`all_products` scope bounds every model you established in that family within the candidate's matched account, including one with no window of its own.
 A named-model or named-product scope is an additional bound for that model alone.
@@ -123,15 +120,20 @@ Do not invent a generic percentage floor, and honor an explicit captain floor fo
 
 ## Rank by spendPriority
 
-Among candidates that pass all three gates, pick the highest known `spendPriority`.
+A matched profile explicitly declared `billing: "flat-plan"` can rank without a quota row when the snapshot has no entry for its established provider and the profile has no quota floor.
+The declaration records established plan evidence; an absent row alone never establishes a flat plan, and authentication, catalog support, reasoning fit, owner rules, and rule floors still apply.
+Among candidates that pass all three gates, prefer such a flat plan over metered candidates in the same matched array; report its quota and `spendPriority` as not applicable, never invent a scalar, percentage, or runway.
+Multiple such flat plans are a genuine tie and escalate.
+If the provider is present in the snapshot, keep the existing account, scope, uncertainty, floor, and quota handling even for a declared flat plan; a wrong-account or unknown row cannot become an unmetered allowance.
+For the remaining candidates, pick the highest known `spendPriority`.
 A higher known scalar is better: positive means paid allowance is on track to reach reset unused, `0` is exact utilization, and negative means overdrawn against the reset clock.
 Rank only from comparable known scalars.
 Never treat absent, `unknown`, or unmeasurable `spendPriority` as zero or as healthy; `0` means exact utilization, a different claim from unknown.
 An unknown `spendPriority` keeps the candidate eligible with disclosed uncertainty.
 Prefer known viable evidence when otherwise comparable.
-After the permitted TOON-to-JSON fallback, escalate to Juggernaut instead of routing if no candidate can be ranked or runway uncertainty prevents proving the feasibility floor for any candidate that could be selected.
+After the permitted TOON-to-JSON fallback, escalate to Juggernaut instead of routing if no candidate can be ranked or metered runway uncertainty prevents proving the feasibility floor for any candidate that could be selected.
 Never resolve that terminal uncertainty by treating unknown as healthy or by choosing arbitrarily.
-Show the scalar or the literal `unknown` in the rationale; do not hide it in a score.
+For metered candidates, show the scalar or the literal `unknown` in the rationale; do not hide it in a score.
 
 Do not compare headroom against runway by hand.
 Do not use pace or signed reserve as a later tie-break layer.

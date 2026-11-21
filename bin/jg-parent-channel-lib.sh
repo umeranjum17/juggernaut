@@ -25,6 +25,8 @@
 #                                    remove the child while it is undelivered
 #   - bin/jg-squad-lead-report.sh     a marked request's correlated answer,
 #                                    with this resolver choosing its destination
+#   - bin/jg-alert.sh                an alert at Main's rung, keyed by its
+#                                    episode, and its close on resolve
 # The mate's own appends are reserved for judgement (bin/jg-brief.sh charter).
 # docs/squad-lead-parent-channel.md records the design and its coverage.
 #

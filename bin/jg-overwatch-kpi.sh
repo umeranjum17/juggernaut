@@ -12,8 +12,11 @@
 #   {"tag":N,"epoch":N,"kind":"<kind>","link":"..."}   a tag of message N; its newest tag wins
 #
 # WRITERS. The prompt-submit hooks append each captain message: Claude's
-# UserPromptSubmit and Cursor's beforeSubmitPrompt, the same surfaces that feed
-# bin/jg-host-mirror.sh. A captain message typed at the board's chat has no
+# UserPromptSubmit, Cursor's beforeSubmitPrompt (the same surfaces that feed
+# bin/jg-host-mirror.sh), Pi's `input` event for a typed (interactive) prompt, run from
+# the primary extension, and agy's PreInvocation, which agy fires before every
+# model call, so only the one that opens a turn on a typed prompt counts (see
+# agy_prompt below). A captain message typed at the board's chat has no
 # prompt hook to catch it, so bin/jg-chat.sh records it with `record`, through
 # the same appender: either way it is one captain message and its tag is asked
 # for the same way. A note the captain sends from his phone reaches Main as an
@@ -60,7 +63,7 @@
 # merged flag, a backlog id by its done state) and is opt-in for that reason.
 #
 # Usage:
-#   jg-overwatch-kpi.sh hook <claude|cursor>   a prompt-submit hook payload on stdin
+#   jg-overwatch-kpi.sh hook <claude|cursor|agy|pi>   a prompt-submit hook payload on stdin
 #   jg-overwatch-kpi.sh tag [--message <seq|inbox-id>] <kind> [<link>]
 #                                              tag the newest captain message, or the one named
 #   jg-overwatch-kpi.sh record [--id <inbox-id>] [--] <text>
@@ -204,6 +207,30 @@ link_ok() {  # <link>
   esac
 }
 
+# agy has no prompt-submit event. Its PreInvocation hook fires before EVERY model
+# call and always carries the newest typed words as lastUserInput, so a turn that
+# a background task, a Stop continuation or a tool result opened would replay an
+# old message. A captain-typed prompt is the one invocation that is the turn's
+# first (invocationNum 0) and whose newest transcript step, the one at
+# initialNumSteps - 1, is a USER_EXPLICIT USER_INPUT; the wake of a finished
+# background task has a model step there instead (verified live, agy 1.5.11:
+# docs/verification/agy.md). Prints the conversation id on the first line and the
+# typed words after it, or prints nothing and returns 1.
+agy_prompt() {  # <payload>
+  local payload=$1 steps transcript sid text
+  steps=$(printf '%s' "$payload" | jq -r 'select(type == "object" and .hookEventName == "PreInvocation" and .invocationNum == 0)
+    | (.initialNumSteps | numbers | tostring)' 2>/dev/null) || return 1
+  case "$steps" in ''|*[!0-9]*|0) return 1 ;; esac
+  transcript=$(printf '%s' "$payload" | jq -r '(.transcriptPath // "") | tostring' 2>/dev/null) || return 1
+  [ -f "$transcript" ] || return 1
+  jq -e --argjson n "$((steps - 1))" 'select(.step_index == $n) | .source == "USER_EXPLICIT" and .type == "USER_INPUT"' \
+    "$transcript" >/dev/null 2>&1 || return 1
+  sid=$(printf '%s' "$payload" | jq -r '(.conversationId // "") | tostring' 2>/dev/null) || return 1
+  [ -n "$sid" ] || return 1
+  text=$(printf '%s' "$payload" | jq -r '(.lastUserInput // "") | tostring' 2>/dev/null) || return 1
+  printf '%s\n%s' "$sid" "$text"
+}
+
 case "${1:-}" in
   hook|tag|pending|scorecard|record) ;;
   -h|--help) sed -n '2,/^set -u/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -229,9 +256,25 @@ case "$1" in
       # Cursor loads the tracked Claude settings too; its own entry records it.
       jg_hook_payload_is_foreign_host "$PAYLOAD" && exit 0
     fi
-    TEXT=$(printf '%s' "$PAYLOAD" | jq -r 'select(type == "object")
-      | select(.hook_event_name == "UserPromptSubmit" or .hook_event_name == "beforeSubmitPrompt")
-      | (.prompt // "") | tostring' 2>/dev/null) || exit 0
+    SID=
+    if [ "$2" = agy ]; then
+      AGY_PROMPT=$(agy_prompt "$PAYLOAD") || exit 0
+      SID=${AGY_PROMPT%%$'\n'*}
+      TEXT=${AGY_PROMPT#*$'\n'}
+    elif [ "$2" = pi ]; then
+      # Pi's extension hands over only what the captain typed (source interactive); the session is
+      # never read from the payload, but proven from this hook's own ancestry (a Pi process in the pane).
+      TEXT=$(printf '%s' "$PAYLOAD" | jq -r 'select(type == "object" and .hook_event_name == "input" and .source == "interactive")
+        | (.text // "") | tostring' 2>/dev/null) || exit 0
+      # shellcheck source=bin/jg-session-lock-lib.sh
+      . "$SCRIPT_DIR/jg-session-lock-lib.sh"
+      SID=$(jg_session_lock_pi_session_id) || SID=
+    else
+      TEXT=$(printf '%s' "$PAYLOAD" | jq -r 'select(type == "object")
+        | select(.hook_event_name == "UserPromptSubmit" or .hook_event_name == "beforeSubmitPrompt")
+        | (.prompt // "") | tostring' 2>/dev/null) || exit 0
+      [ "$2" != claude ] || SID=$(printf '%s' "$PAYLOAD" | jq -r '(.session_id // "") | tostring' 2>/dev/null) || SID=
+    fi
     case "${TEXT#"${TEXT%%[![:space:]]*}"}" in ''|'<task-notification>'*) exit 0 ;; esac
     # A doorbell left unsent in the captain's composer is submitted glued to his
     # own next sentence (captured in a real primary's message box). The text that follows it is
@@ -242,8 +285,7 @@ case "$1" in
     printf '%s' "$TEXT" | "$SCRIPT_DIR/jg-operational-input.sh" classify >/dev/null 2>&1 && exit 0
     SEQ=$(record_message "$TEXT" "" print-seq) || exit 0
     # The words of the locked primary session sign orders; machine text never reaches here.
-    SID=$(printf '%s' "$PAYLOAD" | jq -r '(.session_id // "") | tostring' 2>/dev/null) || SID=
-    [ "$2" = claude ] && [ -n "$SID" ] && [ -n "$SEQ" ] \
+    [ -n "$SID" ] && [ -n "$SEQ" ] \
       && "$SCRIPT_DIR/jg-inbox.sh" primary-chat "$SID" "$SEQ" "$TEXT" >/dev/null 2>&1
     exit 0
     ;;

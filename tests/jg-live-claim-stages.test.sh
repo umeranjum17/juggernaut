@@ -28,7 +28,6 @@ mkdir -p "$REP/data" "$REP/state" "$MAIN/parent/state"
 printf 'umer\n' > "$REP/.jg-squad-lead-home"
 printf 'schema=jg-squad-lead-parent.v1\nroute=local\nparent_home=%s\n' "$MAIN/parent" > "$REP/.jg-squad-lead-parent"
 mkdir -p "$TMP_ROOT/probes"
-for svc in nats dapr; do printf '#!/bin/sh\necho up\n' > "$TMP_ROOT/probes/$svc"; chmod +x "$TMP_ROOT/probes/$svc"; done
 export JG_LIVE_SERVICES_PROBES="$TMP_ROOT/probes"
 
 report() {  # <claim> -> the note the parent channel received

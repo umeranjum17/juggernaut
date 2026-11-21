@@ -227,7 +227,7 @@ def main():
 def fire_alert(note):
     """Raise the one security alert for a finding through the home's alert function (bin/jg-alert.sh raise --deliver).
     A refusal stops the run before the baseline moves, so the next run alerts again."""
-    r = subprocess.run([os.path.join(HOME, "bin", "jg-alert.sh"), "raise", "security", f"key-in-env-{int(time.time())}-{os.getpid()}", "--note", note, "--deliver"],
+    r = subprocess.run([os.path.join(HOME, "bin", "jg-alert.sh"), "raise", "security", f"key-in-env-{int(time.time())}-{os.getpid()}", "--security-source", "key-in-env", "--note", note, "--deliver"],
                        env={**os.environ, "JG_HOME": HOME, "JG_STATE_OVERRIDE": STATE}, capture_output=True, text=True)
     if r.returncode != 0:
         sys.exit(f"key-in-env: the security alert was not raised: {r.stderr.strip()}")

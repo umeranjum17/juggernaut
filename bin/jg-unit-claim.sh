@@ -30,16 +30,33 @@
 #           check runs it every 30 s (bin/jg-watch.sh), so a wrong unit reaches
 #           Main inside two minutes instead of never. bin/jg-bootstrap.sh prints
 #           the same line at session start.
-#   refuse  The one sentence bin/jg-sentinel.sh and bin/jg-stack.sh hand a Squad
-#           Lead home's install, so the reason is stated once. Exit 2.
+#   refuse  The one sentence `bin/jg-sentinel.sh unit` hands a Squad Lead home,
+#           so the reason is stated once. Exit 2.
+#   may-install <caller> <action>
+#           Exit 0 when this home may write the machine's units, else one line on
+#           stderr and exit 2. bin/jg-stack.sh up and core/sentinel/wiring.sh ask
+#           it before they write a unit, and claim applies the same rule.
+#
+# WHO OWNS THEM. The installed units are the owner record: the home they serve
+# owns them. Any other home - a scratch copy of Main under a task's data folder
+# or ~/.cache, wherever it sits - may not rewrite them while that owner is live
+# (still a directory with bin/ and AGENTS.md, and not a Squad Lead home). On 21
+# Nov two scratch homes that were their own copy and outside every temp root ran
+# a session start and moved jg-sentinel off Main. This home may install only
+# when no installed unit names another live home: units that serve it, a home
+# that was deleted, or a Squad Lead that took them do not stop it. Units split
+# between two live homes stop both, and status names the stray one. To move the
+# units to a new Main, remove them from the old one first
+# (core/sentinel/unwiring.sh there).
 #
 # A unit that is absent is not wrong: the first install belongs to
 # bin/jg-stack.sh up (the bus parts) and the SENTINEL line (the sentinel).
 #
 # Env: JG_HOME (required), JG_STACK_UNIT_PREFIX (unit names, default jg),
 #      XDG_CONFIG_HOME (where the user units live, default ~/.config).
-# Exit: claim 0 when every installed unit serves this home and 1 when one could
-#       not be moved or started; status 0 always; refuse 2.
+# Exit: claim 0 when every installed unit serves this home (or is not this
+#       home's to move) and 1 when one could not be moved or started; status 0
+#       always; refuse 2; may-install 0 or 2.
 set -u
 
 SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)"
@@ -87,6 +104,40 @@ problem() {
   # section's case; the line exists for a unit another home is being served by.
   [ -n "$other" ] || return 0
   [ "$other" -ef "$JG_HOME" ] 2>/dev/null || printf 'serves %s, not this home' "$other"
+}
+
+# live_owner <home>: 0 when <home> may own the machine's units: still a
+# Juggernaut home, and not a Squad Lead home.
+live_owner() {
+  [ -d "$1/bin" ] && [ -f "$1/AGENTS.md" ] && [ ! -e "$1/.jg-squad-lead-home" ] && [ ! -L "$1/.jg-squad-lead-home" ]
+}
+
+# file_home <unit>: the home the unit FILE on disk names, or nothing. An install
+# overwrites that file, so the file - not what the user manager has loaded - is
+# what an install would take, and reading it needs no user manager.
+file_home() {
+  sed -n 's/^Environment="\{0,1\}JG_HOME=\(.*\)$/\1/p' "$UNIT_DIR/$1.service" 2>/dev/null \
+    | head -n 1 | sed 's/"$//; s/\\"/"/g; s/\\\\/\\/g; s/%%/%/g'
+}
+
+# foreign_owner: print '<unit> <home>' and return 0 when an installed unit serves
+# another live home, so this home must not write them.
+foreign_owner() {
+  local unit home
+  for unit in $UNITS; do
+    home=$(file_home "$unit")
+    [ -n "$home" ] || continue
+    [ "$home" -ef "$JG_HOME" ] 2>/dev/null && continue
+    live_owner "$home" || continue
+    printf '%s %s\n' "$unit" "$home"
+    return 0
+  done
+  return 1
+}
+
+# not_owner_reason <unit> <home>: the one sentence a non-owner home is refused with.
+not_owner_reason() {
+  printf '%s serves %s, the live home that owns the machine services, so this home (%s) never installs or moves them' "$1" "$2" "$JG_HOME"
 }
 
 # move <unit>: write this home's own unit text, reload, restart, and prove it serves here.
@@ -153,6 +204,8 @@ cmd_claim() {
   # Nor does a throw-away home that is its own copy (a test's fixture under a temp root)
   # move the units when they are this account's own (bin/jg-lab-home-lib.sh owns the rule).
   jg_lab_home_guard "$JG_HOME" jg-unit-claim "$UNIT_DIR" 2>/dev/null || return 0
+  # Nor does any home the units do not serve while their owner is live (WHO OWNS THEM).
+  ! foreign_owner >/dev/null || return 0
   for unit in $UNITS; do
     why=$(problem "$unit") || continue
     [ -n "$why" ] || continue
@@ -161,10 +214,22 @@ cmd_claim() {
   return "$rc"
 }
 
+cmd_may_install() {  # <caller> <action>
+  local owner
+  if squad_lead_home; then
+    printf '%s: %s refused: %s\n' "$1" "$2" "$(reason)" >&2
+    return 2
+  fi
+  owner=$(foreign_owner) || return 0
+  printf '%s: %s refused: %s\n' "$1" "$2" "$(not_owner_reason "${owner%% *}" "${owner#* }")" >&2
+  return 2
+}
+
 case "${1:-}" in
   claim) cmd_claim ;;
+  may-install) cmd_may_install "${2:-jg-unit-claim}" "${3:-install}"; exit ;;
   status) cmd_status ;;
   refuse) printf '%s: %s refused: %s\n' "${2:-jg-unit-claim}" "${3:-install}" "$(reason)" >&2; exit 2 ;;
   -h|--help) awk 'NR > 1 && /^#/ { print; next } NR > 1 { exit }' "$0"; exit 0 ;;
-  *) echo "usage: jg-unit-claim.sh claim|status|refuse <caller> <action>" >&2; exit 2 ;;
+  *) echo "usage: jg-unit-claim.sh claim|status|refuse <caller> <action>|may-install <caller> <action>" >&2; exit 2 ;;
 esac

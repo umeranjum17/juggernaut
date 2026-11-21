@@ -240,7 +240,7 @@ That work is tracked as follow-up `jg-pi-routine-delivery-idempotency-followup-r
 
 `bin/jg-lease-lib.sh` owns:
 
-- The per-task lease contract, whose record now lives in the home's key-value bus ([state-shadow.md](state-shadow.md)).
+- The per-task lease contract, whose record lives in the home's key-value file `state/kv.db`.
 - The posture-aware main-only role partition.
 - The deliberate CONFUSED-AGENT-GRADE threat model these guards target.
   That threat model was captain-decided; adversarial-grade separation is out of scope and tracked as follow-up design work.

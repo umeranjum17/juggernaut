@@ -1,6 +1,6 @@
 ---
 name: juggernaut-orca
-description: Agent-only operator checklist for Juggernaut's Orca runtime backend. Use when switching to Orca, spawning or supervising Orca-backed work, smoke-testing Orca backend behavior, debugging Orca task state, or reconciling Orca-backed task metadata.
+description: Use when switching to Orca, or spawning, supervising, smoke-testing, debugging or reconciling Orca-backed work.
 user-invocable: false
 metadata:
   internal: true

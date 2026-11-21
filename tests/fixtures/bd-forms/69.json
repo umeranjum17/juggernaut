@@ -1,0 +1,13 @@
+{
+ "argv": [
+  "history",
+  "jt-jf0",
+  "--events",
+  "--json"
+ ],
+ "stdin": "",
+ "stdout": "[\n  {\n    \"id\": \"a25f0a05-5aaa-5fcf-a321-0741b006f178\",\n    \"issue_id\": \"jt-jf0\",\n    \"event_type\": \"created\",\n    \"actor\": \"juggernaut\",\n    \"old_value\": \"\",\n    \"new_value\": \"\",\n    \"created_at\": \"2026-11-19T13:42:44Z\"\n  }\n]\n",
+ "exit": 0,
+ "form": "history --events --json",
+ "store": "{\"_type\":\"issue\",\"id\":\"jt-31j\",\"title\":\"Working two\",\"status\":\"in_progress\",\"priority\":2,\"issue_type\":\"task\",\"assignee\":\"Umer\",\"created_at\":\"2026-11-19T13:42:46Z\",\"updated_at\":\"2026-11-19T13:42:48Z\",\"started_at\":\"2026-11-19T13:42:48Z\",\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jt-8w7\",\"title\":\"Closed three\",\"status\":\"closed\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:42:46Z\",\"updated_at\":\"2026-11-19T13:42:48Z\",\"closed_at\":\"2026-11-19T13:42:48Z\",\"close_reason\":\"Closed\",\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jt-jf0\",\"title\":\"Open one\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:42:45Z\",\"updated_at\":\"2026-11-19T13:42:45Z\",\"dependencies\":[{\"issue_id\":\"jt-jf0\",\"depends_on_id\":\"jt-3oh\",\"type\":\"parent-child\",\"created_at\":\"2026-11-19T13:42:47Z\",\"created_by\":\"juggernaut\",\"metadata\":\"{}\"}],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jt-3oh\",\"title\":\"Epic parent\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:42:44Z\",\"updated_at\":\"2026-11-19T13:42:44Z\",\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

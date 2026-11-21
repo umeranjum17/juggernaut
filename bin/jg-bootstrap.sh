@@ -19,7 +19,7 @@
 #                 <stamp>>; <n> failed attempt(s) ... last: <recorded failure>",
 #                 "BACKLOG_RECONCILE: <id>: <what this home could not reconcile>",
 #                 "BACKLOG_RECONCILE: code-root <file> is not this home's <file>; ...",
-#                 "BEADS_UNHEALTHY: <why the store failed jg-beads.sh check>",
+#                 "BEADS_UNHEALTHY: <why the tickets tables failed tickets.py check>",
 #                 "TANGLE: <remediation>",
 #                 "JUDGE_MODEL: <the Fable or Opus done-done judge model, where it is set, and the cheap model to set>",
 #                 "SQUAD_LEAD_SYNC: squad_lead <id>: skipped: <reason>",
@@ -863,7 +863,7 @@ squad_lead_handoff_detect() {
 }
 
 # --- the message bus binaries --------------------------------------------------
-# The JetStream server and the client that drives its streams ship as release
+# The policy engine and the backlog store's binaries ship as release
 # archives, not npm packages, so this is the one owner of how they land: the
 # pinned version from toolchain.versions, the asset for this platform, into the
 # same user-local bin directory every other install uses.
@@ -884,35 +884,18 @@ bus_release_platform() {
 
 # bus_release_asset <tool>: the pinned asset's URL and the directory it unpacks into.
 bus_release_asset() {
-  local version platform os arch stem ext repo
+  local version platform os arch stem
   version=$(jg_pin_version "$1") || return 1
   platform=$(bus_release_platform) || return 1
   os=${platform% *} arch=${platform#* }
-  # The backlog store: bd's archive holds the binary at its root, dolt's under bin/.
-  [ "$1" != bd ] || {
-    printf 'https://github.com/gastownhall/beads/releases/download/v%s/beads_%s_%s_%s.tar.gz .tar.gz\n' \
-      "$version" "$version" "$os" "$arch"
-    return 0
-  }
   case "$1" in
-    nats-server) repo=nats-io/nats-server; stem="nats-server-v$version-$os-$arch"; ext=tar.gz ;;
-    nats) repo=nats-io/natscli; stem="nats-$version-$os-$arch"; ext=zip ;;
-    # The sidecar's archive holds the binary at its root (an empty directory name).
-    daprd) printf 'https://github.com/dapr/dapr/releases/download/v%s/daprd_%s_%s.tar.gz .tar.gz\n' \
-      "$version" "$os" "$arch"; return 0 ;;
-    # The workflow engine's timer service; its archive holds a binary named `scheduler`.
-    dapr-scheduler) printf 'https://github.com/dapr/dapr/releases/download/v%s/scheduler_%s_%s.tar.gz .tar.gz\n' \
-      "$version" "$os" "$arch"; return 0 ;;
     # The policy engine ships as one bare binary, not an archive; the second field "-.bin" says so.
     opa)
       stem="opa_${os}_$arch"
       { [ "$os" = darwin ] && [ "$arch" = amd64 ]; } || stem=${stem}_static
       printf 'https://github.com/open-policy-agent/opa/releases/download/v%s/%s -.bin\n' "$version" "$stem"; return 0 ;;
-    dolt) repo=dolthub/dolt; stem="dolt-$os-$arch"; ext=tar.gz ;;
     *) return 1 ;;
   esac
-  printf '%s %s.%s\n' \
-    "https://github.com/$repo/releases/download/v$version/$stem.$ext" "$stem" "$ext"
 }
 
 # The hint a missing-tool line prints: the same two steps the install runs.
@@ -924,15 +907,8 @@ bus_install_hint() {  # <tool>
 }
 
 # bus_tool_install <tool>: download the pinned archive and install the binary.
-# bd and dolt are pinned by binary hash and run only through bin/jg-beads.sh, so a
-# build off its pin never lands and neither one starts here, even for a version.
 bus_tool_install() {
-  local tool=$1 asset url stem ext dir dest tmp out member=$1 want=
-  [ "$tool" != dapr-scheduler ] || member=scheduler
-  [ "$tool" != dolt ] || member=bin/dolt
-  if [ "$tool" = bd ] || [ "$tool" = dolt ]; then
-    want=$(jg_pin_sha_want "$tool") || { echo "error: toolchain.versions has no $tool build for this platform" >&2; return 1; }
-  fi
+  local tool=$1 asset url stem ext dir dest tmp out member=$1
   asset=$(bus_release_asset "$tool") || { echo "error: no pinned release for $tool" >&2; return 1; }
   url=${asset% *}
   stem=${asset#* }
@@ -972,20 +948,10 @@ bus_tool_install() {
   if [ ! -f "$tmp/$stem/$member" ]; then
     rm -rf -- "$tmp"; echo "error: $tool is not in $url" >&2; return 1
   fi
-  if [ -n "$want" ] && [ "$(jg_pin_sha_of "$tmp/$stem/$member")" != "$want" ]; then
-    rm -rf -- "$tmp"; echo "error: $url does not hold the pinned $tool" >&2; return 1
-  fi
   mkdir -p "$dir" || { rm -rf -- "$tmp"; return 1; }
   chmod 0755 "$tmp/$stem/$member" || { rm -rf -- "$tmp"; return 1; }
   mv -f -- "$tmp/$stem/$member" "$dest" || { rm -rf -- "$tmp"; return 1; }
   rm -rf -- "$tmp"
-  [ -z "$want" ] || { printf '%s: %s\n' "$tool" "$(jg_pin_version "$tool")"; return 0; }
-  # The scheduler has no version flag, so the pin it was installed at is its version.
-  if [ "$tool" = dapr-scheduler ]; then
-    jg_pin_version "$tool" >"$dest.version" || return 1
-    printf '%s: %s\n' "$tool" "$(cat "$dest.version")"
-    return 0
-  fi
   printf '%s: %s\n' "$tool" "$("$dest" --version 2>&1 | head -n 1)"
 }
 
@@ -996,7 +962,7 @@ install_cmd() {
     cmux) echo "brew install --cask cmux  # or see https://cmux.com" ;;
     treehouse) echo "curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh" ;;
     no-mistakes) echo "curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh" ;;
-    nats-server|nats|daprd|dapr-scheduler|opa) bus_install_hint "$1" ;;
+    opa) bus_install_hint "$1" ;;
     learn-from-mistakes) echo "npm install -g $(jg_pin_npm learn-from-mistakes) && ln -sf learn-from-mistakes-axi \"\$(dirname \"\$(command -v learn-from-mistakes-axi)\")/learn-from-mistakes\"" ;;
     *)
       # Every npm tool installs the exact build its toolchain.versions row names, so this
@@ -1033,7 +999,7 @@ missing_tool_diagnostic() {
 # jg_backend_required_tools (bin/jg-backend.sh). So a herdr/zellij/cmux home is
 # never told tmux is missing, and only orca drops treehouse. A backend value with
 # no verified dependency set is reported before the universal checks continue.
-COMMON_TOOLS="node git gh no-mistakes gh-axi chrome-devtools-axi quota-axi learn-from-mistakes done-done sign-off-axi nats-server nats opa"
+COMMON_TOOLS="node git gh no-mistakes gh-axi chrome-devtools-axi quota-axi learn-from-mistakes done-done sign-off-axi opa"
 BACKEND=$(jg_backend_name)
 BACKEND_VALID=1
 if ! BACKEND_TOOLS=$(jg_backend_required_tools "$BACKEND"); then
@@ -1056,8 +1022,6 @@ LEARN_FROM_MISTAKES_AXI_MIN=$(jg_pin_version learn-from-mistakes) || LEARN_FROM_
 # moves installation, detection and this diagnostic together.
 DONE_DONE_AXI_MIN=$(jg_pin_version done-done) || DONE_DONE_AXI_MIN=0.0.0
 SIGN_OFF_AXI_MIN=$(jg_pin_version sign-off-axi) || SIGN_OFF_AXI_MIN=0.0.0
-NATS_SERVER_MIN=$(jg_pin_version nats-server) || NATS_SERVER_MIN=0.0.0
-NATS_MIN=$(jg_pin_version nats) || NATS_MIN=0.0.0
 
 treehouse_supports_lease() {
   treehouse get --help 2>&1 | grep -Eq '(^|[^[:alnum:]_-])--lease([^[:alnum:]_-]|$)'
@@ -1070,11 +1034,7 @@ treehouse_supports_lease() {
 tool_version_parts() {  # <tool>
   local tool=$1 output parts major minor patch extra
   command -v "$tool" >/dev/null 2>&1 || return 1
-  if [ "$tool" = dapr-scheduler ]; then
-    output=$(cat "$(command -v "$tool").version" 2>/dev/null) || return 1
-  else
-    output=$("$tool" --version 2>/dev/null) || return 1
-  fi
+  output=$("$tool" --version 2>/dev/null) || return 1
   parts=$(printf '%s\n' "$output" | sed -nE 's/.*[vV]?([0-9]+)\.([0-9]+)\.([0-9]+).*/\1 \2 \3/p' | head -n 1)
   IFS=' ' read -r major minor patch extra <<< "$parts"
   [ -n "$major" ] && [ -n "$minor" ] && [ -n "$patch" ] && [ -z "$extra" ] || return 1
@@ -1374,6 +1334,9 @@ crew_dispatch_validate() {
       else "default profile model and effort must be non-empty strings when present"
       end
     elif $typed and has("default") and malformed_profile_floors([profiles(.default)[]?]) then "default profile floor needs scope and min_percent 0..100"
+    elif $typed and (configured_profiles | any(. as $p | has("billing") and
+      (["plan", "flat-plan", "credits", "overage"] | index($p.billing) | not))) then
+      "profile billing must be plan, flat-plan, credits, or overage"
     else
       (configured_profiles
         | map(.harness)
@@ -1573,14 +1536,20 @@ startup_memory_budget_setup() {
 # MISSING line, and it never fails the boot. It talks to the network (pinned releases), so it
 # belongs to the network half of a split run; JG_STACK_SKIP=1 turns it off for a fixture.
 bus_service() {
-  local out
+  local out rc=0
   # A Squad Lead home runs none of the machine's services: Main owns them, and
   # `jg-stack.sh up` refuses there for that reason.
   [ ! -e "$(jg_compat_marker "$JG_HOME")" ] && [ ! -L "$(jg_compat_marker "$JG_HOME")" ] || return 0
   network_phase || return 0
   [ "${JG_STACK_SKIP:-0}" != 1 ] || return 0
-  if out=$("$SCRIPT_DIR/jg-stack.sh" up 2>&1); then
+  out=$("$SCRIPT_DIR/jg-stack.sh" up 2>&1) || rc=$?
+  if [ "$rc" -eq 0 ]; then
     [ "${JG_BOOTSTRAP_VERBOSE_FACTS:-0}" != 1 ] || echo "BOOTSTRAP_INFO: $(printf '%s\n' "$out" | tail -n 1)"
+    return 0
+  fi
+  # Exit 2 is a refusal, not a fault: the machine's services are not this home's to install.
+  if [ "$rc" -eq 2 ]; then
+    echo "BOOTSTRAP_INFO: $(printf '%s\n' "$out" | tail -n 1)"
     return 0
   fi
   echo "MISSING: $(printf '%s\n' "$out" | grep '^STACK_FAILED:' | head -n 1 | sed 's/^STACK_FAILED: //') (fix, then run: bin/jg-stack.sh up)"
@@ -1730,14 +1699,6 @@ detect_local_tools() {
   for t in $COMMON_TOOLS; do
     command -v "$t" >/dev/null || missing_tool_diagnostic "$t"
   done
-  # The bus binaries ship as release archives, so their row is an exact version
-  # rather than an npm build; a present but older binary is still a MISSING line.
-  if command -v nats-server >/dev/null 2>&1 && ! tool_version_at_least nats-server "$NATS_SERVER_MIN"; then
-    echo "MISSING: nats-server (install: $(install_cmd nats-server))"
-  fi
-  if command -v nats >/dev/null 2>&1 && ! tool_version_at_least nats "$NATS_MIN"; then
-    echo "MISSING: nats (install: $(install_cmd nats))"
-  fi
   # The treehouse lease-support upgrade check is only relevant when the resolved
   # backend actually requires treehouse (every backend except orca, which owns its
   # own worktrees); an orca home must not be told to upgrade a provider it never uses.
@@ -1835,6 +1796,8 @@ detect_sentinel_service() {
   [ -e "$(jg_compat_marker "$JG_HOME")" ] || [ -L "$(jg_compat_marker "$JG_HOME")" ] && return 0
   command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1 || return 0
   systemctl --user is-active --quiet jg-sentinel && return 0
+  # A home the installed units do not serve offers no command that would take them (bin/jg-unit-claim.sh).
+  "$SCRIPT_DIR/jg-unit-claim.sh" may-install jg-bootstrap sentinel 2>/dev/null || return 0
   local quoted_home quoted_sentinel
   printf -v quoted_home %q "$JG_HOME"
   printf -v quoted_sentinel %q "$JG_ROOT/bin/jg-sentinel.sh"

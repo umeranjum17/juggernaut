@@ -388,10 +388,6 @@
       "audience": "agent-runtime"
     },
     {
-      "path": "defaults/worker-rules.tsv",
-      "audience": "agent-runtime"
-    },
-    {
       "path": "docs/agent-control.md",
       "audience": "maintainer-architecture"
     },
@@ -532,10 +528,6 @@
       "audience": "maintainer-architecture"
     },
     {
-      "path": "docs/bus-leaf-shadow.md",
-      "audience": "maintainer-architecture"
-    },
-    {
       "path": "docs/deprecated-paths.md",
       "audience": "maintainer-architecture"
     },
@@ -546,10 +538,6 @@
     {
       "path": "docs/remote-squad-leads.md",
       "audience": "operator-current"
-    },
-    {
-      "path": "docs/reply-shadow.md",
-      "audience": "maintainer-architecture"
     },
     {
       "path": "docs/squad-lead-parent-channel.md",
@@ -568,12 +556,12 @@
       "audience": "maintainer-architecture"
     },
     {
-      "path": "docs/state-shadow.md",
+      "path": "docs/subagent-guard.md",
       "audience": "maintainer-architecture"
     },
     {
-      "path": "docs/subagent-guard.md",
-      "audience": "maintainer-architecture"
+      "path": "docs/supervision-protocols/agy.md",
+      "audience": "agent-runtime"
     },
     {
       "path": "docs/supervision-protocols/claude.md",
@@ -824,6 +812,18 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/done-done-verify-suites/features/alert-authority.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/done-done-verify-suites/features/ask-outcomes.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/done-done-verify-suites/features/tickets-beads-checks.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/done-done-verify-suites/features/account-next-relaunch.md",
       "audience": "agent-runtime"
     },
@@ -896,18 +896,6 @@
       "audience": "agent-runtime"
     },
     {
-      "path": "core/FORK-EXIT.md",
-      "audience": "maintainer-architecture"
-    },
-    {
-      "path": "core/README.md",
-      "audience": "public-product"
-    },
-    {
-      "path": "core/VISION.md",
-      "audience": "public-product"
-    },
-    {
       "path": "core/account-pool/README.md",
       "audience": "operator-current"
     },
@@ -929,10 +917,6 @@
     },
     {
       "path": "core/critical-stall/README.md",
-      "audience": "operator-current"
-    },
-    {
-      "path": "core/docs/media/README.md",
       "audience": "operator-current"
     },
     {
@@ -973,14 +957,6 @@
     },
     {
       "path": "core/lead-sweep/README.md",
-      "audience": "operator-current"
-    },
-    {
-      "path": "core/lead-wake/DEPRECATED.md",
-      "audience": "maintainer-architecture"
-    },
-    {
-      "path": "core/lead-wake/README.md",
       "audience": "operator-current"
     },
     {
@@ -1048,6 +1024,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "core/report-writer/README.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "core/report-actions/tests/fixtures/recorded-report.md",
       "audience": "maintainer-verification"
     },
@@ -1094,6 +1074,246 @@
     {
       "path": "core/watch/README.md",
       "audience": "maintainer-architecture"
+    },
+    {
+      "path": ".agents/skills/done-done-verify-suites/features/hold-table.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": ".agents/skills/done-done-verify-suites/features/item-store-contention.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": ".agents/skills/done-done-verify-suites/features/codex-lead-queued-wake.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "docs/supervision-protocols/codex-lead.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "core/tool-kits/build-words.txt",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "core/tool-kits/kits/takeone/asks.txt",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "core/tool-kits/kits/takeone/brief.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "core/agent-cli/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/auto-dispatch/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/classify/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/escalation-optimize/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/fleet-status/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/herdr/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/pane-sweep/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/pool-reserve/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/pr-pager/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/quality-ledger/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/recon-ready/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/release-ledger/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/report-page/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/spawn/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/teardown/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/tool-kits/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/trunk-ci/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/wake-rollup/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/wake/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "docs/captain-chat.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "docs/trunk-flow.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/ports/message-bus/PORT.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "core/ports/pi-engine/PORT.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "docs/bus-live.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "docs/context-bound.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "docs/ports-and-adapters.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "docs/ticket-statechart.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "docs/examples/architecture.json",
+      "audience": "operator-example"
+    },
+    {
+      "path": "docs/examples/engineering-rules.json",
+      "audience": "operator-example"
+    },
+    {
+      "path": "docs/examples/preferred-stack.json",
+      "audience": "operator-example"
+    },
+    {
+      "path": "docs/examples/tool-models.json",
+      "audience": "operator-example"
+    },
+    {
+      "path": "core/tool-kits/tests/fixture-kits/asks.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/captures/stuck-live/",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/doorbell-composer/",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/ticket-adapter-conformance/README.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": ".agents/skills/blitz/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/council/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/op-order/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/spotrep/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/status-check/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/strike-recon/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/swarm/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/war-room/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "core/report-writer/prompts/",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "docs/roles/",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "core/item-store/logs/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/swarm/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/workflows/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "docs/item-store.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/item-store/tests/sim-seeds.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/blitz-wide/",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/item-store-land-release/",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/item-store-owner-calls/",
+      "audience": "maintainer-verification"
     }
   ]
 }

@@ -19,10 +19,8 @@ The five goals, scored together:
 
 ## Stack
 
-- NATS JetStream carries messages, queues, history, and key-value state such as locks and busy state.
-- Dapr in slim mode, without Docker, runs over NATS. Workflows own timers, escalation, and wait-for-reply.
 - Open Policy Agent owns every rule that is a yes/no over facts.
-- The captain channel is the one way the fleet reaches the captain and the captain replies. It is events on the NATS bus, read by the chat gateway.
+- The captain channel is the one way the fleet reaches the captain and the captain replies. It is read by the chat gateway.
 - Go is used for new long-running code. Node stays only in short-lived hooks.
 
 ## Code shape
@@ -45,7 +43,6 @@ The five goals, scored together:
    The owner-rules merge gate's refusal order, the brief-time owner rules and the completion-receipt acceptance are `brief_rules.rego` and `receipt.rego` (the owner proof rule, `owner_proof.rego`, was deleted by pcp-s7) in that tree; their scripts only gather facts and print the message for the reason the policy gives.
    Each shell check leaves in the same change that proves the policy gives its recorded decisions.
 4. Shared libraries replace the copied blocks.
-5. The plumbing swap to NATS and Dapr runs in shadow first, one path at a time. One shared NATS server runs per machine, with one account, one `jg.<home>.>` subject prefix, and its own streams per home. A remote machine joins through a leaf node.
 6. The add-on concept ends: every add-on is folded into the core or deleted where the migration replaces it, and a merge check refuses new files under `addons/`.
 
 ## Process rules

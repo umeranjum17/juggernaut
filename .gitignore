@@ -1,6 +1,8 @@
 projects/
 state/
 data/
+!tests/fixtures/**/state/
+!tests/fixtures/**/data/
 scratchpad*
 .no-mistakes/
 .jg-squad-lead-home

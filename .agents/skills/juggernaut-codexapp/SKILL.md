@@ -1,8 +1,6 @@
 ---
 name: juggernaut-codexapp
-description: >-
-  Agent-only playbook for coordinating visible Codex Desktop threads alongside Juggernaut without pretending they are a selectable shell backend.
-  Use before creating, reading, steering, archiving, debugging, or reviewing a Codex App visible thread for Juggernaut work, and before responding to requests to make Codex App native to Juggernaut.
+description: Use before creating, reading, steering, archiving or debugging a Codex App visible thread for Juggernaut work.
 user-invocable: false
 metadata:
   internal: true

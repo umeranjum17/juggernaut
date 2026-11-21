@@ -29,7 +29,7 @@ route() {  # <home> <args...>: the command in a home, stdout and stderr together
   env HOME="$T" TMPDIR="$T" JG_HOME="$h" JG_STATE_OVERRIDE="$h/state" JG_DATA_OVERRIDE="$h/data" \
     JG_CONFIG_OVERRIDE="$h/config" "$CLI" "$@" 2>&1
 }
-bd_() { BEADS_DIR=$(tr -d '[:space:]' < "$1/config/beads-dir") "$ROOT/bin/jg-beads.sh" "${@:2}" 2>/dev/null; }
+bd_() { JG_HOME=$1 python3 -I "$ROOT/core/item-store/adapters/bd_compat.py" "${@:2}" 2>/dev/null; }
 slices_in() { bd_ "$1" list --parent jg-plan --all --limit 0 --json | jq -r '[.[].metadata.plan_slice] | sort | join(",")'; }
 slice() {  # <id> <owner> <deps json>
   jq -n --arg id "$1" --arg o "$2" --argjson d "$3" \

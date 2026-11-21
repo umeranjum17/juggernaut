@@ -28,7 +28,7 @@ inst() { env -u XDG_DATA_HOME HOME="$T/home" "$ADDON/wiring.sh" "$@"; }
 
 inst --dry-run > "$T/dry.out"
 grep -q 'dry run: nothing written' "$T/dry.out" && ok "dry run reports nothing written" || no "dry run output: $(cat "$T/dry.out")"
-[ ! -e "$T/home/.local/share/jg-pipeline-literal-delete/rule.txt" ] && ok "dry run writes nothing" || no "dry run wrote files"
+grep -q '^would-write ' "$T/dry.out" && [ ! -e "$T/home/.local/share/jg-pipeline-literal-delete/rule.txt" ] && ok "dry run names what it would write and writes nothing" || no "dry run wrote files or named none: $(cat "$T/dry.out")"
 inst > "$T/install.out" && inst > "$T/reinstall.out"
 [ "$(grep -c '^unchanged: ' "$T/reinstall.out")" -eq 4 ] && ok "rerun changes nothing" || no "rerun not idempotent: $(cat "$T/reinstall.out")"
 ls "$T/home/.claude/settings.json.bak-pipeline-literal-delete-"* >/dev/null 2>&1 && ok "backup made" || no "no backup"

@@ -1,28 +1,21 @@
 #!/usr/bin/env bash
-# Slice S9 of jg-q1b3n on a real Beads store, through the real callers: the verb `jg-backlog.sh trace record` writes the provenance
+# Slice S9 of jg-q1b3n on the home's ticket tables, through the real callers: the verb `jg-backlog.sh trace record` writes the provenance
 # event first and then the time on the row, found by a task id as well as by a ticket id; the delivery tick's ready step
 # (bin/jg-ready-trace.sh) records ready, resumed and a newer ready from a lane's status file; the merge's post-merge step
-# records the receipt it read; and the evidence list only grows. JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT name the builds; without
-# them the run skips plainly. It proves bin/jg-beads-trace.py, bin/jg-trace-lib.sh, bin/jg-ready-trace.sh and the receipt step of
-# bin/jg-merge-gate-lib.sh, the files the changed-test selector maps to it.
+# records the receipt it read; and the evidence list only grows. It proves bin/jg-beads-trace.py, bin/jg-trace-lib.sh,
+# bin/jg-ready-trace.sh and the receipt step of bin/jg-merge-gate-lib.sh, the files the changed-test selector maps to it.
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
-  printf 'skip: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
-  exit 0
-fi
-
 T=$(jg_test_tmproot jg-trace-writers)
-WRAPPER=$ROOT/bin/jg-beads.sh CLI=$ROOT/bin/jg-backlog.sh
-unset BEADS_DB BEADS_DOLT_SHARED_SERVER BEADS_ACTOR JG_BACKLOG_LANE JG_BACKLOG_SPAWN_GEN JG_BACKLOG_AGENT JG_BACKLOG_LANE_HANDOVER
-mkdir -p "$T/store" "$T/home/config" "$T/home/data" "$T/home/state"
-export TZ=UTC TMPDIR=$T BEADS_DIR=$T/store/.beads JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT JG_HOME=$T/home
-printf '%s\n' "$BEADS_DIR" > "$T/home/config/beads-dir"
+COMPAT=$ROOT/core/item-store/adapters/bd_compat.py CLI=$ROOT/bin/jg-backlog.sh
+unset BEADS_ACTOR JG_BACKLOG_LANE JG_BACKLOG_SPAWN_GEN JG_BACKLOG_AGENT JG_BACKLOG_LANE_HANDOVER
+mkdir -p "$T/home/config" "$T/home/data" "$T/home/state"
+export TZ=UTC TMPDIR=$T JG_HOME=$T/home
 : > "$T/home/config/backlog-intake-loose"  # the fixture files rows by their own words, not by strict intake
 
-bd() { "$WRAPPER" "$@"; }
+bd() { python3 -I "$COMPAT" "$@"; }
 axi() { "$CLI" "$@"; }
 row() { bd show "$1" --json 2>/dev/null | jq -c 'if type == "array" then .[0] else . end'; }
 meta() { row "$1" | jq -r --arg k "$2" '.metadata[$k] // ""'; }
@@ -33,7 +26,6 @@ ready() {  # <ticket>: ready by the row alone, as the stage rule reads it
 }
 tick() { bash "$ROOT/bin/jg-ready-trace.sh" "$T/home" || fail "the ready step failed"; }
 
-bd init --prefix jg >"$T/init.log" 2>&1 || fail "init the store: $(cat "$T/init.log")"
 axi add jg-s9a "[feature] fixture lane" --priority 2 --body why >/dev/null || fail "file jg-s9a"
 bd update jg-s9a --set-metadata task=lane-s9a >/dev/null || fail "name the task"
 
@@ -139,9 +131,11 @@ axi trace record lane-s11 commit work-id lane-s11@done-1 --source jg-done --at 1
 sha=0123456789abcdef0123456789abcdef01234567
 axi trace record jg-s11 land git-sha "$sha" --source jg-trunk-land --at 1794000100 >/dev/null || fail "land"
 axi trace record jg-s11 used work-id card-1 --source jg-evidence >/dev/null || fail "evidence"
+axi trace record jg-s11 used work-id "lane-s11@${sha:0:12}" --source jg-receipt --payload '{"verdict":"PASS"}' >/dev/null || fail "receipt"
 line=$(axi trace lane-s11) || fail "trace by a task id"
-want=$(printf 'jg-s11\tbird'"'"'s-eye fixture\t%s\tfixture-agent\t%s\t%s\tQuestion: which option? => option a\tcard-1' "$(row jg-s11 | jq -r .created_by)" "${sha:0:12}" "$(axi ticket-stage jg-s11 | cut -f1)")
+want=$(printf 'jg-s11\tbird'"'"'s-eye fixture\t%s\tfixture-agent\t%s\t%s\tQuestion: which option? => option a\tcard-1,receipt:PASS@%s' "$(row jg-s11 | jq -r .created_by)" "${sha:0:12}" "$(axi ticket-stage jg-s11 | cut -f1)" "${sha:0:12}")
 [ "$line" = "$want" ] || fail "the trail line is key, title, filed by, worker, commits, state, decision, evidence; got [$line] want [$want]"
 [ "$(printf '%s\n' "$line" | wc -l)" = 1 ] && [ "$(axi trace jg-s11)" = "$line" ] || fail "one line, the same by ticket id"
 axi trace no-such-ticket >/dev/null 2>&1 && fail "an unknown ticket must be refused"
-pass "trace: one line from key to evidence after a full fake life with one answered question, by ticket id or task id: $(printf '%s' "$line" | tr '\t' '|')"
+python3 -I "$ROOT/core/item-store/adapters/tickets.py" check >"$T/check.log" 2>&1 || fail "the tables must stay the record: $(cat "$T/check.log")"
+pass "trace: one line from key to evidence (the card and the receipt) after a full fake life with one answered question, by ticket id or task id: $(printf '%s' "$line" | tr '\t' '|')"

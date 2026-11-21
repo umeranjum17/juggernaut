@@ -1,9 +1,6 @@
 ---
 name: stuck-operator-recovery
-description: >-
-  Agent-only playbook for stuck or missing ordinary Juggernaut direct reports.
-  Use when the session-start digest reports an ordinary direct report's endpoint dead or its metadata has no window, or after a stale wake, looping pane, repeated confusion, an answered-by-brief question, an unresponsive operator, or a failed steer.
-  Reconciles recorded work before escalating from targeted inspection through safe relaunch or failure.
+description: Use when a direct report's endpoint is dead, or after a stale wake, looping pane, repeated confusion, unresponsive worker, or failed steer.
 user-invocable: false
 metadata:
   internal: true

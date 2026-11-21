@@ -5,9 +5,9 @@
 #        jg-backlog.sh --help
 #
 # Every routine juggernaut backlog read or mutation goes through this command. It serves
-# `show`, `view`, `list`, `questions` (the owner's open questions: `--ticket <id>`, `--due`, `--all`, `--json`), `ready`, `ready --spawnable` (the tickets this home can start now, bin/jg-backlog-spawnable.sh, ended at 10 seconds with exit 124), `approve-dispatch`, `markdown`, `homes --json` (every home and its store, `"remote": true` for a lead on another machine, bin/jg-backlog-homes.sh), `tree --homes` (one tree across every home, bin/jg-backlog-tree.py), `add`, `update`, `done`, `block`, `unblock`,
-# `start`, `task`, `reopen`, `hold`, `unhold`, `on-report`, `public-followup`, `relink` and `retag` from the store that
-# `config/beads-dir` names (bin/jg-backlog-lib.sh); any other verb exits 2 with nothing
+# `show`, `view`, `list`, `questions` (the owner's open questions: `--ticket <id>`, `--due`, `--all`, `--json`), `ready`, `ready --spawnable` (the tickets this home can start now, bin/jg-backlog-spawnable.sh, ended at 10 seconds with exit 124), `approve-dispatch`, `markdown`, `homes --json` (every home and its directory, `"remote": true` for a lead on another machine, bin/jg-backlog-homes.sh), `tree --homes` (one tree across every home, bin/jg-backlog-tree.py), `add`, `update`, `done`, `block`, `unblock`,
+# `start`, `task`, `reopen`, `hold`, `unhold`, `on-report`, `public-followup`, `relink`, `retag` and `compare` (below) from the ticket tables
+# (bin/jg-backlog-lib.sh); any other verb exits 2 with nothing
 # run. A relative value of `--to` or any `--*-file` flag (`--body-file`, ...) is made
 # absolute against the caller's working directory. Hold reasons are plain text.
 #
@@ -16,7 +16,6 @@
 #
 # Refusals (exit 2, nothing run):
 #   - a caller-supplied --file, because this command owns the addressing;
-#   - a home with no store named in `config/beads-dir` (bin/jg-backlog-lib.sh owns that diagnostic);
 #   - `add` (or its `create` alias) with --start, so neither spelling places a row In
 #     flight without the dispatch artifacts bin/jg-spawn.sh creates - the task record,
 #     status file, and inbox that go with the row (`start <id>` stays a documented
@@ -39,8 +38,8 @@
 #   - `add` (or `create`) whose item is not filed as fields: the title must read as plain words
 #     (bin/jg-backlog-lib.sh's jg_backlog_title_refusal: 2 to 7 words, at most 48 characters, no id, [tag], URL or
 #     path, and no plan code such as J20d-3 or mf-m2 at the front (the code goes in the body; bin/jg-retitle.py renames the old ones); a leading type tag is still taken as input and stored as the label), the call must carry --priority 0 to 3
-#     (an owner ask gets 0), and bd checks the body for the sections of lint.sections.task (`jg-beads.sh init` sets
-#     Captain, Ask, Why and Done when; bd's own task rule adds Acceptance Criteria) with `create --validate`. The
+#     (an owner ask gets 0), and the tables check the body for the sections of lint.sections.task (Captain, Ask, Why and Done when;
+#     the task rule adds Acceptance Criteria) with `create --validate`. The
 #     local presence flag config/backlog-intake-loose in this home turns the check off;
 #   - `add`/`create` of a [captain-ask] item with a --priority other than 0, or
 #     `update`/`edit` that would set one on a [captain-ask] row (or retitle a
@@ -63,6 +62,8 @@
 # task id goes is resolved to its slug first, `show` prints the key under the id, `list --keys`
 # puts each row's key first, and a successful `add` keys the new ticket when the home has a
 # registered prefix.
+# The ticket tables of the host's item store are the one store (core/item-store/adapters/tickets.py): every read verb answers from them. `compare` lists each
+# difference between a fresh export of the tables and the copy the item store keeps (exit 1 when any). `homes` reads files, not the tables.
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
 [ "$_jg_d" != "${BASH_SOURCE[0]}" ] || _jg_d=.
@@ -206,7 +207,9 @@ done
 ARGS=(${_jg_keyed[@]+"${_jg_keyed[@]}"})
 unset _jg_keyed _jg_arg _jg_slug
 key_tool() { JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$TICKET_KEY" "$@"; }
-beads_read() { jg_backlog_beads_read "$JG_HOME/config" ${ARGS[@]+"${ARGS[@]}"}; }
+beads_read() {
+  JG_HOME="$JG_HOME" python3 "$SCRIPT_DIR/../core/item-store/adapters/tickets.py" read ${ARGS[@]+"${ARGS[@]}"}
+}
 # approve-dispatch <id> --harness <h> --model <m> --effort <e>: the lead's or the owner's yes that the dispatch check
 # (core/auto-dispatch) may start this ticket by itself, on that route. It writes state/dispatch-approved/<id>, the only
 # record the check trusts: a line typed into a ticket body is not one. A worker session (JG_TASK_ID set) is refused.
@@ -260,7 +263,14 @@ case "${1:-}" in
     beads_read; exit $? ;;
   markdown|questions) beads_read; exit $? ;;
   homes) exec "$SCRIPT_DIR/jg-backlog-homes.sh" "${ARGS[@]:1}" ;;
-  tree) exec python3 "$SCRIPT_DIR/jg-backlog-tree.py" "${ARGS[@]:1}" ;;
+  tree)
+    JG_HOME="$JG_HOME" exec python3 "$SCRIPT_DIR/../core/item-store/adapters/tickets.py" tree "${ARGS[@]:1}" ;;
+  compare)
+    [ "${#ARGS[@]}" -eq 1 ] || fail "compare takes no argument"
+    _jg_exp=$(mktemp) || fail "no scratch file"
+    if ! jg_backlog_bd "$JG_HOME" export > "$_jg_exp"; then rm -f -- "$_jg_exp"; fail "the export failed"; fi
+    JG_HOME="$JG_HOME" python3 "$SCRIPT_DIR/../core/item-store/adapters/tickets.py" compare "$_jg_exp"; _jg_rc=$?
+    rm -f -- "$_jg_exp"; exit "$_jg_rc" ;;
   add|create|update|edit|done|close|block|unblock|start|task|reopen|hold|unhold|on-report|public-followup|relink|retag|moment|wait|ticket-stage|ticket-drift|times|trace|beat|reclaim) ;;
   *) fail "the beads backlog does not serve ${1:-this command}" ;;
 esac
@@ -316,7 +326,7 @@ captain_guard() {  # <backlog args>
 # Reads an add/update argument list: ITEM_TITLE (add's title, or update's --title),
 # ITEM_PRIORITY, and ITEM_ID (update's id).
 item_args() {  # <add|update args...>
-  local verb=$1 mint=0 positional=()
+  local verb=$1 positional=()
   ITEM_TITLE='' ITEM_PRIORITY='' ITEM_ID='' ITEM_LABELS=' '
   shift
   while [ "$#" -gt 0 ]; do
@@ -326,9 +336,9 @@ item_args() {  # <add|update args...>
       --title=*) ITEM_TITLE=${1#--title=} ;;
       --priority) ITEM_PRIORITY=${2-}; shift ;;
       --priority=*) ITEM_PRIORITY=${1#--priority=} ;;
-      --mint) mint=1 ;;
-      --parent) mint=1; shift ;;
-      --parent=*) mint=1 ;;
+      --mint) ;;
+      --parent) shift ;;
+      --parent=*) ;;
       --label|-l) ITEM_LABELS+="${2-} "; shift ;;
       --label=*) ITEM_LABELS+="${1#--label=} " ;;
       --kind|--repo|--blocked-by|--pr|--report|--prefix|--release) shift ;;
@@ -337,8 +347,9 @@ item_args() {  # <add|update args...>
     esac
     shift
   done
+  # A word after the id is the title; an add with one word is its title alone and bd names the row (bin/jg-beads-write.py).
   case "$verb" in
-    add|create) if [ "$mint" = 1 ]; then ITEM_TITLE=${positional[0]-}; else ITEM_TITLE=${positional[1]-}; fi ;;
+    add|create) case ${#positional[@]} in 2) ITEM_TITLE=${positional[1]} ;; *) ITEM_TITLE=${positional[0]-} ;; esac ;;
     *) ITEM_ID=${positional[0]-} ;;
   esac
 }

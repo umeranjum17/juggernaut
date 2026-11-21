@@ -26,11 +26,13 @@
 #        jg-trunk.sh waiver <project-dir> --rule <owner-rule-id> --release   Overwatch only: the captain's standing word lets this project's green release pull request merge by itself
 #        jg-trunk.sh ci <project-dir> <sha> green|red  record the CI result for a live commit; red moves the green pin, and every home, back to the last green one
 #        jg-trunk.sh release <project-dir>             push the last green commit of the trunk and open the ONE release PR trunk -> default branch, owned by task release-<project>-<trunk>; refuses without his word
-#        jg-trunk.sh publish <project-dir>             under the release waiver: push the green pin once the trunk holds enough, or the tip as a candidate after a red; one batch at a time, never forced
-#        jg-trunk.sh autorelease <project-dir>         under the release waiver: when CI required is green on the pushed pin (read from the forge), fast-forward the default branch to it and cut the next trunk version at the tip; red leaves main and files one fix ticket
+#        jg-trunk.sh waiver <project-dir> --rule <owner-rule-id> --autorelease   Overwatch only: the captain chose this project for the automatic release (publish, autorelease); a plain --release waiver does not
+#        jg-trunk.sh publish <project-dir>             for a project chosen for the automatic release: push the green pin once the trunk holds enough, or the tip as a candidate after a red; one batch at a time, never forced
+#        jg-trunk.sh autorelease <project-dir>         for a project chosen for the automatic release: when CI required is green on the pushed pin (read from the forge), fast-forward the default branch to it and cut the next trunk version at the tip; red leaves main and files one fix ticket
 #        jg-trunk.sh rollover <project-dir>            after the release PR merged, cut the next trunk version (release/v8, ...) from the default branch
 #        jg-trunk.sh retire <project-dir>              clean up an old trunk unforced: only when its release is proved on main and every hotfix is carried; unlanded work is kept and listed
 #        jg-trunk.sh due <project-dir>                 exit 0 when the oldest unreleased commit is past release-after-hours
+#        jg-trunk.sh release-daily                     Main's daily check: lists in the item store, once, each open release PR that nothing there asks or releases (records only)
 #
 # The flow is the same for every project IN local-trunk MODE (data/projects.md `[local-trunk]`); every subcommand
 # refuses any other project, whose own delivery rules are unchanged: a lane's one commit lands on the local trunk by itself once the
@@ -232,6 +234,26 @@ pol() { jg_trunk_policy "$1" "${PN:-}"; }
 put() { printf '%s\n' "$2" > "$1.tmp.$$" && mv -f "$1.tmp.$$" "$1"; }
 row() { mkdir -p "$DATA"; local f=$1; shift; printf '%s\n' "$(IFS=$'\t'; echo "$*")" >> "$DATA/$f"; }
 rev() { git -C "$PROJ" rev-parse --verify --quiet "$1^{commit}"; }
+# Whether the ref exists at all. rev reads the commit it names, so a ref whose commit this clone does not hold (or whose object is no commit)
+# reads as absent there while a create-only update-ref still refuses it as existing; every guard before a create asks this instead.
+has_ref() { git -C "$PROJ" rev-parse --verify --quiet "$1" >/dev/null; }
+# The item store's record of the same facts (core/item-store/adapters/trunk.py), only where the home has config/item-store. Today's records decide:
+# a store call never changes this script's output or exit status, and a refused write is an intake item on Main, not an error here.
+# store_covers <rel> <prev>: where the home holds the store's decision (config/item-store-decides) a push goes only when the store's
+# yes covers <rel> (core/item-store/adapters/trunk.py agree: covered head is <rel> or has it under it; a machine release needs none).
+# It applies only when pushing into an OPEN release pull request: a first push opens the pull request, so no pull request number and
+# no yes exist yet to cover, and today's word alone lets it go. A refusal records the push so his question is asked, and `agree` files the intake.
+store_covers() {  # <rel> <prev>
+  local pr out
+  [ -e "$JG_HOME/config/item-store-decides" ] && [ -e "$JG_HOME/config/item-store" ] || return 0
+  [ -n "$2" ] && [ "$(pr_state "$2")" = open ] || return 0
+  pr=${2##*/}
+  out=$(python3 -I "$JG_ROOT/core/item-store/adapters/trunk.py" agree "$PN" "$pr" "$1" 2>/dev/null) || out=
+  [ "$out" != agree ] || return 0
+  store_trunk pushed "$PN" "$pr" "$1" --source "push:$1"
+  refuse "release: waiting for the owner's yes on ${1:0:12}"
+}
+store_trunk() { [ -e "$JG_HOME/config/item-store" ] || return 0; python3 -I "$JG_ROOT/core/item-store/adapters/trunk.py" "$@" >/dev/null 2>&1 || true; }
 
 LOCKS=''; VERIFY_WANT=''
 cleanup() {
@@ -350,8 +372,21 @@ tip_adopt_forward() {
 # The only variables a gate takes from whoever starts it. A gate gives one result from every caller (a worker session,
 # the lead, the watcher, a bare shell), so its clone and its command start from an empty environment plus these names:
 # a session's git hook settings, task id or account never reach the tests. JG_HOME is the home this script resolved.
-# A gate that needs another variable goes red on its first run, and the miss is added here by name.
-GATE_ENV='HOME PATH USER LOGNAME SHELL LANG LC_ALL TMPDIR JG_HOME'
+# A project whose gate needs more sets it once in config/trunk-policy (gate-env@<project>=NAME=value ...), and every gate command
+# of that project (the first run, the rerun, the tip and parent runs) starts with it, so no rerun can lose a variable its first run had.
+GATE_ENV='HOME PATH USER LOGNAME SHELL LANG LC_ALL TMPDIR JG_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME'
+# The NAME=value words of the project's gate-env key, read once per run and project into GATE_ENV_SET; a word that is not NAME=value
+# is refused once and left out.
+gate_env_set() {
+  local word words
+  [ "${GATE_ENV_FOR-/}" != "$PN" ] || return 0
+  GATE_ENV_FOR=$PN; GATE_ENV_SET=()
+  read -r -a words <<< "$(pol gate-env)"
+  for word in "${words[@]}"; do
+    if [[ $word =~ ^[A-Z_][A-Z0-9_]*= ]]; then GATE_ENV_SET+=("$word")
+    else echo "REFUSED: gate-env word is not NAME=value: $word" >&2; fi
+  done
+}
 
 # A gate marks itself while it runs (state/.trunk-gate-<project>-<pid>.lock) and never starts while a move of the homes is pending
 # (state/.trunk-move-<project>.lock): the move (go_live, begin_move) waits for every marked gate to end, and a gate that would start
@@ -412,6 +447,7 @@ gate_exec() {  # <commit> <command> <log> [<envfile>]
   gate_enter
   local -a clean=(env -i)
   for name in $GATE_ENV; do [ -z "${!name+set}" ] || clean+=("$name=${!name}"); done
+  gate_env_set; clean+=("${GATE_ENV_SET[@]}")
   mkdir -p "$DATA/trunk"
   WORK=$(mktemp -d)
   "${clean[@]}" git clone -q --shared --no-checkout "$PROJ" "$WORK/tree" || die "cannot clone $PROJ for the gate"
@@ -858,6 +894,11 @@ cmd_init() {
   local base=${2-} vb r
   open_project "${1-}"
   [ ! -e "$STATE/trunk-tip-$PN" ] || die "trunk for $PN already exists"
+  # A clone another home also uses can hold the trunk branch while this home has no record of it: the branch is that home's, never recreated here.
+  if has_ref "refs/heads/$TRUNK"; then
+    rev "refs/heads/$TRUNK" >/dev/null || die "branch $TRUNK already exists in $PROJ but names a commit that clone does not hold, and this home has no record of it (state/trunk-tip-$PN): fetch the missing commit or have its owner repair the branch; init never overwrites it"
+    die "branch $TRUNK already exists in $PROJ but this home has no record of it (state/trunk-tip-$PN): another home that shares the clone owns that trunk, or this record was lost; init never overwrites it"
+  fi
   if [ -z "$base" ]; then
     base=HEAD; vb=$(jg_current_version_branch "$PROJ" || true)
     for r in ${vb:+"origin/$vb" "$vb"}; do if rev "$r" >/dev/null; then base=$r; break; fi; done
@@ -1959,6 +2000,35 @@ cmd_nightly() {
 
 green_short() { cut -c1-12 "$STATE/trunk-green-$PN" 2>/dev/null || echo none; }
 
+# A per-commit `line-red` alert (the keys $PN-<sha12> of a charged verify red, $PN-verify-incomplete-<sha12> and $PN-ci-<sha12> of a red CI)
+# names a commit of the line, so it ends once that red is history. Each minute's green-alarm resolves the open ones of this project when
+#   the commit is no longer on the trunk (the line was cut over), or
+#   a later commit is green: the green pin stands strictly above it; for a CI key, a green CI row of a descendant recorded after its red
+#   (a red CI found under the pin is born with the pin above it, so the pin alone says nothing about it).
+resolve_old_line_reds() {  # <tip> <green pin or empty>
+  local tip=$1 green=$2 rec key sha full why t
+  for rec in "$STATE"/alerts/line-red--"$PN"-*.rec; do
+    [ -e "$rec" ] || continue
+    key=$(basename "$rec" .rec)
+    [ "$(sed -n 's/^project=//p' "$rec")" = "$PN" ] || continue
+    sha=${key##*-}; [[ $sha =~ ^[0-9a-f]{12}$ ]] || continue
+    case ${key#line-red--"$PN"-} in "$sha"|verify-incomplete-"$sha"|ci-"$sha") ;; *) continue ;; esac
+    [ "$(JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" word "$key" 2>/dev/null)" != resolved ] || continue
+    why=''
+    if ! full=$(git -C "$PROJ" rev-parse --verify --quiet "$sha^{commit}") || ! git -C "$PROJ" merge-base --is-ancestor "$full" "$tip"; then
+      why='line-cut-over'
+    elif [ "${key#line-red--"$PN"-}" = "ci-$sha" ]; then
+      t=$(awk -F'\t' -v p="$PN" -v c="$full" '$1 == p && $2 == c && $4 == "red" { t = $3 } END { print t + 0 }' "$DATA/trunk-ci.tsv" 2>/dev/null)
+      while IFS=$'\t' read -r c at; do
+        [ "$c" != "$full" ] && [ "$at" -ge "$t" ] && git -C "$PROJ" merge-base --is-ancestor "$full" "$c" && { why='later-commit-green'; break; }
+      done < <(awk -F'\t' -v p="$PN" '$1 == p && $4 == "green" { print $2 "\t" $3 }' "$DATA/trunk-ci.tsv" 2>/dev/null)
+    elif [ -n "$green" ] && [ "$green" != "$full" ] && git -C "$PROJ" merge-base --is-ancestor "$full" "$green"; then
+      why='later-commit-green'
+    fi
+    [ -z "$why" ] || JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" resolve "$key" --proof "source:$why" >/dev/null 2>&1 || true
+  done
+}
+
 # The trunk with no green commit for no-green-alarm-minutes raises the `line-red` alert through jg-alert.sh for that green pin, and the alert
 # then climbs its ladder (the lead, Main, then the captain's chat) and rings again at the top, until the pin moves; each minute's run of this
 # command is the tick that does it (`jg-alert.sh climb`). The wait is counted from the landing of the oldest commit above the green pin (its
@@ -1968,12 +2038,13 @@ cmd_green_alarm() {
   open_project "${1-}"
   tip=$(rev "refs/heads/$TRUNK") || refuse "trunk branch $TRUNK is missing in $PROJ"
   green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
+  resolve_old_line_reds "$tip" "$green"
   [ -n "$green" ] || { echo "green-alarm: $PN has no green pin yet"; return 0; }
   key="line-red--$PN-no-green-${green:0:12}"
   first=$(git -C "$PROJ" rev-list --reverse "$green..$tip" | head -n 1)
   if [ -z "$first" ]; then
     for rec in "$STATE"/alerts/line-red--"$PN"-no-green-*.rec; do  # the pin caught up with the tip: every no-green alarm of this project ends
-      [ -e "$rec" ] && JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" resolve "$(basename "$rec" .rec)" >/dev/null 2>&1
+      [ -e "$rec" ] && JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" resolve "$(basename "$rec" .rec)" --proof source:tip-at-pin >/dev/null 2>&1
     done
     echo "green-alarm: $TRUNK is green at ${green:0:12}"; return 0
   fi
@@ -2234,15 +2305,17 @@ cmd_live() {
 
 # The captain waived his go-live word for one project until the stable point; only the Overwatch path records it.
 cmd_waiver() {
-  local rule=${3-} others wfile=trunk-live-waiver what="go-live"
+  local rule=${3-} others wfile=trunk-live-waiver what="go-live" scope=""
   [ -z "${JG_TASK_ID:-}" ] || refuse "a worker never writes a waiver"
-  case "${4-}" in '') ;; '--release') wfile='trunk-release-waiver'; what="release-merge" ;; *) refuse "unknown waiver option '${4}'; the only one is --release" ;; esac
-  [ "${2-}" = --rule ] && [ -n "$rule" ] || refuse "a $what waiver names the owner rule that grants it: jg-trunk.sh waiver <project-dir> --rule <owner-rule-id> [--release]"
+  case "${4-}" in '') ;; '--release') wfile='trunk-release-waiver'; what="release-merge" ;;
+    '--autorelease') wfile='trunk-release-waiver'; what="automatic release"; scope=" scope=autorelease" ;;
+    *) refuse "unknown waiver option '${4}'; the only ones are --release and --autorelease" ;; esac
+  [ "${2-}" = --rule ] && [ -n "$rule" ] || refuse "a $what waiver names the owner rule that grants it: jg-trunk.sh waiver <project-dir> --rule <owner-rule-id> [--release|--autorelease]"
   case $rule in owner-rule-[A-Za-z0-9]*) ;; *) refuse "'$rule' is not an owner rule id (owner-rule-<id>)" ;; esac
   open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"
   mkdir -p "$CONFIG"
   others=$(grep -v "^$PN " "$CONFIG/$wfile" 2>/dev/null || true)
-  put "$CONFIG/$wfile" "${others:+$others$'\n'}$PN $rule $(date +%s) until=stable"
+  put "$CONFIG/$wfile" "${others:+$others$'\n'}$PN $rule $(date +%s) until=stable$scope"
   echo "$what waiver recorded for $PN under $rule; delete its line in config/$wfile to restore the word"
 }
 
@@ -2560,6 +2633,12 @@ main_is_ancestor_of_trunk() {  # <main commit>
     && git -C "$PROJ" merge-base --is-ancestor "$1" "refs/heads/$TRUNK" 2>/dev/null
 }
 
+# The merged release pull request, in the item store: the push whose row names this URL is the head that was released.
+store_released() {  # <release pull request URL>
+  local head; head=$(awk -F'\t' -v p="$PN" -v u="$1" 'NF >= 6 && $1 == p && $6 == u { h = $3 } END { print h }' "$DATA/trunk-releases.tsv" 2>/dev/null)
+  [ -z "$head" ] || store_trunk released "$PN" "${1##*/}" "$head" --project-dir "$PROJ" --source "merged:${1##*/}@$head"
+}
+
 # Once the release PR has merged, the NEXT trunk version is cut from the default branch and the project moves onto
 # it: release/v8, release/v9, ... (the count goes on from the version the last cut recorded). Every commit that landed on the old trunk after the release is replayed onto it first (carry_over),
 # and the green pin follows its commit. The old trunk is left exactly as it was. Returns 1, changing nothing, while the PR is not merged.
@@ -2577,7 +2656,7 @@ rollover_if_merged() {
   else
     ff=0; [ "$(pr_state "$url")" = merged ] || { ROLLOVER_SKIP="release $url is not merged"; return 1; }
   fi
-  rev "refs/heads/$new" >/dev/null && die "$new already exists in $PROJ; the next trunk is never overwritten"
+  has_ref "refs/heads/$new" && die "$new already exists in $PROJ; the next trunk is never overwritten"
   if [ "$ff" = 1 ]; then
     CARRY_TIP=$(rev "refs/heads/$TRUNK"); CARRY_REPLAYED=; green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
   else
@@ -2587,6 +2666,7 @@ rollover_if_merged() {
   JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref -m "trunk: version $ver after $url" "refs/heads/$new" "$CARRY_TIP" ""
   put "$STATE/trunk-tip-$PN" "$CARRY_TIP"; put "$STATE/trunk-green-$PN" "${green:-$base}"; put "$STATE/trunk-released-$PN" "$base"
   put "$STATE/trunk-branch-$PN" "$new"; put "$STATE/trunk-version-$PN" "$ver"; put "$STATE/trunk-rolled-$PN" "$url"
+  store_released "$url"
   row trunk-versions.tsv "$PN" "$ver" "$new" "$base" "$(date +%s)"
   carry_proofs
   release_tickets "$url" || :
@@ -2750,7 +2830,7 @@ adopt_pushed_release() {  # <commit>
 release_preflight() {  # <rel>
   local miss key=stuck-wait--release-preflight-$PN
   miss=$("$SCRIPT_DIR/../core/release-preflight/check.sh" "$JG_HOME") && {
-    [ ! -e "$STATE/alerts/$key.rec" ] || JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" resolve "$key" >/dev/null 2>&1 || true
+    [ ! -e "$STATE/alerts/$key.rec" ] || JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" resolve "$key" --proof source:preflight-pass >/dev/null 2>&1 || true
     return 0
   }
   JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" raise stuck-wait "release-preflight-$PN" --deliver --project "$PN" --fact wait=main --fact reason=approval \
@@ -2787,6 +2867,16 @@ record_publication() {  # <rel> <due> <attempt> <opened> <path> <url>
     || echo "warning: the publication record of ${1:0:12} could not be written; the release goes on" >&2
 }
 
+# The push into the release pull request, and the captain's word that allowed it, in the item store. Called before the word is spent (its token
+# holds the epoch the word was recorded at). Only a push that spends a word (`release`) is compared with the store's yes.
+store_release_push() {  # <rel> <url> <spend 0|1>
+  local pr=${2##*/} f="$STATE/trunk-word-release-$PN"
+  store_trunk pushed "$PN" "$pr" "$1" --source "push:$1"
+  [ "$3" = 1 ] || return 0
+  [ ! -f "$f" ] || [ "$(cut -f1 "$f")" != "$1" ] || store_trunk word "$PN" "$pr" "$1" --word-id "$(cut -f2 "$f")@$1"
+  store_trunk agree "$PN" "$pr" "$1"
+}
+
 push_batch() {  # <rel> <n> <prev> <spend 0|1> <proof 0|1> <path automatic|fallback>
   release_preflight "$1"
   local rel=$1 n=$2 prev=$3 default base body url unproved attempt opened=- due; local -a carried
@@ -2815,7 +2905,7 @@ push_batch() {  # <rel> <n> <prev> <spend 0|1> <proof 0|1> <path automatic|fallb
   if ! awk -F '\t' -v p="$PN" -v t="$TRUNK" -v h="$rel" -v u="$url" '$1 == p && $2 == t && $3 == h && $6 == u { found=1 } END { exit !found }' "$DATA/trunk-releases.tsv" 2>/dev/null; then
     row trunk-releases.tsv "$PN" "$TRUNK" "$rel" "$n" "$(date +%s)" "$url"
   fi
-  put "$STATE/trunk-released-$PN" "$rel"; [ "$4" != 1 ] || spend_word release release
+  put "$STATE/trunk-released-$PN" "$rel"; store_release_push "$rel" "$url" "$4"; [ "$4" != 1 ] || spend_word release release
   rm -f -- "$STATE/trunk-release-pending-$PN"
   echo "released $n commits from $TRUNK: $url"
   "$SCRIPT_DIR/../core/machines/release-stamp.sh" "$PROJ" "$base" "$rel" || true
@@ -2853,6 +2943,7 @@ cmd_release() {
     waiting=$(JG_HOME=$JG_HOME "$SCRIPT_DIR/jg-pr-state.sh" --all "$prev") || refuse "cannot read the checks of the open release PR $prev; nothing is pushed into it"
     [ -n "$waiting" ] || refuse "the release PR $prev is green and merges on the captain's standing word; nothing is pushed into it, and the later commits go out in the release after it"
   fi
+  store_covers "$rel" "$prev"
   push_batch "$rel" "$n" "$prev" 1 1 fallback
 }
 
@@ -2887,7 +2978,7 @@ cmd_publish() {
   PRS_URL=; PRS_VAL=
   open_project "${1-}"
   green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
-  [ -n "$(authority trunk-release-waiver "$green")" ] || { echo "publish: $PN has no release waiver and no answer at gated; nothing pushed"; return 0; }
+  [ -n "$(jg_trunk_autorelease_rule "$CONFIG/trunk-release-waiver" "$PN")" ] || [ -n "$(gated_answer "$green")" ] || { echo "publish: $PN is not chosen for the automatic release and has no answer at gated; nothing pushed"; return 0; }
   # The forge is asked before the trunk lock is taken: a slow or hung forge must never stop a landing. A forge that does not
   # answer ends the publish with one line and nothing pushed; the next tick asks again.
   prev=$(last_release_url)
@@ -2953,7 +3044,7 @@ cmd_autorelease() {
   local rel="" url="" default main st
   [ -z "${JG_TASK_ID:-}" ] || refuse "a worker never publishes to the default branch"
   open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"; tip_ok
-  [ -n "$(jg_trunk_waiver_rule "$CONFIG/trunk-release-waiver" "$PN")" ] || { echo "autorelease: not released: it needs the captain's word (no release waiver for $PN)"; return 0; }
+  [ -n "$(jg_trunk_autorelease_rule "$CONFIG/trunk-release-waiver" "$PN")" ] || { echo "autorelease: not released: it needs the captain's word ($PN is not chosen for the automatic release)"; return 0; }
   default=$(default_branch)
   if rollover_if_merged; then echo "autorelease: main holds the release; the project is on $TRUNK"; return 0; fi
   read -r rel url <<< "$(awk -F'\t' -v p="$PN" -v t="$TRUNK" 'NF >= 6 && $1 == p && $2 == t { c = $3; u = $6 } END { print c, u }' "$DATA/trunk-releases.tsv" 2>/dev/null)"
@@ -2995,6 +3086,8 @@ cmd_proof() {
   gaps=$(jg_dod_trunk_proof_gaps "$JG_HOME" "$STATE" "$id" "$meta" "$head") || { printf '%s\n' "$gaps"; return 1; }
 }
 
+cmd_release_daily() { store_trunk daily; }
+
 cmd_due() {
   local first
   open_project "${1-}"; tip_ok
@@ -3031,6 +3124,7 @@ case "${1:-}" in
   publish) shift; cmd_publish "$@" ;;
   autorelease) shift; cmd_autorelease "$@" ;;
   due) shift; cmd_due "$@" ;;
+  release-daily) shift; cmd_release_daily ;;
   -h|--help|help) usage ;;
   *) usage >&2; exit 2 ;;
 esac

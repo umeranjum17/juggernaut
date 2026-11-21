@@ -1,6 +1,6 @@
 ---
 name: stuck-crewmate-recovery
-description: Retired alias of stuck-operator-recovery, kept only during the skill-rename migration window. Load stuck-operator-recovery and follow it unchanged.
+description: Retired alias of stuck-operator-recovery. Load it and follow it unchanged.
 metadata:
   internal: true
 ---

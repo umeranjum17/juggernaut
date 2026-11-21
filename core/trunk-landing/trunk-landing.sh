@@ -8,8 +8,8 @@
 #        trunk-landing.sh live <jg-home> <project>                   (what a tick starts under a go-live waiver: the batched live step)
 #        trunk-landing.sh nightly <jg-home> <project>                (what a tick starts once a day from nightly-hour: bin/jg-trunk.sh nightly, the whole suite on the tip through the same verify)
 #        trunk-landing.sh verify <jg-home> <project>                 (what a tick starts while the trunk tip is above the green pin: bin/jg-trunk.sh verify, one at a time)
-#        trunk-landing.sh publish <jg-home> <project>                (what a tick starts under a release waiver: bin/jg-trunk.sh publish, the green pin or a candidate after a red)
-#        trunk-landing.sh autorelease <jg-home> <project>            (what a tick starts under a release waiver: main follows the CI-green pin)
+#        trunk-landing.sh publish <jg-home> <project>                (what a tick starts for a project chosen for the automatic release: bin/jg-trunk.sh publish, the green pin or a candidate after a red)
+#        trunk-landing.sh autorelease <jg-home> <project>            (what a tick starts for a project chosen for the automatic release: main follows the CI-green pin)
 #
 # For each state/<task>.meta in the home with a local-style mode (the table row `local` or its old words) whose project is registered local-trunk and has a trunk
 # (state/trunk-tip-<project>, made by bin/jg-trunk.sh init), whose ship branch is not on the trunk yet and whose
@@ -35,13 +35,15 @@
 # also starts `live` (a detached job, never blocking a landing), which runs `bin/jg-trunk.sh autolive` and reports a go-live,
 # a failed move, a hold or a home still behind the last go-live after 10 minutes (bin/jg-trunk-live-lag.sh) in the outbox: the homes move once the trunk has been quiet for live-quiet-minutes (20) or the
 # oldest landing not yet live is live-cap-minutes (60) old, whichever is first. Only the green pin goes live, so a red suite never does.
-# Under a release waiver (config/trunk-release-waiver) every tick also starts `autorelease` (a detached job, one at a time per project), which runs
+# For a project chosen for the automatic release (`scope=autorelease` in config/trunk-release-waiver) every tick also starts `autorelease` (a detached job, one at a time per project), which runs
 # `bin/jg-trunk.sh autorelease`: once CI required is green on the pushed pin, main fast-forwards to it and the next trunk version is cut; a red
 # or a refusal is reported once in the outbox, and a wait is silent (docs/trunk-flow.md).
 # A landed task resumes the lanes whose blocker says `waits-for: <task>`: one steer each, the blocker closed in the same send.
 # A landed task is then cleaned up with bin/jg-teardown.sh, never forced, in the same step that landed it and per lane: a stack's
 # output is read as it comes, and each lane is cleaned at its own `landed` line. A refusal that only needs time is retried at 15 s, 1, 2
 # and 5 minutes; any other refusal is final with its reason from core/machines/cleanup-reason.states and one alert (cleanup-retry.sh).
+# A run that landed lanes then starts the home's dispatch check (state/auto-dispatch.check.sh) once, detached and never waited for, where it ends (a stack of five
+# lanes starts it once): the lane a landing freed, and the slices it unblocked, are filled within seconds, not at the next sweep. JG_LANDING_DISPATCH_KICK=0 turns it off.
 # bin/jg-delivery-tick.sh runs this check, from the watcher's fast tick and from the host sentinel's minute tick, so a worker's done
 # starts the landing within seconds in a supervised home and within a minute when no model or watcher runs; the outcome
 # line of a landing already cleaned up (its record is gone) comes from data/jg-trunk-landing/outbox.
@@ -103,6 +105,8 @@ esac
 . "$(dirname "${BASH_SOURCE[0]}")/unit.sh"
 # shellcheck source=core/trunk-landing/verdict.sh
 . "$(dirname "${BASH_SOURCE[0]}")/verdict.sh"
+# shellcheck source=core/trunk-landing/on-trunk.sh
+. "$(dirname "${BASH_SOURCE[0]}")/on-trunk.sh"
 mval() { sed -n "s/^$2=//p" "$1" 2>/dev/null | tail -n 1; }
 # One five-minute deadline belongs to the whole landing attempt, lint and tests together (a test seam shortens it).
 landing_deadline() {
@@ -121,17 +125,45 @@ resume_waiters() {  # <landed task id>
     jg-resume "$FMH" "$lib" "$1" 2>>"$MEM/resume.log" || :
 }
 
+# The landing in the item store (core/item-store/adapters/trunk.py), where the home has config/item-store: the lane's land item closes with the commit
+# now on the trunk (the lander may have re-cut it), read from the lane's landing row. Today's records decide, so a failure here changes nothing.
+store_landed() {  # <task-id> <lane head>
+  local key subject hid commit
+  [ -e "$FMH/config/item-store" ] || return 0
+  commit=$(awk -F'\t' -v i="$1" '$1 == i { c = $3 } END { print c }' "$DATA_DIR/trunk-landings.tsv" 2>/dev/null)
+  IFS=$'\t' read -r key subject _ <<<"$("$FMH/core/item-store/jg-item" key land --task "$1" --head "$2" 2>/dev/null)" || return 0
+  [ -n "$commit" ] && [ -n "$key" ] || return 0
+  hid=${key#land:}; hid=${hid%%/*}
+  python3 -I "$FMH/core/item-store/adapters/trunk.py" landed "$hid" "$subject" "$2" "$commit" --source "land:$1@$commit" >/dev/null 2>&1 || :
+}
+
+# A landing frees a lane and may unblock slices, so the run that landed lanes starts the home's dispatch check once, where the run ends (a stack of
+# five lanes starts it once, after the last): the freed lane is filled within seconds, not at the next sweep. Detached and never waited for, because the
+# landing check runs under the watcher's 30 s bound. JG_LANDING_DISPATCH_KICK=0 turns it off; a home with no state/auto-dispatch.check.sh has nothing to start.
+DISPATCH_KICK_DUE=
+kick_dispatch() {
+  [ -n "$DISPATCH_KICK_DUE" ] || return 0
+  DISPATCH_KICK_DUE=
+  [ "${JG_LANDING_DISPATCH_KICK:-1}" != 0 ] && [ -x "$STATE/auto-dispatch.check.sh" ] || return 0
+  if command -v setsid >/dev/null 2>&1; then setsid nohup "$STATE/auto-dispatch.check.sh" </dev/null >/dev/null 2>&1 &
+  else nohup "$STATE/auto-dispatch.check.sh" </dev/null >/dev/null 2>&1 &
+  fi
+  return 0
+}
+
 # A lane the lander reports landed: cleaned up at once, never forced (cleanup-retry.sh), its waiters resumed, one outbox line.
 # The lander rebased the lane, so its branch may now be at another head: the same state stands for that head.
 landed_lane() {  # <task-id> <head> <outbox text after the id and mode>
   local id=$1 head=$2 proj br now res lane_mode
   proj=$(mval "$STATE/$id.meta" project); lane_mode=$(mval "$STATE/$id.meta" mode)
+  store_landed "$id" "$head"
   br=$(mval "$STATE/$id.meta" branch); br=${br:-fm/$id}
   now=$(git -C "$proj" rev-parse --verify --quiet "refs/heads/$br^{commit}" 2>/dev/null) || now=
   [ "$now" != "$head" ] || now=
   res=$(lane_cleanup "$id" "$head" "$now"); rm -f -- "$STATE/$id.land-next"
   window_move "$(basename "$proj")" landed >/dev/null || :
   resume_waiters "$id"
+  DISPATCH_KICK_DUE=1
   cleanup_outbox "landed $id ($lane_mode) $3; $res"
 }
 
@@ -203,13 +235,15 @@ fi
 
 # The line's verify for one project (bin/jg-trunk.sh verify decides and reports; a red raises line-red there). One at a time per project:
 # a tick that finds the last one still running does nothing. A run that is green or already reported prints nothing.
+# The verify beats its lock while it runs: a verify that bisects its parents runs past the lock lease (core/lock-lease), which ends a
+# tick-started holder that does not beat.
 if [ "$1" = verify ]; then
   pn=$3; proj=$FMH/projects/$pn
   [[ $pn =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && [ -d "$proj" ] || exit 2
   jg_lock_try_acquire "$STATE/.trunk-autoverify-$pn.lock" || exit 0
   trap 'jg_lock_release "$STATE/.trunk-autoverify-$pn.lock"' EXIT
   JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" verify-due "$proj" >/dev/null 2>&1 || exit 0
-  JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" verify "$proj" >"$MEM/verify-$pn.log" 2>&1 || :
+  JG_HOME="$FMH" jg_lock_beat_while "$STATE/.trunk-autoverify-$pn.lock" "$FMH/bin/jg-trunk.sh" verify "$proj" >"$MEM/verify-$pn.log" 2>&1 || :
   exit 0
 fi
 
@@ -282,6 +316,7 @@ if [ "$1" = runbatch ]; then
   done
   ! window_is_red "$out" || window_move "$pn" red >/dev/null || :
   for arg in "$@"; do partition_forget "${arg%%@*}" "${arg#*@}"; done  # the stack's run has ended: its queue is free for the next start
+  kick_dispatch
   "$SELF" next "$FMH" >/dev/null 2>&1 || :
   exit 0
 fi
@@ -304,9 +339,9 @@ if [ "$1" = run ]; then
   printf '%s\n' "$out" > "$request_log"
   printf '%s\n' "$out" > "$MEM/$id.$head.log"
   if [ "$rc" -eq 0 ]; then
-    JG_HOME="$FMH" "$FMH/bin/jg-machine-shadow.sh" landing "$id.$head" landed || true  # shadow report of the move (jg-machine-shadow.sh)
+    partition_forget "$id" "$head"  # the trunk holds the lane: its queue is free before the landed record reads, not after the cleanup
     landed_lane "$id" "$head" "on the local trunk (not In use yet: In use follows the answer given at gated, the captain's word or the project's waiver, and its quiet window)"
-    partition_forget "$id" "$head"
+    kick_dispatch
     "$SELF" next "$FMH" >/dev/null 2>&1 || :
     exit 0
   fi
@@ -351,16 +386,28 @@ fi
 # Only a project registered local-trunk is ever touched; no-mistakes, direct-PR and local-only projects keep their own rules.
 # shellcheck source=bin/jg-delivery-style.sh disable=SC1091
 . "$FMH/bin/jg-delivery-style.sh"
-local_trunk() { jg_delivery_style_is "$(JG_HOME="$FMH" "$FMH/bin/jg-project-mode.sh" --raw "$(basename "$1")" 2>/dev/null | cut -d' ' -f1)" trunk && echo yes || echo no; }
+# local_trunk <project dir>: true when the project is registered local-trunk. Every loop of a pass asks it for the same few
+# projects, so each project's registry entry is read once per pass.
+declare -A LOCAL_TRUNK=()
+local_trunk() {
+  local pn=${1%/}; pn=${pn##*/}
+  [ -n "${LOCAL_TRUNK[$pn]+set}" ] \
+    || LOCAL_TRUNK[$pn]=$(jg_delivery_style_is "$(JG_HOME="$FMH" "$FMH/bin/jg-project-mode.sh" --raw "$pn" 2>/dev/null | cut -d' ' -f1)" trunk && echo yes || echo no)
+  [ "${LOCAL_TRUNK[$pn]}" = yes ]
+}
 # Initialize only registered projects without a recorded trunk; init itself refuses an existing branch.
 for proj in "$FMH"/projects/*; do
-  [ -d "$proj" ] && [ "$(local_trunk "$proj")" = yes ] || continue
+  [ -d "$proj" ] && local_trunk "$proj" || continue
   pn=$(basename "$proj"); [ ! -e "$STATE/trunk-tip-$pn" ] || continue
   # An unborn repository has nothing to initialize; invalid repositories still reach init and report their error.
   if git -C "$proj" rev-parse --git-dir >/dev/null 2>&1 && commits=$(git -C "$proj" rev-list --all --max-count=1 2>/dev/null) && [ -z "$commits" ]; then continue; fi
   jg_lock_try_acquire "$STATE/.trunk-init-$pn.lock" || continue
   if [ ! -e "$STATE/trunk-tip-$pn" ]; then
-    init_out=$(JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" init "$proj" 2>&1) || { [ -n "$QUIET" ] || printf 'trunk-landing: %s\n' "$init_out"; }
+    # A refused init repeats every tick until its cause is fixed, so a refusal is reported when it first appears or changes, never again.
+    if init_out=$(JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" init "$proj" 2>&1); then rm -f -- "$MEM/.init-refused-$pn"
+    elif [ "$init_out" != "$(cat "$MEM/.init-refused-$pn" 2>/dev/null)" ]; then
+      printf '%s\n' "$init_out" > "$MEM/.init-refused-$pn"; [ -n "$QUIET" ] || printf 'trunk-landing: %s\n' "$init_out"
+    fi
   fi
   jg_lock_release "$STATE/.trunk-init-$pn.lock"
 done
@@ -370,7 +417,7 @@ for tip in "$STATE"/trunk-tip-*; do
   [ -z "$QUIET" ] || break
   [ -f "$tip" ] || continue
   pn=${tip##*/trunk-tip-}; proj=$FMH/projects/$pn
-  [ -d "$proj" ] && [ -s "$DATA_DIR/trunk-releases.tsv" ] && [ "$(local_trunk "$proj")" = yes ] || continue
+  [ -d "$proj" ] && [ -s "$DATA_DIR/trunk-releases.tsv" ] && local_trunk "$proj" || continue
   [ ! -e "$MEM/.rollover-$pn" ] || [ -n "$(find "$MEM/.rollover-$pn" -mmin +4 2>/dev/null)" ] || continue
   : > "$MEM/.rollover-$pn"
   JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" rollover "$proj" 2>/dev/null | sed 's/^/trunk-landing: /'
@@ -384,7 +431,7 @@ for tip in "$STATE"/trunk-tip-*; do
   [ -z "$QUIET" ] || break
   [ -f "$tip" ] || continue
   pn=${tip##*/trunk-tip-}; proj=$FMH/projects/$pn
-  [ -d "$proj" ] && [ "$(local_trunk "$proj")" = yes ] || continue
+  [ -d "$proj" ] && local_trunk "$proj" || continue
   [ ! -e "$MEM/.green-alarm-$pn" ] || [ -n "$(find "$MEM/.green-alarm-$pn" -mmin +0 2>/dev/null)" ] || continue
   : > "$MEM/.green-alarm-$pn"
   JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" reconcile "$proj" >/dev/null 2>&1 || :
@@ -398,7 +445,7 @@ for tip in "$STATE"/trunk-tip-*; do
   [ -f "$tip" ] || continue
   pn=${tip##*/trunk-tip-}
   [ "$(cat "$tip" 2>/dev/null)" != "$(cat "$STATE/trunk-green-$pn" 2>/dev/null)" ] || continue
-  [ -d "$FMH/projects/$pn" ] && [ "$(local_trunk "$FMH/projects/$pn")" = yes ] || continue
+  [ -d "$FMH/projects/$pn" ] && local_trunk "$FMH/projects/$pn" || continue
   start_job verify "$pn"
 done
 # Every tick offers the nightly whole run to each local-trunk project: only a project whose `nightly-due` says it is time gets a detached
@@ -407,7 +454,7 @@ for tip in "$STATE"/trunk-tip-*; do
   [ -z "$QUIET" ] || break
   [ -f "$tip" ] || continue
   pn=${tip##*/trunk-tip-}
-  [ -d "$FMH/projects/$pn" ] && [ "$(local_trunk "$FMH/projects/$pn")" = yes ] || continue
+  [ -d "$FMH/projects/$pn" ] && local_trunk "$FMH/projects/$pn" || continue
   # Ask first: a tick that is not due starts no process at all, so the nightly job costs every other tick nothing.
   JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" nightly-due "$FMH/projects/$pn" >/dev/null 2>&1 || continue
   start_job nightly "$pn"
@@ -418,27 +465,27 @@ for tip in "$STATE"/trunk-tip-*; do
   [ -f "$tip" ] || continue
   pn=${tip##*/trunk-tip-}
   awk -v p="$pn" '$1 == p { f = 1 } END { exit !f }' "$FMH/config/trunk-live-waiver" 2>/dev/null || jg_trunk_gated_any "$FMH/data/trunk-gated.tsv" "$pn" || continue
-  [ -d "$FMH/projects/$pn" ] && [ "$(local_trunk "$FMH/projects/$pn")" = yes ] || continue
+  [ -d "$FMH/projects/$pn" ] && local_trunk "$FMH/projects/$pn" || continue
   start_job live "$pn"
 done
-# Under a release waiver every tick starts the publish step (detached, so it never holds a landing back; at most once a minute).
+# For a project chosen for the automatic release every tick starts the publish step (detached, so it never holds a landing back; at most once a minute).
 for tip in "$STATE"/trunk-tip-*; do
   [ -z "$QUIET" ] || break
   [ -f "$tip" ] || continue
   pn=${tip##*/trunk-tip-}
-  awk -v p="$pn" '$1 == p { f = 1 } END { exit !f }' "$FMH/config/trunk-release-waiver" 2>/dev/null || jg_trunk_gated_any "$FMH/data/trunk-gated.tsv" "$pn" || continue
-  [ -d "$FMH/projects/$pn" ] && [ "$(local_trunk "$FMH/projects/$pn")" = yes ] || continue
+  [ -n "$(jg_trunk_autorelease_rule "$FMH/config/trunk-release-waiver" "$pn")" ] || jg_trunk_gated_any "$FMH/data/trunk-gated.tsv" "$pn" || continue
+  [ -d "$FMH/projects/$pn" ] && local_trunk "$FMH/projects/$pn" || continue
   [ ! -e "$MEM/.publish-$pn" ] || [ -n "$(find "$MEM/.publish-$pn" -mmin +0 2>/dev/null)" ] || continue
   : > "$MEM/.publish-$pn"
   start_job publish "$pn"
 done
-# Under a release waiver every tick starts the release step (detached, so it never holds a landing back).
+# For a project chosen for the automatic release every tick starts the release step (detached, so it never holds a landing back).
 for tip in "$STATE"/trunk-tip-*; do
   [ -z "$QUIET" ] || break
   [ -f "$tip" ] || continue
   pn=${tip##*/trunk-tip-}
-  awk -v p="$pn" '$1 == p { f = 1 } END { exit !f }' "$FMH/config/trunk-release-waiver" 2>/dev/null || continue
-  [ -d "$FMH/projects/$pn" ] && [ "$(local_trunk "$FMH/projects/$pn")" = yes ] || continue
+  [ -n "$(jg_trunk_autorelease_rule "$FMH/config/trunk-release-waiver" "$pn")" ] || continue
+  [ -d "$FMH/projects/$pn" ] && local_trunk "$FMH/projects/$pn" || continue
   start_job autorelease "$pn"
 done
 report() {
@@ -457,10 +504,11 @@ run_alive() {
 # existed has no queue record: it is queue `-` and its selection is `*`, so it meets every lane and nothing starts beside it but its own chain.
 running_lanes() {
   local f b h t l pn q
+  # A pass reads every state file the home ever kept, so this loop starts no process per file.
   for f in "$MEM"/*.state; do
     [ -f "$f" ] || continue
-    ! printf '%s' "${f##*/}" | grep -Eq '\.[0-9a-f]{40,64}\.[0-9a-f]{40,64}\.state$' || continue
-    l=$(cat "$f" 2>/dev/null || true)
+    [[ ! ${f##*/} =~ \.[0-9a-f]{40,64}\.[0-9a-f]{40,64}\.state$ ]] || continue
+    l=; IFS= read -r l < "$f" 2>/dev/null || :
     case $l in running*) run_alive "$l" || continue ;; *) continue ;; esac
     b=${f##*/}; b=${b%.state}; h=${b##*.}; t=${b%.*}
     # A lane landed and cleaned up while its run ends has no record any more: it still counts as a running landing, in no project.
@@ -514,7 +562,7 @@ nothing_lands() {
 }
 nothing_lands_resolve() {  # <alert script> <key>: resolve the alert when it is still live
   local w; w=$(JG_HOME=$FMH JG_STATE_OVERRIDE=$STATE bash "$1" word "$2" 2>/dev/null) || return 0
-  [ -z "$w" ] || [ "$w" = resolved ] || JG_HOME=$FMH JG_STATE_OVERRIDE=$STATE bash "$1" resolve "$2" >/dev/null 2>&1 || :
+  [ -z "$w" ] || [ "$w" = resolved ] || JG_HOME=$FMH JG_STATE_OVERRIDE=$STATE bash "$1" resolve "$2" --proof source:no-ready-lane >/dev/null 2>&1 || :
 }
 # The cause a late start names when nothing was ahead of the lane: the project's verify holds its slot, or the host load is at its cpu count.
 start_cause() {
@@ -538,7 +586,7 @@ for meta in "$STATE"/*.meta; do
   jg_delivery_style_is "$(mval "$meta" mode)" local || continue
   proj=$(mval "$meta" project); [ -d "$proj" ] || continue
   [ -e "$STATE/trunk-tip-$(basename "$proj")" ] || continue
-  [ "$(local_trunk "$proj")" = yes ] || continue
+  local_trunk "$proj" || continue
   branch=$(mval "$meta" branch); branch=${branch:-fm/$id}
   head=$(git -C "$proj" rev-parse --verify --quiet "refs/heads/$branch^{commit}") || continue
   # Old heads cannot be admitted again; retain their final records outside the active set.
@@ -558,6 +606,8 @@ for meta in "$STATE"/*.meta; do
     fi ;;
   esac
   at=$(ready_at "$id") || continue
+  # A head the trunk holds is judged by nobody: no proof, no refusal, no steer (core/trunk-landing/on-trunk.sh).
+  if lane_on_trunk "$proj" "$head"; then lane_on_trunk_settle "$id" "$head"; continue; fi
   case $line in final*) ;; *) machine_admits "$id" || continue ;; esac
   # The merge switch of the style `local` (docs/trunk-flow.md): a lane of mode `local` lands by itself with yolo on, or once the lead
   # recorded merge=approved; with yolo off it waits for that word. A record with an old word is read as before.

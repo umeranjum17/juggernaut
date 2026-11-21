@@ -23,8 +23,9 @@ The address, the age, the commit count, and the next step read from `bin/jg-pr-s
 - `green: merge it`
 
 The first page comes when the pull request is 15 minutes old (`JG_PR_PAGER_FIRST_MIN`).
-The next ones come every `pr-page-minutes` (trunk policy, default 60) while it stays open.
-After 6 pages in a row with the same next step, a lead home appends one `note` to its parent channel so Main hears of it; Main's own pages go no further.
+The next step is read every `pr-page-minutes` (trunk policy, default 60) while it stays open.
+A read prints a page only when the next step changed since the last page; with the same step it prints one only as a reminder every `JG_PR_PAGER_REMIND_MIN` (default 360) minutes, so an unchanged pull request does not wake the lead hourly.
+After 6 reads in a row with the same next step, a lead home appends one `note` to its parent channel so Main hears of it; Main's own pages go no further.
 A page never calls `bin/jg-captain-say.sh`: the owner is not paged.
 
 ## A due release
@@ -34,7 +35,7 @@ This is the rule of `jg-trunk.sh due` plus the commit count; it is read here wit
 
 ## Episodes
 
-One file per pull request at `state/.pr-pager/<owner__repo>/<number|release>`: `since pages same last mainpaged step`.
+One file per pull request at `state/.pr-pager/<owner__repo>/<number|release>`: `since pages same last mainpaged emitted step`.
 It ends when the pull request leaves the open list.
 A forge failure keeps every episode and is retried next sweep.
 The episodes are not in `state/.waiting-timers/`: that ladder walks task records, and its readers count each file there as an open lane wait.

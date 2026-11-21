@@ -14,7 +14,6 @@ This document records the deterministic mechanism, structured surfaces, compatib
 | Why does cleanup of finished work leave a captain call open? | [Cleanup never closes a captain call](#cleanup-never-closes-a-captain-call) |
 | How does a keyed answer from chat or a board reach the call? | [Answer-time resolution](#answer-time-resolution) |
 | How is a call closed when it stopped being a question? | [Reconcile](#reconcile-re-check-reality-never-a-blind-close) |
-| Why did a decision card disappear from the board? | [Card hygiene](#card-hygiene-a-landed-subject-is-not-a-live-call) |
 | Where does a hold appear in snapshots and Bearings? | [Structured read surfaces](#structured-read-surfaces) |
 | What key does a status line carry for an owner question? | [Decision keys are gate ids](#decision-keys-are-gate-ids) |
 | How do rows from older installs still work? | [Compatibility with pre-collapse installs](#compatibility-with-pre-collapse-installs) |
@@ -413,7 +412,7 @@ Three legacy inputs are resolved in place:
 ### Legacy ids on a Beads store
 
 On a Beads store, an attested old id reaches its row through the name the provider's own `show` answers to.
-The hold script makes no second lookup and never starts `bd` itself; every store read goes through [`bin/jg-beads.sh`](../bin/jg-beads.sh).
+The hold script makes no second lookup; every store read goes through [`bin/jg-backlog-lib.sh`](../bin/jg-backlog-lib.sh), which the tickets tables answer.
 An id that no row answers to is refused once, naming the id.
 
 A markdown home keeps its legacy rows verbatim, so its resolution is unchanged.
@@ -487,11 +486,6 @@ It uses one row per character class, because any character above U+00FF makes th
 That latin-1 byte loss also reproduces natively on the fleet host carrying the older library, with no shim.
 
 ### Beads store family
-
-[`tests/jg-beads-native-hold.test.sh`](../tests/jg-beads-native-hold.test.sh) proves:
-
-- The hold script never starts `bd` itself, and an unknown id is refused once naming the id.
-- On a real store, `verify` and `complete` resolve an attested old id through the row's stored old name, and the attested id stays in `decision_keys=` for idempotent re-verification.
 
 One case in the lifecycle suite needs no beads install and always runs.
 It uses a stubbed the backlog that fails any markdown file override, and proves the captain-hold hold, answer, and close mutations reach a beads-configured home without one.

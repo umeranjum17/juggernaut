@@ -1,0 +1,13 @@
+# Projects
+- a-lt-yolo [local-trunk +yolo] - x
+- b-lt [local-trunk] - x
+- c-lo [local-only] - x
+- d-lo-yolo [local-only +yolo] - x
+- e-pr [direct-PR] - x
+- f-pr-yolo [direct-PR +yolo] - x
+- g-nm [no-mistakes] - x
+- h-nm-yolo [no-mistakes +yolo] - x
+- i-local [local] - x
+- j-local-yolo [local +yolo] - x
+- k-nmpo [no-mistakes-prod-only] - x
+- l-nmpo-yolo [no-mistakes-prod-only +yolo] - x

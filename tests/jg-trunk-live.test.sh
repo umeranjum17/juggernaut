@@ -239,6 +239,13 @@ test_the_watcher_runs_the_landing_check_on_its_fast_tick() {
   lane ready one; c=$(git -C "$PROJ" rev-parse fm/ready)
   printf '#!/usr/bin/env bash\nexit 0\n' > "$W/fakebin/tmux"; chmod +x "$W/fakebin/tmux"
   printf '#!/usr/bin/env bash\nexit 1\n' > "$W/fakebin/systemctl"; chmod +x "$W/fakebin/systemctl"
+  # The fast tick reads the shared board with sign-off-axi; an empty fake keeps the host's real answers out of this home's wakes.
+  cat > "$W/fakebin/sign-off-axi" <<'SH'
+#!/usr/bin/env bash
+[ "$1" = answers ] && echo "{}"
+exit 0
+SH
+  chmod +x "$W/fakebin/sign-off-axi"
   printf '#!/usr/bin/env bash\nsleep 0.2\nexec %s "$@"\n' "$(command -v setsid)" > "$W/fakebin/setsid"; chmod +x "$W/fakebin/setsid"
   JG_HOME="$HOME_D" JG_STATE_OVERRIDE="$HOME_D/state" bash -c \
     '. "$1"; jg_wake_append check urgent "check: waiting-state urgent blocker"' _ "$ROOT/bin/jg-wake-lib.sh" \

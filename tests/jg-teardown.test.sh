@@ -598,6 +598,8 @@ SH
 # Run teardown with PATH mocking. Args: case_dir [extra args...]
 run_teardown() {
   local case_dir=$1; shift
+  # JG_HOME_SUMMARY_FOREGROUND keeps the summary refresh in the foreground (bin/jg-home-summary-refresh.sh), so the ledger a case
+  # reads is published before teardown returns, not by a detached run.
   # JG_DATA_OVERRIDE is pinned to the case dir because teardown closes this
   # home's backlog item itself; without it $DATA would resolve to the real
   # repo's own home and a test could mutate live records.
@@ -605,6 +607,7 @@ run_teardown() {
   JG_STATE_OVERRIDE="$case_dir/state" \
   JG_DATA_OVERRIDE="$case_dir/data" \
   JG_CONFIG_OVERRIDE="$case_dir/config" \
+  JG_HOME_SUMMARY_FOREGROUND=1 \
   PATH="$case_dir/fakebin:${JG_TEARDOWN_TEST_PATH:-$PATH}" \
     "$TEARDOWN" task-x1 "$@"
 }
@@ -656,6 +659,15 @@ test_local_only_fork_remote_allows() {
   # The supervision branch's bounded per-task outcome cache is a footprint of
   # the retired task, not a record anything reads after it is gone.
   printf 'jg-branch-outcome-index-v1\t5\t0\t-\n' > "$case_dir/state/.task-x1.branch-outcome-index"
+  # An undelivered-steer alert the steering ladder raised for the lane (its ticket names the lane, its subject does not), the lane's own
+  # worker-stopped alert (its subject is the lane), and one alert of another lane: the cleanup closes the first two and only those.
+  local alert_key=undelivered--task-x1:1-001.msg-unavailable
+  JG_STATE_OVERRIDE="$case_dir/state" "$ROOT/bin/jg-alert.sh" raise undelivered "task-x1:1-001.msg-unavailable" --ticket task-x1 --note "unread steer" >/dev/null \
+    || fail "fork-allow: could not raise the lane's undelivered alert"
+  JG_STATE_OVERRIDE="$case_dir/state" "$ROOT/bin/jg-alert.sh" raise worker-stopped task-x1 --note "stopped" >/dev/null \
+    || fail "fork-allow: could not raise the lane's worker-stopped alert"
+  JG_STATE_OVERRIDE="$case_dir/state" "$ROOT/bin/jg-alert.sh" raise undelivered "task-x2:1-001.msg-unavailable" --ticket task-x2 --note "other lane" >/dev/null \
+    || fail "fork-allow: could not raise the other lane's alert"
 
   set +e
   run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
@@ -663,6 +675,10 @@ test_local_only_fork_remote_allows() {
   set -e
 
   expect_code 0 "$rc" "fork-allow: teardown should succeed when HEAD is on a fork remote"
+  assert_equals resolved "$(JG_STATE_OVERRIDE="$case_dir/state" "$ROOT/bin/jg-alert.sh" word "$alert_key")" "fork-allow: cleanup left the lane's undelivered alert open"
+  assert_equals resolved "$(JG_STATE_OVERRIDE="$case_dir/state" "$ROOT/bin/jg-alert.sh" word worker-stopped--task-x1)" "fork-allow: cleanup left the lane's worker-stopped alert open"
+  assert_contains "$(JG_STATE_OVERRIDE="$case_dir/state" "$ROOT/bin/jg-alert.sh" show "$alert_key")" "proof=source:lane-cleaned-up" "fork-allow: the close carries its proof"
+  assert_equals open "$(JG_STATE_OVERRIDE="$case_dir/state" "$ROOT/bin/jg-alert.sh" word "undelivered--task-x2:1-001.msg-unavailable")" "fork-allow: cleanup closed another lane's alert"
   ! grep -q REFUSED "$case_dir/stderr" || fail "fork-allow: teardown printed a REFUSED line"
   [ ! -e "$case_dir/state/.task-x1.branch-outcome-index" ] \
     || fail "fork-allow: teardown left the task's branch outcome index behind"
@@ -1727,6 +1743,38 @@ test_forced_squad_lead_child_scout_nested_clone_returns_clean() {
   pass "a forced squad_lead teardown returns a child scout copy with a nested clone clean"
 }
 
+# A spawn publishing into the squad_lead home joins its task set; a forced teardown refuses while that joiner lives, names it,
+# and changes nothing, then goes on once the joiner is gone.
+test_forced_squad_lead_refuses_while_a_spawn_joins_its_task_set() {
+  local case_dir home joined sleeper start rc
+  case_dir=$(make_case squad-lead-live-joiner)
+  write_meta "$case_dir" local-only squad_lead
+  home="$case_dir/squad-lead-home"
+  mkdir -p "$home/state" "$home/data" "$home/config" "$home/projects"
+  printf '%s\n' task-x1 > "$home/.jg-squad-lead-home"
+  printf '%s\n' "home=$home" >> "$case_dir/state/task-x1.meta"
+  add_treehouse_clean_fd "$case_dir"
+  sleep 30 & sleeper=$!
+  start=$(bash -c '. "$1/bin/jg-wake-lib.sh"; jg_task_set_pid_start "$2"' _ "$ROOT" "$sleeper")
+  joined="$home/state/.task-set.lock.joined"
+  mkdir -p "$joined"
+  printf 'pid=%s\nstart=%s\n' "$sleeper" "$start" > "$joined/jg-fresh"
+
+  rc=0
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  kill "$sleeper" 2>/dev/null; wait "$sleeper" 2>/dev/null || true
+  [ "$rc" -ne 0 ] || fail "squad-lead-live-joiner: forced teardown went on with a live joiner"
+  assert_grep "is publishing a task right now (jg-fresh)" "$case_dir/stderr" \
+    "squad-lead-live-joiner: the refusal does not name the live joiner"
+  [ -e "$case_dir/state/task-x1.meta" ] || fail "squad-lead-live-joiner: refusal erased the squad_lead record"
+  [ -d "$home" ] || fail "squad-lead-live-joiner: refusal removed the squad_lead home"
+
+  rc=0
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 0 "$rc" "squad-lead-live-joiner: forced teardown should go on once the joiner is gone"
+  pass "a forced squad_lead teardown refuses while a spawn joins its task set and goes on once it is gone"
+}
+
 # Return succeeds but leaves no readable worktree behind to verify.
 add_treehouse_that_removes_copy() {
   local case_dir=$1
@@ -2257,6 +2305,9 @@ test_local_trunk_cleanup_by_landing_row() {
     head=$(git -C "$case_dir/wt" rev-parse HEAD)
     at=$(git -C "$case_dir/wt" show -s --format=%ct HEAD)
     rebased=$(git -C "$case_dir/project" commit-tree "$head^{tree}" -p main -m 'task-x1: feature (rebased)')
+    # A trunk commit that holds the lane's content is landed by content alone (tree-equal, teardown-squash-equal); with no row
+    # and no such commit the lane's work is unrecorded, so the no-row case's trunk lacks the lane's content.
+    [ "$scenario" != no-row ] || rebased=$(git -C "$case_dir/project" commit-tree "main^{tree}" -p main -m 'trunk moved on')
     git -C "$case_dir/project" branch trunk "$rebased"
     printf '%s\n' trunk > "$case_dir/state/trunk-branch-project"
     printf '%s\n' "$rebased" > "$case_dir/state/trunk-tip-project"
@@ -5224,6 +5275,7 @@ test_ship_nested_clone_is_refused_and_bytes_stay
 test_dirty_return_warns_which_slot_was_lost
 test_dirty_return_warns_even_when_a_later_step_refuses
 test_forced_squad_lead_child_scout_nested_clone_returns_clean
+test_forced_squad_lead_refuses_while_a_spawn_joins_its_task_set
 test_forced_squad_lead_dirty_child_return_warns_and_completes
 test_return_that_removes_copy_warns_cannot_verify
 test_scout_ignored_files_survive_scratch_clean

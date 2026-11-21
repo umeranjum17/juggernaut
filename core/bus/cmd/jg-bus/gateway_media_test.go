@@ -61,11 +61,9 @@ func TestGatewayMedia(t *testing.T) {
 		}
 	}))
 	defer bot.Close()
-	dapr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	defer dapr.Close()
 	tokenFile, conf, state := filepath.Join(home, "tg.token"), filepath.Join(home, "conf"), filepath.Join(home, "state")
 	os.WriteFile(tokenFile, []byte(tok+"\n"), 0o600)
-	os.WriteFile(conf, []byte(fmt.Sprintf("set gateway-adapters telegram\nset telegram-token-file %s\nset telegram-allow-user 42\nset telegram-api-url %s\nset dapr-http-url %s\nset dapr-pubsub p\nset subject-prefix jg.captain\n", tokenFile, bot.URL, dapr.URL)), 0o600)
+	os.WriteFile(conf, []byte(fmt.Sprintf("set gateway-adapters telegram\nset telegram-token-file %s\nset telegram-allow-user 42\nset telegram-api-url %s\nset subject-prefix jg.captain\n", tokenFile, bot.URL)), 0o600)
 	a := &app{root: root, home: home, state: state, data: filepath.Join(home, "data"), configFiles: []string{conf}, record: state + "/rec", log: state + "/log"}
 	once := func() {
 		if code := a.gateway([]string{"--once"}); code != 0 {

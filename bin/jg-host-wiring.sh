@@ -207,14 +207,6 @@ step_copies() {  # <name>
     supervisor-guard)
       into "$data/jg-supervisor-guard" "$c/bin" jg-supervisor-work-pretool-check.sh jg-supervisor-work-decide.mjs \
         jg-supervisor-work-command-policy.mjs ;;
-    tickets-sync)
-      into "$data/jg-tickets-sync/tickets-sync" "$c" sync.py ticket.py identity.py lane.py hierarchy.py \
-        task_rows.py cleanup.py legacy.py reconcile.py release.py drop.py tidy.py
-      local icon
-      for icon in "$here/$c"/icons/*; do
-        [ -f "$icon" ] || continue
-        into "$data/jg-tickets-sync/tickets-sync/icons" "$c/icons" "${icon##*/}"
-      done ;;
   esac
 }
 

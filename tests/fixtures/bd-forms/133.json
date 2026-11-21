@@ -1,0 +1,17 @@
+{
+ "argv": [
+  "update",
+  "jg-lane-m",
+  "--status",
+  "closed",
+  "--if-status",
+  "in_progress",
+  "--if-assignee",
+  "main"
+ ],
+ "stdin": "",
+ "stdout": "\u2713 Updated issue: jg-lane-m \u2014 jg-lane-m work\n",
+ "exit": 0,
+ "form": "update --if-assignee --if-status --status",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-lane-m\",\"title\":\"jg-lane-m work\",\"description\":\"Fixture ticket jg-lane-m\",\"status\":\"in_progress\",\"priority\":1,\"issue_type\":\"task\",\"assignee\":\"main\",\"created_at\":\"2026-11-19T14:02:45Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T14:02:47Z\",\"started_at\":\"2026-11-19T14:02:47Z\",\"metadata\":{\"kind\":\"ship\",\"release\":\"later\"},\"labels\":[\"feature\",\"project:demo\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

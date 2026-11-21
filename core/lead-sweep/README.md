@@ -47,11 +47,37 @@ Each is acted on once and never forced (limits: `JG_LEAD_SWEEP_PARK_H`, `JG_LEAD
 
 A step that fails prints one alert per lane and reason, like a refused cleanup.
 
+## A parked lane: its lead owns the next step
+
+Parking gives back the copy and keeps the branch, so the park record (`state/<id>.parked`, written by `bin/jg-teardown-park-lib.sh`) is the only thing left, and no other actor revisits it.
+The sweep rechecks every parked lane on each beat, and its lead is the owner of the decision the park left open:
+
+- Its branch head is on the trunk (or its recorded pull request is merged): the park record is cleaned up, the alert raised for it is resolved with that commit as proof, and one line says so.
+  A parked lane whose branch is gone is judged by the head its record names, so work that landed and was cleaned up is still not forgotten.
+- It has a lane record again (a respawn): the parked record is the previous incarnation's, and it would hide the new lane from this sweep, so it is cleared.
+- It is not landed: after `JG_LEAD_SWEEP_PARKED_RECHECK_MIN` minutes (default 60) the sweep raises ONE alert, `parked-lane--<id>-<generation>`, that names the branch and the next step its lead must take, and keeps the obligation in `data/lead-sweep/<id>.parked-owner` (`owner=lead`, branch, head, `next_action`, `recheck_after`).
+  The same alert is rung again only when the step changes, so one parked lane never carries two alerts, and its ladder climbs as every alert does.
+
+The next step comes from records that already exist, never from a second proof test:
+
+| step | when |
+| --- | --- |
+| `drop` | its branch is gone, or its head is the commit the lane started on, so it holds nothing to land |
+| `land` | its last status line is a done line and the lander's own proof reader (`bin/jg-merge-gate-lib.sh` `jg_dod_trunk_proof_gaps`: a PASS receipt and a sealed clean run at that head) finds the proof whole |
+| `re-prove` | anything else: the work stopped before it was ready, its proof is not whole at that head, or its project cannot be read |
+
+The sweep never deletes a branch, and it never forces a cleanup: a parked lane is landed, re-proved or dropped by its lead, and the sweep only names which one it is.
+
 ## Cleanup
 
 The sweep runs `bin/jg-teardown.sh <id>` and never passes `--force`.
 The teardown owns the landed-work test and every gate, so a lane with unlanded work, or a Recon whose report, captain-call inventory or depth gate fails, is refused and stays.
 A refusal is kept in `data/lead-sweep/<id>.reported` and printed once; the same reason on the next beat prints nothing, and a new reason prints again.
+The central drift alert retains its original age when a refusal changes.
+Its subject includes the lane's `spawn_gen`; a legacy lane without that field keeps its existing subject and reports an unknown generation.
+`lead-sweep.sh` owns the capacity observation format and the next action recorded beside the refusal.
+These observations keep the lead responsible for preservation and guarded return; neither a successful command nor a lost slot clears the capacity action.
+Artifact preservation and authoritative slot-reuse proof remain required before capacity recovery can be claimed.
 
 ## Wiring
 
@@ -61,4 +87,4 @@ A refusal is kept in `data/lead-sweep/<id>.reported` and printed once; the same 
 
 ## Test
 
-`bash tests/jg-lead-sweep-end-states.test.sh` runs the end-state journey (resolved lanes); `bash core/lead-sweep/tests/lead-sweep.test.sh` runs the whole journey against a fixture home with real git clones, a recording teardown and a forge stub. `bash tests/jg-teardown-lock-wait.test.sh` runs the lock-wait journey: a held lock, a dead holder and the sweep job.
+`bash tests/jg-lead-sweep-end-states.test.sh` runs the end-state journey (resolved lanes); `bash core/lead-sweep/tests/lead-sweep.test.sh` runs the whole journey against a fixture home with real git clones, a recording teardown and a forge stub, including the parked lane's owner, its recheck window and its one alert. `bash tests/jg-teardown-lock-wait.test.sh` runs the lock-wait journey: a held lock, a dead holder and the sweep job.

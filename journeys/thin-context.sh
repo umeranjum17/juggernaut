@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # done-done journey: the supervisor contract has a carrier of its own (thin-context plan, slice TC4a).
 # Step 0 (always): tests/jg-contract-carrier.test.sh runs and its log is kept.
-# Step 1 (always): bin/jg-contract-carrier.sh names one proof for each of the nine verified primary harnesses,
+# Step 1 (always): bin/jg-contract-carrier.sh names one proof for each of the ten verified primary harnesses,
 #   ensure writes the carrier file of a fixture claude home with its one import line, and the real
 #   bin/jg-session-start.sh holds the contract in its digest for harness unknown and in the re-emit after a
 #   compaction for harness pi, and stops repeating it for a claude home whose file stands.
@@ -56,7 +56,7 @@ bash "$REPO/tests/jg-contract-carrier.test.sh" > "$OUT/contract-carrier-test.log
 log "tests/jg-contract-carrier.test.sh: all assertions passed"
 
 H=$(home table)
-for harness in claude pi pi-signed omp codex cursor opencode grok kimi; do
+for harness in claude pi pi-signed omp codex cursor opencode grok kimi agy; do
   proof=$(JG_HOME="$H" JG_ROOT_OVERRIDE="$H" "$CARRIER" check "$harness")
   case "$proof" in file | reemit | none) ;; *) die "check $harness printed '$proof'" ;; esac
   log "check $harness -> $proof"
@@ -97,6 +97,15 @@ JG_HOME="$K" JG_ROOT_OVERRIDE="$K" "$CARRIER" ensure kimi > "$OUT/kimi-ensure.tx
 [ ! -s "$OUT/kimi-ensure.txt" ] && [ ! -e "$K/CLAUDE.local.md" ] || die "ensure kimi wrote a file"
 log "kimi home: carrier is AGENTS.md itself (read natively, binary); ensure writes nothing; check reads reemit; file after one compaction: not proven"
 
+# agy (slice jg-kw4aw): lab, agy 1.5.11 (-p --model gemini-3.8-flash-low), marker JGCARRIER-AGY-530 in AGENTS.md only:
+# first request with no tool call -> marker; the same request with no AGENTS.md -> NONE. agy reads AGENTS.md itself (native).
+# A compaction was not run (print mode has none): the first request after a compaction is not proven.
+A=$(home agy)
+[ "$(JG_HOME="$A" JG_ROOT_OVERRIDE="$A" "$CARRIER" check agy)" = reemit ] || die "check agy is not reemit"
+JG_HOME="$A" JG_ROOT_OVERRIDE="$A" "$CARRIER" ensure agy > "$OUT/agy-ensure.txt" 2>&1 || die "ensure agy failed"
+[ ! -s "$OUT/agy-ensure.txt" ] && [ ! -e "$A/CLAUDE.local.md" ] || die "ensure agy wrote a file"
+log "agy home: carrier is AGENTS.md itself (read natively, lab); ensure writes nothing; check reads reemit; file after one compaction: not proven"
+
 C=$(home claude)
 start "$C" claude --source startup > "$OUT/claude-start.txt"
 grep -q 'wrote CLAUDE.local.md' "$OUT/claude-start.txt" || die "the first claude start did not write the carrier file"
@@ -129,7 +138,7 @@ start "$X" codex --reemit --source compact > "$OUT/codex-compact.txt"
 grep -q "$MARK" "$OUT/codex-compact.txt" && die "a codex home whose copy stands still repeats the contract after a compaction"
 log "codex home: the first start wrote AGENTS.override.md (a copy of AGENTS.md); check reads file; the digest after a compaction no longer repeats the contract"
 
-printf '{"target":{"version":"bin/jg-contract-carrier.sh and bin/jg-session-start.sh at this head"},"start":"fixture homes holding only an AGENTS.md that is the contract, run under a fake harness","steps":["ask the carrier for its proof for each of the nine verified primary harnesses","start a claude home and read the digest and the file the start wrote","re-emit that claude home after a compaction","start a home of harness unknown","start a pi home and re-emit it after a compaction","start a codex home and re-emit it after a compaction"],"result":"each harness read file, reemit or none; the claude home got CLAUDE.local.md with one import line and stopped repeating the contract after a compaction; the codex home got AGENTS.override.md as a copy of the core file and stopped repeating it; harness unknown and pi held the contract in the digest"}\n' > "$OUT/steps.json"
+printf '{"target":{"version":"bin/jg-contract-carrier.sh and bin/jg-session-start.sh at this head"},"start":"fixture homes holding only an AGENTS.md that is the contract, run under a fake harness","steps":["ask the carrier for its proof for each of the ten verified primary harnesses","start a claude home and read the digest and the file the start wrote","re-emit that claude home after a compaction","start a home of harness unknown","start a pi home and re-emit it after a compaction","start a codex home and re-emit it after a compaction"],"result":"each harness read file, reemit or none; the claude home got CLAUDE.local.md with one import line and stopped repeating the contract after a compaction; the codex home got AGENTS.override.md as a copy of the core file and stopped repeating it; harness unknown and pi held the contract in the digest"}\n' > "$OUT/steps.json"
 jg_live_gate opt-in JG_THIN_CONTEXT_LIVE claude codex
 # Codex does not expand an import line (lab thin-tc5-codex), so its fixture home holds the copy `ensure` wrote.
 (cd "$X" && codex exec --skip-git-repo-check --sandbox read-only \

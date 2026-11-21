@@ -1,0 +1,15 @@
+{
+ "argv": [
+  "update",
+  "jg-held",
+  "--set-metadata",
+  "hold_reason=waiting for the owner",
+  "--status",
+  "on_hold"
+ ],
+ "stdin": "",
+ "stdout": "\u2713 Updated issue: jg-held \u2014 ticket jg-held\n",
+ "exit": 0,
+ "form": "update --set-metadata --status",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-other\",\"title\":\"ticket jg-other\",\"description\":\"Fixture ticket jg-other\",\"status\":\"open\",\"priority\":1,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:35:38Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:35:38Z\",\"metadata\":{\"kind\":\"ship\",\"release\":\"later\"},\"labels\":[\"feature\",\"project:elsewhere\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-lane\",\"title\":\"ticket jg-lane\",\"description\":\"Fixture ticket jg-lane\",\"status\":\"open\",\"priority\":1,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:35:36Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:35:36Z\",\"metadata\":{\"kind\":\"ship\",\"release\":\"later\"},\"labels\":[\"feature\",\"project:demo\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-linked\",\"title\":\"ticket jg-linked\",\"description\":\"Fixture ticket jg-linked\",\"status\":\"open\",\"priority\":1,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:35:34Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:35:34Z\",\"metadata\":{\"kind\":\"ship\",\"release\":\"later\"},\"labels\":[\"feature\",\"project:demo\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-taken\",\"title\":\"ticket jg-taken\",\"description\":\"Fixture ticket jg-taken\",\"status\":\"open\",\"priority\":1,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:35:32Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:35:32Z\",\"metadata\":{\"kind\":\"ship\",\"release\":\"later\"},\"labels\":[\"feature\",\"project:demo\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-held\",\"title\":\"ticket jg-held\",\"description\":\"Fixture ticket jg-held\",\"status\":\"open\",\"priority\":1,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:35:30Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:35:30Z\",\"metadata\":{\"kind\":\"ship\",\"release\":\"later\"},\"labels\":[\"feature\",\"project:demo\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-go\",\"title\":\"ticket jg-go\",\"description\":\"Fixture ticket jg-go\",\"status\":\"open\",\"priority\":1,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:35:27Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:35:27Z\",\"metadata\":{\"kind\":\"ship\",\"release\":\"later\"},\"labels\":[\"feature\",\"project:demo\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

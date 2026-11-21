@@ -24,7 +24,6 @@ Each check reads the script that already owns the fact, and triage adds no probe
 | `sentinel`, `tools`, `checkout`, `config` | the detect-only lines of `bin/jg-bootstrap.sh` | none |
 | `login` | `gh auth status` (skipped with `--offline`) | none |
 | `tmp` | `bin/jg-tmp-sweep.sh check` | `bin/jg-tmp-sweep.sh sweep --apply` |
-| `stray-servers` | the dry run of `bin/jg-stray-nats-reap.sh` | none, the command is printed |
 
 ## What `--fix` never does
 
@@ -76,6 +75,5 @@ The playbook it hands over tells the agent to ask before each fix, never read a 
 - Project clones behind origin and backlog rows out of step with their task records are not repaired here; `bin/jg-fleet-sync.sh` and the bootstrap reconcile own them.
 - Vendor logins other than `gh` are not probed.
 - It does not run unattended.
-- Stray test servers are listed, never stopped.
 
 Verification: `bash tests/jg-triage.test.sh`.

@@ -1,5 +1,9 @@
 app: juggernaut
+skill: .agents/skills/done-done-verify-suites
 journeys:
+  signalled-status-outcomes:
+    tier: local
+    command: bash tests/jg-wake-next.test.sh > "$DONE_DONE_EVIDENCE_ROOT/outcomes.log" 2>&1 && bash tests/jg-wake-drain-status-ack.test.sh < /dev/null > "$DONE_DONE_EVIDENCE_ROOT/status-ack.log" 2>&1
   startable-set-scale:
     tier: local
     command: bash journeys/startable-set-scale.sh
@@ -37,9 +41,6 @@ journeys:
   plan-gate:
     tier: local
     command: bash journeys/plan-gate.sh
-  message-table:
-    tier: local
-    command: (bash bin/jg-machine.sh check message && bash bin/jg-machine.sh events message && bash tests/jg-machine-message.test.sh && bash tests/jg-machine-inbox.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   machine-observers:
     tier: local
     command: (for m in squad-lead supervision presence; do bash bin/jg-machine.sh check $m && bash bin/jg-machine.sh events $m || exit 1; done; bash tests/jg-machine-observers16.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -49,15 +50,13 @@ journeys:
   fleet-status-scale:
     tier: local
     command: bash journeys/fleet-status-scale.sh
-  account-table:
+  home-summary-refresh-scale:
     tier: local
-    command: bash journeys/account-table.sh
-  landing-table:
-    tier: local
-    command: (bash bin/jg-machine.sh check landing && bash bin/jg-machine.sh events landing && bash tests/jg-machine-landing.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    command: bash journeys/home-summary-refresh-scale.sh
+    timeout: 10m
   hold-table:
     tier: local
-    command: bash journeys/hold-table.sh
+    command: node journeys/hold-table.mjs
   recon-table:
     tier: local
     command: bash journeys/recon-table.sh
@@ -67,9 +66,6 @@ journeys:
   trunk-table:
     tier: local
     command: bash journeys/trunk-table.sh
-  cleanup-table:
-    tier: local
-    command: bash journeys/cleanup-table.sh
   machine-diagram:
     tier: local
     command: bash journeys/machine-diagram.sh
@@ -117,19 +113,19 @@ journeys:
     command: bash journeys/required-shard-retry.sh
   trunk-parallel-batch:
     tier: local
-    command: env -u JG_TASK_ID bash tests/jg-trunk-parallel-batch.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    command: env --unset=JG_TASK_ID bash tests/jg-trunk-parallel-batch.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   trunk-latency:
     tier: local
-    command: (env -u JG_TASK_ID JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-trunk-latency.test.sh && env -u JG_TASK_ID bash tests/jg-trunk-queue-why.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    command: (env --unset=JG_TASK_ID JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-trunk-latency.test.sh && env --unset=JG_TASK_ID bash tests/jg-trunk-queue-why.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   green-pin-stale:
     tier: local
-    command: env -u JG_TASK_ID bash tests/jg-green-pin-stale.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    command: env --unset=JG_TASK_ID bash tests/jg-green-pin-stale.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   trunk-ci-result:
     tier: local
-    command: env -u JG_TASK_ID bash tests/jg-trunk-ci-result.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1 && printf '{"target":{"version":"core/trunk-ci/ci-result.sh at this head"},"start":"a real trunk with landed commits and a forge stand-in holding their CI runs","steps":["run the check in watch mode over a green and a red commit","switch to act mode and run it over a new green and a new red commit","run it when more than 2 of the last 20 results are red"],"result":"watch mode records each commit once and changes no trunk record, act mode sends each result to jg-trunk.sh ci and a red moves the green pin back, and a red-heavy trunk is held"}\n' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
+    command: env --unset=JG_TASK_ID bash tests/jg-trunk-ci-result.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1 && printf '{"target":{"version":"core/trunk-ci/ci-result.sh at this head"},"start":"a real trunk with landed commits and a forge stand-in holding their CI runs","steps":["run the check in watch mode over a green and a red commit","switch to act mode and run it over a new green and a new red commit","run it when more than 2 of the last 20 results are red"],"result":"watch mode records each commit once and changes no trunk record, act mode sends each result to jg-trunk.sh ci and a red moves the green pin back, and a red-heavy trunk is held"}\n' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
   status-latency:
     tier: local
-    command: env -u JG_TASK_ID bash tests/jg-status-latency.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    command: env --unset=JG_TASK_ID bash tests/jg-status-latency.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   ports-adapter-refusal:
     tier: local
     command: bash journeys/ports-adapter-refusal.sh
@@ -160,7 +156,7 @@ journeys:
     timeout: 10m
   typed-wait-writer:
     tier: local
-    command: JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-wait-write.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    command: bash tests/jg-wait-write.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
     timeout: 10m
   spawn-admit:
     tier: local
@@ -210,6 +206,11 @@ journeys:
   spawn-imports-dialog:
     tier: local
     command: JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-spawn-imports-dialog.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1 && printf '{"target":{"version":"jg-spawn.sh"},"start":"a claude spawn whose pane shows the external-imports dialog","steps":["spawn a claude worker","the pane shows the imports dialog","read the spawn result and the owner store"],"result":"the spawn failed with the cause, sent no key, and the store holds no decline"}\n' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
+  pi-launch-first-turn:
+    tier: local
+    command: >-
+      JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-spawn-pi-first-turn.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1 &&
+      printf '%s\n' '{"target":{"version":"jg-spawn.sh"},"start":"a fixture home, a real git worktree, and a Pi whose help advertises --tui-mode and --approve","steps":["spawn a Pi worker into a managed fleet pool copy and read the staged launch command","spawn the same worker outside the fleet pool","leave the busy record at its launch seed and read the keys and the alert","replace that seed with the adapter first event and read the keys and the alerts"],"result":"the fleet copy launches with --approve and the plain copy does not, a first turn that never starts gets one retried submit and one worker-stopped alert naming the task while a started one gets neither, and the lane stays up"}' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
   spawn-load-admission:
     tier: local
     command: bash tests/jg-spawn-load-admission.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -238,6 +239,10 @@ journeys:
   project-state-map:
     tier: local
     command: bash core/project-state-map/run-proof.sh
+  report-writer:
+    tier: local
+    command: bash core/report-writer/run-proof.sh
+    timeout: 20m
   status-digest:
     tier: local
     command: bash journeys/status-digest.sh
@@ -299,6 +304,9 @@ journeys:
   captain-close-gate:
     tier: local
     command: bash journeys/captain-close-gate.sh
+  captain-note-ack-gate:
+    tier: local
+    command: bash journeys/captain-note-ack-gate.sh
   stuck-question-replay:
     tier: local
     command: bash journeys/stuck-question-replay.sh
@@ -311,6 +319,9 @@ journeys:
   claude-midturn-cycle:
     tier: local
     command: bash journeys/claude-midturn-cycle.sh
+  agy-primary:
+    tier: local
+    command: bash journeys/agy-primary.sh
   stuck-live-captures:
     tier: local
     command: bash journeys/stuck-live-captures.sh
@@ -469,22 +480,21 @@ journeys:
   kill-guard-home-owner:
     tier: local
     command: node core/kill-guard/run-home-owner-proof.mjs
-  wake-bus-live:
-    tier: local
-    command: bash journeys/wake-bus-live.sh
   wedge-marker:
     tier: local
     command: bash bin/jg-test-run.sh tests/jg-bus.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  wake-cursor-kill:
+  wake-raise-outbox:
     tier: local
-    command: bash journeys/wake-cursor-kill.sh
+    command: bash journeys/wake-raise-outbox.sh
+    timeout: 5m
+  watcher-crash-backoff:
+    tier: local
+    command: bash journeys/watcher-crash-backoff.sh
+    timeout: 10m
   bus-machine-service:
     tier: local
-    command: (bash bin/jg-bus-reap.sh >/dev/null 2>&1 || true; bash tests/jg-bus-machine-service.test.sh && bash tests/jg-stack-owner.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    command: bash tests/jg-stack-owner.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
     timeout: 5m
-  stray-nats-reap:
-    tier: local
-    command: (bash tests/jg-stray-nats-reap.test.sh && bash bin/jg-stray-nats-reap.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   escalation-optimize:
     tier: local
     command: bash core/escalation-optimize/tests/jg-escalation-optimize.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -517,6 +527,10 @@ journeys:
     tier: local
     command: bash journeys/host-memory-sampler-cpu.sh
     timeout: 10m
+  check-cpu-budget:
+    tier: local
+    command: bash journeys/check-cpu-budget.sh
+    timeout: 15m
   tool-kit:
     tier: local
     command: bash journeys/tool-kit.sh
@@ -529,16 +543,16 @@ journeys:
     command: bash journeys/hc-backend.sh
   landing-refusing-shims:
     tier: local
-    command: env -u JG_TASK_ID bash tests/jg-trunk-gate-env.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    command: env --unset=JG_TASK_ID bash tests/jg-trunk-gate-env.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   wait-refusal-retry:
     tier: local
-    command: env -u JG_TASK_ID bash tests/jg-trunk-retry.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    command: env --unset=JG_TASK_ID bash tests/jg-trunk-retry.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   board-answer-route:
     tier: local
-    command: env -u JG_TASK_ID bash tests/jg-board-answers-route.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    command: env --unset=JG_TASK_ID bash tests/jg-board-answers-route.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   afk-daemon-resend:
     tier: local
-    command: env -u JG_TASK_ID bash tests/jg-supervise-daemon-resend.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1 && printf 'run %s at head %s\n' "$RUN_ID" "$(git rev-parse HEAD)" >> "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" && printf '{"target":{"version":"jg-supervise-daemon.sh at this head"},"start":"an afk daemon on a private tmux server whose pane swallows every Enter of the first digest","steps":["write the first status and wait for its digest","write the second status and wait for its digest","count the lines and U+2063 markers the pane submitted"],"result":"the swallowed digest was submitted once, the second digest followed as its own line, and no line went in as user text"}\n' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
+    command: env --unset=JG_TASK_ID bash tests/jg-supervise-daemon-resend.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1 && printf 'run %s at head %s\n' "$RUN_ID" "$(git rev-parse HEAD)" >> "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" && printf '{"target":{"version":"jg-supervise-daemon.sh at this head"},"start":"an afk daemon on a private tmux server whose pane swallows every Enter of the first digest","steps":["write the first status and wait for its digest","write the second status and wait for its digest","count the lines and U+2063 markers the pane submitted"],"result":"the swallowed digest was submitted once, the second digest followed as its own line, and no line went in as user text"}\n' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
   gate-quarantine:
     tier: local
     command: bash journeys/gate-quarantine.sh
@@ -564,9 +578,6 @@ journeys:
   ticket-statechart:
     tier: local
     command: bash journeys/ticket-statechart.sh
-  machine-enums:
-    tier: local
-    command: (for f in core/machines/*.states; do bash bin/jg-machine.sh enum "$(basename "$f" .states)" || exit 1; done; bash bin/jg-machine.sh check ticket && bash bin/jg-machine.sh check delivering && bash tests/jg-machine-enum.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   machine-rules:
     tier: local
     command: bash journeys/machine-rules.sh
@@ -586,7 +597,7 @@ journeys:
     timeout: 10m
   model-stats:
     tier: local
-    command: JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-model-stats.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1 && printf '{"target":{"version":"juggernaut@%s"},"start":"two fixture homes, each with its own Beads store holding tickets that were started, relaunched, landed and closed","steps":["run the per-model statistics reader over both homes","read each model row","confirm that reading the statistics writes no outcome file"],"result":"the log shows the per-model table read from the tickets, with finished, merged, merge rate, time to merge and model switches per model"}\n' "$(git rev-parse --short HEAD)" > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
+    command: bash tests/jg-model-stats.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1 && printf '{"target":{"version":"juggernaut@%s"},"start":"two fixture homes, each with its own Beads store holding tickets that were started, relaunched, landed and closed","steps":["run the per-model statistics reader over both homes","read each model row","confirm that reading the statistics writes no outcome file"],"result":"the log shows the per-model table read from the tickets, with finished, merged, merge rate, time to merge and model switches per model"}\n' "$(git rev-parse --short HEAD)" > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
     timeout: 10m
   ticket-move:
     tier: local
@@ -609,10 +620,6 @@ journeys:
     # measured 22.8 s on the host, 2026-11-12 (serial, one run)
     tier: ci
     command: bash tests/jg-brief.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  contract-bus-machine-service:
-    # measured 12.6 s on the host, 2026-11-12 (serial, one run)
-    tier: ci
-    command: bash tests/jg-bus-machine-service.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   contract-lint-partitions:
     # measured 12.0 s on the host, 2026-11-12 (serial, one run)
     tier: ci
@@ -625,22 +632,10 @@ journeys:
     # measured 0.3 s on the host, 2026-11-12 (serial, one run)
     tier: ci
     command: bash tests/jg-loss-claim-check.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  contract-machine-enforce:
-    # measured 1.2 s on the host, 2026-11-12 (serial, one run)
-    tier: ci
-    command: bash tests/jg-machine-enforce.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  contract-machine-inbox:
-    # measured 2.8 s on the host, 2026-11-12 (serial, one run)
-    tier: ci
-    command: bash tests/jg-machine-inbox.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   contract-machine-index:
     # measured 0.5 s on the host, 2026-11-12 (serial, one run)
     tier: ci
     command: bash tests/jg-machine-index.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  contract-machine-shadow:
-    # measured 2.4 s on the host, 2026-11-12 (serial, one run)
-    tier: ci
-    command: bash tests/jg-machine-shadow.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   contract-machine-status:
     # measured 1.3 s on the host, 2026-11-12 (serial, one run)
     tier: ci
@@ -804,7 +799,7 @@ journeys:
   core-tickets-sync-real-board-journey:
     # was Core suites step 34: Tickets sync real-board journey
     tier: local
-    command: bash journeys/core-run.sh 'bash tickets-sync/tests/sync.test.sh && bash tickets-sync/tests/skip-bad-ticket.test.sh && bash tickets-sync/tests/description-linebreaks.test.sh && bash tickets-sync/tests/long-body.test.sh && bash tickets-sync/tests/cleanup-report-card.test.sh && bash tickets-sync/tests/stage-from-machines.test.sh && bash tickets-sync/tests/no-store-quiet.test.sh && bash tickets-sync/tests/tidy.test.sh && bash tickets-sync/tests/cleanup-acts.test.sh && bash tickets-sync/tests/cleanup-keeps-question.test.sh && bash tickets-sync/tests/check-own-cursor.test.sh && bash tickets-sync/tests/ticket-identity.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    command: bash journeys/core-run.sh 'bash tickets-sync/tests/sync.test.sh && bash tickets-sync/tests/skip-bad-ticket.test.sh && bash tickets-sync/tests/description-linebreaks.test.sh && bash tickets-sync/tests/long-body.test.sh && bash tickets-sync/tests/cleanup-report-card.test.sh && bash tickets-sync/tests/stage-from-machines.test.sh && bash tickets-sync/tests/tidy.test.sh && bash tickets-sync/tests/cleanup-acts.test.sh && bash tickets-sync/tests/cleanup-keeps-question.test.sh && bash tickets-sync/tests/check-own-cursor.test.sh && bash tickets-sync/tests/ticket-identity.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   core-fleet-pulse-test:
     # was Core suites step 35: Fleet pulse test
     tier: local
@@ -1047,6 +1042,12 @@ journeys:
   registry-union:
     tier: local
     command: bash journeys/registry-union.sh
+  item-store-policy-fill:
+    tier: local
+    command: bash journeys/item-store-policy-fill.sh
+  item-store-contention:
+    tier: local
+    command: bash journeys/item-store-contention.sh
   agent-cli-proof-land:
     tier: local
     command: bash journeys/core-run.sh 'bash agent-cli/tests/proof-land.test.sh && bash agent-cli/tests/proof-runner.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1 && printf '{"target":{"version":"core/agent-cli/proof.sh at this head"},"start":"a worker worktree whose home has one heavy slot, held by a live run, and one probed runner","steps":["run jg proof with a free slot and see it run here","hold the slot and run jg proof and see it go to the runner","lose the runner and run jg proof and see it stay here"],"result":"the log shows the proof ran on the runner when the host was full, its result and record were written here, and a lost runner left the run here"}\n' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
@@ -1138,6 +1139,9 @@ journeys:
   jg-autoarm-host-load:
     tier: local
     command: bash tests/jg-autoarm-host-load.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-away-escalation-buffer:
+    tier: local
+    command: bash tests/jg-away-escalation-buffer.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-away-reach:
     tier: local
     command: bash tests/jg-away-reach.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -1168,54 +1172,27 @@ journeys:
   jg-backlog-row-show:
     tier: local
     command: bash tests/jg-backlog-row-show.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-beads-journal:
+  jg-backlog-handoff-move:
     tier: local
-    command: bash tests/jg-beads-journal.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    command: bash tests/jg-backlog-handoff-move.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-beads-lane-s7:
     tier: local
     command: bash tests/jg-beads-lane-s7.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-beads-migrate:
-    tier: local
-    command: bash tests/jg-beads-migrate.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-beads-native-followup:
     tier: local
     command: bash tests/jg-beads-native-followup.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-beads-native-hold:
-    tier: local
-    command: bash tests/jg-beads-native-hold.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-beads-native-n3:
-    tier: local
-    command: bash tests/jg-beads-native-n3.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-beads-native-n4:
-    tier: local
-    command: bash tests/jg-beads-native-n4.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-beads-native-n5:
-    tier: local
-    command: bash tests/jg-beads-native-n5.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-beads-native-n6:
     tier: local
     command: bash tests/jg-beads-native-n6.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-beads-native-n8:
-    tier: local
-    command: bash tests/jg-beads-native-n8.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-beads-native-whole:
-    tier: local
-    command: bash tests/jg-beads-native-whole.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-backlog-intake:
     tier: local
     command: bash tests/jg-backlog-intake.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-beads-parent:
     tier: local
     command: bash tests/jg-beads-parent.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-beads-move:
-    tier: local
-    command: bash tests/jg-beads-move.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-beads-ticket-stage:
     tier: local
     command: bash tests/jg-beads-ticket-stage.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-beads:
-    tier: local
-    command: bash tests/jg-beads.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-behavior-determinism:
     tier: local
     command: bash tests/jg-behavior-determinism.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -1243,24 +1220,9 @@ journeys:
   jg-browser-sweep:
     tier: local
     command: bash tests/jg-browser-sweep.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-bus-account-isolation:
-    tier: local
-    command: bash tests/jg-bus-account-isolation.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-bus-gateway:
     tier: local
     command: bash tests/jg-bus-gateway.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-bus-health-extra:
-    tier: local
-    command: bash tests/jg-bus-health-extra.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-bus-health:
-    tier: local
-    command: bash tests/jg-bus-health.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-bus-leaf-parity:
-    tier: local
-    command: bash tests/jg-bus-leaf-parity.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-bus-service:
-    tier: local
-    command: bash tests/jg-bus-service.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-calm-home-links:
     tier: local
     command: bash tests/jg-calm-home-links.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -1413,6 +1375,12 @@ journeys:
   done-yaml-dup-keys:
     tier: local
     command: bash journeys/done-yaml-dup-keys.sh
+  done-yaml-env-unset:
+    tier: local
+    command: bash journeys/done-yaml-env-unset.sh
+  jg-doc-audience-check:
+    tier: local
+    command: bash tests/jg-doc-audience-check.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-doorbell-composer:
     tier: local
     command: bash tests/jg-doorbell-composer.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -1524,9 +1492,6 @@ journeys:
   jg-remote-reply:
     tier: local
     command: bash tests/jg-remote-reply.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-reply-bus-parity:
-    tier: local
-    command: bash tests/jg-reply-bus-parity.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-reply-engine:
     tier: local
     command: bash tests/jg-reply-engine.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -1575,6 +1540,9 @@ journeys:
   jg-spawn-core:
     tier: local
     command: bash tests/jg-spawn-core.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  answer-route:
+    tier: local
+    command: bash tests/jg-answer-route.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-spawn-lock-deferral:
     tier: local
     command: JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-spawn-lock-deferral.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -1596,9 +1564,6 @@ journeys:
   jg-stage-words:
     tier: local
     command: bash tests/jg-stage-words.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-state-bus-parity:
-    tier: local
-    command: bash tests/jg-state-bus-parity.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-status-digest:
     tier: local
     command: bash tests/jg-status-digest.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -1746,15 +1711,9 @@ journeys:
   jg-account-drift:
     tier: local
     command: bash tests/jg-account-drift.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-account-home-moves:
-    tier: local
-    command: bash tests/jg-account-home-moves.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-backlog-spawnable-scale:
     tier: local
     command: bash tests/jg-backlog-spawnable-scale.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-captain-hold-moves:
-    tier: local
-    command: bash tests/jg-captain-hold-moves.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-decision-group:
     tier: local
     command: bash tests/jg-decision-group.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -1923,12 +1882,6 @@ journeys:
   jg-lock-pi-session-id:
     tier: local
     command: bash tests/jg-lock-pi-session-id.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-machine-account:
-    tier: local
-    command: bash tests/jg-machine-account.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-machine-cleanup:
-    tier: local
-    command: bash tests/jg-machine-cleanup.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-machine-delivery:
     tier: local
     command: bash tests/jg-machine-delivery.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -1938,24 +1891,9 @@ journeys:
   jg-machine-feed-landing:
     tier: local
     command: JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash tests/jg-machine-feed-landing.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-machine-hold-b:
-    tier: local
-    command: bash tests/jg-machine-hold-b.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-machine-hold:
-    tier: local
-    command: bash tests/jg-machine-hold.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-machine-lint:
-    tier: local
-    command: bash tests/jg-machine-lint.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-machine-recon:
     tier: local
     command: bash tests/jg-machine-recon.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-machine-markers:
-    tier: local
-    command: bash tests/jg-machine-markers.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-machine-moves-log:
-    tier: local
-    command: bash tests/jg-machine-moves-log.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-typed-facts:
     tier: local
     command: bash tests/jg-typed-facts.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -1971,9 +1909,6 @@ journeys:
   jg-machine-wait:
     tier: local
     command: bash tests/jg-machine-wait.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
-  jg-machine-writer-lint:
-    tier: local
-    command: bash tests/jg-machine-writer-lint.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-mail:
     tier: local
     command: bash tests/jg-mail.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -2015,7 +1950,7 @@ journeys:
     command: bash tests/jg-overwatch-kpi.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-primary-chat-approval:
     tier: local
-    command: env -u JG_TASK_ID bash tests/jg-primary-chat-approval.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1 && printf '{"target":{"version":"bin/jg-overwatch-kpi.sh hook and bin/jg-inbox.sh primary-chat at this head"},"start":"a primary home whose lock names one session","steps":["submit an order from the locked session through the prompt hook","read it back with the build-approval reader as owner-words","submit from another session, with no lock, and as machine text"],"result":"the locked session files one handled signed chat note with his whole words and an order quoting them is approved; the other cases file no note and approve nothing"}\n' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
+    command: env --unset=JG_TASK_ID bash tests/jg-primary-chat-approval.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1 && printf '{"target":{"version":"bin/jg-overwatch-kpi.sh hook and bin/jg-inbox.sh primary-chat at this head"},"start":"a primary home whose lock names one session","steps":["submit an order from the locked session through the prompt hook","read it back with the build-approval reader as owner-words","submit from another session, with no lock, and as machine text"],"result":"the locked session files one handled signed chat note with his whole words and an order quoting them is approved; the other cases file no note and approve nothing"}\n' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
   jg-owner-correction:
     tier: local
     command: bash tests/jg-owner-correction.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -2073,6 +2008,9 @@ journeys:
   jg-ask-record:
     tier: local
     command: bash journeys/ask-record.sh
+  jg-acceptance-trial:
+    tier: local
+    command: bash tests/jg-acceptance-trial.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-trunk-release-merge-first:
     tier: local
     command: bash tests/jg-trunk-release-merge-first.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -2124,6 +2062,9 @@ journeys:
   jg-trunk-verify:
     tier: local
     command: bash tests/jg-trunk-verify.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-trunk-verify-survives:
+    tier: local
+    command: bash tests/jg-trunk-verify-survives.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-trunk:
     tier: local
     command: bash tests/jg-trunk.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -2193,6 +2134,10 @@ journeys:
   jg-watcher-lock:
     tier: local
     command: bash tests/jg-watcher-lock.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-home-summary-refresh-scale:
+    tier: local
+    command: bash tests/jg-home-summary-refresh-scale.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    timeout: 10m
   jg-whats-left:
     tier: local
     command: bash tests/jg-whats-left.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -2322,7 +2267,7 @@ journeys:
     command: bash journeys/core-run.sh 'bash merge-card/tests/card-title.test.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   merge-card-e2e:
     tier: local
-    command: env -u JG_TICKET -u JG_TASK_ID -u JG_HOME -u JG_TASK_INBOX -u CLAUDE_CONFIG_DIR bash journeys/core-run.sh 'bash merge-card/tests/merge-card-e2e.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    command: env --unset=JG_TICKET --unset=JG_TASK_ID --unset=JG_HOME --unset=JG_TASK_INBOX --unset=CLAUDE_CONFIG_DIR bash journeys/core-run.sh 'bash merge-card/tests/merge-card-e2e.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   merge-card-merge-hooks-e2e:
     tier: local
     command: bash journeys/core-run.sh 'bash merge-card/tests/merge-hooks-e2e.sh' > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -2354,6 +2299,23 @@ journeys:
     tier: local
     command: bash tests/jg-in-use-enforced.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
     timeout: 10m
+  tickets-beads-checks:
+    tier: local
+    command: node journeys/tickets-beads-checks.mjs
+
+  codex-lead-queued-wake:
+    tier: local
+    command: node journeys/codex-lead-queued-wake.mjs
+    timeout: 180s
+
+  ask-outcomes:
+    tier: local
+    command: >-
+      python3 journeys/ask-outcomes.py &&
+      bash bin/jg-test-run.sh tests/jg-bus-gateway.test.sh > "$DONE_DONE_EVIDENCE_ROOT/gateway.log" 2>&1 &&
+      bash bin/jg-lint.sh > "$DONE_DONE_EVIDENCE_ROOT/lint.log" 2>&1 &&
+      bash bin/jg-doc-audience-check.sh > "$DONE_DONE_EVIDENCE_ROOT/docs.log" 2>&1
+    timeout: 15m
 
 secrets:
   allow:

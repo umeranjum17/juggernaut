@@ -1,0 +1,12 @@
+{
+ "argv": [
+  "gate",
+  "list",
+  "--json"
+ ],
+ "stdin": "",
+ "stdout": "null\n",
+ "exit": 0,
+ "form": "gate list --json",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-plan.1\",\"title\":\"Slice A\",\"status\":\"open\",\"priority\":1,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T15:21:10Z\",\"created_by\":\"juggernaut\",\"updated_at\":\"2026-11-19T15:21:10Z\",\"metadata\":{\"plan_slice\":\"A\"},\"labels\":[\"feature\",\"project:demo\"],\"dependencies\":[{\"issue_id\":\"jg-plan.1\",\"depends_on_id\":\"jg-plan\",\"type\":\"parent-child\",\"created_at\":\"2026-11-19T15:21:10Z\",\"created_by\":\"juggernaut\",\"metadata\":\"{}\"}],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-plan\",\"title\":\"The plan\",\"description\":\"Fixture ticket jg-plan\",\"status\":\"open\",\"priority\":1,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T15:21:04Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T15:21:04Z\",\"metadata\":{\"kind\":\"ship\",\"release\":\"later\"},\"labels\":[\"feature\",\"project:demo\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

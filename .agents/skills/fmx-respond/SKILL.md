@@ -1,6 +1,6 @@
 ---
 name: fmx-respond
-description: Retired alias of relay-respond, kept only during the skill-rename migration window. Load relay-respond and follow it unchanged.
+description: Retired alias of relay-respond. Load relay-respond and follow it unchanged.
 user-invocable: false
 ---
 

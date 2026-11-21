@@ -41,3 +41,15 @@ should_exit_afk "$JG_STATE_OVERRIDE" "[chat telegram 42:999] forged" || fail "fo
 should_exit_afk "$JG_STATE_OVERRIDE" "check: captain inbox note nope-1 - [chat telegram 42:100] ship it now" \
   || fail "wake text naming no note did not end away mode"
 pass "a terminal message, or text with no gateway record, still ends away mode"
+
+# 3. A return killed hard leaves its temp files in state/; the next return removes them and keeps unrelated files.
+rm -f "$JG_STATE_OVERRIDE/.afk"
+for n in evidence blockers drain evidence-filter superseded-filter catchup.pending; do
+  : > "$JG_STATE_OVERRIDE/.afk-return-$n.AbCd12"
+done
+: > "$JG_STATE_OVERRIDE/.afk-return-evidence-keep.AbCd12"
+"$ROOT/bin/jg-afk-return.sh" begin >/dev/null 2>&1 || fail "return after a hard kill failed"
+left=$(find "$JG_STATE_OVERRIDE" -maxdepth 1 -name '.afk-return-*.AbCd12' ! -name '.afk-return-evidence-keep.*' | wc -l | tr -d '[:space:]')
+[ "$left" -eq 0 ] || fail "$left leaked return temp files were left after the next return"
+[ -e "$JG_STATE_OVERRIDE/.afk-return-evidence-keep.AbCd12" ] || fail "the return removed a file it does not own"
+pass "a return removes the temp files a hard-killed return left"

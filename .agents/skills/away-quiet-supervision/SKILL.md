@@ -1,6 +1,6 @@
 ---
 name: away-quiet-supervision
-description: Retired alias of watchover-supervision, kept only during the skill-rename migration window. Load watchover-supervision and follow it unchanged.
+description: Retired alias of watchover-supervision. Load watchover-supervision and follow it unchanged.
 user-invocable: false
 ---
 

@@ -1,0 +1,14 @@
+{
+ "argv": [
+  "show",
+  "rd-4cc",
+  "--json",
+  "--include-dependents",
+  "--brief-deps"
+ ],
+ "stdin": "",
+ "stdout": "[\n  {\n    \"id\": \"rd-4cc\",\n    \"title\": \"target\",\n    \"status\": \"open\",\n    \"priority\": 2,\n    \"issue_type\": \"task\",\n    \"created_at\": \"2026-11-19T13:41:29Z\",\n    \"updated_at\": \"2026-11-19T13:41:29Z\",\n    \"dependent_count\": 0,\n    \"dependency_count\": 0,\n    \"comment_count\": 0,\n    \"revision\": \"-4798448237591792878\"\n  }\n]\n",
+ "exit": 0,
+ "form": "show --brief-deps --include-dependents --json",
+ "store": "{\"_type\":\"issue\",\"id\":\"rd-2xo\",\"title\":\"edge-b\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:41:31Z\",\"updated_at\":\"2026-11-19T13:41:31Z\",\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"rd-8gq\",\"title\":\"edge-a\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:41:30Z\",\"updated_at\":\"2026-11-19T13:41:30Z\",\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"rd-4cc\",\"title\":\"target\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:41:29Z\",\"updated_at\":\"2026-11-19T13:41:29Z\",\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

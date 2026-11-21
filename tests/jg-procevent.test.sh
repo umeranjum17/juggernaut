@@ -477,13 +477,8 @@ pe_adapter() {  # <home> <command>...: run the runner against the fixture adapte
 HPUBLISH="$TMP_ROOT/hpublish"; new_home "$HPUBLISH"
 jg_test_track_procevent_home "$HPUBLISH"
 pe_adapter "$HPUBLISH" register applying publish-src -- /bin/echo "apply after publish" >/dev/null
-# The wake queue is the bus's: a raise publishes, and a publish the bus cannot take
-# is owed in the home's own outbox (bin/jg-wake-bus.sh live_publish), so a wake
-# fails to publish only when neither can record it. Point this home at an address
-# nothing listens on, so a bus on the machine cannot take the event, and make the
+# A wake fails to publish only when the queue cannot record it: make the home's own
 # outbox unwritable to prove exactly that.
-mkdir -p "$HPUBLISH/config"
-printf 'nats-url nats://127.0.0.1:1\n' > "$HPUBLISH/config/wake-bus"
 mkdir "$HPUBLISH/state/.wake-bus.outbox.jsonl"
 out=$(pe_adapter "$HPUBLISH" start publish-src 2>&1)
 assert_contains "$out" "not-autohandled: publish-src" "failed publication did not suppress automatic application"

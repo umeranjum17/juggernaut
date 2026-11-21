@@ -1,9 +1,9 @@
 machine	alert	one record per alert key, state/alerts/<alert>--<subject>.rec (machine 5 of the state-machine plan)	bin/jg-alert.sh
 enum	alert
 state	open	initial	The alert rings and nobody has taken it.	rung,precedence	waiting	5m -> climb
-state	acknowledged	normal	Someone has taken it.	rung,precedence	waiting	10m -> reopen
+state	acknowledged	normal	Someone has taken it, and its deadline still stands: the ack never clears it.	rung,precedence	waiting	10m -> reopen
 state	inhibited	normal	A higher alert covers it.	covered_by	rest	release
-state	stuck	normal	It stayed at its top rung past its repeats, so one card and one page went out; it rings no more.	repeats	rest	resolve
+state	stuck	normal	It exhausted its repeats and retains a recovery with the same recipient authority.	repeats	rest	resolve
 state	resolved	terminal	The cause is gone.	-
 group	live	open	acknowledged	inhibited	stuck
 edge	(none)	fire	open	bin/jg-alert.sh:cmd_raise	-	the named state holds past the row's timer	jg-alert
@@ -13,5 +13,5 @@ edge	open	ack	acknowledged	bin/jg-alert.sh:cmd_ack	-	the one it rang answers	jg-
 edge	acknowledged	reopen	open	bin/jg-alert.sh:cmd_reopen	-	the limit ran out again	jg-alert
 edge	open	inhibit	inhibited	bin/jg-alert.sh:cmd_raise	-	a covering alert is open	jg-alert
 edge	inhibited	release	open	bin/jg-alert.sh:cmd_resolve	-	the covering alert resolved	jg-alert
-edge	live	resolve	resolved	bin/jg-alert.sh:cmd_resolve	-	the state it fired on no longer holds	jg-alert
+edge	live	resolve	resolved	bin/jg-alert.sh:cmd_resolve	-	the state it fired on no longer holds, shown by source-clear proof or the obligated action's own evidence	jg-alert
 observer	bash "$(dirname "$JG_MACHINES_TABLES")/observers/alert.sh" "$1"

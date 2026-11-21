@@ -222,10 +222,16 @@
 #   holder role is known, otherwise another operation. --relaunch is exempt
 #   because the existing task's control lock covers it.
 #   A fresh Treehouse-backed spawn also takes the project-identity lock in the local
-#   root Juggernaut home's state directory before slot allocation and holds it through
-#   task metadata publication. Teardown holds that same lock while proving and
-#   returning a slot, so allocation cannot reuse a slot before its owner record
-#   is published.
+#   root Juggernaut home's state directory before slot allocation. Teardown holds that
+#   same lock while proving and returning a slot, so allocation cannot reuse a slot
+#   before its owner claim is written. A project with no declared capacity takes it
+#   once its own endpoint is made and holds it only for the moves that touch the
+#   project's shared pool and git directory: the protect pass, the copy reserve, the
+#   lease, the slot owner claim (on the leased path) and, outside local-trunk, the
+#   base refresh's fetches. It lets go before the wait for its own pane to reach the
+#   copy, so the project's other spawns overlap that wait. A pane that never gets
+#   there returns the copy under the lock again. A project with a declared capacity,
+#   and JG_SPAWN_PROJECT_LOCK_SPAN=full, hold it through task metadata publication.
 #   The local root is whatever bin/jg-wake-lib.sh's
 #   jg_juggernaut_root_home resolves, so a home seeded from another machine anchors
 #   that lock itself rather than failing to resolve one;
@@ -253,6 +259,9 @@
 #   Task-set lock: a fresh spawn that finds this home's task set locked by another spawn, a forced teardown or another
 #   operation is deferred the same way (one `deferred:` line, exit 75, no record, nothing created), because the lock
 #   is a wait and not a verdict. core/auto-dispatch/dispatch.sh resumes every exit 75 under the same approval.
+#   Held file: a fresh ship whose only refusals are files other live lanes hold (`held-file:` from the admission, `lease-held:`
+#   from the file lease) is deferred the same way, with one `deferred:` line naming the file and the holder; any other
+#   refusal exits 1. JG_SPAWN_HELD_FILE_REFUSES=1 keeps the exit 1 for a held file.
 #   With no harness arg, a operator/scout spawn resolves the CREW harness only when
 #   config/crew-dispatch.json is absent. When that file exists, operator/scout
 #   spawns require an explicit harness so juggernaut cannot silently skip dispatch
@@ -271,7 +280,12 @@
 #   also adds --approve when that help advertises it, so the first unattended
 #   launch does not stall on Pi's "Trust project folder?" dialog for that home
 #   path; --approve is session-scoped to the launch cwd and does not rewrite the
-#   operator's trust.json. Ordinary Pi worker launches never receive --approve.
+#   operator's trust.json. A Pi/pi-signed WORKER launch (fresh spawn or relaunch)
+#   receives the same session-scoped --approve when its copy is a managed fleet
+#   Treehouse pool slot (jg_treehouse_pool_slot): the copy is fresh every time, so
+#   Pi's trust gate would otherwise park every unattended worker on that dialog
+#   before its first turn. A worker copy outside the fleet pool (a plain linked
+#   worktree, an Orca worktree, a hand-made checkout) keeps the plain launch.
 #   A missing selected executable refuses before endpoint creation, and pi-signed
 #   never falls back to pi.
 #   Devin is worker-only: --permission-mode dangerous and
@@ -462,9 +476,12 @@
 #                  state/<task-id>.claude-settings.json for a squad_lead
 #     __PIBIN__    quoted concrete Pi-family executable path resolved from PATH
 #     __PITUIMODE__ optional --tui-mode regular when that executable advertises it
-#     __PIAPPROVE__ optional --approve on a seeded Pi/pi-signed squad_lead when
-#                  that executable advertises the flag (empty otherwise; session
-#                  trust for the launch cwd only, never a trust.json rewrite)
+#     __PIAPPROVE__ optional --approve when that executable advertises the flag:
+#                  always on a seeded Pi/pi-signed squad_lead, and on a Pi/
+#                  pi-signed WORKER launch whose copy is a managed fleet pool
+#                  slot (pi_project_trust_approve below owns the rule; empty
+#                  otherwise; session trust for the launch cwd only, never a
+#                  trust.json rewrite)
 #     __PIEXCLUDE__ optional ` --exclude-tools '<comma-joined names>'` from
 #                  config/crew-exclude-tools on Pi/pi-signed ship and scout
 #                  launches (supplies its own leading space, empty otherwise)
@@ -680,8 +697,8 @@ fi
 if [ -n "${JG_DATA_OVERRIDE:-}" ]; then
   JG_DATA_OVERRIDE=$(resolve_directory_input JG_DATA_OVERRIDE "$JG_DATA_OVERRIDE") || exit 1
 fi
-# The backlog store is named by config/beads-dir read from here, and a spawn changes directory before that read, so a
-# relative config override is made absolute with the state and data ones.
+# A spawn changes directory before it reads the config, so a relative config override is made absolute with the state and
+# data ones.
 if [ -n "${JG_CONFIG_OVERRIDE:-}" ]; then
   JG_CONFIG_OVERRIDE=$(resolve_directory_input JG_CONFIG_OVERRIDE "$JG_CONFIG_OVERRIDE") || exit 1
 fi
@@ -831,6 +848,8 @@ spawn_trunk_branch() {
 . "$SCRIPT_DIR/jg-project-capacity-lib.sh"
 # shellcheck source=bin/jg-reaper-lib.sh
 . "$SCRIPT_DIR/jg-reaper-lib.sh"
+# shellcheck source=bin/jg-timing-lib.sh
+. "$SCRIPT_DIR/jg-timing-lib.sh"
 # A fresh lane deferred for project capacity or host load: the sysexits
 # "temporary failure" code, so a caller tells a deferral, which leaves the task
 # exactly as queued as it was, from an ordinary failure.
@@ -1142,20 +1161,14 @@ spawn_remote_squad_lead() {
     [ -z "$remote_recorded_traceparent" ] || echo "traceparent=$remote_recorded_traceparent"
   } >"$tmp"
   if ! jg_backlog_atomic_transition publish "$tmp" "$meta" "task record" "$STATE"; then
-    if [ "$SPAWN_TASK_SET_LOCK_HELD" = 1 ]; then
-      SPAWN_TASK_SET_LOCK_HELD=0
-      jg_lock_release "$SPAWN_TASK_SET_LOCK" || true
-    fi
+    spawn_task_set_release || true
     jg_lock_release "$remote_lock" || true
     jg_lock_release "$registry_lock" || true
     jg_lock_release "$SPAWN_TASK_LOCK" || true
     echo "error: remote squad_lead $id launched, but its task record could not be published ($JG_BACKLOG_TRANSITION_ERROR)" >&2
     return 1
   fi
-  if [ "$SPAWN_TASK_SET_LOCK_HELD" = 1 ]; then
-    SPAWN_TASK_SET_LOCK_HELD=0
-    jg_lock_release "$SPAWN_TASK_SET_LOCK"
-  fi
+  spawn_task_set_release
   jg_lock_release "$remote_lock" || true
   jg_lock_release "$registry_lock" || true
   jg_lock_release "$SPAWN_TASK_LOCK" || true
@@ -1191,8 +1204,33 @@ SPAWN_META_PUBLISH_STARTED=0
 SPAWN_FRESH_COMMIT_PENDING=0
 SPAWN_TASK_SET_LOCK=
 SPAWN_TASK_SET_LOCK_HELD=0
+SPAWN_TASK_SET_JOINED=0
+# Let go of this spawn's place in the task set: the lock itself when the liveness recovery holds it, the joined entry otherwise.
+spawn_task_set_release() {
+  if [ "$SPAWN_TASK_SET_JOINED" = 1 ]; then
+    SPAWN_TASK_SET_JOINED=0
+    jg_task_set_leave "$SPAWN_TASK_SET_LOCK" "$ID"
+  fi
+  if [ "$SPAWN_TASK_SET_LOCK_HELD" = 1 ]; then
+    SPAWN_TASK_SET_LOCK_HELD=0
+    jg_lock_release "$SPAWN_TASK_SET_LOCK"
+  fi
+}
 SPAWN_TREEHOUSE_PROJECT_LOCK=
 SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=0
+# spawn_phase_mark <phase>: when JG_SPAWN_PHASE_LOG names a file, one `<task> TAB <phase> TAB <epoch ms>` line, so a start of many
+# spawns shows which phase each one spends where (tests/jg-spawn-overlap.test.sh, tests/jg-blitz-wide-e2e.test.sh); otherwise nothing.
+spawn_phase_mark() {
+  [ -z "${JG_SPAWN_PHASE_LOG:-}" ] || printf '%s\t%s\t%s\n' "$ID" "$1" "$(jg_timing_now_ms)" >>"$JG_SPAWN_PHASE_LOG" 2>/dev/null || true
+}
+# Let go of the project lock when this spawn holds it.
+spawn_project_lock_release() {
+  [ "$SPAWN_TREEHOUSE_PROJECT_LOCK_HELD" = 1 ] || return 0
+  SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=0
+  jg_lock_release "$SPAWN_TREEHOUSE_PROJECT_LOCK" || true
+  spawn_phase_mark lock-released
+}
+SPAWN_PROJECT_LOCK_LATE=0
 SPAWN_SLOT_CLAIMED=0
 SPAWN_SLOT_CLAIM_REFUSED=0
 SPAWN_TREEHOUSE_LEASE=
@@ -1339,14 +1377,15 @@ spawn_abort_cleanup() {
   # already released that lock and leaves the claim for the next spawn's
   # atomic replacement rather than racing it. The release itself never removes
   # another task's claim.
-  if [ "$SPAWN_SLOT_CLAIMED" = 1 ] && [ -n "${WT:-}" ] &&
+  # The claim names the leased copy, which the pane's own path (WT) is only checked against after the lock is let go.
+  if [ "$SPAWN_SLOT_CLAIMED" = 1 ] && [ -n "${WT:-$SPAWN_TREEHOUSE_LEASE}" ] &&
     [ ! -e "$STATE/$ID.meta" ] && [ ! -L "$STATE/$ID.meta" ] &&
-    jg_treehouse_pool_slot "$PROJ_ABS" "$WT"; then
+    jg_treehouse_pool_slot "$PROJ_ABS" "${WT:-$SPAWN_TREEHOUSE_LEASE}"; then
     SPAWN_SLOT_CLAIMED=0
     if [ "$SPAWN_TREEHOUSE_PROJECT_LOCK_HELD" = 1 ]; then
-      jg_treehouse_slot_owner_release "$WT" "$ID" || true
+      jg_treehouse_slot_owner_release "${WT:-$SPAWN_TREEHOUSE_LEASE}" "$ID" || true
     else
-      echo "warning: leaving task $ID's slot claim on $WT in place; the Treehouse project lock is no longer held, so the next spawn's claim replaces it" >&2
+      echo "warning: leaving task $ID's slot claim on ${WT:-$SPAWN_TREEHOUSE_LEASE} in place; the Treehouse project lock is no longer held, so the next spawn's claim replaces it" >&2
     fi
   fi
   # Failed launches keep their durable lease for explicit teardown, not an
@@ -1378,14 +1417,8 @@ spawn_abort_cleanup() {
       jg_backlog_atomic_transition publish "$SPAWN_META_TMP" "$STATE/$ID.meta" "task record" "$STATE" ||
       echo "error: could not record task $ID's retained lease on $SPAWN_TREEHOUSE_LEASE; reconcile it before retrying" >&2
   fi
-  if [ "$SPAWN_TREEHOUSE_PROJECT_LOCK_HELD" = 1 ]; then
-    SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=0
-    jg_lock_release "$SPAWN_TREEHOUSE_PROJECT_LOCK" || true
-  fi
-  if [ "$SPAWN_TASK_SET_LOCK_HELD" = 1 ]; then
-    SPAWN_TASK_SET_LOCK_HELD=0
-    jg_lock_release "$SPAWN_TASK_SET_LOCK" || true
-  fi
+  spawn_project_lock_release
+  spawn_task_set_release || true
   if [ "$SPAWN_CONTROL_LOCK_HELD" = 1 ]; then
     SPAWN_CONTROL_LOCK_HELD=0
     jg_lock_release "$SPAWN_CONTROL_LOCK" || true
@@ -1690,8 +1723,10 @@ if [ "$RELAUNCH" -eq 0 ]; then
   # already covered by that task's control lock, which the teardown preflight
   # tests.
   #
-  # Refusing rather than waiting is the fail-closed direction: the home may be
-  # moments from removal, so there is nothing worth waiting for.
+  # Spawns do not exclude each other: a fresh spawn JOINS the set (jg_task_set_join takes the lock for an instant and
+  # records itself in <lock>.joined/<id>) and leaves it once its record is published or it exits. A forced teardown takes the
+  # lock alone and refuses while a live entry exists. A spawn that finds a forced teardown holding the set defers at once
+  # (the home may be moments from removal); one that finds another operation holding it waits JG_TASK_SET_JOIN_WAIT seconds.
   SPAWN_TASK_SET_LOCK=$(jg_task_set_lock_path "$STATE") || {
     echo "error: could not resolve the task-set lock for $STATE" >&2
     exit 1
@@ -1700,16 +1735,17 @@ if [ "$RELAUNCH" -eq 0 ]; then
   # itself is unchanged and waiting (bounded) for a sibling recovery's short
   # publication hold keeps the teardown guarantee above while sibling
   # recoveries serialize instead of refusing each other. Every other fresh
-  # spawn still refuses rather than waits.
+  # spawn joins the set as described above.
   SPAWN_TASK_SET_RC=0
   if [ "$KIND" = squad_lead ] && [ "${JG_SQUAD_LEAD_LIVENESS_RECOVERY:-0}" = 1 ]; then
     jg_lock_acquire_wait_bounded "$SPAWN_TASK_SET_LOCK" 600 || SPAWN_TASK_SET_RC=$?
   else
-    jg_lock_try_acquire "$SPAWN_TASK_SET_LOCK" || SPAWN_TASK_SET_RC=$?
+    jg_task_set_join "$SPAWN_TASK_SET_LOCK" "$ID" || SPAWN_TASK_SET_RC=$?
+    [ "$SPAWN_TASK_SET_RC" -ne 0 ] || SPAWN_TASK_SET_JOINED=1
   fi
   if [ "$SPAWN_TASK_SET_RC" -ne 0 ]; then
     case "$(jg_lock_role "$SPAWN_TASK_SET_LOCK" 2>/dev/null || true)" in
-      task-spawn) SPAWN_TASK_SET_HOLDER="another spawn" ;;
+      task-spawn|task-spawn-join) SPAWN_TASK_SET_HOLDER="another spawn" ;;
       forced-teardown) SPAWN_TASK_SET_HOLDER="a forced teardown" ;;
       *) SPAWN_TASK_SET_HOLDER="another operation" ;;
     esac
@@ -1718,12 +1754,14 @@ if [ "$RELAUNCH" -eq 0 ]; then
     echo "deferred: this home's task set is locked by $SPAWN_TASK_SET_HOLDER; task $ID was not created and stays queued rather than racing it" >&2
     exit 75
   fi
-  if ! jg_lock_set_role "$SPAWN_TASK_SET_LOCK" task-spawn; then
-    jg_lock_release "$SPAWN_TASK_SET_LOCK" || true
-    echo "error: could not record task-set lock holder for spawn of $ID" >&2
-    exit 1
+  if [ "$SPAWN_TASK_SET_JOINED" != 1 ]; then
+    if ! jg_lock_set_role "$SPAWN_TASK_SET_LOCK" task-spawn; then
+      jg_lock_release "$SPAWN_TASK_SET_LOCK" || true
+      echo "error: could not record task-set lock holder for spawn of $ID" >&2
+      exit 1
+    fi
+    SPAWN_TASK_SET_LOCK_HELD=1
   fi
-  SPAWN_TASK_SET_LOCK_HELD=1
   spawn_refuse_if_away_spend_cap
   spawn_require_relocated_queued_work
 fi
@@ -2039,6 +2077,25 @@ pi_supports_approve() {
   printf '%s\n' "$help" | grep -Eq -- '(^|[[:space:]])--approve([^[:alnum:]_-]|$)'
 }
 
+# pi_project_trust_approve: the ONE rule for Pi's session-scoped --approve.
+#   - a squad_lead always gets it: its home carries tracked .pi/extensions, and
+#     its first launch is unattended.
+#   - a WORKER (ship or scout, fresh spawn or relaunch) gets it only when its
+#     copy is a managed fleet Treehouse pool slot. Every such copy is a fresh
+#     path Pi has never trusted, so without the flag the launch parks on "Trust
+#     project folder?" before its first turn (reproduced live 2026-11-17: task
+#     jg-rkl2u rendered the dialog and its brief never reached the worker).
+#     The flag is never widened past that: a worktree outside the fleet pool is
+#     not juggernaut's to trust, so it keeps the plain launch.
+# The probe stays here so an older Pi without the flag still launches.
+pi_project_trust_approve() {  # <pi-bin> <kind> <project-dir> <worktree>
+  local bin=$1 kind=$2 project=$3 worktree=$4
+  pi_supports_approve "$bin" || return 0
+  if [ "$kind" = squad_lead ] || jg_treehouse_pool_slot "$project" "$worktree"; then
+    printf ' --approve'
+  fi
+}
+
 # omp pre-launch model validation. `omp models --json` (omp 18.1.11) prints
 # {"models":[{"provider","id","selector":"<provider>/<id>",...}]} for built-in and
 # auto-discovered providers only; it never lists a provider an extension
@@ -2161,7 +2218,7 @@ case "$ARG3" in
   ;;
 esac
 
-# muse, gemini, agy, and devin are verified as OPERATOR/SCOUT adapters only. A squad_lead is
+# muse, gemini, and devin are verified as OPERATOR/SCOUT adapters only. A squad_lead is
 # a juggernaut instance, so it needs a primary supervision protocol.
 # gemini has none: docs/supervision-protocols/ carries no gemini wake protocol
 # and this task verified only operator-side launch, busy state, interrupt, and
@@ -2171,12 +2228,17 @@ esac
 # asyncRewake handlers that juggernaut's primary turn-end supervision is built on
 # (muse 0.1.0-R708.1). Refusing here keeps that gap loud instead of standing up a
 # squad_lead whose supervision cycle could never be armed.
-# agy has none either: it exposes no hook surface for primary supervision and
-# docs/supervision-protocols/ carries no agy wake protocol (agy 1.2.0).
+# agy is a verified primary (docs/supervision-protocols/agy.md), but no Squad
+# Lead launch on it is verified: a lead home's agy must already trust the home
+# before its first turn for .agents/hooks.json to load (agy 1.5.11).
 # devin has none either: only its worker lifecycle hooks are verified, and
 # docs/supervision-protocols/ carries no devin wake protocol (devin 3000.11.1).
-if [ "$KIND" = squad_lead ] && { [ "$HARNESS" = muse ] || [ "$HARNESS" = gemini ] || [ "$HARNESS" = agy ] || [ "$HARNESS" = devin ]; }; then
+if [ "$KIND" = squad_lead ] && { [ "$HARNESS" = muse ] || [ "$HARNESS" = gemini ] || [ "$HARNESS" = devin ]; }; then
   echo "error: $HARNESS is a verified operator/scout adapter only and cannot run a squad_lead; it has no primary supervision protocol. Select a harness verified for squad_leads." >&2
+  exit 1
+fi
+if [ "$KIND" = squad_lead ] && [ "$HARNESS" = agy ]; then
+  echo "error: agy is verified for operators, scouts and the primary, but no squad_lead launch on it is verified. Select a harness verified for squad_leads." >&2
   exit 1
 fi
 
@@ -2221,15 +2283,9 @@ pi | pi-signed)
     PI_TUI_MODE=' --tui-mode regular'
   fi
   LAUNCH=${LAUNCH//__PITUIMODE__/$PI_TUI_MODE}
-  # Seeded-home signal is .jg-squad-lead-home (required by
-  # validate_juggernaut_home_for_spawn before any squad_lead launch reaches
-  # the pane). Session-only --approve; never expand to a parent path or
-  # rewrite the operator trust store.
-  PI_APPROVE=
-  if [ "$KIND" = squad_lead ] && pi_supports_approve "$PI_BIN"; then
-    PI_APPROVE=' --approve'
-  fi
-  LAUNCH=${LAUNCH//__PIAPPROVE__/$PI_APPROVE}
+  # __PIAPPROVE__ is decided later (pi_project_trust_approve below): the
+  # session-scoped trust flag depends on the launch's own worktree, which is not
+  # allocated yet on a fresh worker spawn.
   # A worker never asks the human directly (its question belongs to the lead), so Pi's
   # ask_user_question is hidden for ship and Recon workers whatever config/crew-exclude-tools holds.
   PI_EXCLUDE_NAMES=$EXCLUDE_TOOLS
@@ -2729,12 +2785,130 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ]; then
     exit "$SPAWN_DEFER_EXIT"
   fi
 fi
+# spawn_item_store <spawned|requeue> [<words>]: the item store (core/item-store) is also told of this spawn's dispatch: `spawned` closes
+# the ticket's dispatch item `lane:<task id>` and opens the lane's work; `requeue` opens a dispatch item that carries <words> and
+# waits until a lane starts (it opens no steer, so no steer clock runs). Guarded by the home's own switch, silent, and never a reason
+# to change this script's output or exit: today's record decides, and a refused write is one intake item on Main.
+spawn_item_store() {
+  [ -e "$JG_HOME/config/item-store" ] && [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] || return 0
+  local adapter hid key n
+  adapter=$SCRIPT_DIR/../core/item-store/adapters/dispatch.py
+  [ -f "$adapter" ] || return 0
+  key=$(JG_HOME=$JG_HOME "$SCRIPT_DIR/../core/item-store/jg-item" key dispatch --ticket "${TICKET:-$ID}" 2>/dev/null | cut -f1) || return 0
+  [ -n "$key" ] || return 0
+  hid=${key#dispatch:}; hid=${hid%%/*}
+  case "$1" in
+  spawned) JG_HOME=$JG_HOME python3 -I "$adapter" spawned "$hid" "$ID" --source "spawn:$ID" >/dev/null 2>&1 || true ;;
+  requeue)
+    n=$(JG_HOME=$JG_HOME python3 -I "$adapter" next "$hid" "${TICKET:-$ID}" 2>/dev/null) || return 0
+    JG_HOME=$JG_HOME python3 -I "$adapter" requeue "$hid" "${TICKET:-$ID}" "$n" --words "$2" --source "requeue:${TICKET:-$ID}#$n" >/dev/null 2>&1 || true
+    ;;
+  esac
+  return 0
+}
+# spawn_item_words: the words this spawn carries: the first line of the brief's captain intent, else the ticket id.
+spawn_item_words() {
+  local w
+  w=$(awk '/^## Captain.s intent/ { on = 1; next } on && NF { print; exit }' "$BRIEF" 2>/dev/null | tr '\t\r' '  ' | cut -c1-200)
+  printf '%s' "${w:-${TICKET:-$ID}}"
+}
+# spawn_item_prior_work: exit 0 and print `open` or `closed` when the store holds work of an earlier lane for this task.
+spawn_item_prior_work() {
+  [ -e "$JG_HOME/config/item-store" ] && [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] || return 1
+  JG_HOME=$JG_HOME python3 -I "$SCRIPT_DIR/../core/item-store/adapters/dispatch.py" prior-work "$ID" 2>/dev/null
+}
+# A lane cleaned before its done line leaves its work open in the store: the ticket is owed a new lane, with the new words.
+SPAWN_PRIOR_WORK=$(spawn_item_prior_work) || SPAWN_PRIOR_WORK=
+[ "$SPAWN_PRIOR_WORK" != open ] || spawn_item_store requeue "$(spawn_item_words)"
+# The shared Treehouse project lock: several spawns of one project wait their turn for it, up to a bound.
+# A deferral leaves the task exactly as queued as it was, so this runs before any endpoint, record or backlog move exists.
+# A spawn that takes the lock after its endpoint is made closes that endpoint when the lock refuses it (a Herdr projection is the abort trap's).
+spawn_project_lock_endpoint_close() {
+  [ "$SPAWN_PROJECT_LOCK_LATE" != 1 ] || [ "$HERDR_PROJECTION_ABORT_CLEANUP" = 1 ] || rovo_endpoint_cleanup
+}
+spawn_project_lock_take() {
+  spawn_phase_mark lock-wait
+  # Several spawns of one project wait their turn for the lock, up to a bound; JG_SPAWN_PROJECT_LOCK_WAIT=0 keeps the single try.
+  SPAWN_PROJECT_LOCK_WAIT=${JG_SPAWN_PROJECT_LOCK_WAIT:-240}
+  SPAWN_PROJECT_LOCK_RC=0
+  if [ "$SPAWN_PROJECT_LOCK_WAIT" = 0 ]; then
+    jg_lock_try_acquire "$SPAWN_TREEHOUSE_PROJECT_LOCK" || SPAWN_PROJECT_LOCK_RC=1
+  elif ! jg_lock_try_acquire "$SPAWN_TREEHOUSE_PROJECT_LOCK"; then
+    echo "waiting: the project lock for $(basename "$PROJ_ABS") is held; waiting up to $SPAWN_PROJECT_LOCK_WAIT s" >&2
+    jg_lock_acquire_wait_bounded "$SPAWN_TREEHOUSE_PROJECT_LOCK" "$SPAWN_PROJECT_LOCK_WAIT" || SPAWN_PROJECT_LOCK_RC=$?
+  fi
+  if [ "$SPAWN_PROJECT_LOCK_RC" -eq 124 ]; then
+    echo "deferred: the project lock for $(basename "$PROJ_ABS") stayed held for $SPAWN_PROJECT_LOCK_WAIT s; task $ID was not created and stays queued" >&2
+    spawn_project_lock_endpoint_close
+    exit "$SPAWN_DEFER_EXIT"
+  fi
+  if [ "$SPAWN_PROJECT_LOCK_RC" -ne 0 ]; then
+    if [ "$BACKEND" = orca ]; then
+      echo "error: another spawn or cleanup holds the shared project lock for $PROJ_ABS; refusing to race its capacity admission" >&2
+    else
+      echo "error: another Treehouse slot allocation or return is in progress for $PROJ_ABS; refusing to race it" >&2
+    fi
+    spawn_project_lock_endpoint_close
+    exit 1
+  fi
+  SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=1
+  spawn_phase_mark lock-held
+}
+
+# The point where a fresh spawn's lease is complete: the slot is claimed and, outside local-trunk, the base is refreshed.
+# A project with no declared capacity lets the project lock go here, so the rest of the launch (brief render, launch
+# preparation, record publication), which touches only this spawn's own copy and record, runs beside the project's other spawns.
+# JG_SPAWN_TEST_AFTER_LEASE is a test hook: a command run here, after that decision.
+spawn_lease_complete() {
+  if [ "$SPAWN_PROJECT_LOCK_LATE" = 1 ] && [ "$SPAWN_TREEHOUSE_PROJECT_LOCK_HELD" = 1 ]; then
+    spawn_project_lock_release
+  fi
+  [ -z "${JG_SPAWN_TEST_AFTER_LEASE:-}" ] || bash -c "$JG_SPAWN_TEST_AFTER_LEASE" || {
+    echo "error: JG_SPAWN_TEST_AFTER_LEASE failed for task $ID" >&2
+    exit 1
+  }
+}
+
+# A pane that never reached its leased copy: the copy holds nothing of this task's (the base refresh just made it clean), so the lock is
+# taken again, as teardown takes it to return a slot, the claim goes and the copy goes back to the pool for the project's next spawn.
+# A step that refuses keeps the lease for its recovery record, as every other failure after the lease does.
+spawn_return_unsettled_lease() {
+  [ -n "$SPAWN_TREEHOUSE_LEASE" ] || return 0
+  if [ "$SPAWN_TREEHOUSE_PROJECT_LOCK_HELD" != 1 ]; then
+    jg_lock_acquire_wait_bounded "$SPAWN_TREEHOUSE_PROJECT_LOCK" "$SPAWN_PROJECT_LOCK_WAIT" || return 0
+    SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=1
+    spawn_phase_mark lock-held
+  fi
+  if [ "$SPAWN_SLOT_CLAIMED" = 1 ]; then
+    jg_treehouse_slot_owner_release "$SPAWN_TREEHOUSE_LEASE" "$ID" || return 0
+    SPAWN_SLOT_CLAIMED=0
+  fi
+  if (cd "$PROJ_ABS" && treehouse return "$SPAWN_TREEHOUSE_LEASE") >/dev/null 2>&1; then
+    SPAWN_TREEHOUSE_LEASE=
+  else
+    echo "warning: could not return copy $SPAWN_TREEHOUSE_LEASE of task $ID to the pool; it stays leased with a recovery record" >&2
+  fi
+}
+
+# The end of a fresh spawn's lease on <worktree>: the order of the lock's release and the base refresh by project kind.
+spawn_lease_finish() {  # <worktree>
+  local trunk=0
+  ! spawn_trunk_branch >/dev/null || trunk=1
+  [ "$trunk" = 0 ] || spawn_lease_complete
+  freshen_spawn_worktree_base "$1" "$BASE_BRANCH" || exit 1
+  [ "$trunk" = 1 ] || { spawn_phase_mark base-fresh; spawn_lease_complete; }
+}
+
 # Project capacity admission (bin/jg-project-capacity-lib.sh owns the
 # declaration, what holds a place, and why this is race-safe). A fresh worker
 # for a project whose declared capacity is already held is deferred here, before
 # any brief render, endpoint, worktree, record, or backlog move exists, so the
 # deferral leaves the task exactly as queued as it was. A relaunch replaces a
 # worker that already holds a place, and a squad_lead is not a worker.
+# The Treehouse project lock covers the protect pass, the copy reserve, the lease and the slot owner claim, and outside local-trunk the
+# base refresh's fetches into the shared git directory (spawn_lease_complete lets it go there, before the pane's own wait). A project
+# with no declared capacity takes it after its endpoint is made. A project with a declared capacity takes it here and keeps it through
+# record publication, because its occupants are counted from published records, and so does JG_SPAWN_PROJECT_LOCK_SPAN=full.
 SPAWN_PROJECT_CAPACITY=
 SPAWN_PROJECT_CAPACITY_ANY=
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ]; then
@@ -2755,15 +2929,13 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] &&
     echo "error: could not resolve the shared Treehouse project lock for $PROJ_ABS" >&2
     exit 1
   }
-  if ! jg_lock_try_acquire "$SPAWN_TREEHOUSE_PROJECT_LOCK"; then
-    if [ "$BACKEND" = orca ]; then
-      echo "error: another spawn or cleanup holds the shared project lock for $PROJ_ABS; refusing to race its capacity admission" >&2
-    else
-      echo "error: another Treehouse slot allocation or return is in progress for $PROJ_ABS; refusing to race it" >&2
-    fi
-    exit 1
+  # A project with no declared capacity takes the lock later, after the backlog reads; any other takes it now.
+  SPAWN_PROJECT_LOCK_LATE=0
+  if [ -z "$SPAWN_PROJECT_CAPACITY" ] && [ "${JG_SPAWN_PROJECT_LOCK_SPAN:-}" != full ] && [ "$BACKEND" != orca ]; then
+    SPAWN_PROJECT_LOCK_LATE=1
+  else
+    spawn_project_lock_take
   fi
-  SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=1
 fi
 if [ -n "$SPAWN_PROJECT_CAPACITY" ]; then
   if ! jg_project_capacity_occupants "$SPAWN_TREEHOUSE_PROJECT_LOCK" "$PROJ_ABS" "$STATE" "$ID"; then
@@ -2772,6 +2944,7 @@ if [ -n "$SPAWN_PROJECT_CAPACITY" ]; then
   fi
   if [ "$JG_PROJECT_CAPACITY_OCCUPANTS" -ge "$SPAWN_PROJECT_CAPACITY" ]; then
     echo "deferred: project $(basename "$PROJ_ABS") admits $SPAWN_PROJECT_CAPACITY worker(s) at once on this machine ($JG_PROJECT_CAPACITY_FILE) and $JG_PROJECT_CAPACITY_OCCUPANTS already hold a place ($JG_PROJECT_CAPACITY_OCCUPANT_IDS); task $ID was not launched and its backlog item stays queued - dispatch it again once one of them records its ready PR or is cleaned up" >&2
+    [ -z "$SPAWN_PRIOR_WORK" ] || spawn_item_store requeue "reopened at the lane limit: $(spawn_item_words)"
     exit "$SPAWN_DEFER_EXIT"
   fi
 fi
@@ -3285,46 +3458,70 @@ spawn_ticket_refuse() {
   [ "$KIND" = ship ] || return 0
   spawn_ticket_admit
 }
+# A refusal whose every line says a file is held by another live lane is a wait, not a verdict: the holder lands
+# or is cleaned up, and dispatch tries the start again. Prints the one `deferred:` line and returns 0 when <err>
+# holds only lines that start with <prefix> (after the admission's own `error: spawn refused: `); returns 1 for
+# any other refusal, an empty file, or JG_SPAWN_HELD_FILE_REFUSES=1.
+spawn_held_file_defer() {
+  local err=$1 prefix=$2 held
+  [ "${JG_SPAWN_HELD_FILE_REFUSES:-0}" != 1 ] || return 1
+  held=$(awk -v p="$prefix" '{ sub(/^error: spawn refused: /, ""); if (index($0, p) != 1) bad = 1; else { printf "%s%s", sep, $0; sep = "; " } }
+    END { exit (bad || sep == "") }' "$err") || return 1
+  echo "deferred: task $ID waits: $held; the start is tried again after the holder lands" >&2
+}
 # The lane takes a lease on the files its ticket names (core/file-lease/lease.sh owns the rules): a hot file
-# another live lane leases refuses the start, and the ticket stays in ready. Nothing exists yet to unwind.
+# another live lane leases defers the start, and the ticket stays in ready. Nothing exists yet to unwind.
+# Returns 75 for that wait, any other non-zero status for a refusal.
 spawn_file_lease() {
-  local files rc=0 paths
+  local files rc=0 paths lease_err
   files=$(jq -r '(if type == "array" then .[0] else . end) | .metadata.files // empty
     | if type == "string" then fromjson else . end | .[]?' "$1" 2>&1) \
     || { echo "error: ticket $TICKET's file list could not be read for its lease: $files" >&2; return 1; }
   [ -n "$files" ] || return 0
   mapfile -t paths <<<"$files"
+  lease_err=$(mktemp) || return 1
   JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_CONFIG_OVERRIDE="$CONFIG" JG_FILE_LEASE_REPO="$PROJ_ABS" \
-    "$JG_ROOT/core/file-lease/lease.sh" acquire "$ID" "${paths[@]}" || rc=$?
-  [ "$rc" -eq 0 ] || echo "error: spawn refused: ticket $TICKET could not take its file lease (exit $rc)" >&2
+    "$JG_ROOT/core/file-lease/lease.sh" acquire "$ID" "${paths[@]}" 2>"$lease_err" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    if [ "$rc" -eq 1 ] && spawn_held_file_defer "$lease_err" "lease-held:"; then rc=75
+    else
+      cat -- "$lease_err" >&2
+      echo "error: spawn refused: ticket $TICKET could not take its file lease (exit $rc)" >&2
+    fi
+  fi
+  rm -f -- "$lease_err"
   return "$rc"
 }
 # The ticket belongs to this repository and may start now (core/spawn/cmd/jg-spawn-core/admit.go): its
 # repository label and files, its open edges and the files of the other live lanes. The rows are read here.
+# Returns 75 when only files other live lanes hold refuse it, 1 for any other refusal.
 spawn_ticket_admit() {
-  local store scratch admit_rc=0
-  store=$(tr -d '[:space:]' 2>/dev/null < "$CONFIG/beads-dir") || store=
-  if [ -z "$store" ]; then
-    echo "error: ticket $TICKET's rows could not be read before dispatch: put an absolute BEADS_DIR in $CONFIG/beads-dir" >&2
-    return 1
-  fi
+  local scratch admit_rc=0 trunk_ref=
+  # A local-trunk project's files are looked for on its trunk tip, not on the clone's checked-out branch.
+  trunk_ref=$(spawn_trunk_branch) || trunk_ref=
   scratch=$(mktemp -d) || return 1
-  if ! BEADS_DIR=$store "$SCRIPT_DIR/jg-beads.sh" show "$TICKET" --json >"$scratch/ticket" 2>"$scratch/err" \
-    || ! BEADS_DIR=$store "$SCRIPT_DIR/jg-beads.sh" list --status in_progress --limit 0 --json >"$scratch/lanes" 2>>"$scratch/err"; then
+  if ! JG_HOME="$JG_HOME" python3 -I "$SCRIPT_DIR/../core/item-store/adapters/bd_compat.py" show "$TICKET" --json >"$scratch/ticket" 2>"$scratch/err" \
+    || ! JG_HOME="$JG_HOME" python3 -I "$SCRIPT_DIR/../core/item-store/adapters/bd_compat.py" list --status in_progress --limit 0 --json >"$scratch/lanes" 2>>"$scratch/err"; then
     echo "error: ticket $TICKET's rows could not be read before dispatch ($(sed -n '1p' "$scratch/err"))" >&2
     admit_rc=1
   else
-    "$SCRIPT_DIR/jg-spawn-core.sh" admit --project "$(basename "$PROJ_ABS")" --repo "$PROJ_ABS" \
-      --ticket "$scratch/ticket" --lanes "$scratch/lanes" || admit_rc=1
-    [ "$admit_rc" -ne 0 ] || spawn_file_lease "$scratch/ticket" || admit_rc=1
+    if ! "$SCRIPT_DIR/jg-spawn-core.sh" admit --project "$(basename "$PROJ_ABS")" --repo "$PROJ_ABS" \
+      --ticket "$scratch/ticket" --lanes "$scratch/lanes" ${trunk_ref:+--ref "$trunk_ref"} 2>"$scratch/refusal"; then
+      if spawn_held_file_defer "$scratch/refusal" "held-file:"; then admit_rc=75
+      else cat -- "$scratch/refusal" >&2; admit_rc=1; fi
+    else
+      cat -- "$scratch/refusal" >&2
+      spawn_file_lease "$scratch/ticket" || admit_rc=$?
+    fi
   fi
-  rm -f -- "$scratch/ticket" "$scratch/lanes" "$scratch/err"
+  rm -f -- "$scratch/ticket" "$scratch/lanes" "$scratch/err" "$scratch/refusal"
   rmdir -- "$scratch"
   return "$admit_rc"
 }
 if jg_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then
   BACKLOG_TRANSITION=1
-  if [ "$RELAUNCH" -eq 0 ]; then spawn_ticket_refuse || exit 1; fi
+  # Exit 75 is a wait (a file another live lane holds); every other refusal is a failed start.
+  if [ "$RELAUNCH" -eq 0 ]; then spawn_ticket_refuse || { [ "$?" -ne 75 ] || exit 75; exit 1; }; fi
   if jg_backlog_row_probe "$DATA" "$ID"; then
     BACKLOG_ROW_STATE=$JG_BACKLOG_ROW_STATE
     # A fresh ship for a [captain-ask] or Recon/plan-born ticket needs a record of the captain's
@@ -3730,6 +3927,7 @@ fi
 # WT_TARGET to $T for them (and for any future backend) - the shared handoff +
 # worktree-detection steps below must never reference an unbound WT_TARGET under set -u.
 : "${WT_TARGET:=$T}"
+spawn_phase_mark endpoint-made
 spawn_send_text_line() { # <target> <text>
   case "$BACKEND" in
   tmux) jg_backend_tmux_send_text_line "$1" "$2" ;;
@@ -4122,6 +4320,93 @@ agy_wait_for_working() {
   return 1
 }
 
+# --- first-turn proof ------------------------------------------------------
+# A launch records its brief as a submitted turn (jg-busy-event.sh arm seeds
+# state=busy source=jg-spawn event=launch-brief), and that seed is a CLAIM: a
+# launch that parked on a dialog, or whose harness never reached its first turn,
+# leaves exactly that seed behind and reads as ordinary busy for up to an hour.
+# An adapter with a verified semantic source replaces the seed with its own first
+# event (Pi's agent-start), so "the record moved past the seed" is the one proof
+# that the first turn actually started - the same fact every later reader of the
+# record depends on.
+#
+# Only Pi is gated today: its first-turn silence was the one measured in the field
+# (2026-11-17, six leads sat at 0.0% context for 62 to 103 minutes while their
+# record still read the jg-spawn seed, and their Pi input loop never took a typed
+# line either). A harness joins this list only once its own source is proven to
+# post before its first turn, because a gate on an unproven source would alert on
+# healthy lanes.
+first_turn_gated_harness() {  # <harness>
+  case "${1:-}" in
+  pi | pi-signed) return 0 ;;
+  esac
+  return 1
+}
+
+# first_turn_record_advanced: 0 when an adapter event replaced the launch seed
+# of the incarnation armed right now. A missing, malformed, or gen-mismatched
+# record proves nothing, so it reads as "not started yet" (the same answer
+# jg_busy_record_read gives its own callers).
+first_turn_record_advanced() {  # <state-dir> <id>
+  local rec fields r_source r_seq
+  rec=$(jg_busy_record_read "$1" "$2") || return 1
+  # `read -a` never glob-expands a field and leaves the caller's `set --` alone.
+  read -r -a fields <<<"$rec"
+  r_source=${fields[1]:-}
+  r_seq=${fields[3]:-}
+  case "$r_seq" in '' | *[!0-9]*) return 1 ;; esac
+  [ "$r_seq" -gt 1 ] || return 1
+  [ "$r_source" != jg-spawn ]
+}
+
+# first_turn_wait: poll the record for <polls> rounds <interval> seconds apart.
+first_turn_wait() {  # <state-dir> <id> <polls> <interval>
+  local i=0 max=$3 interval=$4
+  while [ "$i" -lt "$max" ]; do
+    first_turn_record_advanced "$1" "$2" && return 0
+    i=$((i + 1))
+    [ "$i" -ge "$max" ] || sleep "$interval"
+  done
+  return 1
+}
+
+# first_turn_gate: prove the first turn started; retry the submit once; then
+# raise ONE worker-stopped alert that names the task (bin/jg-worker-stop-alert.sh,
+# the existing producer for an agent someone waits for that is not doing its
+# work). It never fails the launch: the agent is up and its lane belongs to the
+# fleet, so the loud, actionable outcome is the alert plus a warning line, never
+# a refused spawn that would leave the same idle agent with no record of why.
+#
+# A parked launch dialog (a trust or sign-in prompt) is never answered blind:
+# Enter on Pi's trust dialog can select "No, exit" and kill the worker, so that
+# case skips the retry and alerts straight away. JG_FIRST_TURN_POLLS and
+# JG_FIRST_TURN_INTERVAL exist for the suites and for a host that needs a longer
+# bound; the default allows 120 s per attempt (240 s with the retry), which is
+# above the slowest healthy start measured on this host (193 s during a
+# whole-fleet restart) and short enough to be actionable.
+first_turn_gate() {
+  local polls=${JG_FIRST_TURN_POLLS:-60} interval=${JG_FIRST_TURN_INTERVAL:-2} tail detail
+  [ -n "$BUSY_GEN" ] || return 0
+  [ "$RAW_LAUNCH" -eq 0 ] || return 0
+  first_turn_gated_harness "$HARNESS" || return 0
+  case "$polls" in '' | *[!0-9]* | 0) polls=60 ;; esac
+  case "$interval" in '' | *[!0-9.]*) interval=2 ;; esac
+  first_turn_wait "$STATE_REAL" "$ID" "$polls" "$interval" && return 0
+  tail=$(jg_backend_capture "$BACKEND" "$T" 40 2>/dev/null || true)
+  if [ -n "$tail" ] && printf '%s' "$tail" | jg_busy_launch_prompt_parked "$HARNESS"; then
+    detail="its first turn never started: it is parked on a launch prompt (a trust or sign-in dialog) that no key was sent to"
+  else
+    spawn_send_key "$T" Enter || true
+    first_turn_wait "$STATE_REAL" "$ID" "$polls" "$interval" && return 0
+    detail="its first turn never started, and one retried submit did not start one either"
+  fi
+  printf '%s\n' "$(status_stamp_line "note: warning: $detail; the lane stays up and the fleet is alerted")" >>"$STATE/$ID.status"
+  JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-worker-stop-alert.sh" raise "$ID" lost "$detail" >/dev/null 2>&1 \
+    || echo "warning: task $ID: $detail, and the worker-stopped alert could not be raised" >&2
+  echo "warning: task $ID: $detail; the lane stays up and the fleet is alerted" >&2
+  return 0
+}
+
 agy_spawn_fail() {  # <detail>
   printf '%s\n' "$(status_stamp_line "failed: $1")" >>"$STATE/$ID.status"
   echo "error: $1; inspect window $T" >&2
@@ -4131,6 +4416,8 @@ agy_spawn_fail() {  # <detail>
 if [ "$RELAUNCH" -eq 1 ] && [ "$BACKEND" = orca ]; then
   [ "$KIND" = squad_lead ] || validate_spawn_worktree "relaunch" "$T"
 elif [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] && [ "$BACKEND" != orca ]; then
+  # A project with no declared capacity takes its lock now, with this spawn's own endpoint made and nothing of the project's touched yet.
+  [ "$SPAWN_PROJECT_LOCK_LATE" != 1 ] || spawn_project_lock_take
   # Lease recorded task copies without touching their Git contents, then
   # acquire in the explicit project, never the new pane's inherited cwd.
   jg_local_juggernaut_state_dirs "$STATE" || {
@@ -4142,6 +4429,7 @@ elif [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] && [ "$BACKEND" != orca 
     exit 1
   }
   python3 "$SCRIPT_DIR/jg-treehouse-protect.py" "$PROJ_ABS" "${JG_LOCAL_JUGGERNAUT_STATES[@]}" || exit 1
+  spawn_phase_mark protect-done
   # Copies follow the lane limit and two stay free for a red fix (core/pool-reserve).
   reserve_args=(); [ -z "$RED_FIX_OF" ] || reserve_args=(--red-fix)
   reserve_rc=0
@@ -4156,6 +4444,7 @@ elif [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] && [ "$BACKEND" != orca 
     exit 75
   fi
   [ "$reserve_rc" -eq 0 ] || { echo "error: the copy reserve check failed (exit $reserve_rc) for task $ID" >&2; exit 1; }
+  spawn_phase_mark reserve-done
   lease_error=$(mktemp "$STATE/.treehouse-lease.XXXXXX") || exit 1
   if ! allocated=$(cd "$PROJ_ABS" && treehouse get --lease --lease-holder "$ID" 2>"$lease_error"); then
     if grep -Eq 'all [0-9]+ worktrees are in use or dirty \(max_trees = [0-9]+\)' "$lease_error"; then
@@ -4183,6 +4472,7 @@ elif [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] && [ "$BACKEND" != orca 
   fi
   rm -f -- "$lease_error"
   [ -n "$allocated" ] || { echo "error: treehouse lease returned no worktree for task $ID" >&2; exit 1; }
+  spawn_phase_mark lease-done
   # The lease belongs to this task even if the pool returned another clone.
   # Record it before inspecting Git so every refusal preserves it for recovery.
   SPAWN_TREEHOUSE_LEASE=$allocated
@@ -4201,6 +4491,40 @@ elif [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] && [ "$BACKEND" != orca 
     exit 1
   fi
   spawn_send_text_line "$WT_TARGET" "cd -- $(shell_quote "$allocated")" || exit 1
+
+  # Claim the pool slot for this task. The interactive `treehouse get` sent to
+  # the pane above records only a process lease (Treehouse's durable
+  # `get --lease --lease-holder`, which bin/jg-home-seed.sh uses for squad_lead
+  # homes, is not this path), so Treehouse cannot say which task a slot belongs
+  # to once that task's worker exits - and that is exactly when the slot is
+  # handed on and this task's worktree= line goes stale. The claim is what lets
+  # bin/jg-teardown.sh leave a slot that has since been reassigned untouched, so
+  # a slot that cannot be claimed is refused here, at the cheapest point, rather
+  # than launching a worker whose slot teardown could later release out from
+  # under its successor.
+  # Written under the Treehouse project lock, held from before slot allocation until the claim (and, outside local-trunk,
+  # the base refresh's fetches) is complete, so no other spawn or return sees a half-claim. A project with a declared capacity
+  # holds it through metadata publication instead (spawn_lease_complete). The claim names the leased path itself: the pane's
+  # own path is read only after the lock is let go (below), and `spawn_worktree_isolated` screens the leased path first.
+  if ! spawn_worktree_isolated "$allocated"; then
+    echo "error: leased copy '$allocated' is not an isolated worktree of '$PROJ_ABS' (${SPAWN_WT_REASON:-no reason recorded}); preserving lease for recovery" >&2
+    exit 1
+  fi
+  if jg_treehouse_pool_slot "$PROJ_ABS" "$allocated"; then
+    if ! jg_treehouse_slot_owner_claim "$allocated" "$ID" "$JG_HOME"; then
+      # The slot was never this task's, so the abort cleanup below must not
+      # retain it with a recovery record: teardown of such a record would
+      # return a copy this task never owned.
+      SPAWN_SLOT_CLAIM_REFUSED=1
+      echo "error: could not claim Treehouse pool slot $allocated for task $ID; refusing to launch a worker whose slot cannot later be proved to be its own; inspect window $T" >&2
+      exit 1
+    fi
+    SPAWN_SLOT_CLAIMED=1
+  fi
+  spawn_phase_mark claim-done
+  # The lease is complete: the lock goes (and, outside local-trunk, after the base refresh), then the pane's own wait runs beside the
+  # project's other spawns.
+  spawn_lease_finish "$allocated"
 
   # Wait for the explicit cd: accept only the leased path, with two agreeing
   # reads, never a different isolated copy inherited from the focused pane.
@@ -4254,37 +4578,17 @@ elif [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] && [ "$BACKEND" != orca 
   done
   if [ -z "$WT" ]; then
     echo "error: treehouse get did not enter an isolated worktree within ${JG_SPAWN_WT_POLLS:-60}s (last seen '${last_seen:-none}': $last_reason; spawning project '$PROJ_ABS'); inspect window $T" >&2
+    spawn_return_unsettled_lease
     exit 1
   fi
 
   validate_spawn_worktree "treehouse get" "$T"
+  spawn_phase_mark pane-settled
 
-  # Claim the pool slot for this task. The interactive `treehouse get` sent to
-  # the pane above records only a process lease (Treehouse's durable
-  # `get --lease --lease-holder`, which bin/jg-home-seed.sh uses for squad_lead
-  # homes, is not this path), so Treehouse cannot say which task a slot belongs
-  # to once that task's worker exits - and that is exactly when the slot is
-  # handed on and this task's worktree= line goes stale. The claim is what lets
-  # bin/jg-teardown.sh leave a slot that has since been reassigned untouched, so
-  # a slot that cannot be claimed is refused here, at the cheapest point, rather
-  # than launching a worker whose slot teardown could later release out from
-  # under its successor.
-  # Written under the Treehouse project lock held from before slot allocation
-  # through metadata publication, so no other spawn or return sees a half-claim.
-  if jg_treehouse_pool_slot "$PROJ_ABS" "$WT"; then
-    if ! jg_treehouse_slot_owner_claim "$WT" "$ID" "$JG_HOME"; then
-      # The slot was never this task's, so the abort cleanup below must not
-      # retain it with a recovery record: teardown of such a record would
-      # return a copy this task never owned.
-      SPAWN_SLOT_CLAIM_REFUSED=1
-      echo "error: could not claim Treehouse pool slot $WT for task $ID; refusing to launch a worker whose slot cannot later be proved to be its own; inspect window $T" >&2
-      exit 1
-    fi
-    SPAWN_SLOT_CLAIMED=1
-  fi
 fi
-if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ]; then
-  freshen_spawn_worktree_base "$WT" "$BASE_BRANCH" || exit 1
+# An Orca worktree has no lease to finish before its pane: its copy is the one Orca made.
+if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] && [ "$BACKEND" = orca ]; then
+  spawn_lease_finish "$WT"
 fi
 
 # Fresh ships/scouts and all relaunches must enter and verify the durable task
@@ -5124,6 +5428,7 @@ if [ "$RELAUNCH" -eq 0 ]; then
     exit 1
   fi
   SPAWN_META_TMP=
+  spawn_phase_mark record-published
 fi
 
 # Fuse the backlog In-flight transition into the publication that just created
@@ -5213,17 +5518,10 @@ fi
 # still being delivered, cannot observe or complete a fresh provisional record
 # between its state check and `jg-backlog.sh start`, and a delivery failure cannot
 # follow a committed In-flight transition.
-if [ "$SPAWN_TREEHOUSE_PROJECT_LOCK_HELD" = 1 ]; then
-  SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=0
-  jg_lock_release "$SPAWN_TREEHOUSE_PROJECT_LOCK"
-fi
-if [ "$SPAWN_TASK_SET_LOCK_HELD" = 1 ]; then
-  # The record is published, so this task is now part of the set a teardown
-  # enumerates and locks per task. The set lock is only needed across that
-  # publication.
-  SPAWN_TASK_SET_LOCK_HELD=0
-  jg_lock_release "$SPAWN_TASK_SET_LOCK"
-fi
+spawn_project_lock_release
+# The record is published, so this task is now part of the set a teardown
+# enumerates and locks per task. The set is only needed across that publication.
+spawn_task_set_release
 "$SCRIPT_DIR/jg-home-summary-refresh.sh" --best-effort || true
 [ "$BACKEND" = orca ] && ORCA_ABORT_CLEANUP=0
 
@@ -5307,7 +5605,13 @@ LAUNCH=${LAUNCH//__OMPEXT__/$sq_ompext}
 LAUNCH=${LAUNCH//__OMPWORKERCFG__/$sq_ompcfg}
 LAUNCH=${LAUNCH//__OPINPUT__/$sq_opinput}
 case "$HARNESS" in
-pi | pi-signed) LAUNCH=${LAUNCH//__PIBIN__/"$(shell_quote "$PI_BIN")"} ;;
+pi | pi-signed)
+  LAUNCH=${LAUNCH//__PIBIN__/"$(shell_quote "$PI_BIN")"}
+  # Session-scoped trust approval; pi_project_trust_approve owns the rule and
+  # needs this launch's own copy, which exists only here. A raw launch command
+  # carries no template placeholder and is never rewritten.
+  LAUNCH=${LAUNCH//__PIAPPROVE__/$([ "$RAW_LAUNCH" -eq 0 ] && pi_project_trust_approve "$PI_BIN" "$KIND" "$PROJ_ABS" "$WT")}
+  ;;
 cursor) LAUNCH=${LAUNCH//__CURSORBIN__/"$(shell_quote "$CURSOR_BIN")"} ;;
 gemini) LAUNCH=${LAUNCH//__GEMINISETTINGS__/"$(shell_quote "$STATE_REAL/$ID.gemini-settings.json")"} ;;
 omp) LAUNCH=${LAUNCH//__OMPBIN__/"$(shell_quote "$OMP_BIN")"} ;;
@@ -5661,6 +5965,13 @@ claude*)
   ;;
 esac
 
+# Prove the first turn started before this launch counts as delivered. The
+# relaunch path reaches this gate through jg-spawn --relaunch, so both paths
+# share one owner; a lane that never starts its turn is never reported as a
+# healthy spawn - it gets one retried submit and, failing that, one alert
+# naming it.
+first_turn_gate
+
 if [ "$KIND" = squad_lead ] && [ "${JG_SKIP_SQUAD_LEAD_INHERIT:-0}" != 1 ]; then
   if ! jg_config_reread_discard_pending "$PROJ_ABS" "$ID" "$JG_HOME"; then
     if jg_config_reread_quarantine_pending "$PROJ_ABS" "$ID" "$JG_HOME"; then
@@ -5798,4 +6109,5 @@ fi
 # Best effort: a write failure never blocks the launch.
 [ "$KIND" = squad_lead ] || printf '%s\t%s\t%s\t%s\n' "$WT" "$META_WINDOW" "$ID" "$(date +%s)" \
   >> "$DATA/copy-tasks.tsv" 2>/dev/null || true
+spawn_item_store spawned
 echo "spawned $ID harness=$HARNESS kind=$KIND$SPAWN_DELIVERY window=$META_WINDOW worktree=$WT$SPAWN_ACCOUNT"

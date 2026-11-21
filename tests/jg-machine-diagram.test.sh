@@ -16,52 +16,10 @@ T=$(jg_test_tmproot jg-machine-diagram); mkdir -p "$T/tables" "$T/svg"
 tab() { local IFS=$'\t'; printf '%s\n' "$*"; }
 jm() { OUT=$(JG_MACHINES_TABLES="${TABLES:-$T/tables}" bash "$JM" "$@" 2>&1); RC=$?; }
 
-# --- the table columns: emits, and the alert of a timeout --------------------------------------------------------------------------------
-seed() {  # <file> <emits> <alert>: a three-state machine whose waiting state carries the two new columns
-  { tab machine job "jobs" tests/jg-machine-diagram.test.sh
-    tab state new initial "Filed." -
-    tab state wait normal "Waiting for a lane." - waiting "10m -> alert ready-idle" "$2" "$3"
-    tab state "done" terminal "Finished." -
-    tab edge '(none)' file new w:f - "a job is filed" t
-    tab edge new queue wait w:f - "a lane is asked for" t
-    tab edge wait finish "done" w:f - "the lane is done" t
-    tab observer "echo new"; } > "$1"
-}
-seed "$T/tables/job.tsv" - ready-idle
-jm check job; expect_code 0 "$RC" "a timeout that names an alert of the alert table passes"
-pass "a timeout that names an alert of the alert table passes"
-
-seed "$T/tables/bad.tsv" - -; sed -i 's/alert ready-idle/alert no-such-alert/' "$T/tables/bad.tsv"
-jm check bad; expect_code 1 "$RC" "a timeout that names no alert of the alert table must fail"
-assert_contains "$OUT" "state wait has a timeout that names the alert no-such-alert, which is not in the alert table" "the lint names the state and the alert"
-assert_contains "$OUT" "legal: security line-red" "the lint lists the alerts of the alert table"
-pass "a state whose timeout names no alert of the alert table fails, naming the state and the alert"
-
-seed "$T/tables/bad.tsv" - drift
-jm check bad; expect_code 1 "$RC" "an alert column that disagrees with the timeout must fail"
-assert_contains "$OUT" "state wait names the alert drift, but its timeout is '10m -> alert ready-idle'" "the lint names the disagreement"
-seed "$T/tables/bad.tsv" - not-an-alert
-jm check bad; expect_code 1 "$RC" "an alert column with no such alert must fail"
-assert_contains "$OUT" "state wait names the alert not-an-alert, which is not in the alert table" "the lint names the unknown alert"
-pass "the alert column must agree with the timeout and name an alert of the table"
-
-cp "$T/tables/job.tsv" "$T/tables/other.tsv"; sed -i 's/^machine\tjob/machine\tother/' "$T/tables/other.tsv"
-seed "$T/tables/bad.tsv" queue@job -
-jm check bad; expect_code 0 "$RC" "an emit of an event the other machine has must pass"
-seed "$T/tables/bad.tsv" nothing@job -
-jm check bad; expect_code 1 "$RC" "an emit of an event the other machine lacks must fail"
-assert_contains "$OUT" "state wait emits nothing to the machine job, which has no such event" "the lint names the missing event"
-seed "$T/tables/bad.tsv" queue@ghost -
-jm check bad; expect_code 1 "$RC" "an emit to a machine with no table must fail"
-assert_contains "$OUT" "state wait emits queue to the machine ghost, which has no table" "the lint names the missing machine"
-seed "$T/tables/bad.tsv" queue -
-jm check bad; expect_code 1 "$RC" "an emit that is not event@machine must fail"
-assert_contains "$OUT" "state wait emits 'queue', which is not <event>@<machine>" "the lint names the bad form"
-pass "the emits column names an event that the receiving machine has"
 
 TABLES=$ROOT/core/machines/tables jm escalation ticket; expect_code 0 "$RC" "escalation reads the shipped ticket table"
-assert_contains "$OUT" "$(printf 'ready\twaiting\t-\t10m -> alert ready-idle\tready-idle\tthe lead\tMain\tnever')" "ready: ready-idle tells the lead, then Main, and no board card"
-assert_contains "$OUT" "$(printf 'released\twaiting\t-\t10m -> alert drift\tdrift\tthe lead\tMain\twhen owner-answer')" "released: drift tells the lead, then Main"
+assert_contains "$OUT" "$(printf 'ready\twaiting\t-\t10m -> alert ready-idle\tready-idle\tthe lead\tMain\twhen a matching owner gate is open')" "ready: owner awareness needs a matching gate"
+assert_contains "$OUT" "$(printf 'released\twaiting\t-\t10m -> alert drift\tdrift\tthe lead\tMain\twhen a matching owner gate is open')" "released: drift tells the lead, then Main"
 pass "escalation prints who is told first, next, and by a board card"
 
 # --- the dot text ----------------------------------------------------------------------------------------------------------------------

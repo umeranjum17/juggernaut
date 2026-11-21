@@ -1,0 +1,17 @@
+{
+ "argv": [
+  "update",
+  "cf-53q",
+  "--title",
+  "Write the 0.11 release note",
+  "-s",
+  "in_progress",
+  "--metadata",
+  "{\"estimate\": \"5\"}"
+ ],
+ "stdin": "",
+ "stdout": "\u2713 Updated issue: cf-53q \u2014 Write the 0.11 release note\n",
+ "exit": 0,
+ "form": "update --metadata --title -s",
+ "store": "{\"_type\":\"issue\",\"id\":\"cf-53q\",\"title\":\"Write the release note 627627c0\",\"description\":\"Two lines.\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T15:17:53Z\",\"created_by\":\"juggernaut\",\"updated_at\":\"2026-11-19T15:17:53Z\",\"metadata\":{\"estimate\":\"3\",\"legacy-ref\":\"L-17\"},\"labels\":[\"alpha\",\"beta\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

@@ -147,7 +147,7 @@ func TestGatewaySetup(t *testing.T) {
 	defer bot.Close()
 	conf, tokenPath := filepath.Join(home, "config", "captain-channel"), filepath.Join(home, "config", "captain-chat", "telegram.token")
 	os.MkdirAll(filepath.Dir(conf), 0o700)
-	os.WriteFile(conf, []byte("set telegram-api-url "+bot.URL+"\nset mode live\n"), 0o600)
+	os.WriteFile(conf, []byte("set telegram-api-url "+bot.URL+"\nset mode direct\n"), 0o600)
 	a := &app{root: ".", home: home, state: state, data: home, configFiles: []string{conf}}
 	pairCode = func() string { return "654321" }
 
@@ -206,7 +206,7 @@ func TestGatewaySetup(t *testing.T) {
 	if got, _ := os.ReadFile(tokenPath); string(got) != tok+"\n" || strings.Contains(shown, "SECRET") || !echoOf(slave) {
 		t.Fatalf("token file %q, terminal showed %q, echo restored %v", got, shown, echoOf(slave))
 	}
-	if got := fileGet(conf, "telegram-allow-user"); got != "91" || fileGet(conf, "mode") != "live" {
+	if got := fileGet(conf, "telegram-allow-user"); got != "91" || fileGet(conf, "mode") != "direct" {
 		t.Fatalf("allow-user %q: want 91 with other keys kept", got)
 	}
 

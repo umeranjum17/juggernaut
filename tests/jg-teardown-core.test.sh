@@ -288,5 +288,85 @@ rm -f "$lab/ewt/dirty"
 out=$(sa); rc=$?
 check "a head whose content differs from every trunk commit is still refused" "$rc|$(printf '%s' "$out" | grep -c '^reason=not-on-trunk')" "1|1"
 
+# Preserve: every tracked, staged, untracked and ignored artifact of a copy is kept in a private,
+# hash-proved retention, the copy is left untouched, and the retention alone rebuilds the same state.
+( cd "$lab/proj" && g checkout -q main && printf 'build/\n*.env\n' > .gitignore && echo t > t && echo d > gone && echo s > s \
+  && g add .gitignore t gone s && g commit -q -m keep-base )
+g -C "$lab/proj" worktree add -q -b keep "$lab/kwt" main
+( cd "$lab/kwt" && echo changed >> t && rm gone && echo staged > s && g add s && echo unstaged >> s \
+  && echo new > added && g add added && printf '#!/bin/sh\n' > 'run me' && chmod 755 'run me' && ln -s t link \
+  && echo secret > local.env && mkdir -p build/dep && g -C build/dep init -q && echo dep > build/dep/f && g -C build/dep add f )
+keep_state() { git -C "$1" status --porcelain=v1 -uall --ignored; git -C "$1" diff --cached --binary; }
+index=$(git -C "$lab/kwt" rev-parse --path-format=absolute --git-path index)
+before=$(keep_state "$lab/kwt"; sha256sum "$index")
+out=$("$core" preserve --worktree "$lab/kwt" --dest "$lab/kept/a" 2>&1); rc=$?
+check "preserve keeps a copy with every kind of uncommitted work" "$rc|$(printf '%s' "$out" | grep -c '^retained=')" "0|1"
+check "  it keeps tracked, staged, untracked and ignored paths, nested repositories file by file" \
+  "$(jq -r '.entries[] | "\(.class):\(.kind):\(.path)"' "$lab/kept/a/manifest.json" | grep -c -e '^tracked:deleted:gone$' -e '^tracked:file:s$' \
+     -e '^tracked:file:added$' -e '^untracked:file:run me$' -e '^untracked:symlink:link$' -e '^ignored:file:local.env$' -e '^ignored:file:build/dep/.git/HEAD$')" 7
+check "  the retention is private and nothing temporary is left beside it" "$(stat -c %a "$lab/kept/a")|$(find "$lab/kept" -maxdepth 1 -name '.a.tmp-*' | wc -l)" "700|0"
+check "  the copy and its index are untouched" "$(keep_state "$lab/kwt"; sha256sum "$index")" "$before"
+out=$("$core" preserve --worktree "$lab/kwt" --dest "$lab/kept/a" 2>&1); rc=$?
+check "a rerun over the same retention of the same state converges" "$rc|$(printf '%s' "$out" | grep -c '^retained=')" "0|1"
+manifest=$(sha256sum < "$lab/kept/a/manifest.json")
+echo more >> "$lab/kwt/local.env"
+out=$("$core" preserve --worktree "$lab/kwt" --dest "$lab/kept/a" 2>&1); rc=$?
+check "a retention of an older state is refused, never overwritten" "$rc|$(printf '%s' "$out" | grep '^reason=')|$(sha256sum < "$lab/kept/a/manifest.json")" "1|reason=exists-differs|$manifest"
+( cd "$lab/kwt" && echo secret > local.env )
+
+# The retention alone must rebuild the copy: the test lays it into a clean copy at the same head (the
+# product restore is a later slice) and compares everything git and the file system can see.
+rebuild() {  # <retention> <clean copy at its head>
+  git -C "$2" apply --cached --binary "$1/files/$(jq -r .staged_sha256 "$1/manifest.json")" || return 1
+  jq -r '.entries[] | [.kind, (.mode // 0), (.sha256 // "-"), .path] | @tsv' "$1/manifest.json" |
+    while IFS=$'\t' read -r kind mode sum p; do
+      case $kind in
+        dir) mkdir -p -- "$2/$p" && chmod "$(printf '%o' "$mode")" "$2/$p" ;;
+        deleted) rm -f -- "$2/$p" ;;
+        symlink) ln -s -- "$(cat "$1/files/$sum")" "$2/$p" ;;
+        file) mkdir -p -- "$(dirname "$2/$p")" && cp -- "$1/files/$sum" "$2/$p" && chmod "$(printf '%o' "$mode")" "$2/$p" ;;
+      esac
+    done
+}
+files_of() { (cd "$1" && find . -path ./.git -prune -o -type f -print0 | sort -z | xargs -0 stat -c '%a %n' && find . -path ./.git -prune -o -type f -print0 | sort -z | xargs -0 sha256sum); }
+g -C "$lab/proj" worktree add -q --detach "$lab/rwt" keep
+rebuild "$lab/kept/a" "$lab/rwt"
+check "the retention rebuilds the copy's tracked, staged, untracked and ignored state" "$(keep_state "$lab/rwt")" "$(keep_state "$lab/kwt")"
+check "  every kept file comes back byte-for-byte and mode-for-mode" "$(files_of "$lab/rwt")" "$(files_of "$lab/kwt")"
+check "  the rebuilt nested repository is a working repository with its staged file" "$(git -C "$lab/rwt/build/dep" diff --cached --name-only)" f
+"$core" preserve --worktree "$lab/rwt" --dest "$lab/kept/round" >/dev/null 2>&1
+check "  preserving the rebuilt copy gives the same manifest" "$(sha256sum < "$lab/kept/round/manifest.json")" "$manifest"
+cp -a "$lab/kept/a" "$lab/kept/damaged"
+blob=$(jq -r '.entries[] | select(.path == "local.env") | .sha256' "$lab/kept/damaged/manifest.json")
+echo tampered > "$lab/kept/damaged/files/$blob"
+out=$("$core" preserve --worktree "$lab/kwt" --dest "$lab/kept/damaged" 2>&1); rc=$?
+check "a retention whose bytes no longer match their hash is refused, and not overwritten" \
+  "$rc|$(printf '%s' "$out" | grep '^reason=')|$(cat "$lab/kept/damaged/files/$blob")" "1|reason=exists-differs|tampered"
+
+mkdir -p "$lab/locked" && chmod 500 "$lab/locked"
+out=$("$core" preserve --worktree "$lab/kwt" --dest "$lab/locked/a" 2>&1); rc=$?
+check "a destination that cannot be written is refused and nothing is published" "$rc|$(printf '%s' "$out" | grep '^reason=')|$(ls -A "$lab/locked")" "1|reason=destination|"
+chmod 700 "$lab/locked"
+head -c 2000000 /dev/zero > "$lab/kwt/build/big"
+out=$( (ulimit -f 1000; "$core" preserve --worktree "$lab/kwt" --dest "$lab/kept/full") 2>&1); rc=$?
+check "a destination that fills up mid-copy is refused, with no retention and no temporary left" \
+  "$rc|$(printf '%s' "$out" | grep '^reason=')|$(find "$lab/kept" -maxdepth 1 -name "*full*" | wc -l)" "1|reason=destination|0"
+( while :; do printf x >> "$lab/kwt/build/big"; done ) & writer=$!
+out=$("$core" preserve --worktree "$lab/kwt" --dest "$lab/kept/busy" 2>&1); rc=$?
+kill "$writer"; wait "$writer" 2>/dev/null
+check "a copy written during the preserve is refused as a concurrent write, and nothing is published" \
+  "$rc|$(printf '%s' "$out" | grep '^reason=')|$(find "$lab/kept" -maxdepth 1 -name "*busy*" | wc -l)" "1|reason=concurrent-write|0"
+"$core" preserve --worktree "$lab/kwt" --dest "$lab/kept/race" > "$lab/race1" 2>&1 & p1=$!
+"$core" preserve --worktree "$lab/kwt" --dest "$lab/kept/race" > "$lab/race2" 2>&1 & p2=$!
+wait "$p1"; r1=$?; wait "$p2"; r2=$?
+check "two preserves racing for one destination both converge on one retention" \
+  "$r1|$r2|$(find "$lab/kept" -maxdepth 1 -name "*race*" | wc -l)|$(jq -r .entries[].path "$lab/kept/race/manifest.json" | grep -c '^build/big$')" "0|0|1|1"
+mkfifo "$lab/kwt/build/dep/pipe"
+out=$("$core" preserve --worktree "$lab/kwt" --dest "$lab/kept/fifo" 2>&1); rc=$?
+check "a file with no bytes to keep is refused rather than dropped" "$rc|$(printf '%s' "$out" | grep '^reason=')" "1|reason=unsupported-file"
+rm -f "$lab/kwt/build/dep/pipe"
+"$core" preserve --worktree "$lab/kwt" --dest "$lab/kwt/inside" >/dev/null 2>&1; rc=$?
+check "a destination inside the copy is an invalid request" "$rc" 2
+
 [ "$fails" -eq 0 ] || { printf '%d check(s) failed\n' "$fails"; exit 1; }
 printf 'all jg-teardown-core tests passed\n'

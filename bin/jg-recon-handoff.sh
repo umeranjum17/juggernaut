@@ -20,8 +20,13 @@
 # `Critic:` line, and is a no-op for the same critic. Once assigned, only that critic's verdict counts and the parent record alone says
 # whether the draft is accepted: the verdict also writes the critic ticket's own `Round` line, so its gate view follows the parent and
 # never decides it. A revise retires the assignment, so a late verdict cannot seal the new draft; a draft that was never assigned still
-# takes a verdict from any named critic. A second critic while one holds the draft is refused.
-# Each move is judged by bin/jg-machine-guard.sh (shadow, or refusal once `recon` is in config/machine-enforce) before it is written.
+# takes a verdict from any named critic. A second critic while one holds the draft is refused: with config/item-store the store answers it (an
+# open work item whose parent is the Recon's work), `refused: <recon> already has an open critic <id>`.
+# With config/item-store, assign also opens the critic's work item as the child of the Recon's (the link a ready draft finds its critic
+# by), and draft and revise send the round to that critic (core/item-store: jg-item ready); the store adds no rule of its own.
+# A draft, a revise or a verdict that succeeded on a lane of a war room (a ticket that is a child of a council with a
+# data/war-room/<council>/record) starts `jg-war-room.sh next <council>` detached: never waited for, never failing the move, so the war
+# room carries on without a supervisor turn. JG_WAR_ROOM_NEXT=0 turns that off.
 # Exit: 0 done, 1 refused, 2 usage. Data directory: JG_DATA_OVERRIDE, else <JG_HOME>/data.
 set -u
 export LC_ALL=C
@@ -32,7 +37,7 @@ export JG_HOME
 
 die() { echo "jg-recon-handoff: $*" >&2; exit 2; }
 refuse() { echo "jg-recon-handoff: refused: $*" >&2; exit 1; }
-usage() { sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,28p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 task_dir() {  # <task-id> -> the data directory of a plain task id
   case "${1:-}" in ''|*/*|.*) die "task id '${1:-}' is not a plain id" ;; esac
@@ -42,6 +47,53 @@ task_dir() {  # <task-id> -> the data directory of a plain task id
 sha_of() { sha256sum "$1" | cut -d' ' -f1; }
 last_line() { [ -s "$1/handoff.tsv" ] && tail -n 1 "$1/handoff.tsv" || true; }
 field() { printf '%s\n' "$1" | cut -f"$2"; }  # <line> <column>
+
+# The item store (core/item-store), guarded by the home's own switch: silent, and never a reason to change this command's output or
+# exit; today's record (handoff.tsv) decides. A refused write becomes one intake item on Main (JG_ITEM_OR_INTAKE=1).
+ITEM=$SCRIPT_DIR/../core/item-store/jg-item
+item_store_on() { [ -e "$JG_HOME/config/item-store" ] && [ -x "$ITEM" ]; }
+item_work_key() {  # <task-id> -> key, subject and project of that task's work item
+  JG_HOME=$JG_HOME "$ITEM" key work --task "$1" 2>/dev/null
+}
+item_assign() {  # <recon> <critic>: the critic's work item, linked to the Recon's by parent (the one place a lead names a critic)
+  item_store_on || return 0
+  local key subject project hid
+  IFS=$'\t' read -r key subject project < <(item_work_key "$2") || return 0
+  [ -n "${key:-}" ] && [ -n "${project:-}" ] && [ "$project" != - ] || return 0
+  hid=${key#work:}; hid=${hid%%/*}
+  JG_HOME=$JG_HOME JG_ITEM_OR_INTAKE=1 "$ITEM" open "$key" --kind work --home "$hid" --subject "$subject" --project "$project" \
+    --owes "critique $1" --lane "worker:$hid/$2" --parent "work:$hid/$1" --source "assign:$1@$2" >/dev/null 2>&1 || true
+}
+item_ready() {  # <recon> <draft hash>: the next round goes to the linked critic, or a dispatch asks for one (Y8)
+  item_store_on || return 0
+  local key
+  key=$(item_work_key "$1" | cut -f1)
+  [ -n "$key" ] && JG_HOME=$JG_HOME python3 -I "$SCRIPT_DIR/../core/item-store/adapters/lane.py" has-open "$key" || return 0
+  JG_HOME=$JG_HOME JG_ITEM_OR_INTAKE=1 "$ITEM" ready "$key" "$2" --source "ready:$1@$2" >/dev/null 2>&1 || true
+}
+
+item_open_critic() {  # <recon> -> the task id of the critic's open work item, empty when none (or no store)
+  item_store_on || return 0
+  local key out
+  key=$(item_work_key "$1" | cut -f1)
+  [ -n "$key" ] || return 0
+  out=$(JG_HOME=$JG_HOME python3 -I "$SCRIPT_DIR/../core/item-store/adapters/lane.py" open-child "$key" 2>/dev/null) || return 0
+  out=${out#work:*/}; printf '%s\n' "${out%%#*}"
+}
+
+# kick_war_room <task-id>: when the task is a lane of a war room, the war room's next step starts by itself, in its own session.
+# A lane's task id is its ticket id with every dot made a dash (jg_backlog_task_id), so it begins with its council's id made the same way.
+kick_war_room() {
+  local record council task=${1#fable-}
+  [ "${JG_WAR_ROOM_NEXT:-1}" != 0 ] || return 0
+  for record in "$DATA"/war-room/*/record; do
+    [ -f "$record" ] || continue
+    council=${record%/record}; council=${council##*/}
+    case $task in "${council//./-}"-*) ;; *) continue ;; esac
+    setsid nohup "$SCRIPT_DIR/jg-war-room.sh" next "$council" > /dev/null 2>&1 < /dev/null &
+  done
+  return 0
+}
 
 command_phase() {
   local dir line; dir=$(task_dir "${1:-}") || exit $?; line=$(last_line "$dir")
@@ -53,11 +105,8 @@ command_show() {
   [ -s "$dir/handoff.tsv" ] && cat "$dir/handoff.tsv" || echo none
 }
 
-record() {  # <dir> <id> <event> <to> <hash> <actor> <gaps>; judge the move, then append one line
-  local dir=$1 id=$2 event=$3 to=$4 from
-  from=$(command_phase "$id"); [ "$from" != none ] || from=-
-  "$SCRIPT_DIR/jg-machine-guard.sh" edge recon "$from" "$to" "$id" >/dev/null 2>&1 \
-    || refuse "the recon table has no move from $from to $to ($event)"
+record() {  # <dir> <id> <event> <to> <hash> <actor> <gaps>; append one line
+  local dir=$1 id=$2 event=$3 to=$4
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$event" "$to" "$5" "$6" "$7" >> "$dir/handoff.tsv"
   echo "recon $id: $event -> $to (report ${5:0:12})"
 }
@@ -71,7 +120,9 @@ command_draft() {
   local id=${1:-} dir hash; dir=$(task_dir "$id") || exit $?
   [ -z "$(last_line "$dir")" ] || refuse "a draft is already recorded; a new draft after a verdict with gaps is a revise"
   hash=$(report_hash "$dir") || exit $?
-  record "$dir" "$id" draft drafted "$hash" researcher 0
+  record "$dir" "$id" draft drafted "$hash" researcher 0 || return $?
+  item_ready "$id" "$hash"
+  kick_war_room "$id"
 }
 
 # The live assignment of a record's last line: critic, generation (the number of assign moves) and hash; empty when none holds.
@@ -87,7 +138,7 @@ command_assignee() {
 }
 
 command_assign() {
-  local id=${1:-} dir critic='' line hash cdir live gen
+  local id=${1:-} dir critic='' line hash cdir live gen open
   [ "$#" -ge 1 ] || usage; shift
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -104,10 +155,11 @@ command_assign() {
   line=$(last_line "$dir")
   [ -n "$line" ] || refuse "no draft is recorded: the researcher runs draft first"
   live=$(live_assignment "$dir")
-  if [ -n "$live" ]; then
-    [ "$(printf '%s' "$live" | cut -f1)" = "$critic" ] || refuse "critic $(printf '%s' "$live" | cut -f1) already holds this draft; a revision retires the assignment"
+  if [ -n "$live" ] && [ "$(printf '%s' "$live" | cut -f1)" = "$critic" ]; then
     echo "recon $id: $critic already holds this draft (generation $(printf '%s' "$live" | cut -f2))"; return 0
   fi
+  open=$(item_open_critic "$id")
+  [ -z "$open" ] || refuse "$id already has an open critic $open"
   [ "$(field "$line" 3)" = drafted ] || refuse "the last move is $(field "$line" 2) ($(field "$line" 3)); a critic is assigned to a draft waiting for one"
   hash=$(field "$line" 4)
   [ "$(report_hash "$dir")" = "$hash" ] || refuse "report.md changed after the draft was recorded: record the revision first"
@@ -115,6 +167,7 @@ command_assign() {
   gen=$(grep -c "$(printf '^[0-9]*\tassign\t')" "$dir/handoff.tsv")
   printf '%s\t%s\t%s\n' "$id" "$gen" "$hash" > "$cdir/assignment.tsv"
   grep -q '^Critic:' "$cdir/critic.md" 2>/dev/null || printf 'Critic: %s\n' "$critic" >> "$cdir/critic.md"
+  item_assign "$id" "$critic"
 }
 
 command_verdict() {
@@ -150,6 +203,7 @@ command_verdict() {
   write_round "$dir" "$critic" "$gaps" "$hash"
   # The critic ticket's own file follows the parent's verdict: it holds the pointer, never the decision.
   [ "$(cut -f1 "$DATA/$critic/assignment.tsv" 2>/dev/null)" != "$id" ] || write_round "$DATA/$critic" "$critic" "$gaps" "$hash"
+  kick_war_room "$id"
 }
 
 write_round() {  # <dir> <critic> <gaps> <hash>: the gate's own lines in <dir>/critic.md
@@ -169,7 +223,9 @@ command_revise() {
   esac
   hash=$(report_hash "$dir") || exit $?
   [ "$hash" != "$(field "$line" 4)" ] || refuse "report.md still holds the critiqued draft ${hash:0:12}: change it before recording the revision"
-  record "$dir" "$id" revise drafted "$hash" researcher 0
+  record "$dir" "$id" revise drafted "$hash" researcher 0 || return $?
+  item_ready "$id" "$hash"
+  kick_war_room "$id"
 }
 
 cmd=${1:-}; [ "$#" -gt 0 ] && shift

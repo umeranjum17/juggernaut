@@ -1,0 +1,20 @@
+name: Item store simulator (nightly)
+
+on:
+  schedule:
+    - cron: '47 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  simulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run seeds 0-999
+        run: python3 -I core/item-store/sim/sim.py --seeds 0-999 > sim.json
+      - name: Fail unless no seed failed
+        run: python3 -I -c 'import json; assert json.load(open("sim.json"))["failed"] == 0'

@@ -12,10 +12,11 @@ SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 REPO=$(cd "$SRC/../.." && pwd -P)
 d=$(mktemp -d)
 trap 'rm -rf -- "$d"' EXIT
-export HOME=$d/home TMPDIR=$d
+export HOME=$d/home TMPDIR=$d TMUX_TMPDIR=$d   # a private tmux socket: a host tmux session never answers for a fixture window
 FM=$d/fm
 mkdir -p "$HOME" "$FM/state" "$FM/data" "$FM/config" "$FM/bin" "$d/wt"
 for f in "$REPO"/bin/*; do ln -s "$f" "$FM/bin/${f##*/}"; done
+ln -sn "$REPO/core" "$FM/core"   # the backlog library finds the tables adapter beside its bin/
 rm "$FM/bin/jg-crew-state.sh"
 cat > "$FM/bin/jg-crew-state.sh" <<STUB
 #!/usr/bin/env bash
@@ -23,9 +24,13 @@ if grep -qx -- "\$1" "$d/live" 2>/dev/null; then echo 'state: working · source:
 STUB
 chmod +x "$FM/bin/jg-crew-state.sh"
 
-# shellcheck source=core/lib/beads-test-env.sh disable=SC1091
-. "$REPO/core/lib/beads-test-env.sh"
-core_beads_home "$REPO" "$FM"
+# A fixture home on the tickets tables (fleet.db).
+core_tables_home() {  # <checkout> <home>
+  mkdir -p "$2/config" "$2/data" && : > "$2/config/backlog-intake-loose"
+  case ":$PATH:" in *":$1/bin:"*) ;; *) PATH=$1/bin:$PATH; export PATH ;; esac
+  JG_HOME=$2 python3 -I "$1/core/item-store/adapters/tickets.py" import --home main /dev/null >/dev/null
+}
+core_tables_home "$REPO" "$FM"
 export JG_HOME=$FM
 ta() { jg-backlog.sh "$@" >/dev/null; }
 row() { ta add "jg-$1" "[feature] $2" --repo r --priority 1 --body body; }
@@ -48,7 +53,7 @@ mkmeta jg-pending-close ship 76;   marker jg-pending-close 76; : > "$FM/state/jg
 mkmeta jg-no-pr ship;              marker jg-no-pr 77
 mkmeta jg-lead-x squad_lead 78;    marker jg-lead-x 78
 mkmeta jg-queued-merged ship 79;   marker jg-queued-merged 79
-BEADS_DIR=$(cat "$FM/config/beads-dir") "$REPO/bin/jg-beads.sh" update jg-held-merged --status on_hold --set-metadata hold_reason="captain decision pending" --set-metadata hold_kind=captain >/dev/null
+JG_HOME=$FM python3 -I "$REPO/core/item-store/adapters/bd_compat.py" update jg-held-merged --status on_hold --set-metadata hold_reason="captain decision pending" --set-metadata hold_kind=captain >/dev/null
 printf '# ref  date  note\nv1.0 2026-11-01 prs=70,73\n' > "$FM/data/releases"
 
 fails=0
@@ -86,7 +91,7 @@ check "merge-on-green check carries the reconcile" "$(printf '%s\n' "$out" | gre
 # A finished cleanup's pending close is retried by the watcher. A labelled fix
 # stays open when its source history is missing; an ordinary row closes.
 row retry-fix "retry the fix"; ta start jg-retry-fix
-BEADS_DIR=$(cat "$FM/config/beads-dir") "$REPO/bin/jg-beads.sh" label add jg-retry-fix bottleneck-fix >/dev/null
+JG_HOME=$FM python3 -I "$REPO/core/item-store/adapters/bd_compat.py" update jg-retry-fix --add-label bottleneck-fix >/dev/null
 row retry-plain "retry the plain item"; ta start jg-retry-plain
 (
   . "$REPO/bin/jg-backlog-lib.sh"

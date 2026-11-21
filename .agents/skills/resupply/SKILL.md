@@ -1,9 +1,6 @@
 ---
 name: resupply
-description: >-
-  Self-update a running Juggernaut and its Squad Leads to the latest from origin.
-  Use when the captain invokes /resupply (e.g. "/resupply", "update Juggernaut", "pull the latest Juggernaut").
-  Updates this Juggernaut repo's default branch and every local or remote Squad Lead through its guarded convergence path (never forced, never disruptive), then re-reads AGENTS.md and restarts every live Squad Lead through the persist-gated restart, with a fallback re-read nudge only where a restart cannot be proven.
+description: Use when the captain invokes /resupply or asks to update Juggernaut, to self-update it and its Squad Leads from origin.
 user-invocable: true
 metadata:
   internal: true

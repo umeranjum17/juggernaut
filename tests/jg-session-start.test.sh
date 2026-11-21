@@ -39,6 +39,10 @@ set -u
 SESSION_START="$ROOT/bin/jg-session-start.sh"
 BASE_PATH=${JG_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 TMP_ROOT=$(jg_test_tmproot jg-session-start-tests)
+# The fake tmux never starts a first turn, so the spawn's first-turn proof for a Pi relaunch would poll its whole 120 s.
+export JG_FIRST_TURN_POLLS=2 JG_FIRST_TURN_INTERVAL=0
+# A run inside a real Herdr pane would give the Pi fixtures that pane's session identity, so a competing lock holder would read as this session's own.
+unset HERDR_PANE_ID
 SESSION_START_TEST_HARNESS_PID=$$
 SESSION_START_SECOND_MATE_ID="fmtest-sm-${TMP_ROOT##*.}"
 SESSION_START_SECOND_MATE_TMP="/tmp/jg-$SESSION_START_SECOND_MATE_ID"
@@ -62,7 +66,7 @@ new_world() {
   fakebin="$w/fakebin"
   mkdir -p "$home/state" "$home/data" "$home/config" "$fakebin"
   # Bootstrap reads the backlog first and stops at a home with no store, which hides the tool diagnostics that follow.
-  # The case runs in a $(...) subshell, so a host without the pinned bd and dolt gets no store here, not a suite exit.
+  # The case runs in a $(...) subshell, and jg_test_beads_home skips the suite without the pinned builds, so such a host gets no backlog here.
   if [ -n "${JG_BEADS_TEST_BD:-}" ] && [ -n "${JG_BEADS_TEST_DOLT:-}" ]; then jg_test_beads_home "$home"; fi
   git init -q -b main "$root"
   git -C "$root" commit -q --allow-empty -m init
@@ -1008,9 +1012,9 @@ EOF
   assert_not_contains "$out" "git -C $root checkout main" "read-only bootstrap printed a state-changing checkout remediation"
 
   # Detect-only bootstrap diagnostics still ran (the fakebin's PATH excludes
-  # NATS, so bootstrap's own read-only tool-detection line fires
+  # the opa tool, so bootstrap's own read-only tool-detection line fires
   # deterministically regardless of what is installed on the test host).
-  assert_contains "$out" "MISSING: nats-server (install:" "detect-only bootstrap diagnostics did not run on the read-only path"
+  assert_contains "$out" "MISSING: opa (install:" "detect-only bootstrap diagnostics did not run on the read-only path"
 
   # The mutating squad_lead sweep must NOT have run: no SQUAD_LEAD_SYNC/
   # NUDGE_SQUAD_LEADS line, and the sowed squad_lead meta's target dir is
@@ -1191,7 +1195,7 @@ EOF
   context_line=$(printf '%s\n' "$out" | grep -n '^CONTEXT$' | head -1 | cut -d: -f1)
   fleet_line=$(printf '%s\n' "$out" | grep -n '^FLEET STATE$' | head -1 | cut -d: -f1)
   next_line=$(printf '%s\n' "$out" | grep -n '^NEXT STEP$' | head -1 | cut -d: -f1)
-  inventory_line=$(printf '%s\n' "$out" | grep -n '^--- task-a ---$' | head -1 | cut -d: -f1)
+  inventory_line=$(printf '%s\n' "$out" | grep -n '^task-a ship | ' | head -1 | cut -d: -f1)
 
   if [ -z "$lock_line" ] || [ -z "$boot_line" ] || [ -z "$wake_line" ] \
     || [ -z "$read_once_line" ] || [ -z "$context_line" ] || [ -z "$fleet_line" ] \
@@ -1824,7 +1828,7 @@ EOF
   assert_contains "$out" "MISSING: node (install:" "jg-bootstrap.sh's real detect line did not appear verbatim"
   # jg-wake-drain.sh's real drained record (raw tab-separated queue line).
   assert_contains "$out" "$(printf 'signal\ttask-z.status\tneeds-decision: pick a library')" "jg-wake-drain.sh's real drained record did not appear"
-  assert_contains "$out" "wake annotation: latest wake-EVENT observed at drain, not current state: task-z.status: needs-decision: pick a library" "jg-session-start.sh did not preserve the drain's separate annotation line"
+  assert_contains "$out" "wake annotation: ACTION: task-z.status: needs-decision: pick a library" "jg-session-start.sh did not preserve the drain's separate annotation line"
 
   pass "jg-session-start.sh composes the real jg-lock.sh, jg-bootstrap.sh, and jg-wake-drain.sh output verbatim"
 }
@@ -1847,19 +1851,12 @@ EOF
   JG_HOME="$home" "$ROOT/bin/jg-branch-outcome.sh" append \
     --task task-b --verdict captain --summary 'PR https://example.com/pr/b checks green' >/dev/null \
     || fail "could not seed the unread branch outcome"
-  # The leases live on the key-value bus now, so the sweep this start runs can
-  # only be observed with one: the dead record must go and the live one must
-  # stay. Without a server or client the case keeps its branch-outcome half and
-  # says which half it skipped.
-  leases=skip
-  if jg_test_bus_start "$TMP_ROOT/lease-bus"; then
-    leases=on
-    JG_HOME="$home" JG_SUPERVISION_ACTOR=branch JG_LEASE_HOLDER_PID="$(dead_pid)" \
-      "$ROOT/bin/jg-lease.sh" claim task-dead --actor branch \
-      || fail "could not seed the dead lease"
-    JG_HOME="$home" JG_SUPERVISION_ACTOR=branch JG_LEASE_HOLDER_PID=$$ "$ROOT/bin/jg-lease.sh" claim task-live --actor branch \
-      || fail "could not seed the live lease"
-  fi
+  # The leases live in state/kv.db: the dead record must go and the live one must stay.
+  JG_HOME="$home" JG_SUPERVISION_ACTOR=branch JG_LEASE_HOLDER_PID="$(dead_pid)" \
+    "$ROOT/bin/jg-lease.sh" claim task-dead --actor branch \
+    || fail "could not seed the dead lease"
+  JG_HOME="$home" JG_SUPERVISION_ACTOR=branch JG_LEASE_HOLDER_PID=$$ "$ROOT/bin/jg-lease.sh" claim task-live --actor branch \
+    || fail "could not seed the live lease"
 
   out=$(run_pi_session_start "$home" "$root" "$fakebin:$BASE_PATH")
   assert_contains "$out" "BRANCH OUTCOMES (handled by the supervision branch, not yet seen by this session):" \
@@ -1869,12 +1866,10 @@ EOF
   assert_contains "$(JG_HOME="$home" "$ROOT/bin/jg-branch-outcome.sh" unread)" \
     "https://example.com/pr/b" "locked start marked the unrendered captain outcome read"
   [ "$(cat "$home/state/.branch-outcomes-cursor")" = 1 ] || fail "locked start advanced past the captain row"
-  if [ "$leases" = on ]; then
-    JG_HOME="$home" "$ROOT/bin/jg-lease.sh" check task-dead >/dev/null 2>&1 \
-      && fail "locked start left a provably dead lease in place"
-    JG_HOME="$home" "$ROOT/bin/jg-lease.sh" check task-live >/dev/null 2>&1 \
-      || fail "locked start swept a live lease"
-  fi
+  JG_HOME="$home" "$ROOT/bin/jg-lease.sh" check task-dead >/dev/null 2>&1 \
+    && fail "locked start left a provably dead lease in place"
+  JG_HOME="$home" "$ROOT/bin/jg-lease.sh" check task-live >/dev/null 2>&1 \
+    || fail "locked start swept a live lease"
 
   # Routine replay is one-shot, while the captain row remains held for Pi's
   # sequence-keyed visible-entry reconciliation.
@@ -1884,7 +1879,7 @@ EOF
   esac
   assert_contains "$(JG_HOME="$home" "$ROOT/bin/jg-branch-outcome.sh" unread)" \
     "https://example.com/pr/b" "second start consumed the captain row without a Pi entry"
-  pass "locked Pi session start replays leading routine outcomes, preserves the captain barrier, and sweeps only dead leases ($([ "$leases" = on ] && echo "lease sweep proven" || echo "lease sweep skipped: no bus on this machine"))"
+  pass "locked Pi session start replays leading routine outcomes, preserves the captain barrier, and sweeps only dead leases (lease sweep proven)"
 }
 
 test_non_pi_session_start_leaves_branch_state_untouched() {
@@ -1903,22 +1898,16 @@ EOF
     --task task-b --verdict captain --summary 'unread Pi branch outcome' >/dev/null \
     || fail "could not seed the non-Pi unread branch outcome"
   rm -f "$home/state/.branch-outcomes-cursor"
-  leases=skip
-  if jg_test_bus_start "$TMP_ROOT/lease-bus-non-pi"; then
-    leases=on
-    JG_HOME="$home" JG_SUPERVISION_ACTOR=branch JG_LEASE_HOLDER_PID="$(dead_pid)" \
-      "$ROOT/bin/jg-lease.sh" claim task-dead --actor branch \
-      || fail "could not seed the dead lease"
-  fi
+  JG_HOME="$home" JG_SUPERVISION_ACTOR=branch JG_LEASE_HOLDER_PID="$(dead_pid)" \
+    "$ROOT/bin/jg-lease.sh" claim task-dead --actor branch \
+    || fail "could not seed the dead lease"
 
   out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
   case "$out" in
     *"BRANCH OUTCOMES"*|*"unread Pi branch outcome"*) fail "non-Pi session replayed Pi branch outcomes" ;;
   esac
-  if [ "$leases" = on ]; then
-    JG_HOME="$home" "$ROOT/bin/jg-lease.sh" check task-dead >/dev/null 2>&1 \
-      || fail "non-Pi session swept a Pi branch lease"
-  fi
+  JG_HOME="$home" "$ROOT/bin/jg-lease.sh" check task-dead >/dev/null 2>&1 \
+    || fail "non-Pi session swept a Pi branch lease"
   [ ! -e "$home/state/.branch-outcomes-cursor" ] || fail "non-Pi session marked a Pi branch outcome read"
   pass "non-Pi session start neither sweeps nor replays Pi branch state"
 }
@@ -2243,9 +2232,7 @@ test_runtime_bound_truncates_loudly_and_exits_zero() {
   IFS='|' read -r root home fakebin <<EOF
 $rec
 EOF
-  # The bound is three seconds and this case proves where a hung git stops the digest. A Beads store would spend
-  # those seconds reading the backlog in the early stages, so the case runs without one, as it always did.
-  rm -f "$home/config/beads-dir"
+  # The bound is three seconds and this case proves where a hung git stops the digest.
   make_fake_toolchain "$fakebin"
   make_fake_ps_claude "$fakebin"
   make_hanging_tool "$fakebin" git
@@ -2962,6 +2949,80 @@ EOF
   pass "session start emits the omp block and reports omp extension load state"
 }
 
+test_agy_takes_the_lock_and_gets_its_supervision_block() {
+  local rec root home fakebin out block_count
+  rec=$(new_world agy-supervision-block)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_harness "$fakebin" agy
+
+  out=$(JG_FAKE_HARNESS=agy run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  [ -s "$home/state/.lock" ] || fail "an agy primary must take the session lock"
+  assert_not_contains "$out" "Lock: read-only" "an agy primary must not be left read-only"
+  block_count=$(printf '%s\n' "$out" | grep -c '^SUPERVISION OPERATING INSTRUCTIONS - primary harness:')
+  [ "$block_count" -eq 1 ] || fail "expected exactly one supervision block, got $block_count"
+  assert_contains "$out" "SUPERVISION OPERATING INSTRUCTIONS - primary harness: agy" "agy supervision block missing"
+  assert_contains "$out" "Mode: agy background-task supervision." "agy snippet missing from session start"
+  pass "session start takes the lock for an agy primary and emits the agy block"
+}
+
+# The lock's harness walk with real processes and no stub: a shell whose process
+# name is exactly agy is the session, and a look-alike name is never claimed.
+test_agy_session_lock_walk_matches_the_exact_name_only() {
+  local dir name found probe
+  dir="$TMP_ROOT/agy-lock-walk"
+  mkdir -p "$dir"
+  # shellcheck disable=SC2016 # expanded by the probe shell, not here
+  probe='. "$1"; printf "%s %s\n" "$PPID" "$(jg_harness_ancestry_pid || echo none)"'
+  for name in agy agyd xagy; do
+    ln -sf "$(command -v bash)" "$dir/$name"
+    # The trailing `:` keeps the named shell alive as the probe's parent.
+    # shellcheck disable=SC2016 # expanded by the named shell, not here
+    found=$(env -u CLAUDECODE -u PI_CODING_AGENT -u JG_PI_HARNESS -u GROK_AGENT \
+      "$dir/$name" -c 'bash -c "$1" _ "$2"; :' _ "$probe" "$ROOT/bin/jg-session-lock-lib.sh")
+    case "$name" in
+      agy) [ "${found#* }" = "${found%% *}" ] || fail "the walk did not stop at the agy process (named-shell walk-result: $found)" ;;
+      *) [ "${found#* }" != "${found%% *}" ] || fail "the walk claimed a process named $name (named-shell walk-result: $found)" ;;
+    esac
+  done
+  pass "the session-lock walk finds a process named agy and never agyd or xagy"
+}
+
+# The tracked agy SessionStart registration, run the way agy runs it (`sh -c`
+# from .agents/, a direct child of the agy process) with real processes and no
+# stub `ps`: the run-tier chain puts agy eleven parents above the harness probe,
+# so this pins that both the lock walk and harness detection still reach it.
+test_agy_sessionstart_hook_takes_the_helm_through_the_real_chain() {
+  local rec root home fakebin dir out cmd agy_pid digest
+  rec=$(new_world agy-sessionstart-hook)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  : > "$root/AGENTS.md"
+  mkdir -p "$root/bin"
+  dir=${root%/root}/agy-shell
+  mkdir -p "$dir"
+  ln -sf "$(command -v bash)" "$dir/agy"
+  cmd=$(jq -r '[.[].SessionStart // empty | .[].command] | first // empty' "$ROOT/.agents/hooks.json")
+  [ -n "$cmd" ] || fail "the tracked .agents/hooks.json registers no SessionStart command"
+  # shellcheck disable=SC2016 # expanded by the agy-named shell, not here
+  out=$(cd "$ROOT/.agents" && printf '{}' \
+    | env -u CLAUDECODE -u PI_CODING_AGENT -u JG_PI_HARNESS -u GROK_AGENT \
+      JG_HOME="$home" JG_ROOT_OVERRIDE="$root" PATH="$fakebin:$BASE_PATH" \
+      "$dir/agy" -c 'printf "%s\n" "$$" > "$2"; sh -c "$1"; :' _ "$cmd" "$dir/agy.pid")
+  agy_pid=$(cat "$dir/agy.pid")
+  assert_equals "$agy_pid" "$(head -1 "$home/state/.lock" 2>/dev/null)" "the session lock must name the agy process"
+  digest=$(printf '%s' "$out" | jq -r '.injectSteps[0].systemMessage.systemMessage' 2>/dev/null)
+  [ -n "$digest" ] || fail "the hook must print one injectSteps system message, got: $(printf '%s' "$out" | head -c 300)"
+  assert_contains "$digest" "SUPERVISION OPERATING INSTRUCTIONS - primary harness: agy" "the digest must name agy, not unknown"
+  assert_contains "$digest" "Mode: agy background-task supervision." "the digest must carry the agy protocol"
+  pass "the agy SessionStart registration takes the lock as agy and injects the agy digest through the real process chain"
+}
+
 test_omp_diagnostic_accepts_prelock_loaded_marker() {
   local rec root home fakebin out holder_pid
   rec=$(new_world omp-prelock-loaded-marker)
@@ -3037,6 +3098,48 @@ EOF
   pass "session start rejects Pi loaded markers from previous sessions"
 }
 
+# --- captain notes -----------------------------------------------------------
+
+# An unanswered captain inbox note leads the digest, before the lock: a note
+# whose wake row an earlier acknowledgement retired has no other way back into a
+# session, and one sat unanswered for three days that way (Main42437, Main42458).
+test_captain_notes_lead_the_digest_before_the_lock() {
+  local rec root home fakebin out note_line lock_line note_id
+  rec=$(new_world captain-note)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+
+  JG_HOME="$home" JG_ROOT_OVERRIDE="$root" JG_STATE_OVERRIDE="$home/state" \
+    JG_DATA_OVERRIDE="$home/data" JG_CONFIG_OVERRIDE="$home/config" \
+    PATH="$fakebin:$BASE_PATH" "$ROOT/bin/jg-inbox.sh" note 'Which dashboard should I drop?' >/dev/null \
+    || fail 'the real note producer failed'
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  note_line=$(printf '%s\n' "$out" | grep -n '^CAPTAIN NOTES - MUST ANSWER$' | head -1 | cut -d: -f1)
+  lock_line=$(printf '%s\n' "$out" | grep -n '^LOCK$' | head -1 | cut -d: -f1)
+  [ -n "$note_line" ] || fail "the digest printed no must-answer list for an unanswered captain note: $out"
+  [ -n "$lock_line" ] || fail 'the digest printed no LOCK section'
+  [ "$note_line" -lt "$lock_line" ] \
+    || fail "the captain notes were not printed at the top of the digest (notes at $note_line, lock at $lock_line)"
+  assert_contains "$out" 'Which dashboard should I drop?' 'the digest did not carry the words of the unanswered note'
+
+  # Once the note is answered, a clean digest says nothing about it at all.
+  note_id=$(basename "$(ls "$home/state/inbox"/*.note)" .note)
+  JG_HOME="$home" JG_ROOT_OVERRIDE="$root" JG_STATE_OVERRIDE="$home/state" \
+    JG_DATA_OVERRIDE="$home/data" JG_CONFIG_OVERRIDE="$home/config" \
+    PATH="$fakebin:$BASE_PATH" "$ROOT/bin/jg-inbox.sh" reply "$note_id" 'You can drop the card.' >/dev/null \
+    || fail 'the real reply path failed'
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  if printf '%s\n' "$out" | grep -q '^CAPTAIN NOTES'; then
+    fail 'the digest still listed an answered captain note as must-answer'
+  fi
+
+  pass 'an unanswered captain note leads the digest before the lock, and an answered one is silent'
+}
+
 # JG_SESSION_START_ONLY="<test function> ..." runs just those cases (tests/jg-session-start.test.sh uses it).
 if [ -n "${JG_SESSION_START_ONLY:-}" ]; then
   for case_name in $JG_SESSION_START_ONLY; do "$case_name"; done
@@ -3055,6 +3158,7 @@ test_lock_write_failure_read_only_path
 test_trace_context_effective_state_is_frozen_after_lock
 test_session_lock_concurrent_single_winner
 test_output_ordering_diagnostics_lead
+test_captain_notes_lead_the_digest_before_the_lock
 test_read_once_contract_is_stated_once_before_its_subject
 test_herdr_backend_diagnostics_follow_real_session_start
 test_session_start_relaunches_missing_pi_squad_lead
@@ -3096,6 +3200,9 @@ test_pi_diagnostic_rejects_handoff_generation_marker
 test_pi_diagnostic_accepts_prelock_loaded_marker
 test_omp_supervision_block_and_diagnostic
 test_omp_diagnostic_accepts_prelock_loaded_marker
+test_agy_takes_the_lock_and_gets_its_supervision_block
+test_agy_session_lock_walk_matches_the_exact_name_only
+test_agy_sessionstart_hook_takes_the_helm_through_the_real_chain
 test_pi_diagnostic_rejects_missing_turnend_guard_marker
 test_pi_diagnostic_rejects_previous_session_loaded_marker
 test_runtime_bound_truncates_loudly_and_exits_zero

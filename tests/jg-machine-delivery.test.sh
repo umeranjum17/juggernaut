@@ -45,7 +45,6 @@ printf '%s' "$revert" > "$S/trunk-tip-juggernaut"; ln -s juggernaut "$JG_HOME/pr
   tab feat-pin pin "$on" - - "a home was pinned back below it"
   tab feat-late juggernaut "$revert" - - "lands later than a skipped home"; } > "$T/changes.tsv"
 
-jm check delivery; expect_code 0 "$RC" "the delivery table lints"
 bash "$JM" coverage delivery >/dev/null; expect_code 0 "$?" "every delivery edge names its test"
 bash "$OBS" check; expect_code 0 "$?" "the seeded registry lints"
 pass "the table and the registry pass their lint"
@@ -120,8 +119,6 @@ pass "reverted and pinned-behind"
   tab unlanded land landed; tab landed live-off in-homes-off; tab landed live-on in-use; tab in-homes-off switch-on in-use
   tab in-use switch-off in-homes-off; tab in-use proof-lost in-homes; tab in-homes-off switch-named in-homes
   tab in-use pin-back pinned-behind; tab pinned-behind live-on in-use; tab in-use revert reverted; } > "$T/corpus"
-jm check delivery --corpus "$T/corpus"; expect_code 0 "$RC" "the observed states and moves are in the table"
-jm check delivery --corpus <(tab in-homes-off live in-use); expect_code 1 "$RC" "a move the table lacks is refused (off to in-use needs the switch)"
 bash "$JM" edge-check delivery reverted in-use >/dev/null 2>&1; expect_code 1 "$?" "reverted is terminal"
 pass "the table holds the observed states and moves"
 

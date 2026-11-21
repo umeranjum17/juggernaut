@@ -1,6 +1,6 @@
 ---
 name: firstmate-codexapp
-description: Retired alias of juggernaut-codexapp, kept only during the skill-rename migration window. Load juggernaut-codexapp and follow it unchanged.
+description: Retired alias of juggernaut-codexapp. Load juggernaut-codexapp and follow it unchanged.
 metadata:
   internal: true
 ---

@@ -16,7 +16,7 @@ This page is for operators who turn Calm on and need to know what it hides and k
 
 Calm is off by default.
 The last `/stealth` choice persists for the effective Juggernaut home across session starts and resumes on either harness.
-Both harnesses keep that choice in the one shared preference file that [`configuration.md`](configuration.md#calm-preference-configcalm) owns.
+Both harnesses keep that choice in the one shared preference file that [`configuration.md`](configuration.md#calm-preference-configstealth) owns.
 
 ## Shared preservation rule for assistant text
 
@@ -159,7 +159,7 @@ How Calm handles that shared slot depends on whether Calm was already on when th
 ### Owning docs and files
 
 - [`calm-mode-feasibility.md`](calm-mode-feasibility.md) owns the version-scoped renderer taxonomy, built-in override constraints, and empirical evidence.
-- [`configuration.md`](configuration.md#calm-preference-configcalm) owns the persisted preference file and resolution rules.
+- [`configuration.md`](configuration.md#calm-preference-configstealth) owns the persisted preference file and resolution rules.
 - `.pi/extensions/lib/jg-calm-visibility.ts` owns the visibility policy.
 - `.claude/mods/juggernaut-calm/lib/jg-calm-preservation.ts` owns the shared substantive mid-turn text rule, which Pi imports through its tracked symlink.
 - `.pi/extensions/lib/jg-calm-operational-user-layout.ts` owns the zero-height operational-user row adapter.

@@ -54,28 +54,6 @@ transport acknowledgement is never called handled. No event comes when a worker 
 the sender's timeout is `jg-delivery.sh overdue <task> --after <seconds>`, and the doorbell
 stays. `tests/jg-delivery-record.test.sh` proves it on a throwaway server.
 
-## One stream for every home
-
-The machine runs one JetStream. `JG_WAKE` carries each home's `jg.<home>.wake.>` and
-`JG_INBOX` each home's `jg.<home>.inbox.>`, so every home's events are accepted; a
-home reads only the events that name it. A wildcard over the home part is refused
-where the captain channel's `jg.captain.>` overlaps it, so each home adds its own
-subject. A stream an earlier build made for the first home alone
-refused every other home's publish, and each of those wakes waited in the home's
-outbox while the read model looked like a working queue. `bus_ensure_stream` adds the
-home's subject to such a stream in place and keeps its messages. An acknowledgement is published on
-the stream of the record it settles, and one flushed from the outbox keeps the
-`/ack` message id, so the server does not drop it as a duplicate of its raise.
-
-## Probe
-
-`bin/jg-wake-bus-probe.sh` is the measurement: it prints the processes that serve the
-bus, raises one real wake and one real steer through the production writers,
-withdraws and settles them, and prints the `JG_WAKE` and `JG_INBOX` message, sequence
-and consumer counts before and after, the outbox size, and the mtime of the old
-`.wake-queue.seq`. It exits 1 when a stream did not rise, the outbox grew, or
-anything wrote the file queue's sequence file.
-
 ## The read model
 
 `state/.wake-queue` and `state/.wake-settled` still exist, in exactly the format
@@ -95,9 +73,16 @@ The live path keeps its replica, cursor and unpublished events separately:
   the stream's last sequence, starts the read again at the stream's first message. It moves only after
   the replica holding what it passed is written, each file by rename, so a render
   killed at any point leaves the old position (a re-read the fold absorbs) or the new one.
+  A message the server refuses stops the read before it, and the next render asks again;
+  once `renderRetryLimit` renders (3) have been refused the same message, it is kept on
+  `state/bus/wake-render.dead.jsonl` with its stream, sequence and the server's own words,
+  and the read steps over it, because one message no render can read must not pin the
+  cursor and freeze the whole read model. `state/bus/wake-render.stuck.json` holds the
+  refusal being counted.
 - `state/.wake-bus.outbox.jsonl` - events a failed publish still owes the bus. A
   home whose bus is briefly unreachable loses no wake: the event waits here and
   the next render publishes it.
+  A raise owns that rule at its caller: a raise the engine refused, or one the engine could not serve at all, is owed here, keeps the engine's own cause on stderr, and still answers success, so no producer and no supervision cycle stops for a store that is down.
 
 The replica and cursor can be rebuilt from the stream; the outbox and producer high-water number must be retained.
 

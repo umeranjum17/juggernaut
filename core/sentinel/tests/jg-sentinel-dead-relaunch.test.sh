@@ -28,8 +28,12 @@ set -u
 SENTINEL="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/jg-sentinel.sh"
 # shellcheck source=/dev/null
 . "$JG_UPSTREAM_ROOT/tests/lib.sh"
-# shellcheck source=/dev/null
-. "$JG_UPSTREAM_ROOT/core/lib/beads-test-env.sh"
+# A fixture home on the tickets tables (fleet.db).
+core_tables_home() {  # <checkout> <home>
+  mkdir -p "$2/config" "$2/data" && : > "$2/config/backlog-intake-loose"
+  case ":$PATH:" in *":$1/bin:"*) ;; *) PATH=$1/bin:$PATH; export PATH ;; esac
+  JG_HOME=$2 python3 -I "$1/core/item-store/adapters/tickets.py" import --home main /dev/null >/dev/null
+}
 
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
 
@@ -45,7 +49,7 @@ mkdir -p "$HOME_DIR/data" "$STATE" "$HOME_DIR/config" "$HOME_DIR/projects"
 # The sentinel runs the host tool's scripts from JG_HOME/bin, so this fixture home
 # borrows the checkout's bin/.
 ln -sn "$ROOT/bin" "$HOME_DIR/bin"
-core_beads_home "$JG_UPSTREAM_ROOT" "$HOME_DIR"
+core_tables_home "$JG_UPSTREAM_ROOT" "$HOME_DIR"
 
 # The herdr stand-in answers only `status`, reporting the server stopped. Every
 # other call fails, so each lane's pane reads missing.
@@ -168,6 +172,7 @@ done
 pass "Claude, Codex and Pi restores refuse missing models and carry each stored model"
 rm "$HOME_DIR/bin"
 cp -a "$ROOT/bin" "$HOME_DIR/bin"
+[ -e "$HOME_DIR/core" ] || ln -sn "$ROOT/core" "$HOME_DIR/core"   # the backlog library finds the tables adapter beside its bin/
 cat > "$HOME_DIR/bin/jg-control.sh" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$RELAUNCH_LOG"

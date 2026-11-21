@@ -313,6 +313,7 @@ Each enabled primary harness adapts its own turn-end mechanism to the shared gua
 | omp | `session_stop` in `.omp/extensions/jg-primary-turnend-guard.ts` | Blocking hook that compels one continuation |
 | Cursor | `stop` hook in `.cursor/hooks.json` | Cannot block, so it parks and returns at most one follow-up |
 | Grok | `Stop` hook in `.grok/hooks/jg-primary-turnend-guard.json` | Native blocking, or one legacy `grok --resume` fallback |
+| agy | `Stop` hook in `.agents/hooks.json` | Returns `decision: continue` once per turn |
 
 The registrations in detail:
 
@@ -345,6 +346,11 @@ The registrations in detail:
   The same marker guard carries every tracked `.claude/settings.json` entry whose event Grok already covers through its own `.grok/hooks/` registration, which is both `Stop` entries, the `SessionStart` entry, and the two `PreToolUse` Bash entries.
   `bin/jg-subagent-pretool-check.sh` is the one deliberate unguarded exception because no Grok registration covers the subagent-spawn event, recorded in [`subagent-guard.md`](subagent-guard.md) "Known residual gap".
   `tests/jg-turnend-guard.test.sh` pins that inventory so neither the guarded set nor the exception can change silently.
+- agy registers a `Stop` hook in `.agents/hooks.json` and adapts it through `bin/jg-turnend-guard-agy.sh`.
+  When the shared guard returns 2, the adapter prints `{"decision":"continue","reason":...}` and agy injects the reason as a system message and keeps the turn going.
+  The forced continuation's own Stop is allowed when `executionNum` is above 0 or `continuationActive` is true, because agy 1.5.11 sent it with `continuationActive: false` and `executionNum: 1` against its own documentation.
+  Every path exits 0, because the decision is the stdout object.
+  agy reads only `hooks.json` files (its log reports `loaded N named hooks from M hooks.json file(s)`), and the live guard confirms the tracked Claude Stop auto-arm never ran under it.
 - pi-code, Pi's Claude-hook compatibility extension, also loads `<project>/.claude/settings.json` and has no `asyncRewake`, so it awaits every Stop hook it delivers.
   `bin/jg-claude-stop-autoarm.sh` therefore stands down on a pi-code-delivered payload.
   Otherwise its foreground arm would run synchronously and hold Pi's turn open for the declared multi-hour timeout, exactly the wedge Cursor and grok 1.0.0 would produce (issue #3343).
@@ -686,5 +692,6 @@ The opt-in live tests are:
 - `JG_CURSOR_PRIMARY_LIVE_E2E=1 tests/jg-cursor-primary-live-e2e.test.sh` is the opt-in guard that proves the Cursor park behavior covered by `tests/jg-cursor-primary.test.sh` against the installed cursor-agent and fails naming the harness and version.
 - `JG_PI_LIVE_E2E=1 tests/jg-pi-primary-live-e2e.test.sh` is the opt-in isolated Pi path.
 - `JG_OMP_LIVE_E2E=1 tests/jg-omp-primary-live-e2e.test.sh` is the opt-in isolated omp path.
+- `JG_AGY_PRIMARY_LIVE_E2E=1 tests/jg-agy-primary-live-e2e.test.sh` is the opt-in isolated agy path; the agy cases of `tests/jg-turnend-guard.test.sh` are its portable counterpart.
 
 [`verification/supervision.md`](verification/supervision.md#turn-end-guard) records the active cross-harness empirical evidence, including the current Claude `asyncRewake` revalidation.

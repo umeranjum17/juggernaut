@@ -3,9 +3,8 @@ package main
 // The wake engine's raise and delivery paths (docs/bus-live.md), ported from
 // bin/jg-wake-bus.sh with identical behaviour: `wake raise <state> <kind> <key>
 // <payload> <class>`, `wake settle <state> <kind> <key> <payload>`, and `wake deliver
-// <state> <subject> <msg-id> <json>` (publish, or owe in the outbox). The script passes what it resolved - JG_HOME, the home key, the
-// bus address, the nats client it called (empty: none), the subject prefix and the
-// stream age - and renders after. The raise-stdin and settle-stdin variants omit
+// <state> <subject> <msg-id> <json>` (owe in the outbox, the home's own file). The script passes
+// what it resolved - JG_HOME, the home key and the subject prefix - and renders after. The raise-stdin and settle-stdin variants omit
 // the payload argument and read its bytes from stdin instead.
 
 import (
@@ -13,9 +12,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -40,62 +37,7 @@ func jqString(s string) string {
 	return b.String() + `"`
 }
 
-type wakeBusEnv struct{ state, home, key, client, url, prefix, maxAge string }
-
-// enabled is the one-step reversal: config/wake-bus carrying the word `off`.
-func (w wakeBusEnv) enabled() bool {
-	data, err := os.ReadFile(filepath.Join(w.home, "config", "wake-bus"))
-	return err != nil || !regexp.MustCompile(`(^|\W)off(\W|$)`).Match(data)
-}
-
-func (w wakeBusEnv) bus(args ...string) ([]byte, error) {
-	if w.client == "" {
-		return nil, os.ErrNotExist
-	}
-	return exec.Command(w.client, append([]string{"-s", w.url, "--timeout", "10s"}, args...)...).CombinedOutput()
-}
-
-// pubSeq publishes and returns the sequence the server stored it at, or 0.
-func (w wakeBusEnv) pubSeq(subject, id, event string) int64 {
-	cmd := exec.Command(w.client, "-s", w.url, "--timeout", "10s", "pub", "--jetstream", "-H", "Nats-Msg-Id:"+id, "--no-templates", subject)
-	cmd.Stdin = strings.NewReader(event)
-	out, err := cmd.CombinedOutput()
-	var seq int64
-	if m := regexp.MustCompile(`Sequence: ([0-9]+)`).FindSubmatch(out); err == nil && m != nil {
-		fmt.Sscan(string(m[1]), &seq)
-	}
-	return seq
-}
-
-// ensureStream makes the stream and makes sure it carries this home's subject: the machine
-// runs one JetStream, so a stream an earlier build made for another home gets this home's
-// subject added to its list, keeping its messages.
-func (w wakeBusEnv) ensureStream(stream, subject string) {
-	out, _ := w.busOut("stream", "info", stream, "--json")
-	var info struct {
-		Config struct {
-			Subjects []string `json:"subjects"`
-		} `json:"config"`
-	}
-	json.Unmarshal(out, &info)
-	have := info.Config.Subjects
-	if len(have) == 0 {
-		w.bus("stream", "add", stream, "--subjects", subject, "--storage", "file", "--retention", "limits",
-			"--max-age", w.maxAge, "--dupe-window", "24h", "--defaults")
-		return
-	}
-	for _, s := range have {
-		if s == subject {
-			return
-		}
-	}
-	w.bus("stream", "edit", stream, "--subjects", strings.Join(append(have, subject), ","), "--force")
-}
-
-func (w wakeBusEnv) ensureStreams() {
-	w.ensureStream("JG_WAKE", w.prefix+".wake.>")
-	w.ensureStream("JG_INBOX", w.prefix+".inbox.>")
-}
+type wakeBusEnv struct{ state, home, key, prefix string }
 
 func (w wakeBusEnv) outbox() string { return filepath.Join(w.state, ".wake-bus.outbox.jsonl") }
 
@@ -122,19 +64,9 @@ func (w wakeBusEnv) owe(subject, event string) bool {
 	return err == nil
 }
 
-// deliver publishes one event, making the streams and retrying once when the
-// first publish is refused, and owes it in the outbox when that fails too. An off
-// home only owes it, and says nothing about whether owing it worked.
+// deliver queues one event in the home's own outbox, which the render folds into the read model.
 func (w wakeBusEnv) deliver(subject, id, event string) bool {
-	if !w.enabled() {
-		w.owe(subject, event)
-		return true
-	}
-	if w.pubSeq(subject, id, event) > 0 {
-		return true
-	}
-	w.ensureStreams()
-	return w.pubSeq(subject, id, event) > 0 || w.owe(subject, event)
+	return w.owe(subject, event)
 }
 
 func (e wakeEvent) drop(k string) wakeEvent {
@@ -256,8 +188,7 @@ func (a *app) wakeBus(args []string) int {
 		}
 		p, verb = q, strings.TrimSuffix(verb, "-stdin")
 	}
-	w := wakeBusEnv{p[0], os.Getenv("JG_HOME"), os.Getenv("JG_WAKE_HOME_KEY"), os.Getenv("JG_NATS_BIN"),
-		os.Getenv("JG_WAKE_BUS_URL"), os.Getenv("JG_BUS_SUBJECT_PREFIX"), os.Getenv("JG_BUS_MAX_AGE")}
+	w := wakeBusEnv{p[0], os.Getenv("JG_HOME"), os.Getenv("JG_WAKE_HOME_KEY"), os.Getenv("JG_BUS_SUBJECT_PREFIX")}
 	now := time.Now().Unix()
 	at, hk := fmt.Sprint(now), jqString(w.key)
 	ok := true

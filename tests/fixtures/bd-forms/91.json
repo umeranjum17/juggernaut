@@ -1,0 +1,25 @@
+{
+ "argv": [
+  "provenance",
+  "record",
+  "--issue",
+  "jg-ap3",
+  "--kind",
+  "claim",
+  "--source",
+  "jg-spawn",
+  "--ref-kind",
+  "work-id",
+  "--ref",
+  "jg-ap3@s1795096104.2223626.5052",
+  "--at",
+  "2026-11-19T13:48:29Z",
+  "--payload",
+  "{\"gen\":\"s1795096104.2223626.5052\",\"harness\":\"codex\",\"model\":\"default\",\"effort\":\"default\",\"kind\":\"ship\"}"
+ ],
+ "stdin": "",
+ "stdout": "\u2713 Recorded claim provenance 0c5d7860-2ee9-46ea-9ee2-8b89b90c4bae on jg-ap3\n",
+ "exit": 0,
+ "form": "provenance --at --issue --kind --payload --ref --ref-kind --source",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-ap1\",\"title\":\"pick the retry policy\",\"description\":\"Fixture ticket jg-ap1\",\"status\":\"open\",\"priority\":0,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:47:59Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:48:04Z\",\"metadata\":{\"kind\":\"ship\",\"task\":\"jg-ap1\",\"release\":\"later\"},\"labels\":[\"captain-ask\",\"project:proj\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-ap3\",\"title\":\"Plain fix\",\"description\":\"Fixture ticket jg-ap3\",\"status\":\"in_progress\",\"priority\":2,\"issue_type\":\"task\",\"assignee\":\"plain-fix-jg-ap3\",\"created_at\":\"2026-11-19T13:48:17Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:48:29Z\",\"started_at\":\"2026-11-19T13:48:29Z\",\"lease_expires_at\":\"2026-11-19T13:53:29Z\",\"heartbeat_at\":\"2026-11-19T13:48:29Z\",\"metadata\":{\"kind\":\"ship\",\"task\":\"jg-ap3\",\"agent\":\"codex\",\"model\":\"default\",\"effort\":\"default\",\"release\":\"later\",\"spawn_gen\":\"s1795096104.2223626.5052\"},\"labels\":[\"feature\",\"project:proj\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-ap2\",\"title\":\"Wire the cache\",\"description\":\"Plan from the Recon.\\nborn-from: recon\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:48:09Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:48:13Z\",\"metadata\":{\"kind\":\"ship\",\"task\":\"jg-ap2\",\"release\":\"later\"},\"labels\":[\"feature\",\"project:proj\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

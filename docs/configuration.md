@@ -10,14 +10,15 @@ Start with the directory layout, then use the setting reference for the behavior
 | Juggernaut's code, private files, or project location | [JG_HOME](#jg_home) and [operational home layout](#operational-home-layout-and-state) |
 | Task windows and worker tools | [Runtime backend](#runtime-backend-configbackend--jg_backend) and [harness support](#harness-support) |
 | Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), [account outage fallbacks](#account-outage-fallbacks-configclaude-account-fallbacks), [Claude 1M context window](#claude-1m-context-window-configclaude-1m-accounts), [model allow-lists](#model-allow-lists-configmodel-allow-listjson), [worker tool exclusions](#worker-tool-exclusions-configcrew-exclude-tools), [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist), [provider credential strip](#provider-credentials-stripped-from-every-launch), and [launch environment hook](#launch-environment-hook-configlaunch-env-hook) |
-| Backlog, preferences, and memory | [Backlog](#backlog-configbeads-dir), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), [external memory tiers](#external-memory-tiers-memory-layering-section), [startup memory budget](#startup-memory-budget-configstartup-memory-budget), [host memory guard](#host-memory-guard-confighost-memory), and [supervisor context cap](#supervisor-context-cap-configsupervisor-context-cap) |
+| Backlog, preferences, and memory | [Backlog](#backlog-tickets-tables), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), [external memory tiers](#external-memory-tiers-memory-layering-section), [startup memory budget](#startup-memory-budget-configstartup-memory-budget), [host memory guard](#host-memory-guard-confighost-memory), and [supervisor context cap](#supervisor-context-cap-configsupervisor-context-cap) |
 | Worker lease and the reclaim of an unheld row | [Worker lease](#worker-lease-configlease-reclaim) |
-| Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configcalm) |
+| Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configstealth) |
 | Persistent Squad Leads | [Squad Lead routes](#squad-lead-routes-datasquad_leadsmd) |
-| Release branch that follows main | [Version branch](#version-branch-configversion-branch-releasec-n) |
+| Release branch that follows main | [Version branch](#version-branch-configversion-branch-releasec-) |
 | Home updates after a merge | [Fleet autosync](#fleet-autosync-configfleet-autosync-off) |
 | A release that pushes its own readiness | [Release readiness](#release-readiness-configrelease-readiness) |
 | Landing gates | [Home merge gate](#home-merge-gate-configmerge-gate) |
+| Workflows, in any order and count | [Workflows](#workflows-defaultsworkflows-configworkflows-configworkflow-routes) |
 | Per-run overrides and tuning | [Environment variables](#environment-variables) |
 
 ## JG_HOME
@@ -382,7 +383,7 @@ While the home runs the host, main's lease-checked commands read the task's leas
 
 ## Overwatch KPI (config/overwatch-kpi)
 
-Every captain message a Claude or Cursor primary receives is recorded and must be tagged in the turn it arrives, and so is every note the captain sends from the chat on his phone (the gateway records it once per inbox note, however often a poll replays it); `bin/jg-overwatch-kpi.sh` owns the ledger, the kinds, and the link a miss needs, and [turnend-guard.md](turnend-guard.md#overwatch-kpi-rule) owns the turn-end refusal.
+Every captain message a Claude or Cursor primary receives is recorded and must be tagged in the turn it arrives, and so is every note the captain sends from the chat on his phone (the gateway records it once per inbox note, however often a poll replays it); `bin/jg-overwatch-kpi.sh` owns the ledger, the kinds, and the link a miss needs, and [turnend-guard.md](turnend-guard.md#overwatch-kpi-tags) owns the turn-end refusal.
 It is on by default.
 A local `config/overwatch-kpi` reading `off` stops recording, which is for a lab whose prompts are scripted rather than typed by a captain.
 `jg-overwatch-kpi.sh tag <kind> [<link>]` tags the newest message; `tag --message <seq|inbox-id> <kind> [<link>]` tags the one named, and refuses an unknown seq or inbox id with exit 2.
@@ -397,37 +398,27 @@ It is on by default.
 A local `config/lease-reclaim` reading `report` prints what the tick would reclaim, one `would reclaim <ticket> from <name>` line each, and writes nothing.
 Leases stay on either way; the file turns only the reclaim.
 
-## Backlog (config/beads-dir)
+## Backlog (tickets tables)
 
-Every home keeps its backlog in a Beads store.
-The absolute `BEADS_DIR` in `config/beads-dir` names it, and `bin/jg-backlog.sh` is the one command that reads and writes it.
-`bin/jg-beads.sh` is the only guarded way to run `bd` and `dolt`; `bin/jg-beads.sh check` proves the pinned versions, the hold rule, the events journal on and telemetry off (`init` turns the journal on, and run again on an older store it turns it on and changes nothing else). The journal gives a reader the changes since its last read: `jg-beads.sh events tail --since <seq>`. The actor of a home's own writes is the home's name, `main` or `lead:<id>`, so `created_by` says who filed; `jg-backlog.sh homes --json` lists every home with its store and marks a lead on another machine `"remote": true`.
-The wrapper serves `show`, `list`, `ready`, `add`, `update`, `done`, `block`, `unblock`, `start`, `reopen`, `hold`, `unhold` and `public-followup`, and refuses every other write.
+Every home keeps its backlog as its own rows in the tickets tables of `fleet.db`, and `bin/jg-backlog.sh` is the one command that reads and writes them.
+`python3 -I core/item-store/adapters/tickets.py check` proves the tables.
+Each `jg-item tick` compacts `fleet.db`: a closed or dropped ticket's history keeps its changes for 7 days, then only the changes its current row is built from, and the freed space goes back to the disk; an open ticket keeps its whole history.
+The actor of a home's own writes is the home's name, `main` or `lead:<id>`, so `created_by` says who filed; `jg-backlog.sh homes --json` lists every home with its store and marks a lead on another machine `"remote": true`.
+`bin/jg-backlog.sh` serves `show`, `list`, `ready`, `add`, `update`, `done`, `block`, `unblock`, `start`, `reopen`, `hold`, `unhold` and `public-followup`, and refuses every other write.
 
-A Goal lives in a small Goal-only Beads store of its own. `config/goal-beads-dir` (or `GOAL_BEADS_DIR`) names its absolute `BEADS_DIR`, outside any git tree, and `bin/jg-goal.sh` reaches it only through `bin/jg-beads.sh`. The pinned bd and dolt must be in place; the wrapper's refusal is the message, and nothing falls back to another bd. Create the store with `BEADS_DIR=<dir> bin/jg-beads.sh init --prefix goal`.
+A Goal is an epic labelled `goal` in this home's tickets tables; `bin/jg-goal.sh` reaches it through `core/item-store/adapters/bd_compat.py` and prints the tables' refusal when they refuse.
 
 The `start`, `reopen` and `done` moves write only if the row still has the status they read, so a row a second writer moved refuses with exit 13, `code: STALE_WRITE`, and changes nothing.
 [`bin/jg-backlog-transition-lib.sh`](../bin/jg-backlog-transition-lib.sh) drives the same provider directly, so spawn, teardown and bootstrap keep their gates on that store.
 `bin/jg-pr-merge.sh`, `bin/jg-merge-local.sh` and `core/merge-on-green/` read holds and linked decisions through `bin/jg-captain-hold.sh`, close rows through that provider, and refuse a merge when the store cannot be read.
 A worker's row is owned by its Herdr agent name, the task record's `agent_name=` (made once at the first spawn; a record with none keeps `jg_backend_herdr_agent_name_for` of the task id), the same across a relaunch; `metadata.spawn_gen` is the task record's `spawn_gen`, and `metadata.agent`, `metadata.model` and `metadata.effort` are its harness, model and effort. The pane id is not on the row.
 A spawn whose `spawn_gen` is not the one on the row refuses with exit 13 and starts nothing that stays; a relaunch takes the row over, `done` keeps the assignee as history, and `reopen` clears all three.
-bd has no guard on metadata, so that check is a read then a write with a short gap, and the owner guard alone cannot tell a second spawn from a relaunch.
+The tables have no guard on metadata, so that check is a read then a write with a short gap, and the owner guard alone cannot tell a second spawn from a relaunch.
 The session digest, the fleet snapshot, the inbox status, the owner's asks, the Squad Lead dormant sweep, ticket keys, the what's-left view, voice status, the flow check and the owner rules read that store, and a failed read reports the failure rather than an empty backlog.
-`bin/jg-backlog-handoff.sh` moves rows between homes by `bd export` and `bd import`, and keeps the body, holds, blockers and links.
+`bin/jg-backlog-handoff.sh` moves rows between homes by an export and an import through `core/item-store/adapters/bd_compat.py`, and keeps the body, holds, blockers and links.
 A crash leaves the rows on both sides and rerunning the same handoff finishes the move.
 A remote handoff stages the rows on the receiver, and asks it first, so a home that cannot file rows refuses before anything is staged.
-Bootstrap and `bin/jg-remote-doctor.sh` run `bin/jg-beads.sh check` and report any failure.
-
-[`bin/jg-beads-migrate.py`](../bin/jg-beads-migrate.py) `cut` moves a home that still holds old markdown files (`data/backlog.md`, `data/done-archive.md`) into a store, run on a written order and never by default.
-The cut holds `data/backlog.md.lock` so no writer can touch the old files, imports the plan, checks the store against the manifest row by row, writes `config/beads-dir`, and leaves the old files read-only.
-Any failure puts the home back on its old files by itself.
-`back` undoes a finished or stopped cut, restores the old files and config, and keeps the store aside.
-It refuses while the store holds rows written since the cut, naming them, and `--drop-new-writes` goes back anyway with those rows saved in `data/beads-after-cut.<at>.jsonl`.
-A cut needs a plan from just before it, because it refuses a home whose old files changed since the copy.
-A cut switches the home to the store in the same step, so it runs only once that home's own `bin/` already carries the Beads reader: a home still running an earlier release stays on its old files until it updates.
-The lock stops every writer for the whole cut, so cut a home only while it is quiet, with no lane writing to it.
-A parked home's rows cut with main under a `parked-home:<name>` label.
-Closed rows move with the rest, so `show` and the write verbs find a row by the name it carried before the move as well as by its new id.
+Bootstrap runs `python3 -I core/item-store/adapters/tickets.py check` and reports a failure as `BEADS_UNHEALTHY`.
 
 ### Backlog intake (config/backlog-intake-loose)
 
@@ -435,7 +426,7 @@ Closed rows move with the rest, so `show` and the write verbs find a row by the 
 The title reads as plain words: 2 to 7 words, at most 48 characters, with no id, `[tag]`, URL or path. The detail goes in the body.
 A leading type tag (`[captain-ask]`, `[feature]`, `[design-ux]`, `[security]` or `[blocker]`) is still taken as input and stored as the label of that name.
 `--priority 0|1|2|3` is required (0 is most urgent; an owner ask gets 0 by itself).
-The body has the sections `Captain`, `Ask`, `Why` and `Done when`, as headings or as lines. Bd checks this itself, with `create --validate` and the `lint.sections.task` setting that `bin/jg-beads.sh init` writes; bd's own task rule also asks for `Acceptance Criteria`. A store made before this rule gets the setting once with `bin/jg-beads.sh config set lint.sections.task "Captain, Ask, Why, Done when"`.
+The body has the sections `Captain`, `Ask`, `Why` and `Done when`, as headings or as lines; the tables check it with `create --validate`.
 `--release <name>` stores the release in `metadata.release` and defaults to `later`. A `release:` line in the body is not read.
 An item that fails a rule is refused before it reaches the backlog, and the refusal names the fix.
 `juggernaut-axi ticket` takes the justification as `--why`.
@@ -448,7 +439,7 @@ Captain rows have no due date; `--until` remains the optional hold deferral.
 A hold with `--until` is a native `deferred` row and a hold with no date is `on_hold`.
 `bd ready` wakes a deferred row once its date passes: the row reads `open`, its date clears, and its hold reason and kind stay, so it remains answerable and the work behind it stays stopped until it closes.
 `start` takes a due row in either form and refuses one whose date is still ahead.
-`bin/jg-beads.sh` refuses a `create` or `update` that defers a row with no reason in the same call, or strips a deferred row's reason; that rule is ours and no store CHECK holds it, so `bin/jg-beads.sh check` names any deferred row that arrived with no reason by another door, such as `bd defer`, which stays whole and keeps none, or an import.
+The tables refuse a `create` or `update` that defers a row with no reason in the same call, or strips a deferred row's reason; `tickets.py check` names any deferred row that arrived with no reason by another door, such as an import.
 
 Do not register a Beads `types.custom` `captain` type for this: captain is a hold kind.
 
@@ -466,11 +457,11 @@ Completion refuses to report success until the item is closed, and session start
 An owner ask comes first: the wrapper files a `[captain-ask]` item at priority 0, so `ready` offers it before other work, and it refuses an `add`, `update` or retitle that would put such an item at any other priority.
 The same wrapper also refuses to remove or close a `[captain-ask]` row, or to drop its tag through `update` or `edit --title`, unless the row links a merged pull request or a Recon report, or the call carries `--captain-quote '<his words>'`, or `--confirm-card <id>` naming a separate board card that names the row and that `bin/jg-captain-hold.sh answered` finds answered. A recorded answer on the row itself no longer closes it, because a rejected option means redo the options, never cancel. The quote or card lands in the ticket note and in `data/captain-closures.md`; it refuses a raw `hold` of such a row, and an unanswered ask in the archive set blocks a close or prune only when that archive would move it past `done_keep`. The refusal names the row and exits 2. The guard covers only commands run through the wrapper, and the automatic dispatch and completion transitions do not use it ([`bin/jg-backlog.sh`](../bin/jg-backlog.sh) owns the complete refusal list).
 
-When a spawn is interrupted after launch delivery began, its exit path re-reads the paired task record and the backlog row under the same per-task lock as the commit, repairs a row the commit believed it had moved, and reports only what was verified or honestly attempted, never intent phrased as outcome ([`bin/jg-spawn.sh`](../bin/jg-spawn.sh); [`tests/jg-backlog-atomicity.test.sh`](../tests/jg-backlog-atomicity.test.sh)).
+When a spawn is interrupted after launch delivery began, its exit path re-reads the paired task record and the backlog row under the same per-task lock as the commit, repairs a row the commit believed it had moved, and reports only what was verified or honestly attempted, never intent phrased as outcome ([`bin/jg-spawn.sh`](../bin/jg-spawn.sh)).
 
 ### Which backlog receives a transition
 
-Automatic transitions address the store named by the target home's own `config/beads-dir`, so the change lands in the home that owns the task regardless of the caller's working directory.
+Automatic transitions address the target home's own rows in the tickets tables, so the change lands in the home that owns the task regardless of the caller's working directory.
 
 ### Exemptions and refusal conditions
 
@@ -482,13 +473,9 @@ A home with no store, an unresolvable configured data directory, or one containi
 `jg-backlog-handoff.sh` keeps its own fleet-level validation and moves the rows through the stores; its [script header](../bin/jg-backlog-handoff.sh) owns route-specific wake outcomes and remote outbox release.
 It moves in-scope queued items only and refuses in-flight and done records, which stay with their home.
 
-### Required tools
-
-Bootstrap requires the pinned `bd` and `dolt` (the `toolchain.versions` rows), installed each against its recorded hash and never started; see "Toolchain" below for missing-tool reporting.
-
 ### Using a separate operational home
 
-`bin/jg-backlog.sh` reads `config/beads-dir` of `JG_HOME`, so a bare run from the code root addresses the home's own store whenever the home lives elsewhere.
+`bin/jg-backlog.sh` reads the rows of `JG_HOME`, so a bare run from the code root addresses the home's own store whenever the home lives elsewhere.
 Run every routine Juggernaut backlog command through [`bin/jg-backlog.sh`](../bin/jg-backlog.sh).
 
 ## Migration card (config/migration-card)
@@ -803,7 +790,7 @@ The flag is a home-local supervision-noise preference and is not inherited by Sq
 
 The watcher treats a worker or Squad Lead pane showing a permission or trust prompt as stuck at once.
 It approves only an OpenCode read it can prove is inside this fleet's own files, and rejects one that touches a secrets path (`.env`, `~/.config`, or a home's `data/` or `config/`), telling the worker why.
-Every other prompt wakes the owning home at once and then rides the stuck-worker escalation chain: owner, Main, then a board card from the main home only ([`core/wait-timers/README.md`](../core/wait-timers/README.md) owns the rungs).
+Every other prompt wakes the owning home at once and then then climbs the item store's one ladder: owner, Main, and only what Main cannot settle, the captain ([`core/item-store`](../core/item-store) owns the tick; [`core/wait-timers/README.md`](../core/wait-timers/README.md) owns what the timer library still does).
 While the same prompt stays on screen it is approved, rejected, or re-alerted again every 10 minutes (`JG_PROMPT_REALERT_SECS`), with no once-per-prompt latch.
 The optional local, gitignored `config/prompt-approve-off` presence flag turns approval off, so every prompt that is not rejected rides the chain.
 `bin/jg-prompt-gate-lib.sh` owns the roots and the records, and `bin/jg-prompt-gate.py` owns the matcher.
@@ -865,6 +852,25 @@ Until then local files are the only memory owners.
 
 the internal [`fleet-records` skill](../.agents/skills/fleet-records/SKILL.md) owns what a declaration changes about knowledge routing, and the internal [`intel` skill](../.agents/skills/intel/SKILL.md) owns how curation reads the declaration and protects tier-owned entries from pruning.
 The section counts toward the startup memory budget like the rest of its file, so keep it to the mapping rather than restating these rules.
+
+## Workflows (defaults/workflows, config/workflows, config/workflow-routes)
+
+A workflow is a name for a spec of steps: stages split by `>`, steps that run at once split by `+`, a count as `*N`, for example `scout*2 > owner > worker*2`.
+Any step may stand in any stage, in any order and any number of times.
+The only rules are the owner's plan-approval rule (a `worker` or `fanout` after a Recon, critic or war room needs an `owner(plan-approval)` stage between them) and what a step reads.
+`core/workflows/README.md` owns the grammar, the kinds and those two rules.
+
+`defaults/workflows` holds the shipped names, one `<name>: <spec>` line each.
+A home changes or adds a name in `config/workflows` (same lines); a name there wins.
+`<name>: off` removes a shipped name in that home.
+`limit count: <n>` (30 by default) bounds one count and `limit steps: <n>` (64) bounds the steps after expansion; a refusal names the line that raises the limit.
+A home overrides a step kind's worker in `config/workflow-routes` (same `<kind> <harness> <model> <effort>` lines as `defaults/workflow-routes`).
+
+`bin/jg-workflow.sh list` prints every name with its spec and where it came from, and exits 2 with the broken lines shown when a name is refused.
+`bin/jg-workflow.sh define <name> <spec|off> --by owner|main|lead` writes one line into `config/workflows`.
+Only `--by owner` changes or removes a name the file holds.
+`bin/jg-workflow.sh parse <spec|name>` prints the stages of one spec.
+`tests/jg-workflow-parse.test.sh` runs each rule through the real command.
 
 ## Digest print caps (defaults/token-caps, config/token-caps)
 
@@ -1090,7 +1096,7 @@ muse also needs a worker-reachable credential before spawning, and the portable 
 gemini is likewise refused for Squad Leads because it has no primary supervision protocol; [its adapter reference](../.agents/skills/harness-adapters/references/harness/gemini.md) owns the credential precondition, canonical-launch wiring, and raw-launch limitations.
 rovo is likewise verified for operator and Recon launches ONLY, refused for a Squad Lead for the same reason - no turn-end hook and no primary supervision protocol; [`docs/verification/rovo.md`](verification/rovo.md) owns that evidence, including the OAuth token's silent background refresh from a stored refresh token and both tmux and herdr pane liveness (herdr placement is verified live, with a Herdr-side agent-detection gap left open for recovery classification).
 
-agy is likewise verified for operator and Recon launches ONLY, refused for a Squad Lead for the same reason - no hook surface and no primary supervision protocol; [`docs/verification/agy.md`](verification/agy.md) owns that evidence, including the spawn-time worktree trust pre-registration through `bin/jg-agy-trust.sh` and Herdr's native agy pane recognition.
+agy is verified for operator and Recon launches and as the primary Overwatch through the tracked `.agents/hooks.json`, but `jg-spawn.sh` refuses it for a Squad Lead because no Squad Lead launch on it is verified; [`docs/verification/agy.md`](verification/agy.md) owns that evidence, including the spawn-time worktree trust pre-registration through `bin/jg-agy-trust.sh`, Herdr's native agy pane recognition, and the primary hooks.
 devin is verified for operator and Recon launches only; a Squad Lead is refused because Devin has no verified primary supervision protocol.
 
 Its private worker config disables Claude Code imports (including the captain's hooks) and, unless the home sets `config/keep-ai-trailers` (see "Commit attribution"), Devin commit attribution without editing user or project config; [`jg-devin-config.sh`](../bin/jg-devin-config.sh) owns these enforced settings and [Devin verification](verification/devin.md) owns the live evidence and observed model availability.
@@ -1381,7 +1387,8 @@ In every home, primary or Squad Lead, a scan whose home sits below the floor wit
 Ready intake uses the base heartbeat interval independently of idle-heartbeat backoff and runs before an away heartbeat can end the cycle; held and future-dated work stays excluded by the backlog's ready query.
 When the ready set empties on a successful read - every named item since held or in flight - the check withdraws the queued ready-work row, so a notification whose condition no longer holds stops being presented instead of repeating until an acknowledgement that may never come, and it re-raises from scratch only when the condition holds again.
 That empty observation keeps the resurface record, so a transient empty set cannot reset the `JG_READY_WORK_RESURFACE_SECS` window and replay the identical set inside it.
-At or above the floor, or without the file, a home wakes when no worker is provably working, so open lanes that only wait never hide an idle home.
+At or above the floor a home has no free lane, so it is never woken for ready work and a queued ready-work row is withdrawn; without the file, a home wakes when no worker is provably working.
+An epic is a container of work and never counts as ready work: its children are the startable items, so a home whose only ready rows are epics is not woken and raises no stalled-backlog alert.
 The wake asks the lead to dispatch the ready items, P0 first, up to the project's declared capacity; a spawn beyond capacity stops and leaves its item queued.
 A malformed value is reported once in the watcher's triage log and then treated as absent, never as a number; `bin/jg-watch.sh`'s header owns the exact reason lines.
 
@@ -1562,7 +1569,7 @@ Diagnostics print names only, and no value is copied, logged, written to a recor
 
 The strip runs inside the pane and reads the pane's own environment when it runs, so a name the herdr server exports or a shell profile sets after the launch is built is stripped too.
 Limit: this is not a sandbox, and tools or later shells can still create or reload credentials.
-For the population side of the same problem, [`addons/key-in-env-check`](../addons/key-in-env-check/README.md) scans running processes for provider keys.
+For the population side of the same problem, [`core/key-in-env-check`](../core/key-in-env-check/README.md) scans running processes for provider keys.
 
 Regression coverage plants synthetic credential names only in the pane, never in the launching process, and runs the real builder and every emitted launch in [`tests/jg-launch-env-strip.test.sh`](../tests/jg-launch-env-strip.test.sh) and [`tests/jg-spawn-dispatch-profile.test.sh`](../tests/jg-spawn-dispatch-profile.test.sh).
 
@@ -1574,13 +1581,13 @@ This guarantee also covers raw launch commands, remote Squad Leads, and launches
 Juggernaut provides no configuration or flag to change this value.
 This applies only to agents Juggernaut launches; the captain's own primary Juggernaut session is never given the variable.
 
-[`jg-spawn.sh --help`](../bin/jg-spawn.sh) owns the delivery mechanics, with focused regression coverage in [`tests/jg-spawn-compact-adviser-disable.test.sh`](../tests/jg-spawn-compact-adviser-disable.test.sh) and [`tests/jg-spawn-compact-adviser-disable-remote.test.sh`](../tests/jg-spawn-compact-adviser-disable-remote.test.sh).
+[`jg-spawn.sh --help`](../bin/jg-spawn.sh) owns the delivery mechanics.
 
 ### Git editor setting
 
 Every operator, Recon, and Squad Lead Juggernaut launches starts with `GIT_EDITOR=true` and `GIT_SEQUENCE_EDITOR=true` in its environment, on a fresh spawn and on a relaunch alike, so git never opens an interactive editor in an unattended worker pane.
 This guarantee also covers raw launch commands and launches filtered by `config/launch-env-allowlist`; it does not depend on the destination environment already containing either variable.
-[`jg-spawn.sh --help`](../bin/jg-spawn.sh) owns the delivery mechanics, with focused regression coverage in [`tests/jg-spawn-compact-adviser-disable.test.sh`](../tests/jg-spawn-compact-adviser-disable.test.sh).
+[`jg-spawn.sh --help`](../bin/jg-spawn.sh) owns the delivery mechanics.
 
 ### Commit attribution
 
@@ -1631,7 +1638,7 @@ The name is the project's registered name, which is its clone directory name and
 A line that is only `#`, or that begins with `#` followed by whitespace, is a comment, as is a `#` line whose last field is not an integer.
 A project name may begin with `#` when that `#` is written immediately against the rest of the name and the line ends with the project's capacity.
 A name that is `#`, or that begins with `#` and a space, cannot be declared, because that line is a comment.
-A place is held by every ship or Recon on that project in the root home or any local Squad Lead home registered under it, including one working in a separate clone of the same origin, until its ready PR is recorded or it is cleaned up; a local-only ship or a Recon holds its place until cleanup.
+A place is held by every ship or Recon on that project in the root home or any local Squad Lead home registered under it, including one working in a separate clone of the same origin, until its ready PR is recorded, its latest status event is `done` or `parked`, or it is cleaned up; a lane that has written no status event for an hour also frees its place, and a lane steered back into work holds one again at its next `working` line.
 The declaration is matched by the spawning clone's directory name, so clones of the same origin share the cap only when they use that same directory name.
 A clone of that origin under a different directory name finds no declaration and is not capped, though its workers are still counted as holders for a same-origin clone that is capped.
 When every place is held, `bin/jg-spawn.sh` launches nothing, creates no record, leaves the backlog item queued, prints one `deferred:` line naming the holders, and exits 75, so Juggernaut dispatches the item again once a place frees.
@@ -1743,6 +1750,8 @@ The four tiers are `easy`, `standard`, `hard`, and `frontier`, and each one's or
 **Fields applied only by typed resolution**
 
 Rule `approval`, `min_confidence`, and `floor`, and profile `provider` and `floor` are optional declarations that only [typed dispatch resolution](#typed-dispatch-resolution-env-typesafe_api_key) applies in code; without that opt-in they are inert, and Juggernaut's own intake reads them as ordinary hints.
+Profile `billing` optionally declares `plan`, `flat-plan`, `credits`, or `overage`; only `flat-plan` changes quota ranking, under the [selection owner's flat-plan procedure](../.agents/skills/quota-array-dispatch/SKILL.md#rank-by-spendpriority).
+For example, a matched profile can be `{"harness":"pi","model":"ollama-cloud/deepseek-v4.1-flash","provider":"ollama-cloud","billing":"flat-plan"}` beside a metered Terra fallback in the same `use` array.
 The resolver supplies the fixed neutral Choice option `No listed rule applies to this task.` for work that matches no listed rule.
 
 - `approval` accepts only `"captain"` and means a task the rule matches is never dispatched from the tool's answer alone.
@@ -1929,12 +1938,13 @@ After the answer, code applies all remaining checks and ranking:
 
 - The confidence floor and the matched rule's `approval` and `floor`.
 - Each candidate's `provider` and `floor`.
+- Each candidate's `route-select` owner-clause decision from `bin/jg-clause.sh` before ranking.
 - Every applicable account-wide and model/product row from one `quota-axi --json` snapshot.
-- The numeric `spendPriority` argmax over candidates, using each candidate's limiting row.
+- The [selection owner's ranking procedure](../.agents/skills/quota-array-dispatch/SKILL.md#rank-by-spendpriority), including explicit flat plans and the numeric `spendPriority` argmax using each metered candidate's limiting row.
 
 The [shared quota library](../bin/jg-quota-axi-lib.sh) accepts schema 5 and schema 6 and implements the [account-matching contract](../.agents/skills/quota-array-dispatch/SKILL.md#1-eligibility).
 
-- An expanded provider with no matching account row leaves the candidate eligible but unranked.
+- An expanded provider with no matching account row leaves the candidate eligible but unranked, including a declared flat plan.
 - Known applicable rows from a provider with partial quota semantics remain rankable; rows whose own status is not known remain unrankable.
 
 **Confidence and fallback rules**
@@ -2000,7 +2010,6 @@ Every home requires:
 - gh; GitHub authentication through `gh auth login` is needed for a home with a GitHub-hosted project, since the session-start auth probe is skipped while every registered project is local-only.
 - Compatible gh-axi.
 - chrome-devtools-axi.
-- Pinned `bd` and `dolt`, as specified in "Backlog" above.
 - Compatible quota-axi.
 - done-done (`done-done-axi`, at its [`toolchain.versions`](../toolchain.versions) row).
 - sign-off-axi (at its `toolchain.versions` row).
@@ -2014,7 +2023,7 @@ This section is the single owner of that universal toolchain list; backend guide
 Both `install.sh` and every session start also run [`bin/jg-axi-link.sh`](../bin/jg-axi-link.sh), which writes one launcher, `~/.local/bin/juggernaut-axi`, that runs `bin/juggernaut-axi` of the home named by `JG_HOME`, of the checkout the current directory is in, or of the home that wrote it.
 A file already there that is not the launcher is left alone and named.
 
-In that list, gh-axi and chrome-devtools-axi cover GitHub and browser operations, and the Beads store plus quota-axi back backlog mutations and quota-aware array dispatch.
+In that list, gh-axi and chrome-devtools-axi cover GitHub and browser operations, and quota-axi backs quota-aware array dispatch.
 A visual report or decision surface is a sign-off board report, published with sign-off-axi; nothing in this list provides a separate review server.
 
 **Backend requirements**
@@ -2053,9 +2062,8 @@ Sign-off arming stays per home and is never done for the user; the first wiring 
 
 **Missing-tool diagnostics**
 
-`bd`, `dolt` and `quota-axi` are essential bootstrap tools in every profile.
+`quota-axi` is an essential bootstrap tool in every profile.
 
-- An absent or unpinned `bd` or `dolt` reports a `MISSING:` line naming the pinned row; a home with no `config/beads-dir` refuses lifecycle mutation until the store is configured.
 - An absent or incompatible `gh-axi` reports `MISSING: gh-axi (install: npm install -g gh-axi && gh-axi setup hooks)`.
 - An absent or too-old `quota-axi` reports `MISSING: quota-axi (install: npm install -g quota-axi)`; Juggernaut cannot resolve a profile array without a compatible binary.
 
@@ -2100,6 +2108,15 @@ It uses the same live Squad Lead discovery and propagation helper as bootstrap; 
 - The locked bootstrap inheritance pass uses the same placement-specific behavior; see `squad-lead-provisioning` for the single contract owner.
 - That live discovery starts from `state/*.meta` records with `kind=squad_lead`; `data/squad_leads.md` only backfills `home=` for older or incomplete meta records.
 - Skipped items, such as a destination checkout that does not yet gitignore the item, are visible warnings but not hard failures.
+
+## Project registry (data/projects.md) and the policy row
+
+Where the main home has `config/item-store`, `data/projects.md` keeps clone facts only: the project's name, `branch=<prefix>`, `forge=<value>`, `mcp=<file>` and its description.
+A project's delivery mode and yolo live in its policy row in the item store, read by [`bin/jg-project-mode.sh`](../bin/jg-project-mode.sh) through `core/item-store/adapters/policy.py --row` (level `loose` prints yolo on); a project with no row prints `direct-PR off` and the registration gap line.
+The row changes only by the captain's own message (`policy.py --from-message`) or his yes to Main's proposal (`policy.py --propose`).
+A mode word or `+yolo` still in a registry line is ignored; `policy.py --registry-check data/projects.md` lists such lines (exit 1), and `policy.py --rewrite-registry data/projects.md --dry-run|--apply` removes them, refusing while a project has no row and keeping the old file beside it as `projects.md.before-policy`.
+Without `config/item-store`, the registry's words decide as before.
+`core/item-store/adapters/daily_files.py <home>` opens one `intake:<home id>/big-files@<date>` item for each home whose `state/` holds a file over 1 MB.
 
 ## Forge selection (data/projects.md forge= token)
 
@@ -3096,6 +3113,7 @@ JG_WATCH_FAILURE_NOTICE_INTERVAL_MS=600000   # OpenCode adapter: the same watche
 JG_STUCK_ERRLOOP_MIN=3   # watcher: a provider or API error line repeated this many times on a worker's screen records the errors wait source
 JG_WATCH_CYCLE_LOG_MAX_BYTES=262144   # size cap for the arm-owned watcher lifecycle ledger
 JG_WATCH_CYCLE_LOG_KEEP_LINES=1000   # newest complete lifecycle rows considered when the ledger is capped
+JG_WATCH_CRASH_BACKOFF="5 30 120 600"   # seconds jg-watch-arm waits before forking a watcher after 1, 2, 3, and more consecutive crash exits in its ledger; the last step repeats (bin/jg-watch-arm.sh "Crash backoff")
 JG_WATCH_EXTENSION_LOG_KEEP_LINES=0   # opt-in Pi extension diagnostic log (state/.watch-extension.log); unset, empty, non-numeric, zero, or negative disables logging, a positive value keeps that many newest rows; logging never changes supervision behavior
 JG_WATCHER_STALE_GRACE=300   # defaults to JG_GUARD_GRACE if set, else the poll-derived grace (docs/turnend-guard.md "Guard grace and the poll cadence"); seconds before a fresh arm refuses a live holder's stale beacon (attached arms: JG_WATCHER_STALL_BOUND)
 JG_WATCHER_STALL_BOUND=       # live-holder stall bound; default and arm/re-arm behavior: docs/turnend-guard.md "Guard grace and the poll cadence"
@@ -3145,7 +3163,7 @@ JG_PENDING_REPLY_GRACE_SECS=120   # seconds after the request turn completes wit
 JG_SUPERVISOR_BACKEND=             # optional supervisor pane backend override; tmux/herdr only, otherwise detects $TMUX_PANE then HERDR_ENV/HERDR_PANE_ID before tmux fallback
 JG_SUPERVISOR_TARGET=              # optional supervisor pane target override; tmux target or herdr <session>:<pane-id>, otherwise auto-detected
 JG_INJECT_SKIP=heartbeat           # |-prefixes force-self-handled bypassing classification; empty disables
-JG_ESCALATE_BATCH_SECS=90          # buffer window for batched escalation digests; 0 = flush immediately
+JG_ESCALATE_BATCH_SECS=            # optional escalation buffer override; bin/jg-supervise-daemon.sh owns the per-role defaults; 0 = flush immediately
 JG_MAX_DEFER_SECS=300              # max buffered escalation age before retry plus wedge alarm; 0 disables
 JG_INJECT_FAIL_SLEEP=30            # seconds to back off when the supervisor pane is unavailable
 JG_INJECT_CONFIRM_RETRIES=3        # daemon Enter-retry attempts after typing a digest once

@@ -17,8 +17,7 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 # shellcheck source=bin/jg-timeout-lib.sh
 . "$ROOT/bin/jg-timeout-lib.sh"
-# shellcheck source=core/lib/beads-test-env.sh
-. "$ROOT/core/lib/beads-test-env.sh"
+PATH=$ROOT/bin:$PATH  # a home's backlog is the jg-backlog.sh found by name
 
 PF="$ROOT/bin/jg-public-followup.sh"
 EMIT="$ROOT/bin/jg-public-followup-emit.sh"
@@ -121,7 +120,7 @@ SH
 make_home() {  # <name> [relay-on|relay-off]
   local home="$TMP_ROOT/$1" relay=${2:-relay-on}
   mkdir -p "$home/data" "$home/state" "$home/config" "$home/projects"
-  core_beads_home "$ROOT" "$home" || return 1
+  jg_test_beads_home "$home" || return 1
   [ "$relay" = relay-off ] || printf 'FMX_PAIRING_TOKEN=test-token\n' > "$home/.env"
   make_fake_curl "$home" >/dev/null
   jg_fake_exit0 "$home/fakebin" tmux treehouse gh gh-axi
@@ -837,7 +836,7 @@ test_squad_lead_teardown_resolves_parent_from_durable_record_when_env_lost() {
     || fail "real squad_lead seeding failed"
   child=$(cd "$child" && pwd -P)
   parent_resolved=$(cd "$parent" && pwd -P)
-  core_beads_home "$ROOT" "$child" || fail "the seeded home needs its own store"
+  jg_test_beads_home "$child" || fail "the seeded home needs its own store"
   make_fake_curl "$child" >/dev/null
   jg_fake_exit0 "$child/fakebin" tmux treehouse gh gh-axi
 
@@ -875,7 +874,7 @@ test_squad_lead_teardown_durable_record_missing_parent_registration_still_refuse
     || fail "real squad_lead seeding failed"
   child=$(cd "$child" && pwd -P)
   parent_resolved=$(cd "$parent" && pwd -P)
-  core_beads_home "$ROOT" "$child" || fail "the seeded home needs its own store"
+  jg_test_beads_home "$child" || fail "the seeded home needs its own store"
   make_fake_curl "$child" >/dev/null
   jg_fake_exit0 "$child/fakebin" tmux treehouse gh gh-axi
   assert_local_squad_lead_parent_record "$child" "$parent_resolved"
@@ -907,7 +906,7 @@ test_squad_lead_teardown_durable_record_with_unknown_field_succeeds() {
     || fail "real squad_lead seeding failed"
   child=$(cd "$child" && pwd -P)
   parent_resolved=$(cd "$parent" && pwd -P)
-  core_beads_home "$ROOT" "$child" || fail "the seeded home needs its own store"
+  jg_test_beads_home "$child" || fail "the seeded home needs its own store"
   make_fake_curl "$child" >/dev/null
   jg_fake_exit0 "$child/fakebin" tmux treehouse gh gh-axi
   assert_local_squad_lead_parent_record "$child" "$parent_resolved"
@@ -942,7 +941,7 @@ test_squad_lead_teardown_rejects_conflicting_live_and_durable_parent_bindings() 
     || fail "real squad_lead seeding failed"
   child=$(cd "$child" && pwd -P)
   parent_resolved=$(cd "$durable_parent" && pwd -P)
-  core_beads_home "$ROOT" "$child" || fail "the seeded home needs its own store"
+  jg_test_beads_home "$child" || fail "the seeded home needs its own store"
   make_fake_curl "$child" >/dev/null
   jg_fake_exit0 "$child/fakebin" tmux treehouse gh gh-axi
   assert_local_squad_lead_parent_record "$child" "$parent_resolved"
@@ -973,7 +972,7 @@ test_squad_lead_teardown_rejects_unsafe_durable_parent_records() {
     JG_SQUAD_LEAD_CHARTER='Unsafe durable-record regression charter.' \
       JG_HOME="$parent" "$ROOT/bin/jg-home-seed.sh" mate "$child" --no-projects >/dev/null \
       || fail "real squad_lead seeding failed for $case_name"
-    core_beads_home "$ROOT" "$child" || fail "the seeded home needs its own store for $case_name"
+    jg_test_beads_home "$child" || fail "the seeded home needs its own store for $case_name"
     child=$(cd "$child" && pwd -P)
     make_fake_curl "$child" >/dev/null
     jg_fake_exit0 "$child/fakebin" tmux treehouse gh gh-axi
@@ -1037,7 +1036,7 @@ test_squad_lead_teardown_rejects_nul_bearing_durable_parent_record() {
     || fail "real squad_lead seeding failed"
   child=$(cd "$child" && pwd -P)
   parent_resolved=$(cd "$parent" && pwd -P)
-  core_beads_home "$ROOT" "$child" || fail "the seeded home needs its own store"
+  jg_test_beads_home "$child" || fail "the seeded home needs its own store"
   make_fake_curl "$child" >/dev/null
   jg_fake_exit0 "$child/fakebin" tmux treehouse gh gh-axi
   assert_local_squad_lead_parent_record "$child" "$parent_resolved"
@@ -1297,7 +1296,7 @@ test_dropped_baton_now_surfaces_open_loop() {
   JG_SQUAD_LEAD_CHARTER='Baton repro charter.' JG_HOME="$parent" \
     "$ROOT/bin/jg-home-seed.sh" mate "$child" --no-projects >/dev/null || fail "seed failed"
   child=$(cd "$child" && pwd -P)
-  core_beads_home "$ROOT" "$child" || fail "the seeded home needs its own store"
+  jg_test_beads_home "$child" || fail "the seeded home needs its own store"
   make_fake_curl "$child" >/dev/null
   jg_fake_exit0 "$child/fakebin" tmux treehouse gh gh-axi
   log="$TMP_ROOT/curl.log"; : > "$log"
@@ -1348,7 +1347,7 @@ test_control_registered_followon_is_guarded() {
   JG_SQUAD_LEAD_CHARTER='Baton control charter.' JG_HOME="$parent" \
     "$ROOT/bin/jg-home-seed.sh" mate "$child" --no-projects >/dev/null || fail "seed failed"
   child=$(cd "$child" && pwd -P)
-  core_beads_home "$ROOT" "$child" || fail "the seeded home needs its own store"
+  jg_test_beads_home "$child" || fail "the seeded home needs its own store"
   make_fake_curl "$child" >/dev/null
   jg_fake_exit0 "$child/fakebin" tmux treehouse gh gh-axi
   seed_repro_commitment "$parent" public-final-pi-rearm-ship req-pirearm2 \

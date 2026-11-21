@@ -114,7 +114,8 @@
 #                                   captain-held transfer is never rechecked
 #                                   while an away record exists
 #          JG_ESCALATE_BATCH_SECS   buffer window for batched escalation
-#                                   digests; 0 = flush immediately (default 90)
+#                                   digests; 0 = flush immediately (default 90
+#                                   away, 1 for an always-on lead)
 #          JG_HEARTBEAT_SCAN_SECS   cadence for the catch-all status scan
 #                                   (default 300)
 #          JG_HOUSEKEEPING_TICK     seconds between housekeeping passes while
@@ -738,6 +739,10 @@ escalate_add() {  # <state> <distilled-item>
     unknown_wake_acknowledged "$state" "$line" && return 0
   fi
   buf="$state/.subsuper-escalations"
+  # The item's own text is its key: an event already waiting in the buffer is the
+  # same event, so it is not buffered again (the digest carries it once). A
+  # delivered event leaves the buffer (escalate_flush), so a later repeat is new.
+  [ -s "$buf" ] && grep -Fxq -- "$item" "$buf" && return 0
   [ -s "$buf" ] || _now > "${buf}.since"
   printf '%s\n' "$item" >> "$buf"
 }
@@ -1490,13 +1495,23 @@ handle_wake() {  # <reason> <state>
 
 handle_durable_wakes() {  # <watcher-reason> <state>
   local fallback_reason=$1 state=$2 out err tab epoch sequence kind key payload rest
-  local handled=0 failed=0 ack_through ack_generation
+  local handled=0 failed=0 ack_through ack_generation presentation
   out=$(mktemp "$state/.subsuper-wake-drain.XXXXXX") || return 1
   err=$(mktemp "$state/.subsuper-wake-drain.XXXXXX") || { rm -f "$out"; return 1; }
   if ! "$JG_DAEMON_DIR/jg-wake-drain.sh" > "$out" 2> "$err"; then
     cat "$err" >&2
     rm -f "$out" "$err"
     return 1
+  fi
+  # The row classifier can distil a span to one event. Outcomes need the full
+  # presentation and individual dispositions, so hand them to the supervisor
+  # through the existing durable escalation buffer and leave their rows queued.
+  if grep -q '^OUTCOME_REQUIRED:' "$out"; then
+    presentation=$(cat "$out" "$err") || { rm -f "$out" "$err"; return 1; }
+    failed=0
+    escalate_add "$state" "$presentation" || failed=1
+    rm -f "$out" "$err"
+    return "$failed"
   fi
 
   tab=$(printf '\t')
@@ -1583,6 +1598,11 @@ jg_super_main() {
   if [ "${JG_LEAD_DAEMON:-0}" = 1 ]; then
     printf '%s\n' "$$" > "$STATE/.lead-daemon" \
       || { echo "error: could not write $STATE/.lead-daemon" >&2; jg_lock_release "$LOCK" 2>/dev/null || true; rm -f "$PIDFILE"; exit 1; }
+    # Routing already holds routine events; a lead only needs a short window
+    # to combine one drain's urgent events into a single wake turn.
+    # Resolve once here so immediate handling and housekeeping share the same
+    # delay. An explicit override still wins, as it does for away supervision.
+    JG_ESCALATE_BATCH_SECS=${JG_ESCALATE_BATCH_SECS:-1}
   fi
   # The recorded identity is what proves this daemon still owns supervision after
   # its watcher child exits (jg_afk_daemon_owns_supervision, read by the turn-end

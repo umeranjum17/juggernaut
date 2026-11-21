@@ -1,0 +1,11 @@
+{
+ "argv": [
+  "list",
+  "--json"
+ ],
+ "stdin": "",
+ "stdout": "",
+ "exit": 0,
+ "form": "list --json",
+ "store": ""
+}

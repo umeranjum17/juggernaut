@@ -40,8 +40,8 @@
 # given paths, matching the same config, without the workflow YAML check.
 # Explicit core bin/ and bin/backends/ scripts still receive the
 # backend-purity check. The backend-purity check rejects a direct Beads CLI
-# invocation in the core bin/ and bin/backends/ scripts, because bd runs only
-# through bin/jg-beads.sh, which holds its guards.
+# invocation in the core bin/ and bin/backends/ scripts, because Beads is retired:
+# the backlog is the tickets tables.
 #
 # Lint defaults to two concurrency-limited workers over two stable logical
 # shards, and each worker runs ONE canonical root per ShellCheck process, so a
@@ -624,7 +624,7 @@ jg_lint_run_test_links() {
   return 1
 }
 
-# bd runs only through bin/jg-beads.sh, the one script allowed to name it.
+# Beads is retired: no script runs bd.
 jg_lint_run_backend_purity() {
   local findings path canonical
   local -a purity_roots
@@ -838,13 +838,12 @@ jg_lint_run_backend_purity() {
       segments[++count]=current
       return count
     }
-    FILENAME ~ /(^|\/)bin\/jg-beads\.sh$/ { next }
     /^[[:space:]]*#/ { next }
     {
       count=split_commands($0, segments)
       for (i=1; i<=count; i++) {
         if (invokes_bd(segments[i])) {
-          print FILENAME ":" FNR ": direct Beads CLI invocation bypasses bin/jg-beads.sh"
+          print FILENAME ":" FNR ": direct Beads CLI invocation: Beads is retired"
           break
         }
       }

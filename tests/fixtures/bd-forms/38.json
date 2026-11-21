@@ -1,0 +1,20 @@
+{
+ "argv": [
+  "create",
+  "--title=Ship the second thing",
+  "--id",
+  "jg-shiptwo",
+  "--force",
+  "-p",
+  "1",
+  "--metadata",
+  "{\"release\": \"later\"}",
+  "-l",
+  "project:demo"
+ ],
+ "stdin": "",
+ "stdout": "\u2713 Created issue: jg-shiptwo \u2014 Ship the second thing\n  Priority: P1\n  Status: open\n",
+ "exit": 0,
+ "form": "create --force --id --metadata --title -l -p",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-shipone\",\"title\":\"Ship the first thing\",\"description\":\"release: c-2\",\"status\":\"open\",\"priority\":1,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T15:19:09Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T15:19:09Z\",\"metadata\":{\"release\":\"later\"},\"labels\":[\"project:demo\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

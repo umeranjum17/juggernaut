@@ -174,7 +174,7 @@ func TestGatewayTypingIndicator(t *testing.T) {
 
 // The whole path: the gateway files an owner note, the chat shows typing while it is open, and the
 // reply made by the real `jg-inbox.sh reply` ends it; a note filed with no reply is capped. A typing
-// failure never stops the note or its reply. Fake Bot API, fake Dapr sidecar, the real jg-inbox.sh.
+// failure never stops the note or its reply. Fake Bot API, the real jg-inbox.sh.
 func TestGatewayTypingUntilReply(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("jg-inbox.sh needs python3")
@@ -184,11 +184,9 @@ func TestGatewayTypingUntilReply(t *testing.T) {
 	api := &typingAPI{actions: map[string]int{}, refuse: true, batch: upd(10, "private", 42, 42, false, "hello overwatch")}
 	bot := httptest.NewServer(api.handler(t))
 	defer bot.Close()
-	dapr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	defer dapr.Close()
 	tokenFile, conf, state := filepath.Join(home, "tg.token"), filepath.Join(home, "conf"), filepath.Join(home, "state")
 	os.WriteFile(tokenFile, []byte(tok+"\n"), 0o600)
-	os.WriteFile(conf, []byte(fmt.Sprintf("set gateway-adapters telegram\nset telegram-token-file %s\nset telegram-allow-user 42\nset telegram-api-url %s\nset dapr-http-url %s\nset dapr-pubsub p\nset subject-prefix jg.captain\nset chat-typing-cap-seconds 90\n", tokenFile, bot.URL, dapr.URL)), 0o600)
+	os.WriteFile(conf, []byte(fmt.Sprintf("set gateway-adapters telegram\nset telegram-token-file %s\nset telegram-allow-user 42\nset telegram-api-url %s\nset subject-prefix jg.captain\nset chat-typing-cap-seconds 90\n", tokenFile, bot.URL)), 0o600)
 	a := &app{root: root, home: home, state: state, data: filepath.Join(home, "data"), configFiles: []string{conf}, record: state + "/rec", log: state + "/log"}
 	if c := a.typerFor(&telegram{}); c.cap != 90*time.Second || c.every != 4*time.Second {
 		t.Fatalf("typer cap %v every %v, want the configured 90s cap and the 4s interval", c.cap, c.every)

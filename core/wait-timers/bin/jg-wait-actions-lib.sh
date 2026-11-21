@@ -208,12 +208,6 @@ jg_wait_action_spent() {  # <task> <since> [first]
   if [ "${3:-}" = first ]; then printf '%s' "$first"; else printf '%s' "${steps//,/, }"; fi
 }
 
-# Whether the ladder's own steps in this episode already raised the wait's card.
-jg_wait_action_raised_card() {  # <task> <since>
-  case ",$(jg_wait_action_spent "$1" "$2")," in *recover*) return 0 ;; esac
-  return 1
-}
-
 _jg_wait_action_send() {  # <jg-send arguments...>
   JG_HOME="$JG_HOME" "$_JG_WAIT_TIMER_DIR/jg-send.sh" "$@" >/dev/null
 }

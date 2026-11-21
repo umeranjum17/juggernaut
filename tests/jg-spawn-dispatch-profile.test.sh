@@ -1449,8 +1449,8 @@ test_pi_worker_launch_omits_seeded_home_approve() {
   assert_contains "$launch" "JG_PI_HARNESS=pi '$FAKEBIN_DIR/pi' --tui-mode regular" \
     "pi worker launch lost its regular TUI probe"
   assert_not_contains "$launch" "--approve" \
-    "ordinary Pi worker launches must not receive squad_lead seeded-home --approve"
-  pass "ordinary Pi worker launches omit --approve"
+    "a Pi worker copy outside the managed fleet pool must not receive --approve"
+  pass "a Pi worker copy outside the managed fleet pool omits --approve"
 }
 
 test_pi_approve_probe_omits_unsupported_flag() {

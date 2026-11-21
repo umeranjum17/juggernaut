@@ -1,0 +1,24 @@
+{
+ "source": "probe/replay_c.py through probe/run_with_final.py --level 4 (out/replay-final-store-l4.json), 14-17 Nov 2026, family \"status lines\"",
+ "lines": 1010,
+ "outcomes": {
+  "work.note:note": 270,
+  "wait.open:note": 205,
+  "refused: a wait with no holder": 135,
+  "work.done:done": 110,
+  "wait.open:open": 90,
+  "not an item: a repeat done/failed on a closed lane": 86,
+  "wait.close(resolved line):done": 40,
+  "work.open(rework):open": 33,
+  "not an item: resolved names no open item": 14,
+  "intake.note:note": 7,
+  "work.hand(failed):hand": 5,
+  "not an item: own wait on a closed lane": 3,
+  "intake.open:open": 3,
+  "not an item: keyless resolved on a closed lane": 2,
+  "work.note(own wait):note": 2,
+  "question.open:open": 2,
+  "question.open:note": 2,
+  "refused:work.done": 1
+ }
+}

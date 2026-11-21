@@ -69,22 +69,17 @@ test_an_unanswered_ring_is_relaunched_then_reaches_main() {
   grep -q 'relaunch exit=0' "$m/state/.waiting-timers/.acted/sq.relaunch.log" || fail "the relaunch outcome was not logged"
   ! grep -q 'waiting-state sq' "$m/events" || fail "a wait with a step left woke a model: $(cat "$m/events")"
   # Both steps spent and still silent: the table's next owner, the lead (Main
-  # in this home), gets the owner wake; only then does the Main rung follow.
+  # in this home), gets the owner wake.
   backdate "$m" sq 61
   cycle_for "$m" 120 grep -q 'waiting-state sq (silent, .*level=owner' "$m/events"
   grep -q 'check: waiting-state sq (silent, .*level=owner' "$m/events" \
     || fail "the lead was not handed the wait after the steps were spent: $(cat "$m/events"; cat "$m/state/.waiting-timers/.acted/sq")"
-  ! grep -q 'waiting-state sq (silent, .*level=main' "$m/events" || fail "Main was woken before the lead: $(cat "$m/events")"
-  backdate "$m" sq 61
-  cycle_for "$m" 120 grep -q 'waiting-state sq (silent, .*level=main' "$m/events"
-  grep -q 'check: waiting-state sq (silent, .*level=main; the ladder already took: ring, relaunch, lead; Main must unblock it now)' "$m/events" \
-    || fail "Main was not told after the lead: $(cat "$m/events")"
   printf 'working [at=%s]: resumed after the relaunch\n' "$(date +%s)" >> "$m/state/sq.status"
   cycle_for "$m" 120 test ! -e "$m/state/.waiting-timers/sq"
   row=$(ledger_row "$m" sq)
-  printf '%s\n' "$row" | grep -qE '	main	ring, relaunch, lead	changed state$' \
+  printf '%s\n' "$row" | grep -qE '	owner	ring, relaunch, lead	changed state$' \
     || fail "the ledger row does not name the rung and the steps: $(cat "$m/data/metrics/escalations.tsv" 2>&1)"
-  pass "an unanswered ring is relaunched by the ladder, then the lead owns it, Main hears only after that, and the ledger names the steps"
+  pass "an unanswered ring is relaunched by the ladder, then the lead owns it, and the ledger names the steps"
 }
 
 test_a_lane_blocked_for_the_herdr_lab_section_is_relaunched_once_with_it() {

@@ -10,17 +10,25 @@
 #
 # Output: one line per finding, and nothing at all when every copy matches. The exit is 0 even with findings,
 # because this is a watcher check, not a gate, and the check never repairs or deletes a copy.
-#   differ <installed path> <repo path>   the two files differ
-#   missing <installed path> <repo path>  the copy holds a file its repo directory does not
-#   unknown origin <installed path>       no repo directory can be discovered for this copy
+# An unchanged finding set prints once: the check records a fingerprint of the findings in
+# state/.installed-drift/last and stays silent while the set is the same, so the watcher wakes Main when a copy
+# starts or stops drifting and not on every sweep. The same set prints again only after
+# JG_INSTALLED_DRIFT_REMIND_SECS (default 21600) as a reminder. A clean pass clears the record, so a drift that
+# comes back wakes at once.
+#   differ <installed path> <repo path>   the installed file and its repo counterpart hold different content
+#
+# Only differing content is drift. An installed copy also holds files the package installer creates at runtime
+# (prev-hooks-path, link-target, upstream, *.real, hooks.d copies, identity.gitconfig) and some directories under
+# the prefix are data, not installs (jg-beads, fm-claude-quota, fm-glm-queue, jg-nm-drain, backups). Neither has
+# a repo counterpart to differ from, so a file with no counterpart and a directory with no discoverable repo
+# directory are skipped silently rather than reported.
 #
 # Origin of a copy, first match that names an existing directory wins: <copy>/.jg-origin, whose first line is
 # the repo directory the copy was installed from, else <root>/core/<name>, where <name> is the copy's
 # directory name without its fm- or jg prefix. The repo counterpart of an installed file is that file's path
-# inside the repo directory, or the only file of the same basename anywhere under it; a file with neither is
-# reported missing. A copy also grows files the repo never installs - Python bytecode, `*.bak-*` backups, the
-# git scaffolding its own `git init` writes under `hooks/`, its runtime `state/`, and its own `home` and
-# `unit.*` records - so those local artifacts are not compared and every other running-only file is reported.
+# inside the repo directory, or the only file of the same basename anywhere under it. A copy also grows Python
+# bytecode, `*.bak-*` backups, the git scaffolding its own `git init` writes under `hooks/`, its runtime
+# `state/`, and its own `home` and `unit.*` records; those are not compared.
 #
 # Legacy copies: an fm-<x> copy whose jg-<x> twin is installed in the same prefix is legacy (the twin is what
 # runs), so its findings are not printed by default; --all prints them. An fm-<x> copy with no jg-<x> twin is
@@ -38,6 +46,7 @@ STATE="${JG_STATE_OVERRIDE:-$JG_HOME/state}"
 ROOT=$REPO_ROOT
 DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}
 ALL=0
+REMIND_SECS=${JG_INSTALLED_DRIFT_REMIND_SECS:-21600}
 
 die() { printf 'jg-installed-drift: %s\n' "$1" >&2; exit "${2:-1}"; }
 
@@ -57,28 +66,43 @@ counterpart() { # counterpart <repo dir> <relative path>: print the repo file, o
 
 scan_copy() { # scan_copy <installed copy> <name-with-prefix>: print one line per finding in this copy.
   local copy=$1 name=${2#??-} src rel repo
-  if ! src=$(origin "$copy" "$name"); then
-    printf 'unknown origin %s\n' "$copy"
-    return 0
-  fi
+  src=$(origin "$copy" "$name") || return 0
   while IFS= read -r -d '' f; do
     rel=${f#"$copy"/}
     case $rel in __pycache__/* | *.pyc | *.bak-* | hooks/* | state/* | home | unit.*) continue ;; esac
-    if ! repo=$(counterpart "$src" "$rel"); then
-      printf 'missing %s %s\n' "$f" "$src/$rel"
-    elif ! cmp -s "$f" "$repo"; then
-      printf 'differ %s %s\n' "$f" "$repo"
-    fi
+    repo=$(counterpart "$src" "$rel") || continue
+    cmp -s "$f" "$repo" || printf 'differ %s %s\n' "$f" "$repo"
   done < <(find "$copy" -type f -print0 2>/dev/null)
 }
 
-cmd_check() {
+scan_all() {
   local d
   for d in "$DATA_HOME"/fm-* "$DATA_HOME"/jg-*; do
     [ -d "$d" ] && [ ! -L "$d" ] || continue
     [ "$ALL" = 1 ] || [ "${d##*/}" = "${d##*/fm-}" ] || [ ! -d "$DATA_HOME/jg-${d##*/fm-}" ] || continue
     scan_copy "$d" "${d##*/}"
   done
+}
+
+# due <findings>: 0 when the findings are to be printed now, and records them. A finding set equal to the last printed
+# one is due again only after REMIND_SECS; an empty set clears the record so the next drift prints at once.
+# A record that cannot be read or written never hides a finding: the set prints.
+due() {
+  local rec=$STATE/.installed-drift/last fp old_fp='' fired=0 now
+  if [ -z "$1" ]; then rm -f -- "$rec" 2>/dev/null; return 1; fi
+  fp=$(printf '%s\n' "$1" | cksum | awk '{print $1 "-" $2}')
+  now=$(date +%s)
+  [ ! -f "$rec" ] || IFS=$'\t' read -r old_fp fired < "$rec" || true
+  case $fired in '' | *[!0-9]*) fired=0 ;; esac
+  [ "$old_fp" != "$fp" ] || [ $((now - fired)) -ge "$REMIND_SECS" ] || return 1
+  { mkdir -p "$STATE/.installed-drift" && printf '%s\t%s\n' "$fp" "$now" > "$rec.tmp" && mv -f -- "$rec.tmp" "$rec"; } 2>/dev/null || true
+  return 0
+}
+
+cmd_check() {
+  local findings
+  findings=$(scan_all | sort)
+  ! due "$findings" || printf '%s\n' "$findings"
   return 0
 }
 

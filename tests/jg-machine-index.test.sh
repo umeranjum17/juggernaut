@@ -94,15 +94,13 @@ links=$(grep -o '](\([^)#]*\)' "$DOC" | sed 's/^](//' | grep -v '^[a-z]*:' | sor
 [ -n "$links" ] || fail "the page links to nothing"
 while IFS= read -r l; do [ -e "$(dirname "$DOC")/$l" ] || fail "the page links to $l, which does not exist"; done <<< "$links"
 pass "every local link on the page resolves"
-assert_contains "$(grep -A1 '"path": "docs/state-machines.md"' "$ROOT/docs/documentation-audiences.json")" '"audience"' "docs/state-machines.md is classified"
-pass "the page has a documentation-audience row"
 
-# The fix-method pointer: one line in the diagnostic-reasoning section names jg-machine and links to this page.
+# The fix-method pointer: one line in the diagnostic-reasoning section links to this page (jg-machine is retired, so it no longer names it).
 SK="$ROOT/.agents/skills/diagnostic-reasoning/SKILL.md"
 sec=$(awk '/^## /{on = ($0 == "## Make the implicit state machine explicit")} on' "$SK")
 [ -n "$sec" ] || fail "diagnostic-reasoning has no 'Make the implicit state machine explicit' section"
-line=$(printf '%s\n' "$sec" | grep 'jg-machine' | grep 'state-machines.md')
-assert_equals 1 "$(printf '%s\n' "$line" | grep -c .)" "exactly one pointer line names jg-machine and the index"
+line=$(printf '%s\n' "$sec" | grep 'state-machines.md')
+assert_equals 1 "$(printf '%s\n' "$line" | grep -c .)" "exactly one pointer line links to the index"
 target=$(printf '%s' "$line" | grep -o '](\([^)#]*state-machines.md\)' | sed 's/^](//')
 [ -e "$(dirname "$SK")/$target" ] || fail "the pointer line links to $target, which does not exist"
 pass "the diagnostic-reasoning pointer resolves to the index"

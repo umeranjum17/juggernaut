@@ -25,6 +25,7 @@ A line more than an hour old the first time it is seen is skipped.
 The limit is `JG_STATUS_LATENCY_LIMIT_SECONDS` (default 120).
 A wake over the limit, or no wake once the limit has passed, raises `undelivered` through `bin/jg-alert.sh` at rung 3 (Main), one key for each line.
 The owner's own watcher is what failed to wake it, so the alert goes one level up.
+The alert stands only while the line still waits: a later tick resolves it once a wake row for the lane is at or after the line, or once the lane has no task record.
 The watcher runs this check, so a watcher that is fully stopped is the supervision-down alert's case.
 
 ## Wiring
@@ -34,4 +35,4 @@ The watcher runs this check, so a watcher that is fully stopped is the supervisi
 
 ## Test
 
-`bash tests/jg-status-latency.test.sh` runs the real watcher on a throwaway home and replays a wake inside the limit, no wake, and a late wake.
+`bash tests/jg-status-latency.test.sh` runs the real watcher on a throwaway home and replays a wake inside the limit, no wake, a late wake, and the resolution of both alerts.

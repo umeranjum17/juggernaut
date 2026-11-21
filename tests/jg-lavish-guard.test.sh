@@ -171,7 +171,7 @@ test_a_deep_draft_says_done_with_its_critic_open() {
   done
   printf '{"id":"C-1","text":"a claim","kind":"fact","sources":["S-1","S-2"],"load_bearing":true}\n' > "$dir/claims.jsonl"
   printf '{"claim":"C-1","status":"verified","method":"run","note":"checked"}\n' > "$dir/checks.jsonl"
-  n=1; printf '# Report\n\n' > "$dir/report.md"
+  n=1; printf '# Report for %s\n\n' "$id" > "$dir/report.md"
   for title in "Answer" "What was asked" "Method and depth record" "Prior art and options" "Findings" "Design" "Not checked" \
     "Implementation plan" "Risks and mitigations" "Open decisions" "Acceptance test" "Sources and evidence" "Revision log"; do
     printf '## %d. %s\nBody citing [C-1].\n\n' "$n" "$title" >> "$dir/report.md"; n=$((n + 1))

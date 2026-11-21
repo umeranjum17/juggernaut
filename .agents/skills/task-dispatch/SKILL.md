@@ -1,8 +1,6 @@
 ---
 name: task-dispatch
-description: >-
-  Agent-only intake and dispatch procedure kept out of the always-loaded AGENTS.md.
-  Load at every intake of project work and before choosing a dispatch profile, effort, or backend, writing a brief, spawning, promoting, or steering a worker.
+description: Load at every intake of project work, and before choosing a dispatch profile, effort or backend, writing a brief, or spawning or steering a worker.
 user-invocable: false
 metadata:
   internal: true
@@ -46,6 +44,15 @@ Pick the depth of every Recon at intake and pass it to the scaffold as `--depth 
 A deep Recon needs one separate critic worker after the researcher's draft, never a fan-out: when the researcher reports `done` with its draft ready for the critic (the ticket is in the proving step `critic`), spawn one critic Recon with the task id `<id>-critic` on a fresh isolated copy with that draft, install the critic's output as the researcher's `data/<id>/critic.md`, and steer that same critic for each further round.
 Each later draft is a new `done` line of the researcher; steer the same critic to it.
 `.agents/skills/deep-recon/SKILL.md` owns the stages, budgets and critic rubric, and `bin/jg-recon-gate.sh` refuses `done` for a standard or deep Recon that does not meet them.
+
+### Workflow at intake
+
+After the ticket is filed, give it a workflow; workflows are configuration (`core/workflows/README.md` owns the grammar, `defaults/workflows` and `config/workflows` hold the names and the `pick` rules).
+- When the owner said how to run it, run `bin/jg-workflow.sh words "<his words>"`, then `bin/jg-workflow.sh set <ticket> <spec> --by owner --quote "<his words>" --note <his chat note id> --order <MainNNN>`.
+- When he names a new workflow ("make a workflow called <name>: <words>"), run `words` on his words, then `bin/jg-workflow.sh define <name> <spec> --by owner`; the name is a word at once.
+- When he asks to change or remove a named one, run `define <name> <spec|off> --by owner`; he may also edit `config/workflows` himself, and `bin/jg-workflow.sh list` shows every name and any broken line.
+- Otherwise run `bin/jg-workflow.sh pick <ticket> --set`.
+- Never ask him to pick a workflow; a refused `words` gets one plain question back to him, posted as a board card.
 
 ## Delivery mode, branch, and consent flags
 

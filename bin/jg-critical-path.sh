@@ -22,7 +22,7 @@
 #   gate           exit 0 to admit a ship, or exit 1 with one error on stderr
 #
 # CONFIG. config/migration-card (key=value lines, the file bin/jg-migration-card.sh reads):
-#   critical=nats,accounts,wake,inbox   the slugs in the order they must go live; the
+#   critical=accounts,wake,inbox        the slugs in the order they must go live; the
 #                                       slugs are bin/jg-migration-live.sh's PART_SLUGS
 #   project=<name>                      the project this applies to (a project directory's
 #                                       basename); the gate never applies without it

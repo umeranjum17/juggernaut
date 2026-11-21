@@ -13,9 +13,15 @@ mkdir -p "$HOME" "$JG_HOME"/{data,config,state}
 ln -sn "$fork/bin" "$JG_HOME/bin"
 printf '{"schema":2,"items":[]}\n' > "$work/board.json"
 printf '%s\n' "$work/board.json" > "$JG_HOME/config/fleet-board"
-# shellcheck source=core/lib/beads-test-env.sh disable=SC1091
-. "$root/lib/beads-test-env.sh"
-core_beads_home "$fork" "$JG_HOME"
+# Still skipped without JG_BEADS_TEST_BD: on the tables the sync prints no skip line for the bad ticket (a gap outside the Beads callers).
+if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then echo 'skip: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset'; exit 0; fi
+# A fixture home on the tickets tables (fleet.db).
+core_tables_home() {  # <checkout> <home>
+  mkdir -p "$2/config" "$2/data" && : > "$2/config/backlog-intake-loose"
+  case ":$PATH:" in *":$1/bin:"*) ;; *) PATH=$1/bin:$PATH; export PATH ;; esac
+  JG_HOME=$2 python3 -I "$1/core/item-store/adapters/tickets.py" import --home main /dev/null >/dev/null
+}
+core_tables_home "$fork" "$JG_HOME"
 (cd "$JG_HOME"
  jg-backlog.sh add jg-good 'Umer good item' --repo alpha --priority 2 >/dev/null
  jg-backlog.sh add jg-bad 'Umer bad item' --repo alpha --priority 2 >/dev/null

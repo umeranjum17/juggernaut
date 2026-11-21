@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""jg-beads-write.py - serve the backlog's add, update, done, block, unblock, start, reopen, hold and unhold on a Beads store.
+"""jg-beads-write.py - serve the backlog's add, update, done, block, unblock, start, reopen, hold and unhold on the tickets tables.
 
-Usage: BEADS_DIR=<store> jg-beads-write.py <add|create|update|edit|done|close|block|unblock|start|task|reopen|hold|unhold|relink|gate|resolve|note> [args...]
-       BEADS_DIR=<store> jg-beads-write.py <stage <key>...|take <file> <key>...|drop <key>...|public-followup ...>
-       BEADS_DIR=<store> jg-beads-write.py <moment|wait|ticket-stage|ticket-drift|times|trace> ...   (the ticket machine's moments, wait and stage: bin/jg-beads-moment.py)
-       BEADS_DIR=<store> jg-beads-write.py <beat|reclaim> ...   (a worker's lease: bin/jg-beads-lease.py)
+Usage: JG_HOME=<home> jg-beads-write.py <add|create|update|edit|done|close|block|unblock|start|task|reopen|hold|unhold|relink|gate|resolve|note> [args...]
+       JG_HOME=<home> jg-beads-write.py <stage <key>...|take <file> <key>...|drop <key>...|public-followup ...>
+       JG_HOME=<home> jg-beads-write.py <moment|wait|ticket-stage|ticket-drift|times|trace> ...   (the ticket machine's moments, wait and stage: bin/jg-beads-moment.py)
+       JG_HOME=<home> jg-beads-write.py <beat|reclaim> ...   (a worker's lease: bin/jg-beads-lease.py)
 
 bin/jg-backlog-lib.sh's jg_backlog_beads_write starts it after bin/jg-backlog.sh's intake and captain guards.
-Every bd call goes through bin/jg-beads.sh. Replies and refusals print the backlog's lines on stdout.
+Every bd call goes through core/item-store/adapters/bd_compat.py. Replies and refusals print the backlog's lines on stdout.
 kind is metadata.kind (a row of bd's old decision type still reads as captain), a leading [tag] of the title is the label of that name and is not stored in the title, repo is the project:<repo> label, the first PR is external_ref, later ones are metadata.prs,
 and reports are metadata.reports, each comma-joined; a PR or report also joins the title, as the backlog writes it.
 A hold is status on_hold with metadata.hold_reason and hold_kind, kept in plain text; a dated hold is status deferred
@@ -29,7 +29,6 @@ start claims a row with no owner. A start whose generation is not the one on the
 (a relaunch) takes it; a row another worker took first exits 13 too. done keeps the assignee as history, reopen clears all
 three, and each moves only from the owner it read.
 With no lane named, start claims an unowned row for the actor (BEADS_ACTOR, else juggernaut), so every in-flight row has an owner.
-bin/jg-beads.sh makes the lane the actor of every bd call, so a comment or an event carries who wrote it.
 bd takes --if-assignee or --force, never both, so closing a blocked row is guarded by status alone; a parent with an open child is refused, naming the open pieces.
 stage, take and drop move queued rows, and bd export and bd import carry them.
 stage prints rows as a backlog file, or with --native as export lines, and refuses to leave an active dependent behind. A native move also carries the rows' questions (open, or answered with the owner's words)
@@ -43,6 +42,7 @@ once neither side is a decision. relink lays every missing edge, for a store who
 A question to the owner is a human gate that blocks its ticket (gate), closed with the owner's words as its close reason (resolve), and a re-check's finding is a comment on it (note) that leaves it open;
 the ticket keeps its status, and done refuses a ticket with an open gate and never forces past one.
 """
+import base64
 import datetime
 import json
 import os
@@ -55,7 +55,7 @@ view = __import__("jg-beads-view")
 edges = __import__("jg-beads-links")
 lease = __import__("jg-beads-lease")
 
-WRAPPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jg-beads.sh")
+WRAPPER = [sys.executable, "-I", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "core", "item-store", "adapters", "bd_compat.py")]
 PR = re.compile(r"https://(github\.com/[^/\s]+/[^/\s]+/pull|[^/\s]+/[^/\s]+/[^/\s]+/pulls)/\d+\Z")
 REPORT = re.compile(r"data/[^/\s]+/report\.md\Z")
 LABEL = {"queued": "Queued", "in_flight": "In flight", "done": "Done"}
@@ -76,7 +76,7 @@ def untag(title):
 
 
 def bd(*args):
-    run = subprocess.run([WRAPPER, *args], capture_output=True, text=True, check=False)
+    run = subprocess.run([*WRAPPER, *args], capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
     if run.returncode == STALE:
         said = [line.split("mismatch: ", 1)[1] for line in (run.stdout + run.stderr).splitlines() if "mismatch: " in line]
         view.refuse("stale write refused: " + (said[0] if said else "the row moved"),
@@ -85,6 +85,28 @@ def bd(*args):
         sys.stderr.write(run.stdout + run.stderr)
         sys.exit(run.returncode)
     return run.stdout
+
+
+def bd_json(*args):
+    """Return the JSON value in the answer to a bd call, or None when bd printed nothing at all.
+
+    bd's stdout is not only the answer: a warning line can sit before the object, and a line bd writes after a write
+    can follow it, so a bare json.loads over the whole of stdout fails once the row is already made. The value starts
+    at the first line that opens one and runs to its own end, so each such line is tried in turn.
+    """
+    text = bd(*args)
+    if not text.strip():
+        return None
+    decoder, offset = json.JSONDecoder(), 0
+    for line in text.splitlines(keepends=True):
+        if line.lstrip()[:1] in ("{", "["):
+            try:
+                return decoder.raw_decode(text[offset:].lstrip())[0]
+            except ValueError:
+                pass
+        offset += len(line)
+    view.refuse("bd printed no JSON in its answer to %s: %s" % (args[0], text.strip().splitlines()[0][:200]),
+                "Report this to the Juggernaut maintainer: the writer reads the JSON value out of bd's stdout")
 
 
 def lane(row):
@@ -127,7 +149,7 @@ def released(row):
 
 
 def rows():
-    return {row["id"]: row for row in json.loads(bd("list", "--all", "--limit", "0", "--include-gates", "--json")) or []}
+    return {row["id"]: row for row in bd_json("list", "--all", "--limit", "0", "--include-gates", "--json") or []}
 
 
 def lay(ident=None, old=""):
@@ -143,7 +165,7 @@ def lay(ident=None, old=""):
     for row, other, kind, _ in edges.pending(items, ident):
         if other:
             one, two, kind = edges.edge(row, other, kind, items)
-            if kind == "related" or subprocess.run([WRAPPER, "dep", "add", one["id"], two["id"], "--type", kind],
+            if kind == "related" or subprocess.run([*WRAPPER, "dep", "add", one["id"], two["id"], "--type", kind],
                                                    capture_output=True, check=False).returncode:
                 kind = "related"
                 bd("dep", "add", one["id"], two["id"], "--type", kind)
@@ -303,15 +325,16 @@ def add(args):
             view.refuse("--prefix cannot go with --mint: bd names a minted id under the store's own prefix",
                         'Run `jg-backlog.sh add <prefix>-<name> "<title>"` to choose the id')
     elif not 1 <= len(words) <= 2:
-        view.refuse("Expected 1-2 positional arguments, got %d" % len(words), 'usage: jg-backlog.sh add <id> "<title>" [flags]')
-    elif len(words) == 1:
-        view.refuse("A title is required", 'Run `jg-backlog.sh add <id> "<title>"`')
+        view.refuse("Expected 1-2 positional arguments, got %d" % len(words),
+                    'usage: jg-backlog.sh add "<title>" [flags], or add <id> "<title>" [flags]')
     body = checked(found)
     items = rows()
     tag, title = untag(words[-1])
     labels = list(dict.fromkeys(found.get("--label+", []) + ([tag] if tag else [])))
-    minted = "--mint" in found or "--parent" in found
-    ident = None if minted else words[0]
+    # One positional is the title and bd names the row; two are the id and the title. An id given as the empty string
+    # is that same mint, which keeps the title's place in the call.
+    minted = "--mint" in found or "--parent" in found or len(words) == 1
+    ident = None if minted else (words[0] or None)
     known = ident and view.named(items.values(), ident)
     if known and known["id"] != ident:
         view.refuse("%s is the task name of row %s, so it cannot be a new id" % (ident, known["id"]),
@@ -340,13 +363,19 @@ def add(args):
     cmd += ["-l", "project:" + found["--repo"]] if "--repo" in found else []
     cmd += [flag for label in labels for flag in ("-l", label)]
     cmd += parent_flags(parent, found) if parent else []
-    if ident:  # the ticket's first move, before the row exists (bin/jg-move.sh): a refusal writes no row. A minted id has no name to judge until bd gives it one, and a new record has only this move.
+    if ident:  # the ticket's first move, before the row exists (bin/jg-move.sh records it): a refusal writes no row. A minted id has no name to judge until bd gives it one, and a new record has only this move.
         move = subprocess.run(["bash", os.path.join(os.path.dirname(os.path.abspath(__file__)), "jg-move.sh"), "--shadow", ident, "file"],
                               capture_output=True, text=True, check=False)
         if move.returncode == 1:
             view.refuse("the move file of %s was refused, so nothing was written: %s" % (ident, move.stderr.strip()), "Run: bin/jg-machine.sh next ticket " + ident, "MOVE_REFUSED", 1)
-    made = bd(*cmd)
-    ident = ident or json.loads(made)["id"]
+    # bd names a minted row, so its answer is the only place that id is; a row with its own id is not read back.
+    if ident is None:
+        ident = (bd_json(*cmd) or {}).get("id")
+        if not ident:  # bd wrote the row but its answer held no id to address it by
+            view.refuse("bd named no id in its answer to create, so the new row cannot be addressed",
+                        "Run `jg-backlog.sh list` and report a row that appeared with no id in its answer")
+    else:
+        bd(*cmd)
     if parent:
         epic(parent)
     lay(ident)
@@ -627,11 +656,11 @@ def gate(args):
     if same:
         print(same[0]["id"])
         return
-    made = json.loads(bd("gate", "create", "--blocks", row["id"], "--type", "human", "--title", found["--title"],
-                         "--reason", found["--reason"], "--json"))
+    made = bd_json("gate", "create", "--blocks", row["id"], "--type", "human", "--title", found["--title"],
+                   "--reason", found["--reason"], "--json")
     meta = [word for key in ("must", "origin", "close", "card") if found.get("--" + key) for word in ("--set-metadata", "%s=%s" % (key, found["--" + key]))]
-    if meta:
-        bd("update", made["id"], *meta)
+    meta += ["--set-metadata", "expires_at=" + view.question_expiry(made)]
+    bd("update", made["id"], *meta)
     print(made["id"])
 
 
@@ -670,6 +699,9 @@ def note(args):
     if one["status"] == "closed":
         view.refuse("%s is already closed; a note cannot keep a closed question open" % ids[0])
     bd("comments", "add", one["id"], "-f", found["--note-file"])
+    # A completed recheck renews the question without replacing the owner's answer.
+    renewed = dict(one, created_at=os.environ.get("JG_CAPTAIN_HOLD_NOW") or datetime.datetime.now(datetime.timezone.utc).isoformat(), metadata={})
+    bd("update", one["id"], "--set-metadata", "expires_at=" + view.question_expiry(renewed))
     print(one["id"])
 
 
@@ -696,13 +728,7 @@ def unhold(args):
 
 
 def exported():
-    name = "export-%d.jsonl" % os.getpid()
-    bd("export", "-o", name)
-    path = os.path.join(os.path.dirname(os.environ["BEADS_DIR"].rstrip("/")), name)
-    with open(path, encoding="utf-8") as source:
-        lines = source.read().splitlines()
-    os.unlink(path)
-    return lines
+    return bd("export").splitlines()
 
 
 def home_name():
@@ -733,7 +759,7 @@ def carried(items, picked):
                 edge["depends_on_id"] = "external:%s:%s" % (home_name(), edge["depends_on_id"])
         out.append(json.dumps(row))
     for row in picked:
-        events = json.loads(bd("provenance", "log", row["id"], "--json") or "[]") or []
+        events = bd_json("provenance", "log", row["id"], "--json") or []
         out.append(json.dumps({"_type": "provenance", "issue": row["id"], "from": home_name(), "events": events}))
     return "".join(line + "\n" for line in out)
 
@@ -773,9 +799,27 @@ def stage(args):
     print("\n## Done")
 
 
+FILE_TAG = r"\s*\((?:repo|kind|priority|since|done|merged|hold|until|hold-kind|hold-until)[: ][^)]*\)"
+
+
+def parse_item(section, head):
+    """One `- [ ] <id> - <title> (tag: value)...` line of a backlog file: its id, title, status, hold, tags, blockers and pull requests."""
+    rest = head[3]
+    tag = lambda k: (re.search(r"\(%s:? ([^)]*)\)" % k, rest) or [None, None])[1]
+    hold = tag("hold")
+    if hold is not None:
+        coded = re.match(r"(?:fm|jg)-hold-v1:([A-Za-z0-9+/=_-]+)", hold.strip())
+        hold = base64.b64decode(coded[1] + "==").decode("utf8", "replace") if coded else hold.strip()
+    status = ("closed" if head[1] == "x" or section == "Done" else ("deferred" if tag("hold-until") else "on_hold") if hold is not None
+              else "in_progress" if section == "In flight" else "open")
+    title = re.sub(r"\s*blocked-by: \S+", "", re.sub(FILE_TAG, "", rest)).strip()
+    return dict(item=head[2], title=title or head[2], status=status, hold=hold, blocked=re.findall(r"blocked-by: ([^\s)]+)", rest),
+                repo=tag("repo"), priority=tag("priority"), kind=tag("kind"), hold_kind=tag("hold-kind"), hold_until=tag("hold-until"),
+                prs=re.findall(r"https://\S+/pull/\d+", rest))
+
+
 def file_rows(path):
-    """A backlog file's rows as bd import rows, read by the parser the cut uses."""
-    parse_item = __import__("jg-beads-migrate").parse_item
+    """A backlog file's rows as bd import rows."""
     found, row, section = [], None, ""
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     with open(path, encoding="utf-8") as source:
@@ -784,7 +828,7 @@ def file_rows(path):
             if line.startswith("## "):
                 section, row = line[3:].strip(), None
             elif head:
-                item = parse_item("", "", section, head)
+                item = parse_item(section, head)
                 words = item["title"].split()
                 meta = {"kind": item["kind"], "hold_reason": item["hold"], "hold_kind": item["hold_kind"],
                         "prs": ",".join(item["prs"][1:]), "reports": ",".join(word for word in words if REPORT.match(word))}

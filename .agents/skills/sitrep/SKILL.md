@@ -1,10 +1,6 @@
 ---
 name: sitrep
-description: >-
-  Generate a "pick up where I left off" fleet digest from Juggernaut's live fleet state.
-  Use when the captain invokes /sitrep or asks for a bearings report, morning brief, status report, catch-up, "where did I leave off", or "what's in the works".
-  Plain /sitrep is chat-only by default, and /sitrep file explicitly writes the dated data/status-report-<YYYY-MM-DD>.md artifact; live PR enrichment remains opt-in and composes with both.
-  Also use on a contributions check wake or when filing work linked to an upstream issue.
+description: Use when the captain invokes /sitrep or asks for a status report or catch-up, and on a contributions check wake or when filing work linked to an upstream issue.
 user-invocable: true
 metadata:
   internal: true
@@ -68,7 +64,9 @@ For a contribution wake or linked-issue filing, go directly to Contribution foll
    Never edit another home's backlog or metadata from here, and never expect or wait on a reply.
 
 3. **Compose the four-section chat digest from the fresh snapshot.**
-   The gather step is deterministic; your judgment is scoped to ranking the command's facts by what matters right now and writing scannable captain-facing prose.
+   The gather step is deterministic; Gemini 4 Neon, through agy, writes the captain-facing prose and ranks the facts: run `printf '%s\n' "$snapshot" | python3 -I core/report-writer/bin/report-writer.py write sitrep --facts -` and send its output as the chat response.
+   `core/report-writer/README.md` owns that route: the model is fixed to Gemini 4 Neon, local paths never reach the model or the text, and a text wall is rewritten or refused.
+   If it fails, report its message; never write the digest yourself or on another model.
    The chat response uses the four complete sections in the chat-response contract below, in the same order, each always present.
    Plain mode stops here and writes no report artifact.
 
@@ -82,10 +80,12 @@ For a contribution wake or linked-issue filing, go directly to Contribution foll
    - **Title** - `# Bearings - <day> <YYYY-MM-DD>` (use "Morning status" only when the captain specifically asks for a morning brief), followed by two or three sentences framing where things stand.
    - **Captain's Call** - every unsuppressed open decision summarized with its options from the structured decision record, plus each PR ready to merge and each needed credential or login, every PR with the full `https://...` URL, never a bare `#number`.
    - **Recently Landed** - the bounded current recent-completions baseline from structured state across the main fleet and every registered Squad Lead home, rendered in full on every run.
-   - **Underway** - each live direct report making progress, with its current state, and the plans or main pickup pointers worth reopening (`data/<id>/report.md` files).
+   - **Underway** - each live direct report making progress, with its current state, and the plans or main pickup pointers worth reopening, each as its board link or as a ready-to-read mention, never a file path.
    - **Charted Next** - queued or gated work, including deferred or aged captain-hold safety gates and any main-inventory integrity warning, with each item's blocker, date, age, or integrity reason.
-   After writing the file, return the concise four-section chat digest and include the report path or link without adding a fifth section.
-   A visual report goes on a sign-off board report through `sign-off-axi`, never a retired review surface, and the digest carries its sign-off report link.
+   Write the report text through `core/report-writer/bin/report-writer.py write sitrep` as well; it follows the same phone limits, so the file is a phone read, not a dump.
+   After writing the file, return the concise four-section chat digest without adding a fifth section.
+   A visual report goes on a sign-off board report through `sign-off-axi` (`report-writer.py render` builds its page), never a retired review surface, and the digest carries its sign-off report link.
+   The digest never carries a local file path: a path does not open on the captain's phone.
 
 ## Board answers
 
@@ -124,7 +124,7 @@ Rules that keep the contract unambiguous:
 - Recently Landed always renders the bounded current baseline, even when the same completions appeared in an earlier report.
 - A captain hold appears in exactly one decision bucket: an unsuppressed live hold is in Captain's Call, while a blocked, dated, or aged hold is in Charted Next; `--all-decisions` moves the latter into Captain's Call and removes its gate.
 - Underway independently reports active work, so an actively worked captain-held task may appear there plus its one decision bucket.
-- When `config/machine-view` exists, an Underway row names the task's one state with the `sentence` line of `bin/jg-machine.sh show task <task>`; the snapshot still owns every bucket and rank.
+- When `config/machine-view` exists, an Underway row names the task's one state with the stage the item store reports for it (`jg-item board`, see `docs/item-store.md`); the snapshot still owns every bucket and rank.
 - A Squad Lead home can contribute to more than one section at once. Each active child is an Underway row regardless of the home-level `bearings_state`, while that same home's live captain hold is Captain's Call and its queued or external holds stay Charted Next. Do not hide active children because the home also has an open captain hold.
 - The strict boundary keeps action-free items OUT of Captain's Call: a working or validating task, a queued item blocked on another task or a date, landed work, a completed Recon's report pointer, a declared `paused:` external wait, and a bare recorded PR with no merge-ready signal each belong to one of the other three sections, never Captain's Call.
 - A Squad Lead's own home-level row is not an Underway unit: `externally_held` belongs in Charted Next, and `unknown` belongs there as an unavailable-state gate unless its reason requires the captain's action.
@@ -133,13 +133,13 @@ Rules that keep the contract unambiguous:
 - Every PR appears as the full `https://...` URL; a shorthand `#number` is fine only as a back-reference after the full URL has already appeared in the same digest.
 - The chat follows `AGENTS.md` section 9 and carries one scannable line per item.
 - Detailed decisions, plans, full gate reasons, and evidence stay out of chat; file mode puts them in the report.
-- In file mode, include the report path or link inside the four-section digest without adding another heading.
+- In file mode, include the report's board link inside the four-section digest without adding another heading.
 - A visual report's sign-off link goes inside the four-section digest the same way.
 
 ## Tone and content rules
 
-- The optional file-mode report is a private, captain-facing internal artifact that lives in gitignored `data/`, so unlike normal captain chat it MAY reference task ids, PR URLs, and repo names.
-- The captain works with those directly and needs them to resume; keep the report organized and scannable, not a raw dump.
+- The optional file-mode report is a private, captain-facing internal artifact that lives in gitignored `data/`, so unlike normal captain chat it MAY reference PR URLs and repo names; it still shows no local file path and no task id the captain cannot open.
+- Keep the report organized and scannable, not a raw dump.
 - Every PR reference is a full `https://...` URL, never a bare `#number`.
 - Never include PHI or secret values; the report is an operational artifact, but it is still subject to the same security and compliance rules that govern everything else in this fleet.
 

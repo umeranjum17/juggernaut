@@ -1,0 +1,12 @@
+#!/usr/bin/env python3
+"""The log of adapter:chat for the stamp check: every line of <main home>/state/item-store/turn-sent.log, which
+adapters/turn_end.py appends (`<source>\t<tell key>`) before it closes a tell."""
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+import itemdb
+
+home = os.environ.get("JG_HOME") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
+try:
+    sys.stdout.write(open(os.path.join(itemdb.store_dir(home), "turn-sent.log"), encoding="utf-8").read())
+except FileNotFoundError:
+    pass

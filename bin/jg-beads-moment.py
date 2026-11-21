@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """jg-beads-moment.py - the adapter verbs that write a ticket's moments and wait, and read its stage.
 
-Usage: BEADS_DIR=<store> jg-beads-write.py moment <ticket> <moment> [--at <RFC3339>] [--returned-to <stage>]
-       BEADS_DIR=<store> jg-beads-write.py wait <ticket> <who> [<reason>] [--at <RFC3339>]
-       BEADS_DIR=<store> jg-beads-write.py ticket-stage <ticket> [--proof <state of the proof run>]
-       BEADS_DIR=<store> jg-beads-write.py ticket-drift <ticket> [--forge]
-       BEADS_DIR=<store> jg-beads-write.py times <ticket>
-       BEADS_DIR=<store> jg-beads-write.py times --json [--since <epoch>]
+Usage: jg-beads-write.py moment <ticket> <moment> [--at <RFC3339>] [--returned-to <stage>]
+       jg-beads-write.py wait <ticket> <who> [<reason>] [--at <RFC3339>]
+       jg-beads-write.py ticket-stage <ticket> [--proof <state of the proof run>]
+       jg-beads-write.py ticket-drift <ticket> [--forge]
+       jg-beads-write.py times <ticket>
+       jg-beads-write.py times --json [--since <epoch>]
 
 moment writes one of eight moments of the ticket machine: approved_at, proved_at, bypassed_at, landing_at, gated_at, returned_at, conflict_at and release_opened_at.
 Each is a provenance event first and then the row's metadata, in that order, because the row write is the signal a reader can poll and
@@ -39,7 +39,6 @@ view = __import__("jg-beads-view")
 rule = __import__("jg-beads-stage")
 drifts = __import__("jg-beads-drift")
 
-WRAPPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jg-beads.sh")
 # moment -> (provenance source, kind). bd has fixed kinds, so the source tells the moments apart.
 MOMENTS = {
     "approved_at": ("jg-approve", "claim"),
@@ -70,7 +69,7 @@ MACHINE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jg-machine.s
 
 def gate(ticket, *events):
     """Make the ticket's move before anything is written: the first of `events` that the ticket's state has, else the first one, which
-    jg-move.sh then logs as a shadow line or refuses. A refusal (exit 1, once `ticket` is in config/machine-enforce) writes nothing."""
+    jg-move.sh then records in data/moves.log (it refuses only when it cannot write the log)."""
     if not events:
         return
     event = events[0]
@@ -85,7 +84,7 @@ def gate(ticket, *events):
 
 
 def bd(*args):
-    run = subprocess.run([WRAPPER, *args], capture_output=True, text=True, check=False)
+    run = subprocess.run([*view.BD, *args], capture_output=True, text=True, check=False)
     if run.returncode:
         sys.stderr.write(run.stdout + run.stderr)
         sys.exit(run.returncode)
@@ -107,7 +106,7 @@ def utc(text):
 
 def fetch(name):
     """The row of a ticket id, or of a task name (metadata.task)."""
-    run = subprocess.run([WRAPPER, "show", name, "--json"], capture_output=True, text=True, check=False)
+    run = subprocess.run([*view.BD, "show", name, "--json"], capture_output=True, text=True, check=False)
     if run.returncode == 0 and run.stdout.strip():
         found = json.loads(run.stdout)
         return found[0] if isinstance(found, list) else found
@@ -211,10 +210,11 @@ def incarnations():
     """Each ticket's starts, in time order: the claim and handoff events of its trail with the tool, model and effort and kind they name."""
     read = __import__("jg-beads-read")
     keys = ("harness", "model", "effort", "kind")
-    cells = ", ".join("json_unquote(json_extract(payload, '$.%s'))" % key for key in keys)
     starts = {}
-    for ticket, kind, at, *named in read.sql("select issue_id, kind, occurred_at, %s from provenance_events where kind in ('claim', 'handoff') order by occurred_at" % cells):
-        starts.setdefault(ticket, []).append(dict(zip(("event", "at") + keys, [kind, at.replace(" ", "T") + "Z"] + [None if c == "NULL" else c for c in named])))  # dolt prints UTC without a zone
+    con = read.table_store()
+    events = read.table_starts(con)
+    for ticket, kind, at, *named in events:
+        starts.setdefault(ticket, []).append(dict(zip(("event", "at") + keys, [kind, at.replace(" ", "T") + "Z"] + [None if c == "NULL" else c for c in named])))  # the table times are UTC without a zone
     return starts
 
 

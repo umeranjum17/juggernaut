@@ -67,8 +67,6 @@ if [ -n "$REAL_DD" ] && "$REAL_DD" lint --help 2>/dev/null | grep -q 'checks.gen
   assert_contains "$(cut -f2,4 "$home/data/done-done-lint/lint.log" 2>/dev/null)" "$home/data/t1d/checks.md"$'\t'"pass" "done-done itself judged the block (its lint.log row)"
   assert_contains "$(cat "$home/data/t1d/checks.md")" "repro: bash tests/demo.test.sh" "--repro is written as given"
   pass "done-done's own lint passes the written block"
-else
-  pass "skip: no done-done with the pinned lint on PATH; the feature lint row above is the proof"
 fi
 
 # One file edited after the seal is left out and named; the rest still make a block.

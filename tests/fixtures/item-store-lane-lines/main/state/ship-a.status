@@ -1,0 +1,15 @@
+working [at=1]: starting the slice
+paused [at=2] [wait=worker] [reason=parked]: thinking it over
+paused [at=3] [reason=quota]: no holder named
+blocked [at=4] [key=q1]: need a word from main
+blocked [at=5] [key=q1]: still need a word from main
+paused [at=6] [key=ci] [wait=outside] [reason=quota]: quota resets until @UNTIL@
+needs-decision [at=7] [key=own] [wait=owner]: pick a colour
+resolved [at=8] [key=ci]: the quota came back
+resolved [at=9] [key=nope]: nothing waits on this
+resolved [at=10]: all good so far
+done [at=11] [head=abc1234] [receipt=r1]: ready in branch chore/ta-1 (local-trunk)
+done [at=12]: said it again
+failed [at=13]: late failure on closed work
+working [at=14]: more work after done
+failed [at=15]: the rework broke

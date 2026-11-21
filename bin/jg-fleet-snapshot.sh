@@ -71,7 +71,9 @@
 #   scout_reports[]: present data/<id>/report.md pointers.
 #   main_inventory: {valid,reason,orphan_in_flight[],unstructured_current_count} -
 #     main-home current-inventory checks shared with squad_lead_home_summary_json
-#     (orphan structured in-flight ids with no state/<id>.meta, and unstructured
+#     (orphan structured in-flight ids with no state/<id>.meta and no
+#     state/<id>.parked - a parked lane keeps its row in flight by design,
+#     bin/jg-teardown-park-lib.sh - and unstructured
 #     current backlog rows). Does not invent live tasks; meta remains truth for
 #     workers. Bearings maps failures into omitted[] disclosure (and a Charted
 #     Next gate line) rather than silent empty Underway.
@@ -431,7 +433,13 @@ backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
   printf '%s\n' "$text" | jq -Rn --arg path "$backlog" --arg today "$SNAPSHOT_TODAY" --arg now "$SNAPSHOT_NOW" \
     --arg note_words "local main|$(bash "$SCRIPT_DIR/jg-delivery-style.sh" --trunk-aliases | paste -sd'|' -)" \
     --argjson age_days "$JG_SNAPSHOT_UNDATED_HOLD_AGE_DAYS" '
-    def trim: gsub("^[[:space:]]+|[[:space:]]+$"; "");
+    # jq writes gsub in jq itself, so each match costs a string rebuild. trim and
+    # the whitespace collapse in clean_title first test whether the edit would
+    # change anything: most titles already have single spaces and no padding.
+    def trim:
+      if test("^[[:space:]]|[[:space:]]$") then gsub("^[[:space:]]+|[[:space:]]+$"; "") else . end;
+    def collapse_space:
+      if test("[[:space:]]{2}|(?! )[[:space:]]") then gsub("[[:space:]]+"; " ") else . end;
     def timestamp_epoch($d):
       if ($d | type) != "string" then null
       elif ($d | test("T")) then try ($d | fromdateiso8601) catch null
@@ -449,8 +457,15 @@ backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
     def cap($rest; $re):
       (((($rest | capture($re)?) // {}) | .v) // null) as $v
       | if $v == null then null else ($v | trim) end;
+    # jq compiles a regex on every call, so on a backlog of thousands of rows the
+    # compiles are the cost. has_text($needle) is a plain substring test that
+    # guards each regex whose every match contains that literal text: the regex
+    # runs only where it can match, and the result is unchanged.
+    def has_text($needle): contains($needle);
+    def cap_if($rest; $needle; $re):
+      if ($rest | has_text($needle)) then cap($rest; $re) else null end;
     def metadata($rest; $key):
-      cap($rest; ".*(?:\\(|,[[:space:]]*)" + $key + ":[[:space:]]*(?<v>[^,)]*)");
+      cap_if($rest; $key + ":"; ".*(?:\\(|,[[:space:]]*)" + $key + ":[[:space:]]*(?<v>[^,)]*)");
     # LOAD-BEARING, do not remove as a duplicate definition of the kind field.
     # The markdown view omits the (kind: ...) metadata when a title starts with
     # uppercase SCOUT or SHIP at a JavaScript word boundary (ASCII letters,
@@ -463,19 +478,23 @@ backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
     def kind_of($rest):
       metadata($rest; "kind") as $kind
       | if $kind != null then $kind
-        elif ($rest | test("^SCOUT(?![A-Za-z0-9_])")) then "scout"
-        elif ($rest | test("^SHIP(?![A-Za-z0-9_])")) then "ship"
+        elif ($rest | startswith("SCOUT") and test("^SCOUT(?![A-Za-z0-9_])")) then "scout"
+        elif ($rest | startswith("SHIP") and test("^SHIP(?![A-Za-z0-9_])")) then "ship"
         else null end;
     def hold_metadata($rest):
-      cap($rest; ".*\\(hold:[[:space:]]*(?<v>[^)]*)");
+      cap_if($rest; "(hold:"; ".*\\(hold:[[:space:]]*(?<v>[^)]*)");
     def metadata_word($rest; $key):
-      cap($rest; ".*(?:\\(|,[[:space:]]*)" + $key + "[[:space:]]+(?<v>[^,)]*)");
+      cap_if($rest; $key; ".*(?:\\(|,[[:space:]]*)" + $key + "[[:space:]]+(?<v>[^,)]*)");
     def url_pattern: "https?://[^[:space:])\"<>]+";
     def wrapped_url_pattern: "<?" + url_pattern + ">?";
-    def links($rest): [$rest | scan(url_pattern)];
+    def links($rest): [$rest | select(has_text("http")) | scan(url_pattern)];
+    # Strips up to 20 trailing metadata groups in one match: the leftmost run of
+    # 1 to 20 groups that reaches the end is what stripping the last group 20
+    # times removes, at the cost of one regex instead of 20.
     def strip_trailing_metadata:
-      reduce range(0; 20) as $_ (.;
-        sub("[[:space:]]*\\([[:space:]]*(?:(?:repo|kind|ask|priority|hold|hold-kind|hold-until):[[:space:]]*[^)]*|(?:since|merged|reported|done)[[:space:]]+[^)]*)[[:space:]]*\\)[[:space:]]*$"; ""));
+      if test("\\)[[:space:]]*$") | not then .
+      else sub("(?:[[:space:]]*\\([[:space:]]*(?:(?:repo|kind|ask|priority|hold|hold-kind|hold-until):[[:space:]]*[^)]*|(?:since|merged|reported|done)[[:space:]]+[^)]*)[[:space:]]*\\)[[:space:]]*){1,20}$"; "")
+      end;
     def strip_title_artifacts:
       sub("[[:space:]]+-[[:space:]]+data/[^[:space:])]+/report\\.md$"; "")
       | sub("[[:space:]]+data/[^[:space:])]+/report\\.md$"; "")
@@ -485,7 +504,7 @@ backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
     def clean_title:
       strip_trailing_metadata
       | strip_title_artifacts
-      | gsub("[[:space:]]+"; " ")
+      | collapse_space
       | trim;
     def title_of($rest):
       $rest
@@ -497,12 +516,16 @@ backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
       [ $rest | scan("blocked-by:[[:space:]]+(?<id>[^[:space:])]+)") | .[0] ]
       | reduce .[] as $id ([]; if index($id) == null then . + [$id] else . end);
     def blocked_reason($rest):
-      cap($rest; ".*blocked-by:[[:space:]]*[^[:space:])]+[[:space:]]+-[[:space:]]*(?<v>.*)$") as $reason
+      cap_if($rest; "blocked-by:"; ".*blocked-by:[[:space:]]*[^[:space:])]+[[:space:]]+-[[:space:]]*(?<v>.*)$") as $reason
       | if $reason == null then null
         else ($reason | clean_title | if . == "" then null else . end)
         end;
+    # The anchored test spares rows that end in no note word the backtracking
+    # of the leading .* capture.
     def local_note($rest):
-      cap(($rest | strip_trailing_metadata); ".*(?:^|[[:space:]]+-[[:space:]]+|[[:space:]])(?<v>\($note_words))$");
+      ($rest | strip_trailing_metadata) as $text
+      | if $text | test("(?:\($note_words))$") | not then null
+        else cap($text; ".*(?:^|[[:space:]]+-[[:space:]]+|[[:space:]])(?<v>\($note_words))$") end;
     def completion($rest):
       (metadata_word($rest; "merged")) as $merged
       | (metadata_word($rest; "reported")) as $reported
@@ -516,8 +539,9 @@ backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
        (($line | capture("^[-*][[:space:]]+\\*\\*(?<id>[^*]+)\\*\\*[[:space:]]+-[[:space:]]+(?<rest>.*)$")?)
         | if . == null then null else . + {check:" "} end));
     def structured_row($line):
-      ($line | test("^[-*][[:space:]]+\\[[ xX]\\][[:space:]]+[^[:space:]]+[[:space:]]+-[[:space:]]+"))
-      or ($line | test("^[-*][[:space:]]+\\*\\*[^*]+\\*\\*[[:space:]]+-[[:space:]]+"));
+      ($line | startswith("-") or startswith("*"))
+      and (($line | test("^[-*][[:space:]]+\\[[ xX]\\][[:space:]]+[^[:space:]]+[[:space:]]+-[[:space:]]+"))
+        or ($line | test("^[-*][[:space:]]+\\*\\*[^*]+\\*\\*[[:space:]]+-[[:space:]]+")));
     def parse_row($line; $section; $order):
       row_match($line) as $m
       | if $m == null then
@@ -536,9 +560,10 @@ backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
              priority:metadata($rest; "priority"),
              hold_reason:hold_metadata($rest),
              hold_kind:metadata($rest; "hold-kind"),
+             owner_call:(metadata($rest; "owner-call") == "yes"),
              hold_until:metadata($rest; "hold-until"),
              hold_set:null,
-             blocked_by:cap($rest; ".*blocked-by:[[:space:]]*(?<v>[^[:space:])]+).*"),
+             blocked_by:cap_if($rest; "blocked-by:"; ".*blocked-by:[[:space:]]*(?<v>[^[:space:])]+).*"),
              blocked_by_ids:blocked_by_ids($rest),
              blocked_reason:blocked_reason($rest),
              since:metadata_word($rest; "since"),
@@ -548,29 +573,45 @@ backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
              completion:completion($rest),
              links:links($rest),
              pr_url:((links($rest) | map(select(test("/pull/[0-9]+"))) | .[0]) // null),
-             report_path:cap($rest; ".*(?<v>data/[^[:space:])]+/report\\.md).*"),
+             report_path:cap_if($rest; "/report.md"; ".*(?<v>data/[^[:space:])]+/report\\.md).*"),
              local_note:local_note($rest),
              raw:$line,
              body_lines:[],
              body_excerpt:null}
         end;
-    reduce inputs as $line
-      ({path:$path,present:true,records:[],section:null,order:0};
-       if ($line | test("^##[[:space:]]+")) then
-         .section = (($line | sub("^##[[:space:]]+";"") | trim) | section_state)
-       elif .section == null or ($line | trim) == "" then
-         .
-       elif structured_row($line) then
-         .order += 1
-         | .records += [parse_row($line; .section; .order)]
-       elif ((.records | length) > 0 and (.records[-1].structured == true) and ($line | test("^[[:space:]]+"))) then
-         ($line | trim) as $body
-         | if $body == "" then .
-           else .records[-1].body_lines += [$body] end
-       else
-         .order += 1
-         | .records += [{order:.order,state:.section,structured:false,id:null,raw:$line,body_lines:[],body_excerpt:null}]
-       end)
+    # One linear pass. Its state never holds the growing record list: jq copies
+    # an array that grows inside reduce or foreach state on every line, which
+    # made this parse quadratic in the backlog size. The row being read waits in
+    # .pending, collecting its body lines, and is emitted as soon as the next row
+    # starts or the input ends (the null after the wrapped lines).
+    {path:$path,present:true,records:[
+      foreach ((inputs | [.]), null) as $item
+        ({section:null,order:0,pending:null,emit:null};
+         .emit = null
+         | if $item == null then
+             .emit = .pending | .pending = null
+           else
+             $item[0] as $line
+             | if ($line | test("^##[[:space:]]+")) then
+                 .section = (($line | sub("^##[[:space:]]+";"") | trim) | section_state)
+               elif .section == null or ($line | test("^[[:space:]]*$")) then
+                 .
+               elif structured_row($line) then
+                 .order += 1
+                 | .emit = .pending
+                 | .pending = parse_row($line; .section; .order)
+               elif .pending.structured == true and ($line | test("^[[:space:]]+")) then
+                 ($line | trim) as $body
+                 | if $body == "" then .
+                   else .pending.body_lines += [$body] end
+               else
+                 .order += 1
+                 | .emit = .pending
+                 | .pending = {order:.order,state:.section,structured:false,id:null,raw:$line,body_lines:[],body_excerpt:null}
+               end
+           end;
+         .emit // empty)
+    ]}
     | .records |= map(
         if (.body_lines | length) > 0 then
           .hold_set = cap(.body_lines[0]; "^Captain hold set:[[:space:]]*(?<v>[0-9]{4}-[0-9]{2}-[0-9]{2}(?:T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)?)$")
@@ -608,9 +649,8 @@ backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
                elif .hold_until == null and .hold_age_days != null
                     and .hold_age_days >= $age_days then "aged"
                else "live" end)
-          | .captain_actionable = (.hold_bucket == "live")
+          | .captain_actionable = (.owner_call and .hold_bucket == "live")
         else . end)
-    | del(.section,.order)
   ' | jg_hold_reason_decode_stream json
 )
 
@@ -980,15 +1020,17 @@ task_json_lines() {
 main_inventory_json() {  # <backlog-json-file> <tasks-json-file>
   jq -n \
     --slurpfile backlog "$1" \
-    --slurpfile tasks "$2" '
+    --slurpfile tasks "$2" \
+    --slurpfile parked "$PARKED_JSON_FILE" '
     ($backlog[0]) as $backlog
     | ($tasks[0]) as $tasks
+    | ([$tasks[].id] + $parked[0]) as $child_ids
     | ([ $backlog.records[]?
        | select((.state == "in_flight" or .state == "queued") and (.structured | not)) ]) as $unstructured_current
     | ([ $backlog.records[]?
          | select(.state == "in_flight" and .structured and .requires_child_metadata) ]) as $owned_in_flight
     | ([ $owned_in_flight[]
-         | select(.id as $id | [$tasks[].id] | index($id) | not)
+         | select(.id as $id | $child_ids | index($id) | not)
          | .id ]) as $orphan_in_flight
     | (($unstructured_current | length) == 0
        and ($orphan_in_flight | length) == 0) as $valid
@@ -1008,10 +1050,9 @@ main_inventory_json() {  # <backlog-json-file> <tasks-json-file>
 # This mode never reads parent events or terminal text and never aggregates
 # nested squad_leads.
 # The count of tickets this home can start, as JSON: a number, null when the store
-# did not answer within its limit (not known), or "legacy" for a home with no store.
+# did not answer within its limit (not known).
 spawnable_ready_json() {
   local out
-  [ -r "$CONFIG/beads-dir" ] || { printf '"legacy"\n'; return 0; }
   out=$(JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-backlog.sh" ready --spawnable 2>/dev/null) || { printf 'null\n'; return 0; }
   out=$(printf '%s\n' "$out" | sed -n 's/^count: \([0-9][0-9]*\)$/\1/p' | head -1)
   printf '%s\n' "${out:-null}"
@@ -1027,9 +1068,11 @@ squad_lead_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
     --argjson landed_n "$JG_SNAPSHOT_SQUAD_LEAD_LANDED_PER_HOME" \
     --argjson spawnable "${SPAWNABLE_READY:-null}" \
     --slurpfile backlog "$1" \
-    --slurpfile tasks "$2" --slurpfile contributions "$CONTRIBUTIONS_JSON_FILE" "$JG_LANDED_JQ_DEFS"'
+    --slurpfile tasks "$2" --slurpfile parked "$PARKED_JSON_FILE" \
+    --slurpfile contributions "$CONTRIBUTIONS_JSON_FILE" "$JG_LANDED_JQ_DEFS"'
     ($backlog[0]) as $backlog
     | ($tasks[0]) as $tasks
+    | ([$tasks[].id] + $parked[0]) as $child_ids
     | def trunc($n):
       tostring | gsub("\\s+"; " ")
       | if length > $n then .[:$n] + "…" else . end;
@@ -1073,7 +1116,7 @@ squad_lead_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
     | ([ $tasks[] | select(.current_state.state == "unknown") ]) as $unknown_children
     | ([ $owned_in_flight[]
          | select(.requires_child_metadata)
-         | select(.id as $id | [$tasks[].id] | index($id) | not) ]) as $orphan_in_flight
+         | select(.id as $id | $child_ids | index($id) | not) ]) as $orphan_in_flight
     | ([ $tasks[]
          | select(.kind != "squad_lead")
          | select(.id as $id | [$owned_in_flight[].id] | index($id) | not)
@@ -2093,6 +2136,11 @@ SQUAD_LEAD_CURRENT_JSON_FILE="$JSON_TRANSPORT_DIR/squad-lead-current.json"
 SQUAD_LEAD_LANDED_JSON_FILE="$JSON_TRANSPORT_DIR/squad-lead-landed.json"
 printf '%s\n' "$TASKS_JSON" > "$TASKS_JSON_FILE" \
   || { echo "jg-fleet-snapshot: temporary task file write failed" >&2; exit 1; }
+# A parked lane's child record is state/<id>.parked (bin/jg-teardown-park-lib.sh): its row stays In flight with no task record.
+PARKED_JSON_FILE="$JSON_TRANSPORT_DIR/parked.json"
+for parked in "$STATE"/*.parked; do [ -f "$parked" ] && basename "$parked" .parked; done \
+  | jq -Rn '[inputs]' > "$PARKED_JSON_FILE" \
+  || { echo "jg-fleet-snapshot: temporary parked-lane file write failed" >&2; exit 1; }
 
 # The store read for the ready count is bounded at 10 seconds and independent of the
 # rest, so it runs beside them and the summary waits for it only at the end.

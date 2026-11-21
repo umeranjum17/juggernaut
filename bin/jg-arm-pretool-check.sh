@@ -20,6 +20,9 @@
 # no new extraction - only --cursor, which selects Cursor's own deny rendering
 # and marks this invocation as the Cursor registration rather than the
 # Claude-settings duplicate Cursor also loads.
+# agy (Antigravity CLI) delivers the command at .toolCall.args.CommandLine for
+# its run_command tool (verified live, agy 1.5.11) and registers this script
+# with --agy from the tracked .agents/hooks.json.
 # CLI mode is used by OpenCode and Pi after their adapters extract the exact
 # command string.
 # --background remains accepted for compatibility, but harness-native tracked
@@ -32,6 +35,12 @@
 #   DENY, --cursor - exit 0 and Cursor's own decision object on stdout. Cursor
 #          reads the returned object rather than the exit status, and only that
 #          rendering is verified to block the command and surface the reason.
+#   DENY, --agy - exit 0 and agy's decision object on stdout. agy treats ANY
+#          non-zero hook exit as a denial of the tool call, so --agy never exits
+#          non-zero; ALLOW stays exit 0 with no output, which agy reads as "no
+#          opinion" and runs its own permission policy (verified live, agy
+#          1.5.11: a bare `{}` or an empty decision denies, so allow prints
+#          nothing).
 #   FAIL OPEN - malformed or empty stdin, missing jq for stdin transport,
 #               missing Node or policy owner, or an invalid policy response.
 #
@@ -68,10 +77,11 @@ CMD_SET=0
 BACKGROUND=""
 CLAUDE_MODE=0
 CURSOR_MODE=0
+AGY_MODE=0
 
 usage() {
   cat <<'EOF'
-Usage: jg-arm-pretool-check.sh [--command <cmd>] [--background true|false] [--claude|--cursor]
+Usage: jg-arm-pretool-check.sh [--command <cmd>] [--background true|false] [--claude|--cursor|--agy]
 
 With no --command, reads a PreToolUse-style JSON payload on stdin (Grok
 toolInput.command, or Claude/Codex/Cursor tool_input.command).
@@ -80,6 +90,8 @@ The deny reason is written to stderr, with a Grok decision object on stdout
 unless --claude is supplied.
 With --cursor, a deny is Cursor's own decision object on stdout and exit 0,
 because Cursor reads the returned object rather than the exit status.
+With --agy, stdin is agy's run_command payload and a deny is agy's decision
+object on stdout and exit 0, because agy denies on any non-zero exit.
 Malformed transport and an unavailable classifier runtime fail open.
 EOF
 }
@@ -114,6 +126,10 @@ while [ "$#" -gt 0 ]; do
       CURSOR_MODE=1
       shift
       ;;
+    --agy)
+      AGY_MODE=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -138,7 +154,7 @@ if [ "$CMD_SET" -eq 0 ]; then
   if [ "$CURSOR_MODE" -eq 0 ] && jg_hook_payload_is_foreign_host "$PAYLOAD"; then
     exit 0
   fi
-  CMD=$(printf '%s' "$PAYLOAD" | jq -r '(.toolInput.command // .tool_input.command // empty)' 2>/dev/null) || exit 0
+  CMD=$(printf '%s' "$PAYLOAD" | jq -r '(.toolInput.command // .tool_input.command // .toolCall.args.CommandLine // empty) | strings' 2>/dev/null) || exit 0
   [ -n "$CMD" ] || exit 0
   # Kept for transport parity only.
   # shellcheck disable=SC2034
@@ -214,6 +230,10 @@ DETAIL="[$CODE] $REASON"
 ESCAPED=$(json_escape "$DETAIL")
 if [ "$CURSOR_MODE" -eq 1 ]; then
   printf '{"permission":"deny","user_message":"%s"}\n' "$ESCAPED"
+  exit 0
+fi
+if [ "$AGY_MODE" -eq 1 ]; then
+  printf '{"decision":"deny","reason":"%s"}\n' "$ESCAPED"
   exit 0
 fi
 printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"%s"}\n' "$ESCAPED" >&2

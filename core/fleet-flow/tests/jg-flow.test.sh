@@ -21,9 +21,13 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/home" "$TMP/xdg" "$TMP/tmp"
-# shellcheck source=core/lib/beads-test-env.sh disable=SC1091
-. "$ROOT/../lib/beads-test-env.sh"
-for h in main child grand; do core_beads_home "$(cd "$JG_BIN/.." && pwd)" "$TMP/$h"; done
+# A fixture home on the tickets tables (fleet.db).
+core_tables_home() {  # <checkout> <home>
+  mkdir -p "$2/config" "$2/data" && : > "$2/config/backlog-intake-loose"
+  case ":$PATH:" in *":$1/bin:"*) ;; *) PATH=$1/bin:$PATH; export PATH ;; esac
+  JG_HOME=$2 python3 -I "$1/core/item-store/adapters/tickets.py" import --home main /dev/null >/dev/null
+}
+for h in main child grand; do core_tables_home "$(cd "$JG_BIN/.." && pwd)" "$TMP/$h"; done
 HOME="$TMP/home" XDG_CONFIG_HOME="$TMP/xdg" TMPDIR="$TMP/tmp" python3 - "$ROOT/bin/jg-flow.sh" "$TMP" <<'PY'
 import hashlib, json, os, shlex, shutil, socket, subprocess, sys, threading
 from pathlib import Path
@@ -33,7 +37,7 @@ def tx(home, *args):
     r = subprocess.run(['jg-backlog.sh', *args], env=dict(os.environ, JG_HOME=str(home)), capture_output=True, text=True)
     assert r.returncode == 0, (args, r.stdout, r.stderr)
 for h in (main, child):
-    (h / 'state').mkdir(parents=True)
+    (h / 'state').mkdir(parents=True, exist_ok=True)
 (main / 'data/squad_leads.md').write_text(f'- child - Worker (home: {child}; scope: app; projects: app)\n')
 (child / 'data/squad_leads.md').write_text(f'- main - Parent (home: {main}; scope: fleet; projects: app)\n')
 # Exact rejected-key return from writeboost.status; key and timestamp remain unknown.
@@ -85,7 +89,7 @@ assert next(b for b in x['bottlenecks'] if b['cause'] == 'unknown')['unknown_ite
 assert any(n.get('line') == 7 for n in x['limitations']), 'malformed durable record disclosed'
 assert sum(d['known'] + d['unknown'] for d in x['trend_7d']) == len(x['executed_7d'])
 grand = tmp / 'grand'
-(grand / 'state').mkdir(parents=True)
+(grand / 'state').mkdir(parents=True, exist_ok=True)
 (grand / 'data/squad_leads.md').write_text(f'- main - Parent (home: {main}; scope: fleet; projects: app)\n')
 with open(child / 'data/squad_leads.md', 'a') as f:
     f.write(f'- grand - Worker (home: {grand}; scope: app; projects: app)\n')
@@ -110,6 +114,29 @@ assert y['homes'] == ['child', 'grand', 'main'], 'nested home discovered'
 bytask = {(l['home'], l['task']): l for l in y['lanes']}
 assert bytask[('grand', 'gtask')]['times']['merged'] == 70, 'nested return-channel merge found'
 assert bytask[('grand', 'gtask')]['durations']['time_to_merge'] is None, 'no guessed pickup'
+# A lead's return channel grows to thousands of lines: the read starts the
+# classifier as often for that long log as for one line, so the dashboard's first build stays bounded.
+starts = tmp / 'classifier-starts'
+counter = tmp / 'count-classifier'
+counter.write_text('#!/usr/bin/env bash\necho start >> "$JG_TEST_STARTS"\n'
+                   'JG_CLASSIFY_BIN= exec bash "$JG_BIN/jg-classify.sh" "$@"\n')
+counter.chmod(0o755)
+def counted_starts():
+    starts.write_text('')
+    os.environ.update(JG_CLASSIFY_BIN=str(counter), JG_TEST_STARTS=str(starts))
+    try:
+        doc = json.loads(run())
+    finally:
+        del os.environ['JG_CLASSIFY_BIN'], os.environ['JG_TEST_STARTS']
+    return doc, len(starts.read_text().splitlines())
+_, short = counted_starts()
+(child / 'state/grand.status').write_text(''.join(f'working [at={n % 60}]: routed step {n}\n' for n in range(3000))
+                                          + 'done [at=70] [key=merged-gtask]: merged\n')
+long_doc, long = counted_starts()
+assert short and long == short, f'classifier starts grew with the log: {short} for one line, {long} for 3001'
+assert {(l['home'], l['task']): l for l in long_doc['lanes']}[('grand', 'gtask')]['times']['merged'] == 70, \
+    'the merge at the end of a long return channel is read'
+(child / 'state/grand.status').write_text('done [at=70] [key=merged-gtask]: merged\n')
 assert 'gtask' in {l['task'] for l in y['executed_24h']}
 assert bytask[('child', 'reused')]['times']['merged'] is None, 'reused id keeps no merge'
 assert 'reused' not in {l['task'] for l in y['executed_24h']}
@@ -270,19 +297,6 @@ reasons = {q['task']: q['why'] for q in coverage['queue'] if q['home'] == 'main'
 assert reasons['jg-archive-ready'] == 'lane cap: 0 recorded active lanes, cap 0'
 assert reasons['jg-multiple'] == 'dependency: jg-prior', 'completed edges excluded, unresolved edge retained'
 assert reasons['jg-held'] == 'hold: Wait for You', 'consumer decodes hold reasons'
-(grand / 'config/beads-dir').unlink()
-before = files()
-missing = json.loads(run())
-assert files() == before and not (grand / 'config/beads-dir').exists(), 'missing store read does not create one'
-assert any(n['source'] == 'grand/backlog' and n['reason'].startswith('unknown:')
-           for n in missing['limitations']), 'missing backlog is unknown, not a known empty queue'
-(child / 'config/beads-dir').write_text(str(tmp / 'no-such-store/.beads') + '\n')
-before = files()
-unavailable = json.loads(run())
-assert files() == before, 'an unavailable store never changes its home'
-assert not any(q['home'] == 'child' for q in unavailable['queue']), 'an unavailable store yields no queue'
-assert any(n['source'] == 'child/backlog' and n['reason'].startswith('unknown:')
-           for n in unavailable['limitations']), 'unavailable alternate backend disclosed'
 (main / 'config/jg-flow-check.sh').write_text('unrecognized clock policy\n')
 assert next(l for l in json.loads(run())['lanes'] if l['task'] == 'memory')['stage_clock']['seconds'] is None
 (main / 'config/jg-mem-gate.sh').write_text('min=${JG_MEM_MIN_GB:-12}\n'

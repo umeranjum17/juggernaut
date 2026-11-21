@@ -11,7 +11,8 @@
 # a dead session's lock alive. Line 1 keeps its whole-line pid format because
 # every other reader takes the first line as the pid.
 #
-# The trusted id itself is recorded beside the lock in state/.lock-session, a
+# The trusted id (a Claude session id, a Pi pane's Herdr session, or an agy
+# conversation id: jg_session_lock_trusted_session_id) is recorded beside the lock in state/.lock-session, a
 # sidecar written only here and only under the claim lock: refreshed on every
 # confirmed-own acquisition, including the early already-mine exit that waits
 # for the claim lock, removed when the acquiring session proves no trusted id,

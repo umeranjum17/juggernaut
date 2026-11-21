@@ -1,0 +1,17 @@
+{
+ "argv": [
+  "create",
+  "--title=Plain ticket",
+  "--id",
+  "jg-plain",
+  "--force",
+  "--metadata",
+  "{\"release\": \"later\"}",
+  "--description=why"
+ ],
+ "stdin": "",
+ "stdout": "\u2713 Created issue: jg-plain \u2014 Plain ticket\n  Priority: P2\n  Status: open\n",
+ "exit": 0,
+ "form": "create --description --force --id --metadata --title",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-early\",\"title\":\"Recent fix\",\"description\":\"why\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T14:11:31Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T14:11:31Z\",\"metadata\":{\"release\":\"later\"},\"labels\":[\"bottleneck-fix\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-fix\",\"title\":\"Fix delivery flow\",\"description\":\"why\",\"status\":\"closed\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T14:11:26Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T14:11:39Z\",\"closed_at\":\"2026-11-19T14:11:39Z\",\"metadata\":{\"release\":\"later\"},\"labels\":[\"bottleneck-fix\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

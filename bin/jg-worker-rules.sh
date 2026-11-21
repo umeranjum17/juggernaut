@@ -35,12 +35,20 @@ rows() {
     esac
   done < "$MAP"
 }
+# AGENTS.md is the shared pack, then the Main pack after its `# Main (the Overwatch) only`
+# line; both packs repeat some `## ` headings, so a Main section's id is `agents:main:<heading>`.
+MAIN_MARK='# Main (the Overwatch) only'
+# The ids of AGENTS.md's sections, one per line, in file order.
+section_ids() {
+  awk -v m="$MAIN_MARK" '/^## /{print "agents:" (main ? "main:" : "") substr($0, 4)} $0 == m{main = 1}' "$ROOT/AGENTS.md"
+}
 # Text of one part. A section runs from its `## ` heading to the next; the
 # preamble is everything before the first. A skill's part is its front matter.
 text() {
   case "$1" in
     agents-preamble) awk '/^## /{exit} {print}' "$ROOT/AGENTS.md" ;;
-    agents:*) awk -v h="## ${1#agents:}" '/^## /{p = ($0 == h)} p' "$ROOT/AGENTS.md" ;;
+    agents:main:*) awk -v h="## ${1#agents:main:}" -v m="$MAIN_MARK" 'main && /^## /{p = ($0 == h)} p && main; $0 == m{main = 1}' "$ROOT/AGENTS.md" ;;
+    agents:*) awk -v h="## ${1#agents:}" -v m="$MAIN_MARK" '/^## /{p = (!main && $0 == h)} p; $0 == m{main = 1}' "$ROOT/AGENTS.md" ;;
     skill:*) awk '/^---$/{c++; print; next} c==1{print} c>=2{exit}' "$ROOT/.agents/skills/${1#skill:}/SKILL.md" ;;
   esac
 }
@@ -85,7 +93,7 @@ case "$cmd" in
   check)
     bad=0
     # Each section heading and each skill is named by exactly one row.
-    want=$( { echo agents-preamble; grep '^## ' "$ROOT/AGENTS.md" | sed 's/^## /agents:/'
+    want=$( { echo agents-preamble; section_ids
       for d in "$ROOT"/.agents/skills/*/SKILL.md; do echo "skill:$(basename "$(dirname "$d")")"; done; } | sort)
     have=$(rows | cut -d'|' -f1 | sort)
     dup=$(echo "$have" | uniq -d); [ -z "$dup" ] || { echo "named twice: $dup"; bad=1; }

@@ -44,11 +44,15 @@
 #     are counted, and
 #   - has no recorded PR handoff: the pr= line bin/jg-pr-check.sh records when a
 #     worker's PR is ready, after which the worker waits on review or merge and
-#     no longer uses local resources.
-# A place therefore frees when a PR-based ship records its ready PR, or when any
-# task is cleaned up and its record removed. A local-only ship and a scout have
-# no recorded handoff and hold their place until cleanup. A worker that is
-# steered back into work after its PR handoff is not counted again.
+#     no longer uses local resources, and
+#   - is a live lane: jg_project_capacity_lane_is_live reads its status log, and
+#     a lane whose current event is `done` or `parked`, or whose log holds no
+#     event and whose record is older than an hour, uses no local resources.
+# A place therefore frees when a PR-based ship records its ready PR, when a lane
+# records done or parked, or when any task is cleaned up and its record removed.
+# A lane steered back into work holds its place again at its next `working`
+# line, which is the line that makes it live; a worker that is steered back
+# into work after its PR handoff is not counted again.
 # The declaration is matched by the spawning clone's directory name, so clones
 # of one origin share the cap only when they use that same directory name. A
 # clone of that origin under a different directory name finds no declaration
@@ -147,6 +151,39 @@ jg_project_capacity_lookup() {  # <config-dir> <project-name>
   return 0
 }
 
+# The lane state a status log shows: the verb of its newest event, skipping
+# `resolved` lines (they close a decision and say nothing about the lane) and a
+# leading epoch stamp, or `empty` when no event is left.
+jg_project_capacity_lane_verb() {  # <status-file>
+  awk '
+    { line = $0; sub(/^[ \t]+/, "", line); sub(/^[0-9]+[ \t]+/, "", line) }
+    line == "" { next }
+    { verb = match(line, /^[a-z][a-z-]*/) ? substr(line, 1, RLENGTH) : "other" }
+    verb != "resolved" { last = verb }
+    END { print (last == "" ? "empty" : last) }
+  ' "$1" 2>/dev/null
+}
+
+# 0 when a task record still uses the project's local resources, 1 when its lane
+# is done, parked, or has never written an event for more than an hour. A fresh
+# spawn has no event yet and holds its place for that hour, so the next spawn
+# counts it; a status log that cannot be read keeps the place, because freeing
+# it could overbook the project.
+jg_project_capacity_lane_is_live() {  # <meta-file>
+  local status=${1%.meta}.status verb
+  if [ ! -e "$status" ]; then
+    verb=empty
+  else
+    [ -r "$status" ] || return 0
+    verb=$(jg_project_capacity_lane_verb "$status") || return 0
+  fi
+  case "$verb" in
+    done | parked) return 1 ;;
+    empty) [ "$(jg_path_age "$1")" -le 3600 ] ;;
+    *) return 0 ;;
+  esac
+}
+
 # Count the task records holding a place in one project's capacity.
 # <project-lock> is jg_treehouse_project_lock_path for the project being
 # admitted, and <project-dir> is that project's own directory, which matches
@@ -187,6 +224,7 @@ jg_project_capacity_occupants() {  # <project-lock> <project-dir> <first-state> 
       kind=$(jg_meta_get "$meta" kind)
       [ "$kind" != squad_lead ] || continue
       [ -z "$(jg_meta_get "$meta" pr)" ] || continue
+      jg_project_capacity_lane_is_live "$meta" || continue
       project=$(jg_meta_get "$meta" project)
       [ -n "$project" ] || continue
       lock=

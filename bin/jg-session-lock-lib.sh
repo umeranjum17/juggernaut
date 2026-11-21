@@ -26,14 +26,18 @@ unset _JG_SESSION_LOCK_LIB_DIR
 
 # Known harness command names; extend when a new adapter is verified. omp is
 # anchored exactly like pi: its process name is the bare word `omp` (verified,
-# omp 18.1.11), and a substring match would claim ompd or comp.
-JG_HARNESS_RE='claude|codex|opencode|grok|kimi|^pi$|^pi-signed$|^omp$'
+# omp 18.1.11), and a substring match would claim ompd or comp. agy is anchored
+# the same way: the Antigravity CLI is one Go binary whose process name is the
+# bare word `agy`, and it is the direct parent of both its hook commands and its
+# run_command shells (verified, agy 1.5.11), so a substring match would claim
+# any name that merely contains it.
+JG_HARNESS_RE='claude|codex|opencode|grok|kimi|^pi$|^pi-signed$|^omp$|^agy$'
 
 # The same harnesses as exact executable names. Keep in sync with
 # JG_HARNESS_RE. Used only for the stricter path evidence below, where the
 # loose regex would also match ordinary juggernaut paths such as
 # bin/jg-claude-stop-autoarm.sh.
-JG_HARNESS_NAMES=(claude codex opencode grok kimi pi-signed pi omp)
+JG_HARNESS_NAMES=(claude codex opencode grok kimi pi-signed pi omp agy)
 
 # Print the exact harness name carried by executable path $1 - its own basename
 # or any directory component - or return 1.
@@ -200,7 +204,28 @@ jg_harness_pid_alive() {
 # ancestry list an earlier walk already produced, so a caller that walked once
 # need not walk again.
 jg_session_lock_trusted_session_id() {  # [<ancestry-pids>]
-  jg_session_lock_claude_session_id "$@" || jg_session_lock_pi_session_id "$@"
+  jg_session_lock_claude_session_id "$@" || jg_session_lock_pi_session_id "$@" \
+    || jg_session_lock_agy_session_id "$@"
+}
+
+# agy hands every hook and run_command shell ANTIGRAVITY_CONVERSATION_ID, the
+# conversation id its PreInvocation hook payload also names as conversationId
+# (verified live, agy 1.5.11: docs/verification/agy.md). Trust gate: the
+# innermost harness process of this contiguous ancestry must be agy itself, so a
+# codex or Claude started by hand in an agy pane never claims the pane's
+# conversation, and an id merely retained in a helper environment is ignored.
+# The id is read from the environment only, never from ps argv.
+jg_session_lock_agy_session_id() {  # [<ancestry-pids>]
+  local id=${ANTIGRAVITY_CONVERSATION_ID:-} pids=${1:-} pid comm
+  [ -n "$id" ] || return 1
+  case "$id" in *[!A-Za-z0-9._-]*|*..*) return 1 ;; esac
+  if [ -z "$pids" ]; then
+    pids=$(jg_harness_ancestry_pids) || return 1
+  fi
+  pid=${pids%%$'\n'*}
+  comm=$(ps -o comm= -p "$pid" 2>/dev/null) || return 1
+  [ "$(basename -- "$comm")" = agy ] || return 1
+  printf '%s\n' "$id"
 }
 
 # Pi hands its shells no session id, so a Pi primary's id is the one Herdr binds

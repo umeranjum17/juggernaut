@@ -8,33 +8,25 @@
 #   park     a `paused ... reason=parked` line becomes the wait lead/parked at the next tick (bin/jg-wait-trace.sh);
 #   landing  a landed commit puts the ticket on the line (bin/jg-beads-trace.py land; the lander's own caller, landed_effects, is
 #            proved by tests/jg-trace-writers.test.sh and the trunk tests).
-# JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT name the builds; without them the run skips plainly.
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
-  printf 'skip: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
-  exit 0
-fi
-
 T=$(jg_test_tmproot jg-lane-events-ticket)
-WRAPPER=$ROOT/bin/jg-beads.sh CLI=$ROOT/bin/jg-backlog.sh
-unset BEADS_DB BEADS_DOLT_SHARED_SERVER BEADS_ACTOR JG_BACKLOG_LANE JG_BACKLOG_SPAWN_GEN JG_BACKLOG_AGENT JG_BACKLOG_LANE_HANDOVER
-mkdir -p "$T/store" "$T/home/config" "$T/home/data" "$T/home/state"
-export TZ=UTC TMPDIR=$T BEADS_DIR=$T/store/.beads JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT JG_HOME=$T/home
-printf '%s\n' "$BEADS_DIR" > "$T/home/config/beads-dir"
+COMPAT=$ROOT/core/item-store/adapters/bd_compat.py CLI=$ROOT/bin/jg-backlog.sh
+unset BEADS_ACTOR JG_BACKLOG_LANE JG_BACKLOG_SPAWN_GEN JG_BACKLOG_AGENT JG_BACKLOG_LANE_HANDOVER
+mkdir -p "$T/home/config" "$T/home/data" "$T/home/state"
+export TZ=UTC TMPDIR=$T JG_HOME=$T/home
 : > "$T/home/config/backlog-intake-loose"
 H=$T/home; ln -sn "$ROOT/bin" "$H/bin"
 
-bd() { "$WRAPPER" "$@"; }
+bd() { python3 -I "$COMPAT" "$@"; }
 axi() { "$CLI" "$@"; }
 field() { bd show "$1" --json 2>/dev/null | jq -r "(if type == \"array\" then .[0] else . end) | $2"; }
 stage() { axi ticket-stage jg-w1 | cut -f1; }
 kinds() { bd provenance log jg-w1 --json | jq -r 'sort_by(.occurred_at) | map(.kind + ":" + .source) | join(" ")'; }
 status() { printf '%s\n' "$1" >> "$H/state/lane-w1.status"; }
 
-bd init --prefix jg >"$T/init.log" 2>&1 || fail "init the store: $(cat "$T/init.log")"
 axi add jg-w1 "[feature] fixture lane" --priority 2 --body why >/dev/null || fail "file jg-w1"
 bd update jg-w1 --set-metadata task=lane-w1 >/dev/null || fail "name the task"
 printf 'ticket=jg-w1\nmode=local-trunk\n' > "$H/state/lane-w1.meta"
@@ -93,4 +85,5 @@ pass "park: the wait lead/parked is on the row and goes when the lane works agai
 # landing.
 axi trace record jg-w1 land git-sha "$head" --source jg-trunk-land --at 1794000600 >/dev/null || fail "land"
 [ "$(stage)" = delivering.batched ] || fail "a landed commit puts the ticket on the line, got [$(stage)]"
+python3 -I "$ROOT/core/item-store/adapters/tickets.py" check >"$T/check.log" 2>&1 || fail "the tables must stay the record: $(cat "$T/check.log")"
 pass "landing: the ticket reads landed on the line ($(kinds))"

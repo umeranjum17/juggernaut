@@ -3,7 +3,8 @@
 import os, re, subprocess, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import alerttable
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "item-store"))
+import alertrules
 import chartfit
 import dwell
 import reconcile
@@ -315,8 +316,8 @@ def escalation(m):
     """For each state: its mode, what it emits and to which machine, its timeout, its alert, and who is told first, next, and by a board card."""
     print("state\tmode\temits\ttimeout\talert\ttold first\ttold next\tboard card")
     for k, s in m["states"].items():
-        al = alerttable.of(s)
-        first, nxt, card = alerttable.chain(al) if al else ("-", "-", "-")
+        al = tablelint.alert_of(s)
+        first, nxt, card = alertrules.chain(al) if al else ("-", "-", "-")
         print("\t".join([k, tablelint.mode(s), s.get("emits") or "-", s.get("limit") or "-", al or "-", first, nxt, card]))
 
 

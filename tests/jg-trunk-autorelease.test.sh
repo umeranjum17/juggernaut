@@ -50,7 +50,11 @@ exit 0
 SH
   chmod +x "$W/fakebin/gh-axi" "$W/fakebin/gh"
   ln -sn "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"
-  [ "${2-}" = no-waiver ] || trunk waiver "$PROJ" --rule "$RULE" --release >/dev/null 2>&1 || fail "the release waiver must record"
+  case "${2-}" in
+    no-waiver) ;;
+    release-only) trunk waiver "$PROJ" --rule "$RULE" --release >/dev/null 2>&1 || fail "the release waiver must record" ;;
+    *) trunk waiver "$PROJ" --rule "$RULE" --autorelease >/dev/null 2>&1 || fail "the automatic release choice must record" ;;
+  esac
   lane a1 released >/dev/null; trunk land a1 >/dev/null 2>&1 || fail "a1 must land"; trunk verify "$PROJ" >/dev/null 2>&1 || fail "a1 must verify"
   trunk word release "$PROJ" "ship a1" >/dev/null 2>&1 || fail "the release word must record"
   out=$(trunk release "$PROJ" 2>&1) || fail "the release must be pushed: $out"
@@ -115,13 +119,19 @@ test_no_waiver_and_diverged_main_are_refused() {
   out=$(trunk autorelease "$PROJ" 2>&1) || fail "T4: no waiver must not fail: $out"
   assert_contains "$out" "needs the captain's word" "T4: no waiver, no push"
   [ "$(origin_main)" != "$PIN" ] || fail "T4: main must not move without the waiver"
+  world_released releaseonly release-only
+  out=$(trunk autorelease "$PROJ" 2>&1) || fail "T4: a release waiver alone must not fail: $out"
+  assert_contains "$out" "not chosen for the automatic release" "T4: a release waiver alone does not choose the automatic release"
+  out=$(trunk publish "$PROJ" 2>&1) || fail "T4: publish without the choice must not fail: $out"
+  assert_contains "$out" "not chosen for the automatic release" "T4: publish needs the choice too"
+  [ "$(origin_main)" != "$PIN" ] || fail "T4: main must not move on a release waiver alone"
   world_released diverged
   git -C "$PROJ" worktree add -q -b other "$W/other" "$(origin_main)"
   commit_in "$W/other" other.txt x "main moves alone"; git -C "$W/other" push -q origin other:refs/heads/main
   out=$(trunk autorelease "$PROJ" 2>&1) && fail "T4: a main that is not an ancestor of the pin must be refused: $out"
   assert_contains "$out" "fast-forward" "T4: the refusal says why"
   [ "$(origin_main)" != "$PIN" ] || fail "T4: nothing is pushed over a diverged main"
-  pass 'T4 no waiver and a diverged main both leave main alone'
+  pass 'T4 no waiver, a release waiver without the automatic-release choice, and a diverged main all leave main alone'
 }
 
 test_pre_push_guard_admits_only_green_fast_forwards() {

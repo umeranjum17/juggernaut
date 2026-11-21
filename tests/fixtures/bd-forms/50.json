@@ -1,0 +1,12 @@
+{
+ "argv": [
+  "create",
+  "--title",
+  "Independent Umer home"
+ ],
+ "stdin": "",
+ "stdout": "\u2713 Created issue: jg-zfx \u2014 Independent Umer home\n  Priority: P2\n  Status: open\n",
+ "exit": 0,
+ "form": "create --title",
+ "store": ""
+}

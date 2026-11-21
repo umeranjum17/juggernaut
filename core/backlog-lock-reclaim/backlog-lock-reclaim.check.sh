@@ -49,4 +49,4 @@ printf '%s reclaimed %s age=%ss\n' "$(date -u +%FT%TZ)" "$LOCK" "$age" >> "$FMH/
 # The reclaim is already done, so the drift alert rings once and resolves: the next stale lock is a new alert.
 JG_HOME="$FMH" JG_STATE_OVERRIDE="$FMH/state" "$FMH/bin/jg-alert.sh" raise drift backlog-lock-reclaim --deliver \
   --note "reclaimed 0-byte backlog lock $LOCK (age ${age}s, no holder); backlog writes are unblocked" >/dev/null 2>&1 \
-  && JG_HOME="$FMH" JG_STATE_OVERRIDE="$FMH/state" "$FMH/bin/jg-alert.sh" resolve drift--backlog-lock-reclaim >/dev/null 2>&1
+  && JG_HOME="$FMH" JG_STATE_OVERRIDE="$FMH/state" "$FMH/bin/jg-alert.sh" resolve drift--backlog-lock-reclaim --proof source:lock-free >/dev/null 2>&1

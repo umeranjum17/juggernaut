@@ -17,9 +17,9 @@ mkdir -p "$HOME"
 H=$T/home
 mkdir -p "$H/state" "$H/data" "$H/config"
 ln -s "$REPO/bin" "$H/bin"
-# shellcheck source=core/lib/beads-test-env.sh
-. "$REPO/core/lib/beads-test-env.sh"
-core_beads_home "$REPO" "$H"
+# The home's backlog is its tickets tables: a config and data folder, loose intake, and the checkout's bin/ on PATH.
+mkdir -p "$H/config" "$H/data" && : > "$H/config/backlog-intake-loose"
+PATH=$REPO/bin:$PATH; export PATH
 cat > "$T/gh" <<'STUB'
 #!/usr/bin/env bash
 # api repos/ex/r/actions/runs/<id> --jq .conclusion: 21 is red, 22 is green; run rerun <id> -R <repo> is recorded.

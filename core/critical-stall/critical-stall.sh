@@ -67,7 +67,7 @@ while IFS="$TAB" read -r slug first; do
   key=$slug.$url.$sha
 
   recorded "alert.$key" || {
-    "$ALERT" resolve "stranded--$slug" >/dev/null 2>&1
+    "$ALERT" resolve "stranded--$slug" --proof source:superseded >/dev/null 2>&1
     "$ALERT" raise stranded "$slug" | "$ALERT" deliver >/dev/null 2>&1 && record "alert.$key"
   }
 

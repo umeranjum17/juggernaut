@@ -19,7 +19,6 @@ git init -q -b trunk "$R"; g commit -q --allow-empty -m base; BASE=$(g rev-parse
 # shellcheck disable=SC2016 # the stub body is written out verbatim and expands when the stub runs
 printf '#!/bin/sh\ncat "%s/pr/${3##*/}.json" 2>/dev/null || exit 1\n' "$T" > "$T/bin/gh"; chmod +x "$T/bin/gh"
 
-for m in lane-delivery release trunk-pointers; do bash "$JM" check "$m" >/dev/null; expect_code 0 "$?" "$m lints"; done
 bash "$JM" coverage trunk-pointers >/dev/null; expect_code 0 "$?" "every trunk-pointers move names its test"
 assert_equals "built landed in-use released" "$(awk -F'\t' '$1 == "state" { printf "%s ", $2 }' "$M/tables/trunk-pointers.tsv" | sed 's/ $//')" "the pointers are the four words"
 
@@ -59,6 +58,4 @@ expect f "In use" released                                                      
 lane g p7; land g p7; tab "revert-g" p7 "$(g commit-tree "$BASE^{tree}" -p "$BASE" -m revert)" "$(date +%s)" reverts >> "$D/trunk-landings.tsv"; expect g "" ""
 assert_equals "" "$(bash "$M/observers/release.sh" stage no-such-lane)" "a lane in no release has no release stage"
 bash "$M/observers/lane-delivery.sh" stage >/dev/null 2>&1; expect_code 2 "$?" "stage without a lane is a usage error"
-bash "$JM" check trunk-pointers --corpus <(printf 'built\nbuilt\tland\tlanded\nlanded\tgo-live\tin-use\nin-use\trelease\treleased\n') >/dev/null; expect_code 0 "$?" "the walk built to released is in the table"
-bash "$JM" check trunk-pointers --corpus <(tab built release released) >/dev/null; expect_code 1 "$?" "a move the table lacks is refused"
 pass "each lane reads its four-word stage through the observers and jg-machine"

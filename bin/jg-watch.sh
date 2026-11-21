@@ -379,6 +379,18 @@ _jg_wait_timers_lib=$SCRIPT_DIR/../core/wait-timers/bin/jg-wait-timers-lib.sh
 WATCH_LOCK="$STATE/.watch.lock"
 WATCH_PATH="$SCRIPT_DIR/jg-watch.sh"
 WATCHER_DOWNTIME_MARKER="$STATE/.watcher-down"
+
+# wake_raise_refused <what>: a wake row this cycle set out to record was refused, so
+# the cycle names it and keeps going. Supervision outranks its own wake store: a
+# watcher that exits here stops every other duty this home carries, and the arm can
+# only read that exit as a broken cycle. bin/jg-wake-bus.sh already owes every raise it
+# could not publish, with the store's own cause on stderr, and the actionable reason
+# still leaves through wake below; what reaches this line is the one case left - a row
+# that could not even be written - and it is never swallowed silently.
+wake_raise_refused() {
+  triage_log "wake raise refused ($1); the cycle continues"
+}
+
 # The singleton-lock acquisition, EXIT trap, and the blocking supervision loop
 # all live below the source guard at the very bottom of this file (see "Main
 # entry"). Sourcing this file for unit tests therefore loads the functions -
@@ -434,6 +446,8 @@ HEARTBEAT=${JG_HEARTBEAT:-600}        # base seconds between heartbeat scans
 HEARTBEAT_MAX=${JG_HEARTBEAT_MAX:-7200}  # heartbeat backoff cap
 CHECK_INTERVAL=${JG_CHECK_INTERVAL:-300}  # seconds between *.check.sh sweeps and ask-default decide ticks
 FAST_CHECK_INTERVAL=${JG_FAST_CHECK_INTERVAL:-30}  # seconds between board-answer ticks (must stay under a minute)
+DISPATCH_INTERVAL=${JG_DISPATCH_INTERVAL:-60}  # seconds between starts of the home's dispatch check (run_fast_checks)
+case "$DISPATCH_INTERVAL" in ''|*[!0-9]*) DISPATCH_INTERVAL=60 ;; esac
 CHECK_TIMEOUT=${JG_CHECK_TIMEOUT:-30}     # seconds allowed per *.check.sh
 HOME_SUMMARY_INTERVAL=${JG_HOME_SUMMARY_INTERVAL:-300}
 case "$HOME_SUMMARY_INTERVAL" in
@@ -1282,11 +1296,13 @@ host_memory_surface_queued() {
 # The ordinary arm owner delivers the reason, never a synthetic keyboard ring.
 own_queue_resurface() {
   local row epoch seq kind key reason idle task file after=''
+  local -a query=(oldest)
+  [ "${JG_LEAD_DAEMON:-0}" != 1 ] || query+=(--urgent)
   while :; do
     if [ -n "$after" ]; then
-      row=$(watcher_queue oldest --after "$after") || return 1
+      row=$(watcher_queue "${query[@]}" --after "$after") || return 1
     else
-      row=$(watcher_queue oldest) || return 1
+      row=$(watcher_queue "${query[@]}") || return 1
     fi
     [ -n "$row" ] || return 0
     IFS=$'\t' read -r epoch seq kind key reason idle <<EOF
@@ -1317,18 +1333,22 @@ EOF
         fi
         ;;
     esac
-    break
+    # Routine rows wait for another turn. An always-on lead must look past
+    # them for newly queued urgent work; it has no foreground checkpoint to
+    # restart the watcher and surface that work through recovery.
+    case "$(jg_wake_route_class "$kind" "$key" "$reason")" in
+      now) break ;;
+      *)
+        [ "${JG_LEAD_DAEMON:-0}" = 1 ] || return 0
+        after=$seq
+        ;;
+    esac
   done
-  # A row the routing rules class `batch` waits for a turn that happens anyway, so
-  # re-delivering it here is what turned a routine event into a Stop-owned wake.
-  # resurface_after_downtime asks the same owner (jg_wake_route_class) before it wakes,
-  # so both arm paths use one rule for which queued row is worth a turn. A row that
-  # classes `now` still re-delivers exactly as before.
-  case "$(jg_wake_route_class "$kind" "$key" "$reason")" in
-    now) ;;
-    *) return 0 ;;
-  esac
-  [ "$idle" -ge "$SQUAD_LEAD_WAKE_STALL_SECS" ] || return 0
+  # The daemon consumes and acknowledges the delivered snapshot itself.
+  # Its first delivery must not wait for the ordinary unhandled-row timer.
+  if [ "${JG_LEAD_DAEMON:-0}" != 1 ]; then
+    [ "$idle" -ge "$SQUAD_LEAD_WAKE_STALL_SECS" ] || return 0
+  fi
   squad_lead_in_active_turn '' "$idle" "$JG_HOME" "$seq" && return 0
   watcher_queue resurfaced "$epoch-$seq" >/dev/null || return 1
   case "$kind:$reason" in
@@ -2113,7 +2133,6 @@ phantom_pane_prune() {
     clear_pause_tracking "$key"
     # Withdraw before removing the sidecar, so a failed queue write is retried.
     jg_wake_withdraw stale "$w" || exit 1
-    "$SCRIPT_DIR/jg-machine-shadow.sh" markers ".tracked-$key" removed || true  # shadow report of the move (jg-machine-shadow.sh)
     # The sidecar is removed LAST: a failed marker removal leaves it behind so
     # the next cycle retries the whole prune, while a removed sidecar with
     # markers left behind would strand the orphans unfindable.
@@ -3018,9 +3037,9 @@ ready_idle() { JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-rea
 # started without anyone asking. With
 # config/lane-target naming a positive integer N, the floor is fewer than N open
 # lanes, and a home with working workers but free slots is exactly the 5 Oct
-# stall that the no-worker-working rule missed. Otherwise (no usable target, or
-# open lanes at or above it) the rule is the older one: no worker is provably
-# working, so open lanes that only wait never hide an idle home. A condition
+# stall that the no-worker-working rule missed; a home with N or more open lanes
+# has no free lane, so it is never woken for ready work. Without a usable target
+# the rule is the older one: no worker is provably working. A condition
 # that still holds re-raises on READY_WORK_RESURFACE_SECS; a new ready set
 # fires at once. Sets
 # READY_WORK_IDS and READY_WORK_REASON. An empty ready set withdraws any queued
@@ -3058,7 +3077,12 @@ ready_work_waits_idle() {
   if [ -z "$target" ] && [ -f "$JG_HOME/config/lane-target" ]; then
     warn_invalid_lane_target_once
   fi
-  if [ -n "$target" ] && open=$(open_lane_count) && [ "$open" -lt "$target" ]; then
+  if [ -n "$target" ] && open=$(open_lane_count); then
+    if [ "$open" -ge "$target" ]; then
+      # No free lane: nothing can start, so there is nothing to ask for. Withdraw the queued row like an empty set.
+      ready_idle clear ready-work: || true
+      return 1
+    fi
     READY_WORK_REASON="check: ready work waiting with free lane slots ($open/$target open): $READY_WORK_IDS - dispatch them now, P0 first, up to project capacity"
   else
     for meta in "$STATE"/*.meta; do
@@ -3283,6 +3307,12 @@ idle_wait() {
     sleep "$slice"
     left=$((left - slice))
     touch "$STATE/.last-watcher-beat" 2>/dev/null || true
+    # Idle lanes can receive a parent inbox or another queued urgent check
+    # without any meta record changing. Keep the cheap idle wait, but let the
+    # same queue owner deliver those wakes at the ordinary poll cadence.
+    if [ "${JG_LEAD_DAEMON:-0}" = 1 ]; then
+      own_queue_resurface || { echo "watcher: own wake-queue observation failed" >&2; exit 1; }
+    fi
     [ "$(printf '%s\n' "$STATE"/*.meta | cksum)" = "$(printf '%s\n' "${metas[@]}" | cksum)" ] || return 0
   done
   return 0
@@ -4054,11 +4084,49 @@ rejected_checks_record() {
   done
 }
 
+# The second doorbell: Main's store pages (core/item-store, `jg-item pages main`). A page Main has not read rings it like a
+# queued record does, and only while the queue is empty, because a queued record already rings and the drain prints both.
+# Main home only, and only once config/item-store-reads is on; a store that cannot answer rings nothing (jg-item tick says
+# why once). Reading moves no cursor: the drain's acknowledgement does.
+store_pages_doorbell() {
+  local pages unread reason
+  [ -e "$CONFIG/item-store" ] && [ -e "$CONFIG/item-store-reads" ] && [ ! -e "$JG_HOME/.jg-squad-lead-home" ] || return 0
+  [ ! -s "$JG_WAKE_QUEUE" ] || return 0
+  pages=$(JG_HOME="$JG_HOME" python3 -I "$SCRIPT_DIR/../core/item-store/jg-item" pages main 2>/dev/null) || return 0
+  unread=$(printf '%s\n' "$pages" | grep -vc '^pages: ')
+  [ "$unread" -gt 0 ] || return 0
+  reason="check: $unread unread page(s) wait on the item store"
+  jg_wake_append check item-pages "$reason" || wake_raise_refused "item-pages"
+  wake "$reason"
+}
+
+# dispatch_check_start: start the home's trusted dispatch check (state/auto-dispatch.check.sh) detached, once per
+# DISPATCH_INTERVAL, and return at once. It runs the same hash-checked snapshot the sweep runs; the detached shell removes
+# the snapshot when the pass ends. JG_DISPATCH_DETACHED=1 makes the pass keep its lead note and alert for the sweep's
+# inline run (core/auto-dispatch/dispatch.sh), because this start has no reader. The check holds its own lock, so a start
+# while a pass runs is folded into it.
+dispatch_check_start() {
+  local snapshot
+  [ "$(age_of "$STATE/.last-dispatch-check")" -ge "$DISPATCH_INTERVAL" ] || return 0
+  jg_custom_check_snapshot_prepare "$STATE" auto-dispatch || { jg_custom_check_snapshot_cleanup; return 0; }
+  snapshot=$JG_CUSTOM_CHECK_SNAPSHOT
+  JG_CUSTOM_CHECK_SNAPSHOT=
+  touch "$STATE/.last-dispatch-check"
+  local -a detach=(nohup)
+  ! command -v setsid >/dev/null 2>&1 || detach=(setsid nohup)
+  # shellcheck disable=SC2016 # the detached shell expands its own argument
+  JG_DISPATCH_DETACHED=1 "${detach[@]}" bash -c 'bash "$1"; rm -f -- "$1"' _ "$snapshot" >/dev/null 2>&1 </dev/null &
+}
+
 # The captain's board answers must reach Main within a minute, so they do not
 # wait for the slow sweep below. bin/jg-board-answers.sh tick heals its own
 # registration (re-arms it, or says once that it could not) and then runs one
 # check pass; a line it prints becomes a check wake like any check result. The
 # slow sweep skips board-answers.check.sh so a pass is never run twice.
+# The home's dispatch check also starts here, at least every DISPATCH_INTERVAL
+# seconds and never waited for (dispatch_check_start): a pass costs seconds of CPU,
+# so an inline run would hold this tick and the queue resurface behind it. The
+# slow sweep still runs the check inline, which is where its wake line is delivered.
 run_fast_checks() {
   local reason shim="$STATE/board-answers.check.sh"
   [ "$(age_of "$STATE/.last-fast-check")" -ge "$FAST_CHECK_INTERVAL" ] || return 0
@@ -4069,7 +4137,7 @@ run_fast_checks() {
       check_capture_skip "$shim"
     elif check_result_reason "$shim"; then
       reason=$JG_CHECK_REASON
-      jg_wake_append check "$shim" "$reason" || exit 1
+      jg_wake_append check "$shim" "$reason" || wake_raise_refused "board-answers"
       wake "$reason"
     fi
   fi
@@ -4088,6 +4156,7 @@ run_fast_checks() {
       wake "$reason"
     fi
   fi
+  dispatch_check_start
   # The machine's four services belong to Main, and a unit that is dead or serves
   # another home is exactly the missing alert this path exists for, so it is read
   # here on the fast cadence and not on the slow sweep (bin/jg-unit-claim.sh owns
@@ -4102,6 +4171,23 @@ run_fast_checks() {
       wake "$reason"
     fi
   fi
+  store_pages_doorbell
+}
+
+# run_timers_tick: the waiting-state ladder's tick; a tick that fails ends the watcher with its reason.
+run_timers_tick() {
+  if declare -F jg_wait_timers_tick >/dev/null; then jg_wait_timers_tick || { echo "watcher: waiting-state timer check failed" >&2; exit 1; }; fi
+}
+
+# check_cursor_advance <next check path>: the sweep ends on a wake; the next one starts at <next check>. With no next
+# check the sweep is complete, so it is stamped like a sweep that ran to its end.
+check_cursor_advance() {
+  if [ -n "$1" ]; then
+    printf '%s\n' "$(basename "$1")" > "$STATE/.check-cursor"
+  else
+    rm -f "$STATE/.check-cursor"
+    touch "$STATE/.last-check"
+  fi
 }
 
 # Slow per-task checks (juggernaut writes these, e.g. a merged-PR poll).
@@ -4112,16 +4198,38 @@ run_fast_checks() {
 # delivered by the same drain as that signal, and a signal stream cannot
 # starve a check. Checks are due only every CHECK_INTERVAL, so most cycles
 # skip this block and fall straight through.
+# A check that prints a line ends the cycle (wake exits), so the sweep is kept
+# in order by $STATE/.check-cursor: that check's successor is written there and
+# .last-check is left alone, the next sweep starts at the cursor, and only a
+# sweep that reaches its last check stamps .last-check and removes the cursor.
+# A check printing a line every run therefore cannot hide the checks after it.
 run_due_checks() {
   local c id out reason is_pr_poll provider url host path number custom_snapshot
   local merge_authority merge_authority_record_identity merge_outcome_rc
   local rejected_checks unalerted_checks contribution_check_output contribution_check_diagnostics contribution_check_line
-  if [ "$(age_of "$STATE/.last-check")" -ge "$CHECK_INTERVAL" ]; then
+  local cursor_file="$STATE/.check-cursor" cursor found checks=() start=0 n
+  if [ -e "$cursor_file" ] || [ "$(age_of "$STATE/.last-check")" -ge "$CHECK_INTERVAL" ]; then
     rejected_checks=
     contribution_check_output=
     for c in "$STATE"/*.check.sh; do
       [ -e "$c" ] || continue
       [ "$(basename "$c")" = board-answers.check.sh ] && continue  # run_fast_checks owns it
+      checks+=("$c")
+    done
+    cursor=$(cat "$cursor_file" 2>/dev/null || true)
+    if [ -n "$cursor" ]; then
+      found=
+      for n in "${!checks[@]}"; do
+        [ "$(basename "${checks[n]}")" = "$cursor" ] && { start=$n; found=1; break; }
+      done
+      [ -n "$found" ] || rm -f "$cursor_file"  # a check that no longer exists: start over at the first
+      # The checks before the cursor ran earlier in this sweep: keep the rejected ones on record.
+      for ((n = 0; n < start; n++)); do
+        [ ! -e "$STATE/.rejected-state-checks/$(basename "${checks[n]}")" ] || rejected_checks="$rejected_checks ${checks[n]}"
+      done
+    fi
+    for ((n = start; n < ${#checks[@]}; n++)); do
+      c=${checks[n]}
       is_pr_poll=0
       if [ "$(basename "$c")" = x-watch.check.sh ]; then
         if fmx_poll_shim_valid "$c" "$JG_HOME" "$JG_ROOT" \
@@ -4232,17 +4340,18 @@ EOF
           fi
           retire_merged_pr_poll "$id"
           pr_poll_control_release || exit 1
-          touch "$STATE/.last-check"
           if [ "$JG_MERGE_OUTCOME_ALREADY_RECORDED" = true ]; then
+            touch "$STATE/.last-check"
             triage_log "absorbed duplicate merged PR poll result for $id"
             continue
           fi
           [ "$(jg_meta_get "$STATE/$id.meta" kind)" = scout ] || post_merge_cleanup "$id"
+          check_cursor_advance "${checks[n + 1]:-}"
           wake "$reason"
         fi
         pr_poll_control_release || exit 1
-        jg_wake_append check "$c" "$reason" || exit 1
-        touch "$STATE/.last-check"
+        jg_wake_append check "$c" "$reason" || wake_raise_refused "$c"
+        check_cursor_advance "${checks[n + 1]:-}"
         wake "$reason"
       fi
       pr_poll_control_release || exit 1
@@ -4251,12 +4360,13 @@ EOF
       # hangs or a cycle that dies never reaches this point, so it still ages.
       watcher_beat due-check
     done
+    rm -f "$cursor_file"  # the sweep reached its last check
     # shellcheck disable=SC2086 # rejected_checks is a space-separated path list.
     unalerted_checks=$(rejected_checks_unalerted $rejected_checks)
     if [ -n "$unalerted_checks" ]; then
       reason="check: rejected unauthenticated state checks:$unalerted_checks"
       JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-alert.sh" raise security "unauthenticated-state-checks-$(date +%s)-$$" \
-        --note "rejected unauthenticated state checks:$unalerted_checks" --deliver || exit 1
+        --security-source unauthenticated-state-checks --note "rejected unauthenticated state checks:$unalerted_checks" --deliver || exit 1
     fi
     # Recorded after the durable append, so a failed append alerts again next sweep.
     # shellcheck disable=SC2086
@@ -4329,6 +4439,16 @@ while :; do
   if declare -F jg_model_outage_tick >/dev/null; then jg_model_outage_tick || triage_log "model-error observation failed"; fi
   # Remove confirmed orphan endpoints before replaying their old queue rows.
   phantom_pane_prune
+  # Overdue first: the queue resurface below ends the cycle on the home's oldest unhandled row, and a row nobody consumes
+  # would end every cycle there, so the slow sweep and the timers would never run. When the sweep is more than two
+  # intervals late it runs here, before that exit; a row it queues is delivered by the normal wake path.
+  # A cycle sweeps at most once: the sweep further down skips when this one ran.
+  CYCLE_SWEPT=
+  if [ "$(age_of "$STATE/.last-check")" -ge $((2 * CHECK_INTERVAL)) ]; then
+    run_due_checks
+    run_timers_tick
+    CYCLE_SWEPT=1
+  fi
   own_queue_resurface || { echo "watcher: own wake-queue observation failed" >&2; exit 1; }
 
   # Opt-in fleet activity ledger (docs/fleet-ledger.md): pick up newly appended
@@ -4340,10 +4460,6 @@ while :; do
   # poll cannot reach is silent and can never fail or delay a wake.
   JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE watcher_child "$SCRIPT_DIR/jg-wake-bus.sh" inbox-settle >/dev/null 2>"$STATE/.inbox-settle.err" \
     || echo "watcher: inbox settle failed: $(tr '\n' ' ' < "$STATE/.inbox-settle.err" | cut -c1-200)" >&2
-  # Migration step 5e shadow: the same task leases and busy events, mirrored to
-  # the key-value bus beside the files (docs/state-shadow.md). Off costs one file
-  # test, and a mirror that cannot reach its bus can never fail or delay a wake.
-  [ ! -e "$CONFIG/state-bus" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE watcher_child "$SCRIPT_DIR/jg-state-bus.sh" sync >/dev/null 2>&1 || true
   # Migration step 5g shadow: the host and fleet numbers on Prometheus plus
   # node_exporter, beside the shell collection (docs/metrics-shadow.md). Off costs
   # one file test, and a shadow that cannot start can never fail or delay a wake.
@@ -4365,11 +4481,6 @@ while :; do
   # repost after grace, and escalate once if the recovery turn is also missed.
   # No conversation scraping; unresolved records are never silently expired.
   jg_pending_reply_tick "$STATE" || true
-  # Migration step 5d shadow: the same waiters, timers and replies, mirrored to the
-  # bus as durable workflow events beside the records (docs/reply-shadow.md). Off
-  # costs one file test, and a mirror that cannot reach its bus can never fail or
-  # delay a reply, a repost or an escalation.
-  [ ! -e "$CONFIG/reply-bus" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE watcher_child "$SCRIPT_DIR/jg-reply-bus.sh" sync >/dev/null 2>&1 || true
   # The same wait, decided by the workflow definition instead of by hand
   # (bin/jg-reply-engine.sh): it folds the event log, records what it would do and
   # acts on nothing. Off costs one file test, and an engine that cannot fold can
@@ -4532,7 +4643,7 @@ EOF
         watcher_beat ready-record
         file_reason="$reason"
         case " $JG_SIGNAL_NEEDS_DECISION_FILES " in *" $f "*) file_reason="needs-decision:$signal_files" ;; esac
-        jg_wake_append signal "$(basename "$f")" "$file_reason" || exit 1
+        jg_wake_append signal "$(basename "$f")" "$file_reason" || wake_raise_refused "signal:$(basename "$f")"
       done <<EOF
 $pending
 EOF
@@ -4581,7 +4692,7 @@ EOF
         while IFS=$(printf '\t') read -r sf sig f; do
           [ -n "$sf" ] || continue
           reportable_signal_path "$f" || continue
-          jg_wake_append signal "$(basename "$f")" "$reason" || exit 1
+          jg_wake_append signal "$(basename "$f")" "$reason" || wake_raise_refused "signal:$(basename "$f")"
         done <<EOF
 $pending
 EOF
@@ -4596,7 +4707,7 @@ EOF
   # Never waited on: a slow feed export cannot hold the beacon (see the helper).
   comms_feed_sync_detached
 
-  run_due_checks
+  [ -n "$CYCLE_SWEPT" ] || run_due_checks
   if [ -n "$signal_wake" ]; then
     wake "$signal_wake"
   fi
@@ -4607,7 +4718,7 @@ EOF
   # next, so a continuous result stream cannot starve them.
   procevent_surface_queued
 
-  if declare -F jg_wait_timers_tick >/dev/null; then jg_wait_timers_tick || { echo "watcher: waiting-state timer check failed" >&2; exit 1; }; fi
+  [ -n "$CYCLE_SWEPT" ] || run_timers_tick
   # Migration step 5c, live: the escalation workflow definition decides the owner
   # rung and the pause cadence for every open episode and queues that wake
   # (bin/jg-escalation-workflows.sh owns the contract). The ladder above keeps the
@@ -4921,13 +5032,13 @@ EOF
   # at least one row waits, one digest wake carries them all; with none waiting there is no wake.
   if digest_waiting=$(jg_wake_digest_due mark); then
     reason="check: digest - $digest_waiting routine events wait in the queue; none needs a decision now"
-    jg_wake_append check wake-digest "$reason" || exit 1
+    jg_wake_append check wake-digest "$reason" || wake_raise_refused "digest"
     wake "$reason"
   fi
 
   # Asks the ask-default feature recorded are decided on the check cadence.
   if ask_default_tick; then
-    jg_wake_append check ask-default "$ASK_DEFAULT_REASON" || exit 1
+    jg_wake_append check ask-default "$ASK_DEFAULT_REASON" || wake_raise_refused "ask-default"
     wake "$ASK_DEFAULT_REASON"
   fi
 
@@ -4949,7 +5060,7 @@ EOF
       # The rule file decides: an unchanged fleet (`silent@fleet-unchanged heartbeat`) is recorded
       # and never wakes, a changed one wakes and records what it saw.
       hb_class=$(jg_wake_route_class heartbeat heartbeat heartbeat)
-      jg_wake_append heartbeat heartbeat heartbeat || exit 1
+      jg_wake_append heartbeat heartbeat heartbeat || wake_raise_refused "heartbeat"
       touch "$STATE/.last-heartbeat"
       if [ "$hb_class" = now ]; then
         jg_wake_fleet_fp_record
@@ -4962,13 +5073,13 @@ EOF
       # Enqueue first, then record every status log surfaced through its end so the
       # next heartbeat does not re-fire it (enqueue-before-suppress preserved);
       # this wake sends juggernaut to the whole fleet, so every log is read.
-      jg_wake_append heartbeat heartbeat heartbeat || exit 1
+      jg_wake_append heartbeat heartbeat heartbeat || wake_raise_refused "heartbeat"
       touch "$STATE/.last-heartbeat"
       mark_all_captain_relevant_surfaced || true
       wake "heartbeat"
     else
       if ! mark_all_captain_relevant_surfaced; then
-        jg_wake_append heartbeat heartbeat heartbeat || exit 1
+        jg_wake_append heartbeat heartbeat heartbeat || wake_raise_refused "heartbeat"
         touch "$STATE/.last-heartbeat"
         wake "heartbeat"
       fi

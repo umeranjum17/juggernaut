@@ -22,6 +22,7 @@ export PATH="$FAKEBIN:$PATH"
 mkdir -p "$FAKEROOT/bin"
 for f in "$ROOT"/bin/*; do ln -s "$f" "$FAKEROOT/bin/${f##*/}"; done
 ln -sn "$ROOT/toolchain.versions" "$FAKEROOT/toolchain.versions"
+ln -sn "$ROOT/core" "$FAKEROOT/core"  # the backlog reads of bin/ run core/item-store beside it
 rm -f "$FAKEROOT/bin/jg-control.sh" "$FAKEROOT/bin/jg-send.sh"
 cat > "$FAKEROOT/bin/jg-control.sh" <<'SH'
 #!/usr/bin/env bash
@@ -43,7 +44,8 @@ setup() {  # <name> -> a main home with one local lead whose own home has no ope
   : > "$LOG"
   mkdir -p "$d/main/state" "$d/main/config" "$d/main/data" "$d/lead/data" "$d/lead/state"
   jg_test_beads_home "$d/lead"
-  touch -d "2 hours ago" "$(cat "$d/lead/config/beads-dir")"
+  printf -- '- demo - the fixture project\n' > "$d/lead/data/projects.md"
+  touch -d "2 hours ago" "$d/lead/state/.wake-queue"
   printf 'kind=squad_lead\nhome=%s\nworktree=%s\nproject=%s\nendpoint_task_id=lead\nharness=claude\nbackend=tmux\nwindow=juggernaut:jg-lead\n' "$d/lead" "$d/lead" "$d/lead" > "$d/main/state/lead.meta"
   printf -- '- lead - a local lead (home: %s; scope: l; projects: l; added 2026-10-30)\n' "$d/lead" > "$d/main/data/squad_leads.md"
   printf '❯\n' > "$JG_FAKE_TMUX_CAPTURE"

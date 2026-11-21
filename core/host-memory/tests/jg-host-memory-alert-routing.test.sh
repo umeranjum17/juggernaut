@@ -43,7 +43,7 @@ assert_alert_recorded() { # <state> <label>: the alert is in the durable interru
   [ -s "$1/.host-memory-alerted" ] || fail "$2: the episode latch was not set"
 }
 
-test_lead_records_without_waking() (
+test_lead_records_without_waking() { (
   main=$(new_home lead-main)
   lead=$(new_home lead-alpha)
   printf 'alpha\n' > "$lead/.jg-squad-lead-home"
@@ -54,18 +54,18 @@ test_lead_records_without_waking() (
   assert_grep 'host-memory' "$lead/state/.wake-settled" "a Squad Lead home must tally the alert as settled"
   assert_grep 'rung=0' "$lead/state/alerts/host--host-memory.rec" "a Squad Lead home must raise the host alert at the tick rung"
   pass "a Squad Lead home records the host memory alert and queues no wake"
-)
+); }
 
-test_primary_wakes() (
+test_primary_wakes() { (
   main=$(new_home primary-main)
   tick "$main" "$main/state" || fail "the primary tick failed"
   assert_alert_recorded "$main/state" "primary home"
   assert_grep 'host memory ALERT' "$main/state/.wake-queue" "the primary home must queue the alert wake"
   assert_grep 'rung=3' "$main/state/alerts/host--host-memory.rec" "the primary home must raise the host alert to Main"
   pass "the primary home queues the host memory alert wake"
-)
+); }
 
-test_missing_role_record_wakes() (
+test_missing_role_record_wakes() { (
   home=$(new_home no-role)
   # A lead marker with no parent record names no root above it, so the home wakes as it always did.
   printf 'orphan\n' > "$home/.jg-squad-lead-home"
@@ -73,9 +73,9 @@ test_missing_role_record_wakes() (
   assert_alert_recorded "$home/state" "home with no parent record"
   assert_grep 'host memory ALERT' "$home/state/.wake-queue" "a home with no parent record must queue the alert wake"
   pass "a home with a missing role record still queues the host memory alert wake"
-)
+); }
 
-test_alert_names_task_in_lead_home() (
+test_alert_names_task_in_lead_home() { (
   # The root records one local Squad Lead, whose home records a task; a fixture process working in
   # that task's worktree is the largest consumer. The tick passes the root alone, so the alert
   # names the task only if the guard walks the lead's home itself.
@@ -96,7 +96,7 @@ test_alert_names_task_in_lead_home() (
   assert_grep 'top consumer is not a task this home owns' "$main/state/host-memory-interrupts.tsv" \
     "a task in another home must never be interrupted by the root"
   pass "the alert names a task in a local Squad Lead's home and leaves it to that home"
-)
+); }
 
 test_lead_records_without_waking || exit 1
 test_primary_wakes || exit 1

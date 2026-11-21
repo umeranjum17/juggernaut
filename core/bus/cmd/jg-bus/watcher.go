@@ -1,16 +1,12 @@
 package main
 
-// watcher.go - the watcher's view of this home's own wake queue, fed by the bus.
+// watcher.go - the watcher's view of this home's own wake queue, built from the home's own files.
 //
-//	jg-bus wake-watcher            the service: a durable pull consumer (wake-watcher) on this
-//	                               home's `jg.<account>.wake.>` subjects. Each raise and each
-//	                               acknowledgement is folded into the set of unsettled queue rows
-//	                               the moment it arrives, so the question "what is the oldest wake
-//	                               nobody handled, and for how long?" is answered from events and
-//	                               never by reading state/.wake-queue.
-//	jg-bus watcher oldest [--after <seq>]
+//	jg-bus watcher oldest [--urgent] [--after <seq>]
 //	                               the oldest eligible unsettled row, tab separated: epoch, seq,
 //	                               kind, key, payload, idle seconds. Nothing when the queue is empty.
+//	                               --urgent excludes producer-classed batch/silent rows, without
+//	                               changing the default view or consuming anything.
 //	jg-bus watcher resurfaced <epoch>-<seq>
 //	                               the watcher delivered that row's reason: restart its idle clock.
 //	jg-bus watcher latest <kind> <key>
@@ -18,39 +14,28 @@ package main
 //	                               key, payload. Nothing when there is none.
 //	jg-bus watcher rows            every unsettled row, in the order the read model lists them
 //	                               (state/.wake-queue); the parity replay compares this.
-//	jg-bus watcher rebuild         forget the fold, the idle clock and the consumer, so the service
-//	                               replays the stream from the start on its next start.
 //	jg-bus watcher replay <events.jsonl> --home <key>
 //	                               fold recorded raise and acknowledgement events one by one and
 //	                               print, after each, the rows, the oldest row and the newest
-//	                               host-memory row as one JSON line; no server is read.
+//	                               host-memory row as one JSON line.
 //
 // WHAT THIS REPLACES. bin/jg-watch.sh's own_queue_resurface and host_memory_surface_queued each
 // opened the read model every poll (an awk over state/.wake-queue) and kept their own progress file
 // (state/.own-wake-progress). They now ask this command, so the watcher no longer polls the queue
 // file. The fold is the jq reduce bin/jg-wake-bus.sh's render applies, row for row: an
 // acknowledgement removes its raise, a raise with a repeated id replaces the earlier one, and only
-// `where == "queue"` events are queue rows. The service's fold lives in
-// state/bus/wake-watcher.fold.json and its idle clock in state/bus/wake-watcher.progress.
+// `where == "queue"` events are queue rows.
 //
-// THE VIEW. A query answers from the service's fold plus the events this home still owes the bus
-// (state/.wake-bus.outbox.jsonl, the spool bin/jg-wake-bus.sh keeps for a publish the server
-// refused), applied in that order, which is the model the render builds. A home whose bus is off, or
-// whose server is down, therefore keeps resurfacing what it queued. When the service is not running
-// its fold is not trusted (it would hold rows nobody settles for it), so the view is built from the
-// render's own inputs instead - the replica state/.wake-bus.events.jsonl, then the owed events - and
-// the command says so on stderr; that is a degraded path, named in the triage log, not a second one.
+// THE VIEW. A query answers from the render's own inputs: the replica state/.wake-bus.events.jsonl,
+// then the events this home still owes (state/.wake-bus.outbox.jsonl), applied in that order, which
+// is the model the render builds.
 //
 // The idle clock is the command's: it restarts when the oldest eligible row changes, or when its
 // stamp is in the future, and is removed when the queue is empty - the rule own_queue_resurface kept
-// in state/.own-wake-progress.
+// in state/.own-wake-progress (state/bus/wake-watcher.progress).
 //
-// A row's sequence is its `rseq`, which every producer sets before publishing; an event without
-// one is ordered by its own `at`, so it sorts with the rest instead of being dropped. The consumer
-// acknowledges each message only after the fold reached disk (jsclient.go), so a crash between the
-// fetch and the save leaves the event unacknowledged and the server delivers it again; a failed
-// save asks for another try and, on the last, lands on the dead list. `jg-bus watcher rebuild`
-// deletes the fold and the consumer, and the service then replays the stream from the start.
+// A row's sequence is its `rseq`, which every producer sets before queueing; an event without
+// one is ordered by its own `at`, so it sorts with the rest instead of being dropped.
 
 import (
 	"bufio"
@@ -74,6 +59,7 @@ type wrow struct {
 	Kind    string `json:"kind"`
 	Key     string `json:"key"`
 	Payload string `json:"payload"`
+	Class   string `json:"class,omitempty"`
 }
 
 // watchFold is the unsettled queue rows by event id.
@@ -104,6 +90,7 @@ func (f *watchFold) apply(body []byte) {
 		Kind    string   `json:"kind"`
 		Key     string   `json:"key"`
 		Payload string   `json:"payload"`
+		Class   string   `json:"class"`
 	}
 	if json.Unmarshal(body, &ev) != nil || ev.ID == "" || ev.Home != f.Home {
 		return
@@ -125,7 +112,7 @@ func (f *watchFold) apply(body []byte) {
 	case ev.Seq != nil:
 		seq = int64(*ev.Seq)
 	}
-	f.Rows[ev.ID] = wrow{ID: ev.ID, At: ev.At, Seq: seq, Kind: ev.Kind, Key: ev.Key, Payload: ev.Payload}
+	f.Rows[ev.ID] = wrow{ID: ev.ID, At: ev.At, Seq: seq, Kind: ev.Kind, Key: ev.Key, Payload: ev.Payload, Class: ev.Class}
 }
 
 // tsvEscape is jq's @tsv for a string: backslash, tab, newline and carriage return.
@@ -185,7 +172,6 @@ func (f *watchFold) latest(kind, key string) (wrow, bool) {
 	return best, found
 }
 
-func (a *app) foldPath() string     { return filepath.Join(a.runtime, "wake-watcher.fold.json") }
 func (a *app) progressPath() string { return filepath.Join(a.runtime, "wake-watcher.progress") }
 
 func (a *app) writeAtomic(path string, data []byte) error {
@@ -197,26 +183,6 @@ func (a *app) writeAtomic(path string, data []byte) error {
 		return err
 	}
 	return os.Rename(tmp, path)
-}
-
-func (a *app) saveFold(f *watchFold) error {
-	data, err := json.Marshal(f)
-	if err != nil {
-		return err
-	}
-	return a.writeAtomic(a.foldPath(), data)
-}
-
-func (a *app) loadFold() (*watchFold, bool) {
-	data, err := os.ReadFile(a.foldPath())
-	if err != nil {
-		return nil, false
-	}
-	f := newFold(homeKey(filepath.Dir(a.state)))
-	if json.Unmarshal(data, f) != nil || f.Rows == nil {
-		return nil, false
-	}
-	return f, true
 }
 
 // progress is the idle clock: when the oldest eligible row was first seen as the oldest.
@@ -256,50 +222,6 @@ func (a *app) observe(f *watchFold, after int64, haveAfter bool, now int64) (wro
 	return r, now - since, true, nil
 }
 
-// wakeWatcherPart is the service's consumer: this home's whole wake subject, so it sees raises,
-// acknowledgements and record-only events in order.
-func (a *app) wakeWatcherPart() (*part, error) {
-	out, err := a.wakeScript("endpoint")
-	if err != nil {
-		return nil, err
-	}
-	f := strings.Split(strings.TrimRight(out, "\n"), "\t")
-	if len(f) != 5 || !strings.HasSuffix(f[2], ".wake.raise") {
-		return nil, fmt.Errorf("jg-wake-bus.sh endpoint printed %q, want url, stream, raise subject, user and password file", out)
-	}
-	var env []string
-	if f[3] != "" {
-		env = []string{"NATS_USER=" + f[3], "NATS_PASSWORD=" + strings.TrimSpace(readFileString(f[4]))}
-	}
-	fold, ok := a.loadFold()
-	if !ok {
-		fold = newFold(homeKey(filepath.Dir(a.state)))
-	}
-	p := &part{name: "wake-watcher", url: f[0], stream: f[1], env: env,
-		filter: strings.TrimSuffix(f[2], ".raise") + ".>"}
-	p.handle = func(body []byte) error {
-		fold.apply(body)
-		if err := a.saveFold(fold); err != nil {
-			return err
-		}
-		return nil
-	}
-	p.fresh = !ok
-	return p, nil
-}
-
-func (a *app) wakeWatcher() int {
-	p, err := a.wakeWatcherPart()
-	if err != nil {
-		return die("wake-watcher: %v", err)
-	}
-	if _, err := a.wakeScript("render"); err != nil {
-		// The render also creates the streams the consumer is made on.
-		return die("wake-watcher: %v", err)
-	}
-	return a.serveConsumer(p)
-}
-
 // watcherCmd is `jg-bus watcher <verb>`.
 func (a *app) watcherCmd(args []string) int {
 	if len(args) == 0 {
@@ -309,12 +231,14 @@ func (a *app) watcherCmd(args []string) int {
 	switch verb {
 	case "replay":
 		return a.watcherReplay(rest)
-	case "rebuild":
-		return a.watcherRebuild()
 	}
 	fold := a.view()
 	switch verb {
 	case "oldest":
+		if len(rest) > 0 && rest[0] == "--urgent" {
+			a.urgentRows(fold)
+			rest = rest[1:]
+		}
 		var after int64
 		haveAfter := false
 		if len(rest) == 2 && rest[0] == "--after" {
@@ -357,26 +281,37 @@ func (a *app) watcherCmd(args []string) int {
 	return die("watcher: unknown verb %q", verb)
 }
 
-// view is the service's fold with the owed events applied. With the service not running, its fold is
-// not trusted, so the view is the inputs the render builds the read model from - the replica of this
-// home's unsettled events, then the owed events - and the command says so on stderr.
+// urgentRows preserves the producer's effective class, including a repeated urgent
+// event held as batch by re-alert throttling. Older running consumers saved no class;
+// enrich only their existing rows from the replica/outbox, never replay acknowledgements
+// over a newer fold or resurrect a row the service already removed.
+func (a *app) urgentRows(fold *watchFold) {
+	for _, row := range fold.Rows {
+		if row.Class != "" {
+			continue
+		}
+		for _, name := range []string{".wake-bus.events.jsonl", ".wake-bus.outbox.jsonl"} {
+			for _, line := range strings.Split(readFileString(filepath.Join(a.state, name)), "\n") {
+				var event struct{ ID, Class string }
+				if json.Unmarshal([]byte(line), &event) == nil && event.ID == row.ID && event.Class != "" {
+					row.Class = event.Class
+				}
+			}
+		}
+		fold.Rows[row.ID] = row
+	}
+	for id, row := range fold.Rows {
+		if row.Class == "batch" || row.Class == "silent" {
+			delete(fold.Rows, id)
+		}
+	}
+}
+
+// view is the replica of this home's unsettled events, then the events the home still owes: the
+// inputs the render builds the read model from.
 func (a *app) view() *watchFold {
 	fold := newFold(homeKey(filepath.Dir(a.state)))
-	var sources []string
-	if _, running := a.runningPid("wake-watcher"); running {
-		if loaded, ok := a.loadFold(); ok {
-			fold = loaded
-		} else {
-			fmt.Fprintf(os.Stderr, "watcher: the wake-watcher service has not written its fold yet (%s)\n", a.foldPath())
-			sources = append(sources, ".wake-bus.events.jsonl")
-		}
-	} else {
-		fmt.Fprintf(os.Stderr, "watcher: the wake-watcher service is not running (see %s); observing the replica and the events still owed to the bus\n",
-			filepath.Join(a.runtime, "wake-watcher.log"))
-		sources = append(sources, ".wake-bus.events.jsonl")
-	}
-	sources = append(sources, ".wake-bus.outbox.jsonl")
-	for _, name := range sources {
+	for _, name := range []string{".wake-bus.events.jsonl", ".wake-bus.outbox.jsonl"} {
 		for _, line := range strings.Split(readFileString(filepath.Join(a.state, name)), "\n") {
 			if strings.TrimSpace(line) != "" {
 				fold.apply([]byte(line))
@@ -384,21 +319,6 @@ func (a *app) view() *watchFold {
 		}
 	}
 	return fold
-}
-
-// watcherRebuild forgets the fold, the clock and the consumer, so the service replays the stream.
-func (a *app) watcherRebuild() int {
-	p, err := a.wakeWatcherPart()
-	if err != nil {
-		return die("watcher rebuild: %v", err)
-	}
-	_ = os.Remove(a.foldPath())
-	_ = os.Remove(a.progressPath())
-	if _, errText, err := p.nats("consumer", "rm", "-f", p.stream, p.name); err != nil && !strings.Contains(errText, "not found") {
-		return die("watcher rebuild: %s", strings.TrimSpace(errText))
-	}
-	say("watcher: fold and consumer removed; restart the wake-watcher service to replay the stream")
-	return 0
 }
 
 // watcherReplay folds recorded events and prints the answers after each one.

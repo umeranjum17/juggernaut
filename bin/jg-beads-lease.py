@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """jg-beads-lease.py - the adapter verbs for a worker's lease: beat and reclaim.
 
-Usage: BEADS_DIR=<store> JG_BACKLOG_LANE=<agent name> jg-beads-write.py beat <ticket>
-       BEADS_DIR=<store> jg-beads-write.py reclaim [--report] [--grace <seconds>] [--keep <ticket>]...
+Usage: JG_BACKLOG_LANE=<agent name> jg-beads-write.py beat <ticket>
+       jg-beads-write.py reclaim [--report] [--grace <seconds>] [--keep <ticket>]...
 
 A claim carries a lease of 300 s that only `bd heartbeat` takes and refreshes, and only for the row's owner. The lease lives in bd's
 node-local table, so no heartbeat writes a commit or a history line, and the in-progress read (never the changes read) shows it as
@@ -25,13 +25,12 @@ import sys
 sys.dont_write_bytecode = True
 view = __import__("jg-beads-view")
 
-WRAPPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jg-beads.sh")
 OWNED = 13
 GRACE = 600
 
 
 def run(*args):
-    return subprocess.run([WRAPPER, *args], capture_output=True, text=True, check=False)
+    return subprocess.run([*view.BD, *args], capture_output=True, text=True, check=False)
 
 
 def refresh(ident):

@@ -97,8 +97,8 @@ func (a *app) parity(args []string) int {
 	deliveries := 0
 	mode := a.channelMode()
 	target := "none"
-	if mode == "live" {
-		target = a.busTarget()
+	if mode == "direct" {
+		target = "chat"
 		deliveries = events
 	}
 	if corrupt {

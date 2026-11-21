@@ -25,16 +25,6 @@ learn-from-mistakes learn-from-mistakes-axi@0.12.0
 done-done done-done-axi@0.6.27
 sign-off-axi sign-off-axi@0.7.0
 first-draft-axi first-draft-axi@0.3.0
-# The message bus every live path in the migration runs on: the JetStream server
-# and the client that creates a stream and reads its state. Both ship as release
-# archives, not npm packages, so the row is their exact version and
-# bin/jg-bootstrap.sh owns the install.
-nats-server 2.10.22
-nats 0.5.1
-# The sidecar and the delivery server the same channel runs on, installed the same way.
-daprd 1.19.1
-# The workflow engine's timer service, from the same release; it has no version flag, so the installer records the pin beside the binary.
-dapr-scheduler 1.19.1
 # The policy engine every yes/no rule under policy/ is evaluated by (jg-guard-host.sh eval), a bare release
 # binary installed by bin/jg-bootstrap.sh like the rows above.
 opa 1.22.0

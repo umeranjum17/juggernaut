@@ -17,6 +17,9 @@ jg_hold_reason_encode() {
 }
 
 # jg_hold_reason_decode_stream [toon|markdown|json]: decode marked reason fields.
+# json reads jq's pretty-printed output, where every member sits on its own line
+# and no string spans lines, and decodes each "hold_reason" member line in
+# place, so a large document is never parsed whole.
 jg_hold_reason_decode_stream() {
   perl -MJSON::PP -MMIME::Base64=encode_base64,decode_base64 -MEncode=decode,FB_CROAK -e '
     use strict;
@@ -42,20 +45,13 @@ jg_hold_reason_decode_stream() {
       my $decoded = decode_reason($value);
       return $decoded eq $value ? $raw : $json->encode($decoded);
     }
-    if ($format eq "json") {
-      local $/;
-      my $snapshot = $json->decode(<STDIN>);
-      for my $record (@{$snapshot->{records}}) {
-        $record->{hold_reason} = decode_reason($record->{hold_reason})
-          if exists $record->{hold_reason};
-      }
-      print $json->encode($snapshot), "\n";
-      exit;
-    }
     my ($column, $task);
     while (my $line = <STDIN>) {
       if ($format eq "markdown") {
         $line =~ s{^([-*] .*\(hold:\s*)(jg-hold-v1:[A-Za-z0-9+/]*={0,2})(\).*)$}
+          {$1 . decode_field($2) . $3}e;
+      } elsif ($format eq "json") {
+        $line =~ s{^(\s*"hold_reason": )("(?:[^"\\]|\\.)*")(,?)$}
           {$1 . decode_field($2) . $3}e;
       } elsif ($line =~ /^tasks\[\d+\]\{([^}]*)\}:\n?$/) {
         my @names = split /,/, $1;

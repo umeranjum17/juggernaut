@@ -1,0 +1,13 @@
+{
+ "argv": [
+  "dep",
+  "remove",
+  "rd-4cc",
+  "rd-8gq"
+ ],
+ "stdin": "",
+ "stdout": "\u2713 Removed dependency: rd-4cc (T3) \u2192 rd-8gq (edge-a)\n",
+ "exit": 0,
+ "form": "dep remove",
+ "store": "{\"_type\":\"issue\",\"id\":\"rd-2xo\",\"title\":\"edge-b\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:41:31Z\",\"updated_at\":\"2026-11-19T13:41:31Z\",\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"rd-8gq\",\"title\":\"edge-a\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:41:30Z\",\"updated_at\":\"2026-11-19T13:41:30Z\",\"dependency_count\":0,\"dependent_count\":1,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"rd-4cc\",\"title\":\"T3\",\"description\":\"D2\",\"status\":\"in_progress\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:41:29Z\",\"updated_at\":\"2026-11-19T13:41:42Z\",\"started_at\":\"2026-11-19T13:41:42Z\",\"metadata\":{\"k\":\"v\"},\"labels\":[\"lb\"],\"dependencies\":[{\"issue_id\":\"rd-4cc\",\"depends_on_id\":\"rd-8gq\",\"type\":\"blocks\",\"created_at\":\"2026-11-19T13:41:51Z\",\"created_by\":\"juggernaut\",\"metadata\":\"{}\"}],\"comments\":[{\"id\":\"130685c3-2ed2-5512-aa2d-a9005b13e432\",\"issue_id\":\"rd-4cc\",\"author\":\"juggernaut\",\"text\":\"hello\",\"created_at\":\"2026-11-19T13:41:48Z\"}],\"dependency_count\":1,\"dependent_count\":0,\"comment_count\":1}\n"
+}

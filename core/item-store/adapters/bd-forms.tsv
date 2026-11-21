@@ -1,0 +1,148 @@
+blocked --json	1661	read	list
+close	14	update	done
+close --force --reason	13	update	done
+close --reason	17	update	done
+comment	28	create	-
+comment --json --stdin	3	create	-
+comments	3	read	-
+comments --json	103	read	-
+comments add -f	3	create	-
+create - --body-file --json --labels --metadata --status --title	1	create	add
+create --defer --force --id	1	create	add
+create --deps --description --force --id --metadata --title -l -p	1	create	add
+create --deps --description --json --metadata --no-inherit-labels --parent --title --validate -l -p	4	create	add
+create --deps --description --json --metadata --no-inherit-labels --parent --title -l -p	8	create	add
+create --deps --force --id --metadata --title -l	1	create	add
+create --deps --json --title	1	create	add
+create --description --force --id --metadata --title	2	create	add
+create --description --force --id --metadata --title --validate -l -p	16	create	add
+create --description --force --id --metadata --title --validate -p	5	create	add
+create --description --force --id --metadata --title -l	44	create	add
+create --description --force --id --metadata --title -l -p	212	create	add
+create --description --force --id --metadata --title -p	1	create	add
+create --description --json --metadata --no-inherit-labels --parent --title --validate -l -p	3	create	add
+create --description --json --metadata --no-inherit-labels --parent --title -l	11	create	add
+create --description --json --metadata --no-inherit-labels --parent --title -l -p	8	create	add
+create --description --json --metadata --title --validate -p	3	create	add
+create --description --json --metadata --title -l	2	create	add
+create --description --json --metadata --title -l -p	3	create	add
+create --force --id	26	create	add
+create --force --id --labels --metadata --title	14	create	add
+create --force --id --metadata --title	2	create	add
+create --force --id --metadata --title -l	72	create	add
+create --force --id --metadata --title -l -p	3	create	add
+create --force --id --status	1	create	add
+create --id --title --type -p	2	create	add
+create --id --title -p	2	create	add
+create --json --metadata --status --title	1	create	add
+create --labels --metadata --priority --silent -t	6	create	add
+create --metadata --parent --priority --silent -t	30	create	add
+create --metadata --parent --silent --title -a -d -l -t	1	create	add
+create --metadata --parent --silent -p	4	create	add
+create --metadata --parent --silent -t	1	create	add
+create --metadata --silent --title -d -l -s -t	2	create	add
+create --silent --title --type	1	create	add
+create --title	1	create	add
+create -t	1	create	add
+defer --until	1	update	-
+delete --force	1	link	-
+dep add	34	link	-
+dep add --type	32	link	-
+dep add -t	1	link	-
+dep remove	4	link	-
+epic --json	2	read	-
+events --limit --since	2	read	-
+export	43	read	compare
+export -o	2	read	compare
+gate create --blocks --json --reason --title --type	114	create	-
+gate create --blocks --reason --title	3	create	-
+gate list --json	13	read	-
+gate resolve --reason	60	update	-
+heartbeat	63	admin	-
+history --events	2	read	-
+history --events --json	11	read	-
+import	5	create	-
+list	12	read	list
+list --all --include-gates --json --limit	3606	read	list
+list --all --include-gates --json --limit --readonly	1	read	list
+list --all --json	2	read	list
+list --all --json --limit	62	read	list
+list --all --json --limit --parent	40	read	list
+list --all --json --parent	25	read	list
+list --include-gates --json --limit --status	172	read	list
+list --json	5	read	list
+list --json --label --type	3	read	list
+list --json --limit	2	read	list
+list --json --limit --status	53	read	list
+list --json --parent	2	read	list
+list --json --parent --status	1	read	list
+list --json --updated-after	1	read	list
+memories --json	1	read	-
+provenance --actor --at --issue --kind --ref --ref-kind --source	4	read	-
+provenance --at --issue --kind --payload --ref --ref-kind --source	77	read	-
+provenance --at --issue --kind --payload --source	12	read	-
+provenance --at --issue --kind --ref --ref-kind --source	27	read	-
+provenance --json	47	read	-
+q	29	read	-
+ready --json --label --limit	7	read	ready
+ready --json --limit	30	read	ready
+ready --json --parent	2	read	ready
+remember --key	1	create	-
+schema	1	read	-
+show	4	read	show
+show --brief-deps --include-dependents --json	127	read	show
+show --json	2094	read	show
+statuses --json	16	read	-
+swarm validate	9	read	-
+types --json	14	read	-
+undefer	1	update	-
+update - --allow-empty-description --body-file --if-status	2	update	update
+update --add-label	8	update	update
+update --add-label --remove-label --set-metadata	10	update	update
+update --add-label --set-metadata	1	update	update
+update --add-label --set-metadata --title --type	2	update	update
+update --add-label --title	3	update	update
+update --assignee --set-metadata	1	update	update
+update --assignee --status	1	update	update
+update --defer	2	update	update
+update --defer --if-assignee --if-status --status -a	1	update	update
+update --defer --set-metadata --status	17	update	update
+update --defer --set-metadata --status --unset-metadata	3	update	update
+update --defer --status --unset-metadata	1	update	update
+update --description	67	update	update
+update --description --if-assignee --if-status --status	25	update	update
+update --description --if-status --status	2	update	update
+update --description --title	4	update	update
+update --external-ref --if-assignee --if-status --status --title	14	update	update
+update --external-ref --if-status --status --title	1	update	update
+update --external-ref --title	5	update	update
+update --force --if-status --metadata --status	6	update	update
+update --if-assignee --if-status --set-metadata --status --title	11	update	update
+update --if-assignee --if-status --set-metadata --status -a	55	update	update
+update --if-assignee --if-status --set-metadata -a	1	update	update
+update --if-assignee --if-status --status	26	update	update
+update --if-assignee --if-status --status --unset-metadata -a	10	update	update
+update --if-assignee --if-status --status -a	77	update	update
+update --if-assignee -a	1	update	update
+update --if-status --metadata	23	update	update
+update --if-status --metadata --status	12	update	update
+update --if-status --status	40	update	update
+update --metadata	63	update	update
+update --metadata --status	1	update	update
+update --metadata --title -s	2	update	update
+update --parent	2	update	update
+update --priority	1	update	update
+update --remove-label -a -s	1	update	update
+update --set-labels	1	update	update
+update --set-metadata	297	update	update
+update --set-metadata --status	21	update	update
+update --set-metadata --status --unset-metadata	3	update	update
+update --set-metadata --title	7	update	update
+update --status	12	update	update
+update --status --unset-metadata	2	update	update
+update --title	17	update	update
+update --type	18	update	update
+update --unset-metadata	3	update	update
+update -d	1	update	update
+update -p	1	update	update
+update -s	2	update	update

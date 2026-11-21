@@ -1,0 +1,16 @@
+{
+ "argv": [
+  "--readonly",
+  "list",
+  "--all",
+  "--limit",
+  "0",
+  "--include-gates",
+  "--json"
+ ],
+ "stdin": "",
+ "stdout": "[\n  {\n    \"id\": \"jg-s13-a\",\n    \"title\": \"Filed by main\",\n    \"description\": \"why\",\n    \"status\": \"open\",\n    \"priority\": 1,\n    \"issue_type\": \"task\",\n    \"created_at\": \"2026-11-19T13:36:46Z\",\n    \"created_by\": \"main\",\n    \"updated_at\": \"2026-11-19T13:36:54Z\",\n    \"metadata\": {\n      \"release\": \"later\"\n    },\n    \"labels\": [\n      \"feature\"\n    ],\n    \"dependency_count\": 0,\n    \"dependent_count\": 0,\n    \"comment_count\": 0\n  },\n  {\n    \"id\": \"jg-s13-c\",\n    \"title\": \"Held with no worker\",\n    \"description\": \"why\",\n    \"status\": \"in_progress\",\n    \"priority\": 2,\n    \"issue_type\": \"task\",\n    \"assignee\": \"main\",\n    \"created_at\": \"2026-11-19T13:36:57Z\",\n    \"created_by\": \"main\",\n    \"updated_at\": \"2026-11-19T13:36:59Z\",\n    \"started_at\": \"2026-11-19T13:36:59Z\",\n    \"metadata\": {\n      \"release\": \"later\"\n    },\n    \"labels\": [\n      \"feature\"\n    ],\n    \"dependency_count\": 0,\n    \"dependent_count\": 0,\n    \"comment_count\": 0\n  }\n]\n",
+ "exit": 0,
+ "form": "list --all --include-gates --json --limit --readonly",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-s13-a\",\"title\":\"Filed by main\",\"description\":\"why\",\"status\":\"open\",\"priority\":1,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:36:46Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:36:54Z\",\"metadata\":{\"release\":\"later\"},\"labels\":[\"feature\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-s13-c\",\"title\":\"Held with no worker\",\"description\":\"why\",\"status\":\"in_progress\",\"priority\":2,\"issue_type\":\"task\",\"assignee\":\"main\",\"created_at\":\"2026-11-19T13:36:57Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:36:59Z\",\"started_at\":\"2026-11-19T13:36:59Z\",\"metadata\":{\"release\":\"later\"},\"labels\":[\"feature\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

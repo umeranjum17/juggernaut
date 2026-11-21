@@ -41,6 +41,7 @@ The exemptions, cooldown and one-action-per-beat ledger are the same.
 - At the limit the lead is told once, with the three tries named: `jg-alert.sh raise lost-worker <task>`.
 - An API error of a billing kind (`billing_error`, `account_on_hold`) is never relaunched: the same account fails the same way. The lead is told at once with the type.
 - A fresh beat resolves the alert (`relaunch.sh clear`).
+- Each check first resolves every `lost-worker` alert whose window no task record names (`relaunch.sh sweep`): a lane that was cleaned up never beats again, so nothing else would close it.
 
 ## What is never touched
 

@@ -1,0 +1,4 @@
+{"type":"user","message":{"role":"user","content":"please deploy the thing"},"timestamp":"2026-11-19T10:00:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Working on it."}]},"timestamp":"2026-11-19T10:00:05Z"}
+{"type":"user","message":{"role":"user","content":"what is the weather"},"timestamp":"2026-11-19T10:10:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I do not know."}]},"timestamp":"2026-11-19T10:10:30Z"}

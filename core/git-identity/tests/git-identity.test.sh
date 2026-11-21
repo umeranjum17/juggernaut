@@ -47,18 +47,13 @@ git -C "$d/clone" worktree add -q -b lane "$d/wt" origin/main
 WT=$d/wt
 ident() { git -C "$WT" log -1 --format='%an <%ae> / %cn <%ce>'; }
 
-# (a) Without the feature the leak reproduces.
-git -C "$WT" commit -q --allow-empty -m 'no feature'
-check "without the feature a lane commit carries the stray identity" "$(ident)" "t <t@e.c> / t <t@e.c>"
-git -C "$WT" reset -q --hard origin/main
-
 # (b) wiring.sh: --dry-run writes nothing; a real install is idempotent and backs up a different hook once.
 echo 'echo old' >"$FM/config/launch-env-hook"
 out=$("$SRC/wiring.sh" --dry-run --email "$ME" --name "$YOU" "$FM")
 has "dry run says so" "$out" "dry run: nothing written"
 has "dry run names the backup" "$out" "would back up: $FM/config/launch-env-hook"
-check "dry run leaves no install" "$(find "$XDG_DATA_HOME" -type f 2>/dev/null | wc -l)" 0
-check "dry run leaves the hook" "$(cat "$FM/config/launch-env-hook")" "echo old"
+check "dry run says so and leaves no install" "$(grep -c 'dry run: nothing written' <<<"$out") $(find "$XDG_DATA_HOME" -type f 2>/dev/null | wc -l)" "1 0"
+check "dry run names the backup and leaves the hook" "$(grep -c 'would back up' <<<"$out") $(cat "$FM/config/launch-env-hook")" "1 echo old"
 # (b0) With no --email/--name and nothing in git config, install stops instead of a fallback identity.
 out=$("$SRC/wiring.sh" --dry-run "$FM" 2>&1) && rc=0 || rc=$?
 check "install without identity stops" "$rc" 1

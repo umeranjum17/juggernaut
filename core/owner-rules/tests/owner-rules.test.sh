@@ -30,9 +30,13 @@ home=$work/home; mkdir -p "$home/config" "$home/data" "$home/state"
 # bin/jg-brief.sh owns the no-mistakes risk reason (--risk); this home answers it up front
 # so these cases exercise the feature's owner, hierarchy and design rules only.
 : > "$home/config/delivery-risk-loose"
-# shellcheck source=core/lib/beads-test-env.sh
-. "$addons/lib/beads-test-env.sh"
-core_beads_home "$FM" "$home"
+# A fixture home on the tickets tables (fleet.db).
+core_tables_home() {  # <checkout> <home>
+  mkdir -p "$2/config" "$2/data" && : > "$2/config/backlog-intake-loose"
+  case ":$PATH:" in *":$1/bin:"*) ;; *) PATH=$1/bin:$PATH; export PATH ;; esac
+  JG_HOME=$2 python3 -I "$1/core/item-store/adapters/tickets.py" import --home main /dev/null >/dev/null
+}
+core_tables_home "$FM" "$home"
 export JG_HOME=$home
 add() {  # <id> <title> <body>
   local id=$1 title=$2 body=$3 prio=1
@@ -90,7 +94,7 @@ else no "squad_lead charter refused"; fi
 
 # The store answers "is this an owner ask": the label, the old tag of a row the one-time pass has not reached, and a slice below an ask.
 (cd "$home" && JG_HOME=$home bash "$FM/bin/jg-backlog.sh" add jg-label-ask -l captain-ask "Labelled ask" --priority 0 --kind ship --repo sample --body "A body line.") >/dev/null 2>&1 || no "fixture: the labelled ask"
-BEADS_DIR=$(cat "$home/config/beads-dir") "$FM/bin/jg-beads.sh" create --title="[captain-ask] Old row" --id jg-old-ask -p 0 -l project:sample >/dev/null 2>&1 || no "fixture: the old row"
+JG_HOME=$home python3 -I "$FM/core/item-store/adapters/bd_compat.py" create --title="[captain-ask] Old row" --id jg-old-ask -p 0 -l project:sample >/dev/null 2>&1 || no "fixture: the old row"
 (cd "$home" && JG_HOME=$home bash "$FM/bin/jg-backlog.sh" add --parent jg-with-ask "[feature] Slice" --priority 1 --repo sample --body "A body line.") >/dev/null 2>&1 || no "fixture: the slice"
 is "pass: an ask filed with the captain-ask label" "$(brief jg-label-ask --mode direct-PR)" "rc=0"
 is "pass: an old row with the tag in its title and no label" "$(brief jg-old-ask --mode direct-PR)" "rc=0"
@@ -112,7 +116,7 @@ with open(sys.argv[1], 'w') as out:
                    created_at='2026-11-08T00:00:00Z', updated_at='2026-11-08T00:00:00Z', created_by='test')
         out.write(json.dumps(row) + '\n')
 PY
-BEADS_DIR=$(cat "$home/config/beads-dir") "$FM/bin/jg-beads.sh" import "$work/large.jsonl" >"$work/import.log" 2>&1 \
+JG_HOME=$home python3 -I "$FM/core/item-store/adapters/bd_compat.py" import "$work/large.jsonl" >"$work/import.log" 2>&1 \
   || { cat "$work/import.log"; exit 1; }
 add jg-large-child 'Plain title' $'Main15 asked for this.\nparent: jg-owner-rules-large-parent-5159-abcdefghijklmnop'
 bytes=$(cd "$home" && JG_HOME=$home bash "$FM/bin/jg-backlog.sh" markdown | \

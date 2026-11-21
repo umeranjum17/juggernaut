@@ -65,12 +65,11 @@ home_dir() {  # <name> <from-home>
   printf '%s\n' "$SQUAD_LEAD_REGISTRY_HOME"
 }
 
-# bd in a home's own store, with that home's own config.
+# bd in a home's own tickets tables.
 bd_in() {  # <home> <bd args...>
-  local store h=$1
+  local h=$1
   shift
-  store=$(jg_backlog_beads_store "$h/config") || return 2
-  BEADS_DIR=$store "$SCRIPT_DIR/jg-beads.sh" "$@" 2>/dev/null
+  JG_HOME=$h python3 -I "$SCRIPT_DIR/../core/item-store/adapters/bd_compat.py" "$@" 2>/dev/null
 }
 
 cmd_add() {

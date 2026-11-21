@@ -10,7 +10,7 @@ group	live	idle	working
 edge	(none)	provision	provisioned	bin/jg-squad-lead-charter-lib.sh:squad_lead_charter_write	-	Main's word and a charter	jg-machine-squad-lead
 edge	provisioned	launch	idle	bin/jg-spawn.sh:spawn_squad_lead	-	the session answers	jg-machine-squad-lead
 edge	idle	route	working	bin/jg-send.sh:send	-	Main routed a ticket to it	jg-machine-squad-lead
-edge	working	drain	idle	bin/jg-squad-lead-dormant.sh:sweep	-	no ticket of its own is open	jg-machine-squad-lead
+edge	working	drain	idle	bin/jg-squad-lead-dormant.sh:sweep	-	no ticket it can start, no worker and no open request	jg-machine-squad-lead
 edge	live	miss	down	bin/jg-squad-lead-liveness-lib.sh:jg_squad_lead_liveness_probe	-	2 beats missed	jg-machine-squad-lead
 edge	down	recover	idle	bin/jg-squad-lead-liveness-lib.sh:jg_squad_lead_liveness_relaunch	-	the session answers again; routed work then makes it working	jg-machine-squad-lead
 edge	working	ring	working	core/stall-action/lead.sh:ring	-	a working beat is 10 min old while the home has work: the lead is rung once, then relaunched	jg-machine-squad-lead

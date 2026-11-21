@@ -1,13 +1,6 @@
 ---
 name: relay-respond
-description: >-
-  Agent-only playbook for handling Relay mentions and follow-ups.
-  Use on an "x-mention <request_id>" check wake to read the stashed mention, classify it, act autonomously on eligible requests, reply or dismiss, and link spawned work.
-  Also use on an "x-mode-error ..." check wake to report the Relay configuration blocker instead of answering a mention.
-  Also use on milestone and terminal wakes for a Relay-linked task before posting completion follow-ups, using typed promised-final reconciliation when registered and --final otherwise.
-  Also use on a "public-followup ..." check wake, and whenever a promised final public reply must be created, reconciled, or delivered.
-  Also use on an "x-followup-held <task-id>" check wake, which retries a follow-up the relay could not accept yet.
-  Loaded only when Relay is enabled.
+description: Use on Relay check wakes (x-mention, x-mode-error, public-followup, x-followup-held), and on milestone or terminal wakes of Relay-linked work. Only when Relay is enabled.
 user-invocable: false
 metadata:
   internal: true
@@ -135,7 +128,7 @@ Fetch narrowly and inspect it only to understand the thread or fulfill an author
 
 Reply in Juggernaut's own voice - the crisp, capable squad persona - but **public-facing**:
 
-- Apply the address and optional-flavor rules in [`AGENTS.md`](../../../AGENTS.md#juggernaut) to these captain-directed public replies, within the public-safety limits above.
+- Apply the address and optional-flavor rules in [`AGENTS.md`](../../../AGENTS.md#1-identity-and-prime-directives-1) to these captain-directed public replies, within the public-safety limits above.
 - **Use ASD-STE100 Simplified Technical English by default**, the standing captain-facing default in [`AGENTS.md` section 9](../../../AGENTS.md#9-escalation-and-captain-etiquette): short active sentences, one fact per sentence, a list over a paragraph.
 - **Be concise by default: aim for a single message, two at the very most.** A short, sharp answer beats a wall of text. Write tight on purpose - one or two sentences.
 

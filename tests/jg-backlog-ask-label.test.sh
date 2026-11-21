@@ -1,26 +1,17 @@
 #!/usr/bin/env bash
 # The type tag and the kind leave the title: `add` stores [captain-ask] words and -l captain-ask words the same way (the label, a title with
 # no tag), --kind captain is metadata on a task, a design ask's slice takes no design-ux label, the store answers "the ask itself" and
-# "under an ask" in one place, and the one-time pass (`retag`) brings an old home to the same shape. Every call runs on a real embedded
-# store with no network. JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT name the pinned builds, which skip without them.
+# "under an ask" in one place, and the one-time pass (`retag`) brings an old home to the same shape. Every call runs on the
+# home's tickets tables with no network.
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
-  printf 'skip: real store: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
-  exit 0
-fi
-
-WRAPPER="$ROOT/bin/jg-beads.sh" CLI="$ROOT/bin/jg-backlog.sh" T=$(jg_test_tmproot jg-backlog-ask-label)
-unset BEADS_DB BEADS_DOLT_SHARED_SERVER
-H=$T/home
+BD="$ROOT/core/item-store/adapters/bd_compat.py" CLI="$ROOT/bin/jg-backlog.sh" T=$(jg_test_tmproot jg-backlog-ask-label)
+H=$T/home; export JG_HOME=$H JG_STATE_OVERRIDE=$H/state JG_DATA_OVERRIDE=$H/data JG_CONFIG_OVERRIDE=$H/config
 mkdir -p "$H/config" "$H/state" "$H/data" "$T/user" "$T/real"
-export BEADS_DIR=$T/real/.beads JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
-printf '%s\n' "$BEADS_DIR" > "$H/config/beads-dir"
 : > "$H/config/backlog-intake-loose"  # this suite is about the label, and tests/jg-backlog-intake.test.sh is about strict intake
-"$WRAPPER" init --prefix jg >"$T/init.log" 2>&1 || fail "init: $(cat "$T/init.log")"
-bd_() { "$WRAPPER" "$@" 2>/dev/null; }
+bd_() { python3 -I "$BD" "$@" 2>/dev/null; }
 tasks() {
   env HOME="$T/user" TMPDIR="$T" XDG_DATA_HOME="$T/xdg" PATH=/usr/bin:/bin JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" JG_DATA_OVERRIDE="$H/data" \
     JG_CONFIG_OVERRIDE="$H/config" JG_BOOTSTRAP_NETWORK=skip "$CLI" "$@" 2>&1

@@ -1,51 +1,34 @@
-// Command jg-bus is the captain channel's one command: the live tee, the three
-// services it talks to, the reply router, and the parity replay.
+// Command jg-bus is the captain channel's one command: the chat in and out, the reply route, the
+// parity replay and the home's own wake queue.
 //
 // This header is the one owner of the captain channel's shape. docs/captain-channel.md
 // and docs/bus-service.md carry the operator view; nothing else restates it.
 //
-// WHY THIS EXISTS (migration step 5a, switched live). The fleet reaches the captain
-// through files and alerts scattered across the tree. The decided shape is one captain
-// channel on a bus: the events that are his to see (a decision waiting, an outcome
-// released with its proof link, a blocker, an alert) are published once, to the
-// CAPTAIN stream, and his replies come back as events routed to the lead that owns
-// them. That channel ran in shadow while its parity was proven; `set mode live` is the
-// shipped value now, so a change of state reaches the captain by this path.
-//
-// The stack decision is that new long-running parts are Go. This command owns
-// the long-running bus itself (`serve`, `ensure`, `unit`) and the routing every
-// captain-facing event takes, so it is written in Go and the shell that held it is
-// gone. Its behaviour is unchanged: tests/jg-bus.test.sh drives the same claims it
-// drove against the shell, and `parity --corrupt` still proves a green replay is never
-// vacuous.
+// WHY THIS EXISTS. The fleet reaches the captain through files and alerts scattered across the
+// tree. The decided shape is one captain channel: the events that are his to see (a decision
+// waiting, an outcome released with its proof link, a blocker, an alert) are recorded once and
+// sent to his chat, and his replies come back routed to the lead that owns them. No server runs
+// for it: the chat is sent in-process and the queue is the home's own files.
 //
 // CONTRACT.
 //
 //	config   defaults/captain-channel, then a home's config/captain-channel, then
 //	         JG_CAPTAIN_CHANNEL; the first file carrying a key wins, so an override
-//	         may set one key. Nothing here is hard-coded: addresses, subjects,
-//	         stream name, the mode, and the relay switch are all in that file.
-//	         `config <key>` prints the value in force.
-//	mode     `set mode live` is the one switch that decides what this path does, and
-//	         live is what ships:
-//	           live    record it, publish it, and name it undelivered when the bus does not take it.
-//	           shadow  record and publish only, and name nothing undelivered. This is the
-//	                   one-step reversal.
+//	         may set one key. `config <key>` prints the value in force.
+//	mode     `set mode direct` is the one switch that decides what this path does:
+//	           direct  record it, then send it through the chat in-process. A send that fails
+//	                   is named undelivered. This is the shipped value.
 //	           off     do nothing at all.
 //	record   $STATE/captain-channel.jsonl, one JSON event per line, appended before
-//	         anything is published. An event is never lost to an unreachable bus or an
-//	         absent service, and it is what a replay and a resend read.
-//	publish  Tee one event: record it, publish it to the bus through the Dapr sidecar
-//	         (the component file picks the backend; the code does not know NATS from
-//	         anything else), and, when the mode is live and the bus does not take it, name it undelivered. It
-//	         never breaks its emitter, because the two callers are today's own delivery
-//	         paths: every transport failure is logged once to $STATE/captain-channel.log
-//	         and the command still exits 0.
-//	undelivered  A live publish the bus does not take is also appended, with its error, to
-//	         $STATE/captain-channel-undelivered.jsonl, and `status` counts them. A live
-//	         path must not lose an event it was going to publish without saying so.
-//	         Nothing retries on its own: the record holds the event and this file names
-//	         the one that did not arrive.
+//	         anything is sent. An event is never lost to an unreachable chat, and it is what a
+//	         replay and a resend read.
+//	publish  Tee one event: record it and send it through the chat. It never breaks its
+//	         emitter, because the two callers are today's own delivery paths: every transport
+//	         failure is logged once to $STATE/captain-channel.log and the command still exits 0.
+//	undelivered  A send the chat does not take is also appended, with its error, to
+//	         $STATE/captain-channel-undelivered.jsonl, and `status` counts them. Nothing
+//	         retries on its own: the record holds the event and this file names the one that
+//	         did not arrive.
 //	parity   Replay every recorded event through the builder the live path sends with
 //	         and compare it with the event the record holds: what he would have seen and
 //	         what he will get are one diff. The delivery target is the one decision the
@@ -55,61 +38,12 @@
 //	reply    One captain reply event, JSON {"key","at","answer"[,"label"]}, on stdin or
 //	         in a file. Routing is NOT re-decided here: it is the route
 //	         bin/jg-board-answers.sh already keeps (state/board-routes/<card-key>) and
-//	         the same marked answer line and decision close it sends, so a reply reaching
-//	         the bus routes to the lead a board answer routes to. An unrouted card is
+//	         the same marked answer line and decision close it sends. An unrouted card is
 //	         refused, exactly as today, and its answer stays with Main.
-//	stream   Exit 0 when the stream exists on the server, 1 when not; creates nothing.
-//	account  Print this home's bus account and its credentials file, tab separated.
-//	         The account is the home's unique id (its Squad Lead id, else a hash of its
-//	         absolute path), never its folder name, and it is read from the registry the
-//	         machine's accounts file is written from (the bus owner's, when another home owns
-//	         it). `accounts [home...]` prints the
-//	         server block for these homes, Main and every data/squad_leads.md entry;
-//	         two homes on one account name are refused with a line naming both.
-//	login    The same two fields for a client about to connect, and nothing when the
-//	         machine's accounts file does not hold this home's account: a client that logs in
-//	         with a name the server does not hold is refused on every call.
-//	owner    Print "self" and exit 0 when this home owns the machine's bus unit (or may take
-//	         it, none being installed); print the owner's home and exit 3 when another
-//	         does. bin/jg-stack.sh asks it before it installs or starts a per-machine part.
-//	check-limits <config>
-//	         Exit 1, naming the shortfall, when a server config's global JetStream caps
-//	         are below what its accounts reserve. `unit` runs the same check on the
-//	         config it writes and refuses to write one the server could not start with.
-//	ensure   Start the server when it is not listening and create the stream, then say
-//	         one line. What a bootstrap step and docs/bus-service.md run.
-//	health   Test every JetStream account from the client side and send one message when an
-//	         outage starts and one when it ends: `health run` (health.go).
-//	unit     Print the systemd user service a home installs once for one part: nats
-//	         (the default) runs the server itself and creates the stream after it
-//	         starts; wake-engine, wake-watcher and router run this command's own consumers; dapr
-//	         runs its binary in the foreground.
-//	registry The machine's member homes live in one list, the owner's state/bus/homes.
-//	         A home that joins appends one line; a temp or worktree test home never
-//	         joins a real machine's list, and a test or a lab names its own list with
-//	         JG_BUS_HOMES so its fixture homes are recorded there instead. That list only
-//	         stands in for a throw-away owner; a real owner always reads its own.
-//	install-service
-//	         Make that service real: write the unit when it is missing, reload systemd, enable
-//	         it now, and verify. Only the unit's owner (the home it names) does that; any
-//	         other home adds its account to the owner's shared accounts, has the server
-//	         reload them, and leaves the unit and the server config untouched. Without a user manager it
-//	         falls back to `ensure`. One line either way, and never a failed boot - this
-//	         is what bin/jg-bootstrap.sh and bin/jg-update.sh run so a release cannot go
-//	         live without its bus and a reboot brings it back.
-//	serve    Start the services from their files (nats, wake-engine, wake-watcher, router, dapr), every one of them read as config
-//	         and none re-implemented here: nats-server (core/bus/nats.conf), the
-//	         JetStream stream it carries (core/bus/stream.json), the slim Dapr runtime
-//	         over NATS (core/bus/dapr/components/pubsub.yaml). A home may override any of them under config/bus/.
-//	         Pids and logs live in $STATE/bus/, so `stop` and `status` are per home. A
-//	         service whose binary is missing is named and not started; the others still
-//	         run, because the record never depends on them.
-//	status   What the channel holds and which of its services run: the mode, the
-//	         delivery target, the record counts, then one line per service read from the
-//	         service manager's own state for the unit that runs it. A service this home
-//	         started detached is read from its pid. A state this probe could not read is
-//	         `unknown`, never down: a wrong down sends a reader after a fault that is not
-//	         there, and a real outage then looks like a healthy fleet.
+//	unit     `unit gateway` prints the systemd user service a home installs once for the chat gateway.
+//	wake     The home's own wake queue: raise, settle, deliver and render, in files under the home's state.
+//	watcher  The watcher's view of that queue: oldest, resurfaced, latest, rows and replay (watcher.go).
+//	status   What the channel holds: the mode, the delivery target and the record counts.
 //
 // Usage:
 //
@@ -118,13 +52,12 @@
 //	jg-bus gateway --once | serve | pair | status | enabled | push <text>   (gateway.go, gateway_pair.go and gateway_push.go own this)
 //	jg-bus parity [--record <file>] [--corrupt]
 //	jg-bus reply [<event.json>]
-//	jg-bus stream | serve | ensure | check-limits <config> | unit [nats|wake-engine|wake-watcher|router|dapr|gateway] | install-service | health run | stop | status | bootstrap
-//	jg-bus wake-engine | router | probe [wake-engine|wake-watcher|router]   (engine.go owns these)
-//	jg-bus wake-watcher | watcher oldest|resurfaced|latest|rows|replay|rebuild   (watcher.go owns these)
-//	jg-bus wake render|raise|settle|deliver <state> ...   (wake.go, wakebus.go, wakerender.go own the wake queue's fold, bus and replica)
+//	jg-bus unit gateway | status
+//	jg-bus watcher oldest|resurfaced|latest|rows|replay   (watcher.go owns these)
+//	jg-bus wake render|raise|settle|deliver <state> ...   (wake.go, wakebus.go, wakerender.go own the wake queue's fold, outbox and replica)
 //
 // Env: JG_BUS_ROOT (this checkout, set by bin/jg-bus.sh), JG_HOME, JG_STATE_OVERRIDE,
-// JG_CAPTAIN_CHANNEL, JG_BUS_HOMES (the machine member list, for a test or a lab).
+// JG_CAPTAIN_CHANNEL.
 package main
 
 import (
@@ -149,8 +82,6 @@ type app struct {
 	undelivered string
 	log         string
 	configFiles []string
-	// set by buildUnit for the nats part: what it just rewrote.
-	accountsChanged, accountsRemoved, confChanged bool
 	// typing is the chat's "typing…" indicator while a serving gateway has open notes; nil otherwise.
 	typing *typer
 	// data is the home's data directory, which holds the Squad Lead registry.
@@ -179,44 +110,12 @@ func run(args []string) int {
 		return a.parity(rest)
 	case "reply":
 		return a.reply(rest)
-	case "serve":
-		return a.serve()
-	case "wake-engine":
-		return a.wakeEngine()
-	case "wake-watcher":
-		return a.wakeWatcher()
 	case "watcher":
 		return a.watcherCmd(rest)
-	case "router":
-		return a.router()
-	case "probe":
-		return a.probe(rest)
 	case "unit":
 		return a.unit(rest)
-	case "health":
-		return a.health(rest)
-	case "install-service":
-		return a.installService()
-	case "accounts":
-		return a.accounts(rest)
 	case "wake":
 		return a.wake(rest)
-	case "account":
-		return a.account()
-	case "login":
-		return a.login()
-	case "owner":
-		return a.owner()
-	case "check-limits":
-		return a.checkLimitsCommand(rest)
-	case "ensure":
-		return a.ensure()
-	case "stop":
-		return a.stop()
-	case "stream":
-		return a.streamExists()
-	case "bootstrap":
-		return a.bootstrap()
 	case "status":
 		return a.status()
 	default:
@@ -366,9 +265,15 @@ func (a *app) cfgOr(key, fallback string) string {
 	return fallback
 }
 
-// channelMode is what this path does: live, shadow or off. Mode is the one switch.
+// channelMode is what this path does: direct, live, shadow or off. Mode is the one switch.
 func (a *app) channelMode() string {
-	return a.cfgOr("mode", "live")
+	return a.cfgOr("mode", "direct")
+}
+
+// chatOn is whether the chat gateway runs: the modes that deliver to the owner's chat.
+func (a *app) chatOn() bool {
+	m := a.channelMode()
+	return m == "direct"
 }
 
 // busFile is the service file in force: a home override first, then the shipped one.

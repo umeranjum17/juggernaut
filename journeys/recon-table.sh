@@ -12,7 +12,7 @@ rc=0
   bash "$jm" events recon || rc=1
   bash "$root/tests/jg-machine-recon.test.sh" || rc=1
   bash "$root/tests/jg-machine-ticket.test.sh" || rc=1
-  JG_BEADS_TEST_BD="${JG_BEADS_TEST_BD:-$(command -v bd)}" JG_BEADS_TEST_DOLT="${JG_BEADS_TEST_DOLT:-$(command -v dolt)}" bash "$root/tests/jg-lavish-guard.test.sh" || rc=1
+  bash "$root/tests/jg-lavish-guard.test.sh" || rc=1
 } > "$out" 2>&1
 cat "$out"
 cat > "$DONE_DONE_EVIDENCE_ROOT/steps.json" <<JSON

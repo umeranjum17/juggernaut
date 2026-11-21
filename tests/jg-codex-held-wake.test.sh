@@ -27,7 +27,6 @@ chmod +x "$WORK/bin/tmux"
 cp "$(command -v bash)" "$WORK/bin/codex"
 export PATH="$WORK/bin:$PATH" JG_HOME="$WORK/home" JG_ROOT_OVERRIDE="$WORK/home"
 export JG_SEND_RETRIES=1 JG_SEND_SLEEP=0.1 JG_TASK_INBOX_GRACE_SECS=1 JG_TASK_INBOX_HELD_SECS=1
-export JG_KV_URL=nats://127.0.0.1:1 JG_WAKE_BUS_URL=nats://127.0.0.1:1 JG_STATE_BUS_URL=nats://127.0.0.1:1
 printf 'window=held:jg-lead\nkind=ship\nharness=codex\n' > "$JG_HOME/state/lead.meta"
 tmux new-session -d -s held -n jg-lead -x 200 -y 40
 : > "$WORK/submitted"

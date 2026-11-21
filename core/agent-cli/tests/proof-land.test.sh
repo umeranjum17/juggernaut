@@ -44,6 +44,27 @@ unset STUB_SLEEP
 echo dirty > "$WT/x"; out=$(jg proof) && fail "dirty tree passed"; has dirty "$out" "not clean"; rm -f "$WT/x"
 out=$(jg proof --bound x) && fail "bad bound passed"; has badbound "$out" "whole seconds"
 
+# proof on a trunk project: `done-done affected` gets the commit the lane left the trunk at, never the project's stale main
+# (which would select every journey of the trunk's history), and a trunk that moved on since is not in the lane's diff
+TP=$H/projects/tproj; TG="git -C $TP -c user.email=t@example.com -c user.name=t"
+git -C "$TP" init -q -b main . 2>/dev/null || { mkdir -p "$TP"; git -C "$TP" init -q -b main .; }
+$TG commit -q --allow-empty -m stale-main
+$TG checkout -q -b trunk; $TG commit -q --allow-empty -m trunk-1; $TG commit -q --allow-empty -m trunk-2
+fork=$(git -C "$TP" rev-parse trunk); stale=$(git -C "$TP" rev-parse main)
+SAVE_WT=$WT; WT=$d/twt
+git -C "$TP" worktree add -q -b feature/t2 "$WT" trunk || fail "trunk worktree"
+WT=$(cd "$WT" && pwd -P)
+printf 'worktree=%s\nkind=ship\nmode=local-trunk\nbranch=feature/t2\nproject=%s\n' "$WT" "$TP" > "$H/state/t2.meta"
+$TG commit -q --allow-empty -m trunk-3-after-fork   # trunk is checked out nowhere: this moves it ahead of the lane
+printf '%s\n' '- tproj [local-trunk] - fixture' > "$H/data/projects.md"; : > "$H/state/trunk-tip-tproj"
+(cd "$WT" && git -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m lane)
+out=$(jg proof --wait); has trunk-base "$out" "stub done-done affected $fork in $WT"
+case $out in *"$stale"*) fail "the stale main is the base: $out" ;; esac
+# a project that is not a trunk project keeps done-done's own default base
+printf '%s\n' '- tproj [direct-PR] - fixture' > "$H/data/projects.md"
+out=$(jg proof --wait); has plain-base "$out" "stub done-done affected in $WT"
+WT=$SAVE_WT
+
 # land: before the done line, with a done line, then each record the lander writes
 mem=$H/data/jg-trunk-landing
 out=$(jg land); rc=$?; [ $rc = 3 ] || fail "notready exit $rc"; has notready "$out" "landing: notready"; has notready "$out" "no done line yet"

@@ -11,7 +11,13 @@ set -u
 OBS="$ROOT/core/machines/observers"
 T=$(cd "$(jg_test_tmproot jg-observers-scale)" && pwd); H=$T/home; S=$H/state; D=$H/data; mkdir -p "$S" "$D" "$H/config" "$H/projects"
 export JG_HOME="$H" JG_STATE_OVERRIDE="$S" JG_DATA_OVERRIDE="$D" JG_CONFIG_OVERRIDE="$H/config"
-now_ms() { date +%s%N | cut -c1-13; }
+# An observer's cost is the CPU it spends (user + system), not the wall time: a loaded host makes a 0.3 s observer wait seconds for a core.
+# cpu_ms <out file> <command...>: run the command with its output in the file, print its CPU milliseconds.
+cpu_ms() {
+  local out=$1 t; shift
+  t=$( { TIMEFORMAT='%U %S'; time "$@" >"$out" 2>&1 </dev/null; } 2>&1 )
+  awk -v t="$t" 'BEGIN { split(t, a, " "); printf "%d", (a[1] + a[2]) * 1000 }'
+}
 
 # 10x today's records: 305 moves, 18 trunk rows and ~300 tasks today.
 awk 'BEGIN { for (i = 1; i <= 3050; i++) printf "%d\tt-%d\tdelivering.queued\tland\tdelivering.landed\n", 1700000000 + i, i % 300 }' > "$D/moves.log"
@@ -19,20 +25,22 @@ awk 'BEGIN { for (i = 1; i <= 180; i++) printf "p\tc%d\t%d\t%s\n", i, 1700000000
 for i in $(seq 1 300); do printf 'kind=ship\n' > "$S/t-$i.meta"; printf 'working [at=1700000000]: x\n' > "$S/t-$i.status"; done
 printf 'c1\n' > "$S/trunk-tip-p"; printf 'c0\n' > "$S/trunk-green-p"
 
-# 1. Every observer, timed at 10x, ends under 1 s.
+# 1. Every observer, timed at 10x, ends under 1 s; a timing of observers that print nothing proves nothing, so some must answer.
+spoke=0
 for f in "$OBS"/*.sh; do
   n=$(basename "$f" .sh); [ "$n" != cursor ] || continue
-  t0=$(now_ms); bash "$f" t-7 >/dev/null 2>&1 </dev/null; t1=$(now_ms)
-  ms=$((t1 - t0)); echo "observer $n: $ms ms at 10x records"
-  [ "$ms" -lt 1000 ] || fail "observer $n took $ms ms at 10x records, over 1 s: move it to the cursor"
+  ms=$(cpu_ms "$T/obs.out" bash "$f" t-7); echo "observer $n: $ms ms of CPU at 10x records"
+  [ ! -s "$T/obs.out" ] || spoke=$((spoke + 1))
+  [ "$ms" -lt 1000 ] || fail "observer $n took $ms ms of CPU at 10x records, over 1 s: move it to the cursor"
 done
-pass "every observer ends under 1 s at 10x records"
+[ "$spoke" -gt 0 ] || fail "no observer printed a state for t-7, the observers did not run"
+pass "every observer ends under 1 s at 10x records and some print a state"
 
 # 2. The cursor answers like a full scan.
 full() { awk -F'\t' -v t="$1" '$2 == t { l = $0 } END { print l }' "$D/moves.log"; }
-t0=$(now_ms); got=$(bash "$OBS/cursor.sh" last t-7); t1=$(now_ms)
+ms=$(cpu_ms "$T/cursor.out" bash "$OBS/cursor.sh" last t-7); got=$(cat "$T/cursor.out")
 assert_equals "$(full t-7)" "$got" "last move of t-7 matches a full scan"
-[ $((t1 - t0)) -lt 1000 ] || fail "first cursor read took $((t1 - t0)) ms at 10x"
+[ "$ms" -lt 1000 ] || fail "first cursor read took $ms ms of CPU at 10x"
 assert_equals "$(wc -c < "$D/moves.log")" "$(head -n1 "$S/observer-cursors/moves.last" | sed 's/^#offset //')" "the cursor stands at the end of the log"
 assert_equals "" "$(bash "$OBS/cursor.sh" last nobody)" "a ticket with no move prints nothing"
 pass "the first cursor read matches a full scan under 1 s"

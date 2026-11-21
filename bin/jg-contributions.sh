@@ -163,30 +163,41 @@ jq_lib() { # jq options/program via final argument
   jq -L "$SCRIPT_DIR" "$@" "include \"jg-contributions\"; $program"
 }
 
+# One find and one jq read every saved file, so the cost stays flat as the
+# number of task directories grows; a per-file jq costs a process each.
 read_saved() {
-  local file dir task
-  : > "$TMP/saved.jsonl"
+  local file dir task n=0 oversized
+  local -a reads=()
   ERRORS=0
   if [ -L "$DATA" ]; then
     ERRORS=1; printf '[]\n' > "$TMP/saved.json"; return 0
   fi
+  oversized=$'\n'$(find "$DATA" -mindepth 2 -maxdepth 2 -name contributions.json \
+    -type f -size +1048576c -print 2>/dev/null)$'\n'
   for file in "$DATA"/*/contributions.json; do
     [ -e "$file" ] || [ -L "$file" ] || continue
     jg_dirname_to dir "$file"
     jg_basename_to task "$dir"
     if [ -L "$file" ] || [ -L "$dir" ] || [ ! -f "$file" ] \
-      || [ "$(wc -c < "$file")" -gt 1048576 ] \
-      || ! jq_lib -ne --slurpfile record "$file" '($record | length) == 1 and ($record[0] | valid_record)' >/dev/null 2>&1; then
+      || [[ $oversized == *$'\n'"$file"$'\n'* ]]; then
       ERRORS=$((ERRORS + 1))
       continue
     fi
-    # A file's task identity must match its durable directory, not arbitrary JSON.
-    if ! jq -e --arg task "$task" '.task == $task' "$file" >/dev/null; then
-      ERRORS=$((ERRORS + 1)); continue
-    fi
-    jq -c . "$file" >> "$TMP/saved.jsonl"
+    reads+=(--rawfile "file$n" "$file" --arg "task$n" "$task")
+    n=$((n + 1))
   done
-  jq -s . "$TMP/saved.jsonl" > "$TMP/saved.json"
+  # A file holds exactly one valid record, whose task identity must match its
+  # durable directory, not arbitrary JSON.
+  jq_lib -n --argjson n "$n" "${reads[@]}" '
+    [range(0; $n) as $i
+     | (try [$ARGS.named["file\($i)"] | fromjson] catch []) as $values
+     | if ($values | length) == 1 and ($values[0] | valid_record)
+          and $values[0].task == $ARGS.named["task\($i)"]
+       then $values[0] else false end]
+    | {saved: map(select(. != false)), errors: map(select(. == false)) | length}' \
+    > "$TMP/saved-read.json" || fail 'saved contribution records could not be read'
+  jq '.saved' "$TMP/saved-read.json" > "$TMP/saved.json"
+  ERRORS=$((ERRORS + $(jq '.errors' "$TMP/saved-read.json")))
 }
 
 get_input() {

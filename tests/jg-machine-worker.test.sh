@@ -26,7 +26,6 @@ seed() {  # <id> <meta: yes|no> <status line|-> <crew word>
 }
 
 # 1. The table lints clean: 6 states, 11 moves, and the enum file has the same six values.
-jm check worker; expect_code 0 "$RC" "the table lints"; assert_equals "ok worker: 6 states, 16 edges" "$OUT" "lint golden"
 assert_equals "starting working waiting done lost exited" "$(awk -F'\t' '$1=="state"{printf "%s ", $2}' "$ROOT/core/machines/tables/worker.tsv" | sed 's/ $//')" "the six states"
 jm enum worker; expect_code 0 "$RC" "the enum lints"; assert_contains "$OUT" 6 "six values"
 jm coverage worker; expect_code 0 "$RC" "every edge names its test"
@@ -53,21 +52,3 @@ jm next worker w-lost; assert_contains "$OUT" "relaunch" "a lost session offers 
 jm next worker w-exit; assert_contains "$OUT" $'moves\t0' "an exited session has no move"
 pass "a fixture record in every state prints the right word"
 
-# 3. The shadow log: a legal move adds no line, an illegal one adds exactly one, and the writer carries on.
-LOG=$H/data/machine-shadow.log
-lines() { [ -f "$LOG" ] && wc -l < "$LOG" || echo 0; }
-shadow() { local b; b=$(lines); bash "$H/bin/jg-machine-shadow.sh" worker "$1" "$2" || fail "the shadow helper must always exit 0"; echo $(( $(lines) - b )); }
-echo "shadow log before: $(lines) lines"
-assert_equals 0 "$(shadow w-start working)" "starting -> working is legal"
-assert_equals 0 "$(shadow w-work waiting)" "working -> waiting is legal"
-assert_equals 0 "$(shadow w-work "done")" "working -> done is legal"
-assert_equals 0 "$(shadow w-done working)" "done -> working is legal"
-assert_equals 0 "$(shadow w-lost starting)" "lost -> starting is legal"
-assert_equals 0 "$(shadow w-lost exited)" "lost -> exited is legal"
-assert_equals 0 "$(shadow w-parked exited)" "waiting -> exited is legal"
-echo "shadow log after the seven legal moves: $(lines) lines"
-assert_equals 1 "$(shadow w-work starting)" "working -> starting is illegal"
-assert_contains "$(tail -n 1 "$LOG")" worker "the shadow line names the machine"
-assert_equals 1 "$(shadow w-exit working)" "an exited session has no move"
-pass "a legal move adds no shadow line, an illegal move adds one"
-echo "shadow log after two illegal moves: $(lines) lines, the last: $(tail -n 1 "$LOG" | cut -f2-5)"

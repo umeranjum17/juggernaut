@@ -197,6 +197,12 @@ test_check_reports_a_merge_with_no_board_evidence() {
   : > "$d/home/state/m1.pr-poll-merge-notified"
   out=$(run "$d" "$GATE" check)
   assert_contains "$out" "merge landed with no board Evidence card: m1 https://github.com/o/r/pull/7" "an unproven merge did not wake the board owner"
+  # Under the default cadence the same unproven merge is one wake, not one per sweep: the report repeats only as a long reminder.
+  for n in 1 2 3; do
+    out=$(env -u JG_BOARD_GATE_REFIRE_SECS JG_BOARD_GATE_NOW=$((NOW + 60 * n)) PATH="$d/fakebin:$PATH" JG_CAPTAIN_CHANNEL="$d/channel-off" \
+      JG_HOME="$d/home" JG_ROOT_OVERRIDE="$d/home" SIGN_OFF_HOME="$d/so" SIGNOFF_LOG="$d/signoff.log" "$GATE" check 2>&1)
+    assert_equals "" "$out" "sweep $n of the same unproven merge woke the board owner again"
+  done
   jq --arg f "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     '.items += [{key: "merge-github.com-o-r-pull-7", kind: "evidence", link: "https://github.com/o/r/pull/7", filed: $f}]' \
     "$board" > "$board.t" && mv "$board.t" "$board"

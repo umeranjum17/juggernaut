@@ -15,8 +15,9 @@
 # behavior; everything else, including any path this script does not recognize,
 # needs the full suite. Cheap paths
 # are media assets anywhere, top-level markdown other than AGENTS.md and
-# CLAUDE.md, LICENSE/NOTICE, and docs/ except its two executable subtrees
-# (docs/examples/ fixtures, docs/supervision-protocols/ session instructions).
+# CLAUDE.md, LICENSE/NOTICE, and docs/ except its three executable subtrees
+# (docs/examples/ fixtures, docs/supervision-protocols/ session instructions,
+# docs/roles/ role packs that briefs and the session start print).
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
 [ "$_jg_d" != "${BASH_SOURCE[0]}" ] || _jg_d=.
@@ -53,7 +54,7 @@ jg_ci_scope_cheap_path() {
     *) return 1 ;;
   esac
   case $path in
-    docs/examples/*|docs/supervision-protocols/*|docs/bus-service.md) return 1 ;;
+    docs/examples/*|docs/supervision-protocols/*|docs/roles/*|docs/bus-service.md) return 1 ;;
     docs/*) return 0 ;;
   esac
   return 1
@@ -71,14 +72,13 @@ jg_ci_scope_bus_path() {
     # The workflow that defines a lane is part of the lane: a change to it must run it.
     .github/*) return 0 ;;
     docs/bus-service.md) return 0 ;;
-    # The helpers and the five suites the Bus service lane runs.
-    tests/lib.sh|tests/git-config-helpers.sh) return 0 ;;
-    tests/jg-bus-service.test.sh|tests/jg-bus-machine-service.test.sh|tests/jg-stack.test.sh|tests/jg-stack-owner.test.sh|tests/jg-bus.test.sh) return 0 ;;
+    # The helpers and the suite the Bus service lane runs.
+    tests/lib.sh|tests/git-config-helpers.sh|tests/bus-direct.test.sh) return 0 ;;
   esac
   return 1
 }
 jg_ci_scope_shell_path() { case $1 in *.sh|.github/*) return 0 ;; esac; return 1; }
-jg_ci_scope_evals_path() { case $1 in bin/*|core/*|defaults/captain-voice*.md|defaults/status-states.tsv|toolchain.versions|.github/*) return 0 ;; esac; return 1; }
+jg_ci_scope_evals_path() { case $1 in bin/*|core/*|docs/roles/*|defaults/captain-voice*.md|defaults/status-states.tsv|toolchain.versions|.github/*) return 0 ;; esac; return 1; }
 
 jg_ci_scope_main() {
   local seen=false cheap=true bus=false shell=false evals=false path line

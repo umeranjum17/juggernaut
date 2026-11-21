@@ -8,6 +8,7 @@
 #    takes the pin back below that commit. A verify whose only failures pass on their one rerun moves the pin too, and each
 #    flaky test is recorded and filed once as its own fix row. A gate shard over its wall-clock budget with no failed test
 #    is a warning and a machine-load row, never a red.
+# A per-commit line-red ends when its commit leaves the line or a later commit is green.
 # A red with no failed test (the stall of 10 Nov) warns and runs once more, pins and reverts nothing, and a ready lane lands on it
 #    through the real check with no hand step and no marker file. A trunk with no green for 15 minutes raises one alarm, not two.
 # No landing or stack holds the trunk lock while its gate runs: a verify finishes and moves the pin, another lane lands,
@@ -451,19 +452,20 @@ test_no_green_for_15_minutes_raises_one_alarm_not_two() {
   [ "$(grep -c 'has had no green commit for 16 minutes' "$q")" = 1 ] || fail "the stall must raise one alarm through the landing check, not two: $(cat "$q" 2>&1)"
   grep 'has had no green commit' "$q" | grep -q "alert-line-red--proj-no-green-${green:0:12}" || fail "the stall raises line-red for the lead: $(cat "$q")"
   assert_contains "$(grep 'has had no green commit' "$q")" "live stays on ${green:0:12}" "the alarm says live stays on the last green commit"
-  # A stall that goes on climbs the ladder through the same per-minute call: nothing before the 300 s rung timer, then Main, then the
-  # captain's chat (the owner rung), then the same rung again after the 600 s repeat.
+  # A stall that goes on climbs the ladder through the same per-minute call: nothing before the 300 s rung timer, then Main. A team alert
+  # stops at Main (bin/jg-alert.sh: facts never grant owner authority), so no owner rung rings, and Main's rung repeats every 600 s.
   rung_at=$(sed -n 's/^rung_at=//p' "$HOME_D/state/alerts/line-red--proj-no-green-${green:0:12}.rec")
   JG_ALERT_NOW=$((rung_at + 299)) trunk green-alarm "$PROJ" >/dev/null 2>&1
   ! grep -q "at rung 3 for main" "$q" || fail "no climb before the rung timer ran out: $(cat "$q")"
   JG_ALERT_NOW=$((rung_at + 300)) trunk green-alarm "$PROJ" >/dev/null 2>&1
   grep "alert-line-red--proj-no-green-${green:0:12}" "$q" | grep -q "at rung 3 for main" || fail "the stall climbs to Main after 300 s: $(cat "$q")"
   JG_ALERT_NOW=$((rung_at + 600)) trunk green-alarm "$PROJ" >/dev/null 2>&1
-  grep "alert-line-red--proj-no-green-${green:0:12}" "$q" | grep -q "at rung 4 for owner" || fail "the stall climbs to the owner after 300 s more: $(cat "$q")"
-  JG_ALERT_NOW=$((rung_at + 1199)) trunk green-alarm "$PROJ" >/dev/null 2>&1
-  [ "$(grep -c "at rung 4 for owner" "$q")" = 1 ] || fail "the owner rung is not repeated before 600 s: $(cat "$q")"
-  JG_ALERT_NOW=$((rung_at + 1200)) trunk green-alarm "$PROJ" >/dev/null 2>&1
-  [ "$(grep -c "at rung 4 for owner" "$q")" = 2 ] || fail "the owner rung repeats every 600 s while the stall goes on: $(cat "$q")"
+  ! grep -q "at rung 4 for owner" "$q" || fail "a team alert must never reach the owner rung: $(cat "$q")"
+  JG_ALERT_NOW=$((rung_at + 899)) trunk green-alarm "$PROJ" >/dev/null 2>&1
+  [ "$(grep -c "at rung 3 for main" "$q")" = 1 ] || fail "Main's rung is not repeated before 600 s: $(cat "$q")"
+  JG_ALERT_NOW=$((rung_at + 900)) trunk green-alarm "$PROJ" >/dev/null 2>&1
+  [ "$(grep -c "at rung 3 for main" "$q")" = 2 ] || fail "Main's rung repeats every 600 s while the stall goes on: $(cat "$q")"
+  ! grep -q "at rung 4 for owner" "$q" || fail "a team alert must never reach the owner rung, even on repeat: $(cat "$q")"
   # The pin moves, and a later stall raises a new alarm.
   trunk verify "$PROJ" >/dev/null 2>&1 || fail "the trunk must verify green"
   old_pin=$green; green=$(tip); assert_contains "$(trunk green-alarm "$PROJ" 2>&1)" "is green at ${green:0:12}" "a green tip raises nothing"
@@ -477,7 +479,37 @@ test_no_green_for_15_minutes_raises_one_alarm_not_two() {
   out=$(trunk green-alarm "$PROJ" 2>&1); assert_contains "$out" "raised:" "a new stall above a moved pin is raised"
   [ "$(grep -c 'at rung 2 for lead.*has had no green commit' "$q")" = 2 ] || fail "each stall is raised once: $(cat "$q")"
   [ "$(sed -n 's/^state=//p' "$HOME_D/state/alerts/line-red--proj-no-green-${old_pin:0:12}.rec")" = resolved ] || fail "the old stall ends when its pin moved"
-  pass 'a trunk with no green for 15 minutes raises one alarm through the landing check that climbs to Main and the owner and repeats while the stall goes on, and a new stall after the pin moved raises one more'
+  pass 'a trunk with no green for 15 minutes raises one alarm through the landing check that climbs to Main, never the owner, and repeats while the stall goes on, and a new stall after the pin moved raises one more'
+}
+
+# A per-commit line-red alert (a charged verify red, an incomplete verify, a red CI) ends when its red is history: the line was cut over
+# (the commit is no longer on the trunk), or a later commit is green. The green pin standing on the red commit itself is not later.
+test_a_per_commit_line_red_ends_when_the_line_is_cut_over_or_a_later_commit_is_green() {
+  local c1 c2 c3 now
+  world oldred
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
+  lane o1 one; c1=$(tip_after_land o1); lane o2 two; c2=$(tip_after_land o2); lane o3 three; c3=$(tip_after_land o3)
+  now=$(date +%s)
+  alert() { JG_STATE_OVERRIDE="$HOME_D/state" "$HOME_D/bin/jg-alert.sh" raise line-red "$1" --project proj --note "red at $1" >/dev/null 2>&1 || fail "line-red $1 must raise"; }
+  state_of() { sed -n 's/^state=//p' "$HOME_D/state/alerts/line-red--$1.rec"; }
+  alert "proj-${c2:0:12}"; alert "proj-verify-incomplete-${c2:0:12}"; alert "proj-ci-${c1:0:12}"; alert "proj-deadbeef0123"
+  printf 'proj\t%s\t%s\tred\n' "$c1" "$((now - 100))" >> "$HOME_D/data/trunk-ci.tsv"
+  # The line was cut over under the fourth alert: its commit is not on the trunk. The others wait on their reds.
+  trunk green-alarm "$PROJ" >/dev/null 2>&1
+  [ "$(state_of proj-deadbeef0123)" = resolved ] || fail "an alert whose commit left the line must resolve"
+  [ "$(state_of "proj-${c2:0:12}")" != resolved ] || fail "a red with no later green stays open"
+  # The pin on the red commit itself is no later green; a pin above a CI red says nothing of it without a CI green row.
+  printf '%s\n' "$c2" > "$HOME_D/state/trunk-green-proj"; trunk green-alarm "$PROJ" >/dev/null 2>&1
+  [ "$(state_of "proj-${c2:0:12}")" != resolved ] && [ "$(state_of "proj-verify-incomplete-${c2:0:12}")" != resolved ] || fail "the pin on the red commit is not a later green"
+  [ "$(state_of "proj-ci-${c1:0:12}")" != resolved ] || fail "a CI red needs a later CI green row, not the pin alone"
+  # A later commit goes green: the pin stands above the red commit.
+  printf '%s\n' "$c3" > "$HOME_D/state/trunk-green-proj"; trunk green-alarm "$PROJ" >/dev/null 2>&1
+  [ "$(state_of "proj-${c2:0:12}")" = resolved ] && [ "$(state_of "proj-verify-incomplete-${c2:0:12}")" = resolved ] || fail "a red under a later green pin must resolve"
+  grep -q '^proof=source:later-commit-green$' "$HOME_D/state/alerts/line-red--proj-${c2:0:12}.rec" || fail "the close names its proof"
+  [ "$(state_of "proj-ci-${c1:0:12}")" != resolved ] || fail "a CI red still needs a CI green row"
+  printf 'proj\t%s\t%s\tgreen\n' "$c3" "$now" >> "$HOME_D/data/trunk-ci.tsv"; trunk green-alarm "$PROJ" >/dev/null 2>&1
+  [ "$(state_of "proj-ci-${c1:0:12}")" = resolved ] || fail "a CI red resolves once a later commit is green in CI"
+  pass 'a per-commit line-red resolves when its commit leaves the line or a later commit is green, and not before'
 }
 
 # The nightly whole run (jg8-t5), started by the tick: every script on the tip through the same verify. Of three changes landed since the
@@ -637,6 +669,7 @@ test_verify_judges_only_the_changes_since_the_green_pin_and_prints_its_seconds
 test_a_red_with_no_failed_test_never_pins_and_a_ready_lane_lands_on_it
 test_the_tick_verifies_a_landed_pair_that_breaks_together_and_the_pin_moves_only_on_green
 test_no_green_for_15_minutes_raises_one_alarm_not_two
+test_a_per_commit_line_red_ends_when_the_line_is_cut_over_or_a_later_commit_is_green
 test_the_nightly_run_writes_its_report_files_one_flake_ticket_and_traces_a_red_to_its_commit
 test_a_journey_its_proof_did_not_select_is_charged_to_its_commit_and_counted_as_a_miss
 printf 'jg-trunk-verify: ok\n'

@@ -4,10 +4,7 @@
 # The delivery record of a steer (bin/jg-delivery.sh, bin/jg-task-inbox-lib.sh): five words, each with
 # its own proof. A real steer written through the inbox library is "stored"; a ring that returned 0 is
 # "rung"; moving the file to handled/ is only "read"; "handled" exists only after the worker's command
-# gives evidence, and that claim reaches the bus as its own event on a throwaway accounts server; a
-# worker that never answers shows up in `overdue`; a dead bus never blocks the worker.
-#
-# The server is a lab one on a free port with its own store, so this never touches the machine's bus.
+# gives evidence; a worker that never answers shows up in `overdue`.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -15,8 +12,6 @@ set -u
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 DIR=$(jg_test_tmproot jg-delivery-record)
-SERVER=${JG_NATS_SERVER:-$(command -v nats-server 2>/dev/null || true)}
-JG_NATS_BIN=${JG_NATS_BIN:-$(command -v nats 2>/dev/null || true)}
 command -v jq >/dev/null 2>&1 || { echo "skip: jq is needed"; exit 0; }
 trap jg_test_cleanup EXIT
 
@@ -90,26 +85,12 @@ sleep 0.3
 ltick FAKE_TMUX_SLOW=1 || true
 wait
 [ "$(grep -c '^sess:jg-t26' "$FAKE_LOG")" = 1 ] && pass "a watcher and the tick together ring window 26 once" || fail "window 26 got $(grep -c '^sess:jg-t26' "$FAKE_LOG") rings with both callers: $(cat "$FAKE_LOG")"
-[ -n "$SERVER" ] && [ -n "$JG_NATS_BIN" ] || { echo "skip: nats-server and the nats client are needed"; exit 0; }
-export JG_NATS_BIN
 trap jg_test_cleanup EXIT
 
 HOME_DIR="$DIR/home"
-mkdir -p "$HOME_DIR/state/bus" "$HOME_DIR/config/bus" "$HOME_DIR/data"
-port=$(( 47900 + RANDOM % 90 ))
-sed "s/4222/$port/" "$ROOT/core/bus/nats.conf" > "$HOME_DIR/config/bus/nats.conf"
-printf 'set nats-url nats://127.0.0.1:%s\n' "$port" > "$HOME_DIR/config/captain-channel"
-export JG_WAKE_BUS_URL="nats://127.0.0.1:$port"
+mkdir -p "$HOME_DIR/state" "$HOME_DIR/config" "$HOME_DIR/data"
 export JG_HOME="$HOME_DIR" JG_STATE_OVERRIDE="$HOME_DIR/state" JG_DATA_OVERRIDE="$HOME_DIR/data"
 STATE=$HOME_DIR/state
-BUS="$ROOT/bin/jg-bus.sh"
-"$BUS" accounts "$HOME_DIR" > "$STATE/bus/accounts.conf" 2>"$DIR/accounts.err" || fail "the accounts file was not generated: $(cat "$DIR/accounts.err")"
-printf 'include "../../config/bus/nats.conf"\ninclude "accounts.conf"\n' > "$STATE/bus/bus.conf"
-( cd "$STATE/bus" && exec "$SERVER" -c bus.conf > "$DIR/nats.log" 2>&1 ) &
-printf '%s\n' "$!" >> "$JG_TEST_BUS_REGISTRY"
-for _ in $(seq 1 200); do grep -q 'Server is ready' "$DIR/nats.log" 2>/dev/null && break; sleep 0.05; done
-grep -q 'Server is ready' "$DIR/nats.log" || { echo "skip: the throwaway server never became ready"; exit 0; }
-for _ in $(seq 1 40); do "$BUS" bootstrap >/dev/null 2>&1; "$ROOT/bin/jg-wake-bus.sh" render >/dev/null 2>&1 && break; sleep 0.25; done
 
 DEL="$ROOT/bin/jg-delivery.sh"
 TASK=lab-task
@@ -145,17 +126,7 @@ show=$("$DEL" show "$TASK" 1)
 case "$show" in *"handled="[0-9]*" failed=no"*"evidence: commit:abc123"*) pass "handled carries its evidence pointer: $(printf '%s' "$show" | tr '\n' ' ')" ;; *) fail "handled is missing its pointer: $show" ;; esac
 "$DEL" overdue "$TASK" --after 0 >/dev/null && pass "a handled steer is no longer overdue" || fail "a handled steer was overdue"
 
-# The claim is its own event on the bus; the transport's ack is never called handled.
-login=$("$BUS" login) || fail "no bus login"
-user=${login%%$'\t'*}; pass_file=${login#*$'\t'}
-got=''
-for _ in $(seq 1 100); do
-  got=$("$JG_NATS_BIN" -s "$JG_WAKE_BUS_URL" --user "$user" --password "$(cat "$pass_file")" stream get JG_INBOX --last-for "jg.$user.inbox.handled" 2>/dev/null) && break
-  sleep 0.1
-done
-case "$got" in *'"evidence":"commit:abc123"'*'"task":"lab-task"'*|*'"task":"lab-task"'*'"evidence":"commit:abc123"'*) pass "the handled claim reached the bus as its own event" ;; *) fail "no handled event on the bus: $got" ;; esac
-
-# The new event folds into no queue row and does not upset the renderer or the inbox settle.
+# A handled claim folds into no queue row and does not upset the renderer or the inbox settle.
 WAKE="$ROOT/bin/jg-wake-bus.sh"
 "$WAKE" render >/dev/null 2>&1 || fail "the renderer failed after a handled event"
 "$WAKE" inbox-settle >/dev/null 2>&1 || fail "the inbox settle failed after a handled event"
@@ -166,10 +137,3 @@ WAKE="$ROOT/bin/jg-wake-bus.sh"
 bash -c '. "$1/bin/jg-task-inbox-lib.sh"; jg_task_inbox_write "$2" "$3" "second"' _ "$ROOT" "$STATE" "$TASK" >/dev/null
 "$DEL" failed "$TASK" 2 --reason "cannot do it: no access" >/dev/null || fail "failed was refused"
 "$DEL" show "$TASK" 2 | grep -q 'reason: cannot do it' && pass "a refusal is recorded with its reason" || fail "the reason is missing: $("$DEL" show "$TASK" 2)"
-
-# A dead bus never blocks the worker: the record still holds the claim.
-bash -c '. "$1/bin/jg-task-inbox-lib.sh"; jg_task_inbox_write "$2" "$3" "third"' _ "$ROOT" "$STATE" "$TASK" >/dev/null
-start=$(date +%s)
-JG_WAKE_BUS_URL=nats://127.0.0.1:1 JG_DELIVERY_BUS_TIMEOUT=3 "$DEL" handled "$TASK" 3 --evidence "status:done line" >/dev/null 2>"$DIR/dead.err" || fail "a dead bus blocked the claim: $(cat "$DIR/dead.err")"
-[ $(( $(date +%s) - start )) -le 8 ] || fail "a dead bus held the worker too long"
-"$DEL" show "$TASK" 3 | grep -q 'evidence: status:done line' && pass "with the bus down the claim is still in the record, and quickly" || fail "the claim was lost"

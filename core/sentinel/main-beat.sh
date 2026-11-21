@@ -67,5 +67,5 @@ if [ -z "$key" ]; then
   [ -z "${age:-}" ] || [ "$age" -lt "$WAKE_SECS" ] || { key=wake$seq; why="a wake waited $(( age / 60 )) minutes unacknowledged"; }
 fi
 if [ -n "$key" ]; then restart "$key" "$why"
-else JG_STATE_OVERRIDE="$STATE" "$ALERT" resolve "supervision-down--$SUBJECT" >/dev/null 2>&1 || true; fi
+else JG_STATE_OVERRIDE="$STATE" "$ALERT" resolve "supervision-down--$SUBJECT" --proof source:beat-fresh >/dev/null 2>&1 || true; fi
 exit 0

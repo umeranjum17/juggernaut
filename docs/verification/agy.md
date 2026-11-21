@@ -1,4 +1,4 @@
-# Verification: the agy (Antigravity CLI) operator/scout adapter
+# Verification: the agy (Antigravity CLI) adapter
 
 Active empirical facts for Juggernaut's agy adapter.
 The skill tree rooted at [`.agents/skills/harness-adapters/SKILL.md`](../../.agents/skills/harness-adapters/SKILL.md) owns the operating facts through [`references/harness/agy.md`](../../.agents/skills/harness-adapters/references/harness/agy.md); this record owns how they were established and what is still unproven.
@@ -133,7 +133,7 @@ $ herdr agent get w2:p1 --session jg-lab-juggernaut-agy-ad-1599574-8823
 
 Herdr tracks agy natively (`antigravity-cli` integration, detected as `agent=agy`), so `jg_backend_herdr_pane_agent_state` returns `live` for every registered agy status and no exit-detection hardening was needed.
 The tmux adapter classifies the anchored process name `agy` as `agent` through the shared name vocabulary in `bin/jg-agent-process-lib.sh`, the muse/omp precedent for short bare-word names.
-agy stays out of the session-lock name vocabulary in `bin/jg-session-lock-lib.sh`, where the other operator-only adapters are also absent.
+The anchored name `agy` is in the session-lock name vocabulary in `bin/jg-session-lock-lib.sh`, and an agy primary records its `ANTIGRAVITY_CONVERSATION_ID` as its trusted session id (see [Primary Overwatch](#primary-overwatch)).
 
 ## Composer: unknown by design
 
@@ -153,12 +153,124 @@ Same-copy relaunch held: `bin/jg-control.sh relaunch --note` replaced the worker
 Exit held: `bin/jg-control.sh exit` stopped the worker, the registry returned `agent_not_found`, and the pane remained a lone shell in the worktree with all work intact.
 No automatic quota failover was exercised or claimed; every handoff above was an explicit supervised relaunch.
 
+## Primary Overwatch
+
+| Field | Value |
+|---|---|
+| Version | `agy 1.5.11` (`agy --version`) |
+| Verified | 2026-11-21 |
+| Platform | Linux x64 (Arch, kernel 7.1.8) |
+| Model | `gemini-3.8-flash-high` for the live guard; `gemini-3.8-flash-medium` for the hook probes |
+| Isolation | A marked lab home (`bin/jg-lab-home.sh create`) inside a `jg-test-run.*` directory, a private tmux server in that home's own socket directory, and the account's normal HOME for agy's sign-in |
+
+Every surface below is a vendor-controlled agy behavior that the tracked `.agents/hooks.json` and its adapters rely on.
+
+### Hook loading and process shape
+
+agy loads `.agents/hooks.json` from the workspace root only once the folder is trusted.
+A prompt queued with `--prompt-interactive` runs before the trust answer, so that first turn runs without hooks; the primary is started as plain `agy` and the trust dialog is answered first.
+Each hook runs as `sh -c "<command>"` with its working directory set to the folder holding `hooks.json`, as a direct child of the agy process; each `run_command` runs as `bash -c "<command>"`, also a direct child of agy.
+A captured `run_command` ancestry, with only the CSRF token removed:
+
+```
+3603552 3603544 anc.sh          /bin/bash .../anc.sh
+3603544 3553164 bash            bash -c .../anc.sh > .../anc.out 2>&1
+3553164 2207341 agy             agy --prompt-interactive Step 1: with run_command run .../anc.sh > ...
+```
+
+The child environment carries `ANTIGRAVITY_AGENT=1`, `ANTIGRAVITY_CONVERSATION_ID` and `ANTIGRAVITY_LS_VERSION=cli-1.5.11`, but the TUI process itself carries none, so detection stays ancestry-only and the session lock takes the anchored name `agy`.
+Under the run-tier session start, the SessionStart hook's own `bin/jg-harness.sh` call sits 11 parents below agy, which is why the harness walk shares the lock walk's 16-parent bound; `tests/jg-session-start.test.sh` pins it with a real agy-named process chain.
+
+### Hook payloads and decisions
+
+| Hook | Payload fact | Decision fact |
+|---|---|---|
+| `SessionStart` | camelCase JSON on stdin | `{"injectSteps":[{"systemMessage":{"systemMessage":"..."}}]}` lands in the conversation as a `SYSTEM_SDK` system message before the first model step |
+| `PreInvocation` | fires before every model call and carries `conversationId`, `invocationNum`, `initialNumSteps`, `transcriptPath` and `lastUserInput`, which stays the newest typed words on every later call | no output keeps agy's own turn |
+| `PreToolUse` (`run_command`) | the command is `.toolCall.args.CommandLine`; the args also carry `WaitMsBeforeAsync` and `IsDaemon` | no output keeps agy's own policy; `{}`, an empty decision or a non-zero exit denies; `{"decision":"deny","reason":"..."}` with exit 0 denies with the reason shown |
+| `Stop` | carries `executionNum` and `continuationActive` | `{"decision":"continue","reason":"..."}` keeps the turn going, and the reason reaches the model as the system message `Stop hook blocked termination: <reason>` |
+
+The forced continuation's own `Stop` payload did not set `continuationActive`, contrary to agy's documentation; the captured pair was:
+
+```
+{"executionNum":0,"continuationActive":false,"hookEventName":"Stop"}
+{"executionNum":1,"continuationActive":false,"hookEventName":"Stop"}
+```
+
+`bin/jg-turnend-guard-agy.sh` therefore lets the turn end on either signal, so it continues at most once per turn.
+
+### Captain prompts and the session id
+
+agy has no prompt-submit event, so `bin/jg-overwatch-kpi.sh hook agy` reads `PreInvocation`.
+The call that opens a typed prompt has `invocationNum` 0, and the transcript step at index `initialNumSteps - 1` is `USER_EXPLICIT` `USER_INPUT`.
+A turn opened by a finished background task also has `invocationNum` 0 and the stale `lastUserInput`, but the step at that index is a model step and the wake message follows it, so the hook files nothing.
+A Stop continuation is `invocationNum` 1 and is skipped the same way.
+Captured on 2026-11-21 against agy 1.5.11 with `gemini-3.8-flash-low`:
+
+```
+PreInvocation {"invocationNum":0,"initialNumSteps":1}   step 0 USER_EXPLICIT USER_INPUT    typed prompt
+PreInvocation {"invocationNum":1,"initialNumSteps":4}   step 3 MODEL GENERIC                same turn, next model call
+PreInvocation {"invocationNum":0,"initialNumSteps":5}   step 4 MODEL PLANNER_RESPONSE       background-task wake
+```
+
+The hook's and `run_command` shell's environment carry `ANTIGRAVITY_CONVERSATION_ID`, equal to the payload's `conversationId`.
+`bin/jg-session-lock-lib.sh` trusts it as the session id only when the innermost harness process of the ancestry is `agy`, so `bin/jg-lock.sh` records it in `state/.lock-session` and `bin/jg-inbox.sh primary-chat` accepts a note only for that conversation.
+A message the captain types while a turn is already running is not proven to open its own `invocationNum` 0 call, so it may file no note; the safe direction is an unsigned message, never a signed one for words he did not type.
+`tests/jg-lock-pi-session-id.test.sh` and `tests/jg-primary-chat-approval.test.sh` pin the logic with real processes; the payload shapes above came from the real binary.
+
+### Background-task wake
+
+A `run_command` that outlives its `WaitMsBeforeAsync` becomes a background task, and the turn can end while it runs.
+When the task exits, agy starts a new turn with a high-priority system message carrying the output:
+
+```
+[Message] timestamp=... sender=<conversation>/task-N priority=MESSAGE_PRIORITY_HIGH content=Task id "<conversation>/task-N" finished with result:
+Command exited with code 0.
+Command output:
+...
+```
+
+A `sleep 900; echo LONG_BG_DONE` background task woke an idle session after 900 seconds, and the session replied `LONG_BG_DONE`; this is the wake path the watcher arm rides.
+agy reads the home's `AGENTS.md` natively: a marker present only in a probe's `AGENTS.md` came back, and the same prompt without the file answered `NONE`.
+
+### Live guard
+
+```
+JG_AGY_PRIMARY_LIVE_E2E=1 bin/jg-test-run.sh tests/jg-agy-primary-live-e2e.test.sh
+```
+
+Output on 2026-11-21:
+
+```
+harness: agy 1.5.11
+ok - agy primary: the SessionStart hook takes the fleet lock as the agy process itself
+ok - agy primary: the run-tier session start completes
+ok - agy primary: the SessionStart system message carries the digest into model context
+ok - agy primary: the Stop hook holds an unsupervised turn end and the session then arms the watcher
+ok - agy primary: the arm runs as a tracked background task
+ok - agy primary: a real status wake ends the arm, wakes the session, and it drains the signal and re-arms
+ok - agy primary: the tracked .claude/settings.json hooks did not run under agy
+ok - agy primary: no user unit names the lab home
+# jg-agy-primary-live-e2e: all assertions passed (agy 1.5.11, gemini-3.8-flash-high, 174s)
+```
+
+The wake check requires the first background-task message after the status append to name the status file, so a wake from any other check cannot stand in for it.
+The guard refuses to start unless the lab-home guard refuses the account's unit directory in the session's own empty environment, and it leaves the unit-claim script out of the staged home.
+
+### Not proven for the primary
+
+- A supervision host, and away-mode daemon delivery into an agy pane.
+- A subagent guard, and context re-emit after a compaction.
+- agy's headless `--prompt` mode as a primary; only the interactive TUI is supported.
+- Any model other than the Gemini Flash tiers above.
+
 ## What is still unproven
 
 The unauthenticated failure mode was never observed; this host's agy runs signed in, so any auth prompt is a fail-loud credential blocker, not a handled dialog.
 No slash-skill invocation form was verified, so skill invocation stays natural language.
 `--continue` and `--conversation` resume were never exercised; recovery uses deterministic relaunch from the brief on disk.
-No primary or Squad Lead behavior was built or tested, and none is claimed.
+No Squad Lead launch on agy was built or tested, and none is claimed.
+The primary's gaps are listed under [Primary Overwatch](#primary-overwatch).
 
 ## Refreshing this record
 
@@ -167,4 +279,10 @@ Run the portable suite and the live guard after any agy upgrade, because the pro
 ```
 bin/jg-test-run.sh tests/jg-agy-harness.test.sh
 JG_AGY_SIGNALS_LIVE=1 bin/jg-test-run.sh tests/jg-agy-signals-live-e2e.test.sh
+```
+
+For the primary, also run the agy cases of the session-start and turn-end suites (the `agy-primary` done-done journey) and the primary live guard, because the hook payload fields, decision shapes, and background-task wake message are vendor-controlled too:
+
+```
+JG_AGY_PRIMARY_LIVE_E2E=1 bin/jg-test-run.sh tests/jg-agy-primary-live-e2e.test.sh
 ```

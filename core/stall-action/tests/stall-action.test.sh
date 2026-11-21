@@ -197,6 +197,7 @@ printf 'alert %s\n' "$*" >> "$STUB_LOG"
 case "$1" in
   raise) mkdir -p "$JG_HOME/state/alerts"; : > "$JG_HOME/state/alerts/lost-worker--$3.rec"; printf 'ring\tlost-worker--%s\t0\ttick\n' "$3" ;;
   resolve) rm -f "$JG_HOME/state/alerts/$2.rec" ;;
+  list) for r in "$JG_HOME"/state/alerts/*.rec; do [ -e "$r" ] && basename "$r" .rec; done ;;
 esac
 STUB
 chmod +x "$d/alert"; export JG_STALL_ACTION_ALERT=$d/alert
@@ -229,6 +230,24 @@ beat rlost -22 PostToolBatch   # a beat 80 s before the last sweep
 sweep_at 1400
 check "i: a worker that beats again resolves its alert" "$(calls alert 'resolve lost-worker--rlost')" 1
 for t in rlost rbill rwait; do rm -f "$FM/state/$t.meta"; done
+
+# i2: a lost-worker alert ends once no task record names its subject. The watcher keys it by window, the relaunch by task.
+hlane rkeep; hlane rgone; touch -d "@$(( NOW - 600 ))" "$FM/state/rkeep.meta"
+sed -i 's|^window=.*|window=sess:jg-rkeep|' "$FM/state/rkeep.meta"
+mkdir -p "$FM/state/alerts"
+for k in lost-worker--sess:jg-rkeep lost-worker--rkeep lost-worker--sess:jg-rgone lost-worker--rnone slow-delivery--sess:jg-rgone; do : > "$FM/state/alerts/$k.rec"; done
+rm -f "$FM/state/rgone.meta"   # the lane was cleaned up: no record names its window
+sweep
+check "i2: an alert for a window a task record still names stays open" "$(calls alert 'resolve lost-worker--sess:jg-rkeep')" 0
+check "i2: an alert for a task that has a record stays open" "$(calls alert 'resolve lost-worker--rkeep$')" 0
+check "i2: an alert for a window no task record names resolves" "$(calls alert 'resolve lost-worker--sess:jg-rgone --proof source:window-gone')" 1
+check "i2: an alert for a task with no record resolves" "$(calls alert 'resolve lost-worker--rnone --proof source:window-gone')" 1
+check "i2: an alert of another kind is left alone" "$(calls alert 'resolve slow-delivery')" 0
+check "i2: the kept alerts are still open" "$(find "$FM/state/alerts" -name 'lost-worker--*rkeep.rec' | wc -l | tr -d ' ')" 2
+check "i2: the check prints nothing" "$(cat "$d/out")" ""
+sweep
+check "i2: the next sweep resolves nothing more" "$(calls alert resolve)" 0
+rm -rf "$FM/state/alerts" "$FM/state/rkeep.meta"
 
 # j: a resumed lane is rung again. A lane blocked `waits-for: a1` is resumed when a1 lands: the real landing-time resume
 # (jg_wait_waits_for_resume) sends the real jg-send steer, which appends the `resolved [key=...]` line. The agent then

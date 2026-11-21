@@ -32,6 +32,8 @@ jg_test_spawn_home "$H"
 printf 'wait_pressure=100\nalert_pressure=100\nwait_available_gb=0\nalert_available_gb=0\n' > "$H/config/host-memory"
 printf 'mode=act\n' > "$H/config/lane-scale"
 printf '2\n' > "$H/state/lane-limit"
+# The stand-in's leased copies are held by lane-1 to lane-4, live lanes with a task record, so each one counts.
+for i in 1 2 3 4; do printf 'kind=ship\n' > "$H/state/lane-$i.meta"; printf 'working [at=1]: x\n' > "$H/state/lane-$i.status"; done
 N=0
 spawn() {  # <leased> [spawn args]: spawn a fresh task; sets out, rc
   local leased=$1; shift; N=$((N + 1)); id=jg-res$N
@@ -78,3 +80,73 @@ spawn 9
 expect_code 1 "$rc" "T5 with no lane limit the check should step aside: $out"
 assert_contains "$out" "stand-in lease refused" "T5 the lane did not reach the lease"
 pass "no lane limit leaves the pool's own limit in charge"
+# The copy count follows live holders (reserve.sh admit): a copy counts only when its holder has a task record that is not finished.
+# The status stand-in prints 5 leased copies held by a to e; the home has a lane limit of 4 and records for a, b and c, c finished.
+# T-stale a copy whose holder is finished, or has no record, is not counted: admit passes and names c, d and e on stderr.
+# T-full records for a to e, none finished: five copies count, admit defers with exit 75 and today's line.
+# T-noname a leased line with no holder name is counted (an unknown holder is never zero).
+# T-all JG_POOL_RESERVE_COUNT_ALL=1 counts every copy as before: the T-stale fixture defers.
+R=$ROOT/core/pool-reserve/reserve.sh
+printf '4\n' > "$H/state/lane-limit"; printf 'mode=act\n' > "$H/config/lane-scale"
+cat > "$F/status-holders" <<'SH'
+#!/usr/bin/env bash
+n=0; for h in a b c d e; do n=$((n + 1)); if [ "$h" = "${NONAME:-}" ]; then printf '%s    leased       /fixture/%s\n' "$n" "$h"; else printf '%s    leased       /fixture/%s  (held by %s)\n' "$n" "$h" "$h"; fi; done
+SH
+chmod +x "$F/status-holders"
+mkmeta() {  # <name> [finished]
+  printf 'kind=ship\nproject=%s\n' "$P" > "$H/state/$1.meta"
+  if [ "${2:-}" = finished ]; then printf 'working [at=1]: x\ndone [at=2]: ready\n' > "$H/state/$1.status"; printf 'landed=abc\n' >> "$H/state/$1.meta"
+  else printf 'working [at=1]: x\n' > "$H/state/$1.status"; fi
+}
+admit() { out=$(JG_POOL_RESERVE_STATUS=$F/status-holders "$@" "$R" admit "$H" "$P" 2>&1); rc=$?; }
+mkmeta a; mkmeta b; mkmeta c finished
+admit env
+expect_code 0 "$rc" "T-stale admit should pass with 2 live copies of 4: $out"
+assert_contains "$out" "pool-reserve: not counted (no live lane): " "T-stale the not-counted line is missing"
+assert_contains "$out" "3=c 4=d 5=e" "T-stale the line does not name c, d and e with their slots"
+assert_not_contains "$out" "1=a" "T-stale a live copy was named as not counted"
+pass "copies of finished and unrecorded holders are not counted, and are named"
+admit env JG_POOL_RESERVE_COUNT_ALL=1
+expect_code 75 "$rc" "T-all counting every copy should defer as before: $out"
+assert_contains "$out" "5 copies of project are leased" "T-all the deferral line changed"
+assert_not_contains "$out" "not counted" "T-all printed a not-counted line"
+pass "JG_POOL_RESERVE_COUNT_ALL=1 counts every copy"
+mkmeta c; mkmeta d; mkmeta e
+admit env
+expect_code 75 "$rc" "T-full five live copies should defer: $out"
+assert_contains "$out" "deferred: 5 copies of project are leased" "T-full the deferral line changed"
+assert_not_contains "$out" "not counted" "T-full printed a not-counted line"
+pass "five live copies defer with today's line"
+rm -f "$H/state/d".* "$H/state/e".*; mkmeta c finished
+admit env NONAME=d
+expect_code 0 "$rc" "T-noname should pass with 3 counted of 4: $out"
+assert_not_contains "$out" "4=" "T-noname the copy with no holder was left uncounted"
+assert_contains "$out" "3=c 5=e" "T-noname the line does not name c and e"
+pass "a leased copy with no holder name is counted"
+# T-flat the cost of admit does not grow with the leased copies: bin/jg-crew-state.sh (a pane read) is asked only for a holder whose status
+# file holds a done line. 24 live holders with no done line, one that is done (no landed=) and one whose note only mentions done: two calls.
+FR=$W/fakeroot; mkdir -p "$FR/core/pool-reserve" "$FR/bin"
+cp "$R" "$FR/core/pool-reserve/reserve.sh"; ln -sn "$ROOT/core/lane-scale" "$FR/core/lane-scale"
+cat > "$FR/bin/jg-crew-state.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$1" >> "$CREW_STATE_LOG"
+[ "$1" = dd ] && echo 'state: done · source: status-log · ready' || echo 'state: working · source: pane · busy'
+SH
+chmod +x "$FR/bin/jg-crew-state.sh"
+cat > "$F/status-many" <<'SH'
+#!/usr/bin/env bash
+n=0; for h in $(seq -f 'w%g' 1 24) dd dn; do n=$((n + 1)); printf '%s    leased       /fixture/%s  (held by %s)\n' "$n" "$h" "$h"; done
+SH
+chmod +x "$F/status-many"
+for i in $(seq 1 24); do printf 'kind=ship\n' > "$H/state/w$i.meta"; printf 'working [at=1]: x\n' > "$H/state/w$i.status"; done
+printf 'kind=ship\n' > "$H/state/dd.meta"; printf 'working [at=1]: x\ndone [at=2]: ready\n' > "$H/state/dd.status"
+printf 'kind=ship\n' > "$H/state/dn.meta"; printf 'working [at=3]: wrote the done-done receipt\n' > "$H/state/dn.status"
+printf '25\n' > "$H/state/lane-limit"
+export CREW_STATE_LOG=$W/crew-state.log; : > "$CREW_STATE_LOG"
+out=$(JG_POOL_RESERVE_STATUS=$F/status-many "$FR/core/pool-reserve/reserve.sh" admit "$H" "$P" 2>&1); rc=$?
+expect_code 75 "$rc" "T-flat 25 live copies of 26 leased, with a limit of 25, should defer: $out"
+assert_contains "$out" "deferred: 25 copies" "T-flat the 25 live copies were not counted: $out"
+assert_not_contains "$out" "w1=" "T-flat a live holder was named as not counted"
+assert_contains "$out" "25=dd" "T-flat the done holder should not count"
+assert_equals "dd dn" "$(sort "$CREW_STATE_LOG" | tr '\n' ' ' | sed 's/ $//')" "T-flat crew-state should be asked for the two holders with a done line only"
+pass "admit asks for a holder's state only when its status file holds a done line"

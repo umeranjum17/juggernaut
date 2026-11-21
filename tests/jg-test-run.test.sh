@@ -523,7 +523,7 @@ test_a_test_within_its_limits_is_unaffected() {
   pass 'a test within its limits is unaffected'
 }
 
-# A branch that retires a journey with its test (go-shell GS6 deleted the Dapr worker's journey and
+# A branch that retires a journey with its test (go-shell GS6 deleted a worker's journey and
 # test) must still select its changed tests: the deleted journey has no owner left, so it selects
 # nothing, while a deleted journey another test still names selects that test.
 test_a_deleted_journey_does_not_refuse_the_changed_selection() {
@@ -771,6 +771,20 @@ i=0; while [ ! -e '$d/$name-release' ] && [ \"\$i\" -lt 1200 ]; do sleep 0.2; i=
   pass 'a trunk run starts at once on its reserved slot, and a second takes the first free slot ahead of lane runs'
 }
 
+# A test that moves HOME still finds the caller's mise state, data and cache, so a python3 shim starts quietly.
+test_a_script_that_moves_home_keeps_the_callers_mise_dirs() {
+  local d=$TMP_ROOT/mise-dirs out want
+  mkdir -p "$d"
+  write_script "$d/moves-home.test.sh" "HOME='$d/home'; echo \"state=\${MISE_STATE_DIR:-unset} data=\${MISE_DATA_DIR:-unset} cache=\${MISE_CACHE_DIR:-unset}\""
+  want="state=$HOME/.local/state/mise data=$HOME/.local/share/mise cache=$HOME/.cache/mise"
+  [ -d "$HOME/.local/state/mise" ] || want=${want/state=$HOME\/.local\/state\/mise/state=unset}
+  [ -d "$HOME/.local/share/mise" ] || want=${want/data=$HOME\/.local\/share\/mise/data=unset}
+  [ -d "$HOME/.cache/mise" ] || want=${want/cache=$HOME\/.cache\/mise/cache=unset}
+  out=$(env -u MISE_STATE_DIR -u MISE_DATA_DIR -u MISE_CACHE_DIR -u XDG_STATE_HOME -u XDG_DATA_HOME -u XDG_CACHE_HOME bash "$RUNNER" "$d/moves-home.test.sh" 2>&1) || fail "the probe run failed: $out"
+  assert_contains "$out" "$want" 'a script that moves HOME must keep the caller mise directories'
+  pass 'a script that moves HOME keeps the caller mise directories'
+}
+
 # A test that moves HOME still builds Go from the caller's own build cache.
 test_a_script_that_moves_home_keeps_the_callers_go_build_cache() {
   local d=$TMP_ROOT/gocache want out
@@ -787,6 +801,7 @@ test_a_run_past_the_machine_limit_waits_for_a_slot
 test_a_burst_of_runs_caps_at_the_slot_limit_under_nice_and_records_the_load
 test_a_trunk_run_starts_at_once_and_takes_the_first_free_slot_ahead_of_lane_runs
 test_a_script_that_moves_home_keeps_the_callers_go_build_cache
+test_a_script_that_moves_home_keeps_the_callers_mise_dirs
 test_required_shards_keep_the_union_and_a_failed_shard
 test_the_aggregate_is_written_when_the_shard_scratch_cannot_be_removed
 test_a_shard_that_stops_before_its_result_still_writes_a_failed_result
@@ -948,6 +963,31 @@ test_the_coverage_time_budget_advises_and_a_script_no_shard_runs_still_refuses()
   pass 'the coverage time budget advises with exit 0 and a script no shard runs still refuses'
 }
 
+# jg-nj700 (bin/jg-test-ignored-reads.sh): two lanes passed their sealed run with fixture files that sat git-ignored in their own copy and were never committed,
+# so the trunk went red. A changed-files run (the sealed run's selection) now fails when a test reads such a file, and names it.
+# Proof: a test reads tests/fixtures/sample/config/seed.txt, which the fixture's .gitignore ignores (the config/ rule matches below
+# tests/ too). The run fails naming the file while it is untracked, and passes once the file is committed.
+test_a_test_that_reads_an_ignored_uncommitted_file_fails_naming_it_and_passes_once_it_is_tracked() {
+  local fixture=$TMP_ROOT/ignored-read out rc=0 seed=tests/fixtures/sample/config/seed.txt
+  required_fixture "$fixture" "cat \"\$(dirname \"\$0\")/fixtures/sample/config/seed.txt\" >/dev/null"
+  printf 'config/\n' >"$fixture/.gitignore"
+  mkdir -p "$fixture/${seed%/*}"
+  printf 'Umer fixture\n' >"$fixture/$seed"
+  git -C "$fixture" add .gitignore
+  git -C "$fixture" -c user.name=t -c user.email=t@example.invalid commit -q --amend --no-edit
+  [ -z "$(git -C "$fixture" ls-files "$seed")" ] || fail "the seed file must be uncommitted in this fixture"
+  out=$(cd "$fixture" && bash bin/jg-test-run.sh --changed --base HEAD^ 2>&1) || rc=$?
+  [ "$rc" = 1 ] || fail "a read of an ignored uncommitted file must fail the run: rc=$rc $out"
+  assert_contains "$out" "git-ignored file $seed, which the commit does not hold" 'the failure names the file'
+  git -C "$fixture" add -f "$seed"
+  git -C "$fixture" -c user.name=t -c user.email=t@example.invalid commit -q --amend --no-edit
+  rc=0
+  out=$(cd "$fixture" && bash bin/jg-test-run.sh --changed --base HEAD^ 2>&1) || rc=$?
+  [ "$rc" = 0 ] || fail "the same read of a tracked file must pass: rc=$rc $out"
+  assert_not_contains "$out" 'git-ignored file' 'a tracked file is never reported'
+  pass 'a test that reads an ignored uncommitted file fails the changed run naming it, and passes once the file is tracked'
+}
+
 test_a_green_result_is_reused_by_a_second_lane_and_a_red_never
 test_shards_split_a_selection_without_losing_or_repeating_a_script
 test_the_e2e_limit_is_60_seconds_in_config
@@ -981,5 +1021,6 @@ test_a_data_file_named_to_the_runner_is_refused_and_never_run
 test_a_changed_range_of_non_test_files_lists_and_runs_only_test_scripts
 test_92_unmapped_paths_are_coverage_notes_and_no_failed_results
 test_a_failing_mapped_test_still_fails_beside_unmapped_paths
+test_a_test_that_reads_an_ignored_uncommitted_file_fails_naming_it_and_passes_once_it_is_tracked
 
 printf 'all %s\n' 'jg-test-run limit tests passed'

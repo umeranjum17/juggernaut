@@ -15,10 +15,10 @@
 #        jg-goal.sh prove <goal-id>
 #        jg-goal.sh proof-failed <goal-id> <exit code or lost>
 #
-# A Goal is a Beads epic labelled `goal` in a small Goal-only store of its own, reached only through
-# bin/jg-beads.sh. The store folder is the absolute BEADS_DIR in `config/goal-beads-dir` (or GOAL_BEADS_DIR),
-# never derived, because a store inside a git clone is refused. The pinned bd and dolt must be in place:
-# when the wrapper refuses, its refusal is printed and nothing falls back to another bd.
+# A Goal is an epic labelled `goal` in this home's tickets tables, reached through
+# core/item-store/adapters/bd_compat.py (JG_GOAL_BEADS_BIN names another program for tests), and a row closes through
+# `jg-backlog.sh done`, whose note keeps the reason. When the tables refuse,
+# their refusal is printed.
 #
 # declare makes the epic and its five steps, ship, merged, released, running and proven, each blocked by
 # the one before. The epic's metadata.goal holds the ask, the finish line (finish.repo, finish.released,
@@ -52,27 +52,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 JG_ROOT="${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 JG_HOME="${JG_HOME:-$JG_ROOT}"
 DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
-CONFIG="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
-BEADS="${JG_GOAL_BEADS_BIN:-$SCRIPT_DIR/jg-beads.sh}"
+if [ -n "${JG_GOAL_BEADS_BIN:-}" ]; then BEADS=("$JG_GOAL_BEADS_BIN"); else BEADS=(python3 -I "$SCRIPT_DIR/../core/item-store/adapters/bd_compat.py"); fi
 STEPS='ship merged released running proven'
 
 usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
 die() { printf 'jg-goal: %s\n' "$*" >&2; exit 2; }
 
-store() {
-  local dir=${GOAL_BEADS_DIR:-}
-  [ -n "$dir" ] || dir=$(tr -d '[:space:]' < "$CONFIG/goal-beads-dir" 2>/dev/null)
-  [ -n "$dir" ] || die "no Goal store: put an absolute BEADS_DIR in $CONFIG/goal-beads-dir"
-  printf '%s\n' "$dir"
-}
+goalstore() { JG_HOME="$JG_HOME" "${BEADS[@]}" "$@"; }
+# A row closes through the backlog's done verb, the tables' one close; the reason stays in the row's body as a note.
+close_row() { JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-backlog.sh" 'done' "$1" --note "$2" >/dev/null 2>&1; }
 
-goalstore() { BEADS_DIR=$BEADS_STORE "$BEADS" "$@"; }
-
-# The wrapper's own refusal, such as a missing pinned tool, is the message: the store has no other way in.
+# The tables' own refusal is the message: the store has no other way in.
 need_store() {
-  BEADS_STORE=$(store) || exit $?
   local out
-  out=$(BEADS_DIR=$BEADS_STORE "$BEADS" check 2>&1) || { printf '%s\n' "$out" >&2; die "the Goal store is not ready"; }
+  out=$(JG_HOME="$JG_HOME" python3 -I "$SCRIPT_DIR/../core/item-store/adapters/tickets.py" check 2>&1) || { printf '%s\n' "$out" >&2; die "the Goal store is not ready"; }
 }
 
 sha_of() { { sha256sum || shasum -a 256; } | cut -d' ' -f1; }
@@ -91,7 +84,7 @@ proof_check() {  # <argv...>
 }
 
 declare_goal() {
-  local ask='' repo='' released=tag where='this home' attempts=3 fix_steps=5 priority=2 proof=() id step prev n meta finish hash dir
+  local ask='' repo='' released=tag where='this home' attempts=3 fix_steps=5 priority=2 proof=() id step prev n meta finish hash dir made
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --ask) ask=${2-}; shift 2 || die "--ask needs a value" ;;
@@ -118,11 +111,14 @@ declare_goal() {
     '{goal:{ask:$ask, finish:$finish, finish_hash:$hash, limits:{attempts:$a, fix_steps:$f}}}')
   id=$(goalstore create "Goal: $ask" -t epic --labels goal --priority "$priority" --metadata "$meta" --silent 2>/dev/null) \
     || die "the Goal store did not take the Goal"
-  prev=
+  prev='' made=()
   for step in $STEPS; do
-    if n=$(goalstore create "$step" -t task --parent "$id" --priority "$priority" --metadata "{\"kind\":\"$step\"}" --silent 2>/dev/null) \
-      && { [ -z "$prev" ] || goalstore dep add "$n" "$prev" >/dev/null 2>&1; }; then prev=$n
-    else goalstore close "$id" --force --reason "declare failed" >/dev/null 2>&1; die "the Goal store did not take the step $step"; fi
+    n=$(goalstore create "$step" -t task --parent "$id" --priority "$priority" --metadata "{\"kind\":\"$step\"}" --silent 2>/dev/null) || n=
+    [ -z "$n" ] || made+=("$n")
+    if [ -n "$n" ] && { [ -z "$prev" ] || goalstore dep add "$n" "$prev" >/dev/null 2>&1; }; then prev=$n
+    else  # the steps it made close first: an epic with an open step is never closed
+      for n in ${made[@]+"${made[@]}"}; do close_row "$n" "declare failed"; done
+      close_row "$id" "declare failed"; die "the Goal store did not take the step $step"; fi
   done
   dir=$DATA/goals/$id
   mkdir -p "$dir" || die "cannot write $dir"
@@ -171,7 +167,7 @@ stop_goal() {
   is_goal "$id" || die "no Goal $id"
   row=$(goalstore create "stop: $kind" -t task --parent "$id" --silent \
     --metadata "$(jq -nc --arg k "$kind" --arg r "$reason" '{hold_kind:$k, hold_reason:$r}')" 2>/dev/null) || die "the Goal store did not take the stop"
-  goalstore update "$row" --status on_hold >/dev/null 2>&1 || { goalstore close "$row" --force --reason "stop failed" >/dev/null 2>&1; die "could not hold $row"; }
+  goalstore update "$row" --status on_hold >/dev/null 2>&1 || { close_row "$row" "stop failed"; die "could not hold $row"; }
   printf '%s\n' "$row"
 }
 
@@ -181,7 +177,7 @@ resume_goal() {
   need_store
   json=$(goalstore show "$row" --json 2>/dev/null | jq -c '.[0] // empty') && [ -n "$json" ] || die "no row $row"
   jq -e '(.status == "on_hold" or .status == "blocked") and (.metadata.hold_reason // "") != ""' <<< "$json" >/dev/null || die "$row is not an open stop"
-  goalstore close "$row" --force --reason "resumed" >/dev/null 2>&1 || die "could not close $row"
+  close_row "$row" "resumed" || die "could not close $row"
   printf 'resumed %s\n' "$row"
 }
 
@@ -215,7 +211,7 @@ finish_goal() {
   need_store
   json=$(goalstore show "$id" --json 2>/dev/null | jq -c '.[0] // empty') && [ -n "$json" ] || die "no Goal $id"
   mark_sent "$id" "goal:$id:finish" || new=0
-  goalstore close "$id" --reason "goal finished" >/dev/null 2>&1 || die "could not close $id"
+  close_row "$id" "goal finished" || die "could not close $id"
   [ "$new" = 1 ] || return 0
   ask=$(jq -r '.metadata.goal.ask // .title' <<< "$json")
   ref=$(jq -r '.metadata.released_ref // ""' <<< "$json")
@@ -272,7 +268,7 @@ prove_goal() {
   log=$DATA/goals/$id/proof-$(date +%s).log
   mv -f "$DATA/goals/$id/proof.log" "$log" 2> /dev/null; rm -f "$DATA/goals/$id/proof.exit" "$DATA/goals/$id/proof.pid"
   goalstore update "$id" --set-metadata "proof_log=$log" > /dev/null 2>&1 || die "could not record the proof log"
-  goalstore close "$(step_row "$id" proven)" --reason "the proof passed" > /dev/null 2>&1 || die "could not close the proven step"
+  close_row "$(step_row "$id" proven)" "the proof passed" || die "could not close the proven step"
 }
 
 proof_failed() {
@@ -312,10 +308,10 @@ cancel_goal() {
   need_store
   goalstore show "$id" --json 2>/dev/null | jq -e '.[0].labels | index("goal")' >/dev/null || die "no Goal $id"
   while read -r row; do
-    [ -z "$row" ] || goalstore close "$row" --force --reason "goal cancelled: $reason" >/dev/null 2>&1 || die "could not close $row"
+    [ -z "$row" ] || close_row "$row" "goal cancelled: $reason" || die "could not close $row"
   done < <(goalstore list --parent "$id" --status open,in_progress,blocked,on_hold,deferred --json 2>/dev/null \
     | jq -r 'sort_by(.id | split(".") | last | tonumber? // 0) | .[].id')
-  goalstore close "$id" --force --reason "goal cancelled: $reason" >/dev/null 2>&1 || die "could not close $id"
+  close_row "$id" "goal cancelled: $reason" || die "could not close $id"
   printf 'cancelled %s\n' "$id"
 }
 

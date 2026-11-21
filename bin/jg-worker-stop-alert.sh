@@ -44,7 +44,7 @@ cmd_raise() {
   local id=$1 how=$2 why=$3 ticket
   case $how in ended | lost) ;; *) usage ;; esac
   ticket=$(mval "$STATE/$id.meta" ticket); ticket=${ticket:-$id}
-  [ "$how" != ended ] || JG_HOME="$HOME_DIR" JG_STATE_OVERRIDE="$STATE" "$HERE/jg-alert.sh" resolve "worker-stopped--$id" >/dev/null 2>&1 || true
+  [ "$how" != ended ] || JG_HOME="$HOME_DIR" JG_STATE_OVERRIDE="$STATE" "$HERE/jg-alert.sh" resolve "worker-stopped--$id" --proof source:ended >/dev/null 2>&1 || true
   JG_HOME="$HOME_DIR" JG_STATE_OVERRIDE="$STATE" "$HERE/jg-alert.sh" raise worker-stopped "$id" --deliver --ticket "$ticket" \
     --note "the agent of $id was $how while someone waits for it ($why); relaunch it or answer its steer" >/dev/null
 }

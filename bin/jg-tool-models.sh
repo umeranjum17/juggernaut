@@ -45,7 +45,7 @@ jg_tool_models_error() {
     elif any(.rules[]; (.tool | type) != "string" or (.tool | length) == 0) then "each rule needs a non-empty tool tag"
     elif any(.rules[]; (.when | type) != "string" or (.when | length) == 0) then "each rule needs non-empty when"
     elif any(.rules[]; profiles(.use) | length == 0) then "each rule needs at least one use profile"
-    elif any(.rules[] | profiles(.use)[]; profile_bad(.)) then "each use profile needs harness; model, effort, and floor must be well formed, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\\z when present"
+    elif any(.rules[] | profiles(.use)[]; profile_bad(.)) then "each use profile needs harness; model, effort, and floor must be well formed; billing must be plan, flat-plan, credits, or overage; provider must match ^[a-z0-9]+(-[a-z0-9]+)*\\z when present"
     elif any(.rules[]; duplicate_profiles(profiles(.use))) then "each rule use must not contain duplicate harness, model, and effort profiles"
     elif any(.rules[] | profiles(.use)[]; (verified(.harness) | not)) then "each use profile must name a verified harness"
     elif any(.rules[] | profiles(.use)[]; (effort_ok(.harness; .model; .effort) | not)) then "each use profile effort must be supported by its harness and model"

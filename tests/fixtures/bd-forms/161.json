@@ -1,0 +1,12 @@
+{
+ "argv": [
+  "show",
+  "jt-93v",
+  "--json"
+ ],
+ "stdin": "",
+ "stdout": "[\n  {\n    \"id\": \"jt-93v\",\n    \"title\": \"Blocker one\",\n    \"status\": \"open\",\n    \"priority\": 2,\n    \"issue_type\": \"task\",\n    \"created_at\": \"2026-11-19T23:01:38Z\",\n    \"created_by\": \"main\",\n    \"updated_at\": \"2026-11-19T23:01:38Z\",\n    \"dependent_count\": 1,\n    \"dependency_count\": 0,\n    \"comment_count\": 0,\n    \"revision\": \"4574382749745000107\"\n  }\n]\n",
+ "exit": 0,
+ "form": "show --json",
+ "store": "{\"_type\":\"issue\",\"id\":\"jt-5nm\",\"title\":\"Blocked two\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T23:01:38Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T23:01:38Z\",\"dependencies\":[{\"issue_id\":\"jt-5nm\",\"depends_on_id\":\"jt-93v\",\"type\":\"blocks\",\"created_at\":\"2026-11-19T23:01:43Z\",\"created_by\":\"main\",\"metadata\":\"{}\"}],\"dependency_count\":1,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jt-93v\",\"title\":\"Blocker one\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T23:01:38Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T23:01:38Z\",\"dependency_count\":0,\"dependent_count\":1,\"comment_count\":0}\n"
+}

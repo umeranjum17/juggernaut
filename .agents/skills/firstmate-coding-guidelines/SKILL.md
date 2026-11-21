@@ -1,6 +1,6 @@
 ---
 name: firstmate-coding-guidelines
-description: Retired alias of juggernaut-coding-guidelines, kept only during the skill-rename migration window. Load juggernaut-coding-guidelines and follow it unchanged.
+description: Retired alias of juggernaut-coding-guidelines. Load it and follow it unchanged.
 metadata:
   internal: true
 ---

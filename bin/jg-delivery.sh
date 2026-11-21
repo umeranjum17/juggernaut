@@ -62,6 +62,17 @@ claim() { # <seq> <word> <pointer> <outcome>
   printf '%s %s %s\n' "$task" "$(printf '%03d' "$((10#$1))")" "$2"
 }
 
+# jg_delivery_close_steer <task> <seq> <evidence>: jg-item close steer:<home id>/<task>/<seq> done handled:<evidence>.
+jg_delivery_close_steer() {
+  local home=${JG_HOME:-$(dirname -- "$STATE")} root key
+  root=$(cd "$SCRIPT_DIR/.." && pwd)
+  [ -e "$home/config/item-store" ] && [ -x "$root/core/item-store/jg-item" ] || return 0
+  key=$(JG_HOME=$home "$root/core/item-store/jg-item" key steer --task "$1" --n "$((10#$2))" 2>/dev/null | cut -f1) || return 0
+  [ -n "$key" ] || return 0
+  JG_HOME=$home python3 -I "$root/core/item-store/adapters/lane.py" has-open "$key" || return 0
+  JG_HOME=$home JG_ITEM_OR_INTAKE=1 "$root/core/item-store/jg-item" close "$key" "done" "handled:$3" --source "handled:$1/$((10#$2))" >/dev/null 2>&1
+}
+
 case "$cmd" in
   handled)
     seq=${1:-}; if [ "${2:-}" = --evidence ]; then ev=${3:-}; else die "handled needs <seq> --evidence <kind>:<pointer>"; fi
@@ -69,7 +80,10 @@ case "$cmd" in
     kind=${ev%%:*}; ptr=${ev#*:}
     case "$kind" in status|commit|reply|task|pr) ;; *) die "evidence kind must be status, commit, reply, task or pr" ;; esac
     [ "$ev" != "$kind" ] && [ -n "$ptr" ] || die "evidence needs a pointer after the kind"
-    claim "$seq" handled "$ev" handled ;;
+    claim "$seq" handled "$ev" handled
+    # The item store closes the steer's item too (guarded by the home's switch; today's record decides, so nothing here changes
+    # this command's output or exit). A steer the store never opened is not a refusal: there is nothing to close.
+    jg_delivery_close_steer "$task" "$seq" "$ev" || true ;;
   failed)
     seq=${1:-}; if [ "${2:-}" = --reason ]; then why=${3:-}; else die "failed needs <seq> --reason <text>"; fi
     case "$seq" in ''|*[!0-9]*) die "the steer number must be digits" ;; esac

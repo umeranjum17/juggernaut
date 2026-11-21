@@ -1,15 +1,14 @@
 # wait-timers
 
 The live watcher sources this timer library and calls it on each poll.
-The escalation workflow delivers the first owner wake.
+The escalation workflow delivers the first owner wake, and the item store's tick (`core/item-store`) climbs every wait: this library no longer escalates a lane to Main, posts its card or raises it again.
 A parked lane (a pause to the placeholder date) and a finished lane whose open decision waits on its owner are quiet: they arm no episode and ring nothing. A real future deadline is honoured.
 
 ## Layout
 
 - `bin/jg-wait-timers-lib.sh` — the timer library the watcher sources once per
   poll: one durable episode per waiting lane under `state/.waiting-timers/`,
-  an escalation to Main when the owner has not cleared the wait, the board
-  card, and the re-alert cadence. The owner recheck and the paused wait's
+  which the owner table's steps time from. The owner recheck and the paused wait's
   recheck are the escalation workflow definition's rungs
   (`core/bus/workflows/escalation-wait-timers.json`, delivered by
   `bin/jg-escalation-workflows.sh`). A blocked or needs-decision wake names its
@@ -17,7 +16,7 @@ A parked lane (a pause to the placeholder date) and a finished lane whose open d
 - `bin/jg-wait-actions-lib.sh` — the owner table and the steps the ladder takes
   itself (see "Known next steps"), sourced by the timer library.
 - `tests/jg-wait-timers.test.sh` — the watcher/drain journey that proves the
-  timers (owner alert, escalation, deduplication, resolution, re-arm).
+  timers (owner alert, deduplication, resolution, re-arm).
 - `tests/jg-wait-timers-tmux-e2e.test.sh` — the live-terminal end-to-end
   journey; moved verbatim, run only against a real terminal session.
 
@@ -46,19 +45,16 @@ provenance table now records history, not the current bytes.
 - The owner rung and the pause cadence are not this library's any more.
   The escalation workflow definition decides and delivers them
   (bin/jg-escalation-workflows.sh, live on every poll) and stamps the episode's
-  owner time, which the escalation, the board card and the re-alert rungs below
-  read.
+  owner time, which the owner table's steps below read.
   This library reads `JG_WAIT_ALERT_SECS` and `JG_PAUSE_RESURFACE_SECS` from
   that definition (`bin/jg-escalation-workflows.sh timers`) rather than
   defaulting them, so each number has one owner.
-- Timers: the alert table owns them (`bin/jg-alert.sh timers`, from the
+- Timers: the store ladder owns them (`bin/jg-alert.sh timers`, from the
   stuck-wait ladder and the ready-idle row); the library writes no number. An
-  environment override still wins: `JG_WAIT_ESCALATE_SECS` for Main's rung,
-  `JG_WAIT_CARD_SECS` (above the escalation threshold) for the
-  board card, and `JG_PROMPT_REALERT_SECS` for how often a
-  reached rung is checked and raised again until its source clears (see
-  "Re-raise until the wait is handled"). A declared pause rechecks at the
-  `JG_PAUSE_RESURFACE_SECS` cadence instead and never escalates.
+  environment override still wins: `JG_WAIT_ESCALATE_SECS` times the owner
+  table's later steps, `JG_WAIT_CARD_SECS` times Main's relay card for a lead's
+  report, and `JG_PROMPT_REALERT_SECS` is how often the watcher acts on a prompt that stays up.
+  A declared pause rechecks at the `JG_PAUSE_RESURFACE_SECS` cadence.
 - Wait sources: the watcher writes `state/.wait-sources/<task>.prompt` for an
   unanswered permission prompt (rewritten on every sighting; a record older
   than three polls plus 30 seconds is ignored, so a prompt on a dead pane
@@ -96,36 +92,28 @@ provenance table now records history, not the current bytes.
   `id=<key> source=[<declaration>]`, so the exact unresolved source is named;
   a resolution closes only the wait it names. The `waiting-timer-` prefix is
   unchanged for the fork's reserved-key fold.
-- Parent lines: `blocked [key=...]: waiting-timer-overdue: <task> (<verb>,
-  observed <n>s, since=<epoch>); ...; source=[...]` on escalation and on every
-  re-fire that raises (see "Re-raise until the wait is handled"), `resolved [key=...]: waiting-timer-cleared: ...` when the wait
-  ends. A top-level wait with no parent escalates as a wake to the top level
-  itself, never as a parent report.
+- Parent lines: this library writes only the stalled-backlog report
+  (`waiting-timer-backlog-overdue`, closed by `waiting-timer-cleared`). A lane's
+  escalation to Main is the store tick's.
 
 ## Escalation chain
 
 A stuck worker never waits on the captain noticing it.
-Every rung is checked again every `JG_PROMPT_REALERT_SECS` while the wait stays open.
-An unresolved wait wakes its owner again at the recheck cadence (next section).
+A wait climbs the item store's one ladder (`core/item-store`): its holder, the lead, Main, and only what Main cannot settle, the owner.
+What this library still does for a wait:
 
 | rung | when | who acts |
 |---|---|---|
 | own-fleet read prompt | at once | the watcher approves it (`bin/jg-prompt-gate-lib.sh`) |
 | secrets-path prompt (`.env`, `~/.config`, a home's `data/` or `config/`) | at once | the watcher rejects it and tells the worker why |
-| any other prompt, question, decision, or blocker | first sight, then `JG_WAIT_ALERT_SECS` | the owning home is woken |
-| still open | `JG_WAIT_ESCALATE_SECS` | a lead home reports `waiting-timer-overdue` to Main; Main steers the lead at once, never interrupting it (a busy lead reads the steer when its turn ends), naming the worker and its wait |
-| still open | `JG_WAIT_CARD_SECS` | the main home posts a guarded board card, and dismisses it when the wait ends; a wait that is not a credential or login ask is recorded for Main to decide instead, because the board takes only a must ask (`bin/jg-ask-gate-lib.sh`) |
+| any other prompt, question, decision, or blocker | first sight, then `JG_WAIT_ALERT_SECS` | the owning home is woken (the escalation workflow) |
 
 - A stuck state with a row in the owner table gets its owner's steps from the
-  ladder before any of the model rungs above (see "Known next steps").
+  library before the owner wake (see "Known next steps").
 - A lead's own supervision not running is a Main wait from lead liveness, so a
   dead hop never goes silent; a dead lead rides its relaunch.
-- A new supervisor session re-presents every open wait on its first tick, so a
-  relaunched lead re-presents its stuck workers within one cycle.
 - The main home reads only the overdue lines a lead appends to its own
   `state/<lead>.status`, never the lead's child records.
-- The board card is raised from the main home only, even when Main has not
-  read its wakes, so it still fires with Main absent.
 
 ## Known next steps
 
@@ -143,7 +131,7 @@ A step that fails, or a stuck state with no row, climbs the ladder as before.
 | `account-down`: the `account` source (the pane shows a subscription the runtime cannot use, or a failed sign-in) or the `quota` source (a usage or rate limit) on a Claude worker, in a home that pins `config/claude-account` | the watcher | recover: probe the pin once; if it is down, switch to the next account in the owner's `config/claude-account-fallbacks`, relaunch every live worker recorded on the dead account with `bin/jg-control.sh`, and raise one card (renew or not). No recorded fallback: raise the card and change nothing. An account that answers is not down, so the wait climbs the ladder as before | lead |
 | `waits-for`: an open `blocked` or `needs-decision` line that says `waits-for: <ticket>` (the form `bin/jg-brief.sh` teaches), once that ticket has landed on the trunk | the landing | resume: one steer, with the blocker's key resolved in the same send, so the lane resumes and its decision closes | lead |
 
-- `waits-for` ends with no timer: the landing check (`core/trunk-landing/trunk-landing.sh`) calls `jg_wait_waits_for_resume` the moment the ticket lands, so the lane is steered within the landing's own run; the table row is the backstop for a lane that declared its wait after the landing or whose send failed (the failure is in `data/jg-trunk-landing/resume.log`). While the ticket's own lane still runs and has not landed, the wait is quiet (`jg_wait_timer_quiet`): no owner wake, escalation or card. Once that lane is gone without landing, the wait rings as any blocker does.
+- `waits-for` ends with no timer: the landing check (`core/trunk-landing/trunk-landing.sh`) calls `jg_wait_waits_for_resume` the moment the ticket lands, so the lane is steered within the landing's own run; the table row is the backstop for a lane that declared its wait after the landing or whose send failed (the failure is in `data/jg-trunk-landing/resume.log`). While the ticket's own lane still runs and has not landed, the wait is quiet (`jg_wait_timer_quiet`): no owner wake. Once that lane is gone without landing, the wait rings as any blocker does.
 - `account-down` never picks an account itself: only the owner's recorded list names one, and the pin changes only when a listed account answers its own probe (`bin/jg-account-outage-lib.sh`, state in `state/.account-outage/`). The card replaces the generic board card for that wait, and the cleared episode's minutes reach the ledger below as for any row.
 - A worker that declared `blocked:`, `needs-decision:` or a pause is waiting on someone, so the silent steps never touch it.
 - The steps live in `state/.waiting-timers/.acted/<task>` (state, time of the last step, steps taken, time of the first step), which outlives the episode on purpose: a ring changes the pane, so a silent wait clears and later re-arms, and the record tells the next episode the ring is spent.
@@ -151,21 +139,8 @@ A step that fails, or a stuck state with no row, climbs the ladder as before.
 
 ## Escalation minutes
 
-Every episode whose first rung fired adds one row to the metrics ledger `data/metrics/escalations.tsv` when it clears: the clear time, task, key, first-fire time (the ladder's first step, else the owner wake), minutes from first fire to clear, the highest rung reached (`owner`, `main` or `card`), the ladder's own steps (or `-`), and why it ended.
+Every episode whose first rung fired adds one row to the metrics ledger `data/metrics/escalations.tsv` when it clears: the clear time, task, key, first-fire time (the ladder's first step, else the owner wake), minutes from first fire to clear, the highest rung reached (`owner`, `main` or `card`: the library now reports only `owner` for a lane), the ladder's own steps (or `-`), and why it ended.
 A lead's `waiting-timer-cleared` report to Main carries the same minutes as `after <n> min`.
-
-## Re-raise until the wait is handled
-
-An unresolved blocker re-fires at every `JG_PROMPT_REALERT_SECS` recheck.
-Reading or acknowledging its durable wake does not clear its source.
-The owner must unblock, retry or reassign the work, or obtain a justified decision, and close the exact source key with evidence of that action.
-Until the source clears, the existing ladder keeps raising the owner and Main hops, including after a session restart.
-The one board card stays open on its existing cadence.
-
-Expected pauses retain the change gate: a changed owner, reason, deadline or phase raises, while an unchanged pause is logged to `state/.waiting-timers/.unchanged.log`.
-A pause also gets its existing bounded backstop raise.
-The `[at=]` stamp moving does not count as a changed pause.
-The gate's sidecar remains `state/.waiting-timers/.raised/<task>` and is removed with the episode.
 
 ## Green PR left unmerged
 
@@ -174,7 +149,7 @@ A recorded ready PR that is green and unmerged under yolo is a slow delivery, no
 It reads the PR from the forge at most every `JG_GREEN_PR_POLL_SECS` (default 120).
 Green means the forge reports the PR open, not a draft, with merge state `CLEAN`, which is the state `bin/jg-pr-merge.sh` merges on.
 Only GitHub is read; any other forge, a missing `gh`, or an unreadable answer stays quiet, and an answer not refreshed for three reads lapses.
-After the PR has stayed green at one head for `JG_GREEN_PR_SECS` (default 900), `jg-alert.sh raise slow-delivery <task> --deliver` raises one alert for the task; the alert table owns its rung and holder (rung 1 until the tick-driven climb exists), and a live alert is never raised twice.
+After the PR has stayed green at one head for `JG_GREEN_PR_SECS` (default 900), `jg-alert.sh raise slow-delivery <task> --deliver` raises one alert for the task; the store ladder owns its rung and holder (rung 1 until the tick-driven climb exists), and a live alert is never raised twice.
 - The alert resolves when the PR merges or closes, goes red or draft, gets a new head (the 15-minute clock re-arms), or yolo is off.
 - A recorded hold also resolves it: a `paused:` or captain-held status line that is still the task's declared wait, or an open captain hold on the task.
 - Merge authority is untouched: the alert only asks; the owner still merges through `bin/jg-pr-merge.sh`.
@@ -187,6 +162,7 @@ A steer the worker read (moved to `handled/`) and never answered with a `handled
 A lead that ignores its ready-work wake (`bin/jg-watch.sh` `ready_work_waits_idle`) is the same ladder with the lead as the stuck party.
 `jg_wait_timers_backlog` runs from a lead home's tick at most every `JG_READY_STALL_POLL_SECS` (default 60), and the watcher's `ready_backlog_stall_state` owns the condition.
 The condition holds while a ready item with no open captain card could start now and the home has a free lane.
+A container epic (a row with a child) is never a ready item, a held item is not ready, and a home with no free lane raises nothing.
 A free lane is fewer open lanes than `config/lane-target`, or than 4 without a usable one.
 An item whose project's declared capacity is already held cannot start now, so it does not count (`bin/jg-project-capacity-lib.sh`).
 

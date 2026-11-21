@@ -1,3 +1,0 @@
-# Beads journal and homes
-
-Beads journal and homes: run `done-done run -- bash tests/jg-beads-journal.test.sh` with `JG_BEADS_TEST_BD` and `JG_BEADS_TEST_DOLT` naming the pinned builds; on real stores `check` proves `events-journal true` and `init` turns it back on, `events tail` returns a ticket's create and its later change, `created_by` is the home's name (`main` or `lead:<id>`), a row started with no worker names the home, `jg-backlog.sh homes --json` lists this home, a local lead with its store and a remote lead marked `"remote": true`, and every field the contract for sign-off names is in `bd schema`; set `JG_BEADS_REAL_STORE` to a copy of a real store's `.beads` folder to time a full read of it.

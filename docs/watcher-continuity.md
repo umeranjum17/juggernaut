@@ -238,6 +238,7 @@ The rule file owns the threshold, never a constant in code: a repeated identical
 - Terminal arm-output classification (`started`, `attached`, or `FAILED`) remains defense in depth for the manual recovery path.
 - Codex retains its bounded foreground checkpoint protocol.
 - Grok retains its tracked background-task notification protocol.
+- agy uses the same shape: the arm is an agy background task whose exit wakes the session.
 
 No adapter starts a replacement with a fire-and-forget shell `&` from a model command.
 The Claude hook's detached handling successor and mid-turn cycle are launched by the hook itself, which waits for the arm's status line before it exits.
@@ -360,6 +361,21 @@ The rows that remain usable are still presented with their acknowledgement comma
 Failing the whole drain would strand the usable rows too.
 
 ### Acknowledgement cutoffs
+
+Signalled status spans also pass the presentation and disposition checks owned by `bin/jg-wake-status-lib.sh`.
+Its actor-local journal retains every new line until acknowledgement, independently of the fleet-wide informational presentation cursor.
+The drain marks outcomes and action lines and prints a stable id for each outcome, including a report buried under later progress in a batch.
+The away daemon buffers the complete outcome presentation for the supervisor and leaves those rows queued for explicit handling.
+Its header names the commands that record a relay reference or classification reason.
+A refused acknowledgement counts every open outcome of the batch at once and lists a bounded page of ids; `--outcomes-before` classifies every outcome first presented before a cut in one locked pass with one reason, and an outcome with a disposition is never asked for again.
+An unseen signal or an outcome without a disposition refuses the acknowledgement before any queue row is consumed.
+An unanswered captain inbox note in the batch refuses it the same way: the captain's own note is the one wake that must never be retired without an answer.
+`bin/jg-captain-note-lib.sh` owns what counts as unanswered: the note is still in `state/inbox/`, has no reply at `state/inbox/.replies/<id>`, and was not acknowledged by `bin/jg-inbox.sh drain --ack <id>`.
+Every drain and the session digest print those notes first, as a must-answer list.
+A reply or the note's own drain acknowledgement lets the run through.
+The list is read from the notes, not from the queue, so a note whose row an earlier acknowledgement retired still reaches the next session.
+An interrupted presentation replays; a new append or rotated log adds fresh events without removing pending outcomes.
+The [wake-status transition table](../core/machines/tables/wake-status.tsv) owns the states and moves.
 
 | Acknowledgement | What it deletes |
 | --- | --- |

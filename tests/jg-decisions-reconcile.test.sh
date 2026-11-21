@@ -69,7 +69,7 @@ answer() {  # <case-dir> <key>
     >> "$1/so/.sign-off/decisions.answers.jsonl"
 }
 
-bd_() { BEADS_DIR=$(cat "$1/config/beads-dir") "$ROOT/bin/jg-beads.sh" "${@:2}"; }
+bd_() { JG_HOME=$1 python3 -I "$ROOT/core/item-store/adapters/bd_compat.py" "${@:2}"; }
 
 lane() {  # <case-dir> <task-id> <state>; a Beads row in that state
   local d=$1 id=$2 state=$3

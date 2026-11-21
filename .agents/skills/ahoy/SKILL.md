@@ -1,6 +1,6 @@
 ---
 name: ahoy
-description: Retired alias of /debrief, kept only during the skill-rename migration window. Use when the captain invokes /ahoy; load the debrief skill and follow it unchanged.
+description: Retired alias of /debrief. Use when the captain invokes /ahoy; load debrief and follow it unchanged.
 user-invocable: true
 metadata:
   internal: true

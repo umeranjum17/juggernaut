@@ -101,7 +101,6 @@ stateDiagram-v2
 
 ```
 bin/jg-machine.sh events ticket                          # the sixteen moves
-bin/jg-machine.sh edge-check ticket proving.running building   # legal, from any sub-state
 bin/jg-machine.sh diagram ticket --mermaid                # the diagram above
 bin/jg-machine.sh word ticket-words task rework          # building, worker, red
 core/machines/ticket-corpus.sh > corpus.tsv && bin/jg-machine.sh replay ticket-words corpus.tsv

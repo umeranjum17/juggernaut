@@ -1,24 +1,19 @@
 #!/usr/bin/env bash
-# jg-wake-bus.sh - the wake queue and the task inboxes on NATS JetStream: the bus is
-# the store, and this script is its one owner.
+# jg-wake-bus.sh - the wake queue and the task inboxes in the home's own files: this script is
+# their one owner.
 #
-# A producer publishes a raise, a consumer's acknowledgement publishes another event,
-# and one renderer folds the stream into the read model every other reader opens
-# (state/.wake-queue, state/.wake-settled). docs/bus-live.md owns the contract and the
-# one-step reversal; the shadow mirror that proved this path against the old file queue
-# is gone.
+# A producer queues a raise, a consumer's acknowledgement queues another event, and one
+# renderer folds the events into the read model every other reader opens
+# (state/.wake-queue, state/.wake-settled). docs/bus-live.md owns the contract.
 #
 # CONTRACT.
-#   config   config/wake-bus may set `nats-url <url>`, or `off` to return the home to
-#            the file behaviour; JG_WAKE_BUS_URL overrides the address. No file means
-#            the bus is on.
-#   streams  JG_WAKE carries jg.<home>.wake.> and JG_INBOX jg.<home>.inbox.> for every
-#            home, file storage, kept JG_BUS_MAX_AGE (default 168h). One server serves
-#            every home on the machine, so the Go command (wakebus.go) adds this home's subject to
-#            a stream an earlier build made for another home; a home reads only its own events
-#            (the event's `home`).
-#   outbox   an event the server refuses waits in state/.wake-bus.outbox.jsonl and is
-#            published by the next render, so a bus that is briefly down loses no wake.
+#   queue    The queue is the home's own files: an event waits in state/.wake-bus.outbox.jsonl,
+#            and the next render folds it into the replica state/.wake-bus.events.jsonl and
+#            the read models. A raise owns the rule at the producer's boundary: when the wake
+#            engine refuses the raise, or cannot run at all, the raise owes the row in the
+#            outbox with the engine's own cause kept on stderr and still answers success,
+#            because a producer's duty never depends on the engine answering and a wake must
+#            never be dropped.
 #
 # Usage: jg-wake-bus.sh raise <kind> <key> <payload> <class> | settle <kind> <key> <payload>
 #        | ack <id>... | ids <kind> <key> | ids-through <max-seq> [<seqs-file>] | count
@@ -26,65 +21,20 @@
 #        | inbox-settle | render
 #        | raise-stdin <kind> <key> <class> | settle-stdin <kind> <key>
 #          Payload comes verbatim from stdin, avoiding the OS argument-size limit.
-#        | endpoint
-#   bin/jg-wake-bus-probe.sh measures the whole path on this machine.
-#   endpoint prints "<server url> <wake stream> <raise subject> <account user> <password file>",
-#   tab separated: where the wake engine service (core/bus/cmd/jg-bus/engine.go) consumes from.
 #
-# Env: JG_WAKE_BUS_URL, JG_NATS_BIN, JG_BUS_MAX_AGE.
-# Login: when the machine's accounts file holds this home's account (the server holds one
-# account per home), the script connects as that account, `bin/jg-bus.sh login`, and publishes on
-# jg.<account>. A server that runs no accounts, and a home that has not joined one, answers
-# nothing and takes the folder-name prefix with no login.
+# Env: JG_BUS_SUBJECT_PREFIX.
 set -u
 
 SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)"
 # shellcheck source=bin/jg-wake-lib.sh
 . "$SCRIPT_DIR/jg-wake-lib.sh"
-# shellcheck source=bin/jg-kv-lib.sh
-. "$SCRIPT_DIR/jg-kv-lib.sh"
 
-WAKE_STREAM=JG_WAKE
-# One subject prefix per home on the machine's one server: jg.<home>.> owns the
-# wakes, the inboxes and the captain channel of exactly one home, and the account
-# that carries them can publish nowhere else (core/bus/accounts.conf).
+# The subject prefix names this home on every event it queues: jg.<home>.
 SUBJECT_PREFIX=${JG_BUS_SUBJECT_PREFIX:-}
-BUS_MAX_AGE=${JG_BUS_MAX_AGE:-168h}
 CMD=
 HOMES=()
 ACK_IDS=()
 INBOX_TASK='' INBOX_SEQ='' INBOX_DELIVERY='' INBOX_SHA=''
-
-# config_get <home> <key>: the value in force, from JG_WAKE_BUS_<KEY>, then the
-# home's config/wake-bus, then the default this function's caller names.
-config_get() { # <home-dir> <key> <default>
-  local var value
-  var="JG_WAKE_BUS_$(printf '%s' "$2" | tr 'a-z-' 'A-Z_')"
-  value=$(eval "printf '%s' \"\${$var:-}\"")
-  if [ -z "$value" ] && [ -f "$1/config/wake-bus" ]; then
-    value=$(awk -v k="$2" '$1 == k { sub(/^[^ ]+[ \t]+/, ""); print; exit }' "$1/config/wake-bus" 2>/dev/null)
-  fi
-  printf '%s\n' "${value:-$3}"
-}
-
-bus() { # one client call against the bus; the server address is always explicit
-  [ -n "${BUS_NATS:-}" ] || return 1
-  jg_kv_run "$BUS_NATS" "$BUS_URL" "$HOME_DIR/state" "$@"
-}
-
-# bus_gate: resolve the client and prove the server answers, or say why not. It
-# never fails the caller: a home with no bus must behave exactly as before.
-bus_gate() {
-  if [ -n "${JG_NATS_BIN:-}" ]; then BUS_NATS=$JG_NATS_BIN; else BUS_NATS=$(command -v nats 2>/dev/null || true); fi
-  if [ -z "${BUS_NATS:-}" ]; then
-    printf 'skip: nats client not found (set JG_NATS_BIN)\n'
-    return 1
-  fi
-  if ! bus stream ls >/dev/null 2>&1; then
-    printf 'skip: the event system at %s does not answer\n' "$BUS_URL"
-    return 1
-  fi
-}
 
 # --- helpers -----------------------------------------------------------------
 sha256_of() { # stdin
@@ -92,75 +42,93 @@ sha256_of() { # stdin
   else shasum -a 256 | cut -d' ' -f1; fi
 }
 
-# home_key <state-dir>: a stable short name for one home, so one stream keeps two
-# homes' identical task names apart.
+# home_key <state-dir>: a stable short name for one home, so two homes' identical task names
+# stay apart.
 home_key() { # <state-dir>
   local home
   home=$(dirname "$1")
   printf '%s:%s\n' "$(basename "$home")" "$(printf '%s' "$home" | sha256_of | cut -c1-8)"
 }
 
-# --- the live path ------------------------------------------------------------
-# The bus is the store for the wake queue. A producer publishes a raise, a
-# consumer's acknowledgement publishes another event, and ONE renderer writes the
-# read model every other reader still opens: state/.wake-queue, in exactly the
-# format it has always had. Nothing appends to that file any more, so the append
-# lock, the sequence file, the whole-file rewrite on every acknowledgement, the
-# withdraw rewrite, the record-only file and the queue's own append-recovery
-# marker all go with the path they served. docs/bus-live.md owns the contract.
+# The home's own files are the store for the wake queue. A producer queues a raise, a consumer's
+# acknowledgement queues another event, and ONE renderer writes the read model every other reader
+# opens: state/.wake-queue. docs/bus-live.md owns the contract.
 LIVE_QUEUE=$STATE/.wake-queue                  # read model: queued rows, oldest first
 LIVE_EVENTS=$STATE/.wake-bus.events.jsonl      # this home's unsettled events, with their sequence
-LIVE_OUTBOX=$STATE/.wake-bus.outbox.jsonl      # events a failed publish still owes the bus
+LIVE_OUTBOX=$STATE/.wake-bus.outbox.jsonl      # events queued and not yet folded into the replica
 
 live_home_key() { home_key "$STATE"; }
 
-# live_enabled: the one-step reversal. config/wake-bus carrying `off` returns the
-# home to the file behaviour on the spot - rows wait in this home's own outbox and
-# nothing is published - without reverting the change.
-live_enabled() {
-  [ -f "$HOME_DIR/config/wake-bus" ] || return 0
-  ! grep -qw off "$HOME_DIR/config/wake-bus" 2>/dev/null
-}
-
-# wake_go: the Go command builds, delivers and renders the wake engine's events
+# wake_go: the Go command builds, queues and renders the wake engine's events
 # (core/bus/cmd/jg-bus/wakebus.go, wakerender.go, wake.go). It is handed what this script
-# resolved: the home, its key, the bus address, the client, the subject prefix and the
-# stream age. NATS_USER and NATS_PASSWORD, exported below when the machine runs accounts,
-# reach it through the environment.
+# resolved: the home, its key and the subject prefix.
 wake_go() {
-  JG_HOME=$HOME_DIR JG_STATE_OVERRIDE=${HOMES[0]} JG_WAKE_HOME_KEY=$(live_home_key) JG_WAKE_BUS_URL=$BUS_URL \
-    JG_NATS_BIN=${BUS_NATS:-} JG_BUS_SUBJECT_PREFIX=$SUBJECT_PREFIX JG_BUS_MAX_AGE=$BUS_MAX_AGE \
+  JG_HOME=$HOME_DIR JG_STATE_OVERRIDE=${HOMES[0]} JG_WAKE_HOME_KEY=$(live_home_key) \
+    JG_BUS_SUBJECT_PREFIX=$SUBJECT_PREFIX \
     "$SCRIPT_DIR/jg-bus.sh" wake "$@"
 }
 
-# live_render: make the streams, publish what the outbox owes, apply the streams from the
-# cursor and write the read models the rest of the fleet reads. The cursor moves only
-# after the replica holding what was read is durable.
+# live_render: fold the replica and the queued events and write the read models the rest of
+# the fleet reads.
 live_render() { wake_go render "$STATE"; }
 
-# A raise and a record-only wake are built and delivered by the Go command, which owes an
-# event it cannot publish; the read model follows.
+# A raise and a record-only wake are built and queued by the Go command; the read model follows.
 live_raise() { printf '%s' "$3" | live_raise_stdin "$1" "$2" "$4"; } # <kind> <key> <payload> <class>
 live_settle() { printf '%s' "$3" | live_settle_stdin "$1" "$2"; }
-live_raise_stdin() { wake_go raise-stdin "$STATE" "$@" || return 1; live_render; return 0; }
+# owe_raise_stdin <kind> <key> <class>: queue one raise in the outbox from the raise
+# path alone. The engine fixes a row's number and identity; when the engine refused, or
+# could not run, the row takes the legacy number the allocator was built to start beyond
+# (this second in milliseconds plus a random suffix), which the engine's own
+# nextWakeSequence already accounts for, so it stays ordered and unique beside every row
+# the engine writes. The engine's refusal keeps its own cause on stderr; this only makes
+# sure the wake survives it.
+owe_raise_stdin() { # <kind> <key> <class>; the payload arrives on stdin
+  local kind=$1 key=$2 class=$3 payload at rseq id row
+  payload=$(cat)
+  at=$(date -u +%s)
+  rseq=$(( at * 1000 + RANDOM % 1000 ))
+  id="wake/$(live_home_key)/$at-$$-$RANDOM"
+  row=$(jq -nc --arg subject "$SUBJECT_PREFIX.wake.raise" --arg id "$id" \
+    --arg home "$(live_home_key)" --arg kind "$kind" --arg key "$key" --arg payload "$payload" \
+    --arg class "$class" --arg word "${JG_WAKE_WORD:-}" --argjson at "$at" --argjson rseq "$rseq" \
+    '{subject:$subject,v:1,id:$id,home:$home,where:"queue",at:$at,rseq:$rseq,kind:$kind,key:$key,payload:$payload,class:$class}
+     + (if $word == "" then {} else {word:$word} end)') || return 1
+  mkdir -p "$STATE" 2>/dev/null || return 1
+  printf '%s\n' "$row" >> "$LIVE_OUTBOX"
+}
+
+# A raise succeeds when its event is durable. That rule holds at the producer's boundary, so
+# this owns it: whether the engine could not make the event durable, could not run, or refused
+# the raise by its own rules, the row is owed here with the engine's cause on stderr. A caller
+# therefore never sees a raise that both failed and lost the event; only a row that cannot even
+# be written here fails.
+live_raise_stdin() { # <kind> <key> <class>; the payload arrives on stdin
+  local rc payload
+  payload=$(cat)
+  printf '%s' "$payload" | wake_go raise-stdin "$STATE" "$@"
+  rc=$?
+  if [ "$rc" -eq 0 ]; then live_render; return 0; fi
+  printf '%s' "$payload" | owe_raise_stdin "$@" || return 1
+  printf 'jg-wake-bus.sh: the raise was not queued by the wake engine (status %s); owed it in %s\n' \
+    "$rc" "$LIVE_OUTBOX" >&2
+  live_render >/dev/null 2>&1 || true
+  return 0
+}
 live_settle_stdin() { wake_go settle-stdin "$STATE" "$@" || return 1; live_render; }
 
-# live_publish <subject> <id> <json>: publish one event, or owe it in the outbox.
+# live_publish <subject> <id> <json>: queue one event in the outbox.
 live_publish() { wake_go deliver "$STATE" "$@"; }
 
 # live_ack <id>...: acknowledge each row, then prove it left the replica. Every
-# acknowledgement is its own bus message (a message id unique to this attempt): the
-# server drops a second message under an id it has already stored as a duplicate,
-# and a row whose first acknowledgement the cursor had already passed without
-# settling it could then never be acknowledged again, yet every retry exited 0.
-# An acknowledgement that leaves its row in the replica says so and exits 1.
+# acknowledgement is its own event (a message id unique to this attempt). An
+# acknowledgement that leaves its row in the replica says so and exits 1.
 live_ack() { # <id>...
   local id at owed subject mid left=''
   at=$(date -u +%s)
   for id in "$@"; do
     [ -n "$id" ] || continue
-    # An event the bus never received is acknowledged by dropping it here: there
-    # is nothing on the server to settle, and keeping it would resurrect the row.
+    # An event still in the outbox is acknowledged by dropping it here, or keeping it would
+    # resurrect the row.
     if [ -s "$LIVE_OUTBOX" ] && jq -e --arg id "$id" 'select(.id == $id)' "$LIVE_OUTBOX" >/dev/null 2>&1; then
       owed=$LIVE_OUTBOX.tmp.$$
       if jq -c --arg id "$id" 'select(.id != $id)' "$LIVE_OUTBOX" > "$owed" 2>/dev/null \
@@ -175,7 +143,7 @@ live_ack() { # <id>...
       rm -f -- "$owed"
       return 1
     fi
-    # An inbox record is acknowledged on the inbox stream, beside its raise.
+    # An inbox record is acknowledged beside its raise.
     case "$id" in inbox/*) subject="$SUBJECT_PREFIX.inbox.ack" ;; *) subject="$SUBJECT_PREFIX.wake.ack" ;; esac
     mid="$id/ack/$at-$$-$RANDOM"
     live_publish "$subject" "$mid" \
@@ -206,8 +174,8 @@ live_ids_through() { # <max-seq> [<seqs-file>]
       else awk -F '\t' '{ print $2 }'; fi
 }
 
-# live_inbox_raise <task> <sequence> <delivery> <body-sha>: one inbox record on the
-# bus, published by the writer that made it durable, so no scan has to find it.
+# live_inbox_raise <task> <sequence> <delivery> <body-sha>: one inbox record, queued by the
+# writer that made it durable, so no scan has to find it.
 live_inbox_raise() { # <task> <seq> <delivery> <body-sha>
   local id at
   at=$(date -u +%s)
@@ -220,9 +188,8 @@ live_inbox_raise() { # <task> <seq> <delivery> <body-sha>
 }
 
 # live_inbox_handled <task> <seq> <outcome> <evidence>: the worker's claim that it handled (or
-# refused) one steer, with the pointer to what shows it. A new event of its own on the inbox
-# stream - never the transport's ack, which only ever means "read" - so a sender or the delivery
-# record can consume it. It folds into nothing: where=handled is no queue row.
+# refused) one steer, with the pointer to what shows it. A new event of its own - never
+# an ack, which only ever means "read" - so a sender or the delivery record can consume it. It folds into nothing: where=handled is no queue row.
 live_inbox_handled() { # <task> <seq> <outcome> <evidence>
   local id
   id="inbox/$(live_home_key)/$1/$2/handled"
@@ -233,14 +200,13 @@ live_inbox_handled() { # <task> <seq> <outcome> <evidence>
 }
 
 # live_inbox_settle: a worker acknowledges a steer by moving its record into
-# handled/, so this is the one observer that carries that move to the bus. A
+# handled/, so this is the one observer that carries that move to the queue. A
 # record still in its inbox is left alone; one that is in handled/ is acknowledged; one that is in neither is not.
-# Cheap: it reads the local replica, not the bus. The record's number is the last part
+# Cheap: it reads the local replica. The record's number is the last part
 # of its own id, and its file is that number padded the way bin/jg-task-inbox-lib.sh
-# names it, so a replica an older render wrote with the stream's sequence still settles.
+# names it, so a replica an older render wrote with a stream sequence still settles.
 live_inbox_settle() {
   local id task seq
-  bus_gate >/dev/null 2>&1 || return 0
   live_events | jq -r 'select((.ack // false) != true and .task != null) | [.id, .task, (.id | split("/") | last)] | @tsv' 2>/dev/null | while IFS=$'\t' read -r id task seq; do
       [ -n "${task:-}" ] || continue
       case "$seq" in ''|*[!0-9]*) continue ;; esac
@@ -265,9 +231,7 @@ live_count() {
 }
 
 # live_events: every unsettled event this home knows, the replica plus anything a
-# failed publish still owes. A home with no reachable bus therefore queues, drains
-# and acknowledges exactly as it did on the file path, and the outbox hands the
-# events to the stream when the bus answers again.
+# queued event still owes.
 live_events() {
   if [ -s "$LIVE_EVENTS" ]; then cat "$LIVE_EVENTS"; fi
   if [ -s "$LIVE_OUTBOX" ]; then jq -c 'del(.subject) | .seq = (.rseq // .seq // 0)' "$LIVE_OUTBOX" 2>/dev/null || true; fi
@@ -324,7 +288,6 @@ while [ "$#" -gt 0 ]; do
       ACK_IDS=("$@") || true
       set -- ;;
     render) CMD=render; shift ;;
-    endpoint) CMD=endpoint; shift ;;
     *) printf 'jg-wake-bus.sh: unknown argument: %s\n' "$1" >&2; exit 2 ;;
   esac
 done
@@ -334,38 +297,10 @@ for h in "${HOMES[@]}"; do
   [ -d "$h" ] || { printf 'jg-wake-bus.sh: no state directory at %s\n' "$h" >&2; exit 2; }
 done
 HOME_DIR=$(dirname "${HOMES[0]}")
-# The server address defaults to the one the stack runs the bus on (the captain channel's nats-url,
-# a home's config/captain-channel over defaults/captain-channel), so a home that moved its server
-# does not have the wake bus and the engine reading a different one.
-channel_url=''
-for channel_file in "$HOME_DIR/config/captain-channel" "$SCRIPT_DIR/../defaults/captain-channel"; do
-  [ -f "$channel_file" ] || continue
-  channel_url=$(awk '$1 == "set" && $2 == "nats-url" { print $3; exit }' "$channel_file" 2>/dev/null)
-  [ -z "$channel_url" ] || break
-done
-BUS_URL=$(config_get "$HOME_DIR" nats-url "${channel_url:-nats://127.0.0.1:4222}")
-# When the machine runs accounts, its accounts file holds this home's account: `jg-bus.sh login`
-# answers the name and the credentials file it was written from, whatever registry named the home
-# (the owner's, which its accounts file is generated from), and this client publishes on that
-# account's prefix. A bare server (a test, a detached stack) answers nothing and takes the
-# folder-name prefix and no login.
-ACCOUNT_PASS_FILE=''
-if acct=$(JG_HOME="$HOME_DIR" JG_STATE_OVERRIDE="${HOMES[0]}" "$SCRIPT_DIR/jg-bus.sh" login 2>/dev/null); then
-  NATS_USER=${acct%%$'\t'*}
-  ACCOUNT_PASS_FILE=${acct#*$'\t'}
-  NATS_PASSWORD=$(cat "$ACCOUNT_PASS_FILE" 2>/dev/null) || NATS_PASSWORD=''
-  export NATS_USER NATS_PASSWORD
-  [ -n "$SUBJECT_PREFIX" ] || SUBJECT_PREFIX=jg.$NATS_USER
-fi
-# jg.<home>.>: the one prefix this home may publish or read on the machine server.
+# jg.<home>: the prefix this home names its events with.
 if [ -z "$SUBJECT_PREFIX" ]; then
   SUBJECT_PREFIX="jg.$(basename "$HOME_DIR" | tr -c 'A-Za-z0-9_.-' '_')"
 fi
-[ -n "${JG_WAKE_BUS_URL:-}" ] && BUS_URL=$JG_WAKE_BUS_URL
-# Resolved once, before any command runs: the live raise and its render must not
-# depend on a gate that prints its own skip lines into a producer's output.
-if [ -n "${JG_NATS_BIN:-}" ]; then BUS_NATS=$JG_NATS_BIN; else BUS_NATS=$(command -v nats 2>/dev/null || true); fi
-
 case "$CMD" in
   raise) live_raise "$RAISE_KIND" "$RAISE_KEY" "$RAISE_PAYLOAD" "$RAISE_CLASS" ;;
   settle) live_settle "$RAISE_KIND" "$RAISE_KEY" "$RAISE_PAYLOAD" ;;
@@ -379,5 +314,4 @@ case "$CMD" in
   inbox-handled) live_inbox_handled "$INBOX_TASK" "$INBOX_SEQ" "$INBOX_DELIVERY" "$INBOX_SHA" ;;
   inbox-settle) live_inbox_settle ;;
   render) live_render ;;
-  endpoint) printf '%s\t%s\t%s\t%s\t%s\n' "$BUS_URL" "$WAKE_STREAM" "$SUBJECT_PREFIX.wake.raise" "${NATS_USER:-}" "${ACCOUNT_PASS_FILE:-}" ;;
 esac

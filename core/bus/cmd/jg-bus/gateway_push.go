@@ -30,8 +30,8 @@ func (a *app) pushOwner(text string) error {
 		return errNoChat
 	case a.channelMode() == "off":
 		return errNoChat
-	case a.channelMode() != "live":
-		return fmt.Errorf("the channel mode is %q, not live", a.channelMode())
+	case !a.chatOn():
+		return fmt.Errorf("the channel mode is %q, not direct", a.channelMode())
 	case a.cfgOr("gateway-adapters", "telegram") != "telegram":
 		return fmt.Errorf("the gateway adapters are %q, not telegram", a.cfgOr("gateway-adapters", "telegram"))
 	case strings.TrimSpace(text) == "":

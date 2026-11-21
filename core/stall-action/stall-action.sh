@@ -41,7 +41,7 @@
 #                   re-ring only.
 # Nothing is ever hung in the last three, so there is nothing to interrupt. A task with no beat record keeps the pane rule.
 # A lost worker that stays lost after its ring is relaunched by relaunch.sh (3 times in 30 minutes, then the lead is told); a fresh
-# beat resolves its alert.
+# beat resolves its alert, and a sweep at the start of each check resolves the alert of a window no task record names any more.
 # The same exemptions, cooldown and one-action-per-beat ledger apply. Seams for tests: JG_STALL_ACTION_PROC_LIB, JG_STALL_ACTION_BG_MIN_AGE, JG_STALL_ACTION_CONTROL, JG_STALL_ACTION_SEND, JG_STALL_ACTION_PEEK, JG_STALL_ACTION_CLASSIFY, JG_STALL_ACTION_NOW (epoch),
 # JG_STALL_ACTION_WATCH_FRESH (seconds a poll record may be old).
 set -u
@@ -113,6 +113,7 @@ tries() { grep -F "\"task\":\"$1\",\"hash\":\"$2\",\"step\":\"$3\"" "$LEDGER" 2>
 record() { printf '{"task":"%s","hash":"%s","step":"%s","ok":%s,"at":%s}\n' "$1" "$2" "$3" "$4" "$NOW" >> "$LEDGER"; }  # <task> <hash> <step> <true|false>
 
 mkdir -p "$DIR" 2>/dev/null || exit 0
+"$RELAUNCH" sweep "$FMH"   # a lost-worker alert for a window no task record names any more ends here
 for meta in "$STATE"/*.meta; do
   [ -e "$meta" ] || continue
   [ $(( $(date +%s) - START )) -lt "$LIMIT" ] || exit 0

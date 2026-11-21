@@ -2,6 +2,8 @@
 set -eu
 # shellcheck source=tests/jg-escalation-chain-fixture.sh
 . "$(dirname "${BASH_SOURCE[0]}")/jg-escalation-chain-fixture.sh"
+# A cycle ends at its first completed scan; a case that needs more scans cycles again, so none waits on the clock.
+CYCLE_POLLS=0
 
 # A finished ship task on a local-only branch: its work is on the branch, and
 # <landed> says whether the project's main already holds it. The treehouse
@@ -46,7 +48,6 @@ test_a_stale_wake_names_its_task_and_reason() {
     || fail "an unrecorded endpoint was mapped to a task"
   # The same wake is the alert lost-worker, raised at rung 1 for the window; the watcher holds no stale wake call of its own any more.
   [ "$(sed -n 's/^rung=//p' "$m/state/alerts/lost-worker--fake:1.rec" 2>/dev/null)" = 1 ] || fail "no lost-worker alert for the window"
-  ! grep -q 'jg_wake_append stale' "$ROOT/bin/jg-watch.sh" || fail "the watcher still appends its own stale wake"
   pass "a stale wake names the task and the reason, on the doorbell line and in the queued row"
 }
 
@@ -159,7 +160,15 @@ test_busy_lead_is_steered_without_interrupt() {
   pass "a lead busy mid-turn is told its worker is blocked, and is not interrupted"
 }
 
-test_lead_stuck_on_a_prompt_reaches_the_board() {
+cycle_until_episode_ends() {  # <home> <task>
+  local n=0
+  while [ "$n" -lt "${CYCLE_TRIES:-8}" ] && [ -e "$1/state/.waiting-timers/$2" ]; do
+    n=$((n + 1))
+    PANES=1 cycle "$1"
+  done
+}
+
+test_lead_stuck_on_a_prompt_wakes_main_and_clears() {
   local m
   m=$(home lead-prompt)
   lead_meta "$m" lead1 1 "$m/lead-home"
@@ -167,31 +176,20 @@ test_lead_stuck_on_a_prompt_reaches_the_board() {
   PANES=1 cycle "$m"
   grep -q '^stale: fake:1 (permission prompt: claude launch trust dialog; path -; not answered: a trust dialog is never auto-approved)' "$m/events" \
     || fail "Main was not woken at first sight of the lead's prompt: $(cat "$m/events")"
-  [ -f "$m/state/.wait-sources/lead1.prompt" ] || fail "the prompt was not handed to the chain"
-  backdate "$m" lead1 10
-  PANES=1 cycle "$m"
-  grep -q 'check: waiting-state lead1 (prompt, .*level=main' "$m/events" || fail "the lead's prompt did not reach Main's rung: $(cat "$m/events")"
-  PANES=1 cycle "$m"
-  # A stuck worker is Main's to unblock, never a card for the captain
-  # (bin/jg-ask-gate-lib.sh rule 2): the chain records the ask for Main instead.
-  ! grep -q -- '--key waiting-timer-[0-9a-f]*-lead1-g[0-9]*-prompt-card' "$m/cards" 2>/dev/null \
-    || fail "a stuck lead's prompt reached the captain's board: $(cat "$m/cards" 2>&1)"
-  grep -q '^- Ask: Unblock stuck lead?' "$m/data/overwatch-decisions.md" 2>/dev/null \
-    || fail "the lead's prompt was neither a card nor recorded for Main: $(cat "$m/data/overwatch-decisions.md" 2>&1)"
+  [ -f "$m/state/.wait-sources/lead1.prompt" ] || fail "the prompt was not handed to the wait record"
   [ "$(grep -c "stale: fake:1 (permission prompt" "$m/events")" -eq 1 ] || fail "the gate re-alerted instead of the chain"
   printf 'all quiet\n> \n' > "$m/panes/1"
-  PANES=1 cycle "$m"
-  PANES=1 cycle "$m"
+  # An episode ends after scans that no longer see its wait; a cycle runs as many scans as the host allows, so
+  # cycle until the episode is gone (bounded) instead of counting on how many scans a time budget holds.
+  cycle_until_episode_ends "$m" lead1
   [ ! -s "$m/cards" ] || ! grep -q '^raise ' "$m/cards" \
     || fail "a card was raised for a stuck lead: $(cat "$m/cards" 2>&1)"
-  grep -q '^- Ask: Unblock stuck lead?' "$m/data/overwatch-decisions.md" 2>/dev/null \
-    || fail "the recorded prompt wait disappeared when the prompt was answered"
   [ ! -e "$m/state/.waiting-timers/lead1" ] || fail "the episode outlived the prompt"
-  pass "a lead stuck on a prompt wakes Main at once, reaches Main's rung, is recorded for Main's decision, and clears when it is answered"
+  pass "a lead stuck on a prompt wakes Main at once, hands the prompt to the wait record, and clears when it is answered"
 }
 
-test_dead_lead_still_reaches_the_board_and_relaunch_represents() {
-  local m l f
+test_dead_lead_gets_a_durable_steer_from_the_relay() {
+  local m
   m=$(home dead-main)
   lead_meta "$m" lead1 1 "$m/lead-home"
   overdue_report "$m" lead1 w1 100
@@ -202,29 +200,7 @@ test_dead_lead_still_reaches_the_board_and_relaunch_represents() {
     || fail "a worker's question went to the captain's board: $(cat "$m/cards" 2>&1)"
   grep -q '^- Ask: ' "$m/data/overwatch-decisions.md" 2>/dev/null \
     || fail "an unsettled wait was not recorded for Main to decide"
-  # The relaunched lead re-presents its open waits on its first cycle.
-  l=$(home dead-lead)
-  wire_lead_check "$l"
-  printf 'lead1\n' > "$l/.jg-squad-lead-home"
-  printf 'schema=jg-squad-lead-parent.v1\nroute=local\nparent_home=%s\n' "$m" > "$l/.jg-squad-lead-parent"
-  printf 'kind=ship\nbackend=tmux\nwindow=fake:1\n' > "$l/state/w1.meta"
-  printf 'needs-decision [key=q]: pick a database\n' > "$l/state/w1.status"
-  prime_status_seen "$l/state" "$l/state/w1.status"
-  printf 'session-one\n' > "$l/state/.lock-session"
-  PANES=1 cycle "$l"
-  backdate "$l" w1 10
-  PANES=1 cycle "$l"
-  backdate "$l" w1 10
-  PANES=1 cycle "$l"
-  f="$m/state/lead1.status"
-  [ "$(grep -c 'waiting-timer-overdue: w1 ' "$f")" -eq 2 ] || fail "the lead did not report its overdue worker: $(cat "$f")"
-  : > "$l/events"
-  printf 'session-two\n' > "$l/state/.lock-session"
-  PANES=1 cycle "$l"
-  [ "$(grep -c 'waiting-timer-overdue: w1 ' "$f")" -eq 3 ] || fail "the relaunched lead did not re-report its stuck worker to Main: $(cat "$f")"
-  grep -q 'check: waiting-state w1 (needs-decision key=q, .*level=owner; still open, owning lead must recheck' "$l/events" \
-    || fail "the relaunched lead was not re-presented its stuck worker in one cycle: $(cat "$l/events")"
-  pass "a dead lead's stuck worker still reaches the board, and after relaunch the lead re-presents it within one cycle"
+  pass "a lead's overdue report reaches Main's relay: a dead lead gets a durable steer, and the wait is recorded for Main, not the captain's board"
 }
 
 test_lead_supervision_not_running_is_a_main_wait() {
@@ -237,15 +213,13 @@ test_lead_supervision_not_running_is_a_main_wait() {
   LIVENESS=1 PANES=1 cycle "$m"
   grep -q 'check: squad_lead lead1 supervision not running' "$m/events" || fail "a lead with work and no watcher was not a Main event: $(cat "$m/events") $(cat "$m/err")"
   grep -q '^jg-send lead1 --fire-and-forget .*Re-arm your supervision' "$m/sent" || fail "the lead was not told to re-arm"
-  backdate "$m" lead1 10
-  LIVENESS=1 PANES=1 cycle "$m"
-  grep -q 'check: waiting-state lead1 (supervision, .*level=main' "$m/events" || fail "the dead hop did not escalate on the chain: $(cat "$m/events")"
+  [ -f "$m/state/.wait-sources/lead1.supervision" ] || fail "the dead hop was not handed to the wait record"
   touch "$lh/state/.last-watcher-beat"
   LIVENESS=1 PANES=1 cycle "$m"
   LIVENESS=1 PANES=1 cycle "$m"
   [ ! -e "$m/state/.wait-sources/lead1.supervision" ] || fail "the wait stayed after the lead's watcher came back"
   [ ! -e "$m/state/.waiting-timers/lead1" ] || fail "the episode stayed after the lead's watcher came back"
-  pass "a lead whose own supervision is down is a Main wait that escalates until its watcher is back"
+  pass "a lead whose own supervision is down is a Main wait that clears when its watcher is back"
 }
 
 test_worker_dead_prompt_and_question_differ() {
@@ -275,57 +249,13 @@ test_worker_dead_prompt_and_question_differ() {
   pass "a prompt wakes Main at first sight, an open question rides the owner rung, and a dead worker's old prompt lapses"
 }
 
-test_two_hops_stuck_at_once() {
-  local m
-  m=$(home two-hops)
-  lead_meta "$m" lead1 1 "$m/lead-home"
-  printf '%s\n' "$TRUST" > "$m/panes/1"
-  overdue_report "$m" lead1 w1 100
-  PANES=1 cycle "$m"
-  backdate "$m" lead1 10
-  PANES=1 cycle "$m"
-  PANES=1 cycle "$m"
-  # Neither hop is the captain's card: a stuck worker and a stuck lead are
-  # Main's to unblock, so both are recorded for Main's decision.
-  ! grep -q -- '--key waiting-timer-[0-9a-f]*-lead1-.*-prompt-card' "$m/cards" 2>/dev/null \
-    || fail "the stuck lead reached the captain's board: $(cat "$m/cards" 2>&1)"
-  ! grep -q -- '--key waiting-timer-0000aaaa-w1-.*-q-card' "$m/cards" 2>/dev/null \
-    || fail "its stuck worker's question reached the captain's board: $(cat "$m/cards" 2>&1)"
-  grep -q '^- Ask: ' "$m/data/overwatch-decisions.md" 2>/dev/null \
-    || fail "its stuck worker's wait was not recorded for Main to decide"
-  pass "a lead stuck on a prompt and its stuck worker both reach Main's decision, and neither reaches the captain's board"
-}
-
-test_main_absent_board_card_still_fires() {
-  local m
-  m=$(home main-absent)
-  printf 'kind=ship\nbackend=tmux\nwindow=fake:1\nharness=claude\n' > "$m/state/w1.meta"
-  printf 'blocked [key=dep]: waiting on the vendor\n' > "$m/state/w1.status"
-  prime_status_seen "$m/state" "$m/state/w1.status"
-  PANES=1 cycle "$m" absent
-  backdate "$m" w1 10
-  PANES=1 cycle "$m" absent
-  PANES=1 cycle "$m" absent
-  PANES=1 cycle "$m" absent
-  grep -q 'level=main' "$m/events" || fail "Main's rung never fired: $(cat "$m/events")"
-  ! grep -q -- '--key waiting-timer-[0-9a-f]*-w1-.*-dep-card' "$m/cards" 2>/dev/null \
-    || fail "a wait Main had not settled went to the captain's board: $(cat "$m/cards" 2>&1)"
-  grep -q '^- Ask: ' "$m/data/overwatch-decisions.md" 2>/dev/null \
-    || fail "the unsettled wait was not recorded for Main while it was absent"
-  [ -s "$m/state/.wake-queue" ] || fail "the fixture did not keep Main's wakes unread"
-  pass "with Main absent and its wakes unread, the unsettled wait is recorded for Main"
-}
-
-
 test_a_stale_wake_names_its_task_and_reason
 test_a_finished_landed_worker_is_cleaned_up_without_a_wake
 test_a_finished_unlanded_worker_is_kept_and_wakes_with_its_reason
 test_lead_idle_is_steered_without_interrupt
 test_busy_lead_is_steered_without_interrupt
-test_lead_stuck_on_a_prompt_reaches_the_board
-test_dead_lead_still_reaches_the_board_and_relaunch_represents
+test_lead_stuck_on_a_prompt_wakes_main_and_clears
+test_dead_lead_gets_a_durable_steer_from_the_relay
 test_lead_supervision_not_running_is_a_main_wait
 test_worker_dead_prompt_and_question_differ
-test_two_hops_stuck_at_once
-test_main_absent_board_card_still_fires
 test_watcher_handoff_gap_is_not_a_dead_watcher

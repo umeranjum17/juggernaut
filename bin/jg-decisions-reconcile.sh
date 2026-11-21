@@ -266,6 +266,10 @@ cmd_check() {
     [ -n "$dry" ] && printf 'reconcile: not due for another %ss; pass --force to run now\n' "$due_after"
     return 0
   fi
+  if [ -z "$dry" ]; then
+    JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$DATA" \
+      "$SCRIPT_DIR/jg-captain-hold.sh" reconcile check || die 'owner-question expiry check failed'
+  fi
   jg_question_signoff_available || { say "board cards cannot be read: sign-off-axi is not on PATH"; return 0; }
   board=$(jg_question_board)
   if [ -n "$board" ]; then

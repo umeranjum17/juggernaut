@@ -1,6 +1,6 @@
 # Deprecated paths
 
-The migration to the NATS bus, the Dapr workflows, the OPA policies and the Go cores replaced part of the older shell system.
+The migration to the OPA policies and the Go cores replaced part of the older shell system.
 Most ports deleted the shell they replaced in the same change, so few old paths remain.
 This file lists the ones that remain, so an agent does not change a path the stack no longer uses.
 
@@ -20,9 +20,6 @@ Do not change these paths without asking, and do not treat them as deprecated ye
 
 | Path | Question | What is known |
 | --- | --- | --- |
-| `bin/jg-pending-reply-lib.sh` and its per-waiter record `state/pending-replies/<corr_id>` | Has the Dapr pending-reply workflow taken over from the record file? | `bin/jg-reply-engine.sh`, `bin/jg-reply-bus.sh` and `core/bus/workflows/pending-reply.json` exist, but run in shadow (`docs/reply-shadow.md`). The switch changes #373, #392 and #413 are on `feature/c1-pending-replies` and are not ancestors of `release/c-10`. `bin/jg-migration-live.sh` reports this part as pending. |
-| `core/wait-timers/bin/jg-wait-timers-lib.sh` | Do the Dapr escalation workflows now own every rung of the wait ladder? | `bin/jg-escalation-workflows.sh` and `core/bus/workflows/escalation-wait-timers.json` (#360) own the escalation timers. The library still owns the other rungs. |
-| `bin/jg-remote-job-lib.sh` and the SSH remote-job path | Has the leaf-node transport replaced the SSH channel? | `bin/jg-bus-leaf.sh` runs in shadow with the SSH path authoritative (`docs/bus-leaf-shadow.md`). |
 
 ## Not listed, with the reason
 

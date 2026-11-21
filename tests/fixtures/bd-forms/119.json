@@ -1,0 +1,25 @@
+{
+ "argv": [
+  "update",
+  "n3-dated",
+  "--set-metadata",
+  "hold_reason=waits on Umer",
+  "--set-metadata",
+  "wait=outside",
+  "--set-metadata",
+  "wait_reason=date",
+  "--set-metadata",
+  "wait_at=2026-11-19T13:37:57Z",
+  "--set-metadata",
+  "hold_kind=external",
+  "--defer",
+  "2099-03-04T00:00:00Z",
+  "--status",
+  "deferred"
+ ],
+ "stdin": "",
+ "stdout": "\u2713 Updated issue: n3-dated \u2014 n3-dated\n",
+ "exit": 0,
+ "form": "update --defer --set-metadata --status",
+ "store": "{\"_type\":\"issue\",\"id\":\"n3-dated\",\"title\":\"n3-dated\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:37:57Z\",\"created_by\":\"juggernaut\",\"updated_at\":\"2026-11-19T13:37:57Z\",\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

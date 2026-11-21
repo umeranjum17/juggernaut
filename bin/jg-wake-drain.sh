@@ -17,6 +17,22 @@
 # scratch here holds a copy of the queue.
 # JG_STATUS_PRESENTATION_LOCK_TIMEOUT sets the positive whole-second wait for
 # presentation-path locks (default 10); queue mutation locks remain blocking.
+# Every signalled status span replays until acknowledgement. OUTCOME_REQUIRED
+# ids must first be handled with --outcome ID --relayed REFERENCE or
+# --outcome ID --classified REASON (nonblank, recorded per actor and home);
+# --outcomes-before EPOCH --classified REASON classifies, in one locked pass, every
+# open outcome first presented before EPOCH (bin/jg-wake-status-lib.sh owns the rule).
+# CAPTAIN NOTES lead every presentation, and they gate the acknowledgement:
+# bin/jg-captain-note-lib.sh owns what counts as an unhandled captain inbox
+# note, lists every one of them at the top of this drain, and refuses an
+# acknowledgement whose batch still holds one with no reply and no drain
+# acknowledgement. A note is read from state/inbox/, not from the queue, so a
+# note whose row an earlier acknowledgement retired cannot disappear again.
+# With config/item-store-reads in the main home (Main writes it after the store switch lands) the drain presents Main's
+# store pages instead of re-printing status lines: QUEUED (each queued record's reason line, capped), PAGES (`jg-item pages
+# main`, capped, from Main's cursor), OPEN DECISIONS (the store's open questions) and RECORD DIVERGENCE (`owner.py compare`).
+# Its one acknowledgement also moves the page cursor (--pages-ack, the ack= of the PAGES count line). Remove the file to
+# get the status-line presentation back; a Squad Lead home and a home without the file keep it.
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
 [ "$_jg_d" != "${BASH_SOURCE[0]}" ] || _jg_d=.
@@ -55,17 +71,27 @@ SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd
 . "$SCRIPT_DIR/jg-supervision-engine-lib.sh"
 # shellcheck source=bin/jg-afk-contract.sh
 . "$SCRIPT_DIR/jg-afk-contract.sh"
+# shellcheck source=bin/jg-wake-status-lib.sh
+. "$SCRIPT_DIR/jg-wake-status-lib.sh"
+# shellcheck source=bin/jg-captain-note-lib.sh
+. "$SCRIPT_DIR/jg-captain-note-lib.sh"
 
 DRAIN_TMP=
 DRAIN_VIEW_TMP=
 DRAIN_LOCK_HELD=false
+STATUS_LOCK_HELD=false
 RAW_ROWS=
+STATUS_ROWS=
 RECOVERY_MARKER="$STATE/.watcher-down"
 RECOVERY_MARKER_TOKEN=
 RECOVERY_ACK_REQUIRED=false
 RECOVERY_ACK_MOVED=false
 ACK_THROUGH=
 ACK_GENERATION=
+PAGES_ACK_ARG=
+PAGES_OUT=
+PAGES_ACK=0
+STORE_MODE=false
 ACK_REMOVED=0
 PRESENTED_MAX=0
 ACK_FINGERPRINTS=
@@ -188,6 +214,29 @@ require_branch_eligible_rows() {
   }
 }
 
+# render_queue: fold the bus into the read model (state/.wake-queue), or name why
+# it cannot. A failed render leaves the read model as the last render wrote it,
+# so presenting from it shows rows the bus already consumed, and acknowledging
+# them consumes nothing while every later drain presents them again. Both paths
+# therefore stop here instead. The renderer replaces the file atomically.
+render_queue() {
+  local err
+  err=$(jg_wake_bus render 2>&1 >/dev/null) && return 0
+  printf 'wake drain: the wake queue could not be brought up to date, so no wake row is presented or acknowledged: %s\n' \
+    "$(printf '%s' "${err:-the renderer gave no cause}" | tr '\n' ' ' | cut -c1-400)" >&2
+  return 1
+}
+
+# held_rows_queued <rows-file> <cutoff>: the rows the file names at or below the
+# cutoff that the read model still queues, comma-separated (empty when none).
+held_rows_queued() { # <rows-file> <cutoff>
+  [ -s "$1" ] || return 0
+  awk -F '\t' -v rows="$1" -v cutoff="$2" '
+    BEGIN { while ((getline line < rows) > 0) if (line ~ /^[0-9]+$/ && line + 0 <= cutoff + 0) held[line] = 1 }
+    NF >= 5 && ($2 in held) { printf "%s%s", (n++ ? "," : ""), $2 }
+  ' "$JG_WAKE_QUEUE" 2>/dev/null
+}
+
 # The highest sequence this actor has already been presented: the branch's
 # grant is exactly its current prompt's rows, and main's claim file is what its
 # last drain printed. Read BEFORE an ack re-claims, so a row that arrived since
@@ -203,6 +252,30 @@ presented_max_row() { # <rows-file>
 
 case "${1:-}" in
   '') ;;
+  --outcome)
+    if [ "$#" -ne 4 ] || { [ "$3" != --relayed ] && [ "$3" != --classified ]; }; then
+      echo 'usage: jg-wake-drain.sh --outcome ID --relayed REFERENCE|--classified REASON' >&2
+      exit 2
+    fi
+    jg_lock_acquire_wait "$STATE/.status-presentation-lock" || exit 1
+    outcome_rc=0
+    jg_wake_status_handle "$2" "${3#--}" "$4" || outcome_rc=$?
+    jg_lock_release "$STATE/.status-presentation-lock"
+    [ "$outcome_rc" -eq 0 ] || echo 'wake drain: outcome handling failed; use a presented id and a nonblank reference or reason' >&2
+    exit "$outcome_rc"
+    ;;
+  --outcomes-before)
+    if [ "$#" -ne 4 ] || [ "$3" != --classified ]; then
+      echo 'usage: jg-wake-drain.sh --outcomes-before EPOCH --classified REASON' >&2
+      exit 2
+    fi
+    jg_lock_acquire_wait "$STATE/.status-presentation-lock" || exit 1
+    outcome_rc=0
+    jg_wake_status_classify_before "$2" "$4" || outcome_rc=$?
+    jg_lock_release "$STATE/.status-presentation-lock"
+    [ "$outcome_rc" -eq 0 ] || echo 'wake drain: bulk classification failed; use a whole-second epoch and a nonblank reason' >&2
+    exit "$outcome_rc"
+    ;;
   --ack-through)
     ACK_THROUGH=${2:-}
     case "$ACK_THROUGH" in ''|*[!0-9]*) echo "wake drain: invalid acknowledgement sequence" >&2; exit 2 ;; esac
@@ -210,7 +283,13 @@ case "${1:-}" in
       || { echo "wake drain: acknowledgement requires its recovery generation" >&2; exit 2; }
     ACK_GENERATION=${4:-}
     case "$ACK_GENERATION" in ''|*[!A-Za-z0-9._-]*) echo "wake drain: invalid recovery generation" >&2; exit 2 ;; esac
-    [ "$#" -eq 4 ] || { echo "wake drain: unexpected acknowledgement arguments" >&2; exit 2; }
+    if [ "$#" -eq 6 ] && [ "${5:-}" = --pages-ack ]; then
+      PAGES_ACK_ARG=$6
+      case "$PAGES_ACK_ARG" in ''|*[!0-9]*) echo "wake drain: invalid page acknowledgement sequence" >&2; exit 2 ;; esac
+    elif [ "$#" -ne 4 ]; then
+      echo "wake drain: unexpected acknowledgement arguments" >&2
+      exit 2
+    fi
     ;;
   --open-decisions)
     # Read-only: every open decision, newest first, none cut. It takes no lock and moves no
@@ -218,7 +297,7 @@ case "${1:-}" in
     [ "$#" -eq 1 ] || { echo "wake drain: --open-decisions takes no other argument" >&2; exit 2; }
     OPEN_DECISIONS_ALL=1
     ;;
-  *) echo "usage: jg-wake-drain.sh [--ack-through SEQUENCE --recovery-generation GENERATION | --open-decisions]" >&2; exit 2 ;;
+  *) echo "usage: jg-wake-drain.sh [--ack-through SEQUENCE --recovery-generation GENERATION [--pages-ack SEQUENCE] | --outcome ID --relayed REFERENCE|--classified REASON | --outcomes-before EPOCH --classified REASON | --open-decisions]" >&2; exit 2 ;;
 esac
 
 [ "$ACTOR" != branch ] || require_branch_eligible_rows || exit 1
@@ -415,8 +494,10 @@ EOF
 # including the empty-queue fast path - so a buried answer cannot be swallowed
 # when the fold later advances the cursor. Prints nothing when nothing is
 # unread, which is the common case.
+UNREAD_STATUS_CAP_DEFAULT=20
+
 print_unread_status_section() {
-  local snapshot=${1:-} unread task line shown=0
+  local snapshot=${1:-} unread task line shown=0 seen=0 total skip
 
   if [ -n "$snapshot" ]; then
     unread=$(scan_unread_surface_snapshot "$STATE" "$snapshot") || return 1
@@ -425,12 +506,20 @@ print_unread_status_section() {
   fi
   [ -n "$unread" ] || return 0
 
+  # The newest UNREAD_STATUS_CAP lines print, then one line counts the rest: these lines surface once, and a status log
+  # nobody drained for days holds thousands. The status logs keep every line.
+  total=$(printf '%s\n' "$unread" | grep -c .) || true
+  skip=$((total - ${UNREAD_STATUS_CAP:-$UNREAD_STATUS_CAP_DEFAULT}))
+  [ "$skip" -gt 0 ] || skip=0
   while IFS=$(printf '\t') read -r task line; do
     [ -n "$task" ] || continue
     [ -n "$line" ] || continue
+    seen=$((seen + 1))
+    if [ "$seen" -le "$skip" ]; then continue; fi
     line="$task $line"
     if [ "$shown" -eq 0 ]; then
       printf 'UNREAD STATUS (new since last drain, not re-printed after this presentation):\n' || return 1
+      [ "$skip" -eq 0 ] || printf 'UNREAD STATUS: %d earlier unread line(s) not shown; each stays in its state/<task>.status\n' "$skip" || return 1
     fi
     printf '%s\n' "$line" || return 1
     shown=$((shown + 1))
@@ -752,7 +841,7 @@ print_status_presentation() {  # [<deduped-raw-rows>]
     rc=1
   }
   if [ "$rc" -eq 0 ] && [ -n "$rows" ]; then
-    jg_wake_print_annotations "$rows" "$snapshot" || rc=1
+    jg_wake_status_present "$rows" "$snapshot" || rc=1
     if [ "$rc" -eq 0 ]; then
       annotation_manifest=$(jg_wake_annotation_manifest "$rows") || rc=1
       fully_presented=$(printf '%s\n' "$annotation_manifest" | awk -F '\t' '$2 == "direct" { sub(/\.status$/, "", $1); print $1 }') || rc=1
@@ -763,19 +852,208 @@ print_status_presentation() {  # [<deduped-raw-rows>]
   return "$rc"
 }
 
+# --- the store presentation (docs/item-store.md) ------------------------------------------------------------------------
+STORE_CLI="$SCRIPT_DIR/../core/item-store/jg-item"
+STORE_OWNER="$SCRIPT_DIR/../core/item-store/adapters/owner.py"
+QUEUED_TEXT=
+QUEUED_N=0
+QUEUED_CUT=0
+
+# 0 when this drain presents the store: Main's home with the store on and its reads switched on.
+store_reads_on() {
+  local cfg=${JG_CONFIG_OVERRIDE:-$JG_HOME/config}
+  [ "$ACTOR" = main ] && [ -e "$cfg/item-store" ] && [ -e "$cfg/item-store-reads" ] && [ ! -e "$JG_HOME/.jg-squad-lead-home" ]
+}
+
+store_jg_item() { JG_HOME="$JG_HOME" python3 -I "$STORE_CLI" "$@"; }
+
+# Every open owner question, newest first, one `<key>\t<subject>\t<text>` row each.
+store_open_questions() {
+  local db
+  db=$(store_jg_item where) || return 1
+  python3 -I -c 'import sqlite3, sys
+c = sqlite3.connect("file:%s?mode=ro" % sys.argv[1], uri=True)
+for k, s, o in c.execute("SELECT key, subject, owes FROM item WHERE kind = '"'"'question'"'"' AND state = '"'"'open'"'"' ORDER BY id DESC"):
+    print("\t".join((k, s or "-", " ".join((o or "").split()))))' "$db"
+}
+
+# Cut the deduped queued rows to what one drain shows: each record's reason line (its first line), at most 200 lines and
+# 32 KiB, oldest first. Sets QUEUED_TEXT, QUEUED_N (every queued record) and QUEUED_CUT (the sequence of the last line shown
+# when records were left over, else 0): the acknowledgement then stops there and the rest come on the next drain.
+build_queued_view() {  # <rows>
+  local LC_ALL=C rows=$1 epoch seq kind key payload line used=0 shown=0 cap_lines=200 cap_bytes=32768 last=0 over=false
+  QUEUED_TEXT='' QUEUED_N=0 QUEUED_CUT=0
+  while IFS=$(printf '\t') read -r epoch seq kind key payload; do
+    case "$seq" in ''|*[!0-9]*) continue ;; esac
+    QUEUED_N=$((QUEUED_N + 1))
+    if [ "$over" = true ]; then continue; fi
+    jg_cap_line_var "${payload%%$'\n'*}" 299
+    line=$JG_LINE_CAP_LINE
+    if [ "$shown" -ge "$cap_lines" ] || [ $((used + ${#line} + 1)) -gt "$cap_bytes" ]; then
+      over=true
+      QUEUED_CUT=$last
+      continue
+    fi
+    QUEUED_TEXT="$QUEUED_TEXT$line
+"
+    used=$((used + ${#line} + 1))
+    shown=$((shown + 1))
+    last=$seq
+  done <<EOF
+$(printf '%s\n' "$rows" | sort -s -t "$(printf '\t')" -k2,2n)
+EOF
+}
+
+# Cut the deduped queued rows to what one drain prints: oldest first, at most WAKE_ROWS_CAP_LINES rows and
+# WAKE_ROWS_CAP_BYTES bytes (a fifth of the digest cap: the queue is never cut by the digest), and always the first row. A queue that grew while no drain finished held thousands of
+# wakes and one drain printed them all, tens of megabytes. Sets RAW_TEXT, RAW_N (every queued row) and RAW_CUT (the
+# sequence of the last row shown when rows were left over, else 0): the acknowledgement then stops there and the rest
+# come on the next drain.
+WAKE_ROWS_CAP_LINES=60
+WAKE_ROWS_CAP_BYTES=10240
+
+build_raw_view() {  # <rows>
+  local out meta
+  out=$(printf '%s\n' "$1" | LC_ALL=C sort -s -t "$(printf '\t')" -k2,2n | LC_ALL=C awk -F '\t' \
+    -v cap_lines="$WAKE_ROWS_CAP_LINES" -v cap_bytes="$WAKE_ROWS_CAP_BYTES" '
+    $2 !~ /^[0-9]+$/ { next }
+    { n++ }
+    over { next }
+    { len = length($0) + 1 }
+    shown > 0 && (shown >= cap_lines || used + len > cap_bytes) { over = 1; cut = last; next }
+    { print; used += len; shown++; last = $2 }
+    END { print "@@meta " n + 0 " " cut + 0 }') || return 1
+  meta=${out##*$'\n'}
+  RAW_TEXT=${out%$'\n'*}
+  [ "$out" != "$meta" ] || RAW_TEXT=''
+  meta=${meta#@@meta }
+  RAW_N=${meta% *}
+  RAW_CUT=${meta#* }
+}
+
+# Read Main's pages once, before anything prints. Sets PAGES_OUT, and PAGES_ACK to the ack= of the count line when the read
+# listed or counted a page (0 when nothing waits, so a quiet drain asks for no acknowledgement; -1 when the store cannot answer).
+load_store_pages() {
+  local count listed closed
+  PAGES_OUT='' PAGES_ACK=0
+  PAGES_OUT=$(store_jg_item pages main 2>&1) || { PAGES_ACK=-1; return 0; }
+  count=$(printf '%s\n' "$PAGES_OUT" | tail -n 1)
+  listed=${count#pages: }; listed=${listed%% listed*}
+  closed=${count#*listed, }; closed=${closed%% closed*}
+  case "$listed:$closed" in *[!0-9:]*|:*|*:) return 0 ;; esac
+  [ $((listed + closed)) -gt 0 ] || return 0
+  PAGES_ACK=${count##*ack=}
+  case "$PAGES_ACK" in ''|*[!0-9]*) PAGES_ACK=0 ;; esac
+}
+
+print_pages_section() {
+  if [ "$PAGES_ACK" = -1 ]; then
+    jg_cap_line_var "$(printf '%s' "$PAGES_OUT" | tr '\n' ' ')" 200
+    printf 'PAGES SKIPPED: the item store could not be read (%s); nothing was marked read.\n' "$JG_LINE_CAP_LINE"
+    return 0
+  fi
+  [ "$PAGES_ACK" -gt 0 ] || return 0
+  printf 'PAGES (unread store pages for Main from its cursor, at most 200 lines and 32 KiB; act on each, then acknowledge):\n'
+  printf '%s\n' "$PAGES_OUT"
+}
+
+print_store_decisions_section() {
+  local rows key subject text line total item_bytes=220 global_bytes=4000 output='' used=0 shown=0 bytes
+  rows=$(store_open_questions) || { printf 'OPEN DECISIONS SKIPPED: the item store could not be read.\n'; return 0; }
+  [ -n "$rows" ] || return 0
+  total=$(printf '%s\n' "$rows" | grep -c .)
+  while IFS=$(printf '\t') read -r key subject text; do
+    [ -n "$key" ] || continue
+    line="$subject [key=$key] decision: $text"
+    jg_cap_line_var "$line" $((item_bytes - 1))
+    line=$JG_LINE_CAP_LINE
+    bytes=$((${#line} + 1))
+    [ $((used + bytes)) -le "$global_bytes" ] || break
+    output="$output$line
+"
+    used=$((used + bytes))
+    shown=$((shown + 1))
+  done <<EOF
+$rows
+EOF
+  printf 'OPEN DECISIONS (%d still open, newest first, from the item store):\n' "$total"
+  printf '%s' "$output"
+  [ "$shown" -ge "$total" ] || printf 'OPEN DECISIONS: %d of %d shown (byte cap); all of them, newest first: bin/jg-wake-drain.sh --open-decisions\n' "$shown" "$total"
+}
+
+print_divergence_section() {
+  local out rc=0 line used=0 global_bytes=4000
+  out=$(env JG_HOME="$JG_HOME" python3 -I "$STORE_OWNER" compare "$JG_HOME" 2>&1) || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    1) ;;
+    *) printf 'RECORD DIVERGENCE SKIPPED: the owner records could not be compared.\n'; return 0 ;;
+  esac
+  printf "RECORD DIVERGENCE (today's records and the store disagree; one line per difference):\n"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    jg_cap_line_var "$line" 219
+    if [ $((used + ${#JG_LINE_CAP_LINE} + 1)) -gt "$global_bytes" ]; then
+      printf 'RECORD DIVERGENCE: more differences not shown; run python3 core/item-store/adapters/owner.py compare <home>\n'
+      break
+    fi
+    printf '%s\n' "$JG_LINE_CAP_LINE"
+    used=$((used + ${#JG_LINE_CAP_LINE} + 1))
+  done <<EOF
+$out
+EOF
+}
+
+# What one store drain prints after QUEUED: the pages it already read, then the store's open questions and the divergence.
+print_store_sections() {
+  print_pages_section
+  print_store_decisions_section
+  print_divergence_section
+}
+
+# The line that tells Main how to acknowledge: the queue generation, and with a page waiting the page cursor too.
+print_ack_required() {  # <through> <generation>
+  local suffix=
+  [ "$PAGES_ACK" -le 0 ] || suffix=" --pages-ack $PAGES_ACK"
+  printf 'WAKE_ACK_REQUIRED: after handling completes run bin/jg-wake-drain.sh --ack-through %s --recovery-generation %s%s\n' "$1" "$2" "$suffix" >&2
+}
+
 # shellcheck disable=SC2317,SC2329 # Invoked by trap handlers below.
 cleanup() {
   local status=$?
   [ -z "$DRAIN_TMP" ] || rm -f -- "$DRAIN_TMP" 2>/dev/null || true
   [ -z "$DRAIN_VIEW_TMP" ] || rm -f -- "$DRAIN_VIEW_TMP" 2>/dev/null || true
+  if [ "$STATUS_LOCK_HELD" = true ]; then
+    jg_lock_release "$STATE/.status-presentation-lock"
+  fi
   if [ "$DRAIN_LOCK_HELD" = true ]; then
     jg_lock_release "$JG_WAKE_QUEUE_LOCK"
   fi
   exit "$status"
 }
 
+# The store presentation decides here, and reads Main's pages once before any lock is taken.
+if store_reads_on; then STORE_MODE=true; fi
+if [ "$STORE_MODE" = true ] && [ -z "$ACK_THROUGH" ] && [ "$OPEN_DECISIONS_ALL" -eq 0 ]; then load_store_pages; fi
+if [ -n "$PAGES_ACK_ARG" ] && [ "$STORE_MODE" != true ]; then
+  echo "wake drain: --pages-ack needs Main's item-store reads (config/item-store-reads)" >&2
+  exit 2
+fi
+
 # --open-decisions: fold every status log whole (status_open_decisions reads the log itself and
 # keeps no cursor), print every open decision newest first, and stop - before any lock or queue read.
+if [ "$OPEN_DECISIONS_ALL" -eq 1 ] && [ "$STORE_MODE" = true ]; then
+  all_rows=$(store_open_questions) || { echo 'wake drain: the item store could not be read' >&2; exit 1; }
+  if [ -z "$all_rows" ]; then
+    printf 'OPEN DECISIONS: none\n'
+    exit 0
+  fi
+  printf 'OPEN DECISIONS (%d still open, newest first):\n' "$(printf '%s\n' "$all_rows" | grep -c .)"
+  printf '%s\n' "$all_rows" | while IFS=$(printf '\t') read -r key subject text; do
+    printf '%s [key=%s] decision: %s\n' "$subject" "$key" "$text"
+  done
+  exit 0
+fi
 if [ "$OPEN_DECISIONS_ALL" -eq 1 ]; then
   all_open=
   for status_file in "$STATE"/*.status; do
@@ -829,6 +1107,9 @@ reclaim_stale_branch_grant_locked || exit 1
 [ "$ACTOR" != branch ] || require_branch_eligible_rows || exit 1
 
 if [ -n "$ACK_THROUGH" ]; then
+  # The claim and the cutoff are read against the bus's current rows, never a
+  # stale read model (render_queue).
+  render_queue || exit 1
   if [ "$ACTOR" = branch ]; then
     PRESENTED_MAX=$(presented_max_row "$ELIGIBLE_ROWS_FILE") || exit 1
   else
@@ -853,16 +1134,27 @@ if [ -n "$ACK_THROUGH" ]; then
     # sequences it consumes. Otherwise the receipt stays pending and every
     # later reconcile scan re-queues the same fingerprint. Attended, a grant
     # names no check row and both scans find nothing.
-    ACK_FINGERPRINTS=$(inactive_outcome_fingerprints "$ACK_THROUGH" 'inactive-outcome:' "$ELIGIBLE_ROWS_FILE") || exit 1
-    ACK_NOTICE_FINGERPRINTS=$(inactive_outcome_fingerprints "$ACK_THROUGH" 'inactive-reconcile:' "$ELIGIBLE_ROWS_FILE") || exit 1
+    ACK_ROWS_FILE=$ELIGIBLE_ROWS_FILE
+    ACK_FINGERPRINTS=$(inactive_outcome_fingerprints "$ACK_THROUGH" 'inactive-outcome:' "$ACK_ROWS_FILE") || exit 1
+    ACK_NOTICE_FINGERPRINTS=$(inactive_outcome_fingerprints "$ACK_THROUGH" 'inactive-reconcile:' "$ACK_ROWS_FILE") || exit 1
   else
     if { [ -e "$MAIN_ROWS_FILE" ] || [ -L "$MAIN_ROWS_FILE" ]; } \
       && ! rows_file_valid "$MAIN_ROWS_FILE"; then
       echo "wake drain: main acknowledgement has an invalid presented-row claim" >&2
       exit 1
     fi
-    ACK_FINGERPRINTS=$(inactive_outcome_fingerprints "$ACK_THROUGH" 'inactive-outcome:' "$MAIN_ROWS_FILE") || exit 1
-    ACK_NOTICE_FINGERPRINTS=$(inactive_outcome_fingerprints "$ACK_THROUGH" 'inactive-reconcile:' "$MAIN_ROWS_FILE") || exit 1
+    ACK_ROWS_FILE=$MAIN_ROWS_FILE
+    ACK_FINGERPRINTS=$(inactive_outcome_fingerprints "$ACK_THROUGH" 'inactive-outcome:' "$ACK_ROWS_FILE") || exit 1
+    ACK_NOTICE_FINGERPRINTS=$(inactive_outcome_fingerprints "$ACK_THROUGH" 'inactive-reconcile:' "$ACK_ROWS_FILE") || exit 1
+  fi
+  # Refuse before anything is consumed: a batch that carries an unanswered
+  # captain note is not handled, however green everything else in it looks.
+  # bin/jg-captain-note-lib.sh owns the test and the refusal text; the rows stay
+  # queued, so the next drain presents the note again.
+  if ! jg_captain_note_ack_gate "$STATE" "$JG_WAKE_QUEUE" "$ACK_ROWS_FILE" "$ACK_THROUGH"; then
+    jg_lock_release "$JG_WAKE_QUEUE_LOCK"
+    DRAIN_LOCK_HELD=false
+    exit 1
   fi
   jg_lock_release "$JG_WAKE_QUEUE_LOCK"
   DRAIN_LOCK_HELD=false
@@ -878,19 +1170,23 @@ if [ -n "$ACK_THROUGH" ]; then
   # another actor owns - even one numbered below the cutoff - is never consumed.
   if [ "$ACTOR" = branch ]; then
     require_branch_eligible_rows || exit 1
-    ACK_ROWS_FILE=$ELIGIBLE_ROWS_FILE
-    jg_wake_commit_squad_lead_stall_receipts_through "$ACK_THROUGH" "$ELIGIBLE_ROWS_FILE" || {
+    jg_wake_commit_squad_lead_stall_receipts_through "$ACK_THROUGH" "$ACK_ROWS_FILE" || {
       echo "wake drain: squad_lead stall receipt could not be recorded safely" >&2
       exit 1
     }
   else
-    ACK_ROWS_FILE=$MAIN_ROWS_FILE
-    jg_wake_commit_squad_lead_stall_receipts_through "$ACK_THROUGH" "$MAIN_ROWS_FILE" || {
+    jg_wake_commit_squad_lead_stall_receipts_through "$ACK_THROUGH" "$ACK_ROWS_FILE" || {
       echo "wake drain: squad_lead stall receipt could not be recorded safely" >&2
       exit 1
     }
   fi
-  ACK_IDS=$(jg_wake_bus ids-through "$ACK_THROUGH" "$ACK_ROWS_FILE") || ACK_IDS=
+  jg_lock_acquire_wait "$STATE/.status-presentation-lock" || exit 1
+  STATUS_LOCK_HELD=true
+  jg_wake_status_ack check "$ACK_ROWS_FILE" "$ACK_THROUGH" || exit 1
+  ACK_IDS=$(jg_wake_bus ids-through "$ACK_THROUGH" "$ACK_ROWS_FILE") || {
+    echo 'wake drain: acknowledgement ids could not be read safely' >&2
+    exit 1
+  }
   ACK_REMOVED=0
   if [ -n "$ACK_IDS" ]; then
     ACK_REMOVED=$(printf '%s\n' "$ACK_IDS" | awk 'END { print NR }')
@@ -900,8 +1196,24 @@ if [ -n "$ACK_THROUGH" ]; then
       exit 1
     }
   fi
+  # The acknowledgement's postcondition: no row this actor holds at or below the
+  # cutoff is still queued. One still there was never consumed, so the ack fails
+  # by naming it rather than exiting 0 with nothing consumed.
+  ACK_LEFT=$(held_rows_queued "$ACK_ROWS_FILE" "$ACK_THROUGH")
+  if [ -n "$ACK_LEFT" ]; then
+    printf 'wake drain: acknowledged through %s, but row(s) %s at or below it are still queued: their acknowledgement did not consume them\n' \
+      "$ACK_THROUGH" "$ACK_LEFT" >&2
+    exit 1
+  fi
+  if [ "$ACK_REMOVED" -gt 0 ]; then
+    jg_wake_status_ack commit "$ACK_ROWS_FILE" "$ACK_THROUGH" || exit 1
+  fi
+  jg_lock_release "$STATE/.status-presentation-lock"
+  STATUS_LOCK_HELD=false
   ACK_QUEUE_LEFT=$(jg_wake_bus count 2>/dev/null || printf '0')
-  if [ "${ACK_QUEUE_LEFT:-0}" -eq 0 ]; then
+  if [ "$ACK_GENERATION" = none ]; then
+    :   # a page-only acknowledgement: no queue generation was handed out, so none is retired
+  elif [ "${ACK_QUEUE_LEFT:-0}" -eq 0 ]; then
     jg_recovery_marker_ack "$RECOVERY_MARKER" "$ACK_GENERATION"
     RECOVERY_ACK_STATUS=$?
     case "$RECOVERY_ACK_STATUS" in
@@ -926,6 +1238,12 @@ if [ -n "$ACK_THROUGH" ]; then
   fi
   jg_lock_release "$JG_WAKE_QUEUE_LOCK"
   DRAIN_LOCK_HELD=false
+  if [ -n "$PAGES_ACK_ARG" ]; then
+    if ! pages_ack_out=$(store_jg_item ack main "$PAGES_ACK_ARG" 2>&1); then
+      echo "wake drain: the queue is acknowledged but Main's page cursor did not move: $pages_ack_out" >&2
+      exit 1
+    fi
+  fi
   # A main acknowledgement that leaves nothing queued and no newer recovery episode is the
   # baseline bin/jg-wake-settled.sh compares the fleet against (docs/turnend-guard.md).
   if [ "$ACTOR" = main ] && [ "${ACK_QUEUE_LEFT:-0}" -eq 0 ] && [ "$RECOVERY_ACK_MOVED" != true ]; then
@@ -957,9 +1275,8 @@ if [ -n "$ACK_THROUGH" ]; then
 fi
 
 # The rows are the bus's now: bring the read model up to date before any actor
-# reads it. Rendering outside the queue lock is safe - the renderer replaces the
-# file atomically and nothing else writes it.
-jg_wake_bus render >/dev/null 2>&1 || true
+# reads it.
+render_queue || exit 1
 
 if [ ! -s "$JG_WAKE_QUEUE" ]; then
   : > "$JG_WAKE_QUEUE"
@@ -978,10 +1295,13 @@ if [ ! -s "$JG_WAKE_QUEUE" ]; then
   esac
   jg_lock_release "$JG_WAKE_QUEUE_LOCK"
   DRAIN_LOCK_HELD=false
-  (print_status_presentation) || true
+  jg_captain_notes_must_answer "$STATE" || true
+  if [ "$STORE_MODE" = true ]; then print_store_sections; else (print_status_presentation) || true; fi
   print_branch_outcomes_section || BRANCH_OUTCOMES_RC=1
   if [ "$RECOVERY_ACK_REQUIRED" = true ]; then
-    printf 'WAKE_ACK_REQUIRED: after handling completes run bin/jg-wake-drain.sh --ack-through 0 --recovery-generation %s\n' "${RECOVERY_MARKER_TOKEN##*:}" >&2
+    print_ack_required 0 "${RECOVERY_MARKER_TOKEN##*:}"
+  elif [ "$PAGES_ACK" -gt 0 ]; then
+    print_ack_required 0 none
   fi
   assert_watcher_liveness
   exit "$BRANCH_OUTCOMES_RC"
@@ -997,11 +1317,13 @@ if [ "$ACTOR" = main ]; then
     # and acknowledges them itself. Say so rather than exiting silently: a
     # drain that prints nothing while the queue is visibly non-empty reads as a
     # lost wake, and leaves the caller with no idea who owns what is queued.
+    jg_captain_notes_must_answer "$STATE" || true
     print_branch_held_notice
     jg_lock_release "$JG_WAKE_QUEUE_LOCK"
     DRAIN_LOCK_HELD=false
-    (print_status_presentation) || true
+    if [ "$STORE_MODE" = true ]; then print_store_sections; else (print_status_presentation) || true; fi
     print_branch_outcomes_section || BRANCH_OUTCOMES_RC=1
+    if [ "$PAGES_ACK" -gt 0 ]; then print_ack_required 0 none; fi
     assert_watcher_liveness
     exit "$BRANCH_OUTCOMES_RC"
   fi
@@ -1040,6 +1362,7 @@ awk -F '\t' -v seqs="$ACTOR_ROWS_FILE" '
   BEGIN { while ((getline line < seqs) > 0) keep[line]=1 }
   NF >= 5 && ($2 in keep)
 ' "$JG_WAKE_QUEUE" > "$DRAIN_VIEW_TMP" || exit 1
+STATUS_ROWS=$(cat "$DRAIN_VIEW_TMP") || exit 1
 RAW_ROWS=$(jg_wake_print_deduped "$DRAIN_VIEW_TMP") || exit "$?"
 rm -f -- "$DRAIN_VIEW_TMP" || exit 1
 DRAIN_VIEW_TMP=
@@ -1049,8 +1372,20 @@ case "${JG_WAKE_DRAIN_TEST_DELAY_BEFORE_COMMIT:-0}" in
   ''|*[!0-9]*) ;;
   *) sleep "$JG_WAKE_DRAIN_TEST_DELAY_BEFORE_COMMIT" ;;
 esac
-if [ -n "$RAW_ROWS" ]; then
-  printf '%s\n' "$RAW_ROWS" || exit "$?"
+jg_captain_notes_must_answer "$STATE" || true
+if [ "$STORE_MODE" = true ]; then
+  build_queued_view "$RAW_ROWS"
+  [ "$QUEUED_CUT" -eq 0 ] || ACK_THROUGH=$QUEUED_CUT
+  printf 'QUEUED (each queued wake record'"'"'s reason line, oldest first):\n%squeued: %d\n' "$QUEUED_TEXT" "$QUEUED_N" || exit "$?"
+  [ "$QUEUED_CUT" -eq 0 ] || printf 'QUEUED: more records follow; they are presented on the next drain once you acknowledge these\n' || exit "$?"
+elif [ -n "$RAW_ROWS" ]; then
+  build_raw_view "$RAW_ROWS" || exit "$?"
+  [ -z "$RAW_TEXT" ] || printf '%s\n' "$RAW_TEXT" || exit "$?"
+  if [ "$RAW_CUT" -gt 0 ]; then
+    ACK_THROUGH=$RAW_CUT
+    STATUS_ROWS=$(printf '%s\n' "$STATUS_ROWS" | awk -F '\t' -v cut="$RAW_CUT" '$2 + 0 <= cut') || exit 1
+    printf 'WAKE QUEUE: %d queued event(s), the oldest shown; the rest follow on the next drain once you acknowledge these (they stay in state/.wake-queue)\n' "$RAW_N" || exit "$?"
+  fi
 fi
 jg_recovery_marker_snapshot "$RECOVERY_MARKER" || exit 1
 RECOVERY_MARKER_TOKEN=$JG_RECOVERY_MARKER_TOKEN
@@ -1060,10 +1395,14 @@ case "$RECOVERY_MARKER_TOKEN" in
 esac
 jg_lock_release "$JG_WAKE_QUEUE_LOCK"
 DRAIN_LOCK_HELD=false
-printf 'WAKE_ACK_REQUIRED: after handling completes run bin/jg-wake-drain.sh --ack-through %s --recovery-generation %s\n' \
-  "$ACK_THROUGH" "${RECOVERY_MARKER_TOKEN##*:}" >&2
+print_ack_required "$ACK_THROUGH" "${RECOVERY_MARKER_TOKEN##*:}"
 
-(print_status_presentation "$RAW_ROWS") || true
+if [ "$STORE_MODE" = true ]; then
+  print_store_sections
+elif ! (print_status_presentation "$STATUS_ROWS"); then
+  echo 'wake drain: status presentation incomplete; acknowledgement remains gated until a successful drain' >&2
+  exit 1
+fi
 print_branch_outcomes_section || BRANCH_OUTCOMES_RC=1
 assert_watcher_liveness
 exit "$BRANCH_OUTCOMES_RC"

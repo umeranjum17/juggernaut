@@ -34,6 +34,7 @@
 #   jg-inbox.sh ask  <question>...
 #   jg-inbox.sh list
 #   jg-inbox.sh asks
+#   jg-inbox.sh outcomes   (JSON terminal asks and actual channel receipt or failure)
 #   jg-inbox.sh drain [--ack <id>...]
 #
 # `note --request-id` is the idempotent capture path: a repeat of the same
@@ -56,7 +57,7 @@
 # own words typed in the locked primary session become the already-handled note
 # `primary-<session>-<seq>`, whose first line is `[chat primary <session>:<seq>]`, so an order
 # `owner-words: note:<that id> "<his words>"` can start its worker. The session must be the one in
-# state/.lock-session; any other session, a machine prompt or an empty text writes nothing. The
+# state/.lock-session (a session id that is not filename-safe, as a Pi session file path, names its notes by a digest); any other session, a machine prompt or an empty text writes nothing. The
 # note is born handled and appends no wake: he is already talking to the primary.
 # A note already acknowledged (in handled/) gets no wake from `announce` or a
 # request-id replay; both report it as acknowledged and exit 0.
@@ -332,6 +333,13 @@ valid_note_id() {
   return 0
 }
 
+# His note is also one `tell` item in the item store (expand only: the note file stays authoritative, and a call that fails
+# or is refused changes nothing here; owner.py files a refused write as one intake item on Main).
+store_tell() {  # <message id> <text>
+  [ -e "$JG_HOME/config/item-store" ] || return 0
+  python3 -I "$SELF_DIR/../core/item-store/adapters/owner.py" tell --channel chat --message-id "$1" --subject - --text "$2" >/dev/null 2>&1 || true
+}
+
 note_path() {  # <id>
   if [ -f "$INBOX/$1.note" ]; then
     printf '%s\n' "$INBOX/$1.note"
@@ -500,24 +508,28 @@ cmd_approve() {  # <note-id> <ticket-id>
 }
 
 cmd_primary_chat() {  # <session-id> <seq> <text>...
-  local sid=${1:-} seq=${2:-} locked body id path
+  local sid=${1:-} seq=${2:-} locked key body id path
   [ "$#" -ge 3 ] || die "usage: jg-inbox.sh primary-chat <session-id> <seq> <text>..."
   shift 2
   case "$seq" in ''|*[!0-9]*) die "the message seq must be a number" ;; esac
-  case "$sid" in ''|*[!A-Za-z0-9._-]*|*..*) die "invalid session id" ;; esac
+  case "$sid" in ''|*$'\n'*|*$'\r'*) die "invalid session id" ;; esac
   # shellcheck source=bin/jg-session-lock-lib.sh
   . "$SELF_DIR/jg-session-lock-lib.sh"
   locked=$(jg_session_lock_recorded_session_id "$STATE") \
     || die "no locked primary session is recorded, so no chat note can be written"
   [ "$locked" = "$sid" ] || die "session $sid is not the locked primary session; its words sign nothing"
   [ -n "${*//[[:space:]]/}" ] || die "refusing an empty chat note"
-  id="primary-$sid-$seq"
+  # A session id that is not filename-safe (a Pi session is a file path) names its notes by a digest.
+  key=$sid
+  case "$sid" in ''|*[!A-Za-z0-9._-]*|*..*) key="s$(printf '%s' "$sid" | cksum | tr -d ' ')" ;; esac
+  id="primary-$key-$seq"
   mkdir -p "$INBOX/handled"
   path="$INBOX/handled/$id.note"
   [ ! -e "$path" ] || { printf 'exists %s\n' "$id"; return 0; }
-  body="[chat primary $sid:$seq] $*"
+  body="[chat primary $key:$seq] $*"
   write_note_file "$path.tmp" "$id" chat-primary "$body" "" ""
   mv "$path.tmp" "$path"
+  store_tell "$key:$seq" "$*"
   printf 'recorded %s\n' "$id"
 }
 
@@ -633,6 +645,7 @@ queue_note() {
       return $?
     fi
     mv "$tmp" "$INBOX/$id.note"
+    store_tell "$id" "$body"
     summary=$(note_summary_from_body "$body")
     finish_note_result created "$id" "$request_id" "$json" "$strict" "$summary"
     return $?
@@ -643,6 +656,7 @@ queue_note() {
   id="$(date +%s)-${staging_name#.staging-}"
   write_note_file "$tmp" "$id" "$source" "$body" "$extra" ""
   mv "$tmp" "$INBOX/$id.note"
+  store_tell "$id" "$body"
   summary=$(note_summary_from_body "$body")
   finish_note_result created "$id" "" "$json" "$strict" "$summary"
 }
@@ -1492,6 +1506,7 @@ case "${1:-}" in
   ask)      shift; cmd_ask "$@" ;;
   list)     shift; cmd_list ;;
   asks)     shift; cmd_asks "$@" ;;
+  outcomes) shift; "$SELF_DIR/jg-bus.sh" gateway asks ;;
   drain)    shift; cmd_drain "$@" ;;
   ''|-h|--help|help)
     # The whole header block, found rather than counted: everything after the

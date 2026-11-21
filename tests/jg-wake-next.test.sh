@@ -137,6 +137,89 @@ test_one_call_relays_the_presentation_and_still_surfaces_open_decisions() {
   pass "one call keeps every section the drain presents beside the wake and its token"
 }
 
+test_six_signals_cannot_acknowledge_a_buried_report_unseen() {
+  local dir state out err repeat seq gen id i line foreign ids_before
+  local -a ids ack
+  dir=$(make_case six-signals); state="$dir/state"; out="$dir/first.out"; err="$dir/first.err"
+  for i in 1 2 3 4 5 6; do
+    printf 'working: Umer starts team %s\n' "$i" > "$state/team$i.status"
+    case "$i" in
+      1) line='report: Umer report is ready' ;;
+      2) line='done: Umer finished' ;;
+      3) line='failed: Umer build refused' ;;
+      4) line='working: PR https://example.test/Umer/demo/pull/7' ;;
+      5) line='landed: Umer change reached the trunk' ;;
+      6) line=$'blocked: Umer needs access\nneeds-decision: choose the next step' ;;
+    esac
+    printf '%s\nworking: Umer continues team %s\n' "$line" "$i" >> "$state/team$i.status"
+    append_wake "$state" signal "team$i.status" "signal: $state/team$i.status"
+  done
+  JG_STATE_OVERRIDE="$state" "$ROOT/bin/jg-wake.sh" next > "$out" 2> "$err" || fail 'six-signal caller failed'
+  seq=$(ack_sequence "$err"); gen=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--recovery-generation \([^ ]*\)$/\1/p' "$err")
+  [ -n "$seq" ] && [ -n "$gen" ] || fail 'six signals have no acknowledgement'
+  ack=(--ack-through "$seq" --recovery-generation "$gen")
+  for i in 1 2 3 4 5 6; do
+    while IFS= read -r line; do grep -F "team$i.status: $line" "$out" >/dev/null || fail "omitted $line"; done < "$state/team$i.status"
+  done
+  grep -F 'OUTCOME: team1.status: report:' "$out" >/dev/null || fail 'buried report has no outcome marker'
+  grep -F 'ACTION: team6.status: blocked:' "$out" >/dev/null || fail 'blocker has no action marker'
+  grep -F 'ACTION: team6.status: needs-decision:' "$out" >/dev/null || fail 'decision has no action marker'
+  if JG_STATE_OVERRIDE="$state" "$DRAIN" "${ack[@]}" > "$dir/refused.out" 2>&1; then fail 'unseen outcomes were acknowledged'; fi
+  [ "$(queued_rows "$state")" = 6 ] || fail 'refusal consumed a signal'
+  mapfile -t ids < <(sed -n 's/^OUTCOME_REQUIRED: //p' "$out" | sort -u)
+  [ "${#ids[@]}" = 5 ] || fail 'not every outcome has an id'
+  ids_before=$(printf '%s\n' "${ids[@]}")
+  repeat="$dir/repeat.out"
+  JG_STATE_OVERRIDE="$state" "$NEXT" > "$repeat" 2> "$dir/repeat.err" || fail 'replay failed'
+  [ "$(sed -n 's/^OUTCOME_REQUIRED: //p' "$repeat" | sort -u)" = "$ids_before" ] || fail 'outcome ids changed on replay'
+  grep -F 'report: Umer report is ready' "$repeat" >/dev/null || fail 'replay lost the report'
+  JG_STATE_OVERRIDE="$state" bash -c '. "$1"; JG_DAEMON_DIR=$2; handle_durable_wakes "$3" "$4"' _ \
+    "$ROOT/bin/jg-supervise-daemon.sh" "$ROOT/bin" "signal: $state/team1.status" "$state" || fail 'daemon handoff failed'
+  for id in "${ids[@]}"; do grep -F "$id" "$state/.subsuper-escalations" >/dev/null || fail 'daemon lost an outcome'; done
+  grep -F 'report: Umer report is ready' "$state/.subsuper-escalations" >/dev/null || fail 'daemon lost report text'
+  [ "$(queued_rows "$state")" = 6 ] || fail 'daemon consumed outcomes before explicit handling'
+  foreign=$(make_case foreign-outcome)
+  if JG_STATE_OVERRIDE="$foreign/state" "$DRAIN" --outcome "${ids[0]}" --classified reviewed > "$dir/foreign.out" 2>&1; then fail 'foreign home accepted an id'; fi
+  if JG_STATE_OVERRIDE="$state" JG_SUPERVISION_ACTOR=branch "$DRAIN" --outcome "${ids[0]}" --classified reviewed > "$dir/actor.out" 2>&1; then fail 'foreign actor accepted an id'; fi
+  if JG_STATE_OVERRIDE="$state" "$DRAIN" --outcome "${ids[0]}" --classified ' ' > "$dir/blank.out" 2>&1; then fail 'blank disposition passed'; fi
+  if JG_STATE_OVERRIDE="$state" "$DRAIN" --outcome "$(printf '%064d' 0)" --relayed "$out" > "$dir/unknown.out" 2>&1; then fail 'unknown id passed'; fi
+  JG_STATE_OVERRIDE="$state" "$DRAIN" --outcome "${ids[0]}" --relayed "$out" || fail 'relay receipt failed'
+  for i in 1 2 3; do JG_STATE_OVERRIDE="$state" "$DRAIN" --outcome "${ids[$i]}" --classified 'reviewed synthetic outcome' || fail 'classification failed'; done
+  if JG_STATE_OVERRIDE="$state" "$DRAIN" "${ack[@]}" >> "$dir/refused.out" 2>&1; then fail 'one unhandled outcome was swallowed'; fi
+  JG_STATE_OVERRIDE="$state" "$DRAIN" --outcome "${ids[4]}" --classified 'reviewed final synthetic outcome' || fail 'last disposition failed'
+  JG_STATE_OVERRIDE="$state" "$DRAIN" --outcome "${ids[4]}" --classified 'reviewed again' || fail 'handling is not idempotent'
+  printf 'report: Umer appends after presentation\n' >> "$state/team1.status"
+  if JG_STATE_OVERRIDE="$state" "$DRAIN" "${ack[@]}" >> "$dir/refused.out" 2>&1; then fail 'unpresented growth was swallowed'; fi
+  JG_STATE_OVERRIDE="$state" "$NEXT" > "$dir/growth.out" 2> "$dir/growth.err" || fail 'growth replay failed'
+  if JG_STATE_OVERRIDE="$state" "$DRAIN" "${ack[@]}" >> "$dir/refused.out" 2>&1; then fail 'new outcome used an old disposition'; fi
+  id=$(sed -n 's/^OUTCOME_REQUIRED: //p' "$dir/growth.out" | sort -u | while read -r id; do [[ "$ids_before" == *"$id"* ]] || printf '%s\n' "$id"; done)
+  JG_STATE_OVERRIDE="$state" "$DRAIN" --outcome "$id" --classified 'reviewed appended report' || fail 'appended disposition failed'
+  JG_STATE_OVERRIDE="$state" "$DRAIN" --ack-through "$((seq - 1))" --recovery-generation "$gen" || fail 'older cutoff failed'
+  [ "$(queued_rows "$state")" = 1 ] || fail 'older cutoff consumed newer row'
+  JG_STATE_OVERRIDE="$state" "$NEXT" > "$dir/partial.out" 2> "$dir/partial.err" || fail 'partial batch replay failed'
+  JG_STATE_OVERRIDE="$state" "$DRAIN" "${ack[@]}" || fail 'handled outcomes could not be acknowledged'
+  JG_STATE_OVERRIDE="$state" "$DRAIN" "${ack[@]}" || fail 'acknowledgement is not idempotent'
+  [ "$(queued_rows "$state")" = 0 ] || fail 'handled batch remains queued'
+  JG_STATE_OVERRIDE="$state" "$NEXT" > "$dir/idle.out" 2> "$dir/idle.err" || fail 'post-ack drain failed'
+  if grep -q '^wake annotation:' "$dir/idle.out"; then fail 'acknowledged lines replayed'; fi
+  printf 'report: Umer has a new report\n' >> "$state/team1.status"
+  append_wake "$state" signal team1.status "signal: $state/team1.status"
+  JG_STATE_OVERRIDE="$state" "$NEXT" > "$dir/new.out" 2> "$dir/new.err" || fail 'new report failed to present'
+  grep -F 'OUTCOME: team1.status: report: Umer has a new report' "$dir/new.out" >/dev/null || fail 'new report missing'
+  if grep -q 'Umer report is ready' "$dir/new.out"; then fail 'old report repeated after ack'; fi
+  seq=$(ack_sequence "$dir/new.out"); gen=$(sed -n 's/^WAKE_NEXT_ACK:.*--recovery-generation \([^ ]*\)$/\1/p' "$dir/new.out")
+  if JG_STATE_OVERRIDE="$state" "$DRAIN" --ack-through "$seq" --recovery-generation "$gen" >> "$dir/refused.out" 2>&1; then fail 'fresh report reused an old receipt'; fi
+  mv "$state/team1.status" "$dir/rotated.status"; printf 'report: Umer rotated the status log\n' > "$state/team1.status"
+  JG_STATE_OVERRIDE="$state" "$NEXT" > "$dir/rotation.out" 2> "$dir/rotation.err" || fail 'rotation replay failed'
+  grep -F 'report: Umer rotated the status log' "$dir/rotation.out" >/dev/null || fail 'rotation lost new report'
+  if [ -n "${DONE_DONE_EVIDENCE_ROOT:-}" ]; then
+    cat "$out" "$err" "$repeat" "$state/.subsuper-escalations" "$dir/refused.out" "$dir/new.out" > "$DONE_DONE_EVIDENCE_ROOT/six-signals.log"
+    printf '{"target":{"version":"%s"},"start":"six real signal rows over synthetic Umer status logs","steps":["drain through jg-wake next","refuse unseen and partially handled acknowledgements","replay through jg-wake-next","route the full batch through the real daemon handler","refuse foreign and invalid dispositions","record relay and classifications","refuse unseen growth","acknowledge twice","present a fresh report"],"result":"all six files and the buried report were presented; every outcome required a disposition; the handled batch was consumed once"}\n' "$(git -C "$ROOT" rev-parse HEAD)" > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
+  fi
+  pass 'six real signals retain their buried report until every outcome is explicitly handled'
+}
+
+test_six_signals_cannot_acknowledge_a_buried_report_unseen
 test_single_call_returns_the_wake_the_drain_returns_and_retires_the_same_row
 test_one_call_reports_nothing_to_acknowledge_when_the_queue_is_empty
 test_one_call_relays_the_presentation_and_still_surfaces_open_decisions

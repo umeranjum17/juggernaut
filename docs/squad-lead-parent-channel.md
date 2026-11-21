@@ -9,7 +9,7 @@ This note records why a Squad Lead home's captain-facing outcomes are delivered 
 A Squad Lead is a Juggernaut in its own home, and nobody reads its chat: the captain and the main Juggernaut see only what is appended to the parent channel.
 On 2026-09-02 four outcomes across two mate homes never reached the captain.
 The watcher had delivered the parent's request within a minute each time, the mate did the work, and then the mate addressed "captain" in its own chat instead of appending to the channel.
-The cause is structural rather than a one-off lapse: the mate can satisfy the [address rule in `AGENTS.md`](../AGENTS.md#juggernaut) in local chat while missing the charter's later return-channel instruction.
+The cause is structural rather than a one-off lapse: the mate can satisfy the [address rule in `AGENTS.md`](../AGENTS.md#1-identity-and-prime-directives-1) in local chat while missing the charter's later return-channel instruction.
 The captain's framing of the requirement was: "the root problem is not specific to PRs, right? it looks like any message or outcomes from Squad Leads can miss. we need to make sure our fixes are addressing this in a principled, fundamental way, not surgically treating the symptoms of just this PR update miss."
 A PR-ready report was the observed symptom, but a finding, a decision, a blocker, and a failure all fail the same way, because every one of them depended on the mate model remembering to write one line.
 
@@ -29,6 +29,7 @@ Every captain-facing outcome that leaves durable evidence in the mate home is pu
 | PR merged | the merge poll or the mate's own merge | `bin/jg-merge-outcome-lib.sh` |
 | Child leaving the home | its final ledger line | `bin/jg-teardown.sh`, which refuses to remove the child while that line is undelivered |
 | Child ended silently | terminal current state with a silent ledger | the existing inactive-outcome scan in `bin/jg-inactive-reconcile.sh` |
+| Alert at Main's rung | the alert record in `state/alerts/`, keyed by its episode | `bin/jg-alert.sh deliver`, which refuses a home with no usable binding, and its `resolve`, which closes the same key |
 | Answer to a marked request | a correlated line guarded by the pending-reply record | `bin/jg-squad-lead-report.sh`, which resolves the parent channel from the mate home; the pending-reply guard repairs a line stranded in the local mate's same-basename status file before recovery or escalation |
 | An outcome that exists only in the mate's reasoning | none | the charter and the `AGENTS.md` carve-outs only |
 
@@ -54,6 +55,7 @@ Every line passes through the captain voice file in `jg_parent_channel_append_on
 ## Regression coverage
 
 `tests/jg-inactive-reconcile.test.sh` covers the ledger delivery against real ledgers with no harness: immediate done and failed delivery with note, PR, mode, posture, and report pointer, once-only delivery across polls, a ship `done:` withheld while its named head exists only in the worker copy, a pending one still delivered after teardown removes that copy, a line still being appended, later routine status prose not minting a fresh parent event because the inactive receipt identity binds structured fields only, the remote route, the yield of the inactive path to a terminal ledger, and the real watcher poll driving it.
+`tests/jg-alert.d/18-routing.sh` covers an alert's lead rung staying in the Squad Lead home, its Main rung reaching the local and remote channels once per episode, its close on resolve and supersede, and the refusal of a home with no usable binding.
 `tests/jg-captain-hold-lifecycle.test.sh` covers a mate home publishing a hold, its answer, and a distinct occurrence on re-hold, and a main home publishing nothing.
 `tests/jg-pr-merge.test.sh` covers the PR-ready line at registration and the merge outcome's upward report.
 `tests/jg-teardown.test.sh` covers teardown delivering a child's final line and refusing when the channel cannot be written.

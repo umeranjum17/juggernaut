@@ -2,9 +2,10 @@
 # Journey: every open pull request pages the lead that answers for it, through the real wiring and the installed check shim,
 # with a forge stub (gh-axi and the pull request state) and two fixture homes: Main and one lead.
 # a) an open pull request 30 minutes old with a red check: one page in the lead home with the address, the check's name and the next step;
-# b) the same pull request one hour later: a second page; inside the hour: nothing;
-# c) six pages with the same next step: one note on the lead's parent channel (Main), and no second one;
-# d) a changed next step restarts the count; merged or closed: no page, and the episode is gone;
+# b) the same pull request with the same next step: no page inside the hour, none on the hourly reads after it (5 reads of the
+#    unchanged step print 0 pages), and one reminder page after six hours;
+# c) six reads with the same next step: one note on the lead's parent channel (Main), and no second one;
+# d) a changed next step pages at the next read and restarts the count; merged or closed: no page, and the episode is gone;
 # e) a repository of another lead, or of Main: no page and no episode in the lead home, and the lead's repository pages nothing in Main;
 # f) a local-trunk release that is due with no pull request: one page; with its pull request open: no release page;
 # h) own-task, own-account and foreign pull requests: only the first two are paged, and the foreign one leaves no episode;
@@ -84,18 +85,21 @@ check 'e) Main pages its own repository' "$(grep -c 'o/rb/pull/21' <<< "$out")" 
 out=''
 
 check 'b) nothing again inside the hour' "$(pages "$(run "$L" 30)")" 0
-check 'b) a second page an hour later' "$(run "$L" 60 | grep -c 'page 2')" 1
-
-for k in 2 3 4 5; do out=$(run "$L" $((60 * k))); done   # pages 3..6
-check 'c) the sixth page is page 6' "$(grep -c 'page 6' <<< "$out")" 1
+quiet=0
+for k in 1 2 3 4; do quiet=$((quiet + $(pages "$(run "$L" $((60 * k)))"))); done   # reads 2..5 of the same step
+check 'b) the unchanged step prints no page on four hourly reads' "$quiet" 0
+check 'c) no note yet after five reads' "$(cat "$M/state/lead1.status" 2>/dev/null | grep -c 'pr-pager' || true)" 0
+out=$(run "$L" 300)   # read 6
+check 'c) the sixth read prints no page' "$(pages "$out")" 0
 check 'c) one note reached the parent channel' "$(grep -c 'pr-pager' "$M/state/lead1.status" 2>/dev/null || true)" 1
-run "$L" 360 >/dev/null
+check 'b) a reminder page after six hours' "$(run "$L" 360 | grep -c 'page 2')" 1
+run "$L" 420 >/dev/null
 check 'c) no second note' "$(grep -c 'pr-pager' "$M/state/lead1.status")" 1
 
 echo 'merge conflicts, which someone has to reconcile' > "$STUB/steps/11"
-check 'd) a changed step pages again as page 8' "$(run "$L" 420 | grep -c 'conflict: rebase')" 1
+check 'd) a changed step pages at once as page 3' "$(run "$L" 480 | grep -c 'conflict: rebase.*page 3')" 1
 : > "$STUB/prs/o__ra"
-out=$(run "$L" 480)
+out=$(run "$L" 540)
 check 'd) closed or merged: no page' "$(pages "$out")" 0
 check 'd) closed or merged: no episode' "$(find "$L/state/.pr-pager/o__ra" -type f 2>/dev/null | wc -l | tr -d ' ')" 0
 

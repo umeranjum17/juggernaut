@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # done-done journey: a red CI run files a root-cause ticket instead of a re-run, driven by the real
-# merge-on-green.sh watcher check, the real bin/jg-backlog.sh and the real Beads backlog. The forge is
+# merge-on-green.sh watcher check, the real bin/jg-backlog.sh and the home's tickets tables. The forge is
 # the recorded gh-axi stub in core/merge-on-green/tests/fixtures/red-ci-ticket, so no network is used.
 # Shows: (1) one poll files one ticket per red run and prints one alert each; (2) the ticket in the backlog
 # carries the run id, URL, failing job and first failing log line; (3) a second poll files none.
@@ -18,9 +18,9 @@ mkdir -p "$HOME"
 H=$T/home
 mkdir -p "$H/state" "$H/data" "$H/config" "$H/projects/r"
 ln -s "$REPO/bin" "$H/bin"
-# shellcheck source=core/lib/beads-test-env.sh
-. "$REPO/core/lib/beads-test-env.sh"
-core_beads_home "$REPO" "$H"
+# The home's backlog is its tickets tables: a config and data folder, loose intake, and the checkout's bin/ on PATH.
+mkdir -p "$H/config" "$H/data" && : > "$H/config/backlog-intake-loose"
+PATH=$REPO/bin:$PATH; export PATH
 printf -- '- r [direct-PR +yolo] - fixture project (ex/r) (added 2026-11-04)\n' > "$H/data/projects.md"
 git -C "$H/projects/r" init -q && git -C "$H/projects/r" remote add origin https://github.com/ex/r.git
 export JG_STALE_PR_GH=false JG_RED_CI_GH=$REPO/core/merge-on-green/tests/fixtures/red-ci-ticket/gh-axi JG_CHECK_TIMEOUT=60 JG_HOME=$H

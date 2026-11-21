@@ -10,8 +10,12 @@ unset _jg_old _jg_new 2>/dev/null || true
 
 set -eu
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
-# shellcheck source=/dev/null
-. "$ROOT/core/lib/beads-test-env.sh"
+# A fixture home on the tickets tables (fleet.db).
+core_tables_home() {  # <checkout> <home>
+  mkdir -p "$2/config" "$2/data" && : > "$2/config/backlog-intake-loose"
+  case ":$PATH:" in *":$1/bin:"*) ;; *) PATH=$1/bin:$PATH; export PATH ;; esac
+  JG_HOME=$2 python3 -I "$1/core/item-store/adapters/tickets.py" import --home main /dev/null >/dev/null
+}
 TMUX_BIN=$(command -v tmux) || exit 1
 world=$(mktemp -d "${TMPDIR:-/tmp}/jg-wait-e2e.XXXXXX")
 sock="jg-wait-e2e-$$"
@@ -39,7 +43,7 @@ export JG_ROOT_OVERRIDE="$world" JG_TMUX_SESSION=juggernaut JG_SESSION=juggernau
 printf 'tmux\n' > "$world/config/backend"
 printf 'lead\n' > "$world/.jg-squad-lead-home"
 printf 'schema=jg-squad-lead-parent.v1\nroute=local\nparent_home=%s\n' "$world/parent" > "$world/.jg-squad-lead-parent"
-core_beads_home "$ROOT" "$world"
+core_tables_home "$ROOT" "$world"
 (cd "$world" && jg-backlog.sh add jg-held-lane 'deliberately paused lane')
 tmux new-session -d -s juggernaut -n jg-held-lane 'sleep 300'
 printf 'window=juggernaut:jg-held-lane\nkind=ship\nharness=pi\nbackend=tmux\nworktree=%s\n' "$world" > "$world/state/jg-held-lane.meta"

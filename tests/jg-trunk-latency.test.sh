@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Integration test for the registered check core/trunk-latency on a real Beads store: the lander puts a landing's timing (the stage that held
-# it, the seconds of each step, the host load) in the payload of the ticket's `land` event, and a landing over five minutes raises one
-# slow-delivery alert through bin/jg-alert.sh that names the stage it reads from that payload. No data/trunk-latency.tsv is written.
+# Integration test for the registered check core/trunk-latency on the home's ticket tables: the lander puts a landing's timing (the stage that held
+# it, the seconds of each step, the host load) in the payload of the ticket's `land` event, and a landing over five minutes records one
+# slow-delivery row through bin/jg-alert.sh that names the stage it reads from that payload and is resolved at once: no alert stays open. No data/trunk-latency.tsv is written.
 # It replays the records of two real landings against a fixture home, at the clock of each landing:
 #   fric-s14-release-one-url: done 22:13:27Z, stack started 22:35:53Z, landed 22:45:27Z on 9 Nov, gate 216 s: 32 minutes, held by the queue.
 #   fric-gate-shard-timeout: done 00:33:38Z, landed 00:35:37Z on 10 Nov, gate 64 s: 2 minutes, held by the gate.
-# L1 the 32-minute landing raises one alert that names the queue and its minutes; the 2-minute landing raises none; a third tick adds none;
+# L1 the 32-minute landing records one row, resolved at once with no open alert and no wake, that names the queue and its minutes; the 2-minute landing records none; a third tick adds none;
 #    the payload holds the seconds of each step, the load and the reason; no tsv row exists.
 # L2 the limit is JG_MERGE_LATENCY_LIMIT_MINUTES, the one core/merge-on-green reads.
 # L3 a landing more than an hour old when the check first runs raises no alert; a landing whose ticket has no event yet is read again later.
@@ -16,7 +16,7 @@
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-# S1 reads a file only, so it runs without a Beads store.
+# S1 reads a file only, so it runs without a backlog.
 SUMMARY_TSV=$ROOT/tests/fixtures/trunk-latency.tsv
 sum_out=$(bash "$ROOT/core/trunk-latency/latency.sh" summary --tsv "$SUMMARY_TSV" --from 1794009600 --to 1794614400) || fail "summary failed: $sum_out"
 [ "$sum_out" = "landings 11
@@ -31,31 +31,24 @@ bash "$ROOT/core/trunk-latency/latency.sh" summary --tsv "$SUMMARY_TSV" --from 1
 if bash "$ROOT/core/trunk-latency/latency.sh" summary --tsv "$SUMMARY_TSV" --bogus 1 2>/dev/null; then fail "an unknown option must be refused"; fi
 printf 'ok - S1 summary prints the 12 lines of the fixture, honours --stall-gap and refuses a bad option\n'
 
-if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
-  printf 'skip: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
-  exit 0
-fi
-
 CHECK=$ROOT/core/trunk-latency/latency.sh
 T=$(jg_test_tmproot jg-trunk-latency)
 LOG=${DONE_DONE_EVIDENCE_ROOT:+$DONE_DONE_EVIDENCE_ROOT/trunk-latency.log}
 say() { printf '%s\n' "$*" | tee -a "${LOG:-/dev/null}"; }
 ok() { say "ok - $1"; }
-unset BEADS_DB BEADS_DOLT_SHARED_SERVER BEADS_ACTOR JG_BACKLOG_LANE JG_BACKLOG_SPAWN_GEN JG_BACKLOG_AGENT JG_BACKLOG_LANE_HANDOVER
+unset BEADS_ACTOR JG_BACKLOG_LANE JG_BACKLOG_SPAWN_GEN JG_BACKLOG_AGENT JG_BACKLOG_LANE_HANDOVER
 export TZ=UTC JG_TRUNK_LATENCY_ALERT=$ROOT/bin/jg-alert.sh JG_TRUNK_LATENCY_BACKLOG=$ROOT/bin/jg-backlog.sh  # the fixture homes hold no bin of their own
-# shellcheck source=core/lib/beads-test-env.sh
-. "$ROOT/core/lib/beads-test-env.sh"
 S14=fric-s14-release-one-url S14_HEAD=c51c26ab2fd909dc744a43bc04cb08ac7ccd0917 S14_COMMIT=f19bfb172622c43cacff1f1d30a33720cfb819b4
 SHARD=fric-gate-shard-timeout SHARD_HEAD=77c927cfa3ea6a35b907cfda47a3c06079ec5741
 
-home() {  # <name>: a home with a real store, an empty set of landing records and a host load of 7.25
+home() {  # <name>: a home with its ticket tables, an empty set of landing records and a host load of 7.25
   local h=$T/$1
   mkdir -p "$h/state" "$h/data/jg-trunk-landing" "$h/bin"
-  core_beads_home "$ROOT" "$h"
+  jg_test_beads_home "$h"
   printf '7.25 6.10 5.00 3/900 4242\n' > "$h/loadavg"
   printf '%s\n' "$h"
 }
-cli() { local h=$1; shift; JG_HOME=$h JG_DATA_OVERRIDE=$h/data BEADS_DIR=$(cat "$h/config/beads-dir") "$ROOT/bin/jg-backlog.sh" "$@"; }
+cli() { local h=$1; shift; JG_HOME=$h JG_DATA_OVERRIDE=$h/data "$ROOT/bin/jg-backlog.sh" "$@"; }
 row() { printf '%s\n' "$2" >> "$1/data/trunk-landings.tsv"; }
 proof() { printf '%s\n' "$2" >> "$1/data/trunk-landing-proofs.tsv"; }
 run_record() {  # <home> <task> <run id> <commit> <started_at>
@@ -64,7 +57,7 @@ run_record() {  # <home> <task> <run id> <commit> <started_at>
 }
 ticket() {  # <home> <task>: a ticket for the lane
   cli "$1" add "$2" "[feature] $2" --priority 2 --body why >/dev/null || fail "file the ticket of $2"
-  BEADS_DIR=$(cat "$1/config/beads-dir") "$ROOT/bin/jg-beads.sh" update "$2" --set-metadata "task=$2" >/dev/null || fail "name the task of $2"
+  JG_HOME=$1 python3 -I "$ROOT/core/item-store/adapters/bd_compat.py" update "$2" --set-metadata "task=$2" >/dev/null || fail "name the task of $2"
 }
 iso() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
 # The records each landing left in the home, as the landing check, the lane and its worker wrote them.
@@ -98,7 +91,9 @@ tick() {  # <home> <clock> [env...]: one watcher tick of the check at that clock
   local h=$1 now=$2; shift 2
   env JG_TRUNK_LATENCY_NOW="$now" "$@" bash "$CHECK" check "$h"
 }
-alerts() { JG_HOME=$1 JG_STATE_OVERRIDE=$1/state bash "$ROOT/bin/jg-alert.sh" list; }
+alerts() { JG_HOME=$1 JG_STATE_OVERRIDE=$1/state bash "$ROOT/bin/jg-alert.sh" list; }  # the open alerts
+rows() { local f; for f in "$1"/state/alerts/*.rec; do [ -e "$f" ] && basename "$f" .rec; done; }  # every row recorded, open or resolved
+rowof() { JG_HOME=$1 JG_STATE_OVERRIDE=$1/state bash "$ROOT/bin/jg-alert.sh" show "$2"; }
 wakes() { cat "$1/state/.wake-queue" 2>/dev/null; }
 notsv() { [ ! -e "$1/data/trunk-latency.tsv" ] || fail "no data/trunk-latency.tsv may be written: $(cat "$1/data/trunk-latency.tsv")"; }
 
@@ -108,22 +103,25 @@ seed_s14 "$H"; ready "$H" "$S14" 1794262407; land "$H" "$S14" "$S14_COMMIT" 1794
 out=$(tick "$H" 1794264357)
 say "$out"
 [ -z "$out" ] || fail "the check prints no alert text of its own, got: $out"
-[ "$(alerts "$H")" = "slow-delivery--$S14-f19bfb172622" ] || fail "the 32-minute landing must raise exactly one slow-delivery alert, got: $(alerts "$H")"
-assert_contains "$(wakes "$H")" "alert-slow-delivery--$S14-f19bfb172622"
-assert_contains "$(wakes "$H")" "the queue held 22 minutes"
-assert_contains "$(wakes "$H")" "landing took 32 minutes"
+[ "$(rows "$H")" = "slow-delivery--$S14-f19bfb172622" ] || fail "the 32-minute landing must record exactly one slow-delivery row, got: $(rows "$H")"
+[ -z "$(alerts "$H")" ] || fail "the landing is a past measurement: no alert may stay open, got: $(alerts "$H")"
+[ -z "$(wakes "$H")" ] || fail "a landing that is already on the trunk wakes nobody, got: $(wakes "$H")"
+ROW=$(rowof "$H" "slow-delivery--$S14-f19bfb172622")
+assert_contains "$ROW" "state=resolved"
+assert_contains "$ROW" "the queue held 22 minutes"
+assert_contains "$ROW" "landing took 32 minutes"
 P=$(payload "$H" "$S14" "$S14_COMMIT")
 say "land payload of $S14: $P"
 [ "$(jq -c '[.stage, .queue_s, .landing_s, .gate_s, .load, .queue_why]' <<< "$P")" = '["queue",1346,358,216,7.25,"not recorded"]' ] || fail "the $S14 payload is $P"
 [ "$(jq -r .head <<< "$P")" = "$S14_HEAD" ] || fail "the payload names the lane head the feeds read, got: $P"
-ok "$S14: 32 minutes, one alert naming the queue and its 22 minutes, read from the land payload"
+ok "$S14: 32 minutes, one row naming the queue and its 22 minutes, resolved at once, read from the land payload"
 seed_shard "$H"; ready "$H" "$SHARD" 1794270818; land "$H" "$SHARD" "$SHARD_HEAD" 1794270937
 out=$(tick "$H" 1794270967)
-[ -z "$out" ] && [ "$(alerts "$H" | wc -l)" = 1 ] || fail "a 2-minute landing raises no alert, got: $out $(alerts "$H")"
+[ -z "$out" ] && [ "$(rows "$H" | wc -l)" = 1 ] || fail "a 2-minute landing raises no alert, got: $out $(alerts "$H")"
 [ "$(payload "$H" "$SHARD" "$SHARD_HEAD" | jq -r .stage)" = gate ] || fail "the gate held most of $SHARD: $(payload "$H" "$SHARD" "$SHARD_HEAD")"
 ok "$SHARD: 2 minutes, held by the gate, no alert"
 out=$(tick "$H" 1794271000)
-[ -z "$out" ] && [ "$(alerts "$H" | wc -l)" = 1 ] || fail "a third tick raised again: $out $(alerts "$H")"
+[ -z "$out" ] && [ "$(rows "$H" | wc -l)" = 1 ] || fail "a third tick raised again: $out $(alerts "$H")"
 notsv "$H"
 ok "a tick with no new landing says nothing, and no latency tsv is written"
 [ -z "${DONE_DONE_EVIDENCE_ROOT:-}" ] || printf '%s\n' "$P" > "$DONE_DONE_EVIDENCE_ROOT/trunk-latency.json"
@@ -132,21 +130,21 @@ ok "a tick with no new landing says nothing, and no latency tsv is written"
 H=$(home l2)
 seed_s14 "$H"; ready "$H" "$S14" 1794262407; land "$H" "$S14" "$S14_COMMIT" 1794264327
 out=$(tick "$H" 1794264357 JG_MERGE_LATENCY_LIMIT_MINUTES=40)
-[ -z "$out" ] && [ -z "$(alerts "$H")" ] || fail "under a 40-minute limit no alert is raised: $out"
+[ -z "$out" ] && [ -z "$(rows "$H")" ] || fail "under a 40-minute limit no row is recorded: $out"
 ok "JG_MERGE_LATENCY_LIMIT_MINUTES sets the limit: under 40 minutes the 32-minute landing raises no alert"
 
 # L3: an old landing is not read; a landing with no event yet is read on a later tick.
 H=$(home l3)
 seed_s14 "$H"; ready "$H" "$S14" 1794262407; land "$H" "$S14" "$S14_COMMIT" 1794264327
 out=$(tick "$H" 1794362400)
-[ -z "$out" ] && [ -z "$(alerts "$H")" ] || fail "a landing over an hour old raises no alert: $out $(alerts "$H")"
+[ -z "$out" ] && [ -z "$(rows "$H")" ] || fail "a landing over an hour old records no row: $out $(rows "$H")"
 H=$(home l3b)
 seed_s14 "$H"; ready "$H" "$S14" 1794262407
 out=$(tick "$H" 1794264357)
-[ -z "$out" ] && [ -z "$(alerts "$H")" ] || fail "a landing with no event raises nothing: $out"
+[ -z "$out" ] && [ -z "$(rows "$H")" ] || fail "a landing with no event records nothing: $out"
 land "$H" "$S14" "$S14_COMMIT" 1794264327
 tick "$H" 1794264400 >/dev/null
-[ "$(alerts "$H")" = "slow-delivery--$S14-f19bfb172622" ] || fail "the landing is read once its event exists: $(alerts "$H")"
+[ "$(rows "$H")" = "slow-delivery--$S14-f19bfb172622" ] && [ -z "$(alerts "$H")" ] || fail "the landing is read once its event exists, and leaves no open alert: $(rows "$H") / $(alerts "$H")"
 ok "an old landing raises no alert; a landing whose event is not there yet is read on the next tick"
 
 # L4: the wiring, through the installed copy.
@@ -166,10 +164,10 @@ bash "$ROOT/core/trunk-latency/wiring.sh" "$H" >/dev/null || fail "the wiring fa
 [ "$(cat "$H/register.log")" = 'register trunk-latency' ] || fail "the check was not registered: $(cat "$H/register.log")"
 cmp -s "$CHECK" "$T/share/jg-trunk-latency/latency.sh" || fail "the installed check differs from the source"
 JG_TRUNK_LATENCY_NOW=1794264357 "$H/state/trunk-latency.check.sh" >/dev/null
-[ "$(alerts "$H")" = "slow-delivery--$S14-f19bfb172622" ] || fail "the installed shim did not raise the alert: $(alerts "$H")"
+[ "$(rows "$H")" = "slow-delivery--$S14-f19bfb172622" ] && [ -z "$(alerts "$H")" ] || fail "the installed shim did not record the row and close it: $(rows "$H") / $(alerts "$H")"
 bash "$ROOT/core/trunk-latency/unwiring.sh" "$H" >/dev/null || fail "the unwiring failed"
 [ ! -e "$H/state/trunk-latency.check.sh" ] && [ ! -e "$T/share/jg-trunk-latency" ] || fail "the unwiring must remove the shim and the install"
-ok "the wiring installs and registers the check, its shim raises the alert, and the unwiring removes it"
+ok "the wiring installs and registers the check, its shim records the row, and the unwiring removes it"
 [ -z "${DONE_DONE_EVIDENCE_ROOT:-}" ] || jq -n --arg v "$(git -C "$ROOT" rev-parse HEAD)" '{target: {version: $v}, start: "a fixture home with a real store and two real landings and their records",
   steps: ["Measure each landing and record it as the land event of its ticket", "Run the trunk-latency check at the clock of each landing"],
-  result: "The 32-minute landing raises one alert that names the queue; the 2-minute landing raises none; no tsv is written"}' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
+  result: "The 32-minute landing records one resolved row that names the queue and leaves no open alert; the 2-minute landing records none; no tsv is written"}' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"

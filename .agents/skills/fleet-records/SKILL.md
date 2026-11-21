@@ -1,8 +1,6 @@
 ---
 name: fleet-records
-description: >-
-  Agent-only home-layout, knowledge-routing, and backlog-record rules kept out of the always-loaded AGENTS.md.
-  Load before routing durable knowledge, editing a backlog item or task note, handing work across homes, or interpreting home layout.
+description: Load before routing durable knowledge, editing a backlog item or task note, handing work across homes, or interpreting home layout.
 user-invocable: false
 metadata:
   internal: true
@@ -43,7 +41,7 @@ Route durable knowledge to its most specific owner:
 
 ## Backlog
 
-The Beads store named by `config/beads-dir` is the durable queue; `bin/jg-backlog.sh markdown` renders it as backlog lines.
+This home's rows in the tickets tables of `fleet.db` are the durable queue; `bin/jg-backlog.sh markdown` renders them as backlog lines.
 It tracks work items only, never agents; persistent Squad Leads never appear as backlog items.
 Work routed to a Squad Lead is recorded in that Squad Lead home's own backlog, not the main backlog.
 A new item needs a readable title, `--priority 0-3` and the body sections (`--release <name>` sets the release), or `bin/jg-backlog.sh add` refuses it; `docs/configuration.md` "Backlog intake" owns the rule.

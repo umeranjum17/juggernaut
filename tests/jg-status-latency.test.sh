@@ -4,7 +4,9 @@
 # ledger row, and the check reads the lane's status line and that row; nothing is faked but the clock of the two late cases.
 # S1 a failed line written while the watcher runs wakes its owner within the minute: one row with the seconds, no alert.
 # S2 a needs-decision line 200 s old with no watcher running raises one alert, one row with no wake time, and a second tick adds nothing.
-# S3 a blocked line stamped 300 s before the watcher saw it is woken late: the row holds the real delay and one alert names it.
+# S3 a blocked line stamped 300 s before the watcher saw it is woken late: the row holds the real delay and one alert names it;
+#    the next tick resolves that alert, because the wake has come.
+# S4 the S2 alert, still open, is resolved by the tick after its lane's task record is gone.
 # With JG_STATUS_LATENCY_LOG set it appends the measured seconds there.
 set -u
 # shellcheck source=tests/wake-helpers.sh
@@ -90,12 +92,26 @@ secs=$(field "$d" seconds)
 [ "$(alerts "$d" | wc -l)" = 1 ] || fail "a late wake must raise one alert, got: $(alerts "$d")"
 grep -q "woke its owner only after $secs seconds" "$d/state/alerts/"*.rec || fail "the alert must name the measured delay"
 pass "S3: a late wake of $secs s is a row and one alert that names the delay"
+tick "$d"
+[ -z "$(alerts "$d")" ] || fail "the tick after a late wake must resolve its alert, still open: $(alerts "$d")"
+grep -q '^proof=source:woke-[0-9]' "$d/state/alerts/"*.rec || fail "the resolved alert must carry the wake as its proof: $(cat "$d/state/alerts/"*.rec)"
+pass "S3: the next tick resolved the late-wake alert with the wake as its proof"
+
+# S4
+d=$TMP_ROOT/s2
+[ "$(alerts "$d" | wc -l)" = 1 ] || fail "fixture: the S2 alert must still be open, got: $(alerts "$d")"
+rm "$d/state/lane.meta"
+tick "$d"
+if [ -n "$(alerts "$d")" ] || ! grep -q '^proof=source:lane-gone$' "$d/state/alerts/"*.rec; then
+  fail "a cleaned-up lane's alert must be resolved with source:lane-gone, got: $(alerts "$d")"
+fi
+pass "S4: the unwoken line's alert was resolved once its lane was cleaned up"
 
 if [ -n "${DONE_DONE_EVIDENCE_ROOT:-}" ]; then
   cat > "$DONE_DONE_EVIDENCE_ROOT/steps.json" <<JSON
 {"target": {"version": "$(git -C "$ROOT" rev-parse --short HEAD)"},
  "start": "a throwaway home with one live lane and the real watcher, wake library and alert command",
- "steps": ["the lane writes a failed line while the watcher runs and the check measures the seconds to its wake", "the lane writes a needs-decision line 200 s old with no watcher and the check raises one alert", "the lane writes a blocked line 300 s old and the watcher wakes it late, so the row holds the delay and the alert names it"],
- "result": "the on-time line has a row of ${secs_s1:-2} seconds and no alert; the unwoken and the late lines each raise one undelivered alert"}
+ "steps": ["the lane writes a failed line while the watcher runs and the check measures the seconds to its wake", "the lane writes a needs-decision line 200 s old with no watcher and the check raises one alert", "the lane writes a blocked line 300 s old and the watcher wakes it late, so the row holds the delay and the alert names it", "the next tick resolves the late-wake alert because the wake came", "the unwoken lane is cleaned up and the next tick resolves its alert"],
+ "result": "the on-time line has a row of ${secs_s1:-2} seconds and no alert; the unwoken and the late lines each raise one undelivered alert; the late one closes once woken and the unwoken one once its lane is gone"}
 JSON
 fi

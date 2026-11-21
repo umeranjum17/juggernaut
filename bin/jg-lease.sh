@@ -31,7 +31,7 @@
 #       removed. Run at session start (a lease held by a dead actor is cleared at
 #       session start); safe to run any time - a live lease is never touched.
 #
-# The records live in the JetStream key-value bucket `JG_LEASES` and the bucket's
+# The records live in the SQLite file state/kv.db and the row's
 # revision is the writer lock, so this script has no lock file, no temporary
 # file, and no lock scratch to sweep (bin/jg-lease-lib.sh owns the contract,
 # bin/jg-kv-lib.sh owns the client).

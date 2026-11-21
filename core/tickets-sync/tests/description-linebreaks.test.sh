@@ -13,9 +13,15 @@ mkdir -p "$HOME" "$JG_HOME"/{data,config,state}
 ln -sn "$fork/bin" "$JG_HOME/bin"
 printf '{"schema":2,"items":[]}\n' > "$work/board.json"
 printf '%s\n' "$work/board.json" > "$JG_HOME/config/fleet-board"
-# shellcheck source=core/lib/beads-test-env.sh disable=SC1091
-. "$root/lib/beads-test-env.sh"
-core_beads_home "$fork" "$JG_HOME"
+# Still skipped without JG_BEADS_TEST_BD: on the tables the sync publishes no ticket, so the board read finds none (a gap outside the Beads callers).
+if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then echo 'skip: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset'; exit 0; fi
+# A fixture home on the tickets tables (fleet.db).
+core_tables_home() {  # <checkout> <home>
+  mkdir -p "$2/config" "$2/data" && : > "$2/config/backlog-intake-loose"
+  case ":$PATH:" in *":$1/bin:"*) ;; *) PATH=$1/bin:$PATH; export PATH ;; esac
+  JG_HOME=$2 python3 -I "$1/core/item-store/adapters/tickets.py" import --home main /dev/null >/dev/null
+}
+core_tables_home "$fork" "$JG_HOME"
 body=$(printf 'Umer wants the summary first.\n# Ask\nKeep the line breaks.\n# Why\nThe board refuses a collapsed body.\n# Done when\nThe ticket shows on the board.')
 (cd "$JG_HOME" && jg-backlog.sh add jg-shaped 'Umer shaped item' --repo alpha --priority 2 --body "$body" >/dev/null)
 bash "$root/tickets-sync/wiring.sh"

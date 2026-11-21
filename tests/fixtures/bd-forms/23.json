@@ -1,0 +1,22 @@
+{
+ "argv": [
+  "create",
+  "--title=Plan the route",
+  "--id",
+  "jg-ask",
+  "--force",
+  "-p",
+  "0",
+  "--metadata",
+  "{\"release\": \"later\"}",
+  "--description=## Captain\nwhat the owner said\n## Ask\nthe change\n## Why\nthe reason\n## Done when\nit works\n## Acceptance Criteria\nit is proved",
+  "--validate",
+  "-l",
+  "captain-ask"
+ ],
+ "stdin": "",
+ "stdout": "\u2713 Created issue: jg-ask \u2014 Plan the route\n  Priority: P0\n  Status: open\n",
+ "exit": 0,
+ "form": "create --description --force --id --metadata --title --validate -l -p",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-line\",\"title\":\"Plain words two\",\"description\":\"## Captain\\nwhat the owner said\\n## Ask\\nthe change\\n## Why\\nthe reason\\n## Done when\\nit works\\n## Acceptance Criteria\\nit is proved\\nrelease: now\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:34:44Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:34:44Z\",\"metadata\":{\"release\":\"later\"},\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-ok\",\"title\":\"Plain words\",\"description\":\"## Captain\\nwhat the owner said\\n## Ask\\nthe change\\n## Why\\nthe reason\\n## Done when\\nit works\\n## Acceptance Criteria\\nit is proved\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T13:34:41Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T13:34:41Z\",\"metadata\":{\"release\":\"v9\"},\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

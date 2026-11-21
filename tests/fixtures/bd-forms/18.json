@@ -1,0 +1,27 @@
+{
+ "argv": [
+  "create",
+  "--title=Make the second part",
+  "--json",
+  "-p",
+  "2",
+  "--deps",
+  "jg-plan.1",
+  "--metadata",
+  "{\"release\": \"later\"}",
+  "--description=## Captain\nThe owner wants slice B.\n\n## Ask\nBuild slice B.\n\n## Why\nIt is in the plan.\n\n## Done when\nIts test passes.\n\n## Acceptance Criteria\nThe test passes.\nPlan: jg-plan, slice B (owner main).\nFiles: bin/B.sh (new)",
+  "--validate",
+  "-l",
+  "project:juggernaut",
+  "-l",
+  "feature",
+  "--parent",
+  "jg-plan",
+  "--no-inherit-labels"
+ ],
+ "stdin": "",
+ "stdout": "{\n  \"created_at\": \"2026-11-19T14:21:20.517530096Z\",\n  \"created_by\": \"main\",\n  \"description\": \"## Captain\\nThe owner wants slice B.\\n\\n## Ask\\nBuild slice B.\\n\\n## Why\\nIt is in the plan.\\n\\n## Done when\\nIts test passes.\\n\\n## Acceptance Criteria\\nThe test passes.\\nPlan: jg-plan, slice B (owner main).\\nFiles: bin/B.sh (new)\",\n  \"id\": \"jg-plan.2\",\n  \"issue_type\": \"task\",\n  \"labels\": [\n    \"feature\",\n    \"project:juggernaut\"\n  ],\n  \"metadata\": {\n    \"release\": \"later\"\n  },\n  \"priority\": 2,\n  \"schema_version\": 1,\n  \"status\": \"open\",\n  \"title\": \"Make the second part\",\n  \"updated_at\": \"2026-11-19T14:21:20.517530096Z\"\n}\n",
+ "exit": 0,
+ "form": "create --deps --description --json --metadata --no-inherit-labels --parent --title --validate -l -p",
+ "store": "{\"_type\":\"issue\",\"id\":\"jg-plan\",\"title\":\"The plan\",\"description\":\"Fixture ticket jg-plan\",\"status\":\"open\",\"priority\":1,\"issue_type\":\"epic\",\"created_at\":\"2026-11-19T14:21:10Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T14:21:18Z\",\"metadata\":{\"kind\":\"ship\",\"release\":\"later\"},\"labels\":[\"feature\",\"project:demo\"],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"jg-plan.1\",\"title\":\"Make the first part\",\"description\":\"## Captain\\nThe owner wants slice A.\\n\\n## Ask\\nBuild slice A.\\n\\n## Why\\nIt is in the plan.\\n\\n## Done when\\nIts test passes.\\n\\n## Acceptance Criteria\\nThe test passes.\\nPlan: jg-plan, slice A (owner main).\\nFiles: bin/A.sh (new)\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T14:21:17Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T14:21:19Z\",\"metadata\":{\"risk\":\"Low\",\"size\":\"S\",\"files\":\"[\\\"bin/A.sh\\\"]\",\"machine\":\"\",\"release\":\"later\",\"new_files\":\"[\\\"bin/A.sh\\\"]\",\"plan_slice\":\"A\"},\"labels\":[\"feature\",\"project:juggernaut\"],\"dependencies\":[{\"issue_id\":\"jg-plan.1\",\"depends_on_id\":\"jg-plan\",\"type\":\"parent-child\",\"created_at\":\"2026-11-19T14:21:17Z\",\"created_by\":\"main\",\"metadata\":\"{}\"}],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

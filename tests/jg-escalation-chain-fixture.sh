@@ -12,8 +12,11 @@ set -eu
 TMP_ROOT=$(jg_test_tmproot jg-escalation-chain)
 FORK="$TMP_ROOT/fork"
 mkdir -p "$FORK"
-# toolchain.versions pins the bd and dolt that the copied backlog scripts run.
+# toolchain.versions is the pin table the copied scripts read.
 cp -a "$ROOT/bin" "$ROOT/core" "$ROOT/toolchain.versions" "$FORK/"
+# The fork is the code root the copied scripts read (core/item-store/adapters/tickets.py among them); it holds no .git,
+# so the worktree-tangle check stays inert as wake-helpers.sh wants.
+export JG_ROOT_OVERRIDE=$FORK
 # The steer and interrupt endpoints record their calls in the calling home. A home
 # holding a real-steer file also delivers each steer through the real jg-send (kept
 # as jg-send-real.sh), so its inbox records and decision closes are the real ones.
@@ -96,7 +99,7 @@ cycle() {  # <home> [absent]
   [ "${2:-}" != absent ] || successor=1
   mark="$h/tmp/cycle-mark"
   touch "$mark"
-  env -u JG_TASK_ID JG_WATCH_HANDLING_SUCCESSOR="$successor" HOME="$h/home" XDG_DATA_HOME="$h/home/.local/share" TMPDIR="$h/tmp" PATH="$h/fakebin:$PATH" \
+  env -u JG_TASK_ID -u XDG_RUNTIME_DIR JG_WATCH_HANDLING_SUCCESSOR="$successor" HOME="$h/home" XDG_DATA_HOME="$h/home/.local/share" TMPDIR="$h/tmp" PATH="$h/fakebin:$PATH" \
     JG_HOME="$h" JG_STATE_OVERRIDE="$h/state" JG_CONFIG_OVERRIDE="$h/config" \
     JG_POLL=1 JG_SIGNAL_GRACE=1 JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999 JG_HOME_SUMMARY_INTERVAL=999999 \
     JG_SQUAD_LEAD_LIVENESS_SECS="${LIVENESS:-99999999}" JG_BUSY_TURN_MAX_SECS=999999 JG_STALE_ESCALATE_SECS=999999 \
@@ -117,7 +120,8 @@ cycle() {  # <home> [absent]
     | while IFS= read -r line; do grep -Fxq -- "$line" "$h/events" || printf '%s\n' "$line" >> "$h/events"; done
   seq=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9]*\) --recovery-generation .*/\1/p' "$h/ack")
   gen=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--recovery-generation \([^ ]*\)$/\1/p' "$h/ack")
-  [ -z "$seq" ] || JG_HOME="$h" JG_STATE_OVERRIDE="$h/state" "$FORK/bin/jg-wake-drain.sh" --ack-through "$seq" --recovery-generation "$gen" >/dev/null
+  [ -z "$seq" ] || JG_HOME="$h" JG_STATE_OVERRIDE="$h/state" "$FORK/bin/jg-wake-drain.sh" --ack-through "$seq" --recovery-generation "$gen" >/dev/null \
+    || true  # a refused acknowledgement leaves the row queued, as for Main; it is not a failed cycle
 }
 
 # A cycle stops at its first wake, so a home holding two open waits can report
@@ -224,11 +228,11 @@ lead_home() {  # <name> <main> -> lead home path
   printf '%s\n' "$l"
 }
 
-# A home's backlog is a real Beads store, built on first use; its item ids carry the store's prefix.
+# A home's backlog is its tickets tables, which need no store: a first use only marks the home's intake loose.
 backlog() {  # <home> <backlog args...>
   local h=$1
   shift
-  [ -s "$h/config/beads-dir" ] || jg_test_beads_home "$h"
+  [ -e "$h/config/backlog-intake-loose" ] || { mkdir -p "$h/config" && : > "$h/config/backlog-intake-loose"; }
   JG_HOME="$h" "$FORK/bin/jg-backlog.sh" "$@" >/dev/null || fail "fixture: tasks $*"
 }
 

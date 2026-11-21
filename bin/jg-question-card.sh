@@ -65,6 +65,13 @@
 #        into the card's detail field as "must: <category>", and on the
 #        when-it-matters leash a post with none is refused and recorded for
 #        Overwatch (bin/jg-board-gate.sh route) instead of posted.
+#        --executor <option>=worker|<option>=supervisor names which end takes that option once
+#        the owner answers it: one worker ticket, brief and approval written from the option,
+#        or one supervisor step. It is written into the card's detail field as
+#        "executor <option>=<end>" and recorded beside the board, which is where
+#        bin/jg-answer-route.sh reads it at answer time; that command owns what each end does.
+#        A card with no --executor makes every option a supervisor step, which is what every
+#        card posted before this flag does.
 #        --record <url> is the card's deep link to its full record, written into
 #        the detail field because raise has no link flag. The two-layer check is
 #        shadow-first: it names the failing rule, logs it, and posts the card.
@@ -140,6 +147,7 @@ split_board() {
   RECORD=''
   RAISED=''
   MOCKS=()
+  EXECUTORS=()
   ARGS=()
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -179,6 +187,15 @@ split_board() {
         shift
         [ $# -gt 0 ] || die "--must needs a category ($(jg_ask_categories_words))"
         MUST=$1
+        ;;
+      --executor)
+        shift
+        [ $# -gt 0 ] || die "--executor needs <option>=worker|<option>=supervisor"
+        case "$1" in
+          ?*=worker|?*=supervisor) ;;
+          *) die "refused: --executor '$1' is not <option>=worker or <option>=supervisor" ;;
+        esac
+        EXECUTORS+=("$1")
         ;;
       *) ARGS+=("$1") ;;
     esac
@@ -285,6 +302,37 @@ check_mocks() {
   [ -z "$missing" ] || die "refused: option(s)$missing have no --mock; a design card carries one mock per option"
 }
 
+# The card's per-option executor field: which of the option's two ends takes the option once
+# the owner answers it. bin/jg-answer-route.sh owns what each end does and reads the field back
+# from the detail written here; a card with no field makes every option a supervisor step.
+# Sets EXECUTORS. An entry that names no option of this card, or that repeats one, is refused
+# before anything posts.
+check_executors() {
+  local value seen=' '
+  [ "${#EXECUTORS[@]}" -gt 0 ] || return 0
+  for value in "${EXECUTORS[@]}"; do
+    case "$value" in
+      *=worker) value=${value%=worker} ;;
+      *=supervisor) value=${value%=supervisor} ;;
+    esac
+    case " $OPTION_VALUES " in *" $value "*) ;; *) die "refused: --executor '$value' names no --option of this card" ;; esac
+    case "$seen" in *" $value "*) die "refused: option '$value' has two executors; a card carries one end per option" ;; esac
+    seen+="$value "
+  done
+}
+
+# The detail field this post carries: the caller's own, plus one `executor <option>=<end>`
+# token per named option. One owner of that text, so the writer and the reader cannot drift.
+set_executors() {
+  local detail=$1 value
+  [ "${#EXECUTORS[@]}" -gt 0 ] || { printf '%s\n' "$detail"; return 0; }
+  for value in "${EXECUTORS[@]}"; do
+    case "$detail" in *"executor $value"*) continue ;; esac
+    detail="${detail:+$detail }executor $value"
+  done
+  printf '%s\n' "$detail"
+}
+
 cmd_post() {
   local title ask_ref before after key board out link mock rc=0 refusal rec filer detail raised_rc RECORD=''
   split_board "$@"
@@ -317,6 +365,10 @@ cmd_post() {
   else
     MUST=$(jg_ask_card_category "$(flag_value --detail)")
   fi
+  # Which end takes each answered option (see --executor in the header). Appended after the
+  # must field so the category stays the first thing a reader finds there.
+  detail=$(set_executors "$(flag_value --detail)")
+  [ "$detail" = "$(flag_value --detail)" ] || set_detail "$detail"
   if ! refusal=$(jg_ask_gate_refusal "$MUST" "$BOARD"); then
     refuse "$refusal"
   fi
@@ -329,6 +381,18 @@ cmd_post() {
     "$SCRIPT_DIR/jg-captain-hold.sh" open "$RAISED" --distinguish-absent >/dev/null 2>&1 || raised_rc=$?
     case "$raised_rc" in 0|1) ;; 3) die "refused: --raised-by '$RAISED' is not a ticket in this home's backlog" ;; *) die "refused: could not read this home's backlog to check --raised-by '$RAISED'" ;; esac
   fi
+
+  # The option names this card carries, for --executor to check against. --outcome entries
+  # name an option the same way --option does.
+  OPTION_VALUES=''
+  local _i=0
+  while [ "$_i" -lt "${#ARGS[@]}" ]; do
+    case "${ARGS[$_i]}" in
+      --outcome|--option) OPTION_VALUES+="${ARGS[$((_i + 1))]%%=*} " ;;
+    esac
+    _i=$((_i + 1))
+  done
+  check_executors
 
   check_mocks
 
@@ -376,11 +440,11 @@ cmd_post() {
     || die "the card $key is posted but its route to $ROUTE was not recorded; run jg-board-answers.sh route $key $ROUTE"
   { [ "$MUST" != design-pick ] || [ -n "$(flag_value --filer)" ]; } || "$SCRIPT_DIR/jg-captain-hold.sh" design-card "$key" --raised-by "$RAISED" --title "$title" >&2 \
     || die "the card $key is posted but its design row was not filed; run jg-captain-hold.sh design-card $key --raised-by $RAISED --title ..."
-  # The detail field is where the card's must category lives, and a rebuild of
-  # the feed writes its own detail. Record it beside the board as well, so the
-  # category outlives any rebuild (bin/jg-board-record-lib.sh).
+  # The detail field is where the card's must category and its option executors live, and a
+  # rebuild of the feed writes its own detail. Record it beside the board as well, so both
+  # outlive any rebuild (bin/jg-board-record-lib.sh).
   detail=$(flag_value --detail)
-  if [ -n "$(jg_ask_card_category "$detail")" ]; then
+  if [ -n "$(jg_ask_card_category "$detail")" ] || [ "${#EXECUTORS[@]}" -gt 0 ]; then
     board_now=${BOARD:-$(jg_question_board)}
     [ -z "$board_now" ] \
       || jg_board_detail_record "$board_now" "$key" "$detail" \

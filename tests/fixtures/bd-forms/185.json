@@ -1,0 +1,13 @@
+{
+ "argv": [
+  "comments",
+  "cm-one",
+  "--json"
+ ],
+ "stdin": "",
+ "stdout": "[\n  {\n    \"id\": \"5a1f0c2e-0000-5000-8000-000000000001\",\n    \"issue_id\": \"cm-one\",\n    \"author\": \"main\",\n    \"text\": \"Still open: nothing has shipped.\\n\",\n    \"created_at\": \"2026-11-19T14:01:16Z\"\n  }\n]\n",
+ "exit": 0,
+ "form": "comments --json",
+ "store": "{\"_type\":\"issue\",\"id\":\"cm-one\",\"title\":\"Commented\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T10:00:00Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T10:00:00Z\",\"comments\":[{\"id\":\"5a1f0c2e-0000-5000-8000-000000000001\",\"issue_id\":\"cm-one\",\"author\":\"main\",\"text\":\"Still open: nothing has shipped.\\n\",\"created_at\":\"2026-11-19T14:01:16Z\"}],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":1}\n",
+ "derived": "comments --json of one comment: derived from the comment objects of the recorded export (id, issue_id, author, text, created_at); only the empty list is recorded as comments --json"
+}

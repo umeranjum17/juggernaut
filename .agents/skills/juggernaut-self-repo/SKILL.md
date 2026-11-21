@@ -1,6 +1,6 @@
 ---
 name: juggernaut-self-repo
-description: The Juggernaut repository publication boundary. Load before dispatching, promoting, relaunching, or delivering any task whose project is the Juggernaut repository itself, when a Juggernaut bug or improvement idea surfaces in ordinary use, before granting or revoking upstream publication authority, and before deciding whether any push, pull request, issue, comment, or fork may reach Juggernaut's own upstream.
+description: Load before dispatching, promoting or delivering work on the Juggernaut repository itself, when a Juggernaut bug or idea surfaces, and before granting upstream publication authority.
 user-invocable: false
 metadata:
   internal: true

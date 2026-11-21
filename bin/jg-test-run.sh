@@ -132,7 +132,7 @@
 #                   accepted so the nightly suite's command line stays valid; a
 #                   speed-limit breach is reported in every mode (see below).
 #   --show-limits   print the effective e2e_seconds, unit_seconds,
-#                   gate_wall_seconds, script_timeout_seconds and machine_runs_max from the config file
+#                   gate_wall_seconds, script_timeout_seconds, machine_runs_max and machine_runs_burst from the config file
 #                   and exit without running anything.
 #   --max-wall-ms N fail the run when its measured invocation wall clock exceeds
 #                   N milliseconds, including an empty selection, and stop
@@ -320,6 +320,8 @@ TEST_SPEED_UNIT_SECONDS=5
 TEST_SPEED_GATE_SECONDS=600
 # How many runs may execute tests on this machine at once (machine_runs_max; 0 is one per 16 cpus, held between 2 and 3).
 TEST_MACHINE_RUNS_MAX=0
+# How many extra slots a lane run may take while every general slot is held and the machine's cpu pressure is low (machine_runs_burst; 0 is off).
+TEST_MACHINE_RUNS_BURST=0
 # Hard per-test ceiling on the automatic --changed path: max(120s, 4 x the
 # test's measured hint), so a wedged script ends as a bounded failure naming it
 # within minutes, not at a job cancel (a 1500s flat bound let tests/jg-mail hang
@@ -419,6 +421,8 @@ load_test_speed_limits() {
     case $v in ''|*[!0-9]*) ;; *) TEST_SPEED_SCRIPT_TIMEOUT_SECONDS=$v ;; esac
     v=$(sed -n 's/^machine_runs_max=//p' "$f" | tail -n 1)
     case $v in ''|*[!0-9]*) ;; *) TEST_MACHINE_RUNS_MAX=$v ;; esac
+    v=$(sed -n 's/^machine_runs_burst=//p' "$f" | tail -n 1)
+    case $v in ''|*[!0-9]*) ;; *) TEST_MACHINE_RUNS_BURST=$v ;; esac
     return 0
   done
   return 0
@@ -453,6 +457,29 @@ log() {
 jg_scratch_pin_tmpdir
 # shellcheck source=bin/jg-test-procs-lib.sh
 . "$ROOT/bin/jg-test-procs-lib.sh"
+
+# A tool manager's shims (a folder named `shims` on PATH) refuse once a test moves HOME away from the config it trusts, so a
+# test that runs python3 or node under a throwaway HOME failed in the gate and passed in a lane's shell. Link each real
+# program that sits later in PATH into one folder of this run and put that folder first. A shard finds the parent's folder
+# first on PATH, sees no shim and makes none. TOOLS_BYPASS_DIR names the folder for the caller's cleanup.
+TOOLS_BYPASS_DIR=
+bypass_tool_shims() {
+  local name found dir linked=() IFS=:
+  for name in python3 python node npm npx; do
+    found=$(command -v "$name" 2>/dev/null) || continue
+    [ "$(basename "$(dirname "$found")")" = shims ] || continue
+    for dir in $PATH; do
+      [ -n "$dir" ] && [ "$(basename "$dir")" != shims ] && [ -x "$dir/$name" ] && [ ! -d "$dir/$name" ] || continue
+      [ -n "$TOOLS_BYPASS_DIR" ] || TOOLS_BYPASS_DIR=$(mktemp -d "${TMPDIR:-/tmp}/jg-tools.$$.XXXXXX") || return 0
+      ln -s "$dir/$name" "$TOOLS_BYPASS_DIR/$name" && linked+=("$name")
+      break
+    done
+  done
+  [ "${#linked[@]}" -gt 0 ] || return 0
+  export PATH="$TOOLS_BYPASS_DIR:$PATH"
+  IFS=' '
+  log "tool shims bypassed: ${linked[*]}"
+}
 
 # The effective machine_runs_max (see bin/jg-test-host-lib.sh "Run slots").
 machine_runs_max() {
@@ -706,9 +733,7 @@ tests/jg-captain-hold-gate.test.sh 500
 tests/jg-done-yaml-dup-keys.test.sh 500
 tests/jg-fleet-compare.test.sh 15500
 tests/jg-fleet-digest.test.sh 7303
-tests/jg-lease-tick.test.sh 500
 tests/jg-recon-journey.test.sh 3500
-tests/jg-refusal-before-write.test.sh 500
 tests/jg-ticket-adapter.test.sh 500
 tests/jg-trunk-base-movement.test.sh 57544
 tests/jg-trunk-nothing-lands.test.sh 6000
@@ -1994,9 +2019,11 @@ if [ "${1:-}" = --required-shards ]; then
   mkdir -p "$required_dir" || die "cannot create required-set output directory"
   # The gate takes one machine run slot for all eight shards, and builds the Go cores once into the shared Go build
   # cache before they start (bin/jg-test-host-lib.sh); the shards inherit both and take no slot of their own.
-  jg_test_host_admit "$(machine_runs_max)"
-  trap jg_test_host_release EXIT
+  jg_test_host_admit "$(machine_runs_max)" "$TEST_MACHINE_RUNS_BURST"
+  bypass_tool_shims
+  trap '[ -z "$TOOLS_BYPASS_DIR" ] || rm -rf "$TOOLS_BYPASS_DIR"; jg_test_host_release' EXIT
   jg_test_host_pin_go_cache
+  jg_test_host_pin_mise_dirs
   jg_test_host_warm_go_cache "$ROOT"
   # The eight shards are disjoint, so they run side by side: each one in its own temp and tmux directory
   # (a short path under the disk scratch root, because a tmux socket path is length-limited), its output kept in its own file and
@@ -2342,6 +2369,7 @@ if [ "$SHOW_LIMITS" -eq 1 ]; then
   printf 'gate_wall_seconds=%s\n' "$TEST_SPEED_GATE_SECONDS"
   printf 'script_timeout_seconds=%s\n' "$TEST_SPEED_SCRIPT_TIMEOUT_SECONDS"
   printf 'machine_runs_max=%s\n' "$(machine_runs_max)"
+  printf 'machine_runs_burst=%s\n' "$TEST_MACHINE_RUNS_BURST"
   exit 0
 fi
 
@@ -2658,11 +2686,13 @@ if [ "$PER_SCRIPT_TIMEOUT_SECS" -gt 0 ] || [ "$CHANGED_CEILING" -eq 1 ]; then
 fi
 
 # A run that executes scripts holds a machine run slot until it exits, and every script it starts shares one Go
-# build cache (bin/jg-test-host-lib.sh). Time spent waiting for the slot is the machine's, so it is taken off the
+# build cache and the caller's mise state (bin/jg-test-host-lib.sh). Time spent waiting for the slot is the machine's, so it is taken off the
 # run's own wall clock.
-jg_test_host_admit "$(machine_runs_max)"
+jg_test_host_admit "$(machine_runs_max)" "$TEST_MACHINE_RUNS_BURST"
 RUN_STARTED_MS=$((RUN_STARTED_MS + JG_TEST_HOST_WAITED_MS))
 jg_test_host_pin_go_cache
+jg_test_host_pin_mise_dirs
+bypass_tool_shims
 
 RUN_TMP=$(mktemp -d "${TMPDIR:-/tmp}/jg-test-run.XXXXXX")
 RECORDS="$RUN_TMP/records.tsv"
@@ -2683,7 +2713,9 @@ declare -a WORKER_SCRIPTS=()
 # shellcheck disable=SC2329
 cleanup_run() {
   jg_test_procs_stop_marked "$$"
+  "$ROOT/bin/jg-test-ignored-reads.sh" stop "$RUN_TMP" >/dev/null 2>&1 || true
   rm -rf "$RUN_TMP"
+  [ -z "$TOOLS_BYPASS_DIR" ] || rm -rf "$TOOLS_BYPASS_DIR"
   jg_test_host_release
 }
 
@@ -2982,6 +3014,18 @@ wall_budget_spent() {  # <next-script> -> 0 when the run must stop here
   return 0
 }
 
+# A changed-files run is the proof a commit is sound, so it must fail when a test reads a file the commit does not hold.
+IGNORED_READS=0
+if [ "$MODE" = changed ] && [ "${#SCRIPTS[@]}" -gt 0 ]; then
+  if ignored_reads_line=$("$ROOT/bin/jg-test-ignored-reads.sh" start "$ROOT" "$RUN_TMP"); then
+    IGNORED_READS=1
+    log "ignored-file reads: $ignored_reads_line"
+  else
+    printf '%s\n' "$ignored_reads_line"
+    AGG_RC=1
+  fi
+fi
+
 if [ "$JOBS" -eq 1 ]; then
   for script in "${SCRIPTS[@]+"${SCRIPTS[@]}"}"; do
     wall_budget_spent "$script" && break
@@ -3124,6 +3168,10 @@ else
     wall_budget_spent "$script" && break
     run_one_serial "$script"
   done
+fi
+
+if [ "$IGNORED_READS" -eq 1 ] && ! "$ROOT/bin/jg-test-ignored-reads.sh" finish "$RUN_TMP"; then
+  AGG_RC=1
 fi
 
 RUN_FINISHED_ISO=$(now_iso)

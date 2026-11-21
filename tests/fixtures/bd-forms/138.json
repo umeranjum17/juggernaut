@@ -1,0 +1,17 @@
+{
+ "argv": [
+  "update",
+  "pf-failed",
+  "--if-status",
+  "open",
+  "--status",
+  "in_progress",
+  "--metadata",
+  "{\"delivery_state\": \"delivery-posting\", \"delivery\": {\"attempt_count\": 1, \"payload_digest\": \"15685e37442cd0e99b4d6718d423d55a5ba65e09fb9b12ab31cf23fc7655fd0f\", \"last_error_code\": null, \"next_attempt_at\": null, \"receipt\": null, \"last_error\": null, \"waiver\": null}, \"revision\": 4}"
+ ],
+ "stdin": "",
+ "stdout": "\u2713 Updated issue: pf-failed \u2014 fix worker placement when two spaces share a name\n",
+ "exit": 0,
+ "form": "update --if-status --metadata --status",
+ "store": "{\"_type\":\"issue\",\"id\":\"pf-failed\",\"title\":\"fix worker placement when two spaces share a name\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T14:52:41Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T14:52:48Z\",\"metadata\":{\"kind\":\"public-followup\",\"added_ns\":1795099960476710400,\"followup\":{\"purpose\":\"promised-final\",\"request\":{\"platform\":\"discord\",\"request_id\":\"req-failed\",\"received_at\":\"2026-07-30T10:00:00Z\",\"context_binding\":{\"value\":\"ctx1_req-failed\",\"version\":\"ctx1\"},\"followup_expires_at\":\"2026-08-06T10:00:00Z\",\"public_safe_summary\":\"fix worker placement when two spaces share a name\",\"reservation_expires_at\":\"2026-08-06T10:00:00Z\"},\"delivery_key\":\"fd1_EZXofc0HrneusJbJ4DM51yCKHKViT3_K\",\"expected_final\":{\"type\":\"pr-merged\",\"project\":\"juggernaut\",\"completion_policy\":\"all-required\",\"required_deliverables\":[\"pr_url\"]},\"obligation_expires_at\":\"2026-10-01T00:00:00Z\"},\"revision\":3,\"relations\":[{\"role\":\"fulfills\",\"state\":\"failed\",\"required\":true,\"work_ref\":{\"home_id\":\"main\",\"task_id\":\"work-failed\"},\"generation\":1,\"relation_id\":\"rel-code\",\"successor_relation_id\":null}],\"delivery_state\":\"ready\"},\"labels\":[\"public-followup\"],\"comments\":[{\"id\":\"e767730a-a851-5bcc-b3dd-dfc9de93dc00\",\"issue_id\":\"pf-failed\",\"author\":\"main\",\"text\":\"{\\\"followup\\\": \\\"work-event\\\", \\\"deliverables\\\": {\\\"error_code\\\": \\\"quota-exhausted\\\"}, \\\"event_id\\\": \\\"85ae5796a98a9afcd2c37afec0e8e6d5729e5574ffaf9f119c361d7a5d73ad8d\\\", \\\"generation\\\": 1, \\\"obligation_id\\\": \\\"pf-failed\\\", \\\"occurred_at\\\": \\\"2026-11-19T14:52:46Z\\\", \\\"outcome_type\\\": \\\"failed\\\", \\\"public_safe_outcome\\\": \\\"This one did not pan out: the worker ran out of quota before it could open a fix.\\\", \\\"relation_id\\\": \\\"rel-code\\\", \\\"schema_version\\\": 1, \\\"source_home_id\\\": \\\"main\\\", \\\"work_id\\\": \\\"work-failed\\\", \\\"successor\\\": null}\",\"created_at\":\"2026-11-19T14:52:47Z\"}],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":1}\n"
+}

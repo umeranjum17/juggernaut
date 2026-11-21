@@ -190,36 +190,17 @@ if [ "$FF_STATUS" = "updated" ]; then
   JG_HOME="$JG_HOME" JG_ROOT_OVERRIDE="$JG_ROOT" "$SCRIPT_DIR/jg-procevent-when.sh" rebind-all || true
 fi
 
-# The bus is a SERVICE, not a process someone remembers to start: a release that lands
-# the bus code on a home - or lands on a home that never had it - otherwise goes live
-# with no message server, and every steer and lead restart is refused until somebody
-# starts one by hand, which a reboot then takes away again. So every pass asks the
-# updated home's own command to install or start it, and prints its one line. Best
-# effort: a home whose bus cannot start still finishes its update.
-ensure_bus_service() {  # <home>
-  local home=$1 out
-  [ -f "$home/bin/jg-bus.sh" ] || return 0
-  if out=$(JG_HOME="$home" JG_ROOT_OVERRIDE="$home" "$home/bin/jg-bus.sh" install-service 2>&1); then
-    [ -z "$out" ] || printf '%s\n' "$out"
-  else
-    echo "bus: could not start in $home: ${out:-unknown error}"
-  fi
-}
-
 # (--base mode moves code only: the services below stay with a release; host wiring runs per moved home in move_home.)
 if [ -z "$BASE" ]; then
 # The services come with the release: run the updated checkout's own install command so a
 # release never lands on a machine without them. A failure is reported, never fatal to the update.
 # A Squad Lead home runs none of the machine's services (Main owns them, bin/jg-unit-claim.sh
-# owns why), so it only registers its own bus account below.
+# owns why).
 if [ "${JG_STACK_SKIP:-0}" != 1 ] && [ -x "$JG_ROOT/bin/jg-stack.sh" ] \
   && [ ! -e "$JG_HOME/.jg-squad-lead-home" ] && [ ! -L "$JG_HOME/.jg-squad-lead-home" ]; then
   JG_HOME="$JG_HOME" "$JG_ROOT/bin/jg-stack.sh" up || echo "stack: not whole after the update (see the STACK_FAILED line above)" >&2
   # Prove it after the release: one line per service, and the verdict a live claim reads.
   [ ! -x "$JG_ROOT/bin/jg-live-services.sh" ] || JG_HOME="$JG_HOME" "$JG_ROOT/bin/jg-live-services.sh" || true
-else
-  # No stack run (JG_STACK_SKIP or an older checkout): the bus alone still comes up.
-  ensure_bus_service "$JG_ROOT"
 fi
 
 # The host wiring comes with the release too: every fleet check a core feature installs outside the
@@ -305,7 +286,7 @@ DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
 FLEET_RC=0 FLEET_VERDICT=""
 
 # The home's own wiring (bin/jg-host-wiring.sh --changed from the code the home now holds) re-runs every step whose
-# sources changed since that home last wired, so an installed sync.py equals the home's core/ after a live move and a
+# sources changed since that home last wired, so a home's tickets-sync checks run its own core/ after a live move and a
 # move that changed no wired source runs nothing. Run after the move and its health check; a failure never blocks the
 # move or the rollout and sets WIRE_FAILED to the failed steps for the row. JG_HOST_WIRING_SKIP=1 turns it off for a fixture.
 wire_home() {  # <dir> <label>

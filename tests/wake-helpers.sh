@@ -105,6 +105,14 @@ fi
 exit 1
 SH
   chmod +x "$fakebin/tmux"
+  # The board-answers tick walks every answer on the machine's one shared board; with no stub it reads the
+  # operator's real board and routes hundreds of cards through each watcher cycle, which outlasts a test's bound.
+  cat > "$fakebin/sign-off-axi" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" = answers ] && echo "{}"
+exit 0
+SH
+  chmod +x "$fakebin/sign-off-axi"
   make_fake_crew_state "$fakebin" >/dev/null
   printf '%s\n' "$dir"
 }

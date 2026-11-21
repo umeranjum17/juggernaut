@@ -5,11 +5,13 @@
 # For each project in <home>/data/projects.md whose clone has a github.com origin, and whose repository THIS home answers
 # for (bin/jg-pr-owner.sh mine: Main's data/pr-owners.tsv, a repository with no line belongs to Main), this lists the open
 # pull requests. A pull request at least JG_PR_PAGER_FIRST_MIN (15) minutes old gets a page, then one more every
-# `pr-page-minutes` (trunk policy, 60) while it stays open. A page is one printed line, which the watcher turns into a check wake in
+# `pr-page-minutes` (trunk policy, 60) reads its next step while it stays open. A page is one printed line, which the watcher turns into a check wake in
 # this home's queue: the address, the age and commit count, the next step read from bin/jg-pr-state.sh (the red check by name,
 # "green: merge it", "conflict: rebase", "draft: mark ready", "no checks: push"), and the page number.
-# After 6 pages in a row with the same next step a lead home also appends one `note` line to its parent channel, so
-# Main hears of a pull request its lead has not moved. A page never calls bin/jg-captain-say.sh: the owner is not paged.
+# A page is printed when the pull request is first due, when its next step differs from the last page's, and then only as
+# a reminder every JG_PR_PAGER_REMIND_MIN (360) minutes while the step stays the same, so an unchanged pull request does not
+# wake the lead on every read. After 6 reads in a row with the same next step a lead home also appends one `note` line to its
+# parent channel, so Main hears of a pull request its lead has not moved. A page never calls bin/jg-captain-say.sh: the owner is not paged.
 # A local-trunk project whose release is due (release-after-commits unreleased commits, or the oldest one past release-after-hours: the rule of `jg-trunk.sh due` plus the count) and which has no
 # open pull request from its trunk branch is paged the same way, as the episode `release`.
 # A pull request with a live shepherd lane (a task record with `shepherd_of=<its address>` whose newest status line is not
@@ -17,7 +19,8 @@
 # lane that answers for the merge hears it with no lead turn; when the send fails the page goes to the lead as before.
 # Only a pull request this home owns is paged: its address is the pr= value of a task record in <home>/state, or its author is this
 # home's gh login (the rule of core/merge-on-green/stale-pr-alarm.sh). Every other open pull request is skipped: no page, no episode.
-# Each pull request keeps one episode, state/.pr-pager/<owner__repo>/<number|release>: `since pages same last mainpaged step`.
+# Each pull request keeps one episode, state/.pr-pager/<owner__repo>/<number|release>: `since pages same last mainpaged emitted step`
+# (`last` is the last read, `emitted` the last page printed, `same` the reads in a row with the same step).
 # It ends, with no further page, when the pull request is no longer in the open list. A forge failure keeps the
 # episodes and is retried next sweep. JG_PR_PAGER_GH names the gh-axi binary and JG_PR_PAGER_STATE the pr-state command, JG_PR_PAGER_SEND the steer command (tests use stubs).
 set -u
@@ -37,6 +40,7 @@ FIRST=$(( ${JG_PR_PAGER_FIRST_MIN:-15} * 60 ))
 # shellcheck source=bin/jg-trunk-policy-lib.sh
 . "$FMH/bin/jg-trunk-policy-lib.sh"
 PAGE=$(( $(jg_trunk_policy pr-page-minutes) * 60 ))
+REMIND=$(( ${JG_PR_PAGER_REMIND_MIN:-360} * 60 ))
 AFTER_COMMITS=$(jg_trunk_policy release-after-commits)
 AFTER_SECS=$(( $(jg_trunk_policy release-after-hours) * 3600 ))
 ME=$(cat "$FMH/.jg-squad-lead-home" 2>/dev/null || true)
@@ -80,25 +84,29 @@ deliver() {
   printf '%s\n' "$2"
 }
 
-# page <dir> <id> <label> <step> <detail>: one episode, and one page when the first is due or `pr-page-minutes` passed since the last.
+# page <dir> <id> <label> <step> <detail>: one episode, read every `pr-page-minutes`; a page is printed on the first read, when the
+# step changed since the last page, and otherwise only after `JG_PR_PAGER_REMIND_MIN` since the last page.
 age() { if [ "$1" -lt 7200 ]; then echo "$(( $1 / 60 )) min"; else echo "$(( $1 / 3600 ))h"; fi; }
 page() {
-  local f=$1/$2 since=$NOW pages=0 same=0 last=0 mp=0 old='' n
-  if [ -f "$f" ]; then IFS=$'\t' read -r since pages same last mp old < "$f" || :; fi
-  case "$since$pages$same$last$mp" in *[!0-9]*|'') since=$NOW pages=0 same=0 last=0 mp=0 old='' ;; esac
+  local f=$1/$2 since=$NOW pages=0 same=0 last=0 mp=0 emitted=0 old='' n
+  if [ -f "$f" ]; then IFS=$'\t' read -r since pages same last mp emitted old < "$f" || :; fi
+  case "$since$pages$same$last$mp$emitted" in *[!0-9]*|'') since=$NOW pages=0 same=0 last=0 mp=0 emitted=0 old='' ;; esac
   [ "$pages" -eq 0 ] || [ "$(( NOW - last ))" -ge "$PAGE" ] || return 0
   n=$(( pages + 1 ))
   if [ "$old" = "$4" ]; then same=$(( same + 1 )); else same=1 mp=0; fi
-  deliver "${3%% *}" "$(printf 'pr-pager: %s%s: %s; page %s' "$3" "$5" "$4" "$n")"
-  if [ "$same" -ge 6 ] && [ "$mp" -eq 0 ] && [ -n "$ME" ] && report_main "$3: $4 (page $n)"; then mp=1; fi
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$since" "$n" "$same" "$NOW" "$mp" "$4" > "$f.tmp" && mv -f "$f.tmp" "$f"
+  if [ "$pages" -eq 0 ] || [ "$old" != "$4" ] || [ "$(( NOW - emitted ))" -ge "$REMIND" ]; then
+    deliver "${3%% *}" "$(printf 'pr-pager: %s%s: %s; page %s' "$3" "$5" "$4" "$n")"
+    pages=$n emitted=$NOW
+  fi
+  if [ "$same" -ge 6 ] && [ "$mp" -eq 0 ] && [ -n "$ME" ] && report_main "$3: $4 (unchanged for $same reads)"; then mp=1; fi
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$since" "$pages" "$same" "$NOW" "$mp" "$emitted" "$4" > "$f.tmp" && mv -f "$f.tmp" "$f"
 }
 
 report_main() {  # <what>: one line on the parent channel, from the lead home only
   # shellcheck disable=SC2034 # JG_HOME is read by the sourced parent-channel library
   ( JG_HOME=$FMH
     # shellcheck source=bin/jg-parent-channel-lib.sh
-    . "$FMH/bin/jg-parent-channel-lib.sh" && jg_parent_channel_report "$FMH" "$STATE" "note: pr-pager: $1; paged 6 times with no change; the lead has not moved it, so settle or reassign it" ) >/dev/null 2>&1
+    . "$FMH/bin/jg-parent-channel-lib.sh" && jg_parent_channel_report "$FMH" "$STATE" "note: pr-pager: $1; no change in 6 reads; the lead has not moved it, so settle or reassign it" ) >/dev/null 2>&1
 }
 
 repos=$(sed -n 's/^- \(.*\)$/\1/p' "$FMH/data/projects.md" 2>/dev/null | while IFS= read -r line; do

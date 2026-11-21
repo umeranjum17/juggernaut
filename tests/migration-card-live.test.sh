@@ -1,59 +1,37 @@
 #!/usr/bin/env bash
-# The migration card's live parts are measured, never remembered: a real bus on a
-# free port is found with its pid and one real message, a fresh server says plainly
-# that it carries no wake stream yet and then carries one, the parts this machine
-# does not have say so instead of staying blank, and the watcher's cadence pass
-# keeps the card current without printing a line, so no wake and no model turn is
-# spent on it. Gate-skips when the bus server or client is missing.
+# The migration card's live parts are measured, never remembered: the wake queue, the task
+# inboxes and the leases read this home's local files, the parts this machine does not have say
+# so instead of staying blank, and the watcher's cadence pass keeps the card current without
+# printing a line, so no wake and no model turn is spent on it.
 set -u
 # shellcheck source=tests/lib.sh
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
-NATS_SERVER=${JG_NATS_SERVER:-$(command -v nats-server 2>/dev/null || true)}
-NATS_BIN=${JG_NATS_BIN:-$(command -v nats 2>/dev/null || true)}
-[ -n "$NATS_SERVER" ] || { echo "skip: nats-server not found (set JG_NATS_SERVER)"; exit 0; }
-[ -n "$NATS_BIN" ] || { echo "skip: nats client not found (set JG_NATS_BIN)"; exit 0; }
 
 T=$(jg_test_tmproot migration-card-live)
 HOME_DIR=$T/home
 DIR=$HOME_DIR/data/migration-card
 BOARD=$T/board/board.json
 ROWS=$DIR/live.tsv
-SERVER_PID=
-LOG=$T/bus.log
 MIGRATION_ORIGINAL_PATH=$PATH
 # shellcheck disable=SC2329 # Registered by the EXIT trap below.
 cleanup() {
-  local pid
-  for pid in "$SERVER_PID" "${ACC_PID:-}" "${BOT_PID:-}"; do
-    [ -z "$pid" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }
-  done
+  local pid=${BOT_PID:-}
+  [ -z "$pid" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }
   PATH=$MIGRATION_ORIGINAL_PATH jg_test_cleanup
 }
 trap cleanup EXIT
 
-mkdir -p "$HOME_DIR/config" "$HOME_DIR/state" "$T/bin" "$T/board" "$T/store"
-"$NATS_SERVER" -js -a 127.0.0.1 -p -1 -sd "$T/store" >"$LOG" 2>&1 &
-SERVER_PID=$!
-PORT=
-for _ in $(seq 1 200); do
-  PORT=$(sed -n 's/.*Listening for client connections on 127\.0\.0\.1:\([0-9][0-9]*\).*/\1/p' "$LOG" 2>/dev/null | head -n 1)
-  [ -z "$PORT" ] || break
-  sleep 0.05
-done
-[ -n "$PORT" ] || fail "the test bus did not start"
-URL=nats://127.0.0.1:$PORT
-
+mkdir -p "$HOME_DIR/config" "$HOME_DIR/state" "$T/bin" "$T/board"
 MIGRATION_BASE=$(jg_test_base_path_sans "${JG_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}" juggernaut-axi)
-export JG_NATS_SERVER=$NATS_SERVER JG_NATS_BIN=$NATS_BIN
 export JG_HOME=$HOME_DIR PATH=$T/bin:$MIGRATION_BASE FAKE_LOG=$T/calls.log
-printf 'set nats-url %s\n' "$URL" >"$HOME_DIR/config/captain-channel"
+: >"$HOME_DIR/config/captain-channel"
 printf '{"schema":2,"items":[]}\n' >"$BOARD"
 printf 'branch=release/c-2\ntarget=100000\nboard=%s\ncard=migration-card\nbaseline-deleted=0\nbaseline-added=0\nfiler=test\nproject=Test\n' \
   "$BOARD" >"$HOME_DIR/config/migration-card"
 # The open pull request list: number, url, title, the way the probe's own gh read prints it.
-printf '%s\t%s\t%s\n' 7 https://example.test/o/r/pull/7 'Give every home its own account on the bus' \
+printf '%s\t%s\t%s\n' 7 https://example.test/o/r/pull/7 'Move the task inbox to local folders' \
   8 https://example.test/o/r/pull/8 'juggernaut-axi: lanes and wakes' >"$T/open-prs.tsv"
 cat >"$T/bin/gh" <<'F'
 #!/usr/bin/env bash
@@ -73,9 +51,9 @@ card_page() { find "$T/board/reports" -mindepth 1 -maxdepth 1 -type d 2>/dev/nul
 card_count() { find "$T/board/reports" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l; }
 
 "$ROOT/bin/jg-migration-live.sh" --quiet >/dev/null || fail "the probe did not run"
-assert_equals 19 "$(wc -l <"$ROWS")" "every part the captain named has a row"
-for part in 'NATS server' 'per-home accounts' 'wake queue' 'task inbox' leases \
-  Dapr 'Go daemons' 'merge gate' 'escalation ladder' 'five-minute merge' deletions 'rules JSON' \
+assert_equals 16 "$(wc -l <"$ROWS")" "every part the captain named has a row"
+for part in 'wake queue' 'task inbox' leases \
+  'Go daemons' 'merge gate' 'escalation ladder' 'five-minute merge' deletions 'rules JSON' \
   'juggernaut-axi' 'add-on removal' 'Rego policy' 'pending-replies cleanup' 'lead-wake cleanup' \
   'line counts from git' 'captain chat (Telegram)'; do
   case $(awk -F'\t' -v p="$part" '$1 == p { print $2 }' "$ROWS") in
@@ -84,11 +62,9 @@ for part in 'NATS server' 'per-home accounts' 'wake queue' 'task inbox' leases \
   esac
 done
 
-assert_contains "$(row 'NATS server')" "live|" "a server that answers is live"
-assert_contains "$(row 'NATS server')" "pid " "the live server is named by pid"
-assert_contains "$(row 'NATS server')" "a real message went out and came back" "the bus carried a real message"
-assert_contains "$(row 'per-home accounts')" "pending|the server runs without accounts" "a server started without accounts is pending, and says why"
-assert_contains "$(row 'wake queue')" "pending|the server carries no JG_WAKE stream" "a path with no stream on the server is pending"
+assert_contains "$(row 'wake queue')" "pending|no state/.wake-queue file" "a home with no wake queue file is pending, and says why"
+assert_contains "$(row 'task inbox')" "pending|no task inbox folder" "a home with no task inbox folder is pending, and says why"
+assert_contains "$(row 'leases')" "live|the store state/kv.db answers" "the lease store answers"
 
 # The chat row: a home with no bot token is off and the probe starts nothing; with one, the row is
 # whatever `jg-bus gateway status --row` measured, and a command that fails is pending, never live.
@@ -110,32 +86,20 @@ CHAT_STUB=fail JG_BUS_CMD=$T/chat-stub.sh "$ROOT/bin/jg-migration-live.sh" --qui
 assert_equals "pending|the gateway status could not be read" "$(row "$CHAT")" "a gateway that cannot answer is pending, never live"
 rm -f "$HOME_DIR/config/captain-chat/telegram.token"
 
-"$NATS_BIN" -s "$URL" stream add JG_WAKE --subjects 'jg.wake.>' --storage file --defaults >/dev/null 2>&1 ||
-  fail "the test could not create the wake stream"
-"$NATS_BIN" -s "$URL" stream add JG_INBOX --subjects 'jg.inbox.>' --storage file --defaults >/dev/null 2>&1 ||
-  fail "the test could not create the inbox stream"
+printf 'one\ntwo\n' >"$HOME_DIR/state/.wake-queue"
 "$ROOT/bin/jg-migration-live.sh" --quiet >/dev/null || fail "the second probe did not run"
-assert_contains "$(row 'wake queue')" "live|the bus is the store, 0 records on JG_WAKE" "a wake stream on the server makes the queue live"
-# A cursor left past the stream's end by a stream the server remade reads nothing new.
-printf 'JG_WAKE\t999\n' >"$HOME_DIR/state/.wake-bus.cursor"
-"$ROOT/bin/jg-migration-live.sh" --quiet >/dev/null || fail "the stale-cursor probe did not run"
-assert_contains "$(row 'wake queue')" "pending|the renderer reads JG_WAKE from sequence 999 and the stream ends at 0" \
-  "a cursor past the stream's end is pending, never live"
-rm -f "$HOME_DIR/state/.wake-bus.cursor"
-"$ROOT/bin/jg-migration-live.sh" --quiet >/dev/null || fail "the probe after the cursor did not run"
+assert_contains "$(row 'wake queue')" "live|the wake queue is the local file state/.wake-queue, 2 rows" "a wake queue file makes the queue live and counts its rows"
 
-assert_contains "$(awk -F'\t' '$1 == "per-home accounts" { print $4 }' "$ROWS")" "https://example.test/o/r/pull/7" \
+assert_contains "$(awk -F'\t' '$1 == "task inbox" { print $4 }' "$ROWS")" "https://example.test/o/r/pull/7" \
   "a pending part names its open pull request"
 assert_contains "$(awk -F'\t' '$1 == "juggernaut-axi" { print $4 }' "$ROWS")" "https://example.test/o/r/pull/8" \
   "a part not installed names its open pull request"
 assert_equals "-" "$(awk -F'\t' '$1 == "wake queue" { print $4 }' "$ROWS")" "a running part names no pull request"
 assert_contains "$(awk -F'\t' '$1 == "Go daemons" { print $4 }' "$ROWS")" "no open pull request" \
   "a pending part with no open pull request says so"
-assert_contains "$(row 'NATS server')" "messages held in" "the bus part carries its traffic count"
-assert_contains "$(row 'wake queue')" " records on JG_WAKE" "the wake queue part carries its record count"
 printf '#!/usr/bin/env bash\nexit 1\n' >"$T/bin/gh"
 "$ROOT/bin/jg-migration-live.sh" --quiet >/dev/null || fail "the probe without gh did not run"
-assert_contains "$(awk -F'\t' '$1 == "per-home accounts" { print $4 }' "$ROWS")" "https://example.test/o/r/pull/7" \
+assert_contains "$(awk -F'\t' '$1 == "task inbox" { print $4 }' "$ROWS")" "https://example.test/o/r/pull/7" \
   "a failed pull request read keeps the last list instead of blanking every link"
 
 key=$("$ROOT/bin/jg-migration-card.sh" live)
@@ -143,7 +107,7 @@ page=$(card_page)
 [ -n "$page" ] || fail "the card was not posted"
 assert_contains "$key" "migration-card-" "live posts a card and names its key"
 assert_contains "$(cat "$page/index.html")" "<h2>What runs on this machine</h2>" "the card carries the live section"
-assert_contains "$(cat "$page/index.html")" "<td>NATS server</td><td>runs here</td>" "the card says a running part runs here"
+assert_contains "$(cat "$page/index.html")" "<td>wake queue</td><td>runs here</td>" "the card says a running part runs here"
 assert_contains "$(cat "$page/index.html")" "<td>juggernaut-axi</td><td>not installed</td>" "a part this machine lacks says it is not installed"
 assert_contains "$(cat "$page/index.html")" "Each line is a probe of this machine" "the card says where the lines come from"
 assert_contains "$(cat "$page/index.html")" "<meta name=viewport" "the page keeps its viewport tag"
@@ -186,47 +150,18 @@ assert_contains "$(cat "$(card_page)/index.html")" "config/crew-dispatch.json pa
 "$ROOT/bin/jg-migration-card.sh" disarm >/dev/null || fail "disarm failed"
 [ ! -e "$HOME_DIR/state/migration-card.check.sh" ] || fail "disarm left the check shim"
 
-# The machine's server runs one account per home and refuses the empty user. A probe that
-# connected without this home's login measured that refusal as a dead bus, and one that
-# missed the bare relative include saw no accounts. The accounts come from the Go bus command.
-if [ -n "${JG_BUS_BIN:-}" ] || command -v "${JG_BUS_GO:-go}" >/dev/null 2>&1; then
-  ACC=$T/acc; BUSD=$ACC/state/bus
-  mkdir -p "$BUSD" "$ACC/config" "$ACC/data" "$T/acc-store"
-  JG_HOME=$ACC JG_STATE_OVERRIDE=$ACC/state JG_DATA_OVERRIDE=$ACC/data timeout 240 bash "$ROOT/bin/jg-bus.sh" accounts \
-    >"$BUSD/accounts.conf" 2>"$T/acc.err" || fail "the bus command did not write the accounts: $(cat "$T/acc.err")"
-  printf 'host: 127.0.0.1\nport: -1\njetstream { store_dir: "%s" }\ninclude accounts.conf\n' "$T/acc-store" >"$BUSD/bus.conf"
-  "$NATS_SERVER" -c "$BUSD/bus.conf" >"$T/acc.log" 2>&1 &
-  ACC_PID=$!
-  APORT=
-  for _ in $(seq 1 200); do
-    APORT=$(sed -n 's/.*Listening for client connections on 127\.0\.0\.1:\([0-9][0-9]*\).*/\1/p' "$T/acc.log" 2>/dev/null | head -n 1)
-    [ -z "$APORT" ] || break
-    sleep 0.05
-  done
-  [ -n "$APORT" ] || fail "the accounts bus did not start: $(cat "$T/acc.log")"
-  printf 'set nats-url nats://127.0.0.1:%s\n' "$APORT" >"$ACC/config/captain-channel"
-  ROWS=$T/acc-data/migration-card/live.tsv
-  # Run from a narrow pane, whose COLUMNS once cut the server's config path short in ps and hid its accounts.
-  COLUMNS=40 JG_HOME=$ACC JG_DATA_OVERRIDE=$T/acc-data "$ROOT/bin/jg-migration-live.sh" --quiet >/dev/null || fail "the accounts probe did not run"
-  assert_contains "$(row 'NATS server')" "live|pid $ACC_PID, port $APORT, a real message went out and came back" \
-    "a server that refuses the empty user is live to this home's login"
-  assert_contains "$(row 'per-home accounts')" "live|the server loads 1 home accounts; this home logs in as home-" \
-    "a bare relative include is read, and the server holds this home's account"
-else
-  echo "skip: the accounts probe needs the Go toolchain or JG_BUS_BIN"
-fi
 # The push: a row change reaches the captain's chat at once, a quiet day says so after
 # push-hours, and a chat that refuses the message never costs the board its card.
 # A stub probe prints fixed rows and a stub bus records its calls, so each pass is deterministic.
 P=$T/push; PLOG=$T/push-calls.log; PUB=$T/published.log
 mkdir -p "$P/config" "$P/state" "$P/data/migration-card" "$T/board2"
 printf '{"schema":2,"items":[]}\n' >"$T/board2/board.json"
-printf 'branch=release/c-2\ntarget=100000\nboard=%s/board2/board.json\ncard=push-card\nfiler=test\nproject=Test\ncritical=nats,accounts\n' "$T" >"$P/config/migration-card"
+printf 'branch=release/c-2\ntarget=100000\nboard=%s/board2/board.json\ncard=push-card\nfiler=test\nproject=Test\ncritical=queue,accounts\n' "$T" >"$P/config/migration-card"
 cat >"$T/probe-stub.sh" <<'F'
 #!/usr/bin/env bash
 case ${1-} in
   --quiet) cp "$STUB_ROWS" "$JG_HOME/data/migration-card/live.tsv" ;;
-  nats) grep '^NATS server' "$STUB_ROWS" ;;
+  queue) grep '^Queue server' "$STUB_ROWS" ;;
   accounts) grep '^per-home accounts' "$STUB_ROWS" ;;
 esac
 F
@@ -239,7 +174,7 @@ F
 chmod +x "$T/probe-stub.sh" "$T/bus-stub.sh"
 export STUB_ROWS=$T/stub-rows.tsv PUBLISHED=$PUB
 set_rows() {  # <accounts-state>
-  printf 'NATS server\tlive\tpid 1\t-\nper-home accounts\t%s\tthe server runs without accounts\thttps://example.test/o/r/pull/9\nwake queue\tpending\tno stream\t-\n' \
+  printf 'Queue server\tlive\tpid 1\t-\nper-home accounts\t%s\tthe server runs without accounts\thttps://example.test/o/r/pull/9\nwake queue\tpending\tno stream\t-\n' \
     "$1" >"$STUB_ROWS"
 }
 push_pass() { JG_HOME=$P FAKE_LOG=$PLOG JG_MIGRATION_LIVE_BIN=$T/probe-stub.sh JG_BUS_CMD=$T/bus-stub.sh JG_MIGRATION_CARD_NOW=$1 "$ROOT/bin/jg-migration-card.sh" live --quiet; }
@@ -252,7 +187,7 @@ out=$(push_pass "$T0" 2>&1)
 assert_equals "" "$out" "a push pass prints nothing"
 assert_equals 1 "$(posts)" "a row change posts one card"
 assert_equals 1 "$(published)" "a row change sends one chat message"
-assert_contains "$(cat "$PUB")" "NATS server: live" "the digest names the first critical row"
+assert_contains "$(cat "$PUB")" "Queue server: live" "the digest names the first critical row"
 assert_contains "$(cat "$PUB")" "per-home accounts: pending - the server runs without accounts https://example.test/o/r/pull/9" "a pending critical row carries its detail and pull request"
 assert_contains "$(cat "$PUB")" "Other rows: 0 of 1 live." "the digest counts the rows that are not critical"
 push_pass "$((T0 + 3600))"

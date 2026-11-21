@@ -61,3 +61,34 @@ assert_contains "$out" "deferred:" "capacity deferral missing"
 row=$(jg_test_backlog "$HOME_DIR" show "$id" 2>&1)
 assert_contains "$row" "state: queued" "capacity-deferred ship left the queue"
 echo "ok - capacity deferred the third ship with exit 75"
+
+# A parked or finished lane frees its place at once; a spawn takes it, and the next spawn defers again.
+printf 'parked [at=%s]: waiting on a date (resume-on: 2099-01-01)\n' "$(date +%s)" >> "$HOME_DIR/state/jg-sf1.status"
+lane 'Change bin/jg-other.sh after the first lane parked.'
+expect_code 0 "$rc" "a parked lane should free its place for the deferred ship: $out"
+[ -e "$HOME_DIR/state/$id.meta" ] || fail "the ship that took the parked lane's place wrote no task record"
+echo "ok - a parked lane freed its place and the next spawn took it"
+
+lane 'Change bin/jg-other.sh while the place is taken.'
+expect_code 75 "$rc" "the place the spawn took should be held again: $out"
+assert_contains "$out" "2 already hold a place" "the deferral should count two live holders, not the parked lane"
+echo "ok - the spawn consumed the freed place: the next ship deferred with two live holders"
+
+printf 'done [at=%s]: ready in branch fixed (local-trunk)\n' "$(date +%s)" >> "$HOME_DIR/state/jg-sf2.status"
+lane 'Change bin/jg-other.sh after the second lane finished.'
+expect_code 0 "$rc" "a finished lane should free its place: $out"
+echo "ok - a done lane freed its place"
+
+printf 'working [at=%s]: steered back into work\n' "$(date +%s)" >> "$HOME_DIR/state/jg-sf2.status"
+lane 'Change bin/jg-other.sh after the second lane resumed.'
+expect_code 75 "$rc" "a lane steered back into work should hold its place again: $out"
+echo "ok - a lane steered back into work held its place again"
+
+# A record that never wrote a status event frees its place once it is an hour old; a fresh one still holds it.
+cp "$HOME_DIR/state/jg-sf1.meta" "$HOME_DIR/state/jg-sfempty-old.meta"; touch -d '2 hours ago' "$HOME_DIR/state/jg-sfempty-old.meta"
+cp "$HOME_DIR/state/jg-sf1.meta" "$HOME_DIR/state/jg-sfempty-new.meta"
+lane 'Change bin/jg-other.sh with empty records about.'
+expect_code 75 "$rc" "the project should still be full: $out"
+assert_contains "$out" "jg-sfempty-new" "a fresh record with no status event should hold its place"
+case $out in *jg-sfempty-old*) fail "a record with no status event for two hours held a place: $out" ;; esac
+echo "ok - an hour-old record with no status event freed its place; a fresh one held it"

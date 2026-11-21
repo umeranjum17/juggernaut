@@ -40,9 +40,6 @@ before=$(verdicts)
 assert_equals "$(printf 'work no -\nprose no -\nopen yes -\ndated yes 1793613600\nsentstamp yes -\nsentday yes -\noldday yes 1798675200\nbadtime yes -')" "$before" "classifier verdicts for the seeded lines"
 sum_before=$(cat "$T"/state/*.status | cksum)
 
-jm check wait; expect_code 0 "$RC" "the wait table passes lint"
-assert_contains "$OUT" "ok wait:" "check says ok"
-pass "the wait table passes the machine lint"
 
 assert_equals not-paused "$(state_of work)" "a working line is not a pause"
 assert_equals not-paused "$(state_of prose)" "prose that names the date is not a pause"

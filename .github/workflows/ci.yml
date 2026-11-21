@@ -114,6 +114,11 @@ jobs:
           PATH="$RUNNER_TEMP/bin:$PATH" bin/jg-lint-workflows.sh
       - name: Prove complete regression partition
         run: bin/jg-test-run.sh --check-coverage
+      - name: Role packs and root AGENTS.md stay within budget and match the generator
+        run: |
+          set -eu
+          bash tests/role-pack-budget.test.sh
+          bash tests/agents-md-budget.test.sh
       - name: Compatibility pointers must stay intact
         run: |
           set -eu
@@ -274,13 +279,13 @@ jobs:
       # The release train's replay of a design lane, a multi-PR lane and a signature
       # lookup through the merge path, time-boxed (bin/jg-release-smoke.sh). The merge path checks the
       # completion receipt through the guard host, which asks OPA, so the replay installs the pinned one.
-      - name: Install the pinned bd, dolt and OPA
+      - name: Install the pinned OPA
         if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/') }}
         run: |
           set -eu
           export NPM_CONFIG_PREFIX=$HOME/.local
           mkdir -p "$NPM_CONFIG_PREFIX/bin"
-          bin/jg-bootstrap.sh install bd dolt opa
+          bin/jg-bootstrap.sh install opa
           echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
       - name: Replay the release lanes
         if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/') }}
@@ -300,22 +305,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
-      # The ticket eval keeps its ticket in a throwaway Beads store, which needs the pinned bd and dolt.
-      - name: Install the pinned bd and dolt
-        run: |
-          set -eu
-          export NPM_CONFIG_PREFIX=$HOME/.local
-          mkdir -p "$NPM_CONFIG_PREFIX/bin"
-          bin/jg-bootstrap.sh install bd dolt
-          echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
       - name: Run the fast evals
         run: bin/jg-ci-area-reads.sh --check evals -- bin/jg-fast-evals.sh
 
-  # The bus lane: the pinned JetStream server and client install through this
-  # repository's own install path, and the test that proves a home comes up with
-  # JetStream running then runs for real instead of gate-skipping. It is the lane
-  # that stops every live path in the migration from depending on a server no
-  # install provides (docs/bus-service.md).
+  # The captain channel lane: the Go command builds and the chat runs direct, with no bus.
   bus:
     name: Bus service
     runs-on: ubuntu-latest
@@ -327,14 +320,6 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
-      - name: Install the pinned bus server and client
-        run: |
-          set -eu
-          export NPM_CONFIG_PREFIX=$HOME/.local
-          mkdir -p "$NPM_CONFIG_PREFIX/bin"
-          export PATH=$NPM_CONFIG_PREFIX/bin:$PATH
-          bin/jg-bootstrap.sh install nats-server nats daprd
-          echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
       - name: Install the pinned Go toolchain
         uses: actions/setup-go@v5
         with:
@@ -368,25 +353,10 @@ jobs:
         with:
           path: ~/.cache/go-build
           key: go-bus-${{ runner.os }}-${{ hashFiles('core/bus/go.mod') }}
-      - name: Prove a home comes up with JetStream running
+      - name: Prove the captain channel's Go command in direct mode
         run: |
           set -eu
-          nats-server --version
-          nats --version
-          # Through the read trace (bin/jg-ci-area-reads.sh): a file this lane
-          # reads that the Bus area in bin/jg-ci-scope.sh misses fails the lane
-          # here instead of letting a change to it skip the lane green.
-          bin/jg-ci-area-reads.sh --check bus -- bash -c '
-            set -eu
-            tests/jg-bus-service.test.sh
-            tests/jg-bus-machine-service.test.sh
-            tests/jg-stack.test.sh
-            tests/jg-stack-owner.test.sh'
-
-      - name: Prove the captain channel's Go command at parity
-        run: |
-          set -eu
-          bin/jg-ci-area-reads.sh --check bus -- tests/jg-bus.test.sh
+          bin/jg-ci-area-reads.sh --check bus -- tests/bus-direct.test.sh
 
   # The tier-ci set: the journeys .done-done.yaml marks `tier: ci`, run by
   # done-done itself, and nothing else. It is the second half of the fast required
@@ -427,17 +397,6 @@ jobs:
           mkdir -p "$NPM_CONFIG_PREFIX/bin"
           bin/jg-bootstrap.sh install opa
           echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
-      # The backlog is a Beads store: the suites that file and read tickets in a fixture home run against the
-      # pinned bd and dolt (run only through bin/jg-beads.sh), or they skip.
-      - name: Install the backlog tools (pinned bd and dolt)
-        run: |
-          set -eu
-          export NPM_CONFIG_PREFIX=$HOME/.local
-          mkdir -p "$NPM_CONFIG_PREFIX/bin"
-          bin/jg-bootstrap.sh install bd dolt
-          echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
-          echo "JG_BEADS_TEST_BD=$NPM_CONFIG_PREFIX/bin/bd" >> "$GITHUB_ENV"
-          echo "JG_BEADS_TEST_DOLT=$NPM_CONFIG_PREFIX/bin/dolt" >> "$GITHUB_ENV"
       # The tier runner: done-done at the version toolchain.versions pins.
       - name: Install the pinned done-done
         run: |

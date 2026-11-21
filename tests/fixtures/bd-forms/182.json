@@ -1,0 +1,13 @@
+{
+ "argv": [
+  "show",
+  "rl-a",
+  "--json"
+ ],
+ "stdin": "",
+ "stdout": "[\n  {\n    \"id\": \"rl-a\",\n    \"title\": \"Alpha\",\n    \"status\": \"open\",\n    \"priority\": 2,\n    \"issue_type\": \"task\",\n    \"created_at\": \"2026-11-19T10:00:00Z\",\n    \"created_by\": \"main\",\n    \"updated_at\": \"2026-11-19T10:00:00Z\",\n    \"dependencies\": [\n      {\n        \"id\": \"rl-b\",\n        \"title\": \"Beta\",\n        \"status\": \"open\",\n        \"priority\": 2,\n        \"issue_type\": \"task\",\n        \"created_at\": \"2026-11-19T10:00:00Z\",\n        \"created_by\": \"main\",\n        \"updated_at\": \"2026-11-19T10:00:00Z\",\n        \"dependency_type\": \"related\"\n      }\n    ],\n    \"dependent_count\": 0,\n    \"dependency_count\": 0,\n    \"comment_count\": 0,\n    \"revision\": \"0\"\n  }\n]\n",
+ "exit": 0,
+ "form": "show --json",
+ "store": "{\"_type\":\"issue\",\"id\":\"rl-a\",\"title\":\"Alpha\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T10:00:00Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T10:00:00Z\",\"dependencies\":[{\"issue_id\":\"rl-a\",\"depends_on_id\":\"rl-b\",\"type\":\"related\",\"created_at\":\"2026-11-19T10:00:00Z\",\"created_by\":\"main\",\"metadata\":\"{}\"}],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"rl-b\",\"title\":\"Beta\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T10:00:00Z\",\"created_by\":\"main\",\"updated_at\":\"2026-11-19T10:00:00Z\",\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n",
+ "derived": "show --json of a related row: derived from the recorded blocks row (dependency_type, counts count blocks edges only, as the recorded exports do); no recorded show fixture holds a related edge"
+}

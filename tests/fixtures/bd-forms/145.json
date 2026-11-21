@@ -1,0 +1,17 @@
+{
+ "argv": [
+  "update",
+  "ad-z51.1",
+  "-s",
+  "in_progress",
+  "-a",
+  "",
+  "--remove-label",
+  "beta"
+ ],
+ "stdin": "",
+ "stdout": "\u2713 Updated issue: ad-z51.1 \u2014 Write it\n",
+ "exit": 0,
+ "form": "update --remove-label -a -s",
+ "store": "{\"_type\":\"issue\",\"id\":\"ad-mv7\",\"title\":\"closed soon\",\"status\":\"closed\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T15:16:46Z\",\"updated_at\":\"2026-11-19T15:16:48Z\",\"closed_at\":\"2026-11-19T15:16:48Z\",\"close_reason\":\"Closed\",\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"ad-z51.1\",\"title\":\"Write it\",\"description\":\"Two lines.\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"feature\",\"assignee\":\"Umer\",\"created_at\":\"2026-11-19T15:16:40Z\",\"created_by\":\"juggernaut\",\"updated_at\":\"2026-11-19T15:16:40Z\",\"metadata\":{\"legacy-ref\":\"L-17\"},\"labels\":[\"alpha\",\"beta\",\"by-hand\"],\"dependencies\":[{\"issue_id\":\"ad-z51.1\",\"depends_on_id\":\"ad-z51\",\"type\":\"parent-child\",\"created_at\":\"2026-11-19T15:16:40Z\",\"created_by\":\"juggernaut\",\"metadata\":\"{}\"}],\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n{\"_type\":\"issue\",\"id\":\"ad-z51\",\"title\":\"the parent\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T15:16:33Z\",\"updated_at\":\"2026-11-19T15:16:33Z\",\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

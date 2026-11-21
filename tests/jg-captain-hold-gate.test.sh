@@ -1,17 +1,13 @@
 #!/usr/bin/env bash
-# The owner's question is one gate row on a real Beads store: `hold` makes it (a readable title, the must category), his
+# The owner's question is one gate row on the home's tickets tables: `hold` makes it (a readable title, the must category), his
 # answer closes it with his words, and no list of work, ready list or count ever shows it. The cases are the S17a proof:
 # a dated hold also defers the ticket, a parked hold makes no gate and writes no text into the ticket, an armed board
 # still refuses a hold with no must, `answer --release` leaves the ticket open, spawn and merge blocking see an open gate,
-# `done` is refused past one, and a ticket with no gate has no question to answer. JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT name the pinned builds.
+# `done` is refused past one, and a ticket with no gate has no question to answer.
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
-  printf 'skip: real store: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
-  exit 0
-fi
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
 
 T=$(jg_test_tmproot jg-captain-hold-gate)
@@ -187,7 +183,7 @@ assert_contains "$out" "still-open: jg-w7" "the note must say the call is still 
 q=$(questions_json --ticket jg-w7)
 [ "$(jq length <<<"$q")" = 1 ] || fail "the gate must stay open after a note: $q"
 gate_id=$(jq -r '.[0].id' <<<"$q")
-assert_contains "$(BEADS_DIR=$(cat "$home/config/beads-dir") "$ROOT/bin/jg-beads.sh" comments "$gate_id" 2>&1)" "Still open: nothing has shipped." "the finding is a comment on the gate"
+assert_contains "$(JG_HOME=$home python3 -I "$ROOT/core/item-store/adapters/bd_compat.py" comments "$gate_id" --json | jq -r '.[].text')" "Still open: nothing has shipped." "the finding is a comment on the gate"
 case "$(tasks show jg-w7 --full)" in *"Still open: nothing"*|*"Captain hold reconciled"*) fail "the note must not go into the ticket body" ;; esac
 hold answered jg-w7 && fail "a note is not an answer"
 pass "reconcile note comments on the gate and leaves it open"

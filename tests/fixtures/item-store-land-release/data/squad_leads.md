@@ -1,0 +1,2 @@
+- lead - fixture Squad Lead (home: @LEADHOME@; scope: x; projects: proj; added 2026-11-19)
+- far - fixture remote Squad Lead (host: h; root: /r; home: /h; scope: x; projects: proj; added 2026-11-19)

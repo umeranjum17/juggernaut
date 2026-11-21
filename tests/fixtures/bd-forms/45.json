@@ -1,0 +1,25 @@
+{
+ "argv": [
+  "create",
+  "--silent",
+  "--title",
+  "Write it",
+  "-d",
+  "Two lines.",
+  "-t",
+  "feature",
+  "-a",
+  "Umer",
+  "--parent",
+  "ad-z51",
+  "--metadata",
+  "{\"legacy-ref\": \"L-17\"}",
+  "-l",
+  "alpha,beta"
+ ],
+ "stdin": "",
+ "stdout": "ad-z51.1\n",
+ "exit": 0,
+ "form": "create --metadata --parent --silent --title -a -d -l -t",
+ "store": "{\"_type\":\"issue\",\"id\":\"ad-z51\",\"title\":\"the parent\",\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"created_at\":\"2026-11-19T15:16:33Z\",\"updated_at\":\"2026-11-19T15:16:33Z\",\"dependency_count\":0,\"dependent_count\":0,\"comment_count\":0}\n"
+}

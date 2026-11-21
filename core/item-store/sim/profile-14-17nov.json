@@ -1,0 +1,168 @@
+{
+ "window": "2026-11-14T00:00Z..2026-11-17T18:12Z (the replay window)",
+ "days": 3.76,
+ "kinds": {
+  "alert": {
+   "per_day": 29.5,
+   "done": 0.847,
+   "dropped": 0.036,
+   "open_at_end": 0.117,
+   "life_p50_s": 0,
+   "life_p90_s": 1250
+  },
+  "cleanup": {
+   "per_day": 128.2,
+   "done": 0.979,
+   "dropped": 0.0,
+   "open_at_end": 0.021,
+   "life_p50_s": 1,
+   "life_p90_s": 1255
+  },
+  "dispatch": {
+   "per_day": 1.9,
+   "done": 0.429,
+   "dropped": 0.0,
+   "open_at_end": 0.571,
+   "life_p50_s": 61,
+   "life_p90_s": 728
+  },
+  "intake": {
+   "per_day": 0.8,
+   "done": 0.0,
+   "dropped": 1.0,
+   "open_at_end": 0.0,
+   "life_p50_s": 490,
+   "life_p90_s": 519
+  },
+  "land": {
+   "per_day": 90.5,
+   "done": 0.994,
+   "dropped": 0.0,
+   "open_at_end": 0.006,
+   "life_p50_s": 0,
+   "life_p90_s": 32
+  },
+  "main-down": {
+   "per_day": 5.9,
+   "done": 0.955,
+   "dropped": 0.0,
+   "open_at_end": 0.045,
+   "life_p50_s": 445,
+   "life_p90_s": 2761
+  },
+  "merge": {
+   "per_day": 11.2,
+   "done": 1.0,
+   "dropped": 0.0,
+   "open_at_end": 0.0,
+   "life_p50_s": 0,
+   "life_p90_s": 0
+  },
+  "question": {
+   "per_day": 19.2,
+   "done": 0.0,
+   "dropped": 0.528,
+   "open_at_end": 0.472,
+   "life_p50_s": 101,
+   "life_p90_s": 50552
+  },
+  "release": {
+   "per_day": 5.1,
+   "done": 1.0,
+   "dropped": 0.0,
+   "open_at_end": 0.0,
+   "life_p50_s": 0,
+   "life_p90_s": 0
+  },
+  "report": {
+   "per_day": 12.2,
+   "done": 0.87,
+   "dropped": 0.0,
+   "open_at_end": 0.13,
+   "life_p50_s": 14522,
+   "life_p90_s": 185069
+  },
+  "security": {
+   "per_day": 12.2,
+   "done": 0.935,
+   "dropped": 0.0,
+   "open_at_end": 0.065,
+   "life_p50_s": 838,
+   "life_p90_s": 17595
+  },
+  "steer": {
+   "per_day": 223.5,
+   "done": 0.976,
+   "dropped": 0.005,
+   "open_at_end": 0.019,
+   "life_p50_s": 41,
+   "life_p90_s": 400
+  },
+  "tell": {
+   "per_day": 75.6,
+   "done": 0.849,
+   "dropped": 0.0,
+   "open_at_end": 0.151,
+   "life_p50_s": 9,
+   "life_p90_s": 242
+  },
+  "update": {
+   "per_day": 8.0,
+   "done": 0.667,
+   "dropped": 0.0,
+   "open_at_end": 0.333,
+   "life_p50_s": 10828,
+   "life_p90_s": 72927
+  },
+  "wait": {
+   "per_day": 97.1,
+   "done": 0.677,
+   "dropped": 0.126,
+   "open_at_end": 0.197,
+   "life_p50_s": 1783,
+   "life_p90_s": 20698
+  },
+  "work": {
+   "per_day": 28.5,
+   "done": 0.888,
+   "dropped": 0.103,
+   "open_at_end": 0.009,
+   "life_p50_s": 1505,
+   "life_p90_s": 15078
+  }
+ },
+ "first_holders": {
+  "lead": {
+   "share": 0.466,
+   "first_move_p50_s": 10,
+   "first_move_p90_s": 465
+  },
+  "main": {
+   "share": 0.273,
+   "first_move_p50_s": 310,
+   "first_move_p90_s": 6108
+  },
+  "outside": {
+   "share": 0.004,
+   "first_move_p50_s": 528,
+   "first_move_p90_s": 7295
+  },
+  "owner": {
+   "share": 0.026,
+   "first_move_p50_s": 102,
+   "first_move_p90_s": 50552
+  },
+  "tick": {
+   "share": 0.142,
+   "first_move_p50_s": 0,
+   "first_move_p90_s": 0
+  },
+  "worker": {
+   "share": 0.089,
+   "first_move_p50_s": 67,
+   "first_move_p90_s": 1639
+  }
+ },
+ "moves_per_item": 2.79,
+ "climbs_per_item": 0.291
+}

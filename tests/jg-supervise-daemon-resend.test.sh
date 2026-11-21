@@ -63,7 +63,6 @@ export XDG_CONFIG_HOME="$JG_HOME/config" XDG_CACHE_HOME="$JG_HOME/cache" XDG_STA
 export XDG_RUNTIME_DIR="$JG_HOME/run"
 # The 10 s wait before a stuck doorbell is keyed out is not under test here; the resend timing is.
 export JG_COMPOSER_DOORBELL_WAIT=1
-export JG_KV_URL=nats://127.0.0.1:1 JG_WAKE_BUS_URL=nats://127.0.0.1:1 JG_STATE_BUS_URL=nats://127.0.0.1:1
 # A fixture is not the machine-service owner; host service findings are not test events.
 mkdir -p "$JG_HOME/config" "$JG_HOME/data" "$JG_HOME/state"
 mkdir -m 700 "$XDG_RUNTIME_DIR"
@@ -257,15 +256,21 @@ test_resend() {
   wait_submitted 'pr/second' 90 || fail "the second digest was never submitted within 90s"
   sleep 3  # a duplicate submit of either digest would land in this window
 
-  local n
-  # The second digest may also list the first status (one scan reads both files),
-  # so the swallowed digest is the one line that names only the first PR.
-  n=$(grep 'pr/first' "$LOG_FILE" | grep -vc 'pr/second' || true)
+  local n lines
+  # The swallowed digest is the one-event digest that names only the first PR.
+  # The daemon also delivers each status once more as a queued signal wake; under
+  # load that wake lands after the first submit, as a separate digest with its own
+  # text. A resend of the swallowed text would repeat the one-event line, so that
+  # exact line is what must appear once.
+  n=$(grep -c 'escalate (1 event(s)): fake-c1.status: done: PR https://example.test/pr/first' "$LOG_FILE" || true)
   [ "$n" -eq 1 ] || fail "the swallowed digest was submitted $n times, expected exactly 1"
-  n=$(grep -c 'pr/second' "$LOG_FILE" || true)
+  # The queued-wake digest for the second status follows exactly once.
+  n=$(grep 'pr/second' "$LOG_FILE" | grep -c 'fake-c2 done' || true)
   [ "$n" -eq 1 ] || fail "the second digest was submitted $n times, expected exactly 1"
+  # Every submitted line starts with exactly one U+2063 marker: no concatenation.
+  lines=$(wc -l < "$LOG_FILE")
   n=$(awk -F '\t' '{ hex=$1; count += gsub(/e281a3/, "", hex) } END { print count + 0 }' "$LOG_FILE")
-  [ "$n" -eq 2 ] || fail "expected 2 U+2063 markers (one per digest, no concatenation), got $n"
+  [ "$n" -eq "$lines" ] || fail "expected one U+2063 marker per submitted line ($lines), got $n"
   grep -q $'\tuser$' "$LOG_FILE" && fail "a line was submitted as user text"
   # The failed Enter leaves one line naming the pane state, never its content.
   n=$(grep -c 'inject pane state after the failed Enter: composer=.* busy=.* held_bytes=[0-9]* own_text=' "$STATE_DIR/.supervise-daemon.log" || true)

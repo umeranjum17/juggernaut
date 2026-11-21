@@ -1,0 +1,415 @@
+#!/usr/bin/env python3
+"""jg-item: the one writer of the host's item store. Every subcommand is one call of store.Store.
+
+`by` is never an argument: it is derived from where this runs (`jg-item whoami` prints it).
+  JG_TASK_ID set             -> worker:<home id>/<task id>
+  otherwise                  -> the home id (itemdb.home_id): "main", or the first line of $JG_HOME/.jg-squad-lead-home
+`whoami` prints that home id; the `by` a Squad Lead home writes under is lead:<home id> (derive_by), and no table keys a row
+on it: a home column always holds the plain home id.
+The store is one file per host: <main home>/state/item-store/fleet.db. A Squad Lead home finds the main home through its
+`.jg-squad-lead-parent` binding (`parent_home=<path>`), followed until a home has none; `jg-item where` prints the file.
+Every write needs --source (the outside record's id): the pair (source, item key) is written once, so a call run twice
+changes nothing. The clock is the host clock. Exit: 0 ok, 1 refused or a finding, 2 usage.
+
+`tick` is the watcher check of every home. It first takes the host's tick lease (store.Store.tick_lease): the tick
+that finds the last one older than 240 s runs, any other returns at once, so the climbs and the re-check run once per
+host, and when Main's watcher stops a Squad Lead home's tick takes over within one cycle (JG_ITEM_TICK_LEASE_S sets the
+240 s; the tests set 0). It prints nothing when it ran, so it never wakes anyone by itself. Its climbs, new stamp
+findings and each re-check's seconds are appended to state/item-store/tick.log; the items they open carry their own
+pages. A failure prints one line `item-store: <cause>` only when the cause differs from the last one
+(state/item-store/tick-error), so a broken store wakes its watcher's reader once, not every cycle; a re-check over 10 s
+prints one such line too (state/item-store/tick-slow), because the watcher stops a check at 30 s. Each tick also compacts
+the file (store.Store.compact) and logs `compact <changes> changes <pages> pages` when it erased or returned any.
+
+With JG_ITEM_OR_INTAKE=1 (what a shell script sets for its guarded calls), a refused write opens one intake item on
+Main naming the refusal (itemdb.or_intake), prints `intake` and exits 0; the same source twice opens it once.
+
+`key <kind>` prints the key, subject and project of one item by the contract in keys.py, reading the ticket and
+project from the task record when --task is given (tab-separated; `-` for no project). work, land and merge need
+--project at open: the project's policy row decides them."""
+import argparse, hashlib, json, os, subprocess, sys, time
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, HERE)
+import store as S   # noqa: E402
+import itemdb as D   # noqa: E402
+import keys as K   # noqa: E402
+
+SELF = "jg-item"
+IN_PROCESS = {"tick", "stamp-check"}   # these write as `tick` and `adapter:stamp-check` (store.py), never as a derived by
+
+
+def die(msg, code=1):
+    print(msg, file=sys.stderr if code == 2 else sys.stdout)
+    sys.exit(code)
+
+
+def jg_home():
+    h = os.environ.get("JG_HOME")
+    if not h or not os.path.isdir(h):
+        die("refused: JG_HOME must name this home's directory", 2)
+    return os.path.realpath(h)
+
+
+def derive_by(home):
+    hid = D.home_id(home)
+    task = os.environ.get("JG_TASK_ID")
+    if task:
+        return "worker:%s/%s" % (hid, task)
+    return "main" if hid == "main" else "lead:" + hid
+
+
+def whoami(home):
+    """What `jg-item whoami` prints: worker:<home id>/<task> for a task, else the home id itself - one value with home_id."""
+    task = os.environ.get("JG_TASK_ID")
+    hid = D.home_id(home)
+    return "worker:%s/%s" % (hid, task) if task else hid
+
+
+def open_store(home, me):
+    try:
+        st = D.open_db(home, me)
+    except Exception as e:                                        # the real cause, not a trace
+        die("refused: cannot open %s: %s" % (D.db_path(home), e))
+    return st, D.store_dir(home)
+
+
+def stamp_clock(st):
+    """Every move is stamped from the host clock; its frame is <boot id>:<host clock minus the steady clock>."""
+    at = D.stamp(st)
+    return at, st._steady
+
+
+def need(a, *names):
+    for n in names:
+        if getattr(a, n) is None:
+            die("%s %s: missing --%s" % (SELF, a.cmd, n), 2)
+
+
+def cmd_open(st, a, d):
+    need(a, "kind", "home", "subject", "owes")
+    if a.kind in ("work", "land", "merge") and not a.project:
+        die("refused: open: %s needs --project (its policy row decides it; `jg-item key` prints it)" % a.kind, 2)
+    at, _ = stamp_clock(st)
+    return st.open(at, a.key, a.kind, a.home, a.subject, a.owes, st.me, source=a.source, named=a.named, lane=a.lane,
+                   due=a.due, parent=a.parent, quiet=a.quiet, project=a.project, options=a.options)
+
+
+def cmd_note(st, a, d):
+    at, _ = stamp_clock(st)
+    return st.note(at, a.key, st.me, a.text, source=a.source)
+
+
+def cmd_hand(st, a, d):
+    at, _ = stamp_clock(st)
+    return st.hand(at, a.key, a.holder, a.holder_id, a.due_in, a.why, st.me, source=a.source)
+
+
+WRITES = ("open", "note", "hand", "close", "ready")
+NEXT_REQUIRED = ("key", "kind", "home", "subject", "owes")
+NEXT_OPTIONAL = ("named", "lane", "project", "parent", "due", "options", "holder_id")
+
+
+def cmd_close(st, a, d):
+    try:
+        then = json.loads(a.then) if a.then else []
+        assert isinstance(then, list) and all(isinstance(s, dict) for s in then), "not a list of objects"
+        for s in then:
+            for f in NEXT_REQUIRED:
+                assert f in s, "a next step has no %s" % f
+            extra = set(s) - set(NEXT_REQUIRED) - set(NEXT_OPTIONAL)
+            assert not extra, "unknown field %s" % sorted(extra)[0]
+    except (ValueError, AssertionError) as e:
+        die("%s close: --then is a JSON list of next steps, each with %s and optionally %s (%s)"
+            % (SELF, ", ".join(NEXT_REQUIRED), ", ".join(NEXT_OPTIONAL), e), 2)
+    at, _ = stamp_clock(st)
+    return st.close(at, a.key, a.ends, a.why, st.me, source=a.source, then=then)
+
+
+def cmd_ready(st, a, d):
+    at, _ = stamp_clock(st)
+    return st.ready(at, a.key, a.draft, st.me, source=a.source)
+
+
+def read_logs(logdir):
+    """A reader is an executable logs/<stamp with the first ':' as '-'>; it prints '<source>\\t<item key>' per record, the
+    source exactly as the move holds it (chat:<message id>)."""
+    logs = {}
+    if not os.path.isdir(logdir):
+        return logs
+    for name in sorted(os.listdir(logdir)):
+        p = os.path.join(logdir, name)
+        if name == "README.md" or not os.path.isfile(p) or not os.access(p, os.X_OK):
+            continue
+        r = subprocess.run([p], capture_output=True, text=True)
+        if r.returncode != 0:
+            raise RuntimeError("log reader %s exited %d: %s" % (name, r.returncode, r.stderr.strip()[:200]))
+        logs[name.replace("-", ":", 1)] = {tuple(ln.split("\t", 1)) for ln in r.stdout.splitlines() if "\t" in ln}
+    return logs
+
+
+def clock_file(d):
+    return os.path.join(d, "tick-clock")
+
+
+def load_clock(st, d):
+    """tick-clock is one line: <boot id> <offset at the last run> <offset before the first open leap, or -> <time of the
+    last re-check, or ->. The offsets count only on the same boot; the re-check time counts across boots."""
+    try:
+        f = open(clock_file(d)).read().split()
+    except OSError:
+        return
+    if len(f) == 4:
+        if f[3] != "-":
+            st._last_fold = int(f[3])
+        if f[0] == st.boot and f[1] != "-":
+            st._clock = (int(f[1]), None if f[2] == "-" else int(f[2]))
+
+
+def save_clock(st, d):
+    c = getattr(st, "_clock", None)
+    lf = getattr(st, "_last_fold", None)
+    line = "%s %s %s %s\n" % (st.boot, "-" if c is None else c[0], "-" if c is None or c[1] is None else c[1],
+                               "-" if lf is None else lf)
+    tmp = clock_file(d) + ".tmp"
+    with open(tmp, "w") as fh:
+        fh.write(line)
+    os.replace(tmp, clock_file(d))
+
+
+def stamp_findings(st, at):
+    """(findings, reader error). A broken reader would make every move look forged, so nothing is checked that run."""
+    try:
+        logs = read_logs(os.path.join(HERE, "logs"))
+    except RuntimeError as e:
+        return None, str(e)
+    return st.stamp_check(at, logs), None
+
+
+def cmd_tick(st, a, d):
+    err_file = os.path.join(d, "tick-error")
+    slow = False
+    try:
+        at, sd = stamp_clock(st)
+        if not st.tick_lease(sd, min_age=int(os.environ.get("JG_ITEM_TICK_LEASE_S", "240"))):
+            return None                 # another home's tick ran within the lease: one tick per host
+        load_clock(st, d)
+        before, t0 = getattr(st, "_last_fold", None), time.monotonic()
+        lines = ["%d climb %s %s -> %s" % (at, k, frm, to) for k, frm, to in st.tick(at, steady=sd)]
+        if getattr(st, "_last_fold", None) != before:           # the re-check ran in this tick: log its seconds
+            secs = time.monotonic() - t0
+            lines.append("%d recheck %.1fs" % (at, secs))
+            slow = secs > 10
+        save_clock(st, d)
+        erased, freed = st.compact(at)                         # the ticket log's old superseded changes, then the free pages
+        if erased or freed:
+            lines.append("%d compact %d changes %d pages" % (at, erased, freed))
+        known = {r[0] for r in st.con.execute("SELECT source FROM move WHERE source LIKE 'forged:%'")}
+        bad, err = stamp_findings(st, at)
+        lines += ["%d stamp %s %s %r" % (at, w, ref, pair) for w, ref, pair in bad or []
+                  if "forged:%s:%s" % (w, ref) not in known]     # a finding is logged once, as its security item opens once
+        if lines:
+            with open(os.path.join(d, "tick.log"), "a") as fh:
+                fh.write("\n".join(lines) + "\n")
+        if err:
+            raise RuntimeError("stamp check skipped: " + err)
+    except Exception as e:            # one line, once per distinct cause; exit 0 so the watcher shows it
+        msg = "item-store: %s" % " ".join(str(e).split())[:300]
+        try:
+            last = open(err_file).read().strip()
+        except OSError:
+            last = ""
+        if msg != last:
+            with open(err_file, "w") as fh:
+                fh.write(msg + "\n")
+            print(msg)
+        return None
+    try:
+        os.remove(err_file)
+    except OSError:
+        pass
+    slow_file = os.path.join(d, "tick-slow")
+    if slow and not os.path.exists(slow_file):
+        open(slow_file, "w").write("%d\n" % at)
+        print("item-store: the re-check took over 10 s (the watcher stops a check at 30 s); tick.log has the seconds")
+    elif not slow and os.path.exists(slow_file) and getattr(st, "_last_fold", None) != before:
+        os.remove(slow_file)
+    return None
+
+
+def cmd_key(st, a, d):
+    home = jg_home()
+    hid = D.home_id(home)
+    ticket, project = D.task_ref(home, a.task) if a.task else (None, None)
+    ticket, project = a.ticket or ticket, a.project or project
+    try:
+        k = K.key(a.kind, hid, task=a.task, ticket=ticket, wait=a.wait, n=a.n, head=a.head, pr=a.pr, version=a.version,
+                  project=project)
+    except ValueError as e:
+        die("refused: key: %s" % e, 2)
+    subject = {"release": "%s@%s" % (project, a.pr), "question:release": "%s@%s" % (project, a.pr),
+               "update": a.version}.get(a.kind, ticket)
+    return "%s\t%s\t%s" % (k, subject, project or "-")
+
+
+def cmd_stamp_check(st, a, d):
+    at, _ = stamp_clock(st)
+    bad, err = stamp_findings(st, at)
+    if err:
+        die("stamp check skipped: " + err)
+    for what, ref, pair in bad:
+        print("stamp %s %s %r" % (what, ref, pair))
+    sys.exit(1 if bad else 0)
+
+
+def cmd_recheck(st, a, d):
+    from recheck import recheck
+    bad = recheck(st.con, st.schema_path)
+    for table, ref, err in bad:
+        print("%s %s %s" % (table, ref, err))
+    sys.exit(1 if bad else 0)
+
+
+def cmd_pages(st, a, d):
+    print("\n".join(st.pages(a.reader)[0]))
+
+
+def cmd_ack(st, a, d):
+    st.ack(a.reader, a.seq)
+    return "ok"
+
+
+def cmd_board(st, a, d):
+    print("holder\tholder_id\tkind\tkey\tsubject\tdue_at\tlate_at")
+    for r in st.con.execute("SELECT holder, holder_id, kind, key, subject, due_at, late_at FROM v_board ORDER BY holder_id, due_at, key"):
+        print("\t".join("" if x is None else str(x) for x in r))
+
+
+def cmd_digest(st, a, d):
+    print("holder_id\tkind\tlate\toldest")
+    for r in st.con.execute("SELECT holder_id, kind, late, oldest FROM v_digest ORDER BY holder_id, kind"):
+        print("\t".join("" if x is None else str(x) for x in r))
+
+
+def home_trunk(project):
+    """The branch bin/jg-trunk.sh works on for a project in the trunk flow (release/vN per home), from its one resolver;
+    empty when the project is not in the trunk flow here."""
+    home = jg_home()
+    lib = os.path.join(HERE, "..", "..", "bin", "jg-trunk-policy-lib.sh")
+    r = subprocess.run(["bash", "-c", '. "$1" && jg_project_trunk_branch "$2" "$3"', "_", lib,
+                        os.path.join(home, "projects", project), os.path.join(home, "state")],
+                       capture_output=True, text=True, env=dict(os.environ, JG_HOME=home))
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def cmd_base(st, a, d):
+    ref = st.base(a.project)
+    if ref.startswith("refs/heads/"):          # a local project: the trunk flow's own branch, when it runs one
+        return "refs/heads/" + (home_trunk(a.project) or ref[len("refs/heads/"):])
+    return ref
+
+
+def cmd_landed(st, a, d):
+    return st.landed(a.ticket)
+
+
+def cmd_covered_head(st, a, d):
+    return st.covered_head(a.project, a.pr)
+
+
+def cmd_schema_check(st, a, d):
+    """Two checks: schema.sql's bytes against schema.sha256 (shipped with it), and the live store's rules (the rows of
+    sqlite_master, Store.schema_hash) against those of a fresh store built from schema.sql."""
+    want = open(os.path.join(HERE, "schema.sha256")).read().split()[0]
+    have = hashlib.sha256(open(os.path.join(HERE, "schema.sql"), "rb").read()).hexdigest()
+    bad = []
+    if have != want:
+        bad.append("schema.sql differs from schema.sha256")
+    if os.path.exists(os.path.join(HERE, "tickets.sql")):
+        want = open(os.path.join(HERE, "tickets.sha256")).read().split()[0]
+        if hashlib.sha256(open(os.path.join(HERE, "tickets.sql"), "rb").read()).hexdigest() != want:
+            bad.append("tickets.sql differs from tickets.sha256")
+    if st.schema_hash() != st.shipped or not st.tickets_ok():
+        bad.append("the store's rules differ from the shipped schema")
+    for b in bad:
+        print(b)
+    sys.exit(1 if bad else 0)
+
+
+def parser():
+    p = argparse.ArgumentParser(prog=SELF, description=__doc__.split("\n")[0])
+    sp = p.add_subparsers(dest="cmd", required=True)
+
+    def add(name, fn, *pos, **opts):
+        s = sp.add_parser(name)
+        for n in pos:
+            s.add_argument(n)
+        for flag, kw in opts.items():
+            s.add_argument("--" + flag.replace("_", "-"), **kw)
+        s.set_defaults(fn=fn)
+        return s
+
+    src = dict(required=True, help="the outside record's id: the pair (source, item key) is written once")
+    o = add("open", cmd_open, "key", kind=dict(), home=dict(), subject=dict(), owes=dict(), source=src,
+            named=dict(default=None, help="first holder instead of the kind's (worker, lead, main, owner, outside, tick)"),
+            lane=dict(default=None, help="the worker's by, for a worker holder"),
+            due=dict(type=int, default=None, help="seconds from now, capped by the kind's limit"),
+            parent=dict(default=None), project=dict(default=None), options=dict(default=None, help="picks, 'a|b'"))
+    o.add_argument("--quiet", action="store_true", help="write no page")
+    add("note", cmd_note, "key", "text", source=src)
+    h = add("hand", cmd_hand, "key", "holder", "holder_id", source=src)
+    h.add_argument("due_in", type=int, help="seconds from now, at most 14 days")
+    h.add_argument("why")
+    c = add("close", cmd_close, "key", source=src, then=dict(default=None, help="a JSON list of next steps"))
+    c.add_argument("ends", choices=("done", "dropped"))
+    c.add_argument("why", help="the proof (done) or the reason (dropped)")
+    add("ready", cmd_ready, "key", "draft", source=src)
+    for n, f in (("whoami", None), ("where", None), ("tick", cmd_tick), ("stamp-check", cmd_stamp_check),
+                 ("recheck", cmd_recheck), ("board", cmd_board), ("digest", cmd_digest), ("schema-check", cmd_schema_check)):
+        add(n, f)
+    add("pages", cmd_pages, "reader")
+    add("ack", cmd_ack, "reader").add_argument("seq", type=int)
+    add("base", cmd_base, "project")
+    add("landed", cmd_landed, "ticket")
+    add("covered-head", cmd_covered_head, "project", "pr")
+    add("key", cmd_key, "kind", task=dict(default=None), ticket=dict(default=None), wait=dict(default=None),
+        n=dict(default=None), head=dict(default=None), pr=dict(default=None), version=dict(default=None),
+        project=dict(default=None))
+    return p
+
+
+def main(argv):
+    if any(x == "--by" or x.startswith("--by=") for x in argv):
+        die("refused: unknown option --by", 2)
+    a = parser().parse_args(argv)
+    home = jg_home()
+    try:
+        if a.cmd in ("whoami", "where"):        # identity and place only: the store is not opened
+            print(whoami(home) if a.cmd == "whoami" else D.db_path(home))
+            return
+        if a.cmd == "key":                     # the contract only: the store is not opened
+            print(cmd_key(None, a, None))
+            return
+        D.home_id(home)
+    except D.Unbound as e:
+        die("refused: %s" % e, 2)
+    st, d = open_store(home, None if a.cmd in IN_PROCESS else derive_by(home))
+    try:
+        r = a.fn(st, a, d)
+    except S.Refused as e:
+        if os.environ.get("JG_ITEM_OR_INTAKE") == "1" and a.cmd in WRITES and getattr(a, "source", None):
+            hid = D.home_id(home)          # a script's refused write: one intake item on Main, never a silent loss
+            at, _ = stamp_clock(st)
+            try:
+                r = D.or_intake(st, at, a.source, hid, getattr(a, "subject", None) or a.key, lambda **kw: (_ for _ in ()).throw(e))
+            except S.Refused as e2:
+                die("refused: %s (and its intake item: %s)" % (e, e2))
+            print(r)
+            return
+        die("refused: %s" % e)
+    if r:
+        print(r)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

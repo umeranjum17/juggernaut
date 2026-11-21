@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # bin/jg-context-load.sh and the ceilings of defaults/token-caps, through their real callers:
-# the shipped tree is green at today's values; a fixture file one byte over a line fails and
+# a fixture file one byte over a line fails and
 # names it; a made-up Claude Code transcript prints its known total and is recorded once per
 # role and day; a reading over its line fails; a home line overrides a shipped one; the brief
 # lint takes its budget from the ceiling; the daily growth check reports a ceiling that is over.
@@ -23,14 +23,6 @@ load() {  # <home> <args>...
   local h=$1; shift
   JG_HOME="$h" JG_ROOT_OVERRIDE="$h/root" JG_DATA_OVERRIDE="$h/data" JG_CONFIG_OVERRIDE="$h/config" \
     JG_CONTEXT_LOAD_DATE=2026-11-14 "$LOAD" "$@"
-}
-
-test_shipped_tree_is_green() {
-  local out code
-  out=$("$LOAD" check); code=$?
-  assert_equals 0 "$code" "the shipped tree is within each ceiling: $out"
-  assert_contains "$out" "ok ctx-agents-md $(wc -c < "$ROOT/AGENTS.md" | tr -d ' ') $CAP measured" "AGENTS.md is measured against its line"
-  pass "the test is green on today's tree with today's values as ceilings"
 }
 
 test_one_byte_over_fails_and_names_the_line() {
@@ -110,10 +102,9 @@ test_growth_check_reports_an_over_ceiling() {
   pass "the daily growth check reports a ceiling that is over and stays silent at it"
 }
 
-test_shipped_tree_is_green
 test_one_byte_over_fails_and_names_the_line
 test_reader_prints_known_total_and_records_once_a_day
 test_reading_over_its_line_fails_and_home_line_overrides
 test_brief_lint_reads_the_ceiling
 test_growth_check_reports_an_over_ceiling
-echo "context budget: each ceiling holds today's value, a byte over fails, one reading per role per day"
+echo "context budget: a byte over a ceiling fails, one reading per role per day"

@@ -55,6 +55,7 @@ set -u
 export LC_ALL=C
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}}"
+ROUTE_ANSWER=${JG_BOARD_ANSWERS_ROUTE:-$SCRIPT_DIR/jg-answer-route.sh}
 STATE="${JG_STATE_OVERRIDE:-$JG_HOME/state}"
 ROUTES="$STATE/board-routes"
 SEEN="$STATE/.board-answers-seen"
@@ -140,6 +141,22 @@ adopt_owner() {  # <card-key>
   [ -n "$_ad_owner" ] && cmd_route "$1" "$_ad_owner"
 }
 
+# route_to_work <key> <at> <answer>: the answered card's options become work or one named
+# other end (bin/jg-answer-route.sh owns the table and every record it writes). It prints one
+# line per end it took and nothing for an answer it already took, so this adds nothing to the
+# report on a later pass; an unreadable board or card is that command's own diagnostic line.
+route_to_work() {  # <key> <at> <answer>
+  local _rw_out _rw_rc=0
+  [ -x "$ROUTE_ANSWER" ] || return 0
+  _rw_out=$(JG_HOME="$JG_HOME" "$ROUTE_ANSWER" route "$1" --answer "$3" --at "$2" 2>&1) || _rw_rc=$?
+  [ -n "$_rw_out" ] || return 0
+  printf '%s\n' "$_rw_out" | while IFS= read -r _rw_line; do
+    [ -n "$_rw_line" ] || continue
+    printf 'answer-route %s\n' "$(say "$_rw_line")"
+  done
+  return 0
+}
+
 deliver() {  # <key> <lead> <decision> <text> <delivery-id>; 0 = recorded in the lead's inbox
   local key=$1 lead=$2 dk=$3 text=$4 id=$5 args=()
   if [ -n "$dk" ] && status_open_decisions "$STATE/$lead.status" 2>/dev/null | grep -q "^$dk"$'\t'; then
@@ -191,6 +208,7 @@ cmd_check() {
   while IFS=$'\037' read -r key at answer label note; do
     key_ok "$key" && [ -n "$at" ] && [ -n "$answer" ] || continue
     designed "$key" "$answer"
+    report="${report}$(route_to_work "$key" "$at" "$answer")"
     # The chat message for this card shows the board's answer and drops its buttons. A repeat is a no-op there.
     case "$closed" in *$'\n'"$key"$'\n'*) ;; *)
       printf '%s\n' "$key" >> "$CLOSED"
@@ -244,6 +262,7 @@ cmd_route_answer() {
   { [ -n "$at" ] && [ -n "$answer" ]; } || die "route-answer needs the answer time and the captain's answer" 2
   mkdir -p "$ROUTES"
   designed "$key" "$answer"
+  route_to_work "$key" "$at" "$answer" >&2 || true
   rget lead "$key" lead
   if [ -z "$lead" ]; then
     case "$key" in jg-*) die "refused: $key belongs to the captain-hold adapter, not a routed card" 3 ;; esac

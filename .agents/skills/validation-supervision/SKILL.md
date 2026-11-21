@@ -1,6 +1,6 @@
 ---
 name: validation-supervision
-description: Load when a ship starts or already has an active validation run, including a mid-run requirement change or finding, and before deciding or answering any ask-user finding or review question.
+description: Load when a ship starts or has an active validation run, and before deciding or answering any ask-user finding or review question.
 user-invocable: false
 metadata:
   internal: true

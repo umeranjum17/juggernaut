@@ -12,13 +12,12 @@ evidence=$DONE_DONE_EVIDENCE_ROOT
 work=$(mktemp -d "${TMPDIR:-/tmp}/rename-board.XXXXXX")
 export HOME=$work/user XDG_DATA_HOME=$work/xdg SIGN_OFF_HOME=$work/signoff
 export JG_HOME=$work/main TMPDIR=$work/tmp
-mkdir -p "$HOME" "$JG_HOME"/{data,config,state} "$TMPDIR" "$work/store"
+mkdir -p "$HOME" "$JG_HOME"/{data,config,state} "$TMPDIR"
 ln -sn "$fork/bin" "$JG_HOME/bin"
 ln -sn "$fork/toolchain.versions" "$JG_HOME/toolchain.versions"
 printf '{"schema":2,"items":[]}\n' > "$work/board.json"
 printf '%s\n' "$work/board.json" > "$JG_HOME/config/fleet-board"
-printf '%s\n' "$work/store/.beads" > "$JG_HOME/config/beads-dir"
-BEADS_DIR="$work/store/.beads" "$fork/bin/jg-beads.sh" init --prefix plain >/dev/null 2>&1 || { echo 'cannot create the Beads store (set JG_BEADS_BD and JG_BEADS_DOLT to the pinned builds)' >&2; exit 1; }
+JG_HOME=$JG_HOME python3 -I "$fork/core/item-store/adapters/tickets.py" import --home main /dev/null >/dev/null || { echo 'cannot create the tickets tables' >&2; exit 1; }
 : > "$JG_HOME/config/backlog-intake-loose"  # the old rows predate the title rule
 map=$work/map.tsv
 while IFS='|' read -r id old new; do

@@ -8,29 +8,12 @@ its backlog item id, published as the ticket identity.py names for it in this
 home: main/<task> in main, <lead>/<task> in a lead home, and the ticket itself
 for a migrated row whose id is one (bin/jg-watch.sh's check environment included).
 
-Nothing is written when this home has no fleet board, when the board file is
-missing, or when the sync has not published that ticket yet: the poll owns
-creating tickets along with their title, parent and ask, and this writer only
-corrects a ticket that already exists, so a merge or a cleanup never invents a
-half ticket. Only fields that differ from the board's are written, so a repeated
-lifecycle step appends nothing; state done also sets progress 100, because the
-sync's own completion rule does.
-
-No stage and no last-event-at is written here or by the poll: the Beads status
-is the one truth, so the board carries no stage word of Juggernaut's own.
-
-A hold travels with the state: sign-off refuses a ticket held for no reason, so
-`--state "on hold"` needs `--hold-reason <why it waits>`, and any other state
-releases a hold the row still carries, as the poll's completion rule does.
+Nothing is written: the board reads every row from the tickets tables, which the
+lifecycle step has already written, so the call checks its arguments and exits 0.
 """
 import argparse
-import json
-from pathlib import Path
-import subprocess as sp
 import sys
 import os
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import identity
 # jg-compat shim (slice S4, deleted by S10): an old FM_* name still resolves here
 for _jg_old, _jg_val in list(os.environ.items()):
     if _jg_old.startswith("FM_") and "JG_" + _jg_old[3:] not in os.environ:
@@ -56,68 +39,8 @@ def main(argv):
         return die('task must be one backlog item id')
     if (options.state, options.pr, options.release, options.hold_reason) == (None, None, None, None, None):
         return die('nothing to record: pass --state, --pr, --hold-reason or --release')
-    home = Path(os.environ.get('JG_HOME') or '.').resolve()
-    pointer = home / 'config/fleet-board'
-    if not pointer.exists():
-        return 0
-    board = Path(pointer.read_text().strip() or '.')
-    if not board.is_absolute():
-        board = home / board
-    if not board.is_file():
-        return 0
-    ticket_id = identity.ticket_id(identity.home_name(home), options.task)
-    try:
-        read = sp.run(['sign-off-axi', 'ticket', str(board), '--id', ticket_id, '--json'],
-                      text=True, capture_output=True, timeout=60)
-    except (OSError, sp.TimeoutExpired) as error:
-        return die(f'{error}')
-    if read.returncode:
-        answer = read.stderr + read.stdout
-        if 'code: NOT_FOUND' in answer:
-            return 0  # the poll has not published this task yet; it owns creating the ticket
-        return die(answer.strip() or 'sign-off-axi could not read the board')
-    try:
-        ticket = (json.loads(read.stdout or '{}') or {}).get('ticket')
-    except ValueError:
-        return die('unreadable board answer for ' + ticket_id)
-    if not ticket:
-        return 0
-    wanted = {'state': options.state,
-              'pr': options.pr, 'release': options.release}
-    write = {}
-    for key, value in wanted.items():
-        if value is None:
-            continue
-        stored = ticket.get('prs' if key == 'pr' else key)
-        if key == 'pr':
-            if list(stored or []) != ([value] if value else []):
-                write[key] = value
-        elif (stored or '') != value:
-            write[key] = value
-    if options.state == 'done' and ticket.get('progress') != 100:
-        write['progress'] = '100'
-    if options.state == 'on hold':
-        # The board refuses a hold nobody can read, so a reasonless hold stays with
-        # the poll, which publishes the item's own words or the parking behind it.
-        if not options.hold_reason:
-            return 0
-        if (ticket.get('hold_reason') or '') != options.hold_reason:
-            write['hold-reason'] = options.hold_reason
-        if not ticket.get('hold'):
-            write['hold'] = 'yes'
-    elif options.state and ticket.get('hold'):
-        write['hold'] = 'no'
-    if not write:
-        return 0
-    command = ['sign-off-axi', 'ticket', str(board), '--id', ticket_id]
-    for key, value in write.items():
-        command += ['--' + key, value]
-    try:
-        wrote = sp.run(command, text=True, capture_output=True, timeout=60)
-    except (OSError, sp.TimeoutExpired) as error:
-        return die(f'{error}')
-    if wrote.returncode:
-        return die((wrote.stderr or wrote.stdout).strip() or 'sign-off-axi could not write the ticket')
+    # The board reads every row from the tickets tables, and lifecycle callers have already written that row.
+    # Never send removed feed fields back through the adapter or create a duplicate store row.
     return 0
 
 

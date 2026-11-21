@@ -1856,8 +1856,6 @@ test_ship_brief_points_at_explicit_state_machine_fix() {
     "ship brief lost the explicit-state-machine fix type"
   assert_grep "diagnostic-reasoning" "$brief" \
     "explicit-state-machine line does not name the skill that owns the method"
-  assert_grep "## Make the implicit state machine explicit" "$ROOT/.agents/skills/diagnostic-reasoning/SKILL.md" \
-    "diagnostic-reasoning lost its explicit-state-machine section"
   pass "jg-brief.sh: ship brief points fix lanes at the explicit state machine fix type"
 }
 test_ship_brief_points_at_explicit_state_machine_fix

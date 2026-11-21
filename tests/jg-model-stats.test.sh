@@ -1,64 +1,72 @@
 #!/usr/bin/env bash
-# Slice S29 of jg-q1b3n on real Beads stores, through the real callers: the per-model statistics reader
+# Slice S29 of jg-q1b3n on the tickets tables, through the real callers: the per-model statistics reader
 # (bin/jg-model-stats.sh) reads each home's tickets, not a task-outcome file. The fixture is the table the old outcome file held:
-# two homes (main and a registered lead), tickets started by the spawn's own `claim` and `handoff` events (the verb of the spawn
-# writer, with the payload the spawn writes), landed, closed and given a pull request, beside the merged-PR and sampled-lane files.
+# two homes (main and a registered lead), tickets started the way the spawn starts them (a start naming the tool, model and effort, and a
+# handover start for each relaunch), landed, closed and given a pull request, beside the merged-PR and sampled-lane files.
 # The reader must print the same per-model figures as before. Teardown must write no outcome row, and neither copy of the recorder
-# remains. JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT name the pinned builds; without them the run skips plainly.
+# remains.
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
-  printf 'skip: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
-  exit 0
-fi
-
 T=$(jg_test_tmproot jg-model-stats)
-WRAPPER=$ROOT/bin/jg-beads.sh CLI=$ROOT/bin/jg-backlog.sh
-unset BEADS_DB BEADS_DOLT_SHARED_SERVER BEADS_ACTOR JG_BACKLOG_LANE JG_BACKLOG_SPAWN_GEN JG_BACKLOG_AGENT JG_BACKLOG_LANE_HANDOVER
-export TZ=UTC JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
+CLI=$ROOT/bin/jg-backlog.sh
+unset BEADS_ACTOR JG_BACKLOG_LANE JG_BACKLOG_SPAWN_GEN JG_BACKLOG_AGENT JG_BACKLOG_LANE_HANDOVER
+export TZ=UTC
 NOW=1700000000 DAY=86400
 CODE=https://github.com/acme/app/pull
 
-# store <home> <prefix>: a home with its own real store, named by config/beads-dir like a live home.
+# store <home>: a home whose backlog is the tickets tables of its own fleet.db.
 store() {
-  mkdir -p "$1/config" "$1/data/metrics" "$1/state" "$T/store-$2"
-  printf '%s\n' "$T/store-$2/.beads" > "$1/config/beads-dir"
+  mkdir -p "$1/config" "$1/data/metrics" "$1/state"
   : > "$1/config/backlog-intake-loose"  # the fixture files rows by their own words, not by strict intake
-  BEADS_DIR=$T/store-$2/.beads "$WRAPPER" init --prefix "$2" >"$T/init-$2.log" 2>&1 || fail "init $2: $(cat "$T/init-$2.log")"
+}
+bd_() { python3 -I "$ROOT/core/item-store/adapters/bd_compat.py" "$@"; }
+# backdate <home> <id> <epoch>: the ticket's last change happened at <epoch>. The tables stamp each change with the host clock and a
+# trigger keeps a change from changing, so the fixture lifts that trigger for the one update and puts it back as it was.
+backdate() {
+  python3 - "$1/state/item-store/fleet.db" "$2" "$3" <<'PY' || fail "date the start of $2"
+import sqlite3, sys
+con = sqlite3.connect(sys.argv[1])
+(trigger,) = con.execute("select sql from sqlite_master where name = 'ticket_change_final'").fetchone()
+con.execute("drop trigger ticket_change_final")
+con.execute("update ticket_change set at = ? where seq = (select max(seq) from ticket_change where id = ?)", (int(sys.argv[3]), sys.argv[2]))
+con.execute(trigger)
+con.commit()
+PY
 }
 # ticket <home> <id> <kind> <started days ago> <closed days ago or -> <landed yes|no> <pr number or -> <runtime>...
 # Each runtime is harness:model:effort; the first is the spawn's claim, the others are relaunches (handoff), an hour apart.
 ticket() {
-  local home=$1 id=$2 kind=$3 start=$4 closed=$5 landed=$6 pr=$7 at n=0 spec harness model effort kindname
+  local home=$1 id=$2 kind=$3 start=$4 closed=$5 landed=$6 pr=$7 at n=0 spec harness model effort handover
   shift 7
   at=$((NOW - start * DAY))
-  JG_HOME=$home BEADS_DIR=$(< "$home/config/beads-dir")
-  export JG_HOME BEADS_DIR
+  JG_HOME=$home
+  export JG_HOME
   "$CLI" add "$id" "[feature] fixture $id" --priority 2 --body why >/dev/null || fail "file $id"
-  "$WRAPPER" update "$id" --set-metadata "task=$id" >/dev/null || fail "name the task of $id"
+  bd_ update "$id" --set-metadata "task=$id" >/dev/null || fail "name the task of $id"
+  [ "$kind" = ship ] || bd_ update "$id" --set-metadata "kind=$kind" >/dev/null || fail "name the kind of $id"
   for spec in "$@"; do
     IFS=: read -r harness model effort <<<"$spec"
-    kindname=claim
-    [ "$n" = 0 ] || kindname=handoff
-    "$CLI" trace record "$id" "$kindname" work-id "$id@s$n" --source jg-spawn --at $((at + n * 3600)) \
-      --payload "$(jq -cn --arg g "s$n" --arg h "$harness" --arg m "$model" --arg e "$effort" --arg k "$kind" '{gen: $g, harness: $h, model: $m, effort: $e, kind: $k}')" >/dev/null \
-      || fail "the $kindname of $id"
+    handover=
+    [ "$n" = 0 ] || handover=1
+    JG_BACKLOG_LANE="lane-$id" JG_BACKLOG_SPAWN_GEN="s$n" JG_BACKLOG_LANE_HANDOVER=$handover JG_BACKLOG_AGENT=$harness JG_BACKLOG_MODEL=$model \
+      JG_BACKLOG_EFFORT=$effort "$CLI" start "$id" >/dev/null || fail "launch $n of $id"
+    backdate "$home" "$id" $((at + n * 3600))
     n=$((n + 1))
   done
   [ "$pr" = - ] || "$CLI" update "$id" --pr "$CODE/$pr" >/dev/null || fail "give $id its pull request"
-  [ "$landed" = no ] || "$WRAPPER" update "$id" --set-metadata "landed_at=$(date -u -d "@$((NOW - closed * DAY - 60))" +%Y-%m-%dT%H:%M:%SZ)" >/dev/null || fail "land $id"
-  if [ "$closed" != - ]; then  # the close time is the fixture's own: bd closes at the real now
-    "$WRAPPER" close "$id" >/dev/null 2>&1 || fail "close $id"
-    "$WRAPPER" dolt sql -q "update issues set closed_at='$(date -u -d "@$((NOW - closed * DAY))" '+%Y-%m-%d %H:%M:%S')' where id='$id'" >/dev/null || fail "date the close of $id"
+  [ "$landed" = no ] || bd_ update "$id" --set-metadata "landed_at=$(date -u -d "@$((NOW - closed * DAY - 60))" +%Y-%m-%dT%H:%M:%SZ)" >/dev/null || fail "land $id"
+  if [ "$closed" != - ]; then  # the close time is the fixture's own: done closes at the real now
+    "$CLI" 'done' "$id" >/dev/null 2>&1 || fail "close $id"
+    python3 -c 'import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.execute("update ticket set closed_at = ? where id = ?", sys.argv[2:]); c.commit()' \
+      "$home/state/item-store/fleet.db" "$(date -u -d "@$((NOW - closed * DAY))" +%Y-%m-%dT%H:%M:%SZ)" "$id" || fail "date the close of $id"
   fi
-  unset BEADS_DIR  # the reader finds each home's store through its config/beads-dir
 }
 
 OPUS=claude:claude-opus-5-5:medium MUSE_H=pi:opencode-go/muse-spark-1.3-contributor:high MUSE_M=pi:opencode-go/muse-spark-1.3-contributor:medium DEEP=pi:opencode-go/deepseek-v4.1-flash:medium
 M=$T/main B=$T/byokit
-store "$M" jg; store "$B" bk
+store "$M"; store "$B"
 printf -- '- byokit - BYOKit (home: %s; scope: toolkit; projects: byokit)\n' "$B" > "$M/data/squad_leads.md"
 ticket "$M" jg-t1 ship 2 1 yes 1 "$OPUS"
 ticket "$M" jg-t2 ship 3 2 yes 2 "$OPUS" "$MUSE_H"
@@ -88,9 +96,11 @@ pass "times --json: one fact per ticket with its runtimes in order"
 
 # The reader: the figures the outcome file gave, now from the tickets.
 stats() { JG_HOME=$1 "$ROOT/bin/jg-model-stats.sh" --json --now $NOW; }
-before=$(find "$M" -type f -printf '%p %T@\n' | sort)
+# A read of the WAL-mode tables leaves SQLite's own -wal and -shm files beside fleet.db; they hold no data, so they are not a write.
+files() { find "$M" -type f ! -name '*-wal' ! -name '*-shm' -printf '%p %T@\n' | sort; }
+before=$(files)
 x=$(stats "$M") || fail "model stats failed"
-[ "$x" = "$(stats "$M")" ] && [ "$before" = "$(find "$M" -type f -printf '%p %T@\n' | sort)" ] || fail "the reader must be deterministic and read-only"
+[ "$x" = "$(stats "$M")" ] && [ "$before" = "$(files)" ] || fail "the reader must be deterministic and read-only"
 q() { jq -r "$1" <<<"$x"; }  # <filter over the output>
 [ "$(q '.schema')" = jg-model-stats.v1 ] && [ "$(q '.windows | join(",")')" = 7,30 ] || fail "schema and windows"
 [ "$(q '.coverage | [.outcome_rows, .sampled_tasks] | join(",")')" = 7,1 ] || fail "coverage: seven tickets worked, one sampled lane, got $(q '.coverage')"
@@ -107,15 +117,14 @@ M7=opencode-go/muse-spark-1.3-contributor
 [ "$(w7 $M7 '.n_started')" = 5 ] || fail "the open ticket and the sampled lane count as started, got $(w7 $M7 '.n_started')"
 pass "model reader: the same per-model table from the tickets of two homes"
 
-# A home with no store is not an error, and its lane ledger still answers.
+# A home with no tickets tables is not an error, and its lane ledger still answers.
 E=$T/empty; mkdir -p "$E/data/metrics"
 y=$(stats "$E") || fail "an empty home must not fail the reader"
 [ "$(jq -r '.models | length' <<<"$y")" = 0 ] || fail "an empty home has no model rows: $y"
-jq -e '.limitations | any(test("no readable Beads store"))' <<<"$y" >/dev/null || fail "an unreadable store is said in the limitations: $y"
-pass "model reader: a home with no store reports it and fails nothing"
+jq -e '.limitations | any(test("no readable tickets tables"))' <<<"$y" >/dev/null || fail "an unreadable home is said in the limitations: $y"
+pass "model reader: a home with no tickets tables reports it and fails nothing"
 
 # Teardown writes no outcome row, and neither copy of the recorder remains.
 [ ! -e "$ROOT/bin/jg-task-outcome.sh" ] && [ ! -e "$ROOT/core/fleet-stats/bin/jg-task-outcome.sh" ] || fail "a copy of the recorder remains"
-if grep -n "jg-task-outcome" "$ROOT/bin/jg-teardown.sh" >/dev/null; then fail "teardown still calls the recorder"; fi
 [ ! -e "$M/data/metrics/task-outcomes.tsv" ] || fail "reading the statistics must write no outcome file"
 pass "teardown: no outcome row, no recorder"
