@@ -50,6 +50,10 @@ journeys:
   fleet-status-scale:
     tier: local
     command: bash journeys/fleet-status-scale.sh
+  home-summary-refresh-scale:
+    tier: local
+    command: bash journeys/home-summary-refresh-scale.sh
+    timeout: 10m
   hold-table:
     tier: local
     command: node journeys/hold-table.mjs
@@ -2122,6 +2126,10 @@ journeys:
   jg-watcher-lock:
     tier: local
     command: bash tests/jg-watcher-lock.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-home-summary-refresh-scale:
+    tier: local
+    command: bash tests/jg-home-summary-refresh-scale.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    timeout: 10m
   jg-whats-left:
     tier: local
     command: bash tests/jg-whats-left.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
