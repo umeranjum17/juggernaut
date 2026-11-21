@@ -332,15 +332,17 @@ SH
   local still_locked=0
   [ -d "$d/data/auto-dispatch/.check.lock" ] && still_locked=1
 
-  touch "$d/log/release"
   kill "$wpid" 2>/dev/null || true
   wait_for_exit "$wpid" 50 >/dev/null 2>&1 || true
+  touch "$d/log/release"
   wait "$holder_pid" 2>/dev/null || true
 
   [ "$(lines_of "$d/log/z-cadence")" -ge 2 ] || fail "T4: slow-sweep check z-cadence stalled while dispatch ran (runs=$(lines_of "$d/log/z-cadence"))"
   [ "$(lines_of "$d/log/board")" -ge 2 ] || fail "T4: fast check board-answers stalled while dispatch ran (runs=$(lines_of "$d/log/board"))"
   assert_equals 1 "$still_locked" "T4: both checks ticked multiple times while the dispatch pass still held its lock"
-  pass "T4: a running auto-dispatch pass does not stall fast checks or slow-sweep checks"
+  [ -e "$d/state/.last-dispatch-check" ] || fail "T4: the watcher did not attempt a periodic dispatch"
+  assert_equals 1 "$(lines_of "$d/log/pass-started")" "T4: a periodic request did not queue a second dispatch pass"
+  pass "T4: a running auto-dispatch pass leaves watcher checks responsive and absorbs periodic requests"
 }
 
 # ---- T5: Pool cap (max_trees) follows the lane limit automatically ----

@@ -56,12 +56,12 @@
 # The item store (--append on a .status file, only while the home has config/item-store): after a successful append the line is
 # also read into the store by core/item-store/adapters/lane.py, silently; that call never changes this script's output or exit.
 #
-# The status kick (--append on a .status file). After the line is written, the line itself starts what waits on it, so
+# The status kick (--append on a .status file). A written status marks the delivery generation pending. The line also starts what waits on it, so
 # neither waits for its own beat: a `done` line starts the home's delivery pass (bin/jg-delivery-tick.sh with
 # JG_DELIVERY_TICK_KICK=1, which runs the landing check), and a done, paused, blocked, needs-decision or failed line, the
 # lines that take the lane out of dispatch's working count, starts the home's dispatch (state/auto-dispatch.check.sh) when the
 # first word of config/auto-dispatch is `on`. Each start is detached, at most one of each per call however many lines the
-# text has, silent, and never a reason to refuse or fail the append. JG_STATUS_KICK=0 turns both off; JG_STATUS_KICK_TICK
+# text has, silent, and never a reason to refuse or fail the append. JG_STATUS_KICK=0 turns off the mark and both starts; JG_STATUS_KICK_TICK
 # and JG_STATUS_KICK_DISPATCH name other programs for them (test hooks).
 #
 # This file is the one core owner of these refusals. bin/jg-squad-lead-report.sh
@@ -204,16 +204,22 @@ start_detached() {  # <program> [<arg>...]
 
 # The status kick: what a written status line starts at once (see the header). It runs after the line is written.
 status_kick() {  # <status file> <text>
-  local home line verb tick dispatch kick_tick='' kick_dispatch=''
+  local home state_dir line verb tick dispatch changed='' kick_tick='' kick_dispatch=''
   [ "${JG_STATUS_KICK:-1}" != 0 ] || return 0
-  home=${JG_HOME:-$(dirname -- "$(dirname -- "$1")")}
+  state_dir=$(dirname -- "$1")
+  home=${JG_HOME:-$(dirname -- "$state_dir")}
   while IFS= read -r line; do
     verb=$(status_line_verb "$line") || continue
+    changed=1
     case $verb in
       done) kick_tick=1 kick_dispatch=1 ;;
       paused | blocked | needs-decision | failed) kick_dispatch=1 ;;
     esac
   done <<< "$2"
+  # Publish the generation after the status line. A periodic pass can recover it even if a kick never starts.
+  if [ -n "$changed" ]; then
+    : > "$state_dir/.delivery-tick.again" || echo 'status: could not mark delivery due' >&2
+  fi
   if [ -n "$kick_tick" ]; then
     tick=${JG_STATUS_KICK_TICK:-$home/bin/jg-delivery-tick.sh}
     [ -f "$tick" ] && JG_DELIVERY_TICK_KICK=1 start_detached bash "$tick" "$home"

@@ -448,6 +448,11 @@ CHECK_INTERVAL=${JG_CHECK_INTERVAL:-300}  # seconds between *.check.sh sweeps an
 FAST_CHECK_INTERVAL=${JG_FAST_CHECK_INTERVAL:-30}  # seconds between board-answer ticks (must stay under a minute)
 DISPATCH_INTERVAL=${JG_DISPATCH_INTERVAL:-60}  # seconds between starts of the home's dispatch check (run_fast_checks)
 case "$DISPATCH_INTERVAL" in ''|*[!0-9]*) DISPATCH_INTERVAL=60 ;; esac
+DISPATCH_INTERVAL=$((10#$DISPATCH_INTERVAL))
+CHECK_STAGGER_WINDOW=$((CHECK_INTERVAL / 2))
+[ "$CHECK_STAGGER_WINDOW" -le 119 ] || CHECK_STAGGER_WINDOW=119
+CHECK_SWEEP_DELAY=$((CHECK_INTERVAL + $(jg_home_timer_offset "$JG_HOME" "$CHECK_STAGGER_WINDOW")))
+DISPATCH_DELAY=$((DISPATCH_INTERVAL + $(jg_home_timer_offset "$JG_HOME" "$((DISPATCH_INTERVAL / 2))")))
 CHECK_TIMEOUT=${JG_CHECK_TIMEOUT:-30}     # seconds allowed per *.check.sh
 HOME_SUMMARY_INTERVAL=${JG_HOME_SUMMARY_INTERVAL:-300}
 case "$HOME_SUMMARY_INTERVAL" in
@@ -4154,15 +4159,21 @@ store_pages_doorbell() {
   wake "$reason"
 }
 
-# dispatch_check_start: start the home's trusted dispatch check (state/auto-dispatch.check.sh) detached, once per
-# DISPATCH_INTERVAL, and return at once. It runs the same hash-checked snapshot the sweep runs; the detached shell removes
-# the snapshot when the pass ends. JG_DISPATCH_DETACHED=1 makes the pass keep its lead note and alert for the sweep's
-# inline run (core/auto-dispatch/dispatch.sh), because this start has no reader. The check holds its own lock, so a start
-# while a pass runs is folded into it.
+# Start the trusted dispatch check on a changed input or a staggered timer.
+# A detached pass leaves its lead note and alert for the inline sweep.
+# An in-flight pass absorbs timer requests and coalesces new input.
 dispatch_check_start() {
-  [ "$(age_of "$STATE/.last-dispatch-check")" -ge "$DISPATCH_INTERVAL" ] || return 0
-  if JG_DISPATCH_DETACHED=1 jg_custom_check_detach "$STATE" auto-dispatch; then
-    touch "$STATE/.last-dispatch-check"
+  local periodic=1 stamp="$STATE/.last-dispatch-check"
+  if [ -e "$stamp" ]; then
+    if [ "$STATE/dispatch-approved" -nt "$stamp" ] || [ "$CONFIG/auto-dispatch" -nt "$stamp" ] ||
+      [ "$STATE/auto-dispatch.check-trust" -nt "$stamp" ]; then
+      periodic=0
+    else
+      [ "$(age_of "$stamp")" -ge "$DISPATCH_DELAY" ] || return 0
+    fi
+  fi
+  if JG_DISPATCH_DETACHED=1 JG_DISPATCH_PERIODIC=$periodic jg_custom_check_detach "$STATE" auto-dispatch; then
+    touch "$stamp"
   fi
 }
 
@@ -4171,8 +4182,8 @@ dispatch_check_start() {
 # registration (re-arms it, or says once that it could not) and then runs one
 # check pass; a line it prints becomes a check wake like any check result. The
 # slow sweep skips board-answers.check.sh so a pass is never run twice.
-# The home's dispatch check also starts here, at least every DISPATCH_INTERVAL
-# seconds and never waited for (dispatch_check_start): a pass costs seconds of CPU,
+# The home's dispatch check also starts here when due and is never waited for
+# (dispatch_check_start): a pass costs seconds of CPU,
 # so an inline run would hold this tick and the queue resurface behind it. The
 # slow sweep still runs the check inline, which is where its wake line is delivered.
 run_fast_checks() {
@@ -4193,9 +4204,10 @@ run_fast_checks() {
   # runs: bin/jg-delivery-tick.sh is the one pass both run (core/trunk-landing lands a task whose done-done receipt is a
   # PASS for its exact head into the local trunk and cleans it up, with no lead or human step). The pass queues its own
   # result row; a reason it prints is a row due now, so this cycle rings the model with it.
-  if [ -f "$SCRIPT_DIR/jg-delivery-tick.sh" ] && [ ! -L "$SCRIPT_DIR/jg-delivery-tick.sh" ]; then
+  if [ -f "$SCRIPT_DIR/jg-delivery-tick.sh" ] && [ ! -L "$SCRIPT_DIR/jg-delivery-tick.sh" ] &&
+    jg_delivery_repair_due "$JG_HOME"; then
     JG_CHECK_OUTPUT_KEY=delivery-tick
-    if ! run_check_capture "$SCRIPT_DIR/jg-delivery-tick.sh" "$JG_HOME"; then
+    if ! JG_DELIVERY_TICK_PERIODIC=1 run_check_capture "$SCRIPT_DIR/jg-delivery-tick.sh" "$JG_HOME"; then
       check_capture_skip delivery-tick
     elif [ -s "$JG_CHECK_OUTPUT" ]; then
       reason=$(head -n 1 "$JG_CHECK_OUTPUT")
@@ -4238,25 +4250,42 @@ check_cursor_advance() {
   fi
 }
 
+# Compare registration records with the start of the last sweep. An update during a sweep remains due.
+check_registration_changed() {
+  local record stamp="$STATE/.check-sweep-start"
+  [ -e "$stamp" ] || stamp="$STATE/.last-check"
+  for record in "$STATE"/*.check-trust "$STATE"/*.pr-poll; do
+    case "${record##*/}" in board-answers.check-trust|auto-dispatch.check-trust) continue ;; esac
+    [ ! "$record" -nt "$stamp" ] || return 0
+  done
+  return 1
+}
+
 # Slow per-task checks (juggernaut writes these, e.g. a merged-PR poll).
 # Time-based via .last-check mtime so the cadence survives watcher restarts.
 # A due check runs on every cycle that reaches it, including a cycle whose
 # actionable signal wake is about to exit (see the signal branch): the signal
 # rows are already durable in the queue, so a check result appended here is
 # delivered by the same drain as that signal, and a signal stream cannot
-# starve a check. Checks are due only every CHECK_INTERVAL, so most cycles
-# skip this block and fall straight through.
+# starve a check. New registrations can advance the next sweep. The repair
+# timer adds a stable home offset to CHECK_INTERVAL so homes spread their work.
 # A check that prints a line ends the cycle (wake exits), so the sweep is kept
 # in order by $STATE/.check-cursor: that check's successor is written there and
 # .last-check is left alone, the next sweep starts at the cursor, and only a
 # sweep that reaches its last check stamps .last-check and removes the cursor.
 # A check printing a line every run therefore cannot hide the checks after it.
 run_due_checks() {
-  local c id out reason is_pr_poll provider url host path number custom_snapshot
+  local c id out reason is_pr_poll provider url host path number custom_snapshot reusable
+  local -a poll_command
   local merge_authority merge_authority_record_identity merge_outcome_rc
   local rejected_checks unalerted_checks contribution_check_output contribution_check_diagnostics contribution_check_line
   local cursor_file="$STATE/.check-cursor" cursor found checks=() start=0 n
-  if [ -e "$cursor_file" ] || [ "$(age_of "$STATE/.last-check")" -ge "$CHECK_INTERVAL" ]; then
+  # The explicit token has precedence over stored GitHub logins. Reuse a successful unmerged
+  # reply only for the identical validated URL and state query within this home and sweep.
+  local -A github_unmerged=()
+  if [ -e "$cursor_file" ] || [ ! -e "$STATE/.last-check" ] ||
+    [ "$(age_of "$STATE/.last-check")" -ge "$CHECK_SWEEP_DELAY" ] || check_registration_changed; then
+    [ -e "$cursor_file" ] || touch "$STATE/.check-sweep-start" || return 1
     rejected_checks=
     contribution_check_output=
     for c in "$STATE"/*.check.sh; do
@@ -4310,16 +4339,37 @@ run_due_checks() {
             continue
           fi
           JG_CHECK_OUTPUT_KEY=$id
-          if ! run_check_capture "$SCRIPT_DIR/jg-pr-poll.sh" --validated \
-            "$provider" "$url" "$host" "$path" "$number"; then
+          reusable=0
+          poll_command=("$SCRIPT_DIR/jg-pr-poll.sh" --validated "$provider" "$url" "$host" "$path" "$number")
+          if [ "$provider" = github ] && [ -n "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ]; then
+            reusable=1
+            if [ -n "${github_unmerged[$url]:-}" ]; then
+              pr_poll_control_release || exit 1
+              watcher_beat due-check
+              continue
+            fi
+            # Keep the registered static poll byte-identical for existing watches. The snapshot
+            # already validated this URL, and an explicit token fixes the credential for the sweep.
+            # shellcheck disable=SC2016 # the check subprocess expands its own argument
+            poll_command=(-c 'reply=$(gh pr view "$1" --json state -q .state) || exit 0
+              case "$reply" in
+                MERGED) printf "%s\n" merged ;;
+                OPEN|CLOSED) printf "%s\n" unmerged ;;
+              esac' _ "$url")
+          fi
+          if ! run_check_capture "${poll_command[@]}"; then
             pr_poll_control_release || exit 1
             check_capture_skip "$c"
             continue
           fi
+          if [ "$reusable" -eq 1 ] && [ "$(< "$JG_CHECK_OUTPUT")" = unmerged ]; then
+            github_unmerged[$url]=1
+            : > "$JG_CHECK_OUTPUT"
+          fi
         elif jg_custom_check_snapshot_prepare "$STATE" "$id"; then
           custom_snapshot=$JG_CUSTOM_CHECK_SNAPSHOT
           JG_CHECK_OUTPUT_KEY=$id
-          if ! run_check_capture "$custom_snapshot"; then
+          if ! JG_DISPATCH_PERIODIC=1 run_check_capture "$custom_snapshot"; then
             jg_custom_check_snapshot_cleanup
             check_capture_skip "$c"
             continue

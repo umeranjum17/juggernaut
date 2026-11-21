@@ -126,6 +126,34 @@ jg_path_age() {
   echo $(( now - m ))
 }
 
+# Spread a periodic job over a bounded window using the home as its stable seed.
+jg_home_timer_offset() {  # <home> <window in seconds>
+  local sum
+  read -r sum _ < <(printf '%s' "$1" | cksum) || sum=0
+  printf '%s\n' "$((sum % ($2 + 1)))"
+}
+
+# Repair recurs in home-specific slots. Homes with lane records keep the
+# sentinel's one-minute cadence for lease renewal and timed worker stops.
+jg_delivery_timer_due() {  # <home>
+  local last now age offset period=120
+  last=$(jg_path_mtime "$1/state/.last-delivery-tick") || return 0
+  jg_epoch_seconds_to now
+  age=$((now - last))
+  if [ "$age" -ge 120 ] || [ "$age" -lt 0 ]; then return 0; fi
+  [ "$age" -ge 30 ] || return 1
+  if compgen -G "$1/state/*.meta" >/dev/null; then period=60; fi
+  [ "$age" -lt "$period" ] || return 0
+  [ "$age" -ge "$((period / 2))" ] || return 1
+  offset=$(jg_home_timer_offset "$1" "$((period - 1))")
+  [ "$(((now + offset) / period))" -ne "$(((last + offset) / period))" ]
+}
+
+# The delivery entry rechecks this with the per-home lock held.
+jg_delivery_repair_due() {  # <home>
+  [ -e "$1/state/.delivery-tick.again" ] || jg_delivery_timer_due "$1"
+}
+
 jg_watcher_child_identity() {
   local identity
   jg_watcher_child_identity_to identity "$1" || return 1

@@ -43,7 +43,8 @@
 # The lane target, the quota gates and the brief gates stay: the spawn applies its own and may refuse.
 # The check runs one pass at a time per home: it holds the lock directory data/auto-dispatch/.check.lock (the holder's pid in it;
 # a dead holder's lock is taken over). A call that finds a pass running leaves the mark data/auto-dispatch/.check.again FIRST,
-# tries the lock once more, and else exits 0 printing nothing; the holder releases the lock after each pass, and when the mark is
+# tries the lock once more, and else exits 0 printing nothing. A periodic check skips while a pass is in flight, since that
+# pass is already performing the scheduled scan. The holder releases the lock after each pass, and when the mark is
 # there takes the lock again, removes the mark and makes one more pass (at most 3 passes in one call; a mark left after the
 # third starts one detached check, so it is never left for the next beat). So any number of events may start the check at once.
 # A detached check (a retry, or that last one) prints nothing, so it names no ticket to the lead and raises no alert: the next
@@ -57,7 +58,7 @@
 # Every pass also appends one line to data/auto-dispatch/passes.tsv (the last 5000 lines are kept), whatever its verdicts were:
 #   <epoch><TAB>pass<TAB><candidates><TAB><started><TAB><deferred><TAB><seconds><TAB><switch on|off>
 # candidates are the tickets the pass judged, started the ones it launched, deferred the ones the spawn told to wait; a pass that
-# could not read the store writes no line. The watcher starts the check every minute (bin/jg-watch.sh, JG_DISPATCH_INTERVAL).
+# could not read the store writes no line. The watcher schedules starts in bin/jg-watch.sh.
 # Switch on, a ticket that passed all six reasons and still has no running start 10 minutes after its refusal (a brief with no
 # delivery contract, an unreadable yolo posture, a failed start) raises the `ready-idle` alert through bin/jg-alert.sh, the
 # alert table's own timer and rung, printed as the check's wake line; a start that takes resolves it. Watch only raises nothing.
@@ -95,6 +96,8 @@ RETRY_DELAY=${JG_DISPATCH_RETRY_DELAY:-20}
 MAX_PASSES=3
 LOCK_HELD=0
 QUIET=${JG_DISPATCH_DETACHED:-}   # set by detach: this check has no reader, so it keeps the lead's note and the alert for a beat
+PERIODIC=${JG_DISPATCH_PERIODIC:-0}
+unset JG_DISPATCH_PERIODIC       # The periodic caller's policy applies only to this attempt, never its deferred retries.
 case "$RETRY_DELAY" in ''|*[!0-9]*) RETRY_DELAY=20 ;; esac
 umask 077
 mkdir -p "$DATA/auto-dispatch" || exit 0
@@ -357,6 +360,7 @@ release_lock() {
 check_call() {
   local passes=0
   if ! take_lock; then
+    [ "$PERIODIC" != 1 ] || return 0
     : > "$CHECK_AGAIN"
     take_lock || return 0
   fi
@@ -510,7 +514,7 @@ while IFS= read -r id; do
   record_row "$id" "$idle" "$kind" "$detail"
 done < "$tmp/ordered"
 cat "$tmp/alerts"
-# The pass's own line: the watcher starts this check every minute, and this file is the record that it ran.
+# Record each pass the watcher or an event starts.
 { printf '%s\tpass\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$(grep -c . "$tmp/ordered")" "$launched" "$deferred" "$SECONDS" "$([ "$ACT" -eq 1 ] && echo on || echo off)" >> "$PASSES"
   [ "$(wc -l < "$PASSES")" -le 5000 ] || { tail -n 5000 "$PASSES" > "$PASSES.tmp.$$" && mv -f "$PASSES.tmp.$$" "$PASSES"; }; } 2>/dev/null
 [ "$ACT" -eq 0 ] || [ ! -s "$tmp/lead" ] || printf 'auto-dispatch: lead, these tickets are not started by themselves: %s\n' "$(paste -sd';' "$tmp/lead" | sed 's/;/; /g')"

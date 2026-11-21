@@ -233,10 +233,10 @@ test_the_landing_check_cuts_the_next_trunk_once_the_release_merged() {
 
 test_the_watcher_runs_the_landing_check_on_its_fast_tick() {
   local c out rc=0 st
+  local -a delivery
   world outer-watch
   cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
   printf 'off\n' > "$HOME_D/config/wake-bus"
-  lane ready one; c=$(git -C "$PROJ" rev-parse fm/ready)
   printf '#!/usr/bin/env bash\nexit 0\n' > "$W/fakebin/tmux"; chmod +x "$W/fakebin/tmux"
   printf '#!/usr/bin/env bash\nexit 1\n' > "$W/fakebin/systemctl"; chmod +x "$W/fakebin/systemctl"
   # The fast tick reads the shared board with sign-off-axi; an empty fake keeps the host's real answers out of this home's wakes.
@@ -247,6 +247,17 @@ exit 0
 SH
   chmod +x "$W/fakebin/sign-off-axi"
   printf '#!/usr/bin/env bash\nsleep 0.2\nexec %s "$@"\n' "$(command -v setsid)" > "$W/fakebin/setsid"; chmod +x "$W/fakebin/setsid"
+  delivery=(env -u JG_TASK_ID PATH="$W/fakebin:$PATH" JG_ROOT_OVERRIDE="$W/root"
+    JG_DELIVERY_TICK_PERIODIC=1 JG_DELIVERY_TICK_TRACE="$W/delivery-trace" bash "$HOME_D/bin/jg-delivery-tick.sh" "$HOME_D")
+  "${delivery[@]}" > "$W/delivery.log" 2>&1 || fail "initial periodic delivery failed: $(cat "$W/delivery.log")"
+  "${delivery[@]}" > "$W/delivery.log" 2>&1 || fail "unchanged periodic delivery failed: $(cat "$W/delivery.log")"
+  [ "$(wc -l < "$W/delivery-trace")" -eq 1 ] || fail "an unchanged home ran another delivery pass"
+  # The fixture publishes done directly. This models a completion whose notification never reached delivery.
+  lane ready one; c=$(git -C "$PROJ" rev-parse fm/ready)
+  "${delivery[@]}" > "$W/delivery.log" 2>&1 || fail "periodic delivery failed: $(cat "$W/delivery.log")"
+  [ "$(wc -l < "$W/delivery-trace")" -eq 1 ] || fail "delivery ran before the missed event's repair timer was due"
+  [ "$(tip)" != "$c" ] || fail "the fixture completion was already landed"
+  jg_touch_epoch "$(($(date +%s) - 240))" "$HOME_D/state/.last-delivery-tick"
   JG_HOME="$HOME_D" JG_STATE_OVERRIDE="$HOME_D/state" bash -c \
     '. "$1"; jg_wake_append check urgent "check: waiting-state urgent blocker"' _ "$ROOT/bin/jg-wake-lib.sh" \
     || fail "could not queue the urgent wake"
@@ -265,7 +276,7 @@ SH
   grep -Eq '^landed( |$)' "$st" || fail "detached landing did not finish: $(cat "$st" "$HOME_D/data/jg-trunk-landing/ready.$c.log")"
   [ "$(tip)" = "$c" ] || fail "outer watcher dispatched but did not land the exact ready head"
   [ ! -e "$W/live-moves" ] || fail "outer watcher must never release or go live"
-  pass 'real outer watcher dispatches and lands ready/PASS before an urgent queued wake exits; never goes live'
+  pass 'unchanged delivery skips the pass, then the outer watcher repairs a missed ready/PASS event before an urgent wake exits'
 }
 
 if [ "${JG_TRUNK_OUTER_ONLY:-0}" = 1 ]; then

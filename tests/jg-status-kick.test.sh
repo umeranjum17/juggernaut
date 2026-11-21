@@ -90,6 +90,7 @@ test_nothing_else_starts_a_kick() {
   printf 'on\n' > "$HOME_D/config/auto-dispatch"
   append "working [at=$(date +%s)]: setup complete"
   [ "$RC" = 0 ] || fail "a working line was refused: $OUT"
+  [ -e "$HOME_D/state/.delivery-tick.again" ] || fail "the accepted status did not mark delivery due"
   settle
   [ ! -s "$LOG" ] || fail "a working line started something: $(cat "$LOG")"
   printf 'off\n' > "$HOME_D/config/auto-dispatch"
