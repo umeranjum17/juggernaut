@@ -2093,6 +2093,9 @@ journeys:
     tier: local
     command: bash tests/jg-recon-loop.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
     timeout: 15m
+  loop-stall-alert:
+    tier: local
+    command: bash tests/jg-loop-stall.test.sh > "$DONE_DONE_EVIDENCE_ROOT/loop-stall.log" 2>&1
   jg-update-local-base:
     tier: local
     command: bash tests/jg-update-local-base.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

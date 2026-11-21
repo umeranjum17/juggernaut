@@ -90,6 +90,8 @@ bash "$SCRIPT_DIR/jg-lease-tick.sh" "$H" >&2 || echo "jg-delivery-tick: the leas
 bash "$SCRIPT_DIR/../core/recon-loop/recon-loop.sh" tick "$H" || echo "jg-delivery-tick: the Recon loop step failed in $H" >&2
 # A finished Recon or critic lane whose required next step nobody took in 10 minutes raises the done-unhandled P1 (core/next-step); it never stops the pass.
 bash "$SCRIPT_DIR/../core/next-step/next-step.sh" tick "$H" >&2 || echo "jg-delivery-tick: the next-step alert step failed in $H" >&2
+# A Blitz plan or a Goal with ready work that made no progress for 10 minutes raises the fleet-blocked P1, which only progress clears (core/loop-stall); it never stops the pass.
+bash "$SCRIPT_DIR/../core/loop-stall/loop-stall.sh" tick "$H" >&2 || echo "jg-delivery-tick: the loop stall step failed in $H" >&2
 # A missing required check is reported in the same queue as other supervision findings.
 required_out=$(bash "$SCRIPT_DIR/jg-required-checks.sh" "$H" 2>&1) || true
 if [ -n "$required_out" ]; then

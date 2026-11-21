@@ -39,5 +39,7 @@ A `next` wake rings once per Goal and step, again after `JG_GOAL_RESURFACE_SECS`
 and at once if the Goal left `next` and came back. Records sit in `data/jg-goal-loop/`. A Goal read that is refused
 raises one wake per reason, with the refusal's text as the reason. `goal-loop.sh state <home>` prints the reduction.
 
+A Goal whose step stays `next` for 10 minutes raises the `fleet-blocked` P1 (`core/loop-stall`, run by the delivery tick), closed only when the step is taken or the Goal leaves `next`.
+
 Install: `core/goal-loop/wiring.sh <home>` (run by `bin/jg-host-wiring.sh`); `unwiring.sh <home>` removes the shim, the
 registration and the installed copy and leaves Goal rows alone. Proof: `bash core/goal-loop/tests/goal-loop.test.sh`, and `journeys/goal-loop.sh` (a fake forge in real time, about 4 minutes; the lead is a script).

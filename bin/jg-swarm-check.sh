@@ -2,6 +2,7 @@
 # jg-swarm-check.sh - one line of swarm progress, one wake when a swarm ends or waits, and the dispatch switch put back.
 # Usage: jg-swarm-check.sh status [<plan>] [--short]
 #        jg-swarm-check.sh check <jg-home>
+#        jg-swarm-check.sh ready <jg-home>
 #
 # Reads the records `bin/jg-swarm.sh start` and `bin/jg-swarm-arm.sh` write: data/swarm/<plan>/swarm.json (Main),
 # plan.json (the derived plan) and arm.json (each owner home). It changes no backlog row.
@@ -16,12 +17,14 @@
 # wrote, and prints `swarm <plan>: <owner> restored its dispatch switch to <value>` once. A slice waits for the owner
 # while its word row in Main is an open decision (jg-captain-hold.sh open exits 0). A failed slice stays open and is
 # never skipped. A home that cannot be read is named on stderr and skipped.
+# ready prints one line `<plan><TAB><D W Q K counts><TAB><open rows>` for each running swarm that has a slice it could start (one
+# not waiting for the owner, with nothing in flight), and `<plan><TAB>unread` for a plan whose home cannot be read. It is read-only; core/loop-stall times it and raises the stall alert.
 # Test hook: JG_SWARM_NOW (the clock). Setting: config/swarm-stall-minutes (default 30).
 set -u
 export LC_ALL=C
 SELF=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 umask 077
-usage() { echo "usage: jg-swarm-check.sh status [<plan>] [--short] | check <jg-home>" >&2; exit 2; }
+usage() { echo "usage: jg-swarm-check.sh status [<plan>] [--short] | check <jg-home> | ready <jg-home>" >&2; exit 2; }
 now() { printf '%s' "${JG_SWARM_NOW:-$(date +%s)}"; }
 hm() { printf '%dh%02dm' $(($1 / 3600)) $(($1 % 3600 / 60)); }
 
@@ -176,7 +179,22 @@ cmd_check() {
   return 0
 }
 
+cmd_ready() {
+  local home dir row list sep
+  [ "$#" -eq 1 ] && [ -d "$1" ] || usage
+  home=$(cd "$1" && pwd -P)
+  while read -r dir; do
+    [ -n "$dir" ] || continue
+    evaluate "$dir" || { printf '%s\tunread\n' "$(basename "$dir")"; continue; }
+    [ "$W" = 0 ] || continue
+    list='' sep=''
+    for row in "${OPEN[@]}"; do [ -z "${STUCK[$row]:-}" ] && { list+="$sep$row"; sep=', '; }; done
+    [ -z "$list" ] || printf '%s\t%s\t%s\n' "$(basename "$dir")" "$SIG" "$list"
+  done < <(running_plans "$home/data")
+}
+
 case "${1:-}" in
+  ready) shift; cmd_ready "$@" ;;
   status) shift; cmd_status "$@" ;;
   check) shift; cmd_check "$@" ;;
   *) usage ;;
