@@ -1,0 +1,39 @@
+machine	muster	data/<ticket>/muster/ (rounds.tsv, approvals.tsv, manifest-<sha12>.tsv), the project documents, its done-done run records and the release record	core/machines/observers/muster.sh
+enum	muster
+state	triage	initial	Pick the depth; no question round has been asked yet.	-	active
+state	council	normal	Specialists argue first, and their questions merge into round 1.	-	active
+state	intent	normal	Agree why this exists, for whom and the end state in the vision.	-	active
+state	lexicon	normal	Write one shared language: every core object is a glossary term.	-	active
+state	rules	normal	Write the stack, lint and test rules, each with the check that enforces it.	-	active
+state	terrain	normal	Write the domain model and the hard decisions as real decision records.	-	active
+state	sand-table	normal	Pick cheap prototypes for the screens and flows.	-	active
+state	charter	normal	Write what is delivered and in which order, with a proof journey for each milestone.	-	active
+state	objectives	normal	Write the proof journeys first; on the base each new one fails on its named assertion.	-	active
+state	check	normal	The program read the pack and passed it; nothing is asked of the captain yet.	-	active
+state	approval	normal	Waiting for the captain's yes to this exact checked pack.	-	active
+state	war-room	normal	The pack is approved; the plan is made from the charter.	-	active
+state	blitz	normal	The build is under way: landed, not secured. An objective has no receipt on the landed commit.	-	active
+state	landed	normal	Every objective is proven: landed, not released. No release names the landed commit.	-	active
+state	secured	terminal	Secured: every objective has a receipt on the landed commit and a release names it.	-	final
+edge	(none)	pick	triage	bin/jg-muster-depth.sh:record	-	Main records the depth line on the ticket; no review mark is left	jg-muster-objectives
+edge	triage	council	council	bin/jg-muster-council.sh:merge	-	the ask is a new project or a risky feature, or the captain asks for the council	jg-muster-objectives
+edge	triage	round	intent	bin/jg-muster.sh:round	-	the first round of questions is asked	jg-muster-objectives
+edge	council	round	intent	bin/jg-muster.sh:round	-	every lens is drafted and its questions are merged into round 1	jg-muster-objectives
+edge	intent	define	lexicon	bin/jg-muster.sh:round	-	the vision has its sections, fits one page and holds no placeholder	jg-muster-objectives
+edge	lexicon	rules	rules	bin/jg-muster.sh:round	-	complete depth: every entity and core object is a glossary term	jg-muster-objectives
+edge	lexicon	model	terrain	bin/jg-muster.sh:round	-	light or full depth: every entity and core object is a glossary term	jg-muster-objectives
+edge	rules	model	terrain	bin/jg-muster.sh:round	-	every rule names its check and its planted fault fails	jg-muster-objectives
+edge	terrain	sketch	sand-table	bin/jg-muster.sh:round	-	the model and its decision records pass the gate and a screen needs a prototype	jg-muster-objectives
+edge	terrain	chart	charter	bin/jg-muster.sh:round	-	the model and its decision records pass the gate	jg-muster-objectives
+edge	sand-table	chart	charter	bin/jg-muster.sh:round	-	one pick is recorded for each design card	jg-muster-objectives
+edge	charter	prove	objectives	bin/jg-muster.sh:round	-	every ticket is in a batch, no dependency runs inside or against batch order, every milestone has a journey	jg-muster-objectives
+edge	objectives	check	check	bin/jg-muster-approval.sh:ask	-	the pack gate passes at the depth and the base half of the objectives holds	jg-muster-objectives
+edge	check	refuse	objectives	bin/jg-muster-approval.sh:ask	-	the gate or the objectives refuses; the state that owns the clause is written again	jg-muster-objectives
+edge	check	ask	approval	bin/jg-muster-approval.sh:ask	-	the approval question is held and its gate id is recorded	jg-muster-objectives
+edge	approval	change	check	bin/jg-muster-approval.sh:verify	-	a pack file changed, so the check and the ask are made again	jg-muster-objectives
+edge	approval	approve	war-room	bin/jg-muster-approval.sh:verify	-	the newest ask names the current manifest, the owner answered exactly yes and the copies still match	jg-muster-objectives
+edge	war-room	finding	terrain	bin/jg-plan.sh:war-room	-	the critic finds an undecided point and only that question re-opens	jg-muster-objectives
+edge	war-room	build	blitz	bin/jg-plan.sh:blitz	-	the plan matches the approved manifest and the first objective has a receipt on the landed commit	jg-muster-objectives
+edge	blitz	prove	landed	bin/jg-muster-objectives.sh:objectives	-	every objective has a receipt (exit 0, clean tree) on the landed commit	jg-muster-objectives
+edge	landed	release	secured	bin/jg-muster-objectives.sh:code	-	every behaviour of the model is found in its module and the release record names the commit	jg-muster-objectives
+observer	bash "$(dirname "$JG_MACHINES_TABLES")/observers/muster.sh" "$1"

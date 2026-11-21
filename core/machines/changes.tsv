@@ -19,3 +19,4 @@ sm-s12-enforce	juggernaut	38f1eed7e0f316ec3787d973160f35678dd0713b	machine-enfor
 jg8-j32a-resolver	juggernaut	ff8795d39dd2b6b482c59900a94481132d63178b	-	-	a rebase conflict goes to resolving: the home's conflict-resolver agent resolves it in the lander's copy
 jg8-j32b-retest	juggernaut	49e03978fbd8e1e2689e730c7dfd614975a589f8	-	-	after a resolved conflict the retest-runner runs only the journeys the touched files affect
 post-merge-ci-rule	juggernaut	-	post-merge-ci-restore	log:data/jg-post-merge-ci/check.log:--main	the registered check runs the post-merge alarm on the behaviour suite under the verify one rule; config/post-merge-ci-restore turns on the pin-back
+muster-machine	juggernaut	-	-	-	the muster machine table: a ticket's muster state read from its records, secured only when every objective has a receipt on the landed commit and a release names it

@@ -1,0 +1,17 @@
+# muster: the closed list of states of the machine "one muster, from the depth pick to a released and proven build".
+# value<TAB>mark (initial, final or -)<TAB>kind (active, waiting, rest, final)<TAB>meaning
+triage	initial	active	the depth is picked and no round has been asked yet
+council	-	active	specialist lenses argue first and their questions merge into round 1
+intent	-	active	the why, the people and the end state are being agreed (docs/vision.md)
+lexicon	-	active	the shared language is being written (GLOSSARY.md with the core objects)
+rules	-	active	the stack, lint, comments, folders and tests are being written as rules with checks
+terrain	-	active	the domain model and the hard decisions are being written (model, design, real ADRs)
+sand-table	-	active	cheap prototypes are being picked for screens and flows
+charter	-	active	what is delivered, and in which order, is being written (docs/charter.md)
+objectives	-	active	the proof journeys are written and wait for a pack check on the base
+check	-	active	the program has checked the pack and written the manifest; no approval is asked yet
+approval	-	active	the captain is asked to approve this exact checked pack
+war-room	-	active	the pack is approved and the plan is being made from the charter
+blitz	-	active	the build is under way and at least one objective has no receipt on the landed commit
+landed	-	active	every objective has a receipt on the landed commit and no release record names it
+secured	final	final	every objective has a receipt on the landed commit, the model's behaviour is in the code and a release names it
