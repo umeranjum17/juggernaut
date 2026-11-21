@@ -2038,6 +2038,9 @@ journeys:
   jg-trunk-verify:
     tier: local
     command: bash tests/jg-trunk-verify.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-trunk-verify-survives:
+    tier: local
+    command: bash tests/jg-trunk-verify-survives.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-trunk:
     tier: local
     command: bash tests/jg-trunk.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

@@ -4,16 +4,18 @@
 #  1. A lane lands while the verify runs: the running verify ends green and the pin moves to its commit; the verify of the newer tip
 #     starts only after it and ends too. Neither attempt ends "stopped by signal TERM".
 #  2. The tick's own process group is stopped while the verify runs (the way the watcher stops a check): the verify still ends green.
+#  3. A lane lands while the verify runs past its lock lease, and the lock-lease check runs (ticket jg-eqs3k.1): the verify beats its
+#     lock, so the check leaves it running and it ends green, not "stopped by signal TERM".
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
 
 tip_after_land() { trunk land "$1" >/dev/null 2>&1 || fail "$1 must land"; tip; }
 verify_rows() { cut -f5 "$HOME_D/data/trunk-verify.tsv" 2>/dev/null | paste -sd, -; }
-# a whole-suite gate that records its commit and runs 20 seconds, so a landing and a group stop both happen inside it
-slow_gate() {
+# a whole-suite gate that records its commit and runs <seconds> (default 20), so a landing and a group stop both happen inside it
+slow_gate() {  # [<seconds>]
   # shellcheck disable=SC2016 # written verbatim, expands when the gate runs it
-  printf '#!/usr/bin/env bash\ngit rev-parse HEAD >> %s/verify-ran\nsleep 20\n' "$W" > "$W/slow.sh"
+  printf '#!/usr/bin/env bash\ngit rev-parse HEAD >> %s/verify-ran\nsleep %s\n' "$W" "${1:-20}" > "$W/slow.sh"
   printf 'gate-verify=bash %s/slow.sh\ngate-full=true\n' "$W" >> "$HOME_D/config/trunk-policy"
   # the home the detached job runs in, with the pin below the tip so a verify is due
   cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
@@ -61,6 +63,32 @@ test_a_group_stop_of_the_tick_does_not_stop_a_running_verify() {
   pass "a stop of the tick's process group does not stop a running verify"
 }
 
+# The verify runs as its systemd unit runs it, leading its own process group, so the lease's group stop would reach the whole gate.
+# A short lease and beat stand in for the 600 s lease and 60 s beat; the gate outlasts the lease three times over.
+test_a_verify_past_its_lock_lease_keeps_running_through_a_landing_and_the_lease_check() {
+  local lock out since
+  world lease1; slow_gate 40
+  lane l1 one a.txt; tip_after_land l1 >/dev/null
+  export JG_LOCK_LEASE_WARN_S=4 JG_LOCK_LEASE_END_S=6 JG_LOCK_BEAT_S=1
+  JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" setsid bash "$ROOT/core/trunk-landing/trunk-landing.sh" verify "$HOME_D" proj >/dev/null 2>&1 < /dev/null &
+  VPID=$!
+  for _ in $(seq 1 100); do [ -s "$W/verify-ran" ] && break; sleep 0.1; done
+  [ -s "$W/verify-ran" ] || fail "the verify must be running"
+  lock=$HOME_D/state/.trunk-autoverify-proj.lock
+  [ "$(cat "$lock/pid" 2>/dev/null)" = "$VPID" ] || fail "fixture: the verify job must hold its lock as its group leader"
+  lane l2 two b.txt; tip_after_land l2 >/dev/null
+  since=$(cat "$lock/since")
+  while [ $(( $(date +%s) - since )) -le 8 ]; do sleep 0.5; done
+  out=$(JG_STATE_OVERRIDE="$HOME_D/state" bash "$ROOT/core/lock-lease/lock-lease.check.sh" "$HOME_D" 2>&1)
+  case $out in *autoverify*) fail "the lease check must leave a beating verify alone: $out" ;; esac
+  kill -0 "$VPID" 2>/dev/null || fail "the verify job must still run after the lease check: $(cat "$HOME_D"/data/trunk/verify-*.log 2>&1)"
+  wait "$VPID" 2>/dev/null || :
+  unset JG_LOCK_LEASE_WARN_S JG_LOCK_LEASE_END_S JG_LOCK_BEAT_S
+  [ "$(cut -f5 "$HOME_D/data/trunk-verify.tsv" | head -n 1)" = green ] || fail "the verify must run to its result: $(cat "$HOME_D"/data/trunk/verify-*.log 2>&1)"
+  no_term
+  pass 'a verify past its lock lease keeps running through a landing and the lease check, and ends green'
+}
+
 # The user manager refuses the unit (a stand-in systemd-run that refuses a unit and, in the second run, also a scope): the tick still
 # starts the verify, tries the scope first, logs why the unit was refused, and the verify ends with its own result.
 test_a_refused_unit_falls_back_to_a_scope_then_setsid_and_logs_why() {
@@ -87,4 +115,5 @@ test_a_refused_unit_falls_back_to_a_scope_then_setsid_and_logs_why() {
 test_a_landing_during_a_verify_does_not_stop_it_and_the_newer_tip_is_verified_after_it
 test_a_refused_unit_falls_back_to_a_scope_then_setsid_and_logs_why
 test_a_group_stop_of_the_tick_does_not_stop_a_running_verify
+test_a_verify_past_its_lock_lease_keeps_running_through_a_landing_and_the_lease_check
 printf 'jg-trunk-verify-survives: ok\n'

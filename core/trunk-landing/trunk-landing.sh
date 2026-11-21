@@ -233,13 +233,15 @@ fi
 
 # The line's verify for one project (bin/jg-trunk.sh verify decides and reports; a red raises line-red there). One at a time per project:
 # a tick that finds the last one still running does nothing. A run that is green or already reported prints nothing.
+# The verify beats its lock while it runs: a verify that bisects its parents runs past the lock lease (core/lock-lease), which ends a
+# tick-started holder that does not beat.
 if [ "$1" = verify ]; then
   pn=$3; proj=$FMH/projects/$pn
   [[ $pn =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && [ -d "$proj" ] || exit 2
   jg_lock_try_acquire "$STATE/.trunk-autoverify-$pn.lock" || exit 0
   trap 'jg_lock_release "$STATE/.trunk-autoverify-$pn.lock"' EXIT
   JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" verify-due "$proj" >/dev/null 2>&1 || exit 0
-  JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" verify "$proj" >"$MEM/verify-$pn.log" 2>&1 || :
+  JG_HOME="$FMH" jg_lock_beat_while "$STATE/.trunk-autoverify-$pn.lock" "$FMH/bin/jg-trunk.sh" verify "$proj" >"$MEM/verify-$pn.log" 2>&1 || :
   exit 0
 fi
 

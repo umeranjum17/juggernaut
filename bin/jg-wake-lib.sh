@@ -710,6 +710,25 @@ jg_lock_beat() {  # <lockdir>
   printf '%s\n' "$now" > "$lockdir/beat" 2>/dev/null
 }
 
+# Run <command> as a child of the holder of <lockdir> and beat the lock every JG_LOCK_BEAT_S seconds (default 60) while the child
+# runs, so a job that holds its lock longer than the lease (a verify bisecting its parents) is not ended while it works. The beat
+# comes from this process, the recorded holder; the child's own runtime is bounded by the child (the test runner's per-script and
+# gate bounds), not by the lease. Returns the command's exit status.
+jg_lock_beat_while() {  # <lockdir> <command>...
+  local lockdir=$1 every=${JG_LOCK_BEAT_S:-60} child rc=0 waited
+  shift
+  case $every in '' | *[!0-9]* | 0) every=60 ;; esac
+  "$@" &
+  child=$!
+  while kill -0 "$child" 2>/dev/null; do
+    jg_lock_beat "$lockdir" || :
+    waited=0
+    while [ "$waited" -lt "$every" ] && kill -0 "$child" 2>/dev/null; do sleep 1; waited=$((waited + 1)); done
+  done
+  wait "$child" || rc=$?
+  return "$rc"
+}
+
 jg_lock_set_role() {
   local lockdir=$1 role=$2 current pid back
   case "$role" in
