@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # jg-runner-shard.sh - the runner's half of a gate shard (H30b): run one shard of the test selection at a commit that
 # arrived as a git bundle, and print the shard's timing JSON.
-# Usage: jg-runner-shard.sh <commit> <base> -- <jg-test-run.sh arguments>      the bundle is the job's stdin
+# Usage: jg-runner-shard.sh <commit> <base> -- [<args...>]      the bundle is the job's stdin
 #   Runs only as a remote job (bin/jg-on.sh --stdin <runner> jg-runner-shard.sh ...; core/runners/run-shard.sh is the caller),
 #   under the remote job queue's own bounds: stdin and stdout are capped at 1 MiB, and the job record carries the shard
 #   timeout (jg_remote_job_command_timeout in bin/jg-remote-job-lib.sh).
@@ -16,7 +16,7 @@ ROOT="${JG_ROOT_OVERRIDE:-$(cd "$DIR/.." && pwd)}"
 UNABLE=97
 
 unable() { printf 'jg-runner-shard: %s\n' "$1" >&2; exit "$UNABLE"; }
-[ "$#" -ge 3 ] && [ "$3" = -- ] || unable "usage: jg-runner-shard.sh <commit> <base> -- <jg-test-run.sh arguments>"
+[ "$#" -ge 3 ] && [ "$3" = -- ] || unable "usage: jg-runner-shard.sh <commit> <base> -- [<args...>]"
 commit=$1 base=$2
 shift 3
 for sha in "$commit" "$base"; do

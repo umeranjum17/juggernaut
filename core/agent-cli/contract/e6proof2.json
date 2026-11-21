@@ -257,7 +257,7 @@
       "schema": "proof.runner-shard.v1",
       "script": "bin/jg-runner-shard.sh",
       "operation": "-",
-      "form": "bin/jg-runner-shard.sh <commit> <base> -- <jg-test-run.sh arguments>",
+      "form": "bin/jg-runner-shard.sh <commit> <base> -- [<args...>]",
       "aliases": []
     },
     {

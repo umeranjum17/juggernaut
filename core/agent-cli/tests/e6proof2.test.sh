@@ -106,10 +106,6 @@ with tempfile.TemporaryDirectory(prefix='jg-e6proof2-') as t:
         else: script+=args
         direct=call(script); direct_files=digest()
         reset(); dispatched=call([str(root/'bin/jg'),*e['path'],*args]); dispatch_files=digest()
-        if key=='runner-shard':
-            assert 'not a full commit id' in direct.stderr
-            assert 'unexpected argument --all' in dispatched.stderr
-            continue  # documented dispatcher gap; no remote work was started
         assert dispatched.stdout, (key,dispatched.stderr)
         data=json.loads(dispatched.stdout)
         expected=e['exits'].get(str(direct.returncode), 0 if direct.returncode==0 else 1)
@@ -121,5 +117,47 @@ with tempfile.TemporaryDirectory(prefix='jg-e6proof2-') as t:
         assert data['data']==expected_output, (key,data,expected_output)
         assert direct_files==dispatch_files, (key,direct_files,dispatch_files)
         if e['method']=='GET': assert before==dispatch_files, key
-    print('PASS: e6proof2 inventory, help, isolated reads and script parity (runner gap recorded)')
+
+    # Run the real shard on a commit available to the runner only through stdin.
+    shard_source = t / 'shard-source'
+    runner_root = t / 'runner-root'
+    shard_source.mkdir()
+    shard_env = {key: value for key, value in env.items() if not key.startswith('GIT_')}
+    shard_env.update(
+        JG_ROOT_OVERRIDE=str(runner_root), GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=os.devnull,
+        GIT_AUTHOR_NAME='Fixture', GIT_AUTHOR_EMAIL='fixture@example.invalid',
+        GIT_COMMITTER_NAME='Fixture', GIT_COMMITTER_EMAIL='fixture@example.invalid',
+    )
+
+    def shard_git(*args):
+        return subprocess.check_output(
+            ['git', *args], cwd=shard_source, env=shard_env, text=True, timeout=30,
+        ).strip()
+
+    shard_git('init', '-q', '-b', 'main')
+    shard_git('commit', '-q', '--allow-empty', '-m', 'Fixture base')
+    shard_base = shard_git('rev-parse', 'HEAD')
+    shard_git('clone', '-q', '--no-local', '.', str(runner_root))
+    (shard_source / 'bin').mkdir()
+    (shard_source / 'bin/jg-test-run.sh').write_text(r'''#!/usr/bin/env bash
+set -eu
+head=$(git -C "${0%/*}/.." rev-parse HEAD)
+jq -nc --arg head "$head" --args '{head: $head, args: $ARGS.positional}' -- "${@:1:$#-2}" > "${!#}"
+''')
+    shard_git('add', 'bin/jg-test-run.sh')
+    shard_git('commit', '-q', '-m', 'Fixture shard')
+    shard_head = shard_git('rev-parse', 'HEAD')
+    shard_ref = 'refs/jg-shard/' + shard_head
+    shard_git('update-ref', shard_ref, shard_head)
+    bundle = t / 'shard.bundle'
+    shard_git('bundle', 'create', str(bundle), '^' + shard_base, shard_ref)
+    with bundle.open('rb') as stdin:
+        routed = subprocess.run(
+            [str(root / 'bin/jg'), 'proof', 'runner-shard', shard_head, shard_base, '--', '--all', '--list'],
+            stdin=stdin, env=shard_env, capture_output=True, text=True, timeout=30,
+        )
+    assert routed.returncode == 0, (routed.stdout, routed.stderr)
+    result = json.loads(routed.stdout)
+    assert result['ok'] and result['data'] == {'head': shard_head, 'args': ['--all', '--list']}, result
+    print('PASS: e6proof2 inventory, help, isolated parity, and runner shard stdin and argument vector')
 PY

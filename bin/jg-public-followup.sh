@@ -114,10 +114,11 @@
 #       its public promise is still open. A delivered registration is not a
 #       block: that work's reply already landed.
 #
-#   jg-public-followup.sh rechain <new-obligation-id> --from <delivered-id>
-#         --work-home <main|squad_lead:<id>> --work-id <task-id>
-#         --expected <pr-merged|report-ready|local-main>
+#   jg-public-followup.sh rechain <new-id> --from <delivered-id>
+#         --work-home <home> --work-id <task-id>
+#         --expected <event>
 #         [--deliverable-key <k>]...
+#       The home is main or squad_lead:<id>, and the event is pr-merged, report-ready or local-main.
 #       Hand a delivered public loop on to follow-on work against the same
 #       thread. Decodes the retained request context, creates and binds a fresh
 #       promised-final obligation, registers it, retires the source with reason

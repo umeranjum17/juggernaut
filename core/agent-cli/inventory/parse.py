@@ -54,16 +54,20 @@ SCRIPT_VALUES = {
     ('jg-alert.sh', 'fact'): 'test=value',
     ('jg-board-gate.sh', 'record-id'): 'owd-20260101T000000Z-0123abcd',
     ('jg-ci-rerun.sh', 'run-id'): '1',
+    ('jg-classify.sh', 'command'): 'is-terminal',
     ('jg-clause.sh', 'facts'): 'fixture=yes',
     ('jg-goal.sh', 'proof argv...'): '/bin/false',
     ('jg-goal.sh', 'kind'): 'external',
     ('jg-machine-guard.sh', 'name'): 'reuse',
     ('jg-procevent-when.sh', 'condition-argv'): '/bin/false',
     ('jg-procevent-when.sh', 'action-argv'): '/bin/true',
+    ('jg-public-followup.sh', 'event'): 'local-main',
+    ('jg-public-followup.sh', 'home'): 'main',
     ('jg-remote-inherit.sh', 'allowlisted-relative-path'): 'config/crew-harness',
     ('jg-vendor-auth-probe.sh', 'probe'): 'grok',
     ('jg-test-run.sh', 'family'): 'pure-contract-unit',
     ('jg-test-run.sh', 'lane'): 'portable-parallel-1',
+    ('jg-wake-core.sh', 'command'): 'count',
     ('jg-workflow.sh', 'sub'): 'list',
 }
 FORM_VALUES = {'0-3': '2', '0-4': '2', 'YYYY-MM-DD': '2099-01-01', 'bytes': '0', 'generation': '1',
@@ -325,17 +329,19 @@ def top_split(cmd):
 def forms(script_path):
     """Every usage-shaped header line of the script: [(operation words, form)], alternatives expanded (`a|b|c` and
     `x <a> | y <b>`), and every indented continuation line that carries a required group (`(--note ... | ...)`) or an
-    optional one (`[--effort <level>]`) joined to the line it continues, in order."""
+    optional one (`[--effort <level>]`), a repeated group or a required option and its operand joined in order."""
     script = os.path.basename(script_path)
     out = []
     head = header(script_path)
+    group = r'\(.*\)|\[.*\](?:\.\.\.)?|--[a-z][\w-]*\s+<[^<>]+>'
+    continuation = re.compile(rf'^#\s{{8,}}((?:{group})(?:\s+(?:{group}))*)\s*$')
     for k, line in enumerate(head):
         cmd = usage_body(line)
         ws = plain_words(script, cmd)
         if ws is None:
             continue
         for nxt in head[k + 1:]:
-            m = re.match(r'^#\s{8,}((?:\(.*\)|\[.*\])(?:\s+(?:\(.*\)|\[.*\]))*)\s*$', nxt)
+            m = continuation.match(nxt)
             if not m:
                 break
             cmd += ' ' + m.group(1)

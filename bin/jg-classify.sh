@@ -21,7 +21,8 @@
 #           missing on stderr and exits 2, never 0 or 1, so a caller can tell a broken
 #           classifier from a "no" answer.
 #
-# Usage: jg-classify.sh <command> [args] - see core/classify/cmd/jg-classify/main.go.
+# Usage: jg-classify.sh <command> [<args...>]
+# See core/classify/cmd/jg-classify/main.go for commands and their arguments.
 set -u
 
 SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)"

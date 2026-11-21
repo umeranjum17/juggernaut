@@ -110,7 +110,7 @@ jg-captain-hold.sh	reconcile close	bin/jg-captain-hold.sh reconcile close <task-
 jg-captain-hold.sh	reconcile note	bin/jg-captain-hold.sh reconcile note <task-id> --note-file <path>	hold captain-hold reconcile note	POST	yes	e6holds2	-	corrected	decisions	dispatch+help	split from reconcile: one operation per sub-word; form=usage
 jg-captain-say.sh	-	bin/jg-captain-say.sh [--key <slug>] [--link <url>] [--asks] <text...>	radio captain-say	POST	yes	e6steer	-	pending	steering	help	form=usage
 jg-chat-transcribe.sh	setup	bin/jg-chat-transcribe.sh setup	radio chat-transcribe setup	POST	yes	e6steer	-	pending	steering	help	form=usage
-jg-chat-transcribe.sh	run	bin/jg-chat-transcribe.sh run	radio chat-transcribe run	POST	yes	e6steer	-	pending	steering	help	form=help-only
+jg-chat-transcribe.sh	run	bin/jg-chat-transcribe.sh run <wav>	radio chat-transcribe run	POST	yes	e6steer	-	corrected	steering	dispatch+help	form=usage; the engine requires a WAV path
 jg-chat-transcribe.sh	status	bin/jg-chat-transcribe.sh status	radio chat-transcribe status	POST	yes	e6steer	-	pending	steering	help	form=usage
 jg-check-live-pipeline.sh	-	bin/jg-check-live-pipeline.sh [home ...]	land check-live-pipeline	POST	yes	e6land1	-	pending	landing	help	form=usage
 jg-check-register.sh	-	bin/jg-check-register.sh <id>	radio check-register	POST	yes	e6radio1	-	pending	notifications	help	form=usage
@@ -118,7 +118,7 @@ jg-check-unregister.sh	-	bin/jg-check-unregister.sh <id>	radio check-unregister	
 jg-checks-write.sh	-	bin/jg-checks-write.sh <task-id> --outcome <text> [--repro <cmd>] [--head <sha>] [--screen <none>]	proof checks-write	POST	yes	e6proof1	-	pending	proof	help	form=usage
 jg-checks-write.sh	--outcome	bin/jg-checks-write.sh <task-id> --outcome <text> [--repro <cmd>] [--head <sha>] [--screen <none>]	proof checks-write outcome	POST	yes	e6proof1	-	pending	proof	help	form=usage
 jg-ci-rerun.sh	-	bin/jg-ci-rerun.sh <run-id> [--repo <owner/repo>] [--failed]	land ci-rerun	POST	yes	e6land1	-	pending	landing	help	form=usage
-jg-classify.sh	-	bin/jg-classify.sh	ticket classify	POST	yes	e6tickets1	-	pending	backlog	help	form=help-only
+jg-classify.sh	-	bin/jg-classify.sh <command> [<args...>]	ticket classify	POST	yes	e6tickets1	-	corrected	backlog	help	form=usage; the Go parser requires a command
 jg-claude-stop-autoarm.sh	-	bin/jg-claude-stop-autoarm.sh	misc claude-stop-autoarm	POST	yes	e6homes	-	pending	other	help	form=help-only
 jg-claude-trust.sh	-	bin/jg-claude-trust.sh <worktree> <project>	crew claude-trust	POST	yes	e6crew1	-	pending	workers	help	form=usage
 jg-claude-trust.sh	--squad-lead-home	bin/jg-claude-trust.sh --squad-lead-home <home> <id>	crew claude-trust squad-lead-home	POST	yes	e6crew1	-	confirmed	workers	dispatch+help	form=usage
@@ -334,7 +334,7 @@ jg-plan-gate.sh	close	bin/jg-plan-gate.sh close	plan plan-gate close	POST	yes	e6
 jg-plan-gate.sh	approve	bin/jg-plan-gate.sh approve <plan.json> --harness <h> --model <m> --effort <e>	plan plan-gate approve	POST	yes	e6plan	-	confirmed	planning	dispatch+help	form=usage
 jg-plan-route.sh	-	bin/jg-plan-route.sh <plan.json> [--dry-run]	plan plan-route	POST	yes	e6plan	-	pending	planning	help	form=usage
 jg-post-merge-ci.sh	-	bin/jg-post-merge-ci.sh <task-id> <PR URL> <merged head>	land post-merge-ci	POST	yes	e6land1	-	pending	landing	help	form=usage
-jg-post-merge-ci.sh	--main	bin/jg-post-merge-ci.sh --main	land post-merge-ci main	POST	yes	e6land1	-	pending	landing	help	form=help-only
+jg-post-merge-ci.sh	--main	bin/jg-post-merge-ci.sh --main [--restore <project-dir>] [<workflow name>]	land post-merge-ci main	POST	yes	e6land1	-	corrected	landing	help	form=usage; the parser accepts a restore directory and a workflow name
 jg-pr-check.sh	-	bin/jg-pr-check.sh <task-id> <pr-url>	land pr-check	POST	yes	e6land1	-	pending	landing	help	form=usage
 jg-pr-check.sh	--from-status	bin/jg-pr-check.sh --from-status <task-id>	land pr-check from-status	POST	yes	e6land1	-	pending	landing	help	form=usage
 jg-pr-merge.sh	-	bin/jg-pr-merge.sh <task-id> <pr-url> [--attended-override] [--allow-red <check-name>] [--allow-missing <check-name>] [--allow-orphans <words>] [-- <extra>...]	land pr-merge	POST	yes	e6land1	-	pending	landing	dispatch	form=usage
@@ -417,7 +417,7 @@ jg-public-followup.sh	pending	bin/jg-public-followup.sh pending	relay public-fol
 jg-public-followup.sh	deliver	bin/jg-public-followup.sh deliver <obligation-id> [--text-file <path>]	relay public-followup deliver	POST	yes	e6relay3	-	confirmed	outside channels	dispatch+help	form=usage
 jg-public-followup.sh	record-posted	bin/jg-public-followup.sh record-posted <obligation-id> --attempt <n> --chunks <n>	relay public-followup record-posted	POST	yes	e6relay3	-	confirmed	outside channels	dispatch+help	form=usage
 jg-public-followup.sh	guard-work	bin/jg-public-followup.sh guard-work <work-home-id> <work-id>	relay public-followup guard-work	POST	yes	e6relay3	-	confirmed	outside channels	dispatch+help	form=usage
-jg-public-followup.sh	rechain	bin/jg-public-followup.sh rechain <new-obligation-id> --from <delivered-id>	relay public-followup rechain	POST	yes	e6relay3	-	confirmed	outside channels	dispatch+help	form=usage
+jg-public-followup.sh	rechain	bin/jg-public-followup.sh rechain <new-id> --from <delivered-id> --work-home <home> --work-id <task-id> --expected <event> [--deliverable-key <k>]...	relay public-followup rechain	POST	yes	e6relay3	-	confirmed	outside channels	dispatch+help	form=usage
 jg-public-followup.sh	retire	bin/jg-public-followup.sh retire <obligation-id> --reason <reason> [--force]	relay public-followup retire	POST	yes	e6relay3	-	confirmed	outside channels	dispatch+help	form=usage
 jg-question-card.sh	post	bin/jg-question-card.sh post (--ask-ref <ref> | --board <decisions.json> | --route <lead>) --title <one question> [--decision-key <slug>]	hold question-card post	POST	yes	e6holds2	-	confirmed	decisions	dispatch+help	form=usage
 jg-question-card.sh	answer	bin/jg-question-card.sh answer <card-key> --words <the captain words> [--board <decisions.json>]	hold question-card answer	POST	yes	e6holds2	-	confirmed	decisions	dispatch+help	form=usage
@@ -469,7 +469,7 @@ jg-retired-catalog-check.sh	--self-test	bin/jg-retired-catalog-check.sh --self-t
 jg-role-pack.sh	-	bin/jg-role-pack.sh <all|main|lead|worker|critic>	home role-pack	POST	yes	e6homes	-	pending	homes	help	form=usage
 jg-run-owned.sh	-	bin/jg-run-owned.sh --owner <ticket-or-tick-name> --limit <seconds> [--owner-pid <pid|none>] -- <command> [<args>...]	proof run-owned	POST	yes	e6proof2	-	pending	proof	help	form=usage
 jg-run-owned.sh	--owner	bin/jg-run-owned.sh --owner <ticket-or-tick-name> --limit <seconds> [--owner-pid <pid|none>] -- <command> [<args>...]	proof run-owned owner	POST	yes	e6proof2	-	pending	proof	help	form=usage
-jg-runner-shard.sh	-	bin/jg-runner-shard.sh <commit> <base> -- <jg-test-run.sh arguments>	proof runner-shard	POST	yes	e6proof2	-	pending	proof	help	form=usage
+jg-runner-shard.sh	-	bin/jg-runner-shard.sh <commit> <base> -- [<args...>]	proof runner-shard	POST	yes	e6proof2	-	corrected	proof	help	form=usage; the runner forwards a vector after -- and reads the bundle on stdin
 jg-scratch.sh	register	bin/jg-scratch.sh register <task-id> <dir>	proof scratch register	POST	yes	e6proof2	-	confirmed	proof	dispatch+help	form=usage
 jg-scratch.sh	list	bin/jg-scratch.sh list <task-id>	proof scratch list	POST	yes	e6proof2	-	confirmed	proof	dispatch+help	form=usage
 jg-send.sh	-	bin/jg-send.sh <target> [--resolve-key <key>]... [--fire-and-forget <delivery-id>] [--allow-rebase-steer] <text...>	radio send	POST	yes	e1	-	pending	steering	help	form=usage
@@ -609,7 +609,7 @@ jg-unit-claim.sh	claim	bin/jg-unit-claim.sh claim	report unit-claim claim	POST	y
 jg-unit-claim.sh	may-install	bin/jg-unit-claim.sh may-install	report unit-claim may-install	POST	yes	e6report2	-	pending	reports	dispatch	form=help-only
 jg-unit-claim.sh	status	bin/jg-unit-claim.sh status	report unit-claim status	GET	no	e6report2	-	pending	reports	dispatch	form=help-only
 jg-unit-claim.sh	refuse	bin/jg-unit-claim.sh refuse	report unit-claim refuse	POST	yes	e6report2	-	pending	reports	dispatch	form=help-only
-jg-update.sh	--base	bin/jg-update.sh --base	home update base	POST	yes	e6homes	-	pending	homes	help	form=help-only
+jg-update.sh	--base	bin/jg-update.sh --base <sha> --project <dir> --branch <trunk> [--home <lead-home>]	home update base	POST	yes	e6homes	-	corrected	homes	help	form=usage; the parser takes a base SHA and project with branch and home selectors
 jg-update.sh	-	bin/jg-update.sh [--help]	home update	POST	yes	e6homes	-	pending	homes	help	form=usage
 jg-vendor-auth-probe.sh	-	bin/jg-vendor-auth-probe.sh <probe>	crew vendor-auth-probe	POST	yes	e6crew2	-	pending	workers	help	form=usage
 jg-version-branch-sync.sh	run	bin/jg-version-branch-sync.sh run	land version-branch-sync run	POST	yes	e6land2	-	confirmed	landing	dispatch+help	form=usage
@@ -630,7 +630,7 @@ jg-wake-bus.sh	inbox-raise	bin/jg-wake-bus.sh inbox-raise <task> <seq> <delivery
 jg-wake-bus.sh	inbox-handled	bin/jg-wake-bus.sh inbox-handled <task> <seq> <outcome> <evidence>	radio wake-bus inbox-handled	POST	yes	e6radio3	-	pending	notifications	dispatch	form=usage
 jg-wake-bus.sh	inbox-settle	bin/jg-wake-bus.sh inbox-settle	radio wake-bus inbox-settle	POST	yes	e6radio3	-	pending	notifications	dispatch	form=usage
 jg-wake-bus.sh	render	bin/jg-wake-bus.sh render	radio wake-bus render	POST	yes	e6radio3	-	pending	notifications	dispatch	form=usage
-jg-wake-core.sh	-	bin/jg-wake-core.sh	radio wake-core	POST	yes	e6radio3	-	pending	notifications	help	form=help-only
+jg-wake-core.sh	-	bin/jg-wake-core.sh <command> [<args...>]	radio wake-core	POST	yes	e6radio3	-	corrected	notifications	help	form=usage; the Go parser requires a command
 jg-wake-drain.sh	-	bin/jg-wake-drain.sh	radio wake-drain	POST	yes	e1	-	pending	notifications	help	form=help-only
 jg-wake-next.sh	-	bin/jg-wake-next.sh	radio wake-next	POST	yes	e6radio3	-	pending	notifications	help	form=help-only
 jg-wake.sh	next	bin/jg-wake.sh next [--ack-through SEQUENCE --recovery-generation GENERATION]	radio wake next	POST	yes	e6radio3	-	confirmed	notifications	dispatch+help	form=usage
