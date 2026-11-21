@@ -3103,6 +3103,7 @@ JG_CLAUDE_AUTOARM_EPOCH_FRESH=15   # seconds a recorded auto-arm outcome remains
 JG_CLAUDE_TURNEND_BLOCK_BUDGET=3   # consecutive --claude guard re-blocks before the verified one-time attended fail-open; safely below Claude Code's 8-block override
 JG_ARM_CONFIRM_TIMEOUT=10   # optional seconds override; unset uses jg_watcher_confirmation_budget in bin/jg-wake-lib.sh
 JG_ARM_ATTACH_POLL=2  # seconds between checks while jg-watch-arm follows an attached watcher cycle (bin/jg-watch-arm.sh header)
+JG_ARM_HANDOFF_WINDOW=15  # most seconds an attached arm waits for a successor to claim the lock before reporting the delivered wake; capped by the confirmation budget (bin/jg-watch-arm.sh header)
 JG_OPENCODE_ARM_READY_TIMEOUT_MS=12000   # optional milliseconds override; unset uses the shared watcher startup budget
 JG_PI_ARM_READY_TIMEOUT_MS=12000   # optional milliseconds override; unset uses the shared watcher startup budget
 JG_WATCH_ARM_RETIRE_TIMEOUT_MS=1000   # milliseconds Pi/OpenCode wait for an unready successor arm to exit before abandoning retries

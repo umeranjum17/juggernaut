@@ -1242,17 +1242,20 @@ while :; do
   HANDLE_RC=$?
   if [ "$HANDLE_RC" -eq 2 ]; then
     log_line "pass-through	attended	$ATTENDED_WHY	$(printf '%s\n' "$REASON" | head -n 1)"
-    # The successor this turn already started and confirmed stays up. Retiring
-    # it is what left no watcher after a close that became main-only.
-    detach_successor
     # Main handles this close after all, so hand back the downtime the handoff
     # above consumed: the re-arm owner delivers the close only while the
-    # recovery marker reads downtime (leave_successor_for_main).
+    # recovery marker reads downtime (leave_successor_for_main). When that
+    # fails the close never reaches main, so the successor is not left for the
+    # next park to take over: the cleanup stops it, and the retried park
+    # starts a fresh cycle whose recovery check owns the undelivered close.
     if [ -n "$SUCCESSOR_GENERATION" ] \
       && ! jg_recovery_marker_publish "$STATE/.watcher-down" downtime >/dev/null 2>&1; then
       log_line "pass-through	downtime-unrestored	$(printf '%s\n' "$REASON" | head -n 1)"
       exit 1
     fi
+    # The successor this turn already started and confirmed stays up. Retiring
+    # it is what left no watcher after a close that became main-only.
+    detach_successor
     emit
     exit 0
   fi

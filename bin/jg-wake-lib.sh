@@ -1255,64 +1255,9 @@ _jg_recovery_marker_reopen_announced() {
   jg_lock_release "$JG_WAKE_QUEUE_LOCK"
 }
 
-# The handover rule for a watcher stopped by bin/jg-watch-arm.sh --take-over
-# (docs/watcher-continuity.md "Generation reuse" owns it). The snapshot reads
-# the marker token and the queue's append sequence under both locks before the
-# stop; handover-restore puts an acknowledged token back only while that
-# sequence is unchanged and the marker reads the fresh pending downtime the
-# stopped watcher's own close published.
-JG_RECOVERY_HANDOVER_TOKEN=
-JG_RECOVERY_HANDOVER_SEQ=
-jg_recovery_marker_handover_snapshot() {  # <marker>
-  local marker=$1 lock
-  JG_RECOVERY_HANDOVER_TOKEN=
-  JG_RECOVERY_HANDOVER_SEQ=
-  lock="${marker}.lock"
-  jg_lock_acquire_wait "$JG_WAKE_QUEUE_LOCK" || return 1
-  if ! jg_lock_acquire_wait "$lock"; then
-    jg_lock_release "$JG_WAKE_QUEUE_LOCK"
-    return 1
-  fi
-  if jg_recovery_marker_read "$marker"; then
-    # shellcheck disable=SC2034 # Read by callers after this function returns.
-    JG_RECOVERY_HANDOVER_TOKEN=$JG_RECOVERY_MARKER_TOKEN
-  fi
-  # shellcheck disable=SC2034 # Read by callers after this function returns.
-  JG_RECOVERY_HANDOVER_SEQ=$(awk -F '\t' 'NF >= 5 { last = $2 } END { print last + 0 }' "$JG_WAKE_QUEUE" 2>/dev/null)
-  jg_lock_release "$lock"
-  jg_lock_release "$JG_WAKE_QUEUE_LOCK"
-}
-
-_jg_recovery_marker_handover_restore() {
-  local marker=$1 token=$2 seq=$3 lock status=0
-  case "$token" in acked:*) ;; *) return 0 ;; esac
-  lock="${marker}.lock"
-  jg_lock_acquire_wait "$JG_WAKE_QUEUE_LOCK" || return 1
-  if ! jg_lock_acquire_wait "$lock"; then
-    jg_lock_release "$JG_WAKE_QUEUE_LOCK"
-    return 1
-  fi
-  if [ "$(awk -F '\t' 'NF >= 5 { last = $2 } END { print last + 0 }' "$JG_WAKE_QUEUE" 2>/dev/null)" = "$seq" ] \
-    && jg_recovery_marker_read "$marker"; then
-    case "$JG_RECOVERY_MARKER_TOKEN" in
-      pending:downtime:*)
-        if [ "${JG_RECOVERY_MARKER_TOKEN##*:}" != "${token##*:}" ]; then
-          _jg_recovery_marker_restore_token_locked "$marker" "$token" || status=1
-        fi
-        ;;
-    esac
-  fi
-  jg_lock_release "$lock"
-  jg_lock_release "$JG_WAKE_QUEUE_LOCK"
-  return "$status"
-}
-
 jg_recovery_transition() {
   local marker=$1 action=$2 target=${3:-} value=${4:-} bound=${5:-}
   case "$action" in
-    handover-restore)
-      _jg_recovery_marker_handover_restore "$marker" "$target" "$value"
-      ;;
     publish)
       _jg_recovery_marker_publish "$marker" "${target:-downtime}" "$bound"
       ;;
@@ -1372,10 +1317,6 @@ jg_recovery_marker_arm_check() {
 
 jg_recovery_marker_reopen_announced() {
   jg_recovery_transition "$1" reopen-announced
-}
-
-jg_recovery_marker_handover_restore() {  # <marker> <snapshot-token> <snapshot-seq>
-  jg_recovery_transition "$1" handover-restore "$2" "$3"
 }
 
 # jg_lock_reap_dead_link <lockdir>
