@@ -1,6 +1,6 @@
 ---
 name: war-room
-description: Use when the captain invokes /war-room or /council with a hard design or problem - several deep Recons and critics, then one plan in work orders.
+description: Use when the captain invokes /war-room with a hard design or problem - several deep Recons and critics, then one plan in work orders.
 user-invocable: true
 metadata:
   internal: true

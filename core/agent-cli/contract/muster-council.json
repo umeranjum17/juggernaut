@@ -1,0 +1,13 @@
+{"area": "muster", "owner": "m7", "entries": [
+  {"path": ["muster", "council"], "meaning": "Merge the lens drafts of a council into the questions of a round; the lenses are started first by plan war-room lenses.",
+   "roles": ["overwatch"], "args": [{"name": "ticket", "type": "text", "required": true}], "changes": true,
+   "method": "POST", "form": "bin/jg-muster-council.sh merge <ticket>", "repeat_key": "ticket", "exits": {"0": 0, "1": 1, "2": 2},
+   "schema": "muster.council.v1", "script": "bin/jg-muster-council.sh", "operation": "merge", "aliases": []},
+  {"path": ["plan", "war-room", "lenses"], "meaning": "Start one lens lane for each lens of a council, with no pack and no plan behind it.",
+   "roles": ["overwatch"], "args": [{"name": "ticket", "type": "text", "required": true}, {"name": "project", "type": "text", "required": true},
+     {"name": "lenses", "type": "text", "required": true}, {"name": "harness", "type": "text", "required": true},
+     {"name": "model", "type": "text", "required": true}, {"name": "effort", "type": "text", "required": true}], "changes": true,
+   "method": "POST", "form": "bin/jg-war-room.sh lenses <ticket> --project <name> --lenses <a,b,c> --harness <h> --model <m> --effort <e>",
+   "repeat_key": "ticket", "exits": {"0": 0, "1": 1, "2": 2}, "schema": "plan.war-room.lenses.v1", "script": "bin/jg-war-room.sh",
+   "operation": "lenses", "aliases": []}
+]}

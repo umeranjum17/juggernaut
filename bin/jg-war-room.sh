@@ -3,6 +3,7 @@
 #
 # Usage: jg-war-room.sh start <council-ticket> --project <name> --angles <a,b,c> --depth <standard|deep>
 #                       --harness <h> --model <m> --effort <e> [--synthesis-depth <standard|deep>] [--no-variant-critics]
+#        jg-war-room.sh lenses <council-ticket> --project <name> --lenses <a,b,c> --harness <h> --model <m> --effort <e>
 #        jg-war-room.sh next <council-ticket>
 #        jg-war-room.sh approve <council-ticket> --words <the owner's words> [--by <who>]
 #        jg-war-room.sh --help
@@ -30,6 +31,12 @@
 # Exit 0 when every lane is live, 1 otherwise. Exit 2 for usage, an unknown council, depth or project, or --no-variant-critics with
 # deep variants, with nothing written.
 #
+# lenses: /muster council's lanes, through the same ticket, brief and spawn path as `start`, with no pack and no plan behind it. One
+# lens lane for each lens (a lens is a lowercase word such as user, domain, architecture, skeptic or quality), a child of the council
+# titled `<lens> lens` and briefed `Lens: <lens>` at Recon depth quick. It takes no --depth, --angles, --synthesis-depth or
+# --no-variant-critics. The record says kind=lenses and data/war-room/<council>/lanes holds `<lens> <task>` for each lane, which
+# bin/jg-muster-council.sh merge reads. The output and exits are those of `start`.
+#
 # next: one idempotent step that does what is due and nothing else (one run at a time for a council; a second waits its turn).
 # bin/jg-recon-handoff.sh starts it, detached, after each successful draft, revise or verdict of a council's lane
 # (JG_WAR_ROOM_NEXT=0 turns that off); it can still be run by hand. Each lane below is filed as a child of the council, briefed
@@ -42,9 +49,11 @@
 #      once for the owner's plan approval (bin/jg-captain-hold.sh hold --must plan-approval; data/war-room/<council>/plan-asked
 #      keeps the plan path) and the output says `owner approval asked`.
 # One line for each step taken, then, when the owner was not just asked, one line for what it waits for: `waits: <lane> <phase>`.
+# On a lens council (kind=lenses) `next` does none of that: it files no critic, synthesis, dry run or plan question, and prints
+# `waits: <lane> <lens> draft` for the first lens not yet drafted, then `every lens drafted: run bin/jg-muster-council.sh merge <council>`.
 # Exit 0, or 1 when a step was refused (its line says why). Exit 2 for usage, an unknown council or a council with no record.
 #
-# approve: Main runs it once it has read the owner's yes. It refuses until the owner was asked, records data/war-room/<council>/approved
+# approve: (a council started with `start` only) Main runs it once it has read the owner's yes. It refuses until the owner was asked, records data/war-room/<council>/approved
 # (who, when, the owner's words) and runs `bin/jg-swarm.sh start <plan.json>` with the harness, model and effort of the record. A second
 # approve prints `already started`; one whose swarm start failed runs it again, and keeps the first record of the words.
 # JG_WAR_ROOM_SPAWN, JG_WAR_ROOM_GATE and JG_WAR_ROOM_SWARM name the spawn, gate and swarm commands; tests point them at stand-ins.
@@ -69,6 +78,7 @@ usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' 
 refuse() { printf 'jg-war-room: %s\n' "$*" >&2; exit 2; }
 USAGE="usage: jg-war-room.sh start <council-ticket> --project <name> --angles <a,b,c> --depth <standard|deep> --harness <h> --model <m> --effort <e>
                                    [--synthesis-depth <standard|deep>] [--no-variant-critics]
+       jg-war-room.sh lenses <council-ticket> --project <name> --lenses <a,b,c> --harness <h> --model <m> --effort <e>
        jg-war-room.sh next <council-ticket>
        jg-war-room.sh approve <council-ticket> --words <the owner's words> [--by <who>]"
 
@@ -77,7 +87,7 @@ bd_() { python3 -I "$SCRIPT_DIR/../core/item-store/adapters/bd_compat.py" "$@"; 
 
 # --- The council and its lanes -----------------------------------------------------------------------------------
 COUNCIL='' COUNCIL_TITLE='' RUN=''
-PROJECT='' ANGLES='' DEPTH='' HARNESS='' MODEL='' EFFORT='' PROJECT_DIR='' SYNTH_DEPTH='' VARIANT_CRITICS=1
+PROJECT='' LANES='' DEPTH='' HARNESS='' MODEL='' EFFORT='' PROJECT_DIR='' SYNTH_DEPTH='' VARIANT_CRITICS=1
 
 # open_council <council>: the ticket must exist; the files of its lanes live in data/war-room/<council>/.
 open_council() {
@@ -170,80 +180,146 @@ launch() {
     > /dev/null 2>&1 < /dev/null &
 }
 
-# --- start -------------------------------------------------------------------------------------------------------
+# --- start and lenses -------------------------------------------------------------------------------------------
+# One lane is one ticket, one brief and one start, whatever it is for: `start` runs one variant Recon for each angle, `lenses` one
+# lens lane for each lens of /muster council. KIND says which; only its words differ (lane_ticket_text, lane_spec).
+KIND=variants
+lens_focus() {  # <lens>: the one line each known lens is held to; any other word is the captain's own lens
+  case $1 in
+    user) echo 'Who it is for, the job they hire it for and the end state they want. Settle what the idea already says; raise the rest as questions.' ;;
+    domain) echo 'Event storming as a written list: the past-tense events, then the core objects they imply with their states. Raise a question for every word that could mean two things.' ;;
+    architecture) echo 'The stack, where the data lives, where it runs and every choice that is hard to reverse. Raise each trade-off as a question.' ;;
+    skeptic) echo 'A premortem: assume the project failed a year from now and list why. Raise the likeliest causes as questions.' ;;
+    quality) echo 'How the work will be proven and kept clean: the journeys that must work, the tests, the lint and the ways of working.' ;;
+    *) echo 'Your own angle, named above.' ;;
+  esac
+}
+
+lane_ticket_text() {  # <name> -> sets L_TITLE L_ASK L_DONE
+  if [ "$KIND" = lenses ]; then
+    L_TITLE="$1 lens"
+    L_ASK="Draft the $1 lens of council $COUNCIL: the questions its idea raises, each with your answer when you can give one."
+    L_DONE="The draft is recorded with bin/jg-recon-handoff.sh draft."
+  else
+    L_TITLE="$1 variant Recon"
+    L_ASK="Run the $1 variant Recon of council $COUNCIL and write its report."
+    L_DONE="The report passes bin/jg-recon-gate.sh and its critic has closed every gap."
+  fi
+}
+
+lens_spec() {  # <lens> <task>: what a lens lane writes, in the format bin/jg-muster-council.sh merge reads
+  # shellcheck disable=SC2016  # the backquotes are the brief's own text
+  printf 'Lens: %s\nFocus: %s\nNo pack exists and none is needed: you read the idea on the council ticket and write only your draft.\nWrite `%s/%s/report.md` with a `## Questions` section, one line for each question:\n- Q: <the question> | A: <your answer, or nothing when it cannot be settled without the captain> | owner: <yes when only the captain can decide it, otherwise no>\nGive your honest answer, not the one most likely to agree with another lens: a different answer is how the council finds a real question.\n' \
+    "$1" "$(lens_focus "$1")" "$DATA" "$2"
+  # shellcheck disable=SC2016
+  [ "$1" != domain ] || printf 'Also write a `## Core objects` section, one line for each object:\n- Object: <Name> | states: <a, b, c, or none> | events: <past-tense events, comma separated>\n'
+  # shellcheck disable=SC2016
+  printf 'Run `%s/bin/jg-recon-handoff.sh draft %s` before your done line. Write no backlog item.\n' "$JG_ROOT" "$2"
+}
+
+lane_spec() {  # <name> <task> -> sets L_DEPTH L_MARKER L_TASKTXT L_SPEC
+  if [ "$KIND" = lenses ]; then
+    L_DEPTH=quick L_MARKER="Lens: $1"
+    L_TASKTXT=$(council_ref "draft the $1 lens of it.")
+    L_SPEC=$(lens_spec "$1" "$2")
+  else
+    L_DEPTH=$DEPTH L_MARKER="Angle: $1"
+    L_TASKTXT=$(council_ref "run the $1 variant Recon of it.")
+    L_SPEC=$(printf 'Angle: %s\n%s' "$1" "$(recon_lines "$2")")
+  fi
+}
+
 cmd_start() {
-  local need raw angle title row task why waited rc reason lane state status=0 lanes=() angle_list=()
+  local need flag raw name row task why waited rc reason lane state status=0 lanes=() name_list=() L_TITLE L_ASK L_DONE L_DEPTH L_MARKER L_TASKTXT L_SPEC
+  [ "$KIND" = lenses ] && flag=--lenses || flag=--angles
   while [ $# -gt 0 ]; do
     case $1 in
-      --project|--angles|--depth|--synthesis-depth|--harness|--model|--effort)
-        [ $# -ge 2 ] || refuse "$1 needs a value"
-        case $1 in
-          --project) PROJECT=$2 ;; --angles) ANGLES=$2 ;; --depth) DEPTH=$2 ;; --synthesis-depth) SYNTH_DEPTH=$2 ;;
-          --harness) HARNESS=$2 ;; --model) MODEL=$2 ;; --effort) EFFORT=$2 ;;
-        esac
-        shift ;;
-      --no-variant-critics) VARIANT_CRITICS=0 ;;
+      --project|"$flag"|--harness|--model|--effort) ;;
+      --depth|--synthesis-depth) [ "$KIND" = variants ] || refuse "unknown flag $1 (a lens lane has no depth)" ;;
+      --no-variant-critics) [ "$KIND" = variants ] || refuse "unknown flag $1"; VARIANT_CRITICS=0; shift; continue ;;
       -*) refuse "unknown flag $1" ;;
-      *) [ -z "$COUNCIL" ] || refuse "one council ticket only"; COUNCIL=$1 ;;
+      *) [ -z "$COUNCIL" ] || refuse "one council ticket only"; COUNCIL=$1; shift; continue ;;
     esac
-    shift
+    [ $# -ge 2 ] || refuse "$1 needs a value"
+    case $1 in
+      --project) PROJECT=$2 ;; "$flag") LANES=$2 ;; --depth) DEPTH=$2 ;; --synthesis-depth) SYNTH_DEPTH=$2 ;;
+      --harness) HARNESS=$2 ;; --model) MODEL=$2 ;; --effort) EFFORT=$2 ;;
+    esac
+    shift 2
   done
   [ -n "$COUNCIL" ] || refuse "the council ticket is missing"
-  for need in PROJECT ANGLES DEPTH HARNESS MODEL EFFORT; do
-    [ -n "${!need}" ] || refuse "--$(printf '%s' "$need" | tr '[:upper:]' '[:lower:]') is missing"
+  [ "$KIND" = lenses ] && DEPTH=quick
+  for need in PROJECT LANES DEPTH HARNESS MODEL EFFORT; do
+    [ -n "${!need}" ] || refuse "$([ "$need" = LANES ] && echo "$flag" || echo "--$(printf '%s' "$need" | tr '[:upper:]' '[:lower:]')") is missing"
   done
-  SYNTH_DEPTH=${SYNTH_DEPTH:-$DEPTH}
-  case $DEPTH in standard|deep) ;; *) refuse "--depth is standard or deep (got '$DEPTH')" ;; esac
-  case $SYNTH_DEPTH in standard|deep) ;; *) refuse "--synthesis-depth is standard or deep (got '$SYNTH_DEPTH')" ;; esac
-  [ "$VARIANT_CRITICS" = 1 ] || [ "$DEPTH" = standard ] \
-    || refuse "--no-variant-critics needs --depth standard: a deep Recon's critic may not be its own"
+  if [ "$KIND" = lenses ]; then
+    [[ ,$LANES, != *[!a-z0-9,-]* ]] || refuse "$flag takes lowercase words with digits and dashes (got '$LANES')"
+  else
+    SYNTH_DEPTH=${SYNTH_DEPTH:-$DEPTH}
+    case $DEPTH in standard|deep) ;; *) refuse "--depth is standard or deep (got '$DEPTH')" ;; esac
+    case $SYNTH_DEPTH in standard|deep) ;; *) refuse "--synthesis-depth is standard or deep (got '$SYNTH_DEPTH')" ;; esac
+    [ "$VARIANT_CRITICS" = 1 ] || [ "$DEPTH" = standard ] \
+      || refuse "--no-variant-critics needs --depth standard: a deep Recon's critic may not be its own"
+  fi
   case $WAIT in ''|*[!0-9]*) refuse "JG_WAR_ROOM_WAIT is a whole number of seconds" ;; esac
   PROJECT_DIR=$PROJECTS/$PROJECT
   [ -d "$PROJECT_DIR" ] || refuse "no project $PROJECT: $PROJECT_DIR is not a directory"
   open_council "$COUNCIL"
   mkdir -p "$RUN" || refuse "cannot write $RUN"
   # What `next` needs to carry on from here; written before the first lane starts, so a draft that comes early finds it.
-  printf 'council=%s\nproject=%s\nangles=%s\ndepth=%s\nharness=%s\nmodel=%s\neffort=%s\nsynthesis_depth=%s\nvariant_critics=%s\n' \
-    "$COUNCIL" "$PROJECT" "$ANGLES" "$DEPTH" "$HARNESS" "$MODEL" "$EFFORT" "$SYNTH_DEPTH" "$VARIANT_CRITICS" > "$RUN/record.tmp"
+  if [ "$KIND" = lenses ]; then
+    printf 'kind=lenses\ncouncil=%s\nproject=%s\nlenses=%s\ndepth=%s\nharness=%s\nmodel=%s\neffort=%s\n' \
+      "$COUNCIL" "$PROJECT" "$LANES" "$DEPTH" "$HARNESS" "$MODEL" "$EFFORT" > "$RUN/record.tmp"
+  else
+    printf 'council=%s\nproject=%s\nangles=%s\ndepth=%s\nharness=%s\nmodel=%s\neffort=%s\nsynthesis_depth=%s\nvariant_critics=%s\n' \
+      "$COUNCIL" "$PROJECT" "$LANES" "$DEPTH" "$HARNESS" "$MODEL" "$EFFORT" "$SYNTH_DEPTH" "$VARIANT_CRITICS" > "$RUN/record.tmp"
+  fi
   mv "$RUN/record.tmp" "$RUN/record" || refuse "cannot write $RUN/record"
 
   # Tickets and briefs, then every start at the same moment.
-  IFS=',' read -ra angle_list <<< "$ANGLES"
-  for raw in "${angle_list[@]}"; do
-    angle=$(printf '%s' "$raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-    [ -n "$angle" ] || continue
-    title="$angle variant Recon"
-    row=$(lane_row "$title" "Run the $angle variant Recon of council $COUNCIL and write its report." \
-      "The report passes bin/jg-recon-gate.sh and its critic has closed every gap." 2>"$RUN/.file.err") && [ -n "$row" ] \
-      || { lanes+=("$angle"$'\t'-$'\t'"the ticket was not filed: $(last_line "$RUN/.file.err")"); continue; }
+  IFS=',' read -ra name_list <<< "$LANES"
+  for raw in "${name_list[@]}"; do
+    name=$(printf '%s' "$raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    [ -n "$name" ] || continue
+    lane_ticket_text "$name"
+    row=$(lane_row "$L_TITLE" "$L_ASK" "$L_DONE" 2>"$RUN/.file.err") && [ -n "$row" ] \
+      || { lanes+=("$name"$'\t'-$'\t'"the ticket was not filed: $(last_line "$RUN/.file.err")"); continue; }
     task=$(task_of "$row")
-    if live_record "$task"; then lanes+=("$angle"$'\t'"$task"$'\t'live); continue; fi
-    why=$(write_brief "$task" "$row" "$DEPTH" "Angle: $angle" \
-      "$(council_ref "run the $angle variant Recon of it.")" "$(printf 'Angle: %s\n%s' "$angle" "$(recon_lines "$task")")") \
-      || { lanes+=("$angle"$'\t'"$task"$'\t'"$why"); continue; }
+    if live_record "$task"; then lanes+=("$name"$'\t'"$task"$'\t'live); continue; fi
+    lane_spec "$name" "$task"
+    why=$(write_brief "$task" "$row" "$L_DEPTH" "$L_MARKER" "$L_TASKTXT" "$L_SPEC") \
+      || { lanes+=("$name"$'\t'"$task"$'\t'"$why"); continue; }
     launch "$task" "$row"
-    lanes+=("$angle"$'\t'"$task"$'\t'start)
+    lanes+=("$name"$'\t'"$task"$'\t'start)
   done
+  # The lanes `merge` reads: written for every lane that has a task, started now or already live.
+  if [ "$KIND" = lenses ]; then
+    for lane in "${lanes[@]}"; do
+      IFS=$'\t' read -r name task state <<< "$lane"
+      [ "$task" = - ] || printf '%s\t%s\n' "$name" "$task"
+    done > "$RUN/lanes.tmp"
+    mv "$RUN/lanes.tmp" "$RUN/lanes" || refuse "cannot write $RUN/lanes"
+  fi
 
   # Wait for each lane's record or exit code, and report.
   for lane in "${lanes[@]}"; do
-    IFS=$'\t' read -r angle task state <<< "$lane"
+    IFS=$'\t' read -r name task state <<< "$lane"
     case $state in
-      live) printf '%s: %s already live\n' "$angle" "$task"; continue ;;
+      live) printf '%s: %s already live\n' "$name" "$task"; continue ;;
       start) ;;
-      *) if [ "$task" = - ]; then printf '%s: not started: %s\n' "$angle" "$state"
-         else printf '%s: %s not started: %s\n' "$angle" "$task" "$state"; fi
+      *) if [ "$task" = - ]; then printf '%s: not started: %s\n' "$name" "$state"
+         else printf '%s: %s not started: %s\n' "$name" "$task" "$state"; fi
          status=1; continue ;;
     esac
     waited=0
     while ! live_record "$task" && [ ! -f "$RUN/$task.rc" ] && [ "$waited" -lt "$WAIT" ]; do sleep 1; waited=$((waited + 1)); done
     rc=$(cat "$RUN/$task.rc" 2>/dev/null)
     if live_record "$task" && { [ -z "$rc" ] || [ "$rc" = 0 ]; }; then
-      printf '%s: %s live\n' "$angle" "$task"
+      printf '%s: %s live\n' "$name" "$task"
     else
       if [ -n "$rc" ]; then reason=$(last_line "$RUN/$task.log"); reason=${reason:-the spawn exited $rc with no output}
       else reason="no task record and no exit after $WAIT s (the spawn may still be running; its output is in $RUN/$task.log)"; fi
-      printf '%s: %s not started: %s\n' "$angle" "$task" "$reason"
+      printf '%s: %s not started: %s\n' "$name" "$task" "$reason"
       status=1
     fi
   done
@@ -257,7 +333,7 @@ read_record() {
   [ -s "$RUN/record" ] || refuse "no war room record for $COUNCIL (data/war-room/$COUNCIL/record): start it with jg-war-room.sh start"
   while IFS='=' read -r key value; do
     case $key in
-      project) PROJECT=$value ;; angles) ANGLES=$value ;; depth) DEPTH=$value ;;
+      kind) KIND=$value ;; project) PROJECT=$value ;; angles|lenses) LANES=$value ;; depth) DEPTH=$value ;;
       harness) HARNESS=$value ;; model) MODEL=$value ;; effort) EFFORT=$value ;;
       synthesis_depth) SYNTH_DEPTH=$value ;; variant_critics) VARIANT_CRITICS=$value ;;
     esac
@@ -374,16 +450,32 @@ step_approval() {
   WAITS=''
 }
 
+# A lens council stops at its drafts: nothing is filed, nothing is held; the merge is the next move.
+next_lenses() {
+  local raw lens row task phase lens_list=()
+  IFS=',' read -ra lens_list <<< "$LANES"
+  for raw in "${lens_list[@]}"; do
+    lens=$(printf '%s' "$raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    [ -n "$lens" ] || continue
+    row=$(child_titled "$lens lens")
+    if [ -z "$row" ]; then [ -n "$WAITS" ] || WAITS="waits: $lens no lane"; continue; fi
+    task=$(task_of "$row"); phase=$(phase_of "$task")
+    [ "$phase" != none ] || { [ -n "$WAITS" ] || WAITS="waits: $task $lens draft"; }
+  done
+  if [ -n "$WAITS" ]; then echo "$WAITS"; else echo "every lens drafted: run bin/jg-muster-council.sh merge $COUNCIL"; fi
+}
+
 cmd_next() {
   local raw angle row task angle_list=()
   [ $# -eq 1 ] || refuse "$USAGE"
   open_council "$1"
   read_record
   [ -d "$PROJECT_DIR" ] || refuse "no project $PROJECT: $PROJECT_DIR is not a directory"
+  [ "$KIND" != lenses ] || { next_lenses; return 0; }
   if [ -f "$RUN/approved" ]; then echo "approved: nothing is due"; return 0; fi
   lock_next || return 1
 
-  IFS=',' read -ra angle_list <<< "$ANGLES"
+  IFS=',' read -ra angle_list <<< "$LANES"
   for raw in "${angle_list[@]}"; do
     angle=$(printf '%s' "$raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
     [ -n "$angle" ] || continue
@@ -417,6 +509,7 @@ cmd_approve() {
   [ -n "${words//[[:space:]]/}" ] || refuse "--words takes the owner's words, quoted"
   RUN=$DATA/war-room/$COUNCIL
   read_record
+  [ "$KIND" != lenses ] || refuse "council $COUNCIL gathers questions with lenses: it has no plan to approve"
   [ -s "$RUN/plan-asked" ] || refuse "the owner's plan approval was not asked yet: run jg-war-room.sh next $COUNCIL"
   plan=$(cat "$RUN/plan-asked")
   if grep -q '^swarm: started' "$RUN/approved" 2>/dev/null; then echo "already started"; return 0; fi
@@ -431,6 +524,7 @@ cmd_approve() {
 case ${1:-} in
   -h|--help) usage; exit 0 ;;
   start) shift; cmd_start "$@"; exit $? ;;
+  lenses) shift; KIND=lenses; cmd_start "$@"; exit $? ;;
   next) shift; cmd_next "$@"; exit $? ;;
   approve) shift; cmd_approve "$@"; exit $? ;;
   *) refuse "$USAGE" ;;
