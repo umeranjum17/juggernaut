@@ -93,7 +93,7 @@ def dep(argv):
     home_id = tickets.itemdb.home_id(h)
     st = tickets.open_tickets(h)
     con = st.con
-    con.execute("BEGIN IMMEDIATE")
+    tickets.S.begin_write(con)
     try:
         row = row_of(con, home_id, frm)
         edges = row["dependencies"]
@@ -123,7 +123,7 @@ def delete(argv):
     home_id = tickets.itemdb.home_id(h)
     st = tickets.open_tickets(h)
     con = st.con
-    con.execute("BEGIN IMMEDIATE")
+    tickets.S.begin_write(con)
     try:
         gone = list(dict.fromkeys(ids))
         for ident in gone:

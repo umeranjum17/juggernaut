@@ -106,34 +106,48 @@ def add_missing_views(con, shipped):
             con.execute(sql)
 
 
-# Triggers a reviewed schema edit replaced: name -> sha256 of the superseded sqlite_master text. A live store whose trigger still has
-# exactly that text is moved to the shipped one; any other text stays, so the schema audit still finds a changed trigger.
-SUPERSEDED_TRIGGERS = {"policy_check": "cb699fdb1102fb2e990c72abb7d102ba423c9d934ac39131f3d432c58260f9ac"}   # jg-6sa2s: fill-missing
+# Triggers a reviewed schema.sql or tickets.sql edit replaced: name -> sha256 of the superseded sqlite_master text. A live store whose
+# trigger still has exactly that text is moved to the shipped one; any other text stays, so the schema audit still finds a changed trigger.
+SUPERSEDED_TRIGGERS = {"policy_check": "cb699fdb1102fb2e990c72abb7d102ba423c9d934ac39131f3d432c58260f9ac",          # jg-6sa2s: fill-missing
+                       "ticket_change_kept": "d5053682fb14d35a1b4b7d3196ffd5feecd8cb40c2ce929b22d88f6181acb4d2"}    # jg-ih7: compact() erases a superseded change
 
 
 def reload_superseded_triggers(con, shipped):
-    for name, old in SUPERSEDED_TRIGGERS.items():
-        live = con.execute("SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?", (name,)).fetchone()
-        new = shipped.execute("SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?", (name,)).fetchone()
-        if live and new and live[0] != new[0] and hashlib.sha256(live[0].encode()).hexdigest() == old:
+    """shipped: trigger name -> its sqlite_master text as schema.sql and tickets.sql build it. Replaced under the write lock, in one transaction."""
+    def stale():
+        out = []
+        for name, old in SUPERSEDED_TRIGGERS.items():
+            live = con.execute("SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?", (name,)).fetchone()
+            if live and shipped.get(name) and live[0] != shipped[name] and hashlib.sha256(live[0].encode()).hexdigest() == old:
+                out.append(name)
+        return out
+    if not stale():
+        return
+    S.begin_write(con)
+    try:
+        for name in stale():               # read again under the lock: another writer may have moved it first
             con.execute("DROP TRIGGER " + name)
-            con.execute(new[0])
+            con.execute(shipped[name])
+        con.execute("COMMIT")
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
 
 
 def open_db(home, by):
     """The one way to open the store. The schema runs once, when the file is created; after that the file is attached
-    (Store(path) on an existing file fails). WAL and a 10 s busy wait, because every home of the host writes it."""
+    (Store(path) on an existing file fails). WAL, and a writer waits for the lock (store.begin_write), because every home of the host writes it."""
     d = store_dir(home)
     os.makedirs(d, exist_ok=True)
     path = os.path.join(d, "fleet.db")
     attach = os.path.exists(path)
     st = ProdStore(path, me=by, attach=attach)
-    st.con.execute("PRAGMA busy_timeout=10000")
     st.con.execute("PRAGMA journal_mode=WAL")
     fresh = S.Store(":memory:")
     if attach:
         add_missing_views(st.con, fresh.con)
-        reload_superseded_triggers(st.con, fresh.con)
+        shipped = dict(fresh.con.execute("SELECT name, sql FROM sqlite_master WHERE type='trigger'").fetchall())
+        reload_superseded_triggers(st.con, dict(shipped, **st._ticket_objects()))
     st.shipped = fresh.schema_hash()                     # the rules as shipped in schema.sql, for the audit
     st.boot = boot_id()
     return st

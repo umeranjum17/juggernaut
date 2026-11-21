@@ -173,7 +173,7 @@ def do_create(argv, stdin_text):
     st = tickets.open_tickets(h)
     con, home_id = st.con, itemdb.home_id(h)
     sec, nano = clock()
-    con.execute("BEGIN IMMEDIATE")
+    tickets.S.begin_write(con)
     try:
         labels, links = set(opt["labels"]), []
         parent = opt.get("parent")
@@ -236,7 +236,7 @@ def write_in(fn):
     h = tickets.home()
     st = tickets.open_tickets(h)
     con, home_id = st.con, itemdb.home_id(h)
-    con.execute("BEGIN IMMEDIATE")
+    tickets.S.begin_write(con)
     try:
         answer = fn(st, con, home_id, int(time.time()))
         con.execute("COMMIT")

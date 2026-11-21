@@ -18,7 +18,8 @@ host, and when Main's watcher stops a Squad Lead home's tick takes over within o
 findings and each re-check's seconds are appended to state/item-store/tick.log; the items they open carry their own
 pages. A failure prints one line `item-store: <cause>` only when the cause differs from the last one
 (state/item-store/tick-error), so a broken store wakes its watcher's reader once, not every cycle; a re-check over 10 s
-prints one such line too (state/item-store/tick-slow), because the watcher stops a check at 30 s.
+prints one such line too (state/item-store/tick-slow), because the watcher stops a check at 30 s. Each tick also compacts
+the file (store.Store.compact) and logs `compact <changes> changes <pages> pages` when it erased or returned any.
 
 With JG_ITEM_OR_INTAKE=1 (what a shell script sets for its guarded calls), a refused write opens one intake item on
 Main naming the refusal (itemdb.or_intake), prints `intake` and exits 0; the same source twice opens it once.
@@ -200,6 +201,9 @@ def cmd_tick(st, a, d):
             lines.append("%d recheck %.1fs" % (at, secs))
             slow = secs > 10
         save_clock(st, d)
+        erased, freed = st.compact(at)                         # the ticket log's old superseded changes, then the free pages
+        if erased or freed:
+            lines.append("%d compact %d changes %d pages" % (at, erased, freed))
         known = {r[0] for r in st.con.execute("SELECT source FROM move WHERE source LIKE 'forged:%'")}
         bad, err = stamp_findings(st, at)
         lines += ["%d stamp %s %s %r" % (at, w, ref, pair) for w, ref, pair in bad or []

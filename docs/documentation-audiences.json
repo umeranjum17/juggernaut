@@ -1080,6 +1080,10 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": ".agents/skills/done-done-verify-suites/features/item-store-contention.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": ".agents/skills/done-done-verify-suites/features/codex-lead-queued-wake.md",
       "audience": "agent-runtime"
     },

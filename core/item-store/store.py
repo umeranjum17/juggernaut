@@ -13,7 +13,7 @@ the move's frame (boot id and host clock minus the boot clock); here `_off` hold
 and the proof cases set while the host clock is off, and the tick sets from its own steady reading.
 Identity: `jg-item` derives `by` from where it runs and never takes it as an argument. The replay and the simulator
 play every program at once, so they pass `by`; a Store made with me=<identity> refuses any other `by`, as the CLI does."""
-import copy, hashlib, os, re, sqlite3
+import copy, hashlib, os, random, re, sqlite3, time
 
 PAGE_QUIET = 7200
 PAGE_ROWS, PAGE_BYTES, PAGE_TEXT, PAGE_COUNT_LINE = 200, 32768, 160, 128   # one read: 200 lines, 32 KiB, count line included
@@ -27,22 +27,40 @@ SCHEMA_ALERT = "schema:main/fleet"     # the store's rules differ from the shipp
 FOLD_ALERT = "fold:main/fleet"         # an item differs from the fold of its moves (a write around the log)
 SCHEMA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schema.sql")
 TICKETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tickets.sql")   # the ticket tables: loaded into the same file, hashed on their own
+BUSY_S, WRITE_TRIES = 15, 3              # every home of the host writes one file: each try waits up to 15 s for the write lock, three tries
+TICKET_KEEP_S = 7 * 86400                # compact(): a closed or dropped ticket's superseded changes are kept 7 days
 
 
 class Refused(Exception):
     pass
 
 
+def begin_write(con, tries=WRITE_TRIES):
+    """BEGIN IMMEDIATE: a writer takes the write lock before its first read. A deferred transaction that reads and then writes
+    fails at once with "database is locked" when another writer committed in between (a stale WAL snapshot), and no busy wait
+    helps it; a lock taken first never goes stale. Each try waits the connection's busy timeout; a lock still held after it
+    is tried again after a short random pause, `tries` times in all, then the busy error is raised."""
+    for n in range(tries):
+        try:
+            con.execute("BEGIN IMMEDIATE")
+            return
+        except sqlite3.OperationalError as e:
+            if "locked" not in str(e) or n == tries - 1:
+                raise
+            time.sleep(random.uniform(0.05, 0.5))
+
+
 class Store:
     def __init__(self, path=":memory:", schema=SCHEMA, me=None, attach=False):
         self.me, self._now, self._off = me, [0], [0]   # the host clock reading and its offset from the boot clock, shared with every as_() view
         self.boot = "b0"                      # the boot id (the real writer reads /proc/sys/kernel/random/boot_id)
-        self.con = sqlite3.connect(path, isolation_level=None)
+        self.con = sqlite3.connect(path, isolation_level=None, timeout=BUSY_S)
         now = self._now
         self.con.create_function("host_now", 0, lambda: now[0])
         self.con.execute("PRAGMA foreign_keys=ON")
         self.con.execute("PRAGMA recursive_triggers=ON")
-        if not attach:
+        if not attach:                        # a new file returns its free pages to the disk (compact); set before its first table
+            self.con.execute("PRAGMA auto_vacuum=INCREMENTAL")
             self.con.executescript(open(schema, encoding="utf-8").read())
         self.kind = {r[0]: r for r in self.con.execute("SELECT kind, first, deadline_s, ceiling, proof, closer FROM kind")}
         self.closers = {r[5] for r in self.kind.values() if r[5].startswith("adapter:")}   # adapters the stamp check always reads
@@ -114,12 +132,19 @@ class Store:
 
     # ------------------------------------------------------------ the write path
     def _write(self, rows):
-        """rows: list of dicts for INSERT INTO move. One transaction; refused as a whole."""
+        """rows: list of dicts for INSERT INTO move. One transaction, under the write lock taken first (begin_write) unless the
+        caller's own transaction holds it; refused as a whole."""
         if self.me is not None and any(r.get("by") != self.me for r in rows):
             raise Refused("by: the writer stamps who it is (%s); it never takes a by" % self.me)
         cols = ("at", "verb", "key", "kind", "home", "subject", "project", "parent", "by", "source", "holder", "holder_id", "due_at", "ends", "why", "options", "page", "frame")
         frame = "%s:%d" % (self.boot, self._off[0])
         rows = [dict(r, frame=r.get("frame", frame)) for r in rows]
+        own = not self.con.in_transaction
+        try:
+            if own:
+                begin_write(self.con)
+        except sqlite3.Error as e:
+            raise Refused(" ".join(str(e).split()))
         try:
             self.con.execute("SAVEPOINT w")
             for r in rows:
@@ -128,7 +153,11 @@ class Store:
         except sqlite3.Error as e:
             self.con.execute("ROLLBACK TO w")
             self.con.execute("RELEASE w")
+            if own:
+                self.con.execute("ROLLBACK")
             raise Refused(" ".join(str(e).split()))
+        if own:
+            self.con.execute("COMMIT")
 
     def first_holder(self, kind, home, named=None):
         k = self.kind[kind]
@@ -454,6 +483,33 @@ class Store:
             except Refused:
                 pass
         return out
+
+    def compact(self, at, keep_s=TICKET_KEEP_S):
+        """Keep the file small; the tick runs it once per host tick. First it erases each change of the ticket log older than
+        keep_s whose ticket is closed or dropped: the log's own trigger (tickets.sql, ticket_change_kept) skips every change
+        the ticket tables are folded from, so no ticket, link, comment or event changes, and an active ticket keeps its whole
+        history. While the live ticket objects differ from tickets.sql the log is left alone. Then a file made before
+        incremental auto-vacuum is rebuilt with it once (VACUUM); after that each run returns the free pages to the disk.
+        Items and moves are never touched. Returns (changes erased, pages returned)."""
+        erased = 0
+        if self._objects(True) and self.tickets_ok():
+            begin_write(self.con)
+            try:
+                erased = self.con.execute(
+                    "DELETE FROM ticket_change WHERE at < ? AND NOT EXISTS (SELECT 1 FROM ticket t WHERE t.home = ticket_change.home"
+                    " AND t.id = ticket_change.id AND t.status IS NOT 'closed')", (at - keep_s,)).rowcount
+                self.con.execute("COMMIT")
+            except sqlite3.Error:
+                self.con.execute("ROLLBACK")
+                raise
+        pages = self.one("PRAGMA page_count")
+        if self.one("PRAGMA auto_vacuum") != 2:
+            self.con.execute("PRAGMA auto_vacuum=INCREMENTAL")
+            self.con.execute("VACUUM")
+            self.con.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()      # once: the rebuild passed the whole file through the WAL
+        else:
+            self.con.execute("PRAGMA incremental_vacuum").fetchall()          # stepped to the end: each step returns one page
+        return erased, pages - self.one("PRAGMA page_count")
 
     def audit(self, at, fold=False):
         """Every tick: the schema hash against the shipped one. Every 15 minutes: the re-check (the log re-applied to the

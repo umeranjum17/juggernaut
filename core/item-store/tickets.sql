@@ -2,6 +2,7 @@
 -- Loaded into the same fleet.db after schema.sql (core/item-store/adapters/tickets.py), and never changes it. The store's
 -- audit and `jg-item check` hash this file's objects against tickets.sha256 and everything else against schema.sha256.
 -- Six tables: ticket, link, comment and ticket_event are the fold of ticket_change, the append-only log; a writer only INSERTs INTO ticket_change.
+-- Only the store's compaction (store.py compact) erases a change, and ticket_change_kept skips every change the fold is built from.
 -- A ticket is keyed on (home, id): ids are NOT unique across homes (every home mints jg- ids from its own counter), so the
 -- same id may be a different ticket in two homes, and one id twice in one home is one row. Every read names its home.
 
@@ -98,7 +99,17 @@ CREATE UNIQUE INDEX ticket_change_once ON ticket_change(source, home, id);
 CREATE INDEX ticket_change_id ON ticket_change(home, id, seq);
 
 CREATE TRIGGER ticket_change_final BEFORE UPDATE ON ticket_change BEGIN SELECT RAISE(ABORT, 'ticket_change: a change never changes'); END;
-CREATE TRIGGER ticket_change_kept BEFORE DELETE ON ticket_change BEGIN SELECT RAISE(ABORT, 'ticket_change: a change is never erased'); END;
+-- The changes the fold is built from are never erased: a ticket's latest change, and while the ticket is not dropped its first change
+-- (the list order reads it), its latest drop and its latest change carrying events and provenance. Replayed in seq order they give back
+-- every row; a delete of one of them is skipped, so an erase of the rest leaves every ticket, link, comment and event as it was.
+CREATE TRIGGER ticket_change_kept BEFORE DELETE ON ticket_change
+  WHEN OLD.seq = (SELECT max(seq) FROM ticket_change WHERE home = OLD.home AND id = OLD.id)
+    OR ((SELECT row IS NOT NULL FROM ticket_change WHERE home = OLD.home AND id = OLD.id ORDER BY seq DESC LIMIT 1)
+        AND OLD.seq IN ((SELECT min(seq) FROM ticket_change WHERE home = OLD.home AND id = OLD.id),
+                        (SELECT max(seq) FROM ticket_change WHERE home = OLD.home AND id = OLD.id AND row IS NULL),
+                        (SELECT max(seq) FROM ticket_change WHERE home = OLD.home AND id = OLD.id AND json_type(row, '$.events') = 'array'),
+                        (SELECT max(seq) FROM ticket_change WHERE home = OLD.home AND id = OLD.id AND json_type(row, '$.provenance') = 'array')))
+BEGIN SELECT RAISE(IGNORE); END;
 
 CREATE TRIGGER ticket_apply AFTER INSERT ON ticket_change WHEN NEW.row IS NOT NULL
 BEGIN

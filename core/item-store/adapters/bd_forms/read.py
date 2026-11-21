@@ -384,7 +384,7 @@ def provenance_record(f):
     h = tickets.home()
     st = tickets.open_tickets(h)
     home_id, ident = itemdb.home_id(h), f.val["--issue"]
-    st.con.execute("BEGIN IMMEDIATE")
+    tickets.S.begin_write(st.con)
     try:
         c = tickets.copy_of(st.con, home_id, ident)
         if c is None:

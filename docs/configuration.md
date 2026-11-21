@@ -402,6 +402,7 @@ Leases stay on either way; the file turns only the reclaim.
 
 Every home keeps its backlog as its own rows in the tickets tables of `fleet.db`, and `bin/jg-backlog.sh` is the one command that reads and writes them.
 `python3 -I core/item-store/adapters/tickets.py check` proves the tables.
+Each `jg-item tick` compacts `fleet.db`: a closed or dropped ticket's history keeps its changes for 7 days, then only the changes its current row is built from, and the freed space goes back to the disk; an open ticket keeps its whole history.
 The actor of a home's own writes is the home's name, `main` or `lead:<id>`, so `created_by` says who filed; `jg-backlog.sh homes --json` lists every home with its store and marks a lead on another machine `"remote": true`.
 `bin/jg-backlog.sh` serves `show`, `list`, `ready`, `add`, `update`, `done`, `block`, `unblock`, `start`, `reopen`, `hold`, `unhold` and `public-followup`, and refuses every other write.
 

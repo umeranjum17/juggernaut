@@ -37,6 +37,7 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 STORE = os.path.dirname(HERE)
 sys.path.insert(0, STORE)
 import itemdb  # noqa: E402
+import store as S  # noqa: E402  (begin_write: the one way a writer takes the lock)
 
 BY = "adapter:tickets"
 FIELDS = ("title", "description", "priority", "issue_type", "assignee", "created_at", "created_by", "updated_at", "started_at",
@@ -105,7 +106,7 @@ def rebuild_from_log(con, sql):
     the current tables. Every table but the log and memory is the fold of ticket_change, so the log is kept as it is - every seq, at and
     source - moved aside, and replayed in seq order into the new tables: the triggers rebuild each row (a field the old log never
     held is NULL until the next import fills it). One transaction; the replay must give back every ticket and link row, else nothing changes."""
-    con.execute("BEGIN IMMEDIATE")
+    S.begin_write(con)
     try:
         before = [con.execute("SELECT count(*) FROM " + t).fetchone()[0] for t in ("ticket", "link", "ticket_change")]
         mine = set(re.findall(r"^CREATE (?:UNIQUE )?(?:VIEW|TRIGGER|INDEX) (\w+)", sql, re.M)) | {"ticket_change_home"}
@@ -220,7 +221,7 @@ def cmd_import(a):
     con = st.con
     at, src = int(time.time()), "import:%s:%d" % (a.home, time.time_ns())
     counts = {"inserted": 0, "updated": 0, "unchanged": 0}
-    con.execute("BEGIN IMMEDIATE")
+    S.begin_write(con)
     try:
         for r in rows.values():
             have = copy_of(con, a.home, r["id"])
@@ -245,7 +246,7 @@ def cmd_drop_lead_homes(a):
     st = open_tickets(home())
     con = st.con
     at, dropped = int(time.time()), []
-    con.execute("BEGIN IMMEDIATE")
+    S.begin_write(con)
     try:
         for (h,) in con.execute("SELECT DISTINCT home FROM ticket WHERE home LIKE 'lead:%' ORDER BY home").fetchall():
             if not con.execute("SELECT 1 FROM ticket WHERE home = ? LIMIT 1", (h[len("lead:"):],)).fetchone():
