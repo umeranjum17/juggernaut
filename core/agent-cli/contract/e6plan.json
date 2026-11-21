@@ -1,0 +1,455 @@
+{
+  "area": "planning",
+  "owner": "e6plan",
+  "entries": [
+    {
+      "path": [
+        "plan",
+        "plan-gate",
+        "add"
+      ],
+      "meaning": "Add a tool dependency to a plan row.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [
+        {
+          "name": "row",
+          "type": "text"
+        },
+        {
+          "name": "name",
+          "type": "text"
+        },
+        {
+          "name": "version",
+          "type": "text"
+        }
+      ],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-plan-gate.sh add <row> --tool <name> --min <version>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "plan.plan-gate.add.v1",
+      "script": "bin/jg-plan-gate.sh",
+      "operation": "add",
+      "aliases": []
+    },
+    {
+      "path": [
+        "plan",
+        "plan-gate",
+        "close"
+      ],
+      "meaning": "Close satisfied plan dependencies.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-plan-gate.sh close",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "plan.plan-gate.close.v1",
+      "script": "bin/jg-plan-gate.sh",
+      "operation": "close",
+      "aliases": []
+    },
+    {
+      "path": [
+        "plan",
+        "plan-gate",
+        "approve"
+      ],
+      "meaning": "Approve the slices of a plan.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [
+        {
+          "name": "plan.json",
+          "type": "text"
+        },
+        {
+          "name": "h",
+          "type": "text"
+        },
+        {
+          "name": "m",
+          "type": "text"
+        },
+        {
+          "name": "e",
+          "type": "text"
+        }
+      ],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-plan-gate.sh approve <plan.json> --harness <h> --model <m> --effort <e>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "plan.plan-gate.approve.v1",
+      "script": "bin/jg-plan-gate.sh",
+      "operation": "approve",
+      "aliases": []
+    },
+    {
+      "path": [
+        "plan",
+        "plan-route"
+      ],
+      "meaning": "Route a plan to its owners.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [
+        {
+          "name": "plan.json",
+          "type": "text"
+        }
+      ],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-plan-route.sh <plan.json> [--dry-run]",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "plan.plan-route.v1",
+      "script": "bin/jg-plan-route.sh",
+      "operation": "-",
+      "aliases": []
+    },
+    {
+      "path": [
+        "plan",
+        "swarm-arm"
+      ],
+      "meaning": "Arm a home for its plan slices.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [
+        {
+          "name": "plan.json",
+          "type": "text"
+        },
+        {
+          "name": "n",
+          "type": "text"
+        }
+      ],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-swarm-arm.sh <plan.json> [--agents <n>] [--with-others]",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "plan.swarm-arm.v1",
+      "script": "bin/jg-swarm-arm.sh",
+      "operation": "-",
+      "aliases": []
+    },
+    {
+      "path": [
+        "plan",
+        "swarm-check",
+        "status"
+      ],
+      "meaning": "Show swarm progress.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [
+        {
+          "name": "plan",
+          "type": "text"
+        }
+      ],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/jg-swarm-check.sh status [<plan>] [--short]",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "plan.swarm-check.status.v1",
+      "script": "bin/jg-swarm-check.sh",
+      "operation": "status",
+      "aliases": []
+    },
+    {
+      "path": [
+        "plan",
+        "swarm-check",
+        "check"
+      ],
+      "meaning": "Check swarm progress and restore dispatch settings.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [
+        {
+          "name": "jg-home",
+          "type": "text"
+        }
+      ],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-swarm-check.sh check <jg-home>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "plan.swarm-check.check.v1",
+      "script": "bin/jg-swarm-check.sh",
+      "operation": "check",
+      "aliases": []
+    },
+    {
+      "path": [
+        "plan",
+        "swarm-plan-check"
+      ],
+      "meaning": "Check a swarm plan.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [
+        {
+          "name": "plan.json",
+          "type": "text"
+        },
+        {
+          "name": "dir",
+          "type": "text"
+        },
+        {
+          "name": "ref",
+          "type": "text"
+        }
+      ],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-swarm-plan-check.sh <plan.json> [--repo <dir> --ref <ref>]",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "plan.swarm-plan-check.v1",
+      "script": "bin/jg-swarm-plan-check.sh",
+      "operation": "-",
+      "aliases": []
+    },
+    {
+      "path": [
+        "plan",
+        "swarm-plan-check",
+        "ref"
+      ],
+      "meaning": "Check a swarm plan against a repository ref.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [
+        {
+          "name": "plan.json",
+          "type": "text"
+        },
+        {
+          "name": "dir",
+          "type": "text"
+        },
+        {
+          "name": "ref",
+          "type": "text"
+        }
+      ],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-swarm-plan-check.sh <plan.json> --repo <dir> --ref <ref>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "plan.swarm-plan-check.ref.v1",
+      "script": "bin/jg-swarm-plan-check.sh",
+      "operation": "--ref",
+      "aliases": []
+    },
+    {
+      "path": [
+        "plan",
+        "swarm-words"
+      ],
+      "meaning": "Process answered swarm decisions.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [
+        {
+          "name": "jg-home",
+          "type": "text"
+        }
+      ],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-swarm-words.sh <jg-home>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "plan.swarm-words.v1",
+      "script": "bin/jg-swarm-words.sh",
+      "operation": "-",
+      "aliases": []
+    },
+    {
+      "path": [
+        "plan",
+        "swarm",
+        "run"
+      ],
+      "meaning": "Run a swarm plan.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [
+        {
+          "name": "plan.json",
+          "type": "text"
+        },
+        {
+          "name": "h",
+          "type": "text"
+        },
+        {
+          "name": "m",
+          "type": "text"
+        },
+        {
+          "name": "e",
+          "type": "text"
+        },
+        {
+          "name": "ref",
+          "type": "text"
+        },
+        {
+          "name": "n",
+          "type": "text"
+        }
+      ],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-swarm.sh run <plan.json> --harness <h> --model <m> --effort <e> [--order <ref>] [--agents <n>] [--with-others] [--wait]",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "plan.swarm.run.v1",
+      "script": "bin/jg-swarm.sh",
+      "operation": "run",
+      "aliases": []
+    },
+    {
+      "path": [
+        "plan",
+        "war-room",
+        "next"
+      ],
+      "meaning": "Advance a war room.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [
+        {
+          "name": "council-ticket",
+          "type": "text"
+        }
+      ],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-war-room.sh next <council-ticket>",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "plan.war-room.next.v1",
+      "script": "bin/jg-war-room.sh",
+      "operation": "next",
+      "aliases": []
+    },
+    {
+      "path": [
+        "plan",
+        "war-room",
+        "approve"
+      ],
+      "meaning": "Approve a war room plan.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [
+        {
+          "name": "council-ticket",
+          "type": "text"
+        },
+        {
+          "name": "the owner's words",
+          "type": "text"
+        },
+        {
+          "name": "who",
+          "type": "text"
+        }
+      ],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-war-room.sh approve <council-ticket> --words <the owner's words> [--by <who>]",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "plan.war-room.approve.v1",
+      "script": "bin/jg-war-room.sh",
+      "operation": "approve",
+      "aliases": []
+    }
+  ]
+}
