@@ -1,0 +1,105 @@
+{
+  "area": "muster",
+  "owner": "m5",
+  "entries": [
+    {
+      "path": ["muster", "round"],
+      "meaning": "Show one round of questions as one card per question and record each question's gate.",
+      "roles": ["overwatch"],
+      "args": [
+        {"name": "ticket", "type": "text", "required": true},
+        {"name": "questions", "type": "path", "required": true, "flag": "--questions"},
+        {"name": "round", "type": "number", "required": false, "flag": "--round"},
+        {"name": "doc", "type": "path", "required": false, "flag": "--doc"}
+      ],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-muster.sh round <ticket> --questions <file> [--round <n>] [--doc <vision file>]",
+      "repeat_key": "ticket+round: a repeat posts only the questions with no row yet",
+      "exits": {"0": 0, "1": 1, "2": 2},
+      "schema": "muster.round.v1",
+      "script": "bin/jg-muster.sh",
+      "operation": "round",
+      "aliases": []
+    },
+    {
+      "path": ["muster", "answer"],
+      "meaning": "Bind one reply (a board card, a chat note or a default) to the question it names and close that gate.",
+      "roles": ["overwatch"],
+      "args": [
+        {"name": "ticket", "type": "text", "required": true},
+        {"name": "card", "type": "text", "required": false, "flag": "--card"},
+        {"name": "value", "type": "text", "required": false, "flag": "--value"},
+        {"name": "words", "type": "text", "required": false, "flag": "--words"},
+        {"name": "note", "type": "text", "required": false, "flag": "--note"},
+        {"name": "default", "type": "text", "required": false, "flag": "--default"}
+      ],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-muster.sh answer <ticket> (--card <card-key> [--value <letter> | --words <text>] | --note <note-id> | --default <qid>)",
+      "repeat_key": "ticket+card or note id or qid: a repeat of the stored answer changes nothing",
+      "exits": {"0": 0, "1": 1, "2": 2},
+      "schema": "muster.answer.v1",
+      "script": "bin/jg-muster.sh",
+      "operation": "answer",
+      "aliases": []
+    },
+    {
+      "path": ["muster", "revise"],
+      "meaning": "Show a round again as its next revision, or record the owner's changed or late answer as one.",
+      "roles": ["overwatch"],
+      "args": [
+        {"name": "ticket", "type": "text", "required": true},
+        {"name": "target", "type": "text", "required": true},
+        {"name": "questions", "type": "path", "required": false, "flag": "--questions"},
+        {"name": "value", "type": "text", "required": false, "flag": "--value"},
+        {"name": "words", "type": "text", "required": false, "flag": "--words"},
+        {"name": "source", "type": "text", "required": false, "flag": "--source"}
+      ],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-muster.sh revise <ticket> (<round> --questions <file> | <qid> (--value <letter> | --words <text>) [--source board|chat])",
+      "repeat_key": "ticket+round+revision: the next revision number makes each call new",
+      "exits": {"0": 0, "1": 1, "2": 2},
+      "schema": "muster.revise.v1",
+      "script": "bin/jg-muster.sh",
+      "operation": "revise",
+      "aliases": []
+    },
+    {
+      "path": ["muster", "round-status"],
+      "meaning": "Read each round's questions, gates and answers, the document lines still owed, and whether the round is complete.",
+      "roles": ["overwatch"],
+      "args": [
+        {"name": "ticket", "type": "text", "required": true},
+        {"name": "json", "type": "flag", "required": false, "flag": "--json"}
+      ],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/jg-muster.sh round-status <ticket> [--json]",
+      "repeat_key": null,
+      "exits": {"0": 0, "1": 1, "2": 2},
+      "schema": "muster.round-status.v1",
+      "script": "bin/jg-muster.sh",
+      "operation": "round-status",
+      "aliases": []
+    },
+    {
+      "path": ["muster", "repair"],
+      "meaning": "Write the document line of every answer that was saved before its line was written.",
+      "roles": ["overwatch"],
+      "args": [
+        {"name": "ticket", "type": "text", "required": true}
+      ],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-muster.sh repair <ticket>",
+      "repeat_key": "ticket: a second repair finds nothing owed and changes nothing",
+      "exits": {"0": 0, "1": 1, "2": 2},
+      "schema": "muster.repair.v1",
+      "script": "bin/jg-muster.sh",
+      "operation": "repair",
+      "aliases": []
+    }
+  ]
+}

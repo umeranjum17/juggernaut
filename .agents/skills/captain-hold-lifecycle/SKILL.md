@@ -19,6 +19,7 @@ For a sign-off board-backed handoff, publish the reply through `sign-off-axi` be
 Prefer holding the work item the question gates over minting a new row; create a new task only when no work item exists to hold.
 The originating investigation or review is never its own inventory entry, so hold a separate task for the call and pass `--origin <origin-id>` so `complete` can check it.
 Put the question and its options in the hold reason, and keep one held task per genuine gate: a multi-question review is one held task pointing at its report, not a row per question. Represent that task with exactly one board card that consolidates its questions and options; never fan one task id into duplicate same-key cards.
+A muster round is the exception: one round ticket with one card per question, because each question is its own decision (`.agents/skills/muster/SKILL.md`).
 Register or re-hold through `bin/jg-captain-hold.sh hold`, which is idempotent per task id; the question becomes one gate row on the ticket that `bin/jg-backlog.sh questions` lists and that no list of work shows.
 After inventorying the whole report and review surface, run `bin/jg-captain-hold.sh complete` with every captain-held task id, or with `--none` only when the reviewed surface leaves nothing waiting on the captain.
 A completed investigation and an ended visual review use this same owner and completion command; a visual report tool, including sign-off, never owns a parallel completion policy.
