@@ -89,7 +89,8 @@ CREATE VIEW alert_kind(alert, precedence, first_rung, fires_at) AS VALUES
   ('quota-unused',      'P2', '0',    '1800'),
   ('quota-blind',       'P2', '0',    '1800'),
   ('worker-stopped',    'P1', '3',    '0'),
-  ('judge-split',       'P1', '2',    '0');
+  ('judge-split',       'P1', '2',    '0'),
+  ('done-unhandled',    'P1', '3',    '600');
 
 CREATE VIEW alert_ladder(precedence, step_s, repeat_s, top, lift, repeats_at_top) AS VALUES
   ('P0',   0,  600, '4',       '-',            3),
@@ -131,7 +132,8 @@ CREATE VIEW alert_text(alert, fires_on, quiet_when) AS VALUES
   ('quota-unused', 'the share of an account''s window that is left is over the share of its time by 20 points, and a ticket can start', 'host-at-stop+account-on-hold'),
   ('quota-blind', 'the newest quota reading of an account that lanes use is old', 'account-no-lane'),
   ('worker-stopped', 'an agent that someone waits for was ended or lost: an unread steer in its inbox, a steer newer than its last status line, an open Recon critic round, or a relaunch after its done line', 'never'),
-  ('judge-split', 'two judges (the tip run, the verify, the nightly run) gave one commit tree two different verdicts', 'never');
+  ('judge-split', 'two judges (the tip run, the verify, the nightly run) gave one commit tree two different verdicts', 'never'),
+  ('done-unhandled', 'a Recon or critic lane reported done and nobody took the next step it owes (bin/jg-facts-lib.sh jg_fact_next_step) within 10 minutes', 'never');
 
 CREATE VIEW alert_rule(id, covers, scope, quieted, why) AS VALUES
   ('I1', 'supervision-down', 'home', 'stuck-wait,lost-worker,undelivered,ready-idle,slow-delivery', 'nobody is watching, so every wait would fire'),

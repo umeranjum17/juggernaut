@@ -2074,6 +2074,9 @@ journeys:
   jg-turnend-guard:
     tier: local
     command: bash tests/jg-turnend-guard.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  finished-work-never-silently-acknowledged:
+    tier: local
+    command: bash tests/jg-finished-work.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-update-local-base:
     tier: local
     command: bash tests/jg-update-local-base.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

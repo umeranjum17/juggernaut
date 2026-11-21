@@ -71,6 +71,24 @@ try:
     check("migrated file hash equals the shipped one", (s.schema_hash(),), [(Store._digest([(x,) for x in got]),)])
     check("migrated file holds the ladder", (4,), [tuple(old.execute("SELECT count(*) FROM alert_ladder").fetchone())])
     itemdb.add_missing_views(old, s.con)    # a second open changes nothing
+    # a store made before the done-unhandled row holds the superseded alert_kind and alert_text; one open moves both to the shipped text
+    gone = {"alert_kind": ",\n  ('done-unhandled',    'P1', '3',    '600')",
+            "alert_text": ",\n  ('done-unhandled', 'a Recon or critic lane reported done and nobody took the next step it owes (bin/jg-facts-lib.sh jg_fact_next_step) within 10 minutes', 'never')"}
+    live = sqlite3.connect(os.path.join(d, "live.db"), isolation_level=None)
+    live.executescript(open(os.path.join(ROOT, "schema.sql"), encoding="utf-8").read())
+    shipped = dict(s.con.execute("SELECT name, sql FROM sqlite_master WHERE type IN ('trigger', 'view')").fetchall())
+    for name, row in gone.items():
+        text = shipped[name]
+        check("the superseded %s text is the shipped one without its last row" % name, (itemdb.SUPERSEDED_VIEWS[name],),
+              [(__import__("hashlib").sha256(text.replace(row, "").encode()).hexdigest(),)])
+        live.execute("DROP VIEW " + name)
+        live.execute(text.replace(row, ""))
+    check("a store with the superseded alert views has no done-unhandled row", (0,), [tuple(live.execute("SELECT count(*) FROM alert_kind WHERE alert='done-unhandled'").fetchone())])
+    itemdb.reload_superseded(live, shipped)
+    got = [r[0] for r in live.execute("SELECT sql FROM sqlite_master ORDER BY name")]
+    check("the moved store's hash equals the shipped one", (s.schema_hash(),), [(Store._digest([(x,) for x in got]),)])
+    check("the moved store holds the done-unhandled alert", ("P1", "3", "600"), [tuple(live.execute("SELECT precedence, first_rung, fires_at FROM alert_kind WHERE alert='done-unhandled'").fetchone())])
+    itemdb.reload_superseded(live, shipped)    # a second open changes nothing
 finally:
     __import__("shutil").rmtree(d, True)
 

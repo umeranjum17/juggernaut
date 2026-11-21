@@ -368,6 +368,7 @@ The drain marks outcomes and action lines and prints a stable id for each outcom
 The away daemon buffers the complete outcome presentation for the supervisor and leaves those rows queued for explicit handling.
 Its header names the commands that record a relay reference or classification reason.
 A refused acknowledgement counts every open outcome of the batch at once and lists a bounded page of ids; `--outcomes-before` classifies every outcome first presented before a cut in one locked pass with one reason, and an outcome with a disposition is never asked for again.
+That sweep is refused whole (exit 3, nothing classified) while a finished Recon or critic lane in the range still owes a required next step, and the refusal names each lane and how its step is taken (`jg_fact_next_step` in `bin/jg-facts-lib.sh` is the one definition; [`turnend-guard.md`](turnend-guard.md) names the other two readers).
 An unseen signal or an outcome without a disposition refuses the acknowledgement before any queue row is consumed.
 An unanswered captain inbox note in the batch refuses it the same way: the captain's own note is the one wake that must never be retired without an answer.
 `bin/jg-captain-note-lib.sh` owns what counts as unanswered: the note is still in `state/inbox/`, has no reply at `state/inbox/.replies/<id>`, and was not acknowledged by `bin/jg-inbox.sh drain --ack <id>`.

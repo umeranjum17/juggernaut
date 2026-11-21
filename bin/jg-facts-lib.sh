@@ -11,6 +11,7 @@
 #   jg_fact_sweep_retry <state-dir> <mem-dir> <id> <now> <start-s>              retry: the never-started relaunch budget and the next step
 #   jg_fact_wake <state-dir> <file>                        cursor: the reported and classified positions of one wake stream
 #   jg_fact_lane_waited <state-dir> <id> <recon-phase> <agent-state cmd...>   waited: whether anyone waits for the lane's agent, and why
+#   jg_fact_next_step <state-dir> <data-dir> <id>          next step: the step a finished Recon or critic lane still owes, who owes it, how it is taken
 #
 # The *_effective, *_at, *_due and *_next forms print one word (or return a status) for a caller that needs only the decision.
 
@@ -116,6 +117,61 @@ jg_fact_lane_waited() {  # <state-dir> <id> <recon-phase> <agent-state cmd...>
     fi
   fi
   printf 'waited\t%s\nreason\t%s\nunread\t%s\nsince\t%s\n' "$([ "$why" = - ] && echo no || echo yes)" "$why" "$unread" "$oldest"
+}
+
+# --- next step: what a finished Recon or critic lane still owes (bin/jg-wake-drain.sh, core/next-step, bin/jg-turnend-guard.sh) ------
+# A done line ends the worker's turn, not the work: someone still has to act on it. This is the one place that says who owes what, and
+# the drain's sweep refusal, the P1 alert and the turn-end guard all read it, so a step is never owed in one and forgotten in another.
+# Only a lane of kind scout whose last status line is done owes a step. The Recon's own record decides which: the last line of
+# data/<work>/handoff.tsv names its phase (bin/jg-recon-handoff.sh), where <work> is the Recon itself, or the Recon a critic was
+# assigned to (column 1 of data/<critic>/assignment.tsv). The clock (`since`) is the later of the done line and the last handoff move.
+#   lane    phase      step     owed by         taken when
+#   Recon   none       relay    Main            a `relayed` move of its ticket is at or after `since` (bin/jg-move.sh <ticket> relayed)
+#   Recon   drafted    assign   the lead        a critic is named, so the phase leaves drafted
+#   Recon   assigned   -        -               the critic holds the draft
+#   critic  assigned   verdict  the critic      the verdict is recorded, so the phase leaves assigned
+#   either  critiqued  revise   the researcher  a revised draft is recorded, so the phase leaves critiqued
+#   either  accepted   relay    Main            as the first row
+#   critic  drafted    -        -               its verdict was acted on
+# An acknowledgement, a sweep or a read notice takes no step: only the move above does. When no step is owed `step` is none and `reason` says why.
+jg_fact_relayed_at() {  # <data-dir> <ticket>: the epoch of the ticket's latest `relayed` move, empty when it has none
+  awk -F'\t' -v t="$2" '$2 == t && $4 == "relayed" { r = $1 } END { print r }' "$1/moves.log" 2>/dev/null
+}
+jg_fact_next_step() {  # <state-dir> <data-dir> <id>
+  local state=$1 data=$2 id=$3 meta=$1/$3.meta role=recon work=$3 phase=none step=none owner=- act=- since=0 why ticket done_at moved relayed
+  if [ "$(sed -n 's/^kind=//p' "$meta" 2>/dev/null | tail -n 1)" != scout ]; then why='not a Recon or critic lane'
+  elif ! done_at=$(jg_fact_ready_at "$state" "$id"); then why='its last status line is not done'
+  else
+    [ "$done_at" != 0 ] || done_at=$(jg_fact_mtime "$state/$id.status")
+    since=$done_at
+    work=$(cut -f1 "$data/$id/assignment.tsv" 2>/dev/null | head -n 1)
+    if [ -n "$work" ]; then role=critic; else work=$id; fi
+    ticket=$(sed -n 's/^ticket=//p' "$state/$work.meta" 2>/dev/null | tail -n 1)
+    if [ -z "$ticket" ] && [ ! -f "$state/$work.meta" ]; then why="the Recon $work has no record here"
+    else
+      ticket=${ticket:-$work}
+      if [ -s "$data/$work/handoff.tsv" ]; then
+        phase=$(tail -n 1 "$data/$work/handoff.tsv" | cut -f3)
+        moved=$(tail -n 1 "$data/$work/handoff.tsv" | cut -f1); case $moved in '' | *[!0-9]*) moved=0 ;; esac
+        [ "$moved" -le "$since" ] || since=$moved
+      fi
+      case "$role/$phase" in
+        recon/none | */accepted)
+          step=relay owner=Main act="relay the findings, then record it: bin/jg-move.sh $ticket relayed"
+          relayed=$(jg_fact_relayed_at "$data" "$ticket")
+          case $relayed in '' | *[!0-9]*) ;; *) if [ "$relayed" -ge "$since" ]; then step=none owner=- act=-; why="relayed at $relayed"; fi ;; esac ;;
+        recon/drafted) step=assign owner='the lead' act="name a critic: bin/jg-recon-handoff.sh assign $work --critic <critic-task-id>" ;;
+        critic/assigned) step=verdict owner='the critic' act="record the verdict: bin/jg-recon-handoff.sh verdict $work --critic $id --hash <sha256> --gaps <k>" ;;
+        */critiqued) step=revise owner='the researcher' act="steer the researcher to revise; its draft is recorded by bin/jg-recon-handoff.sh revise $work" ;;
+        *) why="no step is owed in phase $phase" ;;
+      esac
+    fi
+  fi
+  printf 'step\t%s\nowner\t%s\nhow\t%s\nwork\t%s\nticket\t%s\nsince\t%s\nphase\t%s\nreason\t%s\n' \
+    "$step" "$owner" "$act" "$work" "${ticket:-$work}" "$since" "$phase" "${why:-owed}"
+}
+jg_fact_next_step_text() {  # <id> <facts>: one line naming the lane, the step, who owes it and how it is taken
+  printf '%s: %s owed by %s - %s\n' "$1" "$(jg_fact_val "$2" step)" "$(jg_fact_val "$2" owner)" "$(jg_fact_val "$2" how)"
 }
 
 # --- cursor: the positions of one wake stream (bin/jg-wake-lib.sh) -------------------------------------------------------

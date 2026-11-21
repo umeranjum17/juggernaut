@@ -287,6 +287,42 @@ if [ -x "$SCRIPT_DIR/jg-progress-claim.sh" ]; then
   fi
 fi
 
+# --- the finished-work rule --------------------------------------------------
+# A done line ends a worker's turn, not the work (bin/jg-facts-lib.sh jg_fact_next_step names the step a finished Recon or critic lane
+# still owes). While the done-unhandled alert is open (core/next-step: the step went 10 minutes untaken) this turn does not end; the
+# banner names each lane and how its step is taken. Only taking the step closes the alert, so the refusal lifts on its own. It is bounded
+# like the supervision block below, so it cannot wedge a session: JG_NEXT_STEP_BLOCK_BUDGET (default 3) consecutive refusals per
+# session, then one loud notice and the turn may end. A helper that is missing or cannot answer says so and never blocks.
+NEXT_STEP_BUDGET=${JG_NEXT_STEP_BLOCK_BUDGET:-3}
+case "$NEXT_STEP_BUDGET" in ''|*[!0-9]*|0) NEXT_STEP_BUDGET=3 ;; esac
+NEXT_STEP_FILE="$STATE/.turnend-next-step-blocks"
+if [ -x "$JG_ROOT/core/next-step/next-step.sh" ]; then
+  NEXT_STEP_OPEN=$("$JG_ROOT/core/next-step/next-step.sh" open "$JG_HOME" 2>/dev/null) && NEXT_STEP_RC=0 || NEXT_STEP_RC=$?
+  case "$NEXT_STEP_RC" in
+    1) rm -f "$NEXT_STEP_FILE" 2>/dev/null || true ;;
+    0)
+      NEXT_STEP_SESSION=$(printf '%s' "$PAYLOAD" | jq -r '.session_id // "unknown"' 2>/dev/null || printf 'unknown')
+      NEXT_STEP_COUNT=$(sed -n "s/^$NEXT_STEP_SESSION	//p" "$NEXT_STEP_FILE" 2>/dev/null | head -n 1)
+      case "$NEXT_STEP_COUNT" in ''|*[!0-9]*) NEXT_STEP_COUNT=0 ;; esac
+      NEXT_STEP_COUNT=$((NEXT_STEP_COUNT + 1))
+      printf '%s\t%s\n' "$NEXT_STEP_SESSION" "$NEXT_STEP_COUNT" > "$NEXT_STEP_FILE" 2>/dev/null || true
+      if [ "$NEXT_STEP_COUNT" -le "$NEXT_STEP_BUDGET" ]; then
+        {
+          printf '●%s\n' '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+          printf '●  FINISHED WORK HAS NO NEXT STEP\n'
+          printf '●  A finished lane went 10 minutes with the step it owes untaken. Reading, acknowledging or sweeping its done line does not take it:\n'
+          printf '●  %s\n' "$NEXT_STEP_OPEN"
+          printf '●  Take each step, then end the turn; the P1 closes itself once the step is on record.\n'
+          printf '●%s\n' '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+        } >&2
+        exit 2
+      fi
+      printf 'finished-work: the refusal budget (%s) is spent, so this turn may end with a done-unhandled alert still open: %s\n' \
+        "$NEXT_STEP_BUDGET" "$(printf '%s' "$NEXT_STEP_OPEN" | tr '\n' ' ')" >&2 ;;
+    *) printf 'finished-work: core/next-step/next-step.sh could not answer (exit %s); unfinished steps are not checked this turn\n' "$NEXT_STEP_RC" >&2 ;;
+  esac
+fi
+
 # --- the captain-chat word lint ----------------------------------------------
 # In the locked primary session, the final message is checked against the internal words of
 # AGENTS.md section 9 (docs/roles/chat-words.tsv, one per line). It prints one line naming each

@@ -9,7 +9,7 @@
 #   jg-machine-guard.sh enforced <machine>           stub: exit 1 (no machine is enforced)
 #   jg-machine-guard.sh fact <name> [args]           print one typed fact as `key TAB value` lines, changing nothing: policy <machine> <from> <to>,
 #                                                    reuse, writer <ref> <new-sha>, ready <id>, flush <file> <ready> <oldest> <now> <at-ready> <after-min>,
-#                                                    retry <id> <now> <start-s>, wake <file> (readers: bin/jg-facts-lib.sh)
+#                                                    retry <id> <now> <start-s>, wake <file>, next-step <id> (readers: bin/jg-facts-lib.sh)
 #
 # `edge` allows every move and writes nothing; `flip` writes nothing; `enforced` exits 1 for every machine. Only `fact` still reads.
 #
@@ -75,6 +75,7 @@ cmd_fact() {
     ready) { [ $# -eq 1 ] && plain "$1"; } || usage; jg_fact_ready "$state" "$1" ;;
     flush) [ $# -eq 6 ] || usage; jg_fact_flush "$@" ;;
     retry) { [ $# -eq 3 ] && plain "$1"; } || usage; jg_fact_sweep_retry "$state" "${JG_DATA_OVERRIDE:-$JG_HOME/data}/lead-sweep" "$1" "$2" "$3" ;;
+    next-step) { [ $# -eq 1 ] && plain "$1"; } || usage; jg_fact_next_step "$state" "${JG_DATA_OVERRIDE:-$JG_HOME/data}" "$1" ;;
     wake) [ $# -eq 1 ] || usage
       # shellcheck source=bin/jg-wake-lib.sh
       . "$SCRIPT_DIR/jg-wake-lib.sh"; jg_fact_wake "$state" "$1" ;;

@@ -19,6 +19,7 @@ Do not infer this guard's scope, loop safety, or compatibility tradeoffs for tho
 | What the guard enforces | [Current invariant](#current-invariant) |
 | A correction no rule or ticket captured | [Owner-correction suggestion](#owner-correction-suggestion) |
 | A message that calls a migration part In use with no In use row | [Migration progress rule](#migration-progress-rule) |
+| A turn end refused because a finished Recon or critic has a next step nobody took | [Finished-work rule](#finished-work-rule) |
 | Which sessions are in scope and what counts as supervision need | [Primary scope](#primary-scope) and [supervision need](#supervision-need) |
 | How the turn-end check and the mid-turn pull warning judge watcher health | [Strict watcher check at the turn boundary](#strict-watcher-check-at-the-turn-boundary) and [pull-warning verdict by supervision model](#pull-warning-verdict-by-supervision-model) |
 | Away and quiet mode | [Away and quiet mode daemon ownership](#away-and-quiet-mode-daemon-ownership) |
@@ -89,6 +90,18 @@ A sentence that also says pending, not live, not yet, not running or "is not" is
 The guard blocks once per message (`state/.progress-claim-flagged`), names the part and what the probe measured, and asks for "Landed, not In use" or for the row to be proved In use.
 A home with no `critical=` in `config/migration-card`, a missing `jq`, or a copy of the guard without `bin/jg-progress-claim.sh` checks nothing and is never blocked.
 The captain-facing numbers come from the same rows: the milestone outcome in `bin/jg-migration-card.sh` and the `Live now` line in `bin/jg-status-digest.sh` lead with the count from `bin/jg-critical-path.sh summary`, and a merged switch is recorded as a milestone only when its row is In use.
+
+## Finished-work rule
+
+A done line ends a worker's turn, not the work: someone still has to act on it.
+`bin/jg-facts-lib.sh` `jg_fact_next_step` is the one definition of that required next step for a finished Recon or critic lane (its header holds the table).
+Three parts read it: the drain's `--outcomes-before` sweep is refused whole while a finished Recon in range owes a step, `core/next-step/next-step.sh` raises the `done-unhandled` P1 when the step waited 10 minutes, and this guard.
+The delivery tick runs that script for every home, so the P1 needs no model turn.
+Before the supervision predicate the guard asks `core/next-step/next-step.sh open`, which first closes every alert whose step was taken, then lists the rest.
+While one is open the guard blocks the turn end and names each lane, its step and the command that takes it; reading, acknowledging or sweeping the done line does not.
+Taking the step closes the alert, so the refusal lifts at once with no tick in between.
+The refusal is bounded: `JG_NEXT_STEP_BLOCK_BUDGET` consecutive refusals per session (default 3, `state/.turnend-next-step-blocks`), then one loud notice naming the lane and the turn may end.
+A copy of the guard without `core/next-step/next-step.sh` checks nothing, and a check that cannot answer says so and never blocks.
 
 ## Guard predicates
 
@@ -649,6 +662,7 @@ That warning uses `bin/jg-supervision-instructions.sh --repair-line`, so it alwa
 - Away-mode daemon ownership between watcher cycles and over a watcher lock left behind by an exited watcher, plus its dead, pid-reused, absent, stale-beacon, and away-mode-off negatives.
 - Lead-daemon ownership: a Codex squad lead supervised by the always-on daemon (`bin/jg-lead-daemon.sh`, marker `state/.lead-daemon`, no away flag) ends its turn idle on a live daemon with a fresh beacon, and blocks on a dead daemon, a stale beacon, or a marker with no live daemon; its repair line starts the daemon instead of a foreground checkpoint.
 - The away-mode beacon's poll-derived grace widening for a live daemon still mid-cycle and its bound against a dead daemon, a beacon older than that wider grace, and JG_POLL's inapplicability with away mode off.
+- The finished-work rule: a done Recon line no tick has found unhandled stops nothing, an open `done-unhandled` alert (acknowledged or not) blocks the turn end, the loop guard lets it through, the relay lifts it at once, and the claude-mode budget of 3 ends it with a notice.
 - Pi logical-run latching.
 - Missing-`jq` behavior.
 - All five primary registrations.
