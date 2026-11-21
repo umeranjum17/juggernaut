@@ -234,6 +234,9 @@ pol() { jg_trunk_policy "$1" "${PN:-}"; }
 put() { printf '%s\n' "$2" > "$1.tmp.$$" && mv -f "$1.tmp.$$" "$1"; }
 row() { mkdir -p "$DATA"; local f=$1; shift; printf '%s\n' "$(IFS=$'\t'; echo "$*")" >> "$DATA/$f"; }
 rev() { git -C "$PROJ" rev-parse --verify --quiet "$1^{commit}"; }
+# Whether the ref exists at all. rev reads the commit it names, so a ref whose commit this clone does not hold (or whose object is no commit)
+# reads as absent there while a create-only update-ref still refuses it as existing; every guard before a create asks this instead.
+has_ref() { git -C "$PROJ" rev-parse --verify --quiet "$1" >/dev/null; }
 # The item store's record of the same facts (core/item-store/adapters/trunk.py), only where the home has config/item-store. Today's records decide:
 # a store call never changes this script's output or exit status, and a refused write is an intake item on Main, not an error here.
 # store_covers <rel> <prev>: where the home holds the store's decision (config/item-store-decides) a push goes only when the store's
@@ -892,7 +895,10 @@ cmd_init() {
   open_project "${1-}"
   [ ! -e "$STATE/trunk-tip-$PN" ] || die "trunk for $PN already exists"
   # A clone another home also uses can hold the trunk branch while this home has no record of it: the branch is that home's, never recreated here.
-  rev "refs/heads/$TRUNK" >/dev/null && die "branch $TRUNK already exists in $PROJ but this home has no record of it (state/trunk-tip-$PN): another home that shares the clone owns that trunk, or this record was lost; init never overwrites it"
+  if has_ref "refs/heads/$TRUNK"; then
+    rev "refs/heads/$TRUNK" >/dev/null || die "branch $TRUNK already exists in $PROJ but names a commit that clone does not hold, and this home has no record of it (state/trunk-tip-$PN): fetch the missing commit or have its owner repair the branch; init never overwrites it"
+    die "branch $TRUNK already exists in $PROJ but this home has no record of it (state/trunk-tip-$PN): another home that shares the clone owns that trunk, or this record was lost; init never overwrites it"
+  fi
   if [ -z "$base" ]; then
     base=HEAD; vb=$(jg_current_version_branch "$PROJ" || true)
     for r in ${vb:+"origin/$vb" "$vb"}; do if rev "$r" >/dev/null; then base=$r; break; fi; done
@@ -2620,7 +2626,7 @@ rollover_if_merged() {
   else
     ff=0; [ "$(pr_state "$url")" = merged ] || { ROLLOVER_SKIP="release $url is not merged"; return 1; }
   fi
-  rev "refs/heads/$new" >/dev/null && die "$new already exists in $PROJ; the next trunk is never overwritten"
+  has_ref "refs/heads/$new" && die "$new already exists in $PROJ; the next trunk is never overwritten"
   if [ "$ff" = 1 ]; then
     CARRY_TIP=$(rev "refs/heads/$TRUNK"); CARRY_REPLAYED=; green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
   else

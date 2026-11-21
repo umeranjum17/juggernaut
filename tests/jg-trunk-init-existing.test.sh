@@ -7,6 +7,8 @@
 # T1 init names the cause in its refusal and leaves the branch and the home's records as they were.
 # T2 The landing check reports that refusal once; a second tick with the same cause says nothing.
 # T3 Once the home has its record again, the check reports nothing and the memory of the refusal is gone.
+# T4 A trunk ref that names a commit the clone does not hold reads as absent to a commit lookup but exists to git: init names that cause,
+#    and the tick never shows git's "cannot lock ref" (the muxr, takeone and writeboost homes, 21 Nov 2026).
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
@@ -48,6 +50,27 @@ test_a_restored_record_clears_the_memory() {
   pass 'a restored record stops the report'
 }
 
+# The trunk ref of a clone that lost the commit it names (a pruned or never-fetched object).
+unreadable_trunk_world() {  # <name>
+  lost_record_world "$1"
+  printf 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n' > "$PROJ/.git/refs/heads/trunk"
+}
+
+test_a_ref_naming_a_missing_commit_is_named() {
+  unreadable_trunk_world unreadable
+  local out rc=0 first second; out=$(trunk init "$PROJ" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "init must refuse a trunk ref that exists"
+  case $out in *"names a commit that clone does not hold"*) ;; *) fail "the refusal must name the cause: $out" ;; esac
+  case $out in *"update_ref failed"*|*"cannot lock ref"*) fail "git's own ref error must not reach the owner: $out" ;; esac
+  [ ! -e "$HOME_D/state/trunk-tip-proj" ] || fail "init must write no record"
+  first=$(tick); second=$(tick)
+  case $first in *"names a commit that clone does not hold"*) ;; *) fail "the first tick must report the cause: $first" ;; esac
+  case $first$second in *"cannot lock ref"*) fail "no tick may show git's ref error: $first$second" ;; esac
+  [ -z "$second" ] || fail "the second tick must stay silent: $second"
+  pass 'a trunk ref naming a missing commit is named once, never as git'"'"'s cannot lock ref'
+}
+
 test_init_names_the_existing_branch
 test_the_tick_reports_once
 test_a_restored_record_clears_the_memory
+test_a_ref_naming_a_missing_commit_is_named
