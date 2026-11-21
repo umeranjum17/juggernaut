@@ -99,6 +99,19 @@ unset CDPATH
 
 SELF="$(cd "$(dirname "$0")" && pwd -P)/$(basename "$0")"
 
+# The script path a managed hook records. A hook outlives the process that wrote it, so it must name the home's own copy: a
+# verify copy (data/trunk/.verify-code.*) or a go-live tool export (state/trunk-live-tool/*) runs this same script and is
+# deleted when it ends, and a hook that recorded it fails every later commit (ticket jg-5hw). The home is the JG_ROOT_OVERRIDE
+# those copies are run with, else the parent of the state directory being refreshed; a copy with no such home keeps its own path.
+stable_self() {  # [<state-dir>]
+  local home cand
+  for home in "${JG_ROOT_OVERRIDE:-}" "${1:+$1/..}"; do
+    [ -n "$home" ] && [ -x "$home/bin/${SELF##*/}" ] || continue
+    cand=$(CDPATH='' cd -- "$home/bin" && pwd -P) && { printf '%s/%s\n' "$cand" "${SELF##*/}"; return 0; }
+  done
+  printf '%s\n' "$SELF"
+}
+
 usage() {
   cat >&2 <<'EOF'
 usage:
@@ -311,6 +324,7 @@ install_hooks() {
     echo "error: not a git worktree: $wt" >&2
     return 1
   }
+  HOOK_SELF=$(stable_self)
   chmod u+w "$hooks_dir" 2>/dev/null
   rm -rf "$hooks_dir"
   mkdir -p "$hooks_dir" || return 1
@@ -327,7 +341,7 @@ install_hooks() {
 hook_text() {
   local name=$1 ours=$2
   printf '#!/usr/bin/env bash\n# managed by bin/jg-git-strip-ai-trailers.sh\nset -u\n'
-  [ "$name" != commit-msg ] || printf '%s %s\n' "$(quote_for_hook "$SELF")" "\"\$1\" || exit \$?"
+  [ "$name" != commit-msg ] || printf '%s %s\n' "$(quote_for_hook "$HOOK_SELF")" "\"\$1\" || exit \$?"
   runtime_chain_body "$ours"
 }
 
@@ -342,6 +356,7 @@ hook_text() {
 refresh_hooks() {
   local state=$1 d real name tmp rc=0 unlocked
   [ -d "$state" ] || return 0
+  HOOK_SELF=$(stable_self "$state")
   for d in "$state"/*.git-hooks; do
     [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/commit-msg" ] || continue
     real=$(CDPATH='' cd -- "$d" && pwd -P) || continue
