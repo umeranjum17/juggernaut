@@ -2,7 +2,7 @@
 # The trunk adapter of the item store (slice 5b): landings, release pushes and his release word are recorded in the store beside today's
 # records, which still decide. Real lanes land through core/trunk-landing/trunk-landing.sh and real releases run through bin/jg-trunk.sh
 # (tests/jg-trunk-fixture.sh: scratch git repositories, a local origin, a gh-axi stand-in), against core/item-store of this checkout.
-# a: a landing closes its land item with the landed commit, once; a re-cut commit is read once the stamp check passed. b: a standard project's
+# a: a landing closes its land item with the landed commit, once; a re-cut commit is read once the stamp check passed; a lane rebased after its done line closes the item it opened with. b: a standard project's
 # word and release (his yes, the covered head, no intake). c: a push after his yes asks again, today's output is unchanged, and `agree` lists
 # the difference. d: rollover closes the release and opens the update items of the homes. e: compare. f: the stamp check reads the word.
 # g: release-daily after his no. h: a loose project releases with no question.
@@ -76,6 +76,13 @@ want "a5 once the stamp check has passed, jg-item landed answers the landed comm
 n=$(sql "SELECT count(*) FROM move")
 tr_ landed main lb "$HB" "${cb#trunk:}" --source "land:lb@${cb#trunk:}" >/dev/null
 want "a6 the same landing again writes nothing" "$n" "$(sql "SELECT count(*) FROM move")"
+# A lane rebased onto the newer trunk after its land item opened is landed at its new head: the item opened at the old head closes, with no refused write.
+store_lane lc three c.txt; HC=$LANDHEAD
+relane lc four; HC2=$(git -C "$PROJ" rev-parse fm/lc)
+[ "$HC2" != "$HC" ] || fail "a7 the rebase must move the lane's head"
+for _ in 1 2 3 4 5 6; do sweep >/dev/null; [ "$(sql "SELECT state FROM item WHERE key='land:main/lc@$HC'")" = "done" ] && break; done
+want "a7 the land item opened at the old head closes when the rebased lane lands" "done" "$(sql "SELECT state FROM item WHERE key='land:main/lc@$HC'")"
+want "a8 no land item is opened or refused for the new head" "0" "$(sql "SELECT count(*) FROM item WHERE key LIKE 'land:main/lc@$HC2' OR key LIKE 'intake:main/refused-%'")"
 
 # ---------------------------------------------------------------- b, c, f: the release word on a standard project
 release_flow word 1

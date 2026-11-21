@@ -31,7 +31,7 @@ rc=0
   tests/jg-trunk-init-existing.test.sh tests/jg-trunk-verify.test.sh tests/jg-trunk-unit.test.sh tests/jg-trunk-verify-milestone.test.sh tests/jg-trunk-judge.test.sh tests/jg-trunk-spawn.test.sh tests/jg-trunk-scope.test.sh \
   tests/jg-on.test.sh tests/migration-card-live.test.sh tests/jg-afk-inject-e2e.test.sh \
   tests/jg-beads-native-n6.test.sh \
-  tests/jg-ticket-writeback.test.sh) > "$out" 2>&1 || rc=$?
+  tests/jg-ticket-writeback.test.sh tests/item-store-land-release.test.sh) > "$out" 2>&1 || rc=$?
 cat "$out"
 cat > "$DONE_DONE_EVIDENCE_ROOT/steps.json" <<JSON
 {"target": {"version": "$(git -C "$root" rev-parse --short HEAD)"},
@@ -47,6 +47,7 @@ cat > "$DONE_DONE_EVIDENCE_ROOT/steps.json" <<JSON
  "prove the landing prerequisites through real probes on deterministic tool paths: the remote doctor reports missing and fixture-installed harnesses, the migration card measures absent and installed CLIs over a real private bus, and a private tmux fixture delivers exactly one notification after a swallowed Enter without reading host service bindings",
  "land a stack whose lander prints one landed line per lane: each lane is cleaned up at its own landed line while the lander still runs; a refusal that only needs time is retried on the 15 s, 1, 2 and 5 minute ladder and cleaned on the retry; any other refusal gets one closed-list reason and one alert, and a time-only refusal that never clears is final after the ladder with one alert",
  "publish under the standing release word: the green pin is pushed once the trunk holds enough, never forced; a trunk with fewer commits, no waiver, an open batch pull request or a CI run in flight pushes nothing; after a red the tip is pushed once as a candidate and its green result moves the pin past the red; the landing check starts the publish step within one tick",
+ "land lanes in a home with the item store on: each lane's land item closes with the commit now on the trunk, and a lane rebased onto a newer trunk after its done line closes the item it opened with, with no refused-write intake item",
  "ready four lanes with gate-slots and heavy slots at 3: three gate at once on a chain of fronts, each on the commit below it, the fourth waits for a position and all land in order after one gate each; a red lane in the middle is returned and the lane above it is gated once more"],
  "result": "a done commit lands on the local trunk after one fast check with no human step and is never live until the captain says so, every unsafe landing is refused with the reason, the batch goes out as one trunk-to-main release PR on his word, and a red CI returns the home to the last green commit"}
 JSON

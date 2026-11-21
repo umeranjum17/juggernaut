@@ -6,6 +6,7 @@ ended `|| true`); today's word check decides, and every disagreement is one inta
   landed <home id> <ticket> <head> <landed commit> --source land:<task>@<commit>
       Closes land:<home id>/<ticket>@<head> done `trunk:<landed commit>` (the lander may re-cut the commit: the item names
       the commit that stands on the trunk, so `jg-item landed <ticket>` answers it once the stamp check has passed).
+      A lane rebased after its done line lands at a new head: with no open item at <head>, the ticket's one open land item closes.
   pushed <project> <release pull request> <head> --source push:<head>
       Store.release_push: the first push opens the release step (or his question), a later one is a note on it. The store
       writes the push's moves as the tick, so they need no line in this adapter's log.
@@ -96,9 +97,20 @@ def git(d, *a):
     return r.stdout.strip() if r.returncode == 0 else None
 
 
+def open_land_key(st, home_id, ticket, head):
+    """The key of the land item a landing closes: the one opened at <head>; else the ticket's one open land item, which a rebase of the
+    lane after the done line left at the head it opened with. With none or several open, the head's own key (the store refuses it)."""
+    exact = keys.key("land", home_id, ticket=ticket, head=head)
+    if st.item(exact):
+        return exact
+    prefix = keys.key("land", home_id, ticket=ticket, head="x")[:-1]
+    rows = st.con.execute("SELECT key FROM item WHERE kind='land' AND state='open' AND substr(key, 1, ?) = ?", (len(prefix), prefix)).fetchall()
+    return rows[0][0] if len(rows) == 1 else exact
+
+
 def cmd_landed(a):
     w = Writer()
-    key = keys.key("land", a.home_id, ticket=a.ticket, head=a.head)
+    key = open_land_key(w.st, a.home_id, a.ticket, a.head)
     print(w.put(a.home_id, a.ticket, a.source, key, w.st.close, key, "done", "trunk:" + a.commit, w.st.me))
 
 
