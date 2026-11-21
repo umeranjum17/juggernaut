@@ -65,6 +65,27 @@ def cmd_approve(a):
     return 0
 
 
+def cmd_approve_batch(a):
+    home = os.path.realpath(a.home)
+    st = itemdb.open_db(home, BY)
+    hid = itemdb.home_id(home)
+    for line in sys.stdin:
+        line = line.rstrip("\r\n")
+        if not line:
+            continue
+        ticket, sep, approved_at = line.partition("\t")
+        if not ticket:
+            continue
+        source = "approval:%s@%s" % (ticket, approved_at if sep else "")
+        if st.seen(source):
+            continue
+        at = itemdb.stamp(st)
+        key = K.key("dispatch", hid, ticket=ticket)
+        itemdb.or_intake(st, at, source, hid, ticket, st.open, at, key, "dispatch", hid, ticket,
+                         "start %s: approved to start" % ticket, st.me)
+    return 0
+
+
 def cmd_spawned(a):
     st = itemdb.open_db(a.home, BY)
     hid = itemdb.home_id(os.path.realpath(a.home))
@@ -155,6 +176,8 @@ def main(argv):
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("approve"); s.add_argument("home_id"); s.add_argument("ticket"); s.add_argument("--source", required=True)
     s.set_defaults(f=cmd_approve)
+    s = sub.add_parser("approve-batch")
+    s.set_defaults(f=cmd_approve_batch)
     s = sub.add_parser("spawned"); s.add_argument("home_id"); s.add_argument("task"); s.add_argument("--source", required=True)
     s.set_defaults(f=cmd_spawned)
     s = sub.add_parser("requeue"); s.add_argument("home_id"); s.add_argument("ticket"); s.add_argument("n")

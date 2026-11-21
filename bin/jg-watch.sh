@@ -3159,6 +3159,8 @@ admission_refusal_fresh() {
 # shellcheck disable=SC2034,SC2100 # READY_STALL_MODE and READY_STALL_WHY are read by core/wait-timers, outside the linted set.
 ready_backlog_stall_state() {
   local rows rc id repo proj cfg seen='|' full='|' meta kind cards board data_dir
+  local stall_ids='' block_mode=fallback block_out block_err block_rc=0 first_line bid _rest
+  local -A stall_blocked=()
   READY_STALL_IDS='' READY_STALL_OPEN='' READY_STALL_TARGET='' READY_STALL_LANES='' READY_STALL_MODE='' READY_STALL_WHY=''
   [ -f "$(jg_compat_marker "$JG_HOME")" ] && [ ! -L "$(jg_compat_marker "$JG_HOME")" ] || return 1
   rows=$(jg_ready_work_rows "$JG_HOME"); rc=$?
@@ -3196,8 +3198,37 @@ ready_backlog_stall_state() {
   while read -r id repo; do
     [ -n "$id" ] || continue
     printf '%s\n' "$cards" | grep -Fxq -- "$id" && continue
-    rc=0
-    JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$data_dir" "$SCRIPT_DIR/jg-captain-hold.sh" blocking "$id" >/dev/null 2>&1 || rc=$?
+    stall_ids="${stall_ids}${id}"$'\n'
+  done <<EOF
+$rows
+EOF
+  if [ -n "$stall_ids" ]; then
+    block_out=$(mktemp) || return 2
+    block_err=$(mktemp) || { rm -f -- "$block_out"; return 2; }
+    JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$data_dir" \
+      "$SCRIPT_DIR/jg-captain-hold.sh" blocking --batch <<< "$stall_ids" > "$block_out" 2> "$block_err" || block_rc=$?
+    first_line=$(head -n 1 "$block_out" 2>/dev/null)
+    if [ "$block_rc" -eq 0 ] && [ "$first_line" = "blocking-batch: ok" ]; then
+      block_mode=ok
+      while IFS=$'\t' read -r bid _rest; do
+        [ -n "$bid" ] && stall_blocked[$bid]=1
+      done < <(tail -n +2 "$block_out")
+    elif [ "$block_rc" -eq 2 ] && grep -q '^jg-captain-hold:' "$block_err" 2>/dev/null; then
+      rm -f -- "$block_out" "$block_err"
+      return 2
+    fi
+    rm -f -- "$block_out" "$block_err"
+  fi
+  while read -r id repo; do
+    [ -n "$id" ] || continue
+    printf '%s\n' "$cards" | grep -Fxq -- "$id" && continue
+    if [ "$block_mode" = ok ]; then
+      rc=1
+      [ -z "${stall_blocked[$id]+x}" ] || rc=0
+    else
+      rc=0
+      JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$data_dir" "$SCRIPT_DIR/jg-captain-hold.sh" blocking "$id" >/dev/null 2>&1 || rc=$?
+    fi
     # One lookup per ready task is a completed bounded unit: beat after each, so
     # a slow lookup across many tasks under host load never ages the beacon.
     watcher_beat ready-stall
