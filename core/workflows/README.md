@@ -27,7 +27,15 @@ A bare kind is a one-step workflow named after it, so `parse worker` names `work
 | `fanout` | none | the slice plan of an earlier `recon(standard\|deep)` or `war-room` |
 | `war-room` | `fast` (default), `full` | the council of variants and its plan |
 
-A new kind is one entry in `KINDS` in `wflib.py`, one route line and one kind file in a later slice.
+A new kind is one entry in `KINDS` in `wflib.py`, one route line and one kind file in `core/workflows/kinds/`.
+
+## Which kinds can start
+
+A kind runs when `core/workflows/kinds/<kind>.py` exists.
+`worker`, `recon` and `owner` exist: `worker` and `recon` write the complete brief (`steplib.py`: `bin/jg-brief.sh` with both Task sections filled from the ticket and, for a build after a Recon, the approved report) and the dispatch approval on the kind's route, so dispatch starts the lane with no lead turn.
+`owner` raises the owner's question through `bin/jg-captain-hold.sh` and is done when his words answer it, so a build after a report never starts on the report alone.
+`critic`, `fanout` and `war-room` have no handler yet.
+A ready step of a kind with no handler is one `workflow-step-failed` alert naming the kind, never a silent skip.
 
 ## The two files
 

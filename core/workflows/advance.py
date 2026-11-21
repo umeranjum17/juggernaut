@@ -3,7 +3,7 @@ finished step and starts each ready one as a detached job, and it never waits fo
 
   close   a step whose start record says rc 0 and whose kind's `result` is done: `bin/jg-backlog.sh done <row>`.
           Each `result` has 2 seconds; over that the step stays open and the pass logs `slow`.
-  failed  a start record with rc not 0, a start job gone with no record, or a result of `failed`: the step stays open, so
+  failed  a start record with rc not 0, a start job gone with no record, a result of `failed`, or a kind with no handler: the step stays open, so
           the stages after it stay blocked, and one `workflow-step-failed` alert is raised for it.
   start   a step whose blockers are all closed and that has no data/workflows/<row>.started: write `.started`, launch
           `bin/jg-workflow.sh step-start <home> <row>` with `detach`, print `started <row> (<kind>)`.
@@ -155,6 +155,7 @@ class Pass:
             if any(self.blocker_open(b) for b in blockers(r)):
                 continue
             if self.module(kind) is None:
+                self.fail(ticket, row, kind, f"no kind {kind}: the step has no handler, so nothing can start it")
                 continue
             self.start(row, kind)
 
