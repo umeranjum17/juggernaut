@@ -663,6 +663,69 @@ await_file() {  # <seconds> <path> <what> [<text>]
   fail "$3 within $1 s: $(cat "$2" 2>/dev/null)"
 }
 
+test_lane_and_verification_shards_share_a_host_cap() {
+  local d=$TMP_ROOT/shard-cap fixture=$TMP_ROOT/shard-cap/repo a b lane peak pid
+  local -x JG_TEST_RUN_SLOT='' JG_TEST_SHARD_POOL=''
+  local -x JG_TEST_HOST_SLOTS="$d/slots" JG_REQUIRED_SHARD_PARALLEL=2 TEST_SPEED_LIMITS_FILE="$d/limits"
+  mkdir -p "$d"
+  printf 'machine_runs_max=3\n' >"$d/limits"
+  cat >"$d/activity.py" <<'PY'
+import os, pathlib, sys, time
+d = pathlib.Path(sys.argv[1])
+def event(delta):
+    with (d / "activity").open("a") as log:
+        log.write(f"{time.monotonic_ns()} {delta}\n")
+event(1)
+(d / (os.environ["PROBE"] + ".started")).touch()
+for _ in range(600):
+    if (d / "release").exists():
+        break
+    time.sleep(0.1)
+event(-1)
+PY
+  required_fixture "$fixture" "python3 '$d/activity.py' '$d'" 2
+  PROBE=lane bash "$RUNNER" "$fixture/tests/required-feature.test.sh" >"$d/lane.out" 2>&1 & lane=$!
+  await_file 60 "$d/lane.started" 'the lane never began testing'
+  JG_HOME="$d/home-a" JG_TRUNK_GATE_OUTPUT="$d/a" PROBE=a \
+    bash "$fixture/bin/jg-test-run.sh" --required-shards HEAD^ "$d/a" >"$d/a.out" 2>&1 & a=$!
+  JG_HOME="$d/home-b" JG_TRUNK_GATE_OUTPUT="$d/b" JG_REQUIRED_SHARD_PARALLEL=8 PROBE=b \
+    bash "$fixture/bin/jg-test-run.sh" --required-shards HEAD^ "$d/b" >"$d/b.out" 2>&1 & b=$!
+  # Keep the lane active until at least one verification shard runs beside it.
+  for _ in $(seq 1 300); do
+    [ -e "$d/a.started" ] || [ -e "$d/b.started" ] || { sleep 0.2; continue; }
+    break
+  done
+  [ -e "$d/a.started" ] || [ -e "$d/b.started" ] || fail 'neither verify started alongside the lane'
+  touch "$d/release"
+  for pid in "$a" "$b" "$lane"; do wait "$pid" || fail "an overlapping run failed: $(cat "$d"/*.out)"; done
+  assert_contains "$(cat "$d/a.out" "$d/b.out")" 'waiting for a host shard token' 'the verification shards must contend for tokens'
+  assert_equals 10 "$(wc -l <"$d/activity" | tr -d ' ')" 'four shards and one lane must finish'
+  peak=$(sort -n "$d/activity" | awk '{ active += $2; if (active > peak) peak = active } END { print peak }')
+  assert_equals 2 "$peak" 'two verification runs plus a lane must share a peak of two active workloads'
+  pass 'two verification runs from different homes and one lane share two shard tokens'
+}
+
+test_a_killed_shard_holder_releases_its_token() {
+  local d=$TMP_ROOT/shard-crash holder queued
+  local -x JG_TEST_RUN_SLOT='' JG_TEST_SHARD_POOL='' JG_TRUNK_GATE_OUTPUT=''
+  local -x JG_TEST_HOST_SLOTS="$d/slots" JG_REQUIRED_SHARD_PARALLEL=1 TEST_SPEED_LIMITS_FILE="$d/limits"
+  mkdir -p "$d"
+  printf 'machine_runs_max=2\n' >"$d/limits"
+  write_script "$d/hold.test.sh" "touch '$d/started'
+for i in \$(seq 1 600); do [ ! -e '$d/release' ] || break; sleep 0.1; done"
+  write_script "$d/next.test.sh" ''
+  bash "$RUNNER" "$d/hold.test.sh" >"$d/hold.out" 2>&1 & holder=$!
+  await_file 60 "$d/started" 'the shard holder did not start'
+  bash "$RUNNER" "$d/next.test.sh" >"$d/next.out" 2>&1 & queued=$!
+  await_file 30 "$d/next.out" 'the second shard did not queue' 'waiting for a host shard token'
+  kill -KILL "$holder"
+  touch "$d/release"
+  wait "$holder" 2>/dev/null || :
+  await_file 30 "$d/next.out" 'the queued shard did not run after the holder crashed' 'JG_TEST_SUMMARY total=1 failed=0'
+  wait "$queued" || fail "the queued shard failed after the crash: $(cat "$d/next.out")"
+  pass 'a killed shard holder frees its token for the queued shard'
+}
+
 # Past machine_runs_max a run waits for a slot, naming the runner that holds it, and starts once that run ends. A run
 # started inside an admitted run never waits on it, even one whose environment was cleared, as a landing gate clears it.
 test_a_run_past_the_machine_limit_waits_for_a_slot() {
@@ -676,7 +739,7 @@ env -i PATH=\"\$PATH\" HOME=\"\$HOME\" JG_TEST_HOST_SLOTS='$d/slots' TEST_SPEED_
   bash '$RUNNER' '$d/quick.test.sh' >'$d/cleared.out' 2>&1 || exit 1
 touch '$d/a-started'
 i=0; while [ ! -e '$d/release' ] && [ \"\$i\" -lt 600 ]; do sleep 0.2; i=\$((i + 1)); done"
-  env -u JG_TEST_RUN_SLOT -u JG_TRUNK_GATE_OUTPUT JG_TEST_HOST_SLOTS="$d/slots" TEST_SPEED_LIMITS_FILE="$d/limits" \
+  env -u JG_TEST_RUN_SLOT -u JG_TRUNK_GATE_OUTPUT JG_TEST_HOST_SLOTS="$d/slots" JG_REQUIRED_SHARD_PARALLEL=1 TEST_SPEED_LIMITS_FILE="$d/limits" \
     bash "$RUNNER" "$d/hold.test.sh" >"$d/a.out" 2>&1 &
   pid_a=$!
   await_file 60 "$d/a-started" 'the first run, with a run inside it and one with a cleared environment, did not start'
@@ -692,7 +755,7 @@ i=0; while [ ! -e '$d/release' ] && [ \"\$i\" -lt 600 ]; do sleep 0.2; i=\$((i +
   assert_equals 0 "$rc_a" "the run holding the slot must pass: $(cat "$d/a.out")"
   assert_equals 0 "$rc_b" "the queued run must pass once admitted: $(cat "$d/b.out")"
   [ -e "$d/b-started" ] || fail "the queued run never ran its script: $(cat "$d/b.out")"
-  assert_not_contains "$(cat "$d/nested.out" "$d/cleared.out")" 'waiting for a test-run slot' 'a run inside an admitted run must not queue'
+  assert_not_contains "$(cat "$d/nested.out" "$d/cleared.out")" 'waiting for' 'a run inside an admitted run must not queue'
   pass 'a run past the machine limit waits for a slot and starts when it frees; runs inside an admitted run never wait'
 }
 
@@ -798,6 +861,8 @@ test_a_script_that_moves_home_keeps_the_callers_go_build_cache() {
 }
 
 test_a_run_past_the_machine_limit_waits_for_a_slot
+test_lane_and_verification_shards_share_a_host_cap
+test_a_killed_shard_holder_releases_its_token
 test_a_burst_of_runs_caps_at_the_slot_limit_under_nice_and_records_the_load
 test_a_trunk_run_starts_at_once_and_takes_the_first_free_slot_ahead_of_lane_runs
 test_a_script_that_moves_home_keeps_the_callers_go_build_cache

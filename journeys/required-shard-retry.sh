@@ -12,7 +12,7 @@ cat "$out"
 cat > "$DONE_DONE_EVIDENCE_ROOT/steps.json" <<JSON
 {"target": {"version": "$(git -C "$root" rev-parse --short HEAD)"},
  "start": "throwaway repositories and a fixture home with the real jg-test-run.sh and jg-trunk.sh",
- "steps": ["run the required shards over budget with no failed test", "run the trunk verify over two landed changes that break together", "trace the red to the second change and revert it", "raise the line-red alert under its alert-line-red--proj key", "run the nightly whole run and raise line-red for the traced commit"],
+ "steps": ["overlap two required-shard gates from different homes with a lane test", "kill a running token holder and observe the queued run resume", "run the required shards over budget with no failed test", "run the trunk verify over two landed changes that break together", "trace the red to the second change and revert it", "raise the line-red alert under its alert-line-red--proj key", "run the nightly whole run and raise line-red for the traced commit"],
  "result": "every case of jg-test-run and jg-trunk-verify passes, including the nightly line-red alert under its current key"}
 JSON
 exit "$rc"

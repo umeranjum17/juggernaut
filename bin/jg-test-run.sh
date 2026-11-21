@@ -166,7 +166,9 @@
 #   for one of machine_runs_max run slots on this machine before it starts, and
 #   every script it starts shares the caller's Go build cache, so a test that
 #   moves HOME does not compile Go again. Queue time is not charged to
-#   --max-wall-ms. bin/jg-test-host-lib.sh owns both contracts.
+#   --max-wall-ms. Local shards and standalone lane runs share a second,
+#   host-wide token pool sized by JG_REQUIRED_SHARD_PARALLEL (default 8).
+#   bin/jg-test-host-lib.sh owns these contracts.
 #
 # Placement refusal:
 #   A task worker is assigned an isolated worktree, and that placement is
@@ -2018,7 +2020,7 @@ if [ "${1:-}" = --required-shards ]; then
   required_base=$2 required_dir=$3 required_rc=0
   mkdir -p "$required_dir" || die "cannot create required-set output directory"
   # The gate takes one machine run slot for all eight shards, and builds the Go cores once into the shared Go build
-  # cache before they start (bin/jg-test-host-lib.sh); the shards inherit both and take no slot of their own.
+  # cache before they start. The shards inherit both and acquire their own host shard tokens.
   jg_test_host_admit "$(machine_runs_max)" "$TEST_MACHINE_RUNS_BURST"
   bypass_tool_shims
   trap '[ -z "$TOOLS_BYPASS_DIR" ] || rm -rf "$TOOLS_BYPASS_DIR"; jg_test_host_release' EXIT
@@ -2027,12 +2029,9 @@ if [ "${1:-}" = --required-shards ]; then
   jg_test_host_warm_go_cache "$ROOT"
   # The eight shards are disjoint, so they run side by side: each one in its own temp and tmux directory
   # (a short path under the disk scratch root, because a tmux socket path is length-limited), its output kept in its own file and
-  # printed in shard order afterwards so the log reads exactly as the sequential run's did. JG_REQUIRED_SHARD_PARALLEL
-  # caps how many run at once (default: every shard, at most one per cpu); 1 gives the old one-after-another run.
-  required_cpus=$(nproc 2>/dev/null || echo 1)
-  required_par=${JG_REQUIRED_SHARD_PARALLEL:-8}
-  case $required_par in ''|*[!0-9]*|0) required_par=1 ;; esac
-  [ "$required_par" -le "$required_cpus" ] || required_par=$required_cpus
+  # printed in shard order afterwards. A gate nested inside a test with a token shares that token serially.
+  required_nested=0
+  if jg_test_host_nested_shard; then required_nested=1; fi
   # Each shard's wall clock is a warning at JG_REQUIRED_SHARD_WALL_MS (default 600000 ms, the CI bound), never a red:
   # a shard runs every script it selected, and only a failed script, or a timing file it could not write, fails it.
   # A shard past the bound was slowed by the machine (trunk-v3 at 20eb94ae6054: all eight shards ran 601 to 651 s at
@@ -2081,7 +2080,7 @@ PY
   # Run the shards <k>... side by side, each writing shard-<k>.json, and print their output in shard order.
   # Sets REQUIRED_RED to the shards that failed.
   required_run() {  # <k>...
-    local k i=0 running=0 work
+    local k i=0 work
     required_pids=(); REQUIRED_RED=()
     for k in "$@"; do
       work=$required_scratch/$k
@@ -2096,11 +2095,7 @@ PY
         echo "$shard_rc" > "$work.rc"
       ) > "$work.out" 2>&1 &
       required_pids+=($!)
-      running=$((running + 1))
-      if [ "$running" -ge "$required_par" ]; then
-        wait -n || :
-        running=$((running - 1))
-      fi
+      [ "$required_nested" -eq 0 ] || wait "$!" || :
     done
     for k in "$@"; do
       wait "${required_pids[i]}" 2>/dev/null || :
@@ -2450,6 +2445,12 @@ fi
 # error, so a caller who named no selection mode is told that rather than this.
 if [ -n "${MODE:-}" ] && [ "$LIST_ONLY" -eq 0 ] && [ "$LIST_SCHEDULED" -eq 0 ]; then
   refuse_primary_checkout_for_task
+  # Local gate shards already share their parent's run slot. Queue before shard selection as well as execution.
+  if [ -n "$SHARD" ] && [ -n "${JG_TEST_RUN_SLOT:-}" ]; then
+    trap jg_test_host_release EXIT
+    jg_test_host_admit_shard || exit 1
+    RUN_STARTED_MS=$((RUN_STARTED_MS + JG_TEST_HOST_WAITED_MS))
+  fi
 fi
 
 case "${MODE:-}" in
@@ -2688,7 +2689,10 @@ fi
 # A run that executes scripts holds a machine run slot until it exits, and every script it starts shares one Go
 # build cache and the caller's mise state (bin/jg-test-host-lib.sh). Time spent waiting for the slot is the machine's, so it is taken off the
 # run's own wall clock.
+trap jg_test_host_release EXIT
 jg_test_host_admit "$(machine_runs_max)" "$TEST_MACHINE_RUNS_BURST"
+RUN_STARTED_MS=$((RUN_STARTED_MS + JG_TEST_HOST_WAITED_MS))
+jg_test_host_admit_shard || exit 1
 RUN_STARTED_MS=$((RUN_STARTED_MS + JG_TEST_HOST_WAITED_MS))
 jg_test_host_pin_go_cache
 jg_test_host_pin_mise_dirs

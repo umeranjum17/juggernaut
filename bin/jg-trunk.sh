@@ -374,7 +374,7 @@ tip_adopt_forward() {
 # a session's git hook settings, task id or account never reach the tests. JG_HOME is the home this script resolved.
 # A project whose gate needs more sets it once in config/trunk-policy (gate-env@<project>=NAME=value ...), and every gate command
 # of that project (the first run, the rerun, the tip and parent runs) starts with it, so no rerun can lose a variable its first run had.
-GATE_ENV='HOME PATH USER LOGNAME SHELL LANG LC_ALL TMPDIR JG_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME'
+GATE_ENV='HOME PATH USER LOGNAME SHELL LANG LC_ALL TMPDIR JG_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME JG_REQUIRED_SHARD_PARALLEL'
 # The NAME=value words of the project's gate-env key, read once per run and project into GATE_ENV_SET; a word that is not NAME=value
 # is refused once and left out.
 gate_env_set() {
