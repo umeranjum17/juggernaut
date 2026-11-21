@@ -528,10 +528,6 @@
       "audience": "maintainer-architecture"
     },
     {
-      "path": "docs/bus-leaf-shadow.md",
-      "audience": "maintainer-architecture"
-    },
-    {
       "path": "docs/deprecated-paths.md",
       "audience": "maintainer-architecture"
     },
@@ -542,10 +538,6 @@
     {
       "path": "docs/remote-squad-leads.md",
       "audience": "operator-current"
-    },
-    {
-      "path": "docs/reply-shadow.md",
-      "audience": "maintainer-architecture"
     },
     {
       "path": "docs/squad-lead-parent-channel.md",
@@ -561,10 +553,6 @@
     },
     {
       "path": "docs/state-machines.md",
-      "audience": "maintainer-architecture"
-    },
-    {
-      "path": "docs/state-shadow.md",
       "audience": "maintainer-architecture"
     },
     {
@@ -1188,10 +1176,6 @@
       "audience": "operator-current"
     },
     {
-      "path": "docs/bus-service.md",
-      "audience": "operator-current"
-    },
-    {
       "path": "docs/captain-chat.md",
       "audience": "operator-current"
     },
@@ -1253,6 +1237,78 @@
     },
     {
       "path": "tests/ticket-adapter-conformance/README.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": ".agents/skills/blitz/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/council/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/op-order/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/spotrep/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/status-check/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/strike-recon/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/swarm/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/war-room/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "core/report-writer/prompts/",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "docs/roles/",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "core/item-store/logs/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/swarm/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/workflows/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "docs/item-store.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/item-store/tests/sim-seeds.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/blitz-wide/",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/item-store-land-release/",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/item-store-owner-calls/",
       "audience": "maintainer-verification"
     }
   ]

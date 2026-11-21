@@ -494,7 +494,7 @@ The [Relay configuration reference](configuration.md#promised-public-replies-sta
 
 ## Project memory belongs to projects
 
-Project-memory ownership and the operator corrections-only boundary are defined in [`AGENTS.md` section 6](../AGENTS.md#6-project-and-knowledge-management); `data/projects.md` stays a thin private registry.
+Project-memory ownership and the operator corrections-only boundary are defined in [`AGENTS.md` section 2](../AGENTS.md#2-layout-session-start-dispatch-and-recovery); `data/projects.md` stays a thin private registry.
 For manual project initialization, [`bin/jg-ensure-agents-md.sh`](../bin/jg-ensure-agents-md.sh) owns the `CLAUDE.md` pointer, self-governance insertion, and case-variant file refusal; its header and help document the explicit mark for equivalent project-owned guidance.
 
 ## Operational memory routing

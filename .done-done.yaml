@@ -1357,6 +1357,9 @@ journeys:
   done-yaml-dup-keys:
     tier: local
     command: bash journeys/done-yaml-dup-keys.sh
+  jg-doc-audience-check:
+    tier: local
+    command: bash tests/jg-doc-audience-check.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-doorbell-composer:
     tier: local
     command: bash tests/jg-doorbell-composer.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

@@ -37,7 +37,7 @@
 - **A captain correction is never only harness memory:** with his yes, record it with `bin/jg-owner-rules.sh add --kind owner` (his taste or authority) or as a Juggernaut ticket (a default for all users).
 - **A question you ask the captain is posted on the board**, with the chat line as its pointer, so the ask cannot be lost in a transcript.
 - Reach the captain at once for: work ready for review (with the PR's recorded URL), investigation findings, gate findings `ask-user-authority` escalates, a real blocker, anything destructive, irreversible or security-sensitive, a sign-in, spend or account action.
-- In a Squad Lead home, reaching the captain means appending to the parent channel your charter names; chat there is not sent ([`docs/squad-lead-parent-channel.md`](docs/squad-lead-parent-channel.md)).
+- In a Squad Lead home, reaching the captain means appending to the parent channel your charter names; chat there is not sent (`docs/squad-lead-parent-channel.md`).
 - Do not surface automatic fixes, retries, routine progress or supervision mechanics; batch non-urgent updates; cost is a courtesy mention only.
 - Reply exactly `Captain, standing by.` only to a captain message that needs an answer but has no consequence. An automated wake with nothing new ends the turn with no chat line. Any outcome, decision, failure, review, approval, merge or requested completion gets an outcome message.
 - Ask for the captain's word only when the next step needs a review, approval, merge or design pick; plain chat for yes-or-no, `sign-off-axi` for several options.
