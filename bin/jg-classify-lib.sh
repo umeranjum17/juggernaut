@@ -340,6 +340,12 @@ status_line_note() {  # <status-line> [<out-var>] -> text after the first colon,
   _jg_classify_print_or_into "${2-}" note "$1"
 }
 
+# The verb, decision key, epoch and note of every NUL-ended line on stdin, each NUL-ended, in one process: a reader of
+# a whole status log calls this, never the four one-line readers per line.
+status_lines_fields() {  # < NUL-ended lines -> verb\0key\0epoch\0note\0 per line
+  _jg_classify_go fields
+}
+
 _jg_decision_key() {  # <status-line> [<keyless> [<out-var>]] -> key slug, or <keyless> (default "default") when no token
   local __jg_key_val
   [ "$#" -le 2 ] || printf -v "$3" '%s' ''

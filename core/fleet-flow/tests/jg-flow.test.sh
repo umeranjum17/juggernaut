@@ -114,6 +114,29 @@ assert y['homes'] == ['child', 'grand', 'main'], 'nested home discovered'
 bytask = {(l['home'], l['task']): l for l in y['lanes']}
 assert bytask[('grand', 'gtask')]['times']['merged'] == 70, 'nested return-channel merge found'
 assert bytask[('grand', 'gtask')]['durations']['time_to_merge'] is None, 'no guessed pickup'
+# A lead's return channel grows to thousands of lines: the read starts the
+# classifier as often for that long log as for one line, so the dashboard's first build stays bounded.
+starts = tmp / 'classifier-starts'
+counter = tmp / 'count-classifier'
+counter.write_text('#!/usr/bin/env bash\necho start >> "$JG_TEST_STARTS"\n'
+                   'JG_CLASSIFY_BIN= exec bash "$JG_BIN/jg-classify.sh" "$@"\n')
+counter.chmod(0o755)
+def counted_starts():
+    starts.write_text('')
+    os.environ.update(JG_CLASSIFY_BIN=str(counter), JG_TEST_STARTS=str(starts))
+    try:
+        doc = json.loads(run())
+    finally:
+        del os.environ['JG_CLASSIFY_BIN'], os.environ['JG_TEST_STARTS']
+    return doc, len(starts.read_text().splitlines())
+_, short = counted_starts()
+(child / 'state/grand.status').write_text(''.join(f'working [at={n % 60}]: routed step {n}\n' for n in range(3000))
+                                          + 'done [at=70] [key=merged-gtask]: merged\n')
+long_doc, long = counted_starts()
+assert short and long == short, f'classifier starts grew with the log: {short} for one line, {long} for 3001'
+assert {(l['home'], l['task']): l for l in long_doc['lanes']}[('grand', 'gtask')]['times']['merged'] == 70, \
+    'the merge at the end of a long return channel is read'
+(child / 'state/grand.status').write_text('done [at=70] [key=merged-gtask]: merged\n')
 assert 'gtask' in {l['task'] for l in y['executed_24h']}
 assert bytask[('child', 'reused')]['times']['merged'] is None, 'reused id keeps no merge'
 assert 'reused' not in {l['task'] for l in y['executed_24h']}
