@@ -109,7 +109,10 @@
 #   validated state/<id>.meta, so --backend, --scout, --squad-lead, a project
 #   positional, and batch pairs are all refused alongside it; only harness,
 #   model, and effort may change, which is what makes a harness switch one
-#   ordinary relaunch. A same-harness relaunch with no `--model` refuses when the
+#   ordinary relaunch. The delivery mode is one of those recorded axes: a relaunch keeps
+#   the mode the task was spawned with, and the project registry's mode (a project later
+#   registered local-trunk, or no longer) governs fresh spawns only. A same-harness
+#   relaunch with no `--model` refuses when the
 #   record has no stored model. It refuses unless the recorded endpoint is positively
 #   agent-free on a backend with a recovery-grade agent-state classifier (tmux
 #   or herdr), and clears the previous harness's per-task wiring before arming
@@ -3108,11 +3111,13 @@ if [ "$KIND" = ship ]; then
   # No feature pull requests: a project with a local trunk (bin/jg-trunk.sh init) ships every lane
   # local-trunk; legacy local-only records remain interoperable. The only PR is the release one. A current explicit captain instruction
   # can still choose a pull request mode by removing the trunk record, never by this spawn.
-  if ! jg_delivery_style_is "$MODE" local && jg_delivery_style_is "$STANDING_MODE" trunk; then
+  # The registry's mode governs a FRESH spawn only: a relaunch carries the mode the task was spawned with (read from its own record
+  # above), so a registry that moved to or from local-trunk since intake cannot refuse a task already under way.
+  if [ "$RELAUNCH" -eq 0 ] && ! jg_delivery_style_is "$MODE" local && jg_delivery_style_is "$STANDING_MODE" trunk; then
     echo "error: $ID cannot ship mode=$MODE: $PROJ_NAME is registered local-trunk, so it takes no feature pull request; spawn it --mode local and its one commit lands on the trunk once its done-done proof passes (docs/trunk-flow.md)" >&2
     exit 1
   fi
-  if jg_delivery_style_is "$MODE" trunk && { ! jg_delivery_style_is "$STANDING_MODE" trunk || ! spawn_trunk_branch >/dev/null; }; then
+  if [ "$RELAUNCH" -eq 0 ] && jg_delivery_style_is "$MODE" trunk && { ! jg_delivery_style_is "$STANDING_MODE" trunk || ! spawn_trunk_branch >/dev/null; }; then
     echo "error: $ID requires a registered local-trunk project with an initialized trunk; run bin/jg-trunk.sh init first" >&2
     exit 1
   fi
