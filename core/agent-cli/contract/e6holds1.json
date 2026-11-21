@@ -1,0 +1,396 @@
+{
+  "area": "decisions",
+  "owner": "e6holds1",
+  "entries": [
+    {
+      "path": [
+        "hold",
+        "answer-route",
+        "route"
+      ],
+      "meaning": "Route an answered card to its next action",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-answer-route.sh route <card-key> [--answer <text>] [--at <epoch>] [--dry-run]",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "2": 2,
+        "3": 3,
+        "64": 2
+      },
+      "schema": "hold.answer-route.route.v1",
+      "script": "bin/jg-answer-route.sh",
+      "operation": "route",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "answer-route",
+        "show"
+      ],
+      "meaning": "Show recorded actions for a card",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/jg-answer-route.sh show <card-key>",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "2": 2,
+        "3": 3,
+        "64": 2
+      },
+      "schema": "hold.answer-route.show.v1",
+      "script": "bin/jg-answer-route.sh",
+      "operation": "show",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "ask-record",
+        "show"
+      ],
+      "meaning": "Show the record of a request",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-ask-record.sh show <ticket>",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "2": 2,
+        "3": 3,
+        "64": 2
+      },
+      "schema": "hold.ask-record.show.v1",
+      "script": "bin/jg-ask-record.sh",
+      "operation": "show",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "ask-record",
+        "turns"
+      ],
+      "meaning": "Count a worker’s recorded turns",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-ask-record.sh turns <task>",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "2": 2,
+        "3": 3,
+        "64": 2
+      },
+      "schema": "hold.ask-record.turns.v1",
+      "script": "bin/jg-ask-record.sh",
+      "operation": "turns",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "ask-record",
+        "observe"
+      ],
+      "meaning": "Record an observation of a request",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-ask-record.sh observe <ticket> <home> <version> <pass|fail> <what was seen>",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "2": 2,
+        "3": 3,
+        "64": 2
+      },
+      "schema": "hold.ask-record.observe.v1",
+      "script": "bin/jg-ask-record.sh",
+      "operation": "observe",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "board-answers",
+        "route"
+      ],
+      "meaning": "Assign an answer card to a lead",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-board-answers.sh route <card-key> <lead> [<decision-key>]",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "2": 2,
+        "3": 3,
+        "64": 2
+      },
+      "schema": "hold.board-answers.route.v1",
+      "script": "bin/jg-board-answers.sh",
+      "operation": "route",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "board-answers",
+        "route-answer"
+      ],
+      "meaning": "Route a card answer to its owner",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-board-answers.sh route-answer <card-key> <at> <answer> [<label>]",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "2": 2,
+        "3": 3,
+        "64": 2
+      },
+      "schema": "hold.board-answers.route-answer.v1",
+      "script": "bin/jg-board-answers.sh",
+      "operation": "route-answer",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "board-answers",
+        "arm"
+      ],
+      "meaning": "Schedule answer checks",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-board-answers.sh arm",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "2": 2,
+        "3": 3,
+        "64": 2
+      },
+      "schema": "hold.board-answers.arm.v1",
+      "script": "bin/jg-board-answers.sh",
+      "operation": "arm",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "board-answers",
+        "tick"
+      ],
+      "meaning": "Run the answer check",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-board-answers.sh tick",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "2": 2,
+        "3": 3,
+        "64": 2
+      },
+      "schema": "hold.board-answers.tick.v1",
+      "script": "bin/jg-board-answers.sh",
+      "operation": "tick",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "board-asks",
+        "rebuild"
+      ],
+      "meaning": "Preserve decision records when rebuilding a board",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-board-asks.sh rebuild --from <feed.json> --board <board.json> [--out <file>]",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "2": 2,
+        "3": 3,
+        "64": 2
+      },
+      "schema": "hold.board-asks.rebuild.v1",
+      "script": "bin/jg-board-asks.sh",
+      "operation": "rebuild",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "board-gate",
+        "route"
+      ],
+      "meaning": "Record a decision for the lead",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-board-gate.sh route --title <the ask> [--filer <id>] [--ref <id>]",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "2": 2,
+        "3": 3,
+        "64": 2
+      },
+      "schema": "hold.board-gate.route.v1",
+      "script": "bin/jg-board-gate.sh",
+      "operation": "route",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "board-gate",
+        "decided"
+      ],
+      "meaning": "Record the lead’s decision",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-board-gate.sh decided <record-id> --words <what Main decided>",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "2": 2,
+        "3": 3,
+        "64": 2
+      },
+      "schema": "hold.board-gate.decided.v1",
+      "script": "bin/jg-board-gate.sh",
+      "operation": "decided",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "board-gate",
+        "waiting"
+      ],
+      "meaning": "Count decisions waiting on the board",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-board-gate.sh waiting",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "2": 2,
+        "3": 3,
+        "64": 2
+      },
+      "schema": "hold.board-gate.waiting.v1",
+      "script": "bin/jg-board-gate.sh",
+      "operation": "waiting",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "board-gate",
+        "expire"
+      ],
+      "meaning": "Withdraw expired board decisions",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-board-gate.sh expire [--dry-run]",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "2": 2,
+        "3": 3,
+        "64": 2
+      },
+      "schema": "hold.board-gate.expire.v1",
+      "script": "bin/jg-board-gate.sh",
+      "operation": "expire",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "board-gate",
+        "check"
+      ],
+      "meaning": "Check the board for decisions needing action",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-board-gate.sh check",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "2": 2,
+        "3": 3,
+        "64": 2
+      },
+      "schema": "hold.board-gate.check.v1",
+      "script": "bin/jg-board-gate.sh",
+      "operation": "check",
+      "aliases": []
+    }
+  ]
+}
