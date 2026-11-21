@@ -4,19 +4,22 @@
 # everything after that runs while the project's other spawns lease their copies. Real bin/jg-brief.sh and bin/jg-spawn.sh over
 # fixture projects whose pool slots are real git worktrees of one clone; only the terminal and the worktree tool are stand-ins.
 # The test hook JG_SPAWN_TEST_AFTER_LEASE runs right after the lock is let go (after the claim for a local-trunk project, after
-# the base refresh for any other), so `sleep 2` there is what the other spawns overlap.
+# the base refresh for any other), so `sleep 2` there is what the other spawns overlap. Before it sleeps, the hook records
+# whether its own spawn (the hook's parent process) still owns a project lock, so the span is checked by the lock's owner and not
+# by a wall time a loaded runner stretches.
 #
-# T1 overlap: 8 spawns of one project with no declared capacity, at once: all publish, wall time under 12 s (about 8 s measured;
-#    one at a time they take over 23 s).
+# T1 overlap: 8 spawns of one project with no declared capacity, at once: all publish, and no spawn owns the project lock in
+#    its hook (the wall time is printed: about 8 s measured; one at a time they take over 23 s).
 # T1b the same for a local-trunk project, whose lock is let go right after the claim.
 # T2 capacity: the same with a declared capacity of 3: 3 publish and 5 defer with exit 75 (the lock still spans publication).
-# T3 full: JG_SPAWN_PROJECT_LOCK_SPAN=full: all 8 publish and the wall time is 16 s or more.
+# T3 full: JG_SPAWN_PROJECT_LOCK_SPAN=full: all 8 publish, every spawn owns the project lock in its hook, and the wall time is
+#    16 s or more.
 # T4 failure after the lease: a hook that exits 1 fails the spawn, keeps its copy leased with a recovery record, frees the lock.
 # T5 return during a spawn: while spawn A sleeps in the hook (lock free, no record yet), a cleanup of another task returns its
 #    own slot: A's slot is not returned, A's claim stays, and A publishes its record.
 # T6 fetch stays serial: a project with an origin, 3 branches and no trunk, whose origin moves while 8 spawns fetch it: all
-#    publish, none prints "could not fetch", and the hook after the base refresh overlaps (wall time under 16 s, as the fetches
-#    themselves still take their turn). With the release moved before the base refresh, 5 of the 8 spawns refuse to fetch.
+#    publish, none prints "could not fetch", and no spawn owns the project lock in the hook after the base refresh. With the
+#    release moved before the base refresh, 5 of the 8 spawns refuse to fetch.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -91,6 +94,7 @@ spawn_one() {
 run_case() {
   local name=$1 n=$2 i start
   CASE_OUT="$W/out-$name"; mkdir -p "$CASE_OUT"
+  : > "$JG_HOOK_LOG"
   start=$(now_ms)
   local pids=()
   for i in $(seq 1 "$n"); do spawn_one "$name" "$i" "$CASE_OUT" & pids+=($!); done
@@ -103,14 +107,20 @@ count_rc() { grep -lx "$3" "$1"/jg-sl"$2"-*.rc 2>/dev/null | wc -l | tr -d ' '; 
 published() { local c=0 f; for f in "$HOME_DIR"/state/jg-sl"$1"-*.meta; do [ -f "$f" ] && c=$((c + 1)); done; printf '%s\n' "$c"; }
 all_out() { cat "$1"/*.out 2>/dev/null; }
 
-export JG_SPAWN_TEST_AFTER_LEASE="$REAL_SLEEP 2"
+# hook_count <word>: how many hooks of the last run_case recorded <word>: "held" (the spawn owned a project lock in its hook)
+# or "free".
+hook_count() { grep -cx "$1" "$JG_HOOK_LOG" 2>/dev/null || true; }
+
+export JG_HOOK_LOG="$W/hook.log" JG_LOCK_ROOT="$HOME_DIR/state"
+# shellcheck disable=SC2016 # The hook's own shell expands these.
+export JG_SPAWN_TEST_AFTER_LEASE='s=free; for l in "$JG_LOCK_ROOT"/.treehouse-project-*.lock; do [ "$(cat "$l/pid" 2>/dev/null)" = "$PPID" ] && s=held; done; echo "$s" >> "$JG_HOOK_LOG"; '"$REAL_SLEEP"' 2'
 
 # T1: eight spawns of one project with no declared capacity overlap in the hook.
 make_case t1 8
 run_case t1 8
 [ "$(count_rc "$CASE_OUT" t1 0)" = 8 ] || fail "T1 all 8 spawns should exit 0: $(all_out "$CASE_OUT")"
 [ "$(published t1)" = 8 ] || fail "T1 8 records should be published, found $(published t1)"
-[ "$CASE_WALL" -lt 12000 ] || fail "T1 8 spawns with a 2 s hook took ${CASE_WALL} ms: the project lock still covers the hook"
+[ "$(hook_count free)" = 8 ] && [ "$(hook_count held)" = 0 ] || fail "T1 a spawn still owned the project lock in its hook: $(hook_count held) held, $(hook_count free) free"
 pass "T1 eight spawns of one project overlap after the lease: 8 records in ${CASE_WALL} ms"
 
 # T1b: the same for a local-trunk project, whose lock is let go right after the claim.
@@ -118,7 +128,7 @@ make_case t1b 8 trunk
 run_case t1b 8
 [ "$(count_rc "$CASE_OUT" t1b 0)" = 8 ] || fail "T1b all 8 spawns should exit 0: $(all_out "$CASE_OUT")"
 [ "$(published t1b)" = 8 ] || fail "T1b 8 records should be published, found $(published t1b)"
-[ "$CASE_WALL" -lt 12000 ] || fail "T1b 8 spawns with a 2 s hook took ${CASE_WALL} ms: the project lock still covers the hook"
+[ "$(hook_count free)" = 8 ] && [ "$(hook_count held)" = 0 ] || fail "T1b a spawn still owned the project lock in its hook: $(hook_count held) held, $(hook_count free) free"
 pass "T1b eight spawns of a local-trunk project overlap after the claim: 8 records in ${CASE_WALL} ms"
 
 # T2: a declared capacity keeps the span: the lock covers publication, so 3 publish and 5 defer.
@@ -137,6 +147,7 @@ make_case t3 8
 JG_SPAWN_PROJECT_LOCK_SPAN=full run_case t3 8
 [ "$(count_rc "$CASE_OUT" t3 0)" = 8 ] || fail "T3 all 8 spawns should exit 0: $(all_out "$CASE_OUT")"
 [ "$(published t3)" = 8 ] || fail "T3 8 records should be published, found $(published t3)"
+[ "$(hook_count held)" = 8 ] || fail "T3 every spawn of the full span should own the project lock in its hook: $(hook_count held) held, $(hook_count free) free"
 [ "$CASE_WALL" -ge 16000 ] || fail "T3 the full span took ${CASE_WALL} ms: 8 spawns with a 2 s hook should run one at a time (16 s)"
 pass "T3 JG_SPAWN_PROJECT_LOCK_SPAN=full keeps one spawn at a time: ${CASE_WALL} ms"
 
@@ -211,5 +222,5 @@ moves=$(cat "$W/pusher/moves" 2>/dev/null || echo 0)
 case $(all_out "$CASE_OUT") in *"could not fetch"*) fail "T6 a spawn could not fetch while others fetched: $(all_out "$CASE_OUT" | grep 'could not fetch' | head -3)" ;; esac
 [ "$(count_rc "$CASE_OUT" t6 0)" = 8 ] || fail "T6 all 8 spawns should exit 0: $(all_out "$CASE_OUT")"
 [ "$(published t6)" = 8 ] || fail "T6 8 records should be published, found $(published t6)"
-[ "$CASE_WALL" -lt 16000 ] || fail "T6 8 spawns with a 2 s hook took ${CASE_WALL} ms: the project lock still covers the hook"
+[ "$(hook_count free)" = 8 ] && [ "$(hook_count held)" = 0 ] || fail "T6 a spawn still owned the project lock in the hook after the refresh: $(hook_count held) held, $(hook_count free) free"
 pass "T6 eight spawns fetch a moving origin without a refusal and overlap after the refresh: ${CASE_WALL} ms, $moves origin moves"

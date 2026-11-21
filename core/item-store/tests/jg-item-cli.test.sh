@@ -30,6 +30,7 @@ want() {   # <label> <expected output> <command...>
   local label=$1 exp=$2 got; shift 2
   got=$("$@" 2>&1); [ "$got" = "$exp" ] && ok "$label" || bad "$label" "got [$got], want [$exp]"
 }
+# shellcheck disable=SC2046 # the clock line is split into its fields on purpose
 clock4() { set -- $(cat "$H/state/item-store/tick-clock"); printf '%s' "${4:-}"; }
 
 # (a) by is never an argument; it is derived from where jg-item runs; the file is the main home's from every home
@@ -55,25 +56,27 @@ s, t = Store(sys.argv[2], attach=True).as_("owner:registry"), int(time.time()) -
 for pj, lvl in (("muxr", "loose"), ("alpha", "standard"), ("beta", "standard")):
     s.set_policy(t, pj, lvl, "owner:registry", "import:projects.md:" + pj)
 PY
-want b-close-dispatch done jg close dispatch:muxr/jg-1 done lane:muxr/jg-1 --source spawn:jg-1 \
+want b-close-dispatch "done" jg close dispatch:muxr/jg-1 "done" lane:muxr/jg-1 --source spawn:jg-1 \
   --then '[{"key":"work:muxr/jg-1","kind":"work","home":"muxr","subject":"jg-1","lane":"worker:muxr/jg-1","owes":"build jg-1","project":"muxr"}]'
-want b-close-work done jg close work:muxr/jg-1 done receipt:abc123 --source st:1 \
+want b-close-work "done" jg close work:muxr/jg-1 "done" receipt:abc123 --source st:1 \
   --then '[{"key":"land:muxr/jg-1@abc123","kind":"land","home":"muxr","subject":"jg-1","owes":"land abc123","project":"muxr"},{"key":"cleanup:muxr/jg-1","kind":"cleanup","home":"muxr","subject":"jg-1","owes":"return the copy"}]'
-out=$(jg close work:muxr/jg-x done receipt:x --source st:x --then '[{"key":"k","kind":"land","home":"muxr","subject":"s","owes":"o","color":"red"}]' 2>&1); rc=$?
+out=$(jg close work:muxr/jg-x "done" receipt:x --source st:x --then '[{"key":"k","kind":"land","home":"muxr","subject":"s","owes":"o","color":"red"}]' 2>&1); rc=$?
 [ "$rc" -eq 2 ] && case $out in *"unknown field color"*) true ;; *) false ;; esac && ok b-then-unknown-field || bad b-then-unknown-field "[$out] exit $rc"
 want b-base refs/heads/main jg base muxr
 
 # (c) the tick is a watcher check: silent, its clock line, one re-check per 15 minutes, the re-check's seconds logged
 out=$(jg tick 2>&1); rc=$?
 [ -z "$out" ] && [ "$rc" -eq 0 ] && ok c-tick-silent || bad c-tick-silent "[$out] exit $rc"
-f=$(cat "$H/state/item-store/tick-clock" 2>/dev/null); set -- $f
+f=$(cat "$H/state/item-store/tick-clock" 2>/dev/null)
+# shellcheck disable=SC2086 # the clock line is split into its fields on purpose
+set -- $f
 [ "$#" -eq 4 ] && [ "$4" != - ] && ok c-tick-clock-4-fields || bad c-tick-clock-4-fields "[$f]"
 first=$(clock4)
 # no log reader exists in slice 1, so the owner-stamped policy row is reported once (store.py stamp_check): expected
 grep -q ' stamp policy muxr v1 ' "$H/state/item-store/tick.log" && ok c-stamp-policy-logged || bad c-stamp-policy-logged "no stamp line"
 grep -Eq '^[0-9]+ recheck [0-9]+[.][0-9]s$' "$H/state/item-store/tick.log" && ok c-recheck-seconds-logged || bad c-recheck-seconds-logged "no recheck line"
 jg board | grep -q 'security:fleet/forged-policy-muxr-v1' && ok c-stamp-security-item || bad c-stamp-security-item "not on the board"
-n=0; for i in $(seq 1 15); do out=$(jg tick 2>&1); [ -z "$out" ] || n=$((n + 1)); done
+n=0; for _ in $(seq 1 15); do out=$(jg tick 2>&1); [ -z "$out" ] || n=$((n + 1)); done
 # 16 ticks in one window: the re-check ran at the first only (the 4th field is its time), unless the run crossed a
 # 15-minute boundary, when it ran once more
 now=$(date +%s)
@@ -125,13 +128,13 @@ want f-again again jg ready work:muxr/jg-r d1 --source ready:d1
 jg open dispatch:muxr/jg-2 --kind dispatch --home muxr --subject jg-2 --owes "start jg-2" --source ap:2 >/dev/null
 jg open red-ci:muxr/jg-2 --kind blocker --home muxr --subject jg-2 --owes "CI red" --parent dispatch:muxr/jg-2 --named lead --source ci:2 >/dev/null
 jg board | grep -q red-ci:muxr/jg-2 && ok g-blocker-listed || bad g-blocker-listed "not on the board"
-jg close dispatch:muxr/jg-2 done lane:muxr/jg-2 --source sp:2 >/dev/null
+jg close dispatch:muxr/jg-2 "done" lane:muxr/jg-2 --source sp:2 >/dev/null
 jg board | grep -q red-ci:muxr/jg-2 && bad g-blocker-gone "still on the board" || ok g-blocker-gone
 
 # (h) one source, one effect
 jg open dispatch:muxr/jg-3 --kind dispatch --home muxr --subject jg-3 --owes "start jg-3" --source ap:3 >/dev/null
-want h-first done jg close dispatch:muxr/jg-3 done lane:muxr/jg-3 --source once:1
-want h-again again jg close dispatch:muxr/jg-3 done lane:muxr/jg-3 --source once:1
+want h-first "done" jg close dispatch:muxr/jg-3 "done" lane:muxr/jg-3 --source once:1
+want h-again again jg close dispatch:muxr/jg-3 "done" lane:muxr/jg-3 --source once:1
 
 # (i) a failing tick says so once, not every cycle
 mkdir "$H/state/item-store/tick-clock.tmp"          # the clock line cannot be written: the tick fails
@@ -224,7 +227,7 @@ n = st.one("SELECT count(*) FROM item WHERE kind='intake' AND state='open' AND k
 assert n == 1, n
 PY
 # ... and so does a script's refused jg-item call with JG_ITEM_OR_INTAKE=1, once for the same source
-for i in 1 2; do out=$(JG_ITEM_OR_INTAKE=1 jl close work:muxr/jg-nope done receipt:x --source st:nope 2>&1); rc=$?; done
+for _ in 1 2; do out=$(JG_ITEM_OR_INTAKE=1 jl close work:muxr/jg-nope "done" receipt:x --source st:nope 2>&1); rc=$?; done
 n=$(jg board | grep -c 'intake:muxr/refused-')
 [ "$rc" -eq 0 ] && [ "$out" = again ] && [ "$n" = 2 ] && ok q-cli-refusal-to-intake || bad q-cli-refusal-to-intake "[$out] exit $rc intake items [$n]"
 

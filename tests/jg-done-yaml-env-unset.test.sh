@@ -4,9 +4,11 @@
 # refuses the journey ("command not found: JG_TASK_ID in <journey>: nothing ran"), so nothing ran.
 # `env --unset=NAME` reads right. This test runs every shipped journey whose command starts an `env` through
 # done-done's own run, in a scratch repo holding the shipped config and a stand-in `bash` that exits 0,
-# and fails when done-done refuses any of them as a command not found.
+# and fails when done-done refuses any of them as a command not found. A host without done-done (a portable CI runner)
+# has no preflight to ask, so the test gate-skips there.
 # Usage: tests/jg-done-yaml-env-unset.test.sh
 set -euo pipefail
+command -v done-done >/dev/null 2>&1 || { echo "skip: done-done is not installed"; exit 0; }
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 LOG=${DONE_DONE_EVIDENCE_ROOT:+$DONE_DONE_EVIDENCE_ROOT/done-yaml-env-unset.log}
 CFG=${JG_DONE_YAML:-$ROOT/.done-done.yaml}

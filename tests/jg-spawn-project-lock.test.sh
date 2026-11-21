@@ -4,7 +4,7 @@
 #
 # T1 ten fresh spawns of one project at once: ten records, every exit 0, at least one "waiting:" line; the wall time is printed.
 # T2 another process holds the project lock for the whole test and JG_SPAWN_PROJECT_LOCK_WAIT=2: the spawn exits 75 with the
-#    "deferred:" line after 2 to 4 s and creates no record.
+#    "deferred:" line 2 to 4 s after its "waiting:" line and creates no record.
 # T3 JG_SPAWN_PROJECT_LOCK_WAIT=0 with the lock held: exit 1 and the single-try "refusing to race it" line.
 set -u
 
@@ -63,17 +63,24 @@ id2=jg-pl-held; prepare "$id2"
 LOCK=$(JG_HOME="$HOME_DIR" jg_treehouse_project_lock_path "$PROJ") || fail "setup: could not resolve the project lock"
 jg_lock_try_acquire "$LOCK" || fail "setup: could not take the project lock"
 # The holder is this shell, so a spawn child sees a live foreign owner.
-t2_start=$(date +%s)
-out=$(JG_SPAWN_PROJECT_LOCK_WAIT=2 jg_test_run_spawn "$HOME_DIR" "$W/wt-$id2" "$FAKEBIN" "$id2" "$PROJ" codex --mode direct-PR --yolo off 2>&1); rc=$?
-t2_took=$(( $(date +%s) - t2_start ))
+# Each output line is stamped in ms as it arrives, so the wait is timed from the "waiting:" line to the "deferred:" line and
+# the spawn's own start-up work, which a loaded runner slows, is not counted in it.
+JG_SPAWN_PROJECT_LOCK_WAIT=2 jg_test_run_spawn "$HOME_DIR" "$W/wt-$id2" "$FAKEBIN" "$id2" "$PROJ" codex --mode direct-PR --yolo off 2>&1 \
+  | while IFS= read -r line; do printf '%s %s\n' "$(date +%s%3N)" "$line"; done > "$W/t2.stamped"
+rc=${PIPESTATUS[0]}
+out=$(cut -d' ' -f2- "$W/t2.stamped")
+stamp_of() { awk -v p="$1" 'index(substr($0, index($0, " ") + 1), p) == 1 { print $1; exit }' "$W/t2.stamped"; }
+t2_waiting=$(stamp_of "waiting: the project lock for "); t2_deferred=$(stamp_of "deferred: the project lock for ")
+t2_took=$(( ${t2_deferred:-0} - ${t2_waiting:-0} ))
 expect_code 75 "$rc" "T2 a spawn whose wait ran out should defer: $out"
 assert_contains "$out" "waiting: the project lock for " "T2 the first failed try did not say it waits"
 assert_contains "$out" "deferred: the project lock for " "T2 the deferral does not name the project lock"
 assert_contains "$out" "was not created and stays queued" "T2 the deferral does not say the task stays queued"
 case $out in *"error:"*) fail "T2 a lock deferral must not read as an error: $out" ;; esac
-[ "$t2_took" -ge 2 ] && [ "$t2_took" -le 4 ] || fail "T2 the spawn waited ${t2_took}s, not 2 to 4 s"
+[ -n "$t2_waiting" ] && [ -n "$t2_deferred" ] || fail "T2 the waiting and deferred lines were not both stamped: $(cat "$W/t2.stamped")"
+[ "$t2_took" -ge 2000 ] && [ "$t2_took" -le 4000 ] || fail "T2 the spawn waited ${t2_took} ms for the lock, not 2 to 4 s"
 [ ! -e "$HOME_DIR/state/$id2.meta" ] || fail "T2 the deferred spawn wrote a task record"
-pass "T2 a spawn whose wait ran out defers with exit 75 after ${t2_took}s and creates nothing"
+pass "T2 a spawn whose wait ran out defers with exit 75 after waiting ${t2_took} ms for the lock and creates nothing"
 
 out=$(JG_SPAWN_PROJECT_LOCK_WAIT=0 jg_test_run_spawn "$HOME_DIR" "$W/wt-$id2" "$FAKEBIN" "$id2" "$PROJ" codex --mode direct-PR --yolo off 2>&1); rc=$?
 jg_lock_release "$LOCK" || true

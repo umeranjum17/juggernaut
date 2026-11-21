@@ -42,6 +42,8 @@ start_job() {
     fi
     printf '%s start_job %s %s: systemd-run refused the unit (%s); trying a scope\n' "$(date -u +%FT%TZ)" "$kind" "$pn" "$(printf '%s' "$why" | tr '\n' ' ' | cut -c1-300)" >> "$log"
     # A detached starter (this tick never waits for the job): the scope, and when the manager refuses that too, the plain setsid job.
+    # Positional parameters expand in the child shell, and the log path is passed to it as a name to append to, not read.
+    # shellcheck disable=SC2016,SC2094
     setsid nohup bash -c '
       run=$1 unit=$2 fmh=$3 path=$4 log=$5 self=$6 kind=$7 pn=$8
       "$run" --user --scope --quiet --unit="$unit" --working-directory="$fmh" --setenv=PATH="$path" "$self" "$kind" "$fmh" "$pn" && exit 0

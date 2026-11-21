@@ -252,7 +252,7 @@ prove_at() {  # <id> <head> <gen>: the PASS receipt and the sealed clean run the
   printf '{"task":"%s","head":"%s","verdict":"PASS","spawn_gen":"%s"}\n' "$1" "$2" "$3" > "$FM/state/$1.run-receipt.json"
   printf '{"schema":1,"run_id":"20260101T000000Z-%s-ab","commit":"%s","exit":0,"dirty":false,"started_at":"2026-01-01T00:00:00Z","files":["run.log"]}\n' "${2:0:8}" "$2" > "$FM/data/$1/.done-done/runs/run-$2.json"
 }
-parked_alerts() { ls "$FM/state/alerts" 2>/dev/null | grep -c "^parked-lane--$1" || true; }
+parked_alerts() { local n=0 f; for f in "$FM/state/alerts/parked-lane--$1"*; do [ -e "$f" ] && n=$((n + 1)); done; echo "$n"; }
 parked_note() { sed -n 's/^note=//p' "$FM/state/alerts/parked-lane--$1.rec" 2>/dev/null | tail -n 1; }
 parked_notes() { grep -c "^lead-sweep: $1 is parked and its work is not on the trunk" "$d/out" || true; }
 old=$((now - 7200)); trunk0=$(git -C "$P" rev-parse trunk)
