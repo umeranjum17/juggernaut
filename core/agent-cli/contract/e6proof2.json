@@ -1,0 +1,1119 @@
+{
+  "area": "proof",
+  "owner": "e6proof2",
+  "entries": [
+    {
+      "path": [
+        "proof",
+        "recon-handoff",
+        "draft"
+      ],
+      "meaning": "Record a Recon draft and its report hash",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.recon-handoff.draft.v1",
+      "script": "bin/jg-recon-handoff.sh",
+      "operation": "draft",
+      "form": "bin/jg-recon-handoff.sh draft <task-id>",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "recon-handoff",
+        "assign"
+      ],
+      "meaning": "Assign a critic to a Recon draft",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.recon-handoff.assign.v1",
+      "script": "bin/jg-recon-handoff.sh",
+      "operation": "assign",
+      "form": "bin/jg-recon-handoff.sh assign <task-id> --critic <critic-task-id>",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "recon-handoff",
+        "verdict"
+      ],
+      "meaning": "Record the critic verdict for a draft",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.recon-handoff.verdict.v1",
+      "script": "bin/jg-recon-handoff.sh",
+      "operation": "verdict",
+      "form": "bin/jg-recon-handoff.sh verdict <task-id> --critic <id> --hash <sha256> --gaps <k>",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "recon-handoff",
+        "revise"
+      ],
+      "meaning": "Record a revised Recon draft",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.recon-handoff.revise.v1",
+      "script": "bin/jg-recon-handoff.sh",
+      "operation": "revise",
+      "form": "bin/jg-recon-handoff.sh revise <task-id>",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "recon-handoff",
+        "assignee"
+      ],
+      "meaning": "Show the assigned critic",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.recon-handoff.assignee.v1",
+      "script": "bin/jg-recon-handoff.sh",
+      "operation": "assignee",
+      "form": "bin/jg-recon-handoff.sh assignee <task-id>",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "recon-handoff",
+        "phase"
+      ],
+      "meaning": "Show the Recon handoff phase",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": false,
+      "method": "GET",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.recon-handoff.phase.v1",
+      "script": "bin/jg-recon-handoff.sh",
+      "operation": "phase",
+      "form": "bin/jg-recon-handoff.sh phase <task-id>",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "recon-handoff",
+        "show"
+      ],
+      "meaning": "Show the Recon handoff record",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": false,
+      "method": "GET",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.recon-handoff.show.v1",
+      "script": "bin/jg-recon-handoff.sh",
+      "operation": "show",
+      "form": "bin/jg-recon-handoff.sh show <task-id>",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "run-owned"
+      ],
+      "meaning": "Run a command with an owner and time limit",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.run-owned.v1",
+      "script": "bin/jg-run-owned.sh",
+      "operation": "-",
+      "form": "bin/jg-run-owned.sh --owner <ticket-or-tick-name> --limit <seconds> [--owner-pid <pid|none>] -- <command> [<args>...]",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "run-owned",
+        "owner"
+      ],
+      "meaning": "Run a command with an owner and time limit",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.run-owned.owner.v1",
+      "script": "bin/jg-run-owned.sh",
+      "operation": "--owner",
+      "form": "bin/jg-run-owned.sh --owner <ticket-or-tick-name> --limit <seconds> [--owner-pid <pid|none>] -- <command> [<args>...]",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "runner-shard"
+      ],
+      "meaning": "Run a test shard from a supplied git bundle",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.runner-shard.v1",
+      "script": "bin/jg-runner-shard.sh",
+      "operation": "-",
+      "form": "bin/jg-runner-shard.sh <commit> <base> -- <jg-test-run.sh arguments>",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "scratch",
+        "register"
+      ],
+      "meaning": "Register a task scratch directory",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.scratch.register.v1",
+      "script": "bin/jg-scratch.sh",
+      "operation": "register",
+      "form": "bin/jg-scratch.sh register <task-id> <dir>",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "scratch",
+        "list"
+      ],
+      "meaning": "List a task’s registered scratch directories",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.scratch.list.v1",
+      "script": "bin/jg-scratch.sh",
+      "operation": "list",
+      "form": "bin/jg-scratch.sh list <task-id>",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "squad-lead-reconcile",
+        "request"
+      ],
+      "meaning": "Request a Squad Lead reconciliation from a snapshot",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.squad-lead-reconcile.request.v1",
+      "script": "bin/jg-squad-lead-reconcile.sh",
+      "operation": "request",
+      "form": "bin/jg-squad-lead-reconcile.sh request --snapshot <file-or-dash>",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "squad-lead-reconcile",
+        "process-requests"
+      ],
+      "meaning": "Process queued reconciliation requests",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.squad-lead-reconcile.process-requests.v1",
+      "script": "bin/jg-squad-lead-reconcile.sh",
+      "operation": "process-requests",
+      "form": "bin/jg-squad-lead-reconcile.sh process-requests",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "squad-lead-reconcile",
+        "notify"
+      ],
+      "meaning": "Notify Squad Leads of reconciliation needs",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.squad-lead-reconcile.notify.v1",
+      "script": "bin/jg-squad-lead-reconcile.sh",
+      "operation": "notify",
+      "form": "bin/jg-squad-lead-reconcile.sh notify [--snapshot <file>|-]",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "squad-lead-reconcile",
+        "nudged"
+      ],
+      "meaning": "Record that a Squad Lead was nudged",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.squad-lead-reconcile.nudged.v1",
+      "script": "bin/jg-squad-lead-reconcile.sh",
+      "operation": "nudged",
+      "form": "bin/jg-squad-lead-reconcile.sh nudged <mate-id>",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "state-lint"
+      ],
+      "meaning": "Check or list operational state paths",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.state-lint.v1",
+      "script": "bin/jg-state-lint.sh",
+      "operation": "-",
+      "form": "bin/jg-state-lint.sh [--check] [--list] [--root <dir>] [--baseline <file>]",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "status-states-lint",
+        "text"
+      ],
+      "meaning": "Check status words in text files",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.status-states-lint.text.v1",
+      "script": "bin/jg-status-states-lint.sh",
+      "operation": "text",
+      "form": "bin/jg-status-states-lint.sh text <file>...",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "status-states-lint",
+        "commit"
+      ],
+      "meaning": "Check whether a commit updates the status contract",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.status-states-lint.commit.v1",
+      "script": "bin/jg-status-states-lint.sh",
+      "operation": "commit",
+      "form": "bin/jg-status-states-lint.sh commit [<rev>]",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "stow-cascade"
+      ],
+      "meaning": "Cascade a stow request to Squad Leads",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.stow-cascade.v1",
+      "script": "bin/jg-stow-cascade.sh",
+      "operation": "-",
+      "form": "bin/jg-stow-cascade.sh [--help]",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "test-cache",
+        "key"
+      ],
+      "meaning": "Compute a test cache key",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.test-cache.key.v1",
+      "script": "bin/jg-test-cache.sh",
+      "operation": "key",
+      "form": "bin/jg-test-cache.sh key <script>",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "test-cache",
+        "lookup"
+      ],
+      "meaning": "Look up a cached test result",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.test-cache.lookup.v1",
+      "script": "bin/jg-test-cache.sh",
+      "operation": "lookup",
+      "form": "bin/jg-test-cache.sh lookup <script> <output-file>",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "test-cache",
+        "store"
+      ],
+      "meaning": "Store a successful test result",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.test-cache.store.v1",
+      "script": "bin/jg-test-cache.sh",
+      "operation": "store",
+      "form": "bin/jg-test-cache.sh store <script> <duration-ms> <output-file>",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "test-cache",
+        "prune"
+      ],
+      "meaning": "Prune old test cache entries",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.test-cache.prune.v1",
+      "script": "bin/jg-test-cache.sh",
+      "operation": "prune",
+      "form": "bin/jg-test-cache.sh prune [<days>]",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "test-ignored-reads",
+        "start"
+      ],
+      "meaning": "Watch for test reads of ignored files",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.test-ignored-reads.start.v1",
+      "script": "bin/jg-test-ignored-reads.sh",
+      "operation": "start",
+      "form": "bin/jg-test-ignored-reads.sh start <root> <work-dir>",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "test-ignored-reads",
+        "finish"
+      ],
+      "meaning": "Finish watching for ignored file reads",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.test-ignored-reads.finish.v1",
+      "script": "bin/jg-test-ignored-reads.sh",
+      "operation": "finish",
+      "form": "bin/jg-test-ignored-reads.sh finish <work-dir>",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "test-ignored-reads",
+        "stop"
+      ],
+      "meaning": "Stop watching for ignored file reads",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.test-ignored-reads.stop.v1",
+      "script": "bin/jg-test-ignored-reads.sh",
+      "operation": "stop",
+      "form": "bin/jg-test-ignored-reads.sh stop <work-dir>",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "test-run"
+      ],
+      "meaning": "Run all selected tests",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.test-run.v1",
+      "script": "bin/jg-test-run.sh",
+      "operation": "-",
+      "form": "bin/jg-test-run.sh --all",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "test-run",
+        "all"
+      ],
+      "meaning": "Run all tests or list them",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.test-run.all.v1",
+      "script": "bin/jg-test-run.sh",
+      "operation": "--all",
+      "form": "bin/jg-test-run.sh --all [--list]",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "test-run",
+        "family"
+      ],
+      "meaning": "Run or list tests in a family",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.test-run.family.v1",
+      "script": "bin/jg-test-run.sh",
+      "operation": "--family",
+      "form": "bin/jg-test-run.sh --family <family> [--list]",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "test-run",
+        "changed"
+      ],
+      "meaning": "Run or list tests affected by changes",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.test-run.changed.v1",
+      "script": "bin/jg-test-run.sh",
+      "operation": "--changed",
+      "form": "bin/jg-test-run.sh --changed [--base <git-ref>] [--list]",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "test-run",
+        "lane"
+      ],
+      "meaning": "Run or list tests in a lane",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.test-run.lane.v1",
+      "script": "bin/jg-test-run.sh",
+      "operation": "--lane",
+      "form": "bin/jg-test-run.sh --lane <lane> [--list]",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "test-run",
+        "proven-isolated"
+      ],
+      "meaning": "Run or list isolated tests",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.test-run.proven-isolated.v1",
+      "script": "bin/jg-test-run.sh",
+      "operation": "--proven-isolated",
+      "form": "bin/jg-test-run.sh --proven-isolated [--list]",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "test-run",
+        "required-shards"
+      ],
+      "meaning": "Run and aggregate required test shards",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.test-run.required-shards.v1",
+      "script": "bin/jg-test-run.sh",
+      "operation": "--required-shards",
+      "form": "bin/jg-test-run.sh --required-shards <base-ref> <output-dir>",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "test-run",
+        "list"
+      ],
+      "meaning": "List selected tests",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.test-run.list.v1",
+      "script": "bin/jg-test-run.sh",
+      "operation": "--list",
+      "form": "bin/jg-test-run.sh --list (--all | --family <family> | --lane <lane>)",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "test-run",
+        "list-scheduled"
+      ],
+      "meaning": "List scheduled tests",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.test-run.list-scheduled.v1",
+      "script": "bin/jg-test-run.sh",
+      "operation": "--list-scheduled",
+      "form": "bin/jg-test-run.sh --list-scheduled (--family <family> | --lane <lane>)",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "test-run",
+        "list-families"
+      ],
+      "meaning": "List test families",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.test-run.list-families.v1",
+      "script": "bin/jg-test-run.sh",
+      "operation": "--list-families",
+      "form": "bin/jg-test-run.sh --list-families",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "test-run",
+        "list-concurrent-safe-families"
+      ],
+      "meaning": "List families safe to run concurrently",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.test-run.list-concurrent-safe-families.v1",
+      "script": "bin/jg-test-run.sh",
+      "operation": "--list-concurrent-safe-families",
+      "form": "bin/jg-test-run.sh --list-concurrent-safe-families",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "test-run",
+        "concurrent-safe-family-jobs-max"
+      ],
+      "meaning": "Show the maximum parallel jobs for a family",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.test-run.concurrent-safe-family-jobs-max.v1",
+      "script": "bin/jg-test-run.sh",
+      "operation": "--concurrent-safe-family-jobs-max",
+      "form": "bin/jg-test-run.sh --concurrent-safe-family-jobs-max <name>",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "test-run",
+        "list-lanes"
+      ],
+      "meaning": "List test lanes",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.test-run.list-lanes.v1",
+      "script": "bin/jg-test-run.sh",
+      "operation": "--list-lanes",
+      "form": "bin/jg-test-run.sh --list-lanes",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "test-run",
+        "check-coverage"
+      ],
+      "meaning": "Check that tests have selection coverage",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.test-run.check-coverage.v1",
+      "script": "bin/jg-test-run.sh",
+      "operation": "--check-coverage",
+      "form": "bin/jg-test-run.sh --check-coverage",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "test-run",
+        "show-limits"
+      ],
+      "meaning": "Show test runner resource limits",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.test-run.show-limits.v1",
+      "script": "bin/jg-test-run.sh",
+      "operation": "--show-limits",
+      "form": "bin/jg-test-run.sh --show-limits",
+      "aliases": []
+    },
+    {
+      "path": [
+        "proof",
+        "test-run",
+        "aggregate-json"
+      ],
+      "meaning": "Aggregate test timing records",
+      "roles": [
+        "overwatch",
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "repeat_key": "arguments",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "proof.test-run.aggregate-json.v1",
+      "script": "bin/jg-test-run.sh",
+      "operation": "--aggregate-json",
+      "form": "bin/jg-test-run.sh --aggregate-json <out.json> <lane.json> [<more-lane.json>...]",
+      "aliases": []
+    }
+  ]
+}
