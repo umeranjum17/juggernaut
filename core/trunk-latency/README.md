@@ -1,7 +1,7 @@
 # trunk-latency
 
 Every local-trunk landing keeps its measured minutes from the lane's done line to the landing on its ticket.
-A landing over the five-minute target raises one alert that names the stage that held it.
+A landing over the five-minute target records one row that names the stage that held it.
 
 ## The timing
 
@@ -32,7 +32,7 @@ The stages:
 `latency.sh check <jg-home>` is the watcher check, and `bin/jg-trunk.sh` runs it at the end of every landing.
 For each landing of the last hour that it has not read, it reads the ticket's `ready_at` and the `land` event of that commit (`jg-backlog.sh trace landing <task> <commit>`).
 A landing whose event is not there yet is read again on the next run.
-A landing over `JG_MERGE_LATENCY_LIMIT_MINUTES` (default 5, the limit `core/merge-on-green` reads too) raises one `slow-delivery` alert through `bin/jg-alert.sh`.
+A landing over `JG_MERGE_LATENCY_LIMIT_MINUTES` (default 5, the limit `core/merge-on-green` reads too) records one `slow-delivery` row through `bin/jg-alert.sh` and resolves it at once with the landed commit as proof (`commit:<sha>`), because a landing over the target is a past measurement: the row keeps the fact, no alert stays open, and no wake rings.
 Its note names the minutes, the stage from the payload and that stage's minutes.
 A landing more than an hour old is not read.
 

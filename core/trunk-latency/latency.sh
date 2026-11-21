@@ -6,8 +6,8 @@
 #        latency.sh summary --tsv <file> [--from <epoch> --to <epoch>] [--stall-gap 1800]   print the 12 summary lines of a latency
 #                                   tsv (the old data/trunk-latency.tsv columns): the medians, the re-done lanes and the stall line. Read only.
 #        latency.sh check <jg-home>   the watcher check: for each landing of the last hour that the check has not read yet, read the
-#                                   ticket's ready time and the landing's `land` event (jg-backlog.sh trace landing), and raise the
-#                                   slow-delivery alert through bin/jg-alert.sh for one over the limit, naming the stage from the payload
+#                                   ticket's ready time and the landing's `land` event (jg-backlog.sh trace landing), and record a
+#                                   slow-delivery row (resolved at once) through bin/jg-alert.sh for one over the limit, naming the stage from the payload
 #
 # measure reads only records that the landing check and the lane already write:
 #   data/trunk-landings.tsv         one row per landing: task, project, commit, landed epoch, gate, [batch-from=<commit>]
@@ -22,8 +22,8 @@
 # gate (the lint and the changed tests) that held the most seconds, or before-gate when the start is not on record; queue_s, landing_s and
 # gate_s add up to the seconds from ready to landed. A queue stage always names its reason in queue_why: behind <lane>, behind attempt of
 # <lane>, first seen +N s, slot full, flush hold, or `not recorded`.
-# Alert: a landing over JG_MERGE_LATENCY_LIMIT_MINUTES (default 5, the limit core/merge-on-green reads too) raises the slow-delivery alert
-# through bin/jg-alert.sh, one key per landing. The minutes are the ticket's ready time to the event's time. A landing more than an hour
+# Alert: a landing over JG_MERGE_LATENCY_LIMIT_MINUTES (default 5, the limit core/merge-on-green reads too) records a slow-delivery row
+# through bin/jg-alert.sh, one key per landing, and resolves it at once (proof commit:<landed commit>): the landing is a past measurement. The minutes are the ticket's ready time to the event's time. A landing more than an hour
 # old is not read: the check ran late or was off.
 set -u
 # summary: the minutes from done to landing, the re-done lanes by day and the stall line, read from a tsv with the columns first_done,
@@ -160,8 +160,12 @@ check() {
     note="landing took $minutes minutes; the $stage held $(jq -r --arg k "$secs" 'if $k == "" or .[$k] == null then "most" else "\(.[$k] / 60 | round)" end' <<< "${payload:-null}") minutes${why:+ ($why)}"
     # A landing that waited behind a landing that was running is the row's quiet fact. A refused raise is one warning line.
     facts=(); [ "$stage" != queue ] || case $why in 'behind attempt'*) ;; behind\ *) facts=(--fact queued-behind-running-landing) ;; esac
+    # The landing is over, so its latency is a past measurement: the alert record is the row, and it closes at once (the landed commit is
+    # the proof) with no ring, so no slow landing stays open and nobody is woken for a lane that is already on the trunk.
     JG_HOME=$FMH JG_STATE_OVERRIDE=$STATE bash "$ALERT" raise slow-delivery "$task-${commit:0:12}" --mode local-trunk --kind ship-delivering \
-      "${facts[@]}" --ticket "$task" --note "$note" --deliver >/dev/null || echo "trunk-latency: could not raise the slow-delivery alert for $task ($minutes minutes, $stage)"
+      "${facts[@]}" --ticket "$task" --note "$note" >/dev/null || { echo "trunk-latency: could not record the slow-delivery row for $task ($minutes minutes, $stage)"; continue; }
+    JG_HOME=$FMH JG_STATE_OVERRIDE=$STATE bash "$ALERT" resolve "slow-delivery--$task-${commit:0:12}" --proof "commit:$commit" >/dev/null \
+      || echo "trunk-latency: could not close the slow-delivery row for $task ($minutes minutes, $stage)"
   done < "$LANDINGS"
 }
 
