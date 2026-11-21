@@ -105,9 +105,18 @@ cmd_help() {
 # from literal words the script expects. An entry can also declare the dispatcher options --again and --key.
 # shellcheck disable=SC2016  # the jq program is one single-quoted string
 BIND_JQ='
-def lex: [scan("<[^>]+>(?:\\.\\.\\.)?|[\\[\\]()|]|[^\\s<>\\[\\]()|]+")];
-def placeholder: test("^<[^>]+>(\\.\\.\\.)?$|^[A-Z][A-Z0-9_-]*$");
-def argname: sub("^<"; "") | sub("(\\.\\.\\.)?>(\\.\\.\\.)?$"; "");
+# Two usage lines use descriptive names in place of the explicit operand grammar.
+def canonical_form:
+  if .script == "bin/jg-migration-card.sh" and .operation == "milestone" then
+    .form | sub("\\[text\\]"; "[<text>]")
+  elif .script == "bin/jg-runner-shard.sh" then
+    .form | sub("<jg-test-run\\.sh arguments>"; "[<args>...]")
+  else .form end;
+def lex: [scan("\"<[^>]+>\"|<[^>]+>(?:\\.\\.\\.)?|[\\[\\]()|]|[^\\s<>\\[\\]()|]+")
+  | if startswith("\"<") then .[1:-1] else . end];
+def passthrough: . == "args...";
+def placeholder: passthrough or test("^<[^>]+>(\\.\\.\\.)?$|^[A-Z][A-Z0-9_-]*$");
+def argname: ltrimstr("<") | rtrimstr("...") | rtrimstr(">") | rtrimstr("...");
 def option: test("^--?[a-zA-Z]");
 def find_at_level($toks; $stop):
   first(foreach range(0; $toks | length) as $i
@@ -133,7 +142,8 @@ def specs($toks; $opt; $choice):
             + specs($rest[$end+1:]; $opt; $choice)
       elif $t == "..." then specs($rest; $opt; $choice)
       elif $t | placeholder then
-        [{k: "pos", name: ($t | argname), rest: ($t | test("\\.\\.\\.>?$")), opt: $opt}]
+        [{k: "pos", name: ($t | argname), rest: ($t | test("\\.\\.\\.>?$")),
+          passthrough: ($t | passthrough), opt: $opt}]
         + specs($rest; $opt; $choice)
       elif ($t | option) and ($rest[0] // "" | placeholder) then
         [{k: "opt", flag: $t, name: ($rest[0] | argname), opt: $opt, rest: ($rest[0] | test("\\.\\.\\.>?$"))}]
@@ -153,7 +163,8 @@ def expand($type; $v): if $type == "ack-ref" then ($v | split(":")) as $p
   | ["--ack-through", $p[0], "--recovery-generation", $p[1]] + (if ($p | length) > 2 then ["--pages-ack", $p[2]] else [] end) else [$v] end;
 def take_pos($pos; $a):
   $pos[.posi] as $p
-  | if $p == null or ($p.literal != null and $a != $p.literal) then .err = "unexpected argument \($a)"
+  | if $p.k == "separator" then .err = "expected -- before \($a)"
+    elif $p == null or ($p.literal != null and $a != $p.literal) then .err = "unexpected argument \($a)"
     elif $p.rest then .vals[$p.name] += [$a]
     else .vals[$p.name] = $a | .posi += 1 end;
 def take_value($flags; $a):
@@ -162,7 +173,8 @@ def take_value($flags; $a):
     elif $flags[$flag].repeat then .opts[$flag] += [$a] | .pending = null
     else .opts[$flag] = $a | .pending = null end;
 def bind($in; $spec; $types; $declared):
-  ($spec | map(select(.k == "pos"))) as $pos
+  ($spec | map(select(.k == "pos" or (.k == "separator" and (.opt | not))))) as $pos
+| any($pos[]; .k == "separator") as $requires_separator
 | ($spec | map(select(.k == "opt" or .k == "flag") | {(.flag): .}) | add // {}) as $named
 | (({"--again": {k: "flag", name: "again"}, "--key": {k: "opt", name: "key"}}
     | with_entries(select(.value.name as $n | $declared | index($n)))) + $named) as $flags
@@ -174,7 +186,12 @@ def bind($in; $spec; $types; $declared):
         if (.opts[.pending] | length) == 0 then .err = "option \(.pending) needs at least one argument"
         else .pending = $a end
       else take_value($flags; $a) end
-    elif (.dd | not) and $a == "--" then .dd = true
+    # A trailing args... delegates the entire remaining line to the child parser.
+    elif $pos[.posi].passthrough then take_pos($pos; $a)
+    elif (.dd | not) and $a == "--" then
+      if $pos[.posi].k == "separator" then .dd = true | .posi += 1
+      elif $requires_separator then .err = "unexpected separator --"
+      else .dd = true end
     elif (.dd | not) and ($a | option) then
       if $flags | has($a) then ($flags[$a]) as $f
         | if $f.k == "opt" then .pending = $a else .opts[$a] = true end
@@ -185,7 +202,8 @@ def bind($in; $spec; $types; $declared):
   elif $s.pending != null and ($flags[$s.pending].rest != true or ($s.opts[$s.pending] | length) == 0) then
     {ok: false, error: "option \($s.pending) is missing its value"}
   else $s.vals as $v | $s.opts as $opts
-    | ([$pos[] | select((.opt | not) and (.name as $n | $v | has($n) | not)) | (.literal // "<\(.name)>")]
+    | ([$pos[] | if .k == "separator" then select($s.dd | not) | "--"
+      else select((.opt | not) and (.name as $n | $v | has($n) | not)) | (.literal // "<\(.name)>") end]
        + [$named[] | select((.opt or .default | not) and (.flag as $f | $opts | has($f) | not)) | .flag]) as $missing
     | ($v + ($opts | to_entries | map({($flags[.key].name): .value}) | add // {})) as $vals
     | ([$vals | to_entries[] | select($types[.key] == "ack-ref" and (.value | ref_ok | not)) | .key]) as $badref
@@ -206,7 +224,7 @@ def bind($in; $spec; $types; $declared):
   end;
 . as $in | $in.entry as $e
 | ($e.args | map({(.name): .type}) | add // {}) as $types
-| ($e.form | lex | .[1:]) as $toks
+| ($e | canonical_form | lex | .[1:]) as $toks
 | [if ($e.operation | option) and $toks[0] == $e.operation then
      [{k: "lit", v: $e.operation}] + specs($toks[1:]; false; false)
      | bind($in | if .args[0] == $e.operation then .args = .args[1:] else . end; .; $types; $e.args | map(.name))
