@@ -1,0 +1,655 @@
+{
+  "area": "cleanup and alerts",
+  "owner": "e6alerts",
+  "entries": [
+    {
+      "path": [
+        "alert",
+        "alert",
+        "row"
+      ],
+      "meaning": "Show an alert rule.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-alert.sh row <alert>",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "alert.alert.row.v1",
+      "script": "bin/jg-alert.sh",
+      "operation": "row",
+      "aliases": []
+    },
+    {
+      "path": [
+        "alert",
+        "alert",
+        "limit"
+      ],
+      "meaning": "Show the delay limit for a work kind.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-alert.sh limit <kind>",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "alert.alert.limit.v1",
+      "script": "bin/jg-alert.sh",
+      "operation": "limit",
+      "aliases": []
+    },
+    {
+      "path": [
+        "alert",
+        "alert",
+        "timers"
+      ],
+      "meaning": "Show alert escalation timers.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-alert.sh timers",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "alert.alert.timers.v1",
+      "script": "bin/jg-alert.sh",
+      "operation": "timers",
+      "aliases": []
+    },
+    {
+      "path": [
+        "alert",
+        "alert",
+        "raise"
+      ],
+      "meaning": "Raise an alert for a subject.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-alert.sh raise <alert> <subject> [--mode <delivery word>] [--kind <kind>] [--held <seconds>] [--fact <fact>]... [--home H] [--project P] [--route R] [--machine M] [--ticket T] [--rung N] [--wake <kind> --text <line>] [--repeat] [--note <text>] [--deliver | --print] [--owner-gate G --ticket T --origin O | --security-source S]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "alert.alert.raise.v1",
+      "script": "bin/jg-alert.sh",
+      "operation": "raise",
+      "aliases": []
+    },
+    {
+      "path": [
+        "alert",
+        "alert",
+        "capacity"
+      ],
+      "meaning": "Raise a capacity alert.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-alert.sh capacity <producer> <text> [--deliver | --print]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "alert.alert.capacity.v1",
+      "script": "bin/jg-alert.sh",
+      "operation": "capacity",
+      "aliases": []
+    },
+    {
+      "path": [
+        "alert",
+        "alert",
+        "climb"
+      ],
+      "meaning": "Advance an alert when its timer is due.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-alert.sh climb <key> [--now <epoch>]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "alert.alert.climb.v1",
+      "script": "bin/jg-alert.sh",
+      "operation": "climb",
+      "aliases": []
+    },
+    {
+      "path": [
+        "alert",
+        "alert",
+        "ack"
+      ],
+      "meaning": "Acknowledge an alert.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-alert.sh ack <key>",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "alert.alert.ack.v1",
+      "script": "bin/jg-alert.sh",
+      "operation": "ack",
+      "aliases": []
+    },
+    {
+      "path": [
+        "alert",
+        "alert",
+        "reopen"
+      ],
+      "meaning": "Reopen a due acknowledged alert.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-alert.sh reopen <key> [--now <epoch>]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "alert.alert.reopen.v1",
+      "script": "bin/jg-alert.sh",
+      "operation": "reopen",
+      "aliases": []
+    },
+    {
+      "path": [
+        "alert",
+        "alert",
+        "resolve"
+      ],
+      "meaning": "Resolve an alert with evidence.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-alert.sh resolve <key> --proof <kind:pointer>",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "alert.alert.resolve.v1",
+      "script": "bin/jg-alert.sh",
+      "operation": "resolve",
+      "aliases": []
+    },
+    {
+      "path": [
+        "alert",
+        "alert",
+        "resolve-ticket"
+      ],
+      "meaning": "Resolve alerts for a ticket with evidence.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-alert.sh resolve-ticket <ticket> --proof <kind:pointer>",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "alert.alert.resolve-ticket.v1",
+      "script": "bin/jg-alert.sh",
+      "operation": "resolve-ticket",
+      "aliases": []
+    },
+    {
+      "path": [
+        "alert",
+        "alert",
+        "overdue"
+      ],
+      "meaning": "List alerts past their deadline.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-alert.sh overdue [--now <epoch>]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "alert.alert.overdue.v1",
+      "script": "bin/jg-alert.sh",
+      "operation": "overdue",
+      "aliases": []
+    },
+    {
+      "path": [
+        "alert",
+        "alert",
+        "show"
+      ],
+      "meaning": "Show an alert record.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/jg-alert.sh show <key>",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "alert.alert.show.v1",
+      "script": "bin/jg-alert.sh",
+      "operation": "show",
+      "aliases": []
+    },
+    {
+      "path": [
+        "alert",
+        "alert",
+        "deliver"
+      ],
+      "meaning": "Deliver alert lines from standard input.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-alert.sh deliver",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "alert.alert.deliver.v1",
+      "script": "bin/jg-alert.sh",
+      "operation": "deliver",
+      "aliases": []
+    },
+    {
+      "path": [
+        "alert",
+        "alert",
+        "word"
+      ],
+      "meaning": "Show an alert state.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-alert.sh word <key>",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "alert.alert.word.v1",
+      "script": "bin/jg-alert.sh",
+      "operation": "word",
+      "aliases": []
+    },
+    {
+      "path": [
+        "alert",
+        "alert",
+        "list"
+      ],
+      "meaning": "List active alert keys.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/jg-alert.sh list",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "alert.alert.list.v1",
+      "script": "bin/jg-alert.sh",
+      "operation": "list",
+      "aliases": []
+    },
+    {
+      "path": [
+        "crew",
+        "browser-sweep"
+      ],
+      "meaning": "Inspect or remove unused browser processes.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-browser-sweep.sh [--dry-run | --apply] [--hours N] [--no-bridges]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "crew.browser-sweep.v1",
+      "script": "bin/jg-browser-sweep.sh",
+      "operation": "-",
+      "aliases": []
+    },
+    {
+      "path": [
+        "crew",
+        "teardown-core"
+      ],
+      "meaning": "Run a cleanup safety check.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-teardown-core.sh <command> [<args...>]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "crew.teardown-core.v1",
+      "script": "bin/jg-teardown-core.sh",
+      "operation": "-",
+      "aliases": []
+    },
+    {
+      "path": [
+        "crew",
+        "teardown"
+      ],
+      "meaning": "Park a task and preserve its branch.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-teardown.sh <task-id> --park",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "crew.teardown.v1",
+      "script": "bin/jg-teardown.sh",
+      "operation": "-",
+      "aliases": []
+    },
+    {
+      "path": [
+        "crew",
+        "tmp-reaper",
+        "check"
+      ],
+      "meaning": "Run or arm the temporary file reaper.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-tmp-reaper.sh check",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "crew.tmp-reaper.check.v1",
+      "script": "bin/jg-tmp-reaper.sh",
+      "operation": "check",
+      "aliases": []
+    },
+    {
+      "path": [
+        "crew",
+        "tmp-reaper",
+        "arm"
+      ],
+      "meaning": "Run or arm the temporary file reaper.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-tmp-reaper.sh arm",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "crew.tmp-reaper.arm.v1",
+      "script": "bin/jg-tmp-reaper.sh",
+      "operation": "arm",
+      "aliases": []
+    },
+    {
+      "path": [
+        "crew",
+        "tmp-sweep",
+        "check"
+      ],
+      "meaning": "Inspect or clean temporary storage.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/jg-tmp-sweep.sh check [--root DIR] [--warn-pct N]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "crew.tmp-sweep.check.v1",
+      "script": "bin/jg-tmp-sweep.sh",
+      "operation": "check",
+      "aliases": []
+    },
+    {
+      "path": [
+        "crew",
+        "tmp-sweep",
+        "top"
+      ],
+      "meaning": "Inspect or clean temporary storage.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-tmp-sweep.sh top [--root DIR] [-n N]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "crew.tmp-sweep.top.v1",
+      "script": "bin/jg-tmp-sweep.sh",
+      "operation": "top",
+      "aliases": []
+    },
+    {
+      "path": [
+        "crew",
+        "tmp-sweep",
+        "sweep"
+      ],
+      "meaning": "Inspect or clean temporary storage.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-tmp-sweep.sh sweep [--dry-run | --apply] [--root DIR] [--min-age-days N]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "crew.tmp-sweep.sweep.v1",
+      "script": "bin/jg-tmp-sweep.sh",
+      "operation": "sweep",
+      "aliases": []
+    }
+  ],
+  "dropped": [
+    {
+      "script": "bin/jg-teardown.sh",
+      "operation": "--park",
+      "reason": "The flag is not a standalone operation; as the first argument it is treated as a task ID.",
+      "run": "JG_HOME=<fixture> bin/jg-teardown.sh --park reports task --park already cleaned up."
+    }
+  ]
+}
