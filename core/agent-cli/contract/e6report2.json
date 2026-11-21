@@ -1,0 +1,869 @@
+{
+  "area": "reports",
+  "owner": "e6report2",
+  "entries": [
+    {
+      "path": [
+        "report",
+        "loss-claim-check"
+      ],
+      "meaning": "Check reports for loss claims with a replacement and effort estimate.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-loss-claim-check.sh <report.md>...",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "report.loss-claim-check.v1",
+      "script": "bin/jg-loss-claim-check.sh",
+      "operation": "-",
+      "aliases": []
+    },
+    {
+      "path": [
+        "report",
+        "outcome-ledger",
+        "build"
+      ],
+      "meaning": "Build the outcome ledger.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-outcome-ledger.sh build [<project>]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "report.outcome-ledger.build.v1",
+      "script": "bin/jg-outcome-ledger.sh",
+      "operation": "build",
+      "aliases": []
+    },
+    {
+      "path": [
+        "report",
+        "outcome-ledger",
+        "columns"
+      ],
+      "meaning": "Show the outcome ledger columns.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-outcome-ledger.sh columns",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "report.outcome-ledger.columns.v1",
+      "script": "bin/jg-outcome-ledger.sh",
+      "operation": "columns",
+      "aliases": []
+    },
+    {
+      "path": [
+        "report",
+        "outcome-ledger",
+        "publications"
+      ],
+      "meaning": "Show publication records in the outcome ledger.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-outcome-ledger.sh publications [<project>]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "report.outcome-ledger.publications.v1",
+      "script": "bin/jg-outcome-ledger.sh",
+      "operation": "publications",
+      "aliases": []
+    },
+    {
+      "path": [
+        "report",
+        "outcome-ledger",
+        "show"
+      ],
+      "meaning": "Show outcome records for a ticket.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/jg-outcome-ledger.sh show <ticket>",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "report.outcome-ledger.show.v1",
+      "script": "bin/jg-outcome-ledger.sh",
+      "operation": "show",
+      "aliases": []
+    },
+    {
+      "path": [
+        "report",
+        "outcome-ledger",
+        "summary"
+      ],
+      "meaning": "Summarize the outcome ledger.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-outcome-ledger.sh summary [<project>]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "report.outcome-ledger.summary.v1",
+      "script": "bin/jg-outcome-ledger.sh",
+      "operation": "summary",
+      "aliases": []
+    },
+    {
+      "path": [
+        "report",
+        "overwatch-kpi",
+        "hook"
+      ],
+      "meaning": "Record an Overwatch hook event.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-overwatch-kpi.sh hook <claude|cursor|agy|pi>",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "report.overwatch-kpi.hook.v1",
+      "script": "bin/jg-overwatch-kpi.sh",
+      "operation": "hook",
+      "aliases": []
+    },
+    {
+      "path": [
+        "report",
+        "overwatch-kpi",
+        "tag"
+      ],
+      "meaning": "Tag an Overwatch message with its outcome.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-overwatch-kpi.sh tag [--message <seq|inbox-id>] <kind> [<link>]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "report.overwatch-kpi.tag.v1",
+      "script": "bin/jg-overwatch-kpi.sh",
+      "operation": "tag",
+      "aliases": []
+    },
+    {
+      "path": [
+        "report",
+        "overwatch-kpi",
+        "record"
+      ],
+      "meaning": "Record an Overwatch message.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-overwatch-kpi.sh record [--id <inbox-id>] [--] <text>",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "report.overwatch-kpi.record.v1",
+      "script": "bin/jg-overwatch-kpi.sh",
+      "operation": "record",
+      "aliases": []
+    },
+    {
+      "path": [
+        "report",
+        "overwatch-kpi",
+        "pending"
+      ],
+      "meaning": "Show messages awaiting an outcome tag.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-overwatch-kpi.sh pending",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "report.overwatch-kpi.pending.v1",
+      "script": "bin/jg-overwatch-kpi.sh",
+      "operation": "pending",
+      "aliases": []
+    },
+    {
+      "path": [
+        "report",
+        "overwatch-kpi",
+        "scorecard"
+      ],
+      "meaning": "Show the Overwatch scorecard.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-overwatch-kpi.sh scorecard [--json] [--landed]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "report.overwatch-kpi.scorecard.v1",
+      "script": "bin/jg-overwatch-kpi.sh",
+      "operation": "scorecard",
+      "aliases": []
+    },
+    {
+      "path": [
+        "report",
+        "ready-trace"
+      ],
+      "meaning": "Trace ready work in a home.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-ready-trace.sh <jg-home>",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "report.ready-trace.v1",
+      "script": "bin/jg-ready-trace.sh",
+      "operation": "-",
+      "aliases": []
+    },
+    {
+      "path": [
+        "report",
+        "report-opening-check"
+      ],
+      "meaning": "Check a report opening against a card.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-report-opening-check.sh <report.md> --card <card.json>",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "report.report-opening-check.v1",
+      "script": "bin/jg-report-opening-check.sh",
+      "operation": "-",
+      "aliases": []
+    },
+    {
+      "path": [
+        "report",
+        "report-opening-check",
+        "card"
+      ],
+      "meaning": "Check a report opening against a card.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-report-opening-check.sh <report.md> --card <card.json>",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "report.report-opening-check.card.v1",
+      "script": "bin/jg-report-opening-check.sh",
+      "operation": "--card",
+      "aliases": []
+    },
+    {
+      "path": [
+        "report",
+        "report-opening-check",
+        "filer"
+      ],
+      "meaning": "Check a report opening against a filer’s board cards.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-report-opening-check.sh <report.md> --filer <task-id> [--board <board.json>] [--key <key>]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "report.report-opening-check.filer.v1",
+      "script": "bin/jg-report-opening-check.sh",
+      "operation": "--filer",
+      "aliases": []
+    },
+    {
+      "path": [
+        "report",
+        "report-opening-check",
+        "board"
+      ],
+      "meaning": "Check a report opening against a specified board.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/jg-report-opening-check.sh <report.md> --filer <task-id> --board <board.json> [--key <key>]",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "report.report-opening-check.board.v1",
+      "script": "bin/jg-report-opening-check.sh",
+      "operation": "--board",
+      "aliases": []
+    },
+    {
+      "path": [
+        "report",
+        "report-opening-check",
+        "key"
+      ],
+      "meaning": "Check a report opening against a specified card key.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-report-opening-check.sh <report.md> --filer <task-id> --key <key> [--board <board.json>]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "report.report-opening-check.key.v1",
+      "script": "bin/jg-report-opening-check.sh",
+      "operation": "--key",
+      "aliases": []
+    },
+    {
+      "path": [
+        "report",
+        "report-page",
+        "build"
+      ],
+      "meaning": "Build a report board page.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-report-page.sh build <task-id>",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "report.report-page.build.v1",
+      "script": "bin/jg-report-page.sh",
+      "operation": "build",
+      "aliases": []
+    },
+    {
+      "path": [
+        "report",
+        "report-page",
+        "check"
+      ],
+      "meaning": "Check a report board page for edits or stale content.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/jg-report-page.sh check <task-id>",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "report.report-page.check.v1",
+      "script": "bin/jg-report-page.sh",
+      "operation": "check",
+      "aliases": []
+    },
+    {
+      "path": [
+        "report",
+        "retired-catalog-check"
+      ],
+      "meaning": "Check the tree for retired catalog paths.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-retired-catalog-check.sh",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "report.retired-catalog-check.v1",
+      "script": "bin/jg-retired-catalog-check.sh",
+      "operation": "-",
+      "aliases": []
+    },
+    {
+      "path": [
+        "report",
+        "retired-catalog-check",
+        "base"
+      ],
+      "meaning": "Check changes against a base for retired catalog paths.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-retired-catalog-check.sh --base <ref> [--root <dir>]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "report.retired-catalog-check.base.v1",
+      "script": "bin/jg-retired-catalog-check.sh",
+      "operation": "--base",
+      "aliases": []
+    },
+    {
+      "path": [
+        "report",
+        "retired-catalog-check",
+        "root"
+      ],
+      "meaning": "Check a specified tree for retired catalog paths.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-retired-catalog-check.sh --root <dir> [--base <ref>]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "report.retired-catalog-check.root.v1",
+      "script": "bin/jg-retired-catalog-check.sh",
+      "operation": "--root",
+      "aliases": []
+    },
+    {
+      "path": [
+        "report",
+        "retired-catalog-check",
+        "self-test"
+      ],
+      "meaning": "Run the retired catalog check self-test.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-retired-catalog-check.sh --self-test",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "report.retired-catalog-check.self-test.v1",
+      "script": "bin/jg-retired-catalog-check.sh",
+      "operation": "--self-test",
+      "aliases": []
+    },
+    {
+      "path": [
+        "report",
+        "tokens-retro",
+        "arm"
+      ],
+      "meaning": "Arm the token retrospective.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-tokens-retro.sh arm",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "report.tokens-retro.arm.v1",
+      "script": "bin/jg-tokens-retro.sh",
+      "operation": "arm",
+      "aliases": []
+    },
+    {
+      "path": [
+        "report",
+        "tokens-retro",
+        "show"
+      ],
+      "meaning": "Show the token retrospective.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-tokens-retro.sh show",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "report.tokens-retro.show.v1",
+      "script": "bin/jg-tokens-retro.sh",
+      "operation": "show",
+      "aliases": []
+    },
+    {
+      "path": [
+        "report",
+        "tokens-retro",
+        "disarm"
+      ],
+      "meaning": "Disarm the token retrospective.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-tokens-retro.sh disarm",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "report.tokens-retro.disarm.v1",
+      "script": "bin/jg-tokens-retro.sh",
+      "operation": "disarm",
+      "aliases": []
+    },
+    {
+      "path": [
+        "report",
+        "unit-claim",
+        "claim"
+      ],
+      "meaning": "Claim the machine services for this home.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-unit-claim.sh claim",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "report.unit-claim.claim.v1",
+      "script": "bin/jg-unit-claim.sh",
+      "operation": "claim",
+      "aliases": []
+    },
+    {
+      "path": [
+        "report",
+        "unit-claim",
+        "may-install"
+      ],
+      "meaning": "Check whether this home may install services.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-unit-claim.sh may-install",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "report.unit-claim.may-install.v1",
+      "script": "bin/jg-unit-claim.sh",
+      "operation": "may-install",
+      "aliases": []
+    },
+    {
+      "path": [
+        "report",
+        "unit-claim",
+        "status"
+      ],
+      "meaning": "Show the machine service ownership status.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/jg-unit-claim.sh status",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "report.unit-claim.status.v1",
+      "script": "bin/jg-unit-claim.sh",
+      "operation": "status",
+      "aliases": []
+    },
+    {
+      "path": [
+        "report",
+        "unit-claim",
+        "refuse"
+      ],
+      "meaning": "Explain why a service install is refused.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-unit-claim.sh refuse",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "report.unit-claim.refuse.v1",
+      "script": "bin/jg-unit-claim.sh",
+      "operation": "refuse",
+      "aliases": []
+    },
+    {
+      "path": [
+        "report",
+        "whats-left"
+      ],
+      "meaning": "Render or show what work remains.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-whats-left.sh [write|show]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "report.whats-left.v1",
+      "script": "bin/jg-whats-left.sh",
+      "operation": "-",
+      "aliases": []
+    }
+  ]
+}
