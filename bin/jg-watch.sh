@@ -2356,9 +2356,10 @@ prompt_gate_check() {  # <window> <task> [tail40]
       return 1
     fi
   fi
-  if [ "$kind" = approve ] || [ "$kind" = reject ]; then
+  if [ "$kind" = approve ] || [ "$kind" = reject ] || [ "$kind" = dismiss ]; then
     act=approval
     [ "$kind" = approve ] || act=rejection
+    [ "$kind" != dismiss ] || act=dismissal
     if [ "$(cat "$mf" 2>/dev/null)" = "$kind:$h" ] && [ "$(age_of "$mf")" -lt 60 ]; then
       _r="$_r; the $act sent under a minute ago did not take"
     else
@@ -2373,6 +2374,10 @@ prompt_gate_check() {  # <window> <task> [tail40]
       elif [ "$kind" = approve ] && jg_backend_send_key "$backend" "$w" Enter "$label" >/dev/null 2>&1; then
         printf 'approve:%s' "$h" > "$mf"
         triage_log "approved permission prompt ($_r): $w $path"
+        return 0
+      elif [ "$kind" = dismiss ] && jg_backend_send_key "$backend" "$w" Escape "$label" >/dev/null 2>&1; then
+        printf 'dismiss:%s' "$h" > "$mf"
+        triage_log "dismissed $prompt ($_r): $w"
         return 0
       elif [ "$kind" = reject ] && jg_backend_send_key "$backend" "$w" Escape "$label" >/dev/null 2>&1; then
         printf 'reject:%s' "$h" > "$mf"

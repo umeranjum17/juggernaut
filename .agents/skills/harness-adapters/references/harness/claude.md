@@ -47,6 +47,13 @@ Inspect the pane to identify which dialog is on screen, and report it rather tha
 A launch under `config/claude-permission-mode=auto` never meets the bypass confirmation, because it does not request bypass mode: on 2.1.269 `claude --permission-mode auto` reached the composer directly with the footer `⏵⏵ auto mode on (shift+tab to cycle)`, so a captain who refuses the bypass dialog selects `auto` there instead of accepting it.
 The workspace-trust dialog is unaffected by the permission mode and still needs the pre-registration above.
 
+## Autocompact offer
+
+Claude 2.1.330 can open a modal "Autocompact at N tokens" offer ("Want to autocompact at N tokens instead? Your model doesn't change. Switch back any time with /autocompact.") between turns; it waits for a key and the worker stays parked behind it.
+Esc answers it as "Autocompact unchanged", so it never cancels a turn.
+The text comes from the binary's UI strings and has not been captured from a live render (unverified); the offer's own skip reasons (`auto_compact_off`, `user_settings_off`, `other_settings_file`, `settings_changed`, `window_not_above_default`) are also unproven as a launch-time prevention.
+`jg_busy_claude_autocompact_offer_tail` (`bin/jg-busy-lib.sh`) matches it in the bottom 15 non-blank lines, and the prompt gate (`bin/jg-prompt-gate-lib.sh`) returns `dismiss`, which the watcher answers with one Esc after a fresh re-capture.
+
 ## Composer ghost
 
 Completed turns can render dim predicted text inside an empty composer, indistinguishable in plain `tmux capture-pane`.

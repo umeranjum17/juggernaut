@@ -1444,6 +1444,9 @@ journeys:
   jg-prompt-gate:
     tier: local
     command: bash tests/jg-prompt-gate.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-autocompact-offer:
+    tier: local
+    command: bash tests/jg-autocompact-offer.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-proof-attach:
     tier: local
     command: bash tests/jg-proof-attach.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

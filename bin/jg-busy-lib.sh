@@ -967,6 +967,23 @@ jg_busy_claude_launch_prompt_tail() {
   printf '%s' "$buf" | jg_busy_claude_imports_dialog_tail
 }
 
+# jg_busy_claude_autocompact_offer_tail: Claude's "Autocompact at N tokens"
+# offer (jg-3uo), a modal card that asks to lower the auto-compact window. It
+# is not a launch dialog: it opens between turns of a running worker, waits for
+# an answer forever, and the turn stays parked behind it. Esc is its own safe
+# answer ("Autocompact unchanged": the window is kept, the next turn runs
+# unchanged); the key is the offer's own, so it never cancels a turn.
+# Text from the installed 2.1.330 binary's UI strings, NOT yet captured from a
+# live render: "Want to autocompact at <N> tokens instead? Your model doesn't
+# change. Switch back any time with /autocompact." Whitespace and box borders
+# are collapsed first, because a narrow pane wraps that sentence. Only the
+# bottom 15 non-blank lines count, so the same words in scrollback or in a
+# worker's own prose higher up never match, and both halves are required.
+jg_busy_claude_autocompact_offer_tail() {
+  grep -v '^[[:space:]]*$' | tail -15 | sed 's/[│┃║|]/ /g' | tr '\n' ' ' | tr -s '[:space:]' ' ' \
+    | grep -qiE "Want to autocompact at [0-9][0-9,.kKmM]* tokens instead\? Your model doesn.t change\. Switch back any time with /autocompact"
+}
+
 # jg_busy_pi_launch_prompt_tail: Pi's project-trust dialog. Live-verified on
 # pi 0.86.1 (2026-09-22) in a fresh untrusted worktree carrying a project-local
 # .pi/extensions/ file (the shape a real ship/scout spawn always launches
