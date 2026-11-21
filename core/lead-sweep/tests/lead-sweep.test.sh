@@ -20,7 +20,7 @@
 #    waited-for agent that is gone raises one P1 alert to Main at once; a lane whose head is already on the trunk is finished whatever its
 #    exit file or read steer says (it is torn down), while an unread steer or unlanded work still keeps it;
 # q) a landed lane that kept its exit file and a pending backlog close finishes on one beat: its ticket closes, the close record and the exit
-#    file go, and unlanded work is never touched;
+#    file go, its approved dependent slice starts, and a slice waiting on unlanded work stays queued;
 # p) a parked lane's lead owns the decision a park leaves: its head on the trunk cleans the park record, a lane with a record again
 #    clears the stale one, and every other parked lane raises ONE alert after the recheck window that names its branch and the next
 #    step (land, re-prove or drop), rung again only when that step changes and resolved when the work lands.
@@ -308,29 +308,62 @@ check "p: its obligation is gone with it" "$( [ -e "$FM/data/lead-sweep/pp2.park
 # A third fixture home has a real backlog, and the real replay runs.
 FM=$d/fm3; P=$FM/projects/proj; mkdir -p "$FM/state" "$FM/data" "$FM/config" "$P"; ln -sn "$SRC/../../bin" "$FM/bin"; ln -sn "$SRC/../../core" "$FM/core"
 : > "$FM/config/backlog-intake-loose"
+printf -- '- proj [local-trunk +yolo] - fixture (added 2026-11-22)\n' > "$FM/data/projects.md"
 git -C "$P" init -q; echo 1 > "$P/f"; git -C "$P" add f; git -C "$P" commit -qm base; git -C "$P" rev-parse trunk > "$FM/state/trunk-tip-proj"
 bl() { (cd "$FM" && JG_HOME="$FM" JG_CONFIG_OVERRIDE="$FM/config" "$FM/bin/jg-backlog.sh" "$@"); }
 rowstate() { bl show "$1" 2>/dev/null | sed -n 's/^  state: *//p' | head -1; }
-for t in q1 q2 q3; do bl add "$t" "[feature] fixture $t" --priority 1 --kind ship --repo demo --body "fixture" >/dev/null; bl start "$t" >/dev/null; done
+for t in q1 q2 q3; do bl add "$t" "[feature] fixture $t" --priority 1 --kind ship --repo proj --body "fixture" >/dev/null; bl start "$t" >/dev/null; done
 # q1: its head is on the trunk and its agent was started again after the done line (exit file newer than the status); its record is still there
 lane q1 ship 'done [at=1]: ready'; stamp q1; onto q1; date +%s > "$FM/state/q1.exit"
 # q2: teardown removed the record and died before the close landed: the close record and the exit file are all that is left
-printf 'task=q2\nspawn_gen=g-q2\n' > "$FM/state/q2.meta"
+lane q2 ship 'done [at=1]: ready' 'spawn_gen=g-q2'; onto q2
 (. "$FM/bin/jg-wake-lib.sh"; . "$FM/bin/jg-backlog-lib.sh"; . "$FM/bin/jg-backlog-transition-lib.sh"
  jg_backlog_close_marker_write "$FM/state" q2 "$FM/data" g-q2 --note local-trunk) || { say "FAIL: q: could not write the close record"; fails=$((fails + 1)); }
 rm -f "$FM/state/q2.meta"; date +%s > "$FM/state/q2.exit"
 # q3: unlanded work that is waited for stays exactly as it is
 lane q3 ship 'done [at=1]: ready'; stamp q3; date +%s > "$FM/state/q3.exit"
+
+# Two approved wave-2 slices, one per base. Use the real store, approval, and dispatcher.
+export JG_AUTO_DISPATCH_SPAWN=$FM/spawn
+export JG_POOL_RESERVE_STATUS=true   # the fixture pool has no leased copies
+cat > "$JG_AUTO_DISPATCH_SPAWN" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' 'kind=ship' > "$JG_STATE_OVERRIDE/$1.meta"
+STUB
+chmod +x "$JG_AUTO_DISPATCH_SPAWN"
+printf '%s\n' on > "$FM/config/auto-dispatch"
+printf '%s\n' 1 > "$FM/config/lane-target"
+dispatch=$FM/state/auto-dispatch.check.sh
+printf '#!/usr/bin/env bash\nexec bash %q check %q\n' "$FM/core/auto-dispatch/dispatch.sh" "$FM" > "$dispatch"
+chmod 700 "$dispatch"
+JG_HOME="$FM" JG_STATE_OVERRIDE="$FM/state" "$FM/bin/jg-check-register.sh" auto-dispatch >/dev/null
+for base in q2 q3; do
+  slice=next-$base
+  bl add "$slice" "[feature] dependent on $base" --priority 1 --kind ship --repo proj --body fixture >/dev/null
+  JG_HOME="$FM" python3 -I "$FM/core/item-store/adapters/bd_compat.py" dep add "$slice" "$base" >/dev/null
+  bl approve-dispatch "$slice" --harness codex --model fixture --effort high >/dev/null
+  mkdir -p "$FM/data/$slice"
+  printf '%s\n' 'Delivery contract: mode=local-trunk' > "$FM/data/$slice/brief.md"
+done
+JG_STATE_OVERRIDE="$FM/state" "$dispatch" >/dev/null
+check "q: the first dispatch pass starts neither blocked slice" "$(find "$FM/data/auto-dispatch" -name 'next-*.start.*' | wc -l | tr -d ' ')" 0
 check "q: the fixture left q2's ticket in flight with its close pending" "$(rowstate q2) $([ -e "$FM/state/q2.backlog-close" ] && echo pending)" "in_flight pending"
 sweep
 check "q: the landed lane with an exit file is torn down on that beat" "$(tore q1)" 1
-check "q: the pending close finished: the ticket is closed" "$(rowstate q2 | cut -d' ' -f1)" done
+check "q: the pending close finished: the ticket is closed" "$(rowstate q2 | cut -d' ' -f1)" "done"
 check "q: the close record is gone" "$([ -e "$FM/state/q2.backlog-close" ] && echo pending || echo gone)" gone
 check "q: the exit file is gone" "$([ -e "$FM/state/q2.exit" ] && echo kept || echo gone)" gone
 check "q: it says so once" "$(grep -c "^lead-sweep: q2's recorded backlog close was finished" "$d/out")" 1
+for _ in $(seq 1 60); do
+  grep -qs '^result=started$' "$FM/data/auto-dispatch/next-q2.start.1" && break
+  sleep 0.1
+done
+check "q: recovering the landed base starts its approved dependent on the same beat" "$(sed -n 's/^result=//p' "$FM/data/auto-dispatch/next-q2.start.1" 2>/dev/null || true)" started
+check "q: the slice whose base is unlanded stays queued" "$([ -e "$FM/data/auto-dispatch/next-q3.start.1" ] && echo started || echo queued)" queued
 check "q: unlanded work is not torn down and keeps its exit file" "$(tore q3) $([ -e "$FM/state/q3.exit" ] && echo kept)" "0 kept"
 check "q: its ticket is still in flight" "$(rowstate q3)" in_flight
 sweep
 check "q: a second beat prints nothing about q2" "$(grep -c 'q2' "$d/out" || true)" 0
+check "q: there is one start for the unblocked slice" "$(find "$FM/data/auto-dispatch" -name 'next-q2.start.*' | wc -l | tr -d ' ')" 1
 [ "$fails" -eq 0 ] || { say "FAILED: $fails"; exit 1; }
 say "PASS: lead-sweep"

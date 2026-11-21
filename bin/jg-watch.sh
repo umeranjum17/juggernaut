@@ -4160,16 +4160,10 @@ store_pages_doorbell() {
 # inline run (core/auto-dispatch/dispatch.sh), because this start has no reader. The check holds its own lock, so a start
 # while a pass runs is folded into it.
 dispatch_check_start() {
-  local snapshot
   [ "$(age_of "$STATE/.last-dispatch-check")" -ge "$DISPATCH_INTERVAL" ] || return 0
-  jg_custom_check_snapshot_prepare "$STATE" auto-dispatch || { jg_custom_check_snapshot_cleanup; return 0; }
-  snapshot=$JG_CUSTOM_CHECK_SNAPSHOT
-  JG_CUSTOM_CHECK_SNAPSHOT=
-  touch "$STATE/.last-dispatch-check"
-  local -a detach=(nohup)
-  ! command -v setsid >/dev/null 2>&1 || detach=(setsid nohup)
-  # shellcheck disable=SC2016 # the detached shell expands its own argument
-  JG_DISPATCH_DETACHED=1 "${detach[@]}" bash -c 'bash "$1"; rm -f -- "$1"' _ "$snapshot" >/dev/null 2>&1 </dev/null &
+  if JG_DISPATCH_DETACHED=1 jg_custom_check_detach "$STATE" auto-dispatch; then
+    touch "$STATE/.last-dispatch-check"
+  fi
 }
 
 # The captain's board answers must reach Main within a minute, so they do not

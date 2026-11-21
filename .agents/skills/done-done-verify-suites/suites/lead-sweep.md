@@ -5,3 +5,7 @@ Lead sweep: run `done-done run -- bash core/lead-sweep/tests/lead-sweep.test.sh`
 Capacity-refusal ownership: run `done-done run lead-sweep-end-states` (`bash journeys/lead-sweep-end-states.sh`), which drives `core/lead-sweep/lead-sweep.sh` and `bin/jg-alert.sh` with synthetic Git branches and isolated state.
 It proves that a resolved unlanded lane and a refused cleanup or park retain a generation-bound lead action, changed refusals preserve the alert age and deliver their new reason, a lost slot or command success cannot settle the action, unread input prevents parking, unknown generations remain explicit, and a failed retention destination is retried.
 The command records `lead-sweep-end-states.log` and `steps.json`; it proves no actual pool return, ignored-artifact restore, eligible dispatch or shipment (screen: none).
+
+Blitz next wave: the lead-sweep command above runs the real ticket close, dependency reader, approval and registered auto-dispatch check against two approved slices.
+One sweep recovers the landed base's pending close and dispatches its dependent exactly once, while the slice that depends on an unlanded base stays queued.
+The pool inventory and worker launch use fixture data (screen: none).

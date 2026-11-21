@@ -924,10 +924,26 @@ jg_backlog_close_event() {  # <id> [close args]
   printf '%s\n' "${asked%% *}"
 }
 
+# A durable close can unblock approved work, whether it came from teardown or replay.
+# The dispatch check owns coalescing with any pass that read the backlog before the close.
+jg_backlog_close_kick_dispatch() {  # <state-dir> <data-dir>
+  local state=$1 data=$2 home=${JG_HOME:-${2%/*}} config
+  config=${JG_CONFIG_OVERRIDE:-$home/config}
+  [ "${JG_BACKLOG_CLOSE_DISPATCH:-1}" != 0 ] && [ -x "$state/auto-dispatch.check.sh" ] || return 0
+  [ "$(awk 'NF { print $1; exit }' "$config/auto-dispatch" 2>/dev/null)" = on ] || return 0
+  # Load the check libraries in their own process so their globals cannot affect the close caller.
+  # shellcheck disable=SC2016 # The child shell expands its own arguments.
+  JG_HOME="$home" JG_STATE_OVERRIDE="$state" JG_DATA_OVERRIDE="$data" JG_CONFIG_OVERRIDE="$config" \
+    JG_DISPATCH_DETACHED=1 bash -c '
+      . "$1/jg-pr-lib.sh" && . "$1/jg-check-lib.sh" &&
+        jg_custom_check_detach "$JG_STATE_OVERRIDE" auto-dispatch
+    ' _ "${BASH_SOURCE[0]%/*}"
+}
+
 jg_backlog_close_transition() {
   local meta=$1 marker=$2 data=$3 id=$4 state=$5
   shift 5
-  local move_rc=0 event
+  local move_rc=0 event closed=0
   event=$(jg_backlog_close_event "$id" "$@")
   "${BASH_SOURCE[0]%/*}/jg-move.sh" --shadow "$id" "$event" >/dev/null 2>&1 || move_rc=$?
   if [ "$move_rc" -eq 1 ]; then  # jg-move.sh could not write data/moves.log; nothing is removed or closed yet
@@ -935,7 +951,9 @@ jg_backlog_close_transition() {
     return 1
   fi
   [ -z "$meta" ] || jg_backlog_record_remove "$meta" "task record" "$state" || return 1
-  if ! jg_backlog_done "$data" "$id" "$@"; then
+  if jg_backlog_done "$data" "$id" "$@"; then
+    closed=1
+  else
     # A backlog that never held this row has nothing left to close, which is
     # what a close asks for; a lane dispatched with no row, or a fixture home,
     # reaches teardown exactly like that. Any other failure stays a failure.
@@ -944,7 +962,8 @@ jg_backlog_close_transition() {
       *) return 1 ;;
     esac
   fi
-  jg_backlog_record_remove "$marker" "pending-close record" "$state"
+  jg_backlog_record_remove "$marker" "pending-close record" "$state" || return 1
+  [ "$closed" -eq 0 ] || jg_backlog_close_kick_dispatch "$state" "$data" || :
 }
 
 # The captain-held twin of the close transition: same record, same ordering,

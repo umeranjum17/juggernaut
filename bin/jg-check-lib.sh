@@ -76,6 +76,18 @@ jg_custom_check_snapshot_cleanup() {
   JG_CUSTOM_CHECK_SNAPSHOT=
 }
 
+# Start a registered check without waiting for it. The child owns the snapshot.
+jg_custom_check_detach() {  # <state dir> <check id>
+  local snapshot
+  local -a detach=(nohup)
+  jg_custom_check_snapshot_prepare "$@" || { jg_custom_check_snapshot_cleanup; return 1; }
+  snapshot=$JG_CUSTOM_CHECK_SNAPSHOT
+  JG_CUSTOM_CHECK_SNAPSHOT=
+  ! command -v setsid >/dev/null 2>&1 || detach=(setsid nohup)
+  # shellcheck disable=SC2016 # the detached shell expands its own argument
+  "${detach[@]}" bash -c 'bash "$1"; rm -f -- "$1"' _ "$snapshot" >/dev/null 2>&1 </dev/null &
+}
+
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
 [ "$_jg_d" != "${BASH_SOURCE[0]}" ] || _jg_d=.

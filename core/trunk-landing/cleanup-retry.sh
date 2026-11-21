@@ -33,9 +33,9 @@ cleanup_refusal_class() {  # <teardown output>
 }
 
 # One attempt. Prints `cleaned`, `time <why>` or `final <reason>`; the lane's state file is the caller's to write.
-cleanup_attempt() {  # <task-id>
+cleanup_attempt() {  # <task-id> [<kick-dispatch>]
   local out
-  out=$(JG_HOME="$FMH" "$FMH/bin/jg-teardown.sh" "$1" 2>&1) && { echo cleaned; return 0; }
+  out=$(JG_HOME="$FMH" JG_BACKLOG_CLOSE_DISPATCH="${2:-${JG_LANDING_DISPATCH_KICK:-1}}" "$FMH/bin/jg-teardown.sh" "$1" 2>&1) && { echo cleaned; return 0; }
   case $(cleanup_refusal_class "$out") in
     time) printf 'time %s\n' "$(printf '%s' "$out" | tail -n 1 | cut -c1-200)" ;;
     *) cleanup_refusal_class "$out" ;;
@@ -60,8 +60,10 @@ cleanup_record() {  # <task-id> <result from cleanup_attempt> <head>...
 
 # Called at a lane's landed line. First attempt now; a refusal that needs time starts the detached ladder. Prints the state text.
 lane_cleanup() {  # <task-id> <head> [<head now on the branch>]
-  local id=$1 head=$2 now=${3:-} res text
-  res=$(cleanup_attempt "$id")
+  local id=$1 head=$2 now=${3:-} res text close_dispatch=
+  # A normal landing already kicks once after its whole batch. Recovered closes and retries kick at their own close.
+  case $LANDING_COMMAND in run|runbatch) close_dispatch=0 ;; esac
+  res=$(cleanup_attempt "$id" "$close_dispatch")
   text=$(cleanup_record "$id" "$res" "$head" "$now")
   case $res in
     time*) setsid nohup "$SELF" cleanup "$FMH" "$id" "$head" "$now" >/dev/null 2>&1 < /dev/null & ;;

@@ -70,6 +70,7 @@ case "${1:-}" in
 esac
 [ -d "$2/state" ] || { echo "trunk-landing: $2 has no state directory" >&2; exit 2; }
 FMH=$(cd "$2" && pwd -P)
+LANDING_COMMAND=$1
 STATE=$FMH/state
 DATA_DIR=$FMH/data
 MEM=$FMH/data/jg-trunk-landing
@@ -163,7 +164,7 @@ landed_lane() {  # <task-id> <head> <outbox text after the id and mode>
   res=$(lane_cleanup "$id" "$head" "$now"); rm -f -- "$STATE/$id.land-next"
   window_move "$(basename "$proj")" landed >/dev/null || :
   resume_waiters "$id"
-  DISPATCH_KICK_DUE=1
+  case $LANDING_COMMAND in run|runbatch) DISPATCH_KICK_DUE=1 ;; esac
   cleanup_outbox "landed $id ($lane_mode) $3; $res"
 }
 
