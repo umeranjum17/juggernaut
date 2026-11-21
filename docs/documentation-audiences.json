@@ -1318,6 +1318,38 @@
     {
       "path": "tests/fixtures/item-store-owner-calls/",
       "audience": "maintainer-verification"
+    },
+    {
+      "path": "core/agent-cli/contract/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/agent-cli/inventory/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/loop-stall/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/standards/typescript-react/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "core/standards/typescript-react/fixtures/README.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/muster/",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/muster-approval/",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/muster-survey/",
+      "audience": "maintainer-verification"
     }
   ]
 }
