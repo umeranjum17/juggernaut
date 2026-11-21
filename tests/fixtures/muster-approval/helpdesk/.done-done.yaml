@@ -1,0 +1,14 @@
+# done-done journeys of the help desk bot; each id is an objective id in docs/specs/helpdesk.md.
+journeys:
+  first-question-gets-answer: {tier: local, command: node journeys/run.ts first-question-gets-answer}
+  follow-up-question: {tier: local, command: node journeys/run.ts follow-up-question}
+  answer-without-source-refused: {tier: local, command: node journeys/run.ts answer-without-source-refused}
+  bot-hands-off-unknown: {tier: local, command: node journeys/run.ts bot-hands-off-unknown}
+  handoff-without-reason-refused: {tier: local, command: node journeys/run.ts handoff-without-reason-refused}
+  agent-closes-handoff: {tier: local, command: node journeys/run.ts agent-closes-handoff}
+  closed-handoff-cannot-be-accepted: {tier: local, command: node journeys/run.ts closed-handoff-cannot-be-accepted}
+  second-handoff-refused: {tier: local, command: node journeys/run.ts second-handoff-refused}
+  user-confirms-resolved: {tier: local, command: node journeys/run.ts user-confirms-resolved}
+  answer-after-resolve-refused: {tier: local, command: node journeys/run.ts answer-after-resolve-refused}
+  reopen-within-a-week: {tier: local, command: node journeys/run.ts reopen-within-a-week}
+  reopen-after-a-week-refused: {tier: local, command: node journeys/run.ts reopen-after-a-week-refused}
