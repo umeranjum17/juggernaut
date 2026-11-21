@@ -1295,6 +1295,9 @@ journeys:
   jg-codex-held-wake:
     tier: local
     command: bash tests/jg-codex-held-wake.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  idle-worker-redrive:
+    tier: local
+    command: bash tests/jg-idle-redrive.test.sh
   jg-codex-hook-layer-live-e2e:
     tier: local
     command: bash tests/jg-codex-hook-layer-live-e2e.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
