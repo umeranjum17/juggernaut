@@ -393,8 +393,70 @@ t5_pool_max_trees_follows_lane_limit() {
   pass "T5: jg_treehouse_clone_pool_prepare syncs max_trees to the home's copy cap cleanly for Main and Squad Lead"
 }
 
+# ---- T6: Each project gets one pool read and each pass gets one decision read ----
+t6_pass_reads_refresh() {
+  local d="$TMP_ROOT/t6" id rows
+  mkdir -p "$d/state/dispatch-approved" "$d/config" "$d/projects/alpha" "$d/projects/beta"
+  printf '4\n' > "$d/config/lane-target"
+  printf 'on\n' > "$d/config/auto-dispatch"
+  printf '4\n' > "$d/projects/alpha/leased"
+  : > "$d/projects/beta/unreadable"
+  cat > "$d/backlog" <<'SH'
+#!/usr/bin/env bash
+printf 'a1\talpha\nb1\tbeta\na2\talpha\nb2\tbeta\n'
+SH
+  cat > "$d/hold" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$JG_HOME/hold.calls"
+[ "$*" = 'blocking --batch' ] || exit 1
+[ ! -f "$JG_HOME/bad-batch" ] || exit 0
+printf 'blocking-batch: ok\n'
+SH
+  cat > "$d/status" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "${1##*/}" >> "$JG_HOME/status.calls"
+[ ! -f "$1/unreadable" ] || { echo 'pool is unreadable' >&2; exit 1; }
+if [ -f "$1/leased" ]; then
+  for ((slot = 1; slot <= $(< "$1/leased"); slot++)); do printf '%s leased\n' "$slot"; done
+fi
+SH
+  chmod +x "$d/backlog" "$d/hold" "$d/status"
+  for id in a1 b1 a2 b2; do
+    printf 'approved-at=1\nharness=claude\nmodel=sonnet\neffort=medium\n' > "$d/state/dispatch-approved/$id"
+    mkdir -p "$d/data/$id"
+    printf 'brief without a delivery contract\n' > "$d/data/$id/brief.md"
+  done
+
+  dispatch_t6() {
+    JG_AUTO_DISPATCH_BACKLOG="$d/backlog" JG_AUTO_DISPATCH_HOLD="$d/hold" JG_AUTO_DISPATCH_ALERT=/bin/true \
+      JG_AUTO_DISPATCH_RESERVE="$ROOT/core/pool-reserve/reserve.sh" JG_POOL_RESERVE_STATUS="$d/status" \
+      bash "$DISPATCH" pass "$d" >/dev/null
+  }
+  dispatch_t6 || fail 'T6: first dispatch pass failed'
+  assert_equals $'alpha\nbeta' "$(cat "$d/status.calls")" 'T6: one pool read per project across four candidates'
+  rows=$(cat "$d/data/auto-dispatch/rows.tsv")
+  for id in a1 a2; do assert_contains "$rows" "$id"$'\tskipped\tno free copy' "T6: $id sees a full pool"; done
+  for id in b1 b2; do assert_contains "$rows" "$id"$'\tskipped\tcopy count unknown' "T6: $id sees an unreadable pool"; done
+
+  rm -f "$d/projects/alpha/leased" "$d/projects/beta/unreadable"
+  printf '4\n' > "$d/projects/beta/leased"
+  dispatch_t6 || fail 'T6: second dispatch pass failed'
+  assert_equals $'alpha\nbeta\nalpha\nbeta' "$(cat "$d/status.calls")" 'T6: the next pass reads both projects again'
+  rows=$(tail -n 4 "$d/data/auto-dispatch/rows.tsv")
+  for id in a1 a2; do assert_contains "$rows" "$id"$'\tskipped\tthe brief has no delivery contract line' "T6: $id sees the freed pool"; done
+  for id in b1 b2; do assert_contains "$rows" "$id"$'\tskipped\tno free copy' "T6: $id sees the now-readable full pool"; done
+
+  : > "$d/bad-batch"
+  dispatch_t6 || fail 'T6: dispatch pass with an invalid batch failed'
+  assert_equals $'blocking --batch\nblocking --batch\nblocking --batch' "$(cat "$d/hold.calls")" 'T6: one decision read per pass even when the batch is invalid'
+  assert_equals 4 "$(lines_of "$d/status.calls")" 'T6: an invalid decision batch prevents pool admission reads'
+  assert_equals 4 "$(grep -c $'\tits open decisions could not be read$' "$d/data/auto-dispatch/rows.tsv")" 'T6: an invalid batch stops all four approved candidates'
+  pass 'T6: one decision batch per pass, one pool read per eligible project, and fresh reads on the next pass'
+}
+
 t1_batch_matches_per_row_parity
 t2_138_row_pass_single_read_and_fast
+t6_pass_reads_refresh
 t3_ready_stall_single_batched_read
 t4_running_pass_does_not_stall_check_cadence
 t5_pool_max_trees_follows_lane_limit

@@ -26,7 +26,7 @@ with open(d + "/export.jsonl", "w") as out:
                               "created_at": "2026-11-01T00:00:00Z", "labels": ["project:proj"], "metadata": {}}) + "\n")
 PY
 JG_HOME="$D" python3 "$ROOT/core/item-store/adapters/tickets.py" import --home main "$D/export.jsonl" >/dev/null || fail "the rows did not import"
-printf '#!/usr/bin/env bash\nexit 1\n' > "$D/hold"; chmod +x "$D/hold"   # no open decision for anyone
+printf '#!/usr/bin/env bash\necho "blocking-batch: ok"\n' > "$D/hold"; chmod +x "$D/hold"   # no open decision for anyone
 printf '3\n' > "$D/config/lane-target"; printf 'on\n' > "$D/config/auto-dispatch"
 touch "$D/state/.last-watcher-beat"
 

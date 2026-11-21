@@ -39,7 +39,7 @@ if [ "$(wc -l < "$here/spawn.$1")" -le "$(cat "$here/defer-$1" 2>/dev/null || ec
 fi
 printf 'kind=ship\n' > "$here/state/$1.meta"
 SH
-  printf '#!/usr/bin/env bash\nexit 1\n' > "$d/hold"
+  printf '#!/usr/bin/env bash\necho "blocking-batch: ok"\n' > "$d/hold"
   printf '#!/usr/bin/env bash\nprintf "proj off\\n"\n' > "$d/mode"
   chmod +x "$d/backlog" "$d/spawn" "$d/hold" "$d/mode"
   : > "$d/ready.tsv"

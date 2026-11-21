@@ -149,7 +149,7 @@ with open(d + "/export.jsonl", "w") as out:
                           "created_at": "2026-11-01T00:00:00Z", "labels": ["project:proj"], "metadata": {}}) + "\n")
 PY
   JG_HOME="$d" python3 "$ROOT/core/item-store/adapters/tickets.py" import --home main "$d/export.jsonl" > /dev/null || fail "the row did not import"
-  printf '#!/usr/bin/env bash\nexit 1\n' > "$d/hold"
+  printf '#!/usr/bin/env bash\necho "blocking-batch: ok"\n' > "$d/hold"
   chmod +x "$d/hold"
   printf '1\n' > "$d/config/lane-target"
   touch "$d/state/.last-watcher-beat"

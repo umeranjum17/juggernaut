@@ -34,7 +34,7 @@ if [ "$("$SCALE" target "$H")" = 4 ]; then ok "mode report: the target stays con
 printf 'max=20\nmode=act\n' > "$H/config/lane-scale"
 if [ "$("$SCALE" target "$H")" = 9 ]; then ok "mode act: the target is the limit"; else bad "act target"; fi
 # The real caller: the dispatch check reads the limit (9) minus the 2 working lanes, so all 7 tickets would start.
-printf '#!/usr/bin/env bash\nexit 1\n' > "$H/bin/hold"; chmod +x "$H/bin/hold"
+printf '#!/usr/bin/env bash\necho "blocking-batch: ok"\n' > "$H/bin/hold"; chmod +x "$H/bin/hold"
 printf 'h\n' > "$H/bin/noop"; chmod +x "$H/bin/noop"
 JG_AUTO_DISPATCH_BACKLOG=$TMP_ROOT/backlog JG_AUTO_DISPATCH_HOLD=$H/bin/hold JG_AUTO_DISPATCH_SCALE=$SCALE \
   JG_AUTO_DISPATCH_ALERT=$H/bin/noop bash "$ROOT/core/auto-dispatch/dispatch.sh" check "$H" >/dev/null 2>&1

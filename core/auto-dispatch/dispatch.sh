@@ -11,13 +11,13 @@
 # ticket that holds an approval record. A candidate is judged in this order, and the first reason that fits is the one written:
 #   1. no approval record  state/dispatch-approved/<id>, written by `bin/jg-backlog.sh approve-dispatch` (a worker is refused
 #      there); a line typed into a ticket body is never read, so it cannot approve anything;
-#   2. a captain decision is open and linked to it (`bin/jg-captain-hold.sh blocking`; an answer that cannot be established also stops it);
+#   2. a captain decision is open and linked to it (one `bin/jg-captain-hold.sh blocking --batch` read per pass; an unread batch stops it);
 #   3. it is not in the spawnable list (held, taken by a lane, closed, or its project is not this home's);
 #   4. no brief  data/<id>/brief.md is missing or empty;
 #   5. the approval record has no route (harness, model, effort);
 #   6. no free lane is left for it;
-#   7. no free copy: with the switch on, core/pool-reserve/reserve.sh `admit` refuses a copy of its project (the lane limit and the
-#      two copies kept for a red fix). That is a wait, not a failure: the row says so, nothing is spawned, and a later beat starts it.
+#   7. no free copy: with the switch on, core/pool-reserve/reserve.sh `admit` checks each eligible project once per pass (the lane
+#      limit and two copies kept for a red fix). If it refuses, the project waits for a later beat.
 # A ticket that passes all six is a "would start" row, in list order, as many as there are free lanes. The check writes no
 # brief and picks no route.
 # The switch is config/auto-dispatch: its first word `on` makes the check act, anything else or no file leaves it watch only.
@@ -128,21 +128,10 @@ approved_field() { sed -n "s/^$2=//p" "$APPROVED/$1" 2>/dev/null | tail -n 1; }
 # verdict <id>: sets VERDICT to "route<TAB>..." when the ticket passes reasons 1 to 5, else "why<TAB>...".
 VERDICT=
 verdict() {
-  local id=$1 rc route
+  local id=$1 route
   if [ -z "${APPROVED_EXISTS[$id]+x}" ]; then VERDICT=$'why\tno approval record'; return; fi
-  case "$BLOCK_BATCH_MODE" in
-    ok)
-      if [ -n "${BLOCKED_SET[$id]+x}" ]; then VERDICT=$'why\tan open decision is linked to it'; return; fi ;;
-    error)
-      VERDICT=$'why\tits open decisions could not be read'; return ;;
-    *)
-      "$HOLD" blocking "$id" >/dev/null 2>&1; rc=$?
-      case "$rc" in
-        0) VERDICT=$'why\tan open decision is linked to it'; return ;;
-        1) ;;
-        *) VERDICT=$'why\tits open decisions could not be read'; return ;;
-      esac ;;
-  esac
+  if [ "$decisions_read" -eq 0 ]; then VERDICT=$'why\tits open decisions could not be read'; return; fi
+  if [ -n "${BLOCKED_SET[$id]+x}" ]; then VERDICT=$'why\tan open decision is linked to it'; return; fi
   if [ -z "${SPAWNABLE_PROJECT[$id]+x}" ]; then
     VERDICT="why"$'\t'"not spawnable now (held, taken, closed, or not this home's project)"; return
   fi
@@ -150,6 +139,21 @@ verdict() {
   route="${APPROVED_HARNESS[$id]:-} ${APPROVED_MODEL[$id]:-} ${APPROVED_EFFORT[$id]:-}"
   case "$route" in ' '*|*'  '*|*' ') VERDICT=$'why\tthe approval record has no route'; return ;; esac
   VERDICT="route"$'\t'"$route"
+}
+
+# Cache the dispatch preflight result for this pass. The spawn checks capacity again before leasing a copy.
+pool_has_copy() {
+  local project=$1 admit_err
+  if [ -z "${POOL_WAIT_REASON[$project]+x}" ]; then
+    POOL_WAIT_REASON[$project]=
+    if [ -x "$RESERVE" ] && ! admit_err=$("$RESERVE" admit "$FMH" "$FMH/projects/$project" 2>&1 >/dev/null); then
+      case "$admit_err" in
+        *"cannot be counted"*) POOL_WAIT_REASON[$project]="copy count unknown (the pool could not be read; the next beat retries)" ;;
+        *) POOL_WAIT_REASON[$project]="no free copy (the copies left are kept for a red fix)" ;;
+      esac
+    fi
+  fi
+  [ -z "${POOL_WAIT_REASON[$project]}" ]
 }
 
 # switch_on: the first word of config/auto-dispatch is `on`.
@@ -412,21 +416,18 @@ if [ -e "$FMH/config/item-store" ] && [ -s "$tmp/approved-pairs" ]; then
   [ ! -f "$adapter" ] || python3 -I "$adapter" approve-batch < "$tmp/approved-pairs" >/dev/null 2>&1 || true
 fi
 
-# One batched hold/blocking read for all approved candidates; falls back to per-row blocking for stand-ins without --batch.
-BLOCK_BATCH_MODE=fallback
+# One decision read for all approved candidates. Only a successful batch with the expected header can clear a candidate.
+decisions_read=0
 declare -A BLOCKED_SET=()
-if [ -s "$tmp/approved" ]; then
-  block_rc=0
-  "$HOLD" blocking --batch < "$tmp/approved" > "$tmp/block-out" 2> "$tmp/block-err" || block_rc=$?
-  first_line=$(head -n 1 "$tmp/block-out" 2>/dev/null)
-  if [ "$block_rc" -eq 0 ] && [ "$first_line" = "blocking-batch: ok" ]; then
-    BLOCK_BATCH_MODE=ok
-    while IFS=$'\t' read -r bid _rest; do
-      [ -n "$bid" ] && BLOCKED_SET[$bid]=1
-    done < <(tail -n +2 "$tmp/block-out")
-  elif [ "$block_rc" -eq 2 ] && grep -q '^jg-captain-hold:' "$tmp/block-err" 2>/dev/null; then
-    BLOCK_BATCH_MODE=error
-  fi
+if [ -s "$tmp/approved" ] && "$HOLD" blocking --batch < "$tmp/approved" > "$tmp/block-out" 2>/dev/null; then
+  {
+    if IFS= read -r header && [ "$header" = "blocking-batch: ok" ]; then
+      decisions_read=1
+      while IFS=$'\t' read -r bid _rest; do
+        [ -n "$bid" ] && BLOCKED_SET[$bid]=1
+      done
+    fi
+  } < "$tmp/block-out"
 fi
 
 [ ! -x "$SCALE" ] || "$SCALE" check "$FMH" >/dev/null 2>&1   # the lane limit takes its tick on this beat
@@ -437,7 +438,7 @@ ACT=0; ! switch_on || ACT=1
 : > "$tmp/lead"; : > "$tmp/alerts"
 # List order is the store's priority order and is kept as it is (no sort); approved tickets the list lacks come last, and they never start.
 awk '!seen[$0]++' "$SPAWNABLE_IDS" "$tmp/approved" > "$tmp/ordered"
-declare -A LAST_EPOCH=() LAST_VERDICT=()
+declare -A LAST_EPOCH=() LAST_VERDICT=() POOL_WAIT_REASON=()
 if [ -s "$ROWS" ]; then
   while IFS=$'\t' read -r r_epoch r_id r_kind r_detail; do
     [ -n "$r_id" ] || continue
@@ -495,11 +496,8 @@ while IFS= read -r id; do
     route$'\t'*)
       if [ "$started" -ge "$free" ]; then detail="no free lane left for it"; waits=1
       elif [ "$ACT" -eq 0 ]; then started=$((started + 1)); kind="would start"; detail=${v#route$'\t'}
-      elif [ -x "$RESERVE" ] && ! admit_err=$("$RESERVE" admit "$FMH" "$FMH/projects/${SPAWNABLE_PROJECT[$id]}" 2>&1 >/dev/null); then
-        case "$admit_err" in
-          *"cannot be counted"*) detail="copy count unknown (the pool could not be read; the next beat retries)" ;;
-          *) detail="no free copy (the copies left are kept for a red fix)" ;;
-        esac
+      elif ! pool_has_copy "${SPAWNABLE_PROJECT[$id]}"; then
+        detail=${POOL_WAIT_REASON[${SPAWNABLE_PROJECT[$id]}]}
         waits=1
       elif detail=$(launch "$id" "${SPAWNABLE_PROJECT[$id]}" "${v#route$'\t'}"); then
         started=$((started + 1)); launched=$((launched + 1)); kind=starting; detail=${v#route$'\t'}
