@@ -48,6 +48,7 @@ from urllib.parse import unquote, urlsplit
 
 MARKDOWN_LINK_RE = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 HTML_LINK_RE = re.compile(r"\b(?:href|src)=[\"']([^\"']+)[\"']", re.IGNORECASE)
+PLACEHOLDER_RE = re.compile(r"<[^<>]+>")
 REQUIRED_TRACKED_PATTERNS = ["*.md", "*.mdx", "*.rst", "*.txt", "docs/examples/*"]
 
 
@@ -270,6 +271,8 @@ def validate(root: Path, inventory_path: Path) -> tuple[int, int]:
             continue
         source = root / path
         for raw, target in markdown_local_links(root, source):
+            if PLACEHOLDER_RE.search(normalized_link_value(raw)):
+                continue  # a template's <placeholder> target names no file yet
             checked_links += 1
             if not target.exists():
                 fail(f"unresolved local link in {path}: {raw}")

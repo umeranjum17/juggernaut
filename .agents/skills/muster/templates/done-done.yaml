@@ -1,0 +1,4 @@
+# .done-done.yaml keeps its own format; each journey id is an objective id in the spec's Objectives table.
+# A journey exits 1 and prints `assert: <name>` on a failed assertion, and 77 on a missing prerequisite.
+journeys:
+  <journey id>: {tier: local, command: <command run from the project root>}

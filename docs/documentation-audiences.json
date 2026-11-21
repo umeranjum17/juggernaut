@@ -808,6 +808,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/muster/",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/done-done-verify-suites/features/README.md",
       "audience": "agent-runtime"
     },

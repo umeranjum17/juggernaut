@@ -1,0 +1,24 @@
+Sources this skill adapts. Text reused from the first two keeps its licence notice in UPSTREAM-LICENSE.
+
+mattpocock-skills
+  source: https://github.com/mattpocock/skills/tree/abeeaf95660ba9e8b7c753eb38f441ca707a8823 (MIT)
+  pinned files, first 12 hex digits of sha256:
+    a146842ed93c  productivity/grilling/SKILL.md
+    944c92aa790e  engineering/domain-modeling/ADR-FORMAT.md
+    21dcc40cdec8  engineering/domain-modeling/GLOSSARY-FORMAT.md
+    0e7ac423bf2c  LICENSE
+  used for: the grilling method in questions.md (design tree, rounds, a recommended answer, "yes" accepts it), the glossary shape of templates/GLOSSARY.md (one term, its definition, _Avoid_), and the when-to-write-a-decision test behind the decision templates
+
+madr
+  source: https://github.com/adr/madr/tree/ba75bb1b20d42af5746b246ad348c202419ae681 (MADR 4.0.0, MIT OR CC0-1.0)
+  pinned files, first 12 hex digits of sha256:
+    24581feeb737  adr-template-minimal.md
+    940d45674563  adr-template.md
+    a2eef9f0961a  LICENSE.MIT
+  used for: the decision record shape of templates/adr.md and templates/adr-short.md (status, context, considered options, decision, consequences)
+  Juggernaut choice: a Confirmation section is required in every record; the MADR minimal template has none and the full template marks it optional
+
+Method only, no text copied
+  GitHub Spec Kit clarify (MIT), pinned 5260d798c567 clarify.md: impact times uncertainty ranking, adapted to five questions per round
+  OpenSpec (MIT): the ADDED, MODIFIED and REMOVED deltas of templates/change.md
+  Keep a Changelog 1.1.0 (MIT): the sections of templates/CHANGELOG.md
