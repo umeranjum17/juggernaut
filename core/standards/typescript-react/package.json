@@ -1,0 +1,1 @@
+{"name":"lint-lab-4","private":true,"type":"module","dependencies":{"@biomejs/biome":"2.6.8","@types/react":"19.3.0","eslint":"10.15.0","eslint-plugin-import-x":"4.18.1","eslint-plugin-react-hooks":"7.1.1","eslint-plugin-react-you-might-not-need-an-effect":"1.2.0","oxlint":"1.94.0","react":"19.1.10","typescript":"5.9.3","typescript-eslint":"8.73.0"}}
