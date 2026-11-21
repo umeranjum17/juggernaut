@@ -51,3 +51,5 @@ refused "a link to a missing heading" "unresolved local anchor in docs/item-stor
 printf '\nTemplate link [ADR](../adr/NNNN-<slug>.md).\n' >> "$lab/docs/item-store.md"
 out=$("$CHECK" --root "$lab" 2>&1) || fail "a link whose target holds a <placeholder> was refused: $out"
 pass "a link whose target holds a <placeholder> is skipped, not resolved"
+printf 'See [gone](lab-missing-target.md).\n' >> "$lab/docs/item-store.md"
+refused "a missing target beside a placeholder link" "unresolved local link in docs/item-store.md: lab-missing-target.md"
