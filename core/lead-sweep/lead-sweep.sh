@@ -27,6 +27,9 @@
 # A lane someone waits for is live and is never ended, parked or cleaned up by this sweep: an unread steer in its inbox, an open Recon critic
 # round, a steer newer than its last status line, or a relaunch after its done line (bin/jg-facts-lib.sh jg_fact_lane_waited). A done line does not
 # end it. When the agent of such a lane is already dead or missing, the sweep raises the worker-stopped alert (P1, bin/jg-worker-stop-alert.sh) at once.
+# A lane whose head is on the trunk is finished even when its agent was started again after the done line or it read a steer: only an unread steer
+# or an open Recon round keeps it. A backlog close teardown recorded but never landed, whose task record is gone, is replayed on every beat and
+# its leftover files retired (pending_closes), so a ticket never stays in flight until a restart.
 # The other ends of a lane (machine 10 request; worker expire and retire), each acted on once and never forced:
 #   done, not landed   the agent ends at once (`bin/jg-control.sh <id> exit`); the copy, branch and ticket stay;
 #   parked             a ship lane whose last line is a declared park (`paused ... reason=parked`) is parked on the next beat, at once: the
@@ -340,9 +343,37 @@ parked_recheck() {
   done
 }
 
+# pending_closes: a backlog close teardown recorded and never landed, whose task record is already gone, finishes on this beat: the close is
+# replayed under teardown's own locks (bin/jg-backlog-transition-lib.sh) and the files the lane left beside its record are retired, so a
+# landed lane's ticket never stays in flight until a restart. A lane with a record is left to its own teardown below, which owns that close.
+pending_closes() {
+  local marker id out
+  ls "$STATE"/*.backlog-close >/dev/null 2>&1 || return 0
+  for marker in "$STATE"/*.backlog-close; do
+    id=${marker##*/}; id=${id%.backlog-close}
+    [ ! -e "$STATE/$id.meta" ] && [ ! -L "$STATE/$id.meta" ] || continue
+    jg_fact_lane_lock_held "$STATE" "$id" && continue
+    out=$(JG_HOME="$FMH" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$FMH/data" bash -c '
+      set -u; FMH=$1; STATE=$2; marker=$3; id=$4
+      . "$FMH/bin/jg-wake-lib.sh"; . "$FMH/bin/jg-backlog-lib.sh"; . "$FMH/bin/jg-backlog-transition-lib.sh"; . "$FMH/bin/jg-task-files-lib.sh"
+      rc=0; jg_backlog_close_marker_replay_locked "$STATE" "$marker" "$FMH/data" || rc=$?
+      case $rc in
+        0) jg_task_files_retire "$STATE" "$id"; echo "closed ($JG_BACKLOG_CLOSE_REPLAY_RESULT)" ;;
+        3) echo busy ;;
+        *) echo "failed: $JG_BACKLOG_TRANSITION_ERROR" ;;
+      esac' _ "$FMH" "$STATE" "$marker" "$id" 2>&1 | tail -n 1)
+    case $out in
+      closed*) rm -f -- "$MEM/$id.reported"; echo "lead-sweep: $id's recorded backlog close was finished (${out#closed })" ;;
+      busy|'') ;;
+      *) refuse "$id" "has a recorded backlog close that could not be finished: ${out#failed: }" ;;
+    esac
+  done
+}
+
 # Oldest report first: a lane's status file modification time is when it last reported; a lane with no status line
 # is ordered by its record's age.
 parked_recheck
+pending_closes
 order=$(for m in "$STATE"/*.meta; do
   [ -f "$m" ] || continue
   i=${m##*/}; i=${i%.meta}
@@ -366,12 +397,22 @@ for id in $order; do
     rm -f -- "$MEM/$id.reported"
     printf '%s\n' "$lane_gen" > "$MEM/$id.generation"
   fi
+  landed_why=
   if [ -n "$line" ]; then
     # A lane someone waits for is live, whatever its last line says: nothing here ends it. A waited-for agent that is gone is a loss.
     waited=$(jg_fact_lane_waited "$STATE" "$id" "$(recon_phase "$id" "$kind")" agent_state "$meta")
     if [ "$(jg_fact_val "$waited" waited)" = yes ]; then
-      case $(agent_state "$meta") in dead|missing) lost_waited "$id" "$(jg_fact_val "$waited" reason)" ;; esac
-      continue
+      # Landed work owes its agent nothing: a lane whose head is on the trunk and whose only wait is its own later start (relaunched) or a steer
+      # it already read is finished, so its cleanup goes on. The teardown still refuses a copy with uncommitted or unlanded work, so nothing
+      # is lost; an unread steer or an open Recon round still keeps the lane live.
+      landed_why=
+      case $(jg_fact_val "$waited" reason) in
+        relaunched|steer-read) [ "$kind" != ship ] || [ ! -d "$proj" ] || landed_why=$(why_landed "$meta" "$proj" "$branch") ;;
+      esac
+      if [ -z "$landed_why" ]; then
+        case $(agent_state "$meta") in dead|missing) lost_waited "$id" "$(jg_fact_val "$waited" reason)" ;; esac
+        continue
+      fi
     fi
   fi
   case $line in
@@ -402,8 +443,9 @@ for id in $order; do
   esac
   # Any other lane is swept only when its agent is gone: its record is cleaned once its work has landed.
   if [ "$ended" = gone ]; then case $(agent_state "$meta") in dead|missing) ;; *) continue ;; esac; fi
-  why=
-  if [ "$kind" = scout ]; then
+  why=$landed_why
+  if [ -n "$why" ]; then :
+  elif [ "$kind" = scout ]; then
     [ ! -s "$FMH/data/$id/report.md" ] || ! scout_relayed "$meta" || why='its report exists and Main relayed it'
   else
     [ ! -d "$proj" ] || why=$(why_landed "$meta" "$proj" "$branch")

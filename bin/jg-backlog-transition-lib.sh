@@ -1331,3 +1331,24 @@ jg_backlog_close_marker_replay() {  # <state-dir> <marker-path> <authorized-data
   fi
   return 1
 }
+
+# Replay one pending close under the same two locks teardown holds (the task's control lock, then its record lock), so a replay never
+# runs beside a teardown of the same task. Needs bin/jg-wake-lib.sh in the caller. Returns 0 and sets JG_BACKLOG_CLOSE_REPLAY_RESULT
+# when it replayed, 3 when a lock is held (try again on the next beat), 1 when validation or recovery failed (the record is kept).
+# The one owner of this step for bootstrap (a restart) and for core/lead-sweep (every beat), so a close is never owed to a restart.
+jg_backlog_close_marker_replay_locked() {  # <state-dir> <marker-path> <authorized-data-dir>
+  local state=$1 marker=$2 label control_lock meta_lock rc
+  label=${marker##*/}; label=${label%.backlog-close}
+  control_lock="$state/.control-$label.lock"
+  meta_lock=$(jg_meta_lock_path "$state/$label.meta") || return 3
+  jg_lock_try_acquire "$control_lock" || return 3
+  if ! jg_lock_try_acquire "$meta_lock"; then
+    jg_lock_release "$control_lock"
+    return 3
+  fi
+  rc=0
+  jg_backlog_close_marker_replay "$state" "$marker" "$3" || rc=1
+  jg_lock_release "$meta_lock"
+  jg_lock_release "$control_lock"
+  return "$rc"
+}

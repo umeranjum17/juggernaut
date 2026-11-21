@@ -1388,7 +1388,7 @@ crew_dispatch_validate() {
 # snapshot's classifier and bin/jg-squad-lead-reconcile.sh's nudge stay as
 # backstops for what this cannot see. Never reads or writes another home.
 backlog_record_reconcile() {
-  local marker meta control_lock meta_lock id row label has_record=0 gate_status snapshot=0
+  local marker meta replay_rc meta_lock id row label has_record=0 gate_status snapshot=0
   # A fresh home with no state directory has no physical task records to pair.
   # Keep bootstrap diagnostics working without creating state just for a no-op.
   [ -e "$STATE" ] || [ -L "$STATE" ] || return 0
@@ -1419,14 +1419,10 @@ backlog_record_reconcile() {
       return 2
     fi
     label=$(basename "$marker" .backlog-close)
-    control_lock="$STATE/.control-$label.lock"
-    meta_lock=$(jg_meta_lock_path "$STATE/$label.meta") || continue
-    jg_lock_try_acquire "$control_lock" || continue
-    if ! jg_lock_try_acquire "$meta_lock"; then
-      jg_lock_release "$control_lock"
-      continue
-    fi
-    if jg_backlog_close_marker_replay "$STATE" "$marker" "$DATA"; then
+    replay_rc=0
+    jg_backlog_close_marker_replay_locked "$STATE" "$marker" "$DATA" || replay_rc=$?
+    [ "$replay_rc" -ne 3 ] || continue
+    if [ "$replay_rc" -eq 0 ]; then
       case "$JG_BACKLOG_CLOSE_REPLAY_RESULT" in
         closed)
           echo "BOOTSTRAP_INFO: closed the backlog item for $label that an interrupted cleanup left open"
@@ -1447,8 +1443,6 @@ backlog_record_reconcile() {
     else
       echo "BACKLOG_RECONCILE: $label: recorded backlog close could not be replayed: $JG_BACKLOG_TRANSITION_ERROR"
     fi
-    jg_lock_release "$meta_lock"
-    jg_lock_release "$control_lock"
   done
 
   # A home that owns no records has nothing to pair, so it never pays for a

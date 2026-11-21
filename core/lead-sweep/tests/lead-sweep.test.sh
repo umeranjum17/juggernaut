@@ -17,7 +17,10 @@
 # j) a lane that never started is left for 30 minutes, relaunched once, then parked; a lane that started is not relaunched;
 # k) a lane whose agent is gone is cleaned up when its work landed, and left alone when it did not;
 # o) a lane someone waits for (an unread steer, a steer read after its done line, a relaunch after it) is never ended, parked or torn down, and a
-#    waited-for agent that is gone raises one P1 alert to Main at once;
+#    waited-for agent that is gone raises one P1 alert to Main at once; a lane whose head is already on the trunk is finished whatever its
+#    exit file or read steer says (it is torn down), while an unread steer or unlanded work still keeps it;
+# q) a landed lane that kept its exit file and a pending backlog close finishes on one beat: its ticket closes, the close record and the exit
+#    file go, and unlanded work is never touched;
 # p) a parked lane's lead owns the decision a park leaves: its head on the trunk cleans the park record, a lane with a record again
 #    clears the stale one, and every other parked lane raises ONE alert after the recheck window that names its branch and the next
 #    step (land, re-prove or drop), rung again only when that step changes and resolved when the work lands.
@@ -33,7 +36,7 @@ FM=$d/fm; P=$FM/projects/proj; mkdir -p "$FM/state" "$FM/data" "$P"
 mkdir -p "$FM/bin" "$FM/core/machines" "$FM/config"; echo off > "$FM/config/wake-bus"
 cp "$SRC/../../bin/"jg-*.sh "$FM/bin/"
 cp -r "$SRC/../machines/observers" "$SRC/../machines/tables" "$SRC/../machines/styles" "$FM/core/machines/"
-ln -sn "$SRC/../bus" "$FM/core/bus"; ln -sn "$SRC/../wake" "$FM/core/wake"
+ln -sn "$SRC/../bus" "$FM/core/bus"; ln -sn "$SRC/../wake" "$FM/core/wake"; ln -sn "$SRC/../item-store" "$FM/core/item-store"
 git -C "$P" init -q; echo 1 > "$P/f"; git -C "$P" add f; git -C "$P" commit -qm base
 export STUB_LOG=$d/calls STUB_MERGED=$d/merged
 cat > "$d/teardown" <<'STUB'
@@ -226,12 +229,15 @@ lane w4 ship 'done [at=1]: ready'; stamp w4; mkdir -p "$FM/state/w4.inbox/handle
 lane w5 ship 'done [at=1]: ready'; stamp w5; onto w5; date +%s > "$FM/state/w5.exit"
 lane w6 ship 'done [at=1]: ready'; steer w6; stamp w6; onto w6; echo dead > "$FM/state/agent-w6"
 lane w7 ship 'done [at=1]: ready'; stamp w7
+lane w8 ship 'done [at=1]: ready'; stamp w8; date +%s > "$FM/state/w8.exit"
 sweep
 check "o: a done lane with an unread steer keeps its agent" "$(ends w1)" 0
 check "o: a landed lane with an unread steer is not torn down" "$(tore w2)" 0
 check "o: a declared park with an unread steer is not parked" "$(tore 'w3 --park')" 0
 check "o: a steer newer than the done line, already read, keeps the agent" "$(ends w4)" 0
-check "o: a lane relaunched after its done line is not torn down" "$(tore w5)" 0
+check "o: a landed lane relaunched after its done line is finished: torn down once" "$(tore w5)" 1
+check "o: a relaunched lane whose work has not landed is not torn down" "$(tore w8)" 0
+check "o: a landed lane with an unread steer is still not torn down" "$(tore w2)" 0
 check "o: a done lane nobody waits for is still ended once" "$(ends w7)" 1
 check "o: a waited-for agent that is gone raises one alert" "$(JG_HOME=$FM JG_STATE_OVERRIDE=$FM/state "$FM/bin/jg-alert.sh" list | grep -c '^worker-stopped--w6$')" 1
 check "o: the alert is P1 at Main's rung" "$(sed -n 's/^\(precedence\|rung\)=//p' "$FM/state/alerts/worker-stopped--w6.rec" | paste -sd' ')" "P1 3"
@@ -298,5 +304,33 @@ onto pp2; sweep
 check "p: a parked lane that lands later is cleaned up" "$( [ -e "$FM/state/pp2.parked" ] && echo kept || echo cleaned)" cleaned
 check "p: its one alert is closed with the landed commit as proof" "$(sed -n 's/^state=//p' "$FM/state/alerts/parked-lane--pp2-g-pp2.rec") $(sed -n 's/^proof=//p' "$FM/state/alerts/parked-lane--pp2-g-pp2.rec")" "resolved commit:$(git -C "$P" rev-parse fm/pp2)"
 check "p: its obligation is gone with it" "$( [ -e "$FM/data/lead-sweep/pp2.parked-owner" ] && echo kept || echo cleaned)" cleaned
+# q: the lanes of jg-6si-10 and jg-6si-12 were on the trunk, yet kept an exit file and a pending backlog close, so their tickets stayed in flight.
+# A third fixture home has a real backlog, and the real replay runs.
+FM=$d/fm3; P=$FM/projects/proj; mkdir -p "$FM/state" "$FM/data" "$FM/config" "$P"; ln -sn "$SRC/../../bin" "$FM/bin"; ln -sn "$SRC/../../core" "$FM/core"
+: > "$FM/config/backlog-intake-loose"
+git -C "$P" init -q; echo 1 > "$P/f"; git -C "$P" add f; git -C "$P" commit -qm base; git -C "$P" rev-parse trunk > "$FM/state/trunk-tip-proj"
+bl() { (cd "$FM" && JG_HOME="$FM" JG_CONFIG_OVERRIDE="$FM/config" "$FM/bin/jg-backlog.sh" "$@"); }
+rowstate() { bl show "$1" 2>/dev/null | sed -n 's/^  state: *//p' | head -1; }
+for t in q1 q2 q3; do bl add "$t" "[feature] fixture $t" --priority 1 --kind ship --repo demo --body "fixture" >/dev/null; bl start "$t" >/dev/null; done
+# q1: its head is on the trunk and its agent was started again after the done line (exit file newer than the status); its record is still there
+lane q1 ship 'done [at=1]: ready'; stamp q1; onto q1; date +%s > "$FM/state/q1.exit"
+# q2: teardown removed the record and died before the close landed: the close record and the exit file are all that is left
+printf 'task=q2\nspawn_gen=g-q2\n' > "$FM/state/q2.meta"
+(. "$FM/bin/jg-wake-lib.sh"; . "$FM/bin/jg-backlog-lib.sh"; . "$FM/bin/jg-backlog-transition-lib.sh"
+ jg_backlog_close_marker_write "$FM/state" q2 "$FM/data" g-q2 --note local-trunk) || { say "FAIL: q: could not write the close record"; fails=$((fails + 1)); }
+rm -f "$FM/state/q2.meta"; date +%s > "$FM/state/q2.exit"
+# q3: unlanded work that is waited for stays exactly as it is
+lane q3 ship 'done [at=1]: ready'; stamp q3; date +%s > "$FM/state/q3.exit"
+check "q: the fixture left q2's ticket in flight with its close pending" "$(rowstate q2) $([ -e "$FM/state/q2.backlog-close" ] && echo pending)" "in_flight pending"
+sweep
+check "q: the landed lane with an exit file is torn down on that beat" "$(tore q1)" 1
+check "q: the pending close finished: the ticket is closed" "$(rowstate q2 | cut -d' ' -f1)" done
+check "q: the close record is gone" "$([ -e "$FM/state/q2.backlog-close" ] && echo pending || echo gone)" gone
+check "q: the exit file is gone" "$([ -e "$FM/state/q2.exit" ] && echo kept || echo gone)" gone
+check "q: it says so once" "$(grep -c "^lead-sweep: q2's recorded backlog close was finished" "$d/out")" 1
+check "q: unlanded work is not torn down and keeps its exit file" "$(tore q3) $([ -e "$FM/state/q3.exit" ] && echo kept)" "0 kept"
+check "q: its ticket is still in flight" "$(rowstate q3)" in_flight
+sweep
+check "q: a second beat prints nothing about q2" "$(grep -c 'q2' "$d/out" || true)" 0
 [ "$fails" -eq 0 ] || { say "FAILED: $fails"; exit 1; }
 say "PASS: lead-sweep"
