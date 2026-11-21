@@ -2,7 +2,9 @@
 # jg-war-room.sh - run a /war-room: start its variant Recons together, move it by itself to the owner's plan approval, start /blitz.
 #
 # Usage: jg-war-room.sh start <council-ticket> --project <name> --angles <a,b,c> --depth <standard|deep>
-#                       --harness <h> --model <m> --effort <e> [--synthesis-depth <standard|deep>] [--no-variant-critics]
+#                       --harness <h> --model <m> --effort <e> [--synthesis-depth <standard|deep>] [--no-variant-critics] [--exception]
+#        jg-war-room.sh lite <council-ticket> [--project <name>] [--harness <h> --model <m> --effort <e>] [--exception]
+#        jg-war-room.sh check <council-ticket>
 #        jg-war-room.sh lenses <council-ticket> --project <name> --lenses <a,b,c> --harness <h> --model <m> --effort <e>
 #        jg-war-room.sh next <council-ticket>
 #        jg-war-room.sh approve <council-ticket> --words <the owner's words> [--by <who>]
@@ -18,6 +20,9 @@
 #      --ticket <row> --scout --harness <h> --model <m> --effort <e>` for each lane in the background (a scout takes no --mode
 #      or --yolo), and the command waits up to 300 s (JG_WAR_ROOM_WAIT) for each to have a task record or an exit code.
 # --depth is the depth of the variants. --synthesis-depth is the depth of the synthesis Recon `next` starts later (default: --depth).
+# start and lite backfill missing Muster depth and check approval before filing any lane. --exception requires the ticket's signed yes.
+# check reads an already recorded depth without changing the ticket. lite starts only the synthesis, using the council's project and
+# its previous dispatch profile when none is supplied.
 # --no-variant-critics makes `next` file no critic lane for a variant: that variant writes its own critic round (`Critic: self`, which
 # the gate accepts at standard depth only) and the synthesis keeps its separate critic. /war-room fast is
 # `--depth standard --synthesis-depth deep --no-variant-critics`; /war-room full is `--depth deep`.
@@ -28,8 +33,8 @@
 #   <angle>: <task> already live             the lane had a task record before this run; nothing was started
 #   <angle>: <task> not started: <reason>    the spawn's last line (an exit of 75 is a wait: run the command again)
 #   <angle>: not started: <reason>           no ticket or brief could be made
-# Exit 0 when every lane is live, 1 otherwise. Exit 2 for usage, an unknown council, depth or project, or --no-variant-critics with
-# deep variants, with nothing written.
+# Exit 0 when every lane is live, 1 otherwise. Exit 2 for an invalid command or a refused start. Before a refusal, only a missing
+# Muster depth may be recorded, and no lane is filed.
 #
 # lenses: /muster council's lanes, through the same ticket, brief and spawn path as `start`, with no pack and no plan behind it. One
 # lens lane for each lens (a lens is a lowercase word such as user, domain, architecture, skeptic or quality), a child of the council
@@ -77,7 +82,9 @@ export JG_HOME
 usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
 refuse() { printf 'jg-war-room: %s\n' "$*" >&2; exit 2; }
 USAGE="usage: jg-war-room.sh start <council-ticket> --project <name> --angles <a,b,c> --depth <standard|deep> --harness <h> --model <m> --effort <e>
-                                   [--synthesis-depth <standard|deep>] [--no-variant-critics]
+                                   [--synthesis-depth <standard|deep>] [--no-variant-critics] [--exception]
+       jg-war-room.sh lite <council-ticket> [--project <name>] [--harness <h> --model <m> --effort <e>] [--exception]
+       jg-war-room.sh check <council-ticket>
        jg-war-room.sh lenses <council-ticket> --project <name> --lenses <a,b,c> --harness <h> --model <m> --effort <e>
        jg-war-room.sh next <council-ticket>
        jg-war-room.sh approve <council-ticket> --words <the owner's words> [--by <who>]"
@@ -86,17 +93,77 @@ backlog() { "$SCRIPT_DIR/jg-backlog.sh" "$@"; }
 bd_() { python3 -I "$SCRIPT_DIR/../core/item-store/adapters/bd_compat.py" "$@"; }
 
 # --- The council and its lanes -----------------------------------------------------------------------------------
-COUNCIL='' COUNCIL_TITLE='' RUN=''
+COUNCIL='' COUNCIL_TITLE='' COUNCIL_REPO='' COUNCIL_BODY='' RUN=''
 PROJECT='' LANES='' DEPTH='' HARNESS='' MODEL='' EFFORT='' PROJECT_DIR='' SYNTH_DEPTH='' VARIANT_CRITICS=1
+ALIGNMENT='' MUSTER_SHA='' MUSTER_REFS='' EXCEPTION=0
 
 # open_council <council>: the ticket must exist; the files of its lanes live in data/war-room/<council>/.
 open_council() {
   local show
   COUNCIL=$1
-  show=$(backlog show "$COUNCIL" 2>&1) || refuse "council ticket $COUNCIL: $(printf '%s\n' "$show" | head -1)"
+  [[ $COUNCIL =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || refuse "invalid council ticket $COUNCIL"
+  show=$(backlog show "$COUNCIL" --full 2>&1) || refuse "council ticket $COUNCIL: $(printf '%s\n' "$show" | head -1)"
   COUNCIL_TITLE=$(printf '%s\n' "$show" | sed -n 's/^  title: *//p' | head -1)
   COUNCIL_TITLE=${COUNCIL_TITLE#\"}; COUNCIL_TITLE=${COUNCIL_TITLE%\"}
+  COUNCIL_REPO=$(ticket_field "$show" repo)
+  COUNCIL_BODY=$(ticket_field "$show" body)
   RUN=$DATA/war-room/$COUNCIL
+}
+
+ticket_field() {
+  local value
+  value=$(sed -n "s/^  $2: //p" <<<"$1" | head -n 1)
+  case $value in \"*) jq -r . <<<"$value" ;; *) printf '%s\n' "$value" ;; esac
+}
+
+# A caller that starts work may backfill. A read check only inspects the stored choice.
+muster_depth() {
+  local line options
+  line=$(grep -m1 '^Muster: ' <<<"$COUNCIL_BODY")
+  if [ -z "$line" ] && [ "$1" = backfill ]; then
+    line=$("$SCRIPT_DIR/jg-muster-depth.sh" record --ticket "$COUNCIL" --backfill --projects-dir "$PROJECTS") \
+      || refuse "could not record Muster depth on $COUNCIL"
+    line=${line#*: }
+  fi
+  local grammar='^Muster: (skip|light|full|complete)(( survey-first)?( backfilled)?( review)?) - .+'
+  [[ $line =~ $grammar ]] \
+    || refuse "record the depth with jg muster depth record --ticket $COUNCIL --depth <d> --reason <why>"
+  ALIGNMENT=${BASH_REMATCH[1]} options=${BASH_REMATCH[2]}
+  [[ $options != *' review' ]] \
+    || refuse "Muster needs review; run jg muster depth record --ticket $COUNCIL --depth <d> --reason <why>"
+}
+
+check_muster() {
+  local out folder key question version='version [0-9]+ \(([0-9a-f]{12})\)'
+  muster_depth "$1"
+  case $ALIGNMENT in skip|light) return 0 ;; esac
+  [ "$COUNCIL_REPO" = "$PROJECT" ] || refuse "ticket $COUNCIL names project $COUNCIL_REPO, not $PROJECT"
+  folder=$DATA/$COUNCIL/muster
+  if out=$("$SCRIPT_DIR/jg-muster-approval.sh" verify "$COUNCIL" "$PROJECT_DIR"); then
+    [[ $out =~ $version ]] || refuse "the approval did not report a manifest for $COUNCIL"
+    MUSTER_SHA=${BASH_REMATCH[1]}
+    grep -q "^check $ALIGNMENT " "$folder/manifest-$MUSTER_SHA.tsv" \
+      || refuse "the approved manifest does not match the recorded $ALIGNMENT depth of $COUNCIL"
+    MUSTER_REFS=$(printf 'Muster manifest SHA: %s\nMuster manifest: %s/manifest-%s.tsv\nMuster pack: %s/pack-%s' \
+      "$MUSTER_SHA" "$folder" "$MUSTER_SHA" "$folder" "$MUSTER_SHA")
+    [ ! -d "$folder/base-$MUSTER_SHA" ] || MUSTER_REFS+=$'\n'"Muster baseline: $folder/base-$MUSTER_SHA"
+  elif [ "$EXCEPTION" = 1 ]; then
+    out=$("$SCRIPT_DIR/jg-muster-approval.sh" exception "$COUNCIL") || refuse "$out"
+    IFS=$'\t' read -r key question < <(awk -F '\t' '$2 == "exception" && $1 > latest {latest=$1; line=$4 "\t" $5} END {print line}' "$folder/approvals.tsv")
+    [ -n "$key" ] && [ -n "$question" ] || refuse "the signed exception question could not be read for $COUNCIL"
+    MUSTER_REFS="Muster: let through by $question ($key)"
+  else
+    refuse "$out
+Run jg muster approve ask $COUNCIL \"$PROJECT\" <manifest-sha12> for the current pack."
+  fi
+}
+
+cmd_check() {
+  [ "$#" -eq 1 ] || refuse "$USAGE"
+  open_council "$1"
+  PROJECT=$COUNCIL_REPO PROJECT_DIR=$PROJECTS/$COUNCIL_REPO
+  check_muster read
+  printf '%s\n' "Muster: $ALIGNMENT${MUSTER_REFS:+$'\n'$MUSTER_REFS}"
 }
 
 # The council's children, read once and again after one is filed.
@@ -149,17 +216,18 @@ council_ref() {  # <what the lane does>: the problem is on the council ticket
 # write_brief <task> <row> <depth> <marker> <task text> <spec text>: prints why it could not, returns 1.
 # The spec text starts with the marker line (`Angle: <angle>` or `Role: <role>`); a brief that holds the marker and the depth is kept.
 write_brief() {
-  local task=$1 row=$2 depth=$3 marker=$4 brief=$DATA/$1/brief.md
+  local task=$1 row=$2 depth=$3 marker=$4 brief=$DATA/$1/brief.md spec=$6
+  [ -z "$MUSTER_REFS" ] || spec+=$'\n'"$MUSTER_REFS"
   if [ -e "$brief" ]; then
     if grep -qxF "$marker" "$brief" && { [ "$depth" = quick ] || grep -qxF "Recon depth: $depth" "$brief"; } \
       && ! grep -qE '\{TASK\}|\{JUGGERNAUT_SPEC\}' "$brief"; then
-      return 0
+      if [ -z "$MUSTER_REFS" ] || grep -qxF "${MUSTER_REFS%%$'\n'*}" "$brief"; then return 0; fi
     fi
     echo "a different brief is already at $brief"; return 1
   fi
   "$SCRIPT_DIR/jg-brief.sh" "$task" "$PROJECT" --scout --depth "$depth" --ticket "$row" >/dev/null 2>"$RUN/.brief.err" \
     || { echo "the brief was not written: $(last_line "$RUN/.brief.err")"; return 1; }
-  TASK_FILL=$5 SPEC_FILL=$6 awk '
+  TASK_FILL=$5 SPEC_FILL=$spec awk '
     BEGIN { t = ENVIRON["TASK_FILL"]; p = ENVIRON["SPEC_FILL"] }
     $0 == "{TASK}" { print t; next }
     $0 == "{JUGGERNAUT_SPEC}" { print p; next }
@@ -200,6 +268,10 @@ lane_ticket_text() {  # <name> -> sets L_TITLE L_ASK L_DONE
     L_TITLE="$1 lens"
     L_ASK="Draft the $1 lens of council $COUNCIL: the questions its idea raises, each with your answer when you can give one."
     L_DONE="The draft is recorded with bin/jg-recon-handoff.sh draft."
+  elif [ "$KIND" = lite ]; then
+    L_TITLE='synthesis Recon'
+    L_ASK="Write the synthesis of council $COUNCIL."
+    L_DONE="The report passes bin/jg-recon-gate.sh and orders/plan.json passes bin/jg-swarm-plan-check.sh."
   else
     L_TITLE="$1 variant Recon"
     L_ASK="Run the $1 variant Recon of council $COUNCIL and write its report."
@@ -222,6 +294,10 @@ lane_spec() {  # <name> <task> -> sets L_DEPTH L_MARKER L_TASKTXT L_SPEC
     L_DEPTH=quick L_MARKER="Lens: $1"
     L_TASKTXT=$(council_ref "draft the $1 lens of it.")
     L_SPEC=$(lens_spec "$1" "$2")
+  elif [ "$KIND" = lite ]; then
+    L_DEPTH=$SYNTH_DEPTH L_MARKER='Role: synthesis'
+    L_TASKTXT=$(council_ref 'write its synthesis.')
+    L_SPEC=$(printf '%s\n%s' "$L_MARKER" "$(synthesis_spec "$2")")
   else
     L_DEPTH=$DEPTH L_MARKER="Angle: $1"
     L_TASKTXT=$(council_ref "run the $1 variant Recon of it.")
@@ -230,11 +306,13 @@ lane_spec() {  # <name> <task> -> sets L_DEPTH L_MARKER L_TASKTXT L_SPEC
 }
 
 cmd_start() {
-  local need flag raw name row task why waited rc reason lane state status=0 lanes=() name_list=() L_TITLE L_ASK L_DONE L_DEPTH L_MARKER L_TASKTXT L_SPEC
+  local need flag raw name row task why waited rc reason lane state status=0 angles lanes=() name_list=() L_TITLE L_ASK L_DONE L_DEPTH L_MARKER L_TASKTXT L_SPEC
   [ "$KIND" = lenses ] && flag=--lenses || flag=--angles
   while [ $# -gt 0 ]; do
     case $1 in
-      --project|"$flag"|--harness|--model|--effort) ;;
+      --project|--harness|--model|--effort) ;;
+      "$flag") [ "$KIND" != lite ] || refuse "unknown flag $1" ;;
+      --exception) [ "$KIND" != lenses ] || refuse "unknown flag $1"; EXCEPTION=1; shift; continue ;;
       --depth|--synthesis-depth) [ "$KIND" = variants ] || refuse "unknown flag $1 (a lens lane has no depth)" ;;
       --no-variant-critics) [ "$KIND" = variants ] || refuse "unknown flag $1"; VARIANT_CRITICS=0; shift; continue ;;
       -*) refuse "unknown flag $1" ;;
@@ -248,6 +326,17 @@ cmd_start() {
     shift 2
   done
   [ -n "$COUNCIL" ] || refuse "the council ticket is missing"
+  open_council "$COUNCIL"
+  if [ "$KIND" = lite ]; then
+    local requested_project=$PROJECT requested_harness=$HARNESS requested_model=$MODEL requested_effort=$EFFORT requested_exception=$EXCEPTION
+    [ ! -s "$RUN/record" ] || read_record
+    KIND=lite LANES=synthesis DEPTH=deep SYNTH_DEPTH=deep VARIANT_CRITICS=0
+    PROJECT=${requested_project:-$COUNCIL_REPO}
+    HARNESS=${requested_harness:-$HARNESS} MODEL=${requested_model:-$MODEL} EFFORT=${requested_effort:-$EFFORT}
+    [ "$requested_exception" = 0 ] || EXCEPTION=1
+  fi
+  PROJECT_DIR=$PROJECTS/$PROJECT
+  [ "$KIND" != lite ] || check_muster backfill
   [ "$KIND" = lenses ] && DEPTH=quick
   for need in PROJECT LANES DEPTH HARNESS MODEL EFFORT; do
     [ -n "${!need}" ] || refuse "$([ "$need" = LANES ] && echo "$flag" || echo "--$(printf '%s' "$need" | tr '[:upper:]' '[:lower:]')") is missing"
@@ -258,21 +347,24 @@ cmd_start() {
     SYNTH_DEPTH=${SYNTH_DEPTH:-$DEPTH}
     case $DEPTH in standard|deep) ;; *) refuse "--depth is standard or deep (got '$DEPTH')" ;; esac
     case $SYNTH_DEPTH in standard|deep) ;; *) refuse "--synthesis-depth is standard or deep (got '$SYNTH_DEPTH')" ;; esac
-    [ "$VARIANT_CRITICS" = 1 ] || [ "$DEPTH" = standard ] \
+    [ "$KIND" = lite ] || [ "$VARIANT_CRITICS" = 1 ] || [ "$DEPTH" = standard ] \
       || refuse "--no-variant-critics needs --depth standard: a deep Recon's critic may not be its own"
   fi
   case $WAIT in ''|*[!0-9]*) refuse "JG_WAR_ROOM_WAIT is a whole number of seconds" ;; esac
   PROJECT_DIR=$PROJECTS/$PROJECT
   [ -d "$PROJECT_DIR" ] || refuse "no project $PROJECT: $PROJECT_DIR is not a directory"
-  open_council "$COUNCIL"
+  [ "$KIND" != variants ] || check_muster backfill
   mkdir -p "$RUN" || refuse "cannot write $RUN"
   # What `next` needs to carry on from here; written before the first lane starts, so a draft that comes early finds it.
   if [ "$KIND" = lenses ]; then
     printf 'kind=lenses\ncouncil=%s\nproject=%s\nlenses=%s\ndepth=%s\nharness=%s\nmodel=%s\neffort=%s\n' \
       "$COUNCIL" "$PROJECT" "$LANES" "$DEPTH" "$HARNESS" "$MODEL" "$EFFORT" > "$RUN/record.tmp"
   else
-    printf 'council=%s\nproject=%s\nangles=%s\ndepth=%s\nharness=%s\nmodel=%s\neffort=%s\nsynthesis_depth=%s\nvariant_critics=%s\n' \
-      "$COUNCIL" "$PROJECT" "$LANES" "$DEPTH" "$HARNESS" "$MODEL" "$EFFORT" "$SYNTH_DEPTH" "$VARIANT_CRITICS" > "$RUN/record.tmp"
+    angles=$LANES
+    [ "$KIND" != lite ] || angles=''
+    printf 'kind=%s\ncouncil=%s\nproject=%s\nangles=%s\ndepth=%s\nharness=%s\nmodel=%s\neffort=%s\nsynthesis_depth=%s\nvariant_critics=%s\nexception=%s\n' \
+      "$KIND" "$COUNCIL" "$PROJECT" "$angles" "$DEPTH" "$HARNESS" "$MODEL" "$EFFORT" "$SYNTH_DEPTH" "$VARIANT_CRITICS" "$EXCEPTION" > "$RUN/record.tmp"
+    [ -z "$MUSTER_REFS" ] || printf '%s\n' "$MUSTER_REFS" >> "$RUN/record.tmp"
   fi
   mv "$RUN/record.tmp" "$RUN/record" || refuse "cannot write $RUN/record"
 
@@ -336,6 +428,7 @@ read_record() {
       kind) KIND=$value ;; project) PROJECT=$value ;; angles|lenses) LANES=$value ;; depth) DEPTH=$value ;;
       harness) HARNESS=$value ;; model) MODEL=$value ;; effort) EFFORT=$value ;;
       synthesis_depth) SYNTH_DEPTH=$value ;; variant_critics) VARIANT_CRITICS=$value ;;
+      exception) EXCEPTION=$value ;;
     esac
   done < "$RUN/record"
   SYNTH_DEPTH=${SYNTH_DEPTH:-$DEPTH}
@@ -403,6 +496,12 @@ step_critic() {  # <lane title> <lane task>
   fi
 }
 
+synthesis_spec() {
+  # shellcheck disable=SC2016
+  printf 'Run `strike-recon` at stage 1 and end with `op-order`: the work orders and the plan %s/%s/orders/plan.json, which `%s/bin/jg-swarm-plan-check.sh` must pass. Set the plan owner_ticket to %s.\n%s' \
+    "$DATA" "$1" "$JG_ROOT" "$COUNCIL" "$(recon_lines "$1")"
+}
+
 # b. Every variant past its gate, and no synthesis lane yet: the synthesis, with the three report paths.
 step_synthesis() {
   local all=1 task reports=''
@@ -411,12 +510,10 @@ step_synthesis() {
     all=0; [ -n "$WAITS" ] || WAITS="waits: $task $(phase_of "$task")"
   done
   [ "$all" = 1 ] || return 0
-  # shellcheck disable=SC2016  # the backquotes are the brief's own text
   run_lane synthesis "synthesis Recon" "Write the synthesis of council $COUNCIL from its variant reports." \
     "The report passes bin/jg-recon-gate.sh, its critic has closed every gap and orders/plan.json passes bin/jg-swarm-plan-check.sh." \
     "$SYNTH_DEPTH" "Role: synthesis" "$(council_ref "write the synthesis of its variant reports:$reports.")" \
-    "$(printf 'Run `strike-recon` at stage 1 on the variant reports above, and end with `op-order`: the work orders and the plan %s/<this task>/orders/plan.json, which `%s/bin/jg-swarm-plan-check.sh` must pass.\n%s' \
-      "$DATA" "$JG_ROOT" "$(recon_lines '<this task>')")" || return 0
+    "$(synthesis_spec '<this task>')" || return 0
   SYNTH_TASK=$LANE_TASK
   sed -i.bak "s|<this task>|$SYNTH_TASK|g" "$DATA/$SYNTH_TASK/brief.md" && rm -f "$DATA/$SYNTH_TASK/brief.md.bak"
 }
@@ -474,6 +571,7 @@ cmd_next() {
   [ "$KIND" != lenses ] || { next_lenses; return 0; }
   if [ -f "$RUN/approved" ]; then echo "approved: nothing is due"; return 0; fi
   lock_next || return 1
+  check_muster backfill
 
   IFS=',' read -ra angle_list <<< "$LANES"
   for raw in "${angle_list[@]}"; do
@@ -514,7 +612,7 @@ cmd_approve() {
   plan=$(cat "$RUN/plan-asked")
   if grep -q '^swarm: started' "$RUN/approved" 2>/dev/null; then echo "already started"; return 0; fi
   [ -f "$RUN/approved" ] || printf 'by: %s\nat: %s\nwords: %s\n' "$by" "$(date +%s)" "$words" > "$RUN/approved"
-  out=$("$SWARM" start "$plan" --harness "$HARNESS" --model "$MODEL" --effort "$EFFORT" 2>&1); rc=$?
+  out=$(JG_SWARM_COUNCIL="$COUNCIL" "$SWARM" start "$plan" --harness "$HARNESS" --model "$MODEL" --effort "$EFFORT" 2>&1); rc=$?
   printf '%s\n' "$out"
   [ "$rc" = 0 ] || { echo "jg-war-room: the swarm did not start (exit $rc); run approve again after fixing it" >&2; return 1; }
   printf 'swarm: started %s\n' "$(date +%s)" >> "$RUN/approved"
@@ -524,6 +622,9 @@ cmd_approve() {
 case ${1:-} in
   -h|--help) usage; exit 0 ;;
   start) shift; cmd_start "$@"; exit $? ;;
+  lite) shift; KIND=lite; cmd_start "$@"; exit $? ;;
+  check) shift; cmd_check "$@"; exit $? ;;
+  muster-depth) shift; [ "$#" -eq 1 ] || refuse "$USAGE"; open_council "$1"; muster_depth backfill; printf '%s\n' "$ALIGNMENT" ;;
   lenses) shift; KIND=lenses; cmd_start "$@"; exit $? ;;
   next) shift; cmd_next "$@"; exit $? ;;
   approve) shift; cmd_approve "$@"; exit $? ;;

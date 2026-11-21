@@ -1,0 +1,38 @@
+[
+  {
+    "question": "Which language should the bot use?",
+    "why": "The widget and the bot can share one language.",
+    "options": [
+      {"value":"a", "label":"TypeScript", "outcome":"Use one language for the bot and widget."},
+      {"value":"b", "label":"Python", "outcome":"Use a separate language for the bot."}
+    ],
+    "recommend":"a", "recommend_reason":"One language keeps the example small."
+  },
+  {
+    "question": "Where should the help pages live?",
+    "why":"The bot needs sources that small teams can maintain.",
+    "options":[
+      {"value":"a", "label":"One public site", "outcome":"Read the team's open website."},
+      {"value":"b", "label":"In the project", "outcome":"Ship the pages with the bot."}
+    ],
+    "recommend":"b", "recommend_reason":"The example can answer while offline."
+  },
+  {
+    "question": "Who should close an agent handoff?",
+    "why":"The handoff needs someone to own its last step.",
+    "options":[
+      {"value":"a", "label":"The agent", "outcome":"The person closes the handoff."},
+      {"value":"b", "label":"The bot", "outcome":"The bot closes it after an answer."}
+    ],
+    "recommend":"a", "recommend_reason":"The agent has the user's context."
+  },
+  {
+    "question": "Where should the conversation rating be stored?",
+    "why": "Reopening needs to clear the same rating that the conversation owns.",
+    "options": [
+      {"value":"a", "label":"On the conversation", "outcome":"Keep the score with the conversation."},
+      {"value":"b", "label":"In a ratings store", "outcome":"Keep scores in a separate store."}
+    ],
+    "recommend":"a", "recommend_reason":"The score has the same lifecycle as the conversation."
+  }
+]

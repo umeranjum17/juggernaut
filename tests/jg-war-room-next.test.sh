@@ -72,6 +72,7 @@ questions_of() { jg_test_backlog "$HOME_DIR" questions --ticket "$1" --json 2>/d
 new_council() {  # <id> [start flags...] -> sets V1 V2 V3 (the variant tasks)
   local id=$1; shift
   jg_test_add "$HOME_DIR" "$id" "[feature] War room council"
+  "$ROOT/bin/jg-muster-depth.sh" record --ticket "$id" --depth skip --reason "fixture startup" >/dev/null || fail "record skip"
   local out
   out=$(war_room start "$id" --project proj --angles alpha,bravo,gamma --depth standard --harness codex --model gpt-5.5 --effort high "$@") \
     || fail "$id: start should make three lanes live: $out"
@@ -207,6 +208,7 @@ pass "T6 fast: no variant critic, a deep synthesis, its own critic assigned"
 # T7: a refused combination writes nothing.
 council=jg-wnd
 jg_test_add "$HOME_DIR" "$council" "[feature] War room refusal"
+"$ROOT/bin/jg-muster-depth.sh" record --ticket "$council" --depth skip --reason "fixture startup" >/dev/null || fail "record skip"
 out=$(war_room start "$council" --project proj --angles alpha --depth deep --no-variant-critics --harness codex --model gpt-5.5 --effort high); rc=$?
 [ "$rc" = 2 ] || fail "T7 --no-variant-critics with deep variants should exit 2, exited $rc: $out"
 assert_contains "$out" "needs --depth standard" "T7 the refusal should name the cause: $out"

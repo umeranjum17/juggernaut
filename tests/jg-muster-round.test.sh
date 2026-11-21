@@ -104,6 +104,44 @@ test_round_posts_one_card_per_question_and_records_the_gate() {
   pass "round posts one multi-option card per question and records R1Qk -> its gate, card key, revision and question set"
 }
 
+test_council_questions_keep_their_ids_when_first_shown() {
+  local d data council lane out key gate
+  d=$(setup council-handoff)
+  data=$d/home/data
+  council=$data/war-room/$T
+  lane=$T-user
+  mkdir -p "$council" "$data/$lane"
+  printf 'kind=lenses\n' > "$council/record"
+  printf 'user\t%s\n' "$lane" > "$council/lanes"
+  cat > "$data/$lane/report.md" <<'EOF'
+## Questions
+- Q: Which language should the bot use? | A: | owner: yes
+- Q: Where should the documents live? | A: In the project | owner: no
+EOF
+  JG_WAR_ROOM_NEXT=0 run "$d" "$ROOT/bin/jg-recon-handoff.sh" draft "$lane" >/dev/null
+  run "$d" "$ROOT/bin/jg" muster council "$T" >/dev/null || fail 'merge the council'
+  out=$(mu "$d" round-status "$T" --json)
+  assert_equals false "$(jq -r '.rounds[0].complete' <<<"$out")" 'an unpresented owner question is outstanding'
+  out=$(chat "$d" 170 'yes to the rest')
+  assert_contains "$out" '0 presentations' 'an unpresented council draft cannot receive a reply'
+
+  round1 | jq '.[0:2]' > "$d/r1.json"
+  out=$(run "$d" "$ROOT/bin/jg" muster round "$T" --questions "$d/r1.json" --round 1 --doc "$(doc "$d")" 2>&1) \
+    || fail "first presentation of merged round 1 refused: $out"
+  key=$(card_for "$d" R1Q1)
+  gate=$(gate_for "$d" R1Q1)
+  [ -n "$key" ] && [ -n "$gate" ] || fail 'R1Q1 did not get a card and gate'
+  assert_equals '' "$(gate_for "$d" R1Q2)" 'an agreed answer needs no gate'
+  assert_equals 1 "$(jq '.items | length' "$(board "$d")")" 'only the unresolved question goes to the board'
+  shown "$d" "$d/r1.json" 1 >/dev/null || fail 'repeat of the merged round'
+  assert_equals "$key" "$(card_for "$d" R1Q1)" 'repeat keeps the first card'
+  out=$(chat "$d" 171 'R1Q1 b')
+  assert_contains "$out" 'closed R1Q1' 'the first shown choices bind at the original id'
+  assert_contains "$(cat "$(doc "$d")")" 'R1Q1: "Python" (revision 1)' 'the merged question keeps revision 1'
+  assert_equals true "$(mu "$d" round-status "$T" --json | jq -r '.rounds[0].complete')" 'the round is complete'
+  pass 'a merged council question keeps its id at its first board presentation'
+}
+
 test_a_card_the_rules_refuse_records_nothing() {
   local d out
   d=$(setup refused)
@@ -360,6 +398,7 @@ test_the_command_fragment_has_the_frozen_shape() {
 
 if [ -n "${JG_MUSTER_CASE:-}" ]; then "$JG_MUSTER_CASE"; exit 0; fi
 jg_test_run_cases test_round_posts_one_card_per_question_and_records_the_gate \
+  test_council_questions_keep_their_ids_when_first_shown \
   test_a_card_the_rules_refuse_records_nothing \
   test_a_single_board_pick_closes_only_its_own_gate \
   test_a_chat_note_closes_that_rounds_open_gates_only \

@@ -12,8 +12,8 @@
 #   jg-muster.sh repair <ticket>
 #
 # The method and the question standard are owned by .agents/skills/muster/SKILL.md; the frozen formats (the round
-# record of section 2) are .agents/skills/muster/formats.md. This script is the one writer of
-# data/<ticket>/muster/rounds.tsv and the one place a muster answer reaches a gate.
+# record of section 2) are .agents/skills/muster/formats.md. This script records presentations and answers in
+# data/<ticket>/muster/rounds.tsv. jg-muster-council.sh writes the draft questions before presentation.
 #
 # A ROUND is one ticket (the round ticket) with one card per question, never the yes/no card an armed hold posts.
 # `round` reads the questions file, a JSON array of one to five questions:
@@ -28,7 +28,7 @@
 # no second, yes/no card), and the gate id the backlog returned is looked up by the exact question text among the
 # ticket's open questions. R<round>Q<k> -> gate, the card key, the revision and the question set he saw are appended
 # to rounds.tsv. Only the gate id is ever fed to bin/jg-captain-hold.sh answers. Run again with the same file, `round`
-# posts only the questions that have no row yet.
+# posts only new or draft questions, keeping the council's question ids and leaving its agreed answers settled.
 #
 # AN ANSWER binds to the presentation it names, never to what happens to be open (formats.md section 2):
 #   --card   a board pick names its card; a card of an older revision closes nothing (stale).
@@ -284,7 +284,7 @@ record_answer() {  # <row> <value> <source> <taken> <words>: append the answered
 
 # ---- round ----------------------------------------------------------------------------------------------------------
 cmd_round() {
-  local ticket=${1:-} file='' round='' doc='' n i k text qids=() sha qset key rows
+  local ticket=${1:-} file='' round='' doc='' n i k text qids=() sha qset key rows prior
   [ -n "$ticket" ] || usage
   shift
   while [ $# -gt 0 ]; do
@@ -318,9 +318,16 @@ cmd_round() {
   qset=$(qset_of "${qids[@]}")
   for ((i = 0; i < n; i++)); do
     k=$((i + 1)); text=$(gate_text "$file" "$i"); sha=$(sha12 "$text")
-    if latest_row "R${round}Q$k" >/dev/null 2>&1; then
-      [ "$(col 7 "$(latest_row "R${round}Q$k")")" = "$sha" ] || die "refused: R${round}Q$k is already shown with other words; revise the round instead"
-      printf 'R%sQ%s: already shown, skipped\n' "$round" "$k"; continue
+    if prior=$(latest_row "R${round}Q$k"); then
+      if [ "$(col 10 "$prior")" = agent ]; then
+        printf 'R%sQ%s: agreed by the council, skipped\n' "$round" "$k"
+        continue
+      fi
+      if [ -n "$(col 4 "$prior")" ] || [ -n "$(col 5 "$prior")" ]; then
+        [ "$(col 7 "$prior")" = "$sha" ] || die "refused: R${round}Q$k is already shown with other words; revise the round instead"
+        printf 'R%sQ%s: already shown, skipped\n' "$round" "$k"
+        continue
+      fi
     fi
     post_card "$ticket" "$file" "$i" "$round" "$k" 1; key=$CARD_KEY
     if ! make_gate "$ticket" "$text" "$(jq -r --argjson i "$i" '.[$i].must // "plan-approval"' "$file")"; then
@@ -337,7 +344,7 @@ cmd_round() {
 # shellcheck disable=SC2016
 BIND_JQ="$JQ_DEFS"'
 . as {$words, $rows, $gates}
-| ($rows | map(select(.qid != "-"))) as $rs
+| ($rows | map(select(.qid != "-" and .gate != "" and .presented != ""))) as $rs
 | ($rs | map([.round, .revision]) | unique) as $pres
 | (reduce $rs[] as $r ({}; .[$r.qid] = $r)) as $latest
 | (reduce $rs[] as $r ({}; .[$r.qid] = ([(.[$r.qid] // 0), ($r.revision | tonumber)] | max))) as $newest
@@ -627,14 +634,18 @@ status_json() {  # <ticket>
   local gates rows
   gates=$(gates_json "$1"); rows=$(rows_json)
   jq -n --argjson g "$gates" --argjson r "$rows" "$JQ_DEFS"'
+    def gate_of($x):
+      if $x.taken == "agent" then {state: "closed", question: ""}
+      elif $x.gate == "" then {state: "draft", question: ""}
+      else $g[$x.gate] // {state: "missing", question: ""} end;
     ($r | map(select(.qid != "-"))) as $rs
     | (reduce $rs[] as $x ({}; .[$x.qid] = $x)) as $latest
     | {rounds: ($latest | to_entries | map(.value) | group_by(.round) | map(
         {round: .[0].round, revision: (map(.revision | tonumber) | max),
-         questions: (sort_by(.qid) | map(. as $x | ($g[$x.gate] // {state: "missing", question: ""}) as $gt
+         questions: (sort_by(.qid) | map(. as $x | gate_of($x) as $gt
            | {qid: $x.qid, gate: $x.gate, revision: ($x.revision | tonumber), state: $gt.state, answer: $x.answer, taken: $x.taken,
-              required: (optional($gt.question) | not), doc_written: ($x.doc_rev != "" or $x.answer == "")})),
-         complete: (all(.[]; . as $x | ($g[$x.gate] // {state: "missing", question: ""}) as $gt | ($gt.state != "open") or optional($gt.question)))})),
+              required: (optional($gt.question) | not), doc_written: ($x.doc_rev != "" or $x.answer == "" or $x.taken == "agent")})),
+         complete: (all(.[]; gate_of(.) as $gt | ($gt.state | IN("open", "draft") | not) or optional($gt.question)))})),
        owing_document: [$latest[] | select($g[.gate].state == "closed" and .doc_rev == "")| .qid],
        unbound: [$r[] | select(.answer == "unbound") | .presented]}'
 }

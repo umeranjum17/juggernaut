@@ -12,7 +12,7 @@ metadata:
 Runs independent Recons from different angles, then one synthesis that writes the report, the work orders and `orders/plan.json`.
 - `/war-room fast <problem>`: three variant Recons at `--depth standard`, started together, with no critic lane (each writes its own critic round); then the deep synthesis with its separate critic, and the dry run.
 - `/war-room full <problem>`: three deep variant Recons, a critic for each, the deep synthesis, its critic and the dry run, all at the strongest profile.
-- `/war-room lite <problem>`: only the synthesis Recon, its critic and the dry run.
+- `/war-room lite <problem>`: use `bin/jg-war-room.sh lite` to start the synthesis Recon, followed by its critic and the dry run.
 - `/war-room <problem>` with no word runs `fast` (the owner's pick, 20 Nov).
 
 ## Intake

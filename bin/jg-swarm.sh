@@ -19,6 +19,8 @@
 #
 # The owner order is --order, else the plan's `owner_order`: `Main<digits>` or the id of a [captain-ask] row of Main's backlog. Each filed
 # slice row names it (`Owner order: <ref>.`, bin/jg-plan-file.sh), which is what the owner-rules brief gate asks of a lane.
+# A plan's owner_ticket names the ticket that asked for the work. At full or complete depth the plan must carry that ticket's approved
+# Muster block and respect its charter order.
 #
 # Refused before the first write: a plan the plan check refuses (its `refused:` lines are printed), a slice whose project
 # has yolo off in its owner's home, no owner order or one that is neither MainNNN nor a [captain-ask] row, a Squad Lead home,
@@ -26,7 +28,8 @@
 #
 # Writes data/swarm/<plan>/swarm.json (state starting, then running) and records each finished step in `steps`:
 #   checked    plan check, yolo of each owner home, not a Squad Lead home (before the first write)
-#   copied     orders/ (read-only copies) and plan.json, the derived plan: the input plus on each slice body, order_path,
+#   copied     orders/ (read-only copies with approved pack references when applicable) and plan.json, the derived plan:
+#              the input plus on each slice body, order_path,
 #              order_sha256, goal, and on an owner-word slice word_row; at the top main_home, owner_homes and owner_order
 #   plan-rows  the plan row in Main and in each owner home that lacks it; each word row in Main and in its slice's owner home
 #   routed     bin/jg-plan-route.sh --dry-run, then the route itself; each slice's row and task go into the derived plan.
@@ -126,6 +129,27 @@ done < <(jq -r '.slices[] | [.owner_home, .project, .id] | @tsv' "$IN")
 [[ $ORDER =~ ^Main[0-9]+$ ]] || backlog show "$ORDER" --full 2>/dev/null | grep -qx '  ask: ask' \
   || refuse "the owner order \"$ORDER\" is neither MainNNN nor the id of a [captain-ask] row in this backlog"
 
+muster_context=''
+check_muster_plan() {
+  local ticket depth block
+  ticket=${JG_SWARM_COUNCIL:-$(jq -r '.owner_ticket // .muster.ticket // empty' "$IN")}
+  if [ -z "$ticket" ]; then
+    # An owner order grants dispatch authority. It may refer to a different ticket from the plan.
+    if [ ! -e "$DATA/swarm/$PLAN/swarm.json" ] && backlog show "$PLAN" >/dev/null 2>&1; then ticket=$PLAN
+    else return 0
+    fi
+  fi
+  depth=$("$SCRIPT_DIR/jg-war-room.sh" muster-depth "$ticket") || exit 2
+  case $depth in skip|light) return 0 ;; esac
+  block=$(jq -r '.muster.ticket // empty' "$IN")
+  [ -n "$block" ] || refuse "ticket $ticket is $depth and its plan has no muster block"
+  [ "$block" = "$ticket" ] || refuse "the plan's muster block names $block; its owner ticket is $ticket"
+  [ "$(jq -r '.muster.depth' "$IN")" = "$depth" ] || refuse "the plan's muster depth does not match $depth on $ticket"
+  muster_context=$("$SCRIPT_DIR/jg-war-room.sh" check "$ticket") || exit 2
+  "$SCRIPT_DIR/jg-muster-approval.sh" verify-plan "$ticket" "$IN" >&2 || exit 2
+}
+check_muster_plan
+
 # --- 2. the job: started in the background, or run here -------------------------------------------------------------------
 DIR=$DATA/swarm/$PLAN
 REC=$DIR/swarm.json DERIVED=$DIR/plan.json LOCK=$DIR/.run.lock LOG=$DIR/start.log
@@ -203,6 +227,7 @@ if ! done_step copied; then
     copy=$DIR/orders/$order
     mkdir -p "$(dirname "$copy")"
     cp -f "$(dirname "$IN")/$order" "$copy"
+    [ -z "$muster_context" ] || printf '\n\n## Approved Muster pack\n\n%s\n' "$muster_context" >> "$copy"
     chmod a-w "$copy"
     goal=$(awk '/^## Goal[[:space:]]*$/ { g = 1; next } g && /^#/ { exit } g && NF { print; exit }' "$copy")
     [[ $goal =~ ^([^.!?]*[.!?])([[:space:]]|$) ]] && goal=${BASH_REMATCH[1]}
