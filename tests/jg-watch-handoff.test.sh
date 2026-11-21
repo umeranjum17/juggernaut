@@ -164,8 +164,9 @@ SH
   done
   "$ROOT/bin/jg-watch-arm.sh" > "$dir/arm1.out" 2>&1 &
   arm1=$!
-  for ((i=0; i<300; i++)); do
-    grep -q '^watcher: started' "$dir/arm1.out" 2>/dev/null && break
+  # The arm prints its verdict once the first scan completes, inside its own confirmation budget; the bound only stops a hang.
+  for ((i=0; i<900; i++)); do
+    grep -qE '^watcher: (started|FAILED)' "$dir/arm1.out" 2>/dev/null && break
     sleep 0.1
   done
   grep -q '^watcher: started' "$dir/arm1.out" || fail "first arm never started: $(cat "$dir/arm1.out")"
@@ -174,8 +175,9 @@ SH
   : > "$dir/units"
   "$ROOT/bin/jg-watch-arm.sh" --take-over "$arm1" > "$dir/arm2.out" 2>&1 &
   arm2=$!
-  for ((i=0; i<300; i++)); do
-    grep -q '^watcher: started' "$dir/arm2.out" 2>/dev/null && break
+  # The arm prints its verdict once the first scan completes, inside its own confirmation budget; the bound only stops a hang.
+  for ((i=0; i<900; i++)); do
+    grep -qE '^watcher: (started|FAILED)' "$dir/arm2.out" 2>/dev/null && break
     sleep 0.1
   done
   grep -q '^watcher: started' "$dir/arm2.out" || fail "take-over never started: $(cat "$dir/arm2.out")"

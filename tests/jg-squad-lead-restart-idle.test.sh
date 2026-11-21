@@ -22,6 +22,7 @@ export PATH="$FAKEBIN:$PATH"
 mkdir -p "$FAKEROOT/bin"
 for f in "$ROOT"/bin/*; do ln -s "$f" "$FAKEROOT/bin/${f##*/}"; done
 ln -sn "$ROOT/toolchain.versions" "$FAKEROOT/toolchain.versions"
+ln -sn "$ROOT/core" "$FAKEROOT/core"  # the backlog reads of bin/ run core/item-store beside it
 rm -f "$FAKEROOT/bin/jg-control.sh" "$FAKEROOT/bin/jg-send.sh"
 cat > "$FAKEROOT/bin/jg-control.sh" <<'SH'
 #!/usr/bin/env bash

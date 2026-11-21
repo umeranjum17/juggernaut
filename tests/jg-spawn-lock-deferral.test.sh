@@ -156,7 +156,7 @@ live=$(jg_task_set_live_joiners "$LOCK")
 pass "T6 live joiners are listed and a dead joiner's entry is dropped"
 
 # T7: the check the forced teardown makes, with and without a live joiner. The teardown calls the same function and refuses on
-# any id it prints; bin/jg-teardown.sh carries the refusal text.
+# any id it prints; tests/jg-teardown.test.sh drives that refusal through a forced squad_lead teardown.
 sleep 30 & sleeper=$!
 disown "$sleeper" 2>/dev/null || true
 if [ -r "/proc/$sleeper/stat" ]; then
@@ -166,8 +166,6 @@ else
 fi
 printf 'pid=%s\nstart=%s\n' "$sleeper" "$sleeper_start" > "$LOCK.joined/jg-ld7"
 [ -n "$(jg_task_set_live_joiners "$LOCK")" ] || fail "T7 the teardown check does not see a live joiner"
-# shellcheck disable=SC2016 # The text to find holds a literal $joiners.
-grep -qF 'is publishing a task right now ($joiners)' "$ROOT/bin/jg-teardown.sh" || fail "T7 the teardown does not carry the joiner refusal"
 kill "$sleeper" 2>/dev/null; wait "$sleeper" 2>/dev/null || true
 [ -z "$(jg_task_set_live_joiners "$LOCK")" ] || fail "T7 the teardown check refuses with no live joiner"
 pass "T7 the teardown check refuses with a live joiner and goes on with none"

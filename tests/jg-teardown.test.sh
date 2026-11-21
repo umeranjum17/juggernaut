@@ -1743,6 +1743,38 @@ test_forced_squad_lead_child_scout_nested_clone_returns_clean() {
   pass "a forced squad_lead teardown returns a child scout copy with a nested clone clean"
 }
 
+# A spawn publishing into the squad_lead home joins its task set; a forced teardown refuses while that joiner lives, names it,
+# and changes nothing, then goes on once the joiner is gone.
+test_forced_squad_lead_refuses_while_a_spawn_joins_its_task_set() {
+  local case_dir home joined sleeper start rc
+  case_dir=$(make_case squad-lead-live-joiner)
+  write_meta "$case_dir" local-only squad_lead
+  home="$case_dir/squad-lead-home"
+  mkdir -p "$home/state" "$home/data" "$home/config" "$home/projects"
+  printf '%s\n' task-x1 > "$home/.jg-squad-lead-home"
+  printf '%s\n' "home=$home" >> "$case_dir/state/task-x1.meta"
+  add_treehouse_clean_fd "$case_dir"
+  sleep 30 & sleeper=$!
+  start=$(bash -c '. "$1/bin/jg-wake-lib.sh"; jg_task_set_pid_start "$2"' _ "$ROOT" "$sleeper")
+  joined="$home/state/.task-set.lock.joined"
+  mkdir -p "$joined"
+  printf 'pid=%s\nstart=%s\n' "$sleeper" "$start" > "$joined/jg-fresh"
+
+  rc=0
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  kill "$sleeper" 2>/dev/null; wait "$sleeper" 2>/dev/null || true
+  [ "$rc" -ne 0 ] || fail "squad-lead-live-joiner: forced teardown went on with a live joiner"
+  assert_grep "is publishing a task right now (jg-fresh)" "$case_dir/stderr" \
+    "squad-lead-live-joiner: the refusal does not name the live joiner"
+  [ -e "$case_dir/state/task-x1.meta" ] || fail "squad-lead-live-joiner: refusal erased the squad_lead record"
+  [ -d "$home" ] || fail "squad-lead-live-joiner: refusal removed the squad_lead home"
+
+  rc=0
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 0 "$rc" "squad-lead-live-joiner: forced teardown should go on once the joiner is gone"
+  pass "a forced squad_lead teardown refuses while a spawn joins its task set and goes on once it is gone"
+}
+
 # Return succeeds but leaves no readable worktree behind to verify.
 add_treehouse_that_removes_copy() {
   local case_dir=$1
@@ -5243,6 +5275,7 @@ test_ship_nested_clone_is_refused_and_bytes_stay
 test_dirty_return_warns_which_slot_was_lost
 test_dirty_return_warns_even_when_a_later_step_refuses
 test_forced_squad_lead_child_scout_nested_clone_returns_clean
+test_forced_squad_lead_refuses_while_a_spawn_joins_its_task_set
 test_forced_squad_lead_dirty_child_return_warns_and_completes
 test_return_that_removes_copy_warns_cannot_verify
 test_scout_ignored_files_survive_scratch_clean

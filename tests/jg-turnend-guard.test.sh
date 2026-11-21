@@ -322,6 +322,15 @@ make_squad_lead_dir() {
   printf '%s\n' "$dir"
 }
 
+# A lead whose watcher runs for real needs its required latency check wired and registered, as in a real lead home,
+# so the watcher rings nothing for it (bin/jg-required-checks.sh, bin/jg-check-register.sh).
+wire_lead_latency_check() {  # <dir>
+  if ! { printf '#!/bin/sh\n' > "$1/state/trunk-latency.check.sh" && chmod 0700 "$1/state/trunk-latency.check.sh" \
+    && JG_HOME="$1" JG_STATE_OVERRIDE="$1/state" bash "$ROOT/bin/jg-check-register.sh" trunk-latency >/dev/null; }; then
+    fail "could not wire the fixture lead's latency check"
+  fi
+}
+
 # A genuine linked `git worktree` of a base repo - the shape bin/jg-spawn.sh
 # always hands operator/scout tasks working on juggernaut itself. git-dir and
 # git-common-dir differ here, unlike a plain checkout.
@@ -651,17 +660,13 @@ test_hook_silent_in_idle_squad_lead_home() {
 # scan is what wakes it to dispatch them. An empty or all-held queue stays idle.
 test_hook_blocks_idle_squad_lead_with_ready_backlog() {
   local dir out status ids
-  if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
-    echo 'skip - the ready-work case needs a backlog: jg_test_beads_home asks for JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT'; return 0
-  fi
   dir=$(make_squad_lead_dir "$TMP_ROOT/hook-squad-lead-ready")
   mkdir -p "$dir/data" "$dir/config"
   : > "$dir/config/backlog-intake-loose"  # bare fixture items for the ready-work case
   jg_test_beads_home "$dir"
-  cp "$ROOT"/bin/jg-*-lib.sh "$ROOT/bin/jg-backlog.sh" \
-    "$ROOT/bin/jg-beads-view.py" "$ROOT/bin/jg-beads-write.py" "$ROOT/bin/jg-beads-followup.py" \
-    "$ROOT/bin/jg-beads-links.py" \
-    "$ROOT/bin/jg-ticket-key.sh" "$dir/bin/"
+  # The backlog writer runs from this home's own code, as in a real lead home: the whole bin/ beside the guard, and core/.
+  cp -R "$ROOT/bin/." "$dir/bin/"
+  ln -sn "$ROOT/core" "$dir/core"
   tasks() { local o; o=$(JG_HOME="$dir" "$dir/bin/jg-backlog.sh" "$@" 2>&1) || fail "fixture: tasks $*: $o"; }
   tasks add jg-held-one "held item"; tasks hold jg-held-one --reason "waiting for approval"
   out=$(run_hook "$dir" false); status=$?
@@ -1743,6 +1748,7 @@ midturn_cycle_pid() {  # <dir>: the live, identity-matched watcher with a fresh 
 test_autoarm_midturn_rearms_lead_without_turn_end() {
   local dir out status started elapsed first second
   dir=$(make_squad_lead_dir "$TMP_ROOT/midturn-lead")
+  wire_lead_latency_check "$dir"
   jg_test_track_watcher_state "$(cd "$dir" && pwd)/state"
   ln -s /bin/bash "$dir/fake-claude"
   printf 'kind=ship\n' > "$dir/state/task1.meta"

@@ -4437,9 +4437,12 @@ while :; do
   # Overdue first: the queue resurface below ends the cycle on the home's oldest unhandled row, and a row nobody consumes
   # would end every cycle there, so the slow sweep and the timers would never run. When the sweep is more than two
   # intervals late it runs here, before that exit; a row it queues is delivered by the normal wake path.
+  # A cycle sweeps at most once: the sweep further down skips when this one ran.
+  CYCLE_SWEPT=
   if [ "$(age_of "$STATE/.last-check")" -ge $((2 * CHECK_INTERVAL)) ]; then
     run_due_checks
     run_timers_tick
+    CYCLE_SWEPT=1
   fi
   own_queue_resurface || { echo "watcher: own wake-queue observation failed" >&2; exit 1; }
 
@@ -4699,7 +4702,7 @@ EOF
   # Never waited on: a slow feed export cannot hold the beacon (see the helper).
   comms_feed_sync_detached
 
-  run_due_checks
+  [ -n "$CYCLE_SWEPT" ] || run_due_checks
   if [ -n "$signal_wake" ]; then
     wake "$signal_wake"
   fi
@@ -4710,7 +4713,7 @@ EOF
   # next, so a continuous result stream cannot starve them.
   procevent_surface_queued
 
-  run_timers_tick
+  [ -n "$CYCLE_SWEPT" ] || run_timers_tick
   # Migration step 5c, live: the escalation workflow definition decides the owner
   # rung and the pause cadence for every open episode and queues that wake
   # (bin/jg-escalation-workflows.sh owns the contract). The ladder above keeps the

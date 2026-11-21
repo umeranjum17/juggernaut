@@ -104,7 +104,10 @@ jg_backlog_beads_write() {  # <config_dir> <a verb of bin/jg-beads-write.py> [ar
   case "${1:-}" in
     done|close)
       id=${2:-}
-      row=$(jg_backlog_beads_read "$config" show "$id" --full) || { echo "cannot read ticket $id for closure gate" >&2; return 1; }
+      # A row the backlog never held has no label to gate: the writer refuses it as not found, which a close accepts.
+      if ! row=$(jg_backlog_beads_read "$config" show "$id" --full); then
+        case $row in *'code: NOT_FOUND'*) row= ;; *) echo "cannot read ticket $id for closure gate" >&2; return 1 ;; esac
+      fi
       labels=$(printf '%s\n' "$row" | sed -n 's/^  labels: //p')
       labels=${labels#\"}; labels=${labels%\"}
       case ",$labels," in

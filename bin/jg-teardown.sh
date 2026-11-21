@@ -655,6 +655,11 @@ if [ "$TEARDOWN_BACKLOG_APPLIES" = 1 ]; then
   fi
   [ "$TEARDOWN_LEGACY_PENDING" = 1 ] || TEARDOWN_META_SPAWN_GEN=$JG_BACKLOG_META_SPAWN_GEN
 fi
+# A squad_lead home whose durable parent binding cannot be resolved refuses cleanup (the public follow-up gate below owns when).
+refuse_unbound_parent() {  # <squad_lead id>
+  echo "REFUSED: cannot resolve the primary home for marked squad_lead $1; refusing cleanup without its durable parent binding." >&2
+  exit 1
+}
 # Cleanup never closes a captain call (see the header). Asked here, before any
 # destructive step, so "cannot tell" can refuse while everything is intact.
 TEARDOWN_BACKLOG_TRANSITION=close
@@ -667,6 +672,11 @@ if [ "$TEARDOWN_BACKLOG_APPLIES" = 1 ]; then
     0) TEARDOWN_BACKLOG_TRANSITION=retain ;;
     1) ;;
     *)
+      # A lead home's tickets live in its parent's tables, so a parent record that does not parse is the cause to report.
+      if [ -f "$JG_HOME/$SUB_HOME_MARKER" ] && { [ -e "$JG_HOME/$SUB_HOME_PARENT_MARKER" ] || [ -L "$JG_HOME/$SUB_HOME_PARENT_MARKER" ]; } \
+        && ! jg_squad_lead_parent_record_parse "$JG_HOME/$SUB_HOME_PARENT_MARKER"; then
+        refuse_unbound_parent "$(sed -n '1p' "$JG_HOME/$SUB_HOME_MARKER")"
+      fi
       echo "error: task $ID cannot be torn down because whether its backlog item is still held for the captain could not be read; fix that read and retry rather than risk closing a captain call with no recorded answer" >&2
       [ -z "$TEARDOWN_CAPTAIN_OPEN_OUT" ] || printf '%s\n' "$TEARDOWN_CAPTAIN_OPEN_OUT" >&2
       exit 1
@@ -2865,8 +2875,7 @@ fi
 # work. Both gates live in bin/jg-public-followup-lib.sh, so a home that never
 # opted into the myjuggernaut relay runs one [ -f ] test and nothing else here.
 if [ "$FORCE" != "--force" ] && [ "$PARK" != 1 ] && [ "$PUBLIC_FOLLOWUP_PARENT_UNRESOLVED" = 1 ]; then
-  echo "REFUSED: cannot resolve the primary home for marked squad_lead $SECOND_MATE_ID; refusing cleanup without its durable parent binding." >&2
-  exit 1
+  refuse_unbound_parent "$SECOND_MATE_ID"
 fi
 if [ "$FORCE" != "--force" ] && [ "$PARK" != 1 ] \
   && [ -n "$PUBLIC_FOLLOWUP_STATE" ] \
