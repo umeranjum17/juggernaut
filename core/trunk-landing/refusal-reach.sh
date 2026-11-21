@@ -13,19 +13,24 @@
 #      `gave up after N tries` (a retest runner that failed on every try, a landing deadline spent, a held gate lock). It is the
 #      machine's fault, not the worker's, and no change to the commit clears it: the ticket waits on the lead (wait `lead`, reason
 #      `blocker`) once for that head, and the worker gets no steer, no note and no new agent (the machine: landing `retrying`).
-#   2c. A final conflict whose every path is a registry file all lanes share (REFUSAL_SHARED_FILES, `.done-done.yaml`) goes the same way:
-#      the lane's own relaunch did not clear it (jgp-r1-ledger-s1 waited 1,087 minutes), so the lead owns it, with no steer to the worker.
-#      Once merge-flow D1 is In use the conflict resolver takes this step instead of the lead.
+#   2c. A fault every lane meets (a final conflict whose every path is a registry file all lanes share, REFUSAL_SHARED_FILES, or an
+#      environment hook fact) goes to core/trunk-landing/shared-fault.sh: ONE fault ticket per distinct fault waits on the lead, each
+#      affected lane waits-for it (no steer, no new agent, no per-lane lead wait), and the repair's landing resumes every lane.
 #   2d. A head the trunk already holds (lane_on_trunk) is never steered, noted or alerted: a lane just landed has the rebased commit as its head.
 #   3. A refusal that only needs time (away mode, a held decision) is not the worker's to fix and never comes here.
 #   4. A refusal that is the lane's own fault (its conflict, or a red its own change caused) for a lane that has NO running agent
 #      (stopped at Built, or dead) starts ONE new agent for that head (bin/jg-control.sh relaunch), with the refusal as its first
 #      instruction; that note is the steer, so none is sent for the head. A refusal that is not the lane's fault (an environment wait or
 #      hook, a try cap the machine hit, a revert, a lock, a cleanup refusal) starts nothing, and nor does a lane whose agent runs.
-#      Machine: worker `stopped -> starting`, delivery `returned`; the table is refusal_fault_kind and refusal_agent_stopped below.
+#      A proof input still missing at the head (no completion receipt, no sealed run: `proof inputs are incomplete`) is the lane's too: a
+#      stopped lane gets the same one agent, whose first instruction names the missing input; a ready line itself is refused for it by
+#      bin/jg-lavish-guard.sh. Machine: worker `stopped -> starting`, delivery `returned`; the table is refusal_fault_kind and refusal_agent_stopped below.
 # State: <MEM>/<task>.<head>.refusal, one line `<first seen epoch> <reason checksum> <last steer epoch> <alerted 0|1>`;
 # <MEM>/<task>.<head>.refusal.relaunched, one line `<epoch> <ok|failed>`, the one new agent that head has had.
 # Needs from the caller: STATE, MEM, FMH, QUIET (set for a silent sweep), and the task's project and branch.
+
+# shellcheck source=core/trunk-landing/shared-fault.sh
+. "$(dirname "${BASH_SOURCE[0]}")/shared-fault.sh"
 
 RESTEER_SECS=600
 ALERT_SECS=600
@@ -79,6 +84,16 @@ refusal_fault_kind() {  # <reason>
   esac
 }
 
+# Whether a refusal is the lane's to fix by a new agent: a final refusal of its own fault, or a proof input still missing at its head (the
+# receipt or the sealed run, which only a worker can produce: a PASS is never written for it). Both wait for no time and no other owner.
+refusal_lane_fixable() {  # <reason> <final|empty>
+  case $2:$1 in
+    final:*) [ "$(refusal_fault_kind "$1")" = lane ] ;;
+    :'proof inputs are incomplete: '*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # Whether the lane's agent is provably not running: a verified exit record (jg-control.sh exit, the stop at Built), or the crew state's
 # own positive evidence that the agent is gone. An unknown reading is not proof, so it starts nothing.
 refusal_agent_stopped() {  # <task-id>
@@ -123,7 +138,8 @@ lane_refusal_reach() {
   [ "$(git -C "$proj" rev-parse --verify --quiet "refs/heads/$branch^{commit}" 2>/dev/null)" = "$head" ] || return 0
   # A head the trunk holds is landed or has nothing to land: it is never refused or steered (core/trunk-landing/on-trunk.sh).
   ! lane_on_trunk "$proj" "$head" || return 0
-  if [ "${6:-}" = final ] && { [[ $reason == *'gave up after'* ]] || refusal_shared_conflict "$reason"; }; then
+  if [ "${6:-}" = final ] && fault_route "$id" "$head" "$proj" "$reason"; then return 0; fi
+  if [ "${6:-}" = final ] && [[ $reason == *'gave up after'* ]]; then
     refusal_note_once "$id" "$reason" "$MEM/$id.$head.refusal.noted" || echo "warning: could not add the refusal note to $id" >&2
     refusal_wait_lead "$id" "$MEM/$id.$head.lead-wait" || echo "warning: could not put $id on the wait lead" >&2
     return 0
@@ -138,7 +154,7 @@ lane_refusal_reach() {
   [ "$rsum" = "$sum" ] || { first=$now; steered=0; alerted=0; }
   if [ "${6:-}" = final ]; then refusal_note_once "$id" "$reason" "$f.noted" || echo "warning: could not add the refusal note to $id" >&2; fi
   text="The lander refused your lane $id at head ${head:0:12}: $reason. Fix it in the lane: change the one commit (amend it, never add a second), prove the new head, and report done again. This steer repeats every $(( RESTEER_SECS / 60 )) minutes until the lane's head changes."
-  if [ "${6:-}" = final ] && [ ! -e "$f.relaunched" ] && [ "$(refusal_fault_kind "$5")" = lane ] && refusal_agent_stopped "$id"; then
+  if [ ! -e "$f.relaunched" ] && refusal_lane_fixable "$5" "${6:-}" && refusal_agent_stopped "$id"; then
     if refusal_relaunch "$id" "$text"; then printf '%s ok\n' "$now" > "$f.relaunched"; steered=$now
     else printf '%s failed\n' "$now" > "$f.relaunched"; echo "warning: could not start a new agent for $id: its refusal is steered instead" >&2; fi
   fi
