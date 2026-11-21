@@ -3874,6 +3874,24 @@ comms_feed_sync_detached() {
   COMMS_FEED_PID=$!
 }
 
+# decision_handler_detached: answer the workers' own open questions (core/decision-handler owns the contract). The advisor can
+# take minutes, so the pass runs beside the poll and is never waited on; one pass at a time.
+DECISION_HANDLER_PID=
+decision_handler_detached() {
+  local handler=$SCRIPT_DIR/../core/decision-handler/decision-handler.sh
+  slow_child_due decision-handler || return 0
+  [ -f "$handler" ] || return 0
+  if [ -n "$DECISION_HANDLER_PID" ]; then
+    if kill -0 "$DECISION_HANDLER_PID" 2>/dev/null; then
+      return 0
+    fi
+    wait "$DECISION_HANDLER_PID" 2>/dev/null || true
+    DECISION_HANDLER_PID=
+  fi
+  JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_CONFIG_OVERRIDE="$CONFIG" bash "$handler" tick </dev/null >/dev/null 2>&1 &
+  DECISION_HANDLER_PID=$!
+}
+
 PR_POLL_CONTROL_LOCK=
 PR_POLL_PUBLISH_LOCK=
 
@@ -4711,6 +4729,7 @@ EOF
 
   # Never waited on: a slow feed export cannot hold the beacon (see the helper).
   comms_feed_sync_detached
+  decision_handler_detached
 
   [ -n "$CYCLE_SWEPT" ] || run_due_checks
   if [ -n "$signal_wake" ]; then
