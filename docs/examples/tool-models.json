@@ -44,6 +44,12 @@
       "why": "These models run on Bedrock, so the harness is pi and the model carries the amazon-bedrock/ prefix."
     },
     {
+      "tool": "recon-critic",
+      "when": "Which model is the separate critic of a deep Recon. The built-in default is agy with gemini-4-neon-high.",
+      "use": { "harness": "agy", "model": "gemini-4-neon-high" },
+      "why": "A critic from another model family than the researcher does not share its blind spots. data/<recon>/critic-profile wins for one Recon."
+    },
+    {
       "tool": "route-chain",
       "when": "The default free-route chain, in order, when config/account-pool names no route= lines.",
       "use": [

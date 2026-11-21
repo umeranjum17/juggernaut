@@ -1099,9 +1099,9 @@ Before reporting done, run \`$JG_ROOT/bin/jg-recon-gate.sh $ID\` until it prints
 "
   if [ "$DEPTH" = deep ]; then
     DEPTH_SECTION="${DEPTH_SECTION}This is a deep Recon: you are the one researcher.
-After your draft report is complete, append \`done [at=<epoch>]: draft ready for the separate critic\` to the status file and stop; the gate lets that done through while only the critic is open, the ticket is then in its proving step critic, juggernaut dispatches one separate critic worker, and its \`critic.md\` is installed beside your report.
+After your draft report is complete, append \`done [at=<epoch>]: draft ready for the separate critic\` to the status file and stop; the gate lets that done through while only the critic is open, the ticket is then in its proving step critic, and the loop (core/recon-loop) starts one separate critic worker by itself, installs its \`critic.md\` beside your report and steers you with the gaps it finds.
 Never write \`critic.md\` yourself for a deep Recon; the gate refuses a critic that is you.
-Close every gap the critic finds, then run the gate again.
+Close every gap a steer names, run \`$JG_ROOT/bin/jg-recon-handoff.sh revise $ID\`, then append \`done [at=<epoch>]: draft ready for the separate critic\` again; the same critic reads the new draft, and the loop ends when it finds nothing new.
 "
   else
     DEPTH_SECTION="${DEPTH_SECTION}Write \`critic.md\` yourself: one round that reads the draft as a hostile reviewer, lists the gaps it found, and carries a \`Round 1: new gaps 0 report <sha256sum of report.md>\` line once they are closed (the hash names the draft it read; a later edit needs a new round).

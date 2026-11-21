@@ -32,8 +32,10 @@
 # --step asks where a Recon stands in the ticket stage `proving` (core/machines/tables/proving.tsv): a deep
 # Recon whose only refusals are about its separate critic prints `recon gate: STEP critic - ...` and exits 0, so
 # its researcher's done line is the claim-done move and the critic is a step of proving, not a wait. Every
-# other refusal still refuses, and a Recon with no refusal prints PASS. Cleanup never passes --step, so a Recon
-# whose critic is open is still not cleanable.
+# other refusal still refuses, and a Recon with no refusal prints PASS. A deep Recon past its round cap
+# (more than 3 rounds with new gaps) is not in that step: no further critic round can pass it, so --step
+# refuses it and the loop (core/recon-loop) tells Main. Cleanup never passes --step, so a Recon whose critic
+# is open is still not cleanable.
 #
 # A critic task is judged on its critic.md alone. Its data directory holds a
 # critic.md whose `Critic:` line names the task itself and no report.md; the
@@ -131,6 +133,7 @@ import hashlib, json, os, re, sys
 d, task, depth, step = sys.argv[1:5]
 refusals = []
 critic_refusals = []
+cap_hit = False
 
 
 def refuse(msg):
@@ -273,10 +276,11 @@ else:
         # a critic file, or the closure line, is not one of them.
         gap_rounds = sum(1 for _, k in rounds if int(k) > 0)
         if depth == "deep" and gap_rounds > 3:
+            cap_hit = True
             refuse(f"critic.md has {gap_rounds} rounds with new gaps; a deep Recon allows 3")
 
 critic_refusals = refusals[before_critic:]
-if step and depth == "deep" and critic_refusals and before_critic == 0:
+if step and depth == "deep" and critic_refusals and before_critic == 0 and not cap_hit:
     print(f"recon gate: STEP critic - deep Recon {task}: the draft is complete and its separate critic is open ({'; '.join(critic_refusals)})")
     sys.exit(0)
 if refusals:

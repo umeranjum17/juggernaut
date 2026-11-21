@@ -85,6 +85,9 @@ bash "$SCRIPT_DIR/jg-wait-trace.sh" "$H" >&2 || echo "jg-delivery-tick: the wait
 bash "$SCRIPT_DIR/../core/lane-end/stop-at-built.sh" "$H" >&2 || echo "jg-delivery-tick: the stop-at-built step failed in $H" >&2
 # Each live worker keeps its lease on its ticket, and a row no record of this home holds returns to ready (bin/jg-lease-tick.sh); it never stops the pass.
 bash "$SCRIPT_DIR/jg-lease-tick.sh" "$H" >&2 || echo "jg-delivery-tick: the lease step failed in $H" >&2
+# A deep Recon's writer/critic loop takes each move it owes here (the critic, its round, the researcher's gaps, the revision), so no move waits for a model's
+# turn; a stop is a wake line for Main (core/recon-loop). It never stops the pass.
+bash "$SCRIPT_DIR/../core/recon-loop/recon-loop.sh" tick "$H" || echo "jg-delivery-tick: the Recon loop step failed in $H" >&2
 # A finished Recon or critic lane whose required next step nobody took in 10 minutes raises the done-unhandled P1 (core/next-step); it never stops the pass.
 bash "$SCRIPT_DIR/../core/next-step/next-step.sh" tick "$H" >&2 || echo "jg-delivery-tick: the next-step alert step failed in $H" >&2
 # A missing required check is reported in the same queue as other supervision findings.

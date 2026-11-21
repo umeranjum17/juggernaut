@@ -127,17 +127,22 @@ jg_fact_lane_waited() {  # <state-dir> <id> <recon-phase> <agent-state cmd...>
 # assigned to (column 1 of data/<critic>/assignment.tsv). The clock (`since`) is the later of the done line and the last handoff move.
 #   lane    phase      step     owed by         taken when
 #   Recon   none       relay    Main            a `relayed` move of its ticket is at or after `since` (bin/jg-move.sh <ticket> relayed)
-#   Recon   drafted    assign   the lead        a critic is named, so the phase leaves drafted
+#   Recon   none       assign   the Recon loop  (a deep Recon in its critic loop) the draft is recorded, so the phase leaves none
+#   Recon   drafted    assign   the Recon loop  a critic is named, so the phase leaves drafted
 #   Recon   assigned   -        -               the critic holds the draft
 #   critic  assigned   verdict  the critic      the verdict is recorded, so the phase leaves assigned
 #   either  critiqued  revise   the researcher  a revised draft is recorded, so the phase leaves critiqued
 #   either  accepted   relay    Main            as the first row
 #   critic  drafted    -        -               its verdict was acted on
+# A steer the lane that owes a verdict (the critic) or a revision (the researcher) READ after the step fell due takes the step: its work is under way
+# (core/recon-loop sends that steer). A steer that was only sent takes nothing, so a lane that never reads it is a stall, and the P1 below is raised.
+# A deep Recon whose draft is ready and whose critic loop has no record yet owes `assign` too (the loop records the draft and starts the critic): a loop that
+# stopped is a stall of work that is ready, never a silent state.
 # A relay is owed only once the Recon's critic loop is closed: a deep Recon whose draft is complete and whose separate critic is still open is in the
 # ticket's proving step `critic` (core/machines/tables/proving.tsv), and neither its researcher's draft-ready done line nor a critic's round result
 # is the final done line of a finished Recon. The loop's own moves (assign, verdict, revise) stay owed in that step. An acknowledgement, a sweep or a read
 # notice takes no step: only the move above does. When no step is owed `step` is none and `reason` says why.
-jg_fact_critic_loop() {  # <state-dir> <data-dir> <work>: while <work> is inside a critic loop, print why no relay is owed yet and return 0; else return 1
+jg_fact_critic_loop() {  # <state-dir> <data-dir> <work>: while <work> is inside a critic loop, print why no relay is owed yet and return 0 (a critic task) or 3 (a deep Recon in its loop); else return 1
   # The loop is the depth gate's own reading, so this holds no second copy of when a deep Recon is still being criticised. A gate that cannot answer is not the loop.
   local gate home
   gate=$(dirname -- "${BASH_SOURCE[0]}")/jg-recon-gate.sh; home=${JG_HOME:-$(dirname -- "$1")}
@@ -146,15 +151,24 @@ jg_fact_critic_loop() {  # <state-dir> <data-dir> <work>: while <work> is inside
     printf '%s is a critic task: its round goes to the Recon, and only the Recon'"'"'s final done owes the relay\n' "$3"
   elif JG_HOME=$home JG_STATE_OVERRIDE=$1 JG_DATA_OVERRIDE=$2 bash "$gate" "$3" --step 2> /dev/null | grep -q '^recon gate: STEP critic'; then
     printf 'deep Recon %s is in its critic loop (proving step critic): only its final done owes the relay\n' "$3"
+    return 3
   else
     return 1
   fi
+}
+jg_fact_steered_at() {  # <state-dir> <id>: the epoch of the newest steer the lane has READ (its acknowledgement moved it to handled/); 0 when none
+  local f at=0 t
+  for f in "$1/$2.inbox"/handled/*.msg; do
+    [ -f "$f" ] || continue
+    t=$(stat -c %Y "$f" 2>/dev/null || echo 0); [ "$t" -le "$at" ] || at=$t
+  done
+  printf '%s\n' "$at"
 }
 jg_fact_relayed_at() {  # <data-dir> <ticket>: the epoch of the ticket's latest `relayed` move, empty when it has none
   awk -F'\t' -v t="$2" '$2 == t && $4 == "relayed" { r = $1 } END { print r }' "$1/moves.log" 2>/dev/null
 }
 jg_fact_next_step() {  # <state-dir> <data-dir> <id>
-  local state=$1 data=$2 id=$3 meta=$1/$3.meta role=recon work=$3 phase=none step=none owner=- act=- since=0 why ticket done_at moved relayed
+  local state=$1 data=$2 id=$3 meta=$1/$3.meta role=recon work=$3 phase=none step=none owner=- act=- since=0 why ticket done_at moved relayed taker loop
   if [ "$(sed -n 's/^kind=//p' "$meta" 2>/dev/null | tail -n 1)" != scout ]; then why='not a Recon or critic lane'
   elif ! done_at=$(jg_fact_ready_at "$state" "$id"); then why='its last status line is not done'
   else
@@ -176,12 +190,22 @@ jg_fact_next_step() {  # <state-dir> <data-dir> <id>
           step=relay owner=Main act="relay the findings, then record it: bin/jg-move.sh $ticket relayed"
           relayed=$(jg_fact_relayed_at "$data" "$ticket")
           case $relayed in '' | *[!0-9]*) ;; *) if [ "$relayed" -ge "$since" ]; then step=none owner=- act=-; why="relayed at $relayed"; fi ;; esac
-          if [ "$step" = relay ] && why=$(jg_fact_critic_loop "$state" "$data" "$work"); then step=none owner=- act=-; fi ;;
-        recon/drafted) step=assign owner='the lead' act="name a critic: bin/jg-recon-handoff.sh assign $work --critic <critic-task-id>" ;;
+          if [ "$step" = relay ]; then
+            why=$(jg_fact_critic_loop "$state" "$data" "$work"); loop=$?
+            # A critic task has no Recon of its own to relay; a deep Recon in its loop owes the loop's first move, not a relay.
+            [ "$loop" -eq 0 ] && { step=none owner=- act=-; }
+            [ "$loop" -eq 3 ] && { step=assign owner='the Recon loop' act="the delivery tick records the draft and starts its critic (core/recon-loop); by hand: bin/jg-recon-handoff.sh draft $work, then assign $work --critic <critic-task-id>"; why=owed; }
+          fi ;;
+        recon/drafted) step=assign owner='the Recon loop' act="the delivery tick names a critic (core/recon-loop); by hand: bin/jg-recon-handoff.sh assign $work --critic <critic-task-id>" ;;
         critic/assigned) step=verdict owner='the critic' act="record the verdict: bin/jg-recon-handoff.sh verdict $work --critic $id --hash <sha256> --gaps <k>" ;;
         */critiqued) step=revise owner='the researcher' act="steer the researcher to revise; its draft is recorded by bin/jg-recon-handoff.sh revise $work" ;;
         *) why="no step is owed in phase $phase" ;;
       esac
+      # The lane that owes the step (the critic for a verdict, the researcher for a revision) was steered after the step fell due: it is under way.
+      case $step in verdict) taker=$id ;; revise) taker=$work ;; *) taker='' ;; esac
+      if [ -n "$taker" ] && [ "$(jg_fact_steered_at "$state" "$taker")" -ge "$since" ]; then
+        step=none owner=- act=-; why="$taker was steered after the step fell due: its work is under way"
+      fi
     fi
   fi
   printf 'step\t%s\nowner\t%s\nhow\t%s\nwork\t%s\nticket\t%s\nsince\t%s\nphase\t%s\nreason\t%s\n' \

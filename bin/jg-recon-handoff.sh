@@ -9,12 +9,16 @@
 #   jg-recon-handoff.sh assignee <task-id>                                       print critic, generation and hash of the live assignment, or none
 #   jg-recon-handoff.sh phase   <task-id>                                        print drafted, assigned, critiqued, accepted or none
 #   jg-recon-handoff.sh show    <task-id>                                        print the record, one line per move
+#   jg-recon-handoff.sh council <task-id>                                        print the war-room council(s) the lane belongs to, none when it is no council's
 #
 # The record is data/<task-id>/handoff.tsv, append-only: epoch, event, state after, report hash, actor, gaps. Its last line is the state.
 # Every move is tied to the report hash, so an answer about an older draft cannot close a newer one: a verdict is refused (exit 1,
 # nothing written) when the hash it names is not the recorded draft, or when report.md changed after the draft was recorded; a revise is
 # refused when report.md still holds the critiqued draft. A verdict also writes the gate's own lines into critic.md (`Critic:` once, then
-# `Round <n>: new gaps <k> report <sha>`), the format bin/jg-recon-gate.sh reads, so no one installs that file by hand.
+# `Round <n>: new gaps <k> report <sha>`), the format bin/jg-recon-gate.sh reads, so no one installs that file by hand. The critic's gap lines (the
+# `- ` lines after its last Round line in its own critic.md) are installed under that round, so the Recon's critic.md carries the findings too. A
+# verdict that repeats the critic's own last Round line (same gaps, same report) adds no second line to the critic's file, so a critic that wrote
+# its round by hand and a loop that records it from that file (core/recon-loop) never count one round twice.
 # A critic is a separate ticket of its own (a task directory with its own data): assign records it in this one record, so the assignment
 # survives a restart of any worker, writes the pointer data/<critic>/assignment.tsv (parent, generation, hash) and the critic's own
 # `Critic:` line, and is a no-op for the same critic. Once assigned, only that critic's verdict counts and the parent record alone says
@@ -37,7 +41,7 @@ export JG_HOME
 
 die() { echo "jg-recon-handoff: $*" >&2; exit 2; }
 refuse() { echo "jg-recon-handoff: refused: $*" >&2; exit 1; }
-usage() { sed -n '2,28p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}" >&2; exit 2; }
 
 task_dir() {  # <task-id> -> the data directory of a plain task id
   case "${1:-}" in ''|*/*|.*) die "task id '${1:-}' is not a plain id" ;; esac
@@ -81,19 +85,28 @@ item_open_critic() {  # <recon> -> the task id of the critic's open work item, e
   out=${out#work:*/}; printf '%s\n' "${out%%#*}"
 }
 
-# kick_war_room <task-id>: when the task is a lane of a war room, the war room's next step starts by itself, in its own session.
+# council_of <task-id>: the war-room councils this lane belongs to, one per line (a ticket that is a child of a council with a data/war-room/<council>/record).
 # A lane's task id is its ticket id with every dot made a dash (jg_backlog_task_id), so it begins with its council's id made the same way.
-kick_war_room() {
+council_of() {
   local record council task=${1#fable-}
-  [ "${JG_WAR_ROOM_NEXT:-1}" != 0 ] || return 0
   for record in "$DATA"/war-room/*/record; do
     [ -f "$record" ] || continue
     council=${record%/record}; council=${council##*/}
-    case $task in "${council//./-}"-*) ;; *) continue ;; esac
-    setsid nohup "$SCRIPT_DIR/jg-war-room.sh" next "$council" > /dev/null 2>&1 < /dev/null &
+    case $task in "${council//./-}"-*) printf '%s\n' "$council" ;; esac
   done
   return 0
 }
+# kick_war_room <task-id>: when the task is a lane of a war room, the war room's next step starts by itself, in its own session.
+kick_war_room() {
+  local council
+  [ "${JG_WAR_ROOM_NEXT:-1}" != 0 ] || return 0
+  while IFS= read -r council; do
+    setsid nohup "$SCRIPT_DIR/jg-war-room.sh" next "$council" > /dev/null 2>&1 < /dev/null &
+  done < <(council_of "$1")
+  return 0
+}
+
+command_council() { task_dir "${1:-}" > /dev/null || exit $?; council_of "$1"; }
 
 command_phase() {
   local dir line; dir=$(task_dir "${1:-}") || exit $?; line=$(last_line "$dir")
@@ -201,16 +214,29 @@ command_verdict() {
   if [ "$gaps" -eq 0 ]; then event=clear; to=accepted; else event=gaps; to=critiqued; fi
   record "$dir" "$id" "$event" "$to" "$hash" "$critic" "$gaps" || exit $?
   write_round "$dir" "$critic" "$gaps" "$hash"
+  install_findings "$dir" "$critic"
   # The critic ticket's own file follows the parent's verdict: it holds the pointer, never the decision.
   [ "$(cut -f1 "$DATA/$critic/assignment.tsv" 2>/dev/null)" != "$id" ] || write_round "$DATA/$critic" "$critic" "$gaps" "$hash"
   kick_war_room "$id"
 }
 
-write_round() {  # <dir> <critic> <gaps> <hash>: the gate's own lines in <dir>/critic.md
+write_round() {  # <dir> <critic> <gaps> <hash>: the gate's own lines in <dir>/critic.md; no second line for a round already there
   local n
   [ -f "$1/critic.md" ] && grep -q '^Critic:' "$1/critic.md" || printf 'Critic: %s\n' "$2" >> "$1/critic.md"
+  case $(grep '^Round [0-9]*:' "$1/critic.md" | tail -n 1) in *"new gaps $3 report $4"*) return 0 ;; esac
   n=$(( $(grep -c '^Round [0-9]*:' "$1/critic.md") + 1 ))
   printf 'Round %s: new gaps %s report %s\n' "$n" "$3" "$4" >> "$1/critic.md"
+}
+
+# install_findings <dir> <critic>: the critic's gap lines (the `- ` lines after the last Round line of its own critic.md) go under the round just
+# written in <dir>/critic.md, unless they are already there.
+install_findings() {
+  local src=$DATA/$2/critic.md found
+  [ -f "$src" ] && [ "$src" != "$1/critic.md" ] || return 0
+  found=$(awk '/^Round [0-9]+:/ { gaps = ""; next } /^- / { gaps = gaps $0 "\n" } END { printf "%s", gaps }' "$src")
+  [ -n "$found" ] || return 0
+  [ "$(tail -n 1 "$1/critic.md" | cut -c1-2)" != '- ' ] || return 0
+  printf '%s\n' "$found" >> "$1/critic.md"
 }
 
 command_revise() {
@@ -237,5 +263,6 @@ case "$cmd" in
   assignee) command_assignee "$@" ;;
   phase) command_phase "$@" ;;
   show) command_show "$@" ;;
+  council) command_council "$@" ;;
   *) usage ;;
 esac

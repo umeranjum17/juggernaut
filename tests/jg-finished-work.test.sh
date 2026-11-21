@@ -175,7 +175,7 @@ test_the_one_definition_names_the_step_of_every_lane_and_phase() {
   f=$(fact "$dir" rec-d); check_step "$f" relay "a Recon with no handoff record owes the relay"
   printf 'v1\n' > "$dir/data/rec-d/report.md"
   handoff draft rec-d
-  f=$(fact "$dir" rec-d); check_step "$f" assign "a drafted Recon owes a critic"; assert_contains "$(val "$f" owner)" 'the lead' "the lead names the critic"
+  f=$(fact "$dir" rec-d); check_step "$f" assign "a drafted Recon owes a critic"; assert_contains "$(val "$f" owner)" 'the Recon loop' "the Recon loop names the critic"
   handoff assign rec-d --critic crit-1
   f=$(fact "$dir" rec-d); check_step "$f" none "a Recon whose critic holds the draft owes nothing"
   f=$(fact "$dir" crit-1); check_step "$f" none "a critic still working owes nothing"
@@ -228,9 +228,14 @@ gate_reads() { # <dir> <id> [gate arguments]: the depth gate's own reading of a 
   JG_HOME="$1" JG_DATA_OVERRIDE="$1/data" JG_STATE_OVERRIDE="$1/state" bash "$ROOT/bin/jg-recon-gate.sh" "${@:2}" 2>&1
 }
 
+age_record() { # <dir> <recon> <seconds>: the Recon's handoff record read as if every move was made that long ago (the tick's clock is the real one)
+  local at=$(( $(date +%s) - $3 ))
+  awk -F'\t' -v OFS='\t' -v at="$at" '{ $1 = at; print }' "$1/data/$2/handoff.tsv" > "$1/data/$2/handoff.tsv.new" && mv "$1/data/$2/handoff.tsv.new" "$1/data/$2/handoff.tsv"
+}
 test_a_deep_recon_in_its_critic_loop_owes_no_relay_until_the_loop_closes() {
-  local dir state now d v1 v2 out f
-  dir=$(make_home critic-loop); state=$dir/state; now=$(date +%s); d=$dir/data/jg-6si-1
+  local dir state now d v1 v2 out f h
+  dir=$(make_home critic-loop); state=$dir/state; now=$(date +%s); d=$dir/data/jg-6si-1; h="$ROOT/bin/jg-recon-handoff.sh"
+  handoff() { JG_HOME="$dir" JG_DATA_OVERRIDE="$dir/data" bash "$h" "$@" > /dev/null || fail "jg-recon-handoff.sh $* failed"; }
   make_deep_recon "$dir" jg-6si-1
   add_lane "$dir" jg-6si-1 T-6si scout; add_lane "$dir" jg-6si-1-critic T-6si-c scout
   status_line "$dir" jg-6si-1 working $((now - 2000)) "researching"
@@ -244,47 +249,73 @@ test_a_deep_recon_in_its_critic_loop_owes_no_relay_until_the_loop_closes() {
   assert_contains "$(gate_reads "$dir" jg-6si-1 --step)" 'STEP critic' "the draft is not in the step critic"
   gate_reads "$dir" jg-6si-1-critic --is-critic > /dev/null || fail "the critic's task is not a critic task to the gate"
 
-  # Neither done line owes a relay, no alert is raised for them, and the sweep that Main ran on them goes through.
-  check_step "$(fact "$dir" jg-6si-1)" none "a deep draft whose critic is open"
-  assert_contains "$(val "$(fact "$dir" jg-6si-1)" reason)" 'critic loop' "the researcher's reason must name the critic loop"
+  # No relay is owed inside the loop. What is owed is the loop's own first move, and the critic's round result owes nothing of its own.
+  f=$(fact "$dir" jg-6si-1); check_step "$f" assign "a deep draft whose critic loop has no record yet"
+  assert_contains "$(val "$f" owner)" 'the Recon loop' "the loop owes its first move"
+  assert_contains "$(val "$f" how)" 'core/recon-loop' "the step names the loop that takes it"
   check_step "$(fact "$dir" jg-6si-1-critic)" none "a critic's round result"
+
+  # Work that is ready and untouched for 10 minutes is a stall: the P1 is raised for the loop's step (never a relay), and the critic's lane raises none.
   nxt "$dir" tick || fail "the tick failed"
-  [ -z "$(alertcmd "$dir" word done-unhandled--jg-6si-1 2>/dev/null)" ] || fail "the researcher's draft-ready line raised a relay alert"
-  [ -z "$(alertcmd "$dir" word done-unhandled--jg-6si-1-critic 2>/dev/null)" ] || fail "the critic's round result raised a relay alert"
-  nxt "$dir" open > /dev/null && fail "the open list names finished work inside the critic loop"
+  [ "$(alertcmd "$dir" word done-unhandled--jg-6si-1)" = open ] || fail "a draft ready for 25 minutes with no loop move raised no P1"
+  assert_contains "$(alertcmd "$dir" show done-unhandled--jg-6si-1)" 'assign owed by the Recon loop' "the P1 names the loop's step"
+  [ -z "$(alertcmd "$dir" word done-unhandled--jg-6si-1-critic 2>/dev/null)" ] || fail "the critic's round result raised an alert of its own"
+  alertcmd "$dir" ack done-unhandled--jg-6si-1 > /dev/null || fail "could not acknowledge the P1"
+  nxt "$dir" tick || fail "the tick after the acknowledgement failed"
+  [ "$(alertcmd "$dir" word done-unhandled--jg-6si-1)" != resolved ] || fail "an acknowledgement closed the stall P1"
   signal "$dir" jg-6si-1; signal "$dir" jg-6si-1-critic
   drain "$dir" > "$dir/out" 2> "$dir/err" || fail "the drain failed: $(tail -3 "$dir/err")"
-  drain "$dir" --outcomes-before "$(( $(date +%s) + 1 ))" --classified handled > "$dir/sweep" 2>&1 \
-    || fail "the sweep over the two critic-loop done lines was refused: $(cat "$dir/sweep")"
-  assert_contains "$(cat "$dir/sweep")" 'classified 2 outcome(s)' "the sweep classifies both critic-loop outcomes"
-
-  # The researcher closes the gap and says done again: the critic still has to read the new draft, so still no relay.
-  printf '\nA closed gap.\n' >> "$d/report.md"; v2=$(sha256sum "$d/report.md" | cut -d' ' -f1)
-  status_line "$dir" jg-6si-1 "done" $((now - 900)) "gap closed, new draft ready for the same critic"
-  printf 'Critic: jg-6si-1-critic\nRound 1: new gaps 2 report %s\n- a gap\n' "$v1" > "$d/critic.md"
-  assert_contains "$(gate_reads "$dir" jg-6si-1 --step)" 'STEP critic' "the revised draft is not in the step critic"
-  check_step "$(fact "$dir" jg-6si-1)" none "a revised draft the critic has not read"
-  nxt "$dir" tick || fail "the tick after the revision failed"
-  [ -z "$(alertcmd "$dir" word done-unhandled--jg-6si-1 2>/dev/null)" ] || fail "the revised draft raised a relay alert before the critic read it"
+  drain "$dir" --outcomes-before "$(( $(date +%s) + 1 ))" --classified handled > "$dir/sweep" 2>&1; expect_code 3 "$?" "the sweep over a stalled loop step must be refused"
+  assert_contains "$(cat "$dir/sweep")" 'jg-6si-1: assign owed by the Recon loop' "the refusal names the loop's step"
 
   # A hole other than the critic is not the critic loop: the relay stays owed.
   cp "$d/report.md" "$dir/report.keep"; grep -v '^## 6\. Design$' "$dir/report.keep" > "$d/report.md"
   check_step "$(fact "$dir" jg-6si-1)" relay "a deep draft with a hole other than its critic"
   cp "$dir/report.keep" "$d/report.md"
 
-  # The critic reads the new draft and finds nothing new: the loop is closed, the final done line owes the relay, and only now the alert is due.
-  printf 'Critic: jg-6si-1-critic\nRound 1: new gaps 2 report %s\n- a gap\nRound 2: new gaps 0 report %s\n' "$v1" "$v2" > "$d/critic.md"
+  # Only progress clears the P1: the loop records the draft and names the critic, and the next tick resolves the alert with that step as its proof.
+  handoff draft jg-6si-1; handoff assign jg-6si-1 --critic jg-6si-1-critic
+  status_line "$dir" jg-6si-1-critic working "$(date +%s)" "reading the new draft"
+  check_step "$(fact "$dir" jg-6si-1)" none "a draft whose critic holds it"
+  nxt "$dir" tick || fail "the tick after the loop's first move failed"
+  [ "$(alertcmd "$dir" word done-unhandled--jg-6si-1)" = resolved ] || fail "the loop's move did not close the stall P1"
+
+  # The critic's round with gaps: the researcher owes the revision. A steer it has not read takes nothing; the one it read takes the step.
+  handoff verdict jg-6si-1 --critic jg-6si-1-critic --hash "$v1" --gaps 2
+  age_record "$dir" jg-6si-1 1000
+  f=$(fact "$dir" jg-6si-1); check_step "$f" revise "the researcher owes the revision for a critique 1000 seconds old"
+  mkdir -p "$state/jg-6si-1.inbox/handled"; printf 'the gaps\n' > "$state/jg-6si-1.inbox/001.msg"
+  check_step "$(fact "$dir" jg-6si-1)" revise "a steer that was only sent takes nothing"
+  nxt "$dir" tick || fail "the tick over an unread steer failed"
+  [ "$(alertcmd "$dir" word done-unhandled--jg-6si-1)" = open ] || fail "a steer nobody read kept the stall P1 from firing"
+  mv "$state/jg-6si-1.inbox/001.msg" "$state/jg-6si-1.inbox/handled/"
+  check_step "$(fact "$dir" jg-6si-1)" none "a steer the researcher read leaves its revision under way"
+  nxt "$dir" tick || fail "the tick over a read steer failed"
+  [ "$(alertcmd "$dir" word done-unhandled--jg-6si-1)" = resolved ] || fail "reading the steer did not close the stall P1"
+
+  # The researcher closes the gap and says done again; the loop records it and the same critic takes the new draft: still no relay.
+  printf '\nA closed gap.\n' >> "$d/report.md"; v2=$(sha256sum "$d/report.md" | cut -d' ' -f1)
+  status_line "$dir" jg-6si-1 "done" "$(( $(date +%s) - 900 ))" "gap closed, new draft ready for the same critic"
+  handoff revise jg-6si-1; handoff assign jg-6si-1 --critic jg-6si-1-critic
+  status_line "$dir" jg-6si-1-critic working "$(date +%s)" "reading the revised draft"
+  assert_contains "$(gate_reads "$dir" jg-6si-1 --step)" 'STEP critic' "the revised draft is not in the step critic"
+  check_step "$(fact "$dir" jg-6si-1)" none "a revised draft the critic has not read"
+  nxt "$dir" tick || fail "the tick after the revision failed"
+  [ "$(alertcmd "$dir" word done-unhandled--jg-6si-1)" = resolved ] || fail "the revised draft raised an alert before the critic read it"
+
+  # The critic reads the new draft and finds nothing new: the loop is closed, the final done line owes the relay, and only now is it Main's.
+  handoff verdict jg-6si-1 --critic jg-6si-1-critic --hash "$v2" --gaps 0
+  age_record "$dir" jg-6si-1 1000
   out=$(gate_reads "$dir" jg-6si-1 --step); assert_contains "$out" 'PASS' "the closed loop is not a gate PASS: $out"
   f=$(fact "$dir" jg-6si-1); check_step "$f" relay "the final done line of a closed critic loop"
   assert_contains "$(val "$f" how)" 'bin/jg-move.sh T-6si relayed' "the relay is recorded on the Recon's ticket"
-  check_step "$(fact "$dir" jg-6si-1-critic)" none "the critic's round result is never the Recon's relay"
   nxt "$dir" tick || fail "the tick after the loop closed failed"
   [ "$(alertcmd "$dir" word done-unhandled--jg-6si-1)" = open ] || fail "the final done line of a finished Recon raised no alert"
   [ -z "$(alertcmd "$dir" word done-unhandled--jg-6si-1-critic 2>/dev/null)" ] || fail "the critic's lane raised an alert of its own"
   relay "$dir" T-6si || fail "could not record the relay"
   nxt "$dir" tick || fail "the tick after the relay failed"
   [ "$(alertcmd "$dir" word done-unhandled--jg-6si-1)" = resolved ] || fail "the relay did not close the alert"
-  pass "a deep Recon's draft-ready line and its critic's round results owe no relay and raise no alert while the critic loop is open; the final done line of the closed loop owes it"
+  pass "a deep Recon in its critic loop owes the loop's moves, never a relay; ready work untouched for 10 minutes raises one P1 that an acknowledgement and an unread steer never close and progress does; the final done line of the closed loop owes the relay"
 }
 test_a_sweep_over_two_finished_recons_is_refused_and_named
 test_a_sweep_with_nothing_owed_still_classifies

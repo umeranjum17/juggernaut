@@ -83,10 +83,15 @@ Gaps the critic finds go back to stage 3 as the next sweep round.
 
 The researcher never spawns the critic and never writes `critic.md` for a deep Recon.
 It finishes the draft, then reports `done: draft ready for the separate critic` and stops: the gate (`bin/jg-recon-gate.sh --step`) lets that done through while only the critic is open, and the ticket is in the step `critic` of its stage `proving`, with no decision and no wait.
-Overwatch dispatches exactly one critic worker with a fresh isolated copy, the draft, and these rubric lines.
-The critic worker writes the `critic.md` content with `Critic: <its own task id>`, and Overwatch installs it as `data/<researcher-task>/critic.md`.
-When the critic finds gaps, the researcher closes them and appends `done` again with the new draft, and Overwatch steers the same critic for the next round. Cleanup still needs the plain gate to pass, so a Recon whose critic is open is not cleanable.
-A second critic worker never starts, and neither does a fan-out.
+From that done line the loop advances by itself, with no Overwatch turn between its steps; `core/recon-loop/recon-loop.sh` owns the moves and its header holds the table, and the delivery tick runs it (a worker's done line kicks that tick).
+It records the draft, starts the one critic worker on a fresh isolated copy and names it to the handoff, sends it each round (the draft's sha256, the closure rule, the rounds spent), and records the round the critic wrote.
+When the critic finds gaps, it installs them in the Recon's `critic.md` and sends the researcher the open gaps; the researcher closes them, runs `bin/jg-recon-handoff.sh revise` and appends `done` again with the new draft, and the loop sends the same critic the new round (a steer, or a relaunch when its agent is gone).
+A critic whose lane is gone is replaced by a second one on the next round.
+The critic is a different model family from the researcher by default (agy with `gemini-4-neon-high`); `bin/jg-recon-critic.sh` owns that default, `config/tool-models.json` (tool `recon-critic`) changes it for the home, and `bin/jg-recon-critic.sh profile <recon> <harness> <model> [<effort>]` changes it for one Recon.
+Overwatch is woken only by the final outcome (`core/recon-ready`, once the plain gate passes) and by a stop: a gate refusal (a deep Recon past its 3 rounds with gaps is one), a critic that would not start, a message that could reach no lane, or a researcher that said done over an unchanged draft.
+A draft that is ready and untouched for 10 minutes raises the `done-unhandled` P1, which an acknowledgement never closes and only progress does (`bin/jg-facts-lib.sh` `jg_fact_next_step`).
+Cleanup still needs the plain gate to pass, so a Recon whose critic is open is not cleanable.
+A second critic never runs beside the first, and neither does a fan-out.
 The gate refuses a deep `critic.md` whose `Critic:` is `self`, empty, or the researcher's own task id.
 
 ## The 13-section template
