@@ -37,6 +37,9 @@
 #   watcher: FAILED - attached watcher pid=<N> stalled (beacon <age>s at or past hard bound <bound>s)
 #                                                        - the followed holder is alive but its beacon
 #                                                          reached the stall bound
+# Before any of those, an arm that must first wait out a crash run (see "Crash
+# backoff" below) prints one progress line, which is not a status line:
+#   watcher: backing off <S>s after <N> consecutive crash exits (step <D>s)
 # It NEVER reports started/attached/healthy off a stale beacon or a dead/reused pid: a
 # stale-beacon or dead-pid holder either self-heals (the fresh child steals the
 # dead lock per the singleton self-eviction/steal path and is confirmed) or this
@@ -661,6 +664,46 @@ if [ "$mode" = take-over ]; then
     esac
   fi
 fi
+
+# Crash backoff. Whichever owner retries a failed cycle (the Claude Stop hook,
+# the supervision host, an extension), every fresh watcher is forked below, so
+# the arm owns the delay: a home whose watcher keeps exiting nonzero is retried
+# after capped, growing waits instead of every second. The run is the trailing
+# count of nonzero-exit or confirmation-timeout rows in this arm's own ledger;
+# a signal exit or an interrupted arm (an owner's deliberate stop) leaves it
+# alone, and any other row ends it. The wait for a run of N is the Nth step of
+# CRASH_BACKOFF_STEPS (the last step repeats), measured from the last crash's
+# end. A healthy watcher that appears meanwhile ends the wait (the attach below).
+CRASH_BACKOFF_STEPS=${JG_WATCH_CRASH_BACKOFF:-5 30 120 600}
+crash_backoff_wait() {
+  local streak last delay until now
+  read -r streak last <<EOF
+$(awk -F '\t' '
+  {
+    reason = ""; ended = 0
+    for (i = 1; i <= NF; i++) {
+      if ($i ~ /^reason=/) reason = substr($i, 8)
+      else if ($i ~ /^ended_at=/) ended = substr($i, 10) + 0
+    }
+    if (reason == "nonzero-exit" || reason == "confirmation-timeout") { run++; last = ended }
+    else if (reason != "signal-exit" && reason != "arm-interrupted") { run = 0; last = 0 }
+  }
+  END { print run + 0, last + 0 }' "$CYCLE_LOG" 2>/dev/null)
+EOF
+  case "${streak:-}:${last:-}" in *[!0-9:]*|:*|*:) return 0 ;; esac
+  [ "$streak" -gt 0 ] || return 0
+  delay=$(printf '%s\n' "$CRASH_BACKOFF_STEPS" | awk -v n="$streak" '{ i = (n < NF) ? n : NF; print $i + 0 }')
+  case "$delay" in ''|*[!0-9]*) return 0 ;; esac
+  until=$((last + delay))
+  now=$(date +%s)
+  [ "$now" -lt "$until" ] || return 0
+  echo "watcher: backing off $((until - now))s after $streak consecutive crash exits (step ${delay}s)"
+  while [ "$(date +%s)" -lt "$until" ]; do
+    healthy_watcher && return 0
+    sleep 1
+  done
+}
+crash_backoff_wait
 
 # If a genuinely live+fresh watcher already holds the lock, do not start a second
 # one - attach to that cycle and wait until it ends so the harness notify fires

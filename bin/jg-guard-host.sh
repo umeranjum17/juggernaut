@@ -33,6 +33,9 @@ SOURCE_DIR=$ROOT/core/guard-host
 BIN=${JG_GUARD_HOST_BIN:-$STATE/bin/jg-guard-host}
 GO=${JG_GUARD_HOST_GO:-go}
 
+# shellcheck source=bin/jg-go-workdir-lib.sh
+. "$SCRIPT_DIR/jg-go-workdir-lib.sh"
+
 # The command resolves its rules from this checkout, which is how a binary living in the
 # state directory still reads the repository's policy.
 export JG_GUARD_HOST_ROOT=${JG_GUARD_HOST_ROOT:-$ROOT}
@@ -49,16 +52,7 @@ build() {
   local tmp
   command -v "$GO" >/dev/null 2>&1 || return 1
   mkdir -p "${BIN%/*}" || return 1
-  if [ -n "${GOTMPDIR:-}" ]; then
-    if [ -L "$GOTMPDIR" ] || { [ -e "$GOTMPDIR" ] && { [ ! -d "$GOTMPDIR" ] || [ ! -O "$GOTMPDIR" ]; }; }; then
-      printf 'jg-guard-host: unsafe Go work directory %s (must be a directory owned by the caller, not a symlink)\n' "$GOTMPDIR" >&2
-      return 1
-    fi
-    if ! (umask 077; mkdir -p -- "$GOTMPDIR") || [ -L "$GOTMPDIR" ] || [ ! -O "$GOTMPDIR" ] || ! chmod 700 -- "$GOTMPDIR"; then
-      printf 'jg-guard-host: cannot create or secure Go work directory %s\n' "$GOTMPDIR" >&2
-      return 1
-    fi
-  fi
+  jg_go_workdir_ready jg-guard-host || return 1
   tmp="$BIN.tmp.$$"
   if ! ( cd "$SOURCE_DIR" && "$GO" build -o "$tmp" ./cmd/jg-guard-host ) >&2; then
     rm -f -- "$tmp"

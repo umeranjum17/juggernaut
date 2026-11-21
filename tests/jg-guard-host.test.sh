@@ -87,7 +87,7 @@ check "eval of a package that decides nothing refuses" "$rc" 2
 
 # --- a new guard is one .rego file, with no core change ---
 mkdir -p "$d/feature/bin" "$d/feature/core/guard-host" "$d/feature/policy"
-cp "$ROOT/bin/jg-guard-host.sh" "$d/feature/bin/"
+cp "$ROOT/bin/jg-guard-host.sh" "$ROOT/bin/jg-go-workdir-lib.sh" "$d/feature/bin/"
 cp -R "$ROOT/core/guard-host/." "$d/feature/core/guard-host/"
 cp -R "$ROOT/policy/." "$d/feature/policy/"
 cat >"$d/feature/policy/guard/zz_probe.rego" <<'PROBE'
@@ -100,7 +100,7 @@ import future.keywords.if
 deny contains "probe refused it" if input.command != ""
 PROBE
 probe=$d/feature/bin/jg-guard-host.sh
-core_hash() { (cd "$ROOT" && find core/guard-host policy bin/jg-guard-host.sh -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum); }
+core_hash() { (cd "$ROOT" && find core/guard-host policy bin/jg-guard-host.sh bin/jg-go-workdir-lib.sh -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum); }
 before=$(core_hash)
 check "one new file is enough for the host to load the rule" "$(JG_GUARD_HOST_BIN=$d/feature-bin "$probe" --list | paste -sd ' ' -)" "repo_guard zz_probe"
 out=$(cd "$clone" && jq -Rn --arg c 'echo probe-me' '{tool_name:"Bash",tool_input:{command:$c},cwd:""}' | JG_GUARD_HOST_BIN=$d/feature-bin "$probe" hook 2>&1) && rc=0 || rc=$?

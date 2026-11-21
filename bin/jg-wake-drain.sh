@@ -214,6 +214,29 @@ require_branch_eligible_rows() {
   }
 }
 
+# render_queue: fold the bus into the read model (state/.wake-queue), or name why
+# it cannot. A failed render leaves the read model as the last render wrote it,
+# so presenting from it shows rows the bus already consumed, and acknowledging
+# them consumes nothing while every later drain presents them again. Both paths
+# therefore stop here instead. The renderer replaces the file atomically.
+render_queue() {
+  local err
+  err=$(jg_wake_bus render 2>&1 >/dev/null) && return 0
+  printf 'wake drain: the wake queue could not be brought up to date, so no wake row is presented or acknowledged: %s\n' \
+    "$(printf '%s' "${err:-the renderer gave no cause}" | tr '\n' ' ' | cut -c1-400)" >&2
+  return 1
+}
+
+# held_rows_queued <rows-file> <cutoff>: the rows the file names at or below the
+# cutoff that the read model still queues, comma-separated (empty when none).
+held_rows_queued() { # <rows-file> <cutoff>
+  [ -s "$1" ] || return 0
+  awk -F '\t' -v rows="$1" -v cutoff="$2" '
+    BEGIN { while ((getline line < rows) > 0) if (line ~ /^[0-9]+$/ && line + 0 <= cutoff + 0) held[line] = 1 }
+    NF >= 5 && ($2 in held) { printf "%s%s", (n++ ? "," : ""), $2 }
+  ' "$JG_WAKE_QUEUE" 2>/dev/null
+}
+
 # The highest sequence this actor has already been presented: the branch's
 # grant is exactly its current prompt's rows, and main's claim file is what its
 # last drain printed. Read BEFORE an ack re-claims, so a row that arrived since
@@ -1084,6 +1107,9 @@ reclaim_stale_branch_grant_locked || exit 1
 [ "$ACTOR" != branch ] || require_branch_eligible_rows || exit 1
 
 if [ -n "$ACK_THROUGH" ]; then
+  # The claim and the cutoff are read against the bus's current rows, never a
+  # stale read model (render_queue).
+  render_queue || exit 1
   if [ "$ACTOR" = branch ]; then
     PRESENTED_MAX=$(presented_max_row "$ELIGIBLE_ROWS_FILE") || exit 1
   else
@@ -1170,6 +1196,15 @@ if [ -n "$ACK_THROUGH" ]; then
       exit 1
     }
   fi
+  # The acknowledgement's postcondition: no row this actor holds at or below the
+  # cutoff is still queued. One still there was never consumed, so the ack fails
+  # by naming it rather than exiting 0 with nothing consumed.
+  ACK_LEFT=$(held_rows_queued "$ACK_ROWS_FILE" "$ACK_THROUGH")
+  if [ -n "$ACK_LEFT" ]; then
+    printf 'wake drain: acknowledged through %s, but row(s) %s at or below it are still queued: their acknowledgement did not consume them\n' \
+      "$ACK_THROUGH" "$ACK_LEFT" >&2
+    exit 1
+  fi
   if [ "$ACK_REMOVED" -gt 0 ]; then
     jg_wake_status_ack commit "$ACK_ROWS_FILE" "$ACK_THROUGH" || exit 1
   fi
@@ -1240,9 +1275,8 @@ if [ -n "$ACK_THROUGH" ]; then
 fi
 
 # The rows are the bus's now: bring the read model up to date before any actor
-# reads it. Rendering outside the queue lock is safe - the renderer replaces the
-# file atomically and nothing else writes it.
-jg_wake_bus render >/dev/null 2>&1 || true
+# reads it.
+render_queue || exit 1
 
 if [ ! -s "$JG_WAKE_QUEUE" ]; then
   : > "$JG_WAKE_QUEUE"

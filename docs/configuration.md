@@ -3113,6 +3113,7 @@ JG_WATCH_FAILURE_NOTICE_INTERVAL_MS=600000   # OpenCode adapter: the same watche
 JG_STUCK_ERRLOOP_MIN=3   # watcher: a provider or API error line repeated this many times on a worker's screen records the errors wait source
 JG_WATCH_CYCLE_LOG_MAX_BYTES=262144   # size cap for the arm-owned watcher lifecycle ledger
 JG_WATCH_CYCLE_LOG_KEEP_LINES=1000   # newest complete lifecycle rows considered when the ledger is capped
+JG_WATCH_CRASH_BACKOFF="5 30 120 600"   # seconds jg-watch-arm waits before forking a watcher after 1, 2, 3, and more consecutive crash exits in its ledger; the last step repeats (bin/jg-watch-arm.sh "Crash backoff")
 JG_WATCH_EXTENSION_LOG_KEEP_LINES=0   # opt-in Pi extension diagnostic log (state/.watch-extension.log); unset, empty, non-numeric, zero, or negative disables logging, a positive value keeps that many newest rows; logging never changes supervision behavior
 JG_WATCHER_STALE_GRACE=300   # defaults to JG_GUARD_GRACE if set, else the poll-derived grace (docs/turnend-guard.md "Guard grace and the poll cadence"); seconds before a fresh arm refuses a live holder's stale beacon (attached arms: JG_WATCHER_STALL_BOUND)
 JG_WATCHER_STALL_BOUND=       # live-holder stall bound; default and arm/re-arm behavior: docs/turnend-guard.md "Guard grace and the poll cadence"

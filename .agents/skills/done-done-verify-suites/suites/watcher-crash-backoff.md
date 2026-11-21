@@ -1,0 +1,3 @@
+# Watcher crash backoff and an honest wake acknowledgement
+
+Watcher crash backoff and an honest wake acknowledgement: run `done-done run watcher-crash-backoff`; the real `bin/jg-watch-arm.sh` over a watcher that exits 1 waits each next, longer step before it forks again, `bin/jg-wake-drain.sh` refuses to present or acknowledge a queue the wake engine could not bring up to date and names the cause, an acknowledgement consumes exactly the rows at or below its cutoff, and `bin/jg-bus.sh` rebuilds after its exported Go work folder was removed, where before an idle home re-armed every 1-2 seconds and its acknowledgements exited 0 having consumed nothing (screen: none).

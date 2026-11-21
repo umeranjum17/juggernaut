@@ -487,6 +487,10 @@ journeys:
     tier: local
     command: bash journeys/wake-raise-outbox.sh
     timeout: 5m
+  watcher-crash-backoff:
+    tier: local
+    command: bash journeys/watcher-crash-backoff.sh
+    timeout: 10m
   bus-machine-service:
     tier: local
     command: bash tests/jg-stack-owner.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

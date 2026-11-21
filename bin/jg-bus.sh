@@ -14,7 +14,8 @@
 #           missing or older than a source file, so a checkout that moved is never run
 #           as a stale binary, and the build lands under a temporary name so a partial
 #           binary is never executed.
-#   go      JG_BUS_GO when set, else `go` on PATH.
+#   go      JG_BUS_GO when set, else `go` on PATH. An exported GOTMPDIR that a /tmp cleanup
+#           removed is recreated first (bin/jg-go-workdir-lib.sh).
 #   missing When neither a current binary nor a Go toolchain is available, `publish`
 #           still exits 0, because a captain-facing emitter is never broken by the tee,
 #           and every other command exits 2 after naming what is missing.
@@ -29,6 +30,9 @@ STATE=${JG_STATE_OVERRIDE:-$JG_HOME/state}
 SOURCE_DIR=$ROOT/core/bus
 BIN=${JG_BUS_BIN:-$STATE/bin/jg-bus}
 GO=${JG_BUS_GO:-go}
+
+# shellcheck source=bin/jg-go-workdir-lib.sh
+. "$SCRIPT_DIR/jg-go-workdir-lib.sh"
 
 # The command resolves the rest of its paths from this checkout, which is how a binary
 # living in the state directory still reads the repository's defaults.
@@ -46,6 +50,7 @@ build() {
   local tmp
   command -v "$GO" >/dev/null 2>&1 || return 1
   mkdir -p "${BIN%/*}" || return 1
+  jg_go_workdir_ready jg-bus || return 1
   tmp="$BIN.tmp.$$"
   if ! ( cd "$SOURCE_DIR" && "$GO" build -o "$tmp" ./cmd/jg-bus ) >&2; then
     rm -f -- "$tmp"
