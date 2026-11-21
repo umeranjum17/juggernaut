@@ -6,7 +6,7 @@ bash bin/jg-lint.sh bin/jg bin/jg-alert.sh bin/jg-board-gate.sh bin/jg-crew-stat
   core/agent-cli/dispatch.sh core/agent-cli/tests/contract.test.sh \
   core/agent-cli/tests/forms.test.sh journeys/agent-cli-contract.sh > "$DONE_DONE_EVIDENCE_ROOT/lint.log" 2>&1 \
   || { tail -n 25 "$DONE_DONE_EVIDENCE_ROOT/lint.log" >&2; exit 1; }
-for suite in inventory forms contract e6land2; do
+for suite in inventory forms contract e6land2 e6homes; do
   log="$DONE_DONE_EVIDENCE_ROOT/$suite.log"
   bash "core/agent-cli/tests/$suite.test.sh" > "$log" 2>&1 || { tail -n 25 "$log" >&2; exit 1; }
 done
