@@ -239,4 +239,47 @@ assert_equals "$(wake)" "" "a restart sends no second message"
 "$GOALCLI" resume "$id.1" 2>/dev/null && fail "resume only takes a stop row"
 "$GOALCLI" resume "$row" >/dev/null || fail "resume"
 assert_contains "$(wake)" "$id is ready for its ship step" "closing the stop row resumes the Goal"
+# An authorized Goal (declared --auto-ship) wakes no lead for ship: the check files the ticket, its brief and an approved
+# start on the real tables, takes the step, and closes it once the lander has landed the ticket. A Goal declared without it wakes the lead.
+A=$T/auto
+mkdir -p "$A/data" "$A/state" "$A/config" "$A/projects/demo"
+printf 'v1\n' > "$A/projects/demo/README.md"
+git -C "$A/projects/demo" init -q 2>/dev/null; git -C "$A/projects/demo" add -A >/dev/null 2>&1
+git -C "$A/projects/demo" -c user.email=t@example.com -c user.name=t commit -qm v1 >/dev/null 2>&1
+printf -- '- demo [local-trunk +yolo] - the one project (added 2026-11-01)\n' > "$A/data/projects.md"
+printf '%s\n' '{"rules": [{"when": "Execute an approved ordinary implementation plan with a clear path.", "use": {"harness": "codex", "model": "gpt-5.2-codex"}}], "default": {}}' > "$A/config/crew-dispatch.json"
+JG_HOME=$A python3 -I "$ROOT/core/item-store/adapters/tickets.py" import --home main /dev/null >/dev/null || fail "make the tables for the authorized home"
+export JG_HOME=$A
+wakeA() { "$LOOP" check "$A"; }
+id=$("$GOALCLI" declare --ask "show the new banner" --repo demo --auto-ship -- test -f "$T/never") || fail "declare --auto-ship"
+out=$(wakeA)
+assert_not_contains "$out" "ready for its ship step" "an authorized Goal does not wake the lead for ship"
+assert_contains "$out" "started" "the check started the ship step itself"
+tk=$id-ship; tk=${tk//./-}
+assert_contains "$("$ROOT/bin/jg-backlog.sh" show "$tk")" "Goal ship" "the ship ticket is on the tables"
+assert_present "$A/data/$tk/brief.md" "the ship brief was written"
+assert_not_contains "$(cat "$A/data/$tk/brief.md")" "{TASK}" "the brief's task section is filled"
+assert_contains "$(cat "$A/state/dispatch-approved/$tk")" "harness=codex" "the start is approved for the dispatch check on the home's route"
+assert_equals "$(wakeA)" "" "a taken ship step is waiting: no wake and no second ticket"
+printf '%s\t%s\t%s\t%s\n' "$tk" head1 commit1 "$(date +%s)" > "$A/data/trunk-landings.tsv"
+out=$(wakeA)
+assert_contains "$out" "landed" "a landed ticket settles its step"
+assert_contains "$("$GOALCLI" show "$id")" "step: $id.1 ship closed" "the ship step closed on the landing"
+assert_contains "$(wakeA)" "$id is ready for its merged step" "the next step is the lead's"
+plain=$("$GOALCLI" declare --ask "no authority given" --repo demo -- test -f "$T/never") || fail "declare plain"
+assert_contains "$(wakeA)" "$plain is ready for its ship step" "a Goal without --auto-ship still wakes the lead"
+"$GOALCLI" start-step "$plain" "$plain.1" >/dev/null 2>&1 && fail "start-step needs the Goal's authority"
+pass "goal-loop auto-ship"
+# A failed proof of an authorized Goal adds a fix step that the check starts too, with the failed log in its brief; a restart repeats nothing.
+fx=$("$GOALCLI" declare --ask "repair the banner" --repo demo --auto-ship -- test -f "$T/never") || fail "declare for the fix"
+close_to_running "$fx"
+wakeA >/dev/null; settle "$A/data/goals/$fx/proof.exit"; wakeA >/dev/null
+out=$(wakeA)
+assert_not_contains "$out" "ready for its fix step" "an authorized Goal does not wake the lead for a fix"
+ft=$fx-fix-1; ft=${ft//./-}
+assert_contains "$(cat "$A/data/$ft/brief.md")" "proof-" "the fix brief names the failed proof log"
+assert_present "$A/state/dispatch-approved/$ft" "the fix start is approved"
+rm -rf "$A/data/jg-goal-loop"
+assert_not_contains "$(wakeA)" "$fx" "a restart starts the fix once and rings nothing for it"
+pass "goal-loop auto-fix"
 pass "goal-loop"
