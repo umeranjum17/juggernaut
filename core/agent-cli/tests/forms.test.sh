@@ -36,10 +36,6 @@ parse() { py "$INV/parse.py" "$1" "$ROOT" "$LIST" "$d/lab-$1" --known "$d/known.
 # stops failing is stale and fails the test, so the ledger shrinks as the list is corrected.
 #   mode	script	operation	what is wrong
 cat > "$d/known.tsv" <<'LEDGER'
-form	jg-delivery.sh	failed	the listed form stops at the column gap of its usage line: <task> <seq> --reason <text> are missing
-form	jg-delivery.sh	show	the listed form stops at the column gap of its usage line: <task> [<seq>] are missing
-form	jg-inbox.sh	ask	the listed form lacks its required <question>...
-form	jg-recon-handoff.sh	assign	the listed form stops at the column gap of its usage line: <task-id> --critic <critic-task-id> are missing
 get	jg-peek.sh	-	listed GET, but its run writes state/.guard-watcher-stale-banner and calls tmux
 LEDGER
 

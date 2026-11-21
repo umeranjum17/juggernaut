@@ -4,10 +4,11 @@
 # checks it, resolves a path to its entry, runs the entry's script with the caller's environment unchanged,
 # and prints the jg.v1 envelope {schema, ok, data, next}.
 #
-# Usage: dispatch.sh [--as <command name>] <check | has <word> | help | run <path words> [args...]>
+# Usage: dispatch.sh [--as <command name>] <check | has <word> | matches <words...> | help | run <path words> [args...]>
 #   check   validate every fragment: its shape, unique paths and aliases, one entry per (script, operation),
 #           the owner of a row in operations.tsv, and that each entry's script is there.
-#   has     exit 0 when <word> starts the path of an entry (the wrappers' routing test).
+#   has     exit 0 when <word> starts a path or an alias (the wrappers' routing test).
+#   matches exit 0 when the words match a route of at least two words (before falling back to a worker verb).
 #   help    every entry of every fragment on one page, with its plain meaning.
 #   run     resolve the longest path that matches, bind the arguments against the entry's form, run it.
 # Exit codes of `run`: 0 done, 1 refused by a rule, 2 usage, 3 still waiting, 4 not found, 5 a dependency missing.
@@ -39,10 +40,12 @@ words_json() {
   printf '%s\0' "$@" | jq -Rsc 'split("\u0000")[:-1]'
 }
 
+ROUTES_JQ='def routes: [.path] + [.aliases[] | split(" ")];'
+
 # Shape of one fragment: the check of example-pack/formats.md section 6, plus the fields this dispatcher reads.
 FRAGMENT_SHAPE='(.area|type=="string") and (.owner|type=="string") and (.entries|type=="array" and length>0)
   and all(.entries[];
-    (.path|type=="array" and length>0 and all(.[]; type=="string" and test("^[a-z0-9][a-z0-9-]*$")))
+    (.path|type=="array" and length>0 and all(.[]; type=="string" and test("^[a-z0-9][a-z0-9_-]*$")))
     and (.meaning|type=="string" and length>0) and (.roles|type=="array") and (.changes|type=="boolean")
     and (.method == (if .changes then "POST" else "GET" end))
     and ((.changes|not) or (.repeat_key|type=="string"))
@@ -86,7 +89,7 @@ cmd_check() {
 }
 
 cmd_has() {
-  contract_all | jq -e --arg w "${1:-}" 'any(.[]; .path[0] == $w)' >/dev/null
+  contract_all | jq -e --arg w "${1:-}" "$ROUTES_JQ any(.[] | routes[]; .[0] == \$w)" >/dev/null
 }
 
 cmd_help() {
@@ -98,67 +101,97 @@ cmd_help() {
 }
 
 # --- binding the arguments to the form -----------------------------------------------------------------------
-# The form is the script's own usage line. A word in <> takes an argument; --x <n> is an option, a bare --x in
-# [] a flag, a word in [] optional, <n...> takes the rest of the line, any other word is literal. An argument
-# the entry declares but its form does not name is the dispatcher's own: --again (a flag) and --key (an option).
+# The form is the script's own usage line. Bind one branch of each choice, and keep argument values separate
+# from literal words the script expects. An entry can also declare the dispatcher options --again and --key.
 # shellcheck disable=SC2016  # the jq program is one single-quoted string
 BIND_JQ='
-def parse($toks; $opt):
-  if ($toks | length) == 0 then []
-  else $toks[0] as $t | $toks[1:] as $rest
-  | if ($t | startswith("[")) then parse($t[1:-1] | [scan("\\S+")]; true) + parse($rest; $opt)
-    elif ($t | test("^<.+>$")) then [{k: "pos", name: ($t[1:-1] | rtrimstr("...")), rest: ($t | endswith("...>")), opt: $opt}] + parse($rest; $opt)
-    elif ($t | startswith("--")) then
-      if ($rest | length) > 0 and ($rest[0] | test("^<[^.]+>$")) then
-        [{k: "opt", flag: $t, name: $rest[0][1:-1], opt: $opt}] + parse($rest[1:]; $opt)
-      elif $opt then [{k: "flag", flag: $t, name: ($t | ltrimstr("--")), opt: true}] + parse($rest; $opt)
-      else [{k: "lit", v: $t}] + parse($rest; $opt) end
-    else [{k: "lit", v: $t}] + parse($rest; $opt) end
-  end;
+def lex: [scan("<[^>]+>(?:\\.\\.\\.)?|[\\[\\]()|]|[^\\s<>\\[\\]()|]+")];
+def placeholder: test("^<[^>]+>(\\.\\.\\.)?$|^[A-Z][A-Z0-9_-]*$");
+def argname: sub("^<"; "") | sub("(\\.\\.\\.)?>(\\.\\.\\.)?$"; "");
+def option: test("^--?[a-zA-Z]");
+def find_at_level($toks; $stop):
+  first(foreach range(0; $toks | length) as $i
+    ({depth: 0}; $toks[$i] as $t
+      | .found = (.depth == 0 and ($t | IN($stop[])))
+      | if $t == "[" or $t == "(" then .depth += 1
+        elif $t == "]" or $t == ")" then .depth -= 1 else . end;
+      select(.found) | $i)) // ($toks | length);
+def specs($toks; $opt; $choice):
+  find_at_level($toks; ["|"]) as $or
+  | if $or < ($toks | length) then
+      specs($toks[:$or]; $opt; true), specs($toks[$or+1:]; $opt; true)
+    elif ($toks | length) == 0 then []
+    else $toks[0] as $t | $toks[1:] as $rest
+    | if $t == "[" or $t == "(" then
+        find_at_level($rest; [if $t == "[" then "]" else ")" end]) as $end
+        | $rest[:$end] as $group
+        | (if $t == "[" and find_at_level($group; ["|"]) < ($group | length) then
+             [], specs($group; $opt; true)
+           else specs($group; ($opt or $t == "["); false) end)
+          + specs($rest[$end+1:]; $opt; $choice)
+      elif $t | placeholder then
+        [{k: "pos", name: ($t | argname), rest: ($t | test("\\.\\.\\.>?$")), opt: $opt}]
+        + specs($rest; $opt; $choice)
+      elif ($t | option) and ($rest[0] // "" | placeholder) then
+        [{k: "opt", flag: $t, name: ($rest[0] | argname), opt: $opt}] + specs($rest[1:]; $opt; $choice)
+      elif $t | option then
+        [{k: "flag", flag: $t, name: ($t | sub("^--?"; "")), opt: $opt, default: ($opt or $choice | not)}]
+        + specs($rest; $opt; $choice)
+      elif $t == "--" then
+        [{k: "separator", opt: $opt}] + specs($rest; $opt; $choice)
+      elif $t == "-" or $choice then
+        [{k: "pos", name: $t, literal: $t, opt: $opt}] + specs($rest; $opt; $choice)
+      else [{k: "lit", v: $t}] + specs($rest; $opt; $choice)
+      end
+    end;
 def ref_ok: test("^[0-9]+:[A-Za-z0-9._-]+(:[0-9]+)?$");
 def expand($type; $v): if $type == "ack-ref" then ($v | split(":")) as $p
   | ["--ack-through", $p[0], "--recovery-generation", $p[1]] + (if ($p | length) > 2 then ["--pages-ack", $p[2]] else [] end) else [$v] end;
-. as $in | $in.entry as $e
-| ($e.args | map({(.name): .type}) | add // {}) as $types
-| ($e.form | [scan("\\[[^\\]]*\\]|\\S+")] | .[1:]) as $toks
-| parse($toks; false) as $spec
-| ($spec | map(select(.k == "pos")) ) as $pos
+def take_pos($pos; $a):
+  $pos[.posi] as $p
+  | if $p == null or ($p.literal != null and $a != $p.literal) then .err = "unexpected argument \($a)"
+    elif $p.rest then .vals[$p.name] += [$a]
+    else .vals[$p.name] = $a | .posi += 1 end;
+def bind($in; $spec; $types; $declared):
+  ($spec | map(select(.k == "pos"))) as $pos
 | ($spec | map(select(.k == "opt" or .k == "flag") | {(.flag): .}) | add // {}) as $named
-| (($e.args | map(.name)) as $declared
-   | ($spec | map(select(.k != "lit") | .name)) as $inform
-   | ({} + (if ($declared | index("again")) and ($inform | index("again") | not) then {"--again": {k: "flag", name: "again"}} else {} end)
-        + (if ($declared | index("key")) and ($inform | index("key") | not) then {"--key": {k: "opt", name: "key"}} else {} end))) as $own
-| ($named + $own) as $flags
-| (reduce $in.args[] as $a ({vals: {}, pending: null, posi: 0, dd: false, err: null};
+| (({"--again": {k: "flag", name: "again"}, "--key": {k: "opt", name: "key"}}
+    | with_entries(select(.value.name as $n | $declared | index($n)))) + $named) as $flags
+| (reduce $in.args[] as $a ({vals: {}, opts: {}, pending: null, posi: 0, dd: false, err: null};
     if .err != null then .
-    elif .pending != null then .vals[.pending] = $a | .pending = null
+    elif .pending != null then .opts[.pending] = $a | .pending = null
     elif (.dd | not) and $a == "--" then .dd = true
-    elif (.dd | not) and ($a | startswith("--")) then
+    elif (.dd | not) and ($a | option) then
       if $flags | has($a) then ($flags[$a]) as $f
-        | if $f.k == "opt" then .pending = $f.name else .vals[$f.name] = true end
+        | if $f.k == "opt" then .pending = $a else .opts[$a] = true end
       else .err = "unknown option \($a)" end
-    else
-      ($pos | length) as $n
-      | if .posi < $n then ($pos[.posi]) as $p
-          | if $p.rest then .vals[$p.name] = ((.vals[$p.name] // []) + [$a])
-            else .vals[$p.name] = $a | .posi += 1 end
-        elif $n > 0 and $pos[$n - 1].rest then .vals[$pos[$n - 1].name] += [$a]
-        else .err = "unexpected argument \($a)" end
-    end)) as $s
+    else take_pos($pos; $a) end)) as $s
 | if $s.err != null then {ok: false, error: $s.err}
   elif $s.pending != null then {ok: false, error: "an option is missing its value"}
-  else ($s.vals) as $v
-    | ([$spec[] | select((.k == "pos" or .k == "opt") and (.opt | not) and (.name as $n | $v | has($n) | not)) | "<\(.name)>"]) as $missing
-    | ([$e.args[] | select(.type == "ack-ref" and (.name as $n | $v | has($n)) and (($v[.name] | ref_ok) | not)) | .name]) as $badref
+  else $s.vals as $v | $s.opts as $opts
+    | ([$pos[] | select((.opt | not) and (.name as $n | $v | has($n) | not)) | (.literal // "<\(.name)>")]
+       + [$named[] | select((.opt or .default | not) and (.flag as $f | $opts | has($f) | not)) | .flag]) as $missing
+    | ($v + ($opts | to_entries | map({($flags[.key].name): .value}) | add // {})) as $vals
+    | ([$vals | to_entries[] | select($types[.key] == "ack-ref" and (.value | ref_ok | not)) | .key]) as $badref
     | if ($missing | length) > 0 then {ok: false, error: "missing \($missing | join(" "))"}
       elif ($badref | length) > 0 then {ok: false, error: "\($badref[0]) is not a reference from `\($in.name) radio drain` (<sequence>:<generation>[:<pages>])"}
-      else {ok: true, vals: $v, argv: ($spec | map(
+      else {ok: true, vals: $vals, argv: ($spec | map(
           if .k == "lit" then [.v]
+          elif .k == "separator" then (if (.opt | not) or $s.dd then ["--"] else [] end)
           elif .k == "pos" then (if (.name as $n | $v | has($n)) then (if .rest then $v[.name] else expand($types[.name]; $v[.name]) end) else [] end)
-          elif .k == "opt" then (if (.name as $n | $v | has($n)) then [.flag] + expand($types[.name]; $v[.name]) else [] end)
-          else (if $v[.name] == true then [.flag] else [] end) end) | add // [])}
+          elif .k == "opt" then (if (.flag as $f | $opts | has($f)) then [.flag] + expand($types[.name]; $opts[.flag]) else [] end)
+          else (if .default or $opts[.flag] then [.flag] else [] end) end) | add // [])}
       end
-  end'
+  end;
+. as $in | $in.entry as $e
+| ($e.args | map({(.name): .type}) | add // {}) as $types
+| ($e.form | lex | .[1:]) as $toks
+| [if ($e.operation | option) and $toks[0] == $e.operation then
+     [{k: "lit", v: $e.operation}] + specs($toks[1:]; false; false)
+     | bind($in | if .args[0] == $e.operation then .args = .args[1:] else . end; .; $types; $e.args | map(.name))
+   else specs($toks; false; false) | bind($in; .; $types; $e.args | map(.name))
+   end]
+| first(.[] | select(.ok)) // .[0]'
 
 # --- the repeat guard ------------------------------------------------------------------------------------------
 # An entry that declares an `again` argument runs once per repeat key: the sha256 of its schema and the values
@@ -195,13 +228,17 @@ envelope() {  # <schema> <ok> <data json> <next or empty>
     '{schema: ("jg.v1 " + $schema), ok: $ok, data: $data, next: (if $next == "" then null else $next end)}'
 }
 
+resolve() {
+  contract_all | jq -c --argjson w "$(words_json "$@")" "$ROUTES_JQ
+    [.[] as \$entry | \$entry | routes[] | length as \$n | select(\$w[:\$n] == .) | {entry: \$entry, words: \$n}]
+    | max_by(.words) // empty"
+}
+
 cmd_run() {
-  local all entry n resolved bound vals script rc maprc out err file next ref data
+  local entry n resolved bound vals script rc maprc out err file next ref data
   [ "$#" -gt 0 ] || { printf '%s: run needs a command\n' "$NAME" >&2; return 2; }
   cmd_check || return 1
-  all=$(contract_all)
-  resolved=$(printf '%s' "$all" | jq -c --argjson w "$(words_json "$@")" '
-    . as $all | [$all[] | select(.path as $p | ($w[:($p | length)]) == $p)] | sort_by(.path | length) | last // empty')
+  resolved=$(resolve "$@")
   if [ -z "$resolved" ]; then
     if cmd_has "$1"; then
       printf '%s: no command %s. Next: %s help\n' "$NAME" "$*" "$NAME" >&2
@@ -210,8 +247,8 @@ cmd_run() {
     fi
     return 2
   fi
-  entry=$resolved
-  n=$(printf '%s' "$entry" | jq '.path | length')
+  entry=$(printf '%s' "$resolved" | jq -c .entry)
+  n=$(printf '%s' "$resolved" | jq .words)
   shift "$n"
   bound=$(jq -nc --argjson entry "$entry" --arg name "$NAME" --argjson args "$(words_json "$@")" \
     "{entry: \$entry, name: \$name, args: \$args} | $BIND_JQ") || { printf '%s: the command contract could not be read\n' "$NAME" >&2; return 5; }
@@ -263,7 +300,8 @@ if [ "${1:-}" = --as ]; then NAME=${2:?--as needs a name}; shift 2; fi
 case "${1:-}" in
   check) cmd_check ;;
   has) shift; cmd_has "$@" ;;
+  matches) shift; resolve "$@" | jq -e '.words >= 2' >/dev/null ;;
   help) cmd_help ;;
   run) shift; cmd_run "$@" ;;
-  *) printf 'usage: dispatch.sh [--as <name>] check | has <word> | help | run <path words> [args...]\n' >&2; exit 2 ;;
+  *) printf 'usage: dispatch.sh [--as <name>] check | has <word> | matches <words...> | help | run <path words> [args...]\n' >&2; exit 2 ;;
 esac

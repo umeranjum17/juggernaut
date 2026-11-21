@@ -49,7 +49,16 @@ NOT_RUN = {('jg-host-wiring.sh', '-'): 'wires host protections and services',
            ('jg-afk-start.sh', '-'): 'starts the supervise daemon',
            ('jg-supervise-daemon.sh', '-'): 'is the supervise daemon'}
 # Fixture values for a placeholder only one script gives a meaning to.
-SCRIPT_VALUES = {('jg-machine-guard.sh', 'name'): 'reuse', ('jg-workflow.sh', 'sub'): 'list', ('jg-vendor-auth-probe.sh', 'probe'): 'grok'}
+SCRIPT_VALUES = {
+    ('jg-goal.sh', 'proof argv...'): '/bin/false',
+    ('jg-machine-guard.sh', 'name'): 'reuse',
+    ('jg-remote-inherit.sh', 'allowlisted-relative-path'): 'config/crew-harness',
+    ('jg-vendor-auth-probe.sh', 'probe'): 'grok',
+    ('jg-workflow.sh', 'sub'): 'list',
+}
+FORM_VALUES = {'0-3': '2', '0-4': '2', 'YYYY-MM-DD': '2099-01-01', 'bytes': '0', 'generation': '1',
+               'empty-sha256': hashlib.sha256(b'').hexdigest(), 'max-sequence': '1',
+               'kind:pointer': 'status:fixture', 'file-or-dash': '-'}
 # A usage error, an unknown verb or a form the parser does not know: the form did not parse.
 PARSE_ERROR = re.compile(r'(?i)\busage:|\bunknown (?:verb|wait kind|option|command|subcommand|flag|argument|mode|action|operation)\b'
                          r'|unrecognized (?:option|argument)|invalid option|is not a (?:control )?verb|no home at|unexpected argument')
@@ -174,6 +183,8 @@ class Lab:
             return overrides[name]
         if (script, name) in SCRIPT_VALUES:
             return SCRIPT_VALUES[(script, name)]
+        if name in FORM_VALUES:
+            return FORM_VALUES[name]
         if ',' in name:  # <n,...> a list of numbers
             return self.values['number']
         if name in self.values:
@@ -377,6 +388,8 @@ def render(lab, form, overrides=None, script=None, keep=None):
         m = re.match(r'^<([^>]+)>(\.\.\.)?$', tok)
         if m:
             out.append(lab.value(m.group(1).strip(), overrides or {}, script))
+        elif re.fullmatch(r'[A-Z][A-Z0-9_-]*', tok):
+            out.append(lab.value(tok if tok in FORM_VALUES else tok.lower(), overrides or {}, script))
         elif tok in ('|', '...') or tok.endswith('...'):
             continue
         elif re.search(r'[<>(){}|\[\]]', tok):
@@ -398,7 +411,7 @@ def optional_groups(form):
             depth -= 1
             if depth == 0:
                 g = form[start:i + 1]
-                if re.match(r'^\[--[a-z][\w-]*(?:[ =]<[^>]+>)?\]$', g) and g != '[--help]':
+                if re.match(r'^\[--[a-z][\w-]*(?:[ =](?:<[^>]+>|[A-Z][A-Z0-9_-]*))?\]$', g) and g != '[--help]':
                     groups.append(g)
     return groups
 
@@ -474,6 +487,9 @@ def usage_rows(rows):
 def attempt(lab, row, overrides=None, keep=None):
     """Render the row's form on this lab and run it: (argv, why, result)."""
     argv, why = render(lab, row['form'], overrides, row['script'], keep)
+    if argv is not None and (row['script'], row['operation']) == ('jg-live-lab.sh', 'up'):
+        # Use an existing fixture directory so the real parser runs without starting a lab.
+        argv.append(lab.value('dir', {}))
     return argv, why, (lab.run(argv) if argv is not None else None)
 
 

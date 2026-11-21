@@ -22,8 +22,9 @@
 - `operation` is the script's own operation word (`-` for a script with one action).
 - The pair (`script`, `operation`) is in exactly one entry of one fragment, and that fragment's `owner` is the slice `operations.tsv` names for the pair.
 - Paths and aliases are unique across all fragments.
-- An alias is an old spelling: the old command name and word, for example `juggernaut-axi lanes`.
-  The old name keeps running by itself, byte for byte; the alias only records it in the one contract.
+- An alias is another spelling, for example `plan swarm start` for `plan blitz start`.
+  The dispatcher matches the longest path or alias.
+  The old standalone commands, such as `juggernaut-axi lanes`, keep their historical output.
 - `bash core/agent-cli/dispatch.sh check` validates every fragment, and `run` does it first.
   The shape it checks is `example-pack/formats.md` section 6 of the jg-6si report.
   The owner check reads `core/agent-cli/operations.tsv` when it is there.
@@ -35,9 +36,10 @@ The `form` is read as the script's usage line.
 | In the form | Meaning |
 |---|---|
 | `<name>` | a positional argument |
-| `<name...>` | the rest of the line |
-| `--x <name>` | an option; `--x` alone inside `[ ]` is a flag |
+| `<name...>` or `<name>...` | the rest of the line |
+| `--x <name>` or `--x NAME` | an option; `--x` alone inside `[ ]` is a flag |
 | `[ ... ]` | optional |
+| `(a \| b)` or `[a \| b]` | one required or optional alternative |
 | any other word | literal, passed as written (the operation word, `--json`) |
 
 - The caller's environment goes to the script unchanged.

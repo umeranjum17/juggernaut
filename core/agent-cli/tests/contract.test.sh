@@ -194,4 +194,55 @@ has "same --key" "$out" "already processed"; [ "$(inbox "$H")" = 4 ] || fail "a 
 export JG_HOME=$OTHER; "$JG" radio send t1 "first message" >/dev/null 2>&1 || fail "the same text to home B"
 [ "$(inbox "$OTHER")" = 1 ] || fail "home B's own record of a repeat key was shared with home A"; export JG_HOME=$H
 
+# --- 6. both public names pass stdin and replay identity to the real inbox ------------------------------------
+body=$'First line for Umer\nSecond line for Umer'
+out=$(printf '%s' "$body" | "$JG" radio inbox note --request-id tg-test-101 --json -)
+rc_is 'jg radio inbox note' "$?" 0
+note=$(jq -er 'select(.ok and .data.saved and .data.outcome == "created") | .data.id' <<<"$out") || fail "note was not saved: $out"
+out=$(printf '%s' "$body" | "$AXI" radio inbox note --request-id tg-test-101 --json -)
+rc_is 'juggernaut-axi radio inbox note' "$?" 0
+jq -e --arg id "$note" '.ok and .data.outcome == "replay" and .data.id == $id' <<<"$out" >/dev/null || fail "note replay: $out"
+has "stdin reached the saved note" "$(cat "$H/state/inbox/$note.note")" "$body"
+
+# --- 7. wave-2 forms keep the script argv exact without running any lifecycle action --------------------------
+t=$(mk_tree wave-2)
+cp "$JG" "$t/bin/jg"
+cp "$ROOT/core/agent-cli/operations.tsv" "$t/core/agent-cli/"
+awk -F'\t' '$2 == "check" && $1 == "jg-tmp-sweep.sh" || $2 == "squad_lead" || $1 == "jg-claude-trust.sh" ||
+  $4 ~ /^(radio afk-contract enter|relay procevent register|proof proof-bypass grant|plan blitz start|report fleet-ledger (pr_ready|cleaned_up)|ticket goal declare)$/' \
+  "$t/core/agent-cli/operations.tsv" |
+  while IFS=$'\t' read -r script operation form path _ _ owner aliases _; do
+    cat > "$t/bin/$script" <<'SH'
+#!/usr/bin/env bash
+printf '%s\0' "$@" | jq -Rsc 'split("\u0000")[:-1]'
+SH
+    chmod +x "$t/bin/$script"
+    jq -nc --arg owner "$owner" --arg script "bin/$script" --arg op "$operation" --arg form "$form" \
+      --arg path "$path" --arg aliases "$aliases" '{area:"fixture",owner:$owner,entries:[{
+        path:($path|split(" ")),meaning:"Record the argv",roles:[],args:[],changes:true,method:"POST",
+        repeat_key:"fixture",script:$script,operation:$op,form:$form,exits:{"0":0},schema:"fixture.v1",
+        aliases:(if $aliases == "-" then [] else [$aliases] end)}]}' > "$t/core/agent-cli/contract/$script-$operation.json"
+  done
+argv_is() {
+  local expected=$1 output
+  shift
+  output=$("$t/bin/jg" "$@") || fail "jg $* did not dispatch"
+  [ "$(jq -c .data <<<"$output")" = "$expected" ] || fail "jg $* passed the wrong argv: $output"
+}
+argv_is '["check"]' crew tmp-sweep check
+argv_is '["check","--root","/tmp"]' crew tmp-sweep check --root /tmp
+argv_is '["squad_lead","lead"]' crew harness squad_lead lead
+argv_is '["/tmp/copy","demo"]' crew claude-trust /tmp/copy demo
+argv_is '["--lab-home","/tmp/lab"]' crew claude-trust lab-home /tmp/lab
+argv_is '["--squad-lead-home","/tmp/lead","lead"]' crew claude-trust squad-lead-home /tmp/lead lead
+argv_is '["enter","--words","example"]' radio afk-contract enter --words example
+argv_is '["enter","--words-file","/tmp/words"]' radio afk-contract enter --words-file /tmp/words
+argv_is '["register","file","source","--","/bin/true","--flag","two words"]' relay procevent register file source -- /bin/true --flag 'two words'
+argv_is '["grant","--ticket","ticket-id","--word","word-id"]' proof proof-bypass grant --ticket ticket-id --word word-id
+argv_is '["grant","--home","--word","word-id","--hours","2"]' proof proof-bypass grant --home --word word-id --hours 2
+argv_is '["start","plan.json","--harness","codex","--model","model","--effort","high"]' plan swarm start plan.json --harness codex --model model --effort high
+argv_is '["pr_ready","t1","url"]' report fleet-ledger pr_ready t1 url
+argv_is '["cleaned_up","t1"]' report fleet-ledger cleaned_up t1
+argv_is '["declare","--ask","hello","--repo","demo","--","/bin/true","--flag"]' ticket goal declare --ask hello --repo demo -- /bin/true --flag
+
 pass "contract: fragments, names, envelope, acknowledgement reference, repeats and explicit home"

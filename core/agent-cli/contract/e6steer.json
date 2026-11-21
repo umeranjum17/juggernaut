@@ -1,0 +1,24 @@
+{
+  "area": "steering",
+  "owner": "e6steer",
+  "entries": [
+    {
+      "path": ["radio", "inbox", "note"],
+      "meaning": "Capture a note from standard input",
+      "roles": ["overwatch"],
+      "args": [
+        {"name": "id", "type": "text", "required": false},
+        {"name": "json", "type": "flag", "required": false}
+      ],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-inbox.sh note [--request-id <id>] [--json] -",
+      "repeat_key": "id",
+      "exits": {"0": 0, "1": 1, "2": 2, "3": 3},
+      "schema": "radio.inbox.note.v1",
+      "script": "bin/jg-inbox.sh",
+      "operation": "note",
+      "aliases": []
+    }
+  ]
+}
