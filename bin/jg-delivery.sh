@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # jg-delivery.sh - the delivery record of a steer: five words, each with its own proof.
 #
-# Usage: jg-delivery.sh handled <task> <seq> --evidence <kind>:<pointer>
+# Usage: jg-delivery.sh handled <task> <seq> --evidence <kind>:<pointer> [--action <lane> <text>]...
 #        jg-delivery.sh failed  <task> <seq> --reason <text>
 #        jg-delivery.sh show    <task> [<seq>]
 #        jg-delivery.sh overdue <task> [--after <seconds>] [--read] [--since <epoch>] [--until <epoch>]
@@ -39,6 +39,13 @@ die() { printf 'jg-delivery.sh: %s\n' "$*" >&2; exit 2; }
 cmd=${1:-}; task=${2:-}; [ -n "$cmd" ] && [ -n "$task" ] || die "usage: jg-delivery.sh handled|failed|show|overdue <task> ... (--help)"
 shift 2
 dir=$(jg_task_inbox_dir "$STATE" "$task")
+inbox_home=${JG_HOME:-$(dirname "$STATE")}
+launch_inbox=${JG_TASK_INBOX:-}
+# A local Squad Lead reads the inbox Main opened for it, but its action records belong to its own home.
+if [ "${launch_inbox##*/}" = "$task.inbox" ] && [ -d "$launch_inbox" ]; then
+  if [ "$launch_inbox" != "$dir" ]; then inbox_home=$(dirname "$(dirname "$launch_inbox")"); fi
+  dir=$launch_inbox
+fi
 [ -d "$dir" ] || die "no steering inbox for $task"
 ledger=$dir/.delivery.jsonl
 
@@ -55,16 +62,55 @@ word_at() {
 claim() { # <seq> <word> <pointer> <outcome>
   [ -n "$(record_place "$1")" ] || die "$task has no steer numbered $1"
   jg_task_delivery_note "$dir" "$1" "$2" "$3" || die "the delivery record could not be written"
-  # shellcheck disable=SC2154  # JG_HOME may be unset when only JG_STATE_OVERRIDE names the state
-  JG_HOME=${JG_HOME:-$(dirname "$STATE")} JG_STATE_OVERRIDE=$STATE \
+  JG_HOME=$inbox_home JG_STATE_OVERRIDE=${dir%/*} \
     timeout "${JG_DELIVERY_BUS_TIMEOUT:-5}" "$SCRIPT_DIR/jg-wake-bus.sh" inbox-handled "$task" "$((10#$1))" "$4" "$3" \
     >/dev/null 2>&1 || printf 'jg-delivery.sh: the bus event was not sent; the record holds the claim\n' >&2
   printf '%s %s %s\n' "$task" "$(printf '%03d' "$((10#$1))")" "$2"
 }
 
+# Save one replay-safe action per named lane, in the lead's own state. The
+# evidence pointer remains present even when the claim adds a plain description.
+record_swarm_actions() { # <steer path> <sequence> <evidence> [--action <lane> <text>]...
+  local home=${JG_HOME:-} record=$1 seq=$2 evidence=$3 arm body lanes lane folder saved tmp actions='{}' action
+  shift 3
+  [ -n "$home" ] || return 0
+  local arms=()
+  for arm in "$home"/data/swarm/*/arm.json; do
+    [ ! -f "$arm" ] || arms+=("$arm")
+  done
+  [ "${#arms[@]}" -gt 0 ] || { [ "$#" -eq 0 ] || die "this home has no swarm lanes"; return 0; }
+  body=$(jg_task_inbox_body "$record") || return 1
+  lanes=$(jq -rs --arg body "$body" '
+    [$body | scan("[A-Za-z0-9_]+(?:[.-]+[A-Za-z0-9_]+)*")] as $words
+    | [.[].rows[] | . as $lane | select($words | index($lane))] | unique[]' "${arms[@]}") || return 1
+  while [ "$#" -gt 0 ]; do
+    [ "$#" -ge 3 ] && [ "$1" = --action ] && [ -n "$3" ] || die "handled accepts --action <lane> <text> after the evidence"
+    grep -Fxq -- "$2" <<< "$lanes" || die "steer $seq does not name an owned swarm lane $2"
+    actions=$(jq -c --arg lane "$2" --arg action "$3" '.[$lane] = $action' <<< "$actions") || return 1
+    shift 3
+  done
+  [ -n "$lanes" ] || return 0
+  case "$task" in *[!A-Za-z0-9._-]*) die "invalid lead task id $task" ;; esac
+  while IFS= read -r lane; do
+    folder="$home/state/swarm-actions/$lane"
+    saved="$folder/$task-$((10#$seq)).json"
+    action=$(jq -r --arg lane "$lane" '.[$lane] // empty' <<< "$actions") || return 1
+    [ -n "$action" ] || [ ! -f "$saved" ] || continue
+    mkdir -p -- "$folder" || return 1
+    tmp=$(mktemp "$folder/.action.XXXXXX") || return 1
+    if ! jq -nc --arg lane "$lane" --arg task "$task" --argjson seq "$((10#$seq))" \
+      --arg evidence "$evidence" --arg action "${action:-$evidence}" \
+      '{lane:$lane, steer:{task:$task, seq:$seq}, action:$action, evidence:$evidence}' > "$tmp" ||
+      ! mv -- "$tmp" "$saved"; then
+      rm -f -- "$tmp"
+      return 1
+    fi
+  done <<< "$lanes"
+}
+
 # jg_delivery_close_steer <task> <seq> <evidence>: jg-item close steer:<home id>/<task>/<seq> done handled:<evidence>.
 jg_delivery_close_steer() {
-  local home=${JG_HOME:-$(dirname -- "$STATE")} root key
+  local home=$inbox_home root key
   root=$(cd "$SCRIPT_DIR/.." && pwd)
   [ -e "$home/config/item-store" ] && [ -x "$root/core/item-store/jg-item" ] || return 0
   key=$(JG_HOME=$home "$root/core/item-store/jg-item" key steer --task "$1" --n "$((10#$2))" 2>/dev/null | cut -f1) || return 0
@@ -80,6 +126,11 @@ case "$cmd" in
     kind=${ev%%:*}; ptr=${ev#*:}
     case "$kind" in status|commit|reply|task|pr) ;; *) die "evidence kind must be status, commit, reply, task or pr" ;; esac
     [ "$ev" != "$kind" ] && [ -n "$ptr" ] || die "evidence needs a pointer after the kind"
+    shift 3
+    n=$(printf '%03d' "$((10#$seq))")
+    place=$(record_place "$seq")
+    case "$place" in handled) record="$dir/handled/$n.msg" ;; inbox) record="$dir/$n.msg" ;; *) die "$task has no steer numbered $seq" ;; esac
+    record_swarm_actions "$record" "$seq" "$ev" "$@" || die "the swarm lane action records could not be written"
     claim "$seq" handled "$ev" handled
     # The item store closes the steer's item too (guarded by the home's switch; today's record decides, so nothing here changes
     # this command's output or exit). A steer the store never opened is not a refusal: there is nothing to close.

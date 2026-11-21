@@ -23,6 +23,9 @@ journeys:
   hook-inbox:
     tier: local
     command: bash tests/jg-hook-inbox.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  swarm-blocked-lanes:
+    tier: local
+    command: bash journeys/swarm-blocked-lanes.sh
   stage-words:
     tier: local
     command: bash journeys/stage-words.sh

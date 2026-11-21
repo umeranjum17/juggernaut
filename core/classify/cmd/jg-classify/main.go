@@ -18,6 +18,7 @@
 //	jg-classify key <keyless> <line>                   the decision key, exit 1 for a bad slug
 //	jg-classify key-before-colon|key-at-note-head <line>   where a line carries its key
 //	jg-classify open-decisions|current-line|own-open-decisions <status-file> [kind]
+//	jg-classify blocked-since <status-file>            line and epoch of the current continuous block
 //	jg-classify has-open-needs-decision <status-file> [<run-id>]
 //	jg-classify key-closing-verb <status-file> <key>   the verb that last moved a decision key
 //	jg-classify fold-line|drop|open-set-has|open-set-verb ...     one step of the decision fold
@@ -44,7 +45,7 @@ import (
 const usage = "usage: jg-classify last-line|declared-wait|is-terminal|is-relevant|is-paused|is-held|is-paused-or-held|" +
 	"paused-until|utc-epoch|facts|unread-surface|fields|span-events|verb|note|untimed|stamp-line|stamp-width|at-epoch|key|key-before-colon|" +
 	"key-at-note-head|kind|event-recorded|transition-allowed|pending-reply-escalation|fold-line|drop|open-set-has|" +
-	"open-set-verb|open-decisions|current-line|own-open-decisions|has-open-needs-decision|key-closing-verb|" +
+	"open-set-verb|open-decisions|blocked-since|current-line|own-open-decisions|has-open-needs-decision|key-closing-verb|" +
 	"open-decisions-incremental|scan-open-decisions-incremental|cursor-path|file-ident|file-size|file-mtime|" +
 	"read-span|legacy-cursor-offset ... (see the file header)"
 

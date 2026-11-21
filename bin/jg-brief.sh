@@ -980,6 +980,7 @@ For a detailed answer (an investigation, a plan, an audit), write it to a doc un
 Before treating an investigation or visual review as complete, load \`captain-hold-lifecycle\` from this home's \`.agents/skills/\` and pass its shared completion gate.
 A message with NO marker is the captain typing directly into your pane: treat it as authoritative captain intervention and stay conversational exactly as you would for any captain message; do not force it onto the status path.
 A request arriving through the instruction inbox below follows the same marker and reply rules.
+When you claim a steer that names your swarm lanes, add \`--action <lane> "<what you did>"\` after the evidence pointer for each named lane.
 
 $INBOX_SECTION
 

@@ -12,6 +12,7 @@
 #   `swarm <plan>: all <n> slices landed in <h>h<mm>m`   (swarm.json state becomes `finished`)
 #   `swarm <plan>: all runnable slices landed; <k> wait for the owner: <row>[, <row>...]`
 #   `swarm <plan>: no slice moved for <m> min; open: <row> (<reason>)[; ...]`   (only while a slice is open and none is in flight)
+# It also raises one P1 per lane with an open blocker older than ten minutes and resolves it when the block ends.
 # check, in a home with an armed arm.json whose rows are all done, puts config/auto-dispatch and config/lane-target back
 # to their `*_before` values, but only when no other arm.json of the home is armed and the file still holds what the arm
 # wrote, and prints `swarm <plan>: <owner> restored its dispatch switch to <value>` once. A slice waits for the owner
@@ -51,16 +52,19 @@ load_home() {
 }
 state_of() { printf '%s' "${ST[$1|$2]:-queued}"; }
 
-# evaluate <plan dir>: sets N D W Q K SIG, OPEN (rows), WAITING (rows), ALLSTUCK and ROW_HOME[row]. 1 = a home is unreadable.
+# evaluate <plan dir>: sets N D W Q K SIG, ROWS, OPEN, WAITING, ALLSTUCK, ROW_HOME[row] and ROW_OWNER[row].
+# Unreadable homes are omitted and make the aggregate incomplete (return 1).
 evaluate() {
-  local pf=$1/plan.json main sid row owner word deps h s d
-  declare -gA ROW_HOME=() SLICE_ROW=() DEPS=() STUCK=()
-  N=0 D=0 W=0 Q=0 K=0 OPEN=() WAITING=() ALLSTUCK=1
+  local pf=$1/plan.json main sid row owner word deps h s d unread=0
+  declare -gA ROW_HOME=() ROW_OWNER=() SLICE_ROW=() DEPS=() STUCK=()
+  N=0 D=0 W=0 Q=0 K=0 ROWS=() OPEN=() WAITING=() ALLSTUCK=1
   main=$(jq -r '.main_home' "$pf") || return 1
   while IFS=$'\t' read -r sid row owner word deps; do
     h=$(jq -r --arg o "$owner" '.owner_homes[$o] // .main_home' "$pf")
-    load_home "$h" || return 1
+    load_home "$h" || { unread=1; continue; }
     N=$((N + 1)); ROW_HOME[$row]=$h; SLICE_ROW[$sid]=$row; DEPS[$row]=$deps
+    ROW_OWNER[$row]=$owner
+    ROWS+=("$row")
     s=$(state_of "$h" "$row")
     case $s in
       "done") D=$((D + 1)) ;;
@@ -71,6 +75,7 @@ evaluate() {
         fi ;;
     esac
   done < <(jq -r '.slices[] | [.id, (.row // ""), .owner_home, (.word_row // ""), ((.depends_on // []) | join(","))] | @tsv' "$pf")
+  [ "$unread" = 0 ] || return 1
   d=1
   while [ "$d" = 1 ]; do # a slice behind a slice that waits for the owner waits too
     d=0
@@ -116,10 +121,53 @@ reason_of() { # <row>: the row's latest reason in its home's rows.tsv
   awk -F'\t' -v id="$1" '$2 == id { r = $4 } END { print r }' "${ROW_HOME[$1]}/data/auto-dispatch/rows.tsv" 2> /dev/null
 }
 
+check_blocked_lane() { # <plan dir> <home> <row> <now>
+  local dir=$1 row=$3 t=$4 status observation='' line since first old_line alert_record raised=''
+  local -x JG_HOME=$2 JG_STATE_OVERRIDE=$2/state JG_ALERT_NOW=$4
+  local subject="swarm-lane-$row" key="fleet-blocked--swarm-lane-$row"
+  local marker="$dir/blocked-$row"
+  status=${ROW_HOME[$row]}/state/$row.status
+  if [ "$(state_of "${ROW_HOME[$row]}" "$row")" != "done" ]; then
+    [ -e "$status" ] || [ -L "$status" ] || return 0
+    observation=$(env -u JG_STATE_OVERRIDE -u JG_DATA_OVERRIDE -u JG_CONFIG_OVERRIDE \
+      "$SELF/jg-classify.sh" blocked-since "$status") || return 1
+  fi
+  if [ -r "$JG_STATE_OVERRIDE/alerts/$key.rec" ]; then
+    alert_record=$("$SELF/jg-alert.sh" show "$key") || return 1
+    raised=$(awk -F= '$1 == "since" { since = $2 } $0 == "state=resolved" { closed = 1 } END { if (!closed) print since }' <<< "$alert_record")
+  fi
+  if [ -n "$observation" ]; then
+    IFS=$'\t' read -r line since <<< "$observation"
+    if [ "$since" = 0 ]; then
+      first=$t old_line=''
+      [ ! -f "$marker" ] || read -r old_line first < "$marker" || return 1
+      if [ "$old_line" != "$line" ]; then
+        first=$t
+        printf '%s\t%s\n' "$line" "$first" > "$marker" || return 1
+      fi
+      since=$first
+    fi
+    if [ -n "$raised" ] && [ "$since" -gt "$raised" ]; then
+      "$SELF/jg-alert.sh" resolve "$key" --proof source:swarm-lane-block-ended || return 1
+      raised=''
+    fi
+    [ -z "$raised" ] && [ "$((t - since))" -gt 600 ] || return 0
+    "$SELF/jg-alert.sh" raise fleet-blocked "$subject" --rung 2 --ticket "$row" --deliver \
+      --note "Swarm lane $row (owner ${ROW_OWNER[$row]}) has been blocked for over 10 minutes."
+    return $?
+  fi
+  rm -f -- "$marker" || return 1
+  [ -z "$raised" ] || "$SELF/jg-alert.sh" resolve "$key" --proof source:swarm-lane-block-ended
+}
+
 check_plan() { # <plan dir> <home>
-  local dir=$1 home=$2 p t last sig m mins row list sep='' started
+  local dir=$1 home=$2 p t last sig m mins row list sep='' started unread=0
   p=$(basename "$dir"); t=$(now); started=$(jq -r '.started_at' "$dir/swarm.json")
-  evaluate "$dir" || return 0
+  evaluate "$dir" || unread=1
+  for row in "${ROWS[@]}"; do
+    check_blocked_lane "$dir" "$home" "$row" "$t" || echo "jg-swarm-check: could not check blocker for $row" >&2
+  done
+  [ "$unread" = 0 ] || return 0
   if [ "$D" = "$N" ] && [ "$N" -gt 0 ]; then
     printf '%s\n' "$SIG" > "$dir/finished" && jq '.state = "finished"' "$dir/swarm.json" > "$dir/swarm.json.new" && mv "$dir/swarm.json.new" "$dir/swarm.json" \
       && printf 'swarm %s: all %s slices landed in %s\n' "$p" "$N" "$(hm $((t - started)))"
