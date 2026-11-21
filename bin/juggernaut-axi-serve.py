@@ -9,7 +9,7 @@ method but GET, or a body are refused. The token is never logged or returned. Re
 per token (a sliding minute); failed auth attempts share one smaller bucket. This is defense in depth,
 not protection from another process running as the same OS user.
 """
-import argparse, hmac, json, os, re, stat, subprocess, sys, time
+import argparse, glob, hmac, json, os, re, stat, subprocess, sys, time
 from collections import deque
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlsplit
@@ -24,6 +24,59 @@ ROUTES = {
     "/v1/decisions": ("decisions", {}),
     "/v1/messages": ("messages", {"task": NAME, "limit": NUM}),
 }
+
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DISPATCH = os.path.join(ROOT, "core", "agent-cli", "dispatch.sh")
+
+
+def load_contract():
+    subprocess.run(["bash", DISPATCH, "check"], check=True)
+    routes = {}
+    for path in sorted(glob.glob(os.path.join(ROOT, "core", "agent-cli", "contract", "*.json"))):
+        with open(path) as f:
+            for entry in json.load(f)["entries"]:
+                routes["/v1/" + "/".join(entry["path"])] = entry
+    return routes
+
+
+def contract_argv(entry, query):
+    args = {arg["name"]: arg for arg in entry["args"]}
+    for key, values in query.items():
+        if key not in args or len(values) != 1 or not values[0] or "\x00" in values[0]:
+            raise ValueError("invalid query parameter: " + key)
+    for arg in entry["args"]:
+        if arg.get("required") and arg["name"] not in query:
+            raise ValueError(arg["name"] + " is required")
+    form = entry["form"]
+    options = dict((name, flag) for flag, name in re.findall(r"(--[a-z0-9-]+)\s+<([^>]+)>", form))
+    positional_form = re.sub(r"--[a-z0-9-]+\s+<[^>]+>", "", form)
+    positions = re.findall(r"<([^>]+)>", positional_form)
+    argv, positional = [], []
+    for name, arg in args.items():
+        if name not in query:
+            continue
+        value = query[name][0]
+        if arg["type"] == "flag":
+            if value not in ("true", "false"):
+                raise ValueError("invalid query parameter: " + name)
+            if value == "true":
+                argv.append(arg.get("flag", "--" + name))
+        elif name in options:
+            argv.extend([options[name], value])
+        elif name not in positions:
+            raise ValueError("unsupported query parameter: " + name)
+    missing = False
+    for name in positions:
+        if name not in query:
+            missing = True
+        elif missing:
+            raise ValueError("missing preceding positional argument")
+        else:
+            positional.append(query[name][0])
+    if positional:
+        argv.extend(["--"] + positional)
+    return [CLI] + entry["path"] + argv
 
 
 def load_token(config_dir):
@@ -91,7 +144,24 @@ class Handler(BaseHTTPRequestHandler):
         url = urlsplit(self.path)
         route = ROUTES.get(url.path)
         if route is None:
-            return self.fail(404, "unknown route")
+            entry = self.server.contract.get(url.path)
+            if entry is None:
+                return self.fail(404, "unknown route")
+            if entry["method"] != "GET":
+                return self.fail(405, "read scope only: GET", [("Allow", "GET")])
+            try:
+                argv = contract_argv(entry, parse_qs(url.query, keep_blank_values=True))
+            except ValueError as exc:
+                return self.fail(400, str(exc))
+            try:
+                run = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+            except subprocess.TimeoutExpired:
+                return self.fail(504, "fleet read timed out")
+            if run.returncode == 0:
+                return self.reply(200, run.stdout)
+            if run.returncode == 2:
+                return self.fail(400, run.stderr.strip())
+            return self.fail(500, "fleet read failed")
         command, params = route
         argv = [CLI, command]
         query = parse_qs(url.query, keep_blank_values=True)
@@ -133,7 +203,9 @@ def main():
         sys.exit("juggernaut-axi serve: --reads-per-minute must be positive")
     config = os.environ.get("JG_CONFIG_OVERRIDE") or os.path.join(os.environ["JUGGERNAUT_AXI_HOME"], "config")
     token = load_token(config)
+    contract = load_contract()
     srv = HTTPServer(("127.0.0.1", args.port), Handler)
+    srv.contract = contract
     srv.token, srv.reads_per_minute, srv.hits = token, args.reads_per_minute, {}
     print("listening http://127.0.0.1:%d" % srv.server_port, flush=True)
     try:
