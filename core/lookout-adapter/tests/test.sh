@@ -14,7 +14,9 @@ unset _jg_old _jg_new 2>/dev/null || true
 set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 t=$(mktemp -d)
-trap 'kill "${srv:-}" "${fleet:-}" 2>/dev/null || true; rm -rf -- "$t"' EXIT
+trap 'kill "${srv:-}" "${fleet:-}" "${qs:-}" 2>/dev/null || true; rm -rf -- "$t"' EXIT
+# An unused registry path inside the fixture: quota checks never consult installed account records.
+export JG_CLAUDE_ACCOUNTS_REGISTRY="$t/unused-claude-accounts-registry"
 mkdir -p "$t/home/state" "$t/home/data" "$t/alpha/state" "$t/alpha/data" "$t/proc"
 now=$(date +%s)
 printf 'MemTotal: 1000 kB\nMemAvailable: 400 kB\n' > "$t/proc/meminfo"
@@ -79,4 +81,37 @@ import json, sys
 fleet = json.load(open(sys.argv[1]))['fleet']
 assert fleet['name'] == 'Juggernaut fleet' and len(fleet['lanes']) == 1, fleet
 PY
+# Changed-only refresh: a counting fixture quota view shows how many full builds ran; synthetic registry, owned loopback server.
+mkdir -p "$t/q/state" "$t/q/data"; : > "$t/builds"
+printf '%s\n' "- alpha - Alpha (home: $t/alpha; scope: app)" > "$t/q/data/squad_leads.md"
+printf '{"event":"seed"}\n' | tee "$t/q/state/fleet-ledger.jsonl" > "$t/alpha/state/fleet-ledger.jsonl"
+printf '#!/usr/bin/env bash\necho x >> "%s/builds"\necho "{\\"providers\\":{}}"\n' "$t" > "$t/qv.sh"
+pr() { curl -fsS "$url" | python3 -c 'import json,sys; print(json.load(sys.stdin)["lanes"][0]["pr_url"])'; }
+builds() { wc -l < "$t/builds" | tr -d ' '; }
+setpr() { local f="$t/alpha/state/a-one.meta"; sed "s#^pr=.*#pr=https://github.com/o/r/pull/$1#" "$f" > "$f.tmp" && mv "$f.tmp" "$f"; }
+JG_QUOTA_VIEW="$t/qv.sh" "$here/lookout-juggernaut" --home "$t/q" --proc "$t/proc" --flow-json "$t/flow.json" --serve --port 0 --every 1 --repair-every 5 > "$t/q.log" 2>&1 & qs=$!
+for _ in $(seq 50); do grep -q serving "$t/q.log" && break; sleep 0.1; done
+url=$(sed -n 's/.*serving //p' "$t/q.log" | head -1)
+case "$url" in http://127.0.0.1:*) ;; *) echo "not loopback: $url"; exit 1 ;; esac
+for _ in $(seq 50); do pr > /dev/null 2>&1 && break; sleep 0.1; done
+[ "$(pr)" = https://github.com/o/r/pull/1 ]; first=$(builds)
+[ "$first" = 1 ] || { echo "startup builds: want 1, got $first"; exit 1; }
+sleep 2; [ "$(builds)" = "$first" ] || { echo "unchanged fleet rebuilt"; exit 1; }
+setpr 9; printf '{"event":"pr","task":"a-one"}\n' >> "$t/alpha/state/fleet-ledger.jsonl"
+for _ in $(seq 30); do [ "$(pr)" = https://github.com/o/r/pull/9 ] && break; sleep 0.1; done
+[ "$(pr)" = https://github.com/o/r/pull/9 ] || { echo "ledger event not seen"; exit 1; }
+evb=$(builds)
+[ "$evb" = "$((first + 1))" ] || { echo "event builds: want $((first + 1)), got $evb"; exit 1; }
+setpr 10; sleep 1.5
+[ "$(pr)" = https://github.com/o/r/pull/9 ] && [ "$(builds)" = "$evb" ] || { echo "unlogged change seen before repair"; exit 1; }
+for _ in $(seq 80); do [ "$(pr)" = https://github.com/o/r/pull/10 ] && break; sleep 0.1; done
+[ "$(pr)" = https://github.com/o/r/pull/10 ] || { echo "repair did not pick up the change"; exit 1; }
+rb=$(builds)
+[ "$rb" = "$((evb + 1))" ] || { echo "repair builds: want $((evb + 1)), got $rb"; exit 1; }
+sleep 1.5
+[ "$(pr)" = https://github.com/o/r/pull/10 ] && [ "$(builds)" = "$rb" ] || { echo "idle response changed"; exit 1; }
+echo "lookout changed-only refresh: builds first=$first event=$evb repair=$rb PASS"
+if [ -n "${DONE_DONE_EVIDENCE_ROOT:-}" ]; then
+  printf '{"target":{"version":"lookout-juggernaut --serve"},"start":"a fixture home with a fleet ledger, a counting quota view and a loopback server run with --every 1 --repair-every 5","steps":["wait through ticks on an unchanged fleet","change the lane PR and append a ledger event","change the PR again with no ledger event","read the response while idle"],"result":"exactly one build at startup and none for the unchanged fleet, the ledger event shows the new PR before repair with exactly one more build, the unlogged change shows within the repair bound with exactly one more build, and the last good response is served while idle"}\n' > "$DONE_DONE_EVIDENCE_ROOT/steps.json"
+fi
 echo 'lookout-juggernaut: PASS'

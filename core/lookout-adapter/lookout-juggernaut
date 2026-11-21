@@ -3,12 +3,13 @@
 
   lookout-juggernaut [--home DIR] [--no-build]            print the JSON
   lookout-juggernaut --serve [--port N] [--bind ADDR]     serve it at /fleet.json (Lookout's --adapter URL), the last good
-                                                         snapshot at once, rebuilt in the background every --every seconds
+                                                         snapshot at once, with a generation check every --every seconds
 
 The document comes from the read-only fleet-flow reader and registered home records. Only whitelisted metadata fields are copied,
 so no key, token or account secret reaches the document. JG_HOME defaults to the current directory's Juggernaut home.
 """
 import json, os, re, socket, subprocess, sys, threading, time, argparse
+from glob import glob
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -52,6 +53,39 @@ def home_dirs(home):
     except OSError:
         pass
     return dirs
+
+
+def file_generation(path):
+    try:
+        st = os.stat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    return st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns
+
+
+def fleet_generation(home, flow_json):
+    """Sample the local event records without invoking the fleet-flow reader."""
+    paths = [os.path.join(home, path) for path in (
+        'data/captain-shared.md', 'state/health.json', 'state/outage-history.jsonl',
+        'state/claude-accounts.json', 'state/codex-accounts.json',
+    )]
+    if flow_json:
+        paths.append(flow_json)
+    pending, seen = [home], set()
+    while pending:
+        root = os.path.realpath(pending.pop())
+        if root in seen:
+            continue
+        seen.add(root)
+        registry = os.path.join(root, 'data/squad_leads.md')
+        ledger = os.path.join(root, 'state/fleet-ledger.jsonl')
+        paths.extend((registry, ledger))
+        if not os.path.isfile(ledger):
+            # Ledger capture is optional. In its absence, use the lane records directly.
+            for pattern in ('*.meta', '*.status'):
+                paths.extend(glob(os.path.join(root, 'state', pattern)))
+        pending.extend(path for name, path in home_dirs(root).items() if name != 'main' and os.path.isabs(path))
+    return tuple((path, file_generation(path)) for path in sorted(paths))
 
 
 def lane_meta(dirs, home_id, task):
@@ -199,9 +233,14 @@ def main(argv):
     p.add_argument('--serve', action='store_true')
     p.add_argument('--port', type=int, default=4391)
     p.add_argument('--bind', default='127.0.0.1')
-    p.add_argument('--every', type=int, default=30)
+    p.add_argument('--every', type=int, default=30,
+                   help='seconds between generation checks (default: 30)')
+    p.add_argument('--repair-every', type=int, default=120,
+                   help='seconds between full refreshes even without an event (default: 120)')
     p.add_argument('--cold-wait', type=int, default=120)
     a = p.parse_args(argv)
+    if a.every < 1 or a.repair_every < 1:
+        p.error('--every and --repair-every must be positive')
     make = lambda: build_fleet(a.home, not a.no_build, a.proc, a.flow_json)
     if not a.serve:
         json.dump(make(), sys.stdout, indent=1)
@@ -210,16 +249,19 @@ def main(argv):
 
     snap = {}  # the last good document; a failed rebuild keeps it, and its own generated_at tells the page how old it is
 
-    def refresh():
-        try:
-            snap['doc'] = json.dumps(make())
-            snap.pop('err', None)
-        except Exception as e:  # the cause is shown only while there is no snapshot to serve
-            snap['err'] = str(e)
-
     def keep_fresh():
+        applied, repair_at = None, 0
         while True:
-            refresh()
+            try:
+                generation = fleet_generation(a.home, a.flow_json)
+                if generation != applied or time.monotonic() >= repair_at:
+                    snap['doc'] = json.dumps(make())
+                    snap.pop('err', None)
+                    # Credit only the generation observed before the build. An event
+                    # during a build must still be eligible on the next tick.
+                    applied, repair_at = generation, time.monotonic() + a.repair_every
+            except Exception as e:  # the cause is shown only while there is no snapshot to serve
+                snap['err'] = str(e)
             time.sleep(a.every)
 
     class H(BaseHTTPRequestHandler):

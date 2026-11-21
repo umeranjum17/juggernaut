@@ -10,3 +10,4 @@
 - [Fleet flow lane cap](fleet-flow-lane-cap.md): the home flow check counts live lanes only; a kept copy of a stopped lane stays listed but occupies no working slot.
 - [Hold table: owner questions, expiry reconciliation, and call cap](hold-table.md): run `done-done run hold-table`
 - [Item store contention and compaction](item-store-contention.md): run `done-done run item-store-contention`
+- [Fleet refresh and delivery repair](fleet-refresh-and-delivery-repair.md)

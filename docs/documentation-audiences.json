@@ -1088,6 +1088,10 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": ".agents/skills/done-done-verify-suites/features/fleet-refresh-and-delivery-repair.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/done-done-verify-suites/features/codex-lead-queued-wake.md",
       "audience": "agent-runtime"
     },

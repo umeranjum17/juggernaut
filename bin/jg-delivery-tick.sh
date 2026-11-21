@@ -4,7 +4,7 @@
 # Usage: jg-delivery-tick.sh <jg-home>
 #
 # A step whose next move is known runs from a tick, never from a model's cycle. Three callers run this
-# pass: the host sentinel (core/sentinel/bin/jg-sentinel.sh), every minute for its own home and each
+# pass: the host sentinel (core/sentinel/bin/jg-sentinel.sh), when due for its own home and each
 # local, unparked lead home, so a worker's done lands while no watcher runs; the home's watcher
 # (bin/jg-watch.sh) on its fast tick, so a live home acts within seconds; and a worker's own done line
 # (bin/jg-lavish-guard.sh --append, with JG_DELIVERY_TICK_KICK=1), so the lander sees the lane in seconds
@@ -34,6 +34,7 @@
 #
 # Exit: 0 after a pass, or when another runner holds it; 1 when the row could not be queued (its reason
 # is still printed); 2 for usage.
+# JG_DELIVERY_TICK_REPORT_BUSY=1 makes a non-kicked call return 75 when it cannot take the lock.
 set -u
 [ "$#" -eq 1 ] && [ -d "${1:-}/state" ] || { echo "usage: jg-delivery-tick.sh <jg-home>  (a home with a state directory)" >&2; exit 2; }
 H=$(cd "$1" && pwd -P)
@@ -52,7 +53,10 @@ AGAIN=$H/state/.delivery-tick.again
 # A kicked call that finds the lock held leaves the mark first, then tries once more: a pass that ends in between
 # is taken over here, and one that ends later sees the mark.
 if ! jg_lock_try_acquire "$LOCK"; then
-  [ "${JG_DELIVERY_TICK_KICK:-}" = 1 ] || exit 0
+  if [ "${JG_DELIVERY_TICK_KICK:-}" != 1 ]; then
+    [ "${JG_DELIVERY_TICK_REPORT_BUSY:-}" != 1 ] || exit 75
+    exit 0
+  fi
   : > "$AGAIN" 2>/dev/null || true
   jg_lock_try_acquire "$LOCK" || exit 0
 fi

@@ -67,9 +67,9 @@
 #      turn, and that turn's end re-arms supervision through the primary's own
 #      re-arm owner (docs/watcher-continuity.md).
 #
-# After those steps, whatever they decided and whether or not a Herdr server runs, each tick
-# runs the delivery pass (bin/jg-delivery-tick.sh) for this home and for each registered, local,
-# unparked lead home, each with that home's own checkout's entry and bounded by
+# After those steps, each tick checks delivery for this home and each registered, local,
+# unparked lead home, even if no Herdr server runs. A changed generation, a due timer, or a
+# staggered repair interval runs the home's own delivery entry (bin/jg-delivery-tick.sh), bounded by
 # JG_SENTINEL_DELIVERY_TIMEOUT: a worker's done lands, and the go-live and rollover start, with
 # no model awake and no watcher running. A live watcher runs the same pass on its fast tick; the
 # pass's lock lets only one of them run it at a time, and its result row goes to that home's wake
@@ -137,7 +137,8 @@
 #
 # Knobs: JG_SENTINEL_HERDR_SESSION (HERDR_SESSION, else default), JG_SENTINEL_INTERVAL (60),
 # JG_SENTINEL_REWAKE_SECS (1800), JG_GUARD_GRACE (300), JG_SENTINEL_TMP_REWARN_SECS (21600),
-# JG_SENTINEL_TMP_SWEEP_SECS (86400), JG_SENTINEL_DELIVERY_TIMEOUT (120).
+# JG_SENTINEL_TMP_SWEEP_SECS (86400), JG_SENTINEL_DELIVERY_TIMEOUT (120),
+# JG_SENTINEL_DELIVERY_REPAIR_SECS (300).
 # JG_SENTINEL_DRY_RUN=1 with reconcile decides as usual and prints each line to
 # stdout, but runs no jg-control action, takes no lock, and writes nothing to the
 # home; it is refused for tick and loop.
@@ -184,6 +185,8 @@ TMP_SWEEP=${JG_SENTINEL_TMP_SWEEP_SECS:-86400}
 TMP_PRESSURE_PCT=${JG_TMP_PRESSURE_PCT:-70}
 TMP_PRESSURE_EVERY=${JG_SENTINEL_TMP_PRESSURE_SECS:-900}
 DELIVERY_TIMEOUT=${JG_SENTINEL_DELIVERY_TIMEOUT:-120}
+DELIVERY_REPAIR=${JG_SENTINEL_DELIVERY_REPAIR_SECS:-300}
+[[ $DELIVERY_REPAIR =~ ^[1-9][0-9]{0,7}$ ]] || { echo "jg-sentinel: JG_SENTINEL_DELIVERY_REPAIR_SECS must be positive seconds" >&2; exit 2; }
 LOG="$STATE/.sentinel.log"
 DRY_RUN=${JG_SENTINEL_DRY_RUN:-0}
 case "$DRY_RUN" in 0|1) ;; *) echo "jg-sentinel: JG_SENTINEL_DRY_RUN must be 0 or 1" >&2; exit 2 ;; esac
@@ -772,27 +775,66 @@ tick() {
   return "$rc"
 }
 
-# One home's delivery pass, bounded by DELIVERY_TIMEOUT; a failure is logged.
-deliver_home() {  # <home> <entry>
-  local out rc=0 bound=()
-  [ -x "$2" ] || return 0
+# Use the start of the previous successful pass as the generation watermark.
+# A change during a pass remains eligible for the next one. Repair covers input
+# changes outside these records, deleted records and time-based work.
+delivery_changed() {  # <state> <stamp> <elapsed>
+  local state=$1 stamp=$2 elapsed=$3 path
+  for path in "$state"/{fleet-ledger.jsonl,*.status,*.meta,*.run-receipt.json,trunk-tip-*,trunk-word-*}; do
+    [[ $path -nt $stamp ]] && return 0
+  done
+  # Unread inboxes and active stops retain their tick cadence. Live lanes
+  # need a lease beat every 120 seconds (bin/jg-lease-tick.sh).
+  compgen -G "$state/*.inbox/*.msg" >/dev/null ||
+    compgen -G "$state/.stops/*" >/dev/null ||
+    { [ "$elapsed" -ge 120 ] && compgen -G "$state/*.meta" >/dev/null; }
+}
+
+# One home's due delivery pass. A failed or busy pass leaves its generation pending.
+deliver_home() {  # <home> <entry> <now> <slot> <force>
+  local home=$1 entry=$2 now=$3 slot=$4 force=$5
+  local stamp="$1/state/.sentinel-delivery" start last bucket previous out rc=0 bound=()
+  [ -x "$entry" ] || return 0
+  # Five phases spread idle repairs across ticks at the default cadence.
+  bucket=$(( (now + slot % 5 * DELIVERY_REPAIR / 5) / DELIVERY_REPAIR ))
+  if [ "$force" = 0 ] && read -r last previous 2>/dev/null <"$stamp" &&
+    [[ $last =~ ^[1-9][0-9]{0,11}$ && $previous = "$bucket" ]] &&
+    (( now >= last && now - last < DELIVERY_REPAIR )) &&
+    ! delivery_changed "$home/state" "$stamp" "$(( now - last ))"; then
+    return 0
+  fi
+  start=$(mktemp "$stamp.XXXXXX") || { say "delivery: $home: cannot stage the generation"; return 1; }
+  if ! printf '%s %s\n' "$now" "$bucket" >"$start"; then
+    rm -f -- "$start"
+    say "delivery: $home: cannot write the generation"
+    return 1
+  fi
   if command -v timeout >/dev/null 2>&1; then bound=(timeout "$DELIVERY_TIMEOUT"); fi
-  out=$(env -u JG_BIN -u JG_STATE_OVERRIDE -u JG_CONFIG_OVERRIDE -u JG_DATA_OVERRIDE JG_HOME="$1" \
-    ${bound[@]+"${bound[@]}"} "$2" "$1" </dev/null 2>&1) || rc=$?
-  [ -z "$out" ] || say "delivery: $1: $(printf '%s' "$out" | tail -n 3 | tr '\n' ' ' | cut -c1-300)"
-  [ "$rc" -eq 0 ] || { say "delivery: $1: FAILED (exit $rc)"; return 1; }
+  out=$(env -u JG_BIN -u JG_STATE_OVERRIDE -u JG_CONFIG_OVERRIDE -u JG_DATA_OVERRIDE -u JG_DELIVERY_TICK_KICK JG_HOME="$home" \
+    JG_DELIVERY_TICK_REPORT_BUSY=1 ${bound[@]+"${bound[@]}"} "$entry" "$home" </dev/null 2>&1) || rc=$?
+  [ -z "$out" ] || say "delivery: $home: $(printf '%s' "$out" | tail -n 3 | tr '\n' ' ' | cut -c1-300)"
+  if [ "$rc" -eq 0 ] && mv -f -- "$start" "$stamp"; then return 0; fi
+  rm -f -- "$start"
+  case "$rc" in
+    75) return 0 ;;
+    0) say "delivery: $home: cannot save the generation" ;;
+    *) say "delivery: $home: FAILED (exit $rc)" ;;
+  esac
+  return 1
 }
 
 # The delivery pass of this home and of each local, unparked lead home, which needs no Herdr
 # server and no model (bin/jg-delivery-tick.sh owns the pass, its lock and its result row). Each
 # lead home runs its own checkout's entry; a checkout without one is left to its watcher.
 deliver() {
-  local lead home rc=0
-  deliver_home "$JG_HOME" "$BIN/jg-delivery-tick.sh" || rc=1
+  local lead home now slot=0 rc=0 force=${1:-0}
+  now=$(date +%s) || return 1
+  deliver_home "$JG_HOME" "$BIN/jg-delivery-tick.sh" "$now" "$slot" "$force" || rc=1
   while read -r lead home; do
     lead_parked "$lead" && continue
     [ -d "$home/state" ] && [ "$(cd "$home" && pwd -P)" != "$JG_HOME" ] || continue
-    deliver_home "$home" "$home/bin/jg-delivery-tick.sh" || rc=1
+    slot=$((slot + 1))
+    deliver_home "$home" "$home/bin/jg-delivery-tick.sh" "$now" "$slot" "$force" || rc=1
   done < <(lead_homes)
   return "$rc"
 }
@@ -801,7 +843,7 @@ deliver() {
 pass() {
   local rc=0
   tick || rc=$?
-  deliver || rc=1
+  deliver "${1:-0}" || rc=1
   return "$rc"
 }
 
@@ -826,8 +868,10 @@ case "$CMD" in
   model-reconcile) locked relaunch_model_mismatches ;;
   lead-model-reconcile) locked relaunch_lead_model_mismatches ;;
   loop)
+    force_delivery=1
     while :; do
-      locked pass || true
+      locked pass "$force_delivery" || true
+      force_delivery=0
       sleep "$INTERVAL"
     done
     ;;

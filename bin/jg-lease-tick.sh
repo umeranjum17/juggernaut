@@ -3,7 +3,7 @@
 #
 # Usage: jg-lease-tick.sh <jg-home>
 #
-# One step of the delivery tick (bin/jg-delivery-tick.sh), which the home's watcher runs every 30 s and the host sentinel every 60 s, so a
+# One step of the delivery tick (bin/jg-delivery-tick.sh), which the home's watcher runs every 30 s and the host sentinel runs when due, so a
 # worker stays live on the board while the watcher is down. For each task record with a `ticket=` and an `agent_name=` whose agent is alive
 # it sends `jg-backlog.sh beat <ticket>` as the agent name once 120 s have passed since the record's last beat (the mtime of
 # state/<task>.beat; no file reads as never). A lease is 300 s, so three tries fall inside it. It reads no lease first: that read costs as

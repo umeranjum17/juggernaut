@@ -4,14 +4,17 @@
 
 ```
 lookout-juggernaut [--home DIR] [--no-build]          # print the JSON
-lookout-juggernaut --serve [--port N] [--bind ADDR]   # the last good snapshot at once from /fleet.json (rebuilt every 30 s in the background; its generated_at says how old), for `lookout serve --adapter http://…/fleet.json`
+lookout-juggernaut --serve [--port N] [--bind ADDR]   # the last good snapshot at once from /fleet.json, for `lookout serve --adapter http://…/fleet.json`
 ```
 
 It reads fleet lifecycle data directly from the read-only `fleet-flow` reader and maps it into Lookout's contract; it does not use the legacy dashboard builder or its generated files. It also reads registered-home records and whitelisted lane metadata. No home or state data is written, and no secrets are copied.
 
 Sources: `/proc` and the memory gate for `hosts`; `jg-flow` lifecycle rows and registered-home records for `homes`, `lanes`, `workers` and recent `merges`. `quota` lists every registered Claude and Codex account from `claude-accounts/bin/jg-quota-view` (Main's own login named apart as reserved). `incidents` come from the bus health run: each open outage in `state/health.json` first, then one row per cause with its outage count and total minutes over the last 7 days from `state/outage-history.jsonl`. The adapter currently returns an empty `releases` list.
 
-Test with fixture homes: `bash addons/lookout-adapter/tests/test.sh`. The test uses the pinned `lookout-axi@0.1.0` CLI; no Lookout clone is needed.
+The server keeps the last good snapshot and its `generated_at` timestamp between builds.
+Run `lookout-juggernaut --help` for the generation and repair intervals.
+
+Run `bash core/lookout-adapter/tests/test.sh` to test with fixture homes and the pinned `lookout-axi@0.1.0` CLI.
 
 ## Service
 
