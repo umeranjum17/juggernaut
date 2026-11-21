@@ -21,6 +21,7 @@ The passed report, its misses table, its owner-decision table, its design files,
 Slice <n>: <name>     Misses closed: <ids>     Model: the smallest that can do it
 Wave <w>. Depends on: <slices, time gates>. Owner word needed: no | yes: <which word>
 Owner decisions assumed: <decision id and the default this order builds on>
+Serves        Words (glossary terms), Decisions (ADR numbers), Journeys (ids), Charter ticket (id), from the approved muster pack; `none - no pack` without one
 Goal          one sentence: what is true after this slice that is not true now
 Sources       absolute paths with sha256 prefixes in a frozen, read-only copy; final files are copied byte for byte
 Files         the exact files created or changed, the CLI and libraries included; no other file may change;
@@ -58,6 +59,9 @@ Budget        measured by a dry run, never guessed
    until it prints its ok line (the filer's own dry run needs the plan row filed, so /blitz runs it later).
    `files` entries are repository paths, a new file marked ` (new)`; never prose (bin/jg-swarm-plan-check.sh refuses prose
    once slice pc1 lands).
+   With a muster pack, plan.json also carries the pack's `muster` block (`.agents/skills/muster/formats.md` section 5).
+   Each slice lists its `journeys` and `charter` tickets, the same ids as its order's Serves line.
+   `bin/jg-swarm-plan-check.sh` owns the shape and order rules of the block; a refusal names the slice and the reason.
 6. Dry run: a worker of the order's model carries out the first order on a scratch copy and reports where it got stuck.
    Fix the order, then record its measured time as the budget for that size of order.
 
@@ -67,6 +71,7 @@ Budget        measured by a dry run, never guessed
 - An owner-gated order never holds a wave: when its word is not in at its wave's start, the next wave runs and the
   gated order runs later, alone, cut from that day's trunk tip.
 - orders/plan.json exists, names every order, and its depends_on lists match the orders' Depends on fields.
+- With a muster pack, every order's Serves line names its words, decisions, journeys and charter ticket, and the plan passes `bin/jg-swarm-plan-check.sh`.
 - Every order has fixture acceptance, a rollback and an expand path.
 - An order names only paths that exist in a worker's copy, or absolute paths with hashes.
 - Ready-to-copy sources: before publication, every acceptance command of an order that copies files is run on exactly

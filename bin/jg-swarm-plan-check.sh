@@ -25,7 +25,15 @@
 #   - two slices of one `project` that name the same path (` (new)` removed) have a `depends_on` path between them,
 #     direct or through other slices; else one line names the pair and the first shared path;
 #   - with `--repo <dir> --ref <ref>` (both or neither): an entry not marked ` (new)` exists in <ref> of <dir>;
-#   - a `gate` is null, {waits_for: "<home>:<row id>"} or {tool, min}.
+#   - a `gate` is null, {waits_for: "<home>:<row id>"} or {tool, min};
+#   - an optional `muster` block (formats.md section 5 of the muster skill), shape and order only, no store and no
+#     manifest: `ticket`, `depth` full or complete, `manifest_sha` (12 hex), `journeys` (kind new or preserve),
+#     `batches`, `charter` and `milestones` are well formed; no batch waits on itself; a charter row names a batch
+#     and tickets of the block; a slice's `journeys` and `charter` name only ids of the block; every `new` journey,
+#     every charter ticket and every milestone journey is claimed by a slice; a slice that claims ticket T depends,
+#     directly or through other slices, on every slice that claims a ticket T depends on or a ticket of a batch T's
+#     batch starts after, so no slice claims a ticket together with one it must follow. Tickets of one batch with no
+#     dependency between them may start together. A plan with no block is checked as before.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -169,6 +177,96 @@ shared_file_pairs() {  # <plan json>: prints `<a> <b> <path>` per pair, in plan 
     | "\($a.id) \($b.id) \($path)"' <<<"$1"
 }
 
+# The muster block's rules, all in one jq program that prints `<who>|<reason>` per problem (who is `-` for the plan).
+# Structure first; then the block's own graph (batches, charter rows); then the slices' claims and their order, which
+# mean nothing over a broken graph. A slice reaches another through depends_on, directly or through others.
+# shellcheck disable=SC2016
+MUSTER_JQ='
+def ob: type == "object";
+def strs: type == "array" and all(.[]; type == "string" and length > 0);
+def ids: [.[] | select(type == "string")];
+def dups: group_by(.) | map(select(length > 1) | .[0]);
+def row($who; $why): "\($who)|\($why)";
+def has($arr; $x): any($arr[]; . == $x);
+(.muster) as $m
+| [.slices[] | select(ob and ((.id | type) == "string"))] as $ss
+| if $m == null then
+    $ss[] | select(((.journeys // []) | length) > 0 or ((.charter // []) | length) > 0)
+    | row(.id; "names journeys or a charter ticket and the plan has no muster block")
+  elif ($m | ob | not) then row("-"; "muster is not an object")
+  else
+    ([ (if ($m.ticket | type) == "string" and ($m.ticket | length) > 0 then empty else "muster has no ticket" end),
+       (if ($m.depth | type) == "string" and has(["full", "complete"]; $m.depth) then empty
+        else "muster depth is \($m.depth // "unset"), not full or complete" end),
+       (if ($m.manifest_sha | type) == "string" and ($m.manifest_sha | test("^[0-9a-f]{12}$")) then empty
+        else "muster manifest_sha is not 12 hex digits" end),
+       (if ($m.journeys | type) == "array" and all($m.journeys[]; ob and (.id | type) == "string" and (.id | length) > 0)
+        then ($m.journeys[] | select((.kind | type) != "string" or (has(["new", "preserve"]; .kind) | not))
+              | "muster journey \(.id) has kind \(.kind // "unset"), not new or preserve")
+        else "muster journeys is not a list of {id, kind}" end),
+       (if ($m.batches | type) == "array" and all($m.batches[]; ob and (.id | type) == "string" and (.after | strs))
+        then empty else "muster batches is not a list of {id, after}" end),
+       (if ($m.charter | type) == "array" and all($m.charter[]; ob and (.ticket | type) == "string" and
+            (.batch | type) == "string" and (.depends | strs)) then empty
+        else "muster charter is not a list of {ticket, batch, depends}" end),
+       (if ($m.milestones | type) == "array" and all($m.milestones[]; ob and (.id | type) == "string" and (.journeys | strs))
+        then empty else "muster milestones is not a list of {id, journeys}" end)
+     ]) as $bad
+  | if ($bad | length) > 0 then $bad[] | row("-"; .)
+    else
+      ($m.journeys | map(.id)) as $J | ($m.batches | map(.id)) as $B | ($m.charter | map(.ticket)) as $T
+      | ($m.batches | map({key: .id, value: .after}) | from_entries) as $after
+      | ($m.charter | map({key: .ticket, value: .}) | from_entries) as $row
+      | [ ($J | dups[] | "muster journey \(.) is listed twice"),
+          ($B | dups[] | "muster batch \(.) is listed twice"),
+          ($T | dups[] | "muster charter ticket \(.) is listed twice"),
+          ($m.batches[] | .id as $b | .after[]
+            | if . == $b then "batch \($b) waits on itself"
+              elif (has($B; .) | not) then "batch \($b) starts after \(.), which is not in the block" else empty end),
+          ($m.charter[] | .ticket as $t
+            | (if (has($B; .batch) | not) then "charter ticket \($t) names batch \(.batch), which is not in the block" else empty end),
+              (.depends[] | if . == $t then "charter ticket \($t) depends on itself"
+                            elif (has($T; .) | not) then "charter ticket \($t) depends on \(.), which is not in the block"
+                            else empty end))
+        ] as $graph
+      | if ($graph | length) > 0 then $graph[] | row("-"; .)
+        else
+          ($ss | map({key: .id, value: ((.depends_on // []) | if type == "array" then map(tostring) else [] end)}) | from_entries) as $dep
+          | def up: (. + (map($dep[.] // []) | add // [])) | unique;
+            def reach($i): [$i] | until(up == .; up);
+          ([ $ss[] | select(((.journeys // []) | strs | not) or ((.charter // []) | strs | not))
+             | row(.id; "journeys and charter must each be a list of ids") ]) as $typed
+          | ($ss | map(select(((.journeys // []) | strs) and ((.charter // []) | strs)))) as $ok
+          | ($ok | map({id, journeys: (.journeys // []), charter: (.charter // [])})) as $cl
+          | def claimers($t): [$cl[] | select(has(.charter; $t)) | .id];
+          def need($t): ($row[$t].depends + [$m.charter[] | select(.batch as $b | has($after[$row[$t].batch] // []; $b)) | .ticket]) | unique;
+          $typed[],
+          ($cl[] | .id as $s
+            | (.journeys[] | . as $j | select(has($J; $j) | not) | row($s; "names journey \(.), which is not in the muster block")),
+              (.charter[] | . as $t | select(has($T; $t) | not) | row($s; "names charter ticket \(.), which is not in the muster block"))),
+          ($m.journeys[] | select(.kind == "new") | .id as $j | select([$cl[] | select(has(.journeys; $j))] | length == 0)
+            | row("-"; "muster journey \($j) (new) is claimed by no slice")),
+          ($T[] | . as $t | select(claimers($t) | length == 0) | row("-"; "muster charter ticket \($t) is claimed by no slice")),
+          ($m.milestones[] | .id as $mi | .journeys[] | . as $j | select([$cl[] | select(has(.journeys; $j))] | length == 0)
+            | row("-"; "milestone \($mi) journey \($j) is claimed by no slice")),
+          ($cl[] | .id as $s | .charter[] | . as $t | select(has($T; $t)) | need($t)[] | . as $u | claimers($u)[]
+            | . as $x | select($x == $s)
+            | row($s; "claims \($t) together with \($u), which it must follow: use one slice for each"))
+          ,
+          ($cl[] | .id as $s | .charter[] | . as $t | select(has($T; $t)) | need($t)[] | . as $u | claimers($u)[]
+            | . as $x | select($x != $s and (has(reach($s); $x) | not))
+            | row($s; "claims \($t) and must depend on \($x), which claims \($u), but does not"))
+        end
+    end
+  end'
+check_muster() {  # the optional muster block: shape and order only
+  local who why
+  while IFS='|' read -r who why; do
+    [ -n "$why" ] || continue
+    if [ "$who" = - ]; then refuse "$P" "$why"; else refuse "$who" "$why"; fi
+  done < <(jq -r "$MUSTER_JQ" <<<"$PLAN_JSON" | sort -u)
+}
+
 declare -A HOME_OF=()
 SLICES=$(jq -c '.slices[]' <<<"$PLAN_JSON")
 while IFS= read -r s; do  # first pass: ids and owner homes
@@ -214,4 +312,5 @@ fi
 while read -r a b path; do
   [ -z "$a" ] || refuse "$a" "shares a file with $b and neither depends on the other: $path"
 done < <(shared_file_pairs "$PLAN_JSON")
+check_muster
 finish
