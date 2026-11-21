@@ -1387,7 +1387,8 @@ In every home, primary or Squad Lead, a scan whose home sits below the floor wit
 Ready intake uses the base heartbeat interval independently of idle-heartbeat backoff and runs before an away heartbeat can end the cycle; held and future-dated work stays excluded by the backlog's ready query.
 When the ready set empties on a successful read - every named item since held or in flight - the check withdraws the queued ready-work row, so a notification whose condition no longer holds stops being presented instead of repeating until an acknowledgement that may never come, and it re-raises from scratch only when the condition holds again.
 That empty observation keeps the resurface record, so a transient empty set cannot reset the `JG_READY_WORK_RESURFACE_SECS` window and replay the identical set inside it.
-At or above the floor, or without the file, a home wakes when no worker is provably working, so open lanes that only wait never hide an idle home.
+At or above the floor a home has no free lane, so it is never woken for ready work and a queued ready-work row is withdrawn; without the file, a home wakes when no worker is provably working.
+An epic is a container of work and never counts as ready work: its children are the startable items, so a home whose only ready rows are epics is not woken and raises no stalled-backlog alert.
 The wake asks the lead to dispatch the ready items, P0 first, up to the project's declared capacity; a spawn beyond capacity stops and leaves its item queued.
 A malformed value is reported once in the watcher's triage log and then treated as absent, never as a number; `bin/jg-watch.sh`'s header owns the exact reason lines.
 

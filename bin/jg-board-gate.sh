@@ -60,7 +60,7 @@
 # Environment: JG_HOME, JG_STATE_OVERRIDE and JG_DATA_OVERRIDE as in other bin/
 # scripts. The board is --board, else JG_PROOF_BOARD, else the `--board` of
 # config/post-merge, else the board sign-off-axi's own walk finds.
-# JG_BOARD_GATE_REFIRE_SECS (default 600) spaces one unproven merge's re-reports.
+# JG_BOARD_GATE_REFIRE_SECS (default 21600, a reminder) spaces one unproven merge's re-reports; an unchanged finding stays quiet between.
 set -u
 export LC_ALL=C
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -70,7 +70,7 @@ DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
 CONFIG="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
 RECORDS="$DATA/overwatch-decisions.md"
 GATE_DIR="$STATE/.board-gate"
-REFIRE_SECS=${JG_BOARD_GATE_REFIRE_SECS:-600}
+REFIRE_SECS=${JG_BOARD_GATE_REFIRE_SECS:-21600}
 NOW=${JG_BOARD_GATE_NOW:-$(date +%s)}
 BOARD=${BOARD:-}
 # shellcheck source=bin/jg-compat.sh

@@ -55,7 +55,7 @@
 #        directory is STALLED.
 # check  Prints one line per home that turns GAP or STALLED, or has a protected
 #        pause needing reconciliation, again every
-#        JG_FLEET_HEARTBEAT_REFIRE_SECS (default 600) while it stays there, and
+#        JG_FLEET_HEARTBEAT_REFIRE_SECS (default 21600, a reminder: an unchanged verdict stays quiet between) while it stays there, and
 #        one line when it recovers; the watcher turns each line into a wake for
 #        Main. An unchanged healthy fleet prints nothing.
 #        A finished lane that was never closed is reported the same way:
@@ -88,7 +88,7 @@ JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}}"
 . "$SCRIPT_DIR/jg-pause-lib.sh"
 STATE="$JG_HOME/state"
 BEACON_SECS=${JG_FLEET_HEARTBEAT_BEACON_SECS:-900}
-REFIRE_SECS=${JG_FLEET_HEARTBEAT_REFIRE_SECS:-600}
+REFIRE_SECS=${JG_FLEET_HEARTBEAT_REFIRE_SECS:-21600}
 READY_MAX_AGE=${JG_READY_MAX_AGE:-900}
 NOW=$(date +%s)
 

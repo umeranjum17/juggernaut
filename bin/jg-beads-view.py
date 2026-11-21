@@ -7,7 +7,8 @@ Reads stdin only, for bin/jg-backlog-lib.sh's jg_backlog_beads_read, and never s
 Beads answers ready and blocked: when JG_BEADS_READY names a file holding `bd ready --json`, ready prints exactly those rows in bd's order,
 and when JG_BEADS_BLOCKED names `bd blocked --json`, the blocked and blocked_by fields and list --blocked read it;
 with neither, the answer is worked out from the rows' blocks edges, which is how a write answers.
-Ours on top of bd's answer: a public-followup row is delivery work, so ready leaves it to its own count.
+Ours on top of bd's answer: a public-followup row is delivery work, so ready leaves it to its own count,
+and a container epic (a row that has a child) is no startable work, its children are, so ready never lists it.
 bin/jg-beads-write.py imports it, so a write answers in the same shape.
 The links verb is not a backlog read: it prints the ids linked to one row, for bin/jg-captain-hold.sh's blocking gate.
 bd stamps UTC and the backlog the local day, so created and closed read as the local day.
@@ -237,7 +238,8 @@ def ready(tasks, args, answer=None):
     else:
         by_id = {t["id"]: t for t in tasks}
         pool = [by_id[ident] for ident in answer if ident in by_id]
-    rows = [t for t in pool if t["kind"] != "public-followup" and repo in (None, t["repo"])]
+    containers = {t["parent"] for t in tasks}
+    rows = [t for t in pool if t["kind"] != "public-followup" and t["id"] not in containers and repo in (None, t["repo"])]
     suffix = " --repo=" + repo if repo else ""
     print("count: %d" % len(rows))
     if rows:

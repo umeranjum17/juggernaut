@@ -23,7 +23,7 @@ URL=https://github.com/o/ra/pull/11
 
 # A home whose bin and core are the real ones.
 H=$d/home1; mkdir -p "$H/state" "$H/data" "$H/config" "$H/bin" "$H/projects"
-ln -sn "$ROOT/core" "$H/core"; for f in "$ROOT"/bin/*; do ln -s "$f" "$H/bin/${f##*/}"; done
+ln -sn "$ROOT/core" "$H/core"; for x in defaults docs policy; do ln -sn "$ROOT/$x" "$H/$x"; done; for f in "$ROOT"/bin/*; do ln -s "$f" "$H/bin/${f##*/}"; done
 printf -- '- ra - fixture\n' > "$H/data/projects.md"; printf 'release-after-commits=3\nrelease-after-hours=48\n' > "$H/config/trunk-policy"
 git init -q "$H/projects/ra"; git -C "$H/projects/ra" commit -q --allow-empty -m base; git -C "$H/projects/ra" remote add origin https://github.com/o/ra
 
@@ -94,7 +94,9 @@ check 'c) the page went to the shepherd lane' "$(cut -f1 "$STUB/sent.log")" shep
 case $(cut -f2 "$STUB/sent.log") in *"$URL"*'unit-tests'*'never re-run or waive it'*'page 1'*) say 'ok: c) the page names the address, the check and the next step' ;; *) say "FAIL: c) page text: $(cat "$STUB/sent.log")"; fails=$((fails + 1)) ;; esac
 check 'e) inside the hour nothing more' "$(run 30 | grep -c . || true)$(sent)" 01
 run 60 >/dev/null
-check 'e) an hour later the lane gets page 2' "$(grep -c 'page 2' "$STUB/sent.log")" 1
+check 'e) an hour later, with the step unchanged, the lane gets no second page' "$(sent)" 1
+run 360 >/dev/null
+check 'e) six hours later the lane gets the reminder as page 2' "$(grep -c 'page 2' "$STUB/sent.log")" 1
 
 reset; echo 'done [at=2]: merged' > "$H/state/shep1.status"
 out=$(run 0)

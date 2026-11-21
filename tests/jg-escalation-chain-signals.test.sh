@@ -320,6 +320,38 @@ test_a_merge_freeze_never_idles_free_lanes() {
   pass "live lanes below the floor with ready work wake the home whatever a merge freeze holds, and parked lanes do not count as live"
 }
 
+# Ready work that nothing can start raises no alarm: a home with no free lane, and a queue whose only ready row is a
+# container epic (its child is already in flight). The same home with a free lane and a startable row still wakes.
+test_ready_work_that_nothing_can_start_raises_no_alarm() {
+  local m n
+  m=$(home ready-unstartable)
+  mkdir -p "$m/data"
+  printf '2\n' > "$m/config/lane-target"
+  for n in 1 2; do
+    printf 'kind=ship\nbackend=tmux\nwindow=fake:%s\n' "$n" > "$m/state/w$n.meta"
+    printf 'working [at=1]: on it\n' > "$m/state/w$n.status"
+  done
+  backlog "$m" add jg-alpha "first item" --priority 1
+  PANES='1 2' cycle "$m"
+  ! grep -q '^check: ready work waiting' "$m/events" 2>/dev/null \
+    || fail "a home with 2 of 2 lanes open and no worker provably working was woken for ready work: $(cat "$m/events")"
+  printf '3\n' > "$m/config/lane-target"
+  touch -d '-15 days' "$m/state/.last-ready-work-check"
+  PANES='1 2' cycle "$m"
+  grep -q '^check: ready work waiting with free lane slots (2/3 open): jg-alpha' "$m/events" \
+    || fail "the same home with a free lane raised no wake: $(cat "$m/events")"
+  m=$(home ready-container)
+  mkdir -p "$m/data"
+  backlog "$m" add jg-epic "Big container of work" --priority 1
+  backlog "$m" add --parent jg-epic "Slice one" --priority 1
+  backlog "$m" start jg-epic.1
+  PANES='' cycle "$m"
+  ! grep -q '^check: ready work waiting' "$m/events" 2>/dev/null \
+    || fail "a queue holding only a container epic was woken for ready work: $(cat "$m/events")"
+  [ ! -e "$m/state/.waiting-timers/.ready-backlog" ] || fail "a container epic armed the stalled-backlog episode"
+  pass "ready work with no free lane, or only a container epic, raises no alarm; a startable row with a free lane still does"
+}
+
 test_a_fleet_pause_silences_ready_work_but_not_a_blocker() {
   local m before
   m=$(home ready-pause)
@@ -395,5 +427,6 @@ test_question_and_quota_ride_the_chain_whatever_the_terminal_says
 test_silent_worker_climbs_whatever_it_declared
 test_ready_work_wakes_the_primary_home_too
 test_a_merge_freeze_never_idles_free_lanes
+test_ready_work_that_nothing_can_start_raises_no_alarm
 test_a_fleet_pause_silences_ready_work_but_not_a_blocker
 test_memory_refused_launch_reraises_when_admission_clears

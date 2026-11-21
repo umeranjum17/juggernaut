@@ -162,6 +162,7 @@ A steer the worker read (moved to `handled/`) and never answered with a `handled
 A lead that ignores its ready-work wake (`bin/jg-watch.sh` `ready_work_waits_idle`) is the same ladder with the lead as the stuck party.
 `jg_wait_timers_backlog` runs from a lead home's tick at most every `JG_READY_STALL_POLL_SECS` (default 60), and the watcher's `ready_backlog_stall_state` owns the condition.
 The condition holds while a ready item with no open captain card could start now and the home has a free lane.
+A container epic (a row with a child) is never a ready item, a held item is not ready, and a home with no free lane raises nothing.
 A free lane is fewer open lanes than `config/lane-target`, or than 4 without a usable one.
 An item whose project's declared capacity is already held cannot start now, so it does not count (`bin/jg-project-capacity-lib.sh`).
 

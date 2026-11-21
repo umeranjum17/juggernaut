@@ -174,6 +174,16 @@ test_check_wakes_on_a_gap_refires_and_reports_recovery_once() {
   assert_contains "$out" "fleet heartbeat: dead STALLED" "a stalled home must wake Main"
   assert_not_contains "$out" "overwatch" "a moving home must stay silent"
   assert_equals "$(hb "$d" check)" "" "an unchanged gap inside the re-fire window is silent"
+  # The window is a long reminder: 20 minutes and 5 sweeps later the same unchanged gap still wakes nobody.
+  rec="$d/main/state/.fleet-heartbeat/gappy"
+  IFS=$'\t' read -r v since fired < "$rec"
+  printf '%s\t%s\t%s\n' "$v" "$((since - 1200))" "$((fired - 1200))" > "$rec"
+  for n in 1 2 3 4 5; do
+    assert_equals "$(hb "$d" check)" "" "sweep $n of an unchanged gap, 20 minutes on, must stay silent"
+  done
+  # A change of state wakes at once, whatever the window: a home that was moving and is now in a gap.
+  printf 'MOVING\t%s\t%s\n' "$since" "$fired" > "$rec"
+  assert_contains "$(hb "$d" check)" "fleet heartbeat: gappy GAP" "a changed verdict must wake inside the window"
   out=$(JG_FLEET_HEARTBEAT_REFIRE_SECS=0 hb "$d" check)
   assert_contains "$out" "fleet heartbeat: gappy GAP" "a gap still open after the window must re-fire"
   lane "$d/leads/gappy" g2 'working [at=2]: CI green, back on it'

@@ -55,6 +55,27 @@ assert_contains "$out" "differ $share/fm-solo/s.sh" "an fm- copy with no jg- twi
 out=$(JG_HOME=$WORK/home "$ROOT/bin/jg-installed-drift.sh" --all --root "$repo" --data-home "$share")
 assert_contains "$out" "$share/fm-twin/t.sh" "--all prints the legacy copy"
 
+# Dedupe: an unchanged finding set wakes once, a changed set at once, a cleared drift re-arms, and a reminder is long.
+# A home of its own keeps this record apart from the runs above; the same three-line fixture drifts in turn.
+rm -rf "$share/fm-twin" "$share/jg-twin" "$share/fm-solo" "$repo/core/solo" "$repo/core/twin"
+sweep() { JG_HOME=$WORK/dedupe "$ROOT/bin/jg-installed-drift.sh" --root "$repo" --data-home "$share"; }
+printf 'drifted\n' >"$share/fm-demo/bin/tool.sh"
+out=$(sweep); one_line "$out"
+for n in 1 2 3; do
+  out=$(sweep)
+  [ -z "$out" ] || fail "sweep $n of an unchanged finding set must stay silent, got: $out"
+done
+printf 'drifted\n' >"$share/fm-demo/README.md"
+out=$(sweep)
+[ "$(printf '%s\n' "$out" | wc -l)" -eq 2 ] || fail "a changed finding set must print at once, got: $out"
+out=$(sweep); [ -z "$out" ] || fail "the changed set is unchanged on the next sweep, got: $out"
+cp -p "$repo/core/demo/bin/tool.sh" "$share/fm-demo/bin/tool.sh"; cp -p "$repo/core/demo/README.md" "$share/fm-demo/README.md"
+out=$(sweep); [ -z "$out" ] || fail "a clean pass must print nothing, got: $out"
+printf 'drifted\n' >"$share/fm-demo/bin/tool.sh"
+out=$(sweep); one_line "$out"
+out=$(JG_INSTALLED_DRIFT_REMIND_SECS=0 sweep); one_line "$out"
+cp -p "$repo/core/demo/bin/tool.sh" "$share/fm-demo/bin/tool.sh"
+
 # arm is the registration an feature installer performs: it must leave a bound check in a real home.
 mkdir -p "$WORK/armed/state"
 JG_HOME=$WORK/armed JG_STATE_OVERRIDE=$WORK/armed/state "$ROOT/bin/jg-installed-drift.sh" arm >/dev/null \

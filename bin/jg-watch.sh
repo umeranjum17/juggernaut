@@ -3037,9 +3037,9 @@ ready_idle() { JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-rea
 # started without anyone asking. With
 # config/lane-target naming a positive integer N, the floor is fewer than N open
 # lanes, and a home with working workers but free slots is exactly the 5 Oct
-# stall that the no-worker-working rule missed. Otherwise (no usable target, or
-# open lanes at or above it) the rule is the older one: no worker is provably
-# working, so open lanes that only wait never hide an idle home. A condition
+# stall that the no-worker-working rule missed; a home with N or more open lanes
+# has no free lane, so it is never woken for ready work. Without a usable target
+# the rule is the older one: no worker is provably working. A condition
 # that still holds re-raises on READY_WORK_RESURFACE_SECS; a new ready set
 # fires at once. Sets
 # READY_WORK_IDS and READY_WORK_REASON. An empty ready set withdraws any queued
@@ -3077,7 +3077,12 @@ ready_work_waits_idle() {
   if [ -z "$target" ] && [ -f "$JG_HOME/config/lane-target" ]; then
     warn_invalid_lane_target_once
   fi
-  if [ -n "$target" ] && open=$(open_lane_count) && [ "$open" -lt "$target" ]; then
+  if [ -n "$target" ] && open=$(open_lane_count); then
+    if [ "$open" -ge "$target" ]; then
+      # No free lane: nothing can start, so there is nothing to ask for. Withdraw the queued row like an empty set.
+      ready_idle clear ready-work: || true
+      return 1
+    fi
     READY_WORK_REASON="check: ready work waiting with free lane slots ($open/$target open): $READY_WORK_IDS - dispatch them now, P0 first, up to project capacity"
   else
     for meta in "$STATE"/*.meta; do
