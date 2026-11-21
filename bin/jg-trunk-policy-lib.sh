@@ -16,7 +16,7 @@
 #   gate-lint             bin/jg-lint.sh --changed-base HEAD^   the lint every landing passes, over the changed files only
 #   gate-full             the landing's tests: the CI invariants that need no network (no tracked personal
 #                         paths, no committed binaries, regression coverage), then only the test scripts
-#                         the changed files map to, in eight shards run side by side (HEAD^ is the trunk tip:
+#                         the changed files map to, in eight shards with bounded concurrency (HEAD^ is the trunk tip:
 #                         the lander rebases the lane first)
 #   landing-gate          none        none: a landing runs the lint and no tests; the line's verify (one run for a batch, off the landing path)
 #                                     is the one test run, and a red it finds is reported against the commit that caused it (never reverted). tests: the landing also runs

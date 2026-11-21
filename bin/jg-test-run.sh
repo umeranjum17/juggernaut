@@ -15,7 +15,7 @@
 #   A path named this way must be a *.test.sh: any other path (a data file, a library, a command) is refused with exit 2 before
 #   anything runs, because each named path is started with bash.
 #
-# Local trunk required set (eight shards run side by side, each warned at the CI bound):
+# Local trunk required set (eight shards with bounded concurrency):
 #   jg-test-run.sh --required-shards <base-ref> <output-dir>
 # Writes one timing JSON per shard and required.json via --aggregate-json. Every shard runs every script it selected;
 # a failed script refuses, and a shard over its wall-clock budget is a JG_TEST_OVERRUN warning, never a red.
@@ -167,7 +167,7 @@
 #   every script it starts shares the caller's Go build cache, so a test that
 #   moves HOME does not compile Go again. Queue time is not charged to
 #   --max-wall-ms. Local shards and standalone lane runs share a second,
-#   host-wide token pool sized by JG_REQUIRED_SHARD_PARALLEL (default 8).
+#   host-wide token pool sized by JG_REQUIRED_SHARD_PARALLEL.
 #   bin/jg-test-host-lib.sh owns these contracts.
 #
 # Placement refusal:
@@ -2027,7 +2027,7 @@ if [ "${1:-}" = --required-shards ]; then
   jg_test_host_pin_go_cache
   jg_test_host_pin_mise_dirs
   jg_test_host_warm_go_cache "$ROOT"
-  # The eight shards are disjoint, so they run side by side: each one in its own temp and tmux directory
+  # The eight shards are disjoint and run concurrently, each in its own temp and tmux directory
   # (a short path under the disk scratch root, because a tmux socket path is length-limited), its output kept in its own file and
   # printed in shard order afterwards. A gate nested inside a test with a token shares that token serially.
   required_nested=0

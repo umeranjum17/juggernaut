@@ -53,7 +53,7 @@
 #   Each executing shard and each standalone lane run takes a token from the same pool for this OS user, regardless
 #   of Juggernaut home, HOME, XDG_CACHE_HOME or TMPDIR. JG_TEST_HOST_SLOTS isolates the pool for tests. A required
 #   gate orchestrates its eight shards and holds only a run slot. JG_REQUIRED_SHARD_PARALLEL sets the shared capacity
-#   (default and maximum 8; 1 runs one shard at a time). When invocations request different capacities, admission
+#   (default 4, maximum 8; 1 runs one shard at a time). When invocations request different capacities, admission
 #   honours the lowest among the requester and active holders. A keeper owns the kernel lock until its runner exits,
 #   including after a crash. Nested runs of tests can borrow their ancestor's token to avoid waiting on themselves.
 #
@@ -312,7 +312,7 @@ jg_test_host_nested_shard() {
 }
 
 jg_test_host_admit_shard() {
-  local cap=${JG_REQUIRED_SHARD_PARALLEL:-8}
+  local cap=${JG_REQUIRED_SHARD_PARALLEL:-4}
   case $cap in
     *[!0-9]*) cap=1 ;;
     *) cap=${cap#"${cap%%[!0]*}"} ;;
