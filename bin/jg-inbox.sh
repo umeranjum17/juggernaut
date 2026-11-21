@@ -57,7 +57,7 @@
 # own words typed in the locked primary session become the already-handled note
 # `primary-<session>-<seq>`, whose first line is `[chat primary <session>:<seq>]`, so an order
 # `owner-words: note:<that id> "<his words>"` can start its worker. The session must be the one in
-# state/.lock-session; any other session, a machine prompt or an empty text writes nothing. The
+# state/.lock-session (a session id that is not filename-safe, as a Pi session file path, names its notes by a digest); any other session, a machine prompt or an empty text writes nothing. The
 # note is born handled and appends no wake: he is already talking to the primary.
 # A note already acknowledged (in handled/) gets no wake from `announce` or a
 # request-id replay; both report it as acknowledged and exit 0.
@@ -508,25 +508,28 @@ cmd_approve() {  # <note-id> <ticket-id>
 }
 
 cmd_primary_chat() {  # <session-id> <seq> <text>...
-  local sid=${1:-} seq=${2:-} locked body id path
+  local sid=${1:-} seq=${2:-} locked key body id path
   [ "$#" -ge 3 ] || die "usage: jg-inbox.sh primary-chat <session-id> <seq> <text>..."
   shift 2
   case "$seq" in ''|*[!0-9]*) die "the message seq must be a number" ;; esac
-  case "$sid" in ''|*[!A-Za-z0-9._-]*|*..*) die "invalid session id" ;; esac
+  case "$sid" in ''|*$'\n'*|*$'\r'*) die "invalid session id" ;; esac
   # shellcheck source=bin/jg-session-lock-lib.sh
   . "$SELF_DIR/jg-session-lock-lib.sh"
   locked=$(jg_session_lock_recorded_session_id "$STATE") \
     || die "no locked primary session is recorded, so no chat note can be written"
   [ "$locked" = "$sid" ] || die "session $sid is not the locked primary session; its words sign nothing"
   [ -n "${*//[[:space:]]/}" ] || die "refusing an empty chat note"
-  id="primary-$sid-$seq"
+  # A session id that is not filename-safe (a Pi session is a file path) names its notes by a digest.
+  key=$sid
+  case "$sid" in ''|*[!A-Za-z0-9._-]*|*..*) key="s$(printf '%s' "$sid" | cksum | tr -d ' ')" ;; esac
+  id="primary-$key-$seq"
   mkdir -p "$INBOX/handled"
   path="$INBOX/handled/$id.note"
   [ ! -e "$path" ] || { printf 'exists %s\n' "$id"; return 0; }
-  body="[chat primary $sid:$seq] $*"
+  body="[chat primary $key:$seq] $*"
   write_note_file "$path.tmp" "$id" chat-primary "$body" "" ""
   mv "$path.tmp" "$path"
-  store_tell "$sid:$seq" "$*"
+  store_tell "$key:$seq" "$*"
   printf 'recorded %s\n' "$id"
 }
 

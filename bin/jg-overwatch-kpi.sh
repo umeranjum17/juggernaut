@@ -13,7 +13,8 @@
 #
 # WRITERS. The prompt-submit hooks append each captain message: Claude's
 # UserPromptSubmit, Cursor's beforeSubmitPrompt (the same surfaces that feed
-# bin/jg-host-mirror.sh) and agy's PreInvocation, which agy fires before every
+# bin/jg-host-mirror.sh), Pi's `input` event for a typed (interactive) prompt, run from
+# the primary extension, and agy's PreInvocation, which agy fires before every
 # model call, so only the one that opens a turn on a typed prompt counts (see
 # agy_prompt below). A captain message typed at the board's chat has no
 # prompt hook to catch it, so bin/jg-chat.sh records it with `record`, through
@@ -62,7 +63,7 @@
 # merged flag, a backlog id by its done state) and is opt-in for that reason.
 #
 # Usage:
-#   jg-overwatch-kpi.sh hook <claude|cursor|agy>   a prompt-submit hook payload on stdin
+#   jg-overwatch-kpi.sh hook <claude|cursor|agy|pi>   a prompt-submit hook payload on stdin
 #   jg-overwatch-kpi.sh tag [--message <seq|inbox-id>] <kind> [<link>]
 #                                              tag the newest captain message, or the one named
 #   jg-overwatch-kpi.sh record [--id <inbox-id>] [--] <text>
@@ -260,6 +261,14 @@ case "$1" in
       AGY_PROMPT=$(agy_prompt "$PAYLOAD") || exit 0
       SID=${AGY_PROMPT%%$'\n'*}
       TEXT=${AGY_PROMPT#*$'\n'}
+    elif [ "$2" = pi ]; then
+      # Pi's extension hands over only what the captain typed (source interactive); the session is
+      # never read from the payload, but proven from this hook's own ancestry (a Pi process in the pane).
+      TEXT=$(printf '%s' "$PAYLOAD" | jq -r 'select(type == "object" and .hook_event_name == "input" and .source == "interactive")
+        | (.text // "") | tostring' 2>/dev/null) || exit 0
+      # shellcheck source=bin/jg-session-lock-lib.sh
+      . "$SCRIPT_DIR/jg-session-lock-lib.sh"
+      SID=$(jg_session_lock_pi_session_id) || SID=
     else
       TEXT=$(printf '%s' "$PAYLOAD" | jq -r 'select(type == "object")
         | select(.hook_event_name == "UserPromptSubmit" or .hook_event_name == "beforeSubmitPrompt")

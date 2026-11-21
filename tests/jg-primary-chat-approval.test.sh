@@ -9,6 +9,9 @@
 # T2 a session that is not the locked one, a home with no lock, and machine text file no note, and an
 #    order quoting such words is not approved.
 # T3 the note appends no wake: it is born handled, so the inbox has nothing pending.
+# T5 a Pi primary locked through the real bin/jg-lock.sh files the same signed note when the tracked primary
+#    extension's `input` handler forwards a typed (interactive) prompt: the Pi session is a file path, so the note is
+#    named by a digest of it; an extension-injected prompt, a Pi process in another pane and a non-Pi process file none.
 # T4 an agy primary locked through the real bin/jg-lock.sh files the same signed note from the PreInvocation
 #    that opens a turn on a typed prompt; a background-task wake, a later invocation of the turn, another
 #    conversation and a payload with no readable transcript file none, and the order is approved.
@@ -151,6 +154,65 @@ test_an_agy_primary_signs_an_order() {
   pass "an agy primary's typed prompt files a handled, signed chat note that approves an order quoting it; a wake, a repeat call and a foreign conversation file none"
 }
 
+# Runs the real tracked Pi primary extension under a process named <runtime> (Pi runs it as `pi`) and
+# delivers one `input` event to its handler.
+pi_input() {  # <dir> <runtime-name> <pane> <source> <text>
+  env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID HERDR_PANE_ID="$3" HERDR_BIN_PATH="$TMP_ROOT/pi-bin/herdr" HERDR_SESSION=default \
+    JG_ROOT_OVERRIDE="$1" JG_HOME="$1" JG_STATE_OVERRIDE="$1/state" PLUGIN="$ROOT/.pi/extensions/jg-primary-turnend-guard.ts" \
+    EVENT_SOURCE="$4" EVENT_TEXT="$5" "$TMP_ROOT/pi-bin/$2" --input-type=module <<'EOF'
+import { pathToFileURL } from "node:url";
+const handlers = new Map();
+const pi = { on(event, handler) { handlers.set(event, handler); }, async sendUserMessage() {} };
+const mod = await import(pathToFileURL(process.env.PLUGIN).href);
+mod.default(pi);
+const result = await handlers.get("input")?.({ type: "input", source: process.env.EVENT_SOURCE, text: process.env.EVENT_TEXT }, {});
+if (result?.action !== "continue") throw new Error("the capture changed what Pi does with the prompt");
+await new Promise((resolve) => setTimeout(resolve, 1500));
+EOF
+}
+
+test_a_pi_primary_signs_an_order() {
+  local home="$TMP_ROOT/pi" words="Build the retry policy now, with no second approval." fb="$TMP_ROOT/pi-bin" node_bin n id key
+  node_bin=$(node -p process.execPath) || fail "no node to run the Pi extension"
+  make_home "$home"
+  mkdir -p "$fb/lock" "$home/state"
+  ln -sf "$node_bin" "$fb/pi"
+  ln -sf "$node_bin" "$fb/node-in-pane"
+  ln -sf "$(command -v bash)" "$fb/lock/pi"
+  cat > "$fb/herdr" <<'SH'
+#!/usr/bin/env bash
+cat <<'JSON'
+{"result":{"snapshot":{"agents":[
+ {"pane_id":"p1","agent":"pi","agent_session":{"kind":"path","value":"/s/one.jsonl"}},
+ {"pane_id":"p2","agent":"pi","agent_session":{"kind":"path","value":"/s/two.jsonl"}}]}}}
+JSON
+SH
+  chmod +x "$fb/herdr"
+  env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID HERDR_PANE_ID=p2 HERDR_BIN_PATH="$fb/herdr" HERDR_SESSION=default JG_HOME="$home" \
+    "$fb/lock/pi" -c "$ROOT/bin/jg-lock.sh; exit \$?" >/dev/null 2>&1 || fail "the Pi primary could not take the lock"
+  assert_equals /s/two.jsonl "$(head -n 1 "$home/state/.lock-session")" "the lock did not record the Pi session"
+
+  pi_input "$home" pi p2 interactive "$words"
+  n=$(find "$home/state/inbox/handled" -name 'primary-*.note' | wc -l | tr -d ' ')
+  assert_equals 1 "$n" "the typed Pi prompt did not file exactly one chat note: $(ls -R "$home/state" 2>&1)"
+  id=$(basename "$(find "$home/state/inbox/handled" -name 'primary-*.note')" .note)
+  case "$id" in primary-s[0-9]*-1) ;; *) fail "the Pi note id is not a digest-named first message: $id" ;; esac
+  key=${id#primary-}
+  assert_equals "[chat primary ${key%-1}:1] $words" "$(awk 'f{print} /^--$/{f=1}' "$home/state/inbox/handled/$id.note")" \
+    "the note does not carry the signed tag and his whole words"
+  approved "$home" "$id" "Build the retry policy now" || fail "the order quoting his Pi words was not approved"
+  approved "$home" "$id" "Build the cache now" && fail "words he did not type were approved"
+
+  # A prompt an extension injected (a wake), a Pi process in another pane, and a process that is not Pi sign nothing.
+  pi_input "$home" pi p2 extension "a wake the extension injected"
+  pi_input "$home" pi p1 interactive "typed in another pane"
+  pi_input "$home" node-in-pane p2 interactive "typed under a process that is not Pi"
+  n=$(find "$home/state/inbox/handled" -name 'primary-*.note' | wc -l | tr -d ' ')
+  assert_equals 1 "$n" "an injected prompt, another pane or a non-Pi process filed a chat note"
+  pass "a Pi primary's typed prompt files a handled, signed chat note that approves an order quoting it; an injected prompt, another pane and a non-Pi process file none"
+}
+
 test_the_locked_primary_session_signs_an_order
 test_an_agy_primary_signs_an_order
+test_a_pi_primary_signs_an_order
 test_other_sessions_and_machine_text_sign_nothing

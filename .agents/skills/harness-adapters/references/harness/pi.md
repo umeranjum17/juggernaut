@@ -51,6 +51,8 @@ The primary turn-end behavior was verified on 2026-07-09 with Pi 0.80.5.
 Without `deliverAs: "followUp"`, Pi rejects the send while the agent is still processing.
 On native Windows, the extension runs its session-start, both PreToolUse, turn-end, and operational-input Bash helpers through `bash`; macOS and Linux invoke those helpers directly.
 
+The same turn-end extension forwards a typed (`source: "interactive"`) prompt to `../../../bin/jg-overwatch-kpi.sh hook pi`, so a captain approval typed in a Pi primary files a signed chat note; `../../../docs/verification/runtime-backends.md` owns the audit of every primary harness.
+
 The primary watcher protocol also requires `.pi/extensions/jg-primary-pi-watch.ts`.
 The Pi engine auto-discovers both tracked project-local extensions once the project is trusted.
 The model arms through the `jg_watch_arm_pi` tool, never through a foreground shell arm.

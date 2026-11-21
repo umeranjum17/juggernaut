@@ -504,6 +504,20 @@ function runChecker(script: string, command: string): Promise<{ code: number; st
   });
 }
 
+// The captain's typed words reach bin/jg-overwatch-kpi.sh, which proves the Pi session
+// from its own ancestry and files the signed chat note (docs/verification/runtime-backends.md).
+// It runs beside the prompt, never in front of it, so a slow or failing helper delays nothing.
+function recordTypedPrompt(text: string): void {
+  try {
+    const invocation = juggernautShellInvocation(`${root}/bin/jg-overwatch-kpi.sh`, ["hook", "pi"]);
+    const child = spawn(invocation.command, invocation.args, { stdio: ["pipe", "ignore", "ignore"] });
+    child.on("error", () => {});
+    child.stdin?.on("error", () => {});
+    child.stdin?.end(JSON.stringify({ hook_event_name: "input", source: "interactive", text }));
+  } catch {
+  }
+}
+
 function runPretoolCheck(command: string): Promise<{ code: number; stderr: string }> {
   return runChecker("jg-arm-pretool-check.sh", command);
 }
@@ -599,6 +613,12 @@ export default function (pi: ExtensionAPI) {
       if (sessionstartGeneration === generation) sessionstartGeneration = null;
       removeSessionstartExitListener();
     }
+  });
+
+  pi.on?.("input", (event) => {
+    const typed = event as { source?: unknown; text?: unknown };
+    if (typed.source === "interactive" && typeof typed.text === "string") recordTypedPrompt(typed.text);
+    return { action: "continue" };
   });
 
   pi.on("tool_call", async (event) => {
