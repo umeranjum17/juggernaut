@@ -1,0 +1,934 @@
+{
+  "area": "decisions",
+  "owner": "e6holds2",
+  "entries": [
+    {
+      "path": [
+        "hold",
+        "captain-hold",
+        "hold"
+      ],
+      "meaning": "Hold a task for an owner decision",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-captain-hold.sh hold <task-id> --reason <reason> [--title <title>] [--repo <repo>] [--priority <0-3>] [--origin <origin-id>] [--until YYYY-MM-DD] [--must <category>]",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.captain-hold.hold.v1",
+      "script": "bin/jg-captain-hold.sh",
+      "operation": "hold",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "captain-hold",
+        "answer"
+      ],
+      "meaning": "Record an answer to a held task",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-captain-hold.sh answer <task-id> --decision-file <path> [--release [--card <card-key>]]",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.captain-hold.answer.v1",
+      "script": "bin/jg-captain-hold.sh",
+      "operation": "answer",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "captain-hold",
+        "answers"
+      ],
+      "meaning": "Reconcile answers from a source",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-captain-hold.sh answers [<legacy-origin> | --any-origin] --source <provenance>",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.captain-hold.answers.v1",
+      "script": "bin/jg-captain-hold.sh",
+      "operation": "answers",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "captain-hold",
+        "reconcile-requests"
+      ],
+      "meaning": "Reconcile requests from a bound source",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-captain-hold.sh reconcile-requests --source-id <source-id> --source <provenance>",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.captain-hold.reconcile-requests.v1",
+      "script": "bin/jg-captain-hold.sh",
+      "operation": "reconcile-requests",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "captain-hold",
+        "bind"
+      ],
+      "meaning": "Bind a source to an origin",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-captain-hold.sh bind <source-id> [<legacy-origin> | --any-origin]",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.captain-hold.bind.v1",
+      "script": "bin/jg-captain-hold.sh",
+      "operation": "bind",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "captain-hold",
+        "unbind"
+      ],
+      "meaning": "Remove a source binding",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-captain-hold.sh unbind <source-id>",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.captain-hold.unbind.v1",
+      "script": "bin/jg-captain-hold.sh",
+      "operation": "unbind",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "captain-hold",
+        "binding"
+      ],
+      "meaning": "Show the binding for a source",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/jg-captain-hold.sh binding <source-id>",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.captain-hold.binding.v1",
+      "script": "bin/jg-captain-hold.sh",
+      "operation": "binding",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "captain-hold",
+        "complete"
+      ],
+      "meaning": "Record the completed decision inventory for an origin",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-captain-hold.sh complete <origin-id> (--none | <task-id>...)",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.captain-hold.complete.v1",
+      "script": "bin/jg-captain-hold.sh",
+      "operation": "complete",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "captain-hold",
+        "verify"
+      ],
+      "meaning": "Verify an origin decision inventory",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/jg-captain-hold.sh verify <origin-id>",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.captain-hold.verify.v1",
+      "script": "bin/jg-captain-hold.sh",
+      "operation": "verify",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "captain-hold",
+        "answered"
+      ],
+      "meaning": "Check whether a task was answered",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/jg-captain-hold.sh answered <task-id>",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.captain-hold.answered.v1",
+      "script": "bin/jg-captain-hold.sh",
+      "operation": "answered",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "captain-hold",
+        "open"
+      ],
+      "meaning": "Check whether a task has an open decision",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/jg-captain-hold.sh open <task-id> [--identity] [--distinguish-absent]",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.captain-hold.open.v1",
+      "script": "bin/jg-captain-hold.sh",
+      "operation": "open",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "captain-hold",
+        "blocking"
+      ],
+      "meaning": "Check whether a decision blocks a task",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/jg-captain-hold.sh blocking <task-id>",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.captain-hold.blocking.v1",
+      "script": "bin/jg-captain-hold.sh",
+      "operation": "blocking",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "captain-hold",
+        "design-card"
+      ],
+      "meaning": "Record a design question card",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-captain-hold.sh design-card <card-key> --raised-by <ticket> --title <question>",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.captain-hold.design-card.v1",
+      "script": "bin/jg-captain-hold.sh",
+      "operation": "design-card",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "captain-hold",
+        "design-pick"
+      ],
+      "meaning": "Record the owner’s design choice",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-captain-hold.sh design-pick <card-key> --words <the captain's words>",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.captain-hold.design-pick.v1",
+      "script": "bin/jg-captain-hold.sh",
+      "operation": "design-pick",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "captain-hold",
+        "to-gates"
+      ],
+      "meaning": "Move owner holds to decision gates",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-captain-hold.sh to-gates",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.captain-hold.to-gates.v1",
+      "script": "bin/jg-captain-hold.sh",
+      "operation": "to-gates",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "captain-hold",
+        "phase"
+      ],
+      "meaning": "Show the phase of a held task",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/jg-captain-hold.sh phase <task-id>",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.captain-hold.phase.v1",
+      "script": "bin/jg-captain-hold.sh",
+      "operation": "phase",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "captain-hold",
+        "reconcile",
+        "check"
+      ],
+      "meaning": "Check pending reconciliation requests",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-captain-hold.sh reconcile check",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.captain-hold.reconcile.check.v1",
+      "script": "bin/jg-captain-hold.sh",
+      "operation": "reconcile check",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "captain-hold",
+        "reconcile",
+        "list"
+      ],
+      "meaning": "List reconciliation requests",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/jg-captain-hold.sh reconcile list",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.captain-hold.reconcile.list.v1",
+      "script": "bin/jg-captain-hold.sh",
+      "operation": "reconcile list",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "captain-hold",
+        "reconcile",
+        "close"
+      ],
+      "meaning": "Close a reconciliation request with evidence",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-captain-hold.sh reconcile close <task-id> --evidence-file <path>",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.captain-hold.reconcile.close.v1",
+      "script": "bin/jg-captain-hold.sh",
+      "operation": "reconcile close",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "captain-hold",
+        "reconcile",
+        "note"
+      ],
+      "meaning": "Record a reconciliation note",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-captain-hold.sh reconcile note <task-id> --note-file <path>",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.captain-hold.reconcile.note.v1",
+      "script": "bin/jg-captain-hold.sh",
+      "operation": "reconcile note",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "migration-card",
+        "merge"
+      ],
+      "meaning": "Record a merged change on the migration card",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-migration-card.sh merge <pr-url>",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.migration-card.merge.v1",
+      "script": "bin/jg-migration-card.sh",
+      "operation": "merge",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "migration-card",
+        "live"
+      ],
+      "meaning": "Refresh the migration card from current measurements",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-migration-card.sh live [--quiet]",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.migration-card.live.v1",
+      "script": "bin/jg-migration-card.sh",
+      "operation": "live",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "migration-card",
+        "arm"
+      ],
+      "meaning": "Register the migration card refresh",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-migration-card.sh arm",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.migration-card.arm.v1",
+      "script": "bin/jg-migration-card.sh",
+      "operation": "arm",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "migration-card",
+        "disarm"
+      ],
+      "meaning": "Remove the migration card refresh",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-migration-card.sh disarm",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.migration-card.disarm.v1",
+      "script": "bin/jg-migration-card.sh",
+      "operation": "disarm",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "migration-card",
+        "milestone"
+      ],
+      "meaning": "Record a migration milestone",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-migration-card.sh milestone <kind> [text]",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.migration-card.milestone.v1",
+      "script": "bin/jg-migration-card.sh",
+      "operation": "milestone",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "owner-rules",
+        "init"
+      ],
+      "meaning": "Initialize the owner rules document",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-owner-rules.sh init [--force]",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.owner-rules.init.v1",
+      "script": "bin/jg-owner-rules.sh",
+      "operation": "init",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "owner-rules",
+        "add"
+      ],
+      "meaning": "Record an owner rule",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-owner-rules.sh add --kind <owner> --words <the owner words> --scope <scope> --enforce <where it is enforced> [--date YYYY-MM-DD] [--title <one line>]",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.owner-rules.add.v1",
+      "script": "bin/jg-owner-rules.sh",
+      "operation": "add",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "owner-rules",
+        "split"
+      ],
+      "meaning": "Separate owner rules from product rules",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-owner-rules.sh split [--surface <file>] [--apply]",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.owner-rules.split.v1",
+      "script": "bin/jg-owner-rules.sh",
+      "operation": "split",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "owner-rules",
+        "check"
+      ],
+      "meaning": "Check owner rules for missing details",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/jg-owner-rules.sh check [--surface <file>]",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.owner-rules.check.v1",
+      "script": "bin/jg-owner-rules.sh",
+      "operation": "check",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "owner-rules",
+        "audit"
+      ],
+      "meaning": "Audit sources for unrecorded rules",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-owner-rules.sh audit [--fail] [--source <file-or-directory>]...",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.owner-rules.audit.v1",
+      "script": "bin/jg-owner-rules.sh",
+      "operation": "audit",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "question-card",
+        "post"
+      ],
+      "meaning": "Post a decision question",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-question-card.sh post (--ask-ref <ref> | --board <decisions.json> | --route <lead>) --title <one question> [--decision-key <slug>]",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.question-card.post.v1",
+      "script": "bin/jg-question-card.sh",
+      "operation": "post",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "question-card",
+        "answer"
+      ],
+      "meaning": "Record an answer to a question card",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-question-card.sh answer <card-key> --words <the captain words> [--board <decisions.json>]",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.question-card.answer.v1",
+      "script": "bin/jg-question-card.sh",
+      "operation": "answer",
+      "aliases": []
+    },
+    {
+      "path": [
+        "hold",
+        "question-card",
+        "keys"
+      ],
+      "meaning": "List question card keys",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-question-card.sh keys",
+      "repeat_key": "args",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5
+      },
+      "schema": "decisions.question-card.keys.v1",
+      "script": "bin/jg-question-card.sh",
+      "operation": "keys",
+      "aliases": []
+    }
+  ]
+}
