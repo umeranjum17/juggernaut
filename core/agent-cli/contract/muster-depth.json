@@ -1,0 +1,11 @@
+{"area": "muster", "owner": "m3", "entries": [
+  {"path": ["muster", "depth"], "meaning": "Pick the alignment depth of an ask (skip, light, full or complete) with the no-model rule; changes nothing.",
+   "roles": ["overwatch"], "args": [{"name": "ask", "type": "text", "required": true}], "changes": false,
+   "method": "GET", "form": "bin/jg-muster-depth.sh <ask>", "repeat_key": null, "exits": {"0": 0, "2": 2},
+   "schema": "muster.depth.v1", "script": "bin/jg-muster-depth.sh", "operation": "-", "aliases": []},
+  {"path": ["muster", "depth", "record"], "meaning": "Write a ticket's one Muster line: the rule's pick, or with a depth and a reason Main's reading or raise.",
+   "roles": ["overwatch"], "args": [{"name": "ticket", "type": "text", "required": true}, {"name": "backfill", "type": "flag", "required": false},
+     {"name": "depth", "type": "text", "required": false}, {"name": "reason", "type": "text", "required": false}], "changes": true,
+   "method": "POST", "form": "bin/jg-muster-depth.sh record --ticket <ticket> [--backfill] [--depth <depth> --reason <reason>]", "repeat_key": "ticket",
+   "exits": {"0": 0, "2": 2}, "schema": "muster.depth.record.v1", "script": "bin/jg-muster-depth.sh", "operation": "record", "aliases": []}
+]}

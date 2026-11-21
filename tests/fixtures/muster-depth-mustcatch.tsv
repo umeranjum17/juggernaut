@@ -1,0 +1,34 @@
+# label	state	pack	ask  (rounds 3, 4 and 5, critic rounds 2 and 3 and the closure review: general phrasings written for this test, not real tickets)
+# must-catch: a full or complete ask picked skip or light is a miss (D5: War Room must refuse it; D7: complete starts the council)
+complete	none	no	Can you start a brand-new project?
+complete	none	no	Start a new project for account payments
+full	mature	no	Remove the old storage system and migrate the payment schema across all machines
+complete	none	no	Could you build a new app for the bot from scratch?
+complete	none	no	Please create a new repo for the voice service
+complete	new	no	Let's set up the first version of this project
+full	mature	no	Could you redesign the sync between machines?
+full	mature	no	Let's re-architect the payments flow
+full	mature	no	Build multi-machine sync for the crew
+full	mature	no	Migrate the ticket store to a new schema
+full	mature	no	Add a privacy consent screen before sign-up
+full	mature	no	Rewrite the routing layer and remove the old router
+full	mature	yes	Replace the session store with a new database
+complete	none	no	I want a brand new crew bot, plan it with me
+complete	none	no	Build a new app to approve expense reports
+complete	none	no	Build a brand-new project for proof of delivery tracking
+complete	none	no	Build a new app with a live demo mode
+complete	none	no	Could you help me build a new app to approve expense reports?
+# must-not-refuse: a skip or light ask picked full or complete is a wrong refusal
+skip	none	no	What is the status of the payment sync?
+skip	mature	no	Why did the migration fail last night?
+skip	none	no	Is the new project registered yet?
+skip	mature	no	Fix the typo in the migration guide
+skip	mature	no	Bump the schema validator to the next patch
+skip	mature	no	Should we look at the onboarding numbers?
+light	mature	no	Can you add an export button to the report page?
+light	mature	yes	Please add a dark mode toggle
+skip	mature	no	Remove the stale banner from the account page
+skip	mature	no	Rename the settings heading
+skip	none	no	Can you explain the new project?
+skip	none	no	Could you show me the new project?
+skip	mature	no	Describe how the sync architecture works

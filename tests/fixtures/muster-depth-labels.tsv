@@ -1,0 +1,102 @@
+# label	state	pack	title  (101 real ticket titles, labelled by the jg-6si researcher; state from the local copies on 2026-11-21)
+skip	mature	no	P2 J6: authorize page heading never splits the name
+skip	mature	no	CLI: adopt verified complete-output OpenClaw kit 0.5.0
+light	mature	no	P1 J1: Find my design shows real matches people can judge
+skip	mature	no	P0 J7: no empty hero, no Windsurf claim, unbroken v-1.design name on the beta site
+skip	mature	no	One word replaces secondmate in the internal rename
+skip	mature	no	Juggernaut update the readme as well once done
+light	mature	no	Reproduce a sniff.so-grade site with first-draft
+skip	mature	no	No DeepSeek during peak hours (weekdays 16:00-22:00 your time)
+full	mature	no	Main wakes by priority and time, not every few minutes
+full	mature	no	A reviewed plan for renaming Juggernaut internals without breaking 34 live homes
+full	mature	no	Also move first draft to this open design thing, the new one. ... both are specialized tools that have their own responsibilities built into Juggernaut itself.
+skip	mature	no	Juggernaut migration runbook and scratch dry run (prepare only, do not run)
+skip	mature	no	Remove repo variable JG_CI_SKIP_MACOS when macOS runners start again
+skip	mature	no	Stop all OpenClaw work; Crewhouse moves to Pi
+skip	mature	no	Redo the bots share one computer report so it explains and shows research
+skip	mature	no	Put some Claude load on the Cognify account
+light	mature	no	Scout reports follow a researched standard, learned from Plannotator and other open-source tools
+skip	mature	no	[blocker] Merge watcher merged nothing: its installed copy is stale
+full	mature	no	Build the bots share one computer plan: all eight slices, narrow key route B
+skip	mature	no	Scout cloud agent tools: E2B best practice and Conductor features worth adding
+full	mature	no	Run more work in parallel across the fleet
+skip	mature	no	Approve repair of the add-ons juggernaut clone: owner guard shadowed by a Recon
+skip	mature	no	Release c-15 to main?
+skip	mature	no	Keep work moving across the other projects while Beads leads
+skip	mature	no	Use Haiku for done-done proof runs and basic work
+full	mature	no	Juggernaut-test-ci-rules: ship test and CI rules as defaults, gate unit tests
+light	mature	no	A 'what is left' view you never have to ask for
+skip	mature	no	Tickets I file must show on your board at once
+skip	mature	no	Token cuts show no gain yet: tokens per call went up
+skip	mature	no	Report: robust escalation, no token waste, no needless involvement
+skip	mature	no	Recon for fd-open-design-full-power: what first-draft uses and leaves unused of Open Design, with proof
+skip	mature	no	Approve the Muster and one-command plan
+skip	mature	no	War room default run
+skip	mature	no	Claude account sign-ins for wide blitz
+skip	mature	no	[captain-ask] A team hit its usage limit: reset or use extra usage now?
+full	mature	no	Standing release train: release from trunk on a rule
+skip	mature	no	[captain-ask] Merge-flow Recon: resolver scope, hot-file split, merge commits, machine enforcement
+skip	mature	no	Measure the Bash output cap in a paired lab
+skip	mature	no	Future: swap the overlay kit (@byokit/overlay to @platform-kits/overlay) and prove the Copied note clear of the composer
+full	mature	no	Opt-in background feed watch on X and Reddit with its own consent
+light	mature	no	A user turns AI image planning on with screenshots redacted and blurred first
+light	mature	no	Mac takes get click rings, keycaps and click-driven camera once Desklink captures Mac input
+skip	mature	no	VISION.md direction notes record the owner's target output: a motion-graphics promo look, per the reference video and notes.
+skip	mature	no	Later: buy Refero Pro for design references when the owner funds it
+skip	mature	no	Real-mic words-in proof on test phone
+skip	mature	no	Fork exit 7B prerequisite: account-pool add-on slice S2 (relaunch and spawn-validate events) then S3 (pool tests and docs move), so the fork can delete its acc…
+skip	mature	no	Fork exit 8B prerequisite: lead-wake add-on slice 2 (ring text) so the fork watcher can drop its copy
+skip	mature	no	Firstmate add-on: merge-card gate+post, one sign-off card per merge (part 2 of the merge-automation mission)
+skip	mature	no	Cherry-pick compare, learn and OG pieces from old web PR 7 into feature/v2, then close PR 7
+skip	mature	no	P1 J1: no broken thumbnails anywhere in the library
+light	mature	no	P1 J8: a Quickstart that works today
+light	mature	no	P2 J1: calm design page and clean grid
+skip	mature	no	Studio restore W2: brief to live canvas (Both target, live plan and progress)
+light	mature	no	P0 J3: Claude plan lane shown as Coming; with calm composer (pm-11) and plain consent and status copy (pm-14)
+skip	mature	no	Studio restore W3: iterate and handoff on lanes from the canvas
+skip	mature	no	Studio restore W4: screen thumbnails on the run page
+skip	mature	no	Stage and run the live Studio feasibility check; the owner only signs in
+skip	mature	no	P0 J3: website-started subscription connect proven against the real engine
+full	mature	no	Studio: run the member's host on an always-on cloud computer via @byokit/machine (boat.dev first)
+light	mature	no	P1 J7: home and pricing tell the library-plus-Studio story (after pm-1)
+full	mature	no	Studio return on @byokit/openclaw: re-benchmark, pull-route pairing, Studio v2 behind allowlist, no-computer path, preview cohort (P10-P14)
+skip	mature	no	Engine: move library/_research corpora and revenue docs out of git; README, license UNLICENSED, clone-of metadata
+skip	mature	no	v1 go-public: captain calls from the readiness audit
+skip	mature	no	v1 design: captain calls before the private preview and studio return
+skip	mature	no	v1 design harness: captain calls from the typeui scout
+skip	mature	no	P0 J4: real Studio generation on a member subscription, recorded
+skip	mature	no	P0 J9: real purchase-to-unlocked member demo on a test account
+light	mature	no	P0 J5: canvas polish, add-screen, export and pack on the real engine, recorded
+skip	mature	no	one-repo product name and migration go-ahead
+light	young	no	Allow ordinary messages while a question remains pending
+light	mature	no	Fleet-pulse finds the newest retro report across homes
+light	none	no	[captain-ask] Enforce the owner rule: Every question to me carries its context, pictures and your recommendation
+full	none	no	Linked-work tag and design-feedback stop gate: sibling tickets pause when one enters design or gets owner feedback
+light	none	no	Enforce the owner rule: Proposals are reports or messages, never PRs
+skip	none	no	Critic for final store plan
+light	none	no	Enforce the owner rule: Board questions are radio buttons with the recommendation selected
+full	none	no	Domain model and SQLite schema
+skip	none	no	[captain-ask] Claude workers run on the captain's main account in every home
+skip	none	no	Deep Recon on war room and blitz data/jg-ogo0i/report.md
+skip	none	no	Critic for blitz recon
+skip	none	no	Critic for Muxr Bots discovery
+skip	none	no	Critic for alert coverage recon data/alert-coverage-recon-critic/report.md
+skip	none	no	[captain-ask] When does product work restart: after release c-3 + ntfy/Dapr/axi live (recommended), or after the full Go port and deletions
+skip	none	no	War room on Crewhouse fork data/fable-jg-vcmiv/report.md
+skip	none	no	Muxr Bots discovery explainer
+skip	none	no	[captain-ask] Resume product homes when wake queue + inbox + phone notifications + juggernaut-axi are live?
+light	none	no	Enforce the owner rule: No DeepSeek, Opus and Sonnet only
+light	none	no	Enforce the owner rule: Haiku for basic work
+skip	none	no	[blocker] Revoke the npm publish token a muxr worker printed 18 Oct 15:41Z (captain yes 19 Oct); needs npm sign-in with his security key; do it in the same session as npm-approve
+skip	none	no	Design direction for the bot-crew screens: captain answer on the four frames card
+skip	none	no	Sonnet dry run slice one data/jg-dlo9v-5-2/report.md
+full	none	no	End the add-on concept: fold the remaining addons/ code and finish the home and lead rename
+full	none	no	Multi-machine onboarding and routing internals
+light	none	no	Juggernaut behaviour evals as an installed verification skill
+skip	none	no	[blocker] Composio signed-in leg on captain's desktop browser
+skip	none	no	Critic many machines plan
+skip	none	no	Critic for final store plan
+light	none	no	Enforce the owner rule: Ask only for big or irreversible
+skip	none	no	Architectures of all ranked projects
+complete	none	no	[captain-ask] New React Native app: addictive book reader (Kindle/PDF import, AI, best-in-class reader)
+light	none	no	Nov: I-01 Answers need context he does not have

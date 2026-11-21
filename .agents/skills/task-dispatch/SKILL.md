@@ -45,6 +45,14 @@ A deep Recon needs one separate critic worker after the researcher's draft, neve
 Each later draft is a new `done` line of the researcher; steer the same critic to it.
 `.agents/skills/deep-recon/SKILL.md` owns the stages, budgets and critic rubric, and `bin/jg-recon-gate.sh` refuses `done` for a standard or deep Recon that does not meet them.
 
+### Muster depth at intake
+
+Record the Muster depth once per ticket with `bin/jg-muster-depth.sh record --ticket <id>`; the script's header owns the rule, and reading an ask (`bin/jg-muster-depth.sh "<the ask>"`) changes nothing.
+Read every ticket whose line says `review` yourself, and record your reading with `record --ticket <id> --depth <d> --reason <why>`.
+You may raise a depth freely; a lower depth than the rule picked needs a stated reason, and the reason is always recorded.
+A depth the captain names always wins.
+Nothing refuses on the line yet.
+
 ### Workflow at intake
 
 After the ticket is filed, give it a workflow; workflows are configuration (`core/workflows/README.md` owns the grammar, `defaults/workflows` and `config/workflows` hold the names and the `pick` rules).
