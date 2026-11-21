@@ -125,21 +125,25 @@ def specs($toks; $opt; $choice):
     | if $t == "[" or $t == "(" then
         find_at_level($rest; [if $t == "[" then "]" else ")" end]) as $end
         | $rest[:$end] as $group
+        | ($rest[$end+1] == "...") as $repeat
         | (if $t == "[" and find_at_level($group; ["|"]) < ($group | length) then
              [], specs($group; $opt; true)
            else specs($group; ($opt or $t == "["); false) end)
-          + specs($rest[$end+1:]; $opt; $choice)
+          | (if $repeat then map(if .k == "opt" then .repeat = true else . end) else . end)
+            + specs($rest[$end+1:]; $opt; $choice)
+      elif $t == "..." then specs($rest; $opt; $choice)
       elif $t | placeholder then
         [{k: "pos", name: ($t | argname), rest: ($t | test("\\.\\.\\.>?$")), opt: $opt}]
         + specs($rest; $opt; $choice)
       elif ($t | option) and ($rest[0] // "" | placeholder) then
-        [{k: "opt", flag: $t, name: ($rest[0] | argname), opt: $opt}] + specs($rest[1:]; $opt; $choice)
+        [{k: "opt", flag: $t, name: ($rest[0] | argname), opt: $opt, rest: ($rest[0] | test("\\.\\.\\.>?$"))}]
+        + specs($rest[1:]; $opt; $choice)
       elif $t | option then
         [{k: "flag", flag: $t, name: ($t | sub("^--?"; "")), opt: $opt, default: ($opt or $choice | not)}]
         + specs($rest; $opt; $choice)
       elif $t == "--" then
         [{k: "separator", opt: $opt}] + specs($rest; $opt; $choice)
-      elif $t == "-" or $choice then
+      elif $t == "-" or $choice or $opt then
         [{k: "pos", name: $t, literal: $t, opt: $opt}] + specs($rest; $opt; $choice)
       else [{k: "lit", v: $t}] + specs($rest; $opt; $choice)
       end
@@ -152,22 +156,34 @@ def take_pos($pos; $a):
   | if $p == null or ($p.literal != null and $a != $p.literal) then .err = "unexpected argument \($a)"
     elif $p.rest then .vals[$p.name] += [$a]
     else .vals[$p.name] = $a | .posi += 1 end;
+def take_value($flags; $a):
+  .pending as $flag
+  | if $flags[$flag].rest then .opts[$flag] += [$a]
+    elif $flags[$flag].repeat then .opts[$flag] += [$a] | .pending = null
+    else .opts[$flag] = $a | .pending = null end;
 def bind($in; $spec; $types; $declared):
   ($spec | map(select(.k == "pos"))) as $pos
 | ($spec | map(select(.k == "opt" or .k == "flag") | {(.flag): .}) | add // {}) as $named
 | (({"--again": {k: "flag", name: "again"}, "--key": {k: "opt", name: "key"}}
     | with_entries(select(.value.name as $n | $declared | index($n)))) + $named) as $flags
+| [$spec[] | select(.rest and .k == "opt") | .flag] as $rest_flags
 | (reduce $in.args[] as $a ({vals: {}, opts: {}, pending: null, posi: 0, dd: false, err: null};
     if .err != null then .
-    elif .pending != null then .opts[.pending] = $a | .pending = null
+    elif .pending != null then
+      if $flags[.pending].rest and (.pending as $f | ($rest_flags | index($f)) as $i | $a == $rest_flags[$i+1]) then
+        if (.opts[.pending] | length) == 0 then .err = "option \(.pending) needs at least one argument"
+        else .pending = $a end
+      else take_value($flags; $a) end
     elif (.dd | not) and $a == "--" then .dd = true
     elif (.dd | not) and ($a | option) then
       if $flags | has($a) then ($flags[$a]) as $f
         | if $f.k == "opt" then .pending = $a else .opts[$a] = true end
+      elif $pos[.posi].rest then take_pos($pos; $a)
       else .err = "unknown option \($a)" end
     else take_pos($pos; $a) end)) as $s
 | if $s.err != null then {ok: false, error: $s.err}
-  elif $s.pending != null then {ok: false, error: "an option is missing its value"}
+  elif $s.pending != null and ($flags[$s.pending].rest != true or ($s.opts[$s.pending] | length) == 0) then
+    {ok: false, error: "option \($s.pending) is missing its value"}
   else $s.vals as $v | $s.opts as $opts
     | ([$pos[] | select((.opt | not) and (.name as $n | $v | has($n) | not)) | (.literal // "<\(.name)>")]
        + [$named[] | select((.opt or .default | not) and (.flag as $f | $opts | has($f) | not)) | .flag]) as $missing
@@ -179,7 +195,12 @@ def bind($in; $spec; $types; $declared):
           if .k == "lit" then [.v]
           elif .k == "separator" then (if (.opt | not) or $s.dd then ["--"] else [] end)
           elif .k == "pos" then (if (.name as $n | $v | has($n)) then (if .rest then $v[.name] else expand($types[.name]; $v[.name]) end) else [] end)
-          elif .k == "opt" then (if (.flag as $f | $opts | has($f)) then [.flag] + expand($types[.name]; $opts[.flag]) else [] end)
+          elif .k == "opt" then
+            .flag as $f | $opts[$f] as $value
+            | if $value == null then []
+              elif .rest then [$f] + $value
+              elif .repeat then [$value[] | $f, .]
+              else [$f] + expand($types[.name]; $value) end
           else (if .default or $opts[.flag] then [.flag] else [] end) end) | add // [])}
       end
   end;

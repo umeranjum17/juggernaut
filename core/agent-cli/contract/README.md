@@ -38,6 +38,8 @@ The `form` is read as the script's usage line.
 | `<name>` | a positional argument |
 | `<name...>` or `<name>...` | the rest of the line |
 | `--x <name>` or `--x NAME` | an option; `--x` alone inside `[ ]` is a flag |
+| `[--x <name>]...` | a repeatable option; each supplied value stays a separate flag and argument |
+| `--x <argv>... --y <argv>...` | two argument vectors; the next vector's flag ends the first |
 | `[ ... ]` | optional |
 | `(a \| b)` or `[a \| b]` | one required or optional alternative |
 | any other word | literal, passed as written (the operation word, `--json`) |

@@ -135,6 +135,11 @@ done
 # a read entry changes no file of the home
 digest() { (cd "$H" && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum); }
 before=$(digest)
+ask="Fix a bug in the login sync"
+want=$("$ROOT/bin/jg-muster-depth.sh" --project mature --projects-dir "$H/projects" "$ask")
+out=$("$JG" muster depth --project mature --projects-dir "$H/projects" "$ask") || fail "muster depth refused supported project options"
+[ "$(jq -r '.data.stdout' <<<"$out")" = "$want" ] || fail "muster depth differs from the direct script: $out"
+[ "$(digest)" = "$before" ] || fail "muster depth changed a file of the home"
 for cmd in "sitrep" "sitrep lanes" "sitrep wakes" "sitrep tasks" "sitrep tasks ready" "sitrep tasks show q-1" "sitrep holds" "sitrep tickets" "sitrep decisions" \
            "sitrep messages w1" "sitrep board" "radio decisions"; do
   # shellcheck disable=SC2086
@@ -209,7 +214,7 @@ t=$(mk_tree wave-2)
 cp "$JG" "$t/bin/jg"
 cp "$ROOT/core/agent-cli/operations.tsv" "$t/core/agent-cli/"
 awk -F'\t' '$2 == "check" && $1 == "jg-tmp-sweep.sh" || $2 == "squad_lead" || $1 == "jg-claude-trust.sh" ||
-  $4 ~ /^(radio afk-contract enter|relay procevent register|proof proof-bypass grant|plan blitz start|report fleet-ledger (pr_ready|cleaned_up)|ticket goal declare)$/' \
+  $4 ~ /^(radio (afk-contract enter|beat append|machine-guard fact)|alert alert raise|hold (owner-rules audit|board-gate route)|crew remote-squad-lead-control capture|relay (procevent register|procevent-when arm)|proof proof-bypass grant|plan blitz start|report fleet-ledger (pr_ready|cleaned_up)|ticket goal declare)$/' \
   "$t/core/agent-cli/operations.tsv" |
   while IFS=$'\t' read -r script operation form path _ _ owner aliases _; do
     cat > "$t/bin/$script" <<'SH'
@@ -244,5 +249,26 @@ argv_is '["start","plan.json","--harness","codex","--model","model","--effort","
 argv_is '["pr_ready","t1","url"]' report fleet-ledger pr_ready t1 url
 argv_is '["cleaned_up","t1"]' report fleet-ledger cleaned_up t1
 argv_is '["declare","--ask","hello","--repo","demo","--","/bin/true","--flag"]' ticket goal declare --ask hello --repo demo -- /bin/true --flag
+argv_is '["raise","fixture","two words","--fact","x=one","--fact","y=two words","--print"]' alert alert raise fixture 'two words' --fact x=one --fact 'y=two words' --print
+out=$("$t/bin/jg" alert alert raise fixture demo --fact x=one --fact 2>&1); rc=$?
+rc_is 'raise with an incomplete repeated option' "$rc" 2
+has 'raise with an incomplete repeated option' "$out" 'option --fact is missing its value'
+argv_is '["audit","--source","/tmp/one file","--source","/tmp/two"]' hold owner-rules audit --source '/tmp/one file' --source /tmp/two
+argv_is '["append","/tmp/state","t1","event"]' radio beat append /tmp/state t1 event
+argv_is '["append","/tmp/state","t1","event","timeout"]' radio beat append /tmp/state t1 event timeout
+argv_is '["fact","reuse"]' radio machine-guard fact reuse
+argv_is '["capture","lead"]' crew remote-squad-lead-control capture lead
+argv_is '["capture","lead","12"]' crew remote-squad-lead-control capture lead 12
+argv_is '["arm","fixture","--interval","2","--condition","/bin/false","--flag","two words","--action","/bin/true","--interval"]' \
+  relay procevent-when arm fixture --interval 2 --condition /bin/false --flag 'two words' --action /bin/true --interval
+
+# Both entry points use the same board clock and produce the same durable record.
+printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$ROOT/bin/jg-board-gate.sh" > "$t/bin/jg-board-gate.sh"
+route_args=(--title 'Send the planned update' --filer jg-t1 --ref jg-t2)
+JG_BOARD_GATE_NOW=1795000000 JG_DATA_OVERRIDE=$H/route-direct "$ROOT/bin/jg-board-gate.sh" route "${route_args[@]}" >/dev/null \
+  || fail "direct board route"
+JG_BOARD_GATE_NOW=1795000000 JG_DATA_OVERRIDE=$H/route-bound "$t/bin/jg" hold board-gate route "${route_args[@]}" >/dev/null \
+  || fail "dispatched board route"
+diff -r "$H/route-direct" "$H/route-bound" || fail "board route wrote different records through the dispatcher"
 
 pass "contract: fragments, names, envelope, acknowledgement reference, repeats and explicit home"

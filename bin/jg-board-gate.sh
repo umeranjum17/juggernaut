@@ -136,9 +136,10 @@ refire_ok() {  # <tag>: 0 when this tag may report now, and records the report
 }
 
 route_record() {  # <title> <filer> <ref> -> prints the record id
-  local title id
+  local title id stamp
   title=$(clean_line "$1")
-  id="owd-$(date -u +%Y%m%dT%H%M%SZ)-$(printf '%s' "$title" | cksum | awk '{printf "%08x", $1}')"
+  stamp=$(date -u -d "@$NOW" +%Y%m%dT%H%M%SZ 2>/dev/null || date -u -r "$NOW" +%Y%m%dT%H%M%SZ) || return 1
+  id="owd-$stamp-$(printf '%s' "$title" | cksum | awk '{printf "%08x", $1}')"
   [ -f "$RECORDS" ] && grep -qxF "## $id" "$RECORDS" && { printf '%s\n' "$id"; return 0; }
   mkdir -p "$DATA" || return 1
   {

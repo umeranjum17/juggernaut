@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # jg-crew-state.sh - deterministic read of a crew's CURRENT state.
+# Usage: jg-crew-state.sh <id> [--read-only]
 #
 # Why this exists: state/<id>.status is an append-only, best-effort EVENT LOG.
 # Crews append only wake-worthy transitions (done/needs-decision/blocked/paused/failed)
@@ -44,7 +45,7 @@
 # Read-only, with one sanctioned repair: when the task's recorded Herdr pane is
 # gone because a muxr account move replaced it, and the same task's agent is
 # positively live in another pane of its worktree, the task record's endpoint
-# lines follow it (bin/jg-endpoint-follow-lib.sh). Nothing else is written.
+# lines follow it (bin/jg-endpoint-follow-lib.sh). --read-only skips that repair.
 # Always exits 0 on a successful read regardless of state; exit 2 only on a
 # usage error (no id).
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
@@ -89,7 +90,7 @@ STATE="${JG_STATE_OVERRIDE:-$JG_HOME/state}"
 . "$SCRIPT_DIR/jg-endpoint-follow-lib.sh"
 
 ID=${1:-}
-[ -n "$ID" ] || { echo "usage: jg-crew-state.sh <id>" >&2; exit 2; }
+[ -n "$ID" ] || { echo "usage: jg-crew-state.sh <id> [--read-only]" >&2; exit 2; }
 
 # Fleet snapshot composition supplies its captured metadata path here so every
 # state read resolves the same task generation selected by that snapshot.
@@ -211,7 +212,7 @@ BACKEND_TARGET=$(jg_backend_target_of_meta "$META")
 # here (bin/jg-endpoint-follow-lib.sh owns when, and what changes), so every
 # state below reads the pane the worker runs in. The repair is of the live
 # record, never of a snapshot copy; the target is re-read either way.
-if [ "$TASK_BACKEND" = herdr ] && [ "$META" = "$STATE/$ID.meta" ]; then
+if [ "${2:-}" != --read-only ] && [ "$TASK_BACKEND" = herdr ] && [ "$META" = "$STATE/$ID.meta" ]; then
   jg_endpoint_follow "$META" "$ID" "$STATE" || true
   BACKEND_TARGET=$(jg_backend_target_of_meta "$META")
 fi

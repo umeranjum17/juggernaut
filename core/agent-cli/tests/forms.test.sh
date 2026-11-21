@@ -48,6 +48,15 @@ helponly=$(awk -F'\t' 'NR > 1 && $12 !~ /form=usage/ { n++ } END { print n }' "$
 [ "$(grep -c -P '^form\thelp-only\t' "$d/usage.out")" = "$helponly" ] || fail "every help-only row should be listed for its owning order"
 pass "$want rows with a usage form parse through the real scripts; $helponly help-only rows are listed, never run"
 
+# This parser reports a bare refusal rather than printing usage.
+awk -F'\t' 'BEGIN { OFS = FS } $1 == "jg-pr-check.sh" && $2 == "--from-status" {
+  $3 = "bin/jg-pr-check.sh --from-status"
+} { print }' "$LIST" > "$d/incomplete.tsv"
+if py "$INV/parse.py" usage "$ROOT" "$d/incomplete.tsv" "$d/lab-incomplete" --only jg-pr-check.sh > "$d/incomplete.out"; then
+  fail "missing task id passed the usage check: $(cat "$d/incomplete.out")"
+fi
+has "incomplete PR check" "$(cat "$d/incomplete.out")" 'form	parse-error	jg-pr-check.sh --from-status'
+
 parse shapes > "$d/shapes.out" || fail "a positional row does not parse, or its older shape was accepted: $(grep -P '\t(parse-error|ACCEPTED)\t' "$d/shapes.out" | cut -c1-240)"
 has "older shape" "$(grep -P '^shape\trejected\tjg-control.sh interrupt older' "$d/shapes.out")" "is not a control verb"
 has "older shape" "$(grep -P '^shape\trejected\tjg-wait-write.sh open pause older' "$d/shapes.out" || grep -P '^shape\trejected\tjg-wait-write.sh open older' "$d/shapes.out")" "unknown wait kind"

@@ -45,23 +45,36 @@ STAND_INS = ('tmux', 'herdr', 'gh', 'gh-axi', 'ssh', 'scp', 'systemctl', 'pkill'
 # their owning orders run them on a lab home.
 NOT_RUN = {('jg-host-wiring.sh', '-'): 'wires host protections and services',
            ('jg-tmp-sweep.sh', 'sweep'): 'removes temp folders',
-           ('jg-test-run.sh', '-'): 'runs the whole test suite',
+           ('jg-test-run.sh', '--required-shards'): 'runs the whole required test suite',
            ('jg-afk-start.sh', '-'): 'starts the supervise daemon',
            ('jg-supervise-daemon.sh', '-'): 'is the supervise daemon'}
+TEST_LIST_SELECTORS = {'--all', '--family', '--changed', '--lane', '--proven-isolated'}
 # Fixture values for a placeholder only one script gives a meaning to.
 SCRIPT_VALUES = {
+    ('jg-alert.sh', 'fact'): 'test=value',
+    ('jg-board-gate.sh', 'record-id'): 'owd-20260101T000000Z-0123abcd',
+    ('jg-ci-rerun.sh', 'run-id'): '1',
+    ('jg-clause.sh', 'facts'): 'fixture=yes',
     ('jg-goal.sh', 'proof argv...'): '/bin/false',
+    ('jg-goal.sh', 'kind'): 'external',
     ('jg-machine-guard.sh', 'name'): 'reuse',
+    ('jg-procevent-when.sh', 'condition-argv'): '/bin/false',
+    ('jg-procevent-when.sh', 'action-argv'): '/bin/true',
     ('jg-remote-inherit.sh', 'allowlisted-relative-path'): 'config/crew-harness',
     ('jg-vendor-auth-probe.sh', 'probe'): 'grok',
+    ('jg-test-run.sh', 'family'): 'pure-contract-unit',
+    ('jg-test-run.sh', 'lane'): 'portable-parallel-1',
     ('jg-workflow.sh', 'sub'): 'list',
 }
 FORM_VALUES = {'0-3': '2', '0-4': '2', 'YYYY-MM-DD': '2099-01-01', 'bytes': '0', 'generation': '1',
                'empty-sha256': hashlib.sha256(b'').hexdigest(), 'max-sequence': '1',
-               'kind:pointer': 'status:fixture', 'file-or-dash': '-'}
+               'kind:pointer': 'status:fixture', 'file-or-dash': '-', 'none': 'none', 'lines': '12'}
 # A usage error, an unknown verb or a form the parser does not know: the form did not parse.
 PARSE_ERROR = re.compile(r'(?i)\busage:|\bunknown (?:verb|wait kind|option|command|subcommand|flag|argument|mode|action|operation)\b'
-                         r'|unrecognized (?:option|argument)|invalid option|is not a (?:control )?verb|no home at|unexpected argument')
+                         r'|unknown arm argument|unrecognized (?:option|argument)|invalid option'
+                         r'|is not a (?:control )?verb|no home at|unexpected argument|invalid PR check request'
+                         r'|a squad lead id is required|expected \d+(?:-\d+)? positional arguments?, got \d+'
+                         r'|(?:^|\s)--[a-z][\w-]* (?:is missing|requires (?:a name|a value)|is empty)')
 ARG = re.compile(r'^(?:<[^>]*>|\[[^\]]*\]|--?[\w-]+(?:=\S+)?|\{[^}]*\}|[A-Z_][A-Z0-9_]*|\.\.\.|-|\(.*\))$')
 
 NUMBERS = {'epoch', 'count', 'seq', 'sequence', 'n', 'seconds', 'h', 'm', 'e', 'pid', 'duration-ms', 'entered_epoch', 'at', 'busy-gen', 'point', 'k',
@@ -490,6 +503,8 @@ def attempt(lab, row, overrides=None, keep=None):
     if argv is not None and (row['script'], row['operation']) == ('jg-live-lab.sh', 'up'):
         # Use an existing fixture directory so the real parser runs without starting a lab.
         argv.append(lab.value('dir', {}))
+    if argv and len(argv) > 1 and row['script'] == 'jg-test-run.sh' and argv[1] in TEST_LIST_SELECTORS and '--list' not in argv:
+        argv.append('--list')
     return argv, why, (lab.run(argv) if argv is not None else None)
 
 
@@ -532,7 +547,8 @@ def cmd_usage(pool, rows, args):
     failed = 0
     for r, (argv, why, res) in zip(todo, pool.map([lambda lab, r=r: attempt(lab, r) for r in todo])):
         if res is None:
-            print(f'form\tnot-run\t{label(r)}\t\t{why}')
+            failed += 1
+            print(f'form\tparse-error\t{label(r)}\t\t{why}')
             continue
         word, bad = known.apply('form', r, *verdict(*res))
         failed += bad
@@ -651,12 +667,22 @@ def code_of(tree, files, script, cache):
     """The code (comments left out) of a script and of every bin/ or core/ file it names: exec, source or call."""
     if script not in cache:
         with open(os.path.join(tree, 'bin', script), errors='replace') as f:
-            src = f.read()
-        named = {n for n in re.findall(r'([\w.-]+\.(?:sh|py))\b', re.sub(r'^#.*$', '', src, flags=re.M)) if n in files and n != script}
+            src = re.sub(r'^\s*#.*$', '', f.read(), flags=re.M)
+        named = {files[n] for n in re.findall(r'([\w.-]+\.(?:sh|py))\b', src) if n in files and n != script}
+        for target in re.findall(r'\bcore/[\w./-]+\.(?:sh|py)\b', src):
+            path = os.path.join(tree, target)
+            if os.path.isfile(path):
+                named.add(path)
         parts = []
-        for p in [os.path.join(tree, 'bin', script)] + sorted(files[n] for n in named):
+        for p in [os.path.join(tree, 'bin', script)] + sorted(named):
             with open(p, errors='replace') as f:
-                parts.append(re.sub(r'^\s*#.*$', '', f.read(), flags=re.M))
+                body = re.sub(r'^\s*#.*$', '', f.read(), flags=re.M)
+            parts.append(body)
+            for module in re.findall(r'^from ([\w]+) import ', body, flags=re.M):
+                path = os.path.join(os.path.dirname(p), module + '.py')
+                if os.path.isfile(path):
+                    with open(path, errors='replace') as imported:
+                        parts.append(re.sub(r'^\s*#.*$', '', imported.read(), flags=re.M))
         cache[script] = '\n'.join(parts)
     return cache[script]
 
