@@ -11,6 +11,14 @@
       "why": "Edit this entry to move every new Squad Lead launch to another model."
     },
     {
+      "tool": "done-done-author",
+      "when": "Write or improve a done-done journey.",
+      "use": [
+        { "harness": "codex", "model": "gpt-6.1-terra", "effort": "medium" },
+        { "harness": "codex", "model": "gpt-6.2-sol", "effort": "high" }
+      ]
+    },
+    {
       "tool": "done-done-judge",
       "when": "Which model judges the Evidence card.",
       "use": [

@@ -824,6 +824,14 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/done-done-verify-suites/features/done-done-author-route.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/done-done-verify-suites/features/idle-worker-redrive.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/done-done-verify-suites/features/tickets-beads-checks.md",
       "audience": "agent-runtime"
     },

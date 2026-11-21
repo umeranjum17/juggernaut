@@ -1843,6 +1843,7 @@ Squad Lead homes inherit the file with the other shared config.
 |---|---|---|
 | `squad-lead` | `bin/jg-harness.sh` (`squad_lead_line`), used by `bin/jg-spawn.sh` and `bin/jg-control.sh` | Harness, model, and effort of a Squad Lead launch. A per-lead pin in `config/squad_leads/<id>/harness` still wins, and the entry wins over `config/squad-lead-harness`. |
 | `worker-default` | `bin/jg-spawn.sh` | Model a worker launch records when no model was chosen and the entry names the launching harness. `bin/jg-spawn.sh` otherwise refuses a spawn or relaunch whose model is empty or `default`. |
+| `done-done-author` | done-done-axi 0.6.34 | Writer for `qa --write` and `journey add`, `enhance`, and `improve`. Done-done reads the ordered profiles directly and gives them precedence over its global `routes.author` and `agent` settings. |
 | `done-done-judge` | `core/merge-card/merge-card` | Model that judges the Evidence card. The harness must be `pi`, and the model carries its provider prefix. |
 | `supervision-engine` | `bin/jg-supervision-engine-lib.sh` | Default model of the supervision engine when its harness matches the entry. |
 | `no-mistakes-review` | `core/pipeline-quota-failover/pi-quota-failover`, `core/pipeline-quota-failover/switch.sh` | Model of the no-mistakes review chain, and of the account-pool route that names no model; `switch.sh` plans the same model when no pin or pool pick names one. The harness must be `pi`, and the model carries its provider prefix. The installed wrapper finds the home through `PI_QUOTA_FAILOVER_JG_HOME`, then `JG_HOME`, then `~/juggernaut`; `PI_QUOTA_FAILOVER_CHAIN` still wins. |
@@ -1856,8 +1857,17 @@ Squad Lead homes inherit the file with the other shared config.
 | `model-pool` | `core/account-pool/bin/jg-model-pool` | The Claude model a pick returns when the request names none. The harness must be `claude`. A model the request names still wins. |
 
 Every job in this repository that starts a model reads this file; the table above is the full list.
-The jobs that live in other packages (the done-done author, first-draft and learn-from-mistakes) keep their own defaults until each package reads the file.
+First-draft and learn-from-mistakes keep their own defaults.
 See [`docs/examples/tool-models.json`](examples/tool-models.json) for a starting point.
+
+For the Codex fleet, copy the `done-done-author` object from that example into the top-level `rules` array of `config/tool-models.json`, keeping the other tool entries.
+The example uses GPT 6.1 Terra at medium effort first and GPT 6.2 Sol at high effort as an availability fallback.
+For a hard task, put the same author rule with the two `use` entries reversed in a separate tool-models file and set `JG_TOOL_MODELS` to its path for that done-done invocation.
+The whole file is selected by that override, so include any other rules the invocation needs.
+Done-done uses the profile order supplied for the invocation, so a hard task needs the explicit Sol-first selection.
+As a machine-wide alternative, put the example's ordered `use` array under `routes.author` in `~/.done-done/config.yaml` (or `$DONE_DONE_HOME/config.yaml`), where a fleet `done-done-author` rule still takes precedence.
+`done-done doctor --json` shows the selected writer and does not launch it.
+`qa --write` starts a writer only when its diff-based plan calls for a new or extended journey.
 
 ## Preferred stack and architecture (config/preferred-stack.json, config/architecture.json)
 
