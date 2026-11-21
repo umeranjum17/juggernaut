@@ -1,0 +1,767 @@
+{
+  "area": "core",
+  "owner": "e1",
+  "entries": [
+    {
+      "path": [
+        "radio",
+        "drain"
+      ],
+      "meaning": "Show the queued wakes and the notes waiting for Main; when an acknowledgement is owed, data.ack_ref holds the reference for `radio ack`.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-wake-drain.sh",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "radio.drain.v1",
+      "script": "bin/jg-wake-drain.sh",
+      "operation": "-",
+      "aliases": [],
+      "emits": "ack-ref"
+    },
+    {
+      "path": [
+        "radio",
+        "ack"
+      ],
+      "meaning": "Acknowledge the wakes a drain showed, with the reference that drain returned; a repeat answers 'already processed'.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [
+        {
+          "name": "ref",
+          "type": "ack-ref",
+          "required": true
+        },
+        {
+          "name": "again",
+          "type": "flag",
+          "required": false
+        }
+      ],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-wake-drain.sh <ref>",
+      "repeat_key": "ref",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "radio.ack.v1",
+      "script": "bin/jg-wake-drain.sh",
+      "operation": "--ack-through",
+      "aliases": [],
+      "next": "jg radio drain"
+    },
+    {
+      "path": [
+        "radio",
+        "outcome"
+      ],
+      "meaning": "Record how a presented branch outcome was handled: relayed to the captain, or classified with a reason.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [
+        {
+          "name": "id",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "reference",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "reason",
+          "type": "text",
+          "required": false
+        }
+      ],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-wake-drain.sh --outcome <id> [--relayed <reference>] [--classified <reason>]",
+      "repeat_key": "id",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.outcome.v1",
+      "script": "bin/jg-wake-drain.sh",
+      "operation": "--outcome",
+      "aliases": []
+    },
+    {
+      "path": [
+        "radio",
+        "decisions"
+      ],
+      "meaning": "List every open decision, newest first, none cut; changes nothing.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/jg-wake-drain.sh --open-decisions",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "radio.decisions.v1",
+      "script": "bin/jg-wake-drain.sh",
+      "operation": "--open-decisions",
+      "aliases": []
+    },
+    {
+      "path": [
+        "radio",
+        "send"
+      ],
+      "meaning": "Send a steering text to one worker by its ticket; the same text to the same ticket twice arrives once, --again sends it again.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [
+        {
+          "name": "ticket",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "text",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "key",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "again",
+          "type": "flag",
+          "required": false
+        }
+      ],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/jg-send.sh <ticket> <text...>",
+      "repeat_key": "ticket+text",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3
+      },
+      "schema": "radio.send.v1",
+      "script": "bin/jg-send.sh",
+      "operation": "-",
+      "aliases": [
+        "juggernaut-axi message"
+      ]
+    },
+    {
+      "path": [
+        "sitrep"
+      ],
+      "meaning": "The fleet now: lanes by state, open decisions, queued wakes.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/juggernaut-axi status --json",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "juggernaut-axi.v1",
+      "script": "bin/juggernaut-axi",
+      "operation": "status",
+      "aliases": [
+        "juggernaut-axi status"
+      ]
+    },
+    {
+      "path": [
+        "sitrep",
+        "lanes"
+      ],
+      "meaning": "One row per worker lane.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [
+        {
+          "name": "state",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "kind",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "project",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "limit",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "fields",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "full",
+          "type": "flag",
+          "required": false
+        }
+      ],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/juggernaut-axi lanes [--state <state>] [--kind <kind>] [--project <project>] [--limit <limit>] [--fields <fields>] [--full] --json",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "juggernaut-axi.v1",
+      "script": "bin/juggernaut-axi",
+      "operation": "lanes",
+      "aliases": [
+        "juggernaut-axi lanes"
+      ]
+    },
+    {
+      "path": [
+        "sitrep",
+        "wakes"
+      ],
+      "meaning": "The queued wakes, oldest first.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [
+        {
+          "name": "kind",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "limit",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "full",
+          "type": "flag",
+          "required": false
+        }
+      ],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/juggernaut-axi wakes [--kind <kind>] [--limit <limit>] [--full] --json",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "juggernaut-axi.v1",
+      "script": "bin/juggernaut-axi",
+      "operation": "wakes",
+      "aliases": [
+        "juggernaut-axi wakes"
+      ]
+    },
+    {
+      "path": [
+        "sitrep",
+        "tasks"
+      ],
+      "meaning": "Backlog rows in the backlog's shape.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [
+        {
+          "name": "state",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "repo",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "kind",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "blocked",
+          "type": "flag",
+          "required": false
+        },
+        {
+          "name": "limit",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "fields",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "full",
+          "type": "flag",
+          "required": false
+        }
+      ],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/juggernaut-axi tasks list [--state <state>] [--repo <repo>] [--kind <kind>] [--blocked] [--limit <limit>] [--fields <fields>] [--full] --json",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "juggernaut-axi.v1",
+      "script": "bin/juggernaut-axi",
+      "operation": "tasks",
+      "aliases": [
+        "juggernaut-axi tasks"
+      ]
+    },
+    {
+      "path": [
+        "sitrep",
+        "tasks",
+        "show"
+      ],
+      "meaning": "One task with its hold, blockers, links and notes.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [
+        {
+          "name": "id",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "full",
+          "type": "flag",
+          "required": false
+        }
+      ],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/juggernaut-axi tasks show <id> [--full] --json",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "juggernaut-axi.v1",
+      "script": "bin/juggernaut-axi",
+      "operation": "tasks show",
+      "aliases": [
+        "juggernaut-axi tasks show"
+      ]
+    },
+    {
+      "path": [
+        "sitrep",
+        "tasks",
+        "ready"
+      ],
+      "meaning": "Queued work with no unresolved blocker and no hold.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [
+        {
+          "name": "repo",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "limit",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "full",
+          "type": "flag",
+          "required": false
+        }
+      ],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/juggernaut-axi tasks ready [--repo <repo>] [--limit <limit>] [--full] --json",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "juggernaut-axi.v1",
+      "script": "bin/juggernaut-axi",
+      "operation": "tasks ready",
+      "aliases": [
+        "juggernaut-axi tasks ready"
+      ]
+    },
+    {
+      "path": [
+        "sitrep",
+        "holds"
+      ],
+      "meaning": "Every held task, with its hold kind, reason and age.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [
+        {
+          "name": "kind",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "bucket",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "limit",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "full",
+          "type": "flag",
+          "required": false
+        }
+      ],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/juggernaut-axi holds [--kind <kind>] [--bucket <bucket>] [--limit <limit>] [--full] --json",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "juggernaut-axi.v1",
+      "script": "bin/juggernaut-axi",
+      "operation": "holds",
+      "aliases": [
+        "juggernaut-axi holds"
+      ]
+    },
+    {
+      "path": [
+        "sitrep",
+        "pr"
+      ],
+      "meaning": "The blockers one pull request shows now, and what it waits for.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [
+        {
+          "name": "url",
+          "type": "text",
+          "required": true
+        }
+      ],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/juggernaut-axi pr <url> --json",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "juggernaut-axi.v1",
+      "script": "bin/juggernaut-axi",
+      "operation": "pr",
+      "aliases": [
+        "juggernaut-axi pr"
+      ]
+    },
+    {
+      "path": [
+        "sitrep",
+        "tickets"
+      ],
+      "meaning": "Bounded backlog rows.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [
+        {
+          "name": "state",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "repo",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "limit",
+          "type": "text",
+          "required": false
+        }
+      ],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/juggernaut-axi tickets [--state <state>] [--repo <repo>] [--limit <limit>] --json",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "juggernaut-axi.v1",
+      "script": "bin/juggernaut-axi",
+      "operation": "tickets",
+      "aliases": [
+        "juggernaut-axi tickets"
+      ]
+    },
+    {
+      "path": [
+        "sitrep",
+        "board"
+      ],
+      "meaning": "Every state machine in every registered home: counts per state, records past their limit, records in no state.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [
+        {
+          "name": "steps",
+          "type": "flag",
+          "required": false
+        }
+      ],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/juggernaut-axi board [--steps] --json",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "juggernaut-axi.v1",
+      "script": "bin/juggernaut-axi",
+      "operation": "board",
+      "aliases": [
+        "juggernaut-axi board"
+      ]
+    },
+    {
+      "path": [
+        "sitrep",
+        "decisions"
+      ],
+      "meaning": "The open captain holds.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/juggernaut-axi decisions --json",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "juggernaut-axi.v1",
+      "script": "bin/juggernaut-axi",
+      "operation": "decisions",
+      "aliases": [
+        "juggernaut-axi decisions"
+      ]
+    },
+    {
+      "path": [
+        "sitrep",
+        "messages"
+      ],
+      "meaning": "The newest steering messages of one task.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [
+        {
+          "name": "task-id",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "limit",
+          "type": "text",
+          "required": false
+        }
+      ],
+      "changes": false,
+      "method": "GET",
+      "form": "bin/juggernaut-axi messages <task-id> [--limit <limit>] --json",
+      "repeat_key": null,
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "juggernaut-axi.v1",
+      "script": "bin/juggernaut-axi",
+      "operation": "messages",
+      "aliases": [
+        "juggernaut-axi messages"
+      ]
+    },
+    {
+      "path": [
+        "hold",
+        "answer"
+      ],
+      "meaning": "Record the captain's answer to an open decision.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [
+        {
+          "name": "task-id",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "answer",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "release",
+          "type": "flag",
+          "required": false
+        },
+        {
+          "name": "again",
+          "type": "flag",
+          "required": false
+        }
+      ],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/juggernaut-axi answer <task-id> <answer> [--release] --json",
+      "repeat_key": "task-id+answer",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "juggernaut-axi.v1",
+      "script": "bin/juggernaut-axi",
+      "operation": "answer",
+      "aliases": [
+        "juggernaut-axi answer"
+      ]
+    },
+    {
+      "path": [
+        "ticket",
+        "add"
+      ],
+      "meaning": "Queue a new ticket; it never starts work.",
+      "roles": [
+        "overwatch"
+      ],
+      "args": [
+        {
+          "name": "title",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "why",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "repo",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "kind",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "priority",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "again",
+          "type": "flag",
+          "required": false
+        }
+      ],
+      "changes": true,
+      "method": "POST",
+      "form": "bin/juggernaut-axi ticket <title> --why <why> [--repo <repo>] [--kind <kind>] [--priority <priority>] --json",
+      "repeat_key": "title",
+      "exits": {
+        "0": 0,
+        "1": 1,
+        "2": 2
+      },
+      "schema": "juggernaut-axi.v1",
+      "script": "bin/juggernaut-axi",
+      "operation": "ticket",
+      "aliases": [
+        "juggernaut-axi ticket"
+      ]
+    }
+  ]
+}

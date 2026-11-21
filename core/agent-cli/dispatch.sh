@@ -1,0 +1,269 @@
+#!/usr/bin/env bash
+# core/agent-cli/dispatch.sh - the one dispatcher behind `jg` and `juggernaut-axi`: it reads the command
+# contract (core/agent-cli/contract/*.json, one fragment per slice; README.md in that folder owns the shape),
+# checks it, resolves a path to its entry, runs the entry's script with the caller's environment unchanged,
+# and prints the jg.v1 envelope {schema, ok, data, next}.
+#
+# Usage: dispatch.sh [--as <command name>] <check | has <word> | help | run <path words> [args...]>
+#   check   validate every fragment: its shape, unique paths and aliases, one entry per (script, operation),
+#           the owner of a row in operations.tsv, and that each entry's script is there.
+#   has     exit 0 when <word> starts the path of an entry (the wrappers' routing test).
+#   help    every entry of every fragment on one page, with its plain meaning.
+#   run     resolve the longest path that matches, bind the arguments against the entry's form, run it.
+# Exit codes of `run`: 0 done, 1 refused by a rule, 2 usage, 3 still waiting, 4 not found, 5 a dependency missing.
+# The dispatcher never defaults JG_HOME: a script that needs an explicit home refuses without one, as it does
+# when run by hand. Its one record is the repeat guard (below), written only under an explicit home.
+set -u
+
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+ROOT=$(cd "$HERE/../.." && pwd -P)
+CONTRACT_DIR=$HERE/contract
+OPERATIONS_TSV=$HERE/operations.tsv
+NAME=jg
+
+die() { printf '%s: %s\n' "$NAME" "$*" >&2; exit "${DIE_CODE:-2}"; }
+
+command -v jq >/dev/null 2>&1 || { DIE_CODE=5 die "jq is not installed, and the command contract needs it"; }
+
+# --- the contract ---------------------------------------------------------------------------------------------
+# Every entry of every fragment as one JSON array, each with its fragment's area and owner.
+contract_all() {
+  set -- "$CONTRACT_DIR"/*.json
+  [ -e "$1" ] || { printf '[]\n'; return 0; }
+  jq -s '[.[] | .area as $a | .owner as $o | .entries[] | . + {area: $a, owner: $o}]' "$@" 2>/dev/null || printf '[]\n'
+}
+
+# The command line's words as a JSON array of strings (jq would read a word such as --x as its own option).
+words_json() {
+  [ "$#" -gt 0 ] || { printf '[]\n'; return 0; }
+  printf '%s\0' "$@" | jq -Rsc 'split("\u0000")[:-1]'
+}
+
+# Shape of one fragment: the check of example-pack/formats.md section 6, plus the fields this dispatcher reads.
+FRAGMENT_SHAPE='(.area|type=="string") and (.owner|type=="string") and (.entries|type=="array" and length>0)
+  and all(.entries[];
+    (.path|type=="array" and length>0 and all(.[]; type=="string" and test("^[a-z0-9][a-z0-9-]*$")))
+    and (.meaning|type=="string" and length>0) and (.roles|type=="array") and (.changes|type=="boolean")
+    and (.method == (if .changes then "POST" else "GET" end))
+    and ((.changes|not) or (.repeat_key|type=="string"))
+    and (.script|type=="string" and startswith("bin/")) and (.operation|type=="string")
+    and (.form|type=="string") and (.exits|type=="object") and (.schema|type=="string")
+    and (.args|type=="array" and all(.[]; (.name|type=="string") and (.type|type=="string")))
+    and (.aliases|type=="array"))'
+
+cmd_check() {
+  local f bad=0 all dups out
+  for f in "$CONTRACT_DIR"/*.json; do
+    [ -e "$f" ] || continue
+    jq -e "$FRAGMENT_SHAPE" "$f" >/dev/null 2>&1 \
+      || { printf 'contract: %s does not have the fragment shape (example-pack/formats.md section 6)\n' "${f##*/}" >&2; bad=1; }
+  done
+  [ "$bad" -eq 0 ] || return 1
+  all=$(contract_all)
+  dups=$(printf '%s' "$all" | jq -r '
+    def dups: group_by(.) | map(select(length > 1) | .[0]);
+    ([.[] | .path | join(" ")] ) as $paths
+    | ([.[] | .aliases[]]) as $aliases
+    | ($paths | dups | map("path " + . + " is in two entries")),
+      ($aliases | dups | map("alias " + . + " is in two entries")),
+      ([$aliases[] | select(. as $a | $paths | index($a))] | map("alias " + . + " is also a path")),
+      ([.[] | .script + " " + .operation] | dups | map("(script, operation) " + . + " is in two entries"))
+    | .[]')
+  [ -z "$dups" ] || { printf 'contract: %s\n' "$dups" >&2; return 1; }
+  if [ -f "$OPERATIONS_TSV" ]; then
+    out=$(printf '%s' "$all" | jq -r '.[] | [(.script | sub("^bin/"; "")), .operation, .owner, (.path | join(" "))] | @tsv' \
+      | awk -F '\t' -v tsv="$OPERATIONS_TSV" '
+          BEGIN { while ((getline line < tsv) > 0) { split(line, c, "\t"); own[c[1] "\t" c[2]] = c[7] } }
+          ($1 "\t" $2) in own && own[$1 "\t" $2] != $3 {
+            printf "%s (%s %s) is owned by %s in operations.tsv, not %s\n", $4, $1, $2, own[$1 "\t" $2], $3; bad = 1 }
+          END { exit bad }') \
+      || { printf 'contract: %s\n' "$out" >&2; return 1; }
+  fi
+  for f in $(printf '%s' "$all" | jq -r '.[].script' | sort -u); do
+    [ -f "$ROOT/$f" ] || { printf 'contract: %s names a script that is not there\n' "$f" >&2; return 1; }
+  done
+  return 0
+}
+
+cmd_has() {
+  contract_all | jq -e --arg w "${1:-}" 'any(.[]; .path[0] == $w)' >/dev/null
+}
+
+cmd_help() {
+  printf '%s help - every command of the contract (words in <> are arguments; [] is optional)\n' "$NAME"
+  contract_all | jq -r --arg n "$NAME" '
+    sort_by(.area, (.path | join(" "))) | group_by(.area)[]
+    | "", "\(.[0].area):",
+      (.[] | "  \($n) \(.path | join(" ")) - \(.meaning)\(if .changes then "" else " (reads only)" end)\(if (.aliases | length) > 0 then " [also: \(.aliases | join(", "))]" else "" end)")'
+}
+
+# --- binding the arguments to the form -----------------------------------------------------------------------
+# The form is the script's own usage line. A word in <> takes an argument; --x <n> is an option, a bare --x in
+# [] a flag, a word in [] optional, <n...> takes the rest of the line, any other word is literal. An argument
+# the entry declares but its form does not name is the dispatcher's own: --again (a flag) and --key (an option).
+# shellcheck disable=SC2016  # the jq program is one single-quoted string
+BIND_JQ='
+def parse($toks; $opt):
+  if ($toks | length) == 0 then []
+  else $toks[0] as $t | $toks[1:] as $rest
+  | if ($t | startswith("[")) then parse($t[1:-1] | [scan("\\S+")]; true) + parse($rest; $opt)
+    elif ($t | test("^<.+>$")) then [{k: "pos", name: ($t[1:-1] | rtrimstr("...")), rest: ($t | endswith("...>")), opt: $opt}] + parse($rest; $opt)
+    elif ($t | startswith("--")) then
+      if ($rest | length) > 0 and ($rest[0] | test("^<[^.]+>$")) then
+        [{k: "opt", flag: $t, name: $rest[0][1:-1], opt: $opt}] + parse($rest[1:]; $opt)
+      elif $opt then [{k: "flag", flag: $t, name: ($t | ltrimstr("--")), opt: true}] + parse($rest; $opt)
+      else [{k: "lit", v: $t}] + parse($rest; $opt) end
+    else [{k: "lit", v: $t}] + parse($rest; $opt) end
+  end;
+def ref_ok: test("^[0-9]+:[A-Za-z0-9._-]+(:[0-9]+)?$");
+def expand($type; $v): if $type == "ack-ref" then ($v | split(":")) as $p
+  | ["--ack-through", $p[0], "--recovery-generation", $p[1]] + (if ($p | length) > 2 then ["--pages-ack", $p[2]] else [] end) else [$v] end;
+. as $in | $in.entry as $e
+| ($e.args | map({(.name): .type}) | add // {}) as $types
+| ($e.form | [scan("\\[[^\\]]*\\]|\\S+")] | .[1:]) as $toks
+| parse($toks; false) as $spec
+| ($spec | map(select(.k == "pos")) ) as $pos
+| ($spec | map(select(.k == "opt" or .k == "flag") | {(.flag): .}) | add // {}) as $named
+| (($e.args | map(.name)) as $declared
+   | ($spec | map(select(.k != "lit") | .name)) as $inform
+   | ({} + (if ($declared | index("again")) and ($inform | index("again") | not) then {"--again": {k: "flag", name: "again"}} else {} end)
+        + (if ($declared | index("key")) and ($inform | index("key") | not) then {"--key": {k: "opt", name: "key"}} else {} end))) as $own
+| ($named + $own) as $flags
+| (reduce $in.args[] as $a ({vals: {}, pending: null, posi: 0, dd: false, err: null};
+    if .err != null then .
+    elif .pending != null then .vals[.pending] = $a | .pending = null
+    elif (.dd | not) and $a == "--" then .dd = true
+    elif (.dd | not) and ($a | startswith("--")) then
+      if $flags | has($a) then ($flags[$a]) as $f
+        | if $f.k == "opt" then .pending = $f.name else .vals[$f.name] = true end
+      else .err = "unknown option \($a)" end
+    else
+      ($pos | length) as $n
+      | if .posi < $n then ($pos[.posi]) as $p
+          | if $p.rest then .vals[$p.name] = ((.vals[$p.name] // []) + [$a])
+            else .vals[$p.name] = $a | .posi += 1 end
+        elif $n > 0 and $pos[$n - 1].rest then .vals[$pos[$n - 1].name] += [$a]
+        else .err = "unexpected argument \($a)" end
+    end)) as $s
+| if $s.err != null then {ok: false, error: $s.err}
+  elif $s.pending != null then {ok: false, error: "an option is missing its value"}
+  else ($s.vals) as $v
+    | ([$spec[] | select((.k == "pos" or .k == "opt") and (.opt | not) and (.name as $n | $v | has($n) | not)) | "<\(.name)>"]) as $missing
+    | ([$e.args[] | select(.type == "ack-ref" and (.name as $n | $v | has($n)) and (($v[.name] | ref_ok) | not)) | .name]) as $badref
+    | if ($missing | length) > 0 then {ok: false, error: "missing \($missing | join(" "))"}
+      elif ($badref | length) > 0 then {ok: false, error: "\($badref[0]) is not a reference from `\($in.name) radio drain` (<sequence>:<generation>[:<pages>])"}
+      else {ok: true, vals: $v, argv: ($spec | map(
+          if .k == "lit" then [.v]
+          elif .k == "pos" then (if (.name as $n | $v | has($n)) then (if .rest then $v[.name] else expand($types[.name]; $v[.name]) end) else [] end)
+          elif .k == "opt" then (if (.name as $n | $v | has($n)) then [.flag] + expand($types[.name]; $v[.name]) else [] end)
+          else (if $v[.name] == true then [.flag] else [] end) end) | add // [])}
+      end
+  end'
+
+# --- the repeat guard ------------------------------------------------------------------------------------------
+# An entry that declares an `again` argument runs once per repeat key: the sha256 of its schema and the values
+# its repeat_key names (a+b for two), or of --key's value. The key is written after the script succeeds, under
+# the explicit home's state folder (JG_STATE_OVERRIDE, else JG_HOME/state); with no home the script is run and
+# refuses by itself. A repeat prints "already processed" and exits 0; --again runs it anyway.
+repeat_file() {  # <entry> <vals> -> the key file path, or nothing when the entry has no guard or there is no home
+  local entry=$1 vals=$2 state mat
+  printf '%s' "$entry" | jq -e '.args | any(.[]; .name == "again")' >/dev/null || return 0
+  [ -n "${JG_HOME:-}" ] || [ -n "${JG_STATE_OVERRIDE:-}" ] || return 0
+  state=${JG_STATE_OVERRIDE:-$JG_HOME/state}
+  [ -d "$state" ] || return 0
+  mat=$(jq -rn --argjson e "$entry" --argjson v "$vals" '
+    if $v | has("key") then "key:" + $v.key
+    else [$e.repeat_key | split("+")[] | ($v[.] // "") | if type == "array" then join(" ") else tostring end] | join("\u001f") end')
+  printf '%s/.jg-repeat/%s\n' "$state" "$(printf '%s\037%s' "$(printf '%s' "$entry" | jq -r .schema)" "$mat" | sha256sum | cut -d' ' -f1)"
+}
+
+# --- the acknowledgement reference (the `ack-ref` argument type and the `ack-ref` emit) ---------------------
+# jg-wake-drain.sh asks for `--ack-through <sequence> --recovery-generation <generation> [--pages-ack <n>]` on
+# a line of its stderr; the reference is those values as <sequence>:<generation>[:<pages>].
+ack_ref_from() {  # <stderr file>
+  sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9][0-9]*\) --recovery-generation \([A-Za-z0-9._-]*\)\( --pages-ack \([0-9][0-9]*\)\)\{0,1\}$/\1:\2\3/p' "$1" \
+    | head -n1 | sed 's/ --pages-ack /:/'
+}
+# An acknowledgement the drain answers with exit 0 but did not complete is a refusal here, so the caller drains
+# again: one under a generation that is no longer current ("a newer recovery episode is pending") or through a
+# sequence none of its presented rows reach ("nothing was acknowledged").
+ack_ref_stale() { grep -q -e 'a newer recovery episode is pending' -e 'nothing was acknowledged through' "$1"; }
+
+# --- run -----------------------------------------------------------------------------------------------------
+envelope() {  # <schema> <ok> <data json> <next or empty>
+  jq -nc --arg schema "$1" --argjson ok "$2" --argjson data "$3" --arg next "$4" \
+    '{schema: ("jg.v1 " + $schema), ok: $ok, data: $data, next: (if $next == "" then null else $next end)}'
+}
+
+cmd_run() {
+  local all entry n resolved bound vals script rc maprc out err file next ref data
+  [ "$#" -gt 0 ] || { printf '%s: run needs a command\n' "$NAME" >&2; return 2; }
+  cmd_check || return 1
+  all=$(contract_all)
+  resolved=$(printf '%s' "$all" | jq -c --argjson w "$(words_json "$@")" '
+    . as $all | [$all[] | select(.path as $p | ($w[:($p | length)]) == $p)] | sort_by(.path | length) | last // empty')
+  if [ -z "$resolved" ]; then
+    if cmd_has "$1"; then
+      printf '%s: no command %s. Next: %s help\n' "$NAME" "$*" "$NAME" >&2
+    else
+      printf '%s: unknown command: %s (try %s help)\n' "$NAME" "$1" "$NAME" >&2
+    fi
+    return 2
+  fi
+  entry=$resolved
+  n=$(printf '%s' "$entry" | jq '.path | length')
+  shift "$n"
+  bound=$(jq -nc --argjson entry "$entry" --arg name "$NAME" --argjson args "$(words_json "$@")" \
+    "{entry: \$entry, name: \$name, args: \$args} | $BIND_JQ") || { printf '%s: the command contract could not be read\n' "$NAME" >&2; return 5; }
+  if [ "$(printf '%s' "$bound" | jq -r .ok)" != true ]; then
+    printf '%s: %s. Usage: %s %s %s\n' "$NAME" "$(printf '%s' "$bound" | jq -r .error)" "$NAME" \
+      "$(printf '%s' "$entry" | jq -r '.path | join(" ")')" "$(printf '%s' "$entry" | jq -r '.form | split(" ")[1:] | join(" ")')" >&2
+    return 2
+  fi
+  vals=$(printf '%s' "$bound" | jq -c .vals)
+  eval "set -- $(printf '%s' "$bound" | jq -r '.argv | map(@sh) | join(" ")')"
+  script=$ROOT/$(printf '%s' "$entry" | jq -r .script)
+  file=$(repeat_file "$entry" "$vals")
+  if [ -n "$file" ] && [ -e "$file" ] && [ "$(printf '%s' "$vals" | jq -r '.again // false')" != true ]; then
+    envelope "$(printf '%s' "$entry" | jq -r .schema)" true '{"status":"already processed"}' "add --again to run it again"
+    return 0
+  fi
+  out=$(mktemp "${TMPDIR:-/tmp}/jg-dispatch.XXXXXX") || return 5
+  err=$(mktemp "${TMPDIR:-/tmp}/jg-dispatch.XXXXXX") || { rm -f -- "$out"; return 5; }
+  "$script" "$@" >"$out" 2>"$err"
+  rc=$?
+  cat "$err" >&2
+  # The script's exit through the entry's exit map; a code the map does not name is a refusal.
+  maprc=$(printf '%s' "$entry" | jq -r --arg rc "$rc" '.exits[$rc] // (if $rc == "0" then 0 else 1 end)')
+  if [ "$maprc" = 0 ] && printf '%s' "$entry" | jq -e '.args | any(.[]; .type == "ack-ref")' >/dev/null && ack_ref_stale "$err"; then
+    maprc=1
+  fi
+  data=$(jq -c -R -s '. as $t | (try ($t | fromjson) catch {stdout: $t})' < "$out")
+  [ -n "$data" ] || data='{}'
+  next=$(printf '%s' "$entry" | jq -r '.next // empty')
+  if printf '%s' "$entry" | jq -e '.emits == "ack-ref"' >/dev/null; then
+    ref=$(ack_ref_from "$err")
+    data=$(printf '%s' "$data" | jq -c --arg ref "$ref" '. + {ack_ref: (if $ref == "" then null else $ref end)}')
+    [ -z "$ref" ] || next="$NAME radio ack $ref"
+  fi
+  if [ "$maprc" = 0 ]; then
+    envelope "$(printf '%s' "$entry" | jq -r .schema)" true "$data" "$next"
+    if [ -n "$file" ]; then
+      mkdir -p "${file%/*}" && date +%s > "$file" || printf '%s: the repeat record could not be written; a repeat will run again\n' "$NAME" >&2
+    fi
+  else
+    envelope "$(printf '%s' "$entry" | jq -r .schema)" false "$(jq -nc --rawfile e "$err" --argjson d "$data" '$d + {error: $e}')" "$next"
+    [ -z "$next" ] || printf 'Next: %s\n' "$next" >&2
+  fi
+  rm -f -- "$out" "$err"
+  return "$maprc"
+}
+
+if [ "${1:-}" = --as ]; then NAME=${2:?--as needs a name}; shift 2; fi
+case "${1:-}" in
+  check) cmd_check ;;
+  has) shift; cmd_has "$@" ;;
+  help) cmd_help ;;
+  run) shift; cmd_run "$@" ;;
+  *) printf 'usage: dispatch.sh [--as <name>] check | has <word> | help | run <path words> [args...]\n' >&2; exit 2 ;;
+esac
