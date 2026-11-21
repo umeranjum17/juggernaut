@@ -386,10 +386,18 @@ fi
 # Only a project registered local-trunk is ever touched; no-mistakes, direct-PR and local-only projects keep their own rules.
 # shellcheck source=bin/jg-delivery-style.sh disable=SC1091
 . "$FMH/bin/jg-delivery-style.sh"
-local_trunk() { jg_delivery_style_is "$(JG_HOME="$FMH" "$FMH/bin/jg-project-mode.sh" --raw "$(basename "$1")" 2>/dev/null | cut -d' ' -f1)" trunk && echo yes || echo no; }
+# local_trunk <project dir>: true when the project is registered local-trunk. Every loop of a pass asks it for the same few
+# projects, so each project's registry entry is read once per pass.
+declare -A LOCAL_TRUNK=()
+local_trunk() {
+  local pn=${1%/}; pn=${pn##*/}
+  [ -n "${LOCAL_TRUNK[$pn]+set}" ] \
+    || LOCAL_TRUNK[$pn]=$(jg_delivery_style_is "$(JG_HOME="$FMH" "$FMH/bin/jg-project-mode.sh" --raw "$pn" 2>/dev/null | cut -d' ' -f1)" trunk && echo yes || echo no)
+  [ "${LOCAL_TRUNK[$pn]}" = yes ]
+}
 # Initialize only registered projects without a recorded trunk; init itself refuses an existing branch.
 for proj in "$FMH"/projects/*; do
-  [ -d "$proj" ] && [ "$(local_trunk "$proj")" = yes ] || continue
+  [ -d "$proj" ] && local_trunk "$proj" || continue
   pn=$(basename "$proj"); [ ! -e "$STATE/trunk-tip-$pn" ] || continue
   # An unborn repository has nothing to initialize; invalid repositories still reach init and report their error.
   if git -C "$proj" rev-parse --git-dir >/dev/null 2>&1 && commits=$(git -C "$proj" rev-list --all --max-count=1 2>/dev/null) && [ -z "$commits" ]; then continue; fi
@@ -409,7 +417,7 @@ for tip in "$STATE"/trunk-tip-*; do
   [ -z "$QUIET" ] || break
   [ -f "$tip" ] || continue
   pn=${tip##*/trunk-tip-}; proj=$FMH/projects/$pn
-  [ -d "$proj" ] && [ -s "$DATA_DIR/trunk-releases.tsv" ] && [ "$(local_trunk "$proj")" = yes ] || continue
+  [ -d "$proj" ] && [ -s "$DATA_DIR/trunk-releases.tsv" ] && local_trunk "$proj" || continue
   [ ! -e "$MEM/.rollover-$pn" ] || [ -n "$(find "$MEM/.rollover-$pn" -mmin +4 2>/dev/null)" ] || continue
   : > "$MEM/.rollover-$pn"
   JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" rollover "$proj" 2>/dev/null | sed 's/^/trunk-landing: /'
@@ -423,7 +431,7 @@ for tip in "$STATE"/trunk-tip-*; do
   [ -z "$QUIET" ] || break
   [ -f "$tip" ] || continue
   pn=${tip##*/trunk-tip-}; proj=$FMH/projects/$pn
-  [ -d "$proj" ] && [ "$(local_trunk "$proj")" = yes ] || continue
+  [ -d "$proj" ] && local_trunk "$proj" || continue
   [ ! -e "$MEM/.green-alarm-$pn" ] || [ -n "$(find "$MEM/.green-alarm-$pn" -mmin +0 2>/dev/null)" ] || continue
   : > "$MEM/.green-alarm-$pn"
   JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" reconcile "$proj" >/dev/null 2>&1 || :
@@ -437,7 +445,7 @@ for tip in "$STATE"/trunk-tip-*; do
   [ -f "$tip" ] || continue
   pn=${tip##*/trunk-tip-}
   [ "$(cat "$tip" 2>/dev/null)" != "$(cat "$STATE/trunk-green-$pn" 2>/dev/null)" ] || continue
-  [ -d "$FMH/projects/$pn" ] && [ "$(local_trunk "$FMH/projects/$pn")" = yes ] || continue
+  [ -d "$FMH/projects/$pn" ] && local_trunk "$FMH/projects/$pn" || continue
   start_job verify "$pn"
 done
 # Every tick offers the nightly whole run to each local-trunk project: only a project whose `nightly-due` says it is time gets a detached
@@ -446,7 +454,7 @@ for tip in "$STATE"/trunk-tip-*; do
   [ -z "$QUIET" ] || break
   [ -f "$tip" ] || continue
   pn=${tip##*/trunk-tip-}
-  [ -d "$FMH/projects/$pn" ] && [ "$(local_trunk "$FMH/projects/$pn")" = yes ] || continue
+  [ -d "$FMH/projects/$pn" ] && local_trunk "$FMH/projects/$pn" || continue
   # Ask first: a tick that is not due starts no process at all, so the nightly job costs every other tick nothing.
   JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" nightly-due "$FMH/projects/$pn" >/dev/null 2>&1 || continue
   start_job nightly "$pn"
@@ -457,7 +465,7 @@ for tip in "$STATE"/trunk-tip-*; do
   [ -f "$tip" ] || continue
   pn=${tip##*/trunk-tip-}
   awk -v p="$pn" '$1 == p { f = 1 } END { exit !f }' "$FMH/config/trunk-live-waiver" 2>/dev/null || jg_trunk_gated_any "$FMH/data/trunk-gated.tsv" "$pn" || continue
-  [ -d "$FMH/projects/$pn" ] && [ "$(local_trunk "$FMH/projects/$pn")" = yes ] || continue
+  [ -d "$FMH/projects/$pn" ] && local_trunk "$FMH/projects/$pn" || continue
   start_job live "$pn"
 done
 # For a project chosen for the automatic release every tick starts the publish step (detached, so it never holds a landing back; at most once a minute).
@@ -466,7 +474,7 @@ for tip in "$STATE"/trunk-tip-*; do
   [ -f "$tip" ] || continue
   pn=${tip##*/trunk-tip-}
   [ -n "$(jg_trunk_autorelease_rule "$FMH/config/trunk-release-waiver" "$pn")" ] || jg_trunk_gated_any "$FMH/data/trunk-gated.tsv" "$pn" || continue
-  [ -d "$FMH/projects/$pn" ] && [ "$(local_trunk "$FMH/projects/$pn")" = yes ] || continue
+  [ -d "$FMH/projects/$pn" ] && local_trunk "$FMH/projects/$pn" || continue
   [ ! -e "$MEM/.publish-$pn" ] || [ -n "$(find "$MEM/.publish-$pn" -mmin +0 2>/dev/null)" ] || continue
   : > "$MEM/.publish-$pn"
   start_job publish "$pn"
@@ -477,7 +485,7 @@ for tip in "$STATE"/trunk-tip-*; do
   [ -f "$tip" ] || continue
   pn=${tip##*/trunk-tip-}
   [ -n "$(jg_trunk_autorelease_rule "$FMH/config/trunk-release-waiver" "$pn")" ] || continue
-  [ -d "$FMH/projects/$pn" ] && [ "$(local_trunk "$FMH/projects/$pn")" = yes ] || continue
+  [ -d "$FMH/projects/$pn" ] && local_trunk "$FMH/projects/$pn" || continue
   start_job autorelease "$pn"
 done
 report() {
@@ -496,10 +504,11 @@ run_alive() {
 # existed has no queue record: it is queue `-` and its selection is `*`, so it meets every lane and nothing starts beside it but its own chain.
 running_lanes() {
   local f b h t l pn q
+  # A pass reads every state file the home ever kept, so this loop starts no process per file.
   for f in "$MEM"/*.state; do
     [ -f "$f" ] || continue
-    ! printf '%s' "${f##*/}" | grep -Eq '\.[0-9a-f]{40,64}\.[0-9a-f]{40,64}\.state$' || continue
-    l=$(cat "$f" 2>/dev/null || true)
+    [[ ! ${f##*/} =~ \.[0-9a-f]{40,64}\.[0-9a-f]{40,64}\.state$ ]] || continue
+    l=; IFS= read -r l < "$f" 2>/dev/null || :
     case $l in running*) run_alive "$l" || continue ;; *) continue ;; esac
     b=${f##*/}; b=${b%.state}; h=${b##*.}; t=${b%.*}
     # A lane landed and cleaned up while its run ends has no record any more: it still counts as a running landing, in no project.
@@ -577,7 +586,7 @@ for meta in "$STATE"/*.meta; do
   jg_delivery_style_is "$(mval "$meta" mode)" local || continue
   proj=$(mval "$meta" project); [ -d "$proj" ] || continue
   [ -e "$STATE/trunk-tip-$(basename "$proj")" ] || continue
-  [ "$(local_trunk "$proj")" = yes ] || continue
+  local_trunk "$proj" || continue
   branch=$(mval "$meta" branch); branch=${branch:-fm/$id}
   head=$(git -C "$proj" rev-parse --verify --quiet "refs/heads/$branch^{commit}") || continue
   # Old heads cannot be admitted again; retain their final records outside the active set.

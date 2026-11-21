@@ -18,6 +18,7 @@
 # T8 answer time: the real board-answer check routes the answer it reads, with no model turn.
 # T9 the executor field: jg-question-card.sh post records it beside the board, and refuses one
 #    that names no option of the card.
+# T10 a card with no options: the answer is quiet and recorded once, so a repeat reads no board.
 set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -32,12 +33,14 @@ AT=2026-11-16T09:00:00Z
 ATE=1794819600   # AT in epoch seconds
 
 # The board tool: `list` reads the fixture board, `answers` reads its answers journal, `raise`
-# appends the card a post names, and the rest is a logged no-op.
+# appends the card a post names, and the rest is a no-op. Every call's command is logged in
+# $SIGN_OFF_HOME/calls.log.
 fake_signoff() {  # <case dir>
   cat > "$1/fakebin/sign-off-axi" <<'SH'
 #!/usr/bin/env bash
 cmd=$1; shift
 board=${SIGN_OFF_HOME:?}/.sign-off/decisions.json
+printf '%s\n' "$cmd" >> "$SIGN_OFF_HOME/calls.log"
 case "$cmd" in
   list) jq -c '{decisions: (.items // [])}' "$board" ;;
   answers)
@@ -266,6 +269,22 @@ t9_the_card_post_records_the_executor_beside_the_board() {
   pass "T9 the card post records each option's executor beside the board and refuses an unknown option"
 }
 
+t10_a_card_with_no_options_is_recorded_once() {
+  local d out lists
+  d=$(setup t10)
+  card "$d" card-report ""
+  out=$(route "$d" card-report "seen")
+  [ -z "$out" ] || fail "T10 an answer to a card with no options is not quiet: $out"
+  rows "$d" card-report | grep -q "^$ATE"$'\t-\tno-options\t' || fail "T10 no route row records the answer: $(rows "$d" card-report)"
+  lists=$(grep -c '^list$' "$d/so/calls.log")
+  out=$(route "$d" card-report "seen")
+  [ -z "$out" ] || fail "T10 the repeat is not quiet: $out"
+  [ "$(rows "$d" card-report | wc -l)" = 1 ] || fail "T10 the repeat wrote another route row: $(rows "$d" card-report)"
+  [ "$(grep -c '^list$' "$d/so/calls.log")" = "$lists" ] || fail "T10 the repeat read the board again"
+  ! tickets "$d" | grep -q '^card-report' || fail "T10 an answer to a card with no options filed a ticket"
+  pass "T10 a card with no options is recorded once, and a repeat of its answer reads no board"
+}
+
 # One store template for every case: a case copies it, so no two cases initialise it at once.
 jg_test_beads_home "$TMP_ROOT/warm/home"
 
@@ -278,4 +297,5 @@ jg_test_run_cases \
   t6_the_same_answer_is_a_quiet_duplicate \
   t7_an_unreadable_answer_reaches_the_lead \
   t8_the_board_answer_check_routes_the_answer_it_reads \
-  t9_the_card_post_records_the_executor_beside_the_board
+  t9_the_card_post_records_the_executor_beside_the_board \
+  t10_a_card_with_no_options_is_recorded_once

@@ -56,9 +56,10 @@
 #   the brief            data/<ticket>/brief.md, the scaffold bin/jg-brief.sh writes, whose Task
 #                        sections carry the option's text, the answer line, the source report
 #                        and the parent call.
-#   the route rows       data/answer-route/<card-key>.tsv, one line per option end, which is
-#                        what makes a repeat a duplicate; the card's answer epoch is the
-#                        first column, so a second answer to the same card routes again.
+#   the route rows       data/answer-route/<card-key>.tsv, one line per option end (value `-`,
+#                        end `no-options` for a card that offers none), which is what makes a
+#                        repeat a duplicate; the card's answer epoch is the first column, so a
+#                        second answer to the same card routes again.
 # Nothing here posts a card, answers a question, merges, lands, pushes or starts a worker:
 # the dispatch check starts what this command approves.
 set -u
@@ -442,14 +443,17 @@ cmd_route() {
   board=$(board_file)
   card=$(card_json "$key" "$board")
   # The answer route is the answer-time check's quiet step: a card this board no longer lists
-  # (archived, dismissed, another home's) and a card with no options (a yes/no hold card) have
+  # (archived, dismissed, another home's) and a card with no options (a report or plan card) have
   # no option to route, so they are quiet, never a wake. A person asking by hand sees why.
+  # A card with no options keeps one `-\tno-options` row for the answer, so the check's next pass
+  # stops at the ledger instead of reading the whole board again for it.
   if [ -z "$card" ]; then
     [ "$dry" -eq 0 ] || die "no card $key on this home's board"
     return 0
   fi
   if [ "$(printf '%s' "$card" | jq -r '(.options // []) | length' 2>/dev/null)" = 0 ]; then
-    [ "$dry" -eq 0 ] || printf 'no options on %s\n' "$key"
+    [ "$dry" -eq 0 ] || { printf 'no options on %s\n' "$key"; return 0; }
+    [ -z "$at" ] || put_row "$key" "$at" - no-options "the card offers no options"
     return 0
   fi
   if [ -z "$answer" ]; then

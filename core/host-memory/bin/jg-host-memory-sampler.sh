@@ -26,6 +26,7 @@ jg_memory_machine_dir() {
 }
 
 # True when the pid recorded in <pidfile> is a live shared sampler (same process identity, same command).
+# The sampler is machine-wide, so any home's copy of this script running the loop counts, not only this one's path.
 jg_memory_sampler_pidfile_live() {
   local pid identity current suffix
   IFS=$'\t' read -r pid identity 2>/dev/null < "$1" || return 1
@@ -35,9 +36,9 @@ jg_memory_sampler_pidfile_live() {
   [ "$current" = "$identity" ] || return 1
   case "$current" in
     *cmdline-hex=*)
-      suffix=$(printf '%s\0' "$MEMORY_SAMPLER_PATH" run | od -An -v -tx1 | tr -d '[:space:]')
+      suffix=$(printf '/%s\0%s\0' "${MEMORY_SAMPLER_PATH##*/}" run | od -An -v -tx1 | tr -d '[:space:]')
       case "$current" in *"$suffix") ;; *) return 1 ;; esac ;;
-    *) case "$current" in *"$MEMORY_SAMPLER_PATH run") ;; *) return 1 ;; esac ;;
+    *) case "$current" in *"/${MEMORY_SAMPLER_PATH##*/} run") ;; *) return 1 ;; esac ;;
   esac
   MEMORY_SAMPLER_PID=$pid
 }

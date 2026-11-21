@@ -523,6 +523,10 @@ journeys:
     tier: local
     command: bash journeys/host-memory-sampler-cpu.sh
     timeout: 10m
+  check-cpu-budget:
+    tier: local
+    command: bash journeys/check-cpu-budget.sh
+    timeout: 15m
   tool-kit:
     tier: local
     command: bash journeys/tool-kit.sh

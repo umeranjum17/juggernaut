@@ -2,7 +2,8 @@
 # Integration: one host memory sampler serves every home on the machine.
 # Starts the sampler for two homes through the real lifecycle entry (jg_memory_sampler_ensure), as each
 # home's watcher does, and reads the processes and records it leaves:
-#   1. both homes are served by the same one process, and each records its own samples;
+#   1. both homes are served by the same one process, and each records its own samples, even when each home
+#      runs its own copy of the sampler script, as homes in separate checkouts do;
 #   2. a home whose watcher has gone is dropped from the loop, which keeps serving the other;
 #   3. the last home to stop ends the sampler, and a second sampler never starts beside a running one.
 # Usage: bash core/host-memory/tests/jg-host-memory-shared.test.sh   exit 0 = PASS.
@@ -39,11 +40,11 @@ new_home() { # <name>: sets HOME_DIR to a home with a stand-in watcher of ours r
   HOME_DIR=$h
 }
 
-lifecycle() { # <home> <ensure|stop>: the watcher's own call for that home
+lifecycle() { # <home> <ensure|stop> [sampler script]: the watcher's own call for that home
   JG_HOME=$1 JG_STATE_OVERRIDE=$1/state JG_CONFIG_OVERRIDE=$1/config bash -c '
     SCRIPT_DIR=$2/bin STATE=$JG_STATE_OVERRIDE CONFIG=$JG_CONFIG_OVERRIDE
     . "$SCRIPT_DIR/jg-wake-lib.sh"; . "$SCRIPT_DIR/jg-backend.sh"; . "$3"
-    jg_memory_sampler_$4' _ "$1" "$ROOT" "$SAMPLER" "$2"
+    jg_memory_sampler_$4' _ "$1" "$ROOT" "${3:-$SAMPLER}" "$2"
 }
 
 wait_for() { # <command...>: true within 10 s
@@ -56,17 +57,21 @@ gone() { ! kill -0 "$1" 2>/dev/null; }
 
 new_home alpha; alpha=$HOME_DIR
 new_home beta; beta=$HOME_DIR
+# The second home has its own checkout, so its watcher sources a sampler script at another path.
+BETA_SAMPLER=$TMP_ROOT/beta-checkout/core/host-memory/bin/jg-host-memory-sampler.sh
+mkdir -p "${BETA_SAMPLER%/*}" && cp "$SAMPLER" "$BETA_SAMPLER"
 lifecycle "$alpha" ensure || fail "ensure failed for the first home"
-lifecycle "$beta" ensure || fail "ensure failed for the second home"
+lifecycle "$beta" ensure "$BETA_SAMPLER" || fail "ensure failed for a second home whose checkout holds its own sampler copy"
 pa=$(cut -f1 "$alpha/state/.host-memory-sampler.pid")
 pb=$(cut -f1 "$beta/state/.host-memory-sampler.pid")
 [ -n "$pa" ] && [ "$pa" = "$pb" ] || fail "the two homes are served by two samplers ($pa, $pb)"
-[ "$(pgrep -fc "jg-host-memory-sampler.sh run$" || true)" -le 1 ] || fail "more than one sampler process runs"
+# Count only this test's sampler scripts: the host may run its own sampler.
+[ "$(pgrep -fa "jg-host-memory-sampler.sh run$" | awk -v a="$SAMPLER" -v b="$BETA_SAMPLER" '$3 == a || $3 == b' | wc -l)" -le 1 ] || fail "more than one sampler process runs"
 wait_for has_samples "$alpha" || fail "the first home recorded no sample"
 wait_for has_samples "$beta" || fail "the second home recorded no sample"
-lifecycle "$beta" ensure || fail "a repeated ensure failed"
+lifecycle "$beta" ensure "$BETA_SAMPLER" || fail "a repeated ensure failed"
 [ "$(cut -f1 "$beta/state/.host-memory-sampler.pid")" = "$pa" ] || fail "a repeated ensure started another sampler"
-pass "one sampler serves two homes and each records its own samples"
+pass "one sampler serves two homes in separate checkouts and each records its own samples"
 
 # The second home's watcher goes away: the loop drops that home and keeps the first.
 kill -TERM "${watchers[1]}"; wait "${watchers[1]}" 2>/dev/null
