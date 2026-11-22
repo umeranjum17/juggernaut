@@ -3,7 +3,7 @@
 set -eu
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)
 T=$(mktemp -d "${TMPDIR:-/tmp}/e6holds2.XXXXXX")
-trap "rm -rf -- '$T'" EXIT
+trap 'rm -rf -- "$T"' EXIT
 python3 -I - "$ROOT" "$T" <<'PY'
 import csv, datetime, importlib.util, json, os, re, shutil, sqlite3, subprocess, sys, time
 from pathlib import Path

@@ -63,7 +63,7 @@ out=$(jg status write blocked --key sample "waiting for input"); has status-writ
 last=$(tail -n1 "$S"); case $last in "blocked [at="*"] [key=sample]: waiting for input") ;; *) fail "blocked line: $last" ;; esac
 out=$(jg status write failed "the run failed"); has status-failed "$out" "failed recorded"
 before=$(wc -l < "$S")
-out=$(jg status write done "invalid") && fail "invalid status write passed"
+out=$(jg status write 'done' "invalid") && fail "invalid status write passed"
 out=$(jg status write blocked --key 'bad key' "invalid") && fail "invalid key passed"
 [ "$(wc -l < "$S")" = "$before" ] || fail "refused status write changed the record"
 

@@ -31,9 +31,9 @@ home() {
   jg_test_add "$h" jg-t1 "[feature] Faster sign in" --body "${2-Owner order: Main42707.}"
   printf '%s\n' "$h"
 }
-wf() {  # <home> <args...>: res (stdout), err and rc
+wf() {  # <home> <args...>: res (stdout), err and wf_rc
   local h=$1; shift
-  res=$(JG_HOME=$h "$WF" "$@" 2>"$TMP/err"); rc=$?
+  res=$(JG_HOME=$h "$WF" "$@" 2>"$TMP/err"); wf_rc=$?
   err=$(cat "$TMP/err")
 }
 meta() { JG_HOME=$1 "${BD[@]}" show "$2" --json | jq -r --arg k "$3" '.[0].metadata[$k] // ""'; }
@@ -75,7 +75,7 @@ CANON='recon(quick)*2 > owner(plan-approval) > worker*2'
 # T1, T2, T6
 H=$(home t1)
 wf "$H" set jg-t1 "$SPEC" --by main --order Main42707
-expect_code 0 "$rc" "T1 set: $err"
+expect_code 0 "$wf_rc" "T1 set: $err"
 assert_contains "$res" "on jg-t1: 5 steps (5 new)" "T1 the summary line"
 assert_equals 5 "$(count "$H")" "T1 five step rows"
 assert_equals "$CANON" "$(meta "$H" jg-t1 workflow)" "T1 the canonical spec is on the ticket"
@@ -92,7 +92,7 @@ assert_equals worker "$(meta "$H" "$w1" wf_kind)" "T1 wf_kind"
 assert_equals "$o" "$(meta "$H" "$w1" wf_gate)" "T1 the worker row names its gate"
 before=$(count "$H")
 wf "$H" set jg-t1 "$SPEC" --by main --order Main42707
-expect_code 0 "$rc" "T2 the same call: $err"
+expect_code 0 "$wf_rc" "T2 the same call: $err"
 assert_contains "$res" "(0 new)" "T2 nothing new"
 assert_equals "$before" "$(count "$H")" "T2 still five rows"
 assert_equals "$w1" "$(row "$H" 3 1)" "T2 the same ids"
@@ -101,7 +101,7 @@ for r in "$r1" "$r2" "$o" "$w1" "$w2"; do
   assert_contains "$(body "$H" "$r")" "Owner order: Main42707." "T6 $r names the order"
 done
 wf "$H" show jg-t1
-expect_code 0 "$rc" "T1 show: $err"
+expect_code 0 "$wf_rc" "T1 show: $err"
 assert_contains "$res" "stage 3 worker $w1 open task ${w1//./-} no lane" "T1 show lists a step with no lane"
 assert_contains "$(JG_HOME=$H "$WF" show jg-t1 --json)" '"steps"' "T1 show --json"
 pass "T1 T2 T6 a ticket carries its workflow and one blocked row per step; a second call adopts them"
@@ -109,9 +109,9 @@ pass "T1 T2 T6 a ticket carries its workflow and one blocked row per step; a sec
 # T3, T4
 H=$(home t3)
 wf "$H" set jg-t1 "$SPEC" --by owner --quote "two scouts then two workers" --note n1
-expect_code 0 "$rc" "T3 owner set: $err"
+expect_code 0 "$wf_rc" "T3 owner set: $err"
 wf "$H" set jg-t1 worker --by main
-expect_code 2 "$rc" "T3 main changing the owner's workflow"
+expect_code 2 "$wf_rc" "T3 main changing the owner's workflow"
 assert_contains "$err" 'the owner named this workflow: "two scouts then two workers"' "T3 the refusal quotes the owner"
 assert_equals 5 "$(count "$H")" "T3 rows unchanged"
 assert_equals "$CANON" "$(meta "$H" jg-t1 workflow)" "T3 the record is unchanged"
@@ -120,9 +120,9 @@ for r in $(steps "$H" worker); do
   assert_not_contains "$(body "$H" "$r")" "owner-words" "T3 no owner-words line"
 done
 wf "$H" set jg-t1 'scout > owner > worker' --by owner
-expect_code 2 "$rc" "T3 --by owner needs his words"
+expect_code 2 "$wf_rc" "T3 --by owner needs his words"
 wf "$H" set jg-t1 worker --by owner --quote "just one worker" --note n2
-expect_code 0 "$rc" "T4 owner changes it: $err"
+expect_code 0 "$wf_rc" "T4 owner changes it: $err"
 assert_contains "$res" "1 steps (1 new)" "T4 one row is filed"
 open=0
 for r in $(JG_HOME=$H "${BD[@]}" list --parent jg-t1 --all --limit 0 --json | jq -r '.[].id'); do
@@ -136,34 +136,34 @@ pass "T3 T4 the owner's workflow is changed only by the owner, and an unstarted 
 # T5
 H=$(home t5)
 wf "$H" set jg-t1 "$SPEC" --by main
-expect_code 0 "$rc" "T5 set: $err"
+expect_code 0 "$wf_rc" "T5 set: $err"
 r1=$(row "$H" 1 1)
 : > "$H/state/${r1//./-}.meta"
 wf "$H" set jg-t1 'worker' --by main
-expect_code 2 "$rc" "T5 a new spec after a start"
+expect_code 2 "$wf_rc" "T5 a new spec after a start"
 assert_contains "$err" "$r1" "T5 the refusal names the started step"
 assert_equals 5 "$(count "$H")" "T5 nothing changed"
 assert_equals "$CANON" "$(meta "$H" jg-t1 workflow)" "T5 the record is unchanged"
 wf "$H" set jg-t1 "$SPEC" --by main
-expect_code 0 "$rc" "T5 the same spec is still adopted: $err"
+expect_code 0 "$wf_rc" "T5 the same spec is still adopted: $err"
 pass "T5 a started step keeps its workflow"
 
 # T7, T8
 H=$(home t7 "No order here.")
 wf "$H" set jg-t1 worker --by main
-expect_code 2 "$rc" "T7 no order"
+expect_code 2 "$wf_rc" "T7 no order"
 assert_contains "$err" "refused: no owner order" "T7 the refusal"
 assert_equals 0 "$(count "$H")" "T7 nothing filed"
 H=$(home t8 $'Words first.\nBuild it for Main42707 please.')
 wf "$H" set jg-t1 worker --by main
-expect_code 0 "$rc" "T8 the body's order: $err"
+expect_code 0 "$wf_rc" "T8 the body's order: $err"
 assert_contains "$(body "$H" "$(row "$H" 1 1)")" "Owner order: Main42707." "T8 inherited"
 pass "T7 T8 the owner order is passed, inherited from the ticket's body, or refused"
 
 # T9
 H=$(home t9)
 wf "$H" set jg-t1 'scout > owner > worker > scout > owner > worker' --by main
-expect_code 0 "$rc" "T9 set: $err"
+expect_code 0 "$wf_rc" "T9 set: $err"
 o1=$(row "$H" 2 1); w1=$(row "$H" 3 1); o2=$(row "$H" 5 1); w2=$(row "$H" 6 1)
 assert_contains "$(body "$H" "$w1")" "plan-approved-on: $o1" "T9 the first worker names its owner row"
 assert_contains "$(body "$H" "$w2")" "plan-approved-on: $o2" "T9 the second worker names its owner row"
@@ -211,10 +211,10 @@ wf "$H" set jg-t1 "$SPEC" --by main
 r1=$(row "$H" 1 1)
 : > "$H/state/${r1//./-}.meta"
 wf "$H" set jg-t1 --subject "the faster sign in" --by main
-expect_code 0 "$rc" "T10 subject after a start: $err"
+expect_code 0 "$wf_rc" "T10 subject after a start: $err"
 assert_equals "the faster sign in" "$(meta "$H" jg-t1 workflow_subject)" "T10 the subject is written"
 assert_equals 5 "$(count "$H")" "T10 every row unchanged"
 wf "$H" set jg-t1 --subject "one two three four five six seven eight nine"
-expect_code 2 "$rc" "T10 nine words"
+expect_code 2 "$wf_rc" "T10 nine words"
 assert_equals "the faster sign in" "$(meta "$H" jg-t1 workflow_subject)" "T10 the subject is kept"
 pass "T10 the subject changes at any time and changes no step"

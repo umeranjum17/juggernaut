@@ -144,7 +144,8 @@ run bash "$JM" coverage muster; expect_code 0 "$RC" "every edge names its test"
 run bash "$JM" events muster; expect_code 0 "$RC" "events lists the table"
 for e in "round	triage	intent" "check	objectives	check" "ask	check	approval" "approve	approval	war-room" "prove	blitz	landed" "release	landed	secured"; do
   assert_contains "$OUT" "$e" "event ${e%%	*} is declared"; done
-if grep -q "^muster-machine	" "$ROOT/core/machines/changes.tsv"; then pass "changes.tsv declares muster-machine"; else fail "changes.tsv has no muster-machine row"; fi
+run bash "$ROOT/core/machines/observers/delivery.sh" ids; expect_code 0 "$RC" "delivery lists registered changes"
+grep -Fxq muster-machine <<<"$OUT" || fail "delivery did not list muster-machine"
 
 export JG_HOME=$T/home; export JG_DATA_OVERRIDE=$JG_HOME/data JG_STATE_OVERRIDE=$JG_HOME/state
 unset JG_ROOT_OVERRIDE; mkdir -p "$JG_STATE_OVERRIDE"; TK=m-1; D=$JG_DATA_OVERRIDE/$TK/muster

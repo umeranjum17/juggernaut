@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Journey: a Blitz plan or a Goal with ready work that makes no progress for 10 minutes raises one P1 that only progress clears (jg-8ci).
 # Real: core/loop-stall/loop-stall.sh, bin/jg-swarm-check.sh (the Blitz feed, over the real Beads store), bin/jg-alert.sh, core/goal-loop/goal-loop.sh
-# (the Goal feed, its rows read through the JG_GOAL_BIN hook the goal-loop tests use), bin/jg-delivery-tick.sh wiring by grep. By hand: swarm.json and
+# (the Goal feed, its rows read through the JG_GOAL_BIN hook the goal-loop tests use), bin/jg-delivery-tick.sh. By hand: swarm.json and
 # plan.json (the form of the swarm interface) and the Goal rows.
 # a) a plan with a startable slice: quiet at 599 s, one P1 at 601 s, an acknowledgement and a repeat tick keep it open
 # b) progress closes it: a slice started, with its proof; a slice landed with more ready restarts the clock; an unreadable home changes nothing
@@ -80,15 +80,13 @@ G=fleet-blocked--goal-goal-1-stalled
 goal_rows open open
 g=$((now + 10000))
 tick $g; tick $((g + 599)); check "a Goal step waiting 599 s is quiet" "$(word $G)" ""
-tick $((g + 601)); check "a Goal step waiting 601 s raises the P1" "$(word $G)" open
+run env JG_LOOP_STALL_NOW="$((g + 601))" bash "$ROOT/bin/jg-delivery-tick.sh" "$M"
+check "the delivery tick raises the P1 after 601 s" "$(word "$G")" open
 alertcmd ack $G > /dev/null; tick $((g + 800))
 check "an acknowledgement never closes it" "$(word $G | grep -c -E '^(open|acknowledged|waiting)$' || true)" 1
 goal_rows open in_progress
 tick $((g + 900)); check "the step taken: the P1 resolves" "$(word $G)" resolved
 goal_rows open on_hold
 tick $((g + 5000)); tick $((g + 6000)); check "a Goal stopped for its owner raises nothing new" "$(word $G)" resolved
-
-# the delivery tick runs it, with no model
-check "the delivery tick runs the check" "$(grep -c 'core/loop-stall/loop-stall.sh" tick' "$ROOT/bin/jg-delivery-tick.sh")" 1
 
 if [ "$fails" = 0 ]; then say "loop-stall: all passed"; else say "loop-stall: $fails failed"; exit 1; fi

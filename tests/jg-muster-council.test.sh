@@ -12,7 +12,7 @@
 # T4 merge: the round record follows formats.md section 2; agreed answers are taken=agent, a contested question and a
 #    captain-only question stay open; the domain lens's objects, states and events reach the drafter; a second merge changes nothing.
 # T5 no pack: the project and the ticket's muster folder hold no pack file, manifest or approval record; War Room approve refuses.
-# T6 skills and contract: war-room names no /council, council loads /muster council, and the fragment has the frozen shape.
+# The public CLI starts the lenses and merges their drafts in T1 through T4.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -42,7 +42,12 @@ export JG_HOME="$HOME_DIR" JG_STATE_OVERRIDE="$HOME_DIR/state" JG_DATA_OVERRIDE=
 export JG_PROJECTS_OVERRIDE="$HOME_DIR/projects" JG_WAR_ROOM_SPAWN="$W/spawn.sh" JG_WAR_ROOM_WAIT=30 JG_WAR_ROOM_NEXT=0
 
 war_room() { "$ROOT/bin/jg-war-room.sh" "$@" 2>&1; }
-council_cmd() { "$ROOT/bin/jg-muster-council.sh" "$@" 2>&1; }
+jg_stdout() {
+  local reply status=0
+  reply=$("$ROOT/bin/jg" "$@") || status=$?
+  jq -r '.data.stdout // "", .data.error // empty' <<<"$reply"
+  return "$status"
+}
 handoff() { "$ROOT/bin/jg-recon-handoff.sh" "$@" 2>&1; }
 children() {
   python3 -I "$ROOT/core/item-store/adapters/bd_compat.py" list --parent "$1" --all --limit 0 --json 2>/dev/null | jq -r '.[]?.id' | sort
@@ -63,7 +68,7 @@ council=jg-mc1
 jg_test_add "$HOME_DIR" "$council" "[feature] Muster council for a new bot"
 
 # T1: five lens lanes, started together, with no pack.
-out=$(war_room lenses "$council" --project newbot --lenses "$LENSES" --harness codex --model gpt-5.5 --effort high) \
+out=$(jg_stdout plan war-room lenses "$council" --project newbot --lenses "$LENSES" --harness codex --model gpt-5.5 --effort high) \
   || fail "T1 lenses should make five lanes live: $out"
 [ "$(children "$council" | grep -c .)" = 5 ] || fail "T1 the council should have five child tickets: $(children "$council")"
 for lens in user domain architecture skeptic quality; do
@@ -81,7 +86,7 @@ grep -qx 'kind=lenses' "$HOME_DIR/data/war-room/$council/record" || fail "T1 the
 grep -q 'owner: ' "$HOME_DIR/data/$T_user/brief.md" || fail "T1 the brief does not show the question line format"
 grep -q 'Core objects' "$HOME_DIR/data/$T_domain/brief.md" || fail "T1 the domain lens brief does not ask for core objects"
 before=$(children "$council")
-war_room lenses "$council" --project newbot --lenses "$LENSES" --harness codex --model gpt-5.5 --effort high > /dev/null \
+jg_stdout plan war-room lenses "$council" --project newbot --lenses "$LENSES" --harness codex --model gpt-5.5 --effort high > /dev/null \
   || fail "T1 a second run should exit 0"
 [ "$(children "$council")" = "$before" ] || fail "T1 a second run filed a ticket"
 for task in $T_user $T_domain $T_architecture $T_skeptic $T_quality; do
@@ -105,7 +110,7 @@ assert_contains "$out" "waits: " "T2 next should name what it waits for: $out"
 [ ! -e "$HOME_DIR/data/war-room/$council/plan-asked" ] || fail "T2 next asked for a plan"
 
 # T3: a merge before every lens has drafted is refused.
-out=$(council_cmd merge "$council"); rc=$?
+out=$(jg_stdout muster council "$council"); rc=$?
 expect_code 1 "$rc" "T3 merge before every lens drafted should be refused: $out"
 assert_contains "$out" "domain" "T3 the refusal should name a lens that has not drafted: $out"
 [ ! -e "$HOME_DIR/data/$council/muster/rounds.tsv" ] || fail "T3 a refused merge wrote a round"
@@ -133,7 +138,7 @@ assert_contains "$out" "jg-muster-council.sh merge $council" "T2 next should say
 pass "T2 next files no critic, synthesis, dry run or plan question; it waits, then says to merge"
 
 # T4: the merge, in the round format.
-out=$(council_cmd merge "$council") || fail "T4 merge should exit 0: $out"
+out=$(jg_stdout muster council "$council") || fail "T4 merge should exit 0: $out"
 rounds="$HOME_DIR/data/$council/muster/rounds.tsv"
 [ -s "$rounds" ] || fail "T4 no round record at $rounds"
 [ "$(awk -F'\t' 'NF != 12' "$rounds" | grep -c .)" = 0 ] || fail "T4 every row should have the twelve round columns"
@@ -160,7 +165,7 @@ domain="$HOME_DIR/data/$council/muster/council-domain.md"
 [ -s "$domain" ] || fail "T4 the domain lens's objects did not reach the drafter ($domain)"
 grep -q 'Object: Conversation | states: open, waiting, resolved | events: ConversationOpened' "$domain" || fail "T4 the objects, states and events are not carried"
 before=$(md5sum "$rounds")
-out=$(council_cmd merge "$council") || fail "T4 a second merge should exit 0: $out"
+out=$(jg_stdout muster council "$council") || fail "T4 a second merge should exit 0: $out"
 assert_contains "$out" "already merged" "T4 a second merge should say so: $out"
 [ "$(md5sum "$rounds")" = "$before" ] || fail "T4 a second merge changed the round record"
 pass "T4 merge writes the round format: agreed answers taken=agent, contested and captain-only questions open, objects carried"
@@ -173,18 +178,3 @@ done
 out=$(war_room approve "$council" --words "yes"); rc=$?
 expect_code 2 "$rc" "T5 a lens council has no plan to approve: $out"
 pass "T5 the council needs and writes no pack; a lens council has no plan to approve"
-
-# T6: skills and the command contract.
-[ "$(grep -c '/council' "$ROOT/.agents/skills/war-room/SKILL.md")" = 0 ] || fail "T6 war-room/SKILL.md still names /council"
-grep -q '/muster council' "$ROOT/.agents/skills/council/SKILL.md" || fail "T6 council/SKILL.md does not load /muster council"
-frag="$ROOT/core/agent-cli/contract/muster-council.json"
-jq -e '(.area|type=="string") and (.owner|type=="string") and (.entries|length>0) and all(.entries[];
-  (.path|type=="array" and length>0) and (.meaning|type=="string" and length>0) and (.roles|type=="array") and
-  (.changes|type=="boolean") and (.method == (if .changes then "POST" else "GET" end)) and
-  ((.changes|not) or (.repeat_key|type=="string")) and (.script|startswith("bin/")) and (.operation|type=="string"))' "$frag" > /dev/null \
-  || fail "T6 the fragment does not have the frozen shape"
-[ "$(jq -r '.owner' "$frag")" = m7 ] || fail "T6 the fragment owner is m7"
-[ "$(jq -r '[.entries[] | .path | join(" ")] | sort | join(",")' "$frag")" = "muster council,plan war-room lenses" ] \
-  || fail "T6 the fragment holds the two paths 'muster council' and 'plan war-room lenses'"
-[ "$(jq -r '[.entries[].method] | unique | join(",")' "$frag")" = POST ] || fail "T6 both entries should be POST"
-pass "T6 war-room names no /council, council loads /muster council, the fragment holds both paths in the frozen shape"

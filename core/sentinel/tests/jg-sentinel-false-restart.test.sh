@@ -183,7 +183,11 @@ exec bash "\$here/jg-delivery-tick.real.sh" "\$@"
 WRAP
 chmod +x "$M/bin/jg-delivery-tick.sh"
 printf -- '- lead (home: %s)\n' "$L" > "$M/data/squad_leads.md"
-printf '#!/usr/bin/env bash\n[ "${1:-}" = +%%s ] && [ -n "${FAKE_NOW:-}" ] && { echo "$FAKE_NOW"; exit 0; }\nexec %s "$@"\n' "$(command -v date)" > "$d/shim/date"
+cat > "$d/shim/date" <<SH
+#!/usr/bin/env bash
+[ "\${1:-}" = +%s ] && [ -n "\${FAKE_NOW:-}" ] && { echo "\$FAKE_NOW"; exit 0; }
+exec $(printf '%q' "$(command -v date)") "\$@"
+SH
 chmod +x "$d/shim/date"
 step() {  # <epoch>: one production sentinel tick for Main at that fake time; its status is returned
   FAKE_NOW=$1 JG_SENTINEL_DELIVERY_REPAIR_SECS=300 PATH="$d/shim:$d/stub:$PATH" HOME="$d/home-dir" JG_HOME=$M \
