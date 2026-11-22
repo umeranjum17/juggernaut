@@ -41,8 +41,7 @@ If the top-level path is the primary checkout or not the worktree you were launc
    Leave the worktree clean before reporting done.
    Never use git stash: all worktrees of a repo share one stash; commit work in progress on your own branch instead.
 3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
-4. Report status by appending one line:
-   `echo "{state} [at=<epoch>]: {one short line}" | '@ROOT@/bin/jg-lavish-guard.sh' --append '@HOME@/state/lt.status' && { [ ! -e '@HOME@/config/fleet-ledger' ] || '@ROOT@/bin/jg-fleet-ledger.sh' appended '@HOME@/config' '@HOME@/state/lt.status' >/dev/null 2>&1 || true; }`
+4. Report status with `jg progress <text>`, `jg done [text]`, `jg wait <who> <reason> <text>`, `jg ask <question> --option <a> --option <b>`, or `jg status write <blocked|failed> [--key <key>] <text>`.
    States: working, needs-decision, blocked, paused, done, failed.
    Substitute `<epoch>` with the current Unix time in seconds - run `date +%s` and write the number it printed; a stamp that is not plain digits records no time at all.
    Each append wakes juggernaut, so report sparingly: only phase changes a supervisor
@@ -102,7 +101,7 @@ If the top-level path is the primary checkout or not the worktree you were launc
 # Juggernaut instruction inbox
 Juggernaut steers you through durable message files in '@HOME@/state/lt.inbox'.
 When a terminal message says an instruction is waiting there - and at any natural checkpoint when you are unsure - list '@HOME@/state/lt.inbox'/*.msg, read and act on each message in numeric order, then acknowledge each handled message by moving it: `mv '@HOME@/state/lt.inbox'/NNN.msg '@HOME@/state/lt.inbox'/handled/`.
-The move IS the acknowledgement: without it juggernaut rings again and eventually treats you as stuck. It proves only that you read the message. When you have acted on it, say so with proof: `'@ROOT@/bin/jg-delivery.sh' handled lt NNN --evidence <status|commit|reply|task|pr>:<pointer>` (or `failed lt NNN --reason <why>` if you cannot). An empty or absent inbox needs no action.
+Use `jg inbox` to read instructions and `jg inbox ack NNN --evidence <status|commit|reply|task|pr>:<pointer>` after acting. If you cannot act, acknowledge it and run `jg radio delivery failed lt NNN --reason <why>`. An empty or absent inbox needs no action.
 
 # Project memory
 A project's `AGENTS.md` or `CLAUDE.md` is loaded into every agent session in that project, so edit it only to correct information that is factually wrong - including information your own change made wrong - and never to add knowledge because it is missing.

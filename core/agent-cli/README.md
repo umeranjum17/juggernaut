@@ -14,6 +14,8 @@ Every output is short, and its last line is `Next: ...`.
 
 ```
 jg status                         ticket, stage, last status line, wait, unread steers
+jg status write <blocked|failed> [--key <key>] <text>
+                                  append a guarded blocked or failed line
 jg done [text]                    the done line (a local lane needs no text); the guard refuses a done the landing would refuse
 jg wait <who> <reason> <text> [--until <YYYY-MM-DDTHH:MMZ>]
                                   declare the one kind of wait (a paused line)

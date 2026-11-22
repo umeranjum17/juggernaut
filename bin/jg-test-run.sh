@@ -1232,10 +1232,13 @@ families_for_test_reference() {  # <needle>...
 # evidence, so it selects per script: one real-Herdr E2E sourcing a shared
 # helper must not drag in every other script of that expensive family.
 scripts_for_test_reference() {
-  local needle=$1 s
+  local needle=$1 skip_opt_in=${2:-false} s
   local found=0
   while IFS= read -r s; do
     [ -n "$s" ] || continue
+    if [ "$skip_opt_in" = true ] && grep -Eq '^[[:space:]]*jg_live_gate[[:space:]]+opt-in([[:space:]]|$)' "$s"; then
+      continue
+    fi
     if grep -Fq "$needle" "$s"; then
       printf '__script__:%s\n' "$(basename "$s")"
       found=1
@@ -1263,7 +1266,7 @@ bin_consumers_of() {
 families_for_unmapped_bin() {
   local path=$1 needle consumer out found=0
   needle=$(basename "$path")
-  if out=$(scripts_for_test_reference "$needle"); then
+  if out=$(scripts_for_test_reference "$needle" true); then
     printf '%s\n' "$out"
     found=1
   fi
@@ -1273,7 +1276,7 @@ families_for_unmapped_bin() {
       *-lib.sh) ;;
       *) continue ;;
     esac
-    if out=$(scripts_for_test_reference "$(basename "$consumer")"); then
+    if out=$(scripts_for_test_reference "$(basename "$consumer")" true); then
       printf '%s\n' "$out"
       found=1
     fi

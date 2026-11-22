@@ -914,6 +914,24 @@ test_a_changed_shared_file_selects_the_scripts_that_name_it() {
   pass 'a changed shared file selects the scripts that name it and its libraries'
 }
 
+test_unmapped_bin_scan_does_not_select_opt_in_guards() {
+  local d=$TMP_ROOT/select-opt-in out
+  select_fixture "$d"
+  printf '#!/bin/sh\n' > "$d/bin/jg"
+  printf 'echo jg\n' > "$d/tests/portable.test.sh"
+  printf 'jg_live_gate opt-in JG_FIXTURE_LIVE\necho jg\n' > "$d/tests/live.test.sh"
+  git -C "$d" add bin/jg tests/portable.test.sh tests/live.test.sh
+  git -C "$d" -c user.email=t@t -c user.name=t commit -qm fixtures
+  printf '# change\n' >> "$d/bin/jg"
+  out=$(cd "$d" && bash bin/jg-test-run.sh --list --changed --base HEAD 2>&1) || fail "changed command selection failed: $out"
+  assert_contains "$out" 'tests/portable.test.sh' 'the portable command reader must be selected'
+  case "$out" in *tests/live.test.sh*) fail "the opt-in guard was selected by the substring scan: $out" ;; esac
+  printf '# change\n' >> "$d/tests/live.test.sh"
+  out=$(cd "$d" && bash bin/jg-test-run.sh --list --changed --base HEAD 2>&1) || fail "changed guard selection failed: $out"
+  assert_contains "$out" 'tests/live.test.sh' 'an explicitly changed guard must still be selected'
+  pass 'the unmapped command scan excludes opt-in guards but explicit changes still select them'
+}
+
 test_a_changed_core_script_selects_the_scripts_that_name_it() {
   local d=$TMP_ROOT/select-core out
   select_fixture "$d"
@@ -1076,6 +1094,7 @@ test_a_deleted_journey_does_not_refuse_the_changed_selection
 test_a_deleted_shared_fixture_does_not_refuse_the_changed_selection
 test_a_deleted_capture_file_does_not_refuse_the_changed_selection
 test_a_changed_shared_file_selects_the_scripts_that_name_it
+test_unmapped_bin_scan_does_not_select_opt_in_guards
 test_a_changed_core_script_selects_the_scripts_that_name_it
 test_a_changed_fleet_homes_library_selects_the_move_test
 test_a_script_with_a_done_done_entry_is_selected_by_no_old_selector

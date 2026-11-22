@@ -59,6 +59,14 @@ out=$(jg ask "One option?" --option only) && fail "single option passed"; has as
 out=$(jg ask "Pick" --option a --option b --recommend c) && fail "recommend outside options passed"
 [ "$(wc -l < "$S")" = $((before + 1)) ] || fail "a refused ask wrote a line"
 
+out=$(jg status write blocked --key sample "waiting for input"); has status-write "$out" "blocked recorded"
+last=$(tail -n1 "$S"); case $last in "blocked [at="*"] [key=sample]: waiting for input") ;; *) fail "blocked line: $last" ;; esac
+out=$(jg status write failed "the run failed"); has status-failed "$out" "failed recorded"
+before=$(wc -l < "$S")
+out=$(jg status write done "invalid") && fail "invalid status write passed"
+out=$(jg status write blocked --key 'bad key' "invalid") && fail "invalid key passed"
+[ "$(wc -l < "$S")" = "$before" ] || fail "refused status write changed the record"
+
 out=$(jg bogus) && fail "unknown verb passed"; has verb "$out" "Next: jg help"
 out=$(jg help); has help "$out" "jg inbox"
 

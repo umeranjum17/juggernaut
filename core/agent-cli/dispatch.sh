@@ -49,7 +49,8 @@ FRAGMENT_SHAPE='(.area|type=="string") and (.owner|type=="string") and (.entries
     and (.meaning|type=="string" and length>0) and (.roles|type=="array") and (.changes|type=="boolean")
     and (.method == (if .changes then "POST" else "GET" end))
     and ((.changes|not) or (.repeat_key|type=="string"))
-    and (.script|type=="string" and startswith("bin/")) and (.operation|type=="string")
+    and (.script|type=="string" and (startswith("bin/") or (startswith("core/agent-cli/") and (contains("..")|not))))
+    and ((.passthrough // false)|type=="boolean") and (.operation|type=="string")
     and (.form|type=="string") and (.exits|type=="object") and (.schema|type=="string")
     and (.args|type=="array" and all(.[]; (.name|type=="string") and (.type|type=="string")))
     and (.aliases|type=="array"))'
@@ -289,6 +290,9 @@ cmd_run() {
   entry=$(printf '%s' "$resolved" | jq -c .entry)
   n=$(printf '%s' "$resolved" | jq .words)
   shift "$n"
+  if [ "$(printf '%s' "$entry" | jq -r '.passthrough // false')" = true ]; then
+    exec "$ROOT/$(printf '%s' "$entry" | jq -r .script)" "$@"
+  fi
   bound=$(jq -nc --argjson entry "$entry" --arg name "$NAME" --argjson args "$(words_json "$@")" \
     "{entry: \$entry, name: \$name, args: \$args} | $BIND_JQ") || { printf '%s: the command contract could not be read\n' "$NAME" >&2; return 5; }
   if [ "$(printf '%s' "$bound" | jq -r .ok)" != true ]; then

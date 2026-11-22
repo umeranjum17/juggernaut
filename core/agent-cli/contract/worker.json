@@ -1,0 +1,204 @@
+{
+  "area": "worker",
+  "owner": "e2",
+  "entries": [
+    {
+      "path": [
+        "status"
+      ],
+      "meaning": "Read the worker status or write a guarded blocked or failed line",
+      "roles": [
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "core/agent-cli/status.sh [args...]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0
+      },
+      "schema": "worker.status.v1",
+      "script": "core/agent-cli/status.sh",
+      "operation": "-",
+      "aliases": [],
+      "passthrough": true
+    },
+    {
+      "path": [
+        "done"
+      ],
+      "meaning": "Record completion",
+      "roles": [
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "core/agent-cli/done.sh [args...]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0
+      },
+      "schema": "worker.done.v1",
+      "script": "core/agent-cli/done.sh",
+      "operation": "-",
+      "aliases": [],
+      "passthrough": true
+    },
+    {
+      "path": [
+        "wait"
+      ],
+      "meaning": "Declare a wait",
+      "roles": [
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "core/agent-cli/wait.sh [args...]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0
+      },
+      "schema": "worker.wait.v1",
+      "script": "core/agent-cli/wait.sh",
+      "operation": "-",
+      "aliases": [],
+      "passthrough": true
+    },
+    {
+      "path": [
+        "progress"
+      ],
+      "meaning": "Record progress",
+      "roles": [
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "core/agent-cli/progress.sh [args...]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0
+      },
+      "schema": "worker.progress.v1",
+      "script": "core/agent-cli/progress.sh",
+      "operation": "-",
+      "aliases": [],
+      "passthrough": true
+    },
+    {
+      "path": [
+        "inbox"
+      ],
+      "meaning": "Read or acknowledge instructions",
+      "roles": [
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "core/agent-cli/inbox.sh [args...]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0
+      },
+      "schema": "worker.inbox.v1",
+      "script": "core/agent-cli/inbox.sh",
+      "operation": "-",
+      "aliases": [],
+      "passthrough": true
+    },
+    {
+      "path": [
+        "alert"
+      ],
+      "meaning": "Read or acknowledge alerts",
+      "roles": [
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "core/agent-cli/alerts.sh [args...]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0
+      },
+      "schema": "worker.alert.v1",
+      "script": "core/agent-cli/alerts.sh",
+      "operation": "-",
+      "aliases": [],
+      "passthrough": true
+    },
+    {
+      "path": [
+        "ask"
+      ],
+      "meaning": "Ask for a decision",
+      "roles": [
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "core/agent-cli/ask.sh [args...]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0
+      },
+      "schema": "worker.ask.v1",
+      "script": "core/agent-cli/ask.sh",
+      "operation": "-",
+      "aliases": [],
+      "passthrough": true
+    },
+    {
+      "path": [
+        "proof"
+      ],
+      "meaning": "Run verification",
+      "roles": [
+        "worker"
+      ],
+      "args": [],
+      "changes": true,
+      "method": "POST",
+      "form": "core/agent-cli/proof.sh [args...]",
+      "repeat_key": "none",
+      "exits": {
+        "0": 0
+      },
+      "schema": "worker.proof.v1",
+      "script": "core/agent-cli/proof.sh",
+      "operation": "-",
+      "aliases": [],
+      "passthrough": true
+    },
+    {
+      "path": [
+        "land"
+      ],
+      "meaning": "Read landing progress",
+      "roles": [
+        "worker"
+      ],
+      "args": [],
+      "changes": false,
+      "method": "GET",
+      "form": "core/agent-cli/land.sh [args...]",
+      "repeat_key": null,
+      "exits": {
+        "0": 0
+      },
+      "schema": "worker.land.v1",
+      "script": "core/agent-cli/land.sh",
+      "operation": "-",
+      "aliases": [],
+      "passthrough": true
+    }
+  ]
+}

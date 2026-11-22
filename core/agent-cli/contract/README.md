@@ -46,6 +46,8 @@ The `form` is read as the script's usage line.
 
 - The caller's environment goes to the script unchanged.
   The dispatcher never sets `JG_HOME`, so a script that refuses without an explicit home refuses the same way here.
+- Worker entries with `passthrough: true` run their script with the original arguments and preserve its output and exit code.
+  Their scripts may also live under `core/agent-cli/`.
 - New paths print one line, the `jg.v1` envelope `{schema, ok, data, next}`.
   `data` is the script's JSON result, or `{"stdout": "<text>"}` for a script that prints text.
   A refusal has `ok` false and the script's stderr in `data.error`.
@@ -78,7 +80,7 @@ Optional, and ignored by a reader that does not know them: `next` (the command t
 ## Owners
 
 - `core.json` (slice e1) holds the `juggernaut-axi` names and the notification queue and steering sends.
-- The worker verbs stay in `bin/jg` until slice e2 adds `worker.json`.
+- `worker.json` owns the worker verbs and their passthrough output.
 - `hold answer` and `ticket add` in `core.json` run `bin/juggernaut-axi`; the area slices that own `jg-captain-hold.sh answer` and `jg-backlog.sh add` take those paths over with their own entries.
 
 Test: `core/agent-cli/tests/contract.test.sh`.

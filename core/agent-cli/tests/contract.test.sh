@@ -61,6 +61,18 @@ printf 's.sh\tgo\tbin/s.sh go\ta\tGET\tno\te1\n' >> "$t/core/agent-cli/operation
 expect_refused owner "is owned by e1 in operations.tsv, not e9"
 sed -i 's/"owner":"e9"/"owner":"e1"/' "$t/core/agent-cli/contract/a.json"; bash "$t/core/agent-cli/dispatch.sh" check || fail "the named owner was refused"
 
+# A passthrough preserves arguments, streams and the child exit code.
+t=$(mk_tree passthrough); frag "$t/core/agent-cli/contract/a.json" x a '["raw"]' bin/s.sh - '[]'
+sed -i 's/"aliases":\[\]/"aliases":[],"passthrough":true/' "$t/core/agent-cli/contract/a.json"
+printf '#!/usr/bin/env bash\nprintf "<%%s>\\n" "$@"\nprintf "problem\\n" >&2\nexit 7\n' > "$t/bin/s.sh"
+out=$(bash "$t/core/agent-cli/dispatch.sh" run raw --flag 'two words' 2>"$t/error"); rc=$?
+rc_is passthrough "$rc" 7
+[ "$out" = "$(printf '<%s>\n' --flag 'two words')" ] || fail "passthrough changed arguments or stdout"
+[ "$(cat "$t/error")" = problem ] || fail "passthrough changed stderr"
+t=$(mk_tree invalidraw); frag "$t/core/agent-cli/contract/a.json" x a '["raw"]' bin/s.sh - '[]'
+sed -i 's/"aliases":\[\]/"aliases":[],"passthrough":"yes"/' "$t/core/agent-cli/contract/a.json"
+expect_refused invalidraw "a.json does not have the fragment shape"
+
 # core.json holds the juggernaut-axi names and e1's own operations, and no worker verb
 core=$ROOT/core/agent-cli/contract/core.json
 [ "$(jq -r '.owner' "$core")" = e1 ] || fail "core.json is not owned by e1"
