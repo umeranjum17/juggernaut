@@ -6,6 +6,7 @@
 #        jg-war-room.sh lite <council-ticket> [--project <name>] [--harness <h> --model <m> --effort <e>] [--exception]
 #        jg-war-room.sh check <council-ticket>
 #        jg-war-room.sh lenses <council-ticket> --project <name> --lenses <a,b,c> --harness <h> --model <m> --effort <e>
+#        jg-war-room.sh discover <council-ticket> --project <name> --harness <h> --model <m> --effort <e>
 #        jg-war-room.sh next <council-ticket>
 #        jg-war-room.sh approve <council-ticket> --words <the owner's words> [--by <who>]
 #        jg-war-room.sh --help
@@ -41,6 +42,10 @@
 # titled `<lens> lens` and briefed `Lens: <lens>` at Recon depth quick. It takes no --depth, --angles, --synthesis-depth or
 # --no-variant-critics. The record says kind=lenses and data/war-room/<council>/lanes holds `<lens> <task>` for each lane, which
 # bin/jg-muster-council.sh merge reads. The output and exits are those of `start`.
+# discover uses the same lane path with fixed prior-art, risk and domain lenses and no pack.
+# Its next step starts a discovery synthesis and assigns a separate critic through the Recon handoff.
+# The accepted synthesis is published to data/<council>/muster/discovery/ (findings.md and round.json).
+# The synthesis embeds the round JSON in a fenced json block under `### First round`; an empty array means no question is ready.
 #
 # next: one idempotent step that does what is due and nothing else (one run at a time for a council; a second waits its turn).
 # bin/jg-recon-handoff.sh starts it, detached, after each successful draft, revise or verdict of a council's lane
@@ -86,6 +91,7 @@ USAGE="usage: jg-war-room.sh start <council-ticket> --project <name> --angles <a
        jg-war-room.sh lite <council-ticket> [--project <name>] [--harness <h> --model <m> --effort <e>] [--exception]
        jg-war-room.sh check <council-ticket>
        jg-war-room.sh lenses <council-ticket> --project <name> --lenses <a,b,c> --harness <h> --model <m> --effort <e>
+       jg-war-room.sh discover <council-ticket> --project <name> --harness <h> --model <m> --effort <e>
        jg-war-room.sh next <council-ticket>
        jg-war-room.sh approve <council-ticket> --words <the owner's words> [--by <who>]"
 
@@ -252,6 +258,8 @@ launch() {
 # One lane is one ticket, one brief and one start, whatever it is for: `start` runs one variant Recon for each angle, `lenses` one
 # lens lane for each lens of /muster council. KIND says which; only its words differ (lane_ticket_text, lane_spec).
 KIND=variants
+uses_lenses() { [[ $KIND = lenses || $KIND = discovery ]]; }
+
 lens_focus() {  # <lens>: the one line each known lens is held to; any other word is the captain's own lens
   case $1 in
     user) echo 'Who it is for, the job they hire it for and the end state they want. Settle what the idea already says; raise the rest as questions.' ;;
@@ -259,14 +267,16 @@ lens_focus() {  # <lens>: the one line each known lens is held to; any other wor
     architecture) echo 'The stack, where the data lives, where it runs and every choice that is hard to reverse. Raise each trade-off as a question.' ;;
     skeptic) echo 'A premortem: assume the project failed a year from now and list why. Raise the likeliest causes as questions.' ;;
     quality) echo 'How the work will be proven and kept clean: the journeys that must work, the tests, the lint and the ways of working.' ;;
+    prior-art) echo 'Research competitors and relevant prior implementations; cite sources and licences, compare trade-offs, and identify lessons for this idea.' ;;
+    risks) echo 'Run a premortem and trace edge cases and failure paths through the main use cases; give each risk a mitigation or a way to test it.' ;;
     *) echo 'Your own angle, named above.' ;;
   esac
 }
 
 lane_ticket_text() {  # <name> -> sets L_TITLE L_ASK L_DONE
-  if [ "$KIND" = lenses ]; then
+  if uses_lenses; then
     L_TITLE="$1 lens"
-    L_ASK="Draft the $1 lens of council $COUNCIL: the questions its idea raises, each with your answer when you can give one."
+    L_ASK="Draft the $1 lens of council $COUNCIL from the original idea."
     L_DONE="The draft is recorded with bin/jg-recon-handoff.sh draft."
   elif [ "$KIND" = lite ]; then
     L_TITLE='synthesis Recon'
@@ -280,6 +290,12 @@ lane_ticket_text() {  # <name> -> sets L_TITLE L_ASK L_DONE
 }
 
 lens_spec() {  # <lens> <task>: what a lens lane writes, in the format bin/jg-muster-council.sh merge reads
+  if [ "$KIND" = discovery ]; then
+    # shellcheck disable=SC2016
+    printf 'Lens: %s\nFocus: %s\nRead the raw idea on the council ticket and the existing project, if it has code.\nIn `%s/%s/report.md`, record findings, evidence, assumptions and unresolved decisions. For the domain lens, also propose actors, use cases, core objects, states, events and boundaries.\nRun `%s/bin/jg-recon-handoff.sh draft %s` before your done line. Write no backlog item.\n' \
+      "$1" "$(lens_focus "$1")" "$DATA" "$2" "$JG_ROOT" "$2"
+    return
+  fi
   # shellcheck disable=SC2016  # the backquotes are the brief's own text
   printf 'Lens: %s\nFocus: %s\nNo pack exists and none is needed: you read the idea on the council ticket and write only your draft.\nWrite `%s/%s/report.md` with a `## Questions` section, one line for each question:\n- Q: <the question> | A: <your answer, or nothing when it cannot be settled without the captain> | owner: <yes when only the captain can decide it, otherwise no>\nGive your honest answer, not the one most likely to agree with another lens: a different answer is how the council finds a real question.\n' \
     "$1" "$(lens_focus "$1")" "$DATA" "$2"
@@ -290,7 +306,7 @@ lens_spec() {  # <lens> <task>: what a lens lane writes, in the format bin/jg-mu
 }
 
 lane_spec() {  # <name> <task> -> sets L_DEPTH L_MARKER L_TASKTXT L_SPEC
-  if [ "$KIND" = lenses ]; then
+  if uses_lenses; then
     L_DEPTH=quick L_MARKER="Lens: $1"
     L_TASKTXT=$(council_ref "draft the $1 lens of it.")
     L_SPEC=$(lens_spec "$1" "$2")
@@ -311,8 +327,8 @@ cmd_start() {
   while [ $# -gt 0 ]; do
     case $1 in
       --project|--harness|--model|--effort) ;;
-      "$flag") [ "$KIND" != lite ] || refuse "unknown flag $1" ;;
-      --exception) [ "$KIND" != lenses ] || refuse "unknown flag $1"; EXCEPTION=1; shift; continue ;;
+      "$flag") [[ $KIND = lenses || $KIND = variants ]] || refuse "unknown flag $1" ;;
+      --exception) ! uses_lenses || refuse "unknown flag $1"; EXCEPTION=1; shift; continue ;;
       --depth|--synthesis-depth) [ "$KIND" = variants ] || refuse "unknown flag $1 (a lens lane has no depth)" ;;
       --no-variant-critics) [ "$KIND" = variants ] || refuse "unknown flag $1"; VARIANT_CRITICS=0; shift; continue ;;
       -*) refuse "unknown flag $1" ;;
@@ -337,11 +353,12 @@ cmd_start() {
   fi
   PROJECT_DIR=$PROJECTS/$PROJECT
   [ "$KIND" != lite ] || check_muster backfill
-  [ "$KIND" = lenses ] && DEPTH=quick
+  if uses_lenses; then DEPTH=quick; fi
+  if [ "$KIND" = discovery ]; then LANES='prior-art,risks,domain'; fi
   for need in PROJECT LANES DEPTH HARNESS MODEL EFFORT; do
     [ -n "${!need}" ] || refuse "$([ "$need" = LANES ] && echo "$flag" || echo "--$(printf '%s' "$need" | tr '[:upper:]' '[:lower:]')") is missing"
   done
-  if [ "$KIND" = lenses ]; then
+  if uses_lenses; then
     [[ ,$LANES, != *[!a-z0-9,-]* ]] || refuse "$flag takes lowercase words with digits and dashes (got '$LANES')"
   else
     SYNTH_DEPTH=${SYNTH_DEPTH:-$DEPTH}
@@ -355,10 +372,30 @@ cmd_start() {
   [ -d "$PROJECT_DIR" ] || refuse "no project $PROJECT: $PROJECT_DIR is not a directory"
   [ "$KIND" != variants ] || check_muster backfill
   mkdir -p "$RUN" || refuse "cannot write $RUN"
+  lock_next || return 1
+  if [ "$KIND" = discovery ]; then
+    if [ -s "$DATA/$COUNCIL/muster/discovery/findings.md" ]; then
+      echo "discovery ready: $DATA/$COUNCIL/muster/discovery"
+      return 0
+    fi
+    if [ -s "$RUN/record" ]; then
+      grep -qx 'kind=discovery' "$RUN/record" || refuse "another War Room already owns $COUNCIL"
+      local requested="$PROJECT/$HARNESS/$MODEL/$EFFORT"
+      read_record
+      [ "$requested" = "$PROJECT/$HARNESS/$MODEL/$EFFORT" ] || refuse "retry discovery with the original project and worker profile"
+    fi
+    local muster=$DATA/$COUNCIL/muster
+    mkdir -p "$muster" || refuse "cannot write $muster"
+    mkdir "$muster/.lock" 2>/dev/null || refuse "another Muster command is running for $COUNCIL"
+    ROUND_LOCK=$muster/.lock
+    [ ! -s "$muster/rounds.tsv" ] || refuse "Muster has already started its rounds for $COUNCIL"
+  elif grep -qx 'kind=discovery' "$RUN/record" 2>/dev/null && [ ! -s "$DATA/$COUNCIL/muster/discovery/findings.md" ]; then
+    refuse "discovery for $COUNCIL is still in progress"
+  fi
   # What `next` needs to carry on from here; written before the first lane starts, so a draft that comes early finds it.
-  if [ "$KIND" = lenses ]; then
-    printf 'kind=lenses\ncouncil=%s\nproject=%s\nlenses=%s\ndepth=%s\nharness=%s\nmodel=%s\neffort=%s\n' \
-      "$COUNCIL" "$PROJECT" "$LANES" "$DEPTH" "$HARNESS" "$MODEL" "$EFFORT" > "$RUN/record.tmp"
+  if uses_lenses; then
+    printf 'kind=%s\ncouncil=%s\nproject=%s\nlenses=%s\ndepth=%s\nharness=%s\nmodel=%s\neffort=%s\n' \
+      "$KIND" "$COUNCIL" "$PROJECT" "$LANES" "$DEPTH" "$HARNESS" "$MODEL" "$EFFORT" > "$RUN/record.tmp"
   else
     angles=$LANES
     [ "$KIND" != lite ] || angles=''
@@ -367,6 +404,7 @@ cmd_start() {
     [ -z "$MUSTER_REFS" ] || printf '%s\n' "$MUSTER_REFS" >> "$RUN/record.tmp"
   fi
   mv "$RUN/record.tmp" "$RUN/record" || refuse "cannot write $RUN/record"
+  if [ -n "$ROUND_LOCK" ]; then rmdir "$ROUND_LOCK"; ROUND_LOCK=''; fi
 
   # Tickets and briefs, then every start at the same moment.
   IFS=',' read -ra name_list <<< "$LANES"
@@ -377,7 +415,10 @@ cmd_start() {
     row=$(lane_row "$L_TITLE" "$L_ASK" "$L_DONE" 2>"$RUN/.file.err") && [ -n "$row" ] \
       || { lanes+=("$name"$'\t'-$'\t'"the ticket was not filed: $(last_line "$RUN/.file.err")"); continue; }
     task=$(task_of "$row")
-    if live_record "$task"; then lanes+=("$name"$'\t'"$task"$'\t'live); continue; fi
+    if live_record "$task" || { [ "$KIND" = discovery ] && ever_started "$task"; }; then
+      lanes+=("$name"$'\t'"$task"$'\t'live)
+      continue
+    fi
     lane_spec "$name" "$task"
     why=$(write_brief "$task" "$row" "$L_DEPTH" "$L_MARKER" "$L_TASKTXT" "$L_SPEC") \
       || { lanes+=("$name"$'\t'"$task"$'\t'"$why"); continue; }
@@ -385,7 +426,7 @@ cmd_start() {
     lanes+=("$name"$'\t'"$task"$'\t'start)
   done
   # The lanes `merge` reads: written for every lane that has a task, started now or already live.
-  if [ "$KIND" = lenses ]; then
+  if uses_lenses; then
     for lane in "${lanes[@]}"; do
       IFS=$'\t' read -r name task state <<< "$lane"
       [ "$task" = - ] || printf '%s\t%s\n' "$name" "$task"
@@ -436,8 +477,11 @@ read_record() {
 }
 
 # One `next` at a time for a council: events from three drafts at once queue behind each other, and each finds the work done.
-LOCK=''
-unlock_next() { rm -f "${LOCK:?}/pid"; rmdir "$LOCK" 2>/dev/null; }
+LOCK='' ROUND_LOCK=''
+unlock_next() {
+  if [ -n "$ROUND_LOCK" ]; then rmdir "$ROUND_LOCK" 2>/dev/null; fi
+  rm -f "${LOCK:?}/pid"; rmdir "$LOCK" 2>/dev/null
+}
 lock_next() {
   local waited=0 pid
   LOCK=$RUN/.next.lock
@@ -464,36 +508,38 @@ WAITS='' STATUS=0 SYNTH_TASK='' DRY_TASK='' PLAN='' LANE_ROW='' LANE_TASK=''
 VARIANTS=()   # the task of each angle, `-` when the council has no ticket for it yet
 
 # One lane is one ticket, one brief and at most one start. A refusal prints its line and makes the exit 1.
-run_lane() {  # <what> <title> <ask> <done> <depth> <marker> <task text> <spec text> -> sets LANE_ROW and LANE_TASK
-  local what=$1 title=$2 why
+run_lane() {  # <what> <title> <ask> <done> <depth> <marker> <task text> <spec text> [recon under review] -> sets LANE_ROW and LANE_TASK
+  local what=$1 title=$2 why spec=$8 review=${9:-}
   LANE_ROW=$(lane_row "$title" "$3" "$4" 2>"$RUN/.file.err") && [ -n "$LANE_ROW" ] \
     || { printf '%s: not started: the ticket was not filed: %s\n' "$what" "$(last_line "$RUN/.file.err")"; STATUS=1; LANE_ROW=''; return 1; }
   CHILDREN=''
   LANE_TASK=$(task_of "$LANE_ROW")
-  why=$(write_brief "$LANE_TASK" "$LANE_ROW" "$5" "$6" "$7" "$(printf '%s\n%s' "$6" "$8")") \
+  spec=${spec/--critic CRITIC /--critic $LANE_TASK }
+  why=$(write_brief "$LANE_TASK" "$LANE_ROW" "$5" "$6" "$7" "$(printf '%s\n%s' "$6" "$spec")") \
     || { printf '%s: %s not started: %s\n' "$what" "$LANE_TASK" "$why"; STATUS=1; return 1; }
+  if [ -n "$review" ] && [ "$(phase_of "$review")" = drafted ]; then
+    if why=$("$HANDOFF" assign "$review" --critic "$LANE_TASK" 2>&1); then
+      printf 'critic of %s: %s assigned\n' "$review" "$LANE_TASK"
+    else
+      printf 'critic of %s: %s not assigned: %s\n' "$review" "$LANE_TASK" "$(first_line_of "$why")"; STATUS=1; return 1
+    fi
+  fi
   ever_started "$LANE_TASK" && return 0
   launch "$LANE_TASK" "$LANE_ROW"
   printf '%s: %s started\n' "$what" "$LANE_TASK"
 }
 
 # a. A draft with no critic gets one, and the handoff names it.
-step_critic() {  # <lane title> <lane task>
-  local title=$1 lane=$2 out spec
-  [ "$(phase_of "$lane")" = drafted ] || return 0
+step_critic() {  # <lane title> <lane task> [additional rubric]
+  local title=$1 lane=$2 spec
+  case $(phase_of "$lane") in drafted|assigned) ;; *) return 0 ;; esac
   # shellcheck disable=SC2016  # the backquotes are the brief's own text
   spec=$(printf 'Read the draft with the deep-recon critic rubric (.agents/skills/deep-recon/SKILL.md, "Critic rubric").\nWrite no report.md and no backlog item: your rounds go in critic.md through the verdict command.\nEnd each round with `%s/bin/jg-recon-handoff.sh verdict %s --critic CRITIC --hash <sha256 of %s/report.md> --gaps <k>`.' \
     "$JG_ROOT" "$lane" "$DATA/$lane")
+  spec+=$'\n'"${3:-}"
   run_lane "critic of $lane" "$title critic" "Read the draft of $lane as its critic and close every gap with it." \
     "The critic's verdict is recorded with bin/jg-recon-handoff.sh verdict." quick "Role: critic of $lane" \
-    "$(council_ref "you are the critic of $title (task $lane); its draft is $DATA/$lane/report.md.")" "$spec" || return 0
-  # The verdict command names the critic's own task id, which is known once its ticket is.
-  sed -i.bak "s|--critic CRITIC |--critic $LANE_TASK |" "$DATA/$LANE_TASK/brief.md" && rm -f "$DATA/$LANE_TASK/brief.md.bak"
-  if out=$("$HANDOFF" assign "$lane" --critic "$LANE_TASK" 2>&1); then
-    printf 'critic of %s: %s assigned\n' "$lane" "$LANE_TASK"
-  else
-    printf 'critic of %s: %s not assigned: %s\n' "$lane" "$LANE_TASK" "$(first_line_of "$out")"; STATUS=1
-  fi
+    "$(council_ref "you are the critic of $title (task $lane); its draft is $DATA/$lane/report.md.")" "$spec" "$lane" || return 0
 }
 
 synthesis_spec() {
@@ -565,20 +611,88 @@ next_lenses() {
     row=$(child_titled "$lens lens")
     if [ -z "$row" ]; then [ -n "$WAITS" ] || WAITS="waits: $lens no lane"; continue; fi
     task=$(task_of "$row"); phase=$(phase_of "$task")
-    [ "$phase" != none ] || { [ -n "$WAITS" ] || WAITS="waits: $task $lens draft"; }
+    if [ "$phase" = none ]; then
+      [ -n "$WAITS" ] || WAITS="waits: $task $lens draft"
+    else
+      LENS_REPORTS+=$'\n'"$DATA/$task/report.md"
+    fi
   done
-  if [ -n "$WAITS" ]; then echo "$WAITS"; else echo "every lens drafted: run bin/jg-muster-council.sh merge $COUNCIL"; fi
+}
+
+LENS_REPORTS=''
+next_discovery() {
+  local title='Muster discovery Recon' row task critic verdict report_hash actor stage out
+  local dest=$DATA/$COUNCIL/muster/discovery
+  if [ -s "$dest/findings.md" ]; then echo "discovery ready: $dest"; return 0; fi
+
+  next_lenses
+  if [ -n "$WAITS" ]; then echo "$WAITS"; return 0; fi
+  row=$(child_titled "$title")
+  task=''
+  if [ -n "$row" ]; then task=$(task_of "$row"); fi
+  case ${task:+$(phase_of "$task")} in
+    ''|none)
+      # shellcheck disable=SC2016
+      run_lane discovery "$title" "Synthesize the discovery lenses for $COUNCIL." \
+        "Muster has reviewed findings and proposed first-round questions." deep "Role: Muster discovery" \
+        "$(council_ref "synthesize the lens reports:$LENS_REPORTS")" \
+        'Follow the deep Recon report and draft/revise handoff. This is pre-pack discovery. In the report, give sourced competitor and prior-art findings, risks, edge cases, candidate use cases and domain objects, and concrete engineering practices (including applicable SOLID principles and how to check them). Mark assumptions and unanswered decisions. Under section 10, add a heading exactly `### First round` followed by one fenced `json` block in the format in bin/jg-muster.sh. Propose only independent questions that meet the Muster question standard and cite the discovery finding in each why. Use [] if none is ready. Section 8 should describe how the findings inform the pack and section 11 should explain how to check the proposed use cases. Do not write work orders or ask the captain.' || return "$STATUS"
+      ;;
+    accepted)
+      row=$(child_titled "$title critic")
+      [ -n "$row" ] || refuse "discovery was accepted without its War Room critic"
+      critic=$(task_of "$row")
+      verdict=$("$HANDOFF" show "$task" | tail -n 1)
+      report_hash=$(cut -f4 <<<"$verdict")
+      actor=$(cut -f5 <<<"$verdict")
+      [ "$actor" = "$critic" ] || refuse "discovery was accepted by $actor; expected $critic"
+      out=$("$GATE" "$task" 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
+      mkdir -p "${dest%/*}" || return 1
+      stage=$(mktemp -d "${dest%/*}/.discovery.XXXXXX") || return 1
+      if cp "$DATA/$task/report.md" "$stage/findings.md" &&
+        [ "$(sha256sum "$stage/findings.md" | cut -d' ' -f1)" = "$report_hash" ] &&
+        awk '
+          /^### First round$/ { if (++found > 1) exit 1; expect=1; next }
+          expect && /^[[:space:]]*$/ { next }
+          expect { if ($0 != "```json") exit 1; expect=0; reading=1; next }
+          reading && $0 == "```" { reading=0; closed=1; next }
+          reading { print }
+          END { if (!closed || found != 1 || reading) exit 1 }
+        ' "$stage/findings.md" > "$stage/round.json" &&
+        "$SCRIPT_DIR/jg-muster.sh" check-discovery-questions "$stage/round.json" &&
+        mv "$stage" "$dest"; then
+        echo "discovery ready: $dest"
+      else
+        rm -f -- "$stage/findings.md" "$stage/round.json"
+        rmdir "$stage"
+        echo "jg-war-room: cannot publish discovery for $COUNCIL: check the reviewed report hash and First round JSON" >&2
+        return 1
+      fi
+      ;;
+    drafted|assigned)
+      step_critic "$title" "$task" "Check the synthesis against the original lens reports:$LENS_REPORTS
+Verify evidence, assumptions, candidate use cases and domain, risks, edge cases, engineering practices and whether each first-round question follows the Muster question standard and matches the evidence."
+      ;;
+    *) echo "waits: $task discovery revision" ;;
+  esac
+  return "$STATUS"
 }
 
 cmd_next() {
   local raw angle row task angle_list=()
   [ $# -eq 1 ] || refuse "$USAGE"
   open_council "$1"
+  [ -s "$RUN/record" ] || refuse "no War Room record for $COUNCIL"
+  lock_next || return 1
   read_record
   [ -d "$PROJECT_DIR" ] || refuse "no project $PROJECT: $PROJECT_DIR is not a directory"
-  [ "$KIND" != lenses ] || { next_lenses; return 0; }
+  if [ "$KIND" = lenses ]; then
+    next_lenses
+    if [ -n "$WAITS" ]; then echo "$WAITS"; else echo "every lens drafted: run bin/jg-muster-council.sh merge $COUNCIL"; fi
+    return 0
+  fi
   if [ -f "$RUN/approved" ]; then echo "approved: nothing is due"; return 0; fi
-  lock_next || return 1
+  [ "$KIND" != discovery ] || { next_discovery; return $?; }
   check_muster backfill
 
   IFS=',' read -ra angle_list <<< "$LANES"
@@ -615,7 +729,7 @@ cmd_approve() {
   [ -n "${words//[[:space:]]/}" ] || refuse "--words takes the owner's words, quoted"
   RUN=$DATA/war-room/$COUNCIL
   read_record
-  [ "$KIND" != lenses ] || refuse "council $COUNCIL gathers questions with lenses: it has no plan to approve"
+  ! uses_lenses || refuse "council $COUNCIL gathers questions with lenses: it has no plan to approve"
   [ -s "$RUN/plan-asked" ] || refuse "the owner's plan approval was not asked yet: run jg-war-room.sh next $COUNCIL"
   plan=$(cat "$RUN/plan-asked")
   if grep -q '^swarm: started' "$RUN/approved" 2>/dev/null; then echo "already started"; return 0; fi
@@ -634,6 +748,7 @@ case ${1:-} in
   check) shift; cmd_check "$@"; exit $? ;;
   muster-depth) shift; [ "$#" -eq 1 ] || refuse "$USAGE"; open_council "$1"; muster_depth backfill; printf '%s\n' "$ALIGNMENT" ;;
   lenses) shift; KIND=lenses; cmd_start "$@"; exit $? ;;
+  discover) shift; KIND=discovery; cmd_start "$@"; exit $? ;;
   next) shift; cmd_next "$@"; exit $? ;;
   approve) shift; cmd_approve "$@"; exit $? ;;
   *) refuse "$USAGE" ;;

@@ -90,7 +90,8 @@ out=$(handoff draft "$V1") || fail "T1 the draft should be recorded: $out"
 critic=''
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   critic=$(child_titled "$council" 'alpha variant Recon critic' || true)
-  [ -n "$critic" ] && [ "$(handoff assignee "$V1" | cut -f1)" = "$(task_of "${critic:-none}")" ] && break
+  [ -n "$critic" ] && [ "$(handoff assignee "$V1" | cut -f1)" = "$(task_of "$critic")" ] &&
+    [ "$(starts_of "$(task_of "$critic")")" = 1 ] && break
   /bin/sleep 0.5
 done
 [ -n "$critic" ] || fail "T1 no critic child within 5 s of the draft"
@@ -198,7 +199,7 @@ out=$(handoff draft "$stask") || fail "T6 the synthesis draft should be recorded
 scritic=''
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   scritic=$(child_titled "$council" 'synthesis Recon critic' || true)
-  [ -n "$scritic" ] && break
+  [ -n "$scritic" ] && [ "$(handoff assignee "$stask" | cut -f1)" = "$(task_of "$scritic")" ] && break
   /bin/sleep 0.5
 done
 [ -n "$scritic" ] || fail "T6 the synthesis got no separate critic within 5 s of its draft"

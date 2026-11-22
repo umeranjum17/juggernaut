@@ -1,6 +1,7 @@
 # muster: the closed list of states of the machine "one muster, from the depth pick to a released and proven build".
 # value<TAB>mark (initial, final or -)<TAB>kind (active, waiting, rest, final)<TAB>meaning
 triage	initial	active	the depth is picked and no round has been asked yet
+discover	-	active	War Room researches the raw idea and a critic reviews the findings for round 1
 council	-	active	specialist lenses argue first and their questions merge into round 1
 intent	-	active	the why, the people and the end state are being agreed (docs/vision.md)
 lexicon	-	active	the shared language is being written (GLOSSARY.md with the core objects)

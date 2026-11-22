@@ -1,6 +1,7 @@
 machine	muster	data/<ticket>/muster/ (rounds.tsv, approvals.tsv, manifest-<sha12>.tsv), the project documents, its done-done run records and the release record	core/machines/observers/muster.sh
 enum	muster
 state	triage	initial	Pick the depth; no question round has been asked yet.	-	active
+state	discover	normal	Review the discovery findings and prepare the first round.	-	active
 state	council	normal	Specialists argue first, and their questions merge into round 1.	-	active
 state	intent	normal	Agree why this exists, for whom and the end state in the vision.	-	active
 state	lexicon	normal	Write one shared language: every core object is a glossary term.	-	active
@@ -16,6 +17,8 @@ state	blitz	normal	The build is under way: landed, not secured. An objective has
 state	landed	normal	Every objective is proven: landed, not released. No release names the landed commit.	-	active
 state	secured	terminal	Secured: every objective has a receipt on the landed commit and a release names it.	-	final
 edge	(none)	pick	triage	bin/jg-muster-depth.sh:record	-	Main records the depth line on the ticket; no review mark is left	jg-muster-objectives
+edge	triage	discover	discover	bin/jg-war-room.sh:discover	-	War Room starts the discovery lenses before the first round	jg-muster-objectives
+edge	discover	round	intent	bin/jg-muster.sh:round	-	the reviewed findings feed the first round	jg-muster-objectives
 edge	triage	council	council	bin/jg-muster-council.sh:merge	-	the ask is a new project or a risky feature, or the captain asks for the council	jg-muster-objectives
 edge	triage	round	intent	bin/jg-muster.sh:round	-	the first round of questions is asked	jg-muster-objectives
 edge	council	round	intent	bin/jg-muster.sh:round	-	every lens is drafted and its questions are merged into round 1	jg-muster-objectives

@@ -25,6 +25,11 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P); root=$(cd "$here/../../..
 JG_HOME=${JG_HOME:-${JG_ROOT_OVERRIDE:-$root}}; export JG_HOME
 DATA=${JG_DATA_OVERRIDE:-$JG_HOME/data}; STATE=${JG_STATE_OVERRIDE:-$JG_HOME/state}
 D=$DATA/$id/muster
+if [ ! -s "$D/rounds.tsv" ] && ! compgen -G "$D/manifest-*.tsv" >/dev/null &&
+  grep -qx 'kind=discovery' "$DATA/war-room/$id/record" 2>/dev/null; then
+  echo discover
+  exit 0
+fi
 [ -d "$D" ] || { echo none; exit 0; }
 
 P=$(head -n 1 "$D/project" 2>/dev/null)

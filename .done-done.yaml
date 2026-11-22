@@ -11,6 +11,9 @@ journeys:
   dispatch-muster-council:
     tier: local
     command: bash tests/jg-muster-council.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  muster-discovery:
+    tier: local
+    command: bash tests/jg-muster-discover.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   muster-acceptance:
     tier: local
     command: bash tests/muster-acceptance.test.sh > "$DONE_DONE_EVIDENCE_ROOT/muster.log" 2>&1

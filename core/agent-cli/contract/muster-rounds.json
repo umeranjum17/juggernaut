@@ -4,17 +4,17 @@
   "entries": [
     {
       "path": ["muster", "round"],
-      "meaning": "Show one round of questions as one card per question and record each question's gate.",
+      "meaning": "Show one round of questions as cards. Without --questions, show the reviewed discovery questions for round 1.",
       "roles": ["overwatch"],
       "args": [
         {"name": "ticket", "type": "text", "required": true},
-        {"name": "questions", "type": "path", "required": true, "flag": "--questions"},
+        {"name": "questions", "type": "path", "required": false, "flag": "--questions"},
         {"name": "round", "type": "number", "required": false, "flag": "--round"},
         {"name": "doc", "type": "path", "required": false, "flag": "--doc"}
       ],
       "changes": true,
       "method": "POST",
-      "form": "bin/jg-muster.sh round <ticket> --questions <file> [--round <n>] [--doc <vision file>]",
+      "form": "bin/jg-muster.sh round <ticket> [--questions <file>] [--round <n>] [--doc <vision file>]",
       "repeat_key": "ticket+round: a repeat posts only the questions with no row yet",
       "exits": {"0": 0, "1": 1, "2": 2},
       "schema": "muster.round.v1",

@@ -90,10 +90,16 @@ plain plan war-room lenses "$t" --project helpdesk --lenses user,domain "${profi
   cat "$JG_DATA_OVERRIDE/war-room/$t/"*.log >&2
   fail 'lens launches'
 }
-for _ in {1..40}; do
-  if out=$(plain muster council "$t" 2>&1); then break; fi
-  /bin/sleep 0.25
-done
+run=$JG_DATA_OVERRIDE/war-room/$t
+deadline=$((SECONDS + 90))
+while IFS=$'\t' read -r lens task; do
+  until [ -s "$run/$task.rc" ] || [ "$SECONDS" -ge "$deadline" ]; do /bin/sleep 0.25; done
+  if ! grep -qx 0 "$run/$task.rc" 2>/dev/null; then
+    cat "$run/$task.log" >&2
+    fail "the $lens fixture worker did not finish successfully"
+  fi
+done < "$run/lanes"
+out=$(plain muster council "$t" 2>&1)
 assert_contains "$out" 'merged: round 1' 'the lens drafts merge as round 1'
 refuses 'no approval was asked' plan war-room start "$t" "${war_args[@]}"
 refuses 'no approval was asked' plan war-room lite "$t" "${profile[@]}"

@@ -15,6 +15,14 @@ Runs independent Recons from different angles, then one synthesis that writes th
 - `/war-room lite <problem>`: use `jg plan war-room lite` to start the synthesis Recon, followed by its critic and the dry run.
 - `/war-room <problem>` with no word runs `fast` (the owner's pick, 20 Nov).
 
+## Discovery
+
+For early discovery, put the original idea on the Muster ticket and start `jg muster discover` with the project and dispatch profile.
+War Room starts the competitor and prior-art, risk and edge case, and domain lenses, then combines their findings for a separate critic.
+Use `jg plan war-room next <ticket>` to advance the run when needed.
+When discovery is ready, use the findings and question proposals as described in [Muster](../muster/SKILL.md#discovery-council-and-survey).
+Planning and Blitz keep their pack approval requirements.
+
 ## Intake
 1. Load `task-dispatch`.
 2. File one council ticket with the owner's words quoted.

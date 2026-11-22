@@ -2,7 +2,7 @@
 # jg-muster.sh - the board rounds of a muster and the one answer loop that closes them.
 #
 # Usage:
-#   jg-muster.sh round <ticket> --questions <file> [--round <n>] [--doc <vision file>]
+#   jg-muster.sh round <ticket> [--questions <file>] [--round <n>] [--doc <vision file>]
 #   jg-muster.sh answer <ticket> --card <card-key> [--value <option letter> | --words <text>]
 #   jg-muster.sh answer <ticket> --note <chat note id>
 #   jg-muster.sh answer <ticket> --default <R<round>Q<k>>
@@ -23,6 +23,8 @@
 #    "default": "a", "default_by": "<ISO UTC time>", "required": true, "must": "plan-approval"}
 # Only question, why, options, recommend and recommend_reason are required. An irreversible question takes no default
 # and is guarded on the board; a reversible one may carry a default and the time it is taken.
+# After discovery, `round <ticket>` uses the reviewed questions for round 1. Pass --questions to show a refined set
+# or a later round. A ticket with discovery in progress cannot post a round until its reviewed findings are ready.
 # For each question, in order: the card is posted through bin/jg-question-card.sh post --raised-by <ticket> (so the
 # card rules refuse before anything is recorded), then one gate is made with a dated captain-hold (a dated hold posts
 # no second, yes/no card), and the gate id the backlog returned is looked up by the exact question text among the
@@ -173,9 +175,10 @@ QJQ='
   )'
 check_questions() {  # <file>
   [ -f "$1" ] || die "refused: the questions file $1 does not exist"
-  jq -e "$QJQ" "$1" >/dev/null 2>&1 \
+  jq -es "length == 1 and (.[0] | $QJQ)" "$1" >/dev/null 2>&1 \
     || die "refused: $1 is not a list of one to five questions; each needs a question of 12 words or fewer ending in ?, a why of 130 characters or fewer, two to four options a b c d (label with no ? or parentheses, outcome), a recommend that names one, a recommend_reason, and no default on an irreversible one (see the header of bin/jg-muster.sh)"
 }
+no_questions() { jq -e -s '. == [[]]' "$1" >/dev/null 2>&1; }
 gate_text() {  # <questions file> <index>: the gate's question text, the one record of the words
   jq -r --argjson i "$2" '.[$i] as $q
     | $q.question + " " + ($q.options | map(.value + ") " + .label) | join(" "))
@@ -288,6 +291,7 @@ cmd_round() {
   [ -n "$ticket" ] || usage
   shift
   while [ $# -gt 0 ]; do
+    [ $# -ge 2 ] || usage
     case "$1" in
       --questions) shift; file=${1:-} ;;
       --round) shift; round=${1:-} ;;
@@ -296,8 +300,22 @@ cmd_round() {
     esac
     shift
   done
-  [ -n "$file" ] || usage
-  use_ticket "$ticket"; check_questions "$file"; lock
+  use_ticket "$ticket"; lock
+  local discovery=$MDIR/discovery
+  if grep -qx 'kind=discovery' "$DATA/war-room/$ticket/record" 2>/dev/null && [ ! -s "$discovery/findings.md" ]; then
+    die "discovery is still in progress; run jg plan war-room next $ticket"
+  fi
+  if [ -z "$file" ]; then
+    [ -s "$discovery/round.json" ] || usage
+    [ "${round:-1}" = 1 ] || die "only round 1 can use discovery questions; pass --questions for later rounds"
+    file=$discovery/round.json
+    round=1
+    if no_questions "$file"; then
+      echo "discovery proposed no first-round questions"
+      return 0
+    fi
+  fi
+  check_questions "$file"
   if [ -z "$round" ]; then
     round=$(awk -F'\t' '$1 ~ /^[0-9]+$/ && $1 > m { m = $1 } END { print m + 1 }' "$RFILE" 2>/dev/null); round=${round:-1}
   fi
@@ -700,6 +718,7 @@ cmd=$1
 shift
 case "$cmd" in
   round) cmd_round "$@" ;;
+  check-discovery-questions) [ $# -eq 1 ] || usage; no_questions "$1" || check_questions "$1" ;;
   answer) cmd_answer "$@" ;;
   revise) cmd_revise "$@" ;;
   round-status) cmd_status "$@" ;;

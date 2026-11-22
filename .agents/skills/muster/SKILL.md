@@ -1,6 +1,6 @@
 ---
 name: muster
-description: Use when the captain invokes /muster (council, survey, skip, light, full or complete) or intake picks a big ask - align on what to build, with question rounds and a checked document pack, before any plan or code.
+description: Use when the captain invokes /muster (discover, council, survey, skip, light, full or complete) or intake picks a big ask - align on what to build, with question rounds and a checked document pack, before any plan or code.
 user-invocable: true
 metadata:
   internal: true
@@ -16,6 +16,7 @@ The `jg muster` commands use Juggernaut's existing machines for rounds, approval
 Invocation words:
 - `/muster <idea>` - triage picks the depth, then the steps below run at that depth.
 - `/muster skip|light|full|complete <idea>` - an explicit depth word wins over the picker.
+- `/muster discover <idea>` - run discovery first, then continue at the picked depth.
 - `/muster council <idea>` (alias `/council`) - several specialist lanes argue first; the captain gets only what they cannot settle.
 - `/muster survey` - an existing project: read the code first, draft the glossary, core objects and their state values, record the standards already in use (an existing CONSTRAINTS.md is read into ways of working), propose preserve journeys, and ask only about gaps.
 
@@ -36,8 +37,8 @@ A ticket with no depth line is "not picked yet", never skip.
 |---|---|---|
 | skip | a fix, a small change, a question, a Recon, a slice of an approved plan | none; the line reads `Muster: skip - <reason>` |
 | light | a small feature | 1 round, up to 3 questions; at least one went to the captain, so there is a decision to record |
-| full | a big or complex feature | up to 3 rounds, up to 10 questions; council on risk words or his ask |
-| complete | a brand-new project | up to 5 rounds, up to 20 questions; council by default |
+| full | a big or complex feature | discovery, then up to 3 rounds and 10 questions |
+| complete | a brand-new project | discovery, then up to 5 rounds and 20 questions |
 
 The numbers are targets, not caps.
 What each depth writes is owned by `formats.md` section 7: read it before drafting, and never restate it in a ticket.
@@ -49,6 +50,7 @@ One machine, the same for every depth; a depth skips the states it does not need
 | State | Who acts | Writes | Moves on when | Goes back when |
 |---|---|---|---|---|
 | triage | Main: `jg muster depth`, `depth record` | the depth line | depth recorded, no `review` left | the captain changes it |
+| discover | War Room lenses, synthesis and critic | reviewed findings and proposed first-round questions | the critic accepts the findings and the first-round input is ready | the critic finds a gap |
 | council | lens lanes, never gated | merged questions; agreed answers taken as agent; the domain lens's objects, states and events | every lens drafted and merged | never |
 | intent | drafter; captain answers | `docs/vision.md` | sections present, one page, no placeholder, no open intent question | a later finding changes who or why |
 | lexicon | drafter; domain lens | `GLOSSARY.md` with core objects | every entity and core object is a term | a prototype or code uses a missing word |
@@ -69,7 +71,7 @@ The base of every objective in a brand-new project is its skeleton commit.
 Questions are asked in rounds, one round ticket each, one card per question.
 Read [the requirements coverage map](requirements.md) before the first round and [the question standard](questions.md) before posting any card.
 
-1. Read the repository and its docs, then seed the coverage map from what they establish.
+1. Read the repository and its docs, then seed the coverage map from what they establish and from the reviewed discovery findings when available.
 2. Compute the frontier from the map: every question whose prerequisites are settled.
    A question that depends on another open one belongs to a later round.
 3. Rank by impact times uncertainty, drop what is not asked (see `questions.md`), and keep at most five per round.
@@ -104,7 +106,16 @@ Only the captain's own answers count for an irreversible question and for approv
 - War Room and Blitz refuse to start without a verified approval or that exception.
   Never plan or build around the refusal.
 
-## Council and survey
+## Discovery, council and survey
+
+- Run `jg muster discover` before the first round for full and complete depth, or when explicitly requested.
+  For a survey-first project, read the existing project and use its findings when seeding the coverage map.
+  Load [War Room](../war-room/SKILL.md#discovery) for the discovery run.
+- Use the reviewed findings to draft the pack's use cases, domain candidates, engineering practices and proof journeys.
+  Seed the first frontier with the proposed questions and check what still needs the captain's answer.
+  `jg muster round <ticket>` posts the reviewed proposals for round 1 as written.
+  Pass `--questions` with a refined set when the coverage map changes the frontier.
+  If no question is ready, keep gathering evidence before opening a card.
 - Council runs lens lanes through War Room's lane machinery as a separate operation that never needs a pack: `jg muster council <ticket>`, then `jg plan war-room lenses`.
   `next` stops after the lens drafts, and the merge writes the questions back to the round.
   Give the lenses the evidence from the repository read and carry their merged questions into the coverage map when Muster continues to a pack.
