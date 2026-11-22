@@ -10,7 +10,8 @@
 # states for an approved ordinary implementation plan, else its default.
 # Prints `<ticket-id> on <harness> <model> <effort>` and exits 0. Any refusal is one line on stderr with its cause
 # and exit 1: the project's mode or the home's route cannot be read, the ticket or approval is refused, or the
-# brief is not written. A repeat after a cut run finishes the start and files nothing twice. Callers: bin/jg-answer-route.sh (an answered card), core/goal-loop (a Goal's ship and fix steps).
+# brief is not written. A repeat after a cut run finishes the start and files nothing twice.
+# Callers: bin/jg-answer-route.sh, core/goal-loop and core/trunk-verify/repair.sh.
 set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 JG_ROOT="${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
@@ -36,6 +37,11 @@ done
 
 mode=$(JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-project-mode.sh" "$project" 2>/dev/null | awk '{ print $1 }')
 [ -n "$mode" ] || fail "the project's registered delivery mode could not be read"
+# Keep the ticket even when the route is unavailable, so the report and the next attempt have an owner.
+if ! JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-backlog.sh" show "$id" >/dev/null 2>&1; then
+  out=$(JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-backlog.sh" add "$id" "$title" --kind ship --repo "$project" --priority "$priority" --body-file "$body" 2>&1) \
+    || fail "the ticket was refused: $(last "$out")"
+fi
 route=
 if [ -f "$CONFIG/crew-dispatch.json" ]; then
   rule=$(jq -c '
@@ -46,11 +52,6 @@ fi
 [ -n "$route" ] || fail "this home's dispatch config names no route"
 read -r harness model effort <<< "$route"
 
-# Each step is skipped when an earlier, cut run already did it, so a repeat finishes the start and never files twice.
-if ! JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-backlog.sh" show "$id" >/dev/null 2>&1; then
-  out=$(JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-backlog.sh" add "$id" "$title" --kind ship --repo "$project" --priority "$priority" --body-file "$body" 2>&1) \
-    || fail "the ticket was refused: $(last "$out")"
-fi
 if [ ! -s "$DATA/$id/brief.md" ]; then
   out=$(JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-brief.sh" "$id" "$project" --mode "$mode" --ticket "$id" 2>&1) \
     || fail "the brief was not written: $(last "$out")"

@@ -6,11 +6,10 @@
 # trunk commit it carries. bin/jg-pr-state.sh reads that pull request's required checks. A check in a failed state (a state
 # that is not one of the waiting ones) on a pull request that is still open is a red release, and the watch does two things,
 # once for each head:
-#   1. files one ticket `ci-red-release-<project>-<head12>` naming the failing check, through bin/jg-backlog.sh;
-#   2. records the red as the trunk's CI result for that head with `bin/jg-trunk.sh ci <project-dir> <head> red`, which moves the
-#      green pin, and every home, back to the last green commit and keeps the red in data/trunk-ci.tsv.
-# A head with a red row in data/trunk-ci.tsv is not touched again, so the next tick prints and files nothing. A forge that does
-# not answer, a merged or closed pull request and a pull request with no failed check are silent. Each filing prints one line.
+#   1. records the red through `bin/jg-trunk.sh ci <project-dir> <head> red <url> <failed check>`, which owns the green pin;
+#   2. through the same command, files one fix ticket for that head and submits it to auto-dispatch.
+# A head with an approved repair is not touched again. An incomplete submission is retried on the next tick.
+# A forge that does not answer, a merged or closed pull request and a pull request with no failed check are silent.
 #
 # It also writes data/trunk-release-age.tsv for the board's Landed -> Released view, one row per project with a release row:
 #   project, landed-not-released count, oldest landed-not-released epoch (empty when none), age in seconds at this run
@@ -54,15 +53,13 @@ while IFS= read -r p; do
   read -r head url < <(awk -F'\t' -v p="$p" 'NF >= 6 && $1 == p { c = $3; u = $6 } END { print c, u }' "$DATA/trunk-releases.tsv")
   url=$(grep -Eo 'https?://[^"[:space:],]+/pull/[0-9]+' <<<"$url" | head -n 1)
   [ -n "$head" ] && [ -n "$url" ] || continue
-  grep -Eq "^$p	$head	[0-9]+	red(	|$)" "$DATA/trunk-ci.tsv" 2>/dev/null && continue
+  item=ci-red-release-$p-${head:0:12}
+  [ ! -f "$STATE/dispatch-approved/$item" ] && [ ! -f "$STATE/dispatch-approved/ci-red-$p-${head:0:12}" ] || continue
   out=$(JG_HOME=$FMH timeout --kill-after=5 "$BUDGET" "$FMH/bin/jg-pr-state.sh" "$url" 2>/dev/null) || continue  # the forge did not answer: the next tick asks again
   grep -q '^STATE: ' <<<"$out" && continue  # merged or closed: not a release in flight
   bad=$(failed_check "$out"); [ -n "$bad" ] || continue
-  item=ci-red-release-$p-${head:0:12}
-  body="The release pull request is red: $url carries $p at ${head:0:12}. Failing check: $bad. Find the root cause and land the fix on the trunk; the release goes out again from the next green commit. Never re-run it."
-  JG_HOME=$FMH timeout "$BUDGET" "$FMH/bin/jg-backlog.sh" add "$item" "[blocker] release red: $p ${bad%% (*}: fix it fast" --kind ship --body "$body" >/dev/null 2>&1 \
-    || JG_HOME=$FMH timeout "$BUDGET" "$FMH/bin/jg-backlog.sh" show "$item" >/dev/null 2>&1 || continue  # no ticket yet: the next tick tries again
-  JG_HOME=$FMH timeout "$BUDGET" "$FMH/bin/jg-trunk.sh" ci "$dir" "$head" red >&2 || continue
-  echo "trunk-release: $url is red ($bad); filed $item and moved the green pin back"
+  JG_HOME=$FMH JG_STATE_OVERRIDE=$STATE JG_DATA_OVERRIDE=$DATA JG_CONFIG_OVERRIDE=$FMH/config \
+    timeout "$BUDGET" "$FMH/bin/jg-trunk.sh" ci "$dir" "$head" red "$url" "$bad" 9>&- >&2 || continue
+  echo "trunk-release: $url is red ($bad); repair submitted to dispatch"
 done < <(awk -F'\t' 'NF >= 6 { print $1 }' "$DATA/trunk-releases.tsv" | sort -u)
 exit 0

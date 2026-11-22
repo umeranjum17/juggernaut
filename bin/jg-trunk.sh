@@ -25,6 +25,7 @@
 #        jg-trunk.sh waiver <project-dir> --rule <owner-rule-id>   Overwatch only: the captain waived his word for this project's live until the stable point
 #        jg-trunk.sh waiver <project-dir> --rule <owner-rule-id> --release   Overwatch only: the captain's standing word lets this project's green release pull request merge by itself
 #        jg-trunk.sh ci <project-dir> <sha> green|red  record the CI result for a live commit; red moves the green pin, and every home, back to the last green one
+#        jg-trunk.sh ci <project-dir> <sha> red <url> <failed-check>  record a release failure once and submit its fix to dispatch
 #        jg-trunk.sh release <project-dir>             push the last green commit of the trunk and open the ONE release PR trunk -> default branch, owned by task release-<project>-<trunk>; refuses without his word
 #        jg-trunk.sh waiver <project-dir> --rule <owner-rule-id> --autorelease   Overwatch only: the captain chose this project for the automatic release (publish, autorelease); a plain --release waiver does not
 #        jg-trunk.sh publish <project-dir>             for a project chosen for the automatic release: push the green pin once the trunk holds enough, or the tip as a candidate after a red; one batch at a time, never forced
@@ -225,6 +226,8 @@ LANDER_ACCOUNT="${CLAUDE_CONFIG_DIR:-}"; unset CLAUDE_CONFIG_DIR
 . "$SCRIPT_DIR/../core/trunk-verify/tip-code.sh"
 # shellcheck source=core/trunk-verify/record.sh
 . "$SCRIPT_DIR/../core/trunk-verify/record.sh"
+# shellcheck source=core/trunk-verify/repair.sh
+. "$SCRIPT_DIR/../core/trunk-verify/repair.sh"
 export JG_HOME JG_CONFIG_OVERRIDE="$CONFIG"
 
 usage() { sed -n '2,/^set -eu$/p' "${BASH_SOURCE[0]}" | sed -e 's/^# \{0,1\}//' -e '$d'; }
@@ -1789,15 +1792,19 @@ unlock() { jg_lock_release "$1" || true; LOCKS=${LOCKS/"$1 "/}; }
 
 # Report one charged red commit and change nothing on the trunk: the verify never reverts. The green pin goes back below the commit and the red
 # stays recorded (data/trunk-ci.tsv, source verify) so no later landing moves the pin over it, one line-red alert names the commit and its
-# ticket, and the lane's ticket is told. The ticket's owner repairs it forward or reverts it on a lane of its own; landings go on meanwhile.
+# ticket, the lane's ticket is told and a fix is sent to auto-dispatch. Landings go on meanwhile.
 report_red() {  # <commit> <reason> [<top>]
   local c=$1 id why
   id=$(awk -F'\t' -v c="$c" '$3 == c { i = $1 } END { print i }' "$DATA/trunk-landings.tsv" 2>/dev/null)
   lock "$STATE/.trunk-$PN.lock"; unpin_green "$c"; row trunk-ci.tsv "$PN" "$c" "$(date +%s)" red verify; unlock "$STATE/.trunk-$PN.lock"
-  why="$2${id:+ (ticket $id)}; nothing was reverted and landings go on; live stays on the last green commit $(green_short); ${id:-its owner} repairs it forward or reverts it on a lane of its own"
+  why="$2${id:+ (ticket $id)}; nothing was reverted and landings go on; live stays on the last green commit $(green_short)"
   line_red "$c" "$why"
-  [ -z "$id" ] || tell_lane "$id" "$TRUNK commit ${c:0:12} ($id) went red after it landed: $2. Nothing was reverted. Repair it on a new lane, or revert it there."
+  [ -z "$id" ] || tell_lane "$id" "$TRUNK commit ${c:0:12} ($id) went red after it landed: $2. Nothing was reverted."
   echo "verify: $TRUNK is red at ${c:0:12}: $why" >&2
+  if ! verify_repair "$c" "$2" "$id" >&2; then
+    echo "warning: verify repair for $PN at ${c:0:12} could not be prepared; the next tick retries the handoff" >&2
+    [ -z "$id" ] || echo "verify: if dispatch stays unavailable, $id repairs it forward or reverts it on a lane of its own" >&2
+  fi
   miss_charge "$c" "${3:-}"
 }
 
@@ -1856,6 +1863,7 @@ cmd_verify_due() {
   local tip green
   open_project "${1-}"
   vr_reap >&2  # a verify killed where no trap runs still ends with a record, so its tip is not started again
+  verify_repair_pending >&2 || echo "warning: a pending verify repair for $PN could not be prepared" >&2
   tip=$(rev "refs/heads/$TRUNK") || return 1
   green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
   [ "$green" != "$tip" ] || return 1
@@ -2549,7 +2557,13 @@ cmd_ci() {
   sha=$(rev "${2-}") || die "'${2-}' does not resolve in $PROJ"
   git -C "$PROJ" merge-base --is-ancestor "$sha" "$tip" || refuse "${sha:0:12} is not on $TRUNK"
   case ${3-} in
-    green|red) ci_record "$sha" "$3" ;;
+    green) ci_record "$sha" green ;;
+    red)
+      case "$#" in
+        3) ci_record "$sha" red ;;
+        5) release_red "$sha" "$4" "$5" ;;
+        *) die "usage: jg-trunk.sh ci <project-dir> <sha> red [<release-url> <failed-check>]" ;;
+      esac ;;
     *) die "usage: jg-trunk.sh ci <project-dir> <sha> green|red" ;;
   esac
 }
@@ -3031,15 +3045,23 @@ ci_required_state() {  # <release PR url> <sha>
   case $runs in green|red|pending|absent) echo "$runs" ;; *) echo unknown ;; esac
 }
 
-# The fix ticket of a red CI on the pushed pin, filed once for the commit.
-file_ci_red_ticket() {  # <sha> <url>
-  local id="ci-red-$PN-${1:0:12}"
-  JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-backlog.sh" add "$id" \
-    "[blocker] CI required is red on the release of $PN at ${1:0:12}" --kind ship --priority 1 \
-    --body "CI required failed on $2 at $1; main stays where it is.
-Why: main moves only to a CI-green trunk commit, so every later commit waits behind this red.
-Done when: a fix lands on $TRUNK and its CI required run is green." >/dev/null 2>&1 \
-    || echo "warning: could not file the fix ticket $id" >&2
+# Both release observers reach this function under the trunk lock. Record the red once
+# and reuse a ticket from the older autorelease path if that path already filed one.
+release_red() {  # <sha> <release URL> <failed check>
+  local sha=$1 url=$2 check=$3 id=ci-red-release-$PN-${1:0:12} legacy=ci-red-$PN-${1:0:12} rc=0
+  [ -z "${JG_TASK_ID:-}" ] || refuse "a worker never starts a release repair"
+  if awk -F'\t' -v p="$PN" -v s="$sha" '$1 == p && $2 == s && $4 == "red" { red=1 } END { exit !red }' "$DATA/trunk-ci.tsv" 2>/dev/null; then
+    if [ ! -f "$STATE/dispatch-approved/$id" ] && JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-backlog.sh" show "$legacy" >/dev/null 2>&1; then
+      id=$legacy
+    fi
+  else
+    ci_record "$sha" red || rc=$?
+  fi
+  repair_start "$id" "[blocker] repair red release of $PN at ${sha:0:12} - $check" \
+    "The release pull request $url is red. It carries $PN at $sha.
+Failing check: $check.
+Repair forward on $TRUNK so the next green commit can release. Leave the failed release run in place." || return 1
+  return "$rc"
 }
 
 # Under the project's release waiver, main follows every CI-green trunk commit with no person in between. The commit is the one
@@ -3064,10 +3086,12 @@ cmd_autorelease() {
   case $st in
     green) ;;
     red)
-      if ! grep -q "^$PN	$rel	[0-9]*	red" "$DATA/trunk-ci.tsv" 2>/dev/null; then
-        ci_record "$rel" red >&2; file_ci_red_ticket "$rel" "$url"
+      if release_red "$rel" "$url" "CI required (FAILURE)" >&2; then
+        echo "autorelease: RED: CI required failed at ${rel:0:12}; $default stays at ${main:0:12} and repair was submitted to dispatch"
+      else
+        echo "autorelease: RED: CI required failed at ${rel:0:12}; $default stays at ${main:0:12} and repair submission failed"
       fi
-      echo "autorelease: RED: CI required failed at ${rel:0:12}; $default stays at ${main:0:12} and a fix ticket is filed"; return 0 ;;
+      return 0 ;;
     *) echo "autorelease: waiting: CI required is $st at ${rel:0:12}"; return 0 ;;
   esac
   ci_record "$rel" green >/dev/null

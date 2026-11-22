@@ -1,6 +1,10 @@
 app: juggernaut
 skill: .agents/skills/done-done-verify-suites
 journeys:
+  trunk-self-repair:
+    tier: local
+    command: bin/jg-lint.sh --changed-base HEAD^ > "$DONE_DONE_EVIDENCE_ROOT/lint.log" 2>&1 && bin/jg-test-run.sh tests/jg-trunk-self-repair.test.sh tests/jg-trunk-release-ci-watch.test.sh tests/jg-trunk-autorelease.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    timeout: 5m
   dispatch-process-skills:
     tier: local
     command: bash tests/process-skills.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
