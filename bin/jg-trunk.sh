@@ -163,7 +163,7 @@
 #
 # Every open captain call is a key in bin/jg-trunk-policy-lib.sh with its safe default; nothing
 # here changes with the answer. Records: data/trunk-landings.tsv (task, project, commit, epoch,
-# gate), data/trunk-in-use.tsv (project, commit, epoch, status), data/trunk-releases.tsv, data/trunk-ci.tsv (project,
+# gate, optional ticket=<id> and queue fields), data/trunk-in-use.tsv (project, commit, epoch, status), data/trunk-releases.tsv, data/trunk-ci.tsv (project,
 # commit, epoch, green|red, and `verify` for a charged verify red), data/trunk-words.tsv, data/trunk-publications.tsv (project,
 # trunk, commit, due, attempt, open, path automatic|fallback, url: one append-only row per publication, read by jg-outcome-ledger.sh).
 # `live` runs config/live-hook.<project> <project-dir> <sha> when it is executable. With none, a
@@ -1128,13 +1128,20 @@ lane_admit() {  # <id> <tip> <expected head or -> <follow 0|1>
   printf 'refs/heads/%s %s refs/heads/%s %s\n' "$TRUNK" "$LANE_CAND" "$TRUNK" "$tip" | (cd "$PROJ" && "$SCRIPT_DIR/../core/owner-guard/owner-guard" pre-push) || refuse "owner-guard refused $id"
 }
 
-# What every landing does after the trunk moved: the proofs that exist, the merged event and the ticket close. The landing's Evidence card
+# Write the receipt before other landing effects. The ticket link survives removal of the lane's metadata.
+landing_row() {  # <id> <meta> <landed commit> <gate> [queue fields...]
+  local id=$1 ticket commit=$3 gate=$4
+  ticket=$(jg_dod_meta_value "$2" ticket); shift 4
+  row trunk-landings.tsv "$id" "$PN" "$commit" "$(date +%s)" "$gate" "$@" ${ticket:+"ticket=$ticket"}
+}
+
+# What every landing does after the trunk moved: the proofs that exist, the merged event and ticket provenance. The landing's Evidence card
 # is core/landing-card's, an observer of these records; the PR-flow post-merge hook (merge-card) does not run for a landing.
 landed_effects() {  # <id> <lane head> <landed commit>   (META is the lane's record)
   record_proofs "$1" "$2" "$3" || :
   # The landing's timing rides on the ticket's land event; core/trunk-latency reads it back and raises the slow-delivery alert from it.
   local timing; timing=$(bash "$JG_ROOT/core/trunk-latency/latency.sh" measure "$JG_HOME" "$1" "$3" 2>/dev/null | jq -c --arg t "$TRUNK" '. + {trunk: $t}' 2>/dev/null) || timing=
-  # The same merge alert as bin/jg-merge-local.sh: the opt-in fleet ledger's merged event and the ticket close.
+  # The same merge alert as bin/jg-merge-local.sh: the opt-in fleet ledger's merged event.
   [ ! -e "$CONFIG/fleet-ledger" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-fleet-ledger.sh" merged "$1" local || true
   trace_land "$1" jg-trunk-land "$3" "$timing"
   bash "$JG_ROOT/core/trunk-latency/latency.sh" check "$JG_HOME" >/dev/null 2>&1 || :
@@ -1389,7 +1396,7 @@ land_candidate() {
   [ -n "$still" ] || refuse "the trunk kept moving while $id was gated; it lands on the next try"
   JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref -m "trunk: land $id" "refs/heads/$TRUNK" "$cand" "$base" || refuse "$TRUNK changed while landing $id"
   put "$STATE/trunk-tip-$PN" "$cand"
-  queue_cols; row trunk-landings.tsv "$id" "$PN" "$cand" "$(date +%s)" "$GATE_KIND" "${QCOLS[@]}"
+  queue_cols; landing_row "$id" "$META" "$cand" "$GATE_KIND" "${QCOLS[@]}"
   record_gated_answer "$META" "$id" "$cand"
   unlock "$STATE/.trunk-$PN.lock"; front_release
   [ "$cand" = "$LANE_HEAD" ] || lane_follow "$LANE_BRANCH" "$LANE_HEAD" "$cand" "$(jg_dod_meta_value "$META" worktree)"
@@ -1538,7 +1545,7 @@ land_group() {
   JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref -m "trunk: land a batch of ${#CHAIN[@]}" "refs/heads/$TRUNK" "$top" "$B_TIP" || refuse "$TRUNK changed while landing the batch"
   put "$STATE/trunk-tip-$PN" "$top"
   queue_cols
-  for i in "${CHAIN[@]}"; do row trunk-landings.tsv "${B_ID[$i]}" "$PN" "${B_CUR[$i]}" "$(date +%s)" "$GATE_KIND" "batch-from=$B_BASE0" "${QCOLS[@]}"; record_gated_answer "${B_META[$i]}" "${B_ID[$i]}" "${B_CUR[$i]}"; done
+  for i in "${CHAIN[@]}"; do landing_row "${B_ID[$i]}" "${B_META[$i]}" "${B_CUR[$i]}" "$GATE_KIND" "batch-from=$B_BASE0" "${QCOLS[@]}"; record_gated_answer "${B_META[$i]}" "${B_ID[$i]}" "${B_CUR[$i]}"; done
   unlock "$STATE/.trunk-$PN.lock"
   for i in "${CHAIN[@]}"; do
     META=${B_META[$i]}
@@ -2425,7 +2432,7 @@ cmd_recover() {
   ensure_guard
   JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref -m "trunk: recover $id" "refs/heads/$TRUNK" "$merge" "$actual" || refuse "trunk changed during recovery"
   put "$STATE/trunk-tip-$PN" "$merge"
-  row trunk-landings.tsv "$id" "$PN" "$merge" "$(date +%s)" recovery
+  landing_row "$id" "$meta" "$merge" recovery
   echo "recovered $TRUNK at $merge; not In use"
 }
 
