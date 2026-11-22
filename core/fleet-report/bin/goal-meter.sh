@@ -33,7 +33,7 @@ if [ -f "$landed" ]; then
   done
 fi
 
-lands=$(bash "$(dirname "${BASH_SOURCE[0]}")/../../trunk-latency/ledger-rows.sh" "$home" "$since" "$((now + 1))" 2>/dev/null | awk -F '\t' 'NR > 1 { print $9 "\t" $11 }' || true)
+lands=$(bash "$(dirname "${BASH_SOURCE[0]}")/../../trunk-latency/ledger-rows.sh" "$home" "$since" "$((now + 1))" | awk -F '\t' 'NR > 1 { print $9 "\t" $11 }')
 stops=$(mktemp); trap 'rm -f -- "$stops"' EXIT
 { [ -f "$chat" ] && jq -R 'fromjson? // empty' "$chat" 2>/dev/null | jq -sc --argjson now "$now" '
   [.[] | select(.kind == "status") | (.text // "") as $t

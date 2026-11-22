@@ -1,3 +1,5 @@
 # Fleet report card
 
-Fleet report card: run `done-done run fleet-report` (`bash fleet-report/run-proof.sh`); the fixture table, then one real report built from the live home's records and posted to a throwaway board with the real sign-off-axi (screen: none). Set `JG_MAIN_HOME` to the home to read.
+Run `done-done run -- bash core/fleet-report/run-proof.sh` from the repository root.
+The fixture table exercises the fleet report, and the real watcher runs the registered check through its normal 30-second deadline using fixture ticket events.
+The capture records the daily goal row, confirms one backlog invocation for all landings, and posts a report from fixture records to a throwaway board with the real sign-off-axi.

@@ -6,6 +6,7 @@ Usage: jg-beads-read.py rev <id>...
        jg-beads-read.py show <id>...
        jg-beads-read.py board <closed-since|--all>
        jg-beads-read.py history <id>
+       jg-beads-read.py landings
 
 It only reads, and every verb answers from the ticket tables of JG_HOME's item store, opened read-only.
 rev prints one `<id><TAB><rev>` line per id; a missing id is refused. A row's `revision` is the seq of its last ticket_change, which an edge
@@ -19,6 +20,8 @@ board prints a JSON array of every row the fleet board can show: each open row a
 gates left out, in id order, in one query. Each row has the shape and the `rev` that `show` gives it, so a ticket read here and read again with `show`
 carries the same rev. With --all, that same query includes older closed rows for ticket maintenance and card reconciliation.
 history prints one line per change that altered the row, newest first, `<source><TAB><date><TAB><kind><TAB><changed columns>`, from ticket_change.
+landings reads task/commit pairs as TSV on stdin and prints matching land events in input order as task, commit, ready time (or -),
+event time and payload JSON. Tickets and events are read from one snapshot for the whole batch.
 """
 import hashlib
 import json
@@ -50,13 +53,15 @@ class Tables(sqlite3.Connection):
     home = "main"   # whose tickets these reads name
 
 
-def table_store():
+def table_store(missing_ok=False):
     """The tickets tables of the one item store, opened read-only."""
     sys.path.insert(0, os.path.join(HERE, "..", "core", "item-store"))
     import itemdb
     home = os.environ.get("JG_HOME") or os.path.join(HERE, "..")
     path = itemdb.db_path(home)
     if not os.path.exists(path):
+        if missing_ok:
+            return None
         die("there is no item store at %s" % path)
     con = sqlite3.connect("file:%s?mode=ro" % path, uri=True, factory=Tables)
     con.row_factory = sqlite3.Row
@@ -227,8 +232,47 @@ def cmd_history(args):
         print("\t".join(cell))
 
 
+def cmd_landings(args):
+    if args:
+        die("usage: landings (read task<TAB>commit pairs on stdin)")
+    requested = [line.rstrip("\n").split("\t") for line in sys.stdin]
+    if not requested:
+        return
+    if any(len(pair) != 2 or not all(pair) for pair in requested):
+        die("landings input needs one task<TAB>commit pair per line")
+    con = table_store(missing_ok=True)
+    if con is None:
+        return
+    con.execute("BEGIN")
+    by_id, by_task = {}, {}
+    first = "(SELECT CASE c.verb WHEN 'import' THEN c.seq ELSE -c.seq END FROM ticket_change c WHERE c.home = t.home AND c.id = t.id ORDER BY c.seq LIMIT 1)"
+    for row in con.execute(
+            "SELECT id, issue_type, ephemeral, json_extract(metadata, '$.task'), json_extract(metadata, '$.ready_at')"
+            " FROM ticket t WHERE home = ? ORDER BY priority, created_at DESC, " + first + ", id DESC", (con.home,)):
+        ticket, kind, ephemeral, task, ready = row
+        by_id[ticket] = (ticket, ready if isinstance(ready, str) and ready else "-")
+        if isinstance(task, str) and task and kind != "gate" and not ephemeral:
+            by_task.setdefault(task, by_id[ticket])
+    for task, commit in requested:
+        row = by_id.get(task) or by_task.get(task)
+        if row is None:
+            continue
+        ticket, ready = row
+        event = con.execute(
+            "SELECT json_extract(data, '$.occurred_at'), data FROM ticket_event"
+            " WHERE home = ? AND ticket_id = ? AND source = 'provenance' AND kind = 'land' AND ref_kind = 'git-sha' AND ref = ?"
+            " ORDER BY json_extract(data, '$.occurred_at') DESC, n LIMIT 1", (con.home, ticket, commit)).fetchone()
+        if event is None or event[0] is None:
+            continue
+        occurred_at, data = event
+        payload = json.loads(data).get("payload")
+        if isinstance(payload, str) and payload:
+            payload = json.loads(payload)
+        print("\t".join((task, commit, ready, occurred_at, json.dumps(payload, sort_keys=True))))
+
+
 def main(argv):
-    verbs = {"rev": cmd_rev, "list": cmd_list, "show": cmd_show, "board": cmd_board, "history": cmd_history}
+    verbs = {"rev": cmd_rev, "list": cmd_list, "show": cmd_show, "board": cmd_board, "history": cmd_history, "landings": cmd_landings}
     if not argv or argv[0] not in verbs:
         die("usage: jg-beads-read.py <%s> ..." % "|".join(verbs))
     verbs[argv[0]](argv[1:])

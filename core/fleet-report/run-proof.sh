@@ -1,29 +1,29 @@
 #!/usr/bin/env bash
 # Sealed done-done proof for the fleet report card (screen: none).
-# Runs the fixture table, then builds one real report from a live home's records and
-# posts it to a throwaway board with the real sign-off-axi.
+# Runs the fixture table and the registered watcher check, then builds a report from
+# fixture records and posts it to a throwaway board with the real sign-off-axi.
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 evidence=${DONE_DONE_EVIDENCE_ROOT:?}
-home=${JG_MAIN_HOME:-${JG_HOME:-$HOME/juggernaut}}
 mkdir -p "$evidence"
 t=$(mktemp -d); trap 'rm -rf -- "$t"' EXIT
 {
   echo "== fixture table"
   bash "$repo/fleet-report/tests/fleet-report.test.sh"
-  echo "== live report from $home (24 h)"
-  JG_BIN=${JG_BIN:-$home/bin} bash "$repo/fleet-report/bin/fleet-report.sh" "$home" --hours 24
+  echo "== registered fleet-report check under the watcher"
+  bash "$repo/../tests/jg-goal-meter.test.sh"
   echo "== post that report to a throwaway board with the real sign-off-axi"
   mkdir -p "$t/home/config" "$t/home/data/metrics" "$t/home/state" "$t/board"
-  cp "$home/data/metrics/task-outcomes.tsv" "$t/home/data/metrics/" 2>/dev/null || true
+  printf 'home\ttask\tkind\tproject\tmodels\tstarted\tended\toutcome\tpr\nmain\tfixture\tship\tdemo\t-\t1\t%s\tmerged\t-\n' \
+    "$(date +%s)" > "$t/home/data/metrics/task-outcomes.tsv"
   echo "$t/board/board.json" > "$t/home/config/fleet-board"
-  JG_BIN=${JG_BIN:-$home/bin} SIGN_OFF_HOME=$t/so \
+  JG_BIN=$repo/../bin SIGN_OFF_HOME=$t/so \
     bash "$repo/fleet-report/bin/fleet-report.sh" "$t/home" post --hours 24
 } 2>&1 | tee "$evidence/fleet-report.txt"
 test "${PIPESTATUS[0]}" -eq 0
 cat >"$evidence/steps.json" <<'J'
-{"target":{"version":"fleet-report bin/fleet-report.sh and bin/fleet-alerts-ledger.sh from this checkout"},
- "start":"fixture records for the table, and the live home's task outcomes and flow records for the real report",
- "steps":["run the fixture table: merges, PR dedupe, stuck buckets, ready and captain counts, alert stems, false alarm, clear time, post, tick cadence","build one report from the live home's records","post that report to a throwaway board with the real sign-off-axi"],
- "result":"every fixture row prints PASS, the live report prints merges per project and lane counts, and the board lists a raised fleet-report card"}
+{"target":{"version":"fleet report, goal meter and watcher from this checkout"},
+ "start":"isolated homes with fixture task outcomes, alert data and ticket landing events",
+ "steps":["run the fleet-report fixture table","run the registered check under the real watcher with its normal deadline","post a report to a throwaway board with the real sign-off-axi"],
+ "result":"the fixture table passes, the watcher records the daily goal row with all four landings in one backlog invocation, and the board tool posts the fleet-report card"}
 J

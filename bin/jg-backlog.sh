@@ -3,6 +3,7 @@
 #
 # Usage: jg-backlog.sh [<backlog command> [args...]]
 #        jg-backlog.sh --help
+#        jg-backlog.sh trace landings  (read task<TAB>commit pairs on stdin)
 #
 # Every routine juggernaut backlog read or mutation goes through this command. It serves
 # `show`, `view`, `list`, `questions` (the owner's open questions: `--ticket <id>`, `--due`, `--all`, `--json`), `ready`, `ready --spawnable` (the tickets this home can start now, bin/jg-backlog-spawnable.sh, ended at 10 seconds with exit 124), `approve-dispatch`, `markdown`, `homes --json` (every home and its directory, `"remote": true` for a lead on another machine, bin/jg-backlog-homes.sh), `tree --homes` (one tree across every home, bin/jg-backlog-tree.py), `add`, `update`, `done`, `block`, `unblock`,
@@ -246,6 +247,10 @@ backlog_cmd() { jg_backlog_beads_read "$JG_HOME/config" "$@"; }
 STATE=${JG_STATE_OVERRIDE:-$JG_HOME/state}
 
 set -o pipefail
+if [ "${1:-}:${2:-}" = trace:landings ]; then
+  JG_HOME="$JG_HOME" exec python3 "$SCRIPT_DIR/jg-beads-read.py" landings "${ARGS[@]:2}"
+fi
+
 # The task id is made here, in the one function that makes it, and handed to the writer with the ticket.
 if [ "${1:-}" = task ]; then
   TASK_MODEL=
