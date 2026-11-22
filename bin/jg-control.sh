@@ -875,7 +875,7 @@ clear_composer() {
 # do_exit: stop the running agent, preserving endpoint and worktree. Prints
 # `already-stopped`, `endpoint-gone`, or `stopped`.
 do_exit() {
-  local state cmd hazard verdict composer_state cancel absence submit_retries=$EXIT_RETRIES interrupt_result=not-needed dialog
+  local state cmd hazard verdict composer_state cancel absence submit_retries=$EXIT_RETRIES interrupt_result=not-needed dialog screen
   require_state_verified_backend exit
   state=$(agent_state)
   case "$state" in
@@ -986,6 +986,11 @@ do_exit() {
   if [ -s "${JG_COMPOSER_DIALOG_SINK:-}" ]; then
     dialog=$(cat "$JG_COMPOSER_DIALOG_SINK")
     refuse_blocking_prompt "$dialog"
+  fi
+  if [ "$HARNESS" = agy ] && [ "$composer_state" = unknown ] \
+     && screen=$(jg_backend_visible_capture "$BACKEND" "$T" "$LABEL" 2>/dev/null) \
+     && jg_composer_agy_idle_empty "$screen" && [ "$(agent_state)" = alive ]; then
+    composer_state=empty
   fi
   # The refusal names the working recovery so the next operator clears or
   # submits the pending text instead of looping on interrupt: Enter submits it
