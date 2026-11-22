@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # auto-dispatch watcher check: every beat, write down which tickets this home would start by itself, and, with the home's
 # switch on, start them. With the switch off (the default) it is watch only: it starts nothing.
+# Under the check lock, each pass first gives workflow advance up to 20 seconds to publish approvals for newly ready steps.
+# Advance is silent here and the dispatch scan proceeds even if advance fails or times out.
 # Usage: dispatch.sh check <jg-home>
 #        dispatch.sh pass <jg-home>              one pass of the check, with no lock (the check's own step)
 #        dispatch.sh state <jg-home> <id>        print the start state of an approved ticket (the machine's observer)
@@ -367,6 +369,9 @@ check_call() {
   trap release_lock EXIT
   while :; do
     rm -f -- "$CHECK_AGAIN"
+    if [ -f "$FMH/bin/jg-workflow.sh" ]; then
+      JG_WORKFLOW_WAIT_FOR_STARTS=1 timeout 20 "$FMH/bin/jg-workflow.sh" advance "$FMH" >/dev/null 2>&1 || true
+    fi
     bash "$SELF" pass "$FMH"
     passes=$((passes + 1))
     release_lock hook

@@ -1,5 +1,5 @@
 """advance <home> [--close-only] [--dry-run]: one quick pass over every open ticket that carries a workflow. It closes each
-finished step and starts each ready one as a detached job, and it never waits for an outside command.
+finished step and starts each ready one as a detached job.
 
   close   a step whose start record says rc 0 and whose kind's `result` is done: `bin/jg-backlog.sh done <row>`.
           Each `result` has 2 seconds; over that the step stays open and the pass logs `slow`.
@@ -9,7 +9,9 @@ finished step and starts each ready one as a detached job, and it never waits fo
           `bin/jg-workflow.sh step-start <home> <row>` with `detach`, print `started <row> (<kind>)`.
 
 The pass is safe to run twice at once (a second run leaves a mark and the first makes one more pass), to be killed (the kernel
-frees the lock) and to meet a slow step (its start runs in its own job). `--dry-run` prints and writes nothing."""
+frees the lock) and to meet a slow step (its start runs in its own job). `--dry-run` prints and writes nothing.
+The bounded dispatch caller sets JG_WORKFLOW_WAIT_FOR_STARTS=1 to wait for the starts this invocation requested before scanning
+approvals. This wait holds no workflow lock, and the jobs survive if the caller's timeout expires."""
 import argparse
 import fcntl
 import json
@@ -62,6 +64,7 @@ class Pass:
         self.data = kinds.data_dir(home)
         self.said = set()
         self.status = {}  # row id -> status, as read and as this pass changes it
+        self.starts = {}  # row id -> pid of a job launched by this invocation
 
     def path(self, row, suffix):
         return os.path.join(self.data, f"{row}.{suffix}")
@@ -115,7 +118,9 @@ class Pass:
             return self.say(f"would start {row} ({kind})")
         started = self.path(row, "started")
         kinds.write(started, f"{int(time.time())} {kind}\n")
-        _, pid = kinds.detach(self.home, row, "step-start", [os.path.join(store.ROOT, "bin", "jg-workflow.sh"), "step-start", self.home, row])
+        launched, pid = kinds.detach(self.home, row, "step-start", [os.path.join(store.ROOT, "bin", "jg-workflow.sh"), "step-start", self.home, row])
+        if launched:
+            self.starts[row] = pid
         kinds.write(started, f"{int(time.time())} {kind} {pid}\n")
         self.say(f"started {row} ({kind})")
 
@@ -219,6 +224,9 @@ def main():
                 break
         os.close(fd)
         fd = take(os.path.join(state, ".workflow-advance.lock")) if os.path.exists(again) else None
+    if os.environ.get("JG_WORKFLOW_WAIT_FOR_STARTS") == "1":
+        while any(not os.path.exists(work.path(row, "start.rc")) and kinds.alive(pid) for row, pid in work.starts.items()):
+            time.sleep(0.05)
     return 0
 
 
