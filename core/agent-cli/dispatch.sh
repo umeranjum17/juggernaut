@@ -45,7 +45,9 @@ ROUTES_JQ='def routes: [.path] + [.aliases[] | split(" ")];'
 # Shape of one fragment: the check of example-pack/formats.md section 6, plus the fields this dispatcher reads.
 FRAGMENT_SHAPE='(.area|type=="string") and (.owner|type=="string") and (.entries|type=="array" and length>0)
   and all(.entries[];
-    (.path|type=="array" and length>0 and all(.[]; type=="string" and test("^[a-z0-9][a-z0-9_-]*$")))
+    (.path | type=="array" and length>0
+      and (if length>1 and .[-1]=="--help" then .[:-1] else . end
+        | all(.[]; type=="string" and test("^[a-z0-9][a-z0-9_-]*$"))))
     and (.meaning|type=="string" and length>0) and (.roles|type=="array") and (.changes|type=="boolean")
     and (.method == (if .changes then "POST" else "GET" end))
     and ((.changes|not) or (.repeat_key|type=="string"))
@@ -231,12 +233,12 @@ def bind($in; $spec; $types; $declared):
 | ($e.args | map({(.name): .type}) | add // {}) as $types
 | [([($e | canonical_form)] + ($e.additional_forms // [])) | to_entries[]
    | .key as $index | .value | lex | .[1:] as $toks
-   # A flag-only alternative selects a new form only when the caller supplies the flag.
-   | ($index > 0 and ($toks | length == 1) and ($toks[0] | option)) as $explicit_flag
+   # A flag-only alternative selects a new form only when the caller supplies its flags.
+   | ($index > 0 and ($toks | length > 0) and all($toks[]; option)) as $explicit_flags
    | if ($e.operation | option) and $toks[0] == $e.operation then
      [{k: "lit", v: $e.operation}] + specs($toks[1:]; false; false)
      | bind($in | if .args[0] == $e.operation then .args = .args[1:] else . end; .; $types; $e.args | map(.name))
-   else specs($toks; false; $explicit_flag) | bind($in; .; $types; $e.args | map(.name))
+   else specs($toks; false; $explicit_flags) | bind($in; .; $types; $e.args | map(.name))
    end]
 | first(.[] | select(.ok)) // .[0]'
 

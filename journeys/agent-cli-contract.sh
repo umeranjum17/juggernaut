@@ -44,6 +44,7 @@ bash bin/jg-doc-audience-check.sh > "$DONE_DONE_EVIDENCE_ROOT/doc-audience.log" 
   trap 'rm -rf -- "$tmp"' EXIT INT TERM
   mkdir -p "$tmp/fakebin" "$tmp/home"/{config,data,state,projects} "$tmp/root"
   printf '#!/bin/sh\nexit 0\n' > "$tmp/fakebin/tmux"; chmod +x "$tmp/fakebin/tmux"
+  printf '#!/bin/sh\nexit 97\n' > "$tmp/fakebin/gh"; chmod +x "$tmp/fakebin/gh"
   export PATH="$tmp/fakebin:$PATH" JG_HOME="$tmp/home" JG_CONFIG_OVERRIDE="$tmp/home/config" JG_DATA_OVERRIDE="$tmp/home/data" JG_STATE_OVERRIDE="$tmp/home/state" JG_ROOT_OVERRIDE="$tmp/root" JG_SEND_SETTLE=0
   : > "$tmp/home/config/backlog-intake-loose"
   help=$("$jg" crew vendor-auth-probe --help)
@@ -74,6 +75,37 @@ bash bin/jg-doc-audience-check.sh > "$DONE_DONE_EVIDENCE_ROOT/doc-audience.log" 
   follow=$("$jg" ticket backlog public-followup add pf-one --request-context-file "$tmp/request.json" --purpose promised-final --expected-final-file "$tmp/expected.json" --expires-at 2026-10-01T00:00:00Z --json)
   jq -e '.ok and .data.action == "public-followup.add" and .data.task.id == "pf-one" and .data.task.public_followup.delivery.state == "intent"' <<<"$follow" >/dev/null || { echo 'public-followup-add failed' >&2; exit 1; }
   printf 'PASS public-followup-add\n'
+  relation="$tmp/relation file.json"
+  jq -n '{relation_id:"rel-one",work_ref:{home_id:"main",task_id:"jg-work"},role:"fulfills",required:true,generation:1}' > "$relation"
+  bind=$("$jg" ticket backlog public-followup bind-work pf-one --relation-file "$relation" --json)
+  jq -e '.ok and .data.action == "public-followup.bind-work" and any(.data.task.public_followup.work_relations[]?; .relation_id == "rel-one" and .work_ref.home_id == "main" and .work_ref.task_id == "jg-work")' <<<"$bind" >/dev/null || { echo 'public-followup-bind-work failed' >&2; exit 1; }
+  printf 'PASS public-followup-bind-work\n'
+  "$root/bin/jg-backlog.sh" add bearing-hold-one '[feature] Umer bearings hold one' --priority 1 --kind ship --repo alpha --body Fixture >/dev/null
+  "$root/bin/jg-backlog.sh" add bearing-hold-two '[feature] Umer bearings hold two' --priority 1 --kind ship --repo alpha --body Fixture >/dev/null
+  "$root/bin/jg-captain-hold.sh" hold bearing-hold-one --reason 'Umer fixture captain hold' >/dev/null
+  "$root/bin/jg-captain-hold.sh" hold bearing-hold-two --reason 'Umer fixture captain hold' >/dev/null
+  export JG_BEARINGS_NOW=2026-11-22T11:00:00Z
+  bearings_include=$("$jg" report bearings-snapshot --json --include-prs)
+  bearings_include_direct=$("$root/bin/jg-bearings-snapshot.sh" --json --include-prs)
+  jq -e '.ok and .data == $direct and (.data.candidate_prs | type == "array")' --argjson direct "$bearings_include_direct" <<<"$bearings_include" >/dev/null || { echo 'bearings-include-prs failed' >&2; exit 1; }
+  export JG_BEARINGS_DECISIONS=1
+  bearings_decisions=$("$jg" report bearings-snapshot --json --all-decisions)
+  bearings_decisions_direct=$("$root/bin/jg-bearings-snapshot.sh" --json --all-decisions)
+  jq -e '.ok and .data == $direct and (.data.decisions_open | map(.id) | sort) == ["bearing-hold-one","bearing-hold-two"]' --argjson direct "$bearings_decisions_direct" <<<"$bearings_decisions" >/dev/null || { echo 'bearings-all-decisions failed' >&2; exit 1; }
+  printf 'PASS bearings-snapshot include-prs and all-decisions\n'
+  backlog_help=$("$jg" ticket backlog help)
+  backlog_help_direct=$("$root/bin/jg-backlog.sh" --help)
+  afk_help=$("$jg" radio afk-contract --help)
+  afk_help_direct=$("$root/bin/jg-afk-contract.sh" --help)
+  if [ -z "$backlog_help_direct" ] || [ -z "$afk_help_direct" ] \
+    || [ "$(jq -r .data.stdout <<<"$backlog_help")" != "$backlog_help_direct" ] \
+    || [ "$(jq -r .data.stdout <<<"$afk_help")" != "$afk_help_direct" ]; then
+    echo 'backlog-or-afk-help failed' >&2
+    exit 1
+  fi
+  jq -e '.ok' <<<"$backlog_help" >/dev/null
+  jq -e '.ok' <<<"$afk_help" >/dev/null
+  printf 'PASS backlog-help and afk-contract-help\n'
   rc=0; bash "$root/bin/jg-arm-pretool-check.sh" --command 'jg radio watch-arm &' > "$tmp/arm.out" 2>&1 || rc=$?
   if [ "$rc" != 2 ] || ! grep -q 'watcher-background' "$tmp/arm.out"; then
     echo 'watch-arm-policy failed' >&2
@@ -82,26 +114,29 @@ bash bin/jg-doc-audience-check.sh > "$DONE_DONE_EVIDENCE_ROOT/doc-audience.log" 
   rc=0; bash "$root/bin/jg-arm-pretool-check.sh" --command 'jg radio watch-arm' > "$tmp/arm-foreground.out" 2>&1 || rc=$?
   [ "$rc" = 0 ] || { echo 'watch-arm-foreground-control failed' >&2; exit 1; }
   printf 'PASS watch-arm-policy and foreground control\n'
-  runjson="$tmp/pi-run.json"; runerr="$tmp/pi-run.stderr"; rc=0
-  (cd "$root" && env -u JG_LIVE -u JG_PI_LIVE_E2E JG_TEST_SKIP_EXIT=77 JG_TEST_HOST_SLOTS="$tmp" "$jg" proof test-run single tests/jg-pi-primary-live-e2e.test.sh) > "$runjson" 2> "$runerr" || rc=$?
-  if [ "$rc" != 0 ] || ! jq -e '.ok and (.data.stdout
-      | contains("skip: live: opt-in; set JG_PI_LIVE_E2E=1 to run")
-        and contains("gate_skip=true")
-        and contains("total=1 failed=0 skipped_gate=1"))' "$runjson" >/dev/null; then
-    cat "$runjson" "$runerr" >&2
-    echo 'pi-live-opt-in-gate failed' >&2
-    exit 1
-  fi
-  printf 'Verified Pi runner JSON and stderr:\n'
-  cat "$runjson" "$runerr"
+  for named_test in tests/jg-pi-primary-live-e2e.test.sh tests/jg-opencode-primary-live-e2e.test.sh; do
+    test_label=${named_test##*/}
+    runjson="$tmp/${test_label}.json"; runerr="$tmp/${test_label}.stderr"; rc=0
+    (cd "$root" && env -u JG_LIVE -u JG_PI_LIVE_E2E -u JG_OPENCODE_LIVE_E2E JG_TEST_SKIP_EXIT=77 JG_TEST_HOST_SLOTS="$tmp" "$jg" proof test-run single "$named_test") > "$runjson" 2> "$runerr" || rc=$?
+    if [ "$rc" != 0 ] || ! jq -e '.ok and (.data.stdout
+        | contains("gate_skip=true")
+          and contains("total=1 failed=0 skipped_gate=1")
+          and contains("skip: live: opt-in; set "))' "$runjson" >/dev/null; then
+      cat "$runjson" "$runerr" >&2
+      printf '%s opt-in gate failed\n' "$test_label" >&2
+      exit 1
+    fi
+    printf 'Verified %s runner JSON and stderr:\n' "$test_label"
+    cat "$runjson" "$runerr"
+  done
   printf 'Verified watcher denial reason:\n'
   cat "$tmp/arm.out"
-  printf 'PASS pi-live-opt-in-gate\n'
+  printf 'PASS named live-test opt-in gates\n'
   version=$(git -C "$root" rev-parse HEAD)
   python3 - "$DONE_DONE_EVIDENCE_ROOT/steps.json" "$version" <<'PY'
 import json,sys
 with open(sys.argv[1], 'w') as f:
- json.dump({'target':{'version':sys.argv[2]},'start':'Repository HEAD; isolated temporary home and fixture root.','steps':['Checked public vendor-auth help against direct usage and verified missing-argument exit 2.','Updated a fixture ticket body from a spaced file and read both replacement lines through the public CLI.','Sent a keyed radio answer and verified its inbox record and resolved status line.','Added a local public-followup intent record and checked its returned fields.','Checked watcher-background denial and foreground allowance using command text only.','Ran the Pi live test with opt-in unset and verified the gate skip markers.'],'result':'All six public CLI assertions passed; the Pi live test was skipped by its opt-in gate.'},f,indent=2)
+ json.dump({'target':{'version':sys.argv[2]},'start':'Repository HEAD; isolated temporary home and fixture root.','steps':['Checked public vendor-auth help against direct usage and verified missing-argument exit 2.','Updated a fixture ticket body from a spaced file and read both replacement lines through the public CLI.','Sent a keyed radio answer and verified its inbox record and resolved status line.','Added a local public-followup intent record and checked its returned fields.','Bound pf-one to the spaced-file work relation and checked its returned relation.','Compared both public bearings snapshot forms with the direct script using held fixture tickets and a stub forge command.','Compared public backlog and AFK contract help with nonempty direct help.','Checked watcher-background denial and foreground allowance using command text only.','Ran the Pi and OpenCode named tests with live opt-ins unset and verified their gate skip markers.'],'result':'All existing and added public CLI assertions passed; both named live tests were skipped by their opt-in gates.'},f,indent=2)
  f.write('\n')
 PY
 ) > "$DONE_DONE_EVIDENCE_ROOT/round-two.log" 2>&1
