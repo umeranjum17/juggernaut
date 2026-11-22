@@ -36,17 +36,17 @@ Classify the deliverable:
 
 ### Recon depth
 
-Pick the depth of every Recon at intake and pass it to the scaffold as `--depth quick|standard|deep`; `bin/jg-recon-depth.sh "<the ask>"` maps the ask's words to a level, and a level the captain names always wins.
+Pick the depth of every Recon at intake and pass it to the scaffold as `--depth quick|standard|deep`; `jg proof recon-depth "<the ask>"` maps the ask's words to a level, and a level the captain names always wins.
 - **deep** for "in depth", "discovery", "deep", "research properly", "detailed report", or a plan with slices.
 - **quick** only for one fact.
 - **standard** for everything else; it is the default.
 
 A deep Recon needs one separate critic worker, and the loop starts it, sends it each round and relays the gaps to the researcher by itself (`core/recon-loop`, run by the delivery tick); never dispatch, steer or install a critic by hand unless the loop has stopped and woken Overwatch.
-`.agents/skills/deep-recon/SKILL.md` owns the stages, budgets and critic rubric, and `bin/jg-recon-gate.sh` refuses `done` for a standard or deep Recon that does not meet them.
+script: `.agents/skills/deep-recon/SKILL.md` owns the stages, budgets and critic rubric, and `bin/jg-recon-gate.sh` refuses `done` for a standard or deep Recon that does not meet them.
 
 ### Muster depth at intake
 
-Record the Muster depth once per ticket with `bin/jg-muster-depth.sh record --ticket <id>`; the script's header owns the rule, and reading an ask (`bin/jg-muster-depth.sh "<the ask>"`) changes nothing.
+Record the Muster depth once per ticket with `jg muster depth record --ticket <id>`; the script's header owns the rule, and reading an ask (`jg muster depth "<the ask>"`) changes nothing.
 Read every ticket whose line says `review` yourself, and record your reading with `record --ticket <id> --depth <d> --reason <why>`.
 You may raise a depth freely; a lower depth than the rule picked needs a stated reason, and the reason is always recorded.
 A depth the captain names always wins.
@@ -55,10 +55,10 @@ Nothing refuses on the line yet.
 ### Workflow at intake
 
 After the ticket is filed, give it a workflow; workflows are configuration (`core/workflows/README.md` owns the grammar, `defaults/workflows` and `config/workflows` hold the names and the `pick` rules).
-- When the owner said how to run it, run `bin/jg-workflow.sh words "<his words>"`, then `bin/jg-workflow.sh set <ticket> <spec> --by owner --quote "<his words>" --note <his chat note id> --order <MainNNN>`.
-- When he names a new workflow ("make a workflow called <name>: <words>"), run `words` on his words, then `bin/jg-workflow.sh define <name> <spec> --by owner`; the name is a word at once.
-- When he asks to change or remove a named one, run `define <name> <spec|off> --by owner`; he may also edit `config/workflows` himself, and `bin/jg-workflow.sh list` shows every name and any broken line.
-- Otherwise run `bin/jg-workflow.sh pick <ticket> --set`.
+- When the owner said how to run it, run `jg ticket workflow words "<his words>"`, then `jg ticket workflow set <ticket> <spec> --by owner --quote "<his words>" --note <his chat note id> --order <MainNNN>`.
+- When he names a new workflow ("make a workflow called <name>: <words>"), run `words` on his words, then `jg ticket workflow define <name> <spec> --by owner`; the name is a word at once.
+- When he asks to change or remove a named one, run `define <name> <spec|off> --by owner`; he may also edit `config/workflows` himself, and `jg ticket workflow list` shows every name and any broken line.
+- Otherwise run `jg ticket workflow pick <ticket> --set`.
 - Never ask him to pick a workflow; a refused `words` gets one plain question back to him, posted as a board card.
 
 ## Delivery mode, branch, and consent flags
@@ -67,7 +67,7 @@ For a registered `local-trunk` project, keep `local-trunk` as the task mode thro
 Pass the mode explicitly to the brief, and pass both values explicitly to the spawn and any Recon promotion; each command refuses to guess the values it consumes.
 Resolve the project's registered ship-branch prefix the same way, via `bin/jg-project-mode.sh --branch-prefix --kind <feature|bug|chore> <project>`, and pass it explicitly to the brief, ship spawn, and Recon promotion as `--branch-prefix`; a registered prefix wins, otherwise the kind of the backlog item names the branch (`feature/`, `fix/`, `chore/`), and with no kind it stays `fm/`.
 When the work must start from and target a branch other than the project's default, such as a named feature or release branch, pass it to the ship or Recon brief and spawn as `--base-branch <branch>`; any promotion reads it from task meta.
-For a ship task whose project is this Juggernaut repository, pass the project directory to the brief as `--project` and record any captain-approved one-task contribution consent as `--upstream-consent <host>/<owner>/<repo>` on the brief, spawn, and promotion; `bin/jg-spawn.sh` refuses a publishing contract this home's role does not authorize.
+script: For a ship task whose project is this Juggernaut repository, pass the project directory to the brief as `--project` and record any captain-approved one-task contribution consent as `--upstream-consent <host>/<owner>/<repo>` on the brief, spawn, and promotion; `bin/jg-spawn.sh` refuses a publishing contract this home's role does not authorize.
 For a ship task, judge whether it makes a product demo video of an app and pass `--demo-call <yes|no> --demo-reason <text>` to the brief; it takes effect only while `config/takeone-demo` exists (`docs/configuration.md`).
 Record the resulting mode, `yolo` merge posture, and the one-line reason for any deviation in the backlog item note.
 
@@ -77,15 +77,15 @@ Treat file or subsystem overlap as a risk signal rather than an automatic reason
 A project's declared machine capacity (`config/project-capacity`) and the machine's load (docs/configuration.md "Host load admission") still bound that dispatch: a spawn beyond either exits 75 without launching, and its item stays queued rather than blocked.
 Serialize only for a true semantic dependency, shared mutable external state, incompatible concurrent migration, or another concrete condition that makes independent progress or reconciliation unsafe; same-file editing alone is insufficient, and genuine blockers remain durable.
 Dispatch a home's ready routed backlog P0 first, up to project capacity; `fleet-records` owns the routed-backlog record.
-A `core/goal-loop` wake names a Goal step: take it like any ready item (ship or fix: spawn a worker and close the step row when the work lands). Stop the Goal with `bin/jg-goal.sh stop` for an owner-only call, a credential, a quota or an outside wait; closing the stop row resumes it.
+A `core/goal-loop` wake names a Goal step: take it like any ready item (ship or fix: spawn a worker and close the step row when the work lands). Stop the Goal with `jg ticket goal stop` for an owner-only call, a credential, a quota or an outside wait; closing the stop row resumes it.
 Write the task-specific brief under the brief rules below and `AGENTS.md` section 11 before spawning.
 
 ## Dispatch profiles and backends
 
-`docs/configuration.md` owns dispatch-profile and runtime-backend schemas, `bin/jg-harness.sh` owns static resolution, and `bin/jg-spawn.sh` owns launch flags and fail-closed validation.
+script: `docs/configuration.md` owns dispatch-profile and runtime-backend schemas, `bin/jg-harness.sh` owns static resolution, and `bin/jg-spawn.sh` owns launch flags and fail-closed validation.
 When dispatch profiles exist, consult them at every operator or Recon intake and pass the resolved concrete profile required by `jg-spawn`.
 Routing precedence is an explicit per-task captain override, then the best-fit configured rule, then the configured default, then the static operator harness.
-Run `bin/jg-dispatch-resolve.sh` directly on the written brief in the same turn, with no preflight, and on `clear` pass the `--harness`, `--model`, and `--effort` flags of its `profile:` line to `jg-spawn` unless you state a reason to override, never its trailing `(tier ...)` note, which names the difficulty tier and is not a flag; `ambiguous`, `escalate`, `error`, and off all mean the intake above, unchanged (contract: `docs/configuration.md` "Typed dispatch resolution").
+Run `jg crew dispatch-resolve` directly on the written brief in the same turn, with no preflight, and on `clear` pass the `--harness`, `--model`, and `--effort` flags of its `profile:` line to `jg-spawn` unless you state a reason to override, never its trailing `(tier ...)` note, which names the difficulty tier and is not a flag; `ambiguous`, `escalate`, `error`, and off all mean the intake above, unchanged (contract: `docs/configuration.md` "Typed dispatch resolution").
 `squad-lead-provisioning` owns Squad Lead harness pins and inherited local material, while `harness-adapters` owns the harness consequences.
 Dispatch only on a backend that `jg-spawn` validates as spawn-capable; pass an explicit per-spawn `--backend` only under that exact task's own authority, never as later-task precedent (selection contract: [`docs/configuration.md`](../../../docs/configuration.md) "Runtime backend").
 
@@ -95,19 +95,19 @@ Do not add model-specific versions of that policy.
 ## Spawn handoff and steering
 
 When the configured the backlog backlog gate applies, the spawn itself moves the work item to In flight and refuses rather than dispatching work this home has no item for, so recording the dispatch is never a separate step to remember; a manual-backend home retains the hand-editing contract in `docs/configuration.md`.
-Before writing a brief for a plan's slice, file the slice as a real child: `bin/jg-backlog.sh add --parent <ask> "<title>"` (a second worker's part of a slice: `--parent <slice>`), never a `parent:` body line; use `link` for anything that is not "part of".
+Before writing a brief for a plan's slice, file the slice as a real child: `jg ticket backlog add --parent <ask> "<title>"` (a second worker's part of a slice: `--parent <slice>`), never a `parent:` body line; use `link` for anything that is not "part of".
 After spawning, confirm the worker is processing the brief and handle any trust dialog through `harness-adapters`.
 A persistent Squad Lead is recorded in the Squad Lead registry and runtime state, never as a backlog work item.
 
-Steer a worker with ordinary text through fail-closed `jg-send`: the message becomes a durable record in the task's steering inbox (multi-line text is legal, local and remote alike) and the worker's terminal receives only a constant doorbell line, with the watcher re-ringing an unacknowledged local message and escalating a stuck one (`bin/jg-task-inbox-lib.sh`; `bin/jg-send.sh` owns the typed-plane carve-outs).
-A remote Squad Lead steer rides the same durable-inbox model through the remote transport; after an unconfirmed delivery, only the exact `JG_PENDING_REPLY_EXISTING_CORR=<id>` resend command printed by `jg-send` is safe because it preserves the request body for remote enqueue deduplication (`bin/jg-send.sh` header).
-When a steer answers an open keyed decision or blocker, pass `jg-send`'s `--resolve-key` so the answer itself closes that decision record at answer time, identically for local and remote workers (contract: `bin/jg-send.sh` header).
+script: Steer a worker with ordinary text through fail-closed `jg-send`: the message becomes a durable record in the task's steering inbox (multi-line text is legal, local and remote alike) and the worker's terminal receives only a constant doorbell line, with the watcher re-ringing an unacknowledged local message and escalating a stuck one (`bin/jg-task-inbox-lib.sh`; `bin/jg-send.sh` owns the typed-plane carve-outs).
+script: A remote Squad Lead steer rides the same durable-inbox model through the remote transport; after an unconfirmed delivery, only the exact `JG_PENDING_REPLY_EXISTING_CORR=<id>` resend command printed by `jg-send` is safe because it preserves the request body for remote enqueue deduplication (`bin/jg-send.sh` header).
+script: When a steer answers an open keyed decision or blocker, pass `jg-send`'s `--resolve-key` so the answer itself closes that decision record at answer time, identically for local and remote workers (contract: `bin/jg-send.sh` header).
 For the parent-owned correlation, recovery, and escalation contract on marked Squad Lead requests, see `bin/jg-pending-reply-lib.sh`.
 When the captain adds or changes an ask mid-task, append the captain's words without added speaker labels or direct address to that brief's `## Captain's intent` and relay those words to the worker; Overwatch build constraints stay in `## Juggernaut spec` or the steer.
 
 ## Briefs
 
-A fresh ship or Recon spawn needs `--ticket <ticket-id>` (the brief takes it too); the task id is the ticket id with every dot a dash (`jg-x.1` runs as `jg-x-1`), `bin/jg-backlog.sh task <ticket-id>` prints it, and the spawn refuses a ticket with no row or no readable title (2 to 7 words) and a task id another row answers to. A Squad Lead and a relaunch take no `--ticket`.
+A fresh ship or Recon spawn needs `--ticket <ticket-id>` (the brief takes it too); the task id is the ticket id with every dot a dash (`jg-x.1` runs as `jg-x-1`), `jg ticket backlog task <ticket-id>` prints it, and the spawn refuses a ticket with no row or no readable title (2 to 7 words) and a task id another row answers to. A Squad Lead and a relaunch take no `--ticket`.
 `bin/jg-brief.sh` and its help own scaffold syntax, generated variants, status protocol, delivery-mode definitions of done, and exact safety mechanics.
 Use its scaffold as the contract, then fill `## Captain's intent` (`{TASK}`) with the captain's own ask and any boundary the captain stated, plus the context needed to read it, including the substance of any report, decision, or PR the ask refers to; never widen the ask there into a general goal or an enumerated coverage list, because the reviewer treats that subsection as acceptance criteria.
 Fill `## Juggernaut spec` (`{JUGGERNAUT_SPEC}`) with only the build instructions that ask requires, naming what stays out of scope when the ask is narrow; a generalization, consistency sweep, or extra hardening the captain did not ask for is follow-up work to note, not scope to add.

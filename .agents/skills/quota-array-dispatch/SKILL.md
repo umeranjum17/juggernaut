@@ -13,7 +13,7 @@ This skill is the single owner of the completion-aware profile-array selection p
 `harness-adapters` owns harness verification, model/provider discovery, and effort fallback.
 `quota-axi` remains data-only: it publishes `spendPriority` as a comparable scalar and never recommends, selects, ranks, or infers a route.
 Do not add a daemon, opaque composite score, routing wrapper, hard-coded model-specific policy, or producer-side route recommendation.
-The [worker helper](../../../bin/jg-quota-choose.sh) and [typed resolver](../../../docs/configuration.md#typed-dispatch-resolution-env-typesafe_api_key) own their deterministic mapping boundaries.
+script: The [worker helper](../../../bin/jg-quota-choose.sh) and [typed resolver](../../../docs/configuration.md#typed-dispatch-resolution-env-typesafe_api_key) own their deterministic mapping boundaries.
 
 ## Safety rules
 
@@ -29,7 +29,7 @@ Break genuine evidence ties without array-order or harness bias.
 
 ## Worker-side quota helper
 
-The canonical shell helper for a worker that has already performed its model-selection reasoning and now needs to pick the first viable candidate is `bin/jg-quota-choose.sh`.
+The canonical shell helper for a worker that has already performed its model-selection reasoning and now needs to pick the first viable candidate is `jg crew quota-choose`.
 Pass it the intake's already-captured default TOON or permitted JSON fallback through stdin or `--snapshot`; it never takes another quota snapshot, so it selects from the same quota state as the intake.
 Pass each candidate as `harness:model`, with earlier candidates preferred.
 The helper's header owns its provider mapping and quota selection mechanics.
@@ -40,7 +40,7 @@ omp has no primary family, so the helper keys an `omp:` candidate on its model p
 Authoritative multi-provider routing - including provider discovery from the harness catalog and quota matching by that explicit provider - stays owned by this skill's intake procedure and safety rules, not by the helper.
 Use it only when the brief already fixed the candidate order and every candidate's provider is the harness's primary family.
 It does not replace the reasoning-class, runway-feasibility, or authentication gates above.
-Juggernaut can optionally arm `bin/jg-procevent-quota.sh` for a recurring mid-task check that wakes when the tracked provider drops below its configured threshold or its runway becomes `exhausted_now`.
+Juggernaut can optionally arm `jg relay procevent-quota arm` for a recurring mid-task check that wakes when the tracked provider drops below its configured threshold or its runway becomes `exhausted_now`.
 The opt-in [typed resolver](../../../docs/configuration.md#typed-dispatch-resolution-env-typesafe_api_key) has its own documented gates.
 It never removes this skill's authority, and its `ambiguous`, `escalate`, and `error` outcomes return here.
 
@@ -76,7 +76,7 @@ You establish the remaining relations yourself, in the open, from the candidate'
 
 Confirm the catalog lists the candidate's model and record the provider family it reports.
 A model the catalog does not list is concrete contradictory evidence: block that candidate and quote the catalog result.
-Apply the existing `route-select` owner clauses through `bin/jg-clause.sh` before ranking; a skipped or denied candidate cannot win its matched rule.
+Apply the existing `route-select` owner clauses through `jg report clause decide` before ranking; a skipped or denied candidate cannot win its matched rule.
 Apply quota at the granularity the vendor actually supplies.
 A provider-level or `all_models`/`all_products` scope bounds every model you established in that family within the candidate's matched account, including one with no window of its own.
 A named-model or named-product scope is an additional bound for that model alone.
@@ -96,7 +96,7 @@ Uncertainty and ineligibility are different findings:
 - Reserve login wording for that proven-unusable case, and name the harness, model, surface, and evidence.
 
 When a credential's local classification is the only thing standing between a candidate and a block, get ground truth before blocking.
-`bin/jg-vendor-auth-probe.sh` is the only approved vendor-credential probe; its `--help` owns the registered probes and mechanics.
+`jg crew vendor-auth-probe` is the only approved vendor-credential probe; its `--help` owns the registered probes and mechanics.
 It takes no harness, model, or provider and returns a fact, not a route: only `authenticated` and `unauthenticated` are ground truth, while `indeterminate`, `timeout`, and `unavailable` establish nothing and must never be read as either outcome.
 Never launch a vendor CLI yourself, and never probe a credential store the candidate does not use.
 Grok prepaid `credits` are unrelated to paid-window headroom; never read them as exhaustion.

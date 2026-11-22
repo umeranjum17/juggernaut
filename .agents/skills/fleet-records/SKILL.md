@@ -30,7 +30,7 @@ Route durable knowledge to its most specific owner:
 
 - A home may declare authoritative external memory tiers in a `Memory layering` section of its captain-preference files ([`docs/configuration.md`](../../../docs/configuration.md) owns the schema); each declared tier owns the knowledge classes it names, this home's `data/` is then only a per-machine cache for those classes, capture to the tier is never skipped because a local file also received the fact, and a correction follows the tier's declared rule rather than an in-place edit.
 - When a worker's harness cannot reach a declared tier, Overwatch captures on the worker's behalf from its report.
-- A standing owner correction becomes a rule in `data/owner-rules.md` through `bin/jg-owner-rules.sh add --kind owner`, with his own words, its scope, and the code or contract that enforces it; a correction that stops at one agent's memory is what `bin/jg-owner-rules.sh audit` flags.
+- A standing owner correction becomes a rule in `data/owner-rules.md` through `jg hold owner-rules add --kind owner`, with his own words, its scope, and the code or contract that enforces it; a correction that stops at one agent's memory is what `jg hold owner-rules audit` flags.
 - A correction that is an engineering default every Juggernaut user should get is a product rule: it never becomes an owner-rules entry, and it becomes a ticket and a change to what ships, in `AGENTS.md` where an agent needs it always, a shipped default, a doc, or the code that enforces it.
 - Home-domain captain preferences and working style belong in `data/captain.md` after inspect-then-update.
 - Captain preferences shared across Squad Lead domains belong in the primary home's `data/captain-shared.md` under the `squad-lead-provisioning` contract.
@@ -41,17 +41,17 @@ Route durable knowledge to its most specific owner:
 
 ## Backlog
 
-This home's rows in the tickets tables of `fleet.db` are the durable queue; `bin/jg-backlog.sh markdown` renders them as backlog lines.
+This home's rows in the tickets tables of `fleet.db` are the durable queue; `jg ticket backlog markdown` renders them as backlog lines.
 It tracks work items only, never agents; persistent Squad Leads never appear as backlog items.
 Work routed to a Squad Lead is recorded in that Squad Lead home's own backlog, not the main backlog.
-A new item needs a readable title, `--priority 0-3` and the body sections (`--release <name>` sets the release), or `bin/jg-backlog.sh add` refuses it; `docs/configuration.md` "Backlog intake" owns the rule.
+A new item needs a readable title, `--priority 0-3` and the body sections (`--release <name>` sets the release), or `jg ticket backlog add` refuses it; `docs/configuration.md` "Backlog intake" owns the rule.
 When a main-side thread such as a pending captain decision or relay reminder is worth durable tracking, file it as its own work item and hold it through that wrapper.
-When the automatic transition gate applies, dispatch and completion move the item themselves - `bin/jg-spawn.sh` and `bin/jg-teardown.sh` own those transitions and refuse rather than report success without them - so what remains yours is filing the item before dispatch, recording decisions, and keeping notes current; `docs/configuration.md` owns gate applicability and the manual-backend exception.
+script: When the automatic transition gate applies, dispatch and completion move the item themselves - `bin/jg-spawn.sh` and `bin/jg-teardown.sh` own those transitions and refuse rather than report success without them - so what remains yours is filing the item before dispatch, recording decisions, and keeping notes current; `docs/configuration.md` owns gate applicability and the manual-backend exception.
 
 File an ask with `add --mint`, each plan slice with `add --parent <ask>`, and a second worker's part of a slice with `add --parent <slice>`; bd numbers each child `<parent>.<n>`, a piece takes no parts, and `link` is for anything that is not "part of".
 
-`docs/configuration.md` and current `bin/jg-backlog.sh help` own the backlog schema, compatibility, retention, and routine command syntax.
-`squad-lead-provisioning` and `bin/jg-backlog-handoff.sh` own cross-home handoff safety.
+`docs/configuration.md` and current `jg ticket backlog help` own the backlog schema, compatibility, retention, and routine command syntax.
+`squad-lead-provisioning` and `jg ticket backlog-handoff` own cross-home handoff safety.
 
 ## Task notes
 

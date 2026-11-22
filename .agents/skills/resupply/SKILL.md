@@ -23,7 +23,7 @@ That is why **every live Squad Lead is restarted after a successful update, incl
 Launch-time wiring is not derivable from a file diff, so an unchanged tracked surface is not evidence the running agent is already on the current behavior.
 The only live mates that do not restart are the ones whose home the update pass had to skip, and the ones whose runtime cannot prove a restart; the updater keeps both cases honest and neither is reported as a reload.
 
-**One-time rollout note:** the update that carries this change is still executed by the previous release, which restarts only the mates whose `AGENTS.md` or `.agents/skills/` moved on that pass. After it completes, run `bin/jg-squad-lead-restart.sh <jg-id>...` once with every live Squad Lead ID, not only the ones that release named; later updates follow the normal flow below.
+**One-time rollout note:** the update that carries this change is still executed by the previous release, which restarts only the mates whose `AGENTS.md` or `.agents/skills/` moved on that pass. After it completes, run `jg crew squad-lead-restart <jg-id>...` once with every live Squad Lead ID, not only the ones that release named; later updates follow the normal flow below.
 
 The primary update is fast-forward only, while each Squad Lead uses the same guarded convergence path plus one narrow recovery for squash-merged local history.
 For a remote route, it updates the configured Juggernaut code root on that host from its own origin, then guardedly fast-forwards the persistent home to that code-root commit.
@@ -36,13 +36,13 @@ This touches only the Juggernaut repo and its own worktrees, never anything unde
 ## What it does
 
 0. **A local-trunk project is not updated from origin.**
-   When this Juggernaut is registered `local-trunk` (`data/projects.md`), its code comes from its local trunk, so update it with `bin/jg-trunk.sh live <project-dir>` and not from origin.
-   A home that has the guard (`bin/jg-home-guard.sh`) refuses any move of its `main` or detached HEAD that is not along that trunk; the only other source it accepts is `origin/main` after the release pull request merged.
+   When this Juggernaut is registered `local-trunk` (`data/projects.md`), its code comes from its local trunk, so update it with `jg land trunk live <project-dir>` and not from origin.
+   script: A home that has the guard (`bin/jg-home-guard.sh`) refuses any move of its `main` or detached HEAD that is not along that trunk; the only other source it accepts is `origin/main` after the release pull request merged.
    Do not move a home's `main` by hand.
 
 1. **Run the updater:**
    ```sh
-   bin/jg-update.sh
+   jg home update
    ```
    It fast-forwards this Juggernaut repo's default branch from origin, then updates every registered local or remote Squad Lead home through its placement-specific guarded path.
    It prints one status line per target (`updated <old>..<new>` / `reconciled redundant divergence <old>..<new>` / `already current` / `skipped: <reason>`), followed by three action lines that tell you exactly what to do next:
@@ -63,7 +63,7 @@ This touches only the Juggernaut repo and its own worktrees, never anything unde
 3. **Restart every Squad Lead the updater named.**
    Pass the whole `restart-squad-leads:` list to one command (skip this step entirely when it says `none`):
    ```sh
-   JG_HOME=<this-juggernaut-home> bin/jg-squad-lead-restart.sh <jg-id>...
+   JG_HOME=<this-juggernaut-home> jg crew squad-lead-restart <jg-id>...
    ```
    Include `JG_HOME=<this-juggernaut-home>` unless `JG_HOME` is already set to the active Juggernaut home.
    This is automatic and needs no per-mate confirmation from the captain.
@@ -85,7 +85,7 @@ This touches only the Juggernaut repo and its own worktrees, never anything unde
 4. **Send the re-read message to the rest.**
    For every target on the `nudge-squad-leads:` line (do nothing when it says `none`), send the one-line re-read steer:
    ```sh
-   JG_HOME=<this-juggernaut-home> bin/jg-send.sh <id> 'juggernaut was updated to the latest - please re-read your AGENTS.md to pick up the new instructions.'
+   JG_HOME=<this-juggernaut-home> jg radio send <id> 'juggernaut was updated to the latest - please re-read your AGENTS.md to pick up the new instructions.'
    ```
    These are the mates that are on the latest bytes but could not be restarted provably, so the steer is the most this pass can honestly do for them.
    It is a gentle steer, not an interruption: the mate already got a safe tracked-files fast-forward, and the steer never forces, tears down, or discards its work.

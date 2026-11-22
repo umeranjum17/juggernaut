@@ -80,7 +80,7 @@ done <<'LEDGER'
 4|.agents/skills/quota-array-dispatch/SKILL.md|When every candidate is tight, preserve the captain's strongest-reasoning
 4|.agents/skills/quota-array-dispatch/SKILL.md|Break genuine evidence ties without array-order or harness bias.
 4|.agents/skills/quota-array-dispatch/SKILL.md|`quota-axi` owns how model or product windows relate to
-4|.agents/skills/task-dispatch/SKILL.md|Run `bin/jg-dispatch-resolve.sh` directly on the written brief in the
+4|.agents/skills/task-dispatch/SKILL.md|Run `jg crew dispatch-resolve` directly on the written brief in the
 4|.agents/skills/task-dispatch/SKILL.md|The generic effort fallback and its precedence are owned
 4|.agents/skills/task-dispatch/SKILL.md|Do not add model-specific versions of that policy.
 4|.agents/skills/task-dispatch/SKILL.md|`squad-lead-provisioning` owns Squad Lead harness pins and inherited local
@@ -129,13 +129,13 @@ done <<'LEDGER'
 7|.agents/skills/task-dispatch/SKILL.md|When a steer answers an open keyed decision or
 7|.agents/skills/task-dispatch/SKILL.md|For the parent-owned correlation, recovery, and escalation contract on
 7|.agents/skills/task-dispatch/SKILL.md|When the captain adds or changes an ask mid-task,
-10|.agents/skills/fleet-records/SKILL.md|the durable queue; `bin/jg-backlog.sh markdown` renders them
+10|.agents/skills/fleet-records/SKILL.md|the durable queue; `jg ticket backlog markdown` renders them
 10|.agents/skills/fleet-records/SKILL.md|It tracks work items only, never agents; persistent Squad
 10|.agents/skills/fleet-records/SKILL.md|Work routed to a Squad Lead is recorded in
 10|.agents/skills/fleet-records/SKILL.md|When a main-side thread such as a pending captain
 10|.agents/skills/fleet-records/SKILL.md|When the automatic transition gate applies, dispatch and completion
-10|.agents/skills/fleet-records/SKILL.md|`docs/configuration.md` and current `bin/jg-backlog.sh help` own the backlog
-10|.agents/skills/fleet-records/SKILL.md|`squad-lead-provisioning` and `bin/jg-backlog-handoff.sh` own cross-home handoff safety.
+10|.agents/skills/fleet-records/SKILL.md|`docs/configuration.md` and current `jg ticket backlog help` own the backlog
+10|.agents/skills/fleet-records/SKILL.md|`squad-lead-provisioning` and `jg ticket backlog-handoff` own cross-home handoff safety.
 10|.agents/skills/fleet-records/SKILL.md|Keep free-form notes free of temporary paths, moving versions,
 10|.agents/skills/fleet-records/SKILL.md|Inspect the current task note before replacing its considered
 10|.agents/skills/fleet-records/SKILL.md|Verify volatile details against their authoritative config, live system,

@@ -1,6 +1,12 @@
 app: juggernaut
 skill: .agents/skills/done-done-verify-suites
 journeys:
+  dispatch-process-skills:
+    tier: local
+    command: bash tests/process-skills.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  dispatch-muster-council:
+    tier: local
+    command: bash tests/jg-muster-council.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   muster-acceptance:
     tier: local
     command: bash tests/muster-acceptance.test.sh > "$DONE_DONE_EVIDENCE_ROOT/muster.log" 2>&1
