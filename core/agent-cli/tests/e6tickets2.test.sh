@@ -75,14 +75,16 @@ with tempfile.TemporaryDirectory(prefix='jg-e6tickets2-') as temp:
                 actual.pop('error', None)
                 if 'stdout' in actual: actual['stdout'] = re.sub(r'(?<![0-9])1[0-9]{9}(?![0-9])', '<epoch>', actual['stdout'])
             assert actual == expected, (entry['form'], keep, expected, actual)
-    # A documented dispatcher gap is tracked by the lead: direct workflow arguments work.
+    # A workflow expression stays one argument through the dispatcher.
     lab.reset()
     direct = subprocess.run([lab.tree+'/bin/jg-workflow.sh', 'parse', 'recon(quick)'], env=lab.env, capture_output=True, text=True)
     assert direct.returncode == 0 and json.loads(direct.stdout)['spec'] == 'recon(quick)'
     via = subprocess.run([lab.tree+'/bin/jg', 'ticket', 'workflow', 'parse', 'recon(quick)'], env=lab.env, capture_output=True, text=True)
-    assert via.returncode == 2 and 'unexpected argument recon(quick)' in via.stderr
+    assert via.returncode == 0 and via.stderr == direct.stderr, via.stderr
+    envelope = json.loads(via.stdout)
+    assert envelope['ok'] and envelope['data'] == json.loads(direct.stdout), envelope
     # The pending promotion row is a refused mode value, not an operation.
     direct = subprocess.run([lab.tree+'/bin/jg-promote.sh', 'jg-missing', '--mode', 'no-mistakes-prod-only', '--yolo', 'off'], env=lab.env, capture_output=True, text=True)
     assert direct.returncode != 0 and 'registry policy, not a task mode' in direct.stderr
-print('e6tickets2: inventory, real forms and isolated dispatch parity passed; workflow argument gap recorded')
+print('e6tickets2: inventory, real forms, workflow arguments and isolated dispatch parity passed')
 PY

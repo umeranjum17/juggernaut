@@ -60,6 +60,10 @@ with tempfile.TemporaryDirectory(prefix='jg-e6steer-') as td:
                 (home/'state/.mail-seen').write_text('fixture cursor\n')
             if script == 'jg-inbox.sh' and op in ('ready','status','list'):
                 inbox=home/'state/inbox'; inbox.mkdir(); (inbox/'fixture.note').write_text('id=fixture\n--\nfixture message\n')
+            if (script, op) == ('jg-inbox.sh', 'status'):
+                # Bootstrap the isolated store before checking that status leaves it unchanged.
+                subprocess.run([str(root/'bin/jg-backlog.sh'), 'markdown'], env=env, cwd=home,
+                               stdout=subprocess.DEVNULL, check=True, timeout=15)
             if script == 'jg-peek.sh': (home/'state/.guard-watcher-stale-banner').write_text('fixture\n')
             before=digest(home)
             p=subprocess.run(cmd+cases[script][op],input='fixture\n',env=env,text=True,capture_output=True,timeout=15)

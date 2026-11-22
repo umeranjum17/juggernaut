@@ -36,6 +36,7 @@ with tempfile.TemporaryDirectory(prefix='jg-e6homes-') as tmp:
         (home/part).mkdir(parents=True)
     (home/'data'/'fixture').write_text('fixture\n')
     env = dict(PATH=os.environ['PATH'], HOME=str(tmp), TMPDIR=str(tmp), JG_HOME=str(home),
+               GIT_CEILING_DIRECTORIES=str(tmp),
                XDG_CONFIG_HOME=str(tmp/'xdg-config'), XDG_DATA_HOME=str(tmp/'xdg-data'),
                XDG_CACHE_HOME=str(tmp/'xdg-cache'), XDG_STATE_HOME=str(tmp/'xdg-state'),
                JG_STATE_OVERRIDE=str(home/'state'),
@@ -214,22 +215,28 @@ with tempfile.TemporaryDirectory(prefix='jg-e6homes-') as tmp:
             ledger['home'] = '<home>'
             summaries.append(ledger)
         assert summaries[0] == summaries[1], ('summary mismatch', best)
-    # The verify script accepts check options although its inventory form abbreviates them.
-    health_args = ['/nonexistent-fixture', '0'*40, '--project', 'fixture', '--key', 'fixture', '--grace', '1']
+    # A missing beacon in the fixture makes the selected grace visible in the result.
+    health_args = [str(home), '0'*40, '--project', 'fixture', '--key', 'fixture', '--all', '--grace', '7']
     health = subprocess.run([str(root/'bin/jg-home-health.sh'), 'verify', *health_args], env=env,
                             cwd=home, capture_output=True, text=True, timeout=30)
-    assert 'unknown option --grace' not in health.stderr, health.stderr
     health_jg = subprocess.run([str(root/'bin/jg'), 'home', 'home-health', 'verify', *health_args],
                                env=env, cwd=home, capture_output=True, text=True, timeout=30)
-    assert health_jg.returncode == 2 and 'unknown option --grace' in health_jg.stderr
-    # This historical form names an optional operand without angle brackets.
-    # The direct script accepts it; the dispatcher gap is retained for the owner.
-    project = tmp/'project'; project.mkdir()
-    direct = subprocess.run([str(root/'bin/jg-ensure-agents-md.sh'), str(project)], env=env,
-                            cwd=home, capture_output=True, text=True)
-    assert direct.returncode == 0 and (project/'AGENTS.md').is_file(), direct.stderr
-    dispatched = subprocess.run([str(root/'bin/jg'), 'home', 'ensure-agents-md', str(project)],
-                                env=env, cwd=home, capture_output=True, text=True)
-    assert dispatched.returncode == 2 and 'unexpected argument' in dispatched.stderr
-print('e6homes: contract coverage, help, read-only fixtures and optional operand gap passed')
+    assert 'stale-beacon:' in health.stdout and '(grace 7 s)' in health.stdout, health.stdout
+    assert health_jg.stdout and health_jg.returncode == health.returncode, (health, health_jg)
+    assert health_jg.stderr == health.stderr, (health, health_jg)
+    data = json.loads(health_jg.stdout)
+    assert data['ok'] == (health.returncode == 0) and data['data']['stdout'] == health.stdout, data
+    # Both calls must write the requested project, which is outside their current directory.
+    project_files = []
+    for label, command in (('direct', [str(root/'bin/jg-ensure-agents-md.sh')]),
+                           ('jg', [str(root/'bin/jg'), 'home', 'ensure-agents-md'])):
+        project = tmp/label/'Umer'
+        project.mkdir(parents=True)
+        result = subprocess.run([*command, str(project)], env=env, cwd=home,
+                                capture_output=True, text=True, timeout=30)
+        assert result.returncode == 0, (label, result.stderr)
+        project_files.append([(project/name).read_bytes() for name in ('AGENTS.md', 'CLAUDE.md')])
+    assert project_files[0] == project_files[1]
+    assert not (home/'AGENTS.md').exists() and not (home/'CLAUDE.md').exists()
+print('e6homes: contract coverage, help, read-only fixtures and optional form parity passed')
 PY

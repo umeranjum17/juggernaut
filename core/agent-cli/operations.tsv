@@ -169,7 +169,7 @@ jg-devin-config.sh	-	bin/jg-devin-config.sh <state-dir> <task-id> <busy-gen> [<u
 jg-dispatch-resolve.sh	-	bin/jg-dispatch-resolve.sh <brief-file> [--project <name>]	crew dispatch-resolve	POST	yes	e6crew1	-	pending	workers	help	form=usage
 jg-doc-audience-check.sh	-	bin/jg-doc-audience-check.sh	report doc-audience-check	POST	yes	e6report1	-	pending	reports	help	form=usage
 jg-doc-audience-check.sh	--root	bin/jg-doc-audience-check.sh --root <repo-dir> [--inventory <path>]	report doc-audience-check root	POST	yes	e6report1	-	pending	reports	help	form=usage
-jg-ensure-agents-md.sh	-	bin/jg-ensure-agents-md.sh [repo-or-worktree-dir]	home ensure-agents-md	POST	yes	e6homes	-	pending	homes	help	form=usage
+jg-ensure-agents-md.sh	-	bin/jg-ensure-agents-md.sh [<repo-or-worktree-dir>]	home ensure-agents-md	POST	yes	e6homes	-	pending	homes	help	form=usage
 jg-fleet-heartbeat.sh	check	bin/jg-fleet-heartbeat.sh check	radio fleet-heartbeat check	POST	yes	e6radio1	-	pending	notifications	help	form=usage
 jg-fleet-heartbeat.sh	arm	bin/jg-fleet-heartbeat.sh arm	radio fleet-heartbeat arm	POST	yes	e6radio1	-	pending	notifications	help	form=usage
 jg-fleet-ledger.sh	dispatched	bin/jg-fleet-ledger.sh dispatched <task> <kind> <project> <harness> <model>	report fleet-ledger dispatched	POST	yes	e6report1	-	confirmed	reports	dispatch+help	form=usage
@@ -227,7 +227,7 @@ jg-home-guard.sh	check	bin/jg-home-guard.sh check <home>	radio home-guard check	
 jg-home-guard.sh	uninstall	bin/jg-home-guard.sh uninstall <home>	radio home-guard uninstall	POST	yes	e6radio1	-	confirmed	notifications	dispatch+help	form=usage
 jg-home-health.sh	check	bin/jg-home-health.sh check <home> [<sha>] [--all | --before <file>] [--grace <s>] [--session-max <s>] [--wait <s>]	home home-health check	GET	no	e6homes	-	confirmed	homes	dispatch+help	form=usage
 jg-home-health.sh	pinback	bin/jg-home-health.sh pinback <home> --project <name> --key <home-id> --reason <reason>	home home-health pinback	POST	yes	e6homes	-	confirmed	homes	dispatch+help	form=usage
-jg-home-health.sh	verify	bin/jg-home-health.sh verify <home> <sha> --project <name> --key <home-id> [check options]	home home-health verify	POST	yes	e6homes	-	confirmed	homes	dispatch+help	form=usage
+jg-home-health.sh	verify	bin/jg-home-health.sh verify <home> <sha> --project <name> --key <home-id> [--all] [--before <file>] [--grace <s>] [--session-max <s>] [--wait <s>]	home home-health verify	POST	yes	e6homes	-	confirmed	homes	dispatch+help	form=usage
 jg-home-seed.sh	validate	bin/jg-home-seed.sh validate	home home-seed validate	POST	yes	e6homes	-	confirmed	homes	dispatch+help	form=usage
 jg-home-summary-refresh.sh	-	bin/jg-home-summary-refresh.sh [--best-effort]	home home-summary-refresh	POST	yes	e6homes	-	pending	homes	help	form=usage
 jg-home-summary-refresh.sh	--best-effort	bin/jg-home-summary-refresh.sh --best-effort	home home-summary-refresh best-effort	POST	yes	e6homes	-	pending	homes	dispatch	form=help-only
