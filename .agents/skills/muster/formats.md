@@ -1,4 +1,4 @@
-# Muster machine formats (revision 7)
+# Muster machine formats (revision 8)
 
 Every wave-1 order builds against these formats, so no order has to wait for another to define them. Order m1 copies
 this file byte for byte to `.agents/skills/muster/formats.md`; every other order pins this frozen copy by hash.
@@ -16,6 +16,7 @@ Revision 6 (closure review of draft 6): once a round is revised, a reply names t
 (section 2); no slice claims a ticket together with one it must follow (section 5); the glossary delta is compared by
 definition both ways (section 7); a form keeps every continued usage group (section 8).
 Revision 7 moves technical designs to `docs/architecture/` and reserves design paths for visual work (section 7).
+Revision 8 adds use-case catalogue verification (section 5).
 
 ## 1. The depth line on a ticket
 `Muster: <skip|light|full|complete>[ survey-first][ backfilled][ review] - <reason>`
@@ -128,6 +129,16 @@ An older spec without either requirements section can still use its existing pla
 
 Plan verification reads the [engineering practices](templates/ways-of-working.md#engineering-practices) from the approved pack's `docs/ways-of-working.md`.
 The plan is refused if that section is missing or any practice lacks a closed outcome.
+
+### Use-case catalogue
+
+Plan verification reads `docs/use-cases.md` from the approved pack.
+Use the [catalogue template](templates/use-cases.md) and keep each use case's ID unique, lowercase and hyphen-separated.
+Every use case names at least one journey ID from `.done-done.yaml` and at least one name from `## Core objects` in `docs/domain/model.md`.
+Every project journey must appear in a use case, including preserved journeys outside a feature plan's slices.
+An approved pack without a catalogue needs an updated pack and a fresh approval before plan verification can pass.
+
+### Decisions and assumptions
 
 The plan holds its decisions-and-assumptions table in `muster.decisions_and_assumptions`.
 Use one row per decision or assumption that affects the work, or an empty table when no decision affects a slice.

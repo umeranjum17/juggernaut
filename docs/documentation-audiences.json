@@ -820,6 +820,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/done-done-verify-suites/features/muster-use-cases.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/done-done-verify-suites/features/agent-cli-contract.md",
       "audience": "agent-runtime"
     },

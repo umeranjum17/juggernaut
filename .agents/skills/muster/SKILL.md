@@ -53,7 +53,7 @@ One machine, the same for every depth; a depth skips the states it does not need
 | intent | drafter; captain answers | `docs/vision.md` | sections present, one page, no placeholder, no open intent question | a later finding changes who or why |
 | lexicon | drafter; domain lens | `GLOSSARY.md` with core objects | every entity and core object is a term | a prototype or code uses a missing word |
 | rules | drafter with `prior-art`; captain answers taste calls | `docs/ways-of-working.md` and config | every rule names its check; each fault fails and each allowed use passes | a rule blocks good code |
-| terrain | drafter; architecture lens | `docs/domain/model.md`, `docs/architecture/<slug>.md` from `templates/technical-design.md`, real ADRs | the gate's model and ADR clauses pass; no unresolved question unless held | War Room's critic finds an undecided point |
+| terrain | drafter; architecture lens | `docs/domain/model.md`, `docs/use-cases.md`, `docs/architecture/<slug>.md` from `templates/technical-design.md`, real ADRs | the gate's model and ADR clauses pass; no unresolved question unless held | War Room's critic finds an undecided point |
 | sand table | first-draft for screens, the prototype skill for flows | `docs/design/visual-direction.md` and the visual design system in root `DESIGN.md` | one pick per design card | a pick contradicts terrain |
 | charter | drafter | `docs/charter.md` | every ticket in a batch, no dependency inside a batch or on a later one, every milestone proven by journeys | scope changes |
 | objectives | drafter | the spec's Objectives table; journeys | on the base, each new journey fails on its named assertion and each preserve journey passes | a journey cannot be driven |
@@ -90,6 +90,8 @@ Only the captain's own answers count for an irreversible question and for approv
 ## The pack, the check and the approval
 - Fill each document from `templates/` (placeholders only) and follow `examples/` for a filled one.
   `examples/helpdesk/` is a brand-new help desk bot at complete depth, `examples/skeleton/` is the commit it starts from, and `examples/rated/` is the same project after a rating feature at full depth, with its change pack.
+- Write or update the project's [use-case catalogue](templates/use-cases.md) before asking for approval.
+  See the [plan verification rules](formats.md#use-case-catalogue) for the links it must carry.
 - Every pack at every depth holds at least one real decision record, with a Confirmation; a record missing a part is an idea, and the gate refuses it.
 - Every core object has behaviour, invariants each tried by a journey, and a state machine or `Lifecycle: none - <reason>`.
 - Settle the [engineering practices](templates/ways-of-working.md#engineering-practices) in the standards pack before approval, including when starting from a survey draft or reusing standards for a feature.

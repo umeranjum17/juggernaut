@@ -5,7 +5,8 @@ Usage:
   pack_check.py <project> --depth complete
   pack_check.py <project> --depth full|light --change <slug> --before <dir>
 
-Owner: bin/jg-muster-gate.sh (the only caller). Reads files under <project> and <dir>, writes nothing, makes no
+Entry point: bin/jg-muster-gate.sh. Plan verification in approval.py shares the pack readers. Reads files under
+<project> and <dir>, writes nothing, makes no
 model call and no network call, and prints the same lines for the same files.
 
 complete checks a brand-new project's whole pack. full and light check a feature: the project is the tree after the
@@ -25,6 +26,8 @@ import sys
 
 PH = re.compile(r'<[^<>\n]{2,60}>')  # a template placeholder left in a filled document
 SLUG = re.compile(r'[a-z0-9][a-z0-9-]*\Z')
+USE_CASE_CATALOGUE = 'docs/use-cases.md'
+USE_CASE_FIELDS = ('ID', 'Actors', 'Goal', 'Main flow', 'Alternate flow', 'Failure flow', 'Journeys', 'Domain objects')
 VISION_SECTIONS = ('Press release', 'Who it is for', 'End state', 'Time budget', 'No-gos', 'Open risks', 'FAQ', 'Decisions')
 VISION_LINES = 60  # one page
 
@@ -334,6 +337,47 @@ class Pack:
                 self.refuse('reference', f'journey {j} runs {script.group(1)}, which does not exist')
             if script and j not in (read(self.p(script.group(1))) or ''):
                 self.refuse('reference', f'journey {j} is not defined in {script.group(1)}')
+
+    def check_use_cases(self):
+        """Check the catalogue against the approved project's journeys and core objects."""
+        catalogue = read(self.p(USE_CASE_CATALOGUE))
+        if catalogue is None:
+            self.refuse('use cases', f'{USE_CASE_CATALOGUE} is missing from the approved pack')
+            return
+        block = section(catalogue, 'Use cases') or ''
+        header = tuple(cell.strip() for cell in next(
+            (line for line in block.splitlines() if line.startswith('|')), ''
+        ).strip('|').split('|'))
+        rows = table(block)
+        if header != USE_CASE_FIELDS or not rows:
+            self.refuse('use cases', f'{USE_CASE_CATALOGUE} needs a Use cases table with columns '
+                        + ', '.join(USE_CASE_FIELDS) + ' and at least one use case')
+            return
+        journeys = set(self.manifest())
+        objects = set((self.model() or {}).get('objects', {}))
+        seen = set()
+        covered = set()
+        for row in rows:
+            case = row[0].strip('`')
+            if len(row) != len(USE_CASE_FIELDS) or any(not cell or PH.search(cell) for cell in row):
+                self.refuse('use cases', f'{case or "(unnamed row)"}: fill every use case column')
+                continue
+            if not SLUG.fullmatch(case) or case in seen:
+                self.refuse('use cases', f'{case}: use a unique lowercase use case id')
+            seen.add(case)
+            links = set(ids(row[6]))
+            domain = set(ids(row[7]))
+            if not links:
+                self.refuse('use cases', f'{case} has no journey')
+            for journey in sorted(links - journeys):
+                self.refuse('use cases', f'{case} names unknown journey {journey}')
+            if not domain:
+                self.refuse('use cases', f'{case} has no domain object')
+            for name in sorted(domain - objects):
+                self.refuse('use cases', f'{case} names unknown domain object {name}')
+            covered.update(links)
+        for journey in sorted(journeys - covered):
+            self.refuse('use cases', f'journey {journey} has no use case')
 
     def check_vision(self):
         v = read(self.p('docs/vision.md'))

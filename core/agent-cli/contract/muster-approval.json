@@ -15,7 +15,7 @@
       ],
       "changes": true,
       "method": "POST",
-      "form": "bin/jg-muster-approval.sh manifest <ticket> <project-dir> --depth <depth> [--change <change> --before <before>]",
+      "form": "bin/jg-muster-approval.sh manifest <ticket> <project-dir> --depth <depth> [--change <change> --before <before>] --json",
       "repeat_key": "ticket",
       "exits": {"0": 0, "1": 1, "2": 2},
       "schema": "muster.approve.manifest.v1",
@@ -97,7 +97,7 @@
     },
     {
       "path": ["muster", "verify-plan"],
-      "meaning": "Check that requirements and engineering practices are closed and the plan keeps the approved journeys, charter and order.",
+      "meaning": "Check requirements coverage, settled engineering practices, use-case links, and the plan against the approved journeys and charter order.",
       "roles": ["overwatch"],
       "args": [
         {"name": "ticket", "type": "text", "required": true},

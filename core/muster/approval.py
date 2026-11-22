@@ -4,11 +4,11 @@
 Run through bin/jg-muster-approval.sh. Standard library only. The machine formats are
 .agents/skills/muster/formats.md sections 3 to 5 (frozen copy: example-pack/formats.md of plan jg-6si).
 
-  manifest <ticket> <project dir> --depth <d> [--change <slug> --before <dir>]
+  manifest <ticket> <project dir> --depth <d> [--change <slug> --before <dir>] [--json]
       runs the pack gate on the project; on any refusal prints it and exits 1 with nothing written. On PASS it saves
       a complete byte-for-byte copy of the pack (pack-<sha12>/) and, for a feature, of the documents before it
       (base-<sha12>/), runs the ordinary gate again on those copies, writes manifest-<sha12>.tsv with its `check`
-      line and prints the sha12.
+      line and prints the sha12. With --json it puts that text in a stdout field for the routed CLI.
   ask <ticket> <project name> <sha12>        hold "Approve the agreed documents for <name>, version <n>?"
   exception-ask <ticket> <project name>      hold "Start planning <name> without agreed documents, request <n>?"
       both refuse words the card rule refuses (jg_ask_card_junk), refuse when JG_TASK_ID is set, and record
@@ -16,7 +16,7 @@ Run through bin/jg-muster-approval.sh. Standard library only. The machine format
       `ask` also refuses a manifest with no passing check line or a saved copy that no longer passes.
   verify <ticket> <project dir>              depth, change and baseline come from the approved manifest
   exception <ticket>                         the planning exception, for that ticket only
-  verify-plan <ticket> <plan.json>           check requirements, engineering practices, the approved manifest and slice order
+  verify-plan <ticket> <plan.json>           check requirements, engineering practices, use cases, the approved manifest and slice order
 
 Exit 0 approved, 1 refused (one line saying why), 2 usage. The only accepted answer is exactly `yes`, the hold card's
 affirmative, with the signed approved-by-captain line that jg-captain-hold.sh answer alone writes. This file never
@@ -32,6 +32,9 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+from pack_check import Pack
+
 TREE = os.environ.get('JG_ROOT_OVERRIDE') or os.path.dirname(os.path.dirname(HERE))
 HOME = os.environ.get('JG_HOME') or TREE
 STATE = os.environ.get('JG_STATE_OVERRIDE') or os.path.join(HOME, 'state')
@@ -628,6 +631,10 @@ def verify_plan(ticket, plan_path, emit_directions=False):
                           f'{sorted(set(have) - set(got)) or "none"}, extra {sorted(set(got) - set(have)) or "none"}')
     has_coverage = check_requirements(ticket, row['manifest'], mf)
     check_engineering_practices(ticket, row['manifest'])
+    pack = Pack(os.path.join(muster_dir(ticket), f'pack-{row["manifest"]}'))
+    pack.check_use_cases()
+    if pack.refusals:
+        raise Refused('\n'.join(pack.refusals))
     n = check_order(m, plan)
     directions = slice_directions(plan, m, has_coverage)
     print_gate_warnings(checked)
@@ -652,7 +659,8 @@ def manifest_cmd(argv):
         raise Refused('depth complete checks a project; --change and --before belong to full and light')
     if depth != 'complete' and not (change and before):
         raise Refused(f'depth {depth} checks a feature: it needs --change <slug> and --before <the documents before it>')
-    print(build_manifest(ticket, project, depth, change, before))
+    sha = build_manifest(ticket, project, depth, change, before)
+    print(json.dumps({'stdout': sha + '\n'}) if '--json' in argv else sha)
 
 
 def main(argv):

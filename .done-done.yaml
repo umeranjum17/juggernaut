@@ -24,6 +24,10 @@ journeys:
   muster-engineering-practices:
     tier: local
     command: bash journeys/muster-engineering-practices.sh
+  muster-use-cases:
+    tier: local
+    command: bin/jg-test-run.sh tests/*muster*.test.sh > "$DONE_DONE_EVIDENCE_ROOT/muster.log" 2>&1
+    timeout: 15m
   agent-cli-contract:
     tier: local
     command: bash journeys/agent-cli-contract.sh
