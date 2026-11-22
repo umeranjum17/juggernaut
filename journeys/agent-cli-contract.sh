@@ -31,7 +31,7 @@ fi
 
 bash bin/jg-lint.sh bin/jg bin/jg-alert.sh bin/jg-board-gate.sh bin/jg-crew-state.sh bin/jg-migrate.sh \
   core/agent-cli/dispatch.sh core/agent-cli/tests/contract.test.sh \
-  core/agent-cli/tests/forms.test.sh journeys/agent-cli-contract.sh > "$DONE_DONE_EVIDENCE_ROOT/lint.log" 2>&1 \
+  core/agent-cli/tests/forms.test.sh core/agent-cli/tests/inventory.test.sh journeys/agent-cli-contract.sh > "$DONE_DONE_EVIDENCE_ROOT/lint.log" 2>&1 \
   || { tail -n 25 "$DONE_DONE_EVIDENCE_ROOT/lint.log" >&2; exit 1; }
 for suite in "${suites[@]}"; do
   log="$DONE_DONE_EVIDENCE_ROOT/$suite.log"

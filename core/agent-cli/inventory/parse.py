@@ -8,8 +8,8 @@ check renders a form with fixture values and runs it through the real script, so
 Every run is on a throwaway home with argument-recording stand-ins on PATH (tmux, herdr, gh, ssh, systemctl, pkill,
 curl, the agent CLIs...), in a copy of the tree, with stdin closed. Before each run the home is put back to the same
 fixture, which holds data for a read to act on (an answered hold on jg-t1, an open one on jg-t2). The home's file
-digest before and after the run, and every call to a stand-in, are what a run reports. Nothing outside <scratch> is
-read or written, and no live home is read.
+digest before and after the run, and every call to a stand-in, are what a run reports. Each invocation that needs
+labs creates and removes a private directory under <scratch>. No live home is read.
 
 commands (one line per run; exit 1 when any line is a failure):
   usage    every row whose note says form=usage, optional groups dropped, a required (a | b) group's first alternative;
@@ -35,6 +35,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 
 TIMEOUT = 8
 STAND_INS = ('tmux', 'herdr', 'gh', 'gh-axi', 'ssh', 'scp', 'systemctl', 'pkill', 'killall', 'curl', 'wget', 'claude', 'codex',
@@ -121,8 +122,6 @@ class Lab:
 
     def __init__(self, tree, scratch):
         self.scratch = os.path.abspath(scratch)
-        if os.path.exists(self.scratch):
-            rmtree_force(self.scratch)
         os.makedirs(self.scratch)
         self.tree = os.path.join(self.scratch, 'tree')
         tree_copy(os.path.abspath(tree), self.tree)
@@ -444,10 +443,6 @@ class Pool:
         from concurrent.futures import ThreadPoolExecutor
         import queue
         self.jobs = jobs
-        scratch = os.path.abspath(scratch)
-        if os.path.exists(scratch):
-            rmtree_force(scratch)
-        os.makedirs(scratch)
         with ThreadPoolExecutor(jobs) as ex:
             self.labs = list(ex.map(lambda i: Lab(tree, os.path.join(scratch, f'lab{i}')), range(jobs)))
         self.free = queue.Queue()
@@ -737,7 +732,7 @@ def main(argv=None):
     ap.add_argument('command', choices=['usage', 'options', 'get', 'parity', 'shapes', 'names', 'forms', 'run', 'all'])
     ap.add_argument('tree')
     ap.add_argument('operations')
-    ap.add_argument('scratch')
+    ap.add_argument('scratch', help='parent directory for temporary labs')
     ap.add_argument('--only', action='append', default=[], help='a script name: run only its rows')
     ap.add_argument('--known', help='ledger of rows known to fail: mode<TAB>script<TAB>operation<TAB>reason per line')
     ap.add_argument('--jobs', type=int, default=min(4, os.cpu_count() or 1), help='labs run side by side')
@@ -750,8 +745,16 @@ def main(argv=None):
     if args.only:
         rows = [r for r in rows if r['script'] in args.only]
     tree = os.path.abspath(args.tree)
-    needs_lab = args.command not in ('forms', 'names')
-    pool = Pool(tree, args.scratch, 1 if args.command == 'run' else args.jobs) if needs_lab else None
+    if args.command in ('forms', 'names'):
+        return check_rows(args, tree, rows, None)
+    scratch = os.path.abspath(args.scratch)
+    os.makedirs(scratch, mode=0o700, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='parse.', dir=scratch) as run_scratch:
+        pool = Pool(tree, run_scratch, 1 if args.command == 'run' else args.jobs)
+        return check_rows(args, tree, rows, pool)
+
+
+def check_rows(args, tree, rows, pool):
     commands = {'usage': cmd_usage, 'options': cmd_options, 'get': cmd_get, 'parity': cmd_parity, 'shapes': cmd_shapes, 'run': cmd_run}
     todo = ['usage', 'options', 'get', 'parity', 'shapes', 'names'] if args.command == 'all' else [args.command]
     failed = 0

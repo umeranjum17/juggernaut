@@ -30,7 +30,7 @@ trap cleanup EXIT
 for f in operations.tsv inventory/parse.py inventory/extract.py; do
   [ -s "$ROOT/core/agent-cli/$f" ] || fail "core/agent-cli/$f is missing"
 done
-parse() { py "$INV/parse.py" "$1" "$ROOT" "$LIST" "$d/lab-$1" --known "$d/known.tsv" "${@:2}"; }
+parse() { py "$INV/parse.py" "$1" "$ROOT" "$LIST" "$d" --known "$d/known.tsv" "${@:2}"; }
 
 # Rows the list is known to get wrong, found by this check. A row listed here that fails is reported `known-defect`; one that
 # stops failing is stale and fails the test, so the ledger shrinks as the list is corrected.
@@ -52,7 +52,7 @@ pass "$want rows with a usage form parse through the real scripts; $helponly hel
 awk -F'\t' 'BEGIN { OFS = FS } $1 == "jg-pr-check.sh" && $2 == "--from-status" {
   $3 = "bin/jg-pr-check.sh --from-status"
 } { print }' "$LIST" > "$d/incomplete.tsv"
-if py "$INV/parse.py" usage "$ROOT" "$d/incomplete.tsv" "$d/lab-incomplete" --only jg-pr-check.sh > "$d/incomplete.out"; then
+if py "$INV/parse.py" usage "$ROOT" "$d/incomplete.tsv" "$d" --only jg-pr-check.sh > "$d/incomplete.out"; then
   fail "missing task id passed the usage check: $(cat "$d/incomplete.out")"
 fi
 has "incomplete PR check" "$(cat "$d/incomplete.out")" 'form	parse-error	jg-pr-check.sh --from-status'
@@ -70,12 +70,15 @@ parse names > "$d/names.out" || fail "a form names an option its script does not
 pass "every --option a form names is in the code of its script"
 
 # --- 3: jg-control reaches the task with the stand-in of tests/jg-control.test.sh
+# Keep the borrowed prelude's scratch and cleanup registries under this run's root.
+TMPDIR=$(cd "$d" && pwd -P) || exit 1
+export TMPDIR
 # shellcheck disable=SC2016
 sed -n '1,/^# --- 1\. adapter contract/p' "$ROOT/tests/jg-control.test.sh" \
   | sed 's#"$(dirname "${BASH_SOURCE\[0\]}")/lib.sh"#"$ROOT/tests/lib.sh"#' > "$d/control-prelude.sh"
 # shellcheck source=/dev/null
 . "$d/control-prelude.sh"
-trap 'chmod -R u+rwX -- "$d" "$TMP_ROOT" 2>/dev/null; rm -rf -- "$d" "$TMP_ROOT"' EXIT
+trap 'jg_test_cleanup; cleanup' EXIT
 form_args() {  # <script> <operation> <task id>: the listed form's arguments, the task id in its place, optional groups dropped
   awk -F'\t' -v s="$1" -v o="$2" '$1 == s && $2 == o { print $3 }' "$LIST" \
     | sed -e 's/^bin\/[^ ]* //' -e 's/ *\[[^]]*\]//g' -e 's/ *(--note <text> | --note-file <path>)/ --note fixture/' -e "s/<task-id>/$3/"
@@ -116,7 +119,7 @@ pass "$gets GET rows run on a fixture with an answered and an open hold: no file
 
 parse parity > "$d/parity.out" || fail "a read is listed POST: $(grep -P '\tPOST-read\t' "$d/parity.out" | cut -c1-240)"
 awk -F'\t' 'BEGIN { OFS = FS } $1 == "jg-captain-hold.sh" && $2 == "phase" { $5 = "POST"; $6 = "yes" } { print }' "$LIST" > "$d/planted-list.tsv"
-if py "$INV/parse.py" parity "$ROOT" "$d/planted-list.tsv" "$d/lab-planted" --only jg-captain-hold.sh > "$d/planted.out"; then
+if py "$INV/parse.py" parity "$ROOT" "$d/planted-list.tsv" "$d" --only jg-captain-hold.sh > "$d/planted.out"; then
   fail "a planted POST read was not reported as a parity failure: $(cat "$d/planted.out")"
 fi
 has "planted POST read" "$(cat "$d/planted.out")" 'parity	POST-read	jg-captain-hold.sh phase'

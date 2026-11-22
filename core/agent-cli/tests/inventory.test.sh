@@ -9,7 +9,8 @@
 #      `reconcile list` is a read and `reconcile close` a change, on two paths;
 #   4. a planted script with `Usage: x.sh start` and a `start)` arm is found, a header word that is no operation is not,
 #      a read that writes a file is a change, and a usage count never makes a script public;
-#   5. drift is printed both ways and never written into the list.
+#   5. drift is printed both ways and never written into the list;
+#   6. simultaneous parser runs sharing a scratch parent complete and clean up only their own fixtures.
 set -u
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 ROOT=$(cd "$here/../../.." && pwd -P)
@@ -128,4 +129,25 @@ has "integrity" "$(cat "$P/bad.out")" 'path used 2 times'
 has "integrity" "$(cat "$P/bad.out")" 'no owner'
 has "integrity" "$(cat "$P/bad.out")" 'method GET with changes=yes'
 pass "drift is printed both ways and never written into the list; a broken list fails"
+
+# --- 6. both parser invocations start before either is waited on
+scratch=$d/parser-scratch
+mkdir "$scratch" || fail "cannot create the shared scratch parent"
+printf 'keep\n' > "$scratch/keep"
+py "$INV/parse.py" usage "$ROOT" "$LIST" "$scratch" --only jg-control.sh --jobs 1 > "$d/parse-a.out" 2>&1 &
+first_pid=$!
+py "$INV/parse.py" usage "$ROOT" "$LIST" "$scratch" --only jg-control.sh --jobs 1 > "$d/parse-b.out" 2>&1 &
+second_pid=$!
+first_rc=0 second_rc=0
+wait "$first_pid" || first_rc=$?
+wait "$second_pid" || second_rc=$?
+[ "$first_rc" = 0 ] && [ "$second_rc" = 0 ] ||
+  fail "concurrent parser runs exited $first_rc and $second_rc: $(cat "$d/parse-a.out" "$d/parse-b.out")"
+for log in "$d/parse-a.out" "$d/parse-b.out"; do
+  grep -q $'^form\t[^\t]*\tjg-control.sh interrupt\t' "$log" || fail "parser run did not check the interrupt form: $(cat "$log")"
+done
+[ "$(find "$scratch" -mindepth 1 -maxdepth 1 -print)" = "$scratch/keep" ] ||
+  fail "parser runs removed the caller's file or left scratch behind"
+[ "$(cat "$scratch/keep")" = keep ] || fail "parser runs changed the caller's file"
+pass "two parser runs share a scratch parent without disturbing each other or leaving fixtures behind"
 echo "inventory.test.sh: all checks passed"
