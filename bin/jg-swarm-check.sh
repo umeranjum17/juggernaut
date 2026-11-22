@@ -6,8 +6,8 @@
 #
 # Reads the records `bin/jg-swarm.sh start` and `bin/jg-swarm-arm.sh` write: data/swarm/<plan>/swarm.json (Main),
 # plan.json (the derived plan) and arm.json (each owner home). It changes no backlog row.
-# status prints `<plan>: <d>/<n> landed, <w> working, <q> queued (<k> wait for the owner), started <h>h<mm>m ago`
-# (--short: `<plan> <d>/<n> landed, <w> working, <k> wait for the owner`), or `no swarm is running`.
+# status prints landed, running, waiting and queued counts and each slice's current state.
+# --short prints the counts only; an unavailable live state is named rather than guessed.
 # check, in Main, for each running swarm prints each of these once (a stamp under data/swarm/<plan>/ holds the counts):
 #   `swarm <plan>: all <n> slices landed in <h>h<mm>m`   (swarm.json state becomes `finished`)
 #   `swarm <plan>: all runnable slices landed; <k> wait for the owner: <row>[, <row>...]`
@@ -98,16 +98,57 @@ running_plans() { # <data dir> [<plan>]: plan dirs whose swarm.json is running
   done
 }
 
+# Presentation uses the worker's live state; evaluate's in-flight count remains the dispatch contract.
 cmd_status() {
-  local plan='' short=0 a dir p started n=0 home
+  local plan='' short=0 a dir p started n=0 home sid row task owner deps h state live detail age stamp blocked line since
+  local running waiting queued landed missing unknown lines
   for a in "$@"; do case $a in --short) short=1 ;; -*) usage ;; *) plan=$a ;; esac; done
   home=${JG_HOME:-$(cd "$SELF/.." && pwd -P)}
   while read -r dir; do
     [ -n "$dir" ] || continue
     evaluate "$dir" || continue
     p=$(basename "$dir"); started=$(jq -r '.started_at' "$dir/swarm.json"); n=$((n + 1))
-    if [ "$short" = 1 ]; then printf '%s %s/%s landed, %s working, %s wait for the owner\n' "$p" "$D" "$N" "$W" "$K"
-    else printf '%s: %s/%s landed, %s working, %s queued (%s wait for the owner), started %s ago\n' "$p" "$D" "$N" "$W" "$Q" "$K" "$(hm $(($(now) - started)))"; fi
+    running=0 waiting=0 queued=0 landed=0 missing=0 unknown=0 lines=''
+    while IFS=$'\t' read -r sid row task owner deps; do
+      h=$(jq -r --arg o "$owner" '.owner_homes[$o] // .main_home' "$dir/plan.json")
+      state=$(state_of "$h" "$row"); detail=''
+      if awk -F '\t' -v id="$task" '$1 == id && $5 !~ /^reverts-/ { found=1 } END { exit !found }' "$h/data/trunk-landings.tsv" 2>/dev/null; then
+        landed=$((landed + 1)); detail=landed
+      elif [ "$state" != in_flight ] && [ ! -e "$h/state/$task.meta" ]; then
+        queued=$((queued + 1)); detail="queued; dependencies: ${deps:--}"
+      elif [ ! -e "$h/state/$task.meta" ]; then
+        missing=$((missing + 1)); detail='no lane'
+      else
+        live=$(in_home "$h" jg-crew-state.sh "$task" --read-only) || live=''
+        case $live in
+          'state: working · source: pane · '*)
+            running=$((running + 1)); detail='running now'
+            stamp=$(sed -n 's/.* ts=\([0-9][0-9]*\).*/\1/p' "$h/state/$task.busy-state" 2>/dev/null)
+            if [ -n "$stamp" ] && [ "$stamp" -le "$(now)" ]; then detail="$detail; last activity event $(hm $(( $(now) - stamp ))) ago"; else detail="$detail; last activity unknown"; fi ;;
+          'state: blocked · source: status-log'*|'state: paused · source: status-log'*|'state: parked · source: status-log'*)
+            waiting=$((waiting + 1)); detail="waiting; ${live#* · source: status-log · }"
+            blocked=$(in_home "$h" jg-classify.sh blocked-since "$h/state/$task.status") || blocked=''
+            since=0
+            if [ -n "$blocked" ]; then
+              IFS=$'\t' read -r line since <<< "$blocked"
+            elif [[ $live == 'state: paused ·'* ]]; then
+              line=$(in_home "$h" jg-classify.sh declared-wait "$h/state/$task.status") || line=''
+              since=$(in_home "$h" jg-classify.sh at-epoch "$line") || since=0
+            fi
+            case $since in ''|*[!0-9]*) since=0 ;; esac
+            if [ "$since" -gt 0 ] && [ "$since" -le "$(now)" ]; then age=$(hm $(( $(now) - since ))); detail="$detail; waiting $age"; else detail="$detail; wait age unknown"; fi ;;
+
+          'state: unknown · source: none · backend target gone:'*|'state: unknown · source: none · no metadata'*)
+            missing=$((missing + 1)); detail='no lane' ;;
+          *) unknown=$((unknown + 1)); detail="unknown; ${live:-crew state unavailable}" ;;
+        esac
+      fi
+      lines+=$'\n'"  $sid ($task): $detail"
+    done < <(jq -r '.slices[] | [.id, (.row // "-"), (.task // .row // "-"), .owner_home, (if (.depends_on // [] | length) == 0 then "-" else (.depends_on | join(",")) end)] | @tsv' "$dir/plan.json")
+    printf '%s: %s/%s landed, %s running, %s waiting, %s queued' "$p" "$landed" "$N" "$running" "$waiting" "$queued"
+    [ "$missing" = 0 ] || printf ', %s no lane' "$missing"
+    [ "$unknown" = 0 ] || printf ', %s unknown' "$unknown"
+    if [ "$short" = 1 ]; then printf '\n'; else printf ', started %s ago%s\n' "$(hm $(($(now) - started)))" "$lines"; fi
   done < <(running_plans "${JG_DATA_OVERRIDE:-$home/data}" "$plan")
   [ "$n" -gt 0 ] || echo "no swarm is running"
 }
@@ -122,15 +163,29 @@ reason_of() { # <row>: the row's latest reason in its home's rows.tsv
 }
 
 check_blocked_lane() { # <plan dir> <home> <row> <now>
-  local dir=$1 row=$3 t=$4 status observation='' line since first old_line alert_record raised=''
+  local dir=$1 row=$3 t=$4 status observation='' line since first old_line alert_record raised='' task live wait_line
   local -x JG_HOME=$2 JG_STATE_OVERRIDE=$2/state JG_ALERT_NOW=$4
   local subject="swarm-lane-$row" key="fleet-blocked--swarm-lane-$row"
   local marker="$dir/blocked-$row"
-  status=${ROW_HOME[$row]}/state/$row.status
+  task=$(jq -r --arg row "$row" '.slices[] | select(.row == $row) | .task // .row' "$dir/plan.json") || return 1
+  status=${ROW_HOME[$row]}/state/$task.status
   if [ "$(state_of "${ROW_HOME[$row]}" "$row")" != "done" ]; then
     [ -e "$status" ] || [ -L "$status" ] || return 0
-    observation=$(env -u JG_STATE_OVERRIDE -u JG_DATA_OVERRIDE -u JG_CONFIG_OVERRIDE \
-      "$SELF/jg-classify.sh" blocked-since "$status") || return 1
+    live=''
+    if [ -f "${ROW_HOME[$row]}/state/$task.meta" ]; then
+      live=$(in_home "${ROW_HOME[$row]}" jg-crew-state.sh "$task" --read-only) || return 1
+    fi
+    if [[ $live != 'state: working · source: pane'* ]]; then
+      observation=$(in_home "${ROW_HOME[$row]}" jg-classify.sh blocked-since "$status") || return 1
+      if [ -z "$observation" ]; then
+        wait_line=$(in_home "${ROW_HOME[$row]}" jg-classify.sh declared-wait "$status") || return 1
+        if [[ $wait_line == paused* && $wait_line == *'reason=dependency'* ]]; then
+          line=$(grep -nFx -- "$wait_line" "$status" | tail -1 | cut -d: -f1)
+          since=$(in_home "${ROW_HOME[$row]}" jg-classify.sh at-epoch "$wait_line") || since=0
+          observation="${line:-0}"$'\t'"${since:-0}"
+        fi
+      fi
+    fi
   fi
   if [ -r "$JG_STATE_OVERRIDE/alerts/$key.rec" ]; then
     alert_record=$("$SELF/jg-alert.sh" show "$key") || return 1
@@ -152,7 +207,7 @@ check_blocked_lane() { # <plan dir> <home> <row> <now>
       raised=''
     fi
     [ -z "$raised" ] && [ "$((t - since))" -gt 600 ] || return 0
-    "$SELF/jg-alert.sh" raise fleet-blocked "$subject" --rung 2 --ticket "$row" --deliver \
+    "$SELF/jg-alert.sh" raise fleet-blocked "$subject" --rung 3 --ticket "$row" --deliver \
       --note "Swarm lane $row (owner ${ROW_OWNER[$row]}) has been blocked for over 10 minutes."
     return $?
   fi
