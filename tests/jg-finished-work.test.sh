@@ -72,6 +72,7 @@ refuse_captain_message() { # <dir> <ticket> <expected page number>
 test_a_sweep_over_two_finished_recons_is_refused_and_named() {
   local dir state now cut n
   dir=$(make_home replay); state=$dir/state; now=$(date +%s)
+  ln -sn "$ROOT/bin" "$dir/bin" || fail "could not link the fixture home commands"
   add_lane "$dir" rec-a T-a scout; add_lane "$dir" rec-b T-b scout
   status_line "$dir" rec-a working $((now - 900)) reading
   status_line "$dir" rec-a "done" $((now - 800)) "report ready in data/rec-a/report.md"
