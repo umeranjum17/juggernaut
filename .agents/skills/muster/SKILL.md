@@ -92,8 +92,9 @@ Only the captain's own answers count for an irreversible question and for approv
   `examples/helpdesk/` is a brand-new help desk bot at complete depth, `examples/skeleton/` is the commit it starts from, and `examples/rated/` is the same project after a rating feature at full depth, with its change pack.
 - Every pack at every depth holds at least one real decision record, with a Confirmation; a record missing a part is an idea, and the gate refuses it.
 - Every core object has behaviour, invariants each tried by a journey, and a state machine or `Lifecycle: none - <reason>`.
+- Settle the [engineering practices](templates/ways-of-working.md#engineering-practices) in the standards pack before approval, including when starting from a survey draft or reusing standards for a feature.
 - `jg muster gate` checks the pack at its depth, and a feature against its change pack and the documents before it.
-  `jg muster objectives` runs the journeys on the base, `jg muster code` finds each behaviour in its module, and `jg muster verify-plan` checks that the slice graph keeps the charter's order.
+  `jg muster objectives` runs the journeys on the base, `jg muster code` finds each behaviour in its module, and [plan verification](formats.md#5-the-muster-block-of-a-plan-file) checks the handoff.
 - `jg muster approve ask <ticket>` runs the gate, saves the pack, writes the manifest and holds one question: "Approve the agreed documents for <project>, version <n>?".
   A changed pack needs a fresh check and a fresh yes.
 - The one exception is `jg muster exception ask`, for one ticket only and answered exactly `yes`; `jg muster exception use` spends it.

@@ -126,6 +126,9 @@ For a complete pack without ticket-labelled specs, it checks the project's specs
 A category with a missing row or any row without a closed outcome stays open.
 An older spec without either requirements section can still use its existing plan format.
 
+Plan verification reads the [engineering practices](templates/ways-of-working.md#engineering-practices) from the approved pack's `docs/ways-of-working.md`.
+The plan is refused if that section is missing or any practice lacks a closed outcome.
+
 The plan holds its decisions-and-assumptions table in `muster.decisions_and_assumptions`.
 Use one row per decision or assumption that affects the work, or an empty table when no decision affects a slice.
 

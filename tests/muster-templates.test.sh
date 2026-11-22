@@ -32,7 +32,7 @@ done
 # skeleton/ and rated/ live under examples/.
 pins() {
   cat <<'PINS'
-0f8fc2606f7b66eec5d7c632caefde018aa9bd1bfe004bd017bc5d73250f3d11  formats.md
+3e42d086fae0aac7e75de8ccdd9513a097767f4a1cf66e1aaf29f8d42cea63c1  formats.md
 8ae7954f2af2b378f82852a9ef2523d9b5d7042f27acb47952c8129d0cdcde2a  helpdesk/.done-done.yaml
 2d78a4233a3f5093978cc830cb6740fcbb398ee4513e5767394210cf9bf30123  helpdesk/CHANGELOG.md
 af1698338b5b995f9299552737b9ce8b7c117d89289488ee973f22153f2024e0  helpdesk/GLOSSARY.md
@@ -46,7 +46,7 @@ fbbaf3fb5d5d2c6e2700223d378c9e3c96c91ed6905176ad7292870dd0b8eb48  helpdesk/docs/
 78d78475bce0ac561e146b098f26a677f62e0ca4128490e0908583c6cda6064f  helpdesk/docs/domain/model.md
 6596cdbca2dd4f7e25d90639eed51b75c700c3d0d0e6786384c109890fdd5913  helpdesk/docs/specs/helpdesk.md
 cb95e504885cfd49c7efa1667845c31cb0c2a04b3a1ba727d9a03e992307c31b  helpdesk/docs/vision.md
-5cb2584534564de98b4ae4d92b78052d0d5a23c454b887ce5c1c06272207e2ef  helpdesk/docs/ways-of-working.md
+1b526e2c034ada86626a8b92ca82fe38e141b99ccdd568fce1199d44ca79583c  helpdesk/docs/ways-of-working.md
 3699063bf991bdc11b96533737ac97051d0ac1176ae619cd990fb803bbe235cb  helpdesk/journeys/run.ts
 f4ee5e57f8c4776bcf81db1317c877b03d358c7b92ba60072948ca41eafd0bb3  helpdesk/package.json
 fd2044be9d054e2ab1b673572e511d22c494b5f8dd701e97e765bfa4b6f8a483  helpdesk/src/cli.ts
@@ -70,7 +70,7 @@ fbbaf3fb5d5d2c6e2700223d378c9e3c96c91ed6905176ad7292870dd0b8eb48  rated/docs/des
 6596cdbca2dd4f7e25d90639eed51b75c700c3d0d0e6786384c109890fdd5913  rated/docs/specs/helpdesk.md
 dad7cd07a5fb787ac3b138e7fe60ee81da54abd87339bd85b10750a98654298f  rated/docs/specs/rate-a-conversation.md
 cb646965c0c532fe7b88272d2f1d68bdcc0c8253192a3bb39f773dd1c1dc5289  rated/docs/vision.md
-5cb2584534564de98b4ae4d92b78052d0d5a23c454b887ce5c1c06272207e2ef  rated/docs/ways-of-working.md
+1b526e2c034ada86626a8b92ca82fe38e141b99ccdd568fce1199d44ca79583c  rated/docs/ways-of-working.md
 9e47750459d64a68bdf3fb027c751af3fe183a2e238b6338c538f14317821ba5  rated/journeys/run.ts
 f4ee5e57f8c4776bcf81db1317c877b03d358c7b92ba60072948ca41eafd0bb3  rated/package.json
 0e3b34b33a339d356ca1f973be958fbbbcafdec84da9c698910ee317eba0c6b5  rated/src/cli.ts
@@ -92,7 +92,7 @@ d647441d67160358760a22ab26d144d39fa2c49fb70df1c80cd84c15910edafc  templates/done
 68f9292ccbb65fc015d76f395f77df7151a3c24e419176651d20ca4ba41fa6e7  templates/spec.md
 8f7bb6b9a00e9fada578ef838de70d3cf3c81b723540c781414d4493a16acb70  templates/vision.md
 d49832aaf71087ec07f6316dc2a5e43740157e4509e26d3c0b5cd9fcffd0e94c  templates/visual-direction.md
-76f2be3a55dcbe66df8beaea57234d0b07dc30aa982c07e17a7b25cc6e680d80  templates/ways-of-working.md
+779bfe60ea9f960d33ae894c934f0551571645e48bd1fbb6919ea6f2975132cc  templates/ways-of-working.md
 PINS
 }
 

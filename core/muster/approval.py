@@ -16,7 +16,7 @@ Run through bin/jg-muster-approval.sh. Standard library only. The machine format
       `ask` also refuses a manifest with no passing check line or a saved copy that no longer passes.
   verify <ticket> <project dir>              depth, change and baseline come from the approved manifest
   exception <ticket>                         the planning exception, for that ticket only
-  verify-plan <ticket> <plan.json>           check requirements, the approved manifest and the slice order
+  verify-plan <ticket> <plan.json>           check requirements, engineering practices, the approved manifest and slice order
 
 Exit 0 approved, 1 refused (one line saying why), 2 usage. The only accepted answer is exactly `yes`, the hold card's
 affirmative, with the signed approved-by-captain line that jg-captain-hold.sh answer alone writes. This file never
@@ -42,6 +42,8 @@ PACK_DIRS = ('docs', 'journeys')
 DEPTHS = ('complete', 'full', 'light')
 CONTENT = ('check', 'file', 'journey', 'batch', 'charter', 'milestone', 'adr')
 REQUIREMENT_SECTIONS = ('Functional requirements', 'Non-functional requirements')
+PRACTICES_SECTION = 'Engineering practices'
+PRACTICES_DOC = 'docs/ways-of-working.md'
 
 
 class Refused(Exception):
@@ -515,6 +517,43 @@ def check_requirements(ticket, sha, mf):
     return True
 
 
+def check_engineering_practices(ticket, sha):
+    """Use the template's required practices and the decisions in the signed pack."""
+    template_path = os.path.join(TREE, '.agents', 'skills', 'muster', 'templates', 'ways-of-working.md')
+    try:
+        with open(template_path, encoding='utf-8') as file:
+            required = {row[0].casefold(): row[0] for table in tables(section(file.read(), PRACTICES_SECTION))
+                        for row in table}
+    except OSError as err:
+        raise Refused(f'cannot read the Muster standards template: {err}') from err
+    if not required:
+        raise Refused('the Muster standards template has no engineering practices')
+
+    path = os.path.join(muster_dir(ticket), f'pack-{sha}', PRACTICES_DOC)
+    try:
+        with open(path, encoding='utf-8') as file:
+            practices = section(file.read(), PRACTICES_SECTION)
+    except FileNotFoundError:
+        practices = None
+    except OSError as err:
+        raise Refused(f'cannot read the approved {PRACTICES_DOC}: {err}') from err
+    seen, open_practices = set(), dict(required)
+    for table in tables(practices):
+        for row in table:
+            label = row[0]
+            key = label.casefold()
+            if not label or key in seen:
+                raise Refused(f'{PRACTICES_DOC}: each engineering practice needs a unique name ({label or "blank"})')
+            seen.add(key)
+            if (len(row) == 3 and row[1].casefold() in ('decision', 'accepted recommendation')
+                    and row[2] not in ('', '-') and not re.fullmatch(r'<[^<>]+>', row[2])):
+                open_practices.pop(key, None)
+            else:
+                open_practices[key] = required.get(key, label)
+    if open_practices:
+        raise Refused(f'open engineering practices in {PRACTICES_DOC}: ' + ', '.join(open_practices.values()))
+
+
 def slice_directions(plan, muster, required):
     """Validate the decisions table and resolve one direction per decision for the slices that use it."""
     rows = muster.get('decisions_and_assumptions', None if required else [])
@@ -588,6 +627,7 @@ def verify_plan(ticket, plan_path, emit_directions=False):
             raise Refused(f'the plan\'s {kind} lines differ from the approved manifest: missing '
                           f'{sorted(set(have) - set(got)) or "none"}, extra {sorted(set(got) - set(have)) or "none"}')
     has_coverage = check_requirements(ticket, row['manifest'], mf)
+    check_engineering_practices(ticket, row['manifest'])
     n = check_order(m, plan)
     directions = slice_directions(plan, m, has_coverage)
     print_gate_warnings(checked)

@@ -11,7 +11,7 @@
 #
 # `manifest` runs the pack gate (bin/jg-muster-gate.sh; JG_MUSTER_GATE overrides it for a test) and saves the pack
 # byte for byte; `ask` and `exception-ask` hold the captain's plain-words question; `verify` and `exception` say
-# whether his yes is on file; `verify-plan` checks requirements and the plan against the approved manifest.
+# whether his yes is on file; `verify-plan` checks requirements, engineering practices and the plan against the approved manifest.
 # Blitz calls `verify-plan` with `--slice-directions` for the verified plan hash and selected directions by slice. Exit 0
 # approved, 1 refused (one line), 2 usage. The method and the manifest format live in core/muster/approval.py and
 # .agents/skills/muster/formats.md sections 3 to 5. The signed approved-by-captain line is still written only by

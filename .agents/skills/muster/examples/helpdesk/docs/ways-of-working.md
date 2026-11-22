@@ -19,6 +19,17 @@ is refused too.
 | The domain imports no command line, file or network code | dependencies point toward the domain | `import-x/no-restricted-paths` with the resolver setting | the pack's R6 faults fail; with the resolver removed the pack test reports the rule inert |
 | No raw fetch outside `src/shared/api` | one place for auth, retries and errors | `no-restricted-globals` and `no-restricted-properties` (window.fetch, globalThis.fetch) | the pack's R1 faults fail; `src/shared/api/client.ts` passes |
 
+## Engineering practices
+
+| Practice | Status | Direction |
+|---|---|---|
+| SOLID | Decision | Give Conversation the reply and resolution rules and Handoff the assignment rules. Keep storage and CLI commands in the adapter. |
+| DDD | Decision | Use Conversation and Handoff as defined in the glossary and put state transitions and invariants in the object that owns them. |
+| Testing | Accepted recommendation | Use the fast public CLI cases for behaviour and add focused unit checks only if the domain grows beyond them. Keep cited replies, handoff and resolution as core end-to-end journeys. Run lint and types in CI and seal the real CLI objective runs with done-done before release. |
+| Error handling | Decision | Return rule-specific DomainError refusals with exit 1 and report operational failures with a nonzero exit. |
+| Security | Decision | Validate command inputs at the CLI boundary and restrict the conversation store to the service account. |
+| Observability | Accepted recommendation | Use the CLI exit status and refusal reason to distinguish failures, and inspect conversation and handoff state with the show command. |
+
 ## Floor (numbers)
 | Measure | Threshold | Enforced by |
 |---|---|---|
