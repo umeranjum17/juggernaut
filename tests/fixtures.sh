@@ -269,6 +269,20 @@ make_spawn_fakebin() {
   jg_test_make_spawn_fakebin "$@"
 }
 
+# Keep Treehouse's pool-directory Git discovery inside the fixture even when
+# the test's TMPDIR itself lives under a checkout.
+jg_test_isolate_treehouse() {
+  local fixture
+  fixture=$(cd -- "$1" && pwd -P) || fail "cannot resolve Treehouse fixture directory: $1"
+  # Git still checks its starting directory. Treehouse can start at the fixture
+  # root if the pool directory does not exist yet, so the ceiling is its parent.
+  export GIT_CEILING_DIRECTORIES="${fixture%/*}"
+  unset TREEHOUSE_ROOT
+  if git -C "$fixture" rev-parse --show-toplevel >/dev/null 2>&1; then
+    fail "Treehouse fixture can still discover an enclosing Git repository: $fixture"
+  fi
+}
+
 # jg_test_run_spawn <home> <pane-path> <fakebin> [jg-spawn args...]
 # Common spawn env. Extra variables in the caller (GROK_HOME, JG_FAKE_LAUNCH_LOG,
 # CLAUDE_CONFIG_DIR, ...) are inherited. Does not add --mode/--yolo; ship tests

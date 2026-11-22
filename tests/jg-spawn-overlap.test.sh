@@ -19,9 +19,11 @@ set -u
 
 command -v treehouse >/dev/null 2>&1 || { printf 'skip: treehouse is not installed\n'; exit 0; }
 jg_git_identity fmtest fmtest@example.com
-TMP_ROOT=$(jg_test_tmproot jg-spawn-overlap)
+TMP_ROOT=$(jg_test_tmproot jg-spawn-overlap) || fail "no temp root"
+jg_test_isolate_treehouse "$TMP_ROOT"
 W="$TMP_ROOT/world"; HOME_DIR="$W/home"
 mkdir -p "$W"
+export JG_WORKER_POOL_DIR="$W/pools"
 FAKEBIN=$(jg_fakebin "$W/fake")
 jg_fake_exit0 "$FAKEBIN" gh gh-axi
 # The terminal: windows/<id> holds the name, byname/<name> the id, cwd/<id> the working directory the pane reports, pending/<id> the
@@ -94,7 +96,7 @@ make_case() {
   git clone -q --bare "$W/origin.git" "$W/origin-$name.git" 2>/dev/null
   git clone -q "$W/origin-$name.git" "$p" 2>/dev/null
   git -C "$p" remote set-head origin main >/dev/null 2>&1 || true
-  printf 'root = "%s"\nmax_trees = %s\n' "$W/pool-$name" "$pool" > "$p/treehouse.toml"
+  printf 'root = "%s"\nmax_trees = %s\n' "$JG_WORKER_POOL_DIR/$name" "$pool" > "$p/treehouse.toml"
   printf '/treehouse.toml\n' >> "$(git -C "$p" rev-parse --path-format=absolute --git-common-dir)/info/exclude"
   printf -- '- %s [direct-PR] - fixture (added 2026-11-20)\n' "$name" >> "$HOME_DIR/data/projects.md"
   for i in $(seq 1 "$n"); do
