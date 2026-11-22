@@ -8,6 +8,12 @@
     "crew crew-state": {
       "form": "bin/jg-crew-state.sh <id>",
       "changes": true
+    },
+    "ticket backlog update": {
+      "form": "bin/jg-backlog.sh update <id> --body-file <path> [--archive-body]"
+    },
+    "crew spawn": {
+      "form": "bin/jg-spawn.sh <task-id> <project-dir> --ticket <ticket-id> --mode <mode> --yolo <yolo> --upstream-consent <host/owner/repo> [--branch-prefix <prefix>] [--red-fix-of <branch>] [--shepherd <url>] [--off-critical-path <text>] [--base-branch <branch>] [--harness <name>] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]"
     }
   },
   "entries": [

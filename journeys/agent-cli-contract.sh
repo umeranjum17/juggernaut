@@ -63,6 +63,27 @@ bash bin/jg-doc-audience-check.sh > "$DONE_DONE_EVIDENCE_ROOT/doc-audience.log" 
   card=$(jq -r .data.stdout <<<"$shown")
   [[ "$card" == *'Umer replacement first line'* && "$card" == *'Umer replacement second line'* ]] || { echo 'ticket-body-update failed' >&2; exit 1; }
   printf 'PASS ticket-body-update\n'
+  printf 'Umer archived replacement first line\nUmer archived replacement second line\n' > "$body"
+  archived=$(cd "$tmp" && "$jg" ticket backlog update q-1 --body-file "$body" --archive-body)
+  jq -e '.ok and (.data.stdout | type == "string" and contains("updated q-1 (body, archive)"))' <<<"$archived" >/dev/null || { echo 'ticket-body-archive-update failed' >&2; exit 1; }
+  archived_shown=$("$jg" ticket backlog show q-1 --full)
+  archived_card=$(jq -r .data.stdout <<<"$archived_shown")
+  [[ "$archived_card" == *'Umer archived replacement first line'* && "$archived_card" == *'Umer archived replacement second line'* ]] || { echo 'ticket-body-archive-show failed' >&2; exit 1; }
+  printf 'PASS ticket-body-archive-update and ticket-body-archive-show\n'
+  spawn_task=umer-fixture-task
+  spawn_project="$tmp/nonexistent-fixture-project"
+  direct_spawn_err="$tmp/spawn-direct.stderr"; public_spawn_json="$tmp/spawn-public.json"; public_spawn_err="$tmp/spawn-public.stderr"
+  direct_spawn_rc=0
+  "$root/bin/jg-spawn.sh" "$spawn_task" "$spawn_project" --ticket q-1 --mode local-only --yolo off --upstream-consent example.invalid/umer/repo > /dev/null 2> "$direct_spawn_err" || direct_spawn_rc=$?
+  direct_spawn_error=$(cat "$direct_spawn_err")
+  [[ "$direct_spawn_error" == *'error: --upstream-consent is meaningless on '* && "$direct_spawn_error" == *'which publishes nothing; drop it'* ]] || { echo 'spawn-direct-upstream-consent-refusal failed' >&2; exit 1; }
+  public_spawn_rc=0
+  "$jg" crew spawn "$spawn_task" "$spawn_project" --ticket q-1 --mode local-only --yolo off --upstream-consent example.invalid/umer/repo > "$public_spawn_json" 2> "$public_spawn_err" || public_spawn_rc=$?
+  public_spawn_error=$(jq -er '.data.error | select(type == "string")' "$public_spawn_json") || { echo 'spawn-public-envelope failed' >&2; exit 1; }
+  jq -e '.ok == false and (.data.error | type == "string")' "$public_spawn_json" >/dev/null || { echo 'spawn-public-refusal-envelope failed' >&2; exit 1; }
+  [ "$public_spawn_error" = "$direct_spawn_error" ] || { echo 'spawn-public-error-mismatch failed' >&2; exit 1; }
+  [ "$direct_spawn_rc" -ne 0 ] && [ "$public_spawn_rc" -ne 0 ] && [ "$direct_spawn_rc" = "$public_spawn_rc" ] || { echo 'spawn-refusal-exit-code-mismatch failed' >&2; exit 1; }
+  printf 'PASS spawn-upstream-consent-refusal\n'
   printf 'window=sess:jg-t1\nkind=ship\nharness=claude\n' > "$tmp/home/state/t1.meta"
   printf 'blocked [at=%s] [key=fixture-key]: Umer fixture blocker\n' "$(date +%s)" > "$tmp/home/state/t1.status"
   sent=$("$jg" radio send t1 --resolve-key fixture-key 'Umer fixture answer')
@@ -142,7 +163,7 @@ bash bin/jg-doc-audience-check.sh > "$DONE_DONE_EVIDENCE_ROOT/doc-audience.log" 
   python3 - "$DONE_DONE_EVIDENCE_ROOT/steps.json" "$version" <<'PY'
 import json,sys
 with open(sys.argv[1], 'w') as f:
- json.dump({'target':{'version':sys.argv[2]},'start':'Repository HEAD; isolated temporary home and fixture root.','steps':['Checked public vendor-auth help against direct usage and verified missing-argument exit 2.','Updated a fixture ticket body from a spaced file and read both replacement lines through the public CLI.','Sent a keyed radio answer and verified its inbox record and resolved status line.','Added a local public-followup intent record and checked its returned fields.','Bound pf-one to the spaced-file work relation and checked its returned relation.','Compared the PR and decision flags, separately and combined, with the direct bearings script on held fixture tickets and a stub forge command.','Read a moved worker in read-only mode, then repaired its recorded endpoint through the bare crew state command.','Compared public backlog and AFK contract help with nonempty direct help.','Checked watcher-background denial and foreground allowance using command text only.','Ran the Pi and OpenCode named tests with live opt-ins unset and verified their gate skip markers.'],'result':'All existing and added public CLI assertions passed; both named live tests were skipped by their opt-in gates.'},f,indent=2)
+ json.dump({'target':{'version':sys.argv[2]},'start':'Repository HEAD; isolated temporary home and fixture root.','steps':['Checked public vendor-auth help against direct usage and verified missing-argument exit 2.','Updated a fixture ticket body from a spaced file and read both replacement lines through the public CLI.','Updated the fixture ticket body again with --archive-body and checked the success text and both replacement lines in the full public ticket view.','Ran direct and public spawn commands with --upstream-consent on local-only delivery; verified the intake refusal, matching error text and nonzero exit codes.','Sent a keyed radio answer and verified its inbox record and resolved status line.','Added a local public-followup intent record and checked its returned fields.','Bound pf-one to the spaced-file work relation and checked its returned relation.','Compared the PR and decision flags, separately and combined, with the direct bearings script on held fixture tickets and a stub forge command.','Read a moved worker in read-only mode, then repaired its recorded endpoint through the bare crew state command.','Compared public backlog and AFK contract help with nonempty direct help.','Checked watcher-background denial and foreground allowance using command text only.','Ran the Pi and OpenCode named tests with live opt-ins unset and verified their gate skip markers.'],'result':'All existing and added public CLI assertions passed; both named live tests were skipped by their opt-in gates.'},f,indent=2)
  f.write('\n')
 PY
 ) > "$DONE_DONE_EVIDENCE_ROOT/round-two.log" 2>&1
