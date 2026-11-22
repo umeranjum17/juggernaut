@@ -9,26 +9,26 @@ metadata:
 # Ship landing
 
 Landing is delivering: the delivery style owns rebase, push, pull request and CI, and done-done owns the proof before it (`validation-supervision` names the owner of each of the nine steps).
-For PR-based ship tasks, the ready signal is `done [at=<epoch>]: PR <url>` after opening the PR, only for a non-draft PR; a lane that deliberately holds a draft declares a wait instead, and `bin/jg-pr-check.sh` refuses to arm merge monitoring on a draft.
-The watcher already ran that ready line through `bin/jg-pr-check.sh --from-status` before the wake: when the task's meta now has that `pr=`, the PR is recorded, its merge poll armed, its ready card posted, and its ticket at review.
-Recording that PR also publishes its one-line wait on the PR page, so anyone reading the PR sees what it waits for instead of asking; `bin/jg-pr-wait.sh <url> set <line>` replaces that line and `bin/jg-pr-wait.sh <url> clear` removes it when you send work back.
-Otherwise run `bin/jg-pr-check.sh <id> <PR url>` yourself with the URL copied from that ready signal or the resolved checks-green `jg-crew-state.sh` line - it records `pr=` and the forge's `pr_head=` when available in the task's meta and arms the watcher's merge poll.
-`bin/jg-dod-lib.sh` owns the named-head gate on that ready signal: a ship `done:` whose named head exists only in the worker's disposable copy is not ready (`bin/jg-crew-state.sh` reports blocked, `bin/jg-pr-check.sh` refuses to register, and a Squad Lead does not publish that done upstream).
+script: For PR-based ship tasks, the ready signal is `done [at=<epoch>]: PR <url>` after opening the PR, only for a non-draft PR; a lane that deliberately holds a draft declares a wait instead, and `bin/jg-pr-check.sh` refuses to arm merge monitoring on a draft.
+script: The watcher already ran that ready line through `bin/jg-pr-check.sh --from-status` before the wake: when the task's meta now has that `pr=`, the PR is recorded, its merge poll armed, its ready card posted, and its ticket at review.
+Recording that PR also publishes its one-line wait on the PR page, so anyone reading the PR sees what it waits for instead of asking; `jg land pr-wait set <url> <line>` replaces that line and `jg land pr-wait clear <url>` removes it when you send work back.
+Otherwise run `jg land pr-check <id> <PR url>` yourself with the URL copied from that ready signal or the resolved checks-green `jg-crew-state.sh` line - it records `pr=` and the forge's `pr_head=` when available in the task's meta and arms the watcher's merge poll.
+script: `bin/jg-dod-lib.sh` owns the named-head gate on that ready signal: a ship `done:` whose named head exists only in the worker's disposable copy is not ready (`bin/jg-crew-state.sh` reports blocked, `bin/jg-pr-check.sh` refuses to register, and a Squad Lead does not publish that done upstream).
 That blocked reading is the gate working, not a stuck worker, so steer the worker on the commit the refusal names rather than waiting.
 For `local-trunk`, use the automatic exact-head landing and cleanup path in `docs/trunk-flow.md`; live and release still need the captain's recorded word.
-While a project's landings are held, mark the lane that fixes the hold's reason, and each lane other lanes wait on, with `bin/jg-trunk.sh land-next <task>`; it lands at once and the rest keep waiting.
+While a project's landings are held, mark the lane that fixes the hold's reason, and each lane other lanes wait on, with `jg land trunk land-next <task>`; it lands at once and the rest keep waiting.
 A direct-PR worker pushes that commit to its PR branch, and a local-only worker commits it on its ship branch.
 Tell the captain the PR's full `https://...` URL copied from the worker's ready line, the resolved checks-green crew-state line, or the task's `pr=` metadata, and a concise outcome summary.
-Until the captain answers the auto-merge question, the lead makes the merge call itself within one cycle of the required checks going green, and it never leaves that call unnamed: `bin/jg-pr-state.sh --waiting-for <pr url>` prints exactly one `juggernaut/waiting-for: <what>` line naming the draft, the conflicts, the red or unreported required check, or the merge call, and that line belongs in the captain-facing report while the change is in flight.
+Until the captain answers the auto-merge question, the lead makes the merge call itself within one cycle of the required checks going green, and it never leaves that call unnamed: `jg land pr-state --waiting-for <pr url>` returns an envelope whose `data.stdout` contains exactly one `juggernaut/waiting-for: <what>` line naming the draft, the conflicts, the red or unreported required check, or the merge call, and that line belongs in the captain-facing report while the change is in flight.
 The required set a pull request waits on is the fast set in `.github/workflows/ci.yml` - the repo invariants, the sharded changed-file lint, and the changed-file tests - which is why that wait is minutes rather than half an hour; every heavier suite runs post-merge and a red one files a fix-forward item that is never a revert.
 A captain instruction to merge is explicit authority; `yolo` is the only standing routine merge authority.
-For any custom `state/<id>.check.sh` you write yourself, keep it an ordinary single-link mode-`0700` file, print one line only when Juggernaut should wake, print nothing otherwise, finish before `JG_CHECK_TIMEOUT`, then bind its current bytes with `bin/jg-check-register.sh <id>` before the watcher may execute it.
-Retire a custom check only through `bin/jg-check-unregister.sh <id>` (or `bin/jg-teardown.sh` for a spawned task); never hand-compose an `rm` with `$STATE`/`$ID`.
+For any custom `state/<id>.check.sh` you write yourself, keep it an ordinary single-link mode-`0700` file, print one line only when Juggernaut should wake, print nothing otherwise, finish before `JG_CHECK_TIMEOUT`, then bind its current bytes with `jg radio check-register <id>` before the watcher may execute it.
+script: Retire a custom check only through `jg radio check-unregister <id>` (or `bin/jg-teardown.sh` for a spawned task); never hand-compose an `rm` with `$STATE`/`$ID`.
 
-A steer never tells a local-trunk lane to rebase, because the landing check rebases its commit itself: `bin/jg-send.sh` refuses it with exit 2 unless the lander refused the lane's head for a conflict, or `--allow-rebase-steer` is passed when the owner asked for it.
+script: A steer never tells a local-trunk lane to rebase, because the landing check rebases its commit itself: `bin/jg-send.sh` refuses it with exit 2 unless the lander refused the lane's head for a conflict, or `--allow-rebase-steer` is passed when the owner asked for it.
 
 Tear down a ship task only after landing is confirmed.
-On a confirmed merge of a ship task, `bin/jg-watch.sh` runs `bin/jg-teardown.sh <id>` itself, without `--force`.
+script: On a confirmed merge of a ship task, `bin/jg-watch.sh` runs `bin/jg-teardown.sh <id>` itself, without `--force`.
 A refusal becomes one `check: cleanup after the merge of <id> was refused: ...` wake, so the work to unblock it lands on you rather than on a memory: settle the gate the refusal names, then tear the task down yourself.
 A teardown refusal for uncommitted or unlanded work is a stop-and-investigate result, never an obstacle to bypass.
 Never force teardown without explicit discard authority.

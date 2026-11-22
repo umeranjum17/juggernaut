@@ -9,11 +9,11 @@ metadata:
 # stuck-operator-recovery
 
 Use this playbook when the session-start digest reports an ordinary direct report's endpoint dead or its metadata has no window, or when a direct report is stale, looping, repeatedly confused, asking a question its brief already answers, unresponsive, or when a steer failed to land.
-A stale or dead-endpoint report for a worker whose pull request has already landed is not a recovery case: the work is finished, so close the task through ordinary teardown (`AGENTS.md` section 7 for Juggernaut, the landed-work rule in `bin/jg-branch-prompt.sh` for the supervision branch) instead of this playbook, never with `--force`.
+script: A stale or dead-endpoint report for a worker whose pull request has already landed is not a recovery case: the work is finished, so close the task through ordinary teardown (`AGENTS.md` section 7 for Juggernaut, the landed-work rule in `bin/jg-branch-prompt.sh` for the supervision branch) instead of this playbook, never with `--force`.
 
 A recovering worker's visual report is a sign-off board report; `core/signoff/README.md` owns its card and read-mark contract, and no worker hosts a review board here.
 
-Interrupt, stop, and relaunch a worker through `bin/jg-control.sh <task-id> interrupt|exit|relaunch`, which resolves the recorded runtime itself, verifies each action, and never tears down or discards anything ([`docs/agent-control.md`](../../../docs/agent-control.md)).
+Interrupt, stop, and relaunch a worker through `jg crew control interrupt <task-id>`, `jg crew control exit <task-id>`, or `jg crew control relaunch <task-id> --note <text>`, which resolves the recorded runtime itself, verifies each action, and never tears down or discards anything ([`docs/agent-control.md`](../../../docs/agent-control.md)).
 That plane covers workers running in this home; a remotely placed Squad Lead is refused by name and reconciled through `squad-lead-provisioning` instead.
 Load `harness-adapters` before a resume command or a harness-specific skill invocation, and whenever the adapter's own quirks matter.
 The target window's harness is recorded as `harness=` in `state/<id>.meta`.
@@ -24,10 +24,10 @@ This procedure covers ordinary `kind=ship` and `kind=scout` direct reports.
 Load `squad-lead-provisioning` instead for `kind=squad_lead` recovery.
 
 For a REMOTE Squad Lead, `jg-crew-state` and `jg-peek` read the actual remote endpoint over `jg-on.sh`, and `jg-send` reports a delivered-with-pending-confirmation steer as delivered (their headers own the contracts); an `unknown-remote` read or unreachable-host failure means the remote state could not be read, never that the mate is dead or the send failed.
-Recover a genuinely stuck remote mate only through `bin/jg-spawn.sh <id> --squad-lead`, never raw herdr pane close/kill surgery, which strands the endpoint binding.
+script: Recover a genuinely stuck remote mate only through `bin/jg-spawn.sh <id> --squad-lead`, never raw herdr pane close/kill surgery, which strands the endpoint binding.
 
 Treat the digest's endpoint result as a presence signal, not proof that the task's work or validation run is gone.
-Read the targeted current state with `bin/jg-crew-state.sh <id>` before deciding to relaunch.
+Read the targeted current state with `jg crew crew-state <id>` before deciding to relaunch.
 A validation run matched to the crew's branch and current code remains authoritative when the endpoint is dead: handle a terminal or parked run through the normal lifecycle, and keep supervising an active run instead of creating a duplicate worker.
 
 When no authoritative run accounts for the task, inspect only its recorded backend and worktree inventory.
@@ -40,7 +40,7 @@ A HERDR endpoint that is not merely idle but destroyed - a pane or workspace rem
 That relaunch proves the endpoint is destroyed before it rebinds, so a Herdr server that was merely stopped is adopted back rather than duplicated.
 On tmux there is no reclaim: a task record carries no socket identity for its endpoint, so a `missing` window cannot be told apart from one on a tmux server this seat cannot address, and both `exit` and `relaunch` refuse.
 Do not work around either refusal by respawning - it means a live agent may still hold that worktree.
-That reclaim is the owning home's operation only, and a Squad Lead is the one exception: recover it through `bin/jg-spawn.sh <id> --squad-lead` as above.
+script: That reclaim is the owning home's operation only, and a Squad Lead is the one exception: recover it through `bin/jg-spawn.sh <id> --squad-lead` as above.
 Do not use a fresh generic spawn while the recorded worktree is unaccounted for, because allocating another worktree can split one task across two copies.
 If the worktree or ownership cannot be reconciled safely, leave all state intact and report the task failed or blocked with the conflicting evidence.
 
@@ -49,9 +49,9 @@ If the worktree or ownership cannot be reconciled safely, leave all state intact
 Escalate in order:
 
 1. Peek the pane, and check the task's steering inbox (`state/<id>.inbox/`) for unhandled `*.msg` records - a stale wake naming an unread Juggernaut instruction means the worker never acknowledged a durable steer, and the record itself shows exactly what was intended.
-2. If the operator is waiting on a question its brief already answers, answer in one line via `JG_HOME=<this-juggernaut-home> bin/jg-send.sh` from an active Juggernaut session unless `JG_HOME` is already set to the active Juggernaut home.
-3. If the operator is confused or looping, interrupt with `JG_HOME=<this-juggernaut-home> bin/jg-control.sh <task-id> interrupt`, then redirect with one corrective line through `jg-send`.
-4. If the operator is genuinely wedged after redirection, relaunch it with `JG_HOME=<this-juggernaut-home> bin/jg-control.sh <task-id> relaunch --note '<progress so far>'`, which stops the agent, carries the brief plus that note into a replacement in the same local copy, and restores the prior record if the replacement cannot start.
+2. If the operator is waiting on a question its brief already answers, answer in one line via `JG_HOME=<this-juggernaut-home> jg radio send <task-id> <text>` from an active Juggernaut session unless `JG_HOME` is already set to the active Juggernaut home.
+3. If the operator is confused or looping, interrupt with `JG_HOME=<this-juggernaut-home> jg crew control interrupt <task-id>`, then redirect with one corrective line through `jg-send`.
+4. If the operator is genuinely wedged after redirection, relaunch it with `JG_HOME=<this-juggernaut-home> jg crew control relaunch <task-id> --note '<progress so far>'`, which stops the agent, carries the brief plus that note into a replacement in the same local copy, and restores the prior record if the replacement cannot start.
    Pass `--harness`, `--model`, or `--effort` on that same command when the worker should come back on a different runtime.
    Genuine wedging means looping, unresponsive, repeating the same obstacle, or truly dead.
    A low context reading is not wedging; modern harnesses auto-compact and keep going.
