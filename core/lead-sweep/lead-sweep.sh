@@ -114,8 +114,10 @@ case $MODE in
   check)
     # Print every finished job's results, oldest first, then make sure a job is running. The job itself refuses to start
     # while another holds the lock, so a beat that finds one running changes nothing.
+    result=0
     for f in "$MEM"/results.*; do
       [ -f "$f" ] || continue
+      case $f in *.failed) result=1 ;; esac
       cat "$f" && rm -f -- "$f"
     done
     if [ "${JG_TEST_SEAM:-}" = 1 ] && [ -n "${JG_TEST_DETACHED_REGISTRY:-}" ]; then
@@ -123,7 +125,7 @@ case $MODE in
     else
       setsid nohup "$SELF" job "$FMH" > /dev/null 2>&1 < /dev/null &
     fi
-    exit 0 ;;
+    exit "$result" ;;
   job)
     # shellcheck source=bin/jg-wake-lib.sh
     . "$FMH/bin/jg-wake-lib.sh"
@@ -133,8 +135,13 @@ case $MODE in
     jg_lock_try_acquire "$MEM/.job.lock" || exit 0
     trap 'jg_lock_release "$MEM/.job.lock"' EXIT
     tmp=$(mktemp "$MEM/.job-XXXXXX") || exit 1
-    "$SELF" run "$FMH" > "$tmp" 2>&1 || true
-    if [ -s "$tmp" ]; then mv -- "$tmp" "$MEM/results.$(date +%s).$$"; else rm -f -- "$tmp"; fi
+    result=0 suffix=
+    "$SELF" run "$FMH" > "$tmp" 2>&1 || result=$?
+    if [ "$result" -ne 0 ]; then
+      suffix=.failed
+      printf 'lead-sweep: sweep exited with status %s\n' "$result" >> "$tmp"
+    fi
+    if [ -s "$tmp" ]; then mv -- "$tmp" "$MEM/results.$(date +%s).$$$suffix"; else rm -f -- "$tmp"; fi
     exit 0 ;;
 esac
 mval() { sed -n "s/^$2=//p" "$1" | tail -n 1; }
@@ -347,7 +354,7 @@ parked_recheck() {
 # replayed under teardown's own locks (bin/jg-backlog-transition-lib.sh) and the files the lane left beside its record are retired, so a
 # landed lane's ticket never stays in flight until a restart. A lane with a record is left to its own teardown below, which owns that close.
 pending_closes() {
-  local marker id out
+  local marker id out note reported error
   ls "$STATE"/*.backlog-close >/dev/null 2>&1 || return 0
   for marker in "$STATE"/*.backlog-close; do
     id=${marker##*/}; id=${id%.backlog-close}
@@ -362,10 +369,21 @@ pending_closes() {
         3) echo busy ;;
         *) echo "failed: $JG_BACKLOG_TRANSITION_ERROR" ;;
       esac' _ "$FMH" "$STATE" "$marker" "$id" 2>&1 | tail -n 1)
+    reported=$MEM/$id.close-refusal
     case $out in
-      closed*) rm -f -- "$MEM/$id.reported"; echo "lead-sweep: $id's recorded backlog close was finished (${out#closed })" ;;
+      closed*) rm -f -- "$MEM/$id.reported" "$reported"; echo "lead-sweep: $id's recorded backlog close was finished (${out#closed })" ;;
       busy|'') ;;
-      *) refuse "$id" "has a recorded backlog close that could not be finished: ${out#failed: }" ;;
+      *)
+        # Teardown already retired the lane record. A close refusal has no lane or slot context.
+        note="$id has a recorded backlog close that could not be finished: ${out#failed: }"
+        [ "$(cat "$reported" 2>/dev/null)" != "$note" ] || continue
+        if error=$(run_as_home "$FMH/bin/jg-alert.sh" raise drift "lead-sweep-close-$id" --deliver --repeat \
+          --home "$FMH" --ticket "$id" --note "$note" --wake check --text "lead-sweep: $note" 2>&1); then
+          printf '%s\n' "$note" > "$reported"
+          echo "lead-sweep: $note"
+        else
+          echo "lead-sweep: $note; alert delivery refused: $error" >&2
+        fi ;;
     esac
   done
 }

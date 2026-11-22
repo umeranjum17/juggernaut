@@ -88,6 +88,50 @@ jg_custom_check_detach() {  # <state dir> <check id>
   "${detach[@]}" bash -c 'bash "$1"; rm -f -- "$1"' _ "$snapshot" >/dev/null 2>&1 </dev/null &
 }
 
+# One watcher holds the home lock and owns these records. The streak survives a restart.
+# Current state     Successful execution     Failed execution
+# absent            absent                   1 (allocate a ticket id)
+# 1                 absent                   2
+# 2                 absent                   filed (retry with the same id if filing fails)
+# filed             absent                   filed
+# Capture failures leave the state alone. A stable id makes a retry after a partial
+# write safe, including a watcher exit between adding the ticket and recording it.
+jg_watch_check_result() {  # <home> <state dir> <check id> <exit status> <diagnostic file> <timeout>
+  local home=$1 state=$2 key=$3 rc=$4 diagnostic=$5 timeout=$6
+  local dir=$state/.watch-check-failures record count='' episode='' tmp body detail
+  record=$dir/$key
+  if [ "$rc" -eq 0 ]; then
+    [ ! -e "$record" ] || rm -f -- "$record"
+    return $?
+  fi
+  mkdir -p -- "$dir" || return 1
+  if [ -f "$record" ]; then read -r count episode < "$record" || return 1; fi
+  case $count in
+    ''|1|2|filed) ;;
+    *) printf 'invalid failure streak for %s\n' "$key" >&2; return 1 ;;
+  esac
+  [ "$count" != filed ] || return 0
+  tmp=$(mktemp "$dir/.streak.XXXXXXXXXXXX") || return 1
+  case $count in
+    '') count=1; episode=${tmp##*.} ;;
+    1) count=2 ;;
+    2)
+      detail=$(head -c 512 "$diagnostic" | tr '\t\r\n' '   ')
+      body=$(printf '## Captain\nKeep the home checks running reliably.\n\n## Ask\nRepair the %s watcher check.\n\n## Why\nIt failed on three consecutive runs. The latest exit status was %s.\n%s\n\n## Done when\nThe check runs successfully on its normal cadence.\n\n## Acceptance Criteria\nReproduce the failure and verify the repair through the watcher.\n' "$key" "$rc" "$detail")
+      if ! jg_run_timed "$timeout" env JG_HOME="$home" JG_STATE_OVERRIDE="$state" \
+        bash "${BASH_SOURCE[0]%/*}/jg-backlog.sh" add "watch-check-$episode" \
+        "Repair a failing watcher check" --priority 1 --kind ship --body "$body"; then
+        rm -f -- "$tmp"
+        return 1
+      fi
+      count=filed ;;
+  esac
+  if ! { printf '%s %s\n' "$count" "$episode" > "$tmp" && mv -f -- "$tmp" "$record"; }; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+}
+
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
 [ "$_jg_d" != "${BASH_SOURCE[0]}" ] || _jg_d=.

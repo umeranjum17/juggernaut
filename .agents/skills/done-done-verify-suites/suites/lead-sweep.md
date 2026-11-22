@@ -9,3 +9,9 @@ The command records `lead-sweep-end-states.log` and `steps.json`; it proves no a
 Blitz next wave: the lead-sweep command above runs the real ticket close, dependency reader, approval and registered auto-dispatch check against two approved slices.
 One sweep recovers the landed base's pending close and dispatches its dependent exactly once, while the slice that depends on an unlanded base stays queued.
 The pool inventory and worker launch use fixture data (screen: none).
+
+Backlog-close repair: run `done-done run -- bash journeys/lead-sweep-end-states.sh`.
+The sweep reports a malformed pending close and continues to the next lane, then closes the repaired ticket on a later pass.
+The same run drives `bin/jg-watch.sh` and `bin/jg-check-lib.sh` through registered fixture checks and the local backlog.
+The watcher files one repair ticket after three consecutive errors, resets the count on success, and keeps running the other checks.
+The run captures `lead-sweep.test.log`, `jg-watch-large-check-output.test.log`, and `steps.json`.

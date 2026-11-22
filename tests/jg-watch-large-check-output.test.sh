@@ -28,7 +28,7 @@ add_check() {  # <dir> <id> <body>: write and bind a custom check
 start_watch() {  # <dir> -> sets WPID
   env HOME="$1/home" XDG_CONFIG_HOME="$1/home/config" TMPDIR="$1/tmp" PATH="$1/fakebin:$PATH" \
     JG_HOME="$1" JG_STATE_OVERRIDE="$1/state" JG_CONFIG_OVERRIDE="$1/config" \
-    JG_SIGNAL_GRACE=1 JG_CHECK_INTERVAL=1 JG_POLL=1 JG_HEARTBEAT=999999 JG_HOME_SUMMARY_INTERVAL=999999 \
+    JG_SIGNAL_GRACE=1 JG_CHECK_INTERVAL="${2:-1}" JG_POLL=1 JG_HEARTBEAT=999999 JG_HOME_SUMMARY_INTERVAL=999999 \
     JG_SQUAD_LEAD_LIVENESS_SECS=99999999 JG_STALE_ESCALATE_SECS=999999 \
     "$WATCH" > "$1/out" 2> "$1/err" &
   WPID=$!
@@ -105,6 +105,60 @@ SH
   pass "the ready-work reader reads a $BIG_BYTES-byte priority listing without an argument-list error"
 }
 
+repair_board() {  # <fixture> <backlog command...>
+  local d=$1; shift
+  env HOME="$d/home" XDG_CONFIG_HOME="$d/home/config" TMPDIR="$d/tmp" PATH="$d/fakebin:$PATH" \
+    JG_HOME="$d" JG_STATE_OVERRIDE="$d/state" bash "$ROOT/bin/jg-backlog.sh" "$@"
+}
+
+repair_tick() {  # <fixture> <exit status>
+  local d=$1
+  printf '%s\n' "$2" > "$d/state/flaky-exit"
+  rm -f -- "$d/state/.last-check"
+  start_watch "$d" 999999
+  wait_for 30 test -f "$d/state/.last-check" \
+    || { stop_watch; fail "the repair sweep did not finish: $(cat "$d/err")"; }
+  stop_watch
+}
+
+assert_repair_tickets() {  # <fixture> <count>
+  local rows count
+  rows=$(repair_board "$1" list) || fail "the fixture backlog could not be read"
+  count=$(grep -Ec '^ *watch-check-[[:alnum:]]+,' <<< "$rows" || true)
+  [ "$count" -eq "$2" ] || fail "expected $2 repair tickets, got $count: $rows"
+}
+
+test_three_consecutive_errors_file_one_repair_ticket() {
+  local d id
+  d=$(new_home repair)
+  # shellcheck disable=SC2016 # The registered check expands its own state path and status.
+  add_check "$d" flaky 'read -r status < "$JG_STATE_OVERRIDE/flaky-exit"
+    [ "$status" -eq 0 ] || echo "fixture check failure" >&2
+    exit "$status"'
+  add_check "$d" healthy 'echo healthy-check-result'
+  repair_tick "$d" 7
+  repair_tick "$d" 7
+  assert_repair_tickets "$d" 0
+  repair_tick "$d" 0
+  repair_tick "$d" 7
+  repair_tick "$d" 7
+  assert_repair_tickets "$d" 0
+  repair_tick "$d" 7
+  assert_repair_tickets "$d" 1
+  id=$(repair_board "$d" list | grep -Eo 'watch-check-[[:alnum:]]+' | head -n 1)
+  repair_board "$d" show "$id" | grep -q 'fixture check failure' \
+    || fail "the repair ticket did not include the check diagnostic"
+  repair_tick "$d" 7
+  assert_repair_tickets "$d" 1
+  grep -q 'healthy-check-result' "$d/state/.jg-check-output-healthy" \
+    || fail "the healthy check did not run after the failed check"
+  repair_tick "$d" 0
+  for _ in 1 2 3; do repair_tick "$d" 7; done
+  assert_repair_tickets "$d" 2
+  pass "a success resets the streak; three consecutive failures file one ticket per episode across watcher restarts"
+}
+
 test_a_huge_check_result_wakes_with_a_short_reason_and_the_watcher_lives
 test_a_failed_capture_is_a_logged_skip_not_a_watcher_exit
 test_the_ready_work_reader_takes_a_huge_backlog_listing
+test_three_consecutive_errors_file_one_repair_ticket

@@ -312,7 +312,9 @@ printf -- '- proj [local-trunk +yolo] - fixture (added 2026-11-22)\n' > "$FM/dat
 git -C "$P" init -q; echo 1 > "$P/f"; git -C "$P" add f; git -C "$P" commit -qm base; git -C "$P" rev-parse trunk > "$FM/state/trunk-tip-proj"
 bl() { (cd "$FM" && JG_HOME="$FM" JG_CONFIG_OVERRIDE="$FM/config" "$FM/bin/jg-backlog.sh" "$@"); }
 rowstate() { bl show "$1" 2>/dev/null | sed -n 's/^  state: *//p' | head -1; }
-for t in q1 q2 q3; do bl add "$t" "[feature] fixture $t" --priority 1 --kind ship --repo proj --body "fixture" >/dev/null; bl start "$t" >/dev/null; done
+for t in q0 q1 q2 q3; do bl add "$t" "[feature] fixture $t" --priority 1 --kind ship --repo proj --body "fixture" >/dev/null; bl start "$t" >/dev/null; done
+# q0: a malformed pending close has no lane record and sorts before every valid close.
+printf 'invalid\n' > "$FM/state/q0.backlog-close"
 # q1: its head is on the trunk and its agent was started again after the done line (exit file newer than the status); its record is still there
 lane q1 ship 'done [at=1]: ready'; stamp q1; onto q1; date +%s > "$FM/state/q1.exit"
 # q2: teardown removed the record and died before the close landed: the close record and the exit file are all that is left
@@ -349,6 +351,9 @@ JG_STATE_OVERRIDE="$FM/state" "$dispatch" >/dev/null
 check "q: the first dispatch pass starts neither blocked slice" "$(find "$FM/data/auto-dispatch" -name 'next-*.start.*' | wc -l | tr -d ' ')" 0
 check "q: the fixture left q2's ticket in flight with its close pending" "$(rowstate q2) $([ -e "$FM/state/q2.backlog-close" ] && echo pending)" "in_flight pending"
 sweep
+check "q: the broken close is reported with its actual refusal" "$(grep -c '^lead-sweep: q0 has a recorded backlog close that could not be finished:' "$d/out")" 1
+check "q: the broken close and its ticket are retained" "$(rowstate q0) $([ -e "$FM/state/q0.backlog-close" ] && echo pending)" "in_flight pending"
+check "q: the broken close has its own alert" "$(sed -n 's/^ticket=//p' "$FM/state/alerts/drift--lead-sweep-close-q0.rec")" q0
 check "q: the landed lane with an exit file is torn down on that beat" "$(tore q1)" 1
 check "q: the pending close finished: the ticket is closed" "$(rowstate q2 | cut -d' ' -f1)" "done"
 check "q: the close record is gone" "$([ -e "$FM/state/q2.backlog-close" ] && echo pending || echo gone)" gone
@@ -363,7 +368,13 @@ check "q: the slice whose base is unlanded stays queued" "$([ -e "$FM/data/auto-
 check "q: unlanded work is not torn down and keeps its exit file" "$(tore q3) $([ -e "$FM/state/q3.exit" ] && echo kept)" "0 kept"
 check "q: its ticket is still in flight" "$(rowstate q3)" in_flight
 sweep
+check "q: an unchanged replay refusal is reported once" "$(grep -c 'q0' "$d/out" || true)" 0
 check "q: a second beat prints nothing about q2" "$(grep -c 'q2' "$d/out" || true)" 0
 check "q: there is one start for the unblocked slice" "$(find "$FM/data/auto-dispatch" -name 'next-q2.start.*' | wc -l | tr -d ' ')" 1
+rm -f -- "$FM/state/q0.backlog-close"
+(. "$FM/bin/jg-wake-lib.sh"; . "$FM/bin/jg-backlog-lib.sh"; . "$FM/bin/jg-backlog-transition-lib.sh"
+ jg_backlog_close_marker_write "$FM/state" q0 "$FM/data" g-q0 --note local-trunk)
+sweep
+check "q: the repaired close succeeds on the next sweep" "$(rowstate q0 | cut -d' ' -f1)" done
 [ "$fails" -eq 0 ] || { say "FAILED: $fails"; exit 1; }
 say "PASS: lead-sweep"

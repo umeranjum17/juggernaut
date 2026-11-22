@@ -2690,7 +2690,7 @@ run_check_process() {
     exec gtimeout "$CHECK_TIMEOUT" bash "$c" "$@"
   else
     # shellcheck disable=SC2016  # single quotes are deliberate: Perl expands its own variables.
-    exec perl -e 'my $t = shift; my $owned = shift; my $pid = fork; die "fork failed" unless defined $pid; if (!$pid) { setpgrp(0, 0) unless $owned; exec @ARGV } my $group = $owned ? getpgrp(0) : $pid; my $stop = sub { $SIG{HUP} = $SIG{INT} = $SIG{TERM} = "IGNORE"; kill "TERM", -$group; select undef, undef, undef, 0.2; kill "KILL", -$group; waitpid $pid, 0; exit 124 }; local $SIG{ALRM} = $stop; local $SIG{HUP} = $stop; local $SIG{INT} = $stop; local $SIG{TERM} = $stop; alarm $t; waitpid $pid, 0; exit($? >> 8)' "$CHECK_TIMEOUT" "${JG_CHECK_OWNED_GROUP:-0}" bash "$c" "$@"
+    exec perl -e 'my $t = shift; my $owned = shift; my $pid = fork; die "fork failed" unless defined $pid; if (!$pid) { setpgrp(0, 0) unless $owned; exec @ARGV or exit 127 } my $group = $owned ? getpgrp(0) : $pid; my $stop = sub { $SIG{HUP} = $SIG{INT} = $SIG{TERM} = "IGNORE"; kill "TERM", -$group; select undef, undef, undef, 0.2; kill "KILL", -$group; waitpid $pid, 0; exit 124 }; local $SIG{ALRM} = $stop; local $SIG{HUP} = $stop; local $SIG{INT} = $stop; local $SIG{TERM} = $stop; alarm $t; waitpid $pid, 0; exit(($? & 127) ? 128 + ($? & 127) : $? >> 8)' "$CHECK_TIMEOUT" "${JG_CHECK_OWNED_GROUP:-0}" bash "$c" "$@"
   fi
 }
 
@@ -2706,11 +2706,14 @@ JG_ACTIVE_CHECK_PID=
 JG_ACTIVE_CHECK_PGID=
 JG_CHECK_OUTPUT=
 JG_CHECK_OUTPUT_TMP=
+JG_CHECK_ERROR_TMP=
 JG_CHECK_SIGNAL_PENDING=
 
 jg_check_output_cleanup() {
   [ -z "$JG_CHECK_OUTPUT_TMP" ] || rm -f -- "$JG_CHECK_OUTPUT_TMP"
+  [ -z "$JG_CHECK_ERROR_TMP" ] || rm -f -- "$JG_CHECK_ERROR_TMP"
   JG_CHECK_OUTPUT_TMP=
+  JG_CHECK_ERROR_TMP=
   JG_CHECK_OUTPUT=
 }
 
@@ -2769,7 +2772,7 @@ watch_record_check_cost() {  # <key>
 }
 
 run_check_capture() {
-  local pgid key output tmp
+  local pgid key output tmp rc=0 filing diagnostic
   jg_check_output_cleanup
   key=${JG_CHECK_OUTPUT_KEY:-check}
   printf '%s\t%s\tcheck:%s\n' "$WATCHER_PID" "$JG_WATCH_DELIVERY_IDENTITY" "$key" > "$STATE/.watch-progress" 2>/dev/null || true
@@ -2777,6 +2780,7 @@ run_check_capture() {
   tmp=$(mktemp "$output.XXXXXX") || return 1
   JG_CHECK_OUTPUT_TMP=$tmp
   chmod 0600 "$JG_CHECK_OUTPUT_TMP" || { jg_check_output_cleanup; return 1; }
+  JG_CHECK_ERROR_TMP=$(mktemp "$STATE/.jg-check-error.XXXXXX") || { jg_check_output_cleanup; return 1; }
   JG_CHECK_SIGNAL_PENDING=
   # Defer stop signals only until the check's process group is recorded for
   # watcher_cleanup. Keep command substitutions out of this window: bash 5.2
@@ -2784,7 +2788,7 @@ run_check_capture() {
   trap 'JG_CHECK_SIGNAL_PENDING=1' HUP INT TERM
   times > "$STATE/.watch-times-before" 2>/dev/null || true
   set -m
-  ( JG_CHECK_OWNED_GROUP=1 run_check_process "$@" ) > "$JG_CHECK_OUTPUT_TMP" 2>/dev/null &
+  ( JG_CHECK_OWNED_GROUP=1 run_check_process "$@" ) > "$JG_CHECK_OUTPUT_TMP" 2>"$JG_CHECK_ERROR_TMP" &
   JG_ACTIVE_CHECK_PID=$!
   JG_ACTIVE_CHECK_PGID=$JG_ACTIVE_CHECK_PID
   set +m
@@ -2796,13 +2800,22 @@ run_check_capture() {
     jg_check_output_cleanup
     return 1
   fi
-  wait "$JG_ACTIVE_CHECK_PID" 2>/dev/null || true
+  wait "$JG_ACTIVE_CHECK_PID" 2>/dev/null || rc=$?
   JG_ACTIVE_CHECK_PID=
   watch_record_check_cost "$key"
   jg_active_check_stop || return 1
   mv -f -- "$JG_CHECK_OUTPUT_TMP" "$output" || { jg_check_output_cleanup; return 1; }
   JG_CHECK_OUTPUT_TMP=
   JG_CHECK_OUTPUT=$output
+  diagnostic=$JG_CHECK_ERROR_TMP
+  [ -s "$diagnostic" ] || diagnostic=$output
+  if filing=$(jg_watch_check_result "$JG_HOME" "$STATE" "$key" "$rc" "$diagnostic" "$CHECK_TIMEOUT" 2>&1); then
+    [ -z "$filing" ] || triage_log "watcher check $key: ${filing%%$'\n'*}"
+  else
+    triage_log "watcher check $key could not record exit $rc: ${filing%%$'\n'*}"
+  fi
+  rm -f -- "$JG_CHECK_ERROR_TMP"
+  JG_CHECK_ERROR_TMP=
 }
 
 check_output_reference() {

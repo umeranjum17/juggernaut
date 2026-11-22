@@ -11,7 +11,8 @@ grep -q '^FAIL' "$LOG" && st=1
 [ "$(grep -c '^ok: ' "$LOG")" -ge 6 ] || st=1
 cat "$LOG"
 # The capacity path uses the central alert owner; keep its caller and delivery regressions in the same sealed proof.
-for command in 'bash core/lead-sweep/tests/lead-sweep.test.sh' 'bash journeys/alert.sh' 'bash bin/jg-lint.sh' 'bash bin/jg-doc-audience-check.sh'; do
+for command in 'bash core/lead-sweep/tests/lead-sweep.test.sh' 'bash tests/jg-watch-large-check-output.test.sh' \
+  'bash journeys/alert.sh' 'bash bin/jg-lint.sh' 'bash bin/jg-doc-audience-check.sh'; do
   name=${command##*/}; name=${name%.sh}
   bash -c "$command" > "$OUT/$name.log" 2>&1 || st=1
   cat "$OUT/$name.log"
@@ -19,7 +20,7 @@ done
 cat >"$OUT/steps.json" <<'J'
 {"target":{"version":"juggernaut core/lead-sweep/lead-sweep.sh at this commit"},
  "start":"an isolated home with synthetic Git branches, resolved and paused lanes and the real central alert owner",
- "steps":["sweep a landed resolved lane and an unlanded resolved lane twice","refuse cleanup and change its reason","return a lost-slot result then command success","refuse park then return success","change a lane generation and retain a legacy lane","fail and repair a retention destination","add unread input before a declared park","run the full lead-sweep and central alert integration journeys, lint and documentation checks"],
- "result":"landed cleanup runs unforced; a refusal retains an original-age, generation-bound lead action and branch; repeated alerts deliver the changed reason; lost slot and command success do not prove reusable capacity; unread input protects the lane; no actual pool or live lane is used"}
+ "steps":["sweep a landed resolved lane and an unlanded resolved lane twice","refuse cleanup and change its reason","return a lost-slot result then command success","refuse park then return success","change a lane generation and retain a legacy lane","fail and repair a retention destination","add unread input before a declared park","sweep a malformed backlog close beside a valid close, then repair and replay it","drive consecutive and interrupted failures through the watcher across restarts","run the central alert integration journey, lint and documentation checks"],
+ "result":"landed cleanup runs unforced; a refusal retains an original-age, generation-bound lead action and branch; repeated alerts deliver the changed reason; lost slot and command success do not prove reusable capacity; unread input protects the lane; a refused backlog close leaves later work runnable and can be retried; the watcher files one repair ticket after three consecutive failures and continues running other checks; no actual pool or live lane is used"}
 J
 exit "$st"
