@@ -43,6 +43,9 @@ journeys:
   swarm-blocked-lanes:
     tier: local
     command: bash journeys/swarm-blocked-lanes.sh
+  routed-captain-order:
+    tier: local
+    command: bash journeys/routed-captain-order.sh
   stage-words:
     tier: local
     command: bash journeys/stage-words.sh

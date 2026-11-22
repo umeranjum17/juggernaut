@@ -214,7 +214,7 @@ beads_read() {
 # (core/auto-dispatch) may start this ticket by itself, on that route. It writes state/dispatch-approved/<id>, the only
 # record the check trusts: a line typed into a ticket body is not one. A worker session (JG_TASK_ID set) is refused.
 approve_dispatch() {
-  local id='' harness='' model='' effort='' dir rec
+  local id='' harness='' model='' effort='' dir rec show routed
   [ -z "${JG_TASK_ID:-}" ] || fail "approve-dispatch is refused in a worker session: only the lead or the owner approves a start"
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -227,16 +227,23 @@ approve_dispatch() {
   [ -n "$id" ] && [ -n "$harness" ] && [ -n "$model" ] && [ -n "$effort" ] \
     || fail "usage: approve-dispatch <id> --harness <h> --model <m> --effort <e>"
   case "$id$harness$model$effort" in *[!A-Za-z0-9._:/-]*) fail "approve-dispatch: ids and route values hold letters, digits and . _ : / - only" ;; esac
-  jg_backlog_beads_read "$JG_HOME/config" show "$id" >/dev/null 2>&1 || fail "approve-dispatch: no ticket $id in this home's store"
+  show=$(backlog_cmd show "$id" --full) || fail "approve-dispatch: no ticket $id in this home's store"
+  captain_ask_route_guard "$id" "$show"
+  routed=$(captain_ask_route_file "$show" "$id")
   dir="${JG_STATE_OVERRIDE:-$JG_HOME/state}/dispatch-approved"
   mkdir -p "$dir" || fail "approve-dispatch: cannot create $dir"
   rec=$(mktemp "$dir/.$id.XXXXXX") || fail "approve-dispatch: cannot write in $dir"
-  if ! { printf 'approved-by=%s\napproved-at=%s\nharness=%s\nmodel=%s\neffort=%s\n' \
-    "$(id -un)" "$(date +%s)" "$harness" "$model" "$effort" > "$rec" && mv -f "$rec" "$dir/$id"; }; then
+  if ! { printf 'approved-by=%s\napproved-at=%s\nharness=%s\nmodel=%s\neffort=%s\ncaptain-route=%s\n' \
+    "$(id -un)" "$(date +%s)" "$harness" "$model" "$effort" "${routed:+yes}" > "$rec" && mv -f "$rec" "$dir/$id"; }; then
     rm -f "$rec"; fail "approve-dispatch: cannot write $dir/$id"
   fi
   printf 'approved %s for dispatch: %s %s %s\n' "$id" "$harness" "$model" "$effort"
 }
+
+backlog_cmd() { jg_backlog_beads_read "$JG_HOME/config" "$@"; }
+# shellcheck source=bin/jg-captain-ask-lib.sh disable=SC1091
+. "$SCRIPT_DIR/jg-captain-ask-lib.sh"
+STATE=${JG_STATE_OVERRIDE:-$JG_HOME/state}
 
 set -o pipefail
 # The task id is made here, in the one function that makes it, and handed to the writer with the ticket.
@@ -248,6 +255,11 @@ if [ "${1:-}" = task ]; then
 fi
 case "${1:-}" in
   approve-dispatch) approve_dispatch "${ARGS[@]:1}"; exit $? ;;
+  check-route)
+    [ "${#ARGS[@]}" -eq 2 ] || fail "usage: check-route <ticket>"
+    show=$(backlog_cmd show "${ARGS[1]}" --full) || fail "cannot read ${ARGS[1]}"
+    [ -n "$(captain_ask_route_file "$show" "${ARGS[1]}")" ] || fail "Main must run bin/jg-plan-route.sh again for ${ARGS[1]} to restore its approval"
+    captain_ask_route_guard "${ARGS[1]}" "$show"; exit $? ;;
   show|view) beads_read | key_tool annotate-show; exit $? ;;
   list) if [ "$LIST_KEYS" = 1 ]; then beads_read | key_tool annotate; else beads_read; fi; exit $? ;;
   ready)
@@ -277,13 +289,8 @@ esac
 
 _jg_taxi_sl_own="squad_lead:"
 _jg_taxi_sl_wire="$(jg_compat_legacy_of squad-lead):"
-backlog_cmd() { jg_backlog_beads_read "$JG_HOME/config" "$@"; }
-# shellcheck source=bin/jg-captain-ask-lib.sh disable=SC1091
-. "$SCRIPT_DIR/jg-captain-ask-lib.sh"
-
 if [ "${1:-}" = on-report ]; then
   [ "${#ARGS[@]}" -eq 2 ] || fail "usage: jg-backlog.sh on-report <ticket-id>"
-  STATE=${JG_STATE_OVERRIDE:-$JG_HOME/state}  # read by bin/jg-captain-ask-lib.sh for the approval key and the chat notes
   CAPTAIN_ASK_SHOW=$(backlog_cmd show "${ARGS[1]}" --full 2>/dev/null) || fail "cannot read ${ARGS[1]}"
   captain_ask_on_report "${ARGS[1]}" "$CAPTAIN_ASK_SHOW"
   exit $?
@@ -398,12 +405,18 @@ owner_check() {
     || fail "this row is owned by $ROW_OWNER and this home is $me: file it in $ROW_OWNER's home (bin/jg-plan-route.sh does that for a plan); nothing was filed"
 }
 # New and edited items: an owner ask is raised to priority 0 first, then strict intake reads the fields.
+JG_BACKLOG_CHAT_NOTE=
 case "${1:-}" in
   add|create)
     owner_check
     item_args ${ARGS[@]+"${ARGS[@]}"}
     captain_ask_first
     intake_check
+    if [ -z "${JG_TASK_ID:-}" ] && [ "$(home_owner_name)" = main ]; then
+      case "$ITEM_TITLE|$ITEM_LABELS" in
+        '[captain-ask]'*|*' captain-ask '*) JG_BACKLOG_CHAT_NOTE=$(captain_ask_latest_chat) || JG_BACKLOG_CHAT_NOTE= ;;
+      esac
+    fi
     ;;
   update|edit)
     item_args ${ARGS[@]+"${ARGS[@]}"}
@@ -423,7 +436,7 @@ export JG_BEADS_WIRE_LEAD JG_BEADS_HOME_ID
 # `lead:<id>` unless the caller names an actor.
 BEADS_ACTOR=${BEADS_ACTOR:-$(jg_home_actor "$JG_HOME")}
 export BEADS_ACTOR
-jg_backlog_beads_write "$JG_HOME/config" ${ARGS[@]+"${ARGS[@]}"}
+JG_BACKLOG_CHAT_NOTE=$JG_BACKLOG_CHAT_NOTE jg_backlog_beads_write "$JG_HOME/config" ${ARGS[@]+"${ARGS[@]}"}
 _jg_rc=$?
 case "${1:-}" in add|create) [ "$_jg_rc" -ne 0 ] || key_tool sync >&2 || true ;; esac
 [ "$_jg_rc" -eq 0 ] || exit "$_jg_rc"

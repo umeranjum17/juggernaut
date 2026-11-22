@@ -51,6 +51,8 @@ DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
 . "$SCRIPT_DIR/jg-compat.sh"
 # shellcheck source=bin/jg-squad-lead-registry-lib.sh disable=SC1091
 . "$SCRIPT_DIR/jg-squad-lead-registry-lib.sh"
+# shellcheck source=bin/jg-captain-ask-lib.sh disable=SC1091
+. "$SCRIPT_DIR/jg-captain-ask-lib.sh"
 # shellcheck source=core/trunk-landing/unit.sh disable=SC1091
 . "$SCRIPT_DIR/../core/trunk-landing/unit.sh"
 export JG_HOME
@@ -111,6 +113,7 @@ in_home() {  # <owner> <command...>: the command in that owner's home, its rows 
   fi
 }
 backlog() { "$SCRIPT_DIR/jg-backlog.sh" "$@"; }
+backlog_cmd() { backlog "$@"; }
 
 # --- 1. checked ---------------------------------------------------------------------------------------------------------
 if ! out=$("$SCRIPT_DIR/jg-swarm-plan-check.sh" "$IN" 2>&1); then printf '%s\n' "$out"; exit 2; fi
@@ -125,8 +128,9 @@ while IFS=$'\t' read -r owner project slice; do
 done < <(jq -r '.slices[] | [.owner_home, .project, .id] | @tsv' "$IN")
 # The owner order every slice row will name: --order, else the plan's owner_order; MainNNN, or a [captain-ask] row of Main's backlog.
 [ -n "$ORDER" ] || ORDER=$(jq -r '.owner_order // empty' "$IN")
+[ -n "$ORDER" ] || ORDER=$(captain_ask_root "$PLAN" 2>/dev/null) || ORDER=''
 [ -n "$ORDER" ] || refuse "no owner order: pass --order <MainNNN of the owner's message> or put owner_order in the plan; the brief gate refuses a lane that names none"
-[[ $ORDER =~ ^Main[0-9]+$ ]] || backlog show "$ORDER" --full 2>/dev/null | grep -qx '  ask: ask' \
+[[ $ORDER =~ ^Main[0-9]+$ ]] || captain_ask_root "$ORDER" >/dev/null 2>&1 \
   || refuse "the owner order \"$ORDER\" is neither MainNNN nor the id of a [captain-ask] row in this backlog"
 
 muster_context=''

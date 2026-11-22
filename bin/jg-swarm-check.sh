@@ -149,6 +149,7 @@ cmd_status() {
     [ "$missing" = 0 ] || printf ', %s no lane' "$missing"
     [ "$unknown" = 0 ] || printf ', %s unknown' "$unknown"
     if [ "$short" = 1 ]; then printf '\n'; else printf ', started %s ago%s\n' "$(hm $(($(now) - started)))" "$lines"; fi
+    [ "$short" = 1 ] || routed_status "$dir"
   done < <(running_plans "${JG_DATA_OVERRIDE:-$home/data}" "$plan")
   [ "$n" -gt 0 ] || echo "no swarm is running"
 }
@@ -160,6 +161,67 @@ once() { # <stamp> <signature> <line>: print the line unless the stamp already h
 
 reason_of() { # <row>: the row's latest reason in its home's rows.tsv
   awk -F'\t' -v id="$1" '$2 == id { r = $4 } END { print r }' "${ROW_HOME[$1]}/data/auto-dispatch/rows.tsv" 2> /dev/null
+}
+
+routed_rows() { # <plan dir>; owner, home, and row from the plan, then the receiving home's receipt
+  local owner lead row file plan at
+  while IFS=$'\t' read -r owner lead row; do
+    file=$lead/state/routed-orders/${row//./-}
+    [ -s "$file" ] || continue
+    { read -r plan; read -r at; } < "$file" || continue
+    [[ $plan = "$1/plan.json" && $at =~ ^[0-9]+$ ]] || continue
+    printf '%s\t%s\t%s\t%s\n' "$owner" "$lead" "$row" "$at"
+  done < <(jq -r '. as $plan | .slices[] | [.owner_home, ($plan.owner_homes[.owner_home] // $plan.main_home), .row] | @tsv' "$1/plan.json")
+}
+
+routed_started() { # <home> <row>
+  local meta=$1/state/${2//./-}.meta
+  { [ -f "$meta" ] && ! grep -q '^cleanup_recovery=' "$meta"; } || [[ $(state_of "$1" "$2") =~ ^(done|in_flight)$ ]]
+}
+
+routed_status() {
+  local row lead received=0 started=0
+  while IFS=$'\t' read -r _ lead row _; do
+    received=$((received + 1))
+    if routed_started "$lead" "$row"; then started=$((started + 1)); fi
+  done < <(routed_rows "$1")
+  [ "$received" = 0 ] || printf '  orders: %s routed, %s received, %s started\n' "$N" "$received" "$started"
+}
+
+# Receipt -> no lane at 10m (one resend and lead alert) -> no lane at 20m (alert Main and arm).
+# Arm owns briefs, waits and the kick to auto-dispatch, which still owns admission and starts.
+check_routed_orders() { # <plan dir> <Main home> <plan> <now>
+  local dir=$1 home=$2 plan=$3 row owner lead why agents at age alert args=()
+  agents=$(jq -r '.agents // empty' "$dir/swarm.json")
+  [ -z "$agents" ] || args=(--agents "$agents")
+  while IFS=$'\t' read -r owner lead row at; do
+    age=$(($4 - at))
+    [ "$age" -ge 600 ] && [ "$owner" != main ] || continue
+    if routed_started "$lead" "$row"; then
+      alert=$lead/state/alerts/fleet-blocked--routed-order-$plan.rec
+      if [ -r "$alert" ] && grep -qxF "ticket=$row" "$alert" && ! grep -qx 'state=resolved' "$alert"; then
+        in_home "$lead" jg-alert.sh resolve "fleet-blocked--routed-order-$plan" --proof source:routed-order-started >/dev/null
+      fi
+      continue
+    fi
+    why=$(awk -F'\t' -v id="$row" '$2 == id { r = ($3 == "would start" ? "dispatch is in watch-only mode" : $4) } END { print r }' "$lead/data/auto-dispatch/rows.tsv" 2>/dev/null)
+    [ -s "$lead/data/$row/brief.md" ] || why='no brief from the lead'
+    [ -s "$lead/state/dispatch-approved/$row" ] || why='no dispatch approval recorded'
+    why=${why:-no lane has started}
+    if (set -C; printf '%s\n' "$row" > "$dir/resent-$owner") 2>/dev/null; then
+      JG_HOME="$home" "${JG_SWARM_SEND:-$SELF/jg-send.sh}" "$owner" "Swarm $plan, $row: $why. Run: bin/jg-swarm-arm.sh $(printf '%q' "$dir/plan.json")${agents:+ --agents $agents}" >/dev/null
+      in_home "$lead" jg-alert.sh raise fleet-blocked "routed-order-$plan" --rung 2 --ticket "$row" --deliver --note "$row has no lane after 10 minutes: $why." >/dev/null
+    fi
+    [ "$age" -ge 1200 ] || continue
+    once "$dir/routed-escalation-$owner" "$owner" "swarm $plan: $owner has no lane for $row after 20 minutes ($why); attempting automatic dispatch"
+    [ -s "$lead/state/dispatch-approved/$row" ] || continue
+    in_home "$lead" jg-backlog.sh check-route "$row" >/dev/null || continue
+    if (set -C; printf '%s\n' "$row" > "$dir/auto-arm-$owner") 2>/dev/null; then
+      if ! in_home "$lead" jg-swarm-arm.sh "$dir/plan.json" "${args[@]}"; then
+        rm -f "$dir/auto-arm-$owner"
+      fi
+    fi
+  done < <(routed_rows "$dir")
 }
 
 check_blocked_lane() { # <plan dir> <home> <row> <now>
@@ -223,6 +285,7 @@ check_plan() { # <plan dir> <home>
     check_blocked_lane "$dir" "$home" "$row" "$t" || echo "jg-swarm-check: could not check blocker for $row" >&2
   done
   [ "$unread" = 0 ] || return 0
+  check_routed_orders "$dir" "$home" "$p" "$t"
   if [ "$D" = "$N" ] && [ "$N" -gt 0 ]; then
     printf '%s\n' "$SIG" > "$dir/finished" && jq '.state = "finished"' "$dir/swarm.json" > "$dir/swarm.json.new" && mv "$dir/swarm.json.new" "$dir/swarm.json" \
       && printf 'swarm %s: all %s slices landed in %s\n' "$p" "$N" "$(hm $((t - started)))"

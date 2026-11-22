@@ -15,7 +15,8 @@
 jg_owner_rules_check() {
   # $3 (the delivery mode) is part of the caller contract; the risk reason it
   # used to read is bin/jg-brief.sh --risk now, so this check never needs it.
-  local data=$1 id=$2 kind=$4 entry title ids verdict bin config backlog='' row='[]' facts ask
+  local data=$1 id=$2 kind=$4 entry title ids verdict bin config backlog='' row='[]' facts ask show ticket
+  local JG_HOME="${JG_HOME:-${1%/*}}" STATE="${JG_STATE_OVERRIDE:-${JG_HOME:-${1%/*}}/state}"
   bin=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)/bin
   config=${JG_CONFIG_OVERRIDE:-${JG_HOME:-${data%/*}}/config}
   # shellcheck source=bin/jg-backlog-lib.sh
@@ -30,7 +31,20 @@ jg_owner_rules_check() {
     | {labels: (.labels // []), parent: ((.dependencies // [] | map(select(.dependency_type == "parent-child"))[0].id)
         // (if (.labels // [] | index("upkeep")) then "upkeep" else "" end))}' <<<"$row" 2>/dev/null) || facts='{"labels":[],"parent":""}'
   # The store answers whether the row is an owner ask, or sits under one (the label, or the old tag before the one-time pass).
-  ask=$(jg_backlog_beads_read "$config" show "$id" --full 2>/dev/null | sed -n 's/^  ask: //p')
+  show=$(jg_backlog_beads_read "$config" show "$id" --full 2>/dev/null)
+  ask=$(sed -n 's/^  ask: //p' <<< "$show")
+  ticket=$(sed -n 's/^  id: //p' <<< "$show")
+  # shellcheck source=bin/jg-captain-ask-lib.sh disable=SC1091
+  . "$bin/jg-captain-ask-lib.sh"
+  if [ "$kind" = ship ] && [ -n "$(captain_ask_route_file "$show" "$ticket")" ]; then
+    (fail() { printf 'owner-rules: %s\n' "$*" >&2; exit 1; }; captain_ask_route_guard "$ticket" "$show") || return 1
+    ask=under
+  elif [ "$ask" = - ] && (
+    backlog_cmd() { jg_backlog_beads_read "$config" "$@"; }
+    captain_ask_root "$ticket" >/dev/null 2>&1
+  ); then
+    ask=under
+  fi
   # Entry = the "- [.] <id> - <title>" line and its indented body, up to the next item or heading.
   entry=$(awk -v id="$id" '
     /^- \[.\] / { on = (substr($0, 7, length(id) + 1) == id " ") } /^## / { on = 0 } on' <<<"$backlog")

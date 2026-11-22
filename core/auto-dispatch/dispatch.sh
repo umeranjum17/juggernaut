@@ -133,7 +133,7 @@ approved_field() { sed -n "s/^$2=//p" "$APPROVED/$1" 2>/dev/null | tail -n 1; }
 # verdict <id>: sets VERDICT to "route<TAB>..." when the ticket passes reasons 1 to 5, else "why<TAB>...".
 VERDICT=
 verdict() {
-  local id=$1 route
+  local id=$1 route error
   if [ -z "${APPROVED_EXISTS[$id]+x}" ]; then VERDICT=$'why\tno approval record'; return; fi
   if [ "$decisions_read" -eq 0 ]; then VERDICT=$'why\tits open decisions could not be read'; return; fi
   if [ -n "${BLOCKED_SET[$id]+x}" ]; then VERDICT=$'why\tan open decision is linked to it'; return; fi
@@ -141,6 +141,9 @@ verdict() {
     VERDICT="why"$'\t'"not spawnable now (held, taken, closed, or not this home's project)"; return
   fi
   [ -s "$DATA/$id/brief.md" ] || { VERDICT=$'why\tno brief'; return; }
+  if [ -n "${CAPTAIN_ROUTE[$id]+x}" ] && ! error=$("$BACKLOG" check-route "$id" 2>&1); then
+    VERDICT=$'why\t'${error//$'\n'/ }; return
+  fi
   route="${APPROVED_HARNESS[$id]:-} ${APPROVED_MODEL[$id]:-} ${APPROVED_EFFORT[$id]:-}"
   case "$route" in ' '*|*'  '*|*' ') VERDICT=$'why\tthe approval record has no route'; return ;; esac
   VERDICT="route"$'\t'"$route"
@@ -316,7 +319,7 @@ launch() {
 # needs_lead <kind> <detail>: a row whose cause only the lead can clear.
 needs_lead() {
   [ "$1" != "spawn failed" ] || return 0
-  case "$2" in "no approval record"|"no brief"|"the approval record has no route"|"the brief has no delivery contract line") return 0 ;; esac
+  case "$2" in "no approval record"|"no brief"|"the approval record has no route"|"the brief has no delivery contract line"|*"Main must "*) return 0 ;; esac
   return 1
 }
 
@@ -392,7 +395,7 @@ tmp=$(mktemp -d) || exit 0
 trap 'rm -rf -- "$tmp"' EXIT
 SPAWNABLE_IDS=$tmp/spawnable
 "$BACKLOG" ready --spawnable > "$tmp/out" 2>/dev/null || exit 0   # the store could not answer: write nothing this beat
-declare -A SPAWNABLE_PROJECT=() APPROVED_EXISTS=() APPROVED_AT=() APPROVED_HARNESS=() APPROVED_MODEL=() APPROVED_EFFORT=()
+declare -A SPAWNABLE_PROJECT=() APPROVED_EXISTS=() APPROVED_AT=() APPROVED_HARNESS=() APPROVED_MODEL=() APPROVED_EFFORT=() CAPTAIN_ROUTE=()
 : > "$SPAWNABLE_IDS"
 while IFS=$'\t' read -r sid sproj _rest; do
   [ -n "$sid" ] && [ -n "$sproj" ] || continue
@@ -411,6 +414,7 @@ for f in "$APPROVED"/*; do
       harness=*)     APPROVED_HARNESS[$id]=${line#harness=} ;;
       model=*)       APPROVED_MODEL[$id]=${line#model=} ;;
       effort=*)      APPROVED_EFFORT[$id]=${line#effort=} ;;
+      captain-route=yes) CAPTAIN_ROUTE[$id]=1 ;;
     esac
   done < "$f"
   printf '%s\t%s\n' "$id" "${APPROVED_AT[$id]:-}" >> "$tmp/approved-pairs"

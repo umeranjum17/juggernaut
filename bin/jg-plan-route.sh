@@ -30,6 +30,9 @@ DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
 . "$SCRIPT_DIR/jg-compat.sh"
 # shellcheck source=bin/jg-squad-lead-registry-lib.sh disable=SC1091
 . "$SCRIPT_DIR/jg-squad-lead-registry-lib.sh"
+# shellcheck source=bin/jg-captain-ask-lib.sh disable=SC1091
+. "$SCRIPT_DIR/jg-captain-ask-lib.sh"
+STATE=${JG_STATE_OVERRIDE:-$JG_HOME/state}
 
 usage() {
   awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
@@ -53,6 +56,17 @@ done
 [ -r "$PLAN_FILE" ] || fail "cannot read $PLAN_FILE"
 jq -e 'type == "object"' "$PLAN_FILE" >/dev/null 2>&1 || fail "$PLAN_FILE is not a JSON plan"
 [ ! -e "$(jg_compat_marker "$JG_HOME")" ] || fail "this is a Squad Lead home: only Main routes a plan"
+[ -z "${JG_TASK_ID:-}" ] || fail "only Main may route a plan"
+PLAN_FILE="$(cd "$(dirname "$PLAN_FILE")" && pwd -P)/$(basename "$PLAN_FILE")"
+[[ $PLAN_FILE != *[$'\n\r\t']* ]] || fail "the plan path must be one plain line"
+backlog_cmd() { JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-backlog.sh" "$@"; }
+order=$(jq -r '.owner_order // empty' "$PLAN_FILE")
+root=''
+if [ -n "$order" ] && [[ ! $order =~ ^Main[0-9]+$ ]]; then
+  root=$(captain_ask_root "$order") || fail "owner order $order is not rooted in a captain ask"
+  show=$(backlog_cmd show "$root" --full) || fail "cannot read captain ask $root"
+  captain_ask_build_basis "$root" "$show" >/dev/null || fail "Main cannot verify the recorded approval on captain ask $root"
+fi
 
 jq -e '(.slices // []) | length > 0' "$PLAN_FILE" >/dev/null || fail "$PLAN_FILE has no slice"
 jq -e '.slices | all(.[]; (.owner_home | type) == "string" and (.owner_home | gsub("\\s"; "") | length) > 0)' "$PLAN_FILE" >/dev/null \
@@ -81,11 +95,40 @@ file_for() {  # <owner> [--dry-run]
   local owner=$1
   shift
   if [ "$owner" = main ]; then
-    JG_ROW_OWNER=$owner JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-plan-file.sh" "$PLAN_FILE" --owner "$owner" "$@" 2>&1
+    JG_PLAN_ROUTE_FILE="${root:+$PLAN_FILE}" JG_ROW_OWNER=$owner JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-plan-file.sh" "$PLAN_FILE" --owner "$owner" "$@" 2>&1
   else
     env -u JG_CONFIG_OVERRIDE -u JG_STATE_OVERRIDE -u JG_DATA_OVERRIDE -u JG_ROOT_OVERRIDE \
-      JG_ROW_OWNER="$owner" JG_HOME="${HOME_OF[$owner]}" "$SCRIPT_DIR/jg-plan-file.sh" "$PLAN_FILE" --owner "$owner" "$@" 2>&1
+      JG_PLAN_ROUTE_FILE="${root:+$PLAN_FILE}" JG_ROW_OWNER="$owner" JG_HOME="${HOME_OF[$owner]}" "$SCRIPT_DIR/jg-plan-file.sh" "$PLAN_FILE" --owner "$owner" "$@" 2>&1
   fi
+}
+
+record_approval() {  # <owner> <plan-file output>
+  local owner=$1 out=$2 row show body line receipt
+  [ -n "$root" ] || return 0
+  local -a cmd=(env -u JG_CONFIG_OVERRIDE -u JG_STATE_OVERRIDE -u JG_DATA_OVERRIDE -u JG_ROOT_OVERRIDE
+    JG_HOME="${HOME_OF[$owner]}" "$SCRIPT_DIR/jg-backlog.sh")
+  [ "$owner" != main ] || cmd=(backlog_cmd)
+  while read -r row; do
+    show=$("${cmd[@]}" show "$row" --full) || fail "cannot read routed row $row in $owner"
+    body=$(captain_ask_body "$show")
+    line=$(captain_ask_approval_line "$row" "route:$owner:$root") || fail "cannot sign routed row $row"
+    if [ "$(captain_ask_route_file "$show")" != "$PLAN_FILE" ] || ! grep -qxF -- "$line" <<< "$body"; then
+      body=$(sed '/^Captain order route: /d; /^approved-by-captain: route:/d' <<< "$body")
+      "${cmd[@]}" update "$row" --body "$body"$'\n'"Captain order route: $PLAN_FILE"$'\n'"$line" >/dev/null \
+        || fail "could not record approval on $row in $owner; run bin/jg-plan-route.sh $(printf '%q' "$PLAN_FILE") again"
+    fi
+    # The receiving home records the absolute plan path and the receipt epoch.
+    receipt=${HOME_OF[$owner]}/state/routed-orders/${row//./-}
+    [ "$owner" != main ] || receipt=$STATE/routed-orders/${row//./-}
+    mkdir -p "${receipt%/*}" || fail "cannot record receipt for routed row $row in $owner"
+    if [ ! -s "$receipt" ] || [ "$(head -n1 "$receipt")" != "$PLAN_FILE" ]; then
+      local tmp
+      tmp=$(mktemp "$receipt.XXXXXX") || fail "cannot stage the receipt for $row in $owner"
+      if ! { printf '%s\n%s\n' "$PLAN_FILE" "$(date +%s)" > "$tmp" && mv -f "$tmp" "$receipt"; }; then
+        rm -f "$tmp"; fail "cannot record receipt for $row in $owner"
+      fi
+    fi
+  done < <(awk '$1 == "filed" && $3 == "as" {print $4}' <<< "$out")
 }
 
 # Every owner's checks run before anything is filed.
@@ -98,6 +141,7 @@ done
 DONE=()
 for owner in "${OWNERS[@]}"; do
   if out=$(file_for "$owner"); then
+    record_approval "$owner" "$out"
     printf '%s\n' "$out"
     DONE+=("$owner")
   else

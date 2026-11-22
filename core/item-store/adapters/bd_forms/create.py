@@ -10,7 +10,7 @@ Also answered, each written through tickets.change or its own table: `comment` a
 A form it cannot answer with bd's exact bytes raises NotSupported: a call it has no recorded answer for (a flag it does not know, a missing
 parent, dependency, ticket or file, a gate of another type). A failed --validate refuses with exit 1, naming the missing sections. The hold-reason rule (a deferred row needs a hold reason) is kept:
 it refuses with exit 2. Python stdlib only."""
-import json, os, re, secrets, sys, time, uuid
+import json, os, re, secrets, subprocess, sys, time, uuid
 
 ADAPTERS = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, ADAPTERS)
@@ -148,6 +148,20 @@ def existing(con, home_id, ident):
     return copy
 
 
+def sign_chat_order(home, ident, note):
+    """Use the same signer as inbox approve, after the store has chosen the row id."""
+    signer = os.path.join(ADAPTERS, "..", "..", "..", "bin", "jg-captain-ask-lib.sh")
+    state = os.environ.get("JG_STATE_OVERRIDE") or os.path.join(home, "state")
+    signed = subprocess.run(
+        ["bash", "-c", 'fail() { echo "$*" >&2; exit 2; }; STATE=$1; . "$2"; captain_ask_approval_line "$3" "$4"',
+         "_", state, signer, ident, "note:" + note],
+        capture_output=True, text=True,
+    )
+    if signed.returncode:
+        raise Invalid(signed.stderr.strip() or "cannot sign captain approval for " + ident)
+    return signed.stdout.strip()
+
+
 def do_create(argv, stdin_text):
     opt, words = parse(argv[1:])
     if not reason_check(opt):
@@ -195,6 +209,8 @@ def do_create(argv, stdin_text):
                 raise NotSupported("dependency type %s" % ty)
             existing(con, home_id, to)
             links.append((to, ty))
+        if chat_note := os.environ.get("JG_BACKLOG_CHAT_NOTE"):
+            description = "\n\n".join(filter(None, [description, sign_chat_order(h, ident, chat_note)]))
         row = dict(id=ident, title=title, description=description or None, status=status, priority=priority, issue_type=kind,
                    assignee=opt.get("assignee") or None, created_at=sec, created_by=actor(), labels=sorted(labels), metadata=metadata, ephemeral=0,
                    dependencies=[tickets.new_edge(to, ty) for to, ty in links])

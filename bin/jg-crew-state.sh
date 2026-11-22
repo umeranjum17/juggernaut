@@ -102,6 +102,10 @@ SEP=' · '
 emit() {  # <state> <source> [detail]
   local line="state: $1${SEP}source: $2"
   [ -n "${3:-}" ] && line="$line${SEP}$3"
+  if [ -s "$STATE/routed-orders/${ID//./-}" ]; then
+    line="$line${SEP}routed, received"
+    if [ -f "$META" ]; then line+=", started"; fi
+  fi
   printf '%s\n' "$line"
   exit 0
 }
