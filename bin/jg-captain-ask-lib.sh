@@ -335,6 +335,8 @@ captain_ask_on_report() {  # <ticket> <show-output>; prints "<harness> <model> <
 # bin/jg-spawn.sh and bin/jg-send.sh source; any row it cannot read is refused, never passed.
 guard_captain_ask_build() {  # <ticket>; refuses an unapproved build, else names its record on stderr
   local show parent='' basis filer
+  # shellcheck source=bin/jg-backlog-lib.sh
+  . "$SCRIPT_DIR/jg-backlog-lib.sh" || fail "cannot load backlog access to check build approval for $1"
   show=$(jg_backlog_row_show "$(jg_backlog_data_absolute "${DATA:?}")" "$1" --full) \
     || fail "cannot read $1 to check whether a build of it needs the captain's approval: $show"
   captain_ask_route_guard "$1" "$show"

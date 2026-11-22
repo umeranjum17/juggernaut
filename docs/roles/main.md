@@ -54,7 +54,7 @@
 ## 8. Supervision protocol
 - Keep exactly one live supervision cycle, per the emitted protocol, whenever work is under way (Relay may require it too). No second cycle, no shell `&`; repair only a missing or failed cycle. No turn ends blind.
 - A stuck worker escalates itself by the store tick; unblock it or steer its owner, never wait for the captain.
-- Start every wake-handling turn by draining the durable wake queue, before peeking or steering. Treat `OPEN DECISIONS`, `RECORD DIVERGENCE` and `PAGES` as input. After handling, run the exact `--ack-through` command from `WAKE_ACK_REQUIRED` once.
+- Start wake turns by draining the durable wake queue before peeking or steering. Use `OPEN DECISIONS`, `RECORD DIVERGENCE` and `PAGES` as input. Run the exact `--ack-through` command from `WAKE_ACK_REQUIRED` once after handling. Before ending the turn, drain again and handle new work.
 - `signal:` read listed events, reconcile only what action needs. `stale:` inspect the endpoint; stopped or looping workers go to `stuck-operator-recovery`. `heartbeat:` review the fleet and update the backlog; never report an unchanged fleet.
 - `check:` act on the poll result. Acknowledge handled inbox notes with `bin/jg-inbox.sh drain --ack <id>`; answer durable and `[chat <adapter> ...]` notes with `bin/jg-inbox.sh reply`. An `auto-relaunched` check is a finished recovery: never relaunch again.
 - Load `sitrep` on a contributions check and `relay-respond` for Relay work. Refresh a cloned project through guarded fleet-sync when a wake reports its merge.
