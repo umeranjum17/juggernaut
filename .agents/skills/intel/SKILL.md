@@ -81,7 +81,7 @@ While the flag is present:
 
 Every `/intel` invocation performs this complete pass, even when the session contains no new finding:
 
-1. Run `bin/jg-startup-memory-budget.sh report` before considering a write.
+1. Run `jg radio startup-memory-budget report` before considering a write.
    Record its effective budget and each file's estimated-token total.
    The budget is per home: this home's three files against this home's own allowance, never a fleet total.
    The helper's stable estimate is the documented conservative local approximation, not provider-exact accounting.
@@ -123,7 +123,7 @@ Every `/intel` invocation performs this complete pass, even when the session con
    Convergence precondition: before evicting anything, total the eligible pool and check that archiving all of it would reach the budget; when even that cannot, skip the eviction rung entirely, archive nothing for budget reasons, and carry the concrete inability to the final step, naming the exempt pinned and pending-capture floor that crowds out the budget.
    Automatic processes never move a `pinned` entry: decay clocks, legacy grace cycles, oldest-first budget eviction, immediate budget archiving, and autonomous offload do not apply to it.
    The sole exception is relocation to a JIT owner after explicit, per-item captain approval under the offload flow below, and that entry remains in memory until its destination is live.
-8. Run `bin/jg-startup-memory-budget.sh report` again after the complete pass.
+8. Run `jg radio startup-memory-budget report` again after the complete pass.
    Finish at or below the effective budget, or open a concrete captain decision before ending the pass.
    A Squad Lead must explicitly report `primary-owned-shared-file-alone-exceeds-budget` when the inherited shared file alone exceeds its allowance, because local curation cannot resolve it.
    Route that constraint to the primary owner and open one concrete captain decision at the primary owning level that names the shortfall, with exactly these options: raise the affected home's effective budget, or explicitly approve the primary owner trimming or offloading each named shared-file entry.
@@ -201,7 +201,7 @@ A local skill exists only in this home, so offloading an entry out of `data/capt
    Autonomously relocate it only by adding it to an already-existing allowed JIT note, or by routing it through a project's established delivery path to an already-existing allowed project-level destination, then confirming that destination holds the quoted entry before removing the memory entry.
    A destination that needs creation, uncompleted project delivery, or any other future work is not live and cannot count as relief, so continue with the next archival or eviction rung instead of leaving an over-budget proposal pending.
 2. Propose pinned relocation only.
-   For a pinned candidate, append a `proposed-offload` section with the same fields to the completion receipt, create or refresh one durable backlog item with `bin/jg-backlog.sh add`, `bin/jg-backlog.sh show <id> --full`, and `bin/jg-backlog.sh update <id> --body-file <path>` as appropriate, then hold it through `bin/jg-captain-hold.sh hold`.
+   For a pinned candidate, append a `proposed-offload` section with the same fields to the completion receipt, create or refresh one durable backlog item with `jg ticket backlog add`, `jg ticket backlog show <id> --full`, and `jg ticket backlog update <id> --body-file <path>` as appropriate, then hold it through `jg hold captain-hold hold`.
    Preserve each candidate's approval state in that item, and require explicit plain-chat approval for that named item before any migration.
    If the captain never answers, nothing migrates and the held item persists, but it is never treated as budget relief.
 3. Migrate an approved pinned candidate outside this pass.
@@ -235,7 +235,7 @@ A local skill exists only in this home, so offloading an entry out of `data/capt
      Keep the candidate in `data/learnings.md` or surface it in the completion receipt so the captain can extend the file by hand.
    - Knowledge general to every Juggernaut user belongs in this repo's shared tracked material through the normal branch, PR, and captain-merge path, which exists only under this home's Juggernaut repository publication authority (`AGENTS.md` section 1's role boundary).
      A user/operator home instead keeps the lesson in `data/learnings.md` and may leave a sanitized local draft for the captain to carry upstream.
-   - For task-scoped notes, inspect the item with `bin/jg-backlog.sh show <id> --full`, classify the change as new, duplicate, superseding, or obsolete, then use a considered replacement body through `bin/jg-backlog.sh update <id> --body-file <path>`.
+   - For task-scoped notes, inspect the item with `jg ticket backlog show <id> --full`, classify the change as new, duplicate, superseding, or obsolete, then use a considered replacement body through `jg ticket backlog update <id> --body-file <path>`.
      Use `--archive-body` when recoverability matters.
      Never append.
    - File each undone next step as a queued backlog item with a genuine `blocked-by` dependency when applicable.
@@ -291,13 +291,13 @@ In a primary home, every `/intel` cascades to every registered Squad Lead after 
 In a Squad Lead home, `/intel` curates that home only and never cascades further.
 The cascade changes nothing until `/intel` is invoked: it adds no notification, no digest section, and no background work.
 
-Run `bin/jg-stow-cascade.sh` once the primary's own pass is done.
+Run `jg proof stow-cascade` once the primary's own pass is done.
 It enumerates each registered Squad Lead exactly once, reports that home's own budget accounting, and resolves how the sweep reaches it; its header owns the stanza fields, the bound, and the exit codes.
 Every home is judged against its own `config/startup-memory-budget` allowance, so never add homes together or treat one home's excess as another's.
 
 Act on each home by its reported `transport`:
 
-- `agent` - send the marked request with `bin/jg-send.sh jg-<id> "<request>"` so the live Squad Lead performs its own `/intel`, including the uncaptured knowledge that exists only in its session.
+- `agent` - send the marked request with `jg radio send jg-<id> "<request>"` so the live Squad Lead performs its own `/intel`, including the uncaptured knowledge that exists only in its session.
   Ask it for the same completion receipt this skill defines, and read its reply from its status file or the document it points to, never from its chat.
 - `direct` - curate that local home's editable memory files yourself under the same retention plan, then re-run the cascade to confirm the after totals.
   `data/captain-shared.md` stays a read-only counted input there, exactly as it is in any Squad Lead home.

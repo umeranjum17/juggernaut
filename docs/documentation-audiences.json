@@ -836,6 +836,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/done-done-verify-suites/features/jg-recon-ready.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/done-done-verify-suites/features/idle-worker-redrive.md",
       "audience": "agent-runtime"
     },

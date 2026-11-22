@@ -216,7 +216,8 @@ out=$("$JG" radio ack "${ref%%:*}:no.such.generation" 2>&1); rc=$?
 rc_is "ack under a stale generation" "$rc" 1; has "stale ack" "$out" "jg radio drain"
 append_wake "$H/state" signal t1.status "signal: t1.status again" >/dev/null || fail "could not queue a second wake"
 ref=$("$JG" radio drain 2>/dev/null | jq -r '.data.ack_ref')
-out=$("$JG" radio ack "$ref" 2>&1); rc=$?; rc_is "radio ack" "$rc" 0; [ "$(jq -r .ok <<<"$out")" = true ] || fail "ack was not ok: $out"
+out=$("$JG" radio ack "$ref" 2>"$H/ack.stderr"); rc=$?; rc_is "radio ack" "$rc" 0; [ "$(jq -r .ok <<<"$out")" = true ] || fail "ack was not ok: $out"
+has "ack drain notice" "$(cat "$H/ack.stderr")" "WAKE_DRAIN_AGAIN"
 out=$("$JG" radio ack "$ref" 2>&1); rc=$?; rc_is "a repeated ack" "$rc" 0; has "repeat" "$out" "already processed"
 out=$("$JG" radio ack not-a-reference 2>&1); rc=$?; rc_is "a malformed reference" "$rc" 2
 out=$("$JG" radio ack 2>&1); rc=$?; rc_is "ack with no reference" "$rc" 2

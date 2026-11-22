@@ -13,11 +13,11 @@ It only reads. It never steers, starts, merges, drains the wake queue, or writes
 
 ## Data
 
-1. Run `snapshot=$(bin/jg-bearings-snapshot.sh --json)` once. Its header owns the fields and every bucket.
+1. Run `snapshot_result=$(jg report bearings-snapshot --json) && snapshot=$(printf '%s\n' "$snapshot_result" | jq -c '.data')` once. The snapshot command documentation owns the fields and every bucket.
    Never sort an item into a bucket yourself, and read no other fleet state.
-2. Run `bin/jg-backlog.sh questions --json` once for the open questions on the board.
+2. Run `questions_result=$(jg ticket backlog questions --json) && questions=$(printf '%s\n' "$questions_result" | jq -c '.data')` once for the open questions on the board.
    An item that is in both lists is one item.
-3. Gemini 4 Neon, through agy, writes the reply: with `swarms=$(bin/jg-swarm-check.sh status --short)` as a third fact, run `printf '%s\n%s\n%s\n' "$snapshot" "$questions" "$swarms" | python3 -I core/report-writer/bin/report-writer.py write spotrep --facts -` and send its output; `core/report-writer/README.md` owns the route.
+3. Gemini 4 Neon, through agy, writes the reply: with `swarms_result=$(jg plan swarm-check status --short) && swarms=$(printf '%s\n' "$swarms_result" | jq -r '.data.stdout')` as a third fact, run `printf '%s\n%s\n%s\n' "$snapshot" "$questions" "$swarms" | python3 -I core/report-writer/bin/report-writer.py write spotrep --facts -` and send its output; `core/report-writer/README.md` owns the route.
    If it fails, report its message; never write the reply yourself or on another model.
 
 ## Reply
