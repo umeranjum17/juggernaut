@@ -1,6 +1,15 @@
 {
   "area": "worker",
   "owner": "e2",
+  "form_extensions": {
+    "report bearings-snapshot": {
+      "form": "bin/jg-bearings-snapshot.sh --json --include-prs --all-decisions"
+    },
+    "crew crew-state": {
+      "form": "bin/jg-crew-state.sh <id>",
+      "changes": true
+    }
+  },
   "entries": [
     {
       "path": [

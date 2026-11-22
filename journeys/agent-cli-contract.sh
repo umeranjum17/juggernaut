@@ -93,6 +93,12 @@ bash bin/jg-doc-audience-check.sh > "$DONE_DONE_EVIDENCE_ROOT/doc-audience.log" 
   bearings_decisions_direct=$("$root/bin/jg-bearings-snapshot.sh" --json --all-decisions)
   jq -e '.ok and .data == $direct and (.data.decisions_open | map(.id) | sort) == ["bearing-hold-one","bearing-hold-two"]' --argjson direct "$bearings_decisions_direct" <<<"$bearings_decisions" >/dev/null || { echo 'bearings-all-decisions failed' >&2; exit 1; }
   printf 'PASS bearings-snapshot include-prs and all-decisions\n'
+  bearings_combined=$("$jg" report bearings-snapshot --json --include-prs --all-decisions)
+  bearings_combined_direct=$("$root/bin/jg-bearings-snapshot.sh" --json --include-prs --all-decisions)
+  jq -e '.ok and .data == $direct and (.data.candidate_prs | type == "array")
+    and (.data.decisions_open | map(.id) | sort) == ["bearing-hold-one","bearing-hold-two"]' \
+    --argjson direct "$bearings_combined_direct" <<<"$bearings_combined" >/dev/null || { echo 'bearings-combined failed' >&2; exit 1; }
+  printf 'PASS bearings-snapshot combined include-prs and all-decisions\n'
   backlog_help=$("$jg" ticket backlog help)
   backlog_help_direct=$("$root/bin/jg-backlog.sh" --help)
   afk_help=$("$jg" radio afk-contract --help)
@@ -136,7 +142,7 @@ bash bin/jg-doc-audience-check.sh > "$DONE_DONE_EVIDENCE_ROOT/doc-audience.log" 
   python3 - "$DONE_DONE_EVIDENCE_ROOT/steps.json" "$version" <<'PY'
 import json,sys
 with open(sys.argv[1], 'w') as f:
- json.dump({'target':{'version':sys.argv[2]},'start':'Repository HEAD; isolated temporary home and fixture root.','steps':['Checked public vendor-auth help against direct usage and verified missing-argument exit 2.','Updated a fixture ticket body from a spaced file and read both replacement lines through the public CLI.','Sent a keyed radio answer and verified its inbox record and resolved status line.','Added a local public-followup intent record and checked its returned fields.','Bound pf-one to the spaced-file work relation and checked its returned relation.','Compared both public bearings snapshot forms with the direct script using held fixture tickets and a stub forge command.','Compared public backlog and AFK contract help with nonempty direct help.','Checked watcher-background denial and foreground allowance using command text only.','Ran the Pi and OpenCode named tests with live opt-ins unset and verified their gate skip markers.'],'result':'All existing and added public CLI assertions passed; both named live tests were skipped by their opt-in gates.'},f,indent=2)
+ json.dump({'target':{'version':sys.argv[2]},'start':'Repository HEAD; isolated temporary home and fixture root.','steps':['Checked public vendor-auth help against direct usage and verified missing-argument exit 2.','Updated a fixture ticket body from a spaced file and read both replacement lines through the public CLI.','Sent a keyed radio answer and verified its inbox record and resolved status line.','Added a local public-followup intent record and checked its returned fields.','Bound pf-one to the spaced-file work relation and checked its returned relation.','Compared the PR and decision flags, separately and combined, with the direct bearings script on held fixture tickets and a stub forge command.','Read a moved worker in read-only mode, then repaired its recorded endpoint through the bare crew state command.','Compared public backlog and AFK contract help with nonempty direct help.','Checked watcher-background denial and foreground allowance using command text only.','Ran the Pi and OpenCode named tests with live opt-ins unset and verified their gate skip markers.'],'result':'All existing and added public CLI assertions passed; both named live tests were skipped by their opt-in gates.'},f,indent=2)
  f.write('\n')
 PY
 ) > "$DONE_DONE_EVIDENCE_ROOT/round-two.log" 2>&1
@@ -148,6 +154,8 @@ for suite in "${suites[@]}"; do
     bash "$test_file" && printf 'PASS %s\n' "$test_file"
   } > "$log" 2>&1 || { tail -n 25 "$log" >&2; exit 1; }
 done
+bash tests/jg-endpoint-follow.test.sh > "$DONE_DONE_EVIDENCE_ROOT/endpoint-follow.log" 2>&1 \
+  || { tail -n 25 "$DONE_DONE_EVIDENCE_ROOT/endpoint-follow.log" >&2; exit 1; }
 # Check that harness instructions use registered commands, except named script internals.
 python3 - > "$DONE_DONE_EVIDENCE_ROOT/harness-instruction-contract.log" 2>&1 <<'PYTEST'
 import glob

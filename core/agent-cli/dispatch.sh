@@ -31,7 +31,13 @@ command -v jq >/dev/null 2>&1 || { DIE_CODE=5 die "jq is not installed, and the 
 contract_all() {
   set -- "$CONTRACT_DIR"/*.json
   [ -e "$1" ] || { printf '[]\n'; return 0; }
-  jq -s '[.[] | .area as $a | .owner as $o | .entries[] | . + {area: $a, owner: $o}]' "$@" 2>/dev/null || printf '[]\n'
+  jq -s '
+    (map(.form_extensions // {}) | add) as $extensions
+    | [.[] | .area as $a | .owner as $o | .entries[]
+       | . + {area: $a, owner: $o}
+       | $extensions[.path | join(" ")] as $ext
+       | if $ext then . + {form_extension: $ext} else . end]
+  ' "$@" 2>/dev/null || printf '[]\n'
 }
 
 # The command line's words as a JSON array of strings (jq would read a word such as --x as its own option).
@@ -44,6 +50,10 @@ ROUTES_JQ='def routes: [.path] + [.aliases[] | split(" ")];'
 
 # Shape of one fragment: the check of example-pack/formats.md section 6, plus the fields this dispatcher reads.
 FRAGMENT_SHAPE='(.area|type=="string") and (.owner|type=="string") and (.entries|type=="array" and length>0)
+  and (if has("form_extensions") then
+      (.form_extensions | type=="object" and all(.[]; (.form|type=="string")
+        and (if has("changes") then (.changes|type=="boolean") else true end)))
+    else true end)
   and all(.entries[];
     (.path | type=="array" and length>0
       and (if length>1 and .[-1]=="--help" then .[:-1] else . end
@@ -104,7 +114,7 @@ cmd_help() {
   contract_all | jq -r --arg n "$NAME" '
     sort_by(.area, (.path | join(" "))) | group_by(.area)[]
     | "", "\(.[0].area):",
-      (.[] | "  \($n) \(.path | join(" ")) - \(.meaning)\(if .changes then "" else " (reads only)" end)\(if (.aliases | length) > 0 then " [also: \(.aliases | join(", "))]" else "" end)")'
+      (.[] | "  \($n) \(.path | join(" ")) - \(.meaning)\(if .changes or .form_extension.changes then "" else " (reads only)" end)\(if (.aliases | length) > 0 then " [also: \(.aliases | join(", "))]" else "" end)")'
 }
 
 # --- binding the arguments to the form -----------------------------------------------------------------------
@@ -231,7 +241,7 @@ def bind($in; $spec; $types; $declared):
   end;
 . as $in | $in.entry as $e
 | ($e.args | map({(.name): .type}) | add // {}) as $types
-| [([($e | canonical_form)] + ($e.additional_forms // [])) | to_entries[]
+| [([($e | canonical_form)] + ($e.additional_forms // []) + [$e.form_extension.form // empty]) | to_entries[]
    | .key as $index | .value | lex | .[1:] as $toks
    # A flag-only alternative selects a new form only when the caller supplies its flags.
    | ($index > 0 and ($toks | length > 0) and all($toks[]; option)) as $explicit_flags
@@ -240,7 +250,10 @@ def bind($in; $spec; $types; $declared):
      | bind($in | if .args[0] == $e.operation then .args = .args[1:] else . end; .; $types; $e.args | map(.name))
    else specs($toks; false; $explicit_flags) | bind($in; .; $types; $e.args | map(.name))
    end]
-| first(.[] | select(.ok)) // .[0]'
+# Prefer a matching extension. The base form can inject a default flag that changes the action.
+# Keep the base form first for diagnostics and for the priority of its own alternatives.
+| (if $e.form_extension then .[-1] | select(.ok) else empty end)
+  // first(.[] | select(.ok)) // .[0]'
 
 # --- the repeat guard ------------------------------------------------------------------------------------------
 # An entry that declares an `again` argument runs once per repeat key: the sha256 of its schema and the values
