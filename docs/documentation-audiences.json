@@ -820,6 +820,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/done-done-verify-suites/features/muster-workflow.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/done-done-verify-suites/features/muster-requirements.md",
       "audience": "agent-runtime"
     },
