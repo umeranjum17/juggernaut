@@ -14,7 +14,7 @@ for row in rows:
     match = [e for e in entries if e['script'] == 'bin/'+row['script'] and e['operation'] == row['operation']]
     assert len(match) == 1, row
     e = match[0]
-    expected = row['form'] + (' <wav>' if row['script'] == 'jg-chat-transcribe.sh' and row['operation'] == 'run' else '')
+    expected = row['form']
     method = 'POST' if row['script'] == 'jg-peek.sh' else row['method']
     assert (e['form'], e['path'], e['method']) == (expected, row['path'].split(), method), row
     assert e['aliases'] == ([] if row['aliases'] == '-' else row['aliases'].split(',')), row
