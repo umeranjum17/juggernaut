@@ -280,9 +280,13 @@ pass "T4 a gate refusal at the closure is one wake for Main, and the loop clears
 R5=jg-lp5
 make_recon "$R5" "Spawn failure Recon"
 : > "$W/spawn-fail"
-for i in 1 2 3 4 5 6; do
-  sec; tick
+sec; tick
+n=0; until [ -f "$DATA/$R5/critic-1/spawn.rc" ]; do /bin/sleep 0.5; n=$((n + 1)); [ "$n" -lt 40 ] || fail "T4 first spawn did not finish"; done
+sec; tick
+assert_equals 1 "$(wakes "$R5")" "T4 the first failed critic start alerts Main"
+for i in 2 3 4 5 6; do
   n=0; until [ -f "$DATA/$R5/critic-1/spawn.rc" ] || [ "$i" = 6 ]; do /bin/sleep 0.5; n=$((n + 1)); [ "$n" -lt 40 ] || break; done
+  sec; tick
 done
 assert_equals 1 "$(wakes "$R5")" "T4 a critic that would not start in five tries is one wake for Main"
 assert_contains "$(grep "recon-loop-$R5" "$STATE/.wake-queue")" "did not start" "T4 the wake says the critic did not start"

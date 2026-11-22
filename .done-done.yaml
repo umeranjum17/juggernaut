@@ -2130,6 +2130,9 @@ journeys:
   finished-work-never-silently-acknowledged:
     tier: local
     command: bash tests/jg-finished-work.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  recon-critic-version:
+    tier: local
+    command: bash tests/jg-recon-critic-version.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   deep-recon-loop-advances-by-itself:
     tier: local
     command: bash tests/jg-recon-loop.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

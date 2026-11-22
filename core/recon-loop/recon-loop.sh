@@ -183,7 +183,7 @@ move_send_critic() {  # <recon> <hash>: the critic holds this draft: tell it, on
   read -r _ gen < <(critic_of "$r")
   if ! lane_live "$c" && [ "${gen:-0}" != 0 ]; then       # started here, and not yet running: its starter knows if it is coming
     critic_start "$r" "$gen"; rc=$?
-    [ "$rc" -eq 0 ] || { [ "$rc" -eq 75 ]; return; }
+    [ "$rc" -eq 0 ] || return 1
   fi
   msg=$(mktemp "$DATA/$r/.recon-loop-msg.XXXXXX") || return 1
   round_text "$r" "$c" "$hash" > "$msg"

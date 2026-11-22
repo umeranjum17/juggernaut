@@ -23,7 +23,7 @@
 # for a copy. Every call finds out where the start stands, prints the task id and exits:
 #   0   the critic has its task record: it is live
 #   75  its start is still running (up to JG_RECON_CRITIC_WAIT seconds, default 900), or was just made again after a failed one: call again later
-#   1   the start failed five times, or no ticket or brief could be made; the line on stderr says why (the caller tells Main)
+#   1   a start failed or no ticket or brief could be made; stderr says why (the caller tells Main); failed starts are retried up to five times
 # Exit 2 is a usage error. JG_RECON_CRITIC_SPAWN names the spawn command (tests point it at a wrapper that gives each lane its own copy).
 # JG_HOME, JG_STATE_OVERRIDE and JG_DATA_OVERRIDE name the home.
 set -u
@@ -42,6 +42,8 @@ export JG_HOME
 . "$SCRIPT_DIR/jg-backlog-lib.sh"
 # shellcheck source=bin/jg-tool-models.sh disable=SC1091
 . "$SCRIPT_DIR/jg-tool-models.sh"
+# shellcheck source=bin/jg-version-branch-lib.sh disable=SC1091
+. "$SCRIPT_DIR/jg-version-branch-lib.sh"
 
 usage() { sed -n '2,4p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 refuse() { printf 'jg-recon-critic: %s\n' "$*" >&2; exit 1; }
@@ -80,11 +82,17 @@ critic_title() {  # <generation> <recon ticket title>
 }
 
 # The critic's brief: the scout scaffold at depth quick (the critic's product is critic.md, never a report), with its role and the loop's contract.
-write_brief() {  # <task> <ticket row> <project> <recon> <recon ticket> <generation>
-  local task=$1 row=$2 project=$3 recon=$4 rticket=$5 brief=$DATA/$1/brief.md task_text spec_text
-  [ ! -e "$brief" ] || { grep -qxF "Role: critic of $recon" "$brief" && ! grep -qE '\{TASK\}|\{JUGGERNAUT_SPEC\}' "$brief"; return; }
+write_brief() {  # <task> <ticket row> <project> <recon> <recon ticket> <base>
+  local task=$1 row=$2 project=$3 recon=$4 rticket=$5 base=$6 brief=$DATA/$1/brief.md task_text spec_text
+  local brief_args=()
+  [ -z "$base" ] || brief_args+=(--base-branch "$base")
+  if [ -e "$brief" ]; then
+    grep -qxF "Role: critic of $recon" "$brief" && ! grep -qE '\{TASK\}|\{JUGGERNAUT_SPEC\}' "$brief" || return 1
+    if [ -n "$base" ] && ! grep -q '^Base branch: ' "$brief"; then printf '\nBase branch: %s\n' "$base" >> "$brief"; fi
+    return 0
+  fi
   mkdir -p "$DATA/$task"
-  "$SCRIPT_DIR/jg-brief.sh" "$task" "$project" --scout --depth quick --ticket "$row" >/dev/null 2>"$DATA/$task/.brief.err" \
+  "$SCRIPT_DIR/jg-brief.sh" "$task" "$project" --scout --depth quick --ticket "$row" "${brief_args[@]}" >/dev/null 2>"$DATA/$task/.brief.err" \
     || { echo "the brief was not written: $(one_line < "$DATA/$task/.brief.err")"; rm -f "$brief"; return 1; }
   rm -f "$DATA/$task/.brief.err"
   task_text="Read the draft of the deep Recon $recon (ticket $rticket) as its separate critic and say which gaps it still has."
@@ -100,12 +108,14 @@ write_brief() {  # <task> <ticket row> <project> <recon> <recon ticket> <generat
 }
 
 cmd_start() {
-  local recon=$1 gen=$2 meta=$STATE/$1.meta run=$DATA/$1/critic-$2 project_dir project rticket profile harness model effort title body made row task rc tries why started args
+  local recon=$1 gen=$2 meta=$STATE/$1.meta run=$DATA/$1/critic-$2 project_dir project rticket profile harness model effort title body made row task rc tries why started base failure args
   [ -f "$meta" ] || refuse "no task record for the Recon $recon"
   case $gen in '' | *[!0-9]* | 0) usage ;; esac
   project_dir=$(mval "$meta" project); project=$(basename -- "$project_dir")
   [ -d "$project_dir" ] || refuse "the Recon's project $project_dir is not a directory"
   rticket=$(mval "$meta" ticket); rticket=${rticket:-$recon}
+  base=$(mval "$meta" base_branch)
+  [ -n "$base" ] || base=$(jg_current_version_branch "$project_dir") || base=
   profile=$(critic_profile "$recon" | cut -f2); read -r harness model effort <<< "$profile"
   mkdir -p "$run"
   if [ ! -s "$run/ticket" ]; then
@@ -119,7 +129,7 @@ cmd_start() {
   fi
   row=$(cat "$run/ticket")
   task=$(jg_backlog_task_id "$row" "$model")
-  why=$(write_brief "$task" "$row" "$project" "$recon" "$rticket" "$gen") || refuse "$task: $why"
+  why=$(write_brief "$task" "$row" "$project" "$recon" "$rticket" "$base") || refuse "$task: $why"
   printf '%s\n' "$task" | tee "$run/task"
   # A record that only keeps a failed launch's copy is not a live one.
   if [ -f "$STATE/$task.meta" ] && ! grep -q '^cleanup_recovery=' "$STATE/$task.meta"; then return 0; fi
@@ -130,15 +140,21 @@ cmd_start() {
     [ $(( $(date +%s) - started )) -ge "$WAIT" ] || return 75
     rc=lost
   fi
-  if [ -n "$rc" ] && [ "$tries" -ge "$TRIES" ]; then refuse "$task did not start after $tries tries: $(one_line < "$run/spawn.log")"; fi
+  failure=
+  if [ -n "$rc" ]; then
+    failure="$task did not start: $(one_line < "$run/spawn.log")"
+    [ "$tries" -lt "$TRIES" ] || refuse "$failure"
+  fi
   rm -f "$run/spawn.rc"
   date +%s > "$run/started"; printf '%s\n' "$((tries + 1))" > "$run/attempts"
   args=("$SPAWN" "$task" "$project_dir" --ticket "$row" --scout)
+  [ -z "$base" ] || args+=(--base-branch "$base")
   [ -z "$harness" ] || args+=(--harness "$harness")
   [ -z "$model" ] || args+=(--model "$model")
   [ -z "$effort" ] || args+=(--effort "$effort")
   # shellcheck disable=SC2016  # the shell of the start expands its own arguments
   setsid nohup bash -c '"$@" > "$0.log" 2>&1 < /dev/null; echo $? > "$0.rc.tmp" && mv "$0.rc.tmp" "$0.rc"' "$run/spawn" "${args[@]}" > /dev/null 2>&1 < /dev/null &
+  [ -z "$failure" ] || refuse "$failure"
   return 75
 }
 
