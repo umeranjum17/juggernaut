@@ -134,6 +134,7 @@ jg_fact_lane_waited() {  # <state-dir> <id> <recon-phase> <agent-state cmd...>
 #   either  critiqued  revise   the researcher  a revised draft is recorded, so the phase leaves critiqued
 #   either  accepted   relay    Main            as the first row
 #   critic  drafted    -        -               its verdict was acted on
+#   lens    any        -        -               a lens lane of a Muster council (listed in data/war-room/<council>/lanes) is merged by its council
 # A steer the lane that owes a verdict (the critic) or a revision (the researcher) READ after the step fell due takes the step: its work is under way
 # (core/recon-loop sends that steer). A steer that was only sent takes nothing, so a lane that never reads it is a stall, and the P1 below is raised.
 # A deep Recon whose draft is ready and whose critic loop has no record yet owes `assign` too (the loop records the draft and starts the critic): a loop that
@@ -167,10 +168,14 @@ jg_fact_steered_at() {  # <state-dir> <id>: the epoch of the newest steer the la
 jg_fact_relayed_at() {  # <data-dir> <ticket>: the epoch of the ticket's latest `relayed` move, empty when it has none
   awk -F'\t' -v t="$2" '$2 == t && $4 == "relayed" { r = $1 } END { print r }' "$1/moves.log" 2>/dev/null
 }
+jg_fact_lens_lane() {  # <data-dir> <task>: succeeds when the task is a lens lane of a council (bin/jg-war-room.sh lenses and discover list each in data/war-room/<council>/lanes)
+  awk -F'\t' -v t="${2#fable-}" '$2 == t || $2 == "fable-" t { found = 1 } END { exit !found }' "$1"/war-room/*/lanes 2>/dev/null
+}
 jg_fact_next_step() {  # <state-dir> <data-dir> <id>
   local state=$1 data=$2 id=$3 meta=$1/$3.meta role=recon work=$3 phase=none step=none owner=- act=- since=0 why ticket done_at moved relayed taker loop
   if [ "$(sed -n 's/^kind=//p' "$meta" 2>/dev/null | tail -n 1)" != scout ]; then why='not a Recon or critic lane'
   elif ! done_at=$(jg_fact_ready_at "$state" "$id"); then why='its last status line is not done'
+  elif jg_fact_lens_lane "$data" "$id"; then why='a lens lane is read by its council'"'"'s merge: it owes no critic and no relay'
   else
     [ "$done_at" != 0 ] || done_at=$(jg_fact_mtime "$state/$id.status")
     since=$done_at

@@ -42,6 +42,7 @@
 # titled `<lens> lens` and briefed `Lens: <lens>` at Recon depth quick. It takes no --depth, --angles, --synthesis-depth or
 # --no-variant-critics. The record says kind=lenses and data/war-room/<council>/lanes holds `<lens> <task>` for each lane, which
 # bin/jg-muster-council.sh merge reads. The output and exits are those of `start`.
+# A lens lane owes no critic and no relay: its council's merge reads the draft, so bin/jg-facts-lib.sh jg_fact_next_step reads `lanes` and owes nothing.
 # discover uses the same lane path with fixed prior-art, risk and domain lenses and no pack.
 # Its next step starts a discovery synthesis and assigns a separate critic through the Recon handoff.
 # The accepted synthesis is published to data/<council>/muster/discovery/ (findings.md and round.json).

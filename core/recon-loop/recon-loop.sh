@@ -22,6 +22,7 @@
 #   accepted   the critic found nothing new                             none: the gate decides, and core/recon-ready announces the report once
 # A message goes to a live agent by bin/jg-send.sh (a durable steer) and to an agent that is gone by `bin/jg-control.sh relaunch --note-file` (the
 # message is the note), so it is never typed at a dead terminal. A war room's lane gets every move but its first critic (bin/jg-war-room.sh starts those).
+# A lens lane of a Muster council is no loop's lane: it is read by its council's merge, owes no assign and has no critic (bin/jg-facts-lib.sh jg_fact_lens_lane).
 #
 # The gate decides whether the loop may go on, so no copy of its rules lives here. It is asked before a move, unless the researcher is editing (it was
 # sent its gaps and has not said done since):

@@ -318,10 +318,37 @@ test_a_deep_recon_in_its_critic_loop_owes_no_relay_until_the_loop_closes() {
   [ "$(alertcmd "$dir" word done-unhandled--jg-6si-1)" = resolved ] || fail "the relay did not close the alert"
   pass "a deep Recon in its critic loop owes the loop's moves, never a relay; ready work untouched for 10 minutes raises one P1 that an acknowledgement and an unread steer never close and progress does; the final done line of the closed loop owes the relay"
 }
+# --- 5. a lens lane of a Muster council ----------------------------------------------------------------------------------------
+# A lens lane (bin/jg-war-room.sh lenses) finishes at the handoff phase drafted, and its council's merge reads the draft: no critic is ever
+# assigned, so a lane that owed an assign raised the done-unhandled P1 for a move nobody takes. An ordinary Recon at drafted still owes it.
+test_a_lens_lane_at_drafted_owes_no_assign_while_an_ordinary_recon_still_does() {
+  local dir now f
+  dir=$(make_home lens); now=$(date +%s)
+  handoff() { JG_HOME="$dir" JG_DATA_OVERRIDE="$dir/data" bash "$ROOT/bin/jg-recon-handoff.sh" "$@" > /dev/null || fail "jg-recon-handoff.sh $* failed"; }
+  add_lane "$dir" jg-co-1-user T-lens scout; add_lane "$dir" rec-plain T-plain scout
+  mkdir -p "$dir/data/war-room/jg-co-1"
+  printf 'user\tjg-co-1-user\n' > "$dir/data/war-room/jg-co-1/lanes"
+  printf 'kind=lenses\ncouncil=jg-co-1\n' > "$dir/data/war-room/jg-co-1/record"
+  for l in jg-co-1-user rec-plain; do
+    status_line "$dir" "$l" "done" $((now - 900)) "draft ready"
+    printf 'draft\n' > "$dir/data/$l/report.md"
+  done
+  JG_WAR_ROOM_NEXT=0 handoff draft jg-co-1-user; JG_WAR_ROOM_NEXT=0 handoff draft rec-plain
+  [ "$(JG_DATA_OVERRIDE="$dir/data" bash "$ROOT/bin/jg-recon-handoff.sh" phase jg-co-1-user)" = drafted ] || fail "the lens lane is not at drafted"
+  f=$(fact "$dir" jg-co-1-user); check_step "$f" none "a lens lane at drafted"
+  assert_contains "$(val "$f" reason)" 'lens lane' "the reason names the lens lane"
+  f=$(fact "$dir" rec-plain); check_step "$f" assign "an ordinary Recon at drafted"
+  age_record "$dir" jg-co-1-user 1000; age_record "$dir" rec-plain 1000
+  nxt "$dir" tick || fail "the tick failed"
+  [ "$(alertcmd "$dir" word done-unhandled--jg-co-1-user 2>/dev/null)" != open ] || fail "the lens lane raised the done-unhandled alert"
+  [ "$(alertcmd "$dir" word done-unhandled--rec-plain)" = open ] || fail "the ordinary Recon raised no done-unhandled alert"
+  pass "a lens lane at drafted owes no assign and raises no alert, while an ordinary Recon at drafted still owes it"
+}
 test_a_sweep_over_two_finished_recons_is_refused_and_named
 test_a_sweep_with_nothing_owed_still_classifies
 test_a_done_line_with_no_next_action_raises_a_p1_that_only_the_step_closes
 test_the_one_definition_names_the_step_of_every_lane_and_phase
 test_a_deep_recon_in_its_critic_loop_owes_no_relay_until_the_loop_closes
+test_a_lens_lane_at_drafted_owes_no_assign_while_an_ordinary_recon_still_does
 
 echo "# jg-finished-work.test.sh: all assertions passed"
