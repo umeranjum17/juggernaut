@@ -152,9 +152,15 @@ class Pass:
             row, kind = r["id"], r["metadata"]["wf_kind"]
             if self.status[row] == "closed" or os.path.exists(self.path(row, "started")):
                 continue
-            if any(self.blocker_open(b) for b in blockers(r)):
+            pending = {b for b in blockers(r) if self.blocker_open(b)}
+            if pending and kind != "critic":
                 continue
-            if self.module(kind) is None:
+            module = self.module(kind)
+            if pending:
+                unblocked = getattr(module, "unblocked", None)
+                if unblocked is None or not unblocked(self.home, r, rows, pending, self.dry):
+                    continue
+            if module is None:
                 self.fail(ticket, row, kind, f"no kind {kind}: the step has no handler, so nothing can start it")
                 continue
             self.start(row, kind)

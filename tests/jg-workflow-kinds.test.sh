@@ -9,7 +9,7 @@
 #    the next pass closes the step, and no build starts.
 # K3 Recon to build: after the Recon the owner step asks for his yes and the worker stays unstarted; his yes closes the owner step and
 #    the worker's brief names the Recon's report.
-# K4 a kind with no handler (critic) is one named alert, not a silent skip, and a second pass raises no second one.
+# K4 a critic with its handler absent is one named alert, and a second pass raises no second one.
 # K5 an unreadable prerequisite (an unregistered delivery mode) is one named failure and no approval is written.
 set -u
 # shellcheck source=tests/lib.sh
@@ -139,12 +139,14 @@ pass "K3 a build after a Recon waits for his yes and then names the report"
 # K4
 H=$(home k4 deep)
 R1=$(rowid "$H" jg-t1 1); R2=$(rowid "$H" jg-t1 2)
-adv "$H"
+mkdir "$TMP/missing-kinds"
+ln -sn "$ROOT/core/workflows/kinds/recon.py" "$TMP/missing-kinds/recon.py"
+JG_WORKFLOW_KIND_DIR=$TMP/missing-kinds adv "$H"
 lane_done "$H" "$R1"
-adv "$H"
+JG_WORKFLOW_KIND_DIR=$TMP/missing-kinds adv "$H"
 assert_contains "$res" "failed $R2 (critic): no kind critic" "K4 a kind with no handler is a named failure"
 assert_equals 1 "$(alerts)" "K4 one alert"
-adv "$H"
+JG_WORKFLOW_KIND_DIR=$TMP/missing-kinds adv "$H"
 assert_equals 1 "$(alerts)" "K4 a second pass raises no second alert"
 assert_absent "$H/state/dispatch-approved/$R2" "K4 nothing is approved for it"
 pass "K4 a kind with no handler is one named alert"

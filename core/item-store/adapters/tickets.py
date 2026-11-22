@@ -431,8 +431,12 @@ def cmd_read(a):
 
 
 def cmd_spawnable(a):
+    sys.path.insert(0, os.path.dirname(STORE))
+    from workflows.kinds.critic import draft_ready
+
     h = home()
     con = open_tickets(h).con
+    con.create_function("critic_draft_ready", 2, lambda row, blocker: draft_ready(h, row, blocker))
     card = """(%s.issue_type = 'decision' OR coalesce(json_extract(%s.metadata, '$.kind'), '') = 'captain'
               OR instr(%s.title, '[design-ux]') > 0 OR EXISTS (SELECT 1 FROM json_each(%s.labels) WHERE value = 'design-ux'))"""
     c = lambda x: card % (x, x, x, x)
@@ -441,7 +445,9 @@ def cmd_spawnable(a):
        AND (t.defer_until IS NULL OR t.defer_until <= ?)
        AND coalesce(t.assignee, '') = '' AND coalesce(json_extract(t.metadata, '$.hold_reason'), '') = ''
        AND NOT EXISTS (SELECT 1 FROM link l JOIN ticket b ON b.home = l.home AND b.id = l.to_id
-                        WHERE l.home = t.home AND l.from_id = t.id AND l.type = 'blocks' AND b.status IS NOT 'closed')
+                        WHERE l.home = t.home AND l.from_id = t.id AND l.type = 'blocks' AND b.status IS NOT 'closed'
+                          AND CASE WHEN json_extract(t.metadata, '$.wf_kind') = 'critic'
+                                   THEN NOT critic_draft_ready(t.id, b.id) ELSE 1 END)
        AND NOT EXISTS (SELECT 1 FROM link l JOIN ticket x ON x.home = l.home AND x.id = l.to_id
                         WHERE l.home = t.home AND l.from_id = t.id AND x.status IS NOT 'closed' AND %s)
        AND NOT EXISTS (SELECT 1 FROM link l JOIN ticket x ON x.home = l.home AND x.id = l.from_id
