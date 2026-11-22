@@ -9,7 +9,7 @@ Cross-harness provider and credential identity is owned by `references/common/mo
 |---|---|
 | Binary | `jg_cursor_resolve_binary` in `../../../bin/jg-cursor-lib.sh` resolves stable launcher `cursor-agent` or legacy `agent`, never `cursor`; both symlink into `~/.local/share/cursor-agent/versions/<version>/cursor-agent`, whose target auto-update replaces. |
 | Launch | Positional instructions with `--trust`, `--yolo`, optional `--model <model>`, and `--workspace <absolute-task-worktree>`, after clearing foreign primary markers. |
-| Attribution | Cursor can append a Co-authored-by trailer after the typed message. Unless the home sets `config/keep-ai-trailers` (`../../../../../docs/configuration.md` "Commit attribution"), every fleet launch installs the pane-scoped commit-msg strip in `../../../bin/jg-git-strip-ai-trailers.sh`, which removes known AI trailers and leaves human co-authors and the author identity untouched. |
+| Attribution | Cursor can append a Co-authored-by trailer after the typed message. Unless the home sets `config/keep-ai-trailers` (`../../../../../docs/configuration.md` "Commit attribution"), every fleet launch installs the pane-scoped commit-msg strip in `script: ../../../bin/jg-git-strip-ai-trailers.sh`, which removes known AI trailers and leaves human co-authors and the author identity untouched. |
 | Models | Use current-account `cursor-agent --list-models` or legacy `agent --list-models`; the drifting observed list had only `cursor-grok-4.5-high` and `cursor-grok-4.5-high-fast` for Grok plus several `xhigh` ids, so choose a returned reasoning id and never assume low or medium Grok. |
 | Busy state | `../../../bin/jg-busy-lib.sh` folds the per-conversation transcript as `cursor-transcript`: `role:user` opens and typed `turn_ended` closes success or abort, covering manual interrupt; nothing is armed or seeded, and this backend-agnostic source was identical on tmux and Herdr. |
 | Exit command | `/exit`. |
@@ -27,7 +27,7 @@ The slash popup consumes the first Enter; that Enter closes it and a genuine sec
 ## Detection
 
 Cursor does not clear inherited `CLAUDECODE`, so a Cursor worker under Claude carries both markers.
-`../../../bin/jg-harness.sh` tests Cursor first, and launch also clears foreign markers.
+`script: ../../../bin/jg-harness.sh` tests Cursor first, and launch also clears foreign markers.
 Both remain necessary: sanitization covers Juggernaut launches, ordering covers hand-started sessions.
 That ordering settles the marker layer only, and a nearer Claude ancestor still outranks a retained Cursor marker.
 
@@ -41,7 +41,7 @@ Auto-update changes the target, not this rule.
 Cursor parks its terminal cursor outside the composer: `#{cursor_y}` was below the footer idle and typed, with `#{cursor_flag}` zero, so cursor-anchored reads are always unknown.
 `../../../bin/jg-tmux-lib.sh` lets the bottom-most shape win only after structural Cursor proof.
 The composite then reads empty or pending, verified on 2026-08-13, while every other harness keeps strict blank-cursor behavior and a dead shell never reads empty.
-`../../../bin/jg-supervise-daemon.sh` can therefore require affirmatively empty before away-mode delivery without a Cursor-only branch.
+`script: ../../../bin/jg-supervise-daemon.sh` can therefore require affirmatively empty before away-mode delivery without a Cursor-only branch.
 
 Submission also uses an idle-to-busy transition.
 Match stable token `ctrl+c to stop`, never spinner verbs that changed from `Working` to `Running` between turns.
@@ -57,22 +57,22 @@ Teaching those backends is separate cross-harness work requiring live checks.
 
 Reverse-video placeholder remnants and Herdr half-block edges belong to `../../../bin/jg-composer-lib.sh`; without the edges a bare composer swallows the footer and idle reads pending.
 `../../../docs/verification/runtime-backends.md` owns captures.
-Refresh with `JG_HARNESS_LIVENESS_DRIFT=1 ../../../bin/jg-test-run.sh ../../../tests/jg-harness-liveness-drift-live-e2e.test.sh`.
+Refresh with `JG_HARNESS_LIVENESS_DRIFT=1 jg proof test-run single tests/jg-harness-liveness-drift-live-e2e.test.sh`.
 
 ## Worktree boundary
 
 Juggernaut enters its acquired worktree and passes the same absolute path through `--workspace`.
 Never pass Cursor `-w` or `--worktree`, which allocates a second copy under `~/.cursor/worktrees` and breaks isolation.
 The CLI supports repeatable `--add-dir`, but the adapter adds none; positional instructions need no grant to their private directory.
-Example: `../../../bin/jg-spawn.sh <task-id> <project> --scout --harness cursor --model cursor-grok-4.5-high`.
+Example: `jg crew spawn <task-id> <project> --ticket <ticket-id> --scout --harness cursor --model cursor-grok-4.5-high`.
 
 ## Primary integration
 
 Primary supervision is the stop-hook park in `../../../docs/supervision-protocols/cursor.md` through tracked `.cursor/hooks.json`; primary and Squad Lead launches require `--trust` or hooks do not load.
-In a home with `config/supervision-host` and no `config/supervision-host-off` the park runs the supervision host instead of `../../../bin/jg-watch-arm.sh`, with Claude's print mode as its headless engine; [`supervision-host.md`](../../../../../docs/supervision-host.md) owns the host.
+In a home with `config/supervision-host` and no `config/supervision-host-off` the park runs the supervision host instead of `script: ../../../bin/jg-watch-arm.sh`, with Claude's print mode as its headless engine; [`supervision-host.md`](../../../../../docs/supervision-host.md) owns the host.
 Cursor exposes 20 project events plus a Claude-Code compatibility map that loads `.claude/settings.json`.
 Tracked hooks register `stop`, `sessionStart`, and two `preToolUse` seatbelts through `$CURSOR_PROJECT_DIR`; Claude entries stand down on Cursor payloads under `../../../docs/turnend-guard.md`.
 
-`stop` cannot block because exit 2 is a silent no-op, so `../../../bin/jg-turnend-guard-cursor.sh` parks on supervision and returns one bounded `followup_message`.
+`stop` cannot block because exit 2 is a silent no-op, so `script: ../../../bin/jg-turnend-guard-cursor.sh` parks on supervision and returns one bounded `followup_message`.
 It does not fire in headless `cursor-agent -p`.
 `preCompact` is unregistered because it cannot inject context, so digest re-emission after Cursor compaction remains deferred.
