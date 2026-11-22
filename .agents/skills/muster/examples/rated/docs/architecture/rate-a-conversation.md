@@ -3,7 +3,7 @@ status: approved
 date: 2026-12-20
 muster: <ticket id of the rating feature muster>
 ---
-# Design: rate a resolved conversation
+# Technical design: rate a resolved conversation
 
 ## Context
 The change pack `docs/changes/rate-a-conversation.md` lists what changes; decision 0004 places the rating.

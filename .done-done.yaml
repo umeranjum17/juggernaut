@@ -18,6 +18,9 @@ journeys:
   muster-requirements:
     tier: local
     command: bash tests/jg-muster-requirements.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  muster-technical-design:
+    tier: local
+    command: (bash bin/jg-lint.sh --changed-base HEAD^ && bash bin/jg-doc-audience-check.sh && bash bin/jg-test-run.sh tests/jg-muster-gate.test.sh tests/jg-muster-requirements.test.sh tests/muster-templates.test.sh) > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   agent-cli-contract:
     tier: local
     command: bash journeys/agent-cli-contract.sh

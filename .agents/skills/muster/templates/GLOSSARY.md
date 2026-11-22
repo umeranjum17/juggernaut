@@ -16,4 +16,5 @@ _Avoid_: <synonyms nobody should use for this>
 _Avoid_: <synonyms>
 
 ## Flagged ambiguities
+Use **technical design** for architecture, **visual direction** for the picked look, and **visual design system** for the reusable colors, type, spacing and components.
 - "<word>" was used for both <A> and <B>; settled as: <A> is **<Term 1>**, <B> is **<Term 2>**.

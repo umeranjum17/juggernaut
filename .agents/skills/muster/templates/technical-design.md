@@ -3,7 +3,7 @@ status: approved   # draft | discussion | approved | abandoned (after Oxide RFD 
 date: <YYYY-MM-DD>
 muster: <ticket id>
 ---
-# Design: <system or big feature>
+# Technical design: <system or big feature>
 
 ## Context
 ## Goals and non-goals

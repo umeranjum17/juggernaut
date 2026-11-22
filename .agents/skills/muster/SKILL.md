@@ -53,8 +53,8 @@ One machine, the same for every depth; a depth skips the states it does not need
 | intent | drafter; captain answers | `docs/vision.md` | sections present, one page, no placeholder, no open intent question | a later finding changes who or why |
 | lexicon | drafter; domain lens | `GLOSSARY.md` with core objects | every entity and core object is a term | a prototype or code uses a missing word |
 | rules | drafter with `prior-art`; captain answers taste calls | `docs/ways-of-working.md` and config | every rule names its check; each fault fails and each allowed use passes | a rule blocks good code |
-| terrain | drafter; architecture lens | `docs/domain/model.md`, `docs/design/<slug>.md`, real ADRs | the gate's model and ADR clauses pass; no unresolved question unless held | War Room's critic finds an undecided point |
-| sand table | first-draft for screens, the prototype skill for flows | `docs/design/visual-direction.md` | one pick per design card | a pick contradicts terrain |
+| terrain | drafter; architecture lens | `docs/domain/model.md`, `docs/architecture/<slug>.md` from `templates/technical-design.md`, real ADRs | the gate's model and ADR clauses pass; no unresolved question unless held | War Room's critic finds an undecided point |
+| sand table | first-draft for screens, the prototype skill for flows | `docs/design/visual-direction.md` and the visual design system in root `DESIGN.md` | one pick per design card | a pick contradicts terrain |
 | charter | drafter | `docs/charter.md` | every ticket in a batch, no dependency inside a batch or on a later one, every milestone proven by journeys | scope changes |
 | objectives | drafter | the spec's Objectives table; journeys | on the base, each new journey fails on its named assertion and each preserve journey passes | a journey cannot be driven |
 | check | `jg muster approve ask` runs `jg muster gate` first | the manifest and complete saved copies | the gate passes on the project and again on the saved copies | any refusal: back to the state that owns the clause |

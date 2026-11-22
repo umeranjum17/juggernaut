@@ -1,4 +1,4 @@
-# Muster machine formats (frozen for the jg-6si orders, revision 6)
+# Muster machine formats (revision 7)
 
 Every wave-1 order builds against these formats, so no order has to wait for another to define them. Order m1 copies
 this file byte for byte to `.agents/skills/muster/formats.md`; every other order pins this frozen copy by hash.
@@ -15,6 +15,7 @@ reads (sections 6 and 8).
 Revision 6 (closure review of draft 6): once a round is revised, a reply names the revision or answers on the card
 (section 2); no slice claims a ticket together with one it must follow (section 5); the glossary delta is compared by
 definition both ways (section 7); a form keeps every continued usage group (section 8).
+Revision 7 moves technical designs to `docs/architecture/` and reserves design paths for visual work (section 7).
 
 ## 1. The depth line on a ticket
 `Muster: <skip|light|full|complete>[ survey-first][ backfilled][ review] - <reason>`
@@ -173,11 +174,17 @@ Check every fragment has this shape with:
 | `docs/vision.md` | written | changes listed in the change pack | - |
 | `docs/adr/NNNN-*.md`, real decision records | one each for stack, storage and hosting | at least one | at least one, short form |
 | `docs/ways-of-working.md` and lint, CI config | written and proven | - | - |
-| `docs/design/<slug>.md` | written | written | - |
+| `docs/architecture/<slug>.md` technical design | written | written | - |
 | `docs/design/visual-direction.md` | direction board and key screens | changed screens, or "no screen changes" | one sketch if a screen changes |
+| Root `DESIGN.md` visual design system | written when visual direction is picked | updated when the visual system changes | updated when the visual system changes |
 | `docs/specs/<slug>.md` with Objectives, and journeys in `.done-done.yaml` | written | written | a spec section, 1-3 journeys |
 | `docs/charter.md` (project) or the change pack's Charter section (feature) | written | written | - (one ticket) |
 | `docs/changes/<slug>.md` change pack and `CHANGELOG.md` lines | - | written | objects, terms, objectives, changelog |
+
+Use `templates/technical-design.md` for architecture and reserve `docs/design/` for visual direction.
+Use first-draft and the picked visual direction to record colors, type, spacing and components in root `DESIGN.md`.
+The gate accepts legacy technical designs in `docs/design/<slug>.md` with a warning that names the new path.
+The gate refuses a document titled "Technical design" under `docs/design/`.
 
 Every pack at every depth holds at least one real decision record: status, context, two or more considered options,
 the decision, consequences and a confirmation. The short form (light) keeps the same six parts and allows one line

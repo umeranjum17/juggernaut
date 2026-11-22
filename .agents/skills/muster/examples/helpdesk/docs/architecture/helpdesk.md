@@ -3,7 +3,7 @@ status: approved   # draft | discussion | approved | abandoned (after Oxide RFD 
 date: 2026-11-22
 muster: <ticket id>
 ---
-# Design: help desk bot
+# Technical design: help desk bot
 
 ## Context
 A brand-new project; the pack's vision, glossary and domain model are the input. Decisions 0001-0003 fix the stack,

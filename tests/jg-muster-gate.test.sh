@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # bin/jg-muster-gate.sh (core/muster/pack_check.py) through its real command line, on the committed example packs of
 # tests/fixtures/muster/example: the help desk at complete depth and the rated help desk at full depth (change pack
-# `rate-a-conversation` against the help desk before it) both pass with zero refusals; every planted fault is refused
+# `rate-a-conversation` against the help desk before it) both pass with legacy path warnings; every planted fault is refused
 # with its own line; the light and full depth rules refuse as stated; a second run prints the same lines and writes
 # nothing. Every fault is applied to a throwaway copy: no live home and no real project is read.
 # shellcheck disable=SC2016  # the backticks inside the single-quoted fault texts are literal markdown
@@ -13,7 +13,6 @@ GATE="$ROOT/bin/jg-muster-gate.sh"
 EX="$ROOT/tests/fixtures/muster/example"
 HD="$EX/helpdesk" RT="$EX/rated" SLUG=rate-a-conversation
 T=$(jg_test_tmproot jg-muster-gate)
-N=0
 
 # The one edit helper: replace one text in one file (the text must be there, so a fault never goes vacuous), or turn
 # the rated change pack into a light one (no Charter section, depth light, no design page).
@@ -35,11 +34,11 @@ elif mode == 'light':
 PY
 
 copy() {  # <source tree> -> a fresh throwaway copy of it
-  local d="$T/tree-$((N += 1))"
-  mkdir -p "$d" && cp -a "$1/." "$d" && printf '%s\n' "$d"
+  local d
+  d=$(mktemp -d "$T/tree.XXXXXX") && cp -a "$1/." "$d" && printf '%s\n' "$d"
 }
 edit() { python3 -I "$T/edit.py" replace "$@" || fail "the planted fault does not apply: $2"; }  # <tree> <file> <find> <replace>
-gate() { "$GATE" check "$@" 2>&1; }  # check arguments; prints the output, and the exit code is the gate's
+gate() { "$GATE" check "$@" 2>"$T/gate.stderr"; }
 refused() {  # <name> <output> <exit code> <clause text>...: refused with every clause text, and nothing but refusals
   local name=$1 out=$2 rc=$3 want
   shift 3
@@ -68,15 +67,40 @@ change_fault() {  # <name> <file> <find> <replace> <clause text>...: a fault in 
 # ---- the two examples pass, each with zero refusals, and a second run prints the same and writes nothing
 before=$(cd "$EX" && find . -type f -exec sha256sum {} + | sort)
 out=$(gate "$HD" --depth complete) || fail "helpdesk at complete refused: $out"
-assert_equals "PASS" "$out" "helpdesk at complete prints PASS and nothing else"
-pass "helpdesk: PASS"
+assert_equals "PASS" "$out" "legacy helpdesk at complete prints PASS on stdout"
+assert_contains "$(cat "$T/gate.stderr")" "docs/design/helpdesk.md is a legacy technical design; use docs/architecture/helpdesk.md" \
+  "legacy helpdesk names the migration on stderr"
+pass "legacy helpdesk: PASS with a migration warning"
 out=$(gate "$RT" --depth full --change "$SLUG" --before "$HD") || fail "rated at full refused: $out"
-assert_equals "PASS" "$out" "rated at full prints PASS and nothing else"
-pass "rated: PASS"
+assert_equals "PASS" "$out" "legacy rated at full prints PASS on stdout"
+assert_contains "$(cat "$T/gate.stderr")" "docs/design/$SLUG.md is a legacy technical design; use docs/architecture/$SLUG.md" \
+  "legacy rated names the migration on stderr"
+pass "legacy rated: PASS with a migration warning"
 out2=$(gate "$RT" --depth full --change "$SLUG" --before "$HD")
 assert_equals "$out" "$out2" "a second run prints the same"
 [ "$before" = "$(cd "$EX" && find . -type f -exec sha256sum {} + | sort)" ] || fail "the gate wrote into the pack"
 pass "a second run prints the same lines and the gate writes nothing"
+
+new="$ROOT/.agents/skills/muster/examples"
+out=$(gate "$new/helpdesk" --depth complete) || fail "new helpdesk refused: $out"
+assert_equals "PASS" "$out" "new helpdesk passes"
+[ ! -s "$T/gate.stderr" ] || fail "new helpdesk emitted a warning"
+out=$(gate "$new/rated" --depth full --change "$SLUG" --before "$new/helpdesk") || fail "new rated refused: $out"
+assert_equals "PASS" "$out" "new rated passes"
+[ ! -s "$T/gate.stderr" ] || fail "new rated emitted a warning"
+pass "complete and full packs with technical designs at docs/architecture pass without warnings"
+
+d=$(copy "$new/rated")
+mv "$d/docs/architecture/$SLUG.md" "$d/docs/design/$SLUG.md"
+out=$(gate "$d" --depth full --change "$SLUG" --before "$new/helpdesk") && rc=0 || rc=$?
+refused "technical design in the visual direction folder" "$out" "$rc" \
+  "docs/design/$SLUG.md is a technical design; move it to docs/architecture/$SLUG.md"
+
+d=$(copy "$new/helpdesk")
+edit "$d" docs/architecture/helpdesk.md 'None.' 'Who owns the handoff?'
+out=$(gate "$d" --depth complete) && rc=0 || rc=$?
+refused "unresolved architecture question" "$out" "$rc" \
+  "docs/architecture/helpdesk.md has unresolved questions not held on the board"
 
 # ---- planted faults at complete depth, each refused with its own line
 HANDOFF_MACHINE=$'### Handoff state machine\nStates: waiting, accepted, closed\n```mermaid\nstateDiagram-v2\n  [*] --> waiting : create\n  waiting --> accepted : accept\n  accepted --> closed : close\n```\n\n| From | To | Trigger | Guard | Effect | Journey |\n|---|---|---|---|---|---|\n| [*] | waiting | create | a reason is given | HandoffRequested | bot-hands-off-unknown |\n| waiting | accepted | accept | the handoff is waiting | HandoffAccepted | agent-closes-handoff |\n| accepted | closed | close | a note is given | HandoffClosed | agent-closes-handoff |\n'

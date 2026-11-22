@@ -12,8 +12,9 @@ complete checks a brand-new project's whole pack. full and light check a feature
 feature, <dir> is the tree before it, and `docs/changes/<slug>.md` (the change pack) is compared with the real
 difference between the two, both ways.
 
-Exit 0 prints `PASS`. Exit 1 prints one `refused: <clause>: <detail>` line for every finding, all of them, and
-nothing else. Exit 2 is a usage error or a failure to read the files, named on stderr.
+Exit 0 prints `PASS` and reports legacy technical design paths on stderr. Exit 1 prints one
+`refused: <clause>: <detail>` line for every finding. Exit 2 is a usage error or a failure to read the files,
+named on stderr.
 
 Standard library only; run it as `python3 -I`.
 """
@@ -122,6 +123,7 @@ class Pack:
     def __init__(self, root):
         self.root = root
         self.refusals = []
+        self.warnings = []
 
     def refuse(self, clause, detail):
         self.refusals.append(f'refused: {clause}: {detail}')
@@ -427,13 +429,28 @@ class Pack:
             if k == 'new' and j not in claimed:
                 self.refuse('charter', f'new journey {j} is claimed by no charter ticket')
 
-    def check_design(self):
-        d = self.p('docs/design')
-        for f in sorted(os.listdir(d)) if os.path.isdir(d) else []:
-            if f != 'visual-direction.md':
-                u = (section(read(os.path.join(d, f)) or '', 'Unresolved questions') or '').strip()
-                if u and u != 'None.':
-                    self.refuse('design', f'docs/design/{f} has unresolved questions not held on the board')
+    def check_technical_design(self):
+        for directory in ('docs/architecture', 'docs/design'):
+            root = self.p(directory)
+            for name in sorted(os.listdir(root)) if os.path.isdir(root) else []:
+                if not name.endswith('.md'):
+                    continue
+                path = f'{directory}/{name}'
+                design = read(self.p(path))
+                if design is None:
+                    continue
+                if directory == 'docs/design':
+                    target = f'docs/architecture/{name}'
+                    if re.search(r'^# Technical design\b', design, re.M | re.I):
+                        self.refuse('design', f'{path} is a technical design; move it to {target}')
+                        continue
+                    if not (section(design, 'Design:', level=1) is not None
+                            and section(design, 'Reference level') is not None):
+                        continue
+                    self.warnings.append(f'warning: design: {path} is a legacy technical design; use {target}')
+                questions = (section(design, 'Unresolved questions') or '').strip()
+                if questions and questions != 'None.':
+                    self.refuse('design', f'{path} has unresolved questions not held on the board')
 
     # ---------------------------------------------------------------- the gate
     def gate(self, depth, change=None, before=None):
@@ -462,7 +479,7 @@ class Pack:
             self.check_vision()
             self.check_rules(adrs)
             self.check_project_charter(objectives)
-        self.check_design()
+        self.check_technical_design()
         if change:
             self.check_change_pack(change, Pack(before), depth, objectives, manifest)
         return self.refusals
@@ -628,7 +645,11 @@ def main(argv):
     for label, d in (('project', a.project), ('--before', a.before)):
         if d is not None and not os.path.isdir(d):
             ap.error(f'{label} {d!r} is not a directory')
-    refusals = Pack(a.project).gate(a.depth, a.change, a.before)
+    pack = Pack(a.project)
+    refusals = pack.gate(a.depth, a.change, a.before)
+    if not refusals:
+        for warning in pack.warnings:
+            print(warning, file=sys.stderr)
     print('\n'.join(refusals) if refusals else 'PASS')
     return 1 if refusals else 0
 

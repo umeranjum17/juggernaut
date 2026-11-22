@@ -169,6 +169,15 @@ mv "$T/plan.json" "$plan"
 jq '.muster.decisions_and_assumptions[0].override = "Keep chat logs for 7 days."' "$plan" > "$T/plan.json"
 mv "$T/plan.json" "$plan"
 
+legacy_plan=$(approval verify-plan "$test_ticket" "$plan" --slice-directions 2>"$T/plan.stderr") ||
+  fail "the legacy pack did not verify: $legacy_plan $(cat "$T/plan.stderr")"
+jq -e '.plan_sha256 and (.directions | type == "object")' <<<"$legacy_plan" >/dev/null ||
+  fail 'the legacy warning changed the plan JSON'
+legacy_warning=$(cat "$T/plan.stderr")
+assert_contains "$legacy_warning" 'docs/design/helpdesk.md is a legacy technical design; use docs/architecture/helpdesk.md' \
+  'verify-plan names the migration on stderr'
+printf 'Legacy plan verified. %s\n' "$legacy_warning"
+
 plan_id=$(jq -er .plan "$plan") || fail 'the fixture plan has no id'
 JG_SWARM_ARM_KICK=0 "$ROOT/bin/jg-swarm.sh" start "$plan" --harness codex --model gpt-6.2-sol --effort high --wait
 frozen_plan=$JG_DATA_OVERRIDE/swarm/$plan_id/plan.json
@@ -199,6 +208,19 @@ while IFS= read -r order_path; do
   [[ $order_text != *'7 days'* ]] || fail "the seven-day override leaked into $order_path"
 done <<< "$other_orders"
 pass 'the seven-day override reaches only the frozen c2 order'
+
+mkdir -p "$project/docs/architecture"
+sed 's/^# Design: /# Technical design: /' "$project/docs/design/helpdesk.md" > "$project/docs/architecture/helpdesk.md"
+rm "$project/docs/design/helpdesk.md"
+architecture_manifest=$(approval manifest "$test_ticket" "$project" --depth complete) || fail "$architecture_manifest"
+sign_manifest "$architecture_manifest"
+jq --arg sha "$architecture_manifest" '.muster.manifest_sha = $sha' "$plan" > "$T/plan.json"
+mv "$T/plan.json" "$plan"
+architecture_plan=$(approval verify-plan "$test_ticket" "$plan" 2>"$T/plan.stderr") ||
+  fail "the architecture pack did not verify: $architecture_plan $(cat "$T/plan.stderr")"
+assert_contains "$architecture_plan" 'plan ok:' 'the architecture pack passes verify-plan'
+[ ! -s "$T/plan.stderr" ] || fail 'the architecture pack emitted a warning'
+printf 'Architecture plan verified. %s\n' "$architecture_plan"
 
 if [ -n "${DONE_DONE_EVIDENCE_ROOT:-}" ]; then
   revision=$(git -C "$ROOT" rev-parse --short HEAD)

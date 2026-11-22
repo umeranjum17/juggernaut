@@ -188,6 +188,12 @@ def run_gate(project, depth, change, before):
     return r.returncode == 0, (r.stdout + r.stderr).strip()
 
 
+def print_gate_warnings(output):
+    for line in output.splitlines():
+        if line.startswith('warning: '):
+            print(line, file=sys.stderr)
+
+
 def first_line(text):
     return (text.splitlines() or ['no output'])[0]
 
@@ -206,9 +212,9 @@ def copy_files(src, dst):
 
 def build_manifest(ticket, project, depth, change, before):
     """Gate the project, save both copies, gate the copies, write the manifest. Returns its sha12."""
-    ok, out = run_gate(project, depth, change, before)
+    ok, checked = run_gate(project, depth, change, before)
     if not ok:
-        raise Refused(out + '\nrefused: the pack check did not pass; no manifest, no ask')
+        raise Refused(checked + '\nrefused: the pack check did not pass; no manifest, no ask')
     lines = content_lines(project, depth, change)
     d = muster_dir(ticket, create=True)
     tmp = os.path.join(d, 'snapshot.tmp')
@@ -229,6 +235,7 @@ def build_manifest(ticket, project, depth, change, before):
                 os.rename(os.path.join(tmp, part), dst)
         with open(os.path.join(d, f'manifest-{sha}.tsv'), 'w') as f:
             f.write(body)
+        print_gate_warnings(checked)
         return sha
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -251,7 +258,7 @@ def manifest_scope(mf, sha):
 
 def saved_copy_check(ticket, sha):
     """Both saved copies are byte for byte what the manifest lists, and the ordinary gate passes on them at the
-    manifest's depth and change. Returns the manifest lines; raises Refused with one line otherwise."""
+    manifest's depth and change. Returns the manifest lines and gate output; raises Refused otherwise."""
     mf = read_manifest(ticket, sha)
     depth, change = manifest_scope(mf, sha)
     d = muster_dir(ticket)
@@ -270,7 +277,7 @@ def saved_copy_check(ticket, sha):
     ok, out = run_gate(os.path.join(d, f'pack-{sha}'), depth, change, base)
     if not ok:
         raise Refused('the pack check does not pass on the saved copy: ' + first_line(out))
-    return mf
+    return mf, out
 
 
 # ---- the two owner questions and the approvals record -------------------------------------------------------------------
@@ -300,8 +307,9 @@ def no_worker(what):
 
 def ask(ticket, kind, name, sha):
     no_worker('ask the captain for approval or an exception')
+    checked = ''
     if kind == 'approve':
-        saved_copy_check(ticket, sha)
+        _, checked = saved_copy_check(ticket, sha)
     n = 1 + sum(1 for r in approvals(ticket) if r['kind'] == kind)
     words = (f'Approve the agreed documents for {name}, version {n}?' if kind == 'approve'
              else f'Start planning {name} without agreed documents, request {n}?')
@@ -316,6 +324,7 @@ def ask(ticket, kind, name, sha):
         raise Refused(f'{len(found)} gates carry these words; expected exactly one')
     with open(os.path.join(muster_dir(ticket, create=True), 'approvals.tsv'), 'a') as f:
         f.write('\t'.join([str(n), kind, sha or '-', found[0]['id'], words, str(int(time.time()))]) + '\n')
+    print_gate_warnings(checked)
     print(f'asked: {words} (gate {found[0]["id"]})')
 
 
@@ -350,17 +359,17 @@ def answered_yes(ticket, row):
 
 
 def approved_manifest(ticket):
-    """(newest approve row, manifest lines) when the newest approval verifies apart from the current documents."""
+    """Return the approval row, manifest lines and gate output after checking the signed snapshot."""
     row = newest(ticket, 'approve')
     if not row:
         raise Refused(f'no approval was asked on {ticket}')
-    mf = saved_copy_check(ticket, row['manifest'])
+    mf, checked = saved_copy_check(ticket, row['manifest'])
     answered_yes(ticket, row)
-    return row, mf
+    return row, mf, checked
 
 
 def verify(ticket, project):
-    row, mf = approved_manifest(ticket)
+    row, mf, _ = approved_manifest(ticket)
     sha = row['manifest']
     depth, change = manifest_scope(mf, sha)
     base = os.path.join(muster_dir(ticket), f'base-{sha}') if change else None
@@ -369,6 +378,7 @@ def verify(ticket, project):
         raise Refused('the pack check does not pass on the current documents: ' + first_line(out))
     if content_lines(project, depth, change) != sorted(ln for ln in mf if ln.split(' ')[0] in CONTENT):
         raise Refused(f'the documents changed since version {row["ask"]} was asked; a fresh approval is needed')
+    print_gate_warnings(out)
     print(f'approved: version {row["ask"]} ({sha}) answered yes on {ticket}; the pack check passed at {depth} on the '
           f'saved copy{" and its saved baseline" if change else ""} and on the current documents')
 
@@ -551,7 +561,7 @@ def slice_directions(plan, muster, required):
 
 
 def verify_plan(ticket, plan_path, emit_directions=False):
-    row, mf = approved_manifest(ticket)
+    row, mf, checked = approved_manifest(ticket)
     try:
         with open(plan_path, 'rb') as f:
             source = f.read()
@@ -580,6 +590,7 @@ def verify_plan(ticket, plan_path, emit_directions=False):
     has_coverage = check_requirements(ticket, row['manifest'], mf)
     n = check_order(m, plan)
     directions = slice_directions(plan, m, has_coverage)
+    print_gate_warnings(checked)
     if emit_directions:
         print(json.dumps({'plan_sha256': hashlib.sha256(source).hexdigest(), 'directions': directions}))
     else:

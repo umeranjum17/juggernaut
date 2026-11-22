@@ -39,3 +39,4 @@ To end a conversation: the user confirms the answer, or the agent closes the han
 - "ticket" was used for both a Conversation and a work item of the team; settled as: the user's thread is a
   **Conversation**; "ticket" is never used in the product.
 - "agent" was used for both the bot and the person; settled as: the person is the **Agent**; the bot is "the bot".
+- Use **technical design** for system architecture and **visual direction** for the picked look.
