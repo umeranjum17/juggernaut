@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # E2E: the command contract (core/agent-cli/contract/*.json) and its one dispatcher, run through both names,
 # `jg` and `juggernaut-axi`, on throwaway homes and throwaway projects. No live home is read.
-# Usage: core/agent-cli/tests/contract.test.sh
+# Usage: core/agent-cli/tests/contract.test.sh [--watch-arm-stream]
 # Covers: every fragment's shape; unique paths and aliases; the owner of an operations.tsv row; the help page;
 # the old names unchanged; the exit codes; the acknowledgement reference and its repeat; the explicit home of a
 # send; the repeat key of a send; the envelope; and that a read entry changes no file.
@@ -17,6 +17,52 @@ T=$TMP_ROOT
 has() { case $2 in *"$3"*) ;; *) fail "$1: want [$3] in [$2]" ;; esac; }
 hasnt() { case $2 in *"$3"*) fail "$1: did not want [$3] in [$2]" ;; esac; }
 rc_is() { [ "$2" = "$3" ] || fail "$1: exit $2, want $3"; }
+
+watch_arm_stream() {
+  local stream_home=$T/stream arm_pid python line rc started=no began=$SECONDS
+  mkdir -p "$stream_home"/{bin,config,data,state,tmp}
+  printf '#!/bin/sh\nexit 0\n' > "$stream_home/bin/tmux"
+  chmod +x "$stream_home/bin/tmux"
+  # Resolve Python before changing HOME so a version shim can still find it.
+  python=$(python3 -c 'import sys; print(sys.executable)') || fail "could not resolve fixture Python"
+  ln -s "$python" "$stream_home/bin/python3" || fail "could not pin fixture Python"
+  printf 'off\n' > "$stream_home/config/wake-bus"
+  mkfifo "$stream_home/stderr" || fail "could not create watch-arm output pipe"
+  jg_test_track_watcher_state "$stream_home/state"
+  env HOME="$stream_home" XDG_CONFIG_HOME="$stream_home/config" XDG_DATA_HOME="$stream_home/data" \
+    XDG_CACHE_HOME="$stream_home/cache" XDG_STATE_HOME="$stream_home/state" TMPDIR="$stream_home/tmp" \
+    PATH="$stream_home/bin:$PATH" JG_HOME="$stream_home" JG_STATE_OVERRIDE="$stream_home/state" \
+    JG_POLL=0.2 JG_SIGNAL_GRACE=0 JG_HEARTBEAT=999999 JG_ARM_CONFIRM_TIMEOUT=30 \
+    "$JG" radio watch-arm >"$stream_home/stdout" 2>"$stream_home/stderr" &
+  arm_pid=$!
+  # Release the fixture only after reading startup. The watchdog bounds a
+  # missing line, and the assertion compares event order rather than latency.
+  while :; do
+    IFS= read -r -t "$JG_TEST_STUB_MAX_BLOCK_SECONDS" line
+    rc=$?
+    [ "$rc" -le 128 ] || fail "watch-arm stopped emitting output (startup seen: $started)"
+    [ "$rc" -eq 0 ] || break
+    printf 'watch-arm +%ss %s\n' "$((SECONDS - began))" "$line"
+    case "$line" in
+      'watcher: started pid='*)
+        [ "$started" = no ] || fail "watch-arm emitted more than one startup status"
+        kill -0 "$arm_pid" || fail "watch-arm exited before observing startup status"
+        [ ! -s "$stream_home/stdout" ] || fail "watch-arm wrote the envelope before completing"
+        started=yes
+        jg_write_meta "$stream_home/state/stream-job.meta" kind=ship harness=claude
+        printf 'done: completed fixture\n' > "$stream_home/state/stream-job.status"
+        ;;
+    esac
+  done < "$stream_home/stderr"
+  [ "$started" = yes ] || fail "watch-arm exited without streaming startup status"
+  wait "$arm_pid" || fail "watch-arm did not finish successfully after the fixture wake"
+  jq -e '.ok and (.data.stdout | contains("signal:"))' "$stream_home/stdout" >/dev/null \
+    || fail "watch-arm lost the final envelope"
+  pass "watch-arm streamed startup before the fixture wake and returned its final envelope"
+}
+
+if [ "${1:-}" = --watch-arm-stream ]; then watch_arm_stream; exit; fi
+watch_arm_stream
 
 # --- 1. the contract: shape, unique names, owners ---------------------------------------------------------
 bash "$DISPATCH" check || fail "the contract in the tree does not pass its own check"
@@ -282,5 +328,78 @@ JG_BOARD_GATE_NOW=1795000000 JG_DATA_OVERRIDE=$H/route-direct "$ROOT/bin/jg-boar
 JG_BOARD_GATE_NOW=1795000000 JG_DATA_OVERRIDE=$H/route-bound "$t/bin/jg" hold board-gate route "${route_args[@]}" >/dev/null \
   || fail "dispatched board route"
 diff -r "$H/route-direct" "$H/route-bound" || fail "board route wrote different records through the dispatcher"
+
+# A named test really runs through both supported spellings, including a path with a space.
+mkdir "$T/fixture-bin"
+cp "$T/bin/tmux" "$T/fixture-bin/"
+fixture_path=$T/fixture-bin:${PATH#"$T/bin:"}
+single="$T/one fixture.test.sh"
+printf '#!/usr/bin/env bash\nprintf "ran the fixture\\n"\n' > "$single"
+for spelling in '' single; do
+  test_route=(proof test-run)
+  [ -z "$spelling" ] || test_route+=("$spelling")
+  out=$(PATH=$fixture_path "$JG" "${test_route[@]}" "$single") || fail "single-test run: $out"
+  has "single-test output" "$(jq -r .data.stdout <<<"$out")" "ran the fixture"
+done
+
+# The spawn routes must reach the real script, but must stop at its checks before any launch.
+refusal_matches() {
+  local script=$1 out rc want expected_rc
+  shift
+  local direct=()
+  while [ "$1" != -- ]; do direct+=("$1"); shift; done
+  shift
+  want=$("$ROOT/bin/$script" "${direct[@]}" 2>&1); expected_rc=$?
+  [ "$expected_rc" -ne 0 ] && [ -n "$want" ] || fail "$script did not refuse the fixture"
+  out=$("$JG" "$@" 2>"$T/form.err"); rc=$?
+  rc_is "jg $*" "$rc" "$expected_rc"
+  jq -e '.ok == false' <<<"$out" >/dev/null || fail "jg $* did not return a script refusal: $out"
+  has "jg $* refusal" "$(cat "$T/form.err")" "$want"
+}
+refusal_matches jg-spawn.sh fixture "$T/missing project" --ticket other-ticket --scout --harness cursor --model fixture -- \
+  crew spawn fixture "$T/missing project" --ticket other-ticket --scout --harness cursor --model fixture
+refusal_matches jg-spawn.sh fixture "$T/missing project" --ticket other-ticket --mode local-trunk --yolo off -- \
+  crew spawn fixture "$T/missing project" --ticket other-ticket --mode local-trunk --yolo off
+refusal_matches jg-spawn.sh fixture "$T/missing lead home" --squad-lead -- \
+  crew spawn fixture "$T/missing lead home" --squad-lead
+refusal_matches jg-home-seed.sh fixture "$T/missing lead home" alpha --no-projects -- \
+  home home-seed create fixture "$T/missing lead home" alpha --no-projects
+
+mkdir "$T/key-bin"
+cat > "$T/key-bin/tmux" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$JG_TEST_KEY_LOG"
+SH
+chmod +x "$T/key-bin/tmux"
+before_keys=$(inbox "$H")
+out=$(PATH="$T/key-bin:$PATH" JG_TEST_KEY_LOG="$T/key.log" "$JG" radio send-key t1 Enter) || fail "send key: $out"
+grep -Fxq 'send-keys -t sess:jg-t1 Enter' "$T/key.log" || fail "send-key did not pass Enter to the selected pane"
+[ "$(inbox "$H")" = "$before_keys" ] || fail "send-key created a text inbox record"
+
+# These routes operate on real isolated records and preserve their payloads.
+out=$("$JG" ticket backlog add 'Fixture child' --parent q-1 --priority 1 --kind ship --repo alpha --body 'Child details') \
+  || fail "backlog child creation: $out"
+has "backlog child" "$(jq -r .data.stdout <<<"$out")" "q-1."
+out=$("$JG" ticket backlog task q-1 --model fable) || fail "backlog task: $out"
+has "backlog task id" "$(jq -r .data.stdout <<<"$out")" "fable-q-1"
+want=$("$ROOT/bin/jg-backlog.sh" questions --json | jq -cS .) || fail "direct questions view"
+out=$("$JG" ticket backlog questions --json) || fail "questions view: $out"
+[ "$(jq -cS .data <<<"$out")" = "$want" ] || fail "questions JSON differs from the direct script"
+want=$(JG_BEARINGS_NOW=2026-11-21T00:00:00Z "$ROOT/bin/jg-bearings-snapshot.sh" --json | jq -cS .) \
+  || fail "direct bearings snapshot"
+out=$(JG_BEARINGS_NOW=2026-11-21T00:00:00Z "$JG" report bearings-snapshot --json) || fail "bearings snapshot: $out"
+[ "$(jq -cS .data <<<"$out")" = "$want" ] || fail "bearings JSON differs from the direct script"
+jg_write_meta "$H/state/followup.meta" status=working x_request=req-fixture x_request_ts=1795000000 x_followups=1
+out=$(FMX_NOW_OVERRIDE=1795000000 "$JG" relay x-followup --check followup) || fail "check follow-up: $out"
+[ "$(jq -r .data.stdout <<<"$out")" = req-fixture ] || fail "check follow-up did not identify the request"
+out=$("$JG" relay x-followup --clear followup --expect-request req-fixture) || fail "clear follow-up: $out"
+[ "$(cat "$H/state/followup.meta")" = status=working ] || fail "clear follow-up did not preserve unrelated metadata"
+
+touch "$H/state/.afk"
+printf '[chat telegram 42:100]\nship it now\n' | "$ROOT/bin/jg-inbox.sh" note --request-id tg-42-100 --json - >/dev/null \
+  || fail "could not file synthetic Telegram note"
+out=$("$JG" radio afk-return begin --message '[chat telegram 42:100] ship it now') || fail "Telegram return: $out"
+has "Telegram return" "$(jq -r .data.stdout <<<"$out")" "stay"
+[ -e "$H/state/.afk" ] || fail "a Telegram note ended away mode"
 
 pass "contract: fragments, names, envelope, acknowledgement reference, repeats and explicit home"

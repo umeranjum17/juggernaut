@@ -723,6 +723,7 @@
       "script": "bin/jg-test-run.sh",
       "operation": "-",
       "form": "bin/jg-test-run.sh --all",
+      "additional_forms": ["bin/jg-test-run.sh <test> [--list] [--json <path>]"],
       "aliases": []
     },
     {

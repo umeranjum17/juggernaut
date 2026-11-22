@@ -46,6 +46,11 @@ The `form` is read as the script's usage line.
 
 - The caller's environment goes to the script unchanged.
   The dispatcher never sets `JG_HOME`, so a script that refuses without an explicit home refuses the same way here.
+- `additional_forms` lists further invocation forms for the same path and script.
+  The dispatcher tries the original `form` first.
+- `stream_stdout_for` lists first script arguments whose stdout is mirrored to stderr as the script runs.
+  An empty string selects an invocation with no arguments.
+  Stdout still carries the completed envelope.
 - Worker entries with `passthrough: true` run their script with the original arguments and preserve its output and exit code.
   Their scripts may also live under `core/agent-cli/`.
 - New paths print one line, the `jg.v1` envelope `{schema, ok, data, next}`.

@@ -3,7 +3,7 @@
 # With a trunk ref, require the named test for every changed e6 fragment or test.
 set -euo pipefail
 
-suites=(inventory forms contract e6land2 e6homes e6steer e6radio3)
+suites=(contract inventory forms e6land2 e6homes e6steer e6radio3)
 if [ "$#" -gt 0 ]; then
   base=$(git merge-base "$1" HEAD)
   changed=$(git diff --name-only --no-renames "$base" -- \
@@ -30,7 +30,7 @@ if [ "$#" -gt 0 ]; then
 fi
 
 bash bin/jg-lint.sh bin/jg bin/jg-alert.sh bin/jg-board-gate.sh bin/jg-crew-state.sh bin/jg-migrate.sh \
-  core/agent-cli/dispatch.sh core/agent-cli/tests/contract.test.sh \
+  core/agent-cli/dispatch.sh core/agent-cli/send-key.sh core/agent-cli/tests/contract.test.sh \
   core/agent-cli/tests/forms.test.sh core/agent-cli/tests/inventory.test.sh journeys/agent-cli-contract.sh > "$DONE_DONE_EVIDENCE_ROOT/lint.log" 2>&1 \
   || { tail -n 25 "$DONE_DONE_EVIDENCE_ROOT/lint.log" >&2; exit 1; }
 for suite in "${suites[@]}"; do

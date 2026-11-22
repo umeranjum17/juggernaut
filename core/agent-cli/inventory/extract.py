@@ -20,7 +20,8 @@ Two review rules turn that discovery into the operations the reviewed list (core
                          share a path.
 
 Class (`public`, `internal`, `lib`, `test-only`, `orphan`) comes from what the tree itself says: a script an agent
-instruction names is public. The optional --usage file (the executed-script counts of a private log, rows of
+instruction names or an operation the command contract exposes is public.
+The optional --usage file (the executed-script counts of a private log, rows of
 `count<TAB>...<TAB>...<TAB>script`) only fills the `main_runs_30d` column for discovery: no class and no coverage
 line ever reads it, so a tree gives the same operations with or without private logs.
 
@@ -34,6 +35,7 @@ exits 1 naming it. A read found as `change?` is reported `unreviewed` and left t
 """
 import argparse
 import collections
+import json
 import os
 import re
 import sys
@@ -121,6 +123,16 @@ class Tree:
         self.agent_text = {p: read(p) for p in agent_files}
         self.code_text = {p: read(p) for p in code_files}
         self.test_text = {p: read(p) for p in test_files}
+        self.public_operations = set()
+        contract_dir = os.path.join(root, 'core', 'agent-cli', 'contract')
+        if os.path.isdir(contract_dir):
+            for name in os.listdir(contract_dir):
+                if not name.endswith('.json'):
+                    continue
+                fragment = json.loads(read(os.path.join(contract_dir, name)))
+                self.public_operations.update(
+                    (entry['script'][4:], entry['operation']) for entry in fragment['entries']
+                    if entry['script'].startswith('bin/'))
 
     def script_path(self, name):
         return os.path.join(self.bin, name)
@@ -280,6 +292,7 @@ def discover(tree, runs):
         acts, disp = script_actions(n, text)
         funcs = functions(text)
         for a, src in acts.items():
+            operation_class = 'public' if (n, a) in tree.public_operations else cls
             last = a.split(' ')[-1]
             body = disp[last][1] if last in disp else (disp[a.split(' ')[0]][1] if a.split(' ')[0] in disp else None)
             if a == '-' or not disp:
@@ -293,7 +306,7 @@ def discover(tree, runs):
             rows.append(dict(script=n, action=a, aliases=aliases or '-', source='+'.join(sorted(src)), kind=kind,
                              agent_refs=agent, code_callers=len(code_callers),
                              first_code_caller=code_callers[0] if code_callers else '-', action_callers=callers,
-                             test_files=tests, main_runs_30d=runs[n], **{'class': cls},
+                             test_files=tests, main_runs_30d=runs[n], **{'class': operation_class},
                              effect=effect(a, body, funcs, text, stem), area=area, command=f'jg {noun} {leaf}', rule=''))
     return rows
 

@@ -59,6 +59,18 @@ grep -q "^jg-captain-hold.sh	reconcile list	.*	read	" "$d/found.tsv" || fail "th
 grep -q "^jg-captain-hold.sh	reconcile close	.*	change	" "$d/found.tsv" || fail "the extractor does not find reconcile close as a change"
 pass "the cases are found with their class and effect; reconcile list is a read and reconcile close a change, on two paths"
 
+# A migrated skill can call the public command without mentioning its backing script.
+swarm=$d/swarm
+mkdir -p "$swarm/bin" "$swarm/core/agent-cli/contract"
+cp "$ROOT/bin/jg-swarm.sh" "$swarm/bin/"
+cp "$ROOT/core/agent-cli/contract/muster-gates.json" "$swarm/core/agent-cli/contract/"
+printf 'Run jg plan blitz start to start the plan.\n' > "$swarm/AGENTS.md"
+awk -F'\t' '$1 == "jg-swarm.sh" && $2 == "start"' "$INV/cases.tsv" > "$swarm/cases.tsv"
+py "$INV/extract.py" "$swarm" "$swarm/found.tsv" --cases "$swarm/cases.tsv" > "$swarm/out" \
+  || fail "swarm start disappeared from public inventory: $(cat "$swarm/out")"
+grep -q $'^ok\tjg-swarm.sh\tstart\tpublic/change' "$swarm/out" || fail "swarm start case did not run"
+pass "swarm start stays public when the skill uses its contract path"
+
 # --- 4. planted scripts
 P=$d/planted
 mkdir -p "$P/bin"

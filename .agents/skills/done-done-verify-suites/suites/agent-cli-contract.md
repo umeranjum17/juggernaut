@@ -8,3 +8,5 @@ The logs show accepted required and optional forms, the exact argument boundarie
 The [inventory test](../../../../core/agent-cli/tests/inventory.test.sh) starts two parser invocations with the same scratch parent and checks that both parse successfully, preserve the caller's file, and remove their temporary fixtures.
 The landing command journey checks all 31 e6land2 forms and their results through the real scripts and `jg` in separate fixture homes.
 The homes command journey compares direct and dispatched calls in isolated homes, including health verification with an explicit grace period and agent instructions written to an explicit project directory.
+The contract test drives single-test runs, guarded spawn and key routing, home seed, backlog task and report forms, Relay link checks and cleanup, and away return from a Telegram note.
+It observes a real fixture watcher's startup line before sending the wake that completes the command.

@@ -300,6 +300,7 @@
       "changes": true,
       "method": "POST",
       "form": "bin/jg-x-followup.sh <task-id> [--image <path>] [--final] --text-file <path>",
+      "additional_forms": ["bin/jg-x-followup.sh --check <task-id>", "bin/jg-x-followup.sh --clear <task-id> [--expect-request <request-id>]"],
       "repeat_key": "none",
       "exits": {
         "0": 0,

@@ -51,7 +51,11 @@ FRAGMENT_SHAPE='(.area|type=="string") and (.owner|type=="string") and (.entries
     and ((.changes|not) or (.repeat_key|type=="string"))
     and (.script|type=="string" and (startswith("bin/") or (startswith("core/agent-cli/") and (contains("..")|not))))
     and ((.passthrough // false)|type=="boolean") and (.operation|type=="string")
-    and (.form|type=="string") and (.exits|type=="object") and (.schema|type=="string")
+    and (.form|type=="string") and (if has("additional_forms") then
+      (.additional_forms | type=="array" and all(.[]; type=="string")) else true end)
+    and (if has("stream_stdout_for") then
+      (.stream_stdout_for | type=="array" and all(.[]; type=="string")) else true end)
+    and (.exits|type=="object") and (.schema|type=="string")
     and (.args|type=="array" and all(.[]; (.name|type=="string") and (.type|type=="string")))
     and (.aliases|type=="array"))'
 
@@ -225,8 +229,8 @@ def bind($in; $spec; $types; $declared):
   end;
 . as $in | $in.entry as $e
 | ($e.args | map({(.name): .type}) | add // {}) as $types
-| ($e | canonical_form | lex | .[1:]) as $toks
-| [if ($e.operation | option) and $toks[0] == $e.operation then
+| [([($e | canonical_form)] + ($e.additional_forms // []))[] | lex | .[1:] as $toks
+   | if ($e.operation | option) and $toks[0] == $e.operation then
      [{k: "lit", v: $e.operation}] + specs($toks[1:]; false; false)
      | bind($in | if .args[0] == $e.operation then .args = .args[1:] else . end; .; $types; $e.args | map(.name))
    else specs($toks; false; false) | bind($in; .; $types; $e.args | map(.name))
@@ -310,7 +314,12 @@ cmd_run() {
   fi
   out=$(mktemp "${TMPDIR:-/tmp}/jg-dispatch.XXXXXX") || return 5
   err=$(mktemp "${TMPDIR:-/tmp}/jg-dispatch.XXXXXX") || { rm -f -- "$out"; return 5; }
-  case "$script:${1:-}" in
+  if printf '%s' "$entry" | jq -e --arg first "${1:-}" '.stream_stdout_for // [] | index($first) != null' >/dev/null; then
+    # Show progress as it arrives and keep stdout reserved for the final envelope.
+    "$script" "$@" 2>"$err" | tee "$out" >&2
+    rc=${PIPESTATUS[0]}
+  else
+    case "$script:${1:-}" in
     "$ROOT/bin/jg-procevent-remote-reply.sh":arm-locked|\
     "$ROOT/bin/jg-procevent-remote-reply.sh":retire-quiesce-locked|\
     "$ROOT/bin/jg-procevent-remote-reply.sh":retire-finalize-locked)
@@ -320,8 +329,9 @@ cmd_run() {
       # shellcheck source=/dev/null
       ( . "$script" "$@" ) >"$out" 2>"$err" ;;
     *) "$script" "$@" >"$out" 2>"$err" ;;
-  esac
-  rc=$?
+    esac
+    rc=$?
+  fi
   cat "$err" >&2
   # The script's exit through the entry's exit map; a code the map does not name is a refusal.
   maprc=$(printf '%s' "$entry" | jq -r --arg rc "$rc" '.exits[$rc] // (if $rc == "0" then 0 else 1 end)')
