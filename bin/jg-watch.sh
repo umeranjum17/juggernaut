@@ -1358,6 +1358,8 @@ EOF
   watcher_queue resurfaced "$epoch-$seq" >/dev/null || return 1
   case "$kind:$reason" in
     signal:needs-decision:*) reason="signal:${reason#needs-decision:}" ;;
+    *:signal:*|*:stale:*|*:check:*|*:heartbeat*|*:needs-decision:*) ;;
+    *) reason="$kind: $key $reason" ;;
   esac
   wake "$reason"
 }

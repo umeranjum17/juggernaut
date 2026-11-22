@@ -2341,6 +2341,10 @@ journeys:
     tier: local
     command: node journeys/tickets-beads-checks.mjs
 
+  lead-queue-drain:
+    tier: local
+    command: bash tests/jg-lead-queue-drain.test.sh
+
   codex-lead-queued-wake:
     tier: local
     command: node journeys/codex-lead-queued-wake.mjs

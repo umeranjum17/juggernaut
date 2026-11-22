@@ -169,6 +169,7 @@ unset _jg_d
 set -u
 
 JG_DAEMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+JG_DAEMON_SCRIPT_DIR=$JG_DAEMON_DIR
 JG_ROOT="${JG_ROOT_OVERRIDE:-$(cd "$JG_DAEMON_DIR/.." && pwd)}"
 JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$JG_ROOT}}"
 
@@ -1496,9 +1497,11 @@ handle_wake() {  # <reason> <state>
 handle_durable_wakes() {  # <watcher-reason> <state>
   local fallback_reason=$1 state=$2 out err tab epoch sequence kind key payload rest
   local handled=0 failed=0 ack_through ack_generation presentation
+  JG_WAKE_ACK_ERROR=''
   out=$(mktemp "$state/.subsuper-wake-drain.XXXXXX") || return 1
   err=$(mktemp "$state/.subsuper-wake-drain.XXXXXX") || { rm -f "$out"; return 1; }
   if ! "$JG_DAEMON_DIR/jg-wake-drain.sh" > "$out" 2> "$err"; then
+    JG_WAKE_ACK_ERROR=$(awk 'NF {print; exit}' "$err")
     cat "$err" >&2
     rm -f "$out" "$err"
     return 1
@@ -1536,8 +1539,46 @@ handle_durable_wakes() {  # <watcher-reason> <state>
     log "wake drain omitted its generation-bound acknowledgement; retaining durable wakes"
     return 1
   fi
-  "$JG_DAEMON_DIR/jg-wake-drain.sh" --ack-through "$ack_through" \
-    --recovery-generation "$ack_generation"
+  err=$(mktemp "$state/.subsuper-wake-drain.XXXXXX") || return 1
+  if ! "$JG_DAEMON_DIR/jg-wake-drain.sh" --ack-through "$ack_through" \
+    --recovery-generation "$ack_generation" 2>"$err"; then
+    JG_WAKE_ACK_ERROR=$(awk 'NF {print; exit}' "$err")
+    cat "$err" >&2
+    rm -f "$err"
+    return 1
+  fi
+  cat "$err" >&2
+  rm -f "$err"
+  wake_ack_result success "$state"
+}
+
+wake_ack_result() {  # <success|failure> <state>
+  local result=$1 state=$2 count_file="$2/.wake-ack-failures" now tmp count alert
+  alert="$state/alerts/supervision-down--wake-ack-failing.rec"
+  if [ "$result" = success ]; then
+    if [ -r "$alert" ] && ! grep -qx 'state=resolved' "$alert"; then
+      "$JG_DAEMON_SCRIPT_DIR/jg-alert.sh" resolve supervision-down--wake-ack-failing --proof source:wake-ack-ok || return 1
+    fi
+    : > "$count_file"
+    return
+  fi
+  now=$(date +%s)
+  tmp=$(mktemp "$state/.wake-ack-failures.XXXXXX") || return 1
+  if [ -r "$count_file" ]; then
+    awk -v cutoff="$((now - 600))" '$0 ~ /^[0-9]+$/ && $0 >= cutoff' "$count_file" > "$tmp"
+  fi
+  printf '%s\n' "$now" >> "$tmp"
+  mv -f "$tmp" "$count_file" || return 1
+  count=$(wc -l < "$count_file")
+  if [ "$count" -ge 3 ]; then
+    "$JG_DAEMON_SCRIPT_DIR/jg-alert.sh" raise supervision-down wake-ack-failing --home "$JG_HOME" \
+      --note "wake acknowledgements failing: ${JG_WAKE_ACK_ERROR:-unknown reason}" --deliver || return 1
+  fi
+}
+
+wake_ack_failed() {  # <state>
+  wake_ack_result failure "$1" || log "failed to record wake acknowledgement failure"
+  log "durable wake handling was not acknowledged${JG_WAKE_ACK_ERROR:+: $JG_WAKE_ACK_ERROR}; restarting for recovery"
 }
 
 # --- log --------------------------------------------------------------------
@@ -1787,7 +1828,7 @@ jg_super_main() {
         fi
         log "wake: $reason"
         if ! handle_durable_wakes "$reason" "$STATE"; then
-          log "durable wake handling was not acknowledged; restarting for recovery"
+          wake_ack_failed "$STATE"
         fi
         trim_log
       fi
