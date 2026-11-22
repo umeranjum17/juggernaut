@@ -16,3 +16,4 @@
 - [Recon delivery recovers after a board commit interruption](jg-recon-ready.md): run `done-done run jg-recon-ready`
 - [Muster requirements approval and frozen orders](muster-requirements.md): run `done-done run muster-requirements`
 - [Muster use-case catalogue](muster-use-cases.md) matches the approved pack's use cases to journeys and core objects.
+- [Muster to Blitz workflows](muster-workflow.md): run `done-done run muster-workflow`.

@@ -206,6 +206,7 @@ def main():
     again = os.path.join(state, ".workflow-advance.again")
     work = Pass(a.home, a.close_only, a.dry_run)
     if a.dry_run:
+        os.environ["JG_WORKFLOW_DRY_RUN"] = "1"
         for t in tickets():
             work.ticket(t)
         return 0

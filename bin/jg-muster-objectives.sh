@@ -2,7 +2,7 @@
 # jg-muster-objectives.sh - run the objective journeys of a muster pack, and check the model's behaviour is in the code.
 #
 # Usage:
-#   jg-muster-objectives.sh objectives <project> --base <ref> [--head <ref>] [--spec <slug> | --change <slug>]
+#   jg-muster-objectives.sh objectives <project> --base <ref> [--head <ref> | --draft <dir>] [--spec <slug> | --change <slug>]
 #   jg-muster-objectives.sh code <project>
 #
 # objectives: <project> is a git repository. Its objectives are the Objectives table of each docs/specs/<slug>.md (one row per
@@ -10,6 +10,7 @@
 #   docs/changes/<slug>.md. The command of a journey is its `command:` in the journeys map of .done-done.yaml.
 #   The base is the base ref's code with the head's journeys laid over it (the head's `.done-done.yaml` and `journeys/`),
 #   because journeys are written before code. The head is the --head ref, or the project's working tree when --head is absent.
+#   --draft reads the objectives and journeys from a staged pack, while the base code still comes from the project ref.
 #   With no --head only the base half runs (before approval, when no code exists yet): the head column is empty and the base
 #   condition decides alone. A journey passes the base condition when:
 #     new       exit 1 and a first output line `assert: <name>`, so it fails on its named assertion;
@@ -70,12 +71,13 @@ run_journey() {  # <dir> <cmd>
 }
 
 cmd_objectives() {
-  local project='' base='' head='' spec=- change=- tmp rows id kind cmd b h bc bl hc ok bad=0 n=0 line
+  local project='' base='' head='' draft='' spec=- change=- tmp rows id kind cmd b h bc bl hc ok bad=0 n=0 line
   project=${1:-}; [ -n "$project" ] || die 'usage: objectives <project> --base <ref> [--head <ref>] [--spec <slug> | --change <slug>]'; shift
   while [ $# -gt 0 ]; do
     case $1 in
       --base) base=${2:-}; shift 2 || die '--base needs a ref' ;;
       --head) head=${2:-}; shift 2 || die '--head needs a ref' ;;
+      --draft) draft=${2:-}; shift 2 || die '--draft needs a directory' ;;
       --spec) spec=${2:-}; shift 2 || die '--spec needs a slug' ;;
       --change) change=${2:-}; shift 2 || die '--change needs a slug' ;;
       *) die "unknown option $1" ;;
@@ -83,6 +85,7 @@ cmd_objectives() {
   done
   [ -n "$base" ] || die 'objectives needs --base <ref>'
   [ "$spec" = - ] || [ "$change" = - ] || die '--spec and --change are two ways to pick the objectives; give one'
+  [ -z "$draft" ] || { [ -z "$head" ] && [ -d "$draft" ]; } || die '--draft needs a directory and cannot be used with --head'
   git -C "$project" rev-parse --git-dir >/dev/null 2>&1 || die "$project is not a git repository"
   git -C "$project" rev-parse --verify --quiet "$base^{commit}" >/dev/null || die "$base is not a commit of $project"
   [ -z "$head" ] || git -C "$project" rev-parse --verify --quiet "$head^{commit}" >/dev/null || die "$head is not a commit of $project"
@@ -90,7 +93,12 @@ cmd_objectives() {
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/jg-muster-objectives.XXXXXX") || die 'no temporary folder'
   # shellcheck disable=SC2064
   trap "rm -rf -- '$tmp'" EXIT
-  snapshot "$project" "${head:-WORKTREE}" "$tmp/head" || die "cannot read the head of $project"
+  if [ -n "$draft" ]; then
+    draft=$(cd "$draft" && pwd -P) || die "cannot read the draft"
+    ln -s "$draft" "$tmp/head" || die "cannot stage the draft of $project"
+  else
+    snapshot "$project" "${head:-WORKTREE}" "$tmp/head" || die "cannot read the head of $project"
+  fi
   snapshot "$project" "$base" "$tmp/base" || die "cannot read the base of $project"
   for id in $JOURNEY_PATHS; do                 # the base runs the head's journeys over the base's code
     rm -rf -- "${tmp:?}/base/$id"

@@ -24,17 +24,19 @@ A bare kind is a one-step workflow named after it, so `parse worker` names `work
 | `recon` | `quick`, `standard` (default), `deep` | one scout; reports |
 | `critic` | none | the Recons or war room of an earlier stage; with no `*N` it takes their count |
 | `owner` | `plan-approval` (default, the only one built) | waits for the owner's yes |
-| `fanout` | none | the slice plan of an earlier `recon(standard\|deep)` or `war-room` |
+| `fanout` | none | the slice plan selected by an earlier approval step and, when present, the latest approved Muster pack |
 | `war-room` | `fast` (default), `full` | the council of variants and its plan |
+| `muster` | `survey`, `light`, `full` (default), `complete` | survey or review findings, earlier approved decisions and the project's documents |
 
 A new kind is one entry in `KINDS` in `wflib.py`, one route line and one kind file in `core/workflows/kinds/`.
 
 ## Which kinds can start
 
-A kind runs when `core/workflows/kinds/<kind>.py` exists.
-`worker`, `recon` and `owner` exist: `worker` and `recon` write the complete brief (`steplib.py`: `bin/jg-brief.sh` with both Task sections filled from the ticket and, for a build after a Recon, the approved report) and the dispatch approval on the kind's route, so dispatch starts the lane with no lead turn.
-`owner` raises the owner's question through `bin/jg-captain-hold.sh` and is done when his words answer it, so a build after a report never starts on the report alone.
-`critic`, `fanout` and `war-room` have no handler yet.
+A kind runs when its module exists.
+`worker` and `recon` write the brief and approve dispatch on the kind's route.
+`muster` uses the [Muster round and pack method](../../.agents/skills/muster/SKILL.md) and publishes the signed pack or the completed survey.
+`owner` binds a slice plan and its work orders to the owner's approval.
+`fanout` starts Blitz with the approved plan after checking its match to the latest approved Muster pack.
 A ready step of a kind with no handler is one `workflow-step-failed` alert naming the kind, never a silent skip.
 
 ## The two files
@@ -61,7 +63,12 @@ A line that breaks the rules is refused as `refused: <file>:<line>: <why>`.
 Only these are refused, each as `refused: <rule>` on stderr with exit 2 and nothing on stdout: an unknown word or argument, a count under 1, a count or step total over its limit, `goal`, what a step reads, and the owner rule.
 The owner rule holds for every `--by`, because naming a shape is not approving a plan: a `worker` or `fanout` in a stage after the latest earlier stage that holds a `recon`, `critic` or `war-room` needs an `owner(plan-approval)` stage between them (owner rule 2026-11-05).
 Each build after a report needs its own yes.
-What a step reads: a `critic` needs a `recon(standard|deep)` or `war-room` in an earlier stage, and so does a `fanout`.
+What a step reads: a `critic` needs a `recon(standard|deep)` or `war-room` in an earlier stage.
+A `fanout` needs an earlier plan source (`muster`, `recon(standard|deep)` or `war-room`) and an intervening approval when it follows Muster or a report.
+In workflows that include Muster, War Room before the first pack can publish discovery findings, and War Room or Recon after a pack can propose changes for the next Muster.
+A later Muster step reads earlier survey findings and their decisions.
+If several Muster invocations run in one stage, they present board rounds in configured order and later steps use the last invocation's approved pack.
+Use `discovery-first`, `muster-first`, or `muster-only` as a workflow name or as a leading ticket title tag to pick that named workflow.
 
 ## How state is managed
 

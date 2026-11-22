@@ -102,6 +102,7 @@ bd_() { python3 -I "$SCRIPT_DIR/../core/item-store/adapters/bd_compat.py" "$@"; 
 COUNCIL='' COUNCIL_TITLE='' COUNCIL_REPO='' COUNCIL_BODY='' RUN=''
 PROJECT='' LANES='' DEPTH='' HARNESS='' MODEL='' EFFORT='' PROJECT_DIR='' SYNTH_DEPTH='' VARIANT_CRITICS=1
 ALIGNMENT='' MUSTER_SHA='' MUSTER_REFS='' EXCEPTION=0
+WORKFLOW_PARENT='' WORKFLOW_PACK='' WORKFLOW_SHA='' WORKFLOW_REVIEW=0
 
 # open_council <council>: the ticket must exist; the files of its lanes live in data/war-room/<council>/.
 open_council() {
@@ -164,6 +165,19 @@ Run jg muster approve ask $COUNCIL \"$PROJECT\" <manifest-sha12> for the current
   fi
 }
 
+planning_context() {
+  if [ -z "$WORKFLOW_PARENT" ]; then
+    check_muster backfill
+    return
+  fi
+  [ -n "$WORKFLOW_PACK" ] || return 0
+  local folder=$DATA/$WORKFLOW_PACK/muster out
+  out=$("$SCRIPT_DIR/jg-muster-approval.sh" verify "$WORKFLOW_PACK" "$folder/pack-$WORKFLOW_SHA") || refuse "$out"
+  [[ $out == *"($WORKFLOW_SHA) answered yes"* ]] || refuse "the workflow's approved Muster pack changed"
+  MUSTER_REFS=$(printf 'Muster ticket: %s\nMuster manifest SHA: %s\nMuster manifest: %s/manifest-%s.tsv\nMuster pack: %s/pack-%s' \
+    "$WORKFLOW_PACK" "$WORKFLOW_SHA" "$folder" "$WORKFLOW_SHA" "$folder" "$WORKFLOW_SHA")
+}
+
 cmd_check() {
   [ "$#" -eq 1 ] || refuse "$USAGE"
   open_council "$1"
@@ -214,9 +228,10 @@ recon_lines() {  # <task>: the skill's "Each Recon's spec", after its first line
     "$JG_ROOT" "$1" "$JG_ROOT" "$1" "$JG_ROOT"
 }
 council_ref() {  # <what the lane does>: the problem is on the council ticket
+  local input=${WORKFLOW_PARENT:-$COUNCIL}
   # shellcheck disable=SC2016  # the backquotes are the brief's own text
   printf 'War room council %s (%s): %s The council ticket holds the problem in full: read it with `%s/bin/jg-backlog.sh show %s --full`.' \
-    "$COUNCIL" "$COUNCIL_TITLE" "$1" "$JG_ROOT" "$COUNCIL"
+    "$COUNCIL" "$COUNCIL_TITLE" "$1" "$JG_ROOT" "$input"
 }
 
 # write_brief <task> <row> <depth> <marker> <task text> <spec text>: prints why it could not, returns 1.
@@ -343,6 +358,19 @@ cmd_start() {
   done
   [ -n "$COUNCIL" ] || refuse "the council ticket is missing"
   open_council "$COUNCIL"
+  WORKFLOW_PARENT=${JG_WAR_ROOM_WORKFLOW_PARENT:-}
+  WORKFLOW_PACK=${JG_WAR_ROOM_WORKFLOW_PACK:-}
+  WORKFLOW_SHA=${JG_WAR_ROOM_WORKFLOW_SHA:-}
+  WORKFLOW_REVIEW=${JG_WAR_ROOM_WORKFLOW_REVIEW:-0}
+  if [ -n "$WORKFLOW_PARENT" ]; then
+    bd_ show "$COUNCIL" --json | jq -e --arg parent "$WORKFLOW_PARENT" \
+      '.[0].metadata | .wf_parent == $parent and .wf_kind == "war-room"' >/dev/null \
+      || refuse "the council is not a War Room step of $WORKFLOW_PARENT"
+    if [ -n "$WORKFLOW_PACK" ]; then
+      [[ $WORKFLOW_PACK =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && $WORKFLOW_SHA =~ ^[0-9a-f]{12}$ ]] \
+        || refuse "the workflow's approved Muster pack reference is invalid"
+    fi
+  fi
   if [ "$KIND" = lite ]; then
     local requested_project=$PROJECT requested_harness=$HARNESS requested_model=$MODEL requested_effort=$EFFORT requested_exception=$EXCEPTION
     [ ! -s "$RUN/record" ] || read_record
@@ -352,7 +380,7 @@ cmd_start() {
     [ "$requested_exception" = 0 ] || EXCEPTION=1
   fi
   PROJECT_DIR=$PROJECTS/$PROJECT
-  [ "$KIND" != lite ] || check_muster backfill
+  [ "$KIND" != lite ] || planning_context
   if uses_lenses; then DEPTH=quick; fi
   if [ "$KIND" = discovery ]; then LANES='prior-art,risks,domain'; fi
   for need in PROJECT LANES DEPTH HARNESS MODEL EFFORT; do
@@ -370,7 +398,7 @@ cmd_start() {
   case $WAIT in ''|*[!0-9]*) refuse "JG_WAR_ROOM_WAIT is a whole number of seconds" ;; esac
   PROJECT_DIR=$PROJECTS/$PROJECT
   [ -d "$PROJECT_DIR" ] || refuse "no project $PROJECT: $PROJECT_DIR is not a directory"
-  [ "$KIND" != variants ] || check_muster backfill
+  [ "$KIND" != variants ] || planning_context
   mkdir -p "$RUN" || refuse "cannot write $RUN"
   lock_next || return 1
   if [ "$KIND" = discovery ]; then
@@ -402,6 +430,10 @@ cmd_start() {
     printf 'kind=%s\ncouncil=%s\nproject=%s\nangles=%s\ndepth=%s\nharness=%s\nmodel=%s\neffort=%s\nsynthesis_depth=%s\nvariant_critics=%s\nexception=%s\n' \
       "$KIND" "$COUNCIL" "$PROJECT" "$angles" "$DEPTH" "$HARNESS" "$MODEL" "$EFFORT" "$SYNTH_DEPTH" "$VARIANT_CRITICS" "$EXCEPTION" > "$RUN/record.tmp"
     [ -z "$MUSTER_REFS" ] || printf '%s\n' "$MUSTER_REFS" >> "$RUN/record.tmp"
+  fi
+  if [ -n "$WORKFLOW_PARENT" ]; then
+    printf 'workflow_parent=%s\nworkflow_pack=%s\nworkflow_sha=%s\nworkflow_review=%s\n' \
+      "$WORKFLOW_PARENT" "$WORKFLOW_PACK" "$WORKFLOW_SHA" "$WORKFLOW_REVIEW" >> "$RUN/record.tmp"
   fi
   mv "$RUN/record.tmp" "$RUN/record" || refuse "cannot write $RUN/record"
   if [ -n "$ROUND_LOCK" ]; then rmdir "$ROUND_LOCK"; ROUND_LOCK=''; fi
@@ -470,6 +502,8 @@ read_record() {
       harness) HARNESS=$value ;; model) MODEL=$value ;; effort) EFFORT=$value ;;
       synthesis_depth) SYNTH_DEPTH=$value ;; variant_critics) VARIANT_CRITICS=$value ;;
       exception) EXCEPTION=$value ;;
+      workflow_parent) WORKFLOW_PARENT=$value ;; workflow_pack) WORKFLOW_PACK=$value ;;
+      workflow_sha) WORKFLOW_SHA=$value ;; workflow_review) WORKFLOW_REVIEW=$value ;;
     esac
   done < "$RUN/record"
   SYNTH_DEPTH=${SYNTH_DEPTH:-$DEPTH}
@@ -545,7 +579,10 @@ step_critic() {  # <lane title> <lane task> [additional rubric]
 synthesis_spec() {
   # shellcheck disable=SC2016
   printf 'Run `strike-recon` at stage 1 and end with `op-order`: the work orders and the plan %s/%s/orders/plan.json, which `%s/bin/jg-swarm-plan-check.sh` must pass. Set the plan owner_ticket to %s.\n%s' \
-    "$DATA" "$1" "$JG_ROOT" "$COUNCIL" "$(recon_lines "$1")"
+    "$DATA" "$1" "$JG_ROOT" "${WORKFLOW_PACK:-$COUNCIL}" "$(recon_lines "$1")"
+  if [ "$WORKFLOW_REVIEW" = 1 ]; then
+    printf '\nReview the pack and list proposed changes in the report. Write questions for the next Muster round in %s/%s/muster-proposals.json in the format of bin/jg-muster.sh. Use [] when the review needs no new decisions.\n' "$DATA" "$1"
+  fi
 }
 
 # b. Every variant past its gate, and no synthesis lane yet: the synthesis, with the three report paths.
@@ -579,11 +616,23 @@ step_dry_run() {
 # d. The dry run done and the plan good: the owner is asked once.
 step_approval() {
   local check n w reason out
+  if [ -f "$RUN/plan-ready" ]; then return 0; fi
   if [ -f "$RUN/plan-asked" ]; then WAITS="waits: $COUNCIL plan-approval"; return 0; fi
   [ -n "$DRY_TASK" ] || return 0
   status_done "$DRY_TASK" || { [ -n "$WAITS" ] || WAITS="waits: $DRY_TASK running"; return 0; }
   check=$("$SCRIPT_DIR/jg-swarm-plan-check.sh" "$PLAN" 2>&1) \
     || { WAITS="waits: $SYNTH_TASK plan-check $(first_line_of "$check")"; return 0; }
+  if [ -n "$WORKFLOW_PARENT" ]; then
+    if [ "$WORKFLOW_REVIEW" = 1 ]; then
+      check=$("$SCRIPT_DIR/jg-muster.sh" check-discovery-questions "$DATA/$SYNTH_TASK/muster-proposals.json" 2>&1) \
+        || { WAITS="waits: $SYNTH_TASK proposals $(first_line_of "$check")"; return 0; }
+    fi
+    printf '%s\n' "$DATA/$SYNTH_TASK/report.md" > "$RUN/findings"
+    printf '%s\n' "$PLAN" > "$RUN/plan-ready.tmp"
+    mv "$RUN/plan-ready.tmp" "$RUN/plan-ready"
+    WAITS=''
+    return 0
+  fi
   if [ -n "$MUSTER_SHA" ]; then
     check=$("$SCRIPT_DIR/jg-muster-approval.sh" verify-plan "$COUNCIL" "$PLAN" 2>&1) \
       || { WAITS="waits: $SYNTH_TASK plan-check $(first_line_of "$check")"; return 0; }
@@ -693,7 +742,7 @@ cmd_next() {
   fi
   if [ -f "$RUN/approved" ]; then echo "approved: nothing is due"; return 0; fi
   [ "$KIND" != discovery ] || { next_discovery; return $?; }
-  check_muster backfill
+  planning_context
 
   IFS=',' read -ra angle_list <<< "$LANES"
   for raw in "${angle_list[@]}"; do
@@ -730,6 +779,7 @@ cmd_approve() {
   RUN=$DATA/war-room/$COUNCIL
   read_record
   ! uses_lenses || refuse "council $COUNCIL gathers questions with lenses: it has no plan to approve"
+  [ -z "$WORKFLOW_PARENT" ] || refuse "the workflow owner step approves the plan for $COUNCIL"
   [ -s "$RUN/plan-asked" ] || refuse "the owner's plan approval was not asked yet: run jg-war-room.sh next $COUNCIL"
   plan=$(cat "$RUN/plan-asked")
   if grep -q '^swarm: started' "$RUN/approved" 2>/dev/null; then echo "already started"; return 0; fi

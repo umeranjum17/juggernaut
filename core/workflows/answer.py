@@ -29,6 +29,21 @@ def approve(home, key, rows, decision, path):
             raise steplib.Failed((answer.stderr or answer.stdout).strip() or f"could not release {row}")
 
 
+def muster_answer(key, answer, label):
+    matched = re.fullmatch(r"muster-([\w.-]+)-r\d+q\d+-v\d+", key)
+    if not matched:
+        return 3
+    row = store.read(matched[1])
+    if not row or (row.get("metadata") or {}).get("wf_kind") != "muster":
+        return 3
+    if re.match(r"^\s*(?:taken|default|agent)\b", label, re.I):
+        return 0
+    steplib._run(store.home(), [owner.BIN / "jg-muster.sh", "answer", row["id"], "--card", key,
+                                "--value" if answer in ("a", "b", "c", "d") else "--words", answer],
+                 "Muster could not record the board answer")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(prog="jg-workflow.sh answer")
     parser.add_argument("key")
@@ -43,7 +58,7 @@ def main():
         ticket, row, _, _, _, values, held = (owner.markers() / a.key).read_text().rstrip("\n").split("\t")
         yes, no = values.split(",")
     except FileNotFoundError:
-        return 3
+        return muster_answer(a.key, a.answer, a.label)
     if re.match(r"^\s*(?:taken|default|agent)\b", a.label, re.I):
         raise steplib.Failed("only the owner's answer can approve this plan")
     if a.answer not in (yes, no) or not a.at or len(a.at.split()) != 1 or a.at.strip() != a.at:

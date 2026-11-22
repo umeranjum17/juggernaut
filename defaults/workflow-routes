@@ -6,3 +6,5 @@ recon claude claude-opus-5-5 high
 critic claude claude-opus-5-5 high
 worker claude claude-sonnet-5-5 high
 war-room claude claude-opus-5-5 xhigh
+fanout claude claude-sonnet-5-5 high
+muster claude claude-opus-5-5 high

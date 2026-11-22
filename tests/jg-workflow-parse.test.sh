@@ -157,7 +157,7 @@ wf "$H" list
 is "T11 exit" "$rc" 0
 has "T11 home line" "$out" "pair"$'\t'"recon(quick)*2 > owner(plan-approval) > worker*2"$'\t'"home"
 is "T11 no scout-worker line" "$(printf '%s\n' "$out" | grep -c '^scout-worker')" 0
-is "T11 every other shipped name" "$(printf '%s\n' "$out" | grep -c $'\tshipped$')" 7
+is "T11 every other shipped name" "$(printf '%s\n' "$out" | grep -c $'\tshipped$')" 10
 printf 'bad: bogus\n' >> "$H/config/workflows"
 wf "$H" list
 is "T11 a broken line: exit 2" "$rc" 2
@@ -166,7 +166,10 @@ has "T11 the other lines still print" "$out" "pair"
 wf "$H" parse pair; is "T11 parse pair still works" "$rc" 0
 H=$(home h11b)
 wf "$H" list
-is "T11 shipped names with no home file" "$(printf '%s\n' "$out" | grep -c $'\tshipped$')" 8
+is "T11 shipped names with no home file" "$(printf '%s\n' "$out" | grep -c $'\tshipped$')" 11
+for name in discovery-first muster-first muster-only; do
+  has "T11 shipped workflow $name" "$out" "$name"$'\t'
+done
 
 # Routes: a kind's route reads the home file first, then the shipped one.
 H=$(home h12)

@@ -135,8 +135,8 @@ done < <(jq -r '.slices[] | [.owner_home, .project, .id] | @tsv' "$IN")
 
 muster_context='' muster_verified='{}'
 check_muster_plan() {
-  local ticket depth block
-  ticket=${JG_SWARM_COUNCIL:-$(jq -r '.owner_ticket // .muster.ticket // empty' "$IN")}
+  local ticket depth block sha folder
+  ticket=${JG_SWARM_WORKFLOW_PACK:-${JG_SWARM_COUNCIL:-$(jq -r '.owner_ticket // .muster.ticket // empty' "$IN")}}
   if [ -z "$ticket" ]; then
     # An owner order grants dispatch authority. It may refer to a different ticket from the plan.
     if [ ! -e "$DATA/swarm/$PLAN/swarm.json" ] && backlog show "$PLAN" >/dev/null 2>&1; then ticket=$PLAN
@@ -144,14 +144,23 @@ check_muster_plan() {
     fi
   fi
   depth=$("$SCRIPT_DIR/jg-war-room.sh" muster-depth "$ticket") || exit 2
-  case $depth in skip|light) return 0 ;; esac
   block=$(jq -r '.muster.ticket // empty' "$IN")
+  [ "$depth" != skip ] || { [ -z "${JG_SWARM_WORKFLOW_PACK:-}" ] || refuse "the workflow pack has depth skip"; return 0; }
+  if [ "$depth" = light ] && [ -z "$block" ] && [ -z "${JG_SWARM_WORKFLOW_PACK:-}" ]; then return 0; fi
   [ -n "$block" ] || refuse "ticket $ticket is $depth and its plan has no muster block"
   [ "$block" = "$ticket" ] || refuse "the plan's muster block names $block; its owner ticket is $ticket"
   [ "$(jq -r '.muster.depth' "$IN")" = "$depth" ] || refuse "the plan's muster depth does not match $depth on $ticket"
-  muster_context=$("$SCRIPT_DIR/jg-war-room.sh" check "$ticket") || exit 2
   muster_verified=$("$SCRIPT_DIR/jg-muster-approval.sh" verify-plan "$ticket" "$IN" --slice-directions) \
     || refuse "$muster_verified"
+  if [ -n "${JG_SWARM_WORKFLOW_PACK:-}" ]; then
+    sha=$(jq -r '.muster.manifest_sha' "$IN")
+    [ "$sha" = "${JG_SWARM_WORKFLOW_SHA:-}" ] || refuse "the plan does not use the workflow's approved pack version"
+    folder=$DATA/$ticket/muster
+    muster_context=$(printf 'Muster ticket: %s\nMuster manifest SHA: %s\nMuster manifest: %s/manifest-%s.tsv\nMuster pack: %s/pack-%s' \
+      "$ticket" "$sha" "$folder" "$sha" "$folder" "$sha")
+  else
+    muster_context=$("$SCRIPT_DIR/jg-war-room.sh" check "$ticket") || exit 2
+  fi
 }
 check_muster_plan
 
@@ -205,8 +214,8 @@ if [ ! -e "$REC" ]; then
     jq -n --arg o "$owner" --arg h "$(home_of "$owner")" --arg t "$task" '{($o): {home: $h, task: $t}}'
   done | jq -s 'add')
   jq -n --arg plan "$PLAN" --arg pf "$DERIVED" --argjson at "$(date +%s)" --arg h "$HARNESS" --arg m "$MODEL" --arg e "$EFFORT" \
-    --arg agents "$AGENTS" --argjson owners "$owners_json" \
-    '{plan: $plan, plan_file: $pf, started_at: $at, state: "starting", steps: ["checked"],
+    --arg agents "$AGENTS" --argjson owners "$owners_json" --arg sha "$(sha256sum "$IN" | cut -d' ' -f1)" \
+    '{plan: $plan, plan_file: $pf, source_sha256: $sha, started_at: $at, state: "starting", steps: ["checked"],
       profile: {harness: $h, model: $m, effort: $e}, agents: (if $agents == "" then null else ($agents | tonumber) end), owners: $owners}' \
     > "$REC.new"
   (set -C; cat "$REC.new" > "$REC") 2>/dev/null || { rm -f "$REC.new"; refuse "swarm $PLAN is being started by another run"; }

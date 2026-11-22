@@ -25,8 +25,8 @@ def _tool(env, name):
     return os.environ.get(env) or os.path.join(ROOT, "bin", name)
 
 
-def _run(home, argv, what):
-    p = subprocess.run(argv, env={**os.environ, "JG_HOME": home}, capture_output=True, text=True)
+def _run(home, argv, what, **env):
+    p = subprocess.run(argv, env={**os.environ, "JG_HOME": home, **env}, capture_output=True, text=True)
     if p.returncode != 0:
         last = (p.stdout + p.stderr).strip().splitlines()[-1:] or [f"exit {p.returncode}"]
         raise Failed(f"{what}: {last[0][:200]}")
@@ -64,7 +64,7 @@ def reports_before(step):
 
 
 def sections(step, scout):
-    """(task text, spec text): the ticket's own words, then what the lane builds or reports and what it may not widen."""
+    """The ticket's own words, what the lane does, and any extra file it may write."""
     ticket = store.read(step["metadata"]["wf_parent"])
     if ticket is None:
         raise Failed(f"cannot read the ticket {step['metadata']['wf_parent']}")
@@ -74,25 +74,36 @@ def sections(step, scout):
     if quote:
         task += ["", f'Owner quote: "{quote}"']
     reports = reports_before(step)
+    extra = None
     if scout:
         spec = ["Investigate the ticket above and write the report the Recon contract names; change no code.",
                 "A build after this report starts only on the owner's recorded yes for this plan, never from the report itself."]
+        import handoff
+        home = store.home()
+        rows = store.steps(ticket["id"])
+        pack = handoff.pack(home, step, rows)
+        if pack:
+            folder = os.path.join(data_dir(home), pack["ticket"], "muster")
+            extra = os.path.join(data_dir(home), store.task_id(step["id"]), "muster-proposals.json")
+            spec += [f"Review the approved Muster pack at {folder}/pack-{pack['sha']}. Keep its decisions in force.",
+                     f"Record evidence and proposed changes in the report and new decisions in {extra}, using the bin/jg-muster.sh question format.",
+                     "If the report produces a plan for Blitz, bind the plan to that Muster ticket and manifest."]
     else:
         spec = ["Build exactly what the ticket above asks, and nothing else.",
                 "Do not widen the scope: a new idea or a gap you find is a follow-up line in your report, not this change."]
         if reports:
             spec.insert(1, "The owner approved the plan in the report(s) " + ", ".join(reports) + "; read them first and build that plan.")
-    return "\n".join(task), "\n".join(spec)
+    return "\n".join(task), "\n".join(spec), extra
 
 
-def brief(home, step, scout):
+def brief(home, step, scout, content=None):
     row, task = step["id"], store.task_id(step["id"])
     path = os.path.join(data_dir(home), task, "brief.md")
     if not (os.path.exists(path) and not PLACEHOLDER.search(open(path).read())):
         proj = project(step)
         argv = [_tool("JG_WORKFLOW_BRIEF", "jg-brief.sh"), task, proj, "--ticket", row]
         if scout:
-            argv += ["--scout", "--depth", step["metadata"].get("wf_arg") or "standard"]
+            argv += ["--scout", "--depth", "quick" if content else step["metadata"].get("wf_arg") or "standard"]
         else:
             mode = _run(home, [_tool("JG_WORKFLOW_PROJECT_MODE", "jg-project-mode.sh"), proj], "the delivery mode of " + proj).split()
             if not mode:
@@ -100,8 +111,15 @@ def brief(home, step, scout):
             argv += ["--mode", mode[0]]
         _run(home, argv, "the brief was not written")
         text = open(path).read()
-        task_text, spec_text = sections(step, scout)
+        if content:
+            task_text, spec_text = content
+            extra = "the draft files named in this task"
+        else:
+            task_text, spec_text, extra = sections(step, scout)
         text = text.replace("{TASK}", task_text).replace("{JUGGERNAUT_SPEC}", spec_text)
+        if extra:
+            text = text.replace("the only files you may write outside it are the report and the status file below.",
+                                f"outside it you may write the report, status and {extra}.")
         with open(path + ".tmp", "w") as f:
             f.write(text)
         os.replace(path + ".tmp", path)

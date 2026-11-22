@@ -409,6 +409,25 @@ def block_lines(m):
     }
 
 
+def plan_block(ticket, sha, proposed):
+    """Build the plan's scope header from the manifest, keeping authored decisions."""
+    manifest = read_manifest(ticket, sha)
+    depth, _ = manifest_scope(manifest, sha)
+    block = {**proposed, 'ticket': ticket, 'manifest_sha': sha, 'depth': depth,
+             'journeys': [], 'batches': [], 'charter': [], 'milestones': []}
+    for line in manifest:
+        kind, *fields = line.split()
+        if kind == 'journey':
+            block['journeys'].append(dict(zip(('id', 'kind'), fields)))
+        elif kind == 'batch':
+            block['batches'].append({'id': fields[0], 'after': ids(fields[1])})
+        elif kind == 'charter':
+            block['charter'].append({'ticket': fields[0], 'batch': fields[1], 'depends': ids(fields[2])})
+        elif kind == 'milestone':
+            block['milestones'].append({'id': fields[0], 'journeys': ids(fields[1])})
+    return block
+
+
 def check_order(m, plan):
     """formats.md section 5: shape and order rules, store-free. A slice that claims T must depend, directly or
     through other slices, on every slice that claims a ticket T depends on or of a batch T's batch starts after."""

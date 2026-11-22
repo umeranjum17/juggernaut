@@ -196,7 +196,8 @@ def has($arr; $x): any($arr[]; . == $x);
   elif ($m | ob | not) then row("-"; "muster is not an object")
   else
     ([ (if ($m.ticket | type) == "string" and ($m.ticket | length) > 0 then empty else "muster has no ticket" end),
-       (if ($m.depth | type) == "string" and has(["full", "complete"]; $m.depth) then empty
+       (if ($m.depth | type) == "string" and (has(["full", "complete"]; $m.depth)
+         or ($m.depth == "light" and ([$m.charter, $m.batches, $m.milestones] | all(. == [])))) then empty
         else "muster depth is \($m.depth // "unset"), not full or complete" end),
        (if ($m.manifest_sha | type) == "string" and ($m.manifest_sha | test("^[0-9a-f]{12}$")) then empty
         else "muster manifest_sha is not 12 hex digits" end),

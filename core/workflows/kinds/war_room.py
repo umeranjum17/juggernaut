@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 import time
 
+import handoff
 import kinds
 from rounds import rounds
 import steplib
@@ -27,9 +28,22 @@ def start(home, step):
     harness, model, effort = wflib.route("war-room")
     mode = (["--depth", "deep"] if meta.get("wf_arg") == "full" else
             ["--depth", "standard", "--synthesis-depth", "deep", "--no-variant-critics"])
-    argv = _command("start", row) + ["--project", steplib.project(step), "--angles", angles,
-                                    "--harness", harness, "--model", model, "--effort", effort] + mode
-    p = subprocess.run(argv, env={**os.environ, "JG_HOME": home}, stdout=subprocess.PIPE,
+    rows = store.steps(parent["id"])
+    aligned = [r for r in rows if r["metadata"]["wf_kind"] == "muster"]
+    env = {**os.environ, "JG_HOME": home}
+    project = ["--project", steplib.project(step)]
+    profile = ["--harness", harness, "--model", model, "--effort", effort]
+    command = "start"
+    if aligned:
+        pack = handoff.pack(home, step, rows)
+        later = any(int(r["metadata"]["wf_stage"]) > int(meta["wf_stage"]) for r in aligned)
+        env.update(JG_WAR_ROOM_WORKFLOW_PARENT=parent["id"], JG_WAR_ROOM_WORKFLOW_PACK=pack["ticket"] if pack else "",
+                   JG_WAR_ROOM_WORKFLOW_SHA=pack["sha"] if pack else "", JG_WAR_ROOM_WORKFLOW_REVIEW=str(int(bool(pack))))
+        if later and pack is None:
+            command = "discover"
+    argv = _command(command, row) + project
+    argv += (["--angles", angles] + profile + mode) if command == "start" else profile
+    p = subprocess.run(argv, env=env, stdout=subprocess.PIPE,
                        stderr=subprocess.STDOUT, text=True)
     if p.returncode == 0:
         return "started", "the council started"
@@ -56,6 +70,9 @@ def _lanes(row, record):
     variant_titles = {f"{angle.strip()} variant Recon" for angle in record.get("angles", "").split(",") if angle.strip()}
     titles = variant_titles | {"synthesis Recon", "dry run of order 1"}
     critics = {"synthesis Recon"}
+    if record.get("kind") == "discovery":
+        titles = {f"{lens} lens" for lens in record["lenses"].split(",")} | {"Muster discovery Recon"}
+        critics = {"Muster discovery Recon"}
     if record.get("variant_critics") == "1":
         critics |= variant_titles
     children = [child for child in store.children(row) if child["title"] in titles]
@@ -73,10 +90,17 @@ def _lanes(row, record):
 def result(home, step):
     row = step["id"]
     council = Path(steplib.data_dir(home), "war-room", row)
-    if (council / "plan-asked").is_file():
-        # The owner step adopts the hold while the council stays open.
+    plan_ready = (council / "plan-ready").is_file()
+    discovery_ready = (Path(steplib.data_dir(home), row, "muster/discovery/findings.md")).is_file()
+    plan_asked = (council / "plan-asked").is_file()
+    if plan_ready or discovery_ready or plan_asked:
         if any(child["status"] != "closed" for child in store.children(row)):
             return "open", "waiting for the council's remaining work"
+        if plan_ready:
+            return "done", "the reviewed slice plan is ready"
+        if discovery_ready:
+            return "done", "the reviewed discovery is ready"
+        # The owner step adopts the hold while the council stays open.
         hold = steplib._tool("JG_WORKFLOW_HOLD", "jg-captain-hold.sh")
         phase = steplib._run(home, [hold, "phase", row], "could not read the council's plan approval")
         if phase in ("answered", "closed"):
@@ -102,6 +126,8 @@ def result(home, step):
 
     last = _mtime(jobs / f"{row}.next.pid")
     state_dir = Path(store.state_dir())
-    if time.time() - last >= NEXT_INTERVAL or any(_mtime(state_dir / f"{task}.status") > last for task, _ in lanes):
+    if os.environ.get("JG_WORKFLOW_DRY_RUN") != "1" and (
+        time.time() - last >= NEXT_INTERVAL or any(_mtime(state_dir / f"{task}.status") > last for task, _ in lanes)
+    ):
         kinds.detach(home, row, "next", _command("next", row))
     return "open", "the council is in progress"

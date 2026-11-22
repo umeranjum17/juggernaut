@@ -18,6 +18,10 @@ journeys:
     tier: local
     command: bash tests/muster-acceptance.test.sh > "$DONE_DONE_EVIDENCE_ROOT/muster.log" 2>&1
     timeout: 15m
+  muster-workflow:
+    tier: local
+    command: bash journeys/muster-workflow.sh
+    timeout: 10m
   muster-requirements:
     tier: local
     command: bash tests/jg-muster-requirements.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1

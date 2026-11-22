@@ -185,7 +185,7 @@ designed() {  # <card-key> <answer>
 }
 
 workflowed() {  # <card-key> <at> <answer> <label> [<note>]
-  [ -f "$STATE/workflow-cards/$1" ] || return 3
+  case $1 in muster-*) ;; *) [ -f "$STATE/workflow-cards/$1" ] || return 3 ;; esac
   JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-workflow.sh" answer "$1" \
     --answer "$3" --at "$2" --label "$4" --note "${5:-}"
 }

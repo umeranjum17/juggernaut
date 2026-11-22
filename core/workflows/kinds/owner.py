@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import subprocess
 
+import handoff
 import kinds
 import steplib
 import store
@@ -14,16 +15,7 @@ BIN = Path(store.ROOT) / "bin"
 
 
 def sources(step, rows, report_kinds):
-    preceding = [[] for _ in range(int(step["metadata"]["wf_stage"]) - 1)]
-    for row in rows:
-        meta = row["metadata"]
-        stage = int(meta["wf_stage"]) - 1
-        if stage < len(preceding):
-            preceding[stage].append((meta["wf_kind"], meta["wf_arg"], 1))
-    source = wflib.nearest(preceding, len(preceding), report_kinds)
-    if source is None:
-        return []
-    return [r for r in rows if int(r["metadata"]["wf_stage"]) == source + 1]
+    return handoff.sources(step, rows, lambda meta: wflib.matches((meta["wf_kind"], meta["wf_arg"], 1), report_kinds))
 
 
 def council_handoffs(home, step, rows):
@@ -101,12 +93,12 @@ def start(home, step):
     rows = store.steps(ticket["id"])
     councils = council_handoffs(home, step, rows)
     data = Path(steplib.data_dir(home))
-    plans = [data / store.task_id(r["id"]) / "orders/plan.json"
-             for r in sources(step, rows, wflib.PLAN_SOURCES) if r["metadata"]["wf_kind"] == "recon"]
-    plans = [p for p in plans if p.is_file()]
+    plans = handoff.plans(home, step, rows)
     if councils:
         plans = [Path((data / "war-room" / c / "plan-asked").read_text().strip()) for c in councils]
     total, wave = plan_counts(home, plans, rows, step)
+    if plans:
+        handoff.select(home, row, plans)
     reports = [data / store.task_id(r["id"]) / "report.md" for r in sources(step, rows, wflib.REPORTS)
                if r["metadata"]["wf_kind"] in wflib.REPORTS]
     reports = [p for p in reports if p.is_file()]
