@@ -165,9 +165,9 @@ fi
 
 # Strict-superset prefilter (transport only; owns zero classification semantics).
 # Every protected watcher execution and every broad watcher kill resolves to the
-# jg-watch byte sequence AFTER the classifier's byte normalization, so a command
-# that cannot contain jg-watch even after that normalization can never be a
-# deniable watcher command and is fast-allowed without the Node policy owner.
+# jg-watch or watch-arm byte sequence AFTER the classifier's byte normalization.
+# A command that cannot contain either sequence after normalization is
+# fast-allowed without the Node policy owner.
 # We mirror the classifier's cheapest byte transforms here (drop line-
 # continuation and escape backslashes, quotes, and newlines) so obfuscated
 # protected paths such as jg-watc\<newline>h-arm.sh or jg-"watch"-arm.sh still
@@ -175,7 +175,7 @@ fi
 # existing jg-watch run.
 #
 # The fast path may allow ONLY when BOTH hold: (a) the stripped/normalized text
-# lacks the jg-watch watcher substring, AND (b) the raw command carries no
+# lacks both watcher substrings, AND (b) the raw command carries no
 # quoting-decoder marker - a $ immediately followed by a single quote (ANSI-C
 # $'...') or a double quote (bash locale $"..."), both of which the classifier
 # decodes and can therefore reconstruct jg-watch from bytes this cheap byte
@@ -196,7 +196,7 @@ case "$CMD" in
   *"\$'"*|*'$"'*) ;;
   *)
     case "$PREFILTER" in
-      *jg-watch*) ;;
+      *jg-watch*|*watch-arm*) ;;
       *) exit 0 ;;
     esac
     ;;

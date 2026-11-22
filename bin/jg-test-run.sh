@@ -2812,14 +2812,15 @@ record_script_result() {  # <script> <rc> <duration> <out> <end_iso> <stream>
     log "speed over limit, reported only: $script took ${duration}ms, over its ${speed_ms}ms $speed_class limit"
   fi
 
+  gate_skip=false
+  gate_reason=
   if [ -n "$FAIL_ON_GATE_SKIP" ] && detect_gate_skip_token "$out" "$FAIL_ON_GATE_SKIP"; then
     log "required gate skip token seen in $script: skip: $FAIL_ON_GATE_SKIP"
     rc=1
-  fi
-
-  gate_skip=false
-  gate_reason=
-  if [ "$rc" -eq 0 ] && detect_gate_skip "$out"; then
+  elif { [ "$rc" -eq 0 ] || [ "$rc" = "${JG_TEST_SKIP_EXIT:-0}" ]; } && detect_gate_skip "$out"; then
+    # Direct test callers can opt into a distinct skip exit. The runner has a
+    # separate skip verdict and still requires the test's gate message.
+    rc=0
     gate_skip=true
     gate_reason=$(gate_skip_reason "$out")
     SKIPPED_GATE=$((SKIPPED_GATE + 1))

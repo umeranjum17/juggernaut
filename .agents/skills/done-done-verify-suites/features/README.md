@@ -12,3 +12,4 @@
 - [Item store contention and compaction](item-store-contention.md): run `done-done run item-store-contention`
 - [Fleet refresh and delivery repair](fleet-refresh-and-delivery-repair.md)
 - [Doctor resolves the done-done author route](done-done-author-route.md): run `done-done run done-done-author-route`
+- [Agent CLI contract](agent-cli-contract.md): run `done-done run agent-cli-contract`

@@ -162,6 +162,7 @@
       "changes": true,
       "method": "POST",
       "form": "bin/jg-send.sh <ticket> <text...>",
+      "additional_forms": ["bin/jg-send.sh <ticket> [--resolve-key <decision-key>]... <text...>"],
       "repeat_key": "ticket+text",
       "exits": {
         "0": 0,

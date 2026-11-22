@@ -229,11 +229,14 @@ def bind($in; $spec; $types; $declared):
   end;
 . as $in | $in.entry as $e
 | ($e.args | map({(.name): .type}) | add // {}) as $types
-| [([($e | canonical_form)] + ($e.additional_forms // []))[] | lex | .[1:] as $toks
+| [([($e | canonical_form)] + ($e.additional_forms // [])) | to_entries[]
+   | .key as $index | .value | lex | .[1:] as $toks
+   # A flag-only alternative selects a new form only when the caller supplies the flag.
+   | ($index > 0 and ($toks | length == 1) and ($toks[0] | option)) as $explicit_flag
    | if ($e.operation | option) and $toks[0] == $e.operation then
      [{k: "lit", v: $e.operation}] + specs($toks[1:]; false; false)
      | bind($in | if .args[0] == $e.operation then .args = .args[1:] else . end; .; $types; $e.args | map(.name))
-   else specs($toks; false; false) | bind($in; .; $types; $e.args | map(.name))
+   else specs($toks; false; $explicit_flag) | bind($in; .; $types; $e.args | map(.name))
    end]
 | first(.[] | select(.ok)) // .[0]'
 
