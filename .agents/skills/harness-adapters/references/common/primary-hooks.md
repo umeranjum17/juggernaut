@@ -6,7 +6,7 @@ The tool reference establishes either that identity's empirical path or its unsu
 ## Turn end
 
 `../../../docs/turnend-guard.md` owns the "no turn ends blind" contract, hook installation, per-surface blocking behavior, and tradeoffs when a hook cannot block.
-`../../../docs/supervision-protocols/` and `../../../bin/jg-supervision-instructions.sh` own harness-specific wake protocols.
+`../../../docs/supervision-protocols/` and script: `../../../bin/jg-supervision-instructions.sh` own harness-specific wake protocols.
 Never substitute another harness's wait shape.
 `../../../bin/jg-busy-lib.sh` remains the semantic busy owner; a tool reference names only its source and evidence.
 
@@ -34,7 +34,7 @@ Read it before changing session-open behavior.
 
 ## Watcher supervision
 
-`../../../bin/jg-session-start.sh` prints exactly one block for the detected primary.
+`jg radio session-start` returns exactly one block for the detected primary in `data.stdout`.
 Follow only that rendered protocol.
 When changing a watcher adapter, update its file under `../../../docs/supervision-protocols/`, update `../../../docs/turnend-guard.md` if shared idle or turn-end behavior changed, and refresh the tool fact.
 An identity without a dedicated protocol uses its documented unsupported or unknown boundary; never invent one from a similar TUI.
