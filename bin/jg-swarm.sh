@@ -133,7 +133,7 @@ done < <(jq -r '.slices[] | [.owner_home, .project, .id] | @tsv' "$IN")
 [[ $ORDER =~ ^Main[0-9]+$ ]] || captain_ask_root "$ORDER" >/dev/null 2>&1 \
   || refuse "the owner order \"$ORDER\" is neither MainNNN nor the id of a [captain-ask] row in this backlog"
 
-muster_context=''
+muster_context='' muster_verified='{}'
 check_muster_plan() {
   local ticket depth block
   ticket=${JG_SWARM_COUNCIL:-$(jq -r '.owner_ticket // .muster.ticket // empty' "$IN")}
@@ -150,7 +150,8 @@ check_muster_plan() {
   [ "$block" = "$ticket" ] || refuse "the plan's muster block names $block; its owner ticket is $ticket"
   [ "$(jq -r '.muster.depth' "$IN")" = "$depth" ] || refuse "the plan's muster depth does not match $depth on $ticket"
   muster_context=$("$SCRIPT_DIR/jg-war-room.sh" check "$ticket") || exit 2
-  "$SCRIPT_DIR/jg-muster-approval.sh" verify-plan "$ticket" "$IN" >&2 || exit 2
+  muster_verified=$("$SCRIPT_DIR/jg-muster-approval.sh" verify-plan "$ticket" "$IN" --slice-directions) \
+    || refuse "$muster_verified"
 }
 check_muster_plan
 
@@ -225,6 +226,13 @@ if ! done_step copied; then
   step_delay
   mkdir -p "$DIR/orders"
   cp "$IN" "$DERIVED"
+  if [ -n "$muster_context" ]; then
+    [ "$(sha256sum "$DERIVED" | cut -d' ' -f1)" = "$(jq -r .plan_sha256 <<< "$muster_verified")" ] \
+      || die "the Muster plan changed while Blitz was starting; retry with the edited plan"
+    edit_plan 'if .muster.decisions_and_assumptions then
+      .muster.decisions_and_assumptions |= map(if .override != null then .status = "overridden" else . end)
+      else . end'
+  fi
   edit_plan --arg h "$JG_HOME" --arg o "$ORDER" '. + {main_home: $h, owner_homes: {}, owner_order: $o}'
   for owner in "${OWNERS[@]}"; do edit_plan --arg o "$owner" --arg h "$(home_of "$owner")" '.owner_homes[$o] = $h'; done
   while IFS=$'\t' read -r id order title word; do
@@ -232,6 +240,8 @@ if ! done_step copied; then
     mkdir -p "$(dirname "$copy")"
     cp -f "$(dirname "$IN")/$order" "$copy"
     [ -z "$muster_context" ] || printf '\n\n## Approved Muster pack\n\n%s\n' "$muster_context" >> "$copy"
+    directions=$(jq -r --arg id "$id" '.directions[$id] // {} | to_entries[] | "- \(.key): \(.value)"' <<< "$muster_verified")
+    [ -z "$directions" ] || printf '\n\n## Muster decisions for this slice\n\n%s\n' "$directions" >> "$copy"
     chmod a-w "$copy"
     goal=$(awk '/^## Goal[[:space:]]*$/ { g = 1; next } g && /^#/ { exit } g && NF { print; exit }' "$copy")
     [[ $goal =~ ^([^.!?]*[.!?])([[:space:]]|$) ]] && goal=${BASH_REMATCH[1]}
@@ -244,7 +254,7 @@ if ! done_step copied; then
       --arg body "$body" --argjson w "$wrow" \
       '.slices |= map(if .id == $id then . + {body: $body, order_path: $p, order_sha256: $sha, goal: $goal}
         + (if $w then {word_row: $w} else {} end) else . end)'
-  done < <(jq -r '.slices[] | [.id, .order, .title, (.owner_word != null)] | @tsv' "$IN")
+  done < <(jq -r '.slices[] | [.id, .order, .title, (.owner_word != null)] | @tsv' "$DERIVED")
   mark copied
 fi
 

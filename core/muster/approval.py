@@ -16,7 +16,7 @@ Run through bin/jg-muster-approval.sh. Standard library only. The machine format
       `ask` also refuses a manifest with no passing check line or a saved copy that no longer passes.
   verify <ticket> <project dir>              depth, change and baseline come from the approved manifest
   exception <ticket>                         the planning exception, for that ticket only
-  verify-plan <ticket> <plan.json>           the plan's muster block against the approved manifest, then the order rules
+  verify-plan <ticket> <plan.json>           check requirements, the approved manifest and the slice order
 
 Exit 0 approved, 1 refused (one line saying why), 2 usage. The only accepted answer is exactly `yes`, the hold card's
 affirmative, with the signed approved-by-captain line that jg-captain-hold.sh answer alone writes. This file never
@@ -41,6 +41,7 @@ PACK_FILES = ('GLOSSARY.md', 'CHANGELOG.md', '.done-done.yaml')
 PACK_DIRS = ('docs', 'journeys')
 DEPTHS = ('complete', 'full', 'light')
 CONTENT = ('check', 'file', 'journey', 'batch', 'charter', 'milestone', 'adr')
+REQUIREMENT_SECTIONS = ('Functional requirements', 'Non-functional requirements')
 
 
 class Refused(Exception):
@@ -448,20 +449,125 @@ def check_order(m, plan):
     return len(slices)
 
 
-def verify_plan(ticket, plan_path):
+def check_requirements(ticket, sha, mf):
+    """Check the coverage in the approved spec, whose bytes are checked by approved_manifest."""
+    _, change = manifest_scope(mf, sha)
+    pack = os.path.join(muster_dir(ticket), f'pack-{sha}')
+    specs = {}
+    scoped = {}
+    for path in pack_files(pack):
+        if not (path.startswith('docs/specs/') and path.endswith('.md')):
+            continue
+        with open(os.path.join(pack, path), encoding='utf-8') as file:
+            specs[path] = text = file.read()
+        frontmatter = text.split('\n---\n', 1)[0] if text.startswith('---\n') else ''
+        owns = re.search(r'^muster:[ \t]*' + re.escape(ticket) + r'[ \t]*$', frontmatter, re.M)
+        if owns or (change and path == f'docs/specs/{change}.md'):
+            scoped[path] = text
+    if change or scoped:
+        specs = scoped
+
+    coverage = {name: {} for name in REQUIREMENT_SECTIONS}
+    has_coverage = False
+    for name, results in coverage.items():
+        for spec in specs.values():
+            block = section(spec, name)
+            has_coverage |= block is not None
+            for rows in tables(block):
+                for cells in rows:
+                    category = cells[0].casefold()
+                    outcome = cells[1].casefold() if len(cells) > 1 else ''
+                    closed = outcome in ('answered', 'accepted recommendation', 'out of scope')
+                    results[category] = results.get(category, True) and closed
+    if not has_coverage:
+        return False  # Legacy specs predate the requirements tables.
+
+    taxonomy_path = os.path.join(TREE, '.agents', 'skills', 'muster', 'requirements.md')
+    try:
+        with open(taxonomy_path, encoding='utf-8') as file:
+            taxonomy = file.read()
+    except OSError as err:
+        raise Refused(f'cannot read the Muster requirements map: {err}') from err
+    open_categories = []
+    for name, results in coverage.items():
+        groups = tables(section(taxonomy, name))
+        if not groups or not groups[0]:
+            raise Refused(f'the Muster requirements map has no categories for {name.lower()}')
+        labels = {cells[0].casefold() for cells in groups[0]}
+        unknown = sorted(results.keys() - labels)
+        if unknown:
+            raise Refused(f'unknown categories in {name.lower()}: ' + ', '.join(unknown))
+        for category, *_ in groups[0]:
+            if not results.get(category.casefold()):
+                open_categories.append(category)
+    if open_categories:
+        raise Refused('open requirements categories: ' + ', '.join(open_categories))
+    return True
+
+
+def slice_directions(plan, muster, required):
+    """Validate the decisions table and resolve one direction per decision for the slices that use it."""
+    rows = muster.get('decisions_and_assumptions', None if required else [])
+    if not isinstance(rows, list):
+        raise Refused('decisions_and_assumptions must be a table of decision rows')
+    slices = {s['id'] for s in plan.get('slices', [])}
+    directions = {}
+    seen = set()
+
+    def line(value):
+        return isinstance(value, str) and bool(value.strip()) and value.splitlines() == [value]
+
+    for decision in rows:
+        key = decision.get('id') if isinstance(decision, dict) else None
+        if not isinstance(key, str) or not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9-]*', key):
+            raise Refused('each decision or assumption needs an id with letters, digits or dashes')
+        if key in seen:
+            raise Refused(f'decision {key} is listed twice')
+        seen.add(key)
+        recommendation = decision.get('recommendation')
+        if not line(recommendation):
+            raise Refused(f'decision {key} needs a one-line recommendation')
+        status, answer, override = (decision.get(k) for k in ('status', 'answer', 'override'))
+        if status not in ('answered', 'accepted recommendation', 'overridden'):
+            raise Refused(f'decision {key} needs status answered, accepted recommendation or overridden')
+        if override is not None and not line(override):
+            raise Refused(f'decision {key} needs a one-line override or null')
+        if status == 'answered' and not line(answer):
+            raise Refused(f'decision {key} needs a one-line answer')
+        if status == 'overridden' and override is None:
+            raise Refused(f'decision {key} is overridden and needs an override')
+        targets = decision.get('slices')
+        if not isinstance(targets, list) or not targets:
+            raise Refused(f'decision {key} must name at least one slice')
+        direction = override or (answer if status == 'answered' else recommendation)
+        for target in targets:
+            if not isinstance(target, str) or target not in slices:
+                raise Refused(f'decision {key} names unknown slice {target}')
+            selected = directions.setdefault(target, {})
+            if key in selected:
+                raise Refused(f'decision {key} names slice {target} twice')
+            selected[key] = direction
+    return directions
+
+
+def verify_plan(ticket, plan_path, emit_directions=False):
     row, mf = approved_manifest(ticket)
     try:
-        with open(plan_path) as f:
-            plan = json.load(f)
+        with open(plan_path, 'rb') as f:
+            source = f.read()
+        plan = json.loads(source)
     except (OSError, ValueError) as e:
         raise Refused(f'the plan cannot be read: {e}')
-    m = plan.get('muster')
-    if not m:
+    m = plan.get('muster') if isinstance(plan, dict) else None
+    if not isinstance(m, dict) or not m:
         raise Refused('the plan has no muster block')
     if m.get('ticket') != ticket:
         raise Refused(f'the plan\'s muster block names ticket {m.get("ticket")}, not {ticket}')
     if m.get('manifest_sha') != row['manifest']:
         raise Refused(f'the plan was made from version {m.get("manifest_sha")}, not the approved {row["manifest"]}')
+    depth, _ = manifest_scope(mf, row['manifest'])
+    if m.get('depth') != depth:
+        raise Refused(f'the plan\'s depth does not match the approved {depth} manifest')
     try:
         got_by_kind = block_lines(m)
     except (KeyError, TypeError) as e:
@@ -471,8 +577,13 @@ def verify_plan(ticket, plan_path):
         if got != have:
             raise Refused(f'the plan\'s {kind} lines differ from the approved manifest: missing '
                           f'{sorted(set(have) - set(got)) or "none"}, extra {sorted(set(got) - set(have)) or "none"}')
+    has_coverage = check_requirements(ticket, row['manifest'], mf)
     n = check_order(m, plan)
-    print(f'plan ok: {n} slices keep the approved version {row["manifest"]} and its charter order')
+    directions = slice_directions(plan, m, has_coverage)
+    if emit_directions:
+        print(json.dumps({'plan_sha256': hashlib.sha256(source).hexdigest(), 'directions': directions}))
+    else:
+        print(f'plan ok: {n} slices keep the approved version {row["manifest"]} and its charter order')
 
 
 # ---- the command line --------------------------------------------------------------------------------------------------
@@ -506,8 +617,8 @@ def main(argv):
             verify(argv[1], argv[2])
         elif cmd == 'exception' and n == 2:
             use_exception(argv[1])
-        elif cmd == 'verify-plan' and n == 3:
-            verify_plan(argv[1], argv[2])
+        elif cmd == 'verify-plan' and (n == 3 or (n == 4 and argv[3] == '--slice-directions')):
+            verify_plan(argv[1], argv[2], emit_directions=n == 4)
         else:
             print(__doc__)
             return 2

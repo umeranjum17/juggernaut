@@ -97,7 +97,7 @@
     },
     {
       "path": ["muster", "verify-plan"],
-      "meaning": "Check that a plan keeps the approved documents' journeys, charter and order.",
+      "meaning": "Check that requirements are closed and the plan keeps the approved journeys, charter and order.",
       "roles": ["overwatch"],
       "args": [
         {"name": "ticket", "type": "text", "required": true},

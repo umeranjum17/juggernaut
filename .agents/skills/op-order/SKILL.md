@@ -60,6 +60,7 @@ Budget        measured by a dry run, never guessed
    `files` entries are repository paths, a new file marked ` (new)`; never prose (jg plan swarm-plan-check refuses prose
    once slice pc1 lands).
    With a muster pack, plan.json also carries the pack's `muster` block (`.agents/skills/muster/formats.md` section 5).
+   Put decisions and assumptions in the plan's table as specified there and refer to their ids in the affected work orders so an edited direction has one source.
    Each slice lists its `journeys` and `charter` tickets, the same ids as its order's Serves line.
    `jg plan swarm-plan-check` owns the shape and order rules of the block; a refusal names the slice and the reason.
 6. Dry run: a worker of the order's model carries out the first order on a scratch copy and reports where it got stuck.

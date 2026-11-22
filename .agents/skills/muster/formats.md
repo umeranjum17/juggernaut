@@ -119,6 +119,31 @@ Approval rules (at build start, m2b and a1): the block's ticket, `manifest_sha`,
 charter rows and milestones equal the approved manifest's lines, so a feature plan carries the feature's charter
 (R1, R2, F1 in the example) and never the project's (C1-C4, M1-M3).
 
+At plan verification, every category from the requirements coverage map needs a closed outcome in the approved spec's Functional requirements or Non-functional requirements table.
+The verifier reads the specs for the ticket, or the spec named for the change at full depth, from the approved pack.
+For a complete pack without ticket-labelled specs, it checks the project's specs together.
+A category with a missing row or any row without a closed outcome stays open.
+An older spec without either requirements section can still use its existing plan format.
+
+The plan holds its decisions-and-assumptions table in `muster.decisions_and_assumptions`.
+Use one row per decision or assumption that affects the work, or an empty table when no decision affects a slice.
+
+```json
+{"id": "export-format", "recommendation": "Export CSV by default.", "status": "accepted recommendation",
+ "override": null, "slices": ["c2"]}
+```
+
+| Status | Direction given to the slice |
+| --- | --- |
+| `answered` | The owner's words from the row's `answer` field |
+| `accepted recommendation` | The row's `recommendation` |
+| `overridden` | The owner's words from the row's `override` field |
+
+To change the direction before approval, fill the row's `override` line.
+The override takes precedence and Blitz marks the row `overridden` in the frozen plan.
+Every row names at least one affected slice in `slices`, and the recommendation, answer and override each fit on one line when present.
+Blitz puts the selected direction for each decision into the affected slice's frozen work order.
+
 ## 6. A command contract fragment, `core/agent-cli/contract/<slice>.json`
 ```json
 {"area": "<area>", "owner": "<slice id>", "entries": [{"path": ["muster", "depth"], "meaning": "<one plain line>",

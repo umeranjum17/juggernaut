@@ -538,6 +538,10 @@ step_approval() {
   status_done "$DRY_TASK" || { [ -n "$WAITS" ] || WAITS="waits: $DRY_TASK running"; return 0; }
   check=$("$SCRIPT_DIR/jg-swarm-plan-check.sh" "$PLAN" 2>&1) \
     || { WAITS="waits: $SYNTH_TASK plan-check $(first_line_of "$check")"; return 0; }
+  if [ -n "$MUSTER_SHA" ]; then
+    check=$("$SCRIPT_DIR/jg-muster-approval.sh" verify-plan "$COUNCIL" "$PLAN" 2>&1) \
+      || { WAITS="waits: $SYNTH_TASK plan-check $(first_line_of "$check")"; return 0; }
+  fi
   read -r n w <<< "$(plan_waves "$PLAN")"
   # shellcheck source=bin/jg-ask-gate-lib.sh
   . "$SCRIPT_DIR/jg-ask-gate-lib.sh"
