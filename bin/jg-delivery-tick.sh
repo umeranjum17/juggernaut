@@ -109,6 +109,8 @@ bash "$SCRIPT_DIR/jg-lease-tick.sh" "$H" >&2 || echo "jg-delivery-tick: the leas
 # A deep Recon's writer/critic loop takes each move it owes here (the critic, its round, the researcher's gaps, the revision), so no move waits for a model's
 # turn; a stop is a wake line for Main (core/recon-loop). It never stops the pass.
 bash "$SCRIPT_DIR/../core/recon-loop/recon-loop.sh" tick "$H" || echo "jg-delivery-tick: the Recon loop step failed in $H" >&2
+# Only the delivery pass posts finished Recon cards. The relay move follows a successful post, so an interrupted pass can resume it.
+bash "$SCRIPT_DIR/../core/recon-ready/ready.sh" relay "$H" >&2 || echo "jg-delivery-tick: the Recon relay step failed in $H" >&2
 # A finished Recon or critic lane whose required next step nobody took in 10 minutes raises the done-unhandled P1 (core/next-step); it never stops the pass.
 bash "$SCRIPT_DIR/../core/next-step/next-step.sh" tick "$H" >&2 || echo "jg-delivery-tick: the next-step alert step failed in $H" >&2
 # A Blitz plan or a Goal with ready work that made no progress for 10 minutes raises the fleet-blocked P1, which only progress clears (core/loop-stall); it never stops the pass.

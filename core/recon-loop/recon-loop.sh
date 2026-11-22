@@ -9,7 +9,7 @@
 # owes. This script only takes those steps, once each. Its marks are in data/<recon>/recon-loop/: sent-<what>-<draft hash> for each message
 # sent, tries-<move> for each move that failed, and `stopped` (the epoch, then the reason).
 #
-# One Recon, one pass. The phase is the last line of its handoff record; "newer" means a done line's epoch is later than the last handoff move.
+# One Recon, one pass. The phase is the last line of its handoff record. For a done line in the same second as a move, use the files' write order.
 #   phase      what the loop finds                                      the move
 #   none       the researcher's last line is done                       draft: record the draft (jg-recon-handoff.sh draft)
 #   critiqued  the researcher's done line is newer than the critique    revise: record the revision (done over an unchanged report is a stop)
@@ -67,8 +67,10 @@ done_at() {  # <lane>: the epoch of the lane's done line; fails when its last st
   [ "$at" != 0 ] || at=$(jg_fact_mtime "$STATE/$1.status")
   printf '%s\n' "$at"
 }
-done_after() {  # <lane> <epoch>: the lane's done line is newer than the epoch
-  local at; at=$(done_at "$1") && [ "$at" -gt "$2" ]
+done_after() {  # <lane> <recon> <epoch>: the lane's done line followed the move
+  local at
+  at=$(done_at "$1") || return 1
+  [ "$at" -gt "$3" ] || { [ "$at" -eq "$3" ] && [ "$STATE/$1.status" -nt "$DATA/$2/handoff.tsv" ]; }
 }
 lane_live() { [ -f "$STATE/$1.meta" ] && ! grep -q '^cleanup_recovery=' "$STATE/$1.meta"; }
 # shellcheck disable=SC2329 # deliver calls it
@@ -100,7 +102,7 @@ try() {
   mkdir -p "$(loop_dir "$r")"; f=$(loop_dir "$r")/tries-$key
   if TRY_OUT=$("$@" 2>&1); then rm -f "$f"; return 0; fi
   n=$(( $(cat "$f" 2>/dev/null || echo 0) + 1 )); printf '%s\n' "$n" > "$f"
-  [ "$n" -lt 3 ] || stop "$r" "$key failed $n times: $(printf '%s\n' "$TRY_OUT" | one_line)"
+  [ "$n" -lt 3 ] || stop "$r" "$key still fails after retries: $(printf '%s\n' "$TRY_OUT" | one_line)"
   return 1
 }
 
@@ -174,8 +176,8 @@ move_assign() {  # <recon>: name the critic that will read this draft
   try "$r" assign "$HANDOFF" assign "$r" --critic "$c"
 }
 
-move_send_critic() {  # <recon> <hash>: the critic holds this draft: tell it, once. Returns 1 only for a stop.
-  local r=$1 hash=$2 c gen msg rc
+move_send_critic() {  # <recon> <hash>: the critic holds this draft: tell it, once.
+  local r=$1 hash=$2 c gen msg rc=0
   read -r c _ < <("$HANDOFF" assignee "$r")
   [ -n "${c:-}" ] && [ "$c" != none ] || return 0
   read -r _ gen < <(critic_of "$r")
@@ -185,15 +187,17 @@ move_send_critic() {  # <recon> <hash>: the critic holds this draft: tell it, on
   fi
   msg=$(mktemp "$DATA/$r/.recon-loop-msg.XXXXXX") || return 1
   round_text "$r" "$c" "$hash" > "$msg"
-  send_once "$r" "$c" round "$hash" "$msg"
+  send_once "$r" "$c" round "$hash" "$msg" || rc=1
   rm -f "$msg"
+  return "$rc"
 }
 
 move_verdict() {  # <recon> <hash> <moved>: the critic's done line is newer than the assignment: record the round it wrote
-  local r=$1 hash=$2 moved=$3 c at line named gaps msg mark
+  local r=$1 hash=$2 moved=$3 c at line named gaps msg mark rc=0
   read -r c _ < <("$HANDOFF" assignee "$r")
   [ -n "${c:-}" ] && [ "$c" != none ] || return 0
-  at=$(done_at "$c") && [ "$at" -gt "$moved" ] || return 0
+  done_after "$c" "$r" "$moved" || { move_send_critic "$r" "$hash"; return; }
+  at=$(done_at "$c") || return 0
   # The critic's own last Round line (or its closure line) for exactly this draft.
   line=$(grep -E '^(Round [0-9]+: new gaps [0-9]+|Closure check:)' "$DATA/$c/critic.md" 2>/dev/null | tail -n 1)
   named=$(printf '%s\n' "$line" | sed -n 's/.*report[[:space:]]\{1,\}\([0-9a-f]\{12,64\}\).*/\1/p')
@@ -213,16 +217,18 @@ move_verdict() {  # <recon> <hash> <moved>: the critic's done line is newer than
   printf 'Your done line has no round for the draft %s of %s. Write `Round <n>: new gaps <k> report %s` in %s/%s/critic.md and record it with `%s/bin/jg-recon-handoff.sh verdict %s --critic %s --hash %s --gaps <k>`.\n' \
     "${hash:0:12}" "$r" "$hash" "$DATA" "$c" "$ROOT" "$r" "$c" "$hash" > "$msg"
   mkdir -p "$(loop_dir "$r")"
-  try "$r" remind deliver "$c" "$msg" && : > "$mark"
+  { try "$r" remind deliver "$c" "$msg" && : > "$mark"; } || rc=1
   rm -f "$msg"
+  return "$rc"
 }
 
 move_findings() {  # <recon> <hash>: the critic found gaps: the researcher gets them, once
-  local r=$1 hash=$2 msg
+  local r=$1 hash=$2 msg rc=0
   msg=$(mktemp "$DATA/$r/.recon-loop-msg.XXXXXX") || return 1
   findings_text "$r" "$(last_field "$r" 5)" "$hash" > "$msg"
-  send_once "$r" "$r" findings "$hash" "$msg"
+  send_once "$r" "$r" findings "$hash" "$msg" || rc=1
   rm -f "$msg"
+  return "$rc"
 }
 
 move_revise() {  # <recon> <hash>: the researcher said done: record the revision
@@ -249,7 +255,7 @@ pass_once() {  # <recon>: the moves that are due now, in order; a move that is n
   # No done line and no record: the researcher is still drafting. A researcher that was sent its gaps and has not said done since is editing:
   # its report is not a draft, so the gate is not asked either.
   [ "$phase" != none ] || done_at "$r" > /dev/null || return 0
-  if [ "$phase" = critiqued ] && [ -e "$(loop_dir "$r")/sent-findings-${hash:0:12}" ] && ! done_after "$r" "$moved"; then return 0; fi
+  if [ "$phase" = critiqued ] && [ -e "$(loop_dir "$r")/sent-findings-${hash:0:12}" ] && ! done_after "$r" "$r" "$moved"; then return 0; fi
   gate_word "$r"
   case $GATE_WORD in
     closed) unstop "$r"; return 0 ;;
@@ -257,13 +263,13 @@ pass_once() {  # <recon>: the moves that are due now, in order; a move that is n
   esac
   if [ "$phase" = none ]; then
     try "$r" draft "$HANDOFF" draft "$r" || return 0
-  elif [ "$phase" = critiqued ] && done_after "$r" "$moved"; then
+  elif [ "$phase" = critiqued ] && done_after "$r" "$r" "$moved"; then
     move_revise "$r" "$hash" || return 0
   fi
   [ "$(phase_of "$r")" != drafted ] || move_assign "$r" || return 0
   phase=$(phase_of "$r"); moved=$(last_move "$r"); hash=$(last_field "$r" 4)
   case $phase in
-    assigned) move_send_critic "$r" "$hash" && move_verdict "$r" "$hash" "$moved" || return 0 ;;
+    assigned) move_verdict "$r" "$hash" "$moved" || return 0 ;;
     critiqued) move_findings "$r" "$hash" || return 0 ;;
   esac
   unstop "$r"
@@ -274,9 +280,9 @@ pass_once() {  # <recon>: the moves that are due now, in order; a move that is n
 pass() {
   local r=$1 n=0 before
   while [ "$n" -lt 5 ]; do
-    before=$(wc -l < "$DATA/$r/handoff.tsv" 2>/dev/null || echo 0)
+    before=$(wc -l 2>/dev/null < "$DATA/$r/handoff.tsv" || echo 0)
     pass_once "$r"
-    [ "$(wc -l < "$DATA/$r/handoff.tsv" 2>/dev/null || echo 0)" != "$before" ] || break
+    [ "$(wc -l 2>/dev/null < "$DATA/$r/handoff.tsv" || echo 0)" != "$before" ] || break
     n=$((n + 1))
   done
 }

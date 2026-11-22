@@ -1273,6 +1273,8 @@ if [ -n "$ACK_THROUGH" ]; then
   elif [ "$RECOVERY_ACK_MOVED" = true ]; then
     printf 'wake drain: acknowledged wakes through %s (%s row(s) consumed), but a newer recovery episode is pending; re-run bin/jg-wake-drain.sh and use the new WAKE_ACK_REQUIRED command\n' \
       "$ACK_THROUGH" "$ACK_REMOVED" >&2
+  elif [ "$ACTOR" = main ] && { [ "$ACK_REMOVED" -gt 0 ] || [ -n "$PAGES_ACK_ARG" ]; }; then
+    printf '%s\n' 'WAKE_DRAIN_AGAIN: run bin/jg-wake-drain.sh before ending this turn. Handle and acknowledge any further work it presents.' >&2
   fi
   exit 0
 fi

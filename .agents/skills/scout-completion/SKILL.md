@@ -10,6 +10,8 @@ metadata:
 
 A completed Recon must leave a self-contained report before its scratch worktree can be discarded; read and relay its findings, record the report as the Done artifact, and re-evaluate the queue.
 A report may recommend implementation but does not authorize it.
+The delivery tick posts a finished Recon's report on the configured board and records its relay after the post succeeds.
+If the relay is still owed, use the manual relay below.
 When you relay a Recon's findings, write the move `jg ticket move <ticket> relayed`. Until that move exists the done line still owes its next step: a sweep of its outcome is refused, and after 10 minutes the `done-unhandled` P1 holds your turn end (`bin/jg-facts-lib.sh` `jg_fact_next_step` names the step for a critic and for a draft awaiting a critic too, and for a deep Recon those are the loop's own moves: `core/recon-loop` takes them, and a draft ready and untouched for 10 minutes raises the same P1). The lead-sweep cleans a Recon only after that move and 60 quiet minutes in its inbox; a done line, a passed critic or a gone agent never makes it cleanable, and a new message to the Recon restarts the hour.
 A deep Recon's draft-ready line and its critic's round results owe no relay while its critic loop is open (the depth gate reads the step `critic`); relay only after its final done line, because the lead-sweep cleans a relayed Recon's work copy.
 Before relaying a plan or report, run `jg report loss-claim-check <report>`: a line that says a capability is lost needs a named replacement path and an effort in the same block, or the report goes back.
