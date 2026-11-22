@@ -4,6 +4,7 @@
 set -euo pipefail
 
 suites=(contract inventory forms e6land2 e6homes e6steer e6radio3)
+parallel_count=${#suites[@]}
 if [ "$#" -gt 0 ]; then
   base=$(git merge-base "$1" HEAD)
   changed=$(git diff --name-only --no-renames "$base" -- \
@@ -167,13 +168,35 @@ with open(sys.argv[1], 'w') as f:
  f.write('\n')
 PY
 ) > "$DONE_DONE_EVIDENCE_ROOT/round-two.log" 2>&1
-for suite in "${suites[@]}"; do
-  log="$DONE_DONE_EVIDENCE_ROOT/$suite.log"
-  test_file="core/agent-cli/tests/$suite.test.sh"
+run_suite() {
+  local suite=$1
+  local log="$DONE_DONE_EVIDENCE_ROOT/$suite.log"
+  local test_file="core/agent-cli/tests/$suite.test.sh"
   {
     printf 'Running %s\n' "$test_file"
     bash "$test_file" && printf 'PASS %s\n' "$test_file"
-  } > "$log" 2>&1 || { tail -n 25 "$log" >&2; exit 1; }
+  } > "$log" 2>&1
+}
+
+# Every base suite owns its fixture homes and log. Join all of them so a
+# failure cannot leave a sibling running without its result.
+pids=()
+for suite in "${suites[@]:0:parallel_count}"; do
+  run_suite "$suite" < /dev/null &
+  pids+=("$!")
+done
+failed=0
+for i in "${!pids[@]}"; do
+  if ! wait "${pids[i]}"; then
+    tail -n 25 "$DONE_DONE_EVIDENCE_ROOT/${suites[i]}.log" >&2
+    failed=1
+  fi
+done
+[ "$failed" -eq 0 ] || exit 1
+
+# Additional suites selected by a changed ref retain their original order.
+for suite in "${suites[@]:parallel_count}"; do
+  run_suite "$suite" || { tail -n 25 "$DONE_DONE_EVIDENCE_ROOT/$suite.log" >&2; exit 1; }
 done
 bash tests/jg-endpoint-follow.test.sh > "$DONE_DONE_EVIDENCE_ROOT/endpoint-follow.log" 2>&1 \
   || { tail -n 25 "$DONE_DONE_EVIDENCE_ROOT/endpoint-follow.log" >&2; exit 1; }

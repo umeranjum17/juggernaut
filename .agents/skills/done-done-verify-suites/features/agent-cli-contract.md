@@ -1,6 +1,7 @@
 # Agent CLI contract
 
 Run `done-done run agent-cli-contract` for the default suite, or use the [contract suite](../suites/agent-cli-contract.md) to include changed tests.
+The contract suite also covers the [verification regression driver](../../../../journeys/agent-cli-verification-regressions.mjs) and [wake dispatcher](../../../../bin/jg-wake-core.sh) for changes to fixture caches or scheduling.
 
 The [journey](../../../../journeys/agent-cli-contract.sh) drives `bin/jg` and `bin/juggernaut-axi` in isolated homes.
 It checks vendor probe, backlog, and away contract help, a ticket body update from a file, a keyed radio answer, and creation and work binding of a public follow-up obligation.

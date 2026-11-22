@@ -32,6 +32,7 @@ import csv
 import hashlib
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -120,7 +121,7 @@ def tree_copy(src, dst):
 class Lab:
     """A throwaway world: a tree copy, a home with fixture data, stand-ins on PATH. `run` puts the home back first."""
 
-    def __init__(self, tree, scratch):
+    def __init__(self, tree, scratch, go_cache=None):
         self.scratch = os.path.abspath(scratch)
         os.makedirs(self.scratch)
         self.tree = os.path.join(self.scratch, 'tree')
@@ -145,6 +146,22 @@ class Lab:
                     'LANG': 'C.UTF-8', 'JG_SPAWN_NO_GUARD': '1', 'JG_TEST_SEAM': '1', 'GIT_CONFIG_GLOBAL': '/dev/null',
                     'GIT_CONFIG_SYSTEM': '/dev/null', 'GIT_AUTHOR_NAME': 'fixture', 'GIT_AUTHOR_EMAIL': 'fixture@example.com',
                     'GIT_COMMITTER_NAME': 'fixture', 'GIT_COMMITTER_EMAIL': 'fixture@example.com'}
+        # Only build artifacts live outside the snapshot. Keep the real XDG
+        # and Juggernaut state in the digest so GETs still expose writes there.
+        cache = os.path.join(self.scratch, 'build')
+        for name in ('bus', 'classify', 'guard-host', 'spawn-core', 'wake-core'):
+            self.env['JG_' + name.upper().replace('-', '_') + '_BIN'] = os.path.join(cache, 'jg-' + name)
+        self.env['GOCACHE'] = os.path.abspath(os.environ.get('GOCACHE') or go_cache or os.path.join(cache, 'go-build'))
+        self.env['GOMODCACHE'] = os.path.abspath(os.environ.get('GOMODCACHE') or os.path.join(cache, 'go-mod'))
+        # Go records local telemetry in its config directory. Redirect that
+        # for the tool alone while leaving the fixture's own config measurable.
+        go = shutil.which('go')
+        if go:
+            launcher = os.path.join(self.stub, 'go')
+            with open(launcher, 'w') as f:
+                f.write('#!/bin/sh\n'
+                        f'XDG_CONFIG_HOME={shlex.quote(cache)} exec {shlex.quote(os.path.abspath(go))} "$@"\n')
+            os.chmod(launcher, 0o755)
         self.values = {}
         self._build_world()
         shutil.copytree(self.run_dir, self.snap, symlinks=True)
@@ -443,8 +460,9 @@ class Pool:
         from concurrent.futures import ThreadPoolExecutor
         import queue
         self.jobs = jobs
+        go_cache = os.path.join(scratch, 'go-build')
         with ThreadPoolExecutor(jobs) as ex:
-            self.labs = list(ex.map(lambda i: Lab(tree, os.path.join(scratch, f'lab{i}')), range(jobs)))
+            self.labs = list(ex.map(lambda i: Lab(tree, os.path.join(scratch, f'lab{i}'), go_cache), range(jobs)))
         self.free = queue.Queue()
         for lab in self.labs:
             self.free.put(lab)
