@@ -144,7 +144,7 @@ out=$(war_room next "$council") || fail "T3 next should exit 0: $out"
 assert_contains "$out" "owner approval asked" "T3 next should ask the owner: $out"
 [ "$(questions_of "$council")" = 1 ] || fail "T3 the council should hold one question, holds $(questions_of "$council")"
 jg_test_backlog "$HOME_DIR" questions --ticket "$council" --json | grep -q 'plan-approval' || fail "T3 the question lacks the must plan-approval"
-jg_test_backlog "$HOME_DIR" questions --ticket "$council" --json | grep -q "$plan_dir/plan.json" || fail "T3 the question lacks the plan path"
+grep -Fxq "$plan_dir/plan.json" "$HOME_DIR/data/war-room/$council/plan-asked" || fail "T3 plan-asked lacks the plan path"
 out=$(war_room next "$council") || fail "T3 a second next should exit 0: $out"
 case $out in *"owner approval asked"*) fail "T3 a second next asked again: $out" ;; esac
 [ "$(questions_of "$council")" = 1 ] || fail "T3 a second next held again"

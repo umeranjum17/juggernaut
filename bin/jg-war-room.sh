@@ -539,7 +539,11 @@ step_approval() {
   check=$("$SCRIPT_DIR/jg-swarm-plan-check.sh" "$PLAN" 2>&1) \
     || { WAITS="waits: $SYNTH_TASK plan-check $(first_line_of "$check")"; return 0; }
   read -r n w <<< "$(plan_waves "$PLAN")"
-  reason="Plan $(jq -r '.title' "$PLAN"): $n slices in $w waves. The plan file is $PLAN. Say yes and Main starts /blitz on it."
+  # shellcheck source=bin/jg-ask-gate-lib.sh
+  . "$SCRIPT_DIR/jg-ask-gate-lib.sh"
+  reason="A plan of $n parts in $w stages is ready: $(jq -r '.title' "$PLAN")."
+  jg_ask_card_refusal "$COUNCIL" 2 "Is the plan ready for approval?" "$reason" >/dev/null \
+    || reason="A plan of $n parts in $w stages is ready."
   out=$("$SCRIPT_DIR/jg-captain-hold.sh" hold "$COUNCIL" --must plan-approval --reason "$reason" 2>&1) \
     || { printf 'owner approval not asked: %s\n' "$(first_line_of "$out")"; STATUS=1; return 0; }
   printf '%s\n' "$PLAN" > "$RUN/plan-asked"
