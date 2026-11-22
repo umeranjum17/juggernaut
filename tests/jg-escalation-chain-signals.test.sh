@@ -314,7 +314,7 @@ test_a_merge_freeze_never_idles_free_lanes() {
   backlog "$m" add jg-alpha "first item" --priority 1
   backlog "$m" add jg-beta "second item"
   JG_CREW_STATE_BIN="$crew" PANES='1 2 3 4 5 6' cycle "$m"
-  grep -q '^check: ready work waiting with free lane slots (3/6 open): jg-alpha jg-beta - ' "$m/events" \
+  grep -q '^check: ready work waiting with free lane slots (3 of 6 lanes free, 3 working): jg-alpha jg-beta - ' "$m/events" \
     || fail "a merge freeze with 3 live lanes of 6 and 2 ready items raised no wake naming the count and ids: $(cat "$m/events")"
   [ "$(grep -c '^check: ready work waiting' "$m/events")" = 1 ] || fail "the shortfall rang more than once: $(cat "$m/events")"
   pass "live lanes below the floor with ready work wake the home whatever a merge freeze holds, and parked lanes do not count as live"
@@ -338,7 +338,7 @@ test_ready_work_that_nothing_can_start_raises_no_alarm() {
   printf '3\n' > "$m/config/lane-target"
   touch -d '-15 days' "$m/state/.last-ready-work-check"
   PANES='1 2' cycle "$m"
-  grep -q '^check: ready work waiting with free lane slots (2/3 open): jg-alpha' "$m/events" \
+  grep -q '^check: ready work waiting with free lane slots (1 of 3 lanes free, 2 working): jg-alpha' "$m/events" \
     || fail "the same home with a free lane raised no wake: $(cat "$m/events")"
   m=$(home ready-container)
   mkdir -p "$m/data"

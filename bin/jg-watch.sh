@@ -143,7 +143,7 @@
 #                          running a check or removing poll artifacts
 #   heartbeat              fleet-scan backstop found an unsurfaced captain-relevant
 #                          status, unless afk is active
-#   check: ready work waiting with free lane slots: (<open>/<target> open): <ids> - dispatch them now, P0 first, up to project capacity
+#   check: ready work waiting with free lane slots: (<free> of <target> lanes free, <open> working): <ids> - dispatch them now, P0 first, up to project capacity
 #   check: ready work waiting with no worker working: <ids> - dispatch them now, P0 first, up to project capacity
 #                          a primary or squad_lead home's base-cadence scan found dispatchable
 #                          queued work (jg-backlog.sh ready) while the home sits
@@ -157,7 +157,7 @@
 #                          Re-raised while the condition holds, once per
 #                          new ready set and then every READY_WORK_RESURFACE_SECS;
 #                          intake uses HEARTBEAT's base interval, never its backoff
-#   check: ready backlog stalled: <ids> waits with free lanes|no worker working (<open>/<target> open) and nothing started for <n>s - dispatch them now, P0 first, up to project capacity, or hold each with why it waits; Main was told id=<key>
+#   check: ready backlog stalled: <ids> waits with free lanes|no worker working (<free> of <target> lanes free, <open> working) and nothing started for <n>s - dispatch them now, P0 first, up to project capacity, or hold each with why it waits; Main was told id=<key>
 #                          the wait-timers chain's stalled-backlog backstop: a
 #                          squad_lead home's ready, startable work sat on a free
 #                          lane (or with no worker provably working) with no lane
@@ -3060,7 +3060,7 @@ ready_idle() { JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-rea
 # held or in flight) cannot reset the re-raise window. Intake is independent of
 # the heartbeat's idle backoff and runs before an away heartbeat can exit.
 ready_work_waits_idle() {
-  local meta task target open now surfaced surfaced_at surfaced_ids ready_rc freed
+  local meta task target open free now surfaced surfaced_at surfaced_ids ready_rc freed
   READY_WORK_IDS=
   READY_WORK_REASON=
   # Paused: withdraw the queued row so nothing is presented, and drop the
@@ -3095,7 +3095,8 @@ ready_work_waits_idle() {
       ready_idle clear ready-work: || true
       return 1
     fi
-    READY_WORK_REASON="check: ready work waiting with free lane slots ($open/$target open): $READY_WORK_IDS - dispatch them now, P0 first, up to project capacity"
+    free=$((target - open))
+    READY_WORK_REASON="check: ready work waiting with free lane slots ($free of $target lanes free, $open working): $READY_WORK_IDS - dispatch them now, P0 first, up to project capacity"
   else
     for meta in "$STATE"/*.meta; do
       [ -f "$meta" ] || continue

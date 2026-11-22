@@ -333,7 +333,7 @@ jg_wait_timers_backlog() {  # <now> <interval>
   local now=$1 interval=$2 stall=${JG_READY_STALL_SECS:-$(jg_wait_timers_table ready-stall)} every=${JG_READY_STALL_POLL_SECS:-60}
   local record="$STATE/.waiting-timers/.ready-backlog" mark="$STATE/.waiting-timers/.ready-backlog-checked"
   local whyfile="$STATE/.waiting-timers/.ready-backlog-why" why_old
-  local rc since='' lanes='' key='' reported=0 last=0 id lead age report reason cond
+  local rc since='' lanes='' key='' reported=0 last=0 id lead age report reason cond free
   case "$stall" in ''|*[!0-9]*|0*) echo "waiting timers: JG_READY_STALL_SECS must be positive decimal seconds" >&2; return 1 ;; esac
   case "$every" in ''|*[!0-9]*) echo "waiting timers: JG_READY_STALL_POLL_SECS must be decimal seconds" >&2; return 1 ;; esac
   declare -F ready_backlog_stall_state >/dev/null || return 0
@@ -397,13 +397,15 @@ jg_wait_timers_backlog() {  # <now> <interval>
   [ "$reported" -eq 0 ] || [ $((now - last)) -ge "$interval" ] || return 0
   cond="free lanes"
   [ "$READY_STALL_MODE" != no-worker ] || cond="no worker working"
-  report="blocked [key=$key]: waiting-timer-backlog-overdue: $lead (ready work $READY_STALL_IDS, $cond $READY_STALL_OPEN/$READY_STALL_TARGET open, nothing started for ${age}s, since=$since); Main must steer the lead to dispatch it"
+  free=$((READY_STALL_TARGET - READY_STALL_OPEN))
+  [ "$free" -ge 0 ] || free=0
+  report="blocked [key=$key]: waiting-timer-backlog-overdue: $lead (ready work $READY_STALL_IDS, $cond ($free of $READY_STALL_TARGET lanes free, $READY_STALL_OPEN working), nothing started for ${age}s, since=$since); Main must steer the lead to dispatch it"
   jg_wait_timer_report "$report" || return 0
   [ "$reported" -gt 0 ] || reported=$now
   last=$now
   printf '%s\t%s\t%s\t%s\t%s\n' "$since" "${READY_STALL_LANES:--}" "$key" "$reported" "$last" > "$record.tmp.$$" \
     && mv "$record.tmp.$$" "$record" || return 1
-  reason="check: ready backlog stalled: $READY_STALL_IDS waits with $cond ($READY_STALL_OPEN/$READY_STALL_TARGET open) and nothing started for ${age}s - dispatch them now, P0 first, up to project capacity, or hold each with why it waits; Main was told id=$key"
+  reason="check: ready backlog stalled: $READY_STALL_IDS waits with $cond ($free of $READY_STALL_TARGET lanes free, $READY_STALL_OPEN working) and nothing started for ${age}s - dispatch them now, P0 first, up to project capacity, or hold each with why it waits; Main was told id=$key"
   jg_wait_timer_ready_idle fire "ready-backlog:${READY_STALL_IDS// /+}" || return 1
   wake "$reason"
 }
