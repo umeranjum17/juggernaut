@@ -49,6 +49,8 @@
 # A design card (jg-question-card.sh post --must design-pick) also has a marker
 # state/design-cards/<card-key>; its answer is recorded on the card's backlog row
 # (jg-captain-hold.sh design-pick), which releases the work linked to it.
+# A workflow card has a marker under state/workflow-cards. Its answer goes to
+# the workflow step keyed by that marker.
 # State: state/board-routes/<card-key>, state/.board-answers-seen. Unrouted keys
 # starting `jg-` belong to the captain-hold card adapter and are skipped.
 set -u
@@ -182,6 +184,12 @@ designed() {  # <card-key> <answer>
   "$SCRIPT_DIR/jg-captain-hold.sh" design-pick "$1" --words "$2" >/dev/null 2>&1 || true
 }
 
+workflowed() {  # <card-key> <at> <answer> <label> [<note>]
+  [ -f "$STATE/workflow-cards/$1" ] || return 3
+  JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-workflow.sh" answer "$1" \
+    --answer "$3" --at "$2" --label "$4" --note "${5:-}"
+}
+
 # A board that cannot be read is said in full by `check`; under `tick` (a pass
 # every half minute) the same words are said once and again only after a pass
 # that read the board, so a missing tool cannot wake Main every tick.
@@ -193,7 +201,7 @@ unreadable() {
 }
 
 cmd_check() {
-  local json board key answer label note at lead dk link text id out first=0 report='' shown closed seen got
+  local json board key answer label note taken at lead dk link text id out first=0 report='' shown closed seen got workflow_rc
   jg_question_signoff_available || { unreadable "board answers cannot be read: sign-off-axi is not on PATH"; return 0; }
   board=$(jg_question_board)
   json=$(sign-off-axi answers ${board:+"$board"} --json 2>/dev/null) || { unreadable "board answers cannot be read: sign-off-axi answers failed"; return 0; }
@@ -205,10 +213,14 @@ cmd_check() {
   # an answer that needs nothing costs no process at all.
   lines_of closed "$CLOSED"
   lines_of seen "$SEEN"
-  while IFS=$'\037' read -r key at answer label note; do
+  while IFS=$'\037' read -r key at answer label note taken; do
     key_ok "$key" && [ -n "$at" ] && [ -n "$answer" ] || continue
-    designed "$key" "$answer"
-    report="${report}$(route_to_work "$key" "$at" "$answer")"
+    workflow_rc=0
+    workflowed "$key" "$at" "$answer" "${taken:-$label}" "$note" || workflow_rc=$?
+    if [ "$workflow_rc" = 3 ]; then
+      designed "$key" "$answer"
+      report="${report}$(route_to_work "$key" "$at" "$answer")"
+    fi
     # The chat message for this card shows the board's answer and drops its buttons. A repeat is a no-op there.
     case "$closed" in *$'\n'"$key"$'\n'*) ;; *)
       printf '%s\n' "$key" >> "$CLOSED"
@@ -217,6 +229,7 @@ cmd_check() {
       [ "$first" = 1 ] || "$SCRIPT_DIR/jg-bus.sh" publish card-close "$key" "answered" --answer "$shown" >/dev/null 2>&1 || true
       ;;
     esac
+    [ "$workflow_rc" = 3 ] || continue
     rget lead "$key" lead
     if [ -z "$lead" ]; then
       case "$key" in jg-*) continue ;; esac
@@ -252,15 +265,21 @@ cmd_check() {
       sign-off-axi dismiss "$key" ${board:+"$board"} --reason done-elsewhere >/dev/null 2>&1 && rput "$key" archived 1
     fi
   done < <(printf '%s\n' "$json" | jq -r 'to_entries[] | select(.value.answer != null and .value.at != null)
-    | [.key, .value.at, .value.answer, (.value.label // ""), (.value.note // "")] | map(tostring | gsub("[\n\r\t\u001f]"; " ")) | join("\u001f")' 2>/dev/null)
+    | [.key, .value.at, .value.answer, (.value.label // ""), (.value.note // ""), (.value.taken // "")] | map(tostring | gsub("[\n\r\t\u001f]"; " ")) | join("\u001f")' 2>/dev/null)
   [ -z "$report" ] || printf '%s' "$report"
 }
 
 cmd_route_answer() {
-  local key=${1-} at=${2-} answer=${3-} label=${4-} lead dk link text id out
+  local key=${1-} at=${2-} answer=${3-} label=${4-} lead dk link text id out workflow_rc=0
   key_ok "$key" || die "route-answer needs a card key" 2
   { [ -n "$at" ] && [ -n "$answer" ]; } || die "route-answer needs the answer time and the captain's answer" 2
   mkdir -p "$ROUTES"
+  workflowed "$key" "$at" "$answer" "$label" || workflow_rc=$?
+  case "$workflow_rc" in
+    0) printf 'routed: %s -> workflow\n' "$key"; return 0 ;;
+    3) ;;
+    *) return "$workflow_rc" ;;
+  esac
   designed "$key" "$answer"
   route_to_work "$key" "$at" "$answer" >&2 || true
   rget lead "$key" lead

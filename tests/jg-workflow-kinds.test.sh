@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # jg-workflow-kinds: an approved workflow always has a runnable first step. The real bin/jg-workflow.sh advance, the real shipped step
-# kinds (worker, recon, owner), the real bin/jg-brief.sh and the real approve-dispatch run over a scratch home; the only stand-ins are
-# the project registry (a fixed delivery mode), the owner's hold (a marker file says he answered) and the alert command (it logs).
+# kinds (worker, recon, owner), the real bin/jg-brief.sh and the real approve-dispatch run over a scratch home. K3 uses a
+# stand-in board and also checks the legacy hold phase against the real workflow. The project registry and alerts are stand-ins.
 #
 # K1 a plain ship: one pass writes a complete brief (no placeholder, the ticket's words, no scout contract) and an approval on the
 #    worker route; the dispatch check is kicked; a second pass writes and starts nothing more.
 # K2 a report-only Recon: its brief carries the Recon contract and the Recon route; with a report, a `done` line and the gate's record
 #    the next pass closes the step, and no build starts.
-# K3 Recon to build: after the Recon the owner step asks for his yes and the worker stays unstarted; his yes closes the owner step and
-#    the worker's brief names the Recon's report.
+# K3 Recon to build: an answered hold phase alone leaves the worker unstarted. A board yes with a verified row signature
+#    closes the owner step, and the worker's brief names the Recon's report.
 # K4 a critic with its handler absent is one named alert, and a second pass raises no second one.
 # K5 an unreadable prerequisite (an unregistered delivery mode) is one named failure and no approval is written.
 set -u
@@ -32,20 +32,12 @@ BD=(python3 -I "$ROOT/core/item-store/adapters/bd_compat.py")
 printf '#!/bin/sh\necho "local off"\n' > "$TMP/mode.sh"
 printf '#!/bin/sh\nexit 1\n' > "$TMP/nomode.sh"
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s/alerts.log"\n' "$TMP" > "$TMP/alert.sh"
-cat > "$TMP/hold.sh" <<'SH'
-#!/bin/sh
-# hold <row> --reason <why> | phase <row>: the owner's hold, answered when $JG_HOME/standin/<row>.yes exists.
-case $1 in
-  hold) echo "$2" >> "$JG_HOME/standin/holds" ;;
-  phase) if [ -e "$JG_HOME/standin/$2.yes" ]; then echo answered; else echo raised; fi ;;
-esac
-SH
 chmod +x "$TMP"/*.sh
 
 home() { # <name> <spec>: a scratch home with ticket jg-t1 carrying the workflow
   local h=$TMP/$1
   jg_test_beads_home "$h"
-  mkdir -p "$h/state" "$h/standin"
+  mkdir -p "$h/state"
   printf '#!/bin/sh\necho kicked >> "%s/kicks"\n' "$h" > "$h/state/auto-dispatch.check.sh"
   chmod +x "$h/state/auto-dispatch.check.sh"
   jg_test_add "$h" jg-t1 "[feature] Faster sign in" --body "Owner order: Main42707. Make sign in take one tap."
@@ -54,7 +46,7 @@ home() { # <name> <spec>: a scratch home with ticket jg-t1 carrying the workflow
 }
 adv() { # <home> [mode script]: one pass of the real advance, then wait for its start jobs to end
   local h=$1 mode=${2:-$TMP/mode.sh} i
-  res=$(JG_HOME=$h JG_WORKFLOW_PROJECT_MODE=$mode JG_WORKFLOW_HOLD=$TMP/hold.sh JG_WORKFLOW_ALERT=$TMP/alert.sh timeout 30 "$WF" advance "$h" 2> "$TMP/err")
+  res=$(JG_HOME=$h JG_WORKFLOW_PROJECT_MODE=$mode JG_WORKFLOW_ALERT=$TMP/alert.sh timeout 30 "$WF" advance "$h" 2> "$TMP/err")
   err=$(cat "$TMP/err")
   cat "$h"/data/workflows/*.step-start.pid 2> /dev/null >> "$JOBS"
   for ((i = 0; i < 100; i++)); do
@@ -116,19 +108,69 @@ assert_equals 0 "$(alerts)" "K2 no alert"
 pass "K2 a report-only Recon closes on its report and builds nothing"
 
 # K3
-H=$(home k3 scout-worker)
-R1=$(rowid "$H" jg-t1 1); R2=$(rowid "$H" jg-t1 2); R3=$(rowid "$H" jg-t1 3)
-adv "$H"
-lane_done "$H" "$R1"
-adv "$H"
-assert_contains "$res" "started $R2 (owner)" "K3 the owner step starts after the report: $err"
-assert_contains "$(cat "$H/standin/holds")" "$R2" "K3 his yes is asked for on the owner row"
+mkdir -p "$TMP/k3-bin"
+cat > "$TMP/k3-bin/sign-off-axi" <<'SH'
+#!/usr/bin/env bash
+case $1 in
+  list) printf '{"decisions":[]}\n' ;;
+  raise)
+    shift
+    while [ "$#" -gt 1 ]; do
+      if [ "$1" = --key ]; then printf '%s\n' "$2" > "$SIGN_OFF_HOME/posted"; exit 0; fi
+      shift
+    done
+    exit 1 ;;
+  *) printf '{}\n' ;;
+esac
+SH
+chmod +x "$TMP/k3-bin/sign-off-axi"
+k3_advance() {
+  PATH="$TMP/k3-bin:$PATH" SIGN_OFF_HOME="$H/board" adv "$H"
+}
+hold=$ROOT/bin/jg-captain-hold.sh
+k3_setup() {
+  H=$(home "$1" scout-worker)
+  R1=$(rowid "$H" jg-t1 1); R2=$(rowid "$H" jg-t1 2); R3=$(rowid "$H" jg-t1 3)
+  mkdir -p "$H/board"
+  k3_advance
+  lane_done "$H" "$R1"
+  k3_advance
+  assert_contains "$res" "started $R2 (owner)" "K3 the owner step starts after the report: $err"
+  JG_HOME=$H "$hold" open "$R2" --identity >/dev/null || fail "K3 his yes is asked for on the owner row"
+}
+k3_setup k3-phase
+gate=$(JG_HOME=$H "$ROOT/bin/jg-backlog.sh" questions --ticket "$R2" --json | jq -er '.[0].id') \
+  || fail "K3 could not find the owner question"
+printf 'Fixture marks the question answered without approval.\n' > "$H/words"
+JG_HOME=$H "$ROOT/bin/jg-beads-write.py" resolve "$gate" --words-file "$H/words" --resolution answered >/dev/null \
+  || fail "K3 could not set the answered phase"
+assert_equals answered "$(JG_HOME=$H "$hold" phase "$R2")" "K3 the answered phase fixture is active"
+k3_advance
+assert_equals open "$(status "$H" "$R2")" "K3 an answered phase alone leaves the owner step open"
+assert_absent "$H/state/dispatch-approved/$R3" "K3 an answered phase alone cannot release the worker"
+
+k3_setup k3-board
 assert_absent "$H/state/dispatch-approved/$R3" "K3 no build is approved before his yes"
-adv "$H"
+k3_advance
 assert_equals "" "$res" "K3 waiting for him starts nothing"
 assert_equals open "$(status "$H" "$R3")" "K3 the build row stays open"
-: > "$H/standin/$R2.yes"
-adv "$H"
+
+key=wf-$(task "$R2")-plan
+assert_equals "$key" "$(cat "$H/board/posted")" "K3 the board card belongs to the owner step"
+PATH="$TMP/k3-bin:$PATH" SIGN_OFF_HOME="$H/board" JG_HOME=$H \
+  "$ROOT/bin/jg-board-answers.sh" route-answer "$key" 1795344000 "a-$(task "${R2#jg-}")" >/dev/null \
+  || fail "K3 board yes did not reach the workflow"
+( # shellcheck disable=SC2034
+  JG_HOME=$H STATE=$H/state DATA=$H/data SCRIPT_DIR=$ROOT/bin
+  # shellcheck disable=SC2329
+  fail() { echo "$*"; exit 1; }
+  # shellcheck source=bin/jg-backlog-transition-lib.sh disable=SC1091
+  . "$ROOT/bin/jg-backlog-transition-lib.sh"
+  # shellcheck source=bin/jg-captain-ask-lib.sh disable=SC1091
+  . "$ROOT/bin/jg-captain-ask-lib.sh"
+  guard_captain_ask_build "$R3"
+) || fail "K3 the board yes must verify for this worker's owner row"
+k3_advance
 assert_contains "$res" "closed $R2 (owner): the owner answered" "K3 his yes closes the owner step"
 assert_contains "$res" "started $R3 (worker)" "K3 the build starts in the same pass"
 assert_contains "$(cat "$H/data/$(task "$R3")/brief.md")" "data/$(task "$R1")/report.md" "K3 the build brief names the approved report"

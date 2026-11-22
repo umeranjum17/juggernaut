@@ -976,8 +976,21 @@ reply_release() {  # <task-id> <title> <card-key>
 # the question closes too (--release leaves it open and lifts a date it was deferred to). An exact retry finishes
 # what the first call left undone; a different answer to an answered question is refused.
 write_gate_approval() {  # <task-id> <show-output>
-  local id=$1 line body tmp
-  line=$(captain_ask_approval_line "$id" "answer:$DECISION_DIGEST")
+  local id=$1 line body tmp signer=${JG_CAPTAIN_HOLD_SIGNER_HOME:-}
+  if [ -n "$signer" ]; then
+    # The answer still owns the lead's row and locks. Only signing runs in the parent home.
+    # shellcheck source=bin/jg-squad-lead-parent-lib.sh
+    . "$SCRIPT_DIR/jg-squad-lead-parent-lib.sh"
+    jg_squad_lead_parent_record_parse "$(jg_compat_parent_marker "$JG_HOME")" \
+      && [ "$JG_SQUAD_LEAD_PARENT_ROUTE" = local ] && [ "$JG_SQUAD_LEAD_PARENT_HOME" = "$signer" ] \
+      || fail "the requested signer is not this home's local parent"
+    line=$(JG_HOME="$signer" STATE="$signer/state" bash -c \
+      'fail() { echo "$*" >&2; exit 1; }; . "$1" && captain_ask_approval_line "$2" "$3"' \
+      _ "$signer/bin/jg-captain-ask-lib.sh" "$id" "answer:$DECISION_DIGEST") \
+      || fail "the local parent could not sign the approval for $id"
+  else
+    line=$(captain_ask_approval_line "$id" "answer:$DECISION_DIGEST")
+  fi
   body=$(decode_shown_value "$(show_field "$2" body)") || fail "could not decode the body of $id"
   case "$body" in *"$line"*) return 0 ;; esac
   tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/jg-captain-hold-body.XXXXXX") || fail "cannot stage the approval for $id"

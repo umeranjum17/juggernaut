@@ -141,13 +141,15 @@ deliverable() {
     | jq -c --arg prefix "$prefix" '
         to_entries[] | select(.key | startswith($prefix))
         | (.key[($prefix | length):]) as $rest
-        | {key: ($rest | sub("-[^-]*$"; "")), stamp: ($rest | sub("^.*-"; "")), answer: (.value.answer // ""), label: (.value.label // ""), close: (.value.close // ""), at: (.value.at // "")}' 2>/dev/null \
+        | {key: ($rest | sub("-[^-]*$"; "")), card: .key, stamp: ($rest | sub("^.*-"; "")), answer: (.value.answer // ""), label: (.value.label // ""), close: (.value.close // ""), at: (.value.at // "")}' 2>/dev/null \
     | while IFS= read -r line; do
         key=$(jq -r '.key' <<<"$line")
         stamp=$(jq -r '.stamp' <<<"$line")
         answer=$(jq -r '.answer' <<<"$line")
         at=$(jq -r '.at' <<<"$line")
         jg_procevent_source_id_valid "$key" && [ -n "$answer" ] && [ -n "$at" ] || continue
+        # Board answers owns cards adopted by a workflow.
+        [ ! -f "$STATE/workflow-cards/$prefix$key-$stamp" ] || continue
         [ ! -f "$DELIVERED" ] || ! grep -qxF "$key"$'\t'"$at" "$DELIVERED" || continue
         identity=$("$SCRIPT_DIR/jg-captain-hold.sh" open "$key" --identity 2>/dev/null) || continue
         [ "$stamp" = "$(jg_question_key_stamp "$identity")" ] || continue
@@ -169,13 +171,15 @@ cmd_poll() {
 }
 
 cmd_answers() {
-  local file=${1-} line key answer at
+  local file=${1-} line key card answer at
   [ -f "$file" ] || die "result file does not exist: $file"
   while IFS= read -r line; do
     key=$(jq -r '.key' <<<"$line")
+    card=$(jq -r '.card // empty' <<<"$line")
     answer=$(jq -r '.answer' <<<"$line")
     at=$(jq -r '.at' <<<"$line")
     jg_procevent_source_id_valid "$key" && [ -n "$answer" ] && [ -n "$at" ] || continue
+    [ -z "$card" ] || [ ! -f "$STATE/workflow-cards/$card" ] || continue
     jq -r '[.key, .answer, .label, .close] | map(gsub("[\n\r\t]"; " ")) | join("\t")' <<<"$line"
   done < "$file"
 }

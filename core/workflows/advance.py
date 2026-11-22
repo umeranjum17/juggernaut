@@ -5,7 +5,7 @@ finished step and starts each ready one as a detached job, and it never waits fo
           Each `result` has 2 seconds; over that the step stays open and the pass logs `slow`.
   failed  a start record with rc not 0, a start job gone with no record, a result of `failed`, or a kind with no handler: the step stays open, so
           the stages after it stay blocked, and one `workflow-step-failed` alert is raised for it.
-  start   a step whose blockers are all closed and that has no data/workflows/<row>.started: write `.started`, launch
+  start   a step whose blockers are closed or have handed off to its kind, and that has no data/workflows/<row>.started: write `.started`, launch
           `bin/jg-workflow.sh step-start <home> <row>` with `detach`, print `started <row> (<kind>)`.
 
 The pass is safe to run twice at once (a second run leaves a mark and the first makes one more pass), to be killed (the kernel
@@ -153,7 +153,7 @@ class Pass:
             if self.status[row] == "closed" or os.path.exists(self.path(row, "started")):
                 continue
             pending = {b for b in blockers(r) if self.blocker_open(b)}
-            if pending and kind != "critic":
+            if pending and kind not in ("critic", "owner"):
                 continue
             module = self.module(kind)
             if pending:
