@@ -46,11 +46,21 @@ def data_dir(home):
 
 def reports_before(step):
     """The report of every Recon in a stage before the step's own, as `data/<task>/report.md` lines."""
-    meta, out = step["metadata"], []
-    for r in store.steps(meta["wf_parent"]):
-        if r["metadata"]["wf_kind"] == "recon" and int(r["metadata"]["wf_stage"]) < int(meta["wf_stage"]):
-            out.append(f"data/{store.task_id(r['id'])}/report.md")
-    return out
+    meta = step["metadata"]
+    rows = store.steps(meta["wf_parent"])
+    stages = []
+    for r in rows:
+        m = r["metadata"]
+        stage = int(m["wf_stage"])
+        while len(stages) < stage:
+            stages.append([])
+        stages[stage - 1].append((m["wf_kind"], m.get("wf_arg"), 1))
+    nearest = wflib.nearest(stages, int(meta["wf_stage"]) - 1, wflib.REPORTS)
+    if nearest is None:
+        return []
+    return [f"data/{store.task_id(r['id'])}/report.md" for r in rows
+            if int(r["metadata"]["wf_stage"]) == nearest + 1 and r["metadata"]["wf_kind"] in wflib.REPORTS
+            and r["status"] == "closed"]
 
 
 def sections(step, scout):
@@ -60,6 +70,9 @@ def sections(step, scout):
         raise Failed(f"cannot read the ticket {step['metadata']['wf_parent']}")
     task = [ticket["title"], "", (ticket.get("description") or "").strip(), "",
             f"This lane is step {step['metadata']['wf_index']} of stage {step['metadata']['wf_stage']} of the workflow on {ticket['id']}."]
+    quote = (ticket.get("metadata") or {}).get("workflow_quote")
+    if quote:
+        task += ["", f'Owner quote: "{quote}"']
     reports = reports_before(step)
     if scout:
         spec = ["Investigate the ticket above and write the report the Recon contract names; change no code.",
@@ -94,6 +107,14 @@ def brief(home, step, scout):
         os.replace(path + ".tmp", path)
     if PLACEHOLDER.search(open(path).read()):
         raise Failed(f"the brief of {row} still holds a placeholder")
+    row_dir = os.path.join(data_dir(home), row)
+    os.makedirs(row_dir, exist_ok=True)
+    link = os.path.join(row_dir, "brief.md")
+    target = f"../{task}/brief.md"
+    if not os.path.islink(link) or os.readlink(link) != target:
+        tmp = link + f".{os.getpid()}.tmp"
+        os.symlink(target, tmp)
+        os.replace(tmp, link)
     return path
 
 

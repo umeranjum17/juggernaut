@@ -2033,6 +2033,9 @@ journeys:
   jg-workflow-kinds:
     tier: local
     command: bash tests/jg-workflow-kinds.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  jg-workflow-worker:
+    tier: local
+    command: bash tests/jg-workflow-worker.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   jg-workflow-advance:
     tier: local
     command: bash tests/jg-workflow-advance.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
