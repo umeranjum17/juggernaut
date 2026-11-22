@@ -73,6 +73,32 @@ expect_code 0 "$rc" "T4 the answered ticket should spawn: $out"
 assert_grep 'kind=ship' "$HOME_DIR/state/$cask.meta" "T4 the answered ticket left no ship task record"
 pass "T4 the same spawn passes after the captain's answer, and a copied line stays refused"
 
+# T13: use the real spawn gate even if a brief was prepared before the rules were enabled.
+tasks add jg-m7h "[captain-ask] Start repairs automatically" --priority 0 --kind ship --body "Standing repair order" >/dev/null \
+  || fail "T13 could not file the standing order"
+BEADS_ACTOR=alert:repair tasks add alert-repair-fixture "Repair a failing watcher check" --priority 1 --kind ship --repo proj --body "Alert-filed repair" >/dev/null \
+  || fail "T13 could not file the repair"
+ticket "Repair a failing watcher check"; lookalike=$TID
+scaffold alert-repair-fixture --mode direct-PR || fail "T13 could not scaffold the repair"
+scaffold "$lookalike" --mode direct-PR || fail "T13 could not scaffold the lookalike"
+: > "$HOME_DIR/config/owner-rules"
+out=$(spawn alert-repair-fixture ship); rc=$?
+expect_code 1 "$rc" "T13 an unsigned standing order must refuse a repair: $out"
+assert_contains "$out" "needs the recorded standing approval on jg-m7h" "T13 the refusal names the standing approval"
+refused_clean alert-repair-fixture
+captain "$HOME_DIR" hold jg-m7h --reason "approve automatic repair" >/dev/null 2>&1 || fail "T13 hold failed"
+captain "$HOME_DIR" answer jg-m7h --decision-file "$W/decision.txt" --release >/dev/null 2>&1 || fail "T13 answer failed"
+out=$(spawn "$lookalike" ship); rc=$?
+expect_code 1 "$rc" "T13 the human-filed lookalike must be refused: $out"
+assert_contains "$out" "owner-rules: no owner ask" "T13 a title does not confer the owner's approval"
+refused_clean "$lookalike"
+out=$(spawn alert-repair-fixture ship); rc=$?
+expect_code 0 "$rc" "T13 the alert repair should start under the standing approval: $out"
+assert_contains "$out" "starts on standing repair order jg-m7h" "T13 spawn recognizes the inherited approval"
+pass "T13 spawn accepts an alert-filed repair on jg-m7h and refuses a human-filed lookalike"
+
+rm -f -- "$HOME_DIR/config/owner-rules"
+
 # T5
 S="$W/send"
 mkdir -p "$S/state" "$S/config" "$S/data"

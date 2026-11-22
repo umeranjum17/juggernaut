@@ -118,9 +118,9 @@ jg_watch_check_result() {  # <home> <state dir> <check id> <exit status> <diagno
     2)
       detail=$(head -c 512 "$diagnostic" | tr '\t\r\n' '   ')
       body=$(printf '## Captain\nKeep the home checks running reliably.\n\n## Ask\nRepair the %s watcher check.\n\n## Why\nIt failed on three consecutive runs. The latest exit status was %s.\n%s\n\n## Done when\nThe check runs successfully on its normal cadence.\n\n## Acceptance Criteria\nReproduce the failure and verify the repair through the watcher.\n' "$key" "$rc" "$detail")
-      if ! jg_run_timed "$timeout" env JG_HOME="$home" JG_STATE_OVERRIDE="$state" \
+      if ! jg_run_timed "$timeout" env JG_HOME="$home" JG_STATE_OVERRIDE="$state" BEADS_ACTOR=check:repair \
         bash "${BASH_SOURCE[0]%/*}/jg-backlog.sh" add "watch-check-$episode" \
-        "Repair a failing watcher check" --priority 1 --kind ship --body "$body"; then
+        "Repair a failing watcher check" --priority 1 --kind ship --repo juggernaut --body "$body"; then
         rm -f -- "$tmp"
         return 1
       fi

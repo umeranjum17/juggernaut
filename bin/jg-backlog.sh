@@ -264,10 +264,10 @@ case "${1:-}" in
   list) if [ "$LIST_KEYS" = 1 ]; then beads_read | key_tool annotate; else beads_read; fi; exit $? ;;
   ready)
     if [ "${ARGS[1]:-}" = --spawnable ]; then
-      [ "${#ARGS[@]}" -eq 2 ] || fail "ready --spawnable takes no other argument"
+      case "${ARGS[2]:-}:${#ARGS[@]}" in :2|--with-filer:3) ;; *) fail "usage: ready --spawnable [--with-filer]" ;; esac
       # shellcheck source=bin/jg-timeout-lib.sh disable=SC1091
       . "$SCRIPT_DIR/jg-timeout-lib.sh"
-      JG_HOME="$JG_HOME" jg_run_timed "${JG_BACKLOG_SPAWNABLE_LIMIT:-10}" "$SCRIPT_DIR/jg-backlog-spawnable.sh"
+      JG_HOME="$JG_HOME" jg_run_timed "${JG_BACKLOG_SPAWNABLE_LIMIT:-10}" "$SCRIPT_DIR/jg-backlog-spawnable.sh" "${ARGS[@]:2}"
       _jg_rc=$?
       [ "$_jg_rc" -ne 124 ] || printf 'jg-backlog: ready --spawnable did not finish in %s seconds\n' "${JG_BACKLOG_SPAWNABLE_LIMIT:-10}" >&2
       exit "$_jg_rc"
@@ -435,6 +435,9 @@ export JG_BEADS_WIRE_LEAD JG_BEADS_HOME_ID
 # The filer is the home: bd's actor (`created_by`, the journal) and the assignee of a row held with no worker are `main` or
 # `lead:<id>` unless the caller names an actor.
 BEADS_ACTOR=${BEADS_ACTOR:-$(jg_home_actor "$JG_HOME")}
+if [ -n "${JG_TASK_ID:-}" ] && captain_ask_repair_filer "$BEADS_ACTOR"; then
+  fail "only a home check or alert may file a repair under the standing order"
+fi
 export BEADS_ACTOR
 JG_BACKLOG_CHAT_NOTE=$JG_BACKLOG_CHAT_NOTE jg_backlog_beads_write "$JG_HOME/config" ${ARGS[@]+"${ARGS[@]}"}
 _jg_rc=$?

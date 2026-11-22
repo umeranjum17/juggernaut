@@ -29,6 +29,31 @@ captain_ask_root() {  # <ticket>; follow the store's parent edges in this home
   return 1
 }
 
+# Repair filers record their origin in the store's created_by field. Titles and
+# body text are descriptions, so neither can qualify a ticket for this order.
+captain_ask_repair_filer() {
+  case "$1" in check:repair|alert:repair) return 0 ;; *) return 1 ;; esac
+}
+
+captain_ask_filer() (  # <ticket>; read the stored actor instead of the ticket text.
+  set -o pipefail
+  jg_backlog_bd "$JG_HOME" show "$1" --json | jq -r '(if type == "array" then .[0] else . end).created_by // ""'
+)
+
+captain_ask_repair_order() (  # Print the standing ask only while its approval verifies.
+  local order=jg-m7h show home=$JG_HOME repair_state=${STATE:?}
+  if [ -e "$(jg_compat_marker "$home")" ]; then
+    jg_squad_lead_parent_record_parse "$(jg_compat_parent_marker "$home")" || return 1
+    [ "$JG_SQUAD_LEAD_PARENT_ROUTE" = local ] || return 1
+    home=$JG_SQUAD_LEAD_PARENT_HOME
+    repair_state=$home/state
+  fi
+  show=$(jg_backlog_beads_read "$home/config" show "$order" --full) || return 1
+  captain_ask_itself "$show" || return 1
+  JG_HOME="$home" STATE="$repair_state" captain_ask_build_basis "$order" "$show" >/dev/null || return 1
+  printf '%s\n' "$order"
+)
+
 guard_captain_ask() {  # <id>
   local pr
   captain_ask_row "$1"
@@ -309,10 +334,16 @@ captain_ask_on_report() {  # <ticket> <show-output>; prints "<harness> <model> <
 # Reads its rows with bin/jg-backlog-transition-lib.sh's jg_backlog_row_show over $DATA, which
 # bin/jg-spawn.sh and bin/jg-send.sh source; any row it cannot read is refused, never passed.
 guard_captain_ask_build() {  # <ticket>; refuses an unapproved build, else names its record on stderr
-  local show parent='' basis
+  local show parent='' basis filer
   show=$(jg_backlog_row_show "$(jg_backlog_data_absolute "${DATA:?}")" "$1" --full) \
     || fail "cannot read $1 to check whether a build of it needs the captain's approval: $show"
   captain_ask_route_guard "$1" "$show"
+  filer=$(captain_ask_filer "$1") || fail "cannot read the filer of $1 to check repair approval"
+  if captain_ask_repair_filer "$filer"; then
+    basis=$(captain_ask_repair_order) || fail "$1 needs the recorded standing approval on jg-m7h"
+    printf 'approval: %s starts on standing repair order %s\n' "$1" "$basis" >&2
+    return 0
+  fi
   captain_ask_build_gated "$show" || return 0
   if basis=$(captain_ask_build_basis "$1" "$show"); then
     printf 'approval: %s starts on %s\n' "$1" "$basis" >&2

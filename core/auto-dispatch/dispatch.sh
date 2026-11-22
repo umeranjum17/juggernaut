@@ -20,8 +20,8 @@
 #   6. no free lane is left for it;
 #   7. no free copy: with the switch on, core/pool-reserve/reserve.sh `admit` checks each eligible project once per pass (the lane
 #      limit and two copies kept for a red fix). If it refuses, the project waits for a later beat.
-# A ticket that passes all six is a "would start" row, in list order, as many as there are free lanes. The check writes no
-# brief and picks no route.
+# A ticket that passes all six is a "would start" row, in list order, as many as there are free lanes.
+# With the switch on, jg-worker-start prepares eligible self-filed repairs before these checks.
 # The switch is config/auto-dispatch: its first word `on` makes the check act, anything else or no file leaves it watch only.
 # Switch on, each "would start" ticket is spawned through bin/jg-spawn.sh with the route of its approval record, as a ship
 # lane in the delivery mode of its brief's `Delivery contract: mode=` line and the project's registered yolo posture, on the
@@ -134,7 +134,7 @@ approved_field() { sed -n "s/^$2=//p" "$APPROVED/$1" 2>/dev/null | tail -n 1; }
 VERDICT=
 verdict() {
   local id=$1 route error
-  if [ -z "${APPROVED_EXISTS[$id]+x}" ]; then VERDICT=$'why\tno approval record'; return; fi
+  if [ -z "${APPROVED_EXISTS[$id]+x}" ]; then VERDICT=$'why\t'"${REPAIR_REFUSAL[$id]:-no approval record}"; return; fi
   if [ "$decisions_read" -eq 0 ]; then VERDICT=$'why\tits open decisions could not be read'; return; fi
   if [ -n "${BLOCKED_SET[$id]+x}" ]; then VERDICT=$'why\tan open decision is linked to it'; return; fi
   if [ -z "${SPAWNABLE_PROJECT[$id]+x}" ]; then
@@ -319,7 +319,7 @@ launch() {
 # needs_lead <kind> <detail>: a row whose cause only the lead can clear.
 needs_lead() {
   [ "$1" != "spawn failed" ] || return 0
-  case "$2" in "no approval record"|"no brief"|"the approval record has no route"|"the brief has no delivery contract line"|*"Main must "*) return 0 ;; esac
+  case "$2" in "no approval record"*|"no brief"|"the approval record has no route"|"the brief has no delivery contract line"|*"Main must "*) return 0 ;; esac
   return 1
 }
 
@@ -394,13 +394,25 @@ esac
 tmp=$(mktemp -d) || exit 0
 trap 'rm -rf -- "$tmp"' EXIT
 SPAWNABLE_IDS=$tmp/spawnable
-"$BACKLOG" ready --spawnable > "$tmp/out" 2>/dev/null || exit 0   # the store could not answer: write nothing this beat
+"$BACKLOG" ready --spawnable --with-filer > "$tmp/out" 2>/dev/null || exit 0   # the store could not answer: write nothing this beat
+ACT=0; ! switch_on || ACT=1
+REPAIR_START=$FMH/bin/jg-worker-start.sh
+if [ -x "$REPAIR_START" ]; then
+  # shellcheck source=bin/jg-captain-ask-lib.sh disable=SC1091
+  . "$FMH/bin/jg-captain-ask-lib.sh"
+fi
+declare -A REPAIR_REFUSAL=()
 declare -A SPAWNABLE_PROJECT=() APPROVED_EXISTS=() APPROVED_AT=() APPROVED_HARNESS=() APPROVED_MODEL=() APPROVED_EFFORT=() CAPTAIN_ROUTE=()
 : > "$SPAWNABLE_IDS"
-while IFS=$'\t' read -r sid sproj _rest; do
+while IFS=$'\t' read -r sid sproj filer; do
   [ -n "$sid" ] && [ -n "$sproj" ] || continue
   printf '%s\n' "$sid" >> "$SPAWNABLE_IDS"
   [ -n "${SPAWNABLE_PROJECT[$sid]+x}" ] || SPAWNABLE_PROJECT[$sid]=$sproj
+  if [ "$ACT" -eq 1 ] && [ ! -f "$APPROVED/$sid" ] && [ -x "$REPAIR_START" ] && captain_ask_repair_filer "$filer"; then
+    detail=$("$REPAIR_START" --repair "$sid" "$sproj" 2>&1) || {
+      [ "$?" -eq 75 ] || REPAIR_REFUSAL[$sid]="no approval record: $(printf '%s\n' "$detail" | tail -n 1)"
+    }
+  fi
 done < "$tmp/out"
 : > "$tmp/approved-raw"; : > "$tmp/approved-pairs"
 for f in "$APPROVED"/*; do
@@ -447,7 +459,6 @@ fi
 free=$(free_lanes)
 now=$(date +%s)
 started=0; launched=0; deferred=0
-ACT=0; ! switch_on || ACT=1
 : > "$tmp/lead"; : > "$tmp/alerts"
 # List order is the store's priority order and is kept as it is (no sort); approved tickets the list lacks come last, and they never start.
 awk '!seen[$0]++' "$SPAWNABLE_IDS" "$tmp/approved" > "$tmp/ordered"

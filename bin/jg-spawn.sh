@@ -3461,6 +3461,13 @@ spawn_ticket_refuse() {
     return 1
   fi
   [ "$KIND" = ship ] || return 0
+  if [ -f "$CONFIG/owner-rules" ]; then
+    (
+      # shellcheck source=core/brief-inherit/bin/jg-brief-inherit-lib.sh
+      . "$SCRIPT_DIR/../core/brief-inherit/bin/jg-brief-inherit-lib.sh"
+      jg_brief_inherit_owner_rules "$CONFIG" "$KIND"
+    ) || return 1
+  fi
   spawn_ticket_admit
 }
 # A refusal whose every line says a file is held by another live lane is a wait, not a verdict: the holder lands
