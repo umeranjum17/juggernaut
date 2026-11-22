@@ -41,6 +41,27 @@ def known($input; $saved):
   # A retired record ends that task's ownership even while a backlog link remains.
   | [$saved[] | .task as $task | .records[] | select(.retired != null) | {task:$task,url}] as $retired
   | map(select(. as $pair | any($retired[]; . == $pair) | not));
+def terminal_observation: .observation.state | IN("merged","closed");
+def poll_plan($input; $saved):
+  # Index the snapshot once. A busy home can have hundreds of terminal URLs,
+  # each with several owners; already settled owners need no further work.
+  ([$saved[] | .task as $task | .records[] | {task:$task,record:.}]
+   | group_by(.record.url) | INDEX(.[]; .[0].record.url)) as $by_url
+  | known($input; $saved) | map(select(.url | supported_url)) | group_by(.url)
+  | map(.[0].url as $url | (map(.task) | unique) as $tasks
+    | ($by_url[$url] // []) as $rows
+    | ($rows | group_by(.task) | INDEX(.[]; .[0].task)) as $by_task
+    | if any($tasks[]; $by_task[.][0].record | terminal_observation) then
+        ($rows | map(.record | select(terminal_observation))
+         | sort_by([.retired != null, .error != null]) | first) as $final
+        | {updates: [$tasks[] as $task | $by_task[$task][0].record as $old
+            | (if $old == null then
+                 $final + {error:null,pending:[],notified:[]} | del(.retired)
+               elif ($old | terminal_observation | not) or $old.error != null then
+                 $old + {observation:$final.observation,checked_at:$final.checked_at,error:null}
+               else empty end)
+            | {task:$task,record:.}]}
+      else {live: ([$url] + $tasks)} end);
 def latest_checks:
   group_by(.name) | map(sort_by([(.started_at // ""),(.id // 0)]) | last);
 def projected($input; $saved; $now; $max_age):

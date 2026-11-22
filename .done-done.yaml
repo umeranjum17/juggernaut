@@ -86,6 +86,10 @@ journeys:
     tier: local
     command: bash journeys/home-summary-refresh-scale.sh
     timeout: 10m
+  contributions-watcher:
+    tier: local
+    command: bash journeys/contributions-watcher.sh
+    timeout: 3m
   hold-table:
     tier: local
     command: node journeys/hold-table.mjs
