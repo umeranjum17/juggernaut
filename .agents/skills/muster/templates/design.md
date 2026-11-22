@@ -7,6 +7,10 @@ muster: <ticket id>
 
 ## Context
 ## Goals and non-goals
+
+## Non-functional requirements
+<Link to the spec's targets and constraints and give the design response for each that affects this design.>
+
 ## Guide level (how a user or another developer sees it)
 ## Reference level (how it works)
 - Domain model: aggregates, entities, events (past tense), with glossary terms.

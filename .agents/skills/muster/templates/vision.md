@@ -13,6 +13,9 @@ muster: <ticket id>
 ## End state
 <What is true for the user when this is done. Observable, not a feature list.>
 
+## Non-functional requirements
+<Link to the spec's targets that define acceptable delivery for users and operators.>
+
 ## Time budget (appetite)
 <How much time this is worth. Work that does not fit is cut, not extended.>
 

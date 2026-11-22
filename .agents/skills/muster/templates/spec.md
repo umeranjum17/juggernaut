@@ -18,6 +18,19 @@ The frontmatter is the global spec-docs skill's schema plus one `muster` line; t
 ## Context
 ## Problem
 ## Solution (user view)
+
+## Functional requirements
+
+| Category | Outcome | Requirement or reason for exclusion | Source or decision | Acceptance criterion or journey |
+|---|---|---|---|---|
+| <coverage category> | <outcome> | <expected behaviour in a concrete scenario or scope reason> | <source or answer reference> | <criterion or journey if in scope> |
+
+## Non-functional requirements
+
+| Category | Outcome | Requirement or reason for exclusion | Source or decision | Acceptance criterion or journey |
+|---|---|---|---|---|
+| <coverage category> | <outcome> | <target with units and conditions, observable constraint or scope reason> | <source or answer reference> | <measurement method, criterion or journey if in scope> |
+
 ## Objectives (proof first)
 | Journey id | Kind | Key example (given, when, then) | On the base | On the changed build |
 |---|---|---|---|---|

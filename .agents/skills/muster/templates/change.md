@@ -6,10 +6,9 @@ base: <the released version this changes>
 ---
 # Change pack: <feature>
 
-What this feature changes in the agreed documents, as a delta (after OpenSpec's ADDED, MODIFIED, REMOVED). The gate
-compares every line below with the real difference between the documents before and after. Light depth keeps
-Objects changed (invariants only if they change), Glossary changes, Decisions (one short record), Objectives and
-Changelog.
+What this feature changes in the agreed documents, as a delta (after OpenSpec's ADDED, MODIFIED, REMOVED).
+The gate checks the document changes it tracks against the documents before and after.
+Light depth keeps Objects changed (invariants only if they change), Glossary changes, Decisions (one short record), Objectives and Changelog.
 
 ## Objects changed
 | Object | Behaviour added | Behaviour changed | Invariants added or changed |
@@ -36,6 +35,9 @@ Changelog.
 ## Objectives
 - <journey id> (new)
 - <journey id> (preserve)
+
+### Non-functional requirements
+<Link to changed targets and preserved constraints in the spec, with affected journeys or the reason for no impact.>
 
 ## Charter
 <Full depth: the milestone, batch and ticket tables of templates/charter.md for this feature.>

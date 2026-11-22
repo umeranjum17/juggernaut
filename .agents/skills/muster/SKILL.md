@@ -11,7 +11,7 @@ metadata:
 ## What it does
 Aligns Main and the captain before War Room plans and Blitz builds.
 It writes the agreed project documents ("the pack") as the answers settle, checks them with a program, and asks the captain to say yes to that exact checked version.
-It adds no engine: every step is a `jg muster` command, and the machines that take over afterwards are the ones Juggernaut already runs.
+The `jg muster` commands use Juggernaut's existing machines for rounds, approval and handoff.
 
 Invocation words:
 - `/muster <idea>` - triage picks the depth, then the steps below run at that depth.
@@ -67,22 +67,23 @@ The base of every objective in a brand-new project is its skeleton commit.
 
 ## The round loop
 Questions are asked in rounds, one round ticket each, one card per question.
-The standard for a question is `questions.md`; read it before posting any card.
+Read [the requirements coverage map](requirements.md) before the first round and [the question standard](questions.md) before posting any card.
 
-1. Compute the frontier: every question whose prerequisites are settled.
+1. Read the repository and its docs, then seed the coverage map from what they establish.
+2. Compute the frontier from the map: every question whose prerequisites are settled.
    A question that depends on another open one belongs to a later round.
-2. Rank by impact times uncertainty, drop what is not asked (see `questions.md`), and keep at most five per round.
-3. Look up every fact yourself; run a Recon for a fact a round needs.
+3. Rank by impact times uncertainty, drop what is not asked (see `questions.md`), and keep at most five per round.
+   Run a Recon for a fact the repository and docs do not establish and a round needs.
 4. Post the round with `jg muster round <ticket>`.
    It records each question's gate id with what the captain saw, in the shape of `formats.md` section 2.
 5. Answers arrive through the board or chat and are recorded with `jg muster answer`.
    A reply binds only to the presentation it names; a reply that names no round binds only while one round has been shown.
    `formats.md` section 2 owns every binding rule; follow it, never improvise a reading.
-6. Write each answer into its document as it settles: the vision's Decisions line, the glossary term, the ADR.
+6. Update the coverage map as answers settle and write each answer into its document, such as the spec, glossary or ADR.
 7. A change of mind is a correction: `jg muster revise <qid>` adds a revision.
 8. `jg muster round-status <ticket>` finds an answer saved with no document written and redoes the write.
-9. Recompute the frontier.
-   The loop ends when no required gate is open and the frontier is empty.
+9. Recompute the frontier using the map's follow-up and closure rules.
+   End the loop only when the map is closed, no required gate is open and the frontier is empty.
 
 Only the captain's own answers count for an irreversible question and for approval.
 
@@ -103,6 +104,7 @@ Only the captain's own answers count for an irreversible question and for approv
 ## Council and survey
 - Council runs lens lanes through War Room's lane machinery as a separate operation that never needs a pack: `jg muster council <ticket>`, then `jg plan war-room lenses`.
   `next` stops after the lens drafts, and the merge writes the questions back to the round.
+  Give the lenses the evidence from the repository read and carry their merged questions into the coverage map when Muster continues to a pack.
 - Survey reads the existing project first and asks only about gaps.
   When the pack is missing in an existing project and the depth is full or complete, the line says `survey-first`, and the survey runs before the rounds.
 
