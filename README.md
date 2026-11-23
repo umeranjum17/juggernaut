@@ -295,7 +295,7 @@ Lookout is the only fleet dashboard. [`lookout-adapter`](core/lookout-adapter/RE
 | Tool | What it does and how to install it |
 | --- | --- |
 | **done-done** | Drives the real product, has a fresh judge check the capture, and writes a receipt tied to the commit.<br>`npm install -g done-done-axi@0.6.18` |
-| **sign-off** | Collects questions, designs, reports, and proof on one board; the answer is saved for the agent.<br>`npm install -g sign-off-axi@0.7.0 (0.8.0 once sign-off PR 303 releases)` |
+| **sign-off** | Collects questions, designs, reports, and proof on one board; the answer is saved for the agent.<br>`npm install -g sign-off-axi@0.10.3` |
 | **learn-from-mistakes** | Finds the causes that keep coming back in your records, with counts, evidence, and fixes that cite the record.<br>`npm i -g learn-from-mistakes-axi@0.10.0` |
 | **first-draft** | Makes several HTML design directions, lets you compare them at desktop and phone width, and keeps the one you pick.<br>`npm install -g first-draft-axi@0.3.0` |
 | **TakeOne** | Turns a raw screen recording into a framed, paced demo video on your machine.<br>`npm install -g takeone-axi@0.4.0` |
@@ -366,7 +366,7 @@ Lookout is the only fleet dashboard. [`lookout-adapter`](core/lookout-adapter/RE
   </picture>
 </p>
 
-Install lines are copied from each project's published README and pinned to the version published on 26 October 2026; sign-off stays on 0.7.0 until its 0.8.0 release (PR 303) ships. The done-done screen is the project's 0.6.12 transcript, the learn-from-mistakes screen is a 0.9.0 report, and the first-draft screen is 0.3.0-dev release evidence; the install pins are the current published versions. A clean-home install proof for every row is still owed, so treat an install line as the project's documented command, not as a claim that this page ran it end to end.
+Install lines are copied from each project's published README and pinned to the version published on 26 October 2026; sign-off is pinned to 0.10.3, the first build that passes the workflow board tests. The done-done screen is the project's 0.6.12 transcript, the learn-from-mistakes screen is a 0.9.0 report, and the first-draft screen is 0.3.0-dev release evidence; the install pins are the current published versions. A clean-home install proof for every row is still owed, so treat an install line as the project's documented command, not as a claim that this page ran it end to end.
 
 Two notes on what the screens show:
 

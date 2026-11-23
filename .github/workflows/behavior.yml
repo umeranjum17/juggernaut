@@ -70,6 +70,14 @@ jobs:
           mkdir -p "$NPM_CONFIG_PREFIX/bin"
           bin/jg-bootstrap.sh install opa
           echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
+      # tests/jg-workflow-owner.test.sh and tests/jg-workflow-muster.test.sh drive the real board, so the
+      # lane needs sign-off-axi at the version toolchain.versions pins; no older build passes them.
+      - name: Install the pinned sign-off-axi
+        run: |
+          set -eu
+          export NPM_CONFIG_PREFIX=$HOME/.local
+          mkdir -p "$NPM_CONFIG_PREFIX/bin"
+          bin/jg-bootstrap.sh install sign-off-axi
       - name: Run portable parallel shard 1
         run: |
           set -eu
@@ -119,6 +127,14 @@ jobs:
           mkdir -p "$NPM_CONFIG_PREFIX/bin"
           bin/jg-bootstrap.sh install opa
           echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
+      # tests/jg-workflow-owner.test.sh and tests/jg-workflow-muster.test.sh drive the real board, so the
+      # lane needs sign-off-axi at the version toolchain.versions pins; no older build passes them.
+      - name: Install the pinned sign-off-axi
+        run: |
+          set -eu
+          export NPM_CONFIG_PREFIX=$HOME/.local
+          mkdir -p "$NPM_CONFIG_PREFIX/bin"
+          bin/jg-bootstrap.sh install sign-off-axi
       - name: Run portable parallel shard 2
         run: |
           set -eu
@@ -187,6 +203,14 @@ jobs:
           mkdir -p "$NPM_CONFIG_PREFIX/bin"
           bin/jg-bootstrap.sh install opa
           echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
+      # tests/jg-workflow-owner.test.sh and tests/jg-workflow-muster.test.sh drive the real board, so the
+      # lane needs sign-off-axi at the version toolchain.versions pins; no older build passes them.
+      - name: Install the pinned sign-off-axi
+        run: |
+          set -eu
+          export NPM_CONFIG_PREFIX=$HOME/.local
+          mkdir -p "$NPM_CONFIG_PREFIX/bin"
+          bin/jg-bootstrap.sh install sign-off-axi
       - name: Run portable serial shard ${{ matrix.shard }}
         env:
           # job-total rather than a literal, so shrinking or growing the matrix
