@@ -122,6 +122,19 @@ Only the captain's own answers count for an irreversible question and for approv
 - Survey reads the existing project first and asks only about gaps.
   When the pack is missing in an existing project and the depth is full or complete, the line says `survey-first`, and the survey runs before the rounds.
 
+## Drafts and revisions
+The captain may pull every document at any stage and send any of them back.
+`jg muster drafts <project>` keeps a version of each document that changed and shows its status, version, what is open and what changed, as a table, one board page and one folder.
+`jg muster revise <project> <document|all> --note <words>` sends documents back.
+The note goes to the next draft round, the document returns to discussion, and the new version shows a diff against the one before.
+Documents written from a changed one are flagged to re-check; the flag closes with a new version or `jg muster checked`, and nothing is rewritten silently.
+An approved document is reopened by the same command, with the note as the reason; it needs a fresh check and a fresh yes.
+A War Room or Recon step asks the same way with `--source war-room|recon`.
+The commands read the live draft of a running Muster workflow, else the project.
+A note sent while the pack is ready closes that draft and opens the next round before the captain is asked to approve.
+A note sent while the approval question is open waits for the next Muster step.
+`core/muster/drafts.py` owns the rules and the ledger files.
+
 ## Spec docs
 The feature spec is written in the global spec-docs skill's own schema, plus a `muster:` line.
 Each procedure has one caller:

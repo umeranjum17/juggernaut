@@ -96,7 +96,7 @@ draft_worker() {
 }
 
 drive_muster() {
-  local source=$1 depth=$2 pack slug=rate-a-conversation question card gate
+  local source=$1 depth=$2 sent_back=${3:-} pack slug=rate-a-conversation question card gate
   draft_worker 1
   if [ -n "$source" ]; then
     assert_contains "$(cat "$JG_DATA_OVERRIDE/${worker//./-}/brief.md")" "$source" 'Muster receives earlier findings'
@@ -130,12 +130,34 @@ drive_muster() {
   "$ROOT/bin/jg-muster-objectives.sh" objectives "$project" --base "$(git -C "$project" rev-parse HEAD)" \
     --draft "$pack" --change "$slug" > "$muster_dir/objectives-2.log"
   jq -n --arg change "$slug" '{ready:true,change:$change}' > "$muster_dir/reply-2.json"
+  if [ -n "$sent_back" ]; then
+    "$ROOT/bin/jg-muster-drafts.sh" revise helpdesk ways-of-working --note "$sent_back" > /dev/null
+    worker_finished "$worker"
+    draft_worker 3
+    assert_contains "$(cat "$JG_DATA_OVERRIDE/${worker//./-}/brief.md")" "$sent_back" 'a document sent back reaches the next draft round'
+    [ ! -f "$JG_DATA_OVERRIDE/$muster/muster/approvals.tsv" ] || fail 'the captain was asked to approve before the revision'
+    printf '\nThe lead runs the weekly check.\n' >> "$pack/docs/ways-of-working.md"
+    "$ROOT/bin/jg-muster-objectives.sh" objectives "$project" --base "$(git -C "$project" rev-parse HEAD)" \
+      --draft "$pack" --change "$slug" > "$muster_dir/objectives-3.log"
+    jq -n --arg change "$slug" '{ready:true,change:$change}' > "$muster_dir/reply-3.json"
+  fi
   worker_finished "$worker"
   wait_file "$JG_DATA_OVERRIDE/$muster/muster/approvals.tsv"
   gate=$(awk -F '\t' '$2 == "approve" {print $4}' "$JG_DATA_OVERRIDE/$muster/muster/approvals.tsv")
   "$FIXTURE/owner-reply.sh" "$gate" yes
   wait_file "$JG_DATA_OVERRIDE/workflows/$muster.pack"
   sha=$(jq -er .sha "$JG_DATA_OVERRIDE/workflows/$muster.pack")
+}
+
+# The ways of working were sent back while the pack was ready: the pack was revised before the captain was asked, and the
+# approved document is its second version. Landing copies the approved documents into the project, as Blitz does.
+drafts_after_approval() {
+  local out
+  cp -R "$JG_DATA_OVERRIDE/$muster/muster/pack-$sha/docs/." "$project/docs/"
+  out=$("$ROOT/bin/jg-muster-drafts.sh" drafts "$muster")
+  assert_contains "$out" 'docs/ways-of-working.md | approved | v2 | +2 -0 since v1' 'the approved document is its second version'
+  assert_contains "$("$ROOT/bin/jg-muster-drafts.sh" revise "$muster" ways-of-working --note 'Reopen: the owner changed.')" \
+    'docs/ways-of-working.md: approved -> discussion' 'an approved document is reopened with a reason'
 }
 
 model_room() {
@@ -223,7 +245,8 @@ pass 'Discovery, full Muster and full War Room start Blitz'
 setup muster-only muster-only
 muster=$(row muster 1)
 muster_dir=$JG_DATA_OVERRIDE/workflows/$muster.muster
-drive_muster '' light
+drive_muster '' light 'Name who runs the weekly check.'
+drafts_after_approval
 drive_blitz "$(row owner 2)" "$(row fanout 3)"
 pass 'Light Muster starts Blitz by itself'
 

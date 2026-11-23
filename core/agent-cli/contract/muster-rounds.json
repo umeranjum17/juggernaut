@@ -46,7 +46,7 @@
     },
     {
       "path": ["muster", "revise"],
-      "meaning": "Show a round again as its next revision, or record the owner's changed or late answer as one.",
+      "meaning": "Show a round again as its next revision, record the owner's changed or late answer as one, or send a document (or all) back for another draft round with a note.",
       "roles": ["overwatch"],
       "args": [
         {"name": "ticket", "type": "text", "required": true},
@@ -54,11 +54,12 @@
         {"name": "questions", "type": "path", "required": false, "flag": "--questions"},
         {"name": "value", "type": "text", "required": false, "flag": "--value"},
         {"name": "words", "type": "text", "required": false, "flag": "--words"},
+        {"name": "note", "type": "text", "required": false, "flag": "--note"},
         {"name": "source", "type": "text", "required": false, "flag": "--source"}
       ],
       "changes": true,
       "method": "POST",
-      "form": "bin/jg-muster.sh revise <ticket> (<round> --questions <file> | <qid> (--value <letter> | --words <text>) [--source board|chat])",
+      "form": "bin/jg-muster.sh revise <ticket> (<round> --questions <file> | <qid> (--value <letter> | --words <text>) | <document> --note <words>) [--source <source>]",
       "repeat_key": "ticket+round+revision: the next revision number makes each call new",
       "exits": {"0": 0, "1": 1, "2": 2},
       "schema": "muster.revise.v1",

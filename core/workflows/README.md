@@ -35,6 +35,7 @@ A new kind is one entry in `KINDS` in `wflib.py`, one route line and one kind fi
 A kind runs when its module exists.
 `worker` and `recon` write the brief and approve dispatch on the kind's route.
 `muster` uses the [Muster round and pack method](../../.agents/skills/muster/SKILL.md) and publishes the signed pack or the completed survey.
+A document sent back with `jg muster revise` while the pack is ready makes the step run one more draft round, with the notes in its brief, before the board asks for approval.
 `owner` binds a slice plan and its work orders to the owner's approval.
 `fanout` starts Blitz with the approved plan after checking its match to the latest approved Muster pack.
 A ready step of a kind with no handler is one `workflow-step-failed` alert naming the kind, never a silent skip.

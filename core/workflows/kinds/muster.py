@@ -26,7 +26,7 @@ def layout(home, row):
     return handoff.record(home, row, "muster")
 
 
-def launch_draft(home, step, parent, root, number, inputs, needs_plan):
+def launch_draft(home, step, parent, root, number, inputs, needs_plan, notes):
     row = step["id"]
     title = f"Muster draft {number}"
     child = next((r for r in store.children(row) if r["title"] == title), None)
@@ -41,6 +41,7 @@ def launch_draft(home, step, parent, root, number, inputs, needs_plan):
     reply = root / f"reply-{number}.json"
     plan = root / "orders/plan.json"
     previous = "\n".join(str(path) for path in inputs) or "No earlier review."
+    sent_back = notes()
     instructions = f"""Draft the {depth} Muster for this ticket.
 Read the working method, formats and templates in {Path(store.ROOT, '.agents/skills/muster')}.
 Use the isolated project provided to you for research. Write the pack and objective journeys only under {root / 'draft'}.
@@ -54,7 +55,13 @@ For complete depth omit change. For survey read the survey drafts in the evidenc
 Before reporting a ready pack, run {BIN / 'jg-muster-objectives.sh'} objectives "$PWD" --base {handoff.read(root / 'base-ref')} --draft {root / 'draft'} and save its output to {root / f'objectives-{number}.log'}.
 For light or full include --change with the slug. The base objectives must pass. A survey does not run objective journeys.
 Do not post a board card, approve a pack, start Blitz, or change the source project.
+Keep each document's own `status:` line true, and leave every document a note does not name as it is.
 Write your evidence and next step in the Recon report, then record done. Write the reply before done."""
+    if sent_back:
+        instructions += ("\nThe captain, War Room or Recon sent documents back. Revise each one named below in the draft "
+                         "so the note is answered, or ask a question when the note cannot be settled without the captain. "
+                         "A document listed to re-check was written from one that changed: change it only if it is now wrong.\n"
+                         + sent_back)
     if needs_plan:
         instructions += (f"\nWith a ready pack also write the Blitz plan at {plan} and its work orders beside it. "
                          "Use the op-order format and claim the pack's journeys and charter rows on the appropriate slices. "
@@ -105,7 +112,7 @@ def publish_plan(path, approval, row, sha):
     kinds.write(path, json.dumps(plan, indent=2) + "\n")
 
 
-def advance(home, step, approval):
+def advance(home, step, approval, drafts):
     row, meta = step["id"], step["metadata"]
     root = layout(home, row)
     project_name = steplib.project(step)
@@ -118,6 +125,8 @@ def advance(home, step, approval):
     needs_plan = plan_needed(step, rows)
     root.mkdir(parents=True, exist_ok=True)
     snapshot(home, project, root, prior)
+    kinds.write(Path(steplib.data_dir(home), row, "muster/project"), project_name + "\n")
+    ledger = drafts.Target(project_name, str(root / "draft"), row)
     decisions = root / "decisions.md"
     if depth == "survey":
         survey = Path(steplib.data_dir(home), row, "muster/survey")
@@ -135,14 +144,15 @@ def advance(home, step, approval):
         number += 1
     child = handoff.read(root / f"worker-{number}")
     reply = root / f"reply-{number}.json"
+    notes = lambda: drafts.notes_for_round(ledger, number)
     if not child:
-        launch_draft(home, step, parent, root, number, inputs, needs_plan)
+        launch_draft(home, step, parent, root, number, inputs, needs_plan, notes)
         return
     lane = store.lane_verb(child)
     if lane in ("failed", "blocked", "needs-decision"):
         raise steplib.Failed(f"Muster draft {number} ended {lane}")
     if lane != "done" and store.read(child)["status"] != "closed":
-        launch_draft(home, step, parent, root, number, inputs, needs_plan)
+        launch_draft(home, step, parent, root, number, inputs, needs_plan, notes)
         return
     if not reply.is_file():
         raise steplib.Failed(f"Muster draft {number} did not write {reply.name}")
@@ -153,6 +163,7 @@ def advance(home, step, approval):
            and int(r["metadata"]["wf_index"]) < int(meta["wf_index"]) for r in rows):
         return
     response = json.loads(reply.read_text())
+    drafts.capture(ledger, number)
     if "questions" in response:
         questions = root / f"questions-{number}.json"
         if not (root / f"round-{number}-posted").is_file():
@@ -169,6 +180,11 @@ def advance(home, step, approval):
         return
     if response.get("ready") is not True:
         raise steplib.Failed("the Muster drafter must provide questions or a finished draft")
+    if not approval.newest(row, "approve") and drafts.pending(ledger):
+        # A document was sent back while this draft was ready: the next round answers it before the captain is asked.
+        (root / "manifest").unlink(missing_ok=True)
+        kinds.write(root / f"round-{number}-closed", "closed for a revision\n")
+        return
     if depth == "survey":
         kinds.write(root / "done", "the Muster survey is ready\n")
         return
@@ -232,8 +248,9 @@ if __name__ == "__main__":
     os.environ["JG_HOME"] = home
     sys.path.insert(0, str(Path(store.ROOT, "core/muster")))
     import approval
+    import drafts
 
     try:
-        advance(home, store.read(row), approval)
+        advance(home, store.read(row), approval, drafts)
     except (approval.Refused, steplib.Failed, wflib.Refused, OSError, ValueError, subprocess.SubprocessError) as error:
         sys.exit(str(error))

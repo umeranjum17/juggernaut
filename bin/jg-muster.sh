@@ -8,6 +8,7 @@
 #   jg-muster.sh answer <ticket> --default <R<round>Q<k>>
 #   jg-muster.sh revise <ticket> <round> --questions <file>
 #   jg-muster.sh revise <ticket> <R<round>Q<k>> (--value <option letter> | --words <text>) [--source board|chat]
+#   jg-muster.sh revise <project|ticket> <document|all> --note <words> [--source captain|war-room|recon]
 #   jg-muster.sh round-status <ticket> [--json]
 #   jg-muster.sh repair <ticket>
 #
@@ -55,6 +56,9 @@
 # --doc, kept in data/<ticket>/muster/doc): `- <date> R<round>Q<k>: "<his words>" (revision <n>)`; a default reads
 # "default: <option>". The row's doc_rev is the document's sha256 prefix after the write. A worker that stops between
 # the saved answer and the written line leaves a row with no doc_rev: `round-status` names it, `repair` redoes it.
+#
+# `revise <project|ticket> <document|all> --note <words>` sends documents back for another draft round; it is
+# jg-muster-drafts.sh revise, which owns it (as it owns `drafts`, the early drafts of every document).
 #
 # `round-status` reads only: per round, each question's gate, revision and state, the rows still owing a document
 # line, the unbound notes, and whether the round is complete (no required gate open). `repair` writes.
@@ -720,7 +724,7 @@ case "$cmd" in
   round) cmd_round "$@" ;;
   check-discovery-questions) [ $# -eq 1 ] || usage; no_questions "$1" || check_questions "$1" ;;
   answer) cmd_answer "$@" ;;
-  revise) cmd_revise "$@" ;;
+  revise) case " $* " in *" --note "*) exec "$SCRIPT_DIR/jg-muster-drafts.sh" revise "$@" ;; esac; cmd_revise "$@" ;;
   round-status) cmd_status "$@" ;;
   repair) cmd_repair "$@" ;;
   -h|--help|help) usage ;;
